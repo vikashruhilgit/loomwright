@@ -1,0 +1,17 @@
+{
+  "name": "ai-agent-manager-plugin",
+  "version": "1.0.0",
+  "description": "Global agents for orchestrating, reviewing, summarizing, and managing git workflow. Break goals into tasks, review code changes, summarize work, and manage commits across any project.",
+  "author": {
+    "name": "vikash ruhil"
+  },
+  "license": "MIT",
+  "keywords": [
+    "agents",
+    "orchestration",
+    "code-review",
+    "git",
+    "workflow",
+    "automation"
+  ]
+}
