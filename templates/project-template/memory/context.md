@@ -1,72 +1,48 @@
-# Current State
+# Current Task: [Task Name]
 
-**Agents update this file after work. It reflects the current state of the project.**
+> Task-bound memory: reflects current active task only. Wiped clean when task completes or pauses.
 
----
+## Goal
 
-## What We're Working On
+[What we're building / fixing]
 
-[Brief description of current goal/objective]
+## Current Progress
 
-Examples:
-- Fix JWT validation bug
-- Implement user registration feature
-- Refactor cache logic
-
----
-
-## Proposed CLAUDE.md Updates
-
-If agents discovered new patterns, they'll flag them here:
-
-```markdown
-### 🔍 Pattern Name
-- File: [path to file] (lines X-Y)
-- Pattern: [what it is]
-- Why: [why it's useful]
-- Status: ⏳ AWAITING YOUR APPROVAL
-```
-
-**Action:** Review, approve or reject, then update CLAUDE.md.
-
----
+- [x] Subtask or step completed
+- [ ] Subtask or step pending
+- [ ] Subtask or step pending
+- Progress: [X]% done or "Started" or "Blocked"
 
 ## Blockers
 
-What's preventing progress?
+[If any: what's blocking progress, how to resolve]
 
-- Awaiting code review
-- Missing information
-- External dependency
+Or: "None"
 
----
+## Proposed CLAUDE.md Updates
 
-## What's Next
+> Patterns agents discovered that should be documented
 
-Ordered list of next steps:
+### Pattern: [Pattern Name]
+- **File:** src/file.ts (lines X-Y)
+- **Severity:** GOOD_TO_USE | MUST_USE | SUGGESTION | AVOID
+- **Rationale:** Why this pattern is important
+- **When to use:** Specific use cases
+- **Example:**
+  ```
+  [code example]
+  ```
+- **Status:** ⏳ AWAITING USER APPROVAL
 
-1. [Current task]
-2. [Next task]
-3. [Following task]
+(Add more patterns as discovered)
 
----
+## Status Notes
 
-## Last Updated
-
-- **When:** YYYY-MM-DD HH:MM
-- **By:** Agent name or human
-- **What Changed:** Brief summary
-
-Example:
-- When: 2025-10-29 17:45
-- By: Summarizer
-- What Changed: Updated state after JWT fix completed
+[Any other notes about this task]
 
 ---
 
-## See Also
-
-- **Project knowledge:** CLAUDE.md
-- **Today's tasks:** TODO.md
-- **Session history:** memory/session/
-- **Agent guidelines:** agent-manager/AGENT_GUIDELINES.md
+**See also:**
+- **TODO.md** — All tasks and current status
+- **HISTORY.md** — Index of completed/paused tasks
+- **CLAUDE.md** — Codebase patterns and conventions

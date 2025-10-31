@@ -1,44 +1,37 @@
-# TODO — [DATE]
+# TODO — [Date]
 
-**Agents auto-update this file. Mark tasks as [x] when done.**
+> Central task list. Status markers: `[ ]` Pending, `[-]` In Progress, `[~]` Paused, `[x]` Done
 
----
+## Current Task
+
+- [-] [Task Name] (branch: [optional-branch])
+  - [x] Subtask completed
+  - [ ] Subtask pending
+  - [ ] Subtask pending
 
 ## In Progress
 
-- [ ] Task description here
-- [ ] Another in-progress task
+> Other tasks being worked on (if multi-tasking)
 
----
+- [ ] [Task Name] (branch: [optional-branch])
 
-## Pending (Blocked or Next)
+## Pending (Blocked / Next)
 
-- [ ] Task waiting for approval
-- [ ] Next task in queue
+> Tasks waiting to start or blocked by dependencies
 
----
+- [ ] [Task Name]
+  - Blocked by: [what's blocking]
+- [ ] [Task Name]
 
-## Done
+## Done Today
 
-- [x] Task completed
-- [x] Another completed task
+> Tasks completed in this session
 
----
+- [x] [Task Name] (committed: feat(scope): message)
+- [x] [Task Name] (committed: fix(scope): message)
 
-## Template
+## Archive (Previous Days)
 
-Use this format for tasks:
+> Old completed tasks (optional - can delete after week)
 
-```markdown
-- [ ] Brief description (what to do)
-- [ ] [BLOCKED] Task (awaiting something)
-- [ ] Task (owner: @agent-name)
-```
-
----
-
-## See Also
-
-- **Project knowledge:** CLAUDE.md
-- **Current state:** memory/context.md
-- **What was done:** memory/session/
+- [x] [Task Name] (completed: 2025-10-30)

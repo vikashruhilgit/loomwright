@@ -1,458 +1,255 @@
-# Agent Manager
+# AI Agent Manager
 
-A lightweight, reusable system for AI agents to collaborate on software projects.
+A lightweight system for AI agents to collaborate on software projects. Four intelligent agents (Orchestrator, Code Reviewer, Repo Steward, Summarizer) automate planning, review, commits, and progress tracking.
 
-**Key Idea:** Global agents live here. Your projects have simple memory/context files. Agents read context, do work, update files. Repeatable across any project.
+**Key Idea:** Agents live here. Your projects have simple memory files (CLAUDE.md, TODO.md, memory/). Agents read context, do work, update files. Repeatable across any project.
 
-> **🚀 New:** Use agents via Claude Code plugin with slash commands!
->
-> Instead of manually copying prompts, install the plugin and run:
-> ```bash
-> /orchestrator goal: "your goal"
-> /code-reviewer src/
-> /repo-steward
-> /summarizer
-> ```
->
-> See **Quick Start** below to get started, or check [Plugin Documentation](./.claude-plugin/README.md) for detailed info.
+> **Install the plugin and run slash commands instead of manually managing agents.**
 
 ---
 
 ## Quick Start
 
 ### 1. Install the Plugin
-Install the AI Agent Manager plugin in Claude Code:
+
 ```bash
-# First, add the marketplace (from the ai-agent-manager directory)
+# Add marketplace
 /plugin marketplace add ./
 
-# Then install the plugin
+# Install plugin
 /plugin install ai-agent-manager-plugin@ai-agent-manager-marketplace
 ```
 
-Or manually copy the plugin to your Claude Code config directory:
-- **macOS/Linux:** `cp -r ai-agent-manager-plugin ~/.claude/plugins/ai-agent-manager-plugin`
-- **Windows:** Copy `ai-agent-manager-plugin` to `%APPDATA%\Claude\plugins\`
+Or manually: `cp -r ai-agent-manager-plugin ~/.claude/plugins/`
 
 ### 2. Setup Your Project
-Initialize your project with the template:
+
 ```bash
 cd /path/to/your-project
 cp -r /path/to/ai-agent-manager/templates/project-template/* .
 ```
 
-Your project now has:
+This creates:
 ```
 your-project/
-├── CLAUDE.md              ← Codebase knowledge
-├── TODO.md                ← Today's tasks
+├── CLAUDE.md              # Codebase knowledge
+├── TODO.md                # Tasks and progress
 ├── memory/
-│   ├── context.md         ← Current state
-│   └── session/
-│       └── YYYY-MM-DD.md  ← Session logs
+│   ├── context.md         # Current task state
+│   ├── HISTORY.md         # Task index
+│   └── session/           # Task records
 └── src/ (your code)
 ```
 
 ### 3. Run Your First Command
+
 ```bash
 /orchestrator goal: "what you want to accomplish"
 ```
 
-The orchestrator will:
-1. Find your project's CLAUDE.md
+Orchestrator will:
+1. Read your CLAUDE.md
 2. Understand your goal
 3. Break it into tasks
-4. Suggest task assignments
-
-**That's it!** Use the agents via slash commands. See next section for all available commands.
+4. Suggest task breakdown and acceptance criteria
 
 ---
 
-## Agents Overview
+## The 4 Agents
 
-### **Orchestrator** — Plan Your Work
-```bash
-/orchestrator goal: "what to accomplish"
-```
-- **When:** Starting a new task or need a plan
-- **What it does:** Breaks your goal into 3-7 minimal, actionable tasks
-- **Output:** Task breakdown with assignments + acceptance criteria
-- **Example:** `/orchestrator goal: "add dark mode to settings"`
+| Agent | Command | Purpose | When |
+|-------|---------|---------|------|
+| **Orchestrator** | `/orchestrator goal: "..."` | Plan work → break into tasks | Starting new work |
+| **Code Reviewer** | `/code-reviewer src/` | Review code → flag issues → suggest fixes | After writing code |
+| **Repo Steward** | `/repo-steward` | Stage changes → create commits → link to tasks | Ready to commit |
+| **Summarizer** | `/summarizer` | Update memory → create session logs → clean context | End of task |
 
-### **Code Reviewer** — Check Your Code
-```bash
-/code-reviewer src/
+**How they work together:**
 ```
-- **When:** After writing code, need feedback
-- **What it does:** Reviews code against patterns, flags issues
-- **Checks:** Type safety, security, performance, patterns, test coverage
-- **Output:** Strengths + issues (HIGH/MEDIUM/LOW severity) + fixes
-- **Example:** `/code-reviewer src/components/`
-
-### **Repo Steward** — Commit Your Changes
-```bash
-/repo-steward
+Orchestrator → Plan tasks
+    ↓
+You code
+    ↓
+Code Reviewer → Check quality
+    ↓
+You fix issues
+    ↓
+Repo Steward → Create commits
+    ↓
+Summarizer → Update memory, mark done
+    ↓
+Orchestrator reads updated context → plans next task
 ```
-- **When:** Ready to commit work
-- **What it does:** Stages changes, writes conventional commits, updates TODO.md
-- **Output:** Organized commits with clear messages
-- **Example:** `/repo-steward --push` (also pushes to remote)
-
-### **Summarizer** — Log Your Work
-```bash
-/summarizer
-```
-- **When:** End of day, update memory
-- **What it does:** Reads git history, summarizes work, proposes patterns
-- **Output:** Updated memory/context.md + session log (immutable record)
-- **Example:** `/summarizer` (auto-detects your project)
 
 ---
 
-## File Structure Explained
+## Memory System (Task-Bound)
 
-### `CLAUDE.md` — Codebase Knowledge
-**Your project's knowledge base.** Agent reads this to understand patterns.
+**Key Insight:** Memory tied to *current task only* (not per day). When task completes, memory is archived and wiped for next task.
+
+| File | Purpose | Updated By |
+|------|---------|-----------|
+| `CLAUDE.md` | Codebase patterns & conventions | You (after reviewing agent proposals) |
+| `TODO.md` | All tasks with status markers | Repo Steward (progress), Summarizer (completion) |
+| `memory/context.md` | **Current active task only** — status, blockers, proposals | Summarizer (updates) |
+| `memory/HISTORY.md` | Index of all completed/paused tasks | Summarizer (links to session files) |
+| `memory/session/*.md` | Immutable task records (completed or paused) | Summarizer (creates) |
+
+**Status Markers:**
+- `[ ]` Pending
+- `[-]` In Progress
+- `[~]` Paused
+- `[x]` Done
+
+**Example Daily Flow:**
+
+Morning: Orchestrator reads TODO.md (current task) + context.md (progress) → understands where you are
+
+Work: You code → Code Reviewer checks → you fix → Repo Steward commits
+
+Evening: Summarizer marks task done → creates session log → wipes context.md → ready for next task
+
+Next day: Orchestrator reads updated TODO.md + clean context.md → plans next task
+
+---
+
+## Project Setup
+
+### For New Projects
+
+1. Copy template to your project: `cp -r templates/project-template/* .`
+2. Edit CLAUDE.md with your project structure and patterns
+3. Add initial tasks to TODO.md
+4. Run `/orchestrator goal: "first task"`
+
+### CLAUDE.md Structure
+
+Fill in once at the start:
 
 ```markdown
-# Project Name
+# [Your Project Name]
 
 ## Structure
-- src/auth.ts — JWT validation
-- src/middleware/ — Express middleware
-- tests/ — Jest tests
+- src/ — [what's here]
+- test/ — [what's here]
 
 ## Tech Stack
-- Node.js 18+, Express 4.x, JWT
+- Node.js, Express, PostgreSQL
+- Jest for testing
 
 ## Key Patterns
-- Cache invalidation: call CacheManager.flush() after changes
-- Middleware at src/middleware/auth.ts (update when adding endpoints)
-- Tests use Jest + custom matchers in test/helpers/
-
-## Common Pitfalls
-- Forgetting to invalidate cache
-- Not checking JWT expiry before decode
-```
-
-**You update this when:**
-- New patterns discovered by agents (after you approve)
-- Codebase structure changes
-
-### `TODO.md` — Today's Tasks
-**What needs doing today.** Agents auto-update this.
-
-```markdown
-# TODO — 2025-10-29
-
-## In Progress
-- [ ] Fix JWT validation in src/auth.ts:45-67
-- [ ] Add test for expired tokens
-
-## Pending (Blocked/Next)
-- [ ] Code review (awaiting security team)
-- [ ] Deploy to staging (after review)
-
-## Done
-- [x] Identified root cause
-```
-
-**Agents update this:** Mark tasks done, track progress.
-
-### `memory/context.md` — Current State
-**What's happening right now.** Agent reads/updates this.
-
-```markdown
-# Current State
-
-## What We're Working On
-Fix JWT validation bug in src/auth.ts:45-67
-
-## Proposed CLAUDE.md Updates
-### 🔍 New Cache Pattern Discovered
-- File: src/cache-v2.ts (lines 23-67)
-- Why: LRU cache more efficient than flush-all
-- Status: ⏳ AWAITING YOUR APPROVAL
-
-## Blockers
-- Code review required
-
-## What's Next
-1. Fix code ✓
-2. Code review (in progress)
-3. Staging deployment
-```
-
-**Agents update this:** State changes, blockers, proposals.
-
-### `memory/session/YYYY-MM-DD.md` — Immutable Record
-**What actually happened. Created EOD by Summarizer.**
-
-```markdown
-# Session 2025-10-29
-
-## What Was Done
-### Task: Fix JWT Validation
-- Files: src/auth.ts:45-67, test/auth.spec.ts:120-145
-- Commit: fix(auth): validate JWT expiry before decode [abc123]
-
-## Test Results
-- ✓ npm test: 15 pass, 0 fail
-- ✓ No regressions
-
-## Findings
-- JWT expiry check was missing; added Date.now() comparison
-- Tests pass; security team to review
-
-## Next Session
-- Awaiting code review
-- Then: staging deployment + 24h monitoring
-```
-
-**You read this:** Understand what happened, approve CLAUDE.md changes.
-
----
-
-## Daily Workflow
-
-### **Morning**
-1. Agent (Orchestrator or you) reads CLAUDE.md
-   - "What patterns exist in this codebase?"
-2. Agent reads TODO.md
-   - "What's today's objective?"
-3. Agent reads memory/context.md
-   - "What's blocking us?"
-
-### **During Work**
-1. Agent makes changes to code
-2. Agent updates TODO.md
-   ```
-   - [x] Read CLAUDE.md
-   - [ ] Fix code
-   - [ ] Test
-   ```
-3. Agent updates memory/context.md if state changes
-4. Agent proposes CLAUDE.md updates if new pattern discovered
-   ```
-   ## Proposed CLAUDE.md Updates
-   - File: src/cache-v2.ts
-   - Pattern: LRU cache with TTL
-   - Should we document this?
-   ```
-
-### **End of Day**
-1. Summarizer reads git history + memory files
-2. Creates memory/session/YYYY-MM-DD.md
-   - What changed, commits, test results
-3. Updates memory/context.md
-   - What's next, blockers
-4. You review:
-   - Read memory/session/
-   - Check CLAUDE.md proposals
-   - Approve/reject proposals
-5. You commit project (code + memory + TODO)
-
-### **Next Morning**
-1. New agent reads updated CLAUDE.md
-   - Has learned from yesterday's discoveries
-
----
-
-## How to Use Agents (Step-by-Step)
-
-### Step 1: Prepare Your Project
-```
-your-project/
-├── CLAUDE.md           ← Filled with project patterns
-├── TODO.md             ← Has today's tasks
-├── memory/context.md   ← Current state
-└── src/                ← Your code
-```
-
-### Step 2: Open Claude Code
-```bash
-# In your project directory
-claude-code
-```
-
-### Step 3: Run an Agent Command
-Choose an agent and run the command. Agents auto-detect your project:
-
-```bash
-# Plan your work
-/orchestrator goal: "add user authentication"
-
-# Review your code
-/code-reviewer src/
-
-# Commit your changes
-/repo-steward
-
-# Log your work (end of day)
-/summarizer
-```
-
-Each command:
-1. Auto-finds CLAUDE.md in your project
-2. Reads context (TODO.md, memory/context.md, git history)
-3. Runs the agent logic
-4. Suggests changes and updates
-
-### Step 4: Review Suggestions
-- Agent outputs structured results
-- Agent suggests file updates (in markdown)
-- You review and decide whether to apply changes
-
-### Step 5: Apply Changes
-- For code reviews: Use suggestions to fix your code
-- For TODO.md updates: Agent shows what changed
-- For CLAUDE.md proposals: Review in memory/context.md, approve when ready
-- For commits: Review with `git log --oneline`
-
-For more details, see [Plugin Documentation](./.claude-plugin/README.md)
-
----
-
-## Onboard a New Project
-
-### Checklist
-- [ ] Copy `agent-manager/templates/project-template/` to your project
-- [ ] Create/customize `CLAUDE.md` with your project's structure + patterns
-- [ ] Fill `TODO.md` with today's tasks
-- [ ] Done! Ready to use agents
-
-### Example CLAUDE.md for New Project
-```markdown
-# [Your Project] Codebase
-
-## Structure
-- [key directories]
-
-## Tech Stack
-- [languages, frameworks]
-
-## Key Patterns
-- [how you do things]
-
-## Common Pitfalls
-- [what to watch for]
+(Document as you discover them)
 
 ## Quick Commands
-- [build, test, run]
+- Build: npm run build
+- Test: npm test
+- Lint: npm run lint
+```
+
+### TODO.md Format
+
+```markdown
+# TODO
+
+## Current Task
+- [-] Task name (branch: feature-x)
+  - [x] Subtask done
+  - [ ] Subtask pending
+
+## Pending
+- [ ] Next task
 ```
 
 ---
 
-## Example Session
+## Common Patterns & Best Practices
 
-### Before (Morning)
-```
-CLAUDE.md:
-  - Basic structure documented
-  - Missing cache invalidation pattern
+### Agents Follow These Rules
+- **Quality First:** Thorough, well-tested solutions
+- **Surgical Changes:** Only modify what's necessary
+- **Pattern Consistency:** Use existing patterns
+- **Type Safety:** Strict type checking
+- **Security:** No secrets, validate inputs
+- **Performance:** Profile and document tradeoffs
 
-TODO.md:
-  - [ ] Fix JWT validation bug
-  - [ ] Add test
+See `AGENT_GUIDELINES.md` for detailed standards per language.
 
-memory/context.md:
-  - Goal: Fix JWT validation
-  - Blocker: None
-```
+### Workflow Tips
 
-### During (Agent Works)
-```
-Agent (Code Reviewer):
-  1. Reads CLAUDE.md
-  2. Reviews src/auth.ts changes
-  3. Finds new cache pattern in src/cache-v2.ts
-  4. Updates memory/context.md:
+1. **Start with Orchestrator:** Always run `/orchestrator goal: "..."` when starting new work
+2. **Review code iteratively:** Run `/code-reviewer` multiple times as you fix issues
+3. **Commit cohesively:** Use `/repo-steward` only when code is clean and reviewed
+4. **Update memory at EOD:** Run `/summarizer` to archive task and prepare for next
+5. **Trust the memory:** Orchestrator reads context to understand progress — keep it accurate
 
-     ## Proposed CLAUDE.md Updates
-     - File: src/cache-v2.ts
-     - Pattern: LRU cache with TTL
-     - Status: ⏳ AWAITING APPROVAL
-```
+### CLAUDE.md Proposal Workflow
 
-### After (EOD, Summarizer)
-```
-Creates memory/session/2025-10-29.md:
-  - Fixed src/auth.ts (JWT expiry check)
-  - Added test (test/auth.spec.ts)
-  - Commit: fix(auth): validate JWT expiry [abc123]
-  - Tests: 15 pass, 0 fail
+When Code Reviewer discovers a new pattern:
 
-Updates memory/context.md:
-  - Blocker: Awaiting code review
-  - Next: Staging deployment + monitoring
+1. **Flag in context.md:** Pattern flagged with severity (GOOD_TO_USE, MUST_USE, etc)
+2. **You review:** Check if worth documenting
+3. **If approved:** You update CLAUDE.md manually
+4. **Next agent learns:** Reads updated CLAUDE.md, uses the new pattern
 
-You review:
-  1. Read session/2025-10-29.md ✓
-  2. See proposal: LRU cache pattern
-  3. Approve + update CLAUDE.md:
-     ## Patterns
-     - Cache invalidation:
-       - Old: CacheManager.flush() (clear all)
-       - NEW: src/cache-v2.ts (LRU, more granular)
-  4. Commit project
-```
-
-### Next Morning
-```
-New agent reads CLAUDE.md:
-  - Sees cache-v2.ts pattern
-  - Uses it in similar code
-  - Doesn't reinvent the wheel
-```
+This prevents knowledge loss and helps agents learn from discoveries.
 
 ---
 
-## Shared Rules (See AGENT_GUIDELINES.md)
+## Documentation
 
-All agents follow:
-- **Do:** Smallest correct thing that advances the goal
-- **Output:** Structured Markdown (Context Read, Plan, Work, Results, Risks)
-- **Don't:** Invent files, paths, or APIs; ask if unsure
-- **Safety:** No destructive actions (force-push, db migrations) without explicit approval
-
-See `AGENT_GUIDELINES.md` for complete details.
+- **This file (README.md):** Overview and quick start
+- **CLAUDE.md (this repo):** Architecture and agent system
+- **AGENT_GUIDELINES.md:** Development standards, quality checklist
+- **.claude-plugin/README.md:** Detailed plugin documentation
+- **ai-agent-manager-plugin/agents/*.md:** Individual agent prompts
 
 ---
 
-## Key Insights
+## For Developers
 
-1. **Agents are prompts, not code** — Easy to modify, adapt
-2. **Memory lives in projects** — Projects are self-contained
-3. **One source of truth** — CLAUDE.md grows; agents learn
-4. **Human approval gates** — You control CLAUDE.md changes
-5. **Repeatable across projects** — Same agents work everywhere
+To modify or extend agents:
+
+1. Agents are Markdown prompts in `ai-agent-manager-plugin/agents/`
+2. Commands are in `ai-agent-manager-plugin/commands/`
+3. Shared preamble: `ai-agent-manager-plugin/agents/prompts.md`
+4. All agents follow standard output format (see AGENT_GUIDELINES.md)
+
+To test locally:
+
+```bash
+/plugin marketplace add ./
+/plugin install ai-agent-manager-plugin@ai-agent-manager-marketplace
+```
+
+Then run agents in a test project to verify changes.
 
 ---
 
 ## Troubleshooting
 
-**Agent doesn't understand project structure?**
-- Update CLAUDE.md with more detail
-- Provide clearer examples
+**Agent doesn't understand my project?**
+- Update CLAUDE.md with clearer patterns and examples
+- Add more detailed structure documentation
 
-**Memory files getting out of sync?**
-- Summarizer runs EOD to catch up
-- You update them if agent misses something
+**Memory files out of sync?**
+- Run `/summarizer` to sync memory with git state
+- Check memory/context.md — should reflect current task only
 
-**New pattern but unsure if it's important?**
-- Agent flags in memory/context.md as proposal
-- You review + decide
+**Agents suggesting wrong patterns?**
+- Update CLAUDE.md with approved patterns
+- Reject unwanted proposals in memory/context.md
+
+**Need help?**
+- Check AGENT_GUIDELINES.md for quality standards
+- Check .claude-plugin/README.md for detailed command documentation
+- Review agent prompts in ai-agent-manager-plugin/agents/
 
 ---
 
-## Next Steps
+## License
 
-1. Copy template to your project
-2. Fill CLAUDE.md with your codebase knowledge
-3. Pick an agent (start with Orchestrator or Code Reviewer)
-4. Load agent prompt + context
-5. Let agent work
-6. Review memory files at EOD
-7. Approve CLAUDE.md changes
+MIT — See LICENSE file
 
-Happy shipping! 🚀
+---
+
+**Happy shipping!** 🚀

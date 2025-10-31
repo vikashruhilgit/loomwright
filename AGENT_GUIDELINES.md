@@ -185,7 +185,7 @@ Stop work and escalate if:
 
 ## Multi-Agent Framework
 
-This document also serves as the basis for a multi-agent system. All agents inherit these guidelines.
+This document provides the basis for a multi-agent system. All agents inherit these guidelines.
 
 ### Shared Preamble (All Agents)
 
@@ -197,163 +197,306 @@ Every agent follows this contract:
 
 **Inputs**
 - Task brief (objective, scope, constraints)
-- Context (CLAUDE.md, TODO.md, memory/context.md, recent commits)
+- Context (CLAUDE.md, TODO.md, memory/context.md, recent commits, git history)
 - Project patterns and conventions
+- Current task state (from TODO.md and context.md)
 
 **Outputs**
-- Deterministic, structured output (Markdown sections):
-  - Context Read (what you understood)
-  - Plan (what you'll do)
-  - Work (what you did)
-  - Results (what changed, files, commits)
-  - Risks & Next Steps (what to watch for)
+- Deterministic, structured Markdown output following standard format:
+  1. **Context Read** — What you understood from files/goal
+  2. **Current State** — Where we are, what's relevant to this task
+  3. **Plan** — What you'll do, step-by-step
+  4. **Work/Results** — What you did, files changed, commits, proposals
+  5. **Risks & Next Steps** — What to watch for, blockers, what comes next
 - Never output secrets or tokens
 - Always cite exact file:line(s) when referencing code
 
 **Rules**
 - Do not invent files, paths, APIs, or results. If unknown, ask explicit questions.
 - Keep changes minimal; follow existing patterns and versions.
-- Respect project memory files (CLAUDE.md, TODO.md, memory/). Only update as instructed.
+- Respect project memory files (CLAUDE.md, TODO.md, memory/). Only update as explicitly instructed.
 - If work depends on missing info, stop and request it.
 - Escalate blockers or policy conflicts to human (you).
+- Memory is **task-bound**: context.md always tied to current active task
 
 **Quality & Safety**
 - No destructive actions (db migrations, secret rotation, force-push) without explicit instruction.
 - Cite exact files/lines when referencing code; include short diffs when helpful.
 - Produce testable outputs: commands, file names, expected results.
+- When switching tasks: save current task progress before starting new task
 
 ---
 
-### Agent Roles
+### Standard Output Format (ALL AGENTS)
 
-#### **Orchestrator**
-- **Objective:** Understand goal, break into tasks, coordinate agents
-- **Responsibilities:**
-  - Read CLAUDE.md (codebase patterns), TODO.md (today's tasks), memory/context.md (state)
-  - Understand the incoming goal
-  - Break into minimal, actionable tasks with acceptance criteria
-  - Assign tasks to appropriate agents or you
-  - Verify outputs for quality before final delivery
-- **Output:**
-  - Task graph (who/what/when)
-  - Clear acceptance criteria for each task
-  - Hand-off summaries for each agent
+Every agent output follows this structure:
 
-#### **Code Reviewer**
-- **Objective:** Provide precise, actionable feedback to improve correctness, security, performance
-- **Responsibilities:**
-  - Review diffs against existing patterns in CLAUDE.md
-  - Check for style violations, security issues, performance concerns
-  - Map each comment to exact file:line(s)
-  - Detect new patterns and flag for CLAUDE.md update
-- **Output:**
-  - Summary (what works, what doesn't)
-  - Blocking issues (numbered, severity)
-  - Non-blocking suggestions
-  - Inline review comments (file:line–line, message)
-  - Proposals for CLAUDE.md updates (if new pattern detected)
+```markdown
+## Context Read
+[What files you read, what you understood from the goal/task]
 
-#### **Summarizer**
-- **Objective:** Update memory/context files with work done, create immutable session records
-- **Responsibilities:**
-  - Read project git history (recent commits)
-  - Update memory/context.md (current state, blockers, what's next)
-  - Create memory/session/YYYY-MM-DD.md (immutable record of what happened)
-  - Detect new patterns and flag for CLAUDE.md update
-  - Ensure memory files are in sync with actual project state
-- **Output:**
-  - Updated memory/context.md
-  - Created memory/session/YYYY-MM-DD.md
-  - Memory update summary (what changed, why)
-  - CLAUDE.md proposals (if patterns detected)
+## Current State
+[Current status of the task, blockers, progress so far]
+[Only relevant to the current active task in context.md]
 
-#### **Repo Steward**
-- **Objective:** Keep repository clean, commit cohesively, track progress
-- **Responsibilities:**
-  - Verify repo cleanliness (git status)
-  - Stage minimal, cohesive changes
-  - Write conventional commit messages with scope
-  - Update TODO.md (mark done tasks)
-  - Ensure commits link to tasks
-- **Output:**
-  - Staged files list
-  - Commit message(s)
-  - Updated TODO.md
-  - Next actions (who/when)
+## Plan
+[What you'll do next, step-by-step]
+
+## Work/Results
+[What you accomplished, files changed, commits, proposals]
+
+## Risks & Next Steps
+[What to watch for, blockers, dependencies, what comes next]
+```
+
+This format applies to ALL agent outputs (Orchestrator, Code Reviewer, Repo Steward, Summarizer).
 
 ---
 
-### Memory Files & Updates
+### Agent Roles & Responsibility Matrix
+
+| Agent | Reads | Writes | Primary Responsibility |
+|-------|-------|--------|------------------------|
+| **Orchestrator** | CLAUDE.md, TODO.md, context.md, git history | None (proposes plans) | Planning, task breakdown, understanding current state |
+| **Code Reviewer** | CLAUDE.md, code files, context.md | context.md (proposals) | Code quality, security, pattern consistency, suggesting fixes |
+| **Repo Steward** | git status, TODO.md, context.md | Commits, git operations | Git operations, linking commits to tasks |
+| **Summarizer** | git history, context.md, TODO.md, session files | context.md, TODO.md, session files, HISTORY.md | Memory maintenance, task completion, session logging |
+
+---
+
+#### **Orchestrator** (Planning Agent)
+- **Objective:** Break goals into actionable tasks based on current project state
+- **Reads:** CLAUDE.md, TODO.md, memory/context.md, git history
+- **Writes:** None (outputs plans for user approval)
+- **Responsibilities:**
+  - Read TODO.md to understand all tasks and identify current active task
+  - Read memory/context.md to understand progress on current task
+  - Understand goal/task-details (inline: `goal: "add JWT with refresh tokens"`)
+  - If CLAUDE.md missing: auto-detect tech stack and generate initial CLAUDE.md (run `/orchestrator init` internally)
+  - Create or replan task breakdown based on current state
+  - Output: "Here's where we are" summary + new tasks + acceptance criteria
+  - If user initiates task switch: ask to save current progress before switching
+  - When resuming paused task: read paused session file and restore context
+- **Output (follows standard format):**
+  - Context Read: Files read, goal understood
+  - Current State: Where project stands, current task status
+  - Plan: Task breakdown, acceptance criteria, assignments
+  - Work/Results: None (proposes plans)
+  - Risks & Next Steps: Dependencies, blockers, what to start first
+
+#### **Code Reviewer** (Quality Agent)
+- **Objective:** Provide precise feedback on code quality, security, and patterns; suggest fixes
+- **Reads:** Code files, CLAUDE.md (patterns), memory/context.md
+- **Writes:** memory/context.md (proposals only)
+- **Responsibilities:**
+  - Review code against CLAUDE.md patterns and quality standards
+  - Flag issues with **severity level**: BLOCKING (must fix), HIGH (should fix), MEDIUM (consider fixing), SUGGESTION (nice to have)
+  - For each issue: suggest fix with reasoning, cite file:line
+  - Detect new patterns used in code
+  - Flag proposed CLAUDE.md updates in context.md with format:
+    ```
+    ## Proposed CLAUDE.md Updates
+    - **Pattern:** [name]
+    - **File:** src/file.ts (lines 23-45)
+    - **Severity:** GOOD_TO_USE | MUST_USE | SUGGESTION | AVOID
+    - **Rationale:** [why include in CLAUDE.md]
+    - **Status:** ⏳ AWAITING YOUR APPROVAL
+    ```
+  - Do NOT update CLAUDE.md directly (wait for user approval)
+- **Output (follows standard format):**
+  - Context Read: Code reviewed, patterns checked
+  - Current State: Code quality against project standards
+  - Plan: What to review, approach
+  - Work/Results: Issues found, suggested fixes (file:line with diffs), proposals
+  - Risks & Next Steps: Critical issues, CLAUDE.md proposals, dependencies
+
+#### **Repo Steward** (Git Agent)
+- **Objective:** Keep repository clean with organized, conventional commits
+- **Reads:** git status, TODO.md, memory/context.md
+- **Writes:** Commits (git operations), minimal TODO.md updates
+- **Responsibilities:**
+  - Check git status (what's changed, unstaged files)
+  - Stage minimal, cohesive changes (focused on one task)
+  - Write conventional commit messages: `<type>(<scope>): <message>`
+  - Link commits to current active task
+  - Update TODO.md: note task progress (e.g., `- [-] Task Name (in progress, 3/5 subtasks done)`)
+  - Do NOT mark tasks as done (Summarizer does that)
+  - Focus only on git operations; don't rewrite code
+- **Output (follows standard format):**
+  - Context Read: git status, task context
+  - Current State: What changed, what's staged
+  - Plan: Commits to create
+  - Work/Results: Commit messages, files staged, TODO.md updates
+  - Risks & Next Steps: Remaining changes, what Summarizer should do
+
+#### **Summarizer** (Memory Agent)
+- **Objective:** Maintain accurate project memory and create immutable task records
+- **Reads:** git history, memory/context.md, TODO.md, session files
+- **Writes:** memory/context.md, TODO.md, session files, HISTORY.md
+- **Responsibilities:**
+
+  **When task COMPLETED:**
+  - Read git history for this task
+  - Create immutable session file: `memory/session/[task-name]-completed.md`
+  - Update TODO.md: mark task `[x]` Done, set next task as current
+  - Update HISTORY.md: add entry linking to session file
+  - Wipe memory/context.md clean for next task
+
+  **When task PAUSED (mid-way):**
+  - Create session file: `memory/session/[task-name]-paused.md`
+  - Mark in TODO.md: `[~]` Paused
+  - Archive current context.md to session file
+  - Wipe memory/context.md for next task
+
+  **Active Memory Maintenance:**
+  - Review memory/context.md for stale entries (blockers resolved, proposals approved/rejected)
+  - Ask user: "Remove these stale entries from context.md?"
+  - Move resolved items to session file with status (approved, rejected, resolved)
+  - Archive old findings/patterns that are no longer relevant
+  - Ensure memory files are in sync with actual git state
+
+- **Output (follows standard format):**
+  - Context Read: git history, memory files read
+  - Current State: Task completion status, memory file analysis
+  - Plan: Maintenance steps, memory updates
+  - Work/Results: Updated memory files, session logs created, HISTORY.md updated
+  - Risks & Next Steps: What to work on next, any unresolved blockers
+
+---
+
+### Memory Files & Architecture
+
+**Task-Bound Memory Model:**
+
+All memory is tied to the current active task in TODO.md. When a task is completed or paused, its memory is archived to a session file, and context.md is wiped clean for the next task.
 
 **These files live in your project** (not in agent-manager):
 
-| File | Owner | Purpose | Updated When |
-|------|-------|---------|--------------|
-| `CLAUDE.md` | You (with agent proposals) | Codebase knowledge | When patterns change, after approval |
-| `TODO.md` | Agents (Repo Steward) | Today's tasks | As tasks progress |
-| `memory/context.md` | Agents (Summarizer) | Current state | After significant changes |
-| `memory/session/YYYY-MM-DD.md` | Agents (Summarizer) | Immutable record | End of day |
+| File | Owner | Purpose | Structure |
+|------|-------|---------|-----------|
+| `CLAUDE.md` | You (with Code Reviewer proposals) | Codebase knowledge, patterns, tech stack | User-maintained, grows over time |
+| `TODO.md` | Summarizer (completion), Repo Steward (progress) | All tasks, current active task, status tracking | Central task list with status: `[ ]` Pending, `[-]` In Progress, `[~]` Paused, `[x]` Done |
+| `memory/context.md` | Summarizer (updates), Orchestrator (reads) | **Current active task only** — status, blockers, progress, proposals | Always reflects current task, wiped when task done |
+| `memory/session/[task-name]-[status].md` | Summarizer (creates) | Immutable task records (completed/paused) | One file per task completion/pause event |
+| `memory/HISTORY.md` | Summarizer (updates) | Index of all completed/paused tasks | Links to session files for easy lookup |
 
 **Agent Update Rules:**
-- Agents read all memory files to understand state
-- Agents only update files explicitly instructed to update
-- Summarizer is the only agent that should create/update session logs
-- Only you update CLAUDE.md (after reviewing agent proposals)
+- Orchestrator: Reads TODO.md + context.md to understand state; proposes plans (no writes)
+- Code Reviewer: Reads code + CLAUDE.md; writes proposals to context.md (awaiting approval)
+- Repo Steward: Writes git commits, minimal TODO.md progress notes
+- Summarizer: Writes context.md, TODO.md, session files, HISTORY.md (active memory manager)
+- Only you update CLAUDE.md (after reviewing Code Reviewer proposals)
+- Summarizer is the only agent creating/updating session logs
 
 ---
 
-### Session Log Format
+### Session Log Format (Task-Based)
 
-`memory/session/YYYY-MM-DD.md` should include:
+**Completed Task:** `memory/session/[task-name]-completed.md`
 
 ```markdown
-# Session YYYY-MM-DD
+# Session: [Task Name] — COMPLETED
 
 ## What Was Done
-### Task: [Task Name]
-- Files changed: [file:line ranges]
-- Commit(s): [conventional message] [hash]
-- Test results: [pass/fail count]
+- **Goal:** [What we were building]
+- **Files changed:** [file:line ranges]
+- **Commits:** [conventional messages with hashes]
+- **Test results:** [pass/fail count]
 
-## Findings
+## Key Findings
 - [Any new patterns discovered]
 - [Insights about the codebase]
 
-## Blockers
-- [What's blocking next steps, if any]
+## Approved CLAUDE.md Updates
+- Pattern: [name] — APPROVED (date)
 
-## Next Session
-- [What to pick up tomorrow]
+## Blockers (If Any)
+- [What was blocking, how resolved]
+
+## Session Duration
+- Started: [date]
+- Completed: [date]
+```
+
+**Paused Task:** `memory/session/[task-name]-paused.md`
+
+```markdown
+# Session: [Task Name] — PAUSED
+
+## What Was Done So Far
+- **Goal:** [What we're building]
+- **Progress:** [% complete or current step]
+- **Files changed:** [file:line ranges]
+- **Commits:** [conventional messages with hashes]
+
+## Current State
+- **Where we stopped:** [Last completed step]
+- **What's next:** [Next steps to resume]
+
+## Blockers
+- [Any blockers encountered]
+
+## Resources Needed to Resume
+- [Files to review, dependencies, etc.]
+
+## Session Duration
+- Started: [date]
+- Paused: [date]
+```
+
+**HISTORY.md** - Central index of all tasks:
+
+```markdown
+# Task History
+
+## Completed
+1. [Task Name] - Completed: [Date] - [Link: session/task-name-completed.md]
+2. [Task Name] - Completed: [Date] - [Link: session/task-name-completed.md]
+
+## Paused
+1. [Task Name] - Paused: [Date] - [Link: session/task-name-paused.md]
+
+## In Progress
+1. [Task Name] - Started: [Date]
 ```
 
 ---
 
 ### CLAUDE.md Update Workflow
 
-When an agent discovers a new pattern or codebase insight:
+When Code Reviewer discovers a new pattern or reusable approach:
 
-1. **Agent flags proposal** in memory/context.md:
+1. **Code Reviewer flags proposal** in memory/context.md:
    ```markdown
    ## Proposed CLAUDE.md Updates
-   - File: src/cache-v2.ts (lines 23-67)
-   - Pattern: LRU cache with TTL
-   - Why: More efficient than flush-all caching
-   - Status: ⏳ AWAITING YOUR APPROVAL
+
+   ### Pattern: [Pattern Name]
+   - **File:** src/cache-v2.ts (lines 23-67)
+   - **Severity:** GOOD_TO_USE | MUST_USE | SUGGESTION | AVOID
+   - **Rationale:** LRU cache more efficient than flush-all caching, provides granular TTL control
+   - **When to use:** [Specific use cases when this pattern applies]
+   - **Example:** [Optional: show usage]
+   - **Status:** ⏳ AWAITING YOUR APPROVAL
    ```
 
 2. **You review:**
-   - Read agent proposal in memory/context.md
-   - Check actual code at specified location
-   - Approve or reject
+   - Read proposal in memory/context.md
+   - Check actual code at src/cache-v2.ts:23-67
+   - Decide: Approve or Reject
 
 3. **If approved:**
-   - Update CLAUDE.md with new pattern
-   - Add a note about when/why added (optional)
+   - You update CLAUDE.md with new pattern
+   - Add section under "Key Patterns" or appropriate area
+   - Summarizer marks in context.md: `Status: ✅ APPROVED (date)`
 
-4. **Next agent learns:**
+4. **If rejected:**
+   - Summarizer removes from context.md
+   - Optional: note reason in session file
+
+5. **Next agent learns:**
    - Reads updated CLAUDE.md
    - Uses the new pattern in similar code
-   - Knowledge accumulates over time
+   - Knowledge accumulates, preventing reinvention
 
 ---
 

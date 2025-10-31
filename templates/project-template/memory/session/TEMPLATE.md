@@ -1,92 +1,61 @@
-# Session YYYY-MM-DD
+# Session: [Task Name] — COMPLETED / PAUSED
 
-**Created by: Summarizer**
-**Purpose: Immutable record of what was done today**
-
----
+> Immutable record of work done on this task. Use this template for completed or paused sessions.
 
 ## What Was Done
 
-### Task: [Task Name]
+- **Goal:** [What we were building]
+- **Files changed:** [file:line ranges, count of files]
+- **Commits:** [conventional commit messages with hashes]
+  - `feat(scope): message` [abc123]
+  - `fix(scope): message` [def456]
+- **Test results:** [pass/fail count, coverage %]
 
-Brief description of what was accomplished.
+## Key Findings
 
-- **Files changed:** `file:line-line`, `file:line-line`
-- **Commit(s):** `message [hash]`, `message [hash]`
-- **Test results:** X pass, Y fail (or N/A)
+- [New patterns discovered]
+- [Insights about the codebase]
+- [Anything worth documenting]
 
-### Task: [Another Task]
+## Approved CLAUDE.md Updates
 
-- **Files changed:** ...
-- **Commit(s):** ...
-- **Test results:** ...
+- Pattern: [name] — APPROVED (date)
+  - What was added to CLAUDE.md
 
----
+- Pattern: [name] — APPROVED (date)
+  - What was added to CLAUDE.md
 
-## Test Results
-
-Summary of test execution:
-
-- **Total:** 15 pass, 0 fail
-- **Coverage:** 85% (line coverage)
-- **Regressions:** None detected
-
-Or if not applicable: N/A
-
----
-
-## Findings & Insights
-
-Any new patterns, discoveries, or important learnings:
-
-- Discovered LRU cache pattern in src/cache-v2.ts (more efficient)
-- JWT expiry validation was missing (now fixed)
-- Error handling follows AppError pattern (good)
-
----
+(or: "None")
 
 ## Blockers
 
-What's preventing the next steps?
+(If task completed):
+- [What was blocking] → [How it was resolved]
 
-- Awaiting security review before deploy
-- (Or: None)
+(If task paused):
+- [What's blocking progress] → [How to resolve]
+
+(or: "None")
+
+## Resources Needed to Resume
+
+(If paused):
+- [Key files to review]
+- [Dependencies to check]
+- [Context to understand]
+
+(If completed):
+- (Not applicable)
+
+## Session Duration
+
+- **Started:** YYYY-MM-DD HH:MM
+- **Completed/Paused:** YYYY-MM-DD HH:MM
+- **Total time:** X hours
 
 ---
 
-## Next Session
-
-What should the next agent/person pick up:
-
-1. Code review by security team
-2. Deploy to staging
-3. Monitor auth failures 24h
-4. Then: production deployment
-
----
-
-## See Also
-
-- **Current state:** memory/context.md
-- **Today's tasks:** TODO.md
-- **Project knowledge:** CLAUDE.md
-- **Commits:** Use `git log` to see full details
-
----
-
-## Template Notes
-
-**What to include:**
-- ✅ What files changed (with line numbers)
-- ✅ What commits were made
-- ✅ Test results
-- ✅ New patterns discovered
-- ✅ Clear next steps
-
-**What NOT to include:**
-- ❌ Secrets or sensitive data
-- ❌ Vague status ("did stuff")
-- ❌ Unclear or missing next steps
-- ❌ Personal opinions or off-topic notes
-
-**Immutability:** Once created, don't edit. Create a new session file tomorrow.
+**See also:**
+- **Next steps:** memory/context.md (for paused tasks)
+- **Task history:** memory/HISTORY.md
+- **All sessions:** memory/session/
