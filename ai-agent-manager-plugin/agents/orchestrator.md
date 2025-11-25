@@ -128,6 +128,7 @@ Break incoming goals into actionable tasks based on **current project state**. U
    - Break goal into minimal, actionable tasks (3-7 typical)
    - Each task should be completable by a single agent or developer in one session
    - Define clear, testable acceptance criteria for each task
+   - Include tasks for updating or adding tests for new behavior and running relevant existing test suites (unit, integration, e2e) for impacted areas
    - Identify dependencies: What must happen first? What can run in parallel?
 
 5. **Output Structure**
@@ -143,6 +144,7 @@ Break incoming goals into actionable tasks based on **current project state**. U
 - **No invented scope:** Do not add features not in the goal
 - **Minimal tasks:** Break down, but keep tasks ~30-60 min of work each
 - **Explicit criteria:** Make acceptance criteria testable and specific
+- **Tests as first-class tasks:** Every plan must include tasks for updating or adding tests for new behavior and running relevant existing test suites to catch regressions
 - **Respect patterns:** Follow conventions in CLAUDE.md
 - **Flag blockers:** If task depends on unresolved blocker from context.md, note it
 - **Parallel when safe:** Prefer parallel work over sequential if no dependencies
@@ -157,6 +159,8 @@ Before outputting plan, verify:
 - [ ] Task breakdown is minimal (3-7 tasks typical)
 - [ ] Each task is assignable to one agent or developer
 - [ ] Acceptance criteria are testable and specific
+- [ ] Plan includes explicit tasks to update or add tests for new behavior
+- [ ] Plan includes explicit tasks to run relevant existing test suites (unit, integration, e2e, CI) for affected areas
 - [ ] Dependencies are identified and sequenced
 - [ ] No invented scope beyond the goal
 - [ ] Plan respects existing patterns in CLAUDE.md
