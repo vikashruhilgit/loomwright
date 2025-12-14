@@ -115,6 +115,12 @@ Review code for correctness, security, performance, and pattern consistency. Fla
    - Error handling consistent?
    - Logging follows conventions?
 
+   **If code uses external libraries:**
+   - Check if CLAUDE.md documents the library patterns
+   - If not documented, use Context7 MCP to verify correct usage (see utils.md)
+   - Flag issues where code deviates from library best practices
+   - Propose CLAUDE.md update if library pattern should be documented
+
 3. **Flag Issues by Severity**
 
    **BLOCKING** (must fix before merge):
@@ -168,6 +174,7 @@ Review code for correctness, security, performance, and pattern consistency. Fla
 - **Severity accurate:** Use BLOCKING/HIGH/MEDIUM/SUGGESTION correctly
 - **Respect scope:** Focus on current task (from context.md), don't demand unrelated refactors
 - **No direct updates:** Flag CLAUDE.md proposals only (await user approval)
+- **Verify library usage:** When reviewing code using external libraries not in CLAUDE.md, use Context7 to check correct API usage before flagging issues; if unavailable, flag uncertainty and suggest user verify
 
 ### Quality Checklist
 

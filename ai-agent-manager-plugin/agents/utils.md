@@ -244,10 +244,114 @@ Then at the **END** of agent output, format file suggestions clearly so user can
 
 ---
 
+## External Documentation Lookup (Context7 MCP)
+
+When working with external libraries/packages, use Context7 MCP to get up-to-date documentation.
+
+### When to Use Context7
+
+**DO use Context7 when:**
+- Reviewing code that uses an unfamiliar library
+- Planning tasks that depend on specific library features
+- Verifying correct API usage (method signatures, options)
+- Checking if a pattern is deprecated or has better alternatives
+- User's CLAUDE.md doesn't document the library patterns
+
+**DON'T use Context7 when:**
+- The library is well-known and you're confident about usage (e.g., basic React hooks)
+- CLAUDE.md already documents the project's library patterns
+- The code is straightforward and follows obvious patterns
+
+### How to Use (2-Step Process)
+
+**Step 1: Resolve the library ID**
+```
+resolve-library-id(libraryName: "react-query")
+```
+Returns: Context7-compatible ID like "/tanstack/query"
+
+**Step 2: Fetch documentation**
+```
+get-library-docs(
+  context7CompatibleLibraryID: "/tanstack/query",
+  topic: "mutations"  // Optional: focus on specific area
+)
+```
+Returns: Current documentation for that library
+
+### Common Examples
+
+| Scenario | Library | Topic |
+|----------|---------|-------|
+| Reviewing JWT code | "jsonwebtoken" | "verify" |
+| Planning auth feature | "passport" | "strategies" |
+| Checking React patterns | "react" | "hooks" |
+| Reviewing API client | "axios" | "interceptors" |
+| Planning database task | "prisma" | "transactions" |
+| Checking state management | "zustand" | "store" |
+
+### Integration with Agent Output
+
+When you look up documentation, cite it in your output:
+
+```markdown
+## Context Read
+...
+**External Docs Consulted:**
+- jsonwebtoken (verify): Confirmed token verification requires secret key as second argument
+- prisma (transactions): Verified interactive transaction syntax for nested writes
+```
+
+### If Context7 Is Unavailable
+
+If the MCP tool fails or is not available:
+
+1. **Don't block the agent run** - Continue with available information
+2. **Rely on fallbacks:**
+   - Use CLAUDE.md patterns (project's documented conventions)
+   - Use your training knowledge (may be slightly outdated)
+   - Flag uncertainty in output
+3. **Communicate clearly:**
+   ```markdown
+   ⚠️ **Note:** Could not fetch current documentation for [library].
+   Recommendations based on CLAUDE.md patterns and general knowledge.
+   Consider verifying [specific concern] against official docs.
+   ```
+4. **Lower confidence on library-specific advice:**
+   - Mark as SUGGESTION instead of HIGH severity
+   - Add "verify with official docs" caveat
+
+### Example Fallback Output
+
+```markdown
+## Context Read
+...
+**External Docs Consulted:**
+- jsonwebtoken: ⚠️ Context7 unavailable, using CLAUDE.md patterns
+
+## Work/Results
+...
+### MEDIUM (Consider Fixing)
+1. **Potential deprecated method** (verify with docs)
+   - File: src/auth/token.ts:24
+   - Concern: `jwt.decode()` usage - verify if signature validation needed
+   - Note: Could not confirm against current docs; check official documentation
+```
+
+### Best Practices
+
+- **Use `topic` parameter** to focus on relevant sections (avoids context bloat)
+- **Cache mentally within session** - don't re-fetch same library docs multiple times
+- **Cite in output** - show what docs were consulted for transparency
+- **Trust CLAUDE.md first** - only fetch external docs when project patterns are unclear
+
+---
+
 ## Integration Notes
 
-- All 5 agents use these utilities
+- All 4 agents use these utilities
 - Shared project discovery prevents conflicts
 - Consistent file read/write patterns
 - Safe defaults (suggest, don't auto-write)
 - Clear handoff format for next agent
+- Context7 MCP provides external library documentation when needed

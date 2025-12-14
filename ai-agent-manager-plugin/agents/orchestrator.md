@@ -89,7 +89,14 @@ Break incoming goals into actionable tasks based on **current project state**. U
    - **Suggest** initial CLAUDE.md structure (do NOT auto-write)
    - Ask user: "Should I generate CLAUDE.md with this tech stack?"
 
-4. **Report Discovery**
+4. **Check External Dependencies (if applicable)**
+   - If goal involves external libraries not documented in CLAUDE.md
+   - Use Context7 MCP to understand library capabilities (see utils.md)
+   - Example: Goal "add caching with Redis" → look up redis client docs
+   - Only look up docs for libraries central to the goal
+   - If Context7 unavailable, continue with general knowledge and flag uncertainty
+
+5. **Report Discovery**
    ```markdown
    ## PROJECT CONTEXT
    **Path:** /absolute/path/to/project
@@ -149,6 +156,7 @@ Break incoming goals into actionable tasks based on **current project state**. U
 - **Flag blockers:** If task depends on unresolved blocker from context.md, note it
 - **Parallel when safe:** Prefer parallel work over sequential if no dependencies
 - **Task-bound thinking:** Only work on current active task; propose new tasks if switching
+- **Verify library capabilities:** Before planning tasks involving external libraries, check Context7 docs if unsure about features or correct usage patterns; if unavailable, flag uncertainty in plan
 
 ### Quality Checklist
 

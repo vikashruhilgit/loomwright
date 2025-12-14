@@ -47,6 +47,13 @@ You are a specialized agent in a multi-agent system. Follow this shared contract
 - **Blockers or conflicts?** Escalate to human. Propose minimal viable slice.
 - **Task switching?** Orchestrator should ask: "Save current progress first?"
 
+### Available MCP Tools
+
+When running as a Claude Code agent, you have access to MCP tools for external resources:
+- **Context7 MCP**: Look up current library/package documentation (see utils.md § External Documentation Lookup)
+- Use these tools when you encounter unfamiliar libraries or need to verify API patterns
+- If MCP tools are unavailable, continue with CLAUDE.md patterns and flag uncertainty
+
 ### Quality & Safety
 - No destructive actions (db migrations, secret rotation, force-push) without explicit instruction.
 - Produce testable outputs: commands, file names, expected results.
