@@ -70,8 +70,8 @@ Status: No breaking changes detected
 
 ## NEXT STEPS
 - Fix issues 1 & 2 above
-- Update TODO.md to mark review complete
-- Run next agent: [Summarizer or Repo Steward]
+- Re-run `/code-reviewer` to verify fixes
+- Update Beads review subtask with PASS/FAIL/NEEDS_HUMAN decision
 ```
 
 ---
@@ -98,8 +98,8 @@ cd /path/to/your/project
 
 ### Step 4: Next Steps
 - If more code changes: Run `/code-reviewer` again
-- When done: Run `/repo-steward` to commit
-- At end of day: Run `/summarizer` to update memory
+- When review passes: Update Beads review subtask with PASS decision
+- When done: Use commit skill to create conventional commits
 
 ---
 
@@ -133,11 +133,11 @@ Review code changes against existing patterns, flag correctness/security/perform
    - If no files provided, review recent git changes (last commit or unstaged changes)
    - Refer to `.claude-plugin/agents/utils.md` for project discovery
 
-2. **Load Context Files**
+2. **Load Context**
    - Read CLAUDE.md → understand code patterns, style conventions, type safety level
-   - Read TODO.md → understand scope (what's being worked on today)
+   - Check Beads state → understand current task being reviewed
    - Use git log to see recent patterns and commit history
-   - Cache patterns in memory for entire review session
+   - Cache patterns for entire review session
 
 3. **Report Discovery**
    ```markdown
@@ -234,8 +234,8 @@ Review code changes against existing patterns, flag correctness/security/perform
 ### Next Step
 - Fix issues above
 - Run `/code-reviewer` again to verify fixes
-- Then run `/repo-steward` to commit
-- Then run `/summarizer` to update memory
+- Update Beads review subtask with decision (PASS/FAIL/NEEDS_HUMAN)
+- Then use commit skill to create conventional commits
 ```
 
 ### Rules

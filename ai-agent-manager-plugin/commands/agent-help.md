@@ -20,11 +20,19 @@ Shows all available agent commands and quick usage examples.
 
 ## Quick Start
 
-The AI Agent Manager plugin provides 4 main agents that work together to manage your development workflow:
+The AI Agent Manager plugin provides **4 agents** for your development workflow:
 
+**Constructive Pipeline (3 agents):**
 ```
-1. Plan (Orchestrator)  →  2. Review (Code Reviewer)  →  3. Commit (Repo Steward)  →  4. Summary (Summarizer)
+1. Plan (Orchestrator)  →  2. Review (Code Reviewer)  →  3. Commit (Repo Steward)
 ```
+
+**Independent Auditor (1 agent):**
+```
+4. Attack (Red Team Reviewer)  →  Finds real-world failures before production
+```
+
+**Task Management:** Beads issue tracker (replaces TODO.md/memory files)
 
 ---
 
@@ -42,18 +50,18 @@ The AI Agent Manager plugin provides 4 main agents that work together to manage 
 
 **What it does:**
 - Understands your goal
-- Reads project context (CLAUDE.md, TODO.md, memory files)
-- Breaks goal into 3-7 specific tasks
-- Assigns tasks to agents or you
-- Identifies dependencies and blockers
-- Provides clear acceptance criteria
+- Reads project context (CLAUDE.md, Beads issue tracker state)
+- Creates 3-7 Beads tasks with review gates
+- Each implementation task gets a review subtask
+- Identifies dependencies (review blocks next task)
+- Provides clear acceptance criteria and skill references
 
 **Example Output:**
-- Task 1: [Code Reviewer] Review existing theme patterns
-- Task 2: [You] Implement dark mode toggle
-- Task 3: [Code Reviewer] Review your implementation
-- Task 4: [Repo Steward] Commit changes
-- Task 5: [Summarizer] Update memory files
+- BD-20: Dark Mode Toggle (EPIC)
+- BD-21: Implement dark mode toggle (TASK)
+- BD-22: Code Review - Dark mode (SUBTASK) ← blocks BD-23
+- BD-23: Add tests (TASK)
+- BD-24: Commit & Link (TASK)
 
 **When to Use:**
 - Start of new work
@@ -118,7 +126,7 @@ The AI Agent Manager plugin provides 4 main agents that work together to manage 
 **What it does:**
 - Groups changes into logical commits
 - Writes conventional commit messages (feat, fix, test, etc)
-- Updates TODO.md to mark tasks complete
+- Links commits to Beads tasks
 - Verifies repo cleanliness (no debug code, secrets, etc)
 - Optionally pushes to remote
 
@@ -139,37 +147,81 @@ security(hooks): validate localStorage input
 
 ---
 
-### 4️⃣ /summarizer — Summarize Work
+### 4️⃣ /summarizer — Summarize Work (Deprecated)
 
-**Purpose:** Update memory files, create session logs, propose patterns
+> **Note:** The Summarizer agent has been deprecated in favor of Beads issue tracker. Use `bd close` to close completed tasks and `bd comment` to add notes.
+
+**Previous Purpose:** Update memory files, create session logs
+
+**Current Workflow:**
+- Close completed tasks: `bd close BD-XX`
+- Add comments: `bd comment BD-XX "Work summary"`
+- Pattern proposals: Add to Beads task comments for CLAUDE.md review
+
+---
+
+### 5️⃣ /red-team-reviewer — Attack Your Work (Adversarial)
+
+**Purpose:** Break, stress-test, and ruthlessly critique work under real-world conditions
 
 **Usage:**
 ```
-/summarizer                      # Summarize today's work
-/summarizer --project /path      # Explicit project path
+/red-team-reviewer                              # Attack entire project
+/red-team-reviewer src/auth/                    # Attack specific directory
+/red-team-reviewer --focus security             # Focus on security
+/red-team-reviewer src/api/ --focus cost,scale  # Focus on cost and scale
 ```
 
 **What it does:**
-- Reads git history since last session
-- Summarizes what was accomplished
-- Updates memory/context.md with current state
-- Creates immutable session log (memory/session/YYYY-MM-DD.md)
-- Detects new patterns worth documenting
-- Proposes CLAUDE.md updates (user approves)
+- Identifies attack surface (entry points, trust boundaries, assumptions)
+- Reality-checks claims using Context7 MCP against current docs
+- Explores 6 attack vectors:
+  - Core flaws & blind spots
+  - Real-world operational failures
+  - Security, abuse & misuse
+  - Scalability & reliability
+  - Human & organizational failures
+  - Integration & ecosystem
+- Reports findings by severity (FATAL, CRITICAL, WARNING, WEAKNESS)
+- Provides: Top 3 fatal issues + what convinces hostile expert + prioritized fixes
+- Asks if you want findings saved to file
 
 **Example Output:**
-- Work Completed: Added dark mode, fixed security bug, 89% coverage
-- Files Changed: 4 files, 300 insertions, 14 deletions
-- Session Log: Created memory/session/2025-01-15.md
-- Pattern Proposal: "Dark Mode via Context + localStorage"
+- FATAL: JWT algorithm confusion — attacker bypasses auth with alg:none
+- CRITICAL: No rate limiting — one user can DoS the system
+- Top 3 Fatal Issues + What Would Convince Hostile Expert
+- Prioritized Fixes by real-world impact
+
+**Severity Levels:**
+| Level | Meaning |
+|-------|---------|
+| **FATAL** | Production will fail. Showstopper. |
+| **CRITICAL** | Serious pain coming. Not death, but bad. |
+| **WARNING** | Future pain. Tech debt with teeth. |
+| **WEAKNESS** | Exploitable attack surface exists. |
 
 **When to Use:**
-- End of workday
-- Before handing off to teammate
-- Before long break
-- Weekly review
+- Before production launches
+- After major features
+- Security reviews
+- Architecture decisions
+- When you need brutal honesty (not encouragement)
 
-**Learn More:** `/summarizer --help`
+**When NOT to Use:**
+- Regular code changes → Use `/code-reviewer` instead
+- Quick pattern checks → Use `/code-reviewer` instead
+- Learning codebase conventions → Use `/code-reviewer` instead
+- When you want constructive feedback → Use `/code-reviewer` instead
+
+**Key Difference from Code Reviewer:**
+| Code Reviewer | Red Team Reviewer |
+|---------------|-------------------|
+| Constructive | Adversarial |
+| Follow patterns | Attack assumptions |
+| Helpful tone | Blunt, unsentimental |
+| Part of workflow | Independent audit |
+
+**Learn More:** `/red-team-reviewer --help`
 
 ---
 
@@ -180,7 +232,13 @@ security(hooks): validate localStorage input
 cd /path/to/my-app
 /orchestrator goal: "Add dark mode UI to settings page"
 ```
-→ Agent breaks it into tasks with acceptance criteria
+→ Agent creates Beads tasks with review gates
+
+### Start Work: Claim Task
+```bash
+bd claim BD-21  # Claim the implementation task
+```
+→ Start working on the task
 
 ### During Work: Code & Review
 ```bash
@@ -189,20 +247,20 @@ cd /path/to/my-app
 # 2. Review your code
 /code-reviewer src/components/Settings.tsx
 ```
-→ Agent flags issues and detects patterns
+→ Agent flags issues and outputs PASS/FAIL/NEEDS_HUMAN
 
-### Before Committing: Stage Changes
+### Before Committing: Create Conventional Commits
 ```bash
 git add src/components/Settings.tsx src/hooks/useDarkMode.ts
-/repo-steward
+# Use commit skill for proper formatting
 ```
-→ Agent groups and commits with clear messages
+→ Commits linked to Beads tasks
 
-### End of Day: Summarize
+### Complete Task: Close in Beads
 ```bash
-/summarizer
+bd close BD-21
 ```
-→ Agent updates memory, logs session, proposes pattern
+→ Task marked complete, next task unblocked
 
 ---
 
@@ -211,30 +269,27 @@ git add src/components/Settings.tsx src/hooks/useDarkMode.ts
 ### Scenario 1: Fix a Bug
 ```
 /orchestrator goal: "Fix login button not working on mobile"
-→ Follow suggested tasks
-→ Use /code-reviewer to verify fix
-→ Use /repo-steward to commit
-→ Use /summarizer to log work
+→ Creates Beads tasks: BD-30 (fix), BD-31 (review), BD-32 (commit)
+→ bd claim BD-30, implement fix
+→ /code-reviewer to verify → PASS on BD-31
+→ Commit and bd close BD-32
 ```
 
 ### Scenario 2: Add a Feature
 ```
 /orchestrator goal: "Add dark mode to application"
-→ Orchestrator breaks into 5-6 tasks
-→ Task 1: Code Reviewer checks existing theme patterns
-→ Task 2: You implement dark mode
-→ Task 3: Code Reviewer checks your code
-→ Task 4: Repo Steward commits changes
-→ Task 5: Summarizer logs the work and proposes pattern
+→ Creates EPIC with tasks and review gates
+→ BD-40: Implement → BD-41: Review (blocks) → BD-42: Tests → BD-43: Commit
+→ Work through chain, reviews unlock next tasks
+→ bd close each task when done
 ```
 
 ### Scenario 3: Refactor Code
 ```
 /orchestrator goal: "Refactor Settings component to use hooks"
-→ Follow breakdown
-→ Code Reviewer checks pattern consistency
-→ Repo Steward creates refactor commit
-→ Summarizer logs and updates patterns
+→ Creates Beads tasks with review gates
+→ /code-reviewer checks pattern consistency
+→ Commit with Beads linking
 ```
 
 ### Scenario 4: Review Someone Else's Code
@@ -242,7 +297,25 @@ git add src/components/Settings.tsx src/hooks/useDarkMode.ts
 cd /path/to/pull-request-repo
 /code-reviewer src/  # Review the changes
 ```
-→ Agent flags issues and improvements
+→ Agent flags issues and outputs PASS/FAIL/NEEDS_HUMAN
+
+### Scenario 5: Pre-Launch Security Review
+```
+/red-team-reviewer --focus security
+→ Red Team attacks auth, inputs, data exposure
+→ Reports FATAL issues that must be fixed
+→ Provides "what would convince hostile expert"
+→ Prioritized fixes before launch
+```
+
+### Scenario 6: Stress-Test Before Scale
+```
+/red-team-reviewer src/api/ --focus scale,cost
+→ Red Team attacks scalability, cost assumptions
+→ Finds N+1 queries, unbounded operations
+→ Reports what breaks at 10x/100x load
+→ Prioritized fixes by real-world impact
+```
 
 ---
 
@@ -254,28 +327,29 @@ Each agent automatically finds your project by looking for `CLAUDE.md`:
 - Searches parent directories
 - Uses `/path/to/project` if you provide it
 
-### Memory Files
-Agents read and update these files in your project:
-- **CLAUDE.md** — Codebase knowledge, patterns, conventions
-- **TODO.md** — Today's tasks (updated by Repo Steward)
-- **memory/context.md** — Current state, blockers (updated by Summarizer)
-- **memory/session/YYYY-MM-DD.md** — Immutable daily logs (created by Summarizer)
+### Beads Issue Tracker
+Task management is handled by Beads (replaces TODO.md/memory files):
+- **`bd list`** — View open/in-progress/completed tasks
+- **`bd claim BD-XX`** — Start working on a task
+- **`bd close BD-XX`** — Mark task complete
+- **`bd comment BD-XX "note"`** — Add notes to task
+- **CLAUDE.md** — Codebase knowledge, patterns (still user-maintained)
 
 ### Approval Workflow
-- ✅ File Changes: Agent suggests, you approve
+- ✅ Code Reviews: Agent outputs PASS/FAIL/NEEDS_HUMAN
 - ✅ CLAUDE.md Updates: Agent proposes, you approve
-- ✅ Commits: Agent creates, you review with `git log`
-- ✅ Pushes: Only with `--push` flag
+- ✅ Commits: Conventional format with Beads linking
+- ✅ Pushes: Only with explicit request
 
 ---
 
 ## Tips & Tricks
 
-### Tip 1: Use Agents in Any Order
-You don't have to follow the sequential order. For example:
+### Tip 1: Use Agents Flexibly
+You don't have to follow strict order. For example:
 - Run `/code-reviewer` first to understand patterns before coding
-- Skip `/summarizer` if you prefer manual memory updates
-- Run `/repo-steward` multiple times during the day
+- Run `/code-reviewer` multiple times during development
+- Use `/red-team-reviewer` for adversarial audits before launch
 
 ### Tip 2: Combine with Git
 ```bash
@@ -308,8 +382,10 @@ cd /path/to/project-b
 # Fix issues
 /code-reviewer src/  # Re-review
 
-# When satisfied, commit
-/repo-steward
+# When satisfied, commit with Beads linking
+git commit -m "feat(theme): add dark mode
+
+Closes BD-21"
 ```
 
 ### Tip 5: Daily Routine
@@ -317,12 +393,14 @@ cd /path/to/project-b
 # Morning: Plan
 /orchestrator goal: "Today's goal"
 
+# Claim task
+bd claim BD-XX
+
 # During: Code and review
 /code-reviewer (as needed)
 
-# End of day: Commit and summarize
-/repo-steward
-/summarizer
+# Complete: Close task
+bd close BD-XX
 ```
 
 ---
@@ -331,33 +409,36 @@ cd /path/to/project-b
 
 ### Plugin Files
 ```
-.claude-plugin/
-├── plugin.json              # Plugin metadata
+ai-agent-manager-plugin/
+├── .claude-plugin/
+│   └── plugin.json          # Plugin metadata
 ├── commands/                # Slash commands
 │   ├── orchestrator.md
 │   ├── code-reviewer.md
-│   ├── summarizer.md
 │   ├── repo-steward.md
+│   ├── red-team-reviewer.md # Adversarial auditor
 │   └── agent-help.md
-└── agents/                  # Agent implementations
-    ├── orchestrator.md
-    ├── code-reviewer.md
-    ├── summarizer.md
-    ├── repo-steward.md
-    └── utils.md
+├── agents/                  # Agent implementations
+│   ├── orchestrator.md
+│   ├── code-reviewer.md
+│   ├── repo-steward.md
+│   ├── red-team-reviewer.md # Has own adversarial preamble
+│   └── prompts.md           # Shared preamble
+└── skills/                  # Skill files
+    ├── commit/
+    ├── quality-checklist/
+    ├── nestjs-*/
+    ├── nextjs-*/
+    └── ...
 ```
 
-### Project Files (Created/Updated by Agents)
+### Project Files
 ```
 your-project/
-├── CLAUDE.md                # Codebase knowledge
-├── TODO.md                  # Today's tasks
-└── memory/
-    ├── context.md           # Current state
-    └── session/
-        ├── 2025-01-14.md    # Session logs
-        ├── 2025-01-15.md
-        └── ...
+├── CLAUDE.md                # Codebase knowledge, patterns
+└── .beads/                  # Beads issue tracker (auto-managed)
+    ├── issues/              # Issue files
+    └── ...
 ```
 
 ---
@@ -366,10 +447,10 @@ your-project/
 
 ### Need Help with a Specific Agent?
 ```
-/orchestrator --help    # Help for Orchestrator
-/code-reviewer --help   # Help for Code Reviewer
-/summarizer --help      # Help for Summarizer
-/repo-steward --help    # Help for Repo Steward
+/orchestrator --help       # Help for Orchestrator
+/code-reviewer --help      # Help for Code Reviewer
+/repo-steward --help       # Help for Repo Steward
+/red-team-reviewer --help  # Help for Red Team Reviewer
 ```
 
 ### Questions About the Plugin?
@@ -391,20 +472,30 @@ https://github.com/your-org/ai-agent-manager
 These are Claude Code slash commands, so you can type them directly:
 - Type `/orchestr` + Tab → Auto-completes to `/orchestrator`
 - Type `/code-r` + Tab → Auto-completes to `/code-reviewer`
-- Type `/summar` + Tab → Auto-completes to `/summarizer`
 - Type `/repo-s` + Tab → Auto-completes to `/repo-steward`
+- Type `/red-t` + Tab → Auto-completes to `/red-team-reviewer`
 
 ---
 
 ## Summary
 
+### Constructive Pipeline (Build Correctly)
+
 | Agent | Purpose | When | Input | Output |
 |-------|---------|------|-------|--------|
-| **Orchestrator** | Plan work | Start of task | Goal | Task breakdown |
-| **Code Reviewer** | Review code | During development | Files/diff | Issues & suggestions |
-| **Repo Steward** | Create commits | When done coding | Staged changes | Commits + TODO update |
-| **Summarizer** | Log work | End of day | Git history | Session log + memory update |
+| **Orchestrator** | Plan work | Start of task | Goal | Beads tasks with review gates |
+| **Code Reviewer** | Review code | During development | Files/diff | PASS/FAIL/NEEDS_HUMAN + issues |
+| **Repo Steward** | Create commits | When done coding | Staged changes | Conventional commits + Beads links |
+
+### Independent Auditor (Break Safely)
+
+| Agent | Purpose | When | Input | Output |
+|-------|---------|------|-------|--------|
+| **Red Team Reviewer** | Attack work | Pre-launch, security review | Target scope | Fatal issues + fixes |
 
 ---
 
-**Ready to get started?** Run `/orchestrator goal: "your goal here"` to begin!
+**Ready to get started?**
+- Plan work: `/orchestrator goal: "your goal here"`
+- Review code: `/code-reviewer src/`
+- Attack work: `/red-team-reviewer` (adversarial audit)

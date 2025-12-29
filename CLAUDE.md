@@ -6,9 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**AI Agent Manager** is a lightweight, reusable system that provides intelligent agents for software development workflows. It integrates with Claude Code as a plugin with 4 specialized agents that automate planning, code review, commit management, and progress tracking.
+**AI Agent Manager** is a reusable system that provides intelligent agents for software development workflows. It integrates with Claude Code as a plugin with 5 specialized agents that automate planning, code review, commit management, progress tracking, and adversarial security audits.
 
-The system enables agents to collaborate on any project type by maintaining a simple memory system (CLAUDE.md, TODO.md, memory/) that persists knowledge and context between work sessions.
+The system enables agents to collaborate on any project type by maintaining a memory system (CLAUDE.md, TODO.md, memory/) that persists knowledge and context between work sessions.
 
 ---
 
@@ -40,7 +40,7 @@ The project is structured as a **Claude Code plugin marketplace**:
 
 This prevents memory bloat and keeps agents focused on current work.
 
-### The 4 Agents
+### The 5 Agents
 
 Each agent is a Markdown prompt file (`agents/[name].md`) that:
 
@@ -71,6 +71,13 @@ Each agent is a Markdown prompt file (`agents/[name].md`) that:
 - **Command:** `/summarizer` (auto-detects project)
 - **Workflow:** Reads git history → updates context.md → creates session log → flags new patterns
 - **Outputs:** Updated memory/, session log, CLAUDE.md proposals
+
+#### **Red Team Reviewer** (`/red-team-reviewer`)
+- **Purpose:** Adversarial audit — find what breaks in production
+- **When to use:** Pre-launch, security reviews, architecture decisions
+- **Command:** `/red-team-reviewer [target] [--focus security|scale|cost|ops]`
+- **Workflow:** Attacks assumptions → verifies claims against docs → explores 6 attack vectors
+- **Outputs:** Findings by severity (FATAL/CRITICAL/WARNING/WEAKNESS), prioritized fixes
 
 ### Memory System
 
@@ -395,6 +402,34 @@ Before an agent completes work:
 - Review code at specified file:line numbers
 - Decide whether to add to CLAUDE.md
 - Approval gates prevent noise
+
+---
+
+## Known Limitations
+
+This system has architectural constraints documented in `AUDIT-REPORT.md`:
+
+### Memory System
+- **Non-atomic writes:** Memory files update sequentially; interruptions may cause inconsistency
+- **Retention policy:** Max 30 session files (older archived), max 50 HISTORY.md entries (paginated)
+- **Backup on write:** Agents create `.backup` files before modifying memory files
+- **Recovery:** See `utils.md § Memory Recovery` for restoration procedures
+
+### Git Operations
+- **Branch protection:** Repo Steward refuses main/master without `--allow-main` flag
+- **Dry-run mode:** Use `--dry-run` to preview without executing
+- **No auto-rollback:** Manual recovery via `git reflog` if needed
+
+### Agent Behavior
+- **File verification:** Agents verify file existence before referencing, but LLM hallucination is possible
+- **Input validation:** Goals limited to 1000 chars, paths must be relative, memory files validated
+- **Observability:** All agents output structured summary (status, files read/modified, errors)
+
+### Scale Considerations
+- **Token overhead:** ~5,000-10,000 tokens per invocation for prompts + memory loading
+- **Context7 dependency:** External library lookups require MCP; fallback to CLAUDE.md if unavailable
+
+For migration between versions, see `MIGRATION.md`.
 
 ---
 

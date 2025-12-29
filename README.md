@@ -1,6 +1,6 @@
 # AI Agent Manager
 
-A lightweight system for AI agents to collaborate on software projects. Four intelligent agents (Orchestrator, Code Reviewer, Repo Steward, Summarizer) automate planning, review, commits, and progress tracking.
+A system for AI agents to collaborate on software projects. Five specialized agents (Orchestrator, Code Reviewer, Repo Steward, Summarizer, Red Team Reviewer) automate planning, review, commits, progress tracking, and adversarial audits.
 
 **Key Idea:** Agents live here. Your projects have simple memory files (CLAUDE.md, TODO.md, memory/). Agents read context, do work, update files. Repeatable across any project.
 
@@ -246,10 +246,38 @@ Then run agents in a test project to verify changes.
 
 ---
 
+## Known Limitations
+
+This system has architectural constraints you should be aware of:
+
+### Memory System
+- **Non-atomic writes:** Memory files (TODO.md, context.md) update sequentially. If interrupted mid-write, files may become inconsistent. Backup files (`.backup`) are created before writes.
+- **Retention policy:** Session files are pruned (max 30 kept, older archived). HISTORY.md is paginated (max 50 entries).
+- **Manual recovery:** If memory becomes corrupted, see `utils.md § Memory Recovery` for restoration steps.
+
+### Git Operations
+- **Main branch protection:** Repo Steward refuses commits on main/master without `--allow-main` flag.
+- **No rollback:** Git operations are not automatically reversible. Use `git reflog` for manual recovery.
+
+### Agent Behavior
+- **LLM limitations:** Agents may occasionally reference non-existent files despite validation steps. Always verify before following plans.
+- **No automated tests:** Agent prompts don't have automated test coverage. Changes should be manually validated.
+- **Context7 dependency:** External library lookups depend on Context7 MCP. If unavailable, agents fall back to CLAUDE.md patterns.
+
+### Scale
+- **Token usage:** Each agent invocation loads prompts + memory files (potentially 5,000-10,000 tokens overhead). Consider this for high-frequency usage.
+- **Session file growth:** Mitigated by retention policy, but long-running projects should monitor `memory/session/` size.
+
+For detailed audit findings, see `AUDIT-REPORT.md`.
+
+For migration between versions, see `MIGRATION.md`.
+
+---
+
 ## License
 
 MIT — See LICENSE file
 
 ---
 
-**Happy shipping!** 🚀
+**Happy shipping!**

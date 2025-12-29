@@ -1,7 +1,7 @@
 {
   "name": "ai-agent-manager-plugin",
-  "version": "1.0.0",
-  "description": "Global agents for orchestrating, reviewing, summarizing, and managing git workflow. Break goals into tasks, review code changes, summarize work, and manage commits across any project.",
+  "version": "2.0.0",
+  "description": "Beads-integrated AI agents with focused skills architecture. 3 specialized agents: Orchestrator (Beads task planning with review gates), Code Reviewer (quality gates with PASS/FAIL/NEEDS_HUMAN), and Red Team Reviewer (adversarial audits). Features 17 reusable skills for NestJS, Next.js, and Gateway patterns.",
   "author": {
     "name": "vikash ruhil"
   },
@@ -10,8 +10,16 @@
     "agents",
     "orchestration",
     "code-review",
-    "git",
+    "beads",
+    "issue-tracking",
     "workflow",
-    "automation"
+    "automation",
+    "red-team",
+    "adversarial",
+    "security-audit",
+    "skills",
+    "nestjs",
+    "nextjs",
+    "gateway"
   ]
 }

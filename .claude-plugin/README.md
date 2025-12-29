@@ -1,17 +1,22 @@
 # AI Agent Manager Plugin for Claude Code
 
-A powerful Claude Code plugin that provides 4 intelligent agents to orchestrate your development workflow: planning tasks, reviewing code, managing commits, and summarizing work.
+A powerful Claude Code plugin with 3 intelligent agents, 17 focused skills, and Beads issue tracker integration for modern development workflows. Replaces TODO.md with issue-driven task management and enforces quality gates on code reviews.
 
 ## Overview
 
-The AI Agent Manager Plugin automates and enhances the development workflow by providing:
+The AI Agent Manager Plugin 2.0 includes:
 
-- **🎯 Orchestrator Agent** — Break goals into actionable tasks
-- **👀 Code Reviewer Agent** — Review code against project patterns
-- **📝 Repo Steward Agent** — Create well-organized commits
-- **📊 Summarizer Agent** — Log work and propose patterns
+- **🎯 Orchestrator Agent** — Break goals into Beads tasks with mandatory review gates
+- **👀 Code Reviewer Agent** — Review code with PASS/FAIL/NEEDS_HUMAN decisions (blocks task progression)
+- **🔴 Red Team Reviewer Agent** — Adversarial audits to break assumptions
 
-All agents automatically detect your project context and work together seamlessly.
+**17 Focused Skills:**
+- **Core:** Commits (Beads linking), Context7 library lookups, Quality checklist, Pattern detection
+- **NestJS:** Guards, Controllers, Services, Drizzle ORM
+- **Next.js:** Routing, Components, API routes, Data fetching, Authentication
+- **Gateway:** Proxy patterns, Auth middleware, Rate limiting, Correlation ID
+
+Skills are loaded on-demand to keep context small (70-80% token reduction vs. monolithic agents).
 
 ## Quick Start
 
@@ -45,9 +50,23 @@ Copy the `.claude-plugin/` folder to your Claude Code config directory:
 - **macOS/Linux:** `~/.claude/plugins/ai-agent-manager/`
 - **Windows:** `%APPDATA%\Claude\plugins\ai-agent-manager\`
 
-### 2. Initialize Your Project
+### 2. Setup Beads Issue Tracker
 
-Your project needs three files for agents to work:
+Initialize Beads in your project (replaces TODO.md):
+
+```bash
+cd /path/to/your/project
+
+# Install Beads (one-time)
+# See: https://github.com/steveyegge/beads
+
+# Initialize in your project
+bd init
+```
+
+### 3. Initialize Your Project
+
+Your project needs one file for agents to work:
 
 ```bash
 cd /path/to/your/project
@@ -56,29 +75,29 @@ cd /path/to/your/project
 cp -r /path/to/ai-agent-manager/templates/project-template/* .
 
 # Files created:
-# - CLAUDE.md (Codebase knowledge)
-# - TODO.md (Today's tasks)
-# - memory/context.md (Current state)
-# - memory/session/ (Session logs directory)
+# - CLAUDE.md (Codebase knowledge - required)
+
+# No more TODO.md or memory/ files - Beads tracks everything!
 ```
 
-### 3. Run Your First Command
+### 4. Run Your First Command
 
 ```bash
+bd list  # See all Beads issues
 /orchestrator goal: "add dark mode to UI"
 ```
 
 The orchestrator will:
 1. Find your project's CLAUDE.md
-2. Understand your goal
-3. Break it into tasks
-4. Assign tasks to agents
+2. Check Beads for current work state
+3. Break goal into tasks with built-in review gates
+4. Create Beads tasks (BD-XXX) with subtasks
 
 ## Commands
 
 ### /orchestrator goal: "<what to do>"
 
-Break a goal into minimal, actionable tasks with clear acceptance criteria.
+Break a goal into minimal, actionable Beads tasks with mandatory code review subtasks.
 
 ```bash
 /orchestrator goal: "add dark mode to UI"
@@ -86,87 +105,71 @@ Break a goal into minimal, actionable tasks with clear acceptance criteria.
 ```
 
 **Output:**
-- Task breakdown (3-7 tasks)
-- Task assignments (who does what)
+- Beads task structure (EPIC → TASK → SUBTASK)
+- Each implementation task gets a review subtask (blocks progression)
 - Acceptance criteria
-- Dependencies
-- Next steps
+- Skill references (not embedded content)
+- Dependencies with blocking relationships
+
+**Example Output:**
+```
+BD-45: Add Dark Mode (EPIC)
+├── BD-46: Implement dark mode toggle (TASK)
+├── BD-47: Code Review - Dark Mode Toggle (SUBTASK) [blocks BD-48]
+├── BD-48: Add dark mode tests (TASK)
+├── BD-49: Code Review - Tests (SUBTASK) [blocks BD-50]
+├── BD-50: Commit & Link (TASK)
+```
 
 ---
 
 ### /code-reviewer [files] [--project /path]
 
-Review code against project patterns and flag issues.
+Review code against quality standards with PASS/FAIL/NEEDS_HUMAN decision gates.
 
 ```bash
-/code-reviewer src/components/Settings.tsx      # Review specific file
-/code-reviewer src/                             # Review folder
-/code-reviewer                                  # Review git changes
+bd claim BD-47                           # Claim review subtask
+/code-reviewer src/components/DarkMode  # Review implementation
 ```
 
 **Checks:**
-- Type safety (TypeScript, Python, etc)
-- Security issues
-- Performance problems
-- Pattern consistency
-- Test coverage
+- Type safety, security, performance
+- Pattern consistency (vs CLAUDE.md)
+- Test coverage (≥80% by default)
+- Skills pattern alignment
+
+**Decisions:**
+- **PASS:** All criteria met → Next task unblocks automatically
+- **FAIL:** Critical issues found → Must fix + re-review
+- **NEEDS_HUMAN:** Non-critical issues → Creates bug issues (BD-XX) that block review
 
 **Output:**
-- Strengths & patterns followed
-- Issues with severity levels (HIGH, MEDIUM, LOW)
-- Specific fixes
-- New patterns detected
+- Decision line: `## Code Review Decision: PASS | FAIL | NEEDS_HUMAN`
+- Issues by severity (HIGH/MEDIUM/LOW) with file:line + fixes
+- Bug issues created (if NEEDS_HUMAN)
+- Pattern proposals for CLAUDE.md
+- Strengths highlighted
 
 ---
 
-### /repo-steward [--project /path] [--push]
+### /commit
 
-Stage changes and create conventional commit messages.
+Create conventional commits with Beads linking (replaces /repo-steward).
 
 ```bash
-/repo-steward                   # Stage and commit
-/repo-steward --push            # Also push to remote
-/repo-steward --project /path   # Explicit project path
+/commit  # Stage changes and create commits referencing Beads tasks
 ```
-
-**Does:**
-- Groups changes into logical commits
-- Writes conventional commit messages
-- Updates TODO.md
-- Verifies repo cleanliness
-- Optionally pushes to remote
 
 **Commits Example:**
 ```
 feat(theme): add dark mode toggle
-test(theme): add dark mode tests
-security(hooks): validate localStorage input
+
+Closes BD-46
+
+- Implement DarkMode component
+- Add theme provider
+- Store preference in localStorage
 ```
-
----
-
-### /summarizer [--project /path]
-
-Summarize work, update memory files, propose patterns.
-
-```bash
-/summarizer                     # Summarize today's work
-/summarizer --project /path     # Explicit project path
-```
-
-**Does:**
-- Reads git history since last session
-- Summarizes accomplishments
-- Updates memory/context.md
-- Creates session log (memory/session/YYYY-MM-DD.md)
-- Detects new patterns
-- Proposes CLAUDE.md updates
-
-**Output:**
-- Work summary (features, fixes, tests)
-- Files changed
-- Session log created
-- Pattern proposals (awaiting approval)
 
 ---
 
@@ -193,37 +196,43 @@ Show all commands and quick reference.
 
 ```bash
 cd /path/to/your/project
-/orchestrator goal: "add feature X"
+bd list                           # See current Beads tasks
+/orchestrator goal: "add feature X"  # Creates BD-XXX tasks with review gates
 ```
 
-→ Agent breaks goal into 5-6 specific tasks
+→ Orchestrator creates task chain with mandatory review subtasks
 
-### During Work: Code & Review
+### During Work: Implement & Review
 
 ```bash
-# After implementing...
-/code-reviewer src/
+# Implement BD-46
+bd claim BD-46
+# ... implement feature ...
+
+# Review BD-47 (review subtask)
+bd claim BD-47
+/code-reviewer src/FeatureX
 ```
 
-→ Agent flags type issues, security problems, pattern violations
+→ Code Reviewer posts PASS/FAIL/NEEDS_HUMAN decision to BD-47
 
-### Afternoon: Refine & Commit
+### When Review Passes: Next Task Unblocks
 
 ```bash
-# Fix issues from code review...
-/code-reviewer src/  # Re-review
-/repo-steward       # Create commits
+# If PASS → BD-48 (next implementation) auto-unblocks
+bd claim BD-48
+# ... continue implementation ...
 ```
 
-→ Agent groups changes and creates conventional commits
+→ Task progression is automatic based on review decisions
 
-### End of Day: Summarize
+### End: Commit with Beads Linking
 
 ```bash
-/summarizer
+/commit  # Creates conventional commits with "Closes BD-46" references
 ```
 
-→ Agent logs work, updates memory, proposes patterns
+→ Commits link to Beads tasks for traceability
 
 ---
 
@@ -231,16 +240,15 @@ cd /path/to/your/project
 
 ### Required Files
 
-Your project needs these files for agents to work:
+Your project needs just ONE file for agents to work:
 
 ```
 your-project/
 ├── CLAUDE.md                    # Codebase knowledge (required)
-├── TODO.md                      # Today's tasks
-└── memory/
-    ├── context.md              # Current state
-    └── session/                # Session logs directory
+└── .beads/                      # Beads issue tracker (auto-created by bd init)
 ```
+
+**That's it! No TODO.md, no memory/ directory needed.**
 
 #### CLAUDE.md
 
@@ -285,52 +293,25 @@ npm run format
 [Any gotchas, setup details, or team conventions]
 ```
 
-#### TODO.md
+### No More TODO.md or Memory Files
 
-Track today's work:
+**Beads replaces all task tracking:**
 
-```markdown
-# TODO — Today's Work
+```bash
+# See tasks
+bd list
 
-## In Progress
-- [ ] Implement dark mode toggle
-- [ ] Add dark mode tests
+# See task details
+bd show BD-46
 
-## Backlog
-- [ ] Get design review
-- [ ] Consider system preference detection
+# Update task status
+bd update BD-46 --status in_progress
 
-## Completed
-- [x] Design dark mode colors
+# Check blockers and dependencies
+bd show BD-46 --depends-on
 ```
 
-#### memory/context.md
-
-Track current state:
-
-```markdown
-# Memory: Current Context
-
-## Last Session
-2025-01-14: Started dark mode feature, designed colors
-
-## Current Status
-- Dark mode components ready for implementation
-- Tests written and passing
-- No blockers
-
-## Blockers
-- None
-
-## Next Steps
-- Implement component
-- Add localStorage persistence
-- Run code review
-
-## Dependencies
-- Design approval (received ✓)
-- Performance benchmark (in progress)
-```
+All task state, blockers, and dependencies are tracked in Beads issue system.
 
 ### Plugin Files
 
@@ -345,20 +326,44 @@ ai-agent-manager/                (marketplace root)
 └── ai-agent-manager-plugin/     (plugin directory)
     ├── .claude-plugin/
     │   └── plugin.json          # Plugin metadata
-    ├── commands/                # Slash commands (at plugin root)
+    ├── commands/                # Slash commands
     │   ├── orchestrator.md
     │   ├── code-reviewer.md
-    │   ├── summarizer.md
-    │   ├── repo-steward.md
+    │   ├── red-team-reviewer.md
     │   └── agent-help.md
-    └── agents/                  # Agent implementations (at plugin root)
-        ├── orchestrator.md
-        ├── code-reviewer.md
-        ├── summarizer.md
-        ├── repo-steward.md
-        ├── prompts.md           # Shared agent preamble
-        └── utils.md             # Shared utilities
+    ├── agents/                  # Agent implementations
+    │   ├── orchestrator.md
+    │   ├── code-reviewer.md
+    │   └── red-team-reviewer.md
+    └── skills/                  # Focused skill modules (loaded on-demand)
+        ├── core/                # Core skills
+        │   ├── commit.md
+        │   ├── context7-lookup.md
+        │   ├── quality-checklist.md
+        │   └── pattern-detector.md
+        ├── nestjs/              # NestJS patterns
+        │   ├── guards.md
+        │   ├── controllers.md
+        │   ├── services.md
+        │   └── drizzle.md
+        ├── nextjs/              # Next.js patterns
+        │   ├── routing.md
+        │   ├── components.md
+        │   ├── api-routes.md
+        │   ├── data-fetching.md
+        │   └── auth.md
+        └── gateway/             # API Gateway patterns
+            ├── proxy-patterns.md
+            ├── auth-middleware.md
+            ├── rate-limiting.md
+            └── correlation.md
 ```
+
+**Skills Architecture:**
+- Skills are loaded on-demand based on project context
+- Agents reference skills instead of embedding content
+- Reduces per-task context by 70-80% vs monolithic agents
+- Easy to add new skills without modifying agents
 
 ---
 
@@ -396,26 +401,28 @@ Agents suggest changes, you approve:
 - **Commits:** Agent creates, you review with `git log`
 - **Pushes:** Only with explicit `--push` flag
 
-### Memory Files
+### Beads Issue Tracking
 
-Agents read and update memory:
+Agents read and update Beads:
 
-| File | Purpose | Updated By | When |
-|------|---------|-----------|------|
-| CLAUDE.md | Codebase knowledge | You (approve proposals) | When patterns change |
-| TODO.md | Today's tasks | Repo Steward | When tasks complete |
-| memory/context.md | Current state | Summarizer | After work session |
-| memory/session/DATE.md | Immutable log | Summarizer | End of day |
+| Command | Purpose | Updated By | When |
+|---------|---------|-----------|------|
+| `bd list` | View all tasks | Orchestrator | Task creation |
+| `bd show BD-XX` | View task details | You | Anytime |
+| `bd claim BD-XX` | Start task | You | When ready to work |
+| `bd update BD-XX` | Mark complete/blocked | Code Reviewer | After reviews |
+| `bd comments BD-XX` | Review decisions | Code Reviewer | After review |
 
-### Conventional Commits
+### Conventional Commits with Beads Linking
 
-Repo Steward uses standardized commit format:
+The `/commit` command uses standardized commit format with Beads references:
 
 ```
 <type>(<scope>): <message>
 
 <optional body>
-<optional footer>
+
+Closes BD-XX
 ```
 
 **Types:** `feat`, `fix`, `test`, `refactor`, `docs`, `chore`, `security`
@@ -423,8 +430,21 @@ Repo Steward uses standardized commit format:
 **Examples:**
 ```
 feat(theme): add dark mode toggle
+Closes BD-46
+
+- Implement DarkMode component
+- Add theme context provider
+
+---
+
 fix(login): correct mobile button spacing
+Closes BD-47
+
+---
+
 test(settings): add dark mode tests
+Closes BD-48
+
 security(hooks): validate localStorage input
 refactor(components): extract DarkMode logic
 docs(README): update setup instructions
@@ -851,13 +871,12 @@ Define project-specific settings in CLAUDE.md:
 
 **A:** Agents can't directly access remote repos, but `/repo-steward --push` can push commits using your git credentials.
 
-### Q: Do I need all 4 agents?
+### Q: Do I need all 3 agents?
 
 **A:** No. Use which ones help you:
-- Just need to plan? Use Orchestrator
-- Just need to review code? Use Code Reviewer
-- Just need to commit? Use Repo Steward
-- Just need to log work? Use Summarizer
+- Just need to plan? Use Orchestrator (creates Beads tasks)
+- Just need to review code? Use Code Reviewer (PASS/FAIL/NEEDS_HUMAN)
+- Just need to audit assumptions? Use Red Team Reviewer (adversarial)
 
 ### Q: Can agents work on private projects?
 

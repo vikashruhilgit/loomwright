@@ -7,8 +7,8 @@
     {
       "name": "ai-agent-manager-plugin",
       "source": "./ai-agent-manager-plugin",
-      "description": "Global agents for orchestrating, reviewing, summarizing, and managing git workflow. Break goals into tasks, review code changes, summarize work, and manage commits across any project.",
-      "version": "1.0.0",
+      "description": "5 specialized agents: Orchestrator (plan), Code Reviewer (quality), Repo Steward (commits), Summarizer (memory), and Red Team Reviewer (adversarial audits). Build correctly and break safely.",
+      "version": "1.1.0",
       "author": {
         "name": "vikash ruhil"
       },
@@ -19,7 +19,11 @@
         "code-review",
         "git",
         "workflow",
-        "automation"
+        "automation",
+        "red-team",
+        "adversarial",
+        "security-audit",
+        "stress-test"
       ]
     }
   ]
