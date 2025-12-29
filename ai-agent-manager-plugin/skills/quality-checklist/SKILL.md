@@ -1,3 +1,9 @@
+---
+name: quality-checklist
+description: Pre-task and post-task quality gates extracted from AGENT_GUIDELINES.md. Use when starting implementation, during development, or before completing code review.
+allowed-tools: Read
+---
+
 # Quality Checklist Skill
 
 Pre-task and post-task quality gates (extracted from AGENT_GUIDELINES.md).
@@ -75,43 +81,6 @@ Before marking complete:
 - **Check:** No obvious N+1 queries, loops, or inefficiencies
 - **Benchmark:** If modifying hot path, include timing data
 
-## Language-Specific Variations
-
-### TypeScript/NestJS
-
-```typescript
-// Quality checklist additions
-✓ Decorators used correctly (@UseGuards, @UseInterceptors, etc.)
-✓ Dependency injection: all services injected, no circular deps
-✓ Error handling: all async/await wrapped in try/catch
-✓ Tests: at least controller + service tests
-✓ Swagger documentation: @ApiResponse, @ApiOperation, @ApiParam
-```
-
-### TypeScript/Next.js
-
-```typescript
-// Quality checklist additions
-✓ Server vs client components properly marked
-✓ Suspense boundaries for async components
-✓ Layout structure follows app router conventions
-✓ Error boundaries in place
-✓ ISR/SSG/SSR strategy documented
-✓ Image optimization used
-```
-
-### Python (MCPs)
-
-```python
-# Quality checklist additions
-✓ Type hints on all functions
-✓ Docstrings for public functions
-✓ No hardcoded secrets
-✓ Tests with mocking for external calls
-✓ Logging structured (not print())
-✓ Error handling: specific exception types
-```
-
 ## Review Decision Matrix
 
 | Finding | Type | Action |
@@ -123,40 +92,6 @@ Before marking complete:
 | Minor style issue | NEEDS_HUMAN | Comment, can be fixed in follow-up |
 | Good security practice | PASS | Approve |
 | Tests + docs complete | PASS | Approve |
-
-## Anti-Patterns
-
-❌ **Type Safety**
-- `any` used without comment
-- `as unknown as Type` casting
-- Untyped function parameters
-
-❌ **Security**
-- Credentials in env defaults (.env.example)
-- `console.log(user)` in production code
-- SQL strings concatenated with user input
-- No input validation on API endpoints
-
-❌ **Performance**
-- `SELECT *` without column filtering
-- N+1 queries in loops
-- No caching on expensive operations
-- Synchronous operations in hot paths
-
-❌ **Testing**
-- Tests that pass without assertions
-- Mock setup that doesn't match real behavior
-- No error path tests
-- Coverage < 80%
-
-## Commit Message Checklist
-
-- [ ] Type + scope correct (feat/fix/refactor/docs/test/chore)
-- [ ] Description concise (< 50 chars)
-- [ ] Body explains why (not what)
-- [ ] Footer links to Beads task: `Closes BD-XXX`
-- [ ] No "WIP", "TODO", "FIX" in message
-- [ ] Conventional Commits compliant
 
 ## Gate Outcomes
 
@@ -182,3 +117,9 @@ Before marking complete:
 - Framework-specific variations: 100-200 tokens
 - Total: ~250 tokens
 - Context7: Not required
+
+
+
+
+
+

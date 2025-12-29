@@ -1,8 +1,8 @@
 # AI Agent Manager
 
-A system for AI agents to collaborate on software projects. Five specialized agents (Orchestrator, Code Reviewer, Repo Steward, Summarizer, Red Team Reviewer) automate planning, review, commits, progress tracking, and adversarial audits.
+A system for AI agents to collaborate on software projects. Four specialized agents (Orchestrator, Code Reviewer, Repo Steward, Red Team Reviewer) automate planning, review, commits, and adversarial audits.
 
-**Key Idea:** Agents live here. Your projects have simple memory files (CLAUDE.md, TODO.md, memory/). Agents read context, do work, update files. Repeatable across any project.
+**Key Idea:** Agents use **Beads issue tracker** for task management. Your projects need only a `CLAUDE.md` file for codebase knowledge. Agents read context, do work, create Beads tasks. Repeatable across any project.
 
 > **Install the plugin and run slash commands instead of manually managing agents.**
 
@@ -26,18 +26,20 @@ Or manually: `cp -r ai-agent-manager-plugin ~/.claude/plugins/`
 
 ```bash
 cd /path/to/your-project
-cp -r /path/to/ai-agent-manager/templates/project-template/* .
+
+# Initialize Beads issue tracker
+bd init
+
+# Create CLAUDE.md with your project patterns
+# (See CLAUDE.md Structure section below)
 ```
 
 This creates:
 ```
 your-project/
-├── CLAUDE.md              # Codebase knowledge
-├── TODO.md                # Tasks and progress
-├── memory/
-│   ├── context.md         # Current task state
-│   ├── HISTORY.md         # Task index
-│   └── session/           # Task records
+├── CLAUDE.md              # Codebase knowledge (you maintain)
+├── .beads/                # Beads issue tracker (auto-managed)
+│   └── issues/
 └── src/ (your code)
 ```
 
@@ -50,8 +52,8 @@ your-project/
 Orchestrator will:
 1. Read your CLAUDE.md
 2. Understand your goal
-3. Break it into tasks
-4. Suggest task breakdown and acceptance criteria
+3. Create Beads tasks with review gates
+4. Output task structure and skill references
 
 ---
 
@@ -59,57 +61,52 @@ Orchestrator will:
 
 | Agent | Command | Purpose | When |
 |-------|---------|---------|------|
-| **Orchestrator** | `/orchestrator goal: "..."` | Plan work → break into tasks | Starting new work |
-| **Code Reviewer** | `/code-reviewer src/` | Review code → flag issues → suggest fixes | After writing code |
-| **Repo Steward** | `/repo-steward` | Stage changes → create commits → link to tasks | Ready to commit |
-| **Summarizer** | `/summarizer` | Update memory → create session logs → clean context | End of task |
+| **Orchestrator** | `/orchestrator goal: "..."` | Plan work → create Beads tasks with review gates | Starting new work |
+| **Code Reviewer** | `/code-reviewer src/` | Review code → output PASS/FAIL/NEEDS_HUMAN | After writing code |
+| **Repo Steward** | `/repo-steward` | Stage changes → create commits → link to Beads | Ready to commit |
+| **Red Team Reviewer** | `/red-team-reviewer` | Adversarial audit → find production failures | Pre-launch, security |
 
 **How they work together:**
 ```
-Orchestrator → Plan tasks
+Orchestrator → Create Beads tasks (EPIC → TASK → SUBTASK)
+    ↓
+bd claim BD-XX → Start task
     ↓
 You code
     ↓
-Code Reviewer → Check quality
+Code Reviewer → PASS/FAIL/NEEDS_HUMAN (review gate)
     ↓
-You fix issues
+You fix issues (if needed)
     ↓
-Repo Steward → Create commits
+Repo Steward → Commits linked to Beads
     ↓
-Summarizer → Update memory, mark done
-    ↓
-Orchestrator reads updated context → plans next task
+bd close BD-XX → Complete task, next task unblocked
 ```
 
 ---
 
-## Memory System (Task-Bound)
+## Beads Task Management
 
-**Key Insight:** Memory tied to *current task only* (not per day). When task completes, memory is archived and wiped for next task.
+**Beads replaces TODO.md and memory files:**
 
-| File | Purpose | Updated By |
-|------|---------|-----------|
-| `CLAUDE.md` | Codebase patterns & conventions | You (after reviewing agent proposals) |
-| `TODO.md` | All tasks with status markers | Repo Steward (progress), Summarizer (completion) |
-| `memory/context.md` | **Current active task only** — status, blockers, proposals | Summarizer (updates) |
-| `memory/HISTORY.md` | Index of all completed/paused tasks | Summarizer (links to session files) |
-| `memory/session/*.md` | Immutable task records (completed or paused) | Summarizer (creates) |
+| Command | Purpose |
+|---------|---------|
+| `bd list` | View open/in-progress/completed tasks |
+| `bd create` | Create new task |
+| `bd claim BD-XX` | Start working on a task |
+| `bd close BD-XX` | Mark task complete |
+| `bd comment BD-XX "note"` | Add notes to task |
+| `bd dep BD-XX BD-YY` | Set task dependencies |
 
-**Status Markers:**
-- `[ ]` Pending
-- `[-]` In Progress
-- `[~]` Paused
-- `[x]` Done
+**Task Structure:**
+- **EPIC:** Large feature (contains multiple tasks)
+- **TASK:** Implementation work (30-60 min)
+- **SUBTASK:** Review gate (blocks next task)
 
-**Example Daily Flow:**
-
-Morning: Orchestrator reads TODO.md (current task) + context.md (progress) → understands where you are
-
-Work: You code → Code Reviewer checks → you fix → Repo Steward commits
-
-Evening: Summarizer marks task done → creates session log → wipes context.md → ready for next task
-
-Next day: Orchestrator reads updated TODO.md + clean context.md → plans next task
+**Review Gates:**
+- Every implementation task has a review subtask
+- Review subtask blocks next implementation task
+- Review decisions: PASS (proceed), FAIL (fix and re-review), NEEDS_HUMAN (creates bug issues)
 
 ---
 
@@ -117,10 +114,9 @@ Next day: Orchestrator reads updated TODO.md + clean context.md → plans next t
 
 ### For New Projects
 
-1. Copy template to your project: `cp -r templates/project-template/* .`
-2. Edit CLAUDE.md with your project structure and patterns
-3. Add initial tasks to TODO.md
-4. Run `/orchestrator goal: "first task"`
+1. Initialize Beads: `bd init`
+2. Create CLAUDE.md with your project structure and patterns
+3. Run `/orchestrator goal: "first task"`
 
 ### CLAUDE.md Structure
 
@@ -146,20 +142,6 @@ Fill in once at the start:
 - Lint: npm run lint
 ```
 
-### TODO.md Format
-
-```markdown
-# TODO
-
-## Current Task
-- [-] Task name (branch: feature-x)
-  - [x] Subtask done
-  - [ ] Subtask pending
-
-## Pending
-- [ ] Next task
-```
-
 ---
 
 ## Common Patterns & Best Practices
@@ -177,16 +159,16 @@ See `AGENT_GUIDELINES.md` for detailed standards per language.
 ### Workflow Tips
 
 1. **Start with Orchestrator:** Always run `/orchestrator goal: "..."` when starting new work
-2. **Review code iteratively:** Run `/code-reviewer` multiple times as you fix issues
-3. **Commit cohesively:** Use `/repo-steward` only when code is clean and reviewed
-4. **Update memory at EOD:** Run `/summarizer` to archive task and prepare for next
-5. **Trust the memory:** Orchestrator reads context to understand progress — keep it accurate
+2. **Claim tasks:** Use `bd claim BD-XX` before starting work
+3. **Review iteratively:** Run `/code-reviewer` multiple times as you fix issues
+4. **Review gates:** Wait for PASS before moving to next task
+5. **Close tasks:** Use `bd close BD-XX` when complete
 
 ### CLAUDE.md Proposal Workflow
 
 When Code Reviewer discovers a new pattern:
 
-1. **Flag in context.md:** Pattern flagged with severity (GOOD_TO_USE, MUST_USE, etc)
+1. **Flag in Beads task comment:** Pattern flagged with rationale
 2. **You review:** Check if worth documenting
 3. **If approved:** You update CLAUDE.md manually
 4. **Next agent learns:** Reads updated CLAUDE.md, uses the new pattern
@@ -202,6 +184,7 @@ This prevents knowledge loss and helps agents learn from discoveries.
 - **AGENT_GUIDELINES.md:** Development standards, quality checklist
 - **.claude-plugin/README.md:** Detailed plugin documentation
 - **ai-agent-manager-plugin/agents/*.md:** Individual agent prompts
+- **ai-agent-manager-plugin/skills/*.md:** Skill files for guidance
 
 ---
 
@@ -211,7 +194,7 @@ To modify or extend agents:
 
 1. Agents are Markdown prompts in `ai-agent-manager-plugin/agents/`
 2. Commands are in `ai-agent-manager-plugin/commands/`
-3. Shared preamble: `ai-agent-manager-plugin/agents/prompts.md`
+3. Skills are in `ai-agent-manager-plugin/skills/`
 4. All agents follow standard output format (see AGENT_GUIDELINES.md)
 
 To test locally:
@@ -231,15 +214,16 @@ Then run agents in a test project to verify changes.
 - Update CLAUDE.md with clearer patterns and examples
 - Add more detailed structure documentation
 
-**Memory files out of sync?**
-- Run `/summarizer` to sync memory with git state
-- Check memory/context.md — should reflect current task only
+**Beads tasks not appearing?**
+- Run `bd list` to check current state
+- Ensure `bd init` was run in project
 
 **Agents suggesting wrong patterns?**
 - Update CLAUDE.md with approved patterns
-- Reject unwanted proposals in memory/context.md
+- Review and reject unwanted proposals
 
 **Need help?**
+- Run `/agent-help` for command reference
 - Check AGENT_GUIDELINES.md for quality standards
 - Check .claude-plugin/README.md for detailed command documentation
 - Review agent prompts in ai-agent-manager-plugin/agents/
@@ -248,29 +232,16 @@ Then run agents in a test project to verify changes.
 
 ## Known Limitations
 
-This system has architectural constraints you should be aware of:
-
-### Memory System
-- **Non-atomic writes:** Memory files (TODO.md, context.md) update sequentially. If interrupted mid-write, files may become inconsistent. Backup files (`.backup`) are created before writes.
-- **Retention policy:** Session files are pruned (max 30 kept, older archived). HISTORY.md is paginated (max 50 entries).
-- **Manual recovery:** If memory becomes corrupted, see `utils.md § Memory Recovery` for restoration steps.
-
-### Git Operations
-- **Main branch protection:** Repo Steward refuses commits on main/master without `--allow-main` flag.
-- **No rollback:** Git operations are not automatically reversible. Use `git reflog` for manual recovery.
-
 ### Agent Behavior
 - **LLM limitations:** Agents may occasionally reference non-existent files despite validation steps. Always verify before following plans.
-- **No automated tests:** Agent prompts don't have automated test coverage. Changes should be manually validated.
 - **Context7 dependency:** External library lookups depend on Context7 MCP. If unavailable, agents fall back to CLAUDE.md patterns.
 
 ### Scale
-- **Token usage:** Each agent invocation loads prompts + memory files (potentially 5,000-10,000 tokens overhead). Consider this for high-frequency usage.
-- **Session file growth:** Mitigated by retention policy, but long-running projects should monitor `memory/session/` size.
+- **Token usage:** Each agent invocation loads prompts (potentially 5,000-10,000 tokens overhead). Consider this for high-frequency usage.
 
-For detailed audit findings, see `AUDIT-REPORT.md`.
-
-For migration between versions, see `MIGRATION.md`.
+### Git Operations
+- **Main branch protection:** Repo Steward refuses commits on main/master without explicit flag.
+- **No rollback:** Git operations are not automatically reversible. Use `git reflog` for manual recovery.
 
 ---
 

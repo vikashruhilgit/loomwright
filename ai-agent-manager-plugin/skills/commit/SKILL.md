@@ -1,3 +1,8 @@
+---
+name: commit-skill
+description: Create conventional commits linked to Beads tasks. Use when writing commit messages, linking work to issues, or ensuring conventional commit format compliance.
+---
+
 # Commit Skill
 
 Create conventional commits linked to Beads tasks.
@@ -96,3 +101,9 @@ Use file paths or module names:
 - Invocation: 200 tokens
 - Storage: Inline (minimal overhead)
 - Context7: Not required
+
+
+
+
+
+

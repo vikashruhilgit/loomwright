@@ -6,9 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**AI Agent Manager** is a reusable system that provides intelligent agents for software development workflows. It integrates with Claude Code as a plugin with 5 specialized agents that automate planning, code review, commit management, progress tracking, and adversarial security audits.
+**AI Agent Manager** is a reusable system that provides intelligent agents for software development workflows. It integrates with Claude Code as a plugin with 4 specialized agents that automate planning, code review, commit management, and adversarial security audits.
 
-The system enables agents to collaborate on any project type by maintaining a memory system (CLAUDE.md, TODO.md, memory/) that persists knowledge and context between work sessions.
+The system enables agents to collaborate on any project type using **Beads issue tracker** for task management and `CLAUDE.md` for codebase knowledge that persists between work sessions.
 
 ---
 
@@ -19,58 +19,62 @@ The system enables agents to collaborate on any project type by maintaining a me
 The project is structured as a **Claude Code plugin marketplace**:
 
 1. **Plugin Package** (`ai-agent-manager-plugin/`)
-   - Agent definitions: `agents/` (Markdown prompts only, pure text)
+   - Agent definitions: `agents/` (Markdown prompts)
    - Slash commands: `commands/` (entry points)
-   - Shared preamble: `agents/prompts.md` (included in all agents)
-   - **ONLY source of truth** (duplicate `/agents/` directory deleted)
+   - Skills: `skills/` (focused implementation guidance)
 
 2. **Marketplace** (`.claude-plugin/`)
    - Plugin metadata and distribution
    - Installation via `/plugin install` command
    - Supports local and remote marketplaces
 
-### Task-Bound Memory Model
+### Beads Task Management
 
-**Key Innovation:** Memory is tied to current active task, not per-day or per-project.
+**Beads replaces TODO.md and memory files:**
 
-- **context.md:** Always reflects current task only (marked `[-]` in TODO.md)
-- **session files:** Immutable task records (completed/paused)
-- **HISTORY.md:** Index of all tasks (links to session files)
-- **Workflow:** When task completes → Summarizer archives context → wipes clean → Orchestrator plans next task
+| Command | Purpose |
+|---------|---------|
+| `bd list` | View open/in-progress/completed tasks |
+| `bd create` | Create new task |
+| `bd claim BD-XX` | Start working on a task |
+| `bd close BD-XX` | Mark task complete |
+| `bd comment BD-XX "note"` | Add notes to task |
+| `bd dep BD-XX BD-YY` | Set task dependencies |
 
-This prevents memory bloat and keeps agents focused on current work.
+**Task Structure:**
+- **EPIC:** Large feature (contains multiple tasks)
+- **TASK:** Implementation work (30-60 min)
+- **SUBTASK:** Review gate (blocks next task)
 
-### The 5 Agents
+**Review Gates:**
+- Every implementation task has a review subtask
+- Review subtask blocks next implementation task
+- Review decisions: PASS (proceed), FAIL (fix and re-review), NEEDS_HUMAN (creates bug issues)
 
-Each agent is a Markdown prompt file (`agents/[name].md`) that:
+### The 4 Agents
+
+Each agent is a Markdown prompt file (`agents/[name].md`):
 
 #### **Orchestrator** (`/orchestrator`)
-- **Purpose:** Break goals into actionable tasks with clear acceptance criteria
+- **Purpose:** Break goals into Beads tasks with review gates
 - **When to use:** Starting new work or need a plan
 - **Command:** `/orchestrator goal: "what you want to accomplish"`
-- **Workflow:** Reads CLAUDE.md (patterns) → understands goal → outputs task breakdown
-- **Outputs:** 3-7 minimal tasks, assignments, acceptance criteria, dependencies
+- **Workflow:** Reads CLAUDE.md + Beads state → creates task structure
+- **Outputs:** EPIC → TASK → SUBTASK structure with skill references
 
 #### **Code Reviewer** (`/code-reviewer`)
-- **Purpose:** Provide precise feedback on code quality, security, and pattern consistency
+- **Purpose:** Provide precise feedback; output PASS/FAIL/NEEDS_HUMAN decision
 - **When to use:** After writing code, need review
 - **Command:** `/code-reviewer src/` (specify files/dirs to review)
 - **Checks:** Type safety, security, performance, pattern alignment, test coverage
-- **Outputs:** Strengths + blocking issues (HIGH/MEDIUM/LOW) + fixes + CLAUDE.md proposals
+- **Outputs:** Issues (BLOCKING/HIGH/MEDIUM/LOW) + decision + CLAUDE.md proposals
 
 #### **Repo Steward** (`/repo-steward`)
 - **Purpose:** Keep repository clean with organized, conventional commits
 - **When to use:** Ready to commit work
-- **Command:** `/repo-steward` or `/repo-steward --push` (also push to remote)
-- **Workflow:** Stages changes → writes conventional messages → updates TODO.md
-- **Outputs:** Commit messages, updated TODO.md, next actions
-
-#### **Summarizer** (`/summarizer`)
-- **Purpose:** Update memory files with work done, create immutable session records
-- **When to use:** End of day, update project memory
-- **Command:** `/summarizer` (auto-detects project)
-- **Workflow:** Reads git history → updates context.md → creates session log → flags new patterns
-- **Outputs:** Updated memory/, session log, CLAUDE.md proposals
+- **Command:** `/repo-steward` or `/repo-steward --push`
+- **Workflow:** Stages changes → writes conventional messages → links to Beads
+- **Outputs:** Commit messages with Beads linking (e.g., "Closes BD-XX")
 
 #### **Red Team Reviewer** (`/red-team-reviewer`)
 - **Purpose:** Adversarial audit — find what breaks in production
@@ -79,28 +83,15 @@ Each agent is a Markdown prompt file (`agents/[name].md`) that:
 - **Workflow:** Attacks assumptions → verifies claims against docs → explores 6 attack vectors
 - **Outputs:** Findings by severity (FATAL/CRITICAL/WARNING/WEAKNESS), prioritized fixes
 
-### Memory System
-
-Each project using agents maintains 4 files in its root directory:
-
-| File | Purpose | Updated By |
-|------|---------|-----------|
-| **CLAUDE.md** | Codebase knowledge (patterns, tech stack, structure) | You (after reviewing agent proposals) |
-| **TODO.md** | Today's tasks and progress | Repo Steward agent |
-| **memory/context.md** | Current state, blockers, what's next, CLAUDE.md proposals | Summarizer agent |
-| **memory/session/YYYY-MM-DD.md** | Immutable daily record (what was done, commits, findings) | Summarizer agent |
-
-**Key insight:** Memory lives in projects, not in a central system. Projects are self-contained and repeatable.
-
 ### Agent Design Principles
 
 All agents follow a **shared contract** (see AGENT_GUIDELINES.md):
 
 - **Mission:** Do the smallest correct thing that advances the objective
-- **Input:** Context from memory files + CLAUDE.md + recent git history
+- **Input:** Context from CLAUDE.md + Beads state + recent git history
 - **Output:** Structured Markdown with Context Read → Plan → Work → Results → Risks & Next Steps
 - **Safety:** No destructive actions (db migrations, force-push) without explicit approval
-- **Rules:** Never invent files/APIs/paths; ask if unsure; respect memory files
+- **Rules:** Never invent files/APIs/paths; ask if unsure; use Beads for task management
 
 ---
 
@@ -123,19 +114,19 @@ Or manually copy to Claude Code plugins directory:
 ### Setup a Project
 
 ```bash
-# Initialize project with template
+# Initialize project
 cd /path/to/your-project
-cp -r /path/to/ai-agent-manager/templates/project-template/* .
+bd init
+
+# Create CLAUDE.md with your project patterns
 ```
 
 This creates:
 ```
 your-project/
 ├── CLAUDE.md              # Your codebase knowledge
-├── TODO.md                # Today's tasks
-├── memory/
-│   ├── context.md         # Current state
-│   └── session/           # Daily logs
+├── .beads/                # Beads issue tracker (auto-managed)
+│   └── issues/
 └── src/                   # Your code
 ```
 
@@ -151,8 +142,8 @@ your-project/
 # Commit changes
 /repo-steward
 
-# Log work (end of day)
-/summarizer
+# Adversarial audit (pre-launch)
+/red-team-reviewer --focus security
 ```
 
 ---
@@ -168,32 +159,30 @@ ai-agent-manager/
 │   │   ├── orchestrator.md           # Orchestrator agent
 │   │   ├── code-reviewer.md          # Code Reviewer agent
 │   │   ├── repo-steward.md           # Repo Steward agent
-│   │   ├── summarizer.md             # Summarizer agent
-│   │   ├── prompts.md                # Shared preamble for all agents
-│   │   └── utils.md                  # Utility functions/shared logic
+│   │   └── red-team-reviewer.md      # Red Team Reviewer agent
 │   ├── commands/                     # Slash commands for Claude Code
 │   │   ├── orchestrator.md           # /orchestrator command
 │   │   ├── code-reviewer.md          # /code-reviewer command
 │   │   ├── repo-steward.md           # /repo-steward command
-│   │   ├── summarizer.md             # /summarizer command
+│   │   ├── red-team-reviewer.md      # /red-team-reviewer command
 │   │   └── agent-help.md             # /agent-help command
+│   ├── skills/                       # Skill files for guidance
+│   │   ├── commit/                   # Conventional commits
+│   │   ├── quality-checklist/        # Review gate criteria
+│   │   ├── pattern-detector/         # CLAUDE.md proposals
+│   │   ├── nestjs-*/                 # NestJS patterns
+│   │   ├── nextjs-*/                 # Next.js patterns
+│   │   └── gateway-*/                # API Gateway patterns
 │   └── .claude-plugin/
-│       └── plugin.json               # Plugin metadata (name, version, author)
+│       └── plugin.json               # Plugin metadata
 │
 ├── .claude-plugin/
 │   ├── marketplace.json              # Marketplace definition
 │   └── README.md                     # Plugin usage documentation
 │
-├── templates/project-template/       # Template for new projects
-│   ├── CLAUDE.md                     # Codebase knowledge template
-│   ├── TODO.md                       # Tasks template
-│   └── memory/
-│       ├── context.md                # Current state template
-│       └── session/TEMPLATE.md       # Session log template
-│
 ├── README.md                         # User-facing documentation
 ├── AGENT_GUIDELINES.md               # Development standards & agent contract
-└── CLAUDE.md                         # This file (for the ai-agent-manager repo itself)
+└── CLAUDE.md                         # This file
 ```
 
 ### How Agents Work Together
@@ -201,45 +190,41 @@ ai-agent-manager/
 ```
 User Goal
     ↓
-/orchestrator → Task breakdown
+/orchestrator → Beads tasks (EPIC → TASK → SUBTASK)
     ↓
-You pick tasks
+bd claim BD-XX → Start task
     ↓
-/code-reviewer → Code quality feedback
+You code
     ↓
-Fix issues
+/code-reviewer → PASS/FAIL/NEEDS_HUMAN
     ↓
-/repo-steward → Conventional commits + update TODO.md
+Fix issues (if FAIL)
     ↓
-/summarizer → Update memory, create session log
+/repo-steward → Conventional commits + Beads linking
+    ↓
+bd close BD-XX → Task complete, next unblocked
     ↓
 Next agent reads updated CLAUDE.md (knowledge grows)
 ```
 
-### Memory Flow
+### Beads Workflow
 
 ```
 Session Start:
   1. Agent reads CLAUDE.md (codebase knowledge)
-  2. Agent reads TODO.md (today's tasks)
-  3. Agent reads memory/context.md (current state, blockers)
-  4. Agent reads git history (recent work)
+  2. Agent runs bd list (current task state)
+  3. Agent reads git history (recent work)
 
 During Work:
-  5. Agent makes changes, updates TODO.md
-  6. Agent updates memory/context.md if state changes
-  7. Agent flags new patterns for CLAUDE.md
+  4. Agent creates/updates Beads tasks
+  5. Agent outputs review decisions (PASS/FAIL/NEEDS_HUMAN)
+  6. Agent flags new patterns for CLAUDE.md
 
-End of Day:
-  8. Summarizer creates memory/session/YYYY-MM-DD.md (immutable record)
-  9. Summarizer updates memory/context.md
-  10. You review proposals in memory/context.md
-  11. You update CLAUDE.md (approve/reject proposals)
-  12. You commit project (code + memory files)
-
-Next Day:
-  13. New agent reads updated CLAUDE.md
-  14. Knowledge accumulates; agents learn from discoveries
+Task Complete:
+  7. bd close BD-XX (marks complete, unblocks next)
+  8. You review pattern proposals
+  9. You update CLAUDE.md (approve/reject proposals)
+  10. Knowledge accumulates; agents learn from discoveries
 ```
 
 ---
@@ -249,26 +234,22 @@ Next Day:
 ### Daily Pattern
 
 **Morning:**
-1. Run `/orchestrator goal: "today's objective"` to break down work
-2. Review task breakdown and acceptance criteria
+1. Run `/orchestrator goal: "today's objective"` to create Beads tasks
+2. Review task structure and acceptance criteria
 
 **During Work:**
-1. Implement code
-2. Run `/code-reviewer` to check for issues
-3. Fix identified problems
-4. Re-review if needed
+1. `bd claim BD-XX` to start task
+2. Implement code
+3. Run `/code-reviewer` to check for issues
+4. Fix identified problems, re-review until PASS
 
 **Afternoon:**
 1. Run `/repo-steward` to create conventional commits
-2. Review commit messages and TODO.md updates
+2. `bd close BD-XX` to complete task
 
-**End of Day:**
-1. Run `/summarizer` to create session log
-2. Review memory/context.md and session log
-3. Check for CLAUDE.md proposals in memory/context.md
-4. Approve/reject pattern proposals
-5. Update CLAUDE.md if proposals approved
-6. Commit project (code + memory files)
+**Pre-Launch:**
+1. Run `/red-team-reviewer` for adversarial audit
+2. Address FATAL and CRITICAL findings
 
 ### Adding or Modifying Agents
 
@@ -276,7 +257,6 @@ Agents are Markdown files in `ai-agent-manager-plugin/agents/`:
 
 1. **Create new agent:**
    - Write `.md` file in `agents/` directory
-   - Inherit from shared preamble in `prompts.md`
    - Follow structured output format (Context Read → Plan → Work → Results → Risks)
 
 2. **Create slash command:**
@@ -284,26 +264,21 @@ Agents are Markdown files in `ai-agent-manager-plugin/agents/`:
    - Reference the agent prompt
    - Define command syntax and examples
 
-3. **Test locally:**
+3. **Create skill:**
+   - Write `SKILL.md` in `skills/[skill-name]/` directory
+   - Include quick rules, examples, and quality gates
+
+4. **Test locally:**
    - Copy plugin to `~/.claude/plugins/` (or use `/plugin marketplace add ./`)
    - Run `/agent-help` to verify command is available
    - Test in a sample project
 
-4. **Core principles:**
+5. **Core principles:**
    - Do smallest correct thing that advances goal
    - Output structured Markdown
    - Never invent files/APIs/paths; ask if unsure
-   - Respect project memory files
+   - Use Beads for task management
    - Cite exact file:line numbers when referencing code
-
-### Adding New Agents
-
-When creating a new agent, ensure it:
-- Reads appropriate context files (CLAUDE.md, TODO.md, memory/context.md)
-- Updates only the files it's responsible for (Summarizer updates session logs; Repo Steward updates TODO.md, etc.)
-- Flags new patterns for CLAUDE.md update (not direct updates)
-- Follows conventional commit standards (when applicable)
-- Produces deterministic, auditable output
 
 ---
 
@@ -339,8 +314,7 @@ Before an agent completes work:
 | `README.md` | User-facing guide (installation, quick start, workflow) |
 | `AGENT_GUIDELINES.md` | Development standards, agent contract, quality checklist |
 | `.claude-plugin/README.md` | Detailed plugin documentation |
-| `ai-agent-manager-plugin/agents/prompts.md` | Shared preamble for all agents |
-| `templates/project-template/CLAUDE.md` | Template for new projects |
+| `ai-agent-manager-plugin/skills/*/SKILL.md` | Skill files for implementation guidance |
 
 ### Plugin Metadata
 
@@ -373,14 +347,14 @@ Before an agent completes work:
 ### Human-in-Loop Design
 
 - Agents suggest changes; humans approve
-- Agents flag pattern proposals in memory/context.md
+- Agents flag pattern proposals in Beads task comments
 - Only humans update CLAUDE.md (after review)
 - Agents never make destructive changes without explicit instruction
 
-### Memory is Project-Local
+### Beads for Task Management
 
-- Memory files live in user projects, not in ai-agent-manager
-- Projects are self-contained and portable
+- Beads issue tracker replaces TODO.md and memory files
+- Projects need only CLAUDE.md + .beads/ directory
 - Same agents work across different projects
 
 ---
@@ -392,13 +366,12 @@ Before an agent completes work:
 - Include concrete examples and file references
 - Agents re-read CLAUDE.md at the start of each session
 
-### Memory Files Out of Sync?
-- Run Summarizer at end of day to update memory
-- Summarizer reads git history and syncs state
-- You can manually update if agent misses something
+### Beads Tasks Not Appearing?
+- Run `bd list` to check current state
+- Ensure `bd init` was run in project
 
 ### New Pattern But Unsure If Important?
-- Agent flags it in memory/context.md as a proposal
+- Agent flags it in Beads task comment as a proposal
 - Review code at specified file:line numbers
 - Decide whether to add to CLAUDE.md
 - Approval gates prevent noise
@@ -407,38 +380,21 @@ Before an agent completes work:
 
 ## Known Limitations
 
-This system has architectural constraints documented in `AUDIT-REPORT.md`:
-
-### Memory System
-- **Non-atomic writes:** Memory files update sequentially; interruptions may cause inconsistency
-- **Retention policy:** Max 30 session files (older archived), max 50 HISTORY.md entries (paginated)
-- **Backup on write:** Agents create `.backup` files before modifying memory files
-- **Recovery:** See `utils.md § Memory Recovery` for restoration procedures
-
-### Git Operations
-- **Branch protection:** Repo Steward refuses main/master without `--allow-main` flag
-- **Dry-run mode:** Use `--dry-run` to preview without executing
-- **No auto-rollback:** Manual recovery via `git reflog` if needed
-
 ### Agent Behavior
 - **File verification:** Agents verify file existence before referencing, but LLM hallucination is possible
-- **Input validation:** Goals limited to 1000 chars, paths must be relative, memory files validated
 - **Observability:** All agents output structured summary (status, files read/modified, errors)
 
 ### Scale Considerations
-- **Token overhead:** ~5,000-10,000 tokens per invocation for prompts + memory loading
+- **Token overhead:** ~5,000-10,000 tokens per invocation for prompts
 - **Context7 dependency:** External library lookups require MCP; fallback to CLAUDE.md if unavailable
-
-For migration between versions, see `MIGRATION.md`.
 
 ---
 
 ## Future Enhancements
 
-Potential improvements tracked by agents in memory/context.md:
+Potential improvements:
 - Additional specialized agents (e.g., Documentation Agent, Performance Analyzer)
 - Deeper GitHub/GitLab integration
-- Cloud-synced memory (opt-in)
 - Agent composition (multi-agent workflows)
 - Metrics and analytics
 
@@ -450,4 +406,4 @@ Potential improvements tracked by agents in memory/context.md:
 - **Plugin docs:** `.claude-plugin/README.md` (installation, commands, project setup)
 - **Development standards:** `AGENT_GUIDELINES.md` (quality checklist, agent contract, standards per language)
 - **Agent prompts:** `ai-agent-manager-plugin/agents/*.md` (detailed agent definitions)
-- **Project template:** `templates/project-template/` (starter files for new projects)
+- **Skills:** `ai-agent-manager-plugin/skills/*/SKILL.md` (implementation guidance)

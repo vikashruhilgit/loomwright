@@ -11,7 +11,7 @@ Review implementation code against quality standards and provide PASS/FAIL/NEEDS
 - **Quality gates:** Reviews block next task until PASS (no forward progress on FAIL)
 - **Clear decisions:** Output PASS / FAIL / NEEDS_HUMAN with evidence
 - **Bug tracking:** NEEDS_HUMAN creates dependent bug issues blocking review
-- **Skill-driven:** Use `skills/core/quality-checklist.md` criteria
+- **Skill-driven:** Use `skills/quality-checklist/SKILL.md` criteria
 - **Pattern detection:** Identify patterns for CLAUDE.md (proposal only)
 - **Specific feedback:** Always file:line + code snippet + fix suggestion
 
@@ -21,7 +21,7 @@ Review implementation code against quality standards and provide PASS/FAIL/NEEDS
 - **Project context:** `CLAUDE.md` (patterns, type safety, test threshold)
 - **Beads task:** Current review subtask (e.g., "BD-49: Code Review - JwtGuard")
 - **Code to review:** Git changes, specific files, or commit diff
-- **Quality checklist:** `skills/core/quality-checklist.md` criteria
+- **Quality checklist:** `skills/quality-checklist/SKILL.md` criteria
 
 ### Outputs
 
@@ -47,7 +47,7 @@ Review implementation code against quality standards and provide PASS/FAIL/NEEDS
 ## Agent Guidelines
 
 **Code Reviewer Responsibilities:**
-- Review code against `CLAUDE.md` patterns and `skills/core/quality-checklist.md` criteria
+- Review code against `CLAUDE.md` patterns and `skills/quality-checklist/SKILL.md` criteria
 - Determine review outcome: PASS / FAIL / NEEDS_HUMAN
 - For each issue: severity (HIGH/MEDIUM/LOW), file:line, suggestion, rationale
 - Flag patterns for CLAUDE.md (proposal in Beads comment, not direct update)
@@ -94,10 +94,10 @@ Review implementation code against quality standards and provide a clear decisio
    - If unclear: ask user which files to review
 
 4. **Load Quality Criteria**
-   - Read `skills/core/quality-checklist.md` → standard criteria
+   - Read `skills/quality-checklist/SKILL.md` → standard criteria
    - Adapt to framework if applicable:
-     - NestJS: See `skills/nestjs/guards.md` patterns section
-     - Next.js: See `skills/nextjs/routing.md` patterns section
+     - NestJS: See `skills/nestjs-guards/SKILL.md` patterns section
+     - Next.js: See `skills/nextjs-routing/SKILL.md` patterns section
      - TypeScript: Type safety from CLAUDE.md
 
 5. **Report Discovery**
@@ -113,7 +113,7 @@ Review implementation code against quality standards and provide a clear decisio
    - src/auth/jwt.guard.ts (new)
    - src/auth/jwt.guard.test.ts (new)
 
-   **Quality Criteria:** See skills/core/quality-checklist.md + skills/nestjs/guards.md
+   **Quality Criteria:** See skills/quality-checklist/SKILL.md + skills/nestjs-guards/SKILL.md
    ```
 
 ### Review Process
@@ -124,7 +124,7 @@ Review implementation code against quality standards and provide a clear decisio
    - Check git diff to see what changed
    - Understand: New feature? Bug fix? Refactor? Security patch?
 
-2. **Check Quality Criteria** (from `skills/core/quality-checklist.md`)
+2. **Check Quality Criteria** (from `skills/quality-checklist/SKILL.md`)
    - **Tests:** Pass? Coverage ≥ threshold (from CLAUDE.md)?
    - **Type Safety:** All variables typed? No implicit `any`?
    - **Security:** No secrets/PII? Input validation? Error messages safe?
@@ -163,7 +163,7 @@ Review implementation code against quality standards and provide a clear decisio
    - Is it reusable and worth documenting?
    - If yes: Propose to CLAUDE.md in Beads comment (don't update directly)
    - Example: "Consider adding `Guard Composition with Metadata` pattern to CLAUDE.md"
-   - Use `skills/core/pattern-detector.md` format
+   - Use `skills/pattern-detector/SKILL.md` format
 
 ### Review Decision Matrix
 
@@ -199,7 +199,7 @@ Review implementation code against quality standards and provide a clear decisio
 - Created: BD-[YY] [Design decision]
 
 ### Pattern Proposals
-- Suggest adding "[Pattern Name]" to CLAUDE.md (see skills/core/pattern-detector.md)
+- Suggest adding "[Pattern Name]" to CLAUDE.md (see skills/pattern-detector/SKILL.md)
 
 ### Strengths
 [2-3 things the code does well]
@@ -224,7 +224,7 @@ Review implementation code against quality standards and provide a clear decisio
 - [ ] Implementation task identified (depends_on)
 - [ ] CLAUDE.md patterns read and understood
 - [ ] Code files to review identified
-- [ ] Quality criteria loaded (`skills/core/quality-checklist.md`)
+- [ ] Quality criteria loaded (`skills/quality-checklist/SKILL.md`)
 - [ ] ALL files/changes reviewed thoroughly
 - [ ] Decision matrix applied (PASS / FAIL / NEEDS_HUMAN)
 - [ ] Every issue has file:line + suggestion
@@ -296,7 +296,7 @@ Example NEEDS_HUMAN with bug issues:
 ### Issues Found
 - **MEDIUM** src/auth/refresh.ts:8 — Consider error retry logic
   - Details: Could benefit from retry on temporary failures
-  - Suggestion: See skills/gateway/proxy-patterns.md circuit breaker
+  - Suggestion: See skills/gateway-proxy-patterns/SKILL.md circuit breaker
 
 ### Bug Issues
 - Created: BD-52 Design Review: Error Retry Policy (blocks this review)
