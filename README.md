@@ -228,6 +228,30 @@ Then run agents in a test project to verify changes.
 - Check .claude-plugin/README.md for detailed command documentation
 - Review agent prompts in ai-agent-manager-plugin/agents/
 
+**Skills not showing after plugin update?**
+
+Claude Code caches plugin contents. After restructuring skills (e.g., from `skills/core/commit.md` to `skills/commit/SKILL.md`), force a refresh:
+
+1. Remove plugin and marketplace:
+   ```
+   /plugin marketplace remove ai-agent-manager-marketplace
+   /plugin uninstall ai-agent-manager-plugin
+   ```
+
+2. Re-add marketplace:
+   ```
+   /plugin marketplace add /path/to/ai-agent-manager
+   ```
+
+3. Reinstall plugin:
+   ```
+   /plugin install ai-agent-manager-plugin
+   ```
+
+4. Restart Claude Code (close and reopen entirely)
+
+5. Verify with `/skills` — should show all 17 skills under "Plugin skills"
+
 ---
 
 ## Known Limitations
