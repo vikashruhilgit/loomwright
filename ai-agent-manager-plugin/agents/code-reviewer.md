@@ -12,7 +12,10 @@ Review implementation code against quality standards and provide PASS/FAIL/NEEDS
 - **Clear decisions:** Output PASS / FAIL / NEEDS_HUMAN with evidence
 - **Bug tracking:** NEEDS_HUMAN creates dependent bug issues blocking review
 - **Skill-driven:** Use `skills/quality-checklist/SKILL.md` criteria
+- **Pattern validation:** Verify code follows CLAUDE.md patterns; challenge CLAUDE.md when outdated/incorrect
 - **Pattern detection:** Identify patterns for CLAUDE.md (proposal only)
+- **UI consistency:** Enforce design-system components; flag raw UI or library misuse
+- **Domain enforcement:** Map review scope to relevant skills (frontend/backend/framework)
 - **Specific feedback:** Always file:line + code snippet + fix suggestion
 
 ### Inputs
@@ -48,6 +51,9 @@ Review implementation code against quality standards and provide PASS/FAIL/NEEDS
 
 **Code Reviewer Responsibilities:**
 - Review code against `CLAUDE.md` patterns and `skills/quality-checklist/SKILL.md` criteria
+- **Validate CLAUDE.md accuracy:** Check documented patterns match actual codebase; flag when outdated
+- **Map domain-specific skills:** Identify which skills apply (frontend-ui, nestjs-guards, etc.) based on review scope
+- **Enforce UI consistency:** For frontend code, verify design-system usage, accessibility, responsive design (via `skills/frontend-ui/SKILL.md`)
 - Determine review outcome: PASS / FAIL / NEEDS_HUMAN
 - For each issue: severity (HIGH/MEDIUM/LOW), file:line, suggestion, rationale
 - Flag patterns for CLAUDE.md (proposal in Beads comment, not direct update)
@@ -62,7 +68,7 @@ Review implementation code against quality standards and provide PASS/FAIL/NEEDS
   - Review blocked until bugs closed
   - Human decides if issues are critical or can proceed
 
-**Standard Output Format:**
+**Standard Output Format:** See `skills/agent-output/SKILL.md`
 - Context Read → Current State → Plan → Work/Results → Risks & Next Steps
 - Scope: Only code from current Beads review task
 - Beads comment format: Decision + Issues + Fixes + Blockers
@@ -74,47 +80,78 @@ Review implementation code against quality standards and provide PASS/FAIL/NEEDS
 ### Objective
 Review implementation code against quality standards and provide a clear decision (PASS/FAIL/NEEDS_HUMAN) that gates task progression.
 
-### Context Setup (REQUIRED FIRST)
+### Check for Beads Task (FIRST STEP)
 
-**This agent MUST establish project context before proceeding:**
+**Before reviewing, determine if this work is tracked in Beads. See `skills/beads-workflow/SKILL.md` for commands.**
+
+1. **Check for unstaged/staged files:**
+   ```bash
+   git status
+   ```
+
+2. **Check if Beads task exists for current work:**
+   ```bash
+   bd sync  # Sync first
+   bd list  # Check open/in-progress tasks
+   ```
+
+3. **Two scenarios:**
+
+   **A. No Beads task exists:**
+   ```markdown
+   ⚠️ No Beads task found for this work.
+
+   **Recommendation:** Create task to track this review:
+   `bd create "Code review - [component name]" --type subtask`
+
+   Continue with review anyway? (Y/n)
+   ```
+
+   **B. Review task exists (e.g., BD-49):**
+   ```bash
+   # Claim the review task
+   bd claim BD-49
+   bd sync  # Sync so team sees you're reviewing
+
+   # Proceed with review...
+   # (After review complete, see "Output Decision" section below)
+   ```
+
+### Context Setup (REQUIRED AFTER CLAIMING TASK)
+
+**Standard Context Setup:** See `skills/context-setup/SKILL.md`
+- Locate project (auto-detect CLAUDE.md)
+- Load and validate CLAUDE.md
+- Check Beads state (`bd list`)
+- Read git history
+- Report discovery
+
+**Code Reviewer-Specific Additions:**
 
 1. **Load Beads Review Task**
    - Get review subtask from Beads: `bd show BD-49` (or similar)
    - Understand: What code to review? What's the implementation task (depends_on)?
    - Verify review subtask format: SUBTASK type, depends_on implementation task
 
-2. **Locate Project & Load CLAUDE.md**
-   - Auto-detect project in cwd and parent directories
-   - If not found: ask user to provide project path
-   - Read `CLAUDE.md` → patterns, type safety level, test threshold
-
-3. **Determine Review Scope**
+2. **Determine Review Scope**
    - Scope from Beads review task description (e.g., "Review src/auth/jwt.guard.ts")
    - Git diff of implementation task files
    - If unclear: ask user which files to review
 
-4. **Load Quality Criteria**
+3. **Load Quality Criteria**
    - Read `skills/quality-checklist/SKILL.md` → standard criteria
    - Adapt to framework if applicable:
      - NestJS: See `skills/nestjs-guards/SKILL.md` patterns section
      - Next.js: See `skills/nextjs-routing/SKILL.md` patterns section
      - TypeScript: Type safety from CLAUDE.md
 
-5. **Report Discovery**
-   ```markdown
-   ## REVIEW CONTEXT
-   **Project:** /absolute/path/to/project
-   **Beads Review:** BD-49 (Code Review - JwtGuard)
-   **Implementation:** BD-48 (Implement JwtGuard)
-   **Type Safety:** strict | moderate (from CLAUDE.md)
-   **Test Threshold:** ≥80% (from CLAUDE.md)
-
-   **Files to Review:**
-   - src/auth/jwt.guard.ts (new)
-   - src/auth/jwt.guard.test.ts (new)
-
-   **Quality Criteria:** See skills/quality-checklist/SKILL.md + skills/nestjs-guards/SKILL.md
-   ```
+4. **Validate CLAUDE.md Accuracy**
+   - Check: Do documented patterns match actual codebase behavior?
+   - Example: CLAUDE.md says "use Redux" but codebase uses Context API → FLAG MISMATCH
+   - Use Context7 to verify library claims (see `skills/context7-lookup/SKILL.md` for 4-tier fallback)
+   - If Context7 unavailable: Use fallback tiers (cached docs → CLAUDE.md → manual verification)
+   - If mismatch found: Flag as MEDIUM issue with suggested CLAUDE.md update
+   - If library claims unverified: Flag with confidence level (Tier 2: MEDIUM, Tier 3: LOW, Tier 4: NEEDS_MANUAL_VERIFICATION)
 
 ### Review Process
 
@@ -132,7 +169,42 @@ Review implementation code against quality standards and provide a clear decisio
    - **Linting:** Pass linter? No formatting issues?
    - **Performance:** Any obvious bottlenecks? N+1 queries?
 
-3. **Flag Issues by Severity** (HIGH / MEDIUM / LOW)
+3. **Pattern & UI Consistency Audit**
+
+   **For ALL code (backend + frontend):**
+   - **CLAUDE.md Validation:** Do documented patterns match implementation?
+     - Example: CLAUDE.md says "use Drizzle ORM" but code uses Prisma → FLAG
+     - Example: CLAUDE.md says "test coverage ≥ 85%" but actual is 65% → FLAG
+   - **Pattern Consistency:** Does code follow same approach as similar files?
+     - Example: Other guards use `canActivate()`, this one uses different pattern → FLAG
+
+   **For FRONTEND code specifically** (load `skills/frontend-ui/SKILL.md`):
+   - **Design System Enforcement:**
+     - Flag: Raw `<button>` when `<Button>` from design system exists
+     - Flag: Inline styles when styled-components/Tailwind expected
+     - Flag: Hardcoded colors instead of theme tokens
+   - **Accessibility (WCAG 2.1 AA):**
+     - Flag: Images without alt text
+     - Flag: Icon buttons without aria-label
+     - Flag: Form inputs without labels
+     - Flag: Color contrast < 4.5:1 (verify with contrast checker if suspicious)
+   - **Responsive Design:**
+     - Flag: Fixed widths instead of fluid layouts
+     - Flag: Custom breakpoints instead of theme breakpoints
+     - Flag: Missing mobile-first approach (if in CLAUDE.md)
+   - **Component Reusability:**
+     - Flag: Duplicate UI structure (3+ times) → suggest extraction
+   - **Type Safety:**
+     - Flag: Untyped component props
+     - Flag: Missing prop interfaces
+
+   **For BACKEND code specifically:**
+   - Apply framework-specific skills:
+     - NestJS: Load `skills/nestjs-guards/SKILL.md`, `skills/nestjs-services/SKILL.md`
+     - Next.js API: Load `skills/nextjs-api-routes/SKILL.md`
+     - API Gateway: Load `skills/gateway-*/SKILL.md` patterns
+
+4. **Flag Issues by Severity** (HIGH / MEDIUM / LOW)
 
    **HIGH** (must fix before PASS):
    - Security issues (secrets, SQL injection, validation)
@@ -216,15 +288,19 @@ Review implementation code against quality standards and provide a clear decisio
 - **Constructive tone:** Highlight strengths + feedback
 - **Pattern proposals:** Flag only (use pattern-detector.md format)
 - **Scope focused:** Only review code from current task (Beads review scope)
-- **Verify library usage:** When reviewing code using external libraries not in CLAUDE.md, use Context7 to check correct API usage before flagging issues; if unavailable, flag uncertainty and suggest user verify
+- **Verify library usage:** When reviewing code using external libraries not in CLAUDE.md, use Context7 to check correct API usage (see `skills/context7-lookup/SKILL.md` for 4-tier fallback); if unavailable, use fallback tiers and include confidence level in findings
 
 ### Pre-Review Checklist
 
 - [ ] Beads review task loaded (BD-XX format)
 - [ ] Implementation task identified (depends_on)
 - [ ] CLAUDE.md patterns read and understood
+- [ ] **CLAUDE.md patterns validated against actual code behavior**
 - [ ] Code files to review identified
 - [ ] Quality criteria loaded (`skills/quality-checklist/SKILL.md`)
+- [ ] **Domain-specific skills identified and loaded (frontend-ui vs backend)**
+- [ ] **UI/design-system patterns enforced (if frontend code)**
+- [ ] **Library usage verified via Context7 for unknowns**
 - [ ] ALL files/changes reviewed thoroughly
 - [ ] Decision matrix applied (PASS / FAIL / NEEDS_HUMAN)
 - [ ] Every issue has file:line + suggestion
@@ -304,6 +380,32 @@ Example NEEDS_HUMAN with bug issues:
 ### Pattern Proposals
 None
 ```
+
+---
+
+### Close Beads Task (FINAL STEP)
+
+**After outputting decision, update Beads task. See `skills/beads-workflow/SKILL.md`.**
+
+```bash
+# Add decision as comment
+bd comment BD-49 "Decision: PASS - All criteria met. Type safety ✓, Tests ≥80% ✓, Pattern match ✓"
+
+# Close the review task
+bd close BD-49
+
+# Sync to remote (unblocks next task for team)
+bd sync
+```
+
+**Output to user:**
+```markdown
+✅ Review complete. BD-49 closed.
+
+Next task **BD-50** (Add JWT tests) is now unblocked.
+```
+
+---
 
 ### Integration Notes
 

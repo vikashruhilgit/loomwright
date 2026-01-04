@@ -29,6 +29,134 @@ On-demand external library documentation with strict token budgets.
 ✗ Framework comparisons (broad context)
 ✗ When offline or MCP unavailable
 
+---
+
+## 4-Tier Fallback Strategy
+
+When Context7 MCP is unavailable or fails, use this degradation path:
+
+### Tier 1: Context7 Available (IDEAL)
+
+**When:** MCP is running and responsive
+
+**Action:**
+```bash
+# Query MCP for fresh documentation
+resolve-library-id(libraryName: "nextjs")
+query-docs(libraryId: "/vercel/next.js", query: "App Router data fetching")
+```
+
+**Confidence:** ✅ HIGH
+**Output:** Use fresh documentation directly
+
+---
+
+### Tier 2: Cached Documentation (FALLBACK)
+
+**When:** Context7 unavailable but cache exists
+
+**Action:**
+```bash
+# Check cache directory
+ls -la .cache/context7/nextjs-routing-*.md
+
+# If cache exists and < 7 days old:
+CACHE_DATE=$(stat -f "%Sm" -t "%Y-%m-%d" .cache/context7/nextjs-routing-2026-01-01.md)
+DAYS_OLD=$(( ($(date +%s) - $(date -j -f "%Y-%m-%d" "$CACHE_DATE" +%s)) / 86400 ))
+
+if [ $DAYS_OLD -lt 7 ]; then
+  cat .cache/context7/nextjs-routing-2026-01-01.md
+fi
+```
+
+**Warning Template:**
+```
+⚠️ Using cached Next.js docs from 2026-01-01 (3 days old)
+→ Context7 MCP unavailable, using local cache
+→ Verify critical claims against official docs
+```
+
+**Confidence:** ⚠️ MEDIUM
+**Output:** Include cache warning in findings
+
+---
+
+### Tier 3: CLAUDE.md Fallback (DEGRADED)
+
+**When:** Context7 unavailable, no cache, but CLAUDE.md has patterns
+
+**Action:**
+```bash
+# Search project patterns
+grep -i "next.js\|nextjs" CLAUDE.md
+grep -i "app router\|data fetching" CLAUDE.md
+```
+
+**Warning Template:**
+```
+⚠️ UNVERIFIED - Context7 unavailable, using CLAUDE.md patterns
+→ Library claims not verified against current documentation
+→ CLAUDE.md may be outdated or incorrect
+→ Severity downgraded: FATAL → CRITICAL
+```
+
+**Confidence:** ⚠️ LOW
+**Severity Downgrade:**
+- FATAL → CRITICAL
+- CRITICAL → WARNING
+- WARNING → WEAKNESS
+
+**Output:** Flag as UNVERIFIED with severity downgrade
+
+---
+
+### Tier 4: Manual Verification (WORST CASE)
+
+**When:** Context7 unavailable, no cache, CLAUDE.md insufficient
+
+**Warning Template:**
+```
+🚨 NEEDS_MANUAL_VERIFICATION
+
+Library: Next.js
+Claim: "App Router supports server-side data fetching with fetch()"
+Status: Cannot verify automatically
+
+→ Context7 MCP unavailable
+→ No cached documentation found
+→ CLAUDE.md does not document this pattern
+
+**Action Required:**
+Review official documentation:
+- Next.js: https://nextjs.org/docs/app/building-your-application/data-fetching
+- Verify claim manually before proceeding
+- Update CLAUDE.md if pattern is confirmed
+
+**Temporary Guidance:**
+Treat as UNVERIFIED. Flag for user review.
+```
+
+**Confidence:** ❌ UNKNOWN
+**Output:** Block implementation, require manual verification
+
+---
+
+## Fallback Decision Tree
+
+```
+Context7 available?
+├─ YES → Tier 1 (fresh docs, HIGH confidence)
+└─ NO
+   ├─ Cache exists (<7 days)?
+   │  ├─ YES → Tier 2 (cached docs, MEDIUM confidence, warn)
+   │  └─ NO
+   │     ├─ CLAUDE.md has pattern?
+   │     │  ├─ YES → Tier 3 (CLAUDE.md, LOW confidence, downgrade severity)
+   │     │  └─ NO → Tier 4 (manual verification, UNKNOWN confidence, block)
+```
+
+---
+
 ## Lookup Strategy
 
 ### 1. Prepare Query

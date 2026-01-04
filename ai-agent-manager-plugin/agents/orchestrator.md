@@ -54,7 +54,7 @@ Break incoming goals into actionable Beads tasks with built-in review gates. Und
 - Flag opportunities for pattern additions to `CLAUDE.md`
 - Output: Context summary + Beads task structure + skill references + handoff instructions
 
-**Standard Output Format:**
+**Standard Output Format:** See `skills/agent-output/SKILL.md`
 - Context Read → Current State → Plan (Beads structure) → Work/Results → Risks & Next Steps
 - Each implementation task automatically has a review subtask
 - Review subtask blocks next task until completed (PASS/FAIL/NEEDS_HUMAN)
@@ -69,48 +69,29 @@ Break incoming goals into structured Beads tasks with built-in code review gates
 
 ### Context Setup (REQUIRED FIRST)
 
-**This agent MUST establish project context before proceeding:**
+**Standard Context Setup:** See `skills/context-setup/SKILL.md`
+- Locate project (auto-detect CLAUDE.md)
+- Load and validate CLAUDE.md
+- Check Beads state (`bd list`)
+- Read git history
+- Report discovery
 
-1. **Locate Project**
-   - User provides path or auto-detect `CLAUDE.md` in cwd and parent directories
-   - If none found, ask user: "Please provide project path"
+**Orchestrator-Specific Additions:**
 
-2. **Load Project Context**
-   - Read `CLAUDE.md` → understand patterns, tech stack, conventions
-   - Check Beads repo (`bd list`) → understand current open/in-progress tasks
-   - Read recent git commits → understand recent work
-   - Cache these for entire agent session
-
-3. **Auto-Detect CLAUDE.md (if missing)**
+1. **Auto-Detect CLAUDE.md (if missing)**
    - Scan codebase: `package.json`, `go.mod`, `requirements.txt`, `Cargo.toml`, `pom.xml`, etc.
    - Detect tech stack: Node.js+Express, Python+Django, Go, Rust, Java, etc.
    - Detect frameworks: React, Vue, Next.js, FastAPI, etc.
    - **Suggest** initial structure (do NOT auto-write)
    - Ask user: "Should I generate CLAUDE.md with this tech stack?"
 
-4. **Check External Dependencies (if applicable)**
+2. **Check External Dependencies (if applicable)**
    - If goal involves external libraries not in `CLAUDE.md`
-   - Use Context7 via `skills/context7-lookup/SKILL.md` (max 2000 tokens)
+   - Use Context7 via `skills/context7-lookup/SKILL.md` (max 2000 tokens, 4-tier fallback)
    - Example: Goal "add caching with Redis" → lookup redis client docs
    - Only query for libraries central to goal
-   - If unavailable, continue with general knowledge and flag uncertainty
-
-5. **Report Discovery**
-   ```markdown
-   ## PROJECT CONTEXT
-   **Path:** /absolute/path/to/project
-   **CLAUDE.md Status:** ✓ Found | ✗ Missing (auto-detect: Node.js+Express)
-   **Architecture:** [From CLAUDE.md: React+Next.js+Tailwind, or Node+Express+Postgres, etc]
-   **Key Patterns:** [2-3 most important conventions from CLAUDE.md]
-
-   **Current Beads Tasks:**
-   - Open: [List open issues]
-   - In Progress: [List in-progress issues]
-   - Recent Completed: [List 3 most recent closed tasks]
-
-   **Goal:** [User's stated objective]
-   **Refined Understanding:** [Clarifications needed? Ask questions now]
-   ```
+   - If Context7 unavailable: Use fallback tiers (cached docs → CLAUDE.md → manual verification flag)
+   - Include confidence level in plan based on tier used
 
 ### Responsibilities
 
@@ -146,9 +127,21 @@ Break incoming goals into structured Beads tasks with built-in code review gates
    ```
 
 5. **Link to Skills**
-   - Reference relevant skill files in task descriptions
-   - Example: "See `skills/nestjs-guards/SKILL.md` for guard patterns"
-   - Example: "See `skills/quality-checklist/SKILL.md` for review criteria"
+   - Reference relevant skill files in task descriptions based on detected tech stack:
+   - **Backend (NestJS):**
+     - `skills/nestjs-guards/SKILL.md` for guard patterns
+     - `skills/nestjs-services/SKILL.md` for service architecture
+     - `skills/nestjs-controllers/SKILL.md` for controller structure
+   - **Frontend (React/Vue/Angular/Svelte):**
+     - `skills/frontend-ui/SKILL.md` for design-system, accessibility, responsive design
+     - `skills/nextjs-components/SKILL.md` for Next.js Server/Client components
+     - `skills/nextjs-routing/SKILL.md` for App Router patterns
+   - **API Gateway:**
+     - `skills/gateway-auth-middleware/SKILL.md` for authentication
+     - `skills/gateway-proxy-patterns/SKILL.md` for microservice proxying
+   - **Universal:**
+     - `skills/quality-checklist/SKILL.md` for review criteria
+     - `skills/commit/SKILL.md` for commit formatting
    - Don't embed skill content; just point to it
 
 6. **Output Structure**
@@ -234,7 +227,39 @@ Examples:
 
 ## Plan
 
-### Beads Task Structure
+### Step 1: Create Beads Tasks
+
+**CRITICAL:** After planning, create tasks in Beads using CLI commands. See `skills/beads-workflow/SKILL.md` for patterns.
+
+```bash
+# Create EPIC (capture ID from output)
+bd create "JWT Authentication with Refresh Tokens" --type epic
+# Output: Created BD-47
+
+# Create implementation tasks with dependencies
+bd create "Implement JwtGuard" --type task --depends-on BD-47
+# Output: Created BD-48
+
+bd create "Code Review - JwtGuard" --type subtask --depends-on BD-48
+# Output: Created BD-49
+
+bd create "Implement Refresh Token Endpoint" --type task --depends-on BD-49
+# Output: Created BD-50
+
+# Continue for all tasks...
+
+# Set blocking relationships
+bd dep BD-49 BD-50  # Review blocks next implementation
+
+# Sync to remote (team visibility)
+bd sync
+
+# Claim FIRST task and start working
+bd claim BD-48
+bd sync
+```
+
+### Step 2: Show Task Structure in Output
 
 **BD-47: JWT Authentication with Refresh Tokens (EPIC)**
 
@@ -360,11 +385,17 @@ bd claim BD-48  # Start JwtGuard implementation
 
 ### Skill References
 
+**For this backend (NestJS) example:**
 - **JwtGuard patterns:** `skills/nestjs-guards/SKILL.md`
 - **Controller patterns:** `skills/nestjs-controllers/SKILL.md`
 - **Quality checklist:** `skills/quality-checklist/SKILL.md`
 - **Commit format:** `skills/commit/SKILL.md`
 - **Token refresh logic:** Use Context7 if needed (`skills/context7-lookup/SKILL.md`)
+
+**For frontend projects (React/Vue/Angular/Svelte), include:**
+- **UI components:** `skills/frontend-ui/SKILL.md` (design-system, accessibility, responsive design)
+- **Next.js components:** `skills/nextjs-components/SKILL.md` (Server/Client components)
+- **Next.js routing:** `skills/nextjs-routing/SKILL.md` (App Router patterns)
 
 ## Integration Notes
 

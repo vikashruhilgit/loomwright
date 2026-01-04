@@ -82,6 +82,7 @@ Assume:
 - What claims are being made? (performance, security, scalability, reliability)
 - What assumptions are embedded? (user behavior, load, environment, dependencies)
 - **Read CLAUDE.md to find assumptions to ATTACK, not patterns to follow**
+- Validate `CLAUDE.md` freshness (see `skills/claude-md-validation/SKILL.md`)
 
 ### 3. Reality-Check with Context7 MCP
 
@@ -104,10 +105,11 @@ Assume:
 - Version-specific issues, known vulnerabilities?
 
 **If Context7 unavailable:**
-- Continue with attack
-- Mark ALL library-specific claims as "UNVERIFIED - Context7 unavailable"
-- Recommend manual verification
-- Lower confidence: FATAL → CRITICAL for unverified library issues
+- Use 4-tier fallback strategy (see `skills/context7-lookup/SKILL.md`)
+- Tier 2: Check `.cache/context7/` for cached docs (< 7 days old)
+- Tier 3: Search CLAUDE.md patterns, mark as UNVERIFIED, downgrade severity (FATAL → CRITICAL)
+- Tier 4: Flag as NEEDS_MANUAL_VERIFICATION if no fallback available
+- Always include confidence level and fallback tier used in findings
 
 ### 4. Report Discovery
 ```markdown
