@@ -1,6 +1,6 @@
 # AI Agent Manager Plugin for Claude Code
 
-A powerful Claude Code plugin with 3 intelligent agents, 17 focused skills, and Beads issue tracker integration for modern development workflows. Replaces TODO.md with issue-driven task management and enforces quality gates on code reviews.
+A powerful Claude Code plugin with 3 intelligent agents, 18 focused skills, and Beads issue tracker integration for modern development workflows. Replaces TODO.md with issue-driven task management and enforces quality gates on code reviews.
 
 ## Overview
 
@@ -341,6 +341,8 @@ ai-agent-manager/                (marketplace root)
         │   ├── context7-lookup.md
         │   ├── quality-checklist.md
         │   └── pattern-detector.md
+        ├── frontend/            # Frontend UI patterns
+        │   └── frontend-ui.md   # Design-system, accessibility (WCAG 2.1 AA), responsive design
         ├── nestjs/              # NestJS patterns
         │   ├── guards.md
         │   ├── controllers.md

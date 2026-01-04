@@ -30,8 +30,12 @@ description: Review code changes against patterns, flag issues, detect new patte
    - Security concerns
    - Performance issues
    - Pattern inconsistencies
-5. **Detects new patterns** for CLAUDE.md proposal
-6. **Provides structured feedback** with suggestions
+5. **Validates CLAUDE.md accuracy** (flags outdated patterns against actual codebase)
+6. **Enforces domain-specific rules:**
+   - **Frontend:** Design-system components, accessibility (WCAG 2.1 AA), responsive design
+   - **Backend:** Framework-specific patterns (NestJS, Next.js API, API Gateway)
+7. **Detects new patterns** for CLAUDE.md proposal
+8. **Provides structured feedback** with suggestions
 
 ## Example Output
 
@@ -62,6 +66,16 @@ Status: No breaking changes detected
    - Location: src/components/DarkMode.tsx:45
    - Severity: High
    - Fix: Sanitize localStorage value before using
+
+3. Pattern Mismatch: CLAUDE.md documents Redux but code uses Context API
+   - Location: CLAUDE.md:45 vs src/context/AuthContext.tsx
+   - Severity: Medium
+   - Fix: Update CLAUDE.md to reflect Context API pattern or refactor code to use Redux
+
+4. UI Consistency: Using raw <button> instead of design-system component
+   - Location: src/components/LoginForm.tsx:23
+   - Severity: Medium
+   - Fix: Replace with `<Button variant="primary">` from @/components/ui/button
 
 ### 📋 Pattern Suggestions
 - New pattern detected: "Dark Mode using Context + localStorage"
@@ -100,6 +114,45 @@ cd /path/to/your/project
 - If more code changes: Run `/code-reviewer` again
 - When review passes: Update Beads review subtask with PASS decision
 - When done: Use commit skill to create conventional commits
+
+---
+
+## Domain-Specific Reviews
+
+The code reviewer automatically applies domain-specific checks based on the files being reviewed:
+
+### Frontend Code (React/Vue/Angular/Svelte)
+When reviewing UI components, the reviewer checks:
+- **Design System:** Flags raw HTML elements (`<button>`) when design-system components (`<Button>`) exist
+- **Accessibility:** Verifies WCAG 2.1 AA compliance (alt text, aria-labels, keyboard navigation, color contrast)
+- **Responsive Design:** Checks mobile-first approach, consistent breakpoints, fluid layouts
+- **Component Reusability:** Detects duplicate UI patterns and suggests extraction
+- **Type Safety:** Validates typed props for all components
+
+**Skill Reference:** `skills/frontend-ui/SKILL.md`
+
+### Backend Code (NestJS/Next.js API/API Gateway)
+When reviewing server-side code, the reviewer applies:
+- **NestJS:** Guard patterns, service architecture, controller structure, Drizzle ORM usage
+- **Next.js API Routes:** Route handlers, request validation, error handling
+- **API Gateway:** Auth middleware, proxy patterns, rate limiting, correlation IDs
+
+**Skill References:**
+- `skills/nestjs-guards/SKILL.md`
+- `skills/nestjs-services/SKILL.md`
+- `skills/nextjs-api-routes/SKILL.md`
+- `skills/gateway-*/SKILL.md`
+
+### Mixed Projects
+For full-stack projects, the reviewer:
+1. Detects file type (frontend vs backend)
+2. Applies relevant skills automatically
+3. Validates consistency across both domains
+
+### Disabling Domain Checks
+If a project has custom patterns that conflict with skill guidelines:
+- Add patterns to `CLAUDE.md` (takes precedence over skills)
+- Or remove skill reference from Beads task acceptance criteria
 
 ---
 
