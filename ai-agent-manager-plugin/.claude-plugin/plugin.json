@@ -1,7 +1,7 @@
 {
   "name": "ai-agent-manager-plugin",
-  "version": "2.0.0",
-  "description": "Beads-integrated AI agents with focused skills architecture. 3 specialized agents: Orchestrator (Beads task planning with review gates), Code Reviewer (quality gates with PASS/FAIL/NEEDS_HUMAN), and Red Team Reviewer (adversarial audits). Features 17 reusable skills for NestJS, Next.js, and Gateway patterns.",
+  "version": "2.1.0",
+  "description": "Beads-integrated AI agents with focused skills architecture. 4 specialized agents: Product Owner (business requirements), Orchestrator (Beads task planning), Code Reviewer (quality gates), and Red Team Reviewer (adversarial audits). Features 26 reusable skills for requirements, NestJS, Next.js, and Gateway patterns.",
   "author": {
     "name": "vikash ruhil"
   },
@@ -20,6 +20,9 @@
     "skills",
     "nestjs",
     "nextjs",
-    "gateway"
+    "gateway",
+    "product-owner",
+    "requirements",
+    "user-stories"
   ]
 }

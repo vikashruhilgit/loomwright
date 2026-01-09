@@ -1,6 +1,6 @@
 # AI Agent Manager
 
-A system for AI agents to collaborate on software projects. Four specialized agents (Orchestrator, Code Reviewer, Repo Steward, Red Team Reviewer) automate planning, review, commits, and adversarial audits.
+A system for AI agents to collaborate on software projects. Five specialized agents (Product Owner, Orchestrator, Code Reviewer, Repo Steward, Red Team Reviewer) automate requirements, planning, review, commits, and adversarial audits.
 
 **Key Idea:** Agents use **Beads issue tracker** for task management. Your projects need only a `CLAUDE.md` file for codebase knowledge. Agents read context, do work, create Beads tasks. Repeatable across any project.
 
@@ -57,18 +57,21 @@ Orchestrator will:
 
 ---
 
-## The 4 Agents
+## The 5 Agents
 
 | Agent | Command | Purpose | When |
 |-------|---------|---------|------|
-| **Orchestrator** | `/orchestrator goal: "..."` | Plan work → create Beads tasks with review gates | Starting new work |
+| **Product Owner** | `/product-owner feature: "..."` | Define requirements → create user stories with acceptance criteria | New feature, vague requirements |
+| **Orchestrator** | `/orchestrator goal: "..."` | Plan work → create Beads tasks with review gates | Starting implementation |
 | **Code Reviewer** | `/code-reviewer src/` | Review code → output PASS/FAIL/NEEDS_HUMAN | After writing code |
 | **Repo Steward** | `/repo-steward` | Stage changes → create commits → link to Beads | Ready to commit |
 | **Red Team Reviewer** | `/red-team-reviewer` | Adversarial audit → find production failures | Pre-launch, security |
 
 **How they work together:**
 ```
-Orchestrator → Create Beads tasks (EPIC → TASK → SUBTASK)
+Product Owner → Create Beads stories (user requirements)
+    ↓
+Orchestrator → Break stories into tasks (EPIC → TASK → SUBTASK)
     ↓
 bd claim BD-XX → Start task
     ↓

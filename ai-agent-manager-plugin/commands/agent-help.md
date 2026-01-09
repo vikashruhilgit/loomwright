@@ -20,7 +20,12 @@ Shows all available agent commands and quick usage examples.
 
 ## Quick Start
 
-The AI Agent Manager plugin provides **4 agents** for your development workflow:
+The AI Agent Manager plugin provides **5 agents** for your development workflow:
+
+**Requirements Pipeline (1 agent):**
+```
+0. Discover (Product Owner)  →  User stories with acceptance criteria
+```
 
 **Constructive Pipeline (3 agents):**
 ```
@@ -32,11 +37,62 @@ The AI Agent Manager plugin provides **4 agents** for your development workflow:
 4. Attack (Red Team Reviewer)  →  Finds real-world failures before production
 ```
 
+**Full Workflow:**
+```
+/product-owner → User Stories → /orchestrator → Tasks → Code → /code-reviewer → /repo-steward
+```
+
 **Task Management:** Beads issue tracker (replaces TODO.md/memory files)
 
 ---
 
 ## Command Reference
+
+### 0️⃣ /product-owner — Define Requirements
+
+**Purpose:** Translate business problems into user stories with acceptance criteria
+
+**Usage:**
+```
+/product-owner feature: "staff scheduling for venue events"
+/product-owner problem: "we keep double-booking shifts"
+/product-owner feature: "order history" --mvp-only
+```
+
+**What it does:**
+- Reads domain context from CLAUDE.md
+- Runs product discovery to understand the problem
+- Writes user stories (As a... I want... So that...)
+- Defines acceptance criteria (Given/When/Then)
+- Prioritizes scope (MVP / Phase 2 / Nice-to-have)
+- Creates Beads stories (type: story)
+- Provides handoff to `/orchestrator`
+
+**Example Output:**
+```
+## BD-15: Staff Shift Assignment (type: story)
+
+**As a** Staff Supervisor at a sports venue,
+**I want** to assign staff members to shifts,
+**so that** I have adequate coverage.
+
+### Acceptance Criteria
+- [ ] Given an event, when I open assignment, then I see available staff
+- [ ] Given a conflict, when I double-book, then I see a warning
+
+### Priority: MVP
+### Handoff: /orchestrator goal: "BD-15"
+```
+
+**When to Use:**
+- Starting a new feature
+- When requirements are vague
+- Before running /orchestrator
+- When you need user stories
+
+**Learn More:** `/product-owner --help`
+
+---
 
 ### 1️⃣ /orchestrator — Plan Your Work
 
@@ -479,11 +535,17 @@ These are Claude Code slash commands, so you can type them directly:
 
 ## Summary
 
+### Requirements Pipeline (Define What to Build)
+
+| Agent | Purpose | When | Input | Output |
+|-------|---------|------|-------|--------|
+| **Product Owner** | Define requirements | New feature, vague requirements | Feature/problem | User stories with acceptance criteria |
+
 ### Constructive Pipeline (Build Correctly)
 
 | Agent | Purpose | When | Input | Output |
 |-------|---------|------|-------|--------|
-| **Orchestrator** | Plan work | Start of task | Goal | Beads tasks with review gates |
+| **Orchestrator** | Plan work | Start of task | Goal or story | Beads tasks with review gates |
 | **Code Reviewer** | Review code | During development | Files/diff | PASS/FAIL/NEEDS_HUMAN + issues |
 | **Repo Steward** | Create commits | When done coding | Staged changes | Conventional commits + Beads links |
 
@@ -496,6 +558,7 @@ These are Claude Code slash commands, so you can type them directly:
 ---
 
 **Ready to get started?**
+- Define requirements: `/product-owner feature: "your feature here"`
 - Plan work: `/orchestrator goal: "your goal here"`
 - Review code: `/code-reviewer src/`
 - Attack work: `/red-team-reviewer` (adversarial audit)
