@@ -1,0 +1,274 @@
+---
+name: context-summarization
+description: Summarize agent outputs to minimize context usage. Use after each subagent call to compress results.
+allowed-tools: [Read]
+---
+
+# Context Summarization Skill
+
+Patterns for compressing agent outputs to minimize context usage in multi-agent workflows.
+
+## Quick Rules
+
+- Keep summaries < 200 tokens
+- Strip code snippets (can re-read if needed)
+- Keep: IDs, decisions, file paths, counts
+- Remove: explanations, examples, alternatives
+- Use structured format for easy parsing
+
+## When to Use This Skill
+
+- After subagent returns results
+- Before storing checkpoint data
+- When context usage exceeds 70%
+- Compressing error messages for escalation
+
+## Summary Templates
+
+### Product Owner Output
+
+**Input:** Full story with acceptance criteria, assumptions, risks
+
+**Summary Format:**
+```
+Story BD-XX: [title]
+Type: [story|feature|epic]
+Priority: [critical|high|medium|low]
+Criteria: [N] items
+Dependencies: [list or "none"]
+```
+
+**Example:**
+```
+Story BD-23: User authentication with JWT
+Type: feature
+Priority: high
+Criteria: 5 items
+Dependencies: BD-21 (database schema)
+```
+
+### Orchestrator Output
+
+**Input:** Full task breakdown with subtasks, review gates, skill references
+
+**Summary Format:**
+```
+Created [N] subtasks: [ID1], [ID2], [ID3]
+First: [ID] - [title]
+Review gates: [N]
+Estimated: [time]
+```
+
+**Example:**
+```
+Created 3 subtasks: BD-23a, BD-23b, BD-23c
+First: BD-23a - Implement JwtGuard
+Review gates: 3
+Estimated: 2-3 hours
+```
+
+### Implementer Output
+
+**Input:** Full code changes with explanations
+
+**Summary Format:**
+```
+Modified: [file1], [file2], [file3]
+Created: [new files]
+Deleted: [removed files]
+Lines: +[added] -[removed]
+Tests: [pass|fail] ([N] tests)
+```
+
+**Example:**
+```
+Modified: src/auth/auth.module.ts
+Created: src/auth/jwt.guard.ts, src/auth/jwt.guard.spec.ts
+Deleted: none
+Lines: +145 -12
+Tests: pass (8 tests)
+```
+
+### Code Reviewer Output
+
+**Input:** Full review with issues, suggestions, CLAUDE.md proposals
+
+**Summary Format:**
+```
+Decision: [PASS|FAIL|NEEDS_HUMAN]
+Issues: [N] ([blocking], [high], [medium], [low])
+Files: [reviewed files]
+Proposals: [N] CLAUDE.md updates
+```
+
+**Example:**
+```
+Decision: FAIL
+Issues: 3 (1 blocking, 2 high, 0 medium, 0 low)
+Files: jwt.guard.ts, jwt.guard.spec.ts
+Proposals: 1 CLAUDE.md update (error handling pattern)
+```
+
+### Repo Steward Output
+
+**Input:** Full commit details with messages
+
+**Summary Format:**
+```
+Commits: [N] ([short SHAs])
+Messages: [first commit message summary]
+Beads link: BD-[XX]
+Push: [pushed|not pushed]
+```
+
+**Example:**
+```
+Commits: 2 (a1b2c3d, e4f5g6h)
+Messages: "feat(auth): implement JWT guard"
+Beads link: BD-23a
+Push: not pushed
+```
+
+### Red Team Reviewer Output
+
+**Input:** Full adversarial audit with findings
+
+**Summary Format:**
+```
+Findings: [N] ([fatal], [critical], [warning], [weakness])
+Top issue: [brief description]
+Risk areas: [list]
+```
+
+**Example:**
+```
+Findings: 5 (0 fatal, 1 critical, 2 warning, 2 weakness)
+Top issue: Token expiry not validated on refresh
+Risk areas: auth, session management
+```
+
+## Compression Rules
+
+### Keep
+
+- Task/Issue IDs (BD-XX)
+- Decision outcomes (PASS/FAIL/NEEDS_HUMAN)
+- File paths (relative)
+- Counts (issues, lines, tests)
+- Status indicators
+- Blocking information
+- Error codes/types
+
+### Remove
+
+- Code snippets (can re-read files)
+- Explanations (why something was done)
+- Examples (how to fix)
+- Alternatives (other approaches)
+- Praise/encouragement
+- Verbose formatting
+- Redundant context
+
+## Error Summary Format
+
+**Input:** Full error with stack trace, context
+
+**Summary Format:**
+```
+Error: [error type]
+Location: [file:line]
+Cause: [one-line cause]
+Retry: [N]/[max]
+```
+
+**Example:**
+```
+Error: TypeCheck
+Location: jwt.guard.ts:45
+Cause: Implicit 'any' type on parameter 'token'
+Retry: 1/3
+```
+
+## Checkpoint Data Compression
+
+Compress for Beads comments (< 500 tokens):
+
+```markdown
+## Supervisor Checkpoint
+- Stage: [N]/9 ([name])
+- Progress: [X]/[Y] complete
+- Branch: [branch name]
+- Files: [comma-separated list]
+- Last: [PASS|FAIL|NEEDS_HUMAN]
+- Resume: /supervisor --continue task: BD-XX
+```
+
+**Avoid in checkpoints:**
+- Full file contents
+- Complete error traces
+- Agent conversation history
+- Implementation details
+
+## Progressive Compression
+
+When context exceeds thresholds:
+
+| Context Level | Action |
+|---------------|--------|
+| < 70% | Normal summaries (< 200 tokens) |
+| 70-85% | Aggressive compression (< 100 tokens) |
+| > 85% | Minimal checkpoint only (< 50 tokens) |
+
+**Aggressive Compression Example:**
+
+Normal:
+```
+Created 3 subtasks: BD-23a, BD-23b, BD-23c
+First: BD-23a - Implement JwtGuard
+Review gates: 3
+Estimated: 2-3 hours
+```
+
+Aggressive:
+```
+3 subtasks (BD-23a/b/c). Next: BD-23a
+```
+
+Minimal:
+```
+BD-23: 3 tasks, stage 4/9
+```
+
+## Multi-Agent Summary Chain
+
+For complex workflows with multiple agents:
+
+```
+[PO] Story BD-23: JWT auth, 5 criteria
+  ↓
+[Orch] 3 subtasks: BD-23a/b/c
+  ↓
+[Impl] BD-23a: +145 lines, tests pass
+  ↓
+[Review] PASS, 0 issues
+  ↓
+[Steward] Commit a1b2c3d, linked BD-23a
+```
+
+Total: ~50 tokens for entire chain vs ~2000+ tokens for full outputs.
+
+## Quality Checklist
+
+Before outputting summary:
+- [ ] Under 200 tokens (or threshold for context level)
+- [ ] Contains all IDs and decisions
+- [ ] File paths are relative
+- [ ] No code snippets embedded
+- [ ] Parseable by supervisor
+- [ ] Resume command included if paused
+
+## See Also
+
+- `skills/workflow-management/SKILL.md` - Checkpoint and context patterns
+- `skills/quality-checklist/SKILL.md` - Review decision criteria
+

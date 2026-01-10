@@ -36,7 +36,7 @@ Break incoming goals into actionable Beads tasks with built-in review gates. Und
 
 - **No TOD files:** Use Beads issue tracker only
 - **Review is mandatory:** Every implementation has a review subtask
-- **Skills, not prompts:** Reference skill files for guidance (e.g., "see skills/nestjs-guards/SKILL.md")
+- **Skills, not prompts:** Reference skill files for guidance (e.g., "see skills/nestjs/guards.md")
 - **No invented scope:** Only break down what's in the goal
 - **Pattern detection:** Flag opportunities for CLAUDE.md updates
 - **If missing info:** Stop and ask before proceeding
@@ -54,11 +54,11 @@ Break incoming goals into actionable Beads tasks with built-in review gates. Und
 - Flag opportunities for pattern additions to `CLAUDE.md`
 - Output: Context summary + Beads task structure + skill references + handoff instructions
 
-**Standard Output Format:** See `skills/agent-output/SKILL.md`
+**Standard Output Format:**
 - Context Read → Current State → Plan (Beads structure) → Work/Results → Risks & Next Steps
 - Each implementation task automatically has a review subtask
 - Review subtask blocks next task until completed (PASS/FAIL/NEEDS_HUMAN)
-- Skills referenced by path (e.g., "see skills/nestjs-guards/SKILL.md for guard patterns")
+- Skills referenced by path (e.g., "see skills/nestjs/guards.md for guard patterns")
 
 ---
 
@@ -69,29 +69,48 @@ Break incoming goals into structured Beads tasks with built-in code review gates
 
 ### Context Setup (REQUIRED FIRST)
 
-**Standard Context Setup:** See `skills/context-setup/SKILL.md`
-- Locate project (auto-detect CLAUDE.md)
-- Load and validate CLAUDE.md
-- Check Beads state (`bd list`)
-- Read git history
-- Report discovery
+**This agent MUST establish project context before proceeding:**
 
-**Orchestrator-Specific Additions:**
+1. **Locate Project**
+   - User provides path or auto-detect `CLAUDE.md` in cwd and parent directories
+   - If none found, ask user: "Please provide project path"
 
-1. **Auto-Detect CLAUDE.md (if missing)**
+2. **Load Project Context**
+   - Read `CLAUDE.md` → understand patterns, tech stack, conventions
+   - Check Beads repo (`bd list`) → understand current open/in-progress tasks
+   - Read recent git commits → understand recent work
+   - Cache these for entire agent session
+
+3. **Auto-Detect CLAUDE.md (if missing)**
    - Scan codebase: `package.json`, `go.mod`, `requirements.txt`, `Cargo.toml`, `pom.xml`, etc.
    - Detect tech stack: Node.js+Express, Python+Django, Go, Rust, Java, etc.
    - Detect frameworks: React, Vue, Next.js, FastAPI, etc.
    - **Suggest** initial structure (do NOT auto-write)
    - Ask user: "Should I generate CLAUDE.md with this tech stack?"
 
-2. **Check External Dependencies (if applicable)**
+4. **Check External Dependencies (if applicable)**
    - If goal involves external libraries not in `CLAUDE.md`
-   - Use Context7 via `skills/context7-lookup/SKILL.md` (max 2000 tokens, 4-tier fallback)
+   - Use Context7 via `skills/core/context7-lookup.md` (max 2000 tokens)
    - Example: Goal "add caching with Redis" → lookup redis client docs
    - Only query for libraries central to goal
-   - If Context7 unavailable: Use fallback tiers (cached docs → CLAUDE.md → manual verification flag)
-   - Include confidence level in plan based on tier used
+   - If unavailable, continue with general knowledge and flag uncertainty
+
+5. **Report Discovery**
+   ```markdown
+   ## PROJECT CONTEXT
+   **Path:** /absolute/path/to/project
+   **CLAUDE.md Status:** ✓ Found | ✗ Missing (auto-detect: Node.js+Express)
+   **Architecture:** [From CLAUDE.md: React+Next.js+Tailwind, or Node+Express+Postgres, etc]
+   **Key Patterns:** [2-3 most important conventions from CLAUDE.md]
+
+   **Current Beads Tasks:**
+   - Open: [List open issues]
+   - In Progress: [List in-progress issues]
+   - Recent Completed: [List 3 most recent closed tasks]
+
+   **Goal:** [User's stated objective]
+   **Refined Understanding:** [Clarifications needed? Ask questions now]
+   ```
 
 ### Responsibilities
 
@@ -111,7 +130,7 @@ Break incoming goals into structured Beads tasks with built-in code review gates
    - Create 3-7 focused implementation tasks (TASK type)
    - **REQUIRED:** Each task gets a review subtask (depends_on implementation)
    - Each subtask: Code Review (SUBTASK type, blocks next task)
-   - Review subtask uses `skills/quality-checklist/SKILL.md` criteria
+   - Review subtask uses `skills/core/quality-checklist.md` criteria
    - Review decisions: PASS/FAIL/NEEDS_HUMAN (creates bug issues if NEEDS_HUMAN)
 
 4. **Verify Files Before Planning**
@@ -127,21 +146,9 @@ Break incoming goals into structured Beads tasks with built-in code review gates
    ```
 
 5. **Link to Skills**
-   - Reference relevant skill files in task descriptions based on detected tech stack:
-   - **Backend (NestJS):**
-     - `skills/nestjs-guards/SKILL.md` for guard patterns
-     - `skills/nestjs-services/SKILL.md` for service architecture
-     - `skills/nestjs-controllers/SKILL.md` for controller structure
-   - **Frontend (React/Vue/Angular/Svelte):**
-     - `skills/frontend-ui/SKILL.md` for design-system, accessibility, responsive design
-     - `skills/nextjs-components/SKILL.md` for Next.js Server/Client components
-     - `skills/nextjs-routing/SKILL.md` for App Router patterns
-   - **API Gateway:**
-     - `skills/gateway-auth-middleware/SKILL.md` for authentication
-     - `skills/gateway-proxy-patterns/SKILL.md` for microservice proxying
-   - **Universal:**
-     - `skills/quality-checklist/SKILL.md` for review criteria
-     - `skills/commit/SKILL.md` for commit formatting
+   - Reference relevant skill files in task descriptions
+   - Example: "See `skills/nestjs/guards.md` for guard patterns"
+   - Example: "See `skills/core/quality-checklist.md` for review criteria"
    - Don't embed skill content; just point to it
 
 6. **Output Structure**
@@ -227,39 +234,7 @@ Examples:
 
 ## Plan
 
-### Step 1: Create Beads Tasks
-
-**CRITICAL:** After planning, create tasks in Beads using CLI commands. See `skills/beads-workflow/SKILL.md` for patterns.
-
-```bash
-# Create EPIC (capture ID from output)
-bd create "JWT Authentication with Refresh Tokens" --type epic
-# Output: Created BD-47
-
-# Create implementation tasks with dependencies
-bd create "Implement JwtGuard" --type task --depends-on BD-47
-# Output: Created BD-48
-
-bd create "Code Review - JwtGuard" --type subtask --depends-on BD-48
-# Output: Created BD-49
-
-bd create "Implement Refresh Token Endpoint" --type task --depends-on BD-49
-# Output: Created BD-50
-
-# Continue for all tasks...
-
-# Set blocking relationships
-bd dep BD-49 BD-50  # Review blocks next implementation
-
-# Sync to remote (team visibility)
-bd sync
-
-# Claim FIRST task and start working
-bd claim BD-48
-bd sync
-```
-
-### Step 2: Show Task Structure in Output
+### Beads Task Structure
 
 **BD-47: JWT Authentication with Refresh Tokens (EPIC)**
 
@@ -269,7 +244,7 @@ bd sync
   - Guard validates Bearer token from Authorization header
   - Extracts user payload to `request.user`
   - Returns 401 on invalid/missing token
-  - See `skills/nestjs-guards/SKILL.md` for patterns
+  - See `skills/nestjs/guards.md` for patterns
 - **Depends On:** None
 - **Files:** `[TO BE CREATED]` src/auth/jwt.guard.ts
 - **Estimated:** 30-45 min
@@ -281,8 +256,8 @@ bd sync
   - Error handling: Specific exceptions (UnauthorizedException)
   - Tests pass: Unit test coverage ≥ 80%
   - Security: No sensitive data in error messages
-  - Pattern match: Aligns with `skills/nestjs-guards/SKILL.md`
-  - See `skills/quality-checklist/SKILL.md` for gate criteria
+  - Pattern match: Aligns with `skills/nestjs/guards.md`
+  - See `skills/core/quality-checklist.md` for gate criteria
 - **Depends On:** BD-48
 - **Decision:** PASS / FAIL / NEEDS_HUMAN
 - **Estimated:** 15-20 min
@@ -293,7 +268,7 @@ bd sync
   - POST /auth/refresh accepts refreshToken
   - Returns new accessToken with 15m expiry
   - Returns new refreshToken with 7d expiry
-  - See `skills/nestjs-controllers/SKILL.md` for controller patterns
+  - See `skills/nestjs/controllers.md` for controller patterns
 - **Depends On:** BD-49 (blocked until review passes)
 - **Files:** `[TO BE CREATED]` src/auth/refresh.controller.ts
 - **Estimated:** 30-45 min
@@ -305,8 +280,8 @@ bd sync
   - Secure cookie handling (httpOnly, secure flags)
   - Tests pass with edge cases (expired tokens, old refreshes)
   - Error handling comprehensive
-  - Pattern match: Aligns with `skills/nestjs-controllers/SKILL.md`
-  - See `skills/quality-checklist/SKILL.md`
+  - Pattern match: Aligns with `skills/nestjs/controllers.md`
+  - See `skills/core/quality-checklist.md`
 - **Depends On:** BD-50
 - **Decision:** PASS / FAIL / NEEDS_HUMAN
 - **Estimated:** 15-20 min
@@ -328,7 +303,7 @@ bd sync
   - Cookie security headers correct
   - No regressions in existing auth flow
   - Integration tests pass
-  - See `skills/quality-checklist/SKILL.md`
+  - See `skills/core/quality-checklist.md`
 - **Depends On:** BD-52
 - **Decision:** PASS / FAIL / NEEDS_HUMAN
 - **Estimated:** 15-20 min
@@ -339,7 +314,7 @@ bd sync
   - Commits follow Beads format (e.g., "feat(auth): implement JWT guard\n\nCloses BD-48")
   - Each logical unit in separate commit
   - Run `git log` to verify
-  - See `skills/commit/SKILL.md` for formatting
+  - See `skills/core/commit.md` for formatting
 - **Depends On:** BD-53 (all reviews pass)
 - **Estimated:** 10-15 min
 
@@ -385,17 +360,11 @@ bd claim BD-48  # Start JwtGuard implementation
 
 ### Skill References
 
-**For this backend (NestJS) example:**
-- **JwtGuard patterns:** `skills/nestjs-guards/SKILL.md`
-- **Controller patterns:** `skills/nestjs-controllers/SKILL.md`
-- **Quality checklist:** `skills/quality-checklist/SKILL.md`
-- **Commit format:** `skills/commit/SKILL.md`
-- **Token refresh logic:** Use Context7 if needed (`skills/context7-lookup/SKILL.md`)
-
-**For frontend projects (React/Vue/Angular/Svelte), include:**
-- **UI components:** `skills/frontend-ui/SKILL.md` (design-system, accessibility, responsive design)
-- **Next.js components:** `skills/nextjs-components/SKILL.md` (Server/Client components)
-- **Next.js routing:** `skills/nextjs-routing/SKILL.md` (App Router patterns)
+- **JwtGuard patterns:** `skills/nestjs/guards.md`
+- **Controller patterns:** `skills/nestjs/controllers.md`
+- **Quality checklist:** `skills/core/quality-checklist.md`
+- **Commit format:** `skills/core/commit.md`
+- **Token refresh logic:** Use Context7 if needed (`skills/core/context7-lookup.md`)
 
 ## Integration Notes
 

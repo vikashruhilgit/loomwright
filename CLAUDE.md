@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**AI Agent Manager** is a reusable system that provides intelligent agents for software development workflows. It integrates with Claude Code as a plugin with 4 specialized agents that automate planning, code review, commit management, and adversarial security audits.
+**AI Agent Manager** is a reusable system that provides intelligent agents for software development workflows. It integrates with Claude Code as a plugin with 6 specialized agents that automate autonomous workflows, requirements definition, planning, code review, commit management, and adversarial security audits.
 
 The system enables agents to collaborate on any project type using **Beads issue tracker** for task management and `CLAUDE.md` for codebase knowledge that persists between work sessions.
 
@@ -51,9 +51,23 @@ The project is structured as a **Claude Code plugin marketplace**:
 - Review subtask blocks next implementation task
 - Review decisions: PASS (proceed), FAIL (fix and re-review), NEEDS_HUMAN (creates bug issues)
 
-### The 4 Agents
+### The 6 Agents
 
 Each agent is a Markdown prompt file (`agents/[name].md`):
+
+#### **Supervisor** (`/supervisor`)
+- **Purpose:** Autonomously manage complete development workflow from task pickup to PR creation
+- **When to use:** Full automation of task completion
+- **Command:** `/supervisor` or `/supervisor task: BD-XX`
+- **Workflow:** Picks up ready tasks → orchestrates agents → creates PRs → loops
+- **Outputs:** Completed tasks with PRs and Beads linking
+
+#### **Product Owner** (`/product-owner`)
+- **Purpose:** Translate business problems into user stories with acceptance criteria
+- **When to use:** New feature, vague requirements
+- **Command:** `/product-owner feature: "your feature"` or `/product-owner problem: "issue to solve"`
+- **Workflow:** Reads domain context → runs discovery → writes user stories
+- **Outputs:** Beads stories with acceptance criteria (Given/When/Then)
 
 #### **Orchestrator** (`/orchestrator`)
 - **Purpose:** Break goals into Beads tasks with review gates
@@ -155,26 +169,34 @@ your-project/
 ```
 ai-agent-manager/
 ├── ai-agent-manager-plugin/          # The Claude Code plugin
-│   ├── agents/                       # Agent markdown prompts
-│   │   ├── orchestrator.md           # Orchestrator agent
-│   │   ├── code-reviewer.md          # Code Reviewer agent
-│   │   ├── repo-steward.md           # Repo Steward agent
-│   │   └── red-team-reviewer.md      # Red Team Reviewer agent
+│   ├── agents/                       # Agent markdown prompts (6 agents)
+│   │   ├── supervisor.md             # Supervisor agent (autonomous workflow)
+│   │   ├── product-owner.md          # Product Owner agent (requirements)
+│   │   ├── orchestrator.md           # Orchestrator agent (task planning)
+│   │   ├── code-reviewer.md          # Code Reviewer agent (quality gates)
+│   │   ├── repo-steward.md           # Repo Steward agent (commits)
+│   │   └── red-team-reviewer.md      # Red Team Reviewer agent (adversarial)
 │   ├── commands/                     # Slash commands for Claude Code
+│   │   ├── supervisor.md             # /supervisor command
+│   │   ├── product-owner.md          # /product-owner command
 │   │   ├── orchestrator.md           # /orchestrator command
 │   │   ├── code-reviewer.md          # /code-reviewer command
 │   │   ├── repo-steward.md           # /repo-steward command
 │   │   ├── red-team-reviewer.md      # /red-team-reviewer command
 │   │   └── agent-help.md             # /agent-help command
-│   ├── skills/                       # Skill files for guidance
+│   ├── skills/                       # Skill files for guidance (30 skills)
+│   │   ├── workflow-management/      # Autonomous workflow patterns
+│   │   ├── context-summarization/    # Output compression for context
 │   │   ├── commit/                   # Conventional commits
 │   │   ├── quality-checklist/        # Review gate criteria
 │   │   ├── pattern-detector/         # CLAUDE.md proposals
-│   │   ├── nestjs-*/                 # NestJS patterns
-│   │   ├── nextjs-*/                 # Next.js patterns
-│   │   └── gateway-*/                # API Gateway patterns
+│   │   ├── nestjs-*/                 # NestJS patterns (6 skills)
+│   │   ├── nextjs-*/                 # Next.js patterns (5 skills)
+│   │   ├── gateway-*/                # API Gateway patterns (4 skills)
+│   │   ├── nestjs-typeorm/           # TypeORM integration
+│   │   └── mysql/                    # MySQL patterns
 │   └── .claude-plugin/
-│       └── plugin.json               # Plugin metadata
+│       └── plugin.json               # Plugin metadata (v2.2.0)
 │
 ├── .claude-plugin/
 │   ├── marketplace.json              # Marketplace definition
@@ -319,7 +341,10 @@ Before an agent completes work:
 ### Plugin Metadata
 
 - **Plugin Name:** `ai-agent-manager-plugin`
-- **Version:** 1.0.0
+- **Version:** 2.2.0
+- **Description:** Beads-integrated AI agents with focused skills architecture
+- **Agents:** 6 (Supervisor, Product Owner, Orchestrator, Code Reviewer, Repo Steward, Red Team Reviewer)
+- **Skills:** 30 reusable skill files
 - **Author:** vikash ruhil
 - **License:** MIT
 

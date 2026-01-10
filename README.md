@@ -1,10 +1,12 @@
 # AI Agent Manager
 
-A system for AI agents to collaborate on software projects. Five specialized agents (Product Owner, Orchestrator, Code Reviewer, Repo Steward, Red Team Reviewer) automate requirements, planning, review, commits, and adversarial audits.
+A system for AI agents to collaborate on software projects. Six specialized agents (Supervisor, Product Owner, Orchestrator, Code Reviewer, Repo Steward, Red Team Reviewer) automate workflows, requirements, planning, review, commits, and adversarial audits.
 
 **Key Idea:** Agents use **Beads issue tracker** for task management. Your projects need only a `CLAUDE.md` file for codebase knowledge. Agents read context, do work, create Beads tasks. Repeatable across any project.
 
 > **Install the plugin and run slash commands instead of manually managing agents.**
+>
+> **NEW:** Use `/supervisor` for fully autonomous workflow — picks up tasks, runs agents, creates PRs automatically.
 
 ---
 
@@ -57,17 +59,27 @@ Orchestrator will:
 
 ---
 
-## The 5 Agents
+## The 6 Agents
 
 | Agent | Command | Purpose | When |
 |-------|---------|---------|------|
+| **Supervisor** | `/supervisor` | Autonomous workflow → task pickup → agents → PR → next task | Full automation |
 | **Product Owner** | `/product-owner feature: "..."` | Define requirements → create user stories with acceptance criteria | New feature, vague requirements |
 | **Orchestrator** | `/orchestrator goal: "..."` | Plan work → create Beads tasks with review gates | Starting implementation |
 | **Code Reviewer** | `/code-reviewer src/` | Review code → output PASS/FAIL/NEEDS_HUMAN | After writing code |
 | **Repo Steward** | `/repo-steward` | Stage changes → create commits → link to Beads | Ready to commit |
 | **Red Team Reviewer** | `/red-team-reviewer` | Adversarial audit → find production failures | Pre-launch, security |
 
-**How they work together:**
+**Autonomous Workflow (Supervisor):**
+```
+/supervisor
+    ↓
+Task Pickup (bd ready) → Branch Creation → Agent Orchestration → PR Creation → Next Task
+    ↓
+Loops until no more ready tasks
+```
+
+**Manual Workflow:**
 ```
 Product Owner → Create Beads stories (user requirements)
     ↓
@@ -161,11 +173,12 @@ See `AGENT_GUIDELINES.md` for detailed standards per language.
 
 ### Workflow Tips
 
-1. **Start with Orchestrator:** Always run `/orchestrator goal: "..."` when starting new work
-2. **Claim tasks:** Use `bd claim BD-XX` before starting work
-3. **Review iteratively:** Run `/code-reviewer` multiple times as you fix issues
-4. **Review gates:** Wait for PASS before moving to next task
-5. **Close tasks:** Use `bd close BD-XX` when complete
+1. **Use Supervisor for automation:** Run `/supervisor` for fully autonomous task completion
+2. **Or start with Orchestrator:** Run `/orchestrator goal: "..."` for manual control
+3. **Claim tasks:** Use `bd claim BD-XX` before starting work (manual workflow)
+4. **Review iteratively:** Run `/code-reviewer` multiple times as you fix issues
+5. **Review gates:** Wait for PASS before moving to next task
+6. **Close tasks:** Use `bd close BD-XX` when complete
 
 ### CLAUDE.md Proposal Workflow
 
@@ -253,7 +266,7 @@ Claude Code caches plugin contents. After restructuring skills (e.g., from `skil
 
 4. Restart Claude Code (close and reopen entirely)
 
-5. Verify with `/skills` — should show all 17 skills under "Plugin skills"
+5. Verify with `/skills` — should show all 30 skills under "Plugin skills"
 
 ---
 

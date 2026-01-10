@@ -20,7 +20,12 @@ Shows all available agent commands and quick usage examples.
 
 ## Quick Start
 
-The AI Agent Manager plugin provides **5 agents** for your development workflow:
+The AI Agent Manager plugin provides **6 agents** for your development workflow:
+
+**Autonomous Workflow (1 agent):**
+```
+/supervisor  →  Picks up tasks → Runs agents → Creates PRs → Loops
+```
 
 **Requirements Pipeline (1 agent):**
 ```
@@ -37,9 +42,14 @@ The AI Agent Manager plugin provides **5 agents** for your development workflow:
 4. Attack (Red Team Reviewer)  →  Finds real-world failures before production
 ```
 
-**Full Workflow:**
+**Full Manual Workflow:**
 ```
 /product-owner → User Stories → /orchestrator → Tasks → Code → /code-reviewer → /repo-steward
+```
+
+**Full Autonomous Workflow:**
+```
+/supervisor  →  Automatically: Task → Branch → Agents → PR → Next Task
 ```
 
 **Task Management:** Beads issue tracker (replaces TODO.md/memory files)
@@ -47,6 +57,97 @@ The AI Agent Manager plugin provides **5 agents** for your development workflow:
 ---
 
 ## Command Reference
+
+### 🤖 /supervisor — Autonomous Workflow Conductor
+
+**Purpose:** Autonomously manage the complete development workflow from task pickup to PR creation
+
+**Usage:**
+```
+/supervisor                         # Pick up next ready task and run workflow
+/supervisor task: BD-XX             # Work on specific task
+/supervisor --dry-run               # Preview workflow without executing
+/supervisor --continue              # Resume from last checkpoint
+```
+
+**What it does:**
+- Picks up highest priority ready task from Beads
+- Creates feature branch (`feature/BD-XX-description`)
+- Orchestrates specialized agents in sequence:
+  - Product Owner (if requirements unclear)
+  - Orchestrator (task planning)
+  - Implementer (code changes)
+  - Code Reviewer (review gates)
+  - Repo Steward (commits)
+- Creates Pull Request via GitHub CLI
+- Links PR to Beads task
+- Closes task and moves to next
+
+**9-Stage Workflow:**
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  1. Task Selection  →  2. Branch Setup  →  3. Requirements     │
+│         ↓                                                       │
+│  4. Task Planning  →  5. Implementation Loop  →  6. Commits    │
+│         ↓                                                       │
+│  7. Pull Request  →  8. Task Completion  →  9. Next Task       │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Review Gates:**
+- **PASS:** Continue to next subtask or stage
+- **FAIL:** Fix issues, re-review (max 3 attempts)
+- **NEEDS_HUMAN:** Pause, save checkpoint, exit with resume instructions
+
+**Context Management:**
+- Subagents run in isolation with their own context
+- Only summaries return to supervisor (< 200 tokens each)
+- Checkpoints saved to Beads for cross-session resume
+- At > 85% context: checkpoint and graceful exit
+
+**Example Session:**
+```
+$ /supervisor
+
+### Stage 1: Task Selection
+- Selected: BD-15 (high priority)
+
+### Stage 2: Branch Setup
+- Branch: feature/BD-15-user-auth
+
+### Stage 5: Implementation
+- BD-15a: Review: PASS ✓
+- BD-15b: Review: PASS ✓
+- BD-15c: Review: PASS ✓
+
+### Stage 7: Pull Request
+- PR: #42
+- URL: https://github.com/org/repo/pull/42
+
+### Stage 9: Next Task
+- Continuing with BD-18...
+```
+
+**Resume from Checkpoint:**
+```bash
+# If workflow paused:
+/supervisor --continue task: BD-15
+```
+
+**When to Use:**
+- Autonomous task completion
+- When you want end-to-end workflow automation
+- Processing multiple ready tasks
+- When you want PRs created automatically
+
+**When NOT to Use:**
+- When you want manual control over each step
+- For single code reviews → Use `/code-reviewer`
+- For planning only → Use `/orchestrator`
+
+**Learn More:** `/supervisor --help`
+
+---
 
 ### 0️⃣ /product-owner — Define Requirements
 
@@ -469,18 +570,22 @@ ai-agent-manager-plugin/
 ├── .claude-plugin/
 │   └── plugin.json          # Plugin metadata
 ├── commands/                # Slash commands
+│   ├── supervisor.md        # Autonomous workflow conductor
 │   ├── orchestrator.md
 │   ├── code-reviewer.md
 │   ├── repo-steward.md
 │   ├── red-team-reviewer.md # Adversarial auditor
 │   └── agent-help.md
 ├── agents/                  # Agent implementations
+│   ├── supervisor.md        # Autonomous workflow conductor
 │   ├── orchestrator.md
 │   ├── code-reviewer.md
 │   ├── repo-steward.md
 │   ├── red-team-reviewer.md # Has own adversarial preamble
 │   └── prompts.md           # Shared preamble
 └── skills/                  # Skill files
+    ├── workflow-management/ # Supervisor patterns
+    ├── context-summarization/
     ├── commit/
     ├── quality-checklist/
     ├── nestjs-*/
@@ -503,6 +608,7 @@ your-project/
 
 ### Need Help with a Specific Agent?
 ```
+/supervisor --help         # Help for Supervisor (autonomous workflow)
 /orchestrator --help       # Help for Orchestrator
 /code-reviewer --help      # Help for Code Reviewer
 /repo-steward --help       # Help for Repo Steward
@@ -526,6 +632,7 @@ https://github.com/your-org/ai-agent-manager
 ## Keyboard Shortcuts
 
 These are Claude Code slash commands, so you can type them directly:
+- Type `/super` + Tab → Auto-completes to `/supervisor`
 - Type `/orchestr` + Tab → Auto-completes to `/orchestrator`
 - Type `/code-r` + Tab → Auto-completes to `/code-reviewer`
 - Type `/repo-s` + Tab → Auto-completes to `/repo-steward`
@@ -534,6 +641,12 @@ These are Claude Code slash commands, so you can type them directly:
 ---
 
 ## Summary
+
+### Autonomous Workflow (End-to-End Automation)
+
+| Agent | Purpose | When | Input | Output |
+|-------|---------|------|-------|--------|
+| **Supervisor** | Full workflow automation | Autonomous task completion | Ready tasks | Completed tasks with PRs |
 
 ### Requirements Pipeline (Define What to Build)
 
@@ -558,6 +671,7 @@ These are Claude Code slash commands, so you can type them directly:
 ---
 
 **Ready to get started?**
+- Autonomous workflow: `/supervisor` (picks up tasks, runs agents, creates PRs)
 - Define requirements: `/product-owner feature: "your feature here"`
 - Plan work: `/orchestrator goal: "your goal here"`
 - Review code: `/code-reviewer src/`
