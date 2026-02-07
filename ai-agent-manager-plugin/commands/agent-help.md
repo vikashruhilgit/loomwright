@@ -20,7 +20,7 @@ Shows all available agent commands and quick usage examples.
 
 ## Quick Start
 
-The AI Agent Manager plugin provides **8 agent roles** for your development workflow:
+The AI Agent Manager plugin provides **7 agent roles** for your development workflow:
 
 **Autonomous Workflow (3 agent roles):**
 ```
@@ -34,9 +34,9 @@ The AI Agent Manager plugin provides **8 agent roles** for your development work
 0. Discover (Product Owner)  →  User stories with acceptance criteria
 ```
 
-**Constructive Pipeline (3 agents):**
+**Constructive Pipeline (2 agents + /commit skill):**
 ```
-1. Plan (Orchestrator)  →  2. Review (Code Reviewer)  →  3. Commit (Repo Steward)
+1. Plan (Orchestrator)  →  2. Review (Code Reviewer)  →  3. Commit (/commit skill)
 ```
 
 **Independent Auditor (1 agent):**
@@ -46,7 +46,7 @@ The AI Agent Manager plugin provides **8 agent roles** for your development work
 
 **Full Manual Workflow:**
 ```
-/product-owner → User Stories → /orchestrator → Tasks → Code → /code-reviewer → /repo-steward
+/product-owner → User Stories → /orchestrator → Tasks → Code → /code-reviewer → /commit
 ```
 
 **Full Autonomous Workflow (Parallel):**
@@ -282,27 +282,27 @@ $ /supervisor
 
 ---
 
-### 3️⃣ /repo-steward — Create Commits
+### 3️⃣ /commit — Create Commits
 
-**Purpose:** Stage changes and create conventional commit messages
+**Purpose:** Stage changes and create conventional commit messages with Beads linking
 
 **Usage:**
 ```
-/repo-steward                    # Stage and commit (no push)
-/repo-steward --project /path    # Explicit project path
-/repo-steward --push             # Stage, commit, and push to remote
+/commit                          # Stage and commit with Beads linking
 ```
 
 **What it does:**
 - Groups changes into logical commits
 - Writes conventional commit messages (feat, fix, test, etc)
-- Links commits to Beads tasks
+- Links commits to Beads tasks (`Closes BD-XX`)
 - Verifies repo cleanliness (no debug code, secrets, etc)
-- Optionally pushes to remote
 
 **Example Commits:**
 ```
 feat(theme): add dark mode toggle to Settings
+
+Closes BD-46
+
 test(theme): add dark mode tests (89% coverage)
 security(hooks): validate localStorage input
 ```
@@ -311,26 +311,10 @@ security(hooks): validate localStorage input
 - When you're done coding (after code review)
 - At the end of each task
 - When you want to organize commits
-- Before pushing to remote
-
-**Learn More:** `/repo-steward --help`
 
 ---
 
-### 4️⃣ /summarizer — Summarize Work (Deprecated)
-
-> **Note:** The Summarizer agent has been deprecated in favor of Beads issue tracker. Use `bd close` to close completed tasks and `bd comment` to add notes.
-
-**Previous Purpose:** Update memory files, create session logs
-
-**Current Workflow:**
-- Close completed tasks: `bd close BD-XX`
-- Add comments: `bd comment BD-XX "Work summary"`
-- Pattern proposals: Add to Beads task comments for CLAUDE.md review
-
----
-
-### 5️⃣ /red-team-reviewer — Attack Your Work (Adversarial)
+### 4️⃣ /red-team-reviewer — Attack Your Work (Adversarial)
 
 **Purpose:** Break, stress-test, and ruthlessly critique work under real-world conditions
 
@@ -491,6 +475,58 @@ cd /path/to/pull-request-repo
 
 ## Key Concepts
 
+### Agent Frontmatter (Native Configuration)
+
+Every agent has YAML frontmatter that configures its behavior automatically:
+
+| Setting | What It Does | Example |
+|---------|-------------|---------|
+| `name` | Agent identifier | `ai-agent-manager-plugin:supervisor` |
+| `tools` | Restricts available tools | Workers can't spawn subagents (no Task tool) |
+| `model` | Sets model for the agent | Context-Keeper uses haiku (fast, cheap) |
+| `maxTurns` | Limits API round-trips | Context-Keeper: 3 turns max |
+| `memory: project` | Persistent memory across sessions | Code Reviewer remembers past patterns |
+| `skills` | Pre-loads skill content | Supervisor gets workflow-management pre-injected |
+
+**Agent Model Assignments:**
+| Agent | Model | Why |
+|-------|-------|-----|
+| Supervisor | opus | Strongest reasoning for orchestration |
+| Context-Keeper | haiku | Simple state read/write |
+| Worker | inherit | Matches user's choice |
+| Code Reviewer | inherit | Matches user's choice + memory |
+| Red Team Reviewer | inherit | Matches user's choice + memory |
+
+**Agents with Persistent Memory:**
+- Code Reviewer — remembers past review patterns, recurring issues
+- Red Team Reviewer — remembers past vulnerabilities, attack patterns
+- Product Owner — remembers domain context, terminology, stakeholder preferences
+
+### Plugin Hooks (Quality Gates)
+
+The plugin includes `hooks/hooks.json` that automatically enforce quality:
+
+| Hook | When It Fires | What It Checks |
+|------|---------------|----------------|
+| **SubagentStop (worker)** | Worker agent completes | WORKER_RESULT block present, files modified, no unresolved errors |
+| **TaskCompleted** | Any task marked complete | Task genuinely done, not abandoned or skipped |
+
+These hooks run automatically — no configuration needed. They use fast prompt-based validation (haiku model, 30s timeout).
+
+### Agent Teams (Experimental)
+
+For research or exploration tasks, Claude Code Agent Teams provides native multi-agent coordination:
+
+```bash
+# Enable Agent Teams
+export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
+```
+
+**Best for:** Research across multiple areas, competing hypotheses, cross-layer changes.
+**Not for:** Sequential tasks, same-file edits (use Supervisor v3 with git worktrees instead).
+
+See `skills/agent-teams/SKILL.md` for full patterns and decision matrix.
+
 ### Project Context
 Each agent automatically finds your project by looking for `CLAUDE.md`:
 - Starts in current directory
@@ -532,10 +568,10 @@ You don't have to follow strict order. For example:
 # Review changes before code-reviewer
 git diff src/
 
-# See commits after repo-steward
+# See commits after /commit
 git log --oneline -5
 
-# Push after repo-steward
+# Push after /commit
 git push
 ```
 
@@ -587,25 +623,26 @@ bd close BD-XX
 ```
 ai-agent-manager-plugin/
 ├── .claude-plugin/
-│   └── plugin.json          # Plugin metadata (v3.0.0)
+│   └── plugin.json          # Plugin metadata (v3.1.0)
 ├── commands/                # Slash commands
 │   ├── supervisor.md        # Parallel orchestrator (v3)
 │   ├── orchestrator.md
 │   ├── code-reviewer.md
-│   ├── repo-steward.md
 │   ├── red-team-reviewer.md # Adversarial auditor
 │   └── agent-help.md
-├── agents/                  # Agent implementations (8 roles)
+├── agents/                  # Agent implementations (7 roles)
 │   ├── supervisor.md        # Parallel orchestrator (v3)
 │   ├── context-keeper.md    # State management agent
 │   ├── worker.md            # Implementation worker
 │   ├── product-owner.md     # Requirements definition
 │   ├── orchestrator.md
 │   ├── code-reviewer.md
-│   ├── repo-steward.md
 │   ├── red-team-reviewer.md # Has own adversarial preamble
 │   └── prompts.md           # Shared preamble
-└── skills/                  # Skill files (32 skills)
+├── hooks/                   # Plugin quality gate hooks
+│   └── hooks.json           # SubagentStop + TaskCompleted validation
+└── skills/                  # Skill files (33 skills)
+    ├── agent-teams/         # Agent Teams patterns (experimental)
     ├── async-orchestration/ # Parallel dispatch patterns
     ├── state-management/    # State file schema
     ├── workflow-management/  # Supervisor workflow patterns
@@ -638,7 +675,6 @@ your-project/
 /supervisor --help         # Help for Supervisor (autonomous workflow)
 /orchestrator --help       # Help for Orchestrator
 /code-reviewer --help      # Help for Code Reviewer
-/repo-steward --help       # Help for Repo Steward
 /red-team-reviewer --help  # Help for Red Team Reviewer
 ```
 
@@ -662,8 +698,8 @@ These are Claude Code slash commands, so you can type them directly:
 - Type `/super` + Tab → Auto-completes to `/supervisor`
 - Type `/orchestr` + Tab → Auto-completes to `/orchestrator`
 - Type `/code-r` + Tab → Auto-completes to `/code-reviewer`
-- Type `/repo-s` + Tab → Auto-completes to `/repo-steward`
 - Type `/red-t` + Tab → Auto-completes to `/red-team-reviewer`
+- Type `/comm` + Tab → Auto-completes to `/commit`
 
 ---
 
@@ -689,7 +725,7 @@ These are Claude Code slash commands, so you can type them directly:
 |-------|---------|------|-------|--------|
 | **Orchestrator** | Plan work | Start of task | Goal or story | Beads tasks with review gates |
 | **Code Reviewer** | Review code | During development | Files/diff | PASS/FAIL/NEEDS_HUMAN + issues |
-| **Repo Steward** | Create commits | When done coding | Staged changes | Conventional commits + Beads links |
+| **/commit** (skill) | Create commits | When done coding | Staged changes | Conventional commits + Beads links |
 
 ### Independent Auditor (Break Safely)
 

@@ -7,8 +7,8 @@
     {
       "name": "ai-agent-manager-plugin",
       "source": "./ai-agent-manager-plugin",
-      "description": "5 specialized agents: Orchestrator (plan), Code Reviewer (quality), Repo Steward (commits), Summarizer (memory), and Red Team Reviewer (adversarial audits). Build correctly and break safely.",
-      "version": "2.0.0",
+      "description": "7 agent roles (5 user-facing + 2 internal): Supervisor (parallel orchestration), Orchestrator (plan), Code Reviewer (quality), Red Team Reviewer (adversarial audits), Product Owner (requirements), plus /commit skill. Build correctly and break safely.",
+      "version": "3.1.0",
       "author": {
         "name": "vikash ruhil"
       },

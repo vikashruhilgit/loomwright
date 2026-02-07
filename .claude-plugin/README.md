@@ -154,7 +154,7 @@ bd claim BD-47                           # Claim review subtask
 
 ### /commit
 
-Create conventional commits with Beads linking (replaces /repo-steward).
+Create conventional commits with Beads linking.
 
 ```bash
 /commit  # Stage changes and create commits referencing Beads tasks
@@ -468,9 +468,7 @@ CODE REVIEWER: Check patterns, flag issues
   ↓
 YOU: Fix issues from review
   ↓
-REPO STEWARD: Create commits, update TODO
-  ↓
-SUMMARIZER: Log work, propose patterns
+/commit: Create conventional commits with Beads linking
   ↓
 YOU: Approve pattern proposals
   ↓
@@ -481,10 +479,9 @@ DONE: Ready for next work
 
 Agents are self-contained:
 
-- **Orchestrator** → Reads CLAUDE.md, TODO.md, memory/context.md
+- **Orchestrator** → Reads CLAUDE.md, Beads state, git history
 - **Code Reviewer** → Reads CLAUDE.md, git diff, your code
-- **Repo Steward** → Reads git staging, CLAUDE.md, TODO.md
-- **Summarizer** → Reads git log, CLAUDE.md, memory/context.md
+- **Red Team Reviewer** → Reads CLAUDE.md, code files, Context7 docs
 
 Each agent:
 - Auto-detects project
@@ -687,7 +684,7 @@ git add src/
 /code-reviewer
 ```
 
-### "No commits created" (Repo Steward)
+### "No commits created" (/commit)
 
 **Cause:** No staged changes
 
@@ -695,17 +692,8 @@ git add src/
 ```bash
 # Stage files first
 git add src/components/DarkMode.tsx
-/repo-steward
+/commit
 ```
-
-### "Session log not created" (Summarizer)
-
-**Cause:** No commits since last session
-
-**Solution:**
-- Make commits first
-- Then run summarizer
-- Or check memory/session/ to see if log exists
 
 ### Agent gives incorrect patterns
 
@@ -737,8 +725,8 @@ You don't need to follow the sequential workflow:
 /code-reviewer src/
 # Repeat
 
-# Commit when ready (no summarizer needed yet)
-/repo-steward
+# Commit when ready
+/commit
 ```
 
 ### Multi-Project Workflows
@@ -851,7 +839,7 @@ Define project-specific settings in CLAUDE.md:
 
 ### Q: What if my project doesn't follow conventional commits?
 
-**A:** Repo Steward uses conventional commits by default. If you prefer a different format, edit your project's CLAUDE.md to specify.
+**A:** The `/commit` skill uses conventional commits by default. If you prefer a different format, edit your project's CLAUDE.md to specify.
 
 ### Q: Can I customize agent behavior?
 
@@ -863,15 +851,15 @@ Define project-specific settings in CLAUDE.md:
 
 ### Q: Can I use agents on old projects?
 
-**A:** Yes. Just add CLAUDE.md, TODO.md, and memory/ directory. Use the template as reference.
+**A:** Yes. Just add a `CLAUDE.md` file. Optionally run `bd init` for Beads task tracking.
 
 ### Q: What if CLAUDE.md gets out of sync?
 
-**A:** Agents learn from current CLAUDE.md. Update it when patterns change. Summarizer proposes updates automatically.
+**A:** Agents learn from current CLAUDE.md. Update it when patterns change. Code Reviewer proposes pattern updates via Beads task comments.
 
 ### Q: Can agents access remote repositories?
 
-**A:** Agents can't directly access remote repos, but `/repo-steward --push` can push commits using your git credentials.
+**A:** Agents can't directly access remote repos, but you can push commits using your git credentials after running `/commit`.
 
 ### Q: Do I need all 3 agents?
 
@@ -889,8 +877,7 @@ Define project-specific settings in CLAUDE.md:
 **A:** Run `/agent-help` for quick reference, then try each agent:
 1. `/orchestrator goal: "simple task"` — See task breakdown
 2. `/code-reviewer src/` — See code feedback
-3. `/repo-steward` — See commit organization
-4. `/summarizer` — See work summary
+3. `/commit` — See commit organization
 
 ---
 
@@ -925,8 +912,7 @@ MIT License — See LICENSE file in ai-agent-manager repo
 # Show help for specific agent
 /orchestrator --help
 /code-reviewer --help
-/summarizer --help
-/repo-steward --help
+/red-team-reviewer --help
 
 # General help
 /agent-help
