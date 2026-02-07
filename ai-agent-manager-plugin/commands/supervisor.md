@@ -1,133 +1,149 @@
 ---
-description: Autonomously manage development workflow from task pickup to PR creation
+description: Autonomously manage development workflow with parallel execution from task pickup to PR creation
 ---
 
 # Command: /supervisor
 
 ## Purpose
 
-The Supervisor agent autonomously manages the complete development workflow. It picks up ready tasks from Beads, orchestrates specialized agents (Product Owner, Orchestrator, Code Reviewer, Repo Steward), manages git operations, and creates Pull Requests.
+The Supervisor agent v3 autonomously manages the complete development workflow. It picks up tasks, orchestrates parallel workers via git worktrees, manages quality gates, and creates Pull Requests. Supports Beads-optional operation and cross-session resume.
 
 ## Usage
 
 ```bash
-/supervisor                         # Pick up next ready task and run workflow
-/supervisor task: BD-XX             # Work on specific task
-/supervisor --dry-run               # Preview workflow without executing
-/supervisor --continue              # Resume from last checkpoint
-/supervisor --continue task: BD-XX  # Resume specific task from checkpoint
+/supervisor                                    # Auto-select next ready task
+/supervisor task: BD-XX                        # Work on specific task
+/supervisor --max-workers 3                    # Up to 3 parallel workers
+/supervisor --sequential                       # Force sequential (no worktrees)
+/supervisor --no-beads                         # Skip Beads even if initialized
+/supervisor --continue                         # Resume from last checkpoint
+/supervisor --continue task: BD-XX             # Resume specific task
+/supervisor --dry-run                          # Preview workflow without executing
 ```
 
 ## Parameters
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `task:` | No | Specific Beads task ID to work on (e.g., `task: BD-15`) |
-| `--dry-run` | No | Preview the workflow stages without executing any actions |
-| `--continue` | No | Resume workflow from last checkpoint (after pause or context limit) |
+| `task:` | No | Specific task ID to work on (e.g., `task: BD-15` or `task: user-auth`) |
+| `--max-workers N` | No | Maximum parallel worktrees (default: 2) |
+| `--sequential` | No | Force sequential execution — no worktrees or parallelism |
+| `--no-beads` | No | Disable Beads tracking even if initialized |
+| `--continue` | No | Resume workflow from last checkpoint |
+| `--dry-run` | No | Preview the workflow phases without executing any actions |
 
 ## What This Does
 
-The Supervisor executes a 9-stage workflow:
+The Supervisor executes a **6-phase parallel workflow**:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                     SUPERVISOR WORKFLOW                         │
+│              SUPERVISOR v3 — PARALLEL WORKFLOW                   │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
-│  1. TASK SELECTION                                              │
-│     └─> bd ready → Select highest priority unblocked task       │
+│  Phase 0: INIT (Interactive Configuration)                      │
+│     └─> Detect env, ask preferences, create .supervisor/        │
 │                                                                 │
-│  2. BRANCH SETUP                                                │
-│     └─> git checkout -b feature/BD-XX-description               │
+│  Phase 1: ACQUIRE (Task Selection + Branch — MANDATORY)         │
+│     └─> Select task → Create feature branch (NON-NEGOTIABLE)    │
 │                                                                 │
-│  3. REQUIREMENTS CHECK                                          │
-│     └─> /product-owner (if story with unclear requirements)     │
+│  Phase 2: PLAN (Decompose + Parallelism Analysis)               │
+│     └─> Orchestrator → Subtasks → Parallelism graph             │
 │                                                                 │
-│  4. TASK PLANNING                                               │
-│     └─> /orchestrator goal: "BD-XX"                             │
+│  Phase 3: EXECUTE (Parallel Workers + Review Loop)              │
+│     └─> Worktrees → Background workers → Poll → Review loop    │
 │                                                                 │
-│  5. IMPLEMENTATION LOOP                                         │
-│     └─> For each subtask: implement → /code-reviewer → repeat   │
+│  Phase 4: FINALIZE (Merge + Commit + PR)                        │
+│     └─> Sequential merge → Commit → Push → PR → Close task     │
 │                                                                 │
-│  6. COMMIT CREATION                                             │
-│     └─> /repo-steward → conventional commits                    │
-│                                                                 │
-│  7. PULL REQUEST                                                │
-│     └─> gh pr create → link to Beads                            │
-│                                                                 │
-│  8. TASK COMPLETION                                             │
-│     └─> bd close BD-XX → git checkout main                      │
-│                                                                 │
-│  9. NEXT TASK                                                   │
-│     └─> Loop to step 1 or exit if no more tasks                 │
+│  Phase 5: LOOP (Next Task or Exit)                              │
+│     └─> More tasks? → Phase 1 | No tasks → Done                │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+### Architecture
+
+```
+SUPERVISOR (pure orchestrator, ~800 tokens)
+    ├─> Context-Keeper (blocking, state mutations)
+    ├─> Product Owner (blocking, if vague requirements)
+    ├─> Orchestrator (blocking, task decomposition)
+    ├─> Worker A (background, git worktree A)
+    ├─> Worker B (background, git worktree B)
+    ├─> Reviewer A (background, after Worker A)
+    └─> Reviewer B (background, after Worker B)
+```
+
+### Parallel Execution via Git Worktree
+
+```
+project/                    ← main worktree (feature branch)
+project-BD-15a/             ← worktree for worker A
+project-BD-15c/             ← worktree for worker C
+```
+
+Each parallel worker operates in its own worktree — no file conflicts, no git stash dance. After review passes, subtask branches merge sequentially into the feature branch.
+
 ## Prerequisites
 
-1. **Beads initialized:** Run `bd init` in your project
-2. **Ready tasks exist:** Create tasks with `bd create` or via Orchestrator
-3. **Clean git state:** No uncommitted changes
-4. **GitHub CLI:** `gh` installed and authenticated (for PR creation)
+1. **Git repository:** Project must be a git repo
+2. **Clean git state:** No uncommitted changes (or approve stashing)
+3. **GitHub CLI:** `gh` installed and authenticated (for PR creation)
+4. **Beads (optional):** If using Beads, `bd init` must be run first
+
+**Note:** Beads is no longer required. Without Beads, the Supervisor uses `.supervisor/` for all state management.
 
 ## Example Session
 
 ```bash
 $ /supervisor
 
-## SUPERVISOR: Starting Autonomous Workflow
+## SUPERVISOR v3: Starting Parallel Workflow
 
-## PROJECT CONTEXT
+## ENVIRONMENT
 **Path:** /Users/name/my-project
-**CLAUDE.md Status:** ✓ Found
-**Git Status:** clean
-**Current Branch:** main
-
-**Ready Tasks:**
-- BD-15 high - User authentication with JWT
-- BD-18 medium - Add rate limiting
+**CLAUDE.md:** ✓ Found
+**Beads:** ✓ Active
+**Git:** clean
+**Branch:** main
+**Config:** beads=true, workers=2, mode=parallel
 
 ---
 
-### Stage 1: Task Selection
-- Ready tasks: 2
-- Selected: BD-15 (high)
+### Phase 1: ACQUIRE
+- Task: BD-15 (high)
 - Title: User authentication with JWT
+- Criteria: 5 items
+- Branch: feature/BD-15-user-auth ← CREATED
 
-### Stage 2: Branch Setup
-- Branch: feature/BD-15-user-auth
-- Status: Ready for work
-
-### Stage 4: Task Planning
+### Phase 2: PLAN
 - Subtasks: 3 (BD-15a, BD-15b, BD-15c)
-- First: BD-15a - Implement JwtGuard
+- Parallelism: 2 launchable, 1 blocked
+- First batch: [BD-15a, BD-15c]
 
-### Stage 5: Implementation - BD-15a
+### Phase 3: EXECUTE — BD-15a
+- Worker: parallel
 - Files: src/auth/jwt.guard.ts
 - Review: PASS ✓
 
-### Stage 5: Implementation - BD-15b
+### Phase 3: EXECUTE — BD-15c
+- Worker: parallel
+- Files: src/auth/cookie.service.ts
+- Review: PASS ✓
+
+### Phase 3: EXECUTE — BD-15b (unblocked)
+- Worker: parallel
 - Files: src/auth/refresh.controller.ts
 - Review: PASS ✓
 
-### Stage 5: Implementation - BD-15c
-- Files: src/auth/auth.module.ts
-- Review: PASS ✓
-
-### Stage 6: Commits
-- Commits: 3
-- Message: "feat(auth): implement JWT guard"
-
-### Stage 7: Pull Request
-- PR: #42
-- URL: https://github.com/org/repo/pull/42
-
-### Stage 8: Task Completion
+### Phase 4: FINALIZE
+- Merges: 3 branches → feature/BD-15-user-auth
+- Commit: a1b2c3d — feat(auth): implement JWT auth
+- PR: #42 — https://github.com/org/repo/pull/42
 - Task: BD-15 [CLOSED]
 
-### Stage 9: Next Task
+### Phase 5: LOOP
 - Continuing with BD-18...
 ```
 
@@ -137,67 +153,115 @@ The Supervisor handles review decisions:
 
 | Decision | Action |
 |----------|--------|
-| **PASS** | Continue to next subtask or stage |
-| **FAIL** | Fix issues, re-review (max 3 attempts) |
-| **NEEDS_HUMAN** | Pause workflow, save checkpoint, exit with instructions |
+| **PASS** | Continue; launch newly unblocked subtasks |
+| **FAIL** (< 3 attempts) | Spawn fix worker with retry context |
+| **FAIL** (3 attempts) | Checkpoint, escalate to human |
+| **NEEDS_HUMAN** | Checkpoint, pause, exit with resume command |
 
-After 3 failed review attempts, the Supervisor escalates to human.
+## Beads-Optional Operation
+
+### With Beads (default if initialized)
+- Tasks from `bd ready`
+- Status via `bd update` / `bd close`
+- Checkpoints in `.supervisor/` AND Beads comments
+- Full task lifecycle tracking
+
+### Without Beads (`--no-beads` or not initialized)
+- User provides task description
+- Status tracked in `.supervisor/state.md` only
+- Checkpoints in `.supervisor/` only
+- Works on any project without setup
+
+## State Persistence
+
+```
+Active session:   {scratchpad}/supervisor-state.md
+Persistent:       {project}/.supervisor/state.md
+History:          {project}/.supervisor/history/{date}-{task}.md
+Optional:         Beads comments (if Beads active)
+```
+
+The `.supervisor/` directory is auto-created and gitignored.
 
 ## Checkpoints and Resume
 
-The Supervisor saves checkpoints to Beads after each stage:
+The Supervisor saves checkpoints after every phase transition:
 
 ```bash
-# If workflow pauses (NEEDS_HUMAN or context limit):
-bd show BD-15  # View checkpoint in comments
+# If workflow pauses (NEEDS_HUMAN, merge conflict, or context limit):
+# State is saved automatically
 
 # Resume from checkpoint:
-/supervisor --continue task: BD-15
+/supervisor --continue                   # Resume last task
+/supervisor --continue task: BD-15       # Resume specific task
 ```
 
 **Checkpoint data includes:**
-- Current stage (e.g., 5/9)
+- Current phase (e.g., EXECUTE)
 - Subtask progress (e.g., 2/3 complete)
-- Branch name
-- Modified files
-- Last review decision
+- Branch name and worktree state
+- Worker/reviewer tracking
+- All decisions and results
+
+**Resume priority:**
+1. Scratchpad state (same session)
+2. `.supervisor/state.md` (cross-session)
+3. Beads comments (fallback)
 
 ## Context Management
 
-The Supervisor uses a hybrid approach:
-- **Subagents run in isolation** with their own context
-- **Only summaries return** to supervisor (< 200 tokens each)
-- **Checkpoints saved** to Beads for cross-session resume
+The Supervisor uses externalized state:
+
+- **Supervisor context:** ~800 tokens (phase, IDs, worker tracking only)
+- **State file:** Full session state managed by Context-Keeper
+- **Workers:** Run in background with their own isolated context
+- **Reviewers:** Run in background with their own isolated context
 
 **Context thresholds:**
 - < 70%: Normal operation
-- 70-85%: Warning, force checkpoint
+- 70-85%: Warning, checkpoint, suggest new session
 - > 85%: Critical, checkpoint and exit with resume command
+
+## Parallel vs Sequential
+
+### Parallel Mode (default)
+- Independent subtasks run concurrently in git worktrees
+- Max `--max-workers` concurrent workers (default: 2)
+- Subtasks with dependencies wait for predecessors
+- Sequential merge into feature branch after completion
+
+### Sequential Mode (`--sequential`)
+- All subtasks execute one at a time
+- No git worktrees created
+- Simpler but slower
+- Useful for debugging or constrained environments
+
+### Fast-Path (automatic)
+- If only 1 subtask: executes inline (no worktree overhead)
+- Automatic, no flag needed
 
 ## Permissions
 
-The Supervisor requests approval at strategic points:
-
-| Stage | Approval |
+| Phase | Approval |
 |-------|----------|
-| Task Selection | Auto |
-| Branch Setup | **[APPROVAL NEEDED]** |
-| Requirements | Auto (subagent) |
-| Task Planning | Auto (subagent) |
-| Implementation | **[APPROVAL NEEDED - batch]** |
-| Commits | **[APPROVAL NEEDED]** |
-| Pull Request | **[APPROVAL NEEDED]** |
-| Task Completion | Auto |
+| INIT (config) | Interactive (AskUserQuestion) |
+| ACQUIRE (branch) | **[APPROVAL NEEDED]** |
+| PLAN (decompose) | Auto (subagent) |
+| EXECUTE (implement) | **[APPROVAL NEEDED - batch]** |
+| FINALIZE (commit+PR) | **[APPROVAL NEEDED]** |
+| LOOP (next) | Auto |
 
 ## Error Handling
 
 | Error | Supervisor Action |
 |-------|-------------------|
-| Code review FAIL (3x) | Escalate to human |
-| NEEDS_HUMAN | Pause, checkpoint, exit |
-| Git conflict | Pause, show conflict |
+| Review FAIL (3x) | Checkpoint, escalate to human |
+| NEEDS_HUMAN | Checkpoint, pause, exit with resume |
+| Merge conflict | STOP, report files, exit with resume |
 | No ready tasks | Exit gracefully |
-| Context > 85% | Checkpoint, exit |
+| Context > 85% | Checkpoint, exit with resume |
+| Worker crash | Retry once, then escalate |
+| Worktree fails | Fall back to sequential mode |
 
 ## Dry Run Mode
 
@@ -206,39 +270,41 @@ Preview without executing:
 ```bash
 $ /supervisor --dry-run
 
-## SUPERVISOR: Dry Run Mode
+## SUPERVISOR v3: Dry Run Mode
 
 **Would execute:**
-1. Task Selection: BD-15 (high priority)
-2. Branch: feature/BD-15-user-auth
-3. Planning: /orchestrator goal: "BD-15"
-4. Implementation: [subtasks would be created]
-5. Review: /code-reviewer on changes
-6. Commits: /repo-steward
-7. PR: gh pr create
+Phase 0: INIT — Detect env, configure session
+Phase 1: ACQUIRE — Task BD-15, branch feature/BD-15-user-auth
+Phase 2: PLAN — Orchestrator decompose, parallelism analysis
+Phase 3: EXECUTE — 3 subtasks (2 parallel, 1 sequential)
+Phase 4: FINALIZE — Merge, commit, PR
+Phase 5: LOOP — Check for next task
+
+**Estimated parallel batches:** 2 (batch 1: BD-15a,BD-15c; batch 2: BD-15b)
 
 **No changes made.** Run `/supervisor` to execute.
 ```
 
 ## Workflow Comparison
 
-| Feature | Manual Workflow | With Supervisor |
-|---------|-----------------|-----------------|
-| Task pickup | `bd claim BD-XX` | Automatic |
-| Branch creation | Manual git commands | Automatic |
-| Agent coordination | Run each manually | Orchestrated |
-| Review gates | Manual review | Automated with gates |
-| Commits | Run `/repo-steward` | Automatic |
-| PR creation | Manual `gh pr create` | Automatic |
-| Next task | Manual selection | Automatic loop |
+| Feature | Manual Workflow | Supervisor v2 | Supervisor v3 |
+|---------|-----------------|---------------|---------------|
+| Task pickup | `bd claim` | Auto (Beads required) | Auto (Beads optional) |
+| Branch creation | Manual | Auto (sometimes skipped) | **MANDATORY** |
+| Agent coordination | Run each manually | Sequential | **Parallel** |
+| State management | In-context only | In-context + Beads | **Externalized** |
+| Cross-session resume | Not possible | Beads checkpoints | **.supervisor/ + Beads** |
+| Parallel workers | Not possible | Not possible | **Git worktrees** |
+| Beads dependency | Required | Required | **Optional** |
 
 ## Tips
 
 1. **Start with dry-run:** Use `--dry-run` to preview before executing
-2. **Check ready tasks:** Run `bd ready` to see available work
-3. **Resume after pause:** Use `--continue` to resume from checkpoint
-4. **Monitor progress:** Supervisor outputs stage-by-stage status
-5. **Review PRs:** Supervisor creates PRs but doesn't merge them
+2. **Use sequential for debugging:** `--sequential` simplifies troubleshooting
+3. **Monitor .supervisor/:** Check `.supervisor/state.md` for current state
+4. **Resume after pause:** `/supervisor --continue` picks up exactly where it left off
+5. **Limit workers:** Use `--max-workers 1` for resource-constrained environments
+6. **No Beads? No problem:** The Supervisor works on any project with `--no-beads`
 
 ## Related Commands
 
@@ -253,13 +319,12 @@ $ /supervisor --dry-run
 ## Troubleshooting
 
 **"No ready tasks found"**
-- Check Beads: `bd list`
-- Create tasks: `bd create` or `/orchestrator`
-- Unblock tasks: Resolve dependencies
+- With Beads: `bd list` to check task state; `bd create` to add tasks
+- Without Beads: provide task description directly with `task:` parameter
 
 **"Dirty working tree"**
-- Commit or stash changes: `git stash`
-- Or let Supervisor handle: It will prompt for approval
+- Commit or stash changes before running Supervisor
+- Supervisor will warn and ask for approval
 
 **"Context limit reached"**
 - Supervisor saves checkpoint automatically
@@ -270,9 +335,21 @@ $ /supervisor --dry-run
 - Fix the issue manually
 - Resume with: `/supervisor --continue`
 
+**"Merge conflict in FINALIZE"**
+- Supervisor reports conflicting files
+- Resolve manually in the feature branch
+- Resume with: `/supervisor --continue`
+
+**"Worktree creation failed"**
+- Supervisor automatically falls back to sequential mode
+- Check disk space and git worktree state: `git worktree list`
+
 ## See Also
 
-- `agents/supervisor.md` - Full agent prompt
+- `agents/supervisor.md` - Full agent prompt (6-phase model)
+- `agents/context-keeper.md` - State management agent
+- `agents/worker.md` - Implementation worker agent
+- `skills/async-orchestration/SKILL.md` - Parallel dispatch patterns
+- `skills/state-management/SKILL.md` - State file schema
 - `skills/workflow-management/SKILL.md` - Workflow patterns
 - `skills/context-summarization/SKILL.md` - Output compression
-

@@ -6,9 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**AI Agent Manager** is a reusable system that provides intelligent agents for software development workflows. It integrates with Claude Code as a plugin with 6 specialized agents that automate autonomous workflows, requirements definition, planning, code review, commit management, and adversarial security audits.
+**AI Agent Manager** is a reusable system that provides intelligent agents for software development workflows. It integrates with Claude Code as a plugin with 8 agent roles (6 user-facing + 2 internal) that automate parallel workflow execution, requirements definition, planning, code review, commit management, and adversarial security audits.
 
-The system enables agents to collaborate on any project type using **Beads issue tracker** for task management and `CLAUDE.md` for codebase knowledge that persists between work sessions.
+The system enables agents to collaborate on any project type. **Beads issue tracker** is supported but optional — projects can use `.supervisor/` directory for state management instead. `CLAUDE.md` provides codebase knowledge that persists between work sessions.
 
 ---
 
@@ -51,16 +51,29 @@ The project is structured as a **Claude Code plugin marketplace**:
 - Review subtask blocks next implementation task
 - Review decisions: PASS (proceed), FAIL (fix and re-review), NEEDS_HUMAN (creates bug issues)
 
-### The 6 Agents
+### The 8 Agent Roles
 
 Each agent is a Markdown prompt file (`agents/[name].md`):
 
-#### **Supervisor** (`/supervisor`)
-- **Purpose:** Autonomously manage complete development workflow from task pickup to PR creation
+#### **Supervisor** (`/supervisor`) — v3 Parallel Orchestrator
+- **Purpose:** Autonomously manage complete development workflow with parallel execution
 - **When to use:** Full automation of task completion
-- **Command:** `/supervisor` or `/supervisor task: BD-XX`
-- **Workflow:** Picks up ready tasks → orchestrates agents → creates PRs → loops
-- **Outputs:** Completed tasks with PRs and Beads linking
+- **Command:** `/supervisor`, `/supervisor task: BD-XX`, `/supervisor --max-workers 3`
+- **Workflow:** INIT → ACQUIRE → PLAN → EXECUTE (parallel workers) → FINALIZE → LOOP
+- **Key features:** Git worktrees for parallelism, externalized state, Beads-optional, mandatory branching
+- **Outputs:** Completed tasks with PRs and optional Beads linking
+
+#### **Context-Keeper** (internal, spawned by Supervisor)
+- **Purpose:** Manage Supervisor's externalized state file
+- **When to use:** On-demand, called by Supervisor at each phase transition
+- **Sole writer:** Only agent allowed to mutate the state file
+- **Outputs:** < 50 token confirmations of state operations
+
+#### **Worker** (internal, spawned by Supervisor)
+- **Purpose:** Implement a single subtask in an isolated git worktree
+- **When to use:** Background execution during Supervisor's EXECUTE phase
+- **Isolation:** Works only within assigned worktree path, no git operations
+- **Outputs:** Structured WORKER_RESULT block
 
 #### **Product Owner** (`/product-owner`)
 - **Purpose:** Translate business problems into user stories with acceptance criteria
@@ -130,16 +143,22 @@ Or manually copy to Claude Code plugins directory:
 ```bash
 # Initialize project
 cd /path/to/your-project
+
+# Option A: With Beads (full task management)
 bd init
 
-# Create CLAUDE.md with your project patterns
+# Option B: Without Beads (Supervisor creates .supervisor/ automatically)
+# Just create CLAUDE.md with your project patterns
 ```
 
 This creates:
 ```
 your-project/
 ├── CLAUDE.md              # Your codebase knowledge
-├── .beads/                # Beads issue tracker (auto-managed)
+├── .supervisor/           # Supervisor state (auto-created, gitignored)
+│   ├── state.md           # Current session state
+│   └── history/           # Completed session summaries
+├── .beads/                # Beads issue tracker (optional)
 │   └── issues/
 └── src/                   # Your code
 ```
@@ -169,23 +188,27 @@ your-project/
 ```
 ai-agent-manager/
 ├── ai-agent-manager-plugin/          # The Claude Code plugin
-│   ├── agents/                       # Agent markdown prompts (6 agents)
-│   │   ├── supervisor.md             # Supervisor agent (autonomous workflow)
-│   │   ├── product-owner.md          # Product Owner agent (requirements)
-│   │   ├── orchestrator.md           # Orchestrator agent (task planning)
-│   │   ├── code-reviewer.md          # Code Reviewer agent (quality gates)
-│   │   ├── repo-steward.md           # Repo Steward agent (commits)
-│   │   └── red-team-reviewer.md      # Red Team Reviewer agent (adversarial)
+│   ├── agents/                       # Agent markdown prompts (8 roles)
+│   │   ├── supervisor.md             # Supervisor v3 (parallel orchestrator)
+│   │   ├── context-keeper.md         # Context-Keeper (state management)
+│   │   ├── worker.md                 # Worker (implementation in worktrees)
+│   │   ├── product-owner.md          # Product Owner (requirements)
+│   │   ├── orchestrator.md           # Orchestrator (task planning)
+│   │   ├── code-reviewer.md          # Code Reviewer (quality gates)
+│   │   ├── repo-steward.md           # Repo Steward (commits)
+│   │   └── red-team-reviewer.md      # Red Team Reviewer (adversarial)
 │   ├── commands/                     # Slash commands for Claude Code
-│   │   ├── supervisor.md             # /supervisor command
+│   │   ├── supervisor.md             # /supervisor command (v3)
 │   │   ├── product-owner.md          # /product-owner command
 │   │   ├── orchestrator.md           # /orchestrator command
 │   │   ├── code-reviewer.md          # /code-reviewer command
 │   │   ├── repo-steward.md           # /repo-steward command
 │   │   ├── red-team-reviewer.md      # /red-team-reviewer command
 │   │   └── agent-help.md             # /agent-help command
-│   ├── skills/                       # Skill files for guidance (30 skills)
-│   │   ├── workflow-management/      # Autonomous workflow patterns
+│   ├── skills/                       # Skill files for guidance (32 skills)
+│   │   ├── async-orchestration/      # Parallel dispatch & git worktree patterns
+│   │   ├── state-management/         # State file schema & checkpoint protocols
+│   │   ├── workflow-management/      # 6-phase workflow patterns
 │   │   ├── context-summarization/    # Output compression for context
 │   │   ├── commit/                   # Conventional commits
 │   │   ├── quality-checklist/        # Review gate criteria
@@ -196,7 +219,7 @@ ai-agent-manager/
 │   │   ├── nestjs-typeorm/           # TypeORM integration
 │   │   └── mysql/                    # MySQL patterns
 │   └── .claude-plugin/
-│       └── plugin.json               # Plugin metadata (v2.2.0)
+│       └── plugin.json               # Plugin metadata (v3.0.0)
 │
 ├── .claude-plugin/
 │   ├── marketplace.json              # Marketplace definition
@@ -209,6 +232,7 @@ ai-agent-manager/
 
 ### How Agents Work Together
 
+**Manual Workflow:**
 ```
 User Goal
     ↓
@@ -229,21 +253,42 @@ bd close BD-XX → Task complete, next unblocked
 Next agent reads updated CLAUDE.md (knowledge grows)
 ```
 
-### Beads Workflow
+**Autonomous Workflow (Supervisor v3):**
+```
+/supervisor
+    ↓
+INIT: Detect env → Ask preferences → Create .supervisor/
+    ↓
+ACQUIRE: Select task → Create feature branch (MANDATORY)
+    ↓
+PLAN: Orchestrator → Subtasks → Parallelism analysis
+    ↓
+EXECUTE: Worktree A ─→ Worker A ─→ Reviewer A ─→ PASS
+         Worktree C ─→ Worker C ─→ Reviewer C ─→ PASS
+         (BD-XXb unblocked) → Worktree B → Worker B → PASS
+    ↓
+FINALIZE: Sequential merge → Commit → PR → Close task
+    ↓
+LOOP: Next task or exit
+```
+
+### Task Management Workflow (Beads Optional)
 
 ```
 Session Start:
   1. Agent reads CLAUDE.md (codebase knowledge)
-  2. Agent runs bd list (current task state)
+  2. With Beads: bd list (current task state)
+     Without Beads: read .supervisor/state.md
   3. Agent reads git history (recent work)
 
 During Work:
-  4. Agent creates/updates Beads tasks
+  4. Agent creates/updates tasks (Beads or .supervisor/)
   5. Agent outputs review decisions (PASS/FAIL/NEEDS_HUMAN)
   6. Agent flags new patterns for CLAUDE.md
 
 Task Complete:
-  7. bd close BD-XX (marks complete, unblocks next)
+  7. With Beads: bd close BD-XX (marks complete, unblocks next)
+     Without Beads: update .supervisor/state.md
   8. You review pattern proposals
   9. You update CLAUDE.md (approve/reject proposals)
   10. Knowledge accumulates; agents learn from discoveries
@@ -341,10 +386,10 @@ Before an agent completes work:
 ### Plugin Metadata
 
 - **Plugin Name:** `ai-agent-manager-plugin`
-- **Version:** 2.2.0
-- **Description:** Beads-integrated AI agents with focused skills architecture
-- **Agents:** 6 (Supervisor, Product Owner, Orchestrator, Code Reviewer, Repo Steward, Red Team Reviewer)
-- **Skills:** 30 reusable skill files
+- **Version:** 3.0.0
+- **Description:** AI agents with parallel orchestration, focused skills, and Beads-optional operation
+- **Agents:** 8 roles (Supervisor v3, Context-Keeper, Worker, Product Owner, Orchestrator, Code Reviewer, Repo Steward, Red Team Reviewer)
+- **Skills:** 32 reusable skill files
 - **Author:** vikash ruhil
 - **License:** MIT
 
@@ -375,12 +420,22 @@ Before an agent completes work:
 - Agents flag pattern proposals in Beads task comments
 - Only humans update CLAUDE.md (after review)
 - Agents never make destructive changes without explicit instruction
+- Merge conflicts always escalate to human
 
-### Beads for Task Management
+### Beads-Optional Task Management
 
-- Beads issue tracker replaces TODO.md and memory files
-- Projects need only CLAUDE.md + .beads/ directory
+- **With Beads:** Full task lifecycle tracking via Beads issue tracker
+- **Without Beads:** State managed via `.supervisor/` directory (auto-created, gitignored)
+- Projects need only CLAUDE.md to get started (`.supervisor/` and `.beads/` are optional)
 - Same agents work across different projects
+
+### Parallel Execution Model
+
+- Supervisor v3 uses git worktrees for parallel worker execution
+- Each worker operates in its own worktree (no file conflicts)
+- Context-Keeper externalizes state (Supervisor holds ~800 tokens)
+- Subtask branches merge sequentially into feature branch
+- Fast-path: single subtask skips worktrees entirely
 
 ---
 
@@ -394,6 +449,17 @@ Before an agent completes work:
 ### Beads Tasks Not Appearing?
 - Run `bd list` to check current state
 - Ensure `bd init` was run in project
+- Or use `--no-beads` flag to skip Beads
+
+### Supervisor Workflow Interrupted?
+- State is saved to `.supervisor/state.md` automatically
+- Resume with: `/supervisor --continue task: BD-XX`
+- Check `.supervisor/history/` for completed sessions
+
+### Orphaned Worktrees After Crash?
+- Run `git worktree list` to see all worktrees
+- Remove with: `git worktree remove ../project-BD-XXa`
+- Clean up branches: `git branch -d feature/BD-XXa`
 
 ### New Pattern But Unsure If Important?
 - Agent flags it in Beads task comment as a proposal

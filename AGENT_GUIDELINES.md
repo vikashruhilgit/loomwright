@@ -223,6 +223,14 @@ Every agent follows this contract:
 - Cite exact files/lines when referencing code; include short diffs when helpful.
 - Produce testable outputs: commands, file names, expected results.
 
+**Git Worktree Safety**
+- Workers operate ONLY within their assigned worktree path.
+- Never modify files in the main worktree from a worker worktree.
+- Worktrees are created as sibling directories: `../{project}-{subtask_id}`.
+- All worktrees MUST be cleaned up in FINALIZE phase (no orphans).
+- If worktree creation fails, fall back to sequential execution.
+- Never force-resolve merge conflicts — escalate to human.
+
 ---
 
 ### Standard Output Format (ALL AGENTS)
@@ -255,12 +263,62 @@ This format applies to ALL agent outputs (Orchestrator, Code Reviewer, Repo Stew
 
 | Agent | Reads | Writes | Primary Responsibility |
 |-------|-------|--------|------------------------|
+| **Supervisor** | CLAUDE.md, state file, git state | Worker dispatch, PR creation | Parallel orchestration, 6-phase workflow |
+| **Context-Keeper** | State file | State file (sole writer) | Externalized state management |
+| **Worker** | Code files in worktree | Code files in worktree | Isolated implementation in git worktrees |
 | **Orchestrator** | CLAUDE.md, Beads state, git history | Beads tasks (proposes) | Planning, task breakdown with review gates |
 | **Code Reviewer** | CLAUDE.md, code files, Beads task | Beads comments (review decisions) | Code quality, security, PASS/FAIL/NEEDS_HUMAN |
 | **Repo Steward** | git status, Beads task | Commits (git operations) | Git operations, linking commits to Beads |
 | **Red Team Reviewer** | CLAUDE.md, code files, Context7 docs | Audit report | Adversarial review, find production failures |
 
 ---
+
+#### **Supervisor** (Parallel Orchestrator — v3)
+- **Objective:** Autonomously manage complete workflow with parallel execution
+- **Reads:** CLAUDE.md, `.supervisor/state.md`, git state, Beads state (optional)
+- **Writes:** Worker dispatches, PR creation, `.supervisor/` directory
+- **Responsibilities:**
+  - Run 6-phase workflow: INIT → ACQUIRE → PLAN → EXECUTE → FINALIZE → LOOP
+  - Create feature branch BEFORE any code work (mandatory)
+  - Analyze parallelism and dispatch workers via git worktrees
+  - Poll background workers and reviewers (non-blocking)
+  - Sequential merge of worktree branches into feature branch
+  - Checkpoint state after every phase transition
+  - Support Beads-optional operation
+- **Safety:**
+  - Never force-resolve merge conflicts — escalate to human
+  - Never proceed to PLAN without confirmed feature branch
+  - Clean up all worktrees in FINALIZE (no orphans)
+  - Exit gracefully at > 85% context
+
+#### **Context-Keeper** (State Management Agent)
+- **Objective:** Manage externalized Supervisor state file
+- **Reads:** `{scratchpad}/supervisor-state.md`, `.supervisor/state.md`
+- **Writes:** State file (sole writer — no other agent mutates it)
+- **Responsibilities:**
+  - Initialize, update, and checkpoint state file
+  - Record worker results, review decisions, errors
+  - Maintain state file schema integrity
+  - Return < 50 token confirmations
+- **Safety:**
+  - Never modify code files — only state file
+  - Never spawn other agents
+  - Validate state file before writing
+
+#### **Worker** (Implementation Worker)
+- **Objective:** Implement a single subtask in an isolated git worktree
+- **Reads:** Code files within assigned worktree
+- **Writes:** Code files within assigned worktree only
+- **Responsibilities:**
+  - Implement subtask meeting acceptance criteria
+  - Run tests if infrastructure exists
+  - Output structured WORKER_RESULT block
+  - Handle retry context on re-dispatch
+- **Safety:**
+  - Never modify files outside assigned worktree path
+  - Never perform git operations (Supervisor handles git)
+  - Never spawn other agents
+  - Never access the Supervisor state file
 
 #### **Orchestrator** (Planning Agent)
 - **Objective:** Break goals into Beads tasks with built-in review gates
@@ -404,8 +462,12 @@ Agents reference skill files for guidance (don't embed content):
 
 | Skill | Purpose |
 |-------|---------|
+| `skills/async-orchestration/SKILL.md` | Parallel dispatch and git worktree patterns |
+| `skills/state-management/SKILL.md` | State file schema and checkpoint protocols |
+| `skills/workflow-management/SKILL.md` | 6-phase workflow patterns |
 | `skills/commit/SKILL.md` | Conventional commits with Beads linking |
 | `skills/quality-checklist/SKILL.md` | Review gate criteria |
+| `skills/context-summarization/SKILL.md` | Output compression patterns |
 | `skills/pattern-detector/SKILL.md` | CLAUDE.md pattern proposals |
 | `skills/nestjs-*/SKILL.md` | NestJS implementation patterns |
 | `skills/nextjs-*/SKILL.md` | Next.js implementation patterns |

@@ -1,7 +1,7 @@
 {
   "name": "ai-agent-manager-plugin",
-  "version": "2.2.0",
-  "description": "Beads-integrated AI agents with focused skills architecture. 6 specialized agents: Supervisor (autonomous workflow conductor), Product Owner (business requirements), Orchestrator (Beads task planning), Code Reviewer (quality gates), Repo Steward (conventional commits), and Red Team Reviewer (adversarial audits). Features 30 reusable skills for workflow management, requirements, NestJS, Next.js, TypeORM, MySQL, and Gateway patterns.",
+  "version": "3.0.0",
+  "description": "AI agents with parallel orchestration, focused skills, and Beads-optional operation. 8 agent roles: Supervisor v3 (parallel orchestrator with git worktrees), Context-Keeper (externalized state), Worker (isolated implementation), Product Owner (business requirements), Orchestrator (task planning), Code Reviewer (quality gates), Repo Steward (conventional commits), and Red Team Reviewer (adversarial audits). Features 32 reusable skills for workflow management, async orchestration, state management, NestJS, Next.js, TypeORM, MySQL, and Gateway patterns.",
   "author": {
     "name": "vikash ruhil"
   },
@@ -9,6 +9,8 @@
   "keywords": [
     "agents",
     "orchestration",
+    "parallel-execution",
+    "git-worktree",
     "code-review",
     "beads",
     "issue-tracking",
@@ -21,6 +23,9 @@
     "adversarial",
     "security-audit",
     "skills",
+    "context-keeper",
+    "state-management",
+    "worker",
     "nestjs",
     "nextjs",
     "gateway",
@@ -30,6 +35,7 @@
     "typeorm",
     "mysql",
     "context-management",
-    "checkpoints"
+    "checkpoints",
+    "async-orchestration"
   ]
 }

@@ -20,11 +20,13 @@ Shows all available agent commands and quick usage examples.
 
 ## Quick Start
 
-The AI Agent Manager plugin provides **6 agents** for your development workflow:
+The AI Agent Manager plugin provides **8 agent roles** for your development workflow:
 
-**Autonomous Workflow (1 agent):**
+**Autonomous Workflow (3 agent roles):**
 ```
-/supervisor  →  Picks up tasks → Runs agents → Creates PRs → Loops
+/supervisor  →  Parallel orchestrator: Task → Branch → Workers → Review → PR → Loop
+  ├─ Context-Keeper  →  Externalized state management (on-demand)
+  └─ Worker  →  Isolated implementation in git worktrees (background)
 ```
 
 **Requirements Pipeline (1 agent):**
@@ -47,103 +49,114 @@ The AI Agent Manager plugin provides **6 agents** for your development workflow:
 /product-owner → User Stories → /orchestrator → Tasks → Code → /code-reviewer → /repo-steward
 ```
 
-**Full Autonomous Workflow:**
+**Full Autonomous Workflow (Parallel):**
 ```
-/supervisor  →  Automatically: Task → Branch → Agents → PR → Next Task
+/supervisor  →  INIT → ACQUIRE → PLAN → EXECUTE (parallel workers) → FINALIZE → LOOP
 ```
 
-**Task Management:** Beads issue tracker (replaces TODO.md/memory files)
+**Task Management:** Beads issue tracker (optional) or `.supervisor/` directory
 
 ---
 
 ## Command Reference
 
-### 🤖 /supervisor — Autonomous Workflow Conductor
+### 🤖 /supervisor — Parallel Orchestrator (v3)
 
-**Purpose:** Autonomously manage the complete development workflow from task pickup to PR creation
+**Purpose:** Autonomously manage the complete development workflow with parallel execution from task pickup to PR creation
 
 **Usage:**
 ```
-/supervisor                         # Pick up next ready task and run workflow
+/supervisor                         # Auto-select next ready task
 /supervisor task: BD-XX             # Work on specific task
-/supervisor --dry-run               # Preview workflow without executing
+/supervisor --max-workers 3         # Up to 3 parallel workers
+/supervisor --sequential            # Force sequential (no worktrees)
+/supervisor --no-beads              # Skip Beads even if initialized
 /supervisor --continue              # Resume from last checkpoint
+/supervisor --dry-run               # Preview workflow without executing
 ```
 
 **What it does:**
-- Picks up highest priority ready task from Beads
-- Creates feature branch (`feature/BD-XX-description`)
-- Orchestrates specialized agents in sequence:
-  - Product Owner (if requirements unclear)
-  - Orchestrator (task planning)
-  - Implementer (code changes)
-  - Code Reviewer (review gates)
-  - Repo Steward (commits)
+- Picks up tasks (from Beads or user description — Beads optional)
+- Creates feature branch (MANDATORY before any code work)
+- Orchestrates parallel workers via git worktrees:
+  - Context-Keeper (state management, on-demand)
+  - Product Owner (if requirements unclear, blocking)
+  - Orchestrator (task decomposition, blocking)
+  - Workers (implementation, background in worktrees)
+  - Code Reviewer (quality gates, background)
+- Merges worktree branches sequentially into feature branch
 - Creates Pull Request via GitHub CLI
-- Links PR to Beads task
 - Closes task and moves to next
 
-**9-Stage Workflow:**
+**6-Phase Workflow:**
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  1. Task Selection  →  2. Branch Setup  →  3. Requirements     │
+│  0. INIT (config)  →  1. ACQUIRE (task + branch)               │
 │         ↓                                                       │
-│  4. Task Planning  →  5. Implementation Loop  →  6. Commits    │
+│  2. PLAN (decompose + parallelism)  →  3. EXECUTE (parallel)   │
 │         ↓                                                       │
-│  7. Pull Request  →  8. Task Completion  →  9. Next Task       │
+│  4. FINALIZE (merge + commit + PR)  →  5. LOOP (next or exit)  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Review Gates:**
-- **PASS:** Continue to next subtask or stage
-- **FAIL:** Fix issues, re-review (max 3 attempts)
-- **NEEDS_HUMAN:** Pause, save checkpoint, exit with resume instructions
+**Parallel Execution:**
+```
+project/                    ← main worktree (feature branch)
+project-BD-15a/             ← worktree for Worker A
+project-BD-15c/             ← worktree for Worker C
+```
 
-**Context Management:**
-- Subagents run in isolation with their own context
-- Only summaries return to supervisor (< 200 tokens each)
-- Checkpoints saved to Beads for cross-session resume
-- At > 85% context: checkpoint and graceful exit
+**Review Gates:**
+- **PASS:** Continue; launch newly unblocked subtasks
+- **FAIL:** Spawn fix worker with retry context (max 3 attempts)
+- **NEEDS_HUMAN:** Checkpoint, pause, exit with resume instructions
+
+**State Management:**
+- State externalized to `.supervisor/` directory (auto-created, gitignored)
+- Context-Keeper manages all state mutations
+- Supervisor holds only ~800 tokens
+- Cross-session resume from `.supervisor/state.md`
 
 **Example Session:**
 ```
 $ /supervisor
 
-### Stage 1: Task Selection
-- Selected: BD-15 (high priority)
+## SUPERVISOR v3: Starting Parallel Workflow
+**Config:** beads=true, workers=2, mode=parallel
 
-### Stage 2: Branch Setup
-- Branch: feature/BD-15-user-auth
+### Phase 1: ACQUIRE
+- Task: BD-15, Branch: feature/BD-15-user-auth ← CREATED
 
-### Stage 5: Implementation
-- BD-15a: Review: PASS ✓
-- BD-15b: Review: PASS ✓
-- BD-15c: Review: PASS ✓
+### Phase 2: PLAN
+- Subtasks: 3, Parallel: 2 launchable, 1 blocked
 
-### Stage 7: Pull Request
-- PR: #42
-- URL: https://github.com/org/repo/pull/42
+### Phase 3: EXECUTE
+- BD-15a: PASS ✓ (parallel)
+- BD-15c: PASS ✓ (parallel)
+- BD-15b: PASS ✓ (unblocked after BD-15a)
 
-### Stage 9: Next Task
+### Phase 4: FINALIZE
+- PR: #42 — https://github.com/org/repo/pull/42
+
+### Phase 5: LOOP
 - Continuing with BD-18...
 ```
 
 **Resume from Checkpoint:**
 ```bash
-# If workflow paused:
 /supervisor --continue task: BD-15
 ```
 
 **When to Use:**
-- Autonomous task completion
-- When you want end-to-end workflow automation
+- Autonomous task completion with parallel execution
+- End-to-end workflow automation
 - Processing multiple ready tasks
-- When you want PRs created automatically
+- Projects with or without Beads
 
 **When NOT to Use:**
-- When you want manual control over each step
-- For single code reviews → Use `/code-reviewer`
-- For planning only → Use `/orchestrator`
+- Manual control → Use agents individually
+- Single code reviews → Use `/code-reviewer`
+- Planning only → Use `/orchestrator`
 
 **Learn More:** `/supervisor --help`
 
@@ -484,12 +497,18 @@ Each agent automatically finds your project by looking for `CLAUDE.md`:
 - Searches parent directories
 - Uses `/path/to/project` if you provide it
 
-### Beads Issue Tracker
-Task management is handled by Beads (replaces TODO.md/memory files):
+### Task Management
+Task management supports two modes:
+
+**With Beads (optional):**
 - **`bd list`** — View open/in-progress/completed tasks
 - **`bd claim BD-XX`** — Start working on a task
 - **`bd close BD-XX`** — Mark task complete
 - **`bd comment BD-XX "note"`** — Add notes to task
+
+**Without Beads:**
+- State tracked in `.supervisor/state.md` (auto-created)
+- Task descriptions provided directly to Supervisor
 - **CLAUDE.md** — Codebase knowledge, patterns (still user-maintained)
 
 ### Approval Workflow
@@ -568,23 +587,28 @@ bd close BD-XX
 ```
 ai-agent-manager-plugin/
 ├── .claude-plugin/
-│   └── plugin.json          # Plugin metadata
+│   └── plugin.json          # Plugin metadata (v3.0.0)
 ├── commands/                # Slash commands
-│   ├── supervisor.md        # Autonomous workflow conductor
+│   ├── supervisor.md        # Parallel orchestrator (v3)
 │   ├── orchestrator.md
 │   ├── code-reviewer.md
 │   ├── repo-steward.md
 │   ├── red-team-reviewer.md # Adversarial auditor
 │   └── agent-help.md
-├── agents/                  # Agent implementations
-│   ├── supervisor.md        # Autonomous workflow conductor
+├── agents/                  # Agent implementations (8 roles)
+│   ├── supervisor.md        # Parallel orchestrator (v3)
+│   ├── context-keeper.md    # State management agent
+│   ├── worker.md            # Implementation worker
+│   ├── product-owner.md     # Requirements definition
 │   ├── orchestrator.md
 │   ├── code-reviewer.md
 │   ├── repo-steward.md
 │   ├── red-team-reviewer.md # Has own adversarial preamble
 │   └── prompts.md           # Shared preamble
-└── skills/                  # Skill files
-    ├── workflow-management/ # Supervisor patterns
+└── skills/                  # Skill files (32 skills)
+    ├── async-orchestration/ # Parallel dispatch patterns
+    ├── state-management/    # State file schema
+    ├── workflow-management/  # Supervisor workflow patterns
     ├── context-summarization/
     ├── commit/
     ├── quality-checklist/
@@ -597,7 +621,10 @@ ai-agent-manager-plugin/
 ```
 your-project/
 ├── CLAUDE.md                # Codebase knowledge, patterns
-└── .beads/                  # Beads issue tracker (auto-managed)
+├── .supervisor/             # Supervisor state (auto-created, gitignored)
+│   ├── state.md             # Current session state
+│   └── history/             # Completed session summaries
+└── .beads/                  # Beads issue tracker (optional)
     ├── issues/              # Issue files
     └── ...
 ```
@@ -642,11 +669,13 @@ These are Claude Code slash commands, so you can type them directly:
 
 ## Summary
 
-### Autonomous Workflow (End-to-End Automation)
+### Autonomous Workflow (End-to-End Automation — 3 Roles)
 
 | Agent | Purpose | When | Input | Output |
 |-------|---------|------|-------|--------|
-| **Supervisor** | Full workflow automation | Autonomous task completion | Ready tasks | Completed tasks with PRs |
+| **Supervisor** | Parallel orchestration | Autonomous task completion | Ready tasks (Beads optional) | Completed tasks with PRs |
+| **Context-Keeper** | State management | On-demand (Supervisor calls) | State operations | State file updates |
+| **Worker** | Implementation | Background (parallel) | Subtask + worktree path | WORKER_RESULT block |
 
 ### Requirements Pipeline (Define What to Build)
 

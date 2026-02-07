@@ -147,6 +147,42 @@ Top issue: Token expiry not validated on refresh
 Risk areas: auth, session management
 ```
 
+### Worker Result Output
+
+**Input:** Full WORKER_RESULT block from background worker
+
+**Summary Format:**
+```
+Worker {worker_id}: {subtask_id} {status}
+Files: {modified + created count}
+Lines: +{added} -{removed}
+Tests: {pass|fail} ({count})
+```
+
+**Example:**
+```
+Worker w-001: BD-15a completed
+Files: 3 (1 modified, 2 created)
+Lines: +145 -3
+Tests: pass (8)
+```
+
+### Context-Keeper Response
+
+**Input:** Context-Keeper operation confirmation
+
+**Summary Format:**
+```
+CK: {operation} — {confirmation}
+```
+
+**Example:**
+```
+CK: record_worker_result — BD-15a completed, +145 -3
+CK: update_phase — EXECUTE, progress 1/3
+CK: checkpoint — saved to .supervisor/ + Beads
+```
+
 ## Compression Rules
 
 ### Keep
@@ -191,15 +227,16 @@ Retry: 1/3
 
 ## Checkpoint Data Compression
 
-Compress for Beads comments (< 500 tokens):
+Compress for `.supervisor/` and optional Beads comments (< 500 tokens):
 
 ```markdown
 ## Supervisor Checkpoint
-- Stage: [N]/9 ([name])
-- Progress: [X]/[Y] complete
+- Phase: [INIT|ACQUIRE|PLAN|EXECUTE|FINALIZE|LOOP]
+- Progress: [X]/[Y] subtasks complete
 - Branch: [branch name]
-- Files: [comma-separated list]
-- Last: [PASS|FAIL|NEEDS_HUMAN]
+- Active worktrees: [count]
+- Workers: [running count]
+- Last review: [PASS|FAIL|NEEDS_HUMAN]
 - Resume: /supervisor --continue task: BD-XX
 ```
 
@@ -208,6 +245,7 @@ Compress for Beads comments (< 500 tokens):
 - Complete error traces
 - Agent conversation history
 - Implementation details
+- Worker output details (stored in state file)
 
 ## Progressive Compression
 
@@ -246,16 +284,24 @@ For complex workflows with multiple agents:
 ```
 [PO] Story BD-23: JWT auth, 5 criteria
   ↓
-[Orch] 3 subtasks: BD-23a/b/c
+[Orch] 3 subtasks: BD-23a/b/c. Launchable: a,c. Blocked: b
   ↓
-[Impl] BD-23a: +145 lines, tests pass
+[CK] State initialized, phase PLAN
   ↓
-[Review] PASS, 0 issues
+[Worker-A] BD-23a: +145 lines, tests pass (parallel)
+[Worker-C] BD-23c: +67 lines, tests pass (parallel)
   ↓
-[Steward] Commit a1b2c3d, linked BD-23a
+[Review-A] PASS, 0 issues → BD-23b unblocked
+[Review-C] PASS, 0 issues
+  ↓
+[Worker-B] BD-23b: +89 lines, tests pass
+  ↓
+[Review-B] PASS, 0 issues
+  ↓
+[CK] Checkpoint: 3/3 complete, phase FINALIZE
 ```
 
-Total: ~50 tokens for entire chain vs ~2000+ tokens for full outputs.
+Total: ~80 tokens for entire parallel chain vs ~3000+ tokens for full outputs.
 
 ## Quality Checklist
 
