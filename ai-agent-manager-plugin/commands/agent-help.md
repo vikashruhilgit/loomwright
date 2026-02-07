@@ -641,7 +641,7 @@ ai-agent-manager-plugin/
 │   └── prompts.md           # Shared preamble
 ├── hooks/                   # Plugin quality gate hooks
 │   └── hooks.json           # SubagentStop + TaskCompleted validation
-└── skills/                  # Skill files (33 skills)
+└── skills/                  # Skill files (34 skills)
     ├── agent-teams/         # Agent Teams patterns (experimental)
     ├── async-orchestration/ # Parallel dispatch patterns
     ├── state-management/    # State file schema

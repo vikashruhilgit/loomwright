@@ -199,7 +199,7 @@ ai-agent-manager/
 │   │   └── agent-help.md             # /agent-help command
 │   ├── hooks/                        # Plugin quality gate hooks
 │   │   └── hooks.json                # SubagentStop + TaskCompleted validation
-│   ├── skills/                       # Skill files for guidance (33 skills)
+│   ├── skills/                       # Skill files for guidance (34 skills)
 │   │   ├── agent-teams/              # Agent Teams patterns (experimental)
 │   │   ├── async-orchestration/      # Parallel dispatch & git worktree patterns
 │   │   ├── state-management/         # State file schema & checkpoint protocols
@@ -212,9 +212,10 @@ ai-agent-manager/
 │   │   ├── nextjs-*/                 # Next.js patterns (5 skills)
 │   │   ├── gateway-*/                # API Gateway patterns (4 skills)
 │   │   ├── nestjs-typeorm/           # TypeORM integration
-│   │   └── mysql/                    # MySQL patterns
+│   │   ├── mysql/                    # MySQL patterns
+│   │   └── playwright-e2e/           # Playwright E2E testing patterns
 │   └── .claude-plugin/
-│       └── plugin.json               # Plugin metadata (v3.1.0)
+│       └── plugin.json               # Plugin metadata (v3.2.0)
 │
 ├── .claude-plugin/
 │   ├── marketplace.json              # Marketplace definition
@@ -381,10 +382,10 @@ Before an agent completes work:
 ### Plugin Metadata
 
 - **Plugin Name:** `ai-agent-manager-plugin`
-- **Version:** 3.1.0
+- **Version:** 3.2.0
 - **Description:** AI agents with parallel orchestration, focused skills, plugin hooks, persistent memory, and Beads-optional operation
 - **Agents:** 7 roles (Supervisor v3, Context-Keeper, Worker, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer)
-- **Skills:** 33 reusable skill files (added agent-teams)
+- **Skills:** 34 reusable skill files
 - **Hooks:** 2 quality gate hooks (SubagentStop, TaskCompleted)
 - **Author:** vikash ruhil
 - **License:** MIT
