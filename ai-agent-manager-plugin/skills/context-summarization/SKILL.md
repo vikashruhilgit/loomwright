@@ -109,26 +109,6 @@ Files: jwt.guard.ts, jwt.guard.spec.ts
 Proposals: 1 CLAUDE.md update (error handling pattern)
 ```
 
-### Repo Steward Output
-
-**Input:** Full commit details with messages
-
-**Summary Format:**
-```
-Commits: [N] ([short SHAs])
-Messages: [first commit message summary]
-Beads link: BD-[XX]
-Push: [pushed|not pushed]
-```
-
-**Example:**
-```
-Commits: 2 (a1b2c3d, e4f5g6h)
-Messages: "feat(auth): implement JWT guard"
-Beads link: BD-23a
-Push: not pushed
-```
-
 ### Red Team Reviewer Output
 
 **Input:** Full adversarial audit with findings

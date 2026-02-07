@@ -187,6 +187,63 @@ Stop work and escalate if:
 
 This document provides the basis for a multi-agent system. All agents inherit these guidelines and use **Beads issue tracker** for task management.
 
+### Agent Frontmatter Conventions
+
+Every agent markdown file includes YAML frontmatter that configures Claude Code native behavior:
+
+```yaml
+---
+name: ai-agent-manager-plugin:{role}    # Unique agent identifier
+description: {1-2 sentence purpose}      # Shown in /agents menu
+tools: Read, Write, Edit, Bash, ...      # Tool restrictions (security)
+model: opus | haiku | inherit            # Model selection (cost/capability)
+maxTurns: N                              # API round-trip limit (optional)
+memory: project                          # Persistent memory (optional)
+skills:                                  # Pre-loaded skill content (optional)
+  - skill-name
+---
+```
+
+**Frontmatter Principles:**
+- **Tool restrictions enforce safety:** Workers can't spawn subagents (no Task tool), Context-Keeper can't run Bash
+- **Model selection matches task complexity:** haiku for simple state writes, opus for orchestration, inherit for user's choice
+- **Memory accumulates knowledge:** Code Reviewer and Red Team build institutional memory across sessions
+- **Skills preloading eliminates latency:** Referenced skills are injected at spawn time (no file reads needed)
+
+### Persistent Memory Patterns
+
+Agents with `memory: project` store knowledge in `.claude/agent-memory/{agent-name}/`:
+
+**What to store:**
+- Recurring code patterns discovered during reviews
+- Domain terminology and conventions learned
+- Past vulnerabilities and attack patterns found
+- Stakeholder preferences and project-specific rules
+
+**What NOT to store:**
+- Session-specific state (use `.supervisor/` for that)
+- Secrets, tokens, or PII
+- Temporary debugging notes
+- Information already in CLAUDE.md
+
+**Agents with persistent memory:**
+| Agent | What It Remembers |
+|-------|-------------------|
+| Code Reviewer | Review patterns, recurring issues, codebase conventions |
+| Red Team Reviewer | Past vulnerabilities, attack patterns, what was already audited |
+| Product Owner | Domain context, terminology, stakeholder preferences |
+
+### Plugin Hooks (Quality Gates)
+
+The `hooks/hooks.json` file defines automatic quality gates:
+
+| Hook | Trigger | Validation |
+|------|---------|------------|
+| SubagentStop (worker) | Worker agent completes | WORKER_RESULT block present, files modified, no unresolved errors |
+| TaskCompleted | Task marked complete | Task genuinely done, not abandoned or skipped |
+
+Hooks use prompt-based validation (fast haiku model, 30s timeout). They enforce quality without spawning extra subagents.
+
 ### Shared Preamble (All Agents)
 
 Every agent follows this contract:
@@ -255,7 +312,7 @@ Every agent output follows this structure:
 [What to watch for, blockers, dependencies, what comes next]
 ```
 
-This format applies to ALL agent outputs (Orchestrator, Code Reviewer, Repo Steward, Red Team Reviewer).
+This format applies to ALL agent outputs (Orchestrator, Code Reviewer, Red Team Reviewer).
 
 ---
 
@@ -268,7 +325,6 @@ This format applies to ALL agent outputs (Orchestrator, Code Reviewer, Repo Stew
 | **Worker** | Code files in worktree | Code files in worktree | Isolated implementation in git worktrees |
 | **Orchestrator** | CLAUDE.md, Beads state, git history | Beads tasks (proposes) | Planning, task breakdown with review gates |
 | **Code Reviewer** | CLAUDE.md, code files, Beads task | Beads comments (review decisions) | Code quality, security, PASS/FAIL/NEEDS_HUMAN |
-| **Repo Steward** | git status, Beads task | Commits (git operations) | Git operations, linking commits to Beads |
 | **Red Team Reviewer** | CLAUDE.md, code files, Context7 docs | Audit report | Adversarial review, find production failures |
 
 ---
@@ -357,23 +413,6 @@ This format applies to ALL agent outputs (Orchestrator, Code Reviewer, Repo Stew
   - Plan: What to review, approach
   - Work/Results: Issues found, decision (PASS/FAIL/NEEDS_HUMAN)
   - Risks & Next Steps: Critical issues, CLAUDE.md proposals
-
-#### **Repo Steward** (Git Agent)
-- **Objective:** Keep repository clean with organized, conventional commits
-- **Reads:** git status, Beads task context
-- **Writes:** Commits (git operations) with Beads linking
-- **Responsibilities:**
-  - Check git status (what's changed, unstaged files)
-  - Stage minimal, cohesive changes (focused on one task)
-  - Write conventional commit messages: `<type>(<scope>): <message>`
-  - Link commits to Beads tasks: `Closes BD-XX` or `Refs BD-XX`
-  - Focus only on git operations; don't rewrite code
-- **Output (follows standard format):**
-  - Context Read: git status, Beads task context
-  - Current State: What changed, what's staged
-  - Plan: Commits to create
-  - Work/Results: Commit messages with Beads links
-  - Risks & Next Steps: Remaining changes, task completion
 
 #### **Red Team Reviewer** (Adversarial Agent)
 - **Objective:** Attack assumptions, find real-world failures before production
@@ -473,6 +512,8 @@ Agents reference skill files for guidance (don't embed content):
 | `skills/nextjs-*/SKILL.md` | Next.js implementation patterns |
 | `skills/gateway-*/SKILL.md` | API Gateway patterns |
 | `skills/context7-lookup/SKILL.md` | External library docs lookup |
+| `skills/agent-teams/SKILL.md` | Agent Teams patterns (experimental) |
+| `hooks/hooks.json` | Plugin quality gate hooks |
 
 ---
 

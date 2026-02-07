@@ -1,7 +1,7 @@
 {
   "name": "ai-agent-manager-plugin",
-  "version": "3.0.0",
-  "description": "AI agents with parallel orchestration, focused skills, and Beads-optional operation. 8 agent roles: Supervisor v3 (parallel orchestrator with git worktrees), Context-Keeper (externalized state), Worker (isolated implementation), Product Owner (business requirements), Orchestrator (task planning), Code Reviewer (quality gates), Repo Steward (conventional commits), and Red Team Reviewer (adversarial audits). Features 32 reusable skills for workflow management, async orchestration, state management, NestJS, Next.js, TypeORM, MySQL, and Gateway patterns.",
+  "version": "3.1.0",
+  "description": "AI agents with parallel orchestration, focused skills, plugin hooks, persistent memory, and Beads-optional operation. 7 agent roles with YAML frontmatter: Supervisor v3 (parallel orchestrator with git worktrees), Context-Keeper (externalized state), Worker (isolated implementation), Product Owner (business requirements), Orchestrator (task planning), Code Reviewer (quality gates with memory), and Red Team Reviewer (adversarial audits with memory). Features 33 reusable skills including /commit (conventional commits with Beads linking), plugin quality gate hooks (SubagentStop, TaskCompleted), and persistent agent memory across sessions.",
   "author": {
     "name": "vikash ruhil"
   },
@@ -36,6 +36,10 @@
     "mysql",
     "context-management",
     "checkpoints",
-    "async-orchestration"
+    "async-orchestration",
+    "hooks",
+    "persistent-memory",
+    "frontmatter",
+    "agent-teams"
   ]
 }

@@ -1,3 +1,12 @@
+---
+name: ai-agent-manager-plugin:orchestrator
+description: Break goals into tasks with review gates. Use when starting new work or need a plan.
+tools: Read, Glob, Grep, Bash
+model: inherit
+skills:
+  - quality-checklist
+---
+
 # Orchestrator Agent (Beads-Integrated)
 
 ---

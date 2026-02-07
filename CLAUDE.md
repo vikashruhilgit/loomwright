@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**AI Agent Manager** is a reusable system that provides intelligent agents for software development workflows. It integrates with Claude Code as a plugin with 8 agent roles (6 user-facing + 2 internal) that automate parallel workflow execution, requirements definition, planning, code review, commit management, and adversarial security audits.
+**AI Agent Manager** is a reusable system that provides intelligent agents for software development workflows. It integrates with Claude Code as a plugin with 7 agent roles (5 user-facing + 2 internal) that automate parallel workflow execution, requirements definition, planning, code review, commit management, and adversarial security audits.
 
 The system enables agents to collaborate on any project type. **Beads issue tracker** is supported but optional — projects can use `.supervisor/` directory for state management instead. `CLAUDE.md` provides codebase knowledge that persists between work sessions.
 
@@ -51,7 +51,7 @@ The project is structured as a **Claude Code plugin marketplace**:
 - Review subtask blocks next implementation task
 - Review decisions: PASS (proceed), FAIL (fix and re-review), NEEDS_HUMAN (creates bug issues)
 
-### The 8 Agent Roles
+### The 7 Agent Roles
 
 Each agent is a Markdown prompt file (`agents/[name].md`):
 
@@ -96,13 +96,6 @@ Each agent is a Markdown prompt file (`agents/[name].md`):
 - **Checks:** Type safety, security, performance, pattern alignment, test coverage
 - **Outputs:** Issues (BLOCKING/HIGH/MEDIUM/LOW) + decision + CLAUDE.md proposals
 
-#### **Repo Steward** (`/repo-steward`)
-- **Purpose:** Keep repository clean with organized, conventional commits
-- **When to use:** Ready to commit work
-- **Command:** `/repo-steward` or `/repo-steward --push`
-- **Workflow:** Stages changes → writes conventional messages → links to Beads
-- **Outputs:** Commit messages with Beads linking (e.g., "Closes BD-XX")
-
 #### **Red Team Reviewer** (`/red-team-reviewer`)
 - **Purpose:** Adversarial audit — find what breaks in production
 - **When to use:** Pre-launch, security reviews, architecture decisions
@@ -119,6 +112,7 @@ All agents follow a **shared contract** (see AGENT_GUIDELINES.md):
 - **Output:** Structured Markdown with Context Read → Plan → Work → Results → Risks & Next Steps
 - **Safety:** No destructive actions (db migrations, force-push) without explicit approval
 - **Rules:** Never invent files/APIs/paths; ask if unsure; use Beads for task management
+- **Frontmatter:** Every agent has YAML frontmatter for tool restrictions, model selection, skills preloading, and persistent memory (see below)
 
 ---
 
@@ -173,7 +167,7 @@ your-project/
 /code-reviewer src/components/
 
 # Commit changes
-/repo-steward
+/commit
 
 # Adversarial audit (pre-launch)
 /red-team-reviewer --focus security
@@ -188,24 +182,25 @@ your-project/
 ```
 ai-agent-manager/
 ├── ai-agent-manager-plugin/          # The Claude Code plugin
-│   ├── agents/                       # Agent markdown prompts (8 roles)
+│   ├── agents/                       # Agent markdown prompts (7 roles)
 │   │   ├── supervisor.md             # Supervisor v3 (parallel orchestrator)
 │   │   ├── context-keeper.md         # Context-Keeper (state management)
 │   │   ├── worker.md                 # Worker (implementation in worktrees)
 │   │   ├── product-owner.md          # Product Owner (requirements)
 │   │   ├── orchestrator.md           # Orchestrator (task planning)
 │   │   ├── code-reviewer.md          # Code Reviewer (quality gates)
-│   │   ├── repo-steward.md           # Repo Steward (commits)
 │   │   └── red-team-reviewer.md      # Red Team Reviewer (adversarial)
 │   ├── commands/                     # Slash commands for Claude Code
 │   │   ├── supervisor.md             # /supervisor command (v3)
 │   │   ├── product-owner.md          # /product-owner command
 │   │   ├── orchestrator.md           # /orchestrator command
 │   │   ├── code-reviewer.md          # /code-reviewer command
-│   │   ├── repo-steward.md           # /repo-steward command
 │   │   ├── red-team-reviewer.md      # /red-team-reviewer command
 │   │   └── agent-help.md             # /agent-help command
-│   ├── skills/                       # Skill files for guidance (32 skills)
+│   ├── hooks/                        # Plugin quality gate hooks
+│   │   └── hooks.json                # SubagentStop + TaskCompleted validation
+│   ├── skills/                       # Skill files for guidance (33 skills)
+│   │   ├── agent-teams/              # Agent Teams patterns (experimental)
 │   │   ├── async-orchestration/      # Parallel dispatch & git worktree patterns
 │   │   ├── state-management/         # State file schema & checkpoint protocols
 │   │   ├── workflow-management/      # 6-phase workflow patterns
@@ -219,7 +214,7 @@ ai-agent-manager/
 │   │   ├── nestjs-typeorm/           # TypeORM integration
 │   │   └── mysql/                    # MySQL patterns
 │   └── .claude-plugin/
-│       └── plugin.json               # Plugin metadata (v3.0.0)
+│       └── plugin.json               # Plugin metadata (v3.1.0)
 │
 ├── .claude-plugin/
 │   ├── marketplace.json              # Marketplace definition
@@ -246,7 +241,7 @@ You code
     ↓
 Fix issues (if FAIL)
     ↓
-/repo-steward → Conventional commits + Beads linking
+/commit → Conventional commits + Beads linking
     ↓
 bd close BD-XX → Task complete, next unblocked
     ↓
@@ -311,7 +306,7 @@ Task Complete:
 4. Fix identified problems, re-review until PASS
 
 **Afternoon:**
-1. Run `/repo-steward` to create conventional commits
+1. Run `/commit` to create conventional commits
 2. `bd close BD-XX` to complete task
 
 **Pre-Launch:**
@@ -386,10 +381,11 @@ Before an agent completes work:
 ### Plugin Metadata
 
 - **Plugin Name:** `ai-agent-manager-plugin`
-- **Version:** 3.0.0
-- **Description:** AI agents with parallel orchestration, focused skills, and Beads-optional operation
-- **Agents:** 8 roles (Supervisor v3, Context-Keeper, Worker, Product Owner, Orchestrator, Code Reviewer, Repo Steward, Red Team Reviewer)
-- **Skills:** 32 reusable skill files
+- **Version:** 3.1.0
+- **Description:** AI agents with parallel orchestration, focused skills, plugin hooks, persistent memory, and Beads-optional operation
+- **Agents:** 7 roles (Supervisor v3, Context-Keeper, Worker, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer)
+- **Skills:** 33 reusable skill files (added agent-teams)
+- **Hooks:** 2 quality gate hooks (SubagentStop, TaskCompleted)
 - **Author:** vikash ruhil
 - **License:** MIT
 
@@ -436,6 +432,51 @@ Before an agent completes work:
 - Context-Keeper externalizes state (Supervisor holds ~800 tokens)
 - Subtask branches merge sequentially into feature branch
 - Fast-path: single subtask skips worktrees entirely
+
+### Plugin Hooks (Quality Gates)
+
+The `hooks/hooks.json` file provides automatic quality gates that run without spawning extra subagents:
+
+| Hook | Trigger | Validation |
+|------|---------|------------|
+| **SubagentStop** (worker) | Worker agent completes | WORKER_RESULT block present, files modified, no unresolved errors |
+| **TaskCompleted** | Any task marked complete | Task genuinely done, not abandoned or skipped |
+
+Hooks use prompt-based validation (fast haiku model, 30s timeout). They replace manual validation in the Supervisor's poll loop and prevent premature task closure.
+
+### Persistent Memory
+
+Agents with `memory: project` in their frontmatter build knowledge across sessions:
+
+| Agent | What It Remembers | Storage |
+|-------|-------------------|---------|
+| Code Reviewer | Review patterns, recurring issues, codebase conventions | `.claude/agent-memory/ai-agent-manager-plugin:code-reviewer/` |
+| Red Team Reviewer | Past vulnerabilities, attack patterns, audit history | `.claude/agent-memory/ai-agent-manager-plugin:red-team-reviewer/` |
+| Product Owner | Domain context, terminology, stakeholder preferences | `.claude/agent-memory/ai-agent-manager-plugin:product-owner/` |
+
+Memory accumulates automatically — agents get smarter about project-specific patterns over time.
+
+### Skills Preloading
+
+Agents with `skills` in their frontmatter receive skill content pre-injected at spawn time:
+
+| Agent | Pre-loaded Skills | Why |
+|-------|-------------------|-----|
+| Supervisor | workflow-management, async-orchestration, state-management, context-summarization | Referenced in every run |
+| Orchestrator | quality-checklist | Defines review gate criteria for subtask creation |
+| Code Reviewer | quality-checklist, context7-lookup | Always needs quality criteria and library doc lookup |
+| Red Team Reviewer | context7-lookup | Mandatory for reality-checking library usage |
+
+This eliminates file-read latency during execution — skills are in context from the start.
+
+### Agent Teams (Experimental Alternative)
+
+Claude Code Agent Teams is an experimental feature providing native multi-agent coordination:
+- Requires `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` environment variable
+- Best for research, competing hypotheses, cross-layer changes
+- Not for sequential tasks or same-file edits (use Supervisor with git worktrees)
+- See `skills/agent-teams/SKILL.md` for patterns and decision matrix
+- Does not replace Supervisor v3 — complementary for exploration tasks
 
 ---
 
@@ -496,5 +537,6 @@ Potential improvements:
 - **Main docs:** `README.md` (user guide, examples, troubleshooting)
 - **Plugin docs:** `.claude-plugin/README.md` (installation, commands, project setup)
 - **Development standards:** `AGENT_GUIDELINES.md` (quality checklist, agent contract, standards per language)
-- **Agent prompts:** `ai-agent-manager-plugin/agents/*.md` (detailed agent definitions)
+- **Agent prompts:** `ai-agent-manager-plugin/agents/*.md` (detailed agent definitions with YAML frontmatter)
 - **Skills:** `ai-agent-manager-plugin/skills/*/SKILL.md` (implementation guidance)
+- **Hooks:** `ai-agent-manager-plugin/hooks/hooks.json` (plugin quality gate hooks)

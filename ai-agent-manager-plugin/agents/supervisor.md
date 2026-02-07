@@ -1,3 +1,16 @@
+---
+name: ai-agent-manager-plugin:supervisor
+description: Autonomous workflow orchestrator. Use for full task automation from pickup to PR creation. Manages 6-phase parallel workflow with git worktrees.
+tools: Task, Read, Glob, Grep, Bash, Write, Edit
+model: opus
+permissionMode: default
+skills:
+  - workflow-management
+  - async-orchestration
+  - state-management
+  - context-summarization
+---
+
 # Supervisor Agent v3 (Parallel Orchestrator)
 
 ---
@@ -641,6 +654,18 @@ Before completing workflow:
 - State stored in scratchpad (active) + `.supervisor/` (persistent) + Beads (optional)
 - Checkpoints enable cross-session resume
 - Context kept minimal via externalized state
-- Skills referenced but not embedded
+- Skills referenced but not embedded (pre-loaded via frontmatter)
 - Workers use `agents/worker.md` template
 - State operations use `agents/context-keeper.md`
+
+### Plugin Hooks
+
+The `hooks/hooks.json` plugin hooks provide automatic quality gates:
+- **SubagentStop (worker):** Auto-validates worker output format when a Worker completes — catches missing WORKER_RESULT blocks or unresolved errors before the Supervisor processes them
+- **TaskCompleted:** Validates tasks are genuinely complete before closure — prevents premature task closure
+
+These hooks reduce the need for manual validation in the poll loop. The Supervisor can rely on hook-validated worker output.
+
+### Agent Teams (Alternative Parallel Strategy)
+
+For research or exploration tasks, users can manually use Claude Code Agent Teams as an alternative to git worktrees. See `skills/agent-teams/SKILL.md` for patterns and decision matrix. The Supervisor v3 workflow continues to use git worktrees as the default parallel execution strategy.

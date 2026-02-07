@@ -151,8 +151,7 @@ Do you want me to save these findings to AUDIT-REPORT.md?
 
 - `/code-reviewer` — Constructive code review (patterns, types, tests)
 - `/orchestrator` — Plan work by breaking goals into tasks
-- `/summarizer` — Summarize work done, update memory
-- `/repo-steward` — Manage commits with conventional messages
+- `/commit` — Create conventional commits with Beads linking
 - `/agent-help` — List all available commands
 
 ---

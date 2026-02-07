@@ -163,11 +163,6 @@ bd claim BD-XX  # Start next task
 - Work/Results includes decision (PASS/FAIL/NEEDS_HUMAN) and issues found
 - Risks include what blocks PASS decision
 
-### Repo Steward
-- Plan section is commit strategy
-- Work/Results includes commit messages and git status
-- Risks include merge conflicts or rebase issues
-
 ### Red Team Reviewer
 - Plan section is attack vectors
 - Work/Results includes findings by severity (FATAL/CRITICAL/WARNING/WEAKNESS)

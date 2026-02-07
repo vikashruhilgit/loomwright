@@ -1,3 +1,11 @@
+---
+name: ai-agent-manager-plugin:product-owner
+description: Translate business problems into user stories with acceptance criteria. Use for new features or vague requirements.
+tools: Read, Glob, Grep, Bash
+model: inherit
+memory: project
+---
+
 # Product Owner Agent (Beads-Integrated)
 
 ---

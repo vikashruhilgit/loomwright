@@ -1,0 +1,28 @@
+{
+  "description": "AI Agent Manager quality gates and monitoring",
+  "hooks": {
+    "SubagentStop": [
+      {
+        "matcher": "ai-agent-manager-plugin:worker",
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "A worker agent just completed. Review its output to verify: (1) it produced a WORKER_RESULT block, (2) files_modified is not empty, (3) it didn't report errors that went unresolved. Context: $ARGUMENTS. Respond with {\"ok\": true} if the worker completed successfully, or {\"ok\": false, \"reason\": \"...\"} if there are issues that need attention.",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "TaskCompleted": [
+      {
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "A task is being marked complete. Verify from the context that the task appears genuinely done — not just abandoned or skipped. Check: (1) task subject suggests work was done, (2) no obvious incomplete state. Context: $ARGUMENTS. Respond with {\"ok\": true} if complete, or {\"ok\": false, \"reason\": \"...\"} if incomplete.",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -115,7 +115,7 @@ Or for problems:
 
 - Orchestrator creates Beads tasks with review gates
 - Implement tasks with `/code-reviewer` checkpoints
-- Use `/repo-steward` for commits
+- Use `/commit` for commits
 
 ---
 
@@ -164,7 +164,7 @@ Tasks (BD-XXa, BD-XXb) with review gates
     ↓
 Implementation with /code-reviewer checkpoints
     ↓
-/repo-steward for commits
+/commit for commits
     ↓
 Return to /orchestrator goal: "BD-YY" for next story
 ```
@@ -175,7 +175,7 @@ Return to /orchestrator goal: "BD-YY" for next story
 
 - `/orchestrator` — Break stories into implementation tasks
 - `/code-reviewer` — Review code changes
-- `/repo-steward` — Create conventional commits
+- `/commit` — Create conventional commits with Beads linking
 - `/agent-help` — List all commands
 
 ---

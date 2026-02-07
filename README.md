@@ -1,6 +1,6 @@
 # AI Agent Manager
 
-A system for AI agents to collaborate on software projects. Six specialized agents (Supervisor, Product Owner, Orchestrator, Code Reviewer, Repo Steward, Red Team Reviewer) automate workflows, requirements, planning, review, commits, and adversarial audits.
+A system for AI agents to collaborate on software projects. Specialized agents (Supervisor, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer) and the `/commit` skill automate workflows, requirements, planning, review, commits, and adversarial audits.
 
 **Key Idea:** Agents use **Beads issue tracker** for task management. Your projects need only a `CLAUDE.md` file for codebase knowledge. Agents read context, do work, create Beads tasks. Repeatable across any project.
 
@@ -67,7 +67,7 @@ Orchestrator will:
 | **Product Owner** | `/product-owner feature: "..."` | Define requirements → create user stories with acceptance criteria | New feature, vague requirements |
 | **Orchestrator** | `/orchestrator goal: "..."` | Plan work → create Beads tasks with review gates | Starting implementation |
 | **Code Reviewer** | `/code-reviewer src/` | Review code → output PASS/FAIL/NEEDS_HUMAN | After writing code |
-| **Repo Steward** | `/repo-steward` | Stage changes → create commits → link to Beads | Ready to commit |
+| **Commit** (skill) | `/commit` | Stage changes → create commits → link to Beads | Ready to commit |
 | **Red Team Reviewer** | `/red-team-reviewer` | Adversarial audit → find production failures | Pre-launch, security |
 
 **Autonomous Workflow (Supervisor):**
@@ -93,7 +93,7 @@ Code Reviewer → PASS/FAIL/NEEDS_HUMAN (review gate)
     ↓
 You fix issues (if needed)
     ↓
-Repo Steward → Commits linked to Beads
+/commit → Commits linked to Beads
     ↓
 bd close BD-XX → Complete task, next task unblocked
 ```
@@ -280,7 +280,7 @@ Claude Code caches plugin contents. After restructuring skills (e.g., from `skil
 - **Token usage:** Each agent invocation loads prompts (potentially 5,000-10,000 tokens overhead). Consider this for high-frequency usage.
 
 ### Git Operations
-- **Main branch protection:** Repo Steward refuses commits on main/master without explicit flag.
+- **Main branch protection:** The `/commit` skill refuses commits on main/master without explicit flag.
 - **No rollback:** Git operations are not automatically reversible. Use `git reflog` for manual recovery.
 
 ---

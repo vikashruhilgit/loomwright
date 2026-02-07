@@ -312,7 +312,7 @@ Phase 5: LOOP — Check for next task
 |---------|---------|
 | `/orchestrator` | Plan tasks without executing |
 | `/code-reviewer` | Review specific files |
-| `/repo-steward` | Create commits manually |
+| `/commit` | Create commits manually |
 | `/product-owner` | Refine requirements |
 | `/red-team-reviewer` | Adversarial audit |
 

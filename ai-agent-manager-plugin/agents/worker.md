@@ -1,3 +1,10 @@
+---
+name: ai-agent-manager-plugin:worker
+description: Isolated implementation worker. Operates in git worktrees for parallel execution.
+tools: Read, Write, Edit, Bash, Glob, Grep
+model: inherit
+---
+
 # Worker Agent (Implementation Worker)
 
 ---

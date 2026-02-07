@@ -320,6 +320,77 @@ else:
 - Task ID is a descriptive slug (e.g., `task-user-auth`)
 - All state in `.supervisor/state.md`
 
+## Plugin Hooks (Quality Gates)
+
+Plugin hooks in `hooks/hooks.json` provide automatic quality gates that run without spawning extra subagents:
+
+### SubagentStop Hook (Worker Validation)
+
+When a Worker subagent completes, a prompt-based hook auto-validates its output:
+
+```json
+{
+  "SubagentStop": [
+    {
+      "matcher": "ai-agent-manager-plugin:worker",
+      "hooks": [
+        {
+          "type": "prompt",
+          "prompt": "Verify: (1) WORKER_RESULT block present, (2) files_modified not empty, (3) no unresolved errors...",
+          "timeout": 30
+        }
+      ]
+    }
+  ]
+}
+```
+
+**What this replaces:** Manual WORKER_RESULT validation in the Supervisor's poll loop. The hook catches malformed or incomplete worker output before the Supervisor processes it.
+
+### TaskCompleted Hook (Closure Validation)
+
+When any task is marked complete, a hook validates it's genuinely done:
+
+```json
+{
+  "TaskCompleted": [
+    {
+      "hooks": [
+        {
+          "type": "prompt",
+          "prompt": "Verify task appears genuinely done — not abandoned or skipped...",
+          "timeout": 30
+        }
+      ]
+    }
+  ]
+}
+```
+
+**What this prevents:** Premature task closure (tasks marked done that are actually incomplete).
+
+### Why Prompt-Based Hooks
+
+- No shell scripts to maintain — cross-platform (macOS, Linux, Windows)
+- Uses fast haiku model for evaluation
+- Falls back gracefully if hook fails (doesn't block workflow)
+- Lighter than spawning a full reviewer subagent for simple checks
+
+## Alternative Parallel Execution: Agent Teams
+
+For research or exploration tasks, Claude Code Agent Teams provides an alternative to git worktrees:
+
+| Factor | Git Worktrees (Default) | Agent Teams |
+|--------|------------------------|-------------|
+| File isolation | Full (separate dirs) | None (shared worktree) |
+| Git safety | Safe (separate branches) | Risk of conflicts |
+| Best for | Implementation | Research, exploration |
+| Stability | Stable | Experimental |
+
+See `skills/agent-teams/SKILL.md` for full patterns and decision matrix.
+
+The Supervisor v3 workflow uses git worktrees as the default. Agent Teams is available for manual use in research phases.
+
 ## Quality Checklist
 
 Before completing workflow management:
@@ -333,6 +404,7 @@ Before completing workflow management:
 - [ ] Escalation format includes context for human
 - [ ] Worktrees cleaned up after FINALIZE
 - [ ] Beads calls conditional on config.beads
+- [ ] Plugin hooks active for worker validation and task closure
 
 ## See Also
 
@@ -341,5 +413,7 @@ Before completing workflow management:
 - `skills/context-summarization/SKILL.md` - Output compression patterns
 - `skills/commit/SKILL.md` - Conventional commit format
 - `skills/quality-checklist/SKILL.md` - Review gate criteria
+- `skills/agent-teams/SKILL.md` - Agent Teams patterns (alternative parallel execution)
 - `agents/context-keeper.md` - State management agent
 - `agents/worker.md` - Implementation worker agent
+- `hooks/hooks.json` - Plugin quality gate hooks

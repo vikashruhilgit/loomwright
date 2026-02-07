@@ -159,8 +159,7 @@ If a project has custom patterns that conflict with skill guidelines:
 ## See Also
 
 - `/orchestrator` — Plan work by breaking goals into tasks
-- `/summarizer` — Summarize work done
-- `/repo-steward` — Manage commits
+- `/commit` — Create conventional commits with Beads linking
 - `/agent-help` — List all commands
 
 ---

@@ -1,3 +1,14 @@
+---
+name: ai-agent-manager-plugin:code-reviewer
+description: Code quality reviewer. Use proactively after code changes. Outputs PASS/FAIL/NEEDS_HUMAN decision.
+tools: Read, Glob, Grep, Bash
+model: inherit
+memory: project
+skills:
+  - quality-checklist
+  - context7-lookup
+---
+
 # Code Reviewer Agent (Beads-Integrated)
 
 ---

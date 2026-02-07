@@ -94,8 +94,7 @@ cd /path/to/your/project
 ## See Also
 
 - `/code-reviewer` — Review code changes
-- `/summarizer` — Summarize work done
-- `/repo-steward` — Manage commits
+- `/commit` — Create conventional commits with Beads linking
 - `/agent-help` — List all commands
 
 ---
