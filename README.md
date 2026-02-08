@@ -37,6 +37,7 @@ bd init
 ```
 
 This creates:
+
 ```
 your-project/
 ├── CLAUDE.md              # Codebase knowledge (you maintain)
@@ -52,6 +53,7 @@ your-project/
 ```
 
 Orchestrator will:
+
 1. Read your CLAUDE.md
 2. Understand your goal
 3. Create Beads tasks with review gates
@@ -61,16 +63,19 @@ Orchestrator will:
 
 ## The 6 Agents
 
-| Agent | Command | Purpose | When |
-|-------|---------|---------|------|
-| **Supervisor** | `/supervisor` | Autonomous workflow → task pickup → agents → PR → next task | Full automation |
-| **Product Owner** | `/product-owner feature: "..."` | Define requirements → create user stories with acceptance criteria | New feature, vague requirements |
-| **Orchestrator** | `/orchestrator goal: "..."` | Plan work → create Beads tasks with review gates | Starting implementation |
-| **Code Reviewer** | `/code-reviewer src/` | Review code → output PASS/FAIL/NEEDS_HUMAN | After writing code |
-| **Commit** (skill) | `/commit` | Stage changes → create commits → link to Beads | Ready to commit |
-| **Red Team Reviewer** | `/red-team-reviewer` | Adversarial audit → find production failures | Pre-launch, security |
+
+| Agent                 | Command                         | Purpose                                                            | When                            |
+| --------------------- | ------------------------------- | ------------------------------------------------------------------ | ------------------------------- |
+| **Supervisor**        | `/supervisor`                   | Autonomous workflow → task pickup → agents → PR → next task        | Full automation                 |
+| **Product Owner**     | `/product-owner feature: "..."` | Define requirements → create user stories with acceptance criteria | New feature, vague requirements |
+| **Orchestrator**      | `/orchestrator goal: "..."`     | Plan work → create Beads tasks with review gates                   | Starting implementation         |
+| **Code Reviewer**     | `/code-reviewer src/`           | Review code → output PASS/FAIL/NEEDS_HUMAN                         | After writing code              |
+| **Commit** (skill)    | `/commit`                       | Stage changes → create commits → link to Beads                     | Ready to commit                 |
+| **Red Team Reviewer** | `/red-team-reviewer`            | Adversarial audit → find production failures                       | Pre-launch, security            |
+
 
 **Autonomous Workflow (Supervisor):**
+
 ```
 /supervisor
     ↓
@@ -80,6 +85,7 @@ Loops until no more ready tasks
 ```
 
 **Manual Workflow:**
+
 ```
 Product Owner → Create Beads stories (user requirements)
     ↓
@@ -104,21 +110,25 @@ bd close BD-XX → Complete task, next task unblocked
 
 **Beads replaces TODO.md and memory files:**
 
-| Command | Purpose |
-|---------|---------|
-| `bd list` | View open/in-progress/completed tasks |
-| `bd create` | Create new task |
-| `bd claim BD-XX` | Start working on a task |
-| `bd close BD-XX` | Mark task complete |
-| `bd comment BD-XX "note"` | Add notes to task |
-| `bd dep BD-XX BD-YY` | Set task dependencies |
+
+| Command                   | Purpose                               |
+| ------------------------- | ------------------------------------- |
+| `bd list`                 | View open/in-progress/completed tasks |
+| `bd create`               | Create new task                       |
+| `bd claim BD-XX`          | Start working on a task               |
+| `bd close BD-XX`          | Mark task complete                    |
+| `bd comment BD-XX "note"` | Add notes to task                     |
+| `bd dep BD-XX BD-YY`      | Set task dependencies                 |
+
 
 **Task Structure:**
+
 - **EPIC:** Large feature (contains multiple tasks)
 - **TASK:** Implementation work (30-60 min)
 - **SUBTASK:** Review gate (blocks next task)
 
 **Review Gates:**
+
 - Every implementation task has a review subtask
 - Review subtask blocks next implementation task
 - Review decisions: PASS (proceed), FAIL (fix and re-review), NEEDS_HUMAN (creates bug issues)
@@ -162,6 +172,7 @@ Fill in once at the start:
 ## Common Patterns & Best Practices
 
 ### Agents Follow These Rules
+
 - **Quality First:** Thorough, well-tested solutions
 - **Surgical Changes:** Only modify what's necessary
 - **Pattern Consistency:** Use existing patterns
@@ -227,18 +238,22 @@ Then run agents in a test project to verify changes.
 ## Troubleshooting
 
 **Agent doesn't understand my project?**
+
 - Update CLAUDE.md with clearer patterns and examples
 - Add more detailed structure documentation
 
 **Beads tasks not appearing?**
+
 - Run `bd list` to check current state
 - Ensure `bd init` was run in project
 
 **Agents suggesting wrong patterns?**
+
 - Update CLAUDE.md with approved patterns
 - Review and reject unwanted proposals
 
 **Need help?**
+
 - Run `/agent-help` for command reference
 - Check AGENT_GUIDELINES.md for quality standards
 - Check .claude-plugin/README.md for detailed command documentation
@@ -249,23 +264,19 @@ Then run agents in a test project to verify changes.
 Claude Code caches plugin contents. After restructuring skills (e.g., from `skills/core/commit.md` to `skills/commit/SKILL.md`), force a refresh:
 
 1. Remove plugin and marketplace:
-   ```
+  ```
    /plugin marketplace remove ai-agent-manager-marketplace
    /plugin uninstall ai-agent-manager-plugin
-   ```
-
+  ```
 2. Re-add marketplace:
-   ```
+  ```
    /plugin marketplace add /path/to/ai-agent-manager
-   ```
-
+  ```
 3. Reinstall plugin:
-   ```
+  ```
    /plugin install ai-agent-manager-plugin
-   ```
-
+  ```
 4. Restart Claude Code (close and reopen entirely)
-
 5. Verify with `/skills` — should show all 30 skills under "Plugin skills"
 
 ---
@@ -273,13 +284,16 @@ Claude Code caches plugin contents. After restructuring skills (e.g., from `skil
 ## Known Limitations
 
 ### Agent Behavior
+
 - **LLM limitations:** Agents may occasionally reference non-existent files despite validation steps. Always verify before following plans.
 - **Context7 dependency:** External library lookups depend on Context7 MCP. If unavailable, agents fall back to CLAUDE.md patterns.
 
 ### Scale
+
 - **Token usage:** Each agent invocation loads prompts (potentially 5,000-10,000 tokens overhead). Consider this for high-frequency usage.
 
 ### Git Operations
+
 - **Main branch protection:** The `/commit` skill refuses commits on main/master without explicit flag.
 - **No rollback:** Git operations are not automatically reversible. Use `git reflog` for manual recovery.
 

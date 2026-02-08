@@ -9,6 +9,7 @@ skills:
   - async-orchestration
   - state-management
   - context-summarization
+  - supervisor-readiness
 ---
 
 # Supervisor Agent v3 (Parallel Orchestrator)
@@ -32,10 +33,11 @@ Autonomously manage the complete development workflow from task pickup to PR cre
 ### Inputs
 
 - **Task source:** Beads ready list, user description, or `.supervisor/state.md` (resume)
+- **Job file:** (optional) Pre-computed plan from `.supervisor/jobs/` via Launch Pad (skips Phases 0-2)
 - **CLAUDE.md:** Project context and patterns
 - **Git state:** Current branch, working tree status
 - **Resume data:** (optional) State from previous session
-- **Flags:** `--max-workers N`, `--sequential`, `--no-beads`, `--continue`, `--dry-run`
+- **Flags:** `--max-workers N`, `--sequential`, `--no-beads`, `--continue`, `--dry-run`, `job: {path}`
 
 ### Outputs
 
@@ -109,6 +111,14 @@ Autonomously manage the complete development workflow from task pickup to PR cre
    ```
    Context-Keeper(operation: initialize, config: {...}, session: {...})
    ```
+6. Check for job file:
+   - If `job:` parameter provided: read brief from path
+   - If no `job:` but `.supervisor/jobs/` has files < 24h old: ask user if they want to use one
+   - If job file loaded:
+     - Skip environment validation (already done by Launch Pad)
+     - Pre-populate: task details, acceptance criteria, subtask hints, parallelism analysis, skill references
+     - Jump to Phase 1 with enriched context (~200 tokens instead of ~700)
+     - Context savings: ~500 tokens freed for Phase 3 execution
 
 **Output:**
 ```markdown
@@ -445,6 +455,7 @@ Priority order for loading state:
 | `--no-beads` | false | Skip Beads even if initialized |
 | `--continue` | false | Resume from last checkpoint |
 | `--dry-run` | false | Preview workflow without executing |
+| `job: {path}` | auto | Load pre-computed plan from Launch Pad |
 
 ---
 
@@ -459,6 +470,7 @@ Priority order for loading state:
 /supervisor --continue                         # Resume from checkpoint
 /supervisor --continue task: BD-XX             # Resume specific task
 /supervisor --dry-run                          # Preview only
+/supervisor job: .supervisor/jobs/2026-02-08-jwt-auth.md   # Execute from Launch Pad brief
 ```
 
 ---
@@ -626,6 +638,7 @@ Phase 4 (FINALIZE):
 - **State management:** `skills/state-management/SKILL.md`
 - **Workflow patterns:** `skills/workflow-management/SKILL.md`
 - **Output compression:** `skills/context-summarization/SKILL.md`
+- **Readiness:** `skills/supervisor-readiness/SKILL.md` — Brief template, pre-flight checklist, jobs convention
 - **Commit format:** `skills/commit/SKILL.md`
 - **Review criteria:** `skills/quality-checklist/SKILL.md`
 

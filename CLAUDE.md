@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**AI Agent Manager** is a reusable system that provides intelligent agents for software development workflows. It integrates with Claude Code as a plugin with 7 agent roles (5 user-facing + 2 internal) that automate parallel workflow execution, requirements definition, planning, code review, commit management, and adversarial security audits.
+**AI Agent Manager** is a reusable system that provides intelligent agents for software development workflows. It integrates with Claude Code as a plugin with 8 agent roles (6 user-facing + 2 internal) that automate plan-first readiness, parallel workflow execution, requirements definition, planning, code review, commit management, and adversarial security audits.
 
 The system enables agents to collaborate on any project type. **Beads issue tracker** is supported but optional — projects can use `.supervisor/` directory for state management instead. `CLAUDE.md` provides codebase knowledge that persists between work sessions.
 
@@ -51,9 +51,17 @@ The project is structured as a **Claude Code plugin marketplace**:
 - Review subtask blocks next implementation task
 - Review decisions: PASS (proceed), FAIL (fix and re-review), NEEDS_HUMAN (creates bug issues)
 
-### The 7 Agent Roles
+### The 8 Agent Roles
 
 Each agent is a Markdown prompt file (`agents/[name].md`):
+
+#### **Launch Pad** (`/launch-pad`) — Supervisor Readiness
+- **Purpose:** Prepare raw goals for autonomous Supervisor execution
+- **When to use:** Before `/supervisor` for complex tasks, when starting new work, when you want to review the plan
+- **Command:** `/launch-pad goal: "..."`, `/launch-pad story: BD-XX`, `/launch-pad goal: "..." --discovery`
+- **Workflow:** VALIDATE → DISCOVER → ANALYZE → DECOMPOSE → PACKAGE → REFINE & SAVE
+- **Key features:** File impact estimation, parallelism pre-analysis, jobs folder, interactive refinement
+- **Outputs:** Supervisor-Ready Brief saved to `.supervisor/jobs/`
 
 #### **Supervisor** (`/supervisor`) — v3 Parallel Orchestrator
 - **Purpose:** Autonomously manage complete development workflow with parallel execution
@@ -151,7 +159,8 @@ your-project/
 ├── CLAUDE.md              # Your codebase knowledge
 ├── .supervisor/           # Supervisor state (auto-created, gitignored)
 │   ├── state.md           # Current session state
-│   └── history/           # Completed session summaries
+│   ├── history/           # Completed session summaries
+│   └── jobs/              # Supervisor-Ready Briefs from Launch Pad
 ├── .beads/                # Beads issue tracker (optional)
 │   └── issues/
 └── src/                   # Your code
@@ -160,6 +169,9 @@ your-project/
 ### Run Agents
 
 ```bash
+# Prepare for autonomous execution (plan-first)
+/launch-pad goal: "add user authentication"
+
 # Plan work
 /orchestrator goal: "add user authentication"
 
@@ -182,7 +194,8 @@ your-project/
 ```
 ai-agent-manager/
 ├── ai-agent-manager-plugin/          # The Claude Code plugin
-│   ├── agents/                       # Agent markdown prompts (7 roles)
+│   ├── agents/                       # Agent markdown prompts (8 roles)
+│   │   ├── launch-pad.md             # Launch Pad (Supervisor readiness)
 │   │   ├── supervisor.md             # Supervisor v3 (parallel orchestrator)
 │   │   ├── context-keeper.md         # Context-Keeper (state management)
 │   │   ├── worker.md                 # Worker (implementation in worktrees)
@@ -191,6 +204,7 @@ ai-agent-manager/
 │   │   ├── code-reviewer.md          # Code Reviewer (quality gates)
 │   │   └── red-team-reviewer.md      # Red Team Reviewer (adversarial)
 │   ├── commands/                     # Slash commands for Claude Code
+│   │   ├── launch-pad.md             # /launch-pad command
 │   │   ├── supervisor.md             # /supervisor command (v3)
 │   │   ├── product-owner.md          # /product-owner command
 │   │   ├── orchestrator.md           # /orchestrator command
@@ -199,7 +213,8 @@ ai-agent-manager/
 │   │   └── agent-help.md             # /agent-help command
 │   ├── hooks/                        # Plugin quality gate hooks
 │   │   └── hooks.json                # SubagentStop + TaskCompleted validation
-│   ├── skills/                       # Skill files for guidance (34 skills)
+│   ├── skills/                       # Skill files for guidance (35 skills)
+│   │   ├── supervisor-readiness/     # Pre-flight checklist & Supervisor-Ready Brief template
 │   │   ├── agent-teams/              # Agent Teams patterns (experimental)
 │   │   ├── async-orchestration/      # Parallel dispatch & git worktree patterns
 │   │   ├── state-management/         # State file schema & checkpoint protocols
@@ -215,7 +230,7 @@ ai-agent-manager/
 │   │   ├── mysql/                    # MySQL patterns
 │   │   └── playwright-e2e/           # Playwright E2E testing patterns
 │   └── .claude-plugin/
-│       └── plugin.json               # Plugin metadata (v3.2.0)
+│       └── plugin.json               # Plugin metadata (v3.3.0)
 │
 ├── .claude-plugin/
 │   ├── marketplace.json              # Marketplace definition
@@ -247,6 +262,17 @@ Fix issues (if FAIL)
 bd close BD-XX → Task complete, next unblocked
     ↓
 Next agent reads updated CLAUDE.md (knowledge grows)
+```
+
+**Plan-First Autonomous Workflow:**
+```
+/launch-pad goal: "..."
+    ↓
+.supervisor/jobs/{date}-{slug}.md  (Supervisor-Ready Brief)
+    ↓
+/supervisor job: .supervisor/jobs/{file}.md  (clean context, ~500 tokens freed)
+    ↓
+EXECUTE → FINALIZE → PR
 ```
 
 **Autonomous Workflow (Supervisor v3):**
@@ -382,10 +408,10 @@ Before an agent completes work:
 ### Plugin Metadata
 
 - **Plugin Name:** `ai-agent-manager-plugin`
-- **Version:** 3.2.0
-- **Description:** AI agents with parallel orchestration, focused skills, plugin hooks, persistent memory, and Beads-optional operation
-- **Agents:** 7 roles (Supervisor v3, Context-Keeper, Worker, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer)
-- **Skills:** 34 reusable skill files
+- **Version:** 3.3.0
+- **Description:** AI agents with plan-first workflows, parallel orchestration, focused skills, plugin hooks, persistent memory, and Beads-optional operation
+- **Agents:** 8 roles (Launch Pad, Supervisor v3, Context-Keeper, Worker, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer)
+- **Skills:** 35 reusable skill files
 - **Hooks:** 2 quality gate hooks (SubagentStop, TaskCompleted)
 - **Author:** vikash ruhil
 - **License:** MIT
@@ -451,6 +477,7 @@ Agents with `memory: project` in their frontmatter build knowledge across sessio
 
 | Agent | What It Remembers | Storage |
 |-------|-------------------|---------|
+| Launch Pad | Commonly impacted files per goal type, project patterns | `.claude/agent-memory/ai-agent-manager-plugin:launch-pad/` |
 | Code Reviewer | Review patterns, recurring issues, codebase conventions | `.claude/agent-memory/ai-agent-manager-plugin:code-reviewer/` |
 | Red Team Reviewer | Past vulnerabilities, attack patterns, audit history | `.claude/agent-memory/ai-agent-manager-plugin:red-team-reviewer/` |
 | Product Owner | Domain context, terminology, stakeholder preferences | `.claude/agent-memory/ai-agent-manager-plugin:product-owner/` |
@@ -463,7 +490,8 @@ Agents with `skills` in their frontmatter receive skill content pre-injected at 
 
 | Agent | Pre-loaded Skills | Why |
 |-------|-------------------|-----|
-| Supervisor | workflow-management, async-orchestration, state-management, context-summarization | Referenced in every run |
+| Launch Pad | supervisor-readiness, context-setup, claude-md-validation, product-discovery, mvp-scoping, quality-checklist, context7-lookup | All discovery/validation/readiness knowledge needed |
+| Supervisor | workflow-management, async-orchestration, state-management, context-summarization, supervisor-readiness | Referenced in every run |
 | Orchestrator | quality-checklist | Defines review gate criteria for subtask creation |
 | Code Reviewer | quality-checklist, context7-lookup | Always needs quality criteria and library doc lookup |
 | Red Team Reviewer | context7-lookup | Mandatory for reality-checking library usage |

@@ -19,6 +19,7 @@ The Supervisor agent v3 autonomously manages the complete development workflow. 
 /supervisor --continue                         # Resume from last checkpoint
 /supervisor --continue task: BD-XX             # Resume specific task
 /supervisor --dry-run                          # Preview workflow without executing
+/supervisor job: .supervisor/jobs/2026-02-08-jwt-auth.md   # Execute from Launch Pad brief
 ```
 
 ## Parameters
@@ -31,6 +32,7 @@ The Supervisor agent v3 autonomously manages the complete development workflow. 
 | `--no-beads` | No | Disable Beads tracking even if initialized |
 | `--continue` | No | Resume workflow from last checkpoint |
 | `--dry-run` | No | Preview the workflow phases without executing any actions |
+| `job:` | No | Path to Supervisor-Ready Brief from Launch Pad — skips Phases 0-2 |
 
 ## What This Does
 
@@ -285,6 +287,34 @@ Phase 5: LOOP — Check for next task
 **No changes made.** Run `/supervisor` to execute.
 ```
 
+## Plan-First Workflow (with Launch Pad)
+
+For complex tasks, use Launch Pad to plan and Supervisor to execute:
+
+```bash
+# 1. Prepare the brief (analyzes codebase, decomposes subtasks)
+/launch-pad goal: "add JWT authentication"
+
+# 2. Review the brief
+# Launch Pad presents the brief for your review
+# Choose: Save / Refine / Edit / Discard
+
+# 3. Execute in a fresh session (clean context, ~500 tokens freed)
+/supervisor job: .supervisor/jobs/2026-02-08-jwt-auth.md
+```
+
+**Benefits:**
+- **~500 tokens freed** for execution (Supervisor skips Phases 0-2)
+- **Plan review** before any code is written
+- **File impact analysis** prevents parallelism mistakes
+- **Clean context** — fresh session for Supervisor
+
+**When to use Plan-First:**
+- Complex tasks (>3 expected subtasks)
+- Want to review plan before workers start
+- Need accurate file overlap detection
+- Working on unfamiliar codebase
+
 ## Workflow Comparison
 
 | Feature | Manual Workflow | Supervisor v2 | Supervisor v3 |
@@ -305,11 +335,13 @@ Phase 5: LOOP — Check for next task
 4. **Resume after pause:** `/supervisor --continue` picks up exactly where it left off
 5. **Limit workers:** Use `--max-workers 1` for resource-constrained environments
 6. **No Beads? No problem:** The Supervisor works on any project with `--no-beads`
+7. **Plan first for complex tasks:** Use `/launch-pad` to prepare a brief, then `/supervisor job:` for clean-context execution
 
 ## Related Commands
 
 | Command | Purpose |
 |---------|---------|
+| `/launch-pad` | Prepare brief for clean-context execution |
 | `/orchestrator` | Plan tasks without executing |
 | `/code-reviewer` | Review specific files |
 | `/commit` | Create commits manually |
@@ -352,4 +384,5 @@ Phase 5: LOOP — Check for next task
 - `skills/async-orchestration/SKILL.md` - Parallel dispatch patterns
 - `skills/state-management/SKILL.md` - State file schema
 - `skills/workflow-management/SKILL.md` - Workflow patterns
+- `skills/supervisor-readiness/SKILL.md` - Pre-flight checklist and brief template
 - `skills/context-summarization/SKILL.md` - Output compression

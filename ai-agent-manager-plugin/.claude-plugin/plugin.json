@@ -1,7 +1,7 @@
 {
   "name": "ai-agent-manager-plugin",
-  "version": "3.2.0",
-  "description": "AI agents with parallel orchestration, focused skills, plugin hooks, persistent memory, and Beads-optional operation. 7 agent roles with YAML frontmatter: Supervisor v3 (parallel orchestrator with git worktrees), Context-Keeper (externalized state), Worker (isolated implementation), Product Owner (business requirements), Orchestrator (task planning), Code Reviewer (quality gates with memory), and Red Team Reviewer (adversarial audits with memory). Features 34 reusable skills including /commit (conventional commits with Beads linking), Playwright E2E testing, plugin quality gate hooks (SubagentStop, TaskCompleted), and persistent agent memory across sessions.",
+  "version": "3.3.0",
+  "description": "AI agents with parallel orchestration, plan-first workflows, focused skills, plugin hooks, persistent memory, and Beads-optional operation. 8 agent roles with YAML frontmatter: Launch Pad (Supervisor readiness with codebase analysis and jobs folder), Supervisor v3 (parallel orchestrator with git worktrees), Context-Keeper (externalized state), Worker (isolated implementation), Product Owner (business requirements), Orchestrator (task planning), Code Reviewer (quality gates with memory), and Red Team Reviewer (adversarial audits with memory). Features 35 reusable skills including supervisor-readiness (pre-flight checklist and brief template), /commit (conventional commits with Beads linking), Playwright E2E testing, plugin quality gate hooks (SubagentStop, TaskCompleted), and persistent agent memory across sessions.",
   "author": {
     "name": "vikash ruhil"
   },
@@ -42,6 +42,11 @@
     "frontmatter",
     "agent-teams",
     "playwright",
-    "e2e-testing"
+    "e2e-testing",
+    "launch-pad",
+    "plan-first",
+    "jobs",
+    "readiness",
+    "file-impact"
   ]
 }

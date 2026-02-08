@@ -20,7 +20,12 @@ Shows all available agent commands and quick usage examples.
 
 ## Quick Start
 
-The AI Agent Manager plugin provides **7 agent roles** for your development workflow:
+The AI Agent Manager plugin provides **8 agent roles** for your development workflow:
+
+**Readiness Pipeline (1 agent):**
+```
+/launch-pad  →  Env validation + codebase analysis + brief → .supervisor/jobs/
+```
 
 **Autonomous Workflow (3 agent roles):**
 ```
@@ -54,11 +59,85 @@ The AI Agent Manager plugin provides **7 agent roles** for your development work
 /supervisor  →  INIT → ACQUIRE → PLAN → EXECUTE (parallel workers) → FINALIZE → LOOP
 ```
 
+**Plan-First Autonomous Workflow:**
+```
+/launch-pad → .supervisor/jobs/{brief} → /supervisor job: {brief} → clean execution
+```
+
 **Task Management:** Beads issue tracker (optional) or `.supervisor/` directory
 
 ---
 
 ## Command Reference
+
+### 🚀 /launch-pad — Supervisor Readiness
+
+**Purpose:** Prepare raw goals for autonomous Supervisor execution with codebase analysis, environment validation, file impact estimation, and interactive refinement
+
+**Usage:**
+```
+/launch-pad goal: "add user authentication with JWT"
+/launch-pad feature: "customers need order history"
+/launch-pad problem: "login is broken on mobile"
+/launch-pad story: BD-15
+/launch-pad goal: "..." --discovery
+/launch-pad goal: "..." --skip-validation
+```
+
+**What it does:**
+- Validates environment readiness (git, CLAUDE.md, Beads, worktrees, gh)
+- Refines requirements using product discovery and MVP scoping
+- Analyzes codebase for file impact estimation (grep/glob/read)
+- Decomposes into 3-7 subtasks with dependency analysis
+- Computes parallelism (LAUNCHABLE vs BLOCKED based on file overlap)
+- Saves Supervisor-Ready Brief to `.supervisor/jobs/`
+- Provides interactive refinement (save/refine/edit/discard)
+
+**6-Phase Workflow:**
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  1. VALIDATE (env)  →  2. DISCOVER (requirements)              │
+│         ↓                                                       │
+│  3. ANALYZE (codebase)  →  4. DECOMPOSE (subtasks)             │
+│         ↓                                                       │
+│  5. PACKAGE (brief)  →  6. REFINE & SAVE (interactive)         │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Example Session:**
+```
+$ /launch-pad goal: "add JWT authentication"
+
+## Phase 1: VALIDATE
+- CLAUDE.md: ✓ Found (fresh)
+- Git: clean, branch: main
+- Beads: ✓ Active
+
+## Phase 5: PACKAGE
+# Supervisor Job: Add JWT Authentication
+- Subtasks: 4 (2 LAUNCHABLE, 2 BLOCKED)
+- Recommended workers: 2
+
+## Phase 6: SAVE
+Brief saved: .supervisor/jobs/2026-02-08-jwt-auth.md
+
+To execute: /supervisor job: .supervisor/jobs/2026-02-08-jwt-auth.md
+```
+
+**When to Use:**
+- Complex tasks (>3 expected subtasks)
+- Want to review plan before workers start
+- Need accurate file impact analysis
+- Working on unfamiliar codebase
+
+**When NOT to Use:**
+- Simple tasks (1-2 subtasks) → Use `/supervisor` directly
+- Resuming work → Use `/supervisor --continue`
+- Planning without execution → Use `/orchestrator`
+
+**Learn More:** `/launch-pad --help`
+
+---
 
 ### 🤖 /supervisor — Parallel Orchestrator (v3)
 
@@ -73,6 +152,7 @@ The AI Agent Manager plugin provides **7 agent roles** for your development work
 /supervisor --no-beads              # Skip Beads even if initialized
 /supervisor --continue              # Resume from last checkpoint
 /supervisor --dry-run               # Preview workflow without executing
+/supervisor job: .supervisor/jobs/{file}.md  # Execute from Launch Pad brief
 ```
 
 **What it does:**
@@ -623,14 +703,16 @@ bd close BD-XX
 ```
 ai-agent-manager-plugin/
 ├── .claude-plugin/
-│   └── plugin.json          # Plugin metadata (v3.1.0)
+│   └── plugin.json          # Plugin metadata (v3.3.0)
 ├── commands/                # Slash commands
+│   ├── launch-pad.md        # Supervisor readiness
 │   ├── supervisor.md        # Parallel orchestrator (v3)
 │   ├── orchestrator.md
 │   ├── code-reviewer.md
 │   ├── red-team-reviewer.md # Adversarial auditor
 │   └── agent-help.md
-├── agents/                  # Agent implementations (7 roles)
+├── agents/                  # Agent implementations (8 roles)
+│   ├── launch-pad.md        # Supervisor readiness agent
 │   ├── supervisor.md        # Parallel orchestrator (v3)
 │   ├── context-keeper.md    # State management agent
 │   ├── worker.md            # Implementation worker
@@ -641,7 +723,8 @@ ai-agent-manager-plugin/
 │   └── prompts.md           # Shared preamble
 ├── hooks/                   # Plugin quality gate hooks
 │   └── hooks.json           # SubagentStop + TaskCompleted validation
-└── skills/                  # Skill files (34 skills)
+└── skills/                  # Skill files (35 skills)
+    ├── supervisor-readiness/# Pre-flight checklist & brief template
     ├── agent-teams/         # Agent Teams patterns (experimental)
     ├── async-orchestration/ # Parallel dispatch patterns
     ├── state-management/    # State file schema
@@ -660,7 +743,8 @@ your-project/
 ├── CLAUDE.md                # Codebase knowledge, patterns
 ├── .supervisor/             # Supervisor state (auto-created, gitignored)
 │   ├── state.md             # Current session state
-│   └── history/             # Completed session summaries
+│   ├── history/             # Completed session summaries
+│   └── jobs/                # Supervisor-Ready Briefs from Launch Pad
 └── .beads/                  # Beads issue tracker (optional)
     ├── issues/              # Issue files
     └── ...
@@ -695,6 +779,7 @@ https://github.com/your-org/ai-agent-manager
 ## Keyboard Shortcuts
 
 These are Claude Code slash commands, so you can type them directly:
+- Type `/launch` + Tab → Auto-completes to `/launch-pad`
 - Type `/super` + Tab → Auto-completes to `/supervisor`
 - Type `/orchestr` + Tab → Auto-completes to `/orchestrator`
 - Type `/code-r` + Tab → Auto-completes to `/code-reviewer`
@@ -704,6 +789,12 @@ These are Claude Code slash commands, so you can type them directly:
 ---
 
 ## Summary
+
+### Readiness Pipeline (Prepare for Autonomous Execution)
+
+| Agent | Purpose | When | Input | Output |
+|-------|---------|------|-------|--------|
+| **Launch Pad** | Supervisor readiness | Complex tasks, plan review | Raw goal + codebase | Supervisor-Ready Brief in `.supervisor/jobs/` |
 
 ### Autonomous Workflow (End-to-End Automation — 3 Roles)
 
@@ -736,7 +827,9 @@ These are Claude Code slash commands, so you can type them directly:
 ---
 
 **Ready to get started?**
+- Prepare for execution: `/launch-pad goal: "your goal here"` (codebase analysis, brief, clean handoff)
 - Autonomous workflow: `/supervisor` (picks up tasks, runs agents, creates PRs)
+- Plan-first workflow: `/launch-pad` → `/supervisor job: .supervisor/jobs/{brief}.md`
 - Define requirements: `/product-owner feature: "your feature here"`
 - Plan work: `/orchestrator goal: "your goal here"`
 - Review code: `/code-reviewer src/`
