@@ -7,8 +7,8 @@
     {
       "name": "ai-agent-manager-plugin",
       "source": "./ai-agent-manager-plugin",
-      "description": "8 agent roles (6 user-facing + 2 internal): Launch Pad (Supervisor readiness), Supervisor (parallel orchestration), Orchestrator (plan), Code Reviewer (quality), Red Team Reviewer (adversarial audits), Product Owner (requirements), plus /commit skill. Plan first and build correctly.",
-      "version": "3.3.0",
+      "description": "9 agent roles (6 user-facing + 3 internal): Launch Pad (Supervisor readiness), Supervisor v4 (parallel orchestration with Execute Manager), Orchestrator (plan), Code Reviewer (quality), Red Team Reviewer (adversarial audits), Product Owner (requirements), plus /commit skill. Plan first and build correctly.",
+      "version": "4.0.0",
       "author": {
         "name": "vikash ruhil"
       },

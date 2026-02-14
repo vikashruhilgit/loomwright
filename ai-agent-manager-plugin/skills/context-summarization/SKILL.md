@@ -160,7 +160,29 @@ CK: {operation} — {confirmation}
 ```
 CK: record_worker_result — BD-15a completed, +145 -3
 CK: update_phase — EXECUTE, progress 1/3
-CK: checkpoint — saved to .supervisor/ + Beads
+CK: checkpoint — saved to .supervisor/
+```
+
+### Execute Manager Output
+
+**Input:** Full EXECUTE_RESULT or EXECUTE_CHECKPOINT block
+
+**Summary Format (EXECUTE_RESULT):**
+```
+EM: {status}, {completed}/{total} subtasks, merge_order: [{IDs}]
+Worktrees: [{paths}], calls: {N}/60
+```
+
+**Summary Format (EXECUTE_CHECKPOINT):**
+```
+EM: checkpoint, {completed}/{total} done, {in_progress} active
+Resume: {brief context}, calls: {N}/60
+```
+
+**Example:**
+```
+EM: completed, 3/3 subtasks, merge_order: [user-auth-a, user-auth-c, user-auth-b]
+Worktrees: [../project-user-auth-a, ../project-user-auth-b, ../project-user-auth-c], calls: 42/60
 ```
 
 ## Compression Rules
@@ -207,7 +229,7 @@ Retry: 1/3
 
 ## Checkpoint Data Compression
 
-Compress for `.supervisor/` and optional Beads comments (< 500 tokens):
+Compress for `.supervisor/` (< 500 tokens):
 
 ```markdown
 ## Supervisor Checkpoint
@@ -229,13 +251,13 @@ Compress for `.supervisor/` and optional Beads comments (< 500 tokens):
 
 ## Progressive Compression
 
-When context exceeds thresholds:
+Compression levels based on tool call budget:
 
-| Context Level | Action |
-|---------------|--------|
-| < 70% | Normal summaries (< 200 tokens) |
-| 70-85% | Aggressive compression (< 100 tokens) |
-| > 85% | Minimal checkpoint only (< 50 tokens) |
+| Level | Supervisor (30 calls) | Execute Manager (60 calls) | Action |
+|-------|----------------------|---------------------------|--------|
+| GREEN | 0-18 (60%) | 0-36 (60%) | Normal summaries (< 200 tokens) |
+| YELLOW | 18-24 (80%) | 36-48 (80%) | Aggressive compression (< 100 tokens) |
+| RED | 24-28 (93%) | 48-55 (92%) | Minimal checkpoint only (< 50 tokens) |
 
 **Aggressive Compression Example:**
 

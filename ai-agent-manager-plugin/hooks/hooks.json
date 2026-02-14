@@ -7,7 +7,17 @@
         "hooks": [
           {
             "type": "prompt",
-            "prompt": "A worker agent just completed. Review its output to verify: (1) it produced a WORKER_RESULT block, (2) files_modified is not empty, (3) it didn't report errors that went unresolved. Context: $ARGUMENTS. Respond with {\"ok\": true} if the worker completed successfully, or {\"ok\": false, \"reason\": \"...\"} if there are issues that need attention.",
+            "prompt": "A worker agent just completed. Review its output to verify: (1) it produced a WORKER_RESULT block, (2) files_modified is not empty, (3) a .worker-summary.md file was written to the worktree, (4) it didn't report errors that went unresolved. Context: $ARGUMENTS. Respond with {\"ok\": true} if the worker completed successfully, or {\"ok\": false, \"reason\": \"...\"} if there are issues that need attention.",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "ai-agent-manager-plugin:execute-manager",
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "An Execute Manager agent just completed. Review its output to verify: (1) it produced an EXECUTE_RESULT or EXECUTE_CHECKPOINT block, (2) the block contains subtasks_completed and worktrees fields, (3) merge_order is present if status is completed. Context: $ARGUMENTS. Respond with {\"ok\": true} if valid, or {\"ok\": false, \"reason\": \"...\"} if the output is malformed or missing required fields.",
             "timeout": 30
           }
         ]

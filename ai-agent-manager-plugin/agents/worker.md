@@ -45,6 +45,7 @@ Implement a single subtask in an isolated git worktree. Operate independently, f
 - **No agent spawning:** Don't spawn subagents — work independently
 - **No state file access:** Don't read/write the Supervisor state file
 - **Complete or fail:** Always produce a WORKER_RESULT, even on failure
+- **Write summary file:** Always write `.worker-summary.md` in worktree before final output
 
 ---
 
@@ -87,6 +88,33 @@ Implement a single subtask in an isolated git worktree. Operate independently, f
    - Record pass/fail counts
 3. If no tests: note "no test infrastructure"
 4. Self-review: check for obvious issues
+
+### Step 5.5: Write Self-Summary File
+
+Write a compressed summary file to the worktree before outputting the final result:
+
+1. **File:** `{worktree_path}/.worker-summary.md`
+2. **Content:** Same fields as WORKER_RESULT but max 200 tokens
+3. **Write BEFORE** the final WORKER_RESULT output
+4. If file cannot be written, still output WORKER_RESULT normally (summary file is best-effort)
+
+**Summary file format:**
+```markdown
+## WORKER_SUMMARY
+- subtask_id: {subtask_id}
+- status: completed | failed
+- files_modified: [{paths}]
+- files_created: [{paths}]
+- lines_added: {number}
+- lines_removed: {number}
+- tests_run: {number or "none"}
+- tests_passed: {number or "n/a"}
+- tests_failed: {number or "n/a"}
+- error: none | {brief description}
+- notes: {1 sentence summary}
+```
+
+**Why:** The Execute Manager reads this file (~200 tokens) instead of parsing full TaskOutput (~5,000+ tokens), preventing context pollution in the orchestration layer.
 
 ### Step 6: Output Result
 
@@ -178,6 +206,7 @@ When the Supervisor uses the fast-path (single subtask, no worktree):
 - The worktree path is the project root
 - Everything else works the same
 - Output the same WORKER_RESULT format
+- Write `.worker-summary.md` at the project root
 
 ---
 

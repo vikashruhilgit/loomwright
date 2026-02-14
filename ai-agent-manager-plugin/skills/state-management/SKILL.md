@@ -6,14 +6,14 @@ allowed-tools: [Read, Write, Edit, Bash]
 
 # State Management Skill
 
-Patterns for externalizing Supervisor state to files, enabling cross-session resume and Beads-optional operation.
+Patterns for externalizing Supervisor state to files, enabling cross-session resume.
 
 ## Quick Rules
 
 - Only Context-Keeper writes the state file (blocking calls for mutations)
 - State file lives in scratchpad during active session
 - Persistent copy in `.supervisor/state.md` for cross-session resume
-- Beads checkpoints are optional (only if `config.beads: true`)
+- Checkpoints saved to `.supervisor/` only
 - State file < 1000 tokens; decisions log and worker results grow unbounded
 
 ## When to Use This Skill
@@ -63,7 +63,6 @@ Before creating `.supervisor/`, verify `.gitignore` exists. If not, create it wi
 # Supervisor State
 
 ## Config
-- beads: true | false
 - max_workers: 2
 - mode: parallel | sequential
 
@@ -141,6 +140,7 @@ All mutations go through Context-Keeper (blocking call). Never write the state f
 | `record_decision` | Appends to Decisions Log | Any phase |
 | `record_error` | Appends to Error Log | Any phase |
 | `update_phase` | Updates Session.phase + Checkpoint | Phase transitions |
+| `record_batch` | Multiple mutations in single call | Phase 3 (EXECUTE) |
 | `checkpoint` | Full state snapshot to `.supervisor/` | After each phase |
 
 ### Checkpoint Protocol
@@ -149,18 +149,10 @@ After each phase transition:
 
 1. Context-Keeper updates `Session.phase` and `Checkpoint` section
 2. Copy scratchpad state → `.supervisor/state.md`
-3. If `config.beads: true`: also write summary to Beads comment
 
 ```bash
 # Checkpoint to .supervisor/
 cp {scratchpad}/supervisor-state.md {project}/.supervisor/state.md
-
-# Optional Beads checkpoint
-bd comment BD-XX "## Supervisor Checkpoint
-- Phase: {current_phase}
-- Progress: {completed}/{total} subtasks
-- Branch: {branch}
-- Resume: /supervisor --continue task: BD-XX"
 ```
 
 ---
@@ -187,22 +179,12 @@ If no scratchpad state but `.supervisor/state.md` exists:
 5. Copy to scratchpad: `cp .supervisor/state.md {scratchpad}/supervisor-state.md`
 6. Resume from checkpoint
 
-### Resume with Beads (optional)
-
-If Beads is available and `.supervisor/state.md` is missing:
-
-1. Read last checkpoint from Beads task comments
-2. Parse checkpoint data
-3. Reconstruct state file from checkpoint
-4. Resume from checkpoint
-
 ### Resume Priority
 
 ```
 1. Scratchpad state file (freshest, same session)
 2. .supervisor/state.md (persistent, cross-session)
-3. Beads checkpoint comments (fallback)
-4. No state found → start fresh (Phase 0)
+3. No state found → start fresh (Phase 0)
 ```
 
 ---
@@ -220,36 +202,6 @@ When a session completes (Phase 5 LOOP → no more tasks):
 
 ---
 
-## Beads-Optional Operation
-
-### With Beads (`config.beads: true`)
-
-- Task IDs come from Beads (BD-XX format)
-- Checkpoints written to both `.supervisor/` and Beads comments
-- Task status updates via `bd update` / `bd close`
-- `bd ready` for task selection
-
-### Without Beads (`config.beads: false`)
-
-- Task IDs are descriptive slugs (e.g., `task-user-auth`)
-- Checkpoints written only to `.supervisor/`
-- Task status tracked only in state file
-- User provides task description directly
-
-### Conditional Beads Calls
-
-```
-if config.beads:
-    bd update {task_id} --status in_progress
-    bd comment {task_id} "checkpoint..."
-    bd close {task_id}
-else:
-    # Update state file only
-    update_phase(...)
-```
-
----
-
 ## Quality Checklist
 
 Before completing state management:
@@ -257,7 +209,7 @@ Before completing state management:
 - [ ] State file has all required sections
 - [ ] Checkpoint written after each phase transition
 - [ ] Resume tested from both scratchpad and `.supervisor/`
-- [ ] Beads calls are conditional on `config.beads`
+- [ ] Batch updates used where possible (Execute Manager)
 - [ ] Only Context-Keeper mutates state file
 - [ ] Session history saved on completion
 

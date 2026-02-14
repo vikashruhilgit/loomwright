@@ -14,7 +14,6 @@ The Launch Pad agent prepares raw goals for autonomous Supervisor execution. It 
 /launch-pad goal: "add user authentication with JWT"
 /launch-pad feature: "customers need order history"
 /launch-pad problem: "login is broken on mobile"
-/launch-pad story: BD-15
 /launch-pad goal: "..." --discovery
 /launch-pad goal: "..." --skip-validation
 /launch-pad goal: "..." --project /path/to/project
@@ -24,10 +23,9 @@ The Launch Pad agent prepares raw goals for autonomous Supervisor execution. It 
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `goal:` | Yes (or `feature:`/`problem:`/`story:`) | The raw objective to prepare for Supervisor |
+| `goal:` | Yes (or `feature:`/`problem:`) | The raw objective to prepare for Supervisor |
 | `feature:` | Alternative to `goal:` | Customer-facing feature description |
 | `problem:` | Alternative to `goal:` | Business problem to solve |
-| `story: BD-XX` | Alternative to `goal:` | Load existing Beads story as input |
 | `--discovery` | No | Force full product discovery even if goal seems clear |
 | `--skip-validation` | No | Skip environment validation (Phase 1) for speed |
 | `--project` | No | Explicit project path (overrides auto-detect) |
@@ -42,7 +40,7 @@ The Launch Pad executes a **6-phase readiness workflow**:
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │  Phase 1: VALIDATE (Environment Readiness)                      │
-│     └─> Git, CLAUDE.md, Beads, worktrees, gh                   │
+│     └─> Git, CLAUDE.md, worktrees, gh                           │
 │                                                                 │
 │  Phase 2: DISCOVER (Requirement Refinement)                     │
 │     └─> Product discovery, acceptance criteria, MVP scoping     │
@@ -81,7 +79,6 @@ The Supervisor's 800-token context budget gets consumed by Phases 0-2 (planning)
 - **Project:** /Users/name/my-project
 - **CLAUDE.md:** ✓ Found (fresh)
 - **Git:** clean, branch: main
-- **Beads:** ✓ Active
 - **GitHub CLI:** ✓ Authenticated
 - **Blockers:** 0 | **Warnings:** 0
 
@@ -177,7 +174,6 @@ EXECUTE → FINALIZE → PR
 
 1. **Git repository:** Project must be a git repo
 2. **CLAUDE.md:** Should exist for best results (Launch Pad warns if missing)
-3. **Beads (optional):** If using `story:` parameter, Beads must be initialized
 
 ## Tips
 
@@ -267,10 +263,9 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 
 ### Inputs
 
-- **Goal:** Raw user objective (`goal:`, `feature:`, `problem:`, or `story: BD-XX`)
+- **Goal:** Raw user objective (`goal:`, `feature:`, or `problem:`)
 - **CLAUDE.md:** Project context and patterns
 - **Git state:** Current branch, working tree status
-- **Beads state:** (optional) Existing stories and tasks
 - **Flags:** `--discovery`, `--skip-validation`, `--project`
 
 ### Outputs
@@ -294,7 +289,7 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 ## Agent Guidelines
 
 **Launch Pad Responsibilities:**
-- Validate environment readiness (git, CLAUDE.md, Beads, worktrees, gh)
+- Validate environment readiness (git, CLAUDE.md, worktrees, gh)
 - Refine requirements using product discovery and MVP scoping skills
 - Analyze codebase for file impact estimation (grep/glob/read)
 - Decompose into 3-7 subtasks with dependency analysis
@@ -314,21 +309,19 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 1. Locate project (auto-detect CLAUDE.md via `skills/context-setup/SKILL.md`)
 2. Validate CLAUDE.md freshness via `skills/claude-md-validation/SKILL.md`
 3. Check git state: `git status --porcelain`, `git branch --show-current`
-4. Check Beads: `bd list` (success = active, fail = not initialized)
-5. Check orphaned worktrees: `git worktree list`
-6. Check GitHub CLI: `gh auth status`
-7. Report blockers (must fix) vs warnings (can proceed)
+4. Check orphaned worktrees: `git worktree list`
+5. Check GitHub CLI: `gh auth status`
+6. Report blockers (must fix) vs warnings (can proceed)
 
 Skip if `--skip-validation` flag is set.
 
 ### Phase 2: DISCOVER (Requirement Refinement)
 
-1. If `story: BD-XX`: load story via `bd show BD-XX`
-2. If goal is vague: apply `skills/product-discovery/SKILL.md`, ask clarifying questions (max 2 rounds)
-3. If goal is clear: extract acceptance criteria directly
-4. Write criteria in Given/When/Then format (`skills/user-story-writing/SKILL.md`)
-5. Scope to MVP using `skills/mvp-scoping/SKILL.md`
-6. If `--discovery` flag: force full discovery even if goal seems clear
+1. If goal is vague: apply `skills/product-discovery/SKILL.md`, ask clarifying questions (max 2 rounds)
+2. If goal is clear: extract acceptance criteria directly
+3. Write criteria in Given/When/Then format (`skills/user-story-writing/SKILL.md`)
+4. Scope to MVP using `skills/mvp-scoping/SKILL.md`
+5. If `--discovery` flag: force full discovery even if goal seems clear
 
 ### Phase 3: ANALYZE (Codebase Impact Estimation)
 
@@ -387,4 +380,4 @@ Before offering save:
 - Never spawns subagents (lightweight, skill-based)
 - Memory: Learns which files are commonly impacted by goals
 - Skills pre-loaded via frontmatter (7 skills)
-- Works with or without Beads
+- Uses `.supervisor/` for state management

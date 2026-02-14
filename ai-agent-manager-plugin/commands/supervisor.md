@@ -6,7 +6,7 @@ description: Autonomously manage development workflow with parallel execution fr
 
 ## Purpose
 
-The Supervisor agent v3 autonomously manages the complete development workflow. It picks up tasks, orchestrates parallel workers via git worktrees, manages quality gates, and creates Pull Requests. Supports Beads-optional operation and cross-session resume.
+The Supervisor agent v4 autonomously manages the complete development workflow. It picks up tasks, delegates Phase 3 execution to the Execute Manager, orchestrates parallel workers via git worktrees, manages quality gates, and creates Pull Requests. Uses `.supervisor/` for all state management.
 
 ## Usage
 
@@ -15,7 +15,6 @@ The Supervisor agent v3 autonomously manages the complete development workflow. 
 /supervisor task: BD-XX                        # Work on specific task
 /supervisor --max-workers 3                    # Up to 3 parallel workers
 /supervisor --sequential                       # Force sequential (no worktrees)
-/supervisor --no-beads                         # Skip Beads even if initialized
 /supervisor --continue                         # Resume from last checkpoint
 /supervisor --continue task: BD-XX             # Resume specific task
 /supervisor --dry-run                          # Preview workflow without executing
@@ -29,7 +28,6 @@ The Supervisor agent v3 autonomously manages the complete development workflow. 
 | `task:` | No | Specific task ID to work on (e.g., `task: BD-15` or `task: user-auth`) |
 | `--max-workers N` | No | Maximum parallel worktrees (default: 2) |
 | `--sequential` | No | Force sequential execution — no worktrees or parallelism |
-| `--no-beads` | No | Disable Beads tracking even if initialized |
 | `--continue` | No | Resume workflow from last checkpoint |
 | `--dry-run` | No | Preview the workflow phases without executing any actions |
 | `job:` | No | Path to Supervisor-Ready Brief from Launch Pad — skips Phases 0-2 |
@@ -40,7 +38,7 @@ The Supervisor executes a **6-phase parallel workflow**:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│              SUPERVISOR v3 — PARALLEL WORKFLOW                   │
+│              SUPERVISOR v4 — PARALLEL WORKFLOW                   │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │  Phase 0: INIT (Interactive Configuration)                      │
@@ -52,8 +50,8 @@ The Supervisor executes a **6-phase parallel workflow**:
 │  Phase 2: PLAN (Decompose + Parallelism Analysis)               │
 │     └─> Orchestrator → Subtasks → Parallelism graph             │
 │                                                                 │
-│  Phase 3: EXECUTE (Parallel Workers + Review Loop)              │
-│     └─> Worktrees → Background workers → Poll → Review loop    │
+│  Phase 3: EXECUTE (Delegated to Execute Manager)                │
+│     └─> Execute Manager → Worktrees → Workers → Reviews        │
 │                                                                 │
 │  Phase 4: FINALIZE (Merge + Commit + PR)                        │
 │     └─> Sequential merge → Commit → Push → PR → Close task     │
@@ -67,14 +65,15 @@ The Supervisor executes a **6-phase parallel workflow**:
 ### Architecture
 
 ```
-SUPERVISOR (pure orchestrator, ~800 tokens)
+SUPERVISOR (pure orchestrator, budget: 30 tool calls)
     ├─> Context-Keeper (blocking, state mutations)
     ├─> Product Owner (blocking, if vague requirements)
     ├─> Orchestrator (blocking, task decomposition)
-    ├─> Worker A (background, git worktree A)
-    ├─> Worker B (background, git worktree B)
-    ├─> Reviewer A (background, after Worker A)
-    └─> Reviewer B (background, after Worker B)
+    └─> Execute Manager (blocking, Phase 3, budget: 60 tool calls)
+        ├─> Worker A (background, git worktree A)
+        ├─> Worker B (background, git worktree B)
+        ├─> Reviewer A (background, after Worker A)
+        └─> Reviewer B (background, after Worker B)
 ```
 
 ### Parallel Execution via Git Worktree
@@ -92,24 +91,20 @@ Each parallel worker operates in its own worktree — no file conflicts, no git 
 1. **Git repository:** Project must be a git repo
 2. **Clean git state:** No uncommitted changes (or approve stashing)
 3. **GitHub CLI:** `gh` installed and authenticated (for PR creation)
-4. **Beads (optional):** If using Beads, `bd init` must be run first
-
-**Note:** Beads is no longer required. Without Beads, the Supervisor uses `.supervisor/` for all state management.
 
 ## Example Session
 
 ```bash
 $ /supervisor
 
-## SUPERVISOR v3: Starting Parallel Workflow
+## SUPERVISOR v4: Starting Parallel Workflow
 
 ## ENVIRONMENT
 **Path:** /Users/name/my-project
 **CLAUDE.md:** ✓ Found
-**Beads:** ✓ Active
 **Git:** clean
 **Branch:** main
-**Config:** beads=true, workers=2, mode=parallel
+**Config:** workers=2, mode=parallel
 
 ---
 
@@ -160,27 +155,12 @@ The Supervisor handles review decisions:
 | **FAIL** (3 attempts) | Checkpoint, escalate to human |
 | **NEEDS_HUMAN** | Checkpoint, pause, exit with resume command |
 
-## Beads-Optional Operation
-
-### With Beads (default if initialized)
-- Tasks from `bd ready`
-- Status via `bd update` / `bd close`
-- Checkpoints in `.supervisor/` AND Beads comments
-- Full task lifecycle tracking
-
-### Without Beads (`--no-beads` or not initialized)
-- User provides task description
-- Status tracked in `.supervisor/state.md` only
-- Checkpoints in `.supervisor/` only
-- Works on any project without setup
-
 ## State Persistence
 
 ```
 Active session:   {scratchpad}/supervisor-state.md
 Persistent:       {project}/.supervisor/state.md
 History:          {project}/.supervisor/history/{date}-{task}.md
-Optional:         Beads comments (if Beads active)
 ```
 
 The `.supervisor/` directory is auto-created and gitignored.
@@ -208,21 +188,21 @@ The Supervisor saves checkpoints after every phase transition:
 **Resume priority:**
 1. Scratchpad state (same session)
 2. `.supervisor/state.md` (cross-session)
-3. Beads comments (fallback)
 
 ## Context Management
 
-The Supervisor uses externalized state:
+The Supervisor uses externalized state and tool call budgets:
 
-- **Supervisor context:** ~800 tokens (phase, IDs, worker tracking only)
+- **Supervisor:** 30 tool call budget (~400 tokens context)
+- **Execute Manager:** 60 tool call budget (isolated context for Phase 3)
 - **State file:** Full session state managed by Context-Keeper
 - **Workers:** Run in background with their own isolated context
 - **Reviewers:** Run in background with their own isolated context
 
-**Context thresholds:**
-- < 70%: Normal operation
-- 70-85%: Warning, checkpoint, suggest new session
-- > 85%: Critical, checkpoint and exit with resume command
+**Tool call thresholds (Supervisor):**
+- 0-18 (60%): GREEN — normal operation
+- 18-24 (80%): YELLOW — aggressive compression, force checkpoint
+- 24-28 (93%): RED — checkpoint + exit with resume command
 
 ## Parallel vs Sequential
 
@@ -261,7 +241,7 @@ The Supervisor uses externalized state:
 | NEEDS_HUMAN | Checkpoint, pause, exit with resume |
 | Merge conflict | STOP, report files, exit with resume |
 | No ready tasks | Exit gracefully |
-| Context > 85% | Checkpoint, exit with resume |
+| Tool budget exceeded | Checkpoint, exit with resume |
 | Worker crash | Retry once, then escalate |
 | Worktree fails | Fall back to sequential mode |
 
@@ -317,15 +297,15 @@ For complex tasks, use Launch Pad to plan and Supervisor to execute:
 
 ## Workflow Comparison
 
-| Feature | Manual Workflow | Supervisor v2 | Supervisor v3 |
+| Feature | Manual Workflow | Supervisor v3 | Supervisor v4 |
 |---------|-----------------|---------------|---------------|
-| Task pickup | `bd claim` | Auto (Beads required) | Auto (Beads optional) |
-| Branch creation | Manual | Auto (sometimes skipped) | **MANDATORY** |
-| Agent coordination | Run each manually | Sequential | **Parallel** |
-| State management | In-context only | In-context + Beads | **Externalized** |
-| Cross-session resume | Not possible | Beads checkpoints | **.supervisor/ + Beads** |
-| Parallel workers | Not possible | Not possible | **Git worktrees** |
-| Beads dependency | Required | Required | **Optional** |
+| Task pickup | Manual | Auto (Beads optional) | Auto (`.supervisor/` only) |
+| Branch creation | Manual | **MANDATORY** | **MANDATORY** |
+| Agent coordination | Run each manually | Parallel (inline poll) | **Parallel (Execute Manager)** |
+| State management | In-context only | Externalized | **Externalized + tool call budget** |
+| Cross-session resume | Not possible | `.supervisor/` + Beads | **`.supervisor/` only** |
+| Parallel workers | Not possible | Git worktrees | **Git worktrees** |
+| Context growth | Unbounded | Unbounded in Phase 3 | **Bounded via Execute Manager** |
 
 ## Tips
 
@@ -334,8 +314,7 @@ For complex tasks, use Launch Pad to plan and Supervisor to execute:
 3. **Monitor .supervisor/:** Check `.supervisor/state.md` for current state
 4. **Resume after pause:** `/supervisor --continue` picks up exactly where it left off
 5. **Limit workers:** Use `--max-workers 1` for resource-constrained environments
-6. **No Beads? No problem:** The Supervisor works on any project with `--no-beads`
-7. **Plan first for complex tasks:** Use `/launch-pad` to prepare a brief, then `/supervisor job:` for clean-context execution
+6. **Plan first for complex tasks:** Use `/launch-pad` to prepare a brief, then `/supervisor job:` for clean-context execution
 
 ## Related Commands
 
@@ -350,9 +329,9 @@ For complex tasks, use Launch Pad to plan and Supervisor to execute:
 
 ## Troubleshooting
 
-**"No ready tasks found"**
-- With Beads: `bd list` to check task state; `bd create` to add tasks
-- Without Beads: provide task description directly with `task:` parameter
+**"No tasks provided"**
+- Provide task description directly with `task:` parameter
+- Or run interactively and describe the task when prompted
 
 **"Dirty working tree"**
 - Commit or stash changes before running Supervisor
@@ -379,6 +358,7 @@ For complex tasks, use Launch Pad to plan and Supervisor to execute:
 ## See Also
 
 - `agents/supervisor.md` - Full agent prompt (6-phase model)
+- `agents/execute-manager.md` - Phase 3 execution agent
 - `agents/context-keeper.md` - State management agent
 - `agents/worker.md` - Implementation worker agent
 - `skills/async-orchestration/SKILL.md` - Parallel dispatch patterns

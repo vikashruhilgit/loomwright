@@ -33,10 +33,9 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 
 ### Inputs
 
-- **Goal:** Raw user objective (`goal:`, `feature:`, `problem:`, or `story: BD-XX`)
+- **Goal:** Raw user objective (`goal:`, `feature:`, or `problem:`)
 - **CLAUDE.md:** Project context and patterns
 - **Git state:** Current branch, working tree status
-- **Beads state:** (optional) Existing stories and tasks
 - **Flags:** `--discovery`, `--skip-validation`, `--project`
 
 ### Outputs
@@ -90,21 +89,15 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
    git status --porcelain
    git branch --show-current
    ```
-4. Check Beads:
-   ```bash
-   bd list
-   ```
-   - Success = Beads active
-   - Fail = not initialized (proceed without Beads)
-5. Check orphaned worktrees:
+4. Check orphaned worktrees:
    ```bash
    git worktree list
    ```
-6. Check GitHub CLI:
+5. Check GitHub CLI:
    ```bash
    gh auth status
    ```
-7. Report blockers vs warnings:
+6. Report blockers vs warnings:
    - **BLOCKER** (must fix before proceeding): Dirty git state with conflicts, missing CLAUDE.md
    - **WARNING** (can proceed): Dirty git state (uncommitted changes), no `gh` auth, orphaned worktrees, stale CLAUDE.md
 
@@ -118,7 +111,6 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 |-------|--------|--------|
 | CLAUDE.md | ✓ Found / ⚠ Stale / ✗ Missing | {path} |
 | Git state | ✓ Clean / ⚠ Dirty ({N} files) | {branch} |
-| Beads | ✓ Active / ○ Not initialized | |
 | Worktrees | ✓ Clean / ⚠ {N} orphaned | |
 | GitHub CLI | ✓ Authenticated / ⚠ Not authenticated | |
 
@@ -133,17 +125,14 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 
 **Actions:**
 
-1. If goal references Beads story (`story: BD-XX`):
-   - Load story details via `bd show BD-XX`
-   - Extract existing acceptance criteria
-2. If goal is vague (no clear outcome or acceptance criteria):
+1. If goal is vague (no clear outcome or acceptance criteria):
    - Apply product discovery framework (`skills/product-discovery/SKILL.md`)
    - Ask clarifying questions (max 2 rounds via `AskUserQuestion`)
-3. If goal is clear (specific outcome described):
+2. If goal is clear (specific outcome described):
    - Extract acceptance criteria directly from goal
-4. Write/refine criteria in Given/When/Then format (`skills/user-story-writing/SKILL.md`)
-5. Scope to MVP using `skills/mvp-scoping/SKILL.md`
-6. If `--discovery` flag is set: force full product discovery even if goal seems clear
+3. Write/refine criteria in Given/When/Then format (`skills/user-story-writing/SKILL.md`)
+4. Scope to MVP using `skills/mvp-scoping/SKILL.md`
+5. If `--discovery` flag is set: force full product discovery even if goal seems clear
 
 **Output:**
 ```markdown
@@ -266,7 +255,7 @@ Subtask 2 (independent)
 
 1. Assemble the complete brief using the template from `skills/supervisor-readiness/SKILL.md`
 2. Fill all sections from Phases 1-4 results
-3. Include configuration recommendations (workers, mode, Beads)
+3. Include configuration recommendations (workers, mode)
 4. Add risk assessment and mitigation
 5. Present the complete brief to the user
 
@@ -342,10 +331,9 @@ No subagent overhead. No state file management. Clean exit after save.
 
 | Flag | Default | Purpose |
 |------|---------|---------|
-| `goal:` | — | Raw objective to prepare (required, or use `feature:`/`problem:`/`story:`) |
+| `goal:` | — | Raw objective to prepare (required, or use `feature:`/`problem:`) |
 | `feature:` | — | Alternative to `goal:` (customer-facing feature) |
 | `problem:` | — | Alternative to `goal:` (business problem to solve) |
-| `story: BD-XX` | — | Load existing Beads story as input |
 | `--discovery` | false | Force full product discovery even if goal seems clear |
 | `--skip-validation` | false | Skip environment validation (Phase 1) for speed |
 | `--project` | auto-detect | Explicit project path |
@@ -358,7 +346,6 @@ No subagent overhead. No state file management. Clean exit after save.
 /launch-pad goal: "add user authentication with JWT"
 /launch-pad feature: "customers need order history"
 /launch-pad problem: "login is broken on mobile"
-/launch-pad story: BD-15
 /launch-pad goal: "..." --discovery
 /launch-pad goal: "..." --skip-validation
 /launch-pad goal: "..." --project /path/to/project
@@ -375,7 +362,6 @@ No subagent overhead. No state file management. Clean exit after save.
 - **Project:** /Users/name/my-project
 - **CLAUDE.md:** ✓ Found (fresh)
 - **Git:** clean, branch: main
-- **Beads:** ✓ Active
 - **GitHub CLI:** ✓ Authenticated
 - **Blockers:** 0 | **Warnings:** 0
 
@@ -424,7 +410,6 @@ Users need secure access with token rotation.
 ## Configuration
 - **Workers:** 2
 - **Mode:** parallel
-- **Beads:** true
 - **Estimated batches:** 3
 
 ## Handoff
@@ -439,7 +424,6 @@ Users need secure access with token rotation.
 |-------|--------|
 | CLAUDE.md missing | BLOCKER: output instructions to create one |
 | Git state has conflicts | BLOCKER: output resolution instructions |
-| Beads not initialized | WARNING: proceed without Beads |
 | gh not authenticated | WARNING: note PR creation will fail |
 | Orphaned worktrees | WARNING: output cleanup commands |
 | Goal too vague after 2 rounds | Save what we have with LOW confidence markers |
@@ -482,4 +466,3 @@ Before offering save:
 - Never spawns subagents (lightweight, skill-based)
 - Memory: Learns which files are commonly impacted by goals in this project
 - Skills pre-loaded via frontmatter (7 skills — no file-read latency)
-- Works with or without Beads (Beads-optional like Supervisor)
