@@ -202,59 +202,118 @@ You are an implementation worker operating in a git worktree.
 
 ## Non-Blocking Polling
 
-### Poll Loop Pattern
+### Poll Loop Pattern (Execute Manager)
+
+The poll loop runs inside the Execute Manager (not the Supervisor), with iteration limits and back-off:
 
 ```
-active_workers = {worker_id: {subtask_id, output_file, status}}
-active_reviewers = {reviewer_id: {subtask_id, output_file, status}}
+active_workers = {worker_id: {subtask_id, output_file, worktree_path, status}}
+active_reviewers = {reviewer_id: {subtask_id, output_file, worktree_path, status}}
 
-while uncompleted_subtasks > 0:
+max_iterations = 30
+poll_interval = 2000    # ms, start at 2s
+idle_streak = 0
+tool_calls = {current count}
+
+for iteration in 1..max_iterations:
+  results_found = false
 
   # 1. Check running workers (non-blocking)
   for worker_id in active_workers:
-    result = TaskOutput(task_id=worker_id, block=false, timeout=1000)
+    result = TaskOutput(task_id=worker_id, block=false, timeout=poll_interval)
+    tool_calls += 1
     if result.is_complete:
-      → Parse WORKER_RESULT from output
-      → Spawn Context-Keeper (blocking) to record result
+      results_found = true
+      idle_streak = 0
+      poll_interval = 2000   # reset on activity
+
+      # Prefer summary file over full TaskOutput
+      summary = Read("{worktree_path}/.worker-summary.md")   # ~200 tokens
+      tool_calls += 1
+      # If missing: fall back to parsing full TaskOutput
+
+      → Queue Context-Keeper batch update
       → Spawn Reviewer in background
       → Move worker to completed
 
   # 2. Check running reviewers (non-blocking)
   for reviewer_id in active_reviewers:
-    result = TaskOutput(task_id=reviewer_id, block=false, timeout=1000)
+    result = TaskOutput(task_id=reviewer_id, block=false, timeout=poll_interval)
+    tool_calls += 1
     if result.is_complete:
-      → Parse review decision
+      results_found = true
+      idle_streak = 0
+      poll_interval = 2000
+
+      # Prefer summary file over full TaskOutput
+      review = Read("{worktree_path}/.review-summary.md")
+      tool_calls += 1
+
       if PASS:
-        → Record in state
+        → Queue CK update
         → Check if blocked subtasks now launchable
         → Launch newly launchable subtasks
       if FAIL (attempts < 3):
         → Spawn fix worker (background)
       if FAIL (attempts >= 3):
-        → Checkpoint, escalate to human
+        → Flush CK batch, escalate to human
       if NEEDS_HUMAN:
-        → Checkpoint, pause, exit with resume
+        → Flush CK batch, pause, exit with EXECUTE_CHECKPOINT
 
-  # 3. Launch newly launchable subtasks
+  # 3. Flush Context-Keeper batch if queued
+  if ck_queue has updates:
+    → Task(Context-Keeper, operation: record_batch, updates: [...])
+    tool_calls += 1
+
+  # 4. Launch newly launchable subtasks
   for subtask in newly_launchable:
     if active_worktrees < max_workers:
-      → Create worktree
-      → Spawn worker (background)
+      → Create worktree + spawn worker
+      tool_calls += 2
 
-  # 4. If nothing ready, block on earliest pending
-  if no_results_this_iteration:
+  # 5. Back-off on idle
+  if not results_found:
+    idle_streak += 1
+    if idle_streak >= 3:
+      poll_interval = min(poll_interval * 2, 30000)  # exponential, cap 30s
     earliest = min(active_workers + active_reviewers, key=start_time)
-    TaskOutput(task_id=earliest.id, block=true, timeout=30000)
+    TaskOutput(task_id=earliest.id, block=true, timeout=poll_interval)
+    tool_calls += 1
+
+  # 6. Tool call budget check
+  if tool_calls >= 55:
+    → Flush CK batch
+    → Output EXECUTE_CHECKPOINT and EXIT
+  if tool_calls >= 48:
+    poll_interval = max(poll_interval, 5000)  # longer intervals
+  if tool_calls >= 36:
+    # compress summaries to <100 tokens
+    pass
 ```
+
+### Worker Summary File Protocol
+
+Workers write `.worker-summary.md` in their worktree before outputting WORKER_RESULT. The Execute Manager reads this file (~200 tokens) instead of parsing full TaskOutput (~5,000+ tokens):
+
+```
+# After TaskOutput confirms worker is complete:
+summary = Read("{worktree_path}/.worker-summary.md")
+if summary exists:
+  → Use summary data for Context-Keeper recording
+else:
+  → Fall back to parsing full TaskOutput
+```
+
+Same pattern for reviewers with `.review-summary.md`.
 
 ### Result Collection
 
 After TaskOutput returns:
 
-1. Read the output file content
-2. Parse the structured result block (WORKER_RESULT or REVIEW_RESULT)
-3. Extract: files modified, test results, decision
-4. Pass to Context-Keeper for state update
+1. Read the summary file from worktree (preferred) or parse full output (fallback)
+2. Extract: files modified, test results, decision
+3. Queue for Context-Keeper batch update (not individual calls)
+4. Flush batch periodically or when queue has 2+ items
 
 ---
 
@@ -300,18 +359,25 @@ Reviewers MUST output a structured decision:
 
 ## Context Budget During EXECUTE
 
-The Supervisor holds ONLY:
+### Execute Manager holds (isolated from Supervisor):
 
 | Data | Tokens |
 |------|--------|
-| Config (beads, max_workers, mode) | ~50 |
-| Session (task_id, branch, phase) | ~50 |
-| Active workers (id, subtask, output_file) | ~100 per worker |
-| Active reviewers (id, subtask, output_file) | ~100 per reviewer |
+| Config (max_workers, mode) | ~50 |
+| Active workers (id, subtask, worktree_path) | ~100 per worker |
+| Active reviewers (id, subtask, worktree_path) | ~100 per reviewer |
 | Parallelism state (launchable, blocked lists) | ~100 |
-| **Total (2 workers + 2 reviewers)** | **~600 tokens** |
+| CK batch queue | ~100 |
+| **Total (2 workers + 2 reviewers)** | **~550 tokens** |
 
-Everything else lives in the state file, managed by Context-Keeper.
+### Supervisor holds during Phase 3:
+
+| Data | Tokens |
+|------|--------|
+| Single Task call to Execute Manager | ~50 |
+| **Total** | **~50 tokens** |
+
+Phase 3 poll loop context stays in Execute Manager, not Supervisor. Everything else lives in the state file, managed by Context-Keeper.
 
 ---
 
@@ -324,7 +390,8 @@ Everything else lives in the state file, managed by Context-Keeper.
 | Worktree creation fails | Fall back to sequential execution |
 | Worktree already exists | Remove and recreate, or reuse if clean |
 | Disk space concern | Limit to 2 concurrent worktrees |
-| Context > 85% | Checkpoint all state, exit with resume |
+| Tool budget exceeded | Output EXECUTE_CHECKPOINT, exit |
+| Summary file missing | Fall back to parsing full TaskOutput |
 
 ---
 

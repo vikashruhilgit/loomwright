@@ -24,7 +24,7 @@ Manage the Supervisor's externalized state file. Read, write, and checkpoint ses
 
 ### Inputs
 
-- **Operation:** One of: `initialize`, `set_task`, `set_subtasks`, `record_worker_result`, `record_review`, `record_decision`, `record_error`, `update_phase`, `checkpoint`, `query`
+- **Operation:** One of: `initialize`, `set_task`, `set_subtasks`, `record_worker_result`, `record_review`, `record_decision`, `record_error`, `update_phase`, `checkpoint`, `query`, `record_batch`
 - **Data:** Operation-specific payload
 - **State file path:** Path to `supervisor-state.md` (scratchpad or `.supervisor/`)
 
@@ -54,7 +54,6 @@ Create a fresh state file with config and session data.
 ```
 operation: initialize
 config:
-  beads: true|false
   max_workers: 2
   mode: parallel|sequential
 session:
@@ -258,13 +257,12 @@ state_file: {path}
 
 ### `checkpoint`
 
-Save full state to `.supervisor/state.md` (and optionally Beads).
+Save full state to `.supervisor/state.md`.
 
 **Input:**
 ```
 operation: checkpoint
 project_dir: {path}
-beads: true|false
 task_id: {task_id}
 state_file: {scratchpad state file path}
 ```
@@ -272,10 +270,9 @@ state_file: {scratchpad state file path}
 **Actions:**
 1. Read scratchpad state file
 2. Copy to `{project_dir}/.supervisor/state.md`
-3. If beads is true: output Beads checkpoint command for Supervisor to run
-4. Update Checkpoint.last_checkpoint timestamp
+3. Update Checkpoint.last_checkpoint timestamp
 
-**Response:** `"Checkpoint saved to .supervisor/state.md{' + Beads' if beads}"`
+**Response:** `"Checkpoint saved to .supervisor/state.md"`
 
 ---
 
@@ -296,6 +293,57 @@ state_file: {path}
 3. Return data in compact format
 
 **Response:** Compact representation of the requested section (< 100 tokens)
+
+---
+
+### `record_batch`
+
+Apply multiple state mutations in a single call. Used by Execute Manager to reduce Context-Keeper spawns.
+
+**Input:**
+```
+operation: record_batch
+updates:
+  - type: worker_result
+    worker_id: {worker_id}
+    subtask_id: {subtask_id}
+    result:
+      files_modified: [file1, file2]
+      lines_added: 145
+      lines_removed: 12
+      tests_run: 8
+      tests_passed: 8
+      status: completed
+      error: none
+  - type: review
+    subtask_id: {subtask_id}
+    decision: PASS|FAIL|NEEDS_HUMAN
+    issues_count: 0
+    attempt: 1/3
+  - type: decision
+    phase: EXECUTE
+    decision: {what was decided}
+    rationale: {why}
+  - type: error
+    phase: EXECUTE
+    error: {description}
+    retry: 1/3
+    resolution: {action taken}
+state_file: {path}
+```
+
+**Actions:**
+1. Read state file
+2. For each update in order:
+   - `worker_result`: Update Subtask row + append Worker Results (same as `record_worker_result`)
+   - `review`: Update Subtask review column + parallelism (same as `record_review`)
+   - `decision`: Append to Decisions Log (same as `record_decision`)
+   - `error`: Append to Error Log (same as `record_error`)
+3. Write state file once (single write for all updates)
+
+**Response:** `"Batch: {N} updates applied ({types})"`
+
+**Example response:** `"Batch: 2 updates applied (worker_result: BD-15a completed, review: BD-15a PASS)"`
 
 ---
 

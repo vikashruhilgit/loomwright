@@ -11,10 +11,10 @@ Patterns for autonomous workflow execution with context management, checkpoints,
 ## Quick Rules
 
 - Keep supervisor context < 800 tokens (externalize via Context-Keeper)
-- Save checkpoint after each phase completion (to `.supervisor/` + optionally Beads)
+- Save checkpoint after each phase completion (to `.supervisor/`)
 - Summarize subagent outputs (< 200 tokens each)
 - Pause on NEEDS_HUMAN, retry on FAIL (max 3x), continue on PASS
-- Exit gracefully at > 85% context usage
+- Exit gracefully at tool call budget limit
 - Always create feature branch before any code work (mandatory)
 - Use git worktrees for parallel worker execution
 
@@ -25,7 +25,7 @@ Patterns for autonomous workflow execution with context management, checkpoints,
 - Handling context limits and checkpoints
 - Implementing permission batching
 - Error recovery and escalation
-- Beads-optional task management
+- Execute Manager delegation for Phase 3
 
 ## 6-Phase State Machine
 
@@ -53,40 +53,41 @@ PLAN:
   - --sequential → EXECUTE (no worktrees)
 
 EXECUTE:
-  - all subtasks PASS → FINALIZE
-  - FAIL (< 3x) → retry subtask
-  - FAIL (3x) → ESCALATION
+  - EXECUTE_RESULT (completed) → FINALIZE
+  - EXECUTE_RESULT (escalation) → ESCALATION
+  - EXECUTE_CHECKPOINT → spawn fresh Execute Manager or partial merge
   - NEEDS_HUMAN → PAUSED
-  - context > 85% → PAUSED
+  - tool budget exceeded → PAUSED
 
 FINALIZE:
   - merge + commit + PR → LOOP
   - merge conflict → PAUSED
 
 LOOP:
-  - more tasks + context < 70% → ACQUIRE
-  - context 70-85% → warn + suggest new session
+  - more tasks + tool_calls < 24 (80%) → ACQUIRE
+  - tool_calls 24-28 → warn + suggest new session
   - no tasks → END
 ```
 
-## Context Budget (v3)
+## Context Budget (v4)
 
-| Component | Token Budget |
-|-----------|--------------|
-| Supervisor orchestration state | < 800 tokens |
-| State file (externalized) | Unlimited (managed by Context-Keeper) |
-| Subagent summaries | < 200 tokens each |
-| Checkpoint data | < 500 tokens |
-| Error context | < 300 tokens |
+| Component | Token Budget | Tool Call Budget |
+|-----------|--------------|-----------------|
+| Supervisor orchestration state | < 800 tokens | 30 calls |
+| Execute Manager (Phase 3) | Isolated context | 60 calls |
+| State file (externalized) | Unlimited (managed by Context-Keeper) | — |
+| Subagent summaries | < 200 tokens each | — |
+| Checkpoint data | < 500 tokens | — |
+| Error context | < 300 tokens | — |
 
-**Key difference from v2:** State is externalized to a file managed by Context-Keeper. The Supervisor holds only phase, task_id, branch, and active worker IDs.
+**Key difference from v3:** Phase 3 poll loop is delegated to Execute Manager, keeping Supervisor context minimal. Tool call counting replaces unenforceable percentage-based thresholds.
 
-## Checkpoint Format (v3)
+## Checkpoint Format (v4)
 
 Save checkpoint via Context-Keeper after each phase:
 
 ```
-Context-Keeper(operation: checkpoint, project_dir: {path}, beads: {bool}, task_id: {id})
+Context-Keeper(operation: checkpoint, project_dir: {path}, task_id: {id})
 ```
 
 **State file location:**
@@ -94,42 +95,45 @@ Context-Keeper(operation: checkpoint, project_dir: {path}, beads: {bool}, task_i
 - Persistent: `{project}/.supervisor/state.md`
 - History: `{project}/.supervisor/history/{date}-{task}.md`
 
-**Optional Beads checkpoint (if `config.beads: true`):**
-```bash
-bd comment BD-XX "## Supervisor Checkpoint
-- Phase: {phase}
-- Progress: {completed}/{total} subtasks
-- Branch: feature/BD-XX-{desc}
-- Resume: /supervisor --continue task: BD-XX"
-```
+## Context Monitoring (Tool Call Counter)
 
-## Context Monitoring
+### Supervisor Budget (30 calls)
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│ CONTEXT THRESHOLDS                                      │
+│ SUPERVISOR TOOL CALL THRESHOLDS                          │
 ├─────────────────────────────────────────────────────────┤
-│  < 70%  │ Normal operation                             │
-│  70-85% │ Warning: Force checkpoint, suggest new       │
-│         │ session                                       │
-│  > 85%  │ Critical: Checkpoint + graceful exit         │
-│         │ Output: "Run /supervisor --continue"         │
+│  0-18 (60%)  │ GREEN: Normal operation                  │
+│  18-24 (80%) │ YELLOW: Aggressive compression, checkpoint│
+│  24-28 (93%) │ RED: Checkpoint + exit with resume        │
 └─────────────────────────────────────────────────────────┘
 ```
 
-**At > 85% context:**
+### Execute Manager Budget (60 calls)
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ EXECUTE MANAGER TOOL CALL THRESHOLDS                     │
+├─────────────────────────────────────────────────────────┤
+│  0-36 (60%)  │ GREEN: Normal poll intervals (2s)         │
+│  36-48 (80%) │ YELLOW: Longer intervals, batch CK calls  │
+│  48-55 (92%) │ ORANGE: Force EXECUTE_CHECKPOINT prep     │
+│  55+         │ RED: Output EXECUTE_CHECKPOINT and exit    │
+└─────────────────────────────────────────────────────────┘
+```
+
+**At budget limit:**
 1. Context-Keeper: checkpoint to `.supervisor/`
 2. Output resume command
 3. Exit gracefully with status summary
-4. User runs `/supervisor --continue task: BD-XX` in new session
+4. User runs `/supervisor --continue task: {task_id}` in new session
 
-## Resume Protocol (v3)
+## Resume Protocol (v4)
 
 **Priority order:**
 1. Scratchpad state file (freshest, same session)
 2. `.supervisor/state.md` (persistent, cross-session)
-3. Beads checkpoint comments (fallback, if Beads active)
-4. No state found → start fresh (Phase 0 INIT)
+3. No state found → start fresh (Phase 0 INIT)
 
 **Resume actions:**
 ```
@@ -150,7 +154,6 @@ bd comment BD-XX "## Supervisor Checkpoint
 | Git (read) | `status`, `branch`, `log`, `diff`, `worktree list` |
 | Git (write) | `checkout`, `add`, `commit`, `push`, `pull` |
 | Git (worktree) | `worktree add`, `worktree remove` |
-| Beads | All `bd` commands |
 | GitHub | `gh pr create`, `gh pr view`, `gh pr list` |
 | Build | `npm test`, `npm run lint`, `npm run build` |
 | File system | `.supervisor/` directory operations |
@@ -252,7 +255,7 @@ See `skills/async-orchestration/SKILL.md` for full details.
 | Worker crash/timeout | 1 | Retry once, then escalate |
 | Worktree creation fails | - | Fall back to sequential mode |
 | No ready tasks | - | Report and exit gracefully |
-| Context > 85% | - | Checkpoint + graceful exit |
+| Tool budget exceeded | - | Checkpoint + graceful exit |
 
 **Escalation Format:**
 
@@ -285,8 +288,9 @@ See `skills/async-orchestration/SKILL.md` for full details.
 | Context-Keeper | Blocking | State file mutations |
 | Product Owner | Blocking | Requirements refinement |
 | Orchestrator | Blocking | Task decomposition |
-| Worker | Background | Implementation (parallel) |
-| Code Reviewer | Background | Review (parallel) |
+| Execute Manager | Blocking | Phase 3 poll loop + worker/reviewer lifecycle |
+| Worker | Background (via EM) | Implementation (parallel) |
+| Code Reviewer | Background (via EM) | Review (parallel) |
 
 ### Summary Extraction
 
@@ -300,25 +304,12 @@ After each subagent, extract minimal summary:
 | Worker (bg) | Parse WORKER_RESULT block |
 | Code Reviewer (bg) | Parse REVIEW_RESULT block |
 
-## Beads-Optional Operation
+## Task Selection
 
-### Conditional Beads Calls
-
-```
-if config.beads:
-    bd update {task_id} --status in_progress
-    bd comment {task_id} "checkpoint..."
-    bd close {task_id}
-else:
-    # State managed via .supervisor/ only
-    Context-Keeper(operation: update_phase, ...)
-```
-
-### Task Selection Without Beads
-
-- User provides task description directly
+- User provides task description directly via `task:` parameter
 - Task ID is a descriptive slug (e.g., `task-user-auth`)
-- All state in `.supervisor/state.md`
+- All state managed in `.supervisor/state.md` via Context-Keeper
+- No external task tracking dependency — state is self-contained
 
 ## Plugin Hooks (Quality Gates)
 
@@ -403,8 +394,8 @@ Before completing workflow management:
 - [ ] Permission batching applied to reduce friction
 - [ ] Escalation format includes context for human
 - [ ] Worktrees cleaned up after FINALIZE
-- [ ] Beads calls conditional on config.beads
-- [ ] Plugin hooks active for worker validation and task closure
+- [ ] Tool call budget tracked and respected
+- [ ] Plugin hooks active for worker, execute-manager, and task closure validation
 
 ## See Also
 

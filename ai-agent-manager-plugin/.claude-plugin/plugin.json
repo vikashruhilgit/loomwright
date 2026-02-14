@@ -1,7 +1,7 @@
 {
   "name": "ai-agent-manager-plugin",
-  "version": "3.3.0",
-  "description": "AI agents with parallel orchestration, plan-first workflows, focused skills, plugin hooks, persistent memory, and Beads-optional operation. 8 agent roles with YAML frontmatter: Launch Pad (Supervisor readiness with codebase analysis and jobs folder), Supervisor v3 (parallel orchestrator with git worktrees), Context-Keeper (externalized state), Worker (isolated implementation), Product Owner (business requirements), Orchestrator (task planning), Code Reviewer (quality gates with memory), and Red Team Reviewer (adversarial audits with memory). Features 35 reusable skills including supervisor-readiness (pre-flight checklist and brief template), /commit (conventional commits with Beads linking), Playwright E2E testing, plugin quality gate hooks (SubagentStop, TaskCompleted), and persistent agent memory across sessions.",
+  "version": "4.0.0",
+  "description": "AI agents with parallel orchestration, plan-first workflows, Execute Manager for bounded context growth, focused skills, plugin hooks, persistent memory, and .supervisor/ state management. 9 agent roles with YAML frontmatter: Launch Pad (Supervisor readiness with codebase analysis and jobs folder), Supervisor v4 (parallel orchestrator with tool call budgets), Execute Manager (Phase 3 poll loop with worker/reviewer lifecycle), Context-Keeper (externalized state), Worker (isolated implementation with self-summary files), Product Owner (business requirements), Orchestrator (task planning), Code Reviewer (quality gates with memory), and Red Team Reviewer (adversarial audits with memory). Features 35 reusable skills including supervisor-readiness (pre-flight checklist and brief template), /commit (conventional commits), Playwright E2E testing, plugin quality gate hooks (SubagentStop for worker and execute-manager, TaskCompleted), and persistent agent memory across sessions.",
   "author": {
     "name": "vikash ruhil"
   },
@@ -12,8 +12,6 @@
     "parallel-execution",
     "git-worktree",
     "code-review",
-    "beads",
-    "issue-tracking",
     "workflow",
     "automation",
     "supervisor",
@@ -26,6 +24,8 @@
     "context-keeper",
     "state-management",
     "worker",
+    "execute-manager",
+    "tool-call-budget",
     "nestjs",
     "nextjs",
     "gateway",

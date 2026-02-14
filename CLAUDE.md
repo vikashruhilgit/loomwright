@@ -6,9 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**AI Agent Manager** is a reusable system that provides intelligent agents for software development workflows. It integrates with Claude Code as a plugin with 8 agent roles (6 user-facing + 2 internal) that automate plan-first readiness, parallel workflow execution, requirements definition, planning, code review, commit management, and adversarial security audits.
+**AI Agent Manager** is a reusable system that provides intelligent agents for software development workflows. It integrates with Claude Code as a plugin with 9 agent roles (6 user-facing + 3 internal) that automate plan-first readiness, parallel workflow execution, requirements definition, planning, code review, commit management, and adversarial security audits.
 
-The system enables agents to collaborate on any project type. **Beads issue tracker** is supported but optional — projects can use `.supervisor/` directory for state management instead. `CLAUDE.md` provides codebase knowledge that persists between work sessions.
+The system enables agents to collaborate on any project type. The Supervisor and Launch Pad use `.supervisor/` directory exclusively for state management. Other agents (Orchestrator, Product Owner) can optionally use **Beads issue tracker** independently. `CLAUDE.md` provides codebase knowledge that persists between work sessions.
 
 ---
 
@@ -51,37 +51,43 @@ The project is structured as a **Claude Code plugin marketplace**:
 - Review subtask blocks next implementation task
 - Review decisions: PASS (proceed), FAIL (fix and re-review), NEEDS_HUMAN (creates bug issues)
 
-### The 8 Agent Roles
+### The 9 Agent Roles
 
 Each agent is a Markdown prompt file (`agents/[name].md`):
 
 #### **Launch Pad** (`/launch-pad`) — Supervisor Readiness
 - **Purpose:** Prepare raw goals for autonomous Supervisor execution
 - **When to use:** Before `/supervisor` for complex tasks, when starting new work, when you want to review the plan
-- **Command:** `/launch-pad goal: "..."`, `/launch-pad story: BD-XX`, `/launch-pad goal: "..." --discovery`
+- **Command:** `/launch-pad goal: "..."`, `/launch-pad goal: "..." --discovery`
 - **Workflow:** VALIDATE → DISCOVER → ANALYZE → DECOMPOSE → PACKAGE → REFINE & SAVE
 - **Key features:** File impact estimation, parallelism pre-analysis, jobs folder, interactive refinement
 - **Outputs:** Supervisor-Ready Brief saved to `.supervisor/jobs/`
 
-#### **Supervisor** (`/supervisor`) — v3 Parallel Orchestrator
+#### **Supervisor** (`/supervisor`) — v4 Parallel Orchestrator
 - **Purpose:** Autonomously manage complete development workflow with parallel execution
 - **When to use:** Full automation of task completion
-- **Command:** `/supervisor`, `/supervisor task: BD-XX`, `/supervisor --max-workers 3`
-- **Workflow:** INIT → ACQUIRE → PLAN → EXECUTE (parallel workers) → FINALIZE → LOOP
-- **Key features:** Git worktrees for parallelism, externalized state, Beads-optional, mandatory branching
-- **Outputs:** Completed tasks with PRs and optional Beads linking
+- **Command:** `/supervisor`, `/supervisor task: "description"`, `/supervisor --max-workers 3`
+- **Workflow:** INIT → ACQUIRE → PLAN → EXECUTE (via Execute Manager) → FINALIZE → LOOP
+- **Key features:** Git worktrees for parallelism, externalized state, tool call budgets, mandatory branching
+- **Outputs:** Completed tasks with PRs
 
-#### **Context-Keeper** (internal, spawned by Supervisor)
+#### **Execute Manager** (internal, spawned by Supervisor)
+- **Purpose:** Own Phase 3 EXECUTE loop — worker/reviewer lifecycle, poll loop, Context-Keeper coordination
+- **When to use:** Automatically spawned for multi-subtask workflows (not used for fast-path single subtask)
+- **Budget:** 60 tool calls, isolated context from Supervisor
+- **Outputs:** EXECUTE_RESULT or EXECUTE_CHECKPOINT block
+
+#### **Context-Keeper** (internal, spawned by Supervisor/Execute Manager)
 - **Purpose:** Manage Supervisor's externalized state file
-- **When to use:** On-demand, called by Supervisor at each phase transition
+- **When to use:** On-demand, called at each phase transition and for batch updates
 - **Sole writer:** Only agent allowed to mutate the state file
 - **Outputs:** < 50 token confirmations of state operations
 
-#### **Worker** (internal, spawned by Supervisor)
+#### **Worker** (internal, spawned by Execute Manager or Supervisor)
 - **Purpose:** Implement a single subtask in an isolated git worktree
-- **When to use:** Background execution during Supervisor's EXECUTE phase
+- **When to use:** Background execution during EXECUTE phase
 - **Isolation:** Works only within assigned worktree path, no git operations
-- **Outputs:** Structured WORKER_RESULT block
+- **Outputs:** Structured WORKER_RESULT block + `.worker-summary.md` file
 
 #### **Product Owner** (`/product-owner`)
 - **Purpose:** Translate business problems into user stories with acceptance criteria
@@ -172,6 +178,12 @@ your-project/
 # Prepare for autonomous execution (plan-first)
 /launch-pad goal: "add user authentication"
 
+# Execute from Launch Pad brief (in fresh session)
+/supervisor job: .supervisor/jobs/2026-02-08-user-auth.md
+
+# Or run Supervisor directly
+/supervisor task: "add user authentication"
+
 # Plan work
 /orchestrator goal: "add user authentication"
 
@@ -194,9 +206,10 @@ your-project/
 ```
 ai-agent-manager/
 ├── ai-agent-manager-plugin/          # The Claude Code plugin
-│   ├── agents/                       # Agent markdown prompts (8 roles)
+│   ├── agents/                       # Agent markdown prompts (9 roles)
 │   │   ├── launch-pad.md             # Launch Pad (Supervisor readiness)
-│   │   ├── supervisor.md             # Supervisor v3 (parallel orchestrator)
+│   │   ├── supervisor.md             # Supervisor v4 (parallel orchestrator)
+│   │   ├── execute-manager.md        # Execute Manager (Phase 3 lifecycle)
 │   │   ├── context-keeper.md         # Context-Keeper (state management)
 │   │   ├── worker.md                 # Worker (implementation in worktrees)
 │   │   ├── product-owner.md          # Product Owner (requirements)
@@ -230,7 +243,7 @@ ai-agent-manager/
 │   │   ├── mysql/                    # MySQL patterns
 │   │   └── playwright-e2e/           # Playwright E2E testing patterns
 │   └── .claude-plugin/
-│       └── plugin.json               # Plugin metadata (v3.3.0)
+│       └── plugin.json               # Plugin metadata (v4.0.0)
 │
 ├── .claude-plugin/
 │   ├── marketplace.json              # Marketplace definition
@@ -275,7 +288,7 @@ Next agent reads updated CLAUDE.md (knowledge grows)
 EXECUTE → FINALIZE → PR
 ```
 
-**Autonomous Workflow (Supervisor v3):**
+**Autonomous Workflow (Supervisor v4):**
 ```
 /supervisor
     ↓
@@ -285,11 +298,13 @@ ACQUIRE: Select task → Create feature branch (MANDATORY)
     ↓
 PLAN: Orchestrator → Subtasks → Parallelism analysis
     ↓
-EXECUTE: Worktree A ─→ Worker A ─→ Reviewer A ─→ PASS
+EXECUTE: → Execute Manager (isolated context, 60 tool call budget)
+         Worktree A ─→ Worker A ─→ Reviewer A ─→ PASS
          Worktree C ─→ Worker C ─→ Reviewer C ─→ PASS
-         (BD-XXb unblocked) → Worktree B → Worker B → PASS
+         (unblocked) → Worktree B → Worker B → PASS
+         ← EXECUTE_RESULT (merge_order, worktrees, branches)
     ↓
-FINALIZE: Sequential merge → Commit → PR → Close task
+FINALIZE: Pre-merge validation → Commit in worktrees → Sequential merge → PR
     ↓
 LOOP: Next task or exit
 ```
@@ -408,9 +423,9 @@ Before an agent completes work:
 ### Plugin Metadata
 
 - **Plugin Name:** `ai-agent-manager-plugin`
-- **Version:** 3.3.0
-- **Description:** AI agents with plan-first workflows, parallel orchestration, focused skills, plugin hooks, persistent memory, and Beads-optional operation
-- **Agents:** 8 roles (Launch Pad, Supervisor v3, Context-Keeper, Worker, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer)
+- **Version:** 4.0.0
+- **Description:** AI agents with plan-first workflows, parallel orchestration, Execute Manager for bounded context, focused skills, plugin hooks, persistent memory, and .supervisor/ state management
+- **Agents:** 9 roles (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer)
 - **Skills:** 35 reusable skill files
 - **Hooks:** 2 quality gate hooks (SubagentStop, TaskCompleted)
 - **Author:** vikash ruhil
@@ -445,20 +460,23 @@ Before an agent completes work:
 - Agents never make destructive changes without explicit instruction
 - Merge conflicts always escalate to human
 
-### Beads-Optional Task Management
+### Task Management
 
-- **With Beads:** Full task lifecycle tracking via Beads issue tracker
-- **Without Beads:** State managed via `.supervisor/` directory (auto-created, gitignored)
-- Projects need only CLAUDE.md to get started (`.supervisor/` and `.beads/` are optional)
+- **Supervisor and Launch Pad:** Use `.supervisor/` exclusively for state management (no Beads dependency)
+- **Orchestrator and Product Owner:** Can optionally use Beads for task/story creation independently
+- Projects need only CLAUDE.md to get started (`.supervisor/` is auto-created, `.beads/` is optional)
 - Same agents work across different projects
 
 ### Parallel Execution Model
 
-- Supervisor v3 uses git worktrees for parallel worker execution
-- Each worker operates in its own worktree (no file conflicts)
-- Context-Keeper externalizes state (Supervisor holds ~800 tokens)
-- Subtask branches merge sequentially into feature branch
-- Fast-path: single subtask skips worktrees entirely
+- Supervisor v4 delegates Phase 3 to Execute Manager for multi-subtask workflows
+- Execute Manager owns the poll loop, worker/reviewer lifecycle, and Context-Keeper coordination
+- Each worker operates in its own git worktree (no file conflicts)
+- Workers write `.worker-summary.md` files for lightweight result extraction
+- Context-Keeper externalizes state; Supervisor uses tool call budgets (30 calls) instead of percentage thresholds
+- Execute Manager has its own tool call budget (60 calls) in isolated context
+- Subtask branches merge sequentially into feature branch with pre-merge validation
+- Fast-path: single subtask skips worktrees and Execute Manager entirely
 
 ### Plugin Hooks (Quality Gates)
 
@@ -467,6 +485,7 @@ The `hooks/hooks.json` file provides automatic quality gates that run without sp
 | Hook | Trigger | Validation |
 |------|---------|------------|
 | **SubagentStop** (worker) | Worker agent completes | WORKER_RESULT block present, files modified, no unresolved errors |
+| **SubagentStop** (execute-manager) | Execute Manager completes | EXECUTE_RESULT or EXECUTE_CHECKPOINT block present with required fields |
 | **TaskCompleted** | Any task marked complete | Task genuinely done, not abandoned or skipped |
 
 Hooks use prompt-based validation (fast haiku model, 30s timeout). They replace manual validation in the Supervisor's poll loop and prevent premature task closure.
@@ -519,7 +538,7 @@ Claude Code Agent Teams is an experimental feature providing native multi-agent 
 ### Beads Tasks Not Appearing?
 - Run `bd list` to check current state
 - Ensure `bd init` was run in project
-- Or use `--no-beads` flag to skip Beads
+
 
 ### Supervisor Workflow Interrupted?
 - State is saved to `.supervisor/state.md` automatically

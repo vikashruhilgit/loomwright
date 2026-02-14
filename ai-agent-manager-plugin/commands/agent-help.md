@@ -20,18 +20,19 @@ Shows all available agent commands and quick usage examples.
 
 ## Quick Start
 
-The AI Agent Manager plugin provides **8 agent roles** for your development workflow:
+The AI Agent Manager plugin provides **9 agent roles** for your development workflow:
 
 **Readiness Pipeline (1 agent):**
 ```
 /launch-pad  →  Env validation + codebase analysis + brief → .supervisor/jobs/
 ```
 
-**Autonomous Workflow (3 agent roles):**
+**Autonomous Workflow (4 agent roles):**
 ```
-/supervisor  →  Parallel orchestrator: Task → Branch → Workers → Review → PR → Loop
-  ├─ Context-Keeper  →  Externalized state management (on-demand)
-  └─ Worker  →  Isolated implementation in git worktrees (background)
+/supervisor  →  Parallel orchestrator: Task → Branch → Execute Manager → PR → Loop
+  ├─ Execute Manager  →  Phase 3 poll loop, worker/reviewer lifecycle (blocking)
+  ├─ Context-Keeper   →  Externalized state management (on-demand)
+  └─ Worker           →  Isolated implementation in git worktrees (background)
 ```
 
 **Requirements Pipeline (1 agent):**
@@ -56,7 +57,7 @@ The AI Agent Manager plugin provides **8 agent roles** for your development work
 
 **Full Autonomous Workflow (Parallel):**
 ```
-/supervisor  →  INIT → ACQUIRE → PLAN → EXECUTE (parallel workers) → FINALIZE → LOOP
+/supervisor  →  INIT → ACQUIRE → PLAN → EXECUTE (Execute Manager) → FINALIZE → LOOP
 ```
 
 **Plan-First Autonomous Workflow:**
@@ -64,7 +65,7 @@ The AI Agent Manager plugin provides **8 agent roles** for your development work
 /launch-pad → .supervisor/jobs/{brief} → /supervisor job: {brief} → clean execution
 ```
 
-**Task Management:** Beads issue tracker (optional) or `.supervisor/` directory
+**Task Management:** `.supervisor/` directory for Supervisor/Launch Pad; Beads available for Orchestrator/Product Owner
 
 ---
 
@@ -79,13 +80,12 @@ The AI Agent Manager plugin provides **8 agent roles** for your development work
 /launch-pad goal: "add user authentication with JWT"
 /launch-pad feature: "customers need order history"
 /launch-pad problem: "login is broken on mobile"
-/launch-pad story: BD-15
 /launch-pad goal: "..." --discovery
 /launch-pad goal: "..." --skip-validation
 ```
 
 **What it does:**
-- Validates environment readiness (git, CLAUDE.md, Beads, worktrees, gh)
+- Validates environment readiness (git, CLAUDE.md, worktrees, gh)
 - Refines requirements using product discovery and MVP scoping
 - Analyzes codebase for file impact estimation (grep/glob/read)
 - Decomposes into 3-7 subtasks with dependency analysis
@@ -111,7 +111,6 @@ $ /launch-pad goal: "add JWT authentication"
 ## Phase 1: VALIDATE
 - CLAUDE.md: ✓ Found (fresh)
 - Git: clean, branch: main
-- Beads: ✓ Active
 
 ## Phase 5: PACKAGE
 # Supervisor Job: Add JWT Authentication
@@ -139,41 +138,42 @@ To execute: /supervisor job: .supervisor/jobs/2026-02-08-jwt-auth.md
 
 ---
 
-### 🤖 /supervisor — Parallel Orchestrator (v3)
+### 🤖 /supervisor — Parallel Orchestrator (v4)
 
 **Purpose:** Autonomously manage the complete development workflow with parallel execution from task pickup to PR creation
 
 **Usage:**
 ```
-/supervisor                         # Auto-select next ready task
-/supervisor task: BD-XX             # Work on specific task
+/supervisor                         # Interactive task description
+/supervisor task: "add user auth"   # Work on specific task
 /supervisor --max-workers 3         # Up to 3 parallel workers
 /supervisor --sequential            # Force sequential (no worktrees)
-/supervisor --no-beads              # Skip Beads even if initialized
 /supervisor --continue              # Resume from last checkpoint
 /supervisor --dry-run               # Preview workflow without executing
 /supervisor job: .supervisor/jobs/{file}.md  # Execute from Launch Pad brief
 ```
 
 **What it does:**
-- Picks up tasks (from Beads or user description — Beads optional)
+- Picks up tasks (user description or `.supervisor/state.md`)
 - Creates feature branch (MANDATORY before any code work)
-- Orchestrates parallel workers via git worktrees:
+- Delegates Phase 3 execution to Execute Manager:
+  - Execute Manager (Phase 3 poll loop, worker/reviewer lifecycle, blocking)
   - Context-Keeper (state management, on-demand)
   - Product Owner (if requirements unclear, blocking)
   - Orchestrator (task decomposition, blocking)
   - Workers (implementation, background in worktrees)
   - Code Reviewer (quality gates, background)
+- Validates worktrees and commits worker changes before merging
 - Merges worktree branches sequentially into feature branch
 - Creates Pull Request via GitHub CLI
-- Closes task and moves to next
+- Moves to next task
 
 **6-Phase Workflow:**
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  0. INIT (config)  →  1. ACQUIRE (task + branch)               │
 │         ↓                                                       │
-│  2. PLAN (decompose + parallelism)  →  3. EXECUTE (parallel)   │
+│  2. PLAN (decompose + parallelism)  →  3. EXECUTE (Exec Mgr)   │
 │         ↓                                                       │
 │  4. FINALIZE (merge + commit + PR)  →  5. LOOP (next or exit)  │
 └─────────────────────────────────────────────────────────────────┘
@@ -194,15 +194,15 @@ project-BD-15c/             ← worktree for Worker C
 **State Management:**
 - State externalized to `.supervisor/` directory (auto-created, gitignored)
 - Context-Keeper manages all state mutations
-- Supervisor holds only ~800 tokens
+- Supervisor budget: 30 tool calls; Execute Manager budget: 60 tool calls
 - Cross-session resume from `.supervisor/state.md`
 
 **Example Session:**
 ```
 $ /supervisor
 
-## SUPERVISOR v3: Starting Parallel Workflow
-**Config:** beads=true, workers=2, mode=parallel
+## SUPERVISOR v4: Starting Parallel Workflow
+**Config:** workers=2, mode=parallel
 
 ### Phase 1: ACQUIRE
 - Task: BD-15, Branch: feature/BD-15-user-auth ← CREATED
@@ -230,8 +230,7 @@ $ /supervisor
 **When to Use:**
 - Autonomous task completion with parallel execution
 - End-to-end workflow automation
-- Processing multiple ready tasks
-- Projects with or without Beads
+- Processing multiple tasks sequentially
 
 **When NOT to Use:**
 - Manual control → Use agents individually
@@ -589,6 +588,7 @@ The plugin includes `hooks/hooks.json` that automatically enforce quality:
 | Hook | When It Fires | What It Checks |
 |------|---------------|----------------|
 | **SubagentStop (worker)** | Worker agent completes | WORKER_RESULT block present, files modified, no unresolved errors |
+| **SubagentStop (execute-manager)** | Execute Manager completes | EXECUTE_RESULT or EXECUTE_CHECKPOINT block present |
 | **TaskCompleted** | Any task marked complete | Task genuinely done, not abandoned or skipped |
 
 These hooks run automatically — no configuration needed. They use fast prompt-based validation (haiku model, 30s timeout).
@@ -603,7 +603,7 @@ export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
 ```
 
 **Best for:** Research across multiple areas, competing hypotheses, cross-layer changes.
-**Not for:** Sequential tasks, same-file edits (use Supervisor v3 with git worktrees instead).
+**Not for:** Sequential tasks, same-file edits (use Supervisor v4 with git worktrees instead).
 
 See `skills/agent-teams/SKILL.md` for full patterns and decision matrix.
 
@@ -703,17 +703,18 @@ bd close BD-XX
 ```
 ai-agent-manager-plugin/
 ├── .claude-plugin/
-│   └── plugin.json          # Plugin metadata (v3.3.0)
+│   └── plugin.json          # Plugin metadata (v4.0.0)
 ├── commands/                # Slash commands
 │   ├── launch-pad.md        # Supervisor readiness
-│   ├── supervisor.md        # Parallel orchestrator (v3)
+│   ├── supervisor.md        # Parallel orchestrator (v4)
 │   ├── orchestrator.md
 │   ├── code-reviewer.md
 │   ├── red-team-reviewer.md # Adversarial auditor
 │   └── agent-help.md
-├── agents/                  # Agent implementations (8 roles)
+├── agents/                  # Agent implementations (9 roles)
 │   ├── launch-pad.md        # Supervisor readiness agent
-│   ├── supervisor.md        # Parallel orchestrator (v3)
+│   ├── supervisor.md        # Parallel orchestrator (v4)
+│   ├── execute-manager.md   # Phase 3 execution manager
 │   ├── context-keeper.md    # State management agent
 │   ├── worker.md            # Implementation worker
 │   ├── product-owner.md     # Requirements definition
@@ -796,13 +797,14 @@ These are Claude Code slash commands, so you can type them directly:
 |-------|---------|------|-------|--------|
 | **Launch Pad** | Supervisor readiness | Complex tasks, plan review | Raw goal + codebase | Supervisor-Ready Brief in `.supervisor/jobs/` |
 
-### Autonomous Workflow (End-to-End Automation — 3 Roles)
+### Autonomous Workflow (End-to-End Automation — 4 Roles)
 
 | Agent | Purpose | When | Input | Output |
 |-------|---------|------|-------|--------|
-| **Supervisor** | Parallel orchestration | Autonomous task completion | Ready tasks (Beads optional) | Completed tasks with PRs |
-| **Context-Keeper** | State management | On-demand (Supervisor calls) | State operations | State file updates |
-| **Worker** | Implementation | Background (parallel) | Subtask + worktree path | WORKER_RESULT block |
+| **Supervisor** | Parallel orchestration | Autonomous task completion | Task description or Launch Pad brief | Completed tasks with PRs |
+| **Execute Manager** | Phase 3 execution | Delegated by Supervisor | Subtask list + config | EXECUTE_RESULT / EXECUTE_CHECKPOINT |
+| **Context-Keeper** | State management | On-demand (Supervisor/EM calls) | State operations | State file updates |
+| **Worker** | Implementation | Background (parallel) | Subtask + worktree path | WORKER_RESULT + .worker-summary.md |
 
 ### Requirements Pipeline (Define What to Build)
 

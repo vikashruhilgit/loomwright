@@ -340,12 +340,12 @@ This format applies to ALL agent outputs (Orchestrator, Code Reviewer, Red Team 
   - Poll background workers and reviewers (non-blocking)
   - Sequential merge of worktree branches into feature branch
   - Checkpoint state after every phase transition
-  - Support Beads-optional operation
+  - Use `.supervisor/` for state management; delegate Phase 3 to Execute Manager
 - **Safety:**
   - Never force-resolve merge conflicts — escalate to human
   - Never proceed to PLAN without confirmed feature branch
   - Clean up all worktrees in FINALIZE (no orphans)
-  - Exit gracefully at > 85% context
+  - Exit gracefully at tool call budget limit
 
 #### **Context-Keeper** (State Management Agent)
 - **Objective:** Manage externalized Supervisor state file

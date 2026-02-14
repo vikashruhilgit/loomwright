@@ -12,7 +12,7 @@ Pre-flight validation, Supervisor-Ready Brief format, and jobs folder convention
 
 - Run pre-flight checklist before every Supervisor launch (or use Launch Pad to automate it)
 - Save briefs to `.supervisor/jobs/` with `{YYYY-MM-DD}-{slug}.md` naming
-- Brief must include all 9 sections — Supervisor skips Phases 0-2 when consuming a brief
+- Brief must include all 8 sections — Supervisor skips Phases 0-2 when consuming a brief
 - Conservative parallelism: only mark LAUNCHABLE if zero file overlap AND zero dependencies
 - Clean up consumed briefs after successful Supervisor completion
 
@@ -26,7 +26,7 @@ Pre-flight validation, Supervisor-Ready Brief format, and jobs folder convention
 
 ## Pre-Flight Checklist
 
-Run these 9 checks before launching Supervisor:
+Run these 8 checks before launching Supervisor:
 
 | # | Check | How to Verify | Blocker? |
 |---|-------|---------------|----------|
@@ -36,9 +36,8 @@ Run these 9 checks before launching Supervisor:
 | 4 | On expected branch | `git branch --show-current` | WARNING — wrong branch = wrong base |
 | 5 | No orphaned worktrees | `git worktree list` (only main entry) | WARNING — orphans block new worktrees |
 | 6 | GitHub CLI authenticated | `gh auth status` | WARNING — PR creation will fail |
-| 7 | Beads initialized (if using) | `bd list` succeeds | NO — Supervisor works without Beads |
-| 8 | `.supervisor/` writable | `mkdir -p .supervisor/jobs` | YES — Supervisor needs state directory |
-| 9 | Disk space adequate | `df -h .` (>1GB free) | YES — worktrees need space |
+| 7 | `.supervisor/` writable | `mkdir -p .supervisor/jobs` | YES — Supervisor needs state directory |
+| 8 | Disk space adequate | `df -h .` (>1GB free) | YES — worktrees need space |
 
 **Decision:**
 - 0 blockers + 0 warnings → Ready to launch
@@ -121,7 +120,6 @@ The `.supervisor/` directory should be gitignored (Supervisor auto-adds this):
 - **Project:** {absolute path}
 - **CLAUDE.md:** ✓ Found ({fresh|stale})
 - **Git:** {clean|dirty} ({N} files), branch: {branch}
-- **Beads:** ✓ Active | ○ Not initialized
 - **GitHub CLI:** ✓ Authenticated | ⚠ Not authenticated
 - **Blockers:** {count} | **Warnings:** {count}
 
@@ -183,7 +181,6 @@ Subtask 2 (independent)
 ## Configuration
 - **Workers:** {recommended count}
 - **Mode:** parallel | sequential
-- **Beads:** true | false
 - **Estimated batches:** {N}
 
 ## Handoff
@@ -205,7 +202,7 @@ Every section is **mandatory**. Supervisor relies on:
 | Parallelism Analysis | Phase 2 (pre-populate) | Which subtasks can run concurrently |
 | Skill References | Phase 3 (workers) | Skills to inject into each worker |
 | Risk Assessment | Phase 3 (workers) | Known issues to watch for |
-| Configuration | Phase 0 (skip) | Worker count, mode, Beads |
+| Configuration | Phase 0 (skip) | Worker count, mode |
 | Handoff | — | User-facing command to start execution |
 
 ## Common Failure Modes
@@ -234,13 +231,13 @@ Every section is **mandatory**. Supervisor relies on:
 ## Quality Checklist
 
 Before saving a brief:
-- [ ] All 9 pre-flight checks passed (or warnings acknowledged)
+- [ ] All 8 pre-flight checks passed (or warnings acknowledged)
 - [ ] Goal is a single clear sentence
 - [ ] Acceptance criteria are testable (Given/When/Then)
 - [ ] Every file path in impact map has been verified to exist (or marked as "create")
 - [ ] Subtasks are 3-7 items, each 30-60 min scope
 - [ ] Parallelism analysis is conservative (no false LAUNCHABLE)
-- [ ] Brief follows the complete template (all 9 sections present)
+- [ ] Brief follows the complete template (all 8 sections present)
 
 ## See Also
 
