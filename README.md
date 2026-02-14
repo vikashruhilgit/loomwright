@@ -1,12 +1,12 @@
 # AI Agent Manager
 
-A system for AI agents to collaborate on software projects. Specialized agents (Supervisor, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer) and the `/commit` skill automate workflows, requirements, planning, review, commits, and adversarial audits.
+A system for AI agents to collaborate on software projects. 9 specialized agents (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer) and the `/commit` skill automate plan-first readiness, parallel workflow execution, requirements, planning, review, commits, and adversarial audits.
 
-**Key Idea:** Agents use **Beads issue tracker** for task management. Your projects need only a `CLAUDE.md` file for codebase knowledge. Agents read context, do work, create Beads tasks. Repeatable across any project.
+**Key Idea:** Your projects need only a `CLAUDE.md` file for codebase knowledge. The Supervisor uses `.supervisor/` for state management. Orchestrator and Product Owner can optionally use **Beads issue tracker**. Repeatable across any project.
 
 > **Install the plugin and run slash commands instead of manually managing agents.**
 >
-> **NEW:** Use `/supervisor` for fully autonomous workflow — picks up tasks, runs agents, creates PRs automatically.
+> **NEW in v4:** Use `/launch-pad` to prepare goals, then `/supervisor` for fully autonomous workflow with parallel execution via Execute Manager.
 
 ---
 
@@ -29,11 +29,11 @@ Or manually: `cp -r ai-agent-manager-plugin ~/.claude/plugins/`
 ```bash
 cd /path/to/your-project
 
-# Initialize Beads issue tracker
-bd init
-
 # Create CLAUDE.md with your project patterns
 # (See CLAUDE.md Structure section below)
+
+# Optional: Initialize Beads issue tracker (for Orchestrator/Product Owner)
+bd init
 ```
 
 This creates:
@@ -41,7 +41,11 @@ This creates:
 ```
 your-project/
 ├── CLAUDE.md              # Codebase knowledge (you maintain)
-├── .beads/                # Beads issue tracker (auto-managed)
+├── .supervisor/           # Supervisor state (auto-created, gitignored)
+│   ├── state.md           # Current session state
+│   ├── history/           # Completed session summaries
+│   └── jobs/              # Supervisor-Ready Briefs from Launch Pad
+├── .beads/                # Beads issue tracker (optional, for Orchestrator/Product Owner)
 │   └── issues/
 └── src/ (your code)
 ```
@@ -49,49 +53,83 @@ your-project/
 ### 3. Run Your First Command
 
 ```bash
+# Plan-first autonomous workflow
+/launch-pad goal: "what you want to accomplish"
+/supervisor job: .supervisor/jobs/{date}-{slug}.md
+
+# Or run directly
+/supervisor task: "what you want to accomplish"
+
+# Or plan manually
 /orchestrator goal: "what you want to accomplish"
 ```
 
-Orchestrator will:
-
-1. Read your CLAUDE.md
-2. Understand your goal
-3. Create Beads tasks with review gates
-4. Output task structure and skill references
-
 ---
 
-## The 6 Agents
+## The 9 Agents
 
+### User-Facing Agents (6 + commit skill)
 
 | Agent                 | Command                         | Purpose                                                            | When                            |
 | --------------------- | ------------------------------- | ------------------------------------------------------------------ | ------------------------------- |
-| **Supervisor**        | `/supervisor`                   | Autonomous workflow → task pickup → agents → PR → next task        | Full automation                 |
+| **Launch Pad**        | `/launch-pad goal: "..."`       | Prepare goals for autonomous Supervisor execution                  | Before `/supervisor`, planning  |
+| **Supervisor**        | `/supervisor task: "..."`       | Autonomous workflow → parallel workers → PR creation               | Full automation                 |
 | **Product Owner**     | `/product-owner feature: "..."` | Define requirements → create user stories with acceptance criteria | New feature, vague requirements |
-| **Orchestrator**      | `/orchestrator goal: "..."`     | Plan work → create Beads tasks with review gates                   | Starting implementation         |
+| **Orchestrator**      | `/orchestrator goal: "..."`     | Plan work → create tasks with review gates                         | Starting implementation         |
 | **Code Reviewer**     | `/code-reviewer src/`           | Review code → output PASS/FAIL/NEEDS_HUMAN                         | After writing code              |
-| **Commit** (skill)    | `/commit`                       | Stage changes → create commits → link to Beads                     | Ready to commit                 |
+| **Commit** (skill)    | `/commit`                       | Stage changes → create conventional commits                        | Ready to commit                 |
 | **Red Team Reviewer** | `/red-team-reviewer`            | Adversarial audit → find production failures                       | Pre-launch, security            |
 
+### Internal Agents (3)
 
-**Autonomous Workflow (Supervisor):**
+| Agent                 | Spawned By                  | Purpose                                                            |
+| --------------------- | --------------------------- | ------------------------------------------------------------------ |
+| **Execute Manager**   | Supervisor (Phase 3)        | Own poll loop, worker/reviewer lifecycle, Context-Keeper coordination |
+| **Context-Keeper**    | Supervisor / Execute Manager | Manage externalized state file (sole writer)                       |
+| **Worker**            | Execute Manager / Supervisor | Implement a single subtask in an isolated git worktree             |
 
-```
-/supervisor
-    ↓
-Task Pickup (bd ready) → Branch Creation → Agent Orchestration → PR Creation → Next Task
-    ↓
-Loops until no more ready tasks
-```
-
-**Manual Workflow:**
+### Plan-First Autonomous Workflow
 
 ```
-Product Owner → Create Beads stories (user requirements)
+/launch-pad goal: "add user authentication"
     ↓
-Orchestrator → Break stories into tasks (EPIC → TASK → SUBTASK)
+Supervisor-Ready Brief saved to .supervisor/jobs/
     ↓
-bd claim BD-XX → Start task
+/supervisor job: .supervisor/jobs/{date}-{slug}.md   (fresh session)
+    ↓
+INIT → ACQUIRE → PLAN → EXECUTE (via Execute Manager) → FINALIZE → LOOP
+    ↓
+PR created, next task or exit
+```
+
+### Autonomous Workflow (Supervisor v4)
+
+```
+/supervisor task: "add user authentication"
+    ↓
+INIT: Detect env → Ask preferences → Create .supervisor/
+    ↓
+ACQUIRE: Select task → Create feature branch (MANDATORY)
+    ↓
+PLAN: Orchestrator → Subtasks → Parallelism analysis
+    ↓
+EXECUTE: → Execute Manager (isolated context, 60 tool call budget)
+         Worktree A ─→ Worker A ─→ Reviewer A ─→ PASS
+         Worktree C ─→ Worker C ─→ Reviewer C ─→ PASS
+         (unblocked) → Worktree B → Worker B → PASS
+         ← EXECUTE_RESULT (merge_order, worktrees, branches)
+    ↓
+FINALIZE: Pre-merge validation → Commit in worktrees → Sequential merge → PR
+    ↓
+LOOP: Next task or exit
+```
+
+### Manual Workflow
+
+```
+Product Owner → Create user stories (requirements)
+    ↓
+Orchestrator → Break into tasks (EPIC → TASK → SUBTASK)
     ↓
 You code
     ↓
@@ -99,17 +137,18 @@ Code Reviewer → PASS/FAIL/NEEDS_HUMAN (review gate)
     ↓
 You fix issues (if needed)
     ↓
-/commit → Commits linked to Beads
+/commit → Conventional commits
     ↓
-bd close BD-XX → Complete task, next task unblocked
+Next task
 ```
 
 ---
 
-## Beads Task Management
+## Task Management
 
-**Beads replaces TODO.md and memory files:**
+### Beads (Optional)
 
+Beads is an optional issue tracker used by Orchestrator and Product Owner. The Supervisor and Launch Pad use `.supervisor/` exclusively.
 
 | Command                   | Purpose                               |
 | ------------------------- | ------------------------------------- |
@@ -119,7 +158,6 @@ bd close BD-XX → Complete task, next task unblocked
 | `bd close BD-XX`          | Mark task complete                    |
 | `bd comment BD-XX "note"` | Add notes to task                     |
 | `bd dep BD-XX BD-YY`      | Set task dependencies                 |
-
 
 **Task Structure:**
 
@@ -139,9 +177,9 @@ bd close BD-XX → Complete task, next task unblocked
 
 ### For New Projects
 
-1. Initialize Beads: `bd init`
-2. Create CLAUDE.md with your project structure and patterns
-3. Run `/orchestrator goal: "first task"`
+1. Create CLAUDE.md with your project structure and patterns
+2. Run `/launch-pad goal: "first task"` (plan-first) or `/supervisor task: "first task"` (direct)
+3. Optional: `bd init` if using Orchestrator/Product Owner with Beads
 
 ### CLAUDE.md Structure
 
@@ -184,18 +222,18 @@ See `AGENT_GUIDELINES.md` for detailed standards per language.
 
 ### Workflow Tips
 
-1. **Use Supervisor for automation:** Run `/supervisor` for fully autonomous task completion
-2. **Or start with Orchestrator:** Run `/orchestrator goal: "..."` for manual control
-3. **Claim tasks:** Use `bd claim BD-XX` before starting work (manual workflow)
+1. **Plan first:** Run `/launch-pad goal: "..."` to prepare a Supervisor-Ready Brief
+2. **Use Supervisor for automation:** Run `/supervisor` for fully autonomous task completion
+3. **Or start with Orchestrator:** Run `/orchestrator goal: "..."` for manual control
 4. **Review iteratively:** Run `/code-reviewer` multiple times as you fix issues
 5. **Review gates:** Wait for PASS before moving to next task
-6. **Close tasks:** Use `bd close BD-XX` when complete
+6. **Adversarial audit:** Run `/red-team-reviewer` before launch
 
 ### CLAUDE.md Proposal Workflow
 
 When Code Reviewer discovers a new pattern:
 
-1. **Flag in Beads task comment:** Pattern flagged with rationale
+1. **Flag in review output:** Pattern flagged with rationale and file:line references
 2. **You review:** Check if worth documenting
 3. **If approved:** You update CLAUDE.md manually
 4. **Next agent learns:** Reads updated CLAUDE.md, uses the new pattern
@@ -210,8 +248,8 @@ This prevents knowledge loss and helps agents learn from discoveries.
 - **CLAUDE.md (this repo):** Architecture and agent system
 - **AGENT_GUIDELINES.md:** Development standards, quality checklist
 - **.claude-plugin/README.md:** Detailed plugin documentation
-- **ai-agent-manager-plugin/agents/*.md:** Individual agent prompts
-- **ai-agent-manager-plugin/skills/*.md:** Skill files for guidance
+- **ai-agent-manager-plugin/agents/*.md:** Individual agent prompts (9 roles)
+- **ai-agent-manager-plugin/skills/\*/SKILL.md:** 35 skill files for guidance
 
 ---
 
@@ -219,10 +257,11 @@ This prevents knowledge loss and helps agents learn from discoveries.
 
 To modify or extend agents:
 
-1. Agents are Markdown prompts in `ai-agent-manager-plugin/agents/`
-2. Commands are in `ai-agent-manager-plugin/commands/`
-3. Skills are in `ai-agent-manager-plugin/skills/`
-4. All agents follow standard output format (see AGENT_GUIDELINES.md)
+1. Agents are Markdown prompts in `ai-agent-manager-plugin/agents/` (9 files)
+2. Commands are in `ai-agent-manager-plugin/commands/` (7 commands)
+3. Skills are in `ai-agent-manager-plugin/skills/` (35 skills)
+4. Hooks are in `ai-agent-manager-plugin/hooks/hooks.json` (SubagentStop + TaskCompleted)
+5. All agents follow standard output format (see AGENT_GUIDELINES.md)
 
 To test locally:
 
@@ -242,10 +281,22 @@ Then run agents in a test project to verify changes.
 - Update CLAUDE.md with clearer patterns and examples
 - Add more detailed structure documentation
 
+**Supervisor workflow interrupted?**
+
+- State is saved to `.supervisor/state.md` automatically
+- Resume with: `/supervisor --continue`
+- Check `.supervisor/history/` for completed sessions
+
+**Orphaned worktrees after crash?**
+
+- Run `git worktree list` to see all worktrees
+- Remove with: `git worktree remove ../project-{subtask_id}`
+
 **Beads tasks not appearing?**
 
 - Run `bd list` to check current state
 - Ensure `bd init` was run in project
+- Beads is only used by Orchestrator/Product Owner (not Supervisor)
 
 **Agents suggesting wrong patterns?**
 
@@ -261,7 +312,7 @@ Then run agents in a test project to verify changes.
 
 **Skills not showing after plugin update?**
 
-Claude Code caches plugin contents. After restructuring skills (e.g., from `skills/core/commit.md` to `skills/commit/SKILL.md`), force a refresh:
+Claude Code caches plugin contents. After restructuring skills, force a refresh:
 
 1. Remove plugin and marketplace:
   ```
@@ -277,7 +328,7 @@ Claude Code caches plugin contents. After restructuring skills (e.g., from `skil
    /plugin install ai-agent-manager-plugin
   ```
 4. Restart Claude Code (close and reopen entirely)
-5. Verify with `/skills` — should show all 30 skills under "Plugin skills"
+5. Verify with `/skills` — should show all 35 skills under "Plugin skills"
 
 ---
 
