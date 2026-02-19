@@ -2,7 +2,7 @@
 
 A Claude Code plugin for AI agents to collaborate on software projects. 9 specialized agents (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer) and the `/commit` skill automate plan-first readiness, parallel workflow execution, requirements, planning, review, commits, and adversarial audits.
 
-**Key Idea:** Your projects need only a `CLAUDE.md` file for codebase knowledge. The Supervisor uses `.supervisor/` for state management. Orchestrator and Product Owner can optionally use **Beads issue tracker**. Repeatable across any project.
+**Key Idea:** Your projects need only a `CLAUDE.md` file for codebase knowledge. The Supervisor uses `.supervisor/` for state management. Orchestrator and Product Owner can optionally use [Beads issue tracker](https://github.com/anthropics/beads). Repeatable across any project.
 
 > **Install the plugin and run slash commands instead of manually managing agents.**
 >
