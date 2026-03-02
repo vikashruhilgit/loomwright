@@ -36,3 +36,4 @@ build/
 *.egg-info/
 publish/*
 PRs and commits.json
+temp/

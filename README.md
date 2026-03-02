@@ -1,12 +1,12 @@
 # AI Agent Manager
 
-A Claude Code plugin for AI agents to collaborate on software projects. 9 specialized agents (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer) and the `/commit` skill automate plan-first readiness, parallel workflow execution, requirements, planning, review, commits, and adversarial audits.
+A Claude Code plugin for AI agents to collaborate on software projects. 11 specialized agents (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer, QA Strategist, QA Executor) and the `/commit` skill automate plan-first readiness, parallel workflow execution, requirements, planning, review, commits, adversarial audits, and dual-agent QA automation.
 
 **Key Idea:** Your projects need only a `CLAUDE.md` file for codebase knowledge. The Supervisor uses `.supervisor/` for state management. Orchestrator and Product Owner can optionally use [Beads issue tracker](https://github.com/anthropics/beads). Repeatable across any project.
 
 > **Install the plugin and run slash commands instead of manually managing agents.**
 >
-> **NEW in v4:** Use `/launch-pad` to prepare goals, then `/supervisor` for fully autonomous workflow with parallel execution via Execute Manager.
+> **NEW in v5:** Dual-agent QA system — `/qa-executor` discovers your app, generates risk-based Playwright tests, and `/qa-strategist` audits the results. Plus all v4 features: `/launch-pad` for goal preparation and `/supervisor` for fully autonomous parallel workflows.
 
 ---
 
@@ -66,9 +66,10 @@ your-project/
 
 ---
 
-## The 9 Agents
+## The 11 Agents
 
-### User-Facing Agents (6 + commit skill)
+### User-Facing Agents (8 + commit skill)
+
 
 | Agent                 | Command                         | Purpose                                                            | When                            |
 | --------------------- | ------------------------------- | ------------------------------------------------------------------ | ------------------------------- |
@@ -79,14 +80,19 @@ your-project/
 | **Code Reviewer**     | `/code-reviewer src/`           | Review code → output PASS/FAIL/NEEDS_HUMAN                         | After writing code              |
 | **Commit** (skill)    | `/commit`                       | Stage changes → create conventional commits                        | Ready to commit                 |
 | **Red Team Reviewer** | `/red-team-reviewer`            | Adversarial audit → find production failures                       | Pre-launch, security            |
+| **QA Strategist**     | `/qa-strategist src/`           | Risk-based test strategy → coverage targets                        | Before QA, strategy planning    |
+| **QA Executor**       | `/qa-executor`                  | Discover app → generate + run Playwright tests → QA_RESULT         | Automated QA                    |
+
 
 ### Internal Agents (3)
 
-| Agent                 | Spawned By                  | Purpose                                                            |
-| --------------------- | --------------------------- | ------------------------------------------------------------------ |
-| **Execute Manager**   | Supervisor (Phase 3)        | Own poll loop, worker/reviewer lifecycle, Context-Keeper coordination |
-| **Context-Keeper**    | Supervisor / Execute Manager | Manage externalized state file (sole writer)                       |
-| **Worker**            | Execute Manager / Supervisor | Implement a single subtask in an isolated git worktree             |
+
+| Agent               | Spawned By                   | Purpose                                                               |
+| ------------------- | ---------------------------- | --------------------------------------------------------------------- |
+| **Execute Manager** | Supervisor (Phase 3)         | Own poll loop, worker/reviewer lifecycle, Context-Keeper coordination |
+| **Context-Keeper**  | Supervisor / Execute Manager | Manage externalized state file (sole writer)                          |
+| **Worker**          | Execute Manager / Supervisor | Implement a single subtask in an isolated git worktree                |
+
 
 ### Plan-First Autonomous Workflow
 
@@ -142,6 +148,42 @@ You fix issues (if needed)
 Next task
 ```
 
+### QA Workflow
+
+```
+/qa-executor
+    ↓
+DETECT URL: playwright.config.ts → .env → ask user
+    ↓
+DISCOVER: Static analysis → Runtime crawl → Selective vision → Merge & gate
+    ↓
+STRATEGY: QA Strategist classifies routes (HIGH/MEDIUM/LOW risk)
+    ↓
+GENERATE: Playwright tests (UI/E2E + API, role-based locators)
+    ↓
+EXECUTE: npx playwright test --reporter=json
+    ↓
+COVERAGE: Routes discovered vs tested, APIs discovered vs tested
+    ↓
+AUDIT: QA Strategist reviews results → STRATEGIST_VERDICT
+    ↓
+QA_RESULT: passed | failed | needs_human
+```
+
+**Requirements:**
+- `playwright.config.ts` (or .js) must exist
+- App must be running at the base URL
+- `npx` available (Node.js installed)
+- Playwright browsers installed (`npx playwright install`)
+
+**Quick commands:**
+```bash
+/qa-executor                              # Full QA run
+/qa-executor --skip-strategy              # Skip Strategist, use defaults
+/qa-executor --url http://localhost:3000  # Override URL
+/qa-strategist src/                       # Strategy only (no tests)
+```
+
 ---
 
 ## Task Management
@@ -149,6 +191,7 @@ Next task
 ### Beads (Optional)
 
 Beads is an optional issue tracker used by Orchestrator and Product Owner. The Supervisor and Launch Pad use `.supervisor/` exclusively.
+
 
 | Command                   | Purpose                               |
 | ------------------------- | ------------------------------------- |
@@ -158,6 +201,7 @@ Beads is an optional issue tracker used by Orchestrator and Product Owner. The S
 | `bd close BD-XX`          | Mark task complete                    |
 | `bd comment BD-XX "note"` | Add notes to task                     |
 | `bd dep BD-XX BD-YY`      | Set task dependencies                 |
+
 
 **Task Structure:**
 
@@ -248,8 +292,9 @@ This prevents knowledge loss and helps agents learn from discoveries.
 - **CLAUDE.md (this repo):** Architecture and agent system
 - **AGENT_GUIDELINES.md:** Development standards, quality checklist
 - **.claude-plugin/README.md:** Detailed plugin documentation
-- **ai-agent-manager-plugin/agents/*.md:** Individual agent prompts (9 roles)
-- **ai-agent-manager-plugin/skills/\*/SKILL.md:** 35 skill files for guidance
+- **ai-agent-manager-plugin/agents/*.md:** Individual agent prompts (11 roles)
+- **ai-agent-manager-plugin/skills/*/SKILL.md:** 36 skill files for guidance
+- **ai-agent-manager-plugin/docs/QA_SYSTEM_BLUEPRINT.md:** QA system architecture
 
 ---
 
@@ -257,9 +302,9 @@ This prevents knowledge loss and helps agents learn from discoveries.
 
 To modify or extend agents:
 
-1. Agents are Markdown prompts in `ai-agent-manager-plugin/agents/` (9 files)
-2. Commands are in `ai-agent-manager-plugin/commands/` (7 commands)
-3. Skills are in `ai-agent-manager-plugin/skills/` (35 skills)
+1. Agents are Markdown prompts in `ai-agent-manager-plugin/agents/` (11 files)
+2. Commands are in `ai-agent-manager-plugin/commands/` (9 commands)
+3. Skills are in `ai-agent-manager-plugin/skills/` (36 skills)
 4. Hooks are in `ai-agent-manager-plugin/hooks/hooks.json` (SubagentStop + TaskCompleted)
 5. All agents follow standard output format (see AGENT_GUIDELINES.md)
 
@@ -328,7 +373,7 @@ Claude Code caches plugin contents. After restructuring skills, force a refresh:
    /plugin install ai-agent-manager-plugin
   ```
 4. Restart Claude Code (close and reopen entirely)
-5. Verify with `/skills` — should show all 35 skills under "Plugin skills"
+5. Verify with `/skills` — should show all 36 skills under "Plugin skills"
 
 ---
 
@@ -347,6 +392,14 @@ Claude Code caches plugin contents. After restructuring skills, force a refresh:
 
 - **Main branch protection:** The `/commit` skill refuses commits on main/master without explicit flag.
 - **No rollback:** Git operations are not automatically reversible. Use `git reflog` for manual recovery.
+
+### QA System (Level 1)
+
+- **Requires Playwright config:** `playwright.config.ts` must exist and app must be running
+- **Crawl limits:** Max 30 pages, depth 3, same-origin only
+- **Single debate round:** Strategist audits once (multi-round is Level 2+)
+- **No state modeling or fuzz:** L1 tests happy paths + basic errors only
+- **Coverage is inventory-level:** Tracks routes/APIs discovered vs tested, not behavioral
 
 ---
 

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**AI Agent Manager** is a reusable system that provides intelligent agents for software development workflows. It integrates with Claude Code as a plugin with 9 agent roles (6 user-facing + 3 internal) that automate plan-first readiness, parallel workflow execution, requirements definition, planning, code review, commit management, and adversarial security audits.
+**AI Agent Manager** is a reusable system that provides intelligent agents for software development workflows. It integrates with Claude Code as a plugin with 11 agent roles (8 user-facing + 3 internal) that automate plan-first readiness, parallel workflow execution, requirements definition, planning, code review, commit management, adversarial security audits, and dual-agent QA automation.
 
 The system enables agents to collaborate on any project type. The Supervisor and Launch Pad use `.supervisor/` directory exclusively for state management. Other agents (Orchestrator, Product Owner) can optionally use **Beads issue tracker** independently. `CLAUDE.md` provides codebase knowledge that persists between work sessions.
 
@@ -51,7 +51,7 @@ The project is structured as a **Claude Code plugin marketplace**:
 - Review subtask blocks next implementation task
 - Review decisions: PASS (proceed), FAIL (fix and re-review), NEEDS_HUMAN (creates bug issues)
 
-### The 9 Agent Roles
+### The 11 Agent Roles
 
 Each agent is a Markdown prompt file (`agents/[name].md`):
 
@@ -116,6 +116,20 @@ Each agent is a Markdown prompt file (`agents/[name].md`):
 - **Command:** `/red-team-reviewer [target] [--focus security|scale|cost|ops]`
 - **Workflow:** Attacks assumptions → verifies claims against docs → explores 6 attack vectors
 - **Outputs:** Findings by severity (FATAL/CRITICAL/WARNING/WEAKNESS), prioritized fixes
+
+#### **QA Strategist** (`/qa-strategist`)
+- **Purpose:** Plan risk-based test strategy and audit QA Executor results
+- **When to use:** Before QA execution for strategy, or during debate loop for audit
+- **Command:** `/qa-strategist [target] [--audit .qa-summary.md] [--focus auth|api|ui|all]`
+- **Dual mode:** Strategy Mode (standalone risk classification) + Audit Mode (review Executor results)
+- **Outputs:** Risk classification, coverage targets, STRATEGIST_VERDICT block
+
+#### **QA Executor** (`/qa-executor`)
+- **Purpose:** Discover app, generate and run Playwright tests, orchestrate debate loop
+- **When to use:** Automated QA — test generation, execution, and coverage tracking
+- **Command:** `/qa-executor [--url http://...] [--rounds 1|2|3] [--skip-strategy]`
+- **Workflow:** Detect URL → 4-phase discovery → strategy → generate → execute → coverage → bugs → audit → emit
+- **Outputs:** Discovery Map, Playwright tests, .qa-summary.md, QA_RESULT block
 
 ### Agent Design Principles
 
@@ -195,6 +209,11 @@ your-project/
 
 # Adversarial audit (pre-launch)
 /red-team-reviewer --focus security
+
+# QA automation (requires Playwright config + running app)
+/qa-executor
+/qa-executor --url http://localhost:3000 --skip-strategy
+/qa-strategist src/
 ```
 
 ---
@@ -206,7 +225,7 @@ your-project/
 ```
 ai-agent-manager/
 ├── ai-agent-manager-plugin/          # The Claude Code plugin
-│   ├── agents/                       # Agent markdown prompts (9 roles)
+│   ├── agents/                       # Agent markdown prompts (11 roles)
 │   │   ├── launch-pad.md             # Launch Pad (Supervisor readiness)
 │   │   ├── supervisor.md             # Supervisor v4 (parallel orchestrator)
 │   │   ├── execute-manager.md        # Execute Manager (Phase 3 lifecycle)
@@ -215,18 +234,22 @@ ai-agent-manager/
 │   │   ├── product-owner.md          # Product Owner (requirements)
 │   │   ├── orchestrator.md           # Orchestrator (task planning)
 │   │   ├── code-reviewer.md          # Code Reviewer (quality gates)
-│   │   └── red-team-reviewer.md      # Red Team Reviewer (adversarial)
+│   │   ├── red-team-reviewer.md      # Red Team Reviewer (adversarial)
+│   │   ├── qa-strategist.md          # QA Strategist (risk-based test strategy)
+│   │   └── qa-executor.md            # QA Executor (discovery + test generation)
 │   ├── commands/                     # Slash commands for Claude Code
 │   │   ├── launch-pad.md             # /launch-pad command
-│   │   ├── supervisor.md             # /supervisor command (v3)
+│   │   ├── supervisor.md             # /supervisor command (v4)
 │   │   ├── product-owner.md          # /product-owner command
 │   │   ├── orchestrator.md           # /orchestrator command
 │   │   ├── code-reviewer.md          # /code-reviewer command
 │   │   ├── red-team-reviewer.md      # /red-team-reviewer command
+│   │   ├── qa-strategist.md          # /qa-strategist command
+│   │   ├── qa-executor.md            # /qa-executor command
 │   │   └── agent-help.md             # /agent-help command
 │   ├── hooks/                        # Plugin quality gate hooks
 │   │   └── hooks.json                # SubagentStop + TaskCompleted validation
-│   ├── skills/                       # Skill files for guidance (35 skills)
+│   ├── skills/                       # Skill files for guidance (36 skills)
 │   │   ├── supervisor-readiness/     # Pre-flight checklist & Supervisor-Ready Brief template
 │   │   ├── agent-teams/              # Agent Teams patterns (experimental)
 │   │   ├── async-orchestration/      # Parallel dispatch & git worktree patterns
@@ -241,9 +264,12 @@ ai-agent-manager/
 │   │   ├── gateway-*/                # API Gateway patterns (4 skills)
 │   │   ├── nestjs-typeorm/           # TypeORM integration
 │   │   ├── mysql/                    # MySQL patterns
-│   │   └── playwright-e2e/           # Playwright E2E testing patterns
+│   │   ├── playwright-e2e/           # Playwright E2E testing patterns
+│   │   └── qa-strategy/             # QA risk framework & debate protocol
+│   ├── docs/                        # Architecture documentation
+│   │   └── QA_SYSTEM_BLUEPRINT.md   # QA system architecture (14 modules, 5 levels)
 │   └── .claude-plugin/
-│       └── plugin.json               # Plugin metadata (v4.0.0)
+│       └── plugin.json               # Plugin metadata (v5.0.0)
 │
 ├── .claude-plugin/
 │   ├── marketplace.json              # Marketplace definition
@@ -423,10 +449,10 @@ Before an agent completes work:
 ### Plugin Metadata
 
 - **Plugin Name:** `ai-agent-manager-plugin`
-- **Version:** 4.0.0
-- **Description:** AI agents with plan-first workflows, parallel orchestration, Execute Manager for bounded context, focused skills, plugin hooks, persistent memory, and .supervisor/ state management
-- **Agents:** 9 roles (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer)
-- **Skills:** 35 reusable skill files
+- **Version:** 5.0.0
+- **Description:** AI agents with plan-first workflows, parallel orchestration, dual-agent QA automation, Execute Manager for bounded context, focused skills, plugin hooks, persistent memory, and .supervisor/ state management
+- **Agents:** 11 roles (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer, QA Strategist, QA Executor)
+- **Skills:** 36 reusable skill files
 - **Hooks:** 2 quality gate hooks (SubagentStop, TaskCompleted)
 - **Author:** vikash ruhil
 - **License:** MIT
@@ -500,6 +526,8 @@ Agents with `memory: project` in their frontmatter build knowledge across sessio
 | Code Reviewer | Review patterns, recurring issues, codebase conventions | `.claude/agent-memory/ai-agent-manager-plugin:code-reviewer/` |
 | Red Team Reviewer | Past vulnerabilities, attack patterns, audit history | `.claude/agent-memory/ai-agent-manager-plugin:red-team-reviewer/` |
 | Product Owner | Domain context, terminology, stakeholder preferences | `.claude/agent-memory/ai-agent-manager-plugin:product-owner/` |
+| QA Strategist | Per-project risk patterns, which routes tend to break | `.claude/agent-memory/ai-agent-manager-plugin:qa-strategist/` |
+| QA Executor | Flaky patterns, common failures, successful test templates | `.claude/agent-memory/ai-agent-manager-plugin:qa-executor/` |
 
 Memory accumulates automatically — agents get smarter about project-specific patterns over time.
 
@@ -514,6 +542,8 @@ Agents with `skills` in their frontmatter receive skill content pre-injected at 
 | Orchestrator | quality-checklist | Defines review gate criteria for subtask creation |
 | Code Reviewer | quality-checklist, context7-lookup | Always needs quality criteria and library doc lookup |
 | Red Team Reviewer | context7-lookup | Mandatory for reality-checking library usage |
+| QA Strategist | qa-strategy, quality-checklist | Risk framework and quality gates always needed |
+| QA Executor | qa-strategy, playwright-e2e, quality-checklist | Discovery, test generation patterns, and gates |
 
 This eliminates file-read latency during execution — skills are in context from the start.
 
@@ -568,6 +598,14 @@ Claude Code Agent Teams is an experimental feature providing native multi-agent 
 - **Token overhead:** ~5,000-10,000 tokens per invocation for prompts
 - **Context7 dependency:** External library lookups require MCP; fallback to CLAUDE.md if unavailable
 
+### QA System (Level 1)
+- **Requires Playwright:** `playwright.config.ts` must exist and app must be running
+- **Crawl limits:** Max 30 pages, depth 3, same-origin only
+- **Single debate round:** Strategist audits once (multi-round is Level 2+)
+- **No state modeling:** L1 tests happy paths + basic errors only (state combinations are Level 2)
+- **No security/performance tests:** Non-destructive security and performance are Level 3
+- **Coverage is inventory-level:** Tracks routes/APIs discovered vs tested, not behavioral coverage
+
 ---
 
 ## Future Enhancements
@@ -588,3 +626,4 @@ Potential improvements:
 - **Agent prompts:** `ai-agent-manager-plugin/agents/*.md` (detailed agent definitions with YAML frontmatter)
 - **Skills:** `ai-agent-manager-plugin/skills/*/SKILL.md` (implementation guidance)
 - **Hooks:** `ai-agent-manager-plugin/hooks/hooks.json` (plugin quality gate hooks)
+- **QA Blueprint:** `ai-agent-manager-plugin/docs/QA_SYSTEM_BLUEPRINT.md` (14 modules, 5 maturity levels)
