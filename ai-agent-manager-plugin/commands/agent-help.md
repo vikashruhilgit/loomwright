@@ -703,7 +703,7 @@ bd close BD-XX
 ```
 ai-agent-manager-plugin/
 ├── .claude-plugin/
-│   └── plugin.json          # Plugin metadata (v4.0.0)
+│   └── plugin.json          # Plugin metadata (v5.1.0)
 ├── commands/                # Slash commands
 │   ├── launch-pad.md        # Supervisor readiness
 │   ├── supervisor.md        # Parallel orchestrator (v4)
