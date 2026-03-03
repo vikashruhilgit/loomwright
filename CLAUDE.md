@@ -269,7 +269,7 @@ ai-agent-manager/
 │   ├── docs/                        # Architecture documentation
 │   │   └── QA_SYSTEM_BLUEPRINT.md   # QA system architecture (14 modules, 5 levels)
 │   └── .claude-plugin/
-│       └── plugin.json               # Plugin metadata (v5.0.0)
+│       └── plugin.json               # Plugin metadata (v5.1.0)
 │
 ├── .claude-plugin/
 │   ├── marketplace.json              # Marketplace definition
@@ -449,11 +449,12 @@ Before an agent completes work:
 ### Plugin Metadata
 
 - **Plugin Name:** `ai-agent-manager-plugin`
-- **Version:** 5.0.0
-- **Description:** AI agents with plan-first workflows, parallel orchestration, dual-agent QA automation, Execute Manager for bounded context, focused skills, plugin hooks, persistent memory, and .supervisor/ state management
+- **Version:** 5.1.0
+- **Description:** AI agents with plan-first workflows, parallel orchestration, dual-agent QA automation, Execute Manager for bounded context, focused skills, plugin hooks, persistent memory, .supervisor/ state management, and bundled MySQL MCP server
 - **Agents:** 11 roles (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer, QA Strategist, QA Executor)
 - **Skills:** 36 reusable skill files
 - **Hooks:** 2 quality gate hooks (SubagentStop, TaskCompleted)
+- **Bundled MCP:** MySQL read-only MCP server (`vikashruhil-mysql-mcp`) — query impact analysis, schema inspection, multi-DB profiles
 - **Author:** vikash ruhil
 - **License:** MIT
 

@@ -1,11 +1,24 @@
 {
   "name": "ai-agent-manager-plugin",
-  "version": "5.0.0",
+  "version": "5.1.0",
   "description": "AI agents with parallel orchestration, plan-first workflows, dual-agent QA automation, Execute Manager for bounded context growth, focused skills, plugin hooks, persistent memory, and .supervisor/ state management. 11 agent roles with YAML frontmatter: Launch Pad (Supervisor readiness with codebase analysis and jobs folder), Supervisor v4 (parallel orchestrator with tool call budgets), Execute Manager (Phase 3 poll loop with worker/reviewer lifecycle), Context-Keeper (externalized state), Worker (isolated implementation with self-summary files), Product Owner (business requirements), Orchestrator (task planning), Code Reviewer (quality gates with memory), Red Team Reviewer (adversarial audits with memory), QA Strategist (risk-based test strategy and audit), and QA Executor (discovery, test generation, execution with debate loop). Features 36 reusable skills including qa-strategy (risk framework and debate protocol), supervisor-readiness (pre-flight checklist and brief template), /commit (conventional commits), Playwright E2E testing, plugin quality gate hooks (SubagentStop for worker and execute-manager, TaskCompleted), and persistent agent memory across sessions.",
   "author": {
     "name": "vikash ruhil"
   },
   "license": "MIT",
+  "mcpServers": {
+    "mysql": {
+      "command": "uvx",
+      "args": ["--from", "vikashruhil-mysql-mcp", "--refresh", "mysql-mcp"],
+      "env": {
+        "DB_HOST": "${DB_HOST}",
+        "DB_USER": "${DB_USER}",
+        "DB_PASS": "${DB_PASS}",
+        "DB_NAME": "${DB_NAME}",
+        "DB_PORT": "${DB_PORT}"
+      }
+    }
+  },
   "keywords": [
     "agents",
     "orchestration",

@@ -50,7 +50,46 @@ your-project/
 └── src/ (your code)
 ```
 
-### 3. Run Your First Command
+### 3. (Optional) Enable MySQL MCP
+
+The plugin bundles a read-only MySQL MCP server that gives agents direct database access — schema inspection, query execution with impact analysis, and multi-DB profile switching.
+
+**Set your DB credentials as environment variables** (add to `~/.zshrc` or `~/.bashrc`):
+
+```bash
+export DB_HOST=localhost
+export DB_USER=myuser
+export DB_PASS=mypassword
+export DB_NAME=mydatabase
+export DB_PORT=3306        # numeric string, defaults to 3306
+```
+
+> **Note:** Running `export` in your terminal takes effect **immediately in the current session only**. When you close that terminal or open a new one, the variables are gone. To persist across sessions, add these lines to `~/.zshrc` or `~/.bashrc`:
+> ```bash
+> echo 'export DB_HOST=localhost' >> ~/.zshrc
+> echo 'export DB_USER=myuser' >> ~/.zshrc
+> echo 'export DB_PASS=mypassword' >> ~/.zshrc
+> echo 'export DB_NAME=mydatabase' >> ~/.zshrc
+> echo 'export DB_PORT=3306' >> ~/.zshrc
+> source ~/.zshrc
+> ```
+
+The MCP server starts automatically via `uvx` when the plugin is loaded — no extra steps needed.
+
+**Multi-DB profiles** (optional) — connect to multiple databases by setting:
+
+```bash
+export DB_PROFILES_MYSQL_PROD='{"host":"prod.example.com","user":"ro","pass":"secret","db":"myapp"}'
+export DB_PROFILES_MYSQL_STAGING='{"host":"staging.example.com","user":"ro","pass":"secret","db":"myapp"}'
+```
+
+Then call `switch_database(host="prod.example.com")` at runtime to switch between them.
+
+> **Security:** Only `SELECT` queries are permitted. All write operations (`INSERT`, `UPDATE`, `DELETE`, `DROP`, etc.) are blocked.
+
+---
+
+### 4. Run Your First Command
 
 ```bash
 # Plan-first autonomous workflow
