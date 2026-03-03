@@ -201,7 +201,8 @@ Compare annotations against Discovery Map to compute coverage.
 - status: passed | failed | needs_human | skipped
 - rounds_run: {N}/3
 - tests_generated: {N}
-- tests_run: {N}
+- tests_generated: {N}    # total tests written to disk
+- tests_run_this_session: {N}    # tests actually executed this agent session
 - tests_passed: {N}
 - tests_failed: {N}
 - discovery_confidence: HIGH | MEDIUM | LOW
@@ -257,7 +258,7 @@ Each maturity level unlocks specific capabilities. Agents MUST NOT attempt highe
 | Visual/A11y (10) | - | - | Y | Y | Y |
 | Flaky Analyzer (11) | - | - | Y | Y | Y |
 | Production Feedback (12) | - | - | - | - | Y |
-| Reporting (13) | - | - | Y | Y | Y |
+| Reporting (13) | lightweight (.qa-summary.md) | - | Y | Y | Y |
 | Debate Loop (14) | 1 round | 3 rounds | 3 rounds | 3 rounds | 3 rounds |
 
 ---
@@ -279,17 +280,85 @@ If any limit is hit: log it, proceed with what you have. Never silently fail.
 
 ---
 
-## 10. Quality Checklist for QA Agents
+## 10. Test Isolation Rules
+
+Every generated test must be fully independent. Shared state causes suite-level failures even when individual tests pass.
+
+### Mandatory isolation patterns
+
+```typescript
+test.describe('Feature', () => {
+  // Set up fresh state before each test
+  test.beforeEach(async ({ page, request }) => {
+    // Auth: set storageState or perform login
+    // Data: create required fixtures with unique IDs
+    const id = `test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  });
+
+  // Clean up after each test
+  test.afterEach(async ({ request }) => {
+    // Delete created records, reset state
+  });
+
+  test('...', async ({ page }) => { ... });
+});
+```
+
+### Rules
+- Never rely on test execution order
+- Use `Date.now()` or `crypto.randomUUID()` for unique identifiers to avoid data collisions
+- For auth-gated routes: each test file must set up its own storageState or login step
+- Do NOT share login cookies or auth tokens across test files implicitly
+- If a test needs seed data that cannot be created programmatically: use `test.skip()` with a note
+
+---
+
+## 11. Seed Data Awareness
+
+Tests that assume fixture data (slugs, org IDs, user records) fail when that data doesn't exist.
+
+### Detection (during crawl)
+
+Intercept GET list responses during Phase B to inventory available entities:
+
+```json
+// discovery/seed-data.json
+{
+  "orgs": { "count": 3, "sample_ids": ["org-abc", "org-def"] },
+  "members": { "count": 12, "sample_ids": ["user-1", "user-2"] },
+  "projects": { "count": 0, "sample_ids": [] }
+}
+```
+
+### Generation rules
+
+| seed count | action |
+|---|---|
+| > 0 | Use a discovered sample ID — do NOT hardcode |
+| = 0 (LOW risk route) | Skip test with `test.skip('requires seed data: {entity}')` |
+| = 0 (HIGH/MEDIUM risk route) | Generate beforeEach to create entity + afterEach to delete it |
+
+Never hardcode slugs like `"my-org"` or IDs like `"12345"` — always read from seed-data.json or generate dynamically.
+
+---
+
+## 12. Quality Checklist for QA Agents
 
 Before emitting QA_RESULT:
 - [ ] Discovery Map generated with confidence score
+- [ ] discovery/seed-data.json produced with entity inventory
 - [ ] Risk classification applied to all discovered routes
 - [ ] Tests follow playwright-e2e skill patterns (role-based locators, regex assertions)
+- [ ] Tests have beforeEach/afterEach isolation — no shared state between tests
+- [ ] Tests use unique identifiers per run (Date.now(), crypto.randomUUID())
+- [ ] Seed data check done — no hardcoded slugs or IDs
+- [ ] Cross-org security tests excluded from L1 generation (deferred to L3)
 - [ ] Coverage annotations present in all generated tests
+- [ ] Dry-run gate passed before full suite execution
 - [ ] Coverage tracked (routes discovered vs tested, APIs discovered vs tested)
 - [ ] Bug reports include severity, reproduction steps, file:line
 - [ ] Strategist audit completed (or timeout recorded)
-- [ ] QA_RESULT block contains all required fields
+- [ ] QA_RESULT distinguishes tests_generated from tests_run_this_session
 - [ ] No hardcoded waits, no CSS selectors in generated tests
 - [ ] Level boundaries respected (no L2+ work in L1)
 

@@ -80,7 +80,25 @@ If you identify gaps that require higher-level modules, LOG them in the QA_RESUL
 
 ---
 
-## Level 1 Protocol (9 Phases)
+## Level 1 Protocol (10 Phases)
+
+### Phase 0: ENVIRONMENT SETUP
+
+```
+Detect package manager and install dependencies:
+  1. Detect: check for lock files in project root
+     - yarn.lock → yarn install --frozen-lockfile
+     - pnpm-lock.yaml → pnpm install --frozen-lockfile
+     - package-lock.json → npm ci
+     - None found → npm install
+  2. Run install command, capture output
+  3. Check exit code:
+     - Non-zero → status: needs_human, error: "Dependency install failed: {output}"
+  4. Verify Playwright is available:
+     npx playwright --version
+     If fails → npx playwright install --with-deps
+  5. Log: "Dependencies installed. Playwright version: {version}"
+```
 
 ### Phase 1: DETECT URL
 
@@ -133,6 +151,17 @@ Generate discovery/crawl.ts:
 
 Run: npx playwright test discovery/crawl.ts --reporter=json
 Parse results
+
+Seed Data Inventory (during runtime crawl):
+  - Intercept GET list responses (page.on('response') for list/index endpoints)
+  - For each entity type encountered (orgs, members, users, etc.):
+    Record: entity_type, count, sample_ids/slugs
+  - Write to discovery/seed-data.json
+  - If entity count = 0 for a HIGH risk route's required entity:
+    Flag: SEED_DATA_MISSING for that route
+    Generated tests for that route must either:
+      a) Create required data in beforeEach + clean up in afterEach
+      b) Or: skip with test.skip() + note "requires seed data"
 ```
 
 **Phase C — Selective Vision:**
@@ -174,7 +203,7 @@ Spawn QA Strategist in Strategy Mode (blocking):
              Produce risk classification and coverage targets.
              Discovery data at: discovery/discovery-map.json
              Project root: {cwd}",
-    subagent_type: "ai-agent-manager-plugin:qa-strategist"
+    subagent_type: "ai-agent-manager-plugin:ai-agent-manager-plugin:qa-strategist"
   )
 
 Parse output:
@@ -207,10 +236,45 @@ For each route in priority order (HIGH first, then MEDIUM, then LOW):
       - POST/PUT/DELETE: verify auth required (401 without token)
       - Coverage annotations: // @covers-api: {METHOD} {path}
 
+Test isolation requirements (MANDATORY):
+  - Every test must be fully independent — no shared state
+  - Use test.beforeEach to set up required data/auth state
+  - Use test.afterEach to clean up any created data
+  - Never rely on test execution order
+  - Use unique identifiers per test run (Date.now(), crypto.randomUUID())
+    to avoid collisions with existing data
+  - For auth-gated routes: include storageState setup or login step in beforeEach
+  - Do NOT use shared login state across test files without explicit storageState
+
+SECURITY TEST BOUNDARY (L1):
+  - Cross-org access tests (e.g., "can user A access org B's data?") are L3 adversarial tests
+  - At L1, only test that auth-gated routes return 401 without a token (not cross-org)
+  - If cross-org tests would be generated, skip them and log:
+    notes: "Cross-org security tests deferred to L3"
+  - The only auth test at L1: unauthenticated request → 401/403 response
+
 Governance limits:
   - Max 30 test files
   - If cap hit: prioritize HIGH risk routes first
   - Log skipped routes in discovery_warnings
+```
+
+### Phase 4.5: DRY-RUN GATE
+
+```
+Before executing the full suite:
+  1. Pick up to 3 test files (1 HIGH risk, 1 MEDIUM, 1 LOW if available)
+  2. Run: npx playwright test {file1} {file2} {file3} --reporter=json --timeout=60000
+  3. Parse results:
+     - If ≥ 2/3 pass → proceed to full suite (Phase 5)
+     - If < 2/3 pass → HALT. Do not run full suite.
+       Inspect failures:
+         - "Cannot find module" / "module not found" → dependency issue (re-run Phase 0)
+         - Locator not found / element missing → discovery/locator mismatch
+         - Auth redirect / 401 → need storageState for gated routes
+       status: needs_human, error: "Dry-run failed: {failure summary}"
+       Attach dry-run failures to QA_RESULT notes field
+       Emit QA_RESULT with partial data and exit
 ```
 
 ### Phase 5: EXECUTE
@@ -293,7 +357,7 @@ Spawn QA Strategist in Audit Mode (blocking):
              Test results at: {cwd}/e2e/test-results/
              Discovery map at: {cwd}/discovery/discovery-map.json
              This is Level 1 — only reject for L1 reasons.",
-    subagent_type: "ai-agent-manager-plugin:qa-strategist"
+    subagent_type: "ai-agent-manager-plugin:ai-agent-manager-plugin:qa-strategist"
   )
 
 Parse STRATEGIST_VERDICT:
@@ -308,11 +372,19 @@ Parse STRATEGIST_VERDICT:
 Write .qa-summary.md (final, max 200 tokens)
 
 Emit QA_RESULT block with all fields:
-  task_id, status, rounds_run, tests_generated, tests_run,
-  tests_passed, tests_failed, discovery_confidence,
+  task_id, status, rounds_run,
+  tests_generated,              # total tests written to disk
+  tests_run_this_session,       # tests actually executed in this agent session
+  tests_passed,                 # from this session's execution
+  tests_failed,                 # from this session's execution
+  discovery_confidence,
   discovery_duration_seconds, crawl_limit_hit, discovery_warnings,
   coverage, coverage_weighted, risk_score, bugs_found, bugs_blocking,
   strategist_verdict, files_created, error, notes
+
+If tests_generated > tests_run_this_session:
+  Add note: "Full suite has {tests_generated} tests; only {tests_run_this_session}
+             run this session. Run full suite with: npx playwright test e2e/tests/"
 ```
 
 ---
@@ -338,6 +410,8 @@ Budget is 60 calls. At 36: compress. At 48: skip to execute. At 55: emit and exi
 |---|---|
 | No playwright.config.* found | status: skipped, error: "No Playwright config found" |
 | App not running (URL unreachable) | status: needs_human, error: "App not running at {URL}" |
+| Dependency install failed (Phase 0) | status: needs_human, error: "Dependency install failed: {output}" |
+| Dry-run gate failed (Phase 4.5) | status: needs_human, error: "Dry-run failed: {failure summary}" |
 | Discovery confidence LOW | Halt unless --auto-discover. status: needs_human |
 | Crawl limit hit (30 pages) | Cap confidence at MEDIUM, log in discovery_warnings |
 | Test generation cap hit (30 files) | Prioritize HIGH risk, log skipped routes |
@@ -358,6 +432,7 @@ Budget is 60 calls. At 36: compress. At 48: skip to execute. At 55: emit and exi
 │   ├── static-map.json             # Phase A output
 │   ├── sitemap.json                # Phase B output (runtime routes)
 │   ├── api-calls.json              # Phase B output (intercepted APIs)
+│   ├── seed-data.json              # Phase B output (entity counts + sample IDs)
 │   ├── skipped-interactions.json   # Buttons skipped during crawl
 │   ├── discovery-map.json          # Phase D output (merged final map)
 │   └── report.md                   # Phase D output (human-readable)
@@ -376,18 +451,23 @@ Budget is 60 calls. At 36: compress. At 48: skip to execute. At 55: emit and exi
 ## Quality Checklist
 
 Before emitting QA_RESULT:
+- [ ] Phase 0: Dependencies installed, Playwright version confirmed
 - [ ] Playwright config found and base URL detected
 - [ ] App reachability verified
 - [ ] 4-phase discovery completed with confidence score
+- [ ] discovery/seed-data.json produced with entity counts
 - [ ] Strategist risk classification received (or --skip-strategy used)
 - [ ] Tests follow playwright-e2e skill patterns
+- [ ] Tests have beforeEach/afterEach isolation — no shared state
+- [ ] No cross-org security tests in generated suite (deferred to L3)
 - [ ] Coverage annotations present in all tests (@covers-route, @covers-api)
+- [ ] Dry-run gate passed (≥ 2/3 sample tests passing) before full suite
 - [ ] Tests executed with JSON reporter
 - [ ] Coverage tracked (routes + APIs discovered vs tested)
 - [ ] Bug reports generated for failures with severity
 - [ ] Strategist audit completed (1 round for L1)
 - [ ] .qa-summary.md written (max 200 tokens)
-- [ ] QA_RESULT block contains ALL required fields
+- [ ] QA_RESULT block contains ALL required fields (tests_generated vs tests_run_this_session)
 - [ ] Level 1 boundaries respected
 - [ ] Tool call budget tracked
 
