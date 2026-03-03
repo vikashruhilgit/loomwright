@@ -251,7 +251,7 @@ result = Task(
     - Parallelism graph: [{launchable, blocked}]
     - Config: max_workers={N}, project={name}, feature_branch={branch}
     - State file: {path}",
-  subagent_type: "ai-agent-manager-plugin:execute-manager"
+  subagent_type: "ai-agent-manager-plugin:ai-agent-manager-plugin:execute-manager"
 )
 tool_calls += 1   # single tool call for entire Phase 3
 ```

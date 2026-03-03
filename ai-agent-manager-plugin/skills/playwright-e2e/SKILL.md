@@ -229,6 +229,66 @@ test.describe('Feature Name', () => {
 });
 ```
 
+### Test Isolation (MANDATORY for generated tests)
+
+Every test must be fully independent — no shared state across tests or files.
+
+```typescript
+test.describe('Members', () => {
+  let createdId: string;
+
+  test.beforeEach(async ({ request }) => {
+    // Create unique fixture data for this test run
+    const uniqueName = `test-member-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const res = await request.post('/api/members', {
+      data: { name: uniqueName, email: `${uniqueName}@test.example` },
+      headers: { Authorization: `Bearer ${process.env.E2E_TOKEN}` },
+    });
+    const body = await res.json();
+    createdId = body.id;
+  });
+
+  test.afterEach(async ({ request }) => {
+    // Clean up to avoid data accumulation across runs
+    if (createdId) {
+      await request.delete(`/api/members/${createdId}`, {
+        headers: { Authorization: `Bearer ${process.env.E2E_TOKEN}` },
+      });
+    }
+  });
+
+  test('member detail page loads', async ({ page }) => {
+    await page.goto(`/members/${createdId}`);
+    await expect(page.getByRole('heading')).toBeVisible();
+  });
+});
+```
+
+**Rules:**
+- Never share `createdId`, cookies, or auth tokens across `test.describe` blocks without explicit storageState
+- Use `Date.now()` or `crypto.randomUUID()` to make identifiers unique per run
+- For auth-gated routes: set storageState per-file or log in inside `beforeEach`
+- If test requires data that cannot be created programmatically: `test.skip('requires seed data: {entity}')`
+
+### Fixture Data Patterns
+
+When tests need entity data from the app:
+
+```typescript
+// GOOD — read from discovery/seed-data.json at test generation time,
+//         inject as test constant (never hardcode slugs)
+const ORG_SLUG = process.env.TEST_ORG_SLUG ?? 'fallback-org'; // read from env
+
+// GOOD — create data dynamically
+test.beforeEach(async ({ request }) => {
+  const res = await request.post('/api/orgs', { data: { name: `org-${Date.now()}` } });
+  orgSlug = (await res.json()).slug;
+});
+
+// BAD — hardcoded slug/ID that may not exist in target environment
+await page.goto('/orgs/my-hardcoded-org');
+```
+
 ### Imports: Fixtures vs @playwright/test
 
 ```typescript
@@ -330,6 +390,9 @@ Shows network requests, DOM snapshots, console logs, and action timeline.
 | Commit `e2e/test-results/` directory | Add to `.gitignore` (generated artifacts) |
 | Create separate fixtures files | Extend existing `fixtures/index.ts` |
 | Hardcoded URLs: `page.goto('http://localhost:3000')` | Use `baseURL` from config: `page.goto('/dashboard')` |
+| Hardcoded slugs/IDs: `page.goto('/orgs/my-org')` | Create data in beforeEach or read from seed-data.json |
+| Shared state across tests (no beforeEach/afterEach) | Isolate each test: create + clean up in beforeEach/afterEach |
+| Cross-org assertions at L1 (user A accesses org B) | L3 security tests only; at L1 only test 401 without token |
 
 ---
 
@@ -361,11 +424,13 @@ test.use({ storageState: { cookies: [], origins: [] } });
 Before committing E2E tests:
 - [ ] Tests pass locally (`yarn test:e2e`)
 - [ ] No hardcoded credentials (use env vars)
+- [ ] No hardcoded slugs or entity IDs (use dynamic creation or seed-data.json)
 - [ ] Role-based locators used (no CSS selectors)
 - [ ] Regex used for text assertions (i18n-friendly)
 - [ ] Test file in correct directory (`tests/frontend/` or `tests/api/`)
 - [ ] File named `{feature}.spec.ts` (kebab-case)
 - [ ] Tests grouped with `test.describe`
+- [ ] Each test has beforeEach/afterEach isolation (no shared state)
 - [ ] Explicit timeouts for async assertions
 - [ ] `e2e/.auth/` not committed (gitignored)
 - [ ] `e2e/test-results/` not committed (gitignored)
