@@ -3,6 +3,8 @@ name: ai-agent-manager-plugin:code-reviewer
 description: Code quality reviewer. Use proactively after code changes. Outputs PASS/FAIL/NEEDS_HUMAN decision.
 tools: Read, Glob, Grep, Bash
 model: inherit
+maxTurns: 40
+color: "#20B2AA"
 memory: project
 skills:
   - quality-checklist

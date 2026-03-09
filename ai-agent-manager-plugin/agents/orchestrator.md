@@ -3,6 +3,8 @@ name: ai-agent-manager-plugin:orchestrator
 description: Break goals into tasks with review gates. Use when starting new work or need a plan.
 tools: Read, Glob, Grep, Bash
 model: inherit
+maxTurns: 40
+color: "#9370DB"
 skills:
   - quality-checklist
 ---

@@ -2,6 +2,8 @@
 name: quality-checklist
 description: Pre-task and post-task quality gates extracted from AGENT_GUIDELINES.md. Use when starting implementation, during development, or before completing code review.
 allowed-tools: Read
+version: "1.0.0"
+lastUpdated: "2026-03"
 ---
 
 # Quality Checklist Skill

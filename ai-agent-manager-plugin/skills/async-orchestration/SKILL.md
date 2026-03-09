@@ -2,6 +2,8 @@
 name: async-orchestration
 description: Background dispatch patterns, non-blocking polling, parallelism decisions, and git worktree lifecycle. Use when running parallel workers in Supervisor workflows.
 allowed-tools: [Read, Bash]
+version: "1.0.0"
+lastUpdated: "2026-03"
 ---
 
 # Async Orchestration Skill

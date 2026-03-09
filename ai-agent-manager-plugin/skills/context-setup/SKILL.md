@@ -2,6 +2,8 @@
 name: context-setup
 description: Standard procedure for agents to establish project context. Use when starting a new task to load CLAUDE.md, Beads state, and git history.
 allowed-tools: Read, Bash, Grep
+version: "1.0.0"
+lastUpdated: "2026-03"
 ---
 
 # Context Setup Skill

@@ -1,23 +1,23 @@
 {
-  "description": "AI Agent Manager quality gates and monitoring",
+  "description": "AI Agent Manager quality gates and monitoring — cross-cutting hooks only. Per-agent SubagentStop hooks are in agent frontmatter (worker.md, execute-manager.md).",
   "hooks": {
     "SubagentStop": [
       {
-        "matcher": "ai-agent-manager-plugin:worker",
+        "matcher": "ai-agent-manager-plugin:code-reviewer",
         "hooks": [
           {
             "type": "prompt",
-            "prompt": "A worker agent just completed. Review its output to verify: (1) it produced a WORKER_RESULT block, (2) files_modified is not empty, (3) a .worker-summary.md file was written to the worktree, (4) it didn't report errors that went unresolved. Context: $ARGUMENTS. Respond with {\"ok\": true} if the worker completed successfully, or {\"ok\": false, \"reason\": \"...\"} if there are issues that need attention.",
+            "prompt": "A Code Reviewer agent just completed. Review its output to verify: (1) it produced a CODE_REVIEW_RESULT block with schema_version field equal to 1, (2) decision is one of PASS, FAIL, or NEEDS_HUMAN, (3) if FAIL or NEEDS_HUMAN, issues array is non-empty with severity and description, (4) summary field is present. Context: $ARGUMENTS. Respond with {\"ok\": true} if valid, or {\"ok\": false, \"reason\": \"...\"} if the output is malformed or missing required fields.",
             "timeout": 30
           }
         ]
       },
       {
-        "matcher": "ai-agent-manager-plugin:execute-manager",
+        "matcher": "ai-agent-manager-plugin:qa-executor",
         "hooks": [
           {
             "type": "prompt",
-            "prompt": "An Execute Manager agent just completed. Review its output to verify: (1) it produced an EXECUTE_RESULT or EXECUTE_CHECKPOINT block, (2) the block contains subtasks_completed and worktrees fields, (3) merge_order is present if status is completed. Context: $ARGUMENTS. Respond with {\"ok\": true} if valid, or {\"ok\": false, \"reason\": \"...\"} if the output is malformed or missing required fields.",
+            "prompt": "A QA Executor agent just completed. Review its output to verify: (1) it produced a QA_RESULT block with schema_version field equal to 1, (2) tests_generated and tests_passed are present as integers, (3) summary field is present, (4) if tests were run, coverage_estimate is present. Context: $ARGUMENTS. Respond with {\"ok\": true} if valid, or {\"ok\": false, \"reason\": \"...\"} if the output is malformed or missing required fields.",
             "timeout": 30
           }
         ]

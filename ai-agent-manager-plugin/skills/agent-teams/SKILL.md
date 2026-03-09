@@ -2,6 +2,8 @@
 name: agent-teams
 description: Agent Teams patterns for parallel coordination using Claude Code native teams feature. Use when coordinating multiple agents on cross-layer changes, competing hypotheses, or research tasks.
 allowed-tools: [Read, Bash]
+version: "1.0.0"
+lastUpdated: "2026-03"
 ---
 
 # Agent Teams Skill
@@ -257,6 +259,19 @@ Before using Agent Teams:
 - [ ] Lead agent has clear coordination plan
 - [ ] Fallback plan if teammate fails (manual retry or reassign)
 - [ ] Git operations are handled by lead only (not teammates)
+
+## Graduation Criteria (Experimental → Stable)
+
+Agent Teams remains experimental until all criteria are met:
+
+1. **Documented successful runs:** At least 5 successful multi-teammate runs across different projects with no data loss
+2. **File conflict resolution:** Reliable detection and recovery from file conflicts (not just prevention)
+3. **Error recovery:** Teammate failure recovery comparable to Supervisor's checkpoint/resume
+4. **Context sharing:** Teammates can share intermediate results without context explosion
+5. **Performance parity:** Task completion rate ≥90% (matching Supervisor's worktree approach)
+6. **Integration path:** Clear API for Supervisor to use Agent Teams within EXECUTE phase as alternative to worktrees
+
+**Current status:** Criteria 1-6 NOT met. Use Supervisor v4 with git worktrees for production workflows.
 
 ## See Also
 

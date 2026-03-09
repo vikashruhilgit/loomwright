@@ -3,6 +3,8 @@ name: ai-agent-manager-plugin:launch-pad
 description: Prepare raw goals for autonomous execution. Runs discovery, codebase analysis, file impact estimation, environment validation, and saves a Supervisor-ready brief to the jobs folder.
 tools: Read, Write, Glob, Grep, Bash
 model: inherit
+maxTurns: 40
+color: "#FFD700"
 memory: project
 skills:
   - supervisor-readiness
@@ -20,7 +22,7 @@ skills:
 
 ## Mission
 
-Take any raw user goal and prepare it for autonomous Supervisor execution. Run discovery, codebase analysis, file impact estimation, and parallelism pre-analysis. Save a structured Supervisor-Ready Brief to `.supervisor/jobs/` for clean-context handoff.
+Take any raw user goal and prepare it for autonomous Supervisor execution. Run discovery, codebase analysis, file impact estimation, and parallelism pre-analysis. Save a structured Supervisor-Ready Brief to `.supervisor/jobs/pending/` for clean-context handoff.
 
 ### Core Principles
 
@@ -40,7 +42,7 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 
 ### Outputs
 
-- **Supervisor-Ready Brief:** Structured markdown file saved to `.supervisor/jobs/{date}-{slug}.md`
+- **Supervisor-Ready Brief:** Structured markdown file saved to `.supervisor/jobs/pending/{date}-{slug}.md`
 - **Supervisor command:** Exact `/supervisor job: {path}` command for a fresh-context session
 - **Environment report:** Blockers and warnings from validation
 
@@ -65,11 +67,11 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 │  No subagents — uses pre-loaded skills directly                   │
 └──────────┬──────────────────────────────────────────┬────────────┘
            │                                          │
-    ┌──────▼──────┐                           ┌───────▼──────────┐
-    │  CLAUDE.md  │                           │  .supervisor/    │
-    │  + Codebase │                           │  jobs/{brief}.md │
-    │  (reads)    │                           │  (writes)        │
-    └─────────────┘                           └──────────────────┘
+    ┌──────▼──────┐                           ┌───────▼──────────────────┐
+    │  CLAUDE.md  │                           │  .supervisor/             │
+    │  + Codebase │                           │  jobs/pending/{brief}.md  │
+    │  (reads)    │                           │  (writes)                 │
+    └─────────────┘                           └───────────────────────────┘
 ```
 
 ---
@@ -271,20 +273,20 @@ Subtask 2 (independent)
 
 1. Present the assembled brief from Phase 5
 2. Use `AskUserQuestion` with 4 options:
-   - **"Save and exit"** — Write brief to `.supervisor/jobs/{date}-{slug}.md`, output `/supervisor job: {path}` command
+   - **"Save and exit"** — Write brief to `.supervisor/jobs/pending/{date}-{slug}.md`, output `/supervisor job: {path}` command
    - **"Refine further"** — Ask clarifying questions, update sections, loop back to relevant phase
    - **"Edit sections"** — User specifies what to change, update in-place
    - **"Discard"** — Cancel without saving
 3. On save:
-   - Create `.supervisor/jobs/` directory if not exists:
+   - Create `.supervisor/jobs/pending/` directory if not exists:
      ```bash
-     mkdir -p .supervisor/jobs
+     mkdir -p .supervisor/jobs/pending
      ```
    - Write brief file with naming convention: `{YYYY-MM-DD}-{slug}.md`
    - Confirm save with file path
 4. Output the exact Supervisor command for a fresh-context session:
    ```
-   /supervisor job: .supervisor/jobs/{date}-{slug}.md
+   /supervisor job: .supervisor/jobs/pending/{date}-{slug}.md
    ```
 
 **Save rules:**
@@ -296,11 +298,11 @@ Subtask 2 (independent)
 ```markdown
 ## Phase 6: SAVE
 
-**Brief saved:** `.supervisor/jobs/{date}-{slug}.md`
+**Brief saved:** `.supervisor/jobs/pending/{date}-{slug}.md`
 
 **To execute in a fresh session:**
 ```
-/supervisor job: .supervisor/jobs/{date}-{slug}.md
+/supervisor job: .supervisor/jobs/pending/{date}-{slug}.md
 ```
 
 **Note:** Start a new Claude Code session for clean context (~500 tokens freed for execution).

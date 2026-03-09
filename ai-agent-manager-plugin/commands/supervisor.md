@@ -30,7 +30,7 @@ The Supervisor agent v4 autonomously manages the complete development workflow. 
 | `--sequential` | No | Force sequential execution — no worktrees or parallelism |
 | `--continue` | No | Resume workflow from last checkpoint |
 | `--dry-run` | No | Preview the workflow phases without executing any actions |
-| `job:` | No | Path to Supervisor-Ready Brief from Launch Pad — skips Phases 0-2 |
+| `job:` | No | Path to Supervisor-Ready Brief from Launch Pad (e.g., `.supervisor/jobs/pending/{file}.md`) — skips Phases 0-2, moves brief through lifecycle (pending → in-progress → done/failed) |
 
 ## What This Does
 
@@ -161,6 +161,12 @@ The Supervisor handles review decisions:
 Active session:   {scratchpad}/supervisor-state.md
 Persistent:       {project}/.supervisor/state.md
 History:          {project}/.supervisor/history/{date}-{task}.md
+Jobs lifecycle:   {project}/.supervisor/jobs/
+  ├── pending/      ← Launch Pad saves briefs here
+  ├── in-progress/  ← Supervisor moves brief here on ACQUIRE
+  ├── done/         ← Supervisor moves here on FINALIZE (success)
+  └── failed/       ← Supervisor moves here on failure/abort
+Logs:             {project}/.supervisor/logs/{session_id}.jsonl
 ```
 
 The `.supervisor/` directory is auto-created and gitignored.

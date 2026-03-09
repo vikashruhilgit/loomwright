@@ -2,6 +2,8 @@
 name: pattern-detector
 description: Identify and propose new patterns for CLAUDE.md updates. Use when discovering reusable code patterns that appear 3+ times, or when reviewing code for pattern consistency.
 allowed-tools: Read, Grep
+version: "1.0.0"
+lastUpdated: "2026-03"
 ---
 
 # Pattern Detector Skill

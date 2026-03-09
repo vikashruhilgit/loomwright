@@ -61,7 +61,7 @@ Each agent is a Markdown prompt file (`agents/[name].md`):
 - **Command:** `/launch-pad goal: "..."`, `/launch-pad goal: "..." --discovery`
 - **Workflow:** VALIDATE → DISCOVER → ANALYZE → DECOMPOSE → PACKAGE → REFINE & SAVE
 - **Key features:** File impact estimation, parallelism pre-analysis, jobs folder, interactive refinement
-- **Outputs:** Supervisor-Ready Brief saved to `.supervisor/jobs/`
+- **Outputs:** Supervisor-Ready Brief saved to `.supervisor/jobs/pending/`
 
 #### **Supervisor** (`/supervisor`) — v4 Parallel Orchestrator
 - **Purpose:** Autonomously manage complete development workflow with parallel execution
@@ -140,7 +140,7 @@ All agents follow a **shared contract** (see AGENT_GUIDELINES.md):
 - **Output:** Structured Markdown with Context Read → Plan → Work → Results → Risks & Next Steps
 - **Safety:** No destructive actions (db migrations, force-push) without explicit approval
 - **Rules:** Never invent files/APIs/paths; ask if unsure; use Beads for task management
-- **Frontmatter:** Every agent has YAML frontmatter for tool restrictions, model selection, skills preloading, and persistent memory (see below)
+- **Frontmatter:** Every agent has YAML frontmatter for tool restrictions, model selection, maxTurns, color, disallowedTools, per-agent hooks, skills preloading, and persistent memory (see below)
 
 ---
 
@@ -193,7 +193,7 @@ your-project/
 /launch-pad goal: "add user authentication"
 
 # Execute from Launch Pad brief (in fresh session)
-/supervisor job: .supervisor/jobs/2026-02-08-user-auth.md
+/supervisor job: .supervisor/jobs/pending/2026-02-08-user-auth.md
 
 # Or run Supervisor directly
 /supervisor task: "add user authentication"
@@ -248,8 +248,8 @@ ai-agent-manager/
 │   │   ├── qa-executor.md            # /qa-executor command
 │   │   └── agent-help.md             # /agent-help command
 │   ├── hooks/                        # Plugin quality gate hooks
-│   │   └── hooks.json                # SubagentStop + TaskCompleted validation
-│   ├── skills/                       # Skill files for guidance (36 skills)
+│   │   └── hooks.json                # Cross-cutting hooks (Code Reviewer, QA Executor, TaskCompleted)
+│   ├── skills/                       # Skill files for guidance (43 skills)
 │   │   ├── supervisor-readiness/     # Pre-flight checklist & Supervisor-Ready Brief template
 │   │   ├── agent-teams/              # Agent Teams patterns (experimental)
 │   │   ├── async-orchestration/      # Parallel dispatch & git worktree patterns
@@ -265,11 +265,24 @@ ai-agent-manager/
 │   │   ├── nestjs-typeorm/           # TypeORM integration
 │   │   ├── mysql/                    # MySQL patterns
 │   │   ├── playwright-e2e/           # Playwright E2E testing patterns
-│   │   └── qa-strategy/             # QA risk framework & debate protocol
+│   │   ├── qa-strategy/             # QA risk framework & debate protocol
+│   │   ├── unit-testing/            # Jest/Vitest patterns
+│   │   ├── error-handling/          # Error hierarchy & boundaries
+│   │   ├── ci-cd/                   # GitHub Actions patterns
+│   │   ├── docker/                  # Dockerfile & compose patterns
+│   │   ├── monitoring-observability/ # Logging, tracing, metrics
+│   │   ├── redis-caching/           # Cache patterns & invalidation
+│   │   ├── postgresql/              # Schema, migrations, optimization
+│   │   ├── SKILL_TEMPLATE.md        # Standard skill template
+│   │   └── SKILLS_INDEX.md          # Skill catalog with agent mapping
 │   ├── docs/                        # Architecture documentation
-│   │   └── QA_SYSTEM_BLUEPRINT.md   # QA system architecture (14 modules, 5 levels)
+│   │   ├── QA_SYSTEM_BLUEPRINT.md   # QA system architecture (14 modules, 5 levels)
+│   │   ├── RESULT_SCHEMAS.md        # Structured result contracts for all agents
+│   │   ├── FAILURE_ESCALATION.md    # Agent failure paths and retry rules
+│   │   ├── ARCHITECTURE_CONTRACTS.md # Capability matrix, budgets, rules
+│   │   └── ARCHITECTURE.md          # Visual agent topology diagram
 │   └── .claude-plugin/
-│       └── plugin.json               # Plugin metadata (v5.1.0)
+│       └── plugin.json               # Plugin metadata (v6.0.0)
 │
 ├── .claude-plugin/
 │   ├── marketplace.json              # Marketplace definition
@@ -307,9 +320,9 @@ Next agent reads updated CLAUDE.md (knowledge grows)
 ```
 /launch-pad goal: "..."
     ↓
-.supervisor/jobs/{date}-{slug}.md  (Supervisor-Ready Brief)
+.supervisor/jobs/pending/{date}-{slug}.md  (Supervisor-Ready Brief)
     ↓
-/supervisor job: .supervisor/jobs/{file}.md  (clean context, ~500 tokens freed)
+/supervisor job: .supervisor/jobs/pending/{file}.md  (clean context, ~500 tokens freed)
     ↓
 EXECUTE → FINALIZE → PR
 ```
@@ -449,11 +462,12 @@ Before an agent completes work:
 ### Plugin Metadata
 
 - **Plugin Name:** `ai-agent-manager-plugin`
-- **Version:** 5.1.0
-- **Description:** AI agents with plan-first workflows, parallel orchestration, dual-agent QA automation, Execute Manager for bounded context, focused skills, plugin hooks, persistent memory, .supervisor/ state management, and bundled MySQL MCP server
+- **Version:** 6.0.0
+- **Description:** AI agents with structured result schemas, failure escalation, merge safety gate, session logging, job lifecycle tracking, per-agent hooks, color-coded agents, architecture contracts, plan-first workflows, parallel orchestration, dual-agent QA, and bundled MySQL MCP server
 - **Agents:** 11 roles (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer, QA Strategist, QA Executor)
-- **Skills:** 36 reusable skill files
-- **Hooks:** 2 quality gate hooks (SubagentStop, TaskCompleted)
+- **Skills:** 43 reusable skill files (versioned with SKILLS_INDEX.md)
+- **Hooks:** 5 quality gate hooks — per-agent: SubagentStop (worker, execute-manager); cross-cutting: SubagentStop (code-reviewer, qa-executor), TaskCompleted
+- **Docs:** RESULT_SCHEMAS.md, FAILURE_ESCALATION.md, ARCHITECTURE_CONTRACTS.md, ARCHITECTURE.md, QA_SYSTEM_BLUEPRINT.md
 - **Bundled MCP:** MySQL read-only MCP server (`vikashruhil-mysql-mcp`) — query impact analysis, schema inspection, multi-DB profiles
 - **Author:** vikash ruhil
 - **License:** MIT
@@ -494,6 +508,15 @@ Before an agent completes work:
 - Projects need only CLAUDE.md to get started (`.supervisor/` is auto-created, `.beads/` is optional)
 - Same agents work across different projects
 
+### Structured Contracts (v6.0.0)
+
+- **Result Schemas:** All agent result blocks (WORKER_RESULT, EXECUTE_RESULT, QA_RESULT, CODE_REVIEW_RESULT) follow strict schemas with `schema_version: 1` — see `docs/RESULT_SCHEMAS.md`
+- **Failure Escalation:** Defined retry limits and escalation paths for all agents — see `docs/FAILURE_ESCALATION.md`
+- **Architecture Contracts:** Capability matrix, context budgets, timeout rules, worktree naming — see `docs/ARCHITECTURE_CONTRACTS.md`
+- **Job Lifecycle:** Briefs tracked through `pending/` → `in-progress/` → `done/`/`failed/` in `.supervisor/jobs/`
+- **Session Logging:** Structured JSONL logs in `.supervisor/logs/` for post-mortem analysis
+- **Merge Safety Gate:** Pre-merge checklist in FINALIZE prevents corrupted partial merges
+
 ### Parallel Execution Model
 
 - Supervisor v4 delegates Phase 3 to Execute Manager for multi-subtask workflows
@@ -507,15 +530,17 @@ Before an agent completes work:
 
 ### Plugin Hooks (Quality Gates)
 
-The `hooks/hooks.json` file provides automatic quality gates that run without spawning extra subagents:
+Hooks are split between **per-agent frontmatter** (primary validation) and **hooks.json** (cross-cutting validation):
 
-| Hook | Trigger | Validation |
-|------|---------|------------|
-| **SubagentStop** (worker) | Worker agent completes | WORKER_RESULT block present, files modified, no unresolved errors |
-| **SubagentStop** (execute-manager) | Execute Manager completes | EXECUTE_RESULT or EXECUTE_CHECKPOINT block present with required fields |
-| **TaskCompleted** | Any task marked complete | Task genuinely done, not abandoned or skipped |
+| Hook | Trigger | Location | Validation |
+|------|---------|----------|------------|
+| **SubagentStop** (worker) | Worker completes | Agent frontmatter | WORKER_RESULT with schema_version, task_id, status, files_modified |
+| **SubagentStop** (execute-manager) | Execute Manager completes | Agent frontmatter | EXECUTE_RESULT/EXECUTE_CHECKPOINT with required fields |
+| **SubagentStop** (code-reviewer) | Code Reviewer completes | hooks.json | CODE_REVIEW_RESULT with decision (PASS/FAIL/NEEDS_HUMAN) |
+| **SubagentStop** (qa-executor) | QA Executor completes | hooks.json | QA_RESULT with tests_generated, tests_passed, summary |
+| **TaskCompleted** | Any task marked complete | hooks.json | Task genuinely done, not abandoned or skipped |
 
-Hooks use prompt-based validation (fast haiku model, 30s timeout). They replace manual validation in the Supervisor's poll loop and prevent premature task closure.
+Hooks validate against schemas defined in `docs/RESULT_SCHEMAS.md`. Per-agent hooks take precedence over hooks.json for the same agent. Prompt-based validation (fast haiku model, 30s timeout).
 
 ### Persistent Memory
 

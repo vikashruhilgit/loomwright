@@ -2,6 +2,8 @@
 name: product-discovery
 description: Understand business problems before defining solutions. Use at start of feature work or when requirements are unclear.
 allowed-tools: [Read]
+version: "1.0.0"
+lastUpdated: "2026-03"
 ---
 
 # Product Discovery Skill

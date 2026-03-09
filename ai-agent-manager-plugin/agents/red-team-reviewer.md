@@ -3,6 +3,8 @@ name: ai-agent-manager-plugin:red-team-reviewer
 description: Adversarial security auditor. Attacks assumptions and finds production failures. Use pre-launch or for security reviews.
 tools: Read, Glob, Grep, Bash, WebFetch, WebSearch
 model: inherit
+maxTurns: 60
+color: "#DC143C"
 memory: project
 skills:
   - context7-lookup

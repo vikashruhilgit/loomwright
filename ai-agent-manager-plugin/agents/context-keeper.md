@@ -4,6 +4,8 @@ description: On-demand state manager for Supervisor. Sole writer of externalized
 tools: Read, Write, Edit
 model: haiku
 maxTurns: 3
+color: "#708090"
+disallowedTools: Task, Bash, Glob, Grep
 ---
 
 # Context-Keeper Agent (State Management)
@@ -344,6 +346,39 @@ state_file: {path}
 **Response:** `"Batch: {N} updates applied ({types})"`
 
 **Example response:** `"Batch: 2 updates applied (worker_result: BD-15a completed, review: BD-15a PASS)"`
+
+---
+
+## Concurrency Model
+
+**Context-Keeper is a blocking, single-writer agent.** Understanding its concurrency model is critical for safe state management.
+
+### Caller Semantics
+- Every Context-Keeper call is **blocking** — the caller (Supervisor or Execute Manager) waits for the response before proceeding
+- No concurrent writes can occur because only one caller is active at a time
+- The Execute Manager batches updates via `record_batch` to minimize spawn overhead
+
+### Batch Updates
+- `record_batch` applies multiple mutations in a **single read-modify-write cycle**
+- All updates in a batch share a single state file read and write
+- Partial batch failure: if any update in the batch is invalid, the entire batch fails (atomic)
+- Preferred over multiple sequential calls to reduce tool calls and latency
+
+### Atomic Writes
+- Every operation follows: read state → validate → mutate → write state
+- No partial writes — the entire state file is rewritten on each operation
+- If write fails (disk error, permission), the previous state file remains intact
+
+### Version Counter
+- The state file includes a `version` field (monotonic integer counter)
+- Incremented on every successful write operation
+- Callers can use version to detect stale reads (though concurrent reads are unlikely given blocking model)
+- Version is included in checkpoint data for cross-session resume validation
+
+### Failure Recovery
+- If Context-Keeper fails, caller retries once with a fresh spawn
+- If retry fails, caller falls back to in-context state tracking (degraded mode)
+- See `docs/FAILURE_ESCALATION.md` for full failure paths
 
 ---
 

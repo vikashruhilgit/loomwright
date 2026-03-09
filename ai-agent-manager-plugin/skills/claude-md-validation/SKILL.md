@@ -2,6 +2,8 @@
 name: claude-md-validation
 description: Validate CLAUDE.md freshness and pattern accuracy. Use when establishing project context to ensure documented patterns are current.
 allowed-tools: Read, Bash, Grep
+version: "1.0.0"
+lastUpdated: "2026-03"
 ---
 
 # CLAUDE.md Validation Skill

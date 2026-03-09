@@ -2,6 +2,8 @@
 name: beads-workflow
 description: Beads CLI commands for task lifecycle management. Use when creating tasks, updating status, or syncing team visibility.
 allowed-tools: Bash
+version: "1.0.0"
+lastUpdated: "2026-03"
 ---
 
 # Beads Workflow Skill

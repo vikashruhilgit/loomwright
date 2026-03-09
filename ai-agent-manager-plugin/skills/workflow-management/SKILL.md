@@ -2,6 +2,8 @@
 name: workflow-management
 description: Patterns for managing autonomous workflows including context, checkpoints, parallel execution, and permissions. Use when orchestrating multi-stage agent workflows.
 allowed-tools: [Read, Bash]
+version: "1.0.0"
+lastUpdated: "2026-03"
 ---
 
 # Workflow Management Skill

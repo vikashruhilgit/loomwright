@@ -195,20 +195,30 @@ Every agent markdown file includes YAML frontmatter that configures Claude Code 
 ---
 name: ai-agent-manager-plugin:{role}    # Unique agent identifier
 description: {1-2 sentence purpose}      # Shown in /agents menu
-tools: Read, Write, Edit, Bash, ...      # Tool restrictions (security)
+tools: Read, Write, Edit, Bash, ...      # Tool restrictions (allowlist)
 model: opus | haiku | inherit            # Model selection (cost/capability)
 maxTurns: N                              # API round-trip limit (optional)
+color: "#RRGGBB"                         # Status line color (optional)
+disallowedTools: Task, Bash, ...         # Defense-in-depth blocklist (optional)
 memory: project                          # Persistent memory (optional)
 skills:                                  # Pre-loaded skill content (optional)
   - skill-name
+hooks:                                   # Per-agent hooks (optional)
+  SubagentStop:
+    - type: prompt
+      prompt: "Validation prompt..."
+      timeout: 30
 ---
 ```
 
 **Frontmatter Principles:**
 - **Tool restrictions enforce safety:** Workers can't spawn subagents (no Task tool), Context-Keeper can't run Bash
-- **Model selection matches task complexity:** haiku for simple state writes, opus for orchestration, inherit for user's choice
-- **Memory accumulates knowledge:** Code Reviewer and Red Team build institutional memory across sessions
+- **disallowedTools is defense-in-depth:** NOT a security boundary against adversarial scenarios; prevents accidental misuse
+- **Model selection matches task complexity:** haiku for simple state writes, inherit for user's choice (Sonnet+ recommended for Supervisor)
+- **Color provides visual identity:** Each agent has a unique status line color for quick identification
+- **Memory accumulates knowledge:** 6 agents build institutional memory across sessions
 - **Skills preloading eliminates latency:** Referenced skills are injected at spawn time (no file reads needed)
+- **Per-agent hooks validate results:** Worker and Execute Manager have SubagentStop hooks in frontmatter for schema-based validation
 
 ### Persistent Memory Patterns
 
@@ -226,23 +236,21 @@ Agents with `memory: project` store knowledge in `.claude/agent-memory/{agent-na
 - Temporary debugging notes
 - Information already in CLAUDE.md
 
-**Agents with persistent memory:**
+**Agents with persistent memory (6 total):**
 | Agent | What It Remembers |
 |-------|-------------------|
+| Launch Pad | Commonly impacted files, project patterns |
 | Code Reviewer | Review patterns, recurring issues, codebase conventions |
 | Red Team Reviewer | Past vulnerabilities, attack patterns, what was already audited |
 | Product Owner | Domain context, terminology, stakeholder preferences |
+| QA Strategist | Per-project risk patterns, which routes tend to break |
+| QA Executor | Flaky patterns, common failures, successful test templates |
 
 ### Plugin Hooks (Quality Gates)
 
-The `hooks/hooks.json` file defines automatic quality gates:
+Hooks are split between per-agent frontmatter (primary validation for Worker, Execute Manager) and `hooks.json` (cross-cutting validation for Code Reviewer, QA Executor, TaskCompleted). See the updated hooks table in the "Plugin Hooks — Updated" section above for full details.
 
-| Hook | Trigger | Validation |
-|------|---------|------------|
-| SubagentStop (worker) | Worker agent completes | WORKER_RESULT block present, files modified, no unresolved errors |
-| TaskCompleted | Task marked complete | Task genuinely done, not abandoned or skipped |
-
-Hooks use prompt-based validation (fast haiku model, 30s timeout). They enforce quality without spawning extra subagents.
+Hooks use prompt-based validation (fast haiku model, 30s timeout). They validate against result schemas defined in `docs/RESULT_SCHEMAS.md`.
 
 ### Shared Preamble (All Agents)
 
@@ -320,12 +328,17 @@ This format applies to ALL agent outputs (Orchestrator, Code Reviewer, Red Team 
 
 | Agent | Reads | Writes | Primary Responsibility |
 |-------|-------|--------|------------------------|
+| **Launch Pad** | CLAUDE.md, codebase, git state | `.supervisor/jobs/pending/` briefs | Supervisor readiness, codebase analysis |
 | **Supervisor** | CLAUDE.md, state file, git state | Worker dispatch, PR creation | Parallel orchestration, 6-phase workflow |
+| **Execute Manager** | State file, worker summaries | Poll loop coordination | Phase 3 worker/reviewer lifecycle |
 | **Context-Keeper** | State file | State file (sole writer) | Externalized state management |
 | **Worker** | Code files in worktree | Code files in worktree | Isolated implementation in git worktrees |
+| **Product Owner** | CLAUDE.md, domain context, Beads | Beads stories | Requirements, user stories |
 | **Orchestrator** | CLAUDE.md, Beads state, git history | Beads tasks (proposes) | Planning, task breakdown with review gates |
 | **Code Reviewer** | CLAUDE.md, code files, Beads task | Beads comments (review decisions) | Code quality, security, PASS/FAIL/NEEDS_HUMAN |
 | **Red Team Reviewer** | CLAUDE.md, code files, Context7 docs | Audit report | Adversarial review, find production failures |
+| **QA Strategist** | Source code, discovery data, .qa-summary.md | Risk classification, STRATEGIST_VERDICT | Risk-based test strategy and audit |
+| **QA Executor** | Source code, Playwright config, running app | Tests, discovery map, .qa-summary.md, QA_RESULT | Discovery, test generation, execution |
 
 ---
 
@@ -430,6 +443,91 @@ This format applies to ALL agent outputs (Orchestrator, Code Reviewer, Red Team 
   - Top 3 Fatal Issues
   - What Would Convince Hostile Expert
   - Prioritized Fixes
+
+#### **Launch Pad** (Supervisor Readiness Agent)
+- **Objective:** Prepare raw goals for autonomous Supervisor execution
+- **Reads:** CLAUDE.md, codebase (grep/glob/read), git state
+- **Writes:** Supervisor-Ready Brief to `.supervisor/jobs/pending/`
+- **Responsibilities:**
+  - Validate environment readiness (git, CLAUDE.md, worktrees, gh)
+  - Refine requirements using product discovery and MVP scoping skills
+  - Analyze codebase for file impact estimation
+  - Decompose into 3-7 subtasks with parallelism analysis
+  - Save brief for clean-context Supervisor handoff
+- **Safety:**
+  - Never invoke Supervisor — saves to file, user starts fresh session
+  - Never invent files/APIs/paths — verify everything exists
+  - Conservative parallelism (LAUNCHABLE only if genuinely independent)
+
+#### **Execute Manager** (Phase 3 Orchestrator)
+- **Objective:** Own Phase 3 EXECUTE loop — worker/reviewer lifecycle
+- **Reads:** State file (via Context-Keeper), worker summary files
+- **Writes:** Worker/reviewer dispatches, EXECUTE_RESULT/EXECUTE_CHECKPOINT
+- **Responsibilities:**
+  - Create git worktrees for parallel workers
+  - Spawn workers and reviewers in background
+  - Poll for completion (read `.worker-summary.md`)
+  - Batch update state via Context-Keeper
+  - Return merge order and worktree data to Supervisor
+- **Safety:**
+  - Never write/edit code files (only workers do that)
+  - Never merge branches (Supervisor's FINALIZE handles merges)
+  - Tool call budget: 60 calls max, checkpoint at boundaries
+
+#### **QA Strategist** (Risk Classification Agent)
+- **Objective:** Plan risk-based test strategy and audit QA Executor results
+- **Reads:** Source code (routes, controllers), discovery data, .qa-summary.md
+- **Writes:** Risk classification, coverage targets, STRATEGIST_VERDICT
+- **Responsibilities:**
+  - Discover routes/endpoints via static analysis
+  - Classify risk levels (HIGH/MEDIUM/LOW) based on auth, mutation, payment patterns
+  - Set coverage targets per risk level
+  - Audit QA Executor results and emit verdict (approved/rejected)
+- **Safety:**
+  - Read-only — never writes files, never runs tests
+  - Verdict is final on conflict (defaults to deeper testing)
+
+#### **QA Executor** (Discovery + Test Generation Agent)
+- **Objective:** Discover app, generate and run Playwright tests, orchestrate debate loop
+- **Reads:** Source code, Playwright config, running application
+- **Writes:** Discovery map, test files, .qa-summary.md, QA_RESULT
+- **Responsibilities:**
+  - Detect target URL and run 4-phase discovery engine
+  - Generate risk-based Playwright tests
+  - Execute tests and track coverage
+  - Report bugs and orchestrate Strategist audit
+- **Safety:**
+  - Playwright config required, app must be running
+  - No destructive actions during discovery (no form submissions, no delete/logout clicks)
+  - No production testing
+  - Budget tracking: 60 tool calls max
+
+---
+
+### Plugin Hooks (Quality Gates) — Updated
+
+| Hook | Trigger | Location | Validation |
+|------|---------|----------|------------|
+| SubagentStop (worker) | Worker completes | Agent frontmatter (`worker.md`) | WORKER_RESULT with schema_version, task_id, status, files_modified |
+| SubagentStop (execute-manager) | Execute Manager completes | Agent frontmatter (`execute-manager.md`) | EXECUTE_RESULT/EXECUTE_CHECKPOINT with required fields |
+| SubagentStop (code-reviewer) | Code Reviewer completes | `hooks.json` | CODE_REVIEW_RESULT with decision (PASS/FAIL/NEEDS_HUMAN) |
+| SubagentStop (qa-executor) | QA Executor completes | `hooks.json` | QA_RESULT with tests_generated, tests_passed, summary |
+| TaskCompleted | Any task marked complete | `hooks.json` | Task genuinely done, not abandoned |
+
+**Precedence rule:** Per-agent frontmatter hooks are the primary validation for Worker and Execute Manager. `hooks.json` contains cross-cutting hooks for other agents.
+
+---
+
+### Persistent Memory (6 Agents)
+
+| Agent | What It Remembers | Storage |
+|-------|-------------------|---------|
+| Launch Pad | Commonly impacted files per goal type, project patterns | `.claude/agent-memory/...launch-pad/` |
+| Code Reviewer | Review patterns, recurring issues, codebase conventions | `.claude/agent-memory/...code-reviewer/` |
+| Red Team Reviewer | Past vulnerabilities, attack patterns, audit history | `.claude/agent-memory/...red-team-reviewer/` |
+| Product Owner | Domain context, terminology, stakeholder preferences | `.claude/agent-memory/...product-owner/` |
+| QA Strategist | Per-project risk patterns, which routes tend to break | `.claude/agent-memory/...qa-strategist/` |
+| QA Executor | Flaky patterns, common failures, successful test templates | `.claude/agent-memory/...qa-executor/` |
 
 ---
 

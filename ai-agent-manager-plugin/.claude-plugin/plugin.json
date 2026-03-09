@@ -1,7 +1,7 @@
 {
   "name": "ai-agent-manager-plugin",
-  "version": "5.1.0",
-  "description": "AI agents with parallel orchestration, plan-first workflows, dual-agent QA automation, Execute Manager for bounded context growth, focused skills, plugin hooks, persistent memory, and .supervisor/ state management. 11 agent roles with YAML frontmatter: Launch Pad (Supervisor readiness with codebase analysis and jobs folder), Supervisor v4 (parallel orchestrator with tool call budgets), Execute Manager (Phase 3 poll loop with worker/reviewer lifecycle), Context-Keeper (externalized state), Worker (isolated implementation with self-summary files), Product Owner (business requirements), Orchestrator (task planning), Code Reviewer (quality gates with memory), Red Team Reviewer (adversarial audits with memory), QA Strategist (risk-based test strategy and audit), and QA Executor (discovery, test generation, execution with debate loop). Features 36 reusable skills including qa-strategy (risk framework and debate protocol), supervisor-readiness (pre-flight checklist and brief template), /commit (conventional commits), Playwright E2E testing, plugin quality gate hooks (SubagentStop for worker and execute-manager, TaskCompleted), and persistent agent memory across sessions.",
+  "version": "6.0.0",
+  "description": "AI agents with parallel orchestration, plan-first workflows, dual-agent QA automation, structured result schemas, failure escalation rules, session logging, and .supervisor/ state management. 11 agent roles with YAML frontmatter (color, disallowedTools, per-agent hooks, maxTurns): Launch Pad (Supervisor readiness with codebase analysis and jobs lifecycle), Supervisor v4 (parallel orchestrator with merge safety gate), Execute Manager (Phase 3 poll loop with worker/reviewer lifecycle), Context-Keeper (externalized state with concurrency model), Worker (isolated implementation with schema-validated results), Product Owner (business requirements), Orchestrator (task planning), Code Reviewer (quality gates with memory), Red Team Reviewer (adversarial audits with memory), QA Strategist (risk-based test strategy and audit), and QA Executor (discovery, test generation, execution with debate loop). Features 43 reusable skills with version tracking, structured result schemas (WORKER_RESULT, EXECUTE_RESULT, QA_RESULT, CODE_REVIEW_RESULT), failure escalation rules, architecture contracts, 5 quality gate hooks (SubagentStop for worker, execute-manager, code-reviewer, qa-executor + TaskCompleted), and persistent agent memory across 6 agents.",
   "author": {
     "name": "vikash ruhil"
   },
@@ -66,6 +66,15 @@
     "test-generation",
     "risk-based-testing",
     "discovery",
-    "debate-loop"
+    "debate-loop",
+    "result-schemas",
+    "failure-escalation",
+    "session-logging",
+    "merge-safety-gate",
+    "architecture-contracts",
+    "job-lifecycle",
+    "per-agent-hooks",
+    "color",
+    "disallowedTools"
   ]
 }

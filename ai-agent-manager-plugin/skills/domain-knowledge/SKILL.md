@@ -2,6 +2,8 @@
 name: domain-knowledge
 description: Template for documenting domain expertise in CLAUDE.md. Use when setting up domain context for a project.
 allowed-tools: [Read]
+version: "1.0.0"
+lastUpdated: "2026-03"
 ---
 
 # Domain Knowledge Skill

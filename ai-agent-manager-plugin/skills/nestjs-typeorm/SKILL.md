@@ -2,6 +2,8 @@
 name: nestjs-typeorm
 description: Implement repository patterns with TypeORM in NestJS. Covers entities, repositories, CRUD, relations, transactions, and migrations. Use when building data access layers.
 allowed-tools: [Read]
+version: "1.0.0"
+lastUpdated: "2026-03"
 ---
 
 # NestJS Repository Patterns (TypeORM)

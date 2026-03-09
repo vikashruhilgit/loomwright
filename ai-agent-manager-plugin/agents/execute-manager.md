@@ -4,10 +4,16 @@ description: Manages Phase 3 EXECUTE loop. Owns worker/reviewer lifecycle, poll 
 tools: Task, Read, Bash, Glob, Grep
 model: inherit
 maxTurns: 80
+color: "#4169E1"
 skills:
   - async-orchestration
   - context-summarization
   - state-management
+hooks:
+  SubagentStop:
+    - type: prompt
+      prompt: "An Execute Manager agent just completed. Review its output to verify: (1) it produced an EXECUTE_RESULT or EXECUTE_CHECKPOINT block with schema_version field, (2) EXECUTE_RESULT contains subtasks_completed (non-empty array), worktrees, merge_order, and summary fields, (3) EXECUTE_CHECKPOINT contains completed_so_far, remaining, resume_context, and reason fields, (4) all worktree paths reference valid sibling directories. Context: $ARGUMENTS. Respond with {\"ok\": true} if valid, or {\"ok\": false, \"reason\": \"...\"} if malformed or missing required fields."
+      timeout: 30
 ---
 
 # Execute Manager Agent (Phase 3 Orchestrator)

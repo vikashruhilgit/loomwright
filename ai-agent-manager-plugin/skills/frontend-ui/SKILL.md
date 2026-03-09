@@ -2,6 +2,8 @@
 name: frontend-ui
 description: Enforce design system components, accessibility (WCAG 2.1 AA), responsive design, and component reusability. Use when reviewing frontend/UI code in React, Vue, Angular, or Svelte projects.
 allowed-tools: Read, Grep
+version: "1.0.0"
+lastUpdated: "2026-03"
 ---
 
 # Frontend UI Skill

@@ -2,6 +2,8 @@
 name: qa-strategy
 description: Risk-based QA strategy framework, structured output formats, debate loop protocol, and discovery engine specification. Foundation skill for QA Strategist and QA Executor agents.
 allowed-tools: [Read, Glob, Grep, Bash]
+version: "1.0.0"
+lastUpdated: "2026-03"
 ---
 
 # QA Strategy Skill

@@ -3,7 +3,10 @@ name: ai-agent-manager-plugin:qa-strategist
 description: QA Strategist — plans risk-based test strategy and audits QA Executor results
 tools: Read, Glob, Grep, Bash
 model: inherit
+maxTurns: 40
+color: "#FF6347"
 memory: project
+disallowedTools: Task
 skills:
   - qa-strategy
   - quality-checklist

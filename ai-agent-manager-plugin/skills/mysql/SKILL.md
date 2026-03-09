@@ -2,6 +2,8 @@
 name: mysql
 description: MySQL database patterns and best practices. Covers connection setup, query optimization, indexing, and common pitfalls. Use when working with MySQL databases.
 allowed-tools: [Read]
+version: "1.0.0"
+lastUpdated: "2026-03"
 ---
 
 # MySQL Database Patterns

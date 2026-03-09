@@ -6,7 +6,7 @@ A Claude Code plugin for AI agents to collaborate on software projects. 11 speci
 
 > **Install the plugin and run slash commands instead of manually managing agents.**
 >
-> **NEW in v5:** Dual-agent QA system — `/qa-executor` discovers your app, generates risk-based Playwright tests, and `/qa-strategist` audits the results. Plus all v4 features: `/launch-pad` for goal preparation and `/supervisor` for fully autonomous parallel workflows.
+> **NEW in v6:** Structured result schemas, failure escalation rules, merge safety gate, session logging, job lifecycle tracking (pending→in-progress→done→failed), per-agent hooks, color-coded status lines, architecture contracts. Plus all v5 features: dual-agent QA, `/launch-pad` for goal preparation, and `/supervisor` for fully autonomous parallel workflows.
 
 ---
 
@@ -44,8 +44,14 @@ your-project/
 ├── .supervisor/           # Supervisor state (auto-created, gitignored)
 │   ├── state.md           # Current session state
 │   ├── history/           # Completed session summaries
-│   └── jobs/              # Supervisor-Ready Briefs from Launch Pad
-├── .beads/                # Beads issue tracker (optional, for Orchestrator/Product Owner)
+│   ├── jobs/              # Supervisor-Ready Briefs lifecycle
+│   │   ├── pending/       # Launch Pad saves briefs here
+│   │   ├── in-progress/   # Supervisor moves brief here on ACQUIRE
+│   │   ├── done/          # Supervisor moves here on FINALIZE
+│   │   └── failed/        # Supervisor moves here on failure
+│   ├── logs/              # Structured JSONL session logs
+│   └── worker-summaries/  # Worker summaries (inline mode)
+├── .beads/                # Beads issue tracker (optional)
 │   └── issues/
 └── src/ (your code)
 ```
@@ -94,7 +100,7 @@ Then call `switch_database(host="prod.example.com")` at runtime to switch betwee
 ```bash
 # Plan-first autonomous workflow
 /launch-pad goal: "what you want to accomplish"
-/supervisor job: .supervisor/jobs/{date}-{slug}.md
+/supervisor job: .supervisor/jobs/pending/{date}-{slug}.md
 
 # Or run directly
 /supervisor task: "what you want to accomplish"
@@ -138,9 +144,9 @@ Then call `switch_database(host="prod.example.com")` at runtime to switch betwee
 ```
 /launch-pad goal: "add user authentication"
     ↓
-Supervisor-Ready Brief saved to .supervisor/jobs/
+Supervisor-Ready Brief saved to .supervisor/jobs/pending/
     ↓
-/supervisor job: .supervisor/jobs/{date}-{slug}.md   (fresh session)
+/supervisor job: .supervisor/jobs/pending/{date}-{slug}.md   (fresh session)
     ↓
 INIT → ACQUIRE → PLAN → EXECUTE (via Execute Manager) → FINALIZE → LOOP
     ↓
@@ -332,7 +338,11 @@ This prevents knowledge loss and helps agents learn from discoveries.
 - **AGENT_GUIDELINES.md:** Development standards, quality checklist
 - **.claude-plugin/README.md:** Detailed plugin documentation
 - **ai-agent-manager-plugin/agents/*.md:** Individual agent prompts (11 roles)
-- **ai-agent-manager-plugin/skills/*/SKILL.md:** 36 skill files for guidance
+- **ai-agent-manager-plugin/skills/*/SKILL.md:** 44 skill files for guidance
+- **ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md:** Structured result contracts
+- **ai-agent-manager-plugin/docs/FAILURE_ESCALATION.md:** Agent failure paths
+- **ai-agent-manager-plugin/docs/ARCHITECTURE_CONTRACTS.md:** Capability matrix, budgets, rules
+- **ai-agent-manager-plugin/docs/ARCHITECTURE.md:** Visual agent topology
 - **ai-agent-manager-plugin/docs/QA_SYSTEM_BLUEPRINT.md:** QA system architecture
 
 ---
@@ -343,9 +353,10 @@ To modify or extend agents:
 
 1. Agents are Markdown prompts in `ai-agent-manager-plugin/agents/` (11 files)
 2. Commands are in `ai-agent-manager-plugin/commands/` (9 commands)
-3. Skills are in `ai-agent-manager-plugin/skills/` (36 skills)
-4. Hooks are in `ai-agent-manager-plugin/hooks/hooks.json` (SubagentStop + TaskCompleted)
-5. All agents follow standard output format (see AGENT_GUIDELINES.md)
+3. Skills are in `ai-agent-manager-plugin/skills/` (43 skills, versioned with SKILLS_INDEX.md)
+4. Hooks: per-agent in frontmatter (Worker, Execute Manager) + cross-cutting in `hooks.json` (Code Reviewer, QA Executor, TaskCompleted)
+5. Docs: `docs/RESULT_SCHEMAS.md`, `docs/FAILURE_ESCALATION.md`, `docs/ARCHITECTURE_CONTRACTS.md`, `docs/ARCHITECTURE.md`
+6. All agents follow standard output format (see AGENT_GUIDELINES.md)
 
 To test locally:
 
@@ -412,7 +423,7 @@ Claude Code caches plugin contents. After restructuring skills, force a refresh:
    /plugin install ai-agent-manager-plugin
   ```
 4. Restart Claude Code (close and reopen entirely)
-5. Verify with `/skills` — should show all 36 skills under "Plugin skills"
+5. Verify with `/skills` — should show all 43 skills under "Plugin skills"
 
 ---
 

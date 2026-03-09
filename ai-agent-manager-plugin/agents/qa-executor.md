@@ -3,8 +3,9 @@ name: ai-agent-manager-plugin:qa-executor
 description: QA Executor — discovers app, generates and runs Playwright tests, orchestrates debate loop
 tools: Read, Write, Edit, Glob, Grep, Bash, Task
 model: inherit
-memory: project
 maxTurns: 80
+color: "#FF4500"
+memory: project
 skills:
   - qa-strategy
   - playwright-e2e

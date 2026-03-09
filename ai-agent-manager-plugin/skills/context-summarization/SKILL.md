@@ -2,6 +2,8 @@
 name: context-summarization
 description: Summarize agent outputs to minimize context usage. Use after each subagent call to compress results.
 allowed-tools: [Read]
+version: "1.0.0"
+lastUpdated: "2026-03"
 ---
 
 # Context Summarization Skill

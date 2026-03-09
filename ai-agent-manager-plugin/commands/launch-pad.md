@@ -153,7 +153,7 @@ After assembling the brief, Launch Pad presents 4 options:
     ↓
 Validates environment, analyzes codebase, decomposes subtasks
     ↓
-.supervisor/jobs/{date}-{slug}.md  (Supervisor-Ready Brief)
+.supervisor/jobs/pending/{date}-{slug}.md  (Supervisor-Ready Brief)
     ↓
 /supervisor job: .supervisor/jobs/{file}.md  (clean context execution)
     ↓
@@ -270,7 +270,7 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 
 ### Outputs
 
-- **Supervisor-Ready Brief:** Structured markdown file saved to `.supervisor/jobs/{date}-{slug}.md`
+- **Supervisor-Ready Brief:** Structured markdown file saved to `.supervisor/jobs/pending/{date}-{slug}.md`
 - **Supervisor command:** Exact `/supervisor job: {path}` command for a fresh-context session
 - **Environment report:** Blockers and warnings from validation
 
@@ -351,7 +351,7 @@ Skip if `--skip-validation` flag is set.
 ### Phase 6: REFINE & SAVE (Interactive)
 
 1. Use `AskUserQuestion` with 4 options: Save / Refine / Edit / Discard
-2. On save: `mkdir -p .supervisor/jobs`, write `{date}-{slug}.md`
+2. On save: `mkdir -p .supervisor/jobs/pending`, write `{date}-{slug}.md`
 3. Output exact Supervisor command: `/supervisor job: .supervisor/jobs/{file}.md`
 4. If blockers exist: don't offer save, output fix instructions
 

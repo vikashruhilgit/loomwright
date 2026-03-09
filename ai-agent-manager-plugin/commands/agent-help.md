@@ -20,7 +20,7 @@ Shows all available agent commands and quick usage examples.
 
 ## Quick Start
 
-The AI Agent Manager plugin provides **9 agent roles** for your development workflow:
+The AI Agent Manager plugin provides **11 agent roles** for your development workflow:
 
 **Readiness Pipeline (1 agent):**
 ```
@@ -48,6 +48,12 @@ The AI Agent Manager plugin provides **9 agent roles** for your development work
 **Independent Auditor (1 agent):**
 ```
 4. Attack (Red Team Reviewer)  →  Finds real-world failures before production
+```
+
+**QA Pipeline (2 agents):**
+```
+5. Strategy (QA Strategist)  →  Risk classification + coverage targets
+6. Execute (QA Executor)     →  Discovery → Tests → Debate → QA_RESULT
 ```
 
 **Full Manual Workflow:**
@@ -458,6 +464,104 @@ security(hooks): validate localStorage input
 
 ---
 
+### 5️⃣ /qa-strategist — Risk-Based QA Strategy
+
+**Purpose:** Plan risk-based test strategy and audit QA Executor results
+
+**Usage:**
+```
+/qa-strategist src/                              # Analyze source for risk
+/qa-strategist --audit .qa-summary.md            # Audit Executor results
+/qa-strategist src/auth/ --focus auth             # Focus on auth flows
+```
+
+**What it does:**
+- **Strategy Mode:** Discovers routes/endpoints, classifies risk (HIGH/MEDIUM/LOW), sets coverage targets, produces test priority matrix
+- **Audit Mode:** Reviews QA Executor summary, evaluates coverage against targets, emits STRATEGIST_VERDICT (approved/rejected)
+
+**Risk Classification:**
+- **HIGH:** Auth flows, data mutation, payment/billing (target: 85%)
+- **MEDIUM:** CRUD operations, standard API endpoints (target: 70%)
+- **LOW:** Static pages, informational content (target: 50%)
+
+**Key Constraints:**
+- Read-only — never writes files, never runs tests
+- Verdict is final on conflict (defaults to deeper testing)
+- Level-aware — only demands current maturity level capabilities
+
+**When to Use:**
+- Before QA execution to define test priorities
+- After QA execution to audit coverage and quality
+- When you need risk-based testing decisions
+
+**Learn More:** `/qa-strategist --help`
+
+---
+
+### 6️⃣ /qa-executor — Automated QA Testing
+
+**Purpose:** Discover app structure, generate and run Playwright tests, orchestrate debate loop
+
+**Usage:**
+```
+/qa-executor                                      # Auto-detect URL, full run
+/qa-executor --url http://localhost:3000            # Explicit URL
+/qa-executor --skip-strategy                       # Quick run, skip Strategist
+/qa-executor --rounds 3 --coverage 90              # Multi-round, high coverage
+/qa-executor --strict-discovery                    # Require human approval of discovery
+```
+
+**What it does:**
+1. Detects target URL (Playwright config, .env, or --url)
+2. Runs 4-phase discovery engine (static analysis → runtime crawl → selective vision → merge & gate)
+3. Gets risk strategy from QA Strategist (or uses defaults)
+4. Generates Playwright tests (role-based locators, regex assertions)
+5. Executes tests, tracks coverage, reports bugs
+6. Runs Strategist audit (debate loop)
+7. Emits QA_RESULT
+
+**Discovery Engine:**
+```
+Static Analysis → Routes from source code (Glob/Grep)
+Runtime Crawl   → Playwright DOM/network/a11y extraction (max 30 pages, depth 3)
+Selective Vision → Screenshots for complex pages only
+Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
+```
+
+**Level 1 Boundaries:**
+- Happy paths + basic errors only (no state modeling)
+- No security or performance tests
+- Single debate round
+- Inventory-level coverage tracking
+
+**Requirements:**
+- `playwright.config.ts` must exist
+- Application must be running at base URL
+- Playwright browsers installed
+
+**When to Use:**
+- Automated QA after feature implementation
+- Regression testing before release
+- Quick smoke tests (with --skip-strategy)
+
+**Learn More:** `/qa-executor --help`
+
+---
+
+### QA Workflow Diagram
+
+```
+/qa-strategist src/ → Risk Classification + Coverage Targets
+    ↓
+/qa-executor → Discovery → Tests → Execute → Coverage → Bugs
+    ↓
+/qa-strategist --audit .qa-summary.md → STRATEGIST_VERDICT
+    ↓
+approved: QA complete | rejected: re-run with gaps addressed
+```
+
+---
+
 ## Daily Workflow Example
 
 ### Morning: Plan Your Work
@@ -570,7 +674,7 @@ Every agent has YAML frontmatter that configures its behavior automatically:
 **Agent Model Assignments:**
 | Agent | Model | Why |
 |-------|-------|-----|
-| Supervisor | opus | Strongest reasoning for orchestration |
+| Supervisor | inherit | Respects user's model choice (Sonnet+ recommended) |
 | Context-Keeper | haiku | Simple state read/write |
 | Worker | inherit | Matches user's choice |
 | Code Reviewer | inherit | Matches user's choice + memory |
@@ -710,8 +814,10 @@ ai-agent-manager-plugin/
 │   ├── orchestrator.md
 │   ├── code-reviewer.md
 │   ├── red-team-reviewer.md # Adversarial auditor
+│   ├── qa-strategist.md     # Risk-based QA strategy
+│   ├── qa-executor.md       # Automated QA testing
 │   └── agent-help.md
-├── agents/                  # Agent implementations (9 roles)
+├── agents/                  # Agent implementations (11 roles)
 │   ├── launch-pad.md        # Supervisor readiness agent
 │   ├── supervisor.md        # Parallel orchestrator (v4)
 │   ├── execute-manager.md   # Phase 3 execution manager
@@ -721,6 +827,8 @@ ai-agent-manager-plugin/
 │   ├── orchestrator.md
 │   ├── code-reviewer.md
 │   ├── red-team-reviewer.md # Has own adversarial preamble
+│   ├── qa-strategist.md     # Risk-based QA strategy
+│   ├── qa-executor.md       # Discovery + test generation
 │   └── prompts.md           # Shared preamble
 ├── hooks/                   # Plugin quality gate hooks
 │   └── hooks.json           # SubagentStop + TaskCompleted validation
@@ -825,6 +933,13 @@ These are Claude Code slash commands, so you can type them directly:
 | Agent | Purpose | When | Input | Output |
 |-------|---------|------|-------|--------|
 | **Red Team Reviewer** | Attack work | Pre-launch, security review | Target scope | Fatal issues + fixes |
+
+### QA Pipeline (Test Automatically)
+
+| Agent | Purpose | When | Input | Output |
+|-------|---------|------|-------|--------|
+| **QA Strategist** | Plan test strategy | Before QA, or audit after | Source code or .qa-summary.md | Risk classification + STRATEGIST_VERDICT |
+| **QA Executor** | Run automated QA | After implementation | Running app + Playwright config | QA_RESULT + test files |
 
 ---
 

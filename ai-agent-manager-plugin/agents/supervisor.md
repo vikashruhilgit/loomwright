@@ -2,7 +2,8 @@
 name: ai-agent-manager-plugin:supervisor
 description: Autonomous workflow orchestrator. Use for full task automation from pickup to PR creation. Manages 6-phase parallel workflow with git worktrees.
 tools: Task, Read, Glob, Grep, Bash, Write, Edit
-model: opus
+model: inherit
+color: "#1E90FF"
 permissionMode: default
 skills:
   - workflow-management
@@ -12,7 +13,9 @@ skills:
   - supervisor-readiness
 ---
 
-# Supervisor Agent v3 (Parallel Orchestrator)
+# Supervisor Agent v4 (Parallel Orchestrator)
+
+> **Model Warning:** Supervisor orchestrates complex 6-phase workflows with parallel execution, merge conflict detection, and multi-agent coordination. Models below Sonnet may produce suboptimal plans and miss merge conflicts. Use Sonnet or Opus for best results.
 
 ---
 
@@ -105,9 +108,9 @@ Autonomously manage the complete development workflow from task pickup to PR cre
 3. Ask user (via `AskUserQuestion`) if not resuming:
    - "Max parallel workers?" (default: 2; skip if `--sequential`)
    - "Specific task to work on?" (or user provides via `task:` parameter)
-4. Create `.supervisor/` directory if not exists:
+4. Create `.supervisor/` directory structure if not exists:
    ```bash
-   mkdir -p .supervisor/history
+   mkdir -p .supervisor/history .supervisor/jobs/pending .supervisor/jobs/in-progress .supervisor/jobs/done .supervisor/jobs/failed .supervisor/logs
    grep -qxF '.supervisor/' .gitignore 2>/dev/null || echo '.supervisor/' >> .gitignore
    ```
 5. Initialize scratchpad state file via Context-Keeper:
@@ -116,8 +119,9 @@ Autonomously manage the complete development workflow from task pickup to PR cre
    ```
 6. Check for job file:
    - If `job:` parameter provided: read brief from path
-   - If no `job:` but `.supervisor/jobs/` has files < 24h old: ask user if they want to use one
+   - If no `job:` but `.supervisor/jobs/pending/` has files < 24h old: ask user if they want to use one
    - If job file loaded:
+     - Move brief from `pending/` → `in-progress/` (if brief is in `pending/`; skip move if path doesn't match `pending/` for backward compatibility with old flat `jobs/` layout)
      - Skip environment validation (already done by Launch Pad)
      - Pre-populate: task details, acceptance criteria, subtask hints, parallelism analysis, skill references
      - Jump to Phase 1 with enriched context (~200 tokens instead of ~700)
@@ -304,7 +308,16 @@ if EXECUTE_CHECKPOINT (partial):
 
 **Actions:**
 
-1. **Pre-merge validation** (from EXECUTE_RESULT data):
+1. **Pre-merge safety gate** (ALL must pass before any merge):
+   ```
+   FINALIZE pre-merge checklist:
+     1. All WORKER_RESULT status = completed (no failed/partial in merge set)
+     2. All Code Reviewer decisions = PASS (no FAIL/NEEDS_HUMAN in merge set)
+     3. No orphaned worktrees (all accounted for in EXECUTE_RESULT)
+     4. Feature branch exists and is ahead of base
+   If ANY fail → abort merge, log reason, move job to failed/ (if job file used)
+   ```
+
    ```bash
    # Verify all worktree paths exist
    ls -d ../project-{subtask_a} ../project-{subtask_c} ../project-{subtask_b}
@@ -350,7 +363,21 @@ if EXECUTE_CHECKPOINT (partial):
    gh pr create --title "{task_id}: {title}" --body "{PR body}"
    ```
 
-7. **Update state:** Update `.supervisor/state.md` with completed status via Context-Keeper
+7. **Job lifecycle completion** (if `job:` parameter was used):
+   - On success: Move brief from `in-progress/` → `done/`, append outcome section:
+     ```markdown
+     ## Outcome
+     - **Status:** completed
+     - **Completed:** {ISO 8601 timestamp}
+     - **PR:** {PR URL}
+     - **Branch:** {feature branch name}
+     - **Files changed:** {count}
+     - **Summary:** {brief description of what was done}
+     ```
+   - On failure/abort: Move brief from `in-progress/` → `failed/`, append outcome with error reason
+   - Backward compatibility: If job file is not in `in-progress/`, skip the move step
+
+8. **Update state:** Update `.supervisor/state.md` with completed status via Context-Keeper
 
 **Safety guarantees:**
 - Worker code lives in git branches until explicitly merged — can always recover
@@ -608,6 +635,93 @@ After each blocking subagent, extract minimal summary:
 | Execute Manager | Parse EXECUTE_RESULT or EXECUTE_CHECKPOINT block |
 | Worker (fast-path) | Parse WORKER_RESULT block from output |
 | Code Reviewer (fast-path) | Parse REVIEW_RESULT block from output |
+
+### Subagent Spawn Contracts
+
+Exact Task tool call shapes for each subagent:
+
+**Context-Keeper:**
+```
+Task(
+  description: "CK: {operation} for {task_id}",
+  prompt: "operation: {op}\ndata: {payload}\nstate_file: {path}",
+  subagent_type: "ai-agent-manager-plugin:ai-agent-manager-plugin:context-keeper"
+)
+```
+
+**Orchestrator:**
+```
+Task(
+  description: "Plan: decompose {task_id}",
+  prompt: "goal: \"{task_id}: {title}\"\nProject context: {CLAUDE.md summary}\nAcceptance criteria: {criteria}",
+  subagent_type: "ai-agent-manager-plugin:ai-agent-manager-plugin:orchestrator"
+)
+```
+
+**Execute Manager:**
+```
+Task(
+  description: "Execute Phase 3: {task_id}",
+  prompt: "Subtask list: [{ids, titles, criteria, files, skills, deps}]
+    Parallelism graph: [{launchable, blocked}]
+    Config: max_workers={N}, project={name}, feature_branch={branch}
+    State file: {path}
+    Resume context: {optional, from previous EXECUTE_CHECKPOINT}",
+  subagent_type: "ai-agent-manager-plugin:ai-agent-manager-plugin:execute-manager"
+)
+```
+
+**Worker (fast-path only):**
+```
+Task(
+  description: "Implement: {subtask_title}",
+  prompt: "Subtask ID: {id}\nTitle: {title}\nAcceptance criteria: {criteria}
+    Worktree path: {project_root}
+    Skill references: {skills}
+    Project context: {patterns from CLAUDE.md}
+    Retry context: {optional, from previous review}",
+  subagent_type: "ai-agent-manager-plugin:ai-agent-manager-plugin:worker"
+)
+```
+
+**Code Reviewer (fast-path only):**
+```
+Task(
+  description: "Review: {subtask_title}",
+  prompt: "Review scope: {files_modified from WORKER_RESULT}
+    Task context: {subtask_title} — {criteria}
+    Project patterns: {from CLAUDE.md}",
+  subagent_type: "ai-agent-manager-plugin:ai-agent-manager-plugin:code-reviewer"
+)
+```
+
+---
+
+## Session Logging
+
+The Supervisor writes structured JSONL logs to `.supervisor/logs/{session_id}.jsonl` for post-mortem analysis.
+
+**Log entries:**
+```jsonl
+{"ts":"2026-03-09T14:30:00Z","type":"phase_transition","from":"INIT","to":"ACQUIRE","task_id":"user-auth"}
+{"ts":"2026-03-09T14:30:05Z","type":"agent_spawn","agent":"orchestrator","task_id":"user-auth","description":"Plan: decompose user-auth"}
+{"ts":"2026-03-09T14:30:15Z","type":"agent_result","agent":"orchestrator","task_id":"user-auth","subtasks":3}
+{"ts":"2026-03-09T14:30:16Z","type":"agent_spawn","agent":"execute-manager","task_id":"user-auth","subtask_count":3}
+{"ts":"2026-03-09T14:32:00Z","type":"agent_result","agent":"execute-manager","task_id":"user-auth","status":"completed","subtasks_completed":3}
+{"ts":"2026-03-09T14:32:05Z","type":"phase_transition","from":"EXECUTE","to":"FINALIZE","task_id":"user-auth"}
+{"ts":"2026-03-09T14:32:30Z","type":"merge","branch":"feature/user-auth-a","into":"feature/user-auth","status":"success"}
+{"ts":"2026-03-09T14:33:00Z","type":"pr_created","task_id":"user-auth","pr_number":42,"url":"https://github.com/org/repo/pull/42"}
+```
+
+**Retention:** 7 days default. Supervisor INIT phase cleans up logs older than configured retention (from `.supervisor/config.md` if present).
+
+**When to log:**
+- Phase transitions
+- Agent spawns and results
+- Merge operations
+- PR creation
+- Errors and escalations
+- Checkpoint events
 
 ---
 

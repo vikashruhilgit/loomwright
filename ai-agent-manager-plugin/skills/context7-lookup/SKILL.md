@@ -2,6 +2,8 @@
 name: context7-lookup
 description: On-demand external library documentation lookup with strict token budgets. Use when CLAUDE.md knowledge is insufficient for specific library features or when you need detailed API documentation.
 allowed-tools: Read, Grep
+version: "1.0.0"
+lastUpdated: "2026-03"
 ---
 
 # Context7 Lookup Skill

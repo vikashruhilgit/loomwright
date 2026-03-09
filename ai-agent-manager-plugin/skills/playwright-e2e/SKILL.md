@@ -2,6 +2,8 @@
 name: playwright-e2e
 description: Write, run, and debug Playwright E2E tests using CLI. Covers test authoring, execution, debugging, reports, and CI integration.
 allowed-tools: [Read, Bash]
+version: "1.0.0"
+lastUpdated: "2026-03"
 ---
 
 # Playwright E2E Testing

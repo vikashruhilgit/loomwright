@@ -2,6 +2,8 @@
 name: user-story-writing
 description: Write clear user stories with testable acceptance criteria. Use for requirements definition and feature scoping.
 allowed-tools: [Read]
+version: "1.0.0"
+lastUpdated: "2026-03"
 ---
 
 # User Story Writing Skill

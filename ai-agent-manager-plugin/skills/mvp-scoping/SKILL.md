@@ -2,6 +2,8 @@
 name: mvp-scoping
 description: Prioritize features into MVP, Phase 2, and Nice-to-have. Use when scoping work or making trade-off decisions.
 allowed-tools: [Read]
+version: "1.0.0"
+lastUpdated: "2026-03"
 ---
 
 # MVP Scoping Skill
