@@ -158,7 +158,7 @@ Step 1: READ RESULTS
   Read Discovery Map (routes, APIs, confidence)
   Read bug reports (severity, count)
 
-Step 2: EVALUATE
+Step 2: EVALUATE ROUTE COVERAGE
   Check coverage against targets:
     HIGH risk routes -> 85% target
     MEDIUM risk routes -> 70% target
@@ -169,19 +169,36 @@ Step 2: EVALUATE
     quality_score = (coverage_weighted * 0.6) + (pass_rate * 0.3) + (discovery_confidence_numeric * 0.1)
     where discovery_confidence_numeric: HIGH=1.0, MEDIUM=0.6, LOW=0.3
 
-Step 3: DECIDE
+Step 3: EVALUATE INTERACTION DEPTH (functional depth only)
+  For each HIGH risk route, check if tests exercise discovered interactions:
+    - Route has form in discovery → check for @covers-interaction: form-submission
+    - Route has API POST/PUT → check for @covers-interaction: api-post / api-put
+    - Route has modal → check for @covers-interaction: modal
+    - Route has table/list → check for @covers-interaction: data-rendering
+  Count: {N}/{M} HIGH risk routes have deep interaction tests
+  Flag routes that have route coverage but only smoke-level tests (no @covers-interaction annotations)
+    These are "shallow coverage" — the route is visited but interactions are not tested
+
+  If depth mode is "smoke": skip this step (smoke tests are not expected to have interaction depth)
+
+Step 4: DECIDE
   APPROVE if:
     - Coverage meets or exceeds targets for HIGH risk routes
     - No blocking bugs
     - Discovery confidence is not LOW (unless --auto-discover)
+    - (functional depth) Interaction depth: majority of HIGH risk routes with discovered
+      interactions have corresponding @covers-interaction tests
   REJECT if:
     - Coverage below target for HIGH risk routes
     - Any HIGH risk route has no tests at all
     - Blocking bug exists
     - Discovery confidence is LOW (unless --auto-discover)
+    - (functional depth) Interaction depth below 50% for HIGH risk routes with forms/CRUD
+      (flag as "shallow coverage" in gaps)
 
-Step 4: EMIT VERDICT
+Step 5: EMIT VERDICT
   Output STRATEGIST_VERDICT block (see qa-strategy skill for format)
+  Include interaction_depth field: "{N}/{M} HIGH risk routes have deep interaction tests"
 ```
 
 #### L1 Rejection Reasons
@@ -192,6 +209,7 @@ Step 4: EMIT VERDICT
 2. Missing test for a HIGH risk route entirely
 3. Blocking bug exists (test failure with severity BLOCKING)
 4. Discovery confidence is LOW
+5. (functional depth only) Shallow coverage — HIGH risk route with discovered forms/CRUD but only smoke-level tests (no `@covers-interaction` annotations)
 
 **NOT allowed in L1:**
 - Rejecting for missing fuzz tests (L2)

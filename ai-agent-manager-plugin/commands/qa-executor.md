@@ -7,10 +7,14 @@ description: Discover app structure, generate and run Playwright tests with risk
 ## Usage
 
 ```
-/qa-executor [--url http://...] [--rounds 1|2|3] [--coverage 80] [--skip-strategy] [--strict-discovery] [--auto-discover]
+/qa-executor [--depth smoke|functional] [--url http://...] [--rounds 1|2|3] [--coverage 80] [--skip-strategy] [--strict-discovery] [--auto-discover] [--plan] [--scope feature:{name}] [--continue]
 ```
 
 ## Parameters
+
+- **--depth** (optional): Test generation depth (default: `functional`)
+  - `smoke` — Navigate + verify visible (original L1 behavior). Quick CI sanity check.
+  - `functional` — Discovery-driven test generation. Fills forms, tests CRUD, clicks buttons, verifies data rendering. Uses the Test Pattern Library to match discovered interactions to test patterns.
 
 - **--url** (optional): Override base URL for the application
   - Example: `/qa-executor --url http://localhost:3000`
@@ -34,21 +38,39 @@ description: Discover app structure, generate and run Playwright tests with risk
 - **--auto-discover** (optional): Proceed even on LOW confidence discovery
   - Skips the halt-and-confirm gate for low confidence
 
+- **--plan** (optional): Survey app and create testing plan without running tests
+  - Runs discovery (100-page crawl limit), clusters routes into feature scopes
+  - Writes `.qa-session/plan.json` with scopes, priorities, and estimated test counts
+  - Prints human-readable scope summary table
+
+- **--scope feature:{name}** (optional): Test one feature area deeply
+  - Reads `.qa-session/plan.json` (run `--plan` first)
+  - Filters to only that scope's routes/APIs
+  - Runs functional-depth tests for the scoped subset
+  - Updates cumulative coverage in `.qa-session/coverage.json`
+  - Example: `/qa-executor --scope feature:auth`
+
+- **--continue** (optional): Auto-pick next pending scope from plan
+  - Reads `.qa-session/plan.json`, finds first pending scope by priority
+  - Equivalent to `--scope feature:{next-pending-scope}`
+
+**Note:** `--plan`, `--scope`, and `--continue` are mutually exclusive. They can be combined with `--depth`.
+
 ## What This Does
 
 1. **Detects target URL** from Playwright config, .env, or --url flag
-2. **Runs 4-phase discovery:**
+2. **Runs 4-phase discovery** (enhanced with interaction data):
    - Static analysis (routes from source code)
-   - Runtime crawl (Playwright-based DOM + network + a11y extraction)
+   - Runtime crawl (DOM + network + a11y + **forms, buttons, tables, modals, API body fields**)
    - Selective vision (screenshots for complex pages only)
    - Merge & gate (confidence scoring, discovery report)
 3. **Gets risk strategy** from QA Strategist (or uses defaults with --skip-strategy)
-4. **Generates Playwright tests:**
-   - UI/E2E tests for routes (happy + error paths for HIGH risk)
-   - API tests for endpoints (status codes, auth validation)
+4. **Generates Playwright tests** using discovery-driven Test Pattern Library:
+   - **Functional depth (default):** Form submissions, CRUD operations, button clicks, modal interactions, data rendering, API body validation
+   - **Smoke depth:** Navigate + verify visible (quick CI sanity)
    - All tests use role-based locators and regex assertions
 5. **Executes tests** via `npx playwright test --reporter=json`
-6. **Tracks coverage** (routes and APIs discovered vs tested)
+6. **Tracks coverage** (routes, APIs, and **interactions** discovered vs tested)
 7. **Reports bugs** for failures (severity: BLOCKING/HIGH/MEDIUM/LOW)
 8. **Runs Strategist audit** (1 round for L1) -> approved/rejected
 9. **Emits QA_RESULT** with complete status
@@ -62,28 +84,76 @@ description: Discover app structure, generate and run Playwright tests with risk
 
 ## Example Output
 
+### Default run (functional depth)
+
 ```
 ## QA_RESULT
 - task_id: qa-run-001
 - status: passed
-- rounds_run: 1/3
-- tests_generated: 18
-- tests_run: 18
-- tests_passed: 16
-- tests_failed: 2
+- depth: functional
+- rounds_run: 1/1
+- tests_generated: 42
+- tests_run_this_session: 42
+- tests_passed: 39
+- tests_failed: 3
 - discovery_confidence: HIGH
-- discovery_duration_seconds: 12
+- discovery_duration_seconds: 15
 - crawl_limit_hit: false
 - discovery_warnings: []
 - coverage: routes 12/15, apis 18/23
-- coverage_weighted: 78%
-- risk_score: 22
-- bugs_found: 2
+- coverage_weighted: 82%
+- risk_score: 18
+- bugs_found: 3
 - bugs_blocking: 0
 - strategist_verdict: approved
 - files_created: [discovery/*, e2e/tests/frontend/*.spec.ts, e2e/tests/api/*.spec.ts]
 - error: none
-- notes: 2 LOW severity bugs found (cosmetic). All HIGH risk routes covered.
+- notes: Functional tests include 8 form submissions, 4 API CRUD flows, 3 data rendering checks. 3 MEDIUM bugs.
+```
+
+### Plan mode output
+
+```
+## QA_RESULT
+- task_id: qa-plan-001
+- status: plan_created
+- depth: functional
+- tests_generated: 0
+- scope: null
+- notes: Plan created with 12 scopes. Next: /qa-executor --scope feature:auth
+
+QA Plan for Sports Management Platform
+=======================================
+12 scopes | 89 routes | 230 APIs
+
+Priority  Scope           Risk    Routes  APIs  Est. Tests  Status
+────────  ──────────────  ──────  ──────  ────  ──────────  ───────
+1         auth            HIGH    3       3     18          pending
+2         tournaments     HIGH    4       4     22          pending
+3         leagues         HIGH    3       3     15          pending
+4         organizations   MEDIUM  8       12    20          pending
+5         browse          MEDIUM  3       3     8           pending
+...
+
+Next: /qa-executor --scope feature:auth
+Auto: /qa-executor --continue
+```
+
+### Scoped run output
+
+```
+## QA_RESULT
+- task_id: qa-scope-auth-001
+- status: passed
+- depth: functional
+- tests_generated: 18
+- tests_run_this_session: 18
+- tests_passed: 17
+- tests_failed: 1
+- scope: auth
+- session_id: qa-session-2026-03-20
+- cumulative_coverage: routes 6/89, apis 6/230, scopes 1/12
+- strategist_verdict: approved
 ```
 
 ## Generated Files
@@ -92,21 +162,40 @@ description: Discover app structure, generate and run Playwright tests with risk
 discovery/
   crawl.ts                  # Playwright crawler script
   static-map.json           # Routes from static analysis
-  sitemap.json              # Routes from runtime crawl
-  api-calls.json            # Intercepted API calls
+  sitemap.json              # Routes from runtime crawl (enriched: forms, buttons, tables, modals)
+  api-calls.json            # Intercepted API calls (enriched: request/response body fields)
+  seed-data.json            # Entity counts and sample IDs
   discovery-map.json        # Merged discovery map
   report.md                 # Human-readable discovery report
 
 e2e/tests/frontend/
-  {feature}.spec.ts         # UI/E2E tests per feature
+  {feature}.spec.ts         # UI/E2E tests per feature (5-10 tests per file in functional mode)
 
 e2e/tests/api/
-  {feature}.spec.ts         # API tests per feature
+  {feature}.spec.ts         # API tests per feature (CRUD patterns in functional mode)
 
 .qa-summary.md              # Summary for Strategist audit
+
+# Session files (only with --plan/--scope/--continue):
+.qa-session/
+  plan.json                 # Feature scopes with priority and status
+  coverage.json             # Cumulative coverage across sessions
+  results/{scope}.json      # Per-scope QA_RESULT files
 ```
 
 ## Common Workflows
+
+### Default run (functional depth)
+```
+/qa-executor
+```
+Generates tests that fill forms, test CRUD via API, click buttons, verify data rendering. This is the default.
+
+### Quick smoke run (CI sanity)
+```
+/qa-executor --depth smoke
+```
+Generates navigate-and-verify tests only. Fast, shallow.
 
 ### Quick QA run (skip strategy)
 ```
@@ -126,6 +215,20 @@ e2e/tests/api/
 ### QA with higher coverage target
 ```
 /qa-executor --coverage 90
+```
+
+### Large app: plan, then test by scope
+```
+/qa-executor --plan                        # Survey app, create plan (no tests)
+/qa-executor --scope feature:auth          # Test auth deeply
+/qa-executor --scope feature:tournaments   # Test tournaments deeply
+/qa-executor --continue                    # Auto-pick next pending scope
+/qa-executor --continue                    # ...and the next
+```
+
+### Scope with smoke depth
+```
+/qa-executor --scope feature:settings --depth smoke
 ```
 
 ## Discovery Engine Details
@@ -208,59 +311,126 @@ Thresholds:
 
 ## Test Generation Patterns
 
-Tests are generated differently based on risk level. All tests follow the playwright-e2e skill patterns.
+Tests are generated based on **depth mode** and **risk level**. All tests follow the playwright-e2e skill patterns.
 
-### HIGH Risk Routes
+### Smoke Depth (`--depth smoke`)
 
-Each HIGH risk route gets both happy path and error path tests:
+Smoke tests verify pages load and key elements are visible. Same as original L1 behavior.
 
 ```typescript
 test.describe('Login', () => {
   // @covers-route: /auth/login
-
   test('should display login form', async ({ page }) => {
     await page.goto('/auth/login');
     await expect(page.getByRole('heading', { name: /log in|sign in/i })).toBeVisible();
-    await expect(page.getByLabel(/email/i)).toBeVisible();
-    await expect(page.getByLabel(/password/i)).toBeVisible();
   });
+});
+```
 
-  test('should reject invalid credentials', async ({ page }) => {
+### Functional Depth (default)
+
+Functional tests exercise **discovered interactions** — forms, CRUD, buttons, modals, data rendering.
+
+#### HIGH Risk Route with Form (functional)
+
+```typescript
+test.describe('Login', () => {
+  // @covers-route: /auth/login
+  // @covers-interaction: form-submission
+
+  test('should submit login form with valid credentials', async ({ page }) => {
     await page.goto('/auth/login');
-    await page.getByLabel(/email/i).fill('invalid@example.com');
-    await page.getByLabel(/password/i).fill('wrongpassword');
+    await page.getByLabel(/email/i).fill('user@example.com');
+    await page.getByLabel(/password/i).fill('ValidPass123!');
     await page.getByRole('button', { name: /log in|sign in/i }).click();
-    await expect(page.getByText(/invalid|incorrect|error/i)).toBeVisible();
+    await expect(page).toHaveURL(/dashboard/);
+  });
+
+  // @covers-interaction: validation-error
+  test('should show validation error for invalid email', async ({ page }) => {
+    await page.goto('/auth/login');
+    await page.getByLabel(/email/i).fill('not-an-email');
+    await page.getByLabel(/password/i).fill('password');
+    await page.getByRole('button', { name: /log in|sign in/i }).click();
+    await expect(page.getByText(/invalid|error|incorrect/i)).toBeVisible();
+  });
+
+  test('should show error for empty required fields', async ({ page }) => {
+    await page.goto('/auth/login');
+    await page.getByRole('button', { name: /log in|sign in/i }).click();
+    await expect(page.getByText(/required|cannot be empty/i)).toBeVisible();
   });
 });
 ```
 
-### MEDIUM Risk Routes
-
-MEDIUM risk routes get happy path tests only:
+#### API CRUD Tests (functional)
 
 ```typescript
-test.describe('Product List', () => {
-  // @covers-route: /products
+test.describe('Products API', () => {
+  const uniqueName = `test-product-${Date.now()}`;
+  let createdId: string;
 
-  test('should display product listing', async ({ page }) => {
-    await page.goto('/products');
-    await expect(page.getByRole('heading', { name: /products/i })).toBeVisible();
+  // @covers-api: POST /api/products
+  // @covers-interaction: api-post
+  test('should create product with valid data', async ({ request }) => {
+    const response = await request.post('/api/products', {
+      data: { name: uniqueName, price: 29.99, category: 'test' },
+    });
+    expect(response.status()).toBe(201);
+    const body = await response.json();
+    expect(body).toHaveProperty('id');
+    expect(body.name).toBe(uniqueName);
+    createdId = body.id;
+  });
+
+  // @covers-api: GET /api/products/:id
+  // @covers-interaction: api-get
+  test('should get product by ID', async ({ request }) => {
+    const response = await request.get(`/api/products/${createdId}`);
+    expect(response.status()).toBe(200);
+    const body = await response.json();
+    expect(body).toHaveProperty('name');
+    expect(body).toHaveProperty('price');
+  });
+
+  // @covers-api: PUT /api/products/:id
+  // @covers-interaction: api-put
+  test('should update product', async ({ request }) => {
+    const response = await request.put(`/api/products/${createdId}`, {
+      data: { name: `${uniqueName}-updated` },
+    });
+    expect(response.status()).toBe(200);
+    const body = await response.json();
+    expect(body.name).toContain('updated');
+  });
+
+  // @covers-api: DELETE /api/products/:id
+  // @covers-interaction: api-delete
+  test('should delete product and verify gone', async ({ request }) => {
+    const del = await request.delete(`/api/products/${createdId}`);
+    expect([200, 204]).toContain(del.status());
+    const get = await request.get(`/api/products/${createdId}`);
+    expect(get.status()).toBe(404);
   });
 });
 ```
 
-### LOW Risk Routes
-
-LOW risk routes get a single smoke test:
+#### Data Rendering Test (functional)
 
 ```typescript
-test.describe('About Page', () => {
-  // @covers-route: /about
-
-  test('should load about page', async ({ page }) => {
-    await page.goto('/about');
-    await expect(page).toHaveTitle(/about/i);
+test.describe('Tournament List', () => {
+  // @covers-route: /tournaments
+  // @covers-interaction: data-rendering
+  test('should render tournament table with data', async ({ page }) => {
+    await page.goto('/tournaments');
+    const table = page.getByRole('table');
+    await expect(table).toBeVisible();
+    // Verify column headers from discovery
+    await expect(page.getByRole('columnheader', { name: /name/i })).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: /date/i })).toBeVisible();
+    // Verify at least one row of data renders
+    const rows = table.getByRole('row');
+    await expect(rows).toHaveCount(/.+/); // at least header + 1 data row
   });
 });
 ```
@@ -295,7 +465,7 @@ The runtime crawl operates within strict bounds to prevent runaway execution.
 
 | Limit | Value | What Happens When Hit |
 |-------|-------|----------------------|
-| Max pages | 30 | Stops crawling, processes what was found |
+| Max pages | 30 (default/scope), 100 (plan mode) | Stops crawling, processes what was found |
 | Max depth | 3 | Does not follow links beyond 3 levels from baseURL |
 | Same-origin | Enforced | External links are recorded but not followed |
 | Auth passes | 2 max | Pass 1 unauthenticated, Pass 2 authenticated |
@@ -306,7 +476,7 @@ The runtime crawl operates within strict bounds to prevent runaway execution.
 - A warning is added to `discovery_warnings`: "Crawl limit reached at 30 pages"
 - Routes beyond the limit appear only in static analysis (flagged UNVERIFIED_STATIC)
 
-**Implications:** For large applications with more than 30 routes, the Executor will not discover all pages via crawling. Static analysis helps fill the gap, but confidence is reduced. Consider running targeted analysis on specific directories if coverage of a particular area is important.
+**Implications:** For large applications with more than 30 routes, use `--plan` to survey with a 100-page crawl limit, then `--scope` to test each feature area deeply. Static analysis helps fill the gap for unverified routes, which are verified when their scope runs via `--scope`.
 
 ---
 
@@ -385,12 +555,14 @@ Understanding what Level 1 does and does not do is important for setting expecta
 ### What L1 Does
 
 - Discovers routes and APIs via 4-phase engine (static + runtime + vision + merge)
+- **Enhanced discovery:** Captures form details, button actions, table structure, modal triggers, API request/response body fields
 - Gets risk classification from QA Strategist
-- Generates UI/E2E tests for happy paths on all risk levels
-- Generates error path tests for HIGH risk routes
-- Generates API tests (status codes, auth validation for 401)
+- **Smoke depth:** Generates navigate-and-verify tests (original L1 behavior)
+- **Functional depth (default):** Generates interaction tests — form submissions, CRUD operations, button clicks, modal interactions, data rendering verification
+- Generates API tests (GET response validation, POST/PUT/DELETE CRUD flows, auth validation)
+- **Session management:** `--plan` surveys app into testable scopes, `--scope` tests one area deeply, `--continue` auto-picks next scope
 - Runs tests and parses JSON results
-- Tracks route/API coverage (inventory-level: discovered vs tested)
+- Tracks route/API/interaction coverage (inventory-level: discovered vs tested)
 - Reports bugs with severity classification
 - Runs 1 round of Strategist audit
 
@@ -481,20 +653,19 @@ Risk Classification:
 Coverage Targets: HIGH 85%, MEDIUM 70%, LOW 50%
 ```
 
-### Phase 4: Test Generation
+### Phase 4: Test Generation (functional depth)
 
 ```
-Generated 14 test files:
-  e2e/tests/frontend/auth-login.spec.ts      (3 tests, HIGH)
-  e2e/tests/frontend/auth-register.spec.ts   (3 tests, HIGH)
-  e2e/tests/frontend/dashboard.spec.ts       (2 tests, HIGH)
-  e2e/tests/frontend/products.spec.ts        (1 test, MEDIUM)
-  e2e/tests/frontend/product-detail.spec.ts  (1 test, MEDIUM)
-  e2e/tests/frontend/settings.spec.ts        (1 test, MEDIUM)
-  e2e/tests/frontend/home.spec.ts            (1 test, LOW)
-  e2e/tests/api/auth.spec.ts                 (4 tests, HIGH)
-  e2e/tests/api/users.spec.ts                (2 tests, MEDIUM)
-  e2e/tests/api/products.spec.ts             (3 tests, MEDIUM)
+Generated 8 test files (5-10 tests each, functional depth):
+  e2e/tests/frontend/auth.spec.ts            (8 tests, HIGH — login form valid/invalid, register form valid/invalid/empty)
+  e2e/tests/frontend/dashboard.spec.ts       (4 tests, HIGH — data rendering, auth gate)
+  e2e/tests/frontend/products.spec.ts        (5 tests, MEDIUM — list rendering, detail page, create form)
+  e2e/tests/frontend/settings.spec.ts        (2 tests, MEDIUM — form submission)
+  e2e/tests/frontend/home.spec.ts            (1 test, LOW — content renders)
+  e2e/tests/api/auth.spec.ts                 (6 tests, HIGH — POST valid/invalid, 401 without token)
+  e2e/tests/api/users.spec.ts                (3 tests, MEDIUM — GET body validation, auth)
+  e2e/tests/api/products.spec.ts             (7 tests, MEDIUM — full CRUD: POST/GET/PUT/DELETE + validation)
+Total: 36 tests across 8 files
 ```
 
 ### Phase 4.5: Dry-Run Gate
@@ -509,10 +680,10 @@ Gate: PASSED — proceeding to full suite
 
 ```
 Running full suite: npx playwright test e2e/tests/ --reporter=json
-Duration: 42s
-Total: 21 tests
-Passed: 19
-Failed: 2
+Duration: 58s
+Total: 36 tests
+Passed: 33
+Failed: 3
 Skipped: 0
 ```
 
@@ -522,13 +693,20 @@ Skipped: 0
 Coverage:
   Routes: 10/12 tested (83%)
   APIs: 5/6 tested (83%)
-  Weighted: 79%
+  Interactions: 14 form-submissions, 4 CRUD flows, 3 data-rendering checks
+  Weighted: 82%
 
-Bugs found: 2
+Bugs found: 3
   MEDIUM - Register form accepts empty email field
     Route: /auth/register (HIGH risk)
     Expected: validation error on empty email
     Actual: form submits with empty email
+    @covers-interaction: validation-error
+  MEDIUM - PUT /api/products/:id returns 200 but doesn't update name
+    API: PUT /api/products/:id (MEDIUM risk)
+    Expected: updated product name in response
+    Actual: response shows original name
+    @covers-interaction: api-put
   LOW - Product page missing alt text on images
     Route: /products/[id] (MEDIUM risk)
     Expected: img elements have alt attributes
@@ -543,13 +721,14 @@ Bugs found: 2
 - verdict: approved
 - coverage_achieved: routes 10/12, apis 5/6
 - coverage_target: 85%
+- interaction_depth: 5/5 HIGH risk routes have deep interaction tests
 - gaps: /dashboard/settings (MEDIUM, no error path test)
 - blocking_bugs: 0
-- quality_score: 76
-- rationale: All HIGH risk routes covered with both happy and error paths.
-  Coverage weighted at 79%. Two non-blocking bugs found. The 2 untested
-  routes are auth-gated and were not reached during crawl — acceptable
-  for L1. Approved.
+- quality_score: 79
+- rationale: All HIGH risk routes covered with form submission, validation,
+  and CRUD tests. Interaction depth is full for HIGH risk routes. Coverage
+  weighted at 82%. Three non-blocking bugs found (2 MEDIUM, 1 LOW).
+  Approved.
 ```
 
 ### Phase 9: Final QA_RESULT
@@ -558,24 +737,25 @@ Bugs found: 2
 ## QA_RESULT
 - task_id: qa-run-001
 - status: passed
+- depth: functional
 - rounds_run: 1/1
-- tests_generated: 21
-- tests_run_this_session: 21
-- tests_passed: 19
-- tests_failed: 2
+- tests_generated: 36
+- tests_run_this_session: 36
+- tests_passed: 33
+- tests_failed: 3
 - discovery_confidence: MEDIUM
 - discovery_duration_seconds: 18
 - crawl_limit_hit: false
 - discovery_warnings: ["4 auth-gated routes not verified at runtime"]
 - coverage: routes 10/12, apis 5/6
-- coverage_weighted: 79%
-- risk_score: 21
-- bugs_found: 2
+- coverage_weighted: 82%
+- risk_score: 18
+- bugs_found: 3
 - bugs_blocking: 0
 - strategist_verdict: approved
 - files_created: [discovery/*, e2e/tests/frontend/*.spec.ts, e2e/tests/api/*.spec.ts, .qa-summary.md]
 - error: none
-- notes: 2 non-blocking bugs (1 MEDIUM, 1 LOW). Cross-org security tests deferred to L3.
+- notes: Functional tests with 14 form submissions, 4 CRUD flows. 3 non-blocking bugs. Cross-org security tests deferred to L3.
 ```
 
 ---

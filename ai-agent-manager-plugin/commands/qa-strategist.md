@@ -45,9 +45,10 @@ description: Plan risk-based QA test strategy and audit QA Executor results
 ### Audit Mode (--audit flag)
 
 1. **Reads QA Executor summary** (.qa-summary.md)
-2. **Evaluates coverage** against risk-based targets
-3. **Checks for blocking bugs** and discovery confidence
-4. **Emits STRATEGIST_VERDICT** (approved/rejected with rationale)
+2. **Evaluates route coverage** against risk-based targets
+3. **Evaluates interaction depth** (functional depth only): checks if HIGH risk routes with discovered forms/CRUD have `@covers-interaction` tests, not just smoke-level navigation
+4. **Checks for blocking bugs** and discovery confidence
+5. **Emits STRATEGIST_VERDICT** (approved/rejected with rationale, includes `interaction_depth` field)
 
 ## Example Output (Strategy Mode)
 
@@ -86,14 +87,15 @@ description: Plan risk-based QA test strategy and audit QA Executor results
 
 ```
 ## STRATEGIST_VERDICT
-- round: 1/3
+- round: 1/1
 - verdict: approved
 - coverage_achieved: routes 12/15, apis 18/23
 - coverage_target: 85%
+- interaction_depth: 5/5 HIGH risk routes have deep interaction tests
 - gaps: none
 - blocking_bugs: 0
 - quality_score: 82
-- rationale: All HIGH risk routes covered. Coverage exceeds targets.
+- rationale: All HIGH risk routes covered with interaction tests. Forms tested with valid/invalid data. API CRUD verified.
 ```
 
 ## Prerequisites
@@ -206,6 +208,15 @@ For each risk level, the Strategist compares actual coverage against targets:
 - Check that every HIGH risk route has at least one test
 - Verify no BLOCKING severity bugs exist
 
+### Step 2.5: Evaluate Interaction Depth (functional depth only)
+
+For each HIGH risk route, check if tests exercise discovered interactions:
+- Route has forms → check for `@covers-interaction: form-submission` tests
+- Route has API mutations → check for `@covers-interaction: api-post`, `api-put`, `api-delete`
+- Route has modals → check for `@covers-interaction: modal`
+- Route has tables/lists → check for `@covers-interaction: data-rendering`
+- Flag routes with route coverage but no `@covers-interaction` annotations as "shallow coverage"
+
 ### Step 3: Compute Quality Score
 
 ```
@@ -310,20 +321,22 @@ Example rejected output:
 
 ```
 ## STRATEGIST_VERDICT
-- round: 1/3
+- round: 1/1
 - verdict: rejected
 - coverage_achieved: routes 8/15, apis 12/23
 - coverage_target: 85%
+- interaction_depth: 2/5 HIGH risk routes have deep interaction tests
 - gaps:
   - /auth/reset-password — HIGH risk, no tests generated
   - /api/users/:id/permissions — HIGH risk, no tests generated
-  - /dashboard/settings — HIGH risk, tested but only happy path
+  - /dashboard/settings — HIGH risk, tested but only smoke-level (no @covers-interaction: form-submission despite form discovered)
 - blocking_bugs: 1
 - quality_score: 54
 - rationale: Two HIGH risk routes have zero test coverage. One BLOCKING
   bug found (500 error on /auth/reset-password). HIGH risk coverage is
-  60%, well below the 85% target. Executor must add tests for the missing
-  HIGH risk routes and fix the blocking bug before resubmission.
+  60%, well below the 85% target. 3 HIGH risk routes with forms have only
+  smoke-level tests (shallow coverage). Executor must add interaction tests
+  and fix the blocking bug.
 ```
 
 ### Multi-Focus Analysis
@@ -411,6 +424,7 @@ QA Executor                          QA Strategist
 - **HIGH risk route with no tests:** The Executor failed to generate tests for a critical route. Check if the route requires authentication that was not available during discovery.
 - **Coverage below target:** Not enough tests for HIGH risk area. Add more test scenarios or ensure discovery found all routes.
 - **Blocking bug exists:** A test failure indicates a serious issue (500 error, auth bypass). Fix the application bug first, then re-run QA.
+- **Shallow coverage (functional depth):** Route is visited but interactions are not tested. Strategist found forms/CRUD in discovery but no `@covers-interaction` annotations. Re-run with `--depth functional` (default) to generate interaction tests.
 
 ### "Strategist crashes or times out"
 

@@ -59,11 +59,37 @@ coverage_weighted =
 
 ## 2. Test Depth Matrix
 
-| Risk Level | L1 Tests | L2+ Tests |
+### By Depth Mode (L1)
+
+| Risk | smoke | functional (default) |
 |---|---|---|
-| **HIGH** | Happy path + error path + edge cases | + state combinations + journey coverage + fuzz |
-| **MEDIUM** | Happy path + basic error | + state variations + journey coverage |
-| **LOW** | Happy path only | + basic error paths |
+| **HIGH** | Navigate + verify visible | All discovered patterns + valid + invalid + error paths |
+| **MEDIUM** | Navigate + verify visible | All discovered patterns + valid data only |
+| **LOW** | Navigate + verify title | Navigate + verify content renders correctly |
+
+### By Maturity Level
+
+| Risk Level | L1 smoke | L1 functional | L2+ Tests |
+|---|---|---|---|
+| **HIGH** | Happy path (navigate + visible) | All interaction patterns + valid + invalid + error paths | + state combinations + journey coverage + fuzz |
+| **MEDIUM** | Happy path (navigate + visible) | All interaction patterns + valid data | + state variations + journey coverage |
+| **LOW** | Happy path (navigate + title) | Navigate + verify content renders | + basic error paths |
+
+### Interaction Patterns (functional depth)
+
+Tests are selected by matching **discovery signals** to patterns:
+
+| Discovery Signal | Test Pattern |
+|---|---|
+| Form with inputs | Fill valid → submit → verify; Fill invalid → verify errors |
+| API POST endpoint | Valid payload → 201 + body; Invalid → 400 |
+| API PUT endpoint | Update → 200 + changed fields |
+| API DELETE endpoint | Delete → 204 → re-GET → 404 |
+| API GET endpoint | Call → 200 + body structure |
+| Button (non-form) | Click → verify outcome |
+| Modal detected | Open → interact → close → verify |
+| Table/list | Verify headers, row count, data renders |
+| Auth-gated route | No auth → 401/redirect |
 
 ---
 
@@ -186,7 +212,25 @@ Coverage annotations in test files enable tracking:
 ```typescript
 // @covers-route: /dashboard
 // @covers-api: GET /api/dashboard/stats
+// @covers-interaction: data-rendering
 test('dashboard loads with stats', async ({ page }) => { ... });
+```
+
+### Interaction Coverage Annotations
+
+Functional-depth tests include `@covers-interaction` annotations for tracking interaction depth:
+
+```typescript
+// @covers-interaction: form-submission      — test fills and submits a form
+// @covers-interaction: validation-error     — test triggers and verifies validation
+// @covers-interaction: api-post             — test sends POST with body validation
+// @covers-interaction: api-put              — test sends PUT with field verification
+// @covers-interaction: api-delete           — test deletes + verifies 404
+// @covers-interaction: api-get              — test verifies response body structure
+// @covers-interaction: button-click         — test clicks non-form button
+// @covers-interaction: modal                — test opens/interacts/closes modal
+// @covers-interaction: data-rendering       — test verifies table/list content
+// @covers-interaction: auth-gate            — test verifies 401/redirect without auth
 ```
 
 Compare annotations against Discovery Map to compute coverage.
@@ -230,6 +274,7 @@ Compare annotations against Discovery Map to compute coverage.
 - verdict: approved | rejected
 - coverage_achieved: routes {X}/{Y}, apis {X}/{Y}
 - coverage_target: {pct}
+- interaction_depth: {N}/{M} HIGH risk routes have deep interaction tests
 - gaps: [{test_type}] {description} -- {risk}
 - blocking_bugs: {N}
 - quality_score: {0-100}

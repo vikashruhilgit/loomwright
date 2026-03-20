@@ -76,8 +76,9 @@ Comprehensive index of all skills available in the AI Agent Manager plugin.
 
 | Skill Name | Directory | Agent Consumers | Token Est. | Version | Last Updated |
 |------------|-----------|-----------------|------------|---------|--------------|
-| Playwright E2E | `playwright-e2e/` | QA Executor (preload) | ~1,000 | 1.0.0 | 2026-03 |
-| QA Strategy | `qa-strategy/` | QA Strategist (preload), QA Executor (preload) | ~900 | 1.0.0 | 2026-03 |
+| Playwright E2E | `playwright-e2e/` | QA Executor (preload) | ~1,500 | 1.0.0 | 2026-03 |
+| QA Strategy | `qa-strategy/` | QA Strategist (preload), QA Executor (preload) | ~1,100 | 1.0.0 | 2026-03 |
+| QA Orchestration | `qa-orchestration/` | QA Executor (reference) | ~900 | 1.0.0 | 2026-03 |
 
 ## Database
 
@@ -89,6 +90,7 @@ Comprehensive index of all skills available in the AI Agent Manager plugin.
 
 ---
 
-**Total: 43 skills** (36 existing + 7 new)
+**Total: 44 skills** (36 existing + 8 new)
 
 New skills added in Phase 3: unit-testing, error-handling, ci-cd, docker, monitoring-observability, redis-caching, postgresql
+New skills added in QA L1.5: qa-orchestration

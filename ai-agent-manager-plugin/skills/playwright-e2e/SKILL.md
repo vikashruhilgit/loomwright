@@ -421,6 +421,297 @@ test.use({ storageState: { cookies: [], origins: [] } });
 
 ---
 
+## 11. Interaction Test Patterns
+
+Concrete patterns for functional-depth test generation. Used by QA Executor when `--depth functional` (default).
+
+### Form Submission Pattern
+
+Test forms by filling fields, submitting, and verifying feedback.
+
+```typescript
+test.describe('Create Tournament', () => {
+  // @covers-route: /tournaments/create
+  // @covers-interaction: form-submission
+
+  test('should create tournament with valid data', async ({ page }) => {
+    await page.goto('/tournaments/create');
+    await page.getByLabel(/name/i).fill(`Test Tournament ${Date.now()}`);
+    await page.getByLabel(/date/i).fill('2026-06-15');
+    await page.getByLabel(/location/i).fill('Test Arena');
+    await page.getByRole('combobox', { name: /format/i }).selectOption('round-robin');
+    await page.getByRole('button', { name: /create|submit|save/i }).click();
+
+    // Verify success feedback (toast, redirect, or new element)
+    await expect(page.getByText(/created|success/i)).toBeVisible({ timeout: 10000 });
+  });
+
+  // @covers-interaction: validation-error
+  test('should show validation errors for empty required fields', async ({ page }) => {
+    await page.goto('/tournaments/create');
+    await page.getByRole('button', { name: /create|submit|save/i }).click();
+
+    // Verify validation messages appear
+    await expect(page.getByText(/required|cannot be empty|please fill/i)).toBeVisible();
+  });
+
+  test('should reject invalid date format', async ({ page }) => {
+    await page.goto('/tournaments/create');
+    await page.getByLabel(/name/i).fill('Valid Name');
+    await page.getByLabel(/date/i).fill('not-a-date');
+    await page.getByRole('button', { name: /create|submit|save/i }).click();
+
+    await expect(page.getByText(/invalid|format|valid date/i)).toBeVisible();
+  });
+});
+```
+
+### CRUD Create via UI
+
+Create an entity through the UI form, then verify it appears in the list.
+
+```typescript
+test.describe('Member CRUD - Create', () => {
+  // @covers-route: /members/new
+  // @covers-interaction: form-submission
+  const uniqueName = `test-member-${Date.now()}`;
+
+  test('should create member and verify in list', async ({ page }) => {
+    // Create
+    await page.goto('/members/new');
+    await page.getByLabel(/name/i).fill(uniqueName);
+    await page.getByLabel(/email/i).fill(`${uniqueName}@test.example`);
+    await page.getByRole('button', { name: /create|add|save/i }).click();
+    await expect(page.getByText(/created|success/i)).toBeVisible({ timeout: 10000 });
+
+    // Verify in list
+    await page.goto('/members');
+    await expect(page.getByText(uniqueName)).toBeVisible();
+  });
+});
+```
+
+### CRUD Update via UI
+
+Navigate to edit form, modify fields, save, and verify changes persist.
+
+```typescript
+test.describe('Member CRUD - Update', () => {
+  // @covers-route: /members/:id/edit
+  // @covers-interaction: form-submission
+
+  test('should update member name', async ({ page }) => {
+    // Navigate to existing member (use seed data or create first)
+    await page.goto('/members');
+    await page.getByRole('link', { name: /edit/i }).first().click();
+
+    // Modify
+    const updatedName = `updated-${Date.now()}`;
+    await page.getByLabel(/name/i).clear();
+    await page.getByLabel(/name/i).fill(updatedName);
+    await page.getByRole('button', { name: /save|update/i }).click();
+
+    // Verify
+    await expect(page.getByText(/updated|saved|success/i)).toBeVisible({ timeout: 10000 });
+    await page.goto('/members');
+    await expect(page.getByText(updatedName)).toBeVisible();
+  });
+});
+```
+
+### CRUD Delete via UI
+
+Click delete, handle confirmation dialog, verify entity is removed.
+
+```typescript
+test.describe('Member CRUD - Delete', () => {
+  // @covers-route: /members/:id
+  // @covers-interaction: button-click
+  // @covers-interaction: modal
+
+  test('should delete member with confirmation', async ({ page }) => {
+    await page.goto('/members');
+    const memberName = await page.getByRole('row').nth(1).getByRole('cell').first().innerText();
+
+    // Click delete
+    await page.getByRole('row').nth(1).getByRole('button', { name: /delete|remove/i }).click();
+
+    // Handle confirmation dialog
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await page.getByRole('dialog').getByRole('button', { name: /confirm|yes|delete/i }).click();
+
+    // Verify removed
+    await expect(page.getByText(/deleted|removed/i)).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText(memberName)).not.toBeVisible();
+  });
+});
+```
+
+### Modal Interaction Pattern
+
+Open modal via trigger, interact with contents, close, and verify state.
+
+```typescript
+test.describe('Invite Member Modal', () => {
+  // @covers-route: /members
+  // @covers-interaction: modal
+
+  test('should open invite modal and submit', async ({ page }) => {
+    await page.goto('/members');
+
+    // Open modal
+    await page.getByRole('button', { name: /invite|add member/i }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    // Interact with modal form
+    await page.getByRole('dialog').getByLabel(/email/i).fill(`invite-${Date.now()}@test.example`);
+    await page.getByRole('dialog').getByRole('button', { name: /send|invite|submit/i }).click();
+
+    // Verify modal closes and feedback shown
+    await expect(page.getByRole('dialog')).not.toBeVisible();
+    await expect(page.getByText(/invited|sent/i)).toBeVisible();
+  });
+
+  test('should close modal via cancel', async ({ page }) => {
+    await page.goto('/members');
+    await page.getByRole('button', { name: /invite|add member/i }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+
+    await page.getByRole('dialog').getByRole('button', { name: /cancel|close/i }).click();
+    await expect(page.getByRole('dialog')).not.toBeVisible();
+  });
+});
+```
+
+### API CRUD Pattern
+
+Full create-read-update-delete cycle via API with cleanup.
+
+```typescript
+test.describe('Tournaments API CRUD', () => {
+  let createdId: string;
+  const uniqueName = `api-tournament-${Date.now()}`;
+
+  // @covers-api: POST /api/tournaments
+  // @covers-interaction: api-post
+  test('should create tournament', async ({ request }) => {
+    const response = await request.post('/api/tournaments', {
+      data: { name: uniqueName, format: 'round-robin', date: '2026-06-15' },
+    });
+    expect(response.status()).toBe(201);
+    const body = await response.json();
+    expect(body).toHaveProperty('id');
+    expect(body.name).toBe(uniqueName);
+    createdId = body.id;
+  });
+
+  // @covers-api: GET /api/tournaments/:id
+  // @covers-interaction: api-get
+  test('should get tournament by ID', async ({ request }) => {
+    const response = await request.get(`/api/tournaments/${createdId}`);
+    expect(response.status()).toBe(200);
+    const body = await response.json();
+    expect(body.name).toBe(uniqueName);
+    expect(body).toHaveProperty('format');
+    expect(body).toHaveProperty('date');
+  });
+
+  // @covers-api: PUT /api/tournaments/:id
+  // @covers-interaction: api-put
+  test('should update tournament', async ({ request }) => {
+    const response = await request.put(`/api/tournaments/${createdId}`, {
+      data: { name: `${uniqueName}-updated` },
+    });
+    expect(response.status()).toBe(200);
+    const body = await response.json();
+    expect(body.name).toContain('updated');
+  });
+
+  // @covers-api: DELETE /api/tournaments/:id
+  // @covers-interaction: api-delete
+  test('should delete tournament and verify gone', async ({ request }) => {
+    const del = await request.delete(`/api/tournaments/${createdId}`);
+    expect([200, 204]).toContain(del.status());
+
+    const get = await request.get(`/api/tournaments/${createdId}`);
+    expect(get.status()).toBe(404);
+  });
+
+  // @covers-interaction: api-post
+  test('should reject invalid tournament data', async ({ request }) => {
+    const response = await request.post('/api/tournaments', {
+      data: { name: '' }, // missing required fields
+    });
+    expect(response.status()).toBe(400);
+    const body = await response.json();
+    expect(body).toHaveProperty('message');
+  });
+});
+```
+
+### Data Rendering Verification
+
+Verify tables/lists display correct structure and content.
+
+```typescript
+test.describe('League Standings', () => {
+  // @covers-route: /leagues/:id/standings
+  // @covers-interaction: data-rendering
+
+  test('should render standings table with expected columns', async ({ page }) => {
+    await page.goto('/leagues/1/standings');
+    const table = page.getByRole('table');
+    await expect(table).toBeVisible({ timeout: 10000 });
+
+    // Verify column headers (from discovery data)
+    await expect(page.getByRole('columnheader', { name: /team/i })).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: /wins/i })).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: /losses/i })).toBeVisible();
+
+    // Verify data rows exist
+    const dataRows = table.getByRole('row').filter({ hasNot: page.getByRole('columnheader') });
+    expect(await dataRows.count()).toBeGreaterThan(0);
+  });
+});
+```
+
+### Validation Testing
+
+Test form validation for required fields, format errors, and boundary values.
+
+```typescript
+test.describe('Registration Validation', () => {
+  // @covers-route: /auth/register
+  // @covers-interaction: validation-error
+
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/auth/register');
+  });
+
+  test('should require email field', async ({ page }) => {
+    await page.getByLabel(/password/i).fill('ValidPass123!');
+    await page.getByRole('button', { name: /register|sign up/i }).click();
+    await expect(page.getByText(/email.*required|enter.*email/i)).toBeVisible();
+  });
+
+  test('should reject invalid email format', async ({ page }) => {
+    await page.getByLabel(/email/i).fill('not-an-email');
+    await page.getByLabel(/password/i).fill('ValidPass123!');
+    await page.getByRole('button', { name: /register|sign up/i }).click();
+    await expect(page.getByText(/invalid.*email|valid.*email/i)).toBeVisible();
+  });
+
+  test('should enforce password minimum length', async ({ page }) => {
+    await page.getByLabel(/email/i).fill('test@example.com');
+    await page.getByLabel(/password/i).fill('ab');
+    await page.getByRole('button', { name: /register|sign up/i }).click();
+    await expect(page.getByText(/too short|minimum|at least/i)).toBeVisible();
+  });
+});
+```
+
+---
+
 ## Quality Checklist
 
 Before committing E2E tests:

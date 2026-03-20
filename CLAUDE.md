@@ -266,6 +266,7 @@ ai-agent-manager/
 │   │   ├── mysql/                    # MySQL patterns
 │   │   ├── playwright-e2e/           # Playwright E2E testing patterns
 │   │   ├── qa-strategy/             # QA risk framework & debate protocol
+│   │   ├── qa-orchestration/        # Session management for large-app QA
 │   │   ├── unit-testing/            # Jest/Vitest patterns
 │   │   ├── error-handling/          # Error hierarchy & boundaries
 │   │   ├── ci-cd/                   # GitHub Actions patterns
@@ -282,7 +283,7 @@ ai-agent-manager/
 │   │   ├── ARCHITECTURE_CONTRACTS.md # Capability matrix, budgets, rules
 │   │   └── ARCHITECTURE.md          # Visual agent topology diagram
 │   └── .claude-plugin/
-│       └── plugin.json               # Plugin metadata (v6.0.0)
+│       └── plugin.json               # Plugin metadata (v6.1.0)
 │
 ├── .claude-plugin/
 │   ├── marketplace.json              # Marketplace definition
@@ -462,10 +463,10 @@ Before an agent completes work:
 ### Plugin Metadata
 
 - **Plugin Name:** `ai-agent-manager-plugin`
-- **Version:** 6.0.0
-- **Description:** AI agents with structured result schemas, failure escalation, merge safety gate, session logging, job lifecycle tracking, per-agent hooks, color-coded agents, architecture contracts, plan-first workflows, parallel orchestration, dual-agent QA, and bundled MySQL MCP server
+- **Version:** 6.1.0
+- **Description:** AI agents with structured result schemas, failure escalation, merge safety gate, session logging, job lifecycle tracking, per-agent hooks, color-coded agents, architecture contracts, plan-first workflows, parallel orchestration, dual-agent QA with functional test depth (L1.5), session-based scoping, interaction depth auditing, and bundled MySQL MCP server
 - **Agents:** 11 roles (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer, QA Strategist, QA Executor)
-- **Skills:** 43 reusable skill files (versioned with SKILLS_INDEX.md)
+- **Skills:** 44 reusable skill files (versioned with SKILLS_INDEX.md)
 - **Hooks:** 5 quality gate hooks — per-agent: SubagentStop (worker, execute-manager); cross-cutting: SubagentStop (code-reviewer, qa-executor), TaskCompleted
 - **Docs:** RESULT_SCHEMAS.md, FAILURE_ESCALATION.md, ARCHITECTURE_CONTRACTS.md, ARCHITECTURE.md, QA_SYSTEM_BLUEPRINT.md
 - **Bundled MCP:** MySQL read-only MCP server (`vikashruhil-mysql-mcp`) — query impact analysis, schema inspection, multi-DB profiles
@@ -508,7 +509,7 @@ Before an agent completes work:
 - Projects need only CLAUDE.md to get started (`.supervisor/` is auto-created, `.beads/` is optional)
 - Same agents work across different projects
 
-### Structured Contracts (v6.0.0)
+### Structured Contracts (v6.1.0)
 
 - **Result Schemas:** All agent result blocks (WORKER_RESULT, EXECUTE_RESULT, QA_RESULT, CODE_REVIEW_RESULT) follow strict schemas with `schema_version: 1` — see `docs/RESULT_SCHEMAS.md`
 - **Failure Escalation:** Defined retry limits and escalation paths for all agents — see `docs/FAILURE_ESCALATION.md`

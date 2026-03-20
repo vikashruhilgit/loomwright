@@ -32,7 +32,7 @@ Discover application structure, generate risk-based Playwright tests, execute th
 ### Inputs
 
 - Target URL (from playwright.config.ts, .env, or user-provided)
-- Optional flags: `--rounds`, `--coverage`, `--skip-strategy`, `--strict-discovery`, `--auto-discover`
+- Optional flags: `--depth`, `--rounds`, `--coverage`, `--skip-strategy`, `--strict-discovery`, `--auto-discover`, `--plan`, `--scope`, `--continue`
 - Project source code (routes, controllers, schemas)
 - Playwright configuration
 
@@ -82,6 +82,73 @@ If you identify gaps that require higher-level modules, LOG them in the QA_RESUL
 ---
 
 ## Level 1 Protocol (10 Phases)
+
+### Phase 0.5: SESSION PLANNING (--plan, --scope, --continue)
+
+If `--plan`, `--scope`, or `--continue` flags are present, run session management before the standard protocol.
+
+#### `--plan` — Survey App & Create Testing Plan
+
+```
+1. Run Phase 0 (Environment Setup) + Phase 1 (Detect URL) as normal
+2. Run discovery Phase A (static analysis) + Phase B (runtime crawl, 100-page limit) + Phase D (merge)
+   - Skip Phase C (screenshots not needed for planning)
+3. Cluster routes into feature areas by URL prefix:
+   - Group by first path segment: /auth/* → "auth", /tournaments/* → "tournaments"
+   - If a prefix has only 1 route, merge into nearest related group or "misc"
+4. Assign risk/priority per cluster:
+   - Cluster risk = highest risk route in the cluster
+   - Priority = ordered by risk (HIGH first), then by route count (more routes = higher priority)
+5. Estimate test count per scope:
+   - Per route: base 2 tests (smoke)
+   - Per form discovered: +3 tests (valid, invalid, empty)
+   - Per API mutation endpoint (POST/PUT/DELETE): +2 tests (valid, auth)
+   - Per modal: +1 test
+6. Write .qa-session/plan.json (see schema in qa-orchestration skill)
+7. Write .qa-session/coverage.json (initialized with zeros)
+8. Print human-readable summary table to output — do NOT run tests
+9. Emit QA_RESULT with status: "plan_created", tests_generated: 0
+```
+
+**Output directory:**
+```
+.qa-session/
+  plan.json          # Scopes with priority, status, route/API lists
+  coverage.json      # Cumulative coverage across sessions
+  results/           # Per-scope QA_RESULT files (created during --scope runs)
+```
+
+#### `--scope feature:{name}` — Test One Feature Area Deeply
+
+```
+1. Read .qa-session/plan.json (error if missing — tell user to run --plan first)
+2. Find scope matching {name} (error if not found)
+3. Filter discovery data to only routes/APIs in that scope
+4. Skip full re-discovery — reuse plan's discovery data
+   - Quick verify: check scoped pages are still reachable (curl baseURL + first route)
+5. Run Phase 3 (Strategy) for scoped subset only
+6. Run Phase 4 (Generate) with functional depth for scoped routes
+7. Run Phases 4.5-9 as normal (dry-run, execute, coverage, bugs, audit, emit)
+8. Update .qa-session/coverage.json with cumulative results
+9. Mark scope status → "completed" in plan.json
+10. Save per-scope result to .qa-session/results/{name}.json
+11. Emit QA_RESULT with scope and cumulative_coverage fields
+```
+
+#### `--continue` — Auto-Pick Next Pending Scope
+
+```
+1. Read .qa-session/plan.json (error if missing — tell user to run --plan first)
+2. Find first scope with status: "pending" ordered by priority
+3. If no pending scopes: emit QA_RESULT with status: "all_scopes_completed"
+4. Execute that scope (same as --scope feature:{name})
+```
+
+**Session flags are mutually exclusive:** `--plan`, `--scope`, and `--continue` cannot be combined.
+**Session flags combine with depth:** `--scope feature:auth --depth smoke` runs smoke-level tests for auth scope.
+**Default depth in session mode:** `functional` (same as non-session mode).
+
+---
 
 ### Phase 0: ENVIRONMENT SETUP
 
@@ -145,13 +212,63 @@ Generate discovery/crawl.ts:
   - Modal detection ([role="dialog"], .modal, [aria-modal="true"])
   - Safe-click: DO NOT click delete/remove/logout/purchase/pay buttons
   - SPA detection: monitor framenavigated + pushState/replaceState
-  - Bounds: max depth 3, max 30 pages, same-origin, dedup by pathname
+  - Bounds: max depth 3, max pages per mode (see crawl limits table), same-origin, dedup by pathname
   - Auth: Pass 1 unauthenticated. If auth-gated routes detected and
     coverage below expected -> Pass 2 with storageState or env credentials
   - Output: discovery/sitemap.json + discovery/api-calls.json
 
+Crawl limits by mode:
+  | Mode        | Crawl Limit | Why                                              |
+  |-------------|-------------|--------------------------------------------------|
+  | --plan      | 100 pages   | Plan mode skips test generation, budget allows deeper crawl |
+  | --scope     | 30 pages    | Each scope has ~3-15 routes; 30 is sufficient    |
+  | Default     | 30 pages    | Current L1 behavior preserved                    |
+
+Enhanced data extraction per page (MANDATORY for functional depth):
+
+  Forms — for each <form> on the page:
+    - form_id or name attribute
+    - action URL (or null for JS-handled)
+    - method (GET/POST)
+    - Per input/select/textarea within the form:
+      - name, type, required (boolean), placeholder, pattern (validation regex)
+      - For <select>: option values and labels
+      - For <input type="file">: accept attribute
+    - Submit button: innerText, type attr
+
+  Buttons — for each <button> and [role="button"] NOT inside a form:
+    - innerText / aria-label
+    - type attr (submit/button/reset)
+    - Nearest form association (if any)
+    - data-action or onclick hint (navigation, modal trigger, delete, etc.)
+
+  Tables/Lists — for each <table>, [role="grid"], or repeated list pattern:
+    - Column headers (from <th> or first row)
+    - Row count
+    - Entity type hint (inferred from URL or heading context)
+
+  Modals — for each [role="dialog"], .modal, [aria-modal="true"]:
+    - Trigger element (the button/link that opens it)
+    - Dialog content type: form, confirmation, info, error
+    - Form details inside modal (same as Forms extraction above)
+
 Run: npx playwright test discovery/crawl.ts --reporter=json
 Parse results
+
+Network intercept enrichment (MANDATORY for functional depth):
+
+  API Requests — for each intercepted request:
+    - Method + URL (already captured)
+    - Request body field names and types (from intercepted POST/PUT/PATCH requests)
+    - Content-Type header
+
+  API Responses — for each intercepted response:
+    - Status code (already captured)
+    - Response body field names and types (from intercepted JSON responses)
+    - For list endpoints: array length (entity count)
+    - For single-entity endpoints: top-level field names
+
+  Output: enriched discovery/api-calls.json with request_body_fields and response_body_fields
 
 Seed Data Inventory (during runtime crawl):
   - Intercept GET list responses (page.on('response') for list/index endpoints)
@@ -217,7 +334,11 @@ If `--skip-strategy` flag: skip this phase, use default classification (all rout
 
 ### Phase 4: GENERATE
 
-Generate Playwright test files following playwright-e2e skill patterns:
+Generate Playwright test files following playwright-e2e skill patterns.
+
+**Depth mode** is controlled by `--depth smoke|functional` flag (default: `functional`).
+
+#### Depth Mode: `smoke` (L1 original behavior)
 
 ```
 For each route in priority order (HIGH first, then MEDIUM, then LOW):
@@ -226,17 +347,100 @@ For each route in priority order (HIGH first, then MEDIUM, then LOW):
     - Happy path: navigate, verify key elements visible
     - Error path (HIGH risk only): invalid input, verify error message
     - Coverage annotations: // @covers-route: {route}
-    - Role-based locators: getByRole, getByLabel, getByText
-    - Regex assertions for text matching
-    - No hardcoded waits, no CSS selectors
-    - Group with test.describe('{Feature Name}', ...)
 
   API tests -> e2e/tests/api/{feature}.spec.ts
-    - For each intercepted API endpoint:
-      - GET: verify 200 + response shape
-      - POST/PUT/DELETE: verify auth required (401 without token)
-      - Coverage annotations: // @covers-api: {METHOD} {path}
+    - GET: verify 200 + response shape
+    - POST/PUT/DELETE: verify auth required (401 without token)
+    - Coverage annotations: // @covers-api: {METHOD} {path}
+```
 
+#### Depth Mode: `functional` (DEFAULT — discovery-driven pattern selection)
+
+Instead of risk-level-only generation, use **discovery data to select test patterns**.
+Match discovered interactions to the Test Pattern Library below.
+
+**Test Pattern Library — pattern selection by discovery signal:**
+
+| Discovery Signal | Test Pattern | Coverage Annotation |
+|---|---|---|
+| Form with inputs | Fill valid data → submit → verify success feedback; Fill invalid/empty required fields → verify validation errors | `@covers-interaction: form-submission` |
+| API POST endpoint | Send valid payload → verify 201 + response body fields match; Send invalid payload → verify 400 + error shape | `@covers-interaction: api-post` |
+| API PUT endpoint | Send update payload → verify 200 + changed fields reflected | `@covers-interaction: api-put` |
+| API DELETE endpoint | Delete entity → verify 204/200 → re-GET → verify 404 | `@covers-interaction: api-delete` |
+| API GET endpoint | Call → verify 200 + response body structure (field names + types from discovery) | `@covers-interaction: api-get` |
+| Button (non-form) | Click → verify expected outcome (navigation change, modal open, state change) | `@covers-interaction: button-click` |
+| Modal detected | Open modal via trigger → interact with contents → close → verify state | `@covers-interaction: modal` |
+| Table/list rendering | Verify column headers present, row count > 0, data renders in cells | `@covers-interaction: data-rendering` |
+| Auth-gated route | Access without auth → verify 401/redirect to login | `@covers-interaction: auth-gate` |
+
+**Risk level controls depth within each pattern:**
+
+| Risk | smoke | functional |
+|---|---|---|
+| HIGH | Navigate + verify visible | All matched patterns + valid + invalid + error paths |
+| MEDIUM | Navigate + verify visible | All matched patterns + valid data only |
+| LOW | Navigate + verify title | Navigate + verify content renders correctly |
+
+**Test file grouping (budget optimization):**
+- Group 5-10 tests per spec file by feature area (not 1 test per file)
+- Example: `auth.spec.ts` contains login form, register form, forgot-password tests
+- Same number of Write tool calls, much deeper test coverage
+
+```
+For each route in priority order (HIGH first, then MEDIUM, then LOW):
+
+  1. Read route's discovery data from sitemap.json + api-calls.json
+  2. Match discovery signals to Test Pattern Library (table above)
+  3. Generate tests for ALL matched patterns (not just "navigate + verify visible")
+
+  UI/E2E tests -> e2e/tests/frontend/{feature}.spec.ts
+    For each discovered form on the route:
+      - Test: fill all required fields with valid data → submit → verify success (toast, redirect, or new element)
+      - Test (HIGH risk): fill invalid data per field → submit → verify validation error messages
+      - Test (HIGH risk): submit empty required fields → verify required-field errors
+      - Coverage: // @covers-route: {route}  // @covers-interaction: form-submission
+
+    For each discovered button (non-form, non-destructive):
+      - Test: click → verify outcome (URL change, modal open, content update)
+      - Coverage: // @covers-interaction: button-click
+
+    For each discovered modal:
+      - Test: trigger modal → verify modal content → interact → close
+      - Coverage: // @covers-interaction: modal
+
+    For each discovered table/list:
+      - Test: verify headers present, row count > 0, sample data renders
+      - Coverage: // @covers-interaction: data-rendering
+
+    For auth-gated routes:
+      - Test: access without auth → verify redirect to login or 401
+      - Coverage: // @covers-interaction: auth-gate
+
+  API tests -> e2e/tests/api/{feature}.spec.ts
+    For each intercepted GET endpoint:
+      - Test: call → verify 200 + response body field names match discovery
+      - Coverage: // @covers-api: GET {path}  // @covers-interaction: api-get
+
+    For each intercepted POST endpoint:
+      - Test: send valid payload (field names from request_body_fields) → verify 201 + response body
+      - Test (HIGH risk): send invalid payload → verify 400 + error response
+      - Test: send without auth → verify 401
+      - Coverage: // @covers-api: POST {path}  // @covers-interaction: api-post
+
+    For each intercepted PUT endpoint:
+      - Test: send update (fields from request_body_fields) → verify 200 + updated fields
+      - Test: send without auth → verify 401
+      - Coverage: // @covers-api: PUT {path}  // @covers-interaction: api-put
+
+    For each intercepted DELETE endpoint:
+      - Test: delete entity → verify 204/200 → re-GET → verify 404/gone
+      - Test: send without auth → verify 401
+      - Coverage: // @covers-api: DELETE {path}  // @covers-interaction: api-delete
+```
+
+#### Common rules (both modes)
+
+```
 Test isolation requirements (MANDATORY):
   - Every test must be fully independent — no shared state
   - Use test.beforeEach to set up required data/auth state
@@ -246,6 +450,12 @@ Test isolation requirements (MANDATORY):
     to avoid collisions with existing data
   - For auth-gated routes: include storageState setup or login step in beforeEach
   - Do NOT use shared login state across test files without explicit storageState
+
+Locator and assertion rules:
+  - Role-based locators: getByRole, getByLabel, getByText
+  - Regex assertions for text matching
+  - No hardcoded waits, no CSS selectors
+  - Group with test.describe('{Feature Name}', ...)
 
 SECURITY TEST BOUNDARY (L1):
   - Cross-org access tests (e.g., "can user A access org B's data?") are L3 adversarial tests
@@ -374,6 +584,7 @@ Write .qa-summary.md (final, max 200 tokens)
 
 Emit QA_RESULT block with all fields:
   task_id, status, rounds_run,
+  depth,                        # "smoke" or "functional"
   tests_generated,              # total tests written to disk
   tests_run_this_session,       # tests actually executed in this agent session
   tests_passed,                 # from this session's execution
@@ -381,7 +592,12 @@ Emit QA_RESULT block with all fields:
   discovery_confidence,
   discovery_duration_seconds, crawl_limit_hit, discovery_warnings,
   coverage, coverage_weighted, risk_score, bugs_found, bugs_blocking,
-  strategist_verdict, files_created, error, notes
+  strategist_verdict, files_created, error, notes,
+
+  # Session fields (only when --plan, --scope, or --continue used):
+  scope,                        # scope name tested (e.g., "auth") or null
+  session_id,                   # unique session identifier
+  cumulative_coverage           # from .qa-session/coverage.json (routes_tested/routes_total, apis_tested/apis_total, scopes_completed/scopes_total)
 
 If tests_generated > tests_run_this_session:
   Add note: "Full suite has {tests_generated} tests; only {tests_run_this_session}
@@ -420,6 +636,9 @@ Budget is 60 calls. At 36: compress. At 48: skip to execute. At 55: emit and exi
 | Strategist crash/timeout | strategist_verdict: timeout, status: needs_human |
 | Tool budget exceeded | Emit QA_RESULT with partial data, notes: "budget_exceeded" |
 | No routes discovered | status: needs_human, error: "No routes found" |
+| --scope without --plan | status: skipped, error: "No plan found. Run /qa-executor --plan first" |
+| --scope unknown name | status: skipped, error: "Scope '{name}' not found in plan" |
+| --continue no pending | status: all_scopes_completed, notes: "All scopes completed" |
 
 ---
 
@@ -431,18 +650,24 @@ Budget is 60 calls. At 36: compress. At 48: skip to execute. At 55: emit and exi
 │   ├── crawl.ts                    # Generated crawler script
 │   ├── screenshots.ts              # Generated screenshot script (if needed)
 │   ├── static-map.json             # Phase A output
-│   ├── sitemap.json                # Phase B output (runtime routes)
-│   ├── api-calls.json              # Phase B output (intercepted APIs)
+│   ├── sitemap.json                # Phase B output (runtime routes, enriched with forms/buttons/tables/modals)
+│   ├── api-calls.json              # Phase B output (intercepted APIs, enriched with request/response body fields)
 │   ├── seed-data.json              # Phase B output (entity counts + sample IDs)
 │   ├── skipped-interactions.json   # Buttons skipped during crawl
 │   ├── discovery-map.json          # Phase D output (merged final map)
 │   └── report.md                   # Phase D output (human-readable)
 ├── e2e/tests/
 │   ├── frontend/
-│   │   ├── {feature}.spec.ts       # UI/E2E tests
+│   │   ├── {feature}.spec.ts       # UI/E2E tests (5-10 tests per file in functional mode)
 │   │   └── ...
 │   └── api/
-│       ├── {feature}.spec.ts       # API tests
+│       ├── {feature}.spec.ts       # API tests (CRUD patterns in functional mode)
+│       └── ...
+├── .qa-session/                    # Session state (only with --plan/--scope/--continue)
+│   ├── plan.json                   # Feature scopes with priority and status
+│   ├── coverage.json               # Cumulative coverage across sessions
+│   └── results/                    # Per-scope QA_RESULT files
+│       ├── {scope-name}.json       # Result for each completed scope
 │       └── ...
 └── .qa-summary.md                  # Summary for Strategist audit
 ```
@@ -461,7 +686,8 @@ Before emitting QA_RESULT:
 - [ ] Tests follow playwright-e2e skill patterns
 - [ ] Tests have beforeEach/afterEach isolation — no shared state
 - [ ] No cross-org security tests in generated suite (deferred to L3)
-- [ ] Coverage annotations present in all tests (@covers-route, @covers-api)
+- [ ] Coverage annotations present in all tests (@covers-route, @covers-api, @covers-interaction)
+- [ ] Functional depth: forms have fill+submit tests, APIs have CRUD tests, buttons have click tests
 - [ ] Dry-run gate passed (≥ 2/3 sample tests passing) before full suite
 - [ ] Tests executed with JSON reporter
 - [ ] Coverage tracked (routes + APIs discovered vs tested)
@@ -484,7 +710,8 @@ Before emitting QA_RESULT:
 
 ### Skill References
 
-- **QA Strategy:** `skills/qa-strategy/SKILL.md` — risk classification, output formats, debate protocol
-- **Playwright E2E:** `skills/playwright-e2e/SKILL.md` — test authoring rules, locators, anti-patterns
+- **QA Strategy:** `skills/qa-strategy/SKILL.md` — risk classification, output formats, debate protocol, interaction coverage annotations
+- **Playwright E2E:** `skills/playwright-e2e/SKILL.md` — test authoring rules, locators, anti-patterns, interaction test patterns
+- **QA Orchestration:** `skills/qa-orchestration/SKILL.md` — session management, plan.json/coverage.json schemas, scope clustering
 - **Quality Checklist:** `skills/quality-checklist/SKILL.md` — general quality gates
 - **Blueprint:** `docs/QA_SYSTEM_BLUEPRINT.md` — full architecture and maturity levels
