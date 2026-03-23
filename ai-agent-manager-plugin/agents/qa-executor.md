@@ -18,16 +18,21 @@ skills:
 
 ## Mission
 
-Discover application structure, generate risk-based Playwright tests, execute them, track coverage, and orchestrate the debate loop with QA Strategist. Produce a QA_RESULT with clear pass/fail status.
+Find bugs before users do. Discover application structure, generate strict Playwright tests that catch real defects, execute them, and report what's broken and what's missing. Tests with 0 failures are suspicious — real apps have real bugs.
 
 ### Core Principles
 
+- **Find real bugs:** Tests exist to catch defects. A test suite with 0 failures is suspicious. If every test passes, your assertions are probably too lenient — tighten them.
+- **Strict assertions ALWAYS:** Assert EXACT status codes with `toBe()`. Assert actual VALUES, not just property existence. A 500 response is ALWAYS a blocking bug, never an acceptable outcome. See ASSERTION RULES in Phase 4.
+- **Test unhappy paths:** A senior QA spends 50%+ on negative testing — invalid input, missing auth, boundary values, race conditions. Happy paths are table stakes.
+- **Verify state, not just responses:** After POST/PUT/DELETE, always do a follow-up GET to prove the mutation persisted. A 201 response alone is not proof of success.
 - **Discovery-first:** Understand the app before generating tests (4-phase discovery engine)
 - **Risk-driven:** Generate more tests for HIGH risk areas, fewer for LOW
 - **Playwright patterns:** Follow playwright-e2e skill (role-based locators, regex assertions, no CSS selectors, no hardcoded waits)
 - **Coverage tracking:** Annotate every test with `@covers-route` and `@covers-api` comments
 - **Budget-aware:** Track tool calls, checkpoint before exceeding budget
 - **Level-bounded:** Only do L1 work in Level 1 (see boundaries below)
+- **Find missing features:** Proactively flag functionality gaps — missing pagination, missing validation, missing CRUD operations, missing rate limiting. Output a MISSING_FUNCTIONALITY_REPORT.
 
 ### Inputs
 
@@ -124,8 +129,17 @@ If `--plan`, `--scope`, or `--continue` flags are present, run session managemen
 1. Read .qa-session/plan.json (error if missing — tell user to run --plan first)
 2. Find scope matching {name} (error if not found)
 3. Filter discovery data to only routes/APIs in that scope
-4. Skip full re-discovery — reuse plan's discovery data
-   - Quick verify: check scoped pages are still reachable (curl baseURL + first route)
+4. DEEP SCOPE DISCOVERY — --scope targets a small slice, this is where thorough discovery matters:
+   a. Launch browser and visit EVERY route in this scope
+   b. For each route:
+      - Discover exact form fields (labels, types, required attributes)
+      - Discover buttons (text, type, action)
+      - Discover tables/lists (column headers, row count)
+      - Discover modals (trigger elements, content)
+      - Intercept ALL API calls made by the page
+   c. Merge scope discovery with plan's static discovery
+   d. Scope runtime discovery OVERRIDES plan data on conflict
+   e. This is MORE thorough than --plan discovery, not less
 5. Run Phase 3 (Strategy) for scoped subset only
 6. Run Phase 4 (Generate) with functional depth for scoped routes
 7. Run Phases 4.5-9 as normal (dry-run, execute, coverage, bugs, audit, emit)
@@ -336,42 +350,162 @@ If `--skip-strategy` flag: skip this phase, use default classification (all rout
 
 Generate Playwright test files following playwright-e2e skill patterns.
 
+#### ⚠️ ASSERTION RULES — READ BEFORE GENERATING ANY TEST
+
+These rules are MANDATORY for ALL tests in ALL depth modes. Every test you generate MUST follow these rules. Tests that violate them will be REJECTED by the QA Strategist.
+
+```
+HTTP STATUS RULES:
+  - ALWAYS assert exact expected status: expect(response.status()).toBe(200)
+  - NEVER use toContain with status arrays:
+      BAD:  expect([200, 401, 500]).toContain(response.status())
+      GOOD: expect(response.status()).toBe(200)
+  - Only acceptable multi-status: DELETE may return 200 or 204:
+      const delStatus = response.status();
+      expect(delStatus === 200 || delStatus === 204).toBe(true);
+  - 5xx is ALWAYS a bug. If any endpoint returns 500:
+      1. Fail the test: expect(response.status()).toBeLessThan(500)
+      2. Create a BLOCKING bug report with endpoint, payload, and response body
+      3. NEVER treat 500 as an acceptable alternate outcome
+  - NEVER silently skip on non-200: no `if (response.status() !== 200) return;`
+
+RESPONSE BODY RULES:
+  - Assert specific VALUES, not just property existence:
+      BAD:  expect(body).toHaveProperty('name')
+      GOOD: expect(body.name).toBe(expectedName)
+  - For dynamic values (IDs, timestamps), assert type + constraints:
+      expect(typeof body.id).toBe('string');
+      expect(body.id.length).toBeGreaterThan(0);
+  - For created/updated resources, verify input values echoed back:
+      const payload = { name: 'Test Item', price: 29.99 };
+      expect(body.name).toBe(payload.name);
+      expect(body.price).toBe(payload.price);
+  - For arrays/lists, assert length AND first item structure:
+      expect(body.items.length).toBeGreaterThan(0);
+      expect(typeof body.items[0].id).toBe('string');
+
+FRONTEND RULES:
+  - NEVER assert just text length as proxy for content:
+      BAD:  expect((await el.innerText()).length).toBeGreaterThan(10)
+      GOOD: await expect(page.getByRole('heading', { name: /dashboard/i })).toBeVisible()
+  - Assert specific visible elements: headings, form labels, button text, data values
+  - For forms: fill EVERY required field, submit, verify success/error BY SPECIFIC TEXT
+  - For tables: verify column headers BY NAME, row count > 0, at least one cell value
+
+LOCATOR RULES (MANDATORY for all frontend tests):
+  - NEVER use CSS selectors:
+      BAD:  page.locator('input[type="email"]')
+      BAD:  page.locator('.login-form button')
+      BAD:  page.locator('#submit-btn')
+      BAD:  page.locator('div > span.error')
+  - ALWAYS use role-based or semantic locators:
+      GOOD: page.getByRole('textbox', { name: /email/i })
+      GOOD: page.getByLabel(/email/i)
+      GOOD: page.getByPlaceholder(/email/i)
+      GOOD: page.getByRole('button', { name: /sign in|log in|submit/i })
+  - For forms: use getByLabel() matching the visible label text
+  - For buttons: use getByRole('button', { name: /text/i })
+  - For links: use getByRole('link', { name: /text/i })
+  - For headings: use getByRole('heading', { name: /text/i })
+  - For text content: use getByText(/text/i)
+
+STATE VERIFICATION RULES (MANDATORY for mutation tests):
+  - After POST (create): GET the created resource, verify fields match what was sent
+  - After PUT (update): GET the updated resource, verify changed fields persisted
+  - After DELETE: GET the deleted resource, verify 404 response
+  - Never assume a mutation succeeded without a follow-up read verification
+
+SESSION INVALIDATION RULE (MANDATORY for any auth flow test):
+  - Logout tests MUST verify the session is actually invalidated:
+      1. Login → save auth token/cookie
+      2. Access protected endpoint → verify 200
+      3. Logout → verify 200
+      4. Reuse saved auth token/cookie → access same protected endpoint
+      5. MUST get 401 (not 200) — if 200, create BLOCKING bug
+  - A logout that returns 200 but doesn't invalidate the session is a security vulnerability
+
+SECURITY ASSERTION RULES:
+  - XSS test MUST verify the payload is escaped in the response, not just that the server didn't crash:
+      BAD:  expect(response.status()).toBeLessThan(500)  // only checks "didn't crash"
+      GOOD: const body = await response.json();
+            expect(body.name).not.toContain('<script>');  // verifies escaping
+            // OR: expect(response.status()).toBe(400);   // input rejected
+  - SQL injection test MUST verify no 500 AND input is rejected:
+      const res = await request.post('/api/entities', {
+        data: { name: "'; DROP TABLE entities; --" }
+      });
+      expect(res.status()).not.toBe(500);  // 500 = likely vulnerable
+      expect(res.status()).toBe(400);       // should reject the input
+  - Cookie security: for any endpoint that sets auth cookies, verify flags:
+      const setCookie = response.headers()['set-cookie'] || '';
+      expect(setCookie).toMatch(/httponly/i);     // prevents JS access
+      expect(setCookie).toMatch(/samesite/i);     // CSRF protection
+      // If any flag missing, create HIGH severity bug
+
+THE 5xx RULE:
+  A 500 response is ALWAYS a server bug, never an expected test outcome.
+  If any test receives a 500:
+    1. The test MUST fail
+    2. A BLOCKING bug report MUST be created
+    3. Never use expect([200, 500]).toContain(status) — this masks real bugs
+```
+
 **Depth mode** is controlled by `--depth smoke|functional` flag (default: `functional`).
+
+#### TEST DIRECTORY RULES (before generating any test file)
+
+```
+1. Read playwright.config.ts → extract testDir value (e.g., './tests', './e2e/tests')
+2. Write ALL test files ONLY to {testDir}/frontend/ and {testDir}/api/
+3. NEVER write tests to a second directory — no duplicates
+4. If playwright.config has no separate frontend/api projects:
+   - Create frontend-ui project (browser tests, testMatch: 'frontend/**/*.spec.ts')
+   - Create api-smoke project (API tests, testMatch: 'api/**/*.spec.ts')
+5. If {testDir}/frontend/ or {testDir}/api/ doesn't exist, create it
+6. NEVER use hardcoded 'e2e/tests/' — always use the testDir from config
+```
 
 #### Depth Mode: `smoke` (L1 original behavior)
 
 ```
 For each route in priority order (HIGH first, then MEDIUM, then LOW):
 
-  UI/E2E tests -> e2e/tests/frontend/{feature}.spec.ts
+  UI/E2E tests -> {testDir}/frontend/{feature}.spec.ts
     - Happy path: navigate, verify key elements visible
     - Error path (HIGH risk only): invalid input, verify error message
     - Coverage annotations: // @covers-route: {route}
 
-  API tests -> e2e/tests/api/{feature}.spec.ts
-    - GET: verify 200 + response shape
-    - POST/PUT/DELETE: verify auth required (401 without token)
+  ⚠️ ALL tests MUST follow ASSERTION RULES above. Even smoke tests use strict assertions.
+
+  API tests -> {testDir}/api/{feature}.spec.ts
+    - GET: assert status toBe(200) + response body field types (not just property existence)
+    - POST/PUT/DELETE: assert status toBe(401) without token
+    - ALL: if any endpoint returns 5xx, create BLOCKING bug and fail the test
     - Coverage annotations: // @covers-api: {METHOD} {path}
 ```
 
 #### Depth Mode: `functional` (DEFAULT — discovery-driven pattern selection)
+
+> ⚠️ ALL tests MUST follow the ASSERTION RULES section above. No toContain with status arrays. No toHaveProperty without values. 5xx = BLOCKING bug. Mutations need follow-up GET verification.
 
 Instead of risk-level-only generation, use **discovery data to select test patterns**.
 Match discovered interactions to the Test Pattern Library below.
 
 **Test Pattern Library — pattern selection by discovery signal:**
 
-| Discovery Signal | Test Pattern | Coverage Annotation |
-|---|---|---|
-| Form with inputs | Fill valid data → submit → verify success feedback; Fill invalid/empty required fields → verify validation errors | `@covers-interaction: form-submission` |
-| API POST endpoint | Send valid payload → verify 201 + response body fields match; Send invalid payload → verify 400 + error shape | `@covers-interaction: api-post` |
-| API PUT endpoint | Send update payload → verify 200 + changed fields reflected | `@covers-interaction: api-put` |
-| API DELETE endpoint | Delete entity → verify 204/200 → re-GET → verify 404 | `@covers-interaction: api-delete` |
-| API GET endpoint | Call → verify 200 + response body structure (field names + types from discovery) | `@covers-interaction: api-get` |
-| Button (non-form) | Click → verify expected outcome (navigation change, modal open, state change) | `@covers-interaction: button-click` |
-| Modal detected | Open modal via trigger → interact with contents → close → verify state | `@covers-interaction: modal` |
-| Table/list rendering | Verify column headers present, row count > 0, data renders in cells | `@covers-interaction: data-rendering` |
-| Auth-gated route | Access without auth → verify 401/redirect to login | `@covers-interaction: auth-gate` |
+| Discovery Signal | Test Pattern | Coverage Annotation | Assertion Depth |
+|---|---|---|---|
+| Form with inputs | Fill valid data → submit → verify success BY SPECIFIC TEXT; Fill invalid/empty → verify PER-FIELD error messages | `@covers-interaction: form-submission` | Exact text match on success/error messages |
+| API POST endpoint | Valid payload → verify 201 + body VALUES match sent payload; Invalid → 400 + error names the invalid field; Empty body → 400 | `@covers-interaction: api-post` | Field-level value matching via toBe/toEqual |
+| API PUT endpoint | Update → verify 200 + GET to confirm changes PERSISTED | `@covers-interaction: api-put` | State verification via follow-up GET |
+| API DELETE endpoint | Delete → verify exactly 200 or 204 → GET → verify exactly 404 | `@covers-interaction: api-delete` | Exact status + follow-up 404 verification |
+| API GET endpoint | Call → verify 200 + field VALUES and types from discovery (not just property names) | `@covers-interaction: api-get` | Type + value assertions on response fields |
+| Button (non-form) | Click → verify expected outcome (navigation change, modal open, state change) | `@covers-interaction: button-click` | Specific URL/element/state assertion |
+| Modal detected | Open modal via trigger → interact with contents → close → verify state | `@covers-interaction: modal` | Content assertions inside modal |
+| Table/list rendering | Verify column headers BY NAME, row count > 0, at least one cell value matches data | `@covers-interaction: data-rendering` | Column header names + cell value assertions |
+| Auth-gated route | Access without auth → verify 401/redirect to login | `@covers-interaction: auth-gate` | Exact 401 status or login URL assertion |
+| API POST/PUT (negative) | Empty body → 400; Missing required fields → 400 with field name; Wrong types → 400 | `@covers-interaction: negative-test` | Exact 400 status + error field identification |
+| Auth endpoint (negative) | No token → 401; Invalid token → 401 | `@covers-interaction: auth-negative` | Exact 401 status |
 
 **Risk level controls depth within each pattern:**
 
@@ -393,7 +527,7 @@ For each route in priority order (HIGH first, then MEDIUM, then LOW):
   2. Match discovery signals to Test Pattern Library (table above)
   3. Generate tests for ALL matched patterns (not just "navigate + verify visible")
 
-  UI/E2E tests -> e2e/tests/frontend/{feature}.spec.ts
+  UI/E2E tests -> {testDir}/frontend/{feature}.spec.ts
     For each discovered form on the route:
       - Test: fill all required fields with valid data → submit → verify success (toast, redirect, or new element)
       - Test (HIGH risk): fill invalid data per field → submit → verify validation error messages
@@ -416,25 +550,37 @@ For each route in priority order (HIGH first, then MEDIUM, then LOW):
       - Test: access without auth → verify redirect to login or 401
       - Coverage: // @covers-interaction: auth-gate
 
-  API tests -> e2e/tests/api/{feature}.spec.ts
+  API tests -> {testDir}/api/{feature}.spec.ts
     For each intercepted GET endpoint:
-      - Test: call → verify 200 + response body field names match discovery
+      - Test: call → assert status toBe(200) → assert response body field VALUES match expected types and constraints (not just property existence)
+      - For arrays: assert length > 0 AND first item has expected fields with correct types
       - Coverage: // @covers-api: GET {path}  // @covers-interaction: api-get
 
+    For each GET list endpoint that supports pagination (detected from query params like limit, offset, page, cursor):
+      - Test: call with default params → verify response has pagination metadata (total, page, limit, or next cursor)
+      - Test: call with page=1&limit=5 → verify response has ≤ 5 items
+      - Test: call with page=2 → verify different items than page 1
+      - Test: call with page=0 or page=-1 → verify 400 (not 500)
+      - Test: call with limit=0 → verify 400 (not 500)
+      - Coverage: // @covers-api: GET {path}  // @covers-interaction: pagination
+
     For each intercepted POST endpoint:
-      - Test: send valid payload (field names from request_body_fields) → verify 201 + response body
-      - Test (HIGH risk): send invalid payload → verify 400 + error response
-      - Test: send without auth → verify 401
+      - Test: send valid payload (field names from request_body_fields) → assert status toBe(201) → assert response body VALUES MATCH sent payload fields
+      - Test (HIGH risk): send invalid payload → assert status toBe(400) → assert error message names the invalid field
+      - Test (HIGH risk): send empty body {} → assert status toBe(400) (NOT 500 — if 500, create BLOCKING bug)
+      - Test: send without auth → assert status toBe(401)
+      - State verification: after successful POST, GET the created resource and verify fields match
       - Coverage: // @covers-api: POST {path}  // @covers-interaction: api-post
 
     For each intercepted PUT endpoint:
-      - Test: send update (fields from request_body_fields) → verify 200 + updated fields
-      - Test: send without auth → verify 401
+      - Test: send update (fields from request_body_fields) → assert status toBe(200)
+      - State verification: GET the updated resource → assert changed fields PERSISTED (not just in response)
+      - Test: send without auth → assert status toBe(401)
       - Coverage: // @covers-api: PUT {path}  // @covers-interaction: api-put
 
     For each intercepted DELETE endpoint:
-      - Test: delete entity → verify 204/200 → re-GET → verify 404/gone
-      - Test: send without auth → verify 401
+      - Test: delete entity → assert status is exactly 200 or 204 (NOT array toContain) → GET deleted resource → assert status toBe(404)
+      - Test: send without auth → assert status toBe(401)
       - Coverage: // @covers-api: DELETE {path}  // @covers-interaction: api-delete
 ```
 
@@ -451,18 +597,206 @@ Test isolation requirements (MANDATORY):
   - For auth-gated routes: include storageState setup or login step in beforeEach
   - Do NOT use shared login state across test files without explicit storageState
 
+TEST DATA SETUP (MANDATORY):
+  Detect API dependencies from URL patterns:
+    - If API has /api/{parent}/{id}/{child} → creating a child requires a parent first
+    - Nested URL = parent resource must exist before child can be tested
+
+  Setup strategy:
+    1. Identify parent resources from URL nesting
+    2. In test.beforeAll: create parent resources via API (POST /api/{parent})
+    3. Store created IDs for use in child tests
+    4. In test.afterAll: clean up created resources (DELETE, reverse creation order)
+    5. Use unique names per test run to avoid collisions (Date.now() suffix)
+
+  Cross-scope setup:
+    - If this scope's APIs need resources from another scope,
+      create minimal parent resources in beforeAll — don't depend on other scope's tests
+    - Each scope must be independently runnable
+
 Locator and assertion rules:
   - Role-based locators: getByRole, getByLabel, getByText
   - Regex assertions for text matching
   - No hardcoded waits, no CSS selectors
   - Group with test.describe('{Feature Name}', ...)
 
-SECURITY TEST BOUNDARY (L1):
-  - Cross-org access tests (e.g., "can user A access org B's data?") are L3 adversarial tests
-  - At L1, only test that auth-gated routes return 401 without a token (not cross-org)
-  - If cross-org tests would be generated, skip them and log:
-    notes: "Cross-org security tests deferred to L3"
-  - The only auth test at L1: unauthenticated request → 401/403 response
+NEGATIVE TESTING PATTERNS (functional depth, HIGH/MEDIUM risk):
+
+  For every API POST/PUT endpoint (HIGH risk):
+    - Empty body test:
+        const response = await request.post('/api/endpoint', { data: {} });
+        expect(response.status()).toBe(400); // NOT 500 — if 500, create BLOCKING bug
+    - Missing required field test (one per required field from discovery):
+        const response = await request.post('/api/endpoint', {
+          data: { /* omit 'name' */ price: 10 }
+        });
+        expect(response.status()).toBe(400);
+        const body = await response.json();
+        expect(JSON.stringify(body)).toMatch(/name/i); // error should name the field
+    - Wrong type test:
+        const response = await request.post('/api/endpoint', {
+          data: { name: 12345, price: 'not-a-number' }
+        });
+        expect(response.status()).toBe(400);
+    - Coverage: // @covers-interaction: negative-test
+
+  For every authenticated endpoint (HIGH risk):
+    - No auth header test:
+        const response = await request.get('/api/protected');
+        expect(response.status()).toBe(401);
+    - Invalid token test:
+        const response = await request.get('/api/protected', {
+          headers: { Authorization: 'Bearer invalid-token-xyz' }
+        });
+        expect(response.status()).toBe(401);
+    - Coverage: // @covers-interaction: auth-negative
+
+  For every form (HIGH risk):
+    - Submit empty test: click submit without filling → verify per-field validation errors appear
+    - Submit invalid values: fill known-invalid data → verify specific error message per field
+
+  Boundary value tests (functional depth, HIGH risk):
+    For each text field (from discovery):
+      - Max length + 1 characters → expect 400 (or truncation)
+      - Special characters: quotes, slashes, unicode, emojis → expect 200 or 400 (not 500)
+      - Empty string vs null vs missing field (3 different cases)
+    For each numeric field:
+      - Zero → expect 200 or 400 (depends on business rule)
+      - Negative number → expect 400 (for quantities, prices, counts)
+      - Very large number (Number.MAX_SAFE_INTEGER) → expect 400 or valid handling
+    For each date field:
+      - Date in far past (1900-01-01) → expect 400 or valid handling
+      - Date in far future (2099-12-31) → expect 400 or valid handling
+      - Invalid date format ("not-a-date") → expect 400
+    Coverage: // @covers-interaction: boundary-test
+
+  Error message quality (functional depth, HIGH risk):
+    When a 400 response is returned, verify the error message is descriptive:
+      BAD:  expect(response.status()).toBe(400); // only checks status
+      GOOD: expect(response.status()).toBe(400);
+            const body = await response.json();
+            expect(body.message || body.error).toBeDefined();
+            expect((body.message || body.error).length).toBeGreaterThan(5);
+    If error body is empty or just "Bad Request" → create MEDIUM bug (unhelpful error message)
+
+  For MEDIUM risk: include empty-body, missing-required-field, and error message quality tests.
+  For LOW risk: skip negative tests.
+
+MULTI-STEP FLOW TESTING (functional depth, HIGH risk):
+
+  For every entity with CRUD API endpoints, generate a CRUD lifecycle test:
+    test('CRUD lifecycle: [entity]', async ({ request }) => {
+      // 1. CREATE
+      const createRes = await request.post('/api/entities', { data: payload });
+      expect(createRes.status()).toBe(201);
+      const created = await createRes.json();
+      const id = created.id;
+      // 2. READ and verify
+      const readRes = await request.get(`/api/entities/${id}`);
+      expect(readRes.status()).toBe(200);
+      expect((await readRes.json()).name).toBe(payload.name);
+      // 3. UPDATE
+      const updateRes = await request.put(`/api/entities/${id}`, { data: { name: 'Updated' } });
+      expect(updateRes.status()).toBe(200);
+      // 4. VERIFY update persisted
+      const verifyRes = await request.get(`/api/entities/${id}`);
+      expect((await verifyRes.json()).name).toBe('Updated');
+      // 5. DELETE
+      const delRes = await request.delete(`/api/entities/${id}`);
+      const delStatus = delRes.status();
+      expect(delStatus === 200 || delStatus === 204).toBe(true);
+      // 6. VERIFY gone
+      const goneRes = await request.get(`/api/entities/${id}`);
+      expect(goneRes.status()).toBe(404);
+    });
+
+  For auth flows (if login/register routes discovered):
+    Login → access protected resource → verify 200 → logout → reuse same auth → verify 401
+
+  For business workflows detected from route clusters:
+    Connect 2-3 related HIGH risk routes into a single flow test
+
+DATA INTEGRITY PROBES (functional depth, HIGH risk):
+
+  For entities with capacity limits or unique constraints (detected from discovery):
+    - Concurrent creation race condition:
+        const [res1, res2] = await Promise.all([
+          request.post('/api/entities', { data: payload1 }),
+          request.post('/api/entities', { data: payload2 }),
+        ]);
+        // At least one should succeed, verify constraint is enforced
+        const statuses = [res1.status(), res2.status()].sort();
+        // If both return 201 when only one should, create BLOCKING bug
+
+    - Duplicate creation:
+        const first = await request.post('/api/entities', { data: samePayload });
+        expect(first.status()).toBe(201);
+        const second = await request.post('/api/entities', { data: samePayload });
+        // Should get 409 (conflict) or 400, NOT another 201
+        const secondStatus = second.status();
+        expect(secondStatus === 400 || secondStatus === 409 || secondStatus === 422).toBe(true);
+
+    - Cascade delete verification:
+        // Create parent → create child linked to parent → delete parent → verify child state
+        // Child should be deleted (cascade) or return orphan-safe response
+
+    - Idempotency test:
+        // Submit same valid payload twice SEQUENTIALLY (not concurrently)
+        const first = await request.post('/api/entities', { data: payload });
+        expect(first.status()).toBe(201);
+        const second = await request.post('/api/entities', { data: payload });
+        // Second should be 409 (conflict), 200 (idempotent), or 201 (non-idempotent)
+        // But NEVER 500 — if 500, create BLOCKING bug
+        expect(second.status()).not.toBe(500);
+        // Document actual behavior in test comments
+
+  Coverage: // @covers-interaction: data-integrity
+
+SECURITY BOUNDARY TESTING (functional depth, HIGH risk):
+
+  For every authenticated endpoint with resource-specific access:
+    - Cross-resource access (IDOR):
+        // User A creates a resource, User B tries to access it
+        const created = await userARequest.post('/api/entities', { data: payload });
+        const id = (await created.json()).id;
+        const cross = await userBRequest.get(`/api/entities/${id}`);
+        const crossStatus = cross.status();
+        expect(crossStatus === 403 || crossStatus === 404).toBe(true); // NOT 200
+
+    - Role escalation:
+        // Regular user tries to assign admin role
+        const res = await regularUserRequest.post('/api/users/roles', {
+          data: { role: 'admin' }
+        });
+        expect(res.status()).toBe(403);
+
+    - Session invalidation after logout:
+        // Login → save auth → logout → reuse saved auth → expect 401
+        const loginRes = await request.post('/api/auth/login', { data: creds });
+        const token = (await loginRes.json()).token;
+        await request.post('/api/auth/logout', { headers: { Authorization: `Bearer ${token}` } });
+        const reuse = await request.get('/api/protected', {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        expect(reuse.status()).toBe(401);
+
+  For every endpoint accepting user text input:
+    - XSS probe:
+        const res = await request.post('/api/entities', {
+          data: { name: '<script>alert(1)</script>' }
+        });
+        if (res.status() === 201) {
+          const body = await res.json();
+          expect(body.name).not.toContain('<script>'); // should be escaped
+        }
+    - SQL injection probe:
+        const res = await request.post('/api/entities', {
+          data: { name: "'; DROP TABLE entities; --" }
+        });
+        expect(res.status()).not.toBe(500); // 500 = likely SQL injection vulnerability
+
+  Coverage: // @covers-interaction: security-boundary
+  Note: These are non-destructive probes only. No actual exploitation.
 
 Governance limits:
   - Max 30 test files
@@ -470,7 +804,57 @@ Governance limits:
   - Log skipped routes in discovery_warnings
 ```
 
-### Phase 4.5: DRY-RUN GATE
+### Phase 4.5: MISSING FUNCTIONALITY ANALYSIS
+
+```
+Analyze discovery data (sitemap.json, api-calls.json, forms, tables) to find gaps
+a senior QA engineer would flag. Output as MISSING_FUNCTIONALITY_REPORT block.
+
+Gap detection rules:
+
+  Missing CRUD operations:
+    - If POST /api/entities exists but no PUT → flag "Entity has create but no edit"
+    - If POST /api/entities exists but no DELETE → flag "Entity has create but no delete"
+    - Severity: HIGH (incomplete lifecycle = data management gap)
+
+  Missing pagination:
+    - If GET endpoint returns array and no query params for limit/offset/page/cursor → flag
+    - Evidence: response body is array with no pagination metadata
+    - Severity: MEDIUM (performance + UX gap)
+
+  Missing search/filter:
+    - If UI has table/list with > 5 potential items but no search input discovered → flag
+    - If GET list endpoint has no query params for search/filter/q → flag
+    - Severity: MEDIUM (UX gap)
+
+  Missing error pages:
+    - If no 404 page discovered (navigate to /nonexistent-page-xyz) → flag
+    - If no error boundary for 500 errors → flag
+    - Severity: LOW (UX polish)
+
+  Missing confirmation dialogs:
+    - If DELETE endpoints exist but no confirmation modal/dialog discovered for delete actions → flag
+    - Severity: HIGH (destructive action without safeguard)
+
+  Missing loading states:
+    - If forms exist but no loading/spinner/disabled-button state observed during submission → flag
+    - Severity: LOW (UX polish)
+
+  Missing input validation:
+    - If forms have text inputs but no client-side validation errors appear for empty/invalid data → flag
+    - Evidence: submit empty form and check if any validation feedback appears
+    - Severity: HIGH (data integrity risk)
+
+  Missing rate limiting:
+    - If auth endpoints (login, register, password-reset) exist → check for rate limit headers
+    - Send 5 rapid requests → if all succeed with no 429 → flag
+    - Severity: HIGH (security risk — brute force attack vector)
+
+Output MISSING_FUNCTIONALITY_REPORT block (see docs/RESULT_SCHEMAS.md for schema).
+This is a SEPARATE output from QA_RESULT — both must be emitted.
+```
+
+### Phase 4.6: DRY-RUN GATE
 
 ```
 Before executing the full suite:
@@ -582,7 +966,13 @@ Parse STRATEGIST_VERDICT:
 ```
 Write .qa-summary.md (final, max 200 tokens)
 
-Emit QA_RESULT block with all fields:
+FIRST: Emit MISSING_FUNCTIONALITY_REPORT block (if gaps found during Phase 4.5):
+  See docs/RESULT_SCHEMAS.md for schema.
+  This is a SEPARATE output — emit it BEFORE QA_RESULT.
+  If no gaps were found during Phase 4.5, skip this block.
+  Include all detected gaps with category, severity, location, description, evidence, recommendation.
+
+THEN: Emit QA_RESULT block with all fields:
   task_id, status, rounds_run,
   depth,                        # "smoke" or "functional"
   tests_generated,              # total tests written to disk
@@ -685,9 +1075,17 @@ Before emitting QA_RESULT:
 - [ ] Strategist risk classification received (or --skip-strategy used)
 - [ ] Tests follow playwright-e2e skill patterns
 - [ ] Tests have beforeEach/afterEach isolation — no shared state
-- [ ] No cross-org security tests in generated suite (deferred to L3)
+- [ ] No multi-tenant cross-organization security tests in generated suite (deferred to L3)
 - [ ] Coverage annotations present in all tests (@covers-route, @covers-api, @covers-interaction)
 - [ ] Functional depth: forms have fill+submit tests, APIs have CRUD tests, buttons have click tests
+- [ ] Assertion strictness: no toContain with status arrays, no toHaveProperty without value
+- [ ] 5xx responses treated as BLOCKING bugs (never accepted as valid outcomes)
+- [ ] State verification: POST/PUT/DELETE tests include follow-up GET verification
+- [ ] Negative tests: HIGH risk API endpoints have empty-body and missing-field tests
+- [ ] Multi-step flows: at least one CRUD lifecycle test for HIGH risk entity groups
+- [ ] Data integrity probes: concurrent creation/duplicate tests for HIGH risk entities
+- [ ] Security boundary tests: IDOR, role escalation, session invalidation for HIGH risk endpoints
+- [ ] MISSING_FUNCTIONALITY_REPORT emitted with gaps found during discovery analysis
 - [ ] Dry-run gate passed (≥ 2/3 sample tests passing) before full suite
 - [ ] Tests executed with JSON reporter
 - [ ] Coverage tracked (routes + APIs discovered vs tested)

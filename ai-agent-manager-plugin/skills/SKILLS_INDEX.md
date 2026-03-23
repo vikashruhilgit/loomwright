@@ -27,11 +27,11 @@ Comprehensive index of all skills available in the AI Agent Manager plugin.
 | Commit | `commit/` | — (reference) | ~400 | 1.0.0 | 2026-03 |
 | Pattern Detector | `pattern-detector/` | Code Reviewer (reference) | ~500 | 1.0.0 | 2026-03 |
 | Context7 Lookup | `context7-lookup/` | Launch Pad (preload), Code Reviewer (preload), Red Team Reviewer (preload) | ~300 | 1.0.0 | 2026-03 |
-| Unit Testing | `unit-testing/` | Worker (reference), Code Reviewer (reference) | ~800 | 1.0.0 | 2026-03 |
-| Error Handling | `error-handling/` | Worker (reference), Code Reviewer (reference) | ~900 | 1.0.0 | 2026-03 |
+| Unit Testing | `unit-testing/` | Worker (reference), Code Reviewer (preload) | ~800 | 1.0.0 | 2026-03 |
+| Error Handling | `error-handling/` | Worker (reference), Code Reviewer (preload) | ~900 | 1.0.0 | 2026-03 |
 | CI/CD | `ci-cd/` | Orchestrator (reference), Worker (reference) | ~900 | 1.0.0 | 2026-03 |
 | Docker | `docker/` | Worker (reference) | ~800 | 1.0.0 | 2026-03 |
-| Monitoring & Observability | `monitoring-observability/` | Red Team Reviewer (reference), Code Reviewer (reference) | ~900 | 1.0.0 | 2026-03 |
+| Monitoring & Observability | `monitoring-observability/` | Red Team Reviewer (reference), Code Reviewer (preload) | ~900 | 1.0.0 | 2026-03 |
 
 ## Product / Discovery
 

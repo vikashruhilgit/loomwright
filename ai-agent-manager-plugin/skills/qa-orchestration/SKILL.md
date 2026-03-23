@@ -171,7 +171,9 @@ Session 1: /qa-executor --plan
   → No tests run
 
 Session 2: /qa-executor --scope feature:auth
-  → Tests auth routes deeply (functional depth)
+  → Deep runtime crawl: launches browser, visits every scope route,
+    discovers forms/buttons/tables/APIs, overrides plan's static data
+  → Generates and runs tests with functional depth
   → Updates plan.json: auth status → "completed"
   → Updates coverage.json: routes 6/89, apis 6/230
 

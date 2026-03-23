@@ -12,7 +12,7 @@
 | Supervisor | yes | yes | yes | no | no | via Context-Keeper | inherit |
 | Execute Manager | yes | no | yes | no | no | via Context-Keeper | inherit |
 | Worker | no | yes | yes | no | yes | no | inherit |
-| Code Reviewer | no | no | yes | yes | no | no | inherit |
+| Code Reviewer | no | no | yes (+ LSP) | yes | no | no | inherit (effort: high, permissionMode: plan) |
 | Context-Keeper | no | yes | no | no | no | sole writer | haiku |
 | Launch Pad | no | yes | yes | no | no | jobs/pending/ | inherit |
 | Product Owner | no | no | yes | no | no | no | inherit |
@@ -65,8 +65,9 @@ These are **defense-in-depth** restrictions for accidental misuse, NOT security 
 
 - **Location:** Per-agent SubagentStop hooks (hook execution layer)
 - **Reference:** `docs/RESULT_SCHEMAS.md`
-- **Per-agent hooks:** Worker, Execute Manager (in agent frontmatter)
-- **Cross-cutting hooks:** Code Reviewer, QA Executor (in `hooks.json`)
+- **Per-agent hooks:** Worker, Execute Manager (SubagentStop in agent frontmatter), Code Reviewer (Stop in agent frontmatter)
+- **Cross-cutting hooks:** Code Reviewer, QA Executor (SubagentStop in `hooks.json`)
+- **Dual-hook note:** Code Reviewer intentionally has both a per-agent `Stop` hook (validates CODE_REVIEW_RESULT block exists before finishing — completeness gate) AND a cross-cutting `SubagentStop` hook (validates output schema after completion — format gate). These are complementary: Stop catches incomplete reviews, SubagentStop validates structure.
 - **Never duplicated** in Supervisor or plugin runtime
 
 ---
@@ -135,7 +136,7 @@ Prevents runaway refactors and reviewer context explosion.
 
 ## Result Schema Versioning
 
-All result schemas include `schema_version: 1`.
+All result schemas include a `schema_version` field. CODE_REVIEW_RESULT is at v2 (with issue categories); all others remain at v1.
 
 1. Hooks verify `schema_version` is supported before validating fields
 2. If `schema_version` is unrecognized, hook warns but does not block

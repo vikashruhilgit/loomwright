@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "prompt",
-            "prompt": "A Code Reviewer agent just completed. Review its output to verify: (1) it produced a CODE_REVIEW_RESULT block with schema_version field equal to 1, (2) decision is one of PASS, FAIL, or NEEDS_HUMAN, (3) if FAIL or NEEDS_HUMAN, issues array is non-empty with severity and description, (4) summary field is present. Context: $ARGUMENTS. Respond with {\"ok\": true} if valid, or {\"ok\": false, \"reason\": \"...\"} if the output is malformed or missing required fields.",
+            "prompt": "A Code Reviewer agent just completed. Review its output to verify: (1) it produced a CODE_REVIEW_RESULT block with schema_version field equal to 1 or 2, (2) decision is one of PASS, FAIL, or NEEDS_HUMAN, (3) if FAIL or NEEDS_HUMAN, issues array is non-empty with severity and description, (4) if schema_version is 2, each issue must include category (new, pre_existing, or nit), (5) if decision is FAIL, at least one issue must have category 'new' with severity BLOCKING or HIGH, (6) summary field is present. Context: $ARGUMENTS. Respond with {\"ok\": true} if valid, or {\"ok\": false, \"reason\": \"...\"} if the output is malformed or missing required fields.",
             "timeout": 30
           }
         ]

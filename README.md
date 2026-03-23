@@ -6,7 +6,7 @@ A Claude Code plugin for AI agents to collaborate on software projects. 11 speci
 
 > **Install the plugin and run slash commands instead of manually managing agents.**
 >
-> **NEW in v6:** Structured result schemas, failure escalation rules, merge safety gate, session logging, job lifecycle tracking (pending→in-progress→done→failed), per-agent hooks, color-coded status lines, architecture contracts. Plus all v5 features: dual-agent QA, `/launch-pad` for goal preparation, and `/supervisor` for fully autonomous parallel workflows.
+> **NEW in v7:** Enhanced Code Reviewer (LSP diagnostics, read-only mode, issue categorization: new/pre_existing/nit), senior-grade QA (strict assertions, negative testing, CRUD lifecycle, data integrity probes, security boundary tests, missing functionality detection with `MISSING_FUNCTIONALITY_REPORT`), session-based QA (`--plan`, `--scope`, `--continue`), Strategist assertion quality audit. Plus all v6 features: structured result schemas, failure escalation, merge safety gate, session logging, per-agent hooks, architecture contracts.
 
 ---
 
@@ -125,8 +125,8 @@ Then call `switch_database(host="prod.example.com")` at runtime to switch betwee
 | **Code Reviewer**     | `/code-reviewer src/`           | Review code → output PASS/FAIL/NEEDS_HUMAN                         | After writing code              |
 | **Commit** (skill)    | `/commit`                       | Stage changes → create conventional commits                        | Ready to commit                 |
 | **Red Team Reviewer** | `/red-team-reviewer`            | Adversarial audit → find production failures                       | Pre-launch, security            |
-| **QA Strategist**     | `/qa-strategist src/`           | Risk-based test strategy → coverage targets                        | Before QA, strategy planning    |
-| **QA Executor**       | `/qa-executor`                  | Discover app → generate + run Playwright tests → QA_RESULT         | Automated QA                    |
+| **QA Strategist**     | `/qa-strategist src/`           | Risk-based test strategy → coverage targets → assertion quality audit | Before QA, strategy planning    |
+| **QA Executor**       | `/qa-executor`                  | Discover → generate strict tests → find missing functionality → QA_RESULT | Automated QA                    |
 
 
 ### Internal Agents (3)
@@ -204,15 +204,19 @@ DISCOVER: Static analysis → Runtime crawl → Selective vision → Merge & gat
     ↓
 STRATEGY: QA Strategist classifies routes (HIGH/MEDIUM/LOW risk)
     ↓
-GENERATE: Playwright tests (UI/E2E + API, role-based locators)
+GENERATE: Strict tests (value assertions, negative tests, CRUD lifecycle,
+          data integrity probes, security boundary tests)
+    ↓
+GAP ANALYSIS: Missing functionality detection → MISSING_FUNCTIONALITY_REPORT
     ↓
 EXECUTE: npx playwright test --reporter=json
     ↓
 COVERAGE: Routes discovered vs tested, APIs discovered vs tested
     ↓
-AUDIT: QA Strategist reviews results → STRATEGIST_VERDICT
+AUDIT: QA Strategist reviews results + assertion quality + gaps → STRATEGIST_VERDICT
     ↓
 QA_RESULT: passed | failed | needs_human
+MISSING_FUNCTIONALITY_REPORT: gaps found in the app
 ```
 
 **Requirements:**
@@ -223,11 +227,78 @@ QA_RESULT: passed | failed | needs_human
 
 **Quick commands:**
 ```bash
-/qa-executor                              # Full QA run
+/qa-executor                              # Full QA run (functional depth)
 /qa-executor --skip-strategy              # Skip Strategist, use defaults
 /qa-executor --url http://localhost:3000  # Override URL
+/qa-executor --depth smoke                # Quick smoke tests only
+/qa-executor --depth functional           # Deep tests (default)
 /qa-strategist src/                       # Strategy only (no tests)
+/qa-strategist --audit .qa-summary.md     # Audit existing QA results
 ```
+
+### Session-Based QA (Large Apps)
+
+For apps with many routes, use session-based QA to test in chunks:
+
+```bash
+# Step 1: Create a test plan (discovers all routes, groups into scopes)
+/qa-executor --plan
+
+# Step 2: Test one scope at a time
+/qa-executor --scope auth            # Test auth scope
+/qa-executor --scope tournaments     # Test tournaments scope
+/qa-executor --scope billing         # Test billing scope
+
+# Step 3: Continue with next unfinished scope
+/qa-executor --continue              # Auto-picks next pending scope
+
+# Step 4: Check cumulative coverage
+# coverage.json tracks routes_tested/routes_total across sessions
+```
+
+**How it works:**
+- `--plan` runs discovery and creates `.qa-session/plan.json` with scopes sorted by risk priority
+- `--scope <name>` tests only routes in that scope, updates `.qa-session/coverage.json`
+- `--continue` picks the next `pending` scope from the plan automatically
+- Coverage accumulates across sessions — no retesting already-covered routes
+
+### What the QA Agent Tests
+
+**Assertion strictness (all modes):**
+- Exact HTTP status assertions (`toBe(200)`, never `toContain([200, 500])`)
+- Response body VALUE assertions (not just property existence)
+- State verification after mutations (GET after POST/PUT/DELETE)
+- 5xx responses are ALWAYS BLOCKING bugs — never accepted
+
+**Negative testing (functional depth, HIGH/MEDIUM risk):**
+- Empty body → expect 400
+- Missing required fields → expect 400 with field name in error
+- Wrong types → expect 400
+- No auth / invalid auth → expect 401
+
+**Multi-step flows (functional depth, HIGH risk):**
+- CRUD lifecycle: create → read → update → verify → delete → verify gone
+- Auth lifecycle: login → access protected → logout → verify session revoked
+
+**Data integrity probes (functional depth, HIGH risk):**
+- Concurrent creation race conditions (`Promise.all`)
+- Duplicate creation → expect 409/400
+- Cascade delete verification
+
+**Security boundary tests (functional depth, HIGH risk):**
+- Cross-resource access (IDOR) → expect 403/404
+- Role escalation → expect 403
+- Session invalidation after logout
+- XSS/SQL injection probes (non-destructive)
+
+**Missing functionality detection (all modes):**
+- Missing CRUD operations (create exists but no edit/delete)
+- Missing pagination on list endpoints
+- Missing search/filter on data tables
+- Missing input validation on forms
+- Missing rate limiting on auth endpoints
+- Missing confirmation dialogs on destructive actions
+- Output: `MISSING_FUNCTIONALITY_REPORT` with severity + recommendations
 
 ---
 

@@ -1,6 +1,9 @@
 ---
-description: Review code changes against patterns, flag issues, detect new patterns
+description: Review code changes with LSP diagnostics, issue categorization, and pattern detection
 ---
+
+!`git diff --stat HEAD~1`
+!`git log --oneline -5`
 
 # Command: /code-reviewer
 
@@ -24,18 +27,20 @@ description: Review code changes against patterns, flag issues, detect new patte
 
 1. **Auto-detects your project** by finding CLAUDE.md
 2. **Reads project patterns** from CLAUDE.md
-3. **Reviews specified files** or recent git changes
-4. **Flags issues** against code patterns:
-   - Type safety violations
+3. **Reads review rules** from optional `REVIEW.md` (falls back to CLAUDE.md)
+4. **Reviews specified files** or recent git changes
+5. **Flags issues** against code patterns with category tagging (new/pre_existing/nit):
+   - Type safety violations (verified via LSP language server diagnostics)
    - Security concerns
    - Performance issues
    - Pattern inconsistencies
-5. **Validates CLAUDE.md accuracy** (flags outdated patterns against actual codebase)
-6. **Enforces domain-specific rules:**
+6. **Validates CLAUDE.md accuracy** (flags outdated patterns against actual codebase)
+7. **Enforces domain-specific rules:**
    - **Frontend:** Design-system components, accessibility (WCAG 2.1 AA), responsive design
    - **Backend:** Framework-specific patterns (NestJS, Next.js API, API Gateway)
-7. **Detects new patterns** for CLAUDE.md proposal
-8. **Provides structured feedback** with suggestions
+8. **Detects new patterns** for CLAUDE.md proposal
+9. **Provides structured feedback** with suggestions
+10. **Enforces read-only mode** (permissionMode: plan — reviewer never modifies files)
 
 ## Example Output
 
@@ -57,22 +62,22 @@ Status: No breaking changes detected
 - Good: Follows Conventional Commits format
 
 ### ⚠️ Issues Found
-1. TypeScript: Missing type annotation on `theme` parameter
+1. TypeScript: Missing type annotation on `theme` parameter `new`
    - Location: src/hooks/useDarkMode.ts:12
    - Severity: Medium
    - Fix: Add `theme: 'light' | 'dark'` type
 
-2. Security: localStorage not validating input
+2. Security: localStorage not validating input `new`
    - Location: src/components/DarkMode.tsx:45
    - Severity: High
    - Fix: Sanitize localStorage value before using
 
-3. Pattern Mismatch: CLAUDE.md documents Redux but code uses Context API
+3. Pattern Mismatch: CLAUDE.md documents Redux but code uses Context API `pre_existing`
    - Location: CLAUDE.md:45 vs src/context/AuthContext.tsx
    - Severity: Medium
    - Fix: Update CLAUDE.md to reflect Context API pattern or refactor code to use Redux
 
-4. UI Consistency: Using raw <button> instead of design-system component
+4. UI Consistency: Using raw <button> instead of design-system component `nit`
    - Location: src/components/LoginForm.tsx:23
    - Severity: Medium
    - Fix: Replace with `<Button variant="primary">` from @/components/ui/button
@@ -217,7 +222,7 @@ Review code changes against existing patterns, flag correctness/security/perform
    - Are API endpoints structured correctly?
 
 3. **Flag Issues**
-   - **Type Safety:** Missing types, unsafe casts, implicit any
+   - **Type Safety:** Missing types, unsafe casts, implicit any (use LSP diagnostics when available)
    - **Security:** Input validation, SQL injection risks, XSS, CSRF, secrets in code
    - **Performance:** N+1 queries, memory leaks, unnecessary re-renders, bundle size
    - **Testing:** Low coverage, missing edge cases, brittle tests
@@ -261,12 +266,12 @@ Review code changes against existing patterns, flag correctness/security/perform
 - [What the code does well, aligns with patterns]
 
 ### ⚠️ Issues Found
-1. **[Issue Title]** (Severity: High/Medium/Low)
+1. **[Issue Title]** (Severity: High/Medium/Low) `[new|pre_existing|nit]`
    - File: [path]:[line]
    - Problem: [Explain the issue]
    - Suggestion: [How to fix it]
 
-2. **[Issue Title]** (Severity: ...)
+2. **[Issue Title]** (Severity: ...) `[new|pre_existing|nit]`
    - File: [path]:[line]
    - Problem: [Explain]
    - Suggestion: [Fix]

@@ -129,8 +129,8 @@ QA Plan for Sports Management Platform
 Priority  Scope           Risk    Routes  APIs  Est. Tests  Status
 ────────  ──────────────  ──────  ──────  ────  ──────────  ───────
 1         auth            HIGH    3       3     18          pending
-2         tournaments     HIGH    4       4     22          pending
-3         leagues         HIGH    3       3     15          pending
+2         orders     HIGH    4       4     22          pending
+3         reports         HIGH    3       3     15          pending
 4         organizations   MEDIUM  8       12    20          pending
 5         browse          MEDIUM  3       3     8           pending
 ...
@@ -221,7 +221,7 @@ Generates navigate-and-verify tests only. Fast, shallow.
 ```
 /qa-executor --plan                        # Survey app, create plan (no tests)
 /qa-executor --scope feature:auth          # Test auth deeply
-/qa-executor --scope feature:tournaments   # Test tournaments deeply
+/qa-executor --scope feature:orders   # Test orders deeply
 /qa-executor --continue                    # Auto-pick next pending scope
 /qa-executor --continue                    # ...and the next
 ```
@@ -366,51 +366,74 @@ test.describe('Login', () => {
 #### API CRUD Tests (functional)
 
 ```typescript
-test.describe('Products API', () => {
-  const uniqueName = `test-product-${Date.now()}`;
+test.describe('Items API', () => {
+  const uniqueName = `test-item-${Date.now()}`;
   let createdId: string;
 
-  // @covers-api: POST /api/products
+  // @covers-api: POST /api/items
   // @covers-interaction: api-post
-  test('should create product with valid data', async ({ request }) => {
-    const response = await request.post('/api/products', {
+  test('should create item with valid data', async ({ request }) => {
+    const response = await request.post('/api/items', {
       data: { name: uniqueName, price: 29.99, category: 'test' },
     });
     expect(response.status()).toBe(201);
     const body = await response.json();
-    expect(body).toHaveProperty('id');
+    expect(typeof body.id).toBe('string');
+    expect(body.id.length).toBeGreaterThan(0);
     expect(body.name).toBe(uniqueName);
+    expect(body.price).toBe(29.99);
     createdId = body.id;
   });
 
-  // @covers-api: GET /api/products/:id
+  // @covers-api: GET /api/items/:id
   // @covers-interaction: api-get
-  test('should get product by ID', async ({ request }) => {
-    const response = await request.get(`/api/products/${createdId}`);
+  test('should get item by ID', async ({ request }) => {
+    const response = await request.get(`/api/items/${createdId}`);
     expect(response.status()).toBe(200);
     const body = await response.json();
-    expect(body).toHaveProperty('name');
-    expect(body).toHaveProperty('price');
+    expect(body.name).toBe(uniqueName);
+    expect(body.price).toBe(29.99);
   });
 
-  // @covers-api: PUT /api/products/:id
+  // @covers-api: PUT /api/items/:id
   // @covers-interaction: api-put
-  test('should update product', async ({ request }) => {
-    const response = await request.put(`/api/products/${createdId}`, {
+  test('should update item', async ({ request }) => {
+    const response = await request.put(`/api/items/${createdId}`, {
       data: { name: `${uniqueName}-updated` },
     });
     expect(response.status()).toBe(200);
     const body = await response.json();
-    expect(body.name).toContain('updated');
+    expect(body.name).toBe(`${uniqueName}-updated`);
+
+    // State verification: confirm update persisted
+    const verify = await request.get(`/api/items/${createdId}`);
+    expect((await verify.json()).name).toBe(`${uniqueName}-updated`);
   });
 
-  // @covers-api: DELETE /api/products/:id
+  // @covers-api: DELETE /api/items/:id
   // @covers-interaction: api-delete
-  test('should delete product and verify gone', async ({ request }) => {
-    const del = await request.delete(`/api/products/${createdId}`);
-    expect([200, 204]).toContain(del.status());
-    const get = await request.get(`/api/products/${createdId}`);
+  test('should delete item and verify gone', async ({ request }) => {
+    const del = await request.delete(`/api/items/${createdId}`);
+    const delStatus = del.status();
+    expect(delStatus === 200 || delStatus === 204).toBe(true);
+    const get = await request.get(`/api/items/${createdId}`);
     expect(get.status()).toBe(404);
+  });
+
+  // @covers-interaction: negative-test
+  test('should reject empty body', async ({ request }) => {
+    const response = await request.post('/api/items', { data: {} });
+    expect(response.status()).toBe(400); // NOT 500
+  });
+
+  // @covers-interaction: negative-test
+  test('should reject missing required field', async ({ request }) => {
+    const response = await request.post('/api/items', {
+      data: { price: 10 }, // missing 'name'
+    });
+    expect(response.status()).toBe(400);
+    const body = await response.json();
+    expect(JSON.stringify(body)).toMatch(/name/i);
   });
 });
 ```
@@ -418,11 +441,11 @@ test.describe('Products API', () => {
 #### Data Rendering Test (functional)
 
 ```typescript
-test.describe('Tournament List', () => {
-  // @covers-route: /tournaments
+test.describe('Item List', () => {
+  // @covers-route: /orders
   // @covers-interaction: data-rendering
-  test('should render tournament table with data', async ({ page }) => {
-    await page.goto('/tournaments');
+  test('should render data table with data', async ({ page }) => {
+    await page.goto('/orders');
     const table = page.getByRole('table');
     await expect(table).toBeVisible();
     // Verify column headers from discovery
@@ -617,18 +640,18 @@ Routes found: 12
   /auth/register (page.tsx)
   /dashboard     (page.tsx, layout with auth middleware)
   /dashboard/settings (page.tsx)
-  /products      (page.tsx)
-  /products/[id] (page.tsx)
+  /items      (page.tsx)
+  /items/[id] (page.tsx)
   /api/auth/login     (POST)
   /api/auth/register  (POST)
   /api/users          (GET)
-  /api/products       (GET, POST)
-  /api/products/:id   (GET, PUT, DELETE)
+  /api/items       (GET, POST)
+  /api/items/:id   (GET, PUT, DELETE)
 
 ### Runtime Crawl (Phase B)
 Pages crawled: 8 (depth 2)
 API calls intercepted: 6
-Seed data: products(24), users(3)
+Seed data: items(24), users(3)
 Console errors: 0
 
 ### Selective Vision (Phase C)
@@ -646,8 +669,8 @@ Note: 4 routes require authentication for runtime verification
 
 ```
 Risk Classification:
-  HIGH: /auth/login, /auth/register, /dashboard, /api/auth/*, /api/products (POST/PUT/DELETE)
-  MEDIUM: /products, /products/[id], /dashboard/settings, /api/users, /api/products (GET)
+  HIGH: /auth/login, /auth/register, /dashboard, /api/auth/*, /api/items (POST/PUT/DELETE)
+  MEDIUM: /items, /items/[id], /dashboard/settings, /api/users, /api/items (GET)
   LOW: /
 
 Coverage Targets: HIGH 85%, MEDIUM 70%, LOW 50%
@@ -659,19 +682,19 @@ Coverage Targets: HIGH 85%, MEDIUM 70%, LOW 50%
 Generated 8 test files (5-10 tests each, functional depth):
   e2e/tests/frontend/auth.spec.ts            (8 tests, HIGH — login form valid/invalid, register form valid/invalid/empty)
   e2e/tests/frontend/dashboard.spec.ts       (4 tests, HIGH — data rendering, auth gate)
-  e2e/tests/frontend/products.spec.ts        (5 tests, MEDIUM — list rendering, detail page, create form)
+  e2e/tests/frontend/items.spec.ts        (5 tests, MEDIUM — list rendering, detail page, create form)
   e2e/tests/frontend/settings.spec.ts        (2 tests, MEDIUM — form submission)
   e2e/tests/frontend/home.spec.ts            (1 test, LOW — content renders)
   e2e/tests/api/auth.spec.ts                 (6 tests, HIGH — POST valid/invalid, 401 without token)
   e2e/tests/api/users.spec.ts                (3 tests, MEDIUM — GET body validation, auth)
-  e2e/tests/api/products.spec.ts             (7 tests, MEDIUM — full CRUD: POST/GET/PUT/DELETE + validation)
+  e2e/tests/api/items.spec.ts             (7 tests, MEDIUM — full CRUD: POST/GET/PUT/DELETE + validation)
 Total: 36 tests across 8 files
 ```
 
 ### Phase 4.5: Dry-Run Gate
 
 ```
-Dry-run: 3 files selected (auth-login, products, home)
+Dry-run: 3 files selected (auth-login, items, home)
 Results: 3/3 passed
 Gate: PASSED — proceeding to full suite
 ```
@@ -702,15 +725,15 @@ Bugs found: 3
     Expected: validation error on empty email
     Actual: form submits with empty email
     @covers-interaction: validation-error
-  MEDIUM - PUT /api/products/:id returns 200 but doesn't update name
-    API: PUT /api/products/:id (MEDIUM risk)
-    Expected: updated product name in response
+  MEDIUM - PUT /api/items/:id returns 200 but doesn't update name
+    API: PUT /api/items/:id (MEDIUM risk)
+    Expected: updated item name in response
     Actual: response shows original name
     @covers-interaction: api-put
-  LOW - Product page missing alt text on images
-    Route: /products/[id] (MEDIUM risk)
+  LOW - Detail page missing alt text on images
+    Route: /items/[id] (MEDIUM risk)
     Expected: img elements have alt attributes
-    Actual: alt="" on product images
+    Actual: alt="" on detail images
 ```
 
 ### Phase 8: Strategist Audit

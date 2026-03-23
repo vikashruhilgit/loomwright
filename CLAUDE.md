@@ -107,8 +107,9 @@ Each agent is a Markdown prompt file (`agents/[name].md`):
 - **Purpose:** Provide precise feedback; output PASS/FAIL/NEEDS_HUMAN decision
 - **When to use:** After writing code, need review
 - **Command:** `/code-reviewer src/` (specify files/dirs to review)
-- **Checks:** Type safety, security, performance, pattern alignment, test coverage
-- **Outputs:** Issues (BLOCKING/HIGH/MEDIUM/LOW) + decision + CLAUDE.md proposals
+- **Checks:** Type safety (via LSP), security, performance, pattern alignment, test coverage
+- **Features:** Read-only mode (permissionMode: plan), deep analysis (effort: high), pre-existing issue tagging, optional REVIEW.md support
+- **Outputs:** Issues (BLOCKING/HIGH/MEDIUM/LOW) with category (new/pre_existing/nit) + decision + CLAUDE.md proposals
 
 #### **Red Team Reviewer** (`/red-team-reviewer`)
 - **Purpose:** Adversarial audit — find what breaks in production
@@ -125,11 +126,12 @@ Each agent is a Markdown prompt file (`agents/[name].md`):
 - **Outputs:** Risk classification, coverage targets, STRATEGIST_VERDICT block
 
 #### **QA Executor** (`/qa-executor`)
-- **Purpose:** Discover app, generate and run Playwright tests, orchestrate debate loop
-- **When to use:** Automated QA — test generation, execution, and coverage tracking
+- **Purpose:** Discover app, generate senior-grade Playwright tests, find missing functionality, orchestrate debate loop
+- **When to use:** Automated QA — test generation, execution, gap detection, and coverage tracking
 - **Command:** `/qa-executor [--url http://...] [--rounds 1|2|3] [--skip-strategy]`
-- **Workflow:** Detect URL → 4-phase discovery → strategy → generate → execute → coverage → bugs → audit → emit
-- **Outputs:** Discovery Map, Playwright tests, .qa-summary.md, QA_RESULT block
+- **Workflow:** Detect URL → 4-phase discovery → strategy → generate (strict assertions, negative tests, CRUD lifecycle, data integrity probes, security boundary tests) → gap analysis → execute → coverage → bugs → audit → emit
+- **Features:** Assertion strictness (5xx = BLOCKING bug), negative testing, multi-step flows, data integrity probes, security boundary tests, missing functionality detection
+- **Outputs:** Discovery Map, Playwright tests, .qa-summary.md, QA_RESULT block, MISSING_FUNCTIONALITY_REPORT block
 
 ### Agent Design Principles
 
@@ -283,7 +285,7 @@ ai-agent-manager/
 │   │   ├── ARCHITECTURE_CONTRACTS.md # Capability matrix, budgets, rules
 │   │   └── ARCHITECTURE.md          # Visual agent topology diagram
 │   └── .claude-plugin/
-│       └── plugin.json               # Plugin metadata (v6.1.0)
+│       └── plugin.json               # Plugin metadata (v7.1.0)
 │
 ├── .claude-plugin/
 │   ├── marketplace.json              # Marketplace definition
@@ -463,11 +465,11 @@ Before an agent completes work:
 ### Plugin Metadata
 
 - **Plugin Name:** `ai-agent-manager-plugin`
-- **Version:** 6.1.0
-- **Description:** AI agents with structured result schemas, failure escalation, merge safety gate, session logging, job lifecycle tracking, per-agent hooks, color-coded agents, architecture contracts, plan-first workflows, parallel orchestration, dual-agent QA with functional test depth (L1.5), session-based scoping, interaction depth auditing, and bundled MySQL MCP server
+- **Version:** 7.1.0
+- **Description:** AI agents with enhanced Code Reviewer (LSP diagnostics, effort:high, permissionMode:plan, schema v2 issue categories, REVIEW.md, Stop hook), structured result schemas, failure escalation, merge safety gate, session logging, job lifecycle tracking, per-agent hooks, color-coded agents, architecture contracts, plan-first workflows, parallel orchestration, dual-agent QA with functional test depth (L1.5), session-based scoping, interaction depth auditing, and bundled MySQL MCP server
 - **Agents:** 11 roles (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer, QA Strategist, QA Executor)
 - **Skills:** 44 reusable skill files (versioned with SKILLS_INDEX.md)
-- **Hooks:** 5 quality gate hooks — per-agent: SubagentStop (worker, execute-manager); cross-cutting: SubagentStop (code-reviewer, qa-executor), TaskCompleted
+- **Hooks:** 6 quality gate hooks — per-agent: SubagentStop (worker, execute-manager), Stop (code-reviewer); cross-cutting: SubagentStop (code-reviewer, qa-executor), TaskCompleted
 - **Docs:** RESULT_SCHEMAS.md, FAILURE_ESCALATION.md, ARCHITECTURE_CONTRACTS.md, ARCHITECTURE.md, QA_SYSTEM_BLUEPRINT.md
 - **Bundled MCP:** MySQL read-only MCP server (`vikashruhil-mysql-mcp`) — query impact analysis, schema inspection, multi-DB profiles
 - **Author:** vikash ruhil
@@ -509,9 +511,9 @@ Before an agent completes work:
 - Projects need only CLAUDE.md to get started (`.supervisor/` is auto-created, `.beads/` is optional)
 - Same agents work across different projects
 
-### Structured Contracts (v6.1.0)
+### Structured Contracts (v7.1.0)
 
-- **Result Schemas:** All agent result blocks (WORKER_RESULT, EXECUTE_RESULT, QA_RESULT, CODE_REVIEW_RESULT) follow strict schemas with `schema_version: 1` — see `docs/RESULT_SCHEMAS.md`
+- **Result Schemas:** Agent result blocks follow strict schemas — CODE_REVIEW_RESULT at `schema_version: 2` (with issue categories), all others at `schema_version: 1` — see `docs/RESULT_SCHEMAS.md`
 - **Failure Escalation:** Defined retry limits and escalation paths for all agents — see `docs/FAILURE_ESCALATION.md`
 - **Architecture Contracts:** Capability matrix, context budgets, timeout rules, worktree naming — see `docs/ARCHITECTURE_CONTRACTS.md`
 - **Job Lifecycle:** Briefs tracked through `pending/` → `in-progress/` → `done/`/`failed/` in `.supervisor/jobs/`
@@ -537,7 +539,8 @@ Hooks are split between **per-agent frontmatter** (primary validation) and **hoo
 |------|---------|----------|------------|
 | **SubagentStop** (worker) | Worker completes | Agent frontmatter | WORKER_RESULT with schema_version, task_id, status, files_modified |
 | **SubagentStop** (execute-manager) | Execute Manager completes | Agent frontmatter | EXECUTE_RESULT/EXECUTE_CHECKPOINT with required fields |
-| **SubagentStop** (code-reviewer) | Code Reviewer completes | hooks.json | CODE_REVIEW_RESULT with decision (PASS/FAIL/NEEDS_HUMAN) |
+| **SubagentStop** (code-reviewer) | Code Reviewer completes | hooks.json | CODE_REVIEW_RESULT v2 with decision, issue categories (new/pre_existing/nit) |
+| **Stop** (code-reviewer) | Code Reviewer finishing | Agent frontmatter | CODE_REVIEW_RESULT block present with required fields |
 | **SubagentStop** (qa-executor) | QA Executor completes | hooks.json | QA_RESULT with tests_generated, tests_passed, summary |
 | **TaskCompleted** | Any task marked complete | hooks.json | Task genuinely done, not abandoned or skipped |
 
@@ -567,7 +570,7 @@ Agents with `skills` in their frontmatter receive skill content pre-injected at 
 | Launch Pad | supervisor-readiness, context-setup, claude-md-validation, product-discovery, mvp-scoping, quality-checklist, context7-lookup | All discovery/validation/readiness knowledge needed |
 | Supervisor | workflow-management, async-orchestration, state-management, context-summarization, supervisor-readiness | Referenced in every run |
 | Orchestrator | quality-checklist | Defines review gate criteria for subtask creation |
-| Code Reviewer | quality-checklist, context7-lookup | Always needs quality criteria and library doc lookup |
+| Code Reviewer | quality-checklist, context7-lookup, unit-testing, error-handling, monitoring-observability | Always needs quality criteria, library doc lookup, and coverage/error/observability patterns |
 | Red Team Reviewer | context7-lookup | Mandatory for reality-checking library usage |
 | QA Strategist | qa-strategy, quality-checklist | Risk framework and quality gates always needed |
 | QA Executor | qa-strategy, playwright-e2e, quality-checklist | Discovery, test generation patterns, and gates |
@@ -630,7 +633,8 @@ Claude Code Agent Teams is an experimental feature providing native multi-agent 
 - **Crawl limits:** Max 30 pages, depth 3, same-origin only
 - **Single debate round:** Strategist audits once (multi-round is Level 2+)
 - **No state modeling:** L1 tests happy paths + basic errors only (state combinations are Level 2)
-- **No security/performance tests:** Non-destructive security and performance are Level 3
+- **Security boundary tests (non-destructive):** L1 includes IDOR, role escalation, session invalidation, XSS/SQLi probes for HIGH risk endpoints. Full adversarial security testing is Level 3.
+- **No performance tests:** Performance testing is Level 3.
 - **Coverage is inventory-level:** Tracks routes/APIs discovered vs tested, not behavioral coverage
 
 ---

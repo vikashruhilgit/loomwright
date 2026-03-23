@@ -59,6 +59,27 @@ coverage_weighted =
 
 ## 2. Test Depth Matrix
 
+> **CRITICAL:** Before evaluating or generating tests, read the Assertion Anti-Patterns and Depth Requirements below. Tests that violate these rules must be REJECTED.
+
+### Assertion Anti-Patterns (NEVER generate these — READ FIRST)
+
+| Anti-Pattern | Example | Why It's Bad | Correct Alternative |
+|---|---|---|---|
+| Status array toContain | `expect([200, 401, 500]).toContain(status)` | Accepts failures as valid | `expect(status).toBe(200)` |
+| Property existence only | `expect(body).toHaveProperty('name')` | Passes even if value is wrong | `expect(body.name).toBe('Expected Name')` |
+| Text length proxy | `expect(text.length).toBeGreaterThan(10)` | Passes for any non-empty text | `expect(heading).toHaveText(/dashboard/i)` |
+| Accept 5xx | `expect([200, 500]).toContain(status)` | Masks server errors | `expect(status).toBe(200)` + BLOCKING bug if 500 |
+| Mutation without verify | POST then assert 201 only | Doesn't prove data persisted | POST, then GET, then assert values match |
+| CSS selector locator | `page.locator('input[type="email"]')` | Breaks on DOM changes | `page.getByRole('textbox', { name: /email/i })` |
+
+### Assertion Depth Requirements per Risk Level
+
+| Risk Level | Status Assertions | Body Assertions | Negative Tests | State Verification | Multi-Step Flows | Boundary Tests | Pagination |
+|---|---|---|---|---|---|---|---|
+| **HIGH** | Exact (toBe) | Specific values | Empty, missing, wrong types, no-auth | Required (GET after mutation) | 1 CRUD lifecycle | Max length, special chars, zero/negative | Required if pagination params exist |
+| **MEDIUM** | Exact (toBe) | Specific values | Empty, missing fields | Required (GET after mutation) | Not required | Special chars only | Not required |
+| **LOW** | Exact (toBe) | Type + non-empty OK | Not required | Not required | Not required | Not required | Not required |
+
 ### By Depth Mode (L1)
 
 | Risk | smoke | functional (default) |
@@ -90,6 +111,10 @@ Tests are selected by matching **discovery signals** to patterns:
 | Modal detected | Open → interact → close → verify |
 | Table/list | Verify headers, row count, data renders |
 | Auth-gated route | No auth → 401/redirect |
+| API POST/PUT (negative) | Empty body → 400; Missing required fields → 400 with field name; Wrong types → 400 |
+| Auth endpoint (negative) | No token → 401; Invalid token → 401 |
+| Data integrity probe | Concurrent creation → verify constraint; Duplicate creation → verify 409 |
+| Security boundary | Cross-resource access → 403/404; Role escalation → 403; Session reuse after logout → 401 |
 
 ---
 

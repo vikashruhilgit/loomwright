@@ -181,6 +181,47 @@ Step 3: EVALUATE INTERACTION DEPTH (functional depth only)
 
   If depth mode is "smoke": skip this step (smoke tests are not expected to have interaction depth)
 
+Step 3.5: EVALUATE ASSERTION QUALITY (functional depth only)
+  Read 3-5 generated test files (prioritize HIGH risk routes):
+    Glob: e2e/tests/**/*.spec.ts
+    Read: first 3 files matching HIGH risk routes, then 2 MEDIUM risk
+
+  Check for assertion anti-patterns and count occurrences:
+    ANTI-PATTERN: toContain with status code array
+      Pattern: expect([...]).toContain(status) or expect([200, ...]).toContain
+      Verdict: FLAG as "lenient-status"
+    ANTI-PATTERN: toHaveProperty without value assertion
+      Pattern: expect(body).toHaveProperty('fieldName') with no subsequent value check
+      Verdict: FLAG as "existence-only"
+    ANTI-PATTERN: text length as content proxy
+      Pattern: innerText().length > N without asserting specific text
+      Verdict: FLAG as "length-proxy"
+    ANTI-PATTERN: 500 accepted as valid outcome
+      Pattern: expect([..., 500, ...]).toContain or no assertion that status < 500
+      Verdict: FLAG as "accepts-5xx" — this is ALWAYS a BLOCKING issue
+    ANTI-PATTERN: mutation without state verification
+      Pattern: POST/PUT/DELETE test that never does a follow-up GET
+      Verdict: FLAG as "no-state-verify"
+
+  Count results:
+    strict_assertions = assertions using toBe, toEqual, toMatch with specific values
+    lenient_assertions = assertions matching any anti-pattern above
+    assertion_quality_ratio = strict_assertions / (strict_assertions + lenient_assertions)
+
+  If any "accepts-5xx" flag found: mark as BLOCKING audit finding
+  If assertion_quality_ratio < 0.6: record "assertion_quality_below_threshold"
+
+Step 3.6: REVIEW MISSING FUNCTIONALITY REPORT
+  Read MISSING_FUNCTIONALITY_REPORT block from QA Executor output
+  For each gap:
+    - Validate against discovery data — is this a real gap or false positive?
+    - Classify: CRITICAL (breaks user workflow), HIGH (significant UX gap),
+      MEDIUM (best practice gap), LOW (nice-to-have)
+  Include in verdict:
+    - missing_functionality_count: N
+    - critical_gaps: [list of CRITICAL/HIGH gaps]
+    - recommendation: "address before launch" | "acceptable for MVP" | "track as tech debt"
+
 Step 4: DECIDE
   APPROVE if:
     - Coverage meets or exceeds targets for HIGH risk routes
@@ -188,6 +229,8 @@ Step 4: DECIDE
     - Discovery confidence is not LOW (unless --auto-discover)
     - (functional depth) Interaction depth: majority of HIGH risk routes with discovered
       interactions have corresponding @covers-interaction tests
+    - (functional depth) Assertion quality ratio >= 60% strict assertions
+    - No test files accept 5xx as valid outcomes
   REJECT if:
     - Coverage below target for HIGH risk routes
     - Any HIGH risk route has no tests at all
@@ -195,10 +238,19 @@ Step 4: DECIDE
     - Discovery confidence is LOW (unless --auto-discover)
     - (functional depth) Interaction depth below 50% for HIGH risk routes with forms/CRUD
       (flag as "shallow coverage" in gaps)
+    - (functional depth) Assertion quality ratio below 60% for sampled test files
+      (flag as "assertion_quality_below_threshold" in gaps)
+    - Any test accepts 5xx status as valid outcome
+      (flag as "accepts-5xx" — BLOCKING)
 
 Step 5: EMIT VERDICT
   Output STRATEGIST_VERDICT block (see qa-strategy skill for format)
   Include interaction_depth field: "{N}/{M} HIGH risk routes have deep interaction tests"
+  Include assertion_quality: "{N}% strict ({X} strict / {Y} total assertions sampled)"
+  Include assertion_flags: [list of anti-pattern flags found]
+  Include missing_functionality_count: N
+  Include critical_gaps: [list of CRITICAL/HIGH gaps from MISSING_FUNCTIONALITY_REPORT]
+  Include gap_recommendation: "address before launch" | "acceptable for MVP" | "track as tech debt"
 ```
 
 #### L1 Rejection Reasons
@@ -210,12 +262,13 @@ Step 5: EMIT VERDICT
 3. Blocking bug exists (test failure with severity BLOCKING)
 4. Discovery confidence is LOW
 5. (functional depth only) Shallow coverage — HIGH risk route with discovered forms/CRUD but only smoke-level tests (no `@covers-interaction` annotations)
+6. (functional depth only) Assertion quality below threshold — sampled test files have < 60% strict assertions (too many existence-only or lenient-status checks)
+7. Any test accepts 5xx status as valid — this indicates the test masks a real bug
 
 **NOT allowed in L1:**
 - Rejecting for missing fuzz tests (L2)
 - Rejecting for missing state modeling (L2)
 - Rejecting for missing journey depth (L2)
-- Rejecting for missing security tests (L3)
 - Rejecting for missing visual regression (L3)
 - Rejecting for missing performance tests (L3)
 
@@ -239,7 +292,12 @@ Before emitting output:
 - [ ] Blocking bugs checked
 - [ ] Discovery confidence checked
 - [ ] Quality score computed
-- [ ] STRATEGIST_VERDICT block contains all required fields
+- [ ] 3-5 test files read and assertion quality evaluated
+- [ ] Anti-pattern count computed (lenient-status, existence-only, accepts-5xx, no-state-verify)
+- [ ] Assertion quality ratio computed and compared against 60% threshold
+- [ ] No test files accept 5xx as valid outcome
+- [ ] MISSING_FUNCTIONALITY_REPORT reviewed and gaps classified
+- [ ] STRATEGIST_VERDICT block contains all required fields (including assertion_quality, assertion_flags, missing_functionality_count)
 - [ ] Rejection reasons are L1-valid (no L2+ demands)
 - [ ] No files written
 

@@ -7,8 +7,8 @@
     {
       "name": "ai-agent-manager-plugin",
       "source": "./ai-agent-manager-plugin",
-      "description": "11 agent roles (8 user-facing + 3 internal): Launch Pad (Supervisor readiness), Supervisor v4 (parallel orchestration with Execute Manager), Orchestrator (plan), Code Reviewer (quality), Red Team Reviewer (adversarial audits), Product Owner (requirements), QA Strategist (risk-based test strategy), QA Executor (automated QA testing), plus /commit skill. Plan first and build correctly.",
-      "version": "6.1.0",
+      "description": "11 agent roles (8 user-facing + 3 internal): Launch Pad (Supervisor readiness), Supervisor v4 (parallel orchestration with Execute Manager), Orchestrator (plan), Code Reviewer (LSP diagnostics, issue categories, read-only), Red Team Reviewer (adversarial audits), Product Owner (requirements), QA Strategist (risk-based test strategy), QA Executor (automated QA testing), plus /commit skill. Plan first and build correctly.",
+      "version": "7.1.0",
       "author": {
         "name": "vikash ruhil"
       },

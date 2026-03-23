@@ -193,10 +193,11 @@ Produced by Code Reviewer agent on review completion.
 
 ```yaml
 CODE_REVIEW_RESULT:
-  schema_version: 1                    # integer, required — always 1
+  schema_version: 2                    # integer, required — bumped from 1 for category support
   decision: enum [PASS, FAIL, NEEDS_HUMAN]  # required
   issues: object[]                     # required (can be empty for PASS)
     - severity: enum [BLOCKING, HIGH, MEDIUM, LOW]
+      category: enum [new, pre_existing, nit]  # required — new in v2
       file: string                     # file path
       line: integer                    # optional — line number
       description: string              # what's wrong
@@ -209,10 +210,12 @@ CODE_REVIEW_RESULT:
 ```
 
 **Validation rules:**
-- `schema_version` must equal `1`
+- `schema_version` must equal `2` (v1 still accepted for backward compatibility)
 - `decision` must be one of: `PASS`, `FAIL`, `NEEDS_HUMAN`
-- When `decision=FAIL`: `issues` must contain at least one BLOCKING or HIGH severity item
+- When `decision=FAIL`: `issues` must contain at least one `new` issue with BLOCKING or HIGH severity
 - When `decision=NEEDS_HUMAN`: `issues` must be non-empty
+- Each issue must include `category` (one of: `new`, `pre_existing`, `nit`)
+- Only `new` issues with BLOCKING/HIGH severity can trigger FAIL
 - `summary` must be present
 
 ---
@@ -335,12 +338,81 @@ When QA Executor runs with `--plan`, `--scope`, or `--continue`, the QA_RESULT i
 
 ## Schema Versioning
 
-All result schemas include `schema_version: 1`. This enables forward compatibility:
+All result schemas include a `schema_version` field. This enables forward compatibility:
 
 1. Hooks check `schema_version` before validating fields
 2. If `schema_version` is unrecognized, hook warns but does not block
 3. New fields can be added without breaking existing validation
 4. Breaking changes require incrementing `schema_version`
+
+### Version History
+
+- **CODE_REVIEW_RESULT v2** (v7.0.0): Added `category` field to issues (`new`, `pre_existing`, `nit`). FAIL decisions now require at least one `new` HIGH/BLOCKING issue. Pre-existing issues are reported but do not block.
+- **MISSING_FUNCTIONALITY_REPORT v1** (v7.1.0): New schema for QA Executor gap detection output.
+- All other schemas remain at v1.
+
+---
+
+## MISSING_FUNCTIONALITY_REPORT
+
+Produced by QA Executor during Phase 4.5 gap analysis. Separate from QA_RESULT.
+
+```yaml
+MISSING_FUNCTIONALITY_REPORT:
+  schema_version: 1                    # integer, required — always 1
+  task_id: string                      # required — QA run identifier
+  gaps: object[]                       # required — non-empty array of detected gaps
+    - category: enum [missing_crud, missing_pagination, missing_search,
+                      missing_validation, missing_error_handling, missing_confirmation,
+                      missing_loading_state, missing_rate_limiting,
+                      data_integrity_risk, security_boundary_gap, best_practice_gap]
+      severity: enum [CRITICAL, HIGH, MEDIUM, LOW]
+      location: string                 # route/endpoint/component where gap found
+      description: string              # what's missing and why it matters
+      evidence: string                 # what discovery data led to this conclusion
+      recommendation: string           # what should be built/fixed
+  summary: string                      # required — concise summary of all gaps
+  total_gaps: integer                  # required — total gap count
+  critical_count: integer              # required — CRITICAL gaps count
+```
+
+**Validation rules:**
+- `gaps` must be non-empty (if no gaps found, don't emit the report)
+- Each gap must have `category`, `severity`, `location`, `description`
+- `total_gaps` must equal `gaps.length`
+- `critical_count` must equal count of gaps with `severity=CRITICAL`
+- `summary` must be present
+
+**Example:**
+```
+MISSING_FUNCTIONALITY_REPORT:
+  schema_version: 1
+  task_id: qa-run-2026-03-22
+  gaps:
+    - category: missing_crud
+      severity: HIGH
+      location: POST /api/tournaments
+      description: Tournament entity has create endpoint but no edit (PUT) or delete (DELETE)
+      evidence: Discovery found POST /api/tournaments but no PUT or DELETE for same resource
+      recommendation: Add PUT /api/tournaments/:id and DELETE /api/tournaments/:id endpoints
+    - category: missing_rate_limiting
+      severity: HIGH
+      location: POST /api/auth/login
+      description: Login endpoint has no rate limiting — brute force attack vector
+      evidence: 5 rapid requests all returned 200 with no 429 response
+      recommendation: Add rate limiting (max 5 attempts per minute per IP)
+    - category: missing_pagination
+      severity: MEDIUM
+      location: GET /api/tournaments
+      description: List endpoint returns all items with no pagination support
+      evidence: No limit/offset/page query parameters detected in API calls
+      recommendation: Add pagination with limit/offset or cursor-based approach
+  summary: 3 gaps found (2 HIGH, 1 MEDIUM). Missing CRUD operations and rate limiting are highest priority.
+  total_gaps: 3
+  critical_count: 0
+```
+
+---
 
 ## Validation Location
 

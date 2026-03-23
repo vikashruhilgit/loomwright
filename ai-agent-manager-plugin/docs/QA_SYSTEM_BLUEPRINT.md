@@ -130,16 +130,24 @@ Layer 4 — EVOLUTION
 **Included:**
 - Static + Runtime discovery (4-phase engine)
 - Risk Strategy (Strategist classifies HIGH/MEDIUM/LOW)
-- UI/E2E test generation (happy paths + basic error paths)
-- API test generation (endpoint validation, status codes)
+- UI/E2E test generation (happy paths + error paths + negative tests)
+- API test generation (strict status assertions, value assertions, state verification)
+- Negative testing for HIGH/MEDIUM risk (empty body, missing fields, wrong types, auth boundaries)
+- Multi-step flow testing (CRUD lifecycle, auth lifecycle for HIGH risk)
+- Data integrity probes (concurrent creation, duplicate detection, cascade delete for HIGH risk)
+- Security boundary testing (IDOR, role escalation, session invalidation, XSS/SQLi probes for HIGH risk)
+- Missing Functionality Analysis (gap detection: missing CRUD ops, pagination, search, validation, rate limiting)
+- Assertion strictness enforcement (no status arrays, no existence-only, 5xx = BLOCKING bug)
+- Strategist assertion quality audit (reads test files, checks anti-patterns, 60% strict threshold)
 - Playwright execution (`npx playwright test --reporter=json`)
 - Bug reports (text-based, file:line, reproduction steps)
+- MISSING_FUNCTIONALITY_REPORT (separate structured output for detected gaps)
 - Debate loop (1 round only)
 - Lightweight coverage tracking (routes/APIs discovered vs tested)
 
-**NOT included:** State modeling, journey graphs, fuzz, security, visual, flaky detection, production feedback.
+**NOT included:** State modeling, journey graphs, fuzz, visual regression, flaky detection, production feedback.
 
-**Estimated QA effort eliminated: 30-35%**
+**Estimated QA effort eliminated: 50-60%**
 
 ### Level 2: Depth — "Does it understand behavior?"
 
