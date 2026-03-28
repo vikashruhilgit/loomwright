@@ -259,6 +259,15 @@ Functional-depth tests include `@covers-interaction` annotations for tracking in
 // @covers-interaction: auth-gate            — test verifies 401/redirect without auth
 // @covers-interaction: auth-chain           — test exercises full auth lifecycle (signup→login→access→logout→deny)
 // @covers-interaction: boundary-test        — test sends oversized, special chars, SQL-like, or empty string inputs
+// @covers-interaction: loading-state        — test verifies loading indicator during form submission
+// @covers-interaction: keyboard-nav         — test tabs through fields and submits via Enter
+// @covers-interaction: error-recovery       — test fixes validation errors and resubmits successfully
+// @covers-interaction: rate-limit-verify    — test sends N+1 requests to verify 429 response
+// @covers-interaction: credential-change-verify — test verifies old sessions die after credential change
+// @covers-interaction: cookie-security      — test verifies HttpOnly, SameSite, Secure flags on cookies
+// @covers-interaction: secret-verify        — test verifies wrong/expired/reused codes are rejected
+// @covers-interaction: response-leak-check  — test verifies sensitive fields absent from API responses
+// @covers-interaction: error-leak-check     — test verifies no stack traces or SQL in error responses
 ```
 
 Compare annotations against Discovery Map to compute coverage.

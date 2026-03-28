@@ -530,16 +530,25 @@ The runtime crawl operates within strict bounds to prevent runaway execution.
 
 ## Budget Tracking
 
-The QA Executor has a strict 60 tool call budget. Every tool invocation (Read, Write, Edit, Glob, Grep, Bash, Task) increments the counter by 1.
+The QA Executor has a tool call budget: **60 calls** for default runs, **75 calls** for `--scope` runs (scoped runs need extra budget for crawl-first discovery and deeper UI patterns).
 
-### Budget Thresholds
+### Budget Thresholds (default: 60 calls)
 
 | Tool Calls | Zone | What Happens |
 |------------|------|-------------|
 | 0-36 | GREEN (60%) | Normal operation — all phases run fully |
-| 36-48 | YELLOW (80%) | Selective vision (Phase C) is skipped. Output compression applied — shorter discovery reports, minimal comments in generated tests |
-| 48-55 | ORANGE (92%) | Remaining test generation is skipped. Jumps directly to executing whatever tests exist, then coverage tracking and emit |
-| 55+ | RED | Immediately writes .qa-summary.md and emits QA_RESULT with whatever partial data is available. No further phases run |
+| 36-48 | YELLOW (80%) | Selective vision (Phase C) is skipped. Output compression applied |
+| 48-55 | ORANGE (92%) | Remaining test generation is skipped. Jumps to execute + emit |
+| 55+ | RED | Immediately emits QA_RESULT with partial data |
+
+### Budget Thresholds (--scope: 75 calls)
+
+| Tool Calls | Zone | What Happens |
+|------------|------|-------------|
+| 0-45 | GREEN (60%) | Normal operation — all phases run fully |
+| 45-60 | YELLOW (80%) | Selective vision skipped. Output compression applied |
+| 60-69 | ORANGE (92%) | Remaining test generation skipped. Jumps to execute + emit |
+| 69+ | RED | Immediately emits QA_RESULT with partial data |
 
 ### Budget Tips
 

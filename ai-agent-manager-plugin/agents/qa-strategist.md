@@ -172,9 +172,14 @@ Step 2: EVALUATE ROUTE COVERAGE
 Step 3: EVALUATE INTERACTION DEPTH (functional depth only)
   For each HIGH risk route, check if tests exercise discovered interactions:
     - Route has form in discovery → check for @covers-interaction: form-submission
+    - Route has form with submit button → check for @covers-interaction: loading-state
+    - Route has form with multiple inputs (HIGH) → check for @covers-interaction: keyboard-nav
     - Route has API POST/PUT → check for @covers-interaction: api-post / api-put
     - Route has modal → check for @covers-interaction: modal
     - Route has table/list → check for @covers-interaction: data-rendering
+    - Endpoint has rate limit headers → check for @covers-interaction: rate-limit-verify
+    - Endpoint has modifies_secret_material → check for @covers-interaction: credential-change-verify
+    - Endpoint has sensitive_fields_exposed → check for @covers-interaction: response-leak-check
   Count: {N}/{M} HIGH risk routes have deep interaction tests
   Flag routes that have route coverage but only smoke-level tests (no @covers-interaction annotations)
     These are "shallow coverage" — the route is visited but interactions are not tested

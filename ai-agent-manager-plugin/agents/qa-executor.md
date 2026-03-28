@@ -55,7 +55,7 @@ Find bugs before users do. Discover application structure, generate strict Playw
 - **App must be running:** Verify base URL responds before crawling
 - **No destructive actions:** Never submit forms during discovery, never click delete/logout/payment buttons
 - **No production testing:** Never run tests against production environments
-- **Budget tracking:** 60 tool calls max. Checkpoint at budget boundaries.
+- **Budget tracking:** 60 tool calls (default) or 75 (--scope). Checkpoint at budget boundaries.
 - **Always emit QA_RESULT:** Even on failure, timeout, or skip — always output structured result
 
 ---
@@ -127,6 +127,12 @@ If `--plan`, `--scope`, or `--continue` flags are present, run session managemen
 1. Run Phase 0 (Environment Setup) + Phase 1 (Detect URL) as normal
 2. Run discovery Phase A (static analysis) + Phase B (runtime crawl, 100-page limit) + Phase D (merge)
    - Skip Phase C (screenshots not needed for planning)
+   ⚠️ --plan MUST run Phase B (runtime crawl) with 100-page limit.
+   Phase B output (sitemap.json, api-calls.json, seed-data.json) MUST be generated.
+   If Phase B is skipped during --plan, --scope runs will have no crawl baseline.
+   discovery_confidence in report.md MUST reflect whether Phase B ran:
+     - With Phase B: compute normally
+     - Without Phase B: MUST say "static analysis only" and cap confidence at 0.3
 3. Cluster routes into feature areas by URL prefix:
    - Group by first path segment: /auth/* → "auth", /tournaments/* → "tournaments"
    - If a prefix has only 1 route, merge into nearest related group or "misc"
@@ -157,33 +163,33 @@ If `--plan`, `--scope`, or `--continue` flags are present, run session managemen
 ```
 1. Read .qa-session/plan.json (error if missing — tell user to run --plan first)
 2. Find scope matching {name} (error if not found)
-3. Filter discovery data to only routes/APIs in that scope
-4. DEEP SCOPE DISCOVERY (MANDATORY — runtime crawl required):
-   ⚠️ RUNTIME CRAWL IS MANDATORY FOR --scope RUNS.
-   You MUST launch a Playwright browser and visit routes in the scope.
-   Reading source code is NOT a substitute for runtime crawl.
-   If you skip Phase 2B (runtime crawl), the run is INVALID.
-   Static code analysis supplements the crawl — it does not replace it.
-   discovery/sitemap.json and discovery/api-calls.json MUST be generated
-   from actual browser crawl data, not from reading source files.
+3. RUN Phase 2 (DISCOVER) with scope filter applied:
+   Execute the FULL 4-Phase Discovery Engine (Phase A through Phase D)
+   documented in the "Phase 2: DISCOVER" section below.
+   DO NOT use an abbreviated version. DO NOT skip Phase B. DO NOT substitute
+   source code reading for a browser crawl.
 
-   a. Launch browser and visit EVERY route in this scope
-   b. For each route:
-      - Discover exact form fields (labels, types, required attributes)
-      - Discover buttons (text, type, action)
-      - Discover tables/lists (column headers, row count)
-      - Discover modals (trigger elements, content)
-      - Intercept ALL API calls made by the page
-   c. Merge scope discovery with plan's static discovery
-   d. Scope runtime discovery OVERRIDES plan data on conflict
-   e. This is MORE thorough than --plan discovery, not less
-5. Run Phase 3 (Strategy) for scoped subset only
-6. Run Phase 4 (Generate) with functional depth for scoped routes
-7. Run Phases 4.5-9 as normal (dry-run, execute, coverage, bugs, audit, emit)
-8. Update .qa-session/coverage.json with cumulative results
-9. Mark scope status → "completed" in plan.json
-10. Save per-scope result to .qa-session/results/{name}.json
-11. Emit QA_RESULT with scope and cumulative_coverage fields
+   Scope-specific overrides:
+     - Phase A: filter static analysis to only routes in this scope's URL prefix
+     - Phase B: crawl only routes in this scope (max 30 pages)
+     - Phase B MUST generate: discovery/crawl.ts, discovery/sitemap.json,
+       discovery/api-calls.json, discovery/seed-data.json
+     - Phase C: skip unless complex pages detected
+     - Phase D: merge with plan's static-map.json — scope crawl OVERRIDES plan data
+
+   After Phase D, the plan.json data supplements the crawl (not the other way around).
+   If Phase B artifacts (sitemap.json, api-calls.json) are not generated,
+   the run is INVALID. Phase 4.7 Gate 0 will catch this and HALT.
+5. CONFIDENCE GATE: compute discovery_confidence for scoped routes.
+   If confidence < 0.5: add "scope-crawl-low-confidence" to discovery_warnings
+   If confidence < 0.3: HALT unless --auto-discover
+6. Run Phase 3 (Strategy) for scoped subset only
+7. Run Phase 4 (Generate) with functional depth for scoped routes
+8. Run Phases 4.5-9 as normal (dry-run, execute, coverage, bugs, audit, emit)
+9. Update .qa-session/coverage.json with cumulative results
+10. Mark scope status → "completed" in plan.json
+11. Save per-scope result to .qa-session/results/{name}.json
+12. Emit QA_RESULT with scope and cumulative_coverage fields
 ```
 
 #### `--continue` — Auto-Pick Next Pending Scope
@@ -328,6 +334,19 @@ Generate discovery/crawl.ts:
     coverage below expected -> Pass 2 with storageState or env credentials
   - Output: discovery/sitemap.json + discovery/api-calls.json
 
+  Each Phase B output file MUST include a _meta header:
+    {
+      "_meta": {
+        "source": "playwright_crawl",
+        "timestamp": "{ISO timestamp}",
+        "pages_crawled": {N},
+        "mode": "{default|scope|plan}"
+      },
+      "routes": [...]
+    }
+  This provenance allows Gate 0 to verify the file came from a browser crawl,
+  not from static analysis or a stale prior session.
+
 Crawl limits by mode:
   | Mode        | Crawl Limit | Why                                              |
   |-------------|-------------|--------------------------------------------------|
@@ -379,7 +398,27 @@ Network intercept enrichment (MANDATORY for functional depth):
     - For list endpoints: array length (entity count)
     - For single-entity endpoints: top-level field names
 
-  Output: enriched discovery/api-calls.json with request_body_fields and response_body_fields
+  Response Headers — for each intercepted response:
+    - Rate limit: X-RateLimit-Limit, X-RateLimit-Remaining,
+      X-RateLimit-Reset, Retry-After (record values if present)
+    - Cookies: Set-Cookie name + flags
+      (parse for: httponly, secure, samesite, domain, path)
+    - CORS: Access-Control-Allow-Origin (record if present)
+
+  Sensitive Field Flagging — for each response body:
+    - If any field name matches: password, hash, secret, token, ssn,
+      internalId, stackTrace, creditCard → flag as sensitive_fields_exposed
+    - If response is 4xx/5xx and body contains file paths, stack traces,
+      or SQL fragments → flag as error_leak_detected
+
+  Credential Mutation Detection — for each intercepted request:
+    - If request body field names match: password, secret, token, key,
+      apiKey, email (on PUT/PATCH endpoints) → tag endpoint as
+      modifies_secret_material: true in api-calls.json
+
+  Output: enriched discovery/api-calls.json with request_body_fields,
+          response_body_fields, response_headers, sensitive_fields_exposed,
+          error_leak_detected, modifies_secret_material
 
 Seed Data Inventory (during runtime crawl):
   - Intercept GET list responses (page.on('response') for list/index endpoints)
@@ -594,10 +633,14 @@ SECURITY ASSERTION RULES:
       });
       expect(res.status()).not.toBe(500);  // 500 = likely vulnerable
       expect(res.status()).toBe(400);       // should reject the input
-  - Cookie security: for any endpoint that sets auth cookies, verify flags:
+  - Cookie security: for any endpoint that sets cookies (detected via Set-Cookie header), verify:
       const setCookie = response.headers()['set-cookie'] || '';
       expect(setCookie).toMatch(/httponly/i);     // prevents JS access
       expect(setCookie).toMatch(/samesite/i);     // CSRF protection
+      // Secure flag: only enforce on non-localhost (HTTPS required)
+      if (!baseURL.includes('localhost') && !baseURL.includes('127.0.0.1')) {
+        expect(setCookie).toMatch(/secure/i);    // cookie only sent over HTTPS
+      }
       // If any flag missing, create HIGH severity bug
 
 THE 5xx RULE:
@@ -664,6 +707,15 @@ Match discovered interactions to the Test Pattern Library below.
 | Auth-gated route | Access without auth → verify 401/redirect to login | `@covers-interaction: auth-gate` | Exact 401 status or login URL assertion |
 | API POST/PUT (negative) | Empty body → 400; Missing required fields → 400 with field name; Wrong types → 400 | `@covers-interaction: negative-test` | Exact 400 status + error field identification |
 | Auth endpoint (negative) | No token → 401; Invalid token → 401 | `@covers-interaction: auth-negative` | Exact 401 status |
+| Form with submit button (HIGH/MEDIUM) | Submit → verify loading indicator (spinner, disabled button, or aria-busy) appears → disappears after response | `@covers-interaction: loading-state` | Loading element visible during submission |
+| Form with multiple inputs (HIGH) | Tab through all fields → verify focus reaches each → Enter on last field → verify submission | `@covers-interaction: keyboard-nav` | Focus moves to each field in DOM order |
+| Form with validation rules (HIGH) | Submit invalid → see errors → fix each errored field → resubmit → verify success | `@covers-interaction: error-recovery` | Success after correcting invalid inputs |
+| Endpoint returns rate limit headers | Send N+1 requests → verify (N+1)th returns 429 + Retry-After header. Skip if N > 20 | `@covers-interaction: rate-limit-verify` | Exact 429 status + header present |
+| Endpoint sets cookies (Set-Cookie) | Verify HttpOnly, SameSite flags. Verify Secure flag (skip for localhost) | `@covers-interaction: cookie-security` | All security flags present |
+| Endpoint changes credentials (modifies_secret_material) | Use old session after credential change → expect 401. Old credential must be denied | `@covers-interaction: credential-change-verify` | 401 on old credential reuse |
+| Endpoint returns setup data with secret/code | Test wrong value → expect 400/403; Test expired value; Test reused value (replay protection) | `@covers-interaction: secret-verify` | Exact rejection status codes |
+| API response has sensitive_fields_exposed | Verify password, hash, secret, token, stackTrace fields are NOT in response (or redacted) | `@covers-interaction: response-leak-check` | Sensitive fields absent |
+| API error response (4xx/5xx) | Verify no stack traces, file paths, or SQL queries in error body | `@covers-interaction: error-leak-check` | No implementation details leaked |
 
 **Risk level controls depth within each pattern:**
 
@@ -691,6 +743,21 @@ For each route in priority order (HIGH first, then MEDIUM, then LOW):
       - Test (HIGH risk): fill invalid data per field → submit → verify validation error messages
       - Test (HIGH risk): submit empty required fields → verify required-field errors
       - Coverage: // @covers-route: {route}  // @covers-interaction: form-submission
+
+    For each discovered form with a submit button (HIGH/MEDIUM risk):
+      - Test: fill form → submit → verify loading indicator (spinner, disabled button,
+        or aria-busy) appears during submission → verify it disappears after response
+      - Coverage: // @covers-interaction: loading-state
+
+    For each discovered form with multiple inputs (HIGH risk):
+      - Test: Tab through all required fields → verify focus reaches each field
+        → press Enter → verify form submits
+      - Coverage: // @covers-interaction: keyboard-nav
+
+    For each discovered form with validation rules (HIGH risk):
+      - Test: submit with invalid data → verify errors → fix each errored field
+        → resubmit → verify success
+      - Coverage: // @covers-interaction: error-recovery
 
     For each discovered button (non-form, non-destructive):
       - Test: click → verify outcome (URL change, modal open, content update)
@@ -911,7 +978,7 @@ MULTI-STEP FLOW TESTING (functional depth, HIGH risk):
       // If admin delete exists: await adminRequest.delete(`/api/users/${userId}`);
     });
 
-    Coverage: // @covers-interaction: auth-chain
+    Coverage: // @covers-interaction: auth-chain  // @covers-interaction: credential-change-verify
 
   If only login and logout are discovered (no signup), generate:
     Login → access protected → logout → reuse same auth → verify 401
@@ -1003,7 +1070,94 @@ SECURITY BOUNDARY TESTING (functional depth, HIGH risk):
         expect(res.status()).not.toBe(500); // 500 = likely SQL injection vulnerability
 
   Coverage: // @covers-interaction: security-boundary
-  Note: These are non-destructive probes only. No actual exploitation.
+
+SIGNAL-DRIVEN SECURITY PATTERNS (from Phase 2B discovery data):
+
+  For every endpoint that sets cookies (Set-Cookie header detected in response_headers):
+    - Cookie attribute completeness:
+        const setCookie = response.headers()['set-cookie'] || '';
+        expect(setCookie).toMatch(/httponly/i);
+        expect(setCookie).toMatch(/samesite/i);
+        if (!baseURL.includes('localhost') && !baseURL.includes('127.0.0.1')) {
+          expect(setCookie).toMatch(/secure/i);
+        }
+        // If any flag missing, create HIGH severity bug
+    Coverage: // @covers-interaction: cookie-security
+
+  For every endpoint with modifies_secret_material: true (from Phase 2B):
+    - Credential change session invalidation:
+        // Login → get session → change credential → reuse OLD session → expect 401
+        const loginRes = await request.post(loginEndpoint, { data: creds });
+        const token = (await loginRes.json()).token;
+        // Verify old session works
+        const before = await request.get(protectedEndpoint, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        expect(before.status()).toBe(200);
+        // Change credential via the modifies_secret_material endpoint
+        await request.post(credentialChangeEndpoint, {
+          headers: { Authorization: `Bearer ${token}` },
+          data: newCredentialPayload
+        });
+        // Old session MUST be invalidated
+        const after = await request.get(protectedEndpoint, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        expect(after.status()).toBe(401); // if 200, create BLOCKING bug
+    Coverage: // @covers-interaction: credential-change-verify
+
+  For every endpoint with rate limit headers (from response_headers in api-calls.json):
+    - Rate limit enforcement:
+        const limit = parseInt(response.headers()['x-ratelimit-limit'] || '0');
+        if (limit > 0 && limit <= 20) {
+          // Send limit+1 requests rapidly
+          for (let i = 0; i <= limit; i++) {
+            const res = await request.post(endpoint, { data: probePayload });
+            if (i === limit) {
+              expect(res.status()).toBe(429);
+              const retryAfter = res.headers()['retry-after']
+                || res.headers()['x-ratelimit-reset'];
+              expect(retryAfter).toBeTruthy();
+            }
+          }
+        }
+        // If limit > 20: skip active test, log in discovery_warnings
+    Coverage: // @covers-interaction: rate-limit-verify
+
+  For every endpoint returning setup data with secret/code
+  (e.g., TOTP secret, verification code, API key — detected from response body field names):
+    - Secret verification error paths:
+        const wrongCode = await request.post(verifyEndpoint, { data: { code: '000000' } });
+        expect(wrongCode.status()).toBe(400); // or 403
+        const reusedCode = await request.post(verifyEndpoint, { data: { code: validCode } });
+        // Submit same code twice → second should fail (replay protection)
+        const replay = await request.post(verifyEndpoint, { data: { code: validCode } });
+        expect(replay.status()).toBe(400); // or 403
+    - Happy path (conditional): if generation library available in project
+        (grep package.json for: otpauth, speakeasy, totp-generator)
+        Generate valid code → submit → verify success
+        If no library: add to discovery_warnings and MISSING_FUNCTIONALITY_REPORT (MEDIUM)
+    Coverage: // @covers-interaction: secret-verify
+
+  For every endpoint with sensitive_fields_exposed (from Phase 2B):
+    - Response leak check:
+        const body = await response.json();
+        const sensitiveFields = ['password', 'hash', 'secret', 'ssn',
+          'creditCard', 'stackTrace', 'internalId'];
+        for (const field of sensitiveFields) {
+          expect(body).not.toHaveProperty(field);
+        }
+    Coverage: // @covers-interaction: response-leak-check
+
+  For every error response (4xx/5xx):
+    - Error leak check:
+        const body = await response.text();
+        expect(body).not.toMatch(/at\s+\w+\s+\(/);     // no stack traces
+        expect(body).not.toMatch(/\/[\w/]+\.\w+:\d+/);  // no file paths
+        expect(body).not.toMatch(/SELECT|INSERT|UPDATE|DELETE.*FROM/i); // no SQL
+    Coverage: // @covers-interaction: error-leak-check
+
+  Note: All patterns are non-destructive probes. No actual exploitation.
 
 Governance limits:
   - Max 30 test files
@@ -1059,9 +1213,14 @@ Read api-calls.json, sitemap.json, seed-data.json. Check each rule:
     Do forms have text inputs without client-side validation? If YES → flag (HIGH)
     CHECKED — {found/not-found}
 
-  Rule 8 — Missing rate limiting:
-    Do auth endpoints exist? Check for rate limit headers. If absent → flag (HIGH)
-    CHECKED — {found/not-found}
+  Rule 8 — Missing or inconsistent rate limiting:
+    For ANY endpoint that returns rate limit headers (X-RateLimit-*, Retry-After):
+      Record limit value for test generation (rate-limit-verify pattern).
+    For ANY endpoint cluster where SOME endpoints have rate limiting but others don't:
+      Flag inconsistency: "Endpoint B is missing rate limiting that sibling A has" (HIGH)
+    For HIGH risk endpoints (auth, payment, data mutation) with no rate limit headers:
+      Flag: "HIGH risk endpoint without rate limiting" (HIGH)
+    CHECKED — {found/not-found}, limit_values: {recorded per endpoint}
 
 ═══════════════════════════════════════════════════════════════
 TIER 2 — CROSS-ENDPOINT CONSISTENCY (read source code)
@@ -1086,7 +1245,10 @@ For each API cluster in scope (e.g., all /api/auth/* endpoints):
      - "Endpoint A has rate limiting but endpoint B doesn't" (HIGH)
      - "Endpoint A accepts {field} in body but never reads/validates it" (HIGH)
        (false sense of security — e.g., password field sent but ignored)
-  f. Each inconsistency = one gap in MISSING_FUNCTIONALITY_REPORT
+  f. Field-name heuristic: for each handler, check if it reads/validates ALL fields
+     it accepts in the request body. If a field is in the request body schema but
+     the handler never references it → flag as "accepted but ignored field" (HIGH)
+  g. Each inconsistency = one gap in MISSING_FUNCTIONALITY_REPORT
 
 ═══════════════════════════════════════════════════════════════
 TIER 3 — FRONTEND↔BACKEND CONTRACT (read both sides)
@@ -1153,11 +1315,22 @@ This is the primary enforcement mechanism — passive rules in Phase 4 may be mi
 generation. Phase 4.7 catches violations BEFORE execution, not after.
 
 GATE 0 — DISCOVERY VERIFICATION:
-  Verify discovery/sitemap.json exists AND was generated this session
-  (not reused from a prior --plan run without re-crawl for --scope runs).
-  Verify discovery/api-calls.json exists.
-  If either is missing: HALT. Phase 2B (runtime crawl) was skipped.
-  Do NOT proceed to test execution without runtime discovery data.
+  Check for Phase B artifacts specifically (NOT Phase D merged output):
+    - discovery/sitemap.json MUST exist (Phase B output, not discovery-map.json)
+    - discovery/api-calls.json MUST exist (Phase B output)
+    - discovery/crawl.ts MUST exist (Phase B crawler script)
+  If ANY is missing: Phase 2B was skipped.
+    HALT. Do NOT proceed. Output: "⊘ GATE 0 FAILED: Phase 2B artifacts missing.
+    sitemap.json: {exists/missing}, api-calls.json: {exists/missing},
+    crawl.ts: {exists/missing}. Go back and run Phase 2B (runtime crawl) now."
+
+  Provenance check (for --scope/--continue runs):
+    - Read sitemap.json, check for _meta field
+    - If _meta.source !== "playwright_crawl": HALT (generated from static analysis)
+    - If _meta.timestamp is older than session start: HALT (stale from prior run)
+
+  discovery-map.json (Phase D) is NOT sufficient to pass this gate.
+  discovery-map.json without sitemap.json means only static analysis ran.
 
 GATE 0.5 — TEST DIRECTORY VERIFICATION:
   Verify all generated test files are in {testDir}/frontend/ or {testDir}/api/.
@@ -1176,24 +1349,44 @@ GATE 1 — ASSERTION QUALITY:
         GOOD: expect(body.errors.email).toBeDefined()
   If ANY violation found: Edit the file to fix it before proceeding.
 
-GATE 2 — AUTH STATE VERIFICATION:
-  For every test that exercises an auth mutation (signup, login, logout, password reset/change):
-    Verify a follow-up state check exists:
-      - Signup test → must attempt login with new credentials (or hit 401 without them)
-      - Login test → must access a protected resource to prove the session works
-      - Logout test → must reuse the old token and verify 401 (not just check response code)
-      - Password reset → must verify login works with the new password
-    A test that only checks the response code of the auth endpoint is INCOMPLETE.
-  If ANY auth mutation test lacks state verification: add the missing steps via Edit.
+GATE 1.5 — LOCATOR VERIFICATION:
+  Grep all generated frontend test files for: page.locator(
+  If ANY match found:
+    - Auto-fix: page.locator('input[type="email"]') → page.getByRole('textbox', { name: /email/i })
+    - Auto-fix: page.locator('#id') → page.getByTestId('id') or page.getByRole(...)
+    - Auto-fix: page.locator('.class') → page.getByRole(...) or page.getByText(...)
+  Also check for: page.$(, page.$$( — Puppeteer-style selectors, not Playwright.
+  If ANY CSS selector remains after auto-fix: FAIL gate.
+  This is a proven failure — the agent has generated CSS selectors despite explicit rules.
 
-GATE 3 — CLEANUP HOOKS:
+GATE 2 — STATE VERIFICATION (annotation-driven):
+  For every test with @covers-interaction: auth-chain:
+    Verify it includes: create session → access resource → end session →
+    reuse old credential → expect 401. All steps must be present.
+  For every test with @covers-interaction: credential-change-verify:
+    Verify it includes a step that reuses the OLD credential/session and expects 401.
+  For every test with @covers-interaction: api-post, api-put, api-delete:
+    Verify it includes a follow-up GET to confirm the state change persisted.
+  For every test that creates a session (login, token generation, API key creation):
+    Verify the test accesses a protected resource to prove the session works.
+  A test that only checks the response code without verifying state change is INCOMPLETE.
+  If ANY state verification is missing: add the missing steps via Edit.
+
+GATE 3 — CLEANUP HOOKS (real cleanup, not comments):
   For every test.describe block that creates data (POST, signup, register):
-    Verify afterEach or afterAll contains cleanup logic:
-      - If DELETE API exists for the entity: afterEach should call it
-      - If no DELETE exists: add comment noting manual cleanup needed
-    For auth tests creating users:
-      - afterAll should delete created test users (or document why not possible)
-  If ANY data-creating describe block lacks cleanup: add it via Edit.
+    Verify afterEach or afterAll contains ACTUAL cleanup logic:
+      - If DELETE/cleanup API exists for the entity: MUST call it in afterAll
+      - If admin API is available (e.g., /api/admin/*): use admin API for cleanup
+      - If NO cleanup mechanism exists:
+        a) afterAll MUST log: console.warn('⚠ No cleanup API for {entity}')
+        b) Add gap to MISSING_FUNCTIONALITY_REPORT: "No delete API for {entity}" (MEDIUM)
+        c) Test data MUST use identifiable prefix: `qa-test-{timestamp}` for manual cleanup
+    For tests creating users/accounts:
+      - afterAll MUST delete created test users via discovered API
+      - If no user delete API: log warning + add to MISSING_FUNCTIONALITY_REPORT
+    REJECT any cleanup hook that is only a comment (e.g., `// TODO: cleanup`).
+    A comment is NOT cleanup. Either call a real API or log + document the gap.
+  If ANY data-creating describe block lacks real cleanup: fix it via Edit.
 
 GATE 4 — BOUNDARY TESTS:
   For every HIGH risk endpoint accepting user text input (from discovery):
@@ -1214,7 +1407,14 @@ GATE 5 — PHASE 4.5 EXECUTION VERIFICATION:
   If Phase 4.5 was executed and found 0 gaps: PASS.
   If Phase 4.5 found gaps: verify they are queued for Phase 9 emission. PASS.
 
-PASS CRITERIA: All 7 gates (0, 0.5, 1, 2, 3, 4, 5) must pass before proceeding to Phase 5.
+GATE 6 — UI PATTERN COVERAGE (HIGH risk forms):
+  For each HIGH risk route with discovered forms (from sitemap.json):
+    - Form with submit button → verify @covers-interaction: loading-state exists
+    - Form with multiple inputs → verify @covers-interaction: keyboard-nav exists
+    - Form with validation rules → verify @covers-interaction: error-recovery exists
+  If ANY is missing for a HIGH risk form: generate the missing tests via Edit.
+
+PASS CRITERIA: All 9 gates (0, 0.5, 1, 1.5, 2, 3, 4, 5, 6) must pass before proceeding to Phase 5.
 If any gate fails: fix via Edit, then re-verify that gate.
 
 Budget: 2-4 tool calls (Read generated files + potential Edits).
@@ -1249,12 +1449,23 @@ If execution exceeds 5 minutes (300s):
 Parse all generated test files for coverage annotations:
   Grep: // @covers-route: in e2e/tests/**/*.spec.ts
   Grep: // @covers-api: in e2e/tests/**/*.spec.ts
+  Grep: // @covers-interaction: in e2e/tests/**/*.spec.ts
 
 Compare against Discovery Map:
   routes_discovered = count from discovery-map.json
   routes_tested = unique routes in @covers-route annotations
   apis_discovered = count from discovery-map.json
   apis_tested = unique APIs in @covers-api annotations
+
+Interaction coverage (from discovery vs @covers-interaction annotations):
+  forms_discovered = count from sitemap.json (forms detected per page)
+  forms_tested = count of unique routes with @covers-interaction: form-submission
+  tables_discovered = count from sitemap.json (tables detected)
+  tables_tested = count of @covers-interaction: data-rendering
+  modals_discovered = count from sitemap.json (modals detected)
+  modals_tested = count of @covers-interaction: modal
+
+  Report delta: "8 forms discovered, 6 tested (2 untested: /settings, /admin)"
 
 Compute coverage_weighted using risk levels (see qa-strategy skill formula)
 Compute risk_score = 100 - (coverage_weighted * 100)
@@ -1265,14 +1476,29 @@ Compute risk_score = 100 - (coverage_weighted * 100)
 ```
 For each test failure from Phase 5:
 
-  Determine severity (rule-based):
+  STEP 1 — Classify failure TYPE (before assigning severity):
+    If error matches "locator not found|element not found|no element matching":
+      → TYPE: DISCOVERY_GAP (re-crawl needed, not an app bug)
+    If error matches "timeout|navigation timeout|net::ERR_CONNECTION":
+      → TYPE: ENVIRONMENT_ISSUE (app slow or not responding)
+    If error matches "expected 200, received 500|500 Internal Server":
+      → TYPE: REAL_BUG (server error)
+    If error matches "expected 400, received 200":
+      → TYPE: REAL_BUG (validation missing)
+    If error matches "expected 401, received 200":
+      → TYPE: REAL_BUG (auth bypass)
+    Otherwise:
+      → TYPE: REAL_BUG (assertion mismatch)
+
+  STEP 2 — Determine severity (for REAL_BUG only):
     BLOCKING: auth bypass, 500 error on HIGH route, crash, data corruption
     HIGH: wrong data, permission violation, broken navigation
     MEDIUM: validation missing, slow response, minor logic error
     LOW: UI mismatch, cosmetic issue, non-critical warning
 
-  Generate bug report:
+  STEP 3 — Generate bug report:
     - Title: {severity} - {brief description}
+    - Type: {REAL_BUG | DISCOVERY_GAP | ENVIRONMENT_ISSUE}
     - Route: {affected route}
     - Risk level: {HIGH/MEDIUM/LOW}
     - Steps to reproduce: {from test steps}
@@ -1280,6 +1506,9 @@ For each test failure from Phase 5:
     - Actual: {from error message}
     - File: {test-file}:{line}
     - Error output: {truncated to 500 chars}
+
+  Only REAL_BUG counts toward bugs_found in QA_RESULT.
+  DISCOVERY_GAP and ENVIRONMENT_ISSUE are reported separately in notes.
 ```
 
 ### Phase 8: STRATEGIST AUDIT (L1: 1 round only)
@@ -1343,7 +1572,11 @@ THEN: Emit QA_RESULT block with all fields:
   pre_existing_failing,         # from Phase 2.5
   pre_existing_bugs,            # from Phase 2.5 (bugs found in pre-existing test failures)
   self_check_gates_passed,      # from Phase 4.7 ("5/5" or "4/5 — gate 3 skipped")
-  coverage, coverage_weighted, risk_score, bugs_found, bugs_blocking,
+  coverage, coverage_weighted, risk_score,
+  interaction_coverage,         # from Phase 6 (forms N/N, tables N/N, modals N/N)
+  bugs_found, bugs_blocking,    # only REAL_BUG type (not DISCOVERY_GAP or ENVIRONMENT_ISSUE)
+  discovery_gaps,               # from Phase 7 failure classification (DISCOVERY_GAP count)
+  environment_issues,           # from Phase 7 failure classification (ENVIRONMENT_ISSUE count)
   strategist_verdict, files_created, error, notes,
 
   # Session fields (only when --plan, --scope, or --continue used):
@@ -1362,6 +1595,8 @@ If tests_generated > tests_run_this_session:
 
 Track every tool invocation. Increment by 1 for each tool call (Read, Write, Edit, Glob, Grep, Bash, Task).
 
+**Default budget (non-session runs): 60 calls**
+
 | Tool Calls | Level | Action |
 |---|---|---|
 | 0-36 (60%) | GREEN | Normal operation |
@@ -1369,7 +1604,16 @@ Track every tool invocation. Increment by 1 for each tool call (Read, Write, Edi
 | 48-55 (92%) | ORANGE | Skip remaining test generation, go straight to execute + emit |
 | 55+ | RED | Immediately emit QA_RESULT with partial data and exit |
 
-Budget is 60 calls. At 36: compress. At 48: skip to execute. At 55: emit and exit.
+**--scope budget: 75 calls** (scoped runs do crawl-first + deeper UI patterns)
+
+| Tool Calls | Level | Action |
+|---|---|---|
+| 0-45 (60%) | GREEN | Normal operation |
+| 45-60 (80%) | YELLOW | Skip selective vision, compress outputs |
+| 60-69 (92%) | ORANGE | Skip remaining test generation, go straight to execute + emit |
+| 69+ | RED | Immediately emit QA_RESULT with partial data and exit |
+
+Default runs use 60. --scope runs use 75. --plan runs use 60 (no test generation).
 
 ---
 
@@ -1443,17 +1687,24 @@ Before emitting QA_RESULT:
 - [ ] No multi-tenant cross-organization security tests in generated suite (deferred to L3)
 - [ ] Coverage annotations present in all tests (@covers-route, @covers-api, @covers-interaction)
 - [ ] Functional depth: forms have fill+submit tests, APIs have CRUD tests, buttons have click tests
+- [ ] Phase 4.7 Gate 0: Discovery files (sitemap.json, api-calls.json) exist and are fresh
+- [ ] Phase 4.7 Gate 0.5: All test files in correct directories ({testDir}/frontend/ or /api/)
 - [ ] Phase 4.7 Gate 1: Assertion strictness verified — no anti-patterns in generated tests
-- [ ] Phase 4.7 Gate 2: Auth state verification — signup→login, logout→deny, reset→login
-- [ ] Phase 4.7 Gate 3: Cleanup hooks — all data-creating tests have afterEach/afterAll cleanup
+- [ ] Phase 4.7 Gate 1.5: No CSS selectors (page.locator) — all role-based locators
+- [ ] Phase 4.7 Gate 2: State verification — annotation-driven (auth-chain, credential-change, CRUD)
+- [ ] Phase 4.7 Gate 3: Cleanup hooks — ACTUAL cleanup (not comments), identifiable test data prefixes
 - [ ] Phase 4.7 Gate 4: Boundary tests exist for HIGH risk text input endpoints
-- [ ] Phase 4.7 Gate 5: MISSING_FUNCTIONALITY_REPORT gaps queued for emission
+- [ ] Phase 4.7 Gate 5: Phase 4.5 was EXECUTED (route handlers read, all 4 tiers checked)
 - [ ] 5xx responses treated as BLOCKING bugs (never accepted as valid outcomes)
 - [ ] State verification: POST/PUT/DELETE AND auth mutation tests include follow-up verification
 - [ ] Negative tests: HIGH risk API endpoints have empty-body and missing-field tests
 - [ ] Multi-step flows: auth linear chain + CRUD lifecycle for HIGH risk groups
 - [ ] Data integrity probes: concurrent creation/duplicate tests for HIGH risk entities
 - [ ] Security boundary tests: IDOR, role escalation, session invalidation for HIGH risk endpoints
+- [ ] Signal-driven patterns: cookie-security, credential-change-verify, rate-limit-verify, response-leak-check, error-leak-check generated where discovery signals match
+- [ ] UI patterns: loading-state (HIGH/MEDIUM forms), keyboard-nav (HIGH forms), error-recovery (HIGH forms)
+- [ ] Interaction coverage tracked: forms/tables/modals discovered vs tested
+- [ ] Failure classification: REAL_BUG vs DISCOVERY_GAP vs ENVIRONMENT_ISSUE
 - [ ] MISSING_FUNCTIONALITY_REPORT emitted with gaps found during analysis
 - [ ] Email-dependent flows tested if infrastructure available (Phase 1.5)
 - [ ] Pre-existing test failures triaged with severity (Phase 2.5)
