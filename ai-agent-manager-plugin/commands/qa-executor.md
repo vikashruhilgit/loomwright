@@ -4,6 +4,27 @@ description: Discover app structure, generate and run Playwright tests with risk
 
 # Command: /qa-executor
 
+## Subagent Enforcement
+
+**When `/qa-executor` is invoked, you MUST spawn the QA Executor agent via Task tool:**
+
+```
+Task(
+  description: "QA Executor: {flags and context}",
+  prompt: "{user flags, project context, and any --scope/--continue/--plan details}",
+  subagent_type: "ai-agent-manager-plugin:ai-agent-manager-plugin:qa-executor"
+)
+```
+
+**DO NOT** attempt to execute the QA Executor protocol yourself.
+**DO NOT** delegate discovery to Explore agents.
+**DO NOT** cherry-pick phases from the protocol.
+
+The QA Executor agent has its own tools, budget tracking, phase protocol, and Playwright access.
+Only the QA Executor subagent can run browsers for discovery, generate tests, and emit QA_RESULT.
+
+---
+
 ## Usage
 
 ```
@@ -59,21 +80,24 @@ description: Discover app structure, generate and run Playwright tests with risk
 ## What This Does
 
 1. **Detects target URL** from Playwright config, .env, or --url flag
-2. **Runs 4-phase discovery** (enhanced with interaction data):
+2. **Probes for test infrastructure** (Phase 1.5) — email capture (Mailpit/MailHog), mock servers
+3. **Runs 4-phase discovery** (enhanced with interaction data):
    - Static analysis (routes from source code)
    - Runtime crawl (DOM + network + a11y + **forms, buttons, tables, modals, API body fields**)
    - Selective vision (screenshots for complex pages only)
    - Merge & gate (confidence scoring, discovery report)
-3. **Gets risk strategy** from QA Strategist (or uses defaults with --skip-strategy)
-4. **Generates Playwright tests** using discovery-driven Test Pattern Library:
-   - **Functional depth (default):** Form submissions, CRUD operations, button clicks, modal interactions, data rendering, API body validation
+4. **Triages pre-existing tests** (Phase 2.5) — runs existing tests, classifies failures as real bugs vs stale tests
+5. **Gets risk strategy** from QA Strategist (or uses defaults with --skip-strategy)
+6. **Generates Playwright tests** using discovery-driven Test Pattern Library:
+   - **Functional depth (default):** Form submissions, CRUD operations, button clicks, modal interactions, data rendering, API body validation, **auth linear chains**, **boundary tests**, **email flow tests** (if infrastructure available)
    - **Smoke depth:** Navigate + verify visible (quick CI sanity)
    - All tests use role-based locators and regex assertions
-5. **Executes tests** via `npx playwright test --reporter=json`
-6. **Tracks coverage** (routes, APIs, and **interactions** discovered vs tested)
-7. **Reports bugs** for failures (severity: BLOCKING/HIGH/MEDIUM/LOW)
-8. **Runs Strategist audit** (1 round for L1) -> approved/rejected
-9. **Emits QA_RESULT** with complete status
+7. **Self-checks generated tests** (Phase 4.7) — validates assertion quality, auth state verification, cleanup hooks, boundary tests, gap report readiness
+8. **Executes tests** via `npx playwright test --reporter=json`
+9. **Tracks coverage** (routes, APIs, and **interactions** discovered vs tested)
+10. **Reports bugs** for failures (severity: BLOCKING/HIGH/MEDIUM/LOW)
+11. **Runs Strategist audit** (1 round for L1) -> approved/rejected with structural completeness checks
+12. **Emits QA_RESULT** with complete status including infrastructure, pre-existing test triage, and self-check results
 
 ## Requirements
 
@@ -165,6 +189,7 @@ discovery/
   sitemap.json              # Routes from runtime crawl (enriched: forms, buttons, tables, modals)
   api-calls.json            # Intercepted API calls (enriched: request/response body fields)
   seed-data.json            # Entity counts and sample IDs
+  infrastructure.json       # Test infrastructure (email capture, mock servers) from Phase 1.5
   discovery-map.json        # Merged discovery map
   report.md                 # Human-readable discovery report
 
@@ -578,25 +603,31 @@ Understanding what Level 1 does and does not do is important for setting expecta
 ### What L1 Does
 
 - Discovers routes and APIs via 4-phase engine (static + runtime + vision + merge)
+- **Infrastructure discovery:** Probes for email capture (Mailpit/MailHog), mock servers (Phase 1.5)
+- **Pre-existing test triage:** Runs existing tests, classifies failures, files bugs (Phase 2.5)
 - **Enhanced discovery:** Captures form details, button actions, table structure, modal triggers, API request/response body fields
 - Gets risk classification from QA Strategist
 - **Smoke depth:** Generates navigate-and-verify tests (original L1 behavior)
 - **Functional depth (default):** Generates interaction tests — form submissions, CRUD operations, button clicks, modal interactions, data rendering verification
 - Generates API tests (GET response validation, POST/PUT/DELETE CRUD flows, auth validation)
+- **Simple linear chains:** Generates auth lifecycle tests (signup→login→access→logout→deny) for HIGH risk auth flows
+- **Boundary tests:** Tests oversized input, special chars, SQL-like strings for HIGH risk endpoints
+- **Email flow tests:** Tests password reset, MFA via email capture (if infrastructure available)
+- **Post-generation self-check:** Validates assertion quality, state verification, cleanup, boundaries (Phase 4.7)
 - **Session management:** `--plan` surveys app into testable scopes, `--scope` tests one area deeply, `--continue` auto-picks next scope
 - Runs tests and parses JSON results
 - Tracks route/API/interaction coverage (inventory-level: discovered vs tested)
 - Reports bugs with severity classification
-- Runs 1 round of Strategist audit
+- Runs 1 round of Strategist audit (with structural completeness checks)
 
 ### What L1 Does NOT Do
 
 | Capability | Level | Why Not at L1 |
 |------------|-------|---------------|
 | State modeling (login -> add to cart -> checkout) | L2 | Requires journey graph generation |
-| Fuzz testing (random/boundary inputs) | L2 | Requires input generation engine |
+| Fuzz testing (random/adversarial inputs) | L2 | Requires input generation engine |
 | Multi-round debate (fix gaps and re-audit) | L2 | L1 gets 1 audit round only |
-| Journey depth tests (multi-step user flows) | L2 | Requires state transition modeling |
+| Branching journey graphs (multi-path user flows) | L2 | Requires state transition modeling (L1 has simple linear chains) |
 | Security tests (XSS, CSRF, injection) | L3 | Requires adversarial test patterns |
 | Cross-org access tests | L3 | Requires multi-tenant security modeling |
 | Performance tests (load, stress) | L3 | Requires performance benchmarking tools |

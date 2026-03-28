@@ -162,6 +162,18 @@ QA_RESULT:
   tests_failed: integer                # optional — number failing (default 0)
   discovery_confidence: enum [HIGH, MEDIUM, LOW]  # optional
   coverage_estimate: float             # optional — 0.0 to 1.0, routes/APIs tested vs discovered
+  infrastructure_available: string     # optional — v7.2.0: from Phase 1.5 (e.g., "email:mailpit" or "none")
+  pre_existing_tests: integer          # optional — v7.2.0: count of pre-existing tests found
+  pre_existing_passing: integer        # optional — v7.2.0: count passing
+  pre_existing_failing: integer        # optional — v7.2.0: count failing
+  pre_existing_bugs: object[]          # optional — v7.2.0: bugs found in pre-existing test failures
+    - severity: enum [BLOCKING, HIGH, MEDIUM, LOW]
+      description: string
+      file: string
+  pre_existing_stale: object[]         # optional — v7.2.0: stale tests needing update
+    - file: string
+      reason: string
+  self_check_gates_passed: string      # optional — v7.2.0: from Phase 4.7 (e.g., "5/5")
   risks: object[]                      # optional — identified risk areas
     - area: string
       level: enum [HIGH, MEDIUM, LOW]

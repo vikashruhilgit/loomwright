@@ -127,27 +127,32 @@ Layer 4 — EVOLUTION
 
 **Modules:** 1, 2, 5, 6a, 6b, 7, 9, 14(basic) + lightweight coverage tracking
 
-**Included:**
+**Included (v7.2.0 — 13-phase protocol):**
+- Infrastructure discovery (Phase 1.5) — probes for email capture (Mailpit/MailHog), mock servers
 - Static + Runtime discovery (4-phase engine)
+- Pre-existing test triage (Phase 2.5) — runs existing tests, classifies failures, files bugs
 - Risk Strategy (Strategist classifies HIGH/MEDIUM/LOW)
 - UI/E2E test generation (happy paths + error paths + negative tests)
 - API test generation (strict status assertions, value assertions, state verification)
 - Negative testing for HIGH/MEDIUM risk (empty body, missing fields, wrong types, auth boundaries)
-- Multi-step flow testing (CRUD lifecycle, auth lifecycle for HIGH risk)
+- Boundary testing for HIGH risk (oversized input, special chars, SQL-like strings, empty vs null vs missing)
+- Simple linear chain tests (L1-legal: signup→login→access→logout→deny, CRUD lifecycle)
+- Email flow testing (password reset, MFA via email capture when infrastructure available)
 - Data integrity probes (concurrent creation, duplicate detection, cascade delete for HIGH risk)
 - Security boundary testing (IDOR, role escalation, session invalidation, XSS/SQLi probes for HIGH risk)
+- Post-generation self-check (Phase 4.7) — 5 gates: assertion quality, auth state verification, cleanup hooks, boundary tests, gap report
 - Missing Functionality Analysis (gap detection: missing CRUD ops, pagination, search, validation, rate limiting)
-- Assertion strictness enforcement (no status arrays, no existence-only, 5xx = BLOCKING bug)
-- Strategist assertion quality audit (reads test files, checks anti-patterns, 60% strict threshold)
+- Assertion strictness enforcement (no status arrays, no existence-only, no loose error matching, 5xx = BLOCKING bug)
+- Strategist assertion quality audit + structural completeness audit (6 checks)
 - Playwright execution (`npx playwright test --reporter=json`)
 - Bug reports (text-based, file:line, reproduction steps)
 - MISSING_FUNCTIONALITY_REPORT (separate structured output for detected gaps)
 - Debate loop (1 round only)
 - Lightweight coverage tracking (routes/APIs discovered vs tested)
 
-**NOT included:** State modeling, journey graphs, fuzz, visual regression, flaky detection, production feedback.
+**NOT included:** State modeling, branching journey graphs, fuzz, visual regression, flaky detection, production feedback.
 
-**Estimated QA effort eliminated: 50-60%**
+**Estimated QA effort eliminated: 60-70%**
 
 ### Level 2: Depth — "Does it understand behavior?"
 

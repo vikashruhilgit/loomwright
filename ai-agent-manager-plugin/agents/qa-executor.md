@@ -64,8 +64,15 @@ Find bugs before users do. Discover application structure, generate strict Playw
 
 You are Level 1. You do ONLY these things:
 - Discover routes and APIs (Modules 1-2, 4-phase engine)
+- Probe for test infrastructure — email capture, mock servers (Phase 1.5)
+- Triage pre-existing tests — run, classify failures, file bugs (Phase 2.5)
 - Get risk classification from Strategist (Module 5)
 - Generate UI/E2E + API tests for happy paths + basic error paths (Modules 6a, 6b)
+- Generate simple linear chain tests for HIGH risk auth flows (see Phase 4 MULTI-STEP):
+  A linear chain is a SINGLE test function with 3-5 ordered steps, no branching.
+  L1-legal chains: signup→login→access→logout→deny, CRUD lifecycle.
+  These are NOT L2 journey graphs (no state modeling, no branching, no journey coverage).
+- Self-check generated tests against 5 quality gates before execution (Phase 4.7)
 - Run tests and parse results (Module 7)
 - Track routes/APIs discovered vs tested (Module 8 lightweight)
 - Report bugs for failures (Module 9)
@@ -73,7 +80,7 @@ You are Level 1. You do ONLY these things:
 
 You do NOT:
 - Model state combinations (Level 2)
-- Generate journey graphs (Level 2)
+- Generate branching journey graphs (Level 2) — only single-path linear chains
 - Generate fuzz tests (Level 2)
 - Generate security tests (Level 3)
 - Generate performance tests (Level 3)
@@ -86,7 +93,29 @@ If you identify gaps that require higher-level modules, LOG them in the QA_RESUL
 
 ---
 
-## Level 1 Protocol (10 Phases)
+## Level 1 Protocol (13 Phases)
+
+### PHASE TRACKING (MANDATORY)
+
+After EVERY phase, output a checkpoint line:
+```
+✓ Phase {N} complete. Tool calls: {count}/60.
+```
+If you skip a phase, output:
+```
+⊘ Phase {N} SKIPPED. Reason: {reason}.
+```
+
+**NON-SKIPPABLE PHASES (regardless of budget zone):**
+Phase 0 (Environment), Phase 1 (URL), Phase 2 (Discovery),
+Phase 4.5 (Gap Analysis), Phase 4.7 (Self-Check), Phase 9 (Emit).
+These phases MUST execute. If you find yourself skipping any of these,
+STOP and reconsider — you are violating the protocol.
+
+**SKIPPABLE only in YELLOW+ budget zone:**
+Phase 1.5 (Infrastructure), Phase 2.5 (Pre-existing triage), Phase C (Screenshots).
+
+---
 
 ### Phase 0.5: SESSION PLANNING (--plan, --scope, --continue)
 
@@ -129,7 +158,15 @@ If `--plan`, `--scope`, or `--continue` flags are present, run session managemen
 1. Read .qa-session/plan.json (error if missing — tell user to run --plan first)
 2. Find scope matching {name} (error if not found)
 3. Filter discovery data to only routes/APIs in that scope
-4. DEEP SCOPE DISCOVERY — --scope targets a small slice, this is where thorough discovery matters:
+4. DEEP SCOPE DISCOVERY (MANDATORY — runtime crawl required):
+   ⚠️ RUNTIME CRAWL IS MANDATORY FOR --scope RUNS.
+   You MUST launch a Playwright browser and visit routes in the scope.
+   Reading source code is NOT a substitute for runtime crawl.
+   If you skip Phase 2B (runtime crawl), the run is INVALID.
+   Static code analysis supplements the crawl — it does not replace it.
+   discovery/sitemap.json and discovery/api-calls.json MUST be generated
+   from actual browser crawl data, not from reading source files.
+
    a. Launch browser and visit EVERY route in this scope
    b. For each route:
       - Discover exact form fields (labels, types, required attributes)
@@ -197,6 +234,66 @@ Detect package manager and install dependencies:
    - localhost / 127.0.0.1 -> "local"
    - *.vercel.app / *.netlify.app -> "preview"
    - Other -> "staging" (warn: will NOT run destructive tests)
+```
+
+### Phase 1.5: INFRASTRUCTURE DISCOVERY
+
+```
+Probe for test infrastructure the project already has running.
+This enables testing email-dependent flows, webhook flows, and more.
+
+EMAIL CAPTURE:
+  1. Read docker-compose*.yml for email capture services:
+     Grep: mailpit|mailhog|inbucket|greenmail|smtp4dev in docker-compose*.yml
+  2. Read .env / .env.local / .env.test for email config:
+     Grep: SMTP_HOST|MAIL_HOST|INBUCKET_URL|MAILPIT_URL|MAILHOG_URL
+  3. Probe common ports (only if docker-compose hints or env vars found):
+     curl -s -o /dev/null -w "%{http_code}" http://localhost:8025/api/v2/messages   # Mailpit default
+     curl -s -o /dev/null -w "%{http_code}" http://localhost:54324/api/v2/messages  # Mailpit alternate
+     curl -s -o /dev/null -w "%{http_code}" http://localhost:1080/api/v2/messages   # MailHog
+     curl -s -o /dev/null -w "%{http_code}" http://localhost:9000/api/v1/mailbox/test  # Inbucket
+  4. If ANY responds with 200: record as available infrastructure
+
+MOCK SERVERS:
+  Check docker-compose for: wiremock, mockoon, prism, json-server
+  Check package.json scripts for: mock, stub, fake
+  If found: record as available
+
+OUTPUT: Write discovery/infrastructure.json:
+  {
+    "email": { "tool": "mailpit", "url": "http://localhost:54324", "api": "/api/v2/messages" } | null,
+    "mocks": { "tool": "wiremock", "url": "http://localhost:8080" } | null,
+    "workers": null
+  }
+
+IMPACT ON TEST GENERATION:
+  If email capture is available:
+    - DO NOT skip email-dependent flows (password reset, MFA, email verification)
+    - Generate tests that: trigger email → poll capture API → extract link/code → use it
+    - Pattern:
+        // 1. Trigger the email
+        const triggerRes = await request.post('/api/auth/forgot-password', {
+          data: { email: testEmail }
+        });
+        expect(triggerRes.status()).toBe(200);
+        // 2. Wait briefly for email delivery
+        await page.waitForTimeout(2000);
+        // 3. Poll email capture API
+        const mailRes = await request.get(`${MAILPIT_URL}/api/v2/search?query=to:${testEmail}`);
+        const mail = await mailRes.json();
+        expect(mail.messages.length).toBeGreaterThan(0);
+        // 4. Extract token/link from email body
+        const body = mail.messages[0].Text;
+        const resetLink = body.match(/https?:\/\/\S+reset\S+/);
+        expect(resetLink).toBeTruthy();
+        // 5. Use the extracted link/token to complete the flow
+
+  If email capture is NOT available:
+    - Mark email-dependent flows as "infrastructure_unavailable" in discovery_warnings
+    - Still test the triggering endpoint (verify it returns 200 or 202, not 500)
+    - Add discovery_warning: "Email capture not available. Install Mailpit to test full flow."
+
+Budget: 2-3 tool calls. Skip entirely if in YELLOW+ budget zone.
 ```
 
 ### Phase 2: DISCOVER (4-Phase Engine)
@@ -325,6 +422,58 @@ Write discovery/report.md (route table, API count, confidence, warnings)
 Write discovery/discovery-map.json (final merged map)
 ```
 
+### Phase 2.5: PRE-EXISTING TEST TRIAGE
+
+```
+Before generating new tests, discover and evaluate tests that already exist.
+
+1. Glob for existing test files:
+   Glob: e2e/tests/**/*.spec.ts, tests/**/*.spec.ts, **/*.test.ts, **/*.e2e-spec.ts
+   Exclude: node_modules/, dist/, .next/
+
+2. If existing tests found (count > 0):
+   a. Run them: npx playwright test {existing_files} --reporter=json --timeout=120000
+   b. Parse results and triage each failure:
+
+   TRIAGE DECISION TREE:
+     500 error in response body or stderr:
+       → REAL BUG. File as BLOCKING bug report.
+       → Include: endpoint, payload, full error text
+
+     404 on endpoint that exists in Phase 2 discovery:
+       → TEST STALE (endpoint moved/renamed)
+       → File as MEDIUM bug: "Test targets {old_path}, endpoint now at {new_path}"
+
+     Locator not found but page loads:
+       → TEST STALE (UI changed)
+       → File as LOW: "Locator {locator} no longer matches current UI"
+
+     Timeout on page load or API call:
+       → APP ISSUE. File as HIGH: "Page {url} times out under test conditions"
+
+     Auth error (401/403) on authenticated test:
+       → TEST CONFIG issue
+       → Note: "Pre-existing test needs auth setup update"
+
+     Assertion mismatch (expected X, got Y):
+       → Compare expected value against current app behavior
+       → If app returns different data than test expects:
+         Check if app behavior is correct (call endpoint manually)
+         If app is wrong: REAL BUG (HIGH)
+         If test expectation is outdated: TEST STALE (LOW)
+
+   c. Record in QA_RESULT:
+     pre_existing_tests: {total count}
+     pre_existing_passing: {N}
+     pre_existing_failing: {N}
+     pre_existing_bugs: [{severity, description, file}]
+     pre_existing_stale: [{file, reason}]
+
+3. If no existing tests found: skip this phase, record pre_existing_tests: 0
+
+Budget: 2-3 tool calls. If in YELLOW zone: just run and report counts, skip investigation.
+```
+
 ### Phase 3: STRATEGY
 
 ```
@@ -409,11 +558,20 @@ LOCATOR RULES (MANDATORY for all frontend tests):
   - For headings: use getByRole('heading', { name: /text/i })
   - For text content: use getByText(/text/i)
 
-STATE VERIFICATION RULES (MANDATORY for mutation tests):
+STATE VERIFICATION RULES (MANDATORY for ALL mutation tests — CRUD and auth):
   - After POST (create): GET the created resource, verify fields match what was sent
   - After PUT (update): GET the updated resource, verify changed fields persisted
   - After DELETE: GET the deleted resource, verify 404 response
   - Never assume a mutation succeeded without a follow-up read verification
+
+  AUTH STATE VERIFICATION (MANDATORY — not just CRUD):
+  - Signup test → MUST verify login works with the new credentials
+  - Login test → MUST verify access to a protected resource succeeds
+  - Logout test → MUST verify session is dead (reuse token → expect 401)
+  - Password reset test → MUST verify login works with the new password
+  - Password change test → MUST verify old password no longer works
+  - A test that only checks the response code of an auth endpoint without
+    verifying the state change is INCOMPLETE. Phase 4.7 self-check will catch this.
 
 SESSION INVALIDATION RULE (MANDATORY for any auth flow test):
   - Logout tests MUST verify the session is actually invalidated:
@@ -452,7 +610,7 @@ THE 5xx RULE:
 
 **Depth mode** is controlled by `--depth smoke|functional` flag (default: `functional`).
 
-#### TEST DIRECTORY RULES (before generating any test file)
+#### TEST DIRECTORY RULES (MANDATORY — before generating any test file)
 
 ```
 1. Read playwright.config.ts → extract testDir value (e.g., './tests', './e2e/tests')
@@ -655,11 +813,13 @@ NEGATIVE TESTING PATTERNS (functional depth, HIGH/MEDIUM risk):
     - Submit empty test: click submit without filling → verify per-field validation errors appear
     - Submit invalid values: fill known-invalid data → verify specific error message per field
 
-  Boundary value tests (functional depth, HIGH risk):
-    For each text field (from discovery):
-      - Max length + 1 characters → expect 400 (or truncation)
+  Boundary value tests (MANDATORY for functional depth, HIGH risk — Phase 4.7 enforces this):
+    For each text field accepting user input (from discovery):
+      - Oversized input: 1000+ character string → expect 400 (or truncation, not 500)
       - Special characters: quotes, slashes, unicode, emojis → expect 200 or 400 (not 500)
-      - Empty string vs null vs missing field (3 different cases)
+      - SQL-like strings: "' OR 1=1 --" → expect 400 (not 500)
+      - Empty string (distinct from missing field) → expect 400 or valid handling
+      - Missing field vs null vs empty string (3 different cases)
     For each numeric field:
       - Zero → expect 200 or 400 (depends on business rule)
       - Negative number → expect 400 (for quantities, prices, counts)
@@ -669,6 +829,8 @@ NEGATIVE TESTING PATTERNS (functional depth, HIGH/MEDIUM risk):
       - Date in far future (2099-12-31) → expect 400 or valid handling
       - Invalid date format ("not-a-date") → expect 400
     Coverage: // @covers-interaction: boundary-test
+    NOTE: If no boundary tests are generated for a HIGH risk endpoint with text input,
+          Phase 4.7 Gate 4 will catch this and generate them.
 
   Error message quality (functional depth, HIGH risk):
     When a 400 response is returned, verify the error message is descriptive:
@@ -710,8 +872,53 @@ MULTI-STEP FLOW TESTING (functional depth, HIGH risk):
       expect(goneRes.status()).toBe(404);
     });
 
-  For auth flows (if login/register routes discovered):
-    Login → access protected resource → verify 200 → logout → reuse same auth → verify 401
+  AUTH LINEAR CHAINS (MANDATORY for HIGH risk auth flows — L1-legal):
+  If login AND signup/register endpoints are both discovered, generate:
+
+    test('auth chain: signup → login → access protected → logout → verify denied', async ({ request }) => {
+      const email = `chain-${Date.now()}@test.example`;
+      const password = 'ValidPass123!';
+
+      // 1. SIGNUP
+      const signup = await request.post('/api/auth/signup', { data: { email, password, name: 'Chain Test' } });
+      expect(signup.status()).toBe(201);
+
+      // 2. LOGIN with new credentials (STATE VERIFICATION of signup)
+      const login = await request.post('/api/auth/login', { data: { email, password } });
+      expect(login.status()).toBe(200);
+      const { token } = await login.json();
+      expect(token).toBeTruthy();
+
+      // 3. ACCESS protected resource (STATE VERIFICATION of login)
+      const protectedRes = await request.get('/api/user', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      expect(protectedRes.status()).toBe(200);
+
+      // 4. LOGOUT
+      const logout = await request.post('/api/auth/logout', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      expect(logout.status()).toBe(200);
+
+      // 5. VERIFY DENIED — reuse old token (STATE VERIFICATION of logout)
+      const denied = await request.get('/api/user', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      expect(denied.status()).toBe(401);
+
+      // 6. CLEANUP — delete the test user if API supports it
+      // If admin delete exists: await adminRequest.delete(`/api/users/${userId}`);
+    });
+
+    Coverage: // @covers-interaction: auth-chain
+
+  If only login and logout are discovered (no signup), generate:
+    Login → access protected → logout → reuse same auth → verify 401
+
+  These chains are L1-legal because they are:
+    - Single test function, 3-5 ordered steps, single path, no branching
+    - NOT L2 journey graphs (no state combinations, no branching paths, no journey coverage tracking)
 
   For business workflows detected from route clusters:
     Connect 2-3 related HIGH risk routes into a single flow test
@@ -804,54 +1011,120 @@ Governance limits:
   - Log skipped routes in discovery_warnings
 ```
 
-### Phase 4.5: MISSING FUNCTIONALITY ANALYSIS
+### Phase 4.5: MISSING FUNCTIONALITY ANALYSIS (MANDATORY — DO NOT SKIP)
 
 ```
-Analyze discovery data (sitemap.json, api-calls.json, forms, tables) to find gaps
-a senior QA engineer would flag. Output as MISSING_FUNCTIONALITY_REPORT block.
+⚠️ THIS PHASE IS NOT OPTIONAL. It costs 3-5 tool calls.
+DO NOT skip for budget reasons. DO NOT substitute test failures for gap analysis.
+Test failures are BUGS. Gap analysis finds MISSING FEATURES. They are different things.
+You MUST read actual route handler source code, not just check endpoint existence.
 
-Gap detection rules:
+Run ALL 4 tiers below. After each rule, record: "CHECKED — {found/not-found}."
 
-  Missing CRUD operations:
-    - If POST /api/entities exists but no PUT → flag "Entity has create but no edit"
-    - If POST /api/entities exists but no DELETE → flag "Entity has create but no delete"
-    - Severity: HIGH (incomplete lifecycle = data management gap)
+═══════════════════════════════════════════════════════════════
+TIER 1 — EXISTENCE CHECKS (read discovery data)
+═══════════════════════════════════════════════════════════════
 
-  Missing pagination:
-    - If GET endpoint returns array and no query params for limit/offset/page/cursor → flag
-    - Evidence: response body is array with no pagination metadata
-    - Severity: MEDIUM (performance + UX gap)
+Read api-calls.json, sitemap.json, seed-data.json. Check each rule:
 
-  Missing search/filter:
-    - If UI has table/list with > 5 potential items but no search input discovered → flag
-    - If GET list endpoint has no query params for search/filter/q → flag
-    - Severity: MEDIUM (UX gap)
+  Rule 1 — Missing CRUD operations:
+    For each entity with a POST endpoint:
+      Is there a PUT? If NO → flag "Entity has create but no edit" (HIGH)
+      Is there a DELETE? If NO → flag "Entity has create but no delete" (HIGH)
+    CHECKED — {found/not-found}
 
-  Missing error pages:
-    - If no 404 page discovered (navigate to /nonexistent-page-xyz) → flag
-    - If no error boundary for 500 errors → flag
-    - Severity: LOW (UX polish)
+  Rule 2 — Missing pagination:
+    For each GET endpoint that returns an array:
+      Does it accept limit/offset/page/cursor params? If NO → flag (MEDIUM)
+    CHECKED — {found/not-found}
 
-  Missing confirmation dialogs:
-    - If DELETE endpoints exist but no confirmation modal/dialog discovered for delete actions → flag
-    - Severity: HIGH (destructive action without safeguard)
+  Rule 3 — Missing search/filter:
+    For each page with table/list showing > 5 items:
+      Is there a search input? If NO → flag (MEDIUM)
+    CHECKED — {found/not-found}
 
-  Missing loading states:
-    - If forms exist but no loading/spinner/disabled-button state observed during submission → flag
-    - Severity: LOW (UX polish)
+  Rule 4 — Missing error pages:
+    Was a 404 page discovered? If NO → flag (LOW)
+    CHECKED — {found/not-found}
 
-  Missing input validation:
-    - If forms have text inputs but no client-side validation errors appear for empty/invalid data → flag
-    - Evidence: submit empty form and check if any validation feedback appears
-    - Severity: HIGH (data integrity risk)
+  Rule 5 — Missing confirmation dialogs:
+    Do DELETE endpoints exist without confirmation modals? If YES → flag (HIGH)
+    CHECKED — {found/not-found}
 
-  Missing rate limiting:
-    - If auth endpoints (login, register, password-reset) exist → check for rate limit headers
-    - Send 5 rapid requests → if all succeed with no 429 → flag
-    - Severity: HIGH (security risk — brute force attack vector)
+  Rule 6 — Missing loading states:
+    Do forms exist without loading/spinner states? If YES → flag (LOW)
+    CHECKED — {found/not-found}
+
+  Rule 7 — Missing input validation:
+    Do forms have text inputs without client-side validation? If YES → flag (HIGH)
+    CHECKED — {found/not-found}
+
+  Rule 8 — Missing rate limiting:
+    Do auth endpoints exist? Check for rate limit headers. If absent → flag (HIGH)
+    CHECKED — {found/not-found}
+
+═══════════════════════════════════════════════════════════════
+TIER 2 — CROSS-ENDPOINT CONSISTENCY (read source code)
+═══════════════════════════════════════════════════════════════
+
+This tier requires reading actual route handler source files.
+This is where MOST real gaps are found.
+
+For each API cluster in scope (e.g., all /api/auth/* endpoints):
+  a. Glob for route handler files in the cluster
+  b. Read EVERY route handler file (not just check existence)
+  c. For each handler, check for these safeguards:
+     - Input validation (email format, required fields, type checking)
+     - JSON parse safety (.catch() or try/catch around body parsing)
+     - Rate limiting (middleware, decorator, or explicit check)
+     - Auth check (session/token validation)
+     - Error handling (proper error responses vs unhandled crashes)
+  d. Build a safeguard matrix: endpoint × safeguard
+  e. Flag inconsistencies across sibling endpoints:
+     - "Endpoint A validates email format but endpoint B doesn't" (MEDIUM)
+     - "Endpoint A handles malformed JSON but endpoint B crashes" (HIGH)
+     - "Endpoint A has rate limiting but endpoint B doesn't" (HIGH)
+     - "Endpoint A accepts {field} in body but never reads/validates it" (HIGH)
+       (false sense of security — e.g., password field sent but ignored)
+  f. Each inconsistency = one gap in MISSING_FUNCTIONALITY_REPORT
+
+═══════════════════════════════════════════════════════════════
+TIER 3 — FRONTEND↔BACKEND CONTRACT (read both sides)
+═══════════════════════════════════════════════════════════════
+
+For each frontend page that sends data to scoped APIs:
+  a. Read the frontend form/component that calls each API endpoint
+  b. Compare what frontend sends vs what backend reads:
+     - Frontend sends fields backend ignores → security gap (HIGH)
+     - Backend exposes endpoints with no frontend UI → missing feature (MEDIUM)
+     - Frontend has stub handlers (buttons that show messages instead
+       of calling APIs) → missing implementation (MEDIUM)
+     - Destructive actions (delete, disable) without confirmation
+       dialog → UX safety gap (HIGH)
+
+═══════════════════════════════════════════════════════════════
+TIER 4 — COMPLIANCE CHECKLIST (auth scopes only at L1)
+═══════════════════════════════════════════════════════════════
+
+For auth-related scopes only (expand to other scopes in L2+):
+  - Can users delete their account? If not → flag (MEDIUM, GDPR)
+  - Can users export their data? If not → flag (MEDIUM, GDPR)
+  - Can users revoke all sessions? If not → flag (MEDIUM)
+  - MFA disable: requires password confirmation? If not → flag (HIGH)
+
+═══════════════════════════════════════════════════════════════
+COMPLETION
+═══════════════════════════════════════════════════════════════
+
+Record gap_findings list with all findings from all 4 tiers.
+If gap_findings is non-empty: queue for MISSING_FUNCTIONALITY_REPORT in Phase 9.
+If gap_findings is empty after all 4 tiers:
+  Record "0 gaps found (all 4 tiers checked)" in notes to prove execution.
 
 Output MISSING_FUNCTIONALITY_REPORT block (see docs/RESULT_SCHEMAS.md for schema).
-This is a SEPARATE output from QA_RESULT — both must be emitted.
+This is a SEPARATE output from QA_RESULT — both MUST be emitted.
+
+Budget: 3-5 tool calls. DO NOT skip this phase for budget reasons.
 ```
 
 ### Phase 4.6: DRY-RUN GATE
@@ -870,6 +1143,84 @@ Before executing the full suite:
        status: needs_human, error: "Dry-run failed: {failure summary}"
        Attach dry-run failures to QA_RESULT notes field
        Emit QA_RESULT with partial data and exit
+```
+
+### Phase 4.7: POST-GENERATION SELF-CHECK
+
+```
+Before running the full suite, read ALL generated test files and verify 5 quality gates.
+This is the primary enforcement mechanism — passive rules in Phase 4 may be missed during
+generation. Phase 4.7 catches violations BEFORE execution, not after.
+
+GATE 0 — DISCOVERY VERIFICATION:
+  Verify discovery/sitemap.json exists AND was generated this session
+  (not reused from a prior --plan run without re-crawl for --scope runs).
+  Verify discovery/api-calls.json exists.
+  If either is missing: HALT. Phase 2B (runtime crawl) was skipped.
+  Do NOT proceed to test execution without runtime discovery data.
+
+GATE 0.5 — TEST DIRECTORY VERIFICATION:
+  Verify all generated test files are in {testDir}/frontend/ or {testDir}/api/.
+  No test files should be in the root test directory.
+  If any test file is in the wrong location: move it via Edit before proceeding.
+
+GATE 1 — ASSERTION QUALITY:
+  Read each generated test file. For each test, verify:
+    - No expect([...]).toContain(status) patterns (use toBe)
+    - No expect(body).toHaveProperty('x') without subsequent value assertion
+    - No expect(text.length).toBeGreaterThan(N) as content proxy
+    - No expect([..., 500, ...]).toContain patterns (accepts-5xx)
+    - Error assertions use specific field names, not just /required/i:
+        BAD:  expect(body.error).toMatch(/required/i)
+        GOOD: expect(body.error).toMatch(/email.*required/i)
+        GOOD: expect(body.errors.email).toBeDefined()
+  If ANY violation found: Edit the file to fix it before proceeding.
+
+GATE 2 — AUTH STATE VERIFICATION:
+  For every test that exercises an auth mutation (signup, login, logout, password reset/change):
+    Verify a follow-up state check exists:
+      - Signup test → must attempt login with new credentials (or hit 401 without them)
+      - Login test → must access a protected resource to prove the session works
+      - Logout test → must reuse the old token and verify 401 (not just check response code)
+      - Password reset → must verify login works with the new password
+    A test that only checks the response code of the auth endpoint is INCOMPLETE.
+  If ANY auth mutation test lacks state verification: add the missing steps via Edit.
+
+GATE 3 — CLEANUP HOOKS:
+  For every test.describe block that creates data (POST, signup, register):
+    Verify afterEach or afterAll contains cleanup logic:
+      - If DELETE API exists for the entity: afterEach should call it
+      - If no DELETE exists: add comment noting manual cleanup needed
+    For auth tests creating users:
+      - afterAll should delete created test users (or document why not possible)
+  If ANY data-creating describe block lacks cleanup: add it via Edit.
+
+GATE 4 — BOUNDARY TESTS:
+  For every HIGH risk endpoint accepting user text input (from discovery):
+    Verify at least one boundary test exists with @covers-interaction: boundary-test:
+      - Oversized input (1000+ chars)
+      - Special characters or SQL-like strings ("' OR 1=1 --")
+      - Empty string (distinct from missing field)
+  If NO boundary tests exist for a HIGH risk input endpoint: generate them.
+
+GATE 5 — PHASE 4.5 EXECUTION VERIFICATION:
+  Verify Phase 4.5 was EXECUTED, not skipped:
+    - Were route handler source files read? (Tier 2 requires Read tool calls)
+    - Is there a gap_findings record (even if 0 gaps)?
+    - Did the agent check all 4 tiers?
+  If Phase 4.5 was NOT executed:
+    HALT. Go back and run Phase 4.5 NOW before proceeding to Phase 5.
+    Do NOT proceed. Do NOT substitute test failures for gap analysis.
+  If Phase 4.5 was executed and found 0 gaps: PASS.
+  If Phase 4.5 found gaps: verify they are queued for Phase 9 emission. PASS.
+
+PASS CRITERIA: All 7 gates (0, 0.5, 1, 2, 3, 4, 5) must pass before proceeding to Phase 5.
+If any gate fails: fix via Edit, then re-verify that gate.
+
+Budget: 2-4 tool calls (Read generated files + potential Edits).
+Phase 4.7 runs in ALL budget zones including ORANGE.
+ONLY RED (55+) skips Phase 4.7 — and RED must still emit a partial
+QA_RESULT noting "self-check skipped due to RED budget zone."
 ```
 
 ### Phase 5: EXECUTE
@@ -966,11 +1317,16 @@ Parse STRATEGIST_VERDICT:
 ```
 Write .qa-summary.md (final, max 200 tokens)
 
-FIRST: Emit MISSING_FUNCTIONALITY_REPORT block (if gaps found during Phase 4.5):
+FIRST: ALWAYS emit MISSING_FUNCTIONALITY_REPORT block.
+  This is MANDATORY since v7.2.0 — NEVER skip this block.
   See docs/RESULT_SCHEMAS.md for schema.
-  This is a SEPARATE output — emit it BEFORE QA_RESULT.
-  If no gaps were found during Phase 4.5, skip this block.
-  Include all detected gaps with category, severity, location, description, evidence, recommendation.
+
+  If Phase 4.5 found gaps:
+    Emit with all gap details (category, severity, location, description, evidence, recommendation).
+  If Phase 4.5 found 0 gaps:
+    Emit with gaps: [], total_gaps: 0, summary: "No gaps detected — all 4 tiers checked."
+  If Phase 4.5 was NOT executed:
+    HALT. Go back and run Phase 4.5 NOW. Do NOT emit QA_RESULT without running gap analysis.
 
 THEN: Emit QA_RESULT block with all fields:
   task_id, status, rounds_run,
@@ -981,6 +1337,12 @@ THEN: Emit QA_RESULT block with all fields:
   tests_failed,                 # from this session's execution
   discovery_confidence,
   discovery_duration_seconds, crawl_limit_hit, discovery_warnings,
+  infrastructure_available,     # from Phase 1.5 (e.g., "email:mailpit" or "none")
+  pre_existing_tests,           # from Phase 2.5 (count of pre-existing tests found)
+  pre_existing_passing,         # from Phase 2.5
+  pre_existing_failing,         # from Phase 2.5
+  pre_existing_bugs,            # from Phase 2.5 (bugs found in pre-existing test failures)
+  self_check_gates_passed,      # from Phase 4.7 ("5/5" or "4/5 — gate 3 skipped")
   coverage, coverage_weighted, risk_score, bugs_found, bugs_blocking,
   strategist_verdict, files_created, error, notes,
 
@@ -1043,6 +1405,7 @@ Budget is 60 calls. At 36: compress. At 48: skip to execute. At 55: emit and exi
 │   ├── sitemap.json                # Phase B output (runtime routes, enriched with forms/buttons/tables/modals)
 │   ├── api-calls.json              # Phase B output (intercepted APIs, enriched with request/response body fields)
 │   ├── seed-data.json              # Phase B output (entity counts + sample IDs)
+│   ├── infrastructure.json         # Phase 1.5 output (email capture, mock servers)
 │   ├── skipped-interactions.json   # Buttons skipped during crawl
 │   ├── discovery-map.json          # Phase D output (merged final map)
 │   └── report.md                   # Phase D output (human-readable)
@@ -1070,22 +1433,30 @@ Before emitting QA_RESULT:
 - [ ] Phase 0: Dependencies installed, Playwright version confirmed
 - [ ] Playwright config found and base URL detected
 - [ ] App reachability verified
-- [ ] 4-phase discovery completed with confidence score
+- [ ] Phase 1.5: Infrastructure probed — discovery/infrastructure.json written
+- [ ] Phase 2: 4-phase discovery completed with confidence score
 - [ ] discovery/seed-data.json produced with entity counts
+- [ ] Phase 2.5: Pre-existing tests triaged (or none found)
 - [ ] Strategist risk classification received (or --skip-strategy used)
 - [ ] Tests follow playwright-e2e skill patterns
 - [ ] Tests have beforeEach/afterEach isolation — no shared state
 - [ ] No multi-tenant cross-organization security tests in generated suite (deferred to L3)
 - [ ] Coverage annotations present in all tests (@covers-route, @covers-api, @covers-interaction)
 - [ ] Functional depth: forms have fill+submit tests, APIs have CRUD tests, buttons have click tests
-- [ ] Assertion strictness: no toContain with status arrays, no toHaveProperty without value
+- [ ] Phase 4.7 Gate 1: Assertion strictness verified — no anti-patterns in generated tests
+- [ ] Phase 4.7 Gate 2: Auth state verification — signup→login, logout→deny, reset→login
+- [ ] Phase 4.7 Gate 3: Cleanup hooks — all data-creating tests have afterEach/afterAll cleanup
+- [ ] Phase 4.7 Gate 4: Boundary tests exist for HIGH risk text input endpoints
+- [ ] Phase 4.7 Gate 5: MISSING_FUNCTIONALITY_REPORT gaps queued for emission
 - [ ] 5xx responses treated as BLOCKING bugs (never accepted as valid outcomes)
-- [ ] State verification: POST/PUT/DELETE tests include follow-up GET verification
+- [ ] State verification: POST/PUT/DELETE AND auth mutation tests include follow-up verification
 - [ ] Negative tests: HIGH risk API endpoints have empty-body and missing-field tests
-- [ ] Multi-step flows: at least one CRUD lifecycle test for HIGH risk entity groups
+- [ ] Multi-step flows: auth linear chain + CRUD lifecycle for HIGH risk groups
 - [ ] Data integrity probes: concurrent creation/duplicate tests for HIGH risk entities
 - [ ] Security boundary tests: IDOR, role escalation, session invalidation for HIGH risk endpoints
-- [ ] MISSING_FUNCTIONALITY_REPORT emitted with gaps found during discovery analysis
+- [ ] MISSING_FUNCTIONALITY_REPORT emitted with gaps found during analysis
+- [ ] Email-dependent flows tested if infrastructure available (Phase 1.5)
+- [ ] Pre-existing test failures triaged with severity (Phase 2.5)
 - [ ] Dry-run gate passed (≥ 2/3 sample tests passing) before full suite
 - [ ] Tests executed with JSON reporter
 - [ ] Coverage tracked (routes + APIs discovered vs tested)

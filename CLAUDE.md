@@ -129,9 +129,9 @@ Each agent is a Markdown prompt file (`agents/[name].md`):
 - **Purpose:** Discover app, generate senior-grade Playwright tests, find missing functionality, orchestrate debate loop
 - **When to use:** Automated QA — test generation, execution, gap detection, and coverage tracking
 - **Command:** `/qa-executor [--url http://...] [--rounds 1|2|3] [--skip-strategy]`
-- **Workflow:** Detect URL → 4-phase discovery → strategy → generate (strict assertions, negative tests, CRUD lifecycle, data integrity probes, security boundary tests) → gap analysis → execute → coverage → bugs → audit → emit
-- **Features:** Assertion strictness (5xx = BLOCKING bug), negative testing, multi-step flows, data integrity probes, security boundary tests, missing functionality detection
-- **Outputs:** Discovery Map, Playwright tests, .qa-summary.md, QA_RESULT block, MISSING_FUNCTIONALITY_REPORT block
+- **Workflow:** Detect URL → infrastructure discovery → 4-phase discovery → pre-existing test triage → strategy → generate → **self-check (5 gates)** → gap analysis → execute → coverage → bugs → audit → emit
+- **Features:** 13-phase protocol, infrastructure discovery (Mailpit/MailHog), pre-existing test triage, post-generation self-check gate (assertion quality, auth state verification, cleanup hooks, boundary tests, gap report), auth linear chains (signup→login→access→logout→deny), boundary test enforcement, email flow testing, assertion strictness (5xx = BLOCKING bug), negative testing, multi-step flows, data integrity probes, security boundary tests, missing functionality detection
+- **Outputs:** Discovery Map, discovery/infrastructure.json, Playwright tests, .qa-summary.md, QA_RESULT block, MISSING_FUNCTIONALITY_REPORT block
 
 ### Agent Design Principles
 
@@ -285,7 +285,7 @@ ai-agent-manager/
 │   │   ├── ARCHITECTURE_CONTRACTS.md # Capability matrix, budgets, rules
 │   │   └── ARCHITECTURE.md          # Visual agent topology diagram
 │   └── .claude-plugin/
-│       └── plugin.json               # Plugin metadata (v7.1.0)
+│       └── plugin.json               # Plugin metadata (v7.2.0)
 │
 ├── .claude-plugin/
 │   ├── marketplace.json              # Marketplace definition
@@ -465,8 +465,8 @@ Before an agent completes work:
 ### Plugin Metadata
 
 - **Plugin Name:** `ai-agent-manager-plugin`
-- **Version:** 7.1.0
-- **Description:** AI agents with enhanced Code Reviewer (LSP diagnostics, effort:high, permissionMode:plan, schema v2 issue categories, REVIEW.md, Stop hook), structured result schemas, failure escalation, merge safety gate, session logging, job lifecycle tracking, per-agent hooks, color-coded agents, architecture contracts, plan-first workflows, parallel orchestration, dual-agent QA with functional test depth (L1.5), session-based scoping, interaction depth auditing, and bundled MySQL MCP server
+- **Version:** 7.2.0
+- **Description:** AI agents with enhanced QA Executor v7.2 (13-phase protocol: infrastructure discovery, pre-existing test triage, post-generation self-check gate, auth linear chains, boundary test enforcement, email flow testing), enhanced QA Strategist (structural completeness audit), enhanced Code Reviewer (LSP diagnostics, effort:high, permissionMode:plan, schema v2 issue categories, REVIEW.md, Stop hook), structured result schemas, failure escalation, merge safety gate, session logging, job lifecycle tracking, per-agent hooks, color-coded agents, architecture contracts, plan-first workflows, parallel orchestration, and bundled MySQL MCP server
 - **Agents:** 11 roles (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer, QA Strategist, QA Executor)
 - **Skills:** 44 reusable skill files (versioned with SKILLS_INDEX.md)
 - **Hooks:** 6 quality gate hooks — per-agent: SubagentStop (worker, execute-manager), Stop (code-reviewer); cross-cutting: SubagentStop (code-reviewer, qa-executor), TaskCompleted
@@ -511,7 +511,7 @@ Before an agent completes work:
 - Projects need only CLAUDE.md to get started (`.supervisor/` is auto-created, `.beads/` is optional)
 - Same agents work across different projects
 
-### Structured Contracts (v7.1.0)
+### Structured Contracts (v7.2.0)
 
 - **Result Schemas:** Agent result blocks follow strict schemas — CODE_REVIEW_RESULT at `schema_version: 2` (with issue categories), all others at `schema_version: 1` — see `docs/RESULT_SCHEMAS.md`
 - **Failure Escalation:** Defined retry limits and escalation paths for all agents — see `docs/FAILURE_ESCALATION.md`
@@ -628,11 +628,14 @@ Claude Code Agent Teams is an experimental feature providing native multi-agent 
 - **Token overhead:** ~5,000-10,000 tokens per invocation for prompts
 - **Context7 dependency:** External library lookups require MCP; fallback to CLAUDE.md if unavailable
 
-### QA System (Level 1)
+### QA System (Level 1 — v7.2.0)
 - **Requires Playwright:** `playwright.config.ts` must exist and app must be running
 - **Crawl limits:** Max 30 pages, depth 3, same-origin only
-- **Single debate round:** Strategist audits once (multi-round is Level 2+)
-- **No state modeling:** L1 tests happy paths + basic errors only (state combinations are Level 2)
+- **13-phase protocol:** Infrastructure discovery, pre-existing test triage, post-generation self-check gate (5 gates), auth linear chains, boundary test enforcement
+- **Infrastructure-aware:** Discovers email capture (Mailpit/MailHog) and generates email flow tests when available
+- **Self-check enforced:** Phase 4.7 validates assertion quality, auth state verification, cleanup hooks, boundary tests, and gap report before execution
+- **Simple linear chains (L1-legal):** Auth lifecycle tests (signup→login→access→logout→deny). NOT L2 journey graphs (no state modeling, no branching)
+- **Single debate round:** Strategist audits once with structural completeness checks (multi-round is Level 2+)
 - **Security boundary tests (non-destructive):** L1 includes IDOR, role escalation, session invalidation, XSS/SQLi probes for HIGH risk endpoints. Full adversarial security testing is Level 3.
 - **No performance tests:** Performance testing is Level 3.
 - **Coverage is inventory-level:** Tracks routes/APIs discovered vs tested, not behavioral coverage

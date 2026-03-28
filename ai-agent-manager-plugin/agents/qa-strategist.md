@@ -202,6 +202,10 @@ Step 3.5: EVALUATE ASSERTION QUALITY (functional depth only)
     ANTI-PATTERN: mutation without state verification
       Pattern: POST/PUT/DELETE test that never does a follow-up GET
       Verdict: FLAG as "no-state-verify"
+    ANTI-PATTERN: loose error matching
+      Pattern: expect(body.error).toMatch(/required/i) without field name in regex
+      Verdict: FLAG as "loose-error-match"
+      Better: expect(body.error).toMatch(/email.*required/i) or assert specific field
 
   Count results:
     strict_assertions = assertions using toBe, toEqual, toMatch with specific values
@@ -222,6 +226,48 @@ Step 3.6: REVIEW MISSING FUNCTIONALITY REPORT
     - critical_gaps: [list of CRITICAL/HIGH gaps]
     - recommendation: "address before launch" | "acceptable for MVP" | "track as tech debt"
 
+Step 3.7: EVALUATE STRUCTURAL COMPLETENESS
+  Check for structural gaps the Executor commonly misses, even after Phase 4.7 self-check:
+
+  a. MISSING_FUNCTIONALITY_REPORT present?
+     If Executor output does not contain a MISSING_FUNCTIONALITY_REPORT block:
+     FLAG as "missing-gap-report" — this is a BLOCKING rejection reason.
+     Do NOT approve. MISSING_FUNCTIONALITY_REPORT is mandatory since v7.2.0.
+     Even a report with total_gaps: 0 proves the analysis was run.
+     Absence of the report means Phase 4.5 was skipped entirely.
+
+  b. Auth chain test present?
+     If auth endpoints (login, signup, logout) are in discovery data AND
+     no @covers-interaction: auth-chain annotation found in generated tests:
+     FLAG as "no-auth-chain" — Executor should generate signup→login→access→logout→deny chain.
+
+  c. Cleanup hooks present?
+     Read 2-3 test files that create data (POST, signup, register).
+     Check for afterEach or afterAll blocks containing cleanup (DELETE calls or similar).
+     If data-creating test.describe blocks have no cleanup:
+     FLAG as "no-cleanup"
+
+  d. Infrastructure used?
+     Read discovery/infrastructure.json (if it exists).
+     If email capture is available (email field is non-null) BUT
+     no email-dependent tests exist (no password reset, MFA, or email verification tests):
+     FLAG as "infrastructure-unused"
+
+  e. Pre-existing test triage done?
+     Check QA_RESULT for pre_existing_tests field.
+     If pre_existing_tests > 0 AND pre_existing_failing > 0 AND
+     pre_existing_bugs is empty (no triage performed):
+     FLAG as "pre-existing-untriaged"
+
+  f. Boundary tests present?
+     Check for @covers-interaction: boundary-test annotations in test files.
+     If HIGH risk endpoints with user text input exist (from discovery) AND
+     no boundary tests found:
+     FLAG as "no-boundary-tests"
+
+  Compute structural_completeness: "{passed}/{total} structural checks passed"
+  Include structural_completeness in STRATEGIST_VERDICT output.
+
 Step 4: DECIDE
   APPROVE if:
     - Coverage meets or exceeds targets for HIGH risk routes
@@ -231,6 +277,7 @@ Step 4: DECIDE
       interactions have corresponding @covers-interaction tests
     - (functional depth) Assertion quality ratio >= 60% strict assertions
     - No test files accept 5xx as valid outcomes
+    - Structural completeness: no BLOCKING structural flags
   REJECT if:
     - Coverage below target for HIGH risk routes
     - Any HIGH risk route has no tests at all
@@ -242,12 +289,19 @@ Step 4: DECIDE
       (flag as "assertion_quality_below_threshold" in gaps)
     - Any test accepts 5xx status as valid outcome
       (flag as "accepts-5xx" — BLOCKING)
+    - MISSING_FUNCTIONALITY_REPORT not emitted (flag: "missing-gap-report")
+    - No auth chain test when auth endpoints exist (flag: "no-auth-chain")
+    - No cleanup hooks in data-creating tests (flag: "no-cleanup")
+    - Available infrastructure not used for testing (flag: "infrastructure-unused")
+    - No boundary tests for HIGH risk input endpoints (flag: "no-boundary-tests")
 
 Step 5: EMIT VERDICT
   Output STRATEGIST_VERDICT block (see qa-strategy skill for format)
   Include interaction_depth field: "{N}/{M} HIGH risk routes have deep interaction tests"
   Include assertion_quality: "{N}% strict ({X} strict / {Y} total assertions sampled)"
-  Include assertion_flags: [list of anti-pattern flags found]
+  Include assertion_flags: [list of anti-pattern flags found, including "loose-error-match"]
+  Include structural_completeness: "{N}/{M} structural checks passed"
+  Include structural_flags: [list of flags from Step 3.7, e.g., "no-auth-chain", "no-cleanup"]
   Include missing_functionality_count: N
   Include critical_gaps: [list of CRITICAL/HIGH gaps from MISSING_FUNCTIONALITY_REPORT]
   Include gap_recommendation: "address before launch" | "acceptable for MVP" | "track as tech debt"
@@ -264,6 +318,11 @@ Step 5: EMIT VERDICT
 5. (functional depth only) Shallow coverage — HIGH risk route with discovered forms/CRUD but only smoke-level tests (no `@covers-interaction` annotations)
 6. (functional depth only) Assertion quality below threshold — sampled test files have < 60% strict assertions (too many existence-only or lenient-status checks)
 7. Any test accepts 5xx status as valid — this indicates the test masks a real bug
+8. MISSING_FUNCTIONALITY_REPORT not emitted — required output since v7.2.0
+9. No auth chain test when auth endpoints (login + signup + logout) are discovered
+10. No cleanup hooks in data-creating tests — leads to test data accumulation
+11. Available test infrastructure (email capture) not used — missed testing opportunity
+12. No boundary tests for HIGH risk endpoints accepting user text input
 
 **NOT allowed in L1:**
 - Rejecting for missing fuzz tests (L2)
@@ -293,11 +352,12 @@ Before emitting output:
 - [ ] Discovery confidence checked
 - [ ] Quality score computed
 - [ ] 3-5 test files read and assertion quality evaluated
-- [ ] Anti-pattern count computed (lenient-status, existence-only, accepts-5xx, no-state-verify)
+- [ ] Anti-pattern count computed (lenient-status, existence-only, accepts-5xx, no-state-verify, loose-error-match)
 - [ ] Assertion quality ratio computed and compared against 60% threshold
 - [ ] No test files accept 5xx as valid outcome
 - [ ] MISSING_FUNCTIONALITY_REPORT reviewed and gaps classified
-- [ ] STRATEGIST_VERDICT block contains all required fields (including assertion_quality, assertion_flags, missing_functionality_count)
+- [ ] Step 3.7: Structural completeness evaluated (gap report, auth chain, cleanup, infrastructure, pre-existing triage, boundary tests)
+- [ ] STRATEGIST_VERDICT block contains all required fields (including assertion_quality, assertion_flags, structural_completeness, structural_flags, missing_functionality_count)
 - [ ] Rejection reasons are L1-valid (no L2+ demands)
 - [ ] No files written
 

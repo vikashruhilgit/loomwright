@@ -71,14 +71,15 @@ coverage_weighted =
 | Accept 5xx | `expect([200, 500]).toContain(status)` | Masks server errors | `expect(status).toBe(200)` + BLOCKING bug if 500 |
 | Mutation without verify | POST then assert 201 only | Doesn't prove data persisted | POST, then GET, then assert values match |
 | CSS selector locator | `page.locator('input[type="email"]')` | Breaks on DOM changes | `page.getByRole('textbox', { name: /email/i })` |
+| Loose error matching | `expect(body.error).toMatch(/required/i)` | Matches any "required" string, misses regression if field name changes | `expect(body.error).toMatch(/email.*required/i)` or assert specific field |
 
 ### Assertion Depth Requirements per Risk Level
 
-| Risk Level | Status Assertions | Body Assertions | Negative Tests | State Verification | Multi-Step Flows | Boundary Tests | Pagination |
-|---|---|---|---|---|---|---|---|
-| **HIGH** | Exact (toBe) | Specific values | Empty, missing, wrong types, no-auth | Required (GET after mutation) | 1 CRUD lifecycle | Max length, special chars, zero/negative | Required if pagination params exist |
-| **MEDIUM** | Exact (toBe) | Specific values | Empty, missing fields | Required (GET after mutation) | Not required | Special chars only | Not required |
-| **LOW** | Exact (toBe) | Type + non-empty OK | Not required | Not required | Not required | Not required | Not required |
+| Risk Level | Status Assertions | Body Assertions | Negative Tests | State Verification | Auth State Verification | Multi-Step Flows | Boundary Tests | Pagination |
+|---|---|---|---|---|---|---|---|---|
+| **HIGH** | Exact (toBe) | Specific values | Empty, missing, wrong types, no-auth | Required (GET after mutation) | Signup→login, login→access, logout→deny, reset→login | 1 CRUD lifecycle + auth chain | Max length, special chars, SQL-like, zero/negative | Required if pagination params exist |
+| **MEDIUM** | Exact (toBe) | Specific values | Empty, missing fields | Required (GET after mutation) | Login→access if auth-gated | Not required | Special chars only | Not required |
+| **LOW** | Exact (toBe) | Type + non-empty OK | Not required | Not required | Not required | Not required | Not required | Not required |
 
 ### By Depth Mode (L1)
 
@@ -256,6 +257,8 @@ Functional-depth tests include `@covers-interaction` annotations for tracking in
 // @covers-interaction: modal                — test opens/interacts/closes modal
 // @covers-interaction: data-rendering       — test verifies table/list content
 // @covers-interaction: auth-gate            — test verifies 401/redirect without auth
+// @covers-interaction: auth-chain           — test exercises full auth lifecycle (signup→login→access→logout→deny)
+// @covers-interaction: boundary-test        — test sends oversized, special chars, SQL-like, or empty string inputs
 ```
 
 Compare annotations against Discovery Map to compute coverage.
@@ -300,8 +303,15 @@ Compare annotations against Discovery Map to compute coverage.
 - coverage_achieved: routes {X}/{Y}, apis {X}/{Y}
 - coverage_target: {pct}
 - interaction_depth: {N}/{M} HIGH risk routes have deep interaction tests
+- assertion_quality: {N}% strict ({X} strict / {Y} total sampled)
+- assertion_flags: [lenient-status, existence-only, loose-error-match, ...]
+- structural_completeness: {N}/{M} structural checks passed
+- structural_flags: [no-auth-chain, no-cleanup, infrastructure-unused, ...]
 - gaps: [{test_type}] {description} -- {risk}
 - blocking_bugs: {N}
+- missing_functionality_count: {N}
+- critical_gaps: [list of CRITICAL/HIGH gaps]
+- gap_recommendation: address before launch | acceptable for MVP | track as tech debt
 - quality_score: {0-100}
 - rationale: {1-2 sentences}
 ```
@@ -317,7 +327,7 @@ Each maturity level unlocks specific capabilities. Agents MUST NOT attempt highe
 | Static Analysis (1) | Y | Y | Y | Y | Y |
 | Runtime Crawl (2) | Y | Y | Y | Y | Y |
 | State Modeling (3) | - | Y | Y | Y | Y |
-| Journey Generator (4) | - | Y | Y | Y | Y |
+| Journey Generator (4) | simple linear chains only | Y | Y | Y | Y |
 | Risk Strategy (5) | Y | Y | Y | Y | Y |
 | UI/E2E Tests (6a) | Y | Y | Y | Y | Y |
 | API Tests (6b) | Y | Y | Y | Y | Y |
@@ -419,13 +429,22 @@ Never hardcode slugs like `"my-org"` or IDs like `"12345"` — always read from 
 Before emitting QA_RESULT:
 - [ ] Discovery Map generated with confidence score
 - [ ] discovery/seed-data.json produced with entity inventory
+- [ ] discovery/infrastructure.json produced (Phase 1.5)
+- [ ] Pre-existing tests triaged (Phase 2.5) — or none found
 - [ ] Risk classification applied to all discovered routes
 - [ ] Tests follow playwright-e2e skill patterns (role-based locators, regex assertions)
 - [ ] Tests have beforeEach/afterEach isolation — no shared state between tests
 - [ ] Tests use unique identifiers per run (Date.now(), crypto.randomUUID())
+- [ ] Data-creating tests have cleanup in afterEach/afterAll
 - [ ] Seed data check done — no hardcoded slugs or IDs
 - [ ] Cross-org security tests excluded from L1 generation (deferred to L3)
-- [ ] Coverage annotations present in all generated tests
+- [ ] Auth flow tests verify state changes (signup→login, logout→deny, reset→login)
+- [ ] Auth chain test generated when auth endpoints discovered
+- [ ] Boundary tests generated for HIGH risk text input endpoints
+- [ ] Email-dependent flows tested if infrastructure available
+- [ ] Coverage annotations present in all generated tests (including auth-chain, boundary-test)
+- [ ] Phase 4.7 self-check passed: all 5 gates verified
+- [ ] MISSING_FUNCTIONALITY_REPORT emitted with gaps from discovery analysis
 - [ ] Dry-run gate passed before full suite execution
 - [ ] Coverage tracked (routes discovered vs tested, APIs discovered vs tested)
 - [ ] Bug reports include severity, reproduction steps, file:line

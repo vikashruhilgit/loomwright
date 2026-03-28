@@ -841,6 +841,82 @@ Before committing E2E tests:
 - [ ] 5xx never accepted as valid test outcome
 - [ ] Response body assertions check specific values, not just existence
 
+## Email Capture Testing (Mailpit/MailHog)
+
+When test infrastructure includes an email capture service (detected in `discovery/infrastructure.json`), use these patterns for email-dependent flows like password reset, MFA, and email verification.
+
+### Password Reset Flow
+
+```typescript
+test.describe('Password Reset (full flow via email capture)', () => {
+  const MAILPIT_URL = process.env.MAILPIT_URL || 'http://localhost:54324';
+  const testEmail = `reset-${Date.now()}@test.example`;
+
+  test.beforeAll(async ({ request }) => {
+    // Create test user with known email (if signup API exists)
+    await request.post('/api/auth/signup', {
+      data: { email: testEmail, password: 'OldPass123!', name: 'Reset Test' }
+    });
+  });
+
+  test.afterAll(async ({ request }) => {
+    // Cleanup: delete test user if API supports it
+    // Clear Mailpit messages for this email
+    await request.delete(`${MAILPIT_URL}/api/v1/messages`, {
+      params: { query: `to:${testEmail}` }
+    });
+  });
+
+  test('should send reset email and allow password change', async ({ request }) => {
+    // 1. Trigger password reset
+    const triggerRes = await request.post('/api/auth/forgot-password', {
+      data: { email: testEmail }
+    });
+    expect(triggerRes.status()).toBe(200);
+
+    // 2. Wait for email delivery
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    // 3. Poll email capture API
+    const mailRes = await request.get(`${MAILPIT_URL}/api/v2/search`, {
+      params: { query: `to:${testEmail}` }
+    });
+    const mail = await mailRes.json();
+    expect(mail.messages.length).toBeGreaterThan(0);
+
+    // 4. Extract reset token/link from email body
+    const emailBody = mail.messages[0].Text || mail.messages[0].HTML;
+    const resetMatch = emailBody.match(/https?:\/\/\S+reset\S*token=([^\s&"]+)/);
+    expect(resetMatch).toBeTruthy();
+    const resetToken = resetMatch![1];
+
+    // 5. Use token to reset password
+    const resetRes = await request.post('/api/auth/reset-password', {
+      data: { token: resetToken, password: 'NewPass456!' }
+    });
+    expect(resetRes.status()).toBe(200);
+
+    // 6. STATE VERIFICATION: login with new password
+    const loginRes = await request.post('/api/auth/login', {
+      data: { email: testEmail, password: 'NewPass456!' }
+    });
+    expect(loginRes.status()).toBe(200);
+  });
+});
+```
+
+### Adapting for Different Email Capture Tools
+
+| Tool | API URL Pattern | Messages Endpoint | Search Param |
+|------|----------------|-------------------|--------------|
+| Mailpit | `http://localhost:8025` or `:54324` | `/api/v2/messages` | `?query=to:email` |
+| MailHog | `http://localhost:1080` | `/api/v2/messages` | `?query=to:email` (different schema) |
+| Inbucket | `http://localhost:9000` | `/api/v1/mailbox/{user}` | User part of email address |
+
+Read `discovery/infrastructure.json` to determine which tool is available and its URL.
+
+---
+
 ## See Also
 
 - `skills/quality-checklist/SKILL.md` — Review gate criteria
