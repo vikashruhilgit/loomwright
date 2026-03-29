@@ -746,6 +746,19 @@ Match discovered interactions to the Test Pattern Library below.
 - Same number of Write tool calls, much deeper test coverage
 
 ```
+OVERLAP CHECK (before generating each test file):
+  Before writing tests for a feature, glob for existing test files covering same routes:
+    Glob: {testDir}/**/*{feature}*.spec.ts, tests/**/*{feature}*.spec.ts
+  If existing spec covers the same endpoint:
+    - Read it. Check assertion quality against current rules.
+    - If HIGH quality (strict assertions, state verification, coverage annotations):
+      SKIP generating new tests for those endpoints.
+      Record in coverage: "covered by existing {file}" with @covers-api annotations.
+    - If LOW quality (lenient assertions, no state verification):
+      Generate new tests. Add header comment: "// Supplements existing {file} with stricter assertions"
+  NEVER generate a file that fully duplicates existing coverage.
+  Pre-existing coverage counts toward route/API coverage in Phase 6.
+
 For each route in priority order (HIGH first, then MEDIUM, then LOW):
   Generate BOTH the API test file AND the UI test file for this feature
   before moving to the next feature.
@@ -849,6 +862,19 @@ Test isolation requirements (MANDATORY):
   - For auth-gated routes: include storageState setup or login step in beforeEach
   - Do NOT use shared login state across test files without explicit storageState
 
+SHARED HELPERS RULE:
+  If 2+ test files need the same utility (auth login, API helpers, data factories):
+    1. Check if {testDir}/helpers/ directory exists
+    2. If not: create it
+    3. Generate shared helper file (e.g., {testDir}/helpers/auth.ts):
+         export async function loginAs(request: APIRequestContext, email: string, password: string) {
+           const res = await request.post('/api/auth/login', { data: { email, password } });
+           return res.headers()['set-cookie'] || '';
+         }
+    4. All spec files import from helpers/ — NEVER copy/paste utility functions
+    5. NEVER inline complex type annotations for request parameters
+  This applies to: auth login helpers, API request wrappers, test data factories.
+
 TEST DATA SETUP (MANDATORY):
   Detect API dependencies from URL patterns:
     - If API has /api/{parent}/{id}/{child} → creating a child requires a parent first
@@ -879,6 +905,15 @@ Locator and assertion rules:
   - Regex assertions for text matching
   - No hardcoded waits, no CSS selectors
   - Group with test.describe('{Feature Name}', ...)
+
+BLOCKER-FIRST RULE (before generating negative/boundary tests):
+  For each endpoint, the happy-path test MUST be generated FIRST.
+  During Phase 4.6 (dry-run gate), if a happy-path test returns 5xx:
+    - File BLOCKING bug immediately for that endpoint
+    - SKIP all negative, boundary, idempotency, and security tests for it
+    - Add to discovery_warnings: "Endpoint {path} returns 500 on happy path — skipped {N} secondary tests"
+  Do NOT spend budget testing error handling on an endpoint that can't handle success.
+  This saves 4-8 tool calls per broken endpoint.
 
 NEGATIVE TESTING PATTERNS (functional depth, HIGH/MEDIUM risk):
 
@@ -1332,6 +1367,9 @@ Before executing the full suite:
   2. Run: npx playwright test {file1} {file2} {file3} --reporter=json --timeout=60000
   3. Parse results:
      - If ≥ 2/3 pass → proceed to full suite (Phase 5)
+     - For each test that returns 5xx in the dry-run:
+       Mark that endpoint as BLOCKED. Do NOT generate negative/boundary/
+       idempotency tests for BLOCKED endpoints (BLOCKER-FIRST RULE).
      - If < 2/3 pass → HALT. Do not run full suite.
        Inspect failures:
          - "Cannot find module" / "module not found" → dependency issue (re-run Phase 0)
@@ -1452,7 +1490,18 @@ GATE 6 — UI PATTERN COVERAGE (HIGH risk forms):
     If count < 3 per HIGH risk form: generate missing tests via Edit.
     If total frontend tests < (HIGH_risk_routes_with_forms * 3): FAIL gate.
 
-PASS CRITERIA: All 9 gates (0, 0.5, 1, 1.5, 2, 3, 4, 5, 6) must pass before proceeding to Phase 5.
+GATE 7 — INFRASTRUCTURE UTILIZATION:
+  If discovery/infrastructure.json shows email tool available (email field non-null):
+    AND discovery found endpoints that trigger emails
+    (forgot-password, reset-password, signup-verification, invite, password-change):
+    Verify at least ONE email capture test exists with full flow:
+      trigger endpoint → poll email inbox → extract token/link → use it.
+    If email infra available AND email-triggering endpoints exist
+    AND zero email flow tests: FAIL gate.
+    Generate at least one email flow test using the Mailpit/MailHog pattern
+    from Phase 1.5.
+
+PASS CRITERIA: All 10 gates (0, 0.5, 1, 1.5, 2, 3, 4, 5, 6, 7) must pass before proceeding to Phase 5.
 If any gate fails: fix via Edit, then re-verify that gate.
 
 Budget: 2-4 tool calls (Read generated files + potential Edits).
