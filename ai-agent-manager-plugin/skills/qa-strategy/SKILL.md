@@ -459,7 +459,7 @@ Before emitting QA_RESULT:
 - [ ] Boundary tests generated for HIGH risk text input endpoints
 - [ ] Email-dependent flows tested if infrastructure available
 - [ ] Coverage annotations present in all generated tests (including auth-chain, boundary-test)
-- [ ] Phase 4.7 self-check passed: all 5 gates verified
+- [ ] Strategist gate audit passed (12 gates verified by independent agent)
 - [ ] MISSING_FUNCTIONALITY_REPORT emitted with gaps from discovery analysis
 - [ ] Dry-run gate passed before full suite execution
 - [ ] Coverage tracked (routes discovered vs tested, APIs discovered vs tested)

@@ -8,7 +8,7 @@ lastUpdated: "2026-03"
 
 # QA Gates Skill
 
-Quality gates, gap analysis tiers, dry-run enforcement, and post-generation self-check for QA test suites.
+Quality gates, gap analysis tiers, dry-run enforcement, and 12-gate verification checklist for QA test suites. Used by QA Strategist in Gate Audit Mode for independent verification.
 
 ---
 
@@ -380,9 +380,9 @@ If ANY gate fails: fix via Edit, then re-verify that gate.
 Do NOT skip gates. Do NOT pass a gate with a workaround.
 
 Budget: 2-4 tool calls (Read generated files + potential Edits).
-Phase 4.7 runs in ALL budget zones including ORANGE.
-ONLY RED (55+) skips Phase 4.7 -- and RED must still emit a partial
-QA_RESULT noting "self-check skipped due to RED budget zone."
+Strategist gate audit runs in ALL budget zones including ORANGE.
+ONLY RED (74+) skips the gate audit -- and RED must still emit a partial
+QA_RESULT noting "gate audit skipped due to RED budget zone."
 
 ---
 

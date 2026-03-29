@@ -84,7 +84,7 @@ STATE VERIFICATION RULES (MANDATORY for ALL mutation tests -- CRUD and auth):
   - Password reset test -> MUST verify login works with the new password
   - Password change test -> MUST verify old password no longer works
   - A test that only checks the response code of an auth endpoint without
-    verifying the state change is INCOMPLETE. Phase 4.7 self-check will catch this.
+    verifying the state change is INCOMPLETE. Strategist gate audit will catch this.
 
 SESSION INVALIDATION RULE (MANDATORY for any auth flow test):
   - Logout tests MUST verify the session is actually invalidated:

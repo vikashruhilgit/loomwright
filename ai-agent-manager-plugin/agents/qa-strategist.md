@@ -273,7 +273,7 @@ Step 3.6: REVIEW MISSING FUNCTIONALITY REPORT
     - recommendation: "address before launch" | "acceptable for MVP" | "track as tech debt"
 
 Step 3.7: EVALUATE STRUCTURAL COMPLETENESS
-  Check for structural gaps the Executor commonly misses, even after Phase 4.7 self-check:
+  Check for structural gaps the Executor commonly misses:
 
   a. MISSING_FUNCTIONALITY_REPORT present?
      If Executor output does not contain a MISSING_FUNCTIONALITY_REPORT block:

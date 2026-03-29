@@ -129,8 +129,8 @@ Each agent is a Markdown prompt file (`agents/[name].md`):
 - **Purpose:** Discover app, generate senior-grade Playwright tests, find missing functionality, orchestrate debate loop
 - **When to use:** Automated QA — test generation, execution, gap detection, and coverage tracking
 - **Command:** `/qa-executor [--url http://...] [--rounds 1|2|3] [--skip-strategy]`
-- **Workflow:** Detect URL → infrastructure discovery → 4-phase discovery → pre-existing test triage → strategy → generate → **self-check (5 gates)** → gap analysis → execute → coverage → bugs → audit → emit
-- **Features:** 13-phase protocol, infrastructure discovery (Mailpit/MailHog), pre-existing test triage, post-generation self-check gate (assertion quality, auth state verification, cleanup hooks, boundary tests, gap report), auth linear chains (signup→login→access→logout→deny), boundary test enforcement, email flow testing, assertion strictness (5xx = BLOCKING bug), negative testing, multi-step flows, data integrity probes, security boundary tests, missing functionality detection
+- **Workflow:** Detect URL → infrastructure discovery → 4-phase discovery → pre-existing test triage → strategy → generate → gap analysis → dry-run → **Strategist gate audit (12 gates, independent)** → execute → coverage + bugs + audit → emit
+- **Features:** Split architecture (487-line core + qa-test-patterns skill + qa-gates skill), independent Strategist gate audit (12 gates verified by separate agent), signal→pattern test generation, infrastructure discovery (Mailpit/MailHog), pre-existing test triage, auth linear chains, boundary + idempotency enforcement, blocker-first rule, email flow testing, failure classification (REAL_BUG vs DISCOVERY_GAP vs ENVIRONMENT_ISSUE), interaction-level coverage tracking
 - **Outputs:** Discovery Map, discovery/infrastructure.json, Playwright tests, .qa-summary.md, QA_RESULT block, MISSING_FUNCTIONALITY_REPORT block
 
 ### Agent Design Principles
@@ -465,10 +465,10 @@ Before an agent completes work:
 ### Plugin Metadata
 
 - **Plugin Name:** `ai-agent-manager-plugin`
-- **Version:** 7.2.0
-- **Description:** AI agents with enhanced QA Executor v7.2 (13-phase protocol: infrastructure discovery, pre-existing test triage, post-generation self-check gate, auth linear chains, boundary test enforcement, email flow testing), enhanced QA Strategist (structural completeness audit), enhanced Code Reviewer (LSP diagnostics, effort:high, permissionMode:plan, schema v2 issue categories, REVIEW.md, Stop hook), structured result schemas, failure escalation, merge safety gate, session logging, job lifecycle tracking, per-agent hooks, color-coded agents, architecture contracts, plan-first workflows, parallel orchestration, and bundled MySQL MCP server
+- **Version:** 9.0.0
+- **Description:** AI agents with QA Executor v9 (architectural restructure: 487-line core agent + qa-test-patterns skill + qa-gates skill, independent Strategist gate audit, 13 sequential phases, 80/90 budget, signal→pattern architecture, 12 quality gates verified by separate agent), enhanced QA Strategist (3-mode: Strategy + Gate Audit + Post-Execution Audit), enhanced Code Reviewer (LSP diagnostics, effort:high, permissionMode:plan, schema v2 issue categories, REVIEW.md, Stop hook), structured result schemas, failure escalation, merge safety gate, session logging, job lifecycle tracking, per-agent hooks, color-coded agents, architecture contracts, plan-first workflows, parallel orchestration, and bundled MySQL MCP server
 - **Agents:** 11 roles (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer, QA Strategist, QA Executor)
-- **Skills:** 44 reusable skill files (versioned with SKILLS_INDEX.md)
+- **Skills:** 46 reusable skill files (versioned with SKILLS_INDEX.md)
 - **Hooks:** 6 quality gate hooks — per-agent: SubagentStop (worker, execute-manager), Stop (code-reviewer); cross-cutting: SubagentStop (code-reviewer, qa-executor), TaskCompleted
 - **Docs:** RESULT_SCHEMAS.md, FAILURE_ESCALATION.md, ARCHITECTURE_CONTRACTS.md, ARCHITECTURE.md, QA_SYSTEM_BLUEPRINT.md
 - **Bundled MCP:** MySQL read-only MCP server (`vikashruhil-mysql-mcp`) — query impact analysis, schema inspection, multi-DB profiles
@@ -631,11 +631,13 @@ Claude Code Agent Teams is an experimental feature providing native multi-agent 
 ### QA System (Level 1 — v9.0.0)
 - **Requires Playwright:** `playwright.config.ts` must exist and app must be running
 - **Crawl limits:** Max 30 pages, depth 3, same-origin only
-- **13-phase protocol:** Infrastructure discovery, pre-existing test triage, post-generation self-check gate (5 gates), auth linear chains, boundary test enforcement
+- **Split architecture:** 487-line core agent + qa-test-patterns skill + qa-gates skill (was 1,911 lines)
+- **13 sequential phases** (1-13, no sub-numbering)
+- **Independent gate audit:** 12 quality gates verified by QA Strategist (separate agent, separate context) — not self-grading
+- **Budget: 80/90** — matches protocol reality (was 60)
 - **Infrastructure-aware:** Discovers email capture (Mailpit/MailHog) and generates email flow tests when available
-- **Self-check enforced:** Phase 4.7 validates assertion quality, auth state verification, cleanup hooks, boundary tests, and gap report before execution
-- **Simple linear chains (L1-legal):** Auth lifecycle tests (signup→login→access→logout→deny). NOT L2 journey graphs (no state modeling, no branching)
-- **Single debate round:** Strategist audits once with structural completeness checks (multi-round is Level 2+)
+- **Simple linear chains (L1-legal):** Auth lifecycle tests (signup→login→access→logout→deny). NOT L2 journey graphs
+- **Strategist spawned twice:** Phase 11 (gate audit) + Phase 13 (results audit)
 - **Security boundary tests (non-destructive):** L1 includes IDOR, role escalation, session invalidation, XSS/SQLi probes for HIGH risk endpoints. Full adversarial security testing is Level 3.
 - **No performance tests:** Performance testing is Level 3.
 - **Coverage is inventory-level:** Tracks routes/APIs discovered vs tested, not behavioral coverage

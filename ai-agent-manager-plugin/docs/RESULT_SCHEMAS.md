@@ -173,7 +173,7 @@ QA_RESULT:
   pre_existing_stale: object[]         # optional — v7.2.0: stale tests needing update
     - file: string
       reason: string
-  self_check_gates_passed: string      # optional — v7.2.0: from Phase 4.7 (e.g., "5/5")
+  gate_audit_verdict: string           # optional — v9.0.0: from Strategist Gate Audit (e.g., "pass" or "fail")
   risks: object[]                      # optional — identified risk areas
     - area: string
       level: enum [HIGH, MEDIUM, LOW]

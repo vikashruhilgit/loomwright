@@ -127,7 +127,7 @@ Layer 4 — EVOLUTION
 
 **Modules:** 1, 2, 5, 6a, 6b, 7, 9, 14(basic) + lightweight coverage tracking
 
-**Included (v7.2.0 — 13-phase protocol):**
+**Included (v9.0.0 — 13-phase protocol, split architecture):**
 - Infrastructure discovery (Phase 1.5) — probes for email capture (Mailpit/MailHog), mock servers
 - Static + Runtime discovery (4-phase engine)
 - Pre-existing test triage (Phase 2.5) — runs existing tests, classifies failures, files bugs
@@ -140,7 +140,7 @@ Layer 4 — EVOLUTION
 - Email flow testing (password reset, MFA via email capture when infrastructure available)
 - Data integrity probes (concurrent creation, duplicate detection, cascade delete for HIGH risk)
 - Security boundary testing (IDOR, role escalation, session invalidation, XSS/SQLi probes for HIGH risk)
-- Post-generation self-check (Phase 4.7) — 5 gates: assertion quality, auth state verification, cleanup hooks, boundary tests, gap report
+- Independent Strategist gate audit (Phase 11) — 12 quality gates verified by separate QA Strategist agent
 - Missing Functionality Analysis (gap detection: missing CRUD ops, pagination, search, validation, rate limiting)
 - Assertion strictness enforcement (no status arrays, no existence-only, no loose error matching, 5xx = BLOCKING bug)
 - Strategist assertion quality audit + structural completeness audit (6 checks)
