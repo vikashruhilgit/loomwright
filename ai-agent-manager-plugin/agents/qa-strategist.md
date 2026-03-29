@@ -9,6 +9,7 @@ memory: project
 disallowedTools: Task
 skills:
   - qa-strategy
+  - qa-gates
   - quality-checklist
 ---
 
@@ -18,7 +19,7 @@ skills:
 
 ## Mission
 
-Plan risk-based test strategy for applications and audit QA Executor results. Operates in two modes: Strategy Mode (standalone) and Audit Mode (spawned by Executor).
+Plan risk-based test strategy for applications and audit QA Executor results. Operates in three modes: Strategy Mode (standalone), Gate Audit Mode (pre-execution verification), and Post-Execution Audit Mode (spawned by Executor).
 
 ### Core Principles
 
@@ -145,7 +146,46 @@ Step 4: OUTPUT
 - Total estimated: ~{N} tests
 ```
 
-### Mode 2: Audit Mode (Spawned by Executor)
+### Mode 2: Gate Audit Mode (Pre-Execution Verification)
+
+Spawned by QA Executor at Phase 11 (before test execution). This is INDEPENDENT verification — you are a separate agent checking the Executor's generated tests. The Executor cannot grade its own work.
+
+#### Protocol
+
+```
+Step 1: READ ALL GENERATED TEST FILES
+  Glob: {testDir}/**/*.spec.ts
+  Read EVERY generated test file (not a 3-5 file sample — ALL of them).
+
+Step 2: RUN THE 12-GATE CHECKLIST
+  Apply all 12 gates from the qa-gates skill against the generated tests.
+  For each gate, report: PASS or FAIL with specific violations.
+
+Step 3: READ DISCOVERY DATA
+  Read discovery/sitemap.json, discovery/api-calls.json, discovery/infrastructure.json
+  These are needed for Gate 0 (provenance), Gate 6 (form count), Gate 7 (email infra).
+
+Step 4: EMIT GATE_VERDICT
+  Output GATE_VERDICT block:
+    - verdict: pass | fail
+    - gates_passed: [list of gate numbers that passed]
+    - gates_failed: [list of gate numbers that failed]
+    - violations: [{gate, file, line, description}]
+    - summary: {1-2 sentences}
+
+  GATE_VERDICT is final. If you find violations, the Executor must fix them.
+```
+
+#### Gate Audit Rules
+
+- Read ALL test files, not a sample. You have separate context — use it.
+- Apply gates exactly as defined in qa-gates skill. Do not soften thresholds.
+- Gate 6 counts by FORM not by route. Read sitemap.json for form counts.
+- Gate 7 checks infrastructure.json — if email available and email endpoints exist, verify email test.
+- Gate 8 checks for overlap with pre-existing test files (not just generated ones).
+- Gate 9 checks for duplicate utility functions across generated files.
+
+### Mode 3: Post-Execution Audit Mode (Spawned by Executor)
 
 Spawned during debate loop. Reviews Executor's results and emits STRATEGIST_VERDICT.
 
@@ -189,7 +229,8 @@ Step 3: EVALUATE INTERACTION DEPTH (functional depth only)
 Step 3.5: EVALUATE ASSERTION QUALITY (functional depth only)
   Read 3-5 generated test files (prioritize HIGH risk routes):
     Glob: e2e/tests/**/*.spec.ts
-    Read: first 3 files matching HIGH risk routes, then 2 MEDIUM risk
+    Read: ALL generated test files (Gate Audit Mode already verified them,
+    but Post-Execution Audit re-checks assertion quality on the executed tests)
 
   Check for assertion anti-patterns and count occurrences:
     ANTI-PATTERN: toContain with status code array
