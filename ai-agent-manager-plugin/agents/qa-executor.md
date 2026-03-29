@@ -3,7 +3,7 @@ name: ai-agent-manager-plugin:qa-executor
 description: QA Executor — discovers app, generates and runs Playwright tests, orchestrates debate loop
 tools: Read, Write, Edit, Glob, Grep, Bash, Task
 model: inherit
-maxTurns: 80
+maxTurns: 120
 color: "#FF4500"
 memory: project
 skills:
@@ -58,7 +58,7 @@ Find bugs before users do. Discover application structure, generate strict Playw
 - **App must be running:** Verify base URL responds before crawling
 - **No destructive actions:** Never submit forms during discovery, never click delete/logout/payment buttons
 - **No production testing:** Never run tests against production environments
-- **Budget tracking:** 80 tool calls (default) or 90 (--scope). Checkpoint at boundaries.
+- **Budget tracking:** 80 (default), 110 (--scope/--continue), 60 (--plan). Auto-split scopes > 40 tests.
 - **Always emit QA_RESULT:** Even on failure, timeout, or skip — always output structured result
 
 ---
@@ -319,6 +319,8 @@ If --skip-strategy: use defaults (all MEDIUM, 70% target).
 
 ### Phase 8: GENERATE
 
+⚠️ BUDGET CHECK: Count your tool calls so far. If at or above ORANGE zone, stop generating. Proceed to Phase 9 with whatever tests exist.
+
 Generate Playwright test files following the **qa-test-patterns skill**.
 
 The qa-test-patterns skill contains ALL generation rules:
@@ -382,6 +384,9 @@ If execution exceeds 5 minutes: kill, status = needs_human.
 
 ### Phase 13: COVERAGE + BUGS + AUDIT + EMIT
 
+⚠️ THIS PHASE MUST ALWAYS RUN. Even if budget is exhausted.
+Emit partial QA_RESULT with whatever data you have. NEVER terminate without QA_RESULT.
+
 ```
 STEP 1 — COVERAGE TRACKING:
   Parse @covers-route, @covers-api, @covers-interaction annotations.
@@ -421,25 +426,25 @@ STEP 4 — EMIT:
 
 Track every tool invocation (Read, Write, Edit, Glob, Grep, Bash, Task).
 
-**Default budget: 80 calls**
-
-| Tool Calls | Level | Action |
+| Mode | Budget | Rationale |
 |---|---|---|
-| 0-48 (60%) | GREEN | Normal operation |
-| 48-64 (80%) | YELLOW | Skip vision + infrastructure, compress outputs |
-| 64-74 (92%) | ORANGE | Skip remaining test generation, go to execute + emit |
-| 74+ | RED | Immediately emit QA_RESULT with partial data and exit |
+| Default | 80 | Standard non-session runs |
+| --scope / --continue | 110 | Scoped runs need discovery + generation + gate audit |
+| --plan | 60 | No test generation |
 
-**--scope budget: 90 calls**
+**AUTO-SPLIT:** If scope has `estimated_tests > 40` (from plan.json), split into
+2 sub-scopes by URL prefix before executing. Each sub-scope runs separately.
+Example: organizations (48 tests) → organizations-admin + organizations-public.
+Split scopes are added to plan.json. Original scope marked "split".
 
-| Tool Calls | Level | Action |
+**BUDGET ZONES (% of budget):**
+
+| Zone | Range | Action |
 |---|---|---|
-| 0-54 (60%) | GREEN | Normal operation |
-| 54-72 (80%) | YELLOW | Skip vision, compress outputs |
-| 72-83 (92%) | ORANGE | Skip remaining test generation, go to execute + emit |
-| 83+ | RED | Immediately emit QA_RESULT with partial data and exit |
-
-**--plan budget: 60 calls** (no test generation).
+| GREEN | 0-60% | Normal operation |
+| YELLOW | 60-80% | Skip vision + infrastructure, compress outputs |
+| ORANGE | 80-92% | Skip remaining test generation, proceed to execute + emit |
+| RED | 92%+ | Immediately emit QA_RESULT with partial data and exit |
 
 ---
 
