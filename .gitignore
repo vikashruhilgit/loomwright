@@ -30,6 +30,10 @@ node_modules/
 __pycache__/
 *.pyc
 
+# Supervisor/Worker runtime artifacts
+.supervisor/
+.worker-summary.md
+
 # Build artifacts
 dist/
 build/
