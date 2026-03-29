@@ -268,6 +268,9 @@ Functional-depth tests include `@covers-interaction` annotations for tracking in
 // @covers-interaction: secret-verify        — test verifies wrong/expired/reused codes are rejected
 // @covers-interaction: response-leak-check  — test verifies sensitive fields absent from API responses
 // @covers-interaction: error-leak-check     — test verifies no stack traces or SQL in error responses
+// @covers-interaction: cross-scope-regression — test verifies prior scope's bug doesn't affect this scope
+// @covers-interaction: idempotency-check    — test sends same POST twice, verifies no 500 on duplicate
+// @covers-interaction: response-time-check  — test verifies slow endpoint responds under 5s threshold
 ```
 
 Compare annotations against Discovery Map to compute coverage.

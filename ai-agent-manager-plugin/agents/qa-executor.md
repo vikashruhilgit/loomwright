@@ -183,8 +183,15 @@ If `--plan`, `--scope`, or `--continue` flags are present, run session managemen
 5. CONFIDENCE GATE: compute discovery_confidence for scoped routes.
    If confidence < 0.5: add "scope-crawl-low-confidence" to discovery_warnings
    If confidence < 0.3: HALT unless --auto-discover
-6. Run Phase 3 (Strategy) for scoped subset only
-7. Run Phase 4 (Generate) with functional depth for scoped routes
+6. CROSS-SCOPE REGRESSION CHECK (if prior scopes completed):
+   Read .qa-session/results/*.json for completed scopes.
+   For each HIGH/BLOCKING bug from a prior scope:
+     Check if that bug affects endpoints in THIS scope
+     (e.g., token revocation bug affects ALL authenticated endpoints).
+     If yes: generate one regression test verifying the bug's impact here.
+   Coverage: // @covers-interaction: cross-scope-regression
+7. Run Phase 3 (Strategy) for scoped subset only
+8. Run Phase 4 (Generate) with functional depth for scoped routes
 8. Run Phases 4.5-9 as normal (dry-run, execute, coverage, bugs, audit, emit)
 9. Update .qa-session/coverage.json with cumulative results
 10. Mark scope status → "completed" in plan.json
@@ -410,6 +417,11 @@ Network intercept enrichment (MANDATORY for functional depth):
       internalId, stackTrace, creditCard → flag as sensitive_fields_exposed
     - If response is 4xx/5xx and body contains file paths, stack traces,
       or SQL fragments → flag as error_leak_detected
+
+  Response Timing — for each intercepted response:
+    - Record response time in milliseconds
+    - If response time > 3000ms: flag as slow_endpoint: true in api-calls.json
+    - Flag in discovery report as performance warning
 
   Credential Mutation Detection — for each intercepted request:
     - If request body field names match: password, secret, token, key,
@@ -716,6 +728,9 @@ Match discovered interactions to the Test Pattern Library below.
 | Endpoint returns setup data with secret/code | Test wrong value → expect 400/403; Test expired value; Test reused value (replay protection) | `@covers-interaction: secret-verify` | Exact rejection status codes |
 | API response has sensitive_fields_exposed | Verify password, hash, secret, token, stackTrace fields are NOT in response (or redacted) | `@covers-interaction: response-leak-check` | Sensitive fields absent |
 | API error response (4xx/5xx) | Verify no stack traces, file paths, or SQL queries in error body | `@covers-interaction: error-leak-check` | No implementation details leaked |
+| Prior scope found HIGH/BLOCKING bug affecting current scope | Generate regression test verifying bug impact on this scope's endpoints | `@covers-interaction: cross-scope-regression` | Exact status/behavior check |
+| POST endpoint returns 201 (HIGH risk) | Send same payload twice sequentially → verify second is 409/400/200 (not 500). Document if non-idempotent | `@covers-interaction: idempotency-check` | No 500 on duplicate |
+| Endpoint has slow_endpoint: true (>3s in crawl) | Add expect(responseTime).toBeLessThan(5000) assertion | `@covers-interaction: response-time-check` | Response under 5s threshold |
 
 **Risk level controls depth within each pattern:**
 
@@ -732,6 +747,18 @@ Match discovered interactions to the Test Pattern Library below.
 
 ```
 For each route in priority order (HIGH first, then MEDIUM, then LOW):
+  Generate BOTH the API test file AND the UI test file for this feature
+  before moving to the next feature.
+  Per feature area (e.g., "auth", "organizations"):
+    1. Write {testDir}/api/{feature}.spec.ts (all API tests for this feature)
+    2. Write {testDir}/frontend/{feature}.spec.ts (all UI tests for this feature)
+    3. Then move to next feature
+  This ensures budget exhaustion cuts evenly across UI and API layers,
+  not all API files first then all UI files last.
+  Note: test file grouping (5-10 tests per spec file by feature) is unchanged —
+  this only changes the ORDER files are written, not how tests are grouped.
+
+  For each route/feature:
 
   1. Read route's discovery data from sitemap.json + api-calls.json
   2. Match discovery signals to Test Pattern Library (table above)
@@ -838,6 +865,14 @@ TEST DATA SETUP (MANDATORY):
     - If this scope's APIs need resources from another scope,
       create minimal parent resources in beforeAll — don't depend on other scope's tests
     - Each scope must be independently runnable
+
+  SEED DATA USAGE RULES:
+    - READ-only tests (GET, list, verify existence): MAY use seed-data.json IDs
+    - MUTATION tests (POST, PUT, DELETE, create, update): MUST create own data
+      in beforeAll/beforeEach with unique identifiers (Date.now())
+    - Never mutate seed data — it breaks other tests and future runs
+    - For scope-dependent entities (e.g., org-scoped resources): create a test
+      parent entity in beforeAll rather than depending on seed data slugs
 
 Locator and assertion rules:
   - Role-based locators: getByRole, getByLabel, getByText
@@ -992,7 +1027,7 @@ MULTI-STEP FLOW TESTING (functional depth, HIGH risk):
 
 DATA INTEGRITY PROBES (functional depth, HIGH risk):
 
-  For entities with capacity limits or unique constraints (detected from discovery):
+  For EVERY HIGH risk POST endpoint that returns 201 (resource creation):
     - Concurrent creation race condition:
         const [res1, res2] = await Promise.all([
           request.post('/api/entities', { data: payload1 }),
@@ -1409,10 +1444,13 @@ GATE 5 — PHASE 4.5 EXECUTION VERIFICATION:
 
 GATE 6 — UI PATTERN COVERAGE (HIGH risk forms):
   For each HIGH risk route with discovered forms (from sitemap.json):
-    - Form with submit button → verify @covers-interaction: loading-state exists
-    - Form with multiple inputs → verify @covers-interaction: keyboard-nav exists
-    - Form with validation rules → verify @covers-interaction: error-recovery exists
-  If ANY is missing for a HIGH risk form: generate the missing tests via Edit.
+    Count UI tests for this route (tests in {testDir}/frontend/ with @covers-route matching).
+    MINIMUM: 3 tests per HIGH risk form:
+      - @covers-interaction: form-submission MUST exist
+      - @covers-interaction: loading-state MUST exist (forms with submit buttons)
+      - @covers-interaction: keyboard-nav OR error-recovery MUST exist (at least one)
+    If count < 3 per HIGH risk form: generate missing tests via Edit.
+    If total frontend tests < (HIGH_risk_routes_with_forms * 3): FAIL gate.
 
 PASS CRITERIA: All 9 gates (0, 0.5, 1, 1.5, 2, 3, 4, 5, 6) must pass before proceeding to Phase 5.
 If any gate fails: fix via Edit, then re-verify that gate.
