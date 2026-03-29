@@ -285,7 +285,7 @@ ai-agent-manager/
 │   │   ├── ARCHITECTURE_CONTRACTS.md # Capability matrix, budgets, rules
 │   │   └── ARCHITECTURE.md          # Visual agent topology diagram
 │   └── .claude-plugin/
-│       └── plugin.json               # Plugin metadata (v7.5.0)
+│       └── plugin.json               # Plugin metadata (v8.0.0)
 │
 ├── .claude-plugin/
 │   ├── marketplace.json              # Marketplace definition
@@ -511,7 +511,7 @@ Before an agent completes work:
 - Projects need only CLAUDE.md to get started (`.supervisor/` is auto-created, `.beads/` is optional)
 - Same agents work across different projects
 
-### Structured Contracts (v7.5.0)
+### Structured Contracts (v8.0.0)
 
 - **Result Schemas:** Agent result blocks follow strict schemas — CODE_REVIEW_RESULT at `schema_version: 2` (with issue categories), all others at `schema_version: 1` — see `docs/RESULT_SCHEMAS.md`
 - **Failure Escalation:** Defined retry limits and escalation paths for all agents — see `docs/FAILURE_ESCALATION.md`
@@ -628,7 +628,7 @@ Claude Code Agent Teams is an experimental feature providing native multi-agent 
 - **Token overhead:** ~5,000-10,000 tokens per invocation for prompts
 - **Context7 dependency:** External library lookups require MCP; fallback to CLAUDE.md if unavailable
 
-### QA System (Level 1 — v7.5.0)
+### QA System (Level 1 — v8.0.0)
 - **Requires Playwright:** `playwright.config.ts` must exist and app must be running
 - **Crawl limits:** Max 30 pages, depth 3, same-origin only
 - **13-phase protocol:** Infrastructure discovery, pre-existing test triage, post-generation self-check gate (5 gates), auth linear chains, boundary test enforcement

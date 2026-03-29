@@ -271,6 +271,7 @@ Functional-depth tests include `@covers-interaction` annotations for tracking in
 // @covers-interaction: cross-scope-regression — test verifies prior scope's bug doesn't affect this scope
 // @covers-interaction: idempotency-check    — test sends same POST twice, verifies no 500 on duplicate
 // @covers-interaction: response-time-check  — test verifies slow endpoint responds under 5s threshold
+// @covers-interaction: cross-tenant-access  — test verifies tenant A can't access tenant B's resources
 ```
 
 Compare annotations against Discovery Map to compute coverage.

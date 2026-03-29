@@ -183,12 +183,16 @@ If `--plan`, `--scope`, or `--continue` flags are present, run session managemen
 5. CONFIDENCE GATE: compute discovery_confidence for scoped routes.
    If confidence < 0.5: add "scope-crawl-low-confidence" to discovery_warnings
    If confidence < 0.3: HALT unless --auto-discover
-6. CROSS-SCOPE REGRESSION CHECK (if prior scopes completed):
+6. CROSS-SCOPE REGRESSION CHECK (MANDATORY if prior scopes completed):
    Read .qa-session/results/*.json for completed scopes.
-   For each HIGH/BLOCKING bug from a prior scope:
+   For each HIGH/BLOCKING bug from a prior scope where type is REAL_BUG:
      Check if that bug affects endpoints in THIS scope
-     (e.g., token revocation bug affects ALL authenticated endpoints).
+     (e.g., token revocation bug affects ALL authenticated endpoints,
+      session bugs affect ALL auth-gated scopes).
      If yes: generate one regression test verifying the bug's impact here.
+   This is 1-2 extra tests, not a full re-test of prior scope.
+   If prior scope had REAL_BUG type HIGH/BLOCKING bugs, this step is
+   MANDATORY — do NOT skip it. If no prior scopes completed: skip.
    Coverage: // @covers-interaction: cross-scope-regression
 7. Run Phase 3 (Strategy) for scoped subset only
 8. Run Phase 4 (Generate) with functional depth for scoped routes
@@ -422,6 +426,11 @@ Network intercept enrichment (MANDATORY for functional depth):
     - Record response time in milliseconds
     - If response time > 3000ms: flag as slow_endpoint: true in api-calls.json
     - Flag in discovery report as performance warning
+    In the crawl.ts template, capture timing per page:
+      const start = Date.now();
+      await page.goto(route, { waitUntil: 'networkidle' });
+      const elapsed = Date.now() - start;
+      // Record elapsed in sitemap entry for this route
 
   Credential Mutation Detection — for each intercepted request:
     - If request body field names match: password, secret, token, key,
@@ -731,6 +740,7 @@ Match discovered interactions to the Test Pattern Library below.
 | Prior scope found HIGH/BLOCKING bug affecting current scope | Generate regression test verifying bug impact on this scope's endpoints | `@covers-interaction: cross-scope-regression` | Exact status/behavior check |
 | POST endpoint returns 201 (HIGH risk) | Send same payload twice sequentially → verify second is 409/400/200 (not 500). Document if non-idempotent | `@covers-interaction: idempotency-check` | No 500 on duplicate |
 | Endpoint has slow_endpoint: true (>3s in crawl) | Add expect(responseTime).toBeLessThan(5000) assertion | `@covers-interaction: response-time-check` | Response under 5s threshold |
+| Endpoint URL contains tenant scope ([slug], [orgId], [tenantId]) + requires auth | Authenticate as user from tenant A, access tenant B's endpoint → expect 403 or 404 | `@covers-interaction: cross-tenant-access` | Exact 403/404, never 200 |
 
 **Risk level controls depth within each pattern:**
 
@@ -770,6 +780,11 @@ For each route in priority order (HIGH first, then MEDIUM, then LOW):
   not all API files first then all UI files last.
   Note: test file grouping (5-10 tests per spec file by feature) is unchanged —
   this only changes the ORDER files are written, not how tests are grouped.
+
+  ⚠️ BUDGET PRIORITY: If budget reaches YELLOW zone (60%) and UI tests for the
+  current feature have NOT been generated yet: generate them BEFORE moving to
+  the next feature. UI tests for HIGH risk forms have HIGHER priority than
+  API tests for MEDIUM risk routes.
 
   For each route/feature:
 
@@ -1368,8 +1383,15 @@ Before executing the full suite:
   3. Parse results:
      - If ≥ 2/3 pass → proceed to full suite (Phase 5)
      - For each test that returns 5xx in the dry-run:
-       Mark that endpoint as BLOCKED. Do NOT generate negative/boundary/
-       idempotency tests for BLOCKED endpoints (BLOCKER-FIRST RULE).
+       a) File BLOCKING bug immediately with endpoint path and status code
+       b) Add endpoint path to BLOCKED_ENDPOINTS list (track in memory)
+       c) If MORE test files remain to be generated (Phase 4 not complete):
+          Re-enter Phase 4 generation but SKIP endpoints in BLOCKED_ENDPOINTS.
+          For skipped endpoints: "⊘ Skipped {N} tests for {path} (500 on happy path)"
+       d) If all test files already generated:
+          Edit existing files to wrap BLOCKED endpoint tests in test.fixme():
+          test.fixme('Endpoint returns 500 — fix server first', async () => { ... });
+          This keeps tests visible in reports but prevents them from running.
      - If < 2/3 pass → HALT. Do not run full suite.
        Inspect failures:
          - "Cannot find module" / "module not found" → dependency issue (re-run Phase 0)
@@ -1423,14 +1445,20 @@ GATE 1 — ASSERTION QUALITY:
   If ANY violation found: Edit the file to fix it before proceeding.
 
 GATE 1.5 — LOCATOR VERIFICATION:
-  Grep all generated frontend test files for: page.locator(
-  If ANY match found:
-    - Auto-fix: page.locator('input[type="email"]') → page.getByRole('textbox', { name: /email/i })
-    - Auto-fix: page.locator('#id') → page.getByTestId('id') or page.getByRole(...)
-    - Auto-fix: page.locator('.class') → page.getByRole(...) or page.getByText(...)
-  Also check for: page.$(, page.$$( — Puppeteer-style selectors, not Playwright.
-  If ANY CSS selector remains after auto-fix: FAIL gate.
-  This is a proven failure — the agent has generated CSS selectors despite explicit rules.
+  Grep all generated frontend test files for ANY of these banned patterns:
+    - page.locator('input      (CSS type selector)
+    - page.locator('#           (CSS ID selector)
+    - page.locator('.           (CSS class selector)
+    - page.locator('[           (CSS attribute selector)
+    - .or(page.locator(         (fallback pattern — STILL a CSS selector)
+    - page.$(                   (Puppeteer-style)
+    - page.$$(                  (Puppeteer-style)
+  The .or(page.locator()) fallback is NOT acceptable. If the primary
+  role-based locator doesn't match, fix the locator — don't fall back to CSS.
+  If ANY match found: Edit to replace with semantic locator:
+    - Use page.getByRole(), page.getByLabel(), page.getByText(), page.getByPlaceholder()
+    - Last resort: page.getByTestId() — NEVER page.locator()
+  If ANY CSS selector or .or() fallback remains after fix: FAIL gate.
 
 GATE 2 — STATE VERIFICATION (annotation-driven):
   For every test with @covers-interaction: auth-chain:
@@ -1442,6 +1470,10 @@ GATE 2 — STATE VERIFICATION (annotation-driven):
     Verify it includes a follow-up GET to confirm the state change persisted.
   For every test that creates a session (login, token generation, API key creation):
     Verify the test accesses a protected resource to prove the session works.
+  For scopes with tenant-scoped endpoints (URL contains [slug], [orgId], [tenantId]):
+    Verify at least ONE cross-tenant access test exists with
+    @covers-interaction: cross-tenant-access.
+    If zero: flag in notes as "no cross-tenant test" (MEDIUM, not blocking).
   A test that only checks the response code without verifying state change is INCOMPLETE.
   If ANY state verification is missing: add the missing steps via Edit.
 
@@ -1461,13 +1493,17 @@ GATE 3 — CLEANUP HOOKS (real cleanup, not comments):
     A comment is NOT cleanup. Either call a real API or log + document the gap.
   If ANY data-creating describe block lacks real cleanup: fix it via Edit.
 
-GATE 4 — BOUNDARY TESTS:
-  For every HIGH risk endpoint accepting user text input (from discovery):
+GATE 4 — BOUNDARY + IDEMPOTENCY TESTS:
+  BOUNDARY: For every HIGH risk endpoint accepting user text input:
     Verify at least one boundary test exists with @covers-interaction: boundary-test:
       - Oversized input (1000+ chars)
       - Special characters or SQL-like strings ("' OR 1=1 --")
       - Empty string (distinct from missing field)
-  If NO boundary tests exist for a HIGH risk input endpoint: generate them.
+    If NO boundary tests exist for a HIGH risk input endpoint: generate them.
+  IDEMPOTENCY: For every HIGH risk POST endpoint that returns 201:
+    Verify at least one test exists with @covers-interaction: idempotency-check.
+    (Send same payload twice, verify second is 409/400/200, never 500.)
+    If NO idempotency test exists: generate one.
 
 GATE 5 — PHASE 4.5 EXECUTION VERIFICATION:
   Verify Phase 4.5 was EXECUTED, not skipped:
@@ -1480,29 +1516,80 @@ GATE 5 — PHASE 4.5 EXECUTION VERIFICATION:
   If Phase 4.5 was executed and found 0 gaps: PASS.
   If Phase 4.5 found gaps: verify they are queued for Phase 9 emission. PASS.
 
-GATE 6 — UI PATTERN COVERAGE (HIGH risk forms):
-  For each HIGH risk route with discovered forms (from sitemap.json):
-    Count UI tests for this route (tests in {testDir}/frontend/ with @covers-route matching).
-    MINIMUM: 3 tests per HIGH risk form:
-      - @covers-interaction: form-submission MUST exist
-      - @covers-interaction: loading-state MUST exist (forms with submit buttons)
+GATE 6 — UI PATTERN COVERAGE (counted per FORM, not per route):
+  Read discovery/sitemap.json. Count forms per HIGH risk route.
+  For EACH form on EACH HIGH risk route:
+    Count UI tests that @covers-route this route AND cover this form's fields.
+    MINIMUM: 3 tests per form:
+      - @covers-interaction: form-submission MUST exist (valid submit)
+      - @covers-interaction: loading-state MUST exist (submit button discovered)
       - @covers-interaction: keyboard-nav OR error-recovery MUST exist (at least one)
-    If count < 3 per HIGH risk form: generate missing tests via Edit.
-    If total frontend tests < (HIGH_risk_routes_with_forms * 3): FAIL gate.
+    Example: /signup has 1 form → minimum 3 UI tests.
+    Example: /admin/settings has 2 forms (profile + password) → minimum 6 UI tests.
+  COUNTING:
+    forms_in_scope = sum of forms across all HIGH risk routes in sitemap.json
+    ui_tests_required = forms_in_scope * 3
+    ui_tests_actual = count of tests in {testDir}/frontend/ with @covers-route matching
+    If ui_tests_actual < ui_tests_required: FAIL gate.
+    Output: "Gate 6: {ui_tests_actual}/{ui_tests_required} UI tests
+    ({forms_in_scope} forms × 3 minimum)"
+  If Gate 6 FAILS and API test files exist but UI tests are insufficient:
+    The generation order was NOT interleaved. Generate missing UI tests NOW.
+    UI tests for HIGH risk forms have HIGHER priority than API tests for MEDIUM routes.
 
-GATE 7 — INFRASTRUCTURE UTILIZATION:
-  If discovery/infrastructure.json shows email tool available (email field non-null):
-    AND discovery found endpoints that trigger emails
-    (forgot-password, reset-password, signup-verification, invite, password-change):
-    Verify at least ONE email capture test exists with full flow:
-      trigger endpoint → poll email inbox → extract token/link → use it.
-    If email infra available AND email-triggering endpoints exist
-    AND zero email flow tests: FAIL gate.
-    Generate at least one email flow test using the Mailpit/MailHog pattern
-    from Phase 1.5.
+GATE 7 — INFRASTRUCTURE UTILIZATION (email flow enforcement):
+  If discovery/infrastructure.json has email.tool !== null:
+    Scan api-calls.json for endpoints whose path contains ANY of:
+      forgot, reset, invite, verify, confirm, activation, welcome
+    OR whose request body contains fields: email, recipient, to
+    If ANY such endpoint found AND zero tests have @covers-interaction
+    containing "email" or use the email tool URL (Mailpit/MailHog):
+      FAIL gate. Generate email flow test.
+    The email flow test MUST have all 5 steps:
+      1. Trigger the email-sending endpoint
+      2. Poll {email_tool_url}/api/v2/messages (or /api/v1/mailbox)
+      3. Extract token/link from email body
+      4. Use the token/link in a follow-up request
+      5. Verify the action succeeded
 
-PASS CRITERIA: All 10 gates (0, 0.5, 1, 1.5, 2, 3, 4, 5, 6, 7) must pass before proceeding to Phase 5.
-If any gate fails: fix via Edit, then re-verify that gate.
+GATE 8 — OVERLAP CHECK:
+  For each generated test file:
+    Glob for pre-existing test files covering same feature/routes.
+    If overlap found:
+      - Count endpoints tested in BOTH new and existing files.
+      - If overlap > 30%: FAIL gate.
+        Either: merge coverage annotations into existing file (if quality high)
+        Or: add "// Supplements {existing_file}" header and remove duplicate tests.
+      - If overlap ≤ 30%: PASS (minor overlap acceptable for different test depths).
+    Output: "Gate 8: {N} endpoints overlap between {new_file} and {existing_file}"
+
+GATE 9 — SHARED HELPERS:
+  If 2+ generated test files contain the same function body (login helper,
+  cookie parser, API wrapper):
+    FAIL gate. Extract to {testDir}/helpers/{name}.ts and import.
+  Detection: Grep all generated spec files for:
+    - "async function login" or "function getSessionCookie" or "function authGet"
+      appearing in more than one file
+    - Same function name defined in 2+ files
+  If ANY duplicate utility function found: Extract to helpers/ and update imports.
+
+PASS CRITERIA: All 12 gates must pass before proceeding to Phase 5:
+  Gate 0    — Discovery verification (crawl artifacts + provenance)
+  Gate 0.5  — Test directory verification
+  Gate 1    — Assertion quality (no lenient patterns)
+  Gate 1.5  — Locator verification (no CSS selectors, no .or() fallback)
+  Gate 2    — State verification (annotation-driven)
+  Gate 3    — Cleanup hooks (real cleanup, not comments)
+  Gate 4    — Boundary + idempotency tests (HIGH risk endpoints)
+  Gate 5    — Phase 4.5 execution verification
+  Gate 6    — UI pattern coverage (3 per form, counted by form not route)
+  Gate 7    — Infrastructure utilization (email flow if available)
+  Gate 8    — Overlap check (< 30% duplicate with existing tests)
+  Gate 9    — Shared helpers (no duplicate utility functions across files)
+
+This list is EXHAUSTIVE — if a gate number is listed, it runs.
+If ANY gate fails: fix via Edit, then re-verify that gate.
+Do NOT skip gates. Do NOT pass a gate with a workaround.
 
 Budget: 2-4 tool calls (Read generated files + potential Edits).
 Phase 4.7 runs in ALL budget zones including ORANGE.
@@ -1514,7 +1601,7 @@ QA_RESULT noting "self-check skipped due to RED budget zone."
 
 ```
 Run all generated tests:
-  npx playwright test e2e/tests/ --reporter=json --timeout=300000 2>&1
+  npx playwright test e2e/tests/ --reporter=json --retries=1 --timeout=300000 2>&1
 
 Parse JSON output:
   - Total tests run
