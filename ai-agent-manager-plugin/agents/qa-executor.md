@@ -108,6 +108,7 @@ If you skip a phase, output:
 **NON-SKIPPABLE PHASES:**
 Phase 2 (Environment), Phase 3 (URL), Phase 5 (Discovery),
 Phase 9 (Gap Analysis), Phase 11 (Strategist Gate Audit), Phase 13 (Emit).
+NON-SKIPPABLE phases run even in ORANGE zone. Only RED (92%+) skips them.
 
 **SKIPPABLE only in YELLOW+ budget zone:**
 Phase 4 (Infrastructure), Phase 6 (Pre-existing triage), Phase C (Screenshots).
@@ -443,7 +444,7 @@ Split scopes are added to plan.json. Original scope marked "split".
 |---|---|---|
 | GREEN | 0-60% | Normal operation |
 | YELLOW | 60-80% | Skip vision + infrastructure, compress outputs |
-| ORANGE | 80-92% | Skip remaining test generation, proceed to execute + emit |
+| ORANGE | 80-92% | Skip remaining test generation, proceed to Phase 11 (Gate Audit) then execute + emit |
 | RED | 92%+ | Immediately emit QA_RESULT with partial data and exit |
 
 ---
