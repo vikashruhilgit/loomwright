@@ -248,9 +248,9 @@ Agents with `memory: project` store knowledge in `.claude/agent-memory/{agent-na
 
 ### Plugin Hooks (Quality Gates)
 
-Hooks are split between per-agent frontmatter (primary validation for Worker, Execute Manager) and `hooks.json` (cross-cutting validation for Code Reviewer, QA Executor, TaskCompleted). See the updated hooks table in the "Plugin Hooks — Updated" section above for full details.
+All validation hooks are centralized in `hooks.json` since v10.0.0. Claude Code silently ignores `hooks`, `mcpServers`, and `permissionMode` in plugin agent frontmatter. Per-agent frontmatter hooks are kept for `~/.claude/agents/` compatibility but do not fire for plugin-distributed agents.
 
-Hooks use prompt-based validation (fast haiku model, 30s timeout). They validate against result schemas defined in `docs/RESULT_SCHEMAS.md`.
+Hooks use prompt-based validation (fast haiku model, 30s timeout). WorktreeCreate and StopFailure use `type: "command"` for zero-latency logging. All hooks validate against result schemas defined in `docs/RESULT_SCHEMAS.md`.
 
 ### Shared Preamble (All Agents)
 
@@ -342,7 +342,7 @@ This format applies to ALL agent outputs (Orchestrator, Code Reviewer, Red Team 
 
 ---
 
-#### **Supervisor** (Parallel Orchestrator — v3)
+#### **Supervisor** (Parallel Orchestrator — v4)
 - **Objective:** Autonomously manage complete workflow with parallel execution
 - **Reads:** CLAUDE.md, `.supervisor/state.md`, git state, Beads state (optional)
 - **Writes:** Worker dispatches, PR creation, `.supervisor/` directory
@@ -504,17 +504,23 @@ This format applies to ALL agent outputs (Orchestrator, Code Reviewer, Red Team 
 
 ---
 
-### Plugin Hooks (Quality Gates) — Updated
+### Plugin Hooks (Quality Gates) — v10.0.0
+
+All hooks centralized in `hooks.json`. Per-agent frontmatter hooks kept for `~/.claude/agents/` compatibility only.
 
 | Hook | Trigger | Location | Validation |
 |------|---------|----------|------------|
-| SubagentStop (worker) | Worker completes | Agent frontmatter (`worker.md`) | WORKER_RESULT with schema_version, task_id, status, files_modified |
-| SubagentStop (execute-manager) | Execute Manager completes | Agent frontmatter (`execute-manager.md`) | EXECUTE_RESULT/EXECUTE_CHECKPOINT with required fields |
-| SubagentStop (code-reviewer) | Code Reviewer completes | `hooks.json` | CODE_REVIEW_RESULT with decision (PASS/FAIL/NEEDS_HUMAN) |
-| SubagentStop (qa-executor) | QA Executor completes | `hooks.json` | QA_RESULT with tests_generated, tests_passed, summary |
-| TaskCompleted | Any task marked complete | `hooks.json` | Task genuinely done, not abandoned |
+| SubagentStop (worker) | Worker completes | hooks.json + frontmatter | WORKER_RESULT with schema_version, task_id, status, files_modified |
+| SubagentStop (execute-manager) | Execute Manager completes | hooks.json + frontmatter | EXECUTE_RESULT/EXECUTE_CHECKPOINT with required fields |
+| SubagentStop (code-reviewer) | Code Reviewer completes | hooks.json | CODE_REVIEW_RESULT v2 with decision, issue categories |
+| SubagentStop (supervisor) | Supervisor completes | hooks.json | Session outcome, subtask statuses, PR URL |
+| SubagentStop (qa-executor) | QA Executor completes | hooks.json | QA_RESULT with tests_generated, tests_passed, summary |
+| Stop (code-reviewer) | Code Reviewer finishing | hooks.json + frontmatter | CODE_REVIEW_RESULT block present |
+| TaskCompleted | Any task marked complete | hooks.json | Task genuinely done, not abandoned |
+| WorktreeCreate | Worktree created | hooks.json | Logs to `.supervisor/logs/worktrees.log` (type: command) |
+| StopFailure | Agent API error | hooks.json | Logs to `.supervisor/logs/failures.log` (type: command) |
 
-**Precedence rule:** Per-agent frontmatter hooks are the primary validation for Worker and Execute Manager. `hooks.json` contains cross-cutting hooks for other agents.
+**Plugin restriction:** Claude Code ignores `hooks`, `mcpServers`, and `permissionMode` in plugin agent frontmatter. Code Reviewer uses `disallowedTools: Write, Edit, NotebookEdit` to enforce read-only behavior since `permissionMode: plan` is ignored for plugins.
 
 ---
 

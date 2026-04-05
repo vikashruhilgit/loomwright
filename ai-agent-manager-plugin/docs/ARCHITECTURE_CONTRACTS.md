@@ -117,7 +117,7 @@ Branch:  feature/{task_id}-{slug}
 Example: ../myapp-42-add-auth, branch feature/42-add-auth
 ```
 
-- WorktreeCreate hook (future) validates uniqueness before creation
+- WorktreeCreate hook (hooks.json, type: command) logs worktree creation to `.supervisor/logs/worktrees.log`
 - Sibling directory (not nested) prevents git issues
 - Branch matches worktree slug for traceability
 

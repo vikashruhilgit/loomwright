@@ -4,6 +4,7 @@ description: Adversarial security auditor. Attacks assumptions and finds product
 tools: Read, Glob, Grep, Bash, WebFetch, WebSearch
 model: inherit
 maxTurns: 60
+effort: high
 color: "#DC143C"
 memory: project
 skills:

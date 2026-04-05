@@ -217,7 +217,7 @@ Validate teammate output quality:
 
 ### Recommendation
 
-1. **Default:** Use Supervisor v3 with git worktrees (proven, safe, file-isolated)
+1. **Default:** Use Supervisor v4 with git worktrees (proven, safe, file-isolated)
 2. **Research/exploration:** Consider Agent Teams (native coordination, no worktree overhead)
 3. **One-off parallel tasks:** Use background subagents directly
 
@@ -242,11 +242,11 @@ Validate teammate output quality:
 
 ## Integration with Supervisor
 
-Agent Teams can complement (not replace) the Supervisor v3 workflow:
+Agent Teams can complement (not replace) the Supervisor v4 workflow:
 
 - **Supervisor** handles the 6-phase lifecycle (branch, merge, PR, close)
 - **Agent Teams** could be used within the EXECUTE phase as an alternative to git worktrees
-- This integration is not yet implemented — Supervisor v3 uses git worktrees by default
+- This integration is not yet implemented — Supervisor v4 uses git worktrees by default
 - Users can manually use Agent Teams for research phases or exploration tasks
 
 ## Quality Checklist
@@ -277,5 +277,5 @@ Agent Teams remains experimental until all criteria are met:
 
 - `skills/async-orchestration/SKILL.md` - Git worktree parallel dispatch patterns
 - `skills/workflow-management/SKILL.md` - 6-phase Supervisor workflow
-- `agents/supervisor.md` - Supervisor v3 (default parallel execution)
+- `agents/supervisor.md` - Supervisor v4 (default parallel execution)
 - `agents/worker.md` - Worker agent (git worktree implementation)

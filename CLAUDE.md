@@ -285,7 +285,7 @@ ai-agent-manager/
 │   │   ├── ARCHITECTURE_CONTRACTS.md # Capability matrix, budgets, rules
 │   │   └── ARCHITECTURE.md          # Visual agent topology diagram
 │   └── .claude-plugin/
-│       └── plugin.json               # Plugin metadata (v9.0.0)
+│       └── plugin.json               # Plugin metadata (v10.0.0)
 │
 ├── .claude-plugin/
 │   ├── marketplace.json              # Marketplace definition
@@ -465,11 +465,11 @@ Before an agent completes work:
 ### Plugin Metadata
 
 - **Plugin Name:** `ai-agent-manager-plugin`
-- **Version:** 9.0.0
-- **Description:** AI agents with QA Executor v9 (architectural restructure: 487-line core agent + qa-test-patterns skill + qa-gates skill, independent Strategist gate audit, 13 sequential phases, 80/90 budget, signal→pattern architecture, 12 quality gates verified by separate agent), enhanced QA Strategist (3-mode: Strategy + Gate Audit + Post-Execution Audit), enhanced Code Reviewer (LSP diagnostics, effort:high, permissionMode:plan, schema v2 issue categories, REVIEW.md, Stop hook), structured result schemas, failure escalation, merge safety gate, session logging, job lifecycle tracking, per-agent hooks, color-coded agents, architecture contracts, plan-first workflows, parallel orchestration, and bundled MySQL MCP server
+- **Version:** 10.0.0
+- **Description:** AI agents v10 — centralized hooks for plugin compatibility (all 9 hooks in hooks.json), Supervisor validation hook + maxTurns guard, Code Reviewer disallowedTools enforcement (Write/Edit/NotebookEdit blocked), effort tuning (Red Team + QA Strategist: high), WorktreeCreate/StopFailure logging hooks, Supervisor v4 reference consistency. QA Executor v9, enhanced QA Strategist (3-mode), enhanced Code Reviewer (LSP, effort:high, schema v2), structured result schemas, failure escalation, architecture contracts, plan-first workflows, parallel orchestration, and bundled MySQL MCP server
 - **Agents:** 11 roles (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer, QA Strategist, QA Executor)
 - **Skills:** 46 reusable skill files (versioned with SKILLS_INDEX.md)
-- **Hooks:** 6 quality gate hooks — per-agent: SubagentStop (worker, execute-manager), Stop (code-reviewer); cross-cutting: SubagentStop (code-reviewer, qa-executor), TaskCompleted
+- **Hooks:** 9 quality gate hooks — centralized in hooks.json: SubagentStop (worker, execute-manager, code-reviewer, supervisor, qa-executor), Stop (code-reviewer), TaskCompleted, WorktreeCreate, StopFailure
 - **Docs:** RESULT_SCHEMAS.md, FAILURE_ESCALATION.md, ARCHITECTURE_CONTRACTS.md, ARCHITECTURE.md, QA_SYSTEM_BLUEPRINT.md
 - **Bundled MCP:** MySQL read-only MCP server (`vikashruhil-mysql-mcp`) — query impact analysis, schema inspection, multi-DB profiles
 - **Author:** vikash ruhil
@@ -533,18 +533,21 @@ Before an agent completes work:
 
 ### Plugin Hooks (Quality Gates)
 
-Hooks are split between **per-agent frontmatter** (primary validation) and **hooks.json** (cross-cutting validation):
+All validation hooks are centralized in `hooks.json` since v10.0.0. Claude Code silently ignores `hooks`, `mcpServers`, and `permissionMode` in plugin agent frontmatter — only hooks.json hooks fire for plugin-distributed agents. Per-agent frontmatter hooks are kept for `~/.claude/agents/` compatibility.
 
 | Hook | Trigger | Location | Validation |
 |------|---------|----------|------------|
-| **SubagentStop** (worker) | Worker completes | Agent frontmatter | WORKER_RESULT with schema_version, task_id, status, files_modified |
-| **SubagentStop** (execute-manager) | Execute Manager completes | Agent frontmatter | EXECUTE_RESULT/EXECUTE_CHECKPOINT with required fields |
+| **SubagentStop** (worker) | Worker completes | hooks.json + frontmatter | WORKER_RESULT with schema_version, task_id, status, files_modified |
+| **SubagentStop** (execute-manager) | Execute Manager completes | hooks.json + frontmatter | EXECUTE_RESULT/EXECUTE_CHECKPOINT with required fields |
 | **SubagentStop** (code-reviewer) | Code Reviewer completes | hooks.json | CODE_REVIEW_RESULT v2 with decision, issue categories (new/pre_existing/nit) |
-| **Stop** (code-reviewer) | Code Reviewer finishing | Agent frontmatter | CODE_REVIEW_RESULT block present with required fields |
+| **SubagentStop** (supervisor) | Supervisor completes | hooks.json | Session outcome, subtask statuses, PR URL if created |
 | **SubagentStop** (qa-executor) | QA Executor completes | hooks.json | QA_RESULT with tests_generated, tests_passed, summary |
+| **Stop** (code-reviewer) | Code Reviewer finishing | hooks.json + frontmatter | CODE_REVIEW_RESULT block present with required fields |
 | **TaskCompleted** | Any task marked complete | hooks.json | Task genuinely done, not abandoned or skipped |
+| **WorktreeCreate** | Worktree created | hooks.json | Logs to `.supervisor/logs/worktrees.log` (type: command) |
+| **StopFailure** | Agent API error | hooks.json | Logs to `.supervisor/logs/failures.log` (type: command) |
 
-Hooks validate against schemas defined in `docs/RESULT_SCHEMAS.md`. Per-agent hooks take precedence over hooks.json for the same agent. Prompt-based validation (fast haiku model, 30s timeout).
+Hooks validate against schemas defined in `docs/RESULT_SCHEMAS.md`. Prompt-based validation (fast haiku model, 30s timeout). WorktreeCreate and StopFailure use `type: "command"` for zero-latency logging.
 
 ### Persistent Memory
 
@@ -584,7 +587,7 @@ Claude Code Agent Teams is an experimental feature providing native multi-agent 
 - Best for research, competing hypotheses, cross-layer changes
 - Not for sequential tasks or same-file edits (use Supervisor with git worktrees)
 - See `skills/agent-teams/SKILL.md` for patterns and decision matrix
-- Does not replace Supervisor v3 — complementary for exploration tasks
+- Does not replace Supervisor v4 — complementary for exploration tasks
 
 ---
 

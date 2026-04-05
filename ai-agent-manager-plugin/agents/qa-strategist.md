@@ -4,6 +4,7 @@ description: QA Strategist — plans risk-based test strategy and audits QA Exec
 tools: Read, Glob, Grep, Bash
 model: inherit
 maxTurns: 40
+effort: high
 color: "#FF6347"
 memory: project
 disallowedTools: Task

@@ -258,7 +258,7 @@ Preview without executing:
 ```bash
 $ /supervisor --dry-run
 
-## SUPERVISOR v3: Dry Run Mode
+## SUPERVISOR v4: Dry Run Mode
 
 **Would execute:**
 Phase 0: INIT — Detect env, configure session

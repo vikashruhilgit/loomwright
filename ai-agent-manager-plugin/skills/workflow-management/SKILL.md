@@ -382,7 +382,7 @@ For research or exploration tasks, Claude Code Agent Teams provides an alternati
 
 See `skills/agent-teams/SKILL.md` for full patterns and decision matrix.
 
-The Supervisor v3 workflow uses git worktrees as the default. Agent Teams is available for manual use in research phases.
+The Supervisor v4 workflow uses git worktrees as the default. Agent Teams is available for manual use in research phases.
 
 ## Quality Checklist
 

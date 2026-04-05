@@ -5,6 +5,7 @@ tools: Read, Glob, Grep, Bash, LSP
 model: inherit
 effort: high
 permissionMode: plan
+disallowedTools: Write, Edit, NotebookEdit
 maxTurns: 40
 color: "#20B2AA"
 memory: project

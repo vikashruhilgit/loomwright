@@ -1,5 +1,5 @@
 {
-  "description": "AI Agent Manager quality gates and monitoring — cross-cutting hooks only. Per-agent SubagentStop hooks are in agent frontmatter (worker.md, execute-manager.md).",
+  "description": "AI Agent Manager quality gates — centralized since v10.0.0. Plugin agents only execute hooks from this file (per-agent frontmatter hooks are silently ignored by Claude Code for plugin-distributed agents). Frontmatter hooks are kept in agent .md files for ~/.claude/agents/ compatibility.",
   "hooks": {
     "SubagentStop": [
       {
@@ -21,6 +21,47 @@
             "timeout": 30
           }
         ]
+      },
+      {
+        "matcher": "ai-agent-manager-plugin:worker",
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "A worker agent just completed. Review its output to verify: (1) it produced a WORKER_RESULT block with schema_version, task_id, status, files_modified, and summary fields, (2) files_modified is not empty when status=completed, (3) a .worker-summary.md file was written, (4) no unresolved errors remain, (5) no destructive commands were used (rm -rf, git push, git reset --hard, DROP, TRUNCATE). Context: $ARGUMENTS. Respond with {\"ok\": true} if valid, or {\"ok\": false, \"reason\": \"...\"} if issues found.",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "ai-agent-manager-plugin:execute-manager",
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "An Execute Manager agent just completed. Review its output to verify: (1) it produced an EXECUTE_RESULT or EXECUTE_CHECKPOINT block with schema_version field, (2) EXECUTE_RESULT contains subtasks_completed (non-empty array), worktrees, merge_order, and summary fields, (3) EXECUTE_CHECKPOINT contains completed_so_far, remaining, resume_context, and reason fields, (4) all worktree paths reference valid sibling directories. Context: $ARGUMENTS. Respond with {\"ok\": true} if valid, or {\"ok\": false, \"reason\": \"...\"} if malformed or missing required fields.",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "ai-agent-manager-plugin:supervisor",
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "A Supervisor agent just completed. Review its output to verify: (1) session completed with a clear outcome (PR created, task deferred with reason, or error escalated), (2) all dispatched subtasks have a final status (completed/failed/skipped), (3) if PR was created, a PR URL or number is present, (4) if PR was skipped, an explicit reason is provided, (5) no orphaned worktrees mentioned without cleanup. Context: $ARGUMENTS. Respond with {\"ok\": true} if valid, or {\"ok\": false, \"reason\": \"...\"} if the session appears incomplete or output is malformed.",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "An agent is finishing. If this is NOT the code-reviewer agent, respond {\"ok\": true} immediately. If this IS the code-reviewer agent: verify output contains a CODE_REVIEW_RESULT block with schema_version, decision (PASS/FAIL/NEEDS_HUMAN), issues array, and summary. Context: $ARGUMENTS. Respond {\"ok\": true} if valid or not code-reviewer, {\"ok\": false, \"reason\": \"...\"} if code-reviewer output is missing required fields.",
+            "timeout": 30
+          }
+        ]
       }
     ],
     "TaskCompleted": [
@@ -30,6 +71,26 @@
             "type": "prompt",
             "prompt": "A task is being marked complete. Verify from the context that the task appears genuinely done — not just abandoned or skipped. Check: (1) task subject suggests work was done, (2) no obvious incomplete state. Context: $ARGUMENTS. Respond with {\"ok\": true} if complete, or {\"ok\": false, \"reason\": \"...\"} if incomplete.",
             "timeout": 30
+          }
+        ]
+      }
+    ],
+    "WorktreeCreate": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "INPUT=$(cat) && mkdir -p .supervisor/logs && echo \"[$(date -u +%Y-%m-%dT%H:%M:%SZ)] WORKTREE_CREATED $INPUT\" >> .supervisor/logs/worktrees.log && echo \"$INPUT\" | python3 -c \"import sys,json; print(json.load(sys.stdin).get('worktree_path',''))\" 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "mkdir -p .supervisor/logs && echo \"[$(date -u +%Y-%m-%dT%H:%M:%SZ)] STOP_FAILURE $(cat)\" >> .supervisor/logs/failures.log"
           }
         ]
       }
