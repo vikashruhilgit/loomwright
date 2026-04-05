@@ -414,8 +414,3 @@ Before outputting result:
 - On EXECUTE_CHECKPOINT: Supervisor spawns a fresh Execute Manager for remaining subtasks
 - Worktree paths and branch names in output ensure worker work is never lost
 
-### Skill References
-
-- **Async patterns:** `skills/async-orchestration/SKILL.md`
-- **Output compression:** `skills/context-summarization/SKILL.md`
-- **State management:** `skills/state-management/SKILL.md`

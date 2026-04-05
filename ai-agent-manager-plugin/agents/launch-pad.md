@@ -448,18 +448,6 @@ Before offering save:
 
 ---
 
-## Skill References
-
-- **Readiness:** `skills/supervisor-readiness/SKILL.md` — Brief template, pre-flight checklist, jobs convention
-- **Context setup:** `skills/context-setup/SKILL.md` — Project location, CLAUDE.md loading
-- **CLAUDE.md validation:** `skills/claude-md-validation/SKILL.md` — Freshness checks
-- **Discovery:** `skills/product-discovery/SKILL.md` — Problem understanding framework
-- **MVP scoping:** `skills/mvp-scoping/SKILL.md` — Prioritization matrix
-- **Quality:** `skills/quality-checklist/SKILL.md` — Review gate criteria
-- **Library docs:** `skills/context7-lookup/SKILL.md` — External library documentation
-
----
-
 ## Integration Notes
 
 - Used by `/launch-pad` command

@@ -12,6 +12,8 @@ skills:
   - state-management
   - context-summarization
   - supervisor-readiness
+  - commit
+  - quality-checklist
 ---
 
 # Supervisor Agent v4 (Parallel Orchestrator)
@@ -700,9 +702,7 @@ Task(
 
 ## Session Logging
 
-The Supervisor writes structured JSONL logs to `.supervisor/logs/{session_id}.jsonl` for post-mortem analysis.
-
-**Log entries:**
+**Log entries** (`.supervisor/logs/{session_id}.jsonl`):
 ```jsonl
 {"ts":"2026-03-09T14:30:00Z","type":"phase_transition","from":"INIT","to":"ACQUIRE","task_id":"user-auth"}
 {"ts":"2026-03-09T14:30:05Z","type":"agent_spawn","agent":"orchestrator","task_id":"user-auth","description":"Plan: decompose user-auth"}
@@ -714,7 +714,7 @@ The Supervisor writes structured JSONL logs to `.supervisor/logs/{session_id}.js
 {"ts":"2026-03-09T14:33:00Z","type":"pr_created","task_id":"user-auth","pr_number":42,"url":"https://github.com/org/repo/pull/42"}
 ```
 
-**Retention:** 7 days default. Supervisor INIT phase cleans up logs older than configured retention (from `.supervisor/config.md` if present).
+**Retention:** 7 days (clean up in INIT phase).
 
 **When to log:**
 - Phase transitions
@@ -750,18 +750,6 @@ Phase 4 (FINALIZE):
 
 ---
 
-## Skill References
-
-- **Async patterns:** `skills/async-orchestration/SKILL.md`
-- **State management:** `skills/state-management/SKILL.md`
-- **Workflow patterns:** `skills/workflow-management/SKILL.md`
-- **Output compression:** `skills/context-summarization/SKILL.md`
-- **Readiness:** `skills/supervisor-readiness/SKILL.md` — Brief template, pre-flight checklist, jobs convention
-- **Commit format:** `skills/commit/SKILL.md`
-- **Review criteria:** `skills/quality-checklist/SKILL.md`
-
----
-
 ## Quality Checklist
 
 Before completing workflow:
@@ -782,12 +770,7 @@ Before completing workflow:
 
 ## Integration Notes
 
-- Used by `/supervisor` command
-- Orchestrates: Context-Keeper, Product Owner, Orchestrator, Execute Manager, Worker, Code Reviewer
 - State stored in scratchpad (active) + `.supervisor/` (persistent)
-- Checkpoints enable cross-session resume
-- Context kept minimal via externalized state
-- Skills referenced but not embedded (pre-loaded via frontmatter)
 - Workers use `agents/worker.md` template
 - State operations use `agents/context-keeper.md`
 

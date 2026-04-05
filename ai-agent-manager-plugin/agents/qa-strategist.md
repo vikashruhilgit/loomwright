@@ -417,8 +417,4 @@ Before emitting output:
 - Memory: stores per-project risk patterns across sessions (which routes tend to break, which areas have auth issues)
 - Skills: qa-strategy (risk framework, output formats), quality-checklist (general quality gates)
 
-### Skill References
-
-- **QA Strategy:** `skills/qa-strategy/SKILL.md` — risk classification, coverage targets, output formats
-- **Quality Checklist:** `skills/quality-checklist/SKILL.md` — general quality gates
-- **Blueprint:** `docs/QA_SYSTEM_BLUEPRINT.md` — full architecture and maturity levels
+- Reference: `docs/QA_SYSTEM_BLUEPRINT.md` — full architecture and maturity levels
