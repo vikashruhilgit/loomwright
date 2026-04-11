@@ -90,11 +90,11 @@ Each agent is a Markdown prompt file (`agents/[name].md`):
 - **Outputs:** Structured WORKER_RESULT block + `.worker-summary.md` file
 
 #### **Product Owner** (`/product-owner`)
-- **Purpose:** Translate business problems into user stories with acceptance criteria
-- **When to use:** New feature, vague requirements
-- **Command:** `/product-owner feature: "your feature"` or `/product-owner problem: "issue to solve"`
-- **Workflow:** Reads domain context → runs discovery → writes user stories
-- **Outputs:** Beads stories with acceptance criteria (Given/When/Then)
+- **Purpose:** Translate business problems into user stories with acceptance criteria. Supports `--brainstorm` mode for multi-mind ideation.
+- **When to use:** New feature, vague requirements, exploring multiple directions (`--brainstorm`)
+- **Command:** `/product-owner feature: "your feature"`, `/product-owner problem: "issue to solve"`, `/product-owner problem: "..." --brainstorm`
+- **Workflow:** (Optional) 5-lens brainstorm → reads domain context → runs discovery → writes user stories
+- **Outputs:** Options Analysis (when --brainstorm) + Beads stories with acceptance criteria (Given/When/Then)
 
 #### **Orchestrator** (`/orchestrator`)
 - **Purpose:** Break goals into Beads tasks with review gates
@@ -285,7 +285,7 @@ ai-agent-manager/
 │   │   ├── ARCHITECTURE_CONTRACTS.md # Capability matrix, budgets, rules
 │   │   └── ARCHITECTURE.md          # Visual agent topology diagram
 │   └── .claude-plugin/
-│       └── plugin.json               # Plugin metadata (v10.0.0)
+│       └── plugin.json               # Plugin metadata (v10.1.0)
 │
 ├── .claude-plugin/
 │   ├── marketplace.json              # Marketplace definition
@@ -465,10 +465,10 @@ Before an agent completes work:
 ### Plugin Metadata
 
 - **Plugin Name:** `ai-agent-manager-plugin`
-- **Version:** 10.0.0
-- **Description:** AI agents v10 — centralized hooks for plugin compatibility (all 9 hooks in hooks.json), Supervisor validation hook + maxTurns guard, Code Reviewer disallowedTools enforcement (Write/Edit/NotebookEdit blocked), effort tuning (Red Team + QA Strategist: high), WorktreeCreate/StopFailure logging hooks, Supervisor v4 reference consistency. QA Executor v9, enhanced QA Strategist (3-mode), enhanced Code Reviewer (LSP, effort:high, schema v2), structured result schemas, failure escalation, architecture contracts, plan-first workflows, parallel orchestration, and bundled MySQL MCP server
+- **Version:** 10.1.0
+- **Description:** AI agents v10.1 — Product Owner `--brainstorm` mode (5-lens multi-mind ideation with debate, scoring, and recommendation). 11 agent roles, 47 reusable skills, 9 quality gate hooks, persistent agent memory, bundled MySQL MCP server
 - **Agents:** 11 roles (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer, QA Strategist, QA Executor)
-- **Skills:** 46 reusable skill files (versioned with SKILLS_INDEX.md)
+- **Skills:** 47 reusable skills (versioned with SKILLS_INDEX.md)
 - **Hooks:** 9 quality gate hooks — centralized in hooks.json: SubagentStop (worker, execute-manager, code-reviewer, supervisor, qa-executor), Stop (code-reviewer), TaskCompleted, WorktreeCreate, StopFailure
 - **Docs:** RESULT_SCHEMAS.md, FAILURE_ESCALATION.md, ARCHITECTURE_CONTRACTS.md, ARCHITECTURE.md, QA_SYSTEM_BLUEPRINT.md
 - **Bundled MCP:** MySQL read-only MCP server (`vikashruhil-mysql-mcp`) — query impact analysis, schema inspection, multi-DB profiles
@@ -577,6 +577,7 @@ Agents with `skills` in their frontmatter receive skill content pre-injected at 
 | Red Team Reviewer | context7-lookup | Mandatory for reality-checking library usage |
 | QA Strategist | qa-strategy, quality-checklist | Risk framework and quality gates always needed |
 | QA Executor | qa-strategy, playwright-e2e, quality-checklist | Discovery, test generation patterns, and gates |
+| Product Owner | brainstorming, product-discovery, mvp-scoping | Multi-mind ideation, problem understanding, prioritization |
 
 This eliminates file-read latency during execution — skills are in context from the start.
 

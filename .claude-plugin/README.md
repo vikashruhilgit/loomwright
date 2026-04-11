@@ -1,154 +1,231 @@
 # AI Agent Manager Plugin for Claude Code
 
-A powerful Claude Code plugin with 3 intelligent agents, 18 focused skills, and Beads issue tracker integration for modern development workflows. Replaces TODO.md with issue-driven task management and enforces quality gates on code reviews.
+A Claude Code plugin with 11 agent roles (8 user-facing + 3 internal), 47 focused skills, and optional Beads issue tracker integration. Automates plan-first readiness, parallel workflow execution, requirements definition, code review, adversarial audits, and dual-agent QA testing.
 
 ## Overview
 
-The AI Agent Manager Plugin 2.0 includes:
+The AI Agent Manager Plugin v10.1 includes:
 
-- **🎯 Orchestrator Agent** — Break goals into Beads tasks with mandatory review gates
-- **👀 Code Reviewer Agent** — Review code with PASS/FAIL/NEEDS_HUMAN decisions (blocks task progression)
-- **🔴 Red Team Reviewer Agent** — Adversarial audits to break assumptions
+### User-Facing Agents (8)
 
-**17 Focused Skills:**
-- **Core:** Commits (Beads linking), Context7 library lookups, Quality checklist, Pattern detection
-- **NestJS:** Guards, Controllers, Services, Drizzle ORM
+- **Launch Pad** (`/launch-pad`) — Prepare goals for autonomous Supervisor execution
+- **Supervisor** (`/supervisor`) — Autonomous parallel workflow orchestrator with git worktrees
+- **Product Owner** (`/product-owner`) — Translate business problems into user stories. Supports `--brainstorm` for multi-mind ideation
+- **Orchestrator** (`/orchestrator`) — Break goals into tasks with review gates
+- **Code Reviewer** (`/code-reviewer`) — Review code with PASS/FAIL/NEEDS_HUMAN decisions (LSP diagnostics, read-only)
+- **Red Team Reviewer** (`/red-team-reviewer`) — Adversarial audits to break assumptions
+- **QA Strategist** (`/qa-strategist`) — Risk-based test strategy and QA audit
+- **QA Executor** (`/qa-executor`) — Discover app, generate Playwright tests, find gaps
+
+### Internal Agents (3)
+
+- **Execute Manager** — Owns Phase 3 worker/reviewer lifecycle (spawned by Supervisor)
+- **Context-Keeper** — Sole writer of externalized state file (spawned on-demand)
+- **Worker** — Implements a single subtask in an isolated git worktree (spawned by Execute Manager)
+
+### 47 Skills
+
+Skills are loaded on-demand to keep context small:
+
+- **Core:** Commits, Context7 lookups, Quality checklist, Pattern detection, Claude.md validation
+- **Workflow:** Supervisor readiness, Async orchestration, State management, Context summarization, Workflow management, Agent teams
+- **Product:** Brainstorming, Product discovery, MVP scoping, User story writing, Domain knowledge
+- **QA:** QA strategy, QA orchestration, QA test patterns, QA gates, Playwright E2E, Unit testing
+- **NestJS:** Guards, Controllers, Services, Drizzle ORM, TypeORM
 - **Next.js:** Routing, Components, API routes, Data fetching, Authentication
 - **Gateway:** Proxy patterns, Auth middleware, Rate limiting, Correlation ID
+- **DevOps:** CI/CD, Docker, Monitoring/Observability, Error handling
+- **Data:** MySQL, PostgreSQL, Redis caching
+- **UI:** Frontend UI (design system, accessibility, responsive)
 
-Skills are loaded on-demand to keep context small (70-80% token reduction vs. monolithic agents).
+---
 
 ## Quick Start
 
 ### 1. Installation
 
-**Option A: Install from Local Marketplace (Recommended for Testing)**
-
-First, set up a local marketplace:
+**Option A: Install from Local Marketplace (Recommended)**
 
 ```bash
-# From the ai-agent-manager root directory, create a marketplace
+# From the ai-agent-manager root directory
 cd /path/to/ai-agent-manager
 
 # In Claude Code, add the local marketplace
 /plugin marketplace add ./
-```
 
-Then install the plugin:
-
-```bash
+# Install the plugin
 /plugin install ai-agent-manager-plugin@ai-agent-manager-marketplace
 ```
 
-**Option B: Create a Distributed Marketplace**
+**Option B: Manual Installation**
 
-For sharing with your team, create a marketplace repository. See [Marketplace Setup Guide](#marketplace-setup-guide) below.
+Copy the plugin to your Claude Code plugins directory:
+- **macOS/Linux:** `cp -r ai-agent-manager-plugin ~/.claude/plugins/ai-agent-manager-plugin`
+- **Windows:** Copy `ai-agent-manager-plugin` to `%APPDATA%\Claude\plugins\`
 
-**Option C: Manual Installation**
+### 2. Setup Your Project
 
-Copy the `.claude-plugin/` folder to your Claude Code config directory:
-- **macOS/Linux:** `~/.claude/plugins/ai-agent-manager/`
-- **Windows:** `%APPDATA%\Claude\plugins\ai-agent-manager\`
-
-### 2. Setup Beads Issue Tracker
-
-Initialize Beads in your project (replaces TODO.md):
+Your project needs only a `CLAUDE.md` file for agents to work:
 
 ```bash
 cd /path/to/your/project
 
-# Install Beads (one-time)
-# See: https://github.com/steveyegge/beads
-
-# Initialize in your project
+# Option A: With Beads (full task management)
 bd init
+
+# Option B: Without Beads (Supervisor creates .supervisor/ automatically)
+# Just create CLAUDE.md with your project patterns
 ```
 
-### 3. Initialize Your Project
-
-Your project needs one file for agents to work:
-
-```bash
-cd /path/to/your/project
-
-# Copy the template files
-cp -r /path/to/ai-agent-manager/templates/project-template/* .
-
-# Files created:
-# - CLAUDE.md (Codebase knowledge - required)
-
-# No more TODO.md or memory/ files - Beads tracks everything!
+This creates:
+```
+your-project/
+├── CLAUDE.md              # Codebase knowledge (required)
+├── .supervisor/           # Supervisor state (auto-created, gitignored)
+│   ├── state.md           # Current session state
+│   ├── history/           # Completed session summaries
+│   └── jobs/              # Supervisor-Ready Briefs from Launch Pad
+├── .beads/                # Beads issue tracker (optional)
+└── src/                   # Your code
 ```
 
-### 4. Run Your First Command
+### 3. Run Your First Command
 
 ```bash
-bd list  # See all Beads issues
+# Plan-first autonomous workflow
+/launch-pad goal: "add user authentication"
+/supervisor job: .supervisor/jobs/pending/2026-02-08-user-auth.md
+
+# Or run directly
+/supervisor task: "add user authentication"
+
+# Or plan manually
 /orchestrator goal: "add dark mode to UI"
 ```
 
-The orchestrator will:
-1. Find your project's CLAUDE.md
-2. Check Beads for current work state
-3. Break goal into tasks with built-in review gates
-4. Create Beads tasks (BD-XXX) with subtasks
+---
 
 ## Commands
 
-### /orchestrator goal: "<what to do>"
+### /launch-pad goal: "\<goal\>"
 
-Break a goal into minimal, actionable Beads tasks with mandatory code review subtasks.
+Prepare a goal for autonomous Supervisor execution. Analyzes codebase, estimates file impact, validates environment.
+
+```bash
+/launch-pad goal: "add user authentication"
+/launch-pad goal: "refactor payment module" --discovery
+```
+
+**Output:** Supervisor-Ready Brief saved to `.supervisor/jobs/pending/`
+
+---
+
+### /supervisor [task: "\<description\>"] [job: \<path\>]
+
+Autonomous workflow orchestrator. Creates feature branch, plans work, spawns parallel workers in git worktrees, reviews, merges, and creates PR.
+
+```bash
+/supervisor                                    # Pick up next Beads task
+/supervisor task: "add dark mode"              # Direct task
+/supervisor job: .supervisor/jobs/pending/...   # From Launch Pad brief
+/supervisor --max-workers 3                    # Parallel workers
+```
+
+**Output:** Completed implementation with PR
+
+---
+
+### /product-owner feature: "\<what\>" | problem: "\<issue\>"
+
+Translate business problems into user stories with acceptance criteria.
+
+```bash
+/product-owner feature: "staff scheduling for venue events"
+/product-owner problem: "we keep double-booking shifts"
+/product-owner feature: "order history" --mvp-only
+/product-owner problem: "low retention" --brainstorm
+/product-owner feature: "new pricing model" --brainstorm deep
+```
+
+**Flags:**
+- `--mvp-only` — Focus only on MVP scope
+- `--discovery` — Run full discovery before writing stories
+- `--brainstorm` — 5-lens multi-mind ideation (Creative, PM, Engineer, Business, Critic) with debate, scoring, and recommendation before writing stories
+- `--brainstorm deep` — Deep ideation with 2 debate rounds and market research
+
+**Output:** User stories with Given/When/Then acceptance criteria, scope analysis, handoff to Orchestrator
+
+---
+
+### /orchestrator goal: "\<what to do\>"
+
+Break a goal into tasks with mandatory code review subtasks.
 
 ```bash
 /orchestrator goal: "add dark mode to UI"
 /orchestrator goal: "fix login bug" --project /path/to/project
 ```
 
-**Output:**
-- Beads task structure (EPIC → TASK → SUBTASK)
-- Each implementation task gets a review subtask (blocks progression)
-- Acceptance criteria
-- Skill references (not embedded content)
-- Dependencies with blocking relationships
-
-**Example Output:**
-```
-BD-45: Add Dark Mode (EPIC)
-├── BD-46: Implement dark mode toggle (TASK)
-├── BD-47: Code Review - Dark Mode Toggle (SUBTASK) [blocks BD-48]
-├── BD-48: Add dark mode tests (TASK)
-├── BD-49: Code Review - Tests (SUBTASK) [blocks BD-50]
-├── BD-50: Commit & Link (TASK)
-```
+**Output:** Beads task structure (EPIC -> TASK -> SUBTASK) with review gates
 
 ---
 
 ### /code-reviewer [files] [--project /path]
 
-Review code against quality standards with PASS/FAIL/NEEDS_HUMAN decision gates.
+Review code against quality standards. Read-only (never modifies files).
 
 ```bash
-bd claim BD-47                           # Claim review subtask
-/code-reviewer src/components/DarkMode  # Review implementation
+/code-reviewer src/components/        # Review specific files
+/code-reviewer                        # Review recent git changes
 ```
 
-**Checks:**
-- Type safety, security, performance
-- Pattern consistency (vs CLAUDE.md)
-- Test coverage (≥80% by default)
-- Skills pattern alignment
+**Checks:** Type safety (LSP diagnostics), security, performance, pattern consistency, test coverage
 
-**Decisions:**
-- **PASS:** All criteria met → Next task unblocks automatically
-- **FAIL:** Critical issues found → Must fix + re-review
-- **NEEDS_HUMAN:** Non-critical issues → Creates bug issues (BD-XX) that block review
+**Output:** Issues by severity with category tags (`new`/`pre_existing`/`nit`) + PASS/FAIL/NEEDS_HUMAN decision
 
-**Output:**
-- Decision line: `## Code Review Decision: PASS | FAIL | NEEDS_HUMAN`
-- Issues by severity (HIGH/MEDIUM/LOW) with file:line + fixes
-- Bug issues created (if NEEDS_HUMAN)
-- Pattern proposals for CLAUDE.md
-- Strengths highlighted
+---
+
+### /red-team-reviewer [target] [--focus security|scale|cost|ops]
+
+Adversarial audit — find what breaks in production.
+
+```bash
+/red-team-reviewer                    # Full audit
+/red-team-reviewer src/auth/          # Target specific area
+/red-team-reviewer --focus security   # Focus on security vectors
+```
+
+**Output:** Findings by severity (FATAL/CRITICAL/WARNING/WEAKNESS) with prioritized fixes
+
+---
+
+### /qa-strategist [target] [--audit .qa-summary.md]
+
+Plan risk-based test strategy or audit QA Executor results.
+
+```bash
+/qa-strategist src/                           # Strategy mode
+/qa-strategist --audit .qa-summary.md         # Audit mode
+/qa-strategist --focus auth                   # Focus area
+```
+
+**Output:** Risk classification, coverage targets, STRATEGIST_VERDICT
+
+---
+
+### /qa-executor [--url http://...] [--rounds 1|2|3]
+
+Discover app structure, generate Playwright tests, find gaps, execute.
+
+```bash
+/qa-executor                                          # Auto-detect
+/qa-executor --url http://localhost:3000               # Explicit URL
+/qa-executor --url http://localhost:3000 --skip-strategy
+```
+
+**Requires:** `playwright.config.ts` and running application
+
+**Output:** Playwright tests, .qa-summary.md, QA_RESULT block, MISSING_FUNCTIONALITY_REPORT
 
 ---
 
@@ -157,18 +234,7 @@ bd claim BD-47                           # Claim review subtask
 Create conventional commits with Beads linking.
 
 ```bash
-/commit  # Stage changes and create commits referencing Beads tasks
-```
-
-**Commits Example:**
-```
-feat(theme): add dark mode toggle
-
-Closes BD-46
-
-- Implement DarkMode component
-- Add theme provider
-- Store preference in localStorage
+/commit
 ```
 
 ---
@@ -181,191 +247,97 @@ Show all commands and quick reference.
 /agent-help
 ```
 
-**Shows:**
-- All available commands
-- Usage examples
-- When to use each agent
-- Daily workflow
-- Tips & tricks
-
 ---
 
-## Daily Workflow
+## Workflows
 
-### Morning: Plan Your Work
+### Plan-First Autonomous (Recommended)
 
-```bash
-cd /path/to/your/project
-bd list                           # See current Beads tasks
-/orchestrator goal: "add feature X"  # Creates BD-XXX tasks with review gates
+```
+/launch-pad goal: "..."
+    |
+.supervisor/jobs/pending/{date}-{slug}.md  (Supervisor-Ready Brief)
+    |
+/supervisor job: .supervisor/jobs/pending/{file}.md  (clean context)
+    |
+INIT -> ACQUIRE -> PLAN -> EXECUTE (parallel workers) -> FINALIZE -> PR
 ```
 
-→ Orchestrator creates task chain with mandatory review subtasks
+### Manual
 
-### During Work: Implement & Review
-
-```bash
-# Implement BD-46
-bd claim BD-46
-# ... implement feature ...
-
-# Review BD-47 (review subtask)
-bd claim BD-47
-/code-reviewer src/FeatureX
+```
+/orchestrator goal: "..."     # Plan tasks
+    |
+bd claim BD-XX                # Start task
+    |
+(implement code)
+    |
+/code-reviewer src/           # Review -> PASS/FAIL
+    |
+/commit                       # Conventional commits
+    |
+bd close BD-XX                # Complete, next unblocks
 ```
 
-→ Code Reviewer posts PASS/FAIL/NEEDS_HUMAN decision to BD-47
+### QA Automation
 
-### When Review Passes: Next Task Unblocks
-
-```bash
-# If PASS → BD-48 (next implementation) auto-unblocks
-bd claim BD-48
-# ... continue implementation ...
 ```
-
-→ Task progression is automatic based on review decisions
-
-### End: Commit with Beads Linking
-
-```bash
-/commit  # Creates conventional commits with "Closes BD-46" references
+/qa-strategist src/                    # Risk-based strategy
+    |
+/qa-executor --url http://localhost:3000  # Generate + run tests
+    |
+/qa-strategist --audit .qa-summary.md    # Audit results
 ```
-
-→ Commits link to Beads tasks for traceability
 
 ---
 
 ## Project Structure
 
-### Required Files
-
-Your project needs just ONE file for agents to work:
-
-```
-your-project/
-├── CLAUDE.md                    # Codebase knowledge (required)
-└── .beads/                      # Beads issue tracker (auto-created by bd init)
-```
-
-**That's it! No TODO.md, no memory/ directory needed.**
-
-#### CLAUDE.md
-
-Define your codebase knowledge:
-
-```markdown
-# CLAUDE.md — Project Knowledge
-
-## Overview
-[Brief project description]
-
-## Tech Stack
-- Frontend: React 18, TypeScript, Tailwind CSS
-- Backend: Node.js 18, Express 4, PostgreSQL
-- Testing: Jest, React Testing Library
-
-## Architecture
-[Describe folder structure, patterns, conventions]
-
-## Key Patterns
-- State management: Context API
-- API calls: Custom hooks (useFetch)
-- Error handling: [Your approach]
-- Testing: Unit + integration tests, ≥80% coverage
-
-## Conventions
-- Naming: camelCase for variables, PascalCase for components
-- Commits: Conventional commits (feat, fix, test, etc)
-- Types: TypeScript strict mode required
-- Code style: Prettier, ESLint
-
-## Commands
-```
-npm run dev      # Start dev server
-npm test         # Run tests
-npm run type-check
-npm run lint
-npm run format
-```
-
-## Important Notes
-[Any gotchas, setup details, or team conventions]
-```
-
-### No More TODO.md or Memory Files
-
-**Beads replaces all task tracking:**
-
-```bash
-# See tasks
-bd list
-
-# See task details
-bd show BD-46
-
-# Update task status
-bd update BD-46 --status in_progress
-
-# Check blockers and dependencies
-bd show BD-46 --depends-on
-```
-
-All task state, blockers, and dependencies are tracked in Beads issue system.
-
 ### Plugin Files
 
-The plugin is organized with the marketplace at the root and the actual plugin in a subdirectory:
-
 ```
-ai-agent-manager/                (marketplace root)
+ai-agent-manager/                        (marketplace root)
 ├── .claude-plugin/
-│   ├── marketplace.json         # Marketplace manifest
-│   └── README.md                # This file
+│   ├── marketplace.json                 # Marketplace manifest
+│   └── README.md                        # This file
 │
-└── ai-agent-manager-plugin/     (plugin directory)
+└── ai-agent-manager-plugin/             (plugin directory)
     ├── .claude-plugin/
-    │   └── plugin.json          # Plugin metadata
-    ├── commands/                # Slash commands
+    │   └── plugin.json                  # Plugin metadata (v10.1.0)
+    ├── agents/                          # Agent prompts (11 roles)
+    │   ├── launch-pad.md
+    │   ├── supervisor.md
+    │   ├── execute-manager.md
+    │   ├── context-keeper.md
+    │   ├── worker.md
+    │   ├── product-owner.md
     │   ├── orchestrator.md
     │   ├── code-reviewer.md
     │   ├── red-team-reviewer.md
-    │   └── agent-help.md
-    ├── agents/                  # Agent implementations
+    │   ├── qa-strategist.md
+    │   └── qa-executor.md
+    ├── commands/                         # Slash commands (9)
+    │   ├── launch-pad.md
+    │   ├── supervisor.md
+    │   ├── product-owner.md
     │   ├── orchestrator.md
     │   ├── code-reviewer.md
-    │   └── red-team-reviewer.md
-    └── skills/                  # Focused skill modules (loaded on-demand)
-        ├── core/                # Core skills
-        │   ├── commit.md
-        │   ├── context7-lookup.md
-        │   ├── quality-checklist.md
-        │   └── pattern-detector.md
-        ├── frontend/            # Frontend UI patterns
-        │   └── frontend-ui.md   # Design-system, accessibility (WCAG 2.1 AA), responsive design
-        ├── nestjs/              # NestJS patterns
-        │   ├── guards.md
-        │   ├── controllers.md
-        │   ├── services.md
-        │   └── drizzle.md
-        ├── nextjs/              # Next.js patterns
-        │   ├── routing.md
-        │   ├── components.md
-        │   ├── api-routes.md
-        │   ├── data-fetching.md
-        │   └── auth.md
-        └── gateway/             # API Gateway patterns
-            ├── proxy-patterns.md
-            ├── auth-middleware.md
-            ├── rate-limiting.md
-            └── correlation.md
+    │   ├── red-team-reviewer.md
+    │   ├── qa-strategist.md
+    │   ├── qa-executor.md
+    │   └── agent-help.md
+    ├── hooks/
+    │   └── hooks.json                   # 9 quality gate hooks (centralized)
+    ├── skills/                          # 47 focused skill modules
+    │   ├── SKILLS_INDEX.md              # Skill catalog with agent mapping
+    │   └── [skill-name]/SKILL.md        # Individual skills
+    └── docs/
+        ├── RESULT_SCHEMAS.md            # Structured result contracts
+        ├── FAILURE_ESCALATION.md        # Retry limits and escalation paths
+        ├── ARCHITECTURE_CONTRACTS.md    # Capability matrix, budgets, rules
+        ├── ARCHITECTURE.md              # Visual agent topology
+        └── QA_SYSTEM_BLUEPRINT.md       # QA system architecture
 ```
-
-**Skills Architecture:**
-- Skills are loaded on-demand based on project context
-- Agents reference skills instead of embedding content
-- Reduces per-task context by 70-80% vs monolithic agents
-- Easy to add new skills without modifying agents
 
 ---
 
@@ -380,278 +352,73 @@ Agents automatically find your project:
 3. Use first CLAUDE.md found (nearest wins)
 4. Accept `--project /path` override
 
-This means agents work from any directory in your project:
-
-```bash
-cd /path/to/project
-/orchestrator goal: "add feature"     # Works
-
-cd /path/to/project/src/components
-/orchestrator goal: "add feature"     # Still works (auto-finds parent CLAUDE.md)
-
-cd /elsewhere
-/orchestrator goal: "add feature" --project /path/to/project  # Works with explicit path
-```
-
 ### Approval Workflow
 
-Agents suggest changes, you approve:
-
 - **Code Issues:** Agent flags, you fix
-- **File Updates:** Agent suggests format, you review
-- **CLAUDE.md Changes:** Agent proposes (shows example text), you approve
-- **Commits:** Agent creates, you review with `git log`
-- **Pushes:** Only with explicit `--push` flag
+- **File Updates:** Agent suggests, you review
+- **CLAUDE.md Changes:** Agent proposes, you approve
+- **Commits:** Agent creates, you review
+- **Pushes:** Only with explicit instruction
 
-### Beads Issue Tracking
+### Beads Issue Tracking (Optional)
 
-Agents read and update Beads:
+Agents can read and update Beads:
 
-| Command | Purpose | Updated By | When |
-|---------|---------|-----------|------|
-| `bd list` | View all tasks | Orchestrator | Task creation |
-| `bd show BD-XX` | View task details | You | Anytime |
-| `bd claim BD-XX` | Start task | You | When ready to work |
-| `bd update BD-XX` | Mark complete/blocked | Code Reviewer | After reviews |
-| `bd comments BD-XX` | Review decisions | Code Reviewer | After review |
+| Command | Purpose |
+|---------|---------|
+| `bd list` | View all tasks |
+| `bd create` | Create new task |
+| `bd claim BD-XX` | Start task |
+| `bd close BD-XX` | Mark complete |
+| `bd comment BD-XX "note"` | Add notes |
+| `bd dep BD-XX BD-YY` | Set dependencies |
 
-### Conventional Commits with Beads Linking
+### Persistent Agent Memory
 
-The `/commit` command uses standardized commit format with Beads references:
+Agents with `memory: project` build knowledge across sessions:
 
-```
-<type>(<scope>): <message>
+| Agent | What It Remembers |
+|-------|-------------------|
+| Launch Pad | Commonly impacted files, project patterns |
+| Code Reviewer | Review patterns, recurring issues, conventions |
+| Red Team Reviewer | Past vulnerabilities, attack patterns |
+| Product Owner | Domain context, terminology, preferences |
+| QA Strategist | Risk patterns, which routes break |
+| QA Executor | Flaky patterns, common failures |
 
-<optional body>
+### Quality Gate Hooks
 
-Closes BD-XX
-```
-
-**Types:** `feat`, `fix`, `test`, `refactor`, `docs`, `chore`, `security`
-
-**Examples:**
-```
-feat(theme): add dark mode toggle
-Closes BD-46
-
-- Implement DarkMode component
-- Add theme context provider
-
----
-
-fix(login): correct mobile button spacing
-Closes BD-47
+9 hooks centralized in `hooks.json` validate agent output:
+- **SubagentStop:** Worker, Execute Manager, Code Reviewer, Supervisor, QA Executor
+- **Stop:** Code Reviewer (completeness gate)
+- **TaskCompleted:** Verify task genuinely done
+- **WorktreeCreate / StopFailure:** Logging
 
 ---
 
-test(settings): add dark mode tests
-Closes BD-48
+## Marketplace Setup
 
-security(hooks): validate localStorage input
-refactor(components): extract DarkMode logic
-docs(README): update setup instructions
-chore(deps): upgrade React to 18.2.0
-```
+### Local Marketplace (Testing)
 
----
-
-## Architecture
-
-### How Agents Work Together
-
-```
-YOU: Set a goal
-  ↓
-ORCHESTRATOR: Break into tasks → Assign to agents
-  ↓
-CODE REVIEWER: Check patterns, flag issues
-  ↓
-YOU: Fix issues from review
-  ↓
-/commit: Create conventional commits with Beads linking
-  ↓
-YOU: Approve pattern proposals
-  ↓
-DONE: Ready for next work
-```
-
-### Agent Independence
-
-Agents are self-contained:
-
-- **Orchestrator** → Reads CLAUDE.md, Beads state, git history
-- **Code Reviewer** → Reads CLAUDE.md, git diff, your code
-- **Red Team Reviewer** → Reads CLAUDE.md, code files, Context7 docs
-
-Each agent:
-- Auto-detects project
-- Loads needed context
-- Does its work
-- Suggests changes (no auto-writes)
-- Hands off to next agent
-
-### File Operations
-
-Agents read files openly, suggest writes:
-
-```markdown
-## Suggested TODO.md Update
-
-[Show what should be added/changed]
-
-Status: Awaiting user approval before write
-```
-
-You then manually apply or approve changes.
-
----
-
-## Marketplace Setup Guide
-
-### Create a Local Marketplace (For Testing)
-
-Set up a local marketplace to test the plugin before distributing it:
-
-#### 1. Create the Marketplace Manifest
-
-In the ai-agent-manager root directory, create `.claude-plugin/marketplace.json`:
-
-```json
-{
-  "name": "ai-agent-manager-marketplace",
-  "owner": {
-    "name": "Your Name or Organization"
-  },
-  "plugins": [
-    {
-      "name": "ai-agent-manager-plugin",
-      "source": "./ai-agent-manager-plugin",
-      "description": "Global agents for orchestrating, reviewing, summarizing, and managing git workflow",
-      "version": "1.0.0",
-      "author": {
-        "name": "Your Name"
-      }
-    }
-  ]
-}
-```
-
-**Note:** The marketplace.json already exists in this repository with the correct source path, so you can skip this step.
-
-#### 2. Add the Marketplace to Claude Code
-
-From the ai-agent-manager directory:
+The marketplace manifest already exists at `.claude-plugin/marketplace.json`:
 
 ```bash
 cd /path/to/ai-agent-manager
-
-# In Claude Code:
 /plugin marketplace add ./
-```
-
-This tells Claude Code: "Look in this directory for a marketplace.json file"
-
-#### 3. List Available Marketplaces
-
-Verify the marketplace was added:
-
-```bash
-/plugin marketplace list
-```
-
-You should see `ai-agent-manager-marketplace` in the output.
-
-#### 4. Install the Plugin
-
-```bash
 /plugin install ai-agent-manager-plugin@ai-agent-manager-marketplace
 ```
 
-Claude Code will:
-- Download the plugin from `./`
-- Register all 5 commands
-- Make agents available globally
+### Distributed Marketplace (Team Sharing)
 
-#### 5. Test the Plugin
+Create a GitHub repo with the plugin:
 
 ```bash
-# Navigate to a project with CLAUDE.md
-cd /path/to/your-project
-
-# Test a command
-/orchestrator goal: "test the orchestrator agent"
-
-# Or test help
-/agent-help
-```
-
-### Create a Distributed Marketplace (For Sharing)
-
-When ready to share with your team:
-
-#### 1. Create a GitHub Repository
-
-Create a new GitHub repo (e.g., `your-org/claude-plugins`)
-
-#### 2. Add Marketplace Files
-
-In the repo root, create:
-
-```
-your-org/claude-plugins/
-├── .claude-plugin/
-│   └── marketplace.json
-└── ai-agent-manager-plugin/
-    ├── .claude-plugin/
-    │   └── plugin.json
-    ├── agents/
-    ├── commands/
-    └── hooks/
-```
-
-**marketplace.json:**
-
-```json
-{
-  "name": "your-org-plugins",
-  "owner": {
-    "name": "Your Organization"
-  },
-  "plugins": [
-    {
-      "name": "ai-agent-manager-plugin",
-      "source": {
-        "source": "github",
-        "repo": "your-org/claude-plugins",
-        "path": "ai-agent-manager-plugin"
-      },
-      "description": "Global agents for orchestrating, reviewing, summarizing, and managing git workflow",
-      "version": "1.0.0"
-    }
-  ]
-}
-```
-
-#### 3. Share with Your Team
-
-Team members can add your marketplace:
-
-```bash
+# Team members add your marketplace
 /plugin marketplace add your-org/claude-plugins
 /plugin install ai-agent-manager-plugin@your-org-plugins
 ```
 
-### Troubleshooting Marketplace Issues
-
-**Marketplace not loading:**
-- Verify `.claude-plugin/marketplace.json` exists
-- Check JSON syntax: `claude plugin validate .`
-- Ensure paths are correct (relative or absolute)
-
-**Plugin installation fails:**
-- Verify plugin source path exists
-- Check file permissions
-- For GitHub sources: ensure repo is public or you have access
+See `marketplace.json` for the source configuration format.
 
 ---
 
@@ -659,305 +426,65 @@ Team members can add your marketplace:
 
 ### "Error: No project context found"
 
-**Cause:** Agent couldn't find CLAUDE.md
-
-**Solution:**
-```bash
-# Initialize project with template
-cp -r /path/to/ai-agent-manager/templates/project-template /your/project
-
-# Or specify explicit path
-/orchestrator goal: "add feature" --project /path/to/project
-```
+Agent couldn't find CLAUDE.md. Create one in your project root or use `--project /path`.
 
 ### "No files to review" (Code Reviewer)
 
-**Cause:** No git changes detected
+No git changes detected. Specify files: `/code-reviewer src/components/MyFile.tsx`
 
-**Solution:**
-```bash
-# Option 1: Specify files
-/code-reviewer src/components/MyFile.tsx
+### Supervisor Workflow Interrupted
 
-# Option 2: Stage changes first
-git add src/
-/code-reviewer
-```
+State is saved to `.supervisor/state.md` automatically. Resume with `/supervisor --continue task: BD-XX`.
 
-### "No commits created" (/commit)
-
-**Cause:** No staged changes
-
-**Solution:**
-```bash
-# Stage files first
-git add src/components/DarkMode.tsx
-/commit
-```
-
-### Agent gives incorrect patterns
-
-**Cause:** CLAUDE.md outdated or incomplete
-
-**Solution:**
-1. Update CLAUDE.md with current patterns
-2. Run agent again
-3. Agent will learn from updated CLAUDE.md
-
----
-
-## Advanced Usage
-
-### Running Agents Out of Order
-
-You don't need to follow the sequential workflow:
+### Orphaned Worktrees After Crash
 
 ```bash
-# Review before coding (to learn patterns)
-/code-reviewer src/
-
-# Plan before coding
-/orchestrator goal: "add feature"
-
-# Multiple reviews during development
-/code-reviewer src/
-# Make changes
-/code-reviewer src/
-# Repeat
-
-# Commit when ready
-/commit
-```
-
-### Multi-Project Workflows
-
-Work across projects seamlessly:
-
-```bash
-# Project A
-cd /path/to/project-a
-/orchestrator goal: "fix bug"
-# ... do work, commit ...
-
-# Switch to Project B
-cd /path/to/project-b
-/orchestrator goal: "add feature"  # Auto-detects project-b context
-# ... do work, commit ...
-```
-
-### Custom Project Templates
-
-Create your own template if projects have different structures:
-
-```bash
-# Your custom template
-my-project-template/
-├── CLAUDE.md             # Your standard CLAUDE.md
-├── TODO.md
-└── memory/
-    ├── context.md
-    └── session/
-
-# Use when creating new projects
-cp -r my-project-template /path/to/new-project
-```
-
-### Integration with Git Hooks
-
-Use agents with git hooks for automation:
-
-```bash
-# .githooks/pre-commit
-#!/bin/bash
-/code-reviewer src/
-# Fails if HIGH severity issues found
-```
-
-### CI/CD Integration
-
-Use agents in your CI/CD pipeline:
-
-```bash
-# .github/workflows/review.yml
-- name: Code Review
-  run: /code-reviewer src/
-
-- name: Check Commits
-  run: git log --oneline
-```
-
----
-
-## Configuration
-
-### Plugin Settings
-
-The plugin uses Claude Code's built-in settings:
-
-- Project detection: Auto (current dir + parents)
-- Memory files: Project-based (not cloud)
-- Approval workflow: Manual (agent suggests, you approve)
-- Push safety: Explicit --push flag required
-
-### Project Settings (in CLAUDE.md)
-
-Define project-specific settings in CLAUDE.md:
-
-```markdown
-## Configuration
-
-### Type Safety Level
-- TypeScript: strict mode required
-- Python: mypy with strict config
-
-### Testing Threshold
-- Coverage: ≥80% for all code
-- Exception: UI components ≥70% (hard to test)
-
-### Code Quality
-- Linting: ESLint with strict config
-- Formatting: Prettier (auto-format)
-- Imports: Organized, no unused
-
-### Security
-- Secrets: Never in code (use .env)
-- Dependencies: No known vulnerabilities
-- Input validation: Always required
+git worktree list              # See all worktrees
+git worktree remove ../path    # Clean up
 ```
 
 ---
 
 ## FAQ
 
-### Q: Do agents make changes automatically?
+### Do agents make changes automatically?
 
-**A:** No. Agents suggest changes and describe them. You decide whether to apply them. This keeps you in control.
+No. Agents suggest changes. You decide whether to apply them. Exception: Supervisor workers write code in isolated worktrees, but merging requires validation.
 
-### Q: Can I use agents on different languages?
+### Can I use agents on different languages?
 
-**A:** Yes. The plugin works on any language (JavaScript, Python, Go, Rust, Java, etc). Customize patterns in CLAUDE.md for your language.
+Yes. The plugin works on any language (JavaScript, TypeScript, Python, Go, Rust, Java, etc). Customize patterns in CLAUDE.md.
 
-### Q: What if my project doesn't follow conventional commits?
+### Do I need all 8 user-facing agents?
 
-**A:** The `/commit` skill uses conventional commits by default. If you prefer a different format, edit your project's CLAUDE.md to specify.
+No. Use what helps:
+- **Just need to plan?** `/orchestrator`
+- **Just need code review?** `/code-reviewer`
+- **Need full automation?** `/launch-pad` then `/supervisor`
+- **Need requirements?** `/product-owner`
+- **Need security audit?** `/red-team-reviewer`
+- **Need QA tests?** `/qa-executor`
 
-### Q: Can I customize agent behavior?
+### Do agents need internet?
 
-**A:** Yes. Edit the agent prompts in `ai-agent-manager-plugin/agents/*.md` to match your needs. Share improvements back to the main project.
+No. Everything runs locally. `WebSearch`/`WebFetch` are used only by Red Team Reviewer and Product Owner (for `--brainstorm deep` market research).
 
-### Q: Do agents need internet?
+### Can agents work on private projects?
 
-**A:** No. Everything runs locally. Agents read your local files and git history only.
-
-### Q: Can I use agents on old projects?
-
-**A:** Yes. Just add a `CLAUDE.md` file. Optionally run `bd init` for Beads task tracking.
-
-### Q: What if CLAUDE.md gets out of sync?
-
-**A:** Agents learn from current CLAUDE.md. Update it when patterns change. Code Reviewer proposes pattern updates via Beads task comments.
-
-### Q: Can agents access remote repositories?
-
-**A:** Agents can't directly access remote repos, but you can push commits using your git credentials after running `/commit`.
-
-### Q: Do I need all 3 agents?
-
-**A:** No. Use which ones help you:
-- Just need to plan? Use Orchestrator (creates Beads tasks)
-- Just need to review code? Use Code Reviewer (PASS/FAIL/NEEDS_HUMAN)
-- Just need to audit assumptions? Use Red Team Reviewer (adversarial)
-
-### Q: Can agents work on private projects?
-
-**A:** Yes. Everything stays local. Your code and memory files never leave your machine.
-
-### Q: What's the best way to learn?
-
-**A:** Run `/agent-help` for quick reference, then try each agent:
-1. `/orchestrator goal: "simple task"` — See task breakdown
-2. `/code-reviewer src/` — See code feedback
-3. `/commit` — See commit organization
-
----
-
-## Contributing
-
-Found a bug? Want to improve an agent? Contribute:
-
-```bash
-git clone https://github.com/your-org/ai-agent-manager
-cd ai-agent-manager
-
-# Make changes to ai-agent-manager-plugin/agents/* or ai-agent-manager-plugin/commands/*
-# Test with your project
-# Submit PR
-
-# See main project repo for contribution guidelines
-```
+Yes. Your code stays local. Agent memory is stored in `.claude/agent-memory/` on your machine.
 
 ---
 
 ## License
 
-MIT License — See LICENSE file in ai-agent-manager repo
+MIT License
 
 ---
 
 ## Support
 
-### Need Help?
-
 ```bash
-# Show help for specific agent
-/orchestrator --help
-/code-reviewer --help
-/red-team-reviewer --help
-
-# General help
-/agent-help
-
-# Read plugin docs
-cat /path/to/plugin/README.md
+/agent-help          # Quick reference
 ```
 
-### Report Issues
-
-Open an issue in the main ai-agent-manager repository with:
-- What command you ran
-- What happened
-- What you expected
-- Your project type (e.g., React, Node.js, Python)
-
-### Suggest Improvements
-
-Have an idea for a new agent or feature? Open a discussion in the repository.
-
----
-
-## Roadmap
-
-Planned features:
-
-- [ ] Git conflict resolution agent
-- [ ] Documentation generation agent
-- [ ] Performance profiling agent
-- [ ] Dependency update agent
-- [ ] Test generation agent
-- [ ] API specification generator
-- [ ] Security scanning integration
-- [ ] Team collaboration features
-
----
-
-## Acknowledgments
-
-Built on the foundational work of the AI Agent Manager framework.
-
-Special thanks to the Claude Code team for the excellent plugin system.
-
----
-
-**Ready to start?** Run `/orchestrator goal: "your goal"` now!
-
-For more information, check the main [AI Agent Manager repository](https://github.com/your-org/ai-agent-manager).
+Open an issue in the ai-agent-manager repository for bugs or feature requests.

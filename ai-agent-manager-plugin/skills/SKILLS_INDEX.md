@@ -41,6 +41,7 @@ Comprehensive index of all skills available in the AI Agent Manager plugin.
 | MVP Scoping | `mvp-scoping/` | Launch Pad (preload) | ~500 | 1.0.0 | 2026-03 |
 | User Story Writing | `user-story-writing/` | Product Owner (reference) | ~500 | 1.0.0 | 2026-03 |
 | Domain Knowledge | `domain-knowledge/` | Product Owner (reference) | ~400 | 1.0.0 | 2026-03 |
+| Brainstorming | `brainstorming/` | Product Owner (preload) | ~1,000 | 1.0.0 | 2026-04 |
 
 ## Framework — NestJS
 
@@ -90,7 +91,4 @@ Comprehensive index of all skills available in the AI Agent Manager plugin.
 
 ---
 
-**Total: 44 skills** (36 existing + 8 new)
-
-New skills added in Phase 3: unit-testing, error-handling, ci-cd, docker, monitoring-observability, redis-caching, postgresql
-New skills added in QA L1.5: qa-orchestration
+**Total: 47 skills**
