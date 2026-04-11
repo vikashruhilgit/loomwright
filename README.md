@@ -1,6 +1,6 @@
 # AI Agent Manager
 
-A Claude Code plugin for AI agents to collaborate on software projects. 11 specialized agents (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer, QA Strategist, QA Executor) and the `/commit` skill automate plan-first readiness, parallel workflow execution, requirements, planning, review, commits, adversarial audits, and dual-agent QA automation.
+A Claude Code plugin for AI agents to collaborate on software projects. 12 specialized agents (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Plan Reviewer, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer, QA Strategist, QA Executor) and the `/commit` skill automate plan-first readiness, parallel workflow execution, requirements, planning, review, commits, adversarial audits, and dual-agent QA automation.
 
 **Key Idea:** Your projects need only a `CLAUDE.md` file for codebase knowledge. The Supervisor uses `.supervisor/` for state management. Orchestrator and Product Owner can optionally use [Beads issue tracker](https://github.com/anthropics/beads). Repeatable across any project.
 
@@ -111,7 +111,7 @@ Then call `switch_database(host="prod.example.com")` at runtime to switch betwee
 
 ---
 
-## The 11 Agents
+## The 12 Agents
 
 ### User-Facing Agents (8 + commit skill)
 
@@ -129,7 +129,7 @@ Then call `switch_database(host="prod.example.com")` at runtime to switch betwee
 | **QA Executor**       | `/qa-executor`                  | Discover → generate strict tests → find missing functionality → QA_RESULT | Automated QA                    |
 
 
-### Internal Agents (3)
+### Internal Agents (4)
 
 
 | Agent               | Spawned By                   | Purpose                                                               |
@@ -137,6 +137,7 @@ Then call `switch_database(host="prod.example.com")` at runtime to switch betwee
 | **Execute Manager** | Supervisor (Phase 3)         | Own poll loop, worker/reviewer lifecycle, Context-Keeper coordination |
 | **Context-Keeper**  | Supervisor / Execute Manager | Manage externalized state file (sole writer)                          |
 | **Worker**          | Execute Manager / Supervisor | Implement a single subtask in an isolated git worktree                |
+| **Plan Reviewer**   | Launch Pad                   | Validate Supervisor-Ready Briefs before execution                     |
 
 
 ### Plan-First Autonomous Workflow
@@ -408,7 +409,7 @@ This prevents knowledge loss and helps agents learn from discoveries.
 - **CLAUDE.md (this repo):** Architecture and agent system
 - **AGENT_GUIDELINES.md:** Development standards, quality checklist
 - **.claude-plugin/README.md:** Detailed plugin documentation
-- **ai-agent-manager-plugin/agents/*.md:** Individual agent prompts (11 roles)
+- **ai-agent-manager-plugin/agents/*.md:** Individual agent prompts (12 roles)
 - **ai-agent-manager-plugin/skills/*/SKILL.md:** 44 skill files for guidance
 - **ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md:** Structured result contracts
 - **ai-agent-manager-plugin/docs/FAILURE_ESCALATION.md:** Agent failure paths
@@ -422,7 +423,7 @@ This prevents knowledge loss and helps agents learn from discoveries.
 
 To modify or extend agents:
 
-1. Agents are Markdown prompts in `ai-agent-manager-plugin/agents/` (11 files)
+1. Agents are Markdown prompts in `ai-agent-manager-plugin/agents/` (12 files)
 2. Commands are in `ai-agent-manager-plugin/commands/` (9 commands)
 3. Skills are in `ai-agent-manager-plugin/skills/` (43 skills, versioned with SKILLS_INDEX.md)
 4. Hooks: per-agent in frontmatter (Worker, Execute Manager) + cross-cutting in `hooks.json` (Code Reviewer, QA Executor, TaskCompleted)

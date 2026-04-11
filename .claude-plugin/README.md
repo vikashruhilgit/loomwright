@@ -1,6 +1,6 @@
 # AI Agent Manager Plugin for Claude Code
 
-A Claude Code plugin with 11 agent roles (8 user-facing + 3 internal), 47 focused skills, and optional Beads issue tracker integration. Automates plan-first readiness, parallel workflow execution, requirements definition, code review, adversarial audits, and dual-agent QA testing.
+A Claude Code plugin with 12 agent roles (8 user-facing + 4 internal), 47 focused skills, and optional Beads issue tracker integration. Automates plan-first readiness, parallel workflow execution, requirements definition, code review, adversarial audits, and dual-agent QA testing.
 
 ## Overview
 
@@ -17,11 +17,12 @@ The AI Agent Manager Plugin v10.1 includes:
 - **QA Strategist** (`/qa-strategist`) — Risk-based test strategy and QA audit
 - **QA Executor** (`/qa-executor`) — Discover app, generate Playwright tests, find gaps
 
-### Internal Agents (3)
+### Internal Agents (4)
 
 - **Execute Manager** — Owns Phase 3 worker/reviewer lifecycle (spawned by Supervisor)
 - **Context-Keeper** — Sole writer of externalized state file (spawned on-demand)
 - **Worker** — Implements a single subtask in an isolated git worktree (spawned by Execute Manager)
+- **Plan Reviewer** — Validates Supervisor-Ready Briefs before execution (spawned by Launch Pad)
 
 ### 47 Skills
 
@@ -304,7 +305,7 @@ ai-agent-manager/                        (marketplace root)
 └── ai-agent-manager-plugin/             (plugin directory)
     ├── .claude-plugin/
     │   └── plugin.json                  # Plugin metadata (v10.1.0)
-    ├── agents/                          # Agent prompts (11 roles)
+    ├── agents/                          # Agent prompts (12 roles)
     │   ├── launch-pad.md
     │   ├── supervisor.md
     │   ├── execute-manager.md
@@ -327,7 +328,7 @@ ai-agent-manager/                        (marketplace root)
     │   ├── qa-executor.md
     │   └── agent-help.md
     ├── hooks/
-    │   └── hooks.json                   # 9 quality gate hooks (centralized)
+    │   └── hooks.json                   # 10 quality gate hooks (centralized)
     ├── skills/                          # 47 focused skill modules
     │   ├── SKILLS_INDEX.md              # Skill catalog with agent mapping
     │   └── [skill-name]/SKILL.md        # Individual skills
@@ -388,8 +389,8 @@ Agents with `memory: project` build knowledge across sessions:
 
 ### Quality Gate Hooks
 
-9 hooks centralized in `hooks.json` validate agent output:
-- **SubagentStop:** Worker, Execute Manager, Code Reviewer, Supervisor, QA Executor
+10 hooks centralized in `hooks.json` validate agent output:
+- **SubagentStop:** Worker, Execute Manager, Code Reviewer, Supervisor, QA Executor, Plan Reviewer
 - **Stop:** Code Reviewer (completeness gate)
 - **TaskCompleted:** Verify task genuinely done
 - **WorktreeCreate / StopFailure:** Logging

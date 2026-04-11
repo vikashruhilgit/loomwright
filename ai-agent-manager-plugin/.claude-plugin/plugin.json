@@ -1,7 +1,7 @@
 {
   "name": "ai-agent-manager-plugin",
-  "version": "10.1.0",
-  "description": "AI agents v10.1: Product Owner --brainstorm mode (5-lens multi-mind ideation with debate, scoring, and recommendation). 11 agent roles: Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Product Owner (now with --brainstorm), Orchestrator, Code Reviewer (LSP, effort:high, disallowedTools:Write/Edit/NotebookEdit, schema v2), Red Team Reviewer (effort:high), QA Strategist (effort:high), QA Executor. 47 reusable skills. 9 quality gate hooks, persistent agent memory, bundled MySQL MCP server.",
+  "version": "10.2.0",
+  "description": "AI agents v10.2: Launch Pad mandatory Plan Review gate (Phase 5.5 — dedicated Plan Reviewer validates briefs before save, max 3 retries). 12 agent roles: Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Plan Reviewer, Product Owner (with --brainstorm), Orchestrator, Code Reviewer (LSP, effort:high, schema v2), Red Team Reviewer, QA Strategist, QA Executor. 47 reusable skills. 10 quality gate hooks, persistent agent memory, bundled MySQL MCP server.",
   "author": {
     "name": "vikash ruhil"
   },
@@ -58,6 +58,9 @@
     "e2e-testing",
     "launch-pad",
     "plan-first",
+    "plan-review",
+    "plan-reviewer",
+    "quality-gate",
     "jobs",
     "readiness",
     "file-impact",

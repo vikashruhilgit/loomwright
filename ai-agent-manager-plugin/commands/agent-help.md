@@ -20,11 +20,12 @@ Shows all available agent commands and quick usage examples.
 
 ## Quick Start
 
-The AI Agent Manager plugin provides **11 agent roles** for your development workflow:
+The AI Agent Manager plugin provides **12 agent roles** for your development workflow:
 
-**Readiness Pipeline (1 agent):**
+**Readiness Pipeline (2 agent roles):**
 ```
-/launch-pad  →  Env validation + codebase analysis + brief → .supervisor/jobs/
+/launch-pad  →  Env validation + codebase analysis + brief → Plan Review (gate) → .supervisor/jobs/
+  └─ Plan Reviewer  →  Validates brief quality, patterns, file paths (mandatory gate)
 ```
 
 **Autonomous Workflow (4 agent roles):**
@@ -96,17 +97,20 @@ The AI Agent Manager plugin provides **11 agent roles** for your development wor
 - Analyzes codebase for file impact estimation (grep/glob/read)
 - Decomposes into 3-7 subtasks with dependency analysis
 - Computes parallelism (LAUNCHABLE vs BLOCKED based on file overlap)
+- Validates brief via Plan Reviewer (mandatory gate — PASS enables save; NEEDS_HUMAN enables save only with explicit user override; FAIL never enables save)
 - Saves Supervisor-Ready Brief to `.supervisor/jobs/`
 - Provides interactive refinement (save/refine/edit/discard)
 
-**6-Phase Workflow:**
+**7-Phase Workflow:**
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  1. VALIDATE (env)  →  2. DISCOVER (requirements)              │
 │         ↓                                                       │
 │  3. ANALYZE (codebase)  →  4. DECOMPOSE (subtasks)             │
 │         ↓                                                       │
-│  5. PACKAGE (brief)  →  6. REFINE & SAVE (interactive)         │
+│  5. PACKAGE (brief)  →  5.5. PLAN REVIEW (mandatory gate)      │
+│         ↓                                                       │
+│  6. REFINE & SAVE (save on PASS or user-overridden NEEDS_HUMAN)│
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -122,6 +126,11 @@ $ /launch-pad goal: "add JWT authentication"
 # Supervisor Job: Add JWT Authentication
 - Subtasks: 4 (2 LAUNCHABLE, 2 BLOCKED)
 - Recommended workers: 2
+
+## Phase 5.5: PLAN REVIEW
+- Reviewer decision: PASS
+- Issues found: 0
+- Attempts: 1/3
 
 ## Phase 6: SAVE
 Brief saved: .supervisor/jobs/2026-02-08-jwt-auth.md
@@ -821,7 +830,7 @@ ai-agent-manager-plugin/
 │   ├── qa-strategist.md     # Risk-based QA strategy
 │   ├── qa-executor.md       # Automated QA testing
 │   └── agent-help.md
-├── agents/                  # Agent implementations (11 roles)
+├── agents/                  # Agent implementations (12 roles)
 │   ├── launch-pad.md        # Supervisor readiness agent
 │   ├── supervisor.md        # Parallel orchestrator (v4)
 │   ├── execute-manager.md   # Phase 3 execution manager

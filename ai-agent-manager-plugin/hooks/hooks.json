@@ -51,6 +51,16 @@
             "timeout": 30
           }
         ]
+      },
+      {
+        "matcher": "ai-agent-manager-plugin:plan-reviewer",
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "A Plan Reviewer agent just completed. Verify: (1) output contains PLAN_REVIEW_RESULT block with schema_version field equal to 1, (2) decision is one of PASS, FAIL, or NEEDS_HUMAN, (3) if FAIL or NEEDS_HUMAN, issues array is non-empty with severity and description, (4) if decision is FAIL, at least one issue must have severity BLOCKING or HIGH, (5) each issue includes section field, (6) summary field is present. Context: $ARGUMENTS. Respond with {\"ok\": true} if valid, or {\"ok\": false, \"reason\": \"...\"} if malformed.",
+            "timeout": 30
+          }
+        ]
       }
     ],
     "Stop": [

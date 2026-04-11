@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**AI Agent Manager** is a reusable system that provides intelligent agents for software development workflows. It integrates with Claude Code as a plugin with 11 agent roles (8 user-facing + 3 internal) that automate plan-first readiness, parallel workflow execution, requirements definition, planning, code review, commit management, adversarial security audits, and dual-agent QA automation.
+**AI Agent Manager** is a reusable system that provides intelligent agents for software development workflows. It integrates with Claude Code as a plugin with 12 agent roles (8 user-facing + 4 internal) that automate plan-first readiness, parallel workflow execution, requirements definition, planning, code review, commit management, adversarial security audits, and dual-agent QA automation.
 
 The system enables agents to collaborate on any project type. The Supervisor and Launch Pad use `.supervisor/` directory exclusively for state management. Other agents (Orchestrator, Product Owner) can optionally use **Beads issue tracker** independently. `CLAUDE.md` provides codebase knowledge that persists between work sessions.
 
@@ -51,7 +51,7 @@ The project is structured as a **Claude Code plugin marketplace**:
 - Review subtask blocks next implementation task
 - Review decisions: PASS (proceed), FAIL (fix and re-review), NEEDS_HUMAN (creates bug issues)
 
-### The 11 Agent Roles
+### The 12 Agent Roles
 
 Each agent is a Markdown prompt file (`agents/[name].md`):
 
@@ -59,7 +59,8 @@ Each agent is a Markdown prompt file (`agents/[name].md`):
 - **Purpose:** Prepare raw goals for autonomous Supervisor execution
 - **When to use:** Before `/supervisor` for complex tasks, when starting new work, when you want to review the plan
 - **Command:** `/launch-pad goal: "..."`, `/launch-pad goal: "..." --discovery`
-- **Workflow:** VALIDATE → DISCOVER → ANALYZE → DECOMPOSE → PACKAGE → REFINE & SAVE
+- **Workflow:** VALIDATE → DISCOVER → ANALYZE → DECOMPOSE → PACKAGE → PLAN REVIEW (mandatory gate) → REFINE & SAVE
+- **Plan Review:** Spawns Plan Reviewer to validate brief quality (max 3 retries on FAIL)
 - **Key features:** File impact estimation, parallelism pre-analysis, jobs folder, interactive refinement
 - **Outputs:** Supervisor-Ready Brief saved to `.supervisor/jobs/pending/`
 
@@ -88,6 +89,13 @@ Each agent is a Markdown prompt file (`agents/[name].md`):
 - **When to use:** Background execution during EXECUTE phase
 - **Isolation:** Works only within assigned worktree path, no git operations
 - **Outputs:** Structured WORKER_RESULT block + `.worker-summary.md` file
+
+#### **Plan Reviewer** (internal, spawned by Launch Pad)
+- **Purpose:** Validate Supervisor-Ready Briefs for gaps, missing pieces, pattern alignment, and correctness
+- **When to use:** Automatically spawned during Launch Pad Phase 5.5 (not user-facing)
+- **Checks:** 10 review criteria (file paths, patterns, acceptance criteria, dependencies, parallelism, skills, risks, completeness, configuration)
+- **Outputs:** PLAN_REVIEW_RESULT with decision (PASS/FAIL/NEEDS_HUMAN) and issues array
+- **Gate rule:** PASS enables save; NEEDS_HUMAN enables save only with explicit user override; FAIL never enables save
 
 #### **Product Owner** (`/product-owner`)
 - **Purpose:** Translate business problems into user stories with acceptance criteria. Supports `--brainstorm` mode for multi-mind ideation.
@@ -227,12 +235,13 @@ your-project/
 ```
 ai-agent-manager/
 ├── ai-agent-manager-plugin/          # The Claude Code plugin
-│   ├── agents/                       # Agent markdown prompts (11 roles)
+│   ├── agents/                       # Agent markdown prompts (12 roles)
 │   │   ├── launch-pad.md             # Launch Pad (Supervisor readiness)
 │   │   ├── supervisor.md             # Supervisor v4 (parallel orchestrator)
 │   │   ├── execute-manager.md        # Execute Manager (Phase 3 lifecycle)
 │   │   ├── context-keeper.md         # Context-Keeper (state management)
 │   │   ├── worker.md                 # Worker (implementation in worktrees)
+│   │   ├── plan-reviewer.md          # Plan Reviewer (brief validation gate)
 │   │   ├── product-owner.md          # Product Owner (requirements)
 │   │   ├── orchestrator.md           # Orchestrator (task planning)
 │   │   ├── code-reviewer.md          # Code Reviewer (quality gates)
@@ -465,11 +474,11 @@ Before an agent completes work:
 ### Plugin Metadata
 
 - **Plugin Name:** `ai-agent-manager-plugin`
-- **Version:** 10.1.0
-- **Description:** AI agents v10.1 — Product Owner `--brainstorm` mode (5-lens multi-mind ideation with debate, scoring, and recommendation). 11 agent roles, 47 reusable skills, 9 quality gate hooks, persistent agent memory, bundled MySQL MCP server
-- **Agents:** 11 roles (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer, QA Strategist, QA Executor)
+- **Version:** 10.2.0
+- **Description:** AI agents v10.2 — Launch Pad mandatory Plan Review gate (Phase 5.5, dedicated Plan Reviewer validates briefs before save, max 3 retries). 12 agent roles, 47 reusable skills, 10 quality gate hooks, persistent agent memory, bundled MySQL MCP server
+- **Agents:** 12 roles (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Plan Reviewer, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer, QA Strategist, QA Executor)
 - **Skills:** 47 reusable skills (versioned with SKILLS_INDEX.md)
-- **Hooks:** 9 quality gate hooks — centralized in hooks.json: SubagentStop (worker, execute-manager, code-reviewer, supervisor, qa-executor), Stop (code-reviewer), TaskCompleted, WorktreeCreate, StopFailure
+- **Hooks:** 10 quality gate hooks — centralized in hooks.json: SubagentStop (worker, execute-manager, code-reviewer, supervisor, qa-executor, plan-reviewer), Stop (code-reviewer), TaskCompleted, WorktreeCreate, StopFailure
 - **Docs:** RESULT_SCHEMAS.md, FAILURE_ESCALATION.md, ARCHITECTURE_CONTRACTS.md, ARCHITECTURE.md, QA_SYSTEM_BLUEPRINT.md
 - **Bundled MCP:** MySQL read-only MCP server (`vikashruhil-mysql-mcp`) — query impact analysis, schema inspection, multi-DB profiles
 - **Author:** vikash ruhil
@@ -542,6 +551,7 @@ All validation hooks are centralized in `hooks.json` since v10.0.0. Claude Code 
 | **SubagentStop** (code-reviewer) | Code Reviewer completes | hooks.json | CODE_REVIEW_RESULT v2 with decision, issue categories (new/pre_existing/nit) |
 | **SubagentStop** (supervisor) | Supervisor completes | hooks.json | Session outcome, subtask statuses, PR URL if created |
 | **SubagentStop** (qa-executor) | QA Executor completes | hooks.json | QA_RESULT with tests_generated, tests_passed, summary |
+| **SubagentStop** (plan-reviewer) | Plan Reviewer completes | hooks.json | PLAN_REVIEW_RESULT with schema_version, decision, issues, summary |
 | **Stop** (code-reviewer) | Code Reviewer finishing | hooks.json + frontmatter | CODE_REVIEW_RESULT block present with required fields |
 | **TaskCompleted** | Any task marked complete | hooks.json | Task genuinely done, not abandoned or skipped |
 | **WorktreeCreate** | Worktree created | hooks.json | Logs to `.supervisor/logs/worktrees.log` (type: command) |

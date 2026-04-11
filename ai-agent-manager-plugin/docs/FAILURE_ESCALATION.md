@@ -203,6 +203,35 @@ Warns user in brief
 
 ---
 
+## Launch Pad Plan Review Failure
+
+```
+Plan Reviewer returns PASS
+    → Proceed to Phase 6 (save enabled)
+
+Plan Reviewer returns FAIL (attempt 1 or 2)
+    → Launch Pad fixes issues from feedback
+    → Re-assembles affected brief sections
+    → Re-spawns Plan Reviewer
+
+Plan Reviewer returns FAIL (attempt 3)
+    → Launch Pad presents all unresolved issues to user
+    → Options: "Refine further" or "Discard"
+    → Does NOT save to pending/ (hard gate)
+
+Plan Reviewer returns NEEDS_HUMAN
+    → Launch Pad presents issues to user
+    → Options: "Override and save" (user responsibility) or "Refine further" or "Discard"
+```
+
+**Rules:**
+- Max 3 FAIL retries (fix + re-review)
+- NEEDS_HUMAN: 0 auto-retries, user decides
+- PASS enables save; NEEDS_HUMAN enables save only with explicit user override; FAIL never enables save
+- Failed briefs are NEVER saved to the runnable queue
+
+---
+
 ## Escalation Summary
 
 | Agent | Failure Type | Max Retries | Escalation Target |
@@ -216,3 +245,5 @@ Warns user in brief
 | Supervisor | Budget/conflict | 0 | Human (checkpoint + exit) |
 | Context-Keeper | State error | 1 | Degraded mode |
 | Launch Pad | Env blocker | 0 | User fixes manually |
+| Launch Pad (Plan Review FAIL) | FAIL decision | 3 (fix + re-review) | Block save, user refines |
+| Launch Pad (Plan Review NEEDS_HUMAN) | NEEDS_HUMAN | 0 | User override or refine |

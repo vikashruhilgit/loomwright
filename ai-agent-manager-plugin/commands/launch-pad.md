@@ -32,7 +32,7 @@ The Launch Pad agent prepares raw goals for autonomous Supervisor execution. It 
 
 ## What This Does
 
-The Launch Pad executes a **6-phase readiness workflow**:
+The Launch Pad executes a **7-phase readiness workflow**:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -54,8 +54,11 @@ The Launch Pad executes a **6-phase readiness workflow**:
 │  Phase 5: PACKAGE (Assemble Brief)                              │
 │     └─> Supervisor-Ready Brief with all sections                │
 │                                                                 │
+│  Phase 5.5: PLAN REVIEW (Mandatory Gate)                        │
+│     └─> Plan Reviewer validates brief (max 3 retries on FAIL)   │
+│                                                                 │
 │  Phase 6: REFINE & SAVE (Interactive)                           │
-│     └─> Save / Refine / Edit / Discard                          │
+│     └─> Save (on PASS or user override) / Refine / Discard      │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -109,14 +112,16 @@ The Supervisor's 800-token context budget gets consumed by Phases 0-2 (planning)
 
 ## Interactive Refinement
 
-After assembling the brief, Launch Pad presents 4 options:
+After the brief passes Plan Review (Phase 5.5), Launch Pad presents options:
 
-| Option | What Happens |
-|--------|-------------|
-| **Save and exit** | Writes brief to `.supervisor/jobs/`, outputs Supervisor command |
-| **Refine further** | Asks clarifying questions, updates sections |
-| **Edit sections** | You specify what to change, Launch Pad updates in-place |
-| **Discard** | Cancels without saving |
+| Option | When Available |
+|--------|---------------|
+| **Save and exit** | After PASS, or after explicit user override on NEEDS_HUMAN |
+| **Refine further** | Always (loops back to fix issues) |
+| **Edit sections** | Always (you specify changes, Launch Pad updates in-place) |
+| **Discard** | Always (cancels without saving) |
+
+**Note:** "Save and exit" is disabled when Plan Review returns FAIL (even after 3 retries). You must refine the brief until it passes.
 
 ## How to Use
 
@@ -152,6 +157,8 @@ After assembling the brief, Launch Pad presents 4 options:
 /launch-pad goal: "..."
     ↓
 Validates environment, analyzes codebase, decomposes subtasks
+    ↓
+Plan Reviewer validates brief (mandatory gate, max 3 retries)
     ↓
 .supervisor/jobs/pending/{date}-{slug}.md  (Supervisor-Ready Brief)
     ↓
@@ -218,7 +225,8 @@ EXECUTE → FINALIZE → PR
 
 ## See Also
 
-- `agents/launch-pad.md` — Full agent prompt (6-phase readiness model)
+- `agents/launch-pad.md` — Full agent prompt (7-phase readiness model)
+- `agents/plan-reviewer.md` — Plan Reviewer agent (validates briefs in Phase 5.5)
 - `skills/supervisor-readiness/SKILL.md` — Pre-flight checklist, brief template, jobs convention
 - `skills/product-discovery/SKILL.md` — Discovery framework
 - `skills/claude-md-validation/SKILL.md` — CLAUDE.md freshness validation
@@ -259,7 +267,7 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 - **Honest estimation:** Assign confidence levels (HIGH/MEDIUM/LOW) on file predictions
 - **Verify everything:** Confirm every file path exists before including in impact map
 - **Interactive refinement:** Always present brief for user review before saving
-- **Lightweight:** No subagent spawning — uses skills directly, keeping context lean
+- **Lightweight:** Minimal subagent spawning — one targeted Plan Reviewer for mandatory validation
 
 ### Inputs
 
@@ -298,11 +306,11 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 - Provide interactive refinement (save/refine/edit/discard)
 
 **Standard Output Format:** See `skills/agent-output/SKILL.md`
-- Phase 1-6 structured output as documented in agent prompt
+- Phase 1-6 + Phase 5.5 structured output as documented in agent prompt
 
 ---
 
-## 6-Phase Workflow
+## 7-Phase Workflow
 
 ### Phase 1: VALIDATE (Environment Readiness)
 
@@ -348,12 +356,23 @@ Skip if `--skip-validation` flag is set.
 3. Include configuration and risk assessment
 4. Present to user
 
+### Phase 5.5: PLAN REVIEW (Mandatory Gate)
+
+1. Spawn Plan Reviewer subagent with brief + CLAUDE.md context
+2. Plan Reviewer checks 10 criteria (file paths, patterns, dependencies, parallelism, etc.)
+3. Decision handling:
+   - PASS → proceed to Phase 6 (save enabled)
+   - FAIL (attempt < 3) → fix issues, re-assemble, re-spawn reviewer
+   - FAIL (attempt = 3) → present issues, offer "Refine further" or "Discard" (no save)
+   - NEEDS_HUMAN → present issues, offer "Override and save" or "Refine further" or "Discard"
+
 ### Phase 6: REFINE & SAVE (Interactive)
 
-1. Use `AskUserQuestion` with 4 options: Save / Refine / Edit / Discard
-2. On save: `mkdir -p .supervisor/jobs/pending`, write `{date}-{slug}.md`
-3. Output exact Supervisor command: `/supervisor job: .supervisor/jobs/{file}.md`
-4. If blockers exist: don't offer save, output fix instructions
+1. Present brief with Plan Review status
+2. Options: Save (PASS or user override) / Refine / Edit / Discard
+3. On save: `mkdir -p .supervisor/jobs/pending`, write `{date}-{slug}.md`
+4. Output exact Supervisor command: `/supervisor job: .supervisor/jobs/{file}.md`
+5. If blockers exist or Plan Review FAIL: don't offer save
 
 ---
 
@@ -368,6 +387,7 @@ Before offering save:
 - [ ] Parallelism analysis is conservative
 - [ ] Brief follows complete template (9 sections)
 - [ ] Risk assessment included
+- [ ] Plan Review gate cleared — PASS, or NEEDS_HUMAN with explicit user override
 - [ ] Exact Supervisor command provided
 
 ---
@@ -377,7 +397,7 @@ Before offering save:
 - Used by `/launch-pad` command
 - Outputs: Supervisor-Ready Brief to `.supervisor/jobs/`
 - Consumed by: Supervisor agent via `job:` parameter
-- Never spawns subagents (lightweight, skill-based)
+- Spawns one subagent (Plan Reviewer) for mandatory plan validation in Phase 5.5
 - Memory: Learns which files are commonly impacted by goals
 - Skills pre-loaded via frontmatter (7 skills)
 - Uses `.supervisor/` for state management

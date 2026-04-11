@@ -232,6 +232,38 @@ CODE_REVIEW_RESULT:
 
 ---
 
+## PLAN_REVIEW_RESULT
+
+Produced by Plan Reviewer agent when validating a Supervisor-Ready Brief (Launch Pad Phase 5.5).
+
+```yaml
+PLAN_REVIEW_RESULT:
+  schema_version: 1                    # integer, required
+  decision: enum [PASS, FAIL, NEEDS_HUMAN]  # required
+  issues: object[]                     # required (can be empty for PASS)
+    - severity: enum [BLOCKING, HIGH, MEDIUM, LOW]
+      section: string                  # brief section name (e.g., "Subtask Structure", "File Impact Map")
+      description: string              # what's wrong
+      suggestion: string               # optional — how to fix
+  summary: string                      # required — concise review summary
+```
+
+**Validation rules:**
+- `schema_version` must equal `1`
+- `decision` must be one of: `PASS`, `FAIL`, `NEEDS_HUMAN`
+- When `decision=FAIL`: `issues` must contain at least one issue with BLOCKING or HIGH severity
+- When `decision=NEEDS_HUMAN`: `issues` must be non-empty
+- `section` must reference a valid brief section name
+- `summary` must be present
+
+**Severity mapping for plan review:**
+- BLOCKING: Missing/nonexistent file paths, missing required brief sections
+- HIGH: Incorrect dependencies, unsafe parallelism (false LAUNCHABLE), logic errors
+- MEDIUM: Vague acceptance criteria, missing skill references, incomplete risk assessment
+- LOW: Style improvements, optional enhancements
+
+---
+
 ## CONTEXT_KEEPER_STATE
 
 Schema for `.supervisor/state.md` managed by Context-Keeper.

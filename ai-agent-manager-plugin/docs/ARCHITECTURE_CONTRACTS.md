@@ -14,11 +14,12 @@
 | Worker | no | yes | yes | no | yes | no | inherit |
 | Code Reviewer | no | no | yes (+ LSP) | yes | no | no | inherit (effort: high, permissionMode: plan) |
 | Context-Keeper | no | yes | no | no | no | sole writer | haiku |
-| Launch Pad | no | yes | yes | no | no | jobs/pending/ | inherit |
+| Launch Pad | yes (plan-reviewer only) | yes | yes | no | no | jobs/pending/ | inherit |
 | Product Owner | no | no | yes | no | no | no | inherit |
 | Orchestrator | no | no | yes | no | no | no | inherit |
 | Red Team Reviewer | no | no | yes | no | no | no | inherit |
 | QA Strategist | no | no | yes | no | no | no | inherit |
+| Plan Reviewer | no | no | no | yes | no | no | inherit (effort: high) |
 | QA Executor | yes | yes | yes | no | yes | no | inherit |
 
 ## disallowedTools (Defense-in-Depth)
@@ -29,6 +30,7 @@ These are **defense-in-depth** restrictions for accidental misuse, NOT security 
 |-------|----------------|-----------|
 | Context-Keeper | Task, Bash, Glob, Grep | Sole state writer; must never spawn agents or explore |
 | Worker | Task | Must never spawn subagents |
+| Plan Reviewer | Write, Edit, NotebookEdit, Task, Bash | Read-only; no mutation via any path |
 | QA Strategist | Task | Read-only analyzer |
 
 ---
@@ -44,9 +46,10 @@ These are **defense-in-depth** restrictions for accidental misuse, NOT security 
 | Context-Keeper | ~200 tokens | Atomic state ops, < 50 token responses |
 | QA Executor | ~8k tokens | Discovery + generation + execution |
 | QA Strategist | ~3k tokens | Risk classification |
-| Launch Pad | ~5k tokens | Discovery + analysis + brief assembly |
+| Launch Pad | ~5-7k tokens | Discovery + analysis + brief assembly + plan review (~5k typical, ~7k worst-case with 3 review cycles) |
 | Product Owner | ~4k tokens | Domain analysis + story writing |
 | Orchestrator | ~3k tokens | Task decomposition |
+| Plan Reviewer | ~3k tokens | Focused brief validation |
 | Red Team Reviewer | ~6k tokens | Deep adversarial analysis |
 
 ---
@@ -66,7 +69,7 @@ These are **defense-in-depth** restrictions for accidental misuse, NOT security 
 - **Location:** Per-agent SubagentStop hooks (hook execution layer)
 - **Reference:** `docs/RESULT_SCHEMAS.md`
 - **Per-agent hooks:** Worker, Execute Manager (SubagentStop in agent frontmatter), Code Reviewer (Stop in agent frontmatter)
-- **Cross-cutting hooks:** Code Reviewer, QA Executor (SubagentStop in `hooks.json`)
+- **Cross-cutting hooks:** Code Reviewer, QA Executor, Plan Reviewer (SubagentStop in `hooks.json`)
 - **Dual-hook note:** Code Reviewer intentionally has both a per-agent `Stop` hook (validates CODE_REVIEW_RESULT block exists before finishing — completeness gate) AND a cross-cutting `SubagentStop` hook (validates output schema after completion — format gate). These are complementary: Stop catches incomplete reviews, SubagentStop validates structure.
 - **Never duplicated** in Supervisor or plugin runtime
 
@@ -98,7 +101,8 @@ These are **defense-in-depth** restrictions for accidental misuse, NOT security 
 | Worker | 40 | Return WORKER_RESULT status=failed |
 | Code Reviewer | 40 | Return partial review |
 | Context-Keeper | 3 | Fail (caller retries once) |
-| Launch Pad | 40 | Return partial brief with LOW confidence |
+| Launch Pad | 55 | Return partial brief with LOW confidence |
+| Plan Reviewer | 20 | Return partial review |
 | Product Owner | 40 | Return partial stories |
 | Orchestrator | 40 | Return partial task plan |
 | Red Team Reviewer | 60 | Return partial audit |
@@ -172,6 +176,9 @@ See `docs/FAILURE_ESCALATION.md` for full paths.
 | QA Executor | 0 | Partial result (non-blocking) |
 | Supervisor | 0 | Human (checkpoint + exit) |
 | Context-Keeper | 1 | Degraded mode |
+| Plan Reviewer | 0 | Returns result to Launch Pad |
+| Launch Pad (Plan Review FAIL) | 3 | Block save, user refines |
+| Launch Pad (Plan Review NEEDS_HUMAN) | 0 | User override or refine |
 
 ---
 
@@ -189,4 +196,5 @@ See `docs/FAILURE_ESCALATION.md` for full paths.
 | Code Reviewer | Light Sea Green | `#20B2AA` |
 | Red Team Reviewer | Crimson | `#DC143C` |
 | QA Strategist | Tomato | `#FF6347` |
+| Plan Reviewer | Medium Turquoise | `#48D1CC` |
 | QA Executor | Orange Red | `#FF4500` |

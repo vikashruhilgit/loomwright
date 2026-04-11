@@ -1,6 +1,6 @@
 # Architecture Diagram
 
-> Visual topology of the 11-agent system. For contracts and rules, see `ARCHITECTURE_CONTRACTS.md`.
+> Visual topology of the 12-agent system. For contracts and rules, see `ARCHITECTURE_CONTRACTS.md`.
 
 ---
 
@@ -19,11 +19,17 @@
               └─────┬─────┘ └─────┬─────┘ └─────┬─────┘
                     │              │              │
          ┌──────────▼──────────┐  │    ┌─────────▼──────────┐
-         │ .supervisor/jobs/   │  │    │ /product-owner     │
-         │ pending/{brief}.md  │  │    │ /orchestrator      │
-         └──────────┬──────────┘  │    │ /code-reviewer     │
-                    │              │    │ /commit            │
-                    └──────┬───────┘    └────────────────────┘
+         │ Plan Reviewer       │  │    │ /product-owner     │
+         │ #48D1CC (Phase 5.5) │  │    │ /orchestrator      │
+         │ mandatory gate      │  │    │ /code-reviewer     │
+         └──────────┬──────────┘  │    │ /commit            │
+                    │              │    └────────────────────┘
+         ┌──────────▼──────────┐  │
+         │ .supervisor/jobs/   │  │
+         │ pending/{brief}.md  │  │
+         └──────────┬──────────┘  │
+                    │              │
+                    └──────┬───────┘
                            │
                     ┌──────▼──────────────────────────────────┐
                     │           SUPERVISOR v4                   │
