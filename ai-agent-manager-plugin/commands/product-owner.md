@@ -9,6 +9,8 @@ description: Translate business problems into Beads-ready user stories with acce
 ```
 /product-owner feature: "<what the user wants or needs>"
 /product-owner problem: "<business problem to solve>"
+/product-owner problem: "<challenge>" --brainstorm
+/product-owner feature: "<opportunity>" --brainstorm deep
 ```
 
 ## Parameters
@@ -27,6 +29,12 @@ description: Translate business problems into Beads-ready user stories with acce
 - **--discovery** (optional): Run full discovery framework before writing stories
   - Example: `/product-owner problem: "low conversion rate" --discovery`
 
+- **--brainstorm** (optional): Run multi-mind ideation before writing stories. 5 expert lenses (Creative Thinker, Product Manager, Engineer, Business Strategist, Critic) independently generate options, debate each other, and score ideas. You can stop after ideation or continue to user stories.
+  - Example: `/product-owner problem: "low user retention" --brainstorm`
+
+- **--brainstorm deep** (optional): Deep ideation with 2 debate rounds and market research via WebSearch
+  - Example: `/product-owner feature: "new pricing model" --brainstorm deep`
+
 - **--project** (optional): Explicit path to project (overrides auto-detect)
   - Example: `/product-owner feature: "..." --project /path/to/project`
 
@@ -34,10 +42,11 @@ description: Translate business problems into Beads-ready user stories with acce
 
 1. **Reads domain context** from project's CLAUDE.md (roles, workflows, terminology)
 2. **Checks existing stories** in Beads for conflicts or overlap
-3. **Runs product discovery** to understand the problem before solutions
-4. **Writes user stories** with testable acceptance criteria
-5. **Prioritizes scope** into MVP / Phase 2 / Nice-to-have
-6. **Provides handoff** to `/orchestrator` for task breakdown
+3. **(If --brainstorm) Runs multi-mind ideation** — 5 expert lenses generate options independently, debate each other, score ideas on Impact/Feasibility/Revenue/Uniqueness (1-10), and recommend a winner. You choose whether to continue to stories or stop after ideation.
+4. **Runs product discovery** to understand the problem before solutions
+5. **Writes user stories** with testable acceptance criteria
+6. **Prioritizes scope** into MVP / Phase 2 / Nice-to-have
+7. **Provides handoff** to `/orchestrator` for task breakdown
 
 ## Example Output
 
@@ -154,7 +163,9 @@ Example domain section in CLAUDE.md:
 ## Workflow: Product Owner → Orchestrator
 
 ```
-/product-owner feature: "..."
+/product-owner feature: "..." [--brainstorm]
+    ↓
+(If --brainstorm) Options Analysis → Scored ideas → Recommendation
     ↓
 User Stories (BD-XX, BD-YY) created in Beads
     ↓
@@ -182,6 +193,7 @@ Return to /orchestrator goal: "BD-YY" for next story
 
 ## Skills Referenced
 
+- `skills/brainstorming/SKILL.md` — Multi-mind ideation framework (when --brainstorm)
 - `skills/product-discovery/SKILL.md` — Discovery framework
 - `skills/user-story-writing/SKILL.md` — Story format and INVEST principles
 - `skills/mvp-scoping/SKILL.md` — Prioritization matrix

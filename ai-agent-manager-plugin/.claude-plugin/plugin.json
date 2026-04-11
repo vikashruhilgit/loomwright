@@ -1,7 +1,7 @@
 {
   "name": "ai-agent-manager-plugin",
-  "version": "10.0.0",
-  "description": "AI agents v10: centralized hooks (all validation in hooks.json for plugin compatibility), Supervisor validation hook, Code Reviewer disallowedTools enforcement, effort tuning (Red Team/QA Strategist: high), Supervisor maxTurns guard, WorktreeCreate/StopFailure logging hooks, Supervisor v3→v4 reference fixes. 11 agent roles: Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Product Owner, Orchestrator, Code Reviewer (LSP, effort:high, disallowedTools:Write/Edit/NotebookEdit, schema v2), Red Team Reviewer (effort:high), QA Strategist (effort:high), QA Executor. 46 reusable skills. 9 quality gate hooks, persistent agent memory, bundled MySQL MCP server.",
+  "version": "10.1.0",
+  "description": "AI agents v10.1: Product Owner --brainstorm mode (5-lens multi-mind ideation with debate, scoring, and recommendation). 11 agent roles: Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Product Owner (now with --brainstorm), Orchestrator, Code Reviewer (LSP, effort:high, disallowedTools:Write/Edit/NotebookEdit, schema v2), Red Team Reviewer (effort:high), QA Strategist (effort:high), QA Executor. 47 reusable skills. 9 quality gate hooks, persistent agent memory, bundled MySQL MCP server.",
   "author": {
     "name": "vikash ruhil"
   },
@@ -80,6 +80,9 @@
     "issue-classification",
     "review-md",
     "deep-analysis",
-    "read-only-review"
+    "read-only-review",
+    "brainstorming",
+    "ideation",
+    "multi-mind"
   ]
 }

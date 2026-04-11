@@ -120,7 +120,7 @@ Then call `switch_database(host="prod.example.com")` at runtime to switch betwee
 | --------------------- | ------------------------------- | ------------------------------------------------------------------ | ------------------------------- |
 | **Launch Pad**        | `/launch-pad goal: "..."`       | Prepare goals for autonomous Supervisor execution                  | Before `/supervisor`, planning  |
 | **Supervisor**        | `/supervisor task: "..."`       | Autonomous workflow → parallel workers → PR creation               | Full automation                 |
-| **Product Owner**     | `/product-owner feature: "..."` | Define requirements → create user stories with acceptance criteria | New feature, vague requirements |
+| **Product Owner**     | `/product-owner feature: "..."` | Define requirements → create user stories with acceptance criteria. Use `--brainstorm` for multi-mind ideation. | New feature, vague requirements, exploring directions |
 | **Orchestrator**      | `/orchestrator goal: "..."`     | Plan work → create tasks with review gates                         | Starting implementation         |
 | **Code Reviewer**     | `/code-reviewer src/`           | Review code → output PASS/FAIL/NEEDS_HUMAN                         | After writing code              |
 | **Commit** (skill)    | `/commit`                       | Stage changes → create conventional commits                        | Ready to commit                 |

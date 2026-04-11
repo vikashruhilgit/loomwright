@@ -256,10 +256,13 @@ $ /supervisor
 /product-owner feature: "staff scheduling for venue events"
 /product-owner problem: "we keep double-booking shifts"
 /product-owner feature: "order history" --mvp-only
+/product-owner problem: "low retention" --brainstorm
+/product-owner feature: "new pricing model" --brainstorm deep
 ```
 
 **What it does:**
 - Reads domain context from CLAUDE.md
+- Runs multi-mind brainstorm (5 expert lenses) when `--brainstorm` flag is used — generates options, debates, scores, and recommends a winner before writing stories
 - Runs product discovery to understand the problem
 - Writes user stories (As a... I want... So that...)
 - Defines acceptance criteria (Given/When/Then)
@@ -288,6 +291,7 @@ $ /supervisor
 - When requirements are vague
 - Before running /orchestrator
 - When you need user stories
+- When exploring multiple directions (`--brainstorm`) before committing to one
 
 **Learn More:** `/product-owner --help`
 
