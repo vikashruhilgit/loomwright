@@ -79,6 +79,12 @@ Step 1: CONTEXT
   Read source structure -> identify routes, controllers, API endpoints
 
 Step 2: DISCOVER
+  Read discovery/infrastructure.json for app_topology.
+  Topology adjustments:
+    - If ui_present is false: do not expect frontend routes
+    - If api_style is "graphql" or "mixed": treat GraphQL operations as first-class endpoints
+    - If api_style is "graphql" only: most discovery lives in GraphQL ops, not REST routes
+
   If discovery data exists (discovery/sitemap.json):
     Read Discovery Map -> use verified routes
   Else:
@@ -86,6 +92,10 @@ Step 2: DISCOVER
     Identify auth-gated routes (decorators, middleware, guards)
     Identify data mutation endpoints (POST, PUT, DELETE, PATCH)
     Identify payment/critical flows (payment, checkout, billing keywords)
+
+  If api_style is "graphql" or "mixed":
+    Read discovery/api-calls.json for entries with method "QUERY" or "MUTATION".
+    These operations must be classified in Step 3 alongside REST endpoints.
 
 Step 3: CLASSIFY
   For each route/endpoint:
@@ -104,6 +114,16 @@ Step 3: CLASSIFY
       - Public marketing pages
       - Settings with no side effects
 
+  For each GraphQL operation (when api_style is graphql/mixed):
+    HIGH risk if:
+      - MUTATION (any data-mutating op)
+      - QUERY touching auth/user/permission/payment/billing
+    MEDIUM risk if:
+      - Standard QUERY (list, detail, search)
+    LOW risk if:
+      - Introspection (__schema, __type)
+      - Health/ping queries
+
 Step 4: OUTPUT
   Risk classification table (route, risk level, reason)
   Coverage targets (HIGH: 85%, MEDIUM: 70%, LOW: 50%)
@@ -118,9 +138,12 @@ Step 4: OUTPUT
 
 ### Project Context
 - **Tech Stack:** {from CLAUDE.md}
+- **App Topology:** ui_present={true|false}, api_style={rest|graphql|mixed|none}, client_platform={web|mobile|none}
+- **Auth Method:** {from infrastructure.json — e.g., "oauth:auth0", "session", "api-key", "none"}
 - **Auth Model:** {detected auth pattern}
 - **Routes Discovered:** {N}
 - **API Endpoints:** {N}
+- **GraphQL Operations:** {N queries, M mutations} (only when api_style is graphql/mixed)
 
 ### Risk Classification
 
@@ -145,6 +168,25 @@ Step 4: OUTPUT
 - UI/E2E tests: ~{N} test files
 - API tests: ~{N} test files
 - Total estimated: ~{N} tests
+
+### GraphQL Risk Overrides
+
+(ONLY emit this section when api_style is "graphql" or "mixed". Omit entirely otherwise.)
+
+| Operation | Method | Risk | Reason |
+|---|---|---|---|
+| createUser | MUTATION | HIGH | auth + data mutation |
+| getUsers | QUERY | MEDIUM | (default) |
+| deleteOrg | MUTATION | HIGH | destructive, admin-only |
+| healthCheck | QUERY | LOW | no side effects |
+
+This block is machine-parseable by the Executor in Phase 7 write-back:
+- Match key: Column 1 (Operation) + Column 2 (Method) together match
+  api-calls.json `operation` + `method` fields
+- Column 3 (Risk) is the override value (HIGH | MEDIUM | LOW)
+- Column 4 (Reason) is free-form human-readable text
+- If an operation is not listed, the Phase 5B default risk stands
+- See docs/RESULT_SCHEMAS.md for full contract
 ```
 
 ### Mode 2: Gate Audit Mode (Pre-Execution Verification)
@@ -158,13 +200,18 @@ Step 1: READ ALL GENERATED TEST FILES
   Glob: {testDir}/**/*.spec.ts
   Read EVERY generated test file (not a 3-5 file sample — ALL of them).
 
-Step 2: RUN THE 12-GATE CHECKLIST
-  Apply all 12 gates from the qa-gates skill against the generated tests.
+Step 2: RUN THE 13-GATE CHECKLIST
+  Apply all 13 gates from the qa-gates skill against the generated tests.
   For each gate, report: PASS or FAIL with specific violations.
+  Topology-conditional gates:
+    - Gate 6 (UI form coverage) — SKIPPED if app_topology.ui_present is false
+    - Gate 10 (GraphQL coverage) — runs ONLY if api_style is "graphql" or "mixed"
+  A skipped gate counts as PASS, not as a failure.
 
 Step 3: READ DISCOVERY DATA
   Read discovery/sitemap.json, discovery/api-calls.json, discovery/infrastructure.json
-  These are needed for Gate 0 (provenance), Gate 6 (form count), Gate 7 (email infra).
+  These are needed for Gate 0 (provenance), Gate 6 (form count), Gate 7 (email infra),
+  Gate 10 (GraphQL operations + risk), and topology conditionals.
 
 Step 4: EMIT GATE_VERDICT
   Output GATE_VERDICT block:
@@ -228,10 +275,15 @@ Step 3: EVALUATE INTERACTION DEPTH (functional depth only)
   If depth mode is "smoke": skip this step (smoke tests are not expected to have interaction depth)
 
 Step 3.5: EVALUATE ASSERTION QUALITY (functional depth only)
-  Read 3-5 generated test files (prioritize HIGH risk routes):
-    Glob: e2e/tests/**/*.spec.ts
-    Read: ALL generated test files (Gate Audit Mode already verified them,
-    but Post-Execution Audit re-checks assertion quality on the executed tests)
+  Glob: {testDir}/**/*.spec.ts
+  Sampling rule:
+    - If total generated files ≤ 5: read ALL files
+    - If total > 5: read a representative SAMPLE of 3-5 files, prioritized by:
+        1. All HIGH-risk route test files (up to 3)
+        2. Plus 1-2 MEDIUM files for assertion-pattern diversity
+  This is intentionally a sample in Post-Execution Audit — Gate Audit Mode (Phase 11)
+  already read ALL files exhaustively. Post-Execution re-checks assertion quality on
+  a sample to detect regressions after test execution, not to repeat full audit.
 
   Check for assertion anti-patterns and count occurrences:
     ANTI-PATTERN: toContain with status code array
@@ -312,6 +364,15 @@ Step 3.7: EVALUATE STRUCTURAL COMPLETENESS
      no boundary tests found:
      FLAG as "no-boundary-tests"
 
+  g. Topology consistency check
+     Read discovery/infrastructure.json for app_topology.
+     If ui_present is false:
+       Verify NO frontend/*.spec.ts files were generated (would be pointless).
+       If found: FLAG as "frontend-tests-for-non-ui-app"
+     If api_style is "graphql" or "mixed":
+       Verify graphql tests exist (@covers-api: QUERY or MUTATION).
+       If none: FLAG as "no-graphql-tests"
+
   Compute structural_completeness: "{passed}/{total} structural checks passed"
   Include structural_completeness in STRATEGIST_VERDICT output.
 
@@ -370,6 +431,8 @@ Step 5: EMIT VERDICT
 10. No cleanup hooks in data-creating tests — leads to test data accumulation
 11. Available test infrastructure (email capture) not used — missed testing opportunity
 12. No boundary tests for HIGH risk endpoints accepting user text input
+13. Topology consistency violations: frontend tests generated for ui_present:false apps,
+    or graphql app with no GraphQL tests (see Step 3.7 g)
 
 **NOT allowed in L1:**
 - Rejecting for missing fuzz tests (L2)
@@ -377,6 +440,10 @@ Step 5: EMIT VERDICT
 - Rejecting for missing journey depth (L2)
 - Rejecting for missing visual regression (L3)
 - Rejecting for missing performance tests (L3)
+- Rejecting apps with ui_present: false for missing UI tests (Gate 6 is skipped)
+- Rejecting apps with ui_present: false for missing frontend/ test files
+- Rejecting apps where api_style has no REST for missing REST endpoint tests
+  (e.g., do not demand REST tests from a pure-GraphQL app)
 
 ---
 

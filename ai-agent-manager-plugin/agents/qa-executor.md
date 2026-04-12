@@ -39,7 +39,7 @@ Find bugs before users do. Discover application structure, generate strict Playw
 ### Inputs
 
 - Target URL (from playwright.config.ts, .env, or user-provided)
-- Optional flags: `--depth`, `--rounds`, `--coverage`, `--skip-strategy`, `--strict-discovery`, `--auto-discover`, `--plan`, `--scope`, `--continue`
+- Optional flags: `--depth`, `--rounds`, `--coverage`, `--skip-strategy`, `--strict-discovery`, `--auto-discover`, `--plan`, `--scope`, `--continue`, `--auth-state`
 - Project source code (routes, controllers, schemas)
 - Playwright configuration
 
@@ -54,7 +54,9 @@ Find bugs before users do. Discover application structure, generate strict Playw
 
 ### Critical Rules
 
-- **Playwright config required:** Must find playwright.config.* before proceeding
+- **Playwright config:** Must find playwright.config.* before proceeding.
+  Exception: if `app_topology.ui_present` is false and no config exists, auto-generate
+  a minimal request-only config in Phase 3.6 (see Phase 3 expansion below).
 - **App must be running:** Verify base URL responds before crawling
 - **No destructive actions:** Never submit forms during discovery, never click delete/logout/payment buttons
 - **No production testing:** Never run tests against production environments
@@ -83,8 +85,18 @@ You do NOT:
 - Model state combinations (Level 2)
 - Generate branching journey graphs (Level 2) — only single-path linear chains
 - Generate fuzz tests (Level 2)
-- Generate security tests (Level 3)
+- Generate full/adversarial security tests (Level 3) — things like penetration testing,
+  timing attacks, crypto weakness probes, CSRF token forging
 - Generate performance tests (Level 3)
+
+L1 security testing scope (ALLOWED):
+- Non-destructive security boundary probes (IDOR, role escalation, session invalidation)
+- Auth chain tests (signup→login→access→logout→deny)
+- XSS/SQLi input-rejection assertions (verify escaping or 400 rejection, not actual exploit)
+- Cookie security flag checks (HttpOnly, SameSite, Secure)
+- Response leak checks (no passwords/tokens/stack traces in responses)
+See qa-test-patterns "SECURITY BOUNDARY TESTING" section for the full L1-legal list.
+Full penetration testing, fuzzing, and adversarial security is Level 3.
 - Detect flaky tests (Level 3)
 - Use production feedback (Level 5)
 - Run more than 1 debate round (Level 2)
@@ -221,7 +233,8 @@ Detect package manager and install dependencies:
 ### Phase 4: INFRASTRUCTURE DISCOVERY
 
 ```
-Probe for test infrastructure the project already has running.
+Probe for test infrastructure AND auto-detect app topology/auth/WebSocket.
+Budget: 4-6 tool calls. Skip in YELLOW+ zone.
 
 EMAIL CAPTURE:
   1. Grep docker-compose*.yml for mailpit|mailhog|inbucket
@@ -231,9 +244,152 @@ EMAIL CAPTURE:
      curl -s -o /dev/null -w "%{http_code}" http://localhost:54324/api/v2/messages
   4. If responds 200: record in discovery/infrastructure.json
 
+APP TOPOLOGY DETECTION (2-3 tool calls):
+  1. Read package.json → classify dependencies:
+     Frontend: react, next, vue, nuxt, svelte, angular, @angular/core
+     Backend framework (transport-agnostic): express, fastify, nestjs, hapi, koa, fastapi, flask
+     REST-specific: django-rest-framework, @nestjs/swagger, express-openapi, fastify-swagger, swagger-ui-express
+     GraphQL: graphql, apollo-server, @nestjs/graphql, type-graphql, graphql-yoga, mercurius
+     Mobile: react-native, expo, @capacitor/core
+  2. Glob for structural indicators:
+     Frontend: pages/, app/, components/, public/index.html, *.vue, *.svelte
+     Backend framework: controllers/, routes/
+     REST signals (specific): openapi.yaml, openapi.json, swagger.json, swagger.yaml,
+                              *.http files, REST controller decorators (@Get/@Post/@Put/@Delete
+                              where decorators are from Express/NestJS — not @Query/@Mutation)
+     GraphQL signals: resolvers/, *.graphql, *.gql, schema.graphql,
+                      @Resolver(), @Query()/@Mutation() from GraphQL frameworks
+     Mobile: android/, ios/, App.tsx with react-native imports
+  3. Probe baseURL Content-Type header:
+     curl -s -o /dev/null -w "%{content_type}" {baseURL}
+     text/html → ui_present: true
+     application/json → ui_present: false (likely API-only)
+  4. GraphQL detection — run fallback chain (below) if ANY of these is true:
+     a. GraphQL signals found in step 1-2 (package.json graphql deps, *.graphql files, resolvers/)
+     b. REST discovery is weak: step 2 found fewer than 3 REST-specific signals
+     c. baseURL Content-Type is application/json (API-first app, worth probing)
+     This ensures GraphQL services are detected even when the local repo has no
+     obvious GraphQL dependencies (e.g., consuming a remote GraphQL API).
+
+  IMPORTANT — REST vs GraphQL separation:
+    Backend framework presence (express, nestjs, etc.) alone is NOT a REST signal.
+    A NestJS app with @nestjs/graphql + resolvers/ and NO REST controllers is PURE graphql.
+    Only mark api_style as "rest" or "mixed" when REST-SPECIFIC signals exist:
+      - OpenAPI/Swagger spec file
+      - REST-style route decorators NOT tied to @Resolver/@Query/@Mutation
+      - *.http files or Postman collections
+      - Non-GraphQL route definitions (app.get/post/put with path args)
+
+  Classification:
+    ui_present = frontend signals found OR baseURL serves text/html
+    graphql_detected = GraphQL fallback chain returned >= 1 operation
+    rest_detected = at least 1 REST-specific signal (NOT just backend framework presence)
+
+    api_style:
+      "graphql" if graphql_detected AND NOT rest_detected
+      "mixed"   if graphql_detected AND rest_detected
+      "rest"    if rest_detected AND NOT graphql_detected
+      "none"    if neither detected
+
+    client_platform = "mobile" if react-native/expo/capacitor,
+                      "web" if frontend, "none" if API-only backend
+    confidence = 3+ concordant signals → 0.9, 2 → 0.7, 1 → 0.5
+
+GRAPHQL DISCOVERY FALLBACK CHAIN (stop at first success):
+  1. Schema SDL files: Glob for schema.graphql, *.graphql, schema.gql
+     → Parse `type Query { ... }` and `type Mutation { ... }` for operations
+  2. Resolver/source inspection: Grep for @Query(), @Mutation(), @Resolver()
+     → Extract operation names from decorator arguments
+  3. Generated types / codegen output: Glob for generated/*.ts, __generated__/, graphql.schema.json
+     → Parse operation names from generated types
+  4. Persisted query manifests: Glob for persisted-queries.json, extracted-queries.json
+     → Parse operation names
+  5. Live introspection (only if above fail or to supplement):
+     Determine probe targets:
+       a. If source/config reveals a GraphQL endpoint path (e.g., app.use('/api/graphql'))
+          → use that path
+       b. Otherwise probe common paths in order:
+          /graphql, /api/graphql, /graphql/v1, /api/v1/graphql, /gql
+       c. Stop at first path that returns a valid GraphQL response (has "data" key)
+     For the discovered path:
+       curl -s -X POST {baseURL}{path} -H "Content-Type: application/json" \
+         -d '{"query":"{ __schema { queryType { fields { name } } mutationType { fields { name } } } }"}'
+       → If 200 with data: record operations + graphql.endpoint: {path} + graphql.schema_source: "introspection"
+       → If 401/403: STILL record graphql.endpoint: {path} (endpoint exists, needs auth).
+         Keep graphql.schema_source from earlier step. Log "introspection requires auth at {path}"
+       → If all paths fail: use schema_source from steps 1-4
+
+  ENDPOINT PERSISTENCE RULE:
+    graphql.endpoint MUST be set whenever ANY of these is true:
+      - Source/config reveals a GraphQL mount path (step 5a)
+      - A probed path returns ANY response (200/401/403) to POST
+      - Steps 1-4 found resolvers/SDL with a route annotation containing the path
+    graphql.endpoint is null ONLY when no path candidate was found at all.
+    Phase 5B uses graphql.endpoint for api-calls.json entries. If null, use "/graphql" as fallback.
+
+  If ALL steps fail: api_style stays "rest" (GraphQL not confirmed).
+
+AUTH METHOD DETECTION (1 tool call):
+  Grep source + .env* for:
+    OAuth/SSO: AUTH0_DOMAIN, OAUTH_CLIENT_ID, OIDC_ISSUER,
+               passport-google, passport-github, passport-saml, next-auth, @nestjs/passport
+    API key: API_KEY, X-API-Key headers, X_API_KEY
+    Session: express-session, cookie-session
+  Classification: "oauth:{provider}" | "session" | "api-key" | "none"
+  If OAuth detected + no --auth-state provided:
+    Log: "OAuth/SSO detected. Crawl will be unauthenticated only.
+          Use --auth-state ./auth.json for authenticated testing."
+
+WEBSOCKET DETECTION (1 tool call):
+  Grep for: ws://, wss://, new WebSocket, socket.io, @nestjs/websockets, io.connect,
+            socket.on, socket.emit
+  If detected: websocket.detected: true,
+               websocket.library: "socket.io" | "ws" | "native" (based on grep matches)
+
+OUTPUT discovery/infrastructure.json:
+  {
+    "email": { "tool": "mailpit"|null, "url": "..." },
+    "app_topology": {
+      "ui_present": true|false,
+      "api_style": "rest"|"graphql"|"mixed"|"none",
+      "client_platform": "web"|"mobile"|"none",
+      "confidence": 0.9,
+      "signals": [...]
+    },
+    "graphql": { "endpoint": "/graphql", "schema_source": "introspection"|"sdl"|"resolvers"|"codegen"|"persisted-queries"|null },
+    "auth_method": { "type": "oauth", "provider": "auth0", "storageState": null },
+    "websocket": { "detected": false, "library": null }
+  }
+
 IMPACT: If email capture available, generate email flow tests (password reset, MFA, etc.).
 If NOT available, mark as "infrastructure_unavailable" in discovery_warnings.
-Budget: 2-3 tool calls. Skip in YELLOW+ zone.
+The app_topology + auth_method + websocket results drive conditional behavior in Phase 3.6,
+Phase 5B, Phase 7 (risk write-back), Phase 8, and Phase 11 (Gate 6/10).
+```
+
+### Phase 3.6: PLAYWRIGHT CONFIG FALLBACK (runs after Phase 4)
+
+```
+Runs AFTER Phase 4 because it needs app_topology.ui_present from infrastructure.json.
+Sequence: Phase 2 → Phase 3 (URL) → Phase 4 (topology) → Phase 3.6 (config fallback) → Phase 5 (discovery).
+
+If no playwright.config.* was found in Phase 3 step 1:
+  If ui_present is true:
+    → status: skipped, error: "No Playwright config found. Required for UI testing."
+  If ui_present is false:
+    → Auto-generate playwright.config.ts at project root:
+        import { defineConfig } from '@playwright/test';
+        export default defineConfig({
+          use: { baseURL: '{detected_url}' },
+          testDir: './e2e/tests',
+          projects: [{ name: 'api' }],
+        });
+      This sets testDir to ./e2e/tests so that Phase 8's {testDir}/api/*.spec.ts
+      resolves correctly to ./e2e/tests/api/*.spec.ts (no double-nesting).
+    → Log: "No playwright.config.ts found. Generated minimal API-only config."
+    → Record in QA_RESULT notes: "playwright_config_auto_generated"
+
+If config already exists: no-op, proceed to Phase 5.
 ```
 
 ### Phase 5: DISCOVER (4-Phase Engine)
@@ -248,7 +404,51 @@ Output: discovery/static-map.json
 ```
 
 **Phase B — Runtime Crawl:**
-```
+
+CRAWL MODE (based on app_topology from Phase 4):
+
+If ui_present is true:
+  → Use browser crawl (current behavior below)
+  → If api_style is "graphql" or "mixed": ALSO merge GraphQL operations from
+    Phase 4 discovery into api-calls.json (see GraphQL MERGE rule below)
+
+If ui_present is false:
+  → Use API-only discovery (Playwright `request` fixture, no browser).
+    Discovery precedence (stop at first that yields useful endpoints):
+      1. OpenAPI/Swagger spec: Read openapi.yaml/swagger.json → extract paths + methods
+      2. Route manifests / typed clients: Read generated route types, client SDKs
+      3. Seed data from known fixtures: Read seed files, test factories for sample IDs
+      4. Safe health/list endpoints: Probe GET endpoints from static analysis
+         (only list/health/status endpoints, NOT parameterized or mutation endpoints)
+      5. Static analysis fallback: Use Phase A theoretical map as-is
+  → Generate discovery/crawl.ts using Playwright `request` fixture (no browser navigation)
+  → Output api-calls.json with _meta.source: "api_discovery"
+  → sitemap.json MAY be empty — this is acceptable for non-UI apps
+  → Skip Phase C (screenshots) entirely
+
+If websocket.detected:
+  → Add page.on('websocket', ws => { ... }) to crawl script (if browser crawl runs)
+  → Log WS URLs and frame counts to api-calls.json under "websockets" key
+
+GRAPHQL MERGE rule (when api_style is "graphql" or "mixed", any topology):
+  MERGE GraphQL operations from Phase 4 fallback chain into api-calls.json.
+  Each operation becomes an entry:
+    {
+      "method": "QUERY" | "MUTATION",
+      "path": "{graphql.endpoint}",    // fallback "/graphql" if null
+      "operation": "{name}",
+      "risk": "HIGH" | "MEDIUM" | "LOW"
+    }
+  Risk assignment at merge time (pre-Strategist defaults):
+    - Mutations → HIGH (data mutation)
+    - Queries touching auth/user/payment keywords → HIGH
+    - Other queries → MEDIUM
+    - Introspection-only queries (__schema, __type) → LOW
+  Strategist may override these in Phase 7 via GRAPHQL_RISK_OVERRIDES (see Phase 7).
+  This ensures Gate 10 always has machine-readable risk metadata.
+
+--- Standard browser-crawl details (when ui_present is true) ---
+
 Generate discovery/crawl.ts:
   - Playwright script that crawls from baseURL
   - Per page: extract links, forms, buttons, inputs, modals
@@ -256,7 +456,7 @@ Generate discovery/crawl.ts:
   - Console errors, SPA detection
   - Safe-click: DO NOT click delete/remove/logout/purchase/pay
   - Bounds: max depth 3, max 30 pages (100 for --plan), same-origin, dedup
-  - Auth: Pass 1 unauthenticated, Pass 2 authenticated if needed
+  - Auth: Pass 1 unauthenticated, Pass 2 authenticated if needed (use --auth-state if provided)
   - Output: discovery/sitemap.json + discovery/api-calls.json
 
 Each Phase B output MUST include _meta provenance:
@@ -316,6 +516,22 @@ Spawn QA Strategist in Strategy Mode (blocking):
     subagent_type: "ai-agent-manager-plugin:ai-agent-manager-plugin:qa-strategist")
 Parse: risk classification, coverage targets, test priority matrix.
 If --skip-strategy: use defaults (all MEDIUM, 70% target).
+
+STRATEGIST RISK WRITE-BACK (GraphQL only):
+After Strategist returns, if api_style is "graphql" or "mixed":
+  1. Parse GRAPHQL_RISK_OVERRIDES table from Strategist output
+     (markdown table with Operation | Method | Risk | Reason columns)
+  2. For each row: match to api-calls.json entry by BOTH `operation` AND `method` fields
+     (a query and mutation can share the same name — method disambiguates)
+  3. If Risk differs from current entry: update `risk` field in api-calls.json via Edit
+  4. Log: "Risk write-back: {N} operations overridden in api-calls.json"
+
+  This ensures Gate 10 reads final risk from ONE source (api-calls.json),
+  not from parsing free-form Strategist output.
+
+  If --skip-strategy: defaults from Phase 5B stand (no write-back needed).
+  If Strategist output has no GRAPHQL_RISK_OVERRIDES block: defaults stand.
+  If a table row does not match any api-calls.json entry: log warning, skip.
 ```
 
 ### Phase 8: GENERATE
@@ -324,12 +540,33 @@ If --skip-strategy: use defaults (all MEDIUM, 70% target).
 
 Generate Playwright test files following the **qa-test-patterns skill**.
 
+TOPOLOGY-AWARE GENERATION (based on app_topology from Phase 4):
+
+If ui_present is false:
+  → Generate ONLY {testDir}/api/*.spec.ts files
+  → DO NOT generate {testDir}/frontend/*.spec.ts files (no UI to test)
+  → All tests use Playwright `request` fixture (no `page` object)
+
+If api_style is "graphql" or "mixed":
+  → Generate {testDir}/api/graphql.spec.ts using GraphQL test patterns
+    from qa-test-patterns skill
+  → If "mixed": also generate REST API tests for non-GraphQL endpoints
+
+If ui_present is true:
+  → Current behavior: generate both frontend/ and api/ test files
+
+If websocket.detected:
+  → Generate up to 2-3 WebSocket connection-lifecycle tests
+    using the WebSocket patterns from qa-test-patterns skill
+
 The qa-test-patterns skill contains ALL generation rules:
 - Test Pattern Library (signal→pattern table)
 - Assertion rules, locator rules, state verification rules
 - Test directory rules, depth modes (smoke/functional)
 - UI generation patterns (form-submission, loading-state, keyboard-nav, error-recovery)
 - API generation patterns (CRUD, negative, boundary, idempotency)
+- GraphQL generation patterns (query, mutation, error-handling, auth-gated, depth-limit)
+- WebSocket generation patterns (ws-lifecycle, ws-auth, socketio-event)
 - Security boundary patterns (cookie-security, credential-change, response-leak, error-leak)
 - Common rules (isolation, shared helpers, overlap check, seed data, blocker-first)
 
@@ -360,7 +597,7 @@ Spawn QA Strategist in Gate Audit Mode (blocking):
   Task(
     description: "QA Gate Audit — verify generated tests",
     prompt: "Gate Audit Mode. Read ALL generated test files in {testDir}.
-             Run the 12-gate checklist from qa-gates skill.
+             Run the 13-gate checklist from qa-gates skill.
              Report GATE_VERDICT: pass/fail with specific gate failures.
              Discovery data at: discovery/
              Generated tests at: {testDir}/",
@@ -412,6 +649,9 @@ STEP 4 — EMIT:
     discovery_confidence, discovery_warnings,
     infrastructure_available, pre_existing_tests,
     gate_audit_verdict,                # from Phase 11 (pass/fail)
+    app_topology,                      # from Phase 4 { ui_present, api_style, client_platform }
+    detected_auth_method,              # from Phase 4 (e.g., "oauth:auth0", "session")
+    websocket_detected,                # boolean from Phase 4
     coverage, coverage_weighted, risk_score,
     interaction_coverage,              # forms N/N, tables N/N, modals N/N
     bugs_found, bugs_blocking,         # REAL_BUG only
@@ -453,7 +693,8 @@ Split scopes are added to plan.json. Original scope marked "split".
 
 | Error | Action |
 |---|---|
-| No playwright.config.* found | status: skipped, error: "No Playwright config found" |
+| No playwright.config.* found (ui_present: true) | status: skipped, error: "No Playwright config found. Required for UI testing." |
+| No playwright.config.* found (ui_present: false) | Auto-generate minimal API-only config in Phase 3.6, proceed normally |
 | App not running | status: needs_human, error: "App not running at {URL}" |
 | Dependency install failed | status: needs_human, error: "Install failed: {output}" |
 | Dry-run gate failed | status: needs_human, error: "Dry-run failed: {summary}" |

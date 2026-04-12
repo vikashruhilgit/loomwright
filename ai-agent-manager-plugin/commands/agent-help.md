@@ -517,18 +517,20 @@ security(hooks): validate localStorage input
 
 **Usage:**
 ```
-/qa-executor                                      # Auto-detect URL, full run
+/qa-executor                                      # Auto-detect URL + topology, full run
 /qa-executor --url http://localhost:3000            # Explicit URL
+/qa-executor --auth-state ./auth.json              # Pre-authenticated (OAuth/SSO apps)
 /qa-executor --skip-strategy                       # Quick run, skip Strategist
-/qa-executor --rounds 3 --coverage 90              # Multi-round, high coverage
+/qa-executor --coverage 90                         # Override coverage target (risk-based default)
 /qa-executor --strict-discovery                    # Require human approval of discovery
+# Note: --rounds only meaningful at L2+. L1 runs 1 round (hard cap).
 ```
 
 **What it does:**
-1. Detects target URL (Playwright config, .env, or --url)
+1. Auto-detects app topology (UI, API style, platform) + probes test infrastructure
 2. Runs 4-phase discovery engine (static analysis → runtime crawl → selective vision → merge & gate)
 3. Gets risk strategy from QA Strategist (or uses defaults)
-4. Generates Playwright tests (role-based locators, regex assertions)
+4. Generates Playwright tests appropriate to detected topology (UI/API/GraphQL/WebSocket)
 5. Executes tests, tracks coverage, reports bugs
 6. Runs Strategist audit (debate loop)
 7. Emits QA_RESULT
@@ -542,15 +544,21 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 ```
 
 **Level 1 Boundaries:**
-- Happy paths + basic errors only (no state modeling)
-- No security or performance tests
+- Happy paths + basic errors + negative tests (no state modeling / fuzz → L2)
+- No performance tests (→ L3)
+- No adversarial/penetration security tests (→ L3)
+- L1 INCLUDES non-destructive security boundary probes: IDOR, role escalation,
+  session invalidation, XSS/SQLi input-rejection checks, cookie security flags
 - Single debate round
 - Inventory-level coverage tracking
+- Auto-detects: REST, GraphQL, mixed APIs, web UI, mobile backends
+- Generates tests appropriate to detected topology (skips UI tests for API-only apps)
 
 **Requirements:**
-- `playwright.config.ts` must exist
 - Application must be running at base URL
 - Playwright browsers installed
+- `playwright.config.ts`: required for UI apps; auto-generated for API-only apps if missing
+- For OAuth/SSO apps: `--auth-state ./auth.json` recommended
 
 **When to Use:**
 - Automated QA after feature implementation

@@ -155,13 +155,21 @@ Produced by QA Executor on test completion.
 QA_RESULT:
   schema_version: 1                    # integer, required — always 1
   task_id: string                      # required — QA run identifier
-  status: enum [passed, failed, partial, skipped]  # required
+  status: enum [passed, failed, partial, skipped, needs_human]  # required — needs_human signals manual intervention required (e.g., app not running, dry-run failed)
   rounds_run: string                   # optional — e.g., "1/3"
   tests_generated: integer             # required — number of test files/cases generated
+  tests_run_this_session: integer      # optional — v10.3.0: tests actually executed this agent session (may differ from tests_generated if --scope/--continue)
   tests_passed: integer                # required — number passing
   tests_failed: integer                # optional — number failing (default 0)
+  depth: enum [smoke, functional]      # optional — v10.3.0: test depth used
+  environment: enum [local, preview, staging] # optional — v10.3.0: environment classification from Phase 3
   discovery_confidence: enum [HIGH, MEDIUM, LOW]  # optional
+  discovery_warnings: string[]         # optional — v10.3.0: non-blocking warnings (e.g., "crawl_limit_hit", "infrastructure_unavailable")
   coverage_estimate: float             # optional — 0.0 to 1.0, routes/APIs tested vs discovered
+  coverage: string                     # optional — v10.3.0: human-readable e.g., "routes 12/15, apis 34/40"
+  coverage_weighted: float             # optional — v10.3.0: risk-adjusted coverage 0.0-1.0
+  risk_score: integer                  # optional — v10.3.0: 0-100 (higher = more untested critical areas)
+  interaction_coverage: string         # optional — v10.3.0: e.g., "forms 6/8, tables 3/3, modals 2/2"
   infrastructure_available: string     # optional — v7.2.0: from Phase 1.5 (e.g., "email:mailpit" or "none")
   pre_existing_tests: integer          # optional — v7.2.0: count of pre-existing tests found
   pre_existing_passing: integer        # optional — v7.2.0: count passing
@@ -174,19 +182,34 @@ QA_RESULT:
     - file: string
       reason: string
   gate_audit_verdict: string           # optional — v9.0.0: from Strategist Gate Audit (e.g., "pass" or "fail")
+  app_topology: object                 # optional — v10.2.0: from Phase 4 auto-detection
+    ui_present: boolean                #   has browser UI
+    api_style: enum [rest, graphql, mixed, none]
+    client_platform: enum [web, mobile, none]
+  detected_auth_method: string         # optional — v10.2.0: e.g., "oauth:auth0", "session", "api-key", "none"
+  websocket_detected: boolean          # optional — v10.2.0: true if WebSocket endpoints found
   risks: object[]                      # optional — identified risk areas
     - area: string
       level: enum [HIGH, MEDIUM, LOW]
       description: string
-  bugs_found: object[]                 # optional — bugs discovered during testing
+  bugs_found: integer                  # optional — COUNT of REAL_BUG failures (>= 0)
+  bugs_blocking: integer               # optional — count of BLOCKING-severity bugs
+  bugs: object[]                       # optional — detailed bug list (may be omitted if bugs_found is 0)
     - id: string
       severity: enum [BLOCKING, HIGH, MEDIUM, LOW]
       description: string
       file: string                     # optional — file where bug manifests
       steps: string                    # optional — reproduction steps
+  discovery_gaps: object[]             # optional — v10.3.0: DISCOVERY_GAP test failures (test was wrong, not the app)
+    - description: string
+      file: string
+  environment_issues: object[]         # optional — v10.3.0: ENVIRONMENT_ISSUE test failures (infra/setup problem, not the app)
+    - description: string
+      file: string
   strategist_verdict: string           # optional — approved/rejected from Strategist
   files_created: string[]              # optional — test and discovery files created
   summary: string                      # required — max 200 tokens
+  notes: string                        # optional — v10.3.0: free-form notes (e.g., "budget_exceeded", "playwright_config_auto_generated")
   error: string                        # conditional — required when status=failed
 ```
 
@@ -322,6 +345,11 @@ QA_SESSION_PLAN:
   total_routes: integer                # required — total routes discovered
   total_apis: integer                  # required — total API endpoints discovered
   discovery_confidence: enum [HIGH, MEDIUM, LOW]  # required
+  app_topology: object                 # optional — v10.2.0: from Phase 4 auto-detection
+    ui_present: boolean
+    api_style: enum [rest, graphql, mixed, none]
+    client_platform: enum [web, mobile, none]
+  auth_method: string                  # optional — v10.2.0: e.g., "oauth:auth0", "session"
   scopes: object[]                     # required — non-empty array of feature scopes
     - name: string                     # required — scope identifier (e.g., "auth", "tournaments")
       routes: string[]                 # required — route paths in this scope
@@ -393,6 +421,10 @@ All result schemas include a `schema_version` field. This enables forward compat
 
 - **CODE_REVIEW_RESULT v2** (v7.0.0): Added `category` field to issues (`new`, `pre_existing`, `nit`). FAIL decisions now require at least one `new` HIGH/BLOCKING issue. Pre-existing issues are reported but do not block.
 - **MISSING_FUNCTIONALITY_REPORT v1** (v7.1.0): New schema for QA Executor gap detection output.
+- **QA_RESULT + QA_SESSION_PLAN** (v10.3.0): Added optional `app_topology`, `detected_auth_method`, `websocket_detected` (QA_RESULT) and `app_topology`, `auth_method` (QA_SESSION_PLAN). Backward compatible — existing payloads without these fields still validate.
+- **QA_RESULT contract fixes** (v10.3.0): `status` enum expanded to include `needs_human` (matches executor/blueprint usage). `bugs_found` reclassified as integer count (was object[]); detailed bug records now live in new optional `bugs` field. `bugs_blocking` integer added. Added missing fields to formalize executor emissions: `tests_run_this_session`, `depth`, `environment`, `discovery_warnings`, `coverage`, `coverage_weighted`, `risk_score`, `interaction_coverage`, `discovery_gaps`, `environment_issues`, `notes`. Resolves prior doc/contract drift.
+- **MISSING_FUNCTIONALITY_REPORT** (v10.3.0): `gaps` may be `[]` when analysis finds nothing. Emission is always required — absent block means Phase 4.5 was skipped.
+- **GRAPHQL_RISK_OVERRIDES** (v10.3.0): New output contract emitted by QA Strategist in Strategy Mode when `api_style` is `graphql` or `mixed`.
 - All other schemas remain at v1.
 
 ---
@@ -405,7 +437,7 @@ Produced by QA Executor during Phase 4.5 gap analysis. Separate from QA_RESULT.
 MISSING_FUNCTIONALITY_REPORT:
   schema_version: 1                    # integer, required — always 1
   task_id: string                      # required — QA run identifier
-  gaps: object[]                       # required — non-empty array of detected gaps
+  gaps: object[]                       # required — MAY be empty. An empty array with total_gaps: 0 is valid and means "analysis ran, no gaps found"
     - category: enum [missing_crud, missing_pagination, missing_search,
                       missing_validation, missing_error_handling, missing_confirmation,
                       missing_loading_state, missing_rate_limiting,
@@ -421,11 +453,12 @@ MISSING_FUNCTIONALITY_REPORT:
 ```
 
 **Validation rules:**
-- `gaps` must be non-empty (if no gaps found, don't emit the report)
-- Each gap must have `category`, `severity`, `location`, `description`
+- **Always emit the report** — even when `gaps` is empty. Absence of the block means Phase 4.5 was skipped (Strategist will reject).
+- `gaps` MAY be `[]` (empty). When empty, `total_gaps` MUST be `0` and `critical_count` MUST be `0`.
+- Each gap (when present) must have `category`, `severity`, `location`, `description`
 - `total_gaps` must equal `gaps.length`
 - `critical_count` must equal count of gaps with `severity=CRITICAL`
-- `summary` must be present
+- `summary` must be present (e.g., "No gaps detected." for empty report)
 
 **Example:**
 ```
@@ -455,6 +488,49 @@ MISSING_FUNCTIONALITY_REPORT:
   total_gaps: 3
   critical_count: 0
 ```
+
+---
+
+## GRAPHQL_RISK_OVERRIDES
+
+Produced by QA Strategist in Strategy Mode **only when `api_style` is `graphql` or `mixed`**.
+Consumed by QA Executor in Phase 7 write-back to persist per-operation risk into `discovery/api-calls.json`.
+
+This is a markdown-table contract (not YAML) because it appears inline in the Strategist's textual output. The Executor parses it by header row match.
+
+### Format
+
+```markdown
+### GraphQL Risk Overrides
+
+| Operation | Method | Risk | Reason |
+|---|---|---|---|
+| createUser | MUTATION | HIGH | auth + data mutation |
+| getUsers | QUERY | MEDIUM | (default) |
+| deleteOrg | MUTATION | HIGH | destructive, admin-only |
+| healthCheck | QUERY | LOW | no side effects |
+```
+
+### Validation Rules
+
+- Heading must contain the literal text `GraphQL Risk Overrides` (case-insensitive)
+- Table columns MUST be `Operation | Method | Risk | Reason` in this order
+- Match key into `api-calls.json` is `Operation` + `Method` together (a query and mutation can share the same name — method disambiguates)
+- `Method` values: `QUERY` | `MUTATION` (uppercase)
+- `Risk` values: `HIGH` | `MEDIUM` | `LOW`
+- `Reason` is free-form human-readable text (not parsed by machines)
+- Block is **omitted entirely** when `api_style` is not `graphql`/`mixed` — absence is not an error
+- If block is absent for a graphql app: Phase 5B default risks stand (no write-back performed)
+
+### Write-back Behavior (Executor)
+
+For each row in the table:
+1. Match by `Operation` + `Method` against entries in `discovery/api-calls.json`
+2. If row's `Risk` differs from entry's current `risk`: update the entry's `risk` field via Edit
+3. If row has no matching entry: log warning, skip (Strategist may have hallucinated an operation)
+4. Operations in `api-calls.json` not listed in the override table: keep existing Phase 5B default
+
+Executor updates `api-calls.json` in-place; no separate overrides file is persisted.
 
 ---
 

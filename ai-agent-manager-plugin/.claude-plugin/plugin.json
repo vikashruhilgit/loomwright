@@ -1,7 +1,7 @@
 {
   "name": "ai-agent-manager-plugin",
-  "version": "10.2.0",
-  "description": "AI agents v10.2: Launch Pad mandatory Plan Review gate (Phase 5.5 — dedicated Plan Reviewer validates briefs before save, max 3 retries). 12 agent roles: Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Plan Reviewer, Product Owner (with --brainstorm), Orchestrator, Code Reviewer (LSP, effort:high, schema v2), Red Team Reviewer, QA Strategist, QA Executor. 47 reusable skills. 10 quality gate hooks, persistent agent memory, bundled MySQL MCP server.",
+  "version": "10.3.0",
+  "description": "AI agents v10.3: QA topology auto-detection — QA Executor now detects app_topology (ui_present, api_style, client_platform), auth method, and WebSocket presence in Phase 4. Supports REST, GraphQL (5-step fallback chain: SDL → resolvers → codegen → persisted queries → introspection), API-only backends (OpenAPI-first discovery), mobile-backend apps, and SSO/OAuth apps (--auth-state flag). New Gate 10 for GraphQL coverage with budget-aware tiers (≤20 full, 21-50 sampled, >50 top-20 cap). GRAPHQL_RISK_OVERRIDES contract for machine-readable Strategist → Executor risk write-back into api-calls.json. 13-gate audit (Gate 6 skipped for non-UI apps). Auto-generated minimal Playwright config for API-only apps. Plus v10.2 features: Launch Pad Plan Review gate, 12 agent roles, 47 reusable skills, quality gate hooks, persistent agent memory, bundled MySQL MCP server.",
   "author": {
     "name": "vikash ruhil"
   },
@@ -86,6 +86,12 @@
     "read-only-review",
     "brainstorming",
     "ideation",
-    "multi-mind"
+    "multi-mind",
+    "topology-detection",
+    "graphql",
+    "api-only",
+    "websocket",
+    "oauth",
+    "sso"
   ]
 }

@@ -1,6 +1,6 @@
 ---
 name: qa-gates
-description: Quality gates, gap analysis tiers, and enforcement checklist for QA Executor. Contains Phase 4.5 (4-tier gap analysis), Phase 4.6 (dry-run), Phase 4.7 (12 quality gates with PASS CRITERIA), and quality checklist.
+description: Quality gates, gap analysis tiers, and enforcement checklist for QA Executor. Contains Phase 4.5 (4-tier gap analysis), Phase 4.6 (dry-run), Phase 4.7 (13 quality gates with PASS CRITERIA), and quality checklist.
 allowed-tools: [Read, Glob, Grep, Bash]
 version: "1.0.0"
 lastUpdated: "2026-03"
@@ -8,7 +8,7 @@ lastUpdated: "2026-03"
 
 # QA Gates Skill
 
-Quality gates, gap analysis tiers, dry-run enforcement, and 12-gate verification checklist for QA test suites. Used by QA Strategist in Gate Audit Mode for independent verification.
+Quality gates, gap analysis tiers, dry-run enforcement, and 13-gate verification checklist for QA test suites. Used by QA Strategist in Gate Audit Mode for independent verification.
 
 ---
 
@@ -173,13 +173,35 @@ HALT. Do NOT proceed. Output: "GATE 0 FAILED: Phase 2B artifacts missing.
 sitemap.json: {exists/missing}, api-calls.json: {exists/missing},
 crawl.ts: {exists/missing}. Go back and run Phase 2B (runtime crawl) now."
 
-Provenance check (for --scope/--continue runs):
-- Read sitemap.json, check for _meta field
-- If _meta.source !== "playwright_crawl": HALT (generated from static analysis)
-- If _meta.timestamp is older than session start: HALT (stale from prior run)
+TOPOLOGY-AWARE ARTIFACT + PROVENANCE CHECK:
+
+Read discovery/infrastructure.json to determine app_topology.ui_present.
+
+If ui_present is true (or infrastructure.json missing — assume UI app for backward compat):
+  Required artifacts:
+    - discovery/sitemap.json MUST exist and be non-empty
+    - discovery/api-calls.json MUST exist
+    - discovery/crawl.ts MUST exist
+  Provenance check (for --scope/--continue runs):
+    - Read api-calls.json / sitemap.json, check _meta field
+    - _meta.source MUST be "playwright_crawl"
+    - If _meta.source !== "playwright_crawl": HALT (generated from static analysis)
+    - If _meta.timestamp older than session start: HALT (stale)
+
+If ui_present is false:
+  Required artifacts:
+    - discovery/crawl.ts MUST exist (API discovery script using `request` fixture)
+    - discovery/api-calls.json MUST exist
+    - discovery/sitemap.json MAY be missing or empty — acceptable (no pages to crawl)
+  Provenance check:
+    - Read api-calls.json, check _meta field
+    - _meta.source MUST be "api_discovery" for non-UI apps
+    - If _meta.source is "playwright_crawl" on a non-UI app: HALT
+      (means the executor incorrectly ran a browser crawl — contract violation)
+    - If _meta.timestamp older than session start: HALT (stale)
 
 discovery-map.json (Phase D) is NOT sufficient to pass this gate.
-discovery-map.json without sitemap.json means only static analysis ran.
+discovery-map.json without api-calls.json means only static analysis ran.
 
 ### GATE 0.5 -- TEST DIRECTORY VERIFICATION
 
@@ -292,6 +314,13 @@ If Phase 4.5 found gaps: verify they are queued for Phase 9 emission. PASS.
 
 ### GATE 6 -- UI PATTERN COVERAGE (counted per FORM, not per route)
 
+TOPOLOGY OVERRIDE:
+If discovery/infrastructure.json app_topology.ui_present is false:
+  SKIP Gate 6 entirely. Output: "Gate 6: SKIPPED (ui_present: false)"
+  This is a valid skip, not a failure.
+
+If ui_present is true, continue with the logic below.
+
 Read discovery/sitemap.json. Count forms per HIGH risk route.
 For EACH form on EACH HIGH risk route:
 - Count UI tests that `@covers-route` this route AND cover this form's fields.
@@ -356,33 +385,95 @@ Detection: Grep all generated spec files for:
 
 If ANY duplicate utility function found: Extract to helpers/ and update imports.
 
+### GATE 10 -- GRAPHQL COVERAGE (conditional: api_style is "graphql" or "mixed")
+
+If discovery/infrastructure.json app_topology.api_style is NOT "graphql" or "mixed": SKIP.
+This is a valid skip, not a failure.
+
+Read api-calls.json for entries with method "QUERY" or "MUTATION".
+Each entry has a `risk` field (HIGH/MEDIUM/LOW).
+Risk source: Phase 5B sets defaults → Phase 7 Strategist may override via GRAPHQL_RISK_OVERRIDES.
+Gate 10 reads risk ONLY from api-calls.json (single source of truth).
+
+BUDGET-AWARE COVERAGE RULES:
+  Total discovered operations = queries + mutations from api-calls.json.
+
+  If total operations <= 20 (full-coverage tier):
+    → Every operation needs at least 1 test with matching @covers-api
+    → HIGH risk mutations: 1 happy-path + 1 error-handling + 1 state verification
+    → MEDIUM/LOW queries: 1 happy-path test minimum
+
+  If total operations 21-50 (sampled tier — all operations in scope):
+    → ALL HIGH risk mutations must have full coverage (happy + error + state verify)
+    → MEDIUM operations: test at least 50% (pick representative samples)
+    → LOW operations: test at least 1 LOW operation total (any one is sufficient)
+    → Output: "Gate 10: {tested}/{total} operations ({N} HIGH fully covered, {M} sampled)"
+
+  If total operations > 50 (capped tier):
+    → Select top 20 operations for L1. Selection algorithm:
+      1. Include ALL HIGH risk mutations (up to 20)
+      2. If slots remain: fill with MEDIUM queries sorted by name (deterministic)
+      3. If slots still remain: include 1 LOW query
+      4. If HIGH risk mutations alone exceed 20: take first 20 HIGH sorted by name
+    → ONLY the selected 20 are in scope. The 21-50 tier rules do NOT apply.
+    → Coverage rules for the selected 20: same as <=20 full-coverage tier
+      (every selected operation needs at least 1 test, HIGH mutations need full coverage)
+    → Log: "Schema has {N} operations, testing top 20 by risk. Selected: {H} HIGH, {M} MEDIUM, {L} LOW."
+    → Remaining operations noted in MISSING_FUNCTIONALITY_REPORT, not as gate failure.
+
+FAIL gate if (tier-specific):
+
+  If total operations <= 20 (full coverage tier):
+    - ANY operation (HIGH, MEDIUM, or LOW) has zero test coverage
+    - Any HIGH risk mutation missing error-handling or state verification test
+
+  If total operations 21-50 (sampled tier):
+    - Any HIGH risk mutation has zero test coverage
+    - Less than 50% of MEDIUM operations have coverage
+    - Zero LOW operations tested (at least 1 required)
+
+  If total operations > 50 (capped tier — apply <=20 rules to selected 20):
+    - ANY selected operation (HIGH, MEDIUM, or LOW) has zero test coverage
+    - Any selected HIGH risk mutation missing error-handling or state verification test
+
+  Always fail if:
+    - Zero GraphQL tests exist at all
+
+Output: "Gate 10: {tested}/{total} GraphQL operations covered (HIGH: {n}/{n}, MEDIUM: {n}/{n}, LOW: {n}/{n})"
+
 ### PASS CRITERIA
 
-All 12 gates must pass before proceeding to Phase 5:
+All 13 gates must pass before proceeding to Phase 5 (skipped gates count as PASS):
 
-| Gate | Name | Description |
-|------|------|-------------|
-| Gate 0 | Discovery verification | Crawl artifacts + provenance |
-| Gate 0.5 | Test directory verification | Files in correct subdirectories |
-| Gate 1 | Assertion quality | No lenient patterns |
-| Gate 1.5 | Locator verification | No CSS selectors, no .or() fallback |
-| Gate 2 | State verification | Annotation-driven |
-| Gate 3 | Cleanup hooks | Real cleanup, not comments |
-| Gate 4 | Boundary + idempotency tests | HIGH risk endpoints |
-| Gate 5 | Phase 4.5 execution verification | Gap analysis was run |
-| Gate 6 | UI pattern coverage | 3 per form, counted by form not route |
-| Gate 7 | Infrastructure utilization | Email flow if available |
-| Gate 8 | Overlap check | < 30% duplicate with existing tests |
-| Gate 9 | Shared helpers | No duplicate utility functions across files |
+| Gate | Name | Description | Topology Precondition |
+|------|------|-------------|-----------------------|
+| Gate 0 | Discovery verification | Crawl artifacts + provenance | always runs |
+| Gate 0.5 | Test directory verification | Files in correct subdirectories | always runs |
+| Gate 1 | Assertion quality | No lenient patterns | always runs |
+| Gate 1.5 | Locator verification | No CSS selectors, no .or() fallback | always runs (skip if no frontend tests) |
+| Gate 2 | State verification | Annotation-driven | always runs |
+| Gate 3 | Cleanup hooks | Real cleanup, not comments | always runs |
+| Gate 4 | Boundary + idempotency tests | HIGH risk endpoints | always runs |
+| Gate 5 | Phase 4.5 execution verification | Gap analysis was run | always runs |
+| Gate 6 | UI pattern coverage | 3 per form, counted by form not route | ui_present is true |
+| Gate 7 | Infrastructure utilization | Email flow if available | always runs |
+| Gate 8 | Overlap check | < 30% duplicate with existing tests | always runs |
+| Gate 9 | Shared helpers | No duplicate utility functions across files | always runs |
+| Gate 10 | GraphQL coverage | Tier-based (see above) | api_style is graphql/mixed |
 
-This list is EXHAUSTIVE -- if a gate number is listed, it runs.
+Gates with topology preconditions are SKIPPED when precondition is not met.
+A skipped gate counts as PASS, not as a failure.
+
+This list is EXHAUSTIVE -- if a gate number is listed and its precondition is met, it runs.
 If ANY gate fails: fix via Edit, then re-verify that gate.
 Do NOT skip gates. Do NOT pass a gate with a workaround.
 
 Budget: 2-4 tool calls (Read generated files + potential Edits).
-Strategist gate audit runs in ALL budget zones including ORANGE.
-ONLY RED (74+) skips the gate audit -- and RED must still emit a partial
+Strategist gate audit runs in ALL budget zones including ORANGE (80-92%).
+ONLY RED (92%+) skips the gate audit — and RED must still emit a partial
 QA_RESULT noting "gate audit skipped due to RED budget zone."
+(See qa-executor.md Tool Call Budget table for authoritative zone thresholds:
+GREEN 0-60%, YELLOW 60-80%, ORANGE 80-92%, RED 92%+.)
 
 ---
 

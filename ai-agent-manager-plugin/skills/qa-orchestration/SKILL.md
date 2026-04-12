@@ -56,6 +56,12 @@ All session files are project-local. Add `.qa-session/` to `.gitignore`.
   "total_routes": 89,
   "total_apis": 230,
   "discovery_confidence": "HIGH",
+  "app_topology": {
+    "ui_present": true,
+    "api_style": "rest",
+    "client_platform": "web"
+  },
+  "auth_method": "session",
   "scopes": [
     {
       "name": "auth",

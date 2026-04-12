@@ -140,6 +140,15 @@ These rules are MANDATORY before generating any test file.
    - Create api-smoke project (API tests, testMatch: 'api/**/*.spec.ts')
 5. If {testDir}/frontend/ or {testDir}/api/ doesn't exist, create it
 6. NEVER use hardcoded 'e2e/tests/' -- always use the testDir from config
+7. TOPOLOGY CONDITIONAL (from discovery/infrastructure.json app_topology):
+   - If ui_present is false:
+     * DO NOT create {testDir}/frontend/ directory
+     * All tests go to {testDir}/api/ only
+     * Tests use Playwright `request` fixture (no `page` object)
+8. API STYLE CONDITIONAL:
+   - If api_style is "graphql" or "mixed":
+     * GraphQL tests go to {testDir}/api/graphql.spec.ts
+     * REST API tests (if any) go to {testDir}/api/{feature}.spec.ts as normal
 ```
 
 ---
@@ -334,6 +343,120 @@ For each route in priority order (HIGH first, then MEDIUM, then LOW):
       - Test: send without auth -> assert status toBe(401)
       - Coverage: // @covers-api: DELETE {path}  // @covers-interaction: api-delete
 ```
+
+---
+
+## GraphQL Test Patterns
+
+Generate these when `app_topology.api_style` is `graphql` or `mixed`.
+GraphQL operations come from `discovery/api-calls.json` entries with method `QUERY` or `MUTATION`.
+
+### GraphQL Test Pattern Library
+
+| Discovery Signal | Test Pattern | Annotation | Assertion |
+|---|---|---|---|
+| GraphQL query | Execute → verify 200 + data shape | `@covers-api: QUERY {name}` | `body.errors` undefined, `body.data.{field}` matches schema |
+| GraphQL mutation | Valid + invalid input | `@covers-api: MUTATION {name}` | Valid: data returned; Invalid: `body.errors` with message |
+| GraphQL error | Malformed query | `@covers-interaction: graphql-error` | 200 + `body.errors[0].message` present, NOT 500 |
+| GraphQL auth-gated | Query without auth | `@covers-interaction: graphql-auth` | `body.errors` with auth message or `body.data` null |
+| GraphQL depth limit | Deeply nested query (10+) | `@covers-interaction: graphql-depth` | Rejected with error, not timeout/crash |
+
+### GraphQL Assertion Rules (MANDATORY)
+
+- GraphQL returns HTTP **200 even for errors** — check `body.errors`, not status code
+  - BAD:  `expect(response.status()).toBe(400)` (GraphQL won't return 400 for bad queries)
+  - GOOD: `expect(response.status()).toBe(200); expect(body.errors).toBeDefined();`
+- Assert `body.data.{field}` **structure** — field names and types from introspection/SDL
+  - BAD:  `expect(body.data).toBeDefined()`
+  - GOOD: `expect(typeof body.data.user.id).toBe('string'); expect(body.data.user.email).toMatch(/@/);`
+- Assert `body.errors[0].message` is **descriptive** — not generic "internal error"
+- For mutations: follow-up with a query to **verify state persisted**
+
+### GraphQL Endpoint Path — MANDATORY
+
+NEVER hardcode `/graphql`. The GraphQL endpoint path is discovered in Phase 4
+and persisted at:
+- `discovery/infrastructure.json` → `graphql.endpoint` (primary source)
+- `discovery/api-calls.json` → each QUERY/MUTATION entry has `path` field
+
+Before generating GraphQL tests:
+1. Read `discovery/infrastructure.json` → extract `graphql.endpoint`
+2. If null (shouldn't happen per persistence rule), fall back to `/graphql` and log warning
+3. Use this endpoint in ALL `request.post()` calls — do not hardcode
+
+Common discovered paths: `/graphql`, `/api/graphql`, `/graphql/v1`, `/api/v1/graphql`, `/gql`.
+
+### GraphQL Test Template
+
+```typescript
+// {testDir}/api/graphql.spec.ts
+import { test, expect } from '@playwright/test';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+// Read endpoint from discovery — do not hardcode.
+// Use process.cwd() (project root where Playwright runs) — avoids brittle relative paths
+// that change depending on testDir configuration (e.g., './e2e/tests' vs './tests').
+const infrastructure = JSON.parse(
+  readFileSync(resolve(process.cwd(), 'discovery/infrastructure.json'), 'utf8')
+);
+const GQL = infrastructure.graphql?.endpoint ?? '/graphql';
+
+// @covers-api: QUERY getUsers
+test('QUERY getUsers returns list with correct shape', async ({ request }) => {
+  const response = await request.post(GQL, {
+    data: { query: '{ getUsers { id email createdAt } }' }
+  });
+  expect(response.status()).toBe(200);
+  const body = await response.json();
+  expect(body.errors).toBeUndefined();
+  expect(Array.isArray(body.data.getUsers)).toBe(true);
+  if (body.data.getUsers.length > 0) {
+    expect(typeof body.data.getUsers[0].id).toBe('string');
+    expect(body.data.getUsers[0].email).toMatch(/@/);
+  }
+});
+
+// @covers-api: MUTATION createUser
+// @covers-interaction: graphql-error
+test('MUTATION createUser with invalid input returns errors', async ({ request }) => {
+  const response = await request.post(GQL, {
+    data: { query: 'mutation { createUser(input: {}) { id } }' }
+  });
+  expect(response.status()).toBe(200);  // GraphQL returns 200 even for validation errors
+  const body = await response.json();
+  expect(body.errors).toBeDefined();
+  expect(body.errors.length).toBeGreaterThan(0);
+  expect(body.errors[0].message).toBeTruthy();
+});
+```
+
+Note: `process.cwd()` is the project root when Playwright runs tests. This avoids
+the relative-path trap — e.g., `../../discovery/...` from `e2e/tests/api/` resolves
+to `e2e/discovery/`, NOT project-root `discovery/`. Always resolve from cwd.
+The endpoint MUST come from discovery data — never hardcoded.
+
+### GraphQL Budget
+
+- Per-operation: 1 happy-path test minimum
+- HIGH risk mutations: 1 happy-path + 1 error-handling + 1 state verification = 3 tests
+- Max total GraphQL tests at L1: 60 (cap applies via Gate 10 for schemas with 50+ operations)
+
+---
+
+## WebSocket Test Patterns
+
+Generate these when `discovery/infrastructure.json` has `websocket.detected: true`.
+
+| Signal | Pattern | Annotation |
+|---|---|---|
+| WebSocket endpoint | Connect → verify open → send → receive → close | `@covers-interaction: ws-lifecycle` |
+| WS with auth | Connect without auth → verify rejection | `@covers-interaction: ws-auth` |
+| socket.io | Namespace → emit event → listen for response | `@covers-interaction: socketio-event` |
+
+Budget: max 2-3 WebSocket tests at L1. Deeper WS testing (subscriptions, reconnection, backpressure) is L2+.
+
+Note: WebSocket tests use native `WebSocket` API or `socket.io-client`, not Playwright page object.
 
 ---
 

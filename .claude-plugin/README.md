@@ -4,7 +4,7 @@ A Claude Code plugin with 12 agent roles (8 user-facing + 4 internal), 47 focuse
 
 ## Overview
 
-The AI Agent Manager Plugin v10.1 includes:
+The AI Agent Manager Plugin v10.3 includes:
 
 ### User-Facing Agents (8)
 
@@ -304,7 +304,7 @@ ai-agent-manager/                        (marketplace root)
 │
 └── ai-agent-manager-plugin/             (plugin directory)
     ├── .claude-plugin/
-    │   └── plugin.json                  # Plugin metadata (v10.1.0)
+    │   └── plugin.json                  # Plugin metadata (v10.3.0)
     ├── agents/                          # Agent prompts (12 roles)
     │   ├── launch-pad.md
     │   ├── supervisor.md

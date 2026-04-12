@@ -425,7 +425,7 @@ To modify or extend agents:
 
 1. Agents are Markdown prompts in `ai-agent-manager-plugin/agents/` (12 files)
 2. Commands are in `ai-agent-manager-plugin/commands/` (9 commands)
-3. Skills are in `ai-agent-manager-plugin/skills/` (43 skills, versioned with SKILLS_INDEX.md)
+3. Skills are in `ai-agent-manager-plugin/skills/` (47 skills, versioned with SKILLS_INDEX.md)
 4. Hooks: per-agent in frontmatter (Worker, Execute Manager) + cross-cutting in `hooks.json` (Code Reviewer, QA Executor, TaskCompleted)
 5. Docs: `docs/RESULT_SCHEMAS.md`, `docs/FAILURE_ESCALATION.md`, `docs/ARCHITECTURE_CONTRACTS.md`, `docs/ARCHITECTURE.md`
 6. All agents follow standard output format (see AGENT_GUIDELINES.md)

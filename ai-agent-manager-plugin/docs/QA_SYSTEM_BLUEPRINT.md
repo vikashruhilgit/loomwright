@@ -16,6 +16,9 @@ The system ships incrementally across 5 maturity levels. Level 1 ships first.
 Layer 1 — PERCEPTION
   Modules: 1 (Static Analysis), 2 (Runtime Crawl), 3 (State Modeling)
   Purpose: Understand WHAT exists in the application
+  Phase 4 (Infrastructure Discovery) includes app topology auto-detection
+  (ui_present, api_style, client_platform), auth method detection, and
+  WebSocket discovery. This metadata drives conditional behavior in Layers 2-3.
 
 Layer 2 — INTELLIGENCE
   Modules: 4 (Journey Generator), 5 (Risk Strategy), 14 (Debate Loop)
@@ -127,7 +130,15 @@ Layer 4 — EVOLUTION
 
 **Modules:** 1, 2, 5, 6a, 6b, 7, 9, 14(basic) + lightweight coverage tracking
 
-**Included (v9.0.0 — 13-phase protocol, split architecture):**
+**Included (v10.2.0 — 13-phase protocol, split architecture, topology-aware):**
+- App topology auto-detection (ui_present, api_style, client_platform) — replaces assumption that every app has a browser UI + REST APIs
+- Auth method detection (session, oauth:{provider}, api-key, none) with `--auth-state` support for OAuth/SSO apps
+- WebSocket detection (ws://, wss://, socket.io) with connection-lifecycle test generation
+- GraphQL discovery with 5-step fallback chain (SDL files → resolvers → codegen → persisted queries → live introspection)
+- API-only discovery with OpenAPI-first precedence (OpenAPI → route manifests → seed data → safe health/list → static fallback)
+- Conditional gate logic (Gate 6 skipped for non-UI apps, Gate 10 runs only for GraphQL/mixed)
+- Auto-generated minimal Playwright config for API-only apps when no config exists
+- GRAPHQL_RISK_OVERRIDES contract (Strategist → Executor risk write-back to `api-calls.json`)
 - Infrastructure discovery (Phase 1.5) — probes for email capture (Mailpit/MailHog), mock servers
 - Static + Runtime discovery (4-phase engine)
 - Pre-existing test triage (Phase 2.5) — runs existing tests, classifies failures, files bugs
@@ -140,7 +151,7 @@ Layer 4 — EVOLUTION
 - Email flow testing (password reset, MFA via email capture when infrastructure available)
 - Data integrity probes (concurrent creation, duplicate detection, cascade delete for HIGH risk)
 - Security boundary testing (IDOR, role escalation, session invalidation, XSS/SQLi probes for HIGH risk)
-- Independent Strategist gate audit (Phase 11) — 12 quality gates verified by separate QA Strategist agent
+- Independent Strategist gate audit (Phase 11) — 13 quality gates verified by separate QA Strategist agent (Gate 10 added for GraphQL coverage)
 - Missing Functionality Analysis (gap detection: missing CRUD ops, pagination, search, validation, rate limiting)
 - Assertion strictness enforcement (no status arrays, no existence-only, no loose error matching, 5xx = BLOCKING bug)
 - Strategist assertion quality audit + structural completeness audit (6 checks)
@@ -259,7 +270,7 @@ Layer 4 — EVOLUTION
 | Max test files generated | 30 | Prevents unbounded generation |
 | Max test execution time | 5 minutes | Kill-switch |
 | Max debate rounds | 3 | Hard cap |
-| Max tool calls (Executor) | 60 | Budget zones |
+| Max tool calls (Executor) | 80 default / 110 --scope + --continue / 60 --plan | Budget zones: GREEN 0-60%, YELLOW 60-80%, ORANGE 80-92%, RED 92%+ (see agents/qa-executor.md for authoritative table) |
 | Max screenshots | 10 | Selective vision |
 
 ---
@@ -271,25 +282,34 @@ Layer 4 — EVOLUTION
 ```
 ## QA_RESULT
 - task_id: {id}
-- status: passed | failed | needs_human | skipped
+- status: passed | failed | partial | skipped | needs_human
 - rounds_run: {N}/3
+- depth: smoke | functional
+- environment: local | preview | staging
 - tests_generated: {N}
-- tests_run: {N}
+- tests_run_this_session: {N}
 - tests_passed: {N}
 - tests_failed: {N}
 - discovery_confidence: HIGH | MEDIUM | LOW
-- discovery_duration_seconds: {N}
-- crawl_limit_hit: true | false
 - discovery_warnings: [{array of strings}]
 - coverage: routes {X}/{Y}, apis {X}/{Y}
 - coverage_weighted: {risk-adjusted %}
 - risk_score: {0-100}
-- bugs_found: {N}
-- bugs_blocking: {N}
+- interaction_coverage: forms {X}/{Y}, tables {X}/{Y}, modals {X}/{Y}
+- app_topology: { ui_present, api_style, client_platform }
+- detected_auth_method: {e.g., "oauth:auth0", "session"}
+- websocket_detected: true | false
+- bugs_found: {N}         # integer count of REAL_BUG failures
+- bugs_blocking: {N}      # integer count of BLOCKING-severity bugs
+- bugs: [...]             # optional detailed bug records (see RESULT_SCHEMAS.md)
+- discovery_gaps: [...]   # DISCOVERY_GAP test failures
+- environment_issues: [...] # ENVIRONMENT_ISSUE test failures
 - strategist_verdict: approved | rejected | timeout
 - files_created: [paths]
 - error: none | {description}
 - notes: {1-2 sentences}
+
+See docs/RESULT_SCHEMAS.md for authoritative field types, optionality, and validation rules.
 ```
 
 ### STRATEGIST_VERDICT (QA Strategist)
@@ -305,6 +325,23 @@ Layer 4 — EVOLUTION
 - quality_score: {0-100}
 - rationale: {1-2 sentences}
 ```
+
+### GRAPHQL_RISK_OVERRIDES (QA Strategist, Strategy Mode only)
+
+Emitted when `api_style` is `graphql` or `mixed`. Markdown table with columns:
+`Operation | Method | Risk | Reason`. Consumed by QA Executor in Phase 7
+write-back to update per-operation risk in `discovery/api-calls.json`.
+
+```markdown
+### GraphQL Risk Overrides
+
+| Operation | Method | Risk | Reason |
+|---|---|---|---|
+| createUser | MUTATION | HIGH | auth + data mutation |
+| getUsers | QUERY | MEDIUM | (default) |
+```
+
+See `docs/RESULT_SCHEMAS.md` for full schema, validation rules, and write-back behavior.
 
 ---
 

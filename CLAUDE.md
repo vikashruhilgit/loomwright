@@ -294,7 +294,7 @@ ai-agent-manager/
 │   │   ├── ARCHITECTURE_CONTRACTS.md # Capability matrix, budgets, rules
 │   │   └── ARCHITECTURE.md          # Visual agent topology diagram
 │   └── .claude-plugin/
-│       └── plugin.json               # Plugin metadata (v10.1.0)
+│       └── plugin.json               # Plugin metadata (v10.3.0)
 │
 ├── .claude-plugin/
 │   ├── marketplace.json              # Marketplace definition
@@ -474,8 +474,8 @@ Before an agent completes work:
 ### Plugin Metadata
 
 - **Plugin Name:** `ai-agent-manager-plugin`
-- **Version:** 10.2.0
-- **Description:** AI agents v10.2 — Launch Pad mandatory Plan Review gate (Phase 5.5, dedicated Plan Reviewer validates briefs before save, max 3 retries). 12 agent roles, 47 reusable skills, 10 quality gate hooks, persistent agent memory, bundled MySQL MCP server
+- **Version:** 10.3.0
+- **Description:** AI agents v10.3 — QA topology auto-detection: QA Executor detects app_topology (ui_present, api_style, client_platform), auth method, and WebSocket presence. Supports REST, GraphQL (5-step fallback), API-only backends, mobile-backend apps, and SSO/OAuth (--auth-state flag). New Gate 10 for GraphQL coverage with budget-aware tiers. 13-gate Strategist audit. Plus v10.2 Launch Pad mandatory Plan Review gate. 12 agent roles, 47 reusable skills, 10 quality gate hooks, persistent agent memory, bundled MySQL MCP server
 - **Agents:** 12 roles (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Plan Reviewer, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer, QA Strategist, QA Executor)
 - **Skills:** 47 reusable skills (versioned with SKILLS_INDEX.md)
 - **Hooks:** 10 quality gate hooks — centralized in hooks.json: SubagentStop (worker, execute-manager, code-reviewer, supervisor, qa-executor, plan-reviewer), Stop (code-reviewer), TaskCompleted, WorktreeCreate, StopFailure

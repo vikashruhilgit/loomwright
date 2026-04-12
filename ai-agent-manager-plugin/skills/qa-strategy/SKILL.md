@@ -116,6 +116,10 @@ Tests are selected by matching **discovery signals** to patterns:
 | Auth endpoint (negative) | No token → 401; Invalid token → 401 |
 | Data integrity probe | Concurrent creation → verify constraint; Duplicate creation → verify 409 |
 | Security boundary | Cross-resource access → 403/404; Role escalation → 403; Session reuse after logout → 401 |
+| GraphQL query | Execute → verify 200 + data shape |
+| GraphQL mutation | Execute valid + invalid → verify data/errors + state verification |
+| GraphQL error | Malformed query → verify errors array, NOT 500 |
+| WebSocket endpoint | Connect → verify open → send → receive → close |
 
 ---
 
@@ -153,6 +157,11 @@ If rejected (round = max): Executor emits QA_RESULT (status: failed)
 2. Grep for route definitions, API endpoints, auth decorators
 3. Read OpenAPI/Swagger spec if exists
 4. Output: theoretical map (routes, endpoints, roles from code)
+
+Topology-aware adjustments (when `app_topology` is known from Phase 4):
+- If `api_style` includes "graphql": also glob for `*.graphql`, `resolvers/`, `schema.graphql`, `schema.gql`
+- If `ui_present` is false: skip frontend file globbing (`pages/`, `components/`, `app/`)
+- If `client_platform` is "mobile": still glob backend API files — mobile UI itself is not testable here
 
 ### Phase B — Runtime Structured Crawl (~2 tool calls)
 
@@ -288,7 +297,7 @@ Compare annotations against Discovery Map to compute coverage.
 ```markdown
 ## QA_RESULT
 - task_id: {id}
-- status: passed | failed | needs_human | skipped
+- status: passed | failed | partial | skipped | needs_human
 - rounds_run: {N}/3
 - tests_generated: {N}
 - tests_generated: {N}    # total tests written to disk
@@ -371,7 +380,7 @@ Each maturity level unlocks specific capabilities. Agents MUST NOT attempt highe
 | Max test files generated | 30 |
 | Max test execution time | 5 minutes |
 | Max debate rounds | 3 |
-| Max tool calls (Executor) | 60 |
+| Max tool calls (Executor) | 80 default / 110 --scope+--continue / 60 --plan (see qa-executor.md) |
 | Max screenshots | 10 |
 
 If any limit is hit: log it, proceed with what you have. Never silently fail.
@@ -445,9 +454,14 @@ Never hardcode slugs like `"my-org"` or IDs like `"12345"` — always read from 
 Before emitting QA_RESULT:
 - [ ] Discovery Map generated with confidence score
 - [ ] discovery/seed-data.json produced with entity inventory
-- [ ] discovery/infrastructure.json produced (Phase 1.5)
+- [ ] discovery/infrastructure.json produced (Phase 4) — includes app_topology, auth_method, websocket, graphql
+- [ ] App topology detected (ui_present, api_style, client_platform) with confidence score
+- [ ] Auth method detected (session/oauth/api-key/none)
+- [ ] GraphQL discovery used fallback chain (SDL → resolvers → codegen → persisted queries → introspection) when api_style is graphql/mixed
 - [ ] Pre-existing tests triaged (Phase 2.5) — or none found
-- [ ] Risk classification applied to all discovered routes
+- [ ] Risk classification applied to all discovered routes (and GraphQL operations if applicable)
+- [ ] Topology-aware generation: non-UI apps have no frontend tests; graphql apps have graphql tests
+- [ ] Gate 6 skipped for ui_present: false; Gate 10 runs for graphql/mixed api_style
 - [ ] Tests follow playwright-e2e skill patterns (role-based locators, regex assertions)
 - [ ] Tests have beforeEach/afterEach isolation — no shared state between tests
 - [ ] Tests use unique identifiers per run (Date.now(), crypto.randomUUID())
@@ -459,7 +473,7 @@ Before emitting QA_RESULT:
 - [ ] Boundary tests generated for HIGH risk text input endpoints
 - [ ] Email-dependent flows tested if infrastructure available
 - [ ] Coverage annotations present in all generated tests (including auth-chain, boundary-test)
-- [ ] Strategist gate audit passed (12 gates verified by independent agent)
+- [ ] Strategist gate audit passed (13 gates verified by independent agent)
 - [ ] MISSING_FUNCTIONALITY_REPORT emitted with gaps from discovery analysis
 - [ ] Dry-run gate passed before full suite execution
 - [ ] Coverage tracked (routes discovered vs tested, APIs discovered vs tested)
