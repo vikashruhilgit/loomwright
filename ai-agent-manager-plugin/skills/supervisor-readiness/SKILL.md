@@ -14,7 +14,7 @@ Pre-flight validation, Supervisor-Ready Brief format, and jobs folder convention
 
 - Run pre-flight checklist before every Supervisor launch (or use Launch Pad to automate it)
 - Save briefs to `.supervisor/jobs/` with `{YYYY-MM-DD}-{slug}.md` naming
-- Brief must include all 8 sections — Supervisor skips Phases 0-2 when consuming a brief
+- Brief must include all 9 required sections (Environment, Task, Acceptance Criteria, Subtask Structure, Parallelism Analysis, Skill References, Risk Assessment, Configuration, Handoff) — Supervisor skips Phases 0-2 when consuming a brief. The `## Feasibility` section is optional (Launch Pad v10.3+)
 - Conservative parallelism: only mark LAUNCHABLE if zero file overlap AND zero dependencies
 - Clean up consumed briefs after successful Supervisor completion
 
@@ -125,6 +125,18 @@ The `.supervisor/` directory should be gitignored (Supervisor auto-adds this):
 - **GitHub CLI:** ✓ Authenticated | ⚠ Not authenticated
 - **Blockers:** {count} | **Warnings:** {count}
 
+## Feasibility (optional — Launch Pad v10.3+)
+
+| # | Check | Verdict | Detail |
+|---|-------|---------|--------|
+| 1 | Tech Stack Compatibility | {GO/CAUTION/NO-GO} | {explanation} |
+| 2 | Dependency Availability | {GO/CAUTION/NO-GO} | {explanation} |
+| 3 | Architecture Fit | {GO/CAUTION/NO-GO} | {explanation} |
+| 4 | Scope vs Supervisor Capability | {GO/CAUTION/NO-GO} | {explanation} |
+| 5 | Hard Blockers | {GO/CAUTION/NO-GO} | {explanation} |
+
+**Overall Verdict:** {GO | CAUTION | NO-GO (user override)}
+
 ## Task
 **Goal:** {refined goal statement — one clear sentence}
 
@@ -193,19 +205,20 @@ Subtask 2 (independent)
 
 ### Section Requirements
 
-Every section is **mandatory**. Supervisor relies on:
+**9 required sections** (mandatory — Supervisor relies on them) plus **1 optional section** (`Feasibility`, present only in Launch Pad v10.3+ briefs):
 
-| Section | Used In Phase | Purpose |
-|---------|---------------|---------|
-| Environment | Phase 0 (skip) | Validates pre-flight was done |
-| Task | Phase 1 (skip) | Task description and problem context |
-| Acceptance Criteria | Phase 1 (skip) | What "done" means |
-| Subtask Structure | Phase 2 (pre-populate) | Work breakdown |
-| Parallelism Analysis | Phase 2 (pre-populate) | Which subtasks can run concurrently |
-| Skill References | Phase 3 (workers) | Skills to inject into each worker |
-| Risk Assessment | Phase 3 (workers) | Known issues to watch for |
-| Configuration | Phase 0 (skip) | Worker count, mode |
-| Handoff | — | User-facing command to start execution |
+| Section | Required? | Used In Phase | Purpose |
+|---------|-----------|---------------|---------|
+| Environment | required | Phase 0 (skip) | Validates pre-flight was done |
+| Feasibility | **optional** | Phase 0 (skip) | Records Launch Pad Phase 2.5 verdict. Absent from pre-v10.3 briefs — not required |
+| Task | required | Phase 1 (skip) | Task description and problem context |
+| Acceptance Criteria | required | Phase 1 (skip) | What "done" means |
+| Subtask Structure | required | Phase 2 (pre-populate) | Work breakdown |
+| Parallelism Analysis | required | Phase 2 (pre-populate) | Which subtasks can run concurrently |
+| Skill References | required | Phase 3 (workers) | Skills to inject into each worker |
+| Risk Assessment | required | Phase 3 (workers) | Known issues to watch for |
+| Configuration | required | Phase 0 (skip) | Worker count, mode |
+| Handoff | required | — | User-facing command to start execution |
 
 ## Common Failure Modes
 
@@ -239,7 +252,8 @@ Before saving a brief:
 - [ ] Every file path in impact map has been verified to exist (or marked as "create")
 - [ ] Subtasks are 3-7 items, each 30-60 min scope
 - [ ] Parallelism analysis is conservative (no false LAUNCHABLE)
-- [ ] Brief follows the complete template (all 8 sections present)
+- [ ] Brief follows the complete template (all 9 required sections present; Feasibility optional)
+- [ ] If Phase 2.5 ran, Feasibility verdict recorded in the optional `## Feasibility` section
 
 ## See Also
 

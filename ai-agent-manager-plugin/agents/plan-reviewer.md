@@ -37,15 +37,15 @@ Validate a Supervisor-Ready Brief for quality, completeness, and correctness bef
 
 - **Always verify file paths** — Glob/Read every path in the File Impact Map
 - **Always check CLAUDE.md patterns** — Read CLAUDE.md and compare against brief's approach
-- **Never skip criteria** — All 10 review criteria must be checked
+- **Never skip criteria** — All 11 review criteria must be checked (Criterion 11 is conditional: skip if Feasibility section absent)
 - **FAIL requires evidence** — Every BLOCKING/HIGH issue must cite what was checked and what was wrong
 - **NEEDS_HUMAN is for ambiguity** — Use only when the brief's approach could be valid but you can't confirm
 
 ---
 
-## 10 Review Criteria
+## 11 Review Criteria
 
-Check ALL criteria in order. For each, note whether it passes or has issues.
+Check ALL criteria in order. For each, note whether it passes or has issues. Criterion 11 is conditional: skip silently if the optional `## Feasibility` section is absent.
 
 ### 1. File Path Verification
 
@@ -132,8 +132,9 @@ Check ALL criteria in order. For each, note whether it passes or has issues.
 - Check for obvious risks not mentioned (e.g., database migrations, breaking API changes, auth changes)
 - Verify mitigation strategies exist for HIGH risks
 - Flag missing risk section entirely
+- If a `## Feasibility` section is present with CAUTION findings, verify they appear in Risk Assessment
 
-**Severity if failed:** HIGH (missing risk section), MEDIUM (obvious risks unaddressed)
+**Severity if failed:** HIGH (missing risk section), MEDIUM (obvious risks unaddressed, or CAUTION findings not reflected in risks)
 
 ### 9. Completeness
 
@@ -152,6 +153,8 @@ Check ALL criteria in order. For each, note whether it passes or has issues.
 
 **Severity if failed:** BLOCKING (missing required section), LOW (sparse but present section)
 
+**Note:** The `## Feasibility` section (Launch Pad v10.3+) is **optional** — its absence is not BLOCKING and is not evaluated here. See Criterion 11.
+
 ### 10. Configuration
 
 **Check:** Is the recommended worker count reasonable given the parallelism analysis?
@@ -163,13 +166,28 @@ Check ALL criteria in order. For each, note whether it passes or has issues.
 
 **Severity if failed:** MEDIUM (workers > launchable), LOW (suboptimal but functional)
 
+### 11. Feasibility Section (Optional)
+
+**Check:** If the brief includes a `## Feasibility` section (Launch Pad v10.3+), is it well-formed?
+
+**How:**
+- **If absent: skip silently — no issue emitted** (older briefs remain valid; fully backward compatible)
+- If present: verify the verdict is one of `{GO, CAUTION, NO-GO (user override)}`
+- If present with CAUTION findings: verify they appear in Risk Assessment
+
+**Severity if failed (only when section is present):**
+- LOW if malformed structure (verdict missing/invalid)
+- MEDIUM if CAUTION findings not reflected in Risk Assessment
+
+**Rule:** Absence is never an issue. This criterion only runs when the section exists.
+
 ---
 
 ## Decision Matrix
 
 | Condition | Decision |
 |-----------|----------|
-| All 10 criteria satisfied, no BLOCKING/HIGH issues | **PASS** |
+| All criteria satisfied (11 total, Criterion 11 conditional), no BLOCKING/HIGH issues | **PASS** |
 | Any BLOCKING or HIGH severity issue found | **FAIL** |
 | Only MEDIUM/LOW issues, but design approach is ambiguous | **NEEDS_HUMAN** |
 
@@ -236,7 +254,7 @@ PLAN_REVIEW_RESULT:
 ## Quality Checklist
 
 Before producing PLAN_REVIEW_RESULT:
-- [ ] All 10 criteria checked (none skipped)
+- [ ] All 11 criteria checked (Criterion 11 is conditional — only runs if Feasibility section is present)
 - [ ] Every file path in File Impact Map verified via Read or Glob
 - [ ] CLAUDE.md patterns compared against brief approach
 - [ ] Dependency graph traced for cycles

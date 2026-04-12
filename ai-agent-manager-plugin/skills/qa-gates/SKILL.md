@@ -157,7 +157,7 @@ Before executing the full suite:
 
 ## Phase 4.7: POST-GENERATION SELF-CHECK
 
-Before running the full suite, read ALL generated test files and verify 12 quality gates.
+Before running the full suite, read ALL generated test files and verify 13 quality gates.
 This is the primary enforcement mechanism -- passive rules in Phase 4 may be missed during
 generation. Phase 4.7 catches violations BEFORE execution, not after.
 

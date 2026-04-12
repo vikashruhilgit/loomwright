@@ -94,6 +94,7 @@ The AI Agent Manager plugin provides **12 agent roles** for your development wor
 **What it does:**
 - Validates environment readiness (git, CLAUDE.md, worktrees, gh)
 - Refines requirements using product discovery and MVP scoping
+- **Checks feasibility (Phase 2.5 soft gate)** — tech stack, dependencies, architecture, scope, hard blockers. GO/CAUTION/NO-GO verdict. NO-GO stops pipeline (user can override); CAUTION feeds into Risk Assessment
 - Analyzes codebase for file impact estimation (grep/glob/read)
 - Decomposes into 3-7 subtasks with dependency analysis
 - Computes parallelism (LAUNCHABLE vs BLOCKED based on file overlap)
@@ -101,10 +102,12 @@ The AI Agent Manager plugin provides **12 agent roles** for your development wor
 - Saves Supervisor-Ready Brief to `.supervisor/jobs/`
 - Provides interactive refinement (save/refine/edit/discard)
 
-**7-Phase Workflow:**
+**8-Phase Workflow:**
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  1. VALIDATE (env)  →  2. DISCOVER (requirements)              │
+│         ↓                                                       │
+│  2.5. FEASIBILITY (soft gate: GO/CAUTION/NO-GO)                 │
 │         ↓                                                       │
 │  3. ANALYZE (codebase)  →  4. DECOMPOSE (subtasks)             │
 │         ↓                                                       │
@@ -121,6 +124,9 @@ $ /launch-pad goal: "add JWT authentication"
 ## Phase 1: VALIDATE
 - CLAUDE.md: ✓ Found (fresh)
 - Git: clean, branch: main
+
+## Phase 2.5: FEASIBILITY
+- Verdict: GO (5/5 checks passed)
 
 ## Phase 5: PACKAGE
 # Supervisor Job: Add JWT Authentication
@@ -271,7 +277,9 @@ $ /supervisor
 
 **What it does:**
 - Reads domain context from CLAUDE.md
+- **Runs Assumption Check (standard flow)** — grounded feasibility against codebase (domain entities, architecture alignment, prerequisites). If flags exist, asks user confirmation before `bd create` (Proceed/Refine/Abort)
 - Runs multi-mind brainstorm (5 expert lenses) when `--brainstorm` flag is used — generates options, debates, scores, and recommends a winner before writing stories
+- **Runs Reality Check (brainstorm flow)** — for top 2-3 scored ideas, grounded codebase validation with VIABLE/NEEDS_FOUNDATION/BLOCKED verdicts. Caps Feasibility scores (NEEDS_FOUNDATION ≤ 5, BLOCKED ≤ 2), re-ranks before recommendation
 - Runs product discovery to understand the problem
 - Writes user stories (As a... I want... So that...)
 - Defines acceptance criteria (Given/When/Then)

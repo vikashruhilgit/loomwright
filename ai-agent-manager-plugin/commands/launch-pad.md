@@ -32,7 +32,7 @@ The Launch Pad agent prepares raw goals for autonomous Supervisor execution. It 
 
 ## What This Does
 
-The Launch Pad executes a **7-phase readiness workflow**:
+The Launch Pad executes an **8-phase readiness workflow**:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -44,6 +44,10 @@ The Launch Pad executes a **7-phase readiness workflow**:
 │                                                                 │
 │  Phase 2: DISCOVER (Requirement Refinement)                     │
 │     └─> Product discovery, acceptance criteria, MVP scoping     │
+│                                                                 │
+│  Phase 2.5: FEASIBILITY (Soft Gate)                             │
+│     └─> Tech stack, deps, architecture, scope, blockers         │
+│         → GO / CAUTION (risks) / NO-GO (stop + override option) │
 │                                                                 │
 │  Phase 3: ANALYZE (Codebase Impact Estimation)                  │
 │     └─> Grep/glob codebase, file grouping, overlap detection    │
@@ -72,6 +76,7 @@ The Supervisor's 800-token context budget gets consumed by Phases 0-2 (planning)
 3. **Prevents environment failures** mid-run (pre-flight validation)
 4. **Improves parallelism** with file impact analysis (accurate overlap detection)
 5. **Provides clean handoff** via `.supervisor/jobs/` (fresh session, full context)
+6. **Catches infeasible goals early** via Phase 2.5 (before wasting tokens on analysis and execution)
 
 ## Example Output
 
@@ -156,7 +161,7 @@ After the brief passes Plan Review (Phase 5.5), Launch Pad presents options:
 ```
 /launch-pad goal: "..."
     ↓
-Validates environment, analyzes codebase, decomposes subtasks
+Validates environment, checks feasibility, analyzes codebase, decomposes subtasks
     ↓
 Plan Reviewer validates brief (mandatory gate, max 3 retries)
     ↓
@@ -225,7 +230,7 @@ EXECUTE → FINALIZE → PR
 
 ## See Also
 
-- `agents/launch-pad.md` — Full agent prompt (7-phase readiness model)
+- `agents/launch-pad.md` — Full agent prompt (8-phase readiness model)
 - `agents/plan-reviewer.md` — Plan Reviewer agent (validates briefs in Phase 5.5)
 - `skills/supervisor-readiness/SKILL.md` — Pre-flight checklist, brief template, jobs convention
 - `skills/product-discovery/SKILL.md` — Discovery framework
@@ -258,7 +263,7 @@ EXECUTE → FINALIZE → PR
 
 ## Mission
 
-Take any raw user goal and prepare it for autonomous Supervisor execution. Run discovery, codebase analysis, file impact estimation, and parallelism pre-analysis. Save a structured Supervisor-Ready Brief to `.supervisor/jobs/` for clean-context handoff.
+Take any raw user goal and prepare it for autonomous Supervisor execution. Run discovery, feasibility assessment, codebase analysis, file impact estimation, and parallelism pre-analysis. Save a structured Supervisor-Ready Brief to `.supervisor/jobs/` for clean-context handoff.
 
 ### Core Principles
 
@@ -291,6 +296,7 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 - **If environment has blockers:** output fix instructions, don't offer save
 - **Max 2 rounds** of AskUserQuestion for requirement clarification
 - **Never invent files/APIs/paths** — ask if unsure
+- **Feasibility gate (Phase 2.5)** — soft gate. NO-GO stops pipeline (user can override); CAUTION findings feed into Risk Assessment
 
 ---
 
@@ -306,11 +312,11 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 - Provide interactive refinement (save/refine/edit/discard)
 
 **Standard Output Format:** See `skills/agent-output/SKILL.md`
-- Phase 1-6 + Phase 5.5 structured output as documented in agent prompt
+- Phase 1-6 + Phase 2.5 + Phase 5.5 structured output as documented in agent prompt
 
 ---
 
-## 7-Phase Workflow
+## 8-Phase Workflow
 
 ### Phase 1: VALIDATE (Environment Readiness)
 
@@ -330,6 +336,23 @@ Skip if `--skip-validation` flag is set.
 3. Write criteria in Given/When/Then format (`skills/user-story-writing/SKILL.md`)
 4. Scope to MVP using `skills/mvp-scoping/SKILL.md`
 5. If `--discovery` flag: force full discovery even if goal seems clear
+
+### Phase 2.5: FEASIBILITY (Soft Gate)
+
+Run 5 grounded checks (CLAUDE.md + grep/glob/read), output GO/CAUTION/NO-GO:
+
+1. **Tech Stack Compatibility** — goal matches project's stack?
+2. **Dependency Availability** — required libs/services present or addable?
+3. **Architecture Fit** — goal aligns with CLAUDE.md architecture?
+4. **Scope vs Supervisor** — decomposable into 3-7 subtasks of 30-60 min?
+5. **Hard Blockers** — migration framework, credentials, missing modules?
+
+**Flow:**
+- GO → proceed silently
+- CAUTION → proceed, findings injected into Risk Assessment (Phase 5) with source "Feasibility (Phase 2.5)"
+- NO-GO → stop, AskUserQuestion: Override / Revise (max 1 loop back to Phase 2) / Abort
+
+**Fallback:** Sparse CLAUDE.md → checks 1-3 default to CAUTION with "insufficient project context".
 
 ### Phase 3: ANALYZE (Codebase Impact Estimation)
 
@@ -352,14 +375,14 @@ Skip if `--skip-validation` flag is set.
 ### Phase 5: PACKAGE (Assemble Brief)
 
 1. Assemble Supervisor-Ready Brief from `skills/supervisor-readiness/SKILL.md` template
-2. Fill all 9 sections from Phases 1-4
-3. Include configuration and risk assessment
+2. Fill all 9 sections from Phases 1-4 (plus optional Feasibility section from Phase 2.5)
+3. Include configuration and risk assessment. For each Phase 2.5 CAUTION finding, add a Risk Assessment row with source "Feasibility (Phase 2.5)". Overridden NO-GO findings become HIGH risks.
 4. Present to user
 
 ### Phase 5.5: PLAN REVIEW (Mandatory Gate)
 
 1. Spawn Plan Reviewer subagent with brief + CLAUDE.md context
-2. Plan Reviewer checks 10 criteria (file paths, patterns, dependencies, parallelism, etc.)
+2. Plan Reviewer checks 11 criteria (file paths, patterns, dependencies, parallelism, optional Feasibility section, etc.) — Criterion 11 is conditional (only runs if Feasibility section present)
 3. Decision handling:
    - PASS → proceed to Phase 6 (save enabled)
    - FAIL (attempt < 3) → fix issues, re-assemble, re-spawn reviewer
@@ -381,12 +404,13 @@ Skip if `--skip-validation` flag is set.
 Before offering save:
 - [ ] Environment validated (or --skip-validation acknowledged)
 - [ ] Goal refined with clear acceptance criteria
+- [ ] Feasibility check passed (GO, CAUTION acknowledged, or NO-GO user-overridden)
 - [ ] File impact map includes only verified paths
 - [ ] Confidence levels assigned to all estimates
 - [ ] Subtasks are 3-7 items, 30-60 min each
 - [ ] Parallelism analysis is conservative
-- [ ] Brief follows complete template (9 sections)
-- [ ] Risk assessment included
+- [ ] Brief follows complete template (9 required sections, plus optional Feasibility)
+- [ ] Risk assessment included (with CAUTION findings from Phase 2.5 if any)
 - [ ] Plan Review gate cleared — PASS, or NEEDS_HUMAN with explicit user override
 - [ ] Exact Supervisor command provided
 

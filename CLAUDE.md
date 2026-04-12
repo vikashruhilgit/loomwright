@@ -59,9 +59,10 @@ Each agent is a Markdown prompt file (`agents/[name].md`):
 - **Purpose:** Prepare raw goals for autonomous Supervisor execution
 - **When to use:** Before `/supervisor` for complex tasks, when starting new work, when you want to review the plan
 - **Command:** `/launch-pad goal: "..."`, `/launch-pad goal: "..." --discovery`
-- **Workflow:** VALIDATE → DISCOVER → ANALYZE → DECOMPOSE → PACKAGE → PLAN REVIEW (mandatory gate) → REFINE & SAVE
+- **Workflow:** VALIDATE → DISCOVER → **FEASIBILITY (soft gate)** → ANALYZE → DECOMPOSE → PACKAGE → PLAN REVIEW (mandatory gate) → REFINE & SAVE
+- **Feasibility (Phase 2.5):** 5 grounded checks (tech stack, dependencies, architecture, scope, hard blockers) → GO/CAUTION/NO-GO. CAUTION feeds Risk Assessment; NO-GO stops pipeline (user can override, revise max 1, or abort)
 - **Plan Review:** Spawns Plan Reviewer to validate brief quality (max 3 retries on FAIL)
-- **Key features:** File impact estimation, parallelism pre-analysis, jobs folder, interactive refinement
+- **Key features:** Feasibility assessment, file impact estimation, parallelism pre-analysis, jobs folder, interactive refinement
 - **Outputs:** Supervisor-Ready Brief saved to `.supervisor/jobs/pending/`
 
 #### **Supervisor** (`/supervisor`) — v4 Parallel Orchestrator
@@ -98,11 +99,11 @@ Each agent is a Markdown prompt file (`agents/[name].md`):
 - **Gate rule:** PASS enables save; NEEDS_HUMAN enables save only with explicit user override; FAIL never enables save
 
 #### **Product Owner** (`/product-owner`)
-- **Purpose:** Translate business problems into user stories with acceptance criteria. Supports `--brainstorm` mode for multi-mind ideation.
+- **Purpose:** Translate business problems into user stories with acceptance criteria. Supports `--brainstorm` mode for multi-mind ideation. Includes grounded feasibility: **Assumption Check** (standard flow) and **Reality Check** (brainstorm flow).
 - **When to use:** New feature, vague requirements, exploring multiple directions (`--brainstorm`)
 - **Command:** `/product-owner feature: "your feature"`, `/product-owner problem: "issue to solve"`, `/product-owner problem: "..." --brainstorm`
-- **Workflow:** (Optional) 5-lens brainstorm → reads domain context → runs discovery → writes user stories
-- **Outputs:** Options Analysis (when --brainstorm) + Beads stories with acceptance criteria (Given/When/Then)
+- **Workflow:** reads domain context → **Assumption Check (grounded, with user gate before `bd create` if flags)** → (optional) 5-lens brainstorm with **Reality Check (Phase 3.5, caps Feasibility for NEEDS_FOUNDATION/BLOCKED ideas)** → runs discovery → writes user stories
+- **Outputs:** Options Analysis (when --brainstorm, includes Reality Check) + Beads stories with acceptance criteria (Given/When/Then)
 
 #### **Orchestrator** (`/orchestrator`)
 - **Purpose:** Break goals into Beads tasks with review gates
@@ -137,8 +138,8 @@ Each agent is a Markdown prompt file (`agents/[name].md`):
 - **Purpose:** Discover app, generate senior-grade Playwright tests, find missing functionality, orchestrate debate loop
 - **When to use:** Automated QA — test generation, execution, gap detection, and coverage tracking
 - **Command:** `/qa-executor [--url http://...] [--rounds 1|2|3] [--skip-strategy]`
-- **Workflow:** Detect URL → infrastructure discovery → 4-phase discovery → pre-existing test triage → strategy → generate → gap analysis → dry-run → **Strategist gate audit (12 gates, independent)** → execute → coverage + bugs + audit → emit
-- **Features:** Split architecture (487-line core + qa-test-patterns skill + qa-gates skill), independent Strategist gate audit (12 gates verified by separate agent), signal→pattern test generation, infrastructure discovery (Mailpit/MailHog), pre-existing test triage, auth linear chains, boundary + idempotency enforcement, blocker-first rule, email flow testing, failure classification (REAL_BUG vs DISCOVERY_GAP vs ENVIRONMENT_ISSUE), interaction-level coverage tracking
+- **Workflow:** Detect URL → infrastructure discovery → 4-phase discovery → pre-existing test triage → strategy → generate → gap analysis → dry-run → **Strategist gate audit (13 gates, independent)** → execute → coverage + bugs + audit → emit
+- **Features:** Split architecture (487-line core + qa-test-patterns skill + qa-gates skill), independent Strategist gate audit (13 gates verified by separate agent), signal→pattern test generation, infrastructure discovery (Mailpit/MailHog), pre-existing test triage, auth linear chains, boundary + idempotency enforcement, blocker-first rule, email flow testing, failure classification (REAL_BUG vs DISCOVERY_GAP vs ENVIRONMENT_ISSUE), interaction-level coverage tracking
 - **Outputs:** Discovery Map, discovery/infrastructure.json, Playwright tests, .qa-summary.md, QA_RESULT block, MISSING_FUNCTIONALITY_REPORT block
 
 ### Agent Design Principles
@@ -260,7 +261,7 @@ ai-agent-manager/
 │   │   └── agent-help.md             # /agent-help command
 │   ├── hooks/                        # Plugin quality gate hooks
 │   │   └── hooks.json                # Cross-cutting hooks (Code Reviewer, QA Executor, TaskCompleted)
-│   ├── skills/                       # Skill files for guidance (43 skills)
+│   ├── skills/                       # Skill files for guidance (47 skills)
 │   │   ├── supervisor-readiness/     # Pre-flight checklist & Supervisor-Ready Brief template
 │   │   ├── agent-teams/              # Agent Teams patterns (experimental)
 │   │   ├── async-orchestration/      # Parallel dispatch & git worktree patterns
@@ -475,7 +476,7 @@ Before an agent completes work:
 
 - **Plugin Name:** `ai-agent-manager-plugin`
 - **Version:** 10.3.0
-- **Description:** AI agents v10.3 — QA topology auto-detection: QA Executor detects app_topology (ui_present, api_style, client_platform), auth method, and WebSocket presence. Supports REST, GraphQL (5-step fallback), API-only backends, mobile-backend apps, and SSO/OAuth (--auth-state flag). New Gate 10 for GraphQL coverage with budget-aware tiers. 13-gate Strategist audit. Plus v10.2 Launch Pad mandatory Plan Review gate. 12 agent roles, 47 reusable skills, 10 quality gate hooks, persistent agent memory, bundled MySQL MCP server
+- **Description:** AI agents v10.3 — Feasibility gates (Launch Pad Phase 2.5 soft gate with 5 grounded checks and GO/CAUTION/NO-GO verdicts; Product Owner Assumption Check in standard flow with user confirmation before `bd create`; Product Owner Reality Check in brainstorm flow with codebase-grounded VIABLE/NEEDS_FOUNDATION/BLOCKED verdicts and Feasibility score caps). Plus QA topology auto-detection (QA Executor detects app_topology, auth method, WebSocket presence; supports REST, GraphQL, API-only backends, mobile-backend apps, SSO/OAuth; Gate 10 for GraphQL coverage; 13-gate Strategist audit). Plus v10.2 Launch Pad mandatory Plan Review gate (Phase 5.5). 12 agent roles, 47 reusable skills, 10 quality gate hooks, persistent agent memory, bundled MySQL MCP server
 - **Agents:** 12 roles (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Plan Reviewer, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer, QA Strategist, QA Executor)
 - **Skills:** 47 reusable skills (versioned with SKILLS_INDEX.md)
 - **Hooks:** 10 quality gate hooks — centralized in hooks.json: SubagentStop (worker, execute-manager, code-reviewer, supervisor, qa-executor, plan-reviewer), Stop (code-reviewer), TaskCompleted, WorktreeCreate, StopFailure
@@ -647,7 +648,7 @@ Claude Code Agent Teams is an experimental feature providing native multi-agent 
 - **Crawl limits:** Max 30 pages, depth 3, same-origin only
 - **Split architecture:** 487-line core agent + qa-test-patterns skill + qa-gates skill (was 1,911 lines)
 - **13 sequential phases** (1-13, no sub-numbering)
-- **Independent gate audit:** 12 quality gates verified by QA Strategist (separate agent, separate context) — not self-grading
+- **Independent gate audit:** 13 quality gates verified by QA Strategist (separate agent, separate context) — not self-grading
 - **Budget: 80/90** — matches protocol reality (was 60)
 - **Infrastructure-aware:** Discovers email capture (Mailpit/MailHog) and generates email flow tests when available
 - **Simple linear chains (L1-legal):** Auth lifecycle tests (signup→login→access→logout→deny). NOT L2 journey graphs

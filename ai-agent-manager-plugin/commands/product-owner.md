@@ -42,11 +42,12 @@ description: Translate business problems into Beads-ready user stories with acce
 
 1. **Reads domain context** from project's CLAUDE.md (roles, workflows, terminology)
 2. **Checks existing stories** in Beads for conflicts or overlap
-3. **(If --brainstorm) Runs multi-mind ideation** — 5 expert lenses generate options independently, debate each other, score ideas on Impact/Feasibility/Revenue/Uniqueness (1-10), and recommend a winner. You choose whether to continue to stories or stop after ideation.
-4. **Runs product discovery** to understand the problem before solutions
-5. **Writes user stories** with testable acceptance criteria
-6. **Prioritizes scope** into MVP / Phase 2 / Nice-to-have
-7. **Provides handoff** to `/orchestrator` for task breakdown
+3. **Runs Assumption Check (standard flow)** — grounded feasibility against the codebase (domain entities, architecture alignment, prerequisites). If prerequisites or architecture conflicts are found, asks for confirmation before creating any Beads stories.
+4. **(If --brainstorm) Runs multi-mind ideation** — 5 expert lenses generate options independently, debate each other, score ideas on Impact/Feasibility/Revenue/Uniqueness (1-10). Then runs **Reality Check (Phase 3.5)** — grounded validation of top 2-3 ideas against the codebase, capping Feasibility scores for ideas that need foundation work (≤5) or are blocked (≤2). Recommends a winner based on post-check ranking.
+5. **Runs product discovery** to understand the problem before solutions
+6. **Writes user stories** with testable acceptance criteria
+7. **Prioritizes scope** into MVP / Phase 2 / Nice-to-have
+8. **Provides handoff** to `/orchestrator` for task breakdown
 
 ## Example Output
 
@@ -304,7 +305,47 @@ Translate business problems and feature requests into well-defined user stories 
    - What's the timeline pressure?
    - Are there external constraints?
 
+4. **Assumption Check (Grounded Feasibility — Standard Flow)**
+
+   Standard PO flow goes straight to Orchestrator (no Launch Pad downstream), so PO must ground feasibility assumptions in the actual codebase before writing stories. Run 3 quick checks using Read/Glob/Grep:
+
+   a. **Domain Assumption Validation** — For each business rule/entity implied by the request, grep the codebase to verify it exists (or note its absence)
+   b. **Architecture Alignment** — Compare the feature request against CLAUDE.md architecture patterns. Flag mismatches
+   c. **Prerequisite Detection** — Identify foundations (auth, data models, external services, infrastructure) that must exist BEFORE this feature works
+
+   **Output (appended to Context Read section):**
+   ```markdown
+   ### Assumption Check
+   - [x] Domain entities verified: {list}
+   - [!] Prerequisites flagged: {list — must exist before feature}
+   - [!] Architecture conflicts: {list or "None"}
+   ```
+
+   **Soft gate with user confirmation (before `bd create`):**
+
+   If Assumption Check finds **any prerequisite flags or architecture conflicts**, STOP and use `AskUserQuestion`:
+
+   - "Proceed anyway" — Create stories with concerns as explicit Risks/Assumptions/Dependencies
+   - "Refine requirements" — Loop back to Discovery (max 1 iteration)
+   - "Abort" — Exit without creating Beads stories
+
+   **If no flags:** Proceed silently to story writing.
+
+   **Rule:** NEVER run `bd create` when flags exist without explicit user confirmation.
+
 ### Responsibilities
+
+#### 0. Multi-Mind Brainstorm (when --brainstorm)
+
+When the `--brainstorm` flag is present, run the 5-lens ideation framework before discovery. Follow `skills/brainstorming/SKILL.md`:
+
+1. **Independent Lens Analysis** — 5 lenses each generate 3-5 options, no cross-talk
+2. **Cross-Challenge** — CONCEDE/DEFEND/PIVOT debate
+3. **Scoring** — Impact/Feasibility/Revenue/Uniqueness (1-10 each)
+3.5. **Reality Check (grounded feasibility)** — For top 2-3 ideas, use Read/Glob/Grep to check System Architecture / Prerequisites / Contract Compatibility / Interaction Model. Verdict per idea: VIABLE / NEEDS_FOUNDATION / BLOCKED. Apply score caps: NEEDS_FOUNDATION → Feasibility ≤ 5, BLOCKED → Feasibility ≤ 2. Recompute composites, re-rank.
+4. **Recommendation** — Present top 3 (post-Reality-Check) with trade-offs and winner rationale. Include Reality Check table.
+
+If `--brainstorm deep` is used, also run WebSearch for market context during Phase 1 and add a second debate round.
 
 #### 1. Product Discovery & Strategy
 
@@ -352,6 +393,7 @@ Translate business problems and feature requests into well-defined user stories 
 - Reference skills by path — don't duplicate skill content
 - Create Beads stories with `bd create --type story`
 - Provide explicit handoff to `/orchestrator`
+- **NEVER run `bd create`** if Assumption Check flagged prerequisites or architecture conflicts without explicit user confirmation via `AskUserQuestion` (Proceed / Refine / Abort)
 
 **DO NOT:**
 - Jump straight to technical implementation
@@ -367,6 +409,8 @@ Before outputting stories, verify:
 - [ ] Problem statement is clear and user-focused
 - [ ] Discovery questions answered (or explicitly skipped with rationale)
 - [ ] Domain context loaded from CLAUDE.md
+- [ ] Assumption Check performed — entities verified, prerequisites/conflicts flagged
+- [ ] If Assumption Check flagged concerns, user confirmation obtained via AskUserQuestion BEFORE any `bd create`
 - [ ] User stories follow "As a [role], I want [X], so that [Y]" format
 - [ ] Acceptance criteria are testable (Given/When/Then)
 - [ ] Edge cases and error scenarios covered
@@ -376,6 +420,8 @@ Before outputting stories, verify:
 - [ ] Risks flagged
 - [ ] Existing stories checked for conflicts/overlap
 - [ ] Handoff to Orchestrator is clear
+- [ ] (If --brainstorm) Reality Check performed on top 2-3 ideas with VIABLE/NEEDS_FOUNDATION/BLOCKED verdicts
+- [ ] (If --brainstorm) Feasibility score caps applied (NEEDS_FOUNDATION ≤ 5, BLOCKED ≤ 2); recommendation uses post-check ranking
 
 ### Input Format
 
@@ -410,6 +456,36 @@ Before outputting stories, verify:
 - Potential conflicts: None identified
 
 **Request:** "[User's feature or problem description]"
+
+### Assumption Check
+- [x] Domain entities verified: [list]
+- [!] Prerequisites flagged: [list or "None"]
+- [!] Architecture conflicts: [list or "None"]
+
+**If any flags:** User confirmation obtained via AskUserQuestion before proceeding to story writing.
+
+---
+
+## Options Analysis (only when --brainstorm)
+
+[Phase 1 independent lens outputs, Phase 2 debate, Phase 3 scoring]
+
+### Reality Check (grounded against codebase)
+
+| Idea | Verdict | Blockers/Prerequisites | Feasibility Cap Applied |
+|------|---------|------------------------|-------------------------|
+| [A]  | VIABLE | — | — |
+| [B]  | NEEDS_FOUNDATION | [list] | capped at 5 |
+| [C]  | BLOCKED | [list] | capped at 2 |
+
+**Re-ranked composites after caps:** [new ranking]
+
+### Recommendation
+**Winner:** [Idea] — [Why it wins, post-Reality-Check]
+**Trade-off:** [What you sacrifice]
+**Biggest risk:** [From Critic]
+
+> **Continue to user stories for this option, or stop here?**
 
 ---
 

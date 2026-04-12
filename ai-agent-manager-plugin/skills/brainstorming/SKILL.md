@@ -66,7 +66,7 @@ Framework for structured ideation using 5 expert perspectives that independently
 - **Techniques:** Pre-mortem, edge case analysis, competitive response, "what kills this?"
 - **Constraint:** Must specifically challenge the top-rated idea. No softball criticism
 
-## 4-Phase Framework
+## 5-Phase Framework (Phase 3.5 Reality Check added)
 
 ### Phase 1: Independent Lens Analysis
 
@@ -153,6 +153,41 @@ Rate every surviving idea on 4 axes (1-10):
 | 4-6 | Nice to have | 1-3 months | Revenue possible but unclear | Some differentiation |
 | 1-3 | Marginal value | 6+ months or major unknowns | No clear revenue path | Commodity / me-too |
 
+### Phase 3.5: Reality Check (Grounded Feasibility)
+
+**Why:** The Engineer lens scores Feasibility abstractly. Without codebase grounding, infeasible ideas can score 8/10 and get locked into stories. A prior real-world example: a Dispatcher Agent idea scored highly but had 6 architectural blockers already in the codebase (interactive agent flows, non-uniform result contracts, state ownership conflicts) that the abstract score missed.
+
+**Tool contract:** This skill stays `allowed-tools: [Read]`. The **invoking agent** (e.g., Product Owner, which has `Read, Glob, Grep, Bash`) performs the codebase grounding described here.
+
+**Actions (for top 2-3 scored ideas only):**
+
+1. **System Architecture Check** — Read CLAUDE.md + key agent/module files. Does the idea fit the current design?
+2. **Prerequisite Detection** — Identify foundation work required BEFORE the idea works
+3. **Contract Compatibility** — If the idea touches existing contracts (result schemas, state ownership, agent interfaces), check them
+4. **Interaction Model** — Does the idea require behaviors the current system doesn't support (e.g., non-interactive mode, background execution, unattended chaining)?
+
+**Verdict per idea:**
+- **VIABLE** — buildable with current system as-is
+- **NEEDS_FOUNDATION** — requires prerequisite work first (specify prerequisites)
+- **BLOCKED** — architectural mismatch; would require fundamental redesign before this idea is feasible
+
+**Score caps (applied to Feasibility axis; composites recomputed):**
+- VIABLE → no change
+- NEEDS_FOUNDATION → cap Feasibility at 5; append prerequisites to trade-offs
+- BLOCKED → cap Feasibility at 2; flag as "requires rearchitecture"
+
+**Output table:**
+
+| Idea | Verdict | Blockers/Prerequisites | Feasibility Cap Applied |
+|------|---------|------------------------|-------------------------|
+| [A]  | VIABLE | — | — |
+| [B]  | NEEDS_FOUNDATION | [list] | capped at 5 |
+| [C]  | BLOCKED | [list] | capped at 2 |
+
+After caps, **re-rank** top 3 by composite.
+
+**Rule:** The Recommendation (Phase 4) uses the post-Reality-Check ranking, not the raw Phase 3 scores.
+
 ### Phase 4: Recommendation
 
 For the top 3 ideas by composite score:
@@ -217,6 +252,9 @@ Before emitting recommendation:
 - [ ] Recommendation has rationale beyond "highest score"
 - [ ] MVP scope is actually minimal (3-5 features, not 15)
 - [ ] Next steps are concrete (not "do more research")
+- [ ] Reality Check (Phase 3.5) performed on top 2-3 ideas with codebase-grounded verdicts (VIABLE/NEEDS_FOUNDATION/BLOCKED)
+- [ ] Feasibility score caps correctly applied (NEEDS_FOUNDATION ≤ 5, BLOCKED ≤ 2)
+- [ ] Recommendation uses post-Reality-Check ranking, not raw Phase 3 scores
 
 ## Related Skills
 

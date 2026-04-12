@@ -7,7 +7,7 @@
     {
       "name": "ai-agent-manager-plugin",
       "source": "./ai-agent-manager-plugin",
-      "description": "12 agent roles. User-facing (8): Launch Pad (with mandatory Plan Review gate), Supervisor v4, Orchestrator, Code Reviewer (LSP, read-only), Red Team Reviewer, Product Owner (with --brainstorm ideation), QA Strategist, QA Executor. Internal (4): Execute Manager, Context-Keeper, Worker, Plan Reviewer. v10.3 adds QA topology auto-detection (REST/GraphQL/API-only/mobile/SSO), Gate 10 for GraphQL coverage, 13-gate Strategist audit. 47 skills, 10 hooks, persistent memory, bundled MySQL MCP.",
+      "description": "12 agent roles. User-facing (8): Launch Pad (with Phase 2.5 feasibility gate + mandatory Plan Review gate), Supervisor v4, Orchestrator, Code Reviewer (LSP, read-only), Red Team Reviewer, Product Owner (with --brainstorm ideation, Assumption Check, Reality Check), QA Strategist, QA Executor. Internal (4): Execute Manager, Context-Keeper, Worker, Plan Reviewer. v10.3 adds feasibility gates (Launch Pad Phase 2.5 GO/CAUTION/NO-GO; PO Assumption Check with user gate; PO Reality Check with Feasibility score caps) plus QA topology auto-detection (REST/GraphQL/API-only/mobile/SSO), Gate 10 for GraphQL coverage, 13-gate Strategist audit. 47 skills, 10 hooks, persistent memory, bundled MySQL MCP.",
       "version": "10.3.0",
       "author": {
         "name": "vikash ruhil"
@@ -41,7 +41,11 @@
         "skills",
         "persistent-memory",
         "hooks",
-        "mysql"
+        "mysql",
+        "feasibility",
+        "feasibility-gate",
+        "reality-check",
+        "assumption-check"
       ]
     }
   ]

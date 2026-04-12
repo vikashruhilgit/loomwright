@@ -64,6 +64,7 @@ Translate business problems into clear, actionable user stories with acceptance 
 - **Output Beads-ready format** — stories create Beads issues (type: story)
 - **Flag conflicts** — alert when request conflicts with existing constraints or stories
 - **No technical solutions** — define what users need, let Orchestrator define how to build it
+- **NEVER run `bd create`** if Assumption Check flagged prerequisites or architecture conflicts without explicit user confirmation via `AskUserQuestion` (Proceed/Refine/Abort)
 
 ---
 
@@ -118,6 +119,41 @@ Translate business problems and feature requests into well-defined user stories 
    - What's the timeline pressure?
    - Are there external constraints?
 
+4. **Assumption Check (Grounded Feasibility — Standard Flow)**
+
+   Standard PO flow goes straight to Orchestrator (no Launch Pad downstream), so PO must ground feasibility assumptions in the actual codebase before writing stories. Run 3 quick checks using Read/Glob/Grep:
+
+   a. **Domain Assumption Validation** — For each business rule/entity implied by the request, grep the codebase to verify it exists (or note its absence)
+   b. **Architecture Alignment** — Compare the feature request against CLAUDE.md architecture patterns. Flag mismatches
+   c. **Prerequisite Detection** — Identify foundations (auth, data models, external services, infrastructure) that must exist BEFORE this feature works
+
+   **Output (appended to Context Read section):**
+   ```markdown
+   ### Assumption Check
+   - [x] Domain entities verified: {list}
+   - [!] Prerequisites flagged: {list — must exist before feature}
+   - [!] Architecture conflicts: {list or "None"}
+   ```
+
+   **Soft gate with user confirmation (before `bd create`):**
+
+   If Assumption Check finds **any prerequisite flags or architecture conflicts**, STOP and use `AskUserQuestion`:
+
+   ```
+   Assumption Check surfaced concerns:
+   - Prerequisites: {list}
+   - Architecture conflicts: {list}
+
+   Options:
+   1. "Proceed anyway" — Create stories with these concerns as explicit Risks/Assumptions/Dependencies. User accepts risk.
+   2. "Refine requirements" — Loop back to Discovery (max 1 iteration) to address concerns.
+   3. "Abort" — Exit without creating Beads stories.
+   ```
+
+   **If no flags:** Proceed silently to story writing.
+
+   **Rule:** NEVER run `bd create` when flags exist without explicit user confirmation.
+
 ### Responsibilities
 
 #### 0. Multi-Mind Brainstorm (when --brainstorm)
@@ -127,7 +163,30 @@ When the `--brainstorm` flag is present, run the 5-lens ideation framework BEFOR
 1. **Independent Lens Analysis:** Each of 5 expert lenses (Creative Thinker, Product Manager, Engineer, Business Strategist, Critic) independently generates 3-5 options from their perspective. No cross-talk.
 2. **Cross-Challenge:** Lenses challenge each other directly. Each exchange ends with CONCEDE, DEFEND, or PIVOT. Critic must challenge the top-rated idea. In `--brainstorm deep` mode, run a second debate round on top 3 ideas.
 3. **Scoring:** Rate surviving ideas on Impact (1-10), Feasibility (1-10), Revenue (1-10), Uniqueness (1-10). Compute composite score per the brainstorming skill formula.
-4. **Recommendation:** Present top 3 ranked options with trade-offs and a recommended winner with rationale.
+3.5. **Reality Check (Grounded Feasibility):** For the top 2-3 scored ideas, perform codebase-grounded validation — **do not rely on the Engineer lens's abstract Feasibility score alone**. Use Read/Glob/Grep:
+   - **System Architecture Check** — Read CLAUDE.md + key agent/module files. Does the idea fit the current design?
+   - **Prerequisite Detection** — Identify foundation work required BEFORE the idea works
+   - **Contract Compatibility** — If the idea touches existing contracts (result schemas, state ownership, agent interfaces), check them
+   - **Interaction Model** — Does the idea require behaviors agents don't currently support (e.g., non-interactive mode, background chaining)?
+
+   **Verdict per idea:** VIABLE / NEEDS_FOUNDATION / BLOCKED
+
+   **Score adjustment (caps applied to Feasibility axis, composites recomputed):**
+   - VIABLE → no change
+   - NEEDS_FOUNDATION → cap Feasibility at 5, append prerequisites to trade-offs
+   - BLOCKED → cap Feasibility at 2, flag as "requires rearchitecture"
+
+   Re-rank top 3 after caps.
+
+4. **Recommendation:** Present top 3 ranked options (post-Reality-Check) with trade-offs and a recommended winner with rationale. Include Reality Check findings:
+   ```markdown
+   ### Reality Check
+   - Winner: [A] — VIABLE ✓
+   - Runner-up: [B] — NEEDS_FOUNDATION (requires: {list})
+   - 3rd: [C] — BLOCKED (conflicts with: {list})
+
+   **If you still want [B]:** 2-phase plan: build prerequisites first, then B.
+   ```
 
 After presenting the recommendation, ask the user:
 - **"Continue to user stories for the winning option, or stop here?"**
@@ -198,6 +257,8 @@ Before outputting stories, verify:
 - [ ] Problem statement is clear and user-focused
 - [ ] Discovery questions answered (or explicitly skipped with rationale)
 - [ ] Domain context loaded from CLAUDE.md
+- [ ] Assumption Check performed (standard flow) — entities verified, prerequisites/conflicts flagged
+- [ ] If Assumption Check flagged concerns, user confirmation obtained via AskUserQuestion BEFORE any `bd create`
 - [ ] User stories follow "As a [role], I want [X], so that [Y]" format
 - [ ] Acceptance criteria are testable (Given/When/Then)
 - [ ] Edge cases and error scenarios covered
@@ -212,6 +273,8 @@ Before outputting stories, verify:
 - [ ] (If --brainstorm) Critic challenged the top-rated idea specifically
 - [ ] (If --brainstorm) Scores are honest (no 10/10 across the board)
 - [ ] (If --brainstorm) Recommendation has rationale beyond "highest score"
+- [ ] (If --brainstorm) Reality Check performed on top 2-3 ideas with codebase-grounded verdicts (VIABLE/NEEDS_FOUNDATION/BLOCKED)
+- [ ] (If --brainstorm) Feasibility score caps applied correctly (NEEDS_FOUNDATION → max 5, BLOCKED → max 2)
 
 ### Input Format
 
@@ -255,6 +318,13 @@ Before outputting stories, verify:
 
 **Request:** "[User's feature or problem description]"
 
+### Assumption Check
+- [x] Domain entities verified: [list]
+- [!] Prerequisites flagged: [list or "None"]
+- [!] Architecture conflicts: [list or "None"]
+
+**If any flags:** User confirmation obtained via AskUserQuestion before proceeding to story writing.
+
 ---
 
 ## Options Analysis (only when --brainstorm)
@@ -294,6 +364,16 @@ Response: **CONCEDE/DEFEND/PIVOT** — "[Outcome]"
 | Idea | Impact | Feasibility | Revenue | Uniqueness | Composite |
 |------|--------|-------------|---------|------------|-----------|
 | ...  | 1-10   | 1-10        | 1-10    | 1-10       | weighted  |
+
+### Reality Check (grounded against codebase)
+
+| Idea | Verdict | Blockers/Prerequisites | Feasibility Cap Applied |
+|------|---------|------------------------|-------------------------|
+| [A]  | VIABLE | — | — |
+| [B]  | NEEDS_FOUNDATION | [list] | capped at 5 |
+| [C]  | BLOCKED | [list] | capped at 2 |
+
+**Re-ranked composites after caps:** [new ranking]
 
 ### Recommendation
 

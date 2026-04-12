@@ -1,6 +1,6 @@
 ---
 name: ai-agent-manager-plugin:launch-pad
-description: Prepare raw goals for autonomous execution. Runs discovery, codebase analysis, file impact estimation, environment validation, mandatory Plan Review gate, and saves a Supervisor-ready brief to the jobs folder.
+description: Prepare raw goals for autonomous execution. Runs discovery, feasibility assessment, codebase analysis, file impact estimation, environment validation, mandatory Plan Review gate, and saves a Supervisor-ready brief to the jobs folder.
 tools: Read, Write, Glob, Grep, Bash, Task
 model: inherit
 maxTurns: 55
@@ -22,7 +22,7 @@ skills:
 
 ## Mission
 
-Take any raw user goal and prepare it for autonomous Supervisor execution. Run discovery, codebase analysis, file impact estimation, and parallelism pre-analysis. Save a structured Supervisor-Ready Brief to `.supervisor/jobs/pending/` for clean-context handoff.
+Take any raw user goal and prepare it for autonomous Supervisor execution. Run discovery, feasibility assessment, codebase analysis, file impact estimation, and parallelism pre-analysis. Save a structured Supervisor-Ready Brief to `.supervisor/jobs/pending/` for clean-context handoff.
 
 ### Core Principles
 
@@ -56,6 +56,7 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 - **Max 2 rounds** of AskUserQuestion for requirement clarification
 - **Never invent files/APIs/paths** — ask if unsure
 - **Mandatory plan review** — Phase 5.5 is non-skippable. PASS enables save; NEEDS_HUMAN enables save only with explicit user override; FAIL never enables save
+- **Feasibility gate (Phase 2.5)** — soft gate. NO-GO stops pipeline (user can override); CAUTION findings feed into Risk Assessment
 
 ---
 
@@ -64,8 +65,8 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                    LAUNCH PAD (Readiness Agent)                    │
-│  Goal → Discovery → Analysis → Decomposition → Brief →           │
-│  Plan Review (mandatory gate) → Save                              │
+│  Goal → Discovery → Feasibility → Analysis → Decomposition →     │
+│  Brief → Plan Review (mandatory gate) → Save                      │
 └──────────┬──────────────────────────────────────────┬────────────┘
            │                          │               │
     ┌──────▼──────┐           ┌───────▼────────┐ ┌────▼──────────────────────┐
@@ -78,7 +79,7 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 
 ---
 
-## 7-Phase Workflow
+## 8-Phase Workflow
 
 ### Phase 1: VALIDATE (Environment Readiness)
 
@@ -154,6 +155,70 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 
 **Scope:** MVP | Full
 **Discovery:** Skipped (clear goal) | Applied (vague goal) | Forced (--discovery)
+```
+
+---
+
+### Phase 2.5: FEASIBILITY (Soft Gate)
+
+**Purpose:** Assess whether the goal is achievable in the current codebase and environment before investing tokens on ANALYZE/DECOMPOSE/PACKAGE. Catches infeasible goals early — prevents wasted autonomous execution cycles, orphaned worktrees, and partial changes.
+
+**Actions:** Run 5 checks using CLAUDE.md + codebase grounding (grep/glob/read):
+
+1. **Tech Stack Compatibility** — Parse CLAUDE.md tech stack. Compare against goal requirements. Grep package manifests (package.json, requirements.txt, go.mod, Cargo.toml) for relevant dependencies.
+   - **NO-GO:** Goal requires fundamentally different stack (e.g., "rewrite in Rust" for Node project)
+   - **CAUTION:** Goal needs adding a major new dependency not yet present
+
+2. **Dependency Availability** — Check if external libraries/services implied by the goal exist or can be added.
+   - **NO-GO:** Required dependency is deprecated/nonexistent
+   - **CAUTION:** New dependencies needed (achievable but adds scope)
+
+3. **Architecture Fit** — From CLAUDE.md, identify architecture pattern. Check goal alignment.
+   - **NO-GO:** Goal contradicts architecture fundamentally (e.g., "add microservice" to tightly-coupled monolith with no service discovery)
+   - **CAUTION:** Goal stretches current architecture
+
+4. **Scope vs Supervisor Capability** — Can the goal decompose into 3-7 subtasks of 30-60 min each?
+   - **NO-GO:** Clearly too large (10+ subtasks, multi-repo, infrastructure provisioning required)
+   - **CAUTION:** Borderline scope
+
+5. **Hard Blockers** — Check for showstoppers: missing migration framework for DB changes, missing credentials/config, referenced modules that don't exist.
+   - **NO-GO:** Hard blocker found
+   - **CAUTION:** Potential blocker user might resolve
+
+**Verdict logic:**
+- Any check NO-GO → overall **NO-GO**
+- Any check CAUTION (no NO-GO) → overall **CAUTION**
+- All GO → overall **GO**
+
+**Flow control:**
+- **GO:** Proceed to Phase 3 silently
+- **CAUTION:** Proceed to Phase 3. Findings auto-injected into Risk Assessment (Phase 5) with source "Feasibility (Phase 2.5)"
+- **NO-GO:** Stop pipeline. Use `AskUserQuestion` with 3 options:
+  - **"Override and continue"** → proceed to Phase 3, NO-GO findings become HIGH risks in Phase 5
+  - **"Revise goal"** → loop back to Phase 2 DISCOVER (max 1 revision)
+  - **"Abort"** → exit Launch Pad
+
+**Fallback:** If CLAUDE.md is sparse/missing tech stack info, checks 1-3 default to CAUTION (not NO-GO) with "insufficient project context" note.
+
+**Output:**
+```markdown
+## Phase 2.5: FEASIBILITY
+
+| # | Check | Verdict | Detail |
+|---|-------|---------|--------|
+| 1 | Tech Stack Compatibility | {GO/CAUTION/NO-GO} | {explanation} |
+| 2 | Dependency Availability | {GO/CAUTION/NO-GO} | {explanation} |
+| 3 | Architecture Fit | {GO/CAUTION/NO-GO} | {explanation} |
+| 4 | Scope vs Supervisor Capability | {GO/CAUTION/NO-GO} | {explanation} |
+| 5 | Hard Blockers | {GO/CAUTION/NO-GO} | {explanation} |
+
+**Overall Verdict:** {GO | CAUTION | NO-GO}
+
+### CAUTION Findings (carried to Risk Assessment)
+- {finding} — Impact: {MEDIUM/HIGH}, Mitigation: {suggestion}
+
+### NO-GO Reason (if applicable)
+{Why infeasible. Suggestion for what user could change to make it feasible.}
 ```
 
 ---
@@ -258,10 +323,11 @@ Subtask 2 (independent)
 **Actions:**
 
 1. Assemble the complete brief using the template from `skills/supervisor-readiness/SKILL.md`
-2. Fill all sections from Phases 1-4 results
+2. Fill all sections from Phases 1-4 results (including Phase 2.5 feasibility findings)
 3. Include configuration recommendations (workers, mode)
-4. Add risk assessment and mitigation
-5. Present the complete brief to the user
+4. Add risk assessment and mitigation. For each CAUTION finding from Phase 2.5, add a Risk Assessment row with source "Feasibility (Phase 2.5)" — Impact MEDIUM by default, HIGH if scope-related. If Phase 2.5 returned NO-GO (user overridden), all NO-GO findings become HIGH risks.
+5. If Phase 2.5 ran, include a `## Feasibility` section in the brief (verdict + checks table — see `skills/supervisor-readiness/SKILL.md`)
+6. Present the complete brief to the user
 
 **Output:** The full Supervisor-Ready Brief (see `skills/supervisor-readiness/SKILL.md` for template).
 
@@ -419,11 +485,12 @@ Launch Pad is lightweight by design:
 |-----------|--------|
 | Pre-loaded skills (7) | ~3,000 |
 | CLAUDE.md analysis | ~500 |
+| Feasibility check (Phase 2.5) | ~200-400 |
 | File impact map | ~300 |
 | Subtask structure | ~200 |
 | Brief assembly | ~500 |
 | Plan review (Phase 5.5) | ~500-1,500 |
-| **Total** | **~5,000-6,000** |
+| **Total** | **~5,200-6,400** |
 
 Minimal subagent overhead (one Plan Reviewer spawn, up to 3 retries). No state file management. Clean exit after save.
 
@@ -530,6 +597,7 @@ Users need secure access with token rotation.
 | Orphaned worktrees | WARNING: output cleanup commands |
 | Goal too vague after 2 rounds | Save what we have with LOW confidence markers |
 | No files found matching goal | Flag as greenfield, estimate new file structure |
+| Feasibility NO-GO (Phase 2.5) | Present reason + suggestion, offer Override / Revise (max 1) / Abort |
 
 ---
 
@@ -538,6 +606,7 @@ Users need secure access with token rotation.
 Before offering save:
 - [ ] Environment validated (or --skip-validation acknowledged)
 - [ ] Goal refined with clear acceptance criteria
+- [ ] Feasibility check passed (GO, CAUTION acknowledged, or NO-GO user-overridden)
 - [ ] File impact map includes only verified paths
 - [ ] Confidence levels assigned to all estimates
 - [ ] Subtasks are 3-7 items, 30-60 min each

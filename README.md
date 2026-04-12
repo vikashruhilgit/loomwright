@@ -118,9 +118,9 @@ Then call `switch_database(host="prod.example.com")` at runtime to switch betwee
 
 | Agent                 | Command                         | Purpose                                                            | When                            |
 | --------------------- | ------------------------------- | ------------------------------------------------------------------ | ------------------------------- |
-| **Launch Pad**        | `/launch-pad goal: "..."`       | Prepare goals for autonomous Supervisor execution                  | Before `/supervisor`, planning  |
+| **Launch Pad**        | `/launch-pad goal: "..."`       | Prepare goals for autonomous Supervisor execution with feasibility gate (Phase 2.5: GO/CAUTION/NO-GO) and mandatory Plan Review (Phase 5.5) | Before `/supervisor`, planning  |
 | **Supervisor**        | `/supervisor task: "..."`       | Autonomous workflow → parallel workers → PR creation               | Full automation                 |
-| **Product Owner**     | `/product-owner feature: "..."` | Define requirements → create user stories with acceptance criteria. Use `--brainstorm` for multi-mind ideation. | New feature, vague requirements, exploring directions |
+| **Product Owner**     | `/product-owner feature: "..."` | Define requirements → create user stories with acceptance criteria. Assumption Check (standard flow, user gate before `bd create` if flags) + Reality Check (brainstorm flow, VIABLE/NEEDS_FOUNDATION/BLOCKED with Feasibility score caps). Use `--brainstorm` for multi-mind ideation. | New feature, vague requirements, exploring directions |
 | **Orchestrator**      | `/orchestrator goal: "..."`     | Plan work → create tasks with review gates                         | Starting implementation         |
 | **Code Reviewer**     | `/code-reviewer src/`           | Review code → output PASS/FAIL/NEEDS_HUMAN                         | After writing code              |
 | **Commit** (skill)    | `/commit`                       | Stage changes → create conventional commits                        | Ready to commit                 |
@@ -495,7 +495,7 @@ Claude Code caches plugin contents. After restructuring skills, force a refresh:
    /plugin install ai-agent-manager-plugin
   ```
 4. Restart Claude Code (close and reopen entirely)
-5. Verify with `/skills` — should show all 43 skills under "Plugin skills"
+5. Verify with `/skills` — should show all 47 skills under "Plugin skills"
 
 ---
 

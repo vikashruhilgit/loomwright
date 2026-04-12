@@ -203,6 +203,34 @@ Warns user in brief
 
 ---
 
+## Launch Pad Feasibility (Phase 2.5) — Soft Gate
+
+```
+Feasibility returns GO
+    → Proceed to Phase 3 (ANALYZE) silently
+
+Feasibility returns CAUTION
+    → Proceed to Phase 3
+    → CAUTION findings auto-injected into Risk Assessment (Phase 5)
+    → Source: "Feasibility (Phase 2.5)", Impact: MEDIUM (HIGH if scope-related)
+
+Feasibility returns NO-GO
+    → Pipeline stops
+    → AskUserQuestion: "Override" | "Revise goal" | "Abort"
+    → Override: proceed to Phase 3; NO-GO findings become HIGH risks in Phase 5
+    → Revise: loop back to Phase 2 DISCOVER (max 1 revision)
+    → Abort: exit Launch Pad without saving
+```
+
+**Rules:**
+- Soft gate — user can always override NO-GO (feasibility checks are heuristic)
+- Max 1 goal revision loop (prevents infinite Phase 2 ↔ 2.5 cycling)
+- Override converts NO-GO findings into HIGH risks tagged with source
+- CAUTION auto-proceeds (no user prompt) — informational, feeds risk assessment
+- No subagent spawned — Launch Pad performs checks directly using Read/Glob/Grep
+
+---
+
 ## Launch Pad Plan Review Failure
 
 ```
@@ -245,5 +273,7 @@ Plan Reviewer returns NEEDS_HUMAN
 | Supervisor | Budget/conflict | 0 | Human (checkpoint + exit) |
 | Context-Keeper | State error | 1 | Degraded mode |
 | Launch Pad | Env blocker | 0 | User fixes manually |
+| Launch Pad (Feasibility NO-GO) | Infeasible goal | 0 (user decides) | User override, revise (max 1), or abort |
+| Launch Pad (Feasibility CAUTION) | Risky goal | 0 (auto-proceed) | Findings injected into Risk Assessment |
 | Launch Pad (Plan Review FAIL) | FAIL decision | 3 (fix + re-review) | Block save, user refines |
 | Launch Pad (Plan Review NEEDS_HUMAN) | NEEDS_HUMAN | 0 | User override or refine |
