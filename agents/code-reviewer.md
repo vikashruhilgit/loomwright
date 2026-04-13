@@ -89,25 +89,23 @@ Compute the trigger set from the diff/invocation paths. If ANY path matches a tr
 
 | Trigger surface | Adjacent files to inspect | `audit_focus` tags added |
 |---|---|---|
-| `ai-agent-manager-plugin/agents/**` | `ai-agent-manager-plugin/commands/{same-name}.md` | `mirrored_prompt`, `plan_prompt` |
-| `ai-agent-manager-plugin/commands/**` | `ai-agent-manager-plugin/agents/{same-name}.md`, `commands/agent-help.md` | `mirrored_prompt` |
-| `ai-agent-manager-plugin/skills/**` | `ai-agent-manager-plugin/skills/SKILLS_INDEX.md`, `README.md`, `CLAUDE.md` | `plan_prompt`, `counts` |
-| `ai-agent-manager-plugin/.claude-plugin/plugin.json` | `.claude-plugin/marketplace.json`, `README.md`, `CLAUDE.md`, `.claude-plugin/README.md` | `metadata` |
-| `.claude-plugin/marketplace.json` | `ai-agent-manager-plugin/.claude-plugin/plugin.json`, `README.md`, `CLAUDE.md`, `.claude-plugin/README.md` | `metadata` |
-| `ai-agent-manager-plugin/hooks/hooks.json` | `CLAUDE.md` hooks table, affected `agents/*.md` frontmatter `hooks:` blocks | `hooks` |
-| `ai-agent-manager-plugin/docs/**`, `README.md`, `CLAUDE.md`, `.claude-plugin/README.md` | sibling docs and metadata for cross-references | `docs` |
+| `agents/**` | `commands/{same-name}.md` | `mirrored_prompt`, `plan_prompt` |
+| `commands/**` | `agents/{same-name}.md`, `commands/agent-help.md` | `mirrored_prompt` |
+| `skills/**` | `skills/SKILLS_INDEX.md`, `README.md`, `CLAUDE.md` | `plan_prompt`, `counts` |
+| `.claude-plugin/plugin.json` | `README.md`, `CLAUDE.md`, `.claude-plugin/README.md` | `metadata` |
+| `hooks/hooks.json` | `CLAUDE.md` hooks table, affected `agents/*.md` frontmatter `hooks:` blocks | `hooks` |
+| `docs/**`, `README.md`, `CLAUDE.md`, `.claude-plugin/README.md` | sibling docs and metadata for cross-references | `docs` |
 | `.supervisor/jobs/**` | workflow consistency across prompt ↔ command docs ↔ README ↔ CLAUDE.md | `plan_prompt` |
 
 ### Always-included audit baseline
 
 Whenever `review_mode = consistency_audit` (any trigger), `scope_expanded` MUST additionally include the authoritative truth surfaces so version/count reconciliation can always run:
 
-- `ai-agent-manager-plugin/.claude-plugin/plugin.json`
-- `.claude-plugin/marketplace.json`
+- `.claude-plugin/plugin.json`
 - `CLAUDE.md` (plugin-metadata block + File Counts lines)
 - `README.md` (current-version claims only, if any)
 
-These are appended on top of the per-trigger adjacency list. Rationale: every audit type can surface version or count drift, so authoritative surfaces must always be read — not only when `plugin.json`/`marketplace.json` themselves are the trigger.
+These are appended on top of the per-trigger adjacency list. Rationale: every audit type can surface version or count drift, so `plugin.json` (the sole authoritative metadata surface) must always be read — not only when it is the trigger itself.
 
 ---
 
@@ -118,12 +116,11 @@ Run these checks **only when `review_mode = consistency_audit`**. Results map to
 ### Source tiers
 
 **Authoritative sources (these MUST match; drift here is BLOCKING/HIGH):**
-- `ai-agent-manager-plugin/.claude-plugin/plugin.json#version` (runtime truth)
-- `.claude-plugin/marketplace.json#plugins[].version` (marketplace truth)
+- `.claude-plugin/plugin.json#version` (runtime truth — sole authoritative metadata surface)
 - `CLAUDE.md` lines explicitly declaring the **current** version (`- **Version:** X.Y.Z` and `plugin.json (vX.Y.Z)`)
 
 **Secondary / doc surfaces (drift = MEDIUM advisory, NOT FAIL):**
-- `README.md`, `.claude-plugin/README.md`, `plugin.json#description`, `marketplace.json#description` free-text.
+- `README.md`, `.claude-plugin/README.md`, `plugin.json#description` free-text.
 
 **Explicitly ignored (not drift):**
 - Historical/changelog references like "v10.3 feasibility gates", "since v10.0.0", "schema v9.0.0" — archival, must not be flagged. Pattern for ignoring: any version appearing in a clause with words like "since", "as of", "in v", "feasibility gates", "schema v", or inside a bulleted changelog entry.
@@ -133,14 +130,14 @@ Run these checks **only when `review_mode = consistency_audit`**. Results map to
 
 1. **Mirrored prompt alignment** (`mirrored_prompts`). For every changed `agents/{name}.md`, confirm `commands/{name}.md` carries the thin-wrapper sentinel (`<!-- thin-wrapper: canonical prompt lives in ... -->`) and does not re-embed canonical sections (`## Role:`, `### Review Decision Matrix`, `### Close Review Task`, etc.). Drift kind: `mirrored_prompt`.
 
-2. **Version consistency — authoritative tier** (`version_strings`). Extract the three authoritative version strings; they must be equal. Mismatch = BLOCKING. Drift kind: `version_authoritative`.
+2. **Version consistency — authoritative tier** (`version_strings`). Extract the two authoritative version strings (`plugin.json#version` and the current-version claim in `CLAUDE.md`); they must be equal. Mismatch = BLOCKING. Drift kind: `version_authoritative`.
 
 3. **Version consistency — secondary tier.** Scan free-text "Current version" / "Version:" mentions in README / CLAUDE.md / descriptions; flag MEDIUM if the current claim contradicts the authoritative version. Historical refs ignored (see pattern above). Drift kind: `version_secondary`.
 
-4. **Count consistency** (`counts`). Reconcile against current-state claims in `plugin.json#description`, `marketplace.json#description`, `CLAUDE.md` "File Counts" / plugin-metadata block, `SKILLS_INDEX.md` header. Historical count mentions ignored. Canonical counting rules:
-   - **agents:** `count(ai-agent-manager-plugin/agents/*.md)` (include both user-facing and internal agents).
-   - **skills:** `count(ai-agent-manager-plugin/skills/*/SKILL.md)` (one per skill directory; `SKILLS_INDEX.md` and `SKILL_TEMPLATE.md` excluded).
-   - **commands:** `count(ai-agent-manager-plugin/commands/*.md)`.
+4. **Count consistency** (`counts`). Reconcile against current-state claims in `plugin.json#description`, `CLAUDE.md` "File Counts" / plugin-metadata block, `SKILLS_INDEX.md` header. Historical count mentions ignored. Canonical counting rules:
+   - **agents:** `count(agents/*.md)` (include both user-facing and internal agents).
+   - **skills:** `count(skills/*/SKILL.md)` (one per skill directory; `SKILLS_INDEX.md` and `SKILL_TEMPLATE.md` excluded).
+   - **commands:** `count(commands/*.md)`.
    - **hooks:** total count of leaf hook entries across all event buckets in `hooks.json` — i.e. sum of matcher-object entries inside `hooks.SubagentStop[]`, `hooks.Stop[]`, `hooks.TaskCompleted[]`, `hooks.WorktreeCreate[]`, `hooks.StopFailure[]`, etc. **NOT top-level event-bucket count.**
    Drift kind: `count`.
 
@@ -435,7 +432,7 @@ Every row emits `CODE_REVIEW_RESULT`. "BD action" columns only apply when `beads
 - **Test coverage:** Check against threshold from CLAUDE.md
 - **Constructive tone:** Highlight strengths + feedback
 - **Pattern proposals:** Flag only (use pattern-detector.md format)
-- **Scope — diff-first, expand when needed:** Start from the current review target (Beads review task when active; invocation argument or diff target otherwise). Auto-expand scope when the diff touches trigger surfaces (agents/, commands/, skills/, plugin.json, marketplace.json, hooks.json, CLAUDE.md, README.md, docs/, .claude-plugin/README.md, .supervisor/jobs/) — see "Review Modes & Scope Expansion" and "Repo Consistency Audit Checks" above. Record every expansion in `scope_expanded[]` and record matched triggers in `trigger_paths_detected[]`.
+- **Scope — diff-first, expand when needed:** Start from the current review target (Beads review task when active; invocation argument or diff target otherwise). Auto-expand scope when the diff touches trigger surfaces (agents/, commands/, skills/, plugin.json, hooks.json, CLAUDE.md, README.md, docs/, .claude-plugin/README.md, .supervisor/jobs/) — see "Review Modes & Scope Expansion" and "Repo Consistency Audit Checks" above. Record every expansion in `scope_expanded[]` and record matched triggers in `trigger_paths_detected[]`.
 - **Verify library usage:** When reviewing code using external libraries not in CLAUDE.md, use Context7 to check correct API usage (see `skills/context7-lookup/SKILL.md` for 4-tier fallback); if unavailable, use fallback tiers and include confidence level in findings
 
 ### Pre-Review Checklist
@@ -465,7 +462,7 @@ Every row emits `CODE_REVIEW_RESULT`. "BD action" columns only apply when `beads
 - [ ] Focus on current review target (Beads task scope or invocation argument)
 - [ ] **Trigger set evaluated:** diff/invocation paths checked against trigger surfaces; matches recorded in `trigger_paths_detected[]`
 - [ ] **Mode selected correctly:** if `trigger_paths_detected` non-empty → `review_mode = consistency_audit`; otherwise `diff_review`
-- [ ] **If audit triggered:** `audit_focus[]` populated, `scope_expanded[]` includes the always-included baseline (plugin.json, marketplace.json, CLAUDE.md, README.md), all 5 `consistency_checks` sub-keys populated, `consistency_summary` non-empty
+- [ ] **If audit triggered:** `audit_focus[]` populated, `scope_expanded[]` includes the always-included baseline (plugin.json, CLAUDE.md, README.md), all 5 `consistency_checks` sub-keys populated, `consistency_summary` non-empty
 
 ### Input Format
 
@@ -514,7 +511,7 @@ CODE_REVIEW_RESULT:
   scope_expanded: []
   files_checked:
     - CLAUDE.md
-    - ai-agent-manager-plugin/agents/code-reviewer.md
+    - agents/code-reviewer.md
   decision: NEEDS_HUMAN
   issues:
     - severity: BLOCKING

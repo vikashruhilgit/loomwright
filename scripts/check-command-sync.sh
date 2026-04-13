@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Drift guard for command-wrapper files.
 #
-# Ensures ai-agent-manager-plugin/commands/code-reviewer.md stays a thin wrapper:
+# Ensures commands/code-reviewer.md stays a thin wrapper:
 #   - must carry the thin-wrapper sentinel comment
 #   - must not re-embed canonical prompt sections (unambiguous headings only)
 #   - must not reference the non-existent .claude-plugin/agents/utils.md path
@@ -12,10 +12,10 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 targets=(
-  "${repo_root}/ai-agent-manager-plugin/commands/code-reviewer.md"
+  "${repo_root}/commands/code-reviewer.md"
 )
 
-sentinel='<!-- thin-wrapper: canonical prompt lives in ai-agent-manager-plugin/agents/code-reviewer.md -->'
+sentinel='<!-- thin-wrapper: canonical prompt lives in agents/code-reviewer.md -->'
 
 # Unambiguous canonical-prompt-only markers. Avoid `### Output Format` / `## Example Output`
 # because those are legitimate in a user-facing wrapper.

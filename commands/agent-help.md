@@ -838,7 +838,6 @@ bd close BD-XX
 
 ### Plugin Files
 ```
-ai-agent-manager-plugin/
 ├── .claude-plugin/
 │   └── plugin.json          # Plugin metadata (v9.0.0)
 ├── commands/                # Slash commands

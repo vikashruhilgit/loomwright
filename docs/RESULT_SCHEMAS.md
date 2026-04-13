@@ -370,7 +370,7 @@ CODE_REVIEW_RESULT:
                                        # allowed values: mirrored_prompt, metadata, counts, docs, hooks, plan_prompt
                                        # A single audit may carry multiple focus tags.
   trigger_paths_detected: string[]     # required — subset of reviewed paths matching audit trigger surfaces
-                                       # (agents/, commands/, skills/, docs/, plugin.json, marketplace.json,
+                                       # (agents/, commands/, skills/, docs/, plugin.json,
                                        # hooks.json, .supervisor/jobs/, README.md, CLAUDE.md,
                                        # .claude-plugin/README.md, SKILLS_INDEX.md). Empty = no trigger fired.
                                        # INVARIANT: non-empty ⇒ review_mode MUST equal "consistency_audit".

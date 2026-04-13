@@ -15,14 +15,11 @@ A Claude Code plugin for AI agents to collaborate on software projects. 12 speci
 ### 1. Install the Plugin
 
 ```bash
-# Add marketplace
-/plugin marketplace add ./
-
-# Install plugin
-/plugin install ai-agent-manager-plugin@ai-agent-manager-marketplace
+# From the ai-agent-manager checkout
+/plugin install ./
 ```
 
-Or manually: `cp -r ai-agent-manager-plugin ~/.claude/plugins/`
+Once published to the official Anthropic marketplace, installation becomes a single command without needing a local checkout.
 
 ### 2. Setup Your Project
 
@@ -409,13 +406,13 @@ This prevents knowledge loss and helps agents learn from discoveries.
 - **CLAUDE.md (this repo):** Architecture and agent system
 - **AGENT_GUIDELINES.md:** Development standards, quality checklist
 - **.claude-plugin/README.md:** Detailed plugin documentation
-- **ai-agent-manager-plugin/agents/*.md:** Individual agent prompts (12 roles)
-- **ai-agent-manager-plugin/skills/*/SKILL.md:** 47 skill files for guidance
-- **ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md:** Structured result contracts
-- **ai-agent-manager-plugin/docs/FAILURE_ESCALATION.md:** Agent failure paths
-- **ai-agent-manager-plugin/docs/ARCHITECTURE_CONTRACTS.md:** Capability matrix, budgets, rules
-- **ai-agent-manager-plugin/docs/ARCHITECTURE.md:** Visual agent topology
-- **ai-agent-manager-plugin/docs/QA_SYSTEM_BLUEPRINT.md:** QA system architecture
+- **agents/*.md:** Individual agent prompts (12 roles)
+- **skills/*/SKILL.md:** 47 skill files for guidance
+- **docs/RESULT_SCHEMAS.md:** Structured result contracts
+- **docs/FAILURE_ESCALATION.md:** Agent failure paths
+- **docs/ARCHITECTURE_CONTRACTS.md:** Capability matrix, budgets, rules
+- **docs/ARCHITECTURE.md:** Visual agent topology
+- **docs/QA_SYSTEM_BLUEPRINT.md:** QA system architecture
 
 ---
 
@@ -423,9 +420,9 @@ This prevents knowledge loss and helps agents learn from discoveries.
 
 To modify or extend agents:
 
-1. Agents are Markdown prompts in `ai-agent-manager-plugin/agents/` (12 files)
-2. Commands are in `ai-agent-manager-plugin/commands/` (9 commands)
-3. Skills are in `ai-agent-manager-plugin/skills/` (47 skills, versioned with SKILLS_INDEX.md)
+1. Agents are Markdown prompts in `agents/` (12 files)
+2. Commands are in `commands/` (9 commands)
+3. Skills are in `skills/` (47 skills, versioned with SKILLS_INDEX.md)
 4. Hooks: per-agent in frontmatter (Worker, Execute Manager) + cross-cutting in `hooks.json` (Code Reviewer, QA Executor, TaskCompleted)
 5. Docs: `docs/RESULT_SCHEMAS.md`, `docs/FAILURE_ESCALATION.md`, `docs/ARCHITECTURE_CONTRACTS.md`, `docs/ARCHITECTURE.md`
 6. All agents follow standard output format (see AGENT_GUIDELINES.md)
@@ -433,8 +430,7 @@ To modify or extend agents:
 To test locally:
 
 ```bash
-/plugin marketplace add ./
-/plugin install ai-agent-manager-plugin@ai-agent-manager-marketplace
+/plugin install ./
 ```
 
 Then run agents in a test project to verify changes.
@@ -475,27 +471,29 @@ Then run agents in a test project to verify changes.
 - Run `/agent-help` for command reference
 - Check AGENT_GUIDELINES.md for quality standards
 - Check .claude-plugin/README.md for detailed command documentation
-- Review agent prompts in ai-agent-manager-plugin/agents/
+- Review agent prompts in agents/
 
 **Skills not showing after plugin update?**
 
 Claude Code caches plugin contents. After restructuring skills, force a refresh:
 
-1. Remove plugin and marketplace:
-  ```
-   /plugin marketplace remove ai-agent-manager-marketplace
+1. Uninstall the plugin:
+   ```
    /plugin uninstall ai-agent-manager-plugin
-  ```
-2. Re-add marketplace:
-  ```
-   /plugin marketplace add /path/to/ai-agent-manager
-  ```
-3. Reinstall plugin:
-  ```
-   /plugin install ai-agent-manager-plugin
-  ```
-4. Restart Claude Code (close and reopen entirely)
-5. Verify with `/skills` — should show all 47 skills under "Plugin skills"
+   ```
+2. Reinstall from the repo checkout:
+   ```
+   /plugin install /path/to/ai-agent-manager
+   ```
+3. Restart Claude Code (close and reopen entirely)
+4. Verify with `/skills` — should show all 47 skills under "Plugin skills"
+
+**Migrating from the old marketplace layout?** Before `/plugin install`, first clean up the old registrations:
+```
+/plugin marketplace remove ai-agent-manager-marketplace
+/plugin uninstall ai-agent-manager-plugin
+```
+Then install via `/plugin install ./` from the repo checkout.
 
 ---
 

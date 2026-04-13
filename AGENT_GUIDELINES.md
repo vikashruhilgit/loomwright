@@ -625,5 +625,5 @@ Agents reference skill files for guidance (don't embed content):
 
 - **Project setup:** `README.md`
 - **Project details:** `CLAUDE.md` (in your project)
-- **Agent prompts:** `ai-agent-manager-plugin/agents/` directory
-- **Skills:** `ai-agent-manager-plugin/skills/` directory
+- **Agent prompts:** `agents/` directory
+- **Skills:** `skills/` directory

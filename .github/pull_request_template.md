@@ -7,7 +7,7 @@
 - [ ] Agent changes (new/modified agents)
 - [ ] Skill changes (new/modified skills)
 - [ ] Documentation updates
-- [ ] Configuration changes (plugin.json, marketplace.json)
+- [ ] Configuration changes (plugin.json)
 - [ ] Workflow/CI changes
 
 ## Test Plan
