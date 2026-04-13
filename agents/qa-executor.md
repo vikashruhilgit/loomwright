@@ -513,7 +513,7 @@ Budget: 2-3 calls. Skip investigation in YELLOW zone.
 ```
 Spawn QA Strategist in Strategy Mode (blocking):
   Task(description: "QA Strategy", prompt: "Strategy Mode...",
-    subagent_type: "ai-agent-manager-plugin:ai-agent-manager-plugin:qa-strategist")
+    subagent_type: "ai-agent-manager-plugin:qa-strategist")
 Parse: risk classification, coverage targets, test priority matrix.
 If --skip-strategy: use defaults (all MEDIUM, 70% target).
 
@@ -601,7 +601,7 @@ Spawn QA Strategist in Gate Audit Mode (blocking):
              Report GATE_VERDICT: pass/fail with specific gate failures.
              Discovery data at: discovery/
              Generated tests at: {testDir}/",
-    subagent_type: "ai-agent-manager-plugin:ai-agent-manager-plugin:qa-strategist"
+    subagent_type: "ai-agent-manager-plugin:qa-strategist"
   )
 
 If GATE_VERDICT: pass → proceed to Phase 12

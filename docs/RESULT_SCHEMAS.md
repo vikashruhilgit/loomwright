@@ -1,7 +1,7 @@
 # Result Schemas
 
 > Strict contracts for all agent result blocks. Hooks validate against these schemas.
-> All schemas include a `schema_version` field for forward compatibility. Current versions: CODE_REVIEW_RESULT at `schema_version: 2` (category support); all others at `schema_version: 1`.
+> All schemas include a `schema_version` field for forward compatibility. Current versions: CODE_REVIEW_RESULT at `schema_version: 3` (review modes + consistency audit; v2 accepted for legacy); all others at `schema_version: 1`.
 
 ---
 

@@ -259,7 +259,7 @@ result = Task(
     - Parallelism graph: [{launchable, blocked}]
     - Config: max_workers={N}, project={name}, feature_branch={branch}
     - State file: {path}",
-  subagent_type: "ai-agent-manager-plugin:ai-agent-manager-plugin:execute-manager"
+  subagent_type: "ai-agent-manager-plugin:execute-manager"
 )
 tool_calls += 1   # single tool call for entire Phase 3
 ```
@@ -813,7 +813,7 @@ Exact Task tool call shapes for each subagent:
 Task(
   description: "CK: {operation} for {task_id}",
   prompt: "operation: {op}\ndata: {payload}\nstate_file: {path}",
-  subagent_type: "ai-agent-manager-plugin:ai-agent-manager-plugin:context-keeper"
+  subagent_type: "ai-agent-manager-plugin:context-keeper"
 )
 ```
 
@@ -822,7 +822,7 @@ Task(
 Task(
   description: "Plan: decompose {task_id}",
   prompt: "goal: \"{task_id}: {title}\"\nProject context: {CLAUDE.md summary}\nAcceptance criteria: {criteria}",
-  subagent_type: "ai-agent-manager-plugin:ai-agent-manager-plugin:orchestrator"
+  subagent_type: "ai-agent-manager-plugin:orchestrator"
 )
 ```
 
@@ -835,7 +835,7 @@ Task(
     Config: max_workers={N}, project={name}, feature_branch={branch}
     State file: {path}
     Resume context: {optional, from previous EXECUTE_CHECKPOINT}",
-  subagent_type: "ai-agent-manager-plugin:ai-agent-manager-plugin:execute-manager"
+  subagent_type: "ai-agent-manager-plugin:execute-manager"
 )
 ```
 
@@ -848,7 +848,7 @@ Task(
     Skill references: {skills}
     Project context: {patterns from CLAUDE.md}
     Retry context: {optional, from previous review}",
-  subagent_type: "ai-agent-manager-plugin:ai-agent-manager-plugin:worker"
+  subagent_type: "ai-agent-manager-plugin:worker"
 )
 ```
 
@@ -859,7 +859,7 @@ Task(
   prompt: "Review scope: {files_modified from WORKER_RESULT}
     Task context: {subtask_title} — {criteria}
     Project patterns: {from CLAUDE.md}",
-  subagent_type: "ai-agent-manager-plugin:ai-agent-manager-plugin:code-reviewer"
+  subagent_type: "ai-agent-manager-plugin:code-reviewer"
 )
 ```
 
