@@ -1,7 +1,7 @@
 # Result Schemas
 
 > Strict contracts for all agent result blocks. Hooks validate against these schemas.
-> All schemas include a `schema_version` field for forward compatibility. Current versions: CODE_REVIEW_RESULT at `schema_version: 2` (category support); all others at `schema_version: 1`.
+> All schemas include a `schema_version` field for forward compatibility. Current versions: CODE_REVIEW_RESULT at `schema_version: 3` (review modes + consistency audit; v2 accepted for legacy); all others at `schema_version: 1`.
 
 ---
 
@@ -370,7 +370,7 @@ CODE_REVIEW_RESULT:
                                        # allowed values: mirrored_prompt, metadata, counts, docs, hooks, plan_prompt
                                        # A single audit may carry multiple focus tags.
   trigger_paths_detected: string[]     # required — subset of reviewed paths matching audit trigger surfaces
-                                       # (agents/, commands/, skills/, docs/, plugin.json, marketplace.json,
+                                       # (agents/, commands/, skills/, docs/, plugin.json,
                                        # hooks.json, .supervisor/jobs/, README.md, CLAUDE.md,
                                        # .claude-plugin/README.md, SKILLS_INDEX.md). Empty = no trigger fired.
                                        # INVARIANT: non-empty ⇒ review_mode MUST equal "consistency_audit".

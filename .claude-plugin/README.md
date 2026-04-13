@@ -6,7 +6,7 @@ A Claude Code plugin with 12 agent roles (8 user-facing + 4 internal), 47 focuse
 
 The AI Agent Manager Plugin v11.1.0 includes:
 
-- **Code Reviewer as system integrity reviewer** — `diff_review` / `consistency_audit` modes, trigger-based auto-expand, always-included audit baseline (plugin.json + marketplace.json + CLAUDE.md + README.md), repo consistency audit (mirrored prompts, version strings, counts, workflow alignment, hooks parity), `CODE_REVIEW_RESULT` schema v3 with `audit_focus` + `drift` category + `drift_kind` severity caps enforced by the plugin hook, CI-wired sync guard (`scripts/check-command-sync.sh`)
+- **Code Reviewer as system integrity reviewer** — `diff_review` / `consistency_audit` modes, trigger-based auto-expand, always-included audit baseline (plugin.json + CLAUDE.md + README.md), repo consistency audit (mirrored prompts, version strings, counts, workflow alignment, hooks parity), `CODE_REVIEW_RESULT` schema v3 with `audit_focus` + `drift` category + `drift_kind` severity caps enforced by the plugin hook, CI-wired sync guard (`scripts/check-command-sync.sh`)
 
 Plus all prior v11.0/v10.3/v10.2 capabilities:
 
@@ -52,24 +52,13 @@ Skills are loaded on-demand to keep context small:
 
 ### 1. Installation
 
-**Option A: Install from Local Marketplace (Recommended)**
-
 ```bash
-# From the ai-agent-manager root directory
+# From the ai-agent-manager checkout
 cd /path/to/ai-agent-manager
-
-# In Claude Code, add the local marketplace
-/plugin marketplace add ./
-
-# Install the plugin
-/plugin install ai-agent-manager-plugin@ai-agent-manager-marketplace
+/plugin install ./
 ```
 
-**Option B: Manual Installation**
-
-Copy the plugin to your Claude Code plugins directory:
-- **macOS/Linux:** `cp -r ai-agent-manager-plugin ~/.claude/plugins/ai-agent-manager-plugin`
-- **Windows:** Copy `ai-agent-manager-plugin` to `%APPDATA%\Claude\plugins\`
+Once published to the official Anthropic marketplace, installation becomes a single command without needing a local checkout.
 
 ### 2. Setup Your Project
 
@@ -304,47 +293,29 @@ bd close BD-XX                # Complete, next unblocks
 ### Plugin Files
 
 ```
-ai-agent-manager/                        (marketplace root)
+ai-agent-manager/                        (plugin root — this IS the plugin)
 ├── .claude-plugin/
-│   ├── marketplace.json                 # Marketplace manifest
+│   ├── plugin.json                      # Plugin manifest (v11.1.0)
 │   └── README.md                        # This file
-│
-└── ai-agent-manager-plugin/             (plugin directory)
-    ├── .claude-plugin/
-    │   └── plugin.json                  # Plugin metadata (v11.1.0)
-    ├── agents/                          # Agent prompts (12 roles)
-    │   ├── launch-pad.md
-    │   ├── supervisor.md
-    │   ├── execute-manager.md
-    │   ├── context-keeper.md
-    │   ├── worker.md
-    │   ├── product-owner.md
-    │   ├── orchestrator.md
-    │   ├── code-reviewer.md
-    │   ├── red-team-reviewer.md
-    │   ├── qa-strategist.md
-    │   └── qa-executor.md
-    ├── commands/                         # Slash commands (9)
-    │   ├── launch-pad.md
-    │   ├── supervisor.md
-    │   ├── product-owner.md
-    │   ├── orchestrator.md
-    │   ├── code-reviewer.md
-    │   ├── red-team-reviewer.md
-    │   ├── qa-strategist.md
-    │   ├── qa-executor.md
-    │   └── agent-help.md
-    ├── hooks/
-    │   └── hooks.json                   # 10 quality gate hooks (centralized)
-    ├── skills/                          # 47 focused skill modules
-    │   ├── SKILLS_INDEX.md              # Skill catalog with agent mapping
-    │   └── [skill-name]/SKILL.md        # Individual skills
-    └── docs/
-        ├── RESULT_SCHEMAS.md            # Structured result contracts
-        ├── FAILURE_ESCALATION.md        # Retry limits and escalation paths
-        ├── ARCHITECTURE_CONTRACTS.md    # Capability matrix, budgets, rules
-        ├── ARCHITECTURE.md              # Visual agent topology
-        └── QA_SYSTEM_BLUEPRINT.md       # QA system architecture
+├── agents/                              # Agent prompts (12 roles)
+│   ├── launch-pad.md, supervisor.md, execute-manager.md, context-keeper.md
+│   ├── worker.md, plan-reviewer.md, product-owner.md, orchestrator.md
+│   ├── code-reviewer.md, red-team-reviewer.md, qa-strategist.md, qa-executor.md
+├── commands/                            # Slash commands (9)
+│   ├── launch-pad.md, supervisor.md, product-owner.md, orchestrator.md
+│   ├── code-reviewer.md, red-team-reviewer.md, qa-strategist.md, qa-executor.md
+│   └── agent-help.md
+├── hooks/
+│   └── hooks.json                       # 10 quality gate hooks (centralized)
+├── skills/                              # 47 focused skill modules
+│   ├── SKILLS_INDEX.md                  # Skill catalog with agent mapping
+│   └── [skill-name]/SKILL.md            # Individual skills
+└── docs/
+    ├── RESULT_SCHEMAS.md                # Structured result contracts
+    ├── FAILURE_ESCALATION.md            # Retry limits and escalation paths
+    ├── ARCHITECTURE_CONTRACTS.md        # Capability matrix, budgets, rules
+    ├── ARCHITECTURE.md                  # Visual agent topology
+    └── QA_SYSTEM_BLUEPRINT.md           # QA system architecture
 ```
 
 ---
@@ -406,27 +377,16 @@ Agents with `memory: project` build knowledge across sessions:
 
 ## Marketplace Setup
 
-### Local Marketplace (Testing)
-
-The marketplace manifest already exists at `.claude-plugin/marketplace.json`:
+### Local Install (Testing)
 
 ```bash
 cd /path/to/ai-agent-manager
-/plugin marketplace add ./
-/plugin install ai-agent-manager-plugin@ai-agent-manager-marketplace
+/plugin install ./
 ```
 
-### Distributed Marketplace (Team Sharing)
+### Official Marketplace (Distribution)
 
-Create a GitHub repo with the plugin:
-
-```bash
-# Team members add your marketplace
-/plugin marketplace add your-org/claude-plugins
-/plugin install ai-agent-manager-plugin@your-org-plugins
-```
-
-See `marketplace.json` for the source configuration format.
+Once the plugin is accepted into the official Anthropic marketplace, users install with a single command — no local checkout required. See `.claude-plugin/plugin.json` for the plugin manifest.
 
 ---
 

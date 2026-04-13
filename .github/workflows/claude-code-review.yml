@@ -29,14 +29,14 @@ jobs:
             PR NUMBER: ${{ github.event.pull_request.number }}
 
             PROJECT CONTEXT:
-            - This is a Claude Code plugin with 9 specialized agents and skills
-            - Agents live in ai-agent-manager-plugin/agents/, skills in ai-agent-manager-plugin/skills/
-            - Key config files: .claude-plugin/marketplace.json, ai-agent-manager-plugin/.claude-plugin/plugin.json
+            - This is a Claude Code plugin with 12 specialized agents and 47 skills
+            - Agents live in agents/, skills in skills/
+            - Key config file: .claude-plugin/plugin.json
             - No build step — this is a markdown/config plugin, not a compiled app
 
             Please review this pull request and provide feedback on:
             - Agent/skill prompt quality and clarity
-            - Configuration correctness (plugin.json, marketplace.json)
+            - Configuration correctness (plugin.json)
             - Documentation accuracy
             - Potential issues or improvements
 

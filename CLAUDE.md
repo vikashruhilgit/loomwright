@@ -16,17 +16,16 @@ The system enables agents to collaborate on any project type. The Supervisor and
 
 ### Plugin System
 
-The project is structured as a **Claude Code plugin marketplace**:
+The repo IS the plugin — a single-plugin Claude Code repo with the manifest at `.claude-plugin/plugin.json` and plugin content directly at the repo root:
 
-1. **Plugin Package** (`ai-agent-manager-plugin/`)
-   - Agent definitions: `agents/` (Markdown prompts)
-   - Slash commands: `commands/` (entry points)
-   - Skills: `skills/` (focused implementation guidance)
+- Agent definitions: `agents/` (Markdown prompts)
+- Slash commands: `commands/` (entry points)
+- Skills: `skills/` (focused implementation guidance)
+- Hooks: `hooks/hooks.json`
+- Docs: `docs/`
+- Manifest: `.claude-plugin/plugin.json`
 
-2. **Marketplace** (`.claude-plugin/`)
-   - Plugin metadata and distribution
-   - Installation via `/plugin install` command
-   - Supports local and remote marketplaces
+Installation: `/plugin install ./` from a local checkout, or via the official Anthropic marketplace once submitted.
 
 ### Beads Task Management
 
@@ -162,16 +161,11 @@ All agents follow a **shared contract** (see AGENT_GUIDELINES.md):
 ### Installation
 
 ```bash
-# Add the marketplace (from ai-agent-manager directory)
-/plugin marketplace add ./
-
-# Install the plugin
-/plugin install ai-agent-manager-plugin@ai-agent-manager-marketplace
+# From the ai-agent-manager checkout
+/plugin install ./
 ```
 
-Or manually copy to Claude Code plugins directory:
-- **macOS/Linux:** `cp -r ai-agent-manager-plugin ~/.claude/plugins/ai-agent-manager-plugin`
-- **Windows:** Copy `ai-agent-manager-plugin` to `%APPDATA%\Claude\plugins\`
+Once merged to the official Anthropic marketplace, installation is a single command without needing a local checkout.
 
 ### Setup a Project
 
@@ -236,73 +230,35 @@ your-project/
 ### Directory Structure
 
 ```
-ai-agent-manager/
-├── ai-agent-manager-plugin/          # The Claude Code plugin
-│   ├── agents/                       # Agent markdown prompts (12 roles)
-│   │   ├── launch-pad.md             # Launch Pad (Supervisor readiness)
-│   │   ├── supervisor.md             # Supervisor v4 (parallel orchestrator)
-│   │   ├── execute-manager.md        # Execute Manager (Phase 3 lifecycle)
-│   │   ├── context-keeper.md         # Context-Keeper (state management)
-│   │   ├── worker.md                 # Worker (implementation in worktrees)
-│   │   ├── plan-reviewer.md          # Plan Reviewer (brief validation gate)
-│   │   ├── product-owner.md          # Product Owner (requirements)
-│   │   ├── orchestrator.md           # Orchestrator (task planning)
-│   │   ├── code-reviewer.md          # Code Reviewer (quality gates)
-│   │   ├── red-team-reviewer.md      # Red Team Reviewer (adversarial)
-│   │   ├── qa-strategist.md          # QA Strategist (risk-based test strategy)
-│   │   └── qa-executor.md            # QA Executor (discovery + test generation)
-│   ├── commands/                     # Slash commands for Claude Code
-│   │   ├── launch-pad.md             # /launch-pad command
-│   │   ├── supervisor.md             # /supervisor command (v4)
-│   │   ├── product-owner.md          # /product-owner command
-│   │   ├── orchestrator.md           # /orchestrator command
-│   │   ├── code-reviewer.md          # /code-reviewer command
-│   │   ├── red-team-reviewer.md      # /red-team-reviewer command
-│   │   ├── qa-strategist.md          # /qa-strategist command
-│   │   ├── qa-executor.md            # /qa-executor command
-│   │   └── agent-help.md             # /agent-help command
-│   ├── hooks/                        # Plugin quality gate hooks
-│   │   └── hooks.json                # Cross-cutting hooks (Code Reviewer, QA Executor, TaskCompleted)
-│   ├── skills/                       # Skill files for guidance (47 skills)
-│   │   ├── supervisor-readiness/     # Pre-flight checklist & Supervisor-Ready Brief template
-│   │   ├── agent-teams/              # Agent Teams patterns (experimental)
-│   │   ├── async-orchestration/      # Parallel dispatch & git worktree patterns
-│   │   ├── state-management/         # State file schema & checkpoint protocols
-│   │   ├── workflow-management/      # 7-phase workflow patterns (incl. SELF_HEAL)
-│   │   ├── context-summarization/    # Output compression for context
-│   │   ├── commit/                   # Conventional commits
-│   │   ├── quality-checklist/        # Review gate criteria
-│   │   ├── pattern-detector/         # CLAUDE.md proposals
-│   │   ├── nestjs-*/                 # NestJS patterns (6 skills)
-│   │   ├── nextjs-*/                 # Next.js patterns (5 skills)
-│   │   ├── gateway-*/                # API Gateway patterns (4 skills)
-│   │   ├── nestjs-typeorm/           # TypeORM integration
-│   │   ├── mysql/                    # MySQL patterns
-│   │   ├── playwright-e2e/           # Playwright E2E testing patterns
-│   │   ├── qa-strategy/             # QA risk framework & debate protocol
-│   │   ├── qa-orchestration/        # Session management for large-app QA
-│   │   ├── unit-testing/            # Jest/Vitest patterns
-│   │   ├── error-handling/          # Error hierarchy & boundaries
-│   │   ├── ci-cd/                   # GitHub Actions patterns
-│   │   ├── docker/                  # Dockerfile & compose patterns
-│   │   ├── monitoring-observability/ # Logging, tracing, metrics
-│   │   ├── redis-caching/           # Cache patterns & invalidation
-│   │   ├── postgresql/              # Schema, migrations, optimization
-│   │   ├── SKILL_TEMPLATE.md        # Standard skill template
-│   │   └── SKILLS_INDEX.md          # Skill catalog with agent mapping
-│   ├── docs/                        # Architecture documentation
-│   │   ├── QA_SYSTEM_BLUEPRINT.md   # QA system architecture (14 modules, 5 levels)
-│   │   ├── RESULT_SCHEMAS.md        # Structured result contracts for all agents
-│   │   ├── FAILURE_ESCALATION.md    # Agent failure paths and retry rules
-│   │   ├── ARCHITECTURE_CONTRACTS.md # Capability matrix, budgets, rules
-│   │   └── ARCHITECTURE.md          # Visual agent topology diagram
-│   └── .claude-plugin/
-│       └── plugin.json               # Plugin metadata (v11.1.0)
-│
+ai-agent-manager/                     # The Claude Code plugin (repo IS the plugin)
 ├── .claude-plugin/
-│   ├── marketplace.json              # Marketplace definition
-│   └── README.md                     # Plugin usage documentation
-│
+│   ├── plugin.json                   # Plugin manifest (v11.1.0)
+│   └── README.md                     # Plugin-facing usage guide
+├── agents/                           # Agent markdown prompts (12 roles)
+│   ├── launch-pad.md                 # Launch Pad (Supervisor readiness)
+│   ├── supervisor.md                 # Supervisor v4 (parallel orchestrator)
+│   ├── execute-manager.md            # Execute Manager (Phase 3 lifecycle)
+│   ├── context-keeper.md             # Context-Keeper (state management)
+│   ├── worker.md                     # Worker (implementation in worktrees)
+│   ├── plan-reviewer.md              # Plan Reviewer (brief validation gate)
+│   ├── product-owner.md              # Product Owner (requirements)
+│   ├── orchestrator.md               # Orchestrator (task planning)
+│   ├── code-reviewer.md              # Code Reviewer (quality gates)
+│   ├── red-team-reviewer.md          # Red Team Reviewer (adversarial)
+│   ├── qa-strategist.md              # QA Strategist (risk-based test strategy)
+│   └── qa-executor.md                # QA Executor (discovery + test generation)
+├── commands/                         # Slash commands for Claude Code
+│   ├── launch-pad.md, supervisor.md, product-owner.md, orchestrator.md
+│   ├── code-reviewer.md, red-team-reviewer.md, qa-strategist.md, qa-executor.md
+│   └── agent-help.md
+├── hooks/
+│   └── hooks.json                    # Cross-cutting quality-gate hooks
+├── skills/                           # 47 skills (see SKILLS_INDEX.md)
+├── docs/                             # Architecture + schemas
+│   ├── QA_SYSTEM_BLUEPRINT.md, RESULT_SCHEMAS.md, FAILURE_ESCALATION.md
+│   ├── ARCHITECTURE_CONTRACTS.md, ARCHITECTURE.md
+├── scripts/                          # validate-version.sh, check-command-sync.sh
+├── .github/                          # workflows + PR template
 ├── README.md                         # User-facing documentation
 ├── AGENT_GUIDELINES.md               # Development standards & agent contract
 └── CLAUDE.md                         # This file
@@ -413,7 +369,7 @@ Task Complete:
 
 ### Adding or Modifying Agents
 
-Agents are Markdown files in `ai-agent-manager-plugin/agents/`:
+Agents are Markdown files in `agents/`:
 
 1. **Create new agent:**
    - Write `.md` file in `agents/` directory
@@ -429,7 +385,7 @@ Agents are Markdown files in `ai-agent-manager-plugin/agents/`:
    - Include quick rules, examples, and quality gates
 
 4. **Test locally:**
-   - Copy plugin to `~/.claude/plugins/` (or use `/plugin marketplace add ./`)
+   - Install from the repo root: `/plugin install ./`
    - Run `/agent-help` to verify command is available
    - Test in a sample project
 
@@ -474,13 +430,13 @@ Before an agent completes work:
 | `README.md` | User-facing guide (installation, quick start, workflow) |
 | `AGENT_GUIDELINES.md` | Development standards, agent contract, quality checklist |
 | `.claude-plugin/README.md` | Detailed plugin documentation |
-| `ai-agent-manager-plugin/skills/*/SKILL.md` | Skill files for implementation guidance |
+| `skills/*/SKILL.md` | Skill files for implementation guidance |
 
 ### Plugin Metadata
 
 - **Plugin Name:** `ai-agent-manager-plugin`
 - **Version:** 11.1.0
-- **Description:** AI agents v11.1 — Code Reviewer upgraded to system integrity reviewer: `diff_review` / `consistency_audit` modes with trigger-based auto-expand, always-included audit baseline (plugin.json + marketplace.json + CLAUDE.md + README.md), repo consistency audit (mirrored prompts, version strings, counts, workflow alignment, hooks parity), CODE_REVIEW_RESULT schema v3 with `audit_focus` tags and `drift` category plus `drift_kind` severity caps enforced by the plugin hook, and a `scripts/check-command-sync.sh` drift guard. Builds on v11.0 self-healing Supervisor (Phase 4.5 integration review + bounded fix loop), v10.3 feasibility gates (Launch Pad Phase 2.5, Product Owner Assumption/Reality Check), QA topology auto-detection, and v10.2 Launch Pad mandatory Plan Review. 12 agent roles, 47 reusable skills, 10 quality gate hooks, persistent agent memory, bundled MySQL MCP server.
+- **Description:** AI agents v11.1 — Code Reviewer upgraded to system integrity reviewer: `diff_review` / `consistency_audit` modes with trigger-based auto-expand, always-included audit baseline (plugin.json + CLAUDE.md + README.md), repo consistency audit (mirrored prompts, version strings, counts, workflow alignment, hooks parity), CODE_REVIEW_RESULT schema v3 with `audit_focus` tags and `drift` category plus `drift_kind` severity caps enforced by the plugin hook, and a `scripts/check-command-sync.sh` drift guard. Builds on v11.0 self-healing Supervisor (Phase 4.5 integration review + bounded fix loop), v10.3 feasibility gates (Launch Pad Phase 2.5, Product Owner Assumption/Reality Check), QA topology auto-detection, and v10.2 Launch Pad mandatory Plan Review. 12 agent roles, 47 reusable skills, 10 quality gate hooks, persistent agent memory, bundled MySQL MCP server.
 - **Agents:** 12 roles (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Plan Reviewer, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer, QA Strategist, QA Executor)
 - **Skills:** 47 reusable skills (versioned with SKILLS_INDEX.md)
 - **Hooks:** 10 quality gate hooks — centralized in hooks.json: SubagentStop (worker, execute-manager, code-reviewer, supervisor, qa-executor, plan-reviewer), Stop (code-reviewer), TaskCompleted, WorktreeCreate, StopFailure
@@ -489,11 +445,11 @@ Before an agent completes work:
 - **Author:** vikash ruhil
 - **License:** MIT
 
-### Marketplace Configuration
+### Installation
 
-- Defined in `.claude-plugin/marketplace.json`
-- Supports local marketplace (`/plugin marketplace add ./`)
-- Supports remote GitHub marketplaces for team distribution
+- Single-plugin repo with manifest at `.claude-plugin/plugin.json`
+- Local install: `/plugin install ./` from a repo checkout
+- Official: install via the Anthropic marketplace once submitted
 
 ---
 
@@ -502,7 +458,7 @@ Before an agent completes work:
 ### This is a Plugin System
 
 - Agents are distributed as a Claude Code plugin
-- Users install via `/plugin install ai-agent-manager-plugin@ai-agent-manager-marketplace`
+- Users install via `/plugin install ./` from a local checkout, or via the official Anthropic marketplace
 - Agents run within Claude Code (not standalone)
 
 ### Language-Agnostic
@@ -678,7 +634,7 @@ Potential improvements:
 - **Main docs:** `README.md` (user guide, examples, troubleshooting)
 - **Plugin docs:** `.claude-plugin/README.md` (installation, commands, project setup)
 - **Development standards:** `AGENT_GUIDELINES.md` (quality checklist, agent contract, standards per language)
-- **Agent prompts:** `ai-agent-manager-plugin/agents/*.md` (detailed agent definitions with YAML frontmatter)
-- **Skills:** `ai-agent-manager-plugin/skills/*/SKILL.md` (implementation guidance)
-- **Hooks:** `ai-agent-manager-plugin/hooks/hooks.json` (plugin quality gate hooks)
-- **QA Blueprint:** `ai-agent-manager-plugin/docs/QA_SYSTEM_BLUEPRINT.md` (14 modules, 5 maturity levels)
+- **Agent prompts:** `agents/*.md` (detailed agent definitions with YAML frontmatter)
+- **Skills:** `skills/*/SKILL.md` (implementation guidance)
+- **Hooks:** `hooks/hooks.json` (plugin quality gate hooks)
+- **QA Blueprint:** `docs/QA_SYSTEM_BLUEPRINT.md` (14 modules, 5 maturity levels)

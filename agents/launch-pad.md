@@ -394,7 +394,7 @@ Project CLAUDE.md context:
 {relevant patterns, tech stack, directory structure — max 500 tokens}
 
 Check all 10 review criteria. Output a PLAN_REVIEW_RESULT block.",
-  subagent_type: "ai-agent-manager-plugin:ai-agent-manager-plugin:plan-reviewer"
+  subagent_type: "ai-agent-manager-plugin:plan-reviewer"
 )
 ```
 

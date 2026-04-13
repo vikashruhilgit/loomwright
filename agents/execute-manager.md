@@ -110,7 +110,7 @@ For each worktree created:
 Task(
   description: "Implement {subtask_id}",
   prompt: "Worker prompt with subtask details, worktree path, criteria, skills...",
-  subagent_type: "ai-agent-manager-plugin:ai-agent-manager-plugin:worker",
+  subagent_type: "ai-agent-manager-plugin:worker",
   run_in_background: true
 )
 ```
@@ -151,7 +151,7 @@ for iteration in 1..max_iterations:
       Task(
         description: "Review {subtask_id}",
         prompt: "Reviewer prompt with worktree path...",
-        subagent_type: "ai-agent-manager-plugin:ai-agent-manager-plugin:code-reviewer",
+        subagent_type: "ai-agent-manager-plugin:code-reviewer",
         run_in_background: true
       )
       tool_calls += 1
@@ -307,7 +307,7 @@ Instead of spawning Context-Keeper once per worker result and once per review, b
 Task(
   description: "Record batch results",
   prompt: "Context-Keeper batch update...",
-  subagent_type: "ai-agent-manager-plugin:ai-agent-manager-plugin:context-keeper"
+  subagent_type: "ai-agent-manager-plugin:context-keeper"
 )
 
 operation: record_batch
