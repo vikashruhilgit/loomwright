@@ -36,8 +36,8 @@
                     │  model: inherit  color: #1E90FF           │
                     │  Budget: 30 tool calls                    │
                     │                                           │
-                    │  INIT → ACQUIRE → PLAN → EXECUTE →       │
-                    │  FINALIZE → LOOP                          │
+                    │  INIT → ACQUIRE → PLAN → EXECUTE →        │
+                    │  FINALIZE → SELF_HEAL → LOOP              │
                     └──┬────────┬────────┬────────────────────┘
                        │        │        │
               ┌────────▼──┐  ┌──▼─────┐  │
@@ -102,9 +102,9 @@
     ↓ (fresh session)
 /supervisor job: .supervisor/jobs/pending/{file}.md
     ↓
-INIT → ACQUIRE (move brief to in-progress/) → PLAN → EXECUTE → FINALIZE (move brief to done/) → LOOP
+INIT → ACQUIRE (move brief to in-progress/) → PLAN → EXECUTE → FINALIZE → SELF_HEAL (integration review + bounded fix loop; move brief to done/ in completion tail) → LOOP
     ↓
-PR created
+PR created (task completion recorded in SELF_HEAL tail, not FINALIZE)
 ```
 
 ### Direct Autonomous
@@ -112,7 +112,7 @@ PR created
 ```
 /supervisor task: "..."
     ↓
-INIT → ACQUIRE → PLAN → EXECUTE → FINALIZE → LOOP
+INIT → ACQUIRE → PLAN → EXECUTE → FINALIZE → SELF_HEAL → LOOP
     ↓
 PR created
 ```

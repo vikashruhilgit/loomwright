@@ -19,6 +19,8 @@ The Supervisor agent v4 autonomously manages the complete development workflow. 
 /supervisor --continue task: BD-XX             # Resume specific task
 /supervisor --dry-run                          # Preview workflow without executing
 /supervisor job: .supervisor/jobs/2026-02-08-jwt-auth.md   # Execute from Launch Pad brief
+/supervisor --skip-self-heal                   # Skip Phase 4.5 review+fix loop (emergency bypass)
+/supervisor --heal-iterations 5                # Allow up to 5 fix iterations before escalating (default 3)
 ```
 
 ## Parameters
@@ -31,10 +33,12 @@ The Supervisor agent v4 autonomously manages the complete development workflow. 
 | `--continue` | No | Resume workflow from last checkpoint |
 | `--dry-run` | No | Preview the workflow phases without executing any actions |
 | `job:` | No | Path to Supervisor-Ready Brief from Launch Pad (e.g., `.supervisor/jobs/pending/{file}.md`) — skips Phases 0-2, moves brief through lifecycle (pending → in-progress → done/failed) |
+| `--skip-self-heal` | No | Bypass the Phase 4.5 integration review + fix loop. Phase 4.5 still transitions in state and runs the completion tail, but no review is performed. Use for emergency merges; the heal fields in SUPERVISOR_RESULT will show `heal_loop_ran: false`. |
+| `--heal-iterations N` | No | Maximum self-heal fix iterations before escalating (default: 3). Each iteration is: integration review → fix task → re-review. Lower values escalate sooner; higher values attempt more fixes but risk never passing. |
 
 ## What This Does
 
-The Supervisor executes a **6-phase parallel workflow**:
+The Supervisor executes a **7-phase parallel workflow**:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -51,16 +55,22 @@ The Supervisor executes a **6-phase parallel workflow**:
 │     └─> Orchestrator → Subtasks → Parallelism graph             │
 │                                                                 │
 │  Phase 3: EXECUTE (Delegated to Execute Manager)                │
-│     └─> Execute Manager → Worktrees → Workers → Reviews        │
+│     └─> Execute Manager → Worktrees → Workers → Reviews         │
 │                                                                 │
 │  Phase 4: FINALIZE (Merge + Commit + PR)                        │
-│     └─> Sequential merge → Commit → Push → PR → Close task     │
+│     └─> Sequential merge → Commit → Push → PR → exit            │
+│                                                                 │
+│  Phase 4.5: SELF_HEAL (Integration Review + Fix Loop)  [NEW]    │
+│     └─> Holistic Code Reviewer → bounded auto-fix loop →        │
+│         completion tail (job → done/, state completed)          │
 │                                                                 │
 │  Phase 5: LOOP (Next Task or Exit)                              │
-│     └─> More tasks? → Phase 1 | No tasks → Done                │
+│     └─> More tasks? → Phase 1 | No tasks → Done                 │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+**Phase 4.5 (v11.0.0):** After the PR is created, Supervisor runs a holistic Code Reviewer on the full feature-branch diff. If it finds BLOCKING/HIGH severity `new` issues, Supervisor spawns a fix task that addresses them and pushes updates to the PR. The loop retries up to `--heal-iterations` times (default 3). On PASS the task is marked `completed`; on NEEDS_HUMAN or max iterations the task is marked `completed_with_escalation` with findings posted as a PR comment. Eliminates the manual review-and-fix cycle. The phase always runs (unless `--skip-self-heal` short-circuits the loop); it owns the completion tail (job-file move, state marked completed) so the record captures the heal outcome.
 
 ### Architecture
 
@@ -138,11 +148,22 @@ $ /supervisor
 - Merges: 3 branches → feature/BD-15-user-auth
 - Commit: a1b2c3d — feat(auth): implement JWT auth
 - PR: #42 — https://github.com/org/repo/pull/42
-- Task: BD-15 [CLOSED]
+- Task: BD-15 [MERGED — pending self-heal]
+
+### Phase 4.5: SELF_HEAL
+- Heal loop ran: true
+- Iterations: 1 (review: FAIL → fix task fixed 2 issues → review: PASS)
+- Decision: PASS
+- Fixable issues fixed: 2
+- Remaining issues: 0
+- Task: BD-15 [COMPLETED]
 
 ### Phase 5: LOOP
+- Outcome: completed (heal_decision=PASS, iterations=1, remaining=0)
 - Continuing with BD-18...
 ```
+
+The `SUPERVISOR_RESULT` block (schema v1, validated by the SubagentStop hook) is emitted from Phase 4.5's completion tail — one block per task. Phase 5 LOOP emits nothing. In multi-task sessions, multiple blocks appear in order; the hook validates the last one. See `docs/RESULT_SCHEMAS.md` for the full schema.
 
 ## Review Gates
 
@@ -164,8 +185,8 @@ History:          {project}/.supervisor/history/{date}-{task}.md
 Jobs lifecycle:   {project}/.supervisor/jobs/
   ├── pending/      ← Launch Pad saves briefs here
   ├── in-progress/  ← Supervisor moves brief here on ACQUIRE
-  ├── done/         ← Supervisor moves here on FINALIZE (success)
-  └── failed/       ← Supervisor moves here on failure/abort
+  ├── done/         ← Phase 4.5 SELF_HEAL completion tail moves here (on PASS, loop-skipped, OR ESCALATED — in all cases, with an `## Outcome` block that records heal_loop_ran, heal_decision, heal_iterations, heal_remaining_issues)
+  └── failed/       ← Supervisor moves here on hard failure (merge conflict, fix-task crash after retries) before 4.5 completion tail could run
 Logs:             {project}/.supervisor/logs/{session_id}.jsonl
 ```
 
@@ -363,7 +384,7 @@ For complex tasks, use Launch Pad to plan and Supervisor to execute:
 
 ## See Also
 
-- `agents/supervisor.md` - Full agent prompt (6-phase model)
+- `agents/supervisor.md` - Full agent prompt (7-phase model with Phase 4.5 self-heal)
 - `agents/execute-manager.md` - Phase 3 execution agent
 - `agents/context-keeper.md` - State management agent
 - `agents/worker.md` - Implementation worker agent

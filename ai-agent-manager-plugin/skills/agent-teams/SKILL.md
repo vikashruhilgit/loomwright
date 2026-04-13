@@ -244,7 +244,7 @@ Validate teammate output quality:
 
 Agent Teams can complement (not replace) the Supervisor v4 workflow:
 
-- **Supervisor** handles the 6-phase lifecycle (branch, merge, PR, close)
+- **Supervisor** handles the 7-phase lifecycle (branch, merge, PR, self-heal, close)
 - **Agent Teams** could be used within the EXECUTE phase as an alternative to git worktrees
 - This integration is not yet implemented — Supervisor v4 uses git worktrees by default
 - Users can manually use Agent Teams for research phases or exploration tasks
@@ -276,6 +276,6 @@ Agent Teams remains experimental until all criteria are met:
 ## See Also
 
 - `skills/async-orchestration/SKILL.md` - Git worktree parallel dispatch patterns
-- `skills/workflow-management/SKILL.md` - 6-phase Supervisor workflow
+- `skills/workflow-management/SKILL.md` - 7-phase Supervisor workflow
 - `agents/supervisor.md` - Supervisor v4 (default parallel execution)
 - `agents/worker.md` - Worker agent (git worktree implementation)

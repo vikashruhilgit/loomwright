@@ -149,7 +149,7 @@ Supervisor-Ready Brief saved to .supervisor/jobs/pending/
     ↓
 /supervisor job: .supervisor/jobs/pending/{date}-{slug}.md   (fresh session)
     ↓
-INIT → ACQUIRE → PLAN → EXECUTE (via Execute Manager) → FINALIZE → LOOP
+INIT → ACQUIRE → PLAN → EXECUTE (via Execute Manager) → FINALIZE → SELF_HEAL → LOOP
     ↓
 PR created, next task or exit
 ```

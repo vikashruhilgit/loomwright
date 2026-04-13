@@ -147,6 +147,142 @@ EXECUTE_CHECKPOINT:
 
 ---
 
+## SUPERVISOR_RESULT
+
+Produced by Supervisor once per task from inside Phase 4.5's completion tail (see Emission cadence below). Introduced in v11.0.0 to give a machine-readable completion record (replaces free-form markdown validation in the SubagentStop hook).
+
+```yaml
+SUPERVISOR_RESULT:
+  schema_version: 1                    # integer, required — always 1
+  task_id: string                      # required — task being worked on
+  status: enum [completed, completed_with_escalation, failed, checkpoint]  # required
+  pr_url: string | null                # required when status in [completed, completed_with_escalation]; null for failed/checkpoint
+  branch: string                       # required — feature branch name
+  subtasks_completed: integer          # required — count of subtasks that passed review and merged
+  subtasks_failed: integer             # required — count of subtasks that failed after retries
+  heal_loop_ran: boolean              # required — did the Phase 4.5 review loop execute?
+  heal_iterations: integer | null      # required — number of fix iterations that ran; null when heal_loop_ran=false
+  heal_decision: enum [PASS, ESCALATED] | null  # required — null when heal_loop_ran=false (phase transition and completion tail always run; only the review-and-fix loop is gated, so no decision is produced when skipped)
+  heal_fixable_issues_fixed: integer   # required — count of new+BLOCKING/HIGH issues auto-fixed across all iterations; 0 when heal_loop_ran=false
+  heal_remaining_issues: integer       # required — count of new+BLOCKING/HIGH issues still unresolved in final review; 0 when heal_loop_ran=false or heal_decision=PASS
+  error: string | null                 # conditional — required when status=failed
+  summary: string                      # required — concise session summary
+```
+
+**Field semantics note:** `heal_loop_ran` reports whether the Phase 4.5 *review-and-fix loop* executed, not whether the phase itself transitioned. The phase transition and completion tail are unconditional; only the loop is gated by `--skip-self-heal` and the resume-thrash guard.
+
+**Emission cadence:** Exactly one `SUPERVISOR_RESULT` block is emitted *per task*, from inside Phase 4.5's completion tail (after `status`/`pr_url`/heal fields are finalized). Phase 5 LOOP does NOT emit a block — it only decides whether to loop or exit. When a session processes multiple tasks via LOOP → ACQUIRE, multiple `SUPERVISOR_RESULT` blocks appear in the transcript (one per task). The SubagentStop hook validates the last block in the output; earlier blocks must also be schema-valid but are not hook-checked.
+
+**Validation rules:**
+- `schema_version` must equal `1`
+- `status` must be one of: `completed`, `completed_with_escalation`, `failed`, `checkpoint`
+- When `status in [completed, completed_with_escalation]`: `pr_url` must be present and non-empty
+- When `status=failed`: `error` must be present and non-empty
+- `heal_loop_ran` must be a boolean
+- When `heal_loop_ran=false`: `heal_iterations=null`, `heal_decision=null`, `heal_fixable_issues_fixed=0`, `heal_remaining_issues=0` exactly
+- When `heal_loop_ran=true`: `heal_decision` must be one of `[PASS, ESCALATED]` (NOT `SKIPPED` — skipping corresponds to `heal_loop_ran=false`), `heal_iterations` must be a non-negative integer
+- `heal_fixable_issues_fixed` and `heal_remaining_issues` must be non-negative integers
+- `heal_remaining_issues=0` when `heal_decision=PASS` (PASS means no BLOCKING/HIGH new issues remain)
+- `heal_remaining_issues>=1` when `heal_decision=ESCALATED`
+- `summary` must be present
+
+**Status mapping from heal outcome:**
+- `heal_decision=PASS` OR `heal_loop_ran=false` (loop skipped via `--skip-self-heal`) → `status: completed`
+- `heal_decision=ESCALATED` → `status: completed_with_escalation`
+- Hard failure (merge conflict, fix task crash after retries) → `status: failed`
+- Budget exhaustion → `status: checkpoint`
+
+**Example (happy path, heal passed first try):**
+```
+SUPERVISOR_RESULT:
+  schema_version: 1
+  task_id: add-jwt-auth
+  status: completed
+  pr_url: https://github.com/org/repo/pull/42
+  branch: feature/add-jwt-auth
+  subtasks_completed: 3
+  subtasks_failed: 0
+  heal_loop_ran: true
+  heal_iterations: 0
+  heal_decision: PASS
+  heal_fixable_issues_fixed: 0
+  heal_remaining_issues: 0
+  error: null
+  summary: 3/3 subtasks completed. Integration review PASS on first try. PR #42 ready for human sign-off.
+```
+
+**Example (escalated after max iterations):**
+```
+SUPERVISOR_RESULT:
+  schema_version: 1
+  task_id: refactor-payment-flow
+  status: completed_with_escalation
+  pr_url: https://github.com/org/repo/pull/87
+  branch: feature/refactor-payment-flow
+  subtasks_completed: 4
+  subtasks_failed: 0
+  heal_loop_ran: true
+  heal_iterations: 3
+  heal_decision: ESCALATED
+  heal_fixable_issues_fixed: 7
+  heal_remaining_issues: 2
+  error: null
+  summary: 4/4 subtasks merged. Self-heal fixed 7 issues across 3 iterations; 2 issues still unresolved (see PR comment). Human review required.
+```
+
+**Example (skip flag):**
+```
+SUPERVISOR_RESULT:
+  schema_version: 1
+  task_id: hotfix-login
+  status: completed
+  pr_url: https://github.com/org/repo/pull/91
+  branch: feature/hotfix-login
+  subtasks_completed: 1
+  subtasks_failed: 0
+  heal_loop_ran: false
+  heal_iterations: null
+  heal_decision: null
+  heal_fixable_issues_fixed: 0
+  heal_remaining_issues: 0
+  error: null
+  summary: 1/1 subtasks completed. Self-heal loop skipped via --skip-self-heal flag. PR #91 ready.
+```
+
+---
+
+## FIX_RESULT
+
+Produced by the ad-hoc fix task that Supervisor spawns during Phase 4.5 self-heal iterations. Introduced in v11.0.0.
+
+```yaml
+FIX_RESULT:
+  schema_version: 1                    # integer, required — always 1
+  issues_addressed: integer            # required — count of issues the fix task resolved this iteration
+  files_modified: string[]             # required — non-empty when issues_addressed > 0
+  commit_sha: string                   # required — SHA of the fix commit on the feature branch
+  summary: string                      # required — concise description of what was fixed
+```
+
+**Validation rules:**
+- `schema_version` must equal `1`
+- `issues_addressed` must be a non-negative integer
+- When `issues_addressed > 0`: `files_modified` must be non-empty
+- `commit_sha` must match `^[0-9a-f]{7,40}$`
+- `summary` must be present
+
+**Example:**
+```
+FIX_RESULT:
+  schema_version: 1
+  issues_addressed: 3
+  files_modified: [src/auth/jwt.guard.ts, src/auth/jwt.guard.spec.ts, src/auth/types.ts]
+  commit_sha: a1b2c3d
+  summary: Addressed 3 HIGH-severity findings — tightened JWT validation, fixed type exports, added missing unit tests.
+```
+
+---
+
 ## QA_RESULT
 
 Produced by QA Executor on test completion.
@@ -293,7 +429,7 @@ Schema for `.supervisor/state.md` managed by Context-Keeper.
 
 ```yaml
 version: integer                       # required — monotonic counter, increments on every write
-current_phase: enum [INIT, ACQUIRE, PLAN, EXECUTE, FINALIZE, LOOP]  # required
+current_phase: enum [INIT, ACQUIRE, PLAN, EXECUTE, FINALIZE, SELF_HEAL, LOOP]  # required
 session_id: string                     # required — unique session identifier
 task_id: string                        # required — current task being worked on
 task_title: string                     # optional — human-readable task description
@@ -318,12 +454,15 @@ agents_running: object[]               # currently spawned agents
   - agent_type: string                 # e.g., "worker", "code-reviewer"
     task_id: string
     started_at: timestamp
+self_heal_resume_count: integer        # optional — default 0; increments on each --continue that lands in a PAUSED SELF_HEAL (fix-task crash recovery); resets to 0 unconditionally in the SELF_HEAL completion tail on every exit path (PASS, ESCALATED, or loop-skipped via --skip-self-heal). Guards against resume thrash — if the counter reaches 3, Supervisor aborts the loop and escalates with self_heal_resume_thrash reason. Lazy-added on first SELF_HEAL resume; mutated via record_self_heal_resume operation.
 last_updated: timestamp                # required — ISO 8601
 ```
 
+**Phase note:** `SELF_HEAL` (added in v11.0.0) is the post-FINALIZE holistic review + bounded fix loop. Entered after PR creation; exits to LOOP after PASS or ESCALATED outcome, or when `--skip-self-heal` short-circuits the review loop (completion tail still runs).
+
 **Validation rules:**
 - `version` starts at 1 and monotonically increases on every write
-- `current_phase` must be one of: `INIT`, `ACQUIRE`, `PLAN`, `EXECUTE`, `FINALIZE`, `LOOP`
+- `current_phase` must be one of: `INIT`, `ACQUIRE`, `PLAN`, `EXECUTE`, `FINALIZE`, `SELF_HEAL`, `LOOP`
 - `last_updated` must be in ISO 8601 format
 - `active_subtasks` required when `current_phase = EXECUTE`
 - `branch` required after `ACQUIRE` phase (all subsequent phases)

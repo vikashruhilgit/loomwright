@@ -64,7 +64,7 @@ The AI Agent Manager plugin provides **12 agent roles** for your development wor
 
 **Full Autonomous Workflow (Parallel):**
 ```
-/supervisor  →  INIT → ACQUIRE → PLAN → EXECUTE (Execute Manager) → FINALIZE → LOOP
+/supervisor  →  INIT → ACQUIRE → PLAN → EXECUTE (Execute Manager) → FINALIZE → SELF_HEAL → LOOP
 ```
 
 **Plan-First Autonomous Workflow:**
@@ -189,14 +189,18 @@ To execute: /supervisor job: .supervisor/jobs/2026-02-08-jwt-auth.md
 - Creates Pull Request via GitHub CLI
 - Moves to next task
 
-**6-Phase Workflow:**
+**7-Phase Workflow:**
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  0. INIT (config)  →  1. ACQUIRE (task + branch)               │
+│  0. INIT (config)  →  1. ACQUIRE (task + branch)                │
 │         ↓                                                       │
-│  2. PLAN (decompose + parallelism)  →  3. EXECUTE (Exec Mgr)   │
+│  2. PLAN (decompose + parallelism)  →  3. EXECUTE (Exec Mgr)    │
 │         ↓                                                       │
-│  4. FINALIZE (merge + commit + PR)  →  5. LOOP (next or exit)  │
+│  4. FINALIZE (merge + commit + PR)                              │
+│         ↓                                                       │
+│  4.5 SELF_HEAL (integration review + bounded fix loop)          │
+│         ↓                                                       │
+│  5. LOOP (next or exit)                                         │
 └─────────────────────────────────────────────────────────────────┘
 ```
 

@@ -35,7 +35,7 @@ Only `hooks.json` hooks still work because they're cross-cutting, not per-agent 
 ### 2. Add Supervisor Validation Hook
 
 **What's happening now:**
-The Supervisor (`supervisor.md`) has NO validation hook — not in frontmatter, not in `hooks.json`. It's the most critical agent (6-phase orchestrator, creates PRs, manages branches, manages worktrees) and it can finish with:
+The Supervisor (`supervisor.md`) has NO validation hook — not in frontmatter, not in `hooks.json`. It's the most critical agent (7-phase orchestrator, creates PRs, manages branches, manages worktrees) and it can finish with:
 
 - Corrupted state file
 - Unmerged worktrees left behind
@@ -170,7 +170,7 @@ The Supervisor creates worktrees for parallel workers, but there's no hook track
 ### 7. Add StopFailure Hook for API Error Recovery
 
 **What's happening now:**
-If an agent's turn fails due to an API error (rate limit, timeout, server error), the agent just stops. No logging, no state save, no recovery. For the Supervisor in the middle of a 6-phase workflow, this means lost progress.
+If an agent's turn fails due to an API error (rate limit, timeout, server error), the agent just stops. No logging, no state save, no recovery. For the Supervisor in the middle of a 7-phase workflow, this means lost progress.
 
 **What `StopFailure` does:**
 Fires when an agent turn ends due to an API error. You can:
@@ -285,7 +285,7 @@ Claude Code now ships `/batch` — a built-in command that does parallel work in
 **Where Supervisor is BETTER:**
 
 - Review gates between tasks (Code Reviewer validation)
-- 6-phase workflow with state management
+- 7-phase workflow with state management
 - QA automation (QA Strategist + Executor)
 - Sequential merge with conflict detection
 - Plan-first approach (Launch Pad)

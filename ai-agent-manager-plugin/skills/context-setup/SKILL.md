@@ -14,7 +14,7 @@ Standard procedure for all agents to establish project context before proceeding
 
 - Locate project (auto-detect CLAUDE.md)
 - Load CLAUDE.md + validate freshness
-- Check Beads state (`bd list`)
+- Check Beads state (`bd list`) — **only if `.beads/` is present AND `bd --version` succeeds**
 - Read recent git history
 - Cache for entire agent session
 
@@ -53,8 +53,14 @@ Use `skills/claude-md-validation/SKILL.md`:
 - Sample 2-3 documented patterns to verify they exist in code
 - Non-blocking warnings (informational only)
 
-### 4. Check Beads State
+### 4. Check Beads State (conditional)
 
+**Run detection first:**
+```bash
+test -d .beads && bd --version >/dev/null 2>&1
+```
+
+**If detection succeeds (Beads is active):**
 ```bash
 # Sync with remote first
 bd sync
@@ -63,11 +69,15 @@ bd sync
 bd list
 ```
 
-**Understand:**
+Understand:
 - Open tasks (not started)
 - In-progress tasks (currently being worked on)
 - Recent completed tasks (last 3-5)
 - Any blockers or dependencies
+
+**If detection fails (Beads is not active):**
+- Skip this step entirely. Do NOT synthesize a fake Beads section.
+- Task source is the invocation argument, Supervisor-Ready Brief, or equivalent.
 
 ### 5. Read Recent Git History
 
@@ -101,8 +111,9 @@ Always report discovery in this format:
 **CLAUDE.md Status:** ✓ Found | ✗ Missing (auto-detect: [tech stack])
 **Architecture:** [From CLAUDE.md: e.g., React+Next.js+Tailwind, or Node+Express+Postgres]
 **Key Patterns:** [2-3 most important conventions from CLAUDE.md]
+**Task Source:** Beads | Supervisor-Ready Brief | Invocation argument
 
-**Current Beads Tasks:**
+**Current Beads Tasks:** (include this block only if Beads is active)
 - Open: [List open issues]
 - In Progress: [List in-progress issues]
 - Recent Completed: [List 3 most recent closed tasks]
@@ -119,7 +130,7 @@ Before proceeding with agent work:
 - [ ] Project path identified (ask if not found)
 - [ ] CLAUDE.md read and understood
 - [ ] CLAUDE.md freshness validated (see `skills/claude-md-validation/SKILL.md`)
-- [ ] Beads state checked (`bd list`)
+- [ ] Task source identified (Beads state if available, otherwise invocation scope)
 - [ ] Recent git history reviewed
 - [ ] Context reported to user in standard format
 - [ ] Any ambiguities clarified with user

@@ -36,7 +36,8 @@ Manage the Supervisor's externalized state file. Single writer — only this age
 | `record_review` | Record review decision | subtask_id, decision (PASS\|FAIL\|NEEDS_HUMAN), issues_count, attempt {N}/3 | `"Review: {subtask_id} {decision}, attempt {N}/3"` |
 | `record_decision` | Append to Decisions Log | phase, decision, rationale | `"Decision logged: {phase} — {decision}"` |
 | `record_error` | Append to Error Log | phase, error, retry {N}/{max}, resolution | `"Error logged: {phase} — {error}"` |
-| `update_phase` | Transition phase + checkpoint | new_phase (INIT\|ACQUIRE\|PLAN\|EXECUTE\|FINALIZE\|LOOP), completed_phases, subtask_progress | `"Phase: {new_phase}, progress: {completed}/{total}"` |
+| `record_self_heal_resume` | Increment or reset `self_heal_resume_count` | increment (boolean) | `"Resume count: {new_value}"` |
+| `update_phase` | Transition phase + checkpoint | new_phase (INIT\|ACQUIRE\|PLAN\|EXECUTE\|FINALIZE\|SELF_HEAL\|LOOP), completed_phases, subtask_progress | `"Phase: {new_phase}, progress: {completed}/{total}"` |
 | `checkpoint` | Copy state to `.supervisor/state.md` | project_dir, task_id | `"Checkpoint saved to .supervisor/state.md"` |
 | `query` | Read section without modifying | section (config\|session\|task\|subtasks\|parallelism\|decisions\|worker_results\|errors\|checkpoint) | Compact data (< 100 tokens) |
 | `record_batch` | Multiple mutations in one call | updates [{type, ...fields}] | `"Batch: {N} updates applied ({types})"` |
@@ -61,7 +62,26 @@ Actions: Create file → populate Config/Session → set phase INIT → init emp
 
 **record_review** — on PASS: check if blocked subtasks now become launchable (update Parallelism). On FAIL: increment attempt counter.
 
-**record_batch** — used by Execute Manager to reduce spawns. Each update has `type` field matching an operation name (worker_result, review, decision, error). Apply in order, single read + single write. Atomic: if any update invalid, entire batch fails.
+**record_self_heal_resume** — added in v11.0.0. Mutates the Session-scoped `self_heal_resume_count` field (see `skills/state-management/SKILL.md` and `CONTEXT_KEEPER_STATE` in `docs/RESULT_SCHEMAS.md`).
+
+```
+operation: record_self_heal_resume
+increment: true | false
+state_file: {path}
+```
+
+Actions:
+- Read current state (atomic).
+- If `increment=true`: `self_heal_resume_count = (current_value || 0) + 1`.
+- If `increment=false`: `self_heal_resume_count = 0` (lazy-added if absent).
+- Update `last_updated` timestamp. Write state file atomically.
+- Respond: `"Resume count: {new_value}"` (< 50 tokens).
+
+Callers:
+- Supervisor calls `increment: true` on each `--continue` that lands in a PAUSED SELF_HEAL phase (i.e., after a fix-task crash). If the returned value is ≥ 3, Supervisor aborts the review loop and escalates to human instead of continuing (thrash guard — the caller enforces the limit, this operation just tracks the count).
+- Supervisor calls `increment: false` from the SELF_HEAL completion tail on every exit path — PASS, ESCALATED, or loop-skipped (`--skip-self-heal`). The completion tail runs unconditionally whether the loop ran or not, so the reset is also unconditional.
+
+**record_batch** — used by Execute Manager to reduce spawns. Each update has `type` field matching an operation name (worker_result, review, decision, error, self_heal_resume). Apply in order, single read + single write. Atomic: if any update invalid, entire batch fails.
 
 Example:
 ```

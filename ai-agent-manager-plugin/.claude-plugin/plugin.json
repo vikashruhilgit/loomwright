@@ -1,7 +1,7 @@
 {
   "name": "ai-agent-manager-plugin",
-  "version": "10.3.0",
-  "description": "AI agents v10.3: Feasibility gates — Launch Pad Phase 2.5 soft gate (5 grounded checks with GO/CAUTION/NO-GO verdicts); Product Owner Assumption Check (standard flow, user confirmation before bd create when prerequisites/conflicts flagged); Product Owner Reality Check (brainstorm flow, codebase-grounded VIABLE/NEEDS_FOUNDATION/BLOCKED verdicts with Feasibility score caps). Plus QA topology auto-detection (QA Executor detects app_topology, auth method, WebSocket; REST/GraphQL/API-only/mobile/SSO support; Gate 10 GraphQL coverage; 13-gate audit). Plus v10.2 Launch Pad mandatory Plan Review gate (Phase 5.5, max 3 retries). 12 agent roles, 47 reusable skills, 10 quality gate hooks, persistent agent memory, bundled MySQL MCP server.",
+  "version": "11.0.0",
+  "description": "AI agents v11.0 — Self-healing Supervisor adds Phase 4.5 (integration review + bounded fix loop, SELF_HEAL in Context-Keeper phase enum) plus Beads-optional reviewer stack (agent + preloaded skills + shared guidelines). Builds on v10.3 feasibility gates (Launch Pad Phase 2.5 soft gate with GO/CAUTION/NO-GO verdicts; Product Owner Assumption Check and Reality Check with codebase-grounded VIABLE/NEEDS_FOUNDATION/BLOCKED verdicts) and QA topology auto-detection (REST/GraphQL/API-only/mobile/SSO support; 13-gate audit). Plus v10.2 Launch Pad mandatory Plan Review gate (Phase 5.5, max 3 retries). 12 agent roles, 47 reusable skills, 10 quality gate hooks, persistent agent memory, bundled MySQL MCP server.",
   "author": {
     "name": "vikash ruhil"
   },

@@ -7,8 +7,8 @@
     {
       "name": "ai-agent-manager-plugin",
       "source": "./ai-agent-manager-plugin",
-      "description": "12 agent roles. User-facing (8): Launch Pad (with Phase 2.5 feasibility gate + mandatory Plan Review gate), Supervisor v4, Orchestrator, Code Reviewer (LSP, read-only), Red Team Reviewer, Product Owner (with --brainstorm ideation, Assumption Check, Reality Check), QA Strategist, QA Executor. Internal (4): Execute Manager, Context-Keeper, Worker, Plan Reviewer. v10.3 adds feasibility gates (Launch Pad Phase 2.5 GO/CAUTION/NO-GO; PO Assumption Check with user gate; PO Reality Check with Feasibility score caps) plus QA topology auto-detection (REST/GraphQL/API-only/mobile/SSO), Gate 10 for GraphQL coverage, 13-gate Strategist audit. 47 skills, 10 hooks, persistent memory, bundled MySQL MCP.",
-      "version": "10.3.0",
+      "description": "AI agents v11.0 — Self-healing Supervisor adds Phase 4.5 (integration review + bounded fix loop, SELF_HEAL in Context-Keeper phase enum) plus Beads-optional reviewer stack (agent + preloaded skills + shared guidelines). Builds on v10.3 feasibility gates (Launch Pad Phase 2.5 soft gate with GO/CAUTION/NO-GO; Product Owner Assumption Check and Reality Check with codebase-grounded VIABLE/NEEDS_FOUNDATION/BLOCKED verdicts) and QA topology auto-detection (REST/GraphQL/API-only/mobile/SSO; 13-gate Strategist audit). Plus v10.2 Launch Pad mandatory Plan Review gate (Phase 5.5, max 3 retries). 12 agent roles, 47 reusable skills, 10 quality gate hooks, persistent agent memory, bundled MySQL MCP.",
+      "version": "11.0.0",
       "author": {
         "name": "vikash ruhil"
       },
@@ -45,7 +45,10 @@
         "feasibility",
         "feasibility-gate",
         "reality-check",
-        "assumption-check"
+        "assumption-check",
+        "self-heal",
+        "integration-review",
+        "beads-optional"
       ]
     }
   ]

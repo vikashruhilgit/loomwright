@@ -22,19 +22,19 @@ Patterns for autonomous workflow execution with context management, checkpoints,
 
 ## When to Use This Skill
 
-- Managing multi-phase autonomous workflows (6-phase model)
+- Managing multi-phase autonomous workflows (7-phase model — INIT, ACQUIRE, PLAN, EXECUTE, FINALIZE, SELF_HEAL, LOOP)
 - Coordinating parallel workers with git worktrees
 - Handling context limits and checkpoints
 - Implementing permission batching
 - Error recovery and escalation
 - Execute Manager delegation for Phase 3
 
-## 6-Phase State Machine
+## 7-Phase State Machine
 
 ```
-INIT → ACQUIRE → PLAN → EXECUTE → FINALIZE → LOOP
-                                                 ↓
-                                        (back to ACQUIRE or END)
+INIT → ACQUIRE → PLAN → EXECUTE → FINALIZE → SELF_HEAL → LOOP
+                                                           ↓
+                                                  (back to ACQUIRE or END)
 ```
 
 ### Phase Transitions
@@ -62,10 +62,18 @@ EXECUTE:
   - tool budget exceeded → PAUSED
 
 FINALIZE:
-  - merge + commit + PR → LOOP
+  - merge + commit + PR created → SELF_HEAL (always; completion tail runs inside 4.5)
   - merge conflict → PAUSED
 
+SELF_HEAL:
+  - review PASS → LOOP (status completed)
+  - review NEEDS_HUMAN → LOOP (status completed_with_escalation, reason needs_human)
+  - max iterations reached → LOOP (status completed_with_escalation, reason max_iterations_reached)
+  - --skip-self-heal flag set → LOOP (status completed, heal_loop_ran=false; loop is short-circuited but phase transition and completion tail still execute)
+  - fix task crash → PAUSED (self_heal_resume_count increments on --continue; 3rd resume escalates as self_heal_resume_thrash)
+
 LOOP:
+  - consumes heal outcome from SELF_HEAL for reporting (no completion actions — those happened in 4.5 tail)
   - more tasks + tool_calls < 24 (80%) → ACQUIRE
   - tool_calls 24-28 → warn + suggest new session
   - no tasks → END

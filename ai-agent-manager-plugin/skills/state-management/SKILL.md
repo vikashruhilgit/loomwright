@@ -72,8 +72,9 @@ Before creating `.supervisor/`, verify `.gitignore` exists. If not, create it wi
 - session_id: {uuid}
 - task_id: BD-XX | task-short-desc
 - branch: feature/BD-XX-desc
-- phase: INIT | ACQUIRE | PLAN | EXECUTE | FINALIZE | LOOP
+- phase: INIT | ACQUIRE | PLAN | EXECUTE | FINALIZE | SELF_HEAL | LOOP
 - status: running | paused | completed | failed
+- self_heal_resume_count: {integer, default 0}   # optional — increments on each `--continue` that lands in a PAUSED SELF_HEAL (fix-task crash recovery); resets to 0 on every SELF_HEAL completion-tail exit regardless of path (PASS, ESCALATED, or loop-skipped via `--skip-self-heal`). Guards against resume thrash — if the counter reaches 3, Supervisor aborts the loop and escalates with `self_heal_resume_thrash` reason. Mutated via Context-Keeper's `record_self_heal_resume` operation. Lazy-added on first SELF_HEAL resume; not present in initial state.
 
 ## Task
 - title: {task title}

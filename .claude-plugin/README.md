@@ -4,7 +4,12 @@ A Claude Code plugin with 12 agent roles (8 user-facing + 4 internal), 47 focuse
 
 ## Overview
 
-The AI Agent Manager Plugin v10.3 includes:
+The AI Agent Manager Plugin v11.0.0 includes:
+
+- **Phase 4.5 self-heal** — Supervisor runs a holistic Code Reviewer pass on the integrated feature branch and auto-fixes bounded BLOCKING/HIGH `new` issues (up to `--heal-iterations`, default 3), eliminating the manual review-and-fix cycle per feature
+- **Beads-optional Code Reviewer** — auto-detects `.beads/` + `bd` CLI; when absent, `CODE_REVIEW_RESULT` is the sole decision channel
+
+Plus all prior v10.3/v10.2 capabilities:
 
 ### User-Facing Agents (8)
 
@@ -304,7 +309,7 @@ ai-agent-manager/                        (marketplace root)
 │
 └── ai-agent-manager-plugin/             (plugin directory)
     ├── .claude-plugin/
-    │   └── plugin.json                  # Plugin metadata (v10.3.0)
+    │   └── plugin.json                  # Plugin metadata (v11.0.0)
     ├── agents/                          # Agent prompts (12 roles)
     │   ├── launch-pad.md
     │   ├── supervisor.md

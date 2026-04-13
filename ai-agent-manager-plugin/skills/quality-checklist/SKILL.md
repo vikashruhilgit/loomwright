@@ -14,7 +14,7 @@ Pre-task and post-task quality gates (extracted from AGENT_GUIDELINES.md).
 
 Before starting implementation:
 
-- [ ] Task clearly defined in Beads (acceptance criteria listed)
+- [ ] Task clearly defined (Beads task, Supervisor-Ready Brief, or equivalent source with acceptance criteria)
 - [ ] Dependencies checked (blocks, subtasks)
 - [ ] Related CLAUDE.md patterns understood
 - [ ] Test strategy defined (unit/integration/e2e)
@@ -111,7 +111,7 @@ Before marking complete:
 - Minor issues found
 - Can be fixed in follow-up task
 - Human decides if blocking or not
-- Issue created for tracking (BD-XXX)
+- Issue created for tracking (BD-XXX if Beads is active, otherwise recorded in review output)
 
 ## Token Cost
 

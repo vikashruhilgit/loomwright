@@ -65,13 +65,13 @@ Each agent is a Markdown prompt file (`agents/[name].md`):
 - **Key features:** Feasibility assessment, file impact estimation, parallelism pre-analysis, jobs folder, interactive refinement
 - **Outputs:** Supervisor-Ready Brief saved to `.supervisor/jobs/pending/`
 
-#### **Supervisor** (`/supervisor`) — v4 Parallel Orchestrator
-- **Purpose:** Autonomously manage complete development workflow with parallel execution
+#### **Supervisor** (`/supervisor`) — v4 Parallel Orchestrator + self-heal (Phase 4.5)
+- **Purpose:** Autonomously manage complete development workflow with parallel execution and post-merge self-heal
 - **When to use:** Full automation of task completion
-- **Command:** `/supervisor`, `/supervisor task: "description"`, `/supervisor --max-workers 3`
-- **Workflow:** INIT → ACQUIRE → PLAN → EXECUTE (via Execute Manager) → FINALIZE → LOOP
-- **Key features:** Git worktrees for parallelism, externalized state, tool call budgets, mandatory branching
-- **Outputs:** Completed tasks with PRs
+- **Command:** `/supervisor`, `/supervisor task: "description"`, `/supervisor --max-workers 3`, `/supervisor --skip-self-heal`, `/supervisor --heal-iterations N`
+- **Workflow:** INIT → ACQUIRE → PLAN → EXECUTE (via Execute Manager) → FINALIZE → SELF_HEAL → LOOP
+- **Key features:** Git worktrees for parallelism, externalized state, tool call budgets, mandatory branching, Phase 4.5 post-merge integration review + bounded fix loop, SUPERVISOR_RESULT machine-readable output
+- **Outputs:** Completed tasks with PRs + SUPERVISOR_RESULT block
 
 #### **Execute Manager** (internal, spawned by Supervisor)
 - **Purpose:** Own Phase 3 EXECUTE loop — worker/reviewer lifecycle, poll loop, Context-Keeper coordination
@@ -117,8 +117,8 @@ Each agent is a Markdown prompt file (`agents/[name].md`):
 - **When to use:** After writing code, need review
 - **Command:** `/code-reviewer src/` (specify files/dirs to review)
 - **Checks:** Type safety (via LSP), security, performance, pattern alignment, test coverage
-- **Features:** Read-only mode (permissionMode: plan), deep analysis (effort: high), pre-existing issue tagging, optional REVIEW.md support
-- **Outputs:** Issues (BLOCKING/HIGH/MEDIUM/LOW) with category (new/pre_existing/nit) + decision + CLAUDE.md proposals
+- **Features:** Read-only mode (permissionMode: plan), deep analysis (effort: high), pre-existing issue tagging, optional REVIEW.md support, **Beads integration is optional (auto-detected from `.beads/` presence + `bd --version`)** — when not active, CODE_REVIEW_RESULT block is the sole output channel
+- **Outputs:** CODE_REVIEW_RESULT v2 (always emitted) with issues (BLOCKING/HIGH/MEDIUM/LOW), category (new/pre_existing/nit), decision, CLAUDE.md proposals; Beads comment + bug issues (only when Beads is active)
 
 #### **Red Team Reviewer** (`/red-team-reviewer`)
 - **Purpose:** Adversarial audit — find what breaks in production
@@ -152,6 +152,8 @@ All agents follow a **shared contract** (see AGENT_GUIDELINES.md):
 - **Safety:** No destructive actions (db migrations, force-push) without explicit approval
 - **Rules:** Never invent files/APIs/paths; ask if unsure; use Beads for task management
 - **Frontmatter:** Every agent has YAML frontmatter for tool restrictions, model selection, maxTurns, color, disallowedTools, per-agent hooks, skills preloading, and persistent memory (see below)
+
+**Self-heal pattern (v11.0.0):** After Supervisor's FINALIZE phase creates a PR, Phase 4.5 SELF_HEAL runs a holistic Code Reviewer on the integrated feature-branch diff and auto-fixes bounded BLOCKING/HIGH `new` issues (up to `--heal-iterations`, default 3). This eliminates the manual review-and-fix cycle per feature. The phase always runs (`--skip-self-heal` only short-circuits the review loop, not the phase transition); task-completion side-effects (job-file move, state marked completed) are relocated from FINALIZE into SELF_HEAL's completion tail so the record captures heal outcome. Supervisor emits a `SUPERVISOR_RESULT` block validated by the SubagentStop hook.
 
 ---
 
@@ -266,7 +268,7 @@ ai-agent-manager/
 │   │   ├── agent-teams/              # Agent Teams patterns (experimental)
 │   │   ├── async-orchestration/      # Parallel dispatch & git worktree patterns
 │   │   ├── state-management/         # State file schema & checkpoint protocols
-│   │   ├── workflow-management/      # 6-phase workflow patterns
+│   │   ├── workflow-management/      # 7-phase workflow patterns (incl. SELF_HEAL)
 │   │   ├── context-summarization/    # Output compression for context
 │   │   ├── commit/                   # Conventional commits
 │   │   ├── quality-checklist/        # Review gate criteria
@@ -295,7 +297,7 @@ ai-agent-manager/
 │   │   ├── ARCHITECTURE_CONTRACTS.md # Capability matrix, budgets, rules
 │   │   └── ARCHITECTURE.md          # Visual agent topology diagram
 │   └── .claude-plugin/
-│       └── plugin.json               # Plugin metadata (v10.3.0)
+│       └── plugin.json               # Plugin metadata (v11.0.0)
 │
 ├── .claude-plugin/
 │   ├── marketplace.json              # Marketplace definition
@@ -356,9 +358,11 @@ EXECUTE: → Execute Manager (isolated context, 60 tool call budget)
          (unblocked) → Worktree B → Worker B → PASS
          ← EXECUTE_RESULT (merge_order, worktrees, branches)
     ↓
-FINALIZE: Pre-merge validation → Commit in worktrees → Sequential merge → PR
+FINALIZE: Pre-merge validation → Commit in worktrees → Sequential merge → PR (exit — no task-completion side-effects yet)
     ↓
-LOOP: Next task or exit
+SELF_HEAL: Integration review (Code Reviewer on full diff) → bounded fix loop (max --heal-iterations, default 3) → completion tail (job → done/, state completed, SUPERVISOR_RESULT emitted). `--skip-self-heal` short-circuits the loop but phase still runs.
+    ↓
+LOOP: Next task or exit (consumes heal outcome for reporting)
 ```
 
 ### Task Management Workflow (Beads Optional)
@@ -475,8 +479,8 @@ Before an agent completes work:
 ### Plugin Metadata
 
 - **Plugin Name:** `ai-agent-manager-plugin`
-- **Version:** 10.3.0
-- **Description:** AI agents v10.3 — Feasibility gates (Launch Pad Phase 2.5 soft gate with 5 grounded checks and GO/CAUTION/NO-GO verdicts; Product Owner Assumption Check in standard flow with user confirmation before `bd create`; Product Owner Reality Check in brainstorm flow with codebase-grounded VIABLE/NEEDS_FOUNDATION/BLOCKED verdicts and Feasibility score caps). Plus QA topology auto-detection (QA Executor detects app_topology, auth method, WebSocket presence; supports REST, GraphQL, API-only backends, mobile-backend apps, SSO/OAuth; Gate 10 for GraphQL coverage; 13-gate Strategist audit). Plus v10.2 Launch Pad mandatory Plan Review gate (Phase 5.5). 12 agent roles, 47 reusable skills, 10 quality gate hooks, persistent agent memory, bundled MySQL MCP server
+- **Version:** 11.0.0
+- **Description:** AI agents v11.0 — Self-healing Supervisor adds Phase 4.5 (integration review + bounded fix loop, SELF_HEAL in Context-Keeper phase enum) plus Beads-optional reviewer stack (agent + preloaded skills + shared guidelines). Builds on v10.3 feasibility gates (Launch Pad Phase 2.5, Product Owner Assumption/Reality Check), QA topology auto-detection, and v10.2 Launch Pad mandatory Plan Review. 12 agent roles, 47 reusable skills, 10 quality gate hooks, persistent agent memory, bundled MySQL MCP server.
 - **Agents:** 12 roles (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Plan Reviewer, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer, QA Strategist, QA Executor)
 - **Skills:** 47 reusable skills (versioned with SKILLS_INDEX.md)
 - **Hooks:** 10 quality gate hooks — centralized in hooks.json: SubagentStop (worker, execute-manager, code-reviewer, supervisor, qa-executor, plan-reviewer), Stop (code-reviewer), TaskCompleted, WorktreeCreate, StopFailure

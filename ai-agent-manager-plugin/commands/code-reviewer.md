@@ -26,21 +26,22 @@ description: Review code changes with LSP diagnostics, issue categorization, and
 ## What This Does
 
 1. **Auto-detects your project** by finding CLAUDE.md
-2. **Reads project patterns** from CLAUDE.md
-3. **Reads review rules** from optional `REVIEW.md` (falls back to CLAUDE.md)
-4. **Reviews specified files** or recent git changes
-5. **Flags issues** against code patterns with category tagging (new/pre_existing/nit):
+2. **Auto-detects Beads** — if `.beads/` is present AND `bd --version` succeeds, runs the Beads workflow (claim task, comment, close). Otherwise proceeds without any `bd` commands and relies on the CODE_REVIEW_RESULT block as the sole output channel. Beads integration is opt-in via the presence of `.beads/`.
+3. **Reads project patterns** from CLAUDE.md
+4. **Reads review rules** from optional `REVIEW.md` (falls back to CLAUDE.md)
+5. **Reviews specified files** or recent git changes
+6. **Flags issues** against code patterns with category tagging (new/pre_existing/nit):
    - Type safety violations (verified via LSP language server diagnostics)
    - Security concerns
    - Performance issues
    - Pattern inconsistencies
-6. **Validates CLAUDE.md accuracy** (flags outdated patterns against actual codebase)
-7. **Enforces domain-specific rules:**
+7. **Validates CLAUDE.md accuracy** (flags outdated patterns against actual codebase)
+8. **Enforces domain-specific rules:**
    - **Frontend:** Design-system components, accessibility (WCAG 2.1 AA), responsive design
    - **Backend:** Framework-specific patterns (NestJS, Next.js API, API Gateway)
-8. **Detects new patterns** for CLAUDE.md proposal
-9. **Provides structured feedback** with suggestions
-10. **Enforces read-only mode** (permissionMode: plan — reviewer never modifies files)
+9. **Detects new patterns** for CLAUDE.md proposal
+10. **Provides structured feedback** with suggestions + a `CODE_REVIEW_RESULT` block (schema v2) — always emitted
+11. **Enforces read-only mode** (permissionMode: plan — reviewer never modifies files)
 
 ## Example Output
 
@@ -90,7 +91,8 @@ Status: No breaking changes detected
 ## NEXT STEPS
 - Fix issues 1 & 2 above
 - Re-run `/code-reviewer` to verify fixes
-- Update Beads review subtask with PASS/FAIL/NEEDS_HUMAN decision
+- When Beads is active: the review subtask is updated with PASS/FAIL/NEEDS_HUMAN automatically
+- When Beads is not active: callers inspect the CODE_REVIEW_RESULT block directly to decide next action
 ```
 
 ---
@@ -117,7 +119,8 @@ cd /path/to/your/project
 
 ### Step 4: Next Steps
 - If more code changes: Run `/code-reviewer` again
-- When review passes: Update Beads review subtask with PASS decision
+- When Beads is active AND review passes: the Beads subtask is updated with PASS automatically
+- When Beads is not active: the CODE_REVIEW_RESULT block is the decision channel for any calling automation
 - When done: Use commit skill to create conventional commits
 
 ---
@@ -157,7 +160,12 @@ For full-stack projects, the reviewer:
 ### Disabling Domain Checks
 If a project has custom patterns that conflict with skill guidelines:
 - Add patterns to `CLAUDE.md` (takes precedence over skills)
-- Or remove skill reference from Beads task acceptance criteria
+- Or (when Beads is active) remove skill reference from the Beads task's acceptance criteria
+
+## Troubleshooting
+
+- **"bd: command not found" appears mid-run:** Expected if `.beads/` is present but `bd` CLI is not installed. The reviewer's detection requires BOTH to succeed; if either fails, Beads mode is bypassed silently. If you see this message, install `bd` or remove `.beads/` to make the bypass explicit.
+- **CODE_REVIEW_RESULT missing in output:** Report the run — every invocation must emit one, regardless of Beads state.
 
 ---
 
@@ -192,7 +200,7 @@ Review code changes against existing patterns, flag correctness/security/perform
 
 2. **Load Context**
    - Read CLAUDE.md → understand code patterns, style conventions, type safety level
-   - Check Beads state → understand current task being reviewed
+   - Detect Beads: run `test -d .beads && bd --version >/dev/null 2>&1`. If both succeed, check Beads state (`bd list`) to understand the current task being reviewed. If either fails, skip the Beads check and proceed with invocation arguments.
    - Use git log to see recent patterns and commit history
    - Cache patterns for entire review session
 
@@ -291,7 +299,8 @@ Review code changes against existing patterns, flag correctness/security/perform
 ### Next Step
 - Fix issues above
 - Run `/code-reviewer` again to verify fixes
-- Update Beads review subtask with decision (PASS/FAIL/NEEDS_HUMAN)
+- When Beads is active: the review subtask is updated with decision (PASS/FAIL/NEEDS_HUMAN)
+- When Beads is not active: the caller parses CODE_REVIEW_RESULT for the decision
 - Then use commit skill to create conventional commits
 ```
 

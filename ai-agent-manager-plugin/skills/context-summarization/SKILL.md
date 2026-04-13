@@ -235,7 +235,7 @@ Compress for `.supervisor/` (< 500 tokens):
 
 ```markdown
 ## Supervisor Checkpoint
-- Phase: [INIT|ACQUIRE|PLAN|EXECUTE|FINALIZE|LOOP]
+- Phase: [INIT|ACQUIRE|PLAN|EXECUTE|FINALIZE|SELF_HEAL|LOOP]
 - Progress: [X]/[Y] subtasks complete
 - Branch: [branch name]
 - Active worktrees: [count]
