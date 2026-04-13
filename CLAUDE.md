@@ -117,8 +117,8 @@ Each agent is a Markdown prompt file (`agents/[name].md`):
 - **When to use:** After writing code, need review
 - **Command:** `/code-reviewer src/` (specify files/dirs to review)
 - **Checks:** Type safety (via LSP), security, performance, pattern alignment, test coverage
-- **Features:** Read-only mode (permissionMode: plan), deep analysis (effort: high), pre-existing issue tagging, optional REVIEW.md support, **Beads integration is optional (auto-detected from `.beads/` presence + `bd --version`)** — when not active, CODE_REVIEW_RESULT block is the sole output channel
-- **Outputs:** CODE_REVIEW_RESULT v2 (always emitted) with issues (BLOCKING/HIGH/MEDIUM/LOW), category (new/pre_existing/nit), decision, CLAUDE.md proposals; Beads comment + bug issues (only when Beads is active)
+- **Features:** Read-only mode (permissionMode: plan), deep analysis (effort: high), pre-existing issue tagging, optional REVIEW.md support, **Beads integration is optional (auto-detected from `.beads/` presence + `bd --version`)** — when not active, CODE_REVIEW_RESULT block is the sole output channel. **Auto-expands scope to run a repo consistency audit when diff touches agents/, commands/, skills/, docs/, or plugin metadata** (mirrored prompts, version strings, counts, workflow alignment, hooks parity).
+- **Outputs:** CODE_REVIEW_RESULT v3 (always emitted) with `review_mode` (diff_review | consistency_audit), `audit_focus[]`, `trigger_paths_detected[]`, `scope_expanded[]`, `files_checked[]`, `consistency_checks` + `consistency_summary` (audit mode only), issues (BLOCKING/HIGH/MEDIUM/LOW) with category (new/pre_existing/nit/drift) and `drift_kind` (for drift issues — severity caps enforced by hook), decision, CLAUDE.md proposals; Beads comment + bug issues (only when Beads is active)
 
 #### **Red Team Reviewer** (`/red-team-reviewer`)
 - **Purpose:** Adversarial audit — find what breaks in production
@@ -297,7 +297,7 @@ ai-agent-manager/
 │   │   ├── ARCHITECTURE_CONTRACTS.md # Capability matrix, budgets, rules
 │   │   └── ARCHITECTURE.md          # Visual agent topology diagram
 │   └── .claude-plugin/
-│       └── plugin.json               # Plugin metadata (v11.0.0)
+│       └── plugin.json               # Plugin metadata (v11.1.0)
 │
 ├── .claude-plugin/
 │   ├── marketplace.json              # Marketplace definition
@@ -479,8 +479,8 @@ Before an agent completes work:
 ### Plugin Metadata
 
 - **Plugin Name:** `ai-agent-manager-plugin`
-- **Version:** 11.0.0
-- **Description:** AI agents v11.0 — Self-healing Supervisor adds Phase 4.5 (integration review + bounded fix loop, SELF_HEAL in Context-Keeper phase enum) plus Beads-optional reviewer stack (agent + preloaded skills + shared guidelines). Builds on v10.3 feasibility gates (Launch Pad Phase 2.5, Product Owner Assumption/Reality Check), QA topology auto-detection, and v10.2 Launch Pad mandatory Plan Review. 12 agent roles, 47 reusable skills, 10 quality gate hooks, persistent agent memory, bundled MySQL MCP server.
+- **Version:** 11.1.0
+- **Description:** AI agents v11.1 — Code Reviewer upgraded to system integrity reviewer: `diff_review` / `consistency_audit` modes with trigger-based auto-expand, always-included audit baseline (plugin.json + marketplace.json + CLAUDE.md + README.md), repo consistency audit (mirrored prompts, version strings, counts, workflow alignment, hooks parity), CODE_REVIEW_RESULT schema v3 with `audit_focus` tags and `drift` category plus `drift_kind` severity caps enforced by the plugin hook, and a `scripts/check-command-sync.sh` drift guard. Builds on v11.0 self-healing Supervisor (Phase 4.5 integration review + bounded fix loop), v10.3 feasibility gates (Launch Pad Phase 2.5, Product Owner Assumption/Reality Check), QA topology auto-detection, and v10.2 Launch Pad mandatory Plan Review. 12 agent roles, 47 reusable skills, 10 quality gate hooks, persistent agent memory, bundled MySQL MCP server.
 - **Agents:** 12 roles (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Plan Reviewer, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer, QA Strategist, QA Executor)
 - **Skills:** 47 reusable skills (versioned with SKILLS_INDEX.md)
 - **Hooks:** 10 quality gate hooks — centralized in hooks.json: SubagentStop (worker, execute-manager, code-reviewer, supervisor, qa-executor, plan-reviewer), Stop (code-reviewer), TaskCompleted, WorktreeCreate, StopFailure
@@ -527,7 +527,7 @@ Before an agent completes work:
 
 ### Structured Contracts (v9.0.0)
 
-- **Result Schemas:** Agent result blocks follow strict schemas — CODE_REVIEW_RESULT at `schema_version: 2` (with issue categories), all others at `schema_version: 1` — see `docs/RESULT_SCHEMAS.md`
+- **Result Schemas:** Agent result blocks follow strict schemas — CODE_REVIEW_RESULT at `schema_version: 3` (adds `review_mode`, `audit_focus`, `trigger_paths_detected`, `scope_expanded`, `files_checked`, `consistency_checks`, `consistency_summary`, and the `drift` issue category with `drift_kind` + severity caps; v2 accepted for legacy artifacts), all others at `schema_version: 1` — see `docs/RESULT_SCHEMAS.md`
 - **Failure Escalation:** Defined retry limits and escalation paths for all agents — see `docs/FAILURE_ESCALATION.md`
 - **Architecture Contracts:** Capability matrix, context budgets, timeout rules, worktree naming — see `docs/ARCHITECTURE_CONTRACTS.md`
 - **Job Lifecycle:** Briefs tracked through `pending/` → `in-progress/` → `done/`/`failed/` in `.supervisor/jobs/`

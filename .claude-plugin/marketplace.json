@@ -7,8 +7,8 @@
     {
       "name": "ai-agent-manager-plugin",
       "source": "./ai-agent-manager-plugin",
-      "description": "AI agents v11.0 — Self-healing Supervisor adds Phase 4.5 (integration review + bounded fix loop, SELF_HEAL in Context-Keeper phase enum) plus Beads-optional reviewer stack (agent + preloaded skills + shared guidelines). Builds on v10.3 feasibility gates (Launch Pad Phase 2.5 soft gate with GO/CAUTION/NO-GO; Product Owner Assumption Check and Reality Check with codebase-grounded VIABLE/NEEDS_FOUNDATION/BLOCKED verdicts) and QA topology auto-detection (REST/GraphQL/API-only/mobile/SSO; 13-gate Strategist audit). Plus v10.2 Launch Pad mandatory Plan Review gate (Phase 5.5, max 3 retries). 12 agent roles, 47 reusable skills, 10 quality gate hooks, persistent agent memory, bundled MySQL MCP.",
-      "version": "11.0.0",
+      "description": "AI agents v11.1 — Code Reviewer upgraded to system integrity reviewer: diff/consistency review modes, trigger-based auto-expand, always-included audit baseline, repo consistency audit (mirrored prompts, version strings, counts, workflow alignment, hooks parity), CODE_REVIEW_RESULT schema v3 with audit_focus tags and drift category plus drift_kind severity caps enforced by plugin hook. Builds on v11.0 self-healing Supervisor, v10.3 feasibility gates, QA topology auto-detection (REST/GraphQL/API-only/mobile/SSO; 13-gate Strategist audit), v10.2 Launch Pad Plan Review. 12 agent roles, 47 reusable skills, 10 quality gate hooks, persistent agent memory, bundled MySQL MCP.",
+      "version": "11.1.0",
       "author": {
         "name": "vikash ruhil"
       },

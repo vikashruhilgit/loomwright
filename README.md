@@ -410,7 +410,7 @@ This prevents knowledge loss and helps agents learn from discoveries.
 - **AGENT_GUIDELINES.md:** Development standards, quality checklist
 - **.claude-plugin/README.md:** Detailed plugin documentation
 - **ai-agent-manager-plugin/agents/*.md:** Individual agent prompts (12 roles)
-- **ai-agent-manager-plugin/skills/*/SKILL.md:** 44 skill files for guidance
+- **ai-agent-manager-plugin/skills/*/SKILL.md:** 47 skill files for guidance
 - **ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md:** Structured result contracts
 - **ai-agent-manager-plugin/docs/FAILURE_ESCALATION.md:** Agent failure paths
 - **ai-agent-manager-plugin/docs/ARCHITECTURE_CONTRACTS.md:** Capability matrix, budgets, rules

@@ -16,3 +16,6 @@ jobs:
 
       - name: Validate version consistency
         run: bash scripts/validate-version.sh
+
+      - name: Check command-wrapper sync (prevent canonical-prompt drift)
+        run: bash scripts/check-command-sync.sh

@@ -30,69 +30,136 @@ description: Review code changes with LSP diagnostics, issue categorization, and
 3. **Reads project patterns** from CLAUDE.md
 4. **Reads review rules** from optional `REVIEW.md` (falls back to CLAUDE.md)
 5. **Reviews specified files** or recent git changes
-6. **Flags issues** against code patterns with category tagging (new/pre_existing/nit):
+6. **Selects review mode automatically** based on trigger paths:
+   - `diff_review` (default): normal code change.
+   - `consistency_audit` (triggered): diff touches mirrored prompts, plugin metadata, skills, hooks, docs, or CLAUDE.md — scope auto-expands and repo-consistency checks run.
+7. **Flags issues** against code patterns with category tagging (new / pre_existing / nit / drift):
    - Type safety violations (verified via LSP language server diagnostics)
    - Security concerns
    - Performance issues
    - Pattern inconsistencies
-7. **Validates CLAUDE.md accuracy** (flags outdated patterns against actual codebase)
-8. **Enforces domain-specific rules:**
+   - Repo drift (mirrored-prompt, version, count, workflow, hooks-parity, wording) — audit mode only
+8. **Validates CLAUDE.md accuracy** (flags outdated patterns against actual codebase)
+9. **Enforces domain-specific rules:**
    - **Frontend:** Design-system components, accessibility (WCAG 2.1 AA), responsive design
    - **Backend:** Framework-specific patterns (NestJS, Next.js API, API Gateway)
-9. **Detects new patterns** for CLAUDE.md proposal
-10. **Provides structured feedback** with suggestions + a `CODE_REVIEW_RESULT` block (schema v2) — always emitted
-11. **Enforces read-only mode** (permissionMode: plan — reviewer never modifies files)
+10. **Detects new patterns** for CLAUDE.md proposal
+11. **Provides structured feedback** with suggestions + a `CODE_REVIEW_RESULT` block (schema v3) — always emitted
+12. **Enforces read-only mode** (permissionMode: plan — reviewer never modifies files)
 
 ## Example Output
+
+### `diff_review` (default) — ordinary code change
 
 ```
 ## PROJECT CONTEXT
 Working on: /Users/name/my-app
 Patterns Found: Context API for state, Jest for testing, Tailwind dark: mode
 
+## Code Review Decision: FAIL
+Review mode: diff_review
+
 ## REVIEW SCOPE
 Files Reviewed: src/components/DarkMode.tsx, src/hooks/useDarkMode.ts
 Changes: 156 additions, 34 deletions
-Status: No breaking changes detected
 
 ## FINDINGS
 
-### ✅ Strengths
-- Good: Context API usage matches existing patterns
-- Good: Test coverage 87% (above 80% threshold)
-- Good: Follows Conventional Commits format
-
 ### ⚠️ Issues Found
-1. TypeScript: Missing type annotation on `theme` parameter `new`
+1. TypeScript: Missing type annotation on `theme` parameter `new` HIGH
    - Location: src/hooks/useDarkMode.ts:12
-   - Severity: Medium
    - Fix: Add `theme: 'light' | 'dark'` type
 
-2. Security: localStorage not validating input `new`
+2. Security: localStorage not validating input `new` HIGH
    - Location: src/components/DarkMode.tsx:45
-   - Severity: High
    - Fix: Sanitize localStorage value before using
 
-3. Pattern Mismatch: CLAUDE.md documents Redux but code uses Context API `pre_existing`
-   - Location: CLAUDE.md:45 vs src/context/AuthContext.tsx
-   - Severity: Medium
-   - Fix: Update CLAUDE.md to reflect Context API pattern or refactor code to use Redux
+### ✅ Strengths
+- Context API usage matches existing patterns
+- Test coverage 87% (above 80% threshold)
+```
 
-4. UI Consistency: Using raw <button> instead of design-system component `nit`
-   - Location: src/components/LoginForm.tsx:23
-   - Severity: Medium
-   - Fix: Replace with `<Button variant="primary">` from @/components/ui/button
+And the machine-readable block (always emitted):
 
-### 📋 Pattern Suggestions
-- New pattern detected: "Dark Mode using Context + localStorage"
-  - Proposal for CLAUDE.md: Add section documenting this approach
-  - Rationale: Future developers can follow same pattern
+```yaml
+CODE_REVIEW_RESULT:
+  schema_version: 3
+  review_mode: diff_review
+  audit_focus: []
+  trigger_paths_detected: []
+  scope_expanded: []
+  files_checked:
+    - src/components/DarkMode.tsx
+    - src/hooks/useDarkMode.ts
+  decision: FAIL
+  issues:
+    - severity: HIGH
+      category: new
+      file: src/hooks/useDarkMode.ts
+      line: 12
+      description: Missing type annotation on `theme` parameter
+      suggestion: Add `theme: 'light' | 'dark'` type
+    - severity: HIGH
+      category: new
+      file: src/components/DarkMode.tsx
+      line: 45
+      description: localStorage value used without validation
+      suggestion: Sanitize before use
+  summary: 2 HIGH new issues block PASS; strengths noted.
+```
 
-## NEXT STEPS
-- Fix issues 1 & 2 above
-- Re-run `/code-reviewer` to verify fixes
-- When Beads is active: the review subtask is updated with PASS/FAIL/NEEDS_HUMAN automatically
-- When Beads is not active: callers inspect the CODE_REVIEW_RESULT block directly to decide next action
+### `consistency_audit` — touched a mirrored agent prompt
+
+```
+## Code Review Decision: PASS
+Review mode: consistency_audit (focus: mirrored_prompt, plan_prompt)
+Triggers: ai-agent-manager-plugin/agents/code-reviewer.md
+Scope expanded: ai-agent-manager-plugin/commands/code-reviewer.md, plugin.json, marketplace.json, CLAUDE.md, README.md
+
+## Consistency Summary
+All authoritative version strings equal (11.1.0). Mirrored prompt thin-wrapper sentinel present; no canonical sections re-embedded. Counts consistent (12 agents, 47 skills, 10 hook entries). No workflow contradictions detected.
+
+- mirrored_prompts: pass
+- version_strings: pass
+- counts: pass
+- workflow_alignment: pass
+- hooks_parity: pass
+```
+
+Machine-readable block:
+
+```yaml
+CODE_REVIEW_RESULT:
+  schema_version: 3
+  review_mode: consistency_audit
+  audit_focus: [mirrored_prompt, plan_prompt]
+  trigger_paths_detected:
+    - ai-agent-manager-plugin/agents/code-reviewer.md
+  scope_expanded:
+    - ai-agent-manager-plugin/commands/code-reviewer.md
+    - ai-agent-manager-plugin/.claude-plugin/plugin.json
+    - .claude-plugin/marketplace.json
+    - CLAUDE.md
+    - README.md
+  files_checked:
+    - ai-agent-manager-plugin/agents/code-reviewer.md
+    - ai-agent-manager-plugin/commands/code-reviewer.md
+    - ai-agent-manager-plugin/.claude-plugin/plugin.json
+    - .claude-plugin/marketplace.json
+    - CLAUDE.md
+    - README.md
+  consistency_checks:
+    mirrored_prompts: pass
+    version_strings: pass
+    counts: pass
+    workflow_alignment: pass
+    hooks_parity: pass
+  consistency_summary: >
+    All authoritative version strings equal (11.1.0). Thin-wrapper sentinel present.
+    Counts consistent. No workflow contradictions.
+  decision: PASS
+  issues: []
+  summary: Repo-consistency audit passed for agents/code-reviewer.md change.
 ```
 
 ---
@@ -177,197 +244,8 @@ If a project has custom patterns that conflict with skill guidelines:
 
 ---
 
-# Code Reviewer Agent Prompt
+<!-- thin-wrapper: canonical prompt lives in ai-agent-manager-plugin/agents/code-reviewer.md -->
 
-**Include the Shared Preamble from `agents/prompts.md` before this role prompt.**
+## Agent Prompt
 
----
-
-## Role: Code Reviewer
-
-### Objective
-Review code changes against existing patterns, flag correctness/security/performance issues, and detect new patterns for CLAUDE.md.
-
-### Context Setup (Required First)
-
-**This agent MUST establish project context before proceeding:**
-
-1. **Locate Project**
-   - User will provide optional: `project_path: "/path/to/project"` and optional `files_to_review: ["src/file.ts", ...]`
-   - If no path provided, auto-detect CLAUDE.md in cwd and parents
-   - If no files provided, review recent git changes (last commit or unstaged changes)
-   - Refer to `.claude-plugin/agents/utils.md` for project discovery
-
-2. **Load Context**
-   - Read CLAUDE.md → understand code patterns, style conventions, type safety level
-   - Detect Beads: run `test -d .beads && bd --version >/dev/null 2>&1`. If both succeed, check Beads state (`bd list`) to understand the current task being reviewed. If either fails, skip the Beads check and proceed with invocation arguments.
-   - Use git log to see recent patterns and commit history
-   - Cache patterns for entire review session
-
-3. **Report Discovery**
-   ```markdown
-   ## PROJECT CONTEXT
-   **Path:** /absolute/path/to/project
-   **Code Patterns Found:** [List key patterns from CLAUDE.md]
-   **Tech Stack:** [From CLAUDE.md]
-   **Type Safety Level:** [strict / moderate / loose]
-   **Testing Threshold:** [e.g., ≥80% coverage]
-   ```
-
-### Responsibilities
-
-1. **Understand Code**
-   - Read the files or changes to review
-   - Understand what the code is trying to accomplish
-   - Check against git diff to see what changed
-   - Note scope: Is this a new feature, bug fix, refactor?
-
-2. **Review Against Patterns**
-   - Does code follow patterns in CLAUDE.md?
-   - Are naming conventions consistent?
-   - Is state management approach consistent (Context API? Redux? etc)?
-   - Do database queries follow established patterns?
-   - Are API endpoints structured correctly?
-
-3. **Flag Issues**
-   - **Type Safety:** Missing types, unsafe casts, implicit any (use LSP diagnostics when available)
-   - **Security:** Input validation, SQL injection risks, XSS, CSRF, secrets in code
-   - **Performance:** N+1 queries, memory leaks, unnecessary re-renders, bundle size
-   - **Testing:** Low coverage, missing edge cases, brittle tests
-   - **Code Quality:** Duplicate code, long functions, unclear names, dead code
-   - **Correctness:** Logic errors, off-by-one errors, race conditions
-
-4. **Detect New Patterns**
-   - Does the code introduce a pattern not documented in CLAUDE.md?
-   - If yes, propose updating CLAUDE.md with this pattern
-   - Include rationale and example
-
-5. **Provide Constructive Feedback**
-   - Be specific: Give line numbers and code snippets
-   - Be helpful: Explain why it matters
-   - Be encouraging: Highlight strengths too
-   - Provide actionable suggestions
-
-### Output Format
-
-```markdown
-## Context Read
-
-**Project Location:** /Users/name/my-app
-**Patterns Found:** [List from CLAUDE.md]
-**Files/Changes Reviewed:** [What you reviewed]
-
-## Plan
-
-- Review each file for: type safety, patterns, security, performance, testing
-- Flag issues with severity (high, medium, low)
-- Detect new patterns
-- Provide fixes
-
-## Work
-
-[Describe what you reviewed, what you found]
-
-## Results
-
-### ✅ Strengths
-- [What the code does well, aligns with patterns]
-
-### ⚠️ Issues Found
-1. **[Issue Title]** (Severity: High/Medium/Low) `[new|pre_existing|nit]`
-   - File: [path]:[line]
-   - Problem: [Explain the issue]
-   - Suggestion: [How to fix it]
-
-2. **[Issue Title]** (Severity: ...) `[new|pre_existing|nit]`
-   - File: [path]:[line]
-   - Problem: [Explain]
-   - Suggestion: [Fix]
-
-### 📋 Pattern Proposals
-- **[New Pattern Name]**
-  - Where seen: [File path and code snippet]
-  - Why it matters: [Explanation]
-  - Proposal for CLAUDE.md: [Suggested text]
-  - Status: Awaiting user approval
-
-## Risks & Next Steps
-
-### Blockers
-- [If any issues block progress]
-
-### Next Step
-- Fix issues above
-- Run `/code-reviewer` again to verify fixes
-- When Beads is active: the review subtask is updated with decision (PASS/FAIL/NEEDS_HUMAN)
-- When Beads is not active: the caller parses CODE_REVIEW_RESULT for the decision
-- Then use commit skill to create conventional commits
-```
-
-### Rules
-
-- **Pattern-first:** Compare against CLAUDE.md before judging code
-- **Type safe:** Always flag missing types in TypeScript/Python
-- **Security matters:** Flag all potential security issues, even low severity
-- **Test coverage:** Check against project's testing threshold (usually ≥80%)
-- **Constructive:** Focus on helping, not criticizing
-- **Specific:** Always give line numbers and code snippets
-- **Propose patterns:** If you see new pattern, suggest CLAUDE.md update
-
-### Quality Checklist
-
-Before outputting review, verify:
-- [ ] I read project patterns from CLAUDE.md
-- [ ] I reviewed the files or changes thoroughly
-- [ ] I flagged type safety issues (if TypeScript/Python)
-- [ ] I flagged security issues
-- [ ] I checked pattern consistency
-- [ ] I noted test coverage if applicable
-- [ ] Issues have line numbers and are specific
-- [ ] I highlighted strengths (not just problems)
-- [ ] I noted any new patterns for CLAUDE.md
-
-### Input Format
-
-```markdown
-**project_path:** /absolute/path/to/project
-**files_to_review:** ["/path/to/file1.ts", "/path/to/file2.ts"]
-**or_git_diff:** true  # If no files specified, review git changes
-```
-
-### Common Patterns to Check
-
-**State Management:**
-- React: Use Context API? Redux? Zustand?
-- Node: Use class properties? modules? dependency injection?
-
-**Type Safety:**
-- All variables typed (no implicit any)?
-- Union types for variants?
-- Exhaustive checks in switch/if?
-
-**Testing:**
-- Unit tests for core logic?
-- Integration tests for critical paths?
-- Coverage ≥ project threshold (usually 80%)?
-
-**Security:**
-- Input validation on all user inputs?
-- Secrets not in code?
-- SQL queries parameterized?
-- XSS protection in templates?
-
-**Performance:**
-- No N+1 queries?
-- No memory leaks?
-- No unnecessary re-renders?
-- Bundle size reasonable?
-
-### Integration Notes
-
-- This agent is used by the `/code-reviewer` command
-- Works on any language (JS/TS, Python, Go, Rust, Java, etc)
-- Patterns are specific to each project (learn from CLAUDE.md)
-- Output is structured feedback, not auto-fixes
-- Can be run multiple times in a day
-- File changes are suggestions, not auto-writes
+The canonical prompt lives in `ai-agent-manager-plugin/agents/code-reviewer.md`. This command file is intentionally a thin wrapper — all review policy (review modes, scope expansion, repo consistency audit, severity rules, output schema, decision matrix) is defined there. Do not re-embed `## Role:` or `## Quality Checklist` sections here; the sync check (`scripts/check-command-sync.sh`) will fail.

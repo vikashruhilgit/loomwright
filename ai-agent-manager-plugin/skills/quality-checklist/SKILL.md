@@ -2,8 +2,8 @@
 name: quality-checklist
 description: Pre-task and post-task quality gates extracted from AGENT_GUIDELINES.md. Use when starting implementation, during development, or before completing code review.
 allowed-tools: Read
-version: "1.0.0"
-lastUpdated: "2026-03"
+version: "1.1.0"
+lastUpdated: "2026-04-13"
 ---
 
 # Quality Checklist Skill
@@ -113,11 +113,41 @@ Before marking complete:
 - Human decides if blocking or not
 - Issue created for tracking (BD-XXX if Beads is active, otherwise recorded in review output)
 
+## Repo Consistency Checks (for plugin / prompt / doc reviews)
+
+These checks apply to reviews that touch trigger surfaces (`agents/`, `commands/`, `skills/`, `docs/`, `plugin.json`, `marketplace.json`, `hooks.json`, `CLAUDE.md`, `README.md`, `SKILLS_INDEX.md`, `.supervisor/jobs/`). The Code Reviewer enters `consistency_audit` mode and runs these in addition to the standard gates. See the full trigger table in `ai-agent-manager-plugin/agents/code-reviewer.md` → "Review Modes & Scope Expansion".
+
+### Authoritative vs advisory sources
+
+- **Authoritative (drift = BLOCKING/HIGH):** `plugin.json#version`, `marketplace.json#plugins[].version`, `CLAUDE.md` current-version lines (`- **Version:** X.Y.Z` and `plugin.json (vX.Y.Z)`).
+- **Secondary (drift = MEDIUM advisory):** `README.md`, `.claude-plugin/README.md`, `plugin.json#description`, `marketplace.json#description`.
+- **Ignored (not drift):** archival/changelog references like "since v10.0.0", "v10.3 feasibility gates", "schema v9.0.0". Frontmatter `hooks:` parity is LOW/doc-only (Claude Code ignores plugin-agent frontmatter hooks at runtime).
+
+### Checks
+
+- [ ] **Mirrored prompt alignment** — `commands/{name}.md` carries the thin-wrapper sentinel and does not re-embed canonical sections (`## Role:`, `### Review Decision Matrix`, `### Close Review Task`, `### Pre-Review Checklist` as H3, `# Code Reviewer Agent Prompt`). Drift kind: `mirrored_prompt`.
+- [ ] **Version consistency (authoritative)** — all three authoritative surfaces equal. Drift kind: `version_authoritative`.
+- [ ] **Version consistency (secondary)** — README / CLAUDE.md / descriptions' current-version claims match authoritative. Historical refs ignored. Drift kind: `version_secondary` (capped at MEDIUM).
+- [ ] **Count consistency** — counts of agents (`agents/*.md`), skills (`skills/*/SKILL.md`), commands (`commands/*.md`), and hooks (sum of leaf matcher entries across all event buckets in `hooks.json` — NOT top-level bucket count) match claims in `plugin.json#description`, `marketplace.json#description`, `CLAUDE.md` File Counts block, `SKILLS_INDEX.md` header. Drift kind: `count` (capped at MEDIUM).
+- [ ] **Workflow consistency** — agent prompt behavior matches `commands/{name}.md` usage + `CLAUDE.md` role section + `commands/agent-help.md` for *currently active* claims. Drift kind: `workflow`.
+- [ ] **Hooks parity (advisory)** — `hooks.json` entries vs `CLAUDE.md` hooks table. Mismatches with agent frontmatter `hooks:` are LOW/doc-only. Drift kind: `hooks_parity` (capped at LOW).
+
+### Severity caps for drift
+
+| drift_kind | Cap | May trigger FAIL? |
+|---|---|---|
+| `version_authoritative`, `mirrored_prompt`, `workflow` | none | yes (HIGH/BLOCKING allowed) |
+| `count`, `version_secondary` | MEDIUM | no |
+| `hooks_parity`, `wording` | LOW | no |
+
+The plugin hook enforces these caps — an issue violating a cap is rejected at Stop time.
+
 ## Token Cost
 
 - Checklist invocation: 50 tokens
 - Framework-specific variations: 100-200 tokens
-- Total: ~250 tokens
+- Repo consistency section (audit mode only): +150 tokens
+- Total: ~250-400 tokens
 - Context7: Not required
 
 
