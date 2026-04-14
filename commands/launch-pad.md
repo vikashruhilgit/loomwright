@@ -2,6 +2,8 @@
 description: Prepare a raw goal for autonomous Supervisor execution with codebase analysis, environment validation, file impact estimation, and save to jobs folder
 ---
 
+> **Execute this workflow inline as the main thread.** Do not delegate to `ai-agent-manager-plugin:launch-pad-runner` via the Agent tool — a delegated subagent cannot spawn further subagents ([docs](https://code.claude.com/docs/en/sub-agents)) and the workflow will silently abort with "Task/Agent tool unavailable". To run the agent in its own session instead, launch with `claude --agent ai-agent-manager-plugin:launch-pad-runner`.
+
 # Command: /launch-pad
 
 ## Purpose

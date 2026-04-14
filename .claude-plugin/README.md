@@ -4,7 +4,9 @@ A Claude Code plugin with 12 agent roles (8 user-facing + 4 internal), 47 focuse
 
 ## Overview
 
-The AI Agent Manager Plugin v11.1.0 includes:
+The AI Agent Manager Plugin v11.1.1 includes:
+
+- **Slash-command auto-delegation fix** — `/supervisor` and `/launch-pad` no longer silently auto-delegate to same-named registered subagents (which can't spawn their own children). Agents are now registered as `…:supervisor-runner` / `…:launch-pad-runner`; slash commands execute inline on the main thread; direct `claude --agent …-runner` sessions still work.
 
 - **Code Reviewer as system integrity reviewer** — `diff_review` / `consistency_audit` modes, trigger-based auto-expand, always-included audit baseline (plugin.json + CLAUDE.md + README.md), repo consistency audit (mirrored prompts, version strings, counts, workflow alignment, hooks parity), `CODE_REVIEW_RESULT` schema v3 with `audit_focus` + `drift` category + `drift_kind` severity caps enforced by the plugin hook, CI-wired sync guard (`scripts/check-command-sync.sh`)
 
@@ -295,7 +297,7 @@ bd close BD-XX                # Complete, next unblocks
 ```
 ai-agent-manager/                        (plugin root — this IS the plugin)
 ├── .claude-plugin/
-│   ├── plugin.json                      # Plugin manifest (v11.1.0)
+│   ├── plugin.json                      # Plugin manifest (v11.1.1)
 │   └── README.md                        # This file
 ├── agents/                              # Agent prompts (12 roles)
 │   ├── launch-pad.md, supervisor.md, execute-manager.md, context-keeper.md

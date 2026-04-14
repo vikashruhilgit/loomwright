@@ -697,7 +697,7 @@ Every agent has YAML frontmatter that configures its behavior automatically:
 
 | Setting | What It Does | Example |
 |---------|-------------|---------|
-| `name` | Agent identifier | `ai-agent-manager-plugin:supervisor` |
+| `name` | Agent identifier | `ai-agent-manager-plugin:supervisor-runner` |
 | `tools` | Restricts available tools | Workers can't spawn subagents (no Task tool) |
 | `model` | Sets model for the agent | Context-Keeper uses haiku (fast, cheap) |
 | `maxTurns` | Limits API round-trips | Context-Keeper: 3 turns max |

@@ -232,7 +232,7 @@ your-project/
 ```
 ai-agent-manager/                     # The Claude Code plugin (repo IS the plugin)
 ├── .claude-plugin/
-│   ├── plugin.json                   # Plugin manifest (v11.1.0)
+│   ├── plugin.json                   # Plugin manifest (v11.1.1)
 │   └── README.md                     # Plugin-facing usage guide
 ├── agents/                           # Agent markdown prompts (12 roles)
 │   ├── launch-pad.md                 # Launch Pad (Supervisor readiness)
@@ -435,8 +435,8 @@ Before an agent completes work:
 ### Plugin Metadata
 
 - **Plugin Name:** `ai-agent-manager-plugin`
-- **Version:** 11.1.0
-- **Description:** AI agents v11.1 — Code Reviewer upgraded to system integrity reviewer: `diff_review` / `consistency_audit` modes with trigger-based auto-expand, always-included audit baseline (plugin.json + CLAUDE.md + README.md), repo consistency audit (mirrored prompts, version strings, counts, workflow alignment, hooks parity), CODE_REVIEW_RESULT schema v3 with `audit_focus` tags and `drift` category plus `drift_kind` severity caps enforced by the plugin hook, and a `scripts/check-command-sync.sh` drift guard. Builds on v11.0 self-healing Supervisor (Phase 4.5 integration review + bounded fix loop), v10.3 feasibility gates (Launch Pad Phase 2.5, Product Owner Assumption/Reality Check), QA topology auto-detection, and v10.2 Launch Pad mandatory Plan Review. 12 agent roles, 47 reusable skills, 10 quality gate hooks, persistent agent memory, bundled MySQL MCP server.
+- **Version:** 11.1.1
+- **Description:** AI agents v11.1.1 — Fix slash-command auto-delegation trap: `/supervisor` and `/launch-pad` no longer collide with same-named registered subagents that couldn't spawn their own children. Agents renamed to `…:supervisor-runner` and `…:launch-pad-runner`; slash commands gain explicit main-thread execution guards; direct `claude --agent …-runner` launches preserved. Builds on v11.1 Code Reviewer system integrity review (`diff_review` / `consistency_audit` modes, repo audit baseline, CODE_REVIEW_RESULT schema v3 with `audit_focus` tags and `drift` category plus `drift_kind` severity caps enforced by the plugin hook, `scripts/check-command-sync.sh` drift guard), v11.0 self-healing Supervisor (Phase 4.5 integration review + bounded fix loop), v10.3 feasibility gates (Launch Pad Phase 2.5, Product Owner Assumption/Reality Check), QA topology auto-detection (REST/GraphQL/API-only/mobile/SSO; 13-gate audit), and v10.2 Launch Pad mandatory Plan Review. 12 agent roles, 47 reusable skills, 10 quality gate hooks, persistent agent memory, bundled MySQL MCP server.
 - **Agents:** 12 roles (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Plan Reviewer, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer, QA Strategist, QA Executor)
 - **Skills:** 47 reusable skills (versioned with SKILLS_INDEX.md)
 - **Hooks:** 10 quality gate hooks — centralized in hooks.json: SubagentStop (worker, execute-manager, code-reviewer, supervisor, qa-executor, plan-reviewer), Stop (code-reviewer), TaskCompleted, WorktreeCreate, StopFailure
@@ -526,7 +526,7 @@ Agents with `memory: project` in their frontmatter build knowledge across sessio
 
 | Agent | What It Remembers | Storage |
 |-------|-------------------|---------|
-| Launch Pad | Commonly impacted files per goal type, project patterns | `.claude/agent-memory/ai-agent-manager-plugin:launch-pad/` |
+| Launch Pad | Commonly impacted files per goal type, project patterns | `.claude/agent-memory/ai-agent-manager-plugin:launch-pad-runner/` |
 | Code Reviewer | Review patterns, recurring issues, codebase conventions | `.claude/agent-memory/ai-agent-manager-plugin:code-reviewer/` |
 | Red Team Reviewer | Past vulnerabilities, attack patterns, audit history | `.claude/agent-memory/ai-agent-manager-plugin:red-team-reviewer/` |
 | Product Owner | Domain context, terminology, stakeholder preferences | `.claude/agent-memory/ai-agent-manager-plugin:product-owner/` |
@@ -564,6 +564,11 @@ Claude Code Agent Teams is an experimental feature providing native multi-agent 
 ---
 
 ## Common Pitfalls
+
+### `/supervisor` or `/launch-pad` Aborted with "Task/Agent tool unavailable"?
+- You likely hit the pre-11.1.1 name-collision trap where the slash command silently auto-delegated to a same-named registered subagent, which then couldn't spawn its own child agents ([docs](https://code.claude.com/docs/en/sub-agents): *"Subagents cannot spawn other subagents"*).
+- Fix in 11.1.1: the registered agents are now `ai-agent-manager-plugin:supervisor-runner` and `ai-agent-manager-plugin:launch-pad-runner`. The slash commands are inline main-thread workflows; the `-runner` suffix is what lets `claude --agent ai-agent-manager-plugin:supervisor-runner` own a session without re-introducing auto-delegation.
+- If you want an agent-owned session, use `claude --agent …-runner`. Otherwise use the slash command and stay on the main thread.
 
 ### Agents Don't Understand Project Structure?
 - Update the project's CLAUDE.md with more detailed patterns

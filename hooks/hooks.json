@@ -43,7 +43,7 @@
         ]
       },
       {
-        "matcher": "ai-agent-manager-plugin:supervisor",
+        "matcher": "ai-agent-manager-plugin:supervisor-runner",
         "hooks": [
           {
             "type": "prompt",

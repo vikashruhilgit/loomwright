@@ -1,6 +1,6 @@
 ---
-name: ai-agent-manager-plugin:supervisor
-description: Autonomous workflow orchestrator. Use for full task automation from pickup to PR creation. Manages 7-phase parallel workflow with git worktrees (includes post-merge self-heal).
+name: ai-agent-manager-plugin:supervisor-runner
+description: Internal runner for the `/supervisor` workflow. Invoke directly via `claude --agent ai-agent-manager-plugin:supervisor-runner` when you want an agent-owned session. Not intended for auto-delegation from a main-thread session — use the `/supervisor` slash command instead. Manages 7-phase parallel workflow with git worktrees (includes post-merge self-heal).
 tools: Task, Read, Glob, Grep, Bash, Write, Edit
 model: inherit
 maxTurns: 40

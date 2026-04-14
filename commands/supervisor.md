@@ -2,6 +2,8 @@
 description: Autonomously manage development workflow with parallel execution from task pickup to PR creation
 ---
 
+> **Execute this workflow inline as the main thread.** Do not delegate to `ai-agent-manager-plugin:supervisor-runner` via the Agent tool — a delegated subagent cannot spawn further subagents ([docs](https://code.claude.com/docs/en/sub-agents)) and the workflow will silently abort with "Task/Agent tool unavailable". To run the agent in its own session instead, launch with `claude --agent ai-agent-manager-plugin:supervisor-runner`.
+
 # Command: /supervisor
 
 ## Purpose
