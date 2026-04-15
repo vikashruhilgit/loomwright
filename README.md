@@ -14,10 +14,15 @@ A Claude Code plugin for AI agents to collaborate on software projects. 12 speci
 
 ### 1. Install the Plugin
 
+**Local development (from a checkout of this repo):**
+
 ```bash
-# From the ai-agent-manager checkout
-/plugin install ./
+claude --plugin-dir /path/to/ai-agent-manager
 ```
+
+This is the documented local dev/testing flow — Claude Code loads the plugin directly from the directory containing `.claude-plugin/plugin.json` (this repo's root). No marketplace wrapper needed.
+
+> **Why not `/plugin install ./`?** That command expects a *marketplace* name, not a plugin path. `/plugin marketplace add ./` + `/plugin install name@marketplace` is a separate flow that requires a marketplace wrapper with the plugin nested in a subdirectory — this repo uses the flat single-plugin layout instead, which is designed to be consumed via `--plugin-dir` locally and via the official Anthropic marketplace once published.
 
 Once published to the official Anthropic marketplace, installation becomes a single command without needing a local checkout.
 
@@ -430,7 +435,7 @@ To modify or extend agents:
 To test locally:
 
 ```bash
-/plugin install ./
+claude --plugin-dir /path/to/ai-agent-manager
 ```
 
 Then run agents in a test project to verify changes.
@@ -481,19 +486,18 @@ Claude Code caches plugin contents. After restructuring skills, force a refresh:
    ```
    /plugin uninstall ai-agent-manager-plugin
    ```
-2. Reinstall from the repo checkout:
+2. Relaunch Claude Code with the plugin directory flag:
    ```
-   /plugin install /path/to/ai-agent-manager
+   claude --plugin-dir /path/to/ai-agent-manager
    ```
-3. Restart Claude Code (close and reopen entirely)
-4. Verify with `/skills` — should show all 47 skills under "Plugin skills"
+3. Verify with `/skills` — should show all 47 skills under "Plugin skills"
 
-**Migrating from the old marketplace layout?** Before `/plugin install`, first clean up the old registrations:
+**Previously registered via `/plugin marketplace add`?** Older install instructions told you to use the marketplace flow; that's no longer the documented path for this repo. Clean up stale registrations once:
 ```
-/plugin marketplace remove ai-agent-manager-marketplace
 /plugin uninstall ai-agent-manager-plugin
+/plugin marketplace remove ai-agent-manager-marketplace
 ```
-Then install via `/plugin install ./` from the repo checkout.
+Then relaunch with `claude --plugin-dir /path/to/ai-agent-manager`.
 
 ---
 

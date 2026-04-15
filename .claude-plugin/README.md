@@ -57,12 +57,11 @@ Skills are loaded on-demand to keep context small:
 ### 1. Installation
 
 ```bash
-# From the ai-agent-manager checkout
-cd /path/to/ai-agent-manager
-/plugin install ./
+# From a checkout of this repo
+claude --plugin-dir /path/to/ai-agent-manager
 ```
 
-Once published to the official Anthropic marketplace, installation becomes a single command without needing a local checkout.
+`--plugin-dir` is the documented local-dev flow; Claude Code loads the plugin directly from the directory containing `.claude-plugin/plugin.json`. Once published to the official Anthropic marketplace, installation becomes a single command without needing a local checkout.
 
 ### 2. Setup Your Project
 
@@ -381,12 +380,13 @@ Agents with `memory: project` build knowledge across sessions:
 
 ## Marketplace Setup
 
-### Local Install (Testing)
+### Local Dev/Testing
 
 ```bash
-cd /path/to/ai-agent-manager
-/plugin install ./
+claude --plugin-dir /path/to/ai-agent-manager
 ```
+
+`--plugin-dir` loads this plugin directly from its directory (no marketplace wrapper needed). `/plugin install ./` is NOT the correct flow — it expects a registered *marketplace* name, not a plugin path.
 
 ### Official Marketplace (Distribution)
 

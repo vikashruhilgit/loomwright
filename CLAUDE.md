@@ -25,7 +25,7 @@ The repo IS the plugin — a single-plugin Claude Code repo with the manifest at
 - Docs: `docs/`
 - Manifest: `.claude-plugin/plugin.json`
 
-Installation: `/plugin install ./` from a local checkout, or via the official Anthropic marketplace once submitted.
+Installation: `claude --plugin-dir /path/to/ai-agent-manager` from a local checkout, or via the official Anthropic marketplace once submitted. (`/plugin install ./` is NOT the correct flow — it expects a marketplace name, not a plugin path.)
 
 ### Beads Task Management
 
@@ -161,11 +161,11 @@ All agents follow a **shared contract** (see AGENT_GUIDELINES.md):
 ### Installation
 
 ```bash
-# From the ai-agent-manager checkout
-/plugin install ./
+# From a checkout of this repo
+claude --plugin-dir /path/to/ai-agent-manager
 ```
 
-Once merged to the official Anthropic marketplace, installation is a single command without needing a local checkout.
+`--plugin-dir` is the documented local-dev flow; Claude Code loads the plugin directly from the directory containing `.claude-plugin/plugin.json`. Once merged to the official Anthropic marketplace, installation is a single command without needing a local checkout.
 
 ### Setup a Project
 
@@ -385,7 +385,7 @@ Agents are Markdown files in `agents/`:
    - Include quick rules, examples, and quality gates
 
 4. **Test locally:**
-   - Install from the repo root: `/plugin install ./`
+   - Relaunch Claude Code with: `claude --plugin-dir /path/to/ai-agent-manager`
    - Run `/agent-help` to verify command is available
    - Test in a sample project
 
@@ -448,7 +448,7 @@ Before an agent completes work:
 ### Installation
 
 - Single-plugin repo with manifest at `.claude-plugin/plugin.json`
-- Local install: `/plugin install ./` from a repo checkout
+- Local dev/testing: `claude --plugin-dir /path/to/ai-agent-manager`
 - Official: install via the Anthropic marketplace once submitted
 
 ---
@@ -458,7 +458,7 @@ Before an agent completes work:
 ### This is a Plugin System
 
 - Agents are distributed as a Claude Code plugin
-- Users install via `/plugin install ./` from a local checkout, or via the official Anthropic marketplace
+- Users launch Claude Code with `claude --plugin-dir /path/to/ai-agent-manager` from a local checkout, or install via the official Anthropic marketplace
 - Agents run within Claude Code (not standalone)
 
 ### Language-Agnostic
