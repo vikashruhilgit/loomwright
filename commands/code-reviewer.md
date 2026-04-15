@@ -117,7 +117,7 @@ Triggers: agents/code-reviewer.md
 Scope expanded: commands/code-reviewer.md, plugin.json, CLAUDE.md, README.md
 
 ## Consistency Summary
-All authoritative version strings equal (11.1.1). Mirrored prompt thin-wrapper sentinel present; no canonical sections re-embedded. Counts consistent (12 agents, 47 skills, 10 hook entries). No workflow contradictions detected.
+All authoritative version strings equal (11.1.2). Mirrored prompt thin-wrapper sentinel present; no canonical sections re-embedded. Counts consistent (12 agents, 47 skills, 10 hook entries). No workflow contradictions detected.
 
 - mirrored_prompts: pass
 - version_strings: pass
@@ -153,7 +153,7 @@ CODE_REVIEW_RESULT:
     workflow_alignment: pass
     hooks_parity: pass
   consistency_summary: >
-    All authoritative version strings equal (11.1.1). Thin-wrapper sentinel present.
+    All authoritative version strings equal (11.1.2). Thin-wrapper sentinel present.
     Counts consistent. No workflow contradictions.
   decision: PASS
   issues: []

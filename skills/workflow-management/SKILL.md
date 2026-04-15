@@ -70,7 +70,8 @@ SELF_HEAL:
   - review NEEDS_HUMAN → LOOP (status completed_with_escalation, reason needs_human)
   - max iterations reached → LOOP (status completed_with_escalation, reason max_iterations_reached)
   - --skip-self-heal flag set → LOOP (status completed, heal_loop_ran=false; loop is short-circuited but phase transition and completion tail still execute)
-  - fix task crash → PAUSED (self_heal_resume_count increments on --continue; 3rd resume escalates as self_heal_resume_thrash)
+  - fix task crash → PAUSED (self_heal_resume_count increments on the next --continue only after that resume actually re-runs the code-reviewer Task; 3rd such reviewer-reaching resume escalates as self_heal_resume_thrash. Invariant-violation resumes that skip the reviewer do not increment the counter.)
+  - Phase 4.5 invariant violation (code-reviewer not invoked AND --skip-self-heal not set) → status: failed, job stays in in-progress/, no counter mutation
 
 LOOP:
   - consumes heal outcome from SELF_HEAL for reporting (no completion actions — those happened in 4.5 tail)

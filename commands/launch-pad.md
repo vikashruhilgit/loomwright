@@ -4,6 +4,8 @@ description: Prepare a raw goal for autonomous Supervisor execution with codebas
 
 > **Execute this workflow inline as the main thread.** Do not delegate to `ai-agent-manager-plugin:launch-pad-runner` via the Agent tool — a delegated subagent cannot spawn further subagents ([docs](https://code.claude.com/docs/en/sub-agents)) and the workflow will silently abort with "Task/Agent tool unavailable". To run the agent in its own session instead, launch with `claude --agent ai-agent-manager-plugin:launch-pad-runner`.
 
+> **Execution contract:** Inline main-thread execution replaces only the top-level `launch-pad-runner`. You MUST still spawn the `plan-reviewer` child agent via the Task tool at the Plan Review gate. Do NOT collapse the workflow into direct main-thread brief-drafting and self-validation.
+
 # Command: /launch-pad
 
 ## Purpose

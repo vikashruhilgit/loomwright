@@ -4,9 +4,11 @@ A Claude Code plugin with 12 agent roles (8 user-facing + 4 internal), 47 focuse
 
 ## Overview
 
-The AI Agent Manager Plugin v11.1.1 includes:
+The AI Agent Manager Plugin v11.1.2 includes:
 
-- **Slash-command auto-delegation fix** — `/supervisor` and `/launch-pad` no longer silently auto-delegate to same-named registered subagents (which can't spawn their own children). Agents are now registered as `…:supervisor-runner` / `…:launch-pad-runner`; slash commands execute inline on the main thread; direct `claude --agent …-runner` sessions still work.
+- **"Inline ≠ stop orchestrating" loophole closed (v11.1.2)** — The v11.1.1 main-thread guard accidentally licensed inline `/supervisor` runs to skip Phase 3 child agents and the Phase 4.5 `code-reviewer` integration review. v11.1.2 adds tailored execution-contract paragraphs to both slash commands, an inline-execution critical rule in `agents/supervisor.md`, and a Phase 4.5 completion-tail runtime invariant that emits `status: failed` (and leaves the job in `in-progress/`) if `code-reviewer` was not invoked and `--skip-self-heal` was not explicitly passed. Schema-versioned SUPERVISOR_RESULT field, a `/supervisor --recover-self-heal` command, and symmetric `/launch-pad` plan-reviewer gate hardening are filed as follow-up PRs.
+
+- **Slash-command auto-delegation fix (v11.1.1, preserved)** — `/supervisor` and `/launch-pad` no longer silently auto-delegate to same-named registered subagents (which can't spawn their own children). Agents are now registered as `…:supervisor-runner` / `…:launch-pad-runner`; slash commands execute inline on the main thread; direct `claude --agent …-runner` sessions still work.
 
 - **Code Reviewer as system integrity reviewer** — `diff_review` / `consistency_audit` modes, trigger-based auto-expand, always-included audit baseline (plugin.json + CLAUDE.md + README.md), repo consistency audit (mirrored prompts, version strings, counts, workflow alignment, hooks parity), `CODE_REVIEW_RESULT` schema v3 with `audit_focus` + `drift` category + `drift_kind` severity caps enforced by the plugin hook, CI-wired sync guard (`scripts/check-command-sync.sh`)
 
@@ -297,7 +299,7 @@ bd close BD-XX                # Complete, next unblocks
 ```
 ai-agent-manager/                        (plugin root — this IS the plugin)
 ├── .claude-plugin/
-│   ├── plugin.json                      # Plugin manifest (v11.1.1)
+│   ├── plugin.json                      # Plugin manifest (v11.1.2)
 │   └── README.md                        # This file
 ├── agents/                              # Agent prompts (12 roles)
 │   ├── launch-pad.md, supervisor.md, execute-manager.md, context-keeper.md

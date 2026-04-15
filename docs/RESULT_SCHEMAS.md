@@ -500,7 +500,7 @@ agents_running: object[]               # currently spawned agents
   - agent_type: string                 # e.g., "worker", "code-reviewer"
     task_id: string
     started_at: timestamp
-self_heal_resume_count: integer        # optional — default 0; increments on each --continue that lands in a PAUSED SELF_HEAL (fix-task crash recovery); resets to 0 unconditionally in the SELF_HEAL completion tail on every exit path (PASS, ESCALATED, or loop-skipped via --skip-self-heal). Guards against resume thrash — if the counter reaches 3, Supervisor aborts the loop and escalates with self_heal_resume_thrash reason. Lazy-added on first SELF_HEAL resume; mutated via record_self_heal_resume operation.
+self_heal_resume_count: integer        # optional — default 0; increments only on resumes that actually execute the code-reviewer Task in Phase 4.5 (first loop iteration), NOT on every --continue landing in SELF_HEAL. Phase 4.5 invariant-violation resumes (code-reviewer never invoked AND --skip-self-heal not set) deliberately do NOT increment, so they cannot age into a self_heal_resume_thrash escalation. Resets to 0 in the SELF_HEAL completion tail on the three completion exit paths (PASS, ESCALATED, or loop-skipped via --skip-self-heal); the invariant-violation guard (step 0) exits with status: failed before reaching the reset step and deliberately does NOT reset, preserving prior legitimate reviewer-reaching counts. Thrash guard: if the counter reaches 3, Supervisor aborts the loop and escalates with self_heal_resume_thrash reason. Lazy-added on first SELF_HEAL resume that runs the reviewer; mutated via record_self_heal_resume operation; read non-mutatively via query(section: session).
 last_updated: timestamp                # required — ISO 8601
 ```
 
