@@ -113,8 +113,8 @@ CODE_REVIEW_RESULT:
 ```
 ## Code Review Decision: PASS
 Review mode: consistency_audit (focus: mirrored_prompt, plan_prompt)
-Triggers: agents/code-reviewer.md
-Scope expanded: commands/code-reviewer.md, plugin.json, CLAUDE.md, README.md
+Triggers: ai-agent-manager-plugin/agents/code-reviewer.md
+Scope expanded: ai-agent-manager-plugin/commands/code-reviewer.md, ai-agent-manager-plugin/.claude-plugin/plugin.json, .claude-plugin/marketplace.json, CLAUDE.md, README.md
 
 ## Consistency Summary
 All authoritative version strings equal (11.1.2). Mirrored prompt thin-wrapper sentinel present; no canonical sections re-embedded. Counts consistent (12 agents, 47 skills, 10 hook entries). No workflow contradictions detected.
@@ -134,16 +134,18 @@ CODE_REVIEW_RESULT:
   review_mode: consistency_audit
   audit_focus: [mirrored_prompt, plan_prompt]
   trigger_paths_detected:
-    - agents/code-reviewer.md
+    - ai-agent-manager-plugin/agents/code-reviewer.md
   scope_expanded:
-    - commands/code-reviewer.md
-    - .claude-plugin/plugin.json
+    - ai-agent-manager-plugin/commands/code-reviewer.md
+    - ai-agent-manager-plugin/.claude-plugin/plugin.json
+    - .claude-plugin/marketplace.json
     - CLAUDE.md
     - README.md
   files_checked:
-    - agents/code-reviewer.md
-    - commands/code-reviewer.md
-    - .claude-plugin/plugin.json
+    - ai-agent-manager-plugin/agents/code-reviewer.md
+    - ai-agent-manager-plugin/commands/code-reviewer.md
+    - ai-agent-manager-plugin/.claude-plugin/plugin.json
+    - .claude-plugin/marketplace.json
     - CLAUDE.md
     - README.md
   consistency_checks:
@@ -157,7 +159,7 @@ CODE_REVIEW_RESULT:
     Counts consistent. No workflow contradictions.
   decision: PASS
   issues: []
-  summary: Repo-consistency audit passed for agents/code-reviewer.md change.
+  summary: Repo-consistency audit passed for ai-agent-manager-plugin/agents/code-reviewer.md change.
 ```
 
 ---
@@ -242,8 +244,8 @@ If a project has custom patterns that conflict with skill guidelines:
 
 ---
 
-<!-- thin-wrapper: canonical prompt lives in agents/code-reviewer.md -->
+<!-- thin-wrapper: canonical prompt lives in ai-agent-manager-plugin/agents/code-reviewer.md -->
 
 ## Agent Prompt
 
-The canonical prompt lives in `agents/code-reviewer.md`. This command file is intentionally a thin wrapper — all review policy (review modes, scope expansion, repo consistency audit, severity rules, output schema, decision matrix) is defined there. Do not re-embed `## Role:` or `## Quality Checklist` sections here; the sync check (`scripts/check-command-sync.sh`) will fail.
+The canonical prompt lives in `ai-agent-manager-plugin/agents/code-reviewer.md`. This command file is intentionally a thin wrapper — all review policy (review modes, scope expansion, repo consistency audit, severity rules, output schema, decision matrix) is defined there. Do not re-embed `## Role:` or `## Quality Checklist` sections here; the sync check (`scripts/check-command-sync.sh`) will fail.

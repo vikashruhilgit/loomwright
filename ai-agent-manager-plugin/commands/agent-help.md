@@ -838,38 +838,52 @@ bd close BD-XX
 
 ### Plugin Files
 ```
+.claude-plugin/
+├── marketplace.json                  # Marketplace manifest (root)
+└── README.md                         # Plugin-facing usage guide
+
+ai-agent-manager-plugin/              # Nested plugin root
 ├── .claude-plugin/
-│   └── plugin.json          # Plugin metadata (v9.0.0)
-├── commands/                # Slash commands
-│   ├── launch-pad.md        # Supervisor readiness
-│   ├── supervisor.md        # Parallel orchestrator (v4)
+│   └── plugin.json                   # Plugin metadata (v11.1.2)
+├── .mcp.json                         # Bundled MCP servers
+├── commands/                         # Slash commands (9)
+│   ├── launch-pad.md                 # Supervisor readiness
+│   ├── supervisor.md                 # Parallel orchestrator (v4)
+│   ├── product-owner.md              # Requirements definition
 │   ├── orchestrator.md
 │   ├── code-reviewer.md
-│   ├── red-team-reviewer.md # Adversarial auditor
-│   ├── qa-strategist.md     # Risk-based QA strategy
-│   ├── qa-executor.md       # Automated QA testing
+│   ├── red-team-reviewer.md          # Adversarial auditor
+│   ├── qa-strategist.md              # Risk-based QA strategy
+│   ├── qa-executor.md                # Automated QA testing
 │   └── agent-help.md
-├── agents/                  # Agent implementations (12 roles)
-│   ├── launch-pad.md        # Supervisor readiness agent
-│   ├── supervisor.md        # Parallel orchestrator (v4)
-│   ├── execute-manager.md   # Phase 3 execution manager
-│   ├── context-keeper.md    # State management agent
-│   ├── worker.md            # Implementation worker
-│   ├── product-owner.md     # Requirements definition
+├── agents/                           # Agent implementations (12 roles)
+│   ├── launch-pad.md                 # Supervisor readiness agent
+│   ├── supervisor.md                 # Parallel orchestrator (v4)
+│   ├── execute-manager.md            # Phase 3 execution manager
+│   ├── context-keeper.md             # State management agent
+│   ├── worker.md                     # Implementation worker
+│   ├── plan-reviewer.md              # Brief validation gate
+│   ├── product-owner.md              # Requirements definition
 │   ├── orchestrator.md
 │   ├── code-reviewer.md
-│   ├── red-team-reviewer.md # Has own adversarial preamble
-│   ├── qa-strategist.md     # Risk-based QA strategy
-│   ├── qa-executor.md       # Discovery + test generation
-│   └── prompts.md           # Shared preamble
-├── hooks/                   # Plugin quality gate hooks
-│   └── hooks.json           # SubagentStop + TaskCompleted validation
-└── skills/                  # Skill files (35 skills)
-    ├── supervisor-readiness/# Pre-flight checklist & brief template
-    ├── agent-teams/         # Agent Teams patterns (experimental)
-    ├── async-orchestration/ # Parallel dispatch patterns
-    ├── state-management/    # State file schema
-    ├── workflow-management/  # Supervisor workflow patterns
+│   ├── red-team-reviewer.md
+│   ├── qa-strategist.md
+│   └── qa-executor.md
+├── hooks/                            # Plugin quality gate hooks
+│   └── hooks.json                    # SubagentStop + TaskCompleted validation
+├── docs/                             # Architecture + schemas
+│   ├── RESULT_SCHEMAS.md
+│   ├── FAILURE_ESCALATION.md
+│   ├── ARCHITECTURE_CONTRACTS.md
+│   ├── ARCHITECTURE.md
+│   └── QA_SYSTEM_BLUEPRINT.md
+└── skills/                           # Skill files (47 skills)
+    ├── SKILLS_INDEX.md               # Skill catalog with agent mapping
+    ├── supervisor-readiness/         # Pre-flight checklist & brief template
+    ├── agent-teams/                  # Agent Teams patterns (experimental)
+    ├── async-orchestration/          # Parallel dispatch patterns
+    ├── state-management/             # State file schema
+    ├── workflow-management/          # Supervisor workflow patterns
     ├── context-summarization/
     ├── commit/
     ├── quality-checklist/

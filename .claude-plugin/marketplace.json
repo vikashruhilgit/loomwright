@@ -1,0 +1,55 @@
+{
+  "name": "ai-agent-manager-marketplace",
+  "owner": {
+    "name": "vikash ruhil"
+  },
+  "plugins": [
+    {
+      "name": "ai-agent-manager-plugin",
+      "source": "./ai-agent-manager-plugin",
+      "description": "AI agents v11.1.2 — Close the \"inline = stop orchestrating\" loophole. The v11.1.1 main-thread guard correctly killed the subagent-spawn trap but accidentally licensed inline `/supervisor` runs to skip Phase 3 child agents and the Phase 4.5 `code-reviewer` integration review. v11.1.2 adds tailored execution-contract paragraphs to `/supervisor` and `/launch-pad` command files making \"inline ≠ no child agents\" explicit, an inline-execution critical rule in `ai-agent-manager-plugin/agents/supervisor.md`, and a runtime invariant in the Phase 4.5 completion tail: if `--skip-self-heal` was not passed AND `code-reviewer` Task was not invoked, Supervisor emits `status: failed` and leaves the job in `in-progress/` instead of silently passing. Schema/hook work for `skip_self_heal_flag`, a `/supervisor --recover-self-heal` command, and symmetric `/launch-pad` plan-reviewer gate hardening are deferred to follow-up PRs. Builds on v11.1.1 `-runner` rename (preserved), v11.1 Code Reviewer system integrity review (`diff_review` / `consistency_audit` modes, repo audit baseline, CODE_REVIEW_RESULT schema v3 with `audit_focus` tags and `drift` category plus `drift_kind` severity caps enforced by the plugin hook, `scripts/check-command-sync.sh` drift guard), v11.0 self-healing Supervisor (Phase 4.5 integration review + bounded fix loop), v10.3 feasibility gates (Launch Pad Phase 2.5, Product Owner Assumption/Reality Check), QA topology auto-detection (REST/GraphQL/API-only/mobile/SSO; 13-gate audit), and v10.2 Launch Pad mandatory Plan Review. 12 agent roles, 47 reusable skills, 10 quality gate hooks, persistent agent memory, bundled MySQL MCP server.",
+      "version": "11.1.2",
+      "author": {
+        "name": "vikash ruhil"
+      },
+      "license": "MIT",
+      "keywords": [
+        "agents",
+        "orchestration",
+        "parallel-execution",
+        "git-worktree",
+        "code-review",
+        "workflow",
+        "automation",
+        "supervisor",
+        "autonomous",
+        "red-team",
+        "adversarial",
+        "security-audit",
+        "launch-pad",
+        "plan-first",
+        "plan-review",
+        "plan-reviewer",
+        "readiness",
+        "product-owner",
+        "brainstorming",
+        "ideation",
+        "multi-mind",
+        "qa-strategist",
+        "qa-executor",
+        "playwright",
+        "skills",
+        "persistent-memory",
+        "hooks",
+        "mysql",
+        "feasibility",
+        "feasibility-gate",
+        "reality-check",
+        "assumption-check",
+        "self-heal",
+        "integration-review",
+        "beads-optional"
+      ]
+    }
+  ]
+}

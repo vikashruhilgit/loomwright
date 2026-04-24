@@ -6,7 +6,7 @@ A Claude Code plugin with 12 agent roles (8 user-facing + 4 internal), 47 focuse
 
 The AI Agent Manager Plugin v11.1.2 includes:
 
-- **"Inline ≠ stop orchestrating" loophole closed (v11.1.2)** — The v11.1.1 main-thread guard accidentally licensed inline `/supervisor` runs to skip Phase 3 child agents and the Phase 4.5 `code-reviewer` integration review. v11.1.2 adds tailored execution-contract paragraphs to both slash commands, an inline-execution critical rule in `agents/supervisor.md`, and a Phase 4.5 completion-tail runtime invariant that emits `status: failed` (and leaves the job in `in-progress/`) if `code-reviewer` was not invoked and `--skip-self-heal` was not explicitly passed. Schema-versioned SUPERVISOR_RESULT field, a `/supervisor --recover-self-heal` command, and symmetric `/launch-pad` plan-reviewer gate hardening are filed as follow-up PRs.
+- **"Inline ≠ stop orchestrating" loophole closed (v11.1.2)** — The v11.1.1 main-thread guard accidentally licensed inline `/supervisor` runs to skip Phase 3 child agents and the Phase 4.5 `code-reviewer` integration review. v11.1.2 adds tailored execution-contract paragraphs to both slash commands, an inline-execution critical rule in `ai-agent-manager-plugin/agents/supervisor.md`, and a Phase 4.5 completion-tail runtime invariant that emits `status: failed` (and leaves the job in `in-progress/`) if `code-reviewer` was not invoked and `--skip-self-heal` was not explicitly passed. Schema-versioned SUPERVISOR_RESULT field, a `/supervisor --recover-self-heal` command, and symmetric `/launch-pad` plan-reviewer gate hardening are filed as follow-up PRs.
 
 - **Slash-command auto-delegation fix (v11.1.1, preserved)** — `/supervisor` and `/launch-pad` no longer silently auto-delegate to same-named registered subagents (which can't spawn their own children). Agents are now registered as `…:supervisor-runner` / `…:launch-pad-runner`; slash commands execute inline on the main thread; direct `claude --agent …-runner` sessions still work.
 
@@ -56,12 +56,13 @@ Skills are loaded on-demand to keep context small:
 
 ### 1. Installation
 
-```bash
+```
 # From a checkout of this repo
-claude --plugin-dir /path/to/ai-agent-manager
+/plugin marketplace add /path/to/ai-agent-manager
+/plugin install ai-agent-manager-plugin@ai-agent-manager-marketplace
 ```
 
-`--plugin-dir` is the documented local-dev flow; Claude Code loads the plugin directly from the directory containing `.claude-plugin/plugin.json`. Once published to the official Anthropic marketplace, installation becomes a single command without needing a local checkout.
+The repo is a marketplace wrapper (`/.claude-plugin/marketplace.json`) with the plugin nested at `ai-agent-manager-plugin/`. Once published to the official Anthropic marketplace, installation becomes a single `/plugin install` command without needing a local checkout.
 
 ### 2. Setup Your Project
 
@@ -296,29 +297,33 @@ bd close BD-XX                # Complete, next unblocks
 ### Plugin Files
 
 ```
-ai-agent-manager/                        (plugin root — this IS the plugin)
+ai-agent-manager/                            # Marketplace wrapper repo
 ├── .claude-plugin/
-│   ├── plugin.json                      # Plugin manifest (v11.1.2)
-│   └── README.md                        # This file
-├── agents/                              # Agent prompts (12 roles)
-│   ├── launch-pad.md, supervisor.md, execute-manager.md, context-keeper.md
-│   ├── worker.md, plan-reviewer.md, product-owner.md, orchestrator.md
-│   ├── code-reviewer.md, red-team-reviewer.md, qa-strategist.md, qa-executor.md
-├── commands/                            # Slash commands (9)
-│   ├── launch-pad.md, supervisor.md, product-owner.md, orchestrator.md
-│   ├── code-reviewer.md, red-team-reviewer.md, qa-strategist.md, qa-executor.md
-│   └── agent-help.md
-├── hooks/
-│   └── hooks.json                       # 10 quality gate hooks (centralized)
-├── skills/                              # 47 focused skill modules
-│   ├── SKILLS_INDEX.md                  # Skill catalog with agent mapping
-│   └── [skill-name]/SKILL.md            # Individual skills
-└── docs/
-    ├── RESULT_SCHEMAS.md                # Structured result contracts
-    ├── FAILURE_ESCALATION.md            # Retry limits and escalation paths
-    ├── ARCHITECTURE_CONTRACTS.md        # Capability matrix, budgets, rules
-    ├── ARCHITECTURE.md                  # Visual agent topology
-    └── QA_SYSTEM_BLUEPRINT.md           # QA system architecture
+│   ├── marketplace.json                     # Marketplace manifest (root)
+│   └── README.md                            # This file
+└── ai-agent-manager-plugin/                 # The nested plugin
+    ├── .claude-plugin/
+    │   └── plugin.json                      # Plugin manifest (v11.1.2)
+    ├── .mcp.json                            # Bundled MCP servers
+    ├── agents/                              # Agent prompts (12 roles)
+    │   ├── launch-pad.md, supervisor.md, execute-manager.md, context-keeper.md
+    │   ├── worker.md, plan-reviewer.md, product-owner.md, orchestrator.md
+    │   └── code-reviewer.md, red-team-reviewer.md, qa-strategist.md, qa-executor.md
+    ├── commands/                            # Slash commands (9)
+    │   ├── launch-pad.md, supervisor.md, product-owner.md, orchestrator.md
+    │   ├── code-reviewer.md, red-team-reviewer.md, qa-strategist.md, qa-executor.md
+    │   └── agent-help.md
+    ├── hooks/
+    │   └── hooks.json                       # 10 quality gate hooks (centralized)
+    ├── skills/                              # 47 focused skill modules
+    │   ├── SKILLS_INDEX.md                  # Skill catalog with agent mapping
+    │   └── [skill-name]/SKILL.md            # Individual skills
+    └── docs/
+        ├── RESULT_SCHEMAS.md                # Structured result contracts
+        ├── FAILURE_ESCALATION.md            # Retry limits and escalation paths
+        ├── ARCHITECTURE_CONTRACTS.md        # Capability matrix, budgets, rules
+        ├── ARCHITECTURE.md                  # Visual agent topology
+        └── QA_SYSTEM_BLUEPRINT.md           # QA system architecture
 ```
 
 ---
@@ -382,15 +387,16 @@ Agents with `memory: project` build knowledge across sessions:
 
 ### Local Dev/Testing
 
-```bash
-claude --plugin-dir /path/to/ai-agent-manager
+```
+/plugin marketplace add /path/to/ai-agent-manager
+/plugin install ai-agent-manager-plugin@ai-agent-manager-marketplace
 ```
 
-`--plugin-dir` loads this plugin directly from its directory (no marketplace wrapper needed). `/plugin install ./` is NOT the correct flow — it expects a registered *marketplace* name, not a plugin path.
+The repo ships as a marketplace wrapper (`/.claude-plugin/marketplace.json`) with the plugin nested at `ai-agent-manager-plugin/`. The first command registers the marketplace, the second installs the plugin from it.
 
 ### Official Marketplace (Distribution)
 
-Once the plugin is accepted into the official Anthropic marketplace, users install with a single command — no local checkout required. See `.claude-plugin/plugin.json` for the plugin manifest.
+Once the plugin is accepted into the official Anthropic marketplace, users install with a single `/plugin install` command — no local checkout required. See `ai-agent-manager-plugin/.claude-plugin/plugin.json` for the plugin manifest and `.claude-plugin/marketplace.json` for the marketplace manifest.
 
 ---
 

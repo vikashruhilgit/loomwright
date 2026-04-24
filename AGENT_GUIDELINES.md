@@ -250,7 +250,7 @@ Agents with `memory: project` store knowledge in `.claude/agent-memory/{agent-na
 
 All validation hooks are centralized in `hooks.json` since v10.0.0. Claude Code silently ignores `hooks`, `mcpServers`, and `permissionMode` in plugin agent frontmatter. Per-agent frontmatter hooks are kept for `~/.claude/agents/` compatibility but do not fire for plugin-distributed agents.
 
-Hooks use prompt-based validation (fast haiku model, 30s timeout). WorktreeCreate and StopFailure use `type: "command"` for zero-latency logging. All hooks validate against result schemas defined in `docs/RESULT_SCHEMAS.md`.
+Hooks use prompt-based validation (fast haiku model, 30s timeout). WorktreeCreate and StopFailure use `type: "command"` for zero-latency logging. All hooks validate against result schemas defined in `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md`.
 
 ### Shared Preamble (All Agents)
 
@@ -605,19 +605,19 @@ Agents reference skill files for guidance (don't embed content):
 
 | Skill | Purpose |
 |-------|---------|
-| `skills/async-orchestration/SKILL.md` | Parallel dispatch and git worktree patterns |
-| `skills/state-management/SKILL.md` | State file schema and checkpoint protocols |
-| `skills/workflow-management/SKILL.md` | 7-phase workflow patterns (incl. SELF_HEAL) |
-| `skills/commit/SKILL.md` | Conventional commits with Beads linking |
-| `skills/quality-checklist/SKILL.md` | Review gate criteria |
-| `skills/context-summarization/SKILL.md` | Output compression patterns |
-| `skills/pattern-detector/SKILL.md` | CLAUDE.md pattern proposals |
-| `skills/nestjs-*/SKILL.md` | NestJS implementation patterns |
-| `skills/nextjs-*/SKILL.md` | Next.js implementation patterns |
-| `skills/gateway-*/SKILL.md` | API Gateway patterns |
-| `skills/context7-lookup/SKILL.md` | External library docs lookup |
-| `skills/agent-teams/SKILL.md` | Agent Teams patterns (experimental) |
-| `hooks/hooks.json` | Plugin quality gate hooks |
+| `ai-agent-manager-plugin/skills/async-orchestration/SKILL.md` | Parallel dispatch and git worktree patterns |
+| `ai-agent-manager-plugin/skills/state-management/SKILL.md` | State file schema and checkpoint protocols |
+| `ai-agent-manager-plugin/skills/workflow-management/SKILL.md` | 7-phase workflow patterns (incl. SELF_HEAL) |
+| `ai-agent-manager-plugin/skills/commit/SKILL.md` | Conventional commits with Beads linking |
+| `ai-agent-manager-plugin/skills/quality-checklist/SKILL.md` | Review gate criteria |
+| `ai-agent-manager-plugin/skills/context-summarization/SKILL.md` | Output compression patterns |
+| `ai-agent-manager-plugin/skills/pattern-detector/SKILL.md` | CLAUDE.md pattern proposals |
+| `ai-agent-manager-plugin/skills/nestjs-*/SKILL.md` | NestJS implementation patterns |
+| `ai-agent-manager-plugin/skills/nextjs-*/SKILL.md` | Next.js implementation patterns |
+| `ai-agent-manager-plugin/skills/gateway-*/SKILL.md` | API Gateway patterns |
+| `ai-agent-manager-plugin/skills/context7-lookup/SKILL.md` | External library docs lookup |
+| `ai-agent-manager-plugin/skills/agent-teams/SKILL.md` | Agent Teams patterns (experimental) |
+| `ai-agent-manager-plugin/hooks/hooks.json` | Plugin quality gate hooks |
 
 ---
 
@@ -625,5 +625,5 @@ Agents reference skill files for guidance (don't embed content):
 
 - **Project setup:** `README.md`
 - **Project details:** `CLAUDE.md` (in your project)
-- **Agent prompts:** `agents/` directory
-- **Skills:** `skills/` directory
+- **Agent prompts:** `ai-agent-manager-plugin/agents/` directory
+- **Skills:** `ai-agent-manager-plugin/skills/` directory

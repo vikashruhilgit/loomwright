@@ -16,15 +16,14 @@ A Claude Code plugin for AI agents to collaborate on software projects. 12 speci
 
 **Local development (from a checkout of this repo):**
 
-```bash
-claude --plugin-dir /path/to/ai-agent-manager
+```
+/plugin marketplace add /path/to/ai-agent-manager
+/plugin install ai-agent-manager-plugin@ai-agent-manager-marketplace
 ```
 
-This is the documented local dev/testing flow — Claude Code loads the plugin directly from the directory containing `.claude-plugin/plugin.json` (this repo's root). No marketplace wrapper needed.
+The repo is a marketplace wrapper (`/.claude-plugin/marketplace.json`) with the plugin nested at `ai-agent-manager-plugin/`. The first command registers the marketplace, the second installs the plugin from it.
 
-> **Why not `/plugin install ./`?** That command expects a *marketplace* name, not a plugin path. `/plugin marketplace add ./` + `/plugin install name@marketplace` is a separate flow that requires a marketplace wrapper with the plugin nested in a subdirectory — this repo uses the flat single-plugin layout instead, which is designed to be consumed via `--plugin-dir` locally and via the official Anthropic marketplace once published.
-
-Once published to the official Anthropic marketplace, installation becomes a single command without needing a local checkout.
+Once published to the official Anthropic marketplace, installation becomes a single `/plugin install` command without needing a local checkout.
 
 ### 2. Setup Your Project
 
@@ -410,14 +409,16 @@ This prevents knowledge loss and helps agents learn from discoveries.
 - **This file (README.md):** Overview and quick start
 - **CLAUDE.md (this repo):** Architecture and agent system
 - **AGENT_GUIDELINES.md:** Development standards, quality checklist
+- **.claude-plugin/marketplace.json:** Marketplace manifest (root)
 - **.claude-plugin/README.md:** Detailed plugin documentation
-- **agents/*.md:** Individual agent prompts (12 roles)
-- **skills/*/SKILL.md:** 47 skill files for guidance
-- **docs/RESULT_SCHEMAS.md:** Structured result contracts
-- **docs/FAILURE_ESCALATION.md:** Agent failure paths
-- **docs/ARCHITECTURE_CONTRACTS.md:** Capability matrix, budgets, rules
-- **docs/ARCHITECTURE.md:** Visual agent topology
-- **docs/QA_SYSTEM_BLUEPRINT.md:** QA system architecture
+- **ai-agent-manager-plugin/.claude-plugin/plugin.json:** Plugin manifest
+- **ai-agent-manager-plugin/agents/*.md:** Individual agent prompts (12 roles)
+- **ai-agent-manager-plugin/skills/*/SKILL.md:** 47 skill files for guidance
+- **ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md:** Structured result contracts
+- **ai-agent-manager-plugin/docs/FAILURE_ESCALATION.md:** Agent failure paths
+- **ai-agent-manager-plugin/docs/ARCHITECTURE_CONTRACTS.md:** Capability matrix, budgets, rules
+- **ai-agent-manager-plugin/docs/ARCHITECTURE.md:** Visual agent topology
+- **ai-agent-manager-plugin/docs/QA_SYSTEM_BLUEPRINT.md:** QA system architecture
 
 ---
 
@@ -425,17 +426,18 @@ This prevents knowledge loss and helps agents learn from discoveries.
 
 To modify or extend agents:
 
-1. Agents are Markdown prompts in `agents/` (12 files)
-2. Commands are in `commands/` (9 commands)
-3. Skills are in `skills/` (47 skills, versioned with SKILLS_INDEX.md)
-4. Hooks: per-agent in frontmatter (Worker, Execute Manager) + cross-cutting in `hooks.json` (Code Reviewer, QA Executor, TaskCompleted)
-5. Docs: `docs/RESULT_SCHEMAS.md`, `docs/FAILURE_ESCALATION.md`, `docs/ARCHITECTURE_CONTRACTS.md`, `docs/ARCHITECTURE.md`
+1. Agents are Markdown prompts in `ai-agent-manager-plugin/agents/` (12 files)
+2. Commands are in `ai-agent-manager-plugin/commands/` (9 commands)
+3. Skills are in `ai-agent-manager-plugin/skills/` (47 skills, versioned with SKILLS_INDEX.md)
+4. Hooks: per-agent in frontmatter (Worker, Execute Manager) + cross-cutting in `ai-agent-manager-plugin/hooks/hooks.json` (Code Reviewer, QA Executor, TaskCompleted)
+5. Docs: `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md`, `…/FAILURE_ESCALATION.md`, `…/ARCHITECTURE_CONTRACTS.md`, `…/ARCHITECTURE.md`
 6. All agents follow standard output format (see AGENT_GUIDELINES.md)
 
 To test locally:
 
-```bash
-claude --plugin-dir /path/to/ai-agent-manager
+```
+/plugin marketplace add /path/to/ai-agent-manager
+/plugin install ai-agent-manager-plugin@ai-agent-manager-marketplace
 ```
 
 Then run agents in a test project to verify changes.
@@ -476,28 +478,24 @@ Then run agents in a test project to verify changes.
 - Run `/agent-help` for command reference
 - Check AGENT_GUIDELINES.md for quality standards
 - Check .claude-plugin/README.md for detailed command documentation
-- Review agent prompts in agents/
+- Review agent prompts in ai-agent-manager-plugin/agents/
 
 **Skills not showing after plugin update?**
 
 Claude Code caches plugin contents. After restructuring skills, force a refresh:
 
-1. Uninstall the plugin:
+1. Uninstall and reinstall:
    ```
    /plugin uninstall ai-agent-manager-plugin
+   /plugin install ai-agent-manager-plugin@ai-agent-manager-marketplace
    ```
-2. Relaunch Claude Code with the plugin directory flag:
-   ```
-   claude --plugin-dir /path/to/ai-agent-manager
-   ```
-3. Verify with `/skills` — should show all 47 skills under "Plugin skills"
+2. Verify with `/skills` — should show all 47 skills under "Plugin skills"
 
-**Previously registered via `/plugin marketplace add`?** Older install instructions told you to use the marketplace flow; that's no longer the documented path for this repo. Clean up stale registrations once:
+**Previously installed via `claude --plugin-dir` (flat layout)?** Older install instructions told you to launch Claude with `--plugin-dir` pointing at the repo root. That no longer works — the plugin is now nested under `ai-agent-manager-plugin/`. Switch to the marketplace flow:
 ```
-/plugin uninstall ai-agent-manager-plugin
-/plugin marketplace remove ai-agent-manager-marketplace
+/plugin marketplace add /path/to/ai-agent-manager
+/plugin install ai-agent-manager-plugin@ai-agent-manager-marketplace
 ```
-Then relaunch with `claude --plugin-dir /path/to/ai-agent-manager`.
 
 ---
 

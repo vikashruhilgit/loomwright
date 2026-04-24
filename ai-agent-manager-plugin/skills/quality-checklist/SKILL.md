@@ -115,22 +115,22 @@ Before marking complete:
 
 ## Repo Consistency Checks (for plugin / prompt / doc reviews)
 
-These checks apply to reviews that touch trigger surfaces (`agents/`, `commands/`, `skills/`, `docs/`, `plugin.json`, `hooks.json`, `CLAUDE.md`, `README.md`, `SKILLS_INDEX.md`, `.supervisor/jobs/`). The Code Reviewer enters `consistency_audit` mode and runs these in addition to the standard gates. See the full trigger table in `agents/code-reviewer.md` → "Review Modes & Scope Expansion".
+These checks apply to reviews that touch trigger surfaces (`ai-agent-manager-plugin/agents/`, `ai-agent-manager-plugin/commands/`, `ai-agent-manager-plugin/skills/`, `ai-agent-manager-plugin/docs/`, `ai-agent-manager-plugin/.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `ai-agent-manager-plugin/hooks/hooks.json`, `CLAUDE.md`, `README.md`, `ai-agent-manager-plugin/skills/SKILLS_INDEX.md`, `.supervisor/jobs/`). The Code Reviewer enters `consistency_audit` mode and runs these in addition to the standard gates. See the full trigger table in `ai-agent-manager-plugin/agents/code-reviewer.md` → "Review Modes & Scope Expansion".
 
 ### Authoritative vs advisory sources
 
-- **Authoritative (drift = BLOCKING/HIGH):** `plugin.json#version`, `CLAUDE.md` current-version lines (`- **Version:** X.Y.Z` and `plugin.json (vX.Y.Z)`).
-- **Secondary (drift = MEDIUM advisory):** `README.md`, `.claude-plugin/README.md`, `plugin.json#description`.
+- **Authoritative (drift = BLOCKING/HIGH):** `ai-agent-manager-plugin/.claude-plugin/plugin.json#version`, `.claude-plugin/marketplace.json#plugins[].version` (must equal `plugin.json#version`, enforced by `scripts/validate-version.sh`), `CLAUDE.md` current-version lines (`- **Version:** X.Y.Z` and `plugin.json (vX.Y.Z)`).
+- **Secondary (drift = MEDIUM advisory):** `README.md`, `.claude-plugin/README.md`, `plugin.json#description`, `marketplace.json#description`.
 - **Ignored (not drift):** archival/changelog references like "since v10.0.0", "v10.3 feasibility gates", "schema v9.0.0". Frontmatter `hooks:` parity is LOW/doc-only (Claude Code ignores plugin-agent frontmatter hooks at runtime).
 
 ### Checks
 
-- [ ] **Mirrored prompt alignment** — `commands/{name}.md` carries the thin-wrapper sentinel and does not re-embed canonical sections (`## Role:`, `### Review Decision Matrix`, `### Close Review Task`, `### Pre-Review Checklist` as H3, `# Code Reviewer Agent Prompt`). Drift kind: `mirrored_prompt`.
+- [ ] **Mirrored prompt alignment** — `ai-agent-manager-plugin/commands/{name}.md` carries the thin-wrapper sentinel and does not re-embed canonical sections (`## Role:`, `### Review Decision Matrix`, `### Close Review Task`, `### Pre-Review Checklist` as H3, `# Code Reviewer Agent Prompt`). Drift kind: `mirrored_prompt`.
 - [ ] **Version consistency (authoritative)** — all three authoritative surfaces equal. Drift kind: `version_authoritative`.
 - [ ] **Version consistency (secondary)** — README / CLAUDE.md / descriptions' current-version claims match authoritative. Historical refs ignored. Drift kind: `version_secondary` (capped at MEDIUM).
-- [ ] **Count consistency** — counts of agents (`agents/*.md`), skills (`skills/*/SKILL.md`), commands (`commands/*.md`), and hooks (sum of leaf matcher entries across all event buckets in `hooks.json` — NOT top-level bucket count) match claims in `plugin.json#description`, `CLAUDE.md` File Counts block, `SKILLS_INDEX.md` header. Drift kind: `count` (capped at MEDIUM).
-- [ ] **Workflow consistency** — agent prompt behavior matches `commands/{name}.md` usage + `CLAUDE.md` role section + `commands/agent-help.md` for *currently active* claims. Drift kind: `workflow`.
-- [ ] **Hooks parity (advisory)** — `hooks.json` entries vs `CLAUDE.md` hooks table. Mismatches with agent frontmatter `hooks:` are LOW/doc-only. Drift kind: `hooks_parity` (capped at LOW).
+- [ ] **Count consistency** — counts of agents (`ai-agent-manager-plugin/agents/*.md`), skills (`ai-agent-manager-plugin/skills/*/SKILL.md`), commands (`ai-agent-manager-plugin/commands/*.md`), and hooks (sum of leaf matcher entries across all event buckets in `ai-agent-manager-plugin/hooks/hooks.json` — NOT top-level bucket count) match claims in `plugin.json#description`, `marketplace.json#description`, `CLAUDE.md` File Counts block, `SKILLS_INDEX.md` header. Drift kind: `count` (capped at MEDIUM).
+- [ ] **Workflow consistency** — agent prompt behavior matches `ai-agent-manager-plugin/commands/{name}.md` usage + `CLAUDE.md` role section + `ai-agent-manager-plugin/commands/agent-help.md` for *currently active* claims. Drift kind: `workflow`.
+- [ ] **Hooks parity (advisory)** — `ai-agent-manager-plugin/hooks/hooks.json` entries vs `CLAUDE.md` hooks table. Mismatches with agent frontmatter `hooks:` are LOW/doc-only. Drift kind: `hooks_parity` (capped at LOW).
 
 ### Severity caps for drift
 
