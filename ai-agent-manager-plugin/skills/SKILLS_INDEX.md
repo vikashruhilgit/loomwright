@@ -18,6 +18,7 @@ Comprehensive index of all skills available in the AI Agent Manager plugin.
 | Agent Teams | `agent-teams/` | — (reference) | ~800 | 1.0.0 | 2026-03 |
 | Agent Output | `agent-output/` | — (reference) | ~400 | 1.0.0 | 2026-03 |
 | Beads Workflow | `beads-workflow/` | Orchestrator (reference), Product Owner (reference) | ~600 | 1.0.0 | 2026-03 |
+| Telemetry | `telemetry/` | — (reference, shell-script-driven) | ~600 | 1.0.0 | 2026-04 |
 
 ## Development Practices
 
@@ -91,4 +92,4 @@ Comprehensive index of all skills available in the AI Agent Manager plugin.
 
 ---
 
-**Total: 47 skills**
+**Total: 48 skills**

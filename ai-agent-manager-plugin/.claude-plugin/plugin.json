@@ -1,7 +1,7 @@
 {
   "name": "ai-agent-manager-plugin",
-  "version": "11.1.2",
-  "description": "AI agents v11.1.2 — Close the \"inline = stop orchestrating\" loophole. The v11.1.1 main-thread guard correctly killed the subagent-spawn trap but accidentally licensed inline `/supervisor` runs to skip Phase 3 child agents and the Phase 4.5 `code-reviewer` integration review. v11.1.2 adds (a) tailored execution-contract paragraphs to `/supervisor` and `/launch-pad` command files making \"inline ≠ no child agents\" explicit, (b) an inline-execution critical rule in `ai-agent-manager-plugin/agents/supervisor.md`, and (c) a runtime invariant in the Phase 4.5 completion tail: if `--skip-self-heal` was not passed AND `code-reviewer` Task was not invoked, Supervisor emits `status: failed` and leaves the job in `in-progress/` instead of silently passing. Schema/hook work for `skip_self_heal_flag`, a `/supervisor --recover-self-heal` command, and symmetric `/launch-pad` plan-reviewer gate hardening are deferred to follow-up PRs. Builds on v11.1.1 `-runner` rename (preserved), v11.1 Code Reviewer system integrity review, v11.0 self-healing Supervisor, v10.3 feasibility gates, QA topology auto-detection. 12 agent roles, 47 reusable skills, 10 quality gate hooks, persistent agent memory, bundled MySQL MCP server.",
+  "version": "11.2.0",
+  "description": "AI agents v11.2.0 — Opt-in GitHub Issues telemetry system. After qualifying agent runs (Supervisor / Code Reviewer / QA Executor), an opt-in pipeline can post a structured GitHub issue with derived score, agent performance breakdown, and AI suggestions for longitudinal analysis. Key invariants: wrapper always exits 0; core exits 0..5 (sent / generic_error / privacy_blocked / no_consent / no_repo_configured / filter_skipped); privacy fail-closed via regex deny-list; no default repo (disabled until `AI_AGENT_MANAGER_TELEMETRY_REPO` env var or `/telemetry enable`); consent via `/telemetry [status|enable|disable|test]` only — hooks never prompt. Builds on v11.1.2 inline-execution guard (Phase 4.5 completion-tail invariant: emits `status: failed` if `code-reviewer` not invoked and `--skip-self-heal` absent) and prior v11.1/v11.0/v10.3 layers. 12 agent roles, 48 reusable skills, 10 quality gate hooks, persistent agent memory, bundled MySQL MCP server.",
   "author": {
     "name": "vikash ruhil"
   },
@@ -96,6 +96,9 @@
     "feasibility",
     "feasibility-gate",
     "reality-check",
-    "assumption-check"
+    "assumption-check",
+    "telemetry",
+    "github-issues",
+    "opt-in"
   ]
 }

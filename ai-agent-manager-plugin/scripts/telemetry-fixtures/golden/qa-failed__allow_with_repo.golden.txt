@@ -1,0 +1,40 @@
+--- DRY RUN ---
+TARGET_REPO=example/repo
+TITLE=[Telemetry] qa-executor | Score: 1 | Failed: true
+SCORE=1
+BUCKET=low
+LABELS:
+  - score:low
+  - task:qa-executor
+  - telemetry
+BODY_BEGIN
+## Task Summary
+- Task Type: qa-executor
+- Task ID: fixture-qa-failed-task-0003
+- Success: false
+- Score: 1/10
+- Bucket: low
+
+## Issues Detected
+- tests_failed=8/12
+
+## AI Suggestions
+- (placeholder — automatic suggestion synthesis is future work; see docs/TELEMETRY.md §Future Work)
+
+## Raw Data
+```json
+{
+  "agent_type": "qa-executor",
+  "primary_error": "",
+  "redacted": true,
+  "result_block": "## QA_RESULT\n- schema_version: 1\n- task_id: fixture-qa-failed-task-0003\n- tests_generated: 12\n- tests_passed: 4\n- tests_failed: 8\n- coverage_estimate: 0.42\n- pre_existing_tests: 0\n- infrastructure_available: false\n- self_check_gates_passed: 3\n- summary: Eight of twelve generated Playwright tests failed against the local fixture app; coverage below threshold and two self-check gates failed.\n",
+  "schema": "QA_RESULT",
+  "schema_version": 1,
+  "score": 1,
+  "score_bucket": "low",
+  "score_float": 1.0,
+  "status": "qa",
+  "task_id": "fixture-qa-failed-task-0003"
+}
+```BODY_END
+WOULD_EXIT=0

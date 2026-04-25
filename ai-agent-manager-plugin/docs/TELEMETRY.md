@@ -1,0 +1,664 @@
+# Telemetry — GitHub Issues as Storage
+
+**Status:** Initial design draft (Subtask #1). Architecture diagram, post-implementation
+authoritative tables, and the no-default-repo subsection will be expanded in Subtask #5
+once the wrapper, core, and `/telemetry` slash command land.
+
+---
+
+## Overview
+
+Telemetry is an **opt-in**, structured feedback channel that turns finished
+agent runs (`SUPERVISOR_RESULT`, `CODE_REVIEW_RESULT`, `QA_RESULT`) into GitHub
+issues in a target repo of the user's choice. Each issue carries a derived
+score, a labelled categorisation, and a redacted JSON payload. The goal is
+longitudinal analysis: identify weak agents, find recurring failure modes,
+and improve prompts and skills over many runs.
+
+The system is:
+
+- **Opt-in only.** Disabled until the user explicitly runs `/telemetry enable`
+  or sets the `AI_AGENT_MANAGER_TELEMETRY_REPO` env var.
+- **Storage-free for the plugin.** No backend. GitHub Issues is the database;
+  labels are the index.
+- **Hook-driven, fire-and-forget.** A `SubagentStop` hook invokes a wrapper
+  shell script. The wrapper never blocks the agent run — it always exits 0.
+- **Privacy-first.** A regex deny-list inside the core script blocks any
+  payload that looks like a secret, file path, email, or `.env` content.
+- **Deterministic.** The same result block scored twice produces the same
+  number — no randomness, no timestamps in the score function.
+
+Out of scope for the initial implementation (tracked in
+[Future Work](#future-work) below): session-level batch issues, weekly
+summary bots, and any backend service.
+
+---
+
+## Architecture
+
+The system is split into a **wrapper** and a **core** to satisfy two
+otherwise-contradictory requirements:
+
+1. The hook contract requires the script to never fail the agent run
+   (always exit 0).
+2. Privacy and configuration violations must fail closed (refuse to send,
+   exit non-zero, leave an audit trail).
+
+The split lets each script honour exactly one of those requirements.
+
+```
+SubagentStop hook (hooks.json)
+       |
+       | stdin: JSON payload from Claude Code
+       v
+[ ai-agent-manager-plugin/scripts/send-telemetry.sh ]   <-- WRAPPER
+       |   - pipes stdin to core
+       |   - captures core's exit code + stderr
+       |   - redacts stderr through the privacy whitelist
+       |   - appends one structured line to .supervisor/logs/telemetry.log
+       |   - opportunistically reaps stale per-session flags (>24h)
+       |   - ALWAYS exits 0
+       v
+[ ai-agent-manager-plugin/scripts/send-telemetry-core.sh ]   <-- CORE
+       - parses inbound result block
+       - resolves consent + target repo
+       - applies interest filter and dedup
+       - runs privacy whitelist (fail-closed)
+       - derives score per the rubric below
+       - formats issue body + labels
+       - calls `gh issue create`
+       - writes to telemetry-sent.log on success
+       - exits 0..5 per the contract below
+```
+
+> **Diagram note:** This sketch will be promoted to a fuller diagram
+> in Subtask #5 alongside the post-implementation polish.
+
+### Script-location convention
+
+- `ai-agent-manager-plugin/scripts/` — **plugin-runtime** scripts shipped
+  with the plugin and invoked at agent runtime. Telemetry's wrapper, core,
+  test harness, and fixtures all live here.
+- Repo-root `scripts/` — **release/CI tooling** only (e.g.
+  `validate-version.sh`, `check-command-sync.sh`). Do NOT add runtime
+  scripts at repo root; consistency audits will flag the drift.
+
+---
+
+## Core exit codes (authoritative)
+
+The core is the only script that may exit non-zero. The wrapper logs the
+core's exit code and always returns 0 to the hook. Tests and `/telemetry status`
+read these codes to decide what happened.
+
+| Code | Name                  | Meaning                                                                                  |
+|------|-----------------------|------------------------------------------------------------------------------------------|
+| 0    | `sent`                | Issue successfully created via `gh issue create`. One line appended to `telemetry-sent.log`. |
+| 1    | `generic_error`       | Unexpected failure (e.g. `gh` not authed, network error, malformed JSON from `gh`). Logged with redacted stderr. |
+| 2    | `privacy_blocked`     | Privacy whitelist matched the prospective issue body or stderr; nothing was sent. Logged with the matched pattern's name only — never the matched content. |
+| 3    | `no_consent`          | `.supervisor/telemetry-consent.json` is missing, set to `prompt`, or set to `no`. Wrapper rate-limits the user-facing notice to once per session. |
+| 4    | `no_repo_configured`  | Neither `AI_AGENT_MANAGER_TELEMETRY_REPO` nor consent-file `telemetry_repo` is set. Wrapper logs `telemetry_repo_unset` once per session. |
+| 5    | `filter_skipped`      | Interest filter, schema mismatch (`unknown_payload_skipped`), or dedup window suppressed the send. Not an error. |
+
+The wrapper's behaviour is invariant of the core exit code: log the code,
+log the redacted stderr, exit 0.
+
+---
+
+## Scoring rubric (deterministic, per-result-block)
+
+The three result block schemas (`SUPERVISOR_RESULT`, `CODE_REVIEW_RESULT`,
+`QA_RESULT`) use different status enums, different counters, and different
+notions of "success". A single unified mapping cannot disambiguate them, so
+the rubric is expressed as **three separate tables**. The score function
+selects exactly one table per call based on which result block was found.
+
+**Determinism rule:** Same input -> same output. The score function does
+not call `date`, does not read random sources, and does not depend on
+filesystem ordering. Subtask #2b implements this contract verbatim.
+
+**Bucket ranges (used by the `score:{low|medium|high}` label):**
+
+| Bucket   | Range          |
+|----------|----------------|
+| `low`    | score `< 4`    |
+| `medium` | `4 <= score < 8` (i.e. `4..7` inclusive) |
+| `high`   | `score >= 8`   |
+
+Lower bound is inclusive; the upper bound flips to the next bucket. (Per
+spec §2 — "low < 4, medium 4-7, high 8+".)
+
+After all adjustments, the score is **clamped to `[0, 10]`** with a floor
+of `0` and ceiling of `10`. Negative deductions never push below 0.
+
+---
+
+### Rubric A — `SUPERVISOR_RESULT`
+
+| Condition                                                                          | Base score |
+|------------------------------------------------------------------------------------|------------|
+| `status == "completed"` AND `heal_decision == "PASS"` AND `heal_remaining_issues == 0` | **9** |
+| `status == "completed"` AND `heal_decision == "PASS"` AND `heal_remaining_issues > 0`  | **7** |
+| `status == "completed_with_escalation"`                                            | **5** |
+| `status == "checkpoint"`                                                           | **4** |
+| `status == "failed"`                                                               | **2** |
+| Anything else (unrecognised status enum within `SUPERVISOR_RESULT`)                | **3** (defensive default; logged as `score_default_used`) |
+
+**Adjustments (applied after base score is selected):**
+
+| Signal                                          | Delta            |
+|-------------------------------------------------|------------------|
+| Each item in `subtasks_failed`                  | `-0.5`           |
+| `heal_remaining_issues > 0` (AND not already deducted by base) | `-0.25 * heal_remaining_issues` (max `-1.0`) |
+
+Floor at `0`, ceiling at `10`. Round-half-up to one decimal place.
+
+**Worked example.** `status: "completed"`, `heal_decision: "PASS"`,
+`heal_remaining_issues: 0`, `subtasks_failed: ["BD-15a"]` -> base `9`
+minus `0.5` = **`8.5`**. Bucket: `high`.
+
+---
+
+### Rubric B — `CODE_REVIEW_RESULT`
+
+The score reflects severity of **new** issues only. `pre_existing` and
+`nit` issues do not affect the score.
+
+| Condition                                                                  | Base score |
+|----------------------------------------------------------------------------|------------|
+| `decision == "PASS"` AND no `new` issues at BLOCKING or HIGH severity       | **9** |
+| `decision == "PASS"` AND only `new` issues at MEDIUM or LOW severity        | **7** |
+| `decision == "NEEDS_HUMAN"`                                                | **4** |
+| `decision == "FAIL"`                                                       | **2** |
+| Anything else                                                              | **3** (defensive default) |
+
+**Adjustments:**
+
+| Signal                                       | Delta   |
+|----------------------------------------------|---------|
+| Each `new` BLOCKING issue                    | `-1.0`  |
+| Each `new` HIGH issue                        | `-0.5`  |
+| Each `drift` issue (any `drift_kind`)        | `-0.25` |
+
+Floor at `0`, ceiling at `10`.
+
+**Worked example.** `decision: "PASS"`, two `new` MEDIUM issues, zero
+BLOCKING/HIGH/drift -> base `7`, no deltas -> **`7`**. Bucket: `medium`.
+
+---
+
+### Rubric C — `QA_RESULT`
+
+The score is anchored to the test pass ratio, then adjusted for coverage.
+If `tests_generated == 0`, the run is treated as `filter_skipped` (exit 5)
+upstream and never scored.
+
+Let `r = tests_passed / tests_generated`.
+
+| Condition          | Base score |
+|--------------------|------------|
+| `r == 1.0`         | **9** |
+| `0.9 <= r < 1.0`   | **7** |
+| `0.7 <= r < 0.9`   | **5** |
+| `r < 0.7`          | **3** |
+
+**Adjustments:**
+
+| Signal                              | Delta   |
+|-------------------------------------|---------|
+| `coverage_estimate < 0.5`           | `-1.0`  |
+| `self_check_gates_passed < 5` (out of 5) | `-0.5 * (5 - passed)` |
+
+Floor at `0`, ceiling at `10`.
+
+**Worked example.** `tests_passed: 9`, `tests_generated: 10` -> `r = 0.9`,
+base `7`. `coverage_estimate: 0.42` -> `-1.0`. Final score **`6`**.
+Bucket: `medium`.
+
+---
+
+## Issue body template
+
+Every issue follows the layout from `temp/self-learning.md` §1. Sections
+appear in this order; sections with no data are omitted (the renderer
+should not emit empty headers).
+
+```markdown
+## Task Summary
+- Task Type: <agent_type, e.g. supervisor / code-reviewer / qa-executor>
+- Task ID: <task_id from the result block>
+- Success: <true|false — derived from status enum, see below>
+- Score: <N>/10
+- Bucket: <low|medium|high>
+
+## Agent Scores
+- <agent>: <sub-score>/10        (one line per sub-agent if available)
+                                  (omit section entirely if no sub-scores)
+
+## Issues Detected
+- <one bullet per error / failed subtask / new BLOCKING issue / failing test name>
+                                  (omit section if empty)
+
+## AI Suggestions
+- (placeholder — static text in this release; future work in §Future Work)
+
+## Tools Used
+- <one bullet per distinct agent tool / skill referenced in the run if available>
+                                  (omit section if empty)
+
+## Raw Data
+\`\`\`json
+{
+  "schema_version": 1,
+  "task_id": "...",
+  "agent_type": "...",
+  "score": 7,
+  "score_bucket": "medium",
+  "status": "...",
+  "redacted": true,
+  ...
+}
+\`\`\`
+```
+
+**`Success` derivation:**
+
+- `SUPERVISOR_RESULT`: `true` iff `status == "completed"` AND `heal_decision == "PASS"`.
+- `CODE_REVIEW_RESULT`: `true` iff `decision == "PASS"`.
+- `QA_RESULT`: `true` iff `tests_passed == tests_generated` AND no failing gates.
+
+**Title format (exact):**
+
+```
+[Telemetry] {agent_type} | Score: {N} | Failed: {true|false}
+```
+
+`{N}` is the integer score (round-half-up from the rubric's clamped float).
+`Failed` is the inverse of `Success` above.
+
+---
+
+## Labels
+
+Every issue gets at least two labels (`telemetry` + a `score:` tier).
+Additional labels stack as conditions are met.
+
+| Label                              | When applied                                                                               |
+|------------------------------------|--------------------------------------------------------------------------------------------|
+| `telemetry`                        | Always.                                                                                    |
+| `score:low`                        | Final score `< 4`.                                                                         |
+| `score:medium`                     | Final score `4..7` (inclusive).                                                            |
+| `score:high`                       | Final score `>= 8`.                                                                        |
+| `task:supervisor`                  | `agent_type == "supervisor"` (matched on `SUPERVISOR_RESULT`).                             |
+| `task:code-reviewer`               | `CODE_REVIEW_RESULT`.                                                                      |
+| `task:qa-executor`                 | `QA_RESULT`.                                                                               |
+| `agent:{name}-weak`                | When any sub-score `< 5`. `{name}` is the sub-agent identifier (lowercased, dash-separated). E.g. `agent:planner-weak`. |
+
+Label creation is the issuer's responsibility — Subtask #2b should
+`gh label create --force` (idempotent) before `gh issue create`, so missing
+labels in the target repo don't fail the send.
+
+---
+
+## Consent flow (no-prompt-in-hook)
+
+A `type: command` hook **cannot** drive an interactive prompt. Therefore
+the hook never asks the user anything. First-run UX is mediated entirely
+by the user invoking `/telemetry enable`. This is the only design that is
+actually runnable with Claude Code hooks.
+
+### Consent file schema (`.supervisor/telemetry-consent.json`)
+
+```json
+{
+  "telemetry": "always_allow" | "no" | "prompt",
+  "telemetry_repo": "<owner>/<repo>"
+}
+```
+
+Both fields are required when present, with these semantics:
+
+| `telemetry` value | Behaviour                                                                                              |
+|-------------------|--------------------------------------------------------------------------------------------------------|
+| `always_allow`    | Send (subject to interest filter, dedup, privacy, target-repo resolution).                             |
+| `no`              | Never send. One `denied — skipped` line per session (rate-limited).                                    |
+| `prompt`          | Treated as uninitialised (see below). The hook still does not prompt; the user must run `/telemetry enable`. |
+
+If the file does not exist, behaviour is identical to `prompt`.
+
+`telemetry_repo` is optional inside the file. The env var
+`AI_AGENT_MANAGER_TELEMETRY_REPO` overrides it (see Target repo
+resolution below).
+
+### Uninitialised state — pending notice
+
+When the hook fires and consent is uninitialised (`prompt` or file
+missing), the wrapper writes **one** rate-limited line to
+`.supervisor/logs/telemetry.log`:
+
+```
+telemetry pending — run `/telemetry enable` or `/telemetry disable`
+```
+
+No issue is created, no network call is made, the wrapper exits 0.
+
+### Session-scoped rate limiting
+
+The wrapper extracts `session_id` from the hook's stdin JSON payload
+(Claude Code provides this on every hook payload — see the existing
+`WorktreeCreate` block in `hooks.json:88-107` for the stdin parsing
+pattern). The pending-notice marker is then a **per-session** flag file:
+
+```
+.supervisor/logs/telemetry-pending-shown-${session_id}.flag
+```
+
+- One file per session, not a single global file.
+- The wrapper opportunistically reaps any
+  `telemetry-pending-shown-*.flag` older than 24h on each invocation
+  (`find ... -mtime +1 -delete`) so the log directory does not grow
+  unboundedly.
+- **Fallback:** if `session_id` is missing or empty in the stdin JSON
+  (defence in depth), use a per-hour bucket flag:
+  `telemetry-pending-shown-nosession-$(date +%Y%m%d%H).flag`. Worst case,
+  the user sees one notice per hour from a bug-stripped payload.
+
+The slash command `/telemetry status` reports a count of **retained**
+pending markers from approximately the last 24 hours by globbing the
+`telemetry-pending-shown-*.flag` files. The wording must explicitly say
+"retained ~24h" — not "all-time" or "ever" — because the reaper deletes
+older markers.
+
+### `/telemetry enable` — sole first-run path
+
+Subtask #3 implements the slash command. The handler:
+
+1. Asks the user which repo should receive telemetry (suggesting the
+   maintainer repo `vikashruhilgit/ai-agent-manager` as the canonical
+   community-shared signal target, but accepting any `owner/repo`).
+2. Writes:
+   ```json
+   { "telemetry": "always_allow", "telemetry_repo": "<chosen>" }
+   ```
+   to `.supervisor/telemetry-consent.json`.
+3. Confirms by printing the resolved target.
+
+`/telemetry disable` writes `{"telemetry": "no"}`. `/telemetry status` reports
+the resolved state. `/telemetry test` runs `send-telemetry-core.sh --dry-run`
+against either the latest matching log payload or a built-in fixture.
+
+---
+
+## Target repo resolution
+
+The plugin runs in arbitrary user projects whose `origin` is the user's
+own app repo. Defaulting telemetry to `origin` would post issues into the
+user's repo — wrong on every axis (privacy, signal vs noise, support
+burden). Therefore **telemetry is disabled by default until explicitly
+configured**, and there is no `origin` fallback.
+
+Resolution precedence (first non-empty wins):
+
+1. Environment variable `AI_AGENT_MANAGER_TELEMETRY_REPO` (must match
+   shape `owner/repo`).
+2. `.supervisor/telemetry-consent.json` -> `telemetry_repo` field.
+3. Unset -> core exits `4` (`no_repo_configured`); wrapper logs
+   `telemetry_repo_unset — set AI_AGENT_MANAGER_TELEMETRY_REPO or run /telemetry enable to choose target` (rate-limited per session).
+
+There is **no automatic fallback to `git remote`**. Subtask #2b must NOT
+introduce one.
+
+---
+
+## Privacy whitelist (lives in core)
+
+The whitelist is enforced inside `send-telemetry-core.sh`. The wrapper
+does no payload inspection — it cannot, because it must always exit 0
+even on privacy violations. Wrapper-side inspection would force the
+contradiction the split was created to resolve.
+
+### Deny-list (regex)
+
+The core scans the **prospective issue body** (title + body + JSON
+payload, post-render) AND core-side stderr (before the wrapper appends
+it to the log). Any single match -> fail closed.
+
+| Pattern (regex)                 | Catches                                          |
+|---------------------------------|--------------------------------------------------|
+| `sk-[A-Za-z0-9]{20,}`           | OpenAI / Anthropic-style API keys                |
+| `ghp_[A-Za-z0-9]{20,}`          | GitHub personal access tokens                    |
+| `api[_-]?key`                   | Generic key labels (`api_key`, `api-key`, `apikey`) |
+| `Bearer\s+[A-Za-z0-9._\-]+`     | Bearer auth headers                              |
+| `password\s*[:=]\s*\S+`         | Inline passwords (config-style)                  |
+| `/Users/[a-zA-Z._\-]+/`         | macOS home paths (PII — usernames)               |
+| `/home/[a-zA-Z._\-]+/`          | Linux home paths (PII — usernames)               |
+| `[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}` | Email addresses |
+| `^\s*[A-Z_][A-Z0-9_]*=.+$` (multiline) | Raw `.env` style assignments              |
+
+Subtask #2b owns the canonical list in code; this table is the spec.
+Any change to the regex set must update both this doc and the script in
+the same commit (consistency audit will catch drift).
+
+### Fail-closed behaviour
+
+On match, the core:
+
+1. Does **not** call `gh issue create`.
+2. Writes a structured `privacy_blocked` log entry naming **which
+   pattern** matched — never the matched content. Example:
+   ```
+   {"event":"privacy_blocked","pattern_name":"github_pat","script":"send-telemetry-core","ts":"<ISO>"}
+   ```
+3. Exits `2`.
+
+### Stderr redaction
+
+The core's stderr is redacted by the same whitelist before the wrapper
+appends it to `telemetry.log`. Error messages can themselves echo
+secrets (e.g. `gh`'s "401 unauthorized: ghp_..."), so this is defence in
+depth.
+
+---
+
+## Interest filter
+
+To avoid spam on healthy runs, the core skips uninteresting outcomes
+even when consent + target repo are configured.
+
+**Skip (exit 5) if:** derived score `>= 5` AND status is in the success set.
+
+| Result block         | Success set                  |
+|----------------------|------------------------------|
+| `SUPERVISOR_RESULT`  | `{"completed"}` (with `heal_decision == "PASS"`) |
+| `CODE_REVIEW_RESULT` | `{"PASS"}`                   |
+| `QA_RESULT`          | `tests_passed == tests_generated` AND all gates passed |
+
+**Send if:** derived score `< 5` OR status is in the interesting set:
+
+| Result block         | Interesting set                                                                  |
+|----------------------|----------------------------------------------------------------------------------|
+| `SUPERVISOR_RESULT`  | `{"failed", "completed_with_escalation"}` (also `"checkpoint"` is interesting)  |
+| `CODE_REVIEW_RESULT` | `{"FAIL", "NEEDS_HUMAN"}`                                                       |
+| `QA_RESULT`          | any failing test, or any failing self-check gate                                 |
+
+The interest filter runs **after** privacy and target-repo resolution,
+**before** dedup. Order matters: privacy violations always log even on
+"healthy" runs (audit trail integrity); dedup runs last so dedup never
+suppresses a privacy event.
+
+---
+
+## Dedup window
+
+Same {`task_id`, `score_bucket`, `primary_error`} within the last 6 hours
+-> skip (exit 5).
+
+Implementation:
+
+- Hash key: `sha1(task_id + "|" + score_bucket + "|" + primary_error)`
+  (or `md5` if `sha1` is unavailable on the host — the choice does not
+  affect correctness, only collision odds; document the choice in
+  Subtask #2b).
+- Storage: `.supervisor/logs/telemetry-sent.log` — one line per
+  successful send, columns `<iso_ts>\t<hash>\t<issue_url>`.
+- Lookup: scan the last 6h of entries (`awk` on timestamp prefix is
+  sufficient at expected volumes). If the hash is present, exit 5.
+
+`primary_error`:
+
+- `SUPERVISOR_RESULT`: first item in `subtasks_failed`, else
+  `heal_decision` if not `PASS`, else empty.
+- `CODE_REVIEW_RESULT`: first `new` BLOCKING issue's title, else first
+  HIGH, else empty.
+- `QA_RESULT`: first failing test name, else empty.
+
+---
+
+## Log files
+
+All telemetry logs live under `.supervisor/logs/`. The directory is
+already gitignored via the existing `.supervisor/` rule (see CLAUDE.md
+quick reference).
+
+| Path                                                      | Format                                                                | Purpose                                |
+|-----------------------------------------------------------|-----------------------------------------------------------------------|----------------------------------------|
+| `.supervisor/logs/telemetry.log`                          | one JSON-ish line per event (`{"event":"...","ts":"...", ...}`)        | Full audit (sends, skips, errors, privacy blocks) |
+| `.supervisor/logs/telemetry-sent.log`                     | `<iso_ts>\t<hash>\t<issue_url>`                                       | Dedup lookup; `/telemetry status` last-sent timestamp |
+| `.supervisor/logs/telemetry-pending-shown-${session_id}.flag` | empty file (mtime is the signal)                                  | Per-session "consent pending" rate-limit marker |
+| `.supervisor/logs/telemetry-pending-shown-nosession-$(date +%Y%m%d%H).flag` | empty file (mtime is the signal)                     | Fallback marker when `session_id` is missing |
+
+Log files are append-only from the script's perspective. Operators can
+truncate or rotate them externally; the scripts must tolerate missing
+files by creating them on first write.
+
+---
+
+## Future work (out of scope for this PR)
+
+- **Session-level batch mode.** One issue summarising N tasks per
+  session instead of N issues. Spec'd in `temp/self-learning.md` §6B.
+- **Weekly summary bot.** Cron-driven aggregation across created issues
+  (top failures, trend per agent type).
+- **Backend service.** Replacing GitHub Issues with a structured store
+  once volume justifies it.
+- **AI-generated suggestions.** Currently the `## AI Suggestions`
+  section is static placeholder text; a future iteration could derive
+  suggestions from the score breakdown and the failing signals.
+- **Auto-PR for prompt fixes.** When `agent:{name}-weak` recurs N times,
+  draft a PR adjusting the relevant agent's prompt.
+
+These are intentionally deferred so the v1 surface stays small enough
+to review and reason about.
+
+---
+
+## Post-Implementation Notes (Subtask #5 — v11.2.0)
+
+The sections below are authoritative references added after the wrapper,
+core, hook, and `/telemetry` slash command landed. They reflect what was
+actually shipped, not just what was originally designed.
+
+### Wrapper-vs-Core Architecture (Data Flow)
+
+The runtime data flow from a `SubagentStop` hook firing through to a
+posted (or rejected) GitHub issue:
+
+```
+SubagentStop hook (Claude Code)
+      |
+      v stdin (JSON payload)
+send-telemetry.sh (wrapper, ALWAYS exit 0)
+      |
+      +-- captures session_id, runs reaper
+      |
+      v stdin
+send-telemetry-core.sh (core, exit 0..5)
+      |
+      +-- parse → score → consent → repo → privacy → dedup → gh
+      |
+      v exit code + stderr (redacted)
+.supervisor/logs/telemetry.log
+```
+
+Key invariants reflected in the diagram:
+
+- **Wrapper is fire-and-forget.** Claude Code's `SubagentStop` hook can
+  never receive a non-zero exit from this pipeline — the wrapper absorbs
+  every failure mode of the core (privacy block, no consent, no repo,
+  filter skip, generic error) and translates it into a structured log
+  line plus `exit 0`.
+- **Core owns all decisions.** Parsing, scoring, consent reading,
+  target-repo resolution, the privacy whitelist, dedup, and the actual
+  `gh issue create` invocation all live in `send-telemetry-core.sh`.
+  The wrapper does no payload inspection.
+- **session_id flows from stdin.** Claude Code injects `session_id` into
+  every hook payload; the wrapper extracts it for per-session
+  rate-limiting flags (`telemetry-pending-shown-${session_id}.flag` and
+  `telemetry-repo-unset-shown-${session_id}.flag`). The reaper deletes
+  any of these flags older than ~24 hours opportunistically on each run
+  so the log directory does not accumulate stale markers.
+
+### Core Exit Codes (Authoritative)
+
+The canonical exit-code table is defined inline in this document under
+[`Configuration → Core exit codes`](#configuration). The mirror below
+adds the **wrapper-action** column so log-parsers can correlate a core
+exit code with what the wrapper does in response. See [Core exit codes
+(authoritative)](#configuration) for the source-of-truth definitions.
+
+| Code | Name                | Meaning                                                                                          | Wrapper action                                                                                                                            |
+|------|---------------------|--------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------|
+| 0    | sent                | Issue posted to GitHub via `gh issue create`. URL appended to `.supervisor/logs/telemetry-sent.log`. | Log primary line `CORE_EXIT=0`. Exit 0.                                                                                                   |
+| 1    | generic_error       | Unexpected error (malformed args, JSON parse failure inside repo handling, `gh` CLI failure).     | Log primary line with redacted stderr. Exit 0.                                                                                            |
+| 2    | privacy_blocked     | Privacy whitelist matched; issue NOT posted; structured `PRIVACY_BLOCKED pattern=<label>` on stderr (NEVER the matched content). | Log primary line. Exit 0.                                                                                                                 |
+| 3    | no_consent          | `.supervisor/telemetry-consent.json` missing or `{"telemetry":"prompt"}`/absent.                  | Log primary line; if per-session pending flag is new, set `PENDING_FLAG_NEW=true` and touch the flag (rate-limits the user-facing notice). Exit 0. |
+| 4    | no_repo_configured  | Neither `AI_AGENT_MANAGER_TELEMETRY_REPO` env var nor consent-file `telemetry_repo` is set.       | Log primary line; if the per-session repo-unset flag is new, append a SECOND `telemetry_repo_unset` line with the user-facing remediation hint. Exit 0. |
+| 5    | filter_skipped      | Healthy run (score >= 5 AND status in success set), or unknown payload schema.                    | Log primary line `CORE_EXIT=5`. Exit 0.                                                                                                   |
+
+The wrapper's primary log line shape is:
+
+```
+[<utc-ts>] CORE_EXIT=<rc> SESSION=<sid|nosession> PENDING_FLAG_NEW=<true|false> STDERR=<one-line-redacted>
+```
+
+with sentinel forms for absorbed wrapper-internal failure modes (empty
+stdin, missing core executable, redaction unavailable). See the Subtask
+#2a worker summary and the wrapper source for the complete log-line
+grammar.
+
+### No Default Repo — Explicit Configuration Required
+
+The plugin is intended to be installed in **arbitrary user projects**.
+The `origin` remote of the host project is, in nearly every case, the
+user's own application repository — not a place where ai-agent-manager
+telemetry should land. Defaulting telemetry's target repo to `origin`
+would silently leak agent-run metadata, derived scores, and redacted
+payloads into the user's app issue tracker, polluting their backlog and
+violating the spirit of opt-in consent.
+
+The design therefore disables telemetry **by default** until the user
+explicitly configures a target repo via one of two paths: setting the
+`AI_AGENT_MANAGER_TELEMETRY_REPO` environment variable, or running
+`/telemetry enable` (which prompts interactively for the target repo
+and writes it to `.supervisor/telemetry-consent.json`). When neither is
+set, the core exits with code `4` (`no_repo_configured`) and the
+wrapper logs a single per-session reminder. This decision is also
+recorded in the brief at §3 line 70.
+
+### Plugin-Internal `scripts/` vs Repo-Root `scripts/`
+
+The plugin uses two distinct `scripts/` directories with non-overlapping
+roles:
+
+- **`ai-agent-manager-plugin/scripts/`** — runtime scripts shipped with
+  the plugin and invoked at runtime by hooks or slash commands. The
+  telemetry wrapper (`send-telemetry.sh`), core (`send-telemetry-core.sh`),
+  fixtures (`telemetry-fixtures/`), and test harness (`test-telemetry.sh`)
+  all live here. New runtime scripts MUST go here so they ship with the
+  plugin install.
+- **Repo-root `scripts/`** — release/CI tooling that exists only in the
+  repository checkout, never inside the installed plugin. Examples:
+  `validate-version.sh` (version parity between `marketplace.json` and
+  `plugin.json`) and `check-command-sync.sh` (drift guard between
+  command files and agent prompts). New CI/release helpers go here. New
+  runtime scripts MUST NOT go here.
