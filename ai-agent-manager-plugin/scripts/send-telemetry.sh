@@ -145,10 +145,22 @@ fi
 rm -f "$STDERR_TMP" 2>/dev/null || true
 
 # ---- Compute PENDING_FLAG_NEW -----------------------------------------------
-# True only when CORE_RC == 3 AND the per-session flag did NOT exist before.
+# Surfaced once-per-session ONLY when consent has never been chosen (the core
+# emits `consent_uninitialised` on stderr in that state). When the user has
+# explicitly opted out (`telemetry: "no"` -> stderr `denied — skipped`), the
+# decision is final and we do NOT surface a pending notice — we just log the
+# `denied — skipped` line in REDACTED_STDERR for audit-trail integrity.
+#
+# This pairing was added in heal iter 1 of v11.2.0 to close the loophole
+# where the previous wrapper treated all CORE_RC=3 the same and surfaced a
+# pending notice even to users who had already chosen "no".
 PENDING_FLAG_NEW="false"
 if [ "$CORE_RC" = "3" ] && [ "$FLAG_EXISTED_BEFORE" = "false" ]; then
-  PENDING_FLAG_NEW="true"
+  case "$REDACTED_STDERR" in
+    *consent_uninitialised*) PENDING_FLAG_NEW="true" ;;
+    *"denied — skipped"*)    PENDING_FLAG_NEW="false" ;;
+    *)                        PENDING_FLAG_NEW="true" ;; # fail-safe: surface notice on unknown markers
+  esac
 fi
 
 # Repo-unset flag uses the same once-per-session pattern but tracked separately

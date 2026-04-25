@@ -3,23 +3,28 @@
 #
 # Authoritative spec: ai-agent-manager-plugin/docs/TELEMETRY.md
 #
-# Pipeline (privacy first, gh last):
+# Pipeline (matches docs/TELEMETRY.md §Interest filter — privacy first, gh last,
+# interest-filter runs AFTER consent + target-repo + body-privacy, BEFORE dedup;
+# updated in heal iter 1 of v11.2.0 to remove the prior order-of-operations
+# divergence that allowed a healthy run with a secret to be filter-skipped
+# without a PRIVACY_BLOCKED audit-log entry):
 #   1. Parse flags (only --dry-run supported)
 #   2. Read stdin
-#   3. Parse JSON (session_id, agent_type, result_block)
-#   4. Detect result-block schema (SUPERVISOR_RESULT | CODE_REVIEW_RESULT | QA_RESULT)
-#   5. Compute deterministic score per the rubric (three separate per-block tables)
-#   6. Apply interest filter (skip if score >= 5 AND status in success set)
-#   7. Read consent (.supervisor/telemetry-consent.json)
+#   3. Parse JSON (session_id, agent_type, result_block) + detect schema
+#   4. Compute deterministic score per the rubric (three separate per-block tables)
+#   5. Raw payload privacy scan — fail-closed exit 2 BEFORE consent so
+#      privacy-blocked events always log even on healthy/successful runs.
+#   6. Build prospective body (redacted) + final body privacy scan (defence
+#      in depth — exit 2 again on hit).
+#   7. Read consent (.supervisor/telemetry-consent.json):
+#        - "no" exact         -> exit 3, stderr "denied — skipped"
+#        - missing/prompt/etc -> exit 3, stderr "consent_uninitialised state=..."
 #   8. Resolve target repo (env -> consent file -> exit 4)
-#   9. Format prospective issue body
-#  10. Privacy whitelist (FAIL-CLOSED) on body + raw payload
-#  11. Dedup check (sha256 of task_id::score_bucket::primary_error within 6h)
-#  12. Compute labels
-#  13. Compute title
-#  14. Dry-run branch (print and exit 0 with WOULD_EXIT marker)
-#  15. Live: gh issue create
-#  16. Append success line to telemetry-sent.log
+#   9. Interest filter (skip if score >= 5 AND status in success set, exit 5)
+#  10. Dedup check (sha256 of task_id::score_bucket::primary_error within 6h, exit 5)
+#  11. Dry-run branch (print and exit 0 with WOULD_EXIT marker)
+#  12. Live: gh issue create
+#  13. Append success line to telemetry-sent.log
 #
 # Exit codes (authoritative — match docs/TELEMETRY.md):
 #   0 sent
@@ -423,25 +428,15 @@ def normalise_agent(at, schema):
 
 agent_norm = normalise_agent(agent_type, schema)
 
-# ---- Interest filter -------------------------------------------------------
-# Skip when score >= 5 AND status indicates success.
-skip = False
-if schema == "SUPERVISOR_RESULT":
-    success_status = (status == "completed")  # heal_decision==PASS folded into success above; we use status alone here
-    if score_f >= 5 and success and success_status:
-        skip = True
-elif schema == "CODE_REVIEW_RESULT":
-    if score_f >= 5 and status == "pass":
-        skip = True
-else:  # QA_RESULT
-    if score_f >= 5 and success:
-        skip = True
-
-if skip:
-    sys.stderr.write("filter_skipped reason=interest_filter score=%s status=%s\n"
-                     % (score_int, status))
-    emit("EXIT_CODE", 5)
-    sys.exit(0)
+# ---- Interest filter (deferred) --------------------------------------------
+# The interest filter has MOVED to bash, where it runs AFTER consent + target
+# repo resolution per docs/TELEMETRY.md §Interest filter. Stage 1 only emits
+# the signals bash needs to decide:
+#   - SUCCESS (per-schema)
+#   - STATUS  (already emitted)
+#   - SCORE_INT / SCORE_BUCKET
+# This is the heal-iter-1 reorder that closes the "healthy run with a secret
+# never logs PRIVACY_BLOCKED" loophole.
 
 # ---- Failed flag (for title) -----------------------------------------------
 # Failed = inverse of success per docs/TELEMETRY.md §"Title format".
@@ -599,6 +594,7 @@ emit("TASK_ID", task_id)
 emit("SCORE_INT", score_int)
 emit("SCORE_BUCKET", bucket)
 emit("STATUS", status)
+emit("SUCCESS", success)
 emit("FAILED", failed)
 emit("PRIMARY_ERROR", primary_error)
 emit("DEDUP_HASH", dedup_hash)
@@ -627,6 +623,7 @@ TASK_ID=""
 SCORE_INT=""
 SCORE_BUCKET=""
 STATUS=""
+SUCCESS=""
 FAILED=""
 PRIMARY_ERROR=""
 DEDUP_HASH=""
@@ -643,6 +640,7 @@ while IFS='=' read -r k v; do
     SCORE_INT) SCORE_INT="$v" ;;
     SCORE_BUCKET) SCORE_BUCKET="$v" ;;
     STATUS) STATUS="$v" ;;
+    SUCCESS) SUCCESS="$v" ;;
     FAILED) FAILED="$v" ;;
     PRIMARY_ERROR) PRIMARY_ERROR="$v" ;;
     DEDUP_HASH) DEDUP_HASH="$v" ;;
@@ -660,7 +658,9 @@ if [ -z "$EXIT_CODE" ]; then
   exit 1
 fi
 
-# Stage 1 may signal early exit (filter_skipped, privacy_blocked, json_parse).
+# Stage 1 may signal early exit (privacy_blocked=2, json_parse_failed/empty=5,
+# QA tests_generated==0 short-circuit=5). Interest filter is NOT in stage 1
+# anymore — it runs in bash after consent + target-repo resolution.
 if [ "$EXIT_CODE" != "0" ]; then
   if [ "$DRY_RUN" = "true" ]; then
     printf -- '--- DRY RUN ---\n'
@@ -710,7 +710,11 @@ case "$CONSENT_DECISION" in
     : # proceed
     ;;
   no)
-    printf 'consent_denied\n' >&2
+    # User has explicitly opted out — emit `denied — skipped` marker so the
+    # wrapper can distinguish this from an uninitialised-consent state and
+    # NOT surface the "telemetry pending" notice. The wrapper still
+    # rate-limits the log line via its per-session flag (brief AC §3 line 52).
+    printf 'denied — skipped\n' >&2
     if [ "$DRY_RUN" = "true" ]; then
       printf -- '--- DRY RUN ---\n'
       printf 'WOULD_EXIT=3\n'
@@ -719,6 +723,9 @@ case "$CONSENT_DECISION" in
     exit 3
     ;;
   prompt|missing|parse_error|*)
+    # Consent has never been chosen — emit `consent_uninitialised` so the
+    # wrapper can surface the "telemetry pending — run /telemetry" notice
+    # once per session via PENDING_FLAG_NEW.
     printf 'consent_uninitialised state=%s\n' "$CONSENT_DECISION" >&2
     if [ "$DRY_RUN" = "true" ]; then
       printf -- '--- DRY RUN ---\n'
@@ -749,6 +756,45 @@ fi
 if ! printf '%s' "$TARGET_REPO" | grep -Eq '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$'; then
   printf 'invalid_repo_format repo=%s\n' "$TARGET_REPO" >&2
   exit 1
+fi
+
+# ---- Interest filter ---------------------------------------------------------
+# Per docs/TELEMETRY.md §Interest filter: runs AFTER privacy + consent +
+# target-repo resolution, BEFORE dedup. Skip if score >= 5 AND status indicates
+# success (per-schema definition emitted as SUCCESS by stage 1):
+#   - SUPERVISOR_RESULT: status=='completed' AND heal_decision=='PASS'
+#   - CODE_REVIEW_RESULT: decision=='PASS'
+#   - QA_RESULT:          tests_passed==tests_generated AND gates>=5
+#
+# A healthy run (score>=5, success=true) whose payload contains a secret has
+# ALREADY exited 2 in stage 1's raw/body privacy scans, so the audit trail is
+# preserved before this short-circuit fires.
+INTEREST_SKIP="false"
+if [ "$SUCCESS" = "true" ] && [ -n "$SCORE_INT" ] && [ "$SCORE_INT" -ge 5 ] 2>/dev/null; then
+  case "$SCHEMA" in
+    SUPERVISOR_RESULT)
+      # `success` (stage 1) already encodes status=completed AND heal_decision=PASS.
+      INTEREST_SKIP="true"
+      ;;
+    CODE_REVIEW_RESULT)
+      # Stage 1 emits status=<decision>.lower; success=(decision==PASS).
+      INTEREST_SKIP="true"
+      ;;
+    QA_RESULT)
+      INTEREST_SKIP="true"
+      ;;
+  esac
+fi
+
+if [ "$INTEREST_SKIP" = "true" ]; then
+  printf 'filter_skipped reason=interest_filter score=%s status=%s\n' \
+    "$SCORE_INT" "$STATUS" >&2
+  if [ "$DRY_RUN" = "true" ]; then
+    printf -- '--- DRY RUN ---\n'
+    printf 'WOULD_EXIT=5\n'
+    exit 0
+  fi
+  exit 5
 fi
 
 # ---- Dedup check -------------------------------------------------------------

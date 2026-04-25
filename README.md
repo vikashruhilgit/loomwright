@@ -456,7 +456,7 @@ This prevents knowledge loss and helps agents learn from discoveries.
 To modify or extend agents:
 
 1. Agents are Markdown prompts in `ai-agent-manager-plugin/agents/` (12 files)
-2. Commands are in `ai-agent-manager-plugin/commands/` (9 commands)
+2. Commands are in `ai-agent-manager-plugin/commands/` (10 commands)
 3. Skills are in `ai-agent-manager-plugin/skills/` (48 skills, versioned with SKILLS_INDEX.md)
 4. Hooks: per-agent in frontmatter (Worker, Execute Manager) + cross-cutting in `ai-agent-manager-plugin/hooks/hooks.json` (Code Reviewer, QA Executor, TaskCompleted)
 5. Docs: `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md`, `…/FAILURE_ESCALATION.md`, `…/ARCHITECTURE_CONTRACTS.md`, `…/ARCHITECTURE.md`

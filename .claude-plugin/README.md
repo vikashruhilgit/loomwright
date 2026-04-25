@@ -356,7 +356,7 @@ ai-agent-manager/                            # Marketplace wrapper repo
     │   ├── code-reviewer.md, red-team-reviewer.md, qa-strategist.md, qa-executor.md
     │   └── agent-help.md
     ├── hooks/
-    │   └── hooks.json                       # 10 quality gate hooks (centralized)
+    │   └── hooks.json                       # 13 quality gate hooks (centralized)
     ├── skills/                              # 48 focused skill modules
     │   ├── SKILLS_INDEX.md                  # Skill catalog with agent mapping
     │   └── [skill-name]/SKILL.md            # Individual skills
@@ -417,8 +417,8 @@ Agents with `memory: project` build knowledge across sessions:
 
 ### Quality Gate Hooks
 
-10 hooks centralized in `hooks.json` validate agent output:
-- **SubagentStop:** Worker, Execute Manager, Code Reviewer, Supervisor, QA Executor, Plan Reviewer
+13 hooks centralized in `hooks.json` validate agent output:
+- **SubagentStop:** Worker, Execute Manager, Code Reviewer, Supervisor, QA Executor, Plan Reviewer (6 prompt validators) + 3 `type: command` telemetry hooks on Code Reviewer, QA Executor, Supervisor
 - **Stop:** Code Reviewer (completeness gate)
 - **TaskCompleted:** Verify task genuinely done
 - **WorktreeCreate / StopFailure:** Logging
