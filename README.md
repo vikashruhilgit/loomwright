@@ -462,14 +462,7 @@ To modify or extend agents:
 5. Docs: `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md`, `…/FAILURE_ESCALATION.md`, `…/ARCHITECTURE_CONTRACTS.md`, `…/ARCHITECTURE.md`
 6. All agents follow standard output format (see AGENT_GUIDELINES.md)
 
-To test locally:
-
-```
-/plugin marketplace add /path/to/ai-agent-manager
-/plugin install ai-agent-manager-plugin@ai-agent-manager-marketplace
-```
-
-Then run agents in a test project to verify changes.
+To test locally, install via the marketplace flow shown in **Quick Start → 1. Install the Plugin**, then run agents in a test project to verify changes. After pulling new changes, use the refresh flow under **Troubleshooting → Skills / agents / hooks not showing after plugin update**.
 
 ---
 
@@ -509,22 +502,28 @@ Then run agents in a test project to verify changes.
 - Check .claude-plugin/README.md for detailed command documentation
 - Review agent prompts in ai-agent-manager-plugin/agents/
 
-**Skills not showing after plugin update?**
+**Skills / agents / hooks not showing after plugin update?**
 
-Claude Code caches plugin contents. After restructuring skills, force a refresh:
+Claude Code caches plugin contents. After pulling new changes (e.g. a fresh `git pull` on main), force a full refresh:
 
-1. Uninstall and reinstall:
+1. **Minimal flow** — try this first:
    ```
    /plugin uninstall ai-agent-manager-plugin
    /plugin install ai-agent-manager-plugin@ai-agent-manager-marketplace
+   /reload-plugins
    ```
-2. Verify with `/skills` — should show all 48 skills under "Plugin skills"
+2. **Full reset** — if the minimal flow doesn't pick up your changes, drop the marketplace cache too:
+   ```
+   /plugin uninstall ai-agent-manager-plugin
+   /plugin marketplace remove ai-agent-manager-marketplace
+   /plugin marketplace add ./
+   /plugin install ai-agent-manager-plugin@ai-agent-manager-marketplace
+   /reload-plugins
+   ```
+   Run from the repo root so `./` resolves to your local checkout.
+3. Verify with `/skills` — should show all 48 skills under "Plugin skills". Use `/agent-help` to confirm all 8 user-facing commands are registered.
 
-**Previously installed via `claude --plugin-dir` (flat layout)?** Older install instructions told you to launch Claude with `--plugin-dir` pointing at the repo root. That no longer works — the plugin is now nested under `ai-agent-manager-plugin/`. Switch to the marketplace flow:
-```
-/plugin marketplace add /path/to/ai-agent-manager
-/plugin install ai-agent-manager-plugin@ai-agent-manager-marketplace
-```
+**Previously installed via `claude --plugin-dir` (flat layout)?** Older install instructions told you to launch Claude with `--plugin-dir` pointing at the repo root. That no longer works — the plugin is now nested under `ai-agent-manager-plugin/`. Switch to the marketplace flow shown in **Quick Start → 1. Install the Plugin**.
 
 ---
 

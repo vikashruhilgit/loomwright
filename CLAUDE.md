@@ -1,695 +1,237 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code when working in this repository.
+
+- User-facing docs (install, quick start, commands, troubleshooting): `README.md`
+- Development standards & shared agent contract: `AGENT_GUIDELINES.md`
+- This file captures what's *not* obvious from those — invariants, schemas, hooks, and incident-derived gotchas
 
 ---
 
 ## Project Overview
 
-**AI Agent Manager** is a reusable system that provides intelligent agents for software development workflows. It integrates with Claude Code as a plugin with 12 agent roles (8 user-facing + 4 internal) that automate plan-first readiness, parallel workflow execution, requirements definition, planning, code review, commit management, adversarial security audits, and dual-agent QA automation.
-
-The system enables agents to collaborate on any project type. The Supervisor and Launch Pad use `.supervisor/` directory exclusively for state management. Other agents (Orchestrator, Product Owner) can optionally use **Beads issue tracker** independently. `CLAUDE.md` provides codebase knowledge that persists between work sessions.
+**AI Agent Manager** is a Claude Code plugin with 12 agent roles (8 user-facing + 4 internal) for plan-first readiness, parallel execution, requirements, planning, code review, commits, adversarial audits, and dual-agent QA. Supervisor and Launch Pad use `.supervisor/` exclusively for state; Orchestrator and Product Owner can optionally use Beads.
 
 ---
 
-## Architecture & Key Concepts
+## Plugin Layout
 
-### Plugin System
-
-The repo is a Claude Code **marketplace wrapper** containing a single plugin. The marketplace manifest lives at `.claude-plugin/marketplace.json` (root) and points to the nested plugin at `ai-agent-manager-plugin/`:
+The repo is a **marketplace wrapper** containing one nested plugin:
 
 - Marketplace manifest: `.claude-plugin/marketplace.json` (root)
-- Plugin manifest: `ai-agent-manager-plugin/.claude-plugin/plugin.json`
-- Agent definitions: `ai-agent-manager-plugin/agents/` (Markdown prompts)
-- Slash commands: `ai-agent-manager-plugin/commands/` (entry points)
-- Skills: `ai-agent-manager-plugin/skills/` (focused implementation guidance)
+- Plugin manifest: `ai-agent-manager-plugin/.claude-plugin/plugin.json` (v11.2.0)
+- Agents: `ai-agent-manager-plugin/agents/` (12 markdown prompts)
+- Commands: `ai-agent-manager-plugin/commands/` (10 entry points)
+- Skills: `ai-agent-manager-plugin/skills/` (48 skills, see `SKILLS_INDEX.md`)
 - Hooks: `ai-agent-manager-plugin/hooks/hooks.json`
 - Docs: `ai-agent-manager-plugin/docs/`
+- Bundled MCP: read-only MySQL server (`vikashruhil-mysql-mcp`)
 
-Installation (local dev):
-```
-/plugin marketplace add /path/to/ai-agent-manager
-/plugin install ai-agent-manager-plugin@ai-agent-manager-marketplace
-```
-Or install via the official Anthropic marketplace once submitted.
-
-### Beads Task Management
-
-**Beads replaces TODO.md and memory files:**
-
-| Command | Purpose |
-|---------|---------|
-| `bd list` | View open/in-progress/completed tasks |
-| `bd create` | Create new task |
-| `bd claim BD-XX` | Start working on a task |
-| `bd close BD-XX` | Mark task complete |
-| `bd comment BD-XX "note"` | Add notes to task |
-| `bd dep BD-XX BD-YY` | Set task dependencies |
-
-**Task Structure:**
-- **EPIC:** Large feature (contains multiple tasks)
-- **TASK:** Implementation work (30-60 min)
-- **SUBTASK:** Review gate (blocks next task)
-
-**Review Gates:**
-- Every implementation task has a review subtask
-- Review subtask blocks next implementation task
-- Review decisions: PASS (proceed), FAIL (fix and re-review), NEEDS_HUMAN (creates bug issues)
-
-### The 12 Agent Roles
-
-Each agent is a Markdown prompt file (`ai-agent-manager-plugin/agents/[name].md`):
-
-#### **Launch Pad** (`/launch-pad`) — Supervisor Readiness
-- **Purpose:** Prepare raw goals for autonomous Supervisor execution
-- **When to use:** Before `/supervisor` for complex tasks, when starting new work, when you want to review the plan
-- **Command:** `/launch-pad goal: "..."`, `/launch-pad goal: "..." --discovery`
-- **Workflow:** VALIDATE → DISCOVER → **FEASIBILITY (soft gate)** → ANALYZE → DECOMPOSE → PACKAGE → PLAN REVIEW (mandatory gate) → REFINE & SAVE
-- **Feasibility (Phase 2.5):** 5 grounded checks (tech stack, dependencies, architecture, scope, hard blockers) → GO/CAUTION/NO-GO. CAUTION feeds Risk Assessment; NO-GO stops pipeline (user can override, revise max 1, or abort)
-- **Plan Review:** Spawns Plan Reviewer to validate brief quality (max 3 retries on FAIL)
-- **Key features:** Feasibility assessment, file impact estimation, parallelism pre-analysis, jobs folder, interactive refinement
-- **Outputs:** Supervisor-Ready Brief saved to `.supervisor/jobs/pending/`
-
-#### **Supervisor** (`/supervisor`) — v4 Parallel Orchestrator + self-heal (Phase 4.5)
-- **Purpose:** Autonomously manage complete development workflow with parallel execution and post-merge self-heal
-- **When to use:** Full automation of task completion
-- **Command:** `/supervisor`, `/supervisor task: "description"`, `/supervisor --max-workers 3`, `/supervisor --skip-self-heal`, `/supervisor --heal-iterations N`
-- **Workflow:** INIT → ACQUIRE → PLAN → EXECUTE (via Execute Manager) → FINALIZE → SELF_HEAL → LOOP
-- **Key features:** Git worktrees for parallelism, externalized state, tool call budgets, mandatory branching, Phase 4.5 post-merge integration review + bounded fix loop, SUPERVISOR_RESULT machine-readable output
-- **Outputs:** Completed tasks with PRs + SUPERVISOR_RESULT block
-
-#### **Execute Manager** (internal, spawned by Supervisor)
-- **Purpose:** Own Phase 3 EXECUTE loop — worker/reviewer lifecycle, poll loop, Context-Keeper coordination
-- **When to use:** Automatically spawned for multi-subtask workflows (not used for fast-path single subtask)
-- **Budget:** 60 tool calls, isolated context from Supervisor
-- **Outputs:** EXECUTE_RESULT or EXECUTE_CHECKPOINT block
-
-#### **Context-Keeper** (internal, spawned by Supervisor/Execute Manager)
-- **Purpose:** Manage Supervisor's externalized state file
-- **When to use:** On-demand, called at each phase transition and for batch updates
-- **Sole writer:** Only agent allowed to mutate the state file
-- **Outputs:** < 50 token confirmations of state operations
-
-#### **Worker** (internal, spawned by Execute Manager or Supervisor)
-- **Purpose:** Implement a single subtask in an isolated git worktree
-- **When to use:** Background execution during EXECUTE phase
-- **Isolation:** Works only within assigned worktree path, no git operations
-- **Outputs:** Structured WORKER_RESULT block + `.worker-summary.md` file
-
-#### **Plan Reviewer** (internal, spawned by Launch Pad)
-- **Purpose:** Validate Supervisor-Ready Briefs for gaps, missing pieces, pattern alignment, and correctness
-- **When to use:** Automatically spawned during Launch Pad Phase 5.5 (not user-facing)
-- **Checks:** 10 review criteria (file paths, patterns, acceptance criteria, dependencies, parallelism, skills, risks, completeness, configuration)
-- **Outputs:** PLAN_REVIEW_RESULT with decision (PASS/FAIL/NEEDS_HUMAN) and issues array
-- **Gate rule:** PASS enables save; NEEDS_HUMAN enables save only with explicit user override; FAIL never enables save
-
-#### **Product Owner** (`/product-owner`)
-- **Purpose:** Translate business problems into user stories with acceptance criteria. Supports `--brainstorm` mode for multi-mind ideation. Includes grounded feasibility: **Assumption Check** (standard flow) and **Reality Check** (brainstorm flow).
-- **When to use:** New feature, vague requirements, exploring multiple directions (`--brainstorm`)
-- **Command:** `/product-owner feature: "your feature"`, `/product-owner problem: "issue to solve"`, `/product-owner problem: "..." --brainstorm`
-- **Workflow:** reads domain context → **Assumption Check (grounded, with user gate before `bd create` if flags)** → (optional) 5-lens brainstorm with **Reality Check (Phase 3.5, caps Feasibility for NEEDS_FOUNDATION/BLOCKED ideas)** → runs discovery → writes user stories
-- **Outputs:** Options Analysis (when --brainstorm, includes Reality Check) + Beads stories with acceptance criteria (Given/When/Then)
-
-#### **Orchestrator** (`/orchestrator`)
-- **Purpose:** Break goals into Beads tasks with review gates
-- **When to use:** Starting new work or need a plan
-- **Command:** `/orchestrator goal: "what you want to accomplish"`
-- **Workflow:** Reads CLAUDE.md + Beads state → creates task structure
-- **Outputs:** EPIC → TASK → SUBTASK structure with skill references
-
-#### **Code Reviewer** (`/code-reviewer`)
-- **Purpose:** Provide precise feedback; output PASS/FAIL/NEEDS_HUMAN decision
-- **When to use:** After writing code, need review
-- **Command:** `/code-reviewer src/` (specify files/dirs to review)
-- **Checks:** Type safety (via LSP), security, performance, pattern alignment, test coverage
-- **Features:** Read-only mode (permissionMode: plan), deep analysis (effort: high), pre-existing issue tagging, optional REVIEW.md support, **Beads integration is optional (auto-detected from `.beads/` presence + `bd --version`)** — when not active, CODE_REVIEW_RESULT block is the sole output channel. **Auto-expands scope to run a repo consistency audit when diff touches ai-agent-manager-plugin/agents/, ai-agent-manager-plugin/commands/, ai-agent-manager-plugin/skills/, ai-agent-manager-plugin/docs/, or plugin metadata** (mirrored prompts, version strings, counts, workflow alignment, hooks parity).
-- **Outputs:** CODE_REVIEW_RESULT v3 (always emitted) with `review_mode` (diff_review | consistency_audit), `audit_focus[]`, `trigger_paths_detected[]`, `scope_expanded[]`, `files_checked[]`, `consistency_checks` + `consistency_summary` (audit mode only), issues (BLOCKING/HIGH/MEDIUM/LOW) with category (new/pre_existing/nit/drift) and `drift_kind` (for drift issues — severity caps enforced by hook), decision, CLAUDE.md proposals; Beads comment + bug issues (only when Beads is active)
-
-#### **Red Team Reviewer** (`/red-team-reviewer`)
-- **Purpose:** Adversarial audit — find what breaks in production
-- **When to use:** Pre-launch, security reviews, architecture decisions
-- **Command:** `/red-team-reviewer [target] [--focus security|scale|cost|ops]`
-- **Workflow:** Attacks assumptions → verifies claims against docs → explores 6 attack vectors
-- **Outputs:** Findings by severity (FATAL/CRITICAL/WARNING/WEAKNESS), prioritized fixes
-
-#### **QA Strategist** (`/qa-strategist`)
-- **Purpose:** Plan risk-based test strategy and audit QA Executor results
-- **When to use:** Before QA execution for strategy, or during debate loop for audit
-- **Command:** `/qa-strategist [target] [--audit .qa-summary.md] [--focus auth|api|ui|all]`
-- **Dual mode:** Strategy Mode (standalone risk classification) + Audit Mode (review Executor results)
-- **Outputs:** Risk classification, coverage targets, STRATEGIST_VERDICT block
-
-#### **QA Executor** (`/qa-executor`)
-- **Purpose:** Discover app, generate senior-grade Playwright tests, find missing functionality, orchestrate debate loop
-- **When to use:** Automated QA — test generation, execution, gap detection, and coverage tracking
-- **Command:** `/qa-executor [--url http://...] [--rounds 1|2|3] [--skip-strategy]`
-- **Workflow:** Detect URL → infrastructure discovery → 4-phase discovery → pre-existing test triage → strategy → generate → gap analysis → dry-run → **Strategist gate audit (13 gates, independent)** → execute → coverage + bugs + audit → emit
-- **Features:** Split architecture (487-line core + qa-test-patterns skill + qa-gates skill), independent Strategist gate audit (13 gates verified by separate agent), signal→pattern test generation, infrastructure discovery (Mailpit/MailHog), pre-existing test triage, auth linear chains, boundary + idempotency enforcement, blocker-first rule, email flow testing, failure classification (REAL_BUG vs DISCOVERY_GAP vs ENVIRONMENT_ISSUE), interaction-level coverage tracking
-- **Outputs:** Discovery Map, discovery/infrastructure.json, Playwright tests, .qa-summary.md, QA_RESULT block, MISSING_FUNCTIONALITY_REPORT block
-
-### Agent Design Principles
-
-All agents follow a **shared contract** (see AGENT_GUIDELINES.md):
-
-- **Mission:** Do the smallest correct thing that advances the objective
-- **Input:** Context from CLAUDE.md + Beads state + recent git history
-- **Output:** Structured Markdown with Context Read → Plan → Work → Results → Risks & Next Steps
-- **Safety:** No destructive actions (db migrations, force-push) without explicit approval
-- **Rules:** Never invent files/APIs/paths; ask if unsure; use Beads for task management
-- **Frontmatter:** Every agent has YAML frontmatter for tool restrictions, model selection, maxTurns, color, disallowedTools, per-agent hooks, skills preloading, and persistent memory (see below)
-
-**Self-heal pattern (v11.0.0):** After Supervisor's FINALIZE phase creates a PR, Phase 4.5 SELF_HEAL runs a holistic Code Reviewer on the integrated feature-branch diff and auto-fixes bounded BLOCKING/HIGH `new` issues (up to `--heal-iterations`, default 3). This eliminates the manual review-and-fix cycle per feature. The phase always runs (`--skip-self-heal` only short-circuits the review loop, not the phase transition); task-completion side-effects (job-file move, state marked completed) are relocated from FINALIZE into SELF_HEAL's completion tail so the record captures heal outcome. Supervisor emits a `SUPERVISOR_RESULT` block validated by the SubagentStop hook.
-
----
-
-## Quick Start Commands
-
-### Installation
-
-```
-# From a checkout of this repo
-/plugin marketplace add /path/to/ai-agent-manager
-/plugin install ai-agent-manager-plugin@ai-agent-manager-marketplace
-```
-
-The repo is a marketplace wrapper (`/.claude-plugin/marketplace.json`) with the plugin nested at `ai-agent-manager-plugin/`. Once merged to the official Anthropic marketplace, installation is a single `/plugin install` command without needing a local checkout.
-
-### Setup a Project
-
-```bash
-# Initialize project
-cd /path/to/your-project
-
-# Option A: With Beads (full task management)
-bd init
-
-# Option B: Without Beads (Supervisor creates .supervisor/ automatically)
-# Just create CLAUDE.md with your project patterns
-```
-
-This creates:
-```
-your-project/
-├── CLAUDE.md              # Your codebase knowledge
-├── .supervisor/           # Supervisor state (auto-created, gitignored)
-│   ├── state.md           # Current session state
-│   ├── history/           # Completed session summaries
-│   └── jobs/              # Supervisor-Ready Briefs from Launch Pad
-├── .beads/                # Beads issue tracker (optional)
-│   └── issues/
-└── src/                   # Your code
-```
-
-### Run Agents
-
-```bash
-# Prepare for autonomous execution (plan-first)
-/launch-pad goal: "add user authentication"
-
-# Execute from Launch Pad brief (in fresh session)
-/supervisor job: .supervisor/jobs/pending/2026-02-08-user-auth.md
-
-# Or run Supervisor directly
-/supervisor task: "add user authentication"
-
-# Plan work
-/orchestrator goal: "add user authentication"
-
-# Review code
-/code-reviewer src/components/
-
-# Commit changes
-/commit
-
-# Adversarial audit (pre-launch)
-/red-team-reviewer --focus security
-
-# QA automation (requires Playwright config + running app)
-/qa-executor
-/qa-executor --url http://localhost:3000 --skip-strategy
-/qa-strategist src/
-
-# Telemetry (opt-in — disabled by default)
-/telemetry status
-/telemetry enable
-/telemetry disable
-/telemetry test
-```
-
----
-
-## High-Level Architecture
+> **Repo path vs. runtime path:** `ai-agent-manager-plugin/...` is the developer-side path (this repo on disk). Anything invoked by hooks, skills, or agents at *runtime* must reference `${CLAUDE_PLUGIN_ROOT}/...` — that's the canonical Claude Code variable that resolves to the plugin install dir on both dev checkouts and marketplace installs. Never use `ai-agent-manager-plugin/...` paths from the user-project root; they only resolve for the plugin maintainer.
 
 ### Directory Structure
 
 ```
-ai-agent-manager/                              # Marketplace wrapper repo
+ai-agent-manager/                              # marketplace wrapper
 ├── .claude-plugin/
-│   ├── marketplace.json                       # Marketplace manifest (root)
-│   └── README.md                              # Plugin-facing usage guide
-├── ai-agent-manager-plugin/                   # The nested plugin
-│   ├── .claude-plugin/
-│   │   └── plugin.json                        # Plugin manifest (v11.2.0)
-│   ├── .mcp.json                              # Bundled MCP servers
-│   ├── agents/                                # Agent markdown prompts (12 roles)
-│   │   ├── launch-pad.md                      # Launch Pad (Supervisor readiness)
-│   │   ├── supervisor.md                      # Supervisor v4 (parallel orchestrator)
-│   │   ├── execute-manager.md                 # Execute Manager (Phase 3 lifecycle)
-│   │   ├── context-keeper.md                  # Context-Keeper (state management)
-│   │   ├── worker.md                          # Worker (implementation in worktrees)
-│   │   ├── plan-reviewer.md                   # Plan Reviewer (brief validation gate)
-│   │   ├── product-owner.md                   # Product Owner (requirements)
-│   │   ├── orchestrator.md                    # Orchestrator (task planning)
-│   │   ├── code-reviewer.md                   # Code Reviewer (quality gates)
-│   │   ├── red-team-reviewer.md               # Red Team Reviewer (adversarial)
-│   │   ├── qa-strategist.md                   # QA Strategist (risk-based test strategy)
-│   │   └── qa-executor.md                     # QA Executor (discovery + test generation)
-│   ├── commands/                              # Slash commands for Claude Code
-│   │   ├── launch-pad.md, supervisor.md, product-owner.md, orchestrator.md
-│   │   ├── code-reviewer.md, red-team-reviewer.md, qa-strategist.md, qa-executor.md
-│   │   ├── telemetry.md                        # /telemetry [status|enable|disable|test]
-│   │   └── agent-help.md
-│   ├── hooks/
-│   │   └── hooks.json                         # Cross-cutting quality-gate hooks
-│   ├── skills/                                # 48 skills (see SKILLS_INDEX.md)
-│   └── docs/                                  # Architecture + schemas
-│       ├── QA_SYSTEM_BLUEPRINT.md, RESULT_SCHEMAS.md, FAILURE_ESCALATION.md
-│       └── ARCHITECTURE_CONTRACTS.md, ARCHITECTURE.md
+│   ├── marketplace.json                       # marketplace manifest (root)
+│   └── README.md                              # plugin-facing usage guide
+├── ai-agent-manager-plugin/                   # nested plugin
+│   ├── .claude-plugin/plugin.json
+│   ├── .mcp.json                              # bundled MCP servers
+│   ├── agents/                                # 12 markdown prompts
+│   ├── commands/                              # 10 slash commands
+│   ├── hooks/hooks.json                       # cross-cutting hooks
+│   ├── skills/                                # 48 skills + SKILLS_INDEX.md
+│   ├── scripts/                               # send-telemetry.sh, send-telemetry-core.sh, telemetry-fixtures/
+│   └── docs/                                  # RESULT_SCHEMAS, FAILURE_ESCALATION, ARCHITECTURE_CONTRACTS, ARCHITECTURE, QA_SYSTEM_BLUEPRINT, TELEMETRY
 ├── scripts/                                   # validate-version.sh, check-command-sync.sh
-├── .github/                                   # workflows + PR template
-├── README.md                                  # User-facing documentation
-├── AGENT_GUIDELINES.md                        # Development standards & agent contract
-└── CLAUDE.md                                  # This file
-```
-
-### How Agents Work Together
-
-**Manual Workflow:**
-```
-User Goal
-    ↓
-/orchestrator → Beads tasks (EPIC → TASK → SUBTASK)
-    ↓
-bd claim BD-XX → Start task
-    ↓
-You code
-    ↓
-/code-reviewer → PASS/FAIL/NEEDS_HUMAN
-    ↓
-Fix issues (if FAIL)
-    ↓
-/commit → Conventional commits + Beads linking
-    ↓
-bd close BD-XX → Task complete, next unblocked
-    ↓
-Next agent reads updated CLAUDE.md (knowledge grows)
-```
-
-**Plan-First Autonomous Workflow:**
-```
-/launch-pad goal: "..."
-    ↓
-.supervisor/jobs/pending/{date}-{slug}.md  (Supervisor-Ready Brief)
-    ↓
-/supervisor job: .supervisor/jobs/pending/{file}.md  (clean context, ~500 tokens freed)
-    ↓
-EXECUTE → FINALIZE → PR
-```
-
-**Autonomous Workflow (Supervisor v4):**
-```
-/supervisor
-    ↓
-INIT: Detect env → Ask preferences → Create .supervisor/
-    ↓
-ACQUIRE: Select task → Create feature branch (MANDATORY)
-    ↓
-PLAN: Orchestrator → Subtasks → Parallelism analysis
-    ↓
-EXECUTE: → Execute Manager (isolated context, 60 tool call budget)
-         Worktree A ─→ Worker A ─→ Reviewer A ─→ PASS
-         Worktree C ─→ Worker C ─→ Reviewer C ─→ PASS
-         (unblocked) → Worktree B → Worker B → PASS
-         ← EXECUTE_RESULT (merge_order, worktrees, branches)
-    ↓
-FINALIZE: Pre-merge validation → Commit in worktrees → Sequential merge → PR (exit — no task-completion side-effects yet)
-    ↓
-SELF_HEAL: Integration review (Code Reviewer on full diff) → bounded fix loop (max --heal-iterations, default 3) → completion tail (job → done/, state completed, SUPERVISOR_RESULT emitted). `--skip-self-heal` short-circuits the loop but phase still runs.
-    ↓
-LOOP: Next task or exit (consumes heal outcome for reporting)
-```
-
-### Task Management Workflow (Beads Optional)
-
-```
-Session Start:
-  1. Agent reads CLAUDE.md (codebase knowledge)
-  2. With Beads: bd list (current task state)
-     Without Beads: read .supervisor/state.md
-  3. Agent reads git history (recent work)
-
-During Work:
-  4. Agent creates/updates tasks (Beads or .supervisor/)
-  5. Agent outputs review decisions (PASS/FAIL/NEEDS_HUMAN)
-  6. Agent flags new patterns for CLAUDE.md
-
-Task Complete:
-  7. With Beads: bd close BD-XX (marks complete, unblocks next)
-     Without Beads: update .supervisor/state.md
-  8. You review pattern proposals
-  9. You update CLAUDE.md (approve/reject proposals)
-  10. Knowledge accumulates; agents learn from discoveries
+├── README.md                                  # user-facing docs
+├── AGENT_GUIDELINES.md                        # standards, agent contract
+└── CLAUDE.md                                  # this file
 ```
 
 ---
 
-## Development Workflow
+## The 12 Agent Roles
 
-### Daily Pattern
+Detailed per-agent purpose, command syntax, and workflow diagrams live in `README.md` §"The 12 Agents" and the agent prompts (`ai-agent-manager-plugin/agents/*.md`). Quick map of what matters for in-codebase work:
 
-**Morning:**
-1. Run `/orchestrator goal: "today's objective"` to create Beads tasks
-2. Review task structure and acceptance criteria
+| Agent | Type | Spawned by | Codebase-relevant invariants |
+|---|---|---|---|
+| Launch Pad | user-facing | user | Phase 2.5 feasibility (GO/CAUTION/NO-GO); Phase 5.5 mandatory Plan Review (max 3 retries); writes briefs to `.supervisor/jobs/pending/` |
+| Supervisor | user-facing | user | v4 + Phase 4.5 self-heal — phase **always** runs; `--skip-self-heal` only short-circuits the loop; completion-tail relocates job-move + state-completed from FINALIZE |
+| Product Owner | user-facing | user | Assumption Check (standard) + Reality Check (`--brainstorm`) cap Feasibility for NEEDS_FOUNDATION/BLOCKED ideas |
+| Orchestrator | user-facing | user | Reads CLAUDE.md + Beads → EPIC / TASK / SUBTASK with skill references |
+| Code Reviewer | user-facing | user | LSP, read-only mode, schema_v3 (adds `drift` category, severity caps via hook). **Auto-expands to consistency audit** when diff touches `agents/`, `commands/`, `skills/`, `docs/`, or plugin metadata |
+| Red Team Reviewer | user-facing | user | 6 attack vectors; persistent memory of past audits |
+| QA Strategist | user-facing | user | Strategy mode + Audit mode; spawned twice (gate audit Phase 11, results audit Phase 13) |
+| QA Executor | user-facing | user | 13-phase, `--depth smoke|functional`, `--plan/--scope/--continue`, infrastructure-aware (Mailpit/MailHog), 80/90 budget |
+| Execute Manager | internal | Supervisor (Phase 3) | Owns poll loop in isolated context, 60 tool-call budget |
+| Context-Keeper | internal | Supervisor / Execute Manager | **Sole writer** of state file; haiku model, batch updates, atomic writes |
+| Worker | internal | Execute Manager / Supervisor | One subtask per worktree, no git ops, emits WORKER_RESULT + `.worker-summary.md` |
+| Plan Reviewer | internal | Launch Pad | PLAN_REVIEW_RESULT decision gates the brief save — PASS saves; NEEDS_HUMAN saves only on explicit user override; FAIL never saves |
 
-**During Work:**
-1. `bd claim BD-XX` to start task
-2. Implement code
-3. Run `/code-reviewer` to check for issues
-4. Fix identified problems, re-review until PASS
+### Shared Agent Contract
 
-**Afternoon:**
-1. Run `/commit` to create conventional commits
-2. `bd close BD-XX` to complete task
+Every agent (full standard in `AGENT_GUIDELINES.md`):
 
-**Pre-Launch:**
-1. Run `/red-team-reviewer` for adversarial audit
-2. Address FATAL and CRITICAL findings
+- **Mission:** smallest correct thing that advances the objective
+- **Output:** Context Read → Plan → Work → Results → Risks
+- **Frontmatter:** `tools`, `model`, `maxTurns`, `color`, `disallowedTools`, `skills`, `memory`, per-agent `hooks`, `effort`, `permissionMode`
+- **Safety:** no destructive actions without explicit approval; never invent files/APIs/paths; merge conflicts always escalate
+- Language-agnostic; per-language standards in `AGENT_GUIDELINES.md`
 
-### Adding or Modifying Agents
-
-Agents are Markdown files in `ai-agent-manager-plugin/agents/`:
-
-1. **Create new agent:**
-   - Write `.md` file in `ai-agent-manager-plugin/agents/` directory
-   - Follow structured output format (Context Read → Plan → Work → Results → Risks)
-
-2. **Create slash command:**
-   - Write `.md` file in `ai-agent-manager-plugin/commands/` directory
-   - Reference the agent prompt
-   - Define command syntax and examples
-
-3. **Create skill:**
-   - Write `SKILL.md` in `ai-agent-manager-plugin/skills/[skill-name]/` directory
-   - Include quick rules, examples, and quality gates
-
-4. **Test locally:**
-   - Reinstall the plugin: `/plugin uninstall ai-agent-manager-plugin` then `/plugin install ai-agent-manager-plugin@ai-agent-manager-marketplace`
-   - Run `/agent-help` to verify command is available
-   - Test in a sample project
-
-5. **Core principles:**
-   - Do smallest correct thing that advances goal
-   - Output structured Markdown
-   - Never invent files/APIs/paths; ask if unsure
-   - Use Beads for task management
-   - Cite exact file:line numbers when referencing code
-
----
-
-## Core Principles (From AGENT_GUIDELINES.md)
-
-All agents follow these standards:
-
-1. **Quality First** - Thorough, well-tested, correct solutions; proven approaches
-2. **Surgical Changes** - Only modify what's necessary; fix one thing at a time
-3. **Pattern Consistency** - Use existing patterns; learn codebase before implementing
-4. **Type Safety** - Strictest checking; no implicit `any`; equivalent rigor per language
-5. **Security** - No secrets/PII in code/logs; validate inputs; clear decisions
-6. **Performance** - Profile before/after; document tradeoffs; optimize bottlenecks
-
-### Quality Checklist
-
-Before an agent completes work:
-- Tests pass; no linting/type errors
-- Code follows patterns; changes minimal and focused
-- Coverage ≥ 80%; no regressions
-- No secrets, debug code, console.logs
-- Docs/comments updated
-- Input validation in place
-
----
-
-## Project Structure
-
-### Key Files
-
-| File | Purpose |
-|------|---------|
-| `README.md` | User-facing guide (installation, quick start, workflow) |
-| `AGENT_GUIDELINES.md` | Development standards, agent contract, quality checklist |
-| `.claude-plugin/marketplace.json` | Marketplace manifest (root) |
-| `.claude-plugin/README.md` | Detailed plugin documentation |
-| `ai-agent-manager-plugin/.claude-plugin/plugin.json` | Plugin manifest |
-| `ai-agent-manager-plugin/skills/*/SKILL.md` | Skill files for implementation guidance |
-
-### Plugin Metadata
-
-- **Plugin Name:** `ai-agent-manager-plugin`
-- **Version:** 11.2.0
-- **Description:** AI agents v11.2.0 — Opt-in GitHub Issues telemetry system. After qualifying agent runs (Supervisor / Code Reviewer / QA Executor), an opt-in pipeline can post a structured GitHub issue with derived score, agent performance breakdown, and AI suggestions for longitudinal analysis. Key invariants: wrapper always exits 0; core exits 0..5 (sent / generic_error / privacy_blocked / no_consent / no_repo_configured / filter_skipped); privacy fail-closed via regex deny-list; no default repo (disabled until `AI_AGENT_MANAGER_TELEMETRY_REPO` env var or `/telemetry enable`); consent via `/telemetry [status|enable|disable|test]` only — hooks never prompt. Builds on v11.1.2 inline-execution guard (Phase 4.5 completion-tail invariant: emits `status: failed` if `code-reviewer` not invoked and `--skip-self-heal` absent) and prior v11.1/v11.0/v10.3 layers. 12 agent roles, 48 reusable skills, 13 quality gate hooks, persistent agent memory, bundled MySQL MCP server.
-- **Agents:** 12 roles (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Plan Reviewer, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer, QA Strategist, QA Executor)
-- **Skills:** 48 reusable skills (versioned with SKILLS_INDEX.md)
-- **Hooks:** 13 quality gate hooks — centralized in hooks.json: SubagentStop prompt validators on worker, execute-manager, code-reviewer, supervisor, qa-executor, plan-reviewer (6) + 3 type:command telemetry hooks on code-reviewer/qa-executor/supervisor-runner, Stop (code-reviewer), TaskCompleted, WorktreeCreate, StopFailure
-- **Docs:** RESULT_SCHEMAS.md, FAILURE_ESCALATION.md, ARCHITECTURE_CONTRACTS.md, ARCHITECTURE.md, QA_SYSTEM_BLUEPRINT.md
-- **Bundled MCP:** MySQL read-only MCP server (`vikashruhil-mysql-mcp`) — query impact analysis, schema inspection, multi-DB profiles
-- **Author:** vikash ruhil
-- **License:** MIT
-
-### Installation
-
-- Marketplace wrapper with manifest at `.claude-plugin/marketplace.json` (root); plugin nested at `ai-agent-manager-plugin/`
-- Local dev/testing:
-  ```
-  /plugin marketplace add /path/to/ai-agent-manager
-  /plugin install ai-agent-manager-plugin@ai-agent-manager-marketplace
-  ```
-- Official: install via the Anthropic marketplace once submitted
-
----
-
-## Important Notes
-
-### This is a Plugin System
-
-- Agents are distributed as a Claude Code plugin
-- Users install via `/plugin marketplace add /path/to/ai-agent-manager` + `/plugin install ai-agent-manager-plugin@ai-agent-manager-marketplace` from a local checkout, or via the official Anthropic marketplace
-- Agents run within Claude Code (not standalone)
-
-### Language-Agnostic
-
-- Agents work with any programming language
-- Follow language-specific standards per AGENT_GUIDELINES.md (TypeScript, Python, Go, Rust, Java, etc.)
-
-### Human-in-Loop Design
-
-- Agents suggest changes; humans approve
-- Agents flag pattern proposals in Beads task comments
-- Only humans update CLAUDE.md (after review)
-- Agents never make destructive changes without explicit instruction
-- Merge conflicts always escalate to human
-
-### Task Management
-
-- **Supervisor and Launch Pad:** Use `.supervisor/` exclusively for state management (no Beads dependency)
-- **Orchestrator and Product Owner:** Can optionally use Beads for task/story creation independently
-- Projects need only CLAUDE.md to get started (`.supervisor/` is auto-created, `.beads/` is optional)
-- Same agents work across different projects
-
-### Structured Contracts (v9.0.0)
-
-- **Result Schemas:** Agent result blocks follow strict schemas — CODE_REVIEW_RESULT at `schema_version: 3` (adds `review_mode`, `audit_focus`, `trigger_paths_detected`, `scope_expanded`, `files_checked`, `consistency_checks`, `consistency_summary`, and the `drift` issue category with `drift_kind` + severity caps; v2 accepted for legacy artifacts), all others at `schema_version: 1` — see `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md`
-- **Failure Escalation:** Defined retry limits and escalation paths for all agents — see `ai-agent-manager-plugin/docs/FAILURE_ESCALATION.md`
-- **Architecture Contracts:** Capability matrix, context budgets, timeout rules, worktree naming — see `ai-agent-manager-plugin/docs/ARCHITECTURE_CONTRACTS.md`
-- **Job Lifecycle:** Briefs tracked through `pending/` → `in-progress/` → `done/`/`failed/` in `.supervisor/jobs/`
-- **Session Logging:** Structured JSONL logs in `.supervisor/logs/` for post-mortem analysis
-- **Merge Safety Gate:** Pre-merge checklist in FINALIZE prevents corrupted partial merges
+**Self-heal pattern (v11.0.0):** Phase 4.5 SELF_HEAL runs Code Reviewer on the integrated feature-branch diff after FINALIZE creates the PR, then auto-fixes bounded BLOCKING/HIGH `new` issues (up to `--heal-iterations`, default 3). Job-file move and `state.md` "completed" marker live in SELF_HEAL's completion tail — not FINALIZE — so the record captures heal outcome. `SUPERVISOR_RESULT` is validated by SubagentStop hook.
 
 ### Parallel Execution Model
 
 - Supervisor v4 delegates Phase 3 to Execute Manager for multi-subtask workflows
-- Execute Manager owns the poll loop, worker/reviewer lifecycle, and Context-Keeper coordination
-- Each worker operates in its own git worktree (no file conflicts)
-- Workers write `.worker-summary.md` files for lightweight result extraction
-- Context-Keeper externalizes state; Supervisor uses tool call budgets (30 calls) instead of percentage thresholds
-- Execute Manager has its own tool call budget (60 calls) in isolated context
-- Subtask branches merge sequentially into feature branch with pre-merge validation
+- Execute Manager owns the poll loop, worker/reviewer lifecycle, Context-Keeper coordination
+- Each worker runs in its own git worktree (no file conflicts)
+- Workers write `.worker-summary.md` for lightweight result extraction
+- Context-Keeper externalizes state; Supervisor uses tool-call budgets (30) instead of percentage thresholds; Execute Manager has its own 60-call budget in isolated context
+- Subtask branches merge sequentially into the feature branch with pre-merge validation
 - Fast-path: single subtask skips worktrees and Execute Manager entirely
 
-### Plugin Hooks (Quality Gates)
+---
 
-All validation hooks are centralized in `hooks.json` since v10.0.0. Claude Code silently ignores `hooks`, `mcpServers`, and `permissionMode` in plugin agent frontmatter — only hooks.json hooks fire for plugin-distributed agents. Per-agent frontmatter hooks are kept for `~/.claude/agents/` compatibility.
+## Adding or Modifying Agents
+
+1. **New agent:** `.md` in `ai-agent-manager-plugin/agents/` with YAML frontmatter; output follows Context Read → Plan → Work → Results → Risks
+2. **New slash command:** `.md` in `ai-agent-manager-plugin/commands/` referencing the agent prompt
+3. **New skill:** `SKILL.md` in `ai-agent-manager-plugin/skills/[name]/` with version frontmatter; update `SKILLS_INDEX.md`
+4. **Test locally:**
+   ```
+   /plugin uninstall ai-agent-manager-plugin
+   /plugin install ai-agent-manager-plugin@ai-agent-manager-marketplace
+   ```
+   Verify with `/agent-help`
+5. **Cite exact `file:line` numbers when referencing code**
+
+**Hook gotcha:** Claude Code silently ignores `hooks`, `mcpServers`, and `permissionMode` in plugin agent frontmatter — only `hooks.json` hooks fire for plugin-distributed agents. Per-agent frontmatter hooks are kept for `~/.claude/agents/` compatibility.
+
+---
+
+## Structured Contracts (v9.0.0)
+
+- **Result Schemas** — `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md`. CODE_REVIEW_RESULT at `schema_version: 3` (adds `review_mode` (`diff_review` | `consistency_audit`), `audit_focus[]`, `trigger_paths_detected[]`, `scope_expanded[]`, `files_checked[]`, `consistency_checks`, `consistency_summary`, and the `drift` issue category with `drift_kind` + severity caps; v2 accepted for legacy artifacts). All others at `schema_version: 1`.
+- **Failure Escalation** — `…/FAILURE_ESCALATION.md` (retry limits, escalation paths)
+- **Architecture Contracts** — `…/ARCHITECTURE_CONTRACTS.md` (capability matrix, context budgets, timeouts, worktree naming)
+- **Job Lifecycle** — briefs flow `pending/` → `in-progress/` → `done/` / `failed/` in `.supervisor/jobs/`
+- **Session Logging** — JSONL in `.supervisor/logs/{session_id}.jsonl`
+- **Merge Safety Gate** — pre-merge checklist in FINALIZE prevents corrupted partial merges
+
+---
+
+## Plugin Hooks (Quality Gates)
+
+13 hooks centralized in `hooks.json` since v10.0.0. Prompt-based validation uses fast haiku model with 30s timeout. WorktreeCreate / StopFailure / telemetry hooks use `type: command` for zero-latency.
 
 | Hook | Trigger | Location | Validation |
 |------|---------|----------|------------|
-| **SubagentStop** (worker) | Worker completes | hooks.json + frontmatter | WORKER_RESULT with schema_version, task_id, status, files_modified |
-| **SubagentStop** (execute-manager) | Execute Manager completes | hooks.json + frontmatter | EXECUTE_RESULT/EXECUTE_CHECKPOINT with required fields |
-| **SubagentStop** (code-reviewer) | Code Reviewer completes | hooks.json | CODE_REVIEW_RESULT v2 with decision, issue categories (new/pre_existing/nit) |
-| **SubagentStop** (supervisor) | Supervisor completes | hooks.json | Session outcome, subtask statuses, PR URL if created |
-| **SubagentStop** (qa-executor) | QA Executor completes | hooks.json | QA_RESULT with tests_generated, tests_passed, summary |
-| **SubagentStop** (plan-reviewer) | Plan Reviewer completes | hooks.json | PLAN_REVIEW_RESULT with schema_version, decision, issues, summary |
-| **Stop** (code-reviewer) | Code Reviewer finishing | hooks.json + frontmatter | CODE_REVIEW_RESULT block present with required fields |
-| **TaskCompleted** | Any task marked complete | hooks.json | Task genuinely done, not abandoned or skipped |
-| **WorktreeCreate** | Worktree created | hooks.json | Logs to `.supervisor/logs/worktrees.log` (type: command) |
-| **StopFailure** | Agent API error | hooks.json | Logs to `.supervisor/logs/failures.log` (type: command) |
+| SubagentStop (worker) | Worker completes | hooks.json + frontmatter | WORKER_RESULT (schema_version, task_id, status, files_modified) |
+| SubagentStop (execute-manager) | Execute Manager completes | hooks.json + frontmatter | EXECUTE_RESULT / EXECUTE_CHECKPOINT |
+| SubagentStop (code-reviewer) | Code Reviewer completes | hooks.json | CODE_REVIEW_RESULT v3 with decision + issue categories |
+| SubagentStop (supervisor) | Supervisor completes | hooks.json | Session outcome, subtask statuses, PR URL |
+| SubagentStop (qa-executor) | QA Executor completes | hooks.json | QA_RESULT (tests_generated, tests_passed, summary) |
+| SubagentStop (plan-reviewer) | Plan Reviewer completes | hooks.json | PLAN_REVIEW_RESULT (schema_version, decision, issues, summary) |
+| SubagentStop telemetry × 3 | code-reviewer / qa-executor / supervisor-runner complete | hooks.json | type:command — wrapper exits 0 always; pipes payload to `send-telemetry-core.sh` |
+| Stop (code-reviewer) | Code Reviewer finishing | hooks.json + frontmatter | CODE_REVIEW_RESULT block present |
+| TaskCompleted | Task marked complete | hooks.json | Task genuinely done |
+| WorktreeCreate | Worktree created | hooks.json | type:command, logs `.supervisor/logs/worktrees.log` |
+| StopFailure | Agent API error | hooks.json | type:command, logs `.supervisor/logs/failures.log` |
 
-Hooks validate against schemas defined in `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md`. Prompt-based validation (fast haiku model, 30s timeout). WorktreeCreate and StopFailure use `type: "command"` for zero-latency logging.
+---
 
-### Telemetry System (opt-in)
+## Telemetry System (opt-in, v11.2.0)
 
-Opt-in GitHub Issues telemetry system (v11.2.0). After qualifying agent runs (`supervisor-runner`, `code-reviewer`, `qa-executor`) complete, an additional `SubagentStop` `type: command` hook invokes `${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry.sh` (the wrapper — `${CLAUDE_PLUGIN_ROOT}` is the canonical Claude Code variable for plugin-bundled assets and resolves to the plugin install dir on both dev checkouts and marketplace installs; never use `ai-agent-manager-plugin/...` paths from the user-project root, those only resolve for the plugin maintainer). The wrapper is fire-and-forget and ALWAYS exits 0; it pipes the hook's JSON payload to `send-telemetry-core.sh`, which parses the result block, derives a deterministic score, runs a regex-based privacy whitelist, and (when consent + target repo are configured) calls `gh issue create` with a structured body covering Task Summary, Agent Scores, Issues Detected, AI Suggestions, Tools Used, and a redacted JSON payload. Privacy fail-closes: any whitelist match aborts the post and exits the core with code `2`.
+After qualifying runs (`supervisor-runner`, `code-reviewer`, `qa-executor`), a SubagentStop `type: command` hook invokes `${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry.sh` (the wrapper — `${CLAUDE_PLUGIN_ROOT}` is the canonical Claude Code variable for plugin-bundled assets and resolves to the plugin install dir on both dev checkouts and marketplace installs; never use `ai-agent-manager-plugin/...` paths from the user-project root, those only resolve for the plugin maintainer). The wrapper is fire-and-forget and **always exits 0**; it pipes the hook payload to `send-telemetry-core.sh`, which parses the result block, derives a deterministic score, runs a regex-based privacy whitelist, and (when consent + target repo are configured) calls `gh issue create` with a structured body covering Task Summary, Agent Scores, Issues Detected, AI Suggestions, Tools Used, and a redacted JSON payload.
 
-New user-facing slash commands:
+- **Privacy fail-closed:** any whitelist match aborts the post; core exits `2`
+- **Core exit codes 0..5:** sent / generic_error / privacy_blocked / no_consent / no_repo_configured / filter_skipped
+- **No origin-remote fallback** — the plugin runs in arbitrary user projects whose origin is the user's app repo, which is the wrong place for telemetry
+- **Disabled by default.** Enable via `/telemetry enable` (interactive — pick target repo) or `AI_AGENT_MANAGER_TELEMETRY_REPO=owner/repo`. Hooks **never** prompt — consent flows only through `/telemetry`.
 
 | Command | Purpose |
 |---------|---------|
-| `/telemetry status` | Show consent state, resolved target repo + source, last-sent timestamp, retained per-session pending markers (~24h window) |
-| `/telemetry enable` | Interactive — collects target repo via `AskUserQuestion`, writes `{"telemetry":"always_allow","telemetry_repo":"<owner/repo>"}` to `.supervisor/telemetry-consent.json`. Sole first-run consent path. |
-| `/telemetry disable` | Writes `{"telemetry":"no"}` to the consent file; subsequent hook fires log a single "denied — skipped" line per session and never call `gh` |
-| `/telemetry test` | Dry-run a fixture or the latest log payload through `send-telemetry-core.sh --dry-run`; prints target repo, formatted body, and `WOULD_EXIT` without calling `gh` |
+| `/telemetry status` | consent state, resolved target repo + source, last-sent timestamp, retained per-session pending markers (~24h window) |
+| `/telemetry enable` | interactive — collects target repo via `AskUserQuestion`, writes `{"telemetry":"always_allow","telemetry_repo":"<owner/repo>"}` to `.supervisor/telemetry-consent.json`. Sole first-run consent path. |
+| `/telemetry disable` | writes `{"telemetry":"no"}` to the consent file; subsequent hook fires log a single "denied — skipped" line per session and never call `gh` |
+| `/telemetry test` | dry-run a fixture or the latest log payload through `send-telemetry-core.sh --dry-run`; prints target repo, formatted body, and `WOULD_EXIT` without calling `gh` |
 
-Telemetry is **disabled by default**. To enable, either run `/telemetry enable` (and choose a target repo) or set the `AI_AGENT_MANAGER_TELEMETRY_REPO=owner/repo` environment variable. There is no `origin`-remote fallback — the plugin runs in arbitrary user projects whose `origin` is the user's own app repo, which is the wrong place for telemetry. See `ai-agent-manager-plugin/docs/TELEMETRY.md` for the full design (scoring rubric per result-block schema, privacy whitelist, exit-code table, wrapper-vs-core architecture, and the plugin-internal vs repo-root `scripts/` convention).
+Full design (scoring rubric per result-block schema, privacy whitelist, exit-code table, wrapper-vs-core architecture, plugin-internal vs repo-root `scripts/` convention): `ai-agent-manager-plugin/docs/TELEMETRY.md`.
 
-### Persistent Memory
+---
 
-Agents with `memory: project` in their frontmatter build knowledge across sessions:
+## Persistent Memory
 
-| Agent | What It Remembers | Storage |
-|-------|-------------------|---------|
-| Launch Pad | Commonly impacted files per goal type, project patterns | `.claude/agent-memory/ai-agent-manager-plugin:launch-pad-runner/` |
-| Code Reviewer | Review patterns, recurring issues, codebase conventions | `.claude/agent-memory/ai-agent-manager-plugin:code-reviewer/` |
-| Red Team Reviewer | Past vulnerabilities, attack patterns, audit history | `.claude/agent-memory/ai-agent-manager-plugin:red-team-reviewer/` |
-| Product Owner | Domain context, terminology, stakeholder preferences | `.claude/agent-memory/ai-agent-manager-plugin:product-owner/` |
-| QA Strategist | Per-project risk patterns, which routes tend to break | `.claude/agent-memory/ai-agent-manager-plugin:qa-strategist/` |
-| QA Executor | Flaky patterns, common failures, successful test templates | `.claude/agent-memory/ai-agent-manager-plugin:qa-executor/` |
+Agents with `memory: project` in frontmatter accumulate knowledge across sessions:
 
-Memory accumulates automatically — agents get smarter about project-specific patterns over time.
+| Agent | Storage |
+|-------|---------|
+| Launch Pad | `.claude/agent-memory/ai-agent-manager-plugin:launch-pad-runner/` |
+| Code Reviewer | `.claude/agent-memory/ai-agent-manager-plugin:code-reviewer/` |
+| Red Team Reviewer | `.claude/agent-memory/ai-agent-manager-plugin:red-team-reviewer/` |
+| Product Owner | `.claude/agent-memory/ai-agent-manager-plugin:product-owner/` |
+| QA Strategist | `.claude/agent-memory/ai-agent-manager-plugin:qa-strategist/` |
+| QA Executor | `.claude/agent-memory/ai-agent-manager-plugin:qa-executor/` |
 
-### Skills Preloading
+## Skills Preloading
 
-Agents with `skills` in their frontmatter receive skill content pre-injected at spawn time:
+Agents with `skills` in frontmatter get content pre-injected at spawn time (no runtime file-read):
 
-| Agent | Pre-loaded Skills | Why |
-|-------|-------------------|-----|
-| Launch Pad | supervisor-readiness, context-setup, claude-md-validation, product-discovery, mvp-scoping, quality-checklist, context7-lookup | All discovery/validation/readiness knowledge needed |
-| Supervisor | workflow-management, async-orchestration, state-management, context-summarization, supervisor-readiness | Referenced in every run |
-| Orchestrator | quality-checklist | Defines review gate criteria for subtask creation |
-| Code Reviewer | quality-checklist, context7-lookup, unit-testing, error-handling, monitoring-observability | Always needs quality criteria, library doc lookup, and coverage/error/observability patterns |
-| Red Team Reviewer | context7-lookup | Mandatory for reality-checking library usage |
-| QA Strategist | qa-strategy, quality-checklist | Risk framework and quality gates always needed |
-| QA Executor | qa-strategy, playwright-e2e, quality-checklist | Discovery, test generation patterns, and gates |
-| Product Owner | brainstorming, product-discovery, mvp-scoping | Multi-mind ideation, problem understanding, prioritization |
+| Agent | Pre-loaded skills |
+|-------|-------------------|
+| Launch Pad | supervisor-readiness, context-setup, claude-md-validation, product-discovery, mvp-scoping, quality-checklist, context7-lookup |
+| Supervisor | workflow-management, async-orchestration, state-management, context-summarization, supervisor-readiness |
+| Orchestrator | quality-checklist |
+| Code Reviewer | quality-checklist, context7-lookup, unit-testing, error-handling, monitoring-observability |
+| Red Team Reviewer | context7-lookup |
+| QA Strategist | qa-strategy, quality-checklist |
+| QA Executor | qa-strategy, playwright-e2e, quality-checklist |
+| Product Owner | brainstorming, product-discovery, mvp-scoping |
 
-This eliminates file-read latency during execution — skills are in context from the start.
+## Agent Teams (Experimental Alternative)
 
-### Agent Teams (Experimental Alternative)
-
-Claude Code Agent Teams is an experimental feature providing native multi-agent coordination:
-- Requires `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` environment variable
-- Best for research, competing hypotheses, cross-layer changes
-- Not for sequential tasks or same-file edits (use Supervisor with git worktrees)
-- See `ai-agent-manager-plugin/skills/agent-teams/SKILL.md` for patterns and decision matrix
-- Does not replace Supervisor v4 — complementary for exploration tasks
+Native Claude Code multi-agent coordination — requires `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`. Best for research, competing hypotheses, cross-layer changes; not for sequential tasks or same-file edits (use Supervisor with worktrees). Patterns + decision matrix: `ai-agent-manager-plugin/skills/agent-teams/SKILL.md`. Complementary to Supervisor v4, not a replacement.
 
 ---
 
 ## Common Pitfalls
 
-### `/supervisor` or `/launch-pad` Aborted with "Task/Agent tool unavailable"?
-- You likely hit the pre-11.1.1 name-collision trap where the slash command silently auto-delegated to a same-named registered subagent, which then couldn't spawn its own child agents ([docs](https://code.claude.com/docs/en/sub-agents): *"Subagents cannot spawn other subagents"*).
-- Fix in 11.1.1: the registered agents are now `ai-agent-manager-plugin:supervisor-runner` and `ai-agent-manager-plugin:launch-pad-runner`. The slash commands are inline main-thread workflows; the `-runner` suffix is what lets `claude --agent ai-agent-manager-plugin:supervisor-runner` own a session without re-introducing auto-delegation.
-- If you want an agent-owned session, use `claude --agent …-runner`. Otherwise use the slash command and stay on the main thread.
+### `/supervisor` or `/launch-pad` aborted with "Task/Agent tool unavailable"?
+- Pre-11.1.1 name-collision trap: the slash command silently auto-delegated to a same-named registered subagent, which couldn't spawn its own children ([docs](https://code.claude.com/docs/en/sub-agents): *"Subagents cannot spawn other subagents"*).
+- Fix in 11.1.1: registered agents are now `ai-agent-manager-plugin:supervisor-runner` and `ai-agent-manager-plugin:launch-pad-runner`. The slash commands are inline main-thread workflows; the `-runner` suffix lets `claude --agent ai-agent-manager-plugin:supervisor-runner` own a session without re-introducing auto-delegation.
+- For an agent-owned session: `claude --agent …-runner`. Otherwise stay on the main thread via the slash command.
 
-### `/supervisor` Completed But Skipped Phase 4.5 (or Phase 3 Child Agents)?
-- **What this is:** Inline main-thread execution was misread as permission to stop orchestrating. "Don't delegate to `supervisor-runner`" is correct, but it does NOT mean "do the whole workflow yourself." You must still spawn first-level child agents via the Task tool — `orchestrator` in Phase 2, `execute-manager` or fast-path worker/reviewer in Phase 3, and `code-reviewer` + fix loop in Phase 4.5.
-- **Fix in 11.1.2:** The Phase 4.5 completion-tail guard (`ai-agent-manager-plugin/agents/supervisor.md`) refuses to emit a successful `SUPERVISOR_RESULT` when `skip_self_heal_requested=false` AND `phase45_review_invoked=false`. The run self-reports `status: failed` and the job stays in `in-progress/` for operator review. You can no longer silently skip the integration review.
-- **Recovery for runs completed before 11.1.2 (operator workaround — unsupported, manual):**
-  1. Generate the review scope explicitly. `/code-reviewer` does not have a first-class branch-vs-branch diff mode today — compute the changed files via `git diff --name-only origin/main...HEAD` and pass that list to `/code-reviewer`, OR pipe `git diff origin/main...HEAD` into a manual review session.
-  2. If the review finds new BLOCKING/HIGH issues, fix them (manually or via a worker task loop) and push to the feature branch.
-  3. Only then update `.supervisor/` state and the job file by hand. This manual state surgery is NOT supported and will become a proper `/supervisor --recover-self-heal` command in a follow-up PR — avoid it where possible.
-- **Intentional skip:** If you genuinely want to bypass the integration review (emergency merge), re-run with `--skip-self-heal` explicitly. The guard accepts that flag as a recorded, deliberate choice.
+### `/supervisor` completed but skipped Phase 4.5 (or Phase 3 child agents)?
+- **What this is:** inline main-thread execution misread as permission to stop orchestrating. "Don't delegate to `supervisor-runner`" does NOT mean "do everything yourself." Still spawn first-level children via Task — `orchestrator` (Phase 2), `execute-manager` or fast-path worker/reviewer (Phase 3), `code-reviewer` + fix loop (Phase 4.5).
+- **Fix in 11.1.2:** Phase 4.5 completion-tail guard (`ai-agent-manager-plugin/agents/supervisor.md`) refuses a successful `SUPERVISOR_RESULT` when `skip_self_heal_requested=false` AND `phase45_review_invoked=false`. Run self-reports `status: failed`; job stays in `in-progress/`.
+- **Recovery for pre-11.1.2 runs (operator workaround — unsupported, manual):**
+  1. `/code-reviewer` has no first-class branch-vs-branch diff mode. Compute scope via `git diff --name-only origin/main...HEAD` and pass that file list to `/code-reviewer`, OR pipe `git diff origin/main...HEAD` into a manual review.
+  2. Fix any new BLOCKING/HIGH issues; push to feature branch.
+  3. Update `.supervisor/` state and the job file by hand. NOT supported — will become `/supervisor --recover-self-heal` in a follow-up PR.
+- **Intentional skip:** re-run with `--skip-self-heal` (the guard accepts it as a recorded deliberate choice).
 
-### Agents Don't Understand Project Structure?
-- Update the project's CLAUDE.md with more detailed patterns
-- Include concrete examples and file references
-- Agents re-read CLAUDE.md at the start of each session
+### Agents don't understand project structure?
+Update the project's CLAUDE.md with concrete patterns and `file:line` references. Agents re-read at session start.
 
-### Beads Tasks Not Appearing?
-- Run `bd list` to check current state
-- Ensure `bd init` was run in project
+### Beads tasks not appearing?
+`bd list` to check; ensure `bd init` ran. Beads is only used by Orchestrator/Product Owner — Supervisor/Launch Pad don't need it.
 
+### Supervisor workflow interrupted?
+State auto-saves to `.supervisor/state.md`. Resume with `/supervisor --continue task: BD-XX`. Check `.supervisor/history/` for completed sessions.
 
-### Supervisor Workflow Interrupted?
-- State is saved to `.supervisor/state.md` automatically
-- Resume with: `/supervisor --continue task: BD-XX`
-- Check `.supervisor/history/` for completed sessions
-
-### Orphaned Worktrees After Crash?
-- Run `git worktree list` to see all worktrees
-- Remove with: `git worktree remove ../project-BD-XXa`
-- Clean up branches: `git branch -d feature/BD-XXa`
-
-### New Pattern But Unsure If Important?
-- Agent flags it in Beads task comment as a proposal
-- Review code at specified file:line numbers
-- Decide whether to add to CLAUDE.md
-- Approval gates prevent noise
-
----
-
-## Known Limitations
-
-### Agent Behavior
-- **File verification:** Agents verify file existence before referencing, but LLM hallucination is possible
-- **Observability:** All agents output structured summary (status, files read/modified, errors)
-
-### Scale Considerations
-- **Token overhead:** ~5,000-10,000 tokens per invocation for prompts
-- **Context7 dependency:** External library lookups require MCP; fallback to CLAUDE.md if unavailable
-
-### QA System (Level 1 — v9.0.0)
-- **Requires Playwright:** `playwright.config.ts` must exist and app must be running
-- **Crawl limits:** Max 30 pages, depth 3, same-origin only
-- **Split architecture:** 487-line core agent + qa-test-patterns skill + qa-gates skill (was 1,911 lines)
-- **13 sequential phases** (1-13, no sub-numbering)
-- **Independent gate audit:** 13 quality gates verified by QA Strategist (separate agent, separate context) — not self-grading
-- **Budget: 80/90** — matches protocol reality (was 60)
-- **Infrastructure-aware:** Discovers email capture (Mailpit/MailHog) and generates email flow tests when available
-- **Simple linear chains (L1-legal):** Auth lifecycle tests (signup→login→access→logout→deny). NOT L2 journey graphs
-- **Strategist spawned twice:** Phase 11 (gate audit) + Phase 13 (results audit)
-- **Security boundary tests (non-destructive):** L1 includes IDOR, role escalation, session invalidation, XSS/SQLi probes for HIGH risk endpoints. Full adversarial security testing is Level 3.
-- **No performance tests:** Performance testing is Level 3.
-- **Coverage is inventory-level:** Tracks routes/APIs discovered vs tested, not behavioral coverage
-
----
-
-## Future Enhancements
-
-Potential improvements:
-- Additional specialized agents (e.g., Documentation Agent, Performance Analyzer)
-- Deeper GitHub/GitLab integration
-- Agent composition (multi-agent workflows)
-- Metrics and analytics
+### Orphaned worktrees after crash?
+`git worktree list`; `git worktree remove ../project-BD-XXa`; `git branch -d feature/BD-XXa`.
 
 ---
 
 ## References
 
-- **Main docs:** `README.md` (user guide, examples, troubleshooting)
-- **Plugin docs:** `.claude-plugin/README.md` (installation, commands, project setup)
-- **Marketplace manifest:** `.claude-plugin/marketplace.json` (root)
-- **Plugin manifest:** `ai-agent-manager-plugin/.claude-plugin/plugin.json`
-- **Development standards:** `AGENT_GUIDELINES.md` (quality checklist, agent contract, standards per language)
-- **Agent prompts:** `ai-agent-manager-plugin/agents/*.md` (detailed agent definitions with YAML frontmatter)
-- **Skills:** `ai-agent-manager-plugin/skills/*/SKILL.md` (implementation guidance)
-- **Hooks:** `ai-agent-manager-plugin/hooks/hooks.json` (plugin quality gate hooks)
-- **QA Blueprint:** `ai-agent-manager-plugin/docs/QA_SYSTEM_BLUEPRINT.md` (14 modules, 5 maturity levels)
+- User-facing: `README.md`, `.claude-plugin/README.md`
+- Standards: `AGENT_GUIDELINES.md`
+- Manifests: `.claude-plugin/marketplace.json`, `ai-agent-manager-plugin/.claude-plugin/plugin.json`
+- Schemas / contracts / failure modes: `ai-agent-manager-plugin/docs/{RESULT_SCHEMAS,ARCHITECTURE_CONTRACTS,FAILURE_ESCALATION,ARCHITECTURE,QA_SYSTEM_BLUEPRINT,TELEMETRY}.md`
+- Skills index: `ai-agent-manager-plugin/skills/SKILLS_INDEX.md`
