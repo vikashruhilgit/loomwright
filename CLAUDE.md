@@ -228,6 +228,12 @@ your-project/
 /qa-executor
 /qa-executor --url http://localhost:3000 --skip-strategy
 /qa-strategist src/
+
+# Telemetry (opt-in — disabled by default)
+/telemetry status
+/telemetry enable
+/telemetry disable
+/telemetry test
 ```
 
 ---
@@ -243,7 +249,7 @@ ai-agent-manager/                              # Marketplace wrapper repo
 │   └── README.md                              # Plugin-facing usage guide
 ├── ai-agent-manager-plugin/                   # The nested plugin
 │   ├── .claude-plugin/
-│   │   └── plugin.json                        # Plugin manifest (v11.1.2)
+│   │   └── plugin.json                        # Plugin manifest (v11.2.0)
 │   ├── .mcp.json                              # Bundled MCP servers
 │   ├── agents/                                # Agent markdown prompts (12 roles)
 │   │   ├── launch-pad.md                      # Launch Pad (Supervisor readiness)
@@ -261,10 +267,11 @@ ai-agent-manager/                              # Marketplace wrapper repo
 │   ├── commands/                              # Slash commands for Claude Code
 │   │   ├── launch-pad.md, supervisor.md, product-owner.md, orchestrator.md
 │   │   ├── code-reviewer.md, red-team-reviewer.md, qa-strategist.md, qa-executor.md
+│   │   ├── telemetry.md                        # /telemetry [status|enable|disable|test]
 │   │   └── agent-help.md
 │   ├── hooks/
 │   │   └── hooks.json                         # Cross-cutting quality-gate hooks
-│   ├── skills/                                # 47 skills (see SKILLS_INDEX.md)
+│   ├── skills/                                # 48 skills (see SKILLS_INDEX.md)
 │   └── docs/                                  # Architecture + schemas
 │       ├── QA_SYSTEM_BLUEPRINT.md, RESULT_SCHEMAS.md, FAILURE_ESCALATION.md
 │       └── ARCHITECTURE_CONTRACTS.md, ARCHITECTURE.md
@@ -448,11 +455,11 @@ Before an agent completes work:
 ### Plugin Metadata
 
 - **Plugin Name:** `ai-agent-manager-plugin`
-- **Version:** 11.1.2
-- **Description:** AI agents v11.1.2 — Close the "inline = stop orchestrating" loophole. The v11.1.1 main-thread guard correctly killed the subagent-spawn trap but accidentally licensed inline `/supervisor` runs to skip Phase 3 child agents and the Phase 4.5 `code-reviewer` integration review. v11.1.2 adds tailored execution-contract paragraphs to `/supervisor` and `/launch-pad` command files making "inline ≠ no child agents" explicit, an inline-execution critical rule in `ai-agent-manager-plugin/agents/supervisor.md`, and a runtime invariant in the Phase 4.5 completion tail: if `--skip-self-heal` was not passed AND `code-reviewer` Task was not invoked, Supervisor emits `status: failed` and leaves the job in `in-progress/` instead of silently passing. Schema/hook work for `skip_self_heal_flag`, a `/supervisor --recover-self-heal` command, and symmetric `/launch-pad` plan-reviewer gate hardening are deferred to follow-up PRs. Builds on v11.1.1 `-runner` rename (preserved), v11.1 Code Reviewer system integrity review (`diff_review` / `consistency_audit` modes, repo audit baseline, CODE_REVIEW_RESULT schema v3 with `audit_focus` tags and `drift` category plus `drift_kind` severity caps enforced by the plugin hook, `scripts/check-command-sync.sh` drift guard), v11.0 self-healing Supervisor (Phase 4.5 integration review + bounded fix loop), v10.3 feasibility gates (Launch Pad Phase 2.5, Product Owner Assumption/Reality Check), QA topology auto-detection (REST/GraphQL/API-only/mobile/SSO; 13-gate audit), and v10.2 Launch Pad mandatory Plan Review. 12 agent roles, 47 reusable skills, 10 quality gate hooks, persistent agent memory, bundled MySQL MCP server.
+- **Version:** 11.2.0
+- **Description:** AI agents v11.2.0 — Opt-in GitHub Issues telemetry system. After qualifying agent runs (Supervisor / Code Reviewer / QA Executor), an opt-in pipeline can post a structured GitHub issue with derived score, agent performance breakdown, and AI suggestions for longitudinal analysis. Key invariants: wrapper always exits 0; core exits 0..5 (sent / generic_error / privacy_blocked / no_consent / no_repo_configured / filter_skipped); privacy fail-closed via regex deny-list; no default repo (disabled until `AI_AGENT_MANAGER_TELEMETRY_REPO` env var or `/telemetry enable`); consent via `/telemetry [status|enable|disable|test]` only — hooks never prompt. Builds on v11.1.2 inline-execution guard (Phase 4.5 completion-tail invariant: emits `status: failed` if `code-reviewer` not invoked and `--skip-self-heal` absent) and prior v11.1/v11.0/v10.3 layers. 12 agent roles, 48 reusable skills, 13 quality gate hooks, persistent agent memory, bundled MySQL MCP server.
 - **Agents:** 12 roles (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Plan Reviewer, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer, QA Strategist, QA Executor)
-- **Skills:** 47 reusable skills (versioned with SKILLS_INDEX.md)
-- **Hooks:** 10 quality gate hooks — centralized in hooks.json: SubagentStop (worker, execute-manager, code-reviewer, supervisor, qa-executor, plan-reviewer), Stop (code-reviewer), TaskCompleted, WorktreeCreate, StopFailure
+- **Skills:** 48 reusable skills (versioned with SKILLS_INDEX.md)
+- **Hooks:** 13 quality gate hooks — centralized in hooks.json: SubagentStop prompt validators on worker, execute-manager, code-reviewer, supervisor, qa-executor, plan-reviewer (6) + 3 type:command telemetry hooks on code-reviewer/qa-executor/supervisor-runner, Stop (code-reviewer), TaskCompleted, WorktreeCreate, StopFailure
 - **Docs:** RESULT_SCHEMAS.md, FAILURE_ESCALATION.md, ARCHITECTURE_CONTRACTS.md, ARCHITECTURE.md, QA_SYSTEM_BLUEPRINT.md
 - **Bundled MCP:** MySQL read-only MCP server (`vikashruhil-mysql-mcp`) — query impact analysis, schema inspection, multi-DB profiles
 - **Author:** vikash ruhil
@@ -536,6 +543,21 @@ All validation hooks are centralized in `hooks.json` since v10.0.0. Claude Code 
 | **StopFailure** | Agent API error | hooks.json | Logs to `.supervisor/logs/failures.log` (type: command) |
 
 Hooks validate against schemas defined in `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md`. Prompt-based validation (fast haiku model, 30s timeout). WorktreeCreate and StopFailure use `type: "command"` for zero-latency logging.
+
+### Telemetry System (opt-in)
+
+Opt-in GitHub Issues telemetry system (v11.2.0). After qualifying agent runs (`supervisor-runner`, `code-reviewer`, `qa-executor`) complete, an additional `SubagentStop` `type: command` hook invokes `${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry.sh` (the wrapper — `${CLAUDE_PLUGIN_ROOT}` is the canonical Claude Code variable for plugin-bundled assets and resolves to the plugin install dir on both dev checkouts and marketplace installs; never use `ai-agent-manager-plugin/...` paths from the user-project root, those only resolve for the plugin maintainer). The wrapper is fire-and-forget and ALWAYS exits 0; it pipes the hook's JSON payload to `send-telemetry-core.sh`, which parses the result block, derives a deterministic score, runs a regex-based privacy whitelist, and (when consent + target repo are configured) calls `gh issue create` with a structured body covering Task Summary, Agent Scores, Issues Detected, AI Suggestions, Tools Used, and a redacted JSON payload. Privacy fail-closes: any whitelist match aborts the post and exits the core with code `2`.
+
+New user-facing slash commands:
+
+| Command | Purpose |
+|---------|---------|
+| `/telemetry status` | Show consent state, resolved target repo + source, last-sent timestamp, retained per-session pending markers (~24h window) |
+| `/telemetry enable` | Interactive — collects target repo via `AskUserQuestion`, writes `{"telemetry":"always_allow","telemetry_repo":"<owner/repo>"}` to `.supervisor/telemetry-consent.json`. Sole first-run consent path. |
+| `/telemetry disable` | Writes `{"telemetry":"no"}` to the consent file; subsequent hook fires log a single "denied — skipped" line per session and never call `gh` |
+| `/telemetry test` | Dry-run a fixture or the latest log payload through `send-telemetry-core.sh --dry-run`; prints target repo, formatted body, and `WOULD_EXIT` without calling `gh` |
+
+Telemetry is **disabled by default**. To enable, either run `/telemetry enable` (and choose a target repo) or set the `AI_AGENT_MANAGER_TELEMETRY_REPO=owner/repo` environment variable. There is no `origin`-remote fallback — the plugin runs in arbitrary user projects whose `origin` is the user's own app repo, which is the wrong place for telemetry. See `ai-agent-manager-plugin/docs/TELEMETRY.md` for the full design (scoring rubric per result-block schema, privacy whitelist, exit-code table, wrapper-vs-core architecture, and the plugin-internal vs repo-root `scripts/` convention).
 
 ### Persistent Memory
 

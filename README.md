@@ -304,6 +304,35 @@ For apps with many routes, use session-based QA to test in chunks:
 
 ---
 
+## Telemetry (opt-in)
+
+**New in v11.2.0** — an optional GitHub Issues telemetry pipeline. After
+qualifying agent runs (`/supervisor`, `/code-reviewer`, `/qa-executor`)
+complete, the plugin can post a structured GitHub issue summarising the
+result block, a derived score, agent performance breakdown, and AI
+suggestions for longitudinal analysis. Telemetry is **disabled by
+default** — there is no `origin`-remote fallback because the plugin runs
+in arbitrary user projects.
+
+```bash
+/telemetry status     # Show consent state, target repo, last-sent timestamp
+/telemetry enable     # Interactive — choose target repo, write consent file
+/telemetry disable    # Mark consent denied; no further sends
+/telemetry test       # Dry-run latest payload; never calls gh
+```
+
+**Privacy guarantees:** the wrapper script always exits 0 (telemetry
+can never block an agent run); the core script fails closed on a regex
+deny-list (tokens, API keys, bearer tokens, home-dir paths, emails,
+`.env`-style assignments) and never emits matched content — only the
+pattern label. To enable, run `/telemetry enable` (and pick a target
+repo) or set `AI_AGENT_MANAGER_TELEMETRY_REPO=owner/repo`. See
+[ai-agent-manager-plugin/docs/TELEMETRY.md](ai-agent-manager-plugin/docs/TELEMETRY.md)
+for the scoring rubric, exit-code table, and wrapper-vs-core
+architecture.
+
+---
+
 ## Task Management
 
 ### Beads (Optional)
@@ -413,7 +442,7 @@ This prevents knowledge loss and helps agents learn from discoveries.
 - **.claude-plugin/README.md:** Detailed plugin documentation
 - **ai-agent-manager-plugin/.claude-plugin/plugin.json:** Plugin manifest
 - **ai-agent-manager-plugin/agents/*.md:** Individual agent prompts (12 roles)
-- **ai-agent-manager-plugin/skills/*/SKILL.md:** 47 skill files for guidance
+- **ai-agent-manager-plugin/skills/*/SKILL.md:** 48 skill files for guidance
 - **ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md:** Structured result contracts
 - **ai-agent-manager-plugin/docs/FAILURE_ESCALATION.md:** Agent failure paths
 - **ai-agent-manager-plugin/docs/ARCHITECTURE_CONTRACTS.md:** Capability matrix, budgets, rules
@@ -427,8 +456,8 @@ This prevents knowledge loss and helps agents learn from discoveries.
 To modify or extend agents:
 
 1. Agents are Markdown prompts in `ai-agent-manager-plugin/agents/` (12 files)
-2. Commands are in `ai-agent-manager-plugin/commands/` (9 commands)
-3. Skills are in `ai-agent-manager-plugin/skills/` (47 skills, versioned with SKILLS_INDEX.md)
+2. Commands are in `ai-agent-manager-plugin/commands/` (10 commands)
+3. Skills are in `ai-agent-manager-plugin/skills/` (48 skills, versioned with SKILLS_INDEX.md)
 4. Hooks: per-agent in frontmatter (Worker, Execute Manager) + cross-cutting in `ai-agent-manager-plugin/hooks/hooks.json` (Code Reviewer, QA Executor, TaskCompleted)
 5. Docs: `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md`, `…/FAILURE_ESCALATION.md`, `…/ARCHITECTURE_CONTRACTS.md`, `…/ARCHITECTURE.md`
 6. All agents follow standard output format (see AGENT_GUIDELINES.md)
@@ -489,7 +518,7 @@ Claude Code caches plugin contents. After restructuring skills, force a refresh:
    /plugin uninstall ai-agent-manager-plugin
    /plugin install ai-agent-manager-plugin@ai-agent-manager-marketplace
    ```
-2. Verify with `/skills` — should show all 47 skills under "Plugin skills"
+2. Verify with `/skills` — should show all 48 skills under "Plugin skills"
 
 **Previously installed via `claude --plugin-dir` (flat layout)?** Older install instructions told you to launch Claude with `--plugin-dir` pointing at the repo root. That no longer works — the plugin is now nested under `ai-agent-manager-plugin/`. Switch to the marketplace flow:
 ```
