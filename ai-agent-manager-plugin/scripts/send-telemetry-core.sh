@@ -151,10 +151,14 @@ elif "QA_RESULT" in result_block:
 else:
     fail("unknown_payload_skipped", "no_known_result_block", 5)
 
-# ---- Helpers to extract fields from a "- key: value" markdown block --------
+# ---- Helpers to extract fields from a result block --------
+# Real agents emit YAML mapping form (`  key: value`, see agents/supervisor.md
+# §"Result Block" and docs/RESULT_SCHEMAS.md). The earlier fixtures use the
+# bullet form (`- key: value`) — both must be supported, since the SubagentStop
+# payload echoes whatever the agent printed verbatim.
 def field(text, key):
-    """Return first match for `- key: value` (case-insensitive on key name)."""
-    rx = re.compile(r"^\s*-\s*" + re.escape(key) + r"\s*:\s*(.+?)\s*$",
+    """Return first match for `key: value` or `- key: value` (case-insensitive)."""
+    rx = re.compile(r"^\s*(?:-\s*)?" + re.escape(key) + r"\s*:\s*(.+?)\s*$",
                     re.MULTILINE | re.IGNORECASE)
     m = rx.search(text)
     if not m:
@@ -215,6 +219,31 @@ def round_half_up_int(s):
 # Score functions (deterministic; same input -> same output).
 # ---------------------------------------------------------------------------
 
+def parse_count_or_list(text, key):
+    """Parse `key: <int>` or `key: [a, b]` and return (count, list_items).
+
+    Schema-canonical form is integer (`subtasks_failed: 0`). Legacy bullet
+    fixtures use list form (`- subtasks_failed: []` or `[BD-1, BD-2]`).
+    Returns (0, []) when the field is missing or unparseable.
+    """
+    raw = field(text, key)
+    if raw is None:
+        return (0, [])
+    raw = raw.strip()
+    if raw.startswith("[") and raw.endswith("]"):
+        inner = raw[1:-1].strip()
+        if not inner:
+            return (0, [])
+        items = [x.strip().strip('"').strip("'") for x in inner.split(",") if x.strip()]
+        return (len(items), items)
+    try:
+        return (int(raw), [])
+    except (ValueError, TypeError):
+        try:
+            return (int(float(raw)), [])
+        except (ValueError, TypeError):
+            return (0, [])
+
 def score_supervisor(text):
     """Rubric A — SUPERVISOR_RESULT.
     Returns (final_score_float, status, primary_error, success_bool, sub_agent_weak_label_or_empty).
@@ -222,7 +251,7 @@ def score_supervisor(text):
     status = (field(text, "status") or "").strip().lower()
     heal_decision = (field(text, "heal_decision") or "").strip().upper()
     heal_remaining = field_int(text, "heal_remaining_issues", 0)
-    subtasks_failed = field_list(text, "subtasks_failed")
+    sf_count, sf_list = parse_count_or_list(text, "subtasks_failed")
 
     base_deducted_for_remaining = False
     if status == "completed" and heal_decision == "PASS" and heal_remaining == 0:
@@ -241,7 +270,7 @@ def score_supervisor(text):
         sys.stderr.write("score_default_used schema=SUPERVISOR_RESULT status=%s\n" % status)
 
     # Adjustments
-    base -= 0.5 * len(subtasks_failed)
+    base -= 0.5 * sf_count
     if heal_remaining > 0 and not base_deducted_for_remaining:
         delta = -0.25 * heal_remaining
         if delta < -1.0:
@@ -252,8 +281,8 @@ def score_supervisor(text):
 
     # Primary error
     primary_error = ""
-    if subtasks_failed:
-        primary_error = subtasks_failed[0]
+    if sf_list:
+        primary_error = sf_list[0]
     elif heal_decision and heal_decision != "PASS":
         primary_error = heal_decision
 
@@ -265,20 +294,50 @@ def score_supervisor(text):
 
     return final, status, primary_error, success, weak_label
 
-def _count_severity(text, severity):
-    """Crude counter: matches `severity: {SEV}` lines under issues. Tolerates
-    the result-block being a markdown list of issues. Categories (`new`,
-    `pre_existing`, `nit`, `drift`) are tracked separately.
+def parse_issue_blocks(text):
+    """Parse all issue blocks from a CODE_REVIEW_RESULT result block.
+
+    Returns a list of dicts with keys severity (upper-cased), category
+    (lower-cased), description, file, drift_kind. Each block's window runs
+    from one `severity: …` match to the next, so field order WITHIN a block
+    is irrelevant — `description` may legally appear before `category`, and
+    extra optional fields (suggestion, line, drift_kind, …) may interleave.
+
+    The schema (docs/RESULT_SCHEMAS.md v3 + hooks/hooks.json validator)
+    requires the fields to exist but imposes no ordering, so this parser
+    must not either.
     """
-    # Look for blocks like:  - severity: BLOCKING\n  category: new\n
-    # We scan for `severity: SEV` followed within ~6 lines by a `category:` line.
-    pattern = re.compile(
-        r"severity\s*:\s*" + re.escape(severity) + r"[\s\S]{0,200}?category\s*:\s*([a-zA-Z_]+)",
-        re.IGNORECASE,
-    )
+    issues = []
+    sev_rx = re.compile(r"severity\s*:\s*([A-Za-z]+)", re.IGNORECASE)
+    sev_matches = list(sev_rx.finditer(text))
+    for i, m in enumerate(sev_matches):
+        start = m.start()
+        end = sev_matches[i + 1].start() if i + 1 < len(sev_matches) else len(text)
+        window = text[start:end]
+        sev = m.group(1).strip().upper()
+        cat_m = re.search(r"category\s*:\s*([A-Za-z_]+)", window, re.IGNORECASE)
+        desc_m = re.search(r"description\s*:\s*(.+?)\s*(?:\n|$)", window, re.IGNORECASE)
+        file_m = re.search(r"\bfile\s*:\s*(.+?)\s*(?:\n|$)", window, re.IGNORECASE)
+        drift_m = re.search(r"drift_kind\s*:\s*([A-Za-z_]+)", window, re.IGNORECASE)
+        issues.append({
+            "severity": sev,
+            "category": (cat_m.group(1).strip().lower() if cat_m else ""),
+            "description": (desc_m.group(1).strip() if desc_m else ""),
+            "file": (file_m.group(1).strip() if file_m else ""),
+            "drift_kind": (drift_m.group(1).strip().lower() if drift_m else ""),
+        })
+    return issues
+
+def _count_severity(parsed_issues, severity):
+    """Count parsed issues at the given severity, bucketed by category.
+    Operates on the output of parse_issue_blocks() so it is order-independent.
+    """
     counts = {"new": 0, "pre_existing": 0, "nit": 0, "drift": 0, "_total": 0}
-    for m in pattern.finditer(text):
-        cat = m.group(1).strip().lower()
+    target = severity.upper()
+    for issue in parsed_issues:
+        if issue["severity"] != target:
+            continue
+        cat = issue["category"]
         if cat in counts:
             counts[cat] += 1
         counts["_total"] += 1
@@ -288,10 +347,11 @@ def score_code_review(text):
     """Rubric B — CODE_REVIEW_RESULT."""
     decision = (field(text, "decision") or "").strip().upper()
 
-    blocking = _count_severity(text, "BLOCKING")
-    high = _count_severity(text, "HIGH")
-    medium = _count_severity(text, "MEDIUM")
-    low = _count_severity(text, "LOW")
+    parsed_issues = parse_issue_blocks(text)
+    blocking = _count_severity(parsed_issues, "BLOCKING")
+    high = _count_severity(parsed_issues, "HIGH")
+    medium = _count_severity(parsed_issues, "MEDIUM")
+    low = _count_severity(parsed_issues, "LOW")
 
     new_blocking = blocking.get("new", 0)
     new_high = high.get("new", 0)
@@ -320,23 +380,17 @@ def score_code_review(text):
 
     final = clamp(base)
 
-    # Primary error: first new BLOCKING issue's title (if extractable), else HIGH, else empty.
+    # Primary error: first `new` BLOCKING issue's description, else first `new`
+    # HIGH, else empty. Iterates the structurally-parsed list so field order
+    # within each issue block is irrelevant.
     primary_error = ""
-    title_rx = re.compile(
-        r"severity\s*:\s*BLOCKING[\s\S]{0,400}?category\s*:\s*new[\s\S]{0,200}?title\s*:\s*(.+)",
-        re.IGNORECASE,
-    )
-    m = title_rx.search(text)
-    if m:
-        primary_error = m.group(1).strip().splitlines()[0]
-    if not primary_error and new_high > 0:
-        title_rx2 = re.compile(
-            r"severity\s*:\s*HIGH[\s\S]{0,400}?category\s*:\s*new[\s\S]{0,200}?title\s*:\s*(.+)",
-            re.IGNORECASE,
-        )
-        m2 = title_rx2.search(text)
-        if m2:
-            primary_error = m2.group(1).strip().splitlines()[0]
+    for sev_pref in ("BLOCKING", "HIGH"):
+        for issue in parsed_issues:
+            if issue["severity"] == sev_pref and issue["category"] == "new" and issue["description"]:
+                primary_error = issue["description"].splitlines()[0]
+                break
+        if primary_error:
+            break
 
     success = (decision == "PASS")
     weak_label = ""
@@ -376,7 +430,7 @@ def score_qa(text):
 
     # Primary error: first failing test name if obtainable.
     primary_error = ""
-    failing_rx = re.compile(r"^\s*-\s*failing_test\s*:\s*(.+?)\s*$",
+    failing_rx = re.compile(r"^\s*(?:-\s*)?failing_test\s*:\s*(.+?)\s*$",
                             re.MULTILINE | re.IGNORECASE)
     m = failing_rx.search(text)
     if m:
@@ -464,24 +518,25 @@ for k, v in payload.items():
 # Issues Detected — per schema.
 issues = []
 if schema == "SUPERVISOR_RESULT":
-    sf = field_list(result_block, "subtasks_failed")
-    issues.extend(sf)
+    sf_count, sf_list = parse_count_or_list(result_block, "subtasks_failed")
+    if sf_list:
+        issues.extend(sf_list)
+    elif sf_count > 0:
+        issues.append("subtasks_failed=%d" % sf_count)
     hd = field(result_block, "heal_decision") or ""
     if hd and hd.upper() != "PASS":
         issues.append("heal_decision=" + hd)
 elif schema == "CODE_REVIEW_RESULT":
-    # Title lines for new BLOCKING + HIGH issues.
+    # Description lines for new BLOCKING + HIGH issues. Uses the structural
+    # parser so issue field order is irrelevant.
+    parsed_for_body = parse_issue_blocks(result_block)
     for sev in ("BLOCKING", "HIGH"):
-        rx = re.compile(
-            r"severity\s*:\s*" + re.escape(sev)
-            + r"[\s\S]{0,400}?category\s*:\s*new[\s\S]{0,200}?title\s*:\s*(.+)",
-            re.IGNORECASE,
-        )
-        for m in rx.finditer(result_block):
-            line = m.group(1).strip().splitlines()[0]
-            issues.append("[%s] %s" % (sev, line))
+        for issue in parsed_for_body:
+            if issue["severity"] == sev and issue["category"] == "new" and issue["description"]:
+                line = issue["description"].splitlines()[0]
+                issues.append("[%s] %s" % (sev, line))
 else:  # QA_RESULT
-    failing_rx = re.compile(r"^\s*-\s*failing_test\s*:\s*(.+?)\s*$",
+    failing_rx = re.compile(r"^\s*(?:-\s*)?failing_test\s*:\s*(.+?)\s*$",
                             re.MULTILINE | re.IGNORECASE)
     for m in failing_rx.finditer(result_block):
         issues.append(m.group(1).strip())
@@ -492,7 +547,7 @@ else:  # QA_RESULT
 
 # Tools Used — best-effort scan.
 tools = []
-tools_rx = re.compile(r"^\s*-\s*(?:tools_used|skills_used)\s*:\s*\[(.*?)\]",
+tools_rx = re.compile(r"^\s*(?:-\s*)?(?:tools_used|skills_used)\s*:\s*\[(.*?)\]",
                       re.MULTILINE | re.IGNORECASE)
 m = tools_rx.search(result_block)
 if m:
@@ -677,10 +732,10 @@ CONSENT_DECISION="missing"
 TELEMETRY_REPO_FROM_CONSENT=""
 
 if [ -r "$CONSENT_FILE" ]; then
-  CONSENT_OUT="$(python3 - <<PY 2>/dev/null
+  CONSENT_OUT="$(python3 - "$CONSENT_FILE" <<'PY' 2>/dev/null
 import json, sys
 try:
-    with open("$CONSENT_FILE", "r") as f:
+    with open(sys.argv[1], "r") as f:
         d = json.load(f)
     t = d.get("telemetry", "prompt")
     r = d.get("telemetry_repo", "")

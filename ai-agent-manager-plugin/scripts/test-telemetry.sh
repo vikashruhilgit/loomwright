@@ -181,13 +181,14 @@ run_core_dry_run() {
 # Authoritative source: docs/TELEMETRY.md §Interest filter — order is
 # raw-privacy -> consent -> repo -> body-privacy -> interest -> dedup -> gh.
 #
-# Fixture                       | none | allow_no_repo | allow_with_repo
-# ------------------------------+------+---------------+----------------
-# supervisor-pass.json          |  3   |       4       |       5         (consent first; filter only fires once repo is resolved)
-# supervisor-escalated.json     |  3   |       4       |       0
-# qa-failed.json                |  3   |       4       |       0
-# secrets-bait-ghp.json         |  2   |       2       |       2         (privacy fail-closed in stage1, before consent)
-# secrets-bait-email.json       |  2   |       2       |       2         (privacy fail-closed in stage1, before consent)
+# Fixture                              | none | allow_no_repo | allow_with_repo
+# -------------------------------------+------+---------------+----------------
+# supervisor-pass.json                 |  3   |       4       |       5         (consent first; filter only fires once repo is resolved)
+# supervisor-escalated.json            |  3   |       4       |       0
+# supervisor-escalated-yaml.json       |  3   |       4       |       0         (heal-iter-2: real agent YAML mapping form, not bullet form)
+# qa-failed.json                       |  3   |       4       |       0
+# secrets-bait-ghp.json                |  2   |       2       |       2         (privacy fail-closed in stage1, before consent)
+# secrets-bait-email.json              |  2   |       2       |       2         (privacy fail-closed in stage1, before consent)
 expected_would_exit() {
   local fixture_name="$1" state="$2"
   case "$fixture_name" in
@@ -203,6 +204,15 @@ expected_would_exit() {
     supervisor-escalated.json:none)      printf '3\n' ;;
     supervisor-escalated.json:allow_no_repo) printf '4\n' ;;
     supervisor-escalated.json:allow_with_repo) printf '0\n' ;;
+    supervisor-escalated-yaml.json:none)             printf '3\n' ;;
+    supervisor-escalated-yaml.json:allow_no_repo)    printf '4\n' ;;
+    supervisor-escalated-yaml.json:allow_with_repo)  printf '0\n' ;;
+    code-review-fail.json:none)            printf '3\n' ;;
+    code-review-fail.json:allow_no_repo)   printf '4\n' ;;
+    code-review-fail.json:allow_with_repo) printf '0\n' ;;
+    code-review-shuffled.json:none)            printf '3\n' ;;
+    code-review-shuffled.json:allow_no_repo)   printf '4\n' ;;
+    code-review-shuffled.json:allow_with_repo) printf '0\n' ;;
     qa-failed.json:none)                 printf '3\n' ;;
     qa-failed.json:allow_no_repo)        printf '4\n' ;;
     qa-failed.json:allow_with_repo)      printf '0\n' ;;

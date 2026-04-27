@@ -1,0 +1,40 @@
+--- DRY RUN ---
+TARGET_REPO=example/repo
+TITLE=[Telemetry] supervisor | Score: 5 | Failed: true
+SCORE=5
+BUCKET=medium
+LABELS:
+  - score:medium
+  - task:supervisor
+  - telemetry
+BODY_BEGIN
+## Task Summary
+- Task Type: supervisor
+- Task ID: fixture-supervisor-escalated-yaml-task-0004
+- Success: false
+- Score: 5/10
+- Bucket: medium
+
+## Issues Detected
+- heal_decision=ESCALATED
+
+## AI Suggestions
+- (placeholder — automatic suggestion synthesis is future work; see docs/TELEMETRY.md §Future Work)
+
+## Raw Data
+```json
+{
+  "agent_type": "supervisor",
+  "primary_error": "ESCALATED",
+  "redacted": true,
+  "result_block": "SUPERVISOR_RESULT:\n  schema_version: 1\n  task_id: fixture-supervisor-escalated-yaml-task-0004\n  status: completed_with_escalation\n  pr_url: https://github.com/example/repo/pull/77\n  branch: feature/escalated-yaml\n  subtasks_completed: 4\n  subtasks_failed: 0\n  heal_loop_ran: true\n  heal_iterations: 3\n  heal_decision: ESCALATED\n  heal_fixable_issues_fixed: 1\n  heal_remaining_issues: 2\n  error: null\n  summary: 4/4 subtasks merged. Self-heal exhausted three iterations; two BLOCKING issues remain \u2014 human review required.\n",
+  "schema": "SUPERVISOR_RESULT",
+  "schema_version": 1,
+  "score": 5,
+  "score_bucket": "medium",
+  "score_float": 4.5,
+  "status": "completed_with_escalation",
+  "task_id": "fixture-supervisor-escalated-yaml-task-0004"
+}
+```BODY_END
+WOULD_EXIT=0

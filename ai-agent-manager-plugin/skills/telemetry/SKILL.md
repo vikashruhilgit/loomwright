@@ -51,9 +51,12 @@ Full design: `ai-agent-manager-plugin/docs/TELEMETRY.md`.
    to `.supervisor/telemetry-consent.json` (gitignored via the existing
    `.supervisor/` rule).
 3. From the next qualifying agent run, the `SubagentStop` hook invokes
-   `ai-agent-manager-plugin/scripts/send-telemetry.sh` with the result
-   payload on stdin. The wrapper always exits 0; the core script may
-   exit 0..5 (see exit-code table in `docs/TELEMETRY.md`).
+   `${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry.sh` with the result
+   payload on stdin (`${CLAUDE_PLUGIN_ROOT}` is the Claude Code variable
+   that resolves to the plugin install dir; do NOT hard-code
+   `ai-agent-manager-plugin/...` paths — they only work in the
+   maintainer's dev checkout). The wrapper always exits 0; the core
+   script may exit 0..5 (see exit-code table in `docs/TELEMETRY.md`).
 
 To stop sending: `/telemetry disable`. To inspect state:
 `/telemetry status`. To preview without sending: `/telemetry test`.

@@ -51,7 +51,7 @@ SubagentStop hook (hooks.json)
        |
        | stdin: JSON payload from Claude Code
        v
-[ ai-agent-manager-plugin/scripts/send-telemetry.sh ]   <-- WRAPPER
+[ ${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry.sh ]   <-- WRAPPER
        |   - pipes stdin to core
        |   - captures core's exit code + stderr
        |   - redacts stderr through the privacy whitelist
@@ -59,7 +59,7 @@ SubagentStop hook (hooks.json)
        |   - opportunistically reaps stale per-session flags (>24h)
        |   - ALWAYS exits 0
        v
-[ ai-agent-manager-plugin/scripts/send-telemetry-core.sh ]   <-- CORE
+[ ${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry-core.sh ]   <-- CORE
        - parses inbound result block
        - resolves consent + target repo
        - applies interest filter and dedup
@@ -78,7 +78,13 @@ SubagentStop hook (hooks.json)
 
 - `ai-agent-manager-plugin/scripts/` — **plugin-runtime** scripts shipped
   with the plugin and invoked at agent runtime. Telemetry's wrapper, core,
-  test harness, and fixtures all live here.
+  test harness, and fixtures all live here. (This is the source-tree
+  layout. Hooks and slash commands MUST reference these scripts via
+  `${CLAUDE_PLUGIN_ROOT}/scripts/...` — that env var is set by Claude
+  Code for plugin-distributed hooks/commands and resolves to the plugin
+  install dir on both dev checkouts and marketplace installs. Hard-coded
+  `ai-agent-manager-plugin/...` paths under `${CLAUDE_PROJECT_DIR}` only
+  resolve for the plugin maintainer working from this repo's checkout.)
 - Repo-root `scripts/` — **release/CI tooling** only (e.g.
   `validate-version.sh`, `check-command-sync.sh`). Do NOT add runtime
   scripts at repo root; consistency audits will flag the drift.
@@ -419,9 +425,14 @@ contradiction the split was created to resolve.
 
 ### Deny-list (regex)
 
-The core scans the **prospective issue body** (title + body + JSON
-payload, post-render) AND core-side stderr (before the wrapper appends
-it to the log). Any single match -> fail closed.
+The core scans two surfaces inside `send-telemetry-core.sh`: the **raw
+input payload** (every string field, before consent so privacy violations
+always log even on healthy runs) AND the **prospective issue body** (the
+rendered title + body + redacted JSON payload, post-render). Any single
+match in either scan -> fail closed (exit 2). The core's stderr is
+redacted separately by the wrapper before it lands in `telemetry.log`
+(see "Stderr redaction" below) — that is defence in depth, not part of
+the fail-closed check.
 
 | Pattern (regex)                 | Catches                                          |
 |---------------------------------|--------------------------------------------------|
@@ -453,10 +464,14 @@ On match, the core:
 
 ### Stderr redaction
 
-The core's stderr is redacted by the same whitelist before the wrapper
-appends it to `telemetry.log`. Error messages can themselves echo
-secrets (e.g. `gh`'s "401 unauthorized: ghp_..."), so this is defence in
-depth.
+The core's stderr is captured by the wrapper (`send-telemetry.sh`) into
+a tmp file, then redacted by the same whitelist BEFORE the wrapper
+appends it to `telemetry.log`. The redaction lives in the wrapper, not
+the core, so a runaway core script (e.g. uncaught exception printing a
+traceback that includes a secret) cannot bypass it. Error messages can
+themselves echo secrets (e.g. `gh`'s "401 unauthorized: ghp_..."), so
+this is defence in depth on top of the body + raw-payload scans the
+core already runs at lines 5-6 of the pipeline.
 
 ---
 
@@ -495,21 +510,26 @@ Same {`task_id`, `score_bucket`, `primary_error`} within the last 6 hours
 
 Implementation:
 
-- Hash key: `sha1(task_id + "|" + score_bucket + "|" + primary_error)`
-  (or `md5` if `sha1` is unavailable on the host — the choice does not
-  affect correctness, only collision odds; document the choice in
-  Subtask #2b).
+- Hash key: `sha256(task_id + "::" + score_bucket + "::" + primary_error)`
+  (using `hashlib.sha256(...).hexdigest()` in stage 1 — `sha256` is in the
+  Python stdlib and always available, so there is no `md5` fallback).
 - Storage: `.supervisor/logs/telemetry-sent.log` — one line per
-  successful send, columns `<iso_ts>\t<hash>\t<issue_url>`.
+  successful send, six tab-separated columns:
+  `<iso_ts>\t<hash>\t<task_id>\t<score>\t<bucket>\t<issue_url>`.
 - Lookup: scan the last 6h of entries (`awk` on timestamp prefix is
-  sufficient at expected volumes). If the hash is present, exit 5.
+  sufficient at expected volumes). Match column 1 (timestamp) against the
+  6h window and column 2 (hash) against the current run's hash; columns
+  3-6 are recorded for `/telemetry status` reporting and post-mortem
+  triage but are NOT consulted during dedup. If the hash is present, exit 5.
 
 `primary_error`:
 
 - `SUPERVISOR_RESULT`: first item in `subtasks_failed`, else
   `heal_decision` if not `PASS`, else empty.
-- `CODE_REVIEW_RESULT`: first `new` BLOCKING issue's title, else first
-  HIGH, else empty.
+- `CODE_REVIEW_RESULT`: first `new` BLOCKING issue's `description`, else
+  first `new` HIGH issue's `description`, else empty. (The schema has no
+  `title` field — see allowed issue keys in the SubagentStop validator at
+  `hooks/hooks.json` and the v3 schema in `docs/RESULT_SCHEMAS.md`.)
 - `QA_RESULT`: first failing test name, else empty.
 
 ---
@@ -523,7 +543,7 @@ quick reference).
 | Path                                                      | Format                                                                | Purpose                                |
 |-----------------------------------------------------------|-----------------------------------------------------------------------|----------------------------------------|
 | `.supervisor/logs/telemetry.log`                          | one JSON-ish line per event (`{"event":"...","ts":"...", ...}`)        | Full audit (sends, skips, errors, privacy blocks) |
-| `.supervisor/logs/telemetry-sent.log`                     | `<iso_ts>\t<hash>\t<issue_url>`                                       | Dedup lookup; `/telemetry status` last-sent timestamp |
+| `.supervisor/logs/telemetry-sent.log`                     | six tab-separated columns: `<iso_ts>\t<hash>\t<task_id>\t<score>\t<bucket>\t<issue_url>` (hash is sha256; cols 3-6 are for `/telemetry status` + post-mortem triage, not consulted by dedup) | Dedup lookup (cols 1+2); `/telemetry status` last-sent timestamp |
 | `.supervisor/logs/telemetry-pending-shown-${session_id}.flag` | empty file (mtime is the signal)                                  | Per-session "consent pending" rate-limit marker |
 | `.supervisor/logs/telemetry-pending-shown-nosession-$(date +%Y%m%d%H).flag` | empty file (mtime is the signal)                     | Fallback marker when `session_id` is missing |
 
@@ -574,9 +594,16 @@ send-telemetry.sh (wrapper, ALWAYS exit 0)
       v stdin
 send-telemetry-core.sh (core, exit 0..5)
       |
-      +-- parse → score → consent → repo → privacy → dedup → gh
+      +-- parse → score → privacy (raw + body) → consent → repo
+      |          → interest → dedup → gh
       |
-      v exit code + stderr (redacted)
+      v exit code + raw stderr
+send-telemetry.sh (wrapper, post-core)
+      |
+      +-- redacts core stderr via the privacy whitelist (defence in depth)
+      |   then appends one structured line to telemetry.log
+      |
+      v exit 0 (always)
 .supervisor/logs/telemetry.log
 ```
 
@@ -587,10 +614,22 @@ Key invariants reflected in the diagram:
   every failure mode of the core (privacy block, no consent, no repo,
   filter skip, generic error) and translates it into a structured log
   line plus `exit 0`.
+- **Privacy runs first.** Raw-payload privacy scan happens BEFORE
+  consent and target-repo resolution (heal iter 1 of v11.2.0 reorder)
+  so a healthy/successful run that contains a leaked secret still emits
+  a `PRIVACY_BLOCKED` audit-log entry and exits 2 — never short-circuits
+  silently via the interest filter.
 - **Core owns all decisions.** Parsing, scoring, consent reading,
-  target-repo resolution, the privacy whitelist, dedup, and the actual
-  `gh issue create` invocation all live in `send-telemetry-core.sh`.
-  The wrapper does no payload inspection.
+  target-repo resolution, the privacy whitelist, the interest filter,
+  dedup, and the actual `gh issue create` invocation all live in
+  `send-telemetry-core.sh`. The wrapper does no payload inspection.
+- **Wrapper owns stderr redaction.** The core's stderr is captured by
+  the wrapper to a tmp file, then redacted via the same regex set
+  (defined in both `send-telemetry-core.sh` stage-1 Python and
+  `send-telemetry.sh` Python — kept in sync per the deny-list table
+  above) before being written to `telemetry.log`. This is defence in
+  depth: even if a regex bug let a secret leak from core into stderr,
+  the wrapper's second-pass redaction blocks it from reaching the log.
 - **session_id flows from stdin.** Claude Code injects `session_id` into
   every hook payload; the wrapper extracts it for per-session
   rate-limiting flags (`telemetry-pending-shown-${session_id}.flag` and
@@ -601,10 +640,10 @@ Key invariants reflected in the diagram:
 ### Core Exit Codes (Authoritative)
 
 The canonical exit-code table is defined inline in this document under
-[`Configuration → Core exit codes`](#configuration). The mirror below
-adds the **wrapper-action** column so log-parsers can correlate a core
-exit code with what the wrapper does in response. See [Core exit codes
-(authoritative)](#configuration) for the source-of-truth definitions.
+[Core exit codes (authoritative)](#core-exit-codes-authoritative). The
+mirror below adds the **wrapper-action** column so log-parsers can
+correlate a core exit code with what the wrapper does in response. See
+the linked section above for the source-of-truth definitions.
 
 | Code | Name                | Meaning                                                                                          | Wrapper action                                                                                                                            |
 |------|---------------------|--------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------|

@@ -1,0 +1,40 @@
+--- DRY RUN ---
+TARGET_REPO=example/repo
+TITLE=[Telemetry] code-reviewer | Score: 2 | Failed: true
+SCORE=2
+BUCKET=low
+LABELS:
+  - score:low
+  - task:code-reviewer
+  - telemetry
+BODY_BEGIN
+## Task Summary
+- Task Type: code-reviewer
+- Task ID: fixture-sess-code-review-shuffled-0006
+- Success: false
+- Score: 2/10
+- Bucket: low
+
+## Issues Detected
+- [HIGH] Timing attack via double-equals password compare
+
+## AI Suggestions
+- (placeholder — automatic suggestion synthesis is future work; see docs/TELEMETRY.md §Future Work)
+
+## Raw Data
+```json
+{
+  "agent_type": "code-reviewer",
+  "primary_error": "Timing attack via double-equals password compare",
+  "redacted": true,
+  "result_block": "CODE_REVIEW_RESULT:\n  schema_version: 3\n  review_mode: diff_review\n  audit_focus: []\n  trigger_paths_detected: []\n  scope_expanded: []\n  files_checked:\n    - src/auth/login.ts\n  decision: FAIL\n  issues:\n    - severity: HIGH\n      file: src/auth/login.ts\n      line: 42\n      description: Timing attack via double-equals password compare\n      category: new\n      suggestion: Use crypto.timingSafeEqual()\n  summary: 1 HIGH new issue with shuffled field order \u2014 primary_error and Issues Detected must still extract.\n",
+  "schema": "CODE_REVIEW_RESULT",
+  "schema_version": 1,
+  "score": 2,
+  "score_bucket": "low",
+  "score_float": 1.5,
+  "status": "fail",
+  "task_id": "fixture-sess-code-review-shuffled-0006"
+}
+```BODY_END
+WOULD_EXIT=0

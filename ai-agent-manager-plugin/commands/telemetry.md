@@ -22,7 +22,7 @@ description: Manage opt-in GitHub Issues telemetry — status, enable, disable, 
 
 Telemetry is **opt-in** and disabled by default. The hook (`SubagentStop` -> `send-telemetry.sh`) will only post to GitHub Issues once the user has explicitly run `/telemetry enable` AND a target repo has been resolved (env var `AI_AGENT_MANAGER_TELEMETRY_REPO` OR consent-file `telemetry_repo`).
 
-This slash command is the SOLE first-run consent path. The hook itself never prompts the user — `type: command` hooks cannot drive interactive prompts. See `ai-agent-manager-plugin/docs/TELEMETRY.md` for the full design.
+This slash command is the SOLE first-run consent path. The hook itself never prompts the user — `type: command` hooks cannot drive interactive prompts. See `${CLAUDE_PLUGIN_ROOT}/docs/TELEMETRY.md` for the full design.
 
 ## When to Use
 
@@ -39,7 +39,7 @@ You are handling the `/telemetry` slash command. The user passed arguments after
 
 ## Setup (every subcommand)
 
-1. The repo root is the directory containing `.supervisor/` (typically the current working directory). Use the absolute path when invoking scripts. The plugin scripts live under `ai-agent-manager-plugin/scripts/`.
+1. The user-project root is the directory containing `.supervisor/` (typically the current working directory) — that is where the consent file and logs live. The plugin scripts and bundled fixtures live INSIDE the plugin install, NOT under the user project. Always reference plugin assets via the `${CLAUDE_PLUGIN_ROOT}` environment variable (set by Claude Code for plugin-distributed commands), e.g. `${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry-core.sh` and `${CLAUDE_PLUGIN_ROOT}/scripts/telemetry-fixtures/<name>.json`. NEVER hard-code `ai-agent-manager-plugin/...` paths under the user project — those only resolve in the maintainer's dev checkout.
 2. Print a 1-line summary at the END of the subcommand output, prefixed `Telemetry:` so the user can scan results.
 
 ## If subcommand == `status`
@@ -124,11 +124,11 @@ Then a 1-line summary, e.g. `Telemetry: enabled, target=vikashruhilgit/ai-agent-
 ## If subcommand == `test`
 
 1. Locate a payload to dry-run against. Try in order:
-   - **(a)** Latest payload from `.supervisor/logs/telemetry.log`. If the file exists and is non-empty, attempt to extract the most recent JSON-payload line. The wrapper does NOT log raw payloads, only structured event lines, so payload extraction may fail — that is expected. Treat any of these as "no payload available": missing file, empty file, no JSON object on the last 50 lines.
-   - **(b)** Fallback: bundled fixture `ai-agent-manager-plugin/scripts/telemetry-fixtures/supervisor-escalated.json` (read this file directly with the Read tool — it is committed to the repo).
-2. Pipe the chosen payload to the core script in dry-run mode:
+   - **(a)** Latest payload from `.supervisor/logs/telemetry.log` (under the user-project root). If the file exists and is non-empty, attempt to extract the most recent JSON-payload line. The wrapper does NOT log raw payloads, only structured event lines, so payload extraction may fail — that is expected. Treat any of these as "no payload available": missing file, empty file, no JSON object on the last 50 lines.
+   - **(b)** Fallback: bundled fixture at `${CLAUDE_PLUGIN_ROOT}/scripts/telemetry-fixtures/supervisor-escalated.json` (resolve `${CLAUDE_PLUGIN_ROOT}` via Bash before reading — it is the canonical Claude Code variable for plugin-bundled assets and works regardless of which user project the plugin is installed into). Read the file with the Read tool once the absolute path is known.
+2. Pipe the chosen payload to the core script in dry-run mode (Bash):
    ```
-   cat <payload-file-or-stdin-source> | bash ai-agent-manager-plugin/scripts/send-telemetry-core.sh --dry-run
+   cat <payload-file-or-stdin-source> | bash "${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry-core.sh" --dry-run
    ```
    Capture stdout. The script always exits 0 in dry-run mode regardless of `WOULD_EXIT`, so do not branch on exit status — branch on the `WOULD_EXIT=<n>` line in stdout.
 3. Parse stdout for these fields and print them:
