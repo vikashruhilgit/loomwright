@@ -196,7 +196,7 @@ Every agent markdown file includes YAML frontmatter that configures Claude Code 
 name: ai-agent-manager-plugin:{role}    # Unique agent identifier
 description: {1-2 sentence purpose}      # Shown in /agents menu
 tools: Read, Write, Edit, Bash, ...      # Tool restrictions (allowlist)
-model: opus | haiku | inherit            # Model selection (cost/capability)
+model: opus | sonnet | haiku | inherit | <full model ID>  # Model selection (cost/capability; e.g., claude-sonnet-4-6)
 maxTurns: N                              # API round-trip limit (optional)
 color: "#RRGGBB"                         # Status line color (optional)
 disallowedTools: Task, Bash, ...         # Defense-in-depth blocklist (optional)

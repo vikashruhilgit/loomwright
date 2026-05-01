@@ -713,6 +713,8 @@ Every agent has YAML frontmatter that configures its behavior automatically:
 | Code Reviewer | inherit | Matches user's choice + memory |
 | Red Team Reviewer | inherit | Matches user's choice + memory |
 
+Use `/supervisor --cheap` to override the execution-shaped roles (orchestrator, execute-manager, worker, code-reviewer, Phase 4.5 fix tasks) to Sonnet at spawn time. See `docs/ARCHITECTURE_CONTRACTS.md` §"Cost Profiles" for the full profile table and Haiku-session caveat.
+
 **Agents with Persistent Memory:**
 - Code Reviewer — remembers past review patterns, recurring issues
 - Red Team Reviewer — remembers past vulnerabilities, attack patterns

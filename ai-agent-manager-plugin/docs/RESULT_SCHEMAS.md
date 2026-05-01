@@ -167,6 +167,7 @@ SUPERVISOR_RESULT:
   heal_remaining_issues: integer       # required — count of new+BLOCKING/HIGH issues still unresolved in final review; 0 when heal_loop_ran=false or heal_decision=PASS
   error: string | null                 # conditional — required when status=failed
   summary: string                      # required — concise session summary
+  cost_profile: enum [default, cheap] | null  # optional — null when flag not passed (equivalent to default)
 ```
 
 **Field semantics note:** `heal_loop_ran` reports whether the Phase 4.5 *review-and-fix loop* executed, not whether the phase itself transitioned. The phase transition and completion tail are unconditional; only the loop is gated by `--skip-self-heal` and the resume-thrash guard.
@@ -483,6 +484,7 @@ branch: string                         # required after ACQUIRE — feature bran
 config:
   max_workers: integer                 # default 2
   mode: enum [parallel, sequential]    # default parallel
+  cost_profile: enum [default, cheap]  # optional — default "default"; set from --cheap flag at INIT
 active_subtasks: object[]              # required during EXECUTE
   - id: string
     status: enum [pending, in_progress, completed, failed]

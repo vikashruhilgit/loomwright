@@ -45,7 +45,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
 - **CLAUDE.md:** Project context and patterns
 - **Git state:** Current branch, working tree status
 - **Resume data:** (optional) State from previous session
-- **Flags:** `--max-workers N`, `--sequential`, `--continue`, `--dry-run`, `job: {path}`, `--skip-self-heal`, `--heal-iterations N` (default 3)
+- **Flags:** `--max-workers N`, `--sequential`, `--continue`, `--dry-run`, `job: {path}`, `--skip-self-heal`, `--heal-iterations N` (default 3), `--cheap`
 
 ### Outputs
 
@@ -109,10 +109,17 @@ Autonomously manage the complete development workflow from task pickup to PR cre
    - Check for existing worktrees (`git worktree list`)
 2. Check for resume state:
    - If `--continue` flag: load state from scratchpad → `.supervisor/state.md` (priority order)
-   - If resume state found: skip to the saved phase
+   - If resume state found:
+     a. **Before jumping to the saved phase**, hydrate session config from the loaded state: read `config.cost_profile` (default `default` if absent — handles pre-cheap state files). This ensures `cost_profile` is in memory for every subsequent spawn, regardless of which phase is resumed.
+     b. If `--cheap` was also passed on this invocation: override to `cost_profile = cheap`.
+     c. Jump to the saved phase.
 3. Ask user (via `AskUserQuestion`) if not resuming:
    - "Max parallel workers?" (default: 2; skip if `--sequential`)
    - "Specific task to work on?" (or user provides via `task:` parameter)
+3a. Parse cost profile flag (fresh start only — resume path handled in step 2):
+   - If `--cheap` was passed: set `cost_profile = cheap`.
+   - Otherwise: `cost_profile = default`.
+   - Record in session memory — used at every subagent spawn in Phases 2, 3, and 4.5.
 4. Create `.supervisor/` directory structure if not exists:
    ```bash
    mkdir -p .supervisor/history .supervisor/jobs/pending .supervisor/jobs/in-progress .supervisor/jobs/done .supervisor/jobs/failed .supervisor/logs
@@ -120,7 +127,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
    ```
 5. Initialize scratchpad state file via Context-Keeper:
    ```
-   Context-Keeper(operation: initialize, config: {...}, session: {...})
+   Context-Keeper(operation: initialize, config: {max_workers, mode, cost_profile}, session: {...})
    ```
 6. Check for job file:
    - If `job:` parameter provided: read brief from path
@@ -198,6 +205,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
 1. Spawn Orchestrator (blocking):
    - Input: `goal: "{task_id}: {title}"`
    - Capture: subtask list with titles, criteria, dependencies, file estimates
+   - When `cost_profile=cheap`: include `model: "sonnet"` in the Task call
 2. Analyze parallelism (per `skills/async-orchestration/SKILL.md`):
    - Parse dependencies from Orchestrator output
    - Check file overlap between independent subtasks
@@ -243,8 +251,10 @@ BLOCKED if:
 If ≤ 1 subtask OR `--sequential`:
 1. For each subtask (in order):
    - Spawn implementation worker (blocking, in project root)
+     - When `cost_profile=cheap`: include `model: "sonnet"` in the Task call
    - Record result via Context-Keeper
    - Spawn Code Reviewer (blocking)
+     - When `cost_profile=cheap`: include `model: "sonnet"` in the Task call
    - Handle decision: PASS → next, FAIL → retry, NEEDS_HUMAN → pause
 2. Skip all worktree logic and Execute Manager delegation
 
@@ -259,8 +269,10 @@ result = Task(
     - Subtask list: [{ids, titles, criteria, files, skills, deps}]
     - Parallelism graph: [{launchable, blocked}]
     - Config: max_workers={N}, project={name}, feature_branch={branch}
-    - State file: {path}",
-  subagent_type: "ai-agent-manager-plugin:execute-manager"
+    - State file: {path}
+    - cost_profile: {default|cheap}",   # always include so Execute Manager can propagate overrides
+  subagent_type: "ai-agent-manager-plugin:execute-manager",
+  model: "sonnet"   # ONLY when cost_profile=cheap; omit entirely when cost_profile=default
 )
 tool_calls += 1   # single tool call for entire Phase 3
 ```
@@ -441,7 +453,8 @@ while heal_iterations < max_heal_iterations:
              Target: diff between origin/main and {feature_branch}
              Focus: integration issues, cross-cutting concerns, consistency across files.
              Previous per-subtask reviews all passed — look for issues only visible in the integrated view.
-             Schema: CODE_REVIEW_RESULT v2 with category field (new/pre_existing/nit)."
+             Schema: CODE_REVIEW_RESULT v3 (review_mode: diff_review, category field: new/pre_existing/nit/drift).",
+    model: "sonnet"   # ONLY when cost_profile=cheap; omit entirely when cost_profile=default
   )
   phase45_review_invoked = true  # flipped once the code-reviewer Task actually ran
   # Parse CODE_REVIEW_RESULT block from review output
@@ -457,7 +470,7 @@ while heal_iterations < max_heal_iterations:
     post findings to PR as comment (gh pr comment)
     break
 
-  # decision == FAIL — by CODE_REVIEW_RESULT v2 rule, at least one new+HIGH/BLOCKING issue exists
+  # decision == FAIL — by CODE_REVIEW_RESULT rule, at least one new+HIGH/BLOCKING issue exists
   fixable_issues = [i for i in review.issues if i.category == "new" and i.severity in (BLOCKING, HIGH)]
 
   Task(
@@ -479,7 +492,8 @@ while heal_iterations < max_heal_iterations:
              5. Do NOT address anything outside the listed issues.
              6. Do NOT fix pre_existing issues or nits.
 
-             Emit FIX_RESULT block: schema_version: 1, issues_addressed, files_modified, commit_sha, summary."
+             Emit FIX_RESULT block: schema_version: 1, issues_addressed, files_modified, commit_sha, summary.",
+    model: "sonnet"   # ONLY when cost_profile=cheap; omit entirely when cost_profile=default
   )
   # Parse FIX_RESULT; increment heal_fixable_issues_fixed by FIX_RESULT.issues_addressed
 
@@ -655,6 +669,7 @@ Priority order for loading state:
 | `--continue` | false | Resume from last checkpoint |
 | `--dry-run` | false | Preview workflow without executing |
 | `job: {path}` | auto | Load pre-computed plan from Launch Pad |
+| `--cheap` | false | Cost-optimized profile: spawns orchestrator, execute-manager, workers, code-reviewer, and Phase 4.5 fix tasks with `model: "sonnet"` override. Default `inherit` unchanged when absent. Caution: on Haiku sessions, listed roles upgrade to Sonnet. |
 
 ---
 
@@ -669,6 +684,7 @@ Priority order for loading state:
 /supervisor --continue task: user-auth         # Resume specific task
 /supervisor --dry-run                          # Preview only
 /supervisor job: .supervisor/jobs/2026-02-08-jwt-auth.md   # Execute from Launch Pad brief
+/supervisor --cheap                            # Cost-optimized: orchestrator, execute-manager, workers, code-reviewer, fix tasks run on Sonnet
 ```
 
 ---
@@ -752,6 +768,7 @@ SUPERVISOR_RESULT:
   heal_remaining_issues: 0
   error: null
   summary: 3/3 subtasks merged. Self-heal fixed 2 integration issues in 1 iteration; final review PASSED. PR #42 ready.
+  cost_profile: null
 ```
 
 ---
@@ -845,7 +862,8 @@ Task(
 Task(
   description: "Plan: decompose {task_id}",
   prompt: "goal: \"{task_id}: {title}\"\nProject context: {CLAUDE.md summary}\nAcceptance criteria: {criteria}",
-  subagent_type: "ai-agent-manager-plugin:orchestrator"
+  subagent_type: "ai-agent-manager-plugin:orchestrator",
+  model: "sonnet"   # ONLY when cost_profile=cheap; omit entirely when cost_profile=default
 )
 ```
 
@@ -857,8 +875,10 @@ Task(
     Parallelism graph: [{launchable, blocked}]
     Config: max_workers={N}, project={name}, feature_branch={branch}
     State file: {path}
+    cost_profile: {default|cheap}
     Resume context: {optional, from previous EXECUTE_CHECKPOINT}",
-  subagent_type: "ai-agent-manager-plugin:execute-manager"
+  subagent_type: "ai-agent-manager-plugin:execute-manager",
+  model: "sonnet"   # ONLY when cost_profile=cheap; omit entirely when cost_profile=default
 )
 ```
 
@@ -871,7 +891,8 @@ Task(
     Skill references: {skills}
     Project context: {patterns from CLAUDE.md}
     Retry context: {optional, from previous review}",
-  subagent_type: "ai-agent-manager-plugin:worker"
+  subagent_type: "ai-agent-manager-plugin:worker",
+  model: "sonnet"   # ONLY when cost_profile=cheap; omit entirely when cost_profile=default
 )
 ```
 
@@ -882,7 +903,8 @@ Task(
   prompt: "Review scope: {files_modified from WORKER_RESULT}
     Task context: {subtask_title} — {criteria}
     Project patterns: {from CLAUDE.md}",
-  subagent_type: "ai-agent-manager-plugin:code-reviewer"
+  subagent_type: "ai-agent-manager-plugin:code-reviewer",
+  model: "sonnet"   # ONLY when cost_profile=cheap; omit entirely when cost_profile=default
 )
 ```
 
@@ -997,6 +1019,7 @@ SUPERVISOR_RESULT:
   heal_remaining_issues: integer            # 0 when heal_loop_ran=false or heal_decision=PASS
   error: string | null                      # required when status=failed
   summary: string
+  cost_profile: enum [default, cheap] | null  # optional — null when flag not passed (equivalent to default)
 ```
 
 **Status mapping (machine-readable):**

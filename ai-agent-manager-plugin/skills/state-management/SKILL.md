@@ -67,6 +67,7 @@ Before creating `.supervisor/`, verify `.gitignore` exists. If not, create it wi
 ## Config
 - max_workers: 2
 - mode: parallel | sequential
+- cost_profile: default | cheap   # optional — default "default"; set from --cheap flag at INIT; read back during resume to keep cheap runs cheap across checkpoints
 
 ## Session
 - session_id: {uuid}

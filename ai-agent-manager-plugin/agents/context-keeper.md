@@ -52,6 +52,7 @@ operation: initialize
 config:
   max_workers: 2
   mode: parallel|sequential
+  cost_profile: default | cheap    # optional — defaults to "default"
 session:
   session_id: {uuid}
   task_id: {task_id}

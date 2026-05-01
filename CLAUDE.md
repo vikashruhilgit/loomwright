@@ -198,6 +198,12 @@ Native Claude Code multi-agent coordination — requires `CLAUDE_CODE_EXPERIMENT
 
 ---
 
+## Cost Profile
+
+`/supervisor --cheap` — opt-in flag that overrides execution-shaped roles (orchestrator, execute-manager, worker, code-reviewer, Phase 4.5 fix tasks) to Sonnet at spawn time. Default behavior (`inherit` for all) unchanged. Profile table, semantics, and Haiku-session caveat: `ai-agent-manager-plugin/docs/ARCHITECTURE_CONTRACTS.md` §"Cost Profiles".
+
+---
+
 ## Common Pitfalls
 
 ### `/supervisor` or `/launch-pad` aborted with "Task/Agent tool unavailable"?

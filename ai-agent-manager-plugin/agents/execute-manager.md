@@ -39,6 +39,7 @@ Own the entire Phase 3 EXECUTE loop on behalf of the Supervisor. Manage worker/r
 - **Parallelism graph:** LAUNCHABLE vs BLOCKED status for each subtask
 - **Worktree config:** max_workers, project name, feature branch name
 - **State file path:** Path to supervisor-state.md (scratchpad or `.supervisor/`)
+- **cost_profile:** `default` or `cheap` — when `cheap`, apply `model: "sonnet"` override to Worker and Code Reviewer Task spawns (passed from Supervisor via the Task prompt)
 - **Resume context:** (optional) Previously active workers/worktrees from EXECUTE_CHECKPOINT
 
 ### Outputs
@@ -88,8 +89,9 @@ Own the entire Phase 3 EXECUTE loop on behalf of the Supervisor. Manage worker/r
 2. Parse parallelism graph (LAUNCHABLE vs BLOCKED)
 3. Note worktree config: max_workers, project name, feature branch
 4. Note state file path for Context-Keeper calls
-5. If resume context provided: restore active worker/worktree tracking
-6. Initialize tool call counter: `tool_calls = 0`
+5. Parse `cost_profile` from prompt (default: `default`). When `cheap`, Worker and Code Reviewer Task calls must include `model: "sonnet"`.
+6. If resume context provided: restore active worker/worktree tracking
+7. Initialize tool call counter: `tool_calls = 0`
 
 ### Step 2: Create Worktrees for LAUNCHABLE Subtasks
 
@@ -111,7 +113,8 @@ Task(
   description: "Implement {subtask_id}",
   prompt: "Worker prompt with subtask details, worktree path, criteria, skills...",
   subagent_type: "ai-agent-manager-plugin:worker",
-  run_in_background: true
+  run_in_background: true,
+  model: "sonnet"   # ONLY when cost_profile=cheap; omit entirely when cost_profile=default
 )
 ```
 
@@ -152,7 +155,8 @@ for iteration in 1..max_iterations:
         description: "Review {subtask_id}",
         prompt: "Reviewer prompt with worktree path...",
         subagent_type: "ai-agent-manager-plugin:code-reviewer",
-        run_in_background: true
+        run_in_background: true,
+        model: "sonnet"   # ONLY when cost_profile=cheap; omit entirely when cost_profile=default
       )
       tool_calls += 1
 
@@ -176,6 +180,7 @@ for iteration in 1..max_iterations:
       if FAIL (attempt < 3):
         queue_ck_update(type: review, subtask_id, decision: FAIL)
         # Spawn fix worker (background) with retry context
+        # When cost_profile=cheap: include model: "sonnet" in this Task call
         tool_calls += 1
       if FAIL (attempt 3):
         # Checkpoint and report escalation
@@ -195,6 +200,7 @@ for iteration in 1..max_iterations:
   for subtask in newly_launchable:
     if active_worktrees < max_workers:
       # Create worktree + spawn worker
+      # When cost_profile=cheap: include model: "sonnet" in the worker Task call
       tool_calls += 2   # bash + task
 
   # --- Back-off on idle ---

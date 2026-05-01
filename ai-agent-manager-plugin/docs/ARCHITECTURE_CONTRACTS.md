@@ -182,6 +182,41 @@ See `docs/FAILURE_ESCALATION.md` for full paths.
 
 ---
 
+## Cost Profiles
+
+Single source of truth for cost-profile model overrides. Referenced by Supervisor and Execute Manager.
+
+### `--cheap` Profile
+
+Applies when `/supervisor --cheap` is passed. Supervisor and Execute Manager apply `model: "sonnet"` at spawn time for the roles marked **sonnet** in the table below. Default behavior (`inherit` for all) is unchanged when the flag is absent.
+
+| Role | Default | `--cheap` override |
+|---|---|---|
+| worker | inherit | **sonnet** |
+| code-reviewer | inherit | **sonnet** |
+| execute-manager | inherit | **sonnet** |
+| orchestrator | inherit | **sonnet** |
+| phase45-fix-task (general-purpose) | inherit | **sonnet** |
+| supervisor | inherit | inherit (main thread; uses session model) |
+| context-keeper | haiku | haiku (already minimal) |
+| launch-pad | inherit | inherit (out of v1 scope) |
+| product-owner | inherit | inherit (judgment) |
+| plan-reviewer | inherit | inherit (gating) |
+| qa-strategist | inherit | inherit (gating) |
+| red-team-reviewer | inherit | inherit (adversarial creativity) |
+| qa-executor | inherit | future — not spawned by `/supervisor`; deferred to v2 when `/qa-executor --cheap` ships |
+
+**Semantics:** `--cheap` overrides roles marked **sonnet** in the table to Sonnet, full stop. No runtime session detection. Consequences:
+- Opus session + `--cheap` → roles marked **sonnet** run on Sonnet (intended saving)
+- Sonnet session + `--cheap` → roles marked **sonnet** already match; behavior identical to no-flag path
+- Haiku session + `--cheap` → roles marked **sonnet** **upgrade** to Sonnet (costs more). Haiku users should not pass `--cheap`.
+
+**Propagation:** `cost_profile` is a session attribute. Supervisor records it in `.supervisor/state.md` (via Context-Keeper `initialize`) and passes it to Execute Manager via the Task prompt. Supervisor applies overrides for Orchestrator, Execute Manager, Phase 4.5 Code Reviewer, and Phase 4.5 fix tasks. Execute Manager reads `cost_profile` from its incoming prompt and applies overrides for Worker and Code Reviewer spawns within the poll loop.
+
+**Frontmatter unchanged:** No agent's `model:` frontmatter is modified. The override is applied at spawn time via the Task tool's `model` parameter. If the Task `model` override is ever removed in a future Claude Code release, the profile degrades gracefully to `inherit`.
+
+---
+
 ## Color Legend (Status Line)
 
 | Agent | Color | Hex |
