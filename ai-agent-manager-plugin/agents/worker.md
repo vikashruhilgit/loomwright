@@ -127,6 +127,28 @@ Write a compressed summary file to the worktree before outputting the final resu
 
 **Why:** The Execute Manager reads this file (~200 tokens) instead of parsing full TaskOutput (~5,000+ tokens), preventing context pollution in the orchestration layer.
 
+#### After writing the summary file: verify own `provides:` (Outputs Verification)
+
+After the `.worker-summary.md` file has been written and BEFORE emitting the final `WORKER_RESULT` block, the Worker MUST verify the outputs it promised to deliver:
+
+1. **Re-read the subtask's `provides:` list** from the spawn brief.
+2. **For each `provides` entry**, run the same verification it would run on `requires` (entries have a `kind` of `file` | `symbol` | `type`, a `path`, and for `symbol`/`type` a `name`):
+
+   | `kind` | Verification command | PRESENT condition |
+   |--------|----------------------|-------------------|
+   | `file` | `test -f <path>` | exit 0 |
+   | `symbol` | `grep -nE '<escaped name>' <path>` | any match (exit 0) |
+   | `type` | `grep -nE '(type\|interface\|class\|enum)\s+<escaped name>\b' <path>` | any match (exit 0) |
+
+3. **Build `outputs_verified`** as an array of `{kind, path, name?, status: "present" | "missing"}` objects — one entry per `provides` item.
+4. **Build `outputs_gap`** as a comma-separated string naming the missing items (e.g., `"src/foo.ts:Bar, src/baz.ts"`), or the empty string if all `provides` items are present.
+5. **Set the WORKER_RESULT `status` field** based on the verification outcome:
+   - `completed` if `outputs_gap` is empty (all promised outputs present).
+   - `partial` if `outputs_gap` is non-empty (worker did not deliver all promised outputs — implementation may otherwise be sane, but the contract was not fully met).
+   - `failed` for crash / unfixable error (unchanged from prior behavior).
+
+If the subtask brief has no `provides:` list, treat `outputs_verified` as `[]` and `outputs_gap` as `""` (empty), and use the prior `completed` / `failed` rules.
+
 ### Step 6: Output Result
 
 Produce the structured WORKER_RESULT block (see Output Format below).
@@ -135,11 +157,11 @@ Produce the structured WORKER_RESULT block (see Output Format below).
 
 ## Output Format
 
-**REQUIRED:** Every worker execution MUST end with this block:
+**REQUIRED:** Every worker execution MUST end with this block. Schema is at `schema_version: 2` — `outputs_verified` and `outputs_gap` are required v2 fields.
 
 ```markdown
 ## WORKER_RESULT
-- schema_version: 1
+- schema_version: 2
 - task_id: {subtask_id}
 - status: completed | failed | partial
 - files_modified: [{comma-separated relative paths}]
@@ -150,9 +172,18 @@ Produce the structured WORKER_RESULT block (see Output Format below).
 - tests_run: {number or "none"}
 - tests_passed: {number or "n/a"}
 - tests_failed: {number or "n/a"}
+- outputs_verified: [{kind: file|symbol|type, path: <path>, name?: <name>, status: present|missing}, ...]
+- outputs_gap: "{comma-separated missing items, or empty string if all present}"
 - error: none | {brief error description}
 - summary: {1-2 sentence implementation summary, max 200 tokens}
 ```
+
+**Status / outputs_gap invariant (v2):**
+- `status: completed` ⇔ `outputs_gap == ""` (all `provides` items verified present)
+- `status: partial` ⇔ `outputs_gap != ""` (one or more `provides` items missing)
+- `status: failed` ⇒ crash / unfixable error; `outputs_verified` and `outputs_gap` should still be populated best-effort.
+
+**v1 backward compatibility:** Older artifacts emitted `schema_version: 1` and omitted `outputs_verified` + `outputs_gap`. Consumers should accept v1 blocks (treating the two new fields as `[]` and `""` respectively) for legacy logs only — new emissions MUST be v2.
 
 > **Schema reference:** See `docs/RESULT_SCHEMAS.md` for full validation rules.
 
