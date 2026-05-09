@@ -4,6 +4,7 @@ description: QA Executor — discovers app, generates and runs Playwright tests,
 tools: Read, Write, Edit, Glob, Grep, Bash, Task
 model: inherit
 maxTurns: 120
+effort: high
 color: "#FF4500"
 memory: project
 skills:

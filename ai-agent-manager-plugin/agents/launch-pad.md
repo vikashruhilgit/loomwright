@@ -4,6 +4,7 @@ description: Internal runner for the `/launch-pad` workflow. Invoke directly via
 tools: Read, Write, Glob, Grep, Bash, Task
 model: inherit
 maxTurns: 55
+effort: high
 color: "#FFD700"
 memory: project
 skills:

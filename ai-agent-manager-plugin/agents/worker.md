@@ -4,6 +4,7 @@ description: Isolated implementation worker. Operates in git worktrees for paral
 tools: Read, Write, Edit, Bash, Glob, Grep
 model: inherit
 maxTurns: 40
+effort: high
 color: "#32CD32"
 disallowedTools: Task
 hooks:

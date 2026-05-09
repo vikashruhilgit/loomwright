@@ -4,6 +4,7 @@ description: Manages Phase 3 EXECUTE loop. Owns worker/reviewer lifecycle, poll 
 tools: Task, Read, Bash, Glob, Grep
 model: inherit
 maxTurns: 80
+effort: medium
 color: "#4169E1"
 skills:
   - async-orchestration
