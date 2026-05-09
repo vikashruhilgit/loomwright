@@ -12,6 +12,8 @@ Guidance for Claude Code when working in this repository.
 
 **AI Agent Manager** is a Claude Code plugin with 12 agent roles (8 user-facing + 4 internal) for plan-first readiness, parallel execution, requirements, planning, code review, commits, adversarial audits, and dual-agent QA. Supervisor and Launch Pad use `.supervisor/` exclusively for state; Orchestrator and Product Owner can optionally use Beads.
 
+**v12.0.0 — Reliability primitives:** Inter-subtask output contracts via a `provides` / `requires` schema (planned by Orchestrator, materialized + verified by Execute Manager Step 2a/2b), scope-expansion adjudication (4-option AskUserQuestion escalation when a producer's outputs are missing or a worker emits `outputs_gap`), effort-tier discipline across all 12 agents (`xhigh` / `high` / `medium`), and hardened SubagentStop validation that rejects `outputs_gap` / `toolset_gap` drift. WORKER_RESULT schema bumped to v2 with `outputs_verified[]` + `outputs_gap` fields. See `ai-agent-manager-plugin/docs/ARCHITECTURE_CONTRACTS.md` §"Effort Tiers" and the `provides` / `requires` schema in `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md`.
+
 ---
 
 ## Plugin Layout
@@ -19,7 +21,7 @@ Guidance for Claude Code when working in this repository.
 The repo is a **marketplace wrapper** containing one nested plugin:
 
 - Marketplace manifest: `.claude-plugin/marketplace.json` (root)
-- Plugin manifest: `ai-agent-manager-plugin/.claude-plugin/plugin.json` (v11.2.0)
+- Plugin manifest: `ai-agent-manager-plugin/.claude-plugin/plugin.json` (v12.0.0)
 - Agents: `ai-agent-manager-plugin/agents/` (12 markdown prompts)
 - Commands: `ai-agent-manager-plugin/commands/` (10 entry points)
 - Skills: `ai-agent-manager-plugin/skills/` (48 skills, see `SKILLS_INDEX.md`)
@@ -144,7 +146,7 @@ Every agent (full standard in `AGENT_GUIDELINES.md`):
 
 ---
 
-## Telemetry System (opt-in, v11.2.0)
+## Telemetry System (opt-in, v12.0.0)
 
 After qualifying runs (`supervisor-runner`, `code-reviewer`, `qa-executor`), a SubagentStop `type: command` hook invokes `${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry.sh` (the wrapper — `${CLAUDE_PLUGIN_ROOT}` is the canonical Claude Code variable for plugin-bundled assets and resolves to the plugin install dir on both dev checkouts and marketplace installs; never use `ai-agent-manager-plugin/...` paths from the user-project root, those only resolve for the plugin maintainer). The wrapper is fire-and-forget and **always exits 0**; it pipes the hook payload to `send-telemetry-core.sh`, which parses the result block, derives a deterministic score, runs a regex-based privacy whitelist, and (when consent + target repo are configured) calls `gh issue create` with a structured body covering Task Summary, Agent Scores, Issues Detected, AI Suggestions, Tools Used, and a redacted JSON payload.
 

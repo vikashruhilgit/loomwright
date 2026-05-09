@@ -4,9 +4,11 @@ A Claude Code plugin with 12 agent roles (8 user-facing + 4 internal), 48 focuse
 
 ## Overview
 
-The AI Agent Manager Plugin v11.2.0 includes:
+The AI Agent Manager Plugin v12.0.0 includes:
 
-- **Opt-in GitHub Issues telemetry (v11.2.0)** — After qualifying agent runs (`supervisor-runner`, `code-reviewer`, `qa-executor`), an opt-in pipeline can post a structured GitHub issue with derived score, agent performance breakdown, and AI suggestions for longitudinal analysis. Wrapper always exits 0; core exits 0..5 (sent / generic_error / privacy_blocked / no_consent / no_repo_configured / filter_skipped); privacy fail-closes via a regex deny-list; **disabled by default** (no `origin` fallback) — the user must explicitly run `/telemetry enable` (which prompts for the target repo) or set `AI_AGENT_MANAGER_TELEMETRY_REPO=owner/repo`. New slash commands: `/telemetry status | enable | disable | test`. See `ai-agent-manager-plugin/docs/TELEMETRY.md` for the full design.
+- **Reliability primitives (v12.0.0)** — Inter-subtask output contracts via a `provides` / `requires` schema (planned by Orchestrator, materialized + verified by Execute Manager Step 2a/2b), scope-expansion adjudication (4-option AskUserQuestion escalation when a producer's outputs are missing or a worker emits `outputs_gap`), effort-tier discipline across all 12 agents (`xhigh` / `high` / `medium`), and hardened SubagentStop validation that rejects `outputs_gap` / `toolset_gap` drift. WORKER_RESULT schema bumped to v2 with `outputs_verified[]` + `outputs_gap` fields. See `ai-agent-manager-plugin/docs/ARCHITECTURE_CONTRACTS.md` (Effort Tiers) and `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md` (provides/requires schema, WORKER_RESULT v2).
+
+- **Opt-in GitHub Issues telemetry (v11.2.0, preserved)** — After qualifying agent runs (`supervisor-runner`, `code-reviewer`, `qa-executor`), an opt-in pipeline can post a structured GitHub issue with derived score, agent performance breakdown, and AI suggestions for longitudinal analysis. Wrapper always exits 0; core exits 0..5 (sent / generic_error / privacy_blocked / no_consent / no_repo_configured / filter_skipped); privacy fail-closes via a regex deny-list; **disabled by default** (no `origin` fallback) — the user must explicitly run `/telemetry enable` (which prompts for the target repo) or set `AI_AGENT_MANAGER_TELEMETRY_REPO=owner/repo`. New slash commands: `/telemetry status | enable | disable | test`. See `ai-agent-manager-plugin/docs/TELEMETRY.md` for the full design.
 
 - **"Inline ≠ stop orchestrating" loophole closed (v11.1.2, preserved)** — The v11.1.1 main-thread guard accidentally licensed inline `/supervisor` runs to skip Phase 3 child agents and the Phase 4.5 `code-reviewer` integration review. v11.1.2 adds tailored execution-contract paragraphs to both slash commands, an inline-execution critical rule in `ai-agent-manager-plugin/agents/supervisor.md`, and a Phase 4.5 completion-tail runtime invariant that emits `status: failed` (and leaves the job in `in-progress/`) if `code-reviewer` was not invoked and `--skip-self-heal` was not explicitly passed.
 
@@ -345,7 +347,7 @@ ai-agent-manager/                            # Marketplace wrapper repo
 │   └── README.md                            # This file
 └── ai-agent-manager-plugin/                 # The nested plugin
     ├── .claude-plugin/
-    │   └── plugin.json                      # Plugin manifest (v11.2.0)
+    │   └── plugin.json                      # Plugin manifest (v12.0.0)
     ├── .mcp.json                            # Bundled MCP servers
     ├── agents/                              # Agent prompts (12 roles)
     │   ├── launch-pad.md, supervisor.md, execute-manager.md, context-keeper.md
