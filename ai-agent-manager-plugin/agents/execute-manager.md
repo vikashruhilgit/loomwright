@@ -50,8 +50,7 @@ Own the entire Phase 3 EXECUTE loop on behalf of the Supervisor. Manage worker/r
 
 ### Critical Rules
 
-- **No code modification:** Never write/edit code files — only workers do that
-- **No git merges:** Never merge branches — Supervisor's FINALIZE phase handles merges
+- **No code modification; dependency-materialization merges are the only permitted git merge operations, and only within a dependent worktree — never on the main repo's HEAD.**
 - **Tool call budget:** 60 calls maximum. At 36 (60%): compress. At 48 (80%): checkpoint. At 55 (92%): exit
 - **Summary files first:** Read `.worker-summary.md` / `.review-summary.md` before falling back to TaskOutput
 - **Batch Context-Keeper calls:** Use `record_batch` to combine multiple updates
@@ -94,16 +93,66 @@ Own the entire Phase 3 EXECUTE loop on behalf of the Supervisor. Manage worker/r
 6. If resume context provided: restore active worker/worktree tracking
 7. Initialize tool call counter: `tool_calls = 0`
 
-### Step 2: Create Worktrees for LAUNCHABLE Subtasks
+### Step 2a — Dependency Materialization (only if subtask has non-empty `requires`)
 
-For each LAUNCHABLE subtask (up to max_workers):
+For each LAUNCHABLE subtask, inspect its `requires:` list (from the brief / parallelism graph).
 
+**If `requires` is non-empty:**
+
+1. Create a dependent branch from the feature branch:
+   ```bash
+   git checkout -b feature/<task>-<sub>-dep <feature_branch>
+   ```
+2. Create a worktree off that branch:
+   ```bash
+   git worktree add ../<repo>-<sub>-dep feature/<task>-<sub>-dep
+   ```
+3. For each producing subtask listed in `requires`, merge its branch into the dependent worktree:
+   ```bash
+   git -C ../<repo>-<sub>-dep merge --no-ff feature/<task>-<producer>-<id>
+   ```
+4. **On merge conflict:** STOP. Do NOT spawn the worker. Emit `EXECUTE_CHECKPOINT` with the failure mode `"Dependency Merge Conflict"` (include the conflicting paths, the dependent branch, the producing branch, and the consumer subtask ID) and escalate to the Supervisor.
+
+**If `requires` is empty:** Skip 2a and create a normal worktree off the feature branch (existing behavior):
 ```bash
 git branch feature/{subtask_id}                     # from feature branch HEAD
 git worktree add ../{project}-{subtask_id} feature/{subtask_id}
 ```
 
-Track: subtask_id, worktree_path, branch_name
+Track: subtask_id, worktree_path, branch_name (and, when applicable, dependent_branch + materialized_producers).
+
+### Step 2b — Pre-Spawn Verification Gate
+
+After Step 2a (or after worktree creation for unblocked subtasks), iterate over the subtask's own `requires` entries (NOT its `provides`) and verify each was actually materialized in the worktree. Each `requires` entry has a `kind` (`file` | `symbol` | `type`), a `path`, and (for `symbol`/`type`) a `name`.
+
+| `kind` | Verification command | PASS condition |
+|--------|----------------------|----------------|
+| `file` | `test -f <worktree>/<path>` | exit 0 |
+| `symbol` | `grep -nE '<escaped name>' <worktree>/<path>` | any match (exit 0) |
+| `type` | `grep -nE '(type\|interface\|class\|enum)\s+<escaped name>\b' <worktree>/<path>` | any match (exit 0) |
+
+Record each check result (`PASS` | `FAIL`) along with the exact command run and its exit code.
+
+**If ANY check FAILs:**
+- DO NOT spawn the worker.
+- Emit `EXECUTE_CHECKPOINT` with:
+  - `adjudication_required: true`
+  - `missing_outputs: [{item: "<requires item>", producing_subtask: "<from>", check_run: "<command + exit code>"}, ...]`
+  - `adjudication_options: ["A: re-queue producer", "B: insert remediation subtask", "C: exit to Launch Pad", "D: update consumer brief"]`
+- Wait for the Supervisor to surface the choice to the user and reply with the chosen option (A/B/C/D). Do not advance the subtask until then.
+
+**If ALL checks PASS:** proceed to spawn the worker into the dependent worktree (Step 3 — existing Spawn Background Workers behavior).
+
+#### CHECKPOINT format (adjudication-required)
+
+When verification fails, the `EXECUTE_CHECKPOINT` block carries `adjudication_required: true` and an `adjudication_options` array spelling out the four operator choices the Supervisor must surface (wording is kept aligned with the `async-orchestration` skill — do not paraphrase):
+
+- **A: re-queue producer** — Execute Manager re-spawns the producing subtask with the missing outputs explicitly added to its acceptance criteria.
+- **B: insert remediation subtask** — Supervisor inserts a new ad-hoc subtask whose `provides:` covers the missing items, then resumes execution with the original consumer blocked on it.
+- **C: exit to Launch Pad** — Supervisor checkpoints state, marks the job `failed` with reason `inter_subtask_gap`, and exits cleanly. User must rerun `/launch-pad` to fix the brief.
+- **D: update consumer brief** — Supervisor edits the in-progress brief to remove the failing `requires` entry from the consumer subtask, then re-emits the consumer (consumer may proceed without the missing item).
+
+The Execute Manager never picks an option itself — the Supervisor surfaces the choice to the user and replies.
 
 ### Step 3: Spawn Background Workers
 
@@ -406,7 +455,7 @@ Before outputting result:
 - [ ] EXECUTE_RESULT includes merge_order in dependency order
 - [ ] EXECUTE_CHECKPOINT includes resume context for continuation
 - [ ] No code files were modified (only workers modify code)
-- [ ] No git merges performed (Supervisor handles merges)
+- [ ] No git merges performed on the main repo HEAD (only dependency-materialization merges inside dependent worktrees are permitted; Supervisor handles feature-branch merges)
 - [ ] Summary files preferred over full TaskOutput
 
 ---
