@@ -177,6 +177,8 @@ Supervisor presents 4 options to user via AskUserQuestion (NEVER auto-picks)
 User selects option → Supervisor applies it and resumes EXECUTE
 ```
 
+> When option C is selected, the job is marked `failed` with `reason: inter_subtask_gap` (this string is grep-stable and is what telemetry / `state.md` will record).
+
 **Detection:**
 - Execute Manager Step 2b runs `test -f` / `grep` against each `requires` entry in the dependent subtask's brief; missing entries fail the gate
 - SubagentStop hook on `worker` flags any WORKER_RESULT with non-empty `outputs_gap` (drift detection)

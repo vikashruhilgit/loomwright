@@ -138,7 +138,7 @@ Record each check result (`PASS` | `FAIL`) along with the exact command run and 
 - Emit `EXECUTE_CHECKPOINT` with:
   - `adjudication_required: true`
   - `missing_outputs: [{item: "<requires item>", producing_subtask: "<from>", check_run: "<command + exit code>"}, ...]`
-  - `adjudication_options: ["A: re-queue producer", "B: insert remediation subtask", "C: exit to Launch Pad", "D: update consumer brief"]`
+  - `adjudication_options: ["A: Re-queue producer", "B: Insert remediation subtask", "C: Exit to Launch Pad", "D: Update consumer brief"]`
 - Wait for the Supervisor to surface the choice to the user and reply with the chosen option (A/B/C/D). Do not advance the subtask until then.
 
 **If ALL checks PASS:** proceed to spawn the worker into the dependent worktree (Step 3 — existing Spawn Background Workers behavior).
@@ -147,10 +147,10 @@ Record each check result (`PASS` | `FAIL`) along with the exact command run and 
 
 When verification fails, the `EXECUTE_CHECKPOINT` block carries `adjudication_required: true` and an `adjudication_options` array spelling out the four operator choices the Supervisor must surface (wording is kept aligned with the `async-orchestration` skill — do not paraphrase):
 
-- **A: re-queue producer** — Execute Manager re-spawns the producing subtask with the missing outputs explicitly added to its acceptance criteria.
-- **B: insert remediation subtask** — Supervisor inserts a new ad-hoc subtask whose `provides:` covers the missing items, then resumes execution with the original consumer blocked on it.
-- **C: exit to Launch Pad** — Supervisor checkpoints state, marks the job `failed` with reason `inter_subtask_gap`, and exits cleanly. User must rerun `/launch-pad` to fix the brief.
-- **D: update consumer brief** — Supervisor edits the in-progress brief to remove the failing `requires` entry from the consumer subtask, then re-emits the consumer (consumer may proceed without the missing item).
+- **A: Re-queue producer** — Execute Manager re-spawns the producing subtask with the missing outputs explicitly added to its acceptance criteria.
+- **B: Insert remediation subtask** — Supervisor inserts a new ad-hoc subtask whose `provides:` covers the missing items, then resumes execution with the original consumer blocked on it.
+- **C: Exit to Launch Pad** — Supervisor checkpoints state, marks the job `failed` with reason `inter_subtask_gap`, and exits cleanly. User must rerun `/launch-pad` to fix the brief.
+- **D: Update consumer brief** — Supervisor edits the in-progress brief to remove the failing `requires` entry from the consumer subtask, then re-emits the consumer (consumer may proceed without the missing item).
 
 The Execute Manager never picks an option itself — the Supervisor surfaces the choice to the user and replies.
 

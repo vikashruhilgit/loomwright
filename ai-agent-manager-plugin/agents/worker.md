@@ -190,7 +190,7 @@ Produce the structured WORKER_RESULT block (see Output Format below).
 **Example (success):**
 ```markdown
 ## WORKER_RESULT
-- schema_version: 1
+- schema_version: 2
 - task_id: BD-15a
 - status: completed
 - files_modified: [src/auth/auth.module.ts]
@@ -201,16 +201,18 @@ Produce the structured WORKER_RESULT block (see Output Format below).
 - tests_run: 8
 - tests_passed: 8
 - tests_failed: 0
+- outputs_verified: [{kind: file, path: src/auth/auth.module.ts, status: present}, {kind: file, path: src/auth/jwt.guard.ts, status: present}, {kind: file, path: src/auth/jwt.guard.spec.ts, status: present}]
+- outputs_gap: ""
 - error: none
 - summary: Implemented JwtGuard with token validation and refresh support. Added unit tests covering valid tokens, expired tokens, and malformed tokens.
 ```
 
-**Example (failure):**
+**Example (partial — outputs_gap non-empty):**
 ```markdown
 ## WORKER_RESULT
-- schema_version: 1
+- schema_version: 2
 - task_id: BD-15b
-- status: failed
+- status: partial
 - files_modified: [src/auth/refresh.controller.ts]
 - files_created: [src/auth/refresh.controller.spec.ts]
 - files_deleted: none
@@ -219,8 +221,10 @@ Produce the structured WORKER_RESULT block (see Output Format below).
 - tests_run: 5
 - tests_passed: 3
 - tests_failed: 2
+- outputs_verified: [{kind: file, path: src/auth/refresh.controller.ts, status: present}, {kind: file, path: src/auth/refresh.controller.spec.ts, status: present}, {kind: symbol, path: src/auth/refresh.controller.ts, name: rotateRefreshToken, status: missing}]
+- outputs_gap: "src/auth/refresh.controller.ts:rotateRefreshToken"
 - error: Tests fail: refresh token rotation test expects cookie but HttpOnly flag prevents access in test environment
-- summary: Implemented refresh endpoint but 2 tests fail due to test environment limitations with HttpOnly cookies.
+- summary: Implemented refresh endpoint controller and spec but did not deliver the promised rotateRefreshToken symbol; status: partial because outputs_gap is non-empty per the v2 invariant.
 ```
 
 ---
