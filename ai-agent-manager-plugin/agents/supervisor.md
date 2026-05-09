@@ -4,6 +4,7 @@ description: Internal runner for the `/supervisor` workflow. Invoke directly via
 tools: Task, Read, Glob, Grep, Bash, Write, Edit
 model: inherit
 maxTurns: 40
+effort: medium
 color: "#1E90FF"
 permissionMode: default
 skills:

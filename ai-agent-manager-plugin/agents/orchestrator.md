@@ -4,6 +4,7 @@ description: Break goals into tasks with review gates. Use when starting new wor
 tools: Read, Glob, Grep, Bash
 model: inherit
 maxTurns: 40
+effort: medium
 color: "#9370DB"
 skills:
   - quality-checklist
