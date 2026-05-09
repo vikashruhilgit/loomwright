@@ -383,6 +383,100 @@ Phase 3 poll loop context stays in Execute Manager, not Supervisor. Everything e
 
 ---
 
+## Dependency Materialization
+
+BLOCKED subtasks declare `requires` against producing subtasks (see `skills/supervisor-readiness/SKILL.md` for the schema). Before spawning a BLOCKED subtask whose producers are complete, the Execute Manager must materialize each producer's outputs into the dependent worktree by **merging the producer branch into the dependent branch — never onto the main repo HEAD**.
+
+**Materialization steps:**
+
+1. Branch from feature_branch:
+   ```bash
+   git checkout -b feature/<task>-<sub>-dep <feature_branch>
+   ```
+   This creates the dependent's branch as a child of the integration feature branch.
+
+2. Create a worktree for the dependent subtask:
+   ```bash
+   git worktree add ../<repo>-<sub>-dep feature/<task>-<sub>-dep
+   ```
+
+3. Materialize each producer's outputs by merging the producer branch INTO the dependent worktree:
+   ```bash
+   git -C ../<repo>-<sub>-dep merge --no-ff feature/<task>-<producer-sub>
+   ```
+   Repeat this for every producer listed in the dependent's `requires` set (one merge per producer).
+
+4. Only then spawn the worker into the dependent worktree.
+
+**Invariants:**
+
+- Merges happen in the dependent worktree only — never on the main repo HEAD
+- The integration feature branch HEAD remains untouched until FINALIZE
+- Each producer is merged exactly once per dependent worktree (idempotent if re-run after a clean checkout)
+
+**Conflict policy:** If any merge conflicts during materialization, STOP immediately and escalate as a **Dependency Merge Conflict** failure mode. Do NOT auto-resolve, do NOT commit a partial merge. Treat the dependent worktree as quarantined until the user resolves.
+
+---
+
+## Pre-Spawn Verification Gate
+
+After dependency materialization and **before** spawning the worker, the Execute Manager runs a verification gate that proves each declared `requires` entry actually exists in the dependent worktree. The producer branch claimed to provide an item — this gate verifies the claim against disk.
+
+For each `requires` entry on the dependent subtask:
+
+| `kind` | Verification check |
+|--------|-------------------|
+| `file` | `test -f <worktree>/<path>` — file existence |
+| `symbol` | `grep -nE '<escaped name>' <worktree>/<path>` — symbol/heading/frontmatter-key presence |
+| `type` | `grep -nE '(type\|interface\|class\|enum)\s+<escaped name>\b' <worktree>/<path>` — language-level type declaration |
+
+**Pass criterion:** ALL checks for ALL `requires` entries must PASS.
+
+**Fail handling:** If any check fails, the dependent subtask is held back (worker is NOT spawned) and an `EXECUTE_CHECKPOINT` is emitted with `adjudication_required: true` (see Scope Expansion Adjudication below). The producer's `provides` declaration was a lie or the producer drifted from its acceptance criteria — neither is something the Execute Manager can resolve unilaterally.
+
+**Why this gate exists:** Without it, a worker would be spawned into a worktree that doesn't actually contain the symbols/types/files it expects, and would either fabricate them, fail mid-implementation, or silently drift. The gate fails fast at the boundary between producer and consumer.
+
+---
+
+## Scope Expansion Adjudication
+
+When pre-spawn verification fails (a producer didn't actually emit the symbol it promised) OR a worker reports `outputs_gap` non-empty in its WORKER_RESULT, the Execute Manager emits an `EXECUTE_CHECKPOINT` with `adjudication_required: true` and presents four options to the Supervisor / user.
+
+The Execute Manager **NEVER picks an option itself** — it always escalates to the Supervisor, which presents options to the user via `AskUserQuestion`.
+
+**The four options:**
+
+- **Option A — Re-queue producer:** retry the producing subtask with the missing outputs added to its acceptance criteria.
+  - Cost: one extra worker run.
+  - Risk: same gap recurs if the root cause is brief drift, not worker error.
+
+- **Option B — Insert remediation subtask:** add a new subtask whose sole job is to provide the missing outputs.
+  - Cost: extra subtask + extra dependency edge.
+  - Risk: brief no longer matches the executed plan; downstream telemetry/audit becomes harder to interpret.
+
+- **Option C — Exit to Launch Pad:** abort the run; the brief itself is incoherent and needs replanning.
+  - Cost: full restart.
+  - Benefit: catches structural problems early before deeper damage.
+
+- **Option D — Update consumer brief:** consumer no longer needs the missing item; remove the `requires` entry.
+  - Cost: silent scope reduction.
+  - Risk: callers of the consumer downstream may break because the consumer no longer integrates the producer's output.
+
+**EXECUTE_CHECKPOINT block fields:**
+
+```yaml
+adjudication_required: true
+missing_outputs:
+  - item: {from: "<producer-sub>", kind: "<file|symbol|type>", path: "<path>", name: "<name>"}
+    producing_subtask: "<producer-sub>"
+    check_run: "<exact verification command and its exit/output>"
+adjudication_options: ["A", "B", "C", "D"]
+```
+
+The Supervisor receives the checkpoint, presents the four options to the user (with the `missing_outputs` list and the `check_run` evidence), and only then re-enters Phase 3 with the chosen branch.
+
+---
+
 ## Error Handling
 
 | Situation | Action |
@@ -394,6 +488,9 @@ Phase 3 poll loop context stays in Execute Manager, not Supervisor. Everything e
 | Disk space concern | Limit to 2 concurrent worktrees |
 | Tool budget exceeded | Output EXECUTE_CHECKPOINT, exit |
 | Summary file missing | Fall back to parsing full TaskOutput |
+| Dependency merge conflict | STOP, escalate as Dependency Merge Conflict (do NOT auto-resolve) |
+| Pre-spawn verification fails | Hold subtask, emit EXECUTE_CHECKPOINT with `adjudication_required: true` |
+| Worker reports `outputs_gap` non-empty | Emit EXECUTE_CHECKPOINT with `adjudication_required: true` (Scope Expansion Adjudication) |
 
 ---
 

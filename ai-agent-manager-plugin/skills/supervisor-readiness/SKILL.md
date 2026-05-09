@@ -158,6 +158,54 @@ Success looks like {measurable outcome}.
 | 2 | {title} | {criteria IDs} | {M} modify, {C} create | {skill refs} | LAUNCHABLE |
 | 3 | {title} | {criteria IDs} | {M} modify, {C} create | {skill refs} | BLOCKED (by #1) |
 
+### Provides / Requires Schema (v12.0.0+)
+
+Each subtask SHOULD declare a structured contract with three top-level YAML lists: `provides`, `requires`, `external_requires`. These are consumed by Plan Reviewer (Criterion 12) and Execute Manager's pre-spawn verification gate.
+
+**`provides` items** — addressable outputs the subtask must produce:
+
+- `{kind: "file", path: "<relative-path>"}` — file that must exist after the subtask completes
+- `{kind: "symbol", path: "<relative-path>", name: "<identifier|heading|frontmatter-key>"}` — named identifier, heading, or frontmatter field present in that file
+- `{kind: "type", path: "<relative-path>", name: "<TypeName>"}` — TypeScript / language-level type defined in that file
+
+**`requires` items** — outputs that a sibling subtask must produce first:
+
+- `{from: "<sibling-subtask-id>", kind: "file"|"symbol"|"type", path: "<path>", name: "<name>"}`
+
+**`external_requires`** — top-level list of free-text strings naming things outside the brief's scope (third-party APIs, OS-level CLIs, undocumented platform features). NOT cross-referenced from `requires`.
+
+**Status implication:** A subtask is **BLOCKED** iff its `requires` list is non-empty. Empty `requires` + no file overlap = LAUNCHABLE.
+
+**Complete example** — two subtasks where Subtask 2 requires outputs from Subtask 1:
+
+```yaml
+# Subtask 1 — JWT guard + auth types (LAUNCHABLE)
+provides:
+  - {kind: "file", path: "src/auth/jwt.guard.ts"}
+  - {kind: "symbol", path: "src/auth/jwt.guard.ts", name: "JwtAuthGuard"}
+  - {kind: "file", path: "src/auth/types.ts"}
+  - {kind: "type", path: "src/auth/types.ts", name: "AuthContext"}
+requires: []
+external_requires:
+  - "@nestjs/passport >= 10.0"
+
+# Subtask 2 — Auth controller wiring up the guard + types (BLOCKED by #1)
+provides:
+  - {kind: "file", path: "src/auth/auth.controller.ts"}
+  - {kind: "symbol", path: "src/auth/auth.controller.ts", name: "AuthController"}
+requires:
+  - {from: "1", kind: "symbol", path: "src/auth/jwt.guard.ts", name: "JwtAuthGuard"}
+  - {from: "1", kind: "type",   path: "src/auth/types.ts",     name: "AuthContext"}
+external_requires: []
+```
+
+**Authoring rules:**
+
+- Every subtask SHOULD have non-empty `provides`. Pure-deletion subtasks may use `provides: []` with a comment justifying it
+- Reject vague provides like `"adds feature"` / `"updates code"` — every entry MUST be `{kind, path, name?}` addressable on disk
+- `external_requires` is for things outside the brief; do NOT use it as the `from` target of any `requires` entry
+- Non-empty `requires` → BLOCKED (status in Subtask Structure table MUST reflect this)
+
 ## Parallelism Analysis
 
 ### Dependency Graph

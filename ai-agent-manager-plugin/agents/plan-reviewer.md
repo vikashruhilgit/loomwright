@@ -43,9 +43,9 @@ Validate a Supervisor-Ready Brief for quality, completeness, and correctness bef
 
 ---
 
-## 11 Review Criteria
+## 12 Review Criteria
 
-Check ALL criteria in order. For each, note whether it passes or has issues. Criterion 11 is conditional: skip silently if the optional `## Feasibility` section is absent.
+Check ALL criteria in order. For each, note whether it passes or has issues. Criterion 11 is conditional: skip silently if the optional `## Feasibility` section is absent. Criterion 12 only emits issues when the brief contains subtask contract YAML blocks (`provides` / `requires`); briefs without contract blocks skip Criterion 12 silently.
 
 ### 1. File Path Verification
 
@@ -181,13 +181,35 @@ Check ALL criteria in order. For each, note whether it passes or has issues. Cri
 
 **Rule:** Absence is never an issue. This criterion only runs when the section exists.
 
+### 12. Inter-Subtask Output Contracts
+
+**Check:** Do every subtask's `requires` entries resolve to real `provides` entries on sibling subtasks, with no cycles, no vague provides, and no LAUNCHABLE-when-should-be-BLOCKED misclassifications?
+
+**How:**
+
+- For every subtask with non-empty `requires`, verify each entry's `from` references an existing sibling subtask ID and that the named `{kind, path, name}` appears in that sibling's `provides` list (exact match on `kind` + `path` + `name` where applicable; for `kind: file` only `kind` + `path` must match)
+- Build a dependency DAG: for each `requires` entry on consumer C with `from: P`, add edge `C → P`. Detect cycles (any back-edge) → FAIL the brief
+- Verify any subtask with non-empty `requires` is marked **BLOCKED** in the parallelism analysis (never LAUNCHABLE)
+- Reject vague provides entries (`"adds feature"`, `"updates code"`, free-text strings without `{kind, path}`): every entry MUST be `{kind: file|symbol|type, path, name?}` addressable on disk
+- `external_requires` items must NOT appear as `from` references in any `requires` entry (the `from` field always points at a sibling subtask ID)
+
+**Issue category:** `dep_graph` — use this category in the issues array of PLAN_REVIEW_RESULT for any Criterion 12 violation.
+
+**Severity if failed:**
+
+- BLOCKING: cycle in dependency DAG; `requires` entry has no matching sibling provide; subtask with non-empty `requires` marked LAUNCHABLE; `from` references an `external_requires` item
+- HIGH: vague provides entry without addressable `{kind, path}`; provides entry whose path/name does not match any plausible file in the impact map
+- MEDIUM: `requires` entry whose `name` is a near-miss against the producer's `provides` (likely typo)
+
+**Conditional:** If the brief contains no subtask contract YAML blocks (older briefs pre-v12.0.0), skip this criterion silently and emit no issues.
+
 ---
 
 ## Decision Matrix
 
 | Condition | Decision |
 |-----------|----------|
-| All criteria satisfied (11 total, Criterion 11 conditional), no BLOCKING/HIGH issues | **PASS** |
+| All criteria satisfied (12 total, Criteria 11 and 12 conditional), no BLOCKING/HIGH issues | **PASS** |
 | Any BLOCKING or HIGH severity issue found | **FAIL** |
 | Only MEDIUM/LOW issues, but design approach is ambiguous | **NEEDS_HUMAN** |
 
@@ -254,7 +276,7 @@ PLAN_REVIEW_RESULT:
 ## Quality Checklist
 
 Before producing PLAN_REVIEW_RESULT:
-- [ ] All 11 criteria checked (Criterion 11 is conditional — only runs if Feasibility section is present)
+- [ ] All 12 criteria checked (Criterion 11 conditional on `## Feasibility` section presence; Criterion 12 conditional on subtask contract YAML blocks being present)
 - [ ] Every file path in File Impact Map verified via Read or Glob
 - [ ] CLAUDE.md patterns compared against brief approach
 - [ ] Dependency graph traced for cycles
