@@ -389,16 +389,17 @@ BLOCKED subtasks declare `requires` against producing subtasks (see `skills/supe
 
 **Materialization steps:**
 
-1. Branch from feature_branch:
+1. Create the dependent's branch from `feature_branch` **as a ref only — do NOT switch the main worktree's HEAD**:
    ```bash
-   git checkout -b feature/<task>-<sub>-dep <feature_branch>
+   git branch feature/<task>-<sub>-dep <feature_branch>
    ```
-   This creates the dependent's branch as a child of the integration feature branch.
+   `git checkout -b` would move the main worktree off the feature branch and break sibling parallel subtasks; use `git branch` (creates the ref without switching HEAD) instead.
 
 2. Create a worktree for the dependent subtask:
    ```bash
    git worktree add ../<repo>-<sub>-dep feature/<task>-<sub>-dep
    ```
+   Equivalent one-shot form: `git worktree add -b feature/<task>-<sub>-dep ../<repo>-<sub>-dep <feature_branch>` — both leave the main worktree's HEAD untouched.
 
 3. Materialize each producer's outputs by merging the producer branch INTO the dependent worktree:
    ```bash

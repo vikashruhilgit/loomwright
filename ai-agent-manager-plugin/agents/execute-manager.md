@@ -99,14 +99,16 @@ For each LAUNCHABLE subtask, inspect its `requires:` list (from the brief / para
 
 **If `requires` is non-empty:**
 
-1. Create a dependent branch from the feature branch:
+1. Create a dependent branch from the feature branch **without switching the main worktree's HEAD**:
    ```bash
-   git checkout -b feature/<task>-<sub>-dep <feature_branch>
+   git branch feature/<task>-<sub>-dep <feature_branch>
    ```
+   (Do NOT use `git checkout -b` — that would move the main worktree off the feature branch and break parallel sibling subtasks. The branch is created as a ref only; the worktree below pins it.)
 2. Create a worktree off that branch:
    ```bash
    git worktree add ../<repo>-<sub>-dep feature/<task>-<sub>-dep
    ```
+   (Equivalent one-shot form: `git worktree add -b feature/<task>-<sub>-dep ../<repo>-<sub>-dep <feature_branch>` — pick whichever is more readable; both leave the main worktree's HEAD untouched.)
 3. For each producing subtask listed in `requires`, merge its branch into the dependent worktree:
    ```bash
    git -C ../<repo>-<sub>-dep merge --no-ff feature/<task>-<producer>-<id>
