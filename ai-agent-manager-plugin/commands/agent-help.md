@@ -581,6 +581,52 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 
 ---
 
+### 💤 /dreaming — Reflect on Past Sessions (Read-Only)
+
+**Purpose:** Run target agents in reflection mode over recent session logs to **propose** memory and `CLAUDE.md` updates. Strictly read-only on code AND agent memory until per-item user approval.
+
+**Usage:**
+```
+/dreaming                                      # All agents, last 5 sessions
+/dreaming --agent code-reviewer                # Reflect with Code Reviewer only
+/dreaming --agent red-team --sessions 10       # Red Team, last 10 sessions
+/dreaming --agent qa-executor --sessions 3     # QA Executor, last 3 sessions
+/dreaming --agent all --sessions 20            # All agents, deeper history
+```
+
+**Parameters:**
+- `--agent all|code-reviewer|red-team|qa-executor` (default `all`)
+- `--sessions N` (default `5`)
+
+**What it does:**
+- Reads the N most recent `.supervisor/logs/{session_id}.jsonl` files (read-only)
+- Spawns target agent(s) in reflection mode with read-only access to their own `.claude/agent-memory/{agent-id}/`
+- Aggregates per-agent output into a single reflection report with four mandatory sections:
+  - Recurring Patterns
+  - Distilled Insights
+  - Proposed Memory Updates
+  - Proposed CLAUDE.md Updates
+- Presents each proposed update for **per-item user approval** (Accept / Reject / Edit)
+
+**Read-only contract:**
+- `/dreaming` does not modify code, agent memory, or `CLAUDE.md`
+- Every proposed update is labeled **PENDING USER APPROVAL**
+- Persistence to `.claude/agent-memory/` or `CLAUDE.md` happens **only after** the user explicitly approves each item; the user (or a separate follow-up command) performs the write — `/dreaming` itself never writes
+
+**When to Use:**
+- After a streak of completed `/supervisor` sessions, to surface recurring issues
+- Before updating `CLAUDE.md` by hand, to discover what the logs say should change
+- As a recurring retrospective cadence (weekly / per milestone)
+
+**When NOT to Use:**
+- During active execution → `/dreaming` reflects on *past* sessions
+- When you need code changes → `/dreaming` is read-only; use `/supervisor` or `/code-reviewer`
+- For agents without persistent memory → only Code Reviewer, Red Team Reviewer, and QA Executor are valid targets
+
+**Learn More:** `/dreaming --help`
+
+---
+
 ### QA Workflow Diagram
 
 ```
@@ -848,7 +894,7 @@ ai-agent-manager-plugin/              # Nested plugin root
 ├── .claude-plugin/
 │   └── plugin.json                   # Plugin metadata (v12.1.0)
 ├── .mcp.json                         # Bundled MCP servers
-├── commands/                         # Slash commands (10)
+├── commands/                         # Slash commands (11)
 │   ├── launch-pad.md                 # Supervisor readiness
 │   ├── supervisor.md                 # Parallel orchestrator (v4)
 │   ├── product-owner.md              # Requirements definition
@@ -857,6 +903,7 @@ ai-agent-manager-plugin/              # Nested plugin root
 │   ├── red-team-reviewer.md          # Adversarial auditor
 │   ├── qa-strategist.md              # Risk-based QA strategy
 │   ├── qa-executor.md                # Automated QA testing
+│   ├── dreaming.md                   # Read-only reflection over session logs (proposes memory + CLAUDE.md updates)
 │   ├── telemetry.md                  # Opt-in GitHub Issues telemetry (status/enable/disable/test)
 │   └── agent-help.md
 ├── agents/                           # Agent implementations (12 roles)
