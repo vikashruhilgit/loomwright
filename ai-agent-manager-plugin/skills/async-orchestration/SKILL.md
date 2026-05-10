@@ -446,19 +446,19 @@ The Execute Manager **NEVER picks an option itself** — it always escalates to 
 
 **The four options:**
 
-- **Option A — Re-queue producer:** retry the producing subtask with the missing outputs added to its acceptance criteria.
+- **A: Re-queue producer** — retry the producing subtask with the missing outputs added to its acceptance criteria.
   - Cost: one extra worker run.
   - Risk: same gap recurs if the root cause is brief drift, not worker error.
 
-- **Option B — Insert remediation subtask:** add a new subtask whose sole job is to provide the missing outputs.
+- **B: Insert remediation subtask** — add a new subtask whose sole job is to provide the missing outputs.
   - Cost: extra subtask + extra dependency edge.
   - Risk: brief no longer matches the executed plan; downstream telemetry/audit becomes harder to interpret.
 
-- **Option C — Exit to Launch Pad:** abort the run; the brief itself is incoherent and needs replanning.
+- **C: Exit to Launch Pad** — abort the run; the brief itself is incoherent and needs replanning.
   - Cost: full restart.
   - Benefit: catches structural problems early before deeper damage.
 
-- **Option D — Update consumer brief:** consumer no longer needs the missing item; remove the `requires` entry.
+- **D: Update consumer brief** — consumer no longer needs the missing item; remove the `requires` entry.
   - Cost: silent scope reduction.
   - Risk: callers of the consumer downstream may break because the consumer no longer integrates the producer's output.
 

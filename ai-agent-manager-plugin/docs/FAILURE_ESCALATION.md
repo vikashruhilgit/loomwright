@@ -165,10 +165,10 @@ Execute Manager emits EXECUTE_CHECKPOINT with:
     - adjudication_required: true
     - missing_outputs: [...]
     - adjudication_options:
-        A. Re-queue producer (re-run the producer subtask)
-        B. Insert remediation subtask (new subtask to fill the gap)
-        C. Exit to Launch Pad (re-plan from scratch)
-        D. Update consumer brief (reduce consumer scope)
+        A: Re-queue producer (re-run the producer subtask)
+        B: Insert remediation subtask (new subtask to fill the gap)
+        C: Exit to Launch Pad (re-plan from scratch)
+        D: Update consumer brief (reduce consumer scope)
     ↓
 Supervisor pauses EXECUTE phase
     ↓
