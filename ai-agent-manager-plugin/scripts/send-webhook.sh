@@ -65,12 +65,17 @@ STATUS=""
 PR_URL=""
 SUMMARY=""
 
-# yaml_field <text> <key>  →  prints the value of `  key: value` (case-insensitive,
-# tolerates leading dash for bullet-style blocks). Strips surrounding quotes and
-# whitespace. Returns empty when not found.
+# yaml_field <text> <key>  →  prints the value of `  key: value` (case-sensitive
+# match against lowercase keys; SUPERVISOR_RESULT schema in docs/RESULT_SCHEMAS.md
+# always emits keys in lowercase). Tolerates leading dash for bullet-style blocks.
+# Strips surrounding double-quotes and whitespace. Returns empty when not found.
+#
+# Portability: BSD sed (macOS) historically lacks the `/I` case-insensitive flag,
+# so we match only lowercase keys. Stick to the documented schema casing — do
+# not add `/I` here, it breaks on older BSD sed.
 yaml_field() {
   printf '%s' "$1" | sed -nE \
-    "s/^[[:space:]]*-?[[:space:]]*$2[[:space:]]*:[[:space:]]*\"?([^\"]*)\"?[[:space:]]*$/\1/Ip" \
+    "s/^[[:space:]]*-?[[:space:]]*$2[[:space:]]*:[[:space:]]*\"?([^\"]*)\"?[[:space:]]*$/\1/p" \
     | head -n1
 }
 

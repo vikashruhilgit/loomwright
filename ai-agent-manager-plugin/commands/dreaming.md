@@ -73,6 +73,59 @@ This makes `/dreaming` the safe, auditable counterpart to live execution: read p
 3. **Output a structured reflection report** — `/dreaming` aggregates per-agent proposals into a single report with the four mandatory sections listed below.
 4. **Per-item user approval** — The user is presented with each proposal in turn. The approval mechanism is the harness `AskUserQuestion` tool (or, when unavailable, a numbered list with typed responses): each proposal is displayed with its target file and verbatim text and the user picks `Accept`, `Reject`, or `Edit`. Only accepted items result in actual writes, and writing is performed by the user (or by a separate, explicit follow-up command they invoke). `/dreaming` itself never writes to `.claude/agent-memory/` or `CLAUDE.md`. There is no bulk-accept; each item is gated individually.
 
+## Reflection-Mode Task Prompt
+
+The agents `/dreaming` spawns (Code Reviewer, Red Team Reviewer, QA Executor) all have system prompts tuned for **forward** work — reviewing diffs, attacking running systems, generating tests. To put them into reflection mode, `/dreaming` MUST pass a task prompt that overrides their default behavior. The prompt below is the canonical template — `/dreaming` constructs an instance of it for each spawned agent and substitutes the placeholders.
+
+```
+You are running in REFLECTION MODE for the /dreaming command, not your normal forward-execution mode.
+
+DO NOT review code, attack systems, generate tests, or take any action against the current working tree. Your job for this turn is to look BACKWARD at the supplied session logs and propose durable lessons.
+
+INPUTS (read-only):
+- Session logs (the N most recent /supervisor sessions for this project):
+{numbered list of absolute paths to .supervisor/logs/<session_id>.jsonl files}
+- Your own existing persistent memory directory (read-only for this turn):
+.claude/agent-memory/ai-agent-manager-plugin:{agent-id}/
+
+HARD RULES:
+- READ-ONLY for this turn. Do NOT call Write, Edit, NotebookEdit, or any Bash command that mutates files, the git index, branches, the working tree, or your own memory directory. /dreaming will refuse to persist anything you propose without explicit per-item user approval — your job is to propose, not to write.
+- Stay scoped to the supplied logs and your own existing memory. Do not crawl unrelated parts of the repository.
+- Do not run tests, format code, or open the application.
+
+OUTPUT (mandatory four-section report, in this order):
+
+  ## 1. Recurring Patterns
+  Concrete patterns you observed across the supplied logs. For each:
+  - Name and one-line description
+  - Evidence count and citing session IDs (e.g., "3/5 sessions: 2026-05-03, 2026-05-06, 2026-05-09")
+
+  ## 2. Distilled Insights
+  Short, falsifiable claims that interpret the patterns. For each:
+  - The claim
+  - Linked Pattern letter
+  - Evidence count
+
+  ## 3. Proposed Memory Updates
+  Each proposal MUST be labeled "PENDING USER APPROVAL" and include:
+  - Target file/tag under .claude/agent-memory/ai-agent-manager-plugin:{agent-id}/
+  - Change type (add / edit / delete)
+  - Proposed text (verbatim, ready to paste)
+  - Linked Insight number
+  Do NOT write to the memory directory. Propose only.
+
+  ## 4. Proposed CLAUDE.md Updates
+  Each proposal MUST be labeled "PENDING USER APPROVAL" and include:
+  - Target section (existing heading or proposed new heading)
+  - Proposed text (verbatim, in the same prose style as the surrounding doc)
+  - Linked Insight number
+  Do NOT edit CLAUDE.md. Propose only.
+
+If a section has no candidates, write "(no proposals — N/M sessions reviewed)" rather than padding. Empty proposals are honest; fabricated ones are a defect.
+```
+
+Per-agent customization: `/dreaming` may prepend a one-line role hint (e.g., "Focus on review-finding patterns" for Code Reviewer, "Focus on attack-vector patterns" for Red Team Reviewer, "Focus on test-coverage and infrastructure-discovery patterns" for QA Executor) but MUST NOT remove or weaken any of the HARD RULES above.
+
 ## Reflection Report Sections
 
 Every `/dreaming` report **must** include all four of the following sections, in this order:
