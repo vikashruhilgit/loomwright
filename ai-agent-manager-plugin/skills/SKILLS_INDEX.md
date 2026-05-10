@@ -93,4 +93,6 @@ Comprehensive index of all skills available in the AI Agent Manager plugin.
 
 ---
 
-**Total: 48 skills**
+**Total: 49 skills**
+
+_Last updated: 2026-05-10_
