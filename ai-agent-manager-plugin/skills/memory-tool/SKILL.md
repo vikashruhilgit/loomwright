@@ -76,7 +76,7 @@ So the same "create on discovery / update on contradiction / delete on expiry" r
 
 ## Per-Agent Guidance
 
-The plugin's six memory-using agents all run inside Claude Code, so **the Memory Tool is not directly available to them as a `tools` entry** — Claude Code does not currently propagate that tool to plugin subagents. For these agents the file-based memory is the only practical path. Below: the right kind of content to put in each agent's `.claude/agent-memory/{agent-id}/MEMORY.md`. Memory Tool guidance is included for completeness in case you mirror these agents' prompts into a direct-API SDK harness.
+The plugin's six memory-using agents all run inside Claude Code, so **the Memory Tool is not directly available to them as a `tools` entry** — Claude Code does not currently propagate that tool to plugin subagents. For these agents the file-based memory is the only practical path. Below: detailed guidance for the **three agents** that ship with `memory-tool` listed as a reference skill in `SKILLS_INDEX.md` (Red Team Reviewer, QA Executor, Product Owner). The other three memory-using agents (Launch Pad, Code Reviewer, QA Strategist) follow the same general patterns — pick tags by content type, append for discoveries, snapshot for current-state — and don't need agent-specific guidance here. Memory Tool guidance is included for completeness in case you mirror any of these agents' prompts into a direct-API SDK harness.
 
 ### Red Team Reviewer
 

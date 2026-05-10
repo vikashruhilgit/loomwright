@@ -47,6 +47,7 @@ ai-agent-manager/                              # marketplace wrapper
 │   ├── skills/                                # 49 skills + SKILLS_INDEX.md
 │   ├── scripts/                               # send-telemetry.sh, send-telemetry-core.sh, telemetry-fixtures/
 │   └── docs/                                  # RESULT_SCHEMAS, FAILURE_ESCALATION, ARCHITECTURE_CONTRACTS, ARCHITECTURE, QA_SYSTEM_BLUEPRINT, TELEMETRY
+│       └── SPIKES/                            # Capability spike investigations + deferral records
 ├── scripts/                                   # validate-version.sh, check-command-sync.sh
 ├── README.md                                  # user-facing docs
 ├── AGENT_GUIDELINES.md                        # standards, agent contract

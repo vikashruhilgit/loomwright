@@ -879,7 +879,8 @@ ai-agent-manager-plugin/              # Nested plugin root
 │   ├── FAILURE_ESCALATION.md
 │   ├── ARCHITECTURE_CONTRACTS.md
 │   ├── ARCHITECTURE.md
-│   └── QA_SYSTEM_BLUEPRINT.md
+│   ├── QA_SYSTEM_BLUEPRINT.md
+│   └── SPIKES/                       # Capability spike investigations + deferral records
 └── skills/                           # Skill files (49 skills)
     ├── SKILLS_INDEX.md               # Skill catalog with agent mapping
     ├── supervisor-readiness/         # Pre-flight checklist & brief template
