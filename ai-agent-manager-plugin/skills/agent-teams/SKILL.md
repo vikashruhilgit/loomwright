@@ -2,8 +2,8 @@
 name: agent-teams
 description: Agent Teams patterns for parallel coordination using Claude Code native teams feature. Use when coordinating multiple agents on cross-layer changes, competing hypotheses, or research tasks.
 allowed-tools: [Read, Bash]
-version: "1.0.0"
-lastUpdated: "2026-03"
+version: "1.1.0"
+lastUpdated: "2026-05-10"
 ---
 
 # Agent Teams Skill
@@ -18,6 +18,18 @@ Patterns for using Claude Code Agent Teams as an alternative parallel execution 
 - Size tasks for 5-6 actions per teammate (not too small, not too large)
 - Avoid file conflicts — each teammate should own distinct files
 - Use delegate mode for pure coordination (lead agent doesn't implement)
+
+## Recommended Use Cases
+
+Agent Teams is a good fit for the following scenarios:
+
+- **Research** — parallel exploration of multiple areas of a codebase or problem space, with teammates synthesizing findings back to the lead.
+- **Competing hypotheses** — two (or more) teammates try different approaches to the same problem; the lead compares results and selects the winner.
+- **Cross-layer changes** — work that spans frontend / backend / tests / infrastructure where each teammate owns a distinct architectural layer.
+
+## Not Recommended For
+
+Agent Teams is **not** a good fit for sequential implementation tasks. For ordered, dependency-heavy work — feature branches with serial subtasks, code-review-and-fix loops, or anything that needs strict file isolation across attempts — use the **Supervisor + git worktrees** workflow instead (`agents/supervisor.md`, `skills/async-orchestration/SKILL.md`). Worktrees give you per-subtask branches, separate working directories, and proven checkpoint/resume semantics; Agent Teams shares one worktree and offers no git-level isolation.
 
 ## When to Use Agent Teams
 
@@ -262,16 +274,21 @@ Before using Agent Teams:
 
 ## Graduation Criteria (Experimental → Stable)
 
-Agent Teams remains experimental until all criteria are met:
+Agent Teams maturity is tracked against six criteria. As of 2026-05-10, **3 of 6** are met.
 
-1. **Documented successful runs:** At least 5 successful multi-teammate runs across different projects with no data loss
-2. **File conflict resolution:** Reliable detection and recovery from file conflicts (not just prevention)
-3. **Error recovery:** Teammate failure recovery comparable to Supervisor's checkpoint/resume
-4. **Context sharing:** Teammates can share intermediate results without context explosion
-5. **Performance parity:** Task completion rate ≥90% (matching Supervisor's worktree approach)
-6. **Integration path:** Clear API for Supervisor to use Agent Teams within EXECUTE phase as alternative to worktrees
+### Met (3)
 
-**Current status:** Criteria 1-6 NOT met. Use Supervisor v4 with git worktrees for production workflows.
+1. **TeammateIdle hook** ✅ — the `TeammateIdle` lifecycle hook is available and reliable for detecting teammate completion and reassigning work (see the hook example below).
+2. **Direct mailbox communication** ✅ — teammates can exchange intermediate results through the native mailbox channel without round-tripping through the lead's context, addressing earlier "context sharing" concerns.
+3. **Plan approval gates** ✅ — leads can require explicit approval before teammates begin execution, giving deterministic checkpoints comparable to Supervisor's pre-merge gates.
+
+### Unmet (3)
+
+4. **Nested teams** ❌ — a teammate cannot itself act as a lead and spawn its own sub-team. This blocks recursive decomposition patterns and limits Agent Teams to a single level of hierarchy.
+5. **Session resumption** ❌ — there is no checkpoint/resume equivalent to `/supervisor --continue`. If a team session is interrupted, work is lost; teammate state is not durable across Claude Code restarts.
+6. **One team at a time** ❌ — only one Agent Teams session can run per Claude Code instance. Concurrent teams across different feature branches or projects are not supported, which caps real-world parallelism vs. git worktrees.
+
+**Current status:** 3 of 6 criteria met. Agent Teams is suitable for **research, competing-hypothesis exploration, and bounded cross-layer changes** today, but the unmet criteria (especially session resumption and one-team-at-a-time) mean **Supervisor v4 with git worktrees remains the default for production implementation workflows**.
 
 ## See Also
 
