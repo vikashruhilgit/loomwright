@@ -180,6 +180,8 @@ Agents with `memory: project` in frontmatter accumulate knowledge across session
 | QA Strategist | `.claude/agent-memory/ai-agent-manager-plugin:qa-strategist/` |
 | QA Executor | `.claude/agent-memory/ai-agent-manager-plugin:qa-executor/` |
 
+> Decision aid for *what* to write to those memory directories: `ai-agent-manager-plugin/skills/memory-tool/SKILL.md` (reference skill — not pre-loaded; consult on demand when tagging conventions or Memory-Tool-vs-file-based questions arise).
+
 ## Skills Preloading
 
 Agents with `skills` in frontmatter get content pre-injected at spawn time (no runtime file-read):

@@ -37,12 +37,13 @@ Concrete facts captured from `docs.claude.com/.../advisor-tool`:
 - **Tool type identifier:** `advisor_20260301` (the `type` field on the tool definition).
 - **Mechanism (verbatim):** *"All of this happens inside a single `/v1/messages` request. No extra round trips on your side."* The advisor is a **server-side sub-inference** — the executor emits a `server_tool_use` block with `name: "advisor"`, the server runs a separate inference on the advisor model with the executor's full transcript, and an `advisor_tool_result` block returns to the executor.
 - **Quick-start example uses `client.beta.messages.create(...)`** with executor `claude-sonnet-4-6`, beta `advisor-tool-2026-03-01`, advisor type `advisor_20260301`, advisor model `claude-opus-4-7`.
-- **Valid pairs** (executor → permitted advisors):
-  - Haiku 4.5 → Opus 4.7
-  - Sonnet 4.6 → Opus 4.7 / Opus 4.6
-  - Opus 4.6 → Opus 4.7
-  - Opus 4.7 → Opus 4.7
+- **Valid pairs** (executor → permitted advisors; API slugs in parens):
+  - Haiku 4.5 (`claude-haiku-4-5`) → Opus 4.7 (`claude-opus-4-7`)
+  - Sonnet 4.6 (`claude-sonnet-4-6`) → Opus 4.7 (`claude-opus-4-7`) / Opus 4.6 (`claude-opus-4-6`)
+  - Opus 4.6 (`claude-opus-4-6`) → Opus 4.7 (`claude-opus-4-7`)
+  - Opus 4.7 (`claude-opus-4-7`) → Opus 4.7 (`claude-opus-4-7`)
   - Invalid pairs return `400 invalid_request_error`.
+  - Note: model slugs are accurate as of 2026-05-10; verify against the current Anthropic models list (`https://docs.anthropic.com/en/docs/about-claude/models`) before building — slugs and pair eligibility may change as new model versions ship.
 - **Platform availability (verbatim):** *"The advisor tool is available in beta on the Claude API (Anthropic)."* No mention of Bedrock / Vertex / Claude Code.
 - **Billing:** advisor sub-inference billed at the advisor model's rates; usage reported in the response `usage` object.
 

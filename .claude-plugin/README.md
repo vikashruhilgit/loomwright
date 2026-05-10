@@ -41,7 +41,7 @@ Plus all prior v11.0/v10.3/v10.2 capabilities:
 - **Worker** — Implements a single subtask in an isolated git worktree (spawned by Execute Manager)
 - **Plan Reviewer** — Validates Supervisor-Ready Briefs before execution (spawned by Launch Pad)
 
-### 48 Skills
+### 49 Skills
 
 Skills are loaded on-demand to keep context small:
 
