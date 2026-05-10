@@ -86,6 +86,38 @@ Agent result blocks (`WORKER_RESULT`, `CODE_REVIEW_RESULT`, `EXECUTE_RESULT`, `E
 
 ---
 
+## Advisor Tool (SDK-only pattern)
+
+The Anthropic **Advisor tool** is a beta capability on the Claude API as of 2026-05-10 that lets one inference call use an executor model (e.g., a Sonnet-class model) which can consult a higher-intelligence advisor model (e.g., an Opus-class model) for a sub-inference within the same `/v1/messages` request. It is enabled by sending the beta header `advisor-tool-2026-03-01` and attaching a tool of type `advisor_20260301` to the request's `tools` array.
+
+**Status in this plugin: SDK-only.** The Advisor tool is **not** wired through any plugin surface in v12.1.0 — there is no `--advisor` flag on `/supervisor`, no advisor-aware Worker / Code Reviewer / Execute Manager mode, and no entry in the cost profile. The reason is structural: Claude Code's documented subagent / plugin mechanisms (subagent frontmatter `tools:` / `model:` fields, `settings.json`, hook configuration, the Task tool) currently expose **no path to inject the `advisor-tool-2026-03-01` beta header** or attach an `advisor_20260301` server-tool onto the underlying `/v1/messages` call that a Task-spawned subagent makes. The frontmatter `tools:` field is an allowlist over Claude Code's internal tools (`Read`, `Grep`, `Bash`, `Task`, etc.), not over Anthropic API server-tool types.
+
+**When the pattern IS reachable today:** code that calls the Anthropic SDK directly — i.e. `client.beta.messages.create(...)` from TypeScript or Python — can attach the beta and the advisor tool without restriction. That code lives **outside** the Claude Code plugin runtime (custom orchestrators, CI workers, SDK-based pipelines), not inside a Task-spawned subagent.
+
+**Example shape (TypeScript, fields verbatim from the v12.1.0 advisor spike):**
+
+```typescript
+import Anthropic from "@anthropic-ai/sdk";
+const client = new Anthropic();
+const resp = await client.beta.messages.create({
+  model: "claude-sonnet-4-6",                 // executor
+  betas: ["advisor-tool-2026-03-01"],
+  max_tokens: 4096,
+  tools: [
+    { type: "advisor_20260301", advisor_model: "claude-opus-4-7" }
+  ],
+  messages: [{ role: "user", content: "..." }],
+});
+```
+
+(Equivalent Python uses `client.beta.messages.create(model="claude-sonnet-4-6", betas=["advisor-tool-2026-03-01"], tools=[{"type": "advisor_20260301", "advisor_model": "claude-opus-4-7"}], ...)`.)
+
+**Authoring rule:** do not add a `--advisor` flag, advisor cost-profile row, or advisor-aware subagent mode to the plugin until the spike triggers in `ai-agent-manager-plugin/docs/SPIKES/advisor.md` are met (Claude Code release notes, subagent docs, or Agent SDK reference must document a way to set `anthropic-beta` headers on subagent inference, OR Claude Code adds an `Advisor` internal tool, OR the Advisor tool exits beta with a Claude Code integration note). The canonical cost/quality knobs in v12.x remain the effort tiering (`xhigh` / `high` / `medium`, per `ai-agent-manager-plugin/docs/ARCHITECTURE_CONTRACTS.md` §"Effort Tiers") and the `/supervisor --cheap` opt-in profile.
+
+See `ai-agent-manager-plugin/docs/SPIKES/advisor.md` for the full SDK-ONLY recommendation, the surfaces that were checked, and the re-spike triggers.
+
+---
+
 ## Language-Specific Standards
 
 | Language | Type Safety | Testing | Linting |
