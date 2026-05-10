@@ -150,6 +150,28 @@ Success looks like {measurable outcome}.
 - [ ] Given {precondition}, when {action}, then {outcome}
 - [ ] ...
 
+## Outcomes Rubric (optional — v12.2.0+)
+
+3-7 observable, testable assertion bullets the integrated PR diff must satisfy. Used by Supervisor Phase 4.5 (after Code Reviewer PASS) to spawn a Haiku grader that scores the PR against each item, emitting `rubric_score: N/M` in SUPERVISOR_RESULT.
+
+**Authoring rules:**
+- 3-7 bullets, no fewer no more
+- Each bullet is a single, observable, testable assertion (not prose, not narrative)
+- Each bullet should be evaluable from the PR diff alone (no external state, no manual steps)
+- Phrase as positive assertions ("X is present", "Y references Z"), not aspirations ("X should be nice")
+- The section is **optional**. Briefs without it work exactly as before — Supervisor emits `rubric_score: null`
+
+**Positive example:**
+
+```markdown
+## Outcomes Rubric
+- The new `JwtAuthGuard` class is exported from `src/auth/jwt.guard.ts` and decorated with `@Injectable()`.
+- `auth.module.ts` registers `JwtAuthGuard` in its `providers` array.
+- A spec file `src/auth/jwt.guard.spec.ts` exists and contains at least one `expect(...)` assertion.
+- The PR description does not mention TODO, FIXME, or "deferred".
+- No file outside `src/auth/` is modified.
+```
+
 ## Subtask Structure
 
 | # | Title | Acceptance Criteria Subset | Est. Files (modify/create) | Skills | Status |
