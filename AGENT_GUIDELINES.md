@@ -70,6 +70,22 @@ Comprehensive guidance for AI agents working on any project. Apply these standar
 
 ---
 
+## Structured Outputs
+
+Agent result blocks (`WORKER_RESULT`, `CODE_REVIEW_RESULT`, `EXECUTE_RESULT`, `EXECUTE_CHECKPOINT`, `SUPERVISOR_RESULT`, `QA_RESULT`, `PLAN_REVIEW_RESULT`, `MISSING_FUNCTIONALITY_REPORT`, `FIX_RESULT`, `CONTEXT_KEEPER_STATE`, `QA_SESSION_PLAN`, `QA_SESSION_COVERAGE`) are governed by strict contracts. The single source of truth is `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md` — currently CODE_REVIEW_RESULT at `schema_version: 3`, WORKER_RESULT at `schema_version: 2`, all others at `schema_version: 1`.
+
+**Two enforcement paths, depending on where the agent runs:**
+
+1. **Claude API direct (outside Claude Code) — use `output_config.format`.**
+   When you build agents on the Anthropic API directly (e.g., a custom orchestrator, a CI worker, an SDK-based pipeline), enforce conformance at the API layer by passing the schema as JSON Schema via `output_config.format` (JSON Schema mode). The model is constrained to produce schema-valid output before the response is returned, which gives guaranteed conformance — there is no need to parse a markdown block, regex a YAML frontmatter, or rely on a downstream validator to catch drift. Translate the schemas in `RESULT_SCHEMAS.md` into JSON Schema (the field types, enums, `required` lists, and cross-field invariants are all expressible) and supply them at request time. See the Anthropic API reference for the exact field name in your SDK version (it has been referred to as `output_config.format`, `response_format`, or equivalent depending on SDK and release).
+
+2. **Claude Code plugin (inside this repo) — `SubagentStop` hooks are the runtime fallback.**
+   Plugin-distributed agents cannot configure `output_config` (Claude Code does not expose API-level constraint mode to plugin agents). Instead, the plugin's `SubagentStop` hooks in `ai-agent-manager-plugin/hooks/hooks.json` validate every result block against the same schemas after the agent finishes. A failed hook rejects the run — see the per-schema validation rules and cross-field invariants in `RESULT_SCHEMAS.md` (e.g., WORKER_RESULT's `outputs_gap` non-empty ⇒ `status: partial` invariant, CODE_REVIEW_RESULT's `drift_kind` severity caps, EXECUTE_CHECKPOINT's `toolset_gap` rejection). This is strictly weaker than API-level enforcement (the agent has already burned tokens producing a malformed block by the time the hook fires), but it is the strongest gate available to plugin agents.
+
+**Authoring rule:** when you change a schema in `RESULT_SCHEMAS.md`, update both enforcement paths — the corresponding `SubagentStop` hook in `hooks.json` AND any external API-level JSON Schema fixtures consumers may have generated. Bump `schema_version` for breaking changes; document the transition window. The schemas in `RESULT_SCHEMAS.md` remain authoritative — `output_config.format` schemas and hook validators are derived artifacts.
+
+---
+
 ## Language-Specific Standards
 
 | Language | Type Safety | Testing | Linting |
