@@ -155,6 +155,78 @@ Exits with error description and resume command
 
 ---
 
+## Inter-Subtask Gap / Scope Expansion
+
+```
+Pre-spawn verification gate FAILs (Execute Manager Step 2b)
+    OR Worker emits WORKER_RESULT with non-empty outputs_gap
+    ↓
+Execute Manager emits EXECUTE_CHECKPOINT with:
+    - adjudication_required: true
+    - missing_outputs: [...]
+    - adjudication_options:
+        A: Re-queue producer (re-run the producer subtask)
+        B: Insert remediation subtask (new subtask to fill the gap)
+        C: Exit to Launch Pad (re-plan from scratch)
+        D: Update consumer brief (reduce consumer scope)
+    ↓
+Supervisor pauses EXECUTE phase
+    ↓
+Supervisor presents 4 options to user via AskUserQuestion (NEVER auto-picks)
+    ↓
+User selects option → Supervisor applies it and resumes EXECUTE
+```
+
+> When option C is selected, the job is marked `failed` with `reason: inter_subtask_gap` (this string is grep-stable and is what telemetry / `state.md` will record).
+
+**Detection:**
+- Execute Manager Step 2b runs `test -f` / `grep` against each `requires` entry in the dependent subtask's brief; missing entries fail the gate
+- SubagentStop hook on `worker` flags any WORKER_RESULT with non-empty `outputs_gap` (drift detection)
+
+**Rules:**
+- **NEVER retry silently** — gaps and scope expansions are real specification disagreements, not transient flakes
+- Always escalate immediately; no automatic remediation
+- Supervisor must use AskUserQuestion (no silent default selection)
+- The dependent worktree is not modified by Execute Manager — it remains in its pre-spawn state until the user resolves
+
+**Cross-references:**
+- `agents/execute-manager.md` Step 2b (pre-spawn verification gate)
+- `skills/async-orchestration/SKILL.md` §"Scope Expansion Adjudication"
+- `agents/supervisor.md` §"Adjudication Handling"
+- `agents/worker.md` Step 5.5 (`outputs_verified` / `outputs_gap` emission)
+- `hooks/hooks.json` outputs_gap validation rule
+
+---
+
+## Dependency Merge Conflict
+
+```
+Execute Manager Step 2a (dependency materialization)
+    ↓
+git -C <dependent_worktree> merge --no-ff feature/<task>-<producer>
+    ↓ (exit code != 0 with conflict)
+Execute Manager emits EXECUTE_CHECKPOINT noting conflicting files
+    ↓
+Dependent worktree LEFT in conflicted state (for user inspection)
+    ↓
+Supervisor pauses EXECUTE phase
+    ↓
+Supervisor surfaces conflict + file list to user
+    ↓
+User manually resolves → Supervisor resumes EXECUTE on user signal
+```
+
+**Rules:**
+- **NEVER retry** — merge conflicts between two completed producers reflect real semantic disagreement, not noise
+- Execute Manager does NOT run `git merge --abort`; the worktree stays in conflicted state so the user can inspect both sides
+- Supervisor never force-resolves; the user must complete the merge (or instruct Supervisor to discard the dependent worktree)
+
+**Cross-references:**
+- `agents/execute-manager.md` Step 2a (dependency materialization)
+- `skills/async-orchestration/SKILL.md` §"Dependency Materialization"
+
+---
+
 ## Context-Keeper Failure
 
 ```
@@ -266,6 +338,8 @@ Plan Reviewer returns NEEDS_HUMAN
 |-------|-------------|-------------|-------------------|
 | Worker | Implementation failure | 1 | Execute Manager → Supervisor |
 | Execute Manager | Budget exceeded | 1 (fresh spawn) | Supervisor → Human |
+| Execute Manager | Inter-subtask gap / outputs_gap | 0 (immediate) | Supervisor → User AskUserQuestion (4 options) |
+| Execute Manager | Dependency merge conflict | 0 (never) | Supervisor → User manual resolution |
 | Code Reviewer | FAIL decision | 3 (fix + re-review) | Supervisor → Human |
 | Code Reviewer | NEEDS_HUMAN | 0 (immediate) | Supervisor → Human (3x = halt) |
 | QA Executor | Test failure | 0 | Partial result (non-blocking) |

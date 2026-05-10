@@ -1,7 +1,7 @@
 # Result Schemas
 
 > Strict contracts for all agent result blocks. Hooks validate against these schemas.
-> All schemas include a `schema_version` field for forward compatibility. Current versions: CODE_REVIEW_RESULT at `schema_version: 3` (review modes + consistency audit; v2 accepted for legacy); all others at `schema_version: 1`.
+> All schemas include a `schema_version` field for forward compatibility. Current versions: CODE_REVIEW_RESULT at `schema_version: 3` (review modes + consistency audit; v2 accepted for legacy); WORKER_RESULT at `schema_version: 2` (outputs_verified contract; v1 accepted for the v12.0.0 transition window); all others at `schema_version: 1`.
 
 ---
 
@@ -11,36 +11,82 @@ Produced by Worker agent on task completion.
 
 ```yaml
 WORKER_RESULT:
-  schema_version: 1                    # integer, required — always 1
+  schema_version: 2                    # integer, required — v2 adds outputs_verified + outputs_gap (v1 still accepted during the v12.0.0 transition window)
   task_id: string                      # required — subtask identifier (e.g., "BD-15a" or "add-auth-guard")
   status: enum [completed, failed, partial]  # required
   files_modified: string[]             # required — non-empty when status=completed
   files_created: string[]              # optional — new files created
-  tests_added: string[]               # optional — test files added or modified
-  tests_passed: boolean               # optional — true if all tests pass
+  tests_added: string[]                # optional — test files added or modified
+  tests_passed: boolean                # optional — true if all tests pass
+  outputs_verified: object[]           # required (v2) — itemized verification of every output the brief promised
+    - kind: enum [file, symbol, type]  # required — what was checked
+      path: string                     # required — repo-relative path the check was performed against
+      name: string                     # optional — symbol/type name (required when kind in {symbol, type})
+      status: enum [present, missing]  # required — outcome of the check
+  outputs_gap: string                  # required (v2) — empty string when nothing missing; non-empty implies status MUST be partial
   summary: string                      # required — max 200 tokens, what was done
   error: string                        # conditional — required when status=failed, describes what went wrong
 ```
 
-**Validation rules:**
-- `schema_version` must equal `1`
+**Validation rules (schema_version: 2):**
+- `schema_version` must equal `2`
 - `task_id` must be non-empty string
 - `status` must be one of: `completed`, `failed`, `partial`
 - When `status=completed`: `files_modified` must be non-empty array
 - When `status=failed`: `error` must be present and non-empty
 - `summary` must be present and under 200 tokens
+- `outputs_verified` must be present (may be `[]` only when the brief promised no concrete outputs); each entry must have `kind`, `path`, `status`; entries with `kind ∈ {symbol, type}` must include `name`
+- `outputs_gap` must be present as a string; an empty string means all promised outputs were delivered
+- **Cross-field invariant (hook-enforced):** if `outputs_gap` is non-empty AND `status=completed`, the SubagentStop hook rejects with `outputs_gap non-empty must map to status: partial`. A worker that did not deliver all promised outputs has not completed.
+- **Runtime checks performed by the SubagentStop hook (not part of the schema, listed for transparency):** the hook also verifies that a `.worker-summary.md` file was written and that no destructive commands (`rm -rf`, `git push`, `git reset --hard`, `DROP`, `TRUNCATE`) appear in the run output.
 
-**Example:**
+**Validation rules (schema_version: 1, legacy):**
+- `schema_version` must equal `1`
+- All v2 rules except `outputs_verified` and `outputs_gap` (which are not present in v1)
+- v1 emissions remain accepted by the SubagentStop hook for the v12.0.0 transition window. Workers running on v12.0.0+ MUST emit v2.
+
+**Example (v2, happy path):**
 ```
 WORKER_RESULT:
-  schema_version: 1
+  schema_version: 2
   task_id: add-jwt-guard
   status: completed
   files_modified: [src/auth/jwt.guard.ts, src/auth/jwt.strategy.ts]
   files_created: [src/auth/jwt.guard.spec.ts]
   tests_added: [src/auth/jwt.guard.spec.ts]
   tests_passed: true
+  outputs_verified:
+    - kind: file
+      path: src/auth/jwt.guard.ts
+      status: present
+    - kind: symbol
+      path: src/auth/jwt.guard.ts
+      name: JwtGuard
+      status: present
+    - kind: file
+      path: src/auth/jwt.guard.spec.ts
+      status: present
+  outputs_gap: ""
   summary: Implemented JWT guard with passport strategy. Added unit tests with 92% coverage.
+```
+
+**Example (v2, partial — gap reported):**
+```
+WORKER_RESULT:
+  schema_version: 2
+  task_id: add-jwt-guard
+  status: partial
+  files_modified: [src/auth/jwt.guard.ts]
+  files_created: []
+  outputs_verified:
+    - kind: file
+      path: src/auth/jwt.guard.ts
+      status: present
+    - kind: file
+      path: src/auth/jwt.guard.spec.ts
+      status: missing
+  outputs_gap: "src/auth/jwt.guard.spec.ts"
+  summary: Guard implemented but unit-test file deferred (Jest config absent in the worktree); status partial because outputs_gap names the missing spec.
 ```
 
 ---
@@ -136,6 +182,14 @@ EXECUTE_CHECKPOINT:
     active_worktrees: string[]         # paths that still exist
     feature_branch: string
   reason: string                       # required — why checkpointing (budget, error, etc.)
+  adjudication_required: boolean       # optional (v12) — true when the Execute Manager has detected an outputs gap that requires Supervisor/operator decision
+  missing_outputs: object[]            # conditional (v12) — required and non-empty when adjudication_required=true
+    - item: string                     # what is missing (file path, symbol, contract field)
+      producing_subtask: string        # which subtask was supposed to produce it
+      check_run: string                # what verification was performed (e.g., "ls", "ts-symbol-search", "schema-grep")
+  adjudication_options: string[]       # conditional (v12) — required and non-empty when adjudication_required=true
+                                       # typically ["A: re-queue producer", "B: insert remediation subtask",
+                                       # "C: exit to Launch Pad", "D: update consumer brief"]
 ```
 
 **Validation rules:**
@@ -144,6 +198,8 @@ EXECUTE_CHECKPOINT:
 - `remaining` must be present and non-empty (otherwise use EXECUTE_RESULT)
 - `resume_context` must be present with at least `feature_branch`
 - `reason` must be non-empty string
+- **toolset_gap rejection (hook-enforced, v12):** if `reason` cites `toolset_gap`, "Task tool unavailable", "Agent tool unavailable", or any variant claiming the spawning toolset is missing, the SubagentStop hook rejects the checkpoint. The Execute Manager spawns workers via Task and that capability is guaranteed by the harness; the actual blocker must be restated without referencing toolset availability.
+- **Adjudication tri-field invariant (hook-enforced, v12):** the three fields `adjudication_required`, `missing_outputs`, and `adjudication_options` appear together (all-or-nothing). When `adjudication_required: true`, both `missing_outputs` and `adjudication_options` MUST be non-empty arrays. The SubagentStop hook (see `hooks.json` Execute Manager entry) rejects checkpoints that set the flag without populating both arrays.
 
 ---
 
@@ -356,6 +412,7 @@ QA_RESULT:
 - `tests_passed` must be ≤ `tests_generated`
 - When `status=failed`: `error` must be present
 - `summary` must be present and under 200 tokens
+- **Hook-enforced (in addition to schema):** when tests were actually run (i.e. `tests_generated > 0`), `coverage_estimate` must be present. The SubagentStop hook for QA Executor enforces this conditional even though the field is otherwise optional.
 
 ---
 
@@ -449,6 +506,7 @@ PLAN_REVIEW_RESULT:
   issues: object[]                     # required (can be empty for PASS)
     - severity: enum [BLOCKING, HIGH, MEDIUM, LOW]
       section: string                  # brief section name (e.g., "Subtask Structure", "File Impact Map")
+      category: string                 # optional — issue category (e.g., "dep_graph" for Criterion 12 violations, "file_path" for missing files); free-form, but use canonical names where defined
       description: string              # what's wrong
       suggestion: string               # optional — how to fix
   summary: string                      # required — concise review summary
@@ -460,6 +518,7 @@ PLAN_REVIEW_RESULT:
 - When `decision=FAIL`: `issues` must contain at least one issue with BLOCKING or HIGH severity
 - When `decision=NEEDS_HUMAN`: `issues` must be non-empty
 - `section` must reference a valid brief section name
+- `category` is optional but recommended; when present, prefer canonical names — `dep_graph` for Criterion 12 (provides/requires) violations, `file_path` for missing-file violations, `feasibility` for Criterion 11 issues
 - `summary` must be present
 
 **Severity mapping for plan review:**
@@ -606,6 +665,8 @@ All result schemas include a `schema_version` field. This enables forward compat
 
 ### Version History
 
+- **WORKER_RESULT v2** (v12.0.0): Added `outputs_verified[]` (itemized presence checks for every output the brief promised) and `outputs_gap` (string; non-empty implies status MUST be `partial`). The SubagentStop hook enforces a cross-field invariant: `outputs_gap` non-empty AND `status: completed` is rejected. v1 emissions remain accepted during the v12.0.0 transition window.
+- **EXECUTE_CHECKPOINT v1 extension** (v12.0.0): Added optional fields `adjudication_required: bool`, `missing_outputs: object[]`, and `adjudication_options: string[]`. These fields appear together (all-or-nothing); when `adjudication_required: true`, both arrays MUST be non-empty (hook-enforced). Schema version was NOT bumped because the additions are optional. Same release added a hook rejection of `toolset_gap`-style escalation reasons.
 - **CODE_REVIEW_RESULT v2** (v7.0.0): Added `category` field to issues (`new`, `pre_existing`, `nit`). FAIL decisions now require at least one `new` HIGH/BLOCKING issue. Pre-existing issues are reported but do not block.
 - **MISSING_FUNCTIONALITY_REPORT v1** (v7.1.0): New schema for QA Executor gap detection output.
 - **QA_RESULT + QA_SESSION_PLAN** (v10.3.0): Added optional `app_topology`, `detected_auth_method`, `websocket_detected` (QA_RESULT) and `app_topology`, `auth_method` (QA_SESSION_PLAN). Backward compatible — existing payloads without these fields still validate.

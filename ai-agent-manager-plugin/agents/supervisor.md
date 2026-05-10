@@ -4,6 +4,7 @@ description: Internal runner for the `/supervisor` workflow. Invoke directly via
 tools: Task, Read, Glob, Grep, Bash, Write, Edit
 model: inherit
 maxTurns: 40
+effort: medium
 color: "#1E90FF"
 permissionMode: default
 skills:
@@ -302,8 +303,30 @@ if EXECUTE_CHECKPOINT (partial):
 | EXECUTE_RESULT (completed) | Extract merge data, proceed to FINALIZE |
 | EXECUTE_RESULT (escalation) | Checkpoint, report to human |
 | EXECUTE_CHECKPOINT (partial) | Ask user, merge subset or continue |
+| EXECUTE_CHECKPOINT (`adjudication_required: true`) | Pause EXECUTE, surface 4-option choice via AskUserQuestion (see "Adjudication Handling" below) |
 | Execute Manager crash | Checkpoint, report worktree state, exit with resume |
 | Tool budget warning | Checkpoint, exit with resume command |
+
+#### Adjudication Handling (CHECKPOINT with adjudication_required)
+
+When the Execute Manager surfaces an `EXECUTE_CHECKPOINT` with `adjudication_required: true` (raised by the Execute Manager's Step 2b pre-spawn verification gate when a consumer subtask's `requires:` items are not present in the materialized worktree), the Supervisor MUST:
+
+1. **Pause the EXECUTE phase** — do not spawn further workers, do not advance the consumer subtask, do not return to the Execute Manager until a choice is made.
+2. **Read `missing_outputs[]` and `adjudication_options[]`** from the CHECKPOINT block. `missing_outputs[]` items have shape `{item, producing_subtask, check_run}`.
+3. **Present all four options to the user via `AskUserQuestion`** (preferred). Only fall back to inline prompting if user-input is unavailable in the current session. The four options (wording stays aligned with the `async-orchestration` skill and the Execute Manager's Step 2b CHECKPOINT format — do not paraphrase):
+
+   - **A: Re-queue producer** — Execute Manager re-spawns the producing subtask with the missing outputs explicitly added to its acceptance criteria.
+   - **B: Insert remediation subtask** — Supervisor inserts a new ad-hoc subtask whose `provides:` covers the missing items, then resumes execution with the original consumer blocked on it.
+   - **C: Exit to Launch Pad** — Supervisor checkpoints state, marks the job `failed` with reason `inter_subtask_gap`, and exits cleanly. User must rerun `/launch-pad` to fix the brief.
+   - **D: Update consumer brief** — Supervisor edits the in-progress brief to remove the failing `requires` entry from the consumer subtask, then re-emits the consumer to the Execute Manager (consumer may proceed without the missing item).
+
+4. **Apply the chosen option**, then resume EXECUTE:
+   - **A:** spawn a fresh Execute Manager invocation with the producer re-queued (acceptance criteria amended to call out the missing outputs).
+   - **B:** insert the remediation subtask into the plan (update parallelism graph: consumer now `requires` the remediation), then resume Execute Manager with the new subtask launchable and the consumer blocked.
+   - **C:** call `Context-Keeper(operation: checkpoint, ...)`, mark the job `failed` with `reason: inter_subtask_gap`, move the brief to `.supervisor/jobs/failed/`, exit cleanly.
+   - **D:** edit the in-progress brief in `.supervisor/jobs/in-progress/` to drop the failing `requires` entry from the consumer, record a `record_decision` entry noting the brief edit, then resume Execute Manager with the amended consumer.
+
+**Hard rule:** the Supervisor never picks an option silently — it always asks the user. Auto-selection (e.g., "C is safest, pick C") is forbidden because each option has different irreversible consequences (job failure, brief mutation, plan mutation).
 
 **Output:**
 ```markdown

@@ -140,7 +140,7 @@ Prevents runaway refactors and reviewer context explosion.
 
 ## Result Schema Versioning
 
-All result schemas include a `schema_version` field. CODE_REVIEW_RESULT is at v2 (with issue categories); all others remain at v1.
+All result schemas include a `schema_version` field. Current versions: CODE_REVIEW_RESULT at `schema_version: 3` (review modes + consistency audit; v2 accepted for legacy); WORKER_RESULT at `schema_version: 2` (outputs_verified contract; v1 accepted for the v12.0.0 transition window); all others at `schema_version: 1`.
 
 1. Hooks verify `schema_version` is supported before validating fields
 2. If `schema_version` is unrecognized, hook warns but does not block
@@ -233,3 +233,22 @@ Applies when `/supervisor --cheap` is passed. Supervisor and Execute Manager app
 | QA Strategist | Tomato | `#FF6347` |
 | Plan Reviewer | Medium Turquoise | `#48D1CC` |
 | QA Executor | Orange Red | `#FF4500` |
+
+---
+
+## Effort Tier
+
+The `effort:` frontmatter field on each agent maps to an adaptive thinking tier. Tiers communicate intent — Opus 4.7 manages the actual thinking budget adaptively, so explicit `budget_tokens` are no longer required.
+
+| Tier | Agents | Rationale |
+|------|--------|-----------|
+| `xhigh` | red-team-reviewer | Adversarial deep analysis with persistent memory across audits |
+| `high` | code-reviewer, launch-pad, worker, qa-executor, qa-strategist, plan-reviewer | Implementation, exhaustive analysis, or cross-file validation |
+| `medium` | supervisor, execute-manager, orchestrator | Pure orchestration / coordination |
+| omitted | context-keeper, product-owner | Haiku model (context-keeper) or no thinking budget needed (product-owner) |
+
+### Opus 4.7 Migration Note
+
+- **Adaptive thinking replaces explicit `budget_tokens`.** Earlier configs that pinned an exact thinking budget per agent are now expressed as a tier; the model expands or contracts thinking on its own within that tier.
+- **`xhigh` is a new top-level tier above `high`.** Reserve it for agents whose value comes from going deeper than a normal high-effort review — currently red-team-reviewer is the only one in this tier.
+- **Tokenizer change — 4.7 uses 1.0–1.35× more tokens than 4.6 for the same input.** Tool-call budgets and `tool_call_count` thresholds in this document were sized against 4.6. Sessions on 4.7 may hit the same RED thresholds earlier in real wall time. **Recommendation:** monitor `tool_call_count` against the thresholds documented in this file and adjust downward if you observe RED triggering earlier than expected. No automatic rescaling is applied.

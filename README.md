@@ -6,7 +6,9 @@ A Claude Code plugin for AI agents to collaborate on software projects. 12 speci
 
 > **Install the plugin and run slash commands instead of manually managing agents.**
 >
-> **NEW in v7:** Enhanced Code Reviewer (LSP diagnostics, read-only mode, issue categorization: new/pre_existing/nit), senior-grade QA (strict assertions, negative testing, CRUD lifecycle, data integrity probes, security boundary tests, missing functionality detection with `MISSING_FUNCTIONALITY_REPORT`), session-based QA (`--plan`, `--scope`, `--continue`), Strategist assertion quality audit. Plus all v6 features: structured result schemas, failure escalation, merge safety gate, session logging, per-agent hooks, architecture contracts.
+> **NEW in v12.0.0:** Reliability primitives — inter-subtask `provides` / `requires` contracts, pre-spawn dependency verification gate, scope-expansion adjudication (4-option escalation), effort-tier discipline across the 10 execution-shaped agents (haiku context-keeper and discovery-only product-owner exempt), and hardened SubagentStop validation rejecting `outputs_gap` / `toolset_gap` drift. WORKER_RESULT schema bumped to v2.
+>
+> **v7 baseline (preserved):** Enhanced Code Reviewer (LSP diagnostics, read-only mode, issue categorization: new/pre_existing/nit), senior-grade QA (strict assertions, negative testing, CRUD lifecycle, data integrity probes, security boundary tests, missing functionality detection with `MISSING_FUNCTIONALITY_REPORT`), session-based QA (`--plan`, `--scope`, `--continue`), Strategist assertion quality audit. Plus all v6 features: structured result schemas, failure escalation, merge safety gate, session logging, per-agent hooks, architecture contracts.
 
 ---
 
@@ -306,7 +308,7 @@ For apps with many routes, use session-based QA to test in chunks:
 
 ## Telemetry (opt-in)
 
-**New in v11.2.0** — an optional GitHub Issues telemetry pipeline. After
+**New in v11.2.0 (preserved in v12.0.0)** — an optional GitHub Issues telemetry pipeline. After
 qualifying agent runs (`/supervisor`, `/code-reviewer`, `/qa-executor`)
 complete, the plugin can post a structured GitHub issue summarising the
 result block, a derived score, agent performance breakdown, and AI
@@ -521,7 +523,7 @@ Claude Code caches plugin contents. After pulling new changes (e.g. a fresh `git
    /reload-plugins
    ```
    Run from the repo root so `./` resolves to your local checkout.
-3. Verify with `/skills` — should show all 48 skills under "Plugin skills". Use `/agent-help` to confirm all 8 user-facing commands are registered.
+3. Verify with `/skills` — should show all 48 skills under "Plugin skills". Use `/agent-help` to confirm all 9 user-facing commands are registered.
 
 **Previously installed via `claude --plugin-dir` (flat layout)?** Older install instructions told you to launch Claude with `--plugin-dir` pointing at the repo root. That no longer works — the plugin is now nested under `ai-agent-manager-plugin/`. Switch to the marketplace flow shown in **Quick Start → 1. Install the Plugin**.
 

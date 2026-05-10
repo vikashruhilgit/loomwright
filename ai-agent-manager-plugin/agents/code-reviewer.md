@@ -81,7 +81,7 @@ The reviewer runs in one of two modes. Mode selection is mechanical — derived 
 ### Modes
 
 - **`diff_review` (default).** Review only the changed files / invocation scope. `audit_focus = []`, `scope_expanded = []`, no `consistency_checks`. Emitted when no trigger path is detected.
-- **`consistency_audit` (triggered).** Review the diff plus adjacent surfaces that can drift with it. `audit_focus[]` carries one or more of: `mirrored_prompt`, `metadata`, `counts`, `docs`, `hooks`, `plan_prompt`. A single audit may carry multiple focus tags (e.g., an `agents/` edit yields `["mirrored_prompt", "plan_prompt"]`) — plan/prompt review is an `audit_focus`, not a separate mode.
+- **`consistency_audit` (triggered).** Review the diff plus adjacent surfaces that can drift with it. `audit_focus[]` carries one or more of: `mirrored_prompt`, `metadata`, `counts`, `docs`, `hooks`, `plan_prompt`. A single audit may carry multiple focus tags (e.g., an `agents/` edit yields `["mirrored_prompt", "plan_prompt"]`) — plan/prompt review is an `audit_focus`, not a separate mode. **In consistency_audit mode, treat this as exhaustive cross-file analysis — verify every reference, count, and mirrored prompt.**
 
 ### Trigger rule (diff-first, expand-when-touched)
 

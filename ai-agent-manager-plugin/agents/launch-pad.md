@@ -4,6 +4,7 @@ description: Internal runner for the `/launch-pad` workflow. Invoke directly via
 tools: Read, Write, Glob, Grep, Bash, Task
 model: inherit
 maxTurns: 55
+effort: high
 color: "#FFD700"
 memory: project
 skills:
@@ -280,12 +281,47 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 **Actions:**
 
 1. Break into 3-7 subtasks (30-60 min each), one per file group from Phase 3
-2. For each subtask: title, acceptance criteria subset, estimated files, skill references
-3. Analyze dependencies (which subtasks depend on which)
+2. For each subtask: title, acceptance criteria subset, estimated files, skill references, **structured `provides` / `requires` / `external_requires` lists**
+3. Analyze dependencies (which subtasks depend on which) — derive these from `requires` entries, not free-form prose
 4. Compute parallelism:
-   - **LAUNCHABLE:** No deps + no file overlap with other LAUNCHABLE subtasks
-   - **BLOCKED:** Has deps or file overlap with a LAUNCHABLE subtask
+   - **LAUNCHABLE:** Empty `requires` + no file overlap with other LAUNCHABLE subtasks
+   - **BLOCKED:** Non-empty `requires`, OR file overlap with a LAUNCHABLE subtask
 5. Estimate batches and recommended worker count
+
+#### Provides / Requires / External Requires Schema
+
+Every subtask MUST declare what it produces (`provides`) and what it consumes from siblings (`requires`). These structured lists replace ad-hoc dependency prose and feed Plan Reviewer Criterion 12 plus Execute Manager's pre-spawn verification gate.
+
+**`provides` items** — one of three kinds, all addressable on disk after the subtask completes:
+
+- `{kind: "file", path: "<relative-path>"}` — a file that must exist after the subtask completes
+- `{kind: "symbol", path: "<relative-path>", name: "<identifier|heading|frontmatter-key>"}` — a named identifier, heading, or frontmatter field present in that file
+- `{kind: "type", path: "<relative-path>", name: "<TypeName>"}` — a TypeScript / language type defined in that file
+
+**`requires` items** — references to outputs a sibling subtask must produce first:
+
+- `{from: "<sibling-subtask-id>", kind: "file"|"symbol"|"type", path: "<path>", name: "<name>"}`
+
+**`external_requires`** — a separate top-level YAML list of free-text strings naming things outside the brief's scope (third-party APIs, OS-level CLIs, undocumented Claude Code features). These are NOT cross-referenced from `requires`.
+
+**Example subtask block:**
+
+```yaml
+provides:
+  - {kind: "file", path: "src/auth/jwt.guard.ts"}
+  - {kind: "symbol", path: "src/auth/jwt.guard.ts", name: "JwtAuthGuard"}
+requires:
+  - {from: "S1", kind: "type", path: "src/auth/types.ts", name: "AuthContext"}
+external_requires:
+  - "@nestjs/passport >= 10.0"
+```
+
+**Authoring rules (enforced by Plan Reviewer Criterion 12):**
+
+- Every subtask SHOULD have a non-empty `provides`. Purely-deletion subtasks may use `provides: []` but MUST include a justification comment on the line above (e.g. `# provides: [] — pure deletion, removes deprecated module`)
+- Reject vague provides like `"adds feature"` or `"updates code"` — every entry MUST be a `{kind: file|symbol|type, path, name?}` addressable on disk
+- `external_requires` is for things outside the brief's scope; do NOT cross-reference it from `requires` (the `from` field of `requires` MUST point to a sibling subtask ID, never an external item)
+- A subtask with non-empty `requires` is BLOCKED. The parallelism analysis MUST show it as blocked by the producing subtask(s) listed in its `requires.from` set, never as LAUNCHABLE
 
 **Output:**
 ```markdown
@@ -299,6 +335,30 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 | 2 | {title} | {criteria subset} | {count} | {skills} | LAUNCHABLE |
 | 3 | {title} | {criteria subset} | {count} | {skills} | BLOCKED (by #1) |
 
+### Subtask Contracts
+
+For each subtask, emit a YAML block with `provides`, `requires`, and `external_requires`:
+
+```yaml
+# Subtask 1
+provides:
+  - {kind: "file", path: "src/auth/jwt.guard.ts"}
+  - {kind: "symbol", path: "src/auth/jwt.guard.ts", name: "JwtAuthGuard"}
+  - {kind: "type", path: "src/auth/types.ts", name: "AuthContext"}
+requires: []
+external_requires:
+  - "@nestjs/passport >= 10.0"
+
+# Subtask 3
+provides:
+  - {kind: "file", path: "src/auth/auth.controller.ts"}
+  - {kind: "symbol", path: "src/auth/auth.controller.ts", name: "AuthController"}
+requires:
+  - {from: "1", kind: "symbol", path: "src/auth/jwt.guard.ts", name: "JwtAuthGuard"}
+  - {from: "1", kind: "type", path: "src/auth/types.ts", name: "AuthContext"}
+external_requires: []
+```
+
 ### Dependency Graph
 
 ```
@@ -306,10 +366,12 @@ Subtask 1 ──→ Subtask 3
 Subtask 2 (independent)
 ```
 
+(Edges derived from `requires.from` entries: each `from: "X"` becomes an edge `consumer → X`.)
+
 ### Parallelism Analysis
 
-- **Batch 1:** Subtask 1, Subtask 2 (parallel)
-- **Batch 2:** Subtask 3 (after Subtask 1)
+- **Batch 1:** Subtask 1, Subtask 2 (parallel — both have empty `requires`)
+- **Batch 2:** Subtask 3 (after Subtask 1 — has `requires` entries pointing at Subtask 1)
 - **Recommended workers:** {N}
 - **Estimated batches:** {N}
 ```

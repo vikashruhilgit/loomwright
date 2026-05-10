@@ -7,8 +7,8 @@
     {
       "name": "ai-agent-manager-plugin",
       "source": "./ai-agent-manager-plugin",
-      "description": "AI agents v11.2.0 — Opt-in GitHub Issues telemetry system. After qualifying agent runs (Supervisor / Code Reviewer / QA Executor), an opt-in pipeline can post a structured GitHub issue with derived score, agent performance breakdown, and AI suggestions for longitudinal analysis. Key invariants: wrapper always exits 0; core exits 0..5 (sent / generic_error / privacy_blocked / no_consent / no_repo_configured / filter_skipped); privacy fail-closed via regex deny-list; no default repo (disabled until `AI_AGENT_MANAGER_TELEMETRY_REPO` env var or `/telemetry enable`); consent via `/telemetry [status|enable|disable|test]` only — hooks never prompt. Builds on v11.1.2 inline-execution guard (Phase 4.5 completion-tail invariant: emits `status: failed` if `code-reviewer` not invoked and `--skip-self-heal` absent) and prior v11.1/v11.0/v10.3 layers. 12 agent roles, 48 reusable skills, 13 quality gate hooks, persistent agent memory, bundled MySQL MCP server.",
-      "version": "11.2.0",
+      "description": "AI agents v12.0.0 — Reliability primitives: inter-subtask output contracts (provides/requires schema), pre-spawn dependency verification gate, scope-expansion adjudication (4-option escalation), effort-tier discipline (xhigh/high/medium across 10 execution-shaped agents; haiku context-keeper and discovery-only product-owner exempt), and hardened SubagentStop validation rejecting outputs_gap/toolset_gap drift. WORKER_RESULT schema bumped to v2 with outputs_verified[] + outputs_gap fields. Builds on v11.2.0 (opt-in GitHub Issues telemetry), v11.1.x (inline-execution guard, Phase 4.5 completion-tail invariant), v11.0 (self-heal), v10.3 layers. 12 agent roles, 48 reusable skills, 13 quality gate hooks, persistent agent memory, bundled MySQL MCP server.",
+      "version": "12.0.0",
       "author": {
         "name": "vikash ruhil"
       },
