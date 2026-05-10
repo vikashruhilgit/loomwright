@@ -6,7 +6,9 @@ A Claude Code plugin for AI agents to collaborate on software projects. 12 speci
 
 > **Install the plugin and run slash commands instead of manually managing agents.**
 >
-> **NEW in v12.0.0:** Reliability primitives — inter-subtask `provides` / `requires` contracts, pre-spawn dependency verification gate, scope-expansion adjudication (4-option escalation), effort-tier discipline across the 10 execution-shaped agents (haiku context-keeper and discovery-only product-owner exempt), and hardened SubagentStop validation rejecting `outputs_gap` / `toolset_gap` drift. WORKER_RESULT schema bumped to v2.
+> **NEW in v12.1.0:** Documentation + skills increment — new Memory Tool skill (Anthropic memory-tool pattern reference), new "## Structured Outputs" section in `AGENT_GUIDELINES.md` documenting both enforcement paths (`output_config.format` for direct API agents, `SubagentStop` hooks for plugin agents), and a new "## Advisor Tool (SDK-only pattern)" section noting the `advisor-tool-2026-03-01` beta is reachable only via direct `client.beta.messages.create(...)` calls (not through Task-spawned plugin subagents). Compaction-recovery hooks were spiked and deferred (NO-GO). All v12.0.0 reliability primitives preserved.
+>
+> **v12.0.0 (preserved):** Reliability primitives — inter-subtask `provides` / `requires` contracts, pre-spawn dependency verification gate, scope-expansion adjudication (4-option escalation), effort-tier discipline across the 10 execution-shaped agents (haiku context-keeper and discovery-only product-owner exempt), and hardened SubagentStop validation rejecting `outputs_gap` / `toolset_gap` drift. WORKER_RESULT schema bumped to v2.
 >
 > **v7 baseline (preserved):** Enhanced Code Reviewer (LSP diagnostics, read-only mode, issue categorization: new/pre_existing/nit), senior-grade QA (strict assertions, negative testing, CRUD lifecycle, data integrity probes, security boundary tests, missing functionality detection with `MISSING_FUNCTIONALITY_REPORT`), session-based QA (`--plan`, `--scope`, `--continue`), Strategist assertion quality audit. Plus all v6 features: structured result schemas, failure escalation, merge safety gate, session logging, per-agent hooks, architecture contracts.
 
@@ -308,7 +310,7 @@ For apps with many routes, use session-based QA to test in chunks:
 
 ## Telemetry (opt-in)
 
-**New in v11.2.0 (preserved in v12.0.0)** — an optional GitHub Issues telemetry pipeline. After
+**New in v11.2.0 (preserved in v12.1.0)** — an optional GitHub Issues telemetry pipeline. After
 qualifying agent runs (`/supervisor`, `/code-reviewer`, `/qa-executor`)
 complete, the plugin can post a structured GitHub issue summarising the
 result block, a derived score, agent performance breakdown, and AI
@@ -444,7 +446,7 @@ This prevents knowledge loss and helps agents learn from discoveries.
 - **.claude-plugin/README.md:** Detailed plugin documentation
 - **ai-agent-manager-plugin/.claude-plugin/plugin.json:** Plugin manifest
 - **ai-agent-manager-plugin/agents/*.md:** Individual agent prompts (12 roles)
-- **ai-agent-manager-plugin/skills/*/SKILL.md:** 48 skill files for guidance
+- **ai-agent-manager-plugin/skills/*/SKILL.md:** 49 skill files for guidance
 - **ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md:** Structured result contracts
 - **ai-agent-manager-plugin/docs/FAILURE_ESCALATION.md:** Agent failure paths
 - **ai-agent-manager-plugin/docs/ARCHITECTURE_CONTRACTS.md:** Capability matrix, budgets, rules
@@ -459,7 +461,7 @@ To modify or extend agents:
 
 1. Agents are Markdown prompts in `ai-agent-manager-plugin/agents/` (12 files)
 2. Commands are in `ai-agent-manager-plugin/commands/` (10 commands)
-3. Skills are in `ai-agent-manager-plugin/skills/` (48 skills, versioned with SKILLS_INDEX.md)
+3. Skills are in `ai-agent-manager-plugin/skills/` (49 skills, versioned with SKILLS_INDEX.md)
 4. Hooks: per-agent in frontmatter (Worker, Execute Manager) + cross-cutting in `ai-agent-manager-plugin/hooks/hooks.json` (Code Reviewer, QA Executor, TaskCompleted)
 5. Docs: `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md`, `…/FAILURE_ESCALATION.md`, `…/ARCHITECTURE_CONTRACTS.md`, `…/ARCHITECTURE.md`
 6. All agents follow standard output format (see AGENT_GUIDELINES.md)
@@ -523,7 +525,7 @@ Claude Code caches plugin contents. After pulling new changes (e.g. a fresh `git
    /reload-plugins
    ```
    Run from the repo root so `./` resolves to your local checkout.
-3. Verify with `/skills` — should show all 48 skills under "Plugin skills". Use `/agent-help` to confirm all 9 user-facing commands are registered.
+3. Verify with `/skills` — should show all 49 skills under "Plugin skills". Use `/agent-help` to confirm all 10 user-facing commands are registered.
 
 **Previously installed via `claude --plugin-dir` (flat layout)?** Older install instructions told you to launch Claude with `--plugin-dir` pointing at the repo root. That no longer works — the plugin is now nested under `ai-agent-manager-plugin/`. Switch to the marketplace flow shown in **Quick Start → 1. Install the Plugin**.
 

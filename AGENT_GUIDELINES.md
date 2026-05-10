@@ -70,6 +70,57 @@ Comprehensive guidance for AI agents working on any project. Apply these standar
 
 ---
 
+## Structured Outputs
+
+Agent result blocks (`WORKER_RESULT`, `CODE_REVIEW_RESULT`, `EXECUTE_RESULT`, `EXECUTE_CHECKPOINT`, `SUPERVISOR_RESULT`, `QA_RESULT`, `PLAN_REVIEW_RESULT`, `MISSING_FUNCTIONALITY_REPORT`, `FIX_RESULT`, `CONTEXT_KEEPER_STATE`, `QA_SESSION_PLAN`, `QA_SESSION_COVERAGE`) are governed by strict contracts. The single source of truth is `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md` — currently CODE_REVIEW_RESULT at `schema_version: 3`, WORKER_RESULT at `schema_version: 2`, all others at `schema_version: 1`.
+
+**Two enforcement paths, depending on where the agent runs:**
+
+1. **Claude API direct (outside Claude Code) — use `output_config.format`.**
+   When you build agents on the Anthropic API directly (e.g., a custom orchestrator, a CI worker, an SDK-based pipeline), enforce conformance at the API layer by passing the schema as JSON Schema via `output_config.format` (JSON Schema mode). The model is constrained to produce schema-valid output before the response is returned, which gives guaranteed conformance — there is no need to parse a markdown block, regex a YAML frontmatter, or rely on a downstream validator to catch drift. Translate the schemas in `RESULT_SCHEMAS.md` into JSON Schema (the field types, enums, `required` lists, and cross-field invariants are all expressible) and supply them at request time. **Authoritative field-name reference:** the field has been referred to as `output_config.format`, `response_format`, or equivalent across SDK releases — verify against the Anthropic API reference at `https://docs.anthropic.com/en/api/messages` and your SDK's release notes / TypeScript or Python type stubs (e.g. `node_modules/@anthropic-ai/sdk/resources/messages.d.ts` or the equivalent Python `.pyi`) for the exact field name in your installed version before wiring it into a build.
+
+2. **Claude Code plugin (inside this repo) — `SubagentStop` hooks are the runtime fallback.**
+   Plugin-distributed agents cannot configure `output_config` (Claude Code does not expose API-level constraint mode to plugin agents). Instead, the plugin's `SubagentStop` hooks in `ai-agent-manager-plugin/hooks/hooks.json` validate every result block against the same schemas after the agent finishes. A failed hook rejects the run — see the per-schema validation rules and cross-field invariants in `RESULT_SCHEMAS.md` (e.g., WORKER_RESULT's `outputs_gap` non-empty ⇒ `status: partial` invariant, CODE_REVIEW_RESULT's `drift_kind` severity caps, EXECUTE_CHECKPOINT's `toolset_gap` rejection). This is strictly weaker than API-level enforcement (the agent has already burned tokens producing a malformed block by the time the hook fires), but it is the strongest gate available to plugin agents.
+
+**Authoring rule:** when you change a schema in `RESULT_SCHEMAS.md`, update both enforcement paths — the corresponding `SubagentStop` hook in `hooks.json` AND any external API-level JSON Schema fixtures consumers may have generated. Bump `schema_version` for breaking changes; document the transition window. The schemas in `RESULT_SCHEMAS.md` remain authoritative — `output_config.format` schemas and hook validators are derived artifacts.
+
+---
+
+## Advisor Tool (SDK-only pattern)
+
+The Anthropic **Advisor tool** is a beta capability on the Claude API as of 2026-05-10 that lets one inference call use an executor model (e.g., a Sonnet-class model) which can consult a higher-intelligence advisor model (e.g., an Opus-class model) for a sub-inference within the same `/v1/messages` request. It is enabled by sending the beta header `advisor-tool-2026-03-01` and attaching a tool of type `advisor_20260301` to the request's `tools` array.
+
+**Status in this plugin: SDK-only.** The Advisor tool is **not** wired through any plugin surface in v12.1.0 — there is no `--advisor` flag on `/supervisor`, no advisor-aware Worker / Code Reviewer / Execute Manager mode, and no entry in the cost profile. The reason is structural: Claude Code's documented subagent / plugin mechanisms (subagent frontmatter `tools:` / `model:` fields, `settings.json`, hook configuration, the Task tool) currently expose **no path to inject the `advisor-tool-2026-03-01` beta header** or attach an `advisor_20260301` server-tool onto the underlying `/v1/messages` call that a Task-spawned subagent makes. The frontmatter `tools:` field is an allowlist over Claude Code's internal tools (`Read`, `Grep`, `Bash`, `Task`, etc.), not over Anthropic API server-tool types.
+
+**When the pattern IS reachable today:** code that calls the Anthropic SDK directly — i.e. `client.beta.messages.create(...)` from TypeScript or Python — can attach the beta and the advisor tool without restriction. That code lives **outside** the Claude Code plugin runtime (custom orchestrators, CI workers, SDK-based pipelines), not inside a Task-spawned subagent.
+
+**Example shape (TypeScript, fields verbatim from the v12.1.0 advisor spike):**
+
+```typescript
+import Anthropic from "@anthropic-ai/sdk";
+const client = new Anthropic();
+// Model slugs accurate as of 2026-05-10 — verify against the current models list
+// (https://docs.anthropic.com/en/docs/about-claude/models) and the advisor valid-pairs
+// table in docs/SPIKES/advisor.md before building.
+const resp = await client.beta.messages.create({
+  model: "claude-sonnet-4-6",                 // executor
+  betas: ["advisor-tool-2026-03-01"],
+  max_tokens: 4096,
+  tools: [
+    { type: "advisor_20260301", advisor_model: "claude-opus-4-7" }
+  ],
+  messages: [{ role: "user", content: "..." }],
+});
+```
+
+(Equivalent Python uses `client.beta.messages.create(model="claude-sonnet-4-6", betas=["advisor-tool-2026-03-01"], tools=[{"type": "advisor_20260301", "advisor_model": "claude-opus-4-7"}], ...)`. Same model-slug caveat applies.)
+
+**Authoring rule:** do not add a `--advisor` flag, advisor cost-profile row, or advisor-aware subagent mode to the plugin until the spike triggers in `ai-agent-manager-plugin/docs/SPIKES/advisor.md` are met (Claude Code release notes, subagent docs, or Agent SDK reference must document a way to set `anthropic-beta` headers on subagent inference, OR Claude Code adds an `Advisor` internal tool, OR the Advisor tool exits beta with a Claude Code integration note). The canonical cost/quality knobs in v12.x remain the effort tiering (`xhigh` / `high` / `medium`, per `ai-agent-manager-plugin/docs/ARCHITECTURE_CONTRACTS.md` §"Effort Tiers") and the `/supervisor --cheap` opt-in profile.
+
+See `ai-agent-manager-plugin/docs/SPIKES/advisor.md` for the full SDK-ONLY recommendation, the surfaces that were checked, and the re-spike triggers.
+
+---
+
 ## Language-Specific Standards
 
 | Language | Type Safety | Testing | Linting |

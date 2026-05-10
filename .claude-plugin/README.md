@@ -1,12 +1,14 @@
 # AI Agent Manager Plugin for Claude Code
 
-A Claude Code plugin with 12 agent roles (8 user-facing + 4 internal), 48 focused skills, and optional Beads issue tracker integration. Automates plan-first readiness, parallel workflow execution, requirements definition, code review, adversarial audits, and dual-agent QA testing.
+A Claude Code plugin with 12 agent roles (8 user-facing + 4 internal), 49 focused skills, and optional Beads issue tracker integration. Automates plan-first readiness, parallel workflow execution, requirements definition, code review, adversarial audits, and dual-agent QA testing.
 
 ## Overview
 
-The AI Agent Manager Plugin v12.0.0 includes:
+The AI Agent Manager Plugin v12.1.0 includes:
 
-- **Reliability primitives (v12.0.0)** — Inter-subtask output contracts via a `provides` / `requires` schema (planned by Launch Pad, validated by Plan Reviewer, materialized + verified by Execute Manager Step 2a/2b), scope-expansion adjudication (4-option AskUserQuestion escalation when a producer's outputs are missing or a worker emits `outputs_gap`), effort-tier discipline across the 10 execution-shaped agents (`xhigh` / `high` / `medium`; haiku-locked context-keeper and discovery-only product-owner intentionally exempt), and hardened SubagentStop validation that rejects `outputs_gap` / `toolset_gap` drift. WORKER_RESULT schema bumped to v2 with `outputs_verified[]` + `outputs_gap` fields. See `ai-agent-manager-plugin/docs/ARCHITECTURE_CONTRACTS.md` (Effort Tiers) and `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md` (provides/requires schema, WORKER_RESULT v2).
+- **Documentation + skills increment (v12.1.0)** — New Memory Tool skill (`ai-agent-manager-plugin/skills/memory-tool/SKILL.md`) covering Anthropic's memory-tool pattern as a reference for long-running agents; new "## Structured Outputs" section in `AGENT_GUIDELINES.md` documenting both enforcement paths for result blocks (Claude API direct via `output_config.format` JSON-Schema mode; plugin runtime via `SubagentStop` hooks); new "## Advisor Tool (SDK-only pattern)" section in `AGENT_GUIDELINES.md` documenting the `advisor-tool-2026-03-01` beta / `advisor_20260301` server-tool as reachable only via direct `client.beta.messages.create(...)` calls (no plugin flag, no Task-tool path — see `ai-agent-manager-plugin/docs/SPIKES/advisor.md` for the SDK-ONLY recommendation and re-spike triggers). Compaction-recovery hooks were spiked and deferred (NO-GO; `PostCompact` has no documented `additionalContext` injection path — see `ai-agent-manager-plugin/docs/SPIKES/compaction.md`). Hook count unchanged at 13.
+
+- **Reliability primitives (v12.0.0, preserved)** — Inter-subtask output contracts via a `provides` / `requires` schema (planned by Launch Pad, validated by Plan Reviewer, materialized + verified by Execute Manager Step 2a/2b), scope-expansion adjudication (4-option AskUserQuestion escalation when a producer's outputs are missing or a worker emits `outputs_gap`), effort-tier discipline across the 10 execution-shaped agents (`xhigh` / `high` / `medium`; haiku-locked context-keeper and discovery-only product-owner intentionally exempt), and hardened SubagentStop validation that rejects `outputs_gap` / `toolset_gap` drift. WORKER_RESULT schema bumped to v2 with `outputs_verified[]` + `outputs_gap` fields. See `ai-agent-manager-plugin/docs/ARCHITECTURE_CONTRACTS.md` (Effort Tiers) and `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md` (provides/requires schema, WORKER_RESULT v2).
 
 - **Opt-in GitHub Issues telemetry (v11.2.0, preserved)** — After qualifying agent runs (`supervisor-runner`, `code-reviewer`, `qa-executor`), an opt-in pipeline can post a structured GitHub issue with derived score, agent performance breakdown, and AI suggestions for longitudinal analysis. Wrapper always exits 0; core exits 0..5 (sent / generic_error / privacy_blocked / no_consent / no_repo_configured / filter_skipped); privacy fail-closes via a regex deny-list; **disabled by default** (no `origin` fallback) — the user must explicitly run `/telemetry enable` (which prompts for the target repo) or set `AI_AGENT_MANAGER_TELEMETRY_REPO=owner/repo`. New slash commands: `/telemetry status | enable | disable | test`. See `ai-agent-manager-plugin/docs/TELEMETRY.md` for the full design.
 
@@ -39,7 +41,7 @@ Plus all prior v11.0/v10.3/v10.2 capabilities:
 - **Worker** — Implements a single subtask in an isolated git worktree (spawned by Execute Manager)
 - **Plan Reviewer** — Validates Supervisor-Ready Briefs before execution (spawned by Launch Pad)
 
-### 48 Skills
+### 49 Skills
 
 Skills are loaded on-demand to keep context small:
 
@@ -347,7 +349,7 @@ ai-agent-manager/                            # Marketplace wrapper repo
 │   └── README.md                            # This file
 └── ai-agent-manager-plugin/                 # The nested plugin
     ├── .claude-plugin/
-    │   └── plugin.json                      # Plugin manifest (v12.0.0)
+    │   └── plugin.json                      # Plugin manifest (v12.1.0)
     ├── .mcp.json                            # Bundled MCP servers
     ├── agents/                              # Agent prompts (12 roles)
     │   ├── launch-pad.md, supervisor.md, execute-manager.md, context-keeper.md
@@ -360,7 +362,7 @@ ai-agent-manager/                            # Marketplace wrapper repo
     │   └── agent-help.md
     ├── hooks/
     │   └── hooks.json                       # 13 quality gate hooks (centralized)
-    ├── skills/                              # 48 focused skill modules
+    ├── skills/                              # 49 focused skill modules
     │   ├── SKILLS_INDEX.md                  # Skill catalog with agent mapping
     │   └── [skill-name]/SKILL.md            # Individual skills
     └── docs/
@@ -368,7 +370,8 @@ ai-agent-manager/                            # Marketplace wrapper repo
         ├── FAILURE_ESCALATION.md            # Retry limits and escalation paths
         ├── ARCHITECTURE_CONTRACTS.md        # Capability matrix, budgets, rules
         ├── ARCHITECTURE.md                  # Visual agent topology
-        └── QA_SYSTEM_BLUEPRINT.md           # QA system architecture
+        ├── QA_SYSTEM_BLUEPRINT.md           # QA system architecture
+        └── SPIKES/                          # Capability spike investigations + deferral records
 ```
 
 ---

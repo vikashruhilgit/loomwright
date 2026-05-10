@@ -383,7 +383,7 @@ This is actually **correct and intentional** — double validation. The naming i
 ### 18. Consider Prisma/GraphQL/gRPC Skills
 
 **What's happening now:**
-48 skills covering NestJS, Next.js, TypeORM, Drizzle, MySQL, PostgreSQL, Redis, Docker, etc. Missing: Prisma ORM, GraphQL, gRPC.
+49 skills covering NestJS, Next.js, TypeORM, Drizzle, MySQL, PostgreSQL, Redis, Docker, etc. Missing: Prisma ORM, GraphQL, gRPC.
 
 **Performance impact:** NONE for existing users. Skills are only loaded when referenced by agents. New skills don't slow anything down.
 
