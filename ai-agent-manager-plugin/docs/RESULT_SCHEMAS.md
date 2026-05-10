@@ -85,8 +85,8 @@ WORKER_RESULT:
     - kind: file
       path: src/auth/jwt.guard.spec.ts
       status: missing
-  outputs_gap: "Did not write src/auth/jwt.guard.spec.ts — Jest config absent in the worktree; deferred to a follow-up subtask."
-  summary: Guard implemented but unit-test file deferred — see outputs_gap.
+  outputs_gap: "src/auth/jwt.guard.spec.ts"
+  summary: Guard implemented but unit-test file deferred (Jest config absent in the worktree); status partial because outputs_gap names the missing spec.
 ```
 
 ---
