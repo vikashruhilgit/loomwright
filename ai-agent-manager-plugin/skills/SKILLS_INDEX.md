@@ -8,14 +8,14 @@ Comprehensive index of all skills available in the AI Agent Manager plugin.
 
 | Skill Name | Directory | Agent Consumers | Token Est. | Version | Last Updated |
 |------------|-----------|-----------------|------------|---------|--------------|
-| Supervisor Readiness | `supervisor-readiness/` | Launch Pad (preload), Supervisor (preload) | ~800 | 1.0.0 | 2026-05-09 |
+| Supervisor Readiness | `supervisor-readiness/` | Launch Pad (preload), Supervisor (preload) | ~800 | 1.1.0 | 2026-05-10 |
 | Workflow Management | `workflow-management/` | Supervisor (preload) | ~1,200 | 1.0.0 | 2026-03 |
 | Async Orchestration | `async-orchestration/` | Supervisor (preload) | ~1,000 | 1.0.0 | 2026-05-09 |
 | State Management | `state-management/` | Supervisor (preload) | ~900 | 1.0.0 | 2026-03 |
 | Context Summarization | `context-summarization/` | Supervisor (preload) | ~600 | 1.0.0 | 2026-03 |
 | Context Setup | `context-setup/` | Launch Pad (preload) | ~500 | 1.0.0 | 2026-03 |
 | Claude MD Validation | `claude-md-validation/` | Launch Pad (preload) | ~400 | 1.0.0 | 2026-03 |
-| Agent Teams | `agent-teams/` | — (reference) | ~800 | 1.0.0 | 2026-03 |
+| Agent Teams | `agent-teams/` | — (reference) | ~800 | 1.1.0 | 2026-05-10 |
 | Agent Output | `agent-output/` | — (reference) | ~400 | 1.0.0 | 2026-03 |
 | Beads Workflow | `beads-workflow/` | Orchestrator (reference), Product Owner (reference) | ~600 | 1.0.0 | 2026-03 |
 | Telemetry | `telemetry/` | — (reference, shell-script-driven) | ~600 | 1.0.0 | 2026-04 |
