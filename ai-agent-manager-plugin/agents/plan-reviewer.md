@@ -45,7 +45,7 @@ Validate a Supervisor-Ready Brief for quality, completeness, and correctness bef
 
 ## 12 Review Criteria
 
-Check ALL criteria in order. For each, note whether it passes or has issues. Criterion 11 is conditional: skip silently if the optional `## Feasibility` section is absent. Criterion 12 only emits issues when the brief contains subtask contract YAML blocks (`provides` / `requires`); briefs without contract blocks skip Criterion 12 silently.
+Check ALL criteria in order. For each, note whether it passes or has issues. Criterion 11 is conditional: skip silently if the optional `## Feasibility` section is absent. Criterion 12 is conditional on brief vintage: v12.0.0+ briefs (Launch Pad runtime ≥ v12.0.0) MUST contain `provides:` / `requires:` contract YAML blocks per subtask — absence is a BLOCKING violation. Pre-v12 legacy briefs may omit contract blocks, but only when the brief explicitly opts out via a top-level `legacy_brief: true` marker in the Environment section. Without that explicit marker, Plan Reviewer treats missing contracts as a v12 contract violation.
 
 ### 1. File Path Verification
 
@@ -201,7 +201,7 @@ Check ALL criteria in order. For each, note whether it passes or has issues. Cri
 - HIGH: vague provides entry without addressable `{kind, path}`; provides entry whose path/name does not match any plausible file in the impact map
 - MEDIUM: `requires` entry whose `name` is a near-miss against the producer's `provides` (likely typo)
 
-**Conditional:** If the brief contains no subtask contract YAML blocks (older briefs pre-v12.0.0), skip this criterion silently and emit no issues.
+**Conditional:** If the brief contains no subtask contract YAML blocks AND the Environment section explicitly declares `legacy_brief: true`, skip this criterion silently and emit no issues. Otherwise (v12.0.0+ default), missing contract blocks on any subtask FAIL the brief with a BLOCKING `dep_graph` issue: "Subtask <ID> missing required `provides:` / `requires:` contract blocks (v12.0.0 mandate; add `legacy_brief: true` to Environment to opt out)."
 
 ---
 

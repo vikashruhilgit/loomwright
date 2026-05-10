@@ -197,10 +197,34 @@ for iteration in 1..max_iterations:
         # Fall back to parsing full TaskOutput
         pass
 
+      # --- v12 outputs_verified gate (BEFORE spawning reviewer) ---
+      # Parse WORKER_RESULT block from TaskOutput (or summary).
+      # If status=partial OR outputs_gap is non-empty, the worker self-reported
+      # incomplete delivery — escalate via adjudication CHECKPOINT instead of
+      # spawning a reviewer. Do NOT proceed to review on a partial worker.
+      worker_result = parse_worker_result(result)
+      if worker_result.status == "partial" OR (worker_result.outputs_gap exists AND worker_result.outputs_gap != ""):
+        # Build missing_outputs from outputs_verified entries with status: missing
+        missing = [v for v in worker_result.outputs_verified if v.status == "missing"]
+        emit EXECUTE_CHECKPOINT:
+          schema_version: 1
+          adjudication_required: true
+          missing_outputs: [
+            {item: "{kind} {path} {name?}", producing_subtask: subtask_id,
+             check_run: "worker self-verification (Step 5.5)"}
+            for each missing entry
+          ]
+          adjudication_options: ["A: Re-queue producer", "B: Insert remediation subtask",
+                                 "C: Exit to Launch Pad", "D: Update consumer brief"]
+          reason: "Worker {subtask_id} reported outputs_gap: {worker_result.outputs_gap}"
+        # Do NOT spawn reviewer. Do NOT continue with this subtask.
+        # Supervisor will resolve adjudication and instruct next action.
+        skip_to_next_iteration
+
       # Queue for Context-Keeper batch update
       queue_ck_update(type: worker_result, subtask_id, summary)
 
-      # Spawn reviewer in background
+      # Spawn reviewer in background (only when worker delivered all outputs)
       Task(
         description: "Review {subtask_id}",
         prompt: "Reviewer prompt with worktree path...",
