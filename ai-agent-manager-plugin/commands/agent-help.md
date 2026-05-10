@@ -848,7 +848,7 @@ ai-agent-manager-plugin/              # Nested plugin root
 ├── .claude-plugin/
 │   └── plugin.json                   # Plugin metadata (v12.0.0)
 ├── .mcp.json                         # Bundled MCP servers
-├── commands/                         # Slash commands (9)
+├── commands/                         # Slash commands (10)
 │   ├── launch-pad.md                 # Supervisor readiness
 │   ├── supervisor.md                 # Parallel orchestrator (v4)
 │   ├── product-owner.md              # Requirements definition
@@ -857,6 +857,7 @@ ai-agent-manager-plugin/              # Nested plugin root
 │   ├── red-team-reviewer.md          # Adversarial auditor
 │   ├── qa-strategist.md              # Risk-based QA strategy
 │   ├── qa-executor.md                # Automated QA testing
+│   ├── telemetry.md                  # Opt-in GitHub Issues telemetry (status/enable/disable/test)
 │   └── agent-help.md
 ├── agents/                           # Agent implementations (12 roles)
 │   ├── launch-pad.md                 # Supervisor readiness agent
@@ -879,7 +880,7 @@ ai-agent-manager-plugin/              # Nested plugin root
 │   ├── ARCHITECTURE_CONTRACTS.md
 │   ├── ARCHITECTURE.md
 │   └── QA_SYSTEM_BLUEPRINT.md
-└── skills/                           # Skill files (47 skills)
+└── skills/                           # Skill files (48 skills)
     ├── SKILLS_INDEX.md               # Skill catalog with agent mapping
     ├── supervisor-readiness/         # Pre-flight checklist & brief template
     ├── agent-teams/                  # Agent Teams patterns (experimental)

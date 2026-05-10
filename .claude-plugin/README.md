@@ -353,9 +353,10 @@ ai-agent-manager/                            # Marketplace wrapper repo
     │   ├── launch-pad.md, supervisor.md, execute-manager.md, context-keeper.md
     │   ├── worker.md, plan-reviewer.md, product-owner.md, orchestrator.md
     │   └── code-reviewer.md, red-team-reviewer.md, qa-strategist.md, qa-executor.md
-    ├── commands/                            # Slash commands (9)
+    ├── commands/                            # Slash commands (10)
     │   ├── launch-pad.md, supervisor.md, product-owner.md, orchestrator.md
     │   ├── code-reviewer.md, red-team-reviewer.md, qa-strategist.md, qa-executor.md
+    │   ├── telemetry.md
     │   └── agent-help.md
     ├── hooks/
     │   └── hooks.json                       # 13 quality gate hooks (centralized)

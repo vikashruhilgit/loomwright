@@ -140,7 +140,7 @@ Prevents runaway refactors and reviewer context explosion.
 
 ## Result Schema Versioning
 
-All result schemas include a `schema_version` field. CODE_REVIEW_RESULT is at v2 (with issue categories); all others remain at v1.
+All result schemas include a `schema_version` field. Current versions: CODE_REVIEW_RESULT at `schema_version: 3` (review modes + consistency audit; v2 accepted for legacy); WORKER_RESULT at `schema_version: 2` (outputs_verified contract; v1 accepted for the v12.0.0 transition window); all others at `schema_version: 1`.
 
 1. Hooks verify `schema_version` is supported before validating fields
 2. If `schema_version` is unrecognized, hook warns but does not block
