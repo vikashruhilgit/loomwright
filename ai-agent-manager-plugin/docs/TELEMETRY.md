@@ -604,7 +604,7 @@ Field semantics:
   string if extraction failed (jq missing or malformed payload — see below).
 - **`pr_url`** — copied verbatim from `SUPERVISOR_RESULT.pr_url`. Empty
   string when `status ∈ {failed, checkpoint}` (no PR was created).
-- **`summary`** — copied verbatim from `SUPERVISOR_RESULT.summary`.
+- **`summary`** — copied verbatim from `SUPERVISOR_RESULT.summary`, **truncated to 2,048 bytes** (with a trailing `...` ellipsis) to stay well under the body-size limits common to chat webhooks (Slack incoming-webhooks reject bodies > 40 KB; many enterprise endpoints are stricter). Receivers needing the full text should reach the PR link.
 - **`timestamp`** — UTC ISO-8601 (`%Y-%m-%dT%H:%M:%SZ`) at the moment the
   hook fired (NOT when the Supervisor started).
 

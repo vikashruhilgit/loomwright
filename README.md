@@ -118,7 +118,7 @@ Then call `switch_database(host="prod.example.com")` at runtime to switch betwee
 
 ---
 
-## The 12 Agents
+## The 13 Agents
 
 ### User-Facing Agents (8 + commit skill)
 
@@ -136,7 +136,7 @@ Then call `switch_database(host="prod.example.com")` at runtime to switch betwee
 | **QA Executor**       | `/qa-executor`                  | Discover → generate strict tests → find missing functionality → QA_RESULT | Automated QA                    |
 
 
-### Internal Agents (4)
+### Internal Agents (5)
 
 
 | Agent               | Spawned By                   | Purpose                                                               |
@@ -145,6 +145,7 @@ Then call `switch_database(host="prod.example.com")` at runtime to switch betwee
 | **Context-Keeper**  | Supervisor / Execute Manager | Manage externalized state file (sole writer)                          |
 | **Worker**          | Execute Manager / Supervisor | Implement a single subtask in an isolated git worktree                |
 | **Plan Reviewer**   | Launch Pad                   | Validate Supervisor-Ready Briefs before execution                     |
+| **Rubric Grader**   | Supervisor (Phase 4.5)       | Read-only Haiku scorer for the optional Outcomes Rubric (advisory)    |
 
 
 ### Plan-First Autonomous Workflow

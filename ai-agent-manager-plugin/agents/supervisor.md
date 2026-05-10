@@ -540,29 +540,23 @@ When the loop exits with `heal_decision == PASS` AND the in-progress brief conta
 rubric_bullets = parse_rubric(brief_path)   # [] if no ## Outcomes Rubric section
 
 if heal_decision == PASS and rubric_bullets:
+  # Invoke the registered rubric-grader agent. Spawning by `subagent_type` is
+  # the only reliable enforcement path for `model: haiku` and `permissionMode: plan`
+  # — the Task tool ignores `model:` / `permissionMode:` keywords on the call site.
+  # Frontmatter on `agents/rubric-grader.md` enforces both, plus a read-only
+  # tool allowlist (Read, Bash, Glob, Grep) and `disallowedTools: Write, Edit, Task`.
   grade = Task(
     description: "Grade PR diff against Outcomes Rubric",
-    prompt: "You are a read-only grader. Evaluate the integrated PR diff against each rubric item.
-
-      Feature branch: {feature_branch}
+    prompt: "Feature branch: {feature_branch}
       PR: {pr_url}
-      Diff command: git diff origin/main...{feature_branch}
 
       Rubric items (each is a single observable assertion):
       {numbered list of rubric_bullets}
 
-      For each item, output exactly one line:
-        ITEM {N}: PASS — {one-line justification}
-        ITEM {N}: FAIL — {one-line justification}
-
-      End with one summary line:
-        rubric_score: {passed}/{total}
-
-      Do NOT modify files. Do NOT run tests. Do NOT comment on style.",
-    subagent_type: "general-purpose",
-    model: "haiku"   # always haiku for the rubric grader, regardless of cost_profile — the grader is cheap-by-design
-    # Tool allowlist: Read, Bash (read-only git commands), Glob, Grep. No Write/Edit/Task.
-    # permissionMode: plan
+      Run `git diff origin/main...{feature_branch}` (read-only) and score every item.
+      Emit per-item lines + one `rubric_score: N/M` line. See your agent prompt for
+      the exact output contract.",
+    subagent_type: "ai-agent-manager-plugin:rubric-grader"
   )
   rubric_score = parse_rubric_score(grade.output)   # "N/M" string; N ≤ M; M == len(rubric_bullets)
 else:

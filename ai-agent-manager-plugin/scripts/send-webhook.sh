@@ -53,22 +53,56 @@ if command -v jq >/dev/null 2>&1; then
 fi
 
 # ---- Extract SUPERVISOR_RESULT fields ---------------------------------------
-# The SubagentStop payload typically contains the agent's transcript text.
-# We look for status / pr_url / summary in either:
-#   (a) a top-level JSON object with those keys (forward compatibility), or
-#   (b) embedded SUPERVISOR_RESULT block inside a transcript / output field.
-# `jq -r // empty` keeps us safe on missing keys without erroring.
+# Claude Code SubagentStop payload shape (matches send-telemetry-core.sh):
+#   { "session_id": "...", "agent_type": "...", "result_block": "SUPERVISOR_RESULT:\n  schema_version: 1\n  status: completed\n  pr_url: https://...\n  summary: ..." }
+# The fields we want live INSIDE the `result_block` text — not at the top level.
+# Strategy:
+#   1. Use jq to lift `result_block` out of the JSON envelope (string).
+#   2. Grep the YAML-style `key: value` lines from that text using sed.
+#   3. Fall back to top-level keys if `result_block` is absent (forward compat
+#      and unit-test fixtures that pass a flat object).
 STATUS=""
 PR_URL=""
 SUMMARY=""
 
+# yaml_field <text> <key>  →  prints the value of `  key: value` (case-insensitive,
+# tolerates leading dash for bullet-style blocks). Strips surrounding quotes and
+# whitespace. Returns empty when not found.
+yaml_field() {
+  printf '%s' "$1" | sed -nE \
+    "s/^[[:space:]]*-?[[:space:]]*$2[[:space:]]*:[[:space:]]*\"?([^\"]*)\"?[[:space:]]*$/\1/Ip" \
+    | head -n1
+}
+
 if [ -n "$JQ_BIN" ]; then
-  # First try: top-level keys (defensive — Claude Code may evolve the payload).
-  STATUS="$(printf '%s' "$INPUT" | "$JQ_BIN" -r '.status // .result.status // empty' 2>/dev/null || true)"
-  PR_URL="$(printf '%s' "$INPUT" | "$JQ_BIN" -r '.pr_url // .result.pr_url // empty' 2>/dev/null || true)"
-  SUMMARY="$(printf '%s' "$INPUT" | "$JQ_BIN" -r '.summary // .result.summary // empty' 2>/dev/null || true)"
+  RESULT_BLOCK="$(printf '%s' "$INPUT" | "$JQ_BIN" -r '.result_block // empty' 2>/dev/null || true)"
+
+  if [ -n "$RESULT_BLOCK" ]; then
+    STATUS="$(yaml_field "$RESULT_BLOCK" status)"
+    PR_URL="$(yaml_field "$RESULT_BLOCK" pr_url)"
+    SUMMARY="$(yaml_field "$RESULT_BLOCK" summary)"
+  fi
+
+  # Forward-compat / fixture fallback: top-level keys if result_block was empty
+  # or did not carry the field.
+  if [ -z "$STATUS" ]; then
+    STATUS="$(printf '%s' "$INPUT" | "$JQ_BIN" -r '.status // .result.status // empty' 2>/dev/null || true)"
+  fi
+  if [ -z "$PR_URL" ]; then
+    PR_URL="$(printf '%s' "$INPUT" | "$JQ_BIN" -r '.pr_url // .result.pr_url // empty' 2>/dev/null || true)"
+  fi
+  if [ -z "$SUMMARY" ]; then
+    SUMMARY="$(printf '%s' "$INPUT" | "$JQ_BIN" -r '.summary // .result.summary // empty' 2>/dev/null || true)"
+  fi
 else
   printf 'send-webhook: jq not on PATH — fields will be empty\n' >&2
+fi
+
+# Truncate summary defensively. Slack incoming-webhooks reject bodies > 40 KB;
+# other endpoints may be stricter. Keep summaries small even if the result block
+# is unbounded.
+if [ "${#SUMMARY}" -gt 2048 ]; then
+  SUMMARY="$(printf '%s' "$SUMMARY" | head -c 2045)..."
 fi
 
 # ---- Compose payload --------------------------------------------------------
@@ -94,9 +128,10 @@ if [ -z "$PAYLOAD" ]; then
 fi
 
 # ---- Fire webhook (fire-and-forget) -----------------------------------------
-# -fsS  : fail on HTTP error, silent progress, but show errors on stderr
+# -f : fail (exit non-zero) on HTTP error so `|| true` swallows it
+# -s : silent (no progress meter)
 # --max-time 5 : hard 5s ceiling so a slow endpoint never blocks Supervisor
-curl -fsS --max-time 5 \
+curl -fs --max-time 5 \
   -X POST \
   -H "Content-Type: application/json" \
   -d "$PAYLOAD" \

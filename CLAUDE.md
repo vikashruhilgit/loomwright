@@ -10,7 +10,7 @@ Guidance for Claude Code when working in this repository.
 
 ## Project Overview
 
-**AI Agent Manager** is a Claude Code plugin with 12 agent roles (8 user-facing + 4 internal) for plan-first readiness, parallel execution, requirements, planning, code review, commits, adversarial audits, and dual-agent QA. Supervisor and Launch Pad use `.supervisor/` exclusively for state; Orchestrator and Product Owner can optionally use Beads.
+**AI Agent Manager** is a Claude Code plugin with 13 agent roles (8 user-facing + 5 internal) for plan-first readiness, parallel execution, requirements, planning, code review, commits, adversarial audits, and dual-agent QA. Supervisor and Launch Pad use `.supervisor/` exclusively for state; Orchestrator and Product Owner can optionally use Beads.
 
 **v12.2.0 — New capabilities increment:** Four user-visible additions on top of v12.1.0. (1) **Agent Teams graduation** — `ai-agent-manager-plugin/skills/agent-teams/SKILL.md` now ships per-pattern "Recommended Use Cases" plus a 3-of-6 graduation matrix (research/exploration, competing hypotheses, and cross-layer changes graduate to *recommended*; sequential tasks, same-file edits, and high-write-contention scenarios remain *experimental* / not recommended — keep using Supervisor v4 with worktrees). (2) **Outcomes Rubric** — at the end of every Supervisor run, a Haiku-graded rubric scores the session (`rubric_score` is an optional `"N/M" | null` field in `SUPERVISOR_RESULT` — null when the brief omits the section, additive at schema_version 1); the rubric is owned by `ai-agent-manager-plugin/agents/supervisor.md` and validated by the supervisor SubagentStop hook. (3) **`/dreaming` slash command** — read-only post-hoc reflection on completed sessions (no code, agent-memory, or `CLAUDE.md` writes by `/dreaming` itself; persistence requires explicit user follow-up). The command lives at `ai-agent-manager-plugin/commands/dreaming.md`. (4) **Opt-in webhook hook** — a new SubagentStop `type: command` hook in `ai-agent-manager-plugin/hooks/hooks.json` invokes `${CLAUDE_PLUGIN_ROOT}/scripts/send-webhook.sh` to POST structured agent results to a user-configured endpoint for external monitoring/dashboards (disabled by default, fail-closed on errors, never blocks the agent). All v12.1.0 documentation increments preserved (Memory Tool skill reference, Structured Outputs guidance for both enforcement paths, Advisor Tool SDK-only note) and all v12.0.0 reliability primitives intact (inter-subtask `provides` / `requires` contracts, pre-spawn dependency verification gate, scope-expansion adjudication, effort-tier discipline, hardened SubagentStop validation, WORKER_RESULT v2 with `outputs_verified[]` + `outputs_gap`). See `ai-agent-manager-plugin/docs/ARCHITECTURE_CONTRACTS.md` §"Effort Tiers" and the `provides` / `requires` schema in `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md`.
 
@@ -22,7 +22,7 @@ The repo is a **marketplace wrapper** containing one nested plugin:
 
 - Marketplace manifest: `.claude-plugin/marketplace.json` (root)
 - Plugin manifest: `ai-agent-manager-plugin/.claude-plugin/plugin.json` (v12.2.0)
-- Agents: `ai-agent-manager-plugin/agents/` (12 markdown prompts)
+- Agents: `ai-agent-manager-plugin/agents/` (13 markdown prompts)
 - Commands: `ai-agent-manager-plugin/commands/` (11 entry points)
 - Skills: `ai-agent-manager-plugin/skills/` (49 skills, see `SKILLS_INDEX.md`)
 - Hooks: `ai-agent-manager-plugin/hooks/hooks.json`
@@ -41,7 +41,7 @@ ai-agent-manager/                              # marketplace wrapper
 ├── ai-agent-manager-plugin/                   # nested plugin
 │   ├── .claude-plugin/plugin.json
 │   ├── .mcp.json                              # bundled MCP servers
-│   ├── agents/                                # 12 markdown prompts
+│   ├── agents/                                # 13 markdown prompts
 │   ├── commands/                              # 11 slash commands
 │   ├── hooks/hooks.json                       # cross-cutting hooks
 │   ├── skills/                                # 49 skills + SKILLS_INDEX.md
@@ -56,9 +56,9 @@ ai-agent-manager/                              # marketplace wrapper
 
 ---
 
-## The 12 Agent Roles
+## The 13 Agent Roles
 
-Detailed per-agent purpose, command syntax, and workflow diagrams live in `README.md` §"The 12 Agents" and the agent prompts (`ai-agent-manager-plugin/agents/*.md`). Quick map of what matters for in-codebase work:
+Detailed per-agent purpose, command syntax, and workflow diagrams live in `README.md` §"The 13 Agents" and the agent prompts (`ai-agent-manager-plugin/agents/*.md`). Quick map of what matters for in-codebase work:
 
 | Agent | Type | Spawned by | Codebase-relevant invariants |
 |---|---|---|---|
@@ -74,6 +74,7 @@ Detailed per-agent purpose, command syntax, and workflow diagrams live in `READM
 | Context-Keeper | internal | Supervisor / Execute Manager | **Sole writer** of state file; haiku model, batch updates, atomic writes |
 | Worker | internal | Execute Manager / Supervisor | One subtask per worktree, no git ops, emits WORKER_RESULT + `.worker-summary.md` |
 | Plan Reviewer | internal | Launch Pad | PLAN_REVIEW_RESULT decision gates the brief save — PASS saves; NEEDS_HUMAN saves only on explicit user override; FAIL never saves |
+| Rubric Grader | internal | Supervisor (Phase 4.5, only when brief has `## Outcomes Rubric` and `heal_decision == PASS`) | Read-only Haiku scorer; frontmatter enforces `model: haiku` + `permissionMode: plan` + `disallowedTools: Write, Edit, Task`; emits per-item `ITEM N: PASS\|FAIL` lines + `rubric_score: N/M`; advisory only — never changes `heal_decision` or blocks the PR |
 
 ### Shared Agent Contract
 
@@ -144,6 +145,7 @@ Every agent (full standard in `AGENT_GUIDELINES.md`):
 | TaskCompleted | Task marked complete | hooks.json | Task genuinely done |
 | WorktreeCreate | Worktree created | hooks.json | type:command, logs `.supervisor/logs/worktrees.log` |
 | StopFailure | Agent API error | hooks.json | type:command, logs `.supervisor/logs/failures.log` |
+| SubagentStop webhook (supervisor-runner) | Supervisor completes | hooks.json | type:command — `send-webhook.sh`; gated on `AGENT_MANAGER_WEBHOOK_URL`; fire-and-forget POST; always exits 0 |
 
 ---
 

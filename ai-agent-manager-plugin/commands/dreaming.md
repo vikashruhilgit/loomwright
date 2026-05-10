@@ -28,7 +28,7 @@ This makes `/dreaming` the safe, auditable counterpart to live execution: read p
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
-| `--agent` | No | `all` | Which agent(s) run reflection. Accepts `all`, `code-reviewer`, `red-team`, or `qa-executor`. `all` runs each supported agent in turn and aggregates their reports. Only agents with `memory: project` (Code Reviewer, Red Team Reviewer, QA Executor) are valid targets — the rest do not have persistent memory to reflect on. |
+| `--agent` | No | `all` | Which agent(s) run reflection. Accepts `all`, `code-reviewer`, `red-team`, or `qa-executor`. `all` runs each supported agent in turn and aggregates their reports. Six agents have `memory: project` (Launch Pad, Code Reviewer, Red Team Reviewer, Product Owner, QA Strategist, QA Executor); v12.2.0 supports the three review-shaped agents listed above because their session logs carry the structured findings reflection needs (CODE_REVIEW_RESULT issues, red-team attack outcomes, QA_RESULT gates). Launch Pad, Product Owner, and QA Strategist are intentionally out of scope for v12.2.0 and may be added in a follow-up. |
 | `--sessions N` | No | `5` | How many of the most recent `.supervisor/logs/{session_id}.jsonl` files to feed into reflection. Values are clamped to the number of available log files. Higher values surface more durable patterns at higher token cost. |
 
 ## What This Does / Workflow
@@ -64,14 +64,14 @@ This makes `/dreaming` the safe, auditable counterpart to live execution: read p
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-1. **Read N most recent session logs** — `/dreaming` lists `.supervisor/logs/*.jsonl`, sorts by modification time, and selects the `--sessions N` most recent files (default 5). Logs are opened read-only.
+1. **Read N most recent session logs** — `/dreaming` lists `.supervisor/logs/*.jsonl`, sorts by modification time, and selects the `--sessions N` most recent files (default 5). Logs are opened read-only. **Empty-log path:** if `.supervisor/logs/` is missing or contains no `*.jsonl` files, `/dreaming` exits immediately with a single message — `No session logs found in .supervisor/logs/. Run /supervisor first, then re-run /dreaming.` — and writes nothing.
 2. **Spawn target agent(s) in reflection mode** — Each target agent (per `--agent`) is invoked with a reflection-mode system prompt. The prompt instructs the agent to:
    - Read the provided log files and the agent's own existing memory directory under `.claude/agent-memory/`
    - Identify recurring patterns, repeated mistakes, and unstated invariants
    - Distill those into candidate insights
    - **Propose** memory entries and `CLAUDE.md` paragraphs **without writing anything**
 3. **Output a structured reflection report** — `/dreaming` aggregates per-agent proposals into a single report with the four mandatory sections listed below.
-4. **Per-item user approval** — The user is presented with each proposal. They choose Accept / Reject / Edit per item. Only accepted items result in actual writes, and writing is performed by the user (or by a separate, explicit follow-up). `/dreaming` itself never writes to `.claude/agent-memory/` or `CLAUDE.md`.
+4. **Per-item user approval** — The user is presented with each proposal in turn. The approval mechanism is the harness `AskUserQuestion` tool (or, when unavailable, a numbered list with typed responses): each proposal is displayed with its target file and verbatim text and the user picks `Accept`, `Reject`, or `Edit`. Only accepted items result in actual writes, and writing is performed by the user (or by a separate, explicit follow-up command they invoke). `/dreaming` itself never writes to `.claude/agent-memory/` or `CLAUDE.md`. There is no bulk-accept; each item is gated individually.
 
 ## Reflection Report Sections
 
@@ -195,7 +195,7 @@ Use `/dreaming` periodically — for example, weekly or after every N completed 
 
 - During active execution — `/dreaming` reflects on past sessions, not the current one
 - When you need code changes — `/dreaming` is read-only; use `/supervisor` or `/code-reviewer` for changes
-- For agents without persistent memory — only Code Reviewer, Red Team Reviewer, and QA Executor have `memory: project`
+- For agents not currently supported — six agents have `memory: project` (Launch Pad, Code Reviewer, Red Team Reviewer, Product Owner, QA Strategist, QA Executor), but v12.2.0's `--agent` flag covers only Code Reviewer, Red Team Reviewer, and QA Executor; the other three are out of scope until a follow-up release
 
 ## See Also
 

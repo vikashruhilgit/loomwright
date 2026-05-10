@@ -20,7 +20,7 @@ Shows all available agent commands and quick usage examples.
 
 ## Quick Start
 
-The AI Agent Manager plugin provides **12 agent roles** for your development workflow:
+The AI Agent Manager plugin provides **13 agent roles** (8 user-facing + 5 internal) for your development workflow:
 
 **Readiness Pipeline (2 agent roles):**
 ```
@@ -28,12 +28,13 @@ The AI Agent Manager plugin provides **12 agent roles** for your development wor
   └─ Plan Reviewer  →  Validates brief quality, patterns, file paths (mandatory gate)
 ```
 
-**Autonomous Workflow (4 agent roles):**
+**Autonomous Workflow (5 agent roles):**
 ```
 /supervisor  →  Parallel orchestrator: Task → Branch → Execute Manager → PR → Loop
   ├─ Execute Manager  →  Phase 3 poll loop, worker/reviewer lifecycle (blocking)
   ├─ Context-Keeper   →  Externalized state management (on-demand)
-  └─ Worker           →  Isolated implementation in git worktrees (background)
+  ├─ Worker           →  Isolated implementation in git worktrees (background)
+  └─ Rubric Grader    →  Phase 4.5 read-only Haiku scorer for the optional Outcomes Rubric (advisory only)
 ```
 
 **Requirements Pipeline (1 agent):**

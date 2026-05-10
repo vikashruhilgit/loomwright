@@ -1,6 +1,6 @@
 # AI Agent Manager Plugin for Claude Code
 
-A Claude Code plugin with 12 agent roles (8 user-facing + 4 internal), 49 focused skills, and optional Beads issue tracker integration. Automates plan-first readiness, parallel workflow execution, requirements definition, code review, adversarial audits, and dual-agent QA testing.
+A Claude Code plugin with 13 agent roles (8 user-facing + 5 internal), 49 focused skills, and optional Beads issue tracker integration. Automates plan-first readiness, parallel workflow execution, requirements definition, code review, adversarial audits, and dual-agent QA testing.
 
 ## Overview
 
