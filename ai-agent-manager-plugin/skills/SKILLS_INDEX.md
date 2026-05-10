@@ -19,6 +19,7 @@ Comprehensive index of all skills available in the AI Agent Manager plugin.
 | Agent Output | `agent-output/` | — (reference) | ~400 | 1.0.0 | 2026-03 |
 | Beads Workflow | `beads-workflow/` | Orchestrator (reference), Product Owner (reference) | ~600 | 1.0.0 | 2026-03 |
 | Telemetry | `telemetry/` | — (reference, shell-script-driven) | ~600 | 1.0.0 | 2026-04 |
+| Memory Tool | `memory-tool/` | Red Team Reviewer (reference), QA Executor (reference), Product Owner (reference) | ~500 | 1.0 | 2026-05-10 |
 
 ## Development Practices
 
