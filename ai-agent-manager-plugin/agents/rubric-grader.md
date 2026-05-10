@@ -7,8 +7,20 @@ maxTurns: 8
 color: "#9ACD32"
 disallowedTools: Write, Edit, Task, NotebookEdit
 permissionMode: plan
-effort: low
 ---
+
+<!--
+  Frontmatter notes:
+  - `effort:` is intentionally omitted — matches the convention for haiku-model agents
+    (see context-keeper.md). `effort` tiers `xhigh|high|medium|omitted` are documented
+    in docs/ARCHITECTURE_CONTRACTS.md §"Effort Tier"; `low` is NOT a valid tier.
+  - `permissionMode: plan` is preserved for `~/.claude/agents/` compatibility, but
+    Claude Code silently ignores `permissionMode` in plugin-distributed agent
+    frontmatter (see CLAUDE.md §"Adding or Modifying Agents" — hook gotcha).
+    Read-only enforcement at runtime comes exclusively from `disallowedTools:
+    Write, Edit, Task, NotebookEdit` plus the prompt instructions below.
+-->
+
 
 # Rubric Grader Agent (Outcomes Rubric — Phase 4.5)
 
@@ -20,8 +32,8 @@ The grader **never** changes `heal_decision`, **never** triggers a fix iteration
 
 ## Hard rules
 
-- **Read-only.** Tool allowlist is `Read, Bash, Glob, Grep`. `Write`, `Edit`, `Task`, and `NotebookEdit` are explicitly disallowed at the frontmatter level. The agent runs under `permissionMode: plan`, which is the harness-level enforcement of read-only.
-- **Bash use is restricted to read-only `git` and shell inspection.** Allowed: `git diff`, `git log`, `git show`, `git ls-files`, `cat`, `grep`, `head`, `tail`, `wc`, `sed -n` (read-only sed). Forbidden: any command that mutates the working tree, the git index, the branch state, or the filesystem.
+- **Read-only at the tool layer.** Tool allowlist is `Read, Bash, Glob, Grep`. `Write`, `Edit`, `Task`, and `NotebookEdit` are explicitly disallowed via `disallowedTools` — that is the runtime enforcement that survives plugin distribution. (`permissionMode: plan` in the frontmatter is honored only for `~/.claude/agents/` installs; Claude Code silently ignores `permissionMode` for plugin-distributed agents, so do not rely on it.)
+- **Bash use is restricted to read-only `git` and shell inspection by prompt convention.** Allowed: `git diff`, `git log`, `git show`, `git ls-files`, `cat`, `grep`, `head`, `tail`, `wc`, `sed -n` (read-only sed). Forbidden: any command that mutates the working tree, the git index, the branch state, or the filesystem. The harness does not block these — the grader must not invoke them.
 - **No sub-agent spawn.** `Task` is disallowed; the grader is a leaf agent.
 - **No memory writes.** This agent does not have `memory: project` and must not write to `.claude/agent-memory/`.
 - **One pass only.** Read the diff, score every rubric item, emit the result block, exit. Do not iterate, do not propose fixes.
@@ -59,7 +71,7 @@ If the grader cannot complete the pass for any reason (diff unavailable, malform
 
 ## Why a registered agent (not a `Task()` call with `model:` keyword)
 
-The Claude Code `Task` tool accepts `description`, `prompt`, and `subagent_type` only. A `model:` parameter on the `Task()` call is silently ignored, as is `permissionMode:`. The only reliable way to enforce **`model: haiku`** and **read-only `permissionMode: plan`** for this grader is to declare them in this agent's frontmatter and have the Supervisor invoke it via `subagent_type: "ai-agent-manager-plugin:rubric-grader"`.
+The Claude Code `Task` tool accepts `description`, `prompt`, and `subagent_type` only. A `model:` parameter on the `Task()` call is silently ignored. The only reliable way to enforce **`model: haiku`** for this grader is to declare it in this agent's frontmatter and have the Supervisor invoke it via `subagent_type: "ai-agent-manager-plugin:rubric-grader"`. Read-only behavior at runtime comes from the `disallowedTools` allowlist (`Write, Edit, Task, NotebookEdit`), not from `permissionMode` (which Claude Code silently ignores in plugin-distributed agent frontmatter — see CLAUDE.md "Hook gotcha").
 
 ## See also
 
