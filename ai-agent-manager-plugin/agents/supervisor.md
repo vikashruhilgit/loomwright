@@ -541,10 +541,15 @@ rubric_bullets = parse_rubric(brief_path)   # [] if no ## Outcomes Rubric sectio
 
 if heal_decision == PASS and rubric_bullets:
   # Invoke the registered rubric-grader agent. Spawning by `subagent_type` is
-  # the only reliable enforcement path for `model: haiku` and `permissionMode: plan`
-  # — the Task tool ignores `model:` / `permissionMode:` keywords on the call site.
-  # Frontmatter on `agents/rubric-grader.md` enforces both, plus a read-only
-  # tool allowlist (Read, Bash, Glob, Grep) and `disallowedTools: Write, Edit, Task`.
+  # the reliable enforcement path for `model: haiku` — the Task tool ignores
+  # `model:` keywords on the call site, but honors the frontmatter on
+  # `agents/rubric-grader.md`. Read-only behavior at runtime is enforced by
+  # the agent's `disallowedTools: Write, Edit, Task, NotebookEdit` plus the
+  # prompt convention restricting Bash to read-only git inspection.
+  # `permissionMode: plan` is preserved in the agent frontmatter for
+  # ~/.claude/agents/ compatibility but is silently ignored by Claude Code
+  # for plugin-distributed agents (see CLAUDE.md "Hook gotcha"); do not
+  # rely on it as a runtime gate.
   grade = Task(
     description: "Grade PR diff against Outcomes Rubric",
     prompt: "Feature branch: {feature_branch}
@@ -558,7 +563,7 @@ if heal_decision == PASS and rubric_bullets:
       the exact output contract.",
     subagent_type: "ai-agent-manager-plugin:rubric-grader"
   )
-  rubric_score = parse_rubric_score(grade.output)   # "N/M" string; N ≤ M; M == len(rubric_bullets)
+  rubric_score = parse_rubric_score(grade.output)   # "N/M" string; 0 <= N <= M; M == len(rubric_bullets); "0/M" is valid (all-fail)
 else:
   rubric_score = null   # no rubric in brief, or heal_decision != PASS
 ```

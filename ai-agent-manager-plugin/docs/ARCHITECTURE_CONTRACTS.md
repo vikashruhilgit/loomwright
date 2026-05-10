@@ -20,6 +20,7 @@
 | Red Team Reviewer | no | no | yes | no | no | no | inherit |
 | QA Strategist | no | no | yes | no | no | no | inherit |
 | Plan Reviewer | no | no | no | yes | no | no | inherit (effort: high) |
+| Rubric Grader | no | no | yes (read-only git only) | yes (rubric scoring) | no | no | haiku |
 | QA Executor | yes | yes | yes | no | yes | no | inherit |
 
 ## disallowedTools (Defense-in-Depth)
@@ -31,6 +32,7 @@ These are **defense-in-depth** restrictions for accidental misuse, NOT security 
 | Context-Keeper | Task, Bash, Glob, Grep | Sole state writer; must never spawn agents or explore |
 | Worker | Task | Must never spawn subagents |
 | Plan Reviewer | Write, Edit, NotebookEdit, Task, Bash | Read-only; no mutation via any path |
+| Rubric Grader | Write, Edit, Task, NotebookEdit | Read-only Phase 4.5 grader; advisory only — must never mutate the diff it scores or spawn sub-agents |
 | QA Strategist | Task | Read-only analyzer |
 
 ---
@@ -50,6 +52,7 @@ These are **defense-in-depth** restrictions for accidental misuse, NOT security 
 | Product Owner | ~4k tokens | Domain analysis + story writing |
 | Orchestrator | ~3k tokens | Task decomposition |
 | Plan Reviewer | ~3k tokens | Focused brief validation |
+| Rubric Grader | ~2k tokens | One-shot diff read + per-item scoring |
 | Red Team Reviewer | ~6k tokens | Deep adversarial analysis |
 
 ---

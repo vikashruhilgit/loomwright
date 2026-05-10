@@ -907,13 +907,14 @@ ai-agent-manager-plugin/              # Nested plugin root
 │   ├── dreaming.md                   # Read-only reflection over session logs (proposes memory + CLAUDE.md updates)
 │   ├── telemetry.md                  # Opt-in GitHub Issues telemetry (status/enable/disable/test)
 │   └── agent-help.md
-├── agents/                           # Agent implementations (12 roles)
+├── agents/                           # Agent implementations (13 roles)
 │   ├── launch-pad.md                 # Supervisor readiness agent
 │   ├── supervisor.md                 # Parallel orchestrator (v4)
 │   ├── execute-manager.md            # Phase 3 execution manager
 │   ├── context-keeper.md             # State management agent
 │   ├── worker.md                     # Implementation worker
 │   ├── plan-reviewer.md              # Brief validation gate
+│   ├── rubric-grader.md              # Phase 4.5 read-only Haiku scorer (v12.2.0)
 │   ├── product-owner.md              # Requirements definition
 │   ├── orchestrator.md
 │   ├── code-reviewer.md

@@ -353,7 +353,7 @@ ai-agent-manager/                            # Marketplace wrapper repo
     ├── .claude-plugin/
     │   └── plugin.json                      # Plugin manifest (v12.2.0)
     ├── .mcp.json                            # Bundled MCP servers
-    ├── agents/                              # Agent prompts (12 roles)
+    ├── agents/                              # Agent prompts (13 roles)
     │   ├── launch-pad.md, supervisor.md, execute-manager.md, context-keeper.md
     │   ├── worker.md, plan-reviewer.md, product-owner.md, orchestrator.md
     │   └── code-reviewer.md, red-team-reviewer.md, qa-strategist.md, qa-executor.md

@@ -448,7 +448,7 @@ This prevents knowledge loss and helps agents learn from discoveries.
 - **.claude-plugin/marketplace.json:** Marketplace manifest (root)
 - **.claude-plugin/README.md:** Detailed plugin documentation
 - **ai-agent-manager-plugin/.claude-plugin/plugin.json:** Plugin manifest
-- **ai-agent-manager-plugin/agents/*.md:** Individual agent prompts (12 roles)
+- **ai-agent-manager-plugin/agents/*.md:** Individual agent prompts (13 roles)
 - **ai-agent-manager-plugin/skills/*/SKILL.md:** 49 skill files for guidance
 - **ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md:** Structured result contracts
 - **ai-agent-manager-plugin/docs/FAILURE_ESCALATION.md:** Agent failure paths
@@ -462,7 +462,7 @@ This prevents knowledge loss and helps agents learn from discoveries.
 
 To modify or extend agents:
 
-1. Agents are Markdown prompts in `ai-agent-manager-plugin/agents/` (12 files)
+1. Agents are Markdown prompts in `ai-agent-manager-plugin/agents/` (13 files)
 2. Commands are in `ai-agent-manager-plugin/commands/` (11 commands)
 3. Skills are in `ai-agent-manager-plugin/skills/` (49 skills, versioned with SKILLS_INDEX.md)
 4. Hooks: per-agent in frontmatter (Worker, Execute Manager) + cross-cutting in `ai-agent-manager-plugin/hooks/hooks.json` (Code Reviewer, QA Executor, TaskCompleted)
