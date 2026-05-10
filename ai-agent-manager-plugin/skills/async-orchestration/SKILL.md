@@ -468,10 +468,14 @@ The Execute Manager **NEVER picks an option itself** — it always escalates to 
 ```yaml
 adjudication_required: true
 missing_outputs:
-  - item: {from: "<producer-sub>", kind: "<file|symbol|type>", path: "<path>", name: "<name>"}
+  - item: "<requires item — file path, symbol, or contract field>"
     producing_subtask: "<producer-sub>"
     check_run: "<exact verification command and its exit/output>"
-adjudication_options: ["A", "B", "C", "D"]
+adjudication_options:
+  - "A: Re-queue producer"
+  - "B: Insert remediation subtask"
+  - "C: Exit to Launch Pad"
+  - "D: Update consumer brief"
 ```
 
 The Supervisor receives the checkpoint, presents the four options to the user (with the `missing_outputs` list and the `check_run` evidence), and only then re-enters Phase 3 with the chosen branch.

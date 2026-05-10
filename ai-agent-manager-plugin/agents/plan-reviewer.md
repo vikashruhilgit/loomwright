@@ -276,7 +276,7 @@ PLAN_REVIEW_RESULT:
 ## Quality Checklist
 
 Before producing PLAN_REVIEW_RESULT:
-- [ ] All 12 criteria checked (Criterion 11 conditional on `## Feasibility` section presence; Criterion 12 conditional on subtask contract YAML blocks being present)
+- [ ] All 12 criteria checked (Criterion 11 conditional on `## Feasibility` section presence; Criterion 12 skipped only when the brief's Environment section declares `legacy_brief: true` — otherwise missing `provides:` / `requires:` blocks are a BLOCKING `dep_graph` violation)
 - [ ] Every file path in File Impact Map verified via Read or Glob
 - [ ] CLAUDE.md patterns compared against brief approach
 - [ ] Dependency graph traced for cycles
