@@ -6,7 +6,7 @@ A Claude Code plugin for AI agents to collaborate on software projects. 12 speci
 
 > **Install the plugin and run slash commands instead of manually managing agents.**
 >
-> **NEW in v12.0.0:** Reliability primitives — inter-subtask `provides` / `requires` contracts, pre-spawn dependency verification gate, scope-expansion adjudication (4-option escalation), effort-tier discipline across all 12 agents, and hardened SubagentStop validation rejecting `outputs_gap` / `toolset_gap` drift. WORKER_RESULT schema bumped to v2.
+> **NEW in v12.0.0:** Reliability primitives — inter-subtask `provides` / `requires` contracts, pre-spawn dependency verification gate, scope-expansion adjudication (4-option escalation), effort-tier discipline across the 10 execution-shaped agents (haiku context-keeper and discovery-only product-owner exempt), and hardened SubagentStop validation rejecting `outputs_gap` / `toolset_gap` drift. WORKER_RESULT schema bumped to v2.
 >
 > **v7 baseline (preserved):** Enhanced Code Reviewer (LSP diagnostics, read-only mode, issue categorization: new/pre_existing/nit), senior-grade QA (strict assertions, negative testing, CRUD lifecycle, data integrity probes, security boundary tests, missing functionality detection with `MISSING_FUNCTIONALITY_REPORT`), session-based QA (`--plan`, `--scope`, `--continue`), Strategist assertion quality audit. Plus all v6 features: structured result schemas, failure escalation, merge safety gate, session logging, per-agent hooks, architecture contracts.
 
