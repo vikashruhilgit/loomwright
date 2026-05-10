@@ -6,7 +6,9 @@ A Claude Code plugin for AI agents to collaborate on software projects. 12 speci
 
 > **Install the plugin and run slash commands instead of manually managing agents.**
 >
-> **NEW in v12.1.0:** Documentation + skills increment — new Memory Tool skill (Anthropic memory-tool pattern reference), new "## Structured Outputs" section in `AGENT_GUIDELINES.md` documenting both enforcement paths (`output_config.format` for direct API agents, `SubagentStop` hooks for plugin agents), and a new "## Advisor Tool (SDK-only pattern)" section noting the `advisor-tool-2026-03-01` beta is reachable only via direct `client.beta.messages.create(...)` calls (not through Task-spawned plugin subagents). Compaction-recovery hooks were spiked and deferred (NO-GO). All v12.0.0 reliability primitives preserved.
+> **NEW in v12.2.0:** New capabilities increment — (1) **Agent Teams graduation** (3-of-6 patterns now recommended: research/exploration, competing hypotheses, cross-layer changes; the rest stay experimental), (2) an **Outcomes Rubric** scored by a Haiku grader at the end of every Supervisor run (`rubric_score` is an optional `"N/M" | null` field in `SUPERVISOR_RESULT` — null when the brief omits the section), (3) a new **`/dreaming`** slash command for read-only post-hoc reflection on completed sessions (no code or memory writes by the command itself), and (4) an **opt-in webhook SubagentStop hook** that POSTs structured agent results to a user-configured endpoint for external monitoring/dashboards (disabled by default, fail-closed on errors). 11 slash commands, 14 quality gate hooks. All v12.1.0 documentation increments preserved.
+>
+> **v12.1.0 (preserved):** Documentation + skills increment — Memory Tool skill (Anthropic memory-tool pattern reference), "## Structured Outputs" section in `AGENT_GUIDELINES.md` documenting both enforcement paths (`output_config.format` for direct API agents, `SubagentStop` hooks for plugin agents), and the "## Advisor Tool (SDK-only pattern)" section noting the `advisor-tool-2026-03-01` beta is reachable only via direct `client.beta.messages.create(...)` calls.
 >
 > **v12.0.0 (preserved):** Reliability primitives — inter-subtask `provides` / `requires` contracts, pre-spawn dependency verification gate, scope-expansion adjudication (4-option escalation), effort-tier discipline across the 10 execution-shaped agents (haiku context-keeper and discovery-only product-owner exempt), and hardened SubagentStop validation rejecting `outputs_gap` / `toolset_gap` drift. WORKER_RESULT schema bumped to v2.
 >
@@ -310,7 +312,7 @@ For apps with many routes, use session-based QA to test in chunks:
 
 ## Telemetry (opt-in)
 
-**New in v11.2.0 (preserved in v12.1.0)** — an optional GitHub Issues telemetry pipeline. After
+**New in v11.2.0 (preserved in v12.2.0)** — an optional GitHub Issues telemetry pipeline. After
 qualifying agent runs (`/supervisor`, `/code-reviewer`, `/qa-executor`)
 complete, the plugin can post a structured GitHub issue summarising the
 result block, a derived score, agent performance breakdown, and AI
@@ -460,7 +462,7 @@ This prevents knowledge loss and helps agents learn from discoveries.
 To modify or extend agents:
 
 1. Agents are Markdown prompts in `ai-agent-manager-plugin/agents/` (12 files)
-2. Commands are in `ai-agent-manager-plugin/commands/` (10 commands)
+2. Commands are in `ai-agent-manager-plugin/commands/` (11 commands)
 3. Skills are in `ai-agent-manager-plugin/skills/` (49 skills, versioned with SKILLS_INDEX.md)
 4. Hooks: per-agent in frontmatter (Worker, Execute Manager) + cross-cutting in `ai-agent-manager-plugin/hooks/hooks.json` (Code Reviewer, QA Executor, TaskCompleted)
 5. Docs: `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md`, `…/FAILURE_ESCALATION.md`, `…/ARCHITECTURE_CONTRACTS.md`, `…/ARCHITECTURE.md`
@@ -525,7 +527,7 @@ Claude Code caches plugin contents. After pulling new changes (e.g. a fresh `git
    /reload-plugins
    ```
    Run from the repo root so `./` resolves to your local checkout.
-3. Verify with `/skills` — should show all 49 skills under "Plugin skills". Use `/agent-help` to confirm all 10 user-facing commands are registered.
+3. Verify with `/skills` — should show all 49 skills under "Plugin skills". Use `/agent-help` to confirm all 11 user-facing commands are registered.
 
 **Previously installed via `claude --plugin-dir` (flat layout)?** Older install instructions told you to launch Claude with `--plugin-dir` pointing at the repo root. That no longer works — the plugin is now nested under `ai-agent-manager-plugin/`. Switch to the marketplace flow shown in **Quick Start → 1. Install the Plugin**.
 

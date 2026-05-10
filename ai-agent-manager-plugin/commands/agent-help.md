@@ -892,7 +892,7 @@ bd close BD-XX
 
 ai-agent-manager-plugin/              # Nested plugin root
 ├── .claude-plugin/
-│   └── plugin.json                   # Plugin metadata (v12.1.0)
+│   └── plugin.json                   # Plugin metadata (v12.2.0)
 ├── .mcp.json                         # Bundled MCP servers
 ├── commands/                         # Slash commands (11)
 │   ├── launch-pad.md                 # Supervisor readiness

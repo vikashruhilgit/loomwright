@@ -12,7 +12,7 @@ Guidance for Claude Code when working in this repository.
 
 **AI Agent Manager** is a Claude Code plugin with 12 agent roles (8 user-facing + 4 internal) for plan-first readiness, parallel execution, requirements, planning, code review, commits, adversarial audits, and dual-agent QA. Supervisor and Launch Pad use `.supervisor/` exclusively for state; Orchestrator and Product Owner can optionally use Beads.
 
-**v12.1.0 — Documentation + skills increment:** New Memory Tool skill (`ai-agent-manager-plugin/skills/memory-tool/SKILL.md`) covering Anthropic's memory-tool pattern as a reference for long-running agents; new "## Structured Outputs" section in `AGENT_GUIDELINES.md` documenting both enforcement paths for result blocks (Claude API direct via `output_config.format` JSON-Schema mode vs. plugin runtime via `SubagentStop` hooks); new "## Advisor Tool (SDK-only pattern)" section in `AGENT_GUIDELINES.md` documenting the `advisor-tool-2026-03-01` beta / `advisor_20260301` server-tool as reachable only via direct `client.beta.messages.create(...)` calls (not through Claude Code Task-spawned plugin subagents — see `ai-agent-manager-plugin/docs/SPIKES/advisor.md` for the SDK-ONLY recommendation and re-spike triggers). Compaction-recovery hooks were spiked and deferred (NO-GO; `PostCompact` has no documented `additionalContext` injection path — see `ai-agent-manager-plugin/docs/SPIKES/compaction.md`). All v12.0.0 reliability primitives preserved (inter-subtask `provides` / `requires` contracts, pre-spawn dependency verification gate, scope-expansion adjudication, effort-tier discipline, hardened SubagentStop validation, WORKER_RESULT v2 with `outputs_verified[]` + `outputs_gap`). See `ai-agent-manager-plugin/docs/ARCHITECTURE_CONTRACTS.md` §"Effort Tiers" and the `provides` / `requires` schema in `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md`.
+**v12.2.0 — New capabilities increment:** Four user-visible additions on top of v12.1.0. (1) **Agent Teams graduation** — `ai-agent-manager-plugin/skills/agent-teams/SKILL.md` now ships per-pattern "Recommended Use Cases" plus a 3-of-6 graduation matrix (research/exploration, competing hypotheses, and cross-layer changes graduate to *recommended*; sequential tasks, same-file edits, and high-write-contention scenarios remain *experimental* / not recommended — keep using Supervisor v4 with worktrees). (2) **Outcomes Rubric** — at the end of every Supervisor run, a Haiku-graded rubric scores the session (`rubric_score` is an optional `"N/M" | null` field in `SUPERVISOR_RESULT` — null when the brief omits the section, additive at schema_version 1); the rubric is owned by `ai-agent-manager-plugin/agents/supervisor.md` and validated by the supervisor SubagentStop hook. (3) **`/dreaming` slash command** — read-only post-hoc reflection on completed sessions (no code, agent-memory, or `CLAUDE.md` writes by `/dreaming` itself; persistence requires explicit user follow-up). The command lives at `ai-agent-manager-plugin/commands/dreaming.md`. (4) **Opt-in webhook hook** — a new SubagentStop `type: command` hook in `ai-agent-manager-plugin/hooks/hooks.json` invokes `${CLAUDE_PLUGIN_ROOT}/scripts/send-webhook.sh` to POST structured agent results to a user-configured endpoint for external monitoring/dashboards (disabled by default, fail-closed on errors, never blocks the agent). All v12.1.0 documentation increments preserved (Memory Tool skill reference, Structured Outputs guidance for both enforcement paths, Advisor Tool SDK-only note) and all v12.0.0 reliability primitives intact (inter-subtask `provides` / `requires` contracts, pre-spawn dependency verification gate, scope-expansion adjudication, effort-tier discipline, hardened SubagentStop validation, WORKER_RESULT v2 with `outputs_verified[]` + `outputs_gap`). See `ai-agent-manager-plugin/docs/ARCHITECTURE_CONTRACTS.md` §"Effort Tiers" and the `provides` / `requires` schema in `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md`.
 
 ---
 
@@ -21,9 +21,9 @@ Guidance for Claude Code when working in this repository.
 The repo is a **marketplace wrapper** containing one nested plugin:
 
 - Marketplace manifest: `.claude-plugin/marketplace.json` (root)
-- Plugin manifest: `ai-agent-manager-plugin/.claude-plugin/plugin.json` (v12.1.0)
+- Plugin manifest: `ai-agent-manager-plugin/.claude-plugin/plugin.json` (v12.2.0)
 - Agents: `ai-agent-manager-plugin/agents/` (12 markdown prompts)
-- Commands: `ai-agent-manager-plugin/commands/` (10 entry points)
+- Commands: `ai-agent-manager-plugin/commands/` (11 entry points)
 - Skills: `ai-agent-manager-plugin/skills/` (49 skills, see `SKILLS_INDEX.md`)
 - Hooks: `ai-agent-manager-plugin/hooks/hooks.json`
 - Docs: `ai-agent-manager-plugin/docs/`
@@ -42,7 +42,7 @@ ai-agent-manager/                              # marketplace wrapper
 │   ├── .claude-plugin/plugin.json
 │   ├── .mcp.json                              # bundled MCP servers
 │   ├── agents/                                # 12 markdown prompts
-│   ├── commands/                              # 10 slash commands
+│   ├── commands/                              # 11 slash commands
 │   ├── hooks/hooks.json                       # cross-cutting hooks
 │   ├── skills/                                # 49 skills + SKILLS_INDEX.md
 │   ├── scripts/                               # send-telemetry.sh, send-telemetry-core.sh, telemetry-fixtures/
@@ -129,7 +129,7 @@ Every agent (full standard in `AGENT_GUIDELINES.md`):
 
 ## Plugin Hooks (Quality Gates)
 
-13 hooks centralized in `hooks.json` since v10.0.0. Prompt-based validation uses fast haiku model with 30s timeout. WorktreeCreate / StopFailure / telemetry hooks use `type: command` for zero-latency.
+14 hooks centralized in `hooks.json` since v10.0.0 (the v12.2.0 webhook hook brings the count from 13 → 14). Prompt-based validation uses fast haiku model with 30s timeout. WorktreeCreate / StopFailure / telemetry / webhook hooks use `type: command` for zero-latency.
 
 | Hook | Trigger | Location | Validation |
 |------|---------|----------|------------|
@@ -147,7 +147,7 @@ Every agent (full standard in `AGENT_GUIDELINES.md`):
 
 ---
 
-## Telemetry System (opt-in, v11.2.0 — preserved in v12.1.0)
+## Telemetry System (opt-in, v11.2.0 — preserved in v12.2.0)
 
 After qualifying runs (`supervisor-runner`, `code-reviewer`, `qa-executor`), a SubagentStop `type: command` hook invokes `${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry.sh` (the wrapper — `${CLAUDE_PLUGIN_ROOT}` is the canonical Claude Code variable for plugin-bundled assets and resolves to the plugin install dir on both dev checkouts and marketplace installs; never use `ai-agent-manager-plugin/...` paths from the user-project root, those only resolve for the plugin maintainer). The wrapper is fire-and-forget and **always exits 0**; it pipes the hook payload to `send-telemetry-core.sh`, which parses the result block, derives a deterministic score, runs a regex-based privacy whitelist, and (when consent + target repo are configured) calls `gh issue create` with a structured body covering Task Summary, Agent Scores, Issues Detected, AI Suggestions, Tools Used, and a redacted JSON payload.
 

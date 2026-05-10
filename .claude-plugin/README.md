@@ -4,9 +4,11 @@ A Claude Code plugin with 12 agent roles (8 user-facing + 4 internal), 49 focuse
 
 ## Overview
 
-The AI Agent Manager Plugin v12.1.0 includes:
+The AI Agent Manager Plugin v12.2.0 includes:
 
-- **Documentation + skills increment (v12.1.0)** — New Memory Tool skill (`ai-agent-manager-plugin/skills/memory-tool/SKILL.md`) covering Anthropic's memory-tool pattern as a reference for long-running agents; new "## Structured Outputs" section in `AGENT_GUIDELINES.md` documenting both enforcement paths for result blocks (Claude API direct via `output_config.format` JSON-Schema mode; plugin runtime via `SubagentStop` hooks); new "## Advisor Tool (SDK-only pattern)" section in `AGENT_GUIDELINES.md` documenting the `advisor-tool-2026-03-01` beta / `advisor_20260301` server-tool as reachable only via direct `client.beta.messages.create(...)` calls (no plugin flag, no Task-tool path — see `ai-agent-manager-plugin/docs/SPIKES/advisor.md` for the SDK-ONLY recommendation and re-spike triggers). Compaction-recovery hooks were spiked and deferred (NO-GO; `PostCompact` has no documented `additionalContext` injection path — see `ai-agent-manager-plugin/docs/SPIKES/compaction.md`). Hook count unchanged at 13.
+- **New capabilities increment (v12.2.0)** — (1) **Agent Teams graduation:** `ai-agent-manager-plugin/skills/agent-teams/SKILL.md` now ships per-pattern Recommended Use Cases plus a 3-of-6 graduation matrix (research/exploration, competing hypotheses, cross-layer changes graduate to *recommended*; sequential tasks, same-file edits, high-write-contention scenarios remain experimental — keep using Supervisor v4 + worktrees there). (2) **Outcomes Rubric:** every Supervisor run ends with a Haiku-graded rubric; `rubric_score` is now a required field in `SUPERVISOR_RESULT`, owned by `ai-agent-manager-plugin/agents/supervisor.md` and enforced by the supervisor SubagentStop hook. (3) **`/dreaming` slash command:** read-only post-hoc reflection on completed sessions — does not write code, agent memory, or `CLAUDE.md`; persistence requires explicit user follow-up. (4) **Opt-in webhook hook:** a new SubagentStop `type: command` entry in `ai-agent-manager-plugin/hooks/hooks.json` invokes `${CLAUDE_PLUGIN_ROOT}/scripts/send-webhook.sh` to POST structured agent results to a user-configured endpoint (disabled by default, fail-closed on errors, never blocks the agent). Slash-command count: 10 → 11. Hook count: 13 → 14.
+
+- **Documentation + skills increment (v12.1.0, preserved)** — Memory Tool skill (`ai-agent-manager-plugin/skills/memory-tool/SKILL.md`) covering Anthropic's memory-tool pattern as a reference for long-running agents; "## Structured Outputs" section in `AGENT_GUIDELINES.md` documenting both enforcement paths for result blocks (Claude API direct via `output_config.format` JSON-Schema mode; plugin runtime via `SubagentStop` hooks); "## Advisor Tool (SDK-only pattern)" section in `AGENT_GUIDELINES.md` documenting the `advisor-tool-2026-03-01` beta / `advisor_20260301` server-tool as reachable only via direct `client.beta.messages.create(...)` calls (see `ai-agent-manager-plugin/docs/SPIKES/advisor.md` for the SDK-ONLY recommendation). Compaction-recovery hooks were spiked and deferred (NO-GO; see `ai-agent-manager-plugin/docs/SPIKES/compaction.md`).
 
 - **Reliability primitives (v12.0.0, preserved)** — Inter-subtask output contracts via a `provides` / `requires` schema (planned by Launch Pad, validated by Plan Reviewer, materialized + verified by Execute Manager Step 2a/2b), scope-expansion adjudication (4-option AskUserQuestion escalation when a producer's outputs are missing or a worker emits `outputs_gap`), effort-tier discipline across the 10 execution-shaped agents (`xhigh` / `high` / `medium`; haiku-locked context-keeper and discovery-only product-owner intentionally exempt), and hardened SubagentStop validation that rejects `outputs_gap` / `toolset_gap` drift. WORKER_RESULT schema bumped to v2 with `outputs_verified[]` + `outputs_gap` fields. See `ai-agent-manager-plugin/docs/ARCHITECTURE_CONTRACTS.md` (Effort Tiers) and `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md` (provides/requires schema, WORKER_RESULT v2).
 
@@ -349,19 +351,19 @@ ai-agent-manager/                            # Marketplace wrapper repo
 │   └── README.md                            # This file
 └── ai-agent-manager-plugin/                 # The nested plugin
     ├── .claude-plugin/
-    │   └── plugin.json                      # Plugin manifest (v12.1.0)
+    │   └── plugin.json                      # Plugin manifest (v12.2.0)
     ├── .mcp.json                            # Bundled MCP servers
     ├── agents/                              # Agent prompts (12 roles)
     │   ├── launch-pad.md, supervisor.md, execute-manager.md, context-keeper.md
     │   ├── worker.md, plan-reviewer.md, product-owner.md, orchestrator.md
     │   └── code-reviewer.md, red-team-reviewer.md, qa-strategist.md, qa-executor.md
-    ├── commands/                            # Slash commands (10)
+    ├── commands/                            # Slash commands (11)
     │   ├── launch-pad.md, supervisor.md, product-owner.md, orchestrator.md
     │   ├── code-reviewer.md, red-team-reviewer.md, qa-strategist.md, qa-executor.md
-    │   ├── telemetry.md
+    │   ├── telemetry.md, dreaming.md
     │   └── agent-help.md
     ├── hooks/
-    │   └── hooks.json                       # 13 quality gate hooks (centralized)
+    │   └── hooks.json                       # 14 quality gate hooks (centralized)
     ├── skills/                              # 49 focused skill modules
     │   ├── SKILLS_INDEX.md                  # Skill catalog with agent mapping
     │   └── [skill-name]/SKILL.md            # Individual skills
@@ -423,8 +425,8 @@ Agents with `memory: project` build knowledge across sessions:
 
 ### Quality Gate Hooks
 
-13 hooks centralized in `hooks.json` validate agent output:
-- **SubagentStop:** Worker, Execute Manager, Code Reviewer, Supervisor, QA Executor, Plan Reviewer (6 prompt validators) + 3 `type: command` telemetry hooks on Code Reviewer, QA Executor, Supervisor
+14 hooks centralized in `hooks.json` validate agent output:
+- **SubagentStop:** Worker, Execute Manager, Code Reviewer, Supervisor, QA Executor, Plan Reviewer (6 prompt validators) + 3 `type: command` telemetry hooks on Code Reviewer, QA Executor, Supervisor + 1 `type: command` opt-in webhook hook (v12.2.0)
 - **Stop:** Code Reviewer (completeness gate)
 - **TaskCompleted:** Verify task genuinely done
 - **WorktreeCreate / StopFailure:** Logging
