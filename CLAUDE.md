@@ -12,7 +12,7 @@ Guidance for Claude Code when working in this repository.
 
 **AI Agent Manager** is a Claude Code plugin with 13 agent roles (8 user-facing + 5 internal) for plan-first readiness, parallel execution, requirements, planning, code review, commits, adversarial audits, and dual-agent QA. Supervisor and Launch Pad use `.supervisor/` exclusively for state; Orchestrator and Product Owner can optionally use Beads.
 
-**v12.2.0 — New capabilities increment:** Four user-visible additions on top of v12.1.0. (1) **Agent Teams graduation** — `ai-agent-manager-plugin/skills/agent-teams/SKILL.md` now ships per-pattern "Recommended Use Cases" plus a 3-of-6 graduation matrix (research/exploration, competing hypotheses, and cross-layer changes graduate to *recommended*; sequential tasks, same-file edits, and high-write-contention scenarios remain *experimental* / not recommended — keep using Supervisor v4 with worktrees). (2) **Outcomes Rubric** — at the end of every Supervisor run, a Haiku-graded rubric scores the session (`rubric_score` is an optional `"N/M" | null` field in `SUPERVISOR_RESULT` — null when the brief omits the section, additive at schema_version 1); the rubric is owned by `ai-agent-manager-plugin/agents/supervisor.md` and validated by the supervisor SubagentStop hook. (3) **`/dreaming` slash command** — read-only post-hoc reflection on completed sessions (no code, agent-memory, or `CLAUDE.md` writes by `/dreaming` itself; persistence requires explicit user follow-up). The command lives at `ai-agent-manager-plugin/commands/dreaming.md`. (4) **Opt-in webhook hook** — a new SubagentStop `type: command` hook in `ai-agent-manager-plugin/hooks/hooks.json` invokes `${CLAUDE_PLUGIN_ROOT}/scripts/send-webhook.sh` to POST structured agent results to a user-configured endpoint for external monitoring/dashboards (disabled by default, fail-closed on errors, never blocks the agent). All v12.1.0 documentation increments preserved (Memory Tool skill reference, Structured Outputs guidance for both enforcement paths, Advisor Tool SDK-only note) and all v12.0.0 reliability primitives intact (inter-subtask `provides` / `requires` contracts, pre-spawn dependency verification gate, scope-expansion adjudication, effort-tier discipline, hardened SubagentStop validation, WORKER_RESULT v2 with `outputs_verified[]` + `outputs_gap`). See `ai-agent-manager-plugin/docs/ARCHITECTURE_CONTRACTS.md` §"Effort Tiers" and the `provides` / `requires` schema in `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md`.
+**v13.0.0 — Foreground-assisted goal-completion loop:** One new user-facing addition on top of v12.2.0 — the **`/autonomous` slash command** at `ai-agent-manager-plugin/commands/autonomous.md`, governed by `ai-agent-manager-plugin/skills/autonomous-loop/SKILL.md`. It is an inline main-thread workflow (same execution model as `/launch-pad` and `/supervisor` — no new delegated agent) that chains Launch Pad → Supervisor for a single requirement. In the **default single-iteration mode**, it just runs both inline and emits an `AUTONOMOUS_RUN` summary; this is command chaining, nothing more. In opt-in **multi-iteration mode** (`--allow-multi-iteration --max-iterations N`, default `N=3`), an EVALUATE phase reads `SUPERVISOR_RESULT` and re-plans on exactly two signals: (1) `status: completed` with `rubric_score N/M` where N<M (loop pauses for a **rubric-gate `AskUserQuestion`** — merge-and-continue verified via `gh pr view` / `git merge-base --is-ancestor` / stop-here / force-continue-anyway), (2) `status: failed` with `inter_subtask_gap` detected on this iteration's brief via anchor-by-filename (`.supervisor/jobs/failed/{basename(current_brief_path)}` existence + `inter_subtask_gap` in failed-brief contents / `SUPERVISOR_RESULT.error` / `summary` / `state.md`). The loop **never auto-picks** on adjudication — Supervisor's existing 4-option `AskUserQuestion` surfaces in-session; the loop's value is automating the re-plan that Option C ("Exit to Launch Pad") already requires the user to do by hand. **Foreground-assisted automation, not fire-and-forget**: Launch Pad Phase 6, NO-GO, Plan Review FAIL × 3, Supervisor adjudication, and the rubric gate all bubble `AskUserQuestion` in-session. v13 is **purely additive** — no new agent, no new hook, no schema change, no source change to any existing agent / command / skill / hook / doc / script. All v12.2.0 capabilities preserved (Agent Teams graduation matrix, Outcomes Rubric, `/dreaming`, opt-in webhook hook), v12.1.0 documentation increments preserved (Memory Tool, Structured Outputs, SDK-only Advisor note), v12.0.0 reliability primitives intact (`provides`/`requires` contracts, pre-spawn verification gate, 4-option adjudication, effort-tier discipline, WORKER_RESULT schema_version 2 with `outputs_verified[]` + `outputs_gap`).
 
 ---
 
@@ -21,10 +21,10 @@ Guidance for Claude Code when working in this repository.
 The repo is a **marketplace wrapper** containing one nested plugin:
 
 - Marketplace manifest: `.claude-plugin/marketplace.json` (root)
-- Plugin manifest: `ai-agent-manager-plugin/.claude-plugin/plugin.json` (v12.2.0)
+- Plugin manifest: `ai-agent-manager-plugin/.claude-plugin/plugin.json` (v13.0.0)
 - Agents: `ai-agent-manager-plugin/agents/` (13 markdown prompts)
-- Commands: `ai-agent-manager-plugin/commands/` (11 entry points)
-- Skills: `ai-agent-manager-plugin/skills/` (49 skills, see `SKILLS_INDEX.md`)
+- Commands: `ai-agent-manager-plugin/commands/` (12 entry points)
+- Skills: `ai-agent-manager-plugin/skills/` (50 skills, see `SKILLS_INDEX.md`)
 - Hooks: `ai-agent-manager-plugin/hooks/hooks.json`
 - Docs: `ai-agent-manager-plugin/docs/`
 - Bundled MCP: read-only MySQL server (`vikashruhil-mysql-mcp`)
@@ -42,9 +42,9 @@ ai-agent-manager/                              # marketplace wrapper
 │   ├── .claude-plugin/plugin.json
 │   ├── .mcp.json                              # bundled MCP servers
 │   ├── agents/                                # 13 markdown prompts
-│   ├── commands/                              # 11 slash commands
+│   ├── commands/                              # 12 slash commands
 │   ├── hooks/hooks.json                       # cross-cutting hooks
-│   ├── skills/                                # 49 skills + SKILLS_INDEX.md
+│   ├── skills/                                # 50 skills + SKILLS_INDEX.md
 │   ├── scripts/                               # send-telemetry.sh, send-telemetry-core.sh, send-webhook.sh, telemetry-fixtures/
 │   └── docs/                                  # RESULT_SCHEMAS, FAILURE_ESCALATION, ARCHITECTURE_CONTRACTS, ARCHITECTURE, QA_SYSTEM_BLUEPRINT, TELEMETRY
 │       └── SPIKES/                            # Capability spike investigations + deferral records
@@ -75,6 +75,14 @@ Detailed per-agent purpose, command syntax, and workflow diagrams live in `READM
 | Worker | internal | Execute Manager / Supervisor | One subtask per worktree, no git ops, emits WORKER_RESULT + `.worker-summary.md` |
 | Plan Reviewer | internal | Launch Pad | PLAN_REVIEW_RESULT decision gates the brief save — PASS saves; NEEDS_HUMAN saves only on explicit user override; FAIL never saves |
 | Rubric Grader | internal | Supervisor (Phase 4.5, only when brief has `## Outcomes Rubric` and `heal_decision == PASS`) | Read-only Haiku scorer; runtime read-only enforcement comes from `disallowedTools: Write, Edit, Task, NotebookEdit` (the frontmatter-level enforcement that survives plugin distribution — `permissionMode: plan` is preserved for `~/.claude/agents/` compatibility but is silently ignored by Claude Code for plugin agents); emits per-item `ITEM N: PASS\|FAIL` lines + `rubric_score: N/M`; advisory only — never changes `heal_decision` or blocks the PR |
+
+### `/autonomous` orchestration shell (v13.0.0)
+
+`/autonomous` is **not a new agent.** It is an inline main-thread slash command (`ai-agent-manager-plugin/commands/autonomous.md`) governed by `ai-agent-manager-plugin/skills/autonomous-loop/SKILL.md`. The same execution model as `/launch-pad` and `/supervisor`: the slash command body is workflow instructions executed inline on the main thread. The main thread reads `commands/launch-pad.md` and `commands/supervisor.md` at Step 0 (to avoid prompt drift), then runs Launch Pad inline (which still Task-spawns `plan-reviewer`), then runs Supervisor inline (which still Task-spawns `orchestrator` / `execute-manager` / `code-reviewer` / `rubric-grader`).
+
+**Default mode is single-iteration:** just runs Launch Pad → Supervisor once and emits an `AUTONOMOUS_RUN` summary. Multi-iteration mode (`--allow-multi-iteration`, opt-in) adds an EVALUATE phase that re-plans on two specific `SUPERVISOR_RESULT` signals (rubric_score N<M gated on user-merge verification; failed + inter_subtask_gap anchored by `.supervisor/jobs/failed/{basename(current_brief_path)}` existence). The loop never auto-picks on adjudication — Supervisor's existing 4-option `AskUserQuestion` surfaces in-session as it does today; the loop only automates the re-plan that Option C ("Exit to Launch Pad") already requires the user to do by hand.
+
+State writes are confined to `.supervisor/autonomous/{session_id}/` (the loop's own state) and `.supervisor/requirements/` (the requirement files). Supervisor remains the sole writer of `.supervisor/jobs/` and `.supervisor/state.md` per existing contracts. `AUTONOMOUS_RUN` uses an autonomous-layer-only status enum (`done | paused_max_iterations | aborted | failed`) intentionally distinct from `SUPERVISOR_RESULT.status` to avoid schema collision; the summary is plain markdown plus a JSON sidecar (no hook validation, no resume contract in v1 — those are future work).
 
 ### Shared Agent Contract
 
@@ -130,7 +138,7 @@ Every agent (full standard in `AGENT_GUIDELINES.md`):
 
 ## Plugin Hooks (Quality Gates)
 
-14 hooks centralized in `hooks.json` since v10.0.0 (the v12.2.0 webhook hook brings the count from 13 → 14). Prompt-based validation uses fast haiku model with 30s timeout. WorktreeCreate / StopFailure / telemetry / webhook hooks use `type: command` for zero-latency.
+14 hooks centralized in `hooks.json` since v10.0.0 (the v12.2.0 webhook hook brought the count from 13 → 14; v13.0.0 adds no new hooks). Prompt-based validation uses fast haiku model with 30s timeout. WorktreeCreate / StopFailure / telemetry / webhook hooks use `type: command` for zero-latency.
 
 | Hook | Trigger | Location | Validation |
 |------|---------|----------|------------|
@@ -149,7 +157,7 @@ Every agent (full standard in `AGENT_GUIDELINES.md`):
 
 ---
 
-## Telemetry System (opt-in, v11.2.0 — preserved in v12.2.0)
+## Telemetry System (opt-in, v11.2.0 — preserved in v13.0.0)
 
 After qualifying runs (`supervisor-runner`, `code-reviewer`, `qa-executor`), a SubagentStop `type: command` hook invokes `${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry.sh` (the wrapper — `${CLAUDE_PLUGIN_ROOT}` is the canonical Claude Code variable for plugin-bundled assets and resolves to the plugin install dir on both dev checkouts and marketplace installs; never use `ai-agent-manager-plugin/...` paths from the user-project root, those only resolve for the plugin maintainer). The wrapper is fire-and-forget and **always exits 0**; it pipes the hook payload to `send-telemetry-core.sh`, which parses the result block, derives a deterministic score, runs a regex-based privacy whitelist, and (when consent + target repo are configured) calls `gh issue create` with a structured body covering Task Summary, Agent Scores, Issues Detected, AI Suggestions, Tools Used, and a redacted JSON payload.
 

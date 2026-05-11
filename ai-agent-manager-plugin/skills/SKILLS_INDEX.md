@@ -20,6 +20,7 @@ Comprehensive index of all skills available in the AI Agent Manager plugin.
 | Beads Workflow | `beads-workflow/` | Orchestrator (reference), Product Owner (reference) | ~600 | 1.0.0 | 2026-03 |
 | Telemetry | `telemetry/` | — (reference, shell-script-driven) | ~600 | 1.0.0 | 2026-04 |
 | Memory Tool | `memory-tool/` | — (reference) | ~500 | 1.0.0 | 2026-05-10 |
+| Autonomous Loop | `autonomous-loop/` | `/autonomous` (slash command, reference) | ~2,400 | 1.0.0 | 2026-05-11 |
 
 ## Development Practices
 
@@ -93,6 +94,6 @@ Comprehensive index of all skills available in the AI Agent Manager plugin.
 
 ---
 
-**Total: 49 skills**
+**Total: 50 skills**
 
-_Last updated: 2026-05-10_
+_Last updated: 2026-05-11_

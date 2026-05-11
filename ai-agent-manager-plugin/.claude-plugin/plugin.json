@@ -1,7 +1,7 @@
 {
   "name": "ai-agent-manager-plugin",
-  "version": "12.2.0",
-  "description": "AI agents v12.2.0 — New capabilities increment over v12.1.0: Agent Teams graduated from experimental to recommended for 3-of-6 use cases (the agent-teams skill now ships per-pattern Recommended Use Cases plus a graduation matrix); a new Outcomes Rubric scored by a Haiku grader at the end of every Supervisor run (rubric_score in SUPERVISOR_RESULT); a new /dreaming slash command for read-only post-hoc reflection on completed sessions (no code or memory writes — review-only); and a new opt-in webhook SubagentStop hook (send-webhook.sh) that POSTs structured agent results to a user-configured endpoint for external monitoring/dashboards (disabled by default, fail-closed on errors). Preserves all v12.1.0 documentation increments (Memory Tool skill, Structured Outputs guidance, Advisor Tool SDK-only note) and all v12.0.0 reliability primitives: inter-subtask provides/requires contracts, pre-spawn dependency verification gate, scope-expansion adjudication (4-option escalation), effort-tier discipline across the 10 execution-shaped agents, hardened SubagentStop validation rejecting outputs_gap/toolset_gap drift, WORKER_RESULT schema_version 2 with outputs_verified[] + outputs_gap. Builds on v11.2.0 (opt-in GitHub Issues telemetry), v11.1.x (inline-execution guard, Phase 4.5 completion-tail invariant), v11.0 (self-heal), v10.3 layers. 13 agent roles, 49 reusable skills, 14 quality gate hooks, 11 slash commands, persistent agent memory, bundled MySQL MCP server.",
+  "version": "13.0.0",
+  "description": "AI agents v13.0.0 — New orchestration semantics layer above Launch Pad and Supervisor: a new /autonomous slash command that chains /launch-pad → /supervisor for a single requirement and, in opt-in multi-iteration mode (--allow-multi-iteration), re-plans the next iteration on two specific SUPERVISOR_RESULT signals (rubric_score N<M with user-merge confirmation; failed + inter_subtask_gap on this iteration's brief). Foreground-assisted automation — Launch Pad Phase 6, NO-GO, Plan Review FAIL × 3, Supervisor adjudication 4-option, and the loop's own rubric gate all bubble AskUserQuestion in-session. v13 is purely additive: no new agent, no new hook, no schema change, no source change to any existing agent / command / skill / hook / doc / script. Iteration-scoping via anchor-by-filename (.supervisor/jobs/failed/{basename(current_brief_path)} existence) ensures no false-positive from prior runs. Preserves all v12.2.0 capabilities (Agent Teams graduation, Outcomes Rubric, /dreaming, opt-in webhook hook), v12.1.0 documentation increments (Memory Tool, Structured Outputs, SDK-only Advisor note), v12.0.0 reliability primitives (provides/requires contracts, pre-spawn verification, 4-option adjudication, effort-tier discipline, WORKER_RESULT schema_version 2), and prior v11/v10 layers. 13 agent roles, 50 reusable skills, 14 quality gate hooks, 12 slash commands, persistent agent memory, bundled MySQL MCP server.",
   "author": {
     "name": "vikash ruhil"
   },
@@ -99,6 +99,11 @@
     "assumption-check",
     "telemetry",
     "github-issues",
-    "opt-in"
+    "opt-in",
+    "autonomous-loop",
+    "command-chaining",
+    "multi-iteration",
+    "rubric-gate",
+    "foreground-assisted"
   ]
 }
