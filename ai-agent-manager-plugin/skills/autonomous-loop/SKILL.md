@@ -14,7 +14,7 @@ Protocol for the `/autonomous` outer loop. Owns the orchestration that chains La
 
 ## Quick Rules
 
-- The loop owns no schema, mutates no agent. It reads `SUPERVISOR_RESULT` and four file-system locations (`.supervisor/jobs/pending/`, `.supervisor/jobs/failed/`, `.supervisor/state.md`, `.supervisor/requirements/`); it writes only inside `.supervisor/autonomous/{session_id}/` and creates fresh requirement files in `.supervisor/requirements/`.
+- The loop owns no schema, mutates no agent. It reads `SUPERVISOR_RESULT` and three file-system locations (`.supervisor/jobs/pending/`, `.supervisor/jobs/failed/`, `.supervisor/requirements/`); it writes only inside `.supervisor/autonomous/{session_id}/`, creates fresh requirement files in `.supervisor/requirements/`, and appends one JSONL log line per session to `.supervisor/logs/{session_id}.jsonl` (the session log).
 - Single-iteration is the default mode. Multi-iteration requires explicit `--allow-multi-iteration`.
 - Never auto-pick on adjudication. The 4 options surface to the user via Supervisor's existing `AskUserQuestion`.
 - Two — and only two — signals trigger re-iteration: `rubric_score N<M` (gated by a user-merge confirmation) and `failed + inter_subtask_gap on this iteration's brief` (no merge needed; the job was abandoned).
@@ -35,16 +35,17 @@ Protocol for the `/autonomous` outer loop. Owns the orchestration that chains La
 
 Single-iteration is the safe default because (a) most user requirements complete in one cycle, (b) multi-iteration has real architectural caveats around PR merge cadence, (c) opt-in avoids surprising the user with multi-PR runs.
 
-## Step 0 — Load Canonical Workflow Bodies (once per `/autonomous` invocation)
+## Step 0 — Load Canonical Workflow Bodies + Protocol Skill (once per `/autonomous` invocation)
 
-Before INIT, the main thread `Read`s the canonical command files end-to-end:
+Before INIT, the main thread `Read`s the canonical command files **and this skill** end-to-end. **All paths use `${CLAUDE_PLUGIN_ROOT}`**, the canonical Claude Code variable that resolves to the plugin install dir on both maintainer dev checkouts and marketplace installs. Repo-relative `ai-agent-manager-plugin/...` paths only work in the maintainer checkout and **must not** be used at runtime (see CLAUDE.md "Repo path vs. runtime path"):
 
 ```
-Read ai-agent-manager-plugin/commands/launch-pad.md
-Read ai-agent-manager-plugin/commands/supervisor.md
+Read ${CLAUDE_PLUGIN_ROOT}/commands/launch-pad.md
+Read ${CLAUDE_PLUGIN_ROOT}/commands/supervisor.md
+Read ${CLAUDE_PLUGIN_ROOT}/skills/autonomous-loop/SKILL.md   # this file — re-read at runtime so the protocol can't drift from what the command body assumes
 ```
 
-This guards against prompt drift: if Launch Pad or Supervisor evolve between releases, the autonomous loop picks up the changes automatically because it re-reads them every run. The "references, not duplicates" promise depends on this step. Without it, the autonomous body's references could become stale invocations of behaviors the main thread guesses at.
+This guards against prompt drift on three fronts. If Launch Pad, Supervisor, or this autonomous-loop protocol evolves between releases, `/autonomous` picks up the changes automatically. The "references, not duplicates" promise from the command body depends on this step. Without it, the autonomous body's references could become stale invocations of behaviors the main thread guesses at.
 
 ## INIT (once per invocation)
 
@@ -106,7 +107,7 @@ This guards against prompt drift: if Launch Pad or Supervisor evolve between rel
 1. Reference the loaded `commands/supervisor.md` workflow. Invoke it inline on the main thread, passing `job: <current_brief_path>`.
 2. Supervisor runs its existing 7-phase workflow inline (orchestrator → execute-manager → worker → code-reviewer → Phase 4.5 self-heal → Rubric Grader). Adjudication 4-option AskUserQuestion (when outputs_gap triggers it) bubbles to the user in-session per existing FAILURE_ESCALATION; the autonomous loop never auto-picks.
 3. Supervisor moves the job through `pending/ → in-progress/ → done/ or failed/` per its existing lifecycle. The autonomous loop never touches the job lifecycle.
-4. Capture the emitted `SUPERVISOR_RESULT` block (the last one in the transcript per `RESULT_SCHEMAS.md` emission cadence) and record relevant fields into state.json's `iterations[]` array: `n`, `brief_path`, `supervisor_status`, `pr_url` (when present), `rubric_score`, `branch` (extracted from the brief's Configuration section), `summary`, `error` (when failed), `heal_decision`, `escalation_reason` (when completed_with_escalation).
+4. Capture the emitted `SUPERVISOR_RESULT` block (the last one in the transcript per `RESULT_SCHEMAS.md` emission cadence) and record relevant fields into state.json's `iterations[]` array: `n`, `brief_path`, `supervisor_status`, `pr_url` (when present), `rubric_score`, `branch` (read directly from the `SUPERVISOR_RESULT.branch` field — a required v12.2-schema string), `summary`, `error` (when failed), `heal_decision`, `escalation_reason` (when completed_with_escalation). The `branch` field is what the merge-verification step (Signal 1 in EVALUATE) resolves to a SHA via `git rev-parse`.
 
 ## EVALUATE (multi-iteration mode only)
 
@@ -123,25 +124,40 @@ Loop pauses. Main-thread `AskUserQuestion` fires with the rubric gate:
 > - *(b) stop-here (accept the current rubric score, exit),*
 > - *(c) force-continue-anyway (proceed without merge; risk: iteration {N+1}'s branch won't include iteration {N}'s changes, likely producing conflicting PRs)."*
 
-**If user picks `merge-and-continue`, the loop verifies the merge before re-planning:**
+**If user picks `merge-and-continue`, the loop verifies the merge before re-planning.** The branch name comes from `SUPERVISOR_RESULT.branch` (an existing schema-1 field per `docs/RESULT_SCHEMAS.md:218`); it was captured into `iterations[N].branch` during EXECUTE. The SHA is resolved from that branch name via `git rev-parse` on the **local** ref (not `origin/<branch>`, because we want the SHA the user pushed and we don't want a stale remote ref to hide the real tip):
 
 ```bash
-# Primary: gh CLI
+# Read branch name from this iteration's recorded SUPERVISOR_RESULT
+iter_N_branch="$(jq -r ".iterations[-1].branch" .supervisor/autonomous/${session_id}/state.json)"
+
+# Resolve to a commit SHA — prefer the local ref the user pushed from
+iter_N_branch_sha="$(git rev-parse "refs/heads/$iter_N_branch" 2>/dev/null \
+                     || git rev-parse "origin/$iter_N_branch" 2>/dev/null)"
+if [ -z "$iter_N_branch_sha" ]; then
+  # Can't resolve a SHA for this branch at all. Treat merge as unverifiable —
+  # do NOT auto-confirm. Re-prompt or fall through to gh-only verification.
+  iter_N_branch_sha=""
+fi
+
+# Primary: gh CLI on the PR URL
+merged=
 state=$(gh pr view "$pr_url" --json state -q .state 2>/dev/null)
 if [ "$state" = "MERGED" ]; then merged=true; fi
 
-# Fallback: local ancestry check
-if [ -z "$merged" ]; then
+# Fallback: local ancestry check (only meaningful if we resolved a SHA)
+if [ -z "$merged" ] && [ -n "$iter_N_branch_sha" ]; then
   default_branch=$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || echo main)
   git fetch origin "$default_branch" 2>/dev/null
   if git merge-base --is-ancestor "$iter_N_branch_sha" "origin/$default_branch" 2>/dev/null; then merged=true; fi
 fi
 
 if [ -z "$merged" ]; then
-  # Re-prompt user — don't proceed on premature click
-  AskUserQuestion "PR #$X is not yet showing as merged. Refresh and pick merge-and-continue again, or pick stop-here / force-continue-anyway."
+  # Re-prompt user — don't proceed on premature click or unverifiable merge
+  AskUserQuestion "PR #$X is not yet showing as merged (gh: ${state:-unknown}; local ancestry: $( [ -n "$iter_N_branch_sha" ] && echo "checked" || echo "branch SHA unresolvable" )). Refresh and pick merge-and-continue again, or pick stop-here / force-continue-anyway."
 fi
 ```
+
+**If both `gh` is unavailable AND `iter_N_branch_sha` is unresolvable** (e.g., the branch has been deleted locally and never fetched from origin), the loop cannot positively verify the merge — it re-prompts the user rather than proceeding. The user can re-run after fetching, choose stop-here, or use force-continue-anyway (which records the bypass in `policy_decisions` for audit).
 
 The loop **never** advances to iteration N+1 on `merge-and-continue` until one of the two checks confirms merge. This prevents premature re-iteration from a user who clicked too early.
 
@@ -188,12 +204,24 @@ if [ ! -f "$failed_path" ]; then
 fi
 
 # This iteration's brief was marked failed. Check for inter_subtask_gap in
-# four locations (any match = Option C trigger):
+# THREE iteration-scoped locations (any match = Option C trigger).
+# All three are inherently scoped to this iteration:
+#   (a) failed_path content — Supervisor writes the outcome into THIS brief's
+#       file before moving it to failed/; we know the filename is session_id-
+#       tagged so nothing else can share it.
+#   (b) SUPERVISOR_RESULT.error — emitted in this iteration's Supervisor block.
+#   (c) SUPERVISOR_RESULT.summary — same.
+# Global grep against .supervisor/state.md is intentionally NOT used: Context-
+# Keeper rewrites state.md atomically per skills/state-management/SKILL.md, and
+# pre-rewrite stale content can survive briefly. A global grep there could
+# false-positive on prior-session gaps even though state.md is "supposed" to
+# be per-session. The three iteration-scoped sources above are sufficient
+# because Supervisor's Option C flow guarantees the gap reason lands in at
+# least one of them.
 gap_detected=false
 grep -qF "inter_subtask_gap" "$failed_path" 2>/dev/null && gap_detected=true
 [ "$gap_detected" = false ] && echo "$SUPERVISOR_RESULT_ERROR"   | grep -qF "inter_subtask_gap" && gap_detected=true
 [ "$gap_detected" = false ] && echo "$SUPERVISOR_RESULT_SUMMARY" | grep -qF "inter_subtask_gap" && gap_detected=true
-[ "$gap_detected" = false ] && grep -qF "inter_subtask_gap" .supervisor/state.md 2>/dev/null && gap_detected=true
 
 if [ "$gap_detected" = false ]; then
   # Failed brief exists but no gap signal — some other failure that happened
@@ -305,14 +333,15 @@ Same fields as summary.md, structured as JSON. v1 writes it but does not depend 
 - **Launch Pad inline workflow:** referenced via Step 0 + PLAN invocation. One inline instruction added (rubric preservation), delivered through the inlined prompt, not a Launch Pad source change.
 - **Supervisor inline workflow:** referenced via Step 0 + EXECUTE invocation. No instruction modifications.
 - **Adjudication 4-option escalation:** Supervisor surfaces existing options A/B/C/D via AskUserQuestion. The autonomous loop never auto-picks. Option C produces `failed + inter_subtask_gap` grep-stable per FAILURE_ESCALATION.md:180.
-- **SUPERVISOR_RESULT schema (v12.2):** v1 reads existing fields only — `status`, `pr_url`, `error`, `summary`, `rubric_score`. No schema change. `reason` does not exist on the block; v1 reads gap context from `state.md` per the signal-extraction path above.
+- **SUPERVISOR_RESULT schema (v12.2):** v1 reads existing fields only — `status`, `pr_url`, `error`, `summary`, `rubric_score`, `branch`. No schema change. `reason` does not exist on the block; v1 reads gap context from `SUPERVISOR_RESULT.error` / `SUPERVISOR_RESULT.summary` and from the failed brief's contents (see Signal 2 detection algorithm above).
 - **`.supervisor/jobs/` lifecycle:** Supervisor remains sole writer/mover. The autonomous loop only reads `pending/` (for brief-save detection) and `failed/` (for Option-C anchor check).
-- **`.supervisor/state.md`:** Context-Keeper remains sole writer per `agents/context-keeper.md`. The autonomous loop only reads it (via `grep`) as one of four `inter_subtask_gap` fallback sources.
+- **`.supervisor/state.md`:** Context-Keeper remains sole writer per `agents/context-keeper.md`. The autonomous loop **does not** grep state.md for `inter_subtask_gap` — Signal 2 detection uses only the three iteration-scoped sources (failed-brief contents, `SUPERVISOR_RESULT.error`, `SUPERVISOR_RESULT.summary`) to avoid any false-positive risk from pre-rewrite stale content.
 
 ## Cross-References
 
-- `ai-agent-manager-plugin/commands/launch-pad.md` — inline workflow Step 0 loads
-- `ai-agent-manager-plugin/commands/supervisor.md` — inline workflow Step 0 loads
+- `${CLAUDE_PLUGIN_ROOT}/commands/launch-pad.md` — inline workflow Step 0 loads at runtime
+- `${CLAUDE_PLUGIN_ROOT}/commands/supervisor.md` — inline workflow Step 0 loads at runtime
+- `${CLAUDE_PLUGIN_ROOT}/skills/autonomous-loop/SKILL.md` — this skill; Step 0 loads at runtime
 - `ai-agent-manager-plugin/docs/FAILURE_ESCALATION.md` — adjudication 4 options and the `inter_subtask_gap` grep-stable string (line 180)
 - `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md` — `SUPERVISOR_RESULT` schema including `rubric_score`
 - `ai-agent-manager-plugin/skills/supervisor-readiness/SKILL.md` — brief format the autonomous loop relies on Launch Pad to produce

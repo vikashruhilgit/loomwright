@@ -31,7 +31,6 @@ Plus all prior v11.0/v10.3/v10.2 capabilities:
 
 - **Launch Pad** (`/launch-pad`) — Prepare goals for autonomous Supervisor execution
 - **Supervisor** (`/supervisor`) — Autonomous parallel workflow orchestrator with git worktrees
-- **Autonomous (orchestration shell, v13.0.0)** (`/autonomous`) — Chain Launch Pad → Supervisor for a single requirement; opt-in `--allow-multi-iteration` adds re-planning on existing SUPERVISOR_RESULT signals (rubric N<M with user-merge confirmation; failed + inter_subtask_gap)
 - **Product Owner** (`/product-owner`) — Translate business problems into user stories. Supports `--brainstorm` for multi-mind ideation
 - **Orchestrator** (`/orchestrator`) — Break goals into tasks with review gates
 - **Code Reviewer** (`/code-reviewer`) — Review code with PASS/FAIL/NEEDS_HUMAN decisions (LSP diagnostics, read-only)
@@ -39,14 +38,19 @@ Plus all prior v11.0/v10.3/v10.2 capabilities:
 - **QA Strategist** (`/qa-strategist`) — Risk-based test strategy and QA audit
 - **QA Executor** (`/qa-executor`) — Discover app, generate Playwright tests, find gaps
 
-### Internal Agents (4)
+### Orchestration Shells (slash commands, not agents)
+
+- **`/autonomous` (v13.0.0)** — Chain Launch Pad → Supervisor for a single requirement; opt-in `--allow-multi-iteration` adds re-planning on existing SUPERVISOR_RESULT signals (rubric N<M with user-merge confirmation; failed + inter_subtask_gap). Inline main-thread workflow — does not register a new agent.
+
+### Internal Agents (5)
 
 - **Execute Manager** — Owns Phase 3 worker/reviewer lifecycle (spawned by Supervisor)
 - **Context-Keeper** — Sole writer of externalized state file (spawned on-demand)
 - **Worker** — Implements a single subtask in an isolated git worktree (spawned by Execute Manager)
 - **Plan Reviewer** — Validates Supervisor-Ready Briefs before execution (spawned by Launch Pad)
+- **Rubric Grader** (v12.2.0) — Read-only Haiku scorer for the optional Outcomes Rubric (spawned by Supervisor in Phase 4.5 when the brief contains `## Outcomes Rubric` and `heal_decision == PASS`; advisory only — never blocks the PR)
 
-### 49 Skills
+### 50 Skills
 
 Skills are loaded on-demand to keep context small:
 

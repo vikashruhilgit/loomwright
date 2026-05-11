@@ -42,16 +42,17 @@ This is a v13.0.0 addition. It introduces no new agent, no new hook, no schema c
 
 ## What This Does
 
-### Step 0 — Load Canonical Workflow Bodies (always)
+### Step 0 — Load Canonical Workflow Bodies + Protocol Skill (always)
 
-Before anything else, the main thread reads the canonical inline workflows so it executes the up-to-date versions rather than a remembered shape:
+Before anything else, the main thread reads the canonical inline workflows and the autonomous-loop protocol skill so it executes the up-to-date versions rather than remembered shapes. **All three reads use `${CLAUDE_PLUGIN_ROOT}`**, which is the canonical Claude Code variable that resolves to the plugin install dir at runtime (works on both maintainer dev checkouts and marketplace installs). Never use `ai-agent-manager-plugin/...` here — that path only resolves for the plugin maintainer:
 
 ```
-Read ai-agent-manager-plugin/commands/launch-pad.md
-Read ai-agent-manager-plugin/commands/supervisor.md
+Read ${CLAUDE_PLUGIN_ROOT}/commands/launch-pad.md
+Read ${CLAUDE_PLUGIN_ROOT}/commands/supervisor.md
+Read ${CLAUDE_PLUGIN_ROOT}/skills/autonomous-loop/SKILL.md
 ```
 
-This guards against prompt drift. If Launch Pad or Supervisor evolves between releases, `/autonomous` picks up the changes automatically.
+This guards against prompt drift on three fronts. If Launch Pad, Supervisor, or the autonomous-loop protocol evolves between releases, `/autonomous` picks up the changes automatically because it re-reads them every run.
 
 ### Single-Iteration Mode (default)
 
@@ -144,7 +145,7 @@ You merge PR #42 manually, then pick `merge-and-continue`. The loop verifies the
 $ /autonomous --requirement .supervisor/requirements/refactor-with-hidden-deps.md --allow-multi-iteration
 ```
 
-Iteration 1: Launch Pad saves a brief; Supervisor's Worker emits `outputs_gap`; Execute Manager raises adjudication; Supervisor presents the 4 options via AskUserQuestion. You pick **Option C "Exit to Launch Pad"**. Supervisor marks the job failed with `inter_subtask_gap`. EVALUATE detects this via the anchor-by-filename check (`.supervisor/jobs/failed/{basename(brief)}` exists + `inter_subtask_gap` in one of four locations). Loop writes `.supervisor/requirements/...-iter2.md` with the gap context, loops back to PLAN (no merge prompt — no PR was created). Iteration 2 completes cleanly.
+Iteration 1: Launch Pad saves a brief; Supervisor's Worker emits `outputs_gap`; Execute Manager raises adjudication; Supervisor presents the 4 options via AskUserQuestion. You pick **Option C "Exit to Launch Pad"**. Supervisor marks the job failed with `inter_subtask_gap`. EVALUATE detects this via the anchor-by-filename check (`.supervisor/jobs/failed/{basename(brief)}` exists + `inter_subtask_gap` in one of three iteration-scoped locations: the failed brief's contents, `SUPERVISOR_RESULT.error`, or `SUPERVISOR_RESULT.summary`). Loop writes `.supervisor/requirements/...-iter2.md` with the gap context, loops back to PLAN (no merge prompt — no PR was created). Iteration 2 completes cleanly.
 
 ## Flow Diagram
 
