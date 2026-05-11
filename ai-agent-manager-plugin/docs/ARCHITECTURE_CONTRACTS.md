@@ -52,7 +52,7 @@ These are **defense-in-depth** restrictions for accidental misuse, NOT security 
 | Product Owner | ~4k tokens | Domain analysis + story writing |
 | Orchestrator | ~3k tokens | Task decomposition |
 | Plan Reviewer | ~3k tokens | Focused brief validation |
-| Rubric Grader | ~2k tokens | One-shot diff read + per-item scoring |
+| Rubric Grader | ~2k tokens output; input window scales with diff size (typically 5–50k tokens for a v12.x-style feature branch; larger PRs may need more) | One-shot diff read + per-item scoring; budget is intentionally output-side because the agent emits only N×short justifications plus a single `rubric_score: N/M` line. Input is `git diff origin/main...{branch}` — sized by the feature, not the grader. |
 | Red Team Reviewer | ~6k tokens | Deep adversarial analysis |
 
 ---

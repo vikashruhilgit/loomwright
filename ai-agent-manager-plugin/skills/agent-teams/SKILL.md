@@ -241,7 +241,7 @@ Validate teammate output quality:
 - No file-level isolation — conflicts are possible
 - Teammates share git state — no independent branches
 - Limited error recovery compared to Supervisor's checkpoint/resume
-- ~~Context sharing between teammates is limited~~ — addressed in v12.2.0 by direct mailbox communication (see Graduation Criteria §"Met"); kept here for historical context
+- Context sharing between teammates: **resolved in v12.2.0** via direct mailbox communication — see Graduation Criteria §"Met" criterion 2 (the entry is kept rather than deleted so the historical limitation remains discoverable for users migrating from earlier releases)
 
 ### Workarounds
 

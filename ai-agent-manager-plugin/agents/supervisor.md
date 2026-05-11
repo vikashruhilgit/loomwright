@@ -1087,7 +1087,7 @@ SUPERVISOR_RESULT:
   error: string | null                      # required when status=failed
   summary: string
   cost_profile: enum [default, cheap] | null  # optional — null when flag not passed (equivalent to default)
-  rubric_score: string | null               # optional (v12.2.0+) — "N/M" where N and M are positive integers and M >= N; null when no Outcomes Rubric in brief, heal_decision != PASS, or grader parse failed
+  rubric_score: string | null               # optional (v12.2.0+) — "N/M" where N is non-negative (>= 0; "0/M" is the legitimate all-fail case), M is positive (>= 1), M >= N; null when no Outcomes Rubric in brief, heal_decision != PASS, or grader parse failed
 ```
 
 **Status mapping (machine-readable):**

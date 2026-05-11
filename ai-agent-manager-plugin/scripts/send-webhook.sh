@@ -129,6 +129,11 @@ fi
 
 if [ -z "$PAYLOAD" ]; then
   # Fallback minimal payload — fields are deliberately empty when jq is absent.
+  # $TIMESTAMP is safe to inline into the JSON string here: `date -u
+  # +%Y-%m-%dT%H:%M:%SZ` only ever produces digits, dashes, colons, T, and Z
+  # (no double-quotes, backslashes, or control chars), so no JSON-escape
+  # hazard. The `|| echo unknown` fallback above produces the literal token
+  # "unknown" which is also JSON-safe.
   PAYLOAD='{"agent":"supervisor","status":"","pr_url":"","summary":"","timestamp":"'"$TIMESTAMP"'"}'
 fi
 
