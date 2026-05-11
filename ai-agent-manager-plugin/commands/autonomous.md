@@ -44,7 +44,7 @@ This is a v13.0.0 addition. It introduces no new agent, no new hook, no behavior
 
 > **`--cheap` interaction note:** Passing `--cheap` to `/autonomous` in v1 has **no effect** — the loop does not forward unknown flags to the inlined `/supervisor` call, and `/supervisor`'s `--cheap` cost-profile (Sonnet overrides for orchestrator / execute-manager / worker / code-reviewer / Phase 4.5 fix tasks) is not wired through here. If you want the cost-optimized profile for a single requirement, run the workflows manually instead: `/launch-pad "..."` then `/supervisor job: <brief-path> --cheap`. A future plan can add `--cheap` passthrough once the cost-profile semantics are clarified for multi-iteration cycles.
 
-> **Quoting paths with spaces:** the `--requirement <path>` argument needs shell-quoting if the path contains spaces. Example: `/autonomous --requirement ".supervisor/requirements/My Feature.md"` — without the quotes, the path is split on the first space and the loop will error or read the wrong file.
+> **Quoting paths with spaces:** if the `--requirement <path>` value contains spaces, enclose the whole path in double quotes. Example: `/autonomous --requirement ".supervisor/requirements/My Feature.md"`. Without the quotes the path is split on the first space and the loop will error or read the wrong file.
 
 ## What This Does
 
@@ -210,7 +210,7 @@ Iteration 1: Launch Pad saves a brief; Supervisor's Worker emits `outputs_gap`; 
 ## Troubleshooting
 
 ### Loop aborts with `status_reason: "rubric_dropped_from_brief"`
-Launch Pad did not honor the inline-instruction to preserve the `## Outcomes Rubric`. The loop catches this and exits cleanly. v1 fallback: convert the rubric to inline acceptance criteria in the requirement body and re-run without rubric-driven re-iteration (single-iteration mode), or open a follow-up issue for a Launch Pad source change.
+Launch Pad did not honor the inline-instruction to preserve the `## Outcomes Rubric`. The loop catches this and exits cleanly. **Cleanup before re-running:** the abort happens *after* Launch Pad's Phase 6 save, so the saved brief is still sitting in `.supervisor/jobs/pending/` (its filename starts with this run's `session_id`). Move it to `.supervisor/jobs/failed/` or delete it before re-running `/autonomous`, otherwise the next run's brief-save `ls`-diff will see the stale brief, count it as a "new" file, and either pick it up by accident (if the new run produces no brief of its own) or trip `status_reason: "concurrent_session_detected"` (if both old and new briefs appear). One-liner: `mv .supervisor/jobs/pending/<this-session-id>-*.md .supervisor/jobs/failed/` then re-run. **v1 fallback:** convert the rubric to inline acceptance criteria in the requirement body and re-run without rubric-driven re-iteration (single-iteration mode), or open a follow-up issue for a Launch Pad source change.
 
 ### Loop aborts with `status_reason: "concurrent_session_detected"`
 The brief-save `ls`-diff found more than one new file in `pending/` after Phase 6. Likely cause: another `/launch-pad` or `/autonomous` session is mid-execution on the same repo. v1 fix: kill the other session, clean any stray pending briefs, restart.

@@ -684,7 +684,7 @@ AUTONOMOUS_RUN:
       supervisor_status: enum [completed, completed_with_escalation, failed, checkpoint]  # normally mirrors `SUPERVISOR_RESULT.status`. EXCEPTION: when Supervisor exited without emitting a `SUPERVISOR_RESULT` block at all (crash, hard API error, etc.), the autonomous loop synthesizes this iteration entry with `supervisor_status: failed` and `error: "no_supervisor_result_emitted"` — see `skills/autonomous-loop/SKILL.md` EXECUTE step 5 for the synthesis algorithm. The enum value is the same in both cases; only the provenance differs.
       pr_url: string | null            # SUPERVISOR_RESULT.pr_url when present
       rubric_score: string | null      # SUPERVISOR_RESULT.rubric_score when present (format "N/M")
-      branch: string                   # SUPERVISOR_RESULT.branch
+      branch: string                   # normally `SUPERVISOR_RESULT.branch`. EXCEPTION: the synthetic no-SUPERVISOR_RESULT entry uses the empty string `""` because no branch name was emitted — the iteration crashed before Supervisor produced a result block, so the loop has no authoritative branch to record. The empty string is a deliberate sentinel; merge verification on Signal 1 skips the local-ancestor fallback when `branch == ""` (see `skills/autonomous-loop/SKILL.md` Signal 1 merge-verification block, which already treats unresolvable branch SHAs as "merge unverifiable" and re-prompts the user).
       summary: string                  # SUPERVISOR_RESULT.summary
       error: string | null             # SUPERVISOR_RESULT.error when status: failed
       heal_decision: string | null     # SUPERVISOR_RESULT.heal_decision

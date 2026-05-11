@@ -231,46 +231,49 @@ The autonomous loop already knows `current_brief_path` (set during PLAN). When S
 
 **Detection algorithm (after Supervisor returns `status: failed`):**
 
-```bash
-# PSEUDOCODE — illustrative shell-flavoured pseudocode, not literally runnable.
-# "goto default_termination" denotes a structured control transfer to the
-# default-termination branch documented below; in a real implementation this
-# would be a function return, a state-machine transition, or a labeled break.
+The pseudocode below is implementation-illustrative, not literally runnable bash. `EXIT_TO_DEFAULT_TERMINATION` is a structured-flow marker — a real implementation uses a function return, state-machine transition, or labeled break. The `RESULT_*` placeholders represent fields already extracted from the captured `SUPERVISOR_RESULT` block (see EXECUTE step 4); they are not shell environment variables and do not need to be exported.
 
-failed_path=".supervisor/jobs/failed/$(basename "$current_brief_path")"
+```text
+# Inputs available at this point:
+#   current_brief_path           -- recorded in PLAN
+#   RESULT_ERROR                 -- value of SUPERVISOR_RESULT.error   (string|null)
+#   RESULT_SUMMARY               -- value of SUPERVISOR_RESULT.summary (string)
+#
+# Output:
+#   gap_detected                 -- boolean; true = Signal 2 (Option C) fired
 
-if [ ! -f "$failed_path" ]; then
-  # Supervisor failed for some reason that didn't move this iteration's brief
-  # to failed/ — e.g., merge conflict, env blocker, hard error before adjudication.
-  # NOT an Option C trigger.
-  goto default_termination   # pseudocode — see "Default termination" branch below
-fi
+failed_path = ".supervisor/jobs/failed/" + basename(current_brief_path)
 
-# This iteration's brief was marked failed. Check for inter_subtask_gap in
-# THREE iteration-scoped locations (any match = Option C trigger).
-# All three are inherently scoped to this iteration:
-#   (a) failed_path content — Supervisor writes the outcome into THIS brief's
-#       file before moving it to failed/; we know the filename is session_id-
-#       tagged so nothing else can share it.
-#   (b) SUPERVISOR_RESULT.error — emitted in this iteration's Supervisor block.
-#   (c) SUPERVISOR_RESULT.summary — same.
-# Global grep against .supervisor/state.md is intentionally NOT used: Context-
-# Keeper rewrites state.md atomically per skills/state-management/SKILL.md, and
-# pre-rewrite stale content can survive briefly. A global grep there could
-# false-positive on prior-session gaps even though state.md is "supposed" to
-# be per-session. The three iteration-scoped sources above are sufficient
-# because Supervisor's Option C flow guarantees the gap reason lands in at
-# least one of them.
-gap_detected=false
-grep -qF "inter_subtask_gap" "$failed_path" 2>/dev/null && gap_detected=true
-[ "$gap_detected" = false ] && echo "$SUPERVISOR_RESULT_ERROR"   | grep -qF "inter_subtask_gap" && gap_detected=true
-[ "$gap_detected" = false ] && echo "$SUPERVISOR_RESULT_SUMMARY" | grep -qF "inter_subtask_gap" && gap_detected=true
+if not file_exists(failed_path):
+    # Supervisor failed for some reason that didn't move this iteration's
+    # brief to failed/ — merge conflict, env blocker, hard error before
+    # adjudication, or any other crash path. NOT an Option C trigger.
+    EXIT_TO_DEFAULT_TERMINATION   # see "Default termination" branch below
 
-if [ "$gap_detected" = false ]; then
-  # Failed brief exists but no gap signal — some other failure that happened
-  # to move the brief to failed/.
-  goto default_termination   # pseudocode — see "Default termination" branch below
-fi
+# Brief was marked failed. Check three iteration-scoped sources for
+# the grep-stable substring "inter_subtask_gap" (any match = Option C):
+#   (a) the failed brief's own contents (filename is session_id-tagged so
+#       no other run can share it)
+#   (b) SUPERVISOR_RESULT.error    (emitted by this iteration's Supervisor)
+#   (c) SUPERVISOR_RESULT.summary  (emitted by this iteration's Supervisor)
+#
+# .supervisor/state.md is intentionally NOT consulted — Context-Keeper
+# rewrites it atomically (skills/state-management/SKILL.md), and pre-
+# rewrite stale content from a prior session could survive briefly,
+# producing a false positive. The three sources above are all inherently
+# scoped to this iteration.
+gap_detected = (
+    file_contains_substring(failed_path,  "inter_subtask_gap")
+ or string_contains_substring(RESULT_ERROR,   "inter_subtask_gap")
+ or string_contains_substring(RESULT_SUMMARY, "inter_subtask_gap")
+)
+
+if not gap_detected:
+    # Failed brief exists but no gap signal — Supervisor failed AND moved
+    # the brief to failed/ for some non-Option-C reason.
+    EXIT_TO_DEFAULT_TERMINATION   # see "Default termination" branch below
+
+# Signal 2 fired. Continue with Option-C re-plan.
 ```
 
 If `gap_detected=true`: Option C was the trigger. **No merge prompt** — the job was abandoned, no PR was created.
@@ -392,7 +395,7 @@ Same fields as summary.md, structured as JSON. v1 writes it for two purposes: (a
 - `${CLAUDE_PLUGIN_ROOT}/commands/supervisor.md` — inline workflow Step 0 loads at runtime
 - `${CLAUDE_PLUGIN_ROOT}/skills/autonomous-loop/SKILL.md` — this skill; Step 0 loads at runtime
 - `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md` § "AUTONOMOUS_RUN" — canonical schema (`schema_version: 1`)
-- `ai-agent-manager-plugin/docs/FAILURE_ESCALATION.md` — adjudication 4 options and the `inter_subtask_gap` grep-stable string (line 180)
+- `ai-agent-manager-plugin/docs/FAILURE_ESCALATION.md` §"Inter-Subtask Gap / Scope Expansion" — adjudication 4 options and the `inter_subtask_gap` grep-stable string (documented as grep-stable for telemetry / `state.md` consumers, and re-used here as Signal 2's substring anchor)
 - `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md` — `SUPERVISOR_RESULT` schema including `rubric_score`
 - `ai-agent-manager-plugin/skills/supervisor-readiness/SKILL.md` — brief format the autonomous loop relies on Launch Pad to produce
 - `ai-agent-manager-plugin/skills/state-management/SKILL.md` — atomic-rewrite semantics of `.supervisor/state.md`
