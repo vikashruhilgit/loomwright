@@ -6,7 +6,7 @@ A Claude Code plugin for AI agents to collaborate on software projects. 13 speci
 
 > **Install the plugin and run slash commands instead of manually managing agents.**
 >
-> **NEW in v12.2.0:** New capabilities increment — (1) **Agent Teams graduation** (3-of-6 patterns now recommended: research/exploration, competing hypotheses, cross-layer changes; the rest stay experimental), (2) an **Outcomes Rubric** scored by a Haiku grader at the end of every Supervisor run (`rubric_score` is an optional `"N/M" | null` field in `SUPERVISOR_RESULT` — null when the brief omits the section), (3) a new **`/dreaming`** slash command for read-only post-hoc reflection on completed sessions (no code or memory writes by the command itself), and (4) an **opt-in webhook SubagentStop hook** that POSTs structured agent results to a user-configured endpoint for external monitoring/dashboards (disabled by default, fail-closed on errors). 11 slash commands, 14 quality gate hooks. All v12.1.0 documentation increments preserved.
+> **NEW in v13.0.0:** A new **`/autonomous`** slash command — command chaining for Launch Pad → Supervisor with optional multi-iteration re-planning (opt-in via `--allow-multi-iteration`). This is **foreground-assisted automation, not fire-and-forget**: Launch Pad's Phase 6 save prompt, NO-GO override, Plan Review FAIL × 3 escalation, Supervisor's adjudication 4-option gate, and the loop's own rubric gate (only in multi-iteration mode, after a `rubric_score N/M` with N<M) all bubble `AskUserQuestion` in-session — you stay at the terminal to answer them, the loop handles the rest. Two specific `SUPERVISOR_RESULT` signals trigger re-iteration: rubric N<M (gated on user-merge verification via `gh pr view` / local `git merge-base --is-ancestor`) and `failed + inter_subtask_gap on this iteration's brief` (Option C re-plan trigger, no merge needed). Purely additive: no new agent, no new hook, no behavioral change to any existing agent / hook / script / skill / command, and no change to the field types or validation rules of any existing schema. New artifacts only: `/autonomous` command, `autonomous-loop` skill, and one new `AUTONOMOUS_RUN` entry in `RESULT_SCHEMAS.md` (autonomous-layer-only, no hook validation). 12 slash commands, 50 skills, 14 quality gate hooks. All v12.2.0 capabilities preserved (Agent Teams graduation, Outcomes Rubric, `/dreaming`, opt-in webhook hook) and v12.1.0 documentation increments preserved.
 >
 > **v12.1.0 (preserved):** Documentation + skills increment — Memory Tool skill (Anthropic memory-tool pattern reference), "## Structured Outputs" section in `AGENT_GUIDELINES.md` documenting both enforcement paths (`output_config.format` for direct API agents, `SubagentStop` hooks for plugin agents), and the "## Advisor Tool (SDK-only pattern)" section noting the `advisor-tool-2026-03-01` beta is reachable only via direct `client.beta.messages.create(...)` calls.
 >
@@ -114,6 +114,13 @@ Then call `switch_database(host="prod.example.com")` at runtime to switch betwee
 
 # Or plan manually
 /orchestrator goal: "what you want to accomplish"
+
+# Or chain Launch Pad → Supervisor in one command (v13.0.0)
+# Foreground-assisted automation: you stay at the terminal to answer
+# in-session prompts (Phase 6 save, NO-GO, adjudication, etc.); the
+# loop handles the chaining and the optional rubric-driven re-plan.
+/autonomous "what you want to accomplish"                          # single-iteration
+/autonomous "what you want to accomplish" --allow-multi-iteration  # multi-iteration with rubric gate
 ```
 
 ---
@@ -147,6 +154,10 @@ Then call `switch_database(host="prod.example.com")` at runtime to switch betwee
 | **Plan Reviewer**   | Launch Pad                   | Validate Supervisor-Ready Briefs before execution                     |
 | **Rubric Grader**   | Supervisor (Phase 4.5)       | Read-only Haiku scorer for the optional Outcomes Rubric (advisory)    |
 
+
+### Orchestration Shell: `/autonomous` (v13.0.0)
+
+`/autonomous` is **not** a new agent — it is a slash command that chains the agents above. The command body (`ai-agent-manager-plugin/commands/autonomous.md`) is executed inline on the main thread: it reads `commands/launch-pad.md` and `commands/supervisor.md` at Step 0, then runs Launch Pad inline (which still Task-spawns `plan-reviewer`), then runs Supervisor inline (which still Task-spawns `orchestrator` / `execute-manager` / `code-reviewer` / `rubric-grader`). Default mode is single-iteration. With `--allow-multi-iteration`, the loop re-plans on two existing `SUPERVISOR_RESULT` signals (rubric N<M with user-merge confirmation; `failed + inter_subtask_gap` from Option C adjudication). The protocol skill is at `ai-agent-manager-plugin/skills/autonomous-loop/SKILL.md`.
 
 ### Plan-First Autonomous Workflow
 
@@ -313,7 +324,7 @@ For apps with many routes, use session-based QA to test in chunks:
 
 ## Telemetry (opt-in)
 
-**New in v11.2.0 (preserved in v12.2.0)** — an optional GitHub Issues telemetry pipeline. After
+**New in v11.2.0 (preserved in v13.0.0)** — an optional GitHub Issues telemetry pipeline. After
 qualifying agent runs (`/supervisor`, `/code-reviewer`, `/qa-executor`)
 complete, the plugin can post a structured GitHub issue summarising the
 result block, a derived score, agent performance breakdown, and AI
@@ -449,7 +460,7 @@ This prevents knowledge loss and helps agents learn from discoveries.
 - **.claude-plugin/README.md:** Detailed plugin documentation
 - **ai-agent-manager-plugin/.claude-plugin/plugin.json:** Plugin manifest
 - **ai-agent-manager-plugin/agents/*.md:** Individual agent prompts (13 roles)
-- **ai-agent-manager-plugin/skills/*/SKILL.md:** 49 skill files for guidance
+- **ai-agent-manager-plugin/skills/*/SKILL.md:** 50 skill files for guidance
 - **ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md:** Structured result contracts
 - **ai-agent-manager-plugin/docs/FAILURE_ESCALATION.md:** Agent failure paths
 - **ai-agent-manager-plugin/docs/ARCHITECTURE_CONTRACTS.md:** Capability matrix, budgets, rules
@@ -463,8 +474,8 @@ This prevents knowledge loss and helps agents learn from discoveries.
 To modify or extend agents:
 
 1. Agents are Markdown prompts in `ai-agent-manager-plugin/agents/` (13 files)
-2. Commands are in `ai-agent-manager-plugin/commands/` (11 commands)
-3. Skills are in `ai-agent-manager-plugin/skills/` (49 skills, versioned with SKILLS_INDEX.md)
+2. Commands are in `ai-agent-manager-plugin/commands/` (12 commands)
+3. Skills are in `ai-agent-manager-plugin/skills/` (50 skills, versioned with SKILLS_INDEX.md)
 4. Hooks: per-agent in frontmatter (Worker, Execute Manager) + cross-cutting in `ai-agent-manager-plugin/hooks/hooks.json` (Code Reviewer, QA Executor, TaskCompleted)
 5. Docs: `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md`, `…/FAILURE_ESCALATION.md`, `…/ARCHITECTURE_CONTRACTS.md`, `…/ARCHITECTURE.md`
 6. All agents follow standard output format (see AGENT_GUIDELINES.md)
@@ -528,7 +539,7 @@ Claude Code caches plugin contents. After pulling new changes (e.g. a fresh `git
    /reload-plugins
    ```
    Run from the repo root so `./` resolves to your local checkout.
-3. Verify with `/skills` — should show all 49 skills under "Plugin skills". Use `/agent-help` to confirm all 11 user-facing commands are registered.
+3. Verify with `/skills` — should show all 50 skills under "Plugin skills". Use `/agent-help` to confirm all 12 user-facing commands are registered.
 
 **Previously installed via `claude --plugin-dir` (flat layout)?** Older install instructions told you to launch Claude with `--plugin-dir` pointing at the repo root. That no longer works — the plugin is now nested under `ai-agent-manager-plugin/`. Switch to the marketplace flow shown in **Quick Start → 1. Install the Plugin**.
 

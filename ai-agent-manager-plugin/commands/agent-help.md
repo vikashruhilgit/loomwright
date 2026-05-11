@@ -73,6 +73,12 @@ The AI Agent Manager plugin provides **13 agent roles** (8 user-facing + 5 inter
 /launch-pad → .supervisor/jobs/{brief} → /supervisor job: {brief} → clean execution
 ```
 
+**Foreground-Assisted Chained Workflow (v13.0.0):**
+```
+/autonomous "<requirement>"                                 → command chaining (single iteration)
+/autonomous "<requirement>" --allow-multi-iteration         → re-plan on rubric N<M or Option-C failure
+```
+
 **Task Management:** `.supervisor/` directory for Supervisor/Launch Pad; Beads available for Orchestrator/Product Owner
 
 ---
@@ -628,6 +634,47 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 
 ---
 
+### 🔁 /autonomous — Foreground-Assisted Loop (NEW in v13.0.0)
+
+**Purpose:** Chain `/launch-pad → /supervisor` for a single requirement so you don't have to remember which command to run next. Default mode is single-iteration (just runs them in sequence). Opt-in `--allow-multi-iteration` mode adds re-planning gated on two specific `SUPERVISOR_RESULT` signals.
+
+> **Foreground-assisted automation, not fire-and-forget.** The loop pauses at every existing interactive boundary (Launch Pad Phase 6 save, NO-GO override, Plan Review FAIL × 3, Supervisor adjudication 4-option, and the loop's own rubric gate). You must be at the terminal to answer them.
+
+**Usage:**
+```bash
+/autonomous "<requirement string>"                                       # single-iteration mode
+/autonomous --requirement <path/to/file.md>                              # file-supplied requirement
+/autonomous "<...>" --allow-multi-iteration                              # multi-iteration with default max
+/autonomous "<...>" --allow-multi-iteration --max-iterations N           # multi-iteration capped at N (default 3)
+```
+
+**Parameters:**
+- `"<requirement>"` or `--requirement <path>` (required, choose one)
+- `--allow-multi-iteration` — opt-in for re-planning loop (default off)
+- `--max-iterations N` — cap for multi-iteration mode (default 3)
+
+**Multi-iteration re-plan signals (read from `SUPERVISOR_RESULT` plus iteration-scoped job artifacts):**
+
+| Signal | Action |
+|---|---|
+| `completed` + `rubric_score N/M` with N<M | Pause for the rubric-gate AskUserQuestion (merge-and-continue / stop-here / force-continue). On `merge-and-continue`, the loop verifies the PR is actually merged via `gh pr view` (or local `git merge-base --is-ancestor` fallback) before re-planning. |
+| `failed` + Option-C detected on this iteration's brief | Anchored by `.supervisor/jobs/failed/{basename(current_brief_path)}` existence; `inter_subtask_gap` confirmed by grepping the failed brief contents, `SUPERVISOR_RESULT.error`, or `SUPERVISOR_RESULT.summary` (state.md intentionally not consulted). Re-plan immediately — no merge prompt, no PR was created. |
+| anything else | Terminate the loop (done / failed / aborted). |
+
+**When to Use:**
+- Multi-step requirements where Launch Pad → Supervisor is the natural chain
+- Requirements with `## Outcomes Rubric` you want to iteratively satisfy (multi-iteration mode)
+- After Phase 4.5 self-heal is not enough to address residual rubric gaps
+
+**When NOT to Use:**
+- Single small change with no rubric → just run `/supervisor` directly, faster
+- Crash recovery → v1 has no `--continue`; clean up manually and restart
+- Parallel autonomous runs on same repo → v1 single-session-only assumption (brief-save detection uses `ls`-diff)
+
+**Learn More:** see `ai-agent-manager-plugin/commands/autonomous.md` for the full flow diagram, signal-extraction algorithm, refined-requirement templates, and troubleshooting. The protocol skill is `ai-agent-manager-plugin/skills/autonomous-loop/SKILL.md`.
+
+---
+
 ### QA Workflow Diagram
 
 ```
@@ -893,11 +940,12 @@ bd close BD-XX
 
 ai-agent-manager-plugin/              # Nested plugin root
 ├── .claude-plugin/
-│   └── plugin.json                   # Plugin metadata (v12.2.0)
+│   └── plugin.json                   # Plugin metadata (v13.0.0)
 ├── .mcp.json                         # Bundled MCP servers
-├── commands/                         # Slash commands (11)
+├── commands/                         # Slash commands (12)
 │   ├── launch-pad.md                 # Supervisor readiness
 │   ├── supervisor.md                 # Parallel orchestrator (v4)
+│   ├── autonomous.md                 # Chain Launch Pad → Supervisor (v13.0.0)
 │   ├── product-owner.md              # Requirements definition
 │   ├── orchestrator.md
 │   ├── code-reviewer.md
@@ -930,7 +978,7 @@ ai-agent-manager-plugin/              # Nested plugin root
 │   ├── ARCHITECTURE.md
 │   ├── QA_SYSTEM_BLUEPRINT.md
 │   └── SPIKES/                       # Capability spike investigations + deferral records
-└── skills/                           # Skill files (49 skills)
+└── skills/                           # Skill files (50 skills)
     ├── SKILLS_INDEX.md               # Skill catalog with agent mapping
     ├── supervisor-readiness/         # Pre-flight checklist & brief template
     ├── agent-teams/                  # Agent Teams patterns (experimental)
