@@ -18,7 +18,7 @@ description: Chain Launch Pad → Supervisor for a single requirement, with opti
 
 `/autonomous` chains Launch Pad → Supervisor for one requirement so you do not have to manually run `/launch-pad "..."` then `/supervisor job: <path>`. In the default **single-iteration mode**, the command runs both workflows in sequence and exits. In opt-in **multi-iteration mode** (`--allow-multi-iteration`), the loop additionally evaluates `SUPERVISOR_RESULT` and may re-plan from a refined requirement when one of two specific signals fires.
 
-This is a v13.0.0 addition. It introduces no new agent, no new hook, no schema change, and no source changes to Launch Pad, Supervisor, or any existing file outside the new ones listed below.
+This is a v13.0.0 addition. It introduces no new agent, no new hook, no behavioral change to any existing agent / hook / script / skill / command, and no change to the field types or validation rules of any existing schema. New artifacts only: this slash command, the `autonomous-loop` skill, and one additive `AUTONOMOUS_RUN` entry in `RESULT_SCHEMAS.md` (autonomous-layer-only, no hook validation). Metadata/docs surfaces are updated to reflect counts and the new entries.
 
 ## Usage
 
@@ -28,6 +28,8 @@ This is a v13.0.0 addition. It introduces no new agent, no new hook, no schema c
 /autonomous "<...>" --allow-multi-iteration                              # multi-iteration with default max
 /autonomous "<...>" --allow-multi-iteration --max-iterations N           # multi-iteration capped at N (default N=3)
 ```
+
+> **Cost-profile note:** `--cheap` is **not forwarded** in v13. If you need the Sonnet cost profile, run `/launch-pad` and `/supervisor --cheap` manually (see Parameters → `--cheap interaction note` for details). The autonomous loop is genuinely expensive — each iteration is a full Launch Pad + full Supervisor run.
 
 ## Parameters
 

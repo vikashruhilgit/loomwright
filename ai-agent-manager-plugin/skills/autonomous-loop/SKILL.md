@@ -282,6 +282,8 @@ If signal 1 or 2 would re-plan AND `iteration + 1 > max_iterations`: terminate w
 
 Written to `.supervisor/autonomous/{session_id}/summary.md` (markdown for users) and `.supervisor/autonomous/{session_id}/state.json` (machine-readable sidecar). Echoed to main-thread output.
 
+**Canonical schema:** see `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md` § "AUTONOMOUS_RUN" for the formal `schema_version: 1` definition, the closed `status_reason` enum, validation rules, and a worked example. This skill describes the protocol that produces an `AUTONOMOUS_RUN` block; the schema doc is the source of truth for its shape.
+
 The status enum is **autonomous-layer-only**: `done | paused_max_iterations | aborted | failed`. None of these values appear in `SUPERVISOR_RESULT.status` (which is `completed | completed_with_escalation | failed | checkpoint`). The two enums are intentionally distinct to prevent confusion and to keep the AUTONOMOUS_RUN summary out of scope for the Supervisor SubagentStop hook (which validates SUPERVISOR_RESULT, not AUTONOMOUS_RUN).
 
 ### summary.md format
@@ -353,6 +355,7 @@ Same fields as summary.md, structured as JSON. v1 writes it but does not depend 
 - `${CLAUDE_PLUGIN_ROOT}/commands/launch-pad.md` — inline workflow Step 0 loads at runtime
 - `${CLAUDE_PLUGIN_ROOT}/commands/supervisor.md` — inline workflow Step 0 loads at runtime
 - `${CLAUDE_PLUGIN_ROOT}/skills/autonomous-loop/SKILL.md` — this skill; Step 0 loads at runtime
+- `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md` § "AUTONOMOUS_RUN" — canonical schema (`schema_version: 1`)
 - `ai-agent-manager-plugin/docs/FAILURE_ESCALATION.md` — adjudication 4 options and the `inter_subtask_gap` grep-stable string (line 180)
 - `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md` — `SUPERVISOR_RESULT` schema including `rubric_score`
 - `ai-agent-manager-plugin/skills/supervisor-readiness/SKILL.md` — brief format the autonomous loop relies on Launch Pad to produce

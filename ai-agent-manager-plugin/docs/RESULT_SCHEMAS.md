@@ -659,6 +659,105 @@ When QA Executor runs with `--plan`, `--scope`, or `--continue`, the QA_RESULT i
 
 ---
 
+## AUTONOMOUS_RUN
+
+Emitted by the `/autonomous` inline main-thread workflow (v13.0.0+). Written to `.supervisor/autonomous/{session_id}/summary.md` (human-readable markdown) with a machine-readable sidecar at `.supervisor/autonomous/{session_id}/state.json`. Also echoed to main-thread output for user visibility.
+
+**Not subject to hook validation.** `AUTONOMOUS_RUN` is autonomous-layer-only; the existing `hooks/hooks.json` SubagentStop validators target `SUPERVISOR_RESULT`, `WORKER_RESULT`, etc., and explicitly do *not* validate `AUTONOMOUS_RUN`. The status enum is intentionally distinct from `SUPERVISOR_RESULT.status` (`completed | completed_with_escalation | failed | checkpoint`) to prevent confusion and to keep the two layers separable.
+
+```yaml
+AUTONOMOUS_RUN:
+  schema_version: 1                    # integer, required — always 1
+  session_id: string                   # required — "auto-{YYYY-MM-DD}-{HHMMSS}"
+  requirement_path: string             # required — path to the requirement file under .supervisor/requirements/
+  mode: enum [single, multi]           # required — single-iteration (default) or opt-in --allow-multi-iteration
+  status: enum [done, paused_max_iterations, aborted, failed]  # required — autonomous-layer status
+  status_reason: string | null         # required — null when status: done; otherwise one of the documented reason strings (see below)
+  total_iterations: integer            # required — 1..max_iterations
+  last_phase: enum [PLAN, EXECUTE, EVALUATE, DONE]  # required — phase the loop was in at exit
+  started_at: string                   # required — ISO-8601 UTC timestamp
+  ended_at: string                     # required — ISO-8601 UTC timestamp
+  duration_seconds: integer            # required — ended_at - started_at
+  iterations: object[]                 # required — one entry per iteration that reached EXECUTE
+    - n: integer                       # 1-indexed
+      brief_path: string               # path to the brief Launch Pad saved; lifecycle-moved by Supervisor
+      supervisor_status: enum [completed, completed_with_escalation, failed, checkpoint]  # mirrors SUPERVISOR_RESULT.status
+      pr_url: string | null            # SUPERVISOR_RESULT.pr_url when present
+      rubric_score: string | null      # SUPERVISOR_RESULT.rubric_score when present (format "N/M")
+      branch: string                   # SUPERVISOR_RESULT.branch
+      summary: string                  # SUPERVISOR_RESULT.summary
+      error: string | null             # SUPERVISOR_RESULT.error when status: failed
+      heal_decision: string | null     # SUPERVISOR_RESULT.heal_decision
+      escalation_reason: string | null # populated for status: completed_with_escalation
+  escalations_seen: string[]           # required — flattened list of escalation reasons across iterations (may be empty)
+  policy_decisions: object[]           # required — user choices captured at AskUserQuestion gates
+    - iteration: integer
+      phase: enum [PLAN, EVALUATE]
+      decision: string                 # e.g. "user_picked_save", "user_picked_merge_and_continue", "user_picked_force_continue_anyway", "user_picked_stop_here", "user_picked_override", "user_picked_abort"
+      source: enum [launch_pad_phase_6, launch_pad_no_go, launch_pad_plan_review, autonomous_rubric_gate]
+  rubric_final_score: string | null    # required — last iteration's rubric_score (null when no rubric in requirement)
+```
+
+**`status_reason` enum** (documented as a closed set; new values require updating both this schema and `skills/autonomous-loop/SKILL.md`):
+
+- `null` — only valid when `status: done`
+- `"max_iterations_reached"` — multi-iteration mode hit the `--max-iterations` cap
+- `"user_discarded_at_phase_6"` — user picked "discard" at Launch Pad's Phase 6 save prompt
+- `"user_aborted_at_no_go"` — user picked "abort" at Launch Pad Phase 2.5 NO-GO escalation
+- `"user_aborted_at_plan_review_fail"` — user picked "abort" after Plan Reviewer FAIL × 3
+- `"user_stopped_at_rubric_gate"` — user picked "stop-here" at the rubric-gate AskUserQuestion
+- `"supervisor_checkpoint"` — `SUPERVISOR_RESULT.status: checkpoint` (loop does not auto-resume in v1)
+- `"supervisor_failed_other"` — `SUPERVISOR_RESULT.status: failed` without an `inter_subtask_gap` Option-C signal
+- `"rubric_dropped_from_brief"` — Launch Pad did not preserve the `## Outcomes Rubric` section (rubric-preservation gate failure)
+- `"concurrent_session_detected"` — brief-save `ls`-diff found more than one new file in `.supervisor/jobs/pending/` (violates v1 single-session assumption)
+
+**Validation rules:**
+- No SubagentStop hook validates this block (autonomous-layer-only).
+- `iterations` length must equal `total_iterations`.
+- When `status: done`, `status_reason` MUST be `null`.
+- When `status: failed | aborted | paused_max_iterations`, `status_reason` MUST be a non-null string from the enum above.
+- `rubric_final_score` matches the `rubric_score` of the last entry in `iterations`.
+
+**Example — single-iteration successful run:**
+
+```yaml
+AUTONOMOUS_RUN:
+  schema_version: 1
+  session_id: auto-2026-05-11-143022
+  requirement_path: .supervisor/requirements/2026-05-11-auto-2026-05-11-143022-add-version-cmd.md
+  mode: single
+  status: done
+  status_reason: null
+  total_iterations: 1
+  last_phase: DONE
+  started_at: 2026-05-11T14:30:22Z
+  ended_at: 2026-05-11T14:36:11Z
+  duration_seconds: 349
+  iterations:
+    - n: 1
+      brief_path: .supervisor/jobs/done/2026-05-11-auto-2026-05-11-143022-add-version-cmd.md
+      supervisor_status: completed
+      pr_url: https://github.com/example/repo/pull/42
+      rubric_score: null
+      branch: feature/add-version-cmd
+      summary: Implemented /version command with unit tests.
+      error: null
+      heal_decision: PASS
+      escalation_reason: null
+  escalations_seen: []
+  policy_decisions:
+    - { iteration: 1, phase: PLAN, decision: "user_picked_save", source: "launch_pad_phase_6" }
+  rubric_final_score: null
+```
+
+**Cross-references:**
+- `ai-agent-manager-plugin/skills/autonomous-loop/SKILL.md` — full protocol; this schema canonicalizes its `DONE — AUTONOMOUS_RUN Summary` section
+- `ai-agent-manager-plugin/commands/autonomous.md` — slash command body
+- `ai-agent-manager-plugin/docs/FAILURE_ESCALATION.md` — Option C is the loop's failed-iteration re-plan trigger
+- `SUPERVISOR_RESULT` schema (above) — each `iterations[].supervisor_status` mirrors `SUPERVISOR_RESULT.status` for that iteration's run
+
+---
+
 ## Schema Versioning
 
 All result schemas include a `schema_version` field. This enables forward compatibility:
@@ -671,6 +770,7 @@ All result schemas include a `schema_version` field. This enables forward compat
 ### Version History
 
 - **SUPERVISOR_RESULT v1 extension** (v12.2.0): Added optional `rubric_score: string | null` field. Format is `"N/M"` where N is a non-negative integer (`>= 0`; `"0/M"` is the legitimate all-fail case where the grader ran but every rubric item failed), M is a positive integer (`>= 1`), and M ≥ N — OR `null`. The two non-null forms are semantically distinct: `null` = grader did not run; `"0/M"` = grader ran and zero items passed. Populated by the Phase 4.5 Haiku grader when the brief contains an `## Outcomes Rubric` section AND `heal_decision == PASS`; `null` otherwise. Schema version was NOT bumped because the addition is optional and additive — pre-v12.2.0 producers and consumers continue to validate without change. The Supervisor SubagentStop hook accepts presence or absence and only validates format when present.
+- **AUTONOMOUS_RUN v1** (v13.0.0): New schema for the `/autonomous` orchestration shell's summary block. Autonomous-layer-only — no SubagentStop hook validates it (the autonomous workflow is an inline main-thread chain, not a delegated agent). Status enum (`done | paused_max_iterations | aborted | failed`) is intentionally disjoint from `SUPERVISOR_RESULT.status` to keep the two layers separable. Status-reason enum is closed; new values require updating both this schema and `skills/autonomous-loop/SKILL.md`.
 - **WORKER_RESULT v2** (v12.0.0): Added `outputs_verified[]` (itemized presence checks for every output the brief promised) and `outputs_gap` (string; non-empty implies status MUST be `partial`). The SubagentStop hook enforces a cross-field invariant: `outputs_gap` non-empty AND `status: completed` is rejected. v1 emissions remain accepted during the v12.0.0 transition window.
 - **EXECUTE_CHECKPOINT v1 extension** (v12.0.0): Added optional fields `adjudication_required: bool`, `missing_outputs: object[]`, and `adjudication_options: string[]`. These fields appear together (all-or-nothing); when `adjudication_required: true`, both arrays MUST be non-empty (hook-enforced). Schema version was NOT bumped because the additions are optional. Same release added a hook rejection of `toolset_gap`-style escalation reasons.
 - **CODE_REVIEW_RESULT v2** (v7.0.0): Added `category` field to issues (`new`, `pre_existing`, `nit`). FAIL decisions now require at least one `new` HIGH/BLOCKING issue. Pre-existing issues are reported but do not block.
