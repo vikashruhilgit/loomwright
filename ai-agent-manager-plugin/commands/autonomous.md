@@ -35,7 +35,7 @@ This is a v13.0.0 addition. It introduces no new agent, no new hook, no behavior
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `"<requirement>"` | One of | Inline requirement string. Loop writes it to `.supervisor/requirements/{date}-{session_id}-{slug}.md` with an optional `## Outcomes Rubric` placeholder for the user to fill in. |
+| `"<requirement>"` | One of | Inline requirement string. Loop writes it to `.supervisor/requirements/{session_id}-{slug}.md` (where `session_id` is `auto-{YYYY-MM-DD}-{HHMMSS}` — already date-prefixed, so the path is sortable without a redundant date) with an optional `## Outcomes Rubric` placeholder for the user to fill in. |
 | `--requirement <path>` | One of | Use an existing requirement file. If the file already contains an `## Outcomes Rubric` section, it is preserved and used by multi-iteration mode. |
 | `--allow-multi-iteration` | No | Enable multi-iteration mode. Default is single-iteration (no looping). |
 | `--max-iterations N` | No | Maximum iterations in multi-iteration mode. Default `N=3`. Ignored in single-iteration mode. |
@@ -84,8 +84,6 @@ After Supervisor returns, EVALUATE reads `SUPERVISOR_RESULT` and applies one of 
 
 The detailed protocol — including the `ls`-diff brief-save detection, the anchor-by-filename Option-C scoping, the merge-verification sequence, and the refined-requirement templates — lives in `ai-agent-manager-plugin/skills/autonomous-loop/SKILL.md`.
 
-<!-- v1 weakest implementation point: brief-save detection via ls-diff of `.supervisor/jobs/pending/`. Single-session-only. Proper fix is a `LAUNCH_PAD_RESULT` schema with `saved_brief_path` field, deferred to a separate plan. -->
-
 ### What runs inline (Launch Pad's existing AskUserQuestion gates bubble up)
 
 Phase 2.5 NO-GO override, Phase 5.5 Plan Reviewer FAIL × 3, Phase 6 save/refine/discard — all of Launch Pad's existing prompts fire in-session via Claude Code's native interaction model. The user answers, the workflow continues. No `/autonomous --continue` is needed for the normal interactive path.
@@ -110,7 +108,7 @@ After Phase 6 saves, the loop verifies this with `grep -F "## Outcomes Rubric" "
 $ /autonomous "add a /version command that prints plugin version"
 ```
 
-The loop writes `.supervisor/requirements/2026-05-11-auto-2026-05-11-143022-add-a-version-command.md`, runs Launch Pad inline (you confirm save at Phase 6), runs Supervisor inline (it produces PR #42), and emits:
+The loop writes `.supervisor/requirements/auto-2026-05-11-143022-add-a-version-command.md`, runs Launch Pad inline (you confirm save at Phase 6), runs Supervisor inline (it produces PR #42), and emits:
 
 ```
 # Autonomous Run Summary

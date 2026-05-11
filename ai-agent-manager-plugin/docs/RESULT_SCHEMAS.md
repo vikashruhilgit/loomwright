@@ -716,7 +716,7 @@ Reason-string meanings:
 - `"user_aborted_at_plan_review_fail"` — user picked "abort" after Plan Reviewer FAIL × 3 (pre-EXECUTE; `total_iterations == 0`)
 - `"user_stopped_at_rubric_gate"` — user picked "stop-here" at the rubric-gate AskUserQuestion. The latest iteration's PR exists and Supervisor returned `completed`; the run ends successfully but with `rubric_score N<M` recorded in `rubric_final_score`. Pairs with `status: done` (not `aborted`) because nothing went wrong — the user accepted partial completion.
 - `"supervisor_checkpoint"` — `SUPERVISOR_RESULT.status: checkpoint` (loop does not auto-resume in v1)
-- `"supervisor_failed_other"` — `SUPERVISOR_RESULT.status: failed` without an `inter_subtask_gap` Option-C signal
+- `"supervisor_failed_other"` — covers two cases: (a) `SUPERVISOR_RESULT.status: failed` was emitted but without the `inter_subtask_gap` Option-C signal in any of the three iteration-scoped sources; (b) Supervisor crashed or otherwise exited without emitting any `SUPERVISOR_RESULT` block at all, and the autonomous loop synthesized a placeholder iteration entry with `error: "no_supervisor_result_emitted"` so the schema's `iterations.length == total_iterations` invariant still holds
 - `"rubric_dropped_from_brief"` — Launch Pad did not preserve the `## Outcomes Rubric` section (rubric-preservation gate failure)
 - `"concurrent_session_detected"` — brief-save `ls`-diff found more than one new file in `.supervisor/jobs/pending/` (violates v1 single-session assumption)
 
@@ -734,7 +734,7 @@ Reason-string meanings:
 AUTONOMOUS_RUN:
   schema_version: 1
   session_id: auto-2026-05-11-143022
-  requirement_path: .supervisor/requirements/2026-05-11-auto-2026-05-11-143022-add-version-cmd.md
+  requirement_path: .supervisor/requirements/auto-2026-05-11-143022-add-version-cmd.md
   mode: single
   status: done
   status_reason: null
@@ -745,7 +745,7 @@ AUTONOMOUS_RUN:
   duration_seconds: 349
   iterations:
     - n: 1
-      brief_path: .supervisor/jobs/done/2026-05-11-auto-2026-05-11-143022-add-version-cmd.md
+      brief_path: .supervisor/jobs/done/auto-2026-05-11-143022-add-version-cmd.md
       supervisor_status: completed
       pr_url: https://github.com/example/repo/pull/42
       rubric_score: null
@@ -766,7 +766,7 @@ AUTONOMOUS_RUN:
 AUTONOMOUS_RUN:
   schema_version: 1
   session_id: auto-2026-05-11-150412
-  requirement_path: .supervisor/requirements/2026-05-11-auto-2026-05-11-150412-refactor-auth.md
+  requirement_path: .supervisor/requirements/auto-2026-05-11-150412-refactor-auth.md
   mode: single
   status: aborted
   status_reason: "user_discarded_at_phase_6"
@@ -788,7 +788,7 @@ AUTONOMOUS_RUN:
 AUTONOMOUS_RUN:
   schema_version: 1
   session_id: auto-2026-05-11-160000
-  requirement_path: .supervisor/requirements/2026-05-11-auto-2026-05-11-160000-add-jwt.md
+  requirement_path: .supervisor/requirements/auto-2026-05-11-160000-add-jwt.md
   mode: multi
   status: done
   status_reason: "user_stopped_at_rubric_gate"
@@ -799,7 +799,7 @@ AUTONOMOUS_RUN:
   duration_seconds: 1110
   iterations:
     - n: 1
-      brief_path: .supervisor/jobs/done/2026-05-11-auto-2026-05-11-160000-add-jwt.md
+      brief_path: .supervisor/jobs/done/auto-2026-05-11-160000-add-jwt.md
       supervisor_status: completed
       pr_url: https://github.com/example/repo/pull/77
       rubric_score: "3/5"

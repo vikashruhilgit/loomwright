@@ -1,7 +1,7 @@
 ---
 name: autonomous-loop
 description: Outer-loop protocol for `/autonomous` — single-iteration and multi-iteration chaining of Launch Pad → Supervisor with EVALUATE phase, signal-extraction paths, refined-requirement templates, and the AUTONOMOUS_RUN summary format. Use when implementing or invoking the `/autonomous` command.
-allowed-tools: [Read, Write, Bash, Grep, Glob, Task, AskUserQuestion]
+allowed-tools: [Read, Write, Bash, Grep, Task, AskUserQuestion]
 version: "1.0.0"
 lastUpdated: "2026-05-11"
 ---
@@ -50,7 +50,7 @@ This guards against prompt drift on three fronts. If Launch Pad, Supervisor, or 
 ## INIT (once per invocation)
 
 1. Read the requirement — slash command argument string OR `--requirement <path>`.
-2. If string-argument: write `.supervisor/requirements/{YYYY-MM-DD}-{session_id}-{slug}.md` with the requirement text and an optional `## Outcomes Rubric` placeholder. If `--requirement <path>` is used and the file already has `## Outcomes Rubric`, leave it intact.
+2. If string-argument: write `.supervisor/requirements/{session_id}-{slug}.md` (the `session_id` already carries the date — `auto-{YYYY-MM-DD}-{HHMMSS}` — so the path is sortable without a redundant date prefix). The file contains the requirement text and an optional `## Outcomes Rubric` placeholder. If `--requirement <path>` is used and the file already has `## Outcomes Rubric`, leave it intact.
 3. Generate `session_id` of the form `auto-{YYYY-MM-DD}-{HHMMSS}` (or similar — must be unique enough that no two concurrent runs collide; per v1 single-session assumption, a timestamp suffices).
 4. Initialize `.supervisor/autonomous/{session_id}/state.json` with the schema below.
 5. Initialize `.supervisor/autonomous/{session_id}/summary.md` (running AUTONOMOUS_RUN summary; will be re-written as iterations complete).
@@ -63,7 +63,7 @@ Example (concrete values shown — `mode` is one of the string literals `"single
 ```json
 {
   "session_id": "auto-2026-05-11-143022",
-  "requirement_path": ".supervisor/requirements/2026-05-11-auto-2026-05-11-143022-add-jwt-auth.md",
+  "requirement_path": ".supervisor/requirements/auto-2026-05-11-143022-add-jwt-auth.md",
   "mode": "single",
   "iteration": 0,
   "max_iterations": 3,
@@ -114,7 +114,30 @@ Field types: `mode: "single" | "multi"` (literal-union string); `iteration` and 
 1. Reference the loaded `commands/supervisor.md` workflow. Invoke it inline on the main thread, passing `job: <current_brief_path>`.
 2. Supervisor runs its existing 7-phase workflow inline (orchestrator → execute-manager → worker → code-reviewer → Phase 4.5 self-heal → Rubric Grader). Adjudication 4-option AskUserQuestion (when outputs_gap triggers it) bubbles to the user in-session per existing FAILURE_ESCALATION; the autonomous loop never auto-picks.
 3. Supervisor moves the job through `pending/ → in-progress/ → done/ or failed/` per its existing lifecycle. The autonomous loop never touches the job lifecycle.
-4. Capture the emitted `SUPERVISOR_RESULT` block (the last one in the transcript per `RESULT_SCHEMAS.md` emission cadence) and record relevant fields into state.json's `iterations[]` array: `n`, `brief_path`, `supervisor_status`, `pr_url` (when present), `rubric_score`, `branch` (read directly from the `SUPERVISOR_RESULT.branch` field — a required v12.2-schema string), `summary`, `error` (when failed), `heal_decision`, `escalation_reason` (when completed_with_escalation). The `branch` field is what the merge-verification step (Signal 1 in EVALUATE) resolves to a SHA via `git rev-parse`.
+4. Capture the emitted `SUPERVISOR_RESULT` block (the last one in the transcript per `RESULT_SCHEMAS.md` §"SUPERVISOR_RESULT" emission-cadence note) and record relevant fields into state.json's `iterations[]` array: `n`, `brief_path`, `supervisor_status`, `pr_url` (when present), `rubric_score`, `branch` (read directly from the `SUPERVISOR_RESULT.branch` field — a required v12.2-schema string), `summary`, `error` (when failed), `heal_decision`, `escalation_reason` (when completed_with_escalation). The `branch` field is what the merge-verification step (Signal 1 in EVALUATE) resolves to a SHA via `git rev-parse`.
+
+5. **Fallback when Supervisor emits no `SUPERVISOR_RESULT`** (Supervisor crashed, terminal died mid-execute, network error before completion, Task spawn returned without a result block). Detect this by searching the transcript and finding zero `SUPERVISOR_RESULT` blocks for this iteration. The loop cannot infer Supervisor's actual state, but it CAN determine the loop-level outcome from filesystem evidence:
+   - If `.supervisor/jobs/in-progress/{basename(current_brief_path)}` still exists → Supervisor never finished its lifecycle move. The job is in a half-state.
+   - If `.supervisor/jobs/done/{basename(current_brief_path)}` exists but no `SUPERVISOR_RESULT` was emitted → likely a result-emission failure after the job moved; recoverable in principle but not in v1.
+   - If `.supervisor/jobs/failed/{basename(current_brief_path)}` exists but no `SUPERVISOR_RESULT` was emitted → Supervisor moved it to `failed/` but crashed before emitting the result block.
+   
+   In all three cases, v1 terminates the loop with `AUTONOMOUS_RUN.status: failed`, `status_reason: "supervisor_failed_other"`, and **records a synthetic iteration entry** in `iterations[]` so the array length matches `total_iterations` per schema:
+   
+   ```yaml
+   iterations:
+     - n: <current iteration>
+       brief_path: <current_brief_path>
+       supervisor_status: failed              # synthesized — Supervisor didn't say
+       pr_url: null
+       rubric_score: null
+       branch: ""                             # unknown; merge verification skipped
+       summary: "Supervisor emitted no SUPERVISOR_RESULT block; loop synthesized this entry from filesystem evidence."
+       error: "no_supervisor_result_emitted"
+       heal_decision: null
+       escalation_reason: null
+   ```
+   
+   The user is expected to manually investigate `.supervisor/jobs/`, `.supervisor/state.md`, and `.supervisor/logs/{session_id}.jsonl` before re-running. The `error: "no_supervisor_result_emitted"` string is grep-stable for future tooling that may treat this case differently.
 
 ## EVALUATE (multi-iteration mode only)
 
@@ -131,9 +154,16 @@ Loop pauses. Main-thread `AskUserQuestion` fires with the rubric gate:
 > - *(b) stop-here (accept the current rubric score, exit),*
 > - *(c) force-continue-anyway (proceed without merge; risk: iteration {N+1}'s branch won't include iteration {N}'s changes, likely producing conflicting PRs)."*
 
-**If user picks `merge-and-continue`, the loop verifies the merge before re-planning.** The branch name comes from `SUPERVISOR_RESULT.branch` (an existing schema-1 field per `docs/RESULT_SCHEMAS.md:218`); it was captured into `iterations[N].branch` during EXECUTE. The SHA is resolved from that branch name via `git rev-parse` on the **local** ref (not `origin/<branch>`, because we want the SHA the user pushed and we don't want a stale remote ref to hide the real tip):
+**If user picks `merge-and-continue`, the loop verifies the merge before re-planning.** The branch name comes from `SUPERVISOR_RESULT.branch` (an existing schema-1 field — see `docs/RESULT_SCHEMAS.md` §"SUPERVISOR_RESULT" for the field list); it was captured into `iterations[N].branch` during EXECUTE. The SHA is resolved from that branch name via `git rev-parse` on the **local** ref (not `origin/<branch>`, because we want the SHA the user pushed and we don't want a stale remote ref to hide the real tip):
 
 ```bash
+# PSEUDOCODE — assumes `jq` is available for JSON extraction. Portable
+# alternative (no jq): parse the markdown summary's "branch:" line, or
+# read iter_N_branch from an in-memory implementation variable rather
+# than from state.json. The autonomous loop's state.json is implementer-
+# choice (Python dict, in-memory struct, etc.) — `jq` is illustrative,
+# not a hard dependency.
+
 # Read branch name from this iteration's recorded SUPERVISOR_RESULT
 iter_N_branch="$(jq -r ".iterations[-1].branch" .supervisor/autonomous/${session_id}/state.json)"
 
@@ -171,7 +201,7 @@ The loop **never** advances to iteration N+1 on `merge-and-continue` until one o
 **If `merge-and-continue` (verified):** create refined requirement:
 
 ```
-{date}-{session_id}-iter{N+1}.md
+{session_id}-iter{N+1}.md
 ---
 <original requirement body, including `## Outcomes Rubric` verbatim>
 
@@ -194,7 +224,7 @@ Loop back to PLAN with this new requirement file. Record `policy_decisions` entr
 
 **Iteration-scoping anchor — anchor by filename, not by global grep:**
 
-The autonomous loop already knows `current_brief_path` (set during PLAN). When Supervisor picks Option C, it moves the brief from `.supervisor/jobs/in-progress/` to `.supervisor/jobs/failed/` (per `agents/supervisor.md:326` and `FAILURE_ESCALATION.md` inter-subtask gap flow). So **the unambiguous current-iteration anchor is `.supervisor/jobs/failed/{basename(current_brief_path)}` existence**. Prior runs have different brief filenames (different date / session_id / slug), so this filename uniquely identifies this iteration's failed brief.
+The autonomous loop already knows `current_brief_path` (set during PLAN). When Supervisor picks Option C, it moves the brief from `.supervisor/jobs/in-progress/` to `.supervisor/jobs/failed/` (per `agents/supervisor.md` Phase 3 adjudication-Option-C handler and `FAILURE_ESCALATION.md` §"Inter-Subtask Gap / Scope Expansion" Option C flow). So **the unambiguous current-iteration anchor is `.supervisor/jobs/failed/{basename(current_brief_path)}` existence**. Prior runs have different brief filenames (different date / session_id / slug), so this filename uniquely identifies this iteration's failed brief.
 
 **Why not `grep "inter_subtask_gap" .supervisor/state.md` directly:** state.md is per-Supervisor-session and Context-Keeper rewrites it atomically (`agents/context-keeper.md:15`). A global grep MIGHT be naturally scoped, but the filename anchor is more robust against pathological cases (state.md not yet updated, concurrent inconsistency, etc.).
 
@@ -247,7 +277,7 @@ If `gap_detected=true`: Option C was the trigger. **No merge prompt** — the jo
 Create refined requirement:
 
 ```
-{date}-{session_id}-iter{N+1}.md
+{session_id}-iter{N+1}.md
 ---
 <original requirement body>
 
@@ -295,7 +325,7 @@ The status enum is **autonomous-layer-only**: `done | paused_max_iterations | ab
 # Autonomous Run Summary
 
 - **session_id:** auto-2026-05-11-143022
-- **requirement_path:** `.supervisor/requirements/2026-05-11-auto-2026-05-11-143022-add-jwt-auth.md`
+- **requirement_path:** `.supervisor/requirements/auto-2026-05-11-143022-add-jwt-auth.md`
 - **mode:** single | multi
 - **status:** done | paused_max_iterations | aborted | failed
 - **status_reason:** null | "max_iterations_reached" | "user_discarded_at_phase_6" | "user_aborted_at_no_go" | "user_aborted_at_plan_review_fail" | "user_stopped_at_rubric_gate" | "supervisor_checkpoint" | "supervisor_failed_other" | "rubric_dropped_from_brief" | "concurrent_session_detected"
@@ -309,8 +339,8 @@ The status enum is **autonomous-layer-only**: `done | paused_max_iterations | ab
 
 | n | Brief | Supervisor Status | PR | Rubric | Branch |
 |---|---|---|---|---|---|
-| 1 | `.supervisor/jobs/done/2026-05-11-auto-...-add-jwt-auth.md` | completed | https://github.com/.../pull/42 | 3/5 | feature/jwt-auth |
-| 2 | `.supervisor/jobs/done/2026-05-11-auto-...-iter2.md` | completed | https://github.com/.../pull/43 | 5/5 | feature/jwt-auth-iter2 |
+| 1 | `.supervisor/jobs/done/auto-...-add-jwt-auth.md` | completed | https://github.com/.../pull/42 | 3/5 | feature/jwt-auth |
+| 2 | `.supervisor/jobs/done/auto-...-iter2.md` | completed | https://github.com/.../pull/43 | 5/5 | feature/jwt-auth-iter2 |
 
 ## Policy Decisions
 
@@ -338,7 +368,7 @@ Same fields as summary.md, structured as JSON. v1 writes it but does not depend 
 | Failure | Detection | Recovery |
 |---|---|---|
 | User discards at Phase 6 | `new_briefs` empty after Phase 6 | Clean exit, summary status=aborted |
-| Launch Pad ignores rubric-preservation inline instruction | `grep -F "## Outcomes Rubric" "$current_brief_path"` fails | Iteration aborts with status_reason="rubric_dropped_from_brief"; multi-iteration falls back to single-iteration cleanly |
+| Launch Pad ignores rubric-preservation inline instruction | `grep -F "## Outcomes Rubric" "$current_brief_path"` fails | Loop aborts with `status: aborted, status_reason: "rubric_dropped_from_brief"` (no iteration reaches EXECUTE; `total_iterations: 0`, `iterations: []`). User can re-run without `--allow-multi-iteration` to get single-iteration behavior, or pre-author the brief by hand with the rubric included. |
 | Concurrent autonomous run or manual launch-pad | `new_briefs` has >1 entry after Phase 6 | Abort with status_reason="concurrent_session_detected" |
 | Session terminated mid-loop | Process killed, terminal closed, machine restart | **v1: unsupported.** User must clean up `.supervisor/jobs/in-progress/`, close abandoned PRs, restart with `/autonomous`. Resume contract is its own plan (depends on Doc 4 state.json sidecar). |
 | `gh` unavailable for merge check | `gh pr view` returns non-zero | Fallback to `git merge-base --is-ancestor`; if neither confirms, re-prompt user |
@@ -348,7 +378,7 @@ Same fields as summary.md, structured as JSON. v1 writes it but does not depend 
 
 - **Launch Pad inline workflow:** referenced via Step 0 + PLAN invocation. One inline instruction added (rubric preservation), delivered through the inlined prompt, not a Launch Pad source change.
 - **Supervisor inline workflow:** referenced via Step 0 + EXECUTE invocation. No instruction modifications.
-- **Adjudication 4-option escalation:** Supervisor surfaces existing options A/B/C/D via AskUserQuestion. The autonomous loop never auto-picks. Option C produces `failed + inter_subtask_gap` grep-stable per FAILURE_ESCALATION.md:180.
+- **Adjudication 4-option escalation:** Supervisor surfaces existing options A/B/C/D via AskUserQuestion. The autonomous loop never auto-picks. Option C produces `failed + inter_subtask_gap` — the `inter_subtask_gap` substring is documented as grep-stable in `FAILURE_ESCALATION.md` §"Inter-Subtask Gap / Scope Expansion" (the doc explicitly promises grep-stability for telemetry / state.md consumers).
 - **SUPERVISOR_RESULT schema (v12.2):** v1 reads existing fields only — `status`, `pr_url`, `error`, `summary`, `rubric_score`, `branch`. No schema change. `reason` does not exist on the block; v1 reads gap context from `SUPERVISOR_RESULT.error` / `SUPERVISOR_RESULT.summary` and from the failed brief's contents (see Signal 2 detection algorithm above).
 - **`.supervisor/jobs/` lifecycle:** Supervisor remains sole writer/mover. The autonomous loop only reads `pending/` (for brief-save detection) and `failed/` (for Option-C anchor check).
 - **`.supervisor/state.md`:** Context-Keeper remains sole writer per `agents/context-keeper.md`. The autonomous loop **does not** grep state.md for `inter_subtask_gap` — Signal 2 detection uses only the three iteration-scoped sources (failed-brief contents, `SUPERVISOR_RESULT.error`, `SUPERVISOR_RESULT.summary`) to avoid any false-positive risk from pre-rewrite stale content.
@@ -364,4 +394,4 @@ Same fields as summary.md, structured as JSON. v1 writes it but does not depend 
 - `ai-agent-manager-plugin/skills/supervisor-readiness/SKILL.md` — brief format the autonomous loop relies on Launch Pad to produce
 - `ai-agent-manager-plugin/skills/state-management/SKILL.md` — atomic-rewrite semantics of `.supervisor/state.md`
 - `ai-agent-manager-plugin/agents/context-keeper.md` — sole-writer contract for state.md
-- `ai-agent-manager-plugin/agents/supervisor.md` line 326 — Option C file-move behavior
+- `ai-agent-manager-plugin/agents/supervisor.md` §"Phase 3 — Adjudication" / Option C handler — file-move behavior (brief moves from `in-progress/` to `failed/` when Option C is selected; reason `inter_subtask_gap` recorded in state.md)
