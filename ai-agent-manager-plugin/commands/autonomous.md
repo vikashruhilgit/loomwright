@@ -40,6 +40,10 @@ This is a v13.0.0 addition. It introduces no new agent, no new hook, no schema c
 
 **Not in v13.0.0** (each deferred to a future plan with its prerequisite): `--status`, `--continue`, `--abort`, `--stacked-branches`, `--cheap`, `--notify`, `--background`, `--auto-merge`.
 
+> **`--cheap` interaction note:** Passing `--cheap` to `/autonomous` in v1 has **no effect** — the loop does not forward unknown flags to the inlined `/supervisor` call, and `/supervisor`'s `--cheap` cost-profile (Sonnet overrides for orchestrator / execute-manager / worker / code-reviewer / Phase 4.5 fix tasks) is not wired through here. If you want the cost-optimized profile for a single requirement, run the workflows manually instead: `/launch-pad "..."` then `/supervisor job: <brief-path> --cheap`. A future plan can add `--cheap` passthrough once the cost-profile semantics are clarified for multi-iteration cycles.
+
+> **Quoting paths with spaces:** the `--requirement <path>` argument needs shell-quoting if the path contains spaces. Example: `/autonomous --requirement ".supervisor/requirements/My Feature.md"` — without the quotes, the path is split on the first space and the loop will error or read the wrong file.
+
 ## What This Does
 
 ### Step 0 — Load Canonical Workflow Bodies + Protocol Skill (always)

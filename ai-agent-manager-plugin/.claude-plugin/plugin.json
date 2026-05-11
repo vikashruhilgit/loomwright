@@ -104,6 +104,7 @@
     "command-chaining",
     "multi-iteration",
     "rubric-gate",
-    "foreground-assisted"
+    "foreground-assisted",
+    "goal-completion"
   ]
 }

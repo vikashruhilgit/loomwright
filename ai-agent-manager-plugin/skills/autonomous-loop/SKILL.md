@@ -58,11 +58,13 @@ This guards against prompt drift on three fronts. If Launch Pad, Supervisor, or 
 
 ### state.json schema
 
+Example (concrete values shown — `mode` is one of the string literals `"single"` or `"multi"`, not a union annotation):
+
 ```json
 {
   "session_id": "auto-2026-05-11-143022",
   "requirement_path": ".supervisor/requirements/2026-05-11-auto-2026-05-11-143022-add-jwt-auth.md",
-  "mode": "single | multi",
+  "mode": "single",
   "iteration": 0,
   "max_iterations": 3,
   "current_brief_path": null,
@@ -73,6 +75,8 @@ This guards against prompt drift on three fronts. If Launch Pad, Supervisor, or 
   "last_updated": "2026-05-11T14:30:22Z"
 }
 ```
+
+Field types: `mode: "single" | "multi"` (literal-union string); `iteration` and `max_iterations` are non-negative integers; `current_brief_path` is `string | null`; `iterations`, `policy_decisions`, `escalations_seen` are arrays; timestamps are ISO-8601 UTC.
 
 ## PLAN (per iteration)
 
@@ -113,7 +117,7 @@ This guards against prompt drift on three fronts. If Launch Pad, Supervisor, or 
 
 Single-iteration mode skips EVALUATE entirely and jumps to DONE after EXECUTE.
 
-Multi-iteration EVALUATE reads `SUPERVISOR_RESULT` (status, pr_url, error, summary, rubric_score, branch, heal_decision) plus iteration-scoped file-system artifacts (`.supervisor/jobs/pending/` for brief-save detection during PLAN, `.supervisor/jobs/failed/{basename(current_brief_path)}` for the Option-C iteration anchor, and that failed-brief's own contents for the `inter_subtask_gap` grep). Three exact signals decide the next step:
+Multi-iteration EVALUATE reads `SUPERVISOR_RESULT` (status, pr_url, error, summary, rubric_score, branch, heal_decision) plus iteration-scoped file-system artifacts (`.supervisor/jobs/pending/` for brief-save detection during PLAN, `.supervisor/jobs/failed/{basename(current_brief_path)}` for the Option-C iteration anchor, and that failed-brief's own contents for the `inter_subtask_gap` grep). **Two re-planning signals** drive loop continuation; a **default-termination branch** handles every other outcome:
 
 ### Signal 1 — `status: completed` AND `rubric_score N/M` with N<M
 
@@ -194,13 +198,18 @@ The autonomous loop already knows `current_brief_path` (set during PLAN). When S
 **Detection algorithm (after Supervisor returns `status: failed`):**
 
 ```bash
+# PSEUDOCODE — illustrative shell-flavoured pseudocode, not literally runnable.
+# "goto default_termination" denotes a structured control transfer to the
+# default-termination branch documented below; in a real implementation this
+# would be a function return, a state-machine transition, or a labeled break.
+
 failed_path=".supervisor/jobs/failed/$(basename "$current_brief_path")"
 
 if [ ! -f "$failed_path" ]; then
   # Supervisor failed for some reason that didn't move this iteration's brief
   # to failed/ — e.g., merge conflict, env blocker, hard error before adjudication.
   # NOT an Option C trigger.
-  goto signal_3_other_failure
+  goto default_termination   # pseudocode — see "Default termination" branch below
 fi
 
 # This iteration's brief was marked failed. Check for inter_subtask_gap in
@@ -226,7 +235,7 @@ grep -qF "inter_subtask_gap" "$failed_path" 2>/dev/null && gap_detected=true
 if [ "$gap_detected" = false ]; then
   # Failed brief exists but no gap signal — some other failure that happened
   # to move the brief to failed/.
-  goto signal_3_other_failure
+  goto default_termination   # pseudocode — see "Default termination" branch below
 fi
 ```
 
@@ -252,7 +261,9 @@ The new iteration should re-discover dependencies and produce a fresh Subtask St
 
 Loop back to PLAN with this new requirement file. Record `policy_decisions` entry: `{iteration: N, phase: EVALUATE, decision: "supervisor_option_c", source: "supervisor_adjudication"}`.
 
-### Signal 3 — Any other SUPERVISOR_RESULT outcome terminates the loop
+### Default termination — any other SUPERVISOR_RESULT outcome ends the loop
+
+Not a re-planning signal — this is the catch-all branch when neither Signal 1 nor Signal 2 fires. The loop emits the AUTONOMOUS_RUN summary and exits:
 
 | `SUPERVISOR_RESULT.status` | Other condition | Loop action | summary status | status_reason |
 |---|---|---|---|---|
@@ -326,7 +337,7 @@ Same fields as summary.md, structured as JSON. v1 writes it but does not depend 
 | Concurrent autonomous run or manual launch-pad | `new_briefs` has >1 entry after Phase 6 | Abort with status_reason="concurrent_session_detected" |
 | Session terminated mid-loop | Process killed, terminal closed, machine restart | **v1: unsupported.** User must clean up `.supervisor/jobs/in-progress/`, close abandoned PRs, restart with `/autonomous`. Resume contract is its own plan (depends on Doc 4 state.json sidecar). |
 | `gh` unavailable for merge check | `gh pr view` returns non-zero | Fallback to `git merge-base --is-ancestor`; if neither confirms, re-prompt user |
-| `inter_subtask_gap` string drift (FAILURE_ESCALATION.md changes the grep-stable string) | Signal 2 detection silently fails | Loop falls through to Signal 3 (`supervisor_failed_other`); user inspects failed brief and re-runs. Promotion to typed enum is future work. |
+| `inter_subtask_gap` string drift (FAILURE_ESCALATION.md changes the grep-stable string) | Signal 2 detection silently fails | Loop falls through to the default-termination branch with `status_reason=supervisor_failed_other`; user inspects failed brief and re-runs. Promotion to typed enum is future work. |
 
 ## Hard Reuse Contract (no source changes)
 

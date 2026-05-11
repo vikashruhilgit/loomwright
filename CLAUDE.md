@@ -247,6 +247,12 @@ State auto-saves to `.supervisor/state.md`. Resume with `/supervisor --continue 
 ### Orphaned worktrees after crash?
 `git worktree list`; `git worktree remove ../project-BD-XXa`; `git branch -d feature/BD-XXa`.
 
+### `/autonomous` brief-save detection is single-session-only (v1)
+The PLAN phase detects the saved brief via `ls`-diff of `.supervisor/jobs/pending/` (snapshot before Phase 6's save prompt, snapshot after, take the new file). This works for a single autonomous run but cannot distinguish a concurrent `/launch-pad` or second `/autonomous` session writing to the same `pending/` directory. v1 detects the multi-file case and aborts cleanly with `status_reason="concurrent_session_detected"`, but the safe operating rule is one autonomous / launch-pad invocation at a time per repo. The proper fix is a `LAUNCH_PAD_RESULT` schema with a `saved_brief_path` field emitted by Launch Pad — that lands in a separate follow-up plan and is the single biggest leverage point for hardening `/autonomous`.
+
+### `/autonomous --cheap` is unsupported in v1
+The loop does not forward unknown flags into the inlined `/supervisor` call. Run `/launch-pad` and `/supervisor --cheap` manually if you need the Sonnet cost profile for a one-off requirement. See `commands/autonomous.md` "Parameters" → `--cheap interaction note` for details.
+
 ---
 
 ## References
