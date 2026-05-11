@@ -1103,6 +1103,6 @@ SUPERVISOR_RESULT:
 - `heal_remaining_issues=0` when `heal_decision=PASS`; `≥1` when `heal_decision=ESCALATED`
 - `error` MUST be non-empty when `status=failed`
 - `summary` is always required and non-empty
-- `rubric_score` (optional, v12.2.0+) is `null` OR a string `"N/M"` where N and M are positive integers and M ≥ N; presence/absence is not a validation failure
+- `rubric_score` (optional, v12.2.0+) is `null` OR a string `"N/M"` where N is a non-negative integer (`>= 0`; `"0/M"` is the legitimate all-fail case), M is a positive integer (`>= 1`), and M ≥ N; presence/absence is not a validation failure
 
 See `docs/RESULT_SCHEMAS.md` for the complete schema with examples (happy path, escalated, skip-flag).
