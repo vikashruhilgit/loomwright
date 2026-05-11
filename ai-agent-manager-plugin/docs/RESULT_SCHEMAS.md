@@ -690,10 +690,19 @@ AUTONOMOUS_RUN:
       heal_decision: string | null     # SUPERVISOR_RESULT.heal_decision
       escalation_reason: string | null # populated for status: completed_with_escalation
   escalations_seen: string[]           # required — flattened list of escalation reasons across iterations (may be empty)
-  policy_decisions: object[]           # required — user choices captured at AskUserQuestion gates
+  policy_decisions: object[]           # required — user choices at loop-level AskUserQuestion gates AND loop-inferred records of decisions made inside Supervisor's adjudication
     - iteration: integer               # 0 for PLAN-phase decisions made before any EXECUTE happened
       phase: enum [PLAN, EVALUATE]
-      decision: string                 # e.g. "user_picked_save", "user_picked_merge_and_continue", "user_picked_force_continue_anyway", "user_picked_stop_here", "user_picked_override", "user_picked_abort", "supervisor_option_c"
+      decision: enum [                 # closed set — see decision enum table below
+        "user_picked_save",
+        "user_picked_discard",
+        "user_picked_override",
+        "user_picked_abort",
+        "user_picked_merge_and_continue",
+        "user_picked_stop_here",
+        "user_picked_force_continue_anyway",
+        "supervisor_option_c_detected"
+      ]
       source: enum [launch_pad_phase_6, launch_pad_no_go, launch_pad_plan_review, autonomous_rubric_gate, supervisor_adjudication]
   rubric_final_score: string | null    # required — last iteration's rubric_score (null when no rubric in requirement OR when total_iterations == 0)
 ```
@@ -727,6 +736,20 @@ Reason-string meanings:
 - `status` ↔ `status_reason` pairing must follow the table above. In particular, `status: done` is valid with either `status_reason: null` (clean completion) or `status_reason: "user_stopped_at_rubric_gate"` (user accepted partial rubric); no other reason string is legal with `done`.
 - When `total_iterations == 0`, `rubric_final_score` MUST be `null` and `last_phase` MUST be `PLAN`.
 - When `total_iterations >= 1`, `rubric_final_score` mirrors the `rubric_score` of the last entry in `iterations`.
+- Each `policy_decisions[]` entry's `decision` field MUST match a value from the closed `decision` enum in the YAML schema above. Each `(decision, source)` pair MUST follow the legal pairing table below.
+
+**`policy_decisions.decision` enum** (closed set; new values require updating both this schema and `skills/autonomous-loop/SKILL.md`). The legal `(decision, source)` pairing table:
+
+| `decision` | Legal `source` value | Captures |
+|---|---|---|
+| `"user_picked_save"` | `launch_pad_phase_6` | User confirmed brief save at Launch Pad Phase 6 |
+| `"user_picked_discard"` | `launch_pad_phase_6` | User discarded brief at Launch Pad Phase 6 (terminal — produces `status: aborted`) |
+| `"user_picked_override"` | `launch_pad_no_go`, `launch_pad_plan_review` | User overrode a NO-GO verdict or a Plan Review FAIL (loop continues) |
+| `"user_picked_abort"` | `launch_pad_no_go`, `launch_pad_plan_review` | User aborted at NO-GO or after Plan Review FAIL × 3 (terminal — produces `status: aborted`) |
+| `"user_picked_merge_and_continue"` | `autonomous_rubric_gate` | User confirmed merge and asked loop to proceed; merge-verified before re-plan |
+| `"user_picked_stop_here"` | `autonomous_rubric_gate` | User accepted partial rubric (terminal — produces `status: done, status_reason: user_stopped_at_rubric_gate`) |
+| `"user_picked_force_continue_anyway"` | `autonomous_rubric_gate` | User bypassed merge verification (loop continues; conflict risk recorded for audit) |
+| `"supervisor_option_c_detected"` | `supervisor_adjudication` | **Loop-inferred from filesystem evidence** after Supervisor's own adjudication AskUserQuestion concluded. Unlike the `user_picked_*` entries, this decision was made inside Supervisor's session — the autonomous loop only records that it observed the result (failed brief in `.supervisor/jobs/failed/` + `inter_subtask_gap` substring). The `_detected` suffix is a deliberate naming convention to flag this distinction for future tooling. |
 
 **Example — single-iteration successful run:**
 

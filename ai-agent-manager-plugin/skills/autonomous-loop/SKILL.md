@@ -292,7 +292,7 @@ The new iteration should re-discover dependencies and produce a fresh Subtask St
 (Note for Launch Pad re-discovery: the failed brief is preserved at `<failed_path>` for reference if helpful.)
 ```
 
-Loop back to PLAN with this new requirement file. Record `policy_decisions` entry: `{iteration: N, phase: EVALUATE, decision: "supervisor_option_c", source: "supervisor_adjudication"}`.
+Loop back to PLAN with this new requirement file. Record `policy_decisions` entry: `{iteration: N, phase: EVALUATE, decision: "supervisor_option_c_detected", source: "supervisor_adjudication"}`. **Note:** unlike the other entries in `policy_decisions` that capture a user choice at a *loop-level* `AskUserQuestion` gate, this one is **inferred by the loop from filesystem evidence** after Supervisor's own adjudication AskUserQuestion concluded inside Supervisor's session. The `_detected` suffix is a deliberate naming convention to flag this distinction for future tooling that parses `policy_decisions`.
 
 ### Default termination — any other SUPERVISOR_RESULT outcome ends the loop
 

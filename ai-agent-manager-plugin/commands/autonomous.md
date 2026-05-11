@@ -38,7 +38,7 @@ This is a v13.0.0 addition. It introduces no new agent, no new hook, no behavior
 | `"<requirement>"` | One of | Inline requirement string. Loop writes it to `.supervisor/requirements/{session_id}-{slug}.md` (where `session_id` is `auto-{YYYY-MM-DD}-{HHMMSS}` — already date-prefixed, so the path is sortable without a redundant date) with an optional `## Outcomes Rubric` placeholder for the user to fill in. |
 | `--requirement <path>` | One of | Use an existing requirement file. If the file already contains an `## Outcomes Rubric` section, it is preserved and used by multi-iteration mode. |
 | `--allow-multi-iteration` | No | Enable multi-iteration mode. Default is single-iteration (no looping). |
-| `--max-iterations N` | No | Maximum iterations in multi-iteration mode. Default `N=3`. Ignored in single-iteration mode. |
+| `--max-iterations N` | No | Maximum iterations in multi-iteration mode. Default `N=3`. **Ignored in single-iteration mode (the default)** — passing `--max-iterations` without also passing `--allow-multi-iteration` has no effect; multi-iteration must be explicitly enabled. The loop never silently upgrades single-iteration to multi-iteration based on this flag alone. |
 
 **Not in v13.0.0** (each deferred to a future plan with its prerequisite): `--status`, `--continue`, `--abort`, `--stacked-branches`, `--cheap`, `--notify`, `--background`, `--auto-merge`.
 
@@ -205,6 +205,7 @@ Iteration 1: Launch Pad saves a brief; Supervisor's Worker emits `outputs_gap`; 
 - **Crash recovery is unsupported.** Re-running `/autonomous` on the same requirement after a crash may duplicate work — Launch Pad may re-create a similar brief, Supervisor may try to create a similar PR, merge conflicts likely. Manually clean up `.supervisor/jobs/in-progress/`, close any abandoned PRs, then restart. `/autonomous --continue` is deferred to a future plan that depends on Doc 4's state.json sidecar + resume reconciliation.
 - **No QA integration in the loop.** The loop trusts Supervisor's Phase 4.5 self-heal + (v12.2's) Rubric Grader for in-PR quality. Auto-spawning QA Strategist / QA Executor after each PR is its own design surface; defer.
 - **Cost: multi-iteration loops are genuinely expensive.** Each iteration runs full Launch Pad + full Supervisor (including Phase 4.5 + Rubric Grader). The only cap in v1 is `--max-iterations N` (default 3). Token/dollar budget caps are deferred.
+- **`.gitignore` coverage.** The loop writes to `.supervisor/autonomous/{session_id}/`, `.supervisor/requirements/`, and `.supervisor/logs/{session_id}.jsonl` — all under `.supervisor/`. The `state-management` skill (consumed by Supervisor at session start) idempotently ensures `.supervisor/` is in `.gitignore`, so first-run users won't accidentally commit autonomous session artifacts. If you've moved the supervisor state directory or stripped that line from your `.gitignore` for some reason, re-add `.supervisor/` before running `/autonomous`.
 
 ## Troubleshooting
 

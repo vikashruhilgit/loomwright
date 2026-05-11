@@ -44,11 +44,12 @@ Plus all prior v11.0/v10.3/v10.2 capabilities:
 
 ### Internal Agents (5)
 
+
 - **Execute Manager** — Owns Phase 3 worker/reviewer lifecycle (spawned by Supervisor)
 - **Context-Keeper** — Sole writer of externalized state file (spawned on-demand)
 - **Worker** — Implements a single subtask in an isolated git worktree (spawned by Execute Manager)
 - **Plan Reviewer** — Validates Supervisor-Ready Briefs before execution (spawned by Launch Pad)
-- **Rubric Grader** (v12.2.0) — Read-only Haiku scorer for the optional Outcomes Rubric (spawned by Supervisor in Phase 4.5 when the brief contains `## Outcomes Rubric` and `heal_decision == PASS`; advisory only — never blocks the PR)
+- **Rubric Grader** (shipped in v12.2.0; the "Internal Agents (4) → (5)" count update is a v13.0.0 doc-consistency fix — not a new v13 agent) — Read-only Haiku scorer for the optional Outcomes Rubric (spawned by Supervisor in Phase 4.5 when the brief contains `## Outcomes Rubric` and `heal_decision == PASS`; advisory only — never blocks the PR)
 
 ### 50 Skills
 
