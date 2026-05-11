@@ -31,7 +31,7 @@ Protocol for the `/autonomous` outer loop. Owns the orchestration that chains La
 | Mode | Trigger | Behavior |
 |---|---|---|
 | **Single-iteration** | default — neither `--allow-multi-iteration` nor any iteration flag passed | INIT → PLAN → EXECUTE → DONE. No loop, no EVALUATE branching. Pure command chaining. |
-| **Multi-iteration** | `--allow-multi-iteration` passed (with optional `--max-iterations N`, default `N=3`) | INIT → PLAN → EXECUTE → EVALUATE → (loop or DONE). EVALUATE may trigger re-plan on two signals. |
+| **Multi-iteration** | `--allow-multi-iteration` passed (with optional `--max-iterations N`, integer N ≥ 1, default `N=3`) | INIT → PLAN → EXECUTE → EVALUATE → (loop or DONE). EVALUATE may trigger re-plan on two signals. **N=1 is a degenerate but valid case:** the loop runs one iteration with full EVALUATE / rubric-gate reporting; if Signal 1 or Signal 2 would fire, the cap-check exits with `status: paused_max_iterations, status_reason: "max_iterations_reached"` instead of re-iterating. **N=0 or N<0** rejected at INIT with `status: aborted, status_reason: "invalid_max_iterations"`. |
 
 Single-iteration is the safe default because (a) most user requirements complete in one cycle, (b) multi-iteration has real architectural caveats around PR merge cadence, (c) opt-in avoids surprising the user with multi-PR runs.
 
@@ -332,7 +332,7 @@ The status enum is **autonomous-layer-only**: `done | paused_max_iterations | ab
 - **requirement_path:** `.supervisor/requirements/auto-2026-05-11-143022-add-jwt-auth.md`
 - **mode:** single | multi
 - **status:** done | paused_max_iterations | aborted | failed
-- **status_reason:** null | "max_iterations_reached" | "user_discarded_at_phase_6" | "user_aborted_at_no_go" | "user_aborted_at_plan_review_fail" | "user_stopped_at_rubric_gate" | "supervisor_checkpoint" | "supervisor_failed_other" | "rubric_dropped_from_brief" | "concurrent_session_detected"
+- **status_reason:** null | "max_iterations_reached" | "user_discarded_at_phase_6" | "user_aborted_at_no_go" | "user_aborted_at_plan_review_fail" | "user_stopped_at_rubric_gate" | "supervisor_checkpoint" | "supervisor_failed_other" | "rubric_dropped_from_brief" | "concurrent_session_detected" | "invalid_max_iterations"
 - **total_iterations:** 2
 - **last_phase:** DONE | EVALUATE | PLAN | EXECUTE
 - **started_at:** 2026-05-11T14:30:22Z
@@ -374,7 +374,7 @@ Same fields as summary.md, structured as JSON. v1 writes it for two purposes: (a
 | Failure | Detection | Recovery |
 |---|---|---|
 | User discards at Phase 6 | `new_briefs` empty after Phase 6 | Clean exit, summary status=aborted |
-| Launch Pad ignores rubric-preservation inline instruction | `grep -F "## Outcomes Rubric" "$current_brief_path"` fails | Loop aborts with `status: aborted, status_reason: "rubric_dropped_from_brief"` (no iteration reaches EXECUTE; `total_iterations: 0`, `iterations: []`). User can re-run without `--allow-multi-iteration` to get single-iteration behavior, or pre-author the brief by hand with the rubric included. |
+| Launch Pad ignores rubric-preservation inline instruction | `grep -F "## Outcomes Rubric" "$current_brief_path"` fails | Loop aborts with `status: aborted, status_reason: "rubric_dropped_from_brief"` (no iteration reaches EXECUTE; `total_iterations: 0`, `iterations: []`). **Cleanup required before re-running:** the abort fires *after* Launch Pad's Phase 6 save, so the saved brief is still sitting in `.supervisor/jobs/pending/` (filename starts with this run's `session_id`). The user must move or delete the stale brief before re-running `/autonomous`, otherwise the next run's brief-save `ls`-diff will see it as a "new" file and either pick it up by accident or trip `concurrent_session_detected`. One-liner: `mv .supervisor/jobs/pending/<this-session-id>-*.md .supervisor/jobs/failed/`. **Recovery paths:** re-run without `--allow-multi-iteration` (single-iteration ignores the rubric-preservation gate entirely), or pre-author the brief by hand with the rubric included. |
 | Concurrent autonomous run or manual launch-pad | `new_briefs` has >1 entry after Phase 6 | Abort with status_reason="concurrent_session_detected" |
 | Session terminated mid-loop | Process killed, terminal closed, machine restart | **v1: unsupported.** User must clean up `.supervisor/jobs/in-progress/`, close abandoned PRs, restart with `/autonomous`. Resume contract is its own plan (depends on Doc 4 state.json sidecar). |
 | `gh` unavailable for merge check | `gh pr view` returns non-zero | Fallback to `git merge-base --is-ancestor`; if neither confirms, re-prompt user |

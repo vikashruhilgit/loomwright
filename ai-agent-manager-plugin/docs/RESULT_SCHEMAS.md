@@ -713,7 +713,7 @@ AUTONOMOUS_RUN:
 |---|---|
 | `done` | `null` (rubric satisfied or no rubric present) **OR** `"user_stopped_at_rubric_gate"` (user accepted partial rubric; PR exists, run ended on user's terms) |
 | `paused_max_iterations` | `"max_iterations_reached"` |
-| `aborted` | `"user_discarded_at_phase_6"`, `"user_aborted_at_no_go"`, `"user_aborted_at_plan_review_fail"`, `"supervisor_checkpoint"`, `"rubric_dropped_from_brief"`, `"concurrent_session_detected"` |
+| `aborted` | `"user_discarded_at_phase_6"`, `"user_aborted_at_no_go"`, `"user_aborted_at_plan_review_fail"`, `"supervisor_checkpoint"`, `"rubric_dropped_from_brief"`, `"concurrent_session_detected"`, `"invalid_max_iterations"` |
 | `failed` | `"supervisor_failed_other"` |
 
 Reason-string meanings:
@@ -728,6 +728,7 @@ Reason-string meanings:
 - `"supervisor_failed_other"` — covers two cases: (a) `SUPERVISOR_RESULT.status: failed` was emitted but without the `inter_subtask_gap` Option-C signal in any of the three iteration-scoped sources; (b) Supervisor crashed or otherwise exited without emitting any `SUPERVISOR_RESULT` block at all, and the autonomous loop synthesized a placeholder iteration entry with `error: "no_supervisor_result_emitted"` so the schema's `iterations.length == total_iterations` invariant still holds
 - `"rubric_dropped_from_brief"` — Launch Pad did not preserve the `## Outcomes Rubric` section (rubric-preservation gate failure)
 - `"concurrent_session_detected"` — brief-save `ls`-diff found more than one new file in `.supervisor/jobs/pending/` (violates v1 single-session assumption)
+- `"invalid_max_iterations"` — `--allow-multi-iteration` was passed with `--max-iterations N` where N is not a positive integer (N ≤ 0 or non-integer). INIT rejects this immediately, before any state.json/summary.md is written beyond the abort record. `total_iterations: 0`, `iterations: []`, `last_phase: PLAN`
 
 **Validation rules:**
 - No SubagentStop hook validates this block (autonomous-layer-only).
