@@ -226,6 +226,7 @@ SUPERVISOR_RESULT:
   error: string | null                 # conditional — required when status=failed
   summary: string                      # required — concise session summary
   cost_profile: enum [default, cheap] | null  # optional — null when flag not passed (equivalent to default)
+  rubric_score: string | null          # optional (v12.2.0+) — "N/M" where N is non-negative (>= 0; "0/M" is the legitimate all-fail case), M is positive (>= 1), M >= N; null when no Outcomes Rubric in brief, heal_decision != PASS, or grader parse failed
 ```
 
 **Field semantics note:** `heal_loop_ran` reports whether the Phase 4.5 *review-and-fix loop* executed, not whether the phase itself transitioned. The phase transition and completion tail are unconditional; only the loop is gated by `--skip-self-heal` and the resume-thrash guard.
@@ -244,6 +245,7 @@ SUPERVISOR_RESULT:
 - `heal_remaining_issues=0` when `heal_decision=PASS` (PASS means no BLOCKING/HIGH new issues remain)
 - `heal_remaining_issues>=1` when `heal_decision=ESCALATED`
 - `summary` must be present
+- `rubric_score` is optional (additive in v12.2.0, schema version unchanged at 1). When present, it MUST be either `null` or a string matching the format `"N/M"` where N is a non-negative integer (`>= 0` — `"0/M"` is the legitimate all-fail case where the grader ran but every rubric item failed), M is a positive integer (`>= 1` — there is no zero-item rubric), and M ≥ N. The two non-null forms have distinct meaning: `null` = grader did not run (no rubric in brief, `heal_decision != PASS`, or grader parse failure); `"0/M"` = grader ran and scored zero items. When absent, validators MUST treat it as `null`. The Supervisor SubagentStop hook MUST NOT reject a SUPERVISOR_RESULT solely for the presence or absence of `rubric_score`.
 
 **Status mapping from heal outcome:**
 - `heal_decision=PASS` OR `heal_loop_ran=false` (loop skipped via `--skip-self-heal`) → `status: completed`
@@ -268,6 +270,7 @@ SUPERVISOR_RESULT:
   heal_remaining_issues: 0
   error: null
   summary: 3/3 subtasks completed. Integration review PASS on first try. PR #42 ready for human sign-off.
+  rubric_score: "5/5"
 ```
 
 **Example (escalated after max iterations):**
@@ -667,6 +670,7 @@ All result schemas include a `schema_version` field. This enables forward compat
 
 ### Version History
 
+- **SUPERVISOR_RESULT v1 extension** (v12.2.0): Added optional `rubric_score: string | null` field. Format is `"N/M"` where N is a non-negative integer (`>= 0`; `"0/M"` is the legitimate all-fail case where the grader ran but every rubric item failed), M is a positive integer (`>= 1`), and M ≥ N — OR `null`. The two non-null forms are semantically distinct: `null` = grader did not run; `"0/M"` = grader ran and zero items passed. Populated by the Phase 4.5 Haiku grader when the brief contains an `## Outcomes Rubric` section AND `heal_decision == PASS`; `null` otherwise. Schema version was NOT bumped because the addition is optional and additive — pre-v12.2.0 producers and consumers continue to validate without change. The Supervisor SubagentStop hook accepts presence or absence and only validates format when present.
 - **WORKER_RESULT v2** (v12.0.0): Added `outputs_verified[]` (itemized presence checks for every output the brief promised) and `outputs_gap` (string; non-empty implies status MUST be `partial`). The SubagentStop hook enforces a cross-field invariant: `outputs_gap` non-empty AND `status: completed` is rejected. v1 emissions remain accepted during the v12.0.0 transition window.
 - **EXECUTE_CHECKPOINT v1 extension** (v12.0.0): Added optional fields `adjudication_required: bool`, `missing_outputs: object[]`, and `adjudication_options: string[]`. These fields appear together (all-or-nothing); when `adjudication_required: true`, both arrays MUST be non-empty (hook-enforced). Schema version was NOT bumped because the additions are optional. Same release added a hook rejection of `toolset_gap`-style escalation reasons.
 - **CODE_REVIEW_RESULT v2** (v7.0.0): Added `category` field to issues (`new`, `pre_existing`, `nit`). FAIL decisions now require at least one `new` HIGH/BLOCKING issue. Pre-existing issues are reported but do not block.

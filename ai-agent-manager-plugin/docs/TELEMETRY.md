@@ -553,6 +553,133 @@ files by creating them on first write.
 
 ---
 
+## Webhook Notifications
+
+**v12.2.0+ — complement to GitHub Issues telemetry, different purpose.**
+
+The webhook system is a separate, opt-in delivery channel for **real-time
+operational alerts** (e.g., a Slack incoming-webhook, an internal monitoring
+endpoint, a Discord webhook, a PagerDuty Events API URL). It is intentionally
+distinct from the GitHub Issues telemetry described above:
+
+| Channel | Purpose | Trigger | Cadence |
+|---------|---------|---------|---------|
+| GitHub Issues telemetry | **Longitudinal analytics** — agent scores, issue patterns, trend lines aggregated over weeks | `code-reviewer`, `qa-executor`, `supervisor-runner` SubagentStop | Per qualifying run, dedup-windowed |
+| Webhook notifications  | **Real-time ops alerts** — "did the run finish? what's the PR? did self-heal escalate?" | `supervisor-runner` SubagentStop only | Per Supervisor run, fire-and-forget |
+
+Both can be enabled simultaneously, neither depends on the other, and both
+fail closed (silent no-op) when their respective configuration is absent.
+
+### Setup
+
+```bash
+export AI_AGENT_MANAGER_WEBHOOK_URL=https://hooks.example.com/services/T000/B000/XXXX
+```
+
+That's it — once the env var is set in the shell that launches Claude Code,
+every Supervisor SubagentStop fires a single POST. No `/telemetry`-style
+consent file, no interactive enable command, no per-session state. To
+disable, `unset AI_AGENT_MANAGER_WEBHOOK_URL`.
+
+### Payload schema
+
+A single JSON object, `Content-Type: application/json`:
+
+```json
+{
+  "agent": "supervisor",
+  "status": "completed",
+  "pr_url": "https://github.com/owner/repo/pull/123",
+  "summary": "Implemented v12.2.0 webhook notification...",
+  "timestamp": "2026-05-10T22:53:00Z"
+}
+```
+
+Field semantics:
+
+- **`agent`** — always the literal string `"supervisor"` for v12.2.0; reserved
+  for future expansion (e.g., `"qa-executor"`) without breaking consumers.
+- **`status`** — copied verbatim from `SUPERVISOR_RESULT.status`. One of
+  `completed | completed_with_escalation | failed | checkpoint`. Empty
+  string if extraction failed (jq missing or malformed payload — see below).
+- **`pr_url`** — copied verbatim from `SUPERVISOR_RESULT.pr_url`. Empty
+  string when `status ∈ {failed, checkpoint}` (no PR was created).
+- **`summary`** — copied verbatim from `SUPERVISOR_RESULT.summary`, **truncated to 2,048 bytes** (with a trailing `...` ellipsis) to stay well under the body-size limits common to chat webhooks (Slack incoming-webhooks reject bodies > 40 KB; many enterprise endpoints are stricter). Receivers needing the full text should reach the PR link.
+- **`timestamp`** — UTC ISO-8601 (`%Y-%m-%dT%H:%M:%SZ`) at the moment the
+  hook fired (NOT when the Supervisor started).
+
+**Forward-compatibility note:** new fields may be added to the payload in
+future versions; consumers MUST ignore unknown fields rather than reject.
+
+### Why a `type: command` wrapper, not `type: http`
+
+Claude Code's hook system supports a native `type: http` hook, but its
+env-var interpolation only substitutes `${VAR}` inside the `headers` block
+— **not inside the `url`**. Since the entire feature is gated on
+`AI_AGENT_MANAGER_WEBHOOK_URL`, the URL has to resolve at hook-fire time
+inside a script with shell-level env access, not inside the hook config.
+A `type: command` wrapper invoking `send-webhook.sh` is the only way to
+read the env var and conditionally fire (or silently skip) the request.
+
+### Tool requirements & graceful degradation
+
+The wrapper requires `curl` to fire the webhook and prefers `jq` for safe
+JSON extraction and payload composition. Behaviour when tools are missing:
+
+| Missing | Behaviour |
+|---------|-----------|
+| `AI_AGENT_MANAGER_WEBHOOK_URL` unset | exit 0 immediately, zero side effects |
+| `curl` not on PATH | log one line to stderr, exit 0 (no webhook fired) |
+| `jq` not on PATH | `status`/`pr_url`/`summary` fields will be empty strings; webhook still fires with minimal payload |
+| Webhook returns non-2xx, times out (>5s), or DNS fails | curl error suppressed, exit 0 |
+
+The wrapper **always exits 0**. The fire-and-forget contract means a slow
+or unreachable webhook endpoint will never block a Supervisor run beyond
+the 5-second curl timeout.
+
+### URL safety — user responsibility
+
+Unlike GitHub Issues telemetry, which goes only to a target repo configured
+through an interactive `/telemetry enable` flow, the webhook URL is taken
+verbatim from the env var and POSTed to with no domain whitelist or
+validation. Setting `AI_AGENT_MANAGER_WEBHOOK_URL` is an explicit operator
+action; the operator is responsible for:
+
+- ensuring the URL points to an endpoint they control or trust;
+- ensuring the endpoint accepts unauthenticated POSTs OR carries auth
+  inside the URL (e.g., a Slack webhook with a per-channel token in the
+  path) — the wrapper does not support arbitrary auth headers in this
+  release;
+- treating the URL itself as a secret if the endpoint trusts knowledge of
+  the URL (Slack, Discord, etc.) — do not commit it.
+
+### Privacy posture
+
+The payload contains only:
+
+- a fixed agent label,
+- a Supervisor status enum,
+- the GitHub PR URL (already public on the user's repo),
+- the SUPERVISOR_RESULT summary string (one or two sentences the
+  Supervisor itself authored),
+- a timestamp.
+
+No file paths, no diffs, no tool transcripts, no consent file contents,
+no env-var dumps. Because the operator chose the destination URL, the
+deny-list redaction used by GitHub Issues telemetry does NOT run here —
+the trust model is "operator picked the URL and accepts what reaches it."
+
+### Disabling
+
+```bash
+unset AI_AGENT_MANAGER_WEBHOOK_URL
+```
+
+The next Supervisor SubagentStop will see the wrapper exit 0 immediately
+with no log line, no network call, and no side effects.
+
+---
+
 ## Future work (out of scope for this PR)
 
 - **Session-level batch mode.** One issue summarising N tasks per

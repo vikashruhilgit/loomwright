@@ -532,6 +532,49 @@ if heal_iterations == max_heal_iterations AND review.decision != PASS:
   post findings to PR as comment
 ```
 
+**Outcomes Rubric grading (v12.2.0+, runs only after Code Reviewer PASS):**
+
+When the loop exits with `heal_decision == PASS` AND the in-progress brief contains an `## Outcomes Rubric` section (parse the section between the heading and the next `## ` heading; collect every leading-`-` bullet), spawn a Haiku grader to score the PR diff against each rubric item. This is a one-shot read-only evaluation; no fixes are dispatched off the rubric verdict.
+
+```
+rubric_bullets = parse_rubric(brief_path)   # [] if no ## Outcomes Rubric section
+
+if heal_decision == PASS and rubric_bullets:
+  # Invoke the registered rubric-grader agent. Spawning by `subagent_type` is
+  # the reliable enforcement path for `model: haiku` — the Task tool ignores
+  # `model:` keywords on the call site, but honors the frontmatter on
+  # `agents/rubric-grader.md`. Read-only behavior at runtime is enforced by
+  # the agent's `disallowedTools: Write, Edit, Task, NotebookEdit` plus the
+  # prompt convention restricting Bash to read-only git inspection.
+  # `permissionMode: plan` is preserved in the agent frontmatter for
+  # ~/.claude/agents/ compatibility but is silently ignored by Claude Code
+  # for plugin-distributed agents (see CLAUDE.md "Hook gotcha"); do not
+  # rely on it as a runtime gate.
+  grade = Task(
+    description: "Grade PR diff against Outcomes Rubric",
+    prompt: "Feature branch: {feature_branch}
+      PR: {pr_url}
+
+      Rubric items (each is a single observable assertion):
+      {numbered list of rubric_bullets}
+
+      Run `git diff origin/main...{feature_branch}` (read-only) and score every item.
+      Emit per-item lines + one `rubric_score: N/M` line. See your agent prompt for
+      the exact output contract.",
+    subagent_type: "ai-agent-manager-plugin:rubric-grader"
+  )
+  rubric_score = parse_rubric_score(grade.output)   # "N/M" string; 0 <= N <= M; M == len(rubric_bullets); "0/M" is valid (all-fail)
+else:
+  rubric_score = null   # no rubric in brief, or heal_decision != PASS
+```
+
+**Rubric grading rules:**
+- Grader runs **only when `heal_decision == PASS`**. On ESCALATED or invariant-violation paths, `rubric_score = null` (the rubric is not evaluated against a code state we do not yet trust).
+- Grader is **read-only and advisory** — a failing rubric item does NOT change `heal_decision`, does NOT trigger a fix iteration, and does NOT block the PR. It is reported in the SUPERVISOR_RESULT for human review.
+- If the brief has no `## Outcomes Rubric` section: `rubric_score = null`. Backward-compatible — pre-v12.2.0 briefs continue to work unchanged.
+- If parsing the grader output fails (no `rubric_score: N/M` line): record `record_decision(phase: SELF_HEAL, decision: "rubric_grader_parse_failed", ...)` and set `rubric_score = null`. Do NOT fail the task.
+- Grader output is appended to the PR as a comment alongside the heal report (best-effort; comment failure does not fail the task).
+
 **Integration-review invocation details:** Code Reviewer auto-detects Beads (`test -d .beads && bd --version`). When Beads is not active, the CODE_REVIEW_RESULT block is the sole output channel the Supervisor parses. See `agents/code-reviewer.md` "Detect Beads Integration" for full semantics.
 
 **Fix task crash handling:**
@@ -792,6 +835,7 @@ SUPERVISOR_RESULT:
   error: null
   summary: 3/3 subtasks merged. Self-heal fixed 2 integration issues in 1 iteration; final review PASSED. PR #42 ready.
   cost_profile: null
+  rubric_score: "5/5"
 ```
 
 ---
@@ -1043,6 +1087,7 @@ SUPERVISOR_RESULT:
   error: string | null                      # required when status=failed
   summary: string
   cost_profile: enum [default, cheap] | null  # optional — null when flag not passed (equivalent to default)
+  rubric_score: string | null               # optional (v12.2.0+) — "N/M" where N is non-negative (>= 0; "0/M" is the legitimate all-fail case), M is positive (>= 1), M >= N; null when no Outcomes Rubric in brief, heal_decision != PASS, or grader parse failed
 ```
 
 **Status mapping (machine-readable):**
@@ -1058,5 +1103,6 @@ SUPERVISOR_RESULT:
 - `heal_remaining_issues=0` when `heal_decision=PASS`; `≥1` when `heal_decision=ESCALATED`
 - `error` MUST be non-empty when `status=failed`
 - `summary` is always required and non-empty
+- `rubric_score` (optional, v12.2.0+) is `null` OR a string `"N/M"` where N is a non-negative integer (`>= 0`; `"0/M"` is the legitimate all-fail case), M is a positive integer (`>= 1`), and M ≥ N; presence/absence is not a validation failure
 
 See `docs/RESULT_SCHEMAS.md` for the complete schema with examples (happy path, escalated, skip-flag).
