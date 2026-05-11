@@ -624,7 +624,7 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 - When you need code changes → `/dreaming` is read-only; use `/supervisor` or `/code-reviewer`
 - For agents without persistent memory → only Code Reviewer, Red Team Reviewer, and QA Executor are valid targets
 
-**Learn More:** `/dreaming --help`
+**Learn More:** see `ai-agent-manager-plugin/commands/dreaming.md` for full parameter table, reflection-mode task prompt template, the read-only contract, and example output
 
 ---
 

@@ -1,6 +1,6 @@
 # AI Agent Manager
 
-A Claude Code plugin for AI agents to collaborate on software projects. 12 specialized agents (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Plan Reviewer, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer, QA Strategist, QA Executor) and the `/commit` skill automate plan-first readiness, parallel workflow execution, requirements, planning, review, commits, adversarial audits, and dual-agent QA automation.
+A Claude Code plugin for AI agents to collaborate on software projects. 13 specialized agents (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Plan Reviewer, Rubric Grader, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer, QA Strategist, QA Executor) and the `/commit` skill automate plan-first readiness, parallel workflow execution, requirements, planning, review, commits, adversarial audits, and dual-agent QA automation.
 
 **Key Idea:** Your projects need only a `CLAUDE.md` file for codebase knowledge. The Supervisor uses `.supervisor/` for state management. Orchestrator and Product Owner can optionally use [Beads issue tracker](https://github.com/anthropics/beads). Repeatable across any project.
 

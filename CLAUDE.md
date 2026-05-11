@@ -199,7 +199,7 @@ Agents with `skills` in frontmatter get content pre-injected at spawn time (no r
 | QA Executor | qa-strategy, playwright-e2e, quality-checklist |
 | Product Owner | brainstorming, product-discovery, mvp-scoping |
 
-## Agent Teams (Experimental Alternative)
+## Agent Teams (Recommended for 3 Use Cases, Experimental for the Rest)
 
 Native Claude Code multi-agent coordination — requires `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`. Best for research, competing hypotheses, cross-layer changes; not for sequential tasks or same-file edits (use Supervisor with worktrees). Patterns + decision matrix: `ai-agent-manager-plugin/skills/agent-teams/SKILL.md`. Complementary to Supervisor v4, not a replacement.
 

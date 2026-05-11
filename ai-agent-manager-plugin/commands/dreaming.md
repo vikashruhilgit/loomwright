@@ -172,6 +172,19 @@ Proposed additions or revisions to project `CLAUDE.md` (or a sub-file it referen
 
 This contract is non-negotiable: a `/dreaming` invocation that mutates code, agent memory, or `CLAUDE.md` without per-item user approval is a defect, not a feature request.
 
+### Enforcement boundary (honest disclosure)
+
+The agents `/dreaming` spawns in reflection mode — Code Reviewer, Red Team Reviewer, QA Executor — have **full write tools** in their normal forward-execution mode. When `/dreaming` spawns them via `Task(subagent_type: ...)`, they inherit the tool permissions declared in their registered frontmatter; the Task tool does NOT support overriding `disallowedTools` per-call. That means the read-only constraint for reflection-spawned agents is **prompt-level**, not tool-level: enforced by the HARD RULES block in the reflection-mode task prompt template above and by the agents' own training to follow explicit instructions, NOT by the harness blocking Write/Edit calls.
+
+In practice, a well-functioning agent honors the HARD RULES. The mitigation against drift is:
+
+1. The HARD RULES block in the reflection-mode prompt is explicit and short.
+2. `/dreaming` re-states the read-only contract at the top of every per-agent invocation.
+3. The output contract (four sections with PENDING USER APPROVAL labels) leaves no productive path for writes.
+4. Any write that does land must still pass the user's per-item approval gate before becoming persistent on the user's behalf.
+
+A future improvement (out of scope for v12.2.0) is dedicated reflection-mode agent variants with `disallowedTools: Write, Edit, NotebookEdit` baked into their frontmatter — that would move enforcement from prompt-level to tool-level. For v12.2.0, the prompt-level contract is the design.
+
 ## Example Output
 
 ```markdown

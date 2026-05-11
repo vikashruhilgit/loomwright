@@ -73,6 +73,15 @@ SUMMARY=""
 # Portability: BSD sed (macOS) historically lacks the `/I` case-insensitive flag,
 # so we match only lowercase keys. Stick to the documented schema casing — do
 # not add `/I` here, it breaks on older BSD sed.
+#
+# Value-shape assumption: SUPERVISOR_RESULT emits single-line values per the
+# schema convention in agents/supervisor.md §"Result Block" (status, pr_url,
+# summary are all one-liners; summary is also truncated to 2KB earlier in this
+# script). The `[^"]*` capture stops at the first embedded double-quote, which
+# would silently truncate a summary that contains a literal `"` mid-string.
+# That is acceptable today because the schema does not produce such values; if
+# the schema ever permits embedded quotes in single-line fields, switch to a
+# tighter quoted-string parser or extract via jq from the JSON envelope only.
 yaml_field() {
   printf '%s' "$1" | sed -nE \
     "s/^[[:space:]]*-?[[:space:]]*$2[[:space:]]*:[[:space:]]*\"?([^\"]*)\"?[[:space:]]*$/\1/p" \
