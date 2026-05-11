@@ -672,13 +672,13 @@ AUTONOMOUS_RUN:
   requirement_path: string             # required — path to the requirement file under .supervisor/requirements/
   mode: enum [single, multi]           # required — single-iteration (default) or opt-in --allow-multi-iteration
   status: enum [done, paused_max_iterations, aborted, failed]  # required — autonomous-layer status
-  status_reason: string | null         # required — null when status: done; otherwise one of the documented reason strings (see below)
-  total_iterations: integer            # required — 1..max_iterations
+  status_reason: string | null         # required — null when status: done AND no rubric stop; otherwise one of the documented reason strings (see below)
+  total_iterations: integer            # required — 0..max_iterations (0 when the loop aborted during PLAN before any EXECUTE)
   last_phase: enum [PLAN, EXECUTE, EVALUATE, DONE]  # required — phase the loop was in at exit
   started_at: string                   # required — ISO-8601 UTC timestamp
   ended_at: string                     # required — ISO-8601 UTC timestamp
   duration_seconds: integer            # required — ended_at - started_at
-  iterations: object[]                 # required — one entry per iteration that reached EXECUTE
+  iterations: object[]                 # required — one entry per iteration that reached EXECUTE (may be empty array [] for pre-EXECUTE aborts: Phase 6 discard, NO-GO abort, Plan Review FAIL × 3 abort)
     - n: integer                       # 1-indexed
       brief_path: string               # path to the brief Launch Pad saved; lifecycle-moved by Supervisor
       supervisor_status: enum [completed, completed_with_escalation, failed, checkpoint]  # mirrors SUPERVISOR_RESULT.status
@@ -691,21 +691,30 @@ AUTONOMOUS_RUN:
       escalation_reason: string | null # populated for status: completed_with_escalation
   escalations_seen: string[]           # required — flattened list of escalation reasons across iterations (may be empty)
   policy_decisions: object[]           # required — user choices captured at AskUserQuestion gates
-    - iteration: integer
+    - iteration: integer               # 0 for PLAN-phase decisions made before any EXECUTE happened
       phase: enum [PLAN, EVALUATE]
-      decision: string                 # e.g. "user_picked_save", "user_picked_merge_and_continue", "user_picked_force_continue_anyway", "user_picked_stop_here", "user_picked_override", "user_picked_abort"
-      source: enum [launch_pad_phase_6, launch_pad_no_go, launch_pad_plan_review, autonomous_rubric_gate]
-  rubric_final_score: string | null    # required — last iteration's rubric_score (null when no rubric in requirement)
+      decision: string                 # e.g. "user_picked_save", "user_picked_merge_and_continue", "user_picked_force_continue_anyway", "user_picked_stop_here", "user_picked_override", "user_picked_abort", "supervisor_option_c"
+      source: enum [launch_pad_phase_6, launch_pad_no_go, launch_pad_plan_review, autonomous_rubric_gate, supervisor_adjudication]
+  rubric_final_score: string | null    # required — last iteration's rubric_score (null when no rubric in requirement OR when total_iterations == 0)
 ```
 
-**`status_reason` enum** (documented as a closed set; new values require updating both this schema and `skills/autonomous-loop/SKILL.md`):
+**`status_reason` enum** (documented as a closed set; new values require updating both this schema and `skills/autonomous-loop/SKILL.md`). The mapping between `status` and the legal subset of `status_reason` values is fixed:
 
-- `null` — only valid when `status: done`
+| `status` | Legal `status_reason` values |
+|---|---|
+| `done` | `null` (rubric satisfied or no rubric present) **OR** `"user_stopped_at_rubric_gate"` (user accepted partial rubric; PR exists, run ended on user's terms) |
+| `paused_max_iterations` | `"max_iterations_reached"` |
+| `aborted` | `"user_discarded_at_phase_6"`, `"user_aborted_at_no_go"`, `"user_aborted_at_plan_review_fail"`, `"supervisor_checkpoint"`, `"rubric_dropped_from_brief"`, `"concurrent_session_detected"` |
+| `failed` | `"supervisor_failed_other"` |
+
+Reason-string meanings:
+
+- `null` — `status: done` with rubric satisfied or no rubric present
 - `"max_iterations_reached"` — multi-iteration mode hit the `--max-iterations` cap
-- `"user_discarded_at_phase_6"` — user picked "discard" at Launch Pad's Phase 6 save prompt
-- `"user_aborted_at_no_go"` — user picked "abort" at Launch Pad Phase 2.5 NO-GO escalation
-- `"user_aborted_at_plan_review_fail"` — user picked "abort" after Plan Reviewer FAIL × 3
-- `"user_stopped_at_rubric_gate"` — user picked "stop-here" at the rubric-gate AskUserQuestion
+- `"user_discarded_at_phase_6"` — user picked "discard" at Launch Pad's Phase 6 save prompt (pre-EXECUTE; `total_iterations == 0`, `iterations == []`)
+- `"user_aborted_at_no_go"` — user picked "abort" at Launch Pad Phase 2.5 NO-GO escalation (pre-EXECUTE; `total_iterations == 0`)
+- `"user_aborted_at_plan_review_fail"` — user picked "abort" after Plan Reviewer FAIL × 3 (pre-EXECUTE; `total_iterations == 0`)
+- `"user_stopped_at_rubric_gate"` — user picked "stop-here" at the rubric-gate AskUserQuestion. The latest iteration's PR exists and Supervisor returned `completed`; the run ends successfully but with `rubric_score N<M` recorded in `rubric_final_score`. Pairs with `status: done` (not `aborted`) because nothing went wrong — the user accepted partial completion.
 - `"supervisor_checkpoint"` — `SUPERVISOR_RESULT.status: checkpoint` (loop does not auto-resume in v1)
 - `"supervisor_failed_other"` — `SUPERVISOR_RESULT.status: failed` without an `inter_subtask_gap` Option-C signal
 - `"rubric_dropped_from_brief"` — Launch Pad did not preserve the `## Outcomes Rubric` section (rubric-preservation gate failure)
@@ -713,10 +722,11 @@ AUTONOMOUS_RUN:
 
 **Validation rules:**
 - No SubagentStop hook validates this block (autonomous-layer-only).
-- `iterations` length must equal `total_iterations`.
-- When `status: done`, `status_reason` MUST be `null`.
-- When `status: failed | aborted | paused_max_iterations`, `status_reason` MUST be a non-null string from the enum above.
-- `rubric_final_score` matches the `rubric_score` of the last entry in `iterations`.
+- `iterations.length == total_iterations` (when `total_iterations == 0`, `iterations` MUST be an empty array `[]`; this is the pre-EXECUTE-abort case).
+- `total_iterations >= 0` and `total_iterations <= max_iterations`. The pre-EXECUTE-abort paths (`user_discarded_at_phase_6`, `user_aborted_at_no_go`, `user_aborted_at_plan_review_fail`) all yield `total_iterations == 0`.
+- `status` ↔ `status_reason` pairing must follow the table above. In particular, `status: done` is valid with either `status_reason: null` (clean completion) or `status_reason: "user_stopped_at_rubric_gate"` (user accepted partial rubric); no other reason string is legal with `done`.
+- When `total_iterations == 0`, `rubric_final_score` MUST be `null` and `last_phase` MUST be `PLAN`.
+- When `total_iterations >= 1`, `rubric_final_score` mirrors the `rubric_score` of the last entry in `iterations`.
 
 **Example — single-iteration successful run:**
 
@@ -748,6 +758,61 @@ AUTONOMOUS_RUN:
   policy_decisions:
     - { iteration: 1, phase: PLAN, decision: "user_picked_save", source: "launch_pad_phase_6" }
   rubric_final_score: null
+```
+
+**Example — pre-EXECUTE abort (user discarded at Phase 6):**
+
+```yaml
+AUTONOMOUS_RUN:
+  schema_version: 1
+  session_id: auto-2026-05-11-150412
+  requirement_path: .supervisor/requirements/2026-05-11-auto-2026-05-11-150412-refactor-auth.md
+  mode: single
+  status: aborted
+  status_reason: "user_discarded_at_phase_6"
+  total_iterations: 0
+  last_phase: PLAN
+  started_at: 2026-05-11T15:04:12Z
+  ended_at: 2026-05-11T15:09:48Z
+  duration_seconds: 336
+  iterations: []
+  escalations_seen: []
+  policy_decisions:
+    - { iteration: 0, phase: PLAN, decision: "user_picked_discard", source: "launch_pad_phase_6" }
+  rubric_final_score: null
+```
+
+**Example — multi-iteration with rubric stop-here:**
+
+```yaml
+AUTONOMOUS_RUN:
+  schema_version: 1
+  session_id: auto-2026-05-11-160000
+  requirement_path: .supervisor/requirements/2026-05-11-auto-2026-05-11-160000-add-jwt.md
+  mode: multi
+  status: done
+  status_reason: "user_stopped_at_rubric_gate"
+  total_iterations: 1
+  last_phase: EVALUATE
+  started_at: 2026-05-11T16:00:00Z
+  ended_at: 2026-05-11T16:18:30Z
+  duration_seconds: 1110
+  iterations:
+    - n: 1
+      brief_path: .supervisor/jobs/done/2026-05-11-auto-2026-05-11-160000-add-jwt.md
+      supervisor_status: completed
+      pr_url: https://github.com/example/repo/pull/77
+      rubric_score: "3/5"
+      branch: feature/add-jwt
+      summary: JWT auth implemented; 2 rubric items deferred per user choice.
+      error: null
+      heal_decision: PASS
+      escalation_reason: null
+  escalations_seen: []
+  policy_decisions:
+    - { iteration: 1, phase: PLAN, decision: "user_picked_save", source: "launch_pad_phase_6" }
+    - { iteration: 1, phase: EVALUATE, decision: "user_picked_stop_here", source: "autonomous_rubric_gate" }
+  rubric_final_score: "3/5"
 ```
 
 **Cross-references:**

@@ -99,8 +99,11 @@ Field types: `mode: "single" | "multi"` (literal-union string); `iteration` and 
 6. **Rubric preservation verification (when applicable):** if the requirement file contained `## Outcomes Rubric`:
    ```bash
    if ! grep -qF "## Outcomes Rubric" "$current_brief_path"; then
-     # Inline-instruction was not honored. Abort cleanly.
-     status=failed; status_reason="rubric_dropped_from_brief"; exit
+     # Inline-instruction was not honored. Abort cleanly — the loop chose
+     # to stop because a precondition for multi-iteration was violated,
+     # not because the system itself failed. Pairs with status: aborted
+     # per RESULT_SCHEMAS.md AUTONOMOUS_RUN status↔reason table.
+     status=aborted; status_reason="rubric_dropped_from_brief"; exit
    fi
    ```
    This protects multi-iteration mode from silently degrading to single-iteration when Launch Pad ignores the inline instruction.
