@@ -66,8 +66,9 @@ Example (concrete values shown — `mode` is one of the string literals `"single
   "session_id": "auto-2026-05-11-143022",
   "requirement_path": ".supervisor/requirements/auto-2026-05-11-143022-add-jwt-auth.md",
   "mode": "single",
+  "allow_multi_iteration": false,
   "iteration": 0,
-  "max_iterations": 3,
+  "max_iterations": 1,
   "current_brief_path": null,
   "iterations": [],
   "policy_decisions": [],
@@ -88,6 +89,7 @@ Field types: `_v1_note: string` (advisory marker — see above); `mode: "single"
    - Phase 5.5 mandatory plan-reviewer Task spawn (max 3 FAIL retries → AskUserQuestion)
    - Phase 6 save/refine/discard AskUserQuestion
 4. **Brief-save detection (v1 weakest point — `ls`-diff):**
+   - **Pre-snapshot stale-session-id sanity check (catches the rubric_dropped_from_brief retry footgun):** before the `briefs_before` snapshot, check whether any file matching `<session_id>-*.md` already exists in `.supervisor/jobs/pending/`. The `session_id` is freshly minted in INIT (timestamp-based), so a pre-existing match is an invariant violation — almost always a stale brief left over from a prior aborted run of *this same `/autonomous` invocation pattern* (most commonly a previous `rubric_dropped_from_brief` abort whose stale brief the user didn't clean up). Surface this as a warning to the user with the explicit cleanup hint: `"Found stale brief(s) from a prior run with the same session-id shape: <files>. Move them to .supervisor/jobs/failed/ before continuing, or pick 'abort' below. Continuing now may produce a concurrent_session_detected error after Phase 6."` Then `AskUserQuestion` whether to (a) abort now, (b) move the stale files automatically and continue, or (c) continue anyway (force, recorded in policy_decisions for audit). Strictly speaking the timestamp-based session_id makes exact collisions impossible in v1, so this check fires only on the rubric_dropped_from_brief retry footgun and similar leftover-brief cases.
    - Before Phase 6's AskUserQuestion: `briefs_before = $(ls .supervisor/jobs/pending/*.md 2>/dev/null | sort)`
    - After Phase 6 (whether user picked save, refine-then-save, or discard): `briefs_after = $(ls .supervisor/jobs/pending/*.md 2>/dev/null | sort)`
    - `new_briefs = comm -13 <(echo "$briefs_before") <(echo "$briefs_after")`
@@ -157,13 +159,11 @@ Loop pauses. Main-thread `AskUserQuestion` fires with the rubric gate:
 
 **If user picks `merge-and-continue`, the loop verifies the merge before re-planning.** The branch name comes from `SUPERVISOR_RESULT.branch` (an existing schema-1 field — see `docs/RESULT_SCHEMAS.md` §"SUPERVISOR_RESULT" for the field list); it was captured into `iterations[N].branch` during EXECUTE. The SHA is resolved from that branch name via `git rev-parse` on the **local** ref (not `origin/<branch>`, because we want the SHA the user pushed and we don't want a stale remote ref to hide the real tip):
 
+> **Implementation note — `jq` is illustrative, not required.** The pseudocode below uses `jq` to extract `iterations[-1].branch` from `state.json` because it's the most concise way to write the example. In practice, **implementations should keep `current_brief_path` and the `iterations[].branch` values as in-memory state during the run**; reading state.json back at this point is wasteful and adds a `jq` (or equivalent JSON parser) dependency you don't need. The state.json writes are for persistence and future-recovery seed value (see "v1-only `_v1_note` field" later in this skill), NOT for intra-session lookups. Treat the `jq` line as a stand-in for "look up the most recent iteration's branch name from wherever your implementation stores it."
+
 ```bash
-# PSEUDOCODE — assumes `jq` is available for JSON extraction. Portable
-# alternative (no jq): parse the markdown summary's "branch:" line, or
-# read iter_N_branch from an in-memory implementation variable rather
-# than from state.json. The autonomous loop's state.json is implementer-
-# choice (Python dict, in-memory struct, etc.) — `jq` is illustrative,
-# not a hard dependency.
+# PSEUDOCODE — see callout above. The `jq` extraction here illustrates
+# the lookup; real implementations should use in-memory state.
 
 # Read branch name from this iteration's recorded SUPERVISOR_RESULT
 iter_N_branch="$(jq -r ".iterations[-1].branch" .supervisor/autonomous/${session_id}/state.json)"
@@ -251,11 +251,25 @@ if not file_exists(failed_path):
     EXIT_TO_DEFAULT_TERMINATION   # see "Default termination" branch below
 
 # Brief was marked failed. Check three iteration-scoped sources for
-# the grep-stable substring "inter_subtask_gap" (any match = Option C):
-#   (a) the failed brief's own contents (filename is session_id-tagged so
-#       no other run can share it)
-#   (b) SUPERVISOR_RESULT.error    (emitted by this iteration's Supervisor)
-#   (c) SUPERVISOR_RESULT.summary  (emitted by this iteration's Supervisor)
+# the grep-stable substring "inter_subtask_gap" (any match = Option C).
+# By load-bearing weight:
+#   (b) SUPERVISOR_RESULT.error    -- PRIMARY signal. The gap reason is
+#       Supervisor's own output, emitted by this iteration's
+#       SUPERVISOR_RESULT block. This is where the string is reliably
+#       present on Option C.
+#   (c) SUPERVISOR_RESULT.summary  -- PRIMARY signal. Same Supervisor
+#       block; the summary often reiterates the abort reason.
+#   (a) the failed brief's contents -- BELT-AND-SUSPENDERS only. The
+#       brief is a Launch Pad product (subtask specs, AC, rubric);
+#       Supervisor moves the file to failed/ on Option C but in
+#       current Supervisor versions does NOT necessarily append the
+#       gap reason to the brief body. Keep this check in case a
+#       future Supervisor version annotates the failed brief (a
+#       reasonable hardening), but do not rely on it in v1 — sources
+#       (b) and (c) are the real anchors.
+#
+# Filename is session_id-tagged so no other run can share it,
+# eliminating cross-run false positives.
 #
 # .supervisor/state.md is intentionally NOT consulted — Context-Keeper
 # rewrites it atomically (skills/state-management/SKILL.md), and pre-
@@ -331,6 +345,8 @@ The status enum is **autonomous-layer-only**: `done | paused_max_iterations | ab
 - **session_id:** auto-2026-05-11-143022
 - **requirement_path:** `.supervisor/requirements/auto-2026-05-11-143022-add-jwt-auth.md`
 - **mode:** single | multi
+- **allow_multi_iteration:** true | false
+- **max_iterations:** integer ≥ 1 (`1` for single-iteration runs — the implicit cap; the configured value for multi-iteration runs, default 3)
 - **status:** done | paused_max_iterations | aborted | failed
 - **status_reason:** null | "max_iterations_reached" | "user_discarded_at_phase_6" | "user_aborted_at_no_go" | "user_aborted_at_plan_review_fail" | "user_stopped_at_rubric_gate" | "supervisor_checkpoint" | "supervisor_failed_other" | "rubric_dropped_from_brief" | "concurrent_session_detected" | "invalid_max_iterations"
 - **total_iterations:** 2

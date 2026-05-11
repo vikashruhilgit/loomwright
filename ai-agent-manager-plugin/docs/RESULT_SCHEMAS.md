@@ -671,6 +671,8 @@ AUTONOMOUS_RUN:
   session_id: string                   # required — "auto-{YYYY-MM-DD}-{HHMMSS}". v1 second-precision is sufficient under the single-session assumption; v2 may append a random suffix (e.g., "-{4hex}") to harden against same-second collisions when concurrent sessions are supported.
   requirement_path: string             # required — path to the requirement file under .supervisor/requirements/
   mode: enum [single, multi]           # required — single-iteration (default) or opt-in --allow-multi-iteration
+  allow_multi_iteration: boolean       # required — true iff --allow-multi-iteration was passed; redundant with `mode == "multi"` but explicit for readers who index on the flag name
+  max_iterations: integer              # required — the cap that was in effect for this run (1..N). For single-iteration runs (mode == "single"), this field MUST be 1 — the implicit cap. For multi-iteration runs, it carries the --max-iterations value (default 3). Recording this makes runs that end with status: paused_max_iterations self-diagnosable: a reader can tell whether the cap was the default 3 or a user-supplied custom value.
   status: enum [done, paused_max_iterations, aborted, failed]  # required — autonomous-layer status
   status_reason: string | null         # required — null when status: done AND no rubric stop; otherwise one of the documented reason strings (see below)
   total_iterations: integer            # required — 0..max_iterations (0 when the loop aborted during PLAN before any EXECUTE)
@@ -760,6 +762,8 @@ AUTONOMOUS_RUN:
   session_id: auto-2026-05-11-143022
   requirement_path: .supervisor/requirements/auto-2026-05-11-143022-add-version-cmd.md
   mode: single
+  allow_multi_iteration: false
+  max_iterations: 1
   status: done
   status_reason: null
   total_iterations: 1
@@ -792,6 +796,8 @@ AUTONOMOUS_RUN:
   session_id: auto-2026-05-11-150412
   requirement_path: .supervisor/requirements/auto-2026-05-11-150412-refactor-auth.md
   mode: single
+  allow_multi_iteration: false
+  max_iterations: 1
   status: aborted
   status_reason: "user_discarded_at_phase_6"
   total_iterations: 0
@@ -814,6 +820,8 @@ AUTONOMOUS_RUN:
   session_id: auto-2026-05-11-160000
   requirement_path: .supervisor/requirements/auto-2026-05-11-160000-add-jwt.md
   mode: multi
+  allow_multi_iteration: true
+  max_iterations: 3
   status: done
   status_reason: "user_stopped_at_rubric_gate"
   total_iterations: 1
