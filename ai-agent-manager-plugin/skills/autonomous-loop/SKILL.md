@@ -113,7 +113,7 @@ This guards against prompt drift on three fronts. If Launch Pad, Supervisor, or 
 
 Single-iteration mode skips EVALUATE entirely and jumps to DONE after EXECUTE.
 
-Multi-iteration EVALUATE reads only `SUPERVISOR_RESULT` plus the four documented file-system locations. Three exact signals decide the next step:
+Multi-iteration EVALUATE reads `SUPERVISOR_RESULT` (status, pr_url, error, summary, rubric_score, branch, heal_decision) plus iteration-scoped file-system artifacts (`.supervisor/jobs/pending/` for brief-save detection during PLAN, `.supervisor/jobs/failed/{basename(current_brief_path)}` for the Option-C iteration anchor, and that failed-brief's own contents for the `inter_subtask_gap` grep). Three exact signals decide the next step:
 
 ### Signal 1 — `status: completed` AND `rubric_score N/M` with N<M
 

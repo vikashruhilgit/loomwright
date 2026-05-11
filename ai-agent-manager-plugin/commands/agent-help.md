@@ -653,12 +653,12 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 - `--allow-multi-iteration` — opt-in for re-planning loop (default off)
 - `--max-iterations N` — cap for multi-iteration mode (default 3)
 
-**Multi-iteration re-plan signals (read from `SUPERVISOR_RESULT` only):**
+**Multi-iteration re-plan signals (read from `SUPERVISOR_RESULT` plus iteration-scoped job artifacts):**
 
 | Signal | Action |
 |---|---|
 | `completed` + `rubric_score N/M` with N<M | Pause for the rubric-gate AskUserQuestion (merge-and-continue / stop-here / force-continue). On `merge-and-continue`, the loop verifies the PR is actually merged via `gh pr view` (or local `git merge-base --is-ancestor` fallback) before re-planning. |
-| `failed` with `inter_subtask_gap` on this iteration's brief | Re-plan immediately. No merge prompt — the job was abandoned via adjudication Option C. |
+| `failed` + Option-C detected on this iteration's brief | Anchored by `.supervisor/jobs/failed/{basename(current_brief_path)}` existence; `inter_subtask_gap` confirmed by grepping the failed brief contents, `SUPERVISOR_RESULT.error`, or `SUPERVISOR_RESULT.summary` (state.md intentionally not consulted). Re-plan immediately — no merge prompt, no PR was created. |
 | anything else | Terminate the loop (done / failed / aborted). |
 
 **When to Use:**
