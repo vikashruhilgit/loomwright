@@ -62,7 +62,7 @@ Example (concrete values shown — `mode` is one of the string literals `"single
 
 ```json
 {
-  "_v1_note": "Advisory-only in v13.0.0 — this file is written every iteration but not read by the loop itself. It exists to seed future resume/recovery tooling (Doc 4 state.json sidecar work). Tools MUST NOT treat this file as authoritative; the markdown summary at .supervisor/autonomous/{session_id}/summary.md is the user-facing source of truth, and the SUPERVISOR_RESULT blocks in the transcript are the per-iteration source of truth.",
+  "_v1_note": "Advisory-only in v13.0.0 — this file is NOT AUTHORITATIVE for resume / recovery / cross-session state. It exists to seed future resume tooling (Doc 4 state.json sidecar work). The loop itself MAY read it for intra-session convenience inside the current run (e.g., the merge-verification step reads iterations[-1].branch), but external tools MUST NOT treat this file as authoritative; the markdown summary at .supervisor/autonomous/{session_id}/summary.md is the user-facing source of truth, and the SUPERVISOR_RESULT blocks in the transcript are the per-iteration source of truth.",
   "session_id": "auto-2026-05-11-143022",
   "requirement_path": ".supervisor/requirements/auto-2026-05-11-143022-add-jwt-auth.md",
   "mode": "single",
@@ -358,7 +358,7 @@ The status enum is **autonomous-layer-only**: `done | paused_max_iterations | ab
 
 ### state.json (machine-readable sidecar)
 
-Same fields as summary.md, structured as JSON. v1 writes it but does not depend on it (no hook validation, no resume read). It exists to seed future Doc 4 state.json sidecar work without v1 having to define the resume contract today.
+Same fields as summary.md, structured as JSON. v1 writes it for two purposes: (a) intra-session convenience reads by the loop itself (the merge-verification step reads `iterations[-1].branch` from this file — see Signal 1 pseudocode above), and (b) seeding future Doc 4 state.json sidecar work. v1 explicitly does NOT use it for cross-session resume (no `--continue` flag exists), and no SubagentStop hook validates it. The file is **not authoritative for resume / recovery / cross-session state**.
 
 **v1-only `_v1_note` field:** every state.json this loop writes begins with a `_v1_note` string field (see the schema example earlier in this skill). The field's contents explicitly mark the file as **advisory-only** in v1 and warn tooling against treating it as authoritative. The presence of `_v1_note` IS the v1 contract signal. A future v2 plan that defines a stable resume contract will remove this field; tooling that finds `_v1_note` MUST refuse to use the file for resume / recovery / state queries until a v2-compatible state.json (without `_v1_note`) is observed. The intent is to make accidental dependence on v1's advisory state impossible to do silently.
 

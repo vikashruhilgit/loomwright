@@ -681,7 +681,7 @@ AUTONOMOUS_RUN:
   iterations: object[]                 # required — one entry per iteration that reached EXECUTE (may be empty array [] for pre-EXECUTE aborts: Phase 6 discard, NO-GO abort, Plan Review FAIL × 3 abort)
     - n: integer                       # 1-indexed
       brief_path: string               # path to the brief Launch Pad saved; lifecycle-moved by Supervisor
-      supervisor_status: enum [completed, completed_with_escalation, failed, checkpoint]  # mirrors SUPERVISOR_RESULT.status
+      supervisor_status: enum [completed, completed_with_escalation, failed, checkpoint]  # normally mirrors `SUPERVISOR_RESULT.status`. EXCEPTION: when Supervisor exited without emitting a `SUPERVISOR_RESULT` block at all (crash, hard API error, etc.), the autonomous loop synthesizes this iteration entry with `supervisor_status: failed` and `error: "no_supervisor_result_emitted"` — see `skills/autonomous-loop/SKILL.md` EXECUTE step 5 for the synthesis algorithm. The enum value is the same in both cases; only the provenance differs.
       pr_url: string | null            # SUPERVISOR_RESULT.pr_url when present
       rubric_score: string | null      # SUPERVISOR_RESULT.rubric_score when present (format "N/M")
       branch: string                   # SUPERVISOR_RESULT.branch
