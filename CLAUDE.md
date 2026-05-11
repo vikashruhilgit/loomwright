@@ -45,7 +45,7 @@ ai-agent-manager/                              # marketplace wrapper
 │   ├── commands/                              # 11 slash commands
 │   ├── hooks/hooks.json                       # cross-cutting hooks
 │   ├── skills/                                # 49 skills + SKILLS_INDEX.md
-│   ├── scripts/                               # send-telemetry.sh, send-telemetry-core.sh, telemetry-fixtures/
+│   ├── scripts/                               # send-telemetry.sh, send-telemetry-core.sh, send-webhook.sh, telemetry-fixtures/
 │   └── docs/                                  # RESULT_SCHEMAS, FAILURE_ESCALATION, ARCHITECTURE_CONTRACTS, ARCHITECTURE, QA_SYSTEM_BLUEPRINT, TELEMETRY
 │       └── SPIKES/                            # Capability spike investigations + deferral records
 ├── scripts/                                   # validate-version.sh, check-command-sync.sh
@@ -145,7 +145,7 @@ Every agent (full standard in `AGENT_GUIDELINES.md`):
 | TaskCompleted | Task marked complete | hooks.json | Task genuinely done |
 | WorktreeCreate | Worktree created | hooks.json | type:command, logs `.supervisor/logs/worktrees.log` |
 | StopFailure | Agent API error | hooks.json | type:command, logs `.supervisor/logs/failures.log` |
-| SubagentStop webhook (supervisor-runner) | Supervisor completes | hooks.json | type:command — `send-webhook.sh`; gated on `AGENT_MANAGER_WEBHOOK_URL`; fire-and-forget POST; always exits 0 |
+| SubagentStop webhook (supervisor-runner) | Supervisor completes | hooks.json | type:command — `send-webhook.sh`; gated on `AI_AGENT_MANAGER_WEBHOOK_URL`; fire-and-forget POST; always exits 0 |
 
 ---
 

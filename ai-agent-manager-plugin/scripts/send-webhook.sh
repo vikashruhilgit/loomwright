@@ -8,7 +8,7 @@
 # Authoritative spec: ai-agent-manager-plugin/docs/TELEMETRY.md §"Webhook Notifications"
 #
 # Behaviour:
-#   1. If AGENT_MANAGER_WEBHOOK_URL is unset/empty → exit 0 (silent no-op).
+#   1. If AI_AGENT_MANAGER_WEBHOOK_URL is unset/empty → exit 0 (silent no-op).
 #   2. Read SubagentStop JSON payload from stdin.
 #   3. Use `jq -r // empty` to defensively extract SUPERVISOR_RESULT fields
 #      (status, pr_url, summary). On parse failure → log to stderr, exit 0.
@@ -19,7 +19,7 @@
 #
 # Why a `type: command` wrapper instead of `type: http` hook:
 #   Claude Code env-var interpolation only substitutes ${VAR} inside HTTP
-#   `headers`, not inside `url`. To gate on AGENT_MANAGER_WEBHOOK_URL the URL
+#   `headers`, not inside `url`. To gate on AI_AGENT_MANAGER_WEBHOOK_URL the URL
 #   must resolve at hook-fire time inside a script, not in the hook config.
 #
 # Style/structure mirrors send-telemetry.sh (sibling wrapper).
@@ -29,7 +29,7 @@ set -u
 # pipefail is also OFF for the same reason.
 
 # ---- Gate on env var --------------------------------------------------------
-WEBHOOK_URL="${AGENT_MANAGER_WEBHOOK_URL:-}"
+WEBHOOK_URL="${AI_AGENT_MANAGER_WEBHOOK_URL:-}"
 if [ -z "$WEBHOOK_URL" ]; then
   exit 0
 fi

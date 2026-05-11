@@ -573,13 +573,13 @@ fail closed (silent no-op) when their respective configuration is absent.
 ### Setup
 
 ```bash
-export AGENT_MANAGER_WEBHOOK_URL=https://hooks.example.com/services/T000/B000/XXXX
+export AI_AGENT_MANAGER_WEBHOOK_URL=https://hooks.example.com/services/T000/B000/XXXX
 ```
 
 That's it — once the env var is set in the shell that launches Claude Code,
 every Supervisor SubagentStop fires a single POST. No `/telemetry`-style
 consent file, no interactive enable command, no per-session state. To
-disable, `unset AGENT_MANAGER_WEBHOOK_URL`.
+disable, `unset AI_AGENT_MANAGER_WEBHOOK_URL`.
 
 ### Payload schema
 
@@ -616,7 +616,7 @@ future versions; consumers MUST ignore unknown fields rather than reject.
 Claude Code's hook system supports a native `type: http` hook, but its
 env-var interpolation only substitutes `${VAR}` inside the `headers` block
 — **not inside the `url`**. Since the entire feature is gated on
-`AGENT_MANAGER_WEBHOOK_URL`, the URL has to resolve at hook-fire time
+`AI_AGENT_MANAGER_WEBHOOK_URL`, the URL has to resolve at hook-fire time
 inside a script with shell-level env access, not inside the hook config.
 A `type: command` wrapper invoking `send-webhook.sh` is the only way to
 read the env var and conditionally fire (or silently skip) the request.
@@ -628,7 +628,7 @@ JSON extraction and payload composition. Behaviour when tools are missing:
 
 | Missing | Behaviour |
 |---------|-----------|
-| `AGENT_MANAGER_WEBHOOK_URL` unset | exit 0 immediately, zero side effects |
+| `AI_AGENT_MANAGER_WEBHOOK_URL` unset | exit 0 immediately, zero side effects |
 | `curl` not on PATH | log one line to stderr, exit 0 (no webhook fired) |
 | `jq` not on PATH | `status`/`pr_url`/`summary` fields will be empty strings; webhook still fires with minimal payload |
 | Webhook returns non-2xx, times out (>5s), or DNS fails | curl error suppressed, exit 0 |
@@ -642,7 +642,7 @@ the 5-second curl timeout.
 Unlike GitHub Issues telemetry, which goes only to a target repo configured
 through an interactive `/telemetry enable` flow, the webhook URL is taken
 verbatim from the env var and POSTed to with no domain whitelist or
-validation. Setting `AGENT_MANAGER_WEBHOOK_URL` is an explicit operator
+validation. Setting `AI_AGENT_MANAGER_WEBHOOK_URL` is an explicit operator
 action; the operator is responsible for:
 
 - ensuring the URL points to an endpoint they control or trust;
@@ -672,7 +672,7 @@ the trust model is "operator picked the URL and accepts what reaches it."
 ### Disabling
 
 ```bash
-unset AGENT_MANAGER_WEBHOOK_URL
+unset AI_AGENT_MANAGER_WEBHOOK_URL
 ```
 
 The next Supervisor SubagentStop will see the wrapper exit 0 immediately
