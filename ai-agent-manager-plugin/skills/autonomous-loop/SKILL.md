@@ -51,7 +51,7 @@ This guards against prompt drift on three fronts. If Launch Pad, Supervisor, or 
 
 1. Read the requirement — slash command argument string OR `--requirement <path>`.
 2. If string-argument: write `.supervisor/requirements/{session_id}-{slug}.md` (the `session_id` already carries the date — `auto-{YYYY-MM-DD}-{HHMMSS}` — so the path is sortable without a redundant date prefix). The file contains the requirement text and an optional `## Outcomes Rubric` placeholder. If `--requirement <path>` is used and the file already has `## Outcomes Rubric`, leave it intact.
-3. Generate `session_id` of the form `auto-{YYYY-MM-DD}-{HHMMSS}` (or similar — must be unique enough that no two concurrent runs collide; per v1 single-session assumption, a timestamp suffices).
+3. Generate `session_id` of the form `auto-{YYYY-MM-DD}-{HHMMSS}` (or similar — must be unique enough that no two concurrent runs collide; per v1 single-session assumption, a timestamp suffices). **Collision risk in v1:** two sessions started in the same second would produce identical `session_id`s. Moot under the v1 single-session-only assumption (the loop also detects concurrent activity via the brief-save `ls`-diff and aborts with `status_reason: "concurrent_session_detected"`), but a v2 hardening can append a short random suffix (e.g., `auto-{YYYY-MM-DD}-{HHMMSS}-{4hex}`) once concurrent sessions become supported.
 4. Initialize `.supervisor/autonomous/{session_id}/state.json` with the schema below.
 5. Initialize `.supervisor/autonomous/{session_id}/summary.md` (running AUTONOMOUS_RUN summary; will be re-written as iterations complete).
 6. Log session start to `.supervisor/logs/{session_id}.jsonl`.
@@ -62,6 +62,7 @@ Example (concrete values shown — `mode` is one of the string literals `"single
 
 ```json
 {
+  "_v1_note": "Advisory-only in v13.0.0 — this file is written every iteration but not read by the loop itself. It exists to seed future resume/recovery tooling (Doc 4 state.json sidecar work). Tools MUST NOT treat this file as authoritative; the markdown summary at .supervisor/autonomous/{session_id}/summary.md is the user-facing source of truth, and the SUPERVISOR_RESULT blocks in the transcript are the per-iteration source of truth.",
   "session_id": "auto-2026-05-11-143022",
   "requirement_path": ".supervisor/requirements/auto-2026-05-11-143022-add-jwt-auth.md",
   "mode": "single",
@@ -76,7 +77,7 @@ Example (concrete values shown — `mode` is one of the string literals `"single
 }
 ```
 
-Field types: `mode: "single" | "multi"` (literal-union string); `iteration` and `max_iterations` are non-negative integers; `current_brief_path` is `string | null`; `iterations`, `policy_decisions`, `escalations_seen` are arrays; timestamps are ISO-8601 UTC.
+Field types: `_v1_note: string` (advisory marker — see above); `mode: "single" | "multi"` (literal-union string); `iteration` and `max_iterations` are non-negative integers; `current_brief_path` is `string | null`; `iterations`, `policy_decisions`, `escalations_seen` are arrays; timestamps are ISO-8601 UTC. The `_v1_note` field is removable once a v2 plan defines a stable resume contract — its presence is the contract signal that tooling should not treat this file as authoritative.
 
 ## PLAN (per iteration)
 
@@ -358,6 +359,8 @@ The status enum is **autonomous-layer-only**: `done | paused_max_iterations | ab
 ### state.json (machine-readable sidecar)
 
 Same fields as summary.md, structured as JSON. v1 writes it but does not depend on it (no hook validation, no resume read). It exists to seed future Doc 4 state.json sidecar work without v1 having to define the resume contract today.
+
+**v1-only `_v1_note` field:** every state.json this loop writes begins with a `_v1_note` string field (see the schema example earlier in this skill). The field's contents explicitly mark the file as **advisory-only** in v1 and warn tooling against treating it as authoritative. The presence of `_v1_note` IS the v1 contract signal. A future v2 plan that defines a stable resume contract will remove this field; tooling that finds `_v1_note` MUST refuse to use the file for resume / recovery / state queries until a v2-compatible state.json (without `_v1_note`) is observed. The intent is to make accidental dependence on v1's advisory state impossible to do silently.
 
 ## Concurrency / Single-Session Assumption
 

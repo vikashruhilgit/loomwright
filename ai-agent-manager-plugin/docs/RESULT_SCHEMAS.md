@@ -668,7 +668,7 @@ Emitted by the `/autonomous` inline main-thread workflow (v13.0.0+). Written to 
 ```yaml
 AUTONOMOUS_RUN:
   schema_version: 1                    # integer, required — always 1
-  session_id: string                   # required — "auto-{YYYY-MM-DD}-{HHMMSS}"
+  session_id: string                   # required — "auto-{YYYY-MM-DD}-{HHMMSS}". v1 second-precision is sufficient under the single-session assumption; v2 may append a random suffix (e.g., "-{4hex}") to harden against same-second collisions when concurrent sessions are supported.
   requirement_path: string             # required — path to the requirement file under .supervisor/requirements/
   mode: enum [single, multi]           # required — single-iteration (default) or opt-in --allow-multi-iteration
   status: enum [done, paused_max_iterations, aborted, failed]  # required — autonomous-layer status
@@ -677,7 +677,7 @@ AUTONOMOUS_RUN:
   last_phase: enum [PLAN, EXECUTE, EVALUATE, DONE]  # required — phase the loop was in at exit
   started_at: string                   # required — ISO-8601 UTC timestamp
   ended_at: string                     # required — ISO-8601 UTC timestamp
-  duration_seconds: integer            # required — ended_at - started_at
+  duration_seconds: integer            # required — `ended_at - started_at`, rounded to the nearest second. v1 uses integer precision because the loop is foreground-assisted and human-paced (multi-iteration runs span minutes to hours); sub-second precision is not actionable. If telemetry ever aggregates sub-minute autonomous sessions, a v2 schema bump can widen this to `number` without breaking existing parsers (integer is a valid JSON number).
   iterations: object[]                 # required — one entry per iteration that reached EXECUTE (may be empty array [] for pre-EXECUTE aborts: Phase 6 discard, NO-GO abort, Plan Review FAIL × 3 abort)
     - n: integer                       # 1-indexed
       brief_path: string               # path to the brief Launch Pad saved; lifecycle-moved by Supervisor
