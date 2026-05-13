@@ -626,11 +626,12 @@ read the env var and conditionally fire (or silently skip) the request.
 The wrapper requires `curl` to fire the webhook and prefers `jq` for safe
 JSON extraction and payload composition. Behaviour when tools are missing:
 
-| Missing | Behaviour |
-|---------|-----------|
+| Missing / Condition | Behaviour |
+|---------------------|-----------|
 | `AI_AGENT_MANAGER_WEBHOOK_URL` unset | exit 0 immediately, zero side effects |
 | `curl` not on PATH | log one line to stderr, exit 0 (no webhook fired) |
-| `jq` not on PATH | `status`/`pr_url`/`summary` fields will be empty strings; webhook still fires with minimal payload |
+| `jq` not on PATH | field extraction skipped, `status` stays empty → payload-validity guard exits 0, webhook is NOT fired |
+| `result_block` absent or `status` empty after extraction | logs `"no status in result block — skipping POST"` to stderr, exit 0 (no webhook fired) |
 | Webhook returns non-2xx, times out (>5s), or DNS fails | curl error suppressed, exit 0 |
 
 The wrapper **always exits 0**. The fire-and-forget contract means a slow

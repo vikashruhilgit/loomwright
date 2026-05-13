@@ -112,6 +112,16 @@ else
   printf 'send-webhook: jq not on PATH — fields will be empty\n' >&2
 fi
 
+# ---- Payload validity guard -------------------------------------------------
+# If status is empty after all extraction attempts, supervisor did not produce
+# a valid SUPERVISOR_RESULT block (failed/aborted run, or jq absent).
+# Skip the POST — sending an all-empty payload provides no signal and produces
+# spam notifications.
+if [ -z "$STATUS" ]; then
+  printf 'send-webhook: no status in result block — skipping POST\n' >&2
+  exit 0
+fi
+
 # Truncate summary defensively. Slack incoming-webhooks reject bodies > 40 KB;
 # other endpoints may be stricter. Keep summaries small even if the result block
 # is unbounded.
