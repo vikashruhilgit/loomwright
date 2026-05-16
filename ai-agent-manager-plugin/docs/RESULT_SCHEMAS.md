@@ -1,7 +1,7 @@
 # Result Schemas
 
 > Strict contracts for all agent result blocks. Hooks validate against these schemas.
-> All schemas include a `schema_version` field for forward compatibility. Current versions: CODE_REVIEW_RESULT at `schema_version: 3` (review modes + consistency audit; v2 accepted for legacy); WORKER_RESULT at `schema_version: 2` (outputs_verified contract; v1 accepted for the v12.0.0 transition window); all others at `schema_version: 1`.
+> All schemas include a `schema_version` field for forward compatibility. Current versions: CODE_REVIEW_RESULT at `schema_version: 3` (review modes + consistency audit; v2 accepted for legacy); WORKER_RESULT at `schema_version: 2` (outputs_verified contract; v1 accepted for the v12.0.0 transition window); AUTONOMOUS_RUN at `schema_version: 2` (v14.0.0 status_reason extension; v1 accepted, no hook validation); all others at `schema_version: 1`.
 
 > **API-level enforcement:** When using the Claude API directly (outside Claude Code), enforce these schemas via `output_config.format` (JSON Schema mode) for guaranteed conformance — the model is constrained to produce schema-valid output before the response is returned. Plugin hook validation (the `SubagentStop` hooks defined in `hooks.json`) is the runtime fallback validator inside Claude Code, where `output_config` is not available to plugin agents. See `AGENT_GUIDELINES.md` §"Structured Outputs" and the Anthropic API reference for the exact field name in your SDK version.
 
@@ -227,6 +227,8 @@ SUPERVISOR_RESULT:
   summary: string                      # required — concise session summary
   cost_profile: enum [default, cheap] | null  # optional — null when flag not passed (equivalent to default)
   rubric_score: string | null          # optional (v12.2.0+) — "N/M" where N is non-negative (>= 0; "0/M" is the legitimate all-fail case), M is positive (>= 1), M >= N; null when no Outcomes Rubric in brief, heal_decision != PASS, or grader parse failed
+  branch_base: string | null           # optional (v14.0.0+) — declared Base Branch for the run (from the brief's `Base Branch:` field). null OR absent is treated as "main" by consumers. Purpose: stacked-iteration support for `/autonomous` (iter N+1 branches from iter N's branch). Schema_version stays 1 because the field is purely additive and optional — v13 blocks without it remain valid.
+  pr_state: enum [open, closed_by_loop, close_attempt_failed] | null  # optional (v14.0.0+) — records the PR state after Phase 4.5's base-mismatch cleanup path. `null` for runs where Phase 4.5 did NOT execute the base-mismatch cleanup (i.e., the overwhelming majority). `"closed_by_loop"` when the cleanup closed the PR; `"close_attempt_failed"` when the close attempt failed (operator must resolve); `"open"` is reserved for the case where the PR remained open after the path ran (informational only). Schema_version stays 1 — field is additive and optional.
 ```
 
 **Field semantics note:** `heal_loop_ran` reports whether the Phase 4.5 *review-and-fix loop* executed, not whether the phase itself transitioned. The phase transition and completion tail are unconditional; only the loop is gated by `--skip-self-heal` and the resume-thrash guard.
@@ -246,6 +248,10 @@ SUPERVISOR_RESULT:
 - `heal_remaining_issues>=1` when `heal_decision=ESCALATED`
 - `summary` must be present
 - `rubric_score` is optional (additive in v12.2.0, schema version unchanged at 1). When present, it MUST be either `null` or a string matching the format `"N/M"` where N is a non-negative integer (`>= 0` — `"0/M"` is the legitimate all-fail case where the grader ran but every rubric item failed), M is a positive integer (`>= 1` — there is no zero-item rubric), and M ≥ N. The two non-null forms have distinct meaning: `null` = grader did not run (no rubric in brief, `heal_decision != PASS`, or grader parse failure); `"0/M"` = grader ran and scored zero items. When absent, validators MUST treat it as `null`. The Supervisor SubagentStop hook MUST NOT reject a SUPERVISOR_RESULT solely for the presence or absence of `rubric_score`.
+- `branch_base` is optional (additive in v14.0.0, schema version unchanged at 1). When present, it MUST be either `null` or a non-empty string naming the declared Base Branch (e.g., `"main"`, `"feature/parent-iter"`). Absent OR `null` means the run targeted `"main"` by default. The Supervisor SubagentStop hook MUST NOT reject a SUPERVISOR_RESULT solely for the presence or absence of `branch_base` — v13 blocks without this field remain valid. Consumers reading the field MUST handle `null`/absent as equivalent to `"main"`.
+- `pr_state` is optional (additive in v14.0.0, schema version unchanged at 1). When present, it MUST be either `null` or one of `"open"`, `"closed_by_loop"`, `"close_attempt_failed"`. Absent OR `null` is the normal case (Phase 4.5 base-mismatch cleanup did not execute). The Supervisor SubagentStop hook MUST NOT reject a SUPERVISOR_RESULT solely for the presence or absence of `pr_state` — v13 blocks without this field remain valid.
+
+**v14.0.0 additive fields (backwards-compat):** `branch_base` and `pr_state` are purely additive optional fields. The Supervisor SubagentStop hook (see `hooks/hooks.json` matcher `ai-agent-manager-plugin:supervisor-runner`) validates the v13 field set plus optional `rubric_score`; it does NOT enumerate `branch_base` / `pr_state` and therefore accepts blocks with or without them. Existing v13 SUPERVISOR_RESULT emissions (which lack both fields) continue to validate against the hook unchanged. Schema_version remains `1` precisely because the additions are optional and additive.
 
 **Status mapping from heal outcome:**
 - `heal_decision=PASS` OR `heal_loop_ran=false` (loop skipped via `--skip-self-heal`) → `status: completed`
@@ -309,6 +315,28 @@ SUPERVISOR_RESULT:
   heal_remaining_issues: 0
   error: null
   summary: 1/1 subtasks completed. Self-heal loop skipped via --skip-self-heal flag. PR #91 ready.
+```
+
+**Example (v14.0.0 — stacked iteration with explicit branch_base + pr_state):**
+```
+SUPERVISOR_RESULT:
+  schema_version: 1
+  task_id: auto-2026-05-16-iter2
+  status: completed
+  pr_url: https://github.com/org/repo/pull/58
+  branch: feature/auto-2026-05-16-iter2
+  subtasks_completed: 2
+  subtasks_failed: 0
+  heal_loop_ran: true
+  heal_iterations: 0
+  heal_decision: PASS
+  heal_fixable_issues_fixed: 0
+  heal_remaining_issues: 0
+  error: null
+  summary: Iteration 2 of stacked autonomous run; branched from feature/auto-2026-05-16-iter1. PR #58 stacks on PR #57.
+  rubric_score: "5/5"
+  branch_base: feature/auto-2026-05-16-iter1
+  pr_state: null
 ```
 
 ---
@@ -661,13 +689,15 @@ When QA Executor runs with `--plan`, `--scope`, or `--continue`, the QA_RESULT i
 
 ## AUTONOMOUS_RUN
 
-Emitted by the `/autonomous` inline main-thread workflow (v13.0.0+). Written to `.supervisor/autonomous/{session_id}/summary.md` (human-readable markdown) with a machine-readable sidecar at `.supervisor/autonomous/{session_id}/state.json`. Also echoed to main-thread output for user visibility.
+Emitted by the `/autonomous` inline main-thread workflow (v13.0.0+; bumped to `schema_version: 2` in v14.0.0). Written to `.supervisor/autonomous/{session_id}/summary.md` (human-readable markdown) with a machine-readable sidecar at `.supervisor/autonomous/{session_id}/state.json`. Also echoed to main-thread output for user visibility.
 
 **Not subject to hook validation.** `AUTONOMOUS_RUN` is autonomous-layer-only; the existing `hooks/hooks.json` SubagentStop validators target `SUPERVISOR_RESULT`, `WORKER_RESULT`, etc., and explicitly do *not* validate `AUTONOMOUS_RUN`. The status enum is intentionally distinct from `SUPERVISOR_RESULT.status` (`completed | completed_with_escalation | failed | checkpoint`) to prevent confusion and to keep the two layers separable.
 
+**v1 → v2 transition (v14.0.0):** schema_version was bumped from `1` to `2` to admit the v14 continuous-mode `status_reason` values (nine new closed values introduced when multi-iteration became the default and the non-interactive / stacked-branch paths landed). Because no SubagentStop hook validates this block, the bump is forward-only and **schema-1 emissions remain accepted** for the transition window — tooling that parses the block SHOULD accept either `schema_version: 1` or `schema_version: 2` and treat unknown `status_reason` values as opaque strings rather than rejecting. New emissions on v14.0.0+ MUST use `schema_version: 2`.
+
 ```yaml
 AUTONOMOUS_RUN:
-  schema_version: 1                    # integer, required — always 1
+  schema_version: 2                    # integer, required — v2 in v14.0.0+ (v1 emissions still accepted; see transition note above)
   session_id: string                   # required — "auto-{YYYY-MM-DD}-{HHMMSS}". v1 second-precision is sufficient under the single-session assumption; v2 may append a random suffix (e.g., "-{4hex}") to harden against same-second collisions when concurrent sessions are supported.
   requirement_path: string             # required — path to the requirement file under .supervisor/requirements/
   mode: enum [single, multi]           # required — single-iteration (default) or opt-in --allow-multi-iteration
@@ -713,10 +743,10 @@ AUTONOMOUS_RUN:
 
 | `status` | Legal `status_reason` values |
 |---|---|
-| `done` | `null` (rubric satisfied or no rubric present) **OR** `"user_stopped_at_rubric_gate"` (user accepted partial rubric; PR exists, run ended on user's terms) |
+| `done` | `null` (rubric satisfied or no rubric present), `"user_stopped_at_rubric_gate"` (user accepted partial rubric; PR exists, run ended on user's terms), `"user_stopped_at_no_rubric_gate"` (v14.0.0+; user picked stop at the no-rubric gate), `"no_rubric_in_non_interactive"` (v14.0.0+; non-interactive fallback at no-rubric gate — see Non-interactive fallback policy in `skills/autonomous-loop/SKILL.md` §"No-rubric gate") |
 | `paused_max_iterations` | `"max_iterations_reached"` |
-| `aborted` | `"user_discarded_at_phase_6"`, `"user_aborted_at_no_go"`, `"user_aborted_at_plan_review_fail"`, `"supervisor_checkpoint"`, `"rubric_dropped_from_brief"`, `"concurrent_session_detected"`, `"invalid_max_iterations"` |
-| `failed` | `"supervisor_failed_other"` |
+| `aborted` | `"user_discarded_at_phase_6"`, `"user_aborted_at_no_go"`, `"user_aborted_at_plan_review_fail"`, `"supervisor_checkpoint"`, `"rubric_dropped_from_brief"`, `"concurrent_session_detected"`, `"invalid_max_iterations"`, **v14.0.0+:** `"non_interactive_without_fallback"`, `"conflicting_mode_flags"`, `"iter_pr_base_mismatch"`, `"rubric_gate_closed_non_interactive"`, `"user_aborted_gh_retry"` |
+| `failed` | `"supervisor_failed_other"`, **v14.0.0+:** `"supervisor_base_branch_mismatch"` |
 
 Reason-string meanings:
 
@@ -730,10 +760,21 @@ Reason-string meanings:
 - `"supervisor_failed_other"` — covers two cases: (a) `SUPERVISOR_RESULT.status: failed` was emitted but without the `inter_subtask_gap` Option-C signal in any of the three iteration-scoped sources; (b) Supervisor crashed or otherwise exited without emitting any `SUPERVISOR_RESULT` block at all, and the autonomous loop synthesized a placeholder iteration entry with `error: "no_supervisor_result_emitted"` so the schema's `iterations.length == total_iterations` invariant still holds
 - `"rubric_dropped_from_brief"` — Launch Pad did not preserve the `## Outcomes Rubric` section (rubric-preservation gate failure)
 - `"concurrent_session_detected"` — brief-save `ls`-diff found more than one new file in `.supervisor/jobs/pending/` (violates v1 single-session assumption)
-- `"invalid_max_iterations"` — `--allow-multi-iteration` was passed with `--max-iterations N` where N is not a positive integer (N ≤ 0 or non-integer). INIT rejects this immediately, before any state.json/summary.md is written beyond the abort record. `total_iterations: 0`, `iterations: []`, `last_phase: PLAN`
+- `"invalid_max_iterations"` — `--max-iterations N` was passed where N is not in the valid range (N ≤ 0 or N > 10, or non-integer). INIT rejects this immediately, before any state.json/summary.md is written beyond the abort record. `total_iterations: 0`, `iterations: []`, `last_phase: PLAN`
+
+**v14.0.0 status_reason additions** (paired with the v14 continuous-mode + non-interactive-fallback + stacked-branches work):
+
+- `"non_interactive_without_fallback"` — the loop detected a non-interactive (no-TTY) environment at INIT and `--non-interactive-fallback` was NOT supplied. Pairs with `status: aborted`. Pre-EXECUTE; `total_iterations: 0`. See `skills/autonomous-loop/SKILL.md` §"INIT step 0".
+- `"conflicting_mode_flags"` — both `--single-iteration` and `--allow-multi-iteration` (or equivalent conflict) were supplied. Pairs with `status: aborted`. Pre-EXECUTE; `total_iterations: 0`.
+- `"iter_pr_base_mismatch"` — EVALUATE's PR-base verification (AC-3 + AC-15) found the iteration's PR was opened against a different base than the loop declared, AND the user-prompt-and-retry policy (AC-14) reached its terminal abort. Pairs with `status: aborted`. The offending iteration's entry is still present in `iterations[]` (it did reach EXECUTE).
+- `"rubric_gate_closed_non_interactive"` — the rubric gate would have fired, but the loop was running with `--non-interactive-fallback` in a no-TTY environment. Fail-closed policy: the gate aborts the loop rather than silently picking `continue` or `stop`. Pairs with `status: aborted`.
+- `"user_aborted_gh_retry"` — user explicitly aborted at the EVALUATE PR-base verification retry prompt (e.g., declined to retry a `gh` call after a transient failure). Pairs with `status: aborted`.
+- `"supervisor_base_branch_mismatch"` — Supervisor's Phase 4 self-verify OR Phase 4.5 base-mismatch cleanup detected an unrecoverable base-branch divergence and emitted `SUPERVISOR_RESULT.status: failed` with the diagnostic. The autonomous loop surfaces this as `status: failed` (not `aborted`) because the failure originated below the loop. The iteration's `SUPERVISOR_RESULT.pr_state` typically carries `"closed_by_loop"` or `"close_attempt_failed"` for the cleanup case.
+- `"user_stopped_at_no_rubric_gate"` — user picked "stop" at the v14 no-rubric gate (fires when the iteration had no rubric and the user is given an explicit continue/stop choice rather than the loop silently terminating). Pairs with `status: done` because the PR exists and the user ended the run on their own terms.
+- `"no_rubric_in_non_interactive"` — the no-rubric gate's non-interactive-fallback policy: with no rubric signal to gate against, continuing in CI would be busywork, so the gate accepts the iteration cleanly. Pairs with `status: done` (NOT `aborted`) — this is the explicit non-failure CI exit. Contrast `"rubric_gate_closed_non_interactive"`, which fails closed because a rubric signal IS available and silently dropping it is unsafe.
 
 **Validation rules:**
-- No SubagentStop hook validates this block (autonomous-layer-only).
+- No SubagentStop hook validates this block (autonomous-layer-only). The v1 → v2 bump in v14.0.0 is therefore forward-only — schema-1 emissions remain accepted by downstream tooling. Parsers SHOULD accept either `schema_version: 1` or `schema_version: 2` and SHOULD treat unrecognized `status_reason` values as opaque strings rather than rejecting.
 - `iterations.length == total_iterations` (when `total_iterations == 0`, `iterations` MUST be an empty array `[]`; this is the pre-EXECUTE-abort case).
 - `total_iterations >= 0` and `total_iterations <= max_iterations`. The pre-EXECUTE-abort paths (`user_discarded_at_phase_6`, `user_aborted_at_no_go`, `user_aborted_at_plan_review_fail`) all yield `total_iterations == 0`.
 - `status` ↔ `status_reason` pairing must follow the table above. In particular, `status: done` is valid with either `status_reason: null` (clean completion) or `status_reason: "user_stopped_at_rubric_gate"` (user accepted partial rubric); no other reason string is legal with `done`.
@@ -758,7 +799,7 @@ Reason-string meanings:
 
 ```yaml
 AUTONOMOUS_RUN:
-  schema_version: 1
+  schema_version: 2
   session_id: auto-2026-05-11-143022
   requirement_path: .supervisor/requirements/auto-2026-05-11-143022-add-version-cmd.md
   mode: single
@@ -792,7 +833,7 @@ AUTONOMOUS_RUN:
 
 ```yaml
 AUTONOMOUS_RUN:
-  schema_version: 1
+  schema_version: 2
   session_id: auto-2026-05-11-150412
   requirement_path: .supervisor/requirements/auto-2026-05-11-150412-refactor-auth.md
   mode: single
@@ -816,7 +857,7 @@ AUTONOMOUS_RUN:
 
 ```yaml
 AUTONOMOUS_RUN:
-  schema_version: 1
+  schema_version: 2
   session_id: auto-2026-05-11-160000
   requirement_path: .supervisor/requirements/auto-2026-05-11-160000-add-jwt.md
   mode: multi
@@ -847,6 +888,40 @@ AUTONOMOUS_RUN:
   rubric_final_score: "3/5"
 ```
 
+**Example — v14.0.0 CI run, non-interactive fallback at no-rubric gate (`no_rubric_in_non_interactive`):**
+
+```yaml
+AUTONOMOUS_RUN:
+  schema_version: 2
+  session_id: auto-2026-05-16-090000
+  requirement_path: .supervisor/requirements/auto-2026-05-16-090000-ci-refactor.md
+  mode: multi
+  allow_multi_iteration: true
+  max_iterations: 3
+  status: done
+  status_reason: "no_rubric_in_non_interactive"
+  total_iterations: 1
+  last_phase: EVALUATE
+  started_at: 2026-05-16T09:00:00Z
+  ended_at: 2026-05-16T09:11:42Z
+  duration_seconds: 702
+  iterations:
+    - n: 1
+      brief_path: .supervisor/jobs/done/auto-2026-05-16-090000-ci-refactor.md
+      supervisor_status: completed
+      pr_url: https://github.com/example/repo/pull/102
+      rubric_score: null
+      branch: feature/ci-refactor
+      summary: Refactor landed cleanly; brief had no rubric so loop accepted the iteration in CI mode.
+      error: null
+      heal_decision: PASS
+      escalation_reason: null
+  escalations_seen: []
+  policy_decisions:
+    - { iteration: 1, phase: PLAN, decision: "user_picked_save", source: "launch_pad_phase_6" }
+  rubric_final_score: null
+```
+
 **Cross-references:**
 - `ai-agent-manager-plugin/skills/autonomous-loop/SKILL.md` — full protocol; this schema canonicalizes its `DONE — AUTONOMOUS_RUN Summary` section
 - `ai-agent-manager-plugin/commands/autonomous.md` — slash command body
@@ -866,6 +941,8 @@ All result schemas include a `schema_version` field. This enables forward compat
 
 ### Version History
 
+- **AUTONOMOUS_RUN v2** (v14.0.0): Bumped from v1 → v2. Extended the closed `status_reason` enum with nine new values paired with v14's continuous-mode (multi-iteration default), non-interactive-fallback path, and stacked-branches work: `non_interactive_without_fallback`, `conflicting_mode_flags`, `iter_pr_base_mismatch`, `rubric_gate_closed_non_interactive`, `no_rubric_in_non_interactive`, `user_aborted_gh_retry`, `supervisor_base_branch_mismatch`, `user_stopped_at_no_rubric_gate`, `invalid_max_iterations` (the last was already added in `skills/autonomous-loop/SKILL.md` for v13 but is now first-class in the schema doc). The bump is forward-only — no SubagentStop hook validates AUTONOMOUS_RUN, so schema-1 emissions remain accepted by downstream tooling for the transition window. Tooling SHOULD accept either schema_version and treat unrecognized `status_reason` values as opaque.
+- **SUPERVISOR_RESULT v1 extension** (v14.0.0): Added optional `branch_base: string | null` and `pr_state: enum [open, closed_by_loop, close_attempt_failed] | null` fields. Schema_version stays `1` because both additions are optional and purely additive — v13 emissions (which lack both fields) continue to validate against the Supervisor SubagentStop hook (`hooks/hooks.json` matcher `ai-agent-manager-plugin:supervisor-runner`), whose validation prompt enumerates only the v13 field set plus optional `rubric_score`. Purpose: `branch_base` records the declared Base Branch (defaults to `"main"` when absent) for stacked-iteration support; `pr_state` records the post-cleanup PR state for Phase 4.5's base-mismatch path (typically `null` — the cleanup path is rare).
 - **SUPERVISOR_RESULT v1 extension** (v12.2.0): Added optional `rubric_score: string | null` field. Format is `"N/M"` where N is a non-negative integer (`>= 0`; `"0/M"` is the legitimate all-fail case where the grader ran but every rubric item failed), M is a positive integer (`>= 1`), and M ≥ N — OR `null`. The two non-null forms are semantically distinct: `null` = grader did not run; `"0/M"` = grader ran and zero items passed. Populated by the Phase 4.5 Haiku grader when the brief contains an `## Outcomes Rubric` section AND `heal_decision == PASS`; `null` otherwise. Schema version was NOT bumped because the addition is optional and additive — pre-v12.2.0 producers and consumers continue to validate without change. The Supervisor SubagentStop hook accepts presence or absence and only validates format when present.
 - **AUTONOMOUS_RUN v1** (v13.0.0): New schema for the `/autonomous` orchestration shell's summary block. Autonomous-layer-only — no SubagentStop hook validates it (the autonomous workflow is an inline main-thread chain, not a delegated agent). Status enum (`done | paused_max_iterations | aborted | failed`) is intentionally disjoint from `SUPERVISOR_RESULT.status` to keep the two layers separable. Status-reason enum is closed; new values require updating both this schema and `skills/autonomous-loop/SKILL.md`.
 - **WORKER_RESULT v2** (v12.0.0): Added `outputs_verified[]` (itemized presence checks for every output the brief promised) and `outputs_gap` (string; non-empty implies status MUST be `partial`). The SubagentStop hook enforces a cross-field invariant: `outputs_gap` non-empty AND `status: completed` is rejected. v1 emissions remain accepted during the v12.0.0 transition window.
