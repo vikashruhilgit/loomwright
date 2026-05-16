@@ -37,15 +37,15 @@ Validate a Supervisor-Ready Brief for quality, completeness, and correctness bef
 
 - **Always verify file paths** — Glob/Read every path in the File Impact Map
 - **Always check CLAUDE.md patterns** — Read CLAUDE.md and compare against brief's approach
-- **Never skip criteria** — All 11 review criteria must be checked (Criterion 11 is conditional: skip if Feasibility section absent)
+- **Never skip criteria** — All 13 review criteria must be checked (Criteria 11 and 13 are conditional: skip silently when their gating section/field is absent; Criterion 12 is conditional on brief vintage)
 - **FAIL requires evidence** — Every BLOCKING/HIGH issue must cite what was checked and what was wrong
 - **NEEDS_HUMAN is for ambiguity** — Use only when the brief's approach could be valid but you can't confirm
 
 ---
 
-## 12 Review Criteria
+## 13 Review Criteria
 
-Check ALL criteria in order. For each, note whether it passes or has issues. Criterion 11 is conditional: skip silently if the optional `## Feasibility` section is absent. Criterion 12 is conditional on brief vintage: v12.0.0+ briefs (Launch Pad runtime ≥ v12.0.0) MUST contain `provides:` / `requires:` contract YAML blocks per subtask — absence is a BLOCKING violation. Pre-v12 legacy briefs may omit contract blocks, but only when the brief explicitly opts out via a top-level `legacy_brief: true` marker in the Environment section. Without that explicit marker, Plan Reviewer treats missing contracts as a v12 contract violation.
+Check ALL criteria in order. For each, note whether it passes or has issues. Criterion 11 is conditional: skip silently if the optional `## Feasibility` section is absent. Criterion 13 is conditional: skip silently if no `Base Branch:` line appears in the `## Configuration` block (defaults to `main`). Criterion 12 is conditional on brief vintage: v12.0.0+ briefs (Launch Pad runtime ≥ v12.0.0) MUST contain `provides:` / `requires:` contract YAML blocks per subtask — absence is a BLOCKING violation. Pre-v12 legacy briefs may omit contract blocks, but only when the brief explicitly opts out via a top-level `legacy_brief: true` marker in the Environment section. Without that explicit marker, Plan Reviewer treats missing contracts as a v12 contract violation.
 
 ### 1. File Path Verification
 
@@ -203,13 +203,42 @@ Check ALL criteria in order. For each, note whether it passes or has issues. Cri
 
 **Conditional:** If the brief contains no subtask contract YAML blocks AND the Environment section explicitly declares `legacy_brief: true`, skip this criterion silently and emit no issues. Otherwise (v12.0.0+ default), missing contract blocks on any subtask FAIL the brief with a BLOCKING `dep_graph` issue: "Subtask <ID> missing required `provides:` / `requires:` contract blocks (v12.0.0 mandate; add `legacy_brief: true` to Environment to opt out)."
 
+### 13. Base Branch Validation (v14.0.0+, conditional)
+
+**Check:** If the brief's `## Configuration` block contains a `Base Branch:` line, does the named value resolve to `main` or to a branch that exists locally?
+
+**How:**
+
+- Parse the `## Configuration` block. Look for a line matching `^- \*\*Base Branch:\*\* (.+)$` (or the unbolded variant `^Base Branch:\s*(.+)$`).
+- If absent: skip this criterion silently — `Base Branch:` is optional and defaults to `main`. Emit no issue.
+- If present with value `main`: PASS this criterion (no further check needed).
+- If present with any other value `<branch>`: verify the branch exists by checking the local refs:
+  1. **Try unpacked ref first:** `Glob` for `.git/refs/heads/<branch>` (the path is the literal branch name, slashes preserved). If found and `Read`-able, the branch exists locally → PASS.
+  2. **Fall back to packed-refs:** if `.git/packed-refs` exists, `Read` it and search for a line ending with `refs/heads/<branch>`. If found → PASS.
+  3. If neither check finds the branch → FAIL the brief with a BLOCKING issue:
+     ```yaml
+     - severity: BLOCKING
+       section: "Configuration"
+       category: missing_field
+       description: "Base Branch '<branch>' does not exist locally — autonomous-loop iter N+1 cannot stack on it. Confirmed by checking .git/refs/heads/<branch> and .git/packed-refs; neither contained the branch."
+       suggestion: "Run `git branch --list <branch>` to confirm the branch exists locally. If this brief is for autonomous-loop iter N+1, ensure iter N completed and its feature branch is checked out / fetched."
+     ```
+
+**Why a `Glob`/`Read`-only check is sufficient:** Plan Reviewer is structurally read-only (`disallowedTools: Bash`). The `.git/refs/heads/` directory layout and `.git/packed-refs` format are git-public and stable. A branch is either unpacked (file in `refs/heads/`) or packed (line in `packed-refs`); checking both covers every reachable local branch. Branches that exist only on the remote (not yet fetched) intentionally FAIL — autonomous-loop iter N+1 requires the parent branch to be locally checked out, so this is the correct behavior.
+
+**Issue category:** `missing_field` (existing category — no new issue category needed).
+
+**Severity if failed:** BLOCKING (branch named but unresolvable — autonomous-loop chain would break at Phase 4 PR creation).
+
+**Conditional:** Absent `Base Branch:` line → skip silently. Present and value is `main` → PASS. Present and value resolves → PASS. Present and value does not resolve → FAIL.
+
 ---
 
 ## Decision Matrix
 
 | Condition | Decision |
 |-----------|----------|
-| All criteria satisfied (12 total, Criteria 11 and 12 conditional), no BLOCKING/HIGH issues | **PASS** |
+| All criteria satisfied (13 total, Criteria 11, 12, and 13 conditional), no BLOCKING/HIGH issues | **PASS** |
 | Any BLOCKING or HIGH severity issue found | **FAIL** |
 | Only MEDIUM/LOW issues, but design approach is ambiguous | **NEEDS_HUMAN** |
 
@@ -276,7 +305,7 @@ PLAN_REVIEW_RESULT:
 ## Quality Checklist
 
 Before producing PLAN_REVIEW_RESULT:
-- [ ] All 12 criteria checked (Criterion 11 conditional on `## Feasibility` section presence; Criterion 12 skipped only when the brief's Environment section declares `legacy_brief: true` — otherwise missing `provides:` / `requires:` blocks are a BLOCKING `dep_graph` violation)
+- [ ] All 13 criteria checked (Criterion 11 conditional on `## Feasibility` section presence; Criterion 12 skipped only when the brief's Environment section declares `legacy_brief: true` — otherwise missing `provides:` / `requires:` blocks are a BLOCKING `dep_graph` violation; Criterion 13 skipped silently when `Base Branch:` is absent from `## Configuration`)
 - [ ] Every file path in File Impact Map verified via Read or Glob
 - [ ] CLAUDE.md patterns compared against brief approach
 - [ ] Dependency graph traced for cycles
