@@ -463,7 +463,7 @@ When the Execute Manager surfaces an `EXECUTE_CHECKPOINT` with `adjudication_req
                             detected_at: "<ISO>", reason: "phase4_self_verify"})
      ```
 
-   **Invariant:** Phase 4 sets the flag at most once per session and never emits `SUPERVISOR_RESULT` directly on mismatch. The single emission point for the failure path is Phase 4.5's base-mismatch cleanup block (step 0a below).
+   **Invariant:** Phase 4 sets the flag at most once per session and never emits `SUPERVISOR_RESULT` directly on mismatch. The single emission point for the failure path is Phase 4.5's base-mismatch cleanup block (step 5 below).
 
 7. **Exit FINALIZE.** Task is NOT yet marked completed, and the job file is NOT yet moved. Those actions happen in Phase 4.5 SELF_HEAL's completion tail so that self-heal outcomes are captured in the completion record.
 
