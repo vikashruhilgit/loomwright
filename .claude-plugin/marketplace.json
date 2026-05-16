@@ -7,8 +7,8 @@
     {
       "name": "ai-agent-manager-plugin",
       "source": "./ai-agent-manager-plugin",
-      "description": "AI agents v13.0.1 — New /autonomous slash command that chains /launch-pad → /supervisor for a single requirement, with opt-in multi-iteration re-planning (--allow-multi-iteration) gated on two existing SUPERVISOR_RESULT signals (rubric_score N<M with user-merge confirmation; failed + inter_subtask_gap on this iteration's brief). Foreground-assisted automation — Launch Pad Phase 6, NO-GO, Plan Review FAIL × 3, Supervisor adjudication 4-option, and the loop's rubric gate all bubble AskUserQuestion in-session. v13 is purely additive: no new agent, no new hook, no behavioral change to any existing agent / hook / script / skill / command, no change to the field types or validation rules of any existing schema. New artifacts only: /autonomous command, autonomous-loop skill, AUTONOMOUS_RUN entry in RESULT_SCHEMAS.md. Preserves all v12.2.0 capabilities (Agent Teams graduation, Outcomes Rubric, /dreaming, webhook hook), v12.1.0 documentation increments (Memory Tool, Structured Outputs, SDK-only Advisor), v12.0.0 reliability primitives (provides/requires contracts, pre-spawn verification, 4-option adjudication, effort-tier discipline, WORKER_RESULT schema_version 2), and prior v11/v10 layers. 13 agent roles, 50 reusable skills, 14 quality gate hooks, 12 slash commands, persistent agent memory, bundled MySQL MCP server.",
-      "version": "13.0.1",
+      "description": "AI agents v14.0.0 — Plan-first readiness, parallel execution via git worktrees, continuous autonomous mode with stacked PRs, dual-agent QA, opt-in telemetry, gate-event webhooks. The /autonomous orchestration shell graduates to a default multi-iteration loop (cap 10, default 3) with stacked-branch semantics — iteration N+1 branches from iterations[N].branch, producing a reviewable bottom-up PR stack (reviewers must merge bottom-of-stack first). Restore v13 cadence with --no-stacked-branches; reproduce v13's single-iter default with --max-iterations 1. New flags: --notify enables opt-in gate-event webhooks (rubric, adjudication, NO-GO, Plan Review FAIL × 3) gated on AI_AGENT_MANAGER_WEBHOOK_URL with jq-only injection-safe payloads; --non-interactive-fallback enables a per-gate fail-closed policy for CI / unattended runs. Supervisor gains --base-branch + --non-interactive flags plus Phase 0/4/4.5 base-mismatch detection + cleanup, and emits optional additive branch_base + pr_state fields on SUPERVISOR_RESULT. Context-Keeper gains atomic set_flag / get_flag / clear_flag operations. AUTONOMOUS_RUN bumps to schema_version 2 with nine new closed status_reason values covering stacked-branch / non-interactive-fallback / gh-retry / no-rubric paths (see docs/RESULT_SCHEMAS.md). W-NEW-3 spike PASSED pre-merge: Code Reviewer + Rubric Grader honor DIFF-SCOPE OVERRIDE on stacked-branch fixtures. v14 is additive on top of v13: no new agent, hook count unchanged (still 14). Preserves all v13.0.0 / v13.0.1 capabilities (foreground-assisted gates, rubric-gate user-merge verification, Option C inter_subtask_gap re-plan, webhook empty-payload suppression). Preserves all v12.2.0 / v12.1.0 / v12.0.0 capabilities (Agent Teams graduation, Outcomes Rubric, /dreaming, opt-in SubagentStop webhook hook, Memory Tool, Structured Outputs, provides/requires contracts, pre-spawn verification, 4-option adjudication, effort-tier discipline, WORKER_RESULT schema_version 2) and prior v11/v10 layers. 13 agent roles, 50 reusable skills, 14 quality gate hooks, 12 slash commands, persistent agent memory, bundled MySQL MCP server.",
+      "version": "14.0.0",
       "author": {
         "name": "vikash ruhil"
       },
@@ -57,7 +57,14 @@
         "multi-iteration",
         "rubric-gate",
         "foreground-assisted",
-        "goal-completion"
+        "goal-completion",
+        "stacked-prs",
+        "stacked-branches",
+        "continuous-autonomous",
+        "non-interactive-fallback",
+        "gate-webhooks",
+        "base-branch",
+        "phase-flags"
       ]
     }
   ]
