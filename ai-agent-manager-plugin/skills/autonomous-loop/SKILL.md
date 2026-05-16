@@ -238,7 +238,10 @@ When NOT skipped (`iteration > 1` AND stacked AND `pr_url` non-null):
 
 ```bash
 expected_base="$(jq -r '.iterations[-2].branch' .supervisor/autonomous/${session_id}/state.json)"
-# This is iter N-1's branch (the parent of the current iter N).
+# Pseudocode — see the in-memory-state note in Signal 1 above. iterations[-1] is the
+# CURRENT iteration (just appended by EXECUTE); iterations[-2] is the parent iter whose
+# branch is the expected base for this iter's stacked PR. Real implementations should
+# keep `parent_iter.branch` in memory rather than re-reading state.json here.
 
 actual_base="$(gh pr view "$pr_url" --json baseRefName -q .baseRefName 2>/dev/null)"
 if [ $? -ne 0 ]; then
@@ -256,6 +259,10 @@ if [ $? -ne 0 ]; then
         ["retry", "skip-verify-once", "abort"]
       )
       # retry: re-run gh once more (manual third attempt); on success continue with actual_base.
+      #        On failure of the third attempt, re-prompt this same AskUserQuestion once more
+      #        (max one re-prompt). If the user picks retry a second time and that fails too,
+      #        auto-abort with status_reason="user_aborted_gh_retry" — same as the explicit
+      #        abort option. This bounds the retry loop deterministically.
       # skip-verify-once: record policy_decisions entry, continue as if verified.
       # abort: emit AUTONOMOUS_RUN.status=aborted, status_reason="user_aborted_gh_retry", exit.
     fi
