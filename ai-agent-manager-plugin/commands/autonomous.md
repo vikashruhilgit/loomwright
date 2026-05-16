@@ -114,7 +114,7 @@ When iter N+1 is reached:
 - v13-style (`--no-stacked-branches`): iter N+1's feature branch is created from `main` via `git checkout main && git checkout -b feature/<name>-iter2`. Requires merging iter N's PR first or `--no-stacked-branches`'s explicit out-of-stack semantics (each PR is independent, may conflict).
 - v14 default (stacked): iter N+1's feature branch is created from `iterations[N].branch` via `git checkout <iter N branch> && git checkout -b feature/<name>-iter{N+1}`. The new PR is opened with `--base <iter N branch>` so review proceeds incrementally. The loop verifies the PR's base with `gh pr view <pr_url> --json baseRefName` after Supervisor's Phase 4 (with the AC-14 retry policy on `gh` failure).
 
-Out-of-order merge of a stacked PR can corrupt `main` — the bottom of the stack must merge first. This hazard is documented; the AUTONOMOUS_RUN summary lists `merge_order` so reviewers see the intended sequence.
+Out-of-order merge of a stacked PR can corrupt `main` — the bottom of the stack must merge first. This hazard is documented; the AUTONOMOUS_RUN summary's `iterations[]` array is ordered by `n` (iter 1, iter 2, ...) and that order IS the intended merge order — reviewers must follow it.
 
 The detailed protocol — including the `ls`-diff brief-save detection, the anchor-by-filename Option-C scoping, the merge-verification sequence, and the refined-requirement templates — lives in `ai-agent-manager-plugin/skills/autonomous-loop/SKILL.md`.
 
@@ -237,7 +237,7 @@ Iteration 1: Launch Pad saves a brief; Supervisor's Worker emits `outputs_gap`; 
 │  └────────────────────────────────────────────────────────────┘   │
 │                                                                   │
 │  DONE ▶ write .supervisor/autonomous/{sid}/summary.md + state.json│
-│         ▶ echo AUTONOMOUS_RUN summary + merge_order to output     │
+│         ▶ echo AUTONOMOUS_RUN summary (iterations[] is merge order)│
 │                                                                   │
 └───────────────────────────────────────────────────────────────────┘
 ```
