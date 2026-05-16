@@ -679,6 +679,110 @@ unset AI_AGENT_MANAGER_WEBHOOK_URL
 The next Supervisor SubagentStop will see the wrapper exit 0 immediately
 with no log line, no network call, and no side effects.
 
+### Gate events (v14+)
+
+**New in v14.0.0** — `send-webhook.sh` accepts a second event type used by the
+`/autonomous` orchestration shell to surface user-gate moments in real time.
+The supervisor_result path described above is **unchanged**; gate events run
+alongside it on the same script with a separate payload shape.
+
+**Invocation contract** (CLI-flag driven; stdin is NOT read for gate events):
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/send-webhook.sh" \
+  --event-type gate \
+  --gate-type <phase6_save|rubric|no_rubric|adjudication> \
+  --iteration <N> \
+  --session-id <session_id> \
+  --context "<freeform string>"
+```
+
+All flags except `--gate-type` are optional from the script's contract, though
+the autonomous-loop call sites always populate `--iteration` and `--session-id`
+for correlation. `AI_AGENT_MANAGER_WEBHOOK_URL` gates the POST exactly as it
+does for the supervisor_result path — the script exits 0 immediately when
+the env var is unset.
+
+**Known `gate_type` values and firing sites** (closed set in v14.0.0; new
+values require updating both this doc and `skills/autonomous-loop/SKILL.md`):
+
+| `gate_type`      | Firing site                                                                                 | When                                                                                                |
+|------------------|---------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------|
+| `phase6_save`    | Launch Pad — Phase 6 brief-save prompt                                                      | Loop is about to ask the user to confirm saving the assembled brief to `.supervisor/jobs/pending/`. |
+| `rubric`         | `autonomous-loop` — Signal 1 rubric gate (see `skills/autonomous-loop/SKILL.md` §"Signal 1") | Iteration ended `completed` with `rubric_score N<M` and the gate is asking the user to continue / stop / force. |
+| `no_rubric`      | `autonomous-loop` — no-rubric gate (see `skills/autonomous-loop/SKILL.md` §"No-rubric gate") | Iteration ended `completed` but the brief had no `## Outcomes Rubric`; gate is asking continue / stop. |
+| `adjudication`   | Supervisor — Phase 3 adjudication AskUserQuestion                                           | Supervisor's existing 4-option adjudication prompt is firing; loop emits the gate event as advance notice. |
+
+**Injection-safety guarantee.** Both the call sites in `skills/autonomous-loop/SKILL.md`
+(which forward the user-supplied context string verbatim) and `send-webhook.sh`
+itself construct the JSON payload via `jq --arg` on every field — no
+shell-templated JSON. The `--context` parameter is therefore safe against
+single quotes, double quotes, backslashes, embedded newlines, ASCII control
+characters, and Unicode; the receiver sees the exact round-tripped string
+with no parse error. **Never** construct the gate payload inline at the call
+site; always go through `send-webhook.sh --event-type gate`.
+
+**Dry-run debug switch.** Setting `AI_AGENT_MANAGER_WEBHOOK_DRY_RUN=1` (any
+non-empty value) makes the script print the constructed JSON payload to
+stdout INSTEAD of POSTing. The env-var gate on `AI_AGENT_MANAGER_WEBHOOK_URL`
+still applies — set it to any non-empty value (e.g., `test`) to satisfy the
+gate. Useful for the injection-safety self-tests:
+
+```bash
+AI_AGENT_MANAGER_WEBHOOK_URL=test \
+  AI_AGENT_MANAGER_WEBHOOK_DRY_RUN=1 \
+  bash "${CLAUDE_PLUGIN_ROOT}/scripts/send-webhook.sh" \
+  --event-type gate \
+  --gate-type rubric \
+  --iteration 2 \
+  --session-id auto-2026-05-16-143022 \
+  --context "fix user's \"auth\" bug" \
+  | jq -e .
+```
+
+**Example payload:**
+
+```json
+{
+  "event_type": "gate",
+  "gate_type": "rubric",
+  "iteration": 2,
+  "session_id": "auto-2026-05-16-143022",
+  "context": "iter 2 completed PR https://github.com/org/repo/pull/57 with rubric 3/5; awaiting user decision",
+  "timestamp": "2026-05-16T14:55:00Z"
+}
+```
+
+Field semantics:
+
+- **`event_type`** — always the literal string `"gate"`. Distinguishes gate
+  payloads from supervisor_result payloads (which have `"agent": "supervisor"`
+  as their stable type discriminator).
+- **`gate_type`** — one of the four values in the table above. Consumers
+  SHOULD treat unrecognized values as opaque rather than rejecting; new
+  values may be added in future versions.
+- **`iteration`** — 1-indexed iteration number; `0` for pre-EXECUTE gates
+  (e.g., `phase6_save` before any iteration ran).
+- **`session_id`** — autonomous-loop session identifier (`auto-{YYYY-MM-DD}-{HHMMSS}`).
+- **`context`** — freeform string the call site uses to describe the gate
+  state; safe to include PR URLs, rubric scores, and short prose.
+- **`timestamp`** — UTC ISO-8601 at the moment the hook fired.
+
+**Privacy posture.** Same as supervisor_result events: the operator chose
+the destination URL and accepts what reaches it. The deny-list redaction
+used by GitHub Issues telemetry does NOT run here. Gate `context` strings
+are author-controlled (autonomous-loop sets them) and typically contain a
+PR URL plus a one-line summary — but operators who route the webhook to a
+public channel should treat `context` as if it could contain anything the
+loop saw fit to forward.
+
+**Cross-references:**
+
+- `skills/autonomous-loop/SKILL.md` §"Signal 1" and §"No-rubric gate" — the
+  call sites where `--event-type gate` is invoked.
+- `scripts/send-webhook.sh` — the implementation (both event-type paths
+  live in the same script).
+
 ---
 
 ## Future work (out of scope for this PR)
