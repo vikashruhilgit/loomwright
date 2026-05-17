@@ -746,7 +746,7 @@ AI_AGENT_MANAGER_WEBHOOK_URL=test \
 {
   "event_type": "gate",
   "gate_type": "rubric",
-  "iteration": 2,
+  "iteration": "2",
   "session_id": "auto-2026-05-16-143022",
   "context": "iter 2 completed PR https://github.com/org/repo/pull/57 with rubric 3/5; awaiting user decision",
   "timestamp": "2026-05-16T14:55:00Z"
@@ -761,8 +761,15 @@ Field semantics:
 - **`gate_type`** — one of the four values in the table above. Consumers
   SHOULD treat unrecognized values as opaque rather than rejecting; new
   values may be added in future versions.
-- **`iteration`** — 1-indexed iteration number; `0` for pre-EXECUTE gates
-  (e.g., `phase6_save` before any iteration ran).
+- **`iteration`** — **emitted as a JSON string** (e.g., `"2"`, `"0"`), not
+  a number. The value is a 1-indexed iteration counter (`"0"` for
+  pre-EXECUTE gates like `phase6_save` before any iteration ran). The
+  string shape is a deliberate choice in `send-webhook.sh` (uses
+  `jq --arg` rather than `--argjson`) so a non-numeric `--iteration`
+  argument from a future caller cannot crash the payload construction.
+  Consumers MUST `parseInt(payload.iteration, 10)` (or the local
+  equivalent) before doing arithmetic on it — no strict-equality
+  comparison against numeric literals like `payload.iteration === 2`.
 - **`session_id`** — autonomous-loop session identifier (`auto-{YYYY-MM-DD}-{HHMMSS}`).
 - **`context`** — freeform string the call site uses to describe the gate
   state; safe to include PR URLs, rubric scores, and short prose.
