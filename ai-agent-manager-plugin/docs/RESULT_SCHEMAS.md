@@ -701,7 +701,7 @@ AUTONOMOUS_RUN:
   session_id: string                   # required — "auto-{YYYY-MM-DD}-{HHMMSS}". v1 second-precision is sufficient under the single-session assumption; v2 may append a random suffix (e.g., "-{4hex}") to harden against same-second collisions when concurrent sessions are supported.
   requirement_path: string             # required — path to the requirement file under .supervisor/requirements/
   mode: enum [single, multi]           # required — multi-iteration is the v14 default; single requires --single-iteration (or --max-iterations 1)
-  allow_multi_iteration: boolean       # required — true iff --allow-multi-iteration was passed; redundant with `mode == "multi"` but explicit for readers who index on the flag name
+  allow_multi_iteration: boolean       # required — true iff the deprecated --allow-multi-iteration was explicitly supplied; false on the default multi-iter path (v14) and on single-iter runs
   max_iterations: integer              # required — the cap that was in effect for this run (1..N). For single-iteration runs (mode == "single"), this field MUST be 1 — the implicit cap. For multi-iteration runs, it carries the --max-iterations value (default 3). Recording this makes runs that end with status: paused_max_iterations self-diagnosable: a reader can tell whether the cap was the default 3 or a user-supplied custom value.
   status: enum [done, paused_max_iterations, aborted, failed]  # required — autonomous-layer status
   status_reason: string | null         # required — null when status: done AND no rubric stop; otherwise one of the documented reason strings (see below)
@@ -777,7 +777,7 @@ Reason-string meanings:
 - No SubagentStop hook validates this block (autonomous-layer-only). The v1 → v2 bump in v14.0.0 is therefore forward-only — schema-1 emissions remain accepted by downstream tooling. Parsers SHOULD accept either `schema_version: 1` or `schema_version: 2` and SHOULD treat unrecognized `status_reason` values as opaque strings rather than rejecting.
 - `iterations.length == total_iterations` (when `total_iterations == 0`, `iterations` MUST be an empty array `[]`; this is the pre-EXECUTE-abort case).
 - `total_iterations >= 0` and `total_iterations <= max_iterations`. The pre-EXECUTE-abort paths (`user_discarded_at_phase_6`, `user_aborted_at_no_go`, `user_aborted_at_plan_review_fail`) all yield `total_iterations == 0`.
-- `status` ↔ `status_reason` pairing must follow the table above. In particular, `status: done` is valid with either `status_reason: null` (clean completion) or `status_reason: "user_stopped_at_rubric_gate"` (user accepted partial rubric); no other reason string is legal with `done`.
+- `status` ↔ `status_reason` pairing must follow the table above. The four legal `done` reason values are: `null` (clean completion), `"user_stopped_at_rubric_gate"` (user accepted partial rubric), `"user_stopped_at_no_rubric_gate"` (v14.0.0+; user picked stop at no-rubric gate), and `"no_rubric_in_non_interactive"` (v14.0.0+; non-interactive fallback at no-rubric gate — loop accepts the iteration cleanly rather than aborting).
 - When `total_iterations == 0`, `rubric_final_score` MUST be `null` and `last_phase` MUST be `PLAN`.
 - When `total_iterations >= 1`, `rubric_final_score` mirrors the `rubric_score` of the last entry in `iterations`.
 - Each `policy_decisions[]` entry's `decision` field MUST match a value from the closed `decision` enum in the YAML schema above. Each `(decision, source)` pair MUST follow the legal pairing table below.

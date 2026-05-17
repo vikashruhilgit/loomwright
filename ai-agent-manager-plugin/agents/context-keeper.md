@@ -115,7 +115,7 @@ All three operations take:
 - `key: {string}` (required) — the flag name; opaque to Context-Keeper
 
 `set_flag` additionally takes:
-- `value: {object}` (required) — arbitrary JSON-shaped payload (object, array, scalar, or boolean). Stored verbatim.
+- `value: {any JSON value}` (required) — arbitrary JSON-shaped payload (object, array, scalar, or boolean). Stored verbatim.
 
 ### operation: set_flag
 
@@ -126,7 +126,7 @@ value: {arbitrary JSON value}
 state_file: {path}
 ```
 
-Parameters: `key` (string, required), `value` (object, required).
+Parameters: `key` (string, required), `value` (any JSON value, required).
 
 Return: confirmation token `"Flag set: {key}"` (< 50 tokens).
 
