@@ -202,10 +202,16 @@ Autonomously manage the complete development workflow from task pickup to PR cre
    - If clear criteria exist: proceed
 4. **MANDATORY: Create feature branch** (before ANY code work):
    ```bash
-   git checkout main && git pull
+   # BASE_BRANCH was resolved in Phase 0 (step 5a.1) — default "main", or
+   # the value of --base-branch <name> when the /autonomous loop stacks
+   # iter N+1 on iter N's branch. Iter 1 of an autonomous run, and every
+   # standalone /supervisor invocation, resolves to "main".
+   BASE_BRANCH="${BASE_BRANCH:-main}"
+   git fetch origin "$BASE_BRANCH"
+   git checkout "$BASE_BRANCH" && git pull origin "$BASE_BRANCH"
    git checkout -b feature/{task_id}-{short-desc}
    ```
-   **HARD RULE:** The Supervisor MUST NOT proceed to Phase 2 without a confirmed feature branch.
+   **HARD RULE:** The Supervisor MUST NOT proceed to Phase 2 without a confirmed feature branch. **The branch's parent commit MUST be the tip of `$BASE_BRANCH`** — Phase 4 self-verify (step 6.5) will compare the PR's `baseRefName` against `$BASE_BRANCH` and fall through to Phase 4.5 cleanup on mismatch. If `$BASE_BRANCH` is not honored here, the stacked-iteration feature is silently broken: the PR opens with the right `--base` name but the branch ancestry comes from `main`, producing a nonsensical diff at review time even though Phase 4.5's Code Reviewer + Rubric Grader faithfully honor the DIFF-SCOPE OVERRIDE.
 5. Update state via Context-Keeper:
    ```
    Context-Keeper(operation: set_task, task: {title, criteria})
@@ -785,9 +791,13 @@ else:
    ```bash
    cp .supervisor/state.md ".supervisor/history/$(date +%Y-%m-%d)-{task_id}.md"
    ```
-3. Return to main branch:
+3. Return to the base branch (the one Phase 1 ACQUIRE branched from):
    ```bash
-   git checkout main
+   # Honor BASE_BRANCH from Phase 0 (default "main"). When /autonomous
+   # passed --base-branch <iter-N branch> for stacking, returning to
+   # that branch keeps the next autonomous iteration's checkout
+   # consistent with what Phase 1 will re-resolve.
+   git checkout "${BASE_BRANCH:-main}"
    ```
 4. Check for more tasks:
    - Ask user if more tasks to work on

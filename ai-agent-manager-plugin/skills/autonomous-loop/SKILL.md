@@ -184,7 +184,23 @@ Field types: `_v1_note: string` (advisory marker — see above); `mode: "single"
 
 ## EXECUTE (per iteration)
 
-1. Reference the loaded `commands/supervisor.md` workflow. Invoke it inline on the main thread, passing `job: <current_brief_path>`.
+1. Reference the loaded `commands/supervisor.md` workflow. Invoke it inline on the main thread, passing `job: <current_brief_path>` plus the **stacked-mode flag passthrough** described below.
+
+   **`--base-branch` passthrough (v14.0.0 stacked-mode belt-and-suspenders):** when this iteration is iter N+1 of a stacked-mode multi-iter run (i.e., `iteration > 1` AND `--no-stacked-branches` is NOT active), the loop MUST pass `--base-branch "$expected_base"` to Supervisor on top of the `job:` argument:
+
+   ```text
+   expected_base = iterations[-2].branch   # parent iter's branch — same value EVALUATE's PR-base verification uses
+   /supervisor job: <current_brief_path> --base-branch "$expected_base"
+   ```
+
+   The brief is ALSO expected to carry a `Base Branch:` field under `## Configuration` (the stacked-mode refined-requirement template in EVALUATE writes it; see "Refined requirement (stacked mode)" below). The CLI flag is the **authoritative source** — Supervisor's Phase 0 reads `--base-branch` first; the brief field is a secondary anchor that Plan Reviewer validates for consistency.
+
+   **Why both:** if Launch Pad's inline directive is ignored and the brief is saved without `Base Branch:`, the CLI flag still wins. If the CLI flag is somehow stripped (e.g., a future refactor that re-parses argv), the brief field is the fallback. The two paths must agree at Plan Review time, or Plan Reviewer Criterion 13 will FAIL (v14.0.0+).
+
+   **`--no-stacked-branches` mode and iter 1:** do NOT pass `--base-branch`. Supervisor's Phase 0 defaults to `main` when the flag is absent, which is the correct behavior for both cases. Iter 1 of every autonomous run is unstacked by definition (no parent iter exists).
+
+   **`--non-interactive-fallback` mode:** also pass `--non-interactive` to Supervisor so its Phase 4 gh-failure path and any AskUserQuestion gates fail closed consistently with the loop's own non-interactive policy. Without this, the loop is fail-closed at gates it owns but Supervisor's Phase 4 retry-loop AskUserQuestion is still interactive.
+
 2. Supervisor runs its existing 7-phase workflow inline (orchestrator → execute-manager → worker → code-reviewer → Phase 4.5 self-heal → Rubric Grader). Adjudication 4-option AskUserQuestion (when outputs_gap triggers it) bubbles to the user in-session per existing FAILURE_ESCALATION; the autonomous loop never auto-picks.
 3. Supervisor moves the job through `pending/ → in-progress/ → done/ or failed/` per its existing lifecycle. The autonomous loop never touches the job lifecycle.
 4. Capture the emitted `SUPERVISOR_RESULT` block (the last one in the transcript per `RESULT_SCHEMAS.md` §"SUPERVISOR_RESULT" emission-cadence note) and record relevant fields into state.json's `iterations[]` array: `n`, `brief_path`, `supervisor_status`, `pr_url` (when present), `rubric_score`, `branch` (read directly from the `SUPERVISOR_RESULT.branch` field — a required v12.2-schema string), `summary`, `error` (when failed), `heal_decision`, `escalation_reason` (when completed_with_escalation). The `branch` field is what the merge-verification step (Signal 1 in EVALUATE) resolves to a SHA via `git rev-parse`.
@@ -312,9 +328,31 @@ Main-thread `AskUserQuestion` then fires. The prompt branches on stacked vs non-
 
 **Non-interactive fallback:** when `--non-interactive-fallback` is set AND no TTY, the gate does NOT call AskUserQuestion. The loop exits with `status: aborted, status_reason: "rubric_gate_closed_non_interactive"`. The fail-closed policy is intentional — silently picking `continue` would be unsafe in CI, and silently picking `stop` would silently degrade multi-iter to single-iter.
 
-**Stacked mode — `continue-to-next-iteration` (no merge verification needed):** iter N+1's branch will be created from `iterations[N].branch` at the start of EXECUTE in the next iteration. No `gh pr view` merge check. Skip directly to refined-requirement creation (see below).
+**Stacked mode — `continue-to-next-iteration` (no merge verification needed):** iter N+1's branch will be created from `iterations[N].branch` at the start of EXECUTE in the next iteration. No `gh pr view` merge check. Use the **stacked-mode refined-requirement template** (below) — it differs from the merge-and-continue template because it must tell Launch Pad: (a) the parent iter's PR is unmerged and stacked, (b) the new brief must carry `Base Branch: <iter N's branch>` in its `## Configuration` block so Plan Reviewer and Supervisor agree on the stacking parent, and (c) re-discovery should compare against `iterations[N].branch` (not the default branch) when scoping the next brief.
 
-**`--no-stacked-branches` mode — `merge-and-continue` (verified):** the loop verifies the merge before re-planning, identical to v13 behavior.
+**Refined requirement (stacked mode) — write this file at `.supervisor/requirements/{session_id}-iter{N+1}.md`:**
+
+```
+{session_id}-iter{N+1}.md
+---
+<original requirement body, including `## Outcomes Rubric` verbatim>
+
+---
+
+## Iteration Note (autonomous loop, stacked-mode auto-generated <ISO timestamp>)
+
+Prior iteration {N} scored **{N/M}** on the Outcomes Rubric. PR #{X} (`<pr_url>`) is **unmerged** and is the stacking parent for this iteration — iteration {N+1}'s feature branch MUST be created from `iterations[N].branch` (`<iter_N_branch_name>`), NOT from `main`.
+
+**Inline directive to Launch Pad (mandatory for this iteration):**
+- The saved brief's `## Configuration` block MUST contain the line `Base Branch: <iter_N_branch_name>` verbatim. Plan Reviewer Criterion 13 will FAIL the brief if this is missing or refers to a branch that does not locally resolve.
+- Re-discovery (Phase 1) MUST compare the current state of `<iter_N_branch_name>` against the rubric (NOT against `main` / `<default_branch>`) when scoping remaining work. Iteration {N}'s changes are present on `<iter_N_branch_name>` but NOT on `main`.
+- The full rubric is preserved above; this iteration must satisfy all items, including any not satisfied by iteration {N}.
+- Out-of-order merge of stacked PRs corrupts the stack. Reviewers must merge iter 1 first, then iter 2, etc. The AUTONOMOUS_RUN summary's `iterations[]` array preserves the merge order.
+```
+
+The autonomous-loop main thread then also passes `--base-branch "<iter_N_branch_name>"` on the EXECUTE Supervisor invocation (see EXECUTE step 1 — "passthrough is the authoritative source"). If Launch Pad ignores the inline directive and saves a brief without the `Base Branch:` field, the CLI flag still wins; Plan Reviewer Criterion 13 also catches the missing-field case at Phase 5.5.
+
+**`--no-stacked-branches` mode — `merge-and-continue` (verified):** the loop verifies the merge before re-planning, identical to v13 behavior. Use the v13 merge-and-continue refined-requirement template (below).
 
 **If user picks `merge-and-continue`, the loop verifies the merge before re-planning.** The branch name comes from `SUPERVISOR_RESULT.branch` (an existing schema-1 field — see `docs/RESULT_SCHEMAS.md` §"SUPERVISOR_RESULT" for the field list); it was captured into `iterations[N].branch` during EXECUTE. The SHA is resolved from that branch name via `git rev-parse` on the **local** ref (not `origin/<branch>`, because we want the SHA the user pushed and we don't want a stale remote ref to hide the real tip):
 
