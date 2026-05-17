@@ -700,7 +700,7 @@ AUTONOMOUS_RUN:
   schema_version: 2                    # integer, required — v2 in v14.0.0+ (v1 emissions still accepted; see transition note above)
   session_id: string                   # required — "auto-{YYYY-MM-DD}-{HHMMSS}". v1 second-precision is sufficient under the single-session assumption; v2 may append a random suffix (e.g., "-{4hex}") to harden against same-second collisions when concurrent sessions are supported.
   requirement_path: string             # required — path to the requirement file under .supervisor/requirements/
-  mode: enum [single, multi]           # required — single-iteration (default) or opt-in --allow-multi-iteration
+  mode: enum [single, multi]           # required — multi-iteration is the v14 default; single requires --single-iteration (or --max-iterations 1)
   allow_multi_iteration: boolean       # required — true iff --allow-multi-iteration was passed; redundant with `mode == "multi"` but explicit for readers who index on the flag name
   max_iterations: integer              # required — the cap that was in effect for this run (1..N). For single-iteration runs (mode == "single"), this field MUST be 1 — the implicit cap. For multi-iteration runs, it carries the --max-iterations value (default 3). Recording this makes runs that end with status: paused_max_iterations self-diagnosable: a reader can tell whether the cap was the default 3 or a user-supplied custom value.
   status: enum [done, paused_max_iterations, aborted, failed]  # required — autonomous-layer status
@@ -896,7 +896,7 @@ AUTONOMOUS_RUN:
   session_id: auto-2026-05-16-090000
   requirement_path: .supervisor/requirements/auto-2026-05-16-090000-ci-refactor.md
   mode: multi
-  allow_multi_iteration: true
+  allow_multi_iteration: false
   max_iterations: 3
   status: done
   status_reason: "no_rubric_in_non_interactive"
