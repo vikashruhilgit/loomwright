@@ -46,7 +46,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
 - **CLAUDE.md:** Project context and patterns
 - **Git state:** Current branch, working tree status
 - **Resume data:** (optional) State from previous session
-- **Flags:** `--max-workers N`, `--sequential`, `--continue`, `--dry-run`, `job: {path}`, `--skip-self-heal`, `--heal-iterations N` (default 3), `--cheap`
+- **Flags:** `--max-workers N`, `--sequential`, `--continue`, `--dry-run`, `job: {path}`, `--skip-self-heal`, `--heal-iterations N` (default 3), `--cheap`, `--base-branch <name>` (default `main`), `--non-interactive`
 
 ### Outputs
 
@@ -130,6 +130,34 @@ Autonomously manage the complete development workflow from task pickup to PR cre
    ```
    Context-Keeper(operation: initialize, config: {max_workers, mode, cost_profile}, session: {...})
    ```
+
+5a. **Phase 0 (NEW preamble) — base-branch + non-interactive setup (v14.0.0):**
+
+   This preamble runs on **every** Phase 0 entry — both fresh start and `--continue` resume. The two `clear_flag` calls implement the **read-on-start, clear-on-start invariant** (see `skills/state-management/SKILL.md` §"Phase Flags") for crash-recovery flags: any pre-existing flag left over from a crashed prior session is cleared before this session can act on it.
+
+   1. Parse `--base-branch <name>` from argv. Default to `main` if absent. Record as `BASE_BRANCH` in session memory (used by Phase 4 FINALIZE PR creation, Phase 4 self-verify, and Phase 4.5 spawn prompts).
+   2. Parse `--non-interactive` from argv. Default to `false` if absent. Record as `NON_INTERACTIVE` in session memory.
+   3. **W-NEW-14 mitigation — clear any stale `base_mismatch_detected` flag from a crashed prior session before this session can act on it:**
+      ```
+      Context-Keeper(operation: clear_flag, key: "base_mismatch_detected")
+      ```
+   4. **W-NEW-15 mitigation — autonomous-loop's session-scoped `non_interactive` flag is consumed read-once at every Phase 0; standalone `/supervisor` must treat the terminal as interactive:**
+      ```
+      Context-Keeper(operation: clear_flag, key: "non_interactive")
+      ```
+   5. **If `NON_INTERACTIVE == true`, re-arm the flag for this session** (so Phase 4 FINALIZE / Phase 4.5 can re-read it after a context-summarization round-trip — W-NEW-10 LLM-recall residual mitigation):
+      ```
+      Context-Keeper(operation: set_flag, key: "non_interactive",
+                     value: {set_at: "<ISO 8601>", source: "supervisor_flag"})
+      ```
+      When `NON_INTERACTIVE == false` the flag stays cleared.
+   6. **Echo the resolved values prominently** (placed AFTER environment detection, BEFORE the Status output, so later phases can re-derive these values via LLM recall even if scratchpad state is summarized away):
+      ```markdown
+      ### Session Configuration (echoed for cross-phase recall)
+      - **BASE_BRANCH:** {BASE_BRANCH value or "main"}
+      - **NON_INTERACTIVE:** {true or false}
+      ```
+
 6. Check for job file:
    - If `job:` parameter provided: read brief from path
    - If no `job:` but `.supervisor/jobs/pending/` has files < 24h old: ask user if they want to use one
@@ -174,10 +202,16 @@ Autonomously manage the complete development workflow from task pickup to PR cre
    - If clear criteria exist: proceed
 4. **MANDATORY: Create feature branch** (before ANY code work):
    ```bash
-   git checkout main && git pull
+   # BASE_BRANCH was resolved in Phase 0 (step 5a.1) — default "main", or
+   # the value of --base-branch <name> when the /autonomous loop stacks
+   # iter N+1 on iter N's branch. Iter 1 of an autonomous run, and every
+   # standalone /supervisor invocation, resolves to "main".
+   BASE_BRANCH="${BASE_BRANCH:-main}"
+   git fetch origin "$BASE_BRANCH"
+   git checkout "$BASE_BRANCH" && git pull origin "$BASE_BRANCH"
    git checkout -b feature/{task_id}-{short-desc}
    ```
-   **HARD RULE:** The Supervisor MUST NOT proceed to Phase 2 without a confirmed feature branch.
+   **HARD RULE:** The Supervisor MUST NOT proceed to Phase 2 without a confirmed feature branch. **The branch's parent commit MUST be the tip of `$BASE_BRANCH`** — Phase 4 self-verify (step 6.5) will compare the PR's `baseRefName` against `$BASE_BRANCH` and fall through to Phase 4.5 cleanup on mismatch. If `$BASE_BRANCH` is not honored here, the stacked-iteration feature is silently broken: the PR opens with the right `--base` name but the branch ancestry comes from `main`, producing a nonsensical diff at review time even though Phase 4.5's Code Reviewer + Rubric Grader faithfully honor the DIFF-SCOPE OVERRIDE.
 5. Update state via Context-Keeper:
    ```
    Context-Keeper(operation: set_task, task: {title, criteria})
@@ -397,11 +431,45 @@ When the Execute Manager surfaces an `EXECUTE_CHECKPOINT` with `adjudication_req
    - Write conventional commit message with task linking
    - Format: `feat|fix|refactor({scope}): {message}\n\nCloses {task_id}`
 
-6. **Push and create PR:**
+6. **Push and create PR (against `BASE_BRANCH` — defaults to `main`):**
    ```bash
    git push -u origin feature/{task_id}-{desc}
-   gh pr create --title "{task_id}: {title}" --body "{PR body}"
+   gh pr create --base "$BASE_BRANCH" --title "{task_id}: {title}" --body "{PR body}"
    ```
+   `BASE_BRANCH` is the value resolved at Phase 0 (Phase 0 step 5a) from the `--base-branch` flag, defaulting to `main`. The autonomous-loop multi-iteration mode passes a sibling feature branch (e.g., `feature/v14-iter1`) so iteration N+1 stacks on iteration N's PR.
+
+6.5. **Phase 4 FINALIZE self-verify — PR base branch (v14.0.0, AC-7 + AC-14):**
+
+   Immediately after `gh pr create` returns successfully, before declaring Phase 4 complete, verify the created PR's actual base matches `BASE_BRANCH`:
+
+   ```bash
+   ACTUAL_BASE=$(gh pr view "$PR_URL" --json baseRefName --jq .baseRefName)
+   ```
+
+   **Retry policy (AC-14):**
+   - **First `gh pr view` non-zero exit** → `sleep 5; retry once`.
+   - **Second non-zero exit AND `NON_INTERACTIVE == true`** (read live from `Context-Keeper(operation: get_flag, key: "non_interactive")` — do NOT trust in-context state alone, W-NEW-10):
+     ```
+     Context-Keeper(operation: set_flag, key: "base_mismatch_detected",
+                    value: {expected: "$BASE_BRANCH", actual: null, pr_url: "$PR_URL",
+                            detected_at: "<ISO>", reason: "gh_unavailable_non_interactive"})
+     ```
+     Fall through to Phase 4.5 — its cleanup block owns the single `SUPERVISOR_RESULT` emission.
+   - **Second non-zero exit AND `NON_INTERACTIVE == false`** → `AskUserQuestion` with exactly three options:
+     1. **retry** — run `gh pr view --json baseRefName` once more; on success continue verification, on failure treat as user-aborted (option 3).
+     2. **skip-verify-once** — record `record_decision(phase: FINALIZE, decision: "user_skipped_base_verify", rationale: "gh repeatedly unavailable")` and continue as if verified (`ACTUAL_BASE := $BASE_BRANCH`).
+     3. **abort** — `set_flag base_mismatch_detected value: {expected: "$BASE_BRANCH", actual: null, pr_url: "$PR_URL", detected_at: "<ISO>", reason: "user_aborted_gh_retry"}` and fall through to Phase 4.5 cleanup.
+
+   **Mismatch detection (after `gh pr view` succeeds):**
+   - If `ACTUAL_BASE == BASE_BRANCH`: verification passed, continue to step 7.
+   - If `ACTUAL_BASE != BASE_BRANCH`: this is a real base-branch mismatch (rare; most likely cause is a misconfigured remote or a race between `gh pr create` and a downstream automation). Set the flag — but **do NOT emit `SUPERVISOR_RESULT` here.** Fall through to Phase 4.5 which owns the single emission per task (W-NEW-14):
+     ```
+     Context-Keeper(operation: set_flag, key: "base_mismatch_detected",
+                    value: {expected: "$BASE_BRANCH", actual: "$ACTUAL_BASE", pr_url: "$PR_URL",
+                            detected_at: "<ISO>", reason: "phase4_self_verify"})
+     ```
+
+   **Invariant:** Phase 4 sets the flag at most once per session and never emits `SUPERVISOR_RESULT` directly on mismatch. The single emission point for the failure path is Phase 4.5's base-mismatch cleanup block (step 5 below).
 
 7. **Exit FINALIZE.** Task is NOT yet marked completed, and the job file is NOT yet moved. Those actions happen in Phase 4.5 SELF_HEAL's completion tail so that self-heal outcomes are captured in the completion record.
 
@@ -463,7 +531,61 @@ Generated by Supervisor Agent v4
    - If count ≥ 3: abort the loop, mark task `completed_with_escalation` with reason `"self_heal_resume_thrash"`, skip to completion tail with `heal_loop_ran=true, heal_decision=ESCALATED` (and `phase45_review_invoked=true` since prior runs reached the reviewer)
 4. Check `--skip-self-heal` flag: if set, record `record_decision(phase: SELF_HEAL, decision: "loop_skipped", rationale: "--skip-self-heal flag")` and jump to completion tail with `heal_loop_ran=false`.
 
-**Review-and-fix loop (runs only when flag is not set and thrash guard passed):**
+5. **Phase 4.5 base-mismatch cleanup (v14.0.0, AC-7 — short-circuits the review-and-fix loop):**
+
+   Before running the heal loop, check whether Phase 4 detected a base-branch mismatch:
+
+   ```
+   mismatch = Context-Keeper(operation: get_flag, key: "base_mismatch_detected")
+   ```
+
+   If `mismatch` is non-null (Phase 4 set the flag — either real mismatch or `gh pr view` failure under `--non-interactive`):
+
+   1. **Close the orphan PR best-effort** (do not abort on failure — the PR may already be closed, or `gh` may still be unavailable):
+      ```bash
+      gh pr close "$PR_URL" --comment "Automatically closed by /autonomous loop: base branch mismatch detected — expected ${mismatch.expected}, found ${mismatch.actual}. See SUPERVISOR_RESULT for details. Reason: ${mismatch.reason}." || true
+      ```
+      Capture the exit code:
+      - `0` → `PR_STATE="closed_by_loop"`
+      - non-zero → `PR_STATE="close_attempt_failed"`
+   2. **Move brief to `failed/`:** if `job:` parameter was used, move the brief from `.supervisor/jobs/in-progress/` → `.supervisor/jobs/failed/` and append an `## Outcome` block with `**Status:** failed`, `**Reason:** base_branch_mismatch`, `**Expected:** ${mismatch.expected}`, `**Actual:** ${mismatch.actual}`, `**PR state:** ${PR_STATE}`.
+   3. **Record the decision:** `record_decision(phase: SELF_HEAL, decision: "base_mismatch_cleanup", rationale: "expected=${mismatch.expected}, actual=${mismatch.actual}, pr_state=${PR_STATE}")`.
+   4. **Update state:** `Context-Keeper(operation: update_phase, new_phase: LOOP, completed_phases: [..., SELF_HEAL])` with task status `failed`.
+   5. **Clear the flag (REQUIRED before returning, even on `gh pr close` failure — read-on-start-clear-on-start invariant):**
+      ```
+      Context-Keeper(operation: clear_flag, key: "base_mismatch_detected")
+      ```
+   6. **Reset resume counter:** `Context-Keeper(operation: record_self_heal_resume, increment: false)`.
+   7. **Emit single `SUPERVISOR_RESULT` block** with:
+      ```yaml
+      SUPERVISOR_RESULT:
+        schema_version: 1
+        task_id: {task_id}
+        status: failed
+        pr_url: {PR_URL}
+        branch: {feature_branch}
+        branch_base: {mismatch.expected}    # the BASE_BRANCH we expected
+        subtasks_completed: {N}
+        subtasks_failed: 0
+        heal_loop_ran: false
+        heal_iterations: null
+        heal_decision: null
+        heal_fixable_issues_fixed: 0
+        heal_remaining_issues: 0
+        error: "base_branch_mismatch: expected ${mismatch.expected}, found ${mismatch.actual} (reason: ${mismatch.reason})"
+        pr_state: {PR_STATE}                # "closed_by_loop" | "close_attempt_failed"
+        summary: "Phase 4 self-verify detected PR base-branch mismatch; Phase 4.5 closed PR best-effort and moved job to failed/. No code changes were merged."
+        cost_profile: {default|cheap|null}
+        rubric_score: null
+      ```
+   8. **Return** from Phase 4.5 — do NOT run the review-and-fix loop, do NOT run the standard completion tail. This is a single exit point that emits exactly one `SUPERVISOR_RESULT`.
+
+   **Field semantics:**
+   - `branch_base` is the BASE_BRANCH we expected the PR to target. It is included so the autonomous-loop EVALUATE phase can detect the failure mode without re-parsing `error`.
+   - `pr_state` is a new optional field on `SUPERVISOR_RESULT` (v14.0.0 — see schema update in S5). Values: `"closed_by_loop"` | `"close_attempt_failed"` | absent (when no PR action was taken).
+   - On absent `gh` (`actual: null`), report `actual` as `null` in the error message and rely on the `reason` field to disambiguate (`gh_unavailable_non_interactive` vs `user_aborted_gh_retry`).
+
+**Review-and-fix loop (runs only when flag is not set, thrash guard passed, AND no base-mismatch cleanup triggered):**
 ```
 heal_iterations = 0
 heal_fixable_issues_fixed = 0
@@ -472,8 +594,12 @@ max_heal_iterations = {--heal-iterations value, default 3}
 while heal_iterations < max_heal_iterations:
   review = Task(
     subagent_type: "ai-agent-manager-plugin:code-reviewer",
-    prompt: "Review the integrated feature branch holistically.
-             Target: diff between origin/main and {feature_branch}
+    prompt: "**DIFF-SCOPE OVERRIDE (v14.0.0 stacked-iteration support):** if BASE_BRANCH is supplied below and differs from \"main\", you MUST compute the diff scope as `git diff $BASE_BRANCH...HEAD` and treat that as the entirety of your review scope. Do NOT fall back to `git diff origin/main...HEAD`, do NOT auto-expand to a consistency audit beyond this scope, and do NOT walk the file tree outside the changed files. This is a stacked-branch iteration N+1 review where the parent branch (BASE_BRANCH) already passed its own Phase 4.5 — only this iteration's incremental work is in scope. This directive supersedes the Code Reviewer's standard consistency_audit auto-expand behavior for stacked iterations.
+
+             BASE_BRANCH={BASE_BRANCH value or \"main\"}
+
+             Review the integrated feature branch holistically.
+             Target: diff between BASE_BRANCH (defaults to origin/main when BASE_BRANCH==main) and {feature_branch}
              Focus: integration issues, cross-cutting concerns, consistency across files.
              Previous per-subtask reviews all passed — look for issues only visible in the integrated view.
              Schema: CODE_REVIEW_RESULT v3 (review_mode: diff_review, category field: new/pre_existing/nit/drift).",
@@ -552,13 +678,17 @@ if heal_decision == PASS and rubric_bullets:
   # rely on it as a runtime gate.
   grade = Task(
     description: "Grade PR diff against Outcomes Rubric",
-    prompt: "Feature branch: {feature_branch}
+    prompt: "**DIFF-SCOPE OVERRIDE (v14.0.0 stacked-iteration support):** if BASE_BRANCH is supplied below and differs from \"main\", you MUST compute the diff scope as `git diff $BASE_BRANCH...HEAD` (or `git diff $BASE_BRANCH...{feature_branch}` if you prefer the explicit form) and treat that as the entirety of your grading scope. Do NOT fall back to `git diff origin/main...{feature_branch}`. This is a stacked-branch iteration N+1 grading where the parent branch (BASE_BRANCH) already passed its own rubric — only this iteration's incremental work should be scored. This directive is mandatory; ignore any other diff scope mentioned later in this prompt that conflicts with it.
+
+      BASE_BRANCH={BASE_BRANCH value or \"main\"}
+
+      Feature branch: {feature_branch}
       PR: {pr_url}
 
       Rubric items (each is a single observable assertion):
       {numbered list of rubric_bullets}
 
-      Run `git diff origin/main...{feature_branch}` (read-only) and score every item.
+      Run `git diff $BASE_BRANCH...{feature_branch}` (read-only; when BASE_BRANCH==main this is `git diff origin/main...{feature_branch}`) and score every item.
       Emit per-item lines + one `rubric_score: N/M` line. See your agent prompt for
       the exact output contract.",
     subagent_type: "ai-agent-manager-plugin:rubric-grader"
@@ -661,9 +791,13 @@ else:
    ```bash
    cp .supervisor/state.md ".supervisor/history/$(date +%Y-%m-%d)-{task_id}.md"
    ```
-3. Return to main branch:
+3. Return to the base branch (the one Phase 1 ACQUIRE branched from):
    ```bash
-   git checkout main
+   # Honor BASE_BRANCH from Phase 0 (default "main"). When /autonomous
+   # passed --base-branch <iter-N branch> for stacking, returning to
+   # that branch keeps the next autonomous iteration's checkout
+   # consistent with what Phase 1 will re-resolve.
+   git checkout "${BASE_BRANCH:-main}"
    ```
 4. Check for more tasks:
    - Ask user if more tasks to work on
@@ -736,6 +870,8 @@ Priority order for loading state:
 | `--dry-run` | false | Preview workflow without executing |
 | `job: {path}` | auto | Load pre-computed plan from Launch Pad |
 | `--cheap` | false | Cost-optimized profile: spawns orchestrator, execute-manager, workers, code-reviewer, and Phase 4.5 fix tasks with `model: "sonnet"` override. Default `inherit` unchanged when absent. Caution: on Haiku sessions, listed roles upgrade to Sonnet. |
+| `--base-branch <name>` | `main` | Override base branch for FINALIZE PR creation. Used by the `/autonomous` loop multi-iteration mode to stack iteration N+1 on iteration N's feature branch (v14.0.0). Phase 4 self-verifies the created PR's `baseRefName` matches this value; Phase 4.5 cleans up on mismatch. |
+| `--non-interactive` | false | Suppress `AskUserQuestion` fallbacks. On `gh` failures and ambiguous gates, fail closed with diagnostic instead of prompting. Set automatically by the `/autonomous` loop; rarely passed by humans. Recorded as a Phase Flag at Phase 0 so later phases can re-read it after context loss (W-NEW-10 mitigation). |
 
 ---
 
@@ -751,6 +887,8 @@ Priority order for loading state:
 /supervisor --dry-run                          # Preview only
 /supervisor job: .supervisor/jobs/2026-02-08-jwt-auth.md   # Execute from Launch Pad brief
 /supervisor --cheap                            # Cost-optimized: orchestrator, execute-manager, workers, code-reviewer, fix tasks run on Sonnet
+/supervisor --base-branch feature/v14-iter1    # Stack PR on a non-main base (v14 autonomous-loop multi-iter)
+/supervisor --non-interactive                  # Fail closed instead of prompting on gh/adjudication gates
 ```
 
 ---
@@ -1088,6 +1226,8 @@ SUPERVISOR_RESULT:
   summary: string
   cost_profile: enum [default, cheap] | null  # optional — null when flag not passed (equivalent to default)
   rubric_score: string | null               # optional (v12.2.0+) — "N/M" where N is non-negative (>= 0; "0/M" is the legitimate all-fail case), M is positive (>= 1), M >= N; null when no Outcomes Rubric in brief, heal_decision != PASS, or grader parse failed
+  branch_base: string | null                # optional (v14.0.0+) — BASE_BRANCH the PR was targeting (defaults to "main" when --base-branch not passed). Always set when status=failed with error="base_branch_mismatch:...".
+  pr_state: string | null                   # optional (v14.0.0+) — "closed_by_loop" | "close_attempt_failed" | null. Populated only by Phase 4.5 base-mismatch cleanup; null on all other exit paths.
 ```
 
 **Status mapping (machine-readable):**

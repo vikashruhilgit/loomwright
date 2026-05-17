@@ -1,5 +1,5 @@
 ---
-description: Chain Launch Pad → Supervisor for a single requirement, with optional multi-iteration re-planning gated on existing SUPERVISOR_RESULT signals
+description: Continuous autonomous mode — chain Launch Pad → Supervisor and loop by default with stacked PRs; rubric / Option-C signals drive re-planning, gate firings can ping a webhook
 ---
 
 > **Execute this workflow inline as the main thread.** Do not delegate to any `autonomous-*-runner` via the Agent tool — `/autonomous` runs the entire Launch Pad and Supervisor workflows inline, and both of those require Task descendants (`plan-reviewer`, `orchestrator`, `execute-manager`, `code-reviewer`, etc.). An extra delegation layer would hit the documented subagent-spawn trap and the inner workflows would silently abort. The `/autonomous` command is a thin orchestration shell that references Launch Pad and Supervisor's inline workflows; it does NOT introduce a new delegated agent.
@@ -8,28 +8,38 @@ description: Chain Launch Pad → Supervisor for a single requirement, with opti
 > - Launch Pad **Phase 6**: save / refine / discard the brief
 > - Launch Pad **NO-GO** or **Plan Review FAIL × 3** (rare): override / revise / abort
 > - Supervisor **adjudication 4-option** (if outputs_gap triggers it during EXECUTE): re-queue / remediate / exit-to-Launch-Pad / update-consumer
-> - **Autonomous rubric gate** (multi-iteration mode only, after rubric N<M): merge-and-continue / stop-here / force-continue
+> - **Autonomous rubric gate** (multi-iteration mode, after rubric N<M): continue-to-next-iteration / stop-here / force-continue. In **stacked-branch mode (the v14 default)** the gate is non-blocking on the prior PR's merge status — iter N+1 branches from iter N's feature branch directly, so user merge is not required between iterations.
+> - **No-rubric gate** (multi-iteration, when the brief had no `## Outcomes Rubric`): continue / stop. New in v14.0.0 — multi-iter without a rubric used to be a degenerate single-shot; the gate now lets you decide explicitly.
 >
-> You must be at the terminal to answer these. The "autonomous" value is command chaining + automatic re-plan on two specific signals (defined below), not removing human gates.
+> You must be at the terminal to answer these unless you pass `--non-interactive-fallback` (required for CI / non-TTY environments — gates fail closed instead of prompting). Pass `--notify` to also POST a gate-event payload to the webhook configured via `AI_AGENT_MANAGER_WEBHOOK_URL` so an out-of-band notifier (Slack relay, push notifier, etc.) can ping you when a gate fires.
+>
+> The "autonomous" value is command chaining + automatic re-plan on the rubric / Option-C signals + (v14) stacked PRs by default, not removing human gates.
 
 # Command: /autonomous
 
 ## Purpose
 
-`/autonomous` chains Launch Pad → Supervisor for one requirement so you do not have to manually run `/launch-pad "..."` then `/supervisor job: <path>`. In the default **single-iteration mode**, the command runs both workflows in sequence and exits. In opt-in **multi-iteration mode** (`--allow-multi-iteration`), the loop additionally evaluates `SUPERVISOR_RESULT` and may re-plan from a refined requirement when one of two specific signals fires.
+`/autonomous` chains Launch Pad → Supervisor for one requirement so you do not have to manually run `/launch-pad "..."` then `/supervisor job: <path>`. **In v14.0.0 the default flipped to multi-iteration mode** (cap 10, default 3), with stacked branches: iter N+1's feature branch is created from iter N's feature branch directly, not from `main`, so the loop produces a stack of PRs that can be reviewed and merged in order without the prior intermediate-merge wait. Anyone scripting against v13's single-PR semantics should pass `--single-iteration` to preserve that behavior.
 
-This is a v13.0.0 addition. It introduces no new agent, no new hook, no behavioral change to any existing agent / hook / script / skill / command, and no change to the field types or validation rules of any existing schema. New artifacts only: this slash command, the `autonomous-loop` skill, and one additive `AUTONOMOUS_RUN` entry in `RESULT_SCHEMAS.md` (autonomous-layer-only, no hook validation). Metadata/docs surfaces are updated to reflect counts and the new entries.
+INIT prints a one-line migration hint when the v14 default path is taken (i.e., neither `--single-iteration` nor the deprecated `--allow-multi-iteration` is supplied) so existing scripts notice the default change.
+
+EVALUATE re-plans on the same two `SUPERVISOR_RESULT` signals as v13: `completed` with `rubric_score N/M, N<M` (Signal 1) and `failed` with `inter_subtask_gap` anchored by `.supervisor/jobs/failed/{basename(current_brief_path)}` (Signal 2). What changed in v14 is the branch base and the gate semantics for Signal 1 — see "EVALUATE PR-base verification" and "Signal 1 stacked rubric gate" in `skills/autonomous-loop/SKILL.md`.
 
 ## Usage
 
 ```bash
-/autonomous "<requirement string>"                                       # single-iteration mode
-/autonomous --requirement <path/to/file.md>                              # single-iteration mode, file-supplied
-/autonomous "<...>" --allow-multi-iteration                              # multi-iteration with default max
-/autonomous "<...>" --allow-multi-iteration --max-iterations N           # multi-iteration capped at N (default N=3)
+/autonomous "<requirement string>"                                       # v14 default — multi-iter, stacked branches, max 3 iterations
+/autonomous "<...>" --max-iterations 5                                   # multi-iter, cap 5 (hard cap: 10)
+/autonomous "<...>" --single-iteration                                   # v13-compat one-PR behavior
+/autonomous "<...>" --no-stacked-branches                                # multi-iter, but each iteration's branch from main (v13-style merge cadence)
+/autonomous "<...>" --notify                                             # POST gate-event payloads to AI_AGENT_MANAGER_WEBHOOK_URL
+/autonomous "<...>" --non-interactive-fallback                           # required for CI / non-TTY runs (gates fail closed, no AskUserQuestion)
+/autonomous --requirement <path>                                         # use existing requirement file
 ```
 
-> **Cost-profile note:** `--cheap` is **not forwarded** in v13. If you need the Sonnet cost profile, run `/launch-pad` and `/supervisor --cheap` manually (see Parameters → `--cheap interaction note` for details). The autonomous loop is genuinely expensive — each iteration is a full Launch Pad + full Supervisor run.
+> **CI / non-interactive note:** if `[ ! -t 0 ]` OR `$CI` is set AND multi-iter mode is active AND `--non-interactive-fallback` is NOT passed, INIT aborts immediately with `status_reason: "non_interactive_without_fallback"` and a verbose error naming the trigger and listing two ready-to-paste recovery commands. This is the only escape from CI hangs in v14 (gate-timeout is deferred — see "Not shipped in v14").
+
+> **Cost-profile note:** `--cheap` is **not forwarded** in v14 either. If you need the Sonnet cost profile, run `/launch-pad` and `/supervisor --cheap` manually (see Parameters → `--cheap interaction note` for details). The autonomous loop is genuinely expensive — each iteration is a full Launch Pad + full Supervisor run.
 
 ## Parameters
 
@@ -37,12 +47,19 @@ This is a v13.0.0 addition. It introduces no new agent, no new hook, no behavior
 |-----------|----------|-------------|
 | `"<requirement>"` | One of | Inline requirement string. Loop writes it to `.supervisor/requirements/{session_id}-{slug}.md` (where `session_id` is `auto-{YYYY-MM-DD}-{HHMMSS}` — already date-prefixed, so the path is sortable without a redundant date) with an optional `## Outcomes Rubric` placeholder for the user to fill in. |
 | `--requirement <path>` | One of | Use an existing requirement file. If the file already contains an `## Outcomes Rubric` section, it is preserved and used by multi-iteration mode. |
-| `--allow-multi-iteration` | No | Enable multi-iteration mode. Default is single-iteration (no looping). |
-| `--max-iterations N` | No | Maximum iterations in multi-iteration mode. Integer `N >= 1`; default `N=3`. **Ignored in single-iteration mode (the default)** — passing `--max-iterations` without also passing `--allow-multi-iteration` has no effect; multi-iteration must be explicitly enabled. The loop never silently upgrades single-iteration to multi-iteration based on this flag alone. **Edge case `N=1`:** valid but degenerate — the loop runs one iteration with full EVALUATE / rubric-gate reporting; if Signal 1 or Signal 2 fires the cap-check exits immediately with `status: paused_max_iterations, status_reason: "max_iterations_reached"`. Useful when you want multi-iteration's summary fields (rubric_final_score, escalations_seen) but not actual re-iteration. **Invalid `N=0` or `N<0`** rejected at INIT with `status: aborted` and a clear error message. |
+| `--single-iteration` | No | Disable multi-iter mode; run Launch Pad + Supervisor once and exit (v13-compat behavior). Equivalent to v13's "no `--allow-multi-iteration` passed" default. |
+| `--no-stacked-branches` | No | Iter N+1 branches from `main` instead of `iterations[N].branch`. Disables stacked-PR mode; each iteration produces an independent PR off `main`. Pair with the Signal-1 rubric gate's `merge-and-continue` option for the v13 cadence. |
+| `--notify` | No | Enable webhook gate-event notifications. Requires the `AI_AGENT_MANAGER_WEBHOOK_URL` env var. Fire-and-forget POST via `${CLAUDE_PLUGIN_ROOT}/scripts/send-webhook.sh --event-type gate ...`; the AskUserQuestion fires immediately after backgrounding the POST (no wait on delivery). Silently no-op if the env var is unset. |
+| `--non-interactive-fallback` | No | Permit multi-iter execution in non-interactive (CI / stdin-not-tty) environments. Gates fail closed (abort with a clear status_reason) instead of firing AskUserQuestion. Required when running unattended; the INIT-time non-interactive check refuses to start multi-iter without it. **Auto-forwards `--non-interactive` to the inlined `/supervisor`** so Supervisor's Phase 4 `gh` retry path and adjudication gates fail closed consistently — a single `--non-interactive-fallback` is sufficient for CI; no need to also pass `--non-interactive` to `/autonomous` (see `skills/autonomous-loop/SKILL.md` EXECUTE step 1, "Auto-forwarded flags"). |
+| `--max-iterations N` | No | Maximum iterations in multi-iter mode. Integer `1 <= N <= 10`; default `N=3`. **Hard cap: 10** (rationale: stacked-PR review burden becomes unmanageable beyond ~10 PRs in a stack; review velocity is the rate-limiting step, not the loop). `N=0` or `N>10` rejected at INIT with `status: aborted, status_reason: "invalid_max_iterations"`. **Edge case `N=1`:** valid but degenerate — runs one iteration with full EVALUATE / rubric-gate reporting; if Signal 1 or Signal 2 would fire the cap-check exits with `status: paused_max_iterations, status_reason: "max_iterations_reached"`. Equivalent to `--single-iteration` but keeps the multi-iter summary fields populated. |
+| `--allow-multi-iteration` | No | **DEPRECATED in v14.0.0** — multi-iter is now the default. Flag is silently accepted as a no-op when alone (a one-line deprecation warning is logged). Combining with `--single-iteration` aborts at INIT with `status_reason: "conflicting_mode_flags"` and a clear error directing the user to pick one mode. |
 
-**Not in v13.0.0** (each deferred to a future plan with its prerequisite): `--status`, `--continue`, `--abort`, `--stacked-branches`, `--cheap`, `--notify`, `--background`, `--auto-merge`.
+> **`--cheap` interaction note:** Passing `--cheap` to `/autonomous` in v14 has **no effect** — the loop does not forward unknown flags to the inlined `/supervisor` call, and `/supervisor`'s `--cheap` cost-profile (Sonnet overrides for orchestrator / execute-manager / worker / code-reviewer / Phase 4.5 fix tasks) is not wired through here. If you want the cost-optimized profile for a single requirement, run the workflows manually instead: `/launch-pad "..."` then `/supervisor job: <brief-path> --cheap`. A future plan can add `--cheap` passthrough once the cost-profile semantics are clarified for multi-iteration cycles.
 
-> **`--cheap` interaction note:** Passing `--cheap` to `/autonomous` in v1 has **no effect** — the loop does not forward unknown flags to the inlined `/supervisor` call, and `/supervisor`'s `--cheap` cost-profile (Sonnet overrides for orchestrator / execute-manager / worker / code-reviewer / Phase 4.5 fix tasks) is not wired through here. If you want the cost-optimized profile for a single requirement, run the workflows manually instead: `/launch-pad "..."` then `/supervisor job: <brief-path> --cheap`. A future plan can add `--cheap` passthrough once the cost-profile semantics are clarified for multi-iteration cycles.
+### Not shipped in v14.0.0
+
+- **`--gate-timeout-minutes`** — explicitly deferred. CI hangs are prevented only by the INIT-time non-interactive detection (`--non-interactive-fallback`); once a gate fires in an unattended terminal, the only escape is killing the session externally (corrupts state). A wrapper-process timeout is the right shape for this flag and is its own design surface (deferred to v15). Users running unattended MUST pass `--non-interactive-fallback`.
+- **`--status` / `--continue` / `--abort` / `--background` / `--auto-merge`** — still deferred. Resume contract depends on Doc 4's state.json sidecar work; auto-merge needs trusted-PR enforcement that is its own design surface.
 
 > **Quoting paths with spaces:** if the `--requirement <path>` value contains spaces, enclose the whole path in double quotes. Example: `/autonomous --requirement ".supervisor/requirements/My Feature.md"`. Without the quotes the path is split on the first space and the loop will error or read the wrong file.
 
@@ -60,27 +77,44 @@ Read ${CLAUDE_PLUGIN_ROOT}/skills/autonomous-loop/SKILL.md
 
 This guards against prompt drift on three fronts. If Launch Pad, Supervisor, or the autonomous-loop protocol evolves between releases, `/autonomous` picks up the changes automatically because it re-reads them every run.
 
-### Single-Iteration Mode (default)
-
-```
-INIT → PLAN → EXECUTE → DONE
-```
-
-The loop runs Launch Pad inline, then Supervisor inline on the saved brief, then emits an AUTONOMOUS_RUN summary and exits. No re-iteration logic runs.
-
-### Multi-Iteration Mode (`--allow-multi-iteration`)
+### Multi-Iteration Mode (v14.0.0 default)
 
 ```
 INIT → PLAN → EXECUTE → EVALUATE → (loop back to PLAN with refined requirement, OR DONE)
 ```
 
-After Supervisor returns, EVALUATE reads `SUPERVISOR_RESULT` and applies one of three branches:
+INIT emits the v14 migration hint when neither `--single-iteration` nor `--allow-multi-iteration` is passed:
+
+```
+⚠️ v14.0.0 — /autonomous default is now multi-iteration (max_iterations: 3, cap 10). Pass --single-iteration for v13 one-PR behavior.
+```
+
+After Supervisor returns, EVALUATE reads `SUPERVISOR_RESULT` and applies one of these branches:
 
 | `SUPERVISOR_RESULT.status` | Other condition | Loop action |
 |---|---|---|
-| `completed` | `rubric_score` is `N/M` with N<M | Pause for **rubric-gate AskUserQuestion** (merge-and-continue / stop-here / force-continue). On `merge-and-continue`, verify merge via `gh pr view` or local `git merge-base --is-ancestor` before re-planning. |
-| `failed` | `inter_subtask_gap` detected on this iteration's brief | Re-plan immediately (no merge needed; job was abandoned via adjudication Option C). |
-| anything else | — | Terminate the loop. Specifically: `completed + no-rubric / N=M` → done; `completed_with_escalation` → done with escalations_seen; `failed (other)` → failed; `checkpoint` → aborted (no auto-resume in v1). |
+| `completed` | `rubric_score` is `N/M` with N<M | Fire **Signal 1 rubric gate AskUserQuestion**. In **stacked-branch mode (default)** the gate is `continue-to-next-iteration / stop-here / force-continue` — no merge required because iter N+1 branches from iter N's branch directly. In `--no-stacked-branches` mode the gate falls back to v13 semantics (`merge-and-continue / stop-here / force-continue` with `gh pr view` verification). |
+| `completed` | brief had no `## Outcomes Rubric` AND multi-iter is active | Fire **no-rubric gate** (new in v14): `continue / stop`. v13 silently terminated this case; v14 makes the decision explicit because multi-iter without a rubric is the common shape for refactor / cleanup goals. |
+| `failed` | `inter_subtask_gap` detected on this iteration's brief | Re-plan immediately (no merge needed; job was abandoned via adjudication Option C). Same as v13. |
+| `failed` | `pr_url` is null (Supervisor failed before creating PR — merge conflict, env error, etc.) | Skip PR-base verification entirely (AC-15) and fall through to default termination with `status_reason: "supervisor_failed_other"`. |
+| anything else | — | Terminate the loop. Specifically: `completed_with_escalation` → done with escalations_seen; `failed (other)` → failed; `checkpoint` → aborted (no auto-resume in v1). |
+
+### Single-Iteration Mode (`--single-iteration`)
+
+```
+INIT → PLAN → EXECUTE → DONE
+```
+
+v13-compat behavior. The loop runs Launch Pad inline, then Supervisor inline on the saved brief, then emits an AUTONOMOUS_RUN summary and exits. EVALUATE is short-circuited: the very first step of EVALUATE in single-iter mode is `exit with status: done`. Use when scripting against the v13 one-PR contract.
+
+### Stacked-branch behavior (v14 default)
+
+When iter N+1 is reached:
+
+- v13-style (`--no-stacked-branches`): iter N+1's feature branch is created from `main` via `git checkout main && git checkout -b feature/<name>-iter2`. Requires merging iter N's PR first or `--no-stacked-branches`'s explicit out-of-stack semantics (each PR is independent, may conflict).
+- v14 default (stacked): iter N+1's feature branch is created from `iterations[N].branch` via `git checkout <iter N branch> && git checkout -b feature/<name>-iter{N+1}`. The new PR is opened with `--base <iter N branch>` so review proceeds incrementally. The loop verifies the PR's base with `gh pr view <pr_url> --json baseRefName` after Supervisor's Phase 4 (with the AC-14 retry policy on `gh` failure).
+
+Out-of-order merge of a stacked PR can corrupt `main` — the bottom of the stack must merge first. This hazard is documented; the AUTONOMOUS_RUN summary's `iterations[]` array is ordered by `n` (iter 1, iter 2, ...) and that order IS the intended merge order — reviewers must follow it.
 
 The detailed protocol — including the `ls`-diff brief-save detection, the anchor-by-filename Option-C scoping, the merge-verification sequence, and the refined-requirement templates — lives in `ai-agent-manager-plugin/skills/autonomous-loop/SKILL.md`.
 
@@ -155,43 +189,55 @@ Iteration 1: Launch Pad saves a brief; Supervisor's Worker emits `outputs_gap`; 
 
 ```
 ┌───────────────────────────────────────────────────────────────────┐
-│                  AUTONOMOUS LOOP (v13.0.0)                        │
+│              AUTONOMOUS LOOP (v14.0.0 — multi-iter default)       │
 ├───────────────────────────────────────────────────────────────────┤
 │                                                                   │
 │  Step 0: Read commands/launch-pad.md + commands/supervisor.md     │
+│         + skills/autonomous-loop/SKILL.md                         │
+│     │                                                             │
+│     ▼                                                             │
+│  INIT step 0: non-interactive detection (CI / non-TTY)            │
+│         ▶ multi-iter without --non-interactive-fallback ▶ abort   │
+│         ▶ validate --max-iterations 1..10                         │
+│         ▶ handle deprecated --allow-multi-iteration               │
+│         ▶ emit v14 migration hint if default path                 │
 │     │                                                             │
 │     ▼                                                             │
 │  INIT  ▶ write requirement, init .supervisor/autonomous/{sid}/    │
 │     │                                                             │
 │     ▼                                                             │
 │  PLAN  ▶ Launch Pad inline (Phase 6 save AskUserQuestion)         │
-│         ▶ ls-diff detects new brief in pending/                   │
-│         ▶ grep verifies rubric preservation (if applicable)       │
+│         ▶ optional --notify webhook gate POST                     │
 │     │                                                             │
 │     ▼                                                             │
-│  EXECUTE ▶ Supervisor inline (orchestrator / execute-manager /    │
-│            worker / code-reviewer / Phase 4.5 / rubric-grader)    │
-│            ▶ adjudication AskUserQuestion if outputs_gap          │
+│  EXECUTE ▶ stacked branch: checkout iter-N branch then -b iterN+1 │
+│         ▶ Supervisor inline with --base-branch <iter N branch>    │
+│         ▶ Phase 4 gh pr view --json baseRefName self-verify       │
+│         ▶ optional --notify on adjudication gate                  │
 │     │                                                             │
 │     ▼                                                             │
 │  ┌────────────────────────────────────────────────────────────┐   │
-│  │ single-iteration mode? ─── yes ──▶ DONE                    │   │
+│  │ --single-iteration? ─── yes ──▶ DONE                       │   │
 │  │   no                                                       │   │
 │  │   │                                                        │   │
 │  │   ▼                                                        │   │
-│  │ EVALUATE: read SUPERVISOR_RESULT                           │   │
-│  │   • completed + rubric N<M → rubric gate AskUserQuestion   │   │
-│  │       merge-and-continue (verified) ▶ loop to PLAN         │   │
+│  │ EVALUATE: PR-base verification (stacked mode, pr_url != ∅) │   │
+│  │   then read SUPERVISOR_RESULT                              │   │
+│  │   • completed + rubric N<M → stacked rubric gate           │   │
+│  │       continue ▶ loop to PLAN (iter N's branch as base)    │   │
 │  │       stop-here ▶ DONE                                     │   │
 │  │       force-continue ▶ loop to PLAN (risk recorded)        │   │
-│  │   • failed + inter_subtask_gap (anchor-by-filename) ▶      │   │
-│  │       loop to PLAN (no merge prompt)                       │   │
+│  │   • completed + no rubric → no-rubric gate                 │   │
+│  │       continue ▶ loop to PLAN                              │   │
+│  │       stop ▶ DONE                                          │   │
+│  │   • failed + inter_subtask_gap ▶ loop to PLAN              │   │
+│  │   • failed + pr_url null → skip base-verify, fail-other    │   │
 │  │   • anything else ▶ DONE / failed / aborted                │   │
 │  │   • iteration ≥ max ▶ paused_max_iterations                │   │
 │  └────────────────────────────────────────────────────────────┘   │
 │                                                                   │
 │  DONE ▶ write .supervisor/autonomous/{sid}/summary.md + state.json│
-│         ▶ echo AUTONOMOUS_RUN summary to main-thread output       │
+│         ▶ echo AUTONOMOUS_RUN summary (iterations[] is merge order)│
 │                                                                   │
 └───────────────────────────────────────────────────────────────────┘
 ```

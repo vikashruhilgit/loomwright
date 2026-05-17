@@ -114,6 +114,90 @@ These are **defense-in-depth** restrictions for accidental misuse, NOT security 
 
 ---
 
+## Stacked Branches (autonomous loop)
+
+**New in v14.0.0** — the `/autonomous` orchestration shell now defaults to
+**stacked branches** within multi-iteration runs. This subsection documents
+the contract, the two-line-of-defense PR-base verification, and the
+out-of-order merge hazard.
+
+### Default semantics (stacked-branches mode)
+
+- **Multi-iteration is the default** in v14 (v13's "default single, opt-in
+  multi" flipped). Iter N+1's feature branch is created from
+  `iterations[N].branch` (the branch the previous iteration's Supervisor
+  produced) rather than from `main`. No merge is required between
+  iterations — the next iteration just builds on top.
+- The opt-out is `--no-stacked-branches`, which reverts to v13 cadence:
+  each iteration branches from `main` and the user must merge the prior
+  iteration's PR before the next iteration can run safely.
+- The declared base for each iteration is recorded in
+  `SUPERVISOR_RESULT.branch_base` (v14.0.0 additive field; see
+  `docs/RESULT_SCHEMAS.md` §"SUPERVISOR_RESULT"). When absent OR `null`,
+  consumers treat the base as `"main"`.
+
+### Two-line-of-defense PR-base verification
+
+Stacked branches make base-branch correctness load-bearing — if iter N+1
+opens its PR against `main` instead of `iterations[N].branch`, the diff
+appears to contain iter N's work too, and reviewers will be confused at
+best and self-heal will fix the wrong things at worst. v14 verifies the
+base at two independent sites with identical retry policy:
+
+1. **Supervisor — Phase 4 self-verify** (first line of defense). After the
+   PR is created, Supervisor reads back the PR's actual base via `gh pr view`
+   and compares it to the declared `branch_base` from the brief. Mismatch
+   triggers Phase 4.5's base-mismatch cleanup (close-and-redo path; surfaced
+   via `SUPERVISOR_RESULT.pr_state`). See `agents/supervisor.md` §"Phase 4
+   self-verify" and §"Phase 4.5 base-mismatch cleanup".
+2. **Autonomous loop — EVALUATE PR-base verification** (second line of
+   defense). After Supervisor returns, the loop independently re-reads the
+   PR's base via `gh pr view` and compares it against the expected stacked
+   parent (`iterations[N-1].branch`). Mismatch triggers the user-prompt-
+   and-retry policy (AC-14); terminal abort uses
+   `status_reason: "iter_pr_base_mismatch"`. See
+   `skills/autonomous-loop/SKILL.md` §"EVALUATE PR-base verification"
+   (AC-3 + AC-15).
+
+Both sites use the same `gh` retry policy: transient failures prompt the
+user before aborting; explicit user abort surfaces as
+`status_reason: "user_aborted_gh_retry"`.
+
+### Out-of-order merge hazard
+
+Stacked PRs MUST be merged **bottom-of-stack first**. Merging iter N+1's PR
+before iter N's PR is merged (or rebased onto `main`) silently rewrites
+history for downstream tooling and can produce a merge commit that contains
+work the user did not intend to ship.
+
+The hazard is **documented, not preventable from inside the plugin** —
+GitHub's PR UI does not enforce stack ordering, and the plugin cannot block
+a merge that happens out-of-band. Two mitigations are in place:
+
+- **`AUTONOMOUS_RUN.iterations[]` ordering** surfaces the intended merge
+  sequence. Reviewers MUST follow this order. The `iterations[]` array is
+  ordered by `n` — iter 1, iter 2, ... — and that order IS the merge order;
+  there is no separate `merge_order` field on the autonomous-run block.
+  See `docs/RESULT_SCHEMAS.md` §"AUTONOMOUS_RUN" for the field shape.
+- **`SUPERVISOR_RESULT.pr_state`** (v14.0.0 additive field) records the
+  per-iteration PR state after Phase 4.5's base-mismatch cleanup. Downstream
+  tooling watching for `"closed_by_loop"` or `"close_attempt_failed"` can
+  detect iterations whose PRs were retired and avoid trying to merge them.
+
+### Cross-references
+
+- `agents/supervisor.md` §"Phase 4 self-verify" — first-line PR-base check.
+- `agents/supervisor.md` §"Phase 4.5 base-mismatch cleanup" — close-and-redo
+  path that populates `pr_state`.
+- `skills/autonomous-loop/SKILL.md` §"EVALUATE PR-base verification" and
+  §"Signal 1" — second-line PR-base check and the stacked-branch rubric gate.
+- `docs/RESULT_SCHEMAS.md` §"SUPERVISOR_RESULT" — `branch_base` + `pr_state`
+  field documentation.
+- `docs/RESULT_SCHEMAS.md` §"AUTONOMOUS_RUN" — v14 `status_reason` values
+  associated with the verification paths.
+
+---
+
 ## Worktree Naming Convention
 
 Prevents collisions between parallel workers.

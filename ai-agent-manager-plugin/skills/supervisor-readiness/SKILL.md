@@ -266,6 +266,7 @@ Subtask 2 (independent)
 - **Workers:** {recommended count}
 - **Mode:** parallel | sequential
 - **Estimated batches:** {N}
+- **Base Branch:** main  # optional (v14.0.0+) — defaults to "main" when omitted. Autonomous-loop iter N+1 sets this to the parent iteration's feature branch for stacked PRs (e.g., `feature/v14-iter1`). Plan Reviewer Criterion 13 validates that the named branch exists locally (`main` always passes); a named-but-unresolvable branch FAILs the brief.
 
 ## Handoff
 ```
@@ -289,6 +290,20 @@ Subtask 2 (independent)
 | Risk Assessment | required | Phase 3 (workers) | Known issues to watch for |
 | Configuration | required | Phase 0 (skip) | Worker count, mode |
 | Handoff | required | — | User-facing command to start execution |
+
+### Base Branch field (Configuration block — v14.0.0+)
+
+The `Base Branch:` line in `## Configuration` is **optional** and defaults to `main` when omitted. Its presence signals to Supervisor that the FINALIZE PR should target a non-default base — used by the `/autonomous` loop's multi-iteration mode (see `skills/autonomous-loop/SKILL.md`) to stack iteration N+1's PR on iteration N's feature branch.
+
+**Validation:** Plan Reviewer's Criterion 13 (see `agents/plan-reviewer.md`) validates the field when present:
+
+- Absent → defaults to `main`, no validation
+- Value `main` → PASS (no further check)
+- Value `<branch>` → check `.git/refs/heads/<branch>` and `.git/packed-refs`; FAIL with `category: missing_field` if neither resolves the branch locally
+
+**Supervisor behavior:** Phase 0 INIT echoes `BASE_BRANCH` prominently for cross-phase recall; Phase 4 FINALIZE passes `--base "$BASE_BRANCH"` to `gh pr create` and self-verifies the created PR's `baseRefName` matches; Phase 4.5 closes the PR and emits `status: failed, error: "base_branch_mismatch:..."` on mismatch (see `agents/supervisor.md` Phase 4 + Phase 4.5).
+
+**Pre-v14 briefs:** Briefs created before v14.0.0 do not include this field. They continue to work unchanged — Supervisor treats them as `Base Branch: main`.
 
 ## Common Failure Modes
 

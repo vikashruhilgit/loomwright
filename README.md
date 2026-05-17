@@ -6,7 +6,7 @@ A Claude Code plugin for AI agents to collaborate on software projects. 13 speci
 
 > **Install the plugin and run slash commands instead of manually managing agents.**
 >
-> **NEW in v13.0.0:** A new **`/autonomous`** slash command — command chaining for Launch Pad → Supervisor with optional multi-iteration re-planning (opt-in via `--allow-multi-iteration`). This is **foreground-assisted automation, not fire-and-forget**: Launch Pad's Phase 6 save prompt, NO-GO override, Plan Review FAIL × 3 escalation, Supervisor's adjudication 4-option gate, and the loop's own rubric gate (only in multi-iteration mode, after a `rubric_score N/M` with N<M) all bubble `AskUserQuestion` in-session — you stay at the terminal to answer them, the loop handles the rest. Two specific `SUPERVISOR_RESULT` signals trigger re-iteration: rubric N<M (gated on user-merge verification via `gh pr view` / local `git merge-base --is-ancestor`) and `failed + inter_subtask_gap on this iteration's brief` (Option C re-plan trigger, no merge needed). Purely additive: no new agent, no new hook, no behavioral change to any existing agent / hook / script / skill / command, and no change to the field types or validation rules of any existing schema. New artifacts only: `/autonomous` command, `autonomous-loop` skill, and one new `AUTONOMOUS_RUN` entry in `RESULT_SCHEMAS.md` (autonomous-layer-only, no hook validation). 12 slash commands, 50 skills, 14 quality gate hooks. All v12.2.0 capabilities preserved (Agent Teams graduation, Outcomes Rubric, `/dreaming`, opt-in webhook hook) and v12.1.0 documentation increments preserved.
+> **NEW in v14.0.0 — Continuous autonomous mode with stacked PRs:** `/autonomous` flips to **multi-iteration by default** (cap 10, default `--max-iterations 3`) with **stacked-branch semantics** — iteration N+1 branches from `iterations[N].branch`, producing a reviewable PR stack. Out-of-order merge hazard: reviewers MUST merge the bottom of the stack first (follow `AUTONOMOUS_RUN.iterations[]` order). Restore v13 cadence with `--no-stacked-branches`; reproduce v13's single-iteration default with `--max-iterations 1`. New flags: **`--notify`** (opt-in gate-event webhooks for rubric / adjudication / NO-GO / Plan Review FAIL × 3, gated on `AI_AGENT_MANAGER_WEBHOOK_URL`, jq-only payload construction for injection safety, fire-and-forget POST) and **`--non-interactive-fallback`** (per-gate fail-closed policy for CI / stdin-not-tty: rubric gate aborts, no-rubric `completed` returns `done`, adjudication inherits Supervisor's `--non-interactive` policy when forwarded). Supervisor gains `--base-branch <ref>` + `--non-interactive` + Phase 0/4/4.5 base-mismatch detection + cleanup, and emits optional additive `branch_base` + `pr_state` fields on `SUPERVISOR_RESULT` (schema_version still 1, optional). Context-Keeper gains atomic `set_flag` / `get_flag` / `clear_flag` operations writing under a new `## Phase Flags` section in `state.md`. `AUTONOMOUS_RUN` bumps to **schema_version 2** with nine new closed `status_reason` values. **W-NEW-3 spike PASSED pre-merge**: Code Reviewer + Rubric Grader both honor `DIFF-SCOPE OVERRIDE` inline directives on stacked-branch fixtures. v14 is additive on top of v13: no new agent, hook count unchanged (still 14). All v13.0.0 / v13.0.1 capabilities preserved (foreground-assisted gates, rubric-gate user-merge verification, Option C `inter_subtask_gap` re-plan, webhook empty-payload suppression). 13 agent roles, 12 slash commands, 50 skills, 14 quality gate hooks. All v12.2.0 capabilities preserved (Agent Teams graduation, Outcomes Rubric, `/dreaming`, opt-in SubagentStop webhook hook) and v12.1.0 documentation increments preserved.
 >
 > **v12.1.0 (preserved):** Documentation + skills increment — Memory Tool skill (Anthropic memory-tool pattern reference), "## Structured Outputs" section in `AGENT_GUIDELINES.md` documenting both enforcement paths (`output_config.format` for direct API agents, `SubagentStop` hooks for plugin agents), and the "## Advisor Tool (SDK-only pattern)" section noting the `advisor-tool-2026-03-01` beta is reachable only via direct `client.beta.messages.create(...)` calls.
 >
@@ -115,12 +115,16 @@ Then call `switch_database(host="prod.example.com")` at runtime to switch betwee
 # Or plan manually
 /orchestrator goal: "what you want to accomplish"
 
-# Or chain Launch Pad → Supervisor in one command (v13.0.0)
+# Or chain Launch Pad → Supervisor in one command (v14.0.0)
 # Foreground-assisted automation: you stay at the terminal to answer
 # in-session prompts (Phase 6 save, NO-GO, adjudication, etc.); the
-# loop handles the chaining and the optional rubric-driven re-plan.
-/autonomous "what you want to accomplish"                          # single-iteration
-/autonomous "what you want to accomplish" --allow-multi-iteration  # multi-iteration with rubric gate
+# loop handles the chaining and the rubric-driven re-plan.
+# Default is multi-iteration with stacked PRs (cap 10, default 3).
+/autonomous "what you want to accomplish"                                # multi-iter default (3), stacked PRs
+/autonomous "what you want to accomplish" --max-iterations 1             # reproduce v13's single-iter default
+/autonomous "what you want to accomplish" --no-stacked-branches          # v13-style: branch from integration base
+/autonomous "what you want to accomplish" --notify                       # opt-in gate webhooks (AI_AGENT_MANAGER_WEBHOOK_URL)
+/autonomous "what you want to accomplish" --non-interactive-fallback     # CI / unattended: per-gate fail-closed policy
 ```
 
 ---
@@ -155,9 +159,34 @@ Then call `switch_database(host="prod.example.com")` at runtime to switch betwee
 | **Rubric Grader**   | Supervisor (Phase 4.5)       | Read-only Haiku scorer for the optional Outcomes Rubric (advisory)    |
 
 
-### Orchestration Shell: `/autonomous` (v13.0.0)
+### Orchestration Shell: `/autonomous` (v14.0.0)
 
-`/autonomous` is **not** a new agent — it is a slash command that chains the agents above. The command body (`ai-agent-manager-plugin/commands/autonomous.md`) is executed inline on the main thread: it reads `commands/launch-pad.md` and `commands/supervisor.md` at Step 0, then runs Launch Pad inline (which still Task-spawns `plan-reviewer`), then runs Supervisor inline (which still Task-spawns `orchestrator` / `execute-manager` / `code-reviewer` / `rubric-grader`). Default mode is single-iteration. With `--allow-multi-iteration`, the loop re-plans on two existing `SUPERVISOR_RESULT` signals (rubric N<M with user-merge confirmation; `failed + inter_subtask_gap` from Option C adjudication). The protocol skill is at `ai-agent-manager-plugin/skills/autonomous-loop/SKILL.md`.
+`/autonomous` is **not** a new agent — it is a slash command that chains the agents above. The command body (`ai-agent-manager-plugin/commands/autonomous.md`) is executed inline on the main thread: it reads `commands/launch-pad.md` and `commands/supervisor.md` at Step 0, then runs Launch Pad inline (which still Task-spawns `plan-reviewer`), then runs Supervisor inline (which still Task-spawns `orchestrator` / `execute-manager` / `code-reviewer` / `rubric-grader`). **Default mode is multi-iteration** (cap 10, default `--max-iterations 3`) with **stacked PRs**: iteration N+1 branches from `iterations[N].branch`. The loop re-plans on the same two existing `SUPERVISOR_RESULT` signals as v13 (rubric N<M with user-merge confirmation; `failed + inter_subtask_gap` from Option C adjudication). The protocol skill is at `ai-agent-manager-plugin/skills/autonomous-loop/SKILL.md`.
+
+### Stacked PR workflow (v14.0.0+)
+
+The v14 default flips `/autonomous` from "run once, return" to a continuous loop that produces a **stack of PRs**, one per iteration:
+
+- **Branching:** Iteration 1 branches from the integration base (typically `origin/main`). Iteration N+1 branches from `iterations[N].branch` — the previous iteration's feature branch — so each iteration builds on top of the prior unmerged work. This produces a reviewable bottom-up stack rather than divergent siblings.
+- **Out-of-order merge hazard:** Reviewers MUST merge the **bottom** of the stack first (the earliest iteration, listed first in `AUTONOMOUS_RUN.iterations[]`). Merging a higher iteration before its base leaves the remaining higher iterations rebased against the wrong base and produces phantom conflicts. The autonomous-loop preserves `iterations[N].branch` in the run summary precisely so reviewers can walk the stack in order. Use `gh pr list --base <iter-N-branch>` to confirm dependencies.
+- **Base-mismatch detection:** Supervisor's Phase 0/4/4.5 base-mismatch detection (added in v14) catches the case where a stacked iteration is unintentionally run against the wrong base; it emits `branch_base` + `pr_state` on `SUPERVISOR_RESULT` (with `pr_state: "closed_by_loop"` when Phase 4.5 retired the wrong-base PR) and surfaces upward as `supervisor_base_branch_mismatch` on `AUTONOMOUS_RUN.status_reason`.
+- **Opt-out (`--no-stacked-branches`):** Forces every iteration to branch from the integration base — restores v13's branch-from-base cadence. Use this when iterations are truly independent or when your review process can't handle stacks. Each iteration produces a standalone PR.
+- **Single iteration (`--max-iterations 1`):** Reproduces v13's default behavior exactly — runs Launch Pad → Supervisor once and exits. Useful when you just want command chaining without re-planning.
+- **AUTONOMOUS_RUN summary:** Always lists `iterations[]` with `branch`, `pr_url`, and `status`/`status_reason` per iteration. The schema (v2 in v14) is documented in `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md`.
+
+### Running /autonomous in CI / unattended
+
+`/autonomous` is designed as a foreground-assisted loop — most gates bubble `AskUserQuestion` in-session. For CI / cron / stdin-not-tty environments, opt in to a deterministic per-gate fail-closed policy:
+
+- **`--non-interactive-fallback`** — engage the per-gate policy. Without this flag, an `AskUserQuestion` on a closed stdin will hang or error; with it, each gate has a defined non-interactive outcome:
+  - **Rubric gate** (rubric_score N<M, multi-iter only): **aborts** with `status_reason: rubric_gate_closed_non_interactive` — the loop cannot verify a user merge, so it stops rather than guess. Inspect the PR manually and re-run if you want to continue.
+  - **No-rubric `completed` run**: returns `done` with `status_reason: no_rubric_in_non_interactive` — without a rubric there's nothing to evaluate, so the iteration is treated as terminal.
+  - **Adjudication gate** (Supervisor's 4-option scope-expansion question): when `--non-interactive-fallback` is set on `/autonomous`, the loop **auto-forwards `--non-interactive` to the inlined `/supervisor`**, so the adjudication gate (and Supervisor's Phase 4 `gh` retry path) fail closed consistently with the loop's own policy. A single `--non-interactive-fallback` on `/autonomous` is sufficient — you do NOT need to also pass `--non-interactive`. (Standalone `/supervisor` invocations still accept `--non-interactive` explicitly; the forwarding only applies inside `/autonomous`.)
+  - **Launch Pad NO-GO override + Plan Review FAIL × 3**: with `--non-interactive-fallback` engaged, these gates abort the autonomous run rather than prompt for an override — fail-closed by design.
+- **`--notify` + `AI_AGENT_MANAGER_WEBHOOK_URL`** — opt in to gate-event webhooks for out-of-band notification. Each gate (rubric, adjudication, NO-GO, Plan Review FAIL × 3) emits a JSON event constructed with `jq` (no shell interpolation into the JSON payload, for injection safety). Fire-and-forget POST; failures are logged to the session log but don't abort the run. Combine with `--non-interactive-fallback` for an unattended run that still pings you when a gate triggers — useful for monitoring long-running CI loops.
+- **Recommended CI shape:** `claude /autonomous "..." --non-interactive-fallback --notify --max-iterations 3` with `AI_AGENT_MANAGER_WEBHOOK_URL` set in the CI environment. The loop auto-forwards `--non-interactive` to the inlined `/supervisor`, so you do not need to pass it separately. Examine the JSON sidecar at `.supervisor/autonomous/{session_id}/AUTONOMOUS_RUN.json` after the run; the `status_reason` will tell you exactly which gate (if any) closed the loop.
+
+See `ai-agent-manager-plugin/skills/autonomous-loop/SKILL.md` for the full state machine and per-`status_reason` recovery actions.
 
 ### Plan-First Autonomous Workflow
 
@@ -324,7 +353,7 @@ For apps with many routes, use session-based QA to test in chunks:
 
 ## Telemetry (opt-in)
 
-**New in v11.2.0 (preserved in v13.0.0)** — an optional GitHub Issues telemetry pipeline. After
+**New in v11.2.0 (preserved in v14.0.0)** — an optional GitHub Issues telemetry pipeline. After
 qualifying agent runs (`/supervisor`, `/code-reviewer`, `/qa-executor`)
 complete, the plugin can post a structured GitHub issue summarising the
 result block, a derived score, agent performance breakdown, and AI

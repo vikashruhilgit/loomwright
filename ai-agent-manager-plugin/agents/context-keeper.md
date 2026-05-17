@@ -39,8 +39,11 @@ Manage the Supervisor's externalized state file. Single writer — only this age
 | `record_self_heal_resume` | Increment or reset `self_heal_resume_count` | increment (boolean) | `"Resume count: {new_value}"` |
 | `update_phase` | Transition phase + checkpoint | new_phase (INIT\|ACQUIRE\|PLAN\|EXECUTE\|FINALIZE\|SELF_HEAL\|LOOP), completed_phases, subtask_progress | `"Phase: {new_phase}, progress: {completed}/{total}"` |
 | `checkpoint` | Copy state to `.supervisor/state.md` | project_dir, task_id | `"Checkpoint saved to .supervisor/state.md"` |
-| `query` | Read section without modifying | section (config\|session\|task\|subtasks\|parallelism\|decisions\|worker_results\|errors\|checkpoint) | Compact data (< 100 tokens) |
+| `query` | Read section without modifying | section (config\|session\|task\|subtasks\|parallelism\|decisions\|worker_results\|errors\|checkpoint\|phase_flags) | Compact data (< 100 tokens) |
 | `record_batch` | Multiple mutations in one call | updates [{type, ...fields}] | `"Batch: {N} updates applied ({types})"` |
+| `set_flag` | Set or overwrite a phase flag in `## Phase Flags` | key (string, required), value (any JSON value — object/array/scalar/boolean, required) | `"Flag set: {key}"` |
+| `get_flag` | Read a phase flag value (no mutation) | key (string, required) | Compact JSON value (< 100 tokens) or `"null"` when key absent |
+| `clear_flag` | Remove a phase flag from `## Phase Flags` | key (string, required) | `"Flag cleared: {key}"` (or `"Flag cleared: {key} (no-op)"` when key absent) |
 
 All operations take `state_file: {path}` as input.
 
@@ -100,6 +103,80 @@ updates:
 state_file: {path}
 ```
 Response: `"Batch: 2 updates applied (worker_result: BD-15a completed, review: BD-15a PASS)"`
+
+---
+
+## Phase Flag Operations (v14.0.0)
+
+Phase flags are short-lived key/value markers stored in a dedicated `## Phase Flags` section of the state file. The section schema, placement (after `## Checkpoint`), lifecycle (auto-created on first `set_flag`, auto-removed when the last flag is cleared), and the read-on-start-clear-on-start invariant for crash-recovery flags are documented in `skills/state-management/SKILL.md` (§"Phase Flags"). The three operations below are the only sanctioned mutators/readers — never edit the section by hand.
+
+All three operations take:
+- `state_file: {path}` (required, as with every other operation)
+- `key: {string}` (required) — the flag name; opaque to Context-Keeper
+
+`set_flag` additionally takes:
+- `value: {any JSON value}` (required) — arbitrary JSON-shaped payload (object, array, scalar, or boolean). Stored verbatim.
+
+### operation: set_flag
+
+```
+operation: set_flag
+key: {flag_name}
+value: {arbitrary JSON value}
+state_file: {path}
+```
+
+Parameters: `key` (string, required), `value` (any JSON value, required).
+
+Return: confirmation token `"Flag set: {key}"` (< 50 tokens).
+
+Behavior:
+- Read current state (atomic).
+- If `## Phase Flags` section is absent, create it immediately AFTER the `## Checkpoint` section (matching the schema in `skills/state-management/SKILL.md`).
+- If the named `key` is already present, overwrite the value (idempotent — repeated `set_flag` calls with the same `(key, value)` are no-ops on disk except for the `last_updated` timestamp; calls with the same key and a new value replace the entry in place).
+- If the named `key` is absent, append a new list item to the section.
+- Write the state file atomically (temp file + rename), matching the existing operations' atomicity pattern.
+
+### operation: get_flag
+
+```
+operation: get_flag
+key: {flag_name}
+state_file: {path}
+```
+
+Parameters: `key` (string, required).
+
+Return: the stored JSON value (compact, < 100 tokens) when the key is present; the literal string `"null"` when the key (or the entire `## Phase Flags` section) is absent. Read-only — never mutates the state file.
+
+Behavior:
+- Read current state (atomic).
+- If `## Phase Flags` is absent → return `"null"`.
+- If section is present but `key` is absent → return `"null"`.
+- Otherwise return the value as stored (object/array/scalar/boolean).
+
+### operation: clear_flag
+
+```
+operation: clear_flag
+key: {flag_name}
+state_file: {path}
+```
+
+Parameters: `key` (string, required).
+
+Return: confirmation token `"Flag cleared: {key}"` (< 50 tokens), or `"Flag cleared: {key} (no-op)"` when the key was already absent.
+
+Behavior:
+- Read current state (atomic).
+- If `## Phase Flags` is absent OR `key` is absent within it → no-op (no error, no write — return the no-op confirmation). This is required by AC-8: clearing an absent key is silent.
+- Otherwise remove the named key's list item.
+- **If that removal leaves the section empty**, remove the `## Phase Flags` header line entirely so the state file does not retain a stub section. The section reappears on the next `set_flag`.
+- Write the state file atomically (temp file + rename).
+
+### Atomicity & cross-reference
+
+All three operations follow the same atomic-write pattern as the rest of the operations table: read-validate-mutate-write to a temp file, then rename. The on-disk section format (markdown list items keyed by flag name with single-line or fenced multi-line JSON values) is fully specified in `skills/state-management/SKILL.md` §"Phase Flags" — treat that document as the authoritative section schema.
 
 ---
 
