@@ -90,7 +90,7 @@ if non_interactive AND multi_iter AND NOT --non-interactive-fallback:
   exit
 ```
 
-When `--non-interactive-fallback` IS set, gates do not call AskUserQuestion — they fail closed: rubric-gate → `status: aborted, status_reason: "rubric_gate_closed_non_interactive"`; no-rubric-gate → `status: done, status_reason: "no_rubric_in_non_interactive"` (the loop accepts the iteration and exits cleanly); adjudication still fires via Supervisor's session (Supervisor handles its own non-interactive policy if `--non-interactive` is passed through, but the autonomous-loop does NOT automatically forward that — the user opts into both flags separately for the v14 cut).
+When `--non-interactive-fallback` IS set, gates do not call AskUserQuestion — they fail closed: rubric-gate → `status: aborted, status_reason: "rubric_gate_closed_non_interactive"`; no-rubric-gate → `status: done, status_reason: "no_rubric_in_non_interactive"` (the loop accepts the iteration and exits cleanly); adjudication still fires via Supervisor's session, **and the loop auto-forwards `--non-interactive` to the inlined `/supervisor` invocation** (see EXECUTE step 1 — "Auto-forwarded flags"). The forwarding makes Supervisor's Phase 4 `gh` retry path, adjudication AskUserQuestion, and any other Supervisor-owned interactive gates fail closed consistently with the loop's own policy. A single `--non-interactive-fallback` is therefore sufficient for the CI / unattended case — the user does NOT need to also pass `--non-interactive` to `/autonomous`. (`/supervisor` standalone still accepts the flag explicitly; that's a separate invocation path.)
 
 **max-iterations validation (AC-10):** after parsing `--max-iterations`:
 
