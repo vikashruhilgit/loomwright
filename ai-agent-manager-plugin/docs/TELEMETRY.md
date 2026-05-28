@@ -565,7 +565,7 @@ distinct from the GitHub Issues telemetry described above:
 | Channel | Purpose | Trigger | Cadence |
 |---------|---------|---------|---------|
 | GitHub Issues telemetry | **Longitudinal analytics** — agent scores, issue patterns, trend lines aggregated over weeks | `code-reviewer`, `qa-executor`, `supervisor-runner` SubagentStop | Per qualifying run, dedup-windowed |
-| Webhook notifications  | **Real-time ops alerts** — "did the run finish? what's the PR? did self-heal escalate?" | `supervisor-runner` SubagentStop only | Per Supervisor run, fire-and-forget |
+| Webhook notifications  | **Real-time ops alerts** — "did the run finish? what's the PR? did self-heal escalate? is the plugin paused waiting for me?" | `supervisor-runner` SubagentStop **+** PreToolUse[AskUserQuestion] (v13.1.0+) | Per Supervisor run and per user-pause, fire-and-forget |
 
 Both can be enabled simultaneously, neither depends on the other, and both
 fail closed (silent no-op) when their respective configuration is absent.
@@ -583,7 +583,10 @@ disable, `unset AI_AGENT_MANAGER_WEBHOOK_URL`.
 
 ### Payload schema
 
-A single JSON object, `Content-Type: application/json`:
+The webhook receives **two distinct payload shapes** depending on which hook
+fired, distinguished by the presence (or absence) of an `event` field.
+
+**Shape A — Supervisor completion** (no `event` field, original v12.2.0 shape):
 
 ```json
 {
@@ -595,7 +598,17 @@ A single JSON object, `Content-Type: application/json`:
 }
 ```
 
-Field semantics:
+**Shape B — Plugin paused waiting for user input** (v13.1.0+, `event="paused"`):
+
+```json
+{
+  "event": "paused",
+  "question": "Adjudication: outputs_gap detected. Pick an option: ...",
+  "timestamp": "2026-05-10T22:53:00Z"
+}
+```
+
+Field semantics — Shape A (completion):
 
 - **`agent`** — always the literal string `"supervisor"` for v12.2.0; reserved
   for future expansion (e.g., `"qa-executor"`) without breaking consumers.
@@ -608,8 +621,24 @@ Field semantics:
 - **`timestamp`** — UTC ISO-8601 (`%Y-%m-%dT%H:%M:%SZ`) at the moment the
   hook fired (NOT when the Supervisor started).
 
-**Forward-compatibility note:** new fields may be added to the payload in
-future versions; consumers MUST ignore unknown fields rather than reject.
+Field semantics — Shape B (paused, v13.1.0+):
+
+- **`event`** — always the literal string `"paused"`. Receivers route on this
+  field to distinguish from completion payloads.
+- **`question`** — the first AskUserQuestion question text (or the question
+  header if the question field is empty), **truncated to 1,024 bytes**.
+  Captures Supervisor 4-option adjudication, rubric gate, Plan Reviewer
+  NEEDS_HUMAN, Launch Pad Phase 6, `/autonomous` merge-and-continue, and
+  any other `AskUserQuestion` call in the plugin.
+- **`timestamp`** — same semantics as Shape A.
+
+The paused event is fire-and-forget like completion — the user-facing
+`AskUserQuestion` UI still fires identically; the webhook is a parallel
+notification channel so an operator away from the desktop knows the plugin
+is blocked.
+
+**Forward-compatibility note:** new fields may be added to either payload
+in future versions; consumers MUST ignore unknown fields rather than reject.
 
 ### Why a `type: command` wrapper, not `type: http`
 
@@ -678,6 +707,85 @@ unset AI_AGENT_MANAGER_WEBHOOK_URL
 
 The next Supervisor SubagentStop will see the wrapper exit 0 immediately
 with no log line, no network call, and no side effects.
+
+---
+
+## Desktop Notifications (v13.1.0+)
+
+**OS-native notifications for plugin pause events** — complements the
+outbound Webhook channel above. Where the webhook pings a remote service
+(Slack, Discord, PagerDuty), the desktop notification pings the **local
+machine** through macOS Notification Center or `notify-send` on Linux.
+
+This is the channel that matters most for the **Claude Desktop app primary
+mode**: when `/autonomous` or `/supervisor` blocks on `AskUserQuestion`
+adjudication, the question appears as a chip *inside* the Desktop app — but
+the user away from the laptop has no way to see it. Desktop notifications
+escalate the same event to the OS-level notification banner.
+
+### Triggers
+
+The script is wired to two hook events in `hooks/hooks.json`:
+
+| Hook event | Matcher | Fires when |
+|---|---|---|
+| `PreToolUse` | `AskUserQuestion` | Any plugin (or main-thread) AskUserQuestion call — Supervisor adjudication, rubric gate, Plan Reviewer NEEDS_HUMAN, Launch Pad Phase 6, `/autonomous` merge-and-continue, etc. |
+| `Notification` | (all) | Claude Code itself signals attention — permission_prompt, idle_prompt, elicitation_* |
+
+Both branches funnel through `${CLAUDE_PLUGIN_ROOT}/scripts/notify-desktop.sh`.
+
+### Setup
+
+**macOS (Desktop app or Terminal):** no env var required — desktop
+notifications are on by default. On first fire, macOS will prompt you to
+allow notifications from whichever process spawned the script (Claude
+Desktop, Terminal, iTerm, etc.). Approve the prompt, or grant it manually
+via **System Settings → Notifications**.
+
+**Linux:** requires `notify-send` (typically packaged with `libnotify-bin`).
+
+**Disable:**
+
+```bash
+export AI_AGENT_MANAGER_DESKTOP_NOTIFICATIONS=0
+```
+
+Setting the variable to `0` makes `notify-desktop.sh` silent-exit 0 on
+every fire. To re-enable, `unset` the variable or set it to anything else
+(default behavior is on).
+
+### Behavior
+
+- Fires a single OS-native notification per event, title + body, 60-char
+  title cap, 200-char body cap (macOS Notification Center truncates very
+  long bodies anyway).
+- macOS notifications play the **Glass** system sound (safe on every
+  install). To silence, edit `osascript -e` line in `notify-desktop.sh`.
+- Requires `jq` to parse the hook payload. Without `jq`, the script
+  silent-exits — the absence of notifications is the visible signal that
+  `jq` is missing.
+- Always exits 0. A failing notification (e.g., notification permissions
+  denied) never blocks the hook or the agent loop.
+
+### Why this matters for Desktop-app users
+
+The Claude Desktop app shows `AskUserQuestion` as an inline chip in the
+conversation. If the app is in the background or another Space, the chip
+is invisible until the user re-focuses the window. macOS Notification
+Center is the standard escalation path: a banner appears regardless of
+app focus, the user clicks it to bring the Desktop app forward, then
+answers the question.
+
+This is **foreground-assisted automation** — the user is still required to
+answer the question; the notification ensures they know it's there.
+
+### Pairing with the outbound webhook
+
+Both notification surfaces fire on the same `AskUserQuestion` trigger.
+Setting `AI_AGENT_MANAGER_WEBHOOK_URL` to a Slack incoming-webhook URL
+makes a paused event reach the user's phone via Slack push notifications,
+in parallel with the local desktop banner. Either or both can be enabled;
+neither depends on the other.
 
 ---
 

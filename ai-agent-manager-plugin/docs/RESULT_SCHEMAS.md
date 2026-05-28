@@ -534,6 +534,69 @@ PLAN_REVIEW_RESULT:
 
 ---
 
+## LAUNCH_PAD_RESULT
+
+Produced by Launch Pad at the end of its workflow (after Phase 6 SAVE) to communicate the outcome and — critically — the **exact path of the saved Supervisor-Ready Brief** for programmatic consumers (notably `/autonomous` PLAN phase, which previously relied on a fragile `ls`-diff of `.supervisor/jobs/pending/`).
+
+**Added in v13.1.0.** Emission is non-blocking for v1 — the schema is purely additive. Existing Launch Pad consumers (the user who reads the markdown output) are unaffected; new consumers (`/autonomous`) read the structured block from the transcript or the SubagentStop hook payload when Launch Pad runs in `-runner` mode (`claude --agent ai-agent-manager-plugin:launch-pad-runner`).
+
+```yaml
+LAUNCH_PAD_RESULT:
+  schema_version: 1                    # integer, required — always 1
+  status: enum [saved, discarded, blocked, aborted]  # required
+  saved_brief_path: string | null      # required field, value is null unless status=saved
+  summary: string                      # required — one-line outcome (≤ 200 chars recommended)
+```
+
+**Validation rules (schema_version: 1):**
+- `schema_version` must equal `1`
+- `status` must be one of: `saved` | `discarded` | `blocked` | `aborted`
+- `saved_brief_path`:
+  - When `status: saved` → MUST be a non-empty string matching `.supervisor/jobs/pending/*.md`. Path must exist on disk at the moment the block is emitted (the brief file having been written in Phase 6).
+  - When `status ∈ {discarded, blocked, aborted}` → MUST be `null` (the literal YAML `null`, not the string `"null"` or an empty string).
+- `summary` must be a non-empty string.
+
+**Status semantics:**
+- **`saved`** — Phase 6 completed and the user chose "Save and exit" (or "Override and save" for NEEDS_HUMAN paths). The brief file exists on disk.
+- **`discarded`** — Phase 6 completed and the user chose "Discard". No file written.
+- **`blocked`** — Phase 1 BLOCKERS surfaced (environment, etc.) or Plan Review FAILed × 3 with no user override path; save was never offered.
+- **`aborted`** — User aborted the workflow mid-flight (e.g., killed the session, `/autonomous` cleanup-after-rubric-dropped); no save and no clean Phase 6 outcome.
+
+**Emission cadence:** the block is emitted **once per Launch Pad invocation**, immediately after Phase 6 completes (whether the file was written or not). Whether the agent runs via the `/launch-pad` slash command (inline on the main thread) or via `claude --agent ai-agent-manager-plugin:launch-pad-runner` (agent-owned session), the same single emission happens. The SubagentStop hook validates the block only in the agent-owned path; for the inline slash-command path, programmatic consumers (e.g., the autonomous-loop skill) read the last emitted `LAUNCH_PAD_RESULT` block from the transcript, mirroring the `SUPERVISOR_RESULT` pattern.
+
+**Example (status: saved):**
+```yaml
+LAUNCH_PAD_RESULT:
+  schema_version: 1
+  status: saved
+  saved_brief_path: .supervisor/jobs/pending/2026-05-28-add-version-command.md
+  summary: Plan Review PASS on attempt 1/3; saved Supervisor-Ready Brief for /supervisor handoff.
+```
+
+**Example (status: discarded):**
+```yaml
+LAUNCH_PAD_RESULT:
+  schema_version: 1
+  status: discarded
+  saved_brief_path: null
+  summary: User chose Discard at Phase 6 after reviewing the assembled brief.
+```
+
+**Example (status: blocked):**
+```yaml
+LAUNCH_PAD_RESULT:
+  schema_version: 1
+  status: blocked
+  saved_brief_path: null
+  summary: Phase 1 surfaced BLOCKER — required tool `bd` not installed; save not offered.
+```
+
+**Consumer pattern (`/autonomous` PLAN phase):** read `LAUNCH_PAD_RESULT.saved_brief_path` directly as the iteration's `current_brief_path` when `status: saved`. When `status ∈ {discarded, blocked, aborted}`, exit the autonomous loop with the corresponding terminal status. The `ls`-diff fallback (Launch Pad pre-v13.1.0) remains supported during the transition window but is no longer the primary detection mechanism.
+
+**Why a single new field beyond the standard three (`schema_version`, `status`, `summary`):** the temptation to add `feasibility`, `plan_review_attempts`, `rubric_preserved`, etc. is real — but each new field is one more validation invariant the SubagentStop hook must police, and the CODE_REVIEW_RESULT v2 → v3 migration (which now carries ~600 words of validation logic, see `hooks.json`) is the cautionary tale. v1 stays exactly four fields total. Future additions land in their own follow-up plans with explicit leverage rationale.
+
+---
+
 ## CONTEXT_KEEPER_STATE
 
 Schema for `.supervisor/state.md` managed by Context-Keeper.

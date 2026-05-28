@@ -537,6 +537,66 @@ Check all 10 review criteria. Output a PLAN_REVIEW_RESULT block.",
 
 ---
 
+### Phase 7: EMIT LAUNCH_PAD_RESULT (Required, Non-Interactive)
+
+**Precondition:** Every Launch Pad invocation reaches Phase 7, regardless of Phase 6 outcome — including the abort paths (BLOCKERS in Phase 1, Plan Review FAIL × 3, user-discarded brief, user-aborted mid-flight).
+
+**Purpose:** Emit a single structured `LAUNCH_PAD_RESULT` YAML block so programmatic consumers (notably `/autonomous` PLAN phase, which previously relied on a fragile `ls`-diff of `.supervisor/jobs/pending/`) can read the saved brief path directly and the run outcome unambiguously. Schema authoritative in `docs/RESULT_SCHEMAS.md` §"LAUNCH_PAD_RESULT".
+
+**Actions:**
+
+1. Determine the terminal `status` based on what actually happened in this run:
+   - **`saved`** — Phase 6 chose "Save and exit" OR "Override and save"; the brief file was written.
+   - **`discarded`** — Phase 6 chose "Discard"; no file written.
+   - **`blocked`** — Phase 1 had BLOCKERS that suppressed the save offer, OR Plan Review FAILed × 3 without a user override option; save was never offered.
+   - **`aborted`** — User aborted the run mid-flight, the session was killed, or `/autonomous` cleanup fired after rubric-dropped; no clean Phase 6 outcome.
+
+2. Compute `saved_brief_path`:
+   - When `status: saved` → the exact path of the file written in Phase 6, e.g. `.supervisor/jobs/pending/2026-05-28-add-version-command.md`.
+   - Otherwise → the literal YAML `null` (not the string `"null"`, not an empty string).
+
+3. Compose `summary`: a single line, ≤ 200 characters, describing the outcome and the key fact (Plan Review attempts, BLOCKER reason, etc.).
+
+4. Emit the YAML block verbatim as the **last** structured output of the run. Consumers read the **last** `LAUNCH_PAD_RESULT` block in the transcript when Launch Pad runs inline via the `/launch-pad` slash command; the SubagentStop hook validates the same block when Launch Pad runs via `claude --agent ai-agent-manager-plugin:launch-pad-runner`.
+
+**Emission format (verbatim, including the leading fenced block):**
+
+````markdown
+## LAUNCH_PAD_RESULT
+
+```yaml
+LAUNCH_PAD_RESULT:
+  schema_version: 1
+  status: {saved | discarded | blocked | aborted}
+  saved_brief_path: {.supervisor/jobs/pending/{date}-{slug}.md | null}
+  summary: {one-line outcome, ≤ 200 chars}
+```
+````
+
+**Example (saved):**
+
+```yaml
+LAUNCH_PAD_RESULT:
+  schema_version: 1
+  status: saved
+  saved_brief_path: .supervisor/jobs/pending/2026-05-28-add-version-command.md
+  summary: Plan Review PASS on attempt 1/3; saved Supervisor-Ready Brief for /supervisor handoff.
+```
+
+**Example (blocked):**
+
+```yaml
+LAUNCH_PAD_RESULT:
+  schema_version: 1
+  status: blocked
+  saved_brief_path: null
+  summary: Phase 1 surfaced BLOCKER — required tool `bd` not installed; save not offered.
+```
+
+**Constraint reminder:** the YAML must conform to the validation rules in `docs/RESULT_SCHEMAS.md` §"LAUNCH_PAD_RESULT". In particular, when `status: saved`, `saved_brief_path` MUST be a non-empty string and the file MUST exist on disk; when status is anything else, `saved_brief_path` MUST be the literal `null`. Do not invent additional fields — v1 is exactly four fields and the schema is purposely tight (see RESULT_SCHEMAS.md note on the CODE_REVIEW_RESULT v3 cautionary tale).
+
+---
+
 ## Context Management
 
 ### Token Budget

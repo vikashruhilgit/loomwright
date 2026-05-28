@@ -2,15 +2,15 @@
 name: autonomous-loop
 description: Outer-loop protocol for `/autonomous` — single-iteration and multi-iteration chaining of Launch Pad → Supervisor with EVALUATE phase, signal-extraction paths, refined-requirement templates, and the AUTONOMOUS_RUN summary format. Use when implementing or invoking the `/autonomous` command.
 allowed-tools: [Read, Write, Bash, Grep, Task, AskUserQuestion]
-version: "1.0.0"
-lastUpdated: "2026-05-11"
+version: "1.1.0"
+lastUpdated: "2026-05-28"
 ---
 
 # Autonomous Loop Skill
 
 Protocol for the `/autonomous` outer loop. Owns the orchestration that chains Launch Pad → Supervisor, decides when to re-plan based on `SUPERVISOR_RESULT` signals, and emits an `AUTONOMOUS_RUN` summary. **Foreground-assisted automation, not fire-and-forget** — every interactive boundary in the inner workflows (Launch Pad Phase 6, NO-GO, Plan Review FAIL × 3, Supervisor adjudication, the loop's own rubric gate) bubbles `AskUserQuestion` to the user in-session via Claude Code's native interaction model.
 
-<!-- v1 weakest implementation point: brief-save detection via ls-diff of `.supervisor/jobs/pending/`. This is single-session-only and fragile. The proper fix is a `LAUNCH_PAD_RESULT` schema with `saved_brief_path` field, which is a separate future plan and is the single biggest leverage point for hardening this work. -->
+<!-- v13.1.0 hardening: brief-save detection now consults `LAUNCH_PAD_RESULT.saved_brief_path` as the primary signal (schema in RESULT_SCHEMAS.md §"LAUNCH_PAD_RESULT"; emission cadence in agents/launch-pad.md Phase 7). The ls-diff of `.supervisor/jobs/pending/` is retained as a fallback for pre-v13.1.0 compatibility but is no longer the primary mechanism. The concurrent-session ambiguity that single-session-only ls-diff couldn't distinguish is closed for v13.1.0+ plugins. -->
 
 ## Quick Rules
 
@@ -88,7 +88,25 @@ Field types: `_v1_note: string` (advisory marker — see above); `mode: "single"
    - Phase 2.5 feasibility AskUserQuestion (NO-GO → override/revise/abort)
    - Phase 5.5 mandatory plan-reviewer Task spawn (max 3 FAIL retries → AskUserQuestion)
    - Phase 6 save/refine/discard AskUserQuestion
-4. **Brief-save detection (v1 weakest point — `ls`-diff):**
+4. **Brief-save detection — primary path: `LAUNCH_PAD_RESULT` (v13.1.0+):**
+   - After Launch Pad finishes its inline run, scan the transcript for the **last** `LAUNCH_PAD_RESULT` YAML block (schema in `RESULT_SCHEMAS.md` §"LAUNCH_PAD_RESULT"; emission cadence: one per Launch Pad invocation, emitted in Phase 7).
+   - **Validate the block before trusting it (closes the inline-path validation gap):**
+     The SubagentStop hook on `launch-pad-runner` validates the block only when Launch Pad runs as an agent-owned session (`claude --agent ai-agent-manager-plugin:launch-pad-runner`). For the inline slash-command path that `/autonomous` actually invokes, run the validator from this skill so schema violations are caught on every invocation:
+     ```bash
+     # Extract the block text, then pipe it to the validator in --raw mode.
+     # The validator emits {"ok": true} or {"ok": false, "reason": "..."}.
+     printf '%s' "$BLOCK_TEXT" | python3 "${CLAUDE_PLUGIN_ROOT}/scripts/validate-launch-pad-result.py" --raw
+     ```
+     - If `ok: true` → block is well-formed. Continue with the per-status branch below.
+     - If `ok: false` → block is malformed. Record `policy_decisions[].decision = "launch_pad_result_malformed"` with `reason` set to the validator's `reason` field. Fall through to the `ls`-diff fallback. Do NOT abort the loop on a malformed block — the fallback path is functionally equivalent for the common single-session case.
+   - **If the block is present AND validates** (the v13.1.0+ path):
+     - `status: saved` → set `current_brief_path = LAUNCH_PAD_RESULT.saved_brief_path`. Verify the file exists on disk (`test -f`); if it doesn't (file went missing between Phase 6 save and now — extremely unusual but possible), treat the result block as malformed and fall through to the `ls`-diff fallback below.
+     - `status: discarded` → mark `status: aborted, status_reason: "user_discarded_at_phase_6"`. Exit.
+     - `status: blocked` → mark `status: aborted, status_reason: "launch_pad_blocked"` (Phase 1 BLOCKER or Plan Review FAIL × 3 without override). Exit.
+     - `status: aborted` → mark `status: aborted, status_reason: "user_aborted_at_launch_pad"`. Exit.
+   - **If the block is absent or fails validation** (pre-v13.1.0 plugin, main thread skipped Phase 7, or schema violation), fall through to the `ls`-diff fallback below. Record `policy_decisions[].decision = "launch_pad_result_fallback"` (or `"launch_pad_result_malformed"` for the schema-failure subcase) so the run is auditable.
+
+   **Brief-save detection — fallback path: `ls`-diff (pre-v13.1.0 compatibility, single-session-only):**
    - **Pre-snapshot stale-session-id sanity check (catches the rubric_dropped_from_brief retry footgun):** before the `briefs_before` snapshot, check whether any file matching `<session_id>-*.md` already exists in `.supervisor/jobs/pending/`. The `session_id` is freshly minted in INIT (timestamp-based), so a pre-existing match is an invariant violation — almost always a stale brief left over from a prior aborted run of *this same `/autonomous` invocation pattern* (most commonly a previous `rubric_dropped_from_brief` abort whose stale brief the user didn't clean up). Surface this as a warning to the user with the explicit cleanup hint: `"Found stale brief(s) from a prior run with the same session-id shape: <files>. Move them to .supervisor/jobs/failed/ before continuing, or pick 'abort' below. Continuing now may produce a concurrent_session_detected error after Phase 6."` Then `AskUserQuestion` whether to (a) abort now, (b) move the stale files automatically and continue, or (c) continue anyway (force, recorded in policy_decisions for audit). Strictly speaking the timestamp-based session_id makes exact collisions impossible in v1, so this check fires only on the rubric_dropped_from_brief retry footgun and similar leftover-brief cases.
    - Before Phase 6's AskUserQuestion: `briefs_before = $(ls .supervisor/jobs/pending/*.md 2>/dev/null | sort)`
    - After Phase 6 (whether user picked save, refine-then-save, or discard): `briefs_after = $(ls .supervisor/jobs/pending/*.md 2>/dev/null | sort)`
@@ -96,6 +114,8 @@ Field types: `_v1_note: string` (advisory marker — see above); `mode: "single"
    - If `new_briefs` is empty → user picked discard or refine failed. Mark `status: aborted, status_reason: "user_discarded_at_phase_6"`. Exit.
    - If `new_briefs` has exactly one entry → that path is `current_brief_path`. Record it in state.json. Proceed.
    - If `new_briefs` has >1 entries → ambiguity (concurrent run violated the single-session assumption). Abort with `status_reason: "concurrent_session_detected"`.
+
+   The fallback path remains the **only** detection mechanism when the plugin version pre-dates v13.1.0 (no Phase 7 emission). For v13.1.0+ plugins, `LAUNCH_PAD_RESULT.saved_brief_path` is authoritative and the `ls`-diff is informational only.
 5. Handle Launch Pad's other abort paths:
    - User aborted at NO-GO → `status_reason: "user_aborted_at_no_go"`. Exit.
    - User aborted after Plan Review FAIL × 3 → `status_reason: "user_aborted_at_plan_review_fail"`. Exit.
@@ -383,7 +403,7 @@ Same fields as summary.md, structured as JSON. v1 writes it for two purposes: (a
 
 ## Concurrency / Single-Session Assumption
 
-**v1 assumes one autonomous session at a time per repo.** The brief-save `ls`-diff cannot distinguish a concurrent `/launch-pad` invocation's save from this loop's save. Session-id-tagged filenames in `.supervisor/requirements/` and `.supervisor/autonomous/{session_id}/` isolate the loop's own state, but the brief filename pattern in `.supervisor/jobs/pending/` is owned by Launch Pad's existing convention. A proper LAUNCH_PAD_RESULT schema (separate plan) closes this gap.
+**Concurrent-session safety (v13.1.0+).** Brief-save detection now reads `LAUNCH_PAD_RESULT.saved_brief_path` as the primary signal (see PLAN phase §"Brief-save detection — primary path"), so a concurrent `/launch-pad` invocation writing to the same `.supervisor/jobs/pending/` cannot be mistaken for this loop's save — Launch Pad emits exactly one result block per invocation, and the loop only consults the result block from the Launch Pad call it inlined. The `ls`-diff fallback retains the v1 single-session-only constraint and is used only when the result block is absent (pre-v13.1.0 plugin or transcript-scan failure). Session-id-tagged filenames in `.supervisor/requirements/` and `.supervisor/autonomous/{session_id}/` continue to isolate the loop's own state.
 
 ## Failure Modes & Recovery
 

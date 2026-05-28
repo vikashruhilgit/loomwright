@@ -52,6 +52,110 @@ if command -v jq >/dev/null 2>&1; then
   JQ_BIN="jq"
 fi
 
+# ---- Event-type branch ------------------------------------------------------
+# This script is wired to two distinct hook events:
+#   - SubagentStop (supervisor-runner): post final SUPERVISOR_RESULT.
+#   - PreToolUse (AskUserQuestion):     post a "paused" event so the user
+#                                       knows the plugin is blocked on input.
+# Branch early so the SUPERVISOR_RESULT YAML-parsing path stays untouched.
+HOOK_EVENT=""
+TOOL_NAME=""
+if [ -n "$JQ_BIN" ]; then
+  HOOK_EVENT="$(printf '%s' "$INPUT" | "$JQ_BIN" -r '.hook_event_name // empty' 2>/dev/null || true)"
+  TOOL_NAME="$(printf '%s' "$INPUT" | "$JQ_BIN" -r '.tool_name // empty' 2>/dev/null || true)"
+fi
+
+if [ "$HOOK_EVENT" = "PreToolUse" ] && [ "$TOOL_NAME" = "AskUserQuestion" ]; then
+  # ---- Paused-event path (AskUserQuestion) ----------------------------------
+  # The plugin is about to block on user input — Supervisor adjudication,
+  # rubric gate, Plan Reviewer NEEDS_HUMAN, Launch Pad Phase 6, /autonomous
+  # merge-and-continue, etc. Send a minimal payload so an external service
+  # (Slack incoming-webhook, etc.) can ping the operator.
+
+  # Defense-in-depth: also require the tool_input.questions field to exist
+  # before treating this as a plugin pause event. Guards against future
+  # SubagentStop payload schemas that happen to carry tool_name="AskUserQuestion".
+  HAS_QUESTIONS=""
+  if [ -n "$JQ_BIN" ]; then
+    HAS_QUESTIONS="$(printf '%s' "$INPUT" | "$JQ_BIN" -r '.tool_input.questions // empty' 2>/dev/null || true)"
+  fi
+  if [ -z "$HAS_QUESTIONS" ]; then
+    printf 'send-webhook: AskUserQuestion-tagged payload lacks tool_input.questions — skipping\n' >&2
+    exit 0
+  fi
+
+  # Scope gate: AI_AGENT_MANAGER_NOTIFY_SCOPE=plugin (default) suppresses
+  # paused-event webhook fires when no plugin context is detected. Operators
+  # who want host-wide AskUserQuestion notifications set this to `all`.
+  # Detection identical to notify-desktop.sh §"Scope gate" — three independent
+  # markers (active Supervisor job, recent autonomous state, transcript marker).
+  SCOPE="${AI_AGENT_MANAGER_NOTIFY_SCOPE:-plugin}"
+  if [ "$SCOPE" = "plugin" ]; then
+    TRANSCRIPT_PATH=""
+    if [ -n "$JQ_BIN" ]; then
+      TRANSCRIPT_PATH="$(printf '%s' "$INPUT" | "$JQ_BIN" -r '.transcript_path // empty' 2>/dev/null || true)"
+    fi
+    PLUGIN_CONTEXT=0
+    if compgen -G ".supervisor/jobs/in-progress/*.md" > /dev/null 2>&1; then
+      PLUGIN_CONTEXT=1
+    fi
+    if [ "$PLUGIN_CONTEXT" -eq 0 ]; then
+      for state_file in .supervisor/autonomous/*/state.json; do
+        [ -f "$state_file" ] || continue
+        if [ -n "$(find "$state_file" -mmin -120 2>/dev/null)" ]; then
+          PLUGIN_CONTEXT=1
+          break
+        fi
+      done
+    fi
+    if [ "$PLUGIN_CONTEXT" -eq 0 ] && [ -n "$TRANSCRIPT_PATH" ] && [ -r "$TRANSCRIPT_PATH" ]; then
+      if tail -200 "$TRANSCRIPT_PATH" 2>/dev/null | grep -qE 'ai-agent-manager-plugin:|/launch-pad|/supervisor|/autonomous|/code-reviewer|/qa-executor|/qa-strategist|/red-team-reviewer|/product-owner|/agent-help|/telemetry|/dreaming'; then
+        PLUGIN_CONTEXT=1
+      fi
+    fi
+    if [ "$PLUGIN_CONTEXT" -eq 0 ]; then
+      exit 0
+    fi
+  fi
+
+  QUESTION=""
+  if [ -n "$JQ_BIN" ]; then
+    QUESTION="$(printf '%s' "$INPUT" \
+      | "$JQ_BIN" -r '.tool_input.questions[0].question // .tool_input.questions[0].header // empty' \
+      2>/dev/null || true)"
+  fi
+  if [ -z "$QUESTION" ]; then
+    QUESTION="Plugin is paused on a user question"
+  fi
+  # Truncate to keep Slack-class webhook bodies small.
+  if [ "${#QUESTION}" -gt 1024 ]; then
+    QUESTION="$(printf '%s' "$QUESTION" | head -c 1021)..."
+  fi
+  TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
+  PAYLOAD=""
+  if [ -n "$JQ_BIN" ]; then
+    PAYLOAD="$("$JQ_BIN" -nc \
+      --arg event     "paused" \
+      --arg question  "$QUESTION" \
+      --arg timestamp "$TIMESTAMP" \
+      '{event: $event, question: $question, timestamp: $timestamp}' \
+      2>/dev/null || true)"
+  fi
+  if [ -z "$PAYLOAD" ]; then
+    # Fallback minimal payload without jq. $TIMESTAMP is safe to inline (digits,
+    # dashes, colons, T, Z only). $QUESTION is NOT JSON-safe — without jq we
+    # cannot guarantee escaping, so fall back to a static body that signals the
+    # pause without leaking unescaped content.
+    PAYLOAD='{"event":"paused","question":"(jq not available; install jq for question text)","timestamp":"'"$TIMESTAMP"'"}'
+  fi
+  curl -fs --max-time 5 \
+    -X POST \
+    -H "Content-Type: application/json" \
+    -d "$PAYLOAD" \
+    "$WEBHOOK_URL" >/dev/null 2>&1 || true
+  exit 0
+fi
+
 # ---- Extract SUPERVISOR_RESULT fields ---------------------------------------
 # Claude Code SubagentStop payload shape (matches send-telemetry-core.sh):
 #   { "session_id": "...", "agent_type": "...", "result_block": "SUPERVISOR_RESULT:\n  schema_version: 1\n  status: completed\n  pr_url: https://...\n  summary: ..." }

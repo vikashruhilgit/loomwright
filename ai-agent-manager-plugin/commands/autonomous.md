@@ -165,7 +165,8 @@ Iteration 1: Launch Pad saves a brief; Supervisor's Worker emits `outputs_gap`; 
 │     │                                                             │
 │     ▼                                                             │
 │  PLAN  ▶ Launch Pad inline (Phase 6 save AskUserQuestion)         │
-│         ▶ ls-diff detects new brief in pending/                   │
+│         ▶ Read LAUNCH_PAD_RESULT.saved_brief_path (v13.1.0+);     │
+│           ls-diff fallback for pre-v13.1.0 plugins                │
 │         ▶ grep verifies rubric preservation (if applicable)       │
 │     │                                                             │
 │     ▼                                                             │
@@ -199,7 +200,7 @@ Iteration 1: Launch Pad saves a brief; Supervisor's Worker emits `outputs_gap`; 
 ## Risks and Limitations (v1)
 
 - **Foreground-assisted, not fire-and-forget** — see the callout at the top. You must be at the terminal to answer in-session prompts.
-- **Brief-save detection (`ls`-diff) is single-session-only.** Do not run two `/autonomous` sessions concurrently on the same repo, and do not run a manual `/launch-pad` while `/autonomous` is mid-PLAN. v1 detects concurrent activity and aborts with `status_reason: "concurrent_session_detected"`, but the safe default is to run one at a time. The proper fix (LAUNCH_PAD_RESULT schema with `saved_brief_path`) is a separate future plan.
+- **Brief-save detection (v13.1.0+): primary path is `LAUNCH_PAD_RESULT.saved_brief_path` validated via `scripts/validate-launch-pad-result.py`; `ls`-diff is fallback-only.** When the result block is present and validates, the primary path consumes `saved_brief_path` directly — concurrent `/launch-pad` invocations are much less likely to confuse the autonomous loop because each Launch Pad invocation emits one result block and the loop reads only the block from its own inlined Launch Pad call. The `ls`-diff fallback retains the original v13.0.x single-session-only constraint and `status_reason: "concurrent_session_detected"` abort, and activates when the result block is absent, fails schema validation, or the saved path doesn't exist on disk (recorded as `policy_decisions[].decision = "launch_pad_result_malformed"` or `"launch_pad_result_fallback"`). For pre-v13.1.0 plugins, the safe operating rule remains: one autonomous / launch-pad invocation at a time per repo.
 - **Multi-iteration requires user merge between iterations.** The rubric-gate AskUserQuestion makes this explicit; the loop verifies merge via `gh pr view` or local ancestry check. You can override with `force-continue-anyway`, but iteration N+1's branch then will not include iteration N's changes, likely producing conflicting PRs.
 - **Rubric per-item PASS/FAIL is not available** — only the score `"N/M"` is in `SUPERVISOR_RESULT`. The refined requirement passes the full rubric back to Launch Pad and relies on its re-discovery (which sees the merged PR) to identify gaps.
 - **Crash recovery is unsupported.** Re-running `/autonomous` on the same requirement after a crash may duplicate work — Launch Pad may re-create a similar brief, Supervisor may try to create a similar PR, merge conflicts likely. Manually clean up `.supervisor/jobs/in-progress/`, close any abandoned PRs, then restart. `/autonomous --continue` is deferred to a future plan that depends on Doc 4's state.json sidecar + resume reconciliation.
@@ -223,6 +224,30 @@ Two possibilities. (1) `.supervisor/jobs/failed/{basename(current_brief_path)}` 
 
 ### Supervisor returned `checkpoint` and the loop aborted
 v1 does not auto-resume from checkpoint (the state may be indeterminate). Run `/supervisor --continue task: <task_id>` manually to finish the in-flight task, then start a new `/autonomous` for the next requirement.
+
+## Comparison to Claude Code's `/goal` (v13.1.0+)
+
+Claude Code ships a built-in `/goal` command for autonomous task execution. It looks similar to `/autonomous` from the outside — both pursue a high-level objective across multiple iterations — but they target different problem shapes and should not be confused.
+
+| Aspect | `/goal` (built-in) | `/autonomous` (this plugin) |
+|---|---|---|
+| **Loop type** | Open-ended observe-act-observe; Claude picks tools, runs them, reads results, repeats until done | Bounded chain of plugin workflows: Launch Pad → Supervisor (with optional re-plan via Outcomes Rubric / Option-C adjudication) |
+| **Re-plan signals** | Implicit — the model decides when more work is needed | Explicit, two-signal contract: `rubric_score N<M` with user-merge verification, OR `failed + inter_subtask_gap` on this iteration's brief (`skills/autonomous-loop/SKILL.md` §"EVALUATE") |
+| **Quality gates** | None inherent (relies on the model's judgment) | Inherits every plugin gate: Plan Reviewer (Phase 5.5), Supervisor Phase 4.5 self-heal, Rubric Grader, Code Reviewer, merge-safety gate |
+| **State** | In-conversation; no persisted contract | `.supervisor/autonomous/{session_id}/state.json` + `.supervisor/requirements/` + per-session JSONL log |
+| **Adjudication on ambiguity** | Model decides when to ask the user | Hard-coded 4-option `AskUserQuestion` on every outputs_gap (`FAILURE_ESCALATION.md`); the loop never auto-picks |
+| **PR contract** | Whatever the model emits | Inherits Supervisor's `SUPERVISOR_RESULT` schema, mandatory `pr_url` on completion, branch-vs-main self-heal review |
+| **Output** | Free-form chat | `AUTONOMOUS_RUN` schema in `RESULT_SCHEMAS.md` + audit-grade per-iteration history |
+
+**When to use `/goal`:** open-ended exploratory or research-y work where the right approach isn't known up-front and the value is in the model figuring it out — e.g., "investigate the flaky test in `tests/auth/`", "audit our error handling and propose fixes". The looseness is a feature.
+
+**When to use `/autonomous`:** you have a defined deliverable, you want the plugin's quality contract (Plan Reviewer + Phase 4.5 self-heal + Rubric Grader + Code Reviewer) on every iteration, and you want the re-plan to fire on **specific structured signals** rather than the model's judgment. The plugin's gates and schemas are the value.
+
+**Can `/autonomous` wrap `/goal`?** No — it would re-introduce the subagent-spawn trap documented in `CLAUDE.md` "Common Pitfalls" §"`/supervisor` or `/launch-pad` aborted...". `/autonomous` runs Launch Pad and Supervisor **inline on the main thread** by design. Adding `/goal` as an outer wrapper would create an extra delegation layer that breaks both workflows.
+
+**Can `/goal` invoke `/supervisor`?** Yes — `/goal` is a generic outer loop and can shell out to any tool the model decides to use, including `/supervisor`. But you'd lose the structured re-plan signal contract that `/autonomous` provides.
+
+---
 
 ## Related Commands
 

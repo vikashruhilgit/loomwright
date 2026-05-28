@@ -45,7 +45,7 @@ ai-agent-manager/                              # marketplace wrapper
 │   ├── commands/                              # 12 slash commands
 │   ├── hooks/hooks.json                       # cross-cutting hooks
 │   ├── skills/                                # 50 skills + SKILLS_INDEX.md
-│   ├── scripts/                               # send-telemetry.sh, send-telemetry-core.sh, send-webhook.sh, telemetry-fixtures/
+│   ├── scripts/                               # send-telemetry.sh, send-telemetry-core.sh, send-webhook.sh, notify-desktop.sh, session-resume.sh, validate-launch-pad-result.py, telemetry-fixtures/
 │   └── docs/                                  # RESULT_SCHEMAS, FAILURE_ESCALATION, ARCHITECTURE_CONTRACTS, ARCHITECTURE, QA_SYSTEM_BLUEPRINT, TELEMETRY
 │       └── SPIKES/                            # Capability spike investigations + deferral records
 ├── scripts/                                   # validate-version.sh, check-command-sync.sh
@@ -127,7 +127,7 @@ Every agent (full standard in `AGENT_GUIDELINES.md`):
 
 ## Structured Contracts (v9.0.0)
 
-- **Result Schemas** — `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md`. CODE_REVIEW_RESULT at `schema_version: 3` (adds `review_mode` (`diff_review` | `consistency_audit`), `audit_focus[]`, `trigger_paths_detected[]`, `scope_expanded[]`, `files_checked[]`, `consistency_checks`, `consistency_summary`, and the `drift` issue category with `drift_kind` + severity caps; v2 accepted for legacy artifacts). WORKER_RESULT at `schema_version: 2` (adds `outputs_verified[]` + `outputs_gap`; v1 accepted for the v12.0.0 transition window). All others at `schema_version: 1`.
+- **Result Schemas** — `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md`. CODE_REVIEW_RESULT at `schema_version: 3` (adds `review_mode` (`diff_review` | `consistency_audit`), `audit_focus[]`, `trigger_paths_detected[]`, `scope_expanded[]`, `files_checked[]`, `consistency_checks`, `consistency_summary`, and the `drift` issue category with `drift_kind` + severity caps; v2 accepted for legacy artifacts). WORKER_RESULT at `schema_version: 2` (adds `outputs_verified[]` + `outputs_gap`; v1 accepted for the v12.0.0 transition window). LAUNCH_PAD_RESULT new at `schema_version: 1` in v13.1.0 (four fields: `status` ∈ `{saved,discarded,blocked,aborted}`, `saved_brief_path` `string | null`, `summary`, `schema_version`; emitted in Launch Pad Phase 7; consumed by `/autonomous` PLAN as the primary brief-detection signal, with `ls`-diff retained as fallback). All others at `schema_version: 1`.
 - **Failure Escalation** — `…/FAILURE_ESCALATION.md` (retry limits, escalation paths)
 - **Architecture Contracts** — `…/ARCHITECTURE_CONTRACTS.md` (capability matrix, context budgets, timeouts, worktree naming)
 - **Job Lifecycle** — briefs flow `pending/` → `in-progress/` → `done/` / `failed/` in `.supervisor/jobs/`
@@ -138,7 +138,7 @@ Every agent (full standard in `AGENT_GUIDELINES.md`):
 
 ## Plugin Hooks (Quality Gates)
 
-14 hooks centralized in `hooks.json` since v10.0.0 (the v12.2.0 webhook hook brought the count from 13 → 14; v13.0.0 adds no new hooks). Prompt-based validation uses fast haiku model with 30s timeout. WorktreeCreate / StopFailure / telemetry / webhook hooks use `type: command` for zero-latency.
+19 hooks centralized in `hooks.json` since v10.0.0 (the v12.2.0 webhook hook brought the count from 13 → 14; v13.1.0 adds five hooks — three for the notification surface (notify-desktop on Notification, notify-desktop + send-webhook both wired to PreToolUse[AskUserQuestion]), one for `LAUNCH_PAD_RESULT` validation (now a `type: command` python YAML parser, not a haiku prompt — see `scripts/validate-launch-pad-result.py`), and one SessionStart resume hook that emits a bounded structured summary of prior plugin state — bringing the count to 19). Prompt-based validation uses fast haiku model with 30s timeout. WorktreeCreate / StopFailure / telemetry / webhook / notification / session-resume hooks use `type: command` for zero-latency.
 
 | Hook | Trigger | Location | Validation |
 |------|---------|----------|------------|
@@ -148,12 +148,16 @@ Every agent (full standard in `AGENT_GUIDELINES.md`):
 | SubagentStop (supervisor) | Supervisor completes | hooks.json | Session outcome, subtask statuses, PR URL |
 | SubagentStop (qa-executor) | QA Executor completes | hooks.json | QA_RESULT (tests_generated, tests_passed, summary) |
 | SubagentStop (plan-reviewer) | Plan Reviewer completes | hooks.json | PLAN_REVIEW_RESULT (schema_version, decision, issues, summary) |
+| SubagentStop (launch-pad-runner) (v13.1.0+) | Launch Pad agent-owned session completes | hooks.json | LAUNCH_PAD_RESULT v1 (exactly four fields: schema_version=1, status ∈ {saved,discarded,blocked,aborted}, saved_brief_path matching `.supervisor/jobs/pending/*.md` iff status=saved else literal null, summary non-empty); rejects extra keys to keep schema tight |
 | SubagentStop telemetry × 3 | code-reviewer / qa-executor / supervisor-runner complete | hooks.json | type:command — wrapper exits 0 always; pipes payload to `send-telemetry-core.sh` |
 | Stop (code-reviewer) | Code Reviewer finishing | hooks.json + frontmatter | CODE_REVIEW_RESULT block present |
 | TaskCompleted | Task marked complete | hooks.json | Task genuinely done |
 | WorktreeCreate | Worktree created | hooks.json | type:command, logs `.supervisor/logs/worktrees.log` |
 | StopFailure | Agent API error | hooks.json | type:command, logs `.supervisor/logs/failures.log` |
 | SubagentStop webhook (supervisor-runner) | Supervisor completes | hooks.json | type:command — `send-webhook.sh`; gated on `AI_AGENT_MANAGER_WEBHOOK_URL`; fire-and-forget POST; always exits 0 |
+| PreToolUse[AskUserQuestion] (v13.1.0+) | Plugin (or main thread) is about to block on a user question — Supervisor adjudication, rubric gate, Plan Reviewer NEEDS_HUMAN, Launch Pad Phase 6, `/autonomous` merge-and-continue | hooks.json | type:command × 2 — `notify-desktop.sh` (OS-native banner, default-on, opt-out via `AI_AGENT_MANAGER_DESKTOP_NOTIFICATIONS=0`) AND `send-webhook.sh` (paused-event payload shape; gated on `AI_AGENT_MANAGER_WEBHOOK_URL`); both fire-and-forget, both always exit 0 |
+| Notification (v13.1.0+) | Claude Code itself emits a notification — permission_prompt, idle_prompt, elicitation_* | hooks.json | type:command — `notify-desktop.sh` fires an OS-native banner so the user knows the Desktop app is waiting on them even when out of focus |
+| SessionStart (v13.1.0+) | Session begins or resumes | hooks.json | type:command — `session-resume.sh` emits a bounded (~2 KB, hard-cap 8 KB) structured summary as `additionalContext` when `source ∈ {resume, clear, compact}`: in-progress briefs, recent failed briefs (last 5), tail of `.supervisor/state.md`, last 3 entries from the most recent session log JSONL, and recovery hints. Silent no-op on `source: startup` to avoid context-injection on every fresh session. |
 
 ---
 
@@ -247,8 +251,8 @@ State auto-saves to `.supervisor/state.md`. Resume with `/supervisor --continue 
 ### Orphaned worktrees after crash?
 `git worktree list`; `git worktree remove ../project-BD-XXa`; `git branch -d feature/BD-XXa`.
 
-### `/autonomous` brief-save detection is single-session-only (v1)
-The PLAN phase detects the saved brief via `ls`-diff of `.supervisor/jobs/pending/` (snapshot before Phase 6's save prompt, snapshot after, take the new file). This works for a single autonomous run but cannot distinguish a concurrent `/launch-pad` or second `/autonomous` session writing to the same `pending/` directory. v1 detects the multi-file case and aborts cleanly with `status_reason="concurrent_session_detected"`, but the safe operating rule is one autonomous / launch-pad invocation at a time per repo. The proper fix is a `LAUNCH_PAD_RESULT` schema with a `saved_brief_path` field emitted by Launch Pad — that lands in a separate follow-up plan and is the single biggest leverage point for hardening `/autonomous`.
+### `/autonomous` brief-save detection — fixed in v13.1.0 (was single-session-only in v13.0.x)
+The PLAN phase now reads `LAUNCH_PAD_RESULT.saved_brief_path` as the primary brief-detection signal (schema in `docs/RESULT_SCHEMAS.md` §"LAUNCH_PAD_RESULT"; emission cadence in `agents/launch-pad.md` Phase 7). The v13.0.x `ls`-diff of `.supervisor/jobs/pending/` is retained as a fallback for transcript-scan failures and for pre-v13.1.0 plugin compatibility, and is the only path used when the result block is absent — that fallback path keeps the original single-session-only constraint and the `status_reason="concurrent_session_detected"` abort behavior. For v13.1.0+ plugins, when LAUNCH_PAD_RESULT is present and validates, the primary path consumes `saved_brief_path` directly — concurrent `/launch-pad` invocations are much less likely to confuse `/autonomous` because each Launch Pad invocation emits one result block and the loop reads only the block from its own inlined call. The python validator (`scripts/validate-launch-pad-result.py`, called from both the SubagentStop hook and inline from `autonomous-loop` SKILL.md PLAN step 4) catches schema violations on both the agent-owned and inline-slash-command paths. When the block fails validation or is absent, the ls-diff fallback (single-session-only constraint) takes over.
 
 ### `/autonomous --cheap` is unsupported in v1
 The loop does not forward unknown flags into the inlined `/supervisor` call. Run `/launch-pad` and `/supervisor --cheap` manually if you need the Sonnet cost profile for a one-off requirement. See `commands/autonomous.md` "Parameters" → `--cheap interaction note` for details.

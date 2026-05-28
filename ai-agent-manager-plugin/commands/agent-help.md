@@ -83,6 +83,32 @@ The AI Agent Manager plugin provides **13 agent roles** (8 user-facing + 5 inter
 
 ---
 
+## What's New in v13.1.0
+
+Two purely additive hardening features layered on v13.0.x. No agent removed, no existing schema changed.
+
+### Notification surface
+
+The plugin now fires OS-native desktop banners (and optionally webhooks) whenever a workflow blocks on user input — Supervisor 4-option adjudication, rubric gate, Plan Reviewer NEEDS_HUMAN, Launch Pad Phase 6, `/autonomous` merge-and-continue. Useful for Desktop-app users who walk away while a long-running workflow is in flight.
+
+| Env var | Default | Effect |
+|---|---|---|
+| `AI_AGENT_MANAGER_DESKTOP_NOTIFICATIONS` | unset (on) | Set to `0` to suppress all OS-native banners (macOS Notification Center, Linux `notify-send`). The hook still runs but silent-exits. |
+| `AI_AGENT_MANAGER_NOTIFY_SCOPE` | `plugin` | `plugin` (default) only fires when this plugin is the source of the pause (active Supervisor job, recent autonomous state file, or plugin marker in the last 200 lines of the session transcript). `all` fires on every `AskUserQuestion` in every Claude Code session — useful only for operators who want host-wide notification coverage. |
+| `AI_AGENT_MANAGER_WEBHOOK_URL` | unset (off) | Set to a Slack-incoming-webhook (or any URL accepting POST + JSON) to also receive paused-event pings remotely. See `docs/TELEMETRY.md` §"Webhook Notifications" for payload shapes. |
+
+If notifications stop working, look at `.supervisor/logs/notifications.log` — stderr from the per-platform notifier is captured there. To disable the hooks entirely, edit `hooks/hooks.json` and remove the `Notification` and `PreToolUse[AskUserQuestion]` entries.
+
+### LAUNCH_PAD_RESULT schema (closes the `ls`-diff fragility)
+
+Launch Pad now emits a structured result block at the end of every run (Phase 7) with four fields: `schema_version: 1`, `status ∈ {saved, discarded, blocked, aborted}`, `saved_brief_path: <path> | null`, `summary`. The `/autonomous` PLAN phase reads `saved_brief_path` directly instead of the v13.0.x `ls`-diff of `.supervisor/jobs/pending/`. Schema authoritative in `docs/RESULT_SCHEMAS.md` §"LAUNCH_PAD_RESULT".
+
+Validation is **deterministic** — `scripts/validate-launch-pad-result.py` does real YAML parsing (not a haiku prompt) and is called from both the SubagentStop hook (agent-owned `-runner` path) and inline from the autonomous-loop skill (slash-command path). Schema violations surface as `policy_decisions[].decision = "launch_pad_result_malformed"` and fall through to the `ls`-diff fallback, preserving backward-compatible behavior for pre-v13.1.0 plugins.
+
+---
+
+---
+
 ## Command Reference
 
 ### 🚀 /launch-pad — Supervisor Readiness
