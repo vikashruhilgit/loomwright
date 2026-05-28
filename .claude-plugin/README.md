@@ -394,7 +394,7 @@ ai-agent-manager/                            # Marketplace wrapper repo
     │   ├── telemetry.md, dreaming.md
     │   └── agent-help.md
     ├── hooks/
-    │   └── hooks.json                       # 14 quality gate hooks (centralized)
+    │   └── hooks.json                       # 19 quality gate hooks (centralized)
     ├── skills/                              # 50 focused skill modules
     │   ├── SKILLS_INDEX.md                  # Skill catalog with agent mapping
     │   └── [skill-name]/SKILL.md            # Individual skills
