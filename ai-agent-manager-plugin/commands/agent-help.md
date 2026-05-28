@@ -107,8 +107,6 @@ Validation is **deterministic** — `scripts/validate-launch-pad-result.py` does
 
 ---
 
----
-
 ## Command Reference
 
 ### 🚀 /launch-pad — Supervisor Readiness
