@@ -161,7 +161,9 @@ esac
 
 # ---- Defensive bounds -------------------------------------------------------
 # macOS Notification Center silently truncates very long bodies; cap explicitly
-# so the displayed message stays readable.
+# so the displayed message stays readable. NOTE: `head -c` truncates by BYTES
+# (BSD), so a multi-byte UTF-8 code point at the boundary may be split — cosmetic
+# only at these small caps (a possibly-garbled trailing char before the ellipsis).
 MAX_BODY=200
 MAX_TITLE=60
 

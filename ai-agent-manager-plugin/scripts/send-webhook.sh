@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# send-webhook.sh — WEBHOOK NOTIFICATION WRAPPER (v14.0.0, Subtask S2)
+# send-webhook.sh — WEBHOOK NOTIFICATION WRAPPER (v14.1.0)
 #
 # INVARIANT: ALWAYS exits 0. The SubagentStop hook must never see a non-zero
 # exit from this script. All failure modes (missing env var, missing curl/jq,
@@ -8,7 +8,7 @@
 # Authoritative spec: ai-agent-manager-plugin/docs/TELEMETRY.md §"Webhook Notifications"
 #
 # ----------------------------------------------------------------------------
-# EVENT TYPES (v14.0.0)
+# EVENT TYPES (v14.0.0 / v14.1.0)
 # ----------------------------------------------------------------------------
 #
 #   --event-type supervisor_result   (default when flag absent — v13.0.1 path)
@@ -28,6 +28,16 @@
 #     JSON. The injection-safety contract: --context may contain single quotes,
 #     double quotes, backslashes, embedded newlines, and unicode; the receiver
 #     sees the exact round-tripped string with no parse error.
+#
+#   paused                           (NEW in v14.1.0 — PreToolUse[AskUserQuestion] hook)
+#     Stdin carries the hook payload; NO --event-type flag is passed. Matched on
+#     hook_event_name=PreToolUse + tool_name=AskUserQuestion (requires
+#     tool_input.questions). Scope-gated via AI_AGENT_MANAGER_NOTIFY_SCOPE
+#     (plugin default / all). Webhook URL resolves from AI_AGENT_MANAGER_WEBHOOK_URL
+#     or, if unset, the .supervisor/notify-config.json `.webhook_url` fallback.
+#       ntfy.sh URLs (or AI_AGENT_MANAGER_WEBHOOK_FORMAT=ntfy) → plain-text body
+#         + Title/Priority/Tags headers
+#       other URLs → {event:"paused", question, timestamp}
 #
 # ----------------------------------------------------------------------------
 # DRY-RUN MODE
