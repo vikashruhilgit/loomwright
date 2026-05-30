@@ -193,12 +193,22 @@ NOTIFY_LOG=".supervisor/logs/notifications.log"
 # GNU `timeout` is not on stock macOS; `gtimeout` ships with coreutils. If neither
 # is present we run the notifier directly — identical to pre-v14.1.0 behavior, so
 # this is purely additive protection with zero regression risk.
-TIMEOUT=""
+TIMEOUT_BIN=""
 if command -v timeout >/dev/null 2>&1; then
-  TIMEOUT="timeout 3"
+  TIMEOUT_BIN="timeout"
 elif command -v gtimeout >/dev/null 2>&1; then
-  TIMEOUT="gtimeout 3"
+  TIMEOUT_BIN="gtimeout"
 fi
+# run_bounded <cmd...> — run with a 3s ceiling if a timeout binary exists, else
+# run directly. A function (not a `$TIMEOUT` string) avoids SC2086 word-splitting
+# AND the bash-3.2 `"${arr[@]}"`-under-`set -u` pitfall on stock macOS.
+run_bounded() {
+  if [ -n "$TIMEOUT_BIN" ]; then
+    "$TIMEOUT_BIN" 3 "$@"
+  else
+    "$@"
+  fi
+}
 
 case "$(uname -s 2>/dev/null || echo unknown)" in
   Darwin)
@@ -209,13 +219,13 @@ case "$(uname -s 2>/dev/null || echo unknown)" in
       # stderr captured to .supervisor/logs/notifications.log so the user has a
       # signal when notifications silently stop working (Finding #11 in the
       # v13.1.0 red-team audit). The `|| true` keeps the script exit code at 0.
-      $TIMEOUT osascript -e "display notification \"$ESC_BODY\" with title \"$ESC_TITLE\" sound name \"Glass\"" \
+      run_bounded osascript -e "display notification \"$ESC_BODY\" with title \"$ESC_TITLE\" sound name \"Glass\"" \
         >/dev/null 2>>"$NOTIFY_LOG" || true
     fi
     ;;
   Linux)
     if command -v notify-send >/dev/null 2>&1; then
-      $TIMEOUT notify-send -a "Claude Code" "$TITLE" "$BODY" >/dev/null 2>>"$NOTIFY_LOG" || true
+      run_bounded notify-send -a "Claude Code" "$TITLE" "$BODY" >/dev/null 2>>"$NOTIFY_LOG" || true
     fi
     ;;
   *)

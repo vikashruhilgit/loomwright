@@ -565,7 +565,7 @@ distinct from the GitHub Issues telemetry described above:
 | Channel | Purpose | Trigger | Cadence |
 |---------|---------|---------|---------|
 | GitHub Issues telemetry | **Longitudinal analytics** — agent scores, issue patterns, trend lines aggregated over weeks | `code-reviewer`, `qa-executor`, `supervisor-runner` SubagentStop | Per qualifying run, dedup-windowed |
-| Webhook notifications  | **Real-time ops alerts** — "did the run finish? what's the PR? did self-heal escalate?" | `supervisor-runner` SubagentStop only | Per Supervisor run, fire-and-forget |
+| Webhook notifications  | **Real-time ops alerts** — "did the run finish? what's the PR? did self-heal escalate? is it paused waiting on me?" | `supervisor-runner` SubagentStop; `/autonomous` gates (v14.0.0); `PreToolUse[AskUserQuestion]` pauses (v14.1.0) | Fire-and-forget per event |
 
 Both can be enabled simultaneously, neither depends on the other, and both
 fail closed (silent no-op) when their respective configuration is absent.
@@ -580,6 +580,20 @@ That's it — once the env var is set in the shell that launches Claude Code,
 every Supervisor SubagentStop fires a single POST. No `/telemetry`-style
 consent file, no interactive enable command, no per-session state. To
 disable, `unset AI_AGENT_MANAGER_WEBHOOK_URL`.
+
+### v14.1.0 — paused-event hook, file-config fallback, ntfy payload
+
+**Third event type — `paused`.** Beyond the `supervisor_result` (completion) and `gate` (`/autonomous`) paths, `send-webhook.sh` now fires a `paused` event from a `PreToolUse[AskUserQuestion]` hook whenever the plugin blocks on a user question (Supervisor adjudication, `/autonomous` rubric gate, Plan Reviewer NEEDS_HUMAN, Launch Pad Phase 6, merge-and-continue). It is stdin-driven (the hook payload is read from stdin and matched on `hook_event_name=PreToolUse` + `tool_name=AskUserQuestion`), runs the same three-marker scope gate as `notify-desktop.sh` (`AI_AGENT_MANAGER_NOTIFY_SCOPE=plugin` default, `all` to fire everywhere; the `Notification` hook is exempt), and POSTs:
+
+```json
+{ "event": "paused", "question": "<first question text>", "timestamp": "..." }
+```
+
+**File-config fallback.** When `AI_AGENT_MANAGER_WEBHOOK_URL` is unset, the script falls back to `.supervisor/notify-config.json` → `.webhook_url`. This fixes the common failure where a URL exported only in `~/.zshrc` never reaches the non-interactive (bash) hook subprocess. The env var wins when both are present.
+
+**ntfy-aware payload.** When the resolved URL matches `*ntfy.sh/*` (or `AI_AGENT_MANAGER_WEBHOOK_FORMAT=ntfy` is set for self-hosted instances), the `paused` event sends a **plain-text body** plus `Title` / `Priority` / `Tags` headers instead of JSON — so an ntfy phone push is readable rather than a raw JSON blob. All other endpoints (Slack/Discord/custom) receive JSON.
+
+The `supervisor_result` and `gate` paths are **unchanged**; `AI_AGENT_MANAGER_WEBHOOK_DRY_RUN=1` works for the `paused` path too (prints the would-be body instead of POSTing).
 
 ### Payload schema
 

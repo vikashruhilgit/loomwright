@@ -291,43 +291,47 @@ if [ "$HOOK_EVENT" = "PreToolUse" ] && [ "$TOOL_NAME" = "AskUserQuestion" ]; the
   [ -z "$QUESTION" ] && QUESTION="Plugin is paused on a user question"
   if [ "${#QUESTION}" -gt 1024 ]; then QUESTION="$(printf '%s' "$QUESTION" | head -c 1021)..."; fi
 
-  # ntfy-aware dispatch (red-team §2.1 secondary): an ntfy topic-path POST treats
-  # the body as the literal message, so JSON renders as an unreadable blob. For
-  # ntfy, send a plain-text body + Title/Priority/Tags headers. Everything else
-  # (Slack/Discord/custom) gets the structured JSON payload.
-  case "$WEBHOOK_URL" in
-    *ntfy.sh*|*ntfy*)
-      if [ -n "$DRY_RUN" ]; then
-        printf 'NTFY paused: title=[Claude needs your input] body=[%s]\n' "$QUESTION"
-        exit 0
-      fi
-      printf '%s' "$QUESTION" | curl -fs --max-time 5 \
-        -H "Title: Claude needs your input" \
-        -H "Priority: high" \
-        -H "Tags: robot,question" \
-        --data-binary @- "$WEBHOOK_URL" >/dev/null 2>&1 || true
-      ;;
-    *)
-      PAYLOAD=""
-      if [ -n "$JQ_BIN" ]; then
-        PAYLOAD="$("$JQ_BIN" -nc \
-          --arg event     "paused" \
-          --arg question  "$QUESTION" \
-          --arg timestamp "$TIMESTAMP" \
-          '{event: $event, question: $question, timestamp: $timestamp}' \
-          2>/dev/null || true)"
-      fi
-      if [ -z "$PAYLOAD" ]; then
-        PAYLOAD='{"event":"paused","question":"(jq not available; install jq for question text)","timestamp":"'"$TIMESTAMP"'"}'
-      fi
-      if [ -n "$DRY_RUN" ]; then
-        printf '%s\n' "$PAYLOAD"
-        exit 0
-      fi
-      curl -fs --max-time 5 -X POST -H "Content-Type: application/json" \
-        -d "$PAYLOAD" "$WEBHOOK_URL" >/dev/null 2>&1 || true
-      ;;
-  esac
+  # ntfy detection (red-team NIT): match the official ntfy.sh service by URL
+  # path, OR an explicit opt-in for self-hosted instances via
+  # AI_AGENT_MANAGER_WEBHOOK_FORMAT=ntfy. The earlier broad `*ntfy*` glob was
+  # tightened so hostnames merely containing "ntfy" (e.g. notify.example.com)
+  # don't receive ntfy-shaped (and thus malformed) requests.
+  NTFY=0
+  case "$WEBHOOK_URL" in *ntfy.sh/*) NTFY=1 ;; esac
+  [ "${AI_AGENT_MANAGER_WEBHOOK_FORMAT:-}" = "ntfy" ] && NTFY=1
+
+  # ntfy: plain-text body + Title/Priority/Tags headers (readable phone alert).
+  # Everything else (Slack/Discord/custom) gets the structured JSON payload.
+  if [ "$NTFY" -eq 1 ]; then
+    if [ -n "$DRY_RUN" ]; then
+      printf 'NTFY paused: title=[Claude needs your input] body=[%s]\n' "$QUESTION"
+      exit 0
+    fi
+    printf '%s' "$QUESTION" | curl -fs --max-time 5 \
+      -H "Title: Claude needs your input" \
+      -H "Priority: high" \
+      -H "Tags: robot,question" \
+      --data-binary @- "$WEBHOOK_URL" >/dev/null 2>&1 || true
+  else
+    PAYLOAD=""
+    if [ -n "$JQ_BIN" ]; then
+      PAYLOAD="$("$JQ_BIN" -nc \
+        --arg event     "paused" \
+        --arg question  "$QUESTION" \
+        --arg timestamp "$TIMESTAMP" \
+        '{event: $event, question: $question, timestamp: $timestamp}' \
+        2>/dev/null || true)"
+    fi
+    if [ -z "$PAYLOAD" ]; then
+      PAYLOAD='{"event":"paused","question":"(jq not available; install jq for question text)","timestamp":"'"$TIMESTAMP"'"}'
+    fi
+    if [ -n "$DRY_RUN" ]; then
+      printf '%s\n' "$PAYLOAD"
+      exit 0
+    fi
+    curl -fs --max-time 5 -X POST -H "Content-Type: application/json" \
+      -d "$PAYLOAD" "$WEBHOOK_URL" >/dev/null 2>&1 || true
+  fi
   exit 0
 fi
 
