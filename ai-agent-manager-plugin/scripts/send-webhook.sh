@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# send-webhook.sh — WEBHOOK NOTIFICATION WRAPPER (v14.0.0, Subtask S2)
+# send-webhook.sh — WEBHOOK NOTIFICATION WRAPPER (v14.1.0)
 #
 # INVARIANT: ALWAYS exits 0. The SubagentStop hook must never see a non-zero
 # exit from this script. All failure modes (missing env var, missing curl/jq,
@@ -8,7 +8,7 @@
 # Authoritative spec: ai-agent-manager-plugin/docs/TELEMETRY.md §"Webhook Notifications"
 #
 # ----------------------------------------------------------------------------
-# EVENT TYPES (v14.0.0)
+# EVENT TYPES (v14.0.0 / v14.1.0)
 # ----------------------------------------------------------------------------
 #
 #   --event-type supervisor_result   (default when flag absent — v13.0.1 path)
@@ -28,6 +28,16 @@
 #     JSON. The injection-safety contract: --context may contain single quotes,
 #     double quotes, backslashes, embedded newlines, and unicode; the receiver
 #     sees the exact round-tripped string with no parse error.
+#
+#   paused                           (NEW in v14.1.0 — PreToolUse[AskUserQuestion] hook)
+#     Stdin carries the hook payload; NO --event-type flag is passed. Matched on
+#     hook_event_name=PreToolUse + tool_name=AskUserQuestion (requires
+#     tool_input.questions). Scope-gated via AI_AGENT_MANAGER_NOTIFY_SCOPE
+#     (plugin default / all). Webhook URL resolves from AI_AGENT_MANAGER_WEBHOOK_URL
+#     or, if unset, the .supervisor/notify-config.json `.webhook_url` fallback.
+#       ntfy.sh URLs (or AI_AGENT_MANAGER_WEBHOOK_FORMAT=ntfy) → plain-text body
+#         + Title/Priority/Tags headers
+#       other URLs → {event:"paused", question, timestamp}
 #
 # ----------------------------------------------------------------------------
 # DRY-RUN MODE
@@ -77,8 +87,17 @@ set -u
 # Intentionally NO `set -e` — wrapper must absorb every child failure.
 # pipefail is also OFF for the same reason.
 
-# ---- Gate on env var --------------------------------------------------------
+# ---- Resolve webhook URL (env var, then repo-local config file) -------------
+# v14.1.0 (red-team §2.1): env-var inheritance is fragile. A URL exported only in
+# ~/.zshrc does NOT reach a non-interactive hook subprocess unless the shell that
+# launched `claude` already had it exported — GUI/IDE launches and login shells
+# that source .zprofile/.zshenv silently miss it. Fall back to a repo-local
+# config file so notification config survives regardless of launch context.
+# The env var wins when both are set.
 WEBHOOK_URL="${AI_AGENT_MANAGER_WEBHOOK_URL:-}"
+if [ -z "$WEBHOOK_URL" ] && [ -r ".supervisor/notify-config.json" ] && command -v jq >/dev/null 2>&1; then
+  WEBHOOK_URL="$(jq -r '.webhook_url // empty' .supervisor/notify-config.json 2>/dev/null || true)"
+fi
 if [ -z "$WEBHOOK_URL" ]; then
   exit 0
 fi
@@ -221,12 +240,116 @@ if [ "$EVENT_TYPE" = "gate" ]; then
   exit 0
 fi
 
+# ---- Read stdin ONCE (gate path already exited above) -----------------------
+# Shared by the paused-event and supervisor_result paths below.
+INPUT="$(cat 2>/dev/null || true)"
+
+# ============================================================================
+# PAUSED EVENT PATH (PreToolUse[AskUserQuestion]) — v14.1.0 (reconciled from
+# release/v13.1.0). Fires automatically via the PreToolUse hook on EVERY plugin
+# pause: Supervisor adjudication, /autonomous rubric gate, Plan Reviewer
+# NEEDS_HUMAN, Launch Pad Phase 6, /autonomous merge-and-continue. Tells the
+# operator the run is blocked on input (the OUTBOUND half of bidirectional
+# autonomy; the inbound reply leg is Claude Code Remote Control).
+# ============================================================================
+HOOK_EVENT=""
+TOOL_NAME=""
+if [ -n "$JQ_BIN" ]; then
+  HOOK_EVENT="$(printf '%s' "$INPUT" | "$JQ_BIN" -r '.hook_event_name // empty' 2>/dev/null || true)"
+  TOOL_NAME="$(printf '%s' "$INPUT" | "$JQ_BIN" -r '.tool_name // empty' 2>/dev/null || true)"
+fi
+
+if [ "$HOOK_EVENT" = "PreToolUse" ] && [ "$TOOL_NAME" = "AskUserQuestion" ]; then
+  # Defense-in-depth: require tool_input.questions to exist before treating this
+  # as a plugin pause (guards against future payloads tagged AskUserQuestion).
+  HAS_QUESTIONS=""
+  if [ -n "$JQ_BIN" ]; then
+    HAS_QUESTIONS="$(printf '%s' "$INPUT" | "$JQ_BIN" -r '.tool_input.questions // empty' 2>/dev/null || true)"
+  fi
+  if [ -z "$HAS_QUESTIONS" ]; then
+    printf 'send-webhook: AskUserQuestion payload lacks tool_input.questions — skipping\n' >&2
+    exit 0
+  fi
+
+  # Scope gate (mirrors notify-desktop.sh): default `plugin` suppresses paused
+  # webhooks outside plugin context; AI_AGENT_MANAGER_NOTIFY_SCOPE=all fires on
+  # every AskUserQuestion. Three independent OR'd markers.
+  SCOPE="${AI_AGENT_MANAGER_NOTIFY_SCOPE:-plugin}"
+  if [ "$SCOPE" = "plugin" ]; then
+    TRANSCRIPT_PATH=""
+    [ -n "$JQ_BIN" ] && TRANSCRIPT_PATH="$(printf '%s' "$INPUT" | "$JQ_BIN" -r '.transcript_path // empty' 2>/dev/null || true)"
+    PLUGIN_CONTEXT=0
+    if compgen -G ".supervisor/jobs/in-progress/*.md" >/dev/null 2>&1; then PLUGIN_CONTEXT=1; fi
+    if [ "$PLUGIN_CONTEXT" -eq 0 ]; then
+      for sf in .supervisor/autonomous/*/state.json; do
+        [ -f "$sf" ] || continue
+        if [ -n "$(find "$sf" -mmin -120 2>/dev/null)" ]; then PLUGIN_CONTEXT=1; break; fi
+      done
+    fi
+    if [ "$PLUGIN_CONTEXT" -eq 0 ] && [ -n "$TRANSCRIPT_PATH" ] && [ -r "$TRANSCRIPT_PATH" ]; then
+      if tail -200 "$TRANSCRIPT_PATH" 2>/dev/null | grep -qE 'ai-agent-manager-plugin:|/launch-pad|/supervisor|/autonomous|/code-reviewer|/qa-executor|/qa-strategist|/red-team-reviewer|/product-owner|/agent-help|/telemetry|/dreaming'; then
+        PLUGIN_CONTEXT=1
+      fi
+    fi
+    if [ "$PLUGIN_CONTEXT" -eq 0 ]; then exit 0; fi
+  fi
+
+  QUESTION=""
+  if [ -n "$JQ_BIN" ]; then
+    QUESTION="$(printf '%s' "$INPUT" | "$JQ_BIN" -r '.tool_input.questions[0].question // .tool_input.questions[0].header // empty' 2>/dev/null || true)"
+  fi
+  [ -z "$QUESTION" ] && QUESTION="Plugin is paused on a user question"
+  if [ "${#QUESTION}" -gt 1024 ]; then QUESTION="$(printf '%s' "$QUESTION" | head -c 1021)..."; fi
+
+  # ntfy detection (red-team NIT): match the official ntfy.sh service by URL
+  # path, OR an explicit opt-in for self-hosted instances via
+  # AI_AGENT_MANAGER_WEBHOOK_FORMAT=ntfy. The earlier broad `*ntfy*` glob was
+  # tightened so hostnames merely containing "ntfy" (e.g. notify.example.com)
+  # don't receive ntfy-shaped (and thus malformed) requests.
+  NTFY=0
+  case "$WEBHOOK_URL" in *ntfy.sh/*) NTFY=1 ;; esac
+  [ "${AI_AGENT_MANAGER_WEBHOOK_FORMAT:-}" = "ntfy" ] && NTFY=1
+
+  # ntfy: plain-text body + Title/Priority/Tags headers (readable phone alert).
+  # Everything else (Slack/Discord/custom) gets the structured JSON payload.
+  if [ "$NTFY" -eq 1 ]; then
+    if [ -n "$DRY_RUN" ]; then
+      printf 'NTFY paused: title=[Claude needs your input] body=[%s]\n' "$QUESTION"
+      exit 0
+    fi
+    printf '%s' "$QUESTION" | curl -fs --max-time 5 \
+      -H "Title: Claude needs your input" \
+      -H "Priority: high" \
+      -H "Tags: robot,question" \
+      --data-binary @- "$WEBHOOK_URL" >/dev/null 2>&1 || true
+  else
+    PAYLOAD=""
+    if [ -n "$JQ_BIN" ]; then
+      PAYLOAD="$("$JQ_BIN" -nc \
+        --arg event     "paused" \
+        --arg question  "$QUESTION" \
+        --arg timestamp "$TIMESTAMP" \
+        '{event: $event, question: $question, timestamp: $timestamp}' \
+        2>/dev/null || true)"
+    fi
+    if [ -z "$PAYLOAD" ]; then
+      PAYLOAD='{"event":"paused","question":"(jq not available; install jq for question text)","timestamp":"'"$TIMESTAMP"'"}'
+    fi
+    if [ -n "$DRY_RUN" ]; then
+      printf '%s\n' "$PAYLOAD"
+      exit 0
+    fi
+    curl -fs --max-time 5 -X POST -H "Content-Type: application/json" \
+      -d "$PAYLOAD" "$WEBHOOK_URL" >/dev/null 2>&1 || true
+  fi
+  exit 0
+fi
+
 # ============================================================================
 # SUPERVISOR_RESULT EVENT PATH (default — v13.0.1 behavior, unchanged)
 # ============================================================================
 
-# ---- Read stdin -------------------------------------------------------------
-INPUT="$(cat 2>/dev/null || true)"
+# ---- stdin already read above (shared read) --------------------------------
 if [ -z "$INPUT" ]; then
   printf 'send-webhook: empty stdin payload\n' >&2
   exit 0
