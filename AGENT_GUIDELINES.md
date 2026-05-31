@@ -86,6 +86,22 @@ Agent result blocks (`WORKER_RESULT`, `CODE_REVIEW_RESULT`, `EXECUTE_RESULT`, `E
 
 ---
 
+## Memory Core Principle
+
+> **Rule 0 — Memory is a liability until proven an asset.** Every stored line is paid for on every future context load. The default is *don't store it.*
+
+**Asset test** — store a fact only if it passes ALL four: (1) **Durable** — true across sessions, not transient run state; (2) **Reusable** — applies to a future task, not a one-off; (3) **Decision-changing** — an agent would act *differently* knowing it (if it wouldn't change a decision, it's trivia — drop it); (4) **Non-duplicative** — not already in `CLAUDE.md`, the code, or another memory layer.
+
+**Never store:** session/run state (use `.supervisor/`), secrets/PII/tokens, transient debug notes, anything derivable by reading the code or `CLAUDE.md`, or speculation.
+
+**Hard limits — enforced at WRITE time, never silent truncation:** a project-memory *index* ≤ 200 lines / 25 KB (mirrors Claude Code auto-memory's load cap); topic files ≤ 400 lines; bounded reflection logs ≤ 3 active entries per category (Reflexion sliding window). At a cap, evict the lowest-value entry (oldest-unreferenced / lowest-recall) and log the eviction — do not silently drop data.
+
+**Freshness & authority:** every entry is dated + provenance-tagged; agent-written memory is **advisory and strictly subordinate to the human-authored `CLAUDE.md`** — on any conflict, the human layer wins, and memory is never an enforcement boundary (use hooks for hard gates).
+
+**Retrieval — no RAG / no vector DB.** The filesystem + `grep`/`Glob` + a bounded index file *is* the retrieval system. A codebase is already greppable; a vector store adds infra, opacity, and the #1 memory-poisoning attack surface (MINJA/MemoryGraft). Revisit only if the memory corpus exceeds ~1k entries AND keyword/path retrieval demonstrably misses relevant entries — then reach for embedded `sqlite-vec`, not a server.
+
+---
+
 ## Advisor Tool (SDK-only pattern)
 
 The Anthropic **Advisor tool** is a beta capability on the Claude API as of 2026-05-10 that lets one inference call use an executor model (e.g., a Sonnet-class model) which can consult a higher-intelligence advisor model (e.g., an Opus-class model) for a sub-inference within the same `/v1/messages` request. It is enabled by sending the beta header `advisor-tool-2026-03-01` and attaching a tool of type `advisor_20260301` to the request's `tools` array.
