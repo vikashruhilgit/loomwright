@@ -22,6 +22,7 @@ Why we don't depend on PyYAML:
 """
 
 import json
+import os
 import re
 import sys
 
@@ -187,7 +188,7 @@ def main():
     if block is None:
         emit(
             False,
-            "missing LAUNCH_PAD_RESULT block — Phase 7 emission required since v13.1.0",
+            "missing LAUNCH_PAD_RESULT block — Phase 7 emission required since v14.2.0",
         )
         return
 
@@ -246,6 +247,16 @@ def main():
                 False,
                 "status=saved requires saved_brief_path matching "
                 "'.supervisor/jobs/pending/*.md'; got " + repr(path),
+            )
+            return
+        # File-existence invariant (RESULT_SCHEMAS.md §"LAUNCH_PAD_RESULT"): the
+        # brief MUST exist on disk at emission time. Resolved relative to the
+        # hook/run CWD = project root. `os` is stdlib — no dependency added.
+        if not os.path.exists(path):
+            emit(
+                False,
+                "status=saved: saved_brief_path '" + path
+                + "' does not exist on disk",
             )
             return
     else:

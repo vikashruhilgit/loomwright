@@ -745,7 +745,7 @@ AUTONOMOUS_RUN:
 |---|---|
 | `done` | `null` (rubric satisfied or no rubric present), `"user_stopped_at_rubric_gate"` (user accepted partial rubric; PR exists, run ended on user's terms), `"user_stopped_at_no_rubric_gate"` (v14.0.0+; user picked stop at the no-rubric gate), `"no_rubric_in_non_interactive"` (v14.0.0+; non-interactive fallback at no-rubric gate — see Non-interactive fallback policy in `skills/autonomous-loop/SKILL.md` §"No-rubric gate") |
 | `paused_max_iterations` | `"max_iterations_reached"` |
-| `aborted` | `"user_discarded_at_phase_6"`, `"user_aborted_at_no_go"`, `"user_aborted_at_plan_review_fail"`, `"supervisor_checkpoint"`, `"rubric_dropped_from_brief"`, `"concurrent_session_detected"`, `"invalid_max_iterations"`, **v14.0.0+:** `"non_interactive_without_fallback"`, `"conflicting_mode_flags"`, `"iter_pr_base_mismatch"`, `"rubric_gate_closed_non_interactive"`, `"user_aborted_gh_retry"` |
+| `aborted` | `"user_discarded_at_phase_6"`, `"user_aborted_at_no_go"`, `"user_aborted_at_plan_review_fail"`, `"supervisor_checkpoint"`, `"rubric_dropped_from_brief"`, `"concurrent_session_detected"`, `"invalid_max_iterations"`, **v14.0.0+:** `"non_interactive_without_fallback"`, `"conflicting_mode_flags"`, `"iter_pr_base_mismatch"`, `"rubric_gate_closed_non_interactive"`, `"user_aborted_gh_retry"`, **v14.2.0+:** `"launch_pad_blocked"`, `"user_aborted_at_launch_pad"` |
 | `failed` | `"supervisor_failed_other"`, **v14.0.0+:** `"supervisor_base_branch_mismatch"` |
 
 Reason-string meanings:
@@ -772,6 +772,13 @@ Reason-string meanings:
 - `"supervisor_base_branch_mismatch"` — Supervisor's Phase 4 self-verify OR Phase 4.5 base-mismatch cleanup detected an unrecoverable base-branch divergence and emitted `SUPERVISOR_RESULT.status: failed` with the diagnostic. The autonomous loop surfaces this as `status: failed` (not `aborted`) because the failure originated below the loop. The iteration's `SUPERVISOR_RESULT.pr_state` typically carries `"closed_by_loop"` or `"close_attempt_failed"` for the cleanup case.
 - `"user_stopped_at_no_rubric_gate"` — user picked "stop" at the v14 no-rubric gate (fires when the iteration had no rubric and the user is given an explicit continue/stop choice rather than the loop silently terminating). Pairs with `status: done` because the PR exists and the user ended the run on their own terms.
 - `"no_rubric_in_non_interactive"` — the no-rubric gate's non-interactive-fallback policy: with no rubric signal to gate against, continuing in CI would be busywork, so the gate accepts the iteration cleanly. Pairs with `status: done` (NOT `aborted`) — this is the explicit non-failure CI exit. Contrast `"rubric_gate_closed_non_interactive"`, which fails closed because a rubric signal IS available and silently dropping it is unsafe.
+
+**v14.2.0 status_reason additions** (paired with the LAUNCH_PAD_RESULT brief-detection work):
+
+- `"launch_pad_blocked"` — Launch Pad emitted `LAUNCH_PAD_RESULT.status: blocked` (Phase 1 BLOCKER or Plan Review FAIL × 3 without override); the loop never reached EXECUTE. Pairs with `status: aborted`. Pre-EXECUTE; `total_iterations: 0`.
+- `"user_aborted_at_launch_pad"` — Launch Pad emitted `LAUNCH_PAD_RESULT.status: aborted` (user killed the workflow mid-flight). Pairs with `status: aborted`. Pre-EXECUTE; `total_iterations: 0`.
+
+Two new `policy_decisions[].decision` values also land in v14.2.0 (both audit-only records emitted during PLAN brief-detection, paired with `source: "autonomous_loop"`): `"launch_pad_result_malformed"` (the `LAUNCH_PAD_RESULT` block was present but failed `validate-launch-pad-result.py`, so the loop fell through to the `ls`-diff fallback) and `"launch_pad_result_fallback"` (no result block found — pre-v14.2.0 plugin or transcript-scan miss — so the `ls`-diff fallback was used).
 
 **Validation rules:**
 - No SubagentStop hook validates this block (autonomous-layer-only). The v1 → v2 bump in v14.0.0 is therefore forward-only — schema-1 emissions remain accepted by downstream tooling. Parsers SHOULD accept either `schema_version: 1` or `schema_version: 2` and SHOULD treat unrecognized `status_reason` values as opaque strings rather than rejecting.

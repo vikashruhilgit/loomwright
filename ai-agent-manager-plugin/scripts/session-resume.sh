@@ -2,7 +2,7 @@
 # session-resume.sh — SessionStart hook helper for crash/compact recovery.
 #
 # Fires on SessionStart events. When `source` is `resume`, `clear`, or `compact`,
-# emits a bounded (~2 KB) structured summary as `additionalContext` so the
+# emits a bounded (~8 KB; MAX_CHARS=8000) structured summary as `additionalContext` so the
 # agent re-entering the session has immediate visibility into:
 #   - in-progress Supervisor jobs (.supervisor/jobs/in-progress/)
 #   - recent failed jobs (.supervisor/jobs/failed/)
