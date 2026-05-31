@@ -86,7 +86,7 @@ fi
 # (`python3 - <<PY` reads its code from stdin, which would clobber the JSON
 # payload we need to pipe in.) Using `python3 -c "$VAR"` keeps stdin free.
 IFS= read -r -d '' STAGE1_PY <<'PY' || true
-import json, sys, re
+import json, sys, re, os
 
 # ---------------------------------------------------------------------------
 # Privacy regex deny-list — MUST stay aligned with send-telemetry.sh wrapper
@@ -118,6 +118,43 @@ def fail(stage, msg, exit_code):
     sys.stdout.flush()
     sys.exit(0)  # bash reads EXIT_CODE; this stage always returns 0 itself.
 
+def _last_assistant_text_from_transcript(path):
+    """Best-effort extraction of the LAST assistant message's text from a Claude
+    Code transcript JSONL. The transcript schema is not formally documented, so
+    we defensively pull `text` parts from the last assistant-role entry. Returns
+    "" on any read/parse failure. Mirrors the helper of the same name in
+    scripts/validate-launch-pad-result.py — keep the two in sync."""
+    last_text = ""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                msg = obj.get("message") if isinstance(obj, dict) else None
+                if not isinstance(msg, dict):
+                    msg = obj if isinstance(obj, dict) else {}
+                role = msg.get("role") or obj.get("role") or obj.get("type")
+                if role != "assistant":
+                    continue
+                content = msg.get("content")
+                texts = []
+                if isinstance(content, str):
+                    texts.append(content)
+                elif isinstance(content, list):
+                    for part in content:
+                        if isinstance(part, dict) and isinstance(part.get("text"), str):
+                            texts.append(part["text"])
+                if texts:
+                    last_text = "\n".join(texts)
+    except OSError:
+        return ""
+    return last_text
+
 # ---- Parse JSON ------------------------------------------------------------
 try:
     raw = sys.stdin.read()
@@ -136,9 +173,34 @@ agent_type = payload.get("agent_type", "") or ""
 if not isinstance(agent_type, str):
     agent_type = ""
 
-result_block = payload.get("result_block", "") or ""
+# ---- Resolve the finishing subagent's output text --------------------------
+# v14.2.1 correctness fix: Claude Code SubagentStop payloads do NOT carry a
+# top-level `result_block` field. Empirically (verified against a real captured
+# SubagentStop payload) the subagent's final text lives in
+# `last_assistant_message`; the only guaranteed fallback is the transcript
+# JSONL (`agent_transcript_path` for a Task-spawned subagent — the plugin's
+# code-reviewer / qa-executor / supervisor-runner all fire their SubagentStop
+# this way — else the shared session `transcript_path`). The legacy
+# `result_block` / `output` / `agent_output` field names are retained in the
+# chain so existing fixtures and any future payload that re-adds them keep
+# working. Mirrors scripts/validate-launch-pad-result.py.
+result_block = (
+    payload.get("last_assistant_message")
+    or payload.get("result_block")
+    or payload.get("output")
+    or payload.get("agent_output")
+    or ""
+)
 if not isinstance(result_block, str):
     result_block = ""
+if not result_block:
+    for _tp_key in ("agent_transcript_path", "transcript_path"):
+        _tp = payload.get(_tp_key)
+        if isinstance(_tp, str) and _tp and os.path.exists(_tp):
+            _txt = _last_assistant_text_from_transcript(_tp)
+            if _txt:
+                result_block = _txt
+                break
 
 # ---- Detect schema ---------------------------------------------------------
 schema = None
@@ -513,6 +575,13 @@ for k, v in payload.items():
         if h:
             raw_hit = h
             break
+
+# Also scan the RESOLVED result text. When it was read from the transcript
+# JSONL (v14.2.1 fallback) it is NOT a top-level payload field, so the loop
+# above would miss a secret embedded there. The body scan only ever sees the
+# REDACTED copy, so this raw scan is the authoritative fail-closed gate.
+if not raw_hit:
+    raw_hit = scan_for_secret(result_block)
 
 # ---- Build prospective body components -------------------------------------
 # Issues Detected — per schema.

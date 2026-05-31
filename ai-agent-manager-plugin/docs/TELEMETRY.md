@@ -60,7 +60,8 @@ SubagentStop hook (hooks.json)
        |   - ALWAYS exits 0
        v
 [ ${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry-core.sh ]   <-- CORE
-       - parses inbound result block
+       - resolves the agent's result text (§Result-text extraction)
+       - parses the resolved result block
        - resolves consent + target repo
        - applies interest filter and dedup
        - runs privacy whitelist (fail-closed)
@@ -73,6 +74,60 @@ SubagentStop hook (hooks.json)
 
 > **Diagram note:** This sketch will be promoted to a fuller diagram
 > in Subtask #5 alongside the post-implementation polish.
+
+### Result-text extraction (SubagentStop payload shape) — authoritative
+
+Both `send-telemetry-core.sh` and `send-webhook.sh` (the `supervisor_result`
+path) need the finishing subagent's final output text to parse the
+`SUPERVISOR_RESULT` / `CODE_REVIEW_RESULT` / `QA_RESULT` block out of it. That
+text is **not** in a top-level `result_block` field — a real Claude Code
+`SubagentStop` payload does not carry one.
+
+**Verified payload shape** (captured from a real `SubagentStop` hook fire — the
+Claude Code hook docs guarantee only `transcript_path`, but current payloads
+carry these fields):
+
+```json
+{
+  "session_id": "…",
+  "transcript_path": "…/<session>.jsonl",
+  "agent_transcript_path": "…/<session>/subagents/agent-<id>.jsonl",
+  "agent_id": "…",
+  "agent_type": "ai-agent-manager-plugin:supervisor-runner",
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "last_assistant_message": "## SUPERVISOR_RESULT\n- status: completed\n…",
+  "cwd": "…", "permission_mode": "…", "effort": { "level": "…" }
+}
+```
+
+There is **no** `result_block`, no `output`, no `agent_output`. The subagent's
+final text is in **`last_assistant_message`**.
+
+**Resolution chain (both scripts, in order):**
+
+1. `last_assistant_message` — the real, observed inline field. **Primary.**
+2. `result_block` → `output` → `agent_output` — legacy / forward-compat names.
+   Retained so existing fixtures and any future payload that re-adds them keep
+   working; absent on real payloads today.
+3. Last assistant message read out of the transcript JSONL — preferring the
+   subagent-scoped **`agent_transcript_path`** (the `code-reviewer` /
+   `qa-executor` / `supervisor-runner` SubagentStop hooks all fire from a
+   Task-spawned subagent, whose own messages live here), then the shared
+   session **`transcript_path`**. This is the only field the hook docs
+   guarantee, so it is the durable fallback.
+
+`scripts/validate-launch-pad-result.py` (the `launch-pad-runner` SubagentStop
+validator) uses the same chain — keep all three in sync. The historical
+mistake (reading only `.result_block`, which is always empty) silently
+suppressed every supervisor-completion webhook and every telemetry post until
+v14.2.1.
+
+> **Privacy note:** when the result text is recovered from the transcript
+> JSONL it is **not** a top-level payload field, so the raw-payload secret scan
+> (which walks payload string fields) would not see it. The core therefore also
+> raw-scans the *resolved* result text before redaction, preserving the
+> fail-closed guarantee. See §Deny-list.
 
 ### Script-location convention
 
@@ -426,10 +481,12 @@ contradiction the split was created to resolve.
 ### Deny-list (regex)
 
 The core scans two surfaces inside `send-telemetry-core.sh`: the **raw
-input payload** (every string field, before consent so privacy violations
-always log even on healthy runs) AND the **prospective issue body** (the
-rendered title + body + redacted JSON payload, post-render). Any single
-match in either scan -> fail closed (exit 2). The core's stderr is
+input payload** (every string field, plus the *resolved* result text — which
+may have been read from the transcript JSONL and is therefore not itself a
+payload field; scanned before consent so privacy violations always log even on
+healthy runs) AND the **prospective issue body** (the rendered title + body +
+redacted JSON payload, post-render). Any single match in either scan -> fail
+closed (exit 2). The core's stderr is
 redacted separately by the wrapper before it lands in `telemetry.log`
 (see "Stderr redaction" below) — that is defence in depth, not part of
 the fail-closed check.
@@ -614,8 +671,12 @@ Field semantics:
 - **`agent`** — always the literal string `"supervisor"` for v12.2.0; reserved
   for future expansion (e.g., `"qa-executor"`) without breaking consumers.
 - **`status`** — copied verbatim from `SUPERVISOR_RESULT.status`. One of
-  `completed | completed_with_escalation | failed | checkpoint`. Empty
-  string if extraction failed (jq missing or malformed payload — see below).
+  `completed | completed_with_escalation | failed | checkpoint`. The
+  `SUPERVISOR_RESULT` block is located inside the agent's resolved result text
+  (`last_assistant_message`, then legacy inline fields, then the transcript
+  JSONL — see §Result-text extraction), **not** a top-level `result_block`
+  field. Empty string if extraction failed (jq missing or malformed payload —
+  see below); the payload-validity guard then suppresses the POST.
 - **`pr_url`** — copied verbatim from `SUPERVISOR_RESULT.pr_url`. Empty
   string when `status ∈ {failed, checkpoint}` (no PR was created).
 - **`summary`** — copied verbatim from `SUPERVISOR_RESULT.summary`, **truncated to 2,048 bytes** (with a trailing `...` ellipsis) to stay well under the body-size limits common to chat webhooks (Slack incoming-webhooks reject bodies > 40 KB; many enterprise endpoints are stricter). Receivers needing the full text should reach the PR link.
@@ -645,7 +706,7 @@ JSON extraction and payload composition. Behaviour when tools are missing:
 | `AI_AGENT_MANAGER_WEBHOOK_URL` unset | exit 0 immediately, zero side effects |
 | `curl` not on PATH | log one line to stderr, exit 0 (no webhook fired) |
 | `jq` not on PATH | field extraction skipped, `status` stays empty → payload-validity guard exits 0, webhook is NOT fired |
-| `result_block` absent or `status` empty after extraction | logs `"no status in result block — skipping POST"` to stderr, exit 0 (no webhook fired) |
+| Result text not resolvable (no `last_assistant_message` / legacy inline field / readable transcript) or `status` empty after extraction | logs `"no status in result block — skipping POST"` to stderr, exit 0 (no webhook fired) |
 | Webhook returns non-2xx, times out (>5s), or DNS fails | curl error suppressed, exit 0 |
 
 The wrapper **always exits 0**. The fire-and-forget contract means a slow

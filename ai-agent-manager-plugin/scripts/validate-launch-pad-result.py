@@ -218,7 +218,8 @@ def main():
         # documented. Try the observed/legacy inline field names first
         # (`last_assistant_message` is present in current payloads;
         # result_block/output/agent_output are the plugin's prior convention),
-        # then fall back to reading the transcript JSONL.
+        # then fall back to reading the transcript JSONL (the subagent-scoped
+        # `agent_transcript_path` first, else the shared `transcript_path`).
         result_block = (
             payload.get("last_assistant_message")
             or payload.get("result_block")
@@ -227,16 +228,25 @@ def main():
             or ""
         )
         if not result_block:
-            tp = payload.get("transcript_path")
-            if isinstance(tp, str) and tp and os.path.exists(tp):
-                result_block = _last_assistant_text_from_transcript(tp)
+            # Prefer the subagent-scoped `agent_transcript_path` (the finishing
+            # subagent's own messages) over the shared session `transcript_path`
+            # (the parent session). For a Task-spawned subagent the former is the
+            # more correct source for "the subagent's last assistant message".
+            # Mirrors scripts/send-webhook.sh and scripts/send-telemetry-core.sh.
+            for tp_key in ("agent_transcript_path", "transcript_path"):
+                tp = payload.get(tp_key)
+                if isinstance(tp, str) and tp and os.path.exists(tp):
+                    txt = _last_assistant_text_from_transcript(tp)
+                    if txt:
+                        result_block = txt
+                        break
 
     if not result_block:
         emit(
             False,
             "could not locate agent output in the SubagentStop payload "
             "(checked last_assistant_message / result_block / output / "
-            "agent_output / transcript_path)",
+            "agent_output / agent_transcript_path / transcript_path)",
         )
         return
 
