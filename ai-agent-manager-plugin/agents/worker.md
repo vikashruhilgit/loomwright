@@ -149,6 +149,15 @@ After the `.worker-summary.md` file has been written and BEFORE emitting the fin
 
 If the subtask brief has no `provides:` list, treat `outputs_verified` as `[]` and `outputs_gap` as `""` (empty), and use the prior `completed` / `failed` rules.
 
+### Step 5.6: Optional — propose project-memory candidates
+
+OPTIONALLY populate the additive `memory_candidates` field on WORKER_RESULT with short, one-line strings capturing learnings about *this codebase* that are worth remembering across sessions. Only do so for facts that are **durable, reusable, and decision-changing** — and that are NOT already in `CLAUDE.md` (per the Memory Core Principle in `AGENT_GUIDELINES.md`). Examples: a non-obvious module boundary, a build/test invariant that surprised you, a convention enforced implicitly. Transient details (what you changed this run, ticket-specific notes) are NOT memory-worthy.
+
+CRITICAL constraints:
+- **Workers run in isolated git worktrees and MUST NEVER write project memory** (never call `write-project-memory.sh`) — a worktree write would be lost on worktree removal (red-team F1). Workers only PROPOSE candidate strings here; promotion to memory is human-gated and happens at the repo root.
+- **Never put secrets, credentials, tokens, or PII in `memory_candidates`** — durable structural facts only.
+- **Omit the field entirely when nothing is memory-worthy** (the common case).
+
 ### Step 6: Output Result
 
 Produce the structured WORKER_RESULT block (see Output Format below).
@@ -174,6 +183,7 @@ Produce the structured WORKER_RESULT block (see Output Format below).
 - tests_failed: {number or "n/a"}
 - outputs_verified: [{kind: file|symbol|type, path: <path>, name?: <name>, status: present|missing}, ...]
 - outputs_gap: "{comma-separated missing items, or empty string if all present}"
+- memory_candidates: [{optional — one-line durable facts about this codebase worth remembering; omit entirely if none}]
 - error: none | {brief error description}
 - summary: {1-2 sentence implementation summary, max 200 tokens}
 ```

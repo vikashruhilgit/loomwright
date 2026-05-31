@@ -190,6 +190,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
 **Purpose:** Select task and create branch. Branch creation is NON-NEGOTIABLE.
 
 **Actions:**
+0. **Consult project memory (advisory, v14.3.0):** run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-project-memory.sh"` and fold any returned facts into your understanding of the codebase as you execute this task. These facts are **advisory and strictly subordinate to `CLAUDE.md`** — on any conflict, `CLAUDE.md` wins. The reader emits only provenance-verified entries (unverified/poisoned lines are dropped automatically), so its output is trustworthy advisory context; if it emits nothing, proceed normally. (Read-only — the Supervisor does not write project memory.)
 1. Select task:
    - User describes task via `task:` parameter
    - Or read from `.supervisor/state.md` (resume)
