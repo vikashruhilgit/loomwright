@@ -19,3 +19,6 @@ jobs:
 
       - name: Check command-wrapper sync (prevent canonical-prompt drift)
         run: bash scripts/check-command-sync.sh
+
+      - name: Check documentation currency (version/count drift gate)
+        run: bash scripts/check-doc-currency.sh
