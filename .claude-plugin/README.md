@@ -392,7 +392,7 @@ ai-agent-manager/                            # Marketplace wrapper repo
     │   ├── telemetry.md, dreaming.md
     │   └── agent-help.md
     ├── hooks/
-    │   └── hooks.json                       # 17 quality gate hooks (centralized)
+    │   └── hooks.json                       # 19 quality gate hooks (centralized)
     ├── skills/                              # 50 focused skill modules
     │   ├── SKILLS_INDEX.md                  # Skill catalog with agent mapping
     │   └── [skill-name]/SKILL.md            # Individual skills
@@ -454,10 +454,11 @@ Agents with `memory: project` build knowledge across sessions:
 
 ### Quality Gate Hooks
 
-17 hooks centralized in `hooks.json` validate agent output and surface notifications:
-- **SubagentStop:** Worker, Execute Manager, Code Reviewer, Supervisor, QA Executor, Plan Reviewer (6 prompt validators) + 3 `type: command` telemetry hooks on Code Reviewer, QA Executor, Supervisor + 1 `type: command` opt-in webhook hook (v12.2.0)
+19 hooks centralized in `hooks.json` validate agent output and surface notifications:
+- **SubagentStop:** Worker, Execute Manager, Code Reviewer, Supervisor, QA Executor, Plan Reviewer (6 prompt validators) + 3 `type: command` telemetry hooks on Code Reviewer, QA Executor, Supervisor + 1 `type: command` opt-in webhook hook (v12.2.0) + `launch-pad-runner` `LAUNCH_PAD_RESULT` validator (v14.2.0)
 - **PreToolUse (AskUserQuestion):** desktop banner + paused-event webhook (v14.1.0)
 - **Notification:** desktop banner on permission/idle/elicitation prompts, `auth_success` excluded (v14.1.0)
+- **SessionStart:** crash/compact recovery context via `session-resume.sh` (v14.2.0)
 - **Stop:** Code Reviewer (completeness gate)
 - **TaskCompleted:** Verify task genuinely done
 - **WorktreeCreate / StopFailure:** Logging
