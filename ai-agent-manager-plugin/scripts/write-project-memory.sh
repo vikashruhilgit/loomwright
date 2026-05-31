@@ -32,7 +32,7 @@ done
 [ -n "$FACT" ] || { echo "write-project-memory: --fact is required" >&2; exit 2; }
 # Sanitize the source label of quotes/backslashes so the no-jq provenance fallback
 # (printf-built JSON) can never emit malformed JSONL even if a caller widens --source.
-SOURCE="$(printf '%s' "$SOURCE" | tr -d '"\\')"
+SOURCE="$(printf '%s' "$SOURCE" | tr -d '"\\[:cntrl:]')"
 [ -n "$SOURCE" ] || SOURCE="unknown"
 
 # ---- Worktree guard -------------------------------------------------------
@@ -82,7 +82,10 @@ prov_line() {
   fi
 }
 
-mem_tmp="$(mktemp)"; prov_tmp="$(mktemp)"
+# Temps live IN the memory dir (not $TMPDIR) so the commit `mv` is a same-filesystem,
+# truly-atomic rename — a tmpfs /tmp (Linux/CI) would otherwise make `mv` a non-atomic
+# cross-device copy+unlink, risking a truncated .provenance.jsonl on interruption.
+mem_tmp="$(mktemp "$MEM_DIR/.mtmp.XXXXXX")"; prov_tmp="$(mktemp "$MEM_DIR/.ptmp.XXXXXX")"
 trap 'rm -f "$mem_tmp" "$prov_tmp" "$mem_tmp.e" 2>/dev/null' EXIT
 cat "$MEM" > "$mem_tmp"
 printf -- '- [%s] %s\n' "$id" "$fact_oneline" >> "$mem_tmp"
@@ -90,14 +93,17 @@ cat "$PROV" > "$prov_tmp"
 printf '%s\n' "$(prov_line "$id" "$prev_hash" "$content_hash" "$SOURCE" "add")" >> "$prov_tmp"
 
 # ---- Write-time eviction (cap; never silent) ------------------------------
-count="$(grep -cE '^- \[' "$mem_tmp" 2>/dev/null || echo 0)"
+# NOTE: .provenance.jsonl is append-only (one line per add AND per evict), so each read
+# walks the full chain (O(n)). Provenance compaction / re-genesis once the log exceeds
+# N x cap is a P4 follow-up — fine at the v1 200-entry scale.
+count="$(grep -cE '^- \[' "$mem_tmp" 2>/dev/null)"
 while [ "$count" -gt "$MAX_LINES" ]; do
   victim="$(grep -nE '^- \[' "$mem_tmp" | head -n1)"
   vid="$(printf '%s' "$victim" | sed -E 's/^[0-9]+:- \[([^]]+)\].*/\1/')"
   awk 'BEGIN{d=0} /^- \[/ && d==0 {d=1; next} {print}' "$mem_tmp" > "$mem_tmp.e" && mv "$mem_tmp.e" "$mem_tmp"
   eph="$(tail -n1 "$prov_tmp" | sha)"
   printf '%s\n' "$(prov_line "$vid" "$eph" "" "eviction" "evict")" >> "$prov_tmp"
-  count="$(grep -cE '^- \[' "$mem_tmp" 2>/dev/null || echo 0)"
+  count="$(grep -cE '^- \[' "$mem_tmp" 2>/dev/null)"
 done
 
 # Commit both files. Provenance FIRST: if the second rename fails, the worst case is a

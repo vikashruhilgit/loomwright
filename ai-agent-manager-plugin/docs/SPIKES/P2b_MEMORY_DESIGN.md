@@ -1,6 +1,10 @@
 # P2b — Agent-Writable Project Memory (DESIGN, for review)
 
 > Status: **IMPLEMENTED in v14.3.0 (PR #18)** — retained as the design / rationale record.
+> **v1 shipped scope = Launch Pad reads + writes its own human-approved facts; layout is
+> `PROJECT_MEMORY.md` + `.provenance.jsonl` only.** §3/§5/§10's Context-Keeper-sole-writer,
+> Supervisor-reads-memory, `WORKER_RESULT.memory_candidates[]`, and `topics/` describe the
+> fuller P4 design, NOT current behavior.
 > P2b is the red-team's *single most
 > dangerous idea* (memory the system writes and later trusts), so this nails the
 > safety-critical decisions before implementation. Builds on the v14.2.x Memory
