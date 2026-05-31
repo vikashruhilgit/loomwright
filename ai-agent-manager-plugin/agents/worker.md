@@ -158,7 +158,7 @@ CRITICAL constraints:
 - **Never put secrets, credentials, tokens, or PII in `memory_candidates`** — durable structural facts only.
 - **Omit the field entirely when nothing is memory-worthy** (the common case).
 
-> **Where candidates go (v14.4.0 scope):** proposed candidates surface in your `WORKER_RESULT` block for a human — or a future P4 reflection pass — to promote at the repo root via `write-project-memory.sh`. There is **no automatic Supervisor collection/promotion step yet** (deferred to P4); emitting them here is the v1 deliverable, not a dead end.
+> **Where candidates go (current scope):** proposed candidates surface in your `WORKER_RESULT` block for a human — or a future P4 reflection pass — to promote at the repo root via `write-project-memory.sh`. There is **no automatic Supervisor collection/promotion step yet** (deferred to P4); emitting them here is the v1 deliverable, not a dead end.
 
 ### Step 6: Output Result
 
@@ -185,7 +185,7 @@ Produce the structured WORKER_RESULT block (see Output Format below).
 - tests_failed: {number or "n/a"}
 - outputs_verified: [{kind: file|symbol|type, path: <path>, name?: <name>, status: present|missing}, ...]
 - outputs_gap: "{comma-separated missing items, or empty string if all present}"
-- memory_candidates: ["<one-line durable fact>", ...]   # OPTIONAL array of strings — omit the line entirely if none
+- memory_candidates: ["<one-line durable fact>", ...]   # OPTIONAL array of strings — omit the field entirely if no candidates
 - error: none | {brief error description}
 - summary: {1-2 sentence implementation summary, max 200 tokens}
 ```
