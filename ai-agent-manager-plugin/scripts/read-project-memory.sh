@@ -12,7 +12,7 @@
 # Usage:  read-project-memory.sh           (prints verified memory to stdout)
 # Exit:   always 0 (a read must never break the caller); diagnostics go to stderr + memory.log.
 
-set -uo pipefail
+set -uo pipefail   # `set -e` intentionally omitted — a read must NEVER fail its caller.
 
 GITROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$GITROOT" 2>/dev/null || true

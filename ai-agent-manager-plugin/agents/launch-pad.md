@@ -515,7 +515,7 @@ Check all 10 review criteria. Output a PLAN_REVIEW_RESULT block.",
    ```bash
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/write-project-memory.sh" --fact "<approved fact>" --source "launch-pad:{slug}"
    ```
-   **Never auto-write** — memory promotion is human-gated in v1. Skip entirely if you learned nothing memory-worthy or the user declines. (Safe here: Launch Pad runs at the repo root; the writer refuses any worktree CWD.)
+   **Never auto-write** — memory promotion is human-gated in v1. Skip entirely if you learned nothing memory-worthy or the user declines. (`{slug}` = the saved brief's basename without the `.md` extension. Safe here: Launch Pad runs at the repo root; the writer refuses any worktree CWD.)
 
 **Save rules:**
 - If environment has BLOCKERS from Phase 1: output fix instructions, don't offer save

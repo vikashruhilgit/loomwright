@@ -30,6 +30,10 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$FACT" ] || { echo "write-project-memory: --fact is required" >&2; exit 2; }
+# Sanitize the source label of quotes/backslashes so the no-jq provenance fallback
+# (printf-built JSON) can never emit malformed JSONL even if a caller widens --source.
+SOURCE="$(printf '%s' "$SOURCE" | tr -d '"\\')"
+[ -n "$SOURCE" ] || SOURCE="unknown"
 
 # ---- Worktree guard -------------------------------------------------------
 GITROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
@@ -96,6 +100,12 @@ while [ "$count" -gt "$MAX_LINES" ]; do
   count="$(grep -cE '^- \[' "$mem_tmp" 2>/dev/null || echo 0)"
 done
 
-mv "$mem_tmp" "$MEM"; mv "$prov_tmp" "$PROV"
+# Commit both files. Provenance FIRST: if the second rename fails, the worst case is a
+# provenance entry with no matching memory line — which the read-side gate silently ignores
+# (no orphaned, repeatedly-logged memory line). A failed first rename leaves state untouched.
+mv "$prov_tmp" "$PROV" && mv "$mem_tmp" "$MEM" || {
+  echo "write-project-memory: atomic rename failed — write aborted; read gate ignores any unmatched provenance" >&2
+  exit 2
+}
 echo "write-project-memory: stored [$id] (source=$SOURCE)"
 exit 0
