@@ -184,11 +184,23 @@ run_core_dry_run() {
 # Fixture                              | none | allow_no_repo | allow_with_repo
 # -------------------------------------+------+---------------+----------------
 # supervisor-pass.json                 |  3   |       4       |       5         (consent first; filter only fires once repo is resolved)
+# supervisor-pass-lastmsg.json         |  3   |       4       |       5         (v14.2.1: result carried in REAL `last_assistant_message` field, not `result_block`)
 # supervisor-escalated.json            |  3   |       4       |       0
 # supervisor-escalated-yaml.json       |  3   |       4       |       0         (heal-iter-2: real agent YAML mapping form, not bullet form)
 # qa-failed.json                       |  3   |       4       |       0
 # secrets-bait-ghp.json                |  2   |       2       |       2         (privacy fail-closed in stage1, before consent)
 # secrets-bait-email.json              |  2   |       2       |       2         (privacy fail-closed in stage1, before consent)
+# secrets-bait-lastmsg-ghp.json        |  2   |       2       |       2         (v14.2.1: secret in `last_assistant_message` still fails closed)
+#
+# v14.2.1 DISCRIMINATOR: the two *-lastmsg-* fixtures omit `result_block`
+# entirely and carry the agent output in `last_assistant_message` (the field
+# real Claude Code SubagentStop payloads actually populate). Under the pre-fix
+# reader (which read only `.result_block`) `last_assistant_message` would be
+# ignored → empty result text → schema `no_known_result_block` → WOULD_EXIT=5
+# at EVERY consent state (and bait would short-circuit to 5 BEFORE the privacy
+# scan, exposing the secret to a later POST). The expected values below
+# (3/4/5 for pass, 2/2/2 for bait) therefore FAIL on the buggy reader and PASS
+# only once `last_assistant_message` is honoured.
 expected_would_exit() {
   local fixture_name="$1" state="$2"
   case "$fixture_name" in
@@ -201,6 +213,9 @@ expected_would_exit() {
     supervisor-pass.json:none)             printf '3\n' ;;
     supervisor-pass.json:allow_no_repo)    printf '4\n' ;;
     supervisor-pass.json:allow_with_repo)  printf '5\n' ;;
+    supervisor-pass-lastmsg.json:none)             printf '3\n' ;;
+    supervisor-pass-lastmsg.json:allow_no_repo)    printf '4\n' ;;
+    supervisor-pass-lastmsg.json:allow_with_repo)  printf '5\n' ;;
     supervisor-escalated.json:none)      printf '3\n' ;;
     supervisor-escalated.json:allow_no_repo) printf '4\n' ;;
     supervisor-escalated.json:allow_with_repo) printf '0\n' ;;
@@ -393,6 +408,77 @@ assert_eq "consent_no_exit (supervisor-escalated:no)" "3" "$we_denied"
 assert_match "denied_skipped_marker (supervisor-escalated:no)" "denied — skipped" "$out_denied_full"
 assert_not_match "no_uninitialised_when_denied (supervisor-escalated:no)" "consent_uninitialised" "$out_denied_full"
 rm -f "$DENIED_TMP"
+
+# ---- Transcript-fallback test (v14.2.1) -------------------------------------
+# When the SubagentStop payload carries NO inline result text (no
+# last_assistant_message / result_block / output / agent_output), the core must
+# fall back to reading the LAST assistant message out of the transcript JSONL —
+# preferring the subagent-scoped `agent_transcript_path`, then the shared
+# `transcript_path`. We synthesise a real on-disk transcript (absolute path, so
+# os.path.exists resolves regardless of CWD) carrying an ESCALATED
+# SUPERVISOR_RESULT and assert the core reaches the gh-send path (WOULD_EXIT=0
+# at allow_with_repo) rather than short-circuiting on `no_known_result_block`.
+echo ""
+echo "==== Transcript fallback (no inline result text) ===="
+TRANSCRIPT_TMPDIR="$(mktemp -d 2>/dev/null || echo "/tmp/telemetry-transcript-$$")"
+mkdir -p "$TRANSCRIPT_TMPDIR" 2>/dev/null || true
+set_state_allow_with_repo
+
+# Build a transcript JSONL + two payloads (agent_transcript_path-only and
+# transcript_path-only) via python3 to avoid bash JSON-escaping hazards.
+python3 - "$TRANSCRIPT_TMPDIR" <<'PY'
+import json, os, sys
+d = sys.argv[1]
+result_text = (
+    "## SUPERVISOR_RESULT\n"
+    "- schema_version: 1\n"
+    "- task_id: fixture-transcript-fallback-task-0021\n"
+    "- status: completed_with_escalation\n"
+    "- heal_loop_ran: true\n"
+    "- heal_decision: ESCALATED\n"
+    "- heal_iterations: 3\n"
+    "- heal_fixable_issues_fixed: 1\n"
+    "- heal_remaining_issues: 2\n"
+    "- subtasks_total: 2\n"
+    "- subtasks_completed: 2\n"
+    "- subtasks_failed: []\n"
+    "- pr_url: https://github.com/example/repo/pull/77\n"
+    "- summary: Result text recovered from the transcript JSONL fallback, not an inline field.\n"
+)
+transcript = os.path.join(d, "subagent.jsonl")
+with open(transcript, "w", encoding="utf-8") as fh:
+    # A couple of non-assistant / noise lines, then the real last assistant msg.
+    fh.write(json.dumps({"type": "user", "message": {"role": "user", "content": "go"}}) + "\n")
+    fh.write("this line is deliberately not valid json\n")
+    fh.write(json.dumps({"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "intermediate, ignore me"}]}}) + "\n")
+    fh.write(json.dumps({"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": result_text}]}}) + "\n")
+
+# Payload variant A: only agent_transcript_path (subagent-scoped) is present.
+with open(os.path.join(d, "payload-agent-tp.json"), "w", encoding="utf-8") as fh:
+    json.dump({
+        "session_id": "fixture-sess-transcript-fallback-0021",
+        "agent_type": "ai-agent-manager-plugin:supervisor-runner",
+        "agent_transcript_path": transcript,
+    }, fh)
+
+# Payload variant B: only the shared transcript_path is present.
+with open(os.path.join(d, "payload-shared-tp.json"), "w", encoding="utf-8") as fh:
+    json.dump({
+        "session_id": "fixture-sess-transcript-fallback-0021",
+        "agent_type": "ai-agent-manager-plugin:supervisor-runner",
+        "transcript_path": transcript,
+    }, fh)
+PY
+
+for variant in payload-agent-tp payload-shared-tp; do
+  out_tr="$(run_core_dry_run "$TRANSCRIPT_TMPDIR/$variant.json")"
+  we_tr="$(extract_would_exit "$out_tr")"
+  assert_eq "transcript_fallback would_exit ($variant)" "0" "$we_tr"
+  assert_not_match "transcript_fallback schema_detected ($variant)" "no_known_result_block" "$out_tr"
+  assert_match "transcript_fallback body_from_transcript ($variant)" "recovered from the transcript JSONL fallback" "$out_tr"
+done
+
+rm -rf "$TRANSCRIPT_TMPDIR" 2>/dev/null || true
 
 # ---- Summary ----------------------------------------------------------------
 TOTAL=$((PASS_COUNT + FAIL_COUNT))

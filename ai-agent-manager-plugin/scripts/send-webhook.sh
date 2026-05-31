@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# send-webhook.sh — WEBHOOK NOTIFICATION WRAPPER (v14.1.0)
+# send-webhook.sh — WEBHOOK NOTIFICATION WRAPPER (v14.1.0; result-extraction fix v14.2.1)
 #
 # INVARIANT: ALWAYS exits 0. The SubagentStop hook must never see a non-zero
 # exit from this script. All failure modes (missing env var, missing curl/jq,
@@ -356,14 +356,22 @@ if [ -z "$INPUT" ]; then
 fi
 
 # ---- Extract SUPERVISOR_RESULT fields ---------------------------------------
-# Claude Code SubagentStop payload shape (matches send-telemetry-core.sh):
-#   { "session_id": "...", "agent_type": "...", "result_block": "SUPERVISOR_RESULT:\n  schema_version: 1\n  status: completed\n  pr_url: https://...\n  summary: ..." }
-# The fields we want live INSIDE the `result_block` text — not at the top level.
+# v14.2.1 correctness fix: a real Claude Code SubagentStop payload does NOT
+# carry a top-level `result_block` field. Verified against a captured payload,
+# the finishing subagent's final text lands in `last_assistant_message`; the
+# only guaranteed fallback is the transcript JSONL (`agent_transcript_path` for
+# a Task-spawned subagent — which is how supervisor-runner fires its
+# SubagentStop — else the shared session `transcript_path`). Real payload keys:
+#   { "session_id": "...", "agent_type": "...", "last_assistant_message": "...",
+#     "agent_transcript_path": "...", "transcript_path": "...", ... }
+# The SUPERVISOR_RESULT fields we want live INSIDE that text — not at top level.
 # Strategy:
-#   1. Use jq to lift `result_block` out of the JSON envelope (string).
+#   1. Resolve the result text: last_assistant_message → legacy
+#      result_block/output/agent_output → last assistant message read out of
+#      agent_transcript_path / transcript_path. (Mirrors
+#      scripts/validate-launch-pad-result.py and send-telemetry-core.sh.)
 #   2. Grep the YAML-style `key: value` lines from that text using sed.
-#   3. Fall back to top-level keys if `result_block` is absent (forward compat
-#      and unit-test fixtures that pass a flat object).
+#   3. Fall back to top-level keys (forward compat + flat-object test fixtures).
 STATUS=""
 PR_URL=""
 SUMMARY=""
@@ -391,8 +399,53 @@ yaml_field() {
     | head -n1
 }
 
+# extract_last_assistant <transcript_jsonl_path>  →  prints the LAST assistant
+# message's concatenated text (or nothing). Used only as the v14.2.1 fallback
+# when no inline result text is present on the payload. Tolerant of malformed
+# lines via `fromjson?` (the transcript may interleave non-JSON or differently
+# shaped entries). Pure jq — keeps this script's dependency surface at curl+jq
+# (no python3, unlike send-telemetry-core.sh). Best-effort: empty on any error.
+#
+# The inner filter (no -r) emits each assistant message as a JSON-encoded
+# string — one per line even when the text itself spans multiple lines (the
+# embedded newlines stay escaped as \n) — so `tail -n 1` reliably isolates the
+# LAST message before a final `jq -r` decodes it back to raw text.
+extract_last_assistant() {
+  local tpath="$1" encoded
+  [ -n "$JQ_BIN" ] || return 0
+  [ -r "$tpath" ] || return 0
+  encoded="$(tail -n 800 "$tpath" 2>/dev/null | "$JQ_BIN" -R '
+    fromjson?
+    | (.message // .) as $m
+    | select(($m.role // .role // .type) == "assistant")
+    | ($m.content // .content)
+    | if type == "array" then (map(select((.type // "") == "text") | .text) | join("\n"))
+      elif type == "string" then .
+      else empty end
+  ' 2>/dev/null | tail -n 1)"
+  [ -n "$encoded" ] && printf '%s' "$encoded" | "$JQ_BIN" -r '. // empty' 2>/dev/null || true
+}
+
 if [ -n "$JQ_BIN" ]; then
-  RESULT_BLOCK="$(printf '%s' "$INPUT" | "$JQ_BIN" -r '.result_block // empty' 2>/dev/null || true)"
+  # Primary: the real inline field is `last_assistant_message`. The legacy
+  # `result_block` / `output` / `agent_output` names are kept in the chain so
+  # any fixture or future payload that carries them still works.
+  RESULT_BLOCK="$(printf '%s' "$INPUT" | "$JQ_BIN" -r \
+    '.last_assistant_message // .result_block // .output // .agent_output // empty' \
+    2>/dev/null || true)"
+
+  # Fallback: read the last assistant message from the transcript JSONL. Prefer
+  # the subagent-scoped `agent_transcript_path` (the finishing subagent's own
+  # messages); fall back to the shared session `transcript_path`.
+  if [ -z "$RESULT_BLOCK" ]; then
+    for _tp_key in agent_transcript_path transcript_path; do
+      _TP="$(printf '%s' "$INPUT" | "$JQ_BIN" -r --arg k "$_tp_key" '.[$k] // empty' 2>/dev/null || true)"
+      if [ -n "$_TP" ] && [ -r "$_TP" ]; then
+        RESULT_BLOCK="$(extract_last_assistant "$_TP")"
+        [ -n "$RESULT_BLOCK" ] && break
+      fi
+    done
+  fi
 
   if [ -n "$RESULT_BLOCK" ]; then
     STATUS="$(yaml_field "$RESULT_BLOCK" status)"
@@ -400,8 +453,8 @@ if [ -n "$JQ_BIN" ]; then
     SUMMARY="$(yaml_field "$RESULT_BLOCK" summary)"
   fi
 
-  # Forward-compat / fixture fallback: top-level keys if result_block was empty
-  # or did not carry the field.
+  # Forward-compat / fixture fallback: top-level keys if the result text was
+  # empty or did not carry the field.
   if [ -z "$STATUS" ]; then
     STATUS="$(printf '%s' "$INPUT" | "$JQ_BIN" -r '.status // .result.status // empty' 2>/dev/null || true)"
   fi
