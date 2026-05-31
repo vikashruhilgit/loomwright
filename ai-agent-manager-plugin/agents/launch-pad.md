@@ -230,6 +230,7 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 
 **Actions:**
 
+0. **Consult project memory (advisory, v14.3.0):** run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-project-memory.sh"` and fold any returned facts into your codebase understanding. These are **advisory and strictly subordinate to `CLAUDE.md`** — on any conflict, `CLAUDE.md` wins. The reader emits only provenance-verified entries (unverified/poisoned lines are dropped automatically), so its output is trustworthy advisory context; if it emits nothing, proceed normally.
 1. Parse CLAUDE.md for tech stack, architecture patterns, directory structure
 2. Search codebase for files related to the goal:
    - Grep for keywords, component names, module names
@@ -510,6 +511,11 @@ Check all 10 review criteria. Output a PLAN_REVIEW_RESULT block.",
    ```
    /supervisor job: .supervisor/jobs/pending/{date}-{slug}.md
    ```
+5. **Propose project-memory candidates (human-gated, v14.3.0, optional):** if during ANALYZE you learned **durable, reusable, decision-changing** facts about *this codebase* that pass the Memory Core Principle asset test (`AGENT_GUIDELINES.md` §"Memory Core Principle") and are **not already** in `CLAUDE.md` or the project memory read in Phase 3, present them as proposals — e.g. *"📝 Remember for next time? — `<one-line fact>`"* — via `AskUserQuestion` (each fact individually acceptable/skippable). For every fact the user **explicitly approves**, write it:
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/write-project-memory.sh" --fact "<approved fact>" --source "launch-pad:{slug}"
+   ```
+   **Never auto-write** — memory promotion is human-gated in v1. Skip entirely if you learned nothing memory-worthy or the user declines. (`{slug}` = the saved brief's basename without the `.md` extension. Safe here: Launch Pad runs at the repo root; the writer refuses any worktree CWD.)
 
 **Save rules:**
 - If environment has BLOCKERS from Phase 1: output fix instructions, don't offer save

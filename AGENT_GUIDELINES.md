@@ -100,6 +100,8 @@ Agent result blocks (`WORKER_RESULT`, `CODE_REVIEW_RESULT`, `EXECUTE_RESULT`, `E
 
 **Retrieval — no RAG / no vector DB.** The filesystem + `grep`/`Glob` + a bounded index file *is* the retrieval system. A codebase is already greppable; a vector store adds infra, opacity, and the #1 memory-poisoning attack surface (MINJA/MemoryGraft). Revisit only if the memory corpus exceeds ~1k entries AND keyword/path retrieval demonstrably misses relevant entries — then reach for embedded `sqlite-vec`, not a server.
 
+**Implementation (v14.3.0):** the sanctioned paths are `${CLAUDE_PLUGIN_ROOT}/scripts/read-project-memory.sh` (provenance-gated reader — emits only hash-chain-verified entries; drops poisoned/un-provenanced lines) and `write-project-memory.sh` (sole writer — refuses worktree CWDs, hash-chains provenance, enforces the cap with write-time eviction). Agents **read and propose**; they never `cat` or hand-edit `.supervisor/memory/`. Promotion is **human-gated** (Launch Pad Phase 6) in v1.
+
 ---
 
 ## Advisor Tool (SDK-only pattern)
