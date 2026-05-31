@@ -117,6 +117,27 @@ if [ "$SCOPE" = "plugin" ] && [ "$HOOK_EVENT" = "PreToolUse" ]; then
   fi
 fi
 
+# ---- Debounce (v14.2.2) -----------------------------------------------------
+# Coalesce rapid notification bursts (several gates in quick succession, or
+# parallel hook fires) into a single banner: if one fired within the last
+# DEBOUNCE_WINDOW seconds, suppress this one. State is a single epoch timestamp
+# in a gitignored file under .supervisor/. Best-effort — any failure → no
+# debounce (we'd rather over-notify than drop a real pause). Set
+# AI_AGENT_MANAGER_NOTIFY_DEBOUNCE=0 to disable.
+DEBOUNCE_WINDOW="${AI_AGENT_MANAGER_NOTIFY_DEBOUNCE:-5}"
+case "$DEBOUNCE_WINDOW" in *[!0-9]*|"") DEBOUNCE_WINDOW=5 ;; esac
+DEBOUNCE_FILE=".supervisor/logs/.notify-debounce"
+mkdir -p .supervisor/logs 2>/dev/null || true
+NOW_EPOCH="$(date +%s 2>/dev/null || echo 0)"
+if [ "$DEBOUNCE_WINDOW" -gt 0 ] && [ "$NOW_EPOCH" != "0" ] && [ -f "$DEBOUNCE_FILE" ]; then
+  LAST_EPOCH="$(cat "$DEBOUNCE_FILE" 2>/dev/null || echo 0)"
+  case "$LAST_EPOCH" in *[!0-9]*|"") LAST_EPOCH=0 ;; esac
+  if [ "$LAST_EPOCH" -gt 0 ] && [ "$((NOW_EPOCH - LAST_EPOCH))" -lt "$DEBOUNCE_WINDOW" ]; then
+    exit 0
+  fi
+fi
+[ "$NOW_EPOCH" != "0" ] && printf '%s' "$NOW_EPOCH" > "$DEBOUNCE_FILE" 2>/dev/null || true
+
 TITLE=""
 BODY=""
 
@@ -179,7 +200,10 @@ if [ -z "$TITLE" ]; then TITLE="Claude Code"; fi
 
 # ---- Dispatch ---------------------------------------------------------------
 # Per-platform native notification. Each branch is best-effort and never
-# allowed to bubble a non-zero exit.
+# allowed to bubble a non-zero exit. (A terminal-bell tier was evaluated and
+# intentionally omitted in v14.2.2: a bell from a non-TTY hook subprocess goes
+# nowhere useful and would emit a raw 0x07 into a log; the webhook is the
+# headless channel instead — see docs/TELEMETRY.md §"Webhook Notifications".)
 
 # osascript_escape: escape backslashes and double-quotes for embedding inside
 # a double-quoted AppleScript string literal. Order matters: backslash first.
@@ -226,7 +250,11 @@ case "$(uname -s 2>/dev/null || echo unknown)" in
     fi
     ;;
   Linux)
-    if command -v notify-send >/dev/null 2>&1; then
+    # Channel-detect (v14.2.2): only attempt notify-send when a display server is
+    # present (DISPLAY or WAYLAND_DISPLAY). On a headless Linux box notify-send
+    # errors with no notification daemon — there's no banner to show, so skip
+    # cleanly (the webhook covers headless). run_bounded still caps any hang.
+    if command -v notify-send >/dev/null 2>&1 && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
       run_bounded notify-send -a "Claude Code" "$TITLE" "$BODY" >/dev/null 2>>"$NOTIFY_LOG" || true
     fi
     ;;
