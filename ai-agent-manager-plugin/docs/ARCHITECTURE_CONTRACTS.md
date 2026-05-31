@@ -227,7 +227,7 @@ Prevents runaway refactors and reviewer context explosion.
 
 ## Result Schema Versioning
 
-All result schemas include a `schema_version` field. Current versions: CODE_REVIEW_RESULT at `schema_version: 3` (review modes + consistency audit; v2 accepted for legacy); WORKER_RESULT at `schema_version: 2` (outputs_verified contract; v1 accepted for the v12.0.0 transition window); all others at `schema_version: 1`.
+All result schemas include a `schema_version` field. Current versions: CODE_REVIEW_RESULT at `schema_version: 3` (review modes + consistency audit; v2 accepted for legacy); WORKER_RESULT at `schema_version: 2` (outputs_verified contract; v1 accepted for the v12.0.0 transition window); AUTONOMOUS_RUN at `schema_version: 2` (v14.0.0 status_reason extension; v1 accepted, no hook validation); LAUNCH_PAD_RESULT at `schema_version: 1` (added v14.2.0, validated by `scripts/validate-launch-pad-result.py`); all others at `schema_version: 1`.
 
 1. Hooks verify `schema_version` is supported before validating fields
 2. If `schema_version` is unrecognized, hook warns but does not block

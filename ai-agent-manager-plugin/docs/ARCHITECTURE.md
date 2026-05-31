@@ -1,6 +1,6 @@
 # Architecture Diagram
 
-> Visual topology of the 12-agent system. For contracts and rules, see `ARCHITECTURE_CONTRACTS.md`.
+> Visual topology of the 13-agent system (the Rubric Grader — the read-only Haiku Outcomes-Rubric scorer added in v12.2.0 — is the 13th role; it is omitted from the diagram below for brevity). For contracts and rules, see `ARCHITECTURE_CONTRACTS.md`.
 
 ---
 

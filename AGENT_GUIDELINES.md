@@ -72,7 +72,7 @@ Comprehensive guidance for AI agents working on any project. Apply these standar
 
 ## Structured Outputs
 
-Agent result blocks (`WORKER_RESULT`, `CODE_REVIEW_RESULT`, `EXECUTE_RESULT`, `EXECUTE_CHECKPOINT`, `SUPERVISOR_RESULT`, `QA_RESULT`, `PLAN_REVIEW_RESULT`, `MISSING_FUNCTIONALITY_REPORT`, `FIX_RESULT`, `CONTEXT_KEEPER_STATE`, `QA_SESSION_PLAN`, `QA_SESSION_COVERAGE`) are governed by strict contracts. The single source of truth is `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md` — currently CODE_REVIEW_RESULT at `schema_version: 3`, WORKER_RESULT at `schema_version: 2`, all others at `schema_version: 1`.
+Agent result blocks (`WORKER_RESULT`, `CODE_REVIEW_RESULT`, `EXECUTE_RESULT`, `EXECUTE_CHECKPOINT`, `SUPERVISOR_RESULT`, `QA_RESULT`, `PLAN_REVIEW_RESULT`, `MISSING_FUNCTIONALITY_REPORT`, `FIX_RESULT`, `CONTEXT_KEEPER_STATE`, `QA_SESSION_PLAN`, `QA_SESSION_COVERAGE`, `AUTONOMOUS_RUN`, `LAUNCH_PAD_RESULT`) are governed by strict contracts. The single source of truth is `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md` — currently CODE_REVIEW_RESULT at `schema_version: 3`, WORKER_RESULT at `schema_version: 2`, AUTONOMOUS_RUN at `schema_version: 2`, all others (incl. LAUNCH_PAD_RESULT, added v14.2.0) at `schema_version: 1`.
 
 **Two enforcement paths, depending on where the agent runs:**
 
@@ -555,21 +555,9 @@ This format applies to ALL agent outputs (Orchestrator, Code Reviewer, Red Team 
 
 ---
 
-### Plugin Hooks (Quality Gates) — v10.0.0
+### Plugin Hooks (Quality Gates)
 
-All hooks centralized in `hooks.json`. Per-agent frontmatter hooks kept for `~/.claude/agents/` compatibility only.
-
-| Hook | Trigger | Location | Validation |
-|------|---------|----------|------------|
-| SubagentStop (worker) | Worker completes | hooks.json + frontmatter | WORKER_RESULT with schema_version, task_id, status, files_modified |
-| SubagentStop (execute-manager) | Execute Manager completes | hooks.json + frontmatter | EXECUTE_RESULT/EXECUTE_CHECKPOINT with required fields |
-| SubagentStop (code-reviewer) | Code Reviewer completes | hooks.json | CODE_REVIEW_RESULT v2 with decision, issue categories |
-| SubagentStop (supervisor) | Supervisor completes | hooks.json | Session outcome, subtask statuses, PR URL |
-| SubagentStop (qa-executor) | QA Executor completes | hooks.json | QA_RESULT with tests_generated, tests_passed, summary |
-| Stop (code-reviewer) | Code Reviewer finishing | hooks.json + frontmatter | CODE_REVIEW_RESULT block present |
-| TaskCompleted | Any task marked complete | hooks.json | Task genuinely done, not abandoned |
-| WorktreeCreate | Worktree created | hooks.json | Logs to `.supervisor/logs/worktrees.log` (type: command) |
-| StopFailure | Agent API error | hooks.json | Logs to `.supervisor/logs/failures.log` (type: command) |
+All hooks are centralized in `hooks.json`. As of v14.2.2 there are **19 hook entries**: `SubagentStop` validators (worker, execute-manager, code-reviewer, supervisor-runner, qa-executor, plan-reviewer, **launch-pad-runner**) + 3 telemetry + 1 webhook `type: command` hooks; `Stop`; `TaskCompleted`; `WorktreeCreate`; `StopFailure`; **`PreToolUse[AskUserQuestion]`**; **`Notification`**; and **`SessionStart`**. CODE_REVIEW_RESULT is validated at `schema_version: 3`. **The authoritative, always-current hook table lives in the root `CLAUDE.md` §"Plugin Hooks (Quality Gates)"** — this guide deliberately does not duplicate it, because that duplicate silently drifted from v10 (9 hooks) to v14 (19 hooks).
 
 **Plugin restriction:** Claude Code ignores `hooks`, `mcpServers`, and `permissionMode` in plugin agent frontmatter. Code Reviewer uses `disallowedTools: Write, Edit, NotebookEdit` to enforce read-only behavior since `permissionMode: plan` is ignored for plugins.
 
