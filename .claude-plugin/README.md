@@ -1,12 +1,12 @@
 # AI Agent Manager Plugin for Claude Code
 
-A Claude Code plugin with 13 agent roles (8 user-facing + 5 internal), 50 focused skills, and optional Beads issue tracker integration. Automates plan-first readiness, parallel workflow execution, requirements definition, code review, adversarial audits, and dual-agent QA testing. v13.0.0 adds the `/autonomous` orchestration shell that chains Launch Pad → Supervisor for a single requirement.
+A Claude Code plugin with 13 agent roles (8 user-facing + 5 internal), 50 focused skills, and optional Beads issue tracker integration. Automates plan-first readiness, parallel workflow execution, requirements definition, code review, adversarial audits, and dual-agent QA testing. v14 adds continuous autonomous mode: `/autonomous` chains Launch Pad → Supervisor in a default multi-iteration loop with stacked PRs (v14.2.2).
 
 ## Overview
 
-The AI Agent Manager Plugin v13.0.0 includes:
+The AI Agent Manager Plugin (v14.2.2) includes:
 
-- **Foreground-assisted goal-completion loop (v13.0.0)** — A new `/autonomous` slash command (`ai-agent-manager-plugin/commands/autonomous.md`) governed by a new `autonomous-loop` skill (`ai-agent-manager-plugin/skills/autonomous-loop/SKILL.md`). The command is an inline main-thread workflow that chains Launch Pad → Supervisor for a single requirement. **Default mode is single-iteration** — pure command chaining, just so the user does not have to remember `/launch-pad "..."` then `/supervisor job: <path>`. **Multi-iteration mode** (opt-in via `--allow-multi-iteration --max-iterations N`, default N=3) adds an EVALUATE phase that reads `SUPERVISOR_RESULT` and re-plans on exactly two signals: (1) `status: completed` + `rubric_score N/M` with N<M (loop pauses for a rubric-gate AskUserQuestion — merge-and-continue verified via `gh pr view` / `git merge-base --is-ancestor`, stop-here, or force-continue-anyway); (2) `status: failed` + `inter_subtask_gap` on this iteration's brief, detected by anchor-by-filename (`.supervisor/jobs/failed/{basename(current_brief_path)}` existence + `inter_subtask_gap` found in any of three iteration-scoped sources: the failed brief's contents, `SUPERVISOR_RESULT.error`, or `SUPERVISOR_RESULT.summary`; `.supervisor/state.md` is intentionally NOT consulted because pre-rewrite stale content could false-positive). The loop **never auto-picks** on adjudication — Supervisor's existing 4-option `AskUserQuestion` (per `FAILURE_ESCALATION.md`) surfaces in-session as it does today. v13 is **purely additive**: no new agent, no new hook, no behavioral change to any existing agent / hook / script / skill / command, and no change to the field types or validation rules of any existing schema. The only new artifacts are the `/autonomous` command, the `autonomous-loop` skill, and one additive `AUTONOMOUS_RUN` entry in `RESULT_SCHEMAS.md` (autonomous-layer-only, no hook validation). Slash-command count: 11 → 12. Skill count: 49 → 50. Hook count: unchanged (14).
+- **Continuous autonomous mode (v14, stacked PRs)** — The `/autonomous` slash command (`ai-agent-manager-plugin/commands/autonomous.md`), governed by the `autonomous-loop` skill (`ai-agent-manager-plugin/skills/autonomous-loop/SKILL.md`), is an inline main-thread workflow that chains Launch Pad → Supervisor. **Default mode is multi-iteration** (cap 10, default 3) with **stacked PRs** — iteration N+1 branches from `iterations[N].branch`. Pass `--single-iteration` for v13's run-once command chaining, or `--no-stacked-branches` for the v13 branch-from-`main` cadence. The multi-iteration EVALUATE phase reads `SUPERVISOR_RESULT` and re-plans on exactly two signals: (1) `status: completed` + `rubric_score N/M` with N<M (loop pauses for a rubric-gate AskUserQuestion — merge-and-continue verified via `gh pr view` / `git merge-base --is-ancestor`, stop-here, or force-continue-anyway); (2) `status: failed` + `inter_subtask_gap` on this iteration's brief, detected by anchor-by-filename (`.supervisor/jobs/failed/{basename(current_brief_path)}` existence + `inter_subtask_gap` found in any of three iteration-scoped sources: the failed brief's contents, `SUPERVISOR_RESULT.error`, or `SUPERVISOR_RESULT.summary`; `.supervisor/state.md` is intentionally NOT consulted because pre-rewrite stale content could false-positive). The loop **never auto-picks** on adjudication — Supervisor's existing 4-option `AskUserQuestion` (per `FAILURE_ESCALATION.md`) surfaces in-session as it does today. Since the v13 baseline, v14.0.0 made multi-iteration the default with stacked PRs, and v14.1.0–v14.2.2 added the notification surface (desktop banners + ntfy/webhook; `Notification` / `PreToolUse[AskUserQuestion]` / `SessionStart` hooks), the `LAUNCH_PAD_RESULT` schema + validator (retiring the fragile `ls`-diff brief detection), and crash/compact session-resume. Counts: **12 slash commands, 50 skills, 19 hooks**.
 
 - **Previous capabilities increment (v12.2.0, preserved)** — (1) **Agent Teams graduation:** `ai-agent-manager-plugin/skills/agent-teams/SKILL.md` now ships per-pattern Recommended Use Cases plus a 3-of-6 graduation matrix (research/exploration, competing hypotheses, cross-layer changes graduate to *recommended*; sequential tasks, same-file edits, high-write-contention scenarios remain experimental — keep using Supervisor v4 + worktrees there). (2) **Outcomes Rubric:** every Supervisor run ends with a Haiku-graded rubric; `rubric_score` is an optional additive field in `SUPERVISOR_RESULT` (`"N/M" | null`; schema_version stays 1), owned by `ai-agent-manager-plugin/agents/supervisor.md`; the supervisor SubagentStop hook validates the format only when present and never rejects for presence or absence. (3) **`/dreaming` slash command:** read-only post-hoc reflection on completed sessions — does not write code, agent memory, or `CLAUDE.md`; persistence requires explicit user follow-up. (4) **Opt-in webhook hook:** a new SubagentStop `type: command` entry in `ai-agent-manager-plugin/hooks/hooks.json` invokes `${CLAUDE_PLUGIN_ROOT}/scripts/send-webhook.sh` to POST structured agent results to a user-configured endpoint (disabled by default, fail-closed on errors, never blocks the agent).
 
@@ -40,7 +40,7 @@ Plus all prior v11.0/v10.3/v10.2 capabilities:
 
 ### Orchestration Shells (slash commands, not agents)
 
-- **`/autonomous` (v13.0.0)** — Chain Launch Pad → Supervisor for a single requirement; opt-in `--allow-multi-iteration` adds re-planning on existing SUPERVISOR_RESULT signals (rubric N<M with user-merge confirmation; failed + inter_subtask_gap). Inline main-thread workflow — does not register a new agent.
+- **`/autonomous` (v14)** — Chains Launch Pad → Supervisor in a default multi-iteration loop (cap 10, default 3) with stacked PRs; re-plans on two `SUPERVISOR_RESULT` signals (rubric N<M; failed + inter_subtask_gap). `--single-iteration` reverts to v13 run-once. Inline main-thread workflow — does not register a new agent.
 
 ### Internal Agents (5)
 
@@ -152,22 +152,23 @@ Autonomous workflow orchestrator. Creates feature branch, plans work, spawns par
 
 ---
 
-### /autonomous "\<requirement\>" (orchestration shell, v13.0.0)
+### /autonomous "\<requirement\>" (orchestration shell, v14)
 
-Chain Launch Pad → Supervisor for a single requirement. **Foreground-assisted automation, not fire-and-forget** — every in-session prompt (Launch Pad Phase 6, NO-GO, Plan Review FAIL × 3, Supervisor adjudication 4-option, and the loop's rubric gate) bubbles `AskUserQuestion` for you to answer.
+Chain Launch Pad → Supervisor in a default multi-iteration loop with stacked PRs. **Foreground-assisted automation, not fire-and-forget** — every in-session prompt (Launch Pad Phase 6, NO-GO, Plan Review FAIL × 3, Supervisor adjudication 4-option, and the loop's rubric gate) bubbles `AskUserQuestion` for you to answer.
 
 ```bash
-/autonomous "add user authentication"                                    # single-iteration mode
+/autonomous "add user authentication"                                    # multi-iteration (default, cap 3), stacked PRs
 /autonomous --requirement .supervisor/requirements/feature.md            # use existing file
-/autonomous "..." --allow-multi-iteration                                # multi-iteration with default max=3
-/autonomous "..." --allow-multi-iteration --max-iterations 5             # custom cap
+/autonomous "..." --max-iterations 5                                     # custom cap (max 10)
+/autonomous "..." --single-iteration                                     # v13 run-once
+/autonomous "..." --no-stacked-branches                                  # each iteration branches from main
 ```
 
-**Default (single-iteration):** runs Launch Pad → Supervisor once and emits an `AUTONOMOUS_RUN` summary. Pure command chaining.
+**Default (multi-iteration):** runs the Launch Pad → Supervisor loop (cap 10, default 3) with stacked PRs, re-planning on the two signals below, and emits an `AUTONOMOUS_RUN` summary. Pass `--single-iteration` for pure run-once chaining.
 
 **Multi-iteration:** EVALUATE re-plans on exactly two signals — `completed + rubric_score N/M` with N<M (gated on user-merge verification via `gh pr view` / `git merge-base --is-ancestor`) and `failed + inter_subtask_gap on this iteration's brief` (Option C re-plan trigger, no merge needed). The loop never auto-picks on adjudication — Supervisor's existing 4-option AskUserQuestion surfaces in-session.
 
-v13 is purely additive: no new agent, no new hook, no behavioral change to any existing agent / hook / script / skill / command, and no change to the field types or validation rules of any existing schema. The only new artifacts are the `/autonomous` command, the `autonomous-loop` skill, and the additive `AUTONOMOUS_RUN` entry in `RESULT_SCHEMAS.md`.
+Stacked PRs are the v14 default — reviewers must merge **bottom-of-stack first** (follow `AUTONOMOUS_RUN.iterations[]` order). `--no-stacked-branches` reverts to independent PRs off `main` with a merge gate between iterations.
 
 **Output:** `.supervisor/autonomous/{session_id}/summary.md` (and machine-readable sidecar `state.json`) plus the iteration-by-iteration PR list.
 
@@ -380,13 +381,13 @@ ai-agent-manager/                            # Marketplace wrapper repo
 │   └── README.md                            # This file
 └── ai-agent-manager-plugin/                 # The nested plugin
     ├── .claude-plugin/
-    │   └── plugin.json                      # Plugin manifest (v13.0.0)
+    │   └── plugin.json                      # Plugin manifest (v14.2.2)
     ├── .mcp.json                            # Bundled MCP servers
     ├── agents/                              # Agent prompts (13 roles)
     │   ├── launch-pad.md, supervisor.md, execute-manager.md, context-keeper.md
     │   ├── worker.md, plan-reviewer.md, product-owner.md, orchestrator.md
     │   └── code-reviewer.md, red-team-reviewer.md, qa-strategist.md, qa-executor.md
-    ├── commands/                            # Slash commands (11)
+    ├── commands/                            # Slash commands (12)
     │   ├── launch-pad.md, supervisor.md, product-owner.md, orchestrator.md
     │   ├── code-reviewer.md, red-team-reviewer.md, qa-strategist.md, qa-executor.md
     │   ├── telemetry.md, dreaming.md

@@ -73,10 +73,10 @@ The AI Agent Manager plugin provides **13 agent roles** (8 user-facing + 5 inter
 /launch-pad → .supervisor/jobs/{brief} → /supervisor job: {brief} → clean execution
 ```
 
-**Foreground-Assisted Chained Workflow (v13.0.0):**
+**Continuous Autonomous Loop (v14):**
 ```
-/autonomous "<requirement>"                                 → command chaining (single iteration)
-/autonomous "<requirement>" --allow-multi-iteration         → re-plan on rubric N<M or Option-C failure
+/autonomous "<requirement>"                                 → multi-iteration loop (default, cap 3), stacked PRs, re-plan on rubric N<M / Option-C
+/autonomous "<requirement>" --single-iteration              → run once (v13-compat command chaining)
 ```
 
 **Task Management:** `.supervisor/` directory for Supervisor/Launch Pad; Beads available for Orchestrator/Product Owner
@@ -634,42 +634,47 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 
 ---
 
-### 🔁 /autonomous — Foreground-Assisted Loop (NEW in v13.0.0)
+### 🔁 /autonomous — Continuous Autonomous Loop (v14, stacked PRs)
 
-**Purpose:** Chain `/launch-pad → /supervisor` for a single requirement so you don't have to remember which command to run next. Default mode is single-iteration (just runs them in sequence). Opt-in `--allow-multi-iteration` mode adds re-planning gated on two specific `SUPERVISOR_RESULT` signals.
+**Purpose:** Chain `/launch-pad → /supervisor` to drive a requirement to completion. Default mode is **multi-iteration** (cap 10, default 3) with **stacked PRs** — iteration N+1 branches from `iterations[N].branch` — and re-plans on two specific `SUPERVISOR_RESULT` signals. Pass `--single-iteration` (or `--max-iterations 1`) for v13's run-once behavior; `--no-stacked-branches` for the v13 branch-from-`main` cadence.
 
-> **Foreground-assisted automation, not fire-and-forget.** The loop pauses at every existing interactive boundary (Launch Pad Phase 6 save, NO-GO override, Plan Review FAIL × 3, Supervisor adjudication 4-option, and the loop's own rubric gate). You must be at the terminal to answer them.
+> **Foreground-assisted automation, not fire-and-forget.** The loop pauses at every existing interactive boundary (Launch Pad Phase 6 save, NO-GO override, Plan Review FAIL × 3, Supervisor adjudication 4-option, and the loop's own rubric gate). You must be at the terminal to answer them — unless you pass `--non-interactive-fallback` (CI / non-TTY: gates fail closed). `--notify` posts a gate-event webhook (resolved from `AI_AGENT_MANAGER_WEBHOOK_URL` or `.supervisor/notify-config.json`) so an out-of-band notifier can ping you.
 
 **Usage:**
 ```bash
-/autonomous "<requirement string>"                                       # single-iteration mode
+/autonomous "<requirement string>"                                       # multi-iteration (default, cap 3), stacked PRs
 /autonomous --requirement <path/to/file.md>                              # file-supplied requirement
-/autonomous "<...>" --allow-multi-iteration                              # multi-iteration with default max
-/autonomous "<...>" --allow-multi-iteration --max-iterations N           # multi-iteration capped at N (default 3)
+/autonomous "<...>" --max-iterations N                                   # cap iterations at N (max 10)
+/autonomous "<...>" --single-iteration                                   # v13 run-once (no loop)
+/autonomous "<...>" --no-stacked-branches                                # each iteration branches from main (v13 cadence)
+/autonomous "<...>" --non-interactive-fallback --notify                  # CI: gates fail closed + webhook pings
 ```
 
 **Parameters:**
 - `"<requirement>"` or `--requirement <path>` (required, choose one)
-- `--allow-multi-iteration` — opt-in for re-planning loop (default off)
-- `--max-iterations N` — cap for multi-iteration mode (default 3)
+- `--max-iterations N` — cap for multi-iteration mode (default 3, max 10)
+- `--single-iteration` — disable the loop; run Launch Pad → Supervisor once (v13-compat)
+- `--no-stacked-branches` — each iteration branches from `main` instead of the prior iteration's branch
+- `--non-interactive-fallback` — permit multi-iter in CI / non-TTY; gates fail closed instead of prompting
+- `--notify` — POST gate-event webhooks (fails loud at INIT if no URL resolvable). `--allow-multi-iteration` is **deprecated** (multi-iter is the default now; accepted as a silent no-op)
 
 **Multi-iteration re-plan signals (read from `SUPERVISOR_RESULT` plus iteration-scoped job artifacts):**
 
 | Signal | Action |
 |---|---|
-| `completed` + `rubric_score N/M` with N<M | Pause for the rubric-gate AskUserQuestion (merge-and-continue / stop-here / force-continue). On `merge-and-continue`, the loop verifies the PR is actually merged via `gh pr view` (or local `git merge-base --is-ancestor` fallback) before re-planning. |
+| `completed` + `rubric_score N/M` with N<M | Pause for the rubric-gate AskUserQuestion. In the **default stacked-branch mode** the options are continue-to-next-iteration / stop-here / force-continue with **no merge required** (iter N+1 branches from iter N). With `--no-stacked-branches` the gate is merge-and-continue / stop / force and verifies the PR is merged via `gh pr view` (or `git merge-base --is-ancestor` fallback) before re-planning. |
 | `failed` + Option-C detected on this iteration's brief | Anchored by `.supervisor/jobs/failed/{basename(current_brief_path)}` existence; `inter_subtask_gap` confirmed by grepping the failed brief contents, `SUPERVISOR_RESULT.error`, or `SUPERVISOR_RESULT.summary` (state.md intentionally not consulted). Re-plan immediately — no merge prompt, no PR was created. |
-| anything else | Terminate the loop (done / failed / aborted). |
+| anything else | Terminate the loop (done / paused_max_iterations / failed / aborted). |
 
 **When to Use:**
 - Multi-step requirements where Launch Pad → Supervisor is the natural chain
-- Requirements with `## Outcomes Rubric` you want to iteratively satisfy (multi-iteration mode)
+- Requirements with `## Outcomes Rubric` you want to iteratively satisfy (the default loop)
 - After Phase 4.5 self-heal is not enough to address residual rubric gaps
 
 **When NOT to Use:**
-- Single small change with no rubric → just run `/supervisor` directly, faster
-- Crash recovery → v1 has no `--continue`; clean up manually and restart
-- Parallel autonomous runs on same repo → v1 single-session-only assumption (brief-save detection uses `ls`-diff)
+- Single small change with no rubric → `--single-iteration`, or just run `/supervisor` directly
+- Crash recovery → no `--continue` yet; clean up manually and restart (the `SessionStart` hook injects recovery context on resume/clear/compact)
+- Parallel `/autonomous` runs on the same repo → brief-save detection's primary signal is `LAUNCH_PAD_RESULT.saved_brief_path` (validated by `scripts/validate-launch-pad-result.py`); the `ls`-diff is a pre-v14.2.0 fallback only. Still run one autonomous / launch-pad invocation at a time per repo.
 
 **Learn More:** see `ai-agent-manager-plugin/commands/autonomous.md` for the full flow diagram, signal-extraction algorithm, refined-requirement templates, and troubleshooting. The protocol skill is `ai-agent-manager-plugin/skills/autonomous-loop/SKILL.md`.
 
@@ -816,13 +821,15 @@ Use `/supervisor --cheap` to override the execution-shaped roles (orchestrator, 
 
 ### Plugin Hooks (Quality Gates)
 
-The plugin includes `hooks/hooks.json` that automatically enforce quality:
+The plugin centralizes **19 hooks** in `hooks/hooks.json` that automatically enforce quality and surface notifications (the authoritative table lives in the root `CLAUDE.md`):
 
-| Hook | When It Fires | What It Checks |
+| Hook | When It Fires | What It Checks / Does |
 |------|---------------|----------------|
-| **SubagentStop (worker)** | Worker agent completes | WORKER_RESULT block present, files modified, no unresolved errors |
-| **SubagentStop (execute-manager)** | Execute Manager completes | EXECUTE_RESULT or EXECUTE_CHECKPOINT block present |
-| **TaskCompleted** | Any task marked complete | Task genuinely done, not abandoned or skipped |
+| **SubagentStop** (worker, execute-manager, code-reviewer, supervisor-runner, qa-executor, plan-reviewer, launch-pad-runner) | The matching agent completes | Validates its result block (WORKER_RESULT, EXECUTE_*, CODE_REVIEW_RESULT v3, SUPERVISOR_RESULT, QA_RESULT, PLAN_REVIEW_RESULT, LAUNCH_PAD_RESULT) + 3 telemetry + 1 webhook `type: command` hooks |
+| **PreToolUse (AskUserQuestion)** | Plugin about to block on a user question | Desktop banner (`notify-desktop.sh`) + paused-event webhook (v14.1.0) |
+| **Notification** | Claude Code signals attention (permission / idle / elicitation) | Desktop banner (v14.1.0) |
+| **SessionStart** | Session resume / clear / compact | Injects bounded recovery context (`session-resume.sh`, v14.2.0) |
+| **Stop / TaskCompleted / WorktreeCreate / StopFailure** | Various | Completeness gate, task-done check, worktree + failure logging |
 
 These hooks run automatically — no configuration needed. They use fast prompt-based validation (haiku model, 30s timeout).
 
@@ -940,12 +947,12 @@ bd close BD-XX
 
 ai-agent-manager-plugin/              # Nested plugin root
 ├── .claude-plugin/
-│   └── plugin.json                   # Plugin metadata (v13.0.0)
+│   └── plugin.json                   # Plugin metadata (v14.2.2)
 ├── .mcp.json                         # Bundled MCP servers
 ├── commands/                         # Slash commands (12)
 │   ├── launch-pad.md                 # Supervisor readiness
 │   ├── supervisor.md                 # Parallel orchestrator (v4)
-│   ├── autonomous.md                 # Chain Launch Pad → Supervisor (v13.0.0)
+│   ├── autonomous.md                 # Continuous autonomous loop, stacked PRs (v14)
 │   ├── product-owner.md              # Requirements definition
 │   ├── orchestrator.md
 │   ├── code-reviewer.md

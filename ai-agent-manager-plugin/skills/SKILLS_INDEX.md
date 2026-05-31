@@ -11,7 +11,7 @@ Comprehensive index of all skills available in the AI Agent Manager plugin.
 | Supervisor Readiness | `supervisor-readiness/` | Launch Pad (preload), Supervisor (preload) | ~800 | 1.1.0 | 2026-05-10 |
 | Workflow Management | `workflow-management/` | Supervisor (preload) | ~1,200 | 1.0.0 | 2026-03 |
 | Async Orchestration | `async-orchestration/` | Supervisor (preload) | ~1,000 | 1.0.0 | 2026-05-09 |
-| State Management | `state-management/` | Supervisor (preload) | ~900 | 1.0.0 | 2026-03 |
+| State Management | `state-management/` | Supervisor (preload) | ~900 | 1.1.0 | 2026-05 |
 | Context Summarization | `context-summarization/` | Supervisor (preload) | ~600 | 1.0.0 | 2026-03 |
 | Context Setup | `context-setup/` | Launch Pad (preload) | ~500 | 1.0.0 | 2026-03 |
 | Claude MD Validation | `claude-md-validation/` | Launch Pad (preload) | ~400 | 1.0.0 | 2026-03 |
@@ -28,7 +28,7 @@ Comprehensive index of all skills available in the AI Agent Manager plugin.
 
 | Skill Name | Directory | Agent Consumers | Token Est. | Version | Last Updated |
 |------------|-----------|-----------------|------------|---------|--------------|
-| Quality Checklist | `quality-checklist/` | Orchestrator (preload), Code Reviewer (preload), QA Strategist (preload), QA Executor (preload) | ~500 | 1.0.0 | 2026-03 |
+| Quality Checklist | `quality-checklist/` | Orchestrator (preload), Code Reviewer (preload), QA Strategist (preload), QA Executor (preload) | ~500 | 1.1.0 | 2026-04-13 |
 | Commit | `commit/` | — (reference) | ~400 | 1.0.0 | 2026-03 |
 | Pattern Detector | `pattern-detector/` | Code Reviewer (reference) | ~500 | 1.0.0 | 2026-03 |
 | Context7 Lookup | `context7-lookup/` | Launch Pad (preload), Code Reviewer (preload), Red Team Reviewer (preload) | ~300 | 1.0.0 | 2026-03 |
