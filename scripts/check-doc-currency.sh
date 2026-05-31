@@ -51,6 +51,10 @@ FILES=(
 fail=0
 report() { echo "  DRIFT [$1] $2:$3 — \"$4\""; fail=1; }
 
+# Markdown bold is stripped (`tr -d '*'`) before matching, so a bolded claim like
+# "**13 agent roles** (" is gated identically to the unbolded form — closes the
+# coverage gap where bold between the number and the anchor defeated the pattern.
+#
 # check_count <ERE-with-the-number> <expected> <label>
 check_count() {
   local pat="$1" expected="$2" label="$3" f lineno tok num
@@ -62,7 +66,7 @@ check_count() {
       if [ -n "$num" ] && [ "$num" != "$expected" ]; then
         report "$label" "$f" "$lineno" "$tok"
       fi
-    done < <(grep -nEo "$pat" "$f" 2>/dev/null)
+    done < <(tr -d '*' < "$f" 2>/dev/null | grep -nEo "$pat")
   done
 }
 
@@ -77,7 +81,7 @@ check_version() {
       if [ -n "$ver" ] && [ "$ver" != "$VERSION" ]; then
         report "$label" "$f" "$lineno" "$tok"
       fi
-    done < <(grep -nEo "$pat" "$f" 2>/dev/null)
+    done < <(tr -d '*' < "$f" 2>/dev/null | grep -nEo "$pat")
   done
 }
 
