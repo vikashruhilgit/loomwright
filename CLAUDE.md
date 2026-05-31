@@ -25,7 +25,7 @@ Guidance for Claude Code when working in this repository.
 The repo is a **marketplace wrapper** containing one nested plugin:
 
 - Marketplace manifest: `.claude-plugin/marketplace.json` (root)
-- Plugin manifest: `ai-agent-manager-plugin/.claude-plugin/plugin.json` (v14.0.0)
+- Plugin manifest: `ai-agent-manager-plugin/.claude-plugin/plugin.json` (v14.2.0)
 - Agents: `ai-agent-manager-plugin/agents/` (13 markdown prompts)
 - Commands: `ai-agent-manager-plugin/commands/` (12 entry points)
 - Skills: `ai-agent-manager-plugin/skills/` (50 skills, see `SKILLS_INDEX.md`)

@@ -148,11 +148,54 @@ def parse_block(block):
     return fields, extra_keys
 
 
+def _last_assistant_text_from_transcript(path):
+    """Best-effort extraction of the LAST assistant message's text from a Claude
+    Code transcript JSONL. The transcript schema is not formally documented, so
+    we defensively pull `text` parts from the last assistant-role entry. Returns
+    "" on any read/parse failure (the caller then emits a clear ok:false)."""
+    last_text = ""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                msg = obj.get("message") if isinstance(obj, dict) else None
+                if not isinstance(msg, dict):
+                    msg = obj if isinstance(obj, dict) else {}
+                role = msg.get("role") or obj.get("role") or obj.get("type")
+                if role != "assistant":
+                    continue
+                content = msg.get("content")
+                texts = []
+                if isinstance(content, str):
+                    texts.append(content)
+                elif isinstance(content, list):
+                    for part in content:
+                        if isinstance(part, dict) and isinstance(
+                            part.get("text"), str
+                        ):
+                            texts.append(part["text"])
+                if texts:
+                    last_text = "\n".join(texts)
+    except OSError:
+        return ""
+    return last_text
+
+
 def main():
     # Two input modes:
-    #   default      → stdin is a Claude Code hook payload (JSON envelope with
-    #                  a result_block / output / agent_output field). Used by
-    #                  the SubagentStop[launch-pad-runner] hook in hooks.json.
+    #   default      → stdin is a Claude Code SubagentStop hook payload. The
+    #                  hook docs guarantee only `transcript_path`; current
+    #                  payloads also carry the final text in
+    #                  `last_assistant_message`. We try the known/observed field
+    #                  names, then fall back to reading the last assistant
+    #                  message out of the transcript JSONL. Used by the
+    #                  SubagentStop[launch-pad-runner] hook in hooks.json.
     #   --raw        → stdin IS the agent's output text directly (no JSON
     #                  envelope). Used by the autonomous-loop SKILL.md PLAN
     #                  step when validating an inline-path emission.
@@ -170,18 +213,31 @@ def main():
             emit(True)
             return
 
-        # Extract the agent's output text. Claude Code SubagentStop payloads
-        # carry the finishing agent's output in `result_block`; some variants
-        # may use `output` or `agent_output`. Be defensive about field naming.
+        # Per the Claude Code hook docs, SubagentStop payloads are NOT
+        # guaranteed to carry the agent text inline — only `transcript_path` is
+        # documented. Try the observed/legacy inline field names first
+        # (`last_assistant_message` is present in current payloads;
+        # result_block/output/agent_output are the plugin's prior convention),
+        # then fall back to reading the transcript JSONL.
         result_block = (
-            payload.get("result_block")
+            payload.get("last_assistant_message")
+            or payload.get("result_block")
             or payload.get("output")
             or payload.get("agent_output")
             or ""
         )
+        if not result_block:
+            tp = payload.get("transcript_path")
+            if isinstance(tp, str) and tp and os.path.exists(tp):
+                result_block = _last_assistant_text_from_transcript(tp)
 
     if not result_block:
-        emit(False, "no result_block / output field in hook payload")
+        emit(
+            False,
+            "could not locate agent output in the SubagentStop payload "
+            "(checked last_assistant_message / result_block / output / "
+            "agent_output / transcript_path)",
+        )
         return
 
     block = find_last_launch_pad_result_block(result_block)

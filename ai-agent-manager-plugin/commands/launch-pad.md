@@ -36,7 +36,7 @@ The Launch Pad agent prepares raw goals for autonomous Supervisor execution. It 
 
 ## What This Does
 
-The Launch Pad executes an **8-phase readiness workflow**:
+The Launch Pad executes an **8-phase readiness workflow** (Phases 1–6 plus sub-gates 2.5 and 5.5), followed by a non-interactive **Phase 7** that emits the `LAUNCH_PAD_RESULT` block for programmatic consumers like `/autonomous` (new in v14.2.0):
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -70,6 +70,8 @@ The Launch Pad executes an **8-phase readiness workflow**:
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+> **Phase 7 (v14.2.0, non-interactive):** after Phase 6, Launch Pad emits a `LAUNCH_PAD_RESULT` block (`status` + `saved_brief_path`) for programmatic consumers like `/autonomous`. It has no interactive step, so it is not drawn in the box above. See `agents/launch-pad.md` §"Phase 7" and `docs/RESULT_SCHEMAS.md` §"LAUNCH_PAD_RESULT".
 
 ### Why Use Launch Pad?
 
@@ -234,7 +236,7 @@ EXECUTE → FINALIZE → PR
 
 ## See Also
 
-- `agents/launch-pad.md` — Full agent prompt (8-phase readiness model)
+- `agents/launch-pad.md` — Full agent prompt (8-phase readiness model + non-interactive Phase 7 `LAUNCH_PAD_RESULT` emission)
 - `agents/plan-reviewer.md` — Plan Reviewer agent (validates briefs in Phase 5.5)
 - `skills/supervisor-readiness/SKILL.md` — Pre-flight checklist, brief template, jobs convention
 - `skills/product-discovery/SKILL.md` — Discovery framework

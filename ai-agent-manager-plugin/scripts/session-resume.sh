@@ -70,10 +70,8 @@ fi
 if compgen -G ".supervisor/jobs/failed/*.md" > /dev/null 2>&1; then
   append "### Recent failed briefs (last 5)"$'\n'
   # ls -t sorts newest first; head -5 caps the count
-  count=0
   for f in $(ls -t .supervisor/jobs/failed/*.md 2>/dev/null | head -5); do
     append "- $f"$'\n'
-    count=$((count + 1))
   done
   append $'\n'
 fi
@@ -140,7 +138,16 @@ if [ "${#SUMMARY}" -gt "$MAX_CHARS" ]; then
   SUMMARY="$SUMMARY"$'\n'"... [truncated — see .supervisor/ directly]"
 fi
 
-# Emit JSON with additionalContext at top level. Use jq for safe escaping.
-printf '%s' "$SUMMARY" | jq -Rs '{additionalContext: .}' 2>/dev/null || true
+# Emit the documented SessionStart context envelope. Claude Code injects
+# `hookSpecificOutput.additionalContext` — a bare top-level `additionalContext`
+# is NOT recognized (it would be dropped / shown as raw JSON). jq handles safe
+# JSON string escaping. Scrub to valid UTF-8 first: the byte-wise `head -c`
+# truncation above can split a multibyte char, which would make jq fail and
+# drop ALL context; `iconv -c` strips any invalid sequence (|| cat if iconv is
+# absent).
+printf '%s' "$SUMMARY" \
+  | { iconv -c -f UTF-8 -t UTF-8 2>/dev/null || cat; } \
+  | jq -Rs '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: .}}' 2>/dev/null \
+  || true
 
 exit 0
