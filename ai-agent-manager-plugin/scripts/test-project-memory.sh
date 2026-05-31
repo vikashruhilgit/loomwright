@@ -51,8 +51,10 @@ echo "== 4. provenance tamper-detection (broken chain) =="
 prov="$TMP/.supervisor/memory/.provenance.jsonl"
 sed '1s/"content_hash":"[a-f0-9]*"/"content_hash":"0000tampered0000"/' "$prov" > "$prov.x" && mv "$prov.x" "$prov"
 out="$( cd "$TMP" && bash "$READ" 2>/dev/null )"
-# After tampering entry 1's content_hash, entry 1's own line is no longer trusted (hash mismatch),
-# AND entry 2's prev_hash no longer matches sha(entry1) → chain breaks → entry 2 distrusted too.
+# Why BOTH facts drop: entry 1 stays chain-valid (its prev_hash is still GENESIS), but the
+# *tampered* content_hash ("0000tampered0000") is what enters the trusted set — and
+# sha(fact-1 text) != that, so fact 1 is never emitted. Entry 2 then breaks because
+# sha(corrupted entry-1 line) != entry 2's stored prev_hash → chain break → fact 2 distrusted.
 if echo "$out" | grep -q "auth is JWT" || echo "$out" | grep -q "db is postgres"; then
   no "tampered/after-break entries still emitted"
 else
@@ -70,6 +72,13 @@ rm -rf "$EVDIR"
 
 echo "== 6. .gitignore coverage (real repo) =="
 if git -C "$REAL_REPO" check-ignore -q .supervisor/memory/PROJECT_MEMORY.md 2>/dev/null; then ok ".supervisor/memory/ is gitignored in the real repo"; else no ".supervisor/memory/ NOT gitignored"; fi
+
+echo "== 7. dedup guard =="
+DDIR="$(mktemp -d)"; ( cd "$DDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
+( cd "$DDIR" && bash "$WRITE" --fact "same fact twice" --source d >/dev/null 2>&1; bash "$WRITE" --fact "same fact twice" --source d >/dev/null 2>&1 )
+dcnt="$(grep -cE '^- \[' "$DDIR/.supervisor/memory/PROJECT_MEMORY.md" 2>/dev/null)"; dcnt="${dcnt:-0}"
+if [ "$dcnt" -eq 1 ]; then ok "duplicate fact written once (dedup guard)"; else no "duplicate not deduped (have $dcnt)"; fi
+rm -rf "$DDIR"
 
 echo
 echo "RESULT: $pass passed, $fail failed"

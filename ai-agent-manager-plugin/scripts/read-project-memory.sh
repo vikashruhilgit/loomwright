@@ -39,7 +39,7 @@ if [ -f "$PROV" ]; then
     [ -n "$p" ] || continue
     n=$((n+1))
     if [ "$(field "$p" prev_hash)" != "$prev" ]; then
-      echo "read-project-memory: provenance chain broken at entry $n — distrusting it and everything after" >&2
+      echo "read-project-memory: provenance chain broken at entry $n (prev_hash mismatch — tampering, or a value that defeated field extraction) — distrusting it and everything after" >&2
       break
     fi
     if [ "$(field "$p" action)" = "add" ]; then

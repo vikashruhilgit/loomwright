@@ -67,6 +67,12 @@ ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
 fact_oneline="$(printf '%s' "$FACT" | tr '\n' ' ')"
 content_hash="$(printf '%s' "$fact_oneline" | sha)"
 id="$(printf '%s' "$content_hash" | cut -c1-8)"
+# Dedup guard: the id is content-derived, so an identical fact yields an identical entry.
+# If it's already present in the live index, skip (avoids silent duplicate-fact accumulation).
+if grep -qF -- "- [$id] $fact_oneline" "$MEM" 2>/dev/null; then
+  echo "write-project-memory: fact already present ([$id]) — skipping"
+  exit 0
+fi
 last_line="$(tail -n1 "$PROV" 2>/dev/null || true)"
 if [ -n "$last_line" ]; then prev_hash="$(printf '%s' "$last_line" | sha)"; else prev_hash="$GENESIS"; fi
 

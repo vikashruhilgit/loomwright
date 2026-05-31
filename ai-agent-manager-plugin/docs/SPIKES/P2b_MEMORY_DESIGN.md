@@ -177,7 +177,9 @@ All wired into a `scripts/test-project-memory.sh` self-test (mirrors `test-webho
 
 ---
 
-## 11. Open questions for you (decide before I code)
+## 11. Open questions — RESOLVED before implementation
+
+> All four were adopted per the recommendations below (human-gated promotion · Launch-Pad-only v1 · plugin `scripts/` location · detect-`sha`-else-fail-safe). Retained for the rationale record; not open.
 
 1. **Promotion trigger for v1** — keep it strictly human-gated (proposals → you approve → write), or
    allow Context-Keeper to auto-write a *narrow* class (e.g. Code Reviewer pattern proposals the
