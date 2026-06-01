@@ -10,7 +10,8 @@
 #
 # SCOPE (deliberately narrow to avoid false positives): only high-confidence
 # "current claim" phrasings are checked — version annotations next to
-# `plugin.json` / the `AI agents vX.Y.Z` headline, and explicit count phrases
+# `plugin.json` / the `AI agents vX.Y.Z` headline / the README intro's
+# `Plugin (vX.Y.Z)` and `(vX.Y.Z) includes:` claims, and explicit count phrases
 # ("N quality gate hooks", "N agent roles", "Slash commands (N)", ...). It never
 # scans bare numbers, so dated changelog entries like "v12.2.0 took the count
 # 13 -> 14" do NOT trigger it.
@@ -91,6 +92,21 @@ echo "Scanning $(echo "${FILES[@]}" | wc -w | tr -d ' ') surfaces..."
 check_version 'plugin\.json[^[:space:]]* \(v[0-9]+\.[0-9]+\.[0-9]+\)' "manifest-version"
 check_version 'Plugin (manifest|metadata) \(v[0-9]+\.[0-9]+\.[0-9]+\)'  "manifest-version"
 check_version 'AI agents v[0-9]+\.[0-9]+\.[0-9]+'                        "headline-version"
+
+# --- README intro / Overview version claims (the prose that slipped past the gate
+#     once: "The AI Agent Manager Plugin (v14.2.2) includes:"). High-confidence
+#     current claims — a parenthesized single version tied to "Plugin" or to an
+#     "includes" feature-list intro. NOT matched by the manifest/metadata patterns
+#     above (which require the word "manifest"/"metadata" between Plugin and the
+#     version), and a historical range like "v14.1.0–v14.2.2" lacks the
+#     parenthesized-single-version + anchor, so it stays exempt.
+#     NOTE: the second pattern ("(vX.Y.Z) includes") matches that phrase in ANY
+#     scanned surface — so a *historical* mid-sentence mention such as
+#     "...introduced in (v14.1.0) includes a worker pool..." in an architecture doc
+#     WOULD be flagged. If such phrasing ever appears, reword it (or keep it out of
+#     the FILES allowlist) rather than loosening this gate. ---
+check_version 'Plugin \(v[0-9]+\.[0-9]+\.[0-9]+\)'   "intro-version"
+check_version '\(v[0-9]+\.[0-9]+\.[0-9]+\) includes' "intro-version"
 
 # --- Hook count ---
 check_count '[0-9]+ quality gate hooks'  "$HOOKS" "hook-count"
