@@ -18,7 +18,7 @@ It does what a maintainer would do by hand: read what's new in Claude Code, comp
 /capability-check                      # scan, print a report of candidate adoptions
 /capability-check --max-fetches 3      # tighten the network budget (default 5)
 /capability-check --update-baseline    # after reviewing, record this scan as the new baseline (maintainer / repo-root only)
-/capability-check --save               # also write the report to .supervisor/capability/{date}.md (gitignored)
+/capability-check --save               # also write the report to .supervisor/capability/{YYYY-MM-DD}.md (gitignored)
 ```
 
 ## Parameters
@@ -80,6 +80,6 @@ After you've read the report and decided what's accounted for, rewrite `docs/CAP
 
 ## See Also
 - `docs/CAPABILITY_BASELINE.json` — the tracked baseline this command diffs against.
-- `docs/SPIKES/ENHANCEMENT_PLAN_v15_DRAFT.md` §4 — self-evolution design (on-demand first; scheduled scanner is deferred P5 behind four guardrails).
+- Self-evolution design — on-demand first; the **scheduled-scanner** variant is deferred to **P5** behind four guardrails (durable cadence under a 7-day expiry, explicit per-run budget, circuit breaker on repeated failures, heartbeat). See the v14.6.0 entry in `CHANGELOG.md`.
 - `commands/launch-pad.md` / `commands/supervisor.md` — how to actually adopt a reviewed candidate.
 - `commands/dreaming.md` — the inward-looking counterpart (learns from past runs); `/capability-check` is the outward-looking one (learns what Claude Code newly offers).
