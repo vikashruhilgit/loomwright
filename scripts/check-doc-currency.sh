@@ -99,7 +99,12 @@ check_version 'AI agents v[0-9]+\.[0-9]+\.[0-9]+'                        "headli
 #     "includes" feature-list intro. NOT matched by the manifest/metadata patterns
 #     above (which require the word "manifest"/"metadata" between Plugin and the
 #     version), and a historical range like "v14.1.0–v14.2.2" lacks the
-#     parenthesized-single-version + anchor, so it stays exempt. ---
+#     parenthesized-single-version + anchor, so it stays exempt.
+#     NOTE: the second pattern ("(vX.Y.Z) includes") matches that phrase in ANY
+#     scanned surface — so a *historical* mid-sentence mention such as
+#     "...introduced in (v14.1.0) includes a worker pool..." in an architecture doc
+#     WOULD be flagged. If such phrasing ever appears, reword it (or keep it out of
+#     the FILES allowlist) rather than loosening this gate. ---
 check_version 'Plugin \(v[0-9]+\.[0-9]+\.[0-9]+\)'   "intro-version"
 check_version '\(v[0-9]+\.[0-9]+\.[0-9]+\) includes' "intro-version"
 
