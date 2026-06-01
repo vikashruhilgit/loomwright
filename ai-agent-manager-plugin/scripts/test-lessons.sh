@@ -70,6 +70,17 @@ rm -rf "$CDIR"
 echo "== 5. .gitignore coverage (real repo) =="
 if git -C "$REAL_REPO" check-ignore -q .supervisor/memory/LESSONS.md 2>/dev/null; then ok ".supervisor/memory/ is gitignored in the real repo"; else no ".supervisor/memory/ NOT gitignored"; fi
 
+echo "== 6. backslash integrity (awk ENVIRON, not -v) =="
+WDIR="$(mktemp -d)"; ( cd "$WDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
+( cd "$WDIR" && bash "$WRITE" --category paths --lesson 'windows path C:\Users\x and a \n literal' --source s ) >/dev/null 2>&1
+wf="$WDIR/$LFILE"
+# A lesson containing backslashes must be stored verbatim on ONE line. The old `awk -v lesson=`
+# would interpret \n -> newline (splitting the entry) and mangle \U/\x — this guards the ENVIRON fix.
+if grep -qF 'C:\Users\x and a \n literal' "$wf" 2>/dev/null; then ok "backslashes stored literally (no awk -v escape corruption)"; else no "lesson backslashes corrupted"; fi
+pc="$(awk '/^## paths$/{f=1;next} /^## /{f=0} f && /^- \[/{c++} END{print c+0}' "$wf" 2>/dev/null)"
+[ "$pc" -eq 1 ] && ok "lesson stored as a single entry line" || no "lesson split across lines (have $pc)"
+rm -rf "$WDIR"
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

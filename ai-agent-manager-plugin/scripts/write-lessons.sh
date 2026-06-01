@@ -98,8 +98,12 @@ trap 'rm -f "$tmp" 2>/dev/null' EXIT
 #  - locate the `## <CATSLUG>` section; insert the new line at its end (before the next `##` or EOF)
 #  - if the section is absent, append it (heading + line) at EOF
 #  - within the target section, enforce <=MAX_PER_CAT entries by evicting the OLDEST (first) ones
-awk -v cat="$CATSLUG" -v id="$id" -v lesson="$lesson_oneline" -v maxc="$MAX_PER_CAT" '
-  BEGIN { hdr = "## " cat; inserted = 0 }
+# NOTE: the lesson text is passed via ENVIRON (not `-v`) because `awk -v` interprets backslash
+# escape sequences in the value (\n, \t, \\, ...), which would silently corrupt a lesson that
+# legitimately contains a backslash (e.g. a Windows path). ENVIRON values are taken literally.
+# `cat` (a [a-z0-9-] slug) and `id` (hex) can't contain backslashes, so they stay on `-v`.
+LESSON_ONELINE="$lesson_oneline" awk -v cat="$CATSLUG" -v id="$id" -v maxc="$MAX_PER_CAT" '
+  BEGIN { hdr = "## " cat; lesson = ENVIRON["LESSON_ONELINE"]; inserted = 0 }
   # Collect lines into an array so we can post-process the target section in one pass.
   { lines[NR] = $0 }
   END {
@@ -119,6 +123,7 @@ awk -v cat="$CATSLUG" -v id="$id" -v lesson="$lesson_oneline" -v maxc="$MAX_PER_
     if (sec_start == 0) {
       # No section yet: print everything, then append a fresh section.
       for (i = 1; i <= n; i++) print lines[i]
+      print ""          # blank separator so the new `## <category>` heading is valid markdown
       print hdr
       print "- [" id "] " lesson
     } else {

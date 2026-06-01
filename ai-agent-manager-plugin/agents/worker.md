@@ -157,7 +157,7 @@ CRITICAL constraints:
 - **Workers run in isolated git worktrees and MUST NEVER write project memory** (never call `write-project-memory.sh`) — a worktree write would be lost on worktree removal (red-team F1). Workers only PROPOSE candidate strings here; promotion to memory is human-gated and happens at the repo root.
 - **Never put secrets, credentials, tokens, or PII in `memory_candidates`** — durable structural facts only.
 - **Omit the field entirely when nothing is memory-worthy** (the common case).
-- **Also echo any `memory_candidates` into your `.worker-summary.md`** (the summary file you already write) so a later `/dreaming` reflection pass can collect them; this changes nothing about the WORKER_RESULT schema (stays v2).
+- **Also echo any `memory_candidates` into your `.worker-summary.md`** (the summary file you already write) under a dedicated `## memory_candidates` heading, **one `- ` bullet per candidate string, verbatim** — so a later `/dreaming` reflection pass can collect them unambiguously. Omit the heading entirely when you have no candidates. This changes nothing about the WORKER_RESULT schema (stays v2).
 
 > **Where candidates go (current scope):** proposed candidates surface in your `WORKER_RESULT` block for a human — or a future P4 reflection pass — to promote at the repo root via `write-project-memory.sh`. There is **no automatic Supervisor collection/promotion step yet** (deferred to P4); emitting them here is the v1 deliverable, not a dead end.
 
