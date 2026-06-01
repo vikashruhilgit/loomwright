@@ -104,6 +104,8 @@ Agent result blocks (`WORKER_RESULT`, `CODE_REVIEW_RESULT`, `EXECUTE_RESULT`, `E
 
 **Memory participation (v14.4.0):** extended beyond Launch Pad — the **Supervisor** reads memory in Phase 1 ACQUIRE, and the **Worker** proposes durable learnings via the optional, additive `WORKER_RESULT.memory_candidates[]` field (propose-only, never write). Worker candidates *surface* in each `WORKER_RESULT` for human (or future P4) promotion at the repo root; an automatic Supervisor collection/promotion step is deferred to P4.
 
+**Memory consume-path (v14.5.0):** `LESSONS.md` is bounded to **≤3 active entries per category** (a Reflexion sliding window; the oldest is evicted at write time by the repo-root sole writer `write-lessons.sh`), and `/dreaming` now **writes accepted memory/LESSONS on per-item human approval** (collecting worker `memory_candidates[]` and distilling bounded lessons) — propose-and-write-on-approval, never auto-write. LESSONS-APPLY (reading lessons back at plan time), auto-demotion, and LESSONS provenance are deferred to P5.
+
 ---
 
 ## Advisor Tool (SDK-only pattern)
