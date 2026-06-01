@@ -634,6 +634,14 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 
 ---
 
+### 🔭 /capability-check — Scan for New Platform Capabilities (Read-Only)
+
+**Purpose:** On-demand, bounded (≤5 fetches) scan that diffs the live Claude Code changelog/docs plus dependency info against the tracked `ai-agent-manager-plugin/docs/CAPABILITY_BASELINE.json` and reports **CANDIDATE** adoptions — new platform capabilities the plugin could adopt. Never self-applies; suppresses output when nothing new is found. `--update-baseline` is an explicit maintainer action that refreshes the tracked baseline.
+
+**Learn More:** see `ai-agent-manager-plugin/commands/capability-check.md` for the scan protocol, fetch budget, and the maintainer `--update-baseline` flow
+
+---
+
 ### 🔁 /autonomous — Continuous Autonomous Loop (v14, stacked PRs)
 
 **Purpose:** Chain `/launch-pad → /supervisor` to drive a requirement to completion. Default mode is **multi-iteration** (cap 10, default 3) with **stacked PRs** — iteration N+1 branches from `iterations[N].branch` — and re-plans on two specific `SUPERVISOR_RESULT` signals. Pass `--single-iteration` (or `--max-iterations 1`) for v13's run-once behavior; `--no-stacked-branches` for the v13 branch-from-`main` cadence.
@@ -947,9 +955,9 @@ bd close BD-XX
 
 ai-agent-manager-plugin/              # Nested plugin root
 ├── .claude-plugin/
-│   └── plugin.json                   # Plugin metadata (v14.5.0)
+│   └── plugin.json                   # Plugin metadata (v14.6.0)
 ├── .mcp.json                         # Bundled MCP servers
-├── commands/                         # Slash commands (12)
+├── commands/                         # Slash commands (13)
 │   ├── launch-pad.md                 # Supervisor readiness
 │   ├── supervisor.md                 # Parallel orchestrator (v4)
 │   ├── autonomous.md                 # Continuous autonomous loop, stacked PRs (v14)
@@ -960,6 +968,7 @@ ai-agent-manager-plugin/              # Nested plugin root
 │   ├── qa-strategist.md              # Risk-based QA strategy
 │   ├── qa-executor.md                # Automated QA testing
 │   ├── dreaming.md                   # Read-only reflection over session logs (proposes memory + CLAUDE.md updates)
+│   ├── capability-check.md           # Read-only scan for new Claude Code capabilities vs tracked baseline
 │   ├── telemetry.md                  # Opt-in GitHub Issues telemetry (status/enable/disable/test)
 │   └── agent-help.md
 ├── agents/                           # Agent implementations (13 roles)

@@ -1,0 +1,55 @@
+{
+  "_comment": "Capability baseline for /capability-check (v14.6.0+). Snapshot of the Claude Code features and external deps this plugin currently USES or has deliberately considered. /capability-check diffs the LIVE Claude Code changelog/docs + dep versions against this file and reports candidate adoptions — it never self-applies. Maintainer updates this via `/capability-check --update-baseline` (a repo-root, committed action) after reviewing a report.",
+  "schema_version": 1,
+  "baseline_date": "2026-06-01",
+  "plugin_version_at_baseline": "14.6.0",
+  "claude_code": {
+    "hook_events_used": [
+      "SubagentStop",
+      "Stop",
+      "TaskCompleted",
+      "WorktreeCreate",
+      "StopFailure",
+      "PreToolUse",
+      "Notification",
+      "SessionStart"
+    ],
+    "hook_types_used": ["command", "prompt"],
+    "agent_frontmatter_fields_used": [
+      "name", "description", "tools", "model", "maxTurns",
+      "color", "disallowedTools", "skills", "memory", "hooks",
+      "effort", "permissionMode"
+    ],
+    "tools_used": [
+      "Task", "Read", "Write", "Edit", "Glob", "Grep", "Bash",
+      "LSP", "WebFetch", "WebSearch", "AskUserQuestion"
+    ],
+    "model_tiers_used": ["inherit", "opus", "sonnet", "haiku"],
+    "features_used": [
+      "slash-commands",
+      "subagents (Task)",
+      "run_in_background workers",
+      "skills (frontmatter preloading)",
+      "agent persistent memory (memory: project)",
+      "bundled MCP servers (.mcp.json / plugin.json mcpServers)",
+      "${CLAUDE_PLUGIN_ROOT} path resolution",
+      "AskUserQuestion gated prompts",
+      "SessionStart additionalContext injection"
+    ]
+  },
+  "known_not_adopted": [
+    {"feature": "Remote Control", "why": "documented as the inbound reply leg for v14.1.0 notifications; not yet wired into any workflow"},
+    {"feature": "PreCompact hook", "why": "considered for state-flush before compaction; SessionStart resume covers the recovery path for now"},
+    {"feature": "Agent Teams (CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS)", "why": "documented as experimental/complementary; graduation criteria tracked in agent-teams skill, not met"}
+  ],
+  "deps": {
+    "vikashruhil-mysql-mcp": {"via": "uvx", "pin": "unpinned (--refresh)", "note": "bundled read-only MySQL MCP server"},
+    "runtime_clis": ["git", "gh", "jq", "sha256sum|shasum", "uvx"]
+  },
+  "sources_to_check": {
+    "claude_code_changelog": "https://docs.claude.com/en/release-notes/claude-code",
+    "claude_code_docs_hooks": "https://docs.claude.com/en/docs/claude-code/hooks",
+    "claude_code_docs_subagents": "https://docs.claude.com/en/docs/claude-code/sub-agents",
+    "search_fallback": "Claude Code changelog new features hooks tools"
+  }
+}

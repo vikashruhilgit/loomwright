@@ -12,11 +12,11 @@ Guidance for Claude Code when working in this repository.
 
 **AI Agent Manager** is a Claude Code plugin with 13 agent roles (8 user-facing + 5 internal) for plan-first readiness, parallel execution, requirements, planning, code review, commits, adversarial audits, and dual-agent QA. Supervisor and Launch Pad use `.supervisor/` exclusively for state; Orchestrator and Product Owner can optionally use Beads.
 
+**v14.6.0 — `/capability-check`: on-demand capability-drift scan against a tracked baseline:** Adds a new maintainer/self-evolution slash command `/capability-check` that performs an **on-demand, bounded (≤5 fetches)** scan — it diffs the live Claude Code changelog/docs plus dependency info against a tracked `ai-agent-manager-plugin/docs/CAPABILITY_BASELINE.json` and reports **CANDIDATE** adoptions (new platform capabilities the plugin could adopt). It **never self-applies** any change, **suppresses no-change output** (silent when nothing new), and `--update-baseline` is an explicit maintainer action (not run during a normal scan). This is **+1 command (12 → 13)**; **no new agent / skill / hook (still 19 hooks)** and **no new result schema**. The scheduled-scanner variant remains **deferred to P5**. Additive on top of v14.5.0.
+
 **v14.5.0 — Memory consume-path: `/dreaming` collects, distills, and writes-on-approval:** Closes the consume-half of project memory that v14.4.0 deferred to P4. `/dreaming` now (a) **collects** worker `WORKER_RESULT.memory_candidates[]` from worker summaries / session logs / done+failed briefs, (b) **distills bounded `LESSONS.md`** — at most **≤3 active entries per category** (a Reflexion-style sliding window, scored, oldest-evicted by the new repo-root sole writer **`write-lessons.sh`**), and (c) **writes accepted memory/LESSONS on per-item approval** via the repo-root sole writers (`write-project-memory.sh` / `write-lessons.sh`). This evolves `/dreaming` from strict propose-only to **propose-and-write-on-approval**, but it stays **human-gated** — no auto-write, and `CLAUDE.md` + legacy agent-memory remain paste-to-apply. **APPLY (reading LESSONS back at plan time) and auto-demotion are deferred to P5; LESSONS provenance is deferred to P5.** This added two scripts (`write-lessons.sh` + its test, not counted by the doc-currency gate) but **no new command / agent / skill / hook — still 19 hooks**, and **WORKER_RESULT stays `schema_version` 2**. Additive on top of v14.4.0.
 
-**v14.4.0 — Project memory: Supervisor reads + Workers propose (P2b's deferred half):** Lands the participation that v14.3.0 deferred. The **Supervisor** now reads advisory project memory at the start of **Phase 1 ACQUIRE** (mirroring Launch Pad's Phase 3 step 0) via the provenance-gated `scripts/read-project-memory.sh` — advisory and strictly subordinate to `CLAUDE.md`, fail-safe (no memory / no hashing → proceeds silently). **Workers** now propose durable learnings via an **optional, additive `WORKER_RESULT.memory_candidates[]` field** — *propose-only, never write*: workers never touch `.supervisor/memory/`, the worktree-write ban (red-team F1) is intact, and promotion stays **human-gated**. This is purely additive: **no `schema_version` bump (WORKER_RESULT stays at 2)**, and **no new agent / command / skill / hook — still 19 hooks**. **Consume-path landed in v14.5.0:** `/dreaming` now collects worker `memory_candidates[]` (from summaries/logs/done+failed briefs), distills bounded `LESSONS.md`, and writes accepted items on per-item human approval — superseding this banner's "still-deferred P4" for collection + `LESSONS.md` reflection + `/dreaming` write (which stays human-gated, never auto). **Still deferred to P5:** LESSONS-APPLY (reading lessons back at plan time), auto-demotion, and LESSONS provenance. Additive on top of v14.3.0.
-
-> 📜 **Full release history** (v14.3.0 → v14.0.0 and earlier) lives in [`CHANGELOG.md`](CHANGELOG.md). CLAUDE.md keeps only the two most recent release notes.
+> 📜 **Full release history** (v14.4.0 → v14.0.0 and earlier) lives in [`CHANGELOG.md`](CHANGELOG.md). CLAUDE.md keeps only the two most recent release notes.
 
 ---
 
@@ -25,9 +25,9 @@ Guidance for Claude Code when working in this repository.
 The repo is a **marketplace wrapper** containing one nested plugin:
 
 - Marketplace manifest: `.claude-plugin/marketplace.json` (root)
-- Plugin manifest: `ai-agent-manager-plugin/.claude-plugin/plugin.json` (v14.5.0)
+- Plugin manifest: `ai-agent-manager-plugin/.claude-plugin/plugin.json` (v14.6.0)
 - Agents: `ai-agent-manager-plugin/agents/` (13 markdown prompts)
-- Commands: `ai-agent-manager-plugin/commands/` (12 entry points)
+- Commands: `ai-agent-manager-plugin/commands/` (13 entry points)
 - Skills: `ai-agent-manager-plugin/skills/` (50 skills, see `SKILLS_INDEX.md`)
 - Hooks: `ai-agent-manager-plugin/hooks/hooks.json`
 - Docs: `ai-agent-manager-plugin/docs/`
@@ -46,7 +46,7 @@ ai-agent-manager/                              # marketplace wrapper
 │   ├── .claude-plugin/plugin.json
 │   ├── .mcp.json                              # bundled MCP servers
 │   ├── agents/                                # 13 markdown prompts
-│   ├── commands/                              # 12 slash commands
+│   ├── commands/                              # 13 slash commands
 │   ├── hooks/hooks.json                       # cross-cutting hooks
 │   ├── skills/                                # 50 skills + SKILLS_INDEX.md
 │   ├── scripts/                               # send-telemetry.sh, send-telemetry-core.sh, send-webhook.sh, telemetry-fixtures/
