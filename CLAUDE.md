@@ -12,11 +12,11 @@ Guidance for Claude Code when working in this repository.
 
 **AI Agent Manager** is a Claude Code plugin with 13 agent roles (8 user-facing + 5 internal) for plan-first readiness, parallel execution, requirements, planning, code review, commits, adversarial audits, and dual-agent QA. Supervisor and Launch Pad use `.supervisor/` exclusively for state; Orchestrator and Product Owner can optionally use Beads.
 
+**v14.7.0 — `/insights`: local, Obsidian-friendly insights dashboard from session logs:** Adds a new slash command `/insights` that generates a local markdown **insights dashboard** (`.supervisor/insights/dashboard.md` plus per-run notes carrying Dataview-compatible frontmatter) from `.supervisor/logs/*.jsonl`, covering **work / quality / session-performance** — completion rate, self-heal outcomes, rubric scores, subtask counts, files touched. Aggregation is **deterministic `jq`** via `scripts/build-insights.sh` (self-tested by `scripts/test-insights.sh`; neither counted by the doc-currency gate). **COST (tokens/$) is intentionally NOT captured** — that lives in Claude Code's own transcripts, so the dashboard points to `npx ccusage`. This is **+1 command (13 → 14)**; **no new agent / skill / hook (still 19 hooks)** and **no schema change**. Additive on top of v14.6.0.
+
 **v14.6.0 — `/capability-check`: on-demand capability-drift scan against a tracked baseline:** Adds a new maintainer/self-evolution slash command `/capability-check` that performs an **on-demand, bounded (≤5 fetches)** scan — it diffs the live Claude Code changelog/docs plus dependency info against a tracked `ai-agent-manager-plugin/docs/CAPABILITY_BASELINE.json` and reports **CANDIDATE** adoptions (new platform capabilities the plugin could adopt). It **never self-applies** any change, **suppresses no-change output** (silent when nothing new), and `--update-baseline` is an explicit maintainer action (not run during a normal scan). This is **+1 command (12 → 13)**; **no new agent / skill / hook (still 19 hooks)** and **no new result schema**. The scheduled-scanner variant remains **deferred to P5**. Additive on top of v14.5.0.
 
-**v14.5.0 — Memory consume-path: `/dreaming` collects, distills, and writes-on-approval:** Closes the consume-half of project memory that v14.4.0 deferred to P4. `/dreaming` now (a) **collects** worker `WORKER_RESULT.memory_candidates[]` from worker summaries / session logs / done+failed briefs, (b) **distills bounded `LESSONS.md`** — at most **≤3 active entries per category** (a Reflexion-style sliding window, scored, oldest-evicted by the new repo-root sole writer **`write-lessons.sh`**), and (c) **writes accepted memory/LESSONS on per-item approval** via the repo-root sole writers (`write-project-memory.sh` / `write-lessons.sh`). This evolves `/dreaming` from strict propose-only to **propose-and-write-on-approval**, but it stays **human-gated** — no auto-write, and `CLAUDE.md` + legacy agent-memory remain paste-to-apply. **APPLY (reading LESSONS back at plan time) and auto-demotion are deferred to P5; LESSONS provenance is deferred to P5.** This added two scripts (`write-lessons.sh` + its test, not counted by the doc-currency gate) but **no new command / agent / skill / hook — still 19 hooks**, and **WORKER_RESULT stays `schema_version` 2**. Additive on top of v14.4.0.
-
-> 📜 **Full release history** (v14.4.0 → v14.0.0 and earlier) lives in [`CHANGELOG.md`](CHANGELOG.md). CLAUDE.md keeps only the two most recent release notes.
+> 📜 **Full release history** (v14.5.0 → v14.0.0 and earlier) lives in [`CHANGELOG.md`](CHANGELOG.md). CLAUDE.md keeps only the two most recent release notes.
 
 ---
 
@@ -25,9 +25,9 @@ Guidance for Claude Code when working in this repository.
 The repo is a **marketplace wrapper** containing one nested plugin:
 
 - Marketplace manifest: `.claude-plugin/marketplace.json` (root)
-- Plugin manifest: `ai-agent-manager-plugin/.claude-plugin/plugin.json` (v14.6.0)
+- Plugin manifest: `ai-agent-manager-plugin/.claude-plugin/plugin.json` (v14.7.0)
 - Agents: `ai-agent-manager-plugin/agents/` (13 markdown prompts)
-- Commands: `ai-agent-manager-plugin/commands/` (13 entry points)
+- Commands: `ai-agent-manager-plugin/commands/` (14 entry points)
 - Skills: `ai-agent-manager-plugin/skills/` (50 skills, see `SKILLS_INDEX.md`)
 - Hooks: `ai-agent-manager-plugin/hooks/hooks.json`
 - Docs: `ai-agent-manager-plugin/docs/`
@@ -46,7 +46,7 @@ ai-agent-manager/                              # marketplace wrapper
 │   ├── .claude-plugin/plugin.json
 │   ├── .mcp.json                              # bundled MCP servers
 │   ├── agents/                                # 13 markdown prompts
-│   ├── commands/                              # 13 slash commands
+│   ├── commands/                              # 14 slash commands
 │   ├── hooks/hooks.json                       # cross-cutting hooks
 │   ├── skills/                                # 50 skills + SKILLS_INDEX.md
 │   ├── scripts/                               # send-telemetry.sh, send-telemetry-core.sh, send-webhook.sh, telemetry-fixtures/

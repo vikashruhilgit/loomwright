@@ -642,6 +642,14 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 
 ---
 
+### 📊 /insights — Local Insights Dashboard (Read-Only, Obsidian-friendly)
+
+**Purpose:** Generate a local markdown insights dashboard (`.supervisor/insights/dashboard.md` + per-run notes with Dataview-compatible frontmatter) from `.supervisor/logs/*.jsonl`, covering work / quality / session-performance (completion rate, self-heal outcomes, rubric scores, subtask counts, files touched). Deterministic `jq` aggregation via `scripts/build-insights.sh`. **Cost (tokens/$) is intentionally NOT captured** — it lives in Claude Code's own transcripts; the dashboard points to `npx ccusage`.
+
+**Learn More:** see `ai-agent-manager-plugin/commands/insights.md` for the dashboard layout, the Dataview frontmatter schema, and the `ccusage` cost note
+
+---
+
 ### 🔁 /autonomous — Continuous Autonomous Loop (v14, stacked PRs)
 
 **Purpose:** Chain `/launch-pad → /supervisor` to drive a requirement to completion. Default mode is **multi-iteration** (cap 10, default 3) with **stacked PRs** — iteration N+1 branches from `iterations[N].branch` — and re-plans on two specific `SUPERVISOR_RESULT` signals. Pass `--single-iteration` (or `--max-iterations 1`) for v13's run-once behavior; `--no-stacked-branches` for the v13 branch-from-`main` cadence.
@@ -955,9 +963,9 @@ bd close BD-XX
 
 ai-agent-manager-plugin/              # Nested plugin root
 ├── .claude-plugin/
-│   └── plugin.json                   # Plugin metadata (v14.6.0)
+│   └── plugin.json                   # Plugin metadata (v14.7.0)
 ├── .mcp.json                         # Bundled MCP servers
-├── commands/                         # Slash commands (13)
+├── commands/                         # Slash commands (14)
 │   ├── launch-pad.md                 # Supervisor readiness
 │   ├── supervisor.md                 # Parallel orchestrator (v4)
 │   ├── autonomous.md                 # Continuous autonomous loop, stacked PRs (v14)
@@ -969,6 +977,7 @@ ai-agent-manager-plugin/              # Nested plugin root
 │   ├── qa-executor.md                # Automated QA testing
 │   ├── dreaming.md                   # Read-only reflection over session logs (proposes memory + CLAUDE.md updates)
 │   ├── capability-check.md           # Read-only scan for new Claude Code capabilities vs tracked baseline
+│   ├── insights.md                   # Local Obsidian-friendly insights dashboard from session logs
 │   ├── telemetry.md                  # Opt-in GitHub Issues telemetry (status/enable/disable/test)
 │   └── agent-help.md
 ├── agents/                           # Agent implementations (13 roles)
