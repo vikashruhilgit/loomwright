@@ -246,7 +246,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
 
 **Actions:**
 
-1. **Skip check (AC5):** If `--skip-preflight-sync` was passed (parsed in Phase 0 step 5a, sub-step 2.5), record the skip as a deliberate choice and short-circuit straight to Phase 2:
+1. **Skip check (AC5):** If `--skip-preflight-sync` was passed (parsed in Phase 0's base-branch / non-interactive preamble — the step 5a block), record the skip as a deliberate choice and short-circuit straight to Phase 2:
    ```
    Context-Keeper(operation: record_decision, phase: PRE_FLIGHT_SYNC,
                   decision: "preflight_skipped", rationale: "--skip-preflight-sync flag")
@@ -920,6 +920,8 @@ Track your tool call count mentally. Increment by 1 for each tool invocation (Ta
 > The Cumulative column assumes Phase 1.5's **typical** cost (~2-3, reusing Phase 1's `git fetch`); the common CLEAR path is ~2 and the `unverified` / `--skip-preflight-sync` paths cost less. Phase 1.5's **hard cap is ≤6** — if a cold fetch plus several per-PR file scans push it toward that ceiling, the extra calls are governed by the Supervisor's standard tool-budget thresholds (YELLOW at 18, RED at 24), forcing an earlier checkpoint rather than silently overrunning the 30-call budget.
 >
 > The **Cumulative column is an illustrative happy-path estimate, not a binding trigger** — the GREEN/YELLOW/RED bands below are the adaptive thresholds, and they fire only when a phase is *still running* at the threshold; a normal CLEAR run finishes near the 30-call budget without forcing a checkpoint.
+>
+> **Cold-fetch caveat:** when Phase 1 did NOT just fetch `$BASE_BRANCH` (so Phase 1.5 cannot reuse it), Phase 1.5 can cost up to its full ≤6 cap, leaving correspondingly less budget for Phases 2–5. A downstream phase that then runs over its estimate will checkpoint (and emit a resume command) rather than overrun — i.e. the gate trades a little downstream headroom for the overlap check, never a silent budget breach.
 
 | Tool Calls | Level | Action |
 |-----------|-------|--------|
