@@ -143,7 +143,7 @@ Then call `switch_database(host="prod.example.com")` at runtime to switch betwee
 | Agent                 | Command                         | Purpose                                                            | When                            |
 | --------------------- | ------------------------------- | ------------------------------------------------------------------ | ------------------------------- |
 | **Launch Pad**        | `/launch-pad goal: "..."`       | Prepare goals for autonomous Supervisor execution with feasibility gate (Phase 2.5: GO/CAUTION/NO-GO) and mandatory Plan Review (Phase 5.5) | Before `/supervisor`, planning  |
-| **Supervisor**        | `/supervisor task: "..."`       | Autonomous workflow → parallel workers → PR creation               | Full automation                 |
+| **Supervisor**        | `/supervisor task: "..."`       | Autonomous workflow → Phase 1.5 PRE-FLIGHT SYNC (remote-overlap gate) → parallel workers → PR creation | Full automation                 |
 | **Product Owner**     | `/product-owner feature: "..."` | Define requirements → create user stories with acceptance criteria. Assumption Check (standard flow, user gate before `bd create` if flags) + Reality Check (brainstorm flow, VIABLE/NEEDS_FOUNDATION/BLOCKED with Feasibility score caps). Use `--brainstorm` for multi-mind ideation. | New feature, vague requirements, exploring directions |
 | **Orchestrator**      | `/orchestrator goal: "..."`     | Plan work → create tasks with review gates                         | Starting implementation         |
 | **Code Reviewer**     | `/code-reviewer src/`           | Review code → output PASS/FAIL/NEEDS_HUMAN                         | After writing code              |
@@ -217,7 +217,7 @@ Supervisor-Ready Brief saved to .supervisor/jobs/pending/
     ↓
 /supervisor job: .supervisor/jobs/pending/{date}-{slug}.md   (fresh session)
     ↓
-INIT → ACQUIRE → PLAN → EXECUTE (via Execute Manager) → FINALIZE → SELF_HEAL → LOOP
+INIT → ACQUIRE → PRE-FLIGHT SYNC → PLAN → EXECUTE (via Execute Manager) → FINALIZE → SELF_HEAL → LOOP
     ↓
 PR created, next task or exit
 ```
@@ -230,6 +230,10 @@ PR created, next task or exit
 INIT: Detect env → Ask preferences → Create .supervisor/
     ↓
 ACQUIRE: Select task → Create feature branch (MANDATORY)
+    ↓
+PRE-FLIGHT SYNC: Fetch remote → scan recent commits + open PRs → classify
+                 CLEAR / OVERLAP / SUPERSEDED (silent on CLEAR; soft-gate or
+                 fail-closed on overlap; --skip-preflight-sync escape hatch)
     ↓
 PLAN: Orchestrator → Subtasks → Parallelism analysis
     ↓
