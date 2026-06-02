@@ -196,7 +196,7 @@ To execute: /supervisor job: .supervisor/jobs/2026-02-08-jwt-auth.md
 - Creates Pull Request via GitHub CLI
 - Moves to next task
 
-**8-Phase Workflow:**
+**7-Phase Workflow:**
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  0. INIT (config)  →  1. ACQUIRE (task + branch)                │
