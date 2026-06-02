@@ -49,7 +49,7 @@ ai-agent-manager/                              # marketplace wrapper
 │   ├── commands/                              # 14 slash commands
 │   ├── hooks/hooks.json                       # cross-cutting hooks
 │   ├── skills/                                # 50 skills + SKILLS_INDEX.md
-│   ├── scripts/                               # send-telemetry.sh, send-telemetry-core.sh, send-webhook.sh, telemetry-fixtures/
+│   ├── scripts/                               # runtime helpers: telemetry, webhook, notify, resume, memory, lessons, insights (+ self-tests, fixtures)
 │   └── docs/                                  # RESULT_SCHEMAS, FAILURE_ESCALATION, ARCHITECTURE_CONTRACTS, ARCHITECTURE, QA_SYSTEM_BLUEPRINT, TELEMETRY
 │       └── SPIKES/                            # Capability spike investigations + deferral records
 ├── scripts/                                   # validate-version.sh, check-command-sync.sh
