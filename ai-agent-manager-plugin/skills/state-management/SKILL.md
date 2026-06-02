@@ -94,8 +94,8 @@ Before creating `.supervisor/`, verify `.gitignore` exists. If not, create it wi
 - active_worktrees: [{paths}]
 
 ## Decisions Log
+_The Phase 1.5 PRE-FLIGHT SYNC outcome is recorded here as an ordinary Decisions Log entry via `record_decision(phase: PRE_FLIGHT_SYNC, …)` — there is NO dedicated state-file section for it. See the "Phase 1.5 Pre-Flight Summary" subsection below._
 | # | Phase | Decision | Rationale |
-<!-- The Phase 1.5 PRE-FLIGHT SYNC outcome is recorded here as an ordinary Decisions Log entry via record_decision(phase: PRE_FLIGHT_SYNC, …) — there is NO dedicated state-file section for it. See "Phase 1.5 Pre-Flight Summary" subsection below. -->
 
 ## Worker Results
 ### {worker-id} ({subtask-id})

@@ -246,7 +246,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
 
 **Actions:**
 
-1. **Skip check (AC5):** If `--skip-preflight-sync` was passed (parsed in Phase 0 step 5a), record the skip as a deliberate choice and short-circuit straight to Phase 2:
+1. **Skip check (AC5):** If `--skip-preflight-sync` was passed (parsed in Phase 0 step 5a, sub-step 2.5), record the skip as a deliberate choice and short-circuit straight to Phase 2:
    ```
    Context-Keeper(operation: record_decision, phase: PRE_FLIGHT_SYNC,
                   decision: "preflight_skipped", rationale: "--skip-preflight-sync flag")
@@ -259,7 +259,10 @@ Autonomously manage the complete development workflow from task pickup to PR cre
    git fetch origin "$BASE_BRANCH"
    BASE_TIP=$(git rev-parse --short "origin/$BASE_BRANCH")
    git log --oneline "origin/$BASE_BRANCH" -20        # recent history (N≈20)
-   gh pr list --state open --json number,title,headRefName,files   # or per-PR: gh pr view <n> --json files
+   gh pr list --state open --json number,title,headRefName   # list open PRs (portable across gh versions)
+   # then, for the bounded set of candidate PRs, fetch changed files per-PR:
+   gh pr view <n> --json files                               # per-PR file listing for the same-file overlap check
+   # (gh >= 2.x also supports `gh pr list --json ...,files` as a single-call optimization)
    ```
    Derive the **canonical version** (from `plugin.json` / manifest on `origin/$BASE_BRANCH`, or the task's stated target) and the **base-branch tip SHA** (`BASE_TIP`). If `gh` or `git fetch` errors → graceful degradation (set `preflight_sync = unverified`, one warning, continue — see Bounded budget above).
 
@@ -911,7 +914,7 @@ Track your tool call count mentally. Increment by 1 for each tool invocation (Ta
 | Phase 4 (FINALIZE) | ~8 | 27 |
 | Phase 5 (LOOP) | ~3 | 30 |
 
-> The Cumulative column uses Phase 1.5's worst case (~3). The common CLEAR path costs ~2 and the `unverified` / `--skip-preflight-sync` paths cost less, so the realistic total lands ~29 and the worst case stays within the 30-call budget.
+> The Cumulative column assumes Phase 1.5's **typical** cost (~2-3, reusing Phase 1's `git fetch`); the common CLEAR path is ~2 and the `unverified` / `--skip-preflight-sync` paths cost less. Phase 1.5's **hard cap is ≤6** — if a cold fetch plus several per-PR file scans push it toward that ceiling, the extra calls are governed by the Supervisor's standard tool-budget thresholds (YELLOW at 24, RED at 28), forcing an earlier checkpoint rather than silently overrunning the 30-call budget.
 
 | Tool Calls | Level | Action |
 |-----------|-------|--------|
