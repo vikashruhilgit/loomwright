@@ -137,7 +137,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
 
    1. Parse `--base-branch <name>` from argv. Default to `main` if absent. Record as `BASE_BRANCH` in session memory (used by Phase 4 FINALIZE PR creation, Phase 4 self-verify, and Phase 4.5 spawn prompts).
    2. Parse `--non-interactive` from argv. Default to `false` if absent. Record as `NON_INTERACTIVE` in session memory.
-   2a. Parse `--skip-preflight-sync` from argv. Default to `false` if absent. Record as `SKIP_PREFLIGHT_SYNC` in session memory (consumed by Phase 1.5 PRE-FLIGHT SYNC, step 1 — short-circuits the gate as a deliberate choice).
+   2.5. Parse `--skip-preflight-sync` from argv. Default to `false` if absent. Record as `SKIP_PREFLIGHT_SYNC` in session memory (consumed by Phase 1.5 PRE-FLIGHT SYNC, step 1 — short-circuits the gate as a deliberate choice).
    3. **W-NEW-14 mitigation — clear any stale `base_mismatch_detected` flag from a crashed prior session before this session can act on it:**
       ```
       Context-Keeper(operation: clear_flag, key: "base_mismatch_detected")
@@ -283,7 +283,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
 
    - **OVERLAP / SUPERSEDED in an interactive session (AC3):** present an `AskUserQuestion` (mirroring **Launch Pad's** Phase 2.5 feasibility soft-gate) BEFORE spawning any worker. The question MUST cite the **specific overlapping commit SHAs / PR numbers AND the intersecting file paths**. Three options:
      - **proceed-anyway** → set `preflight_sync = overlap_proceed` (OVERLAP) or `superseded_proceed` (SUPERSEDED); record the decision (`record_decision(phase: PRE_FLIGHT_SYNC, decision: "preflight_overlap_proceed" | "preflight_superseded_proceed", rationale: "{cited commits/PRs + paths}")`); continue to Phase 2.
-     - **revise-scope** → pause; let the user narrow/redirect the task (re-run ACQUIRE/PLAN with the revised scope), then re-evaluate.
+     - **revise-scope** → pause and checkpoint; do NOT spawn any worker. Keep the existing feature branch, `record_decision(phase: PRE_FLIGHT_SYNC, decision: "preflight_revise_scope", rationale: "{cited overlap}")`, and exit with a resume command. The user re-invokes `/supervisor` with the narrowed/redirected task (reusing the branch, or `git checkout $BASE_BRANCH && git branch -D feature/{old}` first if the new scope warrants a different branch name); Phase 1.5 then re-evaluates the revised scope against remote state on the next run. Do NOT silently fall through to Phase 2.
      - **abort** → fail the run cleanly (no worker spawned): record `record_decision(phase: PRE_FLIGHT_SYNC, decision: "preflight_abort", rationale: "{classification} — {cited commits/PRs + paths}")`, mark the task `failed`, move the job brief to `failed/` if a `job:` was used, and emit a single `SUPERVISOR_RESULT` with `status: failed`, `error: "preflight_overlap_detected: {classification} — {cited commits/PRs + paths}"`. Do NOT proceed to Phase 2.
 
    - **OVERLAP / SUPERSEDED under CI / non-interactive (AC4 — fail closed):** re-read the non-interactive state LIVE (do NOT trust in-context state alone — W-NEW-10):

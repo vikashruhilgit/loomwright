@@ -197,11 +197,11 @@ The summary is recorded via the **existing** `record_decision` operation (not a 
 
 ```
 record_decision(phase: PRE_FLIGHT_SYNC,
-                decision: <preflight_clear | preflight_overlap_proceed | preflight_superseded_proceed | preflight_abort | preflight_skipped>,
+                decision: <preflight_clear | preflight_overlap_proceed | preflight_superseded_proceed | preflight_revise_scope | preflight_abort | preflight_skipped>,
                 rationale: "<canonical version, base tip SHA, no overlap | overlapping commit SHAs/PR numbers + intersecting file paths>")
 ```
 
-This matches exactly how `agents/supervisor.md` Phase 1.5 records the gate outcome (`record_decision(phase: PRE_FLIGHT_SYNC, …)`). The `decision` values are verbatim the strings Supervisor emits: `preflight_clear` (CLEAR — AC2 silent record), `preflight_skipped` (`--skip-preflight-sync` escape hatch); for the OVERLAP/SUPERSEDED proceed and abort paths Supervisor mirrors the same `preflight_` prefix — `preflight_overlap_proceed`, `preflight_superseded_proceed`, and `preflight_abort`. The resulting row appears in `## Decisions Log` like any other decision.
+This matches exactly how `agents/supervisor.md` Phase 1.5 records the gate outcome (`record_decision(phase: PRE_FLIGHT_SYNC, …)`). The `decision` values are verbatim the strings Supervisor emits: `preflight_clear` (CLEAR — AC2 silent record), `preflight_skipped` (`--skip-preflight-sync` escape hatch); for the OVERLAP/SUPERSEDED proceed, revise-scope, and abort paths Supervisor mirrors the same `preflight_` prefix — `preflight_overlap_proceed`, `preflight_superseded_proceed`, `preflight_revise_scope`, and `preflight_abort`. The resulting row appears in `## Decisions Log` like any other decision.
 
 ### What the rationale captures
 
