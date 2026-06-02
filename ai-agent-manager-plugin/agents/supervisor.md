@@ -46,7 +46,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
 - **CLAUDE.md:** Project context and patterns
 - **Git state:** Current branch, working tree status
 - **Resume data:** (optional) State from previous session
-- **Flags:** `--max-workers N`, `--sequential`, `--continue`, `--dry-run`, `job: {path}`, `--skip-self-heal`, `--heal-iterations N` (default 3), `--cheap`, `--base-branch <name>` (default `main`), `--non-interactive`
+- **Flags:** `--max-workers N`, `--sequential`, `--continue`, `--dry-run`, `job: {path}`, `--skip-self-heal`, `--heal-iterations N` (default 3), `--cheap`, `--base-branch <name>` (default `main`), `--non-interactive`, `--skip-preflight-sync`
 
 ### Outputs
 
@@ -75,7 +75,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
 │                     SUPERVISOR (Pure Orchestrator)                │
 │  Holds: phase, task_id, branch only (~800 tokens)                │
 │  Budget: 30 tool calls                                           │
-│  Does: INIT → ACQUIRE → PLAN → [delegate] → FINALIZE → SELF_HEAL → LOOP │
+│  Does: INIT → ACQUIRE → PRE-FLIGHT SYNC → PLAN → [delegate] → FINALIZE → SELF_HEAL → LOOP │
 └──────────┬──────────────┬────────────────────────────────────────┘
            │              │
     ┌──────▼──────┐ ┌────▼──────────────────────────────────────┐
@@ -137,6 +137,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
 
    1. Parse `--base-branch <name>` from argv. Default to `main` if absent. Record as `BASE_BRANCH` in session memory (used by Phase 4 FINALIZE PR creation, Phase 4 self-verify, and Phase 4.5 spawn prompts).
    2. Parse `--non-interactive` from argv. Default to `false` if absent. Record as `NON_INTERACTIVE` in session memory.
+   2.5. Parse `--skip-preflight-sync` from argv. Default to `false` if absent. Record as `SKIP_PREFLIGHT_SYNC` in session memory (consumed by Phase 1.5 PRE-FLIGHT SYNC, step 1 — short-circuits the gate as a deliberate choice).
    3. **W-NEW-14 mitigation — clear any stale `base_mismatch_detected` flag from a crashed prior session before this session can act on it:**
       ```
       Context-Keeper(operation: clear_flag, key: "base_mismatch_detected")
@@ -230,6 +231,88 @@ Autonomously manage the complete development workflow from task pickup to PR cre
 ```
 
 **Checkpoint:** State saved to `.supervisor/` after branch creation.
+
+---
+
+### Phase 1.5: PRE-FLIGHT SYNC (Remote-State Reconciliation)
+
+**Purpose:** Before any tokens are spent on decomposition or execution, reconcile the *requested work* against remote state — recent `origin/$BASE_BRANCH` commits and open PRs — to catch (a) in-flight or recently-landed work that touches the **same files** this task will touch, and (b) an **already-merged equivalent** of the requested work. Derive the canonical version and base-branch tip SHA. Classify the task as **CLEAR | OVERLAP | SUPERSEDED** and surface overlaps to the human (or fail closed in CI) *before* Phase 2 PLAN spawns the Orchestrator or any worker.
+
+**Entry:** Runs AFTER Phase 1 ACQUIRE has produced a task and a fresh feature branch, BEFORE Phase 2 PLAN. Skipped entirely when `--skip-preflight-sync` was passed (see AC5 below).
+
+**What this is NOT (scope guard):** Phase 1 ACQUIRE already does `git fetch origin "$BASE_BRANCH"` + `git pull` so the feature branch starts fresh (step 4 above), and the existing `base_branch_mismatch` path (Phase 4 self-verify → Phase 4.5 cleanup, step 6.5) only checks the *PR's `baseRefName`* against `$BASE_BRANCH`. **Neither detects that the requested *work* overlaps with or is superseded by recent commits / open PRs.** This gate adds that *semantic work-overlap reconciliation* and MUST NOT duplicate or weaken either the existing fetch/pull or the post-hoc base-mismatch path. Reuse Phase 1's `git fetch` result where it is fresh — do not redundantly re-fetch if ACQUIRE just fetched `$BASE_BRANCH`.
+
+**Bounded budget (AC7):** the entire phase is capped at **≤ 6 tool calls and a short timeout** (treat ~20s per `gh`/`git` invocation as a SOFT guideline — there is no native per-call shell timeout, so this is an advisory budget the agent self-enforces by passing an explicit Bash `timeout`, not a hard bound). On any tooling unavailability or error (`gh` not installed/authenticated, `git fetch` failure, timeout), record "pre-flight unverified", emit ONE warning, set `preflight_sync = unverified`, and **continue to Phase 2** — NEVER hard-block on a tooling failure.
+
+**Actions:**
+
+1. **Skip check (AC5):** If `--skip-preflight-sync` was passed (parsed in Phase 0's base-branch / non-interactive preamble — the step 5a block), record the skip as a deliberate choice and short-circuit straight to Phase 2:
+   ```
+   Context-Keeper(operation: record_decision, phase: PRE_FLIGHT_SYNC,
+                  decision: "preflight_skipped", rationale: "--skip-preflight-sync flag")
+   ```
+   Set `preflight_sync = skipped` and proceed to Phase 2. Do NOT run any of the steps below.
+
+2. **Gather remote state (bounded):**
+   ```bash
+   # Reuse Phase 1's fetch if it just ran against $BASE_BRANCH; otherwise:
+   git fetch origin "$BASE_BRANCH"
+   BASE_TIP=$(git rev-parse --short "origin/$BASE_BRANCH")
+   git log --oneline "origin/$BASE_BRANCH" -20        # recent history (N≈20)
+   gh pr list --state open --json number,title,headRefName   # list open PRs (portable across gh versions)
+   # then, for the bounded set of candidate PRs, fetch changed files per-PR:
+   gh pr view <n> --json files                               # per-PR file listing for the same-file overlap check
+   # (gh >= 2.x also supports `gh pr list --json ...,files` as a single-call optimization)
+   ```
+   Derive the **canonical version** (from `plugin.json` / manifest on `origin/$BASE_BRANCH`, or the task's stated target) and the **base-branch tip SHA** (`BASE_TIP`). If `gh` or `git fetch` errors → graceful degradation (set `preflight_sync = unverified`, one warning, continue — see Bounded budget above).
+
+   **Per-PR scan bound:** inspect at most N≈3 candidate open PRs (one `gh pr view <n> --json files` call per candidate), prioritised by title / `headRefName` overlap with the task; skip the rest within the ≤6-call budget. Record how many of the open PRs were file-inspected for the Output block disclosure.
+
+3. **Determine the task's anticipated file set:** use the job brief's **File Impact Map** when present (the `job:` brief lists per-subtask MODIFY/CREATE paths); otherwise derive from the task title + criteria.
+
+4. **Classify CLEAR | OVERLAP | SUPERSEDED** using these required signals:
+   - **(a) same-file overlap → OVERLAP:** a recent `origin/$BASE_BRANCH` commit (from `git log`) OR an open PR whose changed files intersect the task's anticipated file set. Record the intersecting paths and the commit SHAs / PR numbers.
+   - **(b) already-merged equivalent → SUPERSEDED:** recent `origin/$BASE_BRANCH` history already implements the requested work. This is the motivating case behind the **v13.1.0→v14.0.0 stale-branch incident** (work was branched from a stale base and re-implemented something already merged) — cite the specific landing commit(s). SUPERSEDED requires BOTH a topic match (the commit message or PR title names the same feature / versioned component as the task) AND a file overlap (changed files intersect the anticipated file set) — either signal alone is insufficient (prevents a topic-only false SUPERSEDED).
+   - Otherwise → **CLEAR.**
+
+5. **Stacked-iteration scoping (AC6):** when `$BASE_BRANCH ≠ main` (the `/autonomous` loop stacks iteration N+1 on iteration N's branch), scope the overlap comparison to `$BASE_BRANCH` only and do NOT flag the **parent iteration's own commits or PR** as overlap — those are the legitimate base this iteration builds on, not a competing change. No false positive against the stacked-PR chain.
+
+6. **Act on the classification:**
+
+   - **CLEAR (AC2 — silent):** proceed to Phase 2 with no extra prompt. Record a one-line pre-flight summary and set `preflight_sync = clear`:
+     ```
+     Context-Keeper(operation: record_decision, phase: PRE_FLIGHT_SYNC,
+                    decision: "preflight_clear",
+                    rationale: "version={canonical_version}, base_tip={BASE_TIP}, no overlap")
+     ```
+
+   - **OVERLAP / SUPERSEDED in an interactive session (AC3):** present an `AskUserQuestion` (mirroring **Launch Pad's** Phase 2.5 feasibility soft-gate) BEFORE spawning any worker. The question MUST cite the **specific overlapping commit SHAs / PR numbers AND the intersecting file paths**. Three options:
+     - **proceed-anyway** → set `preflight_sync = overlap_proceed` (OVERLAP) or `superseded_proceed` (SUPERSEDED); record the decision (`record_decision(phase: PRE_FLIGHT_SYNC, decision: "preflight_overlap_proceed" | "preflight_superseded_proceed", rationale: "{cited commits/PRs + paths}")`); continue to Phase 2.
+     - **revise-scope** → pause and checkpoint; do NOT spawn any worker. Keep the existing feature branch, `record_decision(phase: PRE_FLIGHT_SYNC, decision: "preflight_revise_scope", rationale: "{cited overlap}")`, and emit a single `SUPERVISOR_RESULT` with `status: checkpoint` and `preflight_sync: null` (the classification lives in the Decisions Log entry above, not the field — and a well-formed result block keeps the SubagentStop validator happy), then exit with a resume command. The user re-invokes `/supervisor` with the narrowed/redirected task (reusing the branch, or `git checkout $BASE_BRANCH && git branch -D feature/{old}` first if the new scope warrants a different branch name); Phase 1.5 then re-evaluates the revised scope against remote state on the next run. Do NOT silently fall through to Phase 2.
+     - **abort** → fail the run cleanly (no worker spawned): record `record_decision(phase: PRE_FLIGHT_SYNC, decision: "preflight_abort", rationale: "{classification} — {cited commits/PRs + paths}")`, mark the task `failed`, move the job brief to `failed/` if a `job:` was used, and emit a single `SUPERVISOR_RESULT` with `status: failed`, `error: "preflight_overlap_detected: {classification} — {cited commits/PRs + paths}"`. Do NOT proceed to Phase 2.
+
+   - **OVERLAP / SUPERSEDED under CI / non-interactive (AC4 — fail closed):** re-read the non-interactive state LIVE (do NOT trust in-context state alone — W-NEW-10):
+     ```
+     ni = Context-Keeper(operation: get_flag, key: "non_interactive")
+     ```
+     If `ni` is set (or `--non-interactive` was passed) OR **stdin is not a TTY**, an OVERLAP/SUPERSEDED classification **FAILS CLOSED** — UNLESS `--skip-preflight-sync` was passed (which would already have short-circuited in step 1). Abort with a diagnostic: mark the task `failed`, move the job brief to `failed/` if a `job:` was used, and emit a single `SUPERVISOR_RESULT` with:
+     - `status: failed`
+     - `SUPERVISOR_RESULT.error = "preflight_overlap_detected"` (the dedicated reason — surfaced by the `/autonomous` loop as `AUTONOMOUS_RUN.status_reason: "preflight_overlap_detected"`)
+     Do NOT spawn any worker, do NOT proceed to Phase 2.
+
+**`preflight_sync` field (SUPERVISOR_RESULT, see "Result Block"):** records this phase's outcome — `clear` (CLEAR, silent), `overlap_proceed` (OVERLAP, user proceeded), `superseded_proceed` (SUPERSEDED, user proceeded), `skipped` (`--skip-preflight-sync`), or `unverified` (graceful degradation). Optional/additive — `schema_version` stays 1.
+
+**Output:**
+```markdown
+### Phase 1.5: PRE-FLIGHT SYNC
+- Canonical version: {version} | Base tip: {BASE_TIP}
+- Open PRs scanned: {count} | Recent commits scanned: {N}
+- PRs file-inspected: {n} of {open_count}
+- Classification: CLEAR | OVERLAP | SUPERSEDED | UNVERIFIED (tooling degraded) | SKIPPED (--skip-preflight-sync)
+- Overlap: none | {cited commit SHAs / PR #s + intersecting paths}
+- Decision: proceed (silent) | proceed-anyway | revise-scope | aborted (fail-closed) | skipped
+- preflight_sync: clear | overlap_proceed | superseded_proceed | skipped | unverified
+```
 
 ---
 
@@ -828,10 +911,17 @@ Track your tool call count mentally. Increment by 1 for each tool invocation (Ta
 |-------|----------------|------------|
 | Phase 0 (INIT) | ~5 | 5 |
 | Phase 1 (ACQUIRE) | ~5 | 10 |
-| Phase 2 (PLAN) | ~5 | 15 |
-| Phase 3 (Execute Manager spawn) | 1 | 16 |
-| Phase 4 (FINALIZE) | ~8 | 24 |
-| Phase 5 (LOOP) | ~3 | 27 |
+| Phase 1.5 (PRE-FLIGHT SYNC) | ~2-3 (reuses Phase 1's fetch, so incremental cost is small; bounded at ≤6 tool calls per the Phase 1.5 spec) | 13 |
+| Phase 2 (PLAN) | ~5 | 18 |
+| Phase 3 (Execute Manager spawn) | 1 | 19 |
+| Phase 4 (FINALIZE) | ~8 | 27 |
+| Phase 5 (LOOP) | ~3 | 30 |
+
+> The Cumulative column assumes Phase 1.5's **typical** cost (~2-3, reusing Phase 1's `git fetch`); the common CLEAR path is ~2 and the `unverified` / `--skip-preflight-sync` paths cost less. Phase 1.5's **hard cap is ≤6** — if a cold fetch plus several per-PR file scans push it toward that ceiling, the extra calls are governed by the Supervisor's standard tool-budget thresholds (YELLOW at 18, RED at 24), forcing an earlier checkpoint rather than silently overrunning the 30-call budget.
+>
+> The **Cumulative column is an illustrative happy-path estimate, not a binding trigger** — the GREEN/YELLOW/RED bands below are the adaptive thresholds, and they fire only when a phase is *still running* at the threshold; a normal CLEAR run finishes near the 30-call budget without forcing a checkpoint.
+>
+> **Cold-fetch caveat:** when Phase 1 did NOT just fetch `$BASE_BRANCH` (so Phase 1.5 cannot reuse it), Phase 1.5 can cost up to its full ≤6 cap, leaving correspondingly less budget for Phases 2–5. A downstream phase that then runs over its estimate will checkpoint (and emit a resume command) rather than overrun — i.e. the gate trades a little downstream headroom for the overlap check, never a silent budget breach.
 
 | Tool Calls | Level | Action |
 |-----------|-------|--------|
@@ -873,6 +963,7 @@ Priority order for loading state:
 | `--cheap` | false | Cost-optimized profile: spawns orchestrator, execute-manager, workers, code-reviewer, and Phase 4.5 fix tasks with `model: "sonnet"` override. Default `inherit` unchanged when absent. Caution: on Haiku sessions, listed roles upgrade to Sonnet. |
 | `--base-branch <name>` | `main` | Override base branch for FINALIZE PR creation. Used by the `/autonomous` loop multi-iteration mode to stack iteration N+1 on iteration N's feature branch (v14.0.0). Phase 4 self-verifies the created PR's `baseRefName` matches this value; Phase 4.5 cleans up on mismatch. |
 | `--non-interactive` | false | Suppress `AskUserQuestion` fallbacks. On `gh` failures and ambiguous gates, fail closed with diagnostic instead of prompting. Set automatically by the `/autonomous` loop; rarely passed by humans. Recorded as a Phase Flag at Phase 0 so later phases can re-read it after context loss (W-NEW-10 mitigation). |
+| `--skip-preflight-sync` | false | Short-circuit the Phase 1.5 PRE-FLIGHT SYNC remote-state reconciliation gate. The skip is recorded as a deliberate choice (Context-Keeper `record_decision`) and `preflight_sync` is set to `skipped`. Escape hatch for when remote-overlap reconciliation is known-unnecessary or when intentionally re-doing landed work. |
 
 ---
 
@@ -890,6 +981,7 @@ Priority order for loading state:
 /supervisor --cheap                            # Cost-optimized: orchestrator, execute-manager, workers, code-reviewer, fix tasks run on Sonnet
 /supervisor --base-branch feature/v14-iter1    # Stack PR on a non-main base (v14 autonomous-loop multi-iter)
 /supervisor --non-interactive                  # Fail closed instead of prompting on gh/adjudication gates
+/supervisor --skip-preflight-sync              # Short-circuit the Phase 1.5 remote-overlap reconciliation gate
 ```
 
 ---
@@ -914,6 +1006,14 @@ Priority order for loading state:
 - Criteria: 5 items
 - Branch: feature/user-auth ← CREATED
 - Requirements: Clear
+
+### Phase 1.5: PRE-FLIGHT SYNC
+- Canonical version: 14.8.0 | Base tip: a1b2c3d
+- Open PRs scanned: 2 | Recent commits scanned: 20
+- Classification: CLEAR
+- Overlap: none
+- Decision: proceed (silent)
+- preflight_sync: clear
 
 ### Phase 2: PLAN
 - Subtasks: 3 (user-auth-a, user-auth-b, user-auth-c)
@@ -975,6 +1075,7 @@ SUPERVISOR_RESULT:
   summary: 3/3 subtasks merged. Self-heal fixed 2 integration issues in 1 iteration; final review PASSED. PR #42 ready.
   cost_profile: null
   rubric_score: "5/5"
+  preflight_sync: clear
 ```
 
 ---
@@ -1229,12 +1330,14 @@ SUPERVISOR_RESULT:
   rubric_score: string | null               # optional (v12.2.0+) — "N/M" where N is non-negative (>= 0; "0/M" is the legitimate all-fail case), M is positive (>= 1), M >= N; null when no Outcomes Rubric in brief, heal_decision != PASS, or grader parse failed
   branch_base: string | null                # optional (v14.0.0+) — BASE_BRANCH the PR was targeting (defaults to "main" when --base-branch not passed). Always set when status=failed with error="base_branch_mismatch:...".
   pr_state: string | null                   # optional (v14.0.0+) — "closed_by_loop" | "close_attempt_failed" | null. Populated only by Phase 4.5 base-mismatch cleanup; null on all other exit paths.
+  preflight_sync: enum [clear, overlap_proceed, superseded_proceed, skipped, unverified] | null  # optional (v14.8.0+) — outcome of the Phase 1.5 PRE-FLIGHT SYNC gate; null when the gate did not run (e.g., pre-v14.8.0 resume). On a fail-closed abort the run emits status=failed with `error: "preflight_overlap_detected"` (surfaced by /autonomous as `AUTONOMOUS_RUN.status_reason`). Authoritative field definition lives in docs/RESULT_SCHEMAS.md.
 ```
 
 **Status mapping (machine-readable):**
 - `heal_decision=PASS` OR `heal_loop_ran=false` (loop skipped via `--skip-self-heal`) → `status: completed`
 - `heal_decision=ESCALATED` → `status: completed_with_escalation`
 - Hard failures (merge conflict, fix task crash after retries, resume thrash) → `status: failed` or `status: completed_with_escalation` depending on which phase failed
+- Phase 1.5 PRE-FLIGHT SYNC fail-closed abort (OVERLAP/SUPERSEDED under `--non-interactive`/stdin-not-a-TTY, no `--skip-preflight-sync`) → `status: failed` with `SUPERVISOR_RESULT.error = "preflight_overlap_detected"` (surfaced by /autonomous as `AUTONOMOUS_RUN.status_reason: "preflight_overlap_detected"`)
 - Budget exhaustion (24+ tool calls, phase still running) → `status: checkpoint`
 
 **Invariants:**

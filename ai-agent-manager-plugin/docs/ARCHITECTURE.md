@@ -36,8 +36,9 @@
                     │  model: inherit  color: #1E90FF           │
                     │  Budget: 30 tool calls                    │
                     │                                           │
-                    │  INIT → ACQUIRE → PLAN → EXECUTE →        │
-                    │  FINALIZE → SELF_HEAL → LOOP              │
+                    │  INIT → ACQUIRE → PRE-FLIGHT SYNC →       │
+                    │  PLAN → EXECUTE → FINALIZE →              │
+                    │  SELF_HEAL → LOOP                         │
                     └──┬────────┬────────┬────────────────────┘
                        │        │        │
               ┌────────▼──┐  ┌──▼─────┐  │
@@ -102,7 +103,7 @@
     ↓ (fresh session)
 /supervisor job: .supervisor/jobs/pending/{file}.md
     ↓
-INIT → ACQUIRE (move brief to in-progress/) → PLAN → EXECUTE → FINALIZE → SELF_HEAL (integration review + bounded fix loop; move brief to done/ in completion tail) → LOOP
+INIT → ACQUIRE (move brief to in-progress/) → PRE-FLIGHT SYNC (remote-state reconciliation; CLEAR silent, OVERLAP/SUPERSEDED soft-gate) → PLAN → EXECUTE → FINALIZE → SELF_HEAL (integration review + bounded fix loop; move brief to done/ in completion tail) → LOOP
     ↓
 PR created (task completion recorded in SELF_HEAL tail, not FINALIZE)
 ```
@@ -112,7 +113,7 @@ PR created (task completion recorded in SELF_HEAL tail, not FINALIZE)
 ```
 /supervisor task: "..."
     ↓
-INIT → ACQUIRE → PLAN → EXECUTE → FINALIZE → SELF_HEAL → LOOP
+INIT → ACQUIRE → PRE-FLIGHT SYNC → PLAN → EXECUTE → FINALIZE → SELF_HEAL → LOOP
     ↓
 PR created
 ```

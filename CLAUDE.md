@@ -12,9 +12,9 @@ Guidance for Claude Code when working in this repository.
 
 **AI Agent Manager** is a Claude Code plugin with 13 agent roles (8 user-facing + 5 internal) for plan-first readiness, parallel execution, requirements, planning, code review, commits, adversarial audits, and dual-agent QA. Supervisor and Launch Pad use `.supervisor/` exclusively for state; Orchestrator and Product Owner can optionally use Beads.
 
-**v14.7.0 — `/insights`: local, Obsidian-friendly insights dashboard from session logs:** Adds a new slash command `/insights` that generates a local markdown **insights dashboard** (`.supervisor/insights/dashboard.md` plus per-run notes carrying Dataview-compatible frontmatter) from `.supervisor/logs/*.jsonl`, covering **work / quality / session-performance** — completion rate, self-heal outcomes, rubric scores, subtask counts, files touched. Aggregation is **deterministic `jq`** via `scripts/build-insights.sh` (self-tested by `scripts/test-insights.sh`; neither counted by the doc-currency gate). **COST (tokens/$) is intentionally NOT captured** — that lives in Claude Code's own transcripts, so the dashboard points to `npx ccusage`. This is **+1 command (13 → 14)**; **no new agent / skill / hook (still 19 hooks)** and **no schema change**. Additive on top of v14.6.0.
+**v14.8.0 — Phase 1.5 PRE-FLIGHT SYNC: remote-state reconciliation before any worker spawns:** Adds a mandatory **Phase 1.5 PRE-FLIGHT SYNC** gate to the Supervisor that runs *after* Phase 1 ACQUIRE and *before* Phase 2 PLAN. It fetches remote state, inspects recent `origin/$BASE_BRANCH` commits and open PRs, derives the canonical version/base-tip, and classifies the requested work as **CLEAR / OVERLAP / SUPERSEDED** on two signals — (a) **same-file overlap** with a recent commit / open PR, and (b) an **already-merged equivalent** (the v13.1.0→v14.0.0 stale-branch incident) — *before* tokens are spent on decomposition/execution. **CLEAR is silent**; OVERLAP/SUPERSEDED escalates via `AskUserQuestion` (proceed-anyway / revise-scope / abort) interactively, or **fails closed** under `--non-interactive`/non-TTY with `error: "preflight_overlap_detected"` (surfaced as `AUTONOMOUS_RUN.status_reason`). The gate is **stacked-iteration safe** (scopes to `$BASE_BRANCH`, never flags the parent iteration), **degrades gracefully** on `gh`/`git` failure (`preflight_sync = unverified`), and is **bounded** (≤6 tool calls). `--skip-preflight-sync` is the escape hatch (a **flag, not a command**). Adds the optional additive `preflight_sync` SUPERVISOR_RESULT field (`schema_version` stays 1) and the `preflight_overlap_detected` AUTONOMOUS_RUN status_reason. **No new agent / command / skill / hook (still 13 / 14 / 50 / 19).** Additive on top of v14.7.0.
 
-**v14.6.0 — `/capability-check`: on-demand capability-drift scan against a tracked baseline:** Adds a new maintainer/self-evolution slash command `/capability-check` that performs an **on-demand, bounded (≤5 fetches)** scan — it diffs the live Claude Code changelog/docs plus dependency info against a tracked `ai-agent-manager-plugin/docs/CAPABILITY_BASELINE.json` and reports **CANDIDATE** adoptions (new platform capabilities the plugin could adopt). It **never self-applies** any change, **suppresses no-change output** (silent when nothing new), and `--update-baseline` is an explicit maintainer action (not run during a normal scan). This is **+1 command (12 → 13)**; **no new agent / skill / hook (still 19 hooks)** and **no new result schema**. The scheduled-scanner variant remains **deferred to P5**. Additive on top of v14.5.0.
+**v14.7.0 — `/insights`: local, Obsidian-friendly insights dashboard from session logs:** Adds a new slash command `/insights` that generates a local markdown **insights dashboard** (`.supervisor/insights/dashboard.md` plus per-run notes carrying Dataview-compatible frontmatter) from `.supervisor/logs/*.jsonl`, covering **work / quality / session-performance** — completion rate, self-heal outcomes, rubric scores, subtask counts, files touched. Aggregation is **deterministic `jq`** via `scripts/build-insights.sh` (self-tested by `scripts/test-insights.sh`; neither counted by the doc-currency gate). **COST (tokens/$) is intentionally NOT captured** — that lives in Claude Code's own transcripts, so the dashboard points to `npx ccusage`. This is **+1 command (13 → 14)**; **no new agent / skill / hook (still 19 hooks)** and **no schema change**. Additive on top of v14.6.0.
 
 > 📜 **Full release history** (v14.5.0 → v14.0.0 and earlier) lives in [`CHANGELOG.md`](CHANGELOG.md). CLAUDE.md keeps only the two most recent release notes.
 
@@ -25,7 +25,7 @@ Guidance for Claude Code when working in this repository.
 The repo is a **marketplace wrapper** containing one nested plugin:
 
 - Marketplace manifest: `.claude-plugin/marketplace.json` (root)
-- Plugin manifest: `ai-agent-manager-plugin/.claude-plugin/plugin.json` (v14.7.0)
+- Plugin manifest: `ai-agent-manager-plugin/.claude-plugin/plugin.json` (v14.8.0)
 - Agents: `ai-agent-manager-plugin/agents/` (13 markdown prompts)
 - Commands: `ai-agent-manager-plugin/commands/` (14 entry points)
 - Skills: `ai-agent-manager-plugin/skills/` (50 skills, see `SKILLS_INDEX.md`)
@@ -67,7 +67,7 @@ Detailed per-agent purpose, command syntax, and workflow diagrams live in `READM
 | Agent | Type | Spawned by | Codebase-relevant invariants |
 |---|---|---|---|
 | Launch Pad | user-facing | user | Phase 2.5 feasibility (GO/CAUTION/NO-GO); Phase 5.5 mandatory Plan Review (max 3 retries); writes briefs to `.supervisor/jobs/pending/` |
-| Supervisor | user-facing | user | v4 + Phase 4.5 self-heal — phase **always** runs; `--skip-self-heal` only short-circuits the loop; completion-tail relocates job-move + state-completed from FINALIZE |
+| Supervisor | user-facing | user | v4 + **Phase 1.5 PRE-FLIGHT SYNC** (remote-state reconciliation between ACQUIRE and PLAN — classifies the requested work CLEAR/OVERLAP/SUPERSEDED, silent on CLEAR, soft-gate `AskUserQuestion` interactively, fails closed under `--non-interactive` with `error: "preflight_overlap_detected"`; bounded ≤6 calls; `--skip-preflight-sync` escape hatch) + Phase 4.5 self-heal — self-heal phase **always** runs; `--skip-self-heal` only short-circuits the loop; completion-tail relocates job-move + state-completed from FINALIZE. **Never assert git merge/PR state ("on main", "in the PR", "already merged") without verifying via `git log` / `git branch --contains`.** |
 | Product Owner | user-facing | user | Assumption Check (standard) + Reality Check (`--brainstorm`) cap Feasibility for NEEDS_FOUNDATION/BLOCKED ideas |
 | Orchestrator | user-facing | user | Reads CLAUDE.md + Beads → EPIC / TASK / SUBTASK with skill references |
 | Code Reviewer | user-facing | user | LSP, read-only mode, schema_v3 (adds `drift` category, severity caps via hook). **Auto-expands to consistency audit** when diff touches `agents/`, `commands/`, `skills/`, `docs/`, or plugin metadata |
@@ -234,6 +234,10 @@ Native Claude Code multi-agent coordination — requires `CLAUDE_CODE_EXPERIMENT
 ---
 
 ## Common Pitfalls
+
+### Claimed work is "already merged" / "on main" but isn't (stale-branch trap)?
+- Never assert git merge/PR state from memory or in-context summary — verify with `git log origin/$BASE_BRANCH` and `git branch --contains <sha>` before claiming work landed.
+- This is the **v13.1.0→v14.0.0 stale-branch incident** (work branched from a stale base and re-implemented something already merged) that motivated the Supervisor's Phase 1.5 PRE-FLIGHT SYNC gate (see `ai-agent-manager-plugin/agents/supervisor.md` §"Phase 1.5: PRE-FLIGHT SYNC"). The Supervisor-table row above keeps the quick reference.
 
 ### `/supervisor` or `/launch-pad` aborted with "Task/Agent tool unavailable"?
 - Pre-11.1.1 name-collision trap: the slash command silently auto-delegated to a same-named registered subagent, which couldn't spawn its own children ([docs](https://code.claude.com/docs/en/sub-agents): *"Subagents cannot spawn other subagents"*).

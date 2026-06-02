@@ -94,6 +94,7 @@ Before creating `.supervisor/`, verify `.gitignore` exists. If not, create it wi
 - active_worktrees: [{paths}]
 
 ## Decisions Log
+_The Phase 1.5 PRE-FLIGHT SYNC outcome is recorded here as an ordinary Decisions Log entry via `record_decision(phase: PRE_FLIGHT_SYNC, …)` — there is NO dedicated state-file section for it. See the "Phase 1.5 Pre-Flight Summary" subsection below._
 | # | Phase | Decision | Rationale |
 
 ## Worker Results
@@ -183,6 +184,53 @@ On resume, the autonomous loop's entry handler reads both flags, then immediatel
 ### Operations contract
 
 The full operation specs (parameters, return values, atomicity, error handling) for `set_flag` / `get_flag` / `clear_flag` live in `agents/context-keeper.md` under "Phase Flag Operations (v14.0.0)". Never edit the `## Phase Flags` section by hand — always go through Context-Keeper, like every other section of the state file.
+
+---
+
+## Phase 1.5 Pre-Flight Summary
+
+Added in v14.8.0 to support the Supervisor's **Phase 1.5 PRE-FLIGHT SYNC** gate, which runs *after* Phase 1 ACQUIRE and *before* Phase 2 PLAN. After the gate fetches remote state, derives the canonical version/base branch, and classifies the requested work, Context-Keeper records the outcome as an **ordinary `## Decisions Log` entry** in `state.md` — exactly the way other phases record a one-line outcome. There is **no dedicated state-file section** for the pre-flight summary; it lives in the existing Decisions Log. This makes the gate outcome auditable in the persistent state, consistent with how every other phase's result is captured.
+
+### Mechanism — `record_decision`
+
+The summary is recorded via the **existing** `record_decision` operation (not a new operation), using the `PRE_FLIGHT_SYNC` phase:
+
+```
+record_decision(phase: PRE_FLIGHT_SYNC,
+                decision: <preflight_clear | preflight_overlap_proceed | preflight_superseded_proceed | preflight_revise_scope | preflight_abort | preflight_skipped>,
+                rationale: "<canonical version, base tip SHA, no overlap | overlapping commit SHAs/PR numbers + intersecting file paths>")
+```
+
+This matches exactly how `agents/supervisor.md` Phase 1.5 records the gate outcome (`record_decision(phase: PRE_FLIGHT_SYNC, …)`). The `decision` values are verbatim the strings Supervisor emits: `preflight_clear` (CLEAR — AC2 silent record), `preflight_skipped` (`--skip-preflight-sync` escape hatch); for the OVERLAP/SUPERSEDED proceed, revise-scope, and abort paths Supervisor mirrors the same `preflight_` prefix — `preflight_overlap_proceed`, `preflight_superseded_proceed`, `preflight_revise_scope`, and `preflight_abort`. The resulting row appears in `## Decisions Log` like any other decision.
+
+### What the rationale captures
+
+The `rationale` captures four things on one line:
+
+1. the **canonical version** the gate derived;
+2. the **base-branch tip SHA** — `origin/$BASE_BRANCH`'s tip at fetch time;
+3. the **classification** — the human-readable concept is exactly one of `CLEAR | OVERLAP | SUPERSEDED`; it is carried in the `decision` field as the corresponding verbatim Supervisor string (`preflight_clear` / `preflight_overlap_proceed` / `preflight_superseded_proceed`, or `preflight_abort` on the abort path);
+4. the **overlap detail** — the literal string `no overlap` for a `CLEAR` classification, OR the overlapping commit SHAs / PR numbers plus the intersecting file paths for an `OVERLAP` / `SUPERSEDED` classification.
+
+A `CLEAR` example (the AC2 silent record — Supervisor proceeds to Phase 2 with no extra prompt while still capturing the one-line summary), shown as it lands in the Decisions Log:
+
+```markdown
+## Decisions Log
+| # | Phase | Decision | Rationale |
+| 3 | PRE_FLIGHT_SYNC | preflight_clear | version: 14.8.0, base_tip: a1b2c3d, no overlap |
+```
+
+An `OVERLAP` example — the rationale cites the specific commits/PRs and the intersecting files (the same evidence the interactive `AskUserQuestion` surfaces and the CI fail-closed abort diagnostic prints):
+
+```markdown
+## Decisions Log
+| # | Phase | Decision | Rationale |
+| 3 | PRE_FLIGHT_SYNC | preflight_overlap_proceed | version: 14.8.0, base_tip: a1b2c3d, PR #41, commit 9f8e7d6 ; files: agents/supervisor.md, docs/RESULT_SCHEMAS.md |
+```
+
+### Write path
+
+Like every other Decisions Log entry, the pre-flight summary is written **only by Context-Keeper** — never edited by hand and never written directly by Supervisor. The CLEAR-path write is the silent record AC2 requires (Supervisor proceeds to Phase 2 with no extra prompt while still capturing the one-line summary); the OVERLAP/SUPERSEDED-path write records the classification that drove the interactive escalation or the CI fail-closed abort. The `--skip-preflight-sync` escape hatch likewise records a `record_decision` Decisions Log entry (`decision: preflight_skipped`) per the escape-hatch contract.
 
 ---
 

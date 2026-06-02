@@ -112,6 +112,18 @@ These are **defense-in-depth** restrictions for accidental misuse, NOT security 
 | QA Strategist | 40 | Return partial risk classification |
 | QA Executor | 80 | Return partial QA_RESULT |
 
+### Supervisor Phase 1.5 PRE-FLIGHT SYNC budget
+
+The Phase 1.5 PRE-FLIGHT SYNC gate (remote-state reconciliation, runs after Phase 1 ACQUIRE and before Phase 2 PLAN) is itself a bounded sub-phase inside the Supervisor's 30-tool-call budget:
+
+| Bound | Value | Rationale |
+|-------|-------|-----------|
+| Tool-call budget | ≤ 6 tool calls | Hard ceiling for the whole gate (`git log`, `gh pr list` + per-PR file listing, classification reads). |
+| Marginal cost (common path) | ~2–3 tool calls | Reuses the `git fetch origin "$BASE_BRANCH"` already performed in Phase 1 ACQUIRE, so the CLEAR path adds little; the `unverified` / `--skip-preflight-sync` paths cost less. |
+| Per-invocation soft budget | short (~20s per `gh`/`git` invocation) | SOFT design guideline — no native shell-level enforcement; the agent self-limits (or abandons the call) by judgment, e.g. via an explicit Bash `timeout`. On any tooling unavailability, error, or timeout the gate records "pre-flight unverified", emits one warning, sets `preflight_sync = unverified`, and continues — it NEVER hard-blocks on a tooling failure. |
+
+Authoritative gate semantics live in `agents/supervisor.md` §"Phase 1.5: PRE-FLIGHT SYNC"; the `preflight_sync` SUPERVISOR_RESULT field and the `preflight_overlap_detected` AUTONOMOUS_RUN status_reason are defined in `docs/RESULT_SCHEMAS.md`.
+
 ---
 
 ## Stacked Branches (autonomous loop)

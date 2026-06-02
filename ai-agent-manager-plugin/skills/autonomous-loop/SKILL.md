@@ -570,7 +570,21 @@ Not a re-planning signal — this is the catch-all branch when neither Signal 1 
 | `failed` | `pr_url == null` (Supervisor pre-PR failure, AC-15) | terminate | `failed` | `supervisor_failed_other` |
 | `failed` | inter_subtask_gap NOT detected, `pr_url` non-null | terminate | `failed` | `supervisor_failed_other` |
 | `failed` | `base_branch_mismatch` from Supervisor Phase 4.5 cleanup (S3-added path) | terminate | `failed` | `supervisor_base_branch_mismatch` |
+| `failed` | `error`/`status_reason` = `preflight_overlap_detected` (Supervisor Phase 1.5 pre-flight fail-closed abort — CI / non-TTY OVERLAP or SUPERSEDED) | terminate (loop stops; do NOT re-iterate) | `failed` | `preflight_overlap_detected` |
 | `checkpoint` | any | terminate (no auto-resume in v1) | `aborted` | `supervisor_checkpoint` |
+
+### Phase 1.5 pre-flight gate — CI fail-closed termination (v14.8.0+)
+
+Supervisor's Phase 1.5 PRE-FLIGHT SYNC gate runs *after* task acquisition (Phase 1 ACQUIRE) and *before* Phase 2 PLAN spawns the Orchestrator or any worker. It fetches remote state, inspects recent `origin/$BASE_BRANCH` commits and open PRs, and classifies the requested work as `CLEAR | OVERLAP | SUPERSEDED`. The autonomous loop interacts with that gate only through `SUPERVISOR_RESULT`:
+
+- **CI fail-closed behavior.** When the inlined `/supervisor` invocation runs under `--non-interactive` (auto-forwarded by the loop's `--non-interactive-fallback` policy — see EXECUTE step 1, "Auto-forwarded flags") or a non-TTY session, an `OVERLAP` or `SUPERSEDED` pre-flight classification cannot be escalated interactively. Supervisor therefore fails closed: it aborts with `SUPERVISOR_RESULT.status: failed` and `error`/`status_reason` = `preflight_overlap_detected`, rather than silently spending tokens on decomposition and execution. The loop maps that outcome to `terminate` (see the Default-termination table row above) and surfaces it as `AUTONOMOUS_RUN.status_reason: "preflight_overlap_detected"`. This is a terminal outcome — the loop does **not** re-iterate, because the overlap is a precondition violation the user must resolve (revise scope, or re-run with Supervisor's `--skip-preflight-sync` escape hatch), not a quality signal the next iteration could improve on.
+  - **Flag-forwarding note:** the loop forwards ONLY `--non-interactive` to the inlined `/supervisor` (see "Auto-forwarded flags" above); it does **not** forward `--skip-preflight-sync` (same as `--cheap` — unknown flags are not passed through). The Phase 1.5 gate therefore runs in **every** autonomous iteration. To deliberately skip it, run `/supervisor --skip-preflight-sync` manually for a one-off requirement.
+
+- **Complements — does NOT double-fire with — EVALUATE PR-base verification + stacked `--base-branch` passthrough.** The Phase 1.5 pre-flight gate and the loop's existing EVALUATE PR-base verification (see "EVALUATE PR-base verification") cover **different failure modes at different points in the lifecycle** and never overlap:
+  - The **pre-flight gate** verifies *work overlap before* decomposition/execution — it inspects whether the requested *work* intersects recent commits / open PRs on `$BASE_BRANCH` (same-file overlap or an already-merged equivalent), and fires *between Phase 1 and Phase 2*, before any worker is spawned.
+  - The **EVALUATE PR-base check** verifies the *PR `baseRefName` after* FINALIZE — it confirms that iter N+1's stacked PR was actually opened against `iterations[N].branch` (the value the `--base-branch` passthrough sent in), and fires *after* Supervisor returns `SUPERVISOR_RESULT` with a `pr_url`.
+
+  Because the pre-flight gate scopes its overlap scan to `$BASE_BRANCH` (AC6) it does **not** flag the stacked parent iteration's own commits/PR as overlap, so a stacked-mode multi-iter run does not trip the gate on its own chain. The `preflight_overlap_detected` and `iter_pr_base_mismatch` / `supervisor_base_branch_mismatch` status reasons are therefore mutually exclusive in practice — distinct gates, distinct timing, distinct `status_reason` values.
 
 ### Max-iterations cap
 
@@ -595,7 +609,7 @@ The status enum is **autonomous-layer-only**: `done | paused_max_iterations | ab
 - **allow_multi_iteration:** true | false
 - **max_iterations:** integer ≥ 1 (`1` for single-iteration runs — the implicit cap; the configured value for multi-iteration runs, default 3)
 - **status:** done | paused_max_iterations | aborted | failed
-- **status_reason:** null | "max_iterations_reached" | "user_discarded_at_phase_6" | "user_aborted_at_no_go" | "user_aborted_at_plan_review_fail" | "user_stopped_at_rubric_gate" | "user_stopped_at_no_rubric_gate" | "supervisor_checkpoint" | "supervisor_failed_other" | "supervisor_base_branch_mismatch" | "rubric_dropped_from_brief" | "concurrent_session_detected" | "invalid_max_iterations" | "non_interactive_without_fallback" | "conflicting_mode_flags" | "iter_pr_base_mismatch" | "rubric_gate_closed_non_interactive" | "no_rubric_in_non_interactive" | "user_aborted_gh_retry"
+- **status_reason:** null | "max_iterations_reached" | "user_discarded_at_phase_6" | "user_aborted_at_no_go" | "user_aborted_at_plan_review_fail" | "user_stopped_at_rubric_gate" | "user_stopped_at_no_rubric_gate" | "supervisor_checkpoint" | "supervisor_failed_other" | "supervisor_base_branch_mismatch" | "rubric_dropped_from_brief" | "concurrent_session_detected" | "invalid_max_iterations" | "non_interactive_without_fallback" | "conflicting_mode_flags" | "iter_pr_base_mismatch" | "rubric_gate_closed_non_interactive" | "no_rubric_in_non_interactive" | "user_aborted_gh_retry" | "preflight_overlap_detected"
 - **total_iterations:** 2
 - **last_phase:** DONE | EVALUATE | PLAN | EXECUTE
 - **started_at:** 2026-05-11T14:30:22Z

@@ -65,7 +65,7 @@ The AI Agent Manager plugin provides **13 agent roles** (8 user-facing + 5 inter
 
 **Full Autonomous Workflow (Parallel):**
 ```
-/supervisor  →  INIT → ACQUIRE → PLAN → EXECUTE (Execute Manager) → FINALIZE → SELF_HEAL → LOOP
+/supervisor  →  INIT → ACQUIRE → PRE-FLIGHT SYNC → PLAN → EXECUTE (Execute Manager) → FINALIZE → SELF_HEAL → LOOP
 ```
 
 **Plan-First Autonomous Workflow:**
@@ -200,6 +200,8 @@ To execute: /supervisor job: .supervisor/jobs/2026-02-08-jwt-auth.md
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  0. INIT (config)  →  1. ACQUIRE (task + branch)                │
+│         ↓                                                       │
+│  1.5 PRE-FLIGHT SYNC (remote-state reconciliation)              │
 │         ↓                                                       │
 │  2. PLAN (decompose + parallelism)  →  3. EXECUTE (Exec Mgr)    │
 │         ↓                                                       │
@@ -963,7 +965,7 @@ bd close BD-XX
 
 ai-agent-manager-plugin/              # Nested plugin root
 ├── .claude-plugin/
-│   └── plugin.json                   # Plugin metadata (v14.7.0)
+│   └── plugin.json                   # Plugin metadata (v14.8.0)
 ├── .mcp.json                         # Bundled MCP servers
 ├── commands/                         # Slash commands (14)
 │   ├── launch-pad.md                 # Supervisor readiness
