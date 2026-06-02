@@ -28,6 +28,7 @@ The Supervisor agent v4 autonomously manages the complete development workflow. 
 /supervisor --cheap                            # Cost-optimized: orchestrator, execute-manager, workers, code-reviewer, fix tasks run on Sonnet
 /supervisor --base-branch feature/v14-iter1    # Stack PR on a non-main base (v14 autonomous-loop multi-iter)
 /supervisor --non-interactive                  # Fail closed instead of prompting on gh/adjudication gates (set by /autonomous loop)
+/supervisor --skip-preflight-sync              # Short-circuit the Phase 1.5 remote-overlap reconciliation gate (escape hatch)
 ```
 
 ## Parameters
@@ -45,6 +46,7 @@ The Supervisor agent v4 autonomously manages the complete development workflow. 
 | `--cheap` | No | Cost-optimized profile: spawns orchestrator, execute-manager, workers, code-reviewer, and Phase 4.5 fix tasks with `model: "sonnet"` override at spawn time. Default behavior (`inherit` for all) is unchanged when flag is absent. **Caution:** on Haiku sessions, listed roles upgrade to Sonnet (costs more). See `docs/ARCHITECTURE_CONTRACTS.md` §"Cost Profiles". |
 | `--base-branch <name>` | No | Override default base branch for FINALIZE PR creation. Default: `main`. Set by the `/autonomous` loop's multi-iteration mode so iteration N+1 stacks on iteration N's feature branch (v14.0.0). The brief's `## Configuration` block may also carry a `Base Branch:` field — when present it MUST match this flag (Plan Reviewer validates the brief field independently). Phase 4 FINALIZE self-verifies the created PR's `baseRefName` matches this value and aborts via Phase 4.5 cleanup on mismatch. |
 | `--non-interactive` | No | Suppress `AskUserQuestion` fallbacks; on `gh` failures and ambiguous gates, fail closed with a diagnostic instead of prompting. Set automatically by the `/autonomous` loop when chaining iterations; rarely passed by humans. Recorded as a Phase Flag at Phase 0 so later phases can re-read after context loss (W-NEW-10 mitigation). |
+| `--skip-preflight-sync` | No | Short-circuit the Phase 1.5 PRE-FLIGHT SYNC gate, which reconciles the requested work against recent `origin/$BASE_BRANCH` commits and open PRs (same-file overlap + already-merged equivalents) and classifies the task CLEAR / OVERLAP / SUPERSEDED. The skip is recorded as a deliberate choice (`record_decision`) and `preflight_sync` is set to `skipped`. Escape hatch for when remote-overlap reconciliation is known-unnecessary or when intentionally re-doing landed work. Under `--non-interactive` / CI this is also the only way to proceed past an OVERLAP/SUPERSEDED classification (which otherwise fails closed). |
 
 ## What This Does
 
@@ -60,6 +62,10 @@ The Supervisor executes a **7-phase parallel workflow**:
 │                                                                 │
 │  Phase 1: ACQUIRE (Task Selection + Branch — MANDATORY)         │
 │     └─> Select task → Create feature branch (NON-NEGOTIABLE)    │
+│                                                                 │
+│  Phase 1.5: PRE-FLIGHT SYNC (Remote-State Reconciliation) [NEW] │
+│     └─> Fetch + scan recent commits/open PRs → classify         │
+│         CLEAR/OVERLAP/SUPERSEDED → silent | ask | fail-closed   │
 │                                                                 │
 │  Phase 2: PLAN (Decompose + Parallelism Analysis)               │
 │     └─> Orchestrator → Subtasks → Parallelism graph             │
@@ -79,6 +85,8 @@ The Supervisor executes a **7-phase parallel workflow**:
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+**Phase 1.5 (v14.8.0):** After ACQUIRE produces a task and a fresh feature branch, and before PLAN spawns the Orchestrator or any worker, Supervisor reconciles the *requested work* against remote state. It fetches `origin/$BASE_BRANCH`, scans recent commits and open PRs (bounded: ≤ 6 tool calls + a short timeout), derives the canonical version + base tip, and classifies the task **CLEAR / OVERLAP / SUPERSEDED** — flagging (a) recent/in-flight work touching the **same files** and (b) an **already-merged equivalent** of the requested work (the v13.1.0→v14.0.0 stale-branch case). CLEAR proceeds silently. OVERLAP/SUPERSEDED prompts the human (proceed-anyway / revise-scope / abort) citing the specific commits/PRs + intersecting paths interactively, or **fails closed** under `--non-interactive`/CI with `status_reason: preflight_overlap_detected`. Degrades gracefully (one warning, `preflight_sync: unverified`, continue) if `gh`/`git fetch` is unavailable, and is short-circuited by `--skip-preflight-sync`. It does **not** duplicate ACQUIRE's fetch/pull or the Phase 4 base-mismatch check — it adds semantic work-overlap reconciliation. See `agents/supervisor.md` "Phase 1.5: PRE-FLIGHT SYNC".
 
 **Phase 4.5 (v11.0.0):** After the PR is created, Supervisor runs a holistic Code Reviewer on the full feature-branch diff. If it finds BLOCKING/HIGH severity `new` issues, Supervisor spawns a fix task that addresses them and pushes updates to the PR. The loop retries up to `--heal-iterations` times (default 3). On PASS the task is marked `completed`; on NEEDS_HUMAN or max iterations the task is marked `completed_with_escalation` with findings posted as a PR comment. Eliminates the manual review-and-fix cycle. The phase always runs (unless `--skip-self-heal` short-circuits the loop); it owns the completion tail (job-file move, state marked completed) so the record captures the heal outcome.
 
@@ -133,6 +141,11 @@ $ /supervisor
 - Title: User authentication with JWT
 - Criteria: 5 items
 - Branch: feature/BD-15-user-auth ← CREATED
+
+### Phase 1.5: PRE-FLIGHT SYNC
+- Canonical version: 14.8.0 | Base tip: a1b2c3d
+- Classification: CLEAR (no same-file overlap, no superseding merge)
+- Decision: proceed (silent)
 
 ### Phase 2: PLAN
 - Subtasks: 3 (BD-15a, BD-15b, BD-15c)
@@ -265,6 +278,7 @@ The Supervisor uses externalized state and tool call budgets:
 |-------|----------|
 | INIT (config) | Interactive (AskUserQuestion) |
 | ACQUIRE (branch) | **[APPROVAL NEEDED]** |
+| PRE-FLIGHT SYNC (overlap recon) | Auto on CLEAR; **[APPROVAL NEEDED]** on OVERLAP/SUPERSEDED (AskUserQuestion); fail-closed under `--non-interactive` |
 | PLAN (decompose) | Auto (subagent) |
 | EXECUTE (implement) | **[APPROVAL NEEDED - batch]** |
 | FINALIZE (commit+PR) | **[APPROVAL NEEDED]** |
