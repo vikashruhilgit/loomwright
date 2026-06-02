@@ -36,6 +36,8 @@ mkdir -p "$RUNS" 2>/dev/null || { echo "build-insights: cannot create $RUNS" >&2
 records="$(mktemp)"; trap 'rm -f "$records" 2>/dev/null' EXIT
 for f in "${files[@]}"; do
   sid="$(basename "$f" .jsonl)"
+  # tail -1 (below): a log normally holds one session_end (its final line); take the LAST one
+  # in case a session was appended/replayed, so the newest record for that session wins.
   jq -c --arg sid "$sid" '
     select(.event=="session_end")
     | {sid:$sid, ts:(.ts//""), status:(.status//"unknown"), branch:(.branch//""),
@@ -71,8 +73,8 @@ while IFS= read -r r; do
       (if .files_changed!=null     then "files_changed: \(.files_changed)"           else empty end),
       (if .duration_seconds!=null  then "duration_seconds: \(.duration_seconds)"     else empty end)
     '
-    echo "total_cost:    # not captured by this plugin — see COST note (npx ccusage@latest)"
-    echo "total_tokens:  # not captured by this plugin"
+    echo 'total_cost: "not captured — see Cost note (npx ccusage@latest)"'
+    echo 'total_tokens: "not captured — see Cost note"'
     echo "tags: [type/session-log]"
     echo "---"
     echo
