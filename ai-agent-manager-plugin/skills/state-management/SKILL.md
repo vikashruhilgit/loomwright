@@ -197,11 +197,11 @@ The summary is recorded via the **existing** `record_decision` operation (not a 
 
 ```
 record_decision(phase: PRE_FLIGHT_SYNC,
-                decision: <CLEAR | OVERLAP | SUPERSEDED | skipped>,
+                decision: <preflight_clear | preflight_overlap_proceed | preflight_superseded_proceed | preflight_abort | preflight_skipped>,
                 rationale: "<canonical version, base tip SHA, no overlap | overlapping commit SHAs/PR numbers + intersecting file paths>")
 ```
 
-This matches exactly how `agents/supervisor.md` Phase 1.5 records the gate outcome (`record_decision(phase: PRE_FLIGHT_SYNC, …)`). The resulting row appears in `## Decisions Log` like any other decision.
+This matches exactly how `agents/supervisor.md` Phase 1.5 records the gate outcome (`record_decision(phase: PRE_FLIGHT_SYNC, …)`). The `decision` values are verbatim the strings Supervisor emits: `preflight_clear` (CLEAR — AC2 silent record), `preflight_skipped` (`--skip-preflight-sync` escape hatch); for the OVERLAP/SUPERSEDED proceed and abort paths Supervisor mirrors the same `preflight_` prefix — `preflight_overlap_proceed`, `preflight_superseded_proceed`, and `preflight_abort`. The resulting row appears in `## Decisions Log` like any other decision.
 
 ### What the rationale captures
 
@@ -209,7 +209,7 @@ The `rationale` captures four things on one line:
 
 1. the **canonical version** the gate derived;
 2. the **base-branch tip SHA** — `origin/$BASE_BRANCH`'s tip at fetch time;
-3. the **classification** — exactly one of `CLEAR | OVERLAP | SUPERSEDED` (carried in the `decision` field);
+3. the **classification** — the human-readable concept is exactly one of `CLEAR | OVERLAP | SUPERSEDED`; it is carried in the `decision` field as the corresponding verbatim Supervisor string (`preflight_clear` / `preflight_overlap_proceed` / `preflight_superseded_proceed`, or `preflight_abort` on the abort path);
 4. the **overlap detail** — the literal string `no overlap` for a `CLEAR` classification, OR the overlapping commit SHAs / PR numbers plus the intersecting file paths for an `OVERLAP` / `SUPERSEDED` classification.
 
 A `CLEAR` example (the AC2 silent record — Supervisor proceeds to Phase 2 with no extra prompt while still capturing the one-line summary), shown as it lands in the Decisions Log:
@@ -217,7 +217,7 @@ A `CLEAR` example (the AC2 silent record — Supervisor proceeds to Phase 2 with
 ```markdown
 ## Decisions Log
 | # | Phase | Decision | Rationale |
-| 3 | PRE_FLIGHT_SYNC | CLEAR | version: 14.8.0, base_tip: a1b2c3d, no overlap |
+| 3 | PRE_FLIGHT_SYNC | preflight_clear | version: 14.8.0, base_tip: a1b2c3d, no overlap |
 ```
 
 An `OVERLAP` example — the rationale cites the specific commits/PRs and the intersecting files (the same evidence the interactive `AskUserQuestion` surfaces and the CI fail-closed abort diagnostic prints):
@@ -225,12 +225,12 @@ An `OVERLAP` example — the rationale cites the specific commits/PRs and the in
 ```markdown
 ## Decisions Log
 | # | Phase | Decision | Rationale |
-| 3 | PRE_FLIGHT_SYNC | OVERLAP | version: 14.8.0, base_tip: a1b2c3d, PR #41, commit 9f8e7d6 ; files: agents/supervisor.md, docs/RESULT_SCHEMAS.md |
+| 3 | PRE_FLIGHT_SYNC | preflight_overlap_proceed | version: 14.8.0, base_tip: a1b2c3d, PR #41, commit 9f8e7d6 ; files: agents/supervisor.md, docs/RESULT_SCHEMAS.md |
 ```
 
 ### Write path
 
-Like every other Decisions Log entry, the pre-flight summary is written **only by Context-Keeper** — never edited by hand and never written directly by Supervisor. The CLEAR-path write is the silent record AC2 requires (Supervisor proceeds to Phase 2 with no extra prompt while still capturing the one-line summary); the OVERLAP/SUPERSEDED-path write records the classification that drove the interactive escalation or the CI fail-closed abort. The `--skip-preflight-sync` escape hatch likewise records a `record_decision` Decisions Log entry (`decision: skipped`) per the escape-hatch contract.
+Like every other Decisions Log entry, the pre-flight summary is written **only by Context-Keeper** — never edited by hand and never written directly by Supervisor. The CLEAR-path write is the silent record AC2 requires (Supervisor proceeds to Phase 2 with no extra prompt while still capturing the one-line summary); the OVERLAP/SUPERSEDED-path write records the classification that drove the interactive escalation or the CI fail-closed abort. The `--skip-preflight-sync` escape hatch likewise records a `record_decision` Decisions Log entry (`decision: preflight_skipped`) per the escape-hatch contract.
 
 ---
 
