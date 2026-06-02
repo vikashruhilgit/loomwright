@@ -242,7 +242,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
 
 **What this is NOT (scope guard):** Phase 1 ACQUIRE already does `git fetch origin "$BASE_BRANCH"` + `git pull` so the feature branch starts fresh (step 4 above), and the existing `base_branch_mismatch` path (Phase 4 self-verify → Phase 4.5 cleanup, step 6.5) only checks the *PR's `baseRefName`* against `$BASE_BRANCH`. **Neither detects that the requested *work* overlaps with or is superseded by recent commits / open PRs.** This gate adds that *semantic work-overlap reconciliation* and MUST NOT duplicate or weaken either the existing fetch/pull or the post-hoc base-mismatch path. Reuse Phase 1's `git fetch` result where it is fresh — do not redundantly re-fetch if ACQUIRE just fetched `$BASE_BRANCH`.
 
-**Bounded budget (AC7):** the entire phase is capped at **≤ 6 tool calls and a short timeout** (treat ~20s per `gh`/`git` invocation as the ceiling). On any tooling unavailability or error (`gh` not installed/authenticated, `git fetch` failure, timeout), record "pre-flight unverified", emit ONE warning, set `preflight_sync = unverified`, and **continue to Phase 2** — NEVER hard-block on a tooling failure.
+**Bounded budget (AC7):** the entire phase is capped at **≤ 6 tool calls and a short timeout** (treat ~20s per `gh`/`git` invocation as a SOFT guideline — there is no native per-call shell timeout, so this is an advisory budget the agent self-enforces by passing an explicit Bash `timeout`, not a hard bound). On any tooling unavailability or error (`gh` not installed/authenticated, `git fetch` failure, timeout), record "pre-flight unverified", emit ONE warning, set `preflight_sync = unverified`, and **continue to Phase 2** — NEVER hard-block on a tooling failure.
 
 **Actions:**
 
@@ -266,11 +266,13 @@ Autonomously manage the complete development workflow from task pickup to PR cre
    ```
    Derive the **canonical version** (from `plugin.json` / manifest on `origin/$BASE_BRANCH`, or the task's stated target) and the **base-branch tip SHA** (`BASE_TIP`). If `gh` or `git fetch` errors → graceful degradation (set `preflight_sync = unverified`, one warning, continue — see Bounded budget above).
 
+   **Per-PR scan bound:** inspect at most N≈3 open PRs per-PR (the `gh pr view <n> --json files` call), prioritised by title / `headRefName` overlap with the task; skip the rest within the ≤6-call budget. Record how many of the open PRs were file-inspected for the Output block disclosure.
+
 3. **Determine the task's anticipated file set:** use the job brief's **File Impact Map** when present (the `job:` brief lists per-subtask MODIFY/CREATE paths); otherwise derive from the task title + criteria.
 
 4. **Classify CLEAR | OVERLAP | SUPERSEDED** using these required signals:
    - **(a) same-file overlap → OVERLAP:** a recent `origin/$BASE_BRANCH` commit (from `git log`) OR an open PR whose changed files intersect the task's anticipated file set. Record the intersecting paths and the commit SHAs / PR numbers.
-   - **(b) already-merged equivalent → SUPERSEDED:** recent `origin/$BASE_BRANCH` history already implements the requested work. This is the motivating case behind the **v13.1.0→v14.0.0 stale-branch incident** (work was branched from a stale base and re-implemented something already merged) — cite the specific landing commit(s).
+   - **(b) already-merged equivalent → SUPERSEDED:** recent `origin/$BASE_BRANCH` history already implements the requested work. This is the motivating case behind the **v13.1.0→v14.0.0 stale-branch incident** (work was branched from a stale base and re-implemented something already merged) — cite the specific landing commit(s). SUPERSEDED requires BOTH a topic match (the commit message or PR title names the same feature / versioned component as the task) AND a file overlap (changed files intersect the anticipated file set) — either signal alone is insufficient (prevents a topic-only false SUPERSEDED).
    - Otherwise → **CLEAR.**
 
 5. **Stacked-iteration scoping (AC6):** when `$BASE_BRANCH ≠ main` (the `/autonomous` loop stacks iteration N+1 on iteration N's branch), scope the overlap comparison to `$BASE_BRANCH` only and do NOT flag the **parent iteration's own commits or PR** as overlap — those are the legitimate base this iteration builds on, not a competing change. No false positive against the stacked-PR chain.
@@ -305,6 +307,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
 ### Phase 1.5: PRE-FLIGHT SYNC
 - Canonical version: {version} | Base tip: {BASE_TIP}
 - Open PRs scanned: {count} | Recent commits scanned: {N}
+- PRs file-inspected: {n} of {open_count}
 - Classification: CLEAR | OVERLAP | SUPERSEDED | UNVERIFIED (skipped via --skip-preflight-sync)
 - Overlap: none | {cited commit SHAs / PR #s + intersecting paths}
 - Decision: proceed (silent) | proceed-anyway | aborted (fail-closed) | skipped
@@ -914,7 +917,9 @@ Track your tool call count mentally. Increment by 1 for each tool invocation (Ta
 | Phase 4 (FINALIZE) | ~8 | 27 |
 | Phase 5 (LOOP) | ~3 | 30 |
 
-> The Cumulative column assumes Phase 1.5's **typical** cost (~2-3, reusing Phase 1's `git fetch`); the common CLEAR path is ~2 and the `unverified` / `--skip-preflight-sync` paths cost less. Phase 1.5's **hard cap is ≤6** — if a cold fetch plus several per-PR file scans push it toward that ceiling, the extra calls are governed by the Supervisor's standard tool-budget thresholds (YELLOW at 24, RED at 28), forcing an earlier checkpoint rather than silently overrunning the 30-call budget.
+> The Cumulative column assumes Phase 1.5's **typical** cost (~2-3, reusing Phase 1's `git fetch`); the common CLEAR path is ~2 and the `unverified` / `--skip-preflight-sync` paths cost less. Phase 1.5's **hard cap is ≤6** — if a cold fetch plus several per-PR file scans push it toward that ceiling, the extra calls are governed by the Supervisor's standard tool-budget thresholds (YELLOW at 18, RED at 24), forcing an earlier checkpoint rather than silently overrunning the 30-call budget.
+>
+> The **Cumulative column is an illustrative happy-path estimate, not a binding trigger** — the GREEN/YELLOW/RED bands below are the adaptive thresholds, and they fire only when a phase is *still running* at the threshold; a normal CLEAR run finishes near the 30-call budget without forcing a checkpoint.
 
 | Tool Calls | Level | Action |
 |-----------|-------|--------|

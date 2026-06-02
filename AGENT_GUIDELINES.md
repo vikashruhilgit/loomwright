@@ -402,7 +402,7 @@ This format applies to ALL agent outputs (Orchestrator, Code Reviewer, Red Team 
 | Agent | Reads | Writes | Primary Responsibility |
 |-------|-------|--------|------------------------|
 | **Launch Pad** | CLAUDE.md, codebase, git state | `.supervisor/jobs/pending/` briefs | Supervisor readiness, codebase analysis |
-| **Supervisor** | CLAUDE.md, state file, git state | Worker dispatch, PR creation, SUPERVISOR_RESULT | Parallel orchestration, 7-phase workflow (incl. Phase 4.5 self-heal) |
+| **Supervisor** | CLAUDE.md, state file, git state | Worker dispatch, PR creation, SUPERVISOR_RESULT | Parallel orchestration, 7-phase workflow (incl. Phase 1.5 pre-flight sync + Phase 4.5 self-heal) |
 | **Execute Manager** | State file, worker summaries | Poll loop coordination | Phase 3 worker/reviewer lifecycle |
 | **Context-Keeper** | State file | State file (sole writer) | Externalized state management |
 | **Worker** | Code files in worktree | Code files in worktree | Isolated implementation in git worktrees |
@@ -420,7 +420,7 @@ This format applies to ALL agent outputs (Orchestrator, Code Reviewer, Red Team 
 - **Reads:** CLAUDE.md, `.supervisor/state.md`, git state, Beads state (optional)
 - **Writes:** Worker dispatches, PR creation, `.supervisor/` directory
 - **Responsibilities:**
-  - Run 7-phase workflow: INIT → ACQUIRE → PLAN → EXECUTE → FINALIZE → SELF_HEAL → LOOP
+  - Run 7-phase workflow: INIT → ACQUIRE → PRE-FLIGHT SYNC → PLAN → EXECUTE → FINALIZE → SELF_HEAL → LOOP
   - Create feature branch BEFORE any code work (mandatory)
   - Analyze parallelism and dispatch workers via git worktrees
   - Poll background workers and reviewers (non-blocking)
@@ -668,7 +668,7 @@ Agents reference skill files for guidance (don't embed content):
 |-------|---------|
 | `ai-agent-manager-plugin/skills/async-orchestration/SKILL.md` | Parallel dispatch and git worktree patterns |
 | `ai-agent-manager-plugin/skills/state-management/SKILL.md` | State file schema and checkpoint protocols |
-| `ai-agent-manager-plugin/skills/workflow-management/SKILL.md` | 7-phase workflow patterns (incl. SELF_HEAL) |
+| `ai-agent-manager-plugin/skills/workflow-management/SKILL.md` | 7-phase workflow patterns (incl. PRE-FLIGHT SYNC + SELF_HEAL) |
 | `ai-agent-manager-plugin/skills/commit/SKILL.md` | Conventional commits with Beads linking |
 | `ai-agent-manager-plugin/skills/quality-checklist/SKILL.md` | Review gate criteria |
 | `ai-agent-manager-plugin/skills/context-summarization/SKILL.md` | Output compression patterns |

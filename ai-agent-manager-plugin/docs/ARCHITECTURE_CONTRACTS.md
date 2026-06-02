@@ -120,7 +120,7 @@ The Phase 1.5 PRE-FLIGHT SYNC gate (remote-state reconciliation, runs after Phas
 |-------|-------|-----------|
 | Tool-call budget | ≤ 6 tool calls | Hard ceiling for the whole gate (`git log`, `gh pr list` + per-PR file listing, classification reads). |
 | Marginal cost (common path) | ~2–3 tool calls | Reuses the `git fetch origin "$BASE_BRANCH"` already performed in Phase 1 ACQUIRE, so the CLEAR path adds little; the `unverified` / `--skip-preflight-sync` paths cost less. |
-| Per-invocation timeout | short (~20s ceiling per `gh`/`git` invocation) | On any tooling unavailability, error, or timeout the gate records "pre-flight unverified", emits one warning, sets `preflight_sync = unverified`, and continues — it NEVER hard-blocks on a tooling failure. |
+| Per-invocation soft budget | short (~20s ceiling per `gh`/`git` invocation) — SOFT design guideline — no native shell-level enforcement; the agent self-limits or abandons the call by judgment. | On any tooling unavailability, error, or timeout the gate records "pre-flight unverified", emits one warning, sets `preflight_sync = unverified`, and continues — it NEVER hard-blocks on a tooling failure. |
 
 Authoritative gate semantics live in `agents/supervisor.md` §"Phase 1.5: PRE-FLIGHT SYNC"; the `preflight_sync` SUPERVISOR_RESULT field and the `preflight_overlap_detected` AUTONOMOUS_RUN status_reason are defined in `docs/RESULT_SCHEMAS.md`.
 

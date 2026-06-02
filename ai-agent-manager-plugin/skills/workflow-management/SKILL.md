@@ -22,7 +22,7 @@ Patterns for autonomous workflow execution with context management, checkpoints,
 
 ## When to Use This Skill
 
-- Managing multi-phase autonomous workflows (7-phase model — INIT, ACQUIRE, PLAN, EXECUTE, FINALIZE, SELF_HEAL, LOOP)
+- Managing multi-phase autonomous workflows (7-phase model — INIT, ACQUIRE, PRE-FLIGHT SYNC, PLAN, EXECUTE, FINALIZE, SELF_HEAL, LOOP)
 - Coordinating parallel workers with git worktrees
 - Handling context limits and checkpoints
 - Implementing permission batching
@@ -32,9 +32,9 @@ Patterns for autonomous workflow execution with context management, checkpoints,
 ## 7-Phase State Machine
 
 ```
-INIT → ACQUIRE → PLAN → EXECUTE → FINALIZE → SELF_HEAL → LOOP
-                                                           ↓
-                                                  (back to ACQUIRE or END)
+INIT → ACQUIRE → PRE-FLIGHT SYNC → PLAN → EXECUTE → FINALIZE → SELF_HEAL → LOOP
+                                                                            ↓
+                                                                   (back to ACQUIRE or END)
 ```
 
 ### Phase Transitions
@@ -45,9 +45,14 @@ INIT:
   - --continue with state → resume saved phase
 
 ACQUIRE:
-  - task selected + branch created → PLAN
+  - task selected + branch created → PRE-FLIGHT SYNC
   - no ready tasks → END
-  - vague requirements → spawn Product Owner → PLAN
+  - vague requirements → spawn Product Owner → PRE-FLIGHT SYNC
+
+PRE-FLIGHT SYNC:
+  - CLEAR (no remote overlap) → PLAN
+  - OVERLAP/SUPERSEDED → AskUserQuestion (proceed/revise/abort); fail-closed under --non-interactive
+  - --skip-preflight-sync flag set → PLAN
 
 PLAN:
   - subtasks created + parallelism analyzed → EXECUTE
