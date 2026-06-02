@@ -95,7 +95,9 @@ agg="$(jq -s '{
   completed: (map(select(.status=="completed")) | length),
   failed:    (map(select(.status=="failed"))    | length),
   heal_pass: (map(select(.heal_decision=="PASS"))| length),
-  avg_heal:  ((map(.heal_iterations // 0) | add) / length),
+  healed:    (map(select(.heal_iterations != null)) | length),
+  avg_heal:  ((map(select(.heal_iterations != null) | .heal_iterations) | add // 0)
+              / ((map(select(.heal_iterations != null)) | length) | if . == 0 then 1 else . end)),
   subtasks:  (map(.subtasks_completed // 0) | add),
   files:     (map(.files_changed // 0) | add)
 }' "$records")"
@@ -119,7 +121,8 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
     "| Completed | \(.completed) |",
     "| Failed | \(.failed) |",
     "| Self-heal PASS | \(.heal_pass) |",
-    "| Avg heal iterations | \((.avg_heal*100|floor)/100) |",
+    "| Self-heal runs (with heal data) | \(.healed) |",
+    "| Avg heal iterations (per healed run) | \(if .healed>0 then ((.avg_heal*100|floor)/100) else "—" end) |",
     "| Subtasks completed (total) | \(.subtasks) |",
     "| Files changed (total) | \(.files) |"
   '
