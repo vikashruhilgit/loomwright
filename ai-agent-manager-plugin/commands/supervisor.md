@@ -142,7 +142,7 @@ $ /supervisor
 - Criteria: 5 items
 - Branch: feature/BD-15-user-auth ← CREATED
 
-### Phase 1.5: PRE-FLIGHT SYNC
+### Phase 1.5: PRE-FLIGHT SYNC (abbreviated — full output adds "Open PRs scanned", "Recent commits scanned", "PRs file-inspected" lines; see `agents/supervisor.md`)
 - Canonical version: 14.8.0 | Base tip: a1b2c3d
 - Classification: CLEAR (no same-file overlap, no superseding merge)
 - Decision: proceed (silent)

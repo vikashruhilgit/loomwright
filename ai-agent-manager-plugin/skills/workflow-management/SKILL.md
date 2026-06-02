@@ -31,6 +31,8 @@ Patterns for autonomous workflow execution with context management, checkpoints,
 
 ## 7-Phase State Machine
 
+> **Phase-numbering convention:** "7-Phase" counts the primary numbered phases. **PRE-FLIGHT SYNC (1.5)** and **SELF_HEAL (4.5)** are `.5` sub-phase *gates* inserted between primary phases — they appear in the diagram below (and the enumeration above) but do not change the "7-Phase" name.
+
 ```
 INIT → ACQUIRE → PRE-FLIGHT SYNC → PLAN → EXECUTE → FINALIZE → SELF_HEAL → LOOP
                                                                             ↓

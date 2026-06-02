@@ -266,7 +266,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
    ```
    Derive the **canonical version** (from `plugin.json` / manifest on `origin/$BASE_BRANCH`, or the task's stated target) and the **base-branch tip SHA** (`BASE_TIP`). If `gh` or `git fetch` errors → graceful degradation (set `preflight_sync = unverified`, one warning, continue — see Bounded budget above).
 
-   **Per-PR scan bound:** inspect at most N≈3 open PRs per-PR (the `gh pr view <n> --json files` call), prioritised by title / `headRefName` overlap with the task; skip the rest within the ≤6-call budget. Record how many of the open PRs were file-inspected for the Output block disclosure.
+   **Per-PR scan bound:** inspect at most N≈3 candidate open PRs (one `gh pr view <n> --json files` call per candidate), prioritised by title / `headRefName` overlap with the task; skip the rest within the ≤6-call budget. Record how many of the open PRs were file-inspected for the Output block disclosure.
 
 3. **Determine the task's anticipated file set:** use the job brief's **File Impact Map** when present (the `job:` brief lists per-subtask MODIFY/CREATE paths); otherwise derive from the task title + criteria.
 
@@ -288,7 +288,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
 
    - **OVERLAP / SUPERSEDED in an interactive session (AC3):** present an `AskUserQuestion` (mirroring **Launch Pad's** Phase 2.5 feasibility soft-gate) BEFORE spawning any worker. The question MUST cite the **specific overlapping commit SHAs / PR numbers AND the intersecting file paths**. Three options:
      - **proceed-anyway** → set `preflight_sync = overlap_proceed` (OVERLAP) or `superseded_proceed` (SUPERSEDED); record the decision (`record_decision(phase: PRE_FLIGHT_SYNC, decision: "preflight_overlap_proceed" | "preflight_superseded_proceed", rationale: "{cited commits/PRs + paths}")`); continue to Phase 2.
-     - **revise-scope** → pause and checkpoint; do NOT spawn any worker. Keep the existing feature branch, `record_decision(phase: PRE_FLIGHT_SYNC, decision: "preflight_revise_scope", rationale: "{cited overlap}")`, and exit with a resume command. The user re-invokes `/supervisor` with the narrowed/redirected task (reusing the branch, or `git checkout $BASE_BRANCH && git branch -D feature/{old}` first if the new scope warrants a different branch name); Phase 1.5 then re-evaluates the revised scope against remote state on the next run. Do NOT silently fall through to Phase 2.
+     - **revise-scope** → pause and checkpoint; do NOT spawn any worker. Keep the existing feature branch, `record_decision(phase: PRE_FLIGHT_SYNC, decision: "preflight_revise_scope", rationale: "{cited overlap}")`, and emit a single `SUPERVISOR_RESULT` with `status: checkpoint` and `preflight_sync: null` (the classification lives in the Decisions Log entry above, not the field — and a well-formed result block keeps the SubagentStop validator happy), then exit with a resume command. The user re-invokes `/supervisor` with the narrowed/redirected task (reusing the branch, or `git checkout $BASE_BRANCH && git branch -D feature/{old}` first if the new scope warrants a different branch name); Phase 1.5 then re-evaluates the revised scope against remote state on the next run. Do NOT silently fall through to Phase 2.
      - **abort** → fail the run cleanly (no worker spawned): record `record_decision(phase: PRE_FLIGHT_SYNC, decision: "preflight_abort", rationale: "{classification} — {cited commits/PRs + paths}")`, mark the task `failed`, move the job brief to `failed/` if a `job:` was used, and emit a single `SUPERVISOR_RESULT` with `status: failed`, `error: "preflight_overlap_detected: {classification} — {cited commits/PRs + paths}"`. Do NOT proceed to Phase 2.
 
    - **OVERLAP / SUPERSEDED under CI / non-interactive (AC4 — fail closed):** re-read the non-interactive state LIVE (do NOT trust in-context state alone — W-NEW-10):
@@ -308,9 +308,9 @@ Autonomously manage the complete development workflow from task pickup to PR cre
 - Canonical version: {version} | Base tip: {BASE_TIP}
 - Open PRs scanned: {count} | Recent commits scanned: {N}
 - PRs file-inspected: {n} of {open_count}
-- Classification: CLEAR | OVERLAP | SUPERSEDED | UNVERIFIED (skipped via --skip-preflight-sync)
+- Classification: CLEAR | OVERLAP | SUPERSEDED | UNVERIFIED (tooling degraded) | SKIPPED (--skip-preflight-sync)
 - Overlap: none | {cited commit SHAs / PR #s + intersecting paths}
-- Decision: proceed (silent) | proceed-anyway | aborted (fail-closed) | skipped
+- Decision: proceed (silent) | proceed-anyway | revise-scope | aborted (fail-closed) | skipped
 - preflight_sync: clear | overlap_proceed | superseded_proceed | skipped | unverified
 ```
 
