@@ -1,5 +1,5 @@
 ---
-description: On-demand scan for newly-available Claude Code features / dependency updates the plugin could adopt (default), plus a --strategy mode that proposes differentiated product directions — proposes candidates, never self-applies
+description: On-demand scan for Claude Code adoptions (default) or differentiated product directions (--strategy) — propose-only, bounded, human-gated, never self-applies
 ---
 
 > **Read-only / propose-only contract.** `/capability-check` is strictly read-only on the plugin and the codebase. It fetches the live Claude Code changelog/docs and dependency info, diffs them against the tracked capability baseline, and **reports candidate adoptions**. With `--strategy` it instead runs a grounded product-evolution pass and reports candidate **product directions**. In either mode it **never** edits an agent, command, skill, hook, or any plugin file. Adoption is always a separate, human-driven change (typically a `/launch-pad` → `/supervisor` run). The only file it may write is the baseline itself, and only when you pass `--update-baseline`.
@@ -98,10 +98,12 @@ Read `${CLAUDE_PLUGIN_ROOT}/docs/CAPABILITY_BASELINE.json` as in Workflow A, **a
 The strategy pass grounds every idea in the plugin's *real* surface, not generic advice. Read:
 - **`agents/`** — the 13 agent roles (their missions, frontmatter, contracts) — the plugin's core capabilities and gaps.
 - **`commands/`** — the command set (the user-facing entry points) — where new directions plug in.
-- **The flywheel / insights state** — `.supervisor/insights/` (the `/insights` dashboard) and `.supervisor/logs/*.jsonl` session logs — what the system already observes about its own use.
+- **The flywheel / insights state** — `.supervisor/insights/` (the `/insights` dashboard) and `.supervisor/logs/*.jsonl` session logs — what the system already observes about its own use. These are gitignored session artifacts: **if absent** (fresh install / CI / no prior runs), skip them and note the gap in the coverage footer (the same graceful-degradation Workflow A applies to a missing source).
 - **`docs/SPIKES/ENHANCEMENT_PLAN_v15_DRAFT.md`** — the north-star direction doc (flywheel §0d, on-demand-first §4.1, the single most dangerous idea §7).
 - **The platform diff (optional)** — the *output of Workflow A's DIFF step*: what is newly feasible on the Claude Code platform. A direction can be enabled by a freshly-shipped platform capability.
 - **A bounded, optional frontier-AI signal** — ONE WebSearch (or Context7) step for recent AI-capability trends, **strictly within `--max-fetches`** (reuse the existing cap; never add a separate or uncapped fetch path). If the budget is exhausted, skip it and mark coverage partial. This is a signal, not a requirement — directions may ground entirely on the platform diff instead.
+
+> **Fetch-budget note:** the local product-surface reads above (`agents/`, `commands/`, the insights state, the draft, and the platform diff already produced by Workflow A) are ordinary file reads and do **not** count against `--max-fetches`. Only external calls — the optional frontier-AI signal's WebSearch / WebFetch / Context7 — draw from that budget.
 
 ### B3. IDEATE (bounded engine — reuse the brainstorming skill)
 Generate and stress-test direction candidates using the **5-lens scored-debate framework** in `${CLAUDE_PLUGIN_ROOT}/skills/brainstorming/SKILL.md` (Creative Thinker, Product Manager, Engineer, Business Strategist, Critic — independent analysis → mandatory cross-challenge → scoring, with the Phase 3.5 Reality Check grounding ideas against the actual codebase). **Do not invent a new framework**; this is the bounded ideation engine. Honor its anti-patterns — especially "no generic ideas" ("add AI" without a specific mechanism is banned).

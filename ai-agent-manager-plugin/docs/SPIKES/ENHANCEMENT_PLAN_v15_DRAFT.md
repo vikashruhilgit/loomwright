@@ -4,6 +4,13 @@
 > Authored from research + adversarial review of v14.0.0 (`491bddb`). `file:line` grounded; verified
 > facts tagged ✅; unverified/secondary tagged ⚠️.
 >
+> **⚠️ Hook-count note (added v14.9.0):** the `14 → 16` pinned hook figures throughout this draft
+> (§0 Executive Summary, §2.4, and the §6 roadmap table) reflect the hook count *at time of writing*,
+> when `main` was around v14.0.0–v14.2.x. The **current** count is **19** (authoritative: `plugin.json`
+> / `CLAUDE.md`) — the §6 P1 notification additions described here were never landed as written
+> (§0a: PR #13 was closed/conflicting). Treat the hook numbers in this draft as historical planning
+> context, not current state.
+>
 > **Guiding principle (changed after red-team):** the plugin's only real asset is its **gated,
 > reviewable, human-in-the-loop** workflow. The goal is **"make the gated workflow require less
 > babysitting without weakening a single gate"** — *not* "make it autonomous." Anything that lets the
