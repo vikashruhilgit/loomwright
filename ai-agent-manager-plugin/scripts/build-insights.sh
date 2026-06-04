@@ -38,13 +38,24 @@ for f in "${files[@]}"; do
   sid="$(basename "$f" .jsonl)"
   # tail -1 (below): a log normally holds one session_end (its final line); take the LAST one
   # in case a session was appended/replayed, so the newest record for that session wins.
+  # The System Twin hard-signal fields (contract_conformance_status, contract_violations,
+  # benchmark_status, benchmark_metric, benchmark_value, benchmark_delta) are FLAT scalars on
+  # the session_end event (see docs/RESULT_SCHEMAS.md §"session_end JSONL hard-signal fields").
+  # Field names are a hard contract with ST3 (writer) — do NOT rename. Older logs lack them, so
+  # each defaults to null and renders as "not reported this session".
   jq -c --arg sid "$sid" '
     select(.event=="session_end")
     | {sid:$sid, ts:(.ts//""), status:(.status//"unknown"), branch:(.branch//""),
        pr_url:(.pr_url//""), heal_decision:(.heal_decision//""),
        heal_iterations:(.heal_iterations//null), rubric_score:(.rubric_score//null),
        subtasks_completed:(.subtasks_completed//null), files_changed:(.files_changed//null),
-       duration_seconds:(.duration_seconds//null)}
+       duration_seconds:(.duration_seconds//null),
+       contract_conformance_status:(.contract_conformance_status//null),
+       contract_violations:(.contract_violations//null),
+       benchmark_status:(.benchmark_status//null),
+       benchmark_metric:(.benchmark_metric//null),
+       benchmark_value:(.benchmark_value//null),
+       benchmark_delta:(.benchmark_delta//null)}
   ' "$f" 2>/dev/null | tail -1 >> "$records"
 done
 
@@ -71,7 +82,12 @@ while IFS= read -r r; do
       (if .rubric_score!=null      then "rubric_score: \"\(.rubric_score)\""         else empty end),
       (if .subtasks_completed!=null then "subtasks_completed: \(.subtasks_completed)" else empty end),
       (if .files_changed!=null     then "files_changed: \(.files_changed)"           else empty end),
-      (if .duration_seconds!=null  then "duration_seconds: \(.duration_seconds)"     else empty end)
+      (if .duration_seconds!=null  then "duration_seconds: \(.duration_seconds)"     else empty end),
+      (if .contract_conformance_status!=null then "contract_conformance_status: \(.contract_conformance_status)" else empty end),
+      (if .contract_violations!=null then "contract_violations: \(.contract_violations)" else empty end),
+      (if .benchmark_status!=null  then "benchmark_status: \(.benchmark_status)"      else empty end),
+      (if .benchmark_value!=null   then "benchmark_value: \(.benchmark_value)"        else empty end),
+      (if .benchmark_delta!=null   then "benchmark_delta: \(.benchmark_delta)"        else empty end)
     '
     echo 'total_cost: "not captured — see Cost note (npx ccusage@latest)"'
     echo 'total_tokens: "not captured — see Cost note"'
@@ -86,6 +102,12 @@ while IFS= read -r r; do
       "- **Rubric:** \(.rubric_score // "—")",
       "- **Subtasks completed:** \(.subtasks_completed // "—")",
       "- **Files changed:** \(.files_changed // "—")",
+      (if .contract_conformance_status!=null
+         then "- **Contract conformance:** \(.contract_conformance_status) (\(.contract_violations // 0) advisory violation(s))"
+         else empty end),
+      (if .benchmark_status!=null
+         then "- **Benchmark:** \(.benchmark_status)\(if .benchmark_metric!=null then " — \(.benchmark_metric)" else "" end)\(if .benchmark_value!=null then "=\(.benchmark_value)" else "" end)\(if .benchmark_delta!=null then " (delta \(.benchmark_delta))" else "" end)"
+         else empty end),
       (if .pr_url!="" then "- **PR:** \(.pr_url)" else empty end)
     '
   } > "$RUNS/$sid.md"
@@ -101,7 +123,17 @@ agg="$(jq -s '{
   avg_heal:  ((map(select(.heal_iterations != null) | .heal_iterations) | add // 0)
               / ((map(select(.heal_iterations != null)) | length) | if . == 0 then 1 else . end)),
   subtasks:  (map(.subtasks_completed // 0) | add),
-  files:     (map(.files_changed // 0) | add)
+  files:     (map(.files_changed // 0) | add),
+  # --- System Twin hard signal (additive; treats absent fields as null) ---
+  twin_runs:            (map(select(.contract_conformance_status != null)) | length),
+  contract_violations:  (map(.contract_violations // 0) | add),
+  conformance_pass:     (map(select(.contract_conformance_status=="pass")) | length),
+  bench_runs:           (map(select(.benchmark_status != null)) | length),
+  bench_regressed:      (map(select(.benchmark_status=="regressed")) | length),
+  bench_improved:       (map(select(.benchmark_status=="improved")) | length),
+  # latest benchmark value/delta = newest run (by ts) that actually carries a benchmark_status
+  bench_latest_value:   ((map(select(.benchmark_status != null)) | sort_by(.ts) | last | .benchmark_value) // null),
+  bench_latest_delta:   ((map(select(.benchmark_status != null)) | sort_by(.ts) | last | .benchmark_delta) // null)
 }' "$records")"
 pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.total)|floor) else 0 end')"
 
@@ -130,15 +162,36 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
   '
   echo "| **Completion rate** | **${pass_rate}%** |"
   echo
+  # System Twin hard signal — only render the section when at least one run reported it.
+  twin_runs="$(printf '%s' "$agg" | jq -r '.twin_runs')"
+  if [ "${twin_runs:-0}" -gt 0 ]; then
+    echo "## System Twin hard signal (contract conformance · benchmark)"
+    echo "_Advisory only — never blocks a PR or changes a heal decision. Sourced from the \`session_end\` hard-signal fields; runs that did not report them are omitted from these counts._"
+    echo
+    printf '%s\n' "$agg" | jq -r '
+      "| Metric | Value |",
+      "|---|---|",
+      "| Runs reporting conformance | \(.twin_runs) |",
+      "| Conformance = pass | \(.conformance_pass) |",
+      "| Contract violations (total, advisory) | \(.contract_violations) |",
+      "| Runs reporting a benchmark | \(.bench_runs) |",
+      "| Benchmark regressed / improved | \(.bench_regressed) / \(.bench_improved) |",
+      "| Latest benchmark value | \(if .bench_latest_value!=null then (.bench_latest_value|tostring) else "—" end) |",
+      "| Latest benchmark delta | \(if .bench_latest_delta!=null then (.bench_latest_delta|tostring) else "—" end) |"
+    '
+    echo
+  fi
   echo "## Cost"
   echo "> **Not captured by this plugin.** Token/\$ usage lives in Claude Code's own transcripts, not in \`.supervisor/\`."
   echo "> For real figures run \`npx ccusage@latest\` (daily) or \`npx ccusage@latest session\` (per-session), or Claude Code's \`/cost\`."
   echo
   echo "## Recent sessions"
-  echo "| Session | Status | Self-heal | Rubric | Subtasks | Files | PR |"
-  echo "|---|---|---|---|---|---|---|"
+  echo "| Session | Status | Self-heal | Rubric | Subtasks | Files | Twin (conformance / Δ) | PR |"
+  echo "|---|---|---|---|---|---|---|---|"
   jq -s -r 'sort_by(.ts) | reverse | .[]
-    | "| \(.sid) | \(.status) | \(.heal_decision // "—") (\(.heal_iterations // "—")) | \(.rubric_score // "—") | \(.subtasks_completed // "—") | \(.files_changed // "—") | \(if .pr_url!="" then "[PR](\(.pr_url))" else "—" end) |"' "$records"
+    | (if .contract_conformance_status!=null then .contract_conformance_status else "—" end) as $conf
+    | (if .benchmark_delta!=null then (.benchmark_delta|tostring) else "—" end) as $delta
+    | "| \(.sid) | \(.status) | \(.heal_decision // "—") (\(.heal_iterations // "—")) | \(.rubric_score // "—") | \(.subtasks_completed // "—") | \(.files_changed // "—") | \($conf) / \($delta) | \(if .pr_url!="" then "[PR](\(.pr_url))" else "—" end) |"' "$records"
   echo
   echo "## View in Obsidian (optional)"
   echo "Point an Obsidian vault at \`.supervisor/\` (or symlink \`.supervisor/insights\` into a vault). With the **Dataview** plugin this renders as a live, sortable board:"
