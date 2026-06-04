@@ -1,8 +1,8 @@
 {
-  "_comment": "Capability baseline for /capability-check (v14.6.0+). Snapshot of the Claude Code features and external deps this plugin currently USES or has deliberately considered. /capability-check diffs the LIVE Claude Code changelog/docs + dep versions against this file and reports candidate adoptions — it never self-applies. Maintainer updates this via `/capability-check --update-baseline` (a repo-root, committed action) after reviewing a report.",
+  "_comment": "Capability baseline for /capability-check (v14.6.0+). Snapshot of the Claude Code features and external deps this plugin currently USES or has deliberately considered. /capability-check diffs the LIVE Claude Code changelog/docs + dep versions against this file and reports candidate adoptions — it never self-applies. Maintainer updates this via `/capability-check --update-baseline` (a repo-root, committed action) after reviewing a report. The `product_directions` section is the home for /capability-check --strategy mode's scored, grounded, deduped product directions (each with status adopted | proposed | deferred); --strategy reads it to dedup (never re-proposing a recorded direction), and it is written only via `/capability-check --strategy --update-baseline`. NOTE: `baseline_date` + `plugin_version_at_last_scan` are the (date, plugin-version) pair of the last full platform/adoption scan — they record WHEN the `claude_code.*` lists were last refreshed, NOT the current plugin version. Both are bumped together only by a real `--update-baseline` adoption scan (Workflow A step 5). They are NOT bumped by `--strategy` direction edits: the `product_directions` section (introduced in v14.9.0) carries its own per-entry `date`s, so adding or restatusing a direction leaves the platform-scan pair untouched.",
   "schema_version": 1,
   "baseline_date": "2026-06-01",
-  "plugin_version_at_baseline": "14.6.0",
+  "plugin_version_at_last_scan": "14.6.0",
   "claude_code": {
     "hook_events_used": [
       "SubagentStop",
@@ -51,5 +51,16 @@
     "claude_code_docs_hooks": "https://docs.claude.com/en/docs/claude-code/hooks",
     "claude_code_docs_subagents": "https://docs.claude.com/en/docs/claude-code/sub-agents",
     "search_fallback": "Claude Code changelog new features hooks tools"
-  }
+  },
+  "product_directions": [
+    {
+      "id": "system-twin",
+      "title": "System Twin",
+      "status": "proposed",
+      "provenance": "Session 2026-06-03 north-star; MEMORY system-twin-product-direction; ENHANCEMENT_PLAN_v15_DRAFT.md §0d",
+      "date": "2026-06-03",
+      "rationale": "Evolve from a stateless task→PR runner into a System Twin — accumulated project-specific state is the only durable moat ('rent a coder vs. grow an engineer') that a competitor can't copy and the platform won't build (the three integrated pillars are in pillars[]; see provenance for detail).",
+      "pillars": ["predict-before-touch", "provable-done", "compounding-expertise"]
+    }
+  ]
 }
