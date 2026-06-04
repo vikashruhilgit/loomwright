@@ -8,8 +8,11 @@
 > (§0 Executive Summary, §2.4, and the §6 roadmap table) reflect the hook count *at time of writing*,
 > when `main` was around v14.0.0–v14.2.x. The **current** count is **19** (authoritative: `plugin.json`
 > / `CLAUDE.md`) — the §6 P1 notification additions described here were never landed as written
-> (§0a: PR #13 was closed/conflicting). Treat the hook numbers in this draft as historical planning
-> context, not current state.
+> (§0a: PR #13 was closed/conflicting — its notification surface never merged, so `main` kept only the
+> v14.0.0 inline webhook). Treat **all** hook counts and notification-architecture figures in this draft
+> (including §2's hook approach) as historical planning context that predates v14.1.0–v14.2.x, not
+> current state — the scripts it references (`notify-desktop.sh`, `session-resume.sh`,
+> `validate-launch-pad-result.py`) did subsequently land.
 >
 > **Guiding principle (changed after red-team):** the plugin's only real asset is its **gated,
 > reviewable, human-in-the-loop** workflow. The goal is **"make the gated workflow require less
