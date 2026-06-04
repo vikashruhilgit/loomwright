@@ -789,6 +789,67 @@ else:
 - If parsing the grader output fails (no `rubric_score: N/M` line): record `record_decision(phase: SELF_HEAL, decision: "rubric_grader_parse_failed", ...)` and set `rubric_score = null`. Do NOT fail the task.
 - Grader output is appended to the PR as a comment alongside the heal report (best-effort; comment failure does not fail the task).
 
+**System Twin contract-conformance check (ADVISORY, System Twin / ST3 — runs after the Code Reviewer pass):**
+
+After the Code Reviewer loop has run (regardless of `heal_decision`), check the **integrated feature-branch diff** against any existing System Contracts for the touched subsystems. This produces the `contract_conformance` object on `SUPERVISOR_RESULT` (and the matching flat `session_end` fields — see "Hard-signal fields" below).
+
+> **HARD ADVISORY CONTRACT — this check NEVER changes a gate.** Exactly like the Rubric Grader, the contract-conformance check is **advisory only**: it **NEVER changes `heal_decision`**, **NEVER triggers a fix iteration**, and **NEVER blocks the PR**. Its findings carry `severity: info | advisory` by construction — never `blocking`/`high`. It is reported in `SUPERVISOR_RESULT` for human review and aggregated by ST4; it is not a quality gate. It runs read-only against committed state and dispatches no fixes.
+
+```
+# touched subsystems = the files/paths in the integrated diff (the same scope the Code Reviewer
+# reviewed). When BASE_BRANCH==main this is `git diff origin/main...HEAD`; for a stacked iteration
+# (BASE_BRANCH != main) it is `git diff $BASE_BRANCH...HEAD` — same DIFF-SCOPE OVERRIDE the reviewer used.
+touched = paths from the integrated diff (read-only):
+          BASE_BRANCH==main  -> git diff --name-only origin/main...HEAD
+          BASE_BRANCH!=main  -> git diff --name-only $BASE_BRANCH...HEAD
+
+contract_conformance = { checked: false, status: "skipped", contracts_evaluated: 0, violations: 0, findings: [] }
+
+for each subsystem id derivable from `touched` (a path or a logical subsystem name):
+  # read-side provenance gate; NEVER `cat` the contract files directly.
+  contract = bash ${CLAUDE_PLUGIN_ROOT}/scripts/read-system-contract.sh --subsystem "<id>"
+  if contract has a verified body (not "(no verified System Twin contracts)"):
+    contract_conformance.checked = true
+    contract_conformance.contracts_evaluated += 1
+    # Compare the integrated diff against the contract's `invariants` / `behavioral_specs`.
+    # Any apparent divergence is recorded as an ADVISORY finding (severity info|advisory only).
+    for each invariant the diff appears to violate:
+      contract_conformance.findings += { subsystem: "<id>", invariant: "<text>", severity: "advisory", detail: "<what in the diff diverges>" }
+
+contract_conformance.violations = len(contract_conformance.findings)
+if not contract_conformance.checked:
+  # No verified contracts exist for any touched subsystem, OR read-system-contract.sh emitted nothing
+  # (no sha tool / empty store). Graceful no-op.
+  contract_conformance.status = "skipped"        # (use "unverified" instead when the tooling itself was unavailable)
+elif contract_conformance.violations == 0:
+  contract_conformance.status = "pass"
+else:
+  contract_conformance.status = "advisory_violations"
+
+record_decision(phase: SELF_HEAL, decision: "contract_conformance: {status} ({violations} advisory)", rationale: "advisory only — heal_decision unchanged")
+```
+
+**Contract-conformance rules:**
+- Absent contracts (empty `.supervisor/twin/`, or `read-system-contract.sh` emits nothing) → `checked: false`, `status: skipped` (or `unverified` if the tooling itself was unavailable), `contracts_evaluated: 0`, `violations: 0`. Graceful no-op — never an error, never a fix.
+- `status: pass` requires `violations: 0`; `status: advisory_violations` requires `violations >= 1` and a non-empty `findings[]` (each `severity: info | advisory`).
+- This is a READ of the twin store via `read-system-contract.sh` only — it NEVER writes the twin store (the WRITE happens in the completion tail, below).
+- It runs on EVERY Phase 4.5 (PASS or ESCALATED); unlike the Rubric Grader it is not gated on PASS, because conformance reporting is informational and does not depend on trusting the code state.
+
+**System Twin benchmark run (System Twin / ST3 — populates `benchmark_result`):**
+
+Run the deterministic "provable-done" benchmark to populate `benchmark_result`:
+
+```
+bench = bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-benchmark.sh
+# Parse the single `BENCHMARK_JSON: {...}` line -> benchmark_result (ran, status, name, metric,
+# value, baseline, delta, unit). The script is deterministic, reads/writes its baseline under
+# .supervisor/twin/benchmark-baseline.json (gitignored), and ALWAYS exits 0 — on any failure it
+# emits status: unverified with value: null. Treat a parse miss as benchmark_result.ran=false,
+# status: unverified. The benchmark is informational; it NEVER changes heal_decision or blocks the PR.
+```
+
+`run-benchmark.sh` does not update its baseline on a plain run (the `--update-baseline` flag is the sole write path, reserved for an explicit operator/maintainer baseline-set); Phase 4.5 invokes it WITHOUT that flag, so the heal loop measures-but-does-not-move the baseline.
+
 **Integration-review invocation details:** Code Reviewer auto-detects Beads (`test -d .beads && bd --version`). When Beads is not active, the CODE_REVIEW_RESULT block is the sole output channel the Supervisor parses. See `agents/code-reviewer.md` "Detect Beads Integration" for full semantics.
 
 **Fix task crash handling:**
@@ -837,7 +898,68 @@ else:
 
 4. **Update state:** `Context-Keeper(operation: update_phase, new_phase: LOOP, completed_phases: [..., SELF_HEAL])` and `record_decision(phase: SELF_HEAL, decision: "{PASS|ESCALATED|loop_skipped}", rationale: "{final reason}")`. Status in state file matches the outcome (`completed` or `completed_with_escalation`).
 
-5. **Emit SUPERVISOR_RESULT block for this task** (see "Result Block" section below). Exactly one block per task, emitted here — Phase 5 LOOP emits nothing. When looping to a new task, the next task's Phase 4.5 tail will emit its own block. The SubagentStop hook validates the last block; earlier blocks must still be schema-valid.
+4.5. **System Twin contract builder (WRITE path — completion tail only, System Twin / ST3):**
+
+   **Runs only on a PASS outcome** (`heal_decision == PASS` or loop-skipped — i.e. the same outcomes that move the job to `done/` in step 2). On the ESCALATED / base-mismatch / invariant-violation paths, SKIP the builder (do not record contracts for a code state we did not pass). This is **propose-only, advisory, and reversible** — it writes the advisory twin store, never plugin code, never a gate.
+
+   Spawn an **ephemeral, Bash-capable builder Task** (a `general-purpose` Task — **NOT a new permanent agent**, NOT Context-Keeper) that derives one SYSTEM_CONTRACT per touched subsystem from the integrated feature-branch diff and writes each via `write-system-contract.sh`:
+
+   ```
+   Task(
+     subagent_type: "general-purpose",
+     # Tool allowlist: Read, Bash, Glob, Grep (no Task — the builder may not dispatch further subagents).
+     working_dir: PINNED REPO-ROOT CWD — the main checkout (NEVER a worktree).
+     prompt: "You are the ephemeral System Twin contract builder (advisory, propose-only).
+
+       Repo root (CWD): {repo_root}     # the main checkout — you MUST run from here.
+       Touched diff scope: {BASE_BRANCH==main ? 'git diff origin/main...HEAD' : 'git diff $BASE_BRANCH...HEAD'}
+       Provenance derived_from: {commit SHA or that diff expression}
+
+       For EACH touched subsystem (a path like 'scripts/build-insights.sh' or a logical name like
+       'supervisor-phase45'), derive a structured SYSTEM_CONTRACT (schema in docs/RESULT_SCHEMAS.md
+       §SYSTEM_CONTRACT): subsystem, invariants, dependencies, behavioral_specs, and provenance
+       (derived_from = the diff/commit above, source = this session id).
+
+       Write each contract from THIS pinned repo-root CWD via:
+         bash ${CLAUDE_PLUGIN_ROOT}/scripts/write-system-contract.sh \\
+              --subsystem '<id>' --contract-file <tmpfile> --source '<session-id>'
+
+       HARD RULES:
+       - Run write-system-contract.sh ONLY from the repo-root CWD. It REFUSES (exit 3) from a linked
+         git worktree (the sole-writer / pinned-CWD guard). Worktrees were already removed by Phase 4
+         FINALIZE, so the repo root is the natural and correct location — do NOT cd into any worktree.
+       - This is advisory/propose-only. A non-zero exit from the writer (e.g. exit 0 no-op when no sha
+         tool, exit 2 bad call) MUST NOT fail the task — log it and continue.
+       - Do NOT write .supervisor/state.md or any other state; the twin store is owned solely by
+         write-system-contract.sh, and Context-Keeper is NOT in this path.
+
+       Emit a one-line summary: how many contracts written / skipped."
+   )
+   ```
+
+   - **Context-Keeper is explicitly OUT of this path.** It remains the sole writer of `state.md` only; it neither writes nor gates `.supervisor/twin/`. The twin store's sole writer is `write-system-contract.sh`, whose worktree-guard is the real enforcement.
+   - **Pinned repo-root CWD, never a worktree.** `write-system-contract.sh` exits 3 from a linked worktree (top-level `.git` is a FILE, not a dir). By the completion tail, Phase 4 FINALIZE has already removed all worktrees and returned to the main checkout, so the repo root is both natural and correct.
+   - **Failure is non-fatal.** Any writer non-zero exit, missing-sha-tool no-op, or builder crash is logged via `record_decision(phase: SELF_HEAL, decision: "twin_builder: {n} written / {m} skipped", rationale: "advisory — non-fatal")` and the task proceeds. The builder NEVER changes `heal_decision`, NEVER blocks the PR, and runs AFTER the PR already exists.
+
+5. **Emit SUPERVISOR_RESULT block for this task** (see "Result Block" section below). Exactly one block per task, emitted here — Phase 5 LOOP emits nothing. When looping to a new task, the next task's Phase 4.5 tail will emit its own block. The SubagentStop hook validates the last block; earlier blocks must still be schema-valid. Include the additive `contract_conformance` and `benchmark_result` objects (computed earlier in this phase), and also emit the FLAT hard-signal fields onto the `session_end` JSONL event — see "Hard-signal fields (System Twin)" below.
+
+**Hard-signal fields (System Twin / ST3 — written in BOTH shapes):**
+
+The contract-conformance result and the benchmark result are emitted as **the same data in two shapes**, per `docs/RESULT_SCHEMAS.md` §"`session_end` JSONL hard-signal fields":
+
+1. **Nested objects on `SUPERVISOR_RESULT`** (step 5 above): `contract_conformance` and `benchmark_result` (see the "Result Block" schema). Optional/additive — `schema_version` stays `1`.
+2. **FLAT scalar fields on the `session_end` JSONL event** in `.supervisor/logs/{session_id}.jsonl` — this is what `build-insights.sh` (ST4) aggregates via `select(.event=="session_end")`. Write all six, with the SAME data as the nested objects (field correspondence below). **These flat field names are a hard contract with ST4 — do NOT rename them:**
+
+   | flat `session_end` field | from nested |
+   |--------------------------|-------------|
+   | `contract_conformance_status` | `contract_conformance.status` |
+   | `contract_violations` | `contract_conformance.violations` |
+   | `benchmark_status` | `benchmark_result.status` |
+   | `benchmark_metric` | `benchmark_result.metric` |
+   | `benchmark_value` (number\|null) | `benchmark_result.value` |
+   | `benchmark_delta` (number\|null) | `benchmark_result.delta` |
+
+   See the `session_end` log line in "Session Logging" below for the exact shape. The flat fields are additive — a `session_end` event without them remains valid (a reader treats absent fields as "not reported this session").
 
 **Error handling table:**
 
@@ -1076,6 +1198,21 @@ SUPERVISOR_RESULT:
   cost_profile: null
   rubric_score: "5/5"
   preflight_sync: clear
+  contract_conformance:
+    checked: true
+    status: pass
+    contracts_evaluated: 2
+    violations: 0
+    findings: []
+  benchmark_result:
+    ran: true
+    status: pass
+    name: system-twin-selftest
+    metric: selftest_pass_count
+    value: 4
+    baseline: 4
+    delta: 0
+    unit: assertions
 ```
 
 ---
@@ -1229,7 +1366,10 @@ Task(
 {"ts":"2026-03-09T14:32:05Z","type":"phase_transition","from":"EXECUTE","to":"FINALIZE","task_id":"user-auth"}
 {"ts":"2026-03-09T14:32:30Z","type":"merge","branch":"feature/user-auth-a","into":"feature/user-auth","status":"success"}
 {"ts":"2026-03-09T14:33:00Z","type":"pr_created","task_id":"user-auth","pr_number":42,"url":"https://github.com/org/repo/pull/42"}
+{"ts":"2026-03-09T14:34:00Z","event":"session_end","type":"session_end","task_id":"user-auth","status":"completed","contract_conformance_status":"pass","contract_violations":0,"benchmark_status":"pass","benchmark_metric":"selftest_pass_count","benchmark_value":4,"benchmark_delta":0}
 ```
+
+**System Twin hard-signal fields on `session_end` (System Twin / ST3):** the `session_end` event carries six FLAT scalar fields — `contract_conformance_status`, `contract_violations`, `benchmark_status`, `benchmark_metric`, `benchmark_value`, `benchmark_delta` — written from Phase 4.5's completion tail with the SAME data as the nested `SUPERVISOR_RESULT.contract_conformance` / `benchmark_result` objects (field correspondence in Phase 4.5 §"Hard-signal fields (System Twin)"). `build-insights.sh` (ST4) reads these via `select(.event=="session_end")` exactly as it reads `rubric_score`; it does NOT parse the nested objects. **These flat field names are a hard contract with ST4 — do NOT rename them.** They are additive: a `session_end` event without them remains valid. `benchmark_value` / `benchmark_delta` may be `null` (not measured / no baseline). The matching `event` key (in addition to the existing `type`) is what ST4's `select(.event=="session_end")` filter keys on.
 
 **Retention:** 7 days (clean up in INIT phase).
 
@@ -1331,7 +1471,25 @@ SUPERVISOR_RESULT:
   branch_base: string | null                # optional (v14.0.0+) — BASE_BRANCH the PR was targeting (defaults to "main" when --base-branch not passed). Always set when status=failed with error="base_branch_mismatch:...".
   pr_state: string | null                   # optional (v14.0.0+) — "closed_by_loop" | "close_attempt_failed" | null. Populated only by Phase 4.5 base-mismatch cleanup; null on all other exit paths.
   preflight_sync: enum [clear, overlap_proceed, superseded_proceed, skipped, unverified] | null  # optional (v14.8.0+) — outcome of the Phase 1.5 PRE-FLIGHT SYNC gate; null when the gate did not run (e.g., pre-v14.8.0 resume). On a fail-closed abort the run emits status=failed with `error: "preflight_overlap_detected"` (surfaced by /autonomous as `AUTONOMOUS_RUN.status_reason`). Authoritative field definition lives in docs/RESULT_SCHEMAS.md.
+  contract_conformance:                      # optional (System Twin / ST3) — ADVISORY only; NEVER changes heal_decision, NEVER blocks PR. Absent contracts -> checked:false, status:skipped/unverified.
+    checked: boolean
+    status: enum [pass, advisory_violations, unverified, skipped]
+    contracts_evaluated: integer
+    violations: integer
+    findings:                                # advisory; severity is info|advisory by construction
+      - { subsystem: string, invariant: string, severity: enum [info, advisory], detail: string }
+  benchmark_result:                          # optional (System Twin / ST3) — informational; populated from scripts/run-benchmark.sh
+    ran: boolean
+    status: enum [pass, regressed, improved, unverified, skipped]
+    name: string
+    metric: string
+    value: number | null
+    baseline: number | null
+    delta: number | null                     # value - baseline, null if no baseline
+    unit: string
 ```
+
+**System Twin additive fields (`contract_conformance`, `benchmark_result`):** purely additive optional objects, following the `branch_base` / `pr_state` / `preflight_sync` precedent — `schema_version` stays `1`, the Supervisor SubagentStop hook does NOT enumerate them, and blocks with or without them validate unchanged. Both are advisory/informational: `contract_conformance` NEVER changes `heal_decision` and NEVER blocks the PR (`findings[].severity` is `info`/`advisory` by construction); `benchmark_result` is informational. The SAME data is also emitted as the FLAT `session_end` JSONL fields (`contract_conformance_status`, `contract_violations`, `benchmark_status`, `benchmark_metric`, `benchmark_value`, `benchmark_delta`) which `build-insights.sh` (ST4) aggregates — those flat names are a hard contract with ST4; do not rename. Authoritative definitions: `docs/RESULT_SCHEMAS.md` §"SUPERVISOR_RESULT" and §"`session_end` JSONL hard-signal fields".
 
 **Status mapping (machine-readable):**
 - `heal_decision=PASS` OR `heal_loop_ran=false` (loop skipped via `--skip-self-heal`) → `status: completed`

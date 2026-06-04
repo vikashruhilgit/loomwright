@@ -1,0 +1,1 @@
+{"event":"session_end","ts":"2026-06-04T10:01:00Z","contract_conformance_status":"advisory_violations","contract_violations":2,"benchmark_status":"regressed","benchmark_metric":"selftest_pass_count","benchmark_value":40,"benchmark_delta":-2}
