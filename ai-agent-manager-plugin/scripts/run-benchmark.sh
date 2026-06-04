@@ -130,7 +130,9 @@ done
 baseline="null"
 if [ -f "$BASELINE_FILE" ]; then
   b="$(jq -r '.value // empty' "$BASELINE_FILE" 2>/dev/null || true)"
-  case "$b" in (''|*[!0-9]*) baseline="null" ;; (*) baseline="$b" ;; esac
+  # 10# forces base-10 so a hand-edited baseline with leading zeros (e.g. 008/009) can't trigger a
+  # bash octal arithmetic error in `value - baseline`, nor a JSON leading-zero rejection in --argjson.
+  case "$b" in (''|*[!0-9]*) baseline="null" ;; (*) baseline="$((10#$b))" ;; esac
 fi
 
 if [ "$baseline" = "null" ]; then

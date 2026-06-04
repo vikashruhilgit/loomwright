@@ -10,6 +10,7 @@
 #   4. provenance tamper-detection (broken hash chain → affected entries distrusted)
 #   5. write-time eviction (contract-file cap honored)
 #   6. .gitignore coverage of .supervisor/twin/ (checked against the real repo)
+#   7. dedup guard (unchanged contract body written once)
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

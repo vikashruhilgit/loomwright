@@ -665,17 +665,23 @@ SYSTEM_CONTRACT:
     derived_from: string       # commit SHA or "git diff origin/main...HEAD"
     written_at: string         # ISO 8601
     source: string             # builder session id / agent
-    content_hash: string       # sha256 of the contract body
+    content_hash: string       # OPTIONAL/informational only. The AUTHORITATIVE content_hash lives in
+                               # the .provenance.jsonl ledger (sha256 of the contract-file bytes), NOT
+                               # in the body — a file cannot contain its own hash. See note below.
 ```
 
 **Store / provenance notes:**
 - The artifact body above is held verbatim in the contract file. A separate hash-chained
   provenance ledger at `.supervisor/twin/.provenance.jsonl` carries, per write, a
   `{subsystem, prev_hash, content_hash, source, action, written_at}` entry (mirroring
-  `.supervisor/memory/.provenance.jsonl`). The `provenance.content_hash` recorded inside the
-  artifact body MUST equal `sha256(contract-file-bytes)` — that is the value the read-side gate
-  recomputes to decide whether a contract is verified; un-provenanced or post-chain-break
-  contracts are dropped (and logged to `.supervisor/logs/twin.log`), never emitted.
+  `.supervisor/memory/.provenance.jsonl`). The **authoritative `content_hash` lives in the ledger,
+  not in the artifact body** — `write-system-contract.sh` computes it as `sha256(contract-file-bytes)`
+  at write time and records it only in the ledger entry. The read-side gate (`read-system-contract.sh`)
+  **recomputes `sha256(contract-file-bytes)` and matches it against the ledger's `content_hash`** to
+  decide whether a contract is verified. (A file cannot contain its own hash, so the body's
+  `provenance.content_hash` field is at most an informational copy and is never what the gate checks.)
+  Un-provenanced or post-chain-break contracts are dropped (and logged to `.supervisor/logs/twin.log`),
+  never emitted.
 - `schema_version` stays `1`. The artifact is propose-only and advisory; downstream subtasks
   (ST2 read-path, ST3 prove/hard-signal, ST4 measure-path) treat this schema as source of truth.
 
