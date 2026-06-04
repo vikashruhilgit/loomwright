@@ -33,7 +33,7 @@ It does what a maintainer would do by hand: read what's new in Claude Code, comp
 | `--strategy` | off | Switch from the default adoption diff to the **product-evolution pass** (see "Workflow B"). Emits a `DIRECTION_REPORT` of differentiated product directions instead of a `CAPABILITY_REPORT` of platform adoptions. All other guardrails (`--max-fetches`, propose-only, `--update-baseline`-only-write) are preserved. |
 | `--max-fetches N` | `5` | Hard cap on external fetches (WebFetch + WebSearch + Context7 calls) for the run — **shared by both modes**. In `--strategy` mode the optional frontier-AI-trend signal draws from this same budget; there is no separate or uncapped fetch path. Bounds cost; a run that hits the cap reports partial coverage and says so. |
 | `--update-baseline` | off | After you've reviewed the report, rewrite `docs/CAPABILITY_BASELINE.json`. In default mode: bump the scan date + record accounted-for platform features. In `--strategy` mode: record reviewed direction STATUSes into the `product_directions` section (never edits plugin code). Meaningful only in the plugin's own repo (the install dir is read-only); a no-op notice elsewhere. |
-| `--save` | off | Also persist the report to `.supervisor/capability/{YYYY-MM-DD}.md` (gitignored). Default is print-only. Applies to both report types. |
+| `--save` | off | Also persist the report (gitignored): default mode → `.supervisor/capability/{YYYY-MM-DD}.md`; `--strategy` mode → `.supervisor/capability/{YYYY-MM-DD}-strategy.md`. The mode suffix keeps a same-day adoption scan and strategy pass from overwriting each other. Default is print-only. |
 
 ## Workflow A — default adoption diff (bounded, on-demand)
 
@@ -122,6 +122,8 @@ Score each surviving direction on three axes, then rank by composite:
 ### B5. GROUNDING MANDATE (hard rule — mirrors the default mode's discipline)
 Every emitted DIRECTION **MUST cite ≥1 concrete product asset** (a specific named `agents/` role, `commands/` entry, or identified gap) **AND ≥1 newly-feasible enabler** (a specific Claude Code platform capability from the diff, OR a specific frontier-AI trend from the bounded signal). **A direction that cannot ground BOTH is DROPPED** — no generic advice, no hype, no "leverage AI" filler. This is the strategy-mode parallel to the default mode's "one line of *why it matters for THIS plugin*" rule.
 
+> **Fetch-exhausted edge case:** the newly-feasible enabler comes from the platform diff or the frontier-AI signal — both optional fetches (B2). If **neither** was reachable (e.g. `--max-fetches 0`, or the budget was consumed before either source was read), no candidate can satisfy the mandate. In that case emit the B7 suppression line with coverage marked **partial** and a note that grounding could not be evaluated (a *fetch-exhausted* run — distinct from "nothing scored high enough"). Do **not** emit ungrounded directions to work around an exhausted budget.
+
 ### B6. DEDUP against `product_directions`
 Drop any direction already present in the baseline's `product_directions` section with status `adopted`, `proposed`, or `deferred` (matched on `id`/`title` and intent). The report surfaces only *net-new* directions, so re-running `--strategy` doesn't re-pitch the same ideas (the W3 rarity contract again).
 
@@ -137,12 +139,12 @@ Drop any direction already present in the baseline's `product_directions` sectio
   - **Wedge** — a concrete first step / smallest entry point that starts compounding.
   - **Status: DIRECTION — propose-only, not applied.** Adoption is a separate human-driven change.
   - A coverage footer (product surface read, sources checked / skipped, partial? candidates scored vs. emitted).
-- With `--save`, also write the same report to `.supervisor/capability/{YYYY-MM-DD}.md`.
+- With `--save`, also write the same report to `.supervisor/capability/{YYYY-MM-DD}-strategy.md` (the `-strategy` suffix keeps it distinct from the default mode's same-day `{YYYY-MM-DD}.md`, so neither overwrites the other).
 
 **Never** edit an agent/command/skill/hook/manifest here. The report is the deliverable; a direction becomes work ONLY via a deliberate human-chosen `/launch-pad goal: "<direction title>"` → `/supervisor`.
 
 ### B8. UPDATE baseline (only with `--update-baseline`)
-After reviewing the `DIRECTION_REPORT`, rewrite `docs/CAPABILITY_BASELINE.json` to record direction **STATUS** into the `product_directions` section (schema below): add newly-proposed directions with `status: "proposed"`, mark ones you've started building `status: "adopted"`, and park ones you're not pursuing `status: "deferred"` (so the next `--strategy` run dedups them via B6). This records *status only* — it **never** edits plugin code (no agent/command/skill/hook change). Maintainer action in the plugin's own repo; in an installed copy the dir is read-only, so print a notice and skip.
+After reviewing the `DIRECTION_REPORT`, rewrite `docs/CAPABILITY_BASELINE.json` to record direction **STATUS** into the `product_directions` section (schema below): add newly-proposed directions with `status: "proposed"`, mark ones you've started building `status: "adopted"`, and park ones you're not pursuing `status: "deferred"` (so the next `--strategy` run dedups them via B6). **When an existing entry's status changes** (e.g. `proposed` → `adopted`/`deferred`), also bump its **`date`** to today — `date` tracks *when surfaced or last status-changed* — while leaving `id` / `title` / `provenance` intact. This records *status and `date`* only — it **never** edits plugin code (no agent/command/skill/hook change). Maintainer action in the plugin's own repo; in an installed copy the dir is read-only, so print a notice and skip.
 
 ### The `product_directions` baseline contract (schema — defined here; ST2 seeds it)
 The `--strategy` mode reads and (with `--update-baseline`) writes a `product_directions` section in `docs/CAPABILITY_BASELINE.json`. It sits alongside the existing `claude_code.*`, `known_not_adopted`, `deps`, and `sources_to_check` sections and does not alter them. Shape:

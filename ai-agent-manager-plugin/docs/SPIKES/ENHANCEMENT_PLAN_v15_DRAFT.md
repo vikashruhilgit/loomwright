@@ -217,7 +217,7 @@ NOT on desktop toasts and NOT on the `Notification` hook (which the docs say may
   check, not a hook.
 - **WSL/Windows:** documented as webhook-only (or `powershell.exe -c` toast as a follow-up).
 
-### 2.4 `hooks.json` additions (pinned: +2 → 16 total)
+### 2.4 `hooks.json` additions (pinned: +2 → 16 total) `[historical — current count is 19; see the top-of-file Hook-count note]`
 ```jsonc
 "Notification": [
   { "matcher": "permission_prompt|idle_prompt|elicitation_dialog",
@@ -424,7 +424,7 @@ Only behind Plan-Review/Rubric verification gate; playbooks structural-only + re
 | **P4** | `/dreaming` reflection extension → bounded `LESSONS.md`; structural playbook templates | 2–3 d | Med (drift — human gate + rarity) | — |
 | **P5 (defer)** | Scheduled scanner (4 guardrails); Voyager skill auto-authoring behind gates; vector recall iff file search fails at scale | — | High | — |
 
-**Pinned hook count: 16** after P1 (`Notification` + `SessionEnd`). `PreCompact`/`SessionStart`/
+**Pinned hook count: 16** `[historical — now 19]` after P1 (`Notification` + `SessionEnd`). `PreCompact`/`SessionStart`/
 `FileChanged` are evaluated in P2 and adopted only if they pass the §3.3 fire/no-stall test — each new
 hook ships with a self-test.
 
