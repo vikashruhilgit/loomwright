@@ -8,7 +8,7 @@ description: Generate a local, Obsidian-friendly insights dashboard (work · qua
 
 ## Purpose
 
-The plugin already records rich **work**, **quality**, and **session-performance** signals per run — completion status, self-heal outcome/iterations, rubric scores, subtasks completed, files changed, PR links — but there's no way to *see* them. `/insights` rolls those logs up into a single markdown dashboard plus one note per run, with **Dataview-compatible frontmatter** so the same files render as a live, sortable board if you open `.supervisor/` in Obsidian (and as plain markdown tables everywhere else).
+The plugin already records rich **work**, **quality**, and **session-performance** signals per run — completion status, self-heal outcome/iterations, rubric scores, subtasks completed, files changed, PR links, and (when present) the **System Twin hard signal** (contract-conformance status + violations, benchmark status/value/delta) — but there's no way to *see* them. `/insights` rolls those logs up into a single markdown dashboard plus one note per run, with **Dataview-compatible frontmatter** so the same files render as a live, sortable board if you open `.supervisor/` in Obsidian (and as plain markdown tables everywhere else).
 
 ## Usage
 
@@ -25,8 +25,14 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/build-insights.sh"
 ```
 
 1. Reads every `.supervisor/logs/*.jsonl`, takes each run's `session_end` event (tolerant of older logs with fewer fields), and computes the aggregates with `jq` (real numbers, not estimates).
-2. Writes **`.supervisor/insights/dashboard.md`** — Summary (sessions, completed/failed, completion rate, self-heal PASS count, avg heal iterations, total subtasks/files), a Recent-sessions table, a Cost note, and an Obsidian/Dataview snippet.
-3. Writes **`.supervisor/insights/runs/<session_id>.md`** — one note per run with YAML frontmatter (`status`, `rubric_score`, `heal_iterations`, `subtasks_completed`, `files_changed`, `pr_url`, …).
+2. Writes **`.supervisor/insights/dashboard.md`** — Summary (sessions, completed/failed, completion rate, self-heal PASS count, avg heal iterations, total subtasks/files), an optional **System Twin hard-signal** section (contract-conformance + benchmark trend; see below), a Recent-sessions table (with a Twin conformance/Δ column), a Cost note, and an Obsidian/Dataview snippet.
+3. Writes **`.supervisor/insights/runs/<session_id>.md`** — one note per run with YAML frontmatter (`status`, `rubric_score`, `heal_iterations`, `subtasks_completed`, `files_changed`, `pr_url`, and when present `contract_conformance_status`, `contract_violations`, `benchmark_status`, `benchmark_value`, `benchmark_delta`, …).
+
+### System Twin hard-signal trend
+
+When runs carry them, `/insights` also surfaces the **System Twin hard signal** sourced from the *same* `session_end` events — the six flat fields `contract_conformance_status`, `contract_violations`, `benchmark_status`, `benchmark_metric`, `benchmark_value`, `benchmark_delta`. The dashboard aggregates them into a dedicated section: runs reporting conformance, conformance-pass count, total (advisory) contract violations, benchmark regressed/improved counts, and the latest benchmark value/delta — so you can watch **contract-conformance and benchmark delta over time**.
+
+This is **advisory only** — it never blocks a PR or changes a heal decision — and **tolerant of older logs**: runs that predate these fields are simply omitted from the hard-signal counts, and if *no* run reports them the section is suppressed entirely (no fabricated zeros), so the dashboard renders unchanged.
 
 If there are no logs yet, it says so and writes nothing. Re-run any time to refresh.
 
