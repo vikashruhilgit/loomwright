@@ -652,6 +652,14 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 
 ---
 
+### 🔮 /obsidian — Local Obsidian Vault Projection (Read-Only, Linked)
+
+**Purpose:** Project this repo's accumulated knowledge — session logs, System Twin contracts (with `[[dependency]]` wikilinks so the graph view = blast radius), and Lessons / Project Memory — into a fully-**linked** external Obsidian vault you configure. Read-only one-way projection (no source-of-truth file touched, no agent reads it back, no data leaves your machine) via `scripts/build-vault.sh`. **Opt-in:** destination via `AI_AGENT_MANAGER_OBSIDIAN_VAULT` env or `.supervisor/obsidian-config.json`; **no-op (exits 0, prints how to opt in) when unset.** Content-hash idempotent and sparse-tolerant.
+
+**Learn More:** see `ai-agent-manager-plugin/commands/obsidian.md` for the configuration (env var / config file / slug), the vault layout, and the idempotency / sparse-tolerance guarantees
+
+---
+
 ### 🔁 /autonomous — Continuous Autonomous Loop (v14, stacked PRs)
 
 **Purpose:** Chain `/launch-pad → /supervisor` to drive a requirement to completion. Default mode is **multi-iteration** (cap 10, default 3) with **stacked PRs** — iteration N+1 branches from `iterations[N].branch` — and re-plans on two specific `SUPERVISOR_RESULT` signals. Pass `--single-iteration` (or `--max-iterations 1`) for v13's run-once behavior; `--no-stacked-branches` for the v13 branch-from-`main` cadence.
@@ -965,9 +973,9 @@ bd close BD-XX
 
 ai-agent-manager-plugin/              # Nested plugin root
 ├── .claude-plugin/
-│   └── plugin.json                   # Plugin metadata (v14.10.0)
+│   └── plugin.json                   # Plugin metadata (v14.11.0)
 ├── .mcp.json                         # Bundled MCP servers
-├── commands/                         # Slash commands (14)
+├── commands/                         # Slash commands (15)
 │   ├── launch-pad.md                 # Supervisor readiness
 │   ├── supervisor.md                 # Parallel orchestrator (v4)
 │   ├── autonomous.md                 # Continuous autonomous loop, stacked PRs (v14)
@@ -980,6 +988,7 @@ ai-agent-manager-plugin/              # Nested plugin root
 │   ├── dreaming.md                   # Read-only reflection over session logs (proposes memory + CLAUDE.md updates)
 │   ├── capability-check.md           # Read-only scan for new Claude Code capabilities vs tracked baseline
 │   ├── insights.md                   # Local Obsidian-friendly insights dashboard from session logs
+│   ├── obsidian.md                   # Read-only linked Obsidian vault projection (logs + Twin contracts + memory)
 │   ├── telemetry.md                  # Opt-in GitHub Issues telemetry (status/enable/disable/test)
 │   └── agent-help.md
 ├── agents/                           # Agent implementations (13 roles)
