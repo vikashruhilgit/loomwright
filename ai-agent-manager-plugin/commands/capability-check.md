@@ -78,7 +78,7 @@ For each, write one line of *why it matters for THIS plugin* — which agent/hoo
 **Never** edit an agent/command/skill/hook/manifest here. The report is the deliverable; adopting a candidate is a deliberate follow-up (usually `/launch-pad goal: "adopt <capability>"` → `/supervisor`).
 
 ### 5. UPDATE baseline (only with `--update-baseline`)
-After you've read the report and decided what's accounted for, rewrite `docs/CAPABILITY_BASELINE.json`: bump `baseline_date` to today, add adopted capabilities to the relevant `claude_code.*` lists, and move "seen but not adopting yet" items into `known_not_adopted` (so the next run doesn't re-flag them). This is a maintainer action in the plugin's own repo; in an installed copy the plugin dir is read-only, so print a notice and skip the write.
+After you've read the report and decided what's accounted for, rewrite `docs/CAPABILITY_BASELINE.json`: bump **`baseline_date` to today AND `plugin_version_at_last_scan` to the current plugin version** (the two are the date/version pair of this scan — bump them together so the field never silently drifts stale), add adopted capabilities to the relevant `claude_code.*` lists, and move "seen but not adopting yet" items into `known_not_adopted` (so the next run doesn't re-flag them). This is a maintainer action in the plugin's own repo; in an installed copy the plugin dir is read-only, so print a notice and skip the write.
 
 ## Workflow B — `--strategy` product-evolution pass (bounded, on-demand)
 
