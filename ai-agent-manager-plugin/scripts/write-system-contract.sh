@@ -148,6 +148,8 @@ mv "$prov_tmp" "$PROV" && mv "$c_tmp" "$CONTRACT" || {
 count="$(find "$CONTRACT_DIR" -maxdepth 1 -type f -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
 while [ "${count:-0}" -gt "$MAX_CONTRACTS" ]; do
   # Evict the oldest contract file by mtime (excluding the one just written when possible).
+  # SAFE: subsystem ids are sanitized to a filename-safe form ($SAFE_ID), so contract filenames
+  # never contain spaces/newlines — the ls|head pipeline is fine for this controlled input.
   victim="$(ls -1tr "$CONTRACT_DIR"/*.md 2>/dev/null | head -n1)"
   [ -n "$victim" ] || break
   vid="$(basename "$victim" .md)"

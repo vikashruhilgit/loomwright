@@ -41,6 +41,9 @@ if command -v sha256sum >/dev/null 2>&1; then   sha() { sha256sum | cut -d' ' -f
 elif command -v shasum  >/dev/null 2>&1; then   sha() { shasum -a 256 | cut -d' ' -f1; }
 else echo "read-system-contract: no sha256 tool — contracts unverifiable, emitting nothing (fail-safe)" >&2; exit 0; fi
 
+# Extracts a STRING-valued JSON field only (value in double quotes). All provenance fields walked
+# by the chain logic (prev_hash, content_hash, source, action) are strings, so this is sufficient.
+# A future NUMERIC provenance field would need jq (or a different extractor) — sed would misread it.
 field() { printf '%s' "$1" | sed -E "s/.*\"$2\":\"([^\"]*)\".*/\1/"; }
 
 # Resolve --subsystem to the same sanitized filename the writer uses.

@@ -919,6 +919,9 @@ bench = bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-benchmark.sh
        'supervisor-phase45'), derive a structured SYSTEM_CONTRACT (schema in docs/RESULT_SCHEMAS.md
        §SYSTEM_CONTRACT): subsystem, invariants, dependencies, behavioral_specs, and provenance
        (derived_from = the diff/commit above, source = this session id).
+       Do NOT populate provenance.content_hash — that field is informational only and a file cannot
+       contain its own hash. OMIT it from the contract body you write; write-system-contract.sh
+       computes the authoritative content_hash from the written bytes and records it in the ledger.
 
        Write each contract from THIS pinned repo-root CWD via:
          bash ${CLAUDE_PLUGIN_ROOT}/scripts/write-system-contract.sh \\
