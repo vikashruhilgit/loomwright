@@ -638,9 +638,9 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 
 ### 🔭 /capability-check — Scan for New Platform Capabilities (Read-Only)
 
-**Purpose:** On-demand, bounded (≤5 fetches) scan that diffs the live Claude Code changelog/docs plus dependency info against the tracked `ai-agent-manager-plugin/docs/CAPABILITY_BASELINE.json` and reports **CANDIDATE** adoptions — new platform capabilities the plugin could adopt. Never self-applies; suppresses output when nothing new is found. `--update-baseline` is an explicit maintainer action that refreshes the tracked baseline.
+**Purpose:** On-demand, bounded (≤5 fetches) scan that diffs the live Claude Code changelog/docs plus dependency info against the tracked `ai-agent-manager-plugin/docs/CAPABILITY_BASELINE.json` and reports **CANDIDATE** adoptions — new platform capabilities the plugin could adopt. Never self-applies; suppresses output when nothing new is found. `--update-baseline` is an explicit maintainer action that refreshes the tracked baseline. With **`--strategy`** it instead runs a grounded product-evolution pass that proposes scored, deduped, differentiated **product directions** (distinct from adoption candidates, reusing the brainstorming skill) — same propose-only / bounded / human-gated discipline.
 
-**Learn More:** see `ai-agent-manager-plugin/commands/capability-check.md` for the scan protocol, fetch budget, and the maintainer `--update-baseline` flow
+**Learn More:** see `ai-agent-manager-plugin/commands/capability-check.md` for the scan protocol, fetch budget, the `--strategy` product-direction mode, and the maintainer `--update-baseline` flow
 
 ---
 

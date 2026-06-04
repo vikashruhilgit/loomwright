@@ -115,7 +115,7 @@ Score each surviving direction on three axes, then rank by composite:
 |------|---------|--------|
 | **Differentiation / moat** | How much this makes the plugin *uniquely* better than a stateless task-runner — a defensible edge competitors can't trivially copy. | High = category-defining (e.g. cross-run compounding "gets smarter with use"); Low = me-too convenience. |
 | **Feasibility** | Buildable against the current architecture — graded with the brainstorming skill's Phase 3.5 Reality Check verdict (VIABLE / NEEDS_FOUNDATION / BLOCKED). Cite `skills/mvp-scoping/SKILL.md` for the prioritization lens. | High = VIABLE as-is; cap NEEDS_FOUNDATION feasibility ≤ 5, BLOCKED ≤ 2 (per the brainstorming Reality-Check caps). |
-| **Effort** | Rough build size (S / M / L), per `skills/mvp-scoping/SKILL.md` — *inverted* in the composite (smaller effort ranks higher). | S = a wedge shippable in days; L = a multi-week program. |
+| **Effort** | Rough build size (S / M / L) — *inverted* in the composite (smaller effort ranks higher). Use `skills/mvp-scoping/SKILL.md` as the prioritization lens (MVP / Phase 2 / Nice-to-have) for sequencing which directions to build first, not as the source of the S/M/L buckets. | S = a wedge shippable in days; L = a multi-week program. |
 
 **Composite ranking:** prefer **high differentiation × high feasibility × low effort** — a strong moat that is buildable now via a small wedge. A high-moat direction that is BLOCKED or L-effort ranks below a moderate-moat direction that is VIABLE and S-effort, because the flywheel rewards directions that can actually ship and start compounding (§0d "smallest loop that visibly compounds"). Rank candidates and carry only those that clear the bar (B7) into the report.
 

@@ -59,7 +59,7 @@
       "status": "proposed",
       "provenance": "Session 2026-06-03 north-star; MEMORY system-twin-product-direction; ENHANCEMENT_PLAN_v15_DRAFT.md §0d",
       "date": "2026-06-03",
-      "rationale": "Evolve from a stateless task→PR runner into a System Twin — accumulated project-specific state is the only durable moat ('rent a coder vs. grow an engineer'); a competitor can't copy it and the platform won't build it. Pillars (one integrated system): predict-before-touch (blast-radius analysis grounded in a persistent dep graph + incident history at planning time), provable-done (outcome contracts as executable acceptance checks written first, looped to green against the running app, wired into Supervisor Phase 4.5), compounding-expertise (OBSERVE→DISTILL→PROMOTE→APPLY→MEASURE flywheel re-grounded so MEASURE keys on a HARD signal — executable outcomes + a benchmark, not the soft rubric_score).",
+      "rationale": "Evolve from a stateless task→PR runner into a System Twin — accumulated project-specific state is the only durable moat ('rent a coder vs. grow an engineer') that a competitor can't copy and the platform won't build (the three integrated pillars are in pillars[]; see provenance for detail).",
       "pillars": ["predict-before-touch", "provable-done", "compounding-expertise"]
     }
   ]
