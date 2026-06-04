@@ -92,6 +92,28 @@ These are **defense-in-depth** restrictions for accidental misuse, NOT security 
 | `.supervisor/worker-summaries/` | Worker (inline mode) | Execute Manager (read) |
 | `.worker-summary.md` (in worktree) | Worker (parallel mode) | Execute Manager (read) |
 | `.qa-summary.md` | QA Executor (write) | QA Strategist (read in audit mode) |
+| `.supervisor/twin/` | `scripts/write-system-contract.sh` (sole writer) | Readers via `scripts/read-system-contract.sh`; Context-Keeper is OUT of this path |
+
+---
+
+## System Twin homing contract
+
+The **System Twin** maintains a persistent, per-subsystem **System Contract** artifact store under
+`.supervisor/twin/`. It is an advisory artifact store in the same family as `.supervisor/memory/`:
+**subordinate to the human-authored CLAUDE.md**, propose-only, and NEVER an enforcement boundary.
+
+| Property | Contract |
+|----------|----------|
+| Store layout | `.supervisor/twin/contracts/<subsystem-id>.md` (one SYSTEM_CONTRACT artifact per subsystem; see `docs/RESULT_SCHEMAS.md` §"SYSTEM_CONTRACT") + `.supervisor/twin/.provenance.jsonl` (hash-chained provenance ledger). |
+| **Sole writer** | `scripts/write-system-contract.sh` is the **ONLY** writer of `.supervisor/twin/`. No agent writes the store directly. |
+| Builder/reader split | An ephemeral, Bash-capable **builder** writes contracts via `write-system-contract.sh` from a **pinned repo-root CWD — never worktree-relative**. **Readers** (ST2 read-path, ST3 conformance) use `read-system-contract.sh`, the read-side provenance gate that drops un-provenanced / post-chain-break contracts and logs drops to `.supervisor/logs/twin.log`. |
+| Context-Keeper is OUT | Context-Keeper is **explicitly NOT in this path**. It remains the sole writer of `state.md` only; it neither writes nor gates `.supervisor/twin/`. |
+| Worktree-guard = enforcement | The **real enforcement** of the sole-writer / pinned-CWD contract is the writer's worktree-guard: `write-system-contract.sh` refuses to run from a linked git worktree (where the top-level `.git` is a FILE, not a dir) with **exit 3**. A twin write inside a worktree would diverge and be lost on `git worktree remove`. This mirrors `write-project-memory.sh` (red-team F1). |
+| Advisory-subordinate-to-CLAUDE.md | Contracts are propose-only. Any conformance check against them (`SUPERVISOR_RESULT.contract_conformance`) is **advisory only** — it NEVER changes `heal_decision` and NEVER blocks a PR; on conflict, CLAUDE.md wins. |
+| Fail-safe | The writer is a safe no-op (exit 0) when no sha256 tool is available; the reader emits nothing and exits 0 in the same case. Writes are atomic (temp + same-filesystem rename inside the twin dir), bounded by a contract-file cap (`SYSTEM_TWIN_MAX_CONTRACTS`, default 200) with write-time eviction, and de-duplicate identical contract bodies. |
+
+`.supervisor/twin/` is covered by the repo's existing `.supervisor/` `.gitignore` entry (the store is
+session-local state, not committed). Self-tests live in `scripts/test-system-contract.sh`.
 
 ---
 

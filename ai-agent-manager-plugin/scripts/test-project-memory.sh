@@ -68,7 +68,22 @@ cnt="$(grep -cE '^- \[' "$EVDIR/.supervisor/memory/PROJECT_MEMORY.md" 2>/dev/nul
 if [ "$cnt" -eq 5 ]; then ok "capped at 5 entries (wrote 6, evicted 1)"; else no "cap not enforced (have $cnt, want 5)"; fi
 grep -q '"action":"evict"' "$EVDIR/.supervisor/memory/.provenance.jsonl" 2>/dev/null && ok "eviction recorded in provenance" || no "eviction not recorded"
 grep -q "fact number 1" "$EVDIR/.supervisor/memory/PROJECT_MEMORY.md" 2>/dev/null && no "oldest entry not evicted" || ok "oldest entry (fact number 1) evicted"
-rm -rf "$EVDIR"
+# Post-eviction read-back: the eviction entry's prev_hash MUST be computed the same way the
+# reader walks the chain (sha of the line WITHOUT its trailing newline). If it isn't, the chain
+# breaks at the first evict entry and the reader distrusts every later `add` — silently dropping
+# all surviving facts once enough writes push them past the first eviction. Cap=3 with 7 writes
+# guarantees every survivor (facts 5,6,7) was added AFTER the first eviction entry, so a broken
+# chain emits 0 survivors. The file-count check above can't catch this — only a read-back can.
+EV2DIR="$(mktemp -d)"; ( cd "$EV2DIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
+( cd "$EV2DIR" && for i in 1 2 3 4 5 6 7; do PROJECT_MEMORY_MAX_LINES=3 bash "$WRITE" --fact "fact number $i" --source ev >/dev/null 2>&1; done )
+evout="$( cd "$EV2DIR" && bash "$READ" 2>/dev/null )"
+evsurv="$(echo "$evout" | grep -cE '^- \[')"; evsurv="${evsurv:-0}"
+if [ "$evsurv" -eq 3 ] && echo "$evout" | grep -q "fact number 5" && echo "$evout" | grep -q "fact number 7"; then
+  ok "post-eviction survivors verify and read back (chain intact across evictions)"
+else
+  no "post-eviction survivors dropped by reader (have $evsurv verified, want 3 — eviction broke the hash chain)"
+fi
+rm -rf "$EVDIR" "$EV2DIR"
 
 echo "== 6. .gitignore coverage (real repo) =="
 if git -C "$REAL_REPO" check-ignore -q .supervisor/memory/PROJECT_MEMORY.md 2>/dev/null; then ok ".supervisor/memory/ is gitignored in the real repo"; else no ".supervisor/memory/ NOT gitignored"; fi

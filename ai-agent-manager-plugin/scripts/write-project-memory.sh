@@ -107,7 +107,7 @@ while [ "$count" -gt "$MAX_LINES" ]; do
   victim="$(grep -nE '^- \[' "$mem_tmp" | head -n1)"
   vid="$(printf '%s' "$victim" | sed -E 's/^[0-9]+:- \[([^]]+)\].*/\1/')"
   awk 'BEGIN{d=0} /^- \[/ && d==0 {d=1; next} {print}' "$mem_tmp" > "$mem_tmp.e" && mv "$mem_tmp.e" "$mem_tmp"
-  eph="$(tail -n1 "$prov_tmp" | sha)"
+  eph="$(printf '%s' "$(tail -n1 "$prov_tmp")" | sha)"
   printf '%s\n' "$(prov_line "$vid" "$eph" "" "eviction" "evict")" >> "$prov_tmp"
   count="$(grep -cE '^- \[' "$mem_tmp" 2>/dev/null)"
 done

@@ -241,6 +241,17 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 5. Detect file overlap between groups (overlap = must serialize)
 6. Identify relevant skills per group (e.g., `skills/nestjs-guards/SKILL.md`)
 7. Mark confidence: HIGH (clear match) / MEDIUM (likely) / LOW (uncertain)
+8. **Blast-radius / impact prediction (advisory, System Twin read-path, v14.10.0):** After the file impact map is settled, predict the *indirect* blast radius — subsystems that depend on what you're touching but that the keyword/glob search above would not surface. For each touched subsystem/file group, attempt to read its System Twin contract:
+
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-system-contract.sh" --subsystem "<subsystem-id>"
+   ```
+
+   Derive `<subsystem-id>` using the **convention in `docs/RESULT_SCHEMAS.md` → `## SYSTEM_CONTRACT`** (repo-root-relative path for a file-backed subsystem, e.g. `scripts/build-insights.sh`; a stable logical name for a cross-file concern, e.g. `supervisor-phase45`). It MUST match the id the builder wrote or the read silently misses — do **not** abbreviate (`build-insights` ≠ `scripts/build-insights.sh`). (Use `${CLAUDE_PLUGIN_ROOT}` — the canonical plugin-root variable; this is the **runtime** path, never `ai-agent-manager-plugin/...`.) The reader is the sole sanctioned, provenance-verified reader of the contract store (`.supervisor/twin/contracts/`); it emits only chain-valid contracts and always exits 0. When a contract is returned, parse its `dependencies:` list (the blast-radius graph edges defined in `docs/RESULT_SCHEMAS.md` → `## SYSTEM_CONTRACT`) and union those dependent subsystems into a predicted impact set that extends *beyond* the directly-touched files. Render it in the `### Blast-Radius / Impact Prediction` subsection below.
+
+   **Graceful fallback (REQUIRED):** when NO contract exists for a subsystem — the common case today, and always on first run — Launch Pad behaves **exactly as it does now**: no error, no blank section, no degraded output. The reader simply emits nothing usable, you omit the Blast-Radius subsection entirely, and the rest of Phase 3 is unchanged. This prediction is **purely additive**; its absence must never alter or weaken the existing analysis.
+
+   The prediction is **advisory only** (sourced from the System Twin contract store, strictly subordinate to `CLAUDE.md` — on any conflict, `CLAUDE.md` wins). It **never blocks, gates, or serializes** anything; it only informs the human reading the brief about likely ripple effects worth a closer look.
 
 **Output:**
 ```markdown
@@ -269,6 +280,16 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 |-------|--------|
 | {domain-a} | `skills/nestjs-guards/SKILL.md` |
 | {domain-b} | `skills/nextjs-api-routes/SKILL.md` |
+
+### Blast-Radius / Impact Prediction
+
+> **Advisory** — sourced from System Twin contracts (`.supervisor/twin/contracts/`), subordinate to `CLAUDE.md`. Informs the reader; does not gate decomposition. **Emit this subsection only when at least one touched subsystem has a verified contract; omit it entirely otherwise** (graceful fallback — see Phase 3 action 8).
+
+| Touched Subsystem | Predicted Dependent Subsystems (from contract `dependencies`) | Source Contract |
+|-------------------|----------------------------------------------------------------|-----------------|
+| {subsystem-a} | {dep-1}, {dep-2} | `contract: {subsystem-a}` |
+
+**Predicted ripple beyond directly-touched files:** {union of dependent subsystems, or "none predicted"}
 
 **Total estimated files:** {modify_count} modify + {create_count} create
 ```

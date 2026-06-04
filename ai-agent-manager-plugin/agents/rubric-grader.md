@@ -43,6 +43,8 @@ The grader **never** changes `heal_decision`, **never** triggers a fix iteration
 - `feature_branch` — the integrated branch name (e.g., `feature/v12.2-new-capabilities`)
 - `pr_url` — convenience reference for the human reading the report
 - `rubric_bullets` — a numbered list of observable assertions extracted by the Supervisor from the brief's `## Outcomes Rubric` section
+- `contract_conformance` *(optional, System Twin)* — the conformance hard signal for this run (status + violation count), if the Supervisor supplies it. **Advisory only.**
+- `benchmark_result` *(optional, System Twin)* — the benchmark hard signal for this run (status, metric, value, delta), if supplied. **Advisory only.**
 
 ## Procedure
 
@@ -59,12 +61,21 @@ The grader **never** changes `heal_decision`, **never** triggers a fix iteration
    rubric_score: <passed>/<total>
    ```
 
-4. **Exit.** Do not append commentary, do not propose remediations, do not run tests.
+4. **Report the System Twin hard signal (advisory, additive).** *If — and only if —* the spawning prompt supplied `contract_conformance` / `benchmark_result` (or the data is readable read-only, e.g. via `bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-system-contract.sh"` or the `session_end` hard-signal fields in `.supervisor/logs/`), emit one or both of the following advisory lines **alongside** the rubric output, *after* the `rubric_score: N/M` line:
+
+   ```
+   contract_conformance: <status> (<violations> advisory violations)
+   benchmark: <status> <metric>=<value> (delta <delta>)
+   ```
+
+   These lines are **purely advisory and report-only.** They **NEVER** change `heal_decision`, **NEVER** change `rubric_score`, and **NEVER** block the PR. They do not count toward `M`, do not affect any `ITEM N: PASS/FAIL` decision, and are omitted entirely when no such data is available (their absence is not a failure). If a field within the signal is missing (e.g. no baseline → no delta), render the present sub-fields and drop the rest; do not fabricate values. This step is read-only like every other — it never writes the twin store.
+5. **Exit.** Do not append commentary, do not propose remediations, do not run tests.
 
 ## Output contract
 
 - Exactly one `rubric_score: N/M` line. `N` = items marked PASS. `M` = total bullets supplied. `0 ≤ N ≤ M` and `M ≥ 1`.
 - One `ITEM <N>: {PASS|FAIL} — <justification>` line per supplied bullet, in input order.
+- Optionally, zero/one each of the advisory `contract_conformance:` / `benchmark:` lines (System Twin hard signal — see Procedure step 4). These are **additive and report-only**: they do not change the `rubric_score: N/M` contract, never count toward `M`, and never affect a heal decision or the PR.
 - No other structured blocks; no JSON.
 
 If the grader cannot complete the pass for any reason (diff unavailable, malformed input, exceeded `maxTurns`), it must still emit `rubric_score: 0/{total}` with each item marked `FAIL — <reason>`. Silent exits are forbidden — the Supervisor's completion tail records `rubric_grader_parse_failed` and sets `rubric_score = null` only when no `rubric_score: N/M` line appears at all.

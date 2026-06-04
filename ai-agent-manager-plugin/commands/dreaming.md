@@ -43,8 +43,10 @@ This makes `/dreaming` the safe, auditable counterpart to live execution: read p
 │  Phase 1: GATHER (Read-only source discovery)                   │
 │     └─> List `.supervisor/logs/*.jsonl` (N most recent by       │
 │         mtime), plus `.supervisor/worker-summaries/*.md` and    │
-│         the briefs in `.supervisor/jobs/done/` + `failed/`.     │
-│         All read-only. No mutation.                             │
+│         the briefs in `.supervisor/jobs/done/` + `failed/`,     │
+│         plus (optional) System Twin contract drift from the     │
+│         `session_end` conformance trend + `.supervisor/twin/`   │
+│         (read-system-contract.sh). All read-only. No mutation.  │
 │                                                                 │
 │  Phase 2: REFLECT (Per-target agent invocation)                 │
 │     └─> For each target agent, spawn it with a reflection       │
@@ -68,7 +70,7 @@ This makes `/dreaming` the safe, auditable counterpart to live execution: read p
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-1. **Read N most recent session logs + worker summaries + completed/failed briefs** — `/dreaming` lists `.supervisor/logs/*.jsonl`, sorts by modification time, and selects the `--sessions N` most recent files (default 5). It also reads (read-only) the **N most recent** (by mtime) `.supervisor/worker-summaries/*.md` files and the **N most recent** briefs across `.supervisor/jobs/done/` + `.supervisor/jobs/failed/` — bounded by the same `--sessions N` cap so a repo with many completed jobs does not load them all — since those carry the worker `memory_candidates` and the per-subtask outcomes reflection needs. All sources are opened read-only. **Empty-input path:** if there is genuinely nothing to reflect on — `.supervisor/logs/` is missing or contains no `*.jsonl` files **and** there are no worker summaries or done/failed briefs — `/dreaming` exits immediately with the existing single message — `No session logs found in .supervisor/logs/. Run /supervisor first, then re-run /dreaming.` — and writes nothing.
+1. **Read N most recent session logs + worker summaries + completed/failed briefs + System Twin contract drift** — `/dreaming` lists `.supervisor/logs/*.jsonl`, sorts by modification time, and selects the `--sessions N` most recent files (default 5). It also reads (read-only) the **N most recent** (by mtime) `.supervisor/worker-summaries/*.md` files and the **N most recent** briefs across `.supervisor/jobs/done/` + `.supervisor/jobs/failed/` — bounded by the same `--sessions N` cap so a repo with many completed jobs does not load them all — since those carry the worker `memory_candidates` and the per-subtask outcomes reflection needs. **Additionally, when System Twin data exists, `/dreaming` reads (read-only) the contract-drift signal**: the `contract_conformance_status` / `contract_violations` trend across the same `session_end` events it already loaded, and/or the per-subsystem contract drift from the twin store under `.supervisor/twin/` via `bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-system-contract.sh"` (the provenance-gated read-side reader — never the writer). This drift signal is folded into reflection as another input (e.g. "contracts drifting / repeated conformance violations in subsystem X"). It is **strictly read-only and advisory** and entirely **optional** — when no twin data exists (no `contract_conformance_status` on any loaded `session_end`, and no `.supervisor/twin/` store) it is silently skipped and reflection proceeds exactly as before. All sources are opened read-only. **Empty-input path:** if there is genuinely nothing to reflect on — `.supervisor/logs/` is missing or contains no `*.jsonl` files **and** there are no worker summaries or done/failed briefs — `/dreaming` exits immediately with the existing single message — `No session logs found in .supervisor/logs/. Run /supervisor first, then re-run /dreaming.` — and writes nothing. (The twin signal alone never makes a repo non-empty; it only enriches reflection when other sources already exist.)
 2. **Spawn target agent(s) in reflection mode** — Each target agent (per `--agent`) is invoked with a reflection-mode system prompt. The prompt instructs the agent to:
    - Read the provided sources and the agent's own existing memory directory under `.claude/agent-memory/`
    - Identify recurring patterns, repeated mistakes, and unstated invariants
@@ -99,6 +101,8 @@ INPUTS (read-only):
 {numbered list of absolute paths to .supervisor/logs/<session_id>.jsonl files}
 - Worker summaries and completed/failed briefs for the same window:
 {numbered list of absolute paths to .supervisor/worker-summaries/*.md and .supervisor/jobs/done/*, .supervisor/jobs/failed/* briefs}
+- System Twin contract drift (OPTIONAL — present only when this project uses the System Twin):
+{the contract_conformance_status / contract_violations trend across the loaded session_end events, and/or per-subsystem contract drift read-only from .supervisor/twin/ via read-system-contract.sh. ABSENT when no twin data exists — treat its absence as "not reported" and reflect normally.}
 - Your own existing persistent memory directory (read-only for this turn):
 .claude/agent-memory/ai-agent-manager-plugin:{agent-id}/
 
@@ -119,6 +123,10 @@ OUTPUT (mandatory six-section report, in this order):
   - The claim
   - Linked Pattern letter
   - Evidence count
+  When the OPTIONAL System Twin contract-drift input is present, fold it in here as
+  one more evidence stream — e.g. "contracts drifting / repeated conformance violations
+  in subsystem X" (cite the contract_conformance_status trend or the drifting subsystem).
+  When it is absent, do not mention it; reflect on the other inputs as before.
 
   ## 3. Proposed Memory Updates
   Each proposal MUST be labeled "PENDING USER APPROVAL" and include:
@@ -164,7 +172,7 @@ Concrete patterns observed across the analyzed sessions: repeated failure modes,
 
 ### 2. Distilled Insights
 
-The interpretation layer: what the recurring patterns *mean*. Each insight is a short, falsifiable claim — e.g., "Workers consistently miss boundary tests when subtasks lack explicit `provides:` entries" — paired with the evidence count.
+The interpretation layer: what the recurring patterns *mean*. Each insight is a short, falsifiable claim — e.g., "Workers consistently miss boundary tests when subtasks lack explicit `provides:` entries" — paired with the evidence count. When the **System Twin contract-drift** input is present (the `contract_conformance_status`/`contract_violations` trend from `session_end`, and/or per-subsystem drift read read-only from `.supervisor/twin/`), it is folded in here as an additional evidence stream — e.g. "contract conformance in subsystem X has regressed across the last 3 sessions." This input is read-only and **advisory**, optional, and silently omitted when no twin data exists (backward-compatible with repos that have never run the System Twin).
 
 ### 3. Proposed Memory Updates
 

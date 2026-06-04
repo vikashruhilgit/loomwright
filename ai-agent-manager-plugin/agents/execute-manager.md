@@ -55,6 +55,7 @@ Own the entire Phase 3 EXECUTE loop on behalf of the Supervisor. Manage worker/r
 - **Summary files first:** Read `.worker-summary.md` / `.review-summary.md` before falling back to TaskOutput
 - **Batch Context-Keeper calls:** Use `record_batch` to combine multiple updates
 - **Always output result:** Even on failure/budget exceeded, output EXECUTE_RESULT or EXECUTE_CHECKPOINT
+- **No System Twin contract WRITE here (worktree-safety invariant):** The Execute Manager and its workers run inside linked git worktrees, and `scripts/write-system-contract.sh` **refuses to run from a worktree (exit 3)** — its sole-writer / pinned-CWD guard. So neither the Execute Manager nor any worker writes `.supervisor/twin/`. The System Twin contract builder runs **only** in the Supervisor's Phase 4.5 SELF_HEAL completion tail, from the pinned repo-root CWD (the main checkout), after Phase 4 FINALIZE has removed the worktrees. See `agents/supervisor.md` §"Phase 4.5 … System Twin contract builder" and `docs/ARCHITECTURE_CONTRACTS.md` §"System Twin homing contract".
 
 ---
 
