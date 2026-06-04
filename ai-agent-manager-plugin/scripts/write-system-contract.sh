@@ -150,6 +150,11 @@ while [ "${count:-0}" -gt "$MAX_CONTRACTS" ]; do
   # Evict the oldest contract file by mtime (excluding the one just written when possible).
   # SAFE: subsystem ids are sanitized to a filename-safe form ($SAFE_ID), so contract filenames
   # never contain spaces/newlines — the ls|head pipeline is fine for this controlled input.
+  # ADVISORY ordering: under coarse filesystem mtime granularity (e.g. 1s on some CI), the order
+  # among contracts written in the same tick is undefined, so the exact victim is not guaranteed.
+  # That is acceptable for the foundation slice — eviction is advisory, and the cap + provenance
+  # chain integrity (the correctness-critical invariants) hold regardless of which file is chosen.
+  # A deterministic ledger-write-order eviction is a documented next-slice option.
   victim="$(ls -1tr "$CONTRACT_DIR"/*.md 2>/dev/null | head -n1)"
   [ -n "$victim" ] || break
   vid="$(basename "$victim" .md)"

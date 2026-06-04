@@ -915,10 +915,13 @@ bench = bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-benchmark.sh
        Touched diff scope: {BASE_BRANCH==main ? 'git diff origin/main...HEAD' : 'git diff $BASE_BRANCH...HEAD'}
        Provenance derived_from: {commit SHA or that diff expression}
 
-       For EACH touched subsystem (a path like 'scripts/build-insights.sh' or a logical name like
-       'supervisor-phase45'), derive a structured SYSTEM_CONTRACT (schema in docs/RESULT_SCHEMAS.md
+       For EACH touched subsystem, derive a structured SYSTEM_CONTRACT (schema in docs/RESULT_SCHEMAS.md
        §SYSTEM_CONTRACT): subsystem, invariants, dependencies, behavioral_specs, and provenance
        (derived_from = the diff/commit above, source = this session id).
+       Pick the `subsystem` id per the convention in docs/RESULT_SCHEMAS.md §SYSTEM_CONTRACT — the
+       repo-root-relative PATH for a file-backed subsystem (e.g. 'scripts/build-insights.sh') or a
+       stable LOGICAL name for a cross-file concern (e.g. 'supervisor-phase45'). Use the SAME id the
+       Launch Pad reader would derive (it is the lookup key); do not abbreviate the path.
        Do NOT populate provenance.content_hash — that field is informational only and a file cannot
        contain its own hash. OMIT it from the contract body you write; write-system-contract.sh
        computes the authoritative content_hash from the written bytes and records it in the ledger.

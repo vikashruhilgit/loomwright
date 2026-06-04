@@ -682,6 +682,13 @@ SYSTEM_CONTRACT:
   `provenance.content_hash` field is at most an informational copy and is never what the gate checks.)
   Un-provenanced or post-chain-break contracts are dropped (and logged to `.supervisor/logs/twin.log`),
   never emitted.
+- **Subsystem ID convention (writer ⇄ reader MUST agree).** The `subsystem` id is the lookup key,
+  so the builder (writer) and Launch Pad (reader) must derive the *same* id for the same subsystem —
+  otherwise a read silently misses (graceful fallback emits nothing). Convention: use the
+  **repo-root-relative path** for a file-backed subsystem (e.g. `scripts/build-insights.sh`) and a
+  stable **logical name** for a cross-file concern (e.g. `supervisor-phase45`). The store *filename*
+  is a sanitized form of this id (`/` → `-`, etc.); the logical id is preserved verbatim in the body
+  and in the provenance `subsystem` field. Do not abbreviate (`build-insights` ≠ `scripts/build-insights.sh`).
 - `schema_version` stays `1`. The artifact is propose-only and advisory; downstream subtasks
   (ST2 read-path, ST3 prove/hard-signal, ST4 measure-path) treat this schema as source of truth.
 
@@ -704,6 +711,11 @@ exactly like it already reads `rubric_score`. It does NOT parse the nested SUPER
  "benchmark_value": <number|null>,
  "benchmark_delta": <number|null>}
 ```
+
+> The session_end record carries both an `event` and a (legacy) `type` key with the same value
+> `"session_end"`. **`event` is canonical going forward** — `build-insights.sh` filters on `.event`;
+> the duplicate `type` is retained only for backward-compatibility with older logs. New consumers
+> should read `.event`.
 
 **Hard-signal field contract (the same data in two shapes):** the FLAT `session_end` fields above
 and the nested `SUPERVISOR_RESULT.contract_conformance` / `.benchmark_result` objects carry **the

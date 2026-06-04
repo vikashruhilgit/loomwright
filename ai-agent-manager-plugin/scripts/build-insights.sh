@@ -86,6 +86,7 @@ while IFS= read -r r; do
       (if .contract_conformance_status!=null then "contract_conformance_status: \(.contract_conformance_status)" else empty end),
       (if .contract_violations!=null then "contract_violations: \(.contract_violations)" else empty end),
       (if .benchmark_status!=null  then "benchmark_status: \(.benchmark_status)"      else empty end),
+      (if .benchmark_metric!=null  then "benchmark_metric: \(.benchmark_metric)"      else empty end),
       (if .benchmark_value!=null   then "benchmark_value: \(.benchmark_value)"        else empty end),
       (if .benchmark_delta!=null   then "benchmark_delta: \(.benchmark_delta)"        else empty end)
     '

@@ -102,7 +102,7 @@ INPUTS (read-only):
 - Worker summaries and completed/failed briefs for the same window:
 {numbered list of absolute paths to .supervisor/worker-summaries/*.md and .supervisor/jobs/done/*, .supervisor/jobs/failed/* briefs}
 - System Twin contract drift (OPTIONAL — present only when this project uses the System Twin):
-{the contract_conformance_status / contract_violations trend across the loaded session_end events, and/or per-subsystem contract drift read read-only from .supervisor/twin/ via read-system-contract.sh. ABSENT when no twin data exists — treat its absence as "not reported" and reflect normally.}
+{the contract_conformance_status / contract_violations trend across the loaded session_end events, and/or per-subsystem contract drift read-only from .supervisor/twin/ via read-system-contract.sh. ABSENT when no twin data exists — treat its absence as "not reported" and reflect normally.}
 - Your own existing persistent memory directory (read-only for this turn):
 .claude/agent-memory/ai-agent-manager-plugin:{agent-id}/
 

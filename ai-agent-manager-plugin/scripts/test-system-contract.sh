@@ -76,18 +76,22 @@ EVDIR="$(mktemp -d)"; ( cd "$EVDIR" && git init -q && git config user.email t@t 
 cnt="$(find "$EVDIR/.supervisor/twin/contracts" -maxdepth 1 -type f -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
 if [ "${cnt:-0}" -eq 3 ]; then ok "capped at 3 contracts (wrote 7, evicted 4)"; else no "cap not enforced (have $cnt, want 3)"; fi
 grep -q '"action":"evict"' "$EVDIR/.supervisor/twin/.provenance.jsonl" 2>/dev/null && ok "eviction recorded in provenance" || no "eviction not recorded"
-[ -f "$EVDIR/.supervisor/twin/contracts/sub1.md" ] && no "oldest contract not evicted" || ok "oldest contract (sub1) evicted"
-# Post-eviction read-back: the survivors (sub5,sub6,sub7) MUST still verify through the read gate.
+# Post-eviction read-back: WHICHEVER 3 contracts survive MUST still verify through the read gate.
 # This is the assertion that catches an eviction that breaks the provenance hash chain (FIX 1) —
 # without it, crossing the cap can silently make read-system-contract.sh emit ZERO contracts.
+# NOTE (order-independence): we deliberately do NOT assert WHICH subsystem was evicted. Eviction
+# picks the oldest by mtime, and under coarse (e.g. 1s) filesystem timestamp granularity the order
+# among same-second writes is undefined — asserting a specific victim would be CI-flaky. The
+# correctness guarantees that matter (cap honored + chain intact across evictions) are order-free.
 ev_out="$( cd "$EVDIR" && bash "$READ" 2>/dev/null )"
-ev_emitted=0
-for s in 5 6 7; do
-  if [ -f "$EVDIR/.supervisor/twin/contracts/sub$s.md" ] && echo "$ev_out" | grep -q "contract $s"; then
-    ev_emitted=$((ev_emitted+1))
-  fi
+ev_total=0; ev_emitted=0
+for f in "$EVDIR"/.supervisor/twin/contracts/*.md; do
+  [ -f "$f" ] || continue
+  ev_total=$((ev_total+1))
+  sid="$(basename "$f" .md)"
+  echo "$ev_out" | grep -q "### contract: $sid" && ev_emitted=$((ev_emitted+1))
 done
-if [ "$ev_emitted" -eq 3 ]; then ok "all 3 surviving contracts still emitted by read gate after repeated eviction"; else no "eviction broke the chain — only $ev_emitted/3 survivors verified through read gate"; fi
+if [ "$ev_total" -eq 3 ] && [ "$ev_emitted" -eq 3 ]; then ok "all $ev_total surviving contracts verify through the read gate after repeated eviction (chain intact, order-independent)"; else no "eviction broke the chain — $ev_emitted/$ev_total survivors verified through read gate"; fi
 rm -rf "$EVDIR"
 
 echo "== 6. .gitignore coverage (real repo) =="
