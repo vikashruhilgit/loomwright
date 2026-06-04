@@ -12,11 +12,11 @@ Guidance for Claude Code when working in this repository.
 
 **AI Agent Manager** is a Claude Code plugin with 13 agent roles (8 user-facing + 5 internal) for plan-first readiness, parallel execution, requirements, planning, code review, commits, adversarial audits, and dual-agent QA. Supervisor and Launch Pad use `.supervisor/` exclusively for state; Orchestrator and Product Owner can optionally use Beads.
 
+**v14.11.0 — `/obsidian`: a Full Linked Obsidian Vault projection of `.supervisor/`:** Adds a new read-only, opt-in `/obsidian` command backed by `scripts/build-vault.sh` (self-tested by `scripts/test-build-vault.sh`; neither counted by the doc-currency gate) that projects `.supervisor/{twin,logs,memory}` into a configurable shared destination as a linked Obsidian vault at `<vault>/<slug>/`. The projection is **content-hash idempotent** (unchanged inputs produce no rewrites), **sparse-tolerant** (absent twin/logs/memory subtrees degrade gracefully), and **decoupled** — it modifies no source-of-truth file and no agent ever reads the vault back, so it can never feed stale state into a run. This is **+1 command (14 → 15)**; **no new agent / skill / hook (still 13 / 15 / 50 / 19)** and **no schema change**. Additive on top of v14.10.0.
+
 **v14.10.0 — System Twin foundation slice (advisory, propose-only, 3-pillar vertical):** Lands one thin, additive, reversible vertical that exercises all three System Twin pillars on the plugin's own repo, entirely advisory and **subordinate to CLAUDE.md**. **Foundation:** a `.supervisor/twin/` per-subsystem **System Contract** artifact store written **exclusively** by `scripts/write-system-contract.sh` (sole writer; worktree-guard; hash-chained provenance; atomic; read via `scripts/read-system-contract.sh`; self-tested by `scripts/test-system-contract.sh`) — Context-Keeper is NOT in this path. **Pillar 1 (Predict):** Launch Pad Phase 3 ANALYZE reads the contract's dependency graph for advisory **blast-radius/impact prediction** (graceful fallback when absent). **Pillar 2 (Prove):** Supervisor Phase 4.5 runs an **advisory contract-conformance check** on the integrated diff (`git diff origin/main...HEAD`) plus a **deterministic benchmark** (`run-benchmark.sh` + corpus, self-tested by `test-benchmark.sh`); the SELF_HEAL completion tail spawns an **ephemeral builder** that writes contracts via the sole writer from the pinned repo-root CWD, emitting a hard signal to both `SUPERVISOR_RESULT` and the `session_end` JSONL. **Pillar 3 (Compound):** `build-insights.sh` aggregates the hard-signal trend, `/insights` surfaces it, `/dreaming` reads contract drift as a DISTILL input, and rubric-grader **REPORTS** conformance/benchmark as advisory lines (never gates). Schema-wise: new `SYSTEM_CONTRACT` schema + additive `SUPERVISOR_RESULT.contract_conformance` / `.benchmark_result` fields + flat `session_end` JSONL hard-signal fields in RESULT_SCHEMAS.md (`schema_version` stays 1); Twin homing contract in ARCHITECTURE_CONTRACTS.md. **Guardrails:** propose-only, advisory-subordinate-to-CLAUDE.md, sole-writer + pinned-CWD, every new script self-tested, no self-applied Twin writes without the existing human gate. The foundation added **ZERO** agents/commands/skills/hooks (the builder is an ephemeral Task; the new scripts are not counted) — **no new agent / command / skill / hook (still 13 / 14 / 50 / 19).** Additive on top of v14.9.0.
 
-**v14.9.0 — `/capability-check --strategy`: a grounded product-direction strategist mode:** `/capability-check` gains a `--strategy` mode that runs a grounded product-evolution pass, reusing the brainstorming skill's 5-lens scored-debate engine to propose **scored, grounded, deduped product DIRECTIONS** — distinct from the default mode's adoption-candidate report. Each direction is scored on a moat × feasibility × effort rubric and must cite **≥1 concrete product asset AND ≥1 newly-feasible enabler (or an explicit drop)**, so untethered ideas never surface; when nothing clears the bar the mode emits a single one-line suppression and exits. Candidates are deduped against a new `product_directions` section in `docs/CAPABILITY_BASELINE.json` (seeded with System Twin = proposed). Default (no-flag) behavior is **UNCHANGED**; the mode is **propose-only** and bounded by `--max-fetches`, with `--update-baseline` as the sole write path (it records direction status, never plugin code). This is a **MODE, not a new command** — no new agent / command / skill / hook (still 13 / 14 / 50 / 19). Additive on top of v14.8.0.
-
-> 📜 **Full release history** (v14.8.0 → v14.0.0 and earlier) lives in [`CHANGELOG.md`](CHANGELOG.md). CLAUDE.md keeps only the two most recent release notes.
+> 📜 **Full release history** (v14.9.0 → v14.0.0 and earlier) lives in [`CHANGELOG.md`](CHANGELOG.md). CLAUDE.md keeps only the two most recent release notes.
 
 ---
 
@@ -25,7 +25,7 @@ Guidance for Claude Code when working in this repository.
 The repo is a **marketplace wrapper** containing one nested plugin:
 
 - Marketplace manifest: `.claude-plugin/marketplace.json` (root)
-- Plugin manifest: `ai-agent-manager-plugin/.claude-plugin/plugin.json` (v14.10.0)
+- Plugin manifest: `ai-agent-manager-plugin/.claude-plugin/plugin.json` (v14.11.0)
 - Agents: `ai-agent-manager-plugin/agents/` (13 markdown prompts)
 - Commands: `ai-agent-manager-plugin/commands/` (14 entry points)
 - Skills: `ai-agent-manager-plugin/skills/` (50 skills, see `SKILLS_INDEX.md`)
@@ -46,7 +46,7 @@ ai-agent-manager/                              # marketplace wrapper
 │   ├── .claude-plugin/plugin.json
 │   ├── .mcp.json                              # bundled MCP servers
 │   ├── agents/                                # 13 markdown prompts
-│   ├── commands/                              # 14 slash commands
+│   ├── commands/                              # 15 slash commands
 │   ├── hooks/hooks.json                       # cross-cutting hooks
 │   ├── skills/                                # 50 skills + SKILLS_INDEX.md
 │   ├── scripts/                               # runtime helpers: telemetry, webhook, notify, resume, memory, lessons, insights (+ self-tests, fixtures)
