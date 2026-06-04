@@ -76,6 +76,14 @@ fi
 # into '-' (mirrors write-system-contract.sh's SAFE_ID approach), so the slug can NEVER escape
 # its own subfolder (no '/', '..', etc.) — a hard guarantee that one project never touches another.
 SLUG="$(printf '%s' "$SLUG" | tr '/' '-' | sed -E 's/[^A-Za-z0-9._-]/-/g; s/-+/-/g; s/^-+//; s/-+$//')"
+# The char class above keeps '.' and '-', so a pure-dot slug ('.', '..', '...') would SURVIVE and
+# resolve to a path-escape (e.g. DEST="$VAULT/.." writes to the vault's PARENT). Neutralize that:
+# strip any leading dots, then reject an empty-or-pure-dot result back to the safe fallback. This
+# is what makes the "slug can NEVER escape its own subfolder" guarantee above actually hold.
+SLUG="$(printf '%s' "$SLUG" | sed -E 's/^[.]+//')"
+case "$SLUG" in
+  ""|.|..|...*) SLUG="project" ;;
+esac
 [ -n "$SLUG" ] || SLUG="project"
 
 # ---- A. Validate / create the per-project destination ---------------------

@@ -13,6 +13,8 @@
 #   4. per-project isolation — a sibling project's folder is byte-for-byte untouched
 #   5. writes only under dest — source .supervisor/ files unchanged; nothing written
 #      under $VAULT outside $VAULT/<slug>/
+#   6. path-escape slug ('..') is contained — a pure-dot slug can NEVER write to the vault's
+#      PARENT; it falls back to the safe 'project/' subfolder under the vault, still exit 0
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -192,6 +194,29 @@ if [ "$HAVE_JQ" -eq 1 ]; then
 else
   ok "jq absent → nothing written (sources trivially unchanged)"
   ok "jq absent → no stray files under \$VAULT (no-op)"
+fi
+
+echo "== 6. path-escape slug ('..') is contained (never writes to vault PARENT) =="
+R7="$(new_repo)"
+# Isolate the vault one level DOWN so its PARENT is a dedicated dir we can scan for escapes.
+VPARENT="$(mktmp)"
+V7="$VPARENT/vault"
+mkdir -p "$V7"
+seed_log "$R7" "sess-esc"
+# A SENTINEL the run must never touch: a sibling of the vault, living in the vault's PARENT.
+printf 'PARENT SENTINEL — must not be touched\n' > "$VPARENT/parent-sentinel.md"
+parent_before="$(csum "$VPARENT/parent-sentinel.md")"
+( cd "$R7" && AI_AGENT_MANAGER_OBSIDIAN_VAULT="$V7" AI_AGENT_MANAGER_OBSIDIAN_SLUG=".." bash "$BUILD" ) >/dev/null 2>&1
+rc=$?
+[ "$rc" -eq 0 ] && ok "exits 0 with a path-escape slug ('..')" || no "expected exit 0, got $rc"
+# No notes may have escaped into the vault's PARENT (any *.md beside the vault, other than our sentinel).
+escaped="$(find "$VPARENT" -mindepth 1 -maxdepth 1 -name '*.md' ! -name 'parent-sentinel.md' 2>/dev/null | wc -l | tr -d ' ')"
+[ "${escaped:-0}" -eq 0 ] && ok "no notes written to the vault's PARENT ('..' neutralized)" || no "$escaped note(s) escaped into the vault's parent"
+[ "$parent_before" = "$(csum "$VPARENT/parent-sentinel.md")" ] \
+  && ok "parent-dir sentinel byte-for-byte unchanged" || no "parent-dir sentinel was modified"
+if [ "$HAVE_JQ" -eq 1 ]; then
+  # The run must still produce a vault, contained UNDER $V7 in the safe 'project' fallback folder.
+  [ -f "$V7/project/project — Index.md" ] && ok "'..' slug fell back to safe 'project/' folder under the vault" || no "expected index under \$VAULT/project/ for '..' slug"
 fi
 
 echo
