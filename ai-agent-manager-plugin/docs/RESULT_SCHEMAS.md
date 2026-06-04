@@ -231,6 +231,25 @@ SUPERVISOR_RESULT:
   rubric_score: string | null          # optional (v12.2.0+) — "N/M" where N is non-negative (>= 0; "0/M" is the legitimate all-fail case), M is positive (>= 1), M >= N; null when no Outcomes Rubric in brief, heal_decision != PASS, or grader parse failed
   branch_base: string | null           # optional (v14.0.0+) — declared Base Branch for the run (from the brief's `Base Branch:` field). null OR absent is treated as "main" by consumers. Purpose: stacked-iteration support for `/autonomous` (iter N+1 branches from iter N's branch). Schema_version stays 1 because the field is purely additive and optional — v13 blocks without it remain valid.
   pr_state: enum [open, closed_by_loop, close_attempt_failed] | null  # optional (v14.0.0+) — records the PR state after Phase 4.5's base-mismatch cleanup path. `null` for runs where Phase 4.5 did NOT execute the base-mismatch cleanup (i.e., the overwhelming majority). `"closed_by_loop"` when the cleanup closed the PR; `"close_attempt_failed"` when the close attempt failed (operator must resolve); `"open"` is reserved for the case where the PR remained open after the path ran (informational only). Schema_version stays 1 — field is additive and optional.
+  contract_conformance:                # optional (System Twin) — advisory only; NEVER changes heal_decision, NEVER blocks PR
+    checked: boolean                   # false when no contracts exist / tooling unavailable
+    status: enum [pass, advisory_violations, unverified, skipped]
+    contracts_evaluated: integer
+    violations: integer                # count of advisory violations (0 on pass)
+    findings:                          # advisory
+      - subsystem: string
+        invariant: string
+        severity: enum [info, advisory]   # by construction NEVER blocking/high
+        detail: string
+  benchmark_result:                    # optional (System Twin)
+    ran: boolean
+    status: enum [pass, regressed, improved, unverified, skipped]
+    name: string
+    metric: string
+    value: number | null
+    baseline: number | null
+    delta: number | null               # value - baseline, null if no baseline
+    unit: string
   preflight_sync: enum [clear, overlap_proceed, superseded_proceed, skipped, unverified] | null  # optional (v14.8.0+) — outcome of the Phase 1.5 PRE-FLIGHT SYNC remote-state reconciliation gate. `clear` = gate ran, no overlap/supersession found (silent path); `overlap_proceed` = OVERLAP found, user chose proceed-anyway (interactive); `superseded_proceed` = SUPERSEDED found, user chose proceed-anyway (interactive); `skipped` = `--skip-preflight-sync` short-circuited the gate; `unverified` = gh/git tooling failed and the gate degraded gracefully and continued. `null` OR absent = EITHER the gate did not run (legacy / pre-v14.8.0 resume) OR the run exited before a *proceed* classification was recorded — namely the `revise-scope` path (emits `status: checkpoint`) and the fail-closed abort path (OVERLAP/SUPERSEDED under `--non-interactive`/stdin-not-a-TTY without `--skip-preflight-sync`; emits `status: failed` with `error: "preflight_overlap_detected"`). In those two cases the gate DID run but the classification is carried in the Decisions Log entry / `error` rather than this field — read `status` + `error` to disambiguate, not `preflight_sync` alone. Schema_version stays 1 — field is additive and optional.
 ```
 
@@ -258,6 +277,11 @@ SUPERVISOR_RESULT:
 **v14.0.0 additive fields (backwards-compat):** `branch_base` and `pr_state` are purely additive optional fields. The Supervisor SubagentStop hook (see `hooks/hooks.json` matcher `ai-agent-manager-plugin:supervisor-runner`) validates the v13 field set plus optional `rubric_score`; it does NOT enumerate `branch_base` / `pr_state` and therefore accepts blocks with or without them. Existing v13 SUPERVISOR_RESULT emissions (which lack both fields) continue to validate against the hook unchanged. Schema_version remains `1` precisely because the additions are optional and additive.
 
 **v14.8.0 additive field (backwards-compat):** `preflight_sync` is a purely additive optional field following the same precedent. The Supervisor SubagentStop hook does NOT enumerate it, so blocks with or without it validate unchanged, and pre-v14.8.0 consumers ignore it (no validation failure). Schema_version remains `1`.
+
+**System Twin additive fields (backwards-compat):** `contract_conformance` and `benchmark_result` are purely additive optional objects following the same `branch_base` / `pr_state` / `preflight_sync` precedent. Both are **advisory only** — `contract_conformance` NEVER changes `heal_decision` and NEVER blocks the PR (its `findings[].severity` is `info` or `advisory` by construction, never `blocking`/`high`); `benchmark_result` is informational. The Supervisor SubagentStop hook does NOT enumerate either field, so blocks with or without them validate unchanged, and pre-System-Twin consumers ignore them. Schema_version remains `1`. Field semantics:
+- `contract_conformance.checked` is `false` (with `status: skipped` or `unverified`) when no contracts exist in `.supervisor/twin/` or the conformance tooling is unavailable; `status: pass` requires `violations: 0`; `status: advisory_violations` requires `violations >= 1` and a non-empty `findings[]`. Field names are a contract with the System Twin builder (ST3 writes, ST4 reads) — do not rename.
+- `benchmark_result.delta` is `value - baseline`, or `null` when `baseline` is `null` (no prior baseline to compare against). `status: regressed` / `improved` are relative to `baseline`; `unverified` / `skipped` when the benchmark did not run or could not be measured.
+- **Hard-signal field contract:** `contract_conformance` and `benchmark_result` (the nested-object shape, above) and the FLAT `session_end` JSONL scalar fields (`contract_conformance_status`, `contract_violations`, `benchmark_status`, `benchmark_metric`, `benchmark_value`, `benchmark_delta` — see the `.supervisor/logs/{session}.jsonl` section below) are **the same hard-signal data in two shapes**. ST3 writes both; `build-insights.sh` reads the FLAT `session_end` fields (via `select(.event=="session_end")`), exactly as it reads `rubric_score` — it does NOT parse the nested SUPERVISOR_RESULT objects.
 
 **Status mapping from heal outcome:**
 - `heal_decision=PASS` OR `heal_loop_ran=false` (loop skipped via `--skip-self-heal`) → `status: completed`
@@ -616,6 +640,82 @@ last_updated: timestamp                # required — ISO 8601
 
 ---
 
+## SYSTEM_CONTRACT
+
+Per-subsystem artifact in the **System Twin** contract store. One file per subsystem at
+`.supervisor/twin/contracts/<subsystem-id>.md` (the `<subsystem-id>` is the sanitized filename;
+the logical `subsystem` name is preserved verbatim in the artifact body). Written **exclusively**
+by `scripts/write-system-contract.sh`, read via `scripts/read-system-contract.sh` (the read-side
+provenance gate). This is the **authoritative definition** of the contract body.
+
+`.supervisor/twin/` is an ADVISORY artifact store like `.supervisor/memory/` — **subordinate to
+the human-authored CLAUDE.md** and NEVER an enforcement boundary. Contracts are propose-only;
+any conformance check against them (`SUPERVISOR_RESULT.contract_conformance`) is advisory and
+NEVER blocks a PR or changes a heal decision. See `docs/ARCHITECTURE_CONTRACTS.md` §"System Twin
+homing contract" for the sole-writer / pinned-CWD / worktree-guard enforcement model.
+
+```yaml
+SYSTEM_CONTRACT:
+  schema_version: 1
+  subsystem: string            # logical name or path, e.g. "scripts/build-insights.sh" or "supervisor-phase45"
+  invariants: [string]         # properties that must hold
+  dependencies: [string]       # subsystems/files this depends on — the blast-radius graph edges (Pillar 1 reads these)
+  behavioral_specs: [string]   # observable behaviors
+  provenance:
+    derived_from: string       # commit SHA or "git diff origin/main...HEAD"
+    written_at: string         # ISO 8601
+    source: string             # builder session id / agent
+    content_hash: string       # sha256 of the contract body
+```
+
+**Store / provenance notes:**
+- The artifact body above is held verbatim in the contract file. A separate hash-chained
+  provenance ledger at `.supervisor/twin/.provenance.jsonl` carries, per write, a
+  `{subsystem, prev_hash, content_hash, source, action, written_at}` entry (mirroring
+  `.supervisor/memory/.provenance.jsonl`). The `provenance.content_hash` recorded inside the
+  artifact body MUST equal `sha256(contract-file-bytes)` — that is the value the read-side gate
+  recomputes to decide whether a contract is verified; un-provenanced or post-chain-break
+  contracts are dropped (and logged to `.supervisor/logs/twin.log`), never emitted.
+- `schema_version` stays `1`. The artifact is propose-only and advisory; downstream subtasks
+  (ST2 read-path, ST3 prove/hard-signal, ST4 measure-path) treat this schema as source of truth.
+
+---
+
+## `session_end` JSONL hard-signal fields (System Twin)
+
+The System Twin hard signal is emitted not only as the nested `SUPERVISOR_RESULT.contract_conformance`
+/ `.benchmark_result` objects (see SUPERVISOR_RESULT, above) but ALSO as **FLAT scalar fields on the
+`session_end` event** in the per-session log `.supervisor/logs/{session}.jsonl`. This is what
+`scripts/build-insights.sh` aggregates — it reads these via `select(.event=="session_end")`,
+exactly like it already reads `rubric_score`. It does NOT parse the nested SUPERVISOR_RESULT objects.
+
+```jsonl
+{"event":"session_end", ...,
+ "contract_conformance_status":"pass|advisory_violations|unverified|skipped",
+ "contract_violations": 0,
+ "benchmark_status":"pass|regressed|improved|unverified|skipped",
+ "benchmark_metric":"<string>",
+ "benchmark_value": <number|null>,
+ "benchmark_delta": <number|null>}
+```
+
+**Hard-signal field contract (the same data in two shapes):** the FLAT `session_end` fields above
+and the nested `SUPERVISOR_RESULT.contract_conformance` / `.benchmark_result` objects carry **the
+same hard-signal data in two shapes**. ST3 writes both; the field correspondence is:
+- `contract_conformance_status` ⇔ `contract_conformance.status`
+- `contract_violations` ⇔ `contract_conformance.violations`
+- `benchmark_status` ⇔ `benchmark_result.status`
+- `benchmark_metric` ⇔ `benchmark_result.metric`
+- `benchmark_value` ⇔ `benchmark_result.value` (`null` when not measured)
+- `benchmark_delta` ⇔ `benchmark_result.delta` (`null` when no baseline)
+
+`build-insights.sh` (ST4 / measure-path) reads the FLAT `session_end` fields — these field names
+are a contract with ST3 (writer) and ST4 (aggregator); do not rename them. The flat fields are
+additive to the `session_end` event; events without them remain valid (a reader treats absent
+fields as "not reported this session").
+
+---
+
 ## QA_SESSION
 
 Schema for `.qa-session/plan.json` and `.qa-session/coverage.json` managed by QA Executor during session-based testing.
@@ -958,6 +1058,7 @@ All result schemas include a `schema_version` field. This enables forward compat
 
 ### Version History
 
+- **SYSTEM_CONTRACT artifact + SUPERVISOR_RESULT v1 extension + `session_end` hard-signal fields** (System Twin): Added the new `## SYSTEM_CONTRACT` artifact schema (per-subsystem advisory contract under `.supervisor/twin/contracts/`, written solely by `scripts/write-system-contract.sh`, gated on read by `scripts/read-system-contract.sh`), the optional additive `contract_conformance` and `benchmark_result` objects on SUPERVISOR_RESULT, and the matching FLAT `session_end` JSONL scalar fields (`contract_conformance_status`, `contract_violations`, `benchmark_status`, `benchmark_metric`, `benchmark_value`, `benchmark_delta`). These are **additive System Twin fields** — SUPERVISOR_RESULT and SYSTEM_CONTRACT both stay at `schema_version: 1`. The SUPERVISOR_RESULT additions follow the `branch_base` / `pr_state` / `preflight_sync` precedent (optional, advisory-only, not enumerated by the Supervisor SubagentStop hook), so pre-System-Twin blocks remain valid. `contract_conformance` is advisory only and NEVER changes `heal_decision` / blocks the PR. The nested SUPERVISOR_RESULT objects and the flat `session_end` fields are the same hard-signal data in two shapes; `build-insights.sh` reads the flat `session_end` fields.
 - **SUPERVISOR_RESULT v1 extension + AUTONOMOUS_RUN status_reason addition** (v14.8.0): Added optional `preflight_sync: enum [clear, overlap_proceed, superseded_proceed, skipped, unverified] | null` to SUPERVISOR_RESULT (records the Phase 1.5 PRE-FLIGHT SYNC gate outcome) and the closed `preflight_overlap_detected` value to the AUTONOMOUS_RUN `status_reason` enum (the gate's CI fail-closed abort, paired with `SUPERVISOR_RESULT.status: failed`). SUPERVISOR_RESULT schema_version stays `1` — `preflight_sync` is optional and additive (same precedent as `branch_base` / `pr_state`); the Supervisor SubagentStop hook does not enumerate it, so pre-v14.8.0 blocks remain valid. AUTONOMOUS_RUN schema_version stays `2` — the new status_reason is an additive enum value, and per the closed-set rule the value was added to both this schema and `skills/autonomous-loop/SKILL.md`.
 - **AUTONOMOUS_RUN v2** (v14.0.0): Bumped from v1 → v2. Extended the closed `status_reason` enum with nine new values paired with v14's continuous-mode (multi-iteration default), non-interactive-fallback path, and stacked-branches work: `non_interactive_without_fallback`, `conflicting_mode_flags`, `iter_pr_base_mismatch`, `rubric_gate_closed_non_interactive`, `no_rubric_in_non_interactive`, `user_aborted_gh_retry`, `supervisor_base_branch_mismatch`, `user_stopped_at_no_rubric_gate`, `invalid_max_iterations` (the last was already added in `skills/autonomous-loop/SKILL.md` for v13 but is now first-class in the schema doc). The bump is forward-only — no SubagentStop hook validates AUTONOMOUS_RUN, so schema-1 emissions remain accepted by downstream tooling for the transition window. Tooling SHOULD accept either schema_version and treat unrecognized `status_reason` values as opaque.
 - **SUPERVISOR_RESULT v1 extension** (v14.0.0): Added optional `branch_base: string | null` and `pr_state: enum [open, closed_by_loop, close_attempt_failed] | null` fields. Schema_version stays `1` because both additions are optional and purely additive — v13 emissions (which lack both fields) continue to validate against the Supervisor SubagentStop hook (`hooks/hooks.json` matcher `ai-agent-manager-plugin:supervisor-runner`), whose validation prompt enumerates only the v13 field set plus optional `rubric_score`. Purpose: `branch_base` records the declared Base Branch (defaults to `"main"` when absent) for stacked-iteration support; `pr_state` records the post-cleanup PR state for Phase 4.5's base-mismatch path (typically `null` — the cleanup path is rare).
