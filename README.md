@@ -6,6 +6,8 @@ A Claude Code plugin for AI agents to collaborate on software projects. 13 speci
 
 > **Install the plugin and run slash commands instead of manually managing agents.**
 >
+> **NEW in v14.10.0 — System Twin foundation slice (advisory, propose-only):** One thin, additive, reversible vertical that exercises all three System Twin pillars on the plugin's own repo while staying **advisory and strictly subordinate to `CLAUDE.md`**. A `.supervisor/twin/` per-subsystem **System Contract** store is written **only** by the repo-root sole writer `scripts/write-system-contract.sh` (worktree-guard + hash-chained provenance + atomic; read via `read-system-contract.sh`; self-tested). **Predict:** Launch Pad reads the contract's dependency graph for advisory **blast-radius** prediction (graceful fallback when absent). **Prove:** Supervisor Phase 4.5 runs an advisory **contract-conformance check** on the integrated diff plus a **deterministic benchmark**, then an ephemeral builder writes contracts from the pinned repo-root CWD and emits a hard signal to `SUPERVISOR_RESULT` + the session JSONL. **Compound:** `/insights` surfaces the conformance/benchmark trend, `/dreaming` reads contract drift, and the rubric-grader **reports** the signal as advisory lines that never gate. Propose-only, no self-applied writes without the existing human gate — no new agent/command/skill/hook (still 13 / 14 / 50 / 19).
+>
 > **NEW in v14.9.0 — `/capability-check --strategy`: product-direction strategist:** `--strategy` turns `/capability-check` from a pure platform-adoption diff into a grounded product-evolution pass that proposes **scored, deduped, differentiated product directions** (reusing the brainstorming skill), each grounded in a real product asset plus a newly-feasible enabler or an explicit drop. Default (no-flag) behavior is unchanged; the mode is propose-only, bounded, and human-gated — no new command/agent/skill/hook (still 13 / 14 / 50 / 19).
 >
 > **NEW in v14.3.0 — Advisory project memory (P2b):** Agent-writable, cross-session **project memory** under `.supervisor/memory/` so the plugin stops re-discovering your codebase each run. Built behind guardrails: a **sole writer** (`scripts/write-project-memory.sh`) that **refuses git-worktree CWDs** + hash-chains provenance + caps at 200 lines, and a **read-side gate** (`scripts/read-project-memory.sh`) that emits only chain-verified entries (poisoned lines dropped). Memory is **advisory, subordinate to `CLAUDE.md`, human-gated** — Launch Pad reads it during analysis and *proposes* new facts for your approval. Launch-Pad-only in v1; no new agent/skill/command/hook (still 19 hooks).
@@ -403,6 +405,44 @@ repo) or set `AI_AGENT_MANAGER_TELEMETRY_REPO=owner/repo`. See
 [ai-agent-manager-plugin/docs/TELEMETRY.md](ai-agent-manager-plugin/docs/TELEMETRY.md)
 for the scoring rubric, exit-code table, and wrapper-vs-core
 architecture.
+
+---
+
+## System Twin (advisory foundation, v14.10.0)
+
+The **System Twin** is an in-repo model of your own system that the agents
+consult and update — entirely **advisory, propose-only, and strictly
+subordinate to `CLAUDE.md`**. v14.10.0 ships its **foundation slice**: one thin,
+additive, reversible vertical that exercises all three pillars on the plugin's
+own repo. Nothing here gates a PR or self-applies a change.
+
+- **Foundation — System Contracts.** A per-subsystem **System Contract** store
+  under `.supervisor/twin/` (dependency graph, invariants, expectations) is
+  written **exclusively** by the repo-root sole writer
+  `scripts/write-system-contract.sh` — it refuses any git-worktree CWD,
+  hash-chains provenance, and writes atomically. Contracts are read via
+  `scripts/read-system-contract.sh` and self-tested by
+  `scripts/test-system-contract.sh`. (Context-Keeper is deliberately not in this
+  write path.)
+- **Pillar 1 — Predict.** Launch Pad's analysis phase reads the contract's
+  dependency graph to produce an advisory **blast-radius / impact prediction**
+  for the requested work, degrading gracefully (no prediction, no error) when no
+  contract exists yet.
+- **Pillar 2 — Prove.** The Supervisor's post-merge self-heal phase runs an
+  advisory **contract-conformance check** against the integrated diff plus a
+  **deterministic benchmark**; an ephemeral builder then refreshes the contracts
+  from the pinned repo-root CWD via the sole writer and emits a hard signal to
+  both `SUPERVISOR_RESULT` and the session JSONL.
+- **Pillar 3 — Compound.** `/insights` surfaces the conformance / benchmark
+  trend over time, `/dreaming` reads contract drift as a distillation input, and
+  the rubric-grader **reports** the signal as advisory lines — it never gates the
+  PR.
+
+**Guardrails:** propose-only (no self-applied Twin writes without the existing
+human gate), advisory and subordinate to `CLAUDE.md`, sole-writer +
+pinned-CWD enforcement, and every new script self-tested. The foundation added
+**no new agent / command / skill / hook** — the builder is an ephemeral Task and
+the helper scripts are not counted.
 
 ---
 
