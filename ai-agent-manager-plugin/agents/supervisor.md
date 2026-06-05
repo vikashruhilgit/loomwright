@@ -949,6 +949,28 @@ bench = bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-benchmark.sh
 
 5. **Emit SUPERVISOR_RESULT block for this task** (see "Result Block" section below). Exactly one block per task, emitted here — Phase 5 LOOP emits nothing. When looping to a new task, the next task's Phase 4.5 tail will emit its own block. The SubagentStop hook validates the last block; earlier blocks must still be schema-valid. Include the additive `contract_conformance` and `benchmark_result` objects (computed earlier in this phase), and also emit the FLAT hard-signal fields onto the `session_end` JSONL event — see "Hard-signal fields (System Twin)" below.
 
+6. **Advisory Twin delta line (System Twin Level-1 — informational ONLY):**
+
+   Print one human-readable line summarizing THIS run's Twin hard signal, built from the
+   `contract_conformance` / `benchmark_result` values already computed above in this phase.
+   This is a pure echo of `format-twin-delta.sh` output — it NEVER changes `heal_decision`,
+   NEVER blocks or alters the PR, and NEVER affects control flow. The Supervisor result/gate
+   behavior is byte-identical with or without this line. The script always exits 0; when this
+   run produced no Twin signal (fields null/absent, e.g. Twin not exercised) it prints a benign
+   `Twin: no signal this run` (or pass `--from-session-end` the session_end line instead).
+
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/format-twin-delta.sh" \
+     --conformance-status "{contract_conformance.status}" \
+     --violations "{contract_conformance.violations}" \
+     --benchmark-status "{benchmark_result.status}" \
+     --benchmark-name "{benchmark_result.name}" \
+     --benchmark-metric "{benchmark_result.metric}" \
+     --benchmark-value "{benchmark_result.value}" \
+     --benchmark-delta "{benchmark_result.delta}"
+   # echo the single line into the Phase 4.5 output (advisory). Never gates.
+   ```
+
 **Hard-signal fields (System Twin / ST3 — written in BOTH shapes):**
 
 The contract-conformance result and the benchmark result are emitted as **the same data in two shapes**, per `docs/RESULT_SCHEMAS.md` §"`session_end` JSONL hard-signal fields":
@@ -986,6 +1008,7 @@ The contract-conformance result and the benchmark result are emitted as **the sa
 - Decision: {PASS|ESCALATED|null}
 - Fixable issues fixed: {count}
 - Remaining issues: {count}
+- Twin signal: {format-twin-delta.sh output line}
 - Resume count: {N} (0 after successful PASS/ESCALATED)
 - Task: {task_id} [COMPLETED | COMPLETED_WITH_ESCALATION]
 - Tool calls: Supervisor {N}/30
