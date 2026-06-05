@@ -57,6 +57,9 @@ run_eq "Twin: conformance ADVISORY_VIOLATIONS (2 violations)" \
   --conformance-status advisory_violations --violations 2
 run_eq "Twin: benchmark selftest_pass_count 4 (Δ 0)" \
   --benchmark-status pass --benchmark-metric selftest_pass_count --benchmark-value 4 --benchmark-delta 0
+# negative-zero magnitude normalizes to a bare "0" (never renders the cosmetic "-0")
+run_eq "Twin: benchmark 4 (Δ 0)" \
+  --benchmark-status pass --benchmark-value 4 --benchmark-delta -0
 # violations defaults to 0 when conformance present but --violations omitted
 run_eq "Twin: conformance PASS (0 violations)" --conformance-status pass
 # benchmark with no name and no metric → bare "benchmark <value>"

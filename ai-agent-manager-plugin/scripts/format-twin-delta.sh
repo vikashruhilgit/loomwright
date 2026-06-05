@@ -171,10 +171,15 @@ case "$F_BM_STATUS" in
       # STRING-based (no arithmetic) so an int64-overflow string can never reach
       # [ -gt ]/[ -lt ] and emit a stderr diagnostic — the line stays clean and exit 0.
       if is_int "$F_BM_DELTA"; then
-        case "$F_BM_DELTA" in
-          -*) sd="$F_BM_DELTA" ;;   # negative — already carries the minus
-          0)  sd="0" ;;
-          *)  sd="+$F_BM_DELTA" ;;  # positive
+        # Normalize zero magnitude (0, 00, -0, -00) to a bare "0" so the cosmetic
+        # "-0" never renders. Otherwise keep the verbatim sign for real magnitudes.
+        case "${F_BM_DELTA#-}" in
+          *[!0]*)                              # has a non-zero digit → real magnitude
+            case "$F_BM_DELTA" in
+              -*) sd="$F_BM_DELTA" ;;          # negative — already carries the minus
+              *)  sd="+$F_BM_DELTA" ;;         # positive
+            esac ;;
+          *) sd="0" ;;                          # all-zero magnitude → normalized 0
         esac
         bm_seg="$bm_seg (Δ $sd)"
       fi

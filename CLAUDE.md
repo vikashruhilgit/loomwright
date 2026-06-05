@@ -27,7 +27,7 @@ The repo is a **marketplace wrapper** containing one nested plugin:
 - Marketplace manifest: `.claude-plugin/marketplace.json` (root)
 - Plugin manifest: `ai-agent-manager-plugin/.claude-plugin/plugin.json` (v14.12.0)
 - Agents: `ai-agent-manager-plugin/agents/` (13 markdown prompts)
-- Commands: `ai-agent-manager-plugin/commands/` (14 entry points)
+- Commands: `ai-agent-manager-plugin/commands/` (15 entry points)
 - Skills: `ai-agent-manager-plugin/skills/` (50 skills, see `SKILLS_INDEX.md`)
 - Hooks: `ai-agent-manager-plugin/hooks/hooks.json`
 - Docs: `ai-agent-manager-plugin/docs/`
