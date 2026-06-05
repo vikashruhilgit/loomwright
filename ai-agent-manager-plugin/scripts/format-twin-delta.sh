@@ -81,6 +81,15 @@ is_unset() {
 # as NOT-an-int, so the delta is omitted rather than mis-rendered. Even so, every
 # downstream consumer stays arithmetic-free (see the string-only delta sign block)
 # as defense-in-depth, so a slip-through could never emit a stderr diagnostic.
+#
+# INTEGER-VALUED METRICS ONLY (by design). The schema permits `benchmark_value` /
+# `benchmark_delta` to be any `number | null` (RESULT_SCHEMAS.md:249,251), but the
+# only benchmark today (run-benchmark.sh → selftest_pass_count) is an integer count,
+# so this guard accepts integers only. A non-integer (float) value/delta is treated
+# as "not a number" and its segment is simply OMITTED — it fails safe (no error, no
+# mis-render), but it would silently drop a float benchmark. If a float-valued metric
+# is ever added, widen this guard to accept a single decimal point (and update the
+# zero-magnitude normalization + the delta-sign block accordingly).
 is_int() {
   s="${1:-}"
   case "$s" in ""|null|None) return 1 ;; esac
