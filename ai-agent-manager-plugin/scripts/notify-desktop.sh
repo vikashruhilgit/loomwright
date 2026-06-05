@@ -198,6 +198,43 @@ fi
 if [ -z "$BODY" ]; then BODY="Claude Code event"; fi
 if [ -z "$TITLE" ]; then TITLE="Claude Code"; fi
 
+# ---- Click target (clickable banner) ---------------------------------------
+# Decide what clicking the banner should do. The pure decision logic lives in
+# the sibling notify-click-target.sh (self-tested by test-notify-click-target.sh)
+# so the UUID validation + claude:// deep-link construction can be unit-tested
+# without installing terminal-notifier or firing a real notification.
+#
+# This only has an EFFECT when terminal-notifier is installed (see the Darwin
+# branch below). macOS's built-in `osascript display notification` cannot carry
+# a click action at all, so without terminal-notifier the banner is the same
+# non-clickable banner as before — zero regression.
+#
+#   AI_AGENT_MANAGER_NOTIFY_CLICK = activate (default) | resume | auto | off
+#     activate → click brings the Claude desktop app to the foreground.
+#                RELIABLE on modern macOS (incl. macOS 26) — this is the default.
+#                For a single active session, focusing the app lands on it.
+#     resume   → click opens claude://claude.ai/resume?session=<uuid> to jump
+#                back to THIS exact session. Works only where terminal-notifier's
+#                -open click still fires (older macOS); on macOS 26 the click
+#                callback is dead, so the banner won't navigate. Opt-in.
+#     auto     → activate when already inside the desktop app; else resume.
+#     off      → no click action; plain banner only.
+#
+# Session id: the hook payload's .session_id is authoritative (same field
+# send-telemetry.sh reads); fall back to the CLAUDE_CODE_SESSION_ID env var.
+SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo .)"
+CLICK_MODE="${AI_AGENT_MANAGER_NOTIFY_CLICK:-activate}"
+SESSION_ID="$(printf '%s' "$INPUT" | jq -r '.session_id // empty' 2>/dev/null || true)"
+[ -z "$SESSION_ID" ] && SESSION_ID="${CLAUDE_CODE_SESSION_ID:-}"
+CLICK_ACTION="none"
+CLICK_TARGET=""
+if [ "$CLICK_MODE" != "off" ] && [ -r "$SCRIPT_DIR/notify-click-target.sh" ]; then
+  CLICK_OUT="$(bash "$SCRIPT_DIR/notify-click-target.sh" "$CLICK_MODE" "$SESSION_ID" "${CLAUDE_CODE_ENTRYPOINT:-}" 2>/dev/null || true)"
+  CLICK_ACTION="$(printf '%s\n' "$CLICK_OUT" | sed -n 's/^ACTION=//p' | head -1)"
+  CLICK_TARGET="$(printf '%s\n' "$CLICK_OUT" | sed -n 's/^TARGET=//p' | head -1)"
+  [ -z "$CLICK_ACTION" ] && CLICK_ACTION="none"
+fi
+
 # ---- Dispatch ---------------------------------------------------------------
 # Per-platform native notification. Each branch is best-effort and never
 # allowed to bubble a non-zero exit. (A terminal-bell tier was evaluated and
@@ -236,9 +273,57 @@ run_bounded() {
   fi
 }
 
+# fire_detached <cmd...> — run a notifier FULLY DETACHED so this hook returns
+# immediately. terminal-notifier does NOT exit while a clickable notification
+# (-sender / -open) is on screen — it lingers to service the click — which would
+# otherwise BLOCK the agent loop (and `run_bounded` can't help on stock macOS,
+# which ships neither `timeout` nor `gtimeout`). Backgrounding in a subshell
+# with ALL stdio redirected away from the hook's inherited pipes is what lets
+# the hook finish: a backgrounded child still holding the hook's stdout pipe
+# would keep the hook "running" until that child exits. The orphaned notifier is
+# harmless and is reaped when the user clicks/clears it (or when the next
+# notification in the same -group replaces it).
+fire_detached() {
+  ( "$@" >>"$NOTIFY_LOG" 2>&1 </dev/null & ) >/dev/null 2>&1
+}
+
 case "$(uname -s 2>/dev/null || echo unknown)" in
   Darwin)
-    if command -v osascript >/dev/null 2>&1; then
+    # Preferred path: terminal-notifier produces a CLICKABLE banner.
+    #   -open <claude:// url> runs the resume deep link on click (jump back to
+    #     THIS session); -activate <bundle id> just focuses the desktop app.
+    #
+    # IMPORTANT — do NOT use -sender here. Impersonating another app's bundle id
+    # (e.g. com.anthropic.claudefordesktop, to borrow its icon) is silently
+    # REJECTED by the macOS 26 notification service: the banner never appears.
+    # Verified empirically — a bare terminal-notifier delivers fine, the same
+    # call with -sender delivers nothing. Omitting -sender also means
+    # terminal-notifier owns the notification, so the -open click callback fires
+    # reliably instead of being hijacked into a plain sender-activate. The only
+    # cost is cosmetic: the banner shows terminal-notifier's icon, not Claude's.
+    #
+    # Built-in `osascript display notification` (the fallback when
+    # terminal-notifier is absent) cannot carry any click action — that is the
+    # whole reason terminal-notifier is preferred here. Install it with
+    # `brew install terminal-notifier` to enable clickable banners.
+    CLAUDE_BUNDLE_ID="com.anthropic.claudefordesktop"
+    # -group coalesces banners (a new one replaces the prior in the group, which
+    # also reaps the prior lingering terminal-notifier process — bounding pileup).
+    TN_GROUP="ai-agent-manager"
+    if command -v terminal-notifier >/dev/null 2>&1 && [ "$CLICK_ACTION" != "none" ]; then
+      if [ "$CLICK_ACTION" = "open" ] && [ -n "$CLICK_TARGET" ]; then
+        fire_detached terminal-notifier \
+          -title "$TITLE" -message "$BODY" -sound Glass \
+          -group "$TN_GROUP" \
+          -open "$CLICK_TARGET"
+      else
+        # activate (CLICK_TARGET is the bundle id; default to Claude's).
+        fire_detached terminal-notifier \
+          -title "$TITLE" -message "$BODY" -sound Glass \
+          -group "$TN_GROUP" \
+          -activate "${CLICK_TARGET:-$CLAUDE_BUNDLE_ID}"
+      fi
+    elif command -v osascript >/dev/null 2>&1; then
       ESC_TITLE="$(osascript_escape "$TITLE")"
       ESC_BODY="$(osascript_escape "$BODY")"
       # Glass is a system-supplied sound; safe on every macOS install.
