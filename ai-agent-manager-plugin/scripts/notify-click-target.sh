@@ -87,6 +87,10 @@ case "$MODE" in
     # Already inside the desktop app → focusing it returns the user to the
     # waiting prompt; no need to re-import the session. Other entrypoints
     # (terminal/CLI) get the resume deep-link below.
+    # NOTE: "claude-desktop" is the empirically-confirmed value of
+    # CLAUDE_CODE_ENTRYPOINT when running inside the Claude desktop app
+    # (verified live). This is a best-effort match — if the value ever changes,
+    # `auto` simply behaves like `resume`, which still degrades safely.
     if [ "$ENTRYPOINT" = "claude-desktop" ]; then
       emit activate "$CLAUDE_BUNDLE_ID"
     fi
