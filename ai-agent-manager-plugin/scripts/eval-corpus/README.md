@@ -49,7 +49,19 @@ A task directory **without an executable `check.sh` is not counted** (neither pa
 
 Same corpus → identical `tasks_total`, `tasks_passed`, `pass_rate`, and `per_task`. The `commit` and
 `date` fields are **contextual** and legitimately vary run to run — they are **not** part of the
-determinism invariant.
+determinism invariant. Task discovery uses `LC_ALL=C sort`, so `per_task` ordering is stable across
+locales (not just filesystem enumeration order).
+
+### Portability of the seed tasks (maintainer-side)
+
+The seed corpus tasks `doc-currency-green`, `version-consistent`, and `eval-selftest-green` are
+**dogfooded against this development repo**: their `check.sh` resolves the repo root via
+`git rev-parse --show-toplevel` and invokes repo-local scripts (`scripts/check-doc-currency.sh`,
+`scripts/validate-version.sh`, `ai-agent-manager-plugin/scripts/test-run-eval.sh`). They are therefore
+**maintainer-side checks** — they pass only when run inside this repo and would fail in a marketplace
+install under an arbitrary user project. `fixture-unit-test` is the only fully self-contained,
+location-independent task. Corpus *authors* are free to write either kind; the runner itself is
+location-independent (it scores whatever `check.sh` files it finds).
 
 ### Fail-safe
 
