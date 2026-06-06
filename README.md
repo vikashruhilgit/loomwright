@@ -578,9 +578,9 @@ This prevents knowledge loss and helps agents learn from discoveries.
 
 To modify or extend agents:
 
-1. Agents are Markdown prompts in `ai-agent-manager-plugin/agents/` (13 files)
-2. Commands are in `ai-agent-manager-plugin/commands/` (12 commands)
-3. Skills are in `ai-agent-manager-plugin/skills/` (50 skills, versioned with SKILLS_INDEX.md)
+1. Agents are Markdown prompts in `ai-agent-manager-plugin/agents/` (14 files)
+2. Commands are in `ai-agent-manager-plugin/commands/` (16 commands)
+3. Skills are in `ai-agent-manager-plugin/skills/` (51 skills, versioned with SKILLS_INDEX.md)
 4. Hooks: per-agent in frontmatter (Worker, Execute Manager) + cross-cutting in `ai-agent-manager-plugin/hooks/hooks.json` (Code Reviewer, QA Executor, TaskCompleted)
 5. Docs: `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md`, `…/FAILURE_ESCALATION.md`, `…/ARCHITECTURE_CONTRACTS.md`, `…/ARCHITECTURE.md`
 6. All agents follow standard output format (see AGENT_GUIDELINES.md)
@@ -644,7 +644,7 @@ Claude Code caches plugin contents. After pulling new changes (e.g. a fresh `git
    /reload-plugins
    ```
    Run from the repo root so `./` resolves to your local checkout.
-3. Verify with `/skills` — should show all 50 skills under "Plugin skills". Use `/agent-help` to confirm all 12 user-facing commands are registered.
+3. Verify with `/skills` — should show all 51 skills under "Plugin skills". Use `/agent-help` to confirm all 15 user-facing commands are registered.
 
 **Previously installed via `claude --plugin-dir` (flat layout)?** Older install instructions told you to launch Claude with `--plugin-dir` pointing at the repo root. That no longer works — the plugin is now nested under `ai-agent-manager-plugin/`. Switch to the marketplace flow shown in **Quick Start → 1. Install the Plugin**.
 

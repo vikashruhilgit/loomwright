@@ -96,7 +96,7 @@ Read `${CLAUDE_PLUGIN_ROOT}/docs/CAPABILITY_BASELINE.json` as in Workflow A, **a
 
 ### B2. READ the product surface (grounding inputs — name them concretely)
 The strategy pass grounds every idea in the plugin's *real* surface, not generic advice. Read:
-- **`agents/`** — the 13 agent roles (their missions, frontmatter, contracts) — the plugin's core capabilities and gaps.
+- **`agents/`** — the 14 agent roles (their missions, frontmatter, contracts) — the plugin's core capabilities and gaps.
 - **`commands/`** — the command set (the user-facing entry points) — where new directions plug in.
 - **The flywheel / insights state** — `.supervisor/insights/` (the `/insights` dashboard) and `.supervisor/logs/*.jsonl` session logs — what the system already observes about its own use. These are gitignored session artifacts: **if absent** (fresh install / CI / no prior runs), skip them and note the gap in the coverage footer (the same graceful-degradation Workflow A applies to a missing source).
 - **`docs/SPIKES/ENHANCEMENT_PLAN_v15_DRAFT.md`** — the north-star direction doc (flywheel §0d, on-demand-first §4.1, the single most dangerous idea §7).

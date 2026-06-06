@@ -3,7 +3,7 @@ name: ai-agent-manager-plugin:review-pr-runner
 description: Internal runner for the `/review-pr` standalone PR review-and-heal workflow. Invoke directly via `claude --agent ai-agent-manager-plugin:review-pr-runner` when you want an agent-owned session. Not intended for auto-delegation from a main-thread session — use the `/review-pr` slash command instead. Runs the bounded review→fix→re-review loop defined by the `review-heal` skill against an existing PR URL; never auto-merges.
 tools: Task, Read, Glob, Grep, Bash
 model: inherit
-maxTurns: 30
+maxTurns: 60
 effort: medium
 color: "#00CED1"
 permissionMode: default

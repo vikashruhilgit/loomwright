@@ -706,6 +706,21 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 
 ---
 
+### 🩺 /review-pr — Standalone PR Review-and-Heal
+
+**Purpose:** Run the bounded review→fix→re-review loop against an *existing* PR URL — decoupled from a full Supervisor run, so any open PR (human- or agent-authored) can be reviewed and auto-healed in place. Resolves the PR's head branch (`gh pr view --json headRefName`), checks it out, then orchestrates a `code-reviewer` pass + a `general-purpose` fix worker (default 3 iterations) until the diff is clean (`PASS`) or escalates (`ESCALATED`). Pushes fixes (never `--force`); **never auto-merges** — the PR is always left open for a human, and `NEEDS_HUMAN` stops + notifies + posts findings to the PR.
+
+> **Inline main-thread command.** `/review-pr` runs inline; the `ai-agent-manager-plugin:review-pr-runner` agent is for `claude --agent` agent-owned sessions and is NEVER `Task`-spawned (it spawns its own `code-reviewer` + fix-worker children — subagents cannot spawn subagents). Plain `/supervisor` can optionally auto-dispatch it from the completion tail (`--auto-review` / `--no-auto-review`, off by default); `/autonomous` chains it as a Task step in EVALUATE.
+
+**Usage:**
+```bash
+/review-pr <pr-url>                                                       # review-and-heal an existing PR
+```
+
+**Learn More:** see `ai-agent-manager-plugin/commands/review-pr.md` for the workflow and the `REVIEW_HEAL_RESULT` output; the loop contract lives in `ai-agent-manager-plugin/skills/review-heal/SKILL.md`.
+
+---
+
 ### QA Workflow Diagram
 
 ```
@@ -1016,7 +1031,7 @@ ai-agent-manager-plugin/              # Nested plugin root
 │   ├── ARCHITECTURE.md
 │   ├── QA_SYSTEM_BLUEPRINT.md
 │   └── SPIKES/                       # Capability spike investigations + deferral records
-└── skills/                           # Skill files (50 skills)
+└── skills/                           # Skill files (51 skills)
     ├── SKILLS_INDEX.md               # Skill catalog with agent mapping
     ├── supervisor-readiness/         # Pre-flight checklist & brief template
     ├── agent-teams/                  # Agent Teams patterns (experimental)
