@@ -40,7 +40,8 @@
   "known_not_adopted": [
     {"feature": "Remote Control", "why": "documented as the inbound reply leg for v14.1.0 notifications; not yet wired into any workflow"},
     {"feature": "PreCompact hook", "why": "considered for state-flush before compaction; SessionStart resume covers the recovery path for now"},
-    {"feature": "Agent Teams (CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS)", "why": "documented as experimental/complementary; graduation criteria tracked in agent-teams skill, not met"}
+    {"feature": "Agent Teams (CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS)", "why": "documented as experimental/complementary; graduation criteria tracked in agent-teams skill, not met"},
+    {"feature": "isolation: worktree frontmatter", "why": "NO-GO (2026-06-06 empirical probe): native worktree isolation aborts because the plugin's WorktreeCreate hook returns no worktree path; adopting it would require removing/reworking that hook first — not a clean win, do not re-flag as an easy adoption"}
   ],
   "deps": {
     "vikashruhil-mysql-mcp": {"via": "uvx", "pin": "unpinned (--refresh)", "note": "bundled read-only MySQL MCP server"},

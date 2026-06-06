@@ -32,7 +32,7 @@ __pycache__/
 
 # Supervisor/Worker runtime artifacts
 .supervisor/
-.worker-summary.md
+.worker-summary*.md
 
 # Build artifacts
 dist/
