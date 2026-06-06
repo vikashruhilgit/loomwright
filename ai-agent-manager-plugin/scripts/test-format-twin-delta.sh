@@ -60,8 +60,10 @@ run_eq "Twin: benchmark selftest_pass_count 4 (Δ 0)" \
 # negative-zero magnitude normalizes to a bare "0" (never renders the cosmetic "-0")
 run_eq "Twin: benchmark 4 (Δ 0)" \
   --benchmark-status pass --benchmark-value 4 --benchmark-delta -0
-# violations defaults to 0 when conformance present but --violations omitted
-run_eq "Twin: conformance PASS (0 violations)" --conformance-status pass
+# note B: --violations omitted → NO parenthetical (never fabricate "(0 violations)")
+run_eq "Twin: conformance PASS" --conformance-status pass
+# but a genuine integer 0 still renders "(0 violations)" (distinguishable from omitted)
+run_eq "Twin: conformance PASS (0 violations)" --conformance-status pass --violations 0
 # benchmark with no name and no metric → bare "benchmark <value>"
 run_eq "Twin: benchmark 7" --benchmark-status pass --benchmark-value 7
 # name takes precedence over metric for the label
@@ -89,8 +91,10 @@ run_exit0 "non-numeric benchmark value" --benchmark-status pass --benchmark-valu
 run_exit0 "malformed --from-session-end line" --from-session-end '{this is not valid json'
 run_exit0 "missing flag argument" --conformance-status
 run_exit0 "from-session-end nonexistent file" --from-session-end /no/such/file/here.jsonl
-# non-numeric violations still falls back to 0 in the rendered line (and exits 0)
-run_eq "Twin: conformance PASS (0 violations)" --conformance-status pass --violations abc
+# note B: non-numeric violations → NO parenthetical (and still exits 0)
+run_eq "Twin: conformance PASS" --conformance-status pass --violations abc
+# advisory_violations + unparseable → no self-contradictory "(0 violations)"
+run_eq "Twin: conformance ADVISORY_VIOLATIONS" --conformance-status advisory_violations --violations abc
 
 # --- delta slip-through class: embedded-hyphen + int64-overflow must NOT reach arithmetic ---
 # Embedded-hyphen delta (1-2) is NOT a valid int → delta omitted, benign line, exit 0.
