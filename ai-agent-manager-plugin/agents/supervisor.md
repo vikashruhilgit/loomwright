@@ -902,7 +902,30 @@ bench = bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-benchmark.sh
 
    **Runs only on a PASS outcome** (`heal_decision == PASS` or loop-skipped — i.e. the same outcomes that move the job to `done/` in step 2). On the ESCALATED / base-mismatch / invariant-violation paths, SKIP the builder (do not record contracts for a code state we did not pass). This is **propose-only, advisory, and reversible** — it writes the advisory twin store, never plugin code, never a gate.
 
-   Spawn an **ephemeral, Bash-capable builder Task** (a `general-purpose` Task — **NOT a new permanent agent**, NOT Context-Keeper) that derives one SYSTEM_CONTRACT per touched subsystem from the integrated feature-branch diff and writes each via `write-system-contract.sh`:
+   **First, compute a per-subsystem incident map for THIS run** (advisory blast-radius history — see `docs/RESULT_SCHEMAS.md` §SYSTEM_CONTRACT `incident_history`). This map records ONLY incidents observed *this run* and is passed into the builder Task so it can append (never backfill) `incident_history` entries. Derive it from two sources already computed earlier in Phase 4.5:
+
+   ```
+   incident_map = {}   # subsystem id -> [ {kind, summary} ]   (this-run incidents only)
+
+   # (a) Conformance violations — group contract_conformance.findings by subsystem.
+   for f in contract_conformance.findings:           # each: {subsystem, invariant, severity, detail}
+     incident_map[f.subsystem] += { kind: "conformance_violation",
+                                    summary: f.invariant }   # the violated invariant text (short human string)
+
+   # (b) Self-heal fixes — map each fix iteration's modified files to a subsystem id.
+   #     Use the SAME id convention the builder uses (docs/RESULT_SCHEMAS.md §SYSTEM_CONTRACT):
+   #     repo-root-relative PATH for a file-backed subsystem; a stable LOGICAL name for a
+   #     cross-file concern. For file-backed paths the id IS the repo-root-relative path.
+   for each fix iteration that ran in the review-and-fix loop:        # FIX_RESULT per iteration
+     for path in FIX_RESULT.files_modified:
+       sid = subsystem_id_for(path)                  # repo-root-relative path (file-backed)
+       incident_map[sid] += { kind: "self_heal_fix",
+                              summary: "self-heal fixed {FIX_RESULT.issues_addressed} issue(s) in {path}" }
+   ```
+
+   A subsystem absent from `incident_map` has **no incident this run** → the builder must NOT add an entry for it (and must carry that subsystem's prior `incident_history` unchanged — never fabricate). `incident_history` is **additive / advisory, bounded, deduped, this-run-only**, NEVER a gate, NEVER backfilled, and `schema_version` stays `1` — consistent with the ST1 schema note in `docs/RESULT_SCHEMAS.md` §SYSTEM_CONTRACT.
+
+   Spawn an **ephemeral, Bash-capable builder Task** (a `general-purpose` Task — **NOT a new permanent agent**, NOT Context-Keeper) that derives one SYSTEM_CONTRACT per touched subsystem from the integrated feature-branch diff and writes each via `write-system-contract.sh`, passing `incident_map` so it can record this run's `incident_history`:
 
    ```
    Task(
@@ -914,6 +937,10 @@ bench = bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-benchmark.sh
        Repo root (CWD): {repo_root}     # the main checkout — you MUST run from here.
        Touched diff scope: {BASE_BRANCH==main ? 'git diff origin/main...HEAD' : 'git diff $BASE_BRANCH...HEAD'}
        Provenance derived_from: {commit SHA or that diff expression}
+       Run timestamp (ISO 8601): {run_iso8601}     # use as incident_history entry `date`
+       Session id: {session-id}                      # use as incident_history entry `source` (== --source)
+       This-run incident map (subsystem id -> [{kind, summary}], this-run incidents ONLY):
+         {incident_map as derived above — empty {} if this run had no conformance violation and no self-heal fix}
 
        For EACH touched subsystem, derive a structured SYSTEM_CONTRACT (schema in docs/RESULT_SCHEMAS.md
        §SYSTEM_CONTRACT): subsystem, invariants, dependencies, behavioral_specs, and provenance
@@ -925,6 +952,27 @@ bench = bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-benchmark.sh
        Do NOT populate provenance.content_hash — that field is informational only and a file cannot
        contain its own hash. OMIT it from the contract body you write; write-system-contract.sh
        computes the authoritative content_hash from the written bytes and records it in the ledger.
+
+       INCIDENT HISTORY (additive/advisory, bounded, deduped, this-run-only — see
+       docs/RESULT_SCHEMAS.md §SYSTEM_CONTRACT). For EACH touched subsystem you derive a contract for:
+         1. Read the subsystem's EXISTING contract FIRST to recover any prior incident_history:
+              bash ${CLAUDE_PLUGIN_ROOT}/scripts/read-system-contract.sh --subsystem '<id>'
+            Graceful: if none / not verified / no prior incident_history, start from the empty list [].
+         2. If the This-run incident map above has an entry for THIS subsystem id, APPEND one new
+            incident_history entry PER mapped incident to the (prior) list:
+              {date: "{run_iso8601}", kind: <kind from map>, summary: "<summary from map>", source: "{session-id}"}
+            If the map has NO entry for this subsystem, carry the prior list UNCHANGED (never fabricate).
+         3. DEDUPE: do not add an entry identical in kind+summary+source to one already present.
+         4. BOUND: keep only the most recent 5 entries. The list is chronological oldest-first —
+            always APPEND new entries at the end (step 2) and drop from the FRONT so the newest entry
+            is always the last line (the Launch Pad reader, ST3, treats the last line as most recent).
+         5. Write the merged list into the contract body using EXACTLY this on-disk shape — one entry
+            per line as an inline YAML flow-map (HARD contract with the Launch Pad reader, ST3):
+              incident_history:
+                - {date: "<ISO8601>", kind: <conformance_violation|self_heal_fix|other>, summary: "<short text>", source: "<session-id>"}
+            Omit the `incident_history:` key entirely when the merged list is empty.
+         This is additive (schema_version stays 1), advisory, bounded, deduped, and this-run-only —
+         NEVER a gate, NEVER backfilled.
 
        Write each contract from THIS pinned repo-root CWD via:
          bash ${CLAUDE_PLUGIN_ROOT}/scripts/write-system-contract.sh \\
