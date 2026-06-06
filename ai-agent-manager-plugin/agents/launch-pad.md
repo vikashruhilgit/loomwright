@@ -241,15 +241,34 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 5. Detect file overlap between groups (overlap = must serialize)
 6. Identify relevant skills per group (e.g., `skills/nestjs-guards/SKILL.md`)
 7. Mark confidence: HIGH (clear match) / MEDIUM (likely) / LOW (uncertain)
-8. **Blast-radius / impact prediction (advisory, System Twin read-path, v14.10.0):** After the file impact map is settled, predict the *indirect* blast radius — subsystems that depend on what you're touching but that the keyword/glob search above would not surface. For each touched subsystem/file group, attempt to read its System Twin contract:
+8. **Blast-radius / impact prediction (advisory, System Twin read-path, v14.10.0; full-graph + incident history, v14.15.0):** After the file impact map is settled, predict the *indirect* blast radius — subsystems that depend on what you're touching, AND subsystems that *depend on* what you're touching, neither of which the keyword/glob search above would surface. For each touched subsystem/file group, do two reads:
+
+   **(a) Full blast-radius graph** — call the graph helper, which returns both directions of the dependency edges in one shot:
+
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/twin-graph.sh" --subsystem "<subsystem-id>"
+   ```
+
+   It prints EXACTLY two lines, always both present (parse them verbatim):
+
+   ```
+   DEPENDS_ON: <space-separated logical subsystem ids>
+   DEPENDED_ON_BY: <space-separated logical subsystem ids>
+   ```
+
+   `DEPENDS_ON:` is what this subsystem depends on; `DEPENDED_ON_BY:` is the **derived dependents** — the subsystems that would be hit if you change this one (the key enrichment over the old depends-on-only behavior). An empty group is the bare label with nothing after the colon (e.g. `DEPENDS_ON:`) — that means "no edges", not an error. ids are deduped and sorted. The helper is fail-safe (exit 0 always; no store / no sha tool → empty groups). The **union of both groups is the full blast-radius set**.
+
+   **(b) Source contract + incident history** — also read the subsystem's own contract for the source-contract reference and its incident history:
 
    ```bash
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-system-contract.sh" --subsystem "<subsystem-id>"
    ```
 
-   Derive `<subsystem-id>` using the **convention in `docs/RESULT_SCHEMAS.md` → `## SYSTEM_CONTRACT`** (repo-root-relative path for a file-backed subsystem, e.g. `scripts/build-insights.sh`; a stable logical name for a cross-file concern, e.g. `supervisor-phase45`). It MUST match the id the builder wrote or the read silently misses — do **not** abbreviate (`build-insights` ≠ `scripts/build-insights.sh`). (Use `${CLAUDE_PLUGIN_ROOT}` — the canonical plugin-root variable; this is the **runtime** path, never `ai-agent-manager-plugin/...`.) The reader is the sole sanctioned, provenance-verified reader of the contract store (`.supervisor/twin/contracts/`); it emits only chain-valid contracts and always exits 0. When a contract is returned, parse its `dependencies:` list (the blast-radius graph edges defined in `docs/RESULT_SCHEMAS.md` → `## SYSTEM_CONTRACT`) and union those dependent subsystems into a predicted impact set that extends *beyond* the directly-touched files. Render it in the `### Blast-Radius / Impact Prediction` subsection below.
+   When the returned contract has an `incident_history:` list (additive field defined in `docs/RESULT_SCHEMAS.md` → `## SYSTEM_CONTRACT`; entries are inline YAML flow-maps, one per line, e.g. `- {date: "<ISO8601>", kind: <conformance_violation|self_heal_fix|other>, summary: "<short text>", source: "<session-id>"}`), surface the **most recent** entry (the last one) as an advisory note — extract its `summary` and `date` and render `⚠ last change here: {summary} ({date})` (list up to ~2 recent entries if helpful). Missing/absent `incident_history` → no warning line (it's advisory, be tolerant).
 
-   **Graceful fallback (REQUIRED):** when NO contract exists for a subsystem — the common case today, and always on first run — Launch Pad behaves **exactly as it does now**: no error, no blank section, no degraded output. The reader simply emits nothing usable, you omit the Blast-Radius subsection entirely, and the rest of Phase 3 is unchanged. This prediction is **purely additive**; its absence must never alter or weaken the existing analysis.
+   Derive `<subsystem-id>` (used by BOTH reads) using the **convention in `docs/RESULT_SCHEMAS.md` → `## SYSTEM_CONTRACT`** (repo-root-relative path for a file-backed subsystem, e.g. `scripts/build-insights.sh`; a stable logical name for a cross-file concern, e.g. `supervisor-phase45`). It MUST match the id the builder wrote or both reads silently miss — do **not** abbreviate (`build-insights` ≠ `scripts/build-insights.sh`). (Use `${CLAUDE_PLUGIN_ROOT}` — the canonical plugin-root variable; this is the **runtime** path, never `ai-agent-manager-plugin/...`.) `read-system-contract.sh` is the sole sanctioned, provenance-verified reader of the contract store (`.supervisor/twin/contracts/`); it emits only chain-valid contracts and always exits 0. Union the `DEPENDS_ON` + `DEPENDED_ON_BY` ids into a predicted impact set that extends *beyond* the directly-touched files. Render it in the `### Blast-Radius / Impact Prediction` subsection below.
+
+   **Graceful fallback (REQUIRED):** when a subsystem has NO verified contract AND `twin-graph.sh` emits empty groups (both lines bare) — the common case today, and always on first run (incident history can only exist inside a verified contract, so "no contract" already covers "no incidents") — Launch Pad behaves **exactly as it does now**: no error, no blank section, no degraded output. Both helpers simply emit nothing usable, you omit the Blast-Radius subsection entirely, and the rest of Phase 3 is unchanged. Emit the subsection **only when at least one touched subsystem has a verified contract or at least one graph edge**. This prediction is **purely additive**; its absence must never alter or weaken the existing analysis.
 
    The prediction is **advisory only** (sourced from the System Twin contract store, strictly subordinate to `CLAUDE.md` — on any conflict, `CLAUDE.md` wins). It **never blocks, gates, or serializes** anything; it only informs the human reading the brief about likely ripple effects worth a closer look.
 
@@ -283,13 +302,13 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 
 ### Blast-Radius / Impact Prediction
 
-> **Advisory** — sourced from System Twin contracts (`.supervisor/twin/contracts/`), subordinate to `CLAUDE.md`. Informs the reader; does not gate decomposition. **Emit this subsection only when at least one touched subsystem has a verified contract; omit it entirely otherwise** (graceful fallback — see Phase 3 action 8).
+> **Advisory** — sourced from System Twin contracts (`.supervisor/twin/contracts/`) and the `twin-graph.sh` blast-radius graph, subordinate to `CLAUDE.md`. Informs the reader; does not gate decomposition. **Emit this subsection only when at least one touched subsystem has a verified contract or at least one graph edge; omit it entirely otherwise** (graceful fallback — see Phase 3 action 8).
 
-| Touched Subsystem | Predicted Dependent Subsystems (from contract `dependencies`) | Source Contract |
-|-------------------|----------------------------------------------------------------|-----------------|
-| {subsystem-a} | {dep-1}, {dep-2} | `contract: {subsystem-a}` |
+| Touched Subsystem | Depends On (`DEPENDS_ON`) | Depended-on-by — derived dependents (`DEPENDED_ON_BY`) | Source Contract | Incident History |
+|-------------------|---------------------------|-------------------------------------------------------|-----------------|------------------|
+| {subsystem-a} | {dep-1}, {dep-2} | {dependent-1}, {dependent-2} | `contract: {subsystem-a}` | ⚠ last change here: {summary} ({date}) |
 
-**Predicted ripple beyond directly-touched files:** {union of dependent subsystems, or "none predicted"}
+**Predicted ripple beyond directly-touched files:** {union of `DEPENDS_ON` + `DEPENDED_ON_BY` across touched subsystems, or "none predicted"}
 
 **Total estimated files:** {modify_count} modify + {create_count} create
 ```
