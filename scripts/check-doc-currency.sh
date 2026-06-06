@@ -123,6 +123,7 @@ check_count '[0-9]+ markdown prompts'   "$AGENTS" "agent-count"
 # --- Command count ---
 check_count 'Slash commands \([0-9]+\)' "$COMMANDS" "command-count"
 check_count '[0-9]+ slash commands'     "$COMMANDS" "command-count"
+check_count '[0-9]+ entry points'       "$COMMANDS" "command-count"
 
 # --- Skill count ---
 check_count '[0-9]+ reusable skills' "$SKILLS" "skill-count"

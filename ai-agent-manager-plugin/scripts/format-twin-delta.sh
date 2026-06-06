@@ -156,9 +156,16 @@ fi
 conf_seg=""
 case "$F_CONF_STATUS" in
   pass|advisory_violations)
-    if is_int "$F_VIOLATIONS"; then v="$F_VIOLATIONS"; else v="0"; fi
     up="$(printf '%s' "$F_CONF_STATUS" | tr '[:lower:]' '[:upper:]')"
-    conf_seg="conformance $up ($v violations)"
+    # note B: emit "(N violations)" ONLY when --violations is a valid integer (incl. genuine 0).
+    # When null/non-numeric/absent, OMIT the parenthetical — never fabricate "(0 violations)",
+    # so a genuine zero stays distinguishable from an unparseable/absent count. This also avoids
+    # the self-contradictory "conformance ADVISORY_VIOLATIONS (0 violations)" line.
+    if is_int "$F_VIOLATIONS"; then
+      conf_seg="conformance $up ($F_VIOLATIONS violations)"
+    else
+      conf_seg="conformance $up"
+    fi
     ;;
 esac
 
