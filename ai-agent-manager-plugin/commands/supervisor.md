@@ -29,6 +29,8 @@ The Supervisor agent v4 autonomously manages the complete development workflow. 
 /supervisor --base-branch feature/v14-iter1    # Stack PR on a non-main base (v14 autonomous-loop multi-iter)
 /supervisor --non-interactive                  # Fail closed instead of prompting on gh/adjudication gates (set by /autonomous loop)
 /supervisor --skip-preflight-sync              # Short-circuit the Phase 1.5 remote-overlap reconciliation gate (escape hatch)
+/supervisor --auto-review                      # Opt in: dispatch standalone /review-pr review-and-heal on the PR after completion
+/supervisor --no-auto-review                   # Suppress the post-completion auto-review dispatch (overrides notify-config)
 ```
 
 ## Parameters
@@ -47,6 +49,8 @@ The Supervisor agent v4 autonomously manages the complete development workflow. 
 | `--base-branch <name>` | No | Override default base branch for FINALIZE PR creation. Default: `main`. Set by the `/autonomous` loop's multi-iteration mode so iteration N+1 stacks on iteration N's feature branch (v14.0.0). The brief's `## Configuration` block may also carry a `Base Branch:` field — when present it MUST match this flag (Plan Reviewer validates the brief field independently). Phase 4 FINALIZE self-verifies the created PR's `baseRefName` matches this value and aborts via Phase 4.5 cleanup on mismatch. |
 | `--non-interactive` | No | Suppress `AskUserQuestion` fallbacks; on `gh` failures and ambiguous gates, fail closed with a diagnostic instead of prompting. Set automatically by the `/autonomous` loop when chaining iterations; rarely passed by humans. Recorded as a Phase Flag at Phase 0 so later phases can re-read after context loss (W-NEW-10 mitigation). |
 | `--skip-preflight-sync` | No | Short-circuit the Phase 1.5 PRE-FLIGHT SYNC gate, which reconciles the requested work against recent `origin/$BASE_BRANCH` commits and open PRs (same-file overlap + already-merged equivalents) and classifies the task CLEAR / OVERLAP / SUPERSEDED. The skip is recorded as a deliberate choice (`record_decision`) and `preflight_sync` is set to `skipped`. Escape hatch for when remote-overlap reconciliation is known-unnecessary or when intentionally re-doing landed work. Under `--non-interactive` / CI this is also the only way to proceed past an OVERLAP/SUPERSEDED classification (which otherwise fails closed). |
+| `--auto-review` | No | Opt in to the post-completion auto-review dispatch: on a PASS/normal completion that produced a PR, Phase 4.5's completion tail launches a fresh, detached standalone review-and-heal run (`/review-pr` via `ai-agent-manager-plugin:review-pr-runner`) against the PR. **OFF by default.** Equivalent to setting `.auto_review: true` in `.supervisor/notify-config.json`. Best-effort and fire-and-forget — the dispatcher always exits 0 and never affects the Supervisor result, the PR, or control flow. Because `/review-pr` never creates a PR, there is no review→review recursion. |
+| `--no-auto-review` | No | Suppress the post-completion auto-review dispatch even when `.supervisor/notify-config.json` has `.auto_review: true`. Wins over `--auto-review` if both are passed. |
 
 ## What This Does
 

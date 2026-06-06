@@ -25,6 +25,8 @@ INIT prints a one-line migration hint when the v14 default path is taken (i.e., 
 
 EVALUATE re-plans on the same two `SUPERVISOR_RESULT` signals as v13: `completed` with `rubric_score N/M, N<M` (Signal 1) and `failed` with `inter_subtask_gap` anchored by `.supervisor/jobs/failed/{basename(current_brief_path)}` (Signal 2). What changed in v14 is the branch base and the gate semantics for Signal 1 — see "EVALUATE PR-base verification" and "Signal 1 stacked rubric gate" in `skills/autonomous-loop/SKILL.md`.
 
+**Chained review-and-heal (after PR-base verification, before Signal evaluation):** when an iteration completes successfully and produced a PR (`pr_url` non-null), EVALUATE runs the standalone PR **review-and-heal** workflow as a **`Task` step with fresh isolated context** — NOT a nested `claude` process, and NOT a Task-spawn of the `review-pr-runner` agent (the Task body runs the `review-heal` loop body inline per `skills/review-heal/SKILL.md` entry sense (b) / AC9). The step runs the bounded review→fix→re-review loop on the PR (default 3 iterations, never `--force`, never auto-merge) and emits a `REVIEW_HEAL_RESULT` block, which the loop records into that iteration's `iterations[]` entry under a `review_heal` field. **PASS** → the loop continues to its normal Signal evaluation (rubric gate / Option-C / no-rubric / termination); **ESCALATED** (review-heal exhausted its bound or the reviewer returned NEEDS_HUMAN) → the loop surfaces it through the **existing EVALUATE `AskUserQuestion`** escalation surface (no new gate is introduced), failing closed under `--non-interactive-fallback`. The step is skipped when `pr_url` is null or the iteration failed. See "EVALUATE review-heal step" in `skills/autonomous-loop/SKILL.md` and the `review-heal` skill itself for the loop contract.
+
 ## Usage
 
 ```bash
@@ -91,10 +93,11 @@ INIT emits the v14 migration hint when neither `--single-iteration` nor `--allow
 ⚠️ v14.0.0 — /autonomous default is now multi-iteration (max_iterations: 3, cap 10). Pass --single-iteration for v13 one-PR behavior.
 ```
 
-After Supervisor returns, EVALUATE reads `SUPERVISOR_RESULT` and applies one of these branches:
+After Supervisor returns, EVALUATE first runs PR-base verification, then the chained review-and-heal step (Task, fresh isolated context — see below), then reads `SUPERVISOR_RESULT` and applies one of these branches:
 
 | `SUPERVISOR_RESULT.status` | Other condition | Loop action |
 |---|---|---|
+| `completed` / `completed_with_escalation` | `pr_url` non-null (iteration produced a PR) | Run **chained review-and-heal** as a `Task` step (fresh isolated context, NOT a nested `claude` process) before Signal evaluation. Records `REVIEW_HEAL_RESULT` into the iteration's `review_heal` field. PASS → continue to Signal evaluation; ESCALATED → surface via the **existing** EVALUATE `AskUserQuestion`. |
 | `completed` | `rubric_score` is `N/M` with N<M | Fire **Signal 1 rubric gate AskUserQuestion**. In **stacked-branch mode (default)** the gate is `continue-to-next-iteration / stop-here / force-continue` — no merge required because iter N+1 branches from iter N's branch directly. In `--no-stacked-branches` mode the gate falls back to v13 semantics (`merge-and-continue / stop-here / force-continue` with `gh pr view` verification). |
 | `completed` | brief had no `## Outcomes Rubric` AND multi-iter is active | Fire **no-rubric gate** (new in v14): `continue / stop`. v13 silently terminated this case; v14 makes the decision explicit because multi-iter without a rubric is the common shape for refactor / cleanup goals. |
 | `failed` | `inter_subtask_gap` detected on this iteration's brief | Re-plan immediately (no merge needed; job was abandoned via adjudication Option C). Same as v13. |

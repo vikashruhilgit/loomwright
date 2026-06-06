@@ -20,7 +20,7 @@ Shows all available agent commands and quick usage examples.
 
 ## Quick Start
 
-The AI Agent Manager plugin provides **13 agent roles** (8 user-facing + 5 internal) for your development workflow:
+The AI Agent Manager plugin provides **14 agent roles** (9 user-facing + 5 internal) for your development workflow:
 
 **Readiness Pipeline (2 agent roles):**
 ```
@@ -973,9 +973,9 @@ bd close BD-XX
 
 ai-agent-manager-plugin/              # Nested plugin root
 ├── .claude-plugin/
-│   └── plugin.json                   # Plugin metadata (v14.15.0)
+│   └── plugin.json                   # Plugin metadata (v14.16.0)
 ├── .mcp.json                         # Bundled MCP servers
-├── commands/                         # Slash commands (15)
+├── commands/                         # Slash commands (16)
 │   ├── launch-pad.md                 # Supervisor readiness
 │   ├── supervisor.md                 # Parallel orchestrator (v4)
 │   ├── autonomous.md                 # Continuous autonomous loop, stacked PRs (v14)
@@ -983,6 +983,7 @@ ai-agent-manager-plugin/              # Nested plugin root
 │   ├── orchestrator.md
 │   ├── code-reviewer.md
 │   ├── red-team-reviewer.md          # Adversarial auditor
+│   ├── review-pr.md                  # Standalone PR review-and-heal loop (never auto-merges)
 │   ├── qa-strategist.md              # Risk-based QA strategy
 │   ├── qa-executor.md                # Automated QA testing
 │   ├── dreaming.md                   # Read-only reflection over session logs (proposes memory + CLAUDE.md updates)
@@ -991,7 +992,7 @@ ai-agent-manager-plugin/              # Nested plugin root
 │   ├── obsidian.md                   # Read-only linked Obsidian vault projection (logs + Twin contracts + memory)
 │   ├── telemetry.md                  # Opt-in GitHub Issues telemetry (status/enable/disable/test)
 │   └── agent-help.md
-├── agents/                           # Agent implementations (13 roles)
+├── agents/                           # Agent implementations (14 roles)
 │   ├── launch-pad.md                 # Supervisor readiness agent
 │   ├── supervisor.md                 # Parallel orchestrator (v4)
 │   ├── execute-manager.md            # Phase 3 execution manager
@@ -1003,6 +1004,7 @@ ai-agent-manager-plugin/              # Nested plugin root
 │   ├── orchestrator.md
 │   ├── code-reviewer.md
 │   ├── red-team-reviewer.md
+│   ├── review-pr.md                  # Standalone PR review-and-heal runner
 │   ├── qa-strategist.md
 │   └── qa-executor.md
 ├── hooks/                            # Plugin quality gate hooks

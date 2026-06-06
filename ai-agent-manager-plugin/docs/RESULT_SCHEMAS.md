@@ -1,7 +1,7 @@
 # Result Schemas
 
 > Strict contracts for all agent result blocks. Hooks validate against these schemas.
-> All schemas include a `schema_version` field for forward compatibility. Current versions: CODE_REVIEW_RESULT at `schema_version: 3` (review modes + consistency audit; v2 accepted for legacy); WORKER_RESULT at `schema_version: 2` (outputs_verified contract; v1 accepted for the v12.0.0 transition window); AUTONOMOUS_RUN at `schema_version: 2` (v14.0.0 status_reason extension; v1 accepted, no hook validation); LAUNCH_PAD_RESULT at `schema_version: 1` (added v14.2.0, validated by `scripts/validate-launch-pad-result.py`); all others at `schema_version: 1`.
+> All schemas include a `schema_version` field for forward compatibility. Current versions: CODE_REVIEW_RESULT at `schema_version: 3` (review modes + consistency audit; v2 accepted for legacy); WORKER_RESULT at `schema_version: 2` (outputs_verified contract; v1 accepted for the v12.0.0 transition window); AUTONOMOUS_RUN at `schema_version: 2` (v14.0.0 status_reason extension; v1 accepted, no hook validation); LAUNCH_PAD_RESULT at `schema_version: 1` (added v14.2.0, validated by `scripts/validate-launch-pad-result.py`); REVIEW_HEAL_RESULT at `schema_version: 1` (added v14.16.0, no hook validator — runner is the main agent of its own session); all others at `schema_version: 1`.
 
 > **API-level enforcement:** When using the Claude API directly (outside Claude Code), enforce these schemas via `output_config.format` (JSON Schema mode) for guaranteed conformance — the model is constrained to produce schema-valid output before the response is returned. Plugin hook validation (the `SubagentStop` hooks defined in `hooks.json`) is the runtime fallback validator inside Claude Code, where `output_config` is not available to plugin agents. See `AGENT_GUIDELINES.md` §"Structured Outputs" and the Anthropic API reference for the exact field name in your SDK version.
 
@@ -1097,6 +1097,7 @@ All result schemas include a `schema_version` field. This enables forward compat
 
 ### Version History
 
+- **REVIEW_HEAL_RESULT (schema_version 1)** (v14.16.0): New schema for the standalone PR review-and-heal loop's outcome block (`/review-pr <pr-url>` + the `ai-agent-manager-plugin:review-pr-runner` agent, and the `/autonomous` EVALUATE Task step). Seven fields (`schema_version`, `decision` enum `PASS | ESCALATED`, `iterations`, `issues_fixed`, `remaining_issues`, `pr_url`, `notified`); canonical names coined in `skills/review-heal/SKILL.md` and consumed verbatim. The loop does NOT redefine review output — each iteration reuses the existing `CODE_REVIEW_RESULT` v3 (`review_mode: diff_review`). No SubagentStop hook validates it (the runner is the main agent of its own fresh session, or runs inline via `/review-pr`; the `/autonomous` path consumes it as a Task step). Additive — all other schemas unchanged.
 - **SYSTEM_CONTRACT artifact + SUPERVISOR_RESULT v1 extension + `session_end` hard-signal fields** (System Twin): Added the new `## SYSTEM_CONTRACT` artifact schema (per-subsystem advisory contract under `.supervisor/twin/contracts/`, written solely by `scripts/write-system-contract.sh`, gated on read by `scripts/read-system-contract.sh`), the optional additive `contract_conformance` and `benchmark_result` objects on SUPERVISOR_RESULT, and the matching FLAT `session_end` JSONL scalar fields (`contract_conformance_status`, `contract_violations`, `benchmark_status`, `benchmark_metric`, `benchmark_value`, `benchmark_delta`). These are **additive System Twin fields** — SUPERVISOR_RESULT and SYSTEM_CONTRACT both stay at `schema_version: 1`. The SUPERVISOR_RESULT additions follow the `branch_base` / `pr_state` / `preflight_sync` precedent (optional, advisory-only, not enumerated by the Supervisor SubagentStop hook), so pre-System-Twin blocks remain valid. `contract_conformance` is advisory only and NEVER changes `heal_decision` / blocks the PR. The nested SUPERVISOR_RESULT objects and the flat `session_end` fields are the same hard-signal data in two shapes; `build-insights.sh` reads the flat `session_end` fields.
 - **SUPERVISOR_RESULT v1 extension + AUTONOMOUS_RUN status_reason addition** (v14.8.0): Added optional `preflight_sync: enum [clear, overlap_proceed, superseded_proceed, skipped, unverified] | null` to SUPERVISOR_RESULT (records the Phase 1.5 PRE-FLIGHT SYNC gate outcome) and the closed `preflight_overlap_detected` value to the AUTONOMOUS_RUN `status_reason` enum (the gate's CI fail-closed abort, paired with `SUPERVISOR_RESULT.status: failed`). SUPERVISOR_RESULT schema_version stays `1` — `preflight_sync` is optional and additive (same precedent as `branch_base` / `pr_state`); the Supervisor SubagentStop hook does not enumerate it, so pre-v14.8.0 blocks remain valid. AUTONOMOUS_RUN schema_version stays `2` — the new status_reason is an additive enum value, and per the closed-set rule the value was added to both this schema and `skills/autonomous-loop/SKILL.md`.
 - **AUTONOMOUS_RUN v2** (v14.0.0): Bumped from v1 → v2. Extended the closed `status_reason` enum with nine new values paired with v14's continuous-mode (multi-iteration default), non-interactive-fallback path, and stacked-branches work: `non_interactive_without_fallback`, `conflicting_mode_flags`, `iter_pr_base_mismatch`, `rubric_gate_closed_non_interactive`, `no_rubric_in_non_interactive`, `user_aborted_gh_retry`, `supervisor_base_branch_mismatch`, `user_stopped_at_no_rubric_gate`, `invalid_max_iterations` (the last was already added in `skills/autonomous-loop/SKILL.md` for v13 but is now first-class in the schema doc). The bump is forward-only — no SubagentStop hook validates AUTONOMOUS_RUN, so schema-1 emissions remain accepted by downstream tooling for the transition window. Tooling SHOULD accept either schema_version and treat unrecognized `status_reason` values as opaque.
@@ -1265,6 +1266,47 @@ LAUNCH_PAD_RESULT:
 ```
 
 **Consumer pattern (`/autonomous` PLAN phase):** when `status: saved`, read `LAUNCH_PAD_RESULT.saved_brief_path` directly as the iteration's `current_brief_path`. When `status ∈ {discarded, blocked, aborted}`, exit the loop with the corresponding terminal status. The `ls`-diff fallback (Launch Pad pre-v14.2.0) remains supported during the transition window but is no longer primary.
+
+---
+
+## REVIEW_HEAL_RESULT
+
+Produced by the standalone PR **review-and-heal** loop — emitted once at the end of the bounded review→fix→re-review cycle. The loop is the conceptual extraction of Supervisor **Phase 4.5** into a fresh, PR-URL-keyed session (no Supervisor job, no `.supervisor/state.md`, no worktree fan-out). Its canonical names and field list are coined in `skills/review-heal/SKILL.md` (the single source of truth) and consumed verbatim here.
+
+**Added in v14.16.0.** The block reports the *outcome of the loop*; it does **not** redefine review output. Each review iteration reuses the existing **`CODE_REVIEW_RESULT` schema (v3, `review_mode: diff_review`)** verbatim — the review-and-heal loop consumes `CODE_REVIEW_RESULT` and never re-coins it.
+
+**Emission contexts (two senses of "fresh"):**
+- **`/review-pr` runner** — `ai-agent-manager-plugin:review-pr-runner`, running as the main agent of its own fresh OS process (launched by `dispatch-pr-review.sh` from the plain-`/supervisor` completion tail) or inline on the main thread via `/review-pr <pr-url>`. Emits one `REVIEW_HEAL_RESULT` at exit.
+- **`/autonomous` EVALUATE Task step** — the review-heal loop body runs as a Task-spawned step with fresh isolated context (NOT a nested `claude` process and NOT a `Task` on the `-runner` agent). The EVALUATE step parses the emitted `REVIEW_HEAL_RESULT` to decide its next action.
+
+```yaml
+REVIEW_HEAL_RESULT:
+  schema_version: 1                    # integer, required — always 1
+  decision: enum [PASS, ESCALATED]     # required — exactly these two values (no FAIL in the result block)
+  iterations: int                      # required — how many review→fix→re-review cycles ran
+  issues_fixed: int                    # required — count of new+BLOCKING/HIGH issues addressed by fix workers
+  remaining_issues: int                # required — new+BLOCKING/HIGH issues still open at exit
+  pr_url: string                       # required — the PR this run operated on
+  notified: bool                       # required — true if a NEEDS_HUMAN/escalation notification was attempted
+```
+
+**Field notes:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `schema_version` | int | Always `1`. |
+| `decision` | enum | Exactly `PASS` or `ESCALATED`. There is **no `FAIL`** in the result block: a reviewer `FAIL` is an internal loop signal that drives a fix iteration, becoming terminal only as `ESCALATED` (loop exhausts or reviewer escalates with `NEEDS_HUMAN`). |
+| `iterations` | int | Number of review→fix→re-review cycles run. Bounded — **default 3** (the `--heal-iterations` analogue). |
+| `issues_fixed` | int | Count of `new` + BLOCKING/HIGH findings addressed by `general-purpose` fix workers across all iterations. |
+| `remaining_issues` | int | `new` + BLOCKING/HIGH findings still open at loop exit. `0` on `PASS`; the escalated count on `ESCALATED`. |
+| `pr_url` | string | The PR URL the run operated on (the loop's single input; resolved to a head branch via `gh pr view <pr-url> --json headRefName`). |
+| `notified` | bool | `true` whenever a NEEDS_HUMAN/escalation notification was *attempted* (desktop banner + webhook are best-effort, fire-and-forget, always exit 0 — delivery is unobservable from the loop, so this records attempt, not success). |
+
+**Outcome model:**
+- `PASS` → clean diff; loop done; `remaining_issues: 0`. The loop **NEVER merges the PR** (no-self-trust: an automated reviewer that also merges removes the human gate). PR is left open for a human to merge.
+- `ESCALATED` → reviewer escalated (`NEEDS_HUMAN`) **or** the loop exhausted its iteration bound with issues remaining. Findings are posted to the PR via `gh pr comment`, notifications fired best-effort, PR left open. Never auto-fixes past escalation, never merges.
+
+**No re-coining:** the seven fields and the `decision` enum match `skills/review-heal/SKILL.md` exactly. Do NOT rename or add fields here without updating that skill first (it is authoritative).
 
 ---
 
