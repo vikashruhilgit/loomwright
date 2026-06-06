@@ -35,6 +35,11 @@
 # shapes below. A JSON-bodied contract yields a no-edge contract (it contributes nothing to the
 # graph) — so the "BOTH supported YAML shapes" claim is YAML-only and excludes JSON by design.
 #
+# PERF — each --subsystem call re-reads + re-verifies the WHOLE store (via read-system-contract.sh)
+# and re-parses it, so a caller querying N subsystems is O(N × store). Fine for today's small stores;
+# if a caller ever needs many subsystems at once, prefer ONE no-arg call (which computes the entire
+# edge set in a single pass) and slice the `EDGE:` lines locally instead of looping --subsystem.
+#
 # Usage:  twin-graph.sh --subsystem "<id>"   (blast-radius for one subsystem)
 #         twin-graph.sh                       (list all depends-on edges)
 # Exit:   always 0.
@@ -136,14 +141,16 @@ join_group() {
 }
 
 if [ -n "$SUBSYSTEM" ]; then
-  depends_on="$(printf '%s\n' "$EDGES" | awk -F'\t' -v s="$SUBSYSTEM" 'NF==2 && $1==s {print $2}' | join_group)"
-  depended_on_by="$(printf '%s\n' "$EDGES" | awk -F'\t' -v s="$SUBSYSTEM" 'NF==2 && $2==s {print $1}' | join_group)"
+  # $1!=$2 drops a self-edge (a contract that lists its own subsystem in dependencies — an authoring
+  # error): a subsystem is never its own blast-radius dependency or dependent.
+  depends_on="$(printf '%s\n' "$EDGES" | awk -F'\t' -v s="$SUBSYSTEM" 'NF==2 && $1==s && $2!=s {print $2}' | join_group)"
+  depended_on_by="$(printf '%s\n' "$EDGES" | awk -F'\t' -v s="$SUBSYSTEM" 'NF==2 && $2==s && $1!=s {print $1}' | join_group)"
   printf 'DEPENDS_ON: %s\n' "$depends_on" | sed -E 's/ $//'
   printf 'DEPENDED_ON_BY: %s\n' "$depended_on_by" | sed -E 's/ $//'
   exit 0
 fi
 
-# no-arg mode: list every edge.
-printf '%s\n' "$EDGES" | awk -F'\t' 'NF==2 {print "EDGE: " $1 " -> " $2}' | sort -u
+# no-arg mode: list every edge ($1!=$2 drops self-edges, as in --subsystem mode).
+printf '%s\n' "$EDGES" | awk -F'\t' 'NF==2 && $1!=$2 {print "EDGE: " $1 " -> " $2}' | sort -u
 printf 'DONE\n'
 exit 0

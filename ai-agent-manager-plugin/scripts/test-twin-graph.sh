@@ -18,6 +18,9 @@
 #   8. no-arg listing mode: emits `EDGE: <a> -> <b>` lines plus the trailing `DONE` sentinel.
 #   9. path/slash-based subsystem id round-trip: a `scripts/foo.sh`-style logical id (the canonical
 #      id form per RESULT_SCHEMAS.md) is queryable by its slash form, not the sanitized filename.
+#  10. incident_history co-residence: a contract carrying BOTH a block-list `dependencies` and an
+#      `incident_history` block (the v14.15.0 enrichment's new co-resident field) reports ONLY the
+#      real deps — incident_history flow-map entries must NOT leak in as phantom dependency edges.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -122,6 +125,21 @@ echo "== 9. path/slash-based subsystem id round-trip =="
 out="$( cd "$TMP" && bash "$GRAPH" --subsystem "scripts/foo.sh" )"
 dep="$(printf '%s\n' "$out" | grep '^DEPENDS_ON:')"
 if echo "$dep" | grep -q 'libBar'; then ok "slash-based subsystem id queryable by its logical (slash) form"; else no "slash id round-trip failed (got: $dep)"; fi
+
+echo "== 10. incident_history co-residence (no phantom edges from the new field) =="
+# The v14.15.0 builder writes incident_history as a block-list of inline flow-maps directly after
+# dependencies. Assert twin-graph reports ONLY the real dep and does NOT leak any incident_history
+# token (date/kind/summary/source or the flow-map brace) in as a phantom dependency edge.
+( cd "$TMP" && printf 'SYSTEM_CONTRACT:\nsubsystem: %s\ninvariants: [x]\ndependencies:\n  - realDep\nincident_history:\n  - {date: "2026-06-06T00:00:00Z", kind: self_heal_fix, summary: "fixed thing", source: "sess1"}\n  - {date: "2026-06-06T01:00:00Z", kind: conformance_violation, summary: "diverged", source: "sess2"}\nbehavioral_specs: [y]\n' "subIncident" \
+    | bash "$WRITE" --subsystem "subIncident" --source st1 ) >/dev/null 2>&1
+out="$( cd "$TMP" && bash "$GRAPH" --subsystem "subIncident" )"
+dep="$(printf '%s\n' "$out" | grep '^DEPENDS_ON:')"
+if echo "$dep" | grep -q 'realDep' \
+   && ! echo "$dep" | grep -qE 'date|kind|summary|source|self_heal_fix|conformance_violation|[{}]'; then
+  ok "incident_history co-resident with dependencies leaks no phantom edges (only realDep)"
+else
+  no "incident_history leaked into DEPENDS_ON (got: $dep)"
+fi
 
 echo
 echo "RESULT: $pass passed, $fail failed"

@@ -666,7 +666,8 @@ SYSTEM_CONTRACT:
                                # contract's dependencies to find who points back at this subsystem.
   behavioral_specs: [string]   # observable behaviors
   incident_history: [ {date, kind, summary, source} ]
-                               # OPTIONAL/ADDITIVE advisory blast-radius history; bounded + deduped. Each entry:
+                               # OPTIONAL/ADDITIVE advisory blast-radius history; bounded (the Phase 4.5
+                               # builder keeps the most recent 5, chronological oldest-first) + deduped. Each entry:
                                #   date    — ISO 8601 timestamp of the incident
                                #   kind    — one of: conformance_violation | self_heal_fix | other
                                #   summary — short string describing the incident
