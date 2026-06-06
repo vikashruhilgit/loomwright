@@ -1,6 +1,6 @@
 # AI Agent Manager
 
-A Claude Code plugin for AI agents to collaborate on software projects. 13 specialized agents (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Plan Reviewer, Rubric Grader, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer, QA Strategist, QA Executor) and the `/commit` skill automate plan-first readiness, parallel workflow execution, requirements, planning, review, commits, adversarial audits, and dual-agent QA automation.
+A Claude Code plugin for AI agents to collaborate on software projects. 14 specialized agents (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Plan Reviewer, Rubric Grader, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer, Review-PR, QA Strategist, QA Executor) and the `/commit` skill automate plan-first readiness, parallel workflow execution, requirements, planning, review, commits, adversarial audits, standalone PR review-and-heal, and dual-agent QA automation.
 
 **Key Idea:** Your projects need only a `CLAUDE.md` file for codebase knowledge. The Supervisor uses `.supervisor/` for state management. Orchestrator and Product Owner can optionally use [Beads issue tracker](https://github.com/anthropics/beads). Repeatable across any project.
 
@@ -18,7 +18,7 @@ A Claude Code plugin for AI agents to collaborate on software projects. 13 speci
 >
 > **NEW in v14.2.1 — Webhook + telemetry result-extraction fix (patch):** The supervisor-completion webhook (`send-webhook.sh`) and the opt-in telemetry post (`send-telemetry-core.sh`) read the finishing agent's output from the **real** `SubagentStop` payload field — `last_assistant_message` (with the legacy `result_block` / `output` / `agent_output` names and the `agent_transcript_path` / `transcript_path` JSONL as fallbacks) — instead of a top-level `result_block` field that Claude Code never actually sends. The pre-fix readers resolved to empty and **silently suppressed every supervisor-completion webhook and telemetry issue** since v14.1.0. No hook-count (still 19), schema, agent, command, or skill change. See `ai-agent-manager-plugin/docs/TELEMETRY.md` §"Result-text extraction".
 >
-> **NEW in v14.0.0 — Continuous autonomous mode with stacked PRs:** `/autonomous` flips to **multi-iteration by default** (cap 10, default `--max-iterations 3`) with **stacked-branch semantics** — iteration N+1 branches from `iterations[N].branch`, producing a reviewable PR stack. Out-of-order merge hazard: reviewers MUST merge the bottom of the stack first (follow `AUTONOMOUS_RUN.iterations[]` order). Restore v13 cadence with `--no-stacked-branches`; reproduce v13's single-iteration default with `--max-iterations 1`. New flags: **`--notify`** (opt-in gate-event webhooks for rubric / adjudication / NO-GO / Plan Review FAIL × 3, gated on `AI_AGENT_MANAGER_WEBHOOK_URL`, jq-only payload construction for injection safety, fire-and-forget POST) and **`--non-interactive-fallback`** (per-gate fail-closed policy for CI / stdin-not-tty: rubric gate aborts, no-rubric `completed` returns `done`, adjudication inherits Supervisor's `--non-interactive` policy when forwarded). Supervisor gains `--base-branch <ref>` + `--non-interactive` + Phase 0/4/4.5 base-mismatch detection + cleanup, and emits optional additive `branch_base` + `pr_state` fields on `SUPERVISOR_RESULT` (schema_version still 1, optional). Context-Keeper gains atomic `set_flag` / `get_flag` / `clear_flag` operations writing under a new `## Phase Flags` section in `state.md`. `AUTONOMOUS_RUN` bumps to **schema_version 2** with nine new closed `status_reason` values. **W-NEW-3 spike PASSED pre-merge**: Code Reviewer + Rubric Grader both honor `DIFF-SCOPE OVERRIDE` inline directives on stacked-branch fixtures. v14 is additive on top of v13: no new agent, no hook count change in v14.0.0 (still 14). **v14.1.0** adds desktop + webhook pause notifications (`PreToolUse[AskUserQuestion]` + `Notification` hooks), bringing the hook count 14 → 17 — see "Enabling notifications" below. **v14.2.0** adds the concurrency/resume layer — a `LAUNCH_PAD_RESULT` schema (so `saved_brief_path` becomes the primary `/autonomous` brief-detection signal, retiring the fragile `ls`-diff) plus a `SessionStart` crash/compact resume hook — bringing the count 17 → 19. All v13.0.0 / v13.0.1 capabilities preserved (foreground-assisted gates, rubric-gate user-merge verification, Option C `inter_subtask_gap` re-plan, webhook empty-payload suppression). 13 agent roles, 15 slash commands, 50 skills, 19 quality gate hooks. All v12.2.0 capabilities preserved (Agent Teams graduation, Outcomes Rubric, `/dreaming`, opt-in SubagentStop webhook hook) and v12.1.0 documentation increments preserved.
+> **NEW in v14.0.0 — Continuous autonomous mode with stacked PRs:** `/autonomous` flips to **multi-iteration by default** (cap 10, default `--max-iterations 3`) with **stacked-branch semantics** — iteration N+1 branches from `iterations[N].branch`, producing a reviewable PR stack. Out-of-order merge hazard: reviewers MUST merge the bottom of the stack first (follow `AUTONOMOUS_RUN.iterations[]` order). Restore v13 cadence with `--no-stacked-branches`; reproduce v13's single-iteration default with `--max-iterations 1`. New flags: **`--notify`** (opt-in gate-event webhooks for rubric / adjudication / NO-GO / Plan Review FAIL × 3, gated on `AI_AGENT_MANAGER_WEBHOOK_URL`, jq-only payload construction for injection safety, fire-and-forget POST) and **`--non-interactive-fallback`** (per-gate fail-closed policy for CI / stdin-not-tty: rubric gate aborts, no-rubric `completed` returns `done`, adjudication inherits Supervisor's `--non-interactive` policy when forwarded). Supervisor gains `--base-branch <ref>` + `--non-interactive` + Phase 0/4/4.5 base-mismatch detection + cleanup, and emits optional additive `branch_base` + `pr_state` fields on `SUPERVISOR_RESULT` (schema_version still 1, optional). Context-Keeper gains atomic `set_flag` / `get_flag` / `clear_flag` operations writing under a new `## Phase Flags` section in `state.md`. `AUTONOMOUS_RUN` bumps to **schema_version 2** with nine new closed `status_reason` values. **W-NEW-3 spike PASSED pre-merge**: Code Reviewer + Rubric Grader both honor `DIFF-SCOPE OVERRIDE` inline directives on stacked-branch fixtures. v14 is additive on top of v13: no new agent, no hook count change in v14.0.0 (still 14). **v14.1.0** adds desktop + webhook pause notifications (`PreToolUse[AskUserQuestion]` + `Notification` hooks), bringing the hook count 14 → 17 — see "Enabling notifications" below. **v14.2.0** adds the concurrency/resume layer — a `LAUNCH_PAD_RESULT` schema (so `saved_brief_path` becomes the primary `/autonomous` brief-detection signal, retiring the fragile `ls`-diff) plus a `SessionStart` crash/compact resume hook — bringing the count 17 → 19. All v13.0.0 / v13.0.1 capabilities preserved (foreground-assisted gates, rubric-gate user-merge verification, Option C `inter_subtask_gap` re-plan, webhook empty-payload suppression). 14 agent roles, 16 slash commands, 51 skills, 19 quality gate hooks. All v12.2.0 capabilities preserved (Agent Teams graduation, Outcomes Rubric, `/dreaming`, opt-in SubagentStop webhook hook) and v12.1.0 documentation increments preserved.
 >
 > **v12.1.0 (preserved):** Documentation + skills increment — Memory Tool skill (Anthropic memory-tool pattern reference), "## Structured Outputs" section in `AGENT_GUIDELINES.md` documenting both enforcement paths (`output_config.format` for direct API agents, `SubagentStop` hooks for plugin agents), and the "## Advisor Tool (SDK-only pattern)" section noting the `advisor-tool-2026-03-01` beta is reachable only via direct `client.beta.messages.create(...)` calls.
 >
@@ -141,9 +141,9 @@ Then call `switch_database(host="prod.example.com")` at runtime to switch betwee
 
 ---
 
-## The 13 Agents
+## The 14 Agents
 
-### User-Facing Agents (8 + commit skill)
+### User-Facing Agents (9 + commit skill)
 
 
 | Agent                 | Command                         | Purpose                                                            | When                            |
@@ -157,6 +157,7 @@ Then call `switch_database(host="prod.example.com")` at runtime to switch betwee
 | **Red Team Reviewer** | `/red-team-reviewer`            | Adversarial audit → find production failures                       | Pre-launch, security            |
 | **QA Strategist**     | `/qa-strategist src/`           | Risk-based test strategy → coverage targets → assertion quality audit | Before QA, strategy planning    |
 | **QA Executor**       | `/qa-executor`                  | Discover → generate strict tests → find missing functionality → QA_RESULT | Automated QA                    |
+| **Review-PR**         | `/review-pr <pr-url>`           | Standalone review→fix→re-review loop against an existing PR; auto-heals the diff, never auto-merges → REVIEW_HEAL_RESULT | Review/heal any open PR         |
 
 
 ### Internal Agents (5)
@@ -564,7 +565,7 @@ This prevents knowledge loss and helps agents learn from discoveries.
 - **.claude-plugin/README.md:** Detailed plugin documentation
 - **ai-agent-manager-plugin/.claude-plugin/plugin.json:** Plugin manifest
 - **ai-agent-manager-plugin/agents/*.md:** Individual agent prompts (13 roles)
-- **ai-agent-manager-plugin/skills/*/SKILL.md:** 50 skill files for guidance
+- **ai-agent-manager-plugin/skills/*/SKILL.md:** 51 skill files for guidance
 - **ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md:** Structured result contracts
 - **ai-agent-manager-plugin/docs/FAILURE_ESCALATION.md:** Agent failure paths
 - **ai-agent-manager-plugin/docs/ARCHITECTURE_CONTRACTS.md:** Capability matrix, budgets, rules
@@ -577,9 +578,9 @@ This prevents knowledge loss and helps agents learn from discoveries.
 
 To modify or extend agents:
 
-1. Agents are Markdown prompts in `ai-agent-manager-plugin/agents/` (13 files)
-2. Commands are in `ai-agent-manager-plugin/commands/` (12 commands)
-3. Skills are in `ai-agent-manager-plugin/skills/` (50 skills, versioned with SKILLS_INDEX.md)
+1. Agents are Markdown prompts in `ai-agent-manager-plugin/agents/` (14 files)
+2. Commands are in `ai-agent-manager-plugin/commands/` (16 commands)
+3. Skills are in `ai-agent-manager-plugin/skills/` (51 skills, versioned with SKILLS_INDEX.md)
 4. Hooks: per-agent in frontmatter (Worker, Execute Manager) + cross-cutting in `ai-agent-manager-plugin/hooks/hooks.json` (Code Reviewer, QA Executor, TaskCompleted)
 5. Docs: `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md`, `…/FAILURE_ESCALATION.md`, `…/ARCHITECTURE_CONTRACTS.md`, `…/ARCHITECTURE.md`
 6. All agents follow standard output format (see AGENT_GUIDELINES.md)
@@ -643,7 +644,7 @@ Claude Code caches plugin contents. After pulling new changes (e.g. a fresh `git
    /reload-plugins
    ```
    Run from the repo root so `./` resolves to your local checkout.
-3. Verify with `/skills` — should show all 50 skills under "Plugin skills". Use `/agent-help` to confirm all 12 user-facing commands are registered.
+3. Verify with `/skills` — should show all 51 skills under "Plugin skills". Use `/agent-help` to confirm all 15 user-facing commands are registered.
 
 **Previously installed via `claude --plugin-dir` (flat layout)?** Older install instructions told you to launch Claude with `--plugin-dir` pointing at the repo root. That no longer works — the plugin is now nested under `ai-agent-manager-plugin/`. Switch to the marketplace flow shown in **Quick Start → 1. Install the Plugin**.
 

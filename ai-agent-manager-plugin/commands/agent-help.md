@@ -20,7 +20,7 @@ Shows all available agent commands and quick usage examples.
 
 ## Quick Start
 
-The AI Agent Manager plugin provides **13 agent roles** (8 user-facing + 5 internal) for your development workflow:
+The AI Agent Manager plugin provides **14 agent roles** (9 user-facing + 5 internal) for your development workflow:
 
 **Readiness Pipeline (2 agent roles):**
 ```
@@ -706,6 +706,21 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 
 ---
 
+### 🩺 /review-pr — Standalone PR Review-and-Heal
+
+**Purpose:** Run the bounded review→fix→re-review loop against an *existing* PR URL — decoupled from a full Supervisor run, so any open PR (human- or agent-authored) can be reviewed and auto-healed in place. Resolves the PR's head branch (`gh pr view --json headRefName`), checks it out, then orchestrates a `code-reviewer` pass + a `general-purpose` fix worker (default 3 iterations) until the diff is clean (`PASS`) or escalates (`ESCALATED`). Pushes fixes (never `--force`); **never auto-merges** — the PR is always left open for a human, and `NEEDS_HUMAN` stops + notifies + posts findings to the PR.
+
+> **Inline main-thread command.** `/review-pr` runs inline; the `ai-agent-manager-plugin:review-pr-runner` agent is for `claude --agent` agent-owned sessions and is NEVER `Task`-spawned (it spawns its own `code-reviewer` + fix-worker children — subagents cannot spawn subagents). Plain `/supervisor` can optionally auto-dispatch it from the completion tail (`--auto-review` / `--no-auto-review`, off by default); `/autonomous` chains it as a Task step in EVALUATE.
+
+**Usage:**
+```bash
+/review-pr <pr-url>                                                       # review-and-heal an existing PR
+```
+
+**Learn More:** see `ai-agent-manager-plugin/commands/review-pr.md` for the workflow and the `REVIEW_HEAL_RESULT` output; the loop contract lives in `ai-agent-manager-plugin/skills/review-heal/SKILL.md`.
+
+---
+
 ### QA Workflow Diagram
 
 ```
@@ -973,9 +988,9 @@ bd close BD-XX
 
 ai-agent-manager-plugin/              # Nested plugin root
 ├── .claude-plugin/
-│   └── plugin.json                   # Plugin metadata (v14.15.0)
+│   └── plugin.json                   # Plugin metadata (v14.16.0)
 ├── .mcp.json                         # Bundled MCP servers
-├── commands/                         # Slash commands (15)
+├── commands/                         # Slash commands (16)
 │   ├── launch-pad.md                 # Supervisor readiness
 │   ├── supervisor.md                 # Parallel orchestrator (v4)
 │   ├── autonomous.md                 # Continuous autonomous loop, stacked PRs (v14)
@@ -983,6 +998,7 @@ ai-agent-manager-plugin/              # Nested plugin root
 │   ├── orchestrator.md
 │   ├── code-reviewer.md
 │   ├── red-team-reviewer.md          # Adversarial auditor
+│   ├── review-pr.md                  # Standalone PR review-and-heal loop (never auto-merges)
 │   ├── qa-strategist.md              # Risk-based QA strategy
 │   ├── qa-executor.md                # Automated QA testing
 │   ├── dreaming.md                   # Read-only reflection over session logs (proposes memory + CLAUDE.md updates)
@@ -991,7 +1007,7 @@ ai-agent-manager-plugin/              # Nested plugin root
 │   ├── obsidian.md                   # Read-only linked Obsidian vault projection (logs + Twin contracts + memory)
 │   ├── telemetry.md                  # Opt-in GitHub Issues telemetry (status/enable/disable/test)
 │   └── agent-help.md
-├── agents/                           # Agent implementations (13 roles)
+├── agents/                           # Agent implementations (14 roles)
 │   ├── launch-pad.md                 # Supervisor readiness agent
 │   ├── supervisor.md                 # Parallel orchestrator (v4)
 │   ├── execute-manager.md            # Phase 3 execution manager
@@ -1003,6 +1019,7 @@ ai-agent-manager-plugin/              # Nested plugin root
 │   ├── orchestrator.md
 │   ├── code-reviewer.md
 │   ├── red-team-reviewer.md
+│   ├── review-pr.md                  # Standalone PR review-and-heal runner
 │   ├── qa-strategist.md
 │   └── qa-executor.md
 ├── hooks/                            # Plugin quality gate hooks
@@ -1014,7 +1031,7 @@ ai-agent-manager-plugin/              # Nested plugin root
 │   ├── ARCHITECTURE.md
 │   ├── QA_SYSTEM_BLUEPRINT.md
 │   └── SPIKES/                       # Capability spike investigations + deferral records
-└── skills/                           # Skill files (50 skills)
+└── skills/                           # Skill files (51 skills)
     ├── SKILLS_INDEX.md               # Skill catalog with agent mapping
     ├── supervisor-readiness/         # Pre-flight checklist & brief template
     ├── agent-teams/                  # Agent Teams patterns (experimental)

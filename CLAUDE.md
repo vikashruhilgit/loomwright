@@ -10,11 +10,11 @@ Guidance for Claude Code when working in this repository.
 
 ## Project Overview
 
-**AI Agent Manager** is a Claude Code plugin with 13 agent roles (8 user-facing + 5 internal) for plan-first readiness, parallel execution, requirements, planning, code review, commits, adversarial audits, and dual-agent QA. Supervisor and Launch Pad use `.supervisor/` exclusively for state; Orchestrator and Product Owner can optionally use Beads.
+**AI Agent Manager** is a Claude Code plugin with 14 agent roles (9 user-facing + 5 internal) for plan-first readiness, parallel execution, requirements, planning, code review, commits, adversarial audits, standalone PR review-and-heal, and dual-agent QA. Supervisor and Launch Pad use `.supervisor/` exclusively for state; Orchestrator and Product Owner can optionally use Beads.
+
+**v14.16.0 — Standalone PR review-and-heal (`/review-pr`):** A new user-facing capability that runs the bounded review→fix→re-review loop against an *existing* PR URL — decoupled from a full Supervisor run, so any open PR (human-authored or agent-authored) can be reviewed and auto-healed in place. **(1) New `review-pr` agent** (`ai-agent-manager-plugin:review-pr-runner`, user-facing) — resolves the PR-URL → head branch, checks it out, and orchestrates a `code-reviewer` review + a `general-purpose` fix worker over the bounded loop until the PR diff is clean (PASS) or the loop escalates (ESCALATED); **never auto-merges** — the PR is always left open for a human. **(2) New `/review-pr <pr-url>` command** — the inline main-thread entry point; the `-runner` agent is for `claude --agent` agent-owned sessions and is NEVER Task-spawned (subagents-cannot-spawn-subagents). **(3) New `review-heal` skill** — the single source of truth for the loop contract, PR-URL→branch resolution, bounded-loop semantics, notification behavior, the no-auto-merge rule, and the `REVIEW_HEAL_RESULT` block shape. **(4) `scripts/dispatch-pr-review.sh`** — a fail-safe dispatcher (self-tested by `scripts/test-dispatch-pr-review.sh`, both **uncounted** by the doc-currency gate). **(5) Supervisor completion-tail opt-in dispatch** and **(6) autonomous EVALUATE chaining** can hand a freshly-created PR to the loop. **`REVIEW_HEAL_RESULT` schema** documented in `docs/RESULT_SCHEMAS.md` + capability-matrix row in `docs/ARCHITECTURE_CONTRACTS.md`. **Counts move 13 → 14 agents / 15 → 16 commands / 50 → 51 skills (hooks stay 19).** Additive on top of v14.15.0.
 
 **v14.15.0 — System Twin M1 enrichment: incident history + richer blast-radius graph (advisory, propose-only):** Extends the v14.10.0 System Twin foundation along its M1 slice — **all additive, propose-only, and strictly subordinate to `CLAUDE.md`; nothing here gates a PR.** **(1) `incident_history[]` on `SYSTEM_CONTRACT`** — a new additive field recording recent per-subsystem incidents (each entry `kind ∈ conformance_violation | self_heal_fix | other`); **`schema_version` stays 1** and a missing field stays valid (same additive precedent as prior optional Twin fields). **(2) `scripts/twin-graph.sh`** — a new blast-radius helper that, given a subsystem, reports both its declared **depends-on** edges and the **derived depended-on-by** (reverse) edges across the contract store; it reads only through `read-system-contract.sh` so provenance/hash-chain verification is preserved, is **fail-safe** (no contracts / sparse store → empty graph, exit 0, never errors), and is **self-tested by `scripts/test-twin-graph.sh`** — **both scripts are uncounted** by the doc-currency gate, same precedent as the other Twin helpers. **(3) Builder records this run's incidents** — Supervisor Phase 4.5's ephemeral contract builder now appends this-run `incident_history` (bounded **≤5**, deduped, **conformance-violation / self-heal-fix only**, written **PASS-only** via the repo-root sole writer). **(4) Launch Pad Phase 3** now surfaces the **full dependency graph + incident history** in its advisory blast-radius prediction, degrading gracefully when no contract exists. **No new agent / command / hook / skill (still 13 / 15 / 50 / 19); 2 new uncounted scripts; additive schema (`schema_version` stays 1).** Additive on top of v14.14.0.
-
-**v14.14.0 — Robustness polish: doc-currency gate blind spot + two `format-twin-delta.sh` edge cases (NON-ENGINE, advisory/tooling-only):** Three small, independently-verified fixes batched into one PR (anti-rebloat — no three-tiny-PR fan-out); no agent prompt / hook / engine file is touched. **(1) Doc-currency gate blind spot** — `scripts/check-doc-currency.sh` scanned `Slash commands (N)` / `N slash commands` but **not** the `N entry points` phrasing used at `CLAUDE.md:30`, so that command-count surface could silently drift while CI stayed green; added a `[0-9]+ entry points` command-count pattern, scoped to the count phrasing so prose like "entry points, trust boundaries" never false-positives (verified: gate still passes on the current tree, and a deliberately-stale count is now caught). **(2) `format-twin-delta.sh` note A** — documented near `is_int` that the guard accepts **integer-valued metrics only** (today's only benchmark producer emits integer counts) and to widen it to a single decimal point if a float-valued metric is ever introduced (the downstream sign logic is already string-based and float-safe); **no behavior change**. **(3) `format-twin-delta.sh` note B** — the conformance segment now emits `(N violations)` **only when `--violations` is a valid integer** (including genuine `0`); a null/non-numeric count **omits** the parenthetical instead of fabricating `(0 violations)`, so `advisory_violations` + unparseable renders `Twin: conformance ADVISORY_VIOLATIONS` (no self-contradictory count) while `pass` + `0` stays `Twin: conformance PASS (0 violations)`. `test-format-twin-delta.sh` updated to assert the omitted-count form for both the omitted and non-numeric cases, plus a genuine-`0` and an `advisory_violations`+unparseable case (self-test green at 32 assertions ≥ prior 29). The Twin delta line stays **purely advisory** — it NEVER gates the PR. **No new agent / command / skill / hook (still 13 / 15 / 50 / 19)** and **no schema change.** Additive on top of v14.13.0.
 
 > 📜 **Full release history** (v14.13.0 → v14.0.0 and earlier) lives in [`CHANGELOG.md`](CHANGELOG.md). CLAUDE.md keeps only the two most recent release notes.
 
@@ -25,10 +25,10 @@ Guidance for Claude Code when working in this repository.
 The repo is a **marketplace wrapper** containing one nested plugin:
 
 - Marketplace manifest: `.claude-plugin/marketplace.json` (root)
-- Plugin manifest: `ai-agent-manager-plugin/.claude-plugin/plugin.json` (v14.15.0)
-- Agents: `ai-agent-manager-plugin/agents/` (13 markdown prompts)
-- Commands: `ai-agent-manager-plugin/commands/` (15 entry points)
-- Skills: `ai-agent-manager-plugin/skills/` (50 skills, see `SKILLS_INDEX.md`)
+- Plugin manifest: `ai-agent-manager-plugin/.claude-plugin/plugin.json` (v14.16.0)
+- Agents: `ai-agent-manager-plugin/agents/` (14 markdown prompts)
+- Commands: `ai-agent-manager-plugin/commands/` (16 entry points)
+- Skills: `ai-agent-manager-plugin/skills/` (51 skills, see `SKILLS_INDEX.md`)
 - Hooks: `ai-agent-manager-plugin/hooks/hooks.json`
 - Docs: `ai-agent-manager-plugin/docs/`
 - Bundled MCP: read-only MySQL server (`vikashruhil-mysql-mcp`)
@@ -45,10 +45,10 @@ ai-agent-manager/                              # marketplace wrapper
 ├── ai-agent-manager-plugin/                   # nested plugin
 │   ├── .claude-plugin/plugin.json
 │   ├── .mcp.json                              # bundled MCP servers
-│   ├── agents/                                # 13 markdown prompts
-│   ├── commands/                              # 15 slash commands
+│   ├── agents/                                # 14 markdown prompts
+│   ├── commands/                              # 16 slash commands
 │   ├── hooks/hooks.json                       # cross-cutting hooks
-│   ├── skills/                                # 50 skills + SKILLS_INDEX.md
+│   ├── skills/                                # 51 skills + SKILLS_INDEX.md
 │   ├── scripts/                               # runtime helpers: telemetry, webhook, notify, resume, memory, lessons, insights (+ self-tests, fixtures)
 │   └── docs/                                  # RESULT_SCHEMAS, FAILURE_ESCALATION, ARCHITECTURE_CONTRACTS, ARCHITECTURE, QA_SYSTEM_BLUEPRINT, TELEMETRY
 │       └── SPIKES/                            # Capability spike investigations + deferral records
@@ -60,9 +60,9 @@ ai-agent-manager/                              # marketplace wrapper
 
 ---
 
-## The 13 Agent Roles
+## The 14 Agent Roles
 
-Detailed per-agent purpose, command syntax, and workflow diagrams live in `README.md` §"The 13 Agents" and the agent prompts (`ai-agent-manager-plugin/agents/*.md`). Quick map of what matters for in-codebase work:
+Detailed per-agent purpose, command syntax, and workflow diagrams live in `README.md` §"The 14 Agents" and the agent prompts (`ai-agent-manager-plugin/agents/*.md`). Quick map of what matters for in-codebase work:
 
 | Agent | Type | Spawned by | Codebase-relevant invariants |
 |---|---|---|---|
@@ -74,6 +74,7 @@ Detailed per-agent purpose, command syntax, and workflow diagrams live in `READM
 | Red Team Reviewer | user-facing | user | 6 attack vectors; persistent memory of past audits |
 | QA Strategist | user-facing | user | Strategy mode + Audit mode; spawned twice (gate audit Phase 11, results audit Phase 13) |
 | QA Executor | user-facing | user | 13-phase, `--depth smoke|functional`, `--plan/--scope/--continue`, infrastructure-aware (Mailpit/MailHog), 80/90 budget |
+| Review-PR (`review-pr-runner`) | user-facing | user / Supervisor completion-tail / autonomous EVALUATE | `/review-pr <pr-url>` standalone review→fix→re-review loop against an existing PR; resolves PR-URL → head branch, spawns `code-reviewer` + `general-purpose` fix worker; **never auto-merges**; emits `REVIEW_HEAL_RESULT`. NEVER Task-spawned (subagents-cannot-spawn-subagents) — run inline via `/review-pr` or as `claude --agent …:review-pr-runner`. Authority is the `review-heal` skill. |
 | Execute Manager | internal | Supervisor (Phase 3) | Owns poll loop in isolated context, 60 tool-call budget |
 | Context-Keeper | internal | Supervisor / Execute Manager | **Sole writer** of state file; haiku model, batch updates, atomic writes |
 | Worker | internal | Execute Manager / Supervisor | One subtask per worktree, no git ops, emits WORKER_RESULT + `.worker-summary.md` |

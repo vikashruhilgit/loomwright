@@ -2,8 +2,8 @@
 name: autonomous-loop
 description: Outer-loop protocol for `/autonomous` — v14 continuous (multi-iteration default with stacked branches), single-iteration opt-in, EVALUATE PR-base verification + Signal-1 stacked rubric gate + no-rubric gate, --notify gate webhooks via send-webhook.sh, CI / non-TTY fail-closed protection, and the AUTONOMOUS_RUN summary format. Use when implementing or invoking the `/autonomous` command.
 allowed-tools: [Read, Write, Bash, Grep, Task, AskUserQuestion]
-version: "1.2.1"
-lastUpdated: "2026-05-31"
+version: "1.3.0"
+lastUpdated: "2026-06-06"
 ---
 
 # Autonomous Loop Skill
@@ -225,6 +225,27 @@ Field types: `_v1_note: string` (advisory marker — see above); `mode: "single"
 3. Supervisor moves the job through `pending/ → in-progress/ → done/ or failed/` per its existing lifecycle. The autonomous loop never touches the job lifecycle.
 4. Capture the emitted `SUPERVISOR_RESULT` block (the last one in the transcript per `RESULT_SCHEMAS.md` §"SUPERVISOR_RESULT" emission-cadence note) and record relevant fields into state.json's `iterations[]` array: `n`, `brief_path`, `supervisor_status`, `pr_url` (when present), `rubric_score`, `branch` (read directly from the `SUPERVISOR_RESULT.branch` field — a required v12.2-schema string), `summary`, `error` (when failed), `heal_decision`, `escalation_reason` (when completed_with_escalation). The `branch` field is what the merge-verification step (Signal 1 in EVALUATE) resolves to a SHA via `git rev-parse`.
 
+   **`review_heal` field (added for the chained EVALUATE review-heal step):** when EVALUATE runs the chained review-and-heal step (see EVALUATE §"review-heal step"), it attaches the parsed `REVIEW_HEAL_RESULT` block to this same `iterations[]` entry under a `review_heal` field. The field is **null** when the step was skipped (no `pr_url`, or `supervisor_status == failed`); otherwise it holds the `REVIEW_HEAL_RESULT` shape from `skills/review-heal/SKILL.md` (`decision` (`PASS|ESCALATED`), `iterations`, `issues_fixed`, `remaining_issues`, `pr_url`, `notified`). Recording it alongside the `SUPERVISOR_RESULT`-derived fields keeps the per-iteration record complete and consistent with how every other per-iteration result is stored. Example entry:
+
+   ```yaml
+   iterations:
+     - n: 1
+       brief_path: .supervisor/jobs/done/auto-...-add-jwt-auth.md
+       supervisor_status: completed
+       pr_url: "https://github.com/.../pull/42"
+       rubric_score: "3/5"
+       branch: feature/jwt-auth
+       summary: "..."
+       heal_decision: PASS
+       review_heal:                       # the chained EVALUATE review-heal REVIEW_HEAL_RESULT (null if skipped)
+         decision: PASS                   # PASS | ESCALATED
+         iterations: 1
+         issues_fixed: 0
+         remaining_issues: 0
+         pr_url: "https://github.com/.../pull/42"
+         notified: false
+   ```
+
 5. **Fallback when Supervisor emits no `SUPERVISOR_RESULT`** (Supervisor crashed, terminal died mid-execute, network error before completion, Task spawn returned without a result block). Detect this by searching the transcript and finding zero `SUPERVISOR_RESULT` blocks for this iteration. The loop cannot infer Supervisor's actual state, but it CAN determine the loop-level outcome from filesystem evidence:
    - If `.supervisor/jobs/in-progress/{basename(current_brief_path)}` still exists → Supervisor never finished its lifecycle move. The job is in a half-state.
    - If `.supervisor/jobs/done/{basename(current_brief_path)}` exists but no `SUPERVISOR_RESULT` was emitted → likely a result-emission failure after the job moved; recoverable in principle but not in v1.
@@ -313,6 +334,44 @@ fi
 ```
 
 The verification site here is the **second line of defense** — Supervisor's own Phase 4 self-verify (S3 lands the symmetric block in `agents/supervisor.md`) is the first. Defense in depth handles the case where Supervisor's self-verify was silenced (env error, `gh` outage) but Phase 4.5 still completed and emitted `SUPERVISOR_RESULT`. Identical retry policy on both sites avoids divergence.
+
+### EVALUATE review-heal step (chained PR review-and-heal — fresh isolated Task context)
+
+After PR-base verification passes and **before** any Signal evaluation (Signal 1 / Signal 2 / no-rubric gate / default termination), the loop runs the standalone PR **review-and-heal** workflow as a chained step. The `review-heal` skill (`${CLAUDE_PLUGIN_ROOT}/skills/review-heal/SKILL.md`) is the authority for this step's loop semantics; this section only describes how the autonomous loop invokes it and records its outcome.
+
+**Skip conditions** (no review-heal attempted — fall straight through to Signal evaluation):
+
+- `pr_url` is null — the iteration did not produce a PR (Supervisor failed before PR creation, merge conflict, env error). There is nothing for review-heal to operate on.
+- `SUPERVISOR_RESULT.status == failed` — the iteration did not complete successfully. Review-heal runs **only after a SUCCESSFUL Supervisor iteration that produced a PR** (`status == completed` or `completed_with_escalation`, with a non-null `pr_url`).
+
+**Execution form (AC6 — Task step, NOT a nested `claude` process):** the `/autonomous` path runs review-and-heal as a **`Task`-spawned step with fresh isolated context** — this is entry sense **(b)** in `skills/review-heal/SKILL.md` §"Two entry senses of 'fresh'". It is **NOT** a nested `claude --agent ai-agent-manager-plugin:review-pr-runner` operating-system process (that runner-as-its-own-session form is entry sense (a), reserved for the plain `/supervisor` completion-tail path). Per the review-heal skill's execution-contract rule (AC9), the loop also does **NOT** `Task`-spawn the `review-pr-runner` agent (a Task-spawned runner would sit one spawn-level too deep and its own child spawns would fail). Instead, the Task step itself runs the review-heal **loop body inline** (the bounded review→fix→re-review machinery from `review-heal` skill Step 2):
+
+```text
+review_heal = Task(
+  subagent_type: "general-purpose",
+  # Fresh isolated context. The Task body runs the review-heal loop body inline
+  # per skills/review-heal/SKILL.md Step 1 (PR-URL → branch resolution) + Step 2
+  # (the bounded review→fix→re-review loop, default 3 iterations). It does NOT
+  # Task-spawn ai-agent-manager-plugin:review-pr-runner (AC9 — runner is never
+  # Task-spawned); it emits a REVIEW_HEAL_RESULT block.
+  prompt: "Run the PR review-and-heal loop on PR <pr_url> exactly per
+           skills/review-heal/SKILL.md (resolve the head branch, bounded
+           review→fix→re-review, default 3 iterations, NEVER --force, NEVER
+           auto-merge). Emit a REVIEW_HEAL_RESULT block (schema_version 1) with
+           decision (PASS|ESCALATED), iterations, issues_fixed, remaining_issues,
+           pr_url, notified."
+)
+# Parse the REVIEW_HEAL_RESULT block from the Task transcript.
+```
+
+**Record the outcome:** attach the parsed `REVIEW_HEAL_RESULT` to this iteration's `iterations[]` entry under the `review_heal` field (see the `iterations[]` shape in EXECUTE step 4). This records the chained review-heal result alongside the iteration's `SUPERVISOR_RESULT`-derived fields, consistent with how the loop records other per-iteration results.
+
+**Branch on `decision` (per the `review-heal` skill outcome model):**
+
+- **`PASS`** → the PR diff is clean (review-heal made no further-needed fixes, or fixed all new+BLOCKING/HIGH issues across its bounded iterations). The loop **continues normally to Signal evaluation** (Signal 1 rubric gate / Signal 2 / no-rubric gate / default termination) — review-heal PASS does not itself change the iterate-or-stop decision.
+- **`ESCALATED`** → review-heal exhausted its bound or the reviewer returned `NEEDS_HUMAN`; findings were posted to the PR and best-effort notifications fired. Surface this to the user through the loop's **existing `AskUserQuestion` escalation surface** — the same in-session interaction model EVALUATE already uses for adjudication / gate surfacing. **Do NOT invent a new gate or prompt mechanism.** The prompt informs the user that the chained review-and-heal escalated (with `remaining_issues` and `pr_url`) and offers the existing continue / stop choices; record a `policy_decisions` entry `{iteration: N, phase: EVALUATE, decision: "review_heal_escalated", source: "autonomous_review_heal"}`. Under `--non-interactive-fallback` (no TTY), this escalation fails closed consistent with the loop's other gates rather than calling AskUserQuestion.
+
+This step is **additive** — it does not alter the PR-base verification above it or the Signal-1 / Signal-2 logic below it; it slots between them. Review-heal **never merges** the PR (no-auto-merge contract, `review-heal` skill §"No auto-merge ever"), so it cannot create a new PR that would retrigger the loop.
 
 ### Signal 1 — `status: completed` AND `rubric_score N/M` with N<M (stacked rubric gate)
 
@@ -671,6 +730,7 @@ Same fields as summary.md, structured as JSON. v1 writes it for two purposes: (a
 - `${CLAUDE_PLUGIN_ROOT}/commands/launch-pad.md` — inline workflow Step 0 loads at runtime
 - `${CLAUDE_PLUGIN_ROOT}/commands/supervisor.md` — inline workflow Step 0 loads at runtime; v14 `--base-branch` + `--non-interactive` flags surface here
 - `${CLAUDE_PLUGIN_ROOT}/skills/autonomous-loop/SKILL.md` — this skill; Step 0 loads at runtime
+- `${CLAUDE_PLUGIN_ROOT}/skills/review-heal/SKILL.md` — authority for the chained EVALUATE review-heal step (entry sense (b): Task-spawned step with fresh isolated context, NOT a nested `claude` process; emits `REVIEW_HEAL_RESULT`)
 - `${CLAUDE_PLUGIN_ROOT}/scripts/send-webhook.sh` — `--event-type gate` path used by every gate-firing site when `--notify` is set
 - `ai-agent-manager-plugin/agents/supervisor.md` — Phase 0 preamble (clear_flag base_mismatch_detected + non_interactive), Phase 4 self-verify, Phase 4.5 base-mismatch cleanup; SUPERVISOR_RESULT now optionally carries `branch_base` and `pr_state`
 - `ai-agent-manager-plugin/agents/context-keeper.md` — `set_flag` / `get_flag` / `clear_flag` operations consumed by Supervisor's Phase 0/4/4.5 cycle

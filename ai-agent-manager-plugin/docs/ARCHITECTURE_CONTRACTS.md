@@ -22,6 +22,9 @@
 | Plan Reviewer | no | no | no | yes | no | no | inherit (effort: high) |
 | Rubric Grader | no | no | yes (read-only git only) | yes (rubric scoring) | no | no | haiku |
 | QA Executor | yes | yes | yes | no | yes | no | inherit |
+| review-pr-runner | yes (code-reviewer + general-purpose fix worker) | yes (fix worker pushes the PR branch) | yes (`gh`/`git`) | yes (via code-reviewer) | no | no | inherit |
+
+> **review-pr-runner is NEVER `Task`-spawned (AC9).** It must run only as the **main agent of its own session** (`claude --agent ai-agent-manager-plugin:review-pr-runner`, launched fresh from the plain-`/supervisor` completion tail) or **inline on the main thread** via `/review-pr <pr-url>`. Because it spawns its own children (`code-reviewer` for review, `general-purpose` for the bounded fix), `Task`-spawning the runner would land it one spawn-level too deep and its child `Task` calls would fail (subagents cannot spawn subagents). In the `/autonomous` EVALUATE sense, the review-heal *loop body* runs as a Task step that performs review-and-fix inline — it does NOT `Task`-spawn the `-runner` agent. Canonical contract: `skills/review-heal/SKILL.md`.
 
 ## disallowedTools (Defense-in-Depth)
 
@@ -133,6 +136,34 @@ session-local state, not committed). Self-tests live in `scripts/test-system-con
 | Red Team Reviewer | 60 | Return partial audit |
 | QA Strategist | 40 | Return partial risk classification |
 | QA Executor | 80 | Return partial QA_RESULT |
+| review-pr-runner | 60 | Emit REVIEW_HEAL_RESULT with `decision: ESCALATED` (loop incomplete → escalate, never merge) |
+
+### Standalone review-and-heal loop budget
+
+The standalone PR review-and-heal loop (`/review-pr` + `ai-agent-manager-plugin:review-pr-runner`) mirrors Supervisor **Phase 4.5** semantics, so its budgets are sized against the existing self-heal / code-reviewer conventions:
+
+| Bound | Value | Rationale |
+|-------|-------|-----------|
+| Iteration bound | ≤ 3 review→fix→re-review cycles (default) | The `--heal-iterations` analogue; identical default to Supervisor Phase 4.5's `--heal-iterations 3`. On exhaustion with issues remaining, the loop emits `decision: ESCALATED` (never auto-fixes past the bound, never merges). |
+| Runner `maxTurns` | 60 | Sized above the code-reviewer's 40 because the runner additionally hosts up to 3 `code-reviewer` reviews plus up to 3 `general-purpose` fix workers in its own session; on timeout it emits `REVIEW_HEAL_RESULT` with `decision: ESCALATED`. |
+| Per child `code-reviewer` | inherits the code-reviewer's 40-turn budget | Each review iteration is an ordinary `Task(code-reviewer)` with `review_mode: diff_review`, unchanged from Phase 4.5. |
+| Per child `general-purpose` fix worker | bounded fix scope (new+BLOCKING/HIGH only) | Allowlist Read / Write / Edit / Bash / Glob / Grep, **NO Task** (a fix worker may not dispatch further subagents). |
+| Per `gh`/`git` invocation | short (~20s soft) | SOFT guideline (same convention as the Phase 1.5 gate below); branch resolution (`gh pr view`), PR comments (`gh pr comment`), and regular pushes (**never `--force`**). |
+
+The loop **NEVER merges a PR** — its only terminal `decision` values are `PASS` (clean diff, PR left open for a human) and `ESCALATED` (findings posted + best-effort notify, PR left open). Authoritative loop semantics live in `skills/review-heal/SKILL.md`; the `REVIEW_HEAL_RESULT` block is defined in `docs/RESULT_SCHEMAS.md`.
+
+### Fresh-process dispatch contract (post-`/supervisor` auto-review)
+
+The plain-`/supervisor` completion tail can hand off to the review-and-heal loop via a fresh OS process, gated by config:
+
+| Property | Value |
+|----------|-------|
+| Dispatcher | `ai-agent-manager-plugin/scripts/dispatch-pr-review.sh` (runtime path `${CLAUDE_PLUGIN_ROOT}/scripts/dispatch-pr-review.sh`). |
+| Dispatch shape | Launches a brand-new `claude --agent ai-agent-manager-plugin:review-pr-runner` operating-system process — a true fresh session where the runner is the main agent and can therefore spawn `code-reviewer` / `general-purpose` children (sidesteps the subagents-cannot-spawn-subagents limit). |
+| Gating | Enabled only when `auto_review: true` in `.supervisor/notify-config.json` (or a `--auto-review` flag); suppressed by `--no-auto-review`. Config-file-driven, cost/runaway-guarded. |
+| Failure policy | Fire-and-forget; **always exits 0** — a dispatch failure never fails or blocks the completing `/supervisor` run. |
+| `/autonomous` contrast | The `/autonomous` EVALUATE path does NOT use the dispatcher — it chains the review-heal loop body as a Task-spawned step (fresh isolated context, not a nested `claude` process). |
+| No-recursion invariant | `/review-pr` operates only on an existing PR URL and never creates a PR, so the auto-dispatch cannot retrigger itself on a PR it just produced. |
 
 ### Supervisor Phase 1.5 PRE-FLIGHT SYNC budget
 
