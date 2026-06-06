@@ -71,7 +71,9 @@ if [ ! -d "$CORPUS" ]; then
 fi
 
 # ---- discover tasks (deterministic, sorted) -------------------------------
-# A task is a dir eval-corpus/<task-id>/ containing an executable check.sh.
+# A task is a dir eval-corpus/<task-id>/ containing a check.sh. An executable check.sh is run;
+# a present-but-NON-executable check.sh is counted as a FAIL (with a stderr warning) rather than
+# silently dropped, so a forgotten `chmod +x` cannot quietly shrink N and mask a regression.
 total=0
 passed=0
 per_task_json="[]"   # jq-accumulated array of {id,status}
@@ -84,14 +86,21 @@ if [ -n "$task_dirs" ]; then
   while IFS= read -r dir; do
     [ -z "$dir" ] && continue
     check="$dir/check.sh"
-    # Only count dirs that carry an executable check.sh.
-    [ -f "$check" ] && [ -x "$check" ] || continue
+    # A dir without any check.sh is not a task — skip it silently.
+    [ -f "$check" ] || continue
 
     task_id="$(basename "$dir")"
     total=$((total+1))
 
+    if [ ! -x "$check" ]; then
+      # Present-but-not-executable: count as FAIL and warn loudly rather than silently dropping
+      # the task. A silently dropped task shrinks N (tasks_total) and can MASK a regression — a
+      # would-be-failing task vanishing keeps pass_rate green. A visible FAIL protects the M/N signal.
+      echo "WARN: $task_id: check.sh is present but not executable (run: chmod +x) — counting as FAIL" >&2
+      status="fail"
+      echo "  [FAIL] $task_id (check.sh not executable)"
     # Run the check. A non-zero exit is a normal "fail" tally — never let it abort this script.
-    if ( cd "$dir" && bash "$check" >/dev/null 2>&1 ); then
+    elif ( cd "$dir" && bash "$check" >/dev/null 2>&1 ); then
       status="pass"
       passed=$((passed+1))
       echo "  [PASS] $task_id"

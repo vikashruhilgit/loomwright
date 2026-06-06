@@ -33,16 +33,20 @@ eval-corpus/
   — the same inputs must always yield the same exit status (no wall-clock, network, or random
   dependence in the pass/fail decision).
 
-A task directory **without an executable `check.sh` is not counted** (neither pass nor fail).
+A directory with **no `check.sh` at all is not a task** and is not counted. A directory whose
+`check.sh` is **present but not executable** is counted as a **FAIL** (and the runner prints a stderr
+warning) rather than silently dropped — this prevents a forgotten `chmod +x` from quietly shrinking
+the denominator `N` and masking a regression.
 
 ---
 
 ## How `run-eval.sh` discovers and scores tasks
 
 1. Resolves the corpus dir: `$EVAL_CORPUS_DIR` if set, else `<script-dir>/eval-corpus`.
-2. Finds every immediate child directory containing an **executable `check.sh`**, in **sorted order**.
-3. Runs each `check.sh` (`cd` into the task dir first). Exit 0 → `pass`; non-0 → `fail`.
-   A failing check is a normal **fail tally**, never a script crash.
+2. Finds every immediate child directory containing a `check.sh`, in **sorted order**.
+3. Runs each executable `check.sh` (`cd` into the task dir first). Exit 0 → `pass`; non-0 → `fail`.
+   A failing check is a normal **fail tally**, never a script crash. A present-but-non-executable
+   `check.sh` is counted as a `fail` (with a stderr warning), not silently skipped.
 4. Tallies `M` passes out of `N` tasks and prints a per-task line plus a `Pass rate: M/N` line.
 
 ### Determinism invariant
@@ -50,7 +54,9 @@ A task directory **without an executable `check.sh` is not counted** (neither pa
 Same corpus → identical `tasks_total`, `tasks_passed`, `pass_rate`, and `per_task`. The `commit` and
 `date` fields are **contextual** and legitimately vary run to run — they are **not** part of the
 determinism invariant. Task discovery uses `LC_ALL=C sort`, so `per_task` ordering is stable across
-locales (not just filesystem enumeration order).
+locales (not just filesystem enumeration order). Tasks are direct children of the corpus dir
+(`find -mindepth 1 -maxdepth 1`), so sorting by full path is equivalent to sorting by `id` — the
+`per_task` array is ordered by `id`.
 
 ### Portability of the seed tasks (maintainer-side)
 

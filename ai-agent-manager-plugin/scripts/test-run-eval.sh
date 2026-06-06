@@ -10,6 +10,8 @@
 #   2. deterministic-same-result — two runs over the same fixture yield identical
 #      tasks_total/tasks_passed/pass_rate/per_task (commit/date stripped before compare).
 #   3. missing-corpus fail-safe — a non-existent corpus dir => status "unverified", exit 0.
+#   4. non-executable check.sh — a present-but-not-executable check.sh is counted as a FAIL
+#      (included in tasks_total, with a stderr warning), never silently dropped.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -86,6 +88,29 @@ if [ "$rc" -eq 0 ] && printf '%s' "$jM" \
 else
   no "fail-safe path wrong (rc=$rc): $jM"
 fi
+
+echo "== 4. non-executable check.sh => counted as FAIL (not silently dropped) =="
+CORPUS_NX="$TMP/corpus-nx"
+mk_task "$CORPUS_NX" "runs-ok" 0                                    # normal passing task (chmod +x)
+mkdir -p "$CORPUS_NX/not-exec"
+printf 'task not-exec\n' > "$CORPUS_NX/not-exec/spec.md"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$CORPUS_NX/not-exec/check.sh"   # deliberately NOT chmod +x
+oNX="$( EVAL_CORPUS_DIR="$CORPUS_NX" bash "$RUN" 2>/dev/null )"
+jNX="$(eval_json "$oNX")"
+if printf '%s' "$jNX" | jq -e '
+    .tasks_total==2 and .tasks_passed==1 and .pass_rate=="1/2"
+    and ((.per_task | map({(.id):.status}) | add) == {"not-exec":"fail","runs-ok":"pass"})
+  ' >/dev/null 2>&1; then
+  ok "non-executable check.sh counted as FAIL (included in total, not dropped)"
+else
+  no "non-exec handling wrong: $jNX"
+fi
+# the warning must reach stderr (visibility is the whole point)
+eNX="$( EVAL_CORPUS_DIR="$CORPUS_NX" bash "$RUN" 2>&1 >/dev/null )"
+case "$eNX" in
+  *"not executable"*) ok "emits a stderr warning for the non-executable task" ;;
+  *) no "expected a stderr warning about non-executable check.sh, got: $eNX" ;;
+esac
 
 echo
 echo "RESULT: $pass passed, $fail failed"
