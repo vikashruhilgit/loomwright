@@ -1,7 +1,7 @@
 # Result Schemas
 
 > Strict contracts for all agent result blocks. Hooks validate against these schemas.
-> All schemas include a `schema_version` field for forward compatibility. Current versions: CODE_REVIEW_RESULT at `schema_version: 3` (review modes + consistency audit; v2 accepted for legacy); WORKER_RESULT at `schema_version: 2` (outputs_verified contract; v1 accepted for the v12.0.0 transition window); AUTONOMOUS_RUN at `schema_version: 2` (v14.0.0 status_reason extension; v1 accepted, no hook validation); LAUNCH_PAD_RESULT at `schema_version: 1` (added v14.2.0, validated by `scripts/validate-launch-pad-result.py`); REVIEW_HEAL_RESULT at `schema_version: 1` (added v14.16.0, no hook validator — runner is the main agent of its own session); all others at `schema_version: 1`.
+> All schemas include a `schema_version` field for forward compatibility. Current versions: CODE_REVIEW_RESULT at `schema_version: 3` (review modes + consistency audit; v2 accepted for legacy); WORKER_RESULT at `schema_version: 2` (outputs_verified contract; v1 accepted for the v12.0.0 transition window); AUTONOMOUS_RUN at `schema_version: 2` (v14.0.0 status_reason extension; v1 accepted, no hook validation); LAUNCH_PAD_RESULT at `schema_version: 1` (added v14.2.0, validated by `scripts/validate-launch-pad-result.py`); REVIEW_HEAL_RESULT at `schema_version: 1` (added v14.16.0, no hook validator — runner is the main agent of its own session); EVAL_RESULT at `schema_version: 1` (added v14.17.0, the System Twin eval instrument emitted by `scripts/run-eval.sh`, no hook validator — standalone script); all others at `schema_version: 1`.
 
 > **API-level enforcement:** When using the Claude API directly (outside Claude Code), enforce these schemas via `output_config.format` (JSON Schema mode) for guaranteed conformance — the model is constrained to produce schema-valid output before the response is returned. Plugin hook validation (the `SubagentStop` hooks defined in `hooks.json`) is the runtime fallback validator inside Claude Code, where `output_config` is not available to plugin agents. See `AGENT_GUIDELINES.md` §"Structured Outputs" and the Anthropic API reference for the exact field name in your SDK version.
 
@@ -755,6 +755,66 @@ fields as "not reported this session").
 
 ---
 
+## EVAL_RESULT (System Twin eval harness)
+
+Emitted by `scripts/run-eval.sh` — the System Twin **eval instrument** (M2a). It is a
+deterministic runner/scorer that measures plugin *output quality* against a fixed corpus of tasks
+under `scripts/eval-corpus/` (one self-contained dir per task, each carrying an executable
+`check.sh` whose exit code is the per-task verdict). The script prints a human/grep per-task block
+plus a `Pass rate: M/N` line, AND exactly ONE machine-readable line `EVAL_RESULT: {...}` (jq-built
+for injection safety). The harness ALWAYS exits 0.
+
+The **`pass_rate` (M/N) is the fitness-function signal** — the headline metric tracked
+release-over-release. The runner is deterministic: the same corpus + same checks produce identical
+`tasks_total` / `tasks_passed` / `pass_rate` / `per_task` every run. The **determinism invariant
+covers those tallies/per_task only**; the contextual `commit` / `date` fields legitimately vary
+per run and are explicitly NOT part of the invariant.
+
+```json
+EVAL_RESULT: {
+  "schema_version": 1,
+  "tasks_total": 4,
+  "tasks_passed": 4,
+  "pass_rate": "4/4",
+  "per_task": [ {"id": "doc-currency-green", "status": "pass"}, ... ],
+  "commit": "268a6be",
+  "date": "2026-06-06T17:35:45Z",
+  "status": "ok"
+}
+```
+
+**Field contract (schema_version: 1):**
+- `schema_version` — integer, required, always `1`.
+- `tasks_total` — integer; count of corpus tasks discovered (dirs under the corpus carrying an
+  executable `check.sh`). `0` in the fail-safe path.
+- `tasks_passed` — integer; count whose `check.sh` exited `0`.
+- `pass_rate` — string `"M/N"` (e.g. `"4/4"`). The **fitness-function signal trackable
+  release-over-release**. `"0/0"` in the fail-safe path.
+- `per_task` — array of `{id, status}` objects, one per discovered task, in deterministic sorted
+  order. `id` is the task-dir basename; `status` is one of `pass | fail` (a non-zero `check.sh` is
+  a normal `fail` tally, never a script crash). `[]` in the fail-safe path.
+- `commit` — short commit SHA at run time, or `"unknown"` if `git` is unavailable. **Contextual —
+  NOT part of the determinism invariant.**
+- `date` — ISO 8601 UTC timestamp at run time, or `"unknown"`. **Contextual — NOT part of the
+  determinism invariant.**
+- `status` — one of:
+  - `ok` — normal: the corpus ran and the tallies are real.
+  - `unverified` — fail-safe: the corpus dir is missing OR `jq` is unavailable, so the eval could
+    not run. Emitted with `tasks_total: 0`, `tasks_passed: 0`, `pass_rate: "0/0"`, `per_task: []`
+    (mirroring `run-benchmark.sh`'s fail-safe — an eval that cannot run must never break its
+    caller).
+
+**Scope honesty (M2a vs M2b):** this is the eval **instrument** (M2a, shipped v14.17.0) — a fitness
+function over an output-quality corpus. It is **DISTINCT from the canary benchmark**
+(`BENCHMARK_JSON` / `scripts/run-benchmark.sh`), which validates the `session_end` hard-signal
+pipeline and is named/stored separately on purpose ("eval" ≠ "benchmark"). The eval harness does
+**NOT** auto-run the full Launch Pad→Supervisor agent loop in CI against the corpus, and does **NOT**
+wire ground-truth execution into Supervisor Phase 4.5 — **both are explicit M2b follow-ups**
+(deferred). See `scripts/run-eval.sh` (the runner/scorer) and `scripts/eval-corpus/` (the corpus +
+per-task `check.sh` checks), and `docs/SPIKES/SYSTEM_TWIN_ROADMAP.md` §4 (M2) for milestone status.
+
+---
+
 ## QA_SESSION
 
 Schema for `.qa-session/plan.json` and `.qa-session/coverage.json` managed by QA Executor during session-based testing.
@@ -1097,6 +1157,7 @@ All result schemas include a `schema_version` field. This enables forward compat
 
 ### Version History
 
+- **EVAL_RESULT (schema_version 1)** (v14.17.0): New schema for the System Twin **eval instrument** (M2a) emitted by `scripts/run-eval.sh`. Eight fields (`schema_version`, `tasks_total`, `tasks_passed`, `pass_rate`, `per_task[]` of `{id, status: pass|fail}`, `commit`, `date`, `status: ok|unverified`). `pass_rate` (M/N) is the fitness-function signal trackable release-over-release; the determinism invariant covers the tallies/`per_task` only (NOT the contextual `commit`/`date`). `status: unverified` is the fail-safe path (corpus missing or `jq` absent → tasks 0, pass_rate `0/0`, per_task `[]`). The instrument is **distinct from the canary benchmark** (`BENCHMARK_JSON` / `run-benchmark.sh`) and does NOT auto-run the agent loop in CI nor wire ground-truth into Phase 4.5 — both are M2b follow-ups. No SubagentStop hook validates it (the runner is a standalone script). Additive — all other schemas unchanged.
 - **REVIEW_HEAL_RESULT (schema_version 1)** (v14.16.0): New schema for the standalone PR review-and-heal loop's outcome block (`/review-pr <pr-url>` + the `ai-agent-manager-plugin:review-pr-runner` agent, and the `/autonomous` EVALUATE Task step). Seven fields (`schema_version`, `decision` enum `PASS | ESCALATED`, `iterations`, `issues_fixed`, `remaining_issues`, `pr_url`, `notified`); canonical names coined in `skills/review-heal/SKILL.md` and consumed verbatim. The loop does NOT redefine review output — each iteration reuses the existing `CODE_REVIEW_RESULT` v3 (`review_mode: diff_review`). No SubagentStop hook validates it (the runner is the main agent of its own fresh session, or runs inline via `/review-pr`; the `/autonomous` path consumes it as a Task step). Additive — all other schemas unchanged.
 - **SYSTEM_CONTRACT artifact + SUPERVISOR_RESULT v1 extension + `session_end` hard-signal fields** (System Twin): Added the new `## SYSTEM_CONTRACT` artifact schema (per-subsystem advisory contract under `.supervisor/twin/contracts/`, written solely by `scripts/write-system-contract.sh`, gated on read by `scripts/read-system-contract.sh`), the optional additive `contract_conformance` and `benchmark_result` objects on SUPERVISOR_RESULT, and the matching FLAT `session_end` JSONL scalar fields (`contract_conformance_status`, `contract_violations`, `benchmark_status`, `benchmark_metric`, `benchmark_value`, `benchmark_delta`). These are **additive System Twin fields** — SUPERVISOR_RESULT and SYSTEM_CONTRACT both stay at `schema_version: 1`. The SUPERVISOR_RESULT additions follow the `branch_base` / `pr_state` / `preflight_sync` precedent (optional, advisory-only, not enumerated by the Supervisor SubagentStop hook), so pre-System-Twin blocks remain valid. `contract_conformance` is advisory only and NEVER changes `heal_decision` / blocks the PR. The nested SUPERVISOR_RESULT objects and the flat `session_end` fields are the same hard-signal data in two shapes; `build-insights.sh` reads the flat `session_end` fields.
 - **SUPERVISOR_RESULT v1 extension + AUTONOMOUS_RUN status_reason addition** (v14.8.0): Added optional `preflight_sync: enum [clear, overlap_proceed, superseded_proceed, skipped, unverified] | null` to SUPERVISOR_RESULT (records the Phase 1.5 PRE-FLIGHT SYNC gate outcome) and the closed `preflight_overlap_detected` value to the AUTONOMOUS_RUN `status_reason` enum (the gate's CI fail-closed abort, paired with `SUPERVISOR_RESULT.status: failed`). SUPERVISOR_RESULT schema_version stays `1` — `preflight_sync` is optional and additive (same precedent as `branch_base` / `pr_state`); the Supervisor SubagentStop hook does not enumerate it, so pre-v14.8.0 blocks remain valid. AUTONOMOUS_RUN schema_version stays `2` — the new status_reason is an additive enum value, and per the closed-set rule the value was added to both this schema and `skills/autonomous-loop/SKILL.md`.
