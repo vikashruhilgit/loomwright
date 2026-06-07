@@ -24,21 +24,19 @@ jobs:
         run: bash scripts/check-doc-currency.sh
 
       - name: Run full deterministic self-test suite (hard gate)
+        env:
+          # build-vault.sh's idempotency assertion (#3 in test-build-vault.sh) FAILS on
+          # ubuntu/ext4 but passes on macOS (unsorted dir enumeration churned by an in-$DEST
+          # mktemp). Skip ONLY that one assertion group so the test file's other groups —
+          # including the path-escape / write-containment SAFETY checks (#5/#6) — keep
+          # hard-gating. Pre-existing build-vault bug, tracked in issue #40; drop this env
+          # once #40 lands.
+          BUILD_VAULT_SKIP_IDEMPOTENCY: "1"
         run: |
           set -euo pipefail
-          # Loops over the whole suite so future test-*.sh are auto-gated (anti-drift).
-          # EXCLUSION: test-build-vault.sh asserts build-vault.sh (the /obsidian projection)
-          # is idempotent across re-runs. That holds on macOS but FAILS on ubuntu, where an
-          # unchanged re-run re-writes a few notes (unsorted dir enumeration perturbed by
-          # in-$DEST mktemp churn under ext4 readdir ordering). The bug is pre-existing and
-          # unrelated to the fitness/self-test wiring, so it is excluded here (loudly)
-          # pending a root-cause idempotency fix. All other test-*.sh remain hard gates.
+          # Loops over the WHOLE suite as a hard gate (every test-*.sh runs; future tests are
+          # auto-included — anti-drift), failing the job on the first non-zero exit.
           for t in ai-agent-manager-plugin/scripts/test-*.sh; do
-            case "$t" in
-              */test-build-vault.sh)
-                echo "== SKIP $t (platform-dependent idempotency flake on ubuntu — tracked follow-up) =="
-                continue ;;
-            esac
             echo "== $t =="
             bash "$t"
           done
