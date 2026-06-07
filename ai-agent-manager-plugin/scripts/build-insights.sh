@@ -184,13 +184,17 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
   fi
 
   # --- Eval fitness function (ALWAYS rendered; "no data yet" when absent) ---
-  # Reads .supervisor/eval/results.jsonl (one EVAL_RESULT-plus-recorded_at per line, oldest-first;
-  # written by run-eval.sh in ST1). pass_rate is a string like "4/6". Latest = last line; trend =
-  # the ordered list joined with " → ", bounded to the most recent ~10 points (prefix "… → " if cut).
+  # Reads .supervisor/eval/results.jsonl (one EVAL_RESULT-plus-recorded_at per line; written by
+  # run-eval.sh in ST1). pass_rate is a string like "4/6". Only VERIFIED runs (status=="ok") feed the
+  # fitness trend — unverified records (status=="unverified", pass_rate "0/0", emitted when the eval
+  # could not run) carry a 0/0 that would otherwise misread in the trend as "everything failed"
+  # rather than "not measured", so they are filtered out. Records are sorted by recorded_at ascending
+  # (defensive — robust to manual reordering of the file), so latest = last line and the trend reads
+  # oldest → newest, joined with " → ", bounded to the most recent ~10 points (prefix "… → " if cut).
   echo "## Eval fitness function"
   evf=".supervisor/eval/results.jsonl"
   if [ -f "$evf" ] && [ -s "$evf" ]; then
-    eval_rates="$(jq -r 'select(.pass_rate)|.pass_rate' "$evf" 2>/dev/null)"
+    eval_rates="$(jq -rs 'map(select(.status=="ok" and (.pass_rate // null))) | sort_by(.recorded_at // "") | .[].pass_rate' "$evf" 2>/dev/null)"
     if [ -n "$eval_rates" ]; then
       eval_latest="$(printf '%s\n' "$eval_rates" | tail -1)"
       eval_total="$(printf '%s\n' "$eval_rates" | grep -c . 2>/dev/null)"; eval_total="${eval_total:-0}"
