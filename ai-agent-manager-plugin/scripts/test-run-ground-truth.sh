@@ -4,7 +4,7 @@
 # never pollute the real .supervisor/ (the runner's ground-truth.json fallback resolves against the
 # git root of the CWD). Exit 0 = all pass, 1 = any failure. Prints "RESULT: N passed, M failed".
 #
-# Covers the five core AC cases plus the corpus dogfood and edge cases — 12 assertions (a–k, incl. e2):
+# Covers the five core AC cases plus the corpus dogfood and edge cases — 14 assertions (a–l, incl. e2 + l-env):
 #   (a) passing check (--check 'cmd: true')          => status "pass", 1/1, exit 0.
 #   (b) failing check (--check 'cmd: false')         => status "advisory_failures", per_check fail, exit 0.
 #   (c) no source (temp CWD, no ground-truth.json)   => status "skipped", 0/0, exit 0.
@@ -17,6 +17,7 @@
 #   (i) cmd: target with a leading dash              => target preserved verbatim (not bullet-stripped).
 #   (j) --brief heading match is exact               => sibling "## Executable Acceptance Notes" ignored.
 #   (k) empty cmd: target                            => fail (reason empty_cmd_target), not a false pass.
+#   (l) --no-cmd / GROUND_TRUTH_NO_CMD safety valve   => cmd skipped (unverified/cmd_disabled, no side effect), corpus-task still runs.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -182,6 +183,29 @@ if [ "$rcJ" -eq 0 ] && printf '%s' "$jJ" | jq -e '
   ok "exact heading match: sibling '## Executable Acceptance Notes' ignored, only real section collected"
 else
   no "(j) wrong (rc=$rcJ): $jJ"
+fi
+
+echo "== (l) --no-cmd safety valve: cmd skipped (unverified/cmd_disabled), corpus-task still runs =="
+oL2="$( cd "$CWD" && bash "$RUN" --no-cmd --check 'cmd: true' --check 'corpus-task: version-consistent' 2>/dev/null )"; rcL2=$?
+jL2="$(gt_json "$oL2")"
+# cmd: not executed (unverified/cmd_disabled); corpus-task runs (pass) => overall pass, total 2, passed 1.
+if [ "$rcL2" -eq 0 ] && printf '%s' "$jL2" | jq -e '
+    .checks_total==2 and .checks_passed==1 and .status=="pass"
+    and ((.per_check[] | select(.kind=="cmd")) | .status=="unverified" and .reason=="cmd_disabled")
+    and ((.per_check[] | select(.kind=="corpus-task")) | .status=="pass")
+  ' >/dev/null 2>&1; then
+  ok "--no-cmd: cmd skipped (unverified/cmd_disabled), corpus-task ran (pass), status pass, exit 0"
+else
+  no "(l) wrong (rc=$rcL2): $jL2"
+fi
+# also assert the env-var form (GROUND_TRUTH_NO_CMD=1) skips cmd and the cmd never executes a side effect
+SENTINEL="$TMP/no_cmd_sentinel.$$"
+rm -f "$SENTINEL"
+oL3="$( cd "$CWD" && GROUND_TRUTH_NO_CMD=1 bash "$RUN" --check "cmd: touch '$SENTINEL'" 2>/dev/null )"
+if [ ! -e "$SENTINEL" ] && printf '%s' "$(gt_json "$oL3")" | jq -e '.per_check[0].reason=="cmd_disabled"' >/dev/null 2>&1; then
+  ok "GROUND_TRUTH_NO_CMD=1 env form: cmd not executed (no side effect), reason cmd_disabled"
+else
+  no "(l-env) cmd ran or wrong reason (sentinel exists=$( [ -e "$SENTINEL" ] && echo yes || echo no ))"
 fi
 
 echo "== (k) empty cmd: target => fail (not a false pass), exit 0 =="

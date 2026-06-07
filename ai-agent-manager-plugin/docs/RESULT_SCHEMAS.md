@@ -853,7 +853,13 @@ runner ITSELF performs no repo writes and makes no network calls, but a `cmd:` c
 for the trusted-by-construction checks it executes. Because Phase 4.5 runs this automatically and
 unattended (incl. under `/autonomous`, where the `## Executable Acceptance` section is machine-authored
 by Launch Pad), `cmd:` bullets are a trust-sensitive surface to review at Plan Review; `corpus-task`
-ids are constrained to a single path segment so they cannot escape `eval-corpus`. It is consumed by
+ids are constrained to a single path segment so they cannot escape `eval-corpus`. **Safety valve:**
+`--no-cmd` (or `GROUND_TRUTH_NO_CMD=1`) skips `cmd:`/bare checks entirely (recorded `unverified`,
+reason `cmd_disabled` — never executed); `corpus-task:`/`qa-executor:` are unaffected. Supervisor
+Phase 4.5 passes `--no-cmd` on the unattended/`--non-interactive` (`/autonomous`) path so a
+machine-authored `cmd:` bullet never runs arbitrary shell with no human in the loop — the interim
+guard until the prompt-level Plan Reviewer control lands (M2b slice 1b; see
+`docs/SPIKES/SYSTEM_TWIN_ROADMAP.md` §7). It is consumed by
 Supervisor Phase 4.5, which maps it onto the
 `SUPERVISOR_RESULT.ground_truth` object and the flat `ground_truth_*` `session_end` fields (advisory
 only — NEVER changes `heal_decision`, NEVER blocks the PR).
@@ -895,15 +901,19 @@ GROUND_TRUTH_JSON: {
 - `pass_rate` — string `"M/N"` (e.g. `"2/2"`). `"0/0"` on the `skipped`/no-`jq` paths; the
   all-deferred `unverified` path reports the real `"0/N"` (N = the deferred checks counted in
   `checks_total`).
-- `per_check` — array of `{kind, target, status, reason?}` objects, one per resolved check:
+- `per_check` — array of `{kind, target, status, reason?}` objects, one per resolved check. **Order is
+  source-dependent:** explicit `--check` / `--brief` / `--checks-file` preserve declaration order, but
+  the `.supervisor/twin/ground-truth.json` fallback is `LC_ALL=C`-sorted for determinism — downstream
+  readers should not assume declaration order in the fallback case.
   - `kind` — one of `cmd | corpus-task | qa-executor`.
   - `target` — the shell command (`cmd`), corpus task-id (`corpus-task`), or QA target
     (`qa-executor`).
   - `status` — one of `pass | fail | unverified` (a non-zero exit is a normal `fail` tally, never a
     crash).
   - `reason` — optional short string. Known values: `corpus_task_not_found` (missing task dir /
-    `check.sh` — a missing dogfood target is a real `fail`), `corpus_task_invalid_id`, and
-    `qa_executor_dispatch_deferred_m2b_1b` (the deferred `qa-executor` kind).
+    `check.sh` — a missing dogfood target is a real `fail`), `corpus_task_invalid_id`, `empty_cmd_target`
+    (a bare `cmd:` with no command), `cmd_disabled` (a `cmd:`/bare check skipped under `--no-cmd` /
+    `GROUND_TRUTH_NO_CMD=1`), and `qa_executor_dispatch_deferred_m2b_1b` (the deferred `qa-executor` kind).
 - `commit` — short commit SHA at run time, or `"unknown"`. **Contextual — NOT part of any determinism
   invariant.**
 - `date` — ISO 8601 UTC timestamp at run time, or `"unknown"`. **Contextual.**

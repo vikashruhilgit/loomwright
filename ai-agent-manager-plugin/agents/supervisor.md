@@ -865,7 +865,15 @@ After the Code Reviewer loop has run (regardless of `heal_decision`), execute th
 # falling back to .supervisor/twin/ground-truth.json when the brief has no such section.
 ground_truth = { checked: false, status: "skipped", checks_total: 0, checks_passed: 0, findings: [] }
 
-gt = bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-ground-truth.sh --brief <brief_path>
+# SAFETY VALVE (unattended/autonomous path): when NON_INTERACTIVE == true — i.e. this run was driven
+# by /autonomous, where the brief's `## Executable Acceptance` section is MACHINE-AUTHORED by Launch
+# Pad — pass --no-cmd so a `cmd:` bullet can NEVER run arbitrary shell with no human in the loop.
+# --no-cmd skips cmd:/bare checks (recorded unverified/"cmd_disabled"); corpus-task: checks still run.
+# This is the interim guard until the prompt-level Plan Reviewer control lands (M2b slice 1b — see
+# docs/SPIKES/SYSTEM_TWIN_ROADMAP.md §7). In an interactive `/supervisor` run (human at Plan Review),
+# cmd: bullets run normally.
+NO_CMD_FLAG = (NON_INTERACTIVE == true) ? "--no-cmd" : ""
+gt = bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-ground-truth.sh --brief <brief_path> $NO_CMD_FLAG
 # Parse the single `GROUND_TRUTH_JSON: {...}` line. A parse miss → treat as
 # ground_truth.checked=false, status:"unverified" (mirror the benchmark "treat a parse miss as
 # unverified" rule). The runner always exits 0, so this can never fail the phase.

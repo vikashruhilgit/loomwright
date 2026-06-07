@@ -71,7 +71,13 @@
 # can deterministically exercise the "unverified" tooling path without a brittle PATH shim). It is a
 # TEST-ONLY hook and has no effect on normal operation.
 #
-# Usage:  run-ground-truth.sh [--check '<line>']... [--brief <path>] [--checks-file <path>]
+# Safety valve: --no-cmd (or GROUND_TRUTH_NO_CMD=1) skips cmd:/bare shell checks entirely (recorded
+# per_check "unverified", reason "cmd_disabled" — never executed); corpus-task:/qa-executor: are
+# unaffected. Supervisor passes this on the unattended/--non-interactive (/autonomous) path so a
+# machine-authored cmd: bullet never runs arbitrary shell with no human in the loop, until the
+# prompt-level Plan Reviewer control lands (M2b slice 1b — see docs/SPIKES/SYSTEM_TWIN_ROADMAP.md §7).
+#
+# Usage:  run-ground-truth.sh [--check '<line>']... [--brief <path>] [--checks-file <path>] [--no-cmd]
 # Exit:   always 0.
 
 set -uo pipefail
@@ -87,6 +93,13 @@ DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
 EXPLICIT_CHECKS=()   # collected from --check / --brief / --checks-file (in resolution order)
 BRIEF=""
 CHECKS_FILE=""
+# --no-cmd (or GROUND_TRUTH_NO_CMD=1): safety valve for unattended use. When set, cmd:/bare shell
+# checks are NOT executed (recorded per_check "unverified", reason "cmd_disabled"); corpus-task: and
+# qa-executor: are unaffected. The Supervisor passes this on the unattended/--non-interactive
+# (/autonomous) path so a machine-authored cmd: bullet never runs arbitrary shell with no human in
+# the loop, until the prompt-level Plan Reviewer control lands (M2b slice 1b — see SYSTEM_TWIN_ROADMAP §7).
+NO_CMD=0
+[ "${GROUND_TRUTH_NO_CMD:-0}" = "1" ] && NO_CMD=1
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -96,6 +109,7 @@ while [ $# -gt 0 ]; do
     --brief=*)      BRIEF="${1#--brief=}"; shift ;;
     --checks-file)  CHECKS_FILE="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
     --checks-file=*) CHECKS_FILE="${1#--checks-file=}"; shift ;;
+    --no-cmd)       NO_CMD=1; shift ;;
     *) shift ;;
   esac
 done
@@ -263,7 +277,13 @@ for line in "${CHECK_LINES[@]}"; do
 
   case "$kind" in
     cmd)
-      if [ -z "$target" ]; then
+      if [ "$NO_CMD" -eq 1 ]; then
+        # Safety valve (--no-cmd / GROUND_TRUTH_NO_CMD=1): do NOT execute arbitrary shell. Record
+        # as unverified (like a deferral) — counts toward checks_total, never a pass or a fail.
+        deferred=$((deferred+1))
+        echo "  [SKIP] cmd:$target (cmd execution disabled via --no-cmd)"
+        append_check "cmd" "$target" "unverified" "cmd_disabled"
+      elif [ -z "$target" ]; then
         # An empty command (a bare `cmd:` or `cmd:` + whitespace bullet) is a malformed declaration,
         # NOT a check. `bash -c ""` exits 0, so without this guard it would be a false PASS that
         # silently inflates the green signal. Surface it as a fail so the bad bullet is visible.
