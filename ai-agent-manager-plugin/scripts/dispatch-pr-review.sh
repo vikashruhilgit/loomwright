@@ -153,6 +153,19 @@ if [ -e "$MARKER" ]; then
   exit 0
 fi
 
+# ---- Dry-run short-circuit (honored BEFORE requiring the claude binary) ------
+# In dry-run the claude process is never launched, so its presence on PATH is
+# irrelevant. Emit the would-be command + write the marker (so the marker-guard
+# path is still exercised) WITHOUT requiring the binary. This keeps the self-test
+# (test-dispatch-pr-review.sh) claude-independent on CI runners that have no
+# `claude` on PATH — previously the claude check below short-circuited first,
+# making the dry-run a no-op on CI.
+if [ -n "$DRY_RUN" ]; then
+  printf 'DRY_RUN_DISPATCH: %s --agent %s %s\n' "$CLAUDE_BIN" "$RUNNER" "$PR_URL"
+  printf '%s\n' "$PR_URL" > "$MARKER" 2>/dev/null || true
+  exit 0
+fi
+
 # ---- Require the claude binary ----------------------------------------------
 if ! command -v "$CLAUDE_BIN" >/dev/null 2>&1; then
   log "'$CLAUDE_BIN' not on PATH — cannot launch review-pr-runner, skipping"
@@ -163,14 +176,6 @@ fi
 mkdir -p "$LOG_DIR" 2>/dev/null || true
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || echo unknown)"
 RUN_LOG="$LOG_DIR/review-pr-dispatch-$TIMESTAMP-$PR_HASH.log"
-
-if [ -n "$DRY_RUN" ]; then
-  # Dry-run: do NOT spawn claude. Print the would-be command and write the marker
-  # so the marker-guard path is still exercised by the self-test.
-  printf 'DRY_RUN_DISPATCH: %s --agent %s %s\n' "$CLAUDE_BIN" "$RUNNER" "$PR_URL"
-  printf '%s\n' "$PR_URL" > "$MARKER" 2>/dev/null || true
-  exit 0
-fi
 
 # Write the marker BEFORE launching so a crash mid-launch still blocks re-dispatch
 # (fail-closed against runaway). The marker records the PR URL + dispatch time.
