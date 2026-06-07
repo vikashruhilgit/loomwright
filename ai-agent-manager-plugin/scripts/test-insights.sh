@@ -82,12 +82,17 @@ echo "== 4. Eval fitness + Twin growth sections (present) =="
 E="$(mktemp -d)"; ( cd "$E" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
 mkdir -p "$E/.supervisor/logs"
 printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS","heal_iterations":1}' > "$E/.supervisor/logs/sess-e.jsonl"
-# eval results.jsonl: 3 lines, oldest-first, differing pass_rate
+# eval results.jsonl: deliberately written OUT OF FILE ORDER + one unverified record, to exercise
+# (a) the status=="ok" filter — the unverified 0/0 (emitted when an eval could not run) must NOT
+#     pollute the fitness trend (it would misread as "everything failed" vs "not measured"); and
+# (b) the recorded_at sort — the trend must read oldest→newest regardless of append/file order.
+# Note status is "ok" (what run-eval.sh actually emits), not "verified".
 mkdir -p "$E/.supervisor/eval"
 {
-  printf '%s\n' '{"schema_version":1,"pass_rate":"4/4","status":"verified","recorded_at":"2026-06-02T10:00:00Z"}'
-  printf '%s\n' '{"schema_version":1,"pass_rate":"5/6","status":"verified","recorded_at":"2026-06-03T10:00:00Z"}'
-  printf '%s\n' '{"schema_version":1,"pass_rate":"6/6","status":"verified","recorded_at":"2026-06-04T10:00:00Z"}'
+  printf '%s\n' '{"schema_version":1,"pass_rate":"5/6","status":"ok","recorded_at":"2026-06-03T10:00:00Z"}'
+  printf '%s\n' '{"schema_version":1,"pass_rate":"0/0","status":"unverified","recorded_at":"2026-06-03T12:00:00Z"}'
+  printf '%s\n' '{"schema_version":1,"pass_rate":"4/4","status":"ok","recorded_at":"2026-06-02T10:00:00Z"}'
+  printf '%s\n' '{"schema_version":1,"pass_rate":"6/6","status":"ok","recorded_at":"2026-06-04T10:00:00Z"}'
 } > "$E/.supervisor/eval/results.jsonl"
 # twin store: 3 contract files + provenance with adds across 2 dates
 mkdir -p "$E/.supervisor/twin/contracts"
@@ -104,7 +109,11 @@ ed="$E/.supervisor/insights/dashboard.md"
 [ "$rc" -eq 0 ] && ok "build exits 0 (sections present case)" || no "build rc != 0 (present case, rc=$rc)"
 grep -q "^## Eval fitness function" "$ed" 2>/dev/null && ok "Eval fitness section present" || no "Eval fitness section missing"
 grep -qF "6/6" "$ed" 2>/dev/null && ok "latest pass-rate 6/6 appears" || no "latest pass-rate missing"
-grep -qF "4/4 → 5/6 → 6/6" "$ed" 2>/dev/null && ok "eval trend arrow chain present" || no "eval trend chain wrong"
+grep -qF "4/4 → 5/6 → 6/6" "$ed" 2>/dev/null && ok "eval trend arrow chain present (sorted oldest→newest by recorded_at, out-of-order file)" || no "eval trend chain wrong"
+# the unverified 0/0 record must be filtered out of the Eval fitness section (status=="ok" only).
+evsec="$(sed -n '/^## Eval fitness function/,/^## System Twin growth/p' "$ed" 2>/dev/null)"
+printf '%s' "$evsec" | grep -qF "0/0" && no "unverified 0/0 leaked into the eval fitness trend" || ok "unverified 0/0 excluded from eval fitness trend (status==ok filter)"
+printf '%s' "$evsec" | grep -qF "Latest pass-rate:** 6/6" && ok "latest pass-rate = newest by recorded_at (6/6)" || no "latest pass-rate not newest-by-recorded_at"
 grep -q "^## System Twin growth" "$ed" 2>/dev/null && ok "System Twin growth section present" || no "Twin growth section missing"
 grep -qF "3 contracts" "$ed" 2>/dev/null && ok "contract count (3) appears" || no "contract count wrong"
 grep -qF "(2 → 3)" "$ed" 2>/dev/null && ok "twin growth cumulative arrow present" || no "twin growth arrow wrong"
