@@ -107,6 +107,12 @@ never gating** (their JSON is parsed and written to the GitHub Step Summary) —
 also shipped in **v14.19.0** (M2b slice 1a) — the Supervisor's Phase 4.5 runs a brief's declared
 `## Executable Acceptance` checks and folds the result into an advisory hard signal.
 
+> **Note on the uploaded `eval-results` artifact:** because `.supervisor/` is gitignored, each CI
+> checkout starts fresh, so `run-eval.sh` appends exactly one line and the uploaded
+> `.supervisor/eval/results.jsonl` is a **single-run snapshot**, not an accumulated trend. A
+> release-over-release fitness *trend* only materializes when those per-run lines are aggregated
+> across runs (the local `/insights` scoreboard does this from the persisted local file).
+
 The following are still **out of scope** and deferred:
 
 - **No headless agent-*generation* loop in CI (M2b part-2b)** — CI runs the instruments and self-tests
