@@ -98,11 +98,20 @@ EVAL_RESULT: {"schema_version":1,"tasks_total":N,"tasks_passed":M,"pass_rate":"M
 
 ---
 
-## Out of scope (M2b follow-ups)
+## What runs in CI today (and what's still out of scope)
 
-The following are **not** part of this harness and are deferred to M2b:
+As of **v14.20.0 (M2b part-2a)**, CI **does** auto-run the deterministic **fitness instruments**
+(`run-eval.sh`, `run-ground-truth.sh`, `run-benchmark.sh`) on every push/PR to `main` — **advisory,
+never gating** (their JSON is parsed and written to the GitHub Step Summary) — alongside the full
+**self-test suite** (`test-*.sh`), which runs as a **hard gate**. Phase 4.5 **ground-truth wiring**
+also shipped in **v14.19.0** (M2b slice 1a) — the Supervisor's Phase 4.5 runs a brief's declared
+`## Executable Acceptance` checks and folds the result into an advisory hard signal.
 
-- **No CI auto-run of the full agent loop** — `run-eval.sh` runs the corpus checks only; it does not
-  drive the plugin's agent loop end-to-end in CI.
-- **No Phase 4.5 ground-truth wiring** — the eval result is not yet consumed by the Supervisor's
-  Phase 4.5 self-heal as a ground-truth signal.
+The following are still **out of scope** and deferred:
+
+- **No headless agent-*generation* loop in CI (M2b part-2b)** — CI runs the instruments and self-tests
+  only; it does **not** drive `claude` headless in CI to *generate* solutions for generative corpus
+  tasks (the full Launch Pad→Supervisor agent loop). That needs an `ANTHROPIC_API_KEY` secret, a
+  per-run token budget, and a circuit-breaker — its own future slice.
+- **No advisory → gating flip (M3)** — every fitness signal above is advisory; flipping any of them to
+  block a PR is a deliberate, evidence-gated future milestone.
