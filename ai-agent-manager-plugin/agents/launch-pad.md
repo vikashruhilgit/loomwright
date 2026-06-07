@@ -430,7 +430,8 @@ Subtask 2 (independent)
 3. Include configuration recommendations (workers, mode)
 4. Add risk assessment and mitigation. For each CAUTION finding from Phase 2.5, add a Risk Assessment row with source "Feasibility (Phase 2.5)" — Impact MEDIUM by default, HIGH if scope-related. If Phase 2.5 returned NO-GO (user overridden), all NO-GO findings become HIGH risks.
 5. If Phase 2.5 ran, include a `## Feasibility` section in the brief (verdict + checks table — see `skills/supervisor-readiness/SKILL.md`)
-6. Present the complete brief to the user
+6. **Executable Acceptance is optional and `corpus-task:`-only when machine-authored.** Do NOT add a `## Executable Acceptance` section unless you can express the run's acceptance as `corpus-task:` bullets (sandbox-constrained checks under `scripts/eval-corpus/`). **NEVER emit `cmd:` / bare-shell bullets** — those run arbitrary shell in Supervisor Phase 4.5 and are reserved for human authorship; Plan Reviewer Criterion 14 flags them and Supervisor skips them on the unattended path anyway (machine-authored-brief convention; see `skills/supervisor-readiness/SKILL.md` §"`## Executable Acceptance`")
+7. Present the complete brief to the user
 
 **Output:** The full Supervisor-Ready Brief (see `skills/supervisor-readiness/SKILL.md` for template).
 

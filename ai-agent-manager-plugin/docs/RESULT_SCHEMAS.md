@@ -579,7 +579,7 @@ PLAN_REVIEW_RESULT:
   issues: object[]                     # required (can be empty for PASS)
     - severity: enum [BLOCKING, HIGH, MEDIUM, LOW]
       section: string                  # brief section name (e.g., "Subtask Structure", "File Impact Map")
-      category: string                 # optional — issue category (e.g., "dep_graph" for Criterion 12 violations, "file_path" for missing files); free-form, but use canonical names where defined
+      category: string                 # optional — issue category (e.g., "dep_graph" for Criterion 12 violations, "file_path" for missing files, "executable_acceptance" for Criterion 14 cmd:/bare-shell trust-surface findings); free-form, but use canonical names where defined
       description: string              # what's wrong
       suggestion: string               # optional — how to fix
   summary: string                      # required — concise review summary
@@ -591,7 +591,7 @@ PLAN_REVIEW_RESULT:
 - When `decision=FAIL`: `issues` must contain at least one issue with BLOCKING or HIGH severity
 - When `decision=NEEDS_HUMAN`: `issues` must be non-empty
 - `section` must reference a valid brief section name
-- `category` is optional but recommended; when present, prefer canonical names — `dep_graph` for Criterion 12 (provides/requires) violations, `file_path` for missing-file violations, `feasibility` for Criterion 11 issues
+- `category` is optional but recommended; when present, prefer canonical names — `dep_graph` for Criterion 12 (provides/requires) violations, `file_path` for missing-file violations, `feasibility` for Criterion 11 issues, `executable_acceptance` for Criterion 14 (`## Executable Acceptance` `cmd:`/bare-shell bullets)
 - `summary` must be present
 
 **Severity mapping for plan review:**
@@ -952,6 +952,15 @@ raw shell command or a `<kind>: <target>` line where `kind ∈ {cmd, corpus-task
 
 Supervisor Phase 4.5 passes this section to `run-ground-truth.sh` via `--brief <brief_path>` (falling
 back to `.supervisor/twin/ground-truth.json` when the brief has no such section).
+
+**Authoring convention (trust boundary).** A **machine-authored** brief (Launch Pad, especially under
+`/autonomous`) MUST emit `corpus-task:` bullets ONLY — never `cmd:`/bare shell (`agents/launch-pad.md`
+Phase 5; `skills/supervisor-readiness/SKILL.md` §"`## Executable Acceptance`"). `cmd:` bullets are
+reserved for human authorship. Plan Reviewer **Criterion 14** (`agents/plan-reviewer.md`) surfaces any
+`cmd:`/bare bullet that appears in a brief as a LOW `executable_acceptance` issue (advisory today;
+escalates at M3). On the unattended/`--non-interactive` path Supervisor passes `run-ground-truth.sh
+--no-cmd`, so a `cmd:` bullet there is skipped (`unverified`, reason `cmd_disabled`) and never runs.
+See `docs/SPIKES/SYSTEM_TWIN_ROADMAP.md §7`.
 
 ---
 
