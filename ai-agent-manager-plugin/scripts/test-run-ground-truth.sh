@@ -4,16 +4,18 @@
 # never pollute the real .supervisor/ (the runner's ground-truth.json fallback resolves against the
 # git root of the CWD). Exit 0 = all pass, 1 = any failure. Prints "RESULT: N passed, M failed".
 #
-# Covers the five core AC cases plus the corpus dogfood and edge cases — 9 assertions (a–h, incl. e2):
+# Covers the five core AC cases plus the corpus dogfood and edge cases — 11 assertions (a–j, incl. e2):
 #   (a) passing check (--check 'cmd: true')          => status "pass", 1/1, exit 0.
 #   (b) failing check (--check 'cmd: false')         => status "advisory_failures", per_check fail, exit 0.
 #   (c) no source (temp CWD, no ground-truth.json)   => status "skipped", 0/0, exit 0.
 #   (d) missing-jq simulation (GROUND_TRUTH_FORCE_NO_JQ=1) => status "unverified", exit 0.
-#   (e) qa-executor check                            => per_check unverified + deferred reason, exit 0.
+#   (e) qa-executor check                            => per_check unverified + deferred reason, ran false, exit 0.
 #   (e2) qa-executor coexisting with a passing cmd   => status "pass" (deferred never blocks).
 #   (f) corpus-task: version-consistent              => executes the real check, hard pass/fail, 1/1 total.
 #   (g) missing corpus-task                          => per_check fail, reason corpus_task_not_found, exit 0.
 #   (h) corpus-task with path traversal              => per_check fail, reason corpus_task_invalid_id, exit 0.
+#   (i) cmd: target with a leading dash              => target preserved verbatim (not bullet-stripped).
+#   (j) --brief heading match is exact               => sibling "## Executable Acceptance Notes" ignored.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -89,14 +91,15 @@ fi
 echo "== (e) qa-executor check => per_check unverified + deferred reason, exit 0 =="
 oE="$( cd "$CWD" && bash "$RUN" --check 'qa-executor: login-smoke' 2>/dev/null )"; rcE=$?
 jE="$(gt_json "$oE")"
-# only deferred check => zero pass, zero fail => status unverified (nothing actually verified)
+# only deferred check => zero pass, zero fail => status unverified (nothing actually verified),
+# and ran==false (no check executed a verifiable pass/fail) — pins the ground_truth.checked mapping.
 if [ "$rcE" -eq 0 ] && printf '%s' "$jE" | jq -e '
-    .checks_total==1 and .checks_passed==0
+    .checks_total==1 and .checks_passed==0 and .ran==false
     and .per_check[0].kind=="qa-executor" and .per_check[0].status=="unverified"
     and .per_check[0].reason=="qa_executor_dispatch_deferred_m2b_1b"
     and .status=="unverified"
   ' >/dev/null 2>&1; then
-  ok "qa-executor: per_check unverified, deferred reason, counts in total, status unverified, exit 0"
+  ok "qa-executor: per_check unverified, deferred reason, ran false, status unverified, exit 0"
 else
   no "(e) wrong (rc=$rcE): $jE"
 fi
@@ -149,6 +152,35 @@ if [ "$rcH" -eq 0 ] && printf '%s' "$jH" | jq -e '
   ok "path-traversal corpus-task => per_check fail, reason corpus_task_invalid_id, exit 0"
 else
   no "(h) wrong (rc=$rcH): $jH"
+fi
+
+echo "== (i) cmd: target keeps a leading dash (not eaten by bullet-stripping) =="
+# Regression for the strip_bullet-on-target bug: `cmd: -x foo` previously lost its leading dash.
+# The fix is verified by the target being recorded VERBATIM (incl. the leading dash). We assert on the
+# preserved target + exit 0, not on pass/fail — a leading-dash token is not a runnable command, so the
+# tally is irrelevant; target preservation is the contract under test.
+oI="$( cd "$CWD" && bash "$RUN" --check 'cmd: -x foo' 2>/dev/null )"; rcI=$?
+jI="$(gt_json "$oI")"
+if [ "$rcI" -eq 0 ] && printf '%s' "$jI" | jq -e '
+    .per_check[0].kind=="cmd" and .per_check[0].target=="-x foo"
+  ' >/dev/null 2>&1; then
+  ok "cmd target preserves leading dash (target == '-x foo'), exit 0"
+else
+  no "(i) wrong (rc=$rcI): $jI"
+fi
+
+echo "== (j) --brief heading match is exact ('## Executable Acceptance Notes' must NOT open section) =="
+BRF="$TMP/brief-notes.md"
+printf '## Executable Acceptance Notes\n- cmd: false\n\n## Executable Acceptance\n- cmd: true\n' > "$BRF"
+oJ="$( cd "$CWD" && bash "$RUN" --brief "$BRF" 2>/dev/null )"; rcJ=$?
+jJ="$(gt_json "$oJ")"
+# Only the real heading's `cmd: true` (pass) is collected; the "Notes" heading's `cmd: false` is ignored.
+if [ "$rcJ" -eq 0 ] && printf '%s' "$jJ" | jq -e '
+    .status=="pass" and .checks_total==1 and .per_check[0].target=="true"
+  ' >/dev/null 2>&1; then
+  ok "exact heading match: sibling '## Executable Acceptance Notes' ignored, only real section collected"
+else
+  no "(j) wrong (rc=$rcJ): $jJ"
 fi
 
 echo

@@ -46,7 +46,16 @@
 #                    per_check status "unverified", reason "qa_executor_dispatch_deferred_m2b_1b".
 #                    Counts toward checks_total but neither checks_passed nor a fail.
 #
-# The runner is READ-ONLY w.r.t. the repo (it only executes the checks it is given). No network.
+# TRUST BOUNDARY (not a sandbox): the runner ITSELF performs no repo writes and makes no network
+# calls — but it is NOT a security boundary. A `cmd:` (or bare) check runs an arbitrary
+# `bash -c '<shell>'` with full, unrestricted shell privileges (it CAN write files / hit the
+# network); that is the whole point — it executes the project's *declared* acceptance checks. The
+# "no writes / no network" property is therefore a property of well-behaved, TRUSTED checks, not an
+# enforced guarantee. Because Phase 4.5 runs this automatically and unattended (including under
+# /autonomous, where the brief's `## Executable Acceptance` section is machine-authored by Launch
+# Pad), `cmd:` bullets are a trust-sensitive surface and should be reviewed at Plan Review.
+# corpus-task ids are constrained to a single path segment (no `/`/`..`) so they cannot escape
+# eval-corpus, but `cmd:` shell is intentionally unconstrained.
 # eval-corpus is resolved relative to $SCRIPT_DIR so `corpus-task:` works regardless of CWD.
 #
 # Test-only env hook: GROUND_TRUTH_FORCE_NO_JQ=1 forces the no-jq fail-safe branch (so the self-test
@@ -119,7 +128,17 @@ fi
 # CHECK_LINES is the ordered list of resolved bullet strings (already `- `-stripped, trimmed).
 CHECK_LINES=()
 
+# trim leading/trailing whitespace only (no bullet-marker removal — safe for targets like `-x foo`).
+trim() {
+  local s="$1"
+  s="${s#"${s%%[![:space:]]*}"}"   # ltrim
+  s="${s%"${s##*[![:space:]]}"}"   # rtrim
+  printf '%s' "$s"
+}
+
 # strip a leading `- ` (or `-`) bullet marker and surrounding whitespace.
+# Only used at line ingestion (add_line) — NOT for `<kind>: <target>` target extraction, where a
+# leading dash in the target (e.g. `cmd: -x foo`) is meaningful and must be preserved.
 strip_bullet() {
   local line="$1"
   line="${line#"${line%%[![:space:]]*}"}"   # ltrim
@@ -146,8 +165,11 @@ fi
 if [ -n "$BRIEF" ] && [ -f "$BRIEF" ]; then
   in_section=0
   while IFS= read -r raw || [ -n "$raw" ]; do
-    case "$raw" in
-      "## Executable Acceptance"*) in_section=1; continue ;;
+    # Match the heading EXACTLY (allowing only trailing whitespace) so a sibling heading like
+    # "## Executable Acceptance Notes" does NOT open the section.
+    heading="$(trim "$raw")"
+    case "$heading" in
+      "## Executable Acceptance") in_section=1; continue ;;
       "## "*) [ "$in_section" -eq 1 ] && in_section=0 ;;
     esac
     if [ "$in_section" -eq 1 ]; then
@@ -221,10 +243,12 @@ for line in "${CHECK_LINES[@]}"; do
   # Classify: <kind>: <target> where kind in {cmd, corpus-task, qa-executor}; else bare shell cmd.
   kind=""
   target=""
+  # Use trim (whitespace only) — NOT strip_bullet — so a target with a leading dash (e.g.
+  # `cmd: -x foo`) keeps its dash. The line was already bullet-stripped at ingestion (add_line).
   case "$line" in
-    cmd:*)          kind="cmd";          target="$(strip_bullet "${line#cmd:}")" ;;
-    corpus-task:*)  kind="corpus-task";  target="$(strip_bullet "${line#corpus-task:}")" ;;
-    qa-executor:*)  kind="qa-executor";  target="$(strip_bullet "${line#qa-executor:}")" ;;
+    cmd:*)          kind="cmd";          target="$(trim "${line#cmd:}")" ;;
+    corpus-task:*)  kind="corpus-task";  target="$(trim "${line#corpus-task:}")" ;;
+    qa-executor:*)  kind="qa-executor";  target="$(trim "${line#qa-executor:}")" ;;
     *)              kind="cmd";          target="$line" ;;   # bare line -> treat as shell cmd
   esac
 
@@ -291,5 +315,10 @@ else
   status="unverified"
 fi
 
-emit_jq true "$status" "$total" "$passed" "$pass_rate" "$per_check_json"
+# `ran` means ">=1 check actually executed a verifiable pass/fail". A deferred qa-executor check
+# executes nothing, so the all-deferred path reports ran:false (status:unverified) — matching the
+# header / RESULT_SCHEMAS contract and the supervisor.md `ground_truth.checked = gt.ran` mapping.
+if [ $((passed + failures)) -gt 0 ]; then ran=true; else ran=false; fi
+
+emit_jq "$ran" "$status" "$total" "$passed" "$pass_rate" "$per_check_json"
 exit 0

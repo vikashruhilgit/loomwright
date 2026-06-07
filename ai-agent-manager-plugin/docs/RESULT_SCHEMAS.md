@@ -841,8 +841,14 @@ Emitted by `scripts/run-ground-truth.sh` — the System Twin **ground-truth inst
 pass, non-zero = fail), and emits a single hard PASS/FAIL signal. The script prints a human/grep
 per-check block plus a `Checks passed: M/N` line, AND exactly ONE machine-readable line
 `GROUND_TRUTH_JSON: {...}` (jq-built for injection safety). The runner ALWAYS exits 0 (a check's
-non-zero exit is a normal `fail` tally, never a script crash). It is READ-ONLY w.r.t. the repo and
-runs no network. It is consumed by Supervisor Phase 4.5, which maps it onto the
+non-zero exit is a normal `fail` tally, never a script crash). **Trust boundary (not a sandbox):** the
+runner ITSELF performs no repo writes and makes no network calls, but a `cmd:` check runs an arbitrary
+`bash -c` with full shell privileges — the "no writes / no network" property holds for the runner, NOT
+for the trusted-by-construction checks it executes. Because Phase 4.5 runs this automatically and
+unattended (incl. under `/autonomous`, where the `## Executable Acceptance` section is machine-authored
+by Launch Pad), `cmd:` bullets are a trust-sensitive surface to review at Plan Review; `corpus-task`
+ids are constrained to a single path segment so they cannot escape `eval-corpus`. It is consumed by
+Supervisor Phase 4.5, which maps it onto the
 `SUPERVISOR_RESULT.ground_truth` object and the flat `ground_truth_*` `session_end` fields (advisory
 only — NEVER changes `heal_decision`, NEVER blocks the PR).
 
@@ -876,9 +882,13 @@ GROUND_TRUTH_JSON: {
   - `skipped` — no check source resolved (no `--check`, no `--brief` `## Executable Acceptance`
     section, no `--checks-file`/stdin, no `.supervisor/twin/ground-truth.json`). `ran:false`, `0/0`,
     empty `per_check`.
-- `checks_total` — integer; count of resolved checks. `0` on the `skipped`/no-`jq` paths.
+- `checks_total` — integer; count of resolved checks. `0` on the `skipped` (no source) and no-`jq`
+  paths; **≥1 on the all-deferred `unverified` path** (a deferred `qa-executor` check is resolved and
+  counts toward the total even though it executes nothing).
 - `checks_passed` — integer; count whose check exited `0`.
-- `pass_rate` — string `"M/N"` (e.g. `"2/2"`). `"0/0"` on the fail-safe paths.
+- `pass_rate` — string `"M/N"` (e.g. `"2/2"`). `"0/0"` on the `skipped`/no-`jq` paths; the
+  all-deferred `unverified` path reports the real `"0/N"` (N = the deferred checks counted in
+  `checks_total`).
 - `per_check` — array of `{kind, target, status, reason?}` objects, one per resolved check:
   - `kind` — one of `cmd | corpus-task | qa-executor`.
   - `target` — the shell command (`cmd`), corpus task-id (`corpus-task`), or QA target
