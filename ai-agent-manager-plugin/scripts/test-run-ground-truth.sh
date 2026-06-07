@@ -4,13 +4,16 @@
 # never pollute the real .supervisor/ (the runner's ground-truth.json fallback resolves against the
 # git root of the CWD). Exit 0 = all pass, 1 = any failure. Prints "RESULT: N passed, M failed".
 #
-# Covers all five AC cases plus the corpus dogfood:
+# Covers the five core AC cases plus the corpus dogfood and edge cases — 9 assertions (a–h, incl. e2):
 #   (a) passing check (--check 'cmd: true')          => status "pass", 1/1, exit 0.
 #   (b) failing check (--check 'cmd: false')         => status "advisory_failures", per_check fail, exit 0.
 #   (c) no source (temp CWD, no ground-truth.json)   => status "skipped", 0/0, exit 0.
 #   (d) missing-jq simulation (GROUND_TRUTH_FORCE_NO_JQ=1) => status "unverified", exit 0.
 #   (e) qa-executor check                            => per_check unverified + deferred reason, exit 0.
+#   (e2) qa-executor coexisting with a passing cmd   => status "pass" (deferred never blocks).
 #   (f) corpus-task: version-consistent              => executes the real check, hard pass/fail, 1/1 total.
+#   (g) missing corpus-task                          => per_check fail, reason corpus_task_not_found, exit 0.
+#   (h) corpus-task with path traversal              => per_check fail, reason corpus_task_invalid_id, exit 0.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
