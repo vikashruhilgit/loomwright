@@ -22,3 +22,6 @@ jobs:
 
       - name: Check documentation currency (version/count drift gate)
         run: bash scripts/check-doc-currency.sh
+
+      - name: Eval harness self-test
+        run: bash ai-agent-manager-plugin/scripts/test-run-eval.sh
