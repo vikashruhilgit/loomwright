@@ -4,7 +4,7 @@
 # never pollute the real .supervisor/ (the runner's ground-truth.json fallback resolves against the
 # git root of the CWD). Exit 0 = all pass, 1 = any failure. Prints "RESULT: N passed, M failed".
 #
-# Covers the five core AC cases plus the corpus dogfood and edge cases — 11 assertions (a–j, incl. e2):
+# Covers the five core AC cases plus the corpus dogfood and edge cases — 12 assertions (a–k, incl. e2):
 #   (a) passing check (--check 'cmd: true')          => status "pass", 1/1, exit 0.
 #   (b) failing check (--check 'cmd: false')         => status "advisory_failures", per_check fail, exit 0.
 #   (c) no source (temp CWD, no ground-truth.json)   => status "skipped", 0/0, exit 0.
@@ -16,6 +16,7 @@
 #   (h) corpus-task with path traversal              => per_check fail, reason corpus_task_invalid_id, exit 0.
 #   (i) cmd: target with a leading dash              => target preserved verbatim (not bullet-stripped).
 #   (j) --brief heading match is exact               => sibling "## Executable Acceptance Notes" ignored.
+#   (k) empty cmd: target                            => fail (reason empty_cmd_target), not a false pass.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -181,6 +182,20 @@ if [ "$rcJ" -eq 0 ] && printf '%s' "$jJ" | jq -e '
   ok "exact heading match: sibling '## Executable Acceptance Notes' ignored, only real section collected"
 else
   no "(j) wrong (rc=$rcJ): $jJ"
+fi
+
+echo "== (k) empty cmd: target => fail (not a false pass), exit 0 =="
+# A bare `cmd:` (empty command) must NOT be a false PASS (bash -c "" exits 0). Surfaces as fail.
+oK="$( cd "$CWD" && bash "$RUN" --check 'cmd:' 2>/dev/null )"; rcK=$?
+jK="$(gt_json "$oK")"
+if [ "$rcK" -eq 0 ] && printf '%s' "$jK" | jq -e '
+    .status=="advisory_failures" and .checks_total==1 and .checks_passed==0
+    and .per_check[0].kind=="cmd" and .per_check[0].status=="fail"
+    and .per_check[0].reason=="empty_cmd_target"
+  ' >/dev/null 2>&1; then
+  ok "empty cmd: target => fail (reason empty_cmd_target), not a false pass, exit 0"
+else
+  no "(k) wrong (rc=$rcK): $jK"
 fi
 
 echo

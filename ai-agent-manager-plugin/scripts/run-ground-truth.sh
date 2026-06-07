@@ -26,12 +26,14 @@
 #   - status "pass"               — >=1 check executed and passed, and ZERO checks failed (deferred
 #                                   qa-executor checks may coexist; they never block a pass).
 #
-# Check resolution (priority order):
-#   1. Explicit: repeatable `--check '<line>'`; `--brief <path>` (extract the optional
-#      `## Executable Acceptance` section — leading-`-` bullets between that heading and the next
-#      `## ` heading); `--checks-file <path>` or stdin (one bullet per line).
-#   2. Fallback: `.supervisor/twin/ground-truth.json` (gitignored) — a JSON array of check-line
-#      strings, or {checks:[...]}; jq-parsed, tolerant.
+# Check resolution (explicit sources are COMBINED; the JSON file is fallback-only):
+#   1. Explicit (all three are appended together, in this order — NOT ranked against each other):
+#      repeatable `--check '<line>'`; `--brief <path>` (extract the optional `## Executable
+#      Acceptance` section — leading-`-` bullets between that heading and the next `## ` heading);
+#      `--checks-file <path>` or stdin (one bullet per line).
+#   2. Fallback (used ONLY when no explicit source resolved any check): `.supervisor/twin/
+#      ground-truth.json` (gitignored) — a JSON array of check-line strings, or {checks:[...]};
+#      jq-parsed, tolerant.
 #   3. None -> status "skipped".
 #
 # A check line is a `- `-stripped bullet that is EITHER a raw shell command OR `<kind>: <target>`
@@ -254,7 +256,14 @@ for line in "${CHECK_LINES[@]}"; do
 
   case "$kind" in
     cmd)
-      if bash -c "$target" >/dev/null 2>&1; then
+      if [ -z "$target" ]; then
+        # An empty command (a bare `cmd:` or `cmd:` + whitespace bullet) is a malformed declaration,
+        # NOT a check. `bash -c ""` exits 0, so without this guard it would be a false PASS that
+        # silently inflates the green signal. Surface it as a fail so the bad bullet is visible.
+        failures=$((failures+1))
+        echo "  [FAIL] cmd: (empty command)"
+        append_check "cmd" "$target" "fail" "empty_cmd_target"
+      elif bash -c "$target" >/dev/null 2>&1; then
         passed=$((passed+1))
         echo "  [PASS] cmd:$target"
         append_check "cmd" "$target" "pass"
