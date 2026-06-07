@@ -579,7 +579,7 @@ PLAN_REVIEW_RESULT:
   issues: object[]                     # required (can be empty for PASS)
     - severity: enum [BLOCKING, HIGH, MEDIUM, LOW]
       section: string                  # brief section name (e.g., "Subtask Structure", "File Impact Map")
-      category: string                 # optional — issue category (e.g., "dep_graph" for Criterion 12 violations, "file_path" for missing files); free-form, but use canonical names where defined
+      category: string                 # optional — issue category (e.g., "dep_graph" for Criterion 12 violations, "file_path" for missing files, "executable_acceptance" for Criterion 14 cmd:/bare-shell trust-surface findings); free-form, but use canonical names where defined
       description: string              # what's wrong
       suggestion: string               # optional — how to fix
   summary: string                      # required — concise review summary
@@ -591,7 +591,7 @@ PLAN_REVIEW_RESULT:
 - When `decision=FAIL`: `issues` must contain at least one issue with BLOCKING or HIGH severity
 - When `decision=NEEDS_HUMAN`: `issues` must be non-empty
 - `section` must reference a valid brief section name
-- `category` is optional but recommended; when present, prefer canonical names — `dep_graph` for Criterion 12 (provides/requires) violations, `file_path` for missing-file violations, `feasibility` for Criterion 11 issues
+- `category` is optional but recommended; when present, prefer canonical names — `dep_graph` for Criterion 12 (provides/requires) violations, `file_path` for missing-file violations, `feasibility` for Criterion 11 issues, `executable_acceptance` for Criterion 14 (`## Executable Acceptance` `cmd:`/bare-shell bullets)
 - `summary` must be present
 
 **Severity mapping for plan review:**

@@ -176,7 +176,7 @@ Success looks like {measurable outcome}.
 
 A list of project-declared **executable acceptance checks** the run must satisfy. Used by Supervisor Phase 4.5 (after the Code Reviewer loop) — `scripts/run-ground-truth.sh` resolves this section and runs each check, folding the result into the **advisory** `ground_truth` signal on `SUPERVISOR_RESULT`. It never changes `heal_decision` and never blocks the PR. The section is **optional**; briefs without it work exactly as before (`ground_truth.status: skipped`). Each `- ` bullet is one of:
 
-- `corpus-task: <id>` — runs `scripts/eval-corpus/<id>/check.sh` (sandbox-constrained: `<id>` is a single path segment that cannot escape `eval-corpus/`). **The only kind a machine-authored brief may emit.**
+- `corpus-task: <id>` — runs `scripts/eval-corpus/<id>/check.sh` (sandbox-constrained: `<id>` is a single path segment that cannot escape `eval-corpus/`). **The only kind a machine-authored brief may emit.** `<id>` references a **plugin-bundled** corpus task (resolved against the plugin's own `scripts/eval-corpus/`, e.g. `version-consistent`), NOT a path in the user's project — so outside this plugin's own repo a machine-authored brief will usually omit this section entirely (no matching bundled id exists).
 - `qa-executor: <target>` — recognized but DEFERRED to M2b slice 1b (records `unverified`; spawns nothing).
 - `cmd: <shell>` (or a bare bullet) — an arbitrary shell command run as `bash -c` with **full shell privileges**.
 
