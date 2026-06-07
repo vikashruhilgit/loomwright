@@ -1,7 +1,7 @@
 # Result Schemas
 
 > Strict contracts for all agent result blocks. Hooks validate against these schemas.
-> All schemas include a `schema_version` field for forward compatibility. Current versions: CODE_REVIEW_RESULT at `schema_version: 3` (review modes + consistency audit; v2 accepted for legacy); WORKER_RESULT at `schema_version: 2` (outputs_verified contract; v1 accepted for the v12.0.0 transition window); AUTONOMOUS_RUN at `schema_version: 2` (v14.0.0 status_reason extension; v1 accepted, no hook validation); LAUNCH_PAD_RESULT at `schema_version: 1` (added v14.2.0, validated by `scripts/validate-launch-pad-result.py`); REVIEW_HEAL_RESULT at `schema_version: 1` (added v14.16.0, no hook validator — runner is the main agent of its own session); EVAL_RESULT at `schema_version: 1` (added v14.17.0, the System Twin eval instrument emitted by `scripts/run-eval.sh`, no hook validator — standalone script); all others at `schema_version: 1`.
+> All schemas include a `schema_version` field for forward compatibility. Current versions: CODE_REVIEW_RESULT at `schema_version: 3` (review modes + consistency audit; v2 accepted for legacy); WORKER_RESULT at `schema_version: 2` (outputs_verified contract; v1 accepted for the v12.0.0 transition window); AUTONOMOUS_RUN at `schema_version: 2` (v14.0.0 status_reason extension; v1 accepted, no hook validation); LAUNCH_PAD_RESULT at `schema_version: 1` (added v14.2.0, validated by `scripts/validate-launch-pad-result.py`); REVIEW_HEAL_RESULT at `schema_version: 1` (added v14.16.0, no hook validator — runner is the main agent of its own session); EVAL_RESULT at `schema_version: 1` (added v14.17.0, the System Twin eval instrument emitted by `scripts/run-eval.sh`, no hook validator — standalone script); GROUND_TRUTH_JSON at `schema_version: 1` (added v14.19.0, the System Twin ground-truth instrument emitted by `scripts/run-ground-truth.sh`, no hook validator — standalone script; consumed advisory-only by Supervisor Phase 4.5); all others at `schema_version: 1`.
 
 > **API-level enforcement:** When using the Claude API directly (outside Claude Code), enforce these schemas via `output_config.format` (JSON Schema mode) for guaranteed conformance — the model is constrained to produce schema-valid output before the response is returned. Plugin hook validation (the `SubagentStop` hooks defined in `hooks.json`) is the runtime fallback validator inside Claude Code, where `output_config` is not available to plugin agents. See `AGENT_GUIDELINES.md` §"Structured Outputs" and the Anthropic API reference for the exact field name in your SDK version.
 
@@ -250,6 +250,15 @@ SUPERVISOR_RESULT:
     baseline: number | null
     delta: number | null               # value - baseline, null if no baseline
     unit: string
+  ground_truth:                        # optional (System Twin / M2b slice 1a) — advisory only; NEVER changes heal_decision, NEVER blocks PR
+    checked: boolean                   # false when no check source resolved / runner could not verify
+    status: enum [pass, advisory_failures, unverified, skipped]
+    checks_total: integer
+    checks_passed: integer
+    findings:                          # advisory — failing checks only
+      - check: string                  # "<kind>:<target>"
+        detail: string
+        severity: enum [info, advisory]   # by construction NEVER blocking/high
   preflight_sync: enum [clear, overlap_proceed, superseded_proceed, skipped, unverified] | null  # optional (v14.8.0+) — outcome of the Phase 1.5 PRE-FLIGHT SYNC remote-state reconciliation gate. `clear` = gate ran, no overlap/supersession found (silent path); `overlap_proceed` = OVERLAP found, user chose proceed-anyway (interactive); `superseded_proceed` = SUPERSEDED found, user chose proceed-anyway (interactive); `skipped` = `--skip-preflight-sync` short-circuited the gate; `unverified` = gh/git tooling failed and the gate degraded gracefully and continued. `null` OR absent = EITHER the gate did not run (legacy / pre-v14.8.0 resume) OR the run exited before a *proceed* classification was recorded — namely the `revise-scope` path (emits `status: checkpoint`) and the fail-closed abort path (OVERLAP/SUPERSEDED under `--non-interactive`/stdin-not-a-TTY without `--skip-preflight-sync`; emits `status: failed` with `error: "preflight_overlap_detected"`). In those two cases the gate DID run but the classification is carried in the Decisions Log entry / `error` rather than this field — read `status` + `error` to disambiguate, not `preflight_sync` alone. Schema_version stays 1 — field is additive and optional.
 ```
 
@@ -278,10 +287,11 @@ SUPERVISOR_RESULT:
 
 **v14.8.0 additive field (backwards-compat):** `preflight_sync` is a purely additive optional field following the same precedent. The Supervisor SubagentStop hook does NOT enumerate it, so blocks with or without it validate unchanged, and pre-v14.8.0 consumers ignore it (no validation failure). Schema_version remains `1`.
 
-**System Twin additive fields (backwards-compat):** `contract_conformance` and `benchmark_result` are purely additive optional objects following the same `branch_base` / `pr_state` / `preflight_sync` precedent. Both are **advisory only** — `contract_conformance` NEVER changes `heal_decision` and NEVER blocks the PR (its `findings[].severity` is `info` or `advisory` by construction, never `blocking`/`high`); `benchmark_result` is informational. The Supervisor SubagentStop hook does NOT enumerate either field, so blocks with or without them validate unchanged, and pre-System-Twin consumers ignore them. Schema_version remains `1`. Field semantics:
+**System Twin additive fields (backwards-compat):** `contract_conformance`, `benchmark_result`, and `ground_truth` are purely additive optional objects following the same `branch_base` / `pr_state` / `preflight_sync` precedent. All are **advisory only** — `contract_conformance` NEVER changes `heal_decision` and NEVER blocks the PR (its `findings[].severity` is `info` or `advisory` by construction, never `blocking`/`high`); `benchmark_result` is informational; `ground_truth` (added v14.19.0, M2b slice 1a) NEVER changes `heal_decision` and NEVER blocks the PR (its `findings[].severity` is `info` or `advisory` by construction, never `blocking`/`high`). The Supervisor SubagentStop hook does NOT enumerate any of these fields, so blocks with or without them validate unchanged, and pre-System-Twin consumers ignore them. Schema_version remains `1`. Field semantics:
 - `contract_conformance.checked` is `false` (with `status: skipped` or `unverified`) when no contracts exist in `.supervisor/twin/` or the conformance tooling is unavailable; `status: pass` requires `violations: 0`; `status: advisory_violations` requires `violations >= 1` and a non-empty `findings[]`. Field names are a contract with the System Twin builder (ST3 writes, ST4 reads) — do not rename.
 - `benchmark_result.delta` is `value - baseline`, or `null` when `baseline` is `null` (no prior baseline to compare against). `status: regressed` / `improved` are relative to `baseline`; `unverified` / `skipped` when the benchmark did not run or could not be measured.
-- **Hard-signal field contract:** `contract_conformance` and `benchmark_result` (the nested-object shape, above) and the FLAT `session_end` JSONL scalar fields (`contract_conformance_status`, `contract_violations`, `benchmark_status`, `benchmark_metric`, `benchmark_value`, `benchmark_delta` — see the `.supervisor/logs/{session}.jsonl` section below) are **the same hard-signal data in two shapes**. ST3 writes both; `build-insights.sh` reads the FLAT `session_end` fields (via `select(.event=="session_end")`), exactly as it reads `rubric_score` — it does NOT parse the nested SUPERVISOR_RESULT objects.
+- `ground_truth.checked` is `false` (with `status: skipped` or `unverified`) when no check source resolved (no brief `## Executable Acceptance` section, no `.supervisor/twin/ground-truth.json`) or the runner could not verify any check (e.g. `jq` unavailable, or only deferred `qa-executor` checks resolved); `status: pass` requires zero failing checks (and ≥1 check executed); `status: advisory_failures` requires ≥1 failing check and a non-empty `findings[]` (each `severity: info | advisory`). It is populated from the single `GROUND_TRUTH_JSON` line emitted by `scripts/run-ground-truth.sh` (see the GROUND_TRUTH_JSON schema below): `checked ⇐ ran`, `status ⇐ status`, `checks_total ⇐ checks_total`, `checks_passed ⇐ checks_passed`, `findings[] ⇐ the failing per_check entries`. Field names are a contract with the System Twin builder (ST3 writes, ST4 reads) — do not rename.
+- **Hard-signal field contract:** `contract_conformance`, `benchmark_result`, and `ground_truth` (the nested-object shape, above) and the FLAT `session_end` JSONL scalar fields (`contract_conformance_status`, `contract_violations`, `benchmark_status`, `benchmark_metric`, `benchmark_value`, `benchmark_delta`, `ground_truth_status`, `ground_truth_checks_total`, `ground_truth_checks_passed`, `ground_truth_pass_rate` — see the `.supervisor/logs/{session}.jsonl` section below) are **the same hard-signal data in two shapes**. ST3 writes both; `build-insights.sh` reads the FLAT `session_end` fields (via `select(.event=="session_end")`), exactly as it reads `rubric_score` — it does NOT parse the nested SUPERVISOR_RESULT objects.
 
 **Status mapping from heal outcome:**
 - `heal_decision=PASS` OR `heal_loop_ran=false` (loop skipped via `--skip-self-heal`) → `status: completed`
@@ -730,7 +740,11 @@ exactly like it already reads `rubric_score`. It does NOT parse the nested SUPER
  "benchmark_status":"pass|regressed|improved|unverified|skipped",
  "benchmark_metric":"<string>",
  "benchmark_value": <number|null>,
- "benchmark_delta": <number|null>}
+ "benchmark_delta": <number|null>,
+ "ground_truth_status":"pass|advisory_failures|unverified|skipped",
+ "ground_truth_checks_total": 0,
+ "ground_truth_checks_passed": 0,
+ "ground_truth_pass_rate":"<M/N>"}
 ```
 
 > The session_end record carries both an `event` and a (legacy) `type` key with the same value
@@ -747,11 +761,16 @@ same hard-signal data in two shapes**. ST3 writes both; the field correspondence
 - `benchmark_metric` ⇔ `benchmark_result.metric`
 - `benchmark_value` ⇔ `benchmark_result.value` (`null` when not measured)
 - `benchmark_delta` ⇔ `benchmark_result.delta` (`null` when no baseline)
+- `ground_truth_status` ⇔ `ground_truth.status` (System Twin / M2b slice 1a, added v14.19.0)
+- `ground_truth_checks_total` ⇔ `ground_truth.checks_total`
+- `ground_truth_checks_passed` ⇔ `ground_truth.checks_passed`
+- `ground_truth_pass_rate` (string `"M/N"`) ⇔ the runner's `pass_rate`
 
 `build-insights.sh` (ST4 / measure-path) reads the FLAT `session_end` fields — these field names
 are a contract with ST3 (writer) and ST4 (aggregator); do not rename them. The flat fields are
 additive to the `session_end` event; events without them remain valid (a reader treats absent
-fields as "not reported this session").
+fields as "not reported this session"; the `ground_truth_*` fields, when absent, are treated as
+`"skipped"`).
 
 ---
 
@@ -812,6 +831,96 @@ pipeline and is named/stored separately on purpose ("eval" ≠ "benchmark"). The
 wire ground-truth execution into Supervisor Phase 4.5 — **both are explicit M2b follow-ups**
 (deferred). See `scripts/run-eval.sh` (the runner/scorer) and `scripts/eval-corpus/` (the corpus +
 per-task `check.sh` checks), and `docs/SPIKES/SYSTEM_TWIN_ROADMAP.md` §4 (M2) for milestone status.
+
+---
+
+## GROUND_TRUTH_JSON (System Twin ground-truth runner)
+
+Emitted by `scripts/run-ground-truth.sh` — the System Twin **ground-truth instrument** (M2b slice
+1a). It resolves a set of project-declared **executable acceptance checks**, runs each one (exit 0 =
+pass, non-zero = fail), and emits a single hard PASS/FAIL signal. The script prints a human/grep
+per-check block plus a `Checks passed: M/N` line, AND exactly ONE machine-readable line
+`GROUND_TRUTH_JSON: {...}` (jq-built for injection safety). The runner ALWAYS exits 0 (a check's
+non-zero exit is a normal `fail` tally, never a script crash). It is READ-ONLY w.r.t. the repo and
+runs no network. It is consumed by Supervisor Phase 4.5, which maps it onto the
+`SUPERVISOR_RESULT.ground_truth` object and the flat `ground_truth_*` `session_end` fields (advisory
+only — NEVER changes `heal_decision`, NEVER blocks the PR).
+
+```json
+GROUND_TRUTH_JSON: {
+  "schema_version": 1,
+  "ran": true,
+  "status": "pass",
+  "checks_total": 2,
+  "checks_passed": 2,
+  "pass_rate": "2/2",
+  "per_check": [
+    {"kind": "cmd", "target": "scripts/test-foo.sh", "status": "pass"},
+    {"kind": "corpus-task", "target": "version-consistent", "status": "pass"}
+  ],
+  "commit": "268a6be",
+  "date": "2026-06-07T15:43:00Z"
+}
+```
+
+**Field contract (schema_version: 1):**
+- `schema_version` — integer, required, always `1`.
+- `ran` — boolean; `true` when ≥1 resolved check actually executed (a verifiable pass/fail), `false`
+  on the no-source / no-`jq` / all-deferred fail-safe paths.
+- `status` — one of:
+  - `pass` — ≥1 check executed and passed, and ZERO checks failed (deferred `qa-executor` checks may
+    coexist; they never block a pass).
+  - `advisory_failures` — ≥1 resolved check exited non-zero (a `per_check` `fail` is present).
+  - `unverified` — fail-safe tooling path: `jq` unavailable, OR checks resolved but NONE could be
+    verified (zero passes AND zero fails AND ≥1 deferred — honest: nothing was actually verified).
+  - `skipped` — no check source resolved (no `--check`, no `--brief` `## Executable Acceptance`
+    section, no `--checks-file`/stdin, no `.supervisor/twin/ground-truth.json`). `ran:false`, `0/0`,
+    empty `per_check`.
+- `checks_total` — integer; count of resolved checks. `0` on the `skipped`/no-`jq` paths.
+- `checks_passed` — integer; count whose check exited `0`.
+- `pass_rate` — string `"M/N"` (e.g. `"2/2"`). `"0/0"` on the fail-safe paths.
+- `per_check` — array of `{kind, target, status, reason?}` objects, one per resolved check:
+  - `kind` — one of `cmd | corpus-task | qa-executor`.
+  - `target` — the shell command (`cmd`), corpus task-id (`corpus-task`), or QA target
+    (`qa-executor`).
+  - `status` — one of `pass | fail | unverified` (a non-zero exit is a normal `fail` tally, never a
+    crash).
+  - `reason` — optional short string. Known values: `corpus_task_not_found` (missing task dir /
+    `check.sh` — a missing dogfood target is a real `fail`), `corpus_task_invalid_id`, and
+    `qa_executor_dispatch_deferred_m2b_1b` (the deferred `qa-executor` kind).
+- `commit` — short commit SHA at run time, or `"unknown"`. **Contextual — NOT part of any determinism
+  invariant.**
+- `date` — ISO 8601 UTC timestamp at run time, or `"unknown"`. **Contextual.**
+
+**Distinct from EVAL_RESULT and BENCHMARK_JSON:** "ground-truth" ≠ "eval" ≠ "benchmark". `EVAL_RESULT`
+(`scripts/run-eval.sh`) is the **eval instrument** — a fitness function scoring plugin output quality
+over a fixed corpus. `BENCHMARK_JSON` (`scripts/run-benchmark.sh`) is the **canary benchmark** —
+validating the `session_end` hard-signal fixtures. `GROUND_TRUTH_JSON` (`scripts/run-ground-truth.sh`)
+executes the *actual acceptance checks a brief/project declares*. The three are kept distinct by name,
+dir, and intent.
+
+**Scope honesty (M2b slice 1a vs deferred):** slice 1a (shipped v14.19.0) wires the **generic
+executable-acceptance path** — `cmd:`/bare shell checks and `corpus-task:` checks resolved from a
+brief's `## Executable Acceptance` section (or `.supervisor/twin/ground-truth.json`) and run after the
+Code Reviewer pass in Phase 4.5. The `qa-executor:` kind is RECOGNIZED but **DEFERRED to slice 1b**
+(per-check `unverified`, reason `qa_executor_dispatch_deferred_m2b_1b`; it spawns nothing). Auto-running
+the full Launch Pad→Supervisor agent loop in CI against the corpus, and wiring ground-truth into a
+ground-truth-execution gate, are **part-2 follow-ups** (deferred). See `scripts/run-ground-truth.sh`
+and `docs/SPIKES/SYSTEM_TWIN_ROADMAP.md` §4 (M2) for milestone status.
+
+### `## Executable Acceptance` (brief convention)
+
+The optional `## Executable Acceptance` section in a brief is a list of `- ` bullets, each either a
+raw shell command or a `<kind>: <target>` line where `kind ∈ {cmd, corpus-task, qa-executor}`:
+- `cmd: <shell>` (or a **bare** bullet with no recognized `kind:` prefix) — a shell command run from
+  repo root; exit `0` = pass.
+- `corpus-task: <id>` — runs `scripts/eval-corpus/<id>/check.sh` (the SAME way `run-eval.sh` does);
+  exit `0` = pass. A missing task dir / `check.sh` is a `fail` (reason `corpus_task_not_found`), not a
+  silent drop.
+- `qa-executor: <target>` — RECOGNIZED but DEFERRED to slice 1b (per-check `unverified`).
+
+Supervisor Phase 4.5 passes this section to `run-ground-truth.sh` via `--brief <brief_path>` (falling
+back to `.supervisor/twin/ground-truth.json` when the brief has no such section).
 
 ---
 
@@ -1157,6 +1266,7 @@ All result schemas include a `schema_version` field. This enables forward compat
 
 ### Version History
 
+- **GROUND_TRUTH_JSON (schema_version 1) + SUPERVISOR_RESULT v1 extension + `session_end` hard-signal fields** (v14.19.0, System Twin M2b slice 1a): New `## GROUND_TRUTH_JSON` schema for the System Twin **ground-truth instrument** emitted by `scripts/run-ground-truth.sh` (resolves project-declared executable acceptance checks from a brief's `## Executable Acceptance` section or `.supervisor/twin/ground-truth.json`, runs each one, emits a single hard PASS/FAIL signal; fields `schema_version`, `ran`, `status: pass|advisory_failures|unverified|skipped`, `checks_total`, `checks_passed`, `pass_rate` "M/N", `per_check[]` of `{kind: cmd|corpus-task|qa-executor, target, status: pass|fail|unverified, reason?}`, `commit`, `date`; ALWAYS exits 0; `qa-executor` kind recognized but DEFERRED to slice 1b). Added the optional additive `ground_truth` object on SUPERVISOR_RESULT (advisory only — NEVER changes `heal_decision` / blocks the PR; follows the `contract_conformance` precedent) and the matching FLAT `session_end` JSONL scalar fields (`ground_truth_status`, `ground_truth_checks_total`, `ground_truth_checks_passed`, `ground_truth_pass_rate`; readers treat absent as `skipped`). The instrument is **distinct from** the eval harness (`EVAL_RESULT` / `run-eval.sh`) and the canary benchmark (`BENCHMARK_JSON` / `run-benchmark.sh`) — "ground-truth" ≠ "eval" ≠ "benchmark". SUPERVISOR_RESULT and GROUND_TRUTH_JSON both stay at `schema_version: 1` — purely additive; the Supervisor SubagentStop hook does not enumerate `ground_truth`, so pre-M2b blocks remain valid. No hook validates GROUND_TRUTH_JSON (standalone script). Slice 1b (QA-Executor dispatch) and the part-2 CI agent loop are deferred.
 - **EVAL_RESULT (schema_version 1)** (v14.17.0): New schema for the System Twin **eval instrument** (M2a) emitted by `scripts/run-eval.sh`. Eight fields (`schema_version`, `tasks_total`, `tasks_passed`, `pass_rate`, `per_task[]` of `{id, status: pass|fail}`, `commit`, `date`, `status: ok|unverified`). `pass_rate` (M/N) is the fitness-function signal trackable release-over-release; the determinism invariant covers the tallies/`per_task` only (NOT the contextual `commit`/`date`). `status: unverified` is the fail-safe path (corpus missing or `jq` absent → tasks 0, pass_rate `0/0`, per_task `[]`). The instrument is **distinct from the canary benchmark** (`BENCHMARK_JSON` / `run-benchmark.sh`) and does NOT auto-run the agent loop in CI nor wire ground-truth into Phase 4.5 — both are M2b follow-ups. No SubagentStop hook validates it (the runner is a standalone script). Additive — all other schemas unchanged.
 - **REVIEW_HEAL_RESULT (schema_version 1)** (v14.16.0): New schema for the standalone PR review-and-heal loop's outcome block (`/review-pr <pr-url>` + the `ai-agent-manager-plugin:review-pr-runner` agent, and the `/autonomous` EVALUATE Task step). Seven fields (`schema_version`, `decision` enum `PASS | ESCALATED`, `iterations`, `issues_fixed`, `remaining_issues`, `pr_url`, `notified`); canonical names coined in `skills/review-heal/SKILL.md` and consumed verbatim. The loop does NOT redefine review output — each iteration reuses the existing `CODE_REVIEW_RESULT` v3 (`review_mode: diff_review`). No SubagentStop hook validates it (the runner is the main agent of its own fresh session, or runs inline via `/review-pr`; the `/autonomous` path consumes it as a Task step). Additive — all other schemas unchanged.
 - **SYSTEM_CONTRACT artifact + SUPERVISOR_RESULT v1 extension + `session_end` hard-signal fields** (System Twin): Added the new `## SYSTEM_CONTRACT` artifact schema (per-subsystem advisory contract under `.supervisor/twin/contracts/`, written solely by `scripts/write-system-contract.sh`, gated on read by `scripts/read-system-contract.sh`), the optional additive `contract_conformance` and `benchmark_result` objects on SUPERVISOR_RESULT, and the matching FLAT `session_end` JSONL scalar fields (`contract_conformance_status`, `contract_violations`, `benchmark_status`, `benchmark_metric`, `benchmark_value`, `benchmark_delta`). These are **additive System Twin fields** — SUPERVISOR_RESULT and SYSTEM_CONTRACT both stay at `schema_version: 1`. The SUPERVISOR_RESULT additions follow the `branch_base` / `pr_state` / `preflight_sync` precedent (optional, advisory-only, not enumerated by the Supervisor SubagentStop hook), so pre-System-Twin blocks remain valid. `contract_conformance` is advisory only and NEVER changes `heal_decision` / blocks the PR. The nested SUPERVISOR_RESULT objects and the flat `session_end` fields are the same hard-signal data in two shapes; `build-insights.sh` reads the flat `session_end` fields.
