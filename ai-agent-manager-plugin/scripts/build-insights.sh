@@ -182,6 +182,68 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
     '
     echo
   fi
+
+  # --- Eval fitness function (ALWAYS rendered; "no data yet" when absent) ---
+  # Reads .supervisor/eval/results.jsonl (one EVAL_RESULT-plus-recorded_at per line, oldest-first;
+  # written by run-eval.sh in ST1). pass_rate is a string like "4/6". Latest = last line; trend =
+  # the ordered list joined with " → ", bounded to the most recent ~10 points (prefix "… → " if cut).
+  echo "## Eval fitness function"
+  evf=".supervisor/eval/results.jsonl"
+  if [ -f "$evf" ] && [ -s "$evf" ]; then
+    eval_rates="$(jq -r 'select(.pass_rate)|.pass_rate' "$evf" 2>/dev/null)"
+    if [ -n "$eval_rates" ]; then
+      eval_latest="$(printf '%s\n' "$eval_rates" | tail -1)"
+      eval_total="$(printf '%s\n' "$eval_rates" | grep -c . 2>/dev/null)"; eval_total="${eval_total:-0}"
+      eval_trend="$(printf '%s\n' "$eval_rates" | tail -10 | awk 'BEGIN{ORS=""} {if(NR>1)printf " → "; printf "%s",$0}')"
+      [ "$eval_total" -gt 10 ] && eval_trend="… → $eval_trend"
+      echo "_Deterministic plugin **run scoreboard** — the eval corpus pass-rate, sourced from \`$evf\` (written by \`scripts/run-eval.sh\`). Advisory; computed with jq, never guessed._"
+      echo
+      echo "- **Latest pass-rate:** $eval_latest"
+      echo "- **Trend (oldest → newest):** $eval_trend"
+    else
+      echo "_No eval runs recorded yet — run \`/supervisor\` or \`scripts/run-eval.sh\`._"
+    fi
+  else
+    echo "_No eval runs recorded yet — run \`/supervisor\` or \`scripts/run-eval.sh\`._"
+  fi
+  echo
+
+  # --- System Twin growth (ALWAYS rendered; "no data yet" when absent) ---
+  # contract count = number of .supervisor/twin/contracts/*.md files.
+  # growth = cumulative count of .action=="add" provenance entries, grouped by written_at date,
+  # rendered as a running total oldest→newest, bounded to ~8 points (prefix "… → " if cut).
+  echo "## System Twin growth"
+  twin_dir=".supervisor/twin"
+  twin_contracts="$twin_dir/contracts"
+  twin_prov="$twin_dir/.provenance.jsonl"
+  if [ -d "$twin_contracts" ] || [ -f "$twin_prov" ]; then
+    contract_count="$(find "$twin_contracts" -maxdepth 1 -type f -name '*.md' 2>/dev/null | grep -c . 2>/dev/null)"; contract_count="${contract_count:-0}"
+    growth=""
+    if [ -f "$twin_prov" ] && [ -s "$twin_prov" ]; then
+      # per-date add counts → cumulative running totals oldest→newest (sort by date defensively).
+      growth="$(jq -r 'select(.action=="add")|(.written_at[0:10])' "$twin_prov" 2>/dev/null \
+        | sort \
+        | uniq -c \
+        | awk '{cum+=$1; vals[NR]=cum; n=NR} END{
+            start=(n>8 ? n-7 : 1);
+            out="";
+            for(i=start;i<=n;i++){ if(out!="") out=out" → "; out=out vals[i]; }
+            if(n>8) out="… → " out;
+            printf "%s", out;
+          }')"
+    fi
+    echo "_System Twin contract store growth — sourced from \`$twin_contracts/*.md\` and \`$twin_prov\`. Computed with jq, never guessed._"
+    echo
+    if [ -n "$growth" ]; then
+      echo "- **Contracts:** $contract_count contracts ($growth)"
+    else
+      echo "- **Contracts:** $contract_count contracts (no growth history)"
+    fi
+  else
+    echo "_No System Twin contracts recorded yet — the twin store appears as you run \`/supervisor\`._"
+  fi
+  echo
+
   echo "## Cost"
   echo "> **Not captured by this plugin.** Token/\$ usage lives in Claude Code's own transcripts, not in \`.supervisor/\`."
   echo "> For real figures run \`npx ccusage@latest\` (daily) or \`npx ccusage@latest session\` (per-session), or Claude Code's \`/cost\`."
