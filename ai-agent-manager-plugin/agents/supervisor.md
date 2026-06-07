@@ -854,6 +854,49 @@ bench = bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-benchmark.sh
 
 `run-benchmark.sh` does not update its baseline on a plain run (the `--update-baseline` flag is the sole write path, reserved for an explicit operator/maintainer baseline-set); Phase 4.5 invokes it WITHOUT that flag, so the heal loop measures-but-does-not-move the baseline.
 
+**System Twin ground-truth execution (ADVISORY, System Twin / M2b slice 1a — runs after the Code Reviewer pass):**
+
+After the Code Reviewer loop has run (regardless of `heal_decision`), execute the project-declared **executable acceptance checks** for this run and report whether they pass. This produces the `ground_truth` object on `SUPERVISOR_RESULT` (and the matching flat `session_end` fields — see "Hard-signal fields" below). Where the contract-conformance check reads the twin store and the benchmark validates the hard-signal fixtures, this runner executes the *actual acceptance checks the brief/project declares* and reports a hard PASS/FAIL signal. It runs on EVERY Phase 4.5 (PASS or ESCALATED), read-only against committed state, after the Code Reviewer loop — exactly like the contract-conformance block, it is NOT gated on PASS.
+
+> **HARD ADVISORY CONTRACT — this check NEVER changes a gate.** Exactly like the contract-conformance check and the Rubric Grader, the ground-truth execution is **advisory only**: it **NEVER changes `heal_decision`**, **NEVER triggers a fix iteration**, and **NEVER blocks the PR**. Its findings carry `severity: advisory` by construction — never `blocking`/`high`. It is reported in `SUPERVISOR_RESULT` for human review and aggregated by ST4; it is not a quality gate. The runner ALWAYS exits 0 (a check's non-zero exit is a normal `fail` tally, never a script crash), so this step can never fail the phase.
+
+```
+# Resolve checks from the in-progress brief's `## Executable Acceptance` section (pass --brief),
+# falling back to .supervisor/twin/ground-truth.json when the brief has no such section.
+ground_truth = { checked: false, status: "skipped", checks_total: 0, checks_passed: 0, findings: [] }
+
+# SAFETY VALVE (unattended/autonomous path): when NON_INTERACTIVE == true — i.e. this run was driven
+# by /autonomous, where the brief's `## Executable Acceptance` section is MACHINE-AUTHORED by Launch
+# Pad — pass --no-cmd so a `cmd:` bullet can NEVER run arbitrary shell with no human in the loop.
+# --no-cmd skips cmd:/bare checks (recorded unverified/"cmd_disabled"); corpus-task: checks still run.
+# This is the interim guard until the prompt-level Plan Reviewer control lands (M2b slice 1b — see
+# docs/SPIKES/SYSTEM_TWIN_ROADMAP.md §7). In an interactive `/supervisor` run (human at Plan Review),
+# cmd: bullets run normally.
+NO_CMD_FLAG = (NON_INTERACTIVE == true) ? "--no-cmd" : ""
+gt = bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-ground-truth.sh --brief <brief_path> $NO_CMD_FLAG
+# Parse the single `GROUND_TRUTH_JSON: {...}` line. A parse miss → treat as
+# ground_truth.checked=false, status:"unverified" (mirror the benchmark "treat a parse miss as
+# unverified" rule). The runner always exits 0, so this can never fail the phase.
+
+# Mapping from the runner's GROUND_TRUTH_JSON to the SUPERVISOR_RESULT ground_truth object:
+ground_truth.checked       = gt.ran            # true when >=1 check actually executed
+ground_truth.status        = gt.status         # pass | advisory_failures | unverified | skipped
+ground_truth.checks_total  = gt.checks_total
+ground_truth.checks_passed = gt.checks_passed
+# findings[] = the FAILING per_check entries only (status == "fail"), mapped advisory-by-construction:
+for c in gt.per_check where c.status == "fail":
+  ground_truth.findings += { check: "<c.kind>:<c.target>",
+                             detail: "<c.reason or 'exit non-zero'>",
+                             severity: "advisory" }   # always "advisory" here (the schema enum [info, advisory] reserves "info"); NEVER blocking/high (mirror contract_conformance.findings)
+
+record_decision(phase: SELF_HEAL, decision: "ground_truth: {status} ({checks_passed}/{checks_total})", rationale: "advisory only — heal_decision unchanged")
+```
+
+**Ground-truth execution rules:**
+- The runner resolves checks from the brief's optional `## Executable Acceptance` section (priority) or `.supervisor/twin/ground-truth.json` (fallback). No source → `checked: false`, `status: skipped`, `0/0`, empty `findings[]`. Graceful no-op — never an error, never a fix.
+- `status: pass` requires zero failing checks (and ≥1 check executed); `status: advisory_failures` requires ≥1 failing check and a non-empty `findings[]` (each `severity: advisory`); `status: unverified` is the fail-safe tooling path (no `jq`, or checks resolved but none could be verified — e.g. only deferred `qa-executor` checks).
+- `qa-executor:` checks are recognized but DEFERRED to M2b slice 1b — the runner records them `unverified` (reason `qa_executor_dispatch_deferred_m2b_1b`) and they never block a `pass`. **Trust boundary (not a sandbox):** the runner itself does no repo writes and no network, but a `cmd:` check runs arbitrary `bash -c` with full shell privileges — so a `## Executable Acceptance` `cmd:` bullet is a trust-sensitive surface (review it at Plan Review, especially for `/autonomous`-generated briefs). `corpus-task` ids are constrained to a single path segment so they cannot escape `eval-corpus`.
+
 **Integration-review invocation details:** Code Reviewer auto-detects Beads (`test -d .beads && bd --version`). When Beads is not active, the CODE_REVIEW_RESULT block is the sole output channel the Supervisor parses. See `agents/code-reviewer.md` "Detect Beads Integration" for full semantics.
 
 **Fix task crash handling:**
@@ -999,7 +1042,7 @@ bench = bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-benchmark.sh
    - **Pinned repo-root CWD, never a worktree.** `write-system-contract.sh` exits 3 from a linked worktree (top-level `.git` is a FILE, not a dir). By the completion tail, Phase 4 FINALIZE has already removed all worktrees and returned to the main checkout, so the repo root is both natural and correct.
    - **Failure is non-fatal.** Any writer non-zero exit, missing-sha-tool no-op, or builder crash is logged via `record_decision(phase: SELF_HEAL, decision: "twin_builder: {n} written / {m} skipped", rationale: "advisory — non-fatal")` and the task proceeds. The builder NEVER changes `heal_decision`, NEVER blocks the PR, and runs AFTER the PR already exists.
 
-5. **Emit SUPERVISOR_RESULT block for this task** (see "Result Block" section below). Exactly one block per task, emitted here — Phase 5 LOOP emits nothing. When looping to a new task, the next task's Phase 4.5 tail will emit its own block. The SubagentStop hook validates the last block; earlier blocks must still be schema-valid. Include the additive `contract_conformance` and `benchmark_result` objects (computed earlier in this phase), and also emit the FLAT hard-signal fields onto the `session_end` JSONL event — see "Hard-signal fields (System Twin)" below.
+5. **Emit SUPERVISOR_RESULT block for this task** (see "Result Block" section below). Exactly one block per task, emitted here — Phase 5 LOOP emits nothing. When looping to a new task, the next task's Phase 4.5 tail will emit its own block. The SubagentStop hook validates the last block; earlier blocks must still be schema-valid. Include the additive `contract_conformance`, `benchmark_result`, and `ground_truth` objects (computed earlier in this phase), and also emit the FLAT hard-signal fields onto the `session_end` JSONL event — see "Hard-signal fields (System Twin)" below.
 
 5.5. **Auto-review dispatch (OPT-IN, best-effort, fire-and-forget — OFF by default):**
 
@@ -1038,10 +1081,10 @@ bench = bash ${CLAUDE_PLUGIN_ROOT}/scripts/run-benchmark.sh
 
 **Hard-signal fields (System Twin / ST3 — written in BOTH shapes):**
 
-The contract-conformance result and the benchmark result are emitted as **the same data in two shapes**, per `docs/RESULT_SCHEMAS.md` §"`session_end` JSONL hard-signal fields":
+The contract-conformance result, the benchmark result, and the ground-truth result are emitted as **the same data in two shapes**, per `docs/RESULT_SCHEMAS.md` §"`session_end` JSONL hard-signal fields":
 
-1. **Nested objects on `SUPERVISOR_RESULT`** (step 5 above): `contract_conformance` and `benchmark_result` (see the "Result Block" schema). Optional/additive — `schema_version` stays `1`.
-2. **FLAT scalar fields on the `session_end` JSONL event** in `.supervisor/logs/{session_id}.jsonl` — this is what `build-insights.sh` (ST4) aggregates via `select(.event=="session_end")`. Write all six, with the SAME data as the nested objects (field correspondence below). **These flat field names are a hard contract with ST4 — do NOT rename them:**
+1. **Nested objects on `SUPERVISOR_RESULT`** (step 5 above): `contract_conformance`, `benchmark_result`, and `ground_truth` (see the "Result Block" schema). Optional/additive — `schema_version` stays `1`.
+2. **FLAT scalar fields on the `session_end` JSONL event** in `.supervisor/logs/{session_id}.jsonl` — this is what `build-insights.sh` (ST4) aggregates via `select(.event=="session_end")`. Write all of them, with the SAME data as the nested objects (field correspondence below). **These flat field names are a hard contract with ST4 — do NOT rename them:**
 
    | flat `session_end` field | from nested |
    |--------------------------|-------------|
@@ -1051,8 +1094,12 @@ The contract-conformance result and the benchmark result are emitted as **the sa
    | `benchmark_metric` | `benchmark_result.metric` |
    | `benchmark_value` (number\|null) | `benchmark_result.value` |
    | `benchmark_delta` (number\|null) | `benchmark_result.delta` |
+   | `ground_truth_status` | `ground_truth.status` |
+   | `ground_truth_checks_total` | `ground_truth.checks_total` |
+   | `ground_truth_checks_passed` | `ground_truth.checks_passed` |
+   | `ground_truth_pass_rate` (string "M/N") | the runner's `pass_rate` |
 
-   See the `session_end` log line in "Session Logging" below for the exact shape. The flat fields are additive — a `session_end` event without them remains valid (a reader treats absent fields as "not reported this session").
+   See the `session_end` log line in "Session Logging" below for the exact shape. The flat fields are additive — a `session_end` event without them remains valid (a reader treats absent fields as "not reported this session"; for the `ground_truth_*` fields a reader treats absent as `skipped`).
 
 **Error handling table:**
 
@@ -1460,10 +1507,10 @@ Task(
 {"ts":"2026-03-09T14:32:05Z","type":"phase_transition","from":"EXECUTE","to":"FINALIZE","task_id":"user-auth"}
 {"ts":"2026-03-09T14:32:30Z","type":"merge","branch":"feature/user-auth-a","into":"feature/user-auth","status":"success"}
 {"ts":"2026-03-09T14:33:00Z","type":"pr_created","task_id":"user-auth","pr_number":42,"url":"https://github.com/org/repo/pull/42"}
-{"ts":"2026-03-09T14:34:00Z","event":"session_end","type":"session_end","task_id":"user-auth","status":"completed","contract_conformance_status":"pass","contract_violations":0,"benchmark_status":"pass","benchmark_metric":"selftest_pass_count","benchmark_value":4,"benchmark_delta":0}
+{"ts":"2026-03-09T14:34:00Z","event":"session_end","type":"session_end","task_id":"user-auth","status":"completed","contract_conformance_status":"pass","contract_violations":0,"benchmark_status":"pass","benchmark_metric":"selftest_pass_count","benchmark_value":4,"benchmark_delta":0,"ground_truth_status":"skipped","ground_truth_checks_total":0,"ground_truth_checks_passed":0,"ground_truth_pass_rate":"0/0"}
 ```
 
-**System Twin hard-signal fields on `session_end` (System Twin / ST3):** the `session_end` event carries six FLAT scalar fields — `contract_conformance_status`, `contract_violations`, `benchmark_status`, `benchmark_metric`, `benchmark_value`, `benchmark_delta` — written from Phase 4.5's completion tail with the SAME data as the nested `SUPERVISOR_RESULT.contract_conformance` / `benchmark_result` objects (field correspondence in Phase 4.5 §"Hard-signal fields (System Twin)"). `build-insights.sh` (ST4) reads these via `select(.event=="session_end")` exactly as it reads `rubric_score`; it does NOT parse the nested objects. **These flat field names are a hard contract with ST4 — do NOT rename them.** They are additive: a `session_end` event without them remains valid. `benchmark_value` / `benchmark_delta` may be `null` (not measured / no baseline). The matching `event` key (in addition to the existing `type`) is what ST4's `select(.event=="session_end")` filter keys on.
+**System Twin hard-signal fields on `session_end` (System Twin / ST3 + M2b slice 1a):** the `session_end` event carries FLAT scalar fields — the six `contract_*` / `benchmark_*` fields (`contract_conformance_status`, `contract_violations`, `benchmark_status`, `benchmark_metric`, `benchmark_value`, `benchmark_delta`) and, added in v14.19.0, the four `ground_truth_*` fields (`ground_truth_status`, `ground_truth_checks_total`, `ground_truth_checks_passed`, `ground_truth_pass_rate`) — written from Phase 4.5's completion tail with the SAME data as the nested `SUPERVISOR_RESULT.contract_conformance` / `benchmark_result` / `ground_truth` objects (field correspondence in Phase 4.5 §"Hard-signal fields (System Twin)"). `build-insights.sh` (ST4) reads these via `select(.event=="session_end")` exactly as it reads `rubric_score`; it does NOT parse the nested objects. **These flat field names are a hard contract with ST4 — do NOT rename them.** They are additive: a `session_end` event without them remains valid (a reader treats absent `ground_truth_*` as `"skipped"`). `benchmark_value` / `benchmark_delta` may be `null` (not measured / no baseline). ST4 aggregates the `contract_*`/`benchmark_*` fields today; `ground_truth_*` is written-now with aggregation a forward-compat follow-up. The matching `event` key (in addition to the existing `type`) is what ST4's `select(.event=="session_end")` filter keys on.
 
 **Retention:** 7 days (clean up in INIT phase).
 
@@ -1581,9 +1628,16 @@ SUPERVISOR_RESULT:
     baseline: number | null
     delta: number | null                     # value - baseline, null if no baseline
     unit: string
+  ground_truth:                              # optional (System Twin / M2b slice 1a, v14.19.0) — ADVISORY only; NEVER changes heal_decision, NEVER blocks PR. Populated from scripts/run-ground-truth.sh.
+    checked: boolean                         # gt.ran — true when >=1 check actually executed; false on skipped / no-jq / all-deferred
+    status: enum [pass, advisory_failures, unverified, skipped]
+    checks_total: integer
+    checks_passed: integer
+    findings:                                # advisory; failing checks only; severity is info|advisory by construction
+      - { check: string, detail: string, severity: enum [info, advisory] }
 ```
 
-**System Twin additive fields (`contract_conformance`, `benchmark_result`):** purely additive optional objects, following the `branch_base` / `pr_state` / `preflight_sync` precedent — `schema_version` stays `1`, the Supervisor SubagentStop hook does NOT enumerate them, and blocks with or without them validate unchanged. Both are advisory/informational: `contract_conformance` NEVER changes `heal_decision` and NEVER blocks the PR (`findings[].severity` is `info`/`advisory` by construction); `benchmark_result` is informational. The SAME data is also emitted as the FLAT `session_end` JSONL fields (`contract_conformance_status`, `contract_violations`, `benchmark_status`, `benchmark_metric`, `benchmark_value`, `benchmark_delta`) which `build-insights.sh` (ST4) aggregates — those flat names are a hard contract with ST4; do not rename. Authoritative definitions: `docs/RESULT_SCHEMAS.md` §"SUPERVISOR_RESULT" and §"`session_end` JSONL hard-signal fields".
+**System Twin additive fields (`contract_conformance`, `benchmark_result`, `ground_truth`):** purely additive optional objects, following the `branch_base` / `pr_state` / `preflight_sync` precedent — `schema_version` stays `1`, the Supervisor SubagentStop hook does NOT enumerate them, and blocks with or without them validate unchanged. All are advisory/informational: `contract_conformance` and `ground_truth` NEVER change `heal_decision` and NEVER block the PR (`findings[].severity` is `info`/`advisory` by construction); `benchmark_result` is informational. The SAME data is also emitted as the FLAT `session_end` JSONL fields (`contract_conformance_status`, `contract_violations`, `benchmark_status`, `benchmark_metric`, `benchmark_value`, `benchmark_delta`, `ground_truth_status`, `ground_truth_checks_total`, `ground_truth_checks_passed`, `ground_truth_pass_rate`) which `build-insights.sh` (ST4) aggregates — those flat names are a hard contract with ST4; do not rename. (ST4 aggregates the `contract_*`/`benchmark_*` flat fields today; `ground_truth_*` is written-now / aggregation a forward-compat follow-up — see `docs/RESULT_SCHEMAS.md`.) Authoritative definitions: `docs/RESULT_SCHEMAS.md` §"SUPERVISOR_RESULT" and §"`session_end` JSONL hard-signal fields".
 
 **Status mapping (machine-readable):**
 - `heal_decision=PASS` OR `heal_loop_ran=false` (loop skipped via `--skip-self-heal`) → `status: completed`
