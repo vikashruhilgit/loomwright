@@ -772,6 +772,12 @@ additive to the `session_end` event; events without them remain valid (a reader 
 fields as "not reported this session"; the `ground_truth_*` fields, when absent, are treated as
 `"skipped"`).
 
+> **ST4 aggregation status (M2b slice 1a):** `build-insights.sh` currently aggregates the
+> `contract_*` / `benchmark_*` flat fields. The `ground_truth_*` flat fields are **written now**
+> (forward-compatible) but their dashboard aggregation is a **deliberate follow-up** — slice 1a
+> ships the write side; wiring `ground_truth_*` into `build-insights.sh` is left to a later slice so
+> this change set does not touch the insights-owned files.
+
 ---
 
 ## EVAL_RESULT (System Twin eval harness)
@@ -922,11 +928,16 @@ and `docs/SPIKES/SYSTEM_TWIN_ROADMAP.md` §4 (M2) for milestone status.
 
 The optional `## Executable Acceptance` section in a brief is a list of `- ` bullets, each either a
 raw shell command or a `<kind>: <target>` line where `kind ∈ {cmd, corpus-task, qa-executor}`:
-- `cmd: <shell>` (or a **bare** bullet with no recognized `kind:` prefix) — a shell command run from
-  repo root; exit `0` = pass.
-- `corpus-task: <id>` — runs `scripts/eval-corpus/<id>/check.sh` (the SAME way `run-eval.sh` does);
-  exit `0` = pass. A missing task dir / `check.sh` is a `fail` (reason `corpus_task_not_found`), not a
-  silent drop.
+- `cmd: <shell>` (or a **bare** bullet with no recognized `kind:` prefix) — a shell command run in the
+  caller's CWD (Supervisor Phase 4.5 pins repo-root CWD); exit `0` = pass. An empty command (a bare
+  `cmd:`) is a `fail` (reason `empty_cmd_target`), never a false pass. A command that itself starts
+  with a dash MUST use the `cmd:` prefix (`cmd: -flag …`) — a *bare* leading-dash bullet would have its
+  dash stripped as a bullet marker at ingestion.
+- `corpus-task: <id>` — runs `scripts/eval-corpus/<id>/check.sh` via `bash` from the task dir (like
+  `run-eval.sh`, though without run-eval's present-but-non-executable-`check.sh` fail guard — here the
+  check is always invoked through `bash`); exit `0` = pass. A missing task dir / `check.sh` is a `fail`
+  (reason `corpus_task_not_found`), not a silent drop. The `<id>` is a single path segment (a `/` or
+  `..` is rejected as `corpus_task_invalid_id`).
 - `qa-executor: <target>` — RECOGNIZED but DEFERRED to slice 1b (per-check `unverified`).
 
 Supervisor Phase 4.5 passes this section to `run-ground-truth.sh` via `--brief <brief_path>` (falling

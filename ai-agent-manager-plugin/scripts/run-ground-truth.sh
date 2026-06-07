@@ -38,10 +38,17 @@
 #
 # A check line is a `- `-stripped bullet that is EITHER a raw shell command OR `<kind>: <target>`
 # where kind in {cmd, corpus-task, qa-executor}. Per-kind execution:
-#   - cmd: <shell>   (or a bare line with no recognized kind:) -> run from repo root via
-#                    `bash -c '<shell>' >/dev/null 2>&1`; exit 0 = pass.
-#   - corpus-task: <task-id> -> resolve to $SCRIPT_DIR/eval-corpus/<task-id>/check.sh and run it the
-#                    SAME way run-eval.sh does: `( cd "<task-dir>" && bash check.sh >/dev/null 2>&1 )`;
+#   - cmd: <shell>   (or a bare line with no recognized kind:) -> run in the CALLER's CWD via
+#                    `bash -c '<shell>' >/dev/null 2>&1`; exit 0 = pass. (Supervisor Phase 4.5 pins
+#                    the repo-root CWD, so in that path it runs from the repo root.) An empty command
+#                    (bare `cmd:`) is a malformed bullet -> per_check fail, reason "empty_cmd_target"
+#                    (never a false pass). NOTE: a bare bullet whose command itself starts with a dash
+#                    (e.g. `- -flag ...`) must use the `cmd:` prefix (`cmd: -flag ...`) — at ingestion a
+#                    leading bullet `- `/`-` is stripped, so a bare leading-dash command would be mangled.
+#   - corpus-task: <task-id> -> resolve to $SCRIPT_DIR/eval-corpus/<task-id>/check.sh and run it via
+#                    `( cd "<task-dir>" && bash check.sh >/dev/null 2>&1 )` (like run-eval.sh, though
+#                    without run-eval's present-but-non-executable-check.sh fail guard — here the check
+#                    is always invoked through `bash` regardless of the executable bit);
 #                    exit 0 = pass. Missing task dir / check.sh -> per_check fail, reason
 #                    "corpus_task_not_found" (a missing dogfood target is a real failure, not a drop).
 #   - qa-executor: <target> -> RECOGNIZED but DEFERRED to slice 1b. Does NOT spawn anything; records
