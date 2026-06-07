@@ -78,6 +78,52 @@ grep -qF "contract_conformance_status: advisory_violations" "$S/.supervisor/insi
 if grep -q "^contract_conformance_status:" "$S/.supervisor/insights/runs/tw-c.md" 2>/dev/null; then no "run-tw-c invented absent twin field"; else ok "run-tw-c omits absent twin fields"; fi
 rm -rf "$S"
 
+echo "== 4. Eval fitness + Twin growth sections (present) =="
+E="$(mktemp -d)"; ( cd "$E" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$E/.supervisor/logs"
+printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS","heal_iterations":1}' > "$E/.supervisor/logs/sess-e.jsonl"
+# eval results.jsonl: 3 lines, oldest-first, differing pass_rate
+mkdir -p "$E/.supervisor/eval"
+{
+  printf '%s\n' '{"schema_version":1,"pass_rate":"4/4","status":"verified","recorded_at":"2026-06-02T10:00:00Z"}'
+  printf '%s\n' '{"schema_version":1,"pass_rate":"5/6","status":"verified","recorded_at":"2026-06-03T10:00:00Z"}'
+  printf '%s\n' '{"schema_version":1,"pass_rate":"6/6","status":"verified","recorded_at":"2026-06-04T10:00:00Z"}'
+} > "$E/.supervisor/eval/results.jsonl"
+# twin store: 3 contract files + provenance with adds across 2 dates
+mkdir -p "$E/.supervisor/twin/contracts"
+echo "a" > "$E/.supervisor/twin/contracts/sub-a.md"
+echo "b" > "$E/.supervisor/twin/contracts/sub-b.md"
+echo "c" > "$E/.supervisor/twin/contracts/sub-c.md"
+{
+  printf '%s\n' '{"action":"add","subsystem":"sub-a","written_at":"2026-06-01T09:00:00Z"}'
+  printf '%s\n' '{"action":"add","subsystem":"sub-b","written_at":"2026-06-01T09:05:00Z"}'
+  printf '%s\n' '{"action":"add","subsystem":"sub-c","written_at":"2026-06-02T09:00:00Z"}'
+} > "$E/.supervisor/twin/.provenance.jsonl"
+out="$( cd "$E" && bash "$BUILD" 2>&1 )"; rc=$?
+ed="$E/.supervisor/insights/dashboard.md"
+[ "$rc" -eq 0 ] && ok "build exits 0 (sections present case)" || no "build rc != 0 (present case, rc=$rc)"
+grep -q "^## Eval fitness function" "$ed" 2>/dev/null && ok "Eval fitness section present" || no "Eval fitness section missing"
+grep -qF "6/6" "$ed" 2>/dev/null && ok "latest pass-rate 6/6 appears" || no "latest pass-rate missing"
+grep -qF "4/4 → 5/6 → 6/6" "$ed" 2>/dev/null && ok "eval trend arrow chain present" || no "eval trend chain wrong"
+grep -q "^## System Twin growth" "$ed" 2>/dev/null && ok "System Twin growth section present" || no "Twin growth section missing"
+grep -qF "3 contracts" "$ed" 2>/dev/null && ok "contract count (3) appears" || no "contract count wrong"
+grep -qF "(2 → 3)" "$ed" 2>/dev/null && ok "twin growth cumulative arrow present" || no "twin growth arrow wrong"
+rm -rf "$E"
+
+echo "== 5. Eval + Twin sections degrade gracefully (absent) =="
+A="$(mktemp -d)"; ( cd "$A" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$A/.supervisor/logs"
+printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS","heal_iterations":1}' > "$A/.supervisor/logs/sess-x.jsonl"
+out="$( cd "$A" && bash "$BUILD" 2>&1 )"; rc=$?
+ad="$A/.supervisor/insights/dashboard.md"
+[ "$rc" -eq 0 ] && ok "build exits 0 (sections absent case)" || no "build rc != 0 (absent case, rc=$rc)"
+grep -q "^## Eval fitness function" "$ad" 2>/dev/null && ok "Eval fitness heading present when absent" || no "Eval fitness heading missing (absent)"
+grep -qF "No eval runs recorded yet" "$ad" 2>/dev/null && ok "Eval no-data line rendered" || no "Eval no-data line missing"
+grep -q "^## System Twin growth" "$ad" 2>/dev/null && ok "Twin growth heading present when absent" || no "Twin growth heading missing (absent)"
+grep -qF "No System Twin contracts recorded yet" "$ad" 2>/dev/null && ok "Twin no-data line rendered" || no "Twin no-data line missing"
+grep -q "^## Summary" "$ad" 2>/dev/null && grep -q "^## Cost" "$ad" 2>/dev/null && ok "dashboard still renders fully (absent case)" || no "dashboard incomplete (absent case)"
+rm -rf "$A"
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

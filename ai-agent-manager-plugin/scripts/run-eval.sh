@@ -27,14 +27,61 @@
 # Out of scope here (M2b follow-ups): wiring this to auto-run the full agent loop in CI, and wiring
 # it into Supervisor Phase 4.5 as a ground-truth signal. This script only runs the corpus checks.
 #
-# Usage:  run-eval.sh
-# Env:    EVAL_CORPUS_DIR  — override the corpus dir (default: $SCRIPT_DIR/eval-corpus)
+# Result persistence: on a normal run the EVAL_RESULT is appended as ONE JSON line to a small
+# history file (default: <gitroot>/.supervisor/eval/results.jsonl) so a trend exists release over
+# release. The appended object is the full EVAL_RESULT plus a `recorded_at` UTC timestamp. Recording
+# is BEST-EFFORT / fail-safe: any failure (no git root, cannot mkdir, cannot write) never changes the
+# exit code or stdout — recording is a side effect, never a hard dependency. `--no-record` suppresses
+# it entirely; EVAL_RESULTS_FILE redirects the history file (used by the self-test). recorded_at,
+# commit, date legitimately vary and are NOT part of the determinism invariant.
+#
+# Usage:  run-eval.sh [--no-record]
+# Env:    EVAL_CORPUS_DIR    — override the corpus dir (default: $SCRIPT_DIR/eval-corpus)
+#         EVAL_RESULTS_FILE  — override the history file (default: <gitroot>/.supervisor/eval/results.jsonl)
 # Exit:   always 0.
 
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CORPUS="${EVAL_CORPUS_DIR:-$SCRIPT_DIR/eval-corpus}"
+
+# ---- argv parse -----------------------------------------------------------
+RECORD=1
+for arg in "$@"; do
+  case "$arg" in
+    --no-record) RECORD=0 ;;
+  esac
+done
+
+# ---- results history file (best-effort persistence target) ----------------
+# Resolve once. Default to <gitroot>/.supervisor/eval/results.jsonl; guard an empty git root so we
+# never produce a path that begins with "/.supervisor/...".
+if [ -n "${EVAL_RESULTS_FILE:-}" ]; then
+  RESULTS_FILE="$EVAL_RESULTS_FILE"
+else
+  GIT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+  if [ -n "$GIT_ROOT" ]; then
+    RESULTS_FILE="$GIT_ROOT/.supervisor/eval/results.jsonl"
+  else
+    RESULTS_FILE=""   # no git root — recording will be skipped (fail-safe)
+  fi
+fi
+
+# record_result <eval-result-json>: append the EVAL_RESULT object (no "EVAL_RESULT: " prefix) plus a
+# `recorded_at` UTC timestamp as ONE JSON line to $RESULTS_FILE. Requires jq (callers guarantee it on
+# this path). BEST-EFFORT: gated by --no-record and an empty target, and wrapped so any failure is
+# swallowed — recording must NEVER change the exit code or stdout.
+record_result() {
+  [ "$RECORD" -eq 1 ] || return 0
+  [ -n "$RESULTS_FILE" ] || return 0
+  local obj="$1"
+  {
+    mkdir -p "$(dirname "$RESULTS_FILE")" \
+      && printf '%s' "$obj" \
+        | jq -c --arg ra "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)" '. + {recorded_at:$ra}' \
+        >> "$RESULTS_FILE"
+  } 2>/dev/null || true
+}
 
 # ---- contextual fields (NOT part of the determinism invariant) ------------
 COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
@@ -45,12 +92,16 @@ DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
 emit_unverified() {
   echo "Pass rate: 0/0"
   if command -v jq >/dev/null 2>&1; then
-    jq -cn \
+    local obj
+    obj="$(jq -cn \
       --arg pr "0/0" --arg commit "$COMMIT" --arg date "$DATE" \
-      '{schema_version:1,tasks_total:0,tasks_passed:0,pass_rate:$pr,per_task:[],commit:$commit,date:$date,status:"unverified"}' \
-      | sed 's/^/EVAL_RESULT: /'
+      '{schema_version:1,tasks_total:0,tasks_passed:0,pass_rate:$pr,per_task:[],commit:$commit,date:$date,status:"unverified"}')"
+    printf 'EVAL_RESULT: %s\n' "$obj"
+    # Record the unverified result too, for trend continuity (jq IS available on this branch).
+    record_result "$obj"
   else
     # No jq: hand-built minimal JSON (only fixed/whitelisted values interpolated — injection-safe).
+    # Recording is skipped here on purpose — record_result requires jq to build the line cleanly.
     printf 'EVAL_RESULT: {"schema_version":1,"tasks_total":0,"tasks_passed":0,"pass_rate":"0/0","per_task":[],"commit":"%s","date":"%s","status":"unverified"}\n' \
       "$COMMIT" "$DATE"
   fi
@@ -121,14 +172,16 @@ pass_rate="$passed/$total"
 echo "Pass rate: $pass_rate"
 
 # ---- emit the single machine-readable result line -------------------------
-jq -cn \
+# Build the object once, emit it (prefixed) to stdout, then record it (best-effort).
+result_json="$(jq -cn \
   --argjson total "$total" \
   --argjson passed "$passed" \
   --arg pr "$pass_rate" \
   --argjson per_task "$per_task_json" \
   --arg commit "$COMMIT" \
   --arg date "$DATE" \
-  '{schema_version:1,tasks_total:$total,tasks_passed:$passed,pass_rate:$pr,per_task:$per_task,commit:$commit,date:$date,status:"ok"}' \
-  | sed 's/^/EVAL_RESULT: /'
+  '{schema_version:1,tasks_total:$total,tasks_passed:$passed,pass_rate:$pr,per_task:$per_task,commit:$commit,date:$date,status:"ok"}')"
+printf 'EVAL_RESULT: %s\n' "$result_json"
+record_result "$result_json"
 
 exit 0

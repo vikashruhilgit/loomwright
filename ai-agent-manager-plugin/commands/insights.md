@@ -6,6 +6,8 @@ description: Generate a local, Obsidian-friendly insights dashboard (work · qua
 
 # Command: /insights
 
+> **This is the plugin's deterministic _run scoreboard_** — it measures *this plugin's own runs* (work, quality, session performance, eval pass-rate, System Twin growth) from the logs it writes, computed with jq. For whole-usage **coaching** across all your Claude Code work, use **Claude Code Insights** (the built-in feature); for token/$ **cost**, use **`ccusage`** (see the Cost note below). `/insights` is distinct from, not a replacement for, either.
+
 ## Purpose
 
 The plugin already records rich **work**, **quality**, and **session-performance** signals per run — completion status, self-heal outcome/iterations, rubric scores, subtasks completed, files changed, PR links, and (when present) the **System Twin hard signal** (contract-conformance status + violations, benchmark status/value/delta) — but there's no way to *see* them. `/insights` rolls those logs up into a single markdown dashboard plus one note per run, with **Dataview-compatible frontmatter** so the same files render as a live, sortable board if you open `.supervisor/` in Obsidian (and as plain markdown tables everywhere else).
@@ -25,7 +27,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/build-insights.sh"
 ```
 
 1. Reads every `.supervisor/logs/*.jsonl`, takes each run's `session_end` event (tolerant of older logs with fewer fields), and computes the aggregates with `jq` (real numbers, not estimates).
-2. Writes **`.supervisor/insights/dashboard.md`** — Summary (sessions, completed/failed, completion rate, self-heal PASS count, avg heal iterations, total subtasks/files), an optional **System Twin hard-signal** section (contract-conformance + benchmark trend; see below), a Recent-sessions table (with a Twin conformance/Δ column), a Cost note, and an Obsidian/Dataview snippet.
+2. Writes **`.supervisor/insights/dashboard.md`** — Summary (sessions, completed/failed, completion rate, self-heal PASS count, avg heal iterations, total subtasks/files), an optional **System Twin hard-signal** section (contract-conformance + benchmark trend; see below), an **Eval fitness function** section and a **System Twin growth** section (both always rendered; see below), a Recent-sessions table (with a Twin conformance/Δ column), a Cost note, and an Obsidian/Dataview snippet.
 3. Writes **`.supervisor/insights/runs/<session_id>.md`** — one note per run with YAML frontmatter (`status`, `rubric_score`, `heal_iterations`, `subtasks_completed`, `files_changed`, `pr_url`, and when present `contract_conformance_status`, `contract_violations`, `benchmark_status`, `benchmark_value`, `benchmark_delta`, …).
 
 ### System Twin hard-signal trend
@@ -33,6 +35,15 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/build-insights.sh"
 When runs carry them, `/insights` also surfaces the **System Twin hard signal** sourced from the *same* `session_end` events — the six flat fields `contract_conformance_status`, `contract_violations`, `benchmark_status`, `benchmark_metric`, `benchmark_value`, `benchmark_delta`. The dashboard aggregates them into a dedicated section: runs reporting conformance, conformance-pass count, total (advisory) contract violations, benchmark regressed/improved counts, and the latest benchmark value/delta — so you can watch **contract-conformance and benchmark delta over time**.
 
 This is **advisory only** — it never blocks a PR or changes a heal decision — and **tolerant of older logs**: runs that predate these fields are simply omitted from the hard-signal counts, and if *no* run reports them the section is suppressed entirely (no fabricated zeros), so the dashboard renders unchanged.
+
+### Eval fitness function + System Twin growth
+
+Two sections that are **always rendered** whenever a dashboard is written (unlike the optional hard-signal section, which is suppressed when absent):
+
+- **Eval fitness function** — the deterministic eval-corpus pass-rate, sourced from `.supervisor/eval/results.jsonl` (written by `scripts/run-eval.sh`). Shows the **latest pass-rate** (e.g. `6/6`) and a **trend** oldest → newest (e.g. `4/4 → 5/6 → 6/6`), bounded to the most recent ~10 points. When no eval runs have been recorded yet, it shows a benign "no data yet" line.
+- **System Twin growth** — how the contract store has grown, sourced from `.supervisor/twin/contracts/*.md` and `.supervisor/twin/.provenance.jsonl`. Shows the current **contract count** (live `*.md` files) and a **cumulative count of `add` events** grouped by date, oldest → newest (e.g. `10 contracts (2 → 4 → 12)`), bounded to ~8 points. The trend counts append-only `add` provenance events, so it can **exceed** the current contract count when contracts are re-added or updated over time (12 add-events vs 10 current files in that example). When the twin store is missing/empty it shows a benign "no data yet" line.
+
+Both are advisory and computed with jq (never guessed); both degrade gracefully (the script always exits 0).
 
 If there are no logs yet, it says so and writes nothing. Re-run any time to refresh.
 
