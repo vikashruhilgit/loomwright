@@ -953,6 +953,15 @@ raw shell command or a `<kind>: <target>` line where `kind ∈ {cmd, corpus-task
 Supervisor Phase 4.5 passes this section to `run-ground-truth.sh` via `--brief <brief_path>` (falling
 back to `.supervisor/twin/ground-truth.json` when the brief has no such section).
 
+**Authoring convention (trust boundary).** A **machine-authored** brief (Launch Pad, especially under
+`/autonomous`) MUST emit `corpus-task:` bullets ONLY — never `cmd:`/bare shell (`agents/launch-pad.md`
+Phase 5; `skills/supervisor-readiness/SKILL.md` §"`## Executable Acceptance`"). `cmd:` bullets are
+reserved for human authorship. Plan Reviewer **Criterion 14** (`agents/plan-reviewer.md`) surfaces any
+`cmd:`/bare bullet that appears in a brief as a LOW `executable_acceptance` issue (advisory today;
+escalates at M3). On the unattended/`--non-interactive` path Supervisor passes `run-ground-truth.sh
+--no-cmd`, so a `cmd:` bullet there is skipped (`unverified`, reason `cmd_disabled`) and never runs.
+See `docs/SPIKES/SYSTEM_TWIN_ROADMAP.md §7`.
+
 ---
 
 ## QA_SESSION

@@ -172,6 +172,28 @@ Success looks like {measurable outcome}.
 - No file outside `src/auth/` is modified.
 ```
 
+## Executable Acceptance (optional — System Twin / M2b, v14.19.0+)
+
+A list of project-declared **executable acceptance checks** the run must satisfy. Used by Supervisor Phase 4.5 (after the Code Reviewer loop) — `scripts/run-ground-truth.sh` resolves this section and runs each check, folding the result into the **advisory** `ground_truth` signal on `SUPERVISOR_RESULT`. It never changes `heal_decision` and never blocks the PR. The section is **optional**; briefs without it work exactly as before (`ground_truth.status: skipped`). Each `- ` bullet is one of:
+
+- `corpus-task: <id>` — runs `scripts/eval-corpus/<id>/check.sh` (sandbox-constrained: `<id>` is a single path segment that cannot escape `eval-corpus/`). **The only kind a machine-authored brief may emit.**
+- `qa-executor: <target>` — recognized but DEFERRED to M2b slice 1b (records `unverified`; spawns nothing).
+- `cmd: <shell>` (or a bare bullet) — an arbitrary shell command run as `bash -c` with **full shell privileges**.
+
+**Authoring rule (machine-authored-brief convention — trust boundary):**
+
+- A **machine-authored** brief (Launch Pad, especially under `/autonomous`, where no human reviews the brief at Plan Review) **MUST NOT emit `cmd:` / bare-shell bullets.** Emit only `corpus-task:` bullets when executable acceptance can be derived at all.
+- `cmd:` bullets are reserved for **human authorship**, where the person editing the requirement/brief is the trust anchor and reviews the command themselves.
+- Rationale: on the unattended/`--non-interactive` path Supervisor passes `run-ground-truth.sh --no-cmd`, so a machine-authored `cmd:` bullet would be skipped (`unverified`, reason `cmd_disabled`) and never run — it is both dead-on-arrival there and a latent risk if that valve ever regressed. Plan Reviewer **Criterion 14** surfaces any `cmd:` bullet that appears in a brief (LOW/advisory today; escalates at M3).
+- See `scripts/run-ground-truth.sh`, `docs/RESULT_SCHEMAS.md` §"`## Executable Acceptance`", and `docs/SPIKES/SYSTEM_TWIN_ROADMAP.md §7`.
+
+**Example (machine-authored — `corpus-task:` only):**
+
+```markdown
+## Executable Acceptance
+- corpus-task: version-consistent
+```
+
 ## Subtask Structure
 
 | # | Title | Acceptance Criteria Subset | Est. Files (modify/create) | Skills | Status |
@@ -276,7 +298,7 @@ Subtask 2 (independent)
 
 ### Section Requirements
 
-**9 required sections** (mandatory — Supervisor relies on them) plus **1 optional section** (`Feasibility`, present only in Launch Pad v10.3+ briefs):
+**9 required sections** (mandatory — Supervisor relies on them) plus **optional sections**: `Feasibility` (Launch Pad v10.3+, in the table below), `Outcomes Rubric` (v12.2.0+) and `Executable Acceptance` (v14.19.0+) — the latter two are documented in their own blocks above and omitted from the table below:
 
 | Section | Required? | Used In Phase | Purpose |
 |---------|-----------|---------------|---------|

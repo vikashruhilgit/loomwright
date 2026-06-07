@@ -37,15 +37,15 @@ Validate a Supervisor-Ready Brief for quality, completeness, and correctness bef
 
 - **Always verify file paths** — Glob/Read every path in the File Impact Map
 - **Always check CLAUDE.md patterns** — Read CLAUDE.md and compare against brief's approach
-- **Never skip criteria** — All 13 review criteria must be checked (Criteria 11 and 13 are conditional: skip silently when their gating section/field is absent; Criterion 12 is conditional on brief vintage)
+- **Never skip criteria** — All 14 review criteria must be checked (Criteria 11, 13, and 14 are conditional: skip silently when their gating section/field is absent; Criterion 12 is conditional on brief vintage)
 - **FAIL requires evidence** — Every BLOCKING/HIGH issue must cite what was checked and what was wrong
 - **NEEDS_HUMAN is for ambiguity** — Use only when the brief's approach could be valid but you can't confirm
 
 ---
 
-## 13 Review Criteria
+## 14 Review Criteria
 
-Check ALL criteria in order. For each, note whether it passes or has issues. Criterion 11 is conditional: skip silently if the optional `## Feasibility` section is absent. Criterion 13 is conditional: skip silently if no `Base Branch:` line appears in the `## Configuration` block (defaults to `main`). Criterion 12 is conditional on brief vintage: v12.0.0+ briefs (Launch Pad runtime ≥ v12.0.0) MUST contain `provides:` / `requires:` contract YAML blocks per subtask — absence is a BLOCKING violation. Pre-v12 legacy briefs may omit contract blocks, but only when the brief explicitly opts out via a top-level `legacy_brief: true` marker in the Environment section. Without that explicit marker, Plan Reviewer treats missing contracts as a v12 contract violation.
+Check ALL criteria in order. For each, note whether it passes or has issues. Criterion 11 is conditional: skip silently if the optional `## Feasibility` section is absent. Criterion 13 is conditional: skip silently if no `Base Branch:` line appears in the `## Configuration` block (defaults to `main`). Criterion 14 is conditional: skip silently if the optional `## Executable Acceptance` section is absent. Criterion 12 is conditional on brief vintage: v12.0.0+ briefs (Launch Pad runtime ≥ v12.0.0) MUST contain `provides:` / `requires:` contract YAML blocks per subtask — absence is a BLOCKING violation. Pre-v12 legacy briefs may omit contract blocks, but only when the brief explicitly opts out via a top-level `legacy_brief: true` marker in the Environment section. Without that explicit marker, Plan Reviewer treats missing contracts as a v12 contract violation.
 
 ### 1. File Path Verification
 
@@ -232,13 +232,37 @@ Check ALL criteria in order. For each, note whether it passes or has issues. Cri
 
 **Conditional:** Absent `Base Branch:` line → skip silently. Present and value is `main` → PASS. Present and value resolves → PASS. Present and value does not resolve → FAIL.
 
+### 14. Executable Acceptance Trust Surface (v14.19.0+, conditional)
+
+**Check:** If the brief contains a `## Executable Acceptance` section (the System Twin ground-truth convention — `docs/RESULT_SCHEMAS.md` §"`## Executable Acceptance`"), does it declare any `cmd:` / bare-shell bullets? Those are the trust-sensitive surface: in Supervisor Phase 4.5, `run-ground-truth.sh` runs each `cmd:` bullet as an arbitrary `bash -c` with full shell privileges. This criterion makes the prose-only "review `cmd:` bullets at Plan Review" mitigation a concrete, auditable check.
+
+**How:**
+
+- **If the `## Executable Acceptance` section is absent: skip silently — no issue emitted** (fully backward compatible; mirrors Criteria 11 and 13).
+- If present, classify each `- ` bullet between the `## Executable Acceptance` heading and the next `## ` heading using the **same rule as the runner** (`scripts/run-ground-truth.sh`): a bullet is the trust-sensitive `cmd` kind if it starts with `cmd:` **or** is **bare** (no recognized `corpus-task:` / `qa-executor:` prefix). `corpus-task:` (sandbox-constrained to a single path segment under `eval-corpus/`) and `qa-executor:` (deferred to M2b slice 1b) are **not** flagged.
+- If present with **only** `corpus-task:` / `qa-executor:` bullets: PASS this criterion silently (no issue).
+- If present with **≥1 `cmd:` / bare bullet:** emit ONE `executable_acceptance` issue that lists every flagged bullet verbatim (both `cmd:` and bare-shell bullets — a bare bullet like `- npm test` is classified as `cmd` by the runner and is equally trust-sensitive) and states: it will run as `bash -c` with full shell privileges in an **interactive** `/supervisor` Phase 4.5; on the unattended/`--non-interactive` (`/autonomous`) path Supervisor passes `--no-cmd` so it is skipped (`unverified`, reason `cmd_disabled`) and never runs. A human reviewing this brief should confirm every `cmd:` bullet is safe and intended before saving.
+
+**Issue category:** `executable_acceptance` (new category — use this in the issues array for any Criterion 14 finding).
+
+**Severity if failed:**
+
+- LOW (advisory/visibility): ≥1 `cmd:` / bare bullet present. By the Decision Matrix a lone LOW issue keeps the decision at **PASS**, so the brief still saves — the value is that the `cmd:` bullets are surfaced in the auditable `PLAN_REVIEW_RESULT` record. This is **advisory only while ground-truth is advisory** (M2b); it never blocks the save today.
+
+**M3 graduation (forward note — do NOT enforce yet):** when ground-truth flips advisory → gating (M3, see `docs/SPIKES/SYSTEM_TWIN_ROADMAP.md §7`), this criterion's severity rises so a `cmd:` bullet forces explicit human sign-off — NEEDS_HUMAN on the interactive path, FAIL for a machine-authored brief on the autonomous path. Until M3 it stays LOW.
+
+**Why machine-authored briefs should carry no `cmd:` bullets:** the Launch Pad authoring convention (`skills/supervisor-readiness/SKILL.md` §"`## Executable Acceptance`", `agents/launch-pad.md` Phase 5) directs Launch Pad to emit only `corpus-task:` bullets. A `cmd:` bullet in a Launch-Pad-authored brief is therefore an authoring-convention violation as well as a trust-surface finding — note both in the issue's `description` when you can tell the brief was machine-authored.
+
+**Conditional:** Absent `## Executable Acceptance` section → skip silently. Present without `cmd:`/bare bullets → PASS silently. Present with `cmd:`/bare bullets → LOW `executable_acceptance` issue.
+
 ---
 
 ## Decision Matrix
 
 | Condition | Decision |
 |-----------|----------|
-| All criteria satisfied (13 total, Criteria 11, 12, and 13 conditional), no BLOCKING/HIGH issues | **PASS** |
+| All criteria satisfied (14 total, Criteria 11, 12, 13, and 14 conditional), no BLOCKING/HIGH issues | **PASS** |
+| Only LOW-severity (advisory) issues, design approach unambiguous | **PASS** (issues recorded for visibility — e.g. a Criterion 14 `executable_acceptance` finding — but the save is not blocked) |
 | Any BLOCKING or HIGH severity issue found | **FAIL** |
 | Only MEDIUM/LOW issues, but design approach is ambiguous | **NEEDS_HUMAN** |
 
@@ -305,7 +329,7 @@ PLAN_REVIEW_RESULT:
 ## Quality Checklist
 
 Before producing PLAN_REVIEW_RESULT:
-- [ ] All 13 criteria checked (Criterion 11 conditional on `## Feasibility` section presence; Criterion 12 skipped only when the brief's Environment section declares `legacy_brief: true` — otherwise missing `provides:` / `requires:` blocks are a BLOCKING `dep_graph` violation; Criterion 13 skipped silently when `Base Branch:` is absent from `## Configuration`)
+- [ ] All 14 criteria checked (Criterion 11 conditional on `## Feasibility` section presence; Criterion 12 skipped only when the brief's Environment section declares `legacy_brief: true` — otherwise missing `provides:` / `requires:` blocks are a BLOCKING `dep_graph` violation; Criterion 13 skipped silently when `Base Branch:` is absent from `## Configuration`; Criterion 14 skipped silently when `## Executable Acceptance` is absent — when present with `cmd:`/bare bullets, emit a LOW `executable_acceptance` issue listing them)
 - [ ] Every file path in File Impact Map verified via Read or Glob
 - [ ] CLAUDE.md patterns compared against brief approach
 - [ ] Dependency graph traced for cycles
