@@ -887,7 +887,7 @@ ground_truth.checks_passed = gt.checks_passed
 for c in gt.per_check where c.status == "fail":
   ground_truth.findings += { check: "<c.kind>:<c.target>",
                              detail: "<c.reason or 'exit non-zero'>",
-                             severity: "advisory" }   # NEVER blocking/high (mirror contract_conformance.findings)
+                             severity: "advisory" }   # always "advisory" here (the schema enum [info, advisory] reserves "info"); NEVER blocking/high (mirror contract_conformance.findings)
 
 record_decision(phase: SELF_HEAL, decision: "ground_truth: {status} ({checks_passed}/{checks_total})", rationale: "advisory only — heal_decision unchanged")
 ```

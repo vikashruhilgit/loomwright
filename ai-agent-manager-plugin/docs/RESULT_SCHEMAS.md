@@ -258,7 +258,7 @@ SUPERVISOR_RESULT:
     findings:                          # advisory — failing checks only
       - check: string                  # "<kind>:<target>"
         detail: string
-        severity: enum [info, advisory]   # by construction NEVER blocking/high
+        severity: enum [info, advisory]   # by construction NEVER blocking/high; the Phase 4.5 mapping emits "advisory" (the "info" level is reserved/permitted)
   preflight_sync: enum [clear, overlap_proceed, superseded_proceed, skipped, unverified] | null  # optional (v14.8.0+) — outcome of the Phase 1.5 PRE-FLIGHT SYNC remote-state reconciliation gate. `clear` = gate ran, no overlap/supersession found (silent path); `overlap_proceed` = OVERLAP found, user chose proceed-anyway (interactive); `superseded_proceed` = SUPERSEDED found, user chose proceed-anyway (interactive); `skipped` = `--skip-preflight-sync` short-circuited the gate; `unverified` = gh/git tooling failed and the gate degraded gracefully and continued. `null` OR absent = EITHER the gate did not run (legacy / pre-v14.8.0 resume) OR the run exited before a *proceed* classification was recorded — namely the `revise-scope` path (emits `status: checkpoint`) and the fail-closed abort path (OVERLAP/SUPERSEDED under `--non-interactive`/stdin-not-a-TTY without `--skip-preflight-sync`; emits `status: failed` with `error: "preflight_overlap_detected"`). In those two cases the gate DID run but the classification is carried in the Decisions Log entry / `error` rather than this field — read `status` + `error` to disambiguate, not `preflight_sync` alone. Schema_version stays 1 — field is additive and optional.
 ```
 

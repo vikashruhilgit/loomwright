@@ -303,6 +303,9 @@ for line in "${CHECK_LINES[@]}"; do
     corpus-task)
       # A corpus task-id is a single path segment under eval-corpus/. Reject empty ids and any
       # '/' or '..' so a target can never escape $CORPUS (resolve eval-corpus relative to SCRIPT_DIR).
+      # NOTE: `*..*` is intentionally over-broad — it also rejects a legit id that merely *contains*
+      # ".." (e.g. `foo..bar`). That's a deliberate fail-closed choice; corpus ids are simple slugs
+      # today, so no real id is lost, and it keeps the traversal guard dead simple.
       case "$target" in
         ""|*/*|*..*)
           failures=$((failures+1))
