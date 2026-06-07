@@ -95,7 +95,7 @@ The single most dangerous idea in this whole vision is **a system that acts on i
 3. **Decoupling.** Projections (insights, vault) are read-only and never become dependencies of the engine.
 4. **Sole-writer + provenance** for any accumulated state (contracts, memory) — tamper-evident, read-side-gated.
 5. **Thin vertical slices.** Every milestone is independently useful; no big-bang.
-6. **Anti-rebloat.** Deepen existing agents/phases; minimize new commands/agents (counts are watched: 13/15/50/19).
+6. **Anti-rebloat.** Deepen existing agents/phases; minimize new commands/agents (counts are watched: 14/16/51/19).
 7. **Build the benchmark *before* wiring APPLY.** The reward signal must be hard before the system reinforces on it — else it compounds noise.
 
 ---
