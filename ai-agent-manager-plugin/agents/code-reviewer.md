@@ -156,6 +156,8 @@ Run these checks **only when `review_mode = consistency_audit`**. Results map to
 
 The hook enforces these caps on `drift_kind ↔ severity` combinations — an issue violating a cap is rejected at Stop time.
 
+**Self-heal lens (Supervisor Phase 4.5 / `/review-pr`):** during a self-heal or standalone PR-heal review, ALSO apply the repo-agnostic **Self-Heal Miss-Class Checklist** in `skills/quality-checklist/SKILL.md` — validation parity (backend mirrors frontend), no numeric-falsy coercion, no positional args to options-object functions, branch coverage for new conditionals, and count/cross-ref drift. It is repo-agnostic: it catches these classes on external app repos where the `consistency_audit` triggers above do not fire.
+
 ---
 
 ## Agent Guidelines
@@ -435,7 +437,7 @@ Every row emits `CODE_REVIEW_RESULT`. "BD action" columns only apply when `beads
 - **Test coverage:** Check against threshold from CLAUDE.md
 - **Constructive tone:** Highlight strengths + feedback
 - **Pattern proposals:** Flag only (use pattern-detector.md format)
-- **Scope — diff-first, expand when needed:** Start from the current review target (Beads review task when active; invocation argument or diff target otherwise). Auto-expand scope when the diff touches trigger surfaces (`ai-agent-manager-plugin/agents/`, `ai-agent-manager-plugin/commands/`, `ai-agent-manager-plugin/skills/`, `ai-agent-manager-plugin/.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `ai-agent-manager-plugin/hooks/hooks.json`, `CLAUDE.md`, `README.md`, `ai-agent-manager-plugin/docs/`, `.claude-plugin/README.md`, `.supervisor/jobs/`) — see "Review Modes & Scope Expansion" and "Repo Consistency Audit Checks" above. Record every expansion in `scope_expanded[]` and record matched triggers in `trigger_paths_detected[]`.
+- **Scope — diff-first, expand when needed:** Start from the current review target (Beads review task when active; invocation argument or diff target otherwise). Auto-expand scope when the diff touches any trigger surface defined in the **Trigger rule** table under "Review Modes & Scope Expansion" above (the single authoritative trigger-surface list — do NOT restate it here), and apply the "Repo Consistency Audit Checks". Record every expansion in `scope_expanded[]` and record matched triggers in `trigger_paths_detected[]`.
 - **Verify library usage:** When reviewing code using external libraries not in CLAUDE.md, use Context7 to check correct API usage (see `skills/context7-lookup/SKILL.md` for 4-tier fallback); if unavailable, use fallback tiers and include confidence level in findings
 
 ### Pre-Review Checklist

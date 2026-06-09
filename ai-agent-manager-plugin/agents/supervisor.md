@@ -685,13 +685,17 @@ while heal_iterations < max_heal_iterations:
     subagent_type: "ai-agent-manager-plugin:code-reviewer",
     prompt: "**DIFF-SCOPE OVERRIDE (v14.0.0 stacked-iteration support):** if BASE_BRANCH is supplied below and differs from \"main\", you MUST compute the diff scope as `git diff $BASE_BRANCH...HEAD` and treat that as the entirety of your review scope. Do NOT fall back to `git diff origin/main...HEAD`, do NOT auto-expand to a consistency audit beyond this scope, and do NOT walk the file tree outside the changed files. This is a stacked-branch iteration N+1 review where the parent branch (BASE_BRANCH) already passed its own Phase 4.5 — only this iteration's incremental work is in scope. This directive supersedes the Code Reviewer's standard consistency_audit auto-expand behavior for stacked iterations.
 
+             **DIFFERENT-LENS DIRECTIVE (non-stacked / BASE_BRANCH == \"main\" only — v14.21.0 self-heal hardening):** when BASE_BRANCH == \"main\" (the DIFF-SCOPE OVERRIDE above does NOT apply), this is the holistic post-PR review whose blind spots motivated this directive — a plain re-run of the same diff-scoped reviewer rubber-stamps the same classes it already missed per-subtask. Apply a DIFFERENT lens, not the same one again:
+               1. **Run `consistency_audit` mode when self-repo trigger paths match.** If the integrated diff touches any of the `consistency_audit` trigger surfaces defined in `agents/code-reviewer.md`'s **Trigger rule** table (the single authoritative review-trigger taxonomy — do NOT restate the list here; a restated copy is exactly the cross-file drift this phase exists to catch), you MUST run in `review_mode: consistency_audit` (exhaustive cross-file analysis: every count, version string, mirrored prompt, and cross-reference), NOT a plain `diff_review`.
+               2. **ALWAYS apply the Self-Heal Miss-Class Checklist regardless of repo.** On EVERY non-stacked heal review — plugin-self OR any external repo where the consistency_audit triggers do not fire — additionally apply the repo-agnostic \"Self-Heal Miss-Class Checklist\" in `skills/quality-checklist/SKILL.md` (backend/API validation mirrors every frontend-schema rule; no `||`/falsy coercion on numeric fields; no positional args to options-object functions; missing branch test coverage; drift on count/cross-ref changes). These are the classes that today only surface in 3–6 rounds of post-PR review; catch them here.
+
              BASE_BRANCH={BASE_BRANCH value or \"main\"}
 
              Review the integrated feature branch holistically.
              Target: diff between BASE_BRANCH (defaults to origin/main when BASE_BRANCH==main) and {feature_branch}
-             Focus: integration issues, cross-cutting concerns, consistency across files.
+             Focus: integration issues, cross-cutting concerns, consistency across files, AND the Self-Heal Miss-Class Checklist (see DIFFERENT-LENS DIRECTIVE above).
              Previous per-subtask reviews all passed — look for issues only visible in the integrated view.
-             Schema: CODE_REVIEW_RESULT v3 (review_mode: diff_review, category field: new/pre_existing/nit/drift).",
+             Schema: CODE_REVIEW_RESULT v3 (review_mode: diff_review for a plain integration review, or consistency_audit when self-repo trigger paths match per the DIFFERENT-LENS DIRECTIVE; category field: new/pre_existing/nit/drift).",
     model: "sonnet"   # ONLY when cost_profile=cheap; omit entirely when cost_profile=default
   )
   phase45_review_invoked = true  # flipped once the code-reviewer Task actually ran
@@ -724,10 +728,11 @@ while heal_iterations < max_heal_iterations:
 
              Task:
              1. Address each issue above. Prefer the reviewer's `suggestion` if provided.
+             1a. **Fix the CLASS, not just the flagged instance (v14.21.0 self-heal hardening).** For each finding, name its *class* (e.g. \"numeric field coerced with `||`\", \"positional arg passed to an options-object function\", \"backend validation missing a rule the frontend schema enforces\", \"count/cross-ref drift\", \"new branch with no test\"). Then scan the FULL feature-branch diff (`git diff $BASE_BRANCH...HEAD`, BASE_BRANCH defaults to origin/main) for EVERY other occurrence of that same class and fix them all in this iteration — not only the one file:line the reviewer flagged. The reviewer samples; you must sweep. Stay within the changed surface — fix other instances of the SAME class introduced by this branch; do not refactor unrelated pre-existing code. **Occurrence cap (budget guard, v14.21.0):** if a single class has more than ~10 branch-introduced occurrences, fix a representative handful and REPORT the class with its full occurrence count + locations in `FIX_RESULT.summary` instead of sweeping all of them this iteration — so one finding cannot balloon an iteration's diff or burn the heal budget; the reported remainder is left for the next iteration's re-review or the human.
              2. Update tests if behaviour changes.
              3. Run type-check and tests locally before finishing.
              4. Commit with message: \"fix: address review feedback (iteration {N})\"
-             5. Do NOT address anything outside the listed issues.
+             5. Do NOT address findings outside the listed classes. (You MUST fix other instances of the SAME class per step 1a; you must NOT chase unrelated findings.)
              6. Do NOT fix pre_existing issues or nits.
 
              Emit FIX_RESULT block: schema_version: 1, issues_addressed, files_modified, commit_sha, summary.",
@@ -741,10 +746,21 @@ while heal_iterations < max_heal_iterations:
   heal_iterations += 1
 
 # Loop exit
+# Re-review guarantee (v14.21.0 self-heal hardening): every fix iteration's edits —
+# INCLUDING the fix-the-class SWEEP from step 1a — are re-reviewed at the TOP of the next
+# loop iteration (the `review = Task(...)` above). The only un-re-reviewed case is a
+# fix/sweep on the FINAL allowed iteration: the loop then exits ESCALATED below and posts
+# findings to the PR for human review. So a sweep never ships as a silent clean PASS — it
+# is always either re-reviewed by the next iteration or surfaced to a human via ESCALATED.
+# Budget tension (accepted): a large class-sweep also enlarges the next iteration's re-review
+# diff, so it can consume heal iterations / reviewer call-budget faster — an accepted trade for
+# breaking the post-PR review loop, kept bounded by step 1a's "within the changed surface"
+# guardrail. (An auditable FIX_RESULT swept-instances field was considered and DEFERRED —
+# premature schema growth on a still-soaking advisory instrument.)
 if heal_iterations == max_heal_iterations AND review.decision != PASS:
   heal_decision = ESCALATED
   heal_remaining_issues = count(review.issues where category=new AND severity in [BLOCKING, HIGH])
-  post findings to PR as comment
+  post findings to PR as comment (when a step-1a class-sweep ran on this FINAL iteration, the comment MUST also note: "class-sweep applied on the final heal iteration — its own edits were NOT re-reviewed; eyeball the swept files", so a human knows to check them)
 ```
 
 **Outcomes Rubric grading (v12.2.0+, runs only after Code Reviewer PASS):**
