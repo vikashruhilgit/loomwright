@@ -46,7 +46,11 @@ FILES=(
   ai-agent-manager-plugin/commands/agent-help.md
   ai-agent-manager-plugin/docs/ARCHITECTURE.md
   ai-agent-manager-plugin/docs/ARCHITECTURE_CONTRACTS.md
-  .github/workflows/claude-code-review.yml
+  # .github/workflows/*.yml are deliberately NOT scanned: anthropics/claude-code-action@v1
+  # refuses to run when a PR branch's workflow file differs from the default-branch copy,
+  # so a count claim there would force a workflow edit on every counts-bump PR — which then
+  # guarantees a red claude-review check on that same PR. Workflow prompts must stay free of
+  # current-tense version/count claims (point at CLAUDE.md instead of naming numbers).
 )
 
 fail=0
