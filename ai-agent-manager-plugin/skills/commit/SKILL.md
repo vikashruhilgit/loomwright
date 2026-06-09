@@ -1,8 +1,8 @@
 ---
 name: commit-skill
 description: Create conventional commits linked to Beads tasks. Use when writing commit messages, linking work to issues, or ensuring conventional commit format compliance.
-version: "1.0.0"
-lastUpdated: "2026-03"
+version: "1.1.0"
+lastUpdated: "2026-06"
 ---
 
 # Commit Skill
@@ -17,6 +17,37 @@ Create conventional commits linked to Beads tasks.
 - **Description:** What changed, not why
 - **Body:** Why this change matters (optional)
 - **Footer:** Link to Beads task: `Closes BD-123`
+
+## Passing the Message to git — No Code Fences (CRITICAL)
+
+The ```` ```bash ```` / ```` ``` ```` fences shown throughout this skill are **documentation formatting only**. They are **NEVER part of the commit message.** When you call `git commit`, the message text must begin directly with the conventional-commit subject — never with a fence.
+
+- **The first line IS the subject** and must be the real headline (e.g. `feat(scope): summary`). It must NOT be a ```` ``` ```` fence, a ```` ```bash ```` line, or a blank line.
+- **Never wrap the commit message in a markdown code block.** If a fence character is the first line, git records ```` ``` ```` as the commit *subject* and shoves the real headline into the body. (Observed in the wild: a PR whose title and every commit headline were literally ```` ``` ````, with the true subject buried in the body.)
+- **Multi-line messages:** pass the subject and body as separate `-m` flags, or pipe a fence-free message via `git commit -F -` / a heredoc — do not paste a fenced block.
+
+````bash
+# ✅ Correct — subject first; body as a second -m
+git commit -m "feat(auth): add jwt token refresh endpoint" -m "Implement refresh token endpoint with sliding window expiration.
+
+Closes BD-45"
+
+# ✅ Correct — multi-line via heredoc; the message has NO fences inside it
+git commit -F - <<'EOF'
+feat(auth): add jwt token refresh endpoint
+
+Implement refresh token endpoint with sliding window expiration.
+
+Closes BD-45
+EOF
+
+# ❌ WRONG — the literal ``` line becomes the git commit subject
+git commit -m '```bash
+feat(auth): add jwt token refresh endpoint
+
+Closes BD-45
+```'
+````
 
 ## Common Patterns
 
@@ -97,6 +128,7 @@ Use file paths or module names:
 - ❌ "Work on feature" (not actionable)
 - ❌ No Beads link (can't track to task)
 - ❌ Multiple topics in one commit (should be separate)
+- ❌ Wrapping the message in a ```` ``` ```` / ```` ```bash ```` code fence (the fence line becomes the git subject — see "Passing the Message to git" above)
 
 ## Token Cost
 
