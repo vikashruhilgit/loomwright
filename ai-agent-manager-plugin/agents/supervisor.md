@@ -746,6 +746,12 @@ while heal_iterations < max_heal_iterations:
   heal_iterations += 1
 
 # Loop exit
+# Re-review guarantee (v14.21.0 self-heal hardening): every fix iteration's edits —
+# INCLUDING the fix-the-class SWEEP from step 1a — are re-reviewed at the TOP of the next
+# loop iteration (the `review = Task(...)` above). The only un-re-reviewed case is a
+# fix/sweep on the FINAL allowed iteration: the loop then exits ESCALATED below and posts
+# findings to the PR for human review. So a sweep never ships as a silent clean PASS — it
+# is always either re-reviewed by the next iteration or surfaced to a human via ESCALATED.
 if heal_iterations == max_heal_iterations AND review.decision != PASS:
   heal_decision = ESCALATED
   heal_remaining_issues = count(review.issues where category=new AND severity in [BLOCKING, HIGH])
