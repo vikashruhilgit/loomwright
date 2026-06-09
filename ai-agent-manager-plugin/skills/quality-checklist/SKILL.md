@@ -142,11 +142,26 @@ These checks apply to reviews that touch trigger surfaces (`ai-agent-manager-plu
 
 The plugin hook enforces these caps — an issue violating a cap is rejected at Stop time.
 
+## Self-Heal Miss-Class Checklist (Supervisor Phase 4.5 — repo-agnostic)
+
+Applied by the Code Reviewer during Supervisor Phase 4.5 self-heal (and any standalone `/review-pr` heal). Unlike the **Repo Consistency Checks** above — which only fire on this plugin's own trigger surfaces — these classes are **repo-agnostic**: they catch the issue classes that historically only surfaced across 3–6 rounds of post-PR human review, on external app repos as well as this one. The holistic re-run of a diff-scoped reviewer inherits the same blind spots it had per-subtask; this checklist is the *different lens* that breaks that loop. Advisory severity follows the standard matrix — a `new` HIGH/BLOCKING instance FAILs the heal review; lesser instances are reported. It never introduces a new gate.
+
+Check each class against the integrated diff:
+
+- [ ] **Validation parity (backend mirrors frontend).** Every rule a frontend/client schema enforces (required, min/max, enum, format, length) has an equivalent server-side / API-boundary check. A field validated only in the browser is unvalidated. Class signal: a new frontend Zod/Yup/form rule with no matching backend guard.
+- [ ] **No falsy coercion on numeric (or boolean) fields.** `value || default` / `if (!count)` silently swallows a legitimate `0` (and `false`, `""`). Use `value ?? default` / explicit `=== undefined` / `== null` checks for fields where zero/empty is valid. Class signal: `||`, `!x`, or truthiness guards applied to a quantity, price, count, offset, or index.
+- [ ] **No positional args to an options-object function.** When a function takes a single options object (`fn({ a, b })`), every call site passes an object — never positional args (`fn(a, b)`), and never in the wrong key order. Class signal: a call site whose argument shape doesn't match the callee's signature.
+- [ ] **Branch coverage for new conditionals.** Every new `if`/`else`/`switch`/ternary/error path introduced by the diff has at least one test exercising each branch (success AND failure). Class signal: a new conditional or early-return with no corresponding test.
+- [ ] **Count / cross-reference drift.** When the change alters a count (N agents/commands/items), a version string, a mirrored prompt, or any "see X" cross-reference, EVERY place that restates that count/version/reference is updated in the same change. Class signal: a number or canonical name that appears in more than one file, changed in one but not the others.
+
+**Fix-the-class rule (pairs with Supervisor Phase 4.5 fixer):** when any instance above is flagged, the fixer sweeps the whole diff for the same class and fixes all occurrences — the reviewer samples, the fixer sweeps. See `agents/supervisor.md` Phase 4.5 fix-iteration step.
+
 ## Token Cost
 
 - Checklist invocation: 50 tokens
 - Framework-specific variations: 100-200 tokens
 - Repo consistency section (audit mode only): +150 tokens
+- Self-Heal Miss-Class Checklist (Phase 4.5 / review-pr heal only): +120 tokens
 - Total: ~250-400 tokens
 - Context7: Not required
 
