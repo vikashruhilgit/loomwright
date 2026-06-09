@@ -968,7 +968,7 @@ See `docs/SPIKES/SYSTEM_TWIN_ROADMAP.md §7`.
 
 Appended by the `/pr-postmortem` command (governed by `skills/pr-postmortem/SKILL.md`) — the read-only
 on-demand **PR review-churn root-cause analyzer**. After a PR has absorbed multiple rounds of post-PR
-review-and-fix, the command gathers the PR's metadata + review threads + feature-branch diff (via
+review-and-fix, the command gathers the PR's metadata + review threads + diff stats (via
 `scripts/pr-postmortem-gather.sh`), buckets each review round into a reproducible root-cause class, and
 attributes it to a flow stage. It prints a human-readable root-cause report, then appends **exactly one**
 jq-built JSONL line to `.supervisor/postmortem/results.jsonl` under the current working `.supervisor/`
