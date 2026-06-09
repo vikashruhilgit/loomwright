@@ -564,8 +564,8 @@ This prevents knowledge loss and helps agents learn from discoveries.
 - **.claude-plugin/marketplace.json:** Marketplace manifest (root)
 - **.claude-plugin/README.md:** Detailed plugin documentation
 - **ai-agent-manager-plugin/.claude-plugin/plugin.json:** Plugin manifest
-- **ai-agent-manager-plugin/agents/*.md:** Individual agent prompts (13 roles)
-- **ai-agent-manager-plugin/skills/*/SKILL.md:** 51 skill files for guidance
+- **ai-agent-manager-plugin/agents/*.md:** Individual agent prompts (14 roles)
+- **ai-agent-manager-plugin/skills/*/SKILL.md:** 52 skill files for guidance
 - **ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md:** Structured result contracts
 - **ai-agent-manager-plugin/docs/FAILURE_ESCALATION.md:** Agent failure paths
 - **ai-agent-manager-plugin/docs/ARCHITECTURE_CONTRACTS.md:** Capability matrix, budgets, rules

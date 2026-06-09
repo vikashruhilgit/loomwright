@@ -991,7 +991,7 @@ harness** (the deferred M2b part-2b headless-`claude` evaluator).
   "additions": 312,
   "deletions": 27,
   "changed_files": 9,
-  "categories": [ {"round": 1, "class": "validation_parity", "self_heal_miss": true, "flow_stage": "self_heal", "evidence": "backend missing the numeric guard the frontend has"}, ... ],
+  "categories": [ {"round": 1, "class": "quality_gap", "self_heal_miss": true, "flow_stage": "self_heal", "evidence": "backend missing the numeric guard the frontend has"}, ... ],
   "self_heal_misses": 3,
   "flow_stages": { "launch_pad": 0, "worker": 1, "self_heal": 3, "unknowable": 0 },
   "summary": "4 rounds; 3 were self-heal misses (validation parity + falsy coercion)"
