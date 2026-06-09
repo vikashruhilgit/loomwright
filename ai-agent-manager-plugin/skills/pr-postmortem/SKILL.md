@@ -88,6 +88,7 @@ For each review round / review-fix signal (driven by `review_rounds`, the `revie
 Categorization heuristics (reproducible, evidence-first):
 - Read the `review_comments[].snippet` text — the language usually maps directly to a class (e.g. "already have"/"duplicates" → `missing_context`; "split this PR"/"too big" → `scope_too_large`; "missing test"/"no error handling" → `quality_gap`; "this is wrong"/"breaks when" → `execution_bug`; "naming"/"style"/"count is stale" → `convention_mismatch`; "we never specced"/"requirement missing" → `plan_gap`).
 - If `review_rounds` exceeds the number of usable comment snippets, attribute the residual rounds to the `is_review_fix` commit headlines; if even those are thin, classify the residual round as `flow_stage: unknowable` with the best-fit class and a noted low-confidence evidence snippet.
+- **`review_comments[]` is a superset of the rounds — never derive the round count from it.** The gather script intentionally includes approval-bodied reviews (e.g. an `APPROVED` "LGTM after fix") in `review_comments[]` as context, but they are NOT churn rounds and are already excluded from `review_rounds`. Categorize exactly `review_rounds` rounds; treat surplus comment snippets (approvals, follow-up acknowledgements) as evidence/context only.
 - Apply the Self-Heal Miss-Class Checklist to set `self_heal_miss` (and thereby lean `flow_stage: self_heal`) where the evidence matches one of its classes.
 
 ### Step 4 — Print the categorized root-cause report
