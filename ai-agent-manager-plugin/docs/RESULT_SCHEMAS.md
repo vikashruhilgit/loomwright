@@ -1,7 +1,7 @@
 # Result Schemas
 
 > Strict contracts for all agent result blocks. Hooks validate against these schemas.
-> All schemas include a `schema_version` field for forward compatibility. Current versions: CODE_REVIEW_RESULT at `schema_version: 3` (review modes + consistency audit; v2 accepted for legacy); WORKER_RESULT at `schema_version: 2` (outputs_verified contract; v1 accepted for the v12.0.0 transition window); AUTONOMOUS_RUN at `schema_version: 2` (v14.0.0 status_reason extension; v1 accepted, no hook validation); LAUNCH_PAD_RESULT at `schema_version: 1` (added v14.2.0, validated by `scripts/validate-launch-pad-result.py`); REVIEW_HEAL_RESULT at `schema_version: 1` (added v14.16.0, no hook validator — runner is the main agent of its own session); EVAL_RESULT at `schema_version: 1` (added v14.17.0, the System Twin eval instrument emitted by `scripts/run-eval.sh`, no hook validator — standalone script); GROUND_TRUTH_JSON at `schema_version: 1` (added v14.19.0, the System Twin ground-truth instrument emitted by `scripts/run-ground-truth.sh`, no hook validator — standalone script; consumed advisory-only by Supervisor Phase 4.5); all others at `schema_version: 1`.
+> All schemas include a `schema_version` field for forward compatibility. Current versions: CODE_REVIEW_RESULT at `schema_version: 3` (review modes + consistency audit; v2 accepted for legacy); WORKER_RESULT at `schema_version: 2` (outputs_verified contract; v1 accepted for the v12.0.0 transition window); AUTONOMOUS_RUN at `schema_version: 2` (v14.0.0 status_reason extension; v1 accepted, no hook validation); LAUNCH_PAD_RESULT at `schema_version: 1` (added v14.2.0, validated by `scripts/validate-launch-pad-result.py`); REVIEW_HEAL_RESULT at `schema_version: 1` (added v14.16.0, no hook validator — runner is the main agent of its own session); EVAL_RESULT at `schema_version: 1` (added v14.17.0, the System Twin eval instrument emitted by `scripts/run-eval.sh`, no hook validator — standalone script); GROUND_TRUTH_JSON at `schema_version: 1` (added v14.19.0, the System Twin ground-truth instrument emitted by `scripts/run-ground-truth.sh`, no hook validator — standalone script; consumed advisory-only by Supervisor Phase 4.5); POSTMORTEM_RESULT at `schema_version: 1` (added v14.22.0, the advisory PR review-churn trend line appended by `/pr-postmortem` to `.supervisor/postmortem/results.jsonl`, no hook validator); all others at `schema_version: 1`.
 
 > **API-level enforcement:** When using the Claude API directly (outside Claude Code), enforce these schemas via `output_config.format` (JSON Schema mode) for guaranteed conformance — the model is constrained to produce schema-valid output before the response is returned. Plugin hook validation (the `SubagentStop` hooks defined in `hooks.json`) is the runtime fallback validator inside Claude Code, where `output_config` is not available to plugin agents. See `AGENT_GUIDELINES.md` §"Structured Outputs" and the Anthropic API reference for the exact field name in your SDK version.
 
@@ -964,6 +964,62 @@ See `docs/SPIKES/SYSTEM_TWIN_ROADMAP.md §7`.
 
 ---
 
+## POSTMORTEM_RESULT (PR review-churn analyzer)
+
+Appended by the `/pr-postmortem` command (governed by `skills/pr-postmortem/SKILL.md`) — the read-only
+on-demand **PR review-churn root-cause analyzer**. After a PR has absorbed multiple rounds of post-PR
+review-and-fix, the command gathers the PR's metadata + review threads + feature-branch diff (via
+`scripts/pr-postmortem-gather.sh`), buckets each review round into a reproducible root-cause class, and
+attributes it to a flow stage. It prints a human-readable root-cause report, then appends **exactly one**
+jq-built JSONL line to `.supervisor/postmortem/results.jsonl` under the current working `.supervisor/`
+(never the analyzed repo).
+
+It is **advisory / diagnostic only** — it never writes code, never gates, never blocks the PR. The append
+is best-effort and fail-safe (a `jq`/IO failure prints one warning and still exits 0; the report is already
+printed). There is **no hook validator** (mirroring EVAL_RESULT / GROUND_TRUTH_JSON — the command is the
+main agent of its own session). The accumulated trend file is the **seed corpus for a future synthetic eval
+harness** (the deferred M2b part-2b headless-`claude` evaluator).
+
+```json
+{
+  "schema_version": 1,
+  "ts": "2026-06-10T12:00:00Z",
+  "repo": "owner/repo",
+  "number": 43,
+  "agent_generated_guess": true,
+  "review_rounds": 4,
+  "additions": 312,
+  "deletions": 27,
+  "changed_files": 9,
+  "categories": [ {"round": 1, "class": "validation_parity", "self_heal_miss": true, "flow_stage": "self_heal", "evidence": "backend missing the numeric guard the frontend has"}, ... ],
+  "self_heal_misses": 3,
+  "flow_stages": { "launch_pad": 0, "worker": 1, "self_heal": 3, "unknowable": 0 },
+  "summary": "4 rounds; 3 were self-heal misses (validation parity + falsy coercion)"
+}
+```
+
+**Field contract (schema_version: 1):**
+- `schema_version` — integer, required, always `1`.
+- `ts` — ISO 8601 UTC timestamp at append time.
+- `repo` — `owner/repo` of the analyzed PR (from gather).
+- `number` — integer PR number (from gather).
+- `agent_generated_guess` — boolean; best-effort agent-PR heuristic (from gather).
+- `review_rounds` — integer; total review-and-fix rounds (from gather).
+- `additions` / `deletions` / `changed_files` — integers; PR size (from gather).
+- `categories` — array of per-round objects `{round, class, self_heal_miss, flow_stage, evidence}`, one
+  per review round, classifying each into a root-cause class and the flow stage that should have caught it.
+- `self_heal_misses` — integer; count of rounds flagged `self_heal_miss` (i.e. Phase 4.5 should have
+  caught the class but didn't).
+- `flow_stages` — object tallying rounds per stage `{launch_pad, worker, self_heal, unknowable}`.
+- `summary` — short human-readable one-liner.
+
+**Append-only / write-only:** the file is the seed corpus for the deferred synthetic eval harness; it is
+never read back by the skill and lives under the current working `.supervisor/`, never the analyzed repo.
+See `skills/pr-postmortem/SKILL.md` (the analysis protocol + miss-class taxonomy) and
+`scripts/pr-postmortem-gather.sh` (the read-only gather).
+
+---
+
 ## QA_SESSION
 
 Schema for `.qa-session/plan.json` and `.qa-session/coverage.json` managed by QA Executor during session-based testing.
@@ -1306,6 +1362,7 @@ All result schemas include a `schema_version` field. This enables forward compat
 
 ### Version History
 
+- **POSTMORTEM_RESULT (schema_version 1)** (v14.22.0): New `## POSTMORTEM_RESULT` schema for the read-only `/pr-postmortem` PR review-churn root-cause analyzer. One jq-built JSONL line appended (best-effort, fail-safe, exits 0 on any failure) to `.supervisor/postmortem/results.jsonl` with fields `schema_version`, `ts`, `repo`, `number`, `agent_generated_guess`, `review_rounds`, `additions`, `deletions`, `changed_files`, `categories[]` of `{round, class, self_heal_miss, flow_stage, evidence}`, `self_heal_misses`, `flow_stages{launch_pad, worker, self_heal, unknowable}`, `summary`. Advisory/diagnostic only — never gates, never blocks the PR, write-only trend (never read back), the seed corpus for the deferred synthetic eval harness. No hook validator (the command is the main agent of its own session). Additive — all other schemas unchanged.
 - **GROUND_TRUTH_JSON (schema_version 1) + SUPERVISOR_RESULT v1 extension + `session_end` hard-signal fields** (v14.19.0, System Twin M2b slice 1a): New `## GROUND_TRUTH_JSON` schema for the System Twin **ground-truth instrument** emitted by `scripts/run-ground-truth.sh` (resolves project-declared executable acceptance checks from a brief's `## Executable Acceptance` section or `.supervisor/twin/ground-truth.json`, runs each one, emits a single hard PASS/FAIL signal; fields `schema_version`, `ran`, `status: pass|advisory_failures|unverified|skipped`, `checks_total`, `checks_passed`, `pass_rate` "M/N", `per_check[]` of `{kind: cmd|corpus-task|qa-executor, target, status: pass|fail|unverified, reason?}`, `commit`, `date`; ALWAYS exits 0; `qa-executor` kind recognized but DEFERRED to slice 1b). Added the optional additive `ground_truth` object on SUPERVISOR_RESULT (advisory only — NEVER changes `heal_decision` / blocks the PR; follows the `contract_conformance` precedent) and the matching FLAT `session_end` JSONL scalar fields (`ground_truth_status`, `ground_truth_checks_total`, `ground_truth_checks_passed`, `ground_truth_pass_rate`; readers treat absent as `skipped`). The instrument is **distinct from** the eval harness (`EVAL_RESULT` / `run-eval.sh`) and the canary benchmark (`BENCHMARK_JSON` / `run-benchmark.sh`) — "ground-truth" ≠ "eval" ≠ "benchmark". SUPERVISOR_RESULT and GROUND_TRUTH_JSON both stay at `schema_version: 1` — purely additive; the Supervisor SubagentStop hook does not enumerate `ground_truth`, so pre-M2b blocks remain valid. No hook validates GROUND_TRUTH_JSON (standalone script). Slice 1b (QA-Executor dispatch) and the part-2 CI agent loop are deferred.
 - **EVAL_RESULT (schema_version 1)** (v14.17.0): New schema for the System Twin **eval instrument** (M2a) emitted by `scripts/run-eval.sh`. Eight fields (`schema_version`, `tasks_total`, `tasks_passed`, `pass_rate`, `per_task[]` of `{id, status: pass|fail}`, `commit`, `date`, `status: ok|unverified`). `pass_rate` (M/N) is the fitness-function signal trackable release-over-release; the determinism invariant covers the tallies/`per_task` only (NOT the contextual `commit`/`date`). `status: unverified` is the fail-safe path (corpus missing or `jq` absent → tasks 0, pass_rate `0/0`, per_task `[]`). The instrument is **distinct from the canary benchmark** (`BENCHMARK_JSON` / `run-benchmark.sh`) and does NOT auto-run the agent loop in CI nor wire ground-truth into Phase 4.5 — both are M2b follow-ups. No SubagentStop hook validates it (the runner is a standalone script). Additive — all other schemas unchanged.
 - **REVIEW_HEAL_RESULT (schema_version 1)** (v14.16.0): New schema for the standalone PR review-and-heal loop's outcome block (`/review-pr <pr-url>` + the `ai-agent-manager-plugin:review-pr-runner` agent, and the `/autonomous` EVALUATE Task step). Seven fields (`schema_version`, `decision` enum `PASS | ESCALATED`, `iterations`, `issues_fixed`, `remaining_issues`, `pr_url`, `notified`); canonical names coined in `skills/review-heal/SKILL.md` and consumed verbatim. The loop does NOT redefine review output — each iteration reuses the existing `CODE_REVIEW_RESULT` v3 (`review_mode: diff_review`). No SubagentStop hook validates it (the runner is the main agent of its own fresh session, or runs inline via `/review-pr`; the `/autonomous` path consumes it as a Task step). Additive — all other schemas unchanged.

@@ -660,6 +660,14 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 
 ---
 
+### 🩺 /pr-postmortem — PR Review-Churn Root-Cause Analysis (Read-Only)
+
+**Purpose:** On-demand, read-only diagnostic that analyzes a merged or open PR's review-and-fix churn to find the **root cause** of repeated review rounds. Gathers PR metadata, review threads, and the feature-branch diff via `scripts/pr-postmortem-gather.sh`, then buckets each review round into one of six root-cause classes (plan gap, missing context, convention mismatch, execution bug, quality gap, scope too large), flags rounds self-heal should have caught (`self_heal_miss`), and maps where in the agent flow (`launch_pad` / `worker` / `self_heal` / `unknowable`) each should have been caught. Never writes code, never gates, never blocks the PR — it appends one advisory `POSTMORTEM_RESULT` record to `.supervisor/postmortem/results.jsonl`, the seed corpus for a future synthetic eval harness.
+
+**Learn More:** see `ai-agent-manager-plugin/commands/pr-postmortem.md` and the `pr-postmortem` skill for the gather protocol, the miss-class taxonomy, and the `POSTMORTEM_RESULT` schema
+
+---
+
 ### 🔁 /autonomous — Continuous Autonomous Loop (v14, stacked PRs)
 
 **Purpose:** Chain `/launch-pad → /supervisor` to drive a requirement to completion. Default mode is **multi-iteration** (cap 10, default 3) with **stacked PRs** — iteration N+1 branches from `iterations[N].branch` — and re-plans on two specific `SUPERVISOR_RESULT` signals. Pass `--single-iteration` (or `--max-iterations 1`) for v13's run-once behavior; `--no-stacked-branches` for the v13 branch-from-`main` cadence.
@@ -988,9 +996,9 @@ bd close BD-XX
 
 ai-agent-manager-plugin/              # Nested plugin root
 ├── .claude-plugin/
-│   └── plugin.json                   # Plugin metadata (v14.21.0)
+│   └── plugin.json                   # Plugin metadata (v14.22.0)
 ├── .mcp.json                         # Bundled MCP servers
-├── commands/                         # Slash commands (16)
+├── commands/                         # Slash commands (17)
 │   ├── launch-pad.md                 # Supervisor readiness
 │   ├── supervisor.md                 # Parallel orchestrator (v4)
 │   ├── autonomous.md                 # Continuous autonomous loop, stacked PRs (v14)
@@ -1005,6 +1013,7 @@ ai-agent-manager-plugin/              # Nested plugin root
 │   ├── capability-check.md           # Read-only scan for new Claude Code capabilities vs tracked baseline
 │   ├── insights.md                   # Local Obsidian-friendly insights dashboard from session logs
 │   ├── obsidian.md                   # Read-only linked Obsidian vault projection (logs + Twin contracts + memory)
+│   ├── pr-postmortem.md              # Read-only on-demand PR review-churn root-cause analyzer
 │   ├── telemetry.md                  # Opt-in GitHub Issues telemetry (status/enable/disable/test)
 │   └── agent-help.md
 ├── agents/                           # Agent implementations (14 roles)
@@ -1031,7 +1040,7 @@ ai-agent-manager-plugin/              # Nested plugin root
 │   ├── ARCHITECTURE.md
 │   ├── QA_SYSTEM_BLUEPRINT.md
 │   └── SPIKES/                       # Capability spike investigations + deferral records
-└── skills/                           # Skill files (51 skills)
+└── skills/                           # Skill files (52 skills)
     ├── SKILLS_INDEX.md               # Skill catalog with agent mapping
     ├── supervisor-readiness/         # Pre-flight checklist & brief template
     ├── agent-teams/                  # Agent Teams patterns (experimental)
