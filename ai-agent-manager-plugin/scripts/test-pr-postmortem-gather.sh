@@ -17,7 +17,12 @@
 #                     ci_checks), NO `status` field, exit 0.
 #   2. short-form input OWNER/REPO#N -> same happy shape, exit 0.
 #   3. heuristics  -> agent_generated_guess true, is_review_fix true on the churn
-#                     commit, review_rounds reflects the signal.
+#                     commit, review_rounds reflects the signal; an APPROVED/LGTM
+#                     review does NOT inflate review_rounds.
+#   3b. human PR   -> commit subjects with utf-8/sha-256 tokens do NOT flip
+#                     agent_generated_guess; approval-only review => 0 rounds.
+#   3c. task-id PR -> a subject-LEADING task-id prefix ("bd-15a: ...") DOES flip
+#                     agent_generated_guess.
 #   4. injection-safety -> a title/body/review body with quotes/backslashes/newlines
 #                     round-trips as valid JSON (no parse break).
 #   5. unavailable (stub gh fails / PR inaccessible) -> {"status":"unavailable",...}, exit 0.
@@ -64,13 +69,54 @@ cat > "$FIX_OK" <<'FIX'
     {"messageHeadline": "fix: address review feedback"}
   ],
   "reviews": [
-    {"author": {"login": "alice"}, "body": "please rename this", "submittedAt": "2026-01-01T10:00:00Z"},
-    {"author": {"login": "bob"}, "body": "LGTM after fix", "submittedAt": "2026-01-02T11:00:00Z"}
+    {"author": {"login": "alice"}, "body": "please rename this", "state": "CHANGES_REQUESTED", "submittedAt": "2026-01-01T10:00:00Z"},
+    {"author": {"login": "bob"}, "body": "LGTM after fix", "state": "APPROVED", "submittedAt": "2026-01-02T11:00:00Z"}
   ],
   "statusCheckRollup": [
     {"name": "ci/test", "state": "SUCCESS"},
     {"name": "lint", "state": "FAILURE"}
   ]
+}
+FIX
+
+# Human-PR fixture (3b): subjects carry word-dash-number tokens (utf-8, sha-256) that
+# the pre-fix bare pattern false-positived on; the only review is an approval.
+FIX_HUMAN="$TMP/fixture-human.json"
+cat > "$FIX_HUMAN" <<'FIX'
+{
+  "number": 42,
+  "title": "Fix encoding bugs",
+  "body": "Plain human PR fixing two encoding issues.",
+  "additions": 8,
+  "deletions": 4,
+  "changedFiles": 2,
+  "commits": [
+    {"messageHeadline": "fix utf-8 encoding in importer"},
+    {"messageHeadline": "feat: sha-256 checksum support"}
+  ],
+  "reviews": [
+    {"author": {"login": "bob"}, "body": "LGTM", "state": "APPROVED", "submittedAt": "2026-01-03T09:00:00Z"}
+  ],
+  "statusCheckRollup": []
+}
+FIX
+
+# Task-id-PR fixture (3c): plain body, but a subject-LEADING "id:" prefix — the one
+# task-id shape the anchored pattern is meant to keep matching.
+FIX_TASKID="$TMP/fixture-taskid.json"
+cat > "$FIX_TASKID" <<'FIX'
+{
+  "number": 42,
+  "title": "Cookie service",
+  "body": "Implements the cookie service.",
+  "additions": 20,
+  "deletions": 0,
+  "changedFiles": 1,
+  "commits": [
+    {"messageHeadline": "bd-15a: implement cookie service"}
+  ],
+  "reviews": [],
+  "statusCheckRollup": []
 }
 FIX
 
@@ -99,12 +145,16 @@ FIX
 # carries NO embedded JSON (the JSON lives in the files above), so the unquoted
 # outer heredoc cannot corrupt any escapes. <mode>:
 #   ok        — rich happy-path PR (agent-generated, one review-fix commit, 2 reviews, CI).
+#   human     — human PR: utf-8/sha-256 commit tokens, approval-only review (3b).
+#   taskid    — subject-leading "bd-15a:" task-id prefix, plain body (3c).
 #   inject    — title/body/review carrying quotes, backslashes, and a newline.
 #   fail      — `pr view` exits 1 (simulates private/not-found/unauthenticated).
 make_gh_stub() {
   local mode="$1" fixture=""
   case "$mode" in
     ok)     fixture="$FIX_OK" ;;
+    human)  fixture="$FIX_HUMAN" ;;
+    taskid) fixture="$FIX_TASKID" ;;
     inject) fixture="$FIX_INJECT" ;;
     fail)   fixture="" ;;
   esac
@@ -157,21 +207,47 @@ else
   no "(2) wrong (rc=$RUN_RC): $RUN_OUT"
 fi
 
-echo "== 3. heuristics => agent_generated_guess true, is_review_fix true, review_rounds reflects signal =="
+echo "== 3. heuristics => agent guess true, is_review_fix true, APPROVED does not inflate rounds =="
 make_gh_stub ok
 run_gather "$PR_URL"
+# One CHANGES_REQUESTED review + one is_review_fix commit = 1 churn round; the
+# APPROVED "LGTM after fix" review must NOT bump review_rounds to 2.
 if printf '%s' "$RUN_OUT" | jq -e '
     .agent_generated_guess==true
     and (.commits | length)==2
     and ([.commits[] | select(.is_review_fix)] | length)==1
     and (.commits[1].is_review_fix==true)
-    and (.review_rounds >= 2)
+    and (.review_rounds == 1)
     and (.review_comments | length)==2
     and (.ci_checks | length)==2
   ' >/dev/null 2>&1; then
-  ok "heuristics: agent guess true, 1 review-fix commit, review_rounds>=2, 2 review_comments, 2 ci_checks"
+  ok "heuristics: agent guess true, 1 review-fix commit, review_rounds==1 (approval not counted), 2 review_comments, 2 ci_checks"
 else
   no "(3) wrong: $RUN_OUT"
+fi
+
+echo "== 3b. human PR => utf-8/sha-256 tokens do NOT flip agent guess; approval-only => 0 rounds =="
+make_gh_stub human
+run_gather "$PR_URL"
+if printf '%s' "$RUN_OUT" | jq -e '
+    .agent_generated_guess==false
+    and ([.commits[] | select(.is_review_fix)] | length)==0
+    and (.review_rounds == 0)
+  ' >/dev/null 2>&1; then
+  ok "human PR: agent guess false despite utf-8/sha-256 subjects, review_rounds==0 with approval-only review"
+else
+  no "(3b) wrong: $RUN_OUT"
+fi
+
+echo "== 3c. task-id PR => subject-leading 'bd-15a:' prefix DOES flip agent guess =="
+make_gh_stub taskid
+run_gather "$PR_URL"
+if printf '%s' "$RUN_OUT" | jq -e '
+    .agent_generated_guess==true and (.review_rounds == 0)
+  ' >/dev/null 2>&1; then
+  ok "task-id PR: subject-leading id prefix flips agent guess true"
+else
+  no "(3c) wrong: $RUN_OUT"
 fi
 
 echo "== 4. injection-safety => quotes/backslashes/newlines round-trip as valid JSON =="
