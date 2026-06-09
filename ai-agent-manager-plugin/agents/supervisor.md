@@ -728,7 +728,7 @@ while heal_iterations < max_heal_iterations:
 
              Task:
              1. Address each issue above. Prefer the reviewer's `suggestion` if provided.
-             1a. **Fix the CLASS, not just the flagged instance (v14.21.0 self-heal hardening).** For each finding, name its *class* (e.g. \"numeric field coerced with `||`\", \"positional arg passed to an options-object function\", \"backend validation missing a rule the frontend schema enforces\", \"count/cross-ref drift\", \"new branch with no test\"). Then scan the FULL feature-branch diff (`git diff $BASE_BRANCH...HEAD`, BASE_BRANCH defaults to origin/main) for EVERY other occurrence of that same class and fix them all in this iteration — not only the one file:line the reviewer flagged. The reviewer samples; you must sweep. Stay within the changed surface — fix other instances of the SAME class introduced by this branch; do not refactor unrelated pre-existing code.
+             1a. **Fix the CLASS, not just the flagged instance (v14.21.0 self-heal hardening).** For each finding, name its *class* (e.g. \"numeric field coerced with `||`\", \"positional arg passed to an options-object function\", \"backend validation missing a rule the frontend schema enforces\", \"count/cross-ref drift\", \"new branch with no test\"). Then scan the FULL feature-branch diff (`git diff $BASE_BRANCH...HEAD`, BASE_BRANCH defaults to origin/main) for EVERY other occurrence of that same class and fix them all in this iteration — not only the one file:line the reviewer flagged. The reviewer samples; you must sweep. Stay within the changed surface — fix other instances of the SAME class introduced by this branch; do not refactor unrelated pre-existing code. **Occurrence cap (budget guard, v14.21.0):** if a single class has more than ~10 branch-introduced occurrences, fix a representative handful and REPORT the class with its full occurrence count + locations in `FIX_RESULT.summary` instead of sweeping all of them this iteration — so one finding cannot balloon an iteration's diff or burn the heal budget; the reported remainder is left for the next iteration's re-review or the human.
              2. Update tests if behaviour changes.
              3. Run type-check and tests locally before finishing.
              4. Commit with message: \"fix: address review feedback (iteration {N})\"
@@ -760,7 +760,7 @@ while heal_iterations < max_heal_iterations:
 if heal_iterations == max_heal_iterations AND review.decision != PASS:
   heal_decision = ESCALATED
   heal_remaining_issues = count(review.issues where category=new AND severity in [BLOCKING, HIGH])
-  post findings to PR as comment
+  post findings to PR as comment (when a step-1a class-sweep ran on this FINAL iteration, the comment MUST also note: "class-sweep applied on the final heal iteration — its own edits were NOT re-reviewed; eyeball the swept files", so a human knows to check them)
 ```
 
 **Outcomes Rubric grading (v12.2.0+, runs only after Code Reviewer PASS):**
