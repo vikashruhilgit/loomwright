@@ -515,6 +515,7 @@ When the Execute Manager surfaces an `EXECUTE_CHECKPOINT` with `adjudication_req
    - Stage all changes
    - Write conventional commit message with task linking
    - Format: `feat|fix|refactor({scope}): {message}\n\nCloses {task_id}`
+   - **NEVER code-fence the message.** The first line passed to `git commit` MUST be the conventional-commit subject (e.g. `feat({scope}): {message}`) — never a ```` ``` ```` / ```` ```bash ```` fence. Pass multi-line messages as separate `-m` flags or via `git commit -F -` / a heredoc (see `skills/commit/SKILL.md` → "Passing the Message to git"). A fence as the first line makes ```` ``` ```` the commit/PR subject.
 
 6. **Push and create PR (against `BASE_BRANCH` — defaults to `main`):**
    ```bash
