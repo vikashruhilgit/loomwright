@@ -30,7 +30,7 @@ Comprehensive index of all skills available in the AI Agent Manager plugin.
 | Skill Name | Directory | Agent Consumers | Token Est. | Version | Last Updated |
 |------------|-----------|-----------------|------------|---------|--------------|
 | Quality Checklist | `quality-checklist/` | Orchestrator (preload), Code Reviewer (preload), QA Strategist (preload), QA Executor (preload) | ~500 | 1.1.0 | 2026-04-13 |
-| Commit | `commit/` | — (reference) | ~400 | 1.1.0 | 2026-06 |
+| Commit | `commit/` | — (reference) | ~600 | 1.1.0 | 2026-06 |
 | Pattern Detector | `pattern-detector/` | Code Reviewer (reference) | ~500 | 1.0.0 | 2026-03 |
 | Context7 Lookup | `context7-lookup/` | Launch Pad (preload), Code Reviewer (preload), Red Team Reviewer (preload) | ~300 | 1.0.0 | 2026-03 |
 | Unit Testing | `unit-testing/` | Worker (reference), Code Reviewer (preload) | ~800 | 1.0.0 | 2026-03 |

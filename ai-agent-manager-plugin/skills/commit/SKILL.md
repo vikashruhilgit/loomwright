@@ -23,7 +23,7 @@ Create conventional commits linked to Beads tasks.
 The ```` ```bash ```` / ```` ``` ```` fences shown throughout this skill are **documentation formatting only**. They are **NEVER part of the commit message.** When you call `git commit`, the message text must begin directly with the conventional-commit subject — never with a fence.
 
 - **The first line IS the subject** and must be the real headline (e.g. `feat(scope): summary`). It must NOT be a ```` ``` ```` fence, a ```` ```bash ```` line, or a blank line.
-- **Never wrap the commit message in a markdown code block.** If a fence character is the first line, git records ```` ``` ```` as the commit *subject* and shoves the real headline into the body. (Observed in the wild: a PR whose title and every commit headline were literally ```` ``` ````, with the true subject buried in the body.)
+- **Never wrap the commit message in a markdown code block.** If a fence is the first line, git records that opening fence line — whether ```` ``` ```` or ```` ```bash ```` — as the commit *subject* and shoves the real headline into the body. (Observed in the wild: a PR whose title and every commit headline were literally ```` ``` ````, with the true subject buried in the body.)
 - **Multi-line messages:** pass the subject and body as separate `-m` flags, or pipe a fence-free message via `git commit -F -` / a heredoc — do not paste a fenced block.
 
 ````bash
@@ -41,7 +41,7 @@ Implement refresh token endpoint with sliding window expiration.
 Closes BD-45
 EOF
 
-# ❌ WRONG — the literal ``` line becomes the git commit subject
+# ❌ WRONG — the opening ```bash fence line becomes the git commit subject
 git commit -m '```bash
 feat(auth): add jwt token refresh endpoint
 
