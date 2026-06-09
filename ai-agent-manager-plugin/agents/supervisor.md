@@ -686,7 +686,7 @@ while heal_iterations < max_heal_iterations:
     prompt: "**DIFF-SCOPE OVERRIDE (v14.0.0 stacked-iteration support):** if BASE_BRANCH is supplied below and differs from \"main\", you MUST compute the diff scope as `git diff $BASE_BRANCH...HEAD` and treat that as the entirety of your review scope. Do NOT fall back to `git diff origin/main...HEAD`, do NOT auto-expand to a consistency audit beyond this scope, and do NOT walk the file tree outside the changed files. This is a stacked-branch iteration N+1 review where the parent branch (BASE_BRANCH) already passed its own Phase 4.5 — only this iteration's incremental work is in scope. This directive supersedes the Code Reviewer's standard consistency_audit auto-expand behavior for stacked iterations.
 
              **DIFFERENT-LENS DIRECTIVE (non-stacked / BASE_BRANCH == \"main\" only — v14.21.0 self-heal hardening):** when BASE_BRANCH == \"main\" (the DIFF-SCOPE OVERRIDE above does NOT apply), this is the holistic post-PR review whose blind spots motivated this directive — a plain re-run of the same diff-scoped reviewer rubber-stamps the same classes it already missed per-subtask. Apply a DIFFERENT lens, not the same one again:
-               1. **Run `consistency_audit` mode when self-repo trigger paths match.** If the integrated diff touches this plugin's trigger surfaces (`ai-agent-manager-plugin/agents/`, `commands/`, `skills/`, `docs/`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `hooks/hooks.json`, `CLAUDE.md`, `README.md`, `SKILLS_INDEX.md`) you MUST run in `review_mode: consistency_audit` (exhaustive cross-file analysis: every count, version string, mirrored prompt, and cross-reference), NOT a plain `diff_review`.
+               1. **Run `consistency_audit` mode when self-repo trigger paths match.** If the integrated diff touches this plugin's trigger surfaces (`ai-agent-manager-plugin/agents/`, `commands/`, `skills/`, `docs/`, `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `hooks/hooks.json`, `CLAUDE.md`, `README.md`, `SKILLS_INDEX.md` — authoritative review-trigger taxonomy: `agents/code-reviewer.md`'s Trigger surface table; keep this illustrative list in sync) you MUST run in `review_mode: consistency_audit` (exhaustive cross-file analysis: every count, version string, mirrored prompt, and cross-reference), NOT a plain `diff_review`.
                2. **ALWAYS apply the Self-Heal Miss-Class Checklist regardless of repo.** On EVERY non-stacked heal review — plugin-self OR any external repo where the consistency_audit triggers do not fire — additionally apply the repo-agnostic \"Self-Heal Miss-Class Checklist\" in `skills/quality-checklist/SKILL.md` (backend/API validation mirrors every frontend-schema rule; no `||`/falsy coercion on numeric fields; no positional args to options-object functions; missing branch test coverage; drift on count/cross-ref changes). These are the classes that today only surface in 3–6 rounds of post-PR review; catch them here.
 
              BASE_BRANCH={BASE_BRANCH value or \"main\"}
@@ -752,6 +752,11 @@ while heal_iterations < max_heal_iterations:
 # fix/sweep on the FINAL allowed iteration: the loop then exits ESCALATED below and posts
 # findings to the PR for human review. So a sweep never ships as a silent clean PASS — it
 # is always either re-reviewed by the next iteration or surfaced to a human via ESCALATED.
+# Budget tension (accepted): a large class-sweep also enlarges the next iteration's re-review
+# diff, so it can consume heal iterations / reviewer call-budget faster — an accepted trade for
+# breaking the post-PR review loop, kept bounded by step 1a's "within the changed surface"
+# guardrail. (An auditable FIX_RESULT swept-instances field was considered and DEFERRED —
+# premature schema growth on a still-soaking advisory instrument.)
 if heal_iterations == max_heal_iterations AND review.decision != PASS:
   heal_decision = ESCALATED
   heal_remaining_issues = count(review.issues where category=new AND severity in [BLOCKING, HIGH])
