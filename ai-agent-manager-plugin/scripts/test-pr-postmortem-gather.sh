@@ -23,6 +23,11 @@
 #                     agent_generated_guess; approval-only review => 0 rounds.
 #   3c. task-id PR -> a subject-LEADING task-id prefix ("bd-15a: ...") DOES flip
 #                     agent_generated_guess.
+#   3d. bot-review PR (the PR #47 shape) -> 0 review OBJECTS but N bot-review ISSUE
+#                     comments (CI review workflow) => review_rounds counts them;
+#                     broadened is_review_fix regex matches "round-N"/"nit"/"reconcil"
+#                     subjects; human chatter and non-review bot comments are NOT
+#                     counted and NOT included in review_comments.
 #   4. injection-safety -> a title/body/review body with quotes/backslashes/newlines
 #                     round-trips as valid JSON (no parse break).
 #   5. unavailable (stub gh fails / PR inaccessible) -> {"status":"unavailable",...}, exit 0.
@@ -121,6 +126,35 @@ cat > "$FIX_TASKID" <<'FIX'
 }
 FIX
 
+# Bot-review fixture (3d): the PR #47 shape — the repo's review feedback arrives as
+# claude-bot ISSUE comments (CI review workflow), with ZERO review objects. Includes
+# two negative controls: a human chatter comment and a bot comment with no "review".
+FIX_BOTREVIEW="$TMP/fixture-botreview.json"
+cat > "$FIX_BOTREVIEW" <<'FIX'
+{
+  "number": 42,
+  "title": "Supervisor diet + parity guard",
+  "body": "Structural quality levers.\n\n🤖 Generated with Claude Code",
+  "additions": 60,
+  "deletions": 10,
+  "changedFiles": 6,
+  "commits": [
+    {"messageHeadline": "feat(structure): supervisor diet + parity guard"},
+    {"messageHeadline": "fix(docs): tighten skill description (round-2 review nit 5)"},
+    {"messageHeadline": "fix(docs): round-5 reconciliations — roadmap framing"}
+  ],
+  "reviews": [],
+  "comments": [
+    {"author": {"login": "claude"}, "body": "## Code Review — PR #42\n\nFindings below."},
+    {"author": {"login": "claude"}, "body": "## Review round 2\n\nRemaining nits."},
+    {"author": {"login": "claude"}, "body": "## Review round 3 — clean\n\nRecommend merge."},
+    {"author": {"login": "alice"}, "body": "thanks, merging!"},
+    {"author": {"login": "coverage[bot]"}, "body": "Coverage: 92% (+0.3%)"}
+  ],
+  "statusCheckRollup": []
+}
+FIX
+
 cat > "$FIX_INJECT" <<'FIX'
 {
   "number": 42,
@@ -153,11 +187,12 @@ FIX
 make_gh_stub() {
   local mode="$1" fixture=""
   case "$mode" in
-    ok)     fixture="$FIX_OK" ;;
-    human)  fixture="$FIX_HUMAN" ;;
-    taskid) fixture="$FIX_TASKID" ;;
-    inject) fixture="$FIX_INJECT" ;;
-    fail)   fixture="" ;;
+    ok)        fixture="$FIX_OK" ;;
+    human)     fixture="$FIX_HUMAN" ;;
+    taskid)    fixture="$FIX_TASKID" ;;
+    botreview) fixture="$FIX_BOTREVIEW" ;;
+    inject)    fixture="$FIX_INJECT" ;;
+    fail)      fixture="" ;;
   esac
   cat > "$BIN/gh" <<STUB
 #!/usr/bin/env bash
@@ -250,6 +285,24 @@ if printf '%s' "$RUN_OUT" | jq -e '
   ok "task-id PR: subject-leading id prefix flips agent guess true"
 else
   no "(3c) wrong: $RUN_OUT"
+fi
+
+echo "== 3d. bot-review PR (PR #47 shape) => bot issue comments count as rounds; chatter does not =="
+make_gh_stub botreview
+run_gather "$PR_URL"
+# 0 review objects + 3 claude-bot review comments + 2 broadened-regex fix commits
+# (round-2/nit, round-5/reconcil) => review_rounds == MAX(2, 0, 3) == 3. The human
+# "thanks, merging!" and the coverage bot (no "review" in body) must count nowhere.
+if printf '%s' "$RUN_OUT" | jq -e '
+    (.review_rounds == 3)
+    and ([.commits[] | select(.is_review_fix)] | length)==2
+    and (.review_comments | length)==3
+    and ([.review_comments[] | select(.author=="claude")] | length)==3
+    and .agent_generated_guess==true
+  ' >/dev/null 2>&1; then
+  ok "bot-review PR: review_rounds==3 from bot comments (was 0 pre-fix), 2 broadened-regex fix commits, chatter/non-review-bot excluded"
+else
+  no "(3d) wrong: $RUN_OUT"
 fi
 
 echo "== 4. injection-safety => quotes/backslashes/newlines round-trip as valid JSON =="
