@@ -124,7 +124,7 @@ session-local state, not committed). Self-tests live in `scripts/test-system-con
 
 | Agent | maxTurns | On timeout |
 |-------|----------|------------|
-| Supervisor | — (uses 50 tool call budget) | Checkpoint and halt |
+| Supervisor | `maxTurns: 60` (harness ceiling) + internal 50 tool-call budget | Checkpoint and halt |
 | Execute Manager | 80 | Return EXECUTE_CHECKPOINT |
 | Worker | 40 | Return WORKER_RESULT status=failed |
 | Code Reviewer | 40 | Return partial review |
