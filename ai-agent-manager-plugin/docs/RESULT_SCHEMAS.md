@@ -125,6 +125,7 @@ EXECUTE_RESULT:
 
 **Validation rules:**
 - `schema_version` must equal `1`
+- **Discriminator (no top-level `status:` field):** consumers (Supervisor Phase 3) branch on `subtasks_failed` — non-empty ⇔ escalation; additionally `subtasks_completed` empty ⇔ all-failed escalation (nothing to merge). A partial escalation (both arrays non-empty) merges the completed subset per `merge_order`, then reports the failures.
 - `subtasks_completed` must be present; it may be an empty array ONLY when `subtasks_failed` is non-empty and `summary` records the escalation (all-failed case)
 - `merge_order` must match completed subtask branches (empty when `subtasks_completed` is empty)
 - `worktrees` must be non-empty array with valid paths
