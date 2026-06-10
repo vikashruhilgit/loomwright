@@ -9,8 +9,10 @@
 # the behavioral assertion is the SHAPE of the emitted JSON.
 #
 # Live `gh` is NEVER called: a stub `gh` is placed earlier on PATH inside a temp
-# bindir. The stub emits canned `gh pr view ... --json ...` JSON from a heredoc, so
-# the gatherer's single gh round-trip is fully deterministic and offline.
+# bindir. The stub serves BOTH gh paths from fixture files — the load-bearing
+# `gh pr view ... --json ...` call AND the second, best-effort
+# `gh api repos/{owner}/{repo}/issues/{number}/comments` fetch — so the gatherer's
+# round-trips are fully deterministic and offline.
 #
 # Covers:
 #   1. happy path  -> valid JSON, expected keys (repo,number,commits,review_rounds,
@@ -23,11 +25,20 @@
 #                     agent_generated_guess; approval-only review => 0 rounds.
 #   3c. task-id PR -> a subject-LEADING task-id prefix ("bd-15a: ...") DOES flip
 #                     agent_generated_guess.
-#   3d. bot-review PR (the PR #47 shape) -> 0 review OBJECTS but N bot-review ISSUE
-#                     comments (CI review workflow) => review_rounds counts them;
-#                     broadened is_review_fix regex matches "round-N"/"nit"/"reconcil"
-#                     subjects; human chatter and non-review bot comments are NOT
-#                     counted and NOT included in review_comments.
+#   3d. bot-review PR (the PR #47 shape) -> 0 review OBJECTS but bot-review ISSUE
+#                     comments (served via the SEPARATE `gh api .../issues/N/comments`
+#                     stub path, REST shape) => review_rounds counts ONLY the
+#                     timestamp-ANCHORED rounds (>=1 commit committedDate after the
+#                     comment created_at); the trailing "clean / recommend merge"
+#                     comment with no commits after it does NOT count; a vercel[bot]
+#                     "Deploy Preview" comment does NOT match the word-bounded review
+#                     marker (no phantom round, absent from review_comments); the
+#                     narrow legacy is_review_fix regex does NOT match
+#                     "round-N"/"nit"/"reconcil" subjects; human chatter and
+#                     non-review bot comments count nowhere.
+#   3e. comments-fetch degrade -> `gh pr view` succeeds but `gh api .../comments`
+#                     fails => success-shaped object (NOT unavailable), review_rounds
+#                     falls back to the two legacy signals, exit 0.
 #   4. injection-safety -> a title/body/review body with quotes/backslashes/newlines
 #                     round-trips as valid JSON (no parse break).
 #   5. unavailable (stub gh fails / PR inaccessible) -> {"status":"unavailable",...}, exit 0.
@@ -127,8 +138,11 @@ cat > "$FIX_TASKID" <<'FIX'
 FIX
 
 # Bot-review fixture (3d): the PR #47 shape — the repo's review feedback arrives as
-# claude-bot ISSUE comments (CI review workflow), with ZERO review objects. Includes
-# two negative controls: a human chatter comment and a bot comment with no "review".
+# claude-bot ISSUE comments (CI review workflow), with ZERO review objects. The PR-view
+# blob carries committedDate on every commit (the anchoring data); the comments live in
+# a SEPARATE REST-shaped fixture served via the `gh api` stub path below. The commit
+# subjects carry "round-N"/"nit"/"reconcil" tokens that the REJECTED broadened regex
+# matched — the narrow legacy is_review_fix regex must NOT match them.
 FIX_BOTREVIEW="$TMP/fixture-botreview.json"
 cat > "$FIX_BOTREVIEW" <<'FIX'
 {
@@ -139,20 +153,32 @@ cat > "$FIX_BOTREVIEW" <<'FIX'
   "deletions": 10,
   "changedFiles": 6,
   "commits": [
-    {"messageHeadline": "feat(structure): supervisor diet + parity guard"},
-    {"messageHeadline": "fix(docs): tighten skill description (round-2 review nit 5)"},
-    {"messageHeadline": "fix(docs): round-5 reconciliations — roadmap framing"}
+    {"messageHeadline": "feat(structure): supervisor diet + parity guard", "committedDate": "2026-01-01T08:00:00Z"},
+    {"messageHeadline": "fix(docs): tighten skill description (round-2 review nit 5)", "committedDate": "2026-01-01T12:00:00Z"},
+    {"messageHeadline": "fix(docs): round-5 reconciliations — roadmap framing", "committedDate": "2026-01-02T12:00:00Z"}
   ],
   "reviews": [],
-  "comments": [
-    {"author": {"login": "claude"}, "body": "## Code Review — PR #42\n\nFindings below."},
-    {"author": {"login": "claude"}, "body": "## Review round 2\n\nRemaining nits."},
-    {"author": {"login": "claude"}, "body": "## Review round 3 — clean\n\nRecommend merge."},
-    {"author": {"login": "alice"}, "body": "thanks, merging!"},
-    {"author": {"login": "coverage[bot]"}, "body": "Coverage: 92% (+0.3%)"}
-  ],
   "statusCheckRollup": []
 }
+FIX
+
+# REST-shaped issue comments for 3d (served by the stub's `gh api` path: user.login /
+# created_at / body — snake_case, NOT the gh-pr-view author/createdAt shape). Anchored
+# rounds: c1 (2026-01-01T10) and c2 (2026-01-02T10) each have a commit landing after
+# them => count; the trailing "round 3 — clean / Recommend merge" (2026-01-03T10) has
+# NO commit after it => must NOT count. Negative controls: human chatter, a coverage
+# bot with no review marker, and a vercel[bot] "Deploy Preview" notice ("preview"
+# contains "review" as a substring — the word-bounded marker must not match it).
+FIX_BOTREVIEW_COMMENTS="$TMP/fixture-botreview-comments.json"
+cat > "$FIX_BOTREVIEW_COMMENTS" <<'FIX'
+[
+  {"user": {"login": "claude[bot]"}, "created_at": "2026-01-01T10:00:00Z", "body": "## Code Review — PR #42\n\nFindings below."},
+  {"user": {"login": "claude[bot]"}, "created_at": "2026-01-02T10:00:00Z", "body": "## Review round 2\n\nRemaining nits."},
+  {"user": {"login": "claude[bot]"}, "created_at": "2026-01-03T10:00:00Z", "body": "## Review round 3 — clean\n\nRecommend merge."},
+  {"user": {"login": "alice"}, "created_at": "2026-01-03T11:00:00Z", "body": "thanks, merging!"},
+  {"user": {"login": "coverage[bot]"}, "created_at": "2026-01-01T09:00:00Z", "body": "Coverage: 92% (+0.3%)"},
+  {"user": {"login": "vercel[bot]"}, "created_at": "2026-01-01T09:30:00Z", "body": "Deploy Preview for my-app ready!"}
+]
 FIX
 
 cat > "$FIX_INJECT" <<'FIX'
@@ -175,17 +201,23 @@ cat > "$FIX_INJECT" <<'FIX'
 }
 FIX
 
-# make_gh_stub <mode> — write a fake `gh` to $BIN that, for `pr view`, cats the
-# fixture file for <mode>; for any other args exits 0. The stub body is tiny and
+# make_gh_stub <mode> [api_mode] — write a fake `gh` to $BIN that serves BOTH gh
+# paths the gatherer makes; for any other args exits 0. The stub body is tiny and
 # carries NO embedded JSON (the JSON lives in the files above), so the unquoted
-# outer heredoc cannot corrupt any escapes. <mode>:
+# outer heredoc cannot corrupt any escapes. <mode> drives `gh pr view`:
 #   ok        — rich happy-path PR (agent-generated, one review-fix commit, 2 reviews, CI).
 #   human     — human PR: utf-8/sha-256 commit tokens, approval-only review (3b).
 #   taskid    — subject-leading "bd-15a:" task-id prefix, plain body (3c).
+#   botreview — PR #47 shape: zero review objects, committedDate-stamped commits (3d/3e).
 #   inject    — title/body/review carrying quotes, backslashes, and a newline.
 #   fail      — `pr view` exits 1 (simulates private/not-found/unauthenticated).
+# [api_mode] drives the SECOND fetch (`gh api repos/.../issues/.../comments`; the stub
+# pins the exact endpoint path — any other api path exits 1, exercising degrade):
+#   empty (default) — emit "[]" (no issue comments).
+#   comments        — cat the REST-shaped bot-review comments fixture (3d).
+#   fail            — exit 1 (comments endpoint failing — the degrade path, 3e).
 make_gh_stub() {
-  local mode="$1" fixture=""
+  local mode="$1" api_mode="${2:-empty}" fixture="" api_fixture=""
   case "$mode" in
     ok)        fixture="$FIX_OK" ;;
     human)     fixture="$FIX_HUMAN" ;;
@@ -194,12 +226,25 @@ make_gh_stub() {
     inject)    fixture="$FIX_INJECT" ;;
     fail)      fixture="" ;;
   esac
+  case "$api_mode" in
+    comments) api_fixture="$FIX_BOTREVIEW_COMMENTS" ;;
+  esac
   cat > "$BIN/gh" <<STUB
 #!/usr/bin/env bash
-# fake gh — fixture mode: $mode
+# fake gh — fixture mode: $mode / api mode: $api_mode
 if [ "\${1:-}" = "pr" ] && [ "\${2:-}" = "view" ]; then
   if [ "$mode" = "fail" ]; then exit 1; fi
   cat "$fixture"
+  exit 0
+fi
+if [ "\${1:-}" = "api" ]; then
+  if [ "$api_mode" = "fail" ]; then exit 1; fi
+  case "\${2:-}" in
+    repos/acme/widgets/issues/42/comments) : ;;
+    *) exit 1 ;;
+  esac
+  if [ -n "$api_fixture" ]; then cat "$api_fixture"; exit 0; fi
+  echo "[]"
   exit 0
 fi
 exit 0
@@ -287,22 +332,45 @@ else
   no "(3c) wrong: $RUN_OUT"
 fi
 
-echo "== 3d. bot-review PR (PR #47 shape) => bot issue comments count as rounds; chatter does not =="
-make_gh_stub botreview
+echo "== 3d. bot-review PR (PR #47 shape) => timestamp-ANCHORED bot rounds only; preview/chatter/trailing-clean do not count =="
+make_gh_stub botreview comments
 run_gather "$PR_URL"
-# 0 review objects + 3 claude-bot review comments + 2 broadened-regex fix commits
-# (round-2/nit, round-5/reconcil) => review_rounds == MAX(2, 0, 3) == 3. The human
-# "thanks, merging!" and the coverage bot (no "review" in body) must count nowhere.
+# 0 review objects, 0 narrow-regex fix commits (the "round-2 review nit"/"round-5
+# reconciliations" subjects must NOT match — the broadened regex was rejected), and
+# 3 marker-matching claude-bot review comments of which only 2 have a commit landing
+# after them => review_rounds == MAX(0, 0, 2) == 2. The trailing "round 3 — clean /
+# Recommend merge" comment (no commits after) must NOT count as a round; the
+# vercel[bot] "Deploy Preview" comment must not count anywhere (word-bounded marker);
+# human "thanks, merging!" and the coverage bot count nowhere. review_comments keeps
+# all 3 marker-matching bot review comments (snippets are context, rounds are counts).
 if printf '%s' "$RUN_OUT" | jq -e '
-    (.review_rounds == 3)
-    and ([.commits[] | select(.is_review_fix)] | length)==2
+    (.review_rounds == 2)
+    and ([.commits[] | select(.is_review_fix)] | length)==0
     and (.review_comments | length)==3
-    and ([.review_comments[] | select(.author=="claude")] | length)==3
+    and ([.review_comments[] | select(.author=="claude[bot]")] | length)==3
+    and ([.review_comments[] | select(.snippet | test("Deploy Preview"))] | length)==0
     and .agent_generated_guess==true
   ' >/dev/null 2>&1; then
-  ok "bot-review PR: review_rounds==3 from bot comments (was 0 pre-fix), 2 broadened-regex fix commits, chatter/non-review-bot excluded"
+  ok "bot-review PR: review_rounds==2 anchored bot rounds (trailing clean comment excluded), 0 narrow-regex fix commits, Deploy-Preview/chatter/non-review-bot excluded"
 else
   no "(3d) wrong: $RUN_OUT"
+fi
+
+echo "== 3e. comments-fetch degrade => gh api fails but emit stays success-shaped, legacy signals only =="
+make_gh_stub botreview fail
+run_gather "$PR_URL"
+# `gh pr view` succeeds; `gh api .../issues/42/comments` exits 1. The gatherer must
+# NOT emit unavailable — it degrades to the two legacy signals: 0 narrow-regex fix
+# commits + 0 churn review objects => review_rounds == 0, no bot review_comments.
+if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | jq -e '
+    (has("status") | not)
+    and .repo=="acme/widgets" and .number==42
+    and (.review_rounds == 0)
+    and (.review_comments | length)==0
+  ' >/dev/null 2>&1; then
+  ok "comments fetch failure degrades to legacy signals: success shape, review_rounds==0, exit 0"
+else
+  no "(3e) wrong (rc=$RUN_RC): $RUN_OUT"
 fi
 
 echo "== 4. injection-safety => quotes/backslashes/newlines round-trip as valid JSON =="
