@@ -334,12 +334,12 @@ For complex tasks, use Launch Pad to plan and Supervisor to execute:
 # Launch Pad presents the brief for your review
 # Choose: Save / Refine / Edit / Discard
 
-# 3. Execute in a fresh session (clean context, ~500 tokens freed)
+# 3. Execute in a fresh session (clean context)
 /supervisor job: .supervisor/jobs/pending/2026-02-08-jwt-auth.md
 ```
 
 **Benefits:**
-- **~500 tokens freed** for execution (Supervisor skips Phases 0-2)
+- **Planning context freed** for execution (Supervisor skips Phases 0-2 — pre-answered by the brief)
 - **Plan review** before any code is written
 - **File impact analysis** prevents parallelism mistakes
 - **Clean context** — fresh session for Supervisor

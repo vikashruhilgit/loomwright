@@ -169,8 +169,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
      - Move brief from `pending/` → `in-progress/` (if brief is in `pending/`; skip move if path doesn't match `pending/` for backward compatibility with old flat `jobs/` layout)
      - Skip environment validation (already done by Launch Pad)
      - Pre-populate: task details, acceptance criteria, subtask hints, parallelism analysis, skill references
-     - Jump to Phase 1 with enriched context (~200 tokens instead of ~700)
-     - Context savings: ~500 tokens freed for Phase 3 execution
+     - Jump to Phase 1 with enriched context — planning phases are pre-answered by the brief, freeing budget for Phase 3 execution
 
 **Output:**
 ```markdown
@@ -1182,8 +1181,8 @@ SUPERVISOR_RESULT:
 | Fix task crash in SELF_HEAL | Pause phase, increment resume counter, exit with resume; 3rd pause escalates with `self_heal_resume_thrash` |
 | SELF_HEAL loop exhausts max iterations | Mark ESCALATED, post PR comment, run completion tail, exit normally |
 | CODE_REVIEW_RESULT missing from integration review | Retry review once; still missing → pause with resume |
-| Tool budget 24+ (80%) | Force checkpoint, suggest new session |
-| Tool budget 28+ (93%) | Checkpoint + exit with resume command |
+| Tool budget 40+ (80%) | Force checkpoint, suggest new session |
+| Tool budget 46+ (92%) | Checkpoint + exit with resume command |
 | Dirty working tree | Warn user, ask to stash or commit |
 
 **Escalation Format:**
@@ -1460,7 +1459,7 @@ SUPERVISOR_RESULT:
 - `heal_decision=ESCALATED` → `status: completed_with_escalation`
 - Hard failures (merge conflict, fix task crash after retries, resume thrash) → `status: failed` or `status: completed_with_escalation` depending on which phase failed
 - Phase 1.5 PRE-FLIGHT SYNC fail-closed abort (OVERLAP/SUPERSEDED under `--non-interactive`/stdin-not-a-TTY, no `--skip-preflight-sync`) → `status: failed` with `SUPERVISOR_RESULT.error = "preflight_overlap_detected"` (surfaced by /autonomous as `AUTONOMOUS_RUN.status_reason: "preflight_overlap_detected"`)
-- Budget exhaustion (24+ tool calls, phase still running) → `status: checkpoint`
+- Budget exhaustion (40+ tool calls, phase still running) → `status: checkpoint`
 
 **Invariants:**
 - `pr_url` MUST be present when `status in [completed, completed_with_escalation]`
