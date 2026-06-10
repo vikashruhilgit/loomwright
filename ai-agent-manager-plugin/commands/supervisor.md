@@ -255,8 +255,9 @@ The Supervisor uses externalized state and tool call budgets:
 
 **Tool call thresholds (Supervisor):**
 - 0-30 (60%): GREEN — normal operation
-- 30-40 (80%): YELLOW — aggressive compression, force checkpoint
-- 40-46 (92%): RED — checkpoint + exit with resume command
+- 30-40 (80%): YELLOW — aggressive compression
+- 40-46 (92%): RED — force checkpoint, suggest new session
+- 46+: RED — checkpoint + exit with resume command
 
 ## Parallel vs Sequential
 

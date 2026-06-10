@@ -1000,7 +1000,8 @@ Track your tool call count mentally. Increment by 1 for each tool invocation (Ta
 |-----------|-------|--------|
 | 0-30 (60%) | GREEN | Normal operation |
 | 30-40 (80%) | YELLOW | Aggressive compression (<100 tokens); in Phase 4.5, skip remaining advisory steps (twin/benchmark) — gates still run |
-| 40-46 (92%) | RED | Checkpoint + exit with resume command |
+| 40-46 (92%) | RED | Force checkpoint, suggest new session (Phase 5 LOOP picks up no new tasks) |
+| 46+ | RED | Checkpoint + exit with resume command |
 
 ### Supervisor Context Budget (~400 tokens)
 
