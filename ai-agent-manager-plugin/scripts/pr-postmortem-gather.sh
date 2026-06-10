@@ -51,8 +51,9 @@
 #     CHURN-review submission timestamps). A review counts as churn only when its state
 #     is CHANGES_REQUESTED, or COMMENTED with a non-empty body — approval-only reviews
 #     (APPROVED / bare LGTM) are NOT rounds of back-and-forth. Using the max avoids
-#     undercounting when one signal is absent; caveat: several fix commits inside a
-#     single round can still overcount — accepted noise for a trend signal.
+#     undercounting when one signal is absent; caveats: several fix commits inside a
+#     single round can still overcount, as can two reviewers requesting changes within
+#     one logical round (distinct submittedAt) — accepted noise for a trend signal.
 
 set -uo pipefail
 # Intentionally NO `set -e`: the fail-safe JSON emit must never be aborted mid-stream.
@@ -182,9 +183,13 @@ OUTPUT="$(printf '%s' "$PR_JSON" | jq -c \
   | ([ .reviews[]?
         | select(((.body // "") | gsub("[[:space:]]+"; "")) != "")
         | { author: (.author.login // "unknown"), snippet: ((.body // "") | snippet) } ]) as $review_comments
+  # state fallthrough must skip empty strings, not just null: an in-progress CheckRun
+  # has conclusion: "" (truthy in jq, so a bare // chain would stop there and surface
+  # "" instead of falling through to .status == IN_PROGRESS).
   | ([ .statusCheckRollup[]?
         | { name: (.name // .context // "unknown"),
-            state: (.state // .conclusion // .status // "UNKNOWN") } ]) as $ci_checks
+            state: ([ .state, .conclusion, .status ]
+                    | map(select(. != null and . != "")) | (.[0] // "UNKNOWN")) } ]) as $ci_checks
   | (
       ($body | test(agent_body_re; "i"))
       or ($body | contains("🤖"))

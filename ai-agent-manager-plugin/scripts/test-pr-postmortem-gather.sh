@@ -74,7 +74,8 @@ cat > "$FIX_OK" <<'FIX'
   ],
   "statusCheckRollup": [
     {"name": "ci/test", "state": "SUCCESS"},
-    {"name": "lint", "state": "FAILURE"}
+    {"name": "lint", "state": "FAILURE"},
+    {"name": "build", "status": "IN_PROGRESS", "conclusion": ""}
   ]
 }
 FIX
@@ -219,9 +220,10 @@ if printf '%s' "$RUN_OUT" | jq -e '
     and (.commits[1].is_review_fix==true)
     and (.review_rounds == 1)
     and (.review_comments | length)==2
-    and (.ci_checks | length)==2
+    and (.ci_checks | length)==3
+    and (.ci_checks[2].state=="IN_PROGRESS")
   ' >/dev/null 2>&1; then
-  ok "heuristics: agent guess true, 1 review-fix commit, review_rounds==1 (approval not counted), 2 review_comments, 2 ci_checks"
+  ok "heuristics: agent guess true, 1 review-fix commit, review_rounds==1 (approval not counted), 2 review_comments, in-progress CheckRun (conclusion:\"\") maps to IN_PROGRESS"
 else
   no "(3) wrong: $RUN_OUT"
 fi
