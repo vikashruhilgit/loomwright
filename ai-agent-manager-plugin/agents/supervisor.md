@@ -401,14 +401,23 @@ tool_calls += 1   # single tool call for entire Phase 3
 
 **Parse Execute Manager result:**
 
+EXECUTE_RESULT has no top-level `status:` field — the discriminator is
+**`subtasks_failed`: escalation ⇔ `subtasks_failed` is non-empty** (see
+`docs/RESULT_SCHEMAS.md` §EXECUTE_RESULT).
+
 ```
-if EXECUTE_RESULT (all done):
-  → Extract: merge_order, worktrees, branches, reviews_passed
+if EXECUTE_RESULT and subtasks_failed is empty (all done):
+  → Extract: merge_order, worktrees, branches, review decisions
   → Proceed to Phase 4 FINALIZE with merge data
 
-if EXECUTE_RESULT (escalation):
-  → Checkpoint via Context-Keeper
-  → Report escalation to user with resume command
+if EXECUTE_RESULT and subtasks_failed is non-empty (escalation):
+  → If subtasks_completed is ALSO non-empty (partial escalation — the common
+    shape): proceed to Phase 4 FINALIZE with the completed subset (merge per
+    merge_order, which already lists only completed branches), THEN report the
+    failed subtasks to the user as an escalation in the same run.
+  → If subtasks_completed is empty (all-failed): checkpoint via Context-Keeper
+    and report the escalation to the user with the resume command — nothing to
+    merge.
 
 if EXECUTE_CHECKPOINT (partial):
   → Context-Keeper: checkpoint
@@ -421,8 +430,9 @@ if EXECUTE_CHECKPOINT (partial):
 
 | Situation | Action |
 |-----------|--------|
-| EXECUTE_RESULT (completed) | Extract merge data, proceed to FINALIZE |
-| EXECUTE_RESULT (escalation) | Checkpoint, report to human |
+| EXECUTE_RESULT, `subtasks_failed` empty (completed) | Extract merge data, proceed to FINALIZE |
+| EXECUTE_RESULT, `subtasks_failed` non-empty + `subtasks_completed` non-empty (partial escalation) | FINALIZE the completed subset per `merge_order`, then report failures |
+| EXECUTE_RESULT, `subtasks_completed` empty (all-failed escalation) | Checkpoint, report to human — nothing to merge |
 | EXECUTE_CHECKPOINT (partial) | Ask user, merge subset or continue |
 | EXECUTE_CHECKPOINT (`adjudication_required: true`) | Pause EXECUTE, surface 4-option choice via AskUserQuestion (see "Adjudication Handling" below) |
 | Execute Manager crash | Checkpoint, report worktree state, exit with resume |

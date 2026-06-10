@@ -314,6 +314,10 @@ After all subtasks complete (or budget exceeded):
 Both blocks are validated by the SubagentStop hook against `docs/RESULT_SCHEMAS.md`
 (§EXECUTE_RESULT / §EXECUTE_CHECKPOINT — the canonical field definitions). Emit
 exactly these shapes; `schema_version` and `summary`/`reason` are hook-required.
+There is no top-level `status:` field — consumers discriminate on
+**`subtasks_failed`: non-empty ⇔ escalation** (and `subtasks_completed` empty ⇔
+all-failed). `merge_order` lists only completed branches, so a partial
+escalation is directly mergeable from it.
 
 **If all subtasks completed and reviewed:**
 
