@@ -9,8 +9,9 @@
 # the behavioral assertion is the SHAPE of the emitted JSON.
 #
 # Live `gh` is NEVER called: a stub `gh` is placed earlier on PATH inside a temp
-# bindir. The stub emits canned `gh pr view ... --json ...` JSON from a heredoc, so
-# the gatherer's single gh round-trip is fully deterministic and offline.
+# bindir. The stub emits canned `gh pr view ... --json ...` JSON from a heredoc, and
+# canned `gh api .../issues/N/comments` JSON for the bot-comment signal, so both of
+# the gatherer's gh round-trips are fully deterministic and offline.
 #
 # Covers:
 #   1. happy path  -> valid JSON, expected keys (repo,number,commits,review_rounds,
@@ -28,6 +29,14 @@
 #   5. unavailable (stub gh fails / PR inaccessible) -> {"status":"unavailable",...}, exit 0.
 #   6. bad input   -> {"status":"unavailable","reason":"bad_input"}, exit 0.
 #   7. missing gh  -> {"status":"unavailable","reason":"gh_unavailable"}, exit 0.
+#   8. CI-comment churn (the PR #47 miss-mode) -> 0 formal reviews + 0 review-fix
+#                     commits, but review-shaped claude[bot] issue comments followed
+#                     by pushes => review_rounds counts them, source "bot_comments";
+#                     non-bot / non-review-marker comments excluded; a trailing bot
+#                     comment with no later push is NOT a round; bot snippets land
+#                     in review_comments[].
+#   8b. gh api failure -> the issue-comments fetch failing degrades to the legacy
+#                     behavior (success shape, 0 rounds, source "none"), exit 0.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -121,6 +130,46 @@ cat > "$FIX_TASKID" <<'FIX'
 }
 FIX
 
+# CI-comment-churn fixture (8): the PR #47 miss-mode. NO formal reviews, NO
+# review-fix commit subjects — all churn evidence lives in claude[bot] issue
+# comments. Commits carry committedDate so the comment→push round pairing works.
+FIX_BOTPR="$TMP/fixture-botpr.json"
+cat > "$FIX_BOTPR" <<'FIX'
+{
+  "number": 42,
+  "title": "Consistency sweep",
+  "body": "Sweep.\n\n🤖 Generated with Claude Code",
+  "additions": 568,
+  "deletions": 319,
+  "changedFiles": 34,
+  "commits": [
+    {"messageHeadline": "feat: initial sweep", "committedDate": "2026-01-01T09:00:00Z"},
+    {"messageHeadline": "fix: claude-bot PR-42 findings", "committedDate": "2026-01-01T12:00:00Z"},
+    {"messageHeadline": "fix: round-2 nits", "committedDate": "2026-01-01T14:00:00Z"}
+  ],
+  "reviews": [],
+  "statusCheckRollup": []
+}
+FIX
+
+# Issue-comments fixture for mode botchurn (GitHub REST shape: user.login /
+# created_at). Expected rounds = 2:
+#   claude[bot] @10:00 "## Code Review"      -> commits at 12:00 + 14:00 follow => ROUND
+#   claude[bot] @13:00 "## Code Review ..."  -> commit at 14:00 follows         => ROUND
+#   claude[bot] @15:00 "## Code Review ..."  -> no later push                   => not a round
+#   alice (human) mentioning "Code Review"   -> not a bot                       => excluded
+#   vercel[bot] deploy notice                -> no review marker                => excluded
+FIX_BOTIC="$TMP/fixture-botic.json"
+cat > "$FIX_BOTIC" <<'FIX'
+[
+  {"user": {"login": "claude[bot]"}, "created_at": "2026-01-01T10:00:00Z", "body": "## Code Review\n\nFound 4 issues:\n1. stale count claim in CLAUDE.md"},
+  {"user": {"login": "claude[bot]"}, "created_at": "2026-01-01T13:00:00Z", "body": "## Code Review (round 2)\n\nRemaining nits: hook table row"},
+  {"user": {"login": "claude[bot]"}, "created_at": "2026-01-01T15:00:00Z", "body": "## Code Review (round 3)\n\nAll clear."},
+  {"user": {"login": "alice"}, "created_at": "2026-01-01T11:00:00Z", "body": "Code Review looks thorough, thanks!"},
+  {"user": {"login": "vercel[bot]"}, "created_at": "2026-01-01T09:30:00Z", "body": "Deploy preview ready!"}
+]
+FIX
+
 cat > "$FIX_INJECT" <<'FIX'
 {
   "number": 42,
@@ -142,22 +191,29 @@ cat > "$FIX_INJECT" <<'FIX'
 FIX
 
 # make_gh_stub <mode> — write a fake `gh` to $BIN that, for `pr view`, cats the
-# fixture file for <mode>; for any other args exits 0. The stub body is tiny and
+# fixture file for <mode>, and for `api` (the issue-comments fetch) cats the
+# comments fixture / fails / emits nothing per <mode>. The stub body is tiny and
 # carries NO embedded JSON (the JSON lives in the files above), so the unquoted
 # outer heredoc cannot corrupt any escapes. <mode>:
 #   ok        — rich happy-path PR (agent-generated, one review-fix commit, 2 reviews, CI).
 #   human     — human PR: utf-8/sha-256 commit tokens, approval-only review (3b).
 #   taskid    — subject-leading "bd-15a:" task-id prefix, plain body (3c).
 #   inject    — title/body/review carrying quotes, backslashes, and a newline.
+#   botchurn  — CI-comment churn PR: no formal reviews, claude[bot] issue comments (8).
+#   apifail   — same PR but `gh api` exits 1 — exercises the fail-safe degrade (8b).
 #   fail      — `pr view` exits 1 (simulates private/not-found/unauthenticated).
+# Modes without an explicit comments fixture make `gh api` emit nothing (exit 0),
+# which the gatherer must treat as "no comments" — the legacy behavior.
 make_gh_stub() {
-  local mode="$1" fixture=""
+  local mode="$1" fixture="" ic_fixture="" ic_mode="empty"
   case "$mode" in
-    ok)     fixture="$FIX_OK" ;;
-    human)  fixture="$FIX_HUMAN" ;;
-    taskid) fixture="$FIX_TASKID" ;;
-    inject) fixture="$FIX_INJECT" ;;
-    fail)   fixture="" ;;
+    ok)       fixture="$FIX_OK" ;;
+    human)    fixture="$FIX_HUMAN" ;;
+    taskid)   fixture="$FIX_TASKID" ;;
+    inject)   fixture="$FIX_INJECT" ;;
+    botchurn) fixture="$FIX_BOTPR"; ic_fixture="$FIX_BOTIC"; ic_mode="file" ;;
+    apifail)  fixture="$FIX_BOTPR"; ic_mode="fail" ;;
+    fail)     fixture="" ;;
   esac
   cat > "$BIN/gh" <<STUB
 #!/usr/bin/env bash
@@ -166,6 +222,13 @@ if [ "\${1:-}" = "pr" ] && [ "\${2:-}" = "view" ]; then
   if [ "$mode" = "fail" ]; then exit 1; fi
   cat "$fixture"
   exit 0
+fi
+if [ "\${1:-}" = "api" ]; then
+  case "$ic_mode" in
+    file) cat "$ic_fixture"; exit 0 ;;
+    fail) exit 1 ;;
+    *)    exit 0 ;;
+  esac
 fi
 exit 0
 STUB
@@ -219,11 +282,12 @@ if printf '%s' "$RUN_OUT" | jq -e '
     and ([.commits[] | select(.is_review_fix)] | length)==1
     and (.commits[1].is_review_fix==true)
     and (.review_rounds == 1)
+    and (.review_rounds_source == "fix_commits")
     and (.review_comments | length)==2
     and (.ci_checks | length)==3
     and (.ci_checks[2].state=="IN_PROGRESS")
   ' >/dev/null 2>&1; then
-  ok "heuristics: agent guess true, 1 review-fix commit, review_rounds==1 (approval not counted), 2 review_comments, in-progress CheckRun (conclusion:\"\") maps to IN_PROGRESS"
+  ok "heuristics: agent guess true, 1 review-fix commit, review_rounds==1 (approval not counted), source fix_commits, 2 review_comments, in-progress CheckRun (conclusion:\"\") maps to IN_PROGRESS"
 else
   no "(3) wrong: $RUN_OUT"
 fi
@@ -312,6 +376,44 @@ if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | jq -e '
   ok "missing gh => status unavailable, reason gh_unavailable, exit 0"
 else
   no "(7) wrong (rc=$RUN_RC): $RUN_OUT"
+fi
+
+echo "== 8. CI-comment churn => bot rounds counted, source bot_comments, evidence in review_comments =="
+make_gh_stub botchurn
+run_gather "$PR_URL"
+# 2 review-shaped claude[bot] comments each followed by a push => 2 rounds; the
+# third (post-final-push) bot comment, the human "Code Review" comment, and the
+# markerless vercel[bot] notice must NOT count. All 3 review-shaped bot comments
+# land in review_comments[] as categorization evidence.
+if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | jq -e '
+    (has("status") | not)
+    and .agent_generated_guess==true
+    and ([.commits[] | select(.is_review_fix)] | length)==0
+    and (.review_rounds == 2)
+    and (.review_rounds_source == "bot_comments")
+    and (.review_comments | length)==3
+    and ([.review_comments[] | select(.author=="claude[bot]")] | length)==3
+    and (.review_comments[0].snippet | test("stale count claim"))
+  ' >/dev/null 2>&1; then
+  ok "CI-comment churn: 2 bot rounds (comment→push pairing), trailing/human/markerless comments excluded, source bot_comments, bot snippets in review_comments"
+else
+  no "(8) wrong (rc=$RUN_RC): $RUN_OUT"
+fi
+
+echo "== 8b. gh api failure => fail-safe degrade to legacy behavior, exit 0 =="
+make_gh_stub apifail
+run_gather "$PR_URL"
+# Same PR, but the issue-comments fetch fails: must NOT go unavailable and must
+# NOT exit non-zero — success shape with the legacy (comment-blind) counts.
+if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | jq -e '
+    (has("status") | not)
+    and (.review_rounds == 0)
+    and (.review_rounds_source == "none")
+    and (.review_comments | length)==0
+  ' >/dev/null 2>&1; then
+  ok "gh api failure: degraded to legacy counts (0 rounds, source none), success shape, exit 0"
+else
+  no "(8b) wrong (rc=$RUN_RC): $RUN_OUT"
 fi
 
 echo

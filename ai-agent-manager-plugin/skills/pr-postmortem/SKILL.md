@@ -2,7 +2,7 @@
 name: pr-postmortem
 description: Inline, READ-ONLY post-hoc analysis protocol for `/pr-postmortem <pr-url>` — gathers an existing PR's review/churn signals via pr-postmortem-gather.sh, categorizes each review round into one of 6 root-cause classes, attributes it to a flow stage, prints a human-readable root-cause report, and appends one fail-safe POSTMORTEM_RESULT trend line to .supervisor/postmortem/results.jsonl. Use when implementing or invoking the `/pr-postmortem` command.
 allowed-tools: [Read, Bash]
-version: "1.0.0"
+version: "1.1.0"
 lastUpdated: "2026-06-10"
 ---
 
@@ -16,7 +16,7 @@ The goal: after an agent-generated PR has absorbed multiple rounds of post-PR re
 
 ## Hard Invariants
 
-1. **READ-ONLY on the analyzed repo.** The workflow runs `gh pr view` (read-only) through the gather script and reasons inline. It NEVER writes to, branches, commits to, or comments on the analyzed PR or its repo.
+1. **READ-ONLY on the analyzed repo.** The workflow runs `gh pr view` plus a fail-safe `gh api repos/{owner}/{repo}/issues/{n}/comments` fetch (both read-only) through the gather script and reasons inline. It NEVER writes to, branches, commits to, or comments on the analyzed PR or its repo.
 2. **Inline on the main thread.** No sub-agents are spawned (no `Task`), no extra model/API calls beyond the main thread's own reasoning. Categorization is done by the main thread reading the gathered JSON.
 3. **The ONLY write is the trend append** — exactly one JSONL line to `.supervisor/postmortem/results.jsonl` under the *current working* `.supervisor/`, never the analyzed repo. The append is **jq-built (injection-safe), fail-safe, and MUST NEVER crash the command.**
 4. **Graceful on unavailable.** If the gather script returns `{"status":"unavailable",...}`, print one clear line and exit — no partial trend write, no stack trace.
@@ -65,8 +65,10 @@ GATHERED="$(bash "${CLAUDE_PLUGIN_ROOT}/scripts/pr-postmortem-gather.sh" "<input
 ```
 The script emits exactly ONE JSON object on stdout and always exits 0. Two shapes:
 
-- **Success** (NO `status` field): `{ repo, number, title, agent_generated_guess, additions, deletions, changed_files, commits:[{headline,is_review_fix}], review_rounds, review_comments:[{author,snippet}], ci_checks:[{name,state}] }`.
+- **Success** (NO `status` field): `{ repo, number, title, agent_generated_guess, additions, deletions, changed_files, commits:[{headline,is_review_fix}], review_rounds, review_rounds_source, review_comments:[{author,snippet}], ci_checks:[{name,state}] }`.
 - **Unavailable**: `{"status":"unavailable","reason":"<slug>"}` (slugs: `jq_unavailable`, `gh_unavailable`, `bad_input`, `pr_inaccessible`, `normalize_failed`).
+
+**`review_rounds` counts three signals** (MAX of the three): review-fix commit headlines, formal churn-review submissions, and **bot-authored issue-comment review rounds** — a comment whose author ends with `[bot]` and whose body carries a review marker (a markdown heading containing "review", or the phrase "code review"), followed by at least one later push. The third signal covers repos whose review feedback arrives as CI-workflow comments (e.g. `claude[bot]` from a claude-review workflow) instead of GitHub review objects — the mode that previously reported `review_rounds: 0` despite real churn. `review_rounds_source` names the dominant signal (`fix_commits` | `formal_reviews` | `bot_comments` | `none`). The issue-comments fetch is fail-safe: if it errors, the gather degrades to the two legacy signals — never an unavailable emit, never a non-zero exit.
 
 Detect the unavailable shape:
 ```bash
@@ -88,7 +90,8 @@ For each review round / review-fix signal (driven by `review_rounds`, the `revie
 Categorization heuristics (reproducible, evidence-first):
 - Read the `review_comments[].snippet` text — the language usually maps directly to a class (e.g. "already have"/"duplicates" → `missing_context`; "split this PR"/"too big" → `scope_too_large`; "missing test"/"no error handling" → `quality_gap`; "this is wrong"/"breaks when" → `execution_bug`; "naming"/"style"/"count is stale" → `convention_mismatch`; "we never specced"/"requirement missing" → `plan_gap`).
 - If `review_rounds` exceeds the number of usable comment snippets, attribute the residual rounds to the `is_review_fix` commit headlines; if even those are thin, classify the residual round as `flow_stage: unknowable` with the best-fit class and a noted low-confidence evidence snippet.
-- **`review_comments[]` is a superset of the rounds — never derive the round count from it.** The gather script intentionally includes approval-bodied reviews (e.g. an `APPROVED` "LGTM after fix") in `review_comments[]` as context, but they are NOT churn rounds and are already excluded from `review_rounds`. Categorize exactly `review_rounds` rounds; treat surplus comment snippets (approvals, follow-up acknowledgements) as evidence/context only.
+- **`review_comments[]` is a superset of the rounds — never derive the round count from it.** The gather script intentionally includes approval-bodied reviews (e.g. an `APPROVED` "LGTM after fix") AND review-shaped bot issue comments (including a final all-clear comment with no follow-up push, which is correctly not a round) in `review_comments[]` as context, but only `review_rounds` counts as rounds. Categorize exactly `review_rounds` rounds; treat surplus comment snippets (approvals, follow-up acknowledgements, post-final-push bot comments) as evidence/context only.
+- When `review_rounds_source` is `bot_comments`, the per-round evidence usually lives in the bot-comment snippets (`review_comments[]` entries whose author ends with `[bot]`) — read those first, then fall back to commit headlines.
 - Apply the Self-Heal Miss-Class Checklist to set `self_heal_miss` (and thereby lean `flow_stage: self_heal`) where the evidence matches one of its classes.
 
 ### Step 4 — Print the categorized root-cause report
