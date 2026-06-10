@@ -83,7 +83,10 @@ while IFS='|' read -r matcher agent block fields; do
     if ! grep -qw -- "$f" <<<"$prompt"; then
       err pin-drift "hooks.json [$matcher] no longer mentions '$f' — update the MANIFEST in this script"
     fi
-    # (b) agent prompt must name the field
+    # (b) agent prompt must name the field. NOTE guard strength: this is
+    #     name-presence anywhere in the file, not emit-block membership — it
+    #     catches a field deleted entirely (the v14.22.x trap class) but not
+    #     one mentioned in prose yet dropped from the emit format.
     if ! grep -qw -- "$f" "$agent_path"; then
       err field-presence "$agent: hook-required $block field '$f' not found anywhere in the agent prompt"
     fi
@@ -91,7 +94,11 @@ while IFS='|' read -r matcher agent block fields; do
 done <<<"$MANIFEST"
 
 # ── Check 2: enum literals ───────────────────────────────────────────────────
-# file | key | allowed tokens (enum + that file's other legitimate uses)
+# file | key | allowed tokens (enum + that file's other legitimate uses).
+# Allowlists are deliberately supersets: they also cover sub-object statuses
+# (e.g. supervisor's pass/advisory_failures/unverified/skipped) whose detailed
+# text may live in a linked skill the guard does not scan — defensive, so a
+# pointer-section edit cannot false-positive the gate.
 ENUMS="
 supervisor.md|status|completed,completed_with_escalation,failed,checkpoint,enum,pass,advisory_failures,unverified,skipped
 supervisor.md|heal_decision|PASS,ESCALATED,null,enum
@@ -113,7 +120,7 @@ while IFS='|' read -r agent key allowed; do
       *",$tok,"*) ;;
       *) err enum-literal "$agent: '$key: $tok' is outside the allowed set [$allowed] — out-of-enum literals get hook-rejected at runtime" ;;
     esac
-  done < <(grep -ohE "\b${key}: [A-Za-z_]+" "$agent_path" | sed -E "s/^${key}: //" | sort -u)
+  done < <(grep -ohE "\b${key}:[[:space:]]+[A-Za-z_]+" "$agent_path" | sed -E "s/^${key}:[[:space:]]+//" | sort -u)
 done <<<"$ENUMS"
 
 if [ "$fail" -ne 0 ]; then
