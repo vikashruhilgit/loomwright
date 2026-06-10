@@ -23,6 +23,9 @@ jobs:
       - name: Check documentation currency (version/count drift gate)
         run: bash scripts/check-doc-currency.sh
 
+      - name: Check hook-prompt contract parity (hook-rejection-trap gate)
+        run: bash scripts/check-contract-parity.sh
+
       - name: Run full deterministic self-test suite (hard gate)
         env:
           # build-vault.sh's idempotency assertion (#3 in test-build-vault.sh) FAILS on
