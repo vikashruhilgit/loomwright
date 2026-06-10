@@ -13,6 +13,7 @@
 #     "additions": 120, "deletions": 30, "changed_files": 5,
 #     "commits": [{"headline": "...", "is_review_fix": false}],
 #     "review_rounds": 3,
+#     "review_rounds_source": "fix_commits",
 #     "review_comments": [{"author": "...", "snippet": "..."}],
 #     "ci_checks": [{"name": "...", "state": "SUCCESS"}]
 #   }
@@ -47,13 +48,44 @@
 #   commits[].is_review_fix — true if the commit subject matches (case-insensitively)
 #     any of: "address review", "review feedback", "fix review", "self-heal",
 #     "addresses review", "review comment". A heuristic flag for review-churn commits.
+#     Deliberately NARROW: broadened churn-word alternations ("nit", unanchored
+#     "round-N", "reconcil", "findings") were evaluated and REJECTED as
+#     false-positive-prone (verified matches: "background 4", "playground 2",
+#     "workaround 3", "reconcile inventory totals", "add audit findings export");
+#     the timestamp-anchored bot-round signal below carries the undercount fix instead.
 #   review_rounds — derived as MAX(count of is_review_fix commits, count of distinct
-#     CHURN-review submission timestamps). A review counts as churn only when its state
-#     is CHANGES_REQUESTED, or COMMENTED with a non-empty body — approval-only reviews
-#     (APPROVED / bare LGTM) are NOT rounds of back-and-forth. Using the max avoids
-#     undercounting when one signal is absent; caveats: several fix commits inside a
-#     single round can still overcount, as can two reviewers requesting changes within
-#     one logical round (distinct submittedAt) — accepted noise for a trend signal.
+#     CHURN-review submission timestamps, count of timestamp-ANCHORED bot-review issue
+#     comments). A review OBJECT counts as churn only when its state is
+#     CHANGES_REQUESTED, or COMMENTED with a non-empty body — approval-only reviews
+#     (APPROVED / bare LGTM) are NOT rounds of back-and-forth. A BOT-review issue
+#     COMMENT counts as a round only when ALL of: (a) the author looks like a review
+#     bot (login "claude", "github-actions", or any "*[bot]"); (b) its RAW body (before
+#     snippet normalization, which strips newlines) carries a review MARKER — a
+#     markdown heading containing the word "review", or the phrase "code review",
+#     word-bounded so "Deploy Preview" can never match; (c) at least one commit lands
+#     AFTER the comment — comment `created_at` (REST, snake_case) vs commit
+#     `committedDate` (gh pr view, camelCase), both ISO-8601 UTC so plain lexicographic
+#     string comparison is correct. Anchoring keeps terminal "clean — recommend merge"
+#     comments and re-reviews of unchanged pushes from inflating the count. CI review
+#     workflows (e.g. claude-code-review.yml) post issue comments, NOT review objects,
+#     so without this signal review_rounds reads 0 on exactly the repos this analyzer
+#     targets (observed on PR #47: 0 review objects, 7 claude-bot review comments).
+#     Comments come from a SECOND, separate, best-effort, read-only fetch
+#     (`gh api repos/{owner}/{repo}/issues/{number}/comments?per_page=100`); on ANY
+#     failure of that fetch (non-zero exit, empty output, non-JSON, non-array) the
+#     script degrades to the two legacy signals and still emits the success shape —
+#     NEVER an unavailable emit because of comments. The fetch is a bounded single
+#     page (per_page=100, oldest-first; REST default would be 30): bot rounds past
+#     comment #100 are dropped — accepted noise (`--paginate` would emit concatenated
+#     arrays and break the single-value --argjson parse, silently degrading to []).
+#     Using the max avoids undercounting when one signal is absent; caveats: several
+#     fix commits inside a single round can still overcount, as can two reviewers
+#     requesting changes within one logical round (distinct submittedAt) — accepted
+#     noise for a trend signal.
+#   review_rounds_source — names the dominant signal behind review_rounds:
+#     "fix_commits" | "formal_reviews" | "bot_comments" | "none" (none when
+#     review_rounds is 0; ties resolve in that order — the listed source is the
+#     first signal whose count equals the max).
 
 set -uo pipefail
 # Intentionally NO `set -e`: the fail-safe JSON emit must never be aborted mid-stream.
@@ -118,7 +150,7 @@ case "$NUMBER" in
   ''|*[!0-9]*) emit_unavailable "bad_input" ;;
 esac
 
-# ---- fetch PR core (single gh call) ----------------------------------------
+# ---- fetch PR core (single load-bearing gh call) ----------------------------
 # All field extraction is done from this one JSON blob to minimize gh round-trips.
 # `gh pr view` resolves OWNER/REPO#N via --repo + the number argument.
 PR_JSON="$("$GH_BIN" pr view "$NUMBER" --repo "$REPO" \
@@ -128,6 +160,18 @@ PR_JSON="$("$GH_BIN" pr view "$NUMBER" --repo "$REPO" \
 # Empty output or non-JSON => inaccessible/not-found.
 [ -n "$PR_JSON" ] || emit_unavailable "pr_inaccessible"
 printf '%s' "$PR_JSON" | jq -e . >/dev/null 2>&1 || emit_unavailable "pr_inaccessible"
+
+# ---- fetch issue comments (SECOND, separate, best-effort, read-only fetch) --
+# Bot review rounds live in ISSUE comments (REST shape: user.login / created_at /
+# body), which `gh pr view --json` does not expose with timestamps. This fetch is
+# fail-safe BY DESIGN and must stay out of the load-bearing call above: on ANY
+# failure — non-zero exit, empty output, non-JSON output, non-array output — it
+# degrades to '[]' so review_rounds falls back to the two legacy signals (review-fix
+# commit headlines + formal churn-review submissions). A comments problem must NEVER
+# turn the whole gather into an unavailable emit.
+COMMENTS_JSON="$("$GH_BIN" api "repos/$REPO/issues/$NUMBER/comments?per_page=100" 2>/dev/null)" || COMMENTS_JSON='[]'
+[ -n "$COMMENTS_JSON" ] || COMMENTS_JSON='[]'
+printf '%s' "$COMMENTS_JSON" | jq -e 'type=="array"' >/dev/null 2>&1 || COMMENTS_JSON='[]'
 
 # ---- build the normalized object (SINGLE jq invocation) --------------------
 # All untrusted PR text (title, body, commit messages, review bodies, check names)
@@ -140,6 +184,7 @@ printf '%s' "$PR_JSON" | jq -e . >/dev/null 2>&1 || emit_unavailable "pr_inacces
 OUTPUT="$(printf '%s' "$PR_JSON" | jq -c \
   --arg repo "$REPO" \
   --argjson number "$NUMBER" \
+  --argjson comments "$COMMENTS_JSON" \
   '
   # ---- heuristic regexes (case-insensitive) ----
   # NB: do NOT embed \uXXXX surrogate escapes in these regex strings — the jq regex
@@ -152,7 +197,19 @@ OUTPUT="$(printf '%s' "$PR_JSON" | jq -c \
   # it can never appear in a subject line).
   def agent_body_re: "generated by supervisor|generated with claude code|co-authored-by: *claude";
   def agent_commit_re: "self-heal|^subtask: |^[a-z]{2,}-[0-9]+[a-z]?:";
+  # review_fix_re is deliberately NARROW (header doc): broadened churn-word
+  # alternations (nit / unanchored round-N / reconcil / findings) were evaluated and
+  # rejected as false-positive-prone; the anchored bot-round signal counts instead.
   def review_fix_re: "address(es)? review|review feedback|fix review|self-heal|review comment";
+  # bot-review issue comments: CI review workflows (claude-code-review.yml et al.) post
+  # ISSUE comments, not review objects — anchored ones are review rounds too (header doc).
+  def bot_author_re: "^claude(\\[bot\\])?$|\\[bot\\]$|^github-actions";
+  # review MARKER, tested against the RAW comment body BEFORE snippet normalization
+  # (snippet strips the newlines the heading branch needs): a markdown heading whose
+  # line contains the word "review", or the phrase "code review". Word-bounded (\b,
+  # Oniguruma) so "preview"/"previews" — e.g. a vercel[bot] "Deploy Preview for
+  # my-app ready!" notice — can never match.
+  def review_marker_re: "(^|\\n)#+[^\\n]*\\breview\\b|\\bcode review\\b";
 
   # ---- normalize a free-text snippet: strip control chars, collapse ws, cap 200 ----
   # POSIX classes (jq/Oniguruma): [[:cntrl:]] strips ALL control chars incl. CR/LF/TAB;
@@ -179,10 +236,42 @@ OUTPUT="$(printf '%s' "$PR_JSON" | jq -c \
                   or ( ((.state // "") == "COMMENTED")
                        and (((.body // "") | gsub("[[:space:]]+"; "")) != "") ) )
         | (.submittedAt // empty) ] | map(select(. != "" and . != null)) | unique | length) as $review_ts_count
-  | (if $review_fix_count > $review_ts_count then $review_fix_count else $review_ts_count end) as $review_rounds
+  # BOT-review ISSUE comments (third churn signal — see header doc). $comments is the
+  # SECOND, best-effort fetch (REST shape: user.login / created_at / body; degraded to
+  # [] on any fetch failure). A comment is a review COMMENT when the author looks like
+  # a review bot AND the RAW body carries the review marker; it is a review ROUND only
+  # when at least one commit lands AFTER it (created_at vs committedDate — both
+  # ISO-8601 UTC, so plain lexicographic string comparison is correct). $comments is
+  # validated only as "some array", so EVERY field access on a comment element is
+  # double-guarded: the error-suppressing (…)? form absorbs path-access errors
+  # (non-object parents) and `| strings` drops non-string VALUES so the // default
+  # kicks in. The (…)? form ALONE is not enough: a non-string value (e.g.
+  # {"user":{"login":123}}) exists and is truthy, survives //, and then type-errors
+  # in test()/gsub() — aborting the SINGLE jq invocation and turning the whole gather
+  # unavailable, which the header invariant forbids for any comments problem. With the
+  # strings guard a hostile-typed element degrades to a non-match instead.
+  | ([ .commits[]? | ((.committedDate)? // "") | select(. != "") ]) as $commit_dates
+  | ([ $comments[]?
+        | select( ((((.user.login)? | strings) // "") | test(bot_author_re; "i"))
+                  and (((((.body)? | strings) // "") | gsub("[[:space:]]+"; "")) != "")
+                  and ((((.body)? | strings) // "") | test(review_marker_re; "i")) ) ]) as $bot_review_comments_raw
+  | ([ $bot_review_comments_raw[]
+        | (((.created_at)? | strings) // "") as $cat
+        | select( ($cat != "")
+                  and ([ $commit_dates[] | select(. > $cat) ] | length > 0) ) ]) as $anchored_bot_rounds
+  | ($anchored_bot_rounds | length) as $bot_round_count
+  | ([ $review_fix_count, $review_ts_count, $bot_round_count ] | max) as $review_rounds
+  # Dominant signal behind review_rounds; ties resolve fix_commits > formal_reviews
+  # > bot_comments (first signal whose count equals the max), "none" when 0.
+  | (if $review_rounds == 0 then "none"
+     elif $review_fix_count == $review_rounds then "fix_commits"
+     elif $review_ts_count == $review_rounds then "formal_reviews"
+     else "bot_comments" end) as $review_rounds_source
   | ([ .reviews[]?
         | select(((.body // "") | gsub("[[:space:]]+"; "")) != "")
-        | { author: (.author.login // "unknown"), snippet: ((.body // "") | snippet) } ]) as $review_comments
+        | { author: (.author.login // "unknown"), snippet: ((.body // "") | snippet) } ]
+     + [ $bot_review_comments_raw[]
+        | { author: (((.user.login)? | strings) // "unknown"), snippet: ((((.body)? | strings) // "") | snippet) } ]) as $review_comments
   # state fallthrough must skip empty strings, not just null: an in-progress CheckRun
   # has conclusion: "" (truthy in jq, so a bare // chain would stop there and surface
   # "" instead of falling through to .status == IN_PROGRESS).
@@ -205,6 +294,7 @@ OUTPUT="$(printf '%s' "$PR_JSON" | jq -c \
       changed_files: (.changedFiles // 0),
       commits: $commits,
       review_rounds: $review_rounds,
+      review_rounds_source: $review_rounds_source,
       review_comments: $review_comments,
       ci_checks: $ci_checks
     }

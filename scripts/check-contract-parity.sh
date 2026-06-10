@@ -106,6 +106,7 @@ ENUMS="
 agents/supervisor.md|status|completed,completed_with_escalation,failed,checkpoint,enum,pass,advisory_failures,unverified,skipped
 agents/supervisor.md|heal_decision|PASS,ESCALATED,null,enum
 agents/worker.md|status|completed,failed,partial,present,missing,pending,enum
+agents/qa-executor.md|status|passed,failed,partial,skipped,needs_human,plan_created,all_scopes_completed,enum
 agents/execute-manager.md|status|completed,failed,in_progress,pending,running,missing,checkpoint,enum
 agents/code-reviewer.md|decision|PASS,FAIL,NEEDS_HUMAN,enum
 agents/plan-reviewer.md|decision|PASS,FAIL,NEEDS_HUMAN,enum

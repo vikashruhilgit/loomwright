@@ -169,6 +169,8 @@ Execute Manager emits EXECUTE_CHECKPOINT with:
         B: Insert remediation subtask (new subtask to fill the gap)
         C: Exit to Launch Pad (re-plan from scratch)
         D: Update consumer brief (reduce consumer scope)
+    (plus the hook-required EXECUTE_CHECKPOINT base fields:
+     schema_version, completed_so_far, remaining, resume_context, reason)
     ↓
 Supervisor pauses EXECUTE phase
     ↓

@@ -122,8 +122,9 @@ Context-Keeper(operation: checkpoint, project_dir: {path}, task_id: {id})
 │ SUPERVISOR TOOL CALL THRESHOLDS                          │
 ├─────────────────────────────────────────────────────────┤
 │  0-30 (60%)  │ GREEN: Normal operation                  │
-│  30-40 (80%) │ YELLOW: Aggressive compression, checkpoint│
-│  40-46 (92%) │ RED: Checkpoint + exit with resume        │
+│  30-40 (80%) │ YELLOW: Aggressive compression            │
+│  40-46 (92%) │ RED: Force checkpoint, suggest new session│
+│  46+         │ RED: Checkpoint + exit with resume        │
 └─────────────────────────────────────────────────────────┘
 ```
 

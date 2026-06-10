@@ -41,7 +41,7 @@ WORKER_RESULT:
 - `outputs_verified` must be present (may be `[]` only when the brief promised no concrete outputs); each entry must have `kind`, `path`, `status`; entries with `kind ∈ {symbol, type}` must include `name`
 - `outputs_gap` must be present as a string; an empty string means all promised outputs were delivered
 - **Cross-field invariant (hook-enforced):** if `outputs_gap` is non-empty AND `status=completed`, the SubagentStop hook rejects with `outputs_gap non-empty must map to status: partial`. A worker that did not deliver all promised outputs has not completed.
-- **Runtime checks performed by the SubagentStop hook (not part of the schema, listed for transparency):** the hook also verifies that a `.worker-summary.md` file was written and that no destructive commands (`rm -rf`, `git push`, `git reset --hard`, `DROP`, `TRUNCATE`) appear in the run output.
+- **Runtime checks performed by the SubagentStop hook (not part of the schema, listed for transparency):** the hook also verifies that a `.worker-summary.md` file was written (or that the output records the literal `summary_file_write_failed` degradation marker — the worker prompt's best-effort path) and that no destructive commands (`rm -rf`, `git push`, `git reset --hard`, `DROP`, `TRUNCATE`) appear in the run output.
 - `memory_candidates` is **optional and additive** — it does NOT bump `schema_version` (stays `2` — an optional, backwards-compatible field addition does not require a version bump; `schema_version` bumps only for breaking or required-field changes). When present it is an array of short strings; absent by default. Each candidate must be a **durable, reusable structural fact about the codebase** (not transient run notes) that is not already captured in `CLAUDE.md`. Candidates **MUST NEVER contain secrets, credentials, tokens, or PII**. Workers **PROPOSE only** and never write project memory — a worktree write would be lost on worktree removal (red-team F1), so workers never call `write-project-memory.sh`; promotion of any candidate into project memory is **human-gated** and happens at the repo root.
 
 **Validation rules (schema_version: 1, legacy):**
@@ -422,7 +422,7 @@ Produced by QA Executor on test completion.
 QA_RESULT:
   schema_version: 1                    # integer, required — always 1
   task_id: string                      # required — QA run identifier
-  status: enum [passed, failed, partial, skipped, needs_human]  # required — needs_human signals manual intervention required (e.g., app not running, dry-run failed)
+  status: enum [passed, failed, partial, skipped, needs_human, plan_created, all_scopes_completed]  # required — needs_human signals manual intervention required (e.g., app not running, dry-run failed); plan_created and all_scopes_completed are session-mode statuses (--plan wrote plan.json without running tests; --continue found no pending scopes)
   rounds_run: string                   # optional — e.g., "1/3"
   tests_generated: integer             # required — number of test files/cases generated
   tests_run_this_session: integer      # optional — v10.3.0: tests actually executed this agent session (may differ from tests_generated if --scope/--continue)
@@ -1005,7 +1005,16 @@ harness** (the deferred M2b part-2b headless-`claude` evaluator).
 - `repo` — `owner/repo` of the analyzed PR (from gather).
 - `number` — integer PR number (from gather).
 - `agent_generated_guess` — boolean; best-effort agent-PR heuristic (from gather).
-- `review_rounds` — integer; total review-and-fix rounds (from gather).
+- `review_rounds` — integer; total review-and-fix rounds (from gather). The gather derives it as the
+  MAX of three signals: review-fix commit headlines, formal churn-review submissions, and
+  **bot-authored issue-comment review rounds** (a comment from a review-bot author — login `claude`,
+  `github-actions*`, or any `*[bot]` — whose body
+  carries a review marker — e.g. a "Code Review" heading — followed by at least one later push). The
+  third signal covers repos whose review feedback arrives as CI-workflow comments (e.g. `claude[bot]`)
+  instead of GitHub review objects, which previously left this field at 0 despite real churn. The
+  gather's own output additionally carries a `review_rounds_source` note (`fix_commits` |
+  `formal_reviews` | `bot_comments` | `none`); that note stays in the gather output and is NOT part of
+  this trend line — the schema is unchanged at `schema_version: 1`.
 - `additions` / `deletions` / `changed_files` — integers; PR size (from gather).
 - `categories` — array of per-round objects `{round, class, self_heal_miss, flow_stage, evidence}`, one
   per review round, classifying each into a root-cause class and the flow stage that should have caught it.
@@ -1072,10 +1081,10 @@ via its `gate_audit_verdict` field).
 GATE_VERDICT:
   schema_version: 1                    # integer, required — always 1
   verdict: enum [pass, fail]           # required
-  gates_passed: integer[]              # required — gate numbers that passed (13-gate checklist, qa-gates skill)
-  gates_failed: integer[]              # required — gate numbers that failed (empty when verdict=pass)
+  gates_passed: number[]               # required — gate numbers that passed (13-gate checklist, qa-gates skill; the checklist includes fractional gates 0.5 and 1.5)
+  gates_failed: number[]               # required — gate numbers that failed (empty when verdict=pass)
   violations: object[]                 # required — empty when verdict=pass
-    - gate: integer                    # which gate
+    - gate: number                     # which gate (fractional gate numbers 0.5 / 1.5 are valid)
       file: string                     # offending test file
       line: integer | null             # line number when known
       description: string              # what violated the gate

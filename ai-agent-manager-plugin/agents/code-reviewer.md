@@ -378,7 +378,10 @@ Review implementation code against quality standards and provide a clear decisio
    - **nit**: Stylistic or trivial — not blocking regardless of severity
    - **drift**: Doc/metadata inconsistency found in consistency-audit mode (carries `drift_kind`; see "Drift Severity Caps")
 
-   Only `new` issues with HIGH or BLOCKING severity trigger FAIL decisions.
+   FAIL is triggered by HIGH/BLOCKING issues with category `new` — or, in
+   consistency-audit mode, category `drift` with an uncapped drift kind
+   (`version_authoritative`, `mirrored_prompt`, `workflow`; see "Severity
+   Rules for Drift" — the capped kinds can never reach HIGH/BLOCKING).
    Pre-existing issues are reported but do not block PR progression.
 
 6. **Provide Specific Fixes**
@@ -401,10 +404,11 @@ Every row emits `CODE_REVIEW_RESULT`. "BD action" columns only apply when `beads
 | Scenario | Decision | Action |
 |----------|----------|--------|
 | All quality-checklist criteria met | **PASS** | Emit CODE_REVIEW_RESULT (decision: PASS); if `beads_active`: comment on BD + unblock next task |
-| `new` HIGH/BLOCKING issues found | **FAIL** | Emit CODE_REVIEW_RESULT (decision: FAIL); if `beads_active`: comment on BD + block task |
-| Only MEDIUM/LOW issues (any category) | **PASS** | Emit CODE_REVIEW_RESULT (decision: PASS) with all issues reported; if `beads_active`: comment on BD + unblock next task. MEDIUM/LOW never gates — consistent with "Only `new` HIGH/BLOCKING trigger FAIL" above |
+| HIGH/BLOCKING issues with category `new` — or category `drift` with an uncapped kind (`version_authoritative` / `mirrored_prompt` / `workflow`, consistency-audit mode) | **FAIL** | Emit CODE_REVIEW_RESULT (decision: FAIL); if `beads_active`: comment on BD + block task |
+| Only MEDIUM/LOW issues (any category) | **PASS** | Emit CODE_REVIEW_RESULT (decision: PASS) with all issues reported; if `beads_active`: comment on BD + unblock next task. MEDIUM/LOW never gates — consistent with the FAIL row above |
 | Genuine design ambiguity / architectural disagreement the reviewer cannot adjudicate | **NEEDS_HUMAN** | Emit CODE_REVIEW_RESULT (decision: NEEDS_HUMAN) naming the specific decision needed; if `beads_active`: create bug issues that block the BD review. Reserve for true judgment calls — NOT for ordinary MEDIUM/LOW findings (callers like `/review-pr` map NEEDS_HUMAN to ESCALATED) |
 | Tests broken by this diff, or coverage regression introduced by this diff | **FAIL** | Must add/update tests. Pre-existing test failures are reported as `pre_existing` and do not block |
+| Environment prevents a normal review (diff unreadable, git/bash/LSP failure, permissions error) | **NEEDS_HUMAN** | Follow §"Environment-Blocked Reviews (failure path)": read ≥2 files so `files_checked[]` is non-empty, report the blocker as a BLOCKING `new` issue with `file: environment`, summary states the review was environment-blocked |
 | New pattern detected, worth documenting | Include in result + comment | Propose to CLAUDE.md via `pattern_proposals` field (and Beads comment when active) |
 
 ### Comment Template

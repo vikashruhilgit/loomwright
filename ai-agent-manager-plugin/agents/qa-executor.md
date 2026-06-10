@@ -675,7 +675,7 @@ STEP 4 — EMIT:
   QA_RESULT:
     schema_version: 1
     task_id: qa-2026-06-10-checkout
-    status: completed
+    status: partial
     tests_generated: 12
     tests_passed: 11
     tests_failed: 1

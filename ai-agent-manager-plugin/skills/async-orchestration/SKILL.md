@@ -463,7 +463,7 @@ The Execute Manager **NEVER picks an option itself** — it always escalates to 
   - Cost: silent scope reduction.
   - Risk: callers of the consumer downstream may break because the consumer no longer integrates the producer's output.
 
-**EXECUTE_CHECKPOINT block fields:**
+**EXECUTE_CHECKPOINT block fields** (adjudication-specific additions — the emission must ALSO carry the hook-required base fields `schema_version`, `completed_so_far`, `remaining`, `resume_context`, `reason`):
 
 ```yaml
 adjudication_required: true

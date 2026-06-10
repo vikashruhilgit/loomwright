@@ -24,7 +24,7 @@ The AI Agent Manager plugin provides **14 agent roles** (9 user-facing + 5 inter
 
 **Readiness Pipeline (2 agent roles):**
 ```
-/launch-pad  →  Env validation + codebase analysis + brief → Plan Review (gate) → .supervisor/jobs/
+/launch-pad  →  Env validation + codebase analysis + brief → Plan Review (gate) → .supervisor/jobs/pending/
   └─ Plan Reviewer  →  Validates brief quality, patterns, file paths (mandatory gate)
 ```
 
@@ -70,7 +70,7 @@ The AI Agent Manager plugin provides **14 agent roles** (9 user-facing + 5 inter
 
 **Plan-First Autonomous Workflow:**
 ```
-/launch-pad → .supervisor/jobs/{brief} → /supervisor job: {brief} → clean execution
+/launch-pad → .supervisor/jobs/pending/{brief} → /supervisor job: {brief} → clean execution
 ```
 
 **Continuous Autonomous Loop (v14):**
@@ -106,7 +106,7 @@ The AI Agent Manager plugin provides **14 agent roles** (9 user-facing + 5 inter
 - Decomposes into 3-7 subtasks with dependency analysis
 - Computes parallelism (LAUNCHABLE vs BLOCKED based on file overlap)
 - Validates brief via Plan Reviewer (mandatory gate — PASS enables save; NEEDS_HUMAN enables save only with explicit user override; FAIL never enables save)
-- Saves Supervisor-Ready Brief to `.supervisor/jobs/`
+- Saves Supervisor-Ready Brief to `.supervisor/jobs/pending/`
 - Provides interactive refinement (save/refine/edit/discard)
 
 **7-Phase Workflow:**
@@ -180,7 +180,7 @@ To execute: /supervisor job: .supervisor/jobs/pending/2026-02-08-jwt-auth.md
 /supervisor --sequential            # Force sequential (no worktrees)
 /supervisor --continue              # Resume from last checkpoint
 /supervisor --dry-run               # Preview workflow without executing
-/supervisor job: .supervisor/jobs/{file}.md  # Execute from Launch Pad brief
+/supervisor job: .supervisor/jobs/pending/{file}.md  # Execute from Launch Pad brief
 ```
 
 **What it does:**
@@ -998,7 +998,7 @@ bd close BD-XX
 
 ai-agent-manager-plugin/              # Nested plugin root
 ├── .claude-plugin/
-│   └── plugin.json                   # Plugin metadata (v14.23.0)
+│   └── plugin.json                   # Plugin metadata (v14.23.1)
 ├── .mcp.json                         # Bundled MCP servers
 ├── commands/                         # Slash commands (17)
 │   ├── launch-pad.md                 # Supervisor readiness
@@ -1114,7 +1114,7 @@ These are Claude Code slash commands, so you can type them directly:
 
 | Agent | Purpose | When | Input | Output |
 |-------|---------|------|-------|--------|
-| **Launch Pad** | Supervisor readiness | Complex tasks, plan review | Raw goal + codebase | Supervisor-Ready Brief in `.supervisor/jobs/` |
+| **Launch Pad** | Supervisor readiness | Complex tasks, plan review | Raw goal + codebase | Supervisor-Ready Brief in `.supervisor/jobs/pending/` |
 
 ### Autonomous Workflow (End-to-End Automation — 4 Roles)
 
@@ -1157,7 +1157,7 @@ These are Claude Code slash commands, so you can type them directly:
 **Ready to get started?**
 - Prepare for execution: `/launch-pad goal: "your goal here"` (codebase analysis, brief, clean handoff)
 - Autonomous workflow: `/supervisor` (picks up tasks, runs agents, creates PRs)
-- Plan-first workflow: `/launch-pad` → `/supervisor job: .supervisor/jobs/{brief}.md`
+- Plan-first workflow: `/launch-pad` → `/supervisor job: .supervisor/jobs/pending/{brief}.md`
 - Define requirements: `/product-owner feature: "your feature here"`
 - Plan work: `/orchestrator goal: "your goal here"`
 - Review code: `/code-reviewer src/`

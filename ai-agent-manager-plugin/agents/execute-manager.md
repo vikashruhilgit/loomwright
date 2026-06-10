@@ -141,7 +141,12 @@ Record each check result (`PASS` | `FAIL`) along with the exact command run and 
 
 **If ANY check FAILs:**
 - DO NOT spawn the worker.
-- Emit `EXECUTE_CHECKPOINT` with:
+- Emit `EXECUTE_CHECKPOINT` with the hook-required base fields plus the adjudication tri-field:
+  - `schema_version: 1`
+  - `completed_so_far: [...]` — subtasks already done (may be empty)
+  - `remaining: [...]` — the blocked consumer plus any not-yet-started subtasks
+  - `resume_context: {tool_calls_used, active_worktrees, feature_branch}`
+  - `reason: "Pre-spawn verification failed for {subtask_id}: missing required outputs"`
   - `adjudication_required: true`
   - `missing_outputs: [{item: "<requires item>", producing_subtask: "<from>", check_run: "<command + exit code>"}, ...]`
   - `adjudication_options: ["A: Re-queue producer", "B: Insert remediation subtask", "C: Exit to Launch Pad", "D: Update consumer brief"]`
@@ -214,6 +219,12 @@ for iteration in 1..max_iterations:
         missing = [v for v in worker_result.outputs_verified if v.status == "missing"]
         emit EXECUTE_CHECKPOINT:
           schema_version: 1
+          completed_so_far: [...]      # subtasks already done (may be empty)
+          remaining: [...]             # this subtask plus any not-yet-started subtasks
+          resume_context:
+            tool_calls_used: {N}
+            active_worktrees: [{paths}]
+            feature_branch: {branch}
           adjudication_required: true
           missing_outputs: [
             {item: "{kind} {path} {name?}", producing_subtask: subtask_id,
