@@ -89,6 +89,10 @@ You do NOT:
 - Generate full/adversarial security tests (Level 3) — things like penetration testing,
   timing attacks, crypto weakness probes, CSRF token forging
 - Generate performance tests (Level 3)
+- Detect flaky tests (Level 3)
+- Use production feedback (Level 5)
+- Run more than 1 debate round (Level 2)
+- Attempt visual regression comparison (Level 3)
 
 L1 security testing scope (ALLOWED):
 - Non-destructive security boundary probes (IDOR, role escalation, session invalidation)
@@ -98,14 +102,14 @@ L1 security testing scope (ALLOWED):
 - Response leak checks (no passwords/tokens/stack traces in responses)
 See qa-test-patterns "SECURITY BOUNDARY TESTING" section for the full L1-legal list.
 Full penetration testing, fuzzing, and adversarial security is Level 3.
-- Detect flaky tests (Level 3)
-- Use production feedback (Level 5)
-- Run more than 1 debate round (Level 2)
-- Attempt visual regression comparison (Level 3)
 
 ---
 
-## Level 1 Protocol (13 Phases)
+## Level 1 Protocol
+
+Phases run in this sequence (phase numbers are stable identifiers, not a count —
+Phase 3.6 runs after Phase 4 by design; see the Phase 3.6 ordering note):
+1 → 2 → 3 → 4 → 3.6 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13.
 
 ### PHASE TRACKING (MANDATORY)
 
@@ -605,6 +609,7 @@ Spawn QA Strategist in Gate Audit Mode (blocking):
     subagent_type: "ai-agent-manager-plugin:qa-strategist"
   )
 
+Parse the GATE_VERDICT block (canonical schema: docs/RESULT_SCHEMAS.md §"GATE_VERDICT").
 If GATE_VERDICT: pass → proceed to Phase 12
 If GATE_VERDICT: fail → fix cited violations via Edit, re-spawn (max 1 retry)
 If retry also fails → emit QA_RESULT with status: needs_human, gate_failures: [list]
@@ -645,6 +650,7 @@ STEP 3 — STRATEGIST AUDIT (1 round for L1):
 STEP 4 — EMIT:
   ALWAYS emit MISSING_FUNCTIONALITY_REPORT (even with 0 gaps).
   Emit QA_RESULT with all fields:
+    schema_version,                    # integer, required — always 1 (hook-validated)
     task_id, status, rounds_run, depth,
     tests_generated, tests_run_this_session, tests_passed, tests_failed,
     discovery_confidence, discovery_warnings,
@@ -654,12 +660,28 @@ STEP 4 — EMIT:
     detected_auth_method,              # from Phase 4 (e.g., "oauth:auth0", "session")
     websocket_detected,                # boolean from Phase 4
     coverage, coverage_weighted, risk_score,
+    coverage_estimate,                 # float 0.0-1.0 — hook-REQUIRED whenever tests were run
     interaction_coverage,              # forms N/N, tables N/N, modals N/N
     bugs_found, bugs_blocking,         # REAL_BUG only
     discovery_gaps, environment_issues,
     strategist_verdict, files_created, error, notes,
+    summary,                           # string, required — one-paragraph run summary (hook-validated)
     # Session fields (if --plan/--scope/--continue):
     scope, session_id, cumulative_coverage
+
+  Minimal emission shape (the SubagentStop hook rejects blocks missing
+  schema_version or summary — emit them even in partial/budget-exhausted runs):
+
+  QA_RESULT:
+    schema_version: 1
+    task_id: qa-2026-06-10-checkout
+    status: completed
+    tests_generated: 12
+    tests_passed: 11
+    tests_failed: 1
+    coverage_estimate: 0.72
+    summary: "12 tests generated for checkout flow; 1 REAL_BUG (HIGH) in coupon validation."
+    # ...remaining fields per the list above
 ```
 
 ---

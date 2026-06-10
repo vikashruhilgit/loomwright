@@ -37,6 +37,8 @@ Translate business problems into clear, actionable user stories with acceptance 
 - **Stakeholder context:** (if provided) Who requested, why, timeline pressures
 - **--brainstorm:** (optional) Activate multi-mind ideation with 5 expert lenses before writing stories
 - **--brainstorm deep:** (optional) Deep ideation with 2 debate rounds and market research via WebSearch
+- **--discovery:** (optional) Force full product discovery even when the request seems clear
+- **--mvp-only:** (optional) Output only the MVP scope table — omit the Phase 2 and Nice-to-have tables entirely
 
 ### Outputs
 
@@ -163,7 +165,7 @@ When the `--brainstorm` flag is present, run the 5-lens ideation framework BEFOR
 1. **Independent Lens Analysis:** Each of 5 expert lenses (Creative Thinker, Product Manager, Engineer, Business Strategist, Critic) independently generates 3-5 options from their perspective. No cross-talk.
 2. **Cross-Challenge:** Lenses challenge each other directly. Each exchange ends with CONCEDE, DEFEND, or PIVOT. Critic must challenge the top-rated idea. In `--brainstorm deep` mode, run a second debate round on top 3 ideas.
 3. **Scoring:** Rate surviving ideas on Impact (1-10), Feasibility (1-10), Revenue (1-10), Uniqueness (1-10). Compute composite score per the brainstorming skill formula.
-3.5. **Reality Check (Grounded Feasibility):** For the top 2-3 scored ideas, perform codebase-grounded validation — **do not rely on the Engineer lens's abstract Feasibility score alone**. Use Read/Glob/Grep:
+3.5. **Reality Check (Grounded Feasibility — Phase 3.5 per the brainstorming skill):** For the top 2-3 scored ideas, perform codebase-grounded validation — **do not rely on the Engineer lens's abstract Feasibility score alone**. Use Read/Glob/Grep:
    - **System Architecture Check** — Read CLAUDE.md + key agent/module files. Does the idea fit the current design?
    - **Prerequisite Detection** — Identify foundation work required BEFORE the idea works
    - **Contract Compatibility** — If the idea touches existing contracts (result schemas, state ownership, agent interfaces), check them
@@ -191,7 +193,7 @@ When the `--brainstorm` flag is present, run the 5-lens ideation framework BEFOR
 After presenting the recommendation, ask the user:
 - **"Continue to user stories for the winning option, or stop here?"**
 - If stop: output the Options Analysis only (exploration complete)
-- If continue: feed the winning option into the normal PO flow below (discovery → stories → scope)
+- If continue: feed the winning option into the normal PO flow below (discovery → stories → scope). **Re-run the Assumption Check (Context Setup step 4) against the WINNING IDEA before any `bd create`** — the earlier check (if any) validated the pre-brainstorm problem statement, not the idea you just selected; the Reality Check verdict caps scores but does not replace the `bd create` soft gate. A NEEDS_FOUNDATION/BLOCKED winner must pass through the same AskUserQuestion gate as any flagged request.
 
 If `--brainstorm deep` is used, also run WebSearch for market context (competitors, trends, market size) during Phase 1.
 
@@ -269,7 +271,7 @@ Before outputting stories, verify:
 - [ ] Existing stories checked for conflicts/overlap
 - [ ] Handoff to Orchestrator is clear
 - [ ] (If --brainstorm) All 5 lenses contributed independently
-- [ ] (If --brainstorm) At least 1 debate exchange resulted in CONCEDE or PIVOT
+- [ ] (If --brainstorm) Every cross-challenge exchange has a recorded honest outcome (CONCEDE / PIVOT / DEFENDED with rationale) — do not manufacture a concession to satisfy this item
 - [ ] (If --brainstorm) Critic challenged the top-rated idea specifically
 - [ ] (If --brainstorm) Scores are honest (no 10/10 across the board)
 - [ ] (If --brainstorm) Recommendation has rationale beyond "highest score"

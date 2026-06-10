@@ -44,7 +44,7 @@ These are **defense-in-depth** restrictions for accidental misuse, NOT security 
 
 | Agent | Max Context | Rationale |
 |-------|-------------|-----------|
-| Supervisor | ~800 tokens | Pure orchestrator, everything else in state file |
+| Supervisor | ~400 tokens | Pure orchestrator, everything else in state file |
 | Execute Manager | ~2k tokens | Poll loop + worker tracking |
 | Worker | ~6k tokens | Focused implementation |
 | Code Reviewer | ~4k tokens | Read-only analysis |
@@ -124,7 +124,7 @@ session-local state, not committed). Self-tests live in `scripts/test-system-con
 
 | Agent | maxTurns | On timeout |
 |-------|----------|------------|
-| Supervisor | — (uses 30 tool call budget) | Checkpoint and halt |
+| Supervisor | `maxTurns: 60` (harness ceiling) + internal 50 tool-call budget | Checkpoint and halt |
 | Execute Manager | 80 | Return EXECUTE_CHECKPOINT |
 | Worker | 40 | Return WORKER_RESULT status=failed |
 | Code Reviewer | 40 | Return partial review |
@@ -167,7 +167,7 @@ The plain-`/supervisor` completion tail can hand off to the review-and-heal loop
 
 ### Supervisor Phase 1.5 PRE-FLIGHT SYNC budget
 
-The Phase 1.5 PRE-FLIGHT SYNC gate (remote-state reconciliation, runs after Phase 1 ACQUIRE and before Phase 2 PLAN) is itself a bounded sub-phase inside the Supervisor's 30-tool-call budget:
+The Phase 1.5 PRE-FLIGHT SYNC gate (remote-state reconciliation, runs after Phase 1 ACQUIRE and before Phase 2 PLAN) is itself a bounded sub-phase inside the Supervisor's 50-tool-call budget:
 
 | Bound | Value | Rationale |
 |-------|-------|-----------|

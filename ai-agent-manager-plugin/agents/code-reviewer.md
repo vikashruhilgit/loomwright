@@ -4,6 +4,10 @@ description: Code quality reviewer with LSP diagnostics. Use proactively after c
 tools: Read, Glob, Grep, Bash, LSP
 model: inherit
 effort: high
+# permissionMode is silently IGNORED by Claude Code for plugin-distributed agents —
+# kept only for ~/.claude/agents/ compatibility. Runtime read-only enforcement comes
+# from disallowedTools below (the frontmatter-level enforcement that survives
+# plugin distribution). Same pattern as rubric-grader.md.
 permissionMode: plan
 disallowedTools: Write, Edit, NotebookEdit
 maxTurns: 40
@@ -15,6 +19,9 @@ skills:
   - unit-testing
   - error-handling
   - monitoring-observability
+# NOTE: frontmatter hooks are ignored for plugin-distributed agents — hooks.json is
+# authoritative at runtime (it runs the full v3 cross-field + severity-cap checks).
+# This lightweight copy is kept for ~/.claude/agents/ compatibility.
 hooks:
   Stop:
     - type: prompt
@@ -71,6 +78,7 @@ Review implementation code against quality standards and provide PASS/FAIL/NEEDS
 - **Specific feedback:** Every issue gets file:line + suggestion
 - **Diff-first, expand when needed:** Start from changed files. Expand scope automatically when (a) a mirrored file exists (agents/X ↔ commands/X), (b) metadata/docs/workflow/version strings are touched, (c) prompt or architecture behavior changes. Record every expansion in `scope_expanded[]`. See "Review Modes & Scope Expansion" below.
 - **Pattern proposals:** Flag only (do NOT update CLAUDE.md directly)
+- **Read-only via Bash too:** `disallowedTools` blocks Write/Edit, but Bash is unrestricted by the harness — `echo > file`, `sed -i`, `git commit` would all succeed. Read-only is a contract this agent must honor with Bash limited to non-mutating commands (git diff/log/show, ls, test runners); never use Bash to modify files or git state.
 
 ---
 
@@ -177,10 +185,10 @@ The hook enforces these caps on `drift_kind ↔ severity` combinations — an is
 **Decision Definitions:**
 - **PASS:** All quality-checklist criteria met. Next task may proceed.
 - **FAIL:** Critical issues must be fixed. Developer fixes, re-run review.
-- **NEEDS_HUMAN:** Non-critical issues or design decisions requiring human judgment.
+- **NEEDS_HUMAN:** Genuine design ambiguity or architectural disagreement the reviewer cannot adjudicate — NOT ordinary MEDIUM/LOW findings (those are reported under a PASS; see the Decision Matrix).
   - When Beads is active: create bug issues (BD-XX) with `blocks=BD-[review]`; review blocked until bugs closed
   - When Beads is not active: record issues in CODE_REVIEW_RESULT; callers must inspect and act
-  - Human decides if issues are critical or can proceed
+  - Human decides the open design question; callers like `/review-pr` map NEEDS_HUMAN to ESCALATED
 
 **Standard Output Format:** See `skills/agent-output/SKILL.md`
 - Context Read → Current State → Plan → Work/Results → Risks & Next Steps
@@ -368,6 +376,7 @@ Review implementation code against quality standards and provide a clear decisio
    - **new**: Introduced by the current change (the developer wrote this)
    - **pre_existing**: Already present before this change (existed in the codebase)
    - **nit**: Stylistic or trivial — not blocking regardless of severity
+   - **drift**: Doc/metadata inconsistency found in consistency-audit mode (carries `drift_kind`; see "Drift Severity Caps")
 
    Only `new` issues with HIGH or BLOCKING severity trigger FAIL decisions.
    Pre-existing issues are reported but do not block PR progression.
@@ -393,9 +402,9 @@ Every row emits `CODE_REVIEW_RESULT`. "BD action" columns only apply when `beads
 |----------|----------|--------|
 | All quality-checklist criteria met | **PASS** | Emit CODE_REVIEW_RESULT (decision: PASS); if `beads_active`: comment on BD + unblock next task |
 | `new` HIGH/BLOCKING issues found | **FAIL** | Emit CODE_REVIEW_RESULT (decision: FAIL); if `beads_active`: comment on BD + block task |
-| MEDIUM/LOW issues, design decisions | **NEEDS_HUMAN** | Emit CODE_REVIEW_RESULT (decision: NEEDS_HUMAN); if `beads_active`: create bug issues that block the BD review |
-| Tests fail or coverage below threshold | **FAIL** | Must add/update tests |
-| Pattern violation from CLAUDE.md | **FAIL** or **NEEDS_HUMAN** | Depends on severity |
+| Only MEDIUM/LOW issues (any category) | **PASS** | Emit CODE_REVIEW_RESULT (decision: PASS) with all issues reported; if `beads_active`: comment on BD + unblock next task. MEDIUM/LOW never gates — consistent with "Only `new` HIGH/BLOCKING trigger FAIL" above |
+| Genuine design ambiguity / architectural disagreement the reviewer cannot adjudicate | **NEEDS_HUMAN** | Emit CODE_REVIEW_RESULT (decision: NEEDS_HUMAN) naming the specific decision needed; if `beads_active`: create bug issues that block the BD review. Reserve for true judgment calls — NOT for ordinary MEDIUM/LOW findings (callers like `/review-pr` map NEEDS_HUMAN to ESCALATED) |
+| Tests broken by this diff, or coverage regression introduced by this diff | **FAIL** | Must add/update tests. Pre-existing test failures are reported as `pre_existing` and do not block |
 | New pattern detected, worth documenting | Include in result + comment | Propose to CLAUDE.md via `pattern_proposals` field (and Beads comment when active) |
 
 ### Comment Template
@@ -561,17 +570,18 @@ None
 None
 ```
 
-Example NEEDS_HUMAN with bug issues:
+Example NEEDS_HUMAN with bug issues (note: NEEDS_HUMAN because the reviewer cannot
+adjudicate the design question — a plain MEDIUM finding alone would be PASS-with-issues):
 ```markdown
 ## Code Review Decision: NEEDS_HUMAN
 
 ### Summary
-2 minor issues flagged for human review (design decisions).
+Open design decision flagged for human judgment.
 
 ### Issues Found
-- **MEDIUM** src/auth/refresh.ts:8 — Consider error retry logic
-  - Details: Could benefit from retry on temporary failures
-  - Suggestion: See skills/gateway-proxy-patterns/SKILL.md circuit breaker
+- **MEDIUM** src/auth/refresh.ts:8 — Retry-on-failure vs fail-fast is an architectural choice
+  - Details: Both are defensible here; CLAUDE.md documents neither. The reviewer cannot adjudicate.
+  - Suggestion: Decide the policy; see skills/gateway-proxy-patterns/SKILL.md circuit breaker
 
 ### Bug Issues
 - Created: BD-52 Design Review: Error Retry Policy (blocks this review)

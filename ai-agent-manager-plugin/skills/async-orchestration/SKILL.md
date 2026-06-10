@@ -247,8 +247,8 @@ for iteration in 1..max_iterations:
       idle_streak = 0
       poll_interval = 2000
 
-      # Prefer summary file over full TaskOutput
-      review = Read("{worktree_path}/.review-summary.md")
+      # Parse CODE_REVIEW_RESULT from the reviewer's TaskOutput
+      # (no summary file — the Code Reviewer is read-only and cannot write one)
       tool_calls += 1
 
       if PASS:
@@ -306,7 +306,7 @@ else:
   → Fall back to parsing full TaskOutput
 ```
 
-Same pattern for reviewers with `.review-summary.md`.
+Reviewers have NO summary file — the Code Reviewer is read-only (`disallowedTools: Write, Edit`); parse `CODE_REVIEW_RESULT` from its TaskOutput directly.
 
 ### Result Collection
 

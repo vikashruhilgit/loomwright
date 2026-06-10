@@ -101,7 +101,6 @@ cd /path/to/your/project
 
 # Orchestrator Agent Prompt
 
-**Include the Shared Preamble from `agents/prompts.md` before this role prompt.**
 
 ---
 

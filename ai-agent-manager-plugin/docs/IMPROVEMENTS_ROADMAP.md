@@ -202,7 +202,7 @@ Agents use Bash tool calls to run git commands, file operations, and state manag
 **What `bin/` does:**
 Plugin ships executables that agents can invoke as bare commands. Instead of 3 separate bash calls to check worktree state, you ship one `worktree-status` script.
 
-**Performance impact:** IMPROVES tool-call efficiency. One script invocation instead of multiple bash calls. For Supervisor with a 30-call budget, this is meaningful.
+**Performance impact:** IMPROVES tool-call efficiency. One script invocation instead of multiple bash calls. For Supervisor with a 50-call budget, this is meaningful.
 
 **However — complexity tradeoff:**
 
@@ -347,13 +347,13 @@ Update `README.md` to position Supervisor as "what you need when `/batch` isn't 
 ### 16. Add Supervisor `maxTurns`
 
 **What's happening now:**
-Supervisor has no `maxTurns` in frontmatter. It relies on its internal "30 tool call budget" documented in the prompt text. But `maxTurns` is enforced by Claude Code infrastructure — without it, the Supervisor could theoretically run indefinitely if its self-tracking fails.
+**Resolved — `supervisor.md` frontmatter now carries `maxTurns: 60`** (historically it had none and relied solely on its internal tool-call budget). But `maxTurns` is enforced by Claude Code infrastructure — without it, the Supervisor could theoretically run indefinitely if its self-tracking fails.
 
 **Performance impact:** PREVENTS runaway agents. If Supervisor's internal budget tracking fails (LLM hallucination), `maxTurns` is the hard stop. Without it, a stuck Supervisor burns tokens indefinitely.
 
-**What value to set:** The Supervisor delegates Phase 3 to Execute Manager. Its own work is phases 1-2 and 4-6 (init, acquire, plan, finalize, loop). 30 tool calls is right for this. But `maxTurns` counts LLM turns, not tool calls — set it slightly higher (e.g., 40) to account for turns that don't use tools.
+**What value to set:** The Supervisor delegates Phase 3 to Execute Manager. Its own work is phases 1-2 and 4-6 plus the Phase 4.5 self-heal orchestration (init, acquire, plan, finalize, self-heal, loop). 50 tool calls is right for this. But `maxTurns` counts LLM turns, not tool calls — set it slightly higher (e.g., 60) to account for turns that don't use tools.
 
-**Risk of degradation:** LOW. If set too low, Supervisor gets cut off mid-workflow. 40 is safe — matches other orchestration agents.
+**Risk of degradation:** LOW. If set too low, Supervisor gets cut off mid-workflow. 60 keeps the same headroom over the 50-call budget that 40 gave the old 30-call budget.
 
 ---
 
@@ -410,7 +410,7 @@ This is actually **correct and intentional** — double validation. The naming i
 | 13 | Launch Pad + Red Team schemas | Zero (docs only) | Zero | **YES** |
 | 14 | QA failure escalation docs | Zero (docs only) | Zero | **YES** |
 | 15 | Fix version references | Zero (docs only) | Zero | **YES** |
-| 16 | Supervisor `maxTurns: 40` | Prevents runaway agents | Low | **YES** |
+| 16 | Supervisor `maxTurns` (60 since the 50-call budget; was 40) | Prevents runaway agents | Low | **YES** |
 | 17 | Move Code Reviewer `Stop` hook to `hooks.json` | Restores self-validation | Low | **YES (with P0 #1)** |
 | 18 | Prisma/GraphQL/gRPC skills | None (additive) | Zero | **ON DEMAND** |
 

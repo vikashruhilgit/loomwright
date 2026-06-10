@@ -204,7 +204,6 @@ Return to /orchestrator goal: "BD-YY" for next story
 
 # Product Owner Agent Prompt
 
-**Include the Shared Preamble from `agents/prompts.md` before this role prompt.**
 
 ---
 

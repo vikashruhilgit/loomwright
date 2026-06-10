@@ -66,14 +66,14 @@ Detailed per-agent purpose, command syntax, and workflow diagrams live in `READM
 
 | Agent | Type | Spawned by | Codebase-relevant invariants |
 |---|---|---|---|
-| Launch Pad | user-facing | user | Phase 2.5 feasibility (GO/CAUTION/NO-GO); Phase 5.5 mandatory Plan Review (max 3 retries); writes briefs to `.supervisor/jobs/pending/` |
+| Launch Pad | user-facing | user | Phase 2.5 feasibility (GO/CAUTION/NO-GO); Phase 5.5 mandatory Plan Review (max 3 spawns per session); writes briefs to `.supervisor/jobs/pending/` |
 | Supervisor | user-facing | user | v4 + **Phase 1.5 PRE-FLIGHT SYNC** (remote-state reconciliation between ACQUIRE and PLAN — classifies the requested work CLEAR/OVERLAP/SUPERSEDED, silent on CLEAR, soft-gate `AskUserQuestion` interactively, fails closed under `--non-interactive` with `error: "preflight_overlap_detected"`; bounded ≤6 calls; `--skip-preflight-sync` escape hatch) + Phase 4.5 self-heal — self-heal phase **always** runs; `--skip-self-heal` only short-circuits the loop; completion-tail relocates job-move + state-completed from FINALIZE. **Never assert git merge/PR state ("on main", "in the PR", "already merged") without verifying via `git log` / `git branch --contains`.** |
 | Product Owner | user-facing | user | Assumption Check (standard) + Reality Check (`--brainstorm`) cap Feasibility for NEEDS_FOUNDATION/BLOCKED ideas |
 | Orchestrator | user-facing | user | Reads CLAUDE.md + Beads → EPIC / TASK / SUBTASK with skill references |
 | Code Reviewer | user-facing | user | LSP, read-only mode, schema_v3 (adds `drift` category, severity caps via hook). **Auto-expands to consistency audit** when diff touches `agents/`, `commands/`, `skills/`, `docs/`, or plugin metadata |
 | Red Team Reviewer | user-facing | user | 6 attack vectors; persistent memory of past audits |
-| QA Strategist | user-facing | user | Strategy mode + Audit mode; spawned twice (gate audit Phase 11, results audit Phase 13) |
-| QA Executor | user-facing | user | 13-phase, `--depth smoke|functional`, `--plan/--scope/--continue`, infrastructure-aware (Mailpit/MailHog), 80/90 budget |
+| QA Strategist | user-facing | user | Three modes (Strategy / Gate Audit / Post-Execution Audit); spawned twice (gate audit Phase 11, results audit Phase 13) |
+| QA Executor | user-facing | user | Multi-phase Level 1 protocol (phases 1–13, non-monotonic order), `--depth smoke|functional`, `--plan/--scope/--continue`, infrastructure-aware (Mailpit/MailHog), 80/110/60 budget (default/scoped/plan) with 60/80/92% zones |
 | Review-PR (`review-pr-runner`) | user-facing | user / Supervisor completion-tail / autonomous EVALUATE | `/review-pr <pr-url>` standalone review→fix→re-review loop against an existing PR; resolves PR-URL → head branch, spawns `code-reviewer` + `general-purpose` fix worker; **never auto-merges**; emits `REVIEW_HEAL_RESULT`. NEVER Task-spawned (subagents-cannot-spawn-subagents) — run inline via `/review-pr` or as `claude --agent …:review-pr-runner`. Authority is the `review-heal` skill. |
 | Execute Manager | internal | Supervisor (Phase 3) | Owns poll loop in isolated context, 60 tool-call budget |
 | Context-Keeper | internal | Supervisor / Execute Manager | **Sole writer** of state file; haiku model, batch updates, atomic writes |
@@ -109,7 +109,7 @@ Every agent (full standard in `AGENT_GUIDELINES.md`):
 - Execute Manager owns the poll loop, worker/reviewer lifecycle, Context-Keeper coordination
 - Each worker runs in its own git worktree (no file conflicts)
 - Workers write `.worker-summary.md` for lightweight result extraction
-- Context-Keeper externalizes state; Supervisor uses tool-call budgets (30) instead of percentage thresholds; Execute Manager has its own 60-call budget in isolated context
+- Context-Keeper externalizes state; Supervisor uses tool-call budgets (50, including Phase 4.5) instead of percentage thresholds; Execute Manager has its own 60-call budget in isolated context
 - Subtask branches merge sequentially into the feature branch with pre-merge validation
 - Fast-path: single subtask skips worktrees and Execute Manager entirely
 
@@ -218,8 +218,8 @@ Agents with `skills` in frontmatter get content pre-injected at spawn time (no r
 | Orchestrator | quality-checklist |
 | Code Reviewer | quality-checklist, context7-lookup, unit-testing, error-handling, monitoring-observability |
 | Red Team Reviewer | context7-lookup |
-| QA Strategist | qa-strategy, quality-checklist |
-| QA Executor | qa-strategy, playwright-e2e, quality-checklist |
+| QA Strategist | qa-strategy, qa-gates, quality-checklist |
+| QA Executor | qa-strategy, qa-test-patterns, qa-gates, playwright-e2e, quality-checklist |
 | Product Owner | brainstorming, product-discovery, mvp-scoping |
 
 ## Agent Teams (Recommended for 3 Use Cases, Experimental for the Rest)

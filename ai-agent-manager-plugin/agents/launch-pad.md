@@ -80,7 +80,9 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 
 ---
 
-## 8-Phase Workflow
+## 7-Phase Workflow
+
+> **Phase-numbering convention** (same rule as `agents/supervisor.md` / `skills/workflow-management/SKILL.md`): "7-Phase" counts the primary phases 1–7; **FEASIBILITY (2.5)** and **PLAN REVIEW (5.5)** are `.5` sub-phase gates inserted between primary phases — they appear in the enumeration but do not change the "7-Phase" name.
 
 ### Phase 1: VALIDATE (Environment Readiness)
 
@@ -453,7 +455,7 @@ Subtask 2 (independent)
 4. Decision handling:
    - **PASS:** Proceed to Phase 6 (save enabled)
    - **FAIL (attempt < 3):** Fix issues identified in the review, re-assemble affected brief sections, re-spawn reviewer
-   - **FAIL (attempt = 3):** Present all unresolved issues to user. Offer: "Refine further" (loop back to relevant phase) or "Discard". Do NOT save.
+   - **FAIL (attempt = 3):** Present all unresolved issues to user. Offer: "Refine offline" (exit, `status: blocked` — fix and start a new session) or "Discard". Do NOT save; the 3-spawn cap is never reset within a session.
    - **NEEDS_HUMAN:** Present issues to user. Offer: "Override and save" (user takes responsibility) or "Refine further" or "Discard"
 
 **Retry loop:**
@@ -474,13 +476,16 @@ loop:
     → options: "Override and save" | "Refine further" | "Discard"
     → if override: proceed to Phase 6 with user-acknowledged warnings
     → if refine: loop back to relevant phase, then re-review
+      (re-review consumes an attempt; if attempt >= max_attempts the only
+       remaining options are "Override and save" or "Discard" — no further spawns)
     → if discard: exit
 
   if result.decision == FAIL:
     if attempt >= max_attempts:
       → present all unresolved issues to user
-      → options: "Refine further" | "Discard"
-      → do NOT allow save to pending/
+      → options: "Refine offline (exit, status: blocked)" | "Discard"
+      → do NOT allow save to pending/ — FAIL never enables save,
+        and the cap is never reset within a session
     else:
       → fix issues from reviewer feedback
       → re-assemble brief
@@ -501,7 +506,7 @@ Task(
 Project CLAUDE.md context:
 {relevant patterns, tech stack, directory structure — max 500 tokens}
 
-Check all 10 review criteria. Output a PLAN_REVIEW_RESULT block.",
+Check all 14 review criteria. Output a PLAN_REVIEW_RESULT block.",
   subagent_type: "ai-agent-manager-plugin:plan-reviewer"
 )
 ```
@@ -539,24 +544,24 @@ Check all 10 review criteria. Output a PLAN_REVIEW_RESULT block.",
    - **"Discard"** — Cancel without saving
 3. If Plan Review returned PASS: use `AskUserQuestion` with 4 options:
    - **"Save and exit"** — Write brief to `.supervisor/jobs/pending/{date}-{slug}.md`, output `/supervisor job: {path}` command
-   - **"Refine further"** — Ask clarifying questions, update sections, loop back to relevant phase
-   - **"Edit sections"** — User specifies what to change, update in-place
+   - **"Refine further"** — Ask clarifying questions, update sections, then **re-run Plan Review before save** (consumes an attempt from the shared 3-spawn cap; the PASS is void once the brief is mutated)
+   - **"Edit sections"** — User specifies what to change, update in-place, then **re-run Plan Review before save** (same rule: any post-PASS mutation voids the PASS and requires re-review; consumes an attempt from the shared cap). **Corner case:** if the PASS landed on the 3rd (final) spawn, no attempts remain — "Refine further"/"Edit sections" are not offered; only "Save and exit" (the unmutated PASSed brief) or "Discard"
    - **"Discard"** — Cancel without saving
-4. If Plan Review returned FAIL (after 3 retries): use `AskUserQuestion` with 2 options:
-   - **"Refine further"** — Loop back to fix issues, then re-run Plan Review
-   - **"Discard"** — Cancel without saving
-3. On save:
+4. If Plan Review returned FAIL (after 3 attempts — the cap is exhausted): use `AskUserQuestion` with 2 options. **FAIL never enables save**, and the 3-spawn cap is never reset within a session:
+   - **"Refine offline"** — Exit without saving (`status: blocked`); the user fixes the issues and starts a new Launch Pad session
+   - **"Discard"** — Cancel without saving (`status: discarded`)
+5. On save:
    - Create `.supervisor/jobs/pending/` directory if not exists:
      ```bash
      mkdir -p .supervisor/jobs/pending
      ```
    - Write brief file with naming convention: `{YYYY-MM-DD}-{slug}.md`
    - Confirm save with file path
-4. Output the exact Supervisor command for a fresh-context session:
+6. Output the exact Supervisor command for a fresh-context session:
    ```
    /supervisor job: .supervisor/jobs/pending/{date}-{slug}.md
    ```
-5. **Propose project-memory candidates (human-gated, v14.3.0, optional):** if during ANALYZE you learned **durable, reusable, decision-changing** facts about *this codebase* that pass the Memory Core Principle asset test (`AGENT_GUIDELINES.md` §"Memory Core Principle") and are **not already** in `CLAUDE.md` or the project memory read in Phase 3, present them as proposals — e.g. *"📝 Remember for next time? — `<one-line fact>`"* — via `AskUserQuestion` (each fact individually acceptable/skippable). For every fact the user **explicitly approves**, write it:
+7. **Propose project-memory candidates (human-gated, v14.3.0, optional):** if during ANALYZE you learned **durable, reusable, decision-changing** facts about *this codebase* that pass the Memory Core Principle asset test (`AGENT_GUIDELINES.md` §"Memory Core Principle") and are **not already** in `CLAUDE.md` or the project memory read in Phase 3, present them as proposals — e.g. *"📝 Remember for next time? — `<one-line fact>`"* — via `AskUserQuestion` (each fact individually acceptable/skippable). For every fact the user **explicitly approves**, write it:
    ```bash
    bash "${CLAUDE_PLUGIN_ROOT}/scripts/write-project-memory.sh" --fact "<approved fact>" --source "launch-pad:{slug}"
    ```
@@ -564,7 +569,7 @@ Check all 10 review criteria. Output a PLAN_REVIEW_RESULT block.",
 
 **Save rules:**
 - If environment has BLOCKERS from Phase 1: output fix instructions, don't offer save
-- If Plan Review did not pass (FAIL after 3 retries): don't offer save, only "Refine further" or "Discard"
+- If Plan Review did not pass (FAIL after 3 attempts): don't offer save, only "Refine offline" (exit, status: blocked) or "Discard"
 - If Plan Review returned NEEDS_HUMAN: offer "Override and save" (user takes responsibility), "Refine further", or "Discard"
 - Slug derived from goal (lowercase, hyphens, max 40 chars)
 - Date in ISO format (YYYY-MM-DD)
@@ -583,7 +588,7 @@ Check all 10 review criteria. Output a PLAN_REVIEW_RESULT block.",
 /supervisor job: .supervisor/jobs/pending/{date}-{slug}.md
 ```
 
-**Note:** Start a new Claude Code session for clean context (~500 tokens freed for execution).
+**Note:** Start a new Claude Code session so the Supervisor runs with clean context.
 ```
 
 ---
@@ -599,8 +604,8 @@ Check all 10 review criteria. Output a PLAN_REVIEW_RESULT block.",
 1. Determine the terminal `status` based on what actually happened in this run:
    - **`saved`** — Phase 6 chose "Save and exit" OR "Override and save"; the brief file was written.
    - **`discarded`** — Phase 6 chose "Discard"; no file written.
-   - **`blocked`** — Phase 1 had BLOCKERS that suppressed the save offer, OR Plan Review FAILed × 3 without a user override option; save was never offered.
-   - **`aborted`** — User aborted the run mid-flight, the session was killed, or `/autonomous` cleanup fired after rubric-dropped; no clean Phase 6 outcome.
+   - **`blocked`** — Phase 1 had BLOCKERS that suppressed the save offer, OR Plan Review FAILed × 3 and the user chose "Refine offline" (or no choice was offered); save was never enabled. Precedence: an explicit user "Discard" always wins — FAIL × 3 followed by Discard is `discarded`, not `blocked`.
+   - **`aborted`** — User aborted the run mid-flight, or `/autonomous` cleanup fired after rubric-dropped; no clean Phase 6 outcome. (A killed session emits nothing — this value covers in-session aborts that still reach Phase 7.)
 
 2. Compute `saved_brief_path`:
    - When `status: saved` → the exact path of the file written in Phase 6, e.g. `.supervisor/jobs/pending/2026-05-28-add-version-command.md`.
@@ -652,20 +657,11 @@ LAUNCH_PAD_RESULT:
 
 ### Token Budget
 
-Launch Pad is lightweight by design:
+Launch Pad is lightweight by design: it produces a brief, not code. Keep
+phase outputs compact (summaries and tables, not transcripts) and avoid
+re-reading large files already summarized in earlier phases.
 
-| Component | Tokens |
-|-----------|--------|
-| Pre-loaded skills (7) | ~3,000 |
-| CLAUDE.md analysis | ~500 |
-| Feasibility check (Phase 2.5) | ~200-400 |
-| File impact map | ~300 |
-| Subtask structure | ~200 |
-| Brief assembly | ~500 |
-| Plan review (Phase 5.5) | ~500-1,500 |
-| **Total** | **~5,200-6,400** |
-
-Minimal subagent overhead (one Plan Reviewer spawn, up to 3 retries). No state file management. Clean exit after save.
+Minimal subagent overhead (up to 3 Plan Reviewer spawns total per session). No state file management. Clean exit after save.
 
 ---
 
@@ -737,6 +733,30 @@ Users need secure access with token rotation.
 - **Recommended workers:** 2
 - **Estimated batches:** 3
 
+## Subtask Contracts
+
+```yaml
+subtask_1:
+  provides:
+    - {kind: file, path: src/auth/jwt.guard.ts}
+    - {kind: symbol, path: src/auth/jwt.strategy.ts, name: JwtStrategy}
+  requires: []
+subtask_2:
+  provides:
+    - {kind: file, path: src/auth/refresh.service.ts}
+  requires: []
+subtask_3:
+  provides:
+    - {kind: file, path: src/auth/auth.controller.ts}
+  requires:
+    - {kind: symbol, path: src/auth/jwt.strategy.ts, name: JwtStrategy}
+subtask_4:
+  provides:
+    - {kind: file, path: e2e/auth.spec.ts}
+  requires:
+    - {kind: file, path: src/auth/auth.controller.ts}
+```
+
 ## Skill References
 - `skills/nestjs-guards/SKILL.md` (Subtask 1)
 - `skills/nestjs-services/SKILL.md` (Subtask 2)
@@ -755,7 +775,7 @@ Users need secure access with token rotation.
 - **Estimated batches:** 3
 
 ## Handoff
-/supervisor job: .supervisor/jobs/2026-02-08-jwt-auth.md
+/supervisor job: .supervisor/jobs/pending/2026-02-08-jwt-auth.md
 ```
 
 ---
@@ -794,7 +814,7 @@ Before offering save:
 ## Integration Notes
 
 - Used by `/launch-pad` command
-- Outputs: Supervisor-Ready Brief to `.supervisor/jobs/`
+- Outputs: Supervisor-Ready Brief to `.supervisor/jobs/pending/`
 - Consumed by: Supervisor agent via `job:` parameter
 - Spawns one subagent (Plan Reviewer) for mandatory plan validation in Phase 5.5
 - Memory: Learns which files are commonly impacted by goals in this project

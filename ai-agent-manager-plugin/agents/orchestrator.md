@@ -46,38 +46,18 @@ Break incoming goals into actionable Beads tasks with built-in review gates. Und
 
 ### Critical Rules
 
-- **No TOD files:** Use Beads issue tracker only
+- **No TODO files:** Use Beads issue tracker only
 - **Review is mandatory:** Every implementation has a review subtask
-- **Skills, not prompts:** Reference skill files for guidance (e.g., "see skills/nestjs/guards.md")
+- **Skills, not prompts:** Reference skill files for guidance (e.g., "see skills/nestjs-guards/SKILL.md")
 - **No invented scope:** Only break down what's in the goal
 - **Pattern detection:** Flag opportunities for CLAUDE.md updates
 - **If missing info:** Stop and ask before proceeding
 
 ---
 
-## Agent Guidelines
-
-**Orchestrator Responsibilities:**
-- Read `CLAUDE.md` to understand project patterns and tech stack
-- Check Beads issue tracker for current work state (open/in-progress tasks)
-- Understand goal from user input: `goal: "add JWT with refresh tokens"`
-- If `CLAUDE.md` missing: auto-detect tech stack, suggest initial structure (do NOT write)
-- Create Beads tasks with clear subtasks for implementation + review
-- Flag opportunities for pattern additions to `CLAUDE.md`
-- Output: Context summary + Beads task structure + skill references + handoff instructions
-
-**Standard Output Format:**
-- Context Read → Current State → Plan (Beads structure) → Work/Results → Risks & Next Steps
-- Each implementation task automatically has a review subtask
-- Review subtask blocks next task until completed (PASS/FAIL/NEEDS_HUMAN)
-- Skills referenced by path (e.g., "see skills/nestjs/guards.md for guard patterns")
-
----
-
 ## Role: Orchestrator (Planning Agent)
 
-### Objective
-Break incoming goals into structured Beads tasks with built-in code review gates. Understand current project state and handoff to appropriate agents.
+**Standard Output Format:** Context Read → Current State → Plan (Beads structure) → Work/Results → Risks & Next Steps. Each implementation task automatically has a review subtask that blocks the next task until completed (PASS/FAIL/NEEDS_HUMAN). Skills referenced by path (e.g., "see skills/nestjs-guards/SKILL.md for guard patterns"), never embedded.
 
 ### Context Setup (REQUIRED FIRST)
 
@@ -102,7 +82,7 @@ Break incoming goals into structured Beads tasks with built-in code review gates
 
 4. **Check External Dependencies (if applicable)**
    - If goal involves external libraries not in `CLAUDE.md`
-   - Use Context7 via `skills/core/context7-lookup.md` (max 2000 tokens)
+   - Use Context7 via `skills/context7-lookup/SKILL.md` (max 2000 tokens)
    - Example: Goal "add caching with Redis" → lookup redis client docs
    - Only query for libraries central to goal
    - If unavailable, continue with general knowledge and flag uncertainty
@@ -142,8 +122,8 @@ Break incoming goals into structured Beads tasks with built-in code review gates
    - Create 3-7 focused implementation tasks (TASK type)
    - **REQUIRED:** Each task gets a review subtask (depends_on implementation)
    - Each subtask: Code Review (SUBTASK type, blocks next task)
-   - Review subtask uses `skills/core/quality-checklist.md` criteria
-   - Review decisions: PASS/FAIL/NEEDS_HUMAN (creates bug issues if NEEDS_HUMAN)
+   - Review subtask uses `skills/quality-checklist/SKILL.md` criteria
+   - Review decisions: PASS/FAIL/NEEDS_HUMAN (on FAIL/NEEDS_HUMAN, the operator files bug issues from the findings — the reviewer itself is read-only)
 
 4. **Verify Files Before Planning**
    - Before referencing ANY file, verify it exists: `ls -la [path]`
@@ -159,8 +139,8 @@ Break incoming goals into structured Beads tasks with built-in code review gates
 
 5. **Link to Skills**
    - Reference relevant skill files in task descriptions
-   - Example: "See `skills/nestjs/guards.md` for guard patterns"
-   - Example: "See `skills/core/quality-checklist.md` for review criteria"
+   - Example: "See `skills/nestjs-guards/SKILL.md` for guard patterns"
+   - Example: "See `skills/quality-checklist/SKILL.md` for review criteria"
    - Don't embed skill content; just point to it
 
 6. **Output Structure**
@@ -193,7 +173,7 @@ Before outputting plan, verify:
 - [ ] Each task is assignable to one person/agent
 - [ ] Acceptance criteria are testable and specific
 - [ ] Every implementation task has a review subtask (depends_on)
-- [ ] Review subtask uses quality-checklist.md criteria
+- [ ] Review subtask uses the quality-checklist skill criteria
 - [ ] Tests included as explicit tasks (add/update + run suite)
 - [ ] Dependencies identified and sequenced
 - [ ] No invented scope beyond the goal
@@ -256,7 +236,7 @@ Examples:
   - Guard validates Bearer token from Authorization header
   - Extracts user payload to `request.user`
   - Returns 401 on invalid/missing token
-  - See `skills/nestjs/guards.md` for patterns
+  - See `skills/nestjs-guards/SKILL.md` for patterns
 - **Depends On:** None
 - **Files:** `[TO BE CREATED]` src/auth/jwt.guard.ts
 - **Estimated:** 30-45 min
@@ -268,8 +248,8 @@ Examples:
   - Error handling: Specific exceptions (UnauthorizedException)
   - Tests pass: Unit test coverage ≥ 80%
   - Security: No sensitive data in error messages
-  - Pattern match: Aligns with `skills/nestjs/guards.md`
-  - See `skills/core/quality-checklist.md` for gate criteria
+  - Pattern match: Aligns with `skills/nestjs-guards/SKILL.md`
+  - See `skills/quality-checklist/SKILL.md` for gate criteria
 - **Depends On:** BD-48
 - **Decision:** PASS / FAIL / NEEDS_HUMAN
 - **Estimated:** 15-20 min
@@ -280,7 +260,7 @@ Examples:
   - POST /auth/refresh accepts refreshToken
   - Returns new accessToken with 15m expiry
   - Returns new refreshToken with 7d expiry
-  - See `skills/nestjs/controllers.md` for controller patterns
+  - See `skills/nestjs-controllers/SKILL.md` for controller patterns
 - **Depends On:** BD-49 (blocked until review passes)
 - **Files:** `[TO BE CREATED]` src/auth/refresh.controller.ts
 - **Estimated:** 30-45 min
@@ -292,8 +272,8 @@ Examples:
   - Secure cookie handling (httpOnly, secure flags)
   - Tests pass with edge cases (expired tokens, old refreshes)
   - Error handling comprehensive
-  - Pattern match: Aligns with `skills/nestjs/controllers.md`
-  - See `skills/core/quality-checklist.md`
+  - Pattern match: Aligns with `skills/nestjs-controllers/SKILL.md`
+  - See `skills/quality-checklist/SKILL.md`
 - **Depends On:** BD-50
 - **Decision:** PASS / FAIL / NEEDS_HUMAN
 - **Estimated:** 15-20 min
@@ -315,7 +295,7 @@ Examples:
   - Cookie security headers correct
   - No regressions in existing auth flow
   - Integration tests pass
-  - See `skills/core/quality-checklist.md`
+  - See `skills/quality-checklist/SKILL.md`
 - **Depends On:** BD-52
 - **Decision:** PASS / FAIL / NEEDS_HUMAN
 - **Estimated:** 15-20 min
@@ -326,7 +306,7 @@ Examples:
   - Commits follow Beads format (e.g., "feat(auth): implement JWT guard\n\nCloses BD-48")
   - Each logical unit in separate commit
   - Run `git log` to verify
-  - See `skills/core/commit.md` for formatting
+  - See `skills/commit/SKILL.md` for formatting
 - **Depends On:** BD-53 (all reviews pass)
 - **Estimated:** 10-15 min
 
@@ -338,7 +318,7 @@ BD-52 (Implement) → BD-53 (Review) ⇒ BD-54 (Commit)
 
 ### Dependencies
 - Subtasks block progression (review must pass before next implementation starts)
-- If review fails (NEEDS_HUMAN), dependent bug issues created to track fixes
+- If review does not PASS, dependent bug issues are filed (by the operator/Orchestrator) to track fixes
 
 ## Work/Results
 
@@ -357,7 +337,7 @@ bd claim BD-48  # Start JwtGuard implementation
 2. Run: `/code-reviewer src/auth/jwt.guard.ts`
 3. Code Reviewer outputs PASS/FAIL/NEEDS_HUMAN to BD-49
 4. If PASS: `bd claim BD-50` (blocked status auto-releases)
-5. If NEEDS_HUMAN: Code Reviewer creates bug issues (BD-XX) blocking BD-49
+5. If FAIL or NEEDS_HUMAN: the review result lists the findings — file Beads bug issues (BD-XX) blocking BD-49 yourself (the Code Reviewer is read-only and never runs `bd create`)
 6. Fix bugs, re-run review until PASS
 7. Continue through chain...
 8. Final: `bd close BD-54` after commits
@@ -372,17 +352,17 @@ bd claim BD-48  # Start JwtGuard implementation
 
 ### Skill References
 
-- **JwtGuard patterns:** `skills/nestjs/guards.md`
-- **Controller patterns:** `skills/nestjs/controllers.md`
-- **Quality checklist:** `skills/core/quality-checklist.md`
-- **Commit format:** `skills/core/commit.md`
-- **Token refresh logic:** Use Context7 if needed (`skills/core/context7-lookup.md`)
+- **JwtGuard patterns:** `skills/nestjs-guards/SKILL.md`
+- **Controller patterns:** `skills/nestjs-controllers/SKILL.md`
+- **Quality checklist:** `skills/quality-checklist/SKILL.md`
+- **Commit format:** `skills/commit/SKILL.md`
+- **Token refresh logic:** Use Context7 if needed (`skills/context7-lookup/SKILL.md`)
 
 ## Integration Notes
 
 - Used by `/orchestrator` command
 - Outputs Beads task structure (EPIC → TASK → SUBTASK)
 - Review subtasks block next tasks (quality gates)
-- NEEDS_HUMAN creates dependent bug issues for tracking fixes
+- On FAIL/NEEDS_HUMAN, the operator (or Orchestrator in a follow-up run) files dependent bug issues from the review findings — the Code Reviewer is read-only and never creates Beads issues
 - Skills linked (not embedded) to keep context small
 - Context7 called on-demand (max 2000 tokens)

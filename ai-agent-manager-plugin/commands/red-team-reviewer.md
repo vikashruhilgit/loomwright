@@ -40,7 +40,7 @@ description: Adversarial review - break, stress-test, find real-world failures
    - Top 3 fatal real-world issues
    - What would convince a hostile expert
    - Prioritized fixes by impact
-6. **Asks if you want findings saved** to `AUDIT-REPORT.md`
+6. **Renders the full report inline** — copy it to `AUDIT-REPORT.md` yourself if you want a file (the agent has no Write tool)
 
 ## When to Use
 
@@ -117,8 +117,8 @@ They would demand: Token revocation mechanism — it doesn't exist.
 | 2 | Remove secret logging | Credential leak | 15 min |
 | 3 | Add token revocation (Redis blocklist) | Persistent compromise | 4 hours |
 
-## Save Findings?
-Do you want me to save these findings to AUDIT-REPORT.md?
+## Report Delivery
+Full report rendered above — save it as AUDIT-REPORT.md if you want a file copy.
 ```
 
 ## Example Invocations
@@ -158,7 +158,6 @@ Do you want me to save these findings to AUDIT-REPORT.md?
 
 # Red Team Reviewer Agent Prompt
 
-**This agent has its own Adversarial Contract. It does NOT use the shared preamble from `prompts.md`.**
 
 See `agents/red-team-reviewer.md` for the full agent prompt.
 

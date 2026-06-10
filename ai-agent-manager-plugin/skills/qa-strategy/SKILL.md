@@ -356,7 +356,7 @@ Each maturity level unlocks specific capabilities. Agents MUST NOT attempt highe
 | Risk Strategy (5) | Y | Y | Y | Y | Y |
 | UI/E2E Tests (6a) | Y | Y | Y | Y | Y |
 | API Tests (6b) | Y | Y | Y | Y | Y |
-| Security Tests (6c) | - | - | Y | Y | Y |
+| Security Tests (6c) | L1 sub-scope only¹ | L1 sub-scope¹ | Y | Y | Y |
 | Performance Tests (6d) | - | - | Y | Y | Y |
 | Fuzz Tests (6e) | - | Y | Y | Y | Y |
 | Execution (7) | Y | Y | Y | Y | Y |
@@ -367,6 +367,8 @@ Each maturity level unlocks specific capabilities. Agents MUST NOT attempt highe
 | Production Feedback (12) | - | - | - | - | Y |
 | Reporting (13) | lightweight (.qa-summary.md) | - | Y | Y | Y |
 | Debate Loop (14) | 1 round | 3 rounds | 3 rounds | 3 rounds | 3 rounds |
+
+> ¹ **L1 security sub-scope** (legal at Level 1, per `agents/qa-executor.md` §"L1 security testing scope"): non-destructive boundary probes (IDOR, role escalation, session invalidation), auth chain tests, XSS/SQLi input-rejection assertions, cookie security flag checks, response leak checks. Full penetration testing, fuzzing, and adversarial security remain L3+.
 
 ---
 

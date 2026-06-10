@@ -37,7 +37,7 @@ Validate a Supervisor-Ready Brief for quality, completeness, and correctness bef
 
 - **Always verify file paths** — Glob/Read every path in the File Impact Map
 - **Always check CLAUDE.md patterns** — Read CLAUDE.md and compare against brief's approach
-- **Never skip criteria** — All 14 review criteria must be checked (Criteria 11, 13, and 14 are conditional: skip silently when their gating section/field is absent; Criterion 12 is conditional on brief vintage)
+- **Never skip criteria** — All 14 review criteria must be checked (Criteria 11, 13, and 14 are conditional: skip silently when their gating section/field is absent; Criterion 12 is conditional only on an explicit `legacy_brief: true` marker)
 - **FAIL requires evidence** — Every BLOCKING/HIGH issue must cite what was checked and what was wrong
 - **NEEDS_HUMAN is for ambiguity** — Use only when the brief's approach could be valid but you can't confirm
 
@@ -45,7 +45,7 @@ Validate a Supervisor-Ready Brief for quality, completeness, and correctness bef
 
 ## 14 Review Criteria
 
-Check ALL criteria in order. For each, note whether it passes or has issues. Criterion 11 is conditional: skip silently if the optional `## Feasibility` section is absent. Criterion 13 is conditional: skip silently if no `Base Branch:` line appears in the `## Configuration` block (defaults to `main`). Criterion 14 is conditional: skip silently if the optional `## Executable Acceptance` section is absent. Criterion 12 is conditional on brief vintage: v12.0.0+ briefs (Launch Pad runtime ≥ v12.0.0) MUST contain `provides:` / `requires:` contract YAML blocks per subtask — absence is a BLOCKING violation. Pre-v12 legacy briefs may omit contract blocks, but only when the brief explicitly opts out via a top-level `legacy_brief: true` marker in the Environment section. Without that explicit marker, Plan Reviewer treats missing contracts as a v12 contract violation.
+Check ALL criteria in order. For each, note whether it passes or has issues. Criterion 11 is conditional: skip silently if the optional `## Feasibility` section is absent. Criterion 13 is conditional: skip silently if no `Base Branch:` line appears in the `## Configuration` block (defaults to `main`). Criterion 14 is conditional: skip silently if the optional `## Executable Acceptance` section is absent. Criterion 12: briefs MUST contain `provides:` / `requires:` contract YAML blocks per subtask — absence is a BLOCKING violation. The only exception is an explicit top-level `legacy_brief: true` marker in the Environment section (the marker is the sole observable signal; the producing runtime's version cannot be inferred from brief text). Without that marker, missing contracts are a BLOCKING `dep_graph` violation.
 
 ### 1. File Path Verification
 
@@ -262,7 +262,7 @@ Check ALL criteria in order. For each, note whether it passes or has issues. Cri
 | Condition | Decision |
 |-----------|----------|
 | All criteria satisfied (14 total, Criteria 11, 12, 13, and 14 conditional), no BLOCKING/HIGH issues | **PASS** |
-| Only LOW-severity (advisory) issues, design approach unambiguous | **PASS** (issues recorded for visibility — e.g. a Criterion 14 `executable_acceptance` finding — but the save is not blocked) |
+| Only MEDIUM/LOW issues, design approach unambiguous | **PASS** (all issues recorded for visibility — e.g. a Criterion 14 `executable_acceptance` finding — but the save is not blocked) |
 | Any BLOCKING or HIGH severity issue found | **FAIL** |
 | Only MEDIUM/LOW issues, but design approach is ambiguous | **NEEDS_HUMAN** |
 
@@ -277,6 +277,7 @@ PLAN_REVIEW_RESULT:
   issues:
     - severity: {BLOCKING | HIGH | MEDIUM | LOW}
       section: "{brief section name}"
+      category: "{dep_graph | missing_field | executable_acceptance | ...}"  # optional — emit when a criterion mandates it (12, 13, 14)
       description: "{what's wrong}"
       suggestion: "{how to fix}"
   summary: "{concise review summary}"
@@ -301,6 +302,7 @@ PLAN_REVIEW_RESULT:
   issues:
     - severity: BLOCKING
       section: "File Impact Map"
+      category: "missing_field"
       description: "Path src/auth/jwt.guard.ts does not exist in codebase. Glob found no matches."
       suggestion: "Verify correct path. Possible: src/guards/jwt.guard.ts (found via Glob)."
     - severity: HIGH

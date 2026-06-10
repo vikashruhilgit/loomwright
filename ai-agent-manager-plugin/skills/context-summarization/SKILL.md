@@ -255,11 +255,11 @@ Compress for `.supervisor/` (< 500 tokens):
 
 Compression levels based on tool call budget:
 
-| Level | Supervisor (30 calls) | Execute Manager (60 calls) | Action |
+| Level | Supervisor (50 calls) | Execute Manager (60 calls) | Action |
 |-------|----------------------|---------------------------|--------|
-| GREEN | 0-18 (60%) | 0-36 (60%) | Normal summaries (< 200 tokens) |
-| YELLOW | 18-24 (80%) | 36-48 (80%) | Aggressive compression (< 100 tokens) |
-| RED | 24-28 (93%) | 48-55 (92%) | Minimal checkpoint only (< 50 tokens) |
+| GREEN | 0-30 (60%) | 0-36 (60%) | Normal summaries (< 200 tokens) |
+| YELLOW | 30-40 (80%) | 36-48 (80%) | Aggressive compression (< 100 tokens) |
+| RED | 40-46 (92%) | 48-55 (92%) | Minimal checkpoint only (< 50 tokens) |
 
 **Aggressive Compression Example:**
 

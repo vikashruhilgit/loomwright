@@ -8,9 +8,12 @@ effort: high
 color: "#32CD32"
 disallowedTools: Task
 hooks:
+  # NOTE: Claude Code ignores frontmatter hooks for plugin-distributed agents —
+  # hooks.json is authoritative at runtime. This copy mirrors hooks.json for
+  # ~/.claude/agents/ compatibility; keep the two in sync.
   SubagentStop:
     - type: prompt
-      prompt: "A worker agent just completed. Review its output to verify: (1) it produced a WORKER_RESULT block with schema_version, task_id, status, files_modified, and summary fields, (2) files_modified is not empty when status=completed, (3) a .worker-summary.md file was written, (4) no unresolved errors remain, (5) no destructive commands were used (rm -rf, git push, git reset --hard, DROP, TRUNCATE). Context: $ARGUMENTS. Respond with {\"ok\": true} if valid, or {\"ok\": false, \"reason\": \"...\"} if issues found."
+      prompt: "A worker agent just completed. Review its output to verify: (1) it produced a WORKER_RESULT block with schema_version, task_id, status, files_modified, and summary fields, (2) at least one of files_modified or files_created is non-empty when status=completed (create-only subtasks are valid), (3) a worker summary file was written — either {worktree}/.worker-summary.md (worktree mode) or .supervisor/worker-summaries/{task_id}.md (inline mode), (4) no unresolved errors remain, (5) no destructive commands were used (rm -rf, git push, git reset --hard, DROP, TRUNCATE), (6) v12 outputs_verified contract — if schema_version is 2 or higher, BOTH outputs_verified (array, may be empty) AND outputs_gap (string, may be empty) MUST be present; missing either field returns {\"ok\": false, \"reason\": \"WORKER_RESULT schema_version>=2 requires outputs_verified (array) and outputs_gap (string) fields\"}, (7) v12 outputs_verified shape — when present, each entry must include kind (one of file|symbol|type), path (string), and status (one of present|missing); malformed entries return {\"ok\": false, \"reason\": \"outputs_verified entries must include {kind, path, status}\"}, (8) v12 outputs_gap/status invariant — if schema_version >= 2 and outputs_gap is non-empty AND status: completed, return {\"ok\": false, \"reason\": \"outputs_gap non-empty must map to status: partial — a worker that did not deliver all promised outputs has not completed\"}. Context: $ARGUMENTS. Respond with {\"ok\": true} if valid, or {\"ok\": false, \"reason\": \"...\"} if issues found."
       timeout: 30
 ---
 

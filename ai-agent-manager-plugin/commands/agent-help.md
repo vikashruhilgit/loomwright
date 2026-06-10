@@ -109,7 +109,7 @@ The AI Agent Manager plugin provides **14 agent roles** (9 user-facing + 5 inter
 - Saves Supervisor-Ready Brief to `.supervisor/jobs/`
 - Provides interactive refinement (save/refine/edit/discard)
 
-**8-Phase Workflow:**
+**7-Phase Workflow:**
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  1. VALIDATE (env)  →  2. DISCOVER (requirements)              │
@@ -121,6 +121,8 @@ The AI Agent Manager plugin provides **14 agent roles** (9 user-facing + 5 inter
 │  5. PACKAGE (brief)  →  5.5. PLAN REVIEW (mandatory gate)      │
 │         ↓                                                       │
 │  6. REFINE & SAVE (save on PASS or user-overridden NEEDS_HUMAN)│
+│         ↓                                                       │
+│  7. EMIT LAUNCH_PAD_RESULT (non-interactive, always runs)       │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -146,9 +148,9 @@ $ /launch-pad goal: "add JWT authentication"
 - Attempts: 1/3
 
 ## Phase 6: SAVE
-Brief saved: .supervisor/jobs/2026-02-08-jwt-auth.md
+Brief saved: .supervisor/jobs/pending/2026-02-08-jwt-auth.md
 
-To execute: /supervisor job: .supervisor/jobs/2026-02-08-jwt-auth.md
+To execute: /supervisor job: .supervisor/jobs/pending/2026-02-08-jwt-auth.md
 ```
 
 **When to Use:**
@@ -228,7 +230,7 @@ project-BD-15c/             ← worktree for Worker C
 **State Management:**
 - State externalized to `.supervisor/` directory (auto-created, gitignored)
 - Context-Keeper manages all state mutations
-- Supervisor budget: 30 tool calls; Execute Manager budget: 60 tool calls
+- Supervisor budget: 50 tool calls (including Phase 4.5); Execute Manager budget: 60 tool calls
 - Cross-session resume from `.supervisor/state.md`
 
 **Example Session:**
