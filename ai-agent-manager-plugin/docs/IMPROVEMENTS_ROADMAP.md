@@ -347,7 +347,7 @@ Update `README.md` to position Supervisor as "what you need when `/batch` isn't 
 ### 16. Add Supervisor `maxTurns`
 
 **What's happening now:**
-Supervisor has no `maxTurns` in frontmatter. It relies on its internal "50 tool call budget" documented in the prompt text. But `maxTurns` is enforced by Claude Code infrastructure — without it, the Supervisor could theoretically run indefinitely if its self-tracking fails.
+**Resolved — `supervisor.md` frontmatter now carries `maxTurns: 60`** (historically it had none and relied solely on its internal tool-call budget). But `maxTurns` is enforced by Claude Code infrastructure — without it, the Supervisor could theoretically run indefinitely if its self-tracking fails.
 
 **Performance impact:** PREVENTS runaway agents. If Supervisor's internal budget tracking fails (LLM hallucination), `maxTurns` is the hard stop. Without it, a stuck Supervisor burns tokens indefinitely.
 

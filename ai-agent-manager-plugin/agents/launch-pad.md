@@ -545,7 +545,7 @@ Check all 14 review criteria. Output a PLAN_REVIEW_RESULT block.",
 3. If Plan Review returned PASS: use `AskUserQuestion` with 4 options:
    - **"Save and exit"** — Write brief to `.supervisor/jobs/pending/{date}-{slug}.md`, output `/supervisor job: {path}` command
    - **"Refine further"** — Ask clarifying questions, update sections, then **re-run Plan Review before save** (consumes an attempt from the shared 3-spawn cap; the PASS is void once the brief is mutated)
-   - **"Edit sections"** — User specifies what to change, update in-place, then **re-run Plan Review before save** (same rule: any post-PASS mutation voids the PASS and requires re-review; consumes an attempt from the shared cap)
+   - **"Edit sections"** — User specifies what to change, update in-place, then **re-run Plan Review before save** (same rule: any post-PASS mutation voids the PASS and requires re-review; consumes an attempt from the shared cap). **Corner case:** if the PASS landed on the 3rd (final) spawn, no attempts remain — "Refine further"/"Edit sections" are not offered; only "Save and exit" (the unmutated PASSed brief) or "Discard"
    - **"Discard"** — Cancel without saving
 4. If Plan Review returned FAIL (after 3 attempts — the cap is exhausted): use `AskUserQuestion` with 2 options. **FAIL never enables save**, and the 3-spawn cap is never reset within a session:
    - **"Refine offline"** — Exit without saving (`status: blocked`); the user fixes the issues and starts a new Launch Pad session
