@@ -232,15 +232,22 @@ OUTPUT="$(printf '%s' "$PR_JSON" | jq -c \
   # [] on any fetch failure). A comment is a review COMMENT when the author looks like
   # a review bot AND the RAW body carries the review marker; it is a review ROUND only
   # when at least one commit lands AFTER it (created_at vs committedDate — both
-  # ISO-8601 UTC, so plain lexicographic string comparison is correct). Field accesses
-  # use the error-suppressing (…)? form: $comments is validated only as "some array".
+  # ISO-8601 UTC, so plain lexicographic string comparison is correct). $comments is
+  # validated only as "some array", so EVERY field access on a comment element is
+  # double-guarded: the error-suppressing (…)? form absorbs path-access errors
+  # (non-object parents) and `| strings` drops non-string VALUES so the // default
+  # kicks in. The (…)? form ALONE is not enough: a non-string value (e.g.
+  # {"user":{"login":123}}) exists and is truthy, survives //, and then type-errors
+  # in test()/gsub() — aborting the SINGLE jq invocation and turning the whole gather
+  # unavailable, which the header invariant forbids for any comments problem. With the
+  # strings guard a hostile-typed element degrades to a non-match instead.
   | ([ .commits[]? | ((.committedDate)? // "") | select(. != "") ]) as $commit_dates
   | ([ $comments[]?
-        | select( (((.user.login)? // "") | test(bot_author_re; "i"))
-                  and ((((.body)? // "") | gsub("[[:space:]]+"; "")) != "")
-                  and (((.body)? // "") | test(review_marker_re; "i")) ) ]) as $bot_review_comments_raw
+        | select( ((((.user.login)? | strings) // "") | test(bot_author_re; "i"))
+                  and (((((.body)? | strings) // "") | gsub("[[:space:]]+"; "")) != "")
+                  and ((((.body)? | strings) // "") | test(review_marker_re; "i")) ) ]) as $bot_review_comments_raw
   | ([ $bot_review_comments_raw[]
-        | ((.created_at)? // "") as $cat
+        | (((.created_at)? | strings) // "") as $cat
         | select( ($cat != "")
                   and ([ $commit_dates[] | select(. > $cat) ] | length > 0) ) ]) as $anchored_bot_rounds
   | ($anchored_bot_rounds | length) as $bot_round_count
@@ -249,7 +256,7 @@ OUTPUT="$(printf '%s' "$PR_JSON" | jq -c \
         | select(((.body // "") | gsub("[[:space:]]+"; "")) != "")
         | { author: (.author.login // "unknown"), snippet: ((.body // "") | snippet) } ]
      + [ $bot_review_comments_raw[]
-        | { author: ((.user.login)? // "unknown"), snippet: (((.body)? // "") | snippet) } ]) as $review_comments
+        | { author: (((.user.login)? | strings) // "unknown"), snippet: ((((.body)? | strings) // "") | snippet) } ]) as $review_comments
   # state fallthrough must skip empty strings, not just null: an in-progress CheckRun
   # has conclusion: "" (truthy in jq, so a bare // chain would stop there and surface
   # "" instead of falling through to .status == IN_PROGRESS).

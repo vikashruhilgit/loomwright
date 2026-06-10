@@ -39,6 +39,12 @@
 #   3e. comments-fetch degrade -> `gh pr view` succeeds but `gh api .../comments`
 #                     fails => success-shaped object (NOT unavailable), review_rounds
 #                     falls back to the two legacy signals, exit 0.
+#   3f. hostile-typed comment elements -> a VALID comments array containing elements
+#                     with non-string user.login/body/created_at values must NOT abort
+#                     the single jq invocation (NEVER unavailable because of comments,
+#                     element-level): hostile elements degrade to non-matches, the
+#                     well-formed bot comments still produce the same anchored
+#                     review_rounds as 3d, exit 0.
 #   4. injection-safety -> a title/body/review body with quotes/backslashes/newlines
 #                     round-trips as valid JSON (no parse break).
 #   5. unavailable (stub gh fails / PR inaccessible) -> {"status":"unavailable",...}, exit 0.
@@ -181,6 +187,32 @@ cat > "$FIX_BOTREVIEW_COMMENTS" <<'FIX'
 ]
 FIX
 
+# Hostile-typed comments fixture (3f): a VALID JSON array whose elements carry
+# non-string values where strings are expected. {"user":{"login":123}} survives a
+# bare ((.user.login)? // "") access — the value exists and is truthy, so // keeps
+# 123 — and then type-errors in test()/gsub(), aborting the gatherer's SINGLE jq
+# invocation => normalize_failed (unavailable), violating the
+# never-unavailable-from-comments invariant at the element level. The strings-guarded
+# accesses must instead degrade each hostile element to a non-match. Elements:
+#   - the fully hostile element (number login/body/created_at) — the abort repro;
+#   - a string `user` (path-access error on .user.login — the (…)? control case);
+#   - a marker-matching hostile[bot] comment whose created_at is a NUMBER — must NOT
+#     become a round (strings guard empties $cat, the anchor check drops it), though
+#     its well-typed body still lands in review_comments;
+#   - the 3 well-formed claude[bot] comments from 3d, so the anchored count (2) is
+#     still derivable from the surviving elements.
+FIX_BOTREVIEW_COMMENTS_HOSTILE="$TMP/fixture-botreview-comments-hostile.json"
+cat > "$FIX_BOTREVIEW_COMMENTS_HOSTILE" <<'FIX'
+[
+  {"user": {"login": 123}, "body": 456, "created_at": 789},
+  {"user": "just-a-string", "body": null, "created_at": "2026-01-01T09:45:00Z"},
+  {"user": {"login": "hostile[bot]"}, "created_at": 42, "body": "## Code Review — bad timestamp\n\nNon-string created_at must not anchor a round."},
+  {"user": {"login": "claude[bot]"}, "created_at": "2026-01-01T10:00:00Z", "body": "## Code Review — PR #42\n\nFindings below."},
+  {"user": {"login": "claude[bot]"}, "created_at": "2026-01-02T10:00:00Z", "body": "## Review round 2\n\nRemaining nits."},
+  {"user": {"login": "claude[bot]"}, "created_at": "2026-01-03T10:00:00Z", "body": "## Review round 3 — clean\n\nRecommend merge."}
+]
+FIX
+
 cat > "$FIX_INJECT" <<'FIX'
 {
   "number": 42,
@@ -215,6 +247,8 @@ FIX
 # pins the exact endpoint path — any other api path exits 1, exercising degrade):
 #   empty (default) — emit "[]" (no issue comments).
 #   comments        — cat the REST-shaped bot-review comments fixture (3d).
+#   hostile         — cat the hostile-typed comments fixture (3f): VALID array,
+#                     non-string user.login/body/created_at elements.
 #   fail            — exit 1 (comments endpoint failing — the degrade path, 3e).
 make_gh_stub() {
   local mode="$1" api_mode="${2:-empty}" fixture="" api_fixture=""
@@ -228,6 +262,7 @@ make_gh_stub() {
   esac
   case "$api_mode" in
     comments) api_fixture="$FIX_BOTREVIEW_COMMENTS" ;;
+    hostile)  api_fixture="$FIX_BOTREVIEW_COMMENTS_HOSTILE" ;;
   esac
   cat > "$BIN/gh" <<STUB
 #!/usr/bin/env bash
@@ -371,6 +406,32 @@ if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | jq -e '
   ok "comments fetch failure degrades to legacy signals: success shape, review_rounds==0, exit 0"
 else
   no "(3e) wrong (rc=$RUN_RC): $RUN_OUT"
+fi
+
+echo "== 3f. hostile-typed comment elements => success shape (NEVER unavailable from comments), anchored rounds intact =="
+make_gh_stub botreview hostile
+run_gather "$PR_URL"
+# The comments array is VALID but carries hostile-typed elements (non-string
+# user.login/body/created_at). Pre-fix, {"user":{"login":123}} survived the bare
+# ((.user.login)? // "") access and type-error-aborted the single jq invocation =>
+# {"status":"unavailable","reason":"normalize_failed"} — violating the
+# never-unavailable-from-comments invariant at the element level. With the
+# strings-guarded accesses every hostile element degrades to a non-match: the 3
+# well-formed claude[bot] comments still yield the same 2 anchored rounds as 3d; the
+# marker-matching hostile[bot] comment with a NUMBER created_at must NOT add a third
+# round (the strings guard empties $cat, so the anchor check drops it), though its
+# well-typed body still appears in review_comments alongside the 3 claude[bot] ones.
+if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | jq -e '
+    (has("status") | not)
+    and .repo=="acme/widgets" and .number==42
+    and (.review_rounds == 2)
+    and (.review_comments | length)==4
+    and ([.review_comments[] | select(.author=="claude[bot]")] | length)==3
+    and ([.review_comments[] | select(.author=="hostile[bot]")] | length)==1
+  ' >/dev/null 2>&1; then
+  ok "hostile-typed comment elements degrade to non-matches: success shape, review_rounds==2 (number created_at not anchored), exit 0"
+else
+  no "(3f) wrong (rc=$RUN_RC): $RUN_OUT"
 fi
 
 echo "== 4. injection-safety => quotes/backslashes/newlines round-trip as valid JSON =="
