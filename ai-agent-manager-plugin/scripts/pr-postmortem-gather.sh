@@ -13,6 +13,7 @@
 #     "additions": 120, "deletions": 30, "changed_files": 5,
 #     "commits": [{"headline": "...", "is_review_fix": false}],
 #     "review_rounds": 3,
+#     "review_rounds_source": "fix_commits",
 #     "review_comments": [{"author": "...", "snippet": "..."}],
 #     "ci_checks": [{"name": "...", "state": "SUCCESS"}]
 #   }
@@ -70,13 +71,21 @@
 #     so without this signal review_rounds reads 0 on exactly the repos this analyzer
 #     targets (observed on PR #47: 0 review objects, 7 claude-bot review comments).
 #     Comments come from a SECOND, separate, best-effort, read-only fetch
-#     (`gh api repos/{owner}/{repo}/issues/{number}/comments`); on ANY failure of that
-#     fetch (non-zero exit, empty output, non-JSON, non-array) the script degrades to
-#     the two legacy signals and still emits the success shape — NEVER an unavailable
-#     emit because of comments. Using the max avoids undercounting when one signal is
-#     absent; caveats: several fix commits inside a single round can still overcount,
-#     as can two reviewers requesting changes within one logical round (distinct
-#     submittedAt) — accepted noise for a trend signal.
+#     (`gh api repos/{owner}/{repo}/issues/{number}/comments?per_page=100`); on ANY
+#     failure of that fetch (non-zero exit, empty output, non-JSON, non-array) the
+#     script degrades to the two legacy signals and still emits the success shape —
+#     NEVER an unavailable emit because of comments. The fetch is a bounded single
+#     page (per_page=100, oldest-first; REST default would be 30): bot rounds past
+#     comment #100 are dropped — accepted noise (`--paginate` would emit concatenated
+#     arrays and break the single-value --argjson parse, silently degrading to []).
+#     Using the max avoids undercounting when one signal is absent; caveats: several
+#     fix commits inside a single round can still overcount, as can two reviewers
+#     requesting changes within one logical round (distinct submittedAt) — accepted
+#     noise for a trend signal.
+#   review_rounds_source — names the dominant signal behind review_rounds:
+#     "fix_commits" | "formal_reviews" | "bot_comments" | "none" (none when
+#     review_rounds is 0; ties resolve in that order — the listed source is the
+#     first signal whose count equals the max).
 
 set -uo pipefail
 # Intentionally NO `set -e`: the fail-safe JSON emit must never be aborted mid-stream.
@@ -160,7 +169,7 @@ printf '%s' "$PR_JSON" | jq -e . >/dev/null 2>&1 || emit_unavailable "pr_inacces
 # degrades to '[]' so review_rounds falls back to the two legacy signals (review-fix
 # commit headlines + formal churn-review submissions). A comments problem must NEVER
 # turn the whole gather into an unavailable emit.
-COMMENTS_JSON="$("$GH_BIN" api "repos/$REPO/issues/$NUMBER/comments" 2>/dev/null)" || COMMENTS_JSON='[]'
+COMMENTS_JSON="$("$GH_BIN" api "repos/$REPO/issues/$NUMBER/comments?per_page=100" 2>/dev/null)" || COMMENTS_JSON='[]'
 [ -n "$COMMENTS_JSON" ] || COMMENTS_JSON='[]'
 printf '%s' "$COMMENTS_JSON" | jq -e 'type=="array"' >/dev/null 2>&1 || COMMENTS_JSON='[]'
 
@@ -252,6 +261,12 @@ OUTPUT="$(printf '%s' "$PR_JSON" | jq -c \
                   and ([ $commit_dates[] | select(. > $cat) ] | length > 0) ) ]) as $anchored_bot_rounds
   | ($anchored_bot_rounds | length) as $bot_round_count
   | ([ $review_fix_count, $review_ts_count, $bot_round_count ] | max) as $review_rounds
+  # Dominant signal behind review_rounds; ties resolve fix_commits > formal_reviews
+  # > bot_comments (first signal whose count equals the max), "none" when 0.
+  | (if $review_rounds == 0 then "none"
+     elif $review_fix_count == $review_rounds then "fix_commits"
+     elif $review_ts_count == $review_rounds then "formal_reviews"
+     else "bot_comments" end) as $review_rounds_source
   | ([ .reviews[]?
         | select(((.body // "") | gsub("[[:space:]]+"; "")) != "")
         | { author: (.author.login // "unknown"), snippet: ((.body // "") | snippet) } ]
@@ -279,6 +294,7 @@ OUTPUT="$(printf '%s' "$PR_JSON" | jq -c \
       changed_files: (.changedFiles // 0),
       commits: $commits,
       review_rounds: $review_rounds,
+      review_rounds_source: $review_rounds_source,
       review_comments: $review_comments,
       ci_checks: $ci_checks
     }

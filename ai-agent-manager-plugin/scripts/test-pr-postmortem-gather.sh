@@ -274,8 +274,11 @@ if [ "\${1:-}" = "pr" ] && [ "\${2:-}" = "view" ]; then
 fi
 if [ "\${1:-}" = "api" ]; then
   if [ "$api_mode" = "fail" ]; then exit 1; fi
+  # Pinned endpoint INCLUDING the bounded-page query: a fetch without ?per_page=100
+  # (REST default 30 — silently drops bot rounds on heavy-churn PRs) exits 1 and
+  # degrades, which 3d/3f catch via their review_rounds==2 assertions.
   case "\${2:-}" in
-    repos/acme/widgets/issues/42/comments) : ;;
+    'repos/acme/widgets/issues/42/comments?per_page=100') : ;;
     *) exit 1 ;;
   esac
   if [ -n "$api_fixture" ]; then cat "$api_fixture"; exit 0; fi
@@ -334,11 +337,12 @@ if printf '%s' "$RUN_OUT" | jq -e '
     and ([.commits[] | select(.is_review_fix)] | length)==1
     and (.commits[1].is_review_fix==true)
     and (.review_rounds == 1)
+    and (.review_rounds_source == "fix_commits")
     and (.review_comments | length)==2
     and (.ci_checks | length)==3
     and (.ci_checks[2].state=="IN_PROGRESS")
   ' >/dev/null 2>&1; then
-  ok "heuristics: agent guess true, 1 review-fix commit, review_rounds==1 (approval not counted), 2 review_comments, in-progress CheckRun (conclusion:\"\") maps to IN_PROGRESS"
+  ok "heuristics: agent guess true, 1 review-fix commit, review_rounds==1 (approval not counted, source fix_commits wins the tie), 2 review_comments, in-progress CheckRun (conclusion:\"\") maps to IN_PROGRESS"
 else
   no "(3) wrong: $RUN_OUT"
 fi
@@ -350,8 +354,9 @@ if printf '%s' "$RUN_OUT" | jq -e '
     .agent_generated_guess==false
     and ([.commits[] | select(.is_review_fix)] | length)==0
     and (.review_rounds == 0)
+    and (.review_rounds_source == "none")
   ' >/dev/null 2>&1; then
-  ok "human PR: agent guess false despite utf-8/sha-256 subjects, review_rounds==0 with approval-only review"
+  ok "human PR: agent guess false despite utf-8/sha-256 subjects, review_rounds==0 (source none) with approval-only review"
 else
   no "(3b) wrong: $RUN_OUT"
 fi
@@ -380,6 +385,7 @@ run_gather "$PR_URL"
 # all 3 marker-matching bot review comments (snippets are context, rounds are counts).
 if printf '%s' "$RUN_OUT" | jq -e '
     (.review_rounds == 2)
+    and (.review_rounds_source == "bot_comments")
     and ([.commits[] | select(.is_review_fix)] | length)==0
     and (.review_comments | length)==3
     and ([.review_comments[] | select(.author=="claude[bot]")] | length)==3
@@ -401,9 +407,10 @@ if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | jq -e '
     (has("status") | not)
     and .repo=="acme/widgets" and .number==42
     and (.review_rounds == 0)
+    and (.review_rounds_source == "none")
     and (.review_comments | length)==0
   ' >/dev/null 2>&1; then
-  ok "comments fetch failure degrades to legacy signals: success shape, review_rounds==0, exit 0"
+  ok "comments fetch failure degrades to legacy signals: success shape, review_rounds==0 (source none), exit 0"
 else
   no "(3e) wrong (rc=$RUN_RC): $RUN_OUT"
 fi
@@ -425,6 +432,7 @@ if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | jq -e '
     (has("status") | not)
     and .repo=="acme/widgets" and .number==42
     and (.review_rounds == 2)
+    and (.review_rounds_source == "bot_comments")
     and (.review_comments | length)==4
     and ([.review_comments[] | select(.author=="claude[bot]")] | length)==3
     and ([.review_comments[] | select(.author=="hostile[bot]")] | length)==1
