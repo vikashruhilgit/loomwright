@@ -264,11 +264,12 @@ Step 2: EVALUATE ROUTE COVERAGE
   Check for blocking bugs (BLOCKING severity)
   Check discovery confidence level
   Compute quality_score:
-    quality_score = (coverage_weighted * 0.6) + (pass_rate * 0.3) + (discovery_confidence_numeric * 0.1)
-    where discovery_confidence_numeric: HIGH=1.0, MEDIUM=0.6, LOW=0.3
-    Units: all three inputs are expressed as 0-100 percentages (multiply ratios by 100
-    first; discovery_confidence_numeric scales to 100/60/30), so quality_score is 0-100 —
-    matching STRATEGIST_VERDICT's quality_score: {0-100} contract.
+    quality_score = (coverage_weighted * 100 * 0.6) + (pass_rate * 100 * 0.3) + (discovery_confidence_numeric * 0.1)
+    where discovery_confidence_numeric: HIGH=100, MEDIUM=60, LOW=30
+    Units: coverage_weighted and pass_rate are 0-1 ratios (per the qa-strategy skill's
+    risk_score formula) multiplied to the 0-100 scale inline, and the confidence
+    constants are already on that scale — so quality_score is 0-100 with no mental
+    rescale step, matching STRATEGIST_VERDICT's quality_score: {0-100} contract.
 
 Step 3: EVALUATE INTERACTION DEPTH (functional depth only)
   For each HIGH risk route, check if tests exercise discovered interactions:
