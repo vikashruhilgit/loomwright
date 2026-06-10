@@ -117,7 +117,7 @@ They would demand: Token revocation mechanism — it doesn't exist.
 | 2 | Remove secret logging | Credential leak | 15 min |
 | 3 | Add token revocation (Redis blocklist) | Persistent compromise | 4 hours |
 
-## Save Findings?
+## Report Delivery
 Full report rendered above — save it as AUDIT-REPORT.md if you want a file copy.
 ```
 
