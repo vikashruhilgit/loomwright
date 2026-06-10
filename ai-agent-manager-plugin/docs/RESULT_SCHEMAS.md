@@ -1007,7 +1007,8 @@ harness** (the deferred M2b part-2b headless-`claude` evaluator).
 - `agent_generated_guess` — boolean; best-effort agent-PR heuristic (from gather).
 - `review_rounds` — integer; total review-and-fix rounds (from gather). The gather derives it as the
   MAX of three signals: review-fix commit headlines, formal churn-review submissions, and
-  **bot-authored issue-comment review rounds** (a comment whose author ends with `[bot]` and whose body
+  **bot-authored issue-comment review rounds** (a comment from a review-bot author — login `claude`,
+  `github-actions*`, or any `*[bot]` — whose body
   carries a review marker — e.g. a "Code Review" heading — followed by at least one later push). The
   third signal covers repos whose review feedback arrives as CI-workflow comments (e.g. `claude[bot]`)
   instead of GitHub review objects, which previously left this field at 0 despite real churn. The

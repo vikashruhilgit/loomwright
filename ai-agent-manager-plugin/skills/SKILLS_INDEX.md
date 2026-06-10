@@ -23,7 +23,7 @@ Comprehensive index of all skills available in the AI Agent Manager plugin.
 | Autonomous Loop | `autonomous-loop/` | `/autonomous` (slash command, reference) | ~2,400 [^al-tokens] | 1.2.1 | 2026-05-31 |
 | Review Heal | `review-heal/` | `review-pr-runner` (preload), `/review-pr` + Supervisor + `/autonomous` (reference) | ~1,400 | 1.0.0 | 2026-06-06 |
 | Self-Heal Advisory | `self-heal-advisory/` | Supervisor (on-demand Read at Phase 4.5 entry — deliberately NOT preloaded) | ~2,000 | 1.0.0 | 2026-06-10 |
-| PR Postmortem | `pr-postmortem/` | `/pr-postmortem` (slash command, reference) | ~1,400 | 1.1.0 | 2026-06-10 |
+| PR Postmortem | `pr-postmortem/` | `/pr-postmortem` (slash command, reference) | ~1,400 | 1.1.0 | 2026-06-11 |
 
 [^al-tokens]: The `autonomous-loop` skill is intentionally larger than the other reference-category skills (~500–600 tokens). It encodes the full `/autonomous` orchestration protocol (loop phases, EVALUATE branching, signal-extraction algorithms, refined-requirement templates, `AUTONOMOUS_RUN` summary format, failure-modes table) — comprehensive by design because it is the single source of truth for the loop's behavior, read at runtime by the main thread via Step 0. Splitting it across smaller files would fragment the protocol and risk drift; the trade-off is the higher token cost on the one slash command that loads it.
 
