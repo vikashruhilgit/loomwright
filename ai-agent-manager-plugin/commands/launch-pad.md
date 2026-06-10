@@ -36,7 +36,7 @@ The Launch Pad agent prepares raw goals for autonomous Supervisor execution. It 
 
 ## What This Does
 
-The Launch Pad executes an **8-phase readiness workflow** (Phases 1–6 plus sub-gates 2.5 and 5.5), followed by a non-interactive **Phase 7** that emits the `LAUNCH_PAD_RESULT` block for programmatic consumers like `/autonomous` (new in v14.2.0):
+The Launch Pad executes a **9-phase readiness workflow** (Phases 1–6 plus sub-gates 2.5 and 5.5, and the non-interactive **Phase 7** that emits the `LAUNCH_PAD_RESULT` block for programmatic consumers like `/autonomous`, new in v14.2.0):
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -63,7 +63,7 @@ The Launch Pad executes an **8-phase readiness workflow** (Phases 1–6 plus sub
 │     └─> Supervisor-Ready Brief with all sections                │
 │                                                                 │
 │  Phase 5.5: PLAN REVIEW (Mandatory Gate)                        │
-│     └─> Plan Reviewer validates brief (max 3 retries on FAIL)   │
+│     └─> Plan Reviewer validates brief (max 3 spawns/session)    │
 │                                                                 │
 │  Phase 6: REFINE & SAVE (Interactive)                           │
 │     └─> Save (on PASS or user override) / Refine / Discard      │
@@ -118,7 +118,7 @@ The Supervisor's 800-token context budget gets consumed by Phases 0-2 (planning)
 - Recommended workers: 2
 
 ## Handoff
-/supervisor job: .supervisor/jobs/2026-02-08-jwt-auth.md
+/supervisor job: .supervisor/jobs/pending/2026-02-08-jwt-auth.md
 ```
 
 ## Interactive Refinement
@@ -128,11 +128,12 @@ After the brief passes Plan Review (Phase 5.5), Launch Pad presents options:
 | Option | When Available |
 |--------|---------------|
 | **Save and exit** | After PASS, or after explicit user override on NEEDS_HUMAN |
-| **Refine further** | Always (loops back to fix issues) |
-| **Edit sections** | Always (you specify changes, Launch Pad updates in-place) |
+| **Refine further** | While the shared 3-spawn Plan Review cap is not exhausted — any post-PASS refinement voids the PASS and re-runs Plan Review, consuming an attempt |
+| **Edit sections** | Same rule: in-place edits void a prior PASS and re-run Plan Review (consumes an attempt) |
+| **Refine offline** | After FAIL × 3 — exit without saving (`status: blocked`), fix the issues, start a new Launch Pad session |
 | **Discard** | Always (cancels without saving) |
 
-**Note:** "Save and exit" is disabled when Plan Review returns FAIL (even after 3 retries). You must refine the brief until it passes.
+**Note:** "Save and exit" is disabled when Plan Review returns FAIL — FAIL never enables save, and the 3-spawn cap is never reset within a session. After FAIL × 3 the only options are "Refine offline" or "Discard".
 
 ## How to Use
 
@@ -159,7 +160,7 @@ After the brief passes Plan Review (Phase 5.5), Launch Pad presents options:
 
 ```bash
 # In a NEW Claude Code session (clean context):
-/supervisor job: .supervisor/jobs/2026-02-08-jwt-auth.md
+/supervisor job: .supervisor/jobs/pending/2026-02-08-jwt-auth.md
 ```
 
 ## Workflow Positioning
@@ -169,7 +170,7 @@ After the brief passes Plan Review (Phase 5.5), Launch Pad presents options:
     ↓
 Validates environment, checks feasibility, analyzes codebase, decomposes subtasks
     ↓
-Plan Reviewer validates brief (mandatory gate, max 3 retries)
+Plan Reviewer validates brief (mandatory gate, max 3 spawns per session)
     ↓
 .supervisor/jobs/pending/{date}-{slug}.md  (Supervisor-Ready Brief)
     ↓
@@ -236,7 +237,7 @@ EXECUTE → FINALIZE → PR
 
 ## See Also
 
-- `agents/launch-pad.md` — Full agent prompt (8-phase readiness model + non-interactive Phase 7 `LAUNCH_PAD_RESULT` emission)
+- `agents/launch-pad.md` — Full agent prompt (9-phase readiness model incl. non-interactive Phase 7 `LAUNCH_PAD_RESULT` emission)
 - `agents/plan-reviewer.md` — Plan Reviewer agent (validates briefs in Phase 5.5)
 - `skills/supervisor-readiness/SKILL.md` — Pre-flight checklist, brief template, jobs convention
 - `skills/product-discovery/SKILL.md` — Discovery framework
@@ -259,7 +260,6 @@ EXECUTE → FINALIZE → PR
 
 # Launch Pad Agent Prompt
 
-**Include the Shared Preamble from `agents/prompts.md` before this role prompt.**
 
 ---
 
@@ -322,7 +322,7 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 
 ---
 
-## 8-Phase Workflow
+## 9-Phase Workflow
 
 ### Phase 1: VALIDATE (Environment Readiness)
 
@@ -388,11 +388,11 @@ Run 5 grounded checks (CLAUDE.md + grep/glob/read), output GO/CAUTION/NO-GO:
 ### Phase 5.5: PLAN REVIEW (Mandatory Gate)
 
 1. Spawn Plan Reviewer subagent with brief + CLAUDE.md context
-2. Plan Reviewer checks 11 criteria (file paths, patterns, dependencies, parallelism, optional Feasibility section, etc.) — Criterion 11 is conditional (only runs if Feasibility section present)
+2. Plan Reviewer checks all 14 criteria (file paths, patterns, dependencies, parallelism, subtask contracts, etc.) — Criteria 11, 13, and 14 are conditional (skip silently when their gating section/field is absent); Criterion 12 requires `provides:`/`requires:` contracts unless `legacy_brief: true`
 3. Decision handling:
    - PASS → proceed to Phase 6 (save enabled)
    - FAIL (attempt < 3) → fix issues, re-assemble, re-spawn reviewer
-   - FAIL (attempt = 3) → present issues, offer "Refine further" or "Discard" (no save)
+   - FAIL (attempt = 3) → present issues, offer "Refine offline" (exit, `status: blocked`) or "Discard" (no save; the 3-spawn cap is never reset within a session)
    - NEEDS_HUMAN → present issues, offer "Override and save" or "Refine further" or "Discard"
 
 ### Phase 6: REFINE & SAVE (Interactive)

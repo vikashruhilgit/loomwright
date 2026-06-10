@@ -22,7 +22,7 @@ The Supervisor agent v4 autonomously manages the complete development workflow. 
 /supervisor --continue                         # Resume from last checkpoint
 /supervisor --continue task: BD-XX             # Resume specific task
 /supervisor --dry-run                          # Preview workflow without executing
-/supervisor job: .supervisor/jobs/2026-02-08-jwt-auth.md   # Execute from Launch Pad brief
+/supervisor job: .supervisor/jobs/pending/2026-02-08-jwt-auth.md   # Execute from Launch Pad brief
 /supervisor --skip-self-heal                   # Skip Phase 4.5 review+fix loop (emergency bypass)
 /supervisor --heal-iterations 5                # Allow up to 5 fix iterations before escalating (default 3)
 /supervisor --cheap                            # Cost-optimized: orchestrator, execute-manager, workers, code-reviewer, fix tasks run on Sonnet
@@ -97,7 +97,7 @@ The Supervisor executes a **7-phase parallel workflow**:
 ### Architecture
 
 ```
-SUPERVISOR (pure orchestrator, budget: 30 tool calls)
+SUPERVISOR (pure orchestrator, budget: 50 tool calls)
     ├─> Context-Keeper (blocking, state mutations)
     ├─> Product Owner (blocking, if vague requirements)
     ├─> Orchestrator (blocking, task decomposition)
@@ -247,16 +247,16 @@ The Supervisor saves checkpoints after every phase transition:
 
 The Supervisor uses externalized state and tool call budgets:
 
-- **Supervisor:** 30 tool call budget (~400 tokens context)
+- **Supervisor:** 50 tool call budget (~400 tokens context)
 - **Execute Manager:** 60 tool call budget (isolated context for Phase 3)
 - **State file:** Full session state managed by Context-Keeper
 - **Workers:** Run in background with their own isolated context
 - **Reviewers:** Run in background with their own isolated context
 
 **Tool call thresholds (Supervisor):**
-- 0-18 (60%): GREEN — normal operation
-- 18-24 (80%): YELLOW — aggressive compression, force checkpoint
-- 24-28 (93%): RED — checkpoint + exit with resume command
+- 0-30 (60%): GREEN — normal operation
+- 30-40 (80%): YELLOW — aggressive compression, force checkpoint
+- 40-46 (92%): RED — checkpoint + exit with resume command
 
 ## Parallel vs Sequential
 
@@ -335,7 +335,7 @@ For complex tasks, use Launch Pad to plan and Supervisor to execute:
 # Choose: Save / Refine / Edit / Discard
 
 # 3. Execute in a fresh session (clean context, ~500 tokens freed)
-/supervisor job: .supervisor/jobs/2026-02-08-jwt-auth.md
+/supervisor job: .supervisor/jobs/pending/2026-02-08-jwt-auth.md
 ```
 
 **Benefits:**

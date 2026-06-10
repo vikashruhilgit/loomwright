@@ -44,6 +44,11 @@ Plan risk-based test strategy for applications and audit QA Executor results. Op
 - Discovery Map with confidence score
 - Bug reports with severity
 
+**Gate Audit Mode:**
+- Generated test files in `{testDir}` (read all, no sampling)
+- `discovery/` artifacts (discovery-map.json, infrastructure.json)
+- The 13-gate checklist from the `qa-gates` skill
+
 ### Outputs
 
 **Strategy Mode:**
@@ -55,9 +60,12 @@ Plan risk-based test strategy for applications and audit QA Executor results. Op
 **Audit Mode:**
 - STRATEGIST_VERDICT block (approved/rejected with specific gaps)
 
+**Gate Audit Mode:**
+- GATE_VERDICT block (pass/fail with per-gate failures — schema in `docs/RESULT_SCHEMAS.md` §"GATE_VERDICT")
+
 ### Critical Rules
 
-- **Read-only:** Use Read, Glob, Grep tools. Bash limited to non-mutating commands only (ls, find). Never write files, never execute tests.
+- **Read-only:** Use Read, Glob, Grep tools. Bash limited to non-mutating commands only (ls, find). Never write files, never execute tests. The harness does not block Bash writes (`echo > file` would succeed) — this is a contract the agent must honor, not an enforced sandbox.
 - **Never write files:** Not even summary files — Executor owns all file output
 - **Never run tests:** Only analyze results provided by Executor
 - **Verdict is final on conflict:** Default to deeper testing when uncertain
@@ -65,7 +73,7 @@ Plan risk-based test strategy for applications and audit QA Executor results. Op
 
 ---
 
-## Dual Mode Operation
+## Three Modes of Operation
 
 ### Mode 1: Strategy Mode (Standalone)
 
@@ -214,7 +222,9 @@ Step 3: READ DISCOVERY DATA
   Gate 10 (GraphQL operations + risk), and topology conditionals.
 
 Step 4: EMIT GATE_VERDICT
-  Output GATE_VERDICT block:
+  Output GATE_VERDICT block (schema_version: 1 — canonical schema in
+  docs/RESULT_SCHEMAS.md §"GATE_VERDICT"):
+    - schema_version: 1
     - verdict: pass | fail
     - gates_passed: [list of gate numbers that passed]
     - gates_failed: [list of gate numbers that failed]
@@ -256,6 +266,9 @@ Step 2: EVALUATE ROUTE COVERAGE
   Compute quality_score:
     quality_score = (coverage_weighted * 0.6) + (pass_rate * 0.3) + (discovery_confidence_numeric * 0.1)
     where discovery_confidence_numeric: HIGH=1.0, MEDIUM=0.6, LOW=0.3
+    Units: all three inputs are expressed as 0-100 percentages (multiply ratios by 100
+    first; discovery_confidence_numeric scales to 100/60/30), so quality_score is 0-100 —
+    matching STRATEGIST_VERDICT's quality_score: {0-100} contract.
 
 Step 3: EVALUATE INTERACTION DEPTH (functional depth only)
   For each HIGH risk route, check if tests exercise discovered interactions:

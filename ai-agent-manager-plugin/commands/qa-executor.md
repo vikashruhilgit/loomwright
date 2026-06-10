@@ -18,7 +18,7 @@ Task(
 
 **DO NOT** attempt to execute the QA Executor protocol yourself.
 **DO NOT** delegate to Explore agents for discovery.
-The QA Executor agent has its own tools, budget tracking, and 13-phase protocol.
+The QA Executor agent has its own tools, budget tracking, and multi-phase Level 1 protocol.
 
 ---
 

@@ -1,7 +1,7 @@
 # Result Schemas
 
 > Strict contracts for all agent result blocks. Hooks validate against these schemas.
-> All schemas include a `schema_version` field for forward compatibility. Current versions: CODE_REVIEW_RESULT at `schema_version: 3` (review modes + consistency audit; v2 accepted for legacy); WORKER_RESULT at `schema_version: 2` (outputs_verified contract; v1 accepted for the v12.0.0 transition window); AUTONOMOUS_RUN at `schema_version: 2` (v14.0.0 status_reason extension; v1 accepted, no hook validation); LAUNCH_PAD_RESULT at `schema_version: 1` (added v14.2.0, validated by `scripts/validate-launch-pad-result.py`); REVIEW_HEAL_RESULT at `schema_version: 1` (added v14.16.0, no hook validator — runner is the main agent of its own session); EVAL_RESULT at `schema_version: 1` (added v14.17.0, the System Twin eval instrument emitted by `scripts/run-eval.sh`, no hook validator — standalone script); GROUND_TRUTH_JSON at `schema_version: 1` (added v14.19.0, the System Twin ground-truth instrument emitted by `scripts/run-ground-truth.sh`, no hook validator — standalone script; consumed advisory-only by Supervisor Phase 4.5); POSTMORTEM_RESULT at `schema_version: 1` (added v14.22.0, the advisory PR review-churn trend line appended by `/pr-postmortem` to `.supervisor/postmortem/results.jsonl`, no hook validator); all others at `schema_version: 1`.
+> All schemas include a `schema_version` field for forward compatibility. Current versions: CODE_REVIEW_RESULT at `schema_version: 3` (review modes + consistency audit; v2 accepted for legacy); WORKER_RESULT at `schema_version: 2` (outputs_verified contract; v1 accepted for the v12.0.0 transition window); AUTONOMOUS_RUN at `schema_version: 2` (v14.0.0 status_reason extension; v1 accepted, no hook validation); LAUNCH_PAD_RESULT at `schema_version: 1` (added v14.2.0, validated by `scripts/validate-launch-pad-result.py`); REVIEW_HEAL_RESULT at `schema_version: 1` (added v14.16.0, no hook validator — runner is the main agent of its own session); EVAL_RESULT at `schema_version: 1` (added v14.17.0, the System Twin eval instrument emitted by `scripts/run-eval.sh`, no hook validator — standalone script); GROUND_TRUTH_JSON at `schema_version: 1` (added v14.19.0, the System Twin ground-truth instrument emitted by `scripts/run-ground-truth.sh`, no hook validator — standalone script; consumed advisory-only by Supervisor Phase 4.5); POSTMORTEM_RESULT at `schema_version: 1` (added v14.22.0, the advisory PR review-churn trend line appended by `/pr-postmortem` to `.supervisor/postmortem/results.jsonl`, no hook validator); GATE_VERDICT at `schema_version: 1` (Strategist↔Executor gate-audit handoff, no hook validator); RED_TEAM_RESULT at `schema_version: 1` (advisory audit tail, no hook validator); all others at `schema_version: 1`.
 
 > **API-level enforcement:** When using the Claude API directly (outside Claude Code), enforce these schemas via `output_config.format` (JSON Schema mode) for guaranteed conformance — the model is constrained to produce schema-valid output before the response is returned. Plugin hook validation (the `SubagentStop` hooks defined in `hooks.json`) is the runtime fallback validator inside Claude Code, where `output_config` is not available to plugin agents. See `AGENT_GUIDELINES.md` §"Structured Outputs" and the Anthropic API reference for the exact field name in your SDK version.
 
@@ -16,7 +16,7 @@ WORKER_RESULT:
   schema_version: 2                    # integer, required — v2 adds outputs_verified + outputs_gap (v1 still accepted during the v12.0.0 transition window)
   task_id: string                      # required — subtask identifier (e.g., "BD-15a" or "add-auth-guard")
   status: enum [completed, failed, partial]  # required
-  files_modified: string[]             # required — non-empty when status=completed
+  files_modified: string[]             # required — when status=completed, at least one of files_modified/files_created must be non-empty
   files_created: string[]              # optional — new files created
   tests_added: string[]                # optional — test files added or modified
   tests_passed: boolean                # optional — true if all tests pass
@@ -35,7 +35,7 @@ WORKER_RESULT:
 - `schema_version` must equal `2`
 - `task_id` must be non-empty string
 - `status` must be one of: `completed`, `failed`, `partial`
-- When `status=completed`: `files_modified` must be non-empty array
+- When `status=completed`: at least one of `files_modified` or `files_created` must be non-empty (create-only subtasks are valid)
 - When `status=failed`: `error` must be present and non-empty
 - `summary` must be present and under 200 tokens
 - `outputs_verified` must be present (may be `[]` only when the brief promised no concrete outputs); each entry must have `kind`, `path`, `status`; entries with `kind ∈ {symbol, type}` must include `name`
@@ -102,7 +102,7 @@ Produced by Execute Manager when all subtasks are completed.
 ```yaml
 EXECUTE_RESULT:
   schema_version: 1                    # integer, required — always 1
-  subtasks_completed: object[]         # required — non-empty array
+  subtasks_completed: object[]         # required — may be empty ONLY when subtasks_failed is non-empty (all-failed escalation)
     - task_id: string                  # subtask identifier
       status: completed                # always "completed" in this array
       branch: string                   # worktree branch name
@@ -125,8 +125,8 @@ EXECUTE_RESULT:
 
 **Validation rules:**
 - `schema_version` must equal `1`
-- `subtasks_completed` must be non-empty array (at least one subtask succeeded)
-- `merge_order` must be non-empty array matching completed subtask branches
+- `subtasks_completed` must be present; it may be an empty array ONLY when `subtasks_failed` is non-empty and `summary` records the escalation (all-failed case)
+- `merge_order` must match completed subtask branches (empty when `subtasks_completed` is empty)
 - `worktrees` must be non-empty array with valid paths
 - `summary` must be present
 
@@ -224,7 +224,7 @@ SUPERVISOR_RESULT:
   heal_iterations: integer | null      # required — number of fix iterations that ran; null when heal_loop_ran=false
   heal_decision: enum [PASS, ESCALATED] | null  # required — null when heal_loop_ran=false (phase transition and completion tail always run; only the review-and-fix loop is gated, so no decision is produced when skipped)
   heal_fixable_issues_fixed: integer   # required — count of new+BLOCKING/HIGH issues auto-fixed across all iterations; 0 when heal_loop_ran=false
-  heal_remaining_issues: integer       # required — count of new+BLOCKING/HIGH issues still unresolved in final review; 0 when heal_loop_ran=false or heal_decision=PASS
+  heal_remaining_issues: integer       # required — count of new+BLOCKING/HIGH issues still unresolved in final review; 0 when heal_loop_ran=false or heal_decision=PASS; may be 0 with heal_decision=ESCALATED only when error is non-empty (thrash escalation)
   error: string | null                 # conditional — required when status=failed
   summary: string                      # required — concise session summary
   cost_profile: enum [default, cheap] | null  # optional — null when flag not passed (equivalent to default)
@@ -276,7 +276,7 @@ SUPERVISOR_RESULT:
 - When `heal_loop_ran=true`: `heal_decision` must be one of `[PASS, ESCALATED]` (NOT `SKIPPED` — skipping corresponds to `heal_loop_ran=false`), `heal_iterations` must be a non-negative integer
 - `heal_fixable_issues_fixed` and `heal_remaining_issues` must be non-negative integers
 - `heal_remaining_issues=0` when `heal_decision=PASS` (PASS means no BLOCKING/HIGH new issues remain)
-- `heal_remaining_issues>=1` when `heal_decision=ESCALATED`
+- when `heal_decision=ESCALATED`: `heal_remaining_issues>=1` OR `error` non-empty (the resume-thrash escalation path legitimately reports 0 known remaining issues with `error: "self_heal_resume_thrash"`)
 - `summary` must be present
 - `rubric_score` is optional (additive in v12.2.0, schema version unchanged at 1). When present, it MUST be either `null` or a string matching the format `"N/M"` where N is a non-negative integer (`>= 0` — `"0/M"` is the legitimate all-fail case where the grader ran but every rubric item failed), M is a positive integer (`>= 1` — there is no zero-item rubric), and M ≥ N. The two non-null forms have distinct meaning: `null` = grader did not run (no rubric in brief, `heal_decision != PASS`, or grader parse failure); `"0/M"` = grader ran and scored zero items. When absent, validators MUST treat it as `null`. The Supervisor SubagentStop hook MUST NOT reject a SUPERVISOR_RESULT solely for the presence or absence of `rubric_score`.
 - `branch_base` is optional (additive in v14.0.0, schema version unchanged at 1). When present, it MUST be either `null` or a non-empty string naming the declared Base Branch (e.g., `"main"`, `"feature/parent-iter"`). Absent OR `null` means the run targeted `"main"` by default. The Supervisor SubagentStop hook MUST NOT reject a SUPERVISOR_RESULT solely for the presence or absence of `branch_base` — v13 blocks without this field remain valid. Consumers reading the field MUST handle `null`/absent as equivalent to `"main"`.
@@ -634,7 +634,7 @@ agents_running: object[]               # currently spawned agents
   - agent_type: string                 # e.g., "worker", "code-reviewer"
     task_id: string
     started_at: timestamp
-self_heal_resume_count: integer        # optional — default 0; increments only on resumes that actually execute the code-reviewer Task in Phase 4.5 (first loop iteration), NOT on every --continue landing in SELF_HEAL. Phase 4.5 invariant-violation resumes (code-reviewer never invoked AND --skip-self-heal not set) deliberately do NOT increment, so they cannot age into a self_heal_resume_thrash escalation. Resets to 0 in the SELF_HEAL completion tail on the three completion exit paths (PASS, ESCALATED, or loop-skipped via --skip-self-heal); the invariant-violation guard (step 0) exits with status: failed before reaching the reset step and deliberately does NOT reset, preserving prior legitimate reviewer-reaching counts. Thrash guard: if the counter reaches 3, Supervisor aborts the loop and escalates with self_heal_resume_thrash reason. Lazy-added on first SELF_HEAL resume that runs the reviewer; mutated via record_self_heal_resume operation; read non-mutatively via query(section: session).
+self_heal_resume_count: integer        # optional — default 0; increments exactly once per --continue run, at Phase 4.5 entry (on-entry step 3 via record_self_heal_resume) — the single increment site. Repeated broken resumes therefore age into the self_heal_resume_thrash escalation after 3, which is intended: thrash is detected at entry, before the reviewer runs. Resets to 0 in the SELF_HEAL completion tail on the three completion exit paths (PASS, ESCALATED, or loop-skipped via --skip-self-heal); the invariant-violation guard (step 0) exits with status: failed before reaching the reset step and deliberately does NOT reset, preserving prior legitimate reviewer-reaching counts. Thrash guard: if the counter reaches 3, Supervisor aborts the loop and escalates with self_heal_resume_thrash reason. Lazy-added on the first --continue run landing in SELF_HEAL; mutated (and read from the returned count) via the record_self_heal_resume operation at phase entry.
 last_updated: timestamp                # required — ISO 8601
 ```
 
@@ -1017,6 +1017,75 @@ harness** (the deferred M2b part-2b headless-`claude` evaluator).
 never read back by the skill and lives under the current working `.supervisor/`, never the analyzed repo.
 See `skills/pr-postmortem/SKILL.md` (the analysis protocol + miss-class taxonomy) and
 `scripts/pr-postmortem-gather.sh` (the read-only gather).
+
+---
+
+## RED_TEAM_RESULT (adversarial audit summary)
+
+Emitted by the Red Team Reviewer (`agents/red-team-reviewer.md`) as the **last** structured block of
+every audit, after the human-readable report. It is **advisory only** — there is **no hook validator**
+(mirroring POSTMORTEM_RESULT — the agent's free-form report stays the primary output; this block exists
+so telemetry and programmatic consumers can read the verdict without parsing prose).
+
+```yaml
+RED_TEAM_RESULT:
+  schema_version: 1                    # integer, required — always 1
+  verdict: enum [SHIP_BLOCKED, SHIP_WITH_RISKS, ACCEPTABLE]  # required — overall adversarial verdict
+  fatal_count: integer                 # required — count of FATAL findings
+  critical_count: integer              # required — count of CRITICAL findings
+  warning_count: integer               # required — count of WARNING findings
+  top_risks: string[]                  # required — up to 3 one-line risk statements (empty only when no findings)
+  summary: string                      # required — one-line audit summary
+```
+
+**Validation rules:**
+- `schema_version` must equal `1`
+- `verdict` derivation is mechanical: any FATAL → `SHIP_BLOCKED`; no FATAL but any CRITICAL → `SHIP_WITH_RISKS`; otherwise `ACCEPTABLE`
+- counts are non-negative integers matching the report's findings
+- `top_risks` lists the highest-severity findings first, max 3 entries
+
+**Example:**
+```yaml
+RED_TEAM_RESULT:
+  schema_version: 1
+  verdict: SHIP_WITH_RISKS
+  fatal_count: 0
+  critical_count: 2
+  warning_count: 5
+  top_risks:
+    - "Refresh tokens never rotate — a leaked token is valid for 7 days"
+    - "Rate limiter keyed on IP only — trivially bypassed behind a NAT"
+  summary: "No fatal exploits; 2 critical auth weaknesses must be fixed before public launch."
+```
+
+---
+
+## GATE_VERDICT (pre-execution gate audit)
+
+Emitted by the QA Strategist in **Gate Audit Mode** (spawned by QA Executor Phase 11) and consumed by
+QA Executor Phase 11's pass/fail handling (max 1 retry on fail). **Advisory between the two QA agents —
+no hook validator** (the block never terminates a session by itself; QA_RESULT carries the session outcome
+via its `gate_audit_verdict` field).
+
+```yaml
+GATE_VERDICT:
+  schema_version: 1                    # integer, required — always 1
+  verdict: enum [pass, fail]           # required
+  gates_passed: integer[]              # required — gate numbers that passed (13-gate checklist, qa-gates skill)
+  gates_failed: integer[]              # required — gate numbers that failed (empty when verdict=pass)
+  violations: object[]                 # required — empty when verdict=pass
+    - gate: integer                    # which gate
+      file: string                     # offending test file
+      line: integer | null             # line number when known
+      description: string              # what violated the gate
+  summary: string                      # required — 1-2 sentences
+```
+
+**Validation rules:**
+- `schema_version` must equal `1`
+- `verdict=fail` requires non-empty `gates_failed` AND non-empty `violations`
+- `verdict=pass` requires empty `gates_failed` and empty `violations`
+- GATE_VERDICT is final: on `fail`, the Executor fixes the violations and re-submits (max 1 retry); a second `fail` → QA_RESULT `status: needs_human` with `gate_failures`
 
 ---
 

@@ -34,7 +34,7 @@
                     ┌──────▼──────────────────────────────────┐
                     │           SUPERVISOR v4                   │
                     │  model: inherit  color: #1E90FF           │
-                    │  Budget: 30 tool calls                    │
+                    │  Budget: 50 tool calls                    │
                     │                                           │
                     │  INIT → ACQUIRE → PRE-FLIGHT SYNC →       │
                     │  PLAN → EXECUTE → FINALIZE →              │

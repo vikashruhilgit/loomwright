@@ -126,7 +126,7 @@ No retry needed — read-only agent with no side effects
 ## Supervisor Failure
 
 ```
-Supervisor hits tool call budget (30 calls)
+Supervisor hits tool call budget (50 calls)
     ↓
 Checkpoints current state via Context-Keeper
     ↓

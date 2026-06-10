@@ -12,7 +12,7 @@ Patterns for autonomous workflow execution with context management, checkpoints,
 
 ## Quick Rules
 
-- Keep supervisor context < 800 tokens (externalize via Context-Keeper)
+- Keep supervisor context < 400 tokens (externalize via Context-Keeper)
 - Save checkpoint after each phase completion (to `.supervisor/`)
 - Summarize subagent outputs (< 200 tokens each)
 - Pause on NEEDS_HUMAN, retry on FAIL (max 3x), continue on PASS
@@ -82,8 +82,8 @@ SELF_HEAL:
 
 LOOP:
   - consumes heal outcome from SELF_HEAL for reporting (no completion actions — those happened in 4.5 tail)
-  - more tasks + tool_calls < 24 (80%) → ACQUIRE
-  - tool_calls 24-28 → warn + suggest new session
+  - more tasks + tool_calls < 40 (80%) → ACQUIRE
+  - tool_calls 40-46 → warn + suggest new session
   - no tasks → END
 ```
 
@@ -91,7 +91,7 @@ LOOP:
 
 | Component | Token Budget | Tool Call Budget |
 |-----------|--------------|-----------------|
-| Supervisor orchestration state | < 800 tokens | 30 calls |
+| Supervisor orchestration state | < 400 tokens | 50 calls |
 | Execute Manager (Phase 3) | Isolated context | 60 calls |
 | State file (externalized) | Unlimited (managed by Context-Keeper) | — |
 | Subagent summaries | < 200 tokens each | — |
@@ -115,15 +115,15 @@ Context-Keeper(operation: checkpoint, project_dir: {path}, task_id: {id})
 
 ## Context Monitoring (Tool Call Counter)
 
-### Supervisor Budget (30 calls)
+### Supervisor Budget (50 calls, including Phase 4.5)
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │ SUPERVISOR TOOL CALL THRESHOLDS                          │
 ├─────────────────────────────────────────────────────────┤
-│  0-18 (60%)  │ GREEN: Normal operation                  │
-│  18-24 (80%) │ YELLOW: Aggressive compression, checkpoint│
-│  24-28 (93%) │ RED: Checkpoint + exit with resume        │
+│  0-30 (60%)  │ GREEN: Normal operation                  │
+│  30-40 (80%) │ YELLOW: Aggressive compression, checkpoint│
+│  40-46 (92%) │ RED: Checkpoint + exit with resume        │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -405,7 +405,7 @@ The Supervisor v4 workflow uses git worktrees as the default. Agent Teams is ava
 Before completing workflow management:
 - [ ] Feature branch created before any code work (mandatory)
 - [ ] Checkpoint saved after each phase transition
-- [ ] Context budget respected (< 800 tokens supervisor state)
+- [ ] Context budget respected (< 400 tokens supervisor state)
 - [ ] Subagent outputs summarized (< 200 tokens each)
 - [ ] Error handling covers all failure modes
 - [ ] Resume command provided at pause points

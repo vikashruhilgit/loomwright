@@ -653,7 +653,7 @@ If signal 1 or 2 would re-plan AND `iteration + 1 > max_iterations`: terminate w
 
 Written to `.supervisor/autonomous/{session_id}/summary.md` (markdown for users) and `.supervisor/autonomous/{session_id}/state.json` (machine-readable sidecar). Echoed to main-thread output.
 
-**Canonical schema:** see `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md` § "AUTONOMOUS_RUN" for the formal `schema_version: 1` definition, the closed `status_reason` enum, validation rules, and a worked example. This skill describes the protocol that produces an `AUTONOMOUS_RUN` block; the schema doc is the source of truth for its shape.
+**Canonical schema:** see `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md` § "AUTONOMOUS_RUN" for the formal `schema_version: 2` definition, the closed `status_reason` enum, validation rules, and a worked example. This skill describes the protocol that produces an `AUTONOMOUS_RUN` block; the schema doc is the source of truth for its shape.
 
 The status enum is **autonomous-layer-only**: `done | paused_max_iterations | aborted | failed`. None of these values appear in `SUPERVISOR_RESULT.status` (which is `completed | completed_with_escalation | failed | checkpoint`). The two enums are intentionally distinct to prevent confusion and to keep the AUTONOMOUS_RUN summary out of scope for the Supervisor SubagentStop hook (which validates SUPERVISOR_RESULT, not AUTONOMOUS_RUN).
 

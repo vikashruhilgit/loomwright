@@ -202,7 +202,7 @@ Agents use Bash tool calls to run git commands, file operations, and state manag
 **What `bin/` does:**
 Plugin ships executables that agents can invoke as bare commands. Instead of 3 separate bash calls to check worktree state, you ship one `worktree-status` script.
 
-**Performance impact:** IMPROVES tool-call efficiency. One script invocation instead of multiple bash calls. For Supervisor with a 30-call budget, this is meaningful.
+**Performance impact:** IMPROVES tool-call efficiency. One script invocation instead of multiple bash calls. For Supervisor with a 50-call budget, this is meaningful.
 
 **However — complexity tradeoff:**
 

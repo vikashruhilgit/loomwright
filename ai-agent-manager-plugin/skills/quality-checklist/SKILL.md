@@ -91,7 +91,7 @@ Before marking complete:
 | Hardcoded secret | FAIL | Reject, require env var |
 | Pattern mismatch | FAIL | Request alignment |
 | Performance issue | FAIL | Request optimization |
-| Minor style issue | NEEDS_HUMAN | Comment, can be fixed in follow-up |
+| Minor style issue | PASS (issue reported) | MEDIUM/LOW never gates; reported in the result |
 | Good security practice | PASS | Approve |
 | Tests + docs complete | PASS | Approve |
 
@@ -108,9 +108,9 @@ Before marking complete:
 - Re-run review after changes
 
 ### ≈ NEEDS_HUMAN
-- Minor issues found
-- Can be fixed in follow-up task
-- Human decides if blocking or not
+- Genuine design ambiguity / architectural disagreement the reviewer cannot adjudicate
+- NOT for ordinary MEDIUM/LOW findings — those are reported under a PASS
+- Human decides the open question
 - Issue created for tracking (BD-XXX if Beads is active, otherwise recorded in review output)
 
 ## Repo Consistency Checks (for plugin / prompt / doc reviews)
