@@ -1,6 +1,6 @@
 ---
 name: self-heal-advisory
-description: Supervisor Phase 4.5 advisory machinery — System Twin contract-conformance, benchmark, ground-truth execution, the contract-builder WRITE path, the advisory Twin delta line, and the hard-signal dual emission. Advisory only; none of it ever changes heal_decision or blocks the PR. Read on demand by the Supervisor at Phase 4.5 entry (deliberately NOT preloaded).
+description: Supervisor Phase 4.5 advisory-only machinery (System Twin conformance/benchmark/ground-truth, contract-builder WRITE path, delta line, hard-signal dual emission). Never changes heal_decision or blocks the PR; read on demand at Phase 4.5 entry, deliberately not preloaded.
 version: 1.0.0
 lastUpdated: 2026-06-10
 ---
