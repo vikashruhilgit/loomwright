@@ -10,7 +10,7 @@ description: Prepare a raw goal for autonomous Supervisor execution with codebas
 
 ## Purpose
 
-The Launch Pad agent prepares raw goals for autonomous Supervisor execution. It runs discovery, codebase analysis, file impact estimation, environment validation, and parallelism pre-analysis — then saves a structured Supervisor-Ready Brief to `.supervisor/jobs/` for clean-context handoff.
+The Launch Pad agent prepares raw goals for autonomous Supervisor execution. It runs discovery, codebase analysis, file impact estimation, environment validation, and parallelism pre-analysis — then saves a structured Supervisor-Ready Brief to `.supervisor/jobs/pending/` for clean-context handoff.
 
 ## Usage
 
@@ -75,13 +75,13 @@ The Launch Pad executes a **7-phase readiness workflow** (primary Phases 1–7, 
 
 ### Why Use Launch Pad?
 
-The Supervisor's ~400-token context budget gets consumed by Phases 0-2 (planning) before any code execution begins. Launch Pad:
+The Supervisor's context budget gets consumed by Phases 0-2 (planning) before any code execution begins. Launch Pad:
 
-1. **Frees ~500 tokens** for Supervisor's execution phases
+1. **Frees planning context** for Supervisor's execution phases (Phases 0-2 are pre-answered by the brief)
 2. **Enables plan review** before workers start (no wasted effort)
 3. **Prevents environment failures** mid-run (pre-flight validation)
 4. **Improves parallelism** with file impact analysis (accurate overlap detection)
-5. **Provides clean handoff** via `.supervisor/jobs/` (fresh session, full context)
+5. **Provides clean handoff** via `.supervisor/jobs/pending/` (fresh session, full context)
 6. **Catches infeasible goals early** via Phase 2.5 (before wasting tokens on analysis and execution)
 
 ## Example Output
@@ -174,7 +174,7 @@ Plan Reviewer validates brief (mandatory gate, max 3 spawns per session)
     ↓
 .supervisor/jobs/pending/{date}-{slug}.md  (Supervisor-Ready Brief)
     ↓
-/supervisor job: .supervisor/jobs/{file}.md  (clean context execution)
+/supervisor job: .supervisor/jobs/pending/{file}.md  (clean context execution)
     ↓
 EXECUTE → FINALIZE → PR
 ```
@@ -269,7 +269,7 @@ EXECUTE → FINALIZE → PR
 
 ## Mission
 
-Take any raw user goal and prepare it for autonomous Supervisor execution. Run discovery, feasibility assessment, codebase analysis, file impact estimation, and parallelism pre-analysis. Save a structured Supervisor-Ready Brief to `.supervisor/jobs/` for clean-context handoff.
+Take any raw user goal and prepare it for autonomous Supervisor execution. Run discovery, feasibility assessment, codebase analysis, file impact estimation, and parallelism pre-analysis. Save a structured Supervisor-Ready Brief to `.supervisor/jobs/pending/` for clean-context handoff.
 
 ### Core Principles
 
@@ -400,7 +400,7 @@ Run 5 grounded checks (CLAUDE.md + grep/glob/read), output GO/CAUTION/NO-GO:
 1. Present brief with Plan Review status
 2. Options: Save (PASS or user override) / Refine / Edit / Discard
 3. On save: `mkdir -p .supervisor/jobs/pending`, write `{date}-{slug}.md`
-4. Output exact Supervisor command: `/supervisor job: .supervisor/jobs/{file}.md`
+4. Output exact Supervisor command: `/supervisor job: .supervisor/jobs/pending/{file}.md`
 5. If blockers exist or Plan Review FAIL: don't offer save
 
 ---
@@ -425,7 +425,7 @@ Before offering save:
 ## Integration Notes
 
 - Used by `/launch-pad` command
-- Outputs: Supervisor-Ready Brief to `.supervisor/jobs/`
+- Outputs: Supervisor-Ready Brief to `.supervisor/jobs/pending/`
 - Consumed by: Supervisor agent via `job:` parameter
 - Spawns one subagent (Plan Reviewer) for mandatory plan validation in Phase 5.5
 - Memory: Learns which files are commonly impacted by goals

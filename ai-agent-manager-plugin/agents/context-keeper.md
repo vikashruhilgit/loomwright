@@ -135,7 +135,7 @@ Behavior:
 - If `## Phase Flags` section is absent, create it immediately AFTER the `## Checkpoint` section (matching the schema in `skills/state-management/SKILL.md`).
 - If the named `key` is already present, overwrite the value (idempotent — repeated `set_flag` calls with the same `(key, value)` are no-ops on disk except for the `last_updated` timestamp; calls with the same key and a new value replace the entry in place).
 - If the named `key` is absent, append a new list item to the section.
-- Write the state file atomically (temp file + rename), matching the existing operations' atomicity pattern.
+- Persist with a single full-file Write (never partial edits), matching the existing operations' write pattern.
 
 ### operation: get_flag
 
@@ -172,11 +172,11 @@ Behavior:
 - If `## Phase Flags` is absent OR `key` is absent within it → no-op (no error, no write — return the no-op confirmation). This is required by AC-8: clearing an absent key is silent.
 - Otherwise remove the named key's list item.
 - **If that removal leaves the section empty**, remove the `## Phase Flags` header line entirely so the state file does not retain a stub section. The section reappears on the next `set_flag`.
-- Write the state file atomically (temp file + rename).
+- Persist with a single full-file Write (never partial edits).
 
 ### Atomicity & cross-reference
 
-All three operations follow the same atomic-write pattern as the rest of the operations table: read-validate-mutate-write to a temp file, then rename. The on-disk section format (markdown list items keyed by flag name with single-line or fenced multi-line JSON values) is fully specified in `skills/state-management/SKILL.md` §"Phase Flags" — treat that document as the authoritative section schema.
+All three operations follow the same write pattern as the rest of the operations table: read-validate-mutate, then persist the whole file in a single full-file Write. (This agent's toolset is Read/Write/Edit — no Bash — so a temp-file + rename is not available; the single-writer contract plus one-shot Write is what prevents torn state.) The on-disk section format (markdown list items keyed by flag name with single-line or fenced multi-line JSON values) is fully specified in `skills/state-management/SKILL.md` §"Phase Flags" — treat that document as the authoritative section schema.
 
 ---
 

@@ -234,7 +234,7 @@ For the top 3 ideas by composite score:
 | Anti-Pattern | Problem | Better Approach |
 |--------------|---------|-----------------|
 | "Add AI/blockchain/gamification" | Generic, not specific | Describe the specific mechanism and why it works here |
-| Echo chamber | All lenses agree immediately | Critic must find real flaws; force at least 2 CONCEDE/PIVOT outcomes |
+| Echo chamber | All lenses agree immediately | Critic must find real flaws; record the honest outcome of every exchange (CONCEDE / PIVOT / DEFENDED with rationale) — never manufacture a concession |
 | Skipping debate | Premature consensus | Debate is mandatory — it refines ideas |
 | All 10/10 scores | Dishonest scoring | A 10 on Feasibility means "ship today" — be honest |
 | Recommending everything | No prioritization | Pick one winner with rationale |
@@ -245,7 +245,7 @@ For the top 3 ideas by composite score:
 
 Before emitting recommendation:
 - [ ] All 5 lenses contributed independently (not just echoing each other)
-- [ ] At least 1 debate exchange resulted in CONCEDE or PIVOT (real conflict happened)
+- [ ] Every debate exchange has a recorded honest outcome (CONCEDE / PIVOT / DEFENDED with rationale) — do not manufacture a concession to satisfy this item
 - [ ] Critic specifically challenged the top-rated idea
 - [ ] No generic ideas survived scoring (each is specific and actionable)
 - [ ] Scores are honest (no idea scores 10/10 on everything)

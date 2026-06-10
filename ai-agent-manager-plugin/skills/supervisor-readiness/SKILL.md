@@ -13,7 +13,7 @@ Pre-flight validation, Supervisor-Ready Brief format, and jobs folder convention
 ## Quick Rules
 
 - Run pre-flight checklist before every Supervisor launch (or use Launch Pad to automate it)
-- Save briefs to `.supervisor/jobs/` with `{YYYY-MM-DD}-{slug}.md` naming
+- Save briefs to `.supervisor/jobs/pending/` with `{YYYY-MM-DD}-{slug}.md` naming
 - Brief must include all 9 required sections (Environment, Task, Acceptance Criteria, Subtask Structure, Parallelism Analysis, Skill References, Risk Assessment, Configuration, Handoff) — Supervisor skips Phases 0-2 when consuming a brief. The `## Feasibility` section is optional (Launch Pad v10.3+)
 - Conservative parallelism: only mark LAUNCHABLE if zero file overlap AND zero dependencies
 - Clean up consumed briefs after successful Supervisor completion
@@ -38,7 +38,7 @@ Run these 8 checks before launching Supervisor:
 | 4 | On expected branch | `git branch --show-current` | WARNING — wrong branch = wrong base |
 | 5 | No orphaned worktrees | `git worktree list` (only main entry) | WARNING — orphans block new worktrees |
 | 6 | GitHub CLI authenticated | `gh auth status` | WARNING — PR creation will fail |
-| 7 | `.supervisor/` writable | `mkdir -p .supervisor/jobs` | YES — Supervisor needs state directory |
+| 7 | `.supervisor/` writable | `mkdir -p .supervisor/jobs/pending` | YES — Supervisor needs state directory |
 | 8 | Disk space adequate | `df -h .` (>1GB free) | YES — worktrees need space |
 
 **Decision:**
@@ -55,10 +55,13 @@ Run these 8 checks before launching Supervisor:
 ├── .supervisor/
 │   ├── state.md              # Active session state
 │   ├── history/              # Completed session summaries
-│   └── jobs/                 # Supervisor-Ready Briefs
-│       ├── 2026-02-07-jwt-auth.md
-│       ├── 2026-02-08-dark-mode.md
-│       └── ...
+│   └── jobs/                 # Supervisor-Ready Briefs (lifecycle folders)
+│       ├── pending/          # awaiting Supervisor pickup
+│       │   ├── 2026-02-07-jwt-auth.md
+│       │   └── 2026-02-08-dark-mode.md
+│       ├── in-progress/      # picked up by an active session
+│       ├── done/             # completed successfully
+│       └── failed/           # unrecoverable failures
 ```
 
 ### Naming Convention
@@ -78,7 +81,7 @@ Run these 8 checks before launching Supervisor:
 
 ```bash
 # Create jobs directory (idempotent)
-mkdir -p .supervisor/jobs
+mkdir -p .supervisor/jobs/pending
 
 # Write brief
 # (Launch Pad handles this automatically)
@@ -86,23 +89,22 @@ mkdir -p .supervisor/jobs
 
 ### Consumption
 
-When Supervisor receives `job: .supervisor/jobs/{file}.md`:
-1. Read the brief file
+When Supervisor receives `job: .supervisor/jobs/pending/{file}.md`:
+1. Read the brief file (and move it to `.supervisor/jobs/in-progress/` on pickup)
 2. Skip Phase 0 (INIT) environment validation — already done by Launch Pad
 3. Skip Phase 1 (ACQUIRE) requirement refinement — criteria already defined
 4. Pre-populate Phase 2 (PLAN) with subtask hints and parallelism analysis
-5. Begin Phase 3 (EXECUTE) with enriched context (~200 tokens instead of ~700)
-6. Context savings: ~500 tokens freed for execution phases
+5. Begin Phase 3 (EXECUTE) with enriched context — planning phases are pre-answered by the brief
 
 ### Cleanup
 
 After Supervisor completes successfully:
-- Brief file remains in `.supervisor/jobs/` for reference
+- Brief file is moved to `.supervisor/jobs/done/` (or `failed/` on unrecoverable errors) by the Supervisor's completion tail and remains there for reference
 - Supervisor does NOT delete the brief
-- User can manually clean up old briefs:
+- User can manually clean up old consumed briefs:
   ```bash
-  # Remove briefs older than 30 days
-  find .supervisor/jobs -name "*.md" -mtime +30 -delete
+  # Remove consumed briefs older than 30 days (never touch pending/)
+  find .supervisor/jobs/done .supervisor/jobs/failed -name "*.md" -mtime +30 -delete 2>/dev/null
   ```
 
 ### Gitignore
@@ -214,7 +216,7 @@ so Supervisor Phase 4.5 `ground_truth` executes the doc-currency and version-con
 
 ### Provides / Requires Schema (v12.0.0+)
 
-Each subtask SHOULD declare a structured contract with three top-level YAML lists: `provides`, `requires`, `external_requires`. These are consumed by Plan Reviewer (Criterion 12) and Execute Manager's pre-spawn verification gate.
+Each subtask MUST declare a structured contract with three top-level YAML lists: `provides`, `requires`, `external_requires` — Plan Reviewer Criterion 12 FAILs the brief with a BLOCKING `dep_graph` issue when contract blocks are missing (only an explicit `legacy_brief: true` in the Environment section opts out). These are consumed by Plan Reviewer (Criterion 12) and Execute Manager's pre-spawn verification gate.
 
 **`provides` items** — addressable outputs the subtask must produce:
 
@@ -255,7 +257,7 @@ external_requires: []
 
 **Authoring rules:**
 
-- Every subtask SHOULD have non-empty `provides`. Pure-deletion subtasks may use `provides: []` with a comment justifying it
+- Every subtask MUST declare a `provides` list (Criterion 12 BLOCKING when the contract block is absent), and it should be non-empty. Pure-deletion subtasks may use `provides: []` with a comment justifying it
 - Reject vague provides like `"adds feature"` / `"updates code"` — every entry MUST be `{kind, path, name?}` addressable on disk
 - `external_requires` is for things outside the brief; do NOT use it as the `from` target of any `requires` entry
 - Non-empty `requires` → BLOCKED (status in Subtask Structure table MUST reflect this)
