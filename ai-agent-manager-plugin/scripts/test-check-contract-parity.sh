@@ -25,7 +25,14 @@ check() { # $1 desc, $2 expected exit (0|1), then the command
 
 make_fixture() { # $1 = fixture dir; writes a minimal valid tree
   local d="$1"
-  mkdir -p "$d/ai-agent-manager-plugin/hooks" "$d/ai-agent-manager-plugin/agents"
+  mkdir -p "$d/ai-agent-manager-plugin/hooks" "$d/ai-agent-manager-plugin/agents" \
+           "$d/ai-agent-manager-plugin/skills/self-heal-advisory"
+  # the gate's ENUMS scope includes this skill (v14.23.0 supervisor diet) and
+  # errs loudly when a scoped file is missing — fixtures must provide it
+  cat >"$d/ai-agent-manager-plugin/skills/self-heal-advisory/SKILL.md" <<'EOF2'
+Advisory statuses: status: pass, status: advisory_failures, status: advisory_violations,
+status: unverified, status: skipped. Gating: heal_decision: PASS / heal_decision: ESCALATED / heal_decision: null.
+EOF2
   # hooks.json mentioning every manifest field for every matcher (pin guard satisfied)
   python3 - "$d/ai-agent-manager-plugin/hooks/hooks.json" <<'PY'
 import json,sys
@@ -81,6 +88,8 @@ check "clean fixture passes" 0 bash "$GUARD" --root "$TMP/clean"
 
 # 2. Missing hook-required field in an agent prompt fails (the qa-executor trap class)
 make_fixture "$TMP/missing-field"
+# BSD sed (macOS) needs -i '' (empty backup suffix); GNU sed rejects the empty
+# arg — try BSD form first, fall back to GNU on failure.
 sed -i '' -e 's/coverage_estimate, summary/summary/' "$TMP/missing-field/ai-agent-manager-plugin/agents/qa-executor.md" 2>/dev/null \
   || sed -i -e 's/coverage_estimate, summary/summary/' "$TMP/missing-field/ai-agent-manager-plugin/agents/qa-executor.md"
 check "missing hook-required field fails" 1 bash "$GUARD" --root "$TMP/missing-field"
@@ -102,7 +111,10 @@ json.dump(h,open(p,"w"))
 PY
 check "hooks.json pin-drift fails" 1 bash "$GUARD" --root "$TMP/pin-drift"
 
-# 5. The guard passes against the REAL repo tree (post-sweep invariant)
+# 5. The guard passes against the REAL repo tree. Deliberately NOT a pure
+#    fixture test: this is an integration invariant (the gate must hold on the
+#    committed tree), so an agent edit that trips the gate fails here too —
+#    a double signal with the CI step, by design.
 check "real repo tree passes" 0 bash "$GUARD" --root "$REPO_ROOT"
 
 echo "----"

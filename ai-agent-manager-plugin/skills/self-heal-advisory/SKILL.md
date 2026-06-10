@@ -25,7 +25,8 @@ in `agents/supervisor.md` still run.
 
 **When to read this file:** the Supervisor reads it at Phase 4.5 entry (it is
 deliberately NOT in the Supervisor's preloaded `skills:` list — preloading would
-re-inject ~300 lines into every session; on-demand reading keeps the agent prompt
+re-inject the ~220 extracted lines into every session (this file is ~290 lines
+with its own headers and framing); on-demand reading keeps the agent prompt
 focused on gates).
 
 ---

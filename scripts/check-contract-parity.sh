@@ -94,24 +94,29 @@ while IFS='|' read -r matcher agent block fields; do
 done <<<"$MANIFEST"
 
 # ── Check 2: enum literals ───────────────────────────────────────────────────
-# file | key | allowed tokens (enum + that file's other legitimate uses).
-# Allowlists are deliberately supersets: they also cover sub-object statuses
-# (e.g. supervisor's pass/advisory_failures/unverified/skipped) whose detailed
-# text may live in a linked skill the guard does not scan — defensive, so a
-# pointer-section edit cannot false-positive the gate.
+# path (plugin-root-relative) | key | allowed tokens (enum + that file's other
+# legitimate uses). Allowlists are deliberately supersets: they also cover
+# sub-object statuses (e.g. supervisor's pass/advisory_failures/unverified/
+# skipped — sub-object enums on contract_conformance/ground_truth, not
+# SUPERVISOR_RESULT.status values). Skills that carry emit-shaping prose
+# extracted from an agent (the v14.23.0 supervisor diet) are IN SCOPE below —
+# when a refactor moves status-literal-bearing text into a new skill, add a
+# row here so the gate's coverage moves with it.
 ENUMS="
-supervisor.md|status|completed,completed_with_escalation,failed,checkpoint,enum,pass,advisory_failures,unverified,skipped
-supervisor.md|heal_decision|PASS,ESCALATED,null,enum
-worker.md|status|completed,failed,partial,present,missing,pending,enum
-execute-manager.md|status|completed,failed,in_progress,pending,running,missing,checkpoint,enum
-code-reviewer.md|decision|PASS,FAIL,NEEDS_HUMAN,enum
-plan-reviewer.md|decision|PASS,FAIL,NEEDS_HUMAN,enum
+agents/supervisor.md|status|completed,completed_with_escalation,failed,checkpoint,enum,pass,advisory_failures,unverified,skipped
+agents/supervisor.md|heal_decision|PASS,ESCALATED,null,enum
+agents/worker.md|status|completed,failed,partial,present,missing,pending,enum
+agents/execute-manager.md|status|completed,failed,in_progress,pending,running,missing,checkpoint,enum
+agents/code-reviewer.md|decision|PASS,FAIL,NEEDS_HUMAN,enum
+agents/plan-reviewer.md|decision|PASS,FAIL,NEEDS_HUMAN,enum
+skills/self-heal-advisory/SKILL.md|status|pass,advisory_failures,advisory_violations,unverified,skipped,enum
+skills/self-heal-advisory/SKILL.md|heal_decision|PASS,ESCALATED,null,enum
 "
 
 while IFS='|' read -r agent key allowed; do
   [ -n "$agent" ] || continue
-  agent_path="$AGENTS/$agent"
-  [ -f "$agent_path" ] || continue
+  agent_path="$PLUGIN/$agent"
+  [ -f "$agent_path" ] || { err enum-literal "scoped file $agent missing at $agent_path — update ENUMS"; continue; }
   # bare literals only: `key: token` (quoted strings, {placeholders}, and
   # comparison forms like `key ==` deliberately do not match)
   while read -r tok; do
