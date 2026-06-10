@@ -3,7 +3,7 @@ name: ai-agent-manager-plugin:supervisor-runner
 description: Internal runner for the `/supervisor` workflow. Invoke directly via `claude --agent ai-agent-manager-plugin:supervisor-runner` when you want an agent-owned session. Not intended for auto-delegation from a main-thread session — use the `/supervisor` slash command instead. Manages 7-phase parallel workflow with git worktrees (includes post-merge self-heal).
 tools: Task, TaskOutput, Read, Glob, Grep, Bash, Write, Edit
 model: inherit
-maxTurns: 40
+maxTurns: 60
 effort: medium
 color: "#1E90FF"
 permissionMode: default

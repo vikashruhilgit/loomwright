@@ -36,7 +36,7 @@ The Launch Pad agent prepares raw goals for autonomous Supervisor execution. It 
 
 ## What This Does
 
-The Launch Pad executes a **9-phase readiness workflow** (Phases 1–6 plus sub-gates 2.5 and 5.5, and the non-interactive **Phase 7** that emits the `LAUNCH_PAD_RESULT` block for programmatic consumers like `/autonomous`, new in v14.2.0):
+The Launch Pad executes a **7-phase readiness workflow** (primary Phases 1–7, including the non-interactive **Phase 7** that emits the `LAUNCH_PAD_RESULT` block for programmatic consumers like `/autonomous`; the FEASIBILITY 2.5 and PLAN REVIEW 5.5 sub-phase gates are enumerated but, per the repo-wide phase-numbering convention, do not change the phase count):
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -75,7 +75,7 @@ The Launch Pad executes a **9-phase readiness workflow** (Phases 1–6 plus sub-
 
 ### Why Use Launch Pad?
 
-The Supervisor's 800-token context budget gets consumed by Phases 0-2 (planning) before any code execution begins. Launch Pad:
+The Supervisor's ~400-token context budget gets consumed by Phases 0-2 (planning) before any code execution begins. Launch Pad:
 
 1. **Frees ~500 tokens** for Supervisor's execution phases
 2. **Enables plan review** before workers start (no wasted effort)
@@ -237,7 +237,7 @@ EXECUTE → FINALIZE → PR
 
 ## See Also
 
-- `agents/launch-pad.md` — Full agent prompt (9-phase readiness model incl. non-interactive Phase 7 `LAUNCH_PAD_RESULT` emission)
+- `agents/launch-pad.md` — Full agent prompt (7-phase readiness model incl. non-interactive Phase 7 `LAUNCH_PAD_RESULT` emission)
 - `agents/plan-reviewer.md` — Plan Reviewer agent (validates briefs in Phase 5.5)
 - `skills/supervisor-readiness/SKILL.md` — Pre-flight checklist, brief template, jobs convention
 - `skills/product-discovery/SKILL.md` — Discovery framework
@@ -322,7 +322,7 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 
 ---
 
-## 9-Phase Workflow
+## 7-Phase Workflow
 
 ### Phase 1: VALIDATE (Environment Readiness)
 

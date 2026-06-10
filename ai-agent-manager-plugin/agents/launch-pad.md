@@ -80,7 +80,9 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 
 ---
 
-## 9-Phase Workflow
+## 7-Phase Workflow
+
+> **Phase-numbering convention** (same rule as `agents/supervisor.md` / `skills/workflow-management/SKILL.md`): "7-Phase" counts the primary phases 1–7; **FEASIBILITY (2.5)** and **PLAN REVIEW (5.5)** are `.5` sub-phase gates inserted between primary phases — they appear in the enumeration but do not change the "7-Phase" name.
 
 ### Phase 1: VALIDATE (Environment Readiness)
 

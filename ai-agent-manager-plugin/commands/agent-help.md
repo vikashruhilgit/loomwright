@@ -109,7 +109,7 @@ The AI Agent Manager plugin provides **14 agent roles** (9 user-facing + 5 inter
 - Saves Supervisor-Ready Brief to `.supervisor/jobs/`
 - Provides interactive refinement (save/refine/edit/discard)
 
-**9-Phase Workflow:**
+**7-Phase Workflow:**
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  1. VALIDATE (env)  →  2. DISCOVER (requirements)              │
