@@ -72,7 +72,13 @@
 #     AFTER the comment — comment `created_at` (REST, snake_case) vs commit
 #     `committedDate` (gh pr view, camelCase), both ISO-8601 UTC so plain lexicographic
 #     string comparison is correct. Anchoring keeps terminal "clean — recommend merge"
-#     comments and re-reviews of unchanged pushes from inflating the count. CI review
+#     comments and re-reviews of unchanged pushes from inflating the count — but only
+#     when nothing lands after the closer: a housekeeping commit (version bump, doc
+#     tweak, rebase) AFTER an all-clear closer books one phantom round. Accepted
+#     noise for a trend signal (true under the original heading-anchored marker too —
+#     observed all-clear closers carry "## Review …" headings; a phrasing-based
+#     negative anchor on "recommend merge"-style closers was considered and rejected
+#     as brittle, the same class as the rejected churn words). CI review
 #     workflows (e.g. claude-code-review.yml) post issue comments, NOT review objects,
 #     so without this signal review_rounds reads 0 on exactly the repos this analyzer
 #     targets (observed on PR #47: 0 review objects, 7 claude-bot review comments).
