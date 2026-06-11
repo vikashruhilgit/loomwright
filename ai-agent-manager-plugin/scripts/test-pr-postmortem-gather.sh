@@ -45,6 +45,16 @@
 #                     element-level): hostile elements degrade to non-matches, the
 #                     well-formed bot comments still produce the same anchored
 #                     review_rounds as 3d, exit 0.
+#   3g. HUB-shape PR (vendsy/hub#146) -> 0 review objects, claude-bot comments headed
+#                     "## Overview" (NO review heading — the widened word-bounded
+#                     anywhere-in-body marker must match their running text), commit
+#                     headlines using the EXPLICIT anchored forms "PR #42 review — …" /
+#                     "review #2 — …" (the narrow regex's two new alternations) =>
+#                     review_rounds==3 with both signals independently counting 3;
+#                     a "deploy preview #2" headline and a vercel[bot] "Deploy
+#                     Preview" comment stay non-matching (word-bounded, re-pinned
+#                     against the widened marker); the trailing all-clear bot comment
+#                     with no later push does not anchor a 4th round.
 #   4. injection-safety -> a title/body/review body with quotes/backslashes/newlines
 #                     round-trips as valid JSON (no parse break).
 #   5. unavailable (stub gh fails / PR inaccessible) -> {"status":"unavailable",...}, exit 0.
@@ -213,6 +223,50 @@ cat > "$FIX_BOTREVIEW_COMMENTS_HOSTILE" <<'FIX'
 ]
 FIX
 
+# HUB-shape fixture (3g): the vendsy/hub#146 shape (verified live 2026-06-10) that
+# BOTH v14.23.1 signals missed — zero review objects, bot review comments headed
+# "## Overview" (no review heading for the old marker), and review-fix commits using
+# the EXPLICIT "PR #N review — …" / "review #N — …" headline forms the narrow regex
+# omitted. The "deploy preview #2" subject is the word-boundary negative control for
+# the new "review #N" alternation ("preview #2" contains "review #2" as a substring).
+FIX_HUBSHAPE="$TMP/fixture-hubshape.json"
+cat > "$FIX_HUBSHAPE" <<'FIX'
+{
+  "number": 42,
+  "title": "Auto-emit taxMappings on E-Invoice provisioning",
+  "body": "Auto-populates taxMappings at provisioning time.\n\n🤖 Generated with Claude Code",
+  "additions": 700,
+  "deletions": 2,
+  "changedFiles": 8,
+  "commits": [
+    {"messageHeadline": "feat(ENT-1): auto-emit taxMappings on provisioning (R7)", "committedDate": "2026-01-01T08:00:00Z"},
+    {"messageHeadline": "chore: deploy preview #2 tweaks", "committedDate": "2026-01-01T08:30:00Z"},
+    {"messageHeadline": "fix(ENT-1): PR #42 review — use findActiveByVenue convention", "committedDate": "2026-01-01T10:30:00Z"},
+    {"messageHeadline": "fix(ENT-1): review #2 — skip FIXED-rate domain rule", "committedDate": "2026-01-01T12:30:00Z"},
+    {"messageHeadline": "fix(ENT-1): review #3 — type-safe taxRateType + coverage", "committedDate": "2026-01-01T14:30:00Z"}
+  ],
+  "reviews": [],
+  "statusCheckRollup": []
+}
+FIX
+
+# REST-shaped issue comments for 3g: four claude[bot] review comments, every body
+# headed "## Overview" — the OLD heading-anchored marker matches NONE of them; the
+# widened word-bounded anywhere-in-body marker must match all four via "review" in
+# the running text. Anchoring: c1/c2/c3 each have a commit landing after => 3 rounds;
+# the trailing all-clear c4 (15:00, no commit after) must NOT count. vercel[bot]
+# "Deploy Preview" re-pins the word-boundary guarantee against the widened marker.
+FIX_HUBSHAPE_COMMENTS="$TMP/fixture-hubshape-comments.json"
+cat > "$FIX_HUBSHAPE_COMMENTS" <<'FIX'
+[
+  {"user": {"login": "vercel[bot]"}, "created_at": "2026-01-01T09:00:00Z", "body": "Deploy Preview for my-app ready!"},
+  {"user": {"login": "claude[bot]"}, "created_at": "2026-01-01T10:00:00Z", "body": "## Overview\n\nThe fix premise is accurate; addresses issues raised in prior review rounds."},
+  {"user": {"login": "claude[bot]"}, "created_at": "2026-01-01T12:00:00Z", "body": "## Overview\n\nFollow-up verification; remaining review concern: FIXED-rate rows."},
+  {"user": {"login": "claude[bot]"}, "created_at": "2026-01-01T14:00:00Z", "body": "## Overview\n\nResidual review nit: taxRateType cast loses type safety."},
+  {"user": {"login": "claude[bot]"}, "created_at": "2026-01-01T15:00:00Z", "body": "## Overview\n\nAll prior review findings resolved. Recommend merge."}
+]
+FIX
+
 cat > "$FIX_INJECT" <<'FIX'
 {
   "number": 42,
@@ -241,12 +295,15 @@ FIX
 #   human     — human PR: utf-8/sha-256 commit tokens, approval-only review (3b).
 #   taskid    — subject-leading "bd-15a:" task-id prefix, plain body (3c).
 #   botreview — PR #47 shape: zero review objects, committedDate-stamped commits (3d/3e).
+#   hubshape  — vendsy/hub#146 shape: zero review objects, "PR #N review"/"review #N"
+#               fix headlines, "## Overview"-headed bot comments (3g).
 #   inject    — title/body/review carrying quotes, backslashes, and a newline.
 #   fail      — `pr view` exits 1 (simulates private/not-found/unauthenticated).
 # [api_mode] drives the SECOND fetch (`gh api repos/.../issues/.../comments`; the stub
 # pins the exact endpoint path — any other api path exits 1, exercising degrade):
 #   empty (default) — emit "[]" (no issue comments).
 #   comments        — cat the REST-shaped bot-review comments fixture (3d).
+#   hubcomments     — cat the "## Overview"-headed bot comments fixture (3g).
 #   hostile         — cat the hostile-typed comments fixture (3f): VALID array,
 #                     non-string user.login/body/created_at elements.
 #   fail            — exit 1 (comments endpoint failing — the degrade path, 3e).
@@ -257,12 +314,14 @@ make_gh_stub() {
     human)     fixture="$FIX_HUMAN" ;;
     taskid)    fixture="$FIX_TASKID" ;;
     botreview) fixture="$FIX_BOTREVIEW" ;;
+    hubshape)  fixture="$FIX_HUBSHAPE" ;;
     inject)    fixture="$FIX_INJECT" ;;
     fail)      fixture="" ;;
   esac
   case "$api_mode" in
-    comments) api_fixture="$FIX_BOTREVIEW_COMMENTS" ;;
-    hostile)  api_fixture="$FIX_BOTREVIEW_COMMENTS_HOSTILE" ;;
+    comments)    api_fixture="$FIX_BOTREVIEW_COMMENTS" ;;
+    hubcomments) api_fixture="$FIX_HUBSHAPE_COMMENTS" ;;
+    hostile)     api_fixture="$FIX_BOTREVIEW_COMMENTS_HOSTILE" ;;
   esac
   cat > "$BIN/gh" <<STUB
 #!/usr/bin/env bash
@@ -440,6 +499,34 @@ if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | jq -e '
   ok "hostile-typed comment elements degrade to non-matches: success shape, review_rounds==2 (number created_at not anchored), exit 0"
 else
   no "(3f) wrong (rc=$RUN_RC): $RUN_OUT"
+fi
+
+echo "== 3g. HUB-shape PR (hub#146) => explicit 'PR #N review'/'review #N' headlines + Overview-headed bot comments both count 3 =="
+make_gh_stub hubshape hubcomments
+run_gather "$PR_URL"
+# Both v14.23.1-missed signals must now independently land on 3: the three explicit
+# "PR #42 review — …" / "review #2/#3 — …" headlines match the two new anchored
+# review_fix_re alternations (=> 3 fix commits; tie order makes fix_commits the
+# source), and the three "## Overview"-headed claude-bot comments with a later push
+# match the widened anywhere-in-body marker (the 15:00 all-clear has no commit after
+# it — no 4th round). Word-boundary negatives re-pinned against the new alternation
+# AND the widened marker: the "deploy preview #2" commit must NOT flag is_review_fix,
+# and the vercel[bot] "Deploy Preview" comment must match nowhere. review_comments
+# carries all 4 marker-matching claude-bot comments (superset-of-rounds contract).
+if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | jq -e '
+    (has("status") | not)
+    and (.review_rounds == 3)
+    and (.review_rounds_source == "fix_commits")
+    and ([.commits[] | select(.is_review_fix)] | length)==3
+    and ([.commits[] | select(.headline | test("preview"; "i")) | .is_review_fix] == [false])
+    and (.review_comments | length)==4
+    and ([.review_comments[] | select(.author=="claude[bot]")] | length)==4
+    and ([.review_comments[] | select(.snippet | test("Deploy Preview"))] | length)==0
+    and .agent_generated_guess==true
+  ' >/dev/null 2>&1; then
+  ok "HUB shape: review_rounds==3 (explicit fix headlines + anchored Overview-headed bot rounds agree), preview #2 commit and Deploy-Preview comment stay non-matching"
+else
+  no "(3g) wrong (rc=$RUN_RC): $RUN_OUT"
 fi
 
 echo "== 4. injection-safety => quotes/backslashes/newlines round-trip as valid JSON =="

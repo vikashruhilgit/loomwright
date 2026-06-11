@@ -47,22 +47,28 @@
 #     Best-effort signal, not authoritative.
 #   commits[].is_review_fix — true if the commit subject matches (case-insensitively)
 #     any of: "address review", "review feedback", "fix review", "self-heal",
-#     "addresses review", "review comment". A heuristic flag for review-churn commits.
-#     Deliberately NARROW: broadened churn-word alternations ("nit", unanchored
-#     "round-N", "reconcil", "findings") were evaluated and REJECTED as
-#     false-positive-prone (verified matches: "background 4", "playground 2",
-#     "workaround 3", "reconcile inventory totals", "add audit findings export");
-#     the timestamp-anchored bot-round signal below carries the undercount fix instead.
+#     "addresses review", "review comment", or the two EXPLICIT anchored forms
+#     "pr #N review" / "review #N" (word-bounded — "preview #2" can never match).
+#     A heuristic flag for review-churn commits. Deliberately NARROW: broadened
+#     churn-word alternations ("nit", unanchored "round-N", "reconcil", "findings")
+#     were evaluated and REJECTED as false-positive-prone (verified matches:
+#     "background 4", "playground 2", "workaround 3", "reconcile inventory totals",
+#     "add audit findings export"); the timestamp-anchored bot-round signal below
+#     carries that undercount fix instead. The two explicit forms are NOT a
+#     re-broadening to that rejected class: each requires the literal word "review"
+#     adjacent to a PR/round number, covering headlines like "PR #146 review — …" /
+#     "review #2 — …" (the HUB shape, vendsy/hub#146, verified 2026-06-10).
 #   review_rounds — derived as MAX(count of is_review_fix commits, count of distinct
 #     CHURN-review submission timestamps, count of timestamp-ANCHORED bot-review issue
 #     comments). A review OBJECT counts as churn only when its state is
 #     CHANGES_REQUESTED, or COMMENTED with a non-empty body — approval-only reviews
 #     (APPROVED / bare LGTM) are NOT rounds of back-and-forth. A BOT-review issue
 #     COMMENT counts as a round only when ALL of: (a) the author looks like a review
-#     bot (login "claude", "github-actions", or any "*[bot]"); (b) its RAW body (before
-#     snippet normalization, which strips newlines) carries a review MARKER — a
-#     markdown heading containing the word "review", or the phrase "code review",
-#     word-bounded so "Deploy Preview" can never match; (c) at least one commit lands
+#     bot (login "claude", "github-actions", or any "*[bot]"); (b) its RAW body
+#     carries a review MARKER — a word-bounded "review" ANYWHERE in the body
+#     (originally a heading-anchored marker; widened because HUB-shape bot review
+#     comments open with "## Overview" and mention review only in running text),
+#     still word-bounded so "Deploy Preview" can never match; (c) at least one commit lands
 #     AFTER the comment — comment `created_at` (REST, snake_case) vs commit
 #     `committedDate` (gh pr view, camelCase), both ISO-8601 UTC so plain lexicographic
 #     string comparison is correct. Anchoring keeps terminal "clean — recommend merge"
@@ -200,16 +206,28 @@ OUTPUT="$(printf '%s' "$PR_JSON" | jq -c \
   # review_fix_re is deliberately NARROW (header doc): broadened churn-word
   # alternations (nit / unanchored round-N / reconcil / findings) were evaluated and
   # rejected as false-positive-prone; the anchored bot-round signal counts instead.
-  def review_fix_re: "address(es)? review|review feedback|fix review|self-heal|review comment";
+  # The two EXPLICIT anchored forms ("pr #N review" / "review #N") are not in that
+  # rejected class: each carries the literal word "review" adjacent to a PR/round
+  # number, word-bounded (\b) so "preview #2" can never match (no boundary inside
+  # "preview"). They cover the HUB-shape headlines ("PR #146 review — …",
+  # "review #2 — …") the narrow set missed (vendsy/hub#146, verified 2026-06-10).
+  def review_fix_re: "address(es)? review|review feedback|fix review|self-heal|review comment|\\bpr #[0-9]+ review\\b|\\breview #[0-9]+\\b";
   # bot-review issue comments: CI review workflows (claude-code-review.yml et al.) post
   # ISSUE comments, not review objects — anchored ones are review rounds too (header doc).
   def bot_author_re: "^claude(\\[bot\\])?$|\\[bot\\]$|^github-actions";
-  # review MARKER, tested against the RAW comment body BEFORE snippet normalization
-  # (snippet strips the newlines the heading branch needs): a markdown heading whose
-  # line contains the word "review", or the phrase "code review". Word-bounded (\b,
-  # Oniguruma) so "preview"/"previews" — e.g. a vercel[bot] "Deploy Preview for
-  # my-app ready!" notice — can never match.
-  def review_marker_re: "(^|\\n)#+[^\\n]*\\breview\\b|\\bcode review\\b";
+  # review MARKER, tested against the RAW comment body: a word-bounded "review"
+  # ANYWHERE in the body. Strict superset of the original v14.23.1 marker (markdown
+  # heading containing "review", or the phrase "code review") — that heading-anchored
+  # form missed the HUB shape, where claude-bot review comments open with
+  # "## Overview" and mention review only in running text (vendsy/hub#146, verified
+  # 2026-06-10). Word-bounded (\b, Oniguruma) so "preview"/"previews" — e.g. a
+  # vercel[bot] "Deploy Preview for my-app ready!" notice — can never match
+  # (test-pinned). False-round control now rests on the OTHER two gates, which are
+  # unchanged: the author must look like a review bot AND a commit must land after
+  # the comment (timestamp anchor). A non-review bot that merely says "review"
+  # mid-PR is accepted noise for a trend signal (and only surfaces when the bot
+  # count exceeds both legacy signals, since review_rounds takes the MAX).
+  def review_marker_re: "\\breview\\b";
 
   # ---- normalize a free-text snippet: strip control chars, collapse ws, cap 200 ----
   # POSIX classes (jq/Oniguruma): [[:cntrl:]] strips ALL control chars incl. CR/LF/TAB;

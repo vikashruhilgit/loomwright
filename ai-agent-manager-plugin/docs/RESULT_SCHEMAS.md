@@ -1009,7 +1009,7 @@ harness** (the deferred M2b part-2b headless-`claude` evaluator).
   MAX of three signals: review-fix commit headlines, formal churn-review submissions, and
   **bot-authored issue-comment review rounds** (a comment from a review-bot author — login `claude`,
   `github-actions*`, or any `*[bot]` — whose body
-  carries a review marker — e.g. a "Code Review" heading — followed by at least one later push). The
+  carries a review marker — a word-bounded "review" anywhere in the body — followed by at least one later push). The
   third signal covers repos whose review feedback arrives as CI-workflow comments (e.g. `claude[bot]`)
   instead of GitHub review objects, which previously left this field at 0 despite real churn. The
   gather's own output additionally carries a `review_rounds_source` note (`fix_commits` |
