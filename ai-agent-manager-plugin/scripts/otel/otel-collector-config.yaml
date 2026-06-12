@@ -1,0 +1,100 @@
+# otel-collector-config.yaml — OTLP/HTTP receiver → Langfuse trace forwarder
+#
+# Receives OTLP over HTTP on 0.0.0.0:4318, renames Claude-Code-style token
+# attributes to GenAI semantic-convention names, and forwards TRACES to the
+# Langfuse public OTLP endpoint with Basic auth from the environment.
+#
+# LANGFUSE_BASIC_AUTH must be base64("<public_key>:<secret_key>") — it is
+# injected via the container environment (see docker-compose.yml), never
+# committed here.
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 5s
+    limit_percentage: 80
+    spike_limit_percentage: 20
+
+  # Rename flat token-count span attributes to OTel GenAI semantic
+  # conventions so Langfuse picks them up as usage/cost fields.
+  attributes/genai_token_rename:
+    actions:
+      - key: gen_ai.usage.input_tokens
+        from_attribute: input_tokens
+        action: upsert
+      - key: input_tokens
+        action: delete
+      - key: gen_ai.usage.output_tokens
+        from_attribute: output_tokens
+        action: upsert
+      - key: output_tokens
+        action: delete
+      - key: gen_ai.usage.cache_read.input_tokens
+        from_attribute: cache_read_tokens
+        action: upsert
+      - key: cache_read_tokens
+        action: delete
+      - key: gen_ai.usage.cache_creation.input_tokens
+        from_attribute: cache_creation_tokens
+        action: upsert
+      - key: cache_creation_tokens
+        action: delete
+
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+
+exporters:
+  otlphttp/langfuse:
+    endpoint: http://langfuse-web:3000/api/public/otel
+    headers:
+      Authorization: "Basic ${env:LANGFUSE_BASIC_AUTH}"
+    # Persistent queue: buffered spans survive collector restarts and
+    # Langfuse downtime (backed by the file_storage extension below).
+    sending_queue:
+      enabled: true
+      storage: file_storage
+      queue_size: 5000
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 60s
+      max_elapsed_time: 0  # never drop; the persistent queue bounds growth
+
+  # Terminal sink for signals Langfuse cannot ingest (see pipelines note).
+  debug:
+    verbosity: basic
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  file_storage:
+    directory: /var/lib/otelcol/file_storage
+    create_directory: true
+
+service:
+  extensions: [health_check, file_storage]
+  pipelines:
+    # TRACES ONLY are forwarded to Langfuse: the Langfuse OTLP endpoint
+    # (/api/public/otel) ingests traces only — it does not accept metrics
+    # or logs.
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/genai_token_rename, batch]
+      exporters: [otlphttp/langfuse]
+    # Metrics/logs are NOT forwarded (Langfuse cannot ingest them); they
+    # terminate in the debug exporter so OTLP senders that emit all three
+    # signals to :4318 never see export errors.
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [debug]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [debug]
