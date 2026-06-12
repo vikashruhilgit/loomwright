@@ -55,6 +55,14 @@
 #                     Preview" comment stay non-matching (word-bounded, re-pinned
 #                     against the widened marker); the trailing all-clear bot comment
 #                     with no later push does not anchor a 4th round.
+#   3h. hub#139 shape -> "address code review findings …" commit headlines (the
+#                     intervening "code" broke the old "address(es)? review"
+#                     adjacency requirement) must flag is_review_fix via the widened
+#                     "address(es)? (code )?review" alternative => review_rounds==2
+#                     (source fix_commits) instead of the live undercount of 1
+#                     (formal_reviews); "add audit findings export" — a verified
+#                     false-positive of the REJECTED broadened churn-word class —
+#                     stays non-matching.
 #   4. injection-safety -> a title/body/review body with quotes/backslashes/newlines
 #                     round-trips as valid JSON (no parse break).
 #   5. unavailable (stub gh fails / PR inaccessible) -> {"status":"unavailable",...}, exit 0.
@@ -267,6 +275,35 @@ cat > "$FIX_HUBSHAPE_COMMENTS" <<'FIX'
 ]
 FIX
 
+# hub#139-shape fixture (3h): "address code review findings …" headlines (verified
+# live 2026-06-12) — the old first alternative required "address(es)? review"
+# ADJACENCY, so the intervening word "code" left both explicit fix commits uncounted
+# and review_rounds stuck at 1 (the single formal churn review). The widened
+# "address(es)? (code )?review" must match both; "findings" ALONE stays rejected —
+# "add audit findings export" is a verified false-positive of the REJECTED broadened
+# churn-word class and is the in-fixture negative control.
+FIX_HUB139="$TMP/fixture-hub139.json"
+cat > "$FIX_HUB139" <<'FIX'
+{
+  "number": 42,
+  "title": "Favorite reports",
+  "body": "Adds favorite-reports.\n\n🤖 Generated with Claude Code",
+  "additions": 300,
+  "deletions": 12,
+  "changedFiles": 9,
+  "commits": [
+    {"messageHeadline": "feat(reports): favorite reports feature", "committedDate": "2026-01-01T08:00:00Z"},
+    {"messageHeadline": "fix(reports): address code review findings on favorite-reports feature", "committedDate": "2026-01-01T10:00:00Z"},
+    {"messageHeadline": "fix(reporting): address code review findings #3 #5 #7 #10", "committedDate": "2026-01-01T12:00:00Z"},
+    {"messageHeadline": "chore: add audit findings export", "committedDate": "2026-01-01T13:00:00Z"}
+  ],
+  "reviews": [
+    {"author": {"login": "alice"}, "body": "please fix the query shape", "state": "CHANGES_REQUESTED", "submittedAt": "2026-01-01T09:00:00Z"}
+  ],
+  "statusCheckRollup": []
+}
+FIX
+
 cat > "$FIX_INJECT" <<'FIX'
 {
   "number": 42,
@@ -297,6 +334,8 @@ FIX
 #   botreview — PR #47 shape: zero review objects, committedDate-stamped commits (3d/3e).
 #   hubshape  — vendsy/hub#146 shape: zero review objects, "PR #N review"/"review #N"
 #               fix headlines, "## Overview"-headed bot comments (3g).
+#   hub139    — vendsy/hub#139 shape: "address code review findings" fix headlines,
+#               one formal churn review, no bot comments (3h).
 #   inject    — title/body/review carrying quotes, backslashes, and a newline.
 #   fail      — `pr view` exits 1 (simulates private/not-found/unauthenticated).
 # [api_mode] drives the SECOND fetch (`gh api repos/.../issues/.../comments`; the stub
@@ -315,6 +354,7 @@ make_gh_stub() {
     taskid)    fixture="$FIX_TASKID" ;;
     botreview) fixture="$FIX_BOTREVIEW" ;;
     hubshape)  fixture="$FIX_HUBSHAPE" ;;
+    hub139)    fixture="$FIX_HUB139" ;;
     inject)    fixture="$FIX_INJECT" ;;
     fail)      fixture="" ;;
   esac
@@ -527,6 +567,29 @@ if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | jq -e '
   ok "HUB shape: review_rounds==3 (explicit fix headlines + anchored Overview-headed bot rounds agree), preview #2 commit and Deploy-Preview comment stay non-matching"
 else
   no "(3g) wrong (rc=$RUN_RC): $RUN_OUT"
+fi
+
+echo "== 3h. hub#139 shape => 'address code review' headlines count; 'findings' alone stays rejected =="
+make_gh_stub hub139
+run_gather "$PR_URL"
+# Pre-widening, the intervening "code" broke the "address(es)? review" adjacency:
+# both explicit fix commits read is_review_fix:false and review_rounds fell back to
+# the single formal churn review — the live hub#139 undercount of 1 (verified
+# 2026-06-12, true ≈3). The widened "address(es)? (code )?review" must flag both
+# (=> 2 fix commits, review_rounds == MAX(2, 1, 0) == 2, source fix_commits); the
+# "add audit findings export" subject — a verified false-positive of the REJECTED
+# broadened churn-word class — must stay non-matching.
+if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | jq -e '
+    (has("status") | not)
+    and ([.commits[] | select(.is_review_fix)] | length)==2
+    and ([.commits[] | select(.headline | test("address code review"; "i")) | .is_review_fix] == [true, true])
+    and ([.commits[] | select(.headline | test("audit findings"; "i")) | .is_review_fix] == [false])
+    and (.review_rounds == 2)
+    and (.review_rounds_source == "fix_commits")
+  ' >/dev/null 2>&1; then
+  ok "hub#139 shape: both 'address code review findings' commits flagged, review_rounds==2 (source fix_commits, was 1 via formal_reviews), 'findings' alone still rejected"
+else
+  no "(3h) wrong (rc=$RUN_RC): $RUN_OUT"
 fi
 
 echo "== 4. injection-safety => quotes/backslashes/newlines round-trip as valid JSON =="
