@@ -46,9 +46,12 @@
 #     against the PR body, never against commit subjects where it cannot appear.)
 #     Best-effort signal, not authoritative.
 #   commits[].is_review_fix — true if the commit subject matches (case-insensitively)
-#     any of: "address review", "review feedback", "fix review", "self-heal",
-#     "addresses review", "review comment", or the two EXPLICIT anchored forms
-#     "pr #N review" / "review #N" (word-bounded — "preview #2" can never match).
+#     any of: "address(es) review" with an OPTIONAL intervening "code" ("address
+#     code review findings …" headlines broke the old adjacency requirement —
+#     vendsy/hub#139, verified 2026-06-12: 2 explicit review-fix commits uncounted),
+#     "review feedback", "fix review", "self-heal", "review comment", or the two
+#     EXPLICIT anchored forms "pr #N review" / "review #N" (word-bounded —
+#     "preview #2" can never match).
 #     A heuristic flag for review-churn commits. Deliberately NARROW: broadened
 #     churn-word alternations ("nit", unanchored "round-N", "reconcil", "findings")
 #     were evaluated and REJECTED as false-positive-prone (verified matches:
@@ -57,7 +60,9 @@
 #     carries that undercount fix instead. The two explicit forms are NOT a
 #     re-broadening to that rejected class: each requires the literal word "review"
 #     adjacent to a PR/round number, covering headlines like "PR #146 review — …" /
-#     "review #2 — …" (the HUB shape, vendsy/hub#146, verified 2026-06-10).
+#     "review #2 — …" (the HUB shape, vendsy/hub#146, verified 2026-06-10). The
+#     optional "code" is the same spirit — the literal word "review" stays
+#     mandatory, so "findings" ALONE still never matches (test-pinned).
 #   review_rounds — derived as MAX(count of is_review_fix commits, count of distinct
 #     CHURN-review submission timestamps, count of timestamp-ANCHORED bot-review issue
 #     comments). A review OBJECT counts as churn only when its state is
@@ -217,7 +222,11 @@ OUTPUT="$(printf '%s' "$PR_JSON" | jq -c \
   # number, word-bounded (\b) so "preview #2" can never match (no boundary inside
   # "preview"). They cover the HUB-shape headlines ("PR #146 review — …",
   # "review #2 — …") the narrow set missed (vendsy/hub#146, verified 2026-06-10).
-  def review_fix_re: "address(es)? review|review feedback|fix review|self-heal|review comment|\\bpr #[0-9]+ review\\b|\\breview #[0-9]+\\b";
+  # The first alternative accepts an OPTIONAL intervening "code " — the old
+  # adjacency requirement left "address code review findings …" headlines
+  # uncounted (vendsy/hub#139, verified 2026-06-12); the literal word "review"
+  # stays mandatory, so "findings" alone still never matches (test-pinned).
+  def review_fix_re: "address(es)? (code )?review|review feedback|fix review|self-heal|review comment|\\bpr #[0-9]+ review\\b|\\breview #[0-9]+\\b";
   # bot-review issue comments: CI review workflows (claude-code-review.yml et al.) post
   # ISSUE comments, not review objects — anchored ones are review rounds too (header doc).
   def bot_author_re: "^claude(\\[bot\\])?$|\\[bot\\]$|^github-actions";
