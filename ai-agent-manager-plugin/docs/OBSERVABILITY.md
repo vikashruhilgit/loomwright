@@ -68,8 +68,12 @@ Langfuse's OTLP endpoint (`/api/public/otel`) **accepts traces only** — metric
 - **It NEVER starts Docker.** It only prints the exact restart command:
 
   ```bash
-  docker compose -f ~/.claude/ai-agent-manager/observability/docker-compose.yml up -d
+  docker compose -p ai-agent-manager-observability -f ~/.claude/ai-agent-manager/observability/docker-compose.yml up -d
   ```
+
+### Compose project-name convention
+
+The stack's compose project is always **`ai-agent-manager-observability`** (named volumes: `ai-agent-manager-observability_*`), pinned two ways: every documented command carries `-p ai-agent-manager-observability` explicitly, and the generated `.env` contains `COMPOSE_PROJECT_NAME=ai-agent-manager-observability` (compose v2 loads `.env` from the `-f` file's directory, so even a bare `docker compose -f … up -d` joins the same project). A command with neither would derive project `observability` from the directory basename and silently create a second parallel stack on fresh empty volumes — orphaning the existing traces and fighting over ports.
 
 ## Pinned versions
 
@@ -95,10 +99,10 @@ Whether Claude Code's native spans carry a usable `agent.name` attribute for sub
 The `otel-collector-contrib` image is **distroless and runs as non-root UID 10001**. A freshly created named volume mounted at the `file_storage` path (`/var/lib/otelcol/file_storage`) is root-owned by default, so the collector's `create_directory`/write can **permission-fail on the very first boot**. Remedies (either):
 
 - **One-shot root run:** temporarily add `user: "0:0"` to the `otel-collector` service, `up -d` once so the directory is created, then remove the override and recreate the container; or
-- **Pre-seed ownership** of the volume path before first boot, e.g.:
+- **Pre-seed ownership** of the volume path before first boot (the `-p` flag is load-bearing here — it makes the pre-seed act on the real stack's `ai-agent-manager-observability_otel_collector_queue` volume, not a freshly created `observability_*` one):
 
   ```bash
-  docker compose -f ~/.claude/ai-agent-manager/observability/docker-compose.yml run --rm --user 0:0 --entrypoint sh otel-collector -c 'chown -R 10001:10001 /var/lib/otelcol/file_storage'
+  docker compose -p ai-agent-manager-observability -f ~/.claude/ai-agent-manager/observability/docker-compose.yml run --rm --user 0:0 --entrypoint sh otel-collector -c 'chown -R 10001:10001 /var/lib/otelcol/file_storage'
   ```
 
 ### (b) Stack is down — session-start warning
@@ -106,7 +110,7 @@ The `otel-collector-contrib` image is **distroless and runs as non-root UID 1000
 If the stack is stopped, the session-start probe prints a bounded warning (debounced to once per 24h) with the restart command. Run it, or use `/setup observability` to repair the stack:
 
 ```bash
-docker compose -f ~/.claude/ai-agent-manager/observability/docker-compose.yml up -d
+docker compose -p ai-agent-manager-observability -f ~/.claude/ai-agent-manager/observability/docker-compose.yml up -d
 ```
 
 ### (c) Traces not appearing in Langfuse

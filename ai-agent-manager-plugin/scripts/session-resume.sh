@@ -119,9 +119,16 @@ observability_probe() {
     return 0
   fi
 
+  # Restart command convention: ALWAYS carry -p ai-agent-manager-observability —
+  # the project name the init flow uses. Belt-and-braces with the
+  # COMPOSE_PROJECT_NAME baked into the stack's generated .env: a command
+  # without BOTH would derive project "observability" from the directory
+  # basename and start a SECOND parallel stack on fresh empty volumes
+  # (orphaning existing traces + port conflicts). Explicit -p is correct on
+  # any compose version, from any cwd.
   append "### Observability stack unreachable"$'\n'
   append "Telemetry is configured (OTEL_EXPORTER_OTLP_ENDPOINT=$endpoint) but the endpoint did not respond within 1s."$'\n'
-  append "- Restart it: \`docker compose -f ~/.claude/ai-agent-manager/observability/docker-compose.yml up -d\`"$'\n'
+  append "- Restart it: \`docker compose -p ai-agent-manager-observability -f ~/.claude/ai-agent-manager/observability/docker-compose.yml up -d\`"$'\n'
   append "- Or run \`/setup observability\` to repair the stack."$'\n\n'
 
   # Best-effort desktop notification via the sibling helper. Never fails the
@@ -129,7 +136,7 @@ observability_probe() {
   local script_dir
   script_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo .)"
   if [ -r "$script_dir/notify-desktop.sh" ]; then
-    printf '{"hook_event_name":"Notification","notification_type":"observability_down","message":"Observability stack is down — restart: docker compose -f ~/.claude/ai-agent-manager/observability/docker-compose.yml up -d"}' \
+    printf '{"hook_event_name":"Notification","notification_type":"observability_down","message":"Observability stack is down — restart: docker compose -p ai-agent-manager-observability -f ~/.claude/ai-agent-manager/observability/docker-compose.yml up -d"}' \
       | bash "$script_dir/notify-desktop.sh" >/dev/null 2>&1 || true
   fi
 

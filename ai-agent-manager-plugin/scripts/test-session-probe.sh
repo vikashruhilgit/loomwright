@@ -139,8 +139,11 @@ echo "down" > "$CURL_MODE_FILE"
 OUT3="$(run_hook resume)"; rc=$?
 [ "$rc" -eq 0 ] && ok "exits 0 even when stack is down" || no "rc=$rc"
 printf '%s' "$OUT3" | grep -qF "Observability stack unreachable" && ok "warning block emitted" || no "warning block missing"
-printf '%s' "$OUT3" | grep -qF "docker compose -f ~/.claude/ai-agent-manager/observability/docker-compose.yml up -d" \
-  && ok "exact restart command present" || no "restart command missing/garbled"
+# Pins the full restart command INCLUDING -p ai-agent-manager-observability:
+# without the explicit project name, compose would derive project
+# "observability" from the dir basename and start a second parallel stack.
+printf '%s' "$OUT3" | grep -qF "docker compose -p ai-agent-manager-observability -f ~/.claude/ai-agent-manager/observability/docker-compose.yml up -d" \
+  && ok "exact restart command present (with -p ai-agent-manager-observability)" || no "restart command missing/garbled"
 printf '%s' "$OUT3" | grep -qF "/setup observability" && ok "/setup observability pointer present" || no "/setup observability pointer missing"
 printf '%s' "$OUT3" | jq -e '.hookSpecificOutput.additionalContext' >/dev/null 2>&1 && ok "warning rides inside the context envelope" || no "down-case output is not a valid envelope"
 [ -f "$MARKER" ] && ok "marker .last-warned written" || no "marker not written"

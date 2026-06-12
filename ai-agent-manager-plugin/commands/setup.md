@@ -138,7 +138,8 @@ If already configured, offer instead: `Status` / `Reconfigure (re-run init)` / `
    cp "${CLAUDE_PLUGIN_ROOT}/scripts/otel/otel-collector-config.yaml" "$OBS_DIR/"
    ```
    Re-copying compose/config on re-init is fine (it picks up plugin updates). **NEVER overwrite an existing `$OBS_DIR/.env`** — it holds the generated keys; if present, reuse it and skip step 3.
-3. **Generate `$OBS_DIR/.env`** with openssl-generated secrets — execute the ".env generation" recipe in the setup skill verbatim. The variable set matches exactly what the copied `docker-compose.yml` consumes:
+3. **Generate `$OBS_DIR/.env`** with openssl-generated secrets — execute the ".env generation" recipe in the setup skill verbatim. The variable set matches exactly what the copied `docker-compose.yml` consumes, plus one compose-CLI key:
+   - Project identity: `COMPOSE_PROJECT_NAME` (= `ai-agent-manager-observability` — belt-and-braces with the explicit `-p` flag below: compose v2 loads `.env` from the `-f` file's directory, so even a bare `docker compose -f "$OBS_DIR/docker-compose.yml" …` joins the same project instead of deriving a second `observability` project from the dir basename)
    - Infrastructure: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`, `REDIS_AUTH`, `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`, `LANGFUSE_S3_BUCKET`
    - Langfuse core: `LANGFUSE_SALT`, `LANGFUSE_ENCRYPTION_KEY` (64 hex chars — `openssl rand -hex 32`), `NEXTAUTH_SECRET`, `NEXTAUTH_URL`, `LANGFUSE_PORT`
    - Headless provisioning: `LANGFUSE_INIT_ORG_ID`, `LANGFUSE_INIT_ORG_NAME`, `LANGFUSE_INIT_PROJECT_ID`, `LANGFUSE_INIT_PROJECT_NAME`, `LANGFUSE_INIT_PROJECT_PUBLIC_KEY` (`pk-lf-…`), `LANGFUSE_INIT_PROJECT_SECRET_KEY` (`sk-lf-…`), `LANGFUSE_INIT_USER_EMAIL`, `LANGFUSE_INIT_USER_NAME`, `LANGFUSE_INIT_USER_PASSWORD`
