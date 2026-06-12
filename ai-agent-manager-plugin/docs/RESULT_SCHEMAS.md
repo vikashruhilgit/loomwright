@@ -745,7 +745,8 @@ exactly like it already reads `rubric_score`. It does NOT parse the nested SUPER
  "ground_truth_status":"pass|advisory_failures|unverified|skipped",
  "ground_truth_checks_total": 0,
  "ground_truth_checks_passed": 0,
- "ground_truth_pass_rate":"<M/N>"}
+ "ground_truth_pass_rate":"<M/N>",
+ "plugin_version":"14.24.0"}
 ```
 
 > The session_end record carries both an `event` and a (legacy) `type` key with the same value
@@ -772,6 +773,13 @@ are a contract with ST3 (writer) and ST4 (aggregator); do not rename them. The f
 additive to the `session_end` event; events without them remain valid (a reader treats absent
 fields as "not reported this session"; the `ground_truth_*` fields, when absent, are treated as
 `"skipped"`).
+
+**`plugin_version` (additive, optional):** the `session_end` event also carries a `plugin_version`
+string (e.g. `"14.24.0"`), read at emission time from
+`${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` via jq with an `"unknown"` fallback when the
+manifest is unreadable. Purely additive — events without it remain valid, and `build-insights.sh`
+groups them under `"unknown"` in its per-version insights section. No `schema_version` change
+anywhere; never rename or restructure the existing flat fields above.
 
 > **ST4 aggregation status (M2b slice 1a):** `build-insights.sh` currently aggregates the
 > `contract_*` / `benchmark_*` flat fields. The `ground_truth_*` flat fields are **written now**
@@ -995,7 +1003,8 @@ harness** (the deferred M2b part-2b headless-`claude` evaluator).
   "categories": [ {"round": 1, "class": "quality_gap", "self_heal_miss": true, "flow_stage": "self_heal", "evidence": "backend missing the numeric guard the frontend has"}, ... ],
   "self_heal_misses": 3,
   "flow_stages": { "launch_pad": 0, "worker": 1, "self_heal": 3, "unknowable": 0 },
-  "summary": "4 rounds; 3 were self-heal misses (validation parity + falsy coercion)"
+  "summary": "4 rounds; 3 were self-heal misses (validation parity + falsy coercion)",
+  "plugin_version": "14.24.0"
 }
 ```
 
@@ -1022,6 +1031,9 @@ harness** (the deferred M2b part-2b headless-`claude` evaluator).
   caught the class but didn't).
 - `flow_stages` — object tallying rounds per stage `{launch_pad, worker, self_heal, unknowable}`.
 - `summary` — short human-readable one-liner.
+- `plugin_version` — string, **additive & optional** — plugin version at analysis time, read
+  defensively from `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` via jq with an `"unknown"`
+  fallback. Absent in older trend lines, which remain valid — `schema_version` stays `1`.
 
 **Append-only / write-only:** the file is the seed corpus for the deferred synthetic eval harness; it is
 never read back by the skill and lives under the current working `.supervisor/`, never the analyzed repo.

@@ -50,6 +50,7 @@ for f in "${files[@]}"; do
        heal_iterations:(.heal_iterations//null), rubric_score:(.rubric_score//null),
        subtasks_completed:(.subtasks_completed//null), files_changed:(.files_changed//null),
        duration_seconds:(.duration_seconds//null),
+       plugin_version:(.plugin_version//"unknown"),
        contract_conformance_status:(.contract_conformance_status//null),
        contract_violations:(.contract_violations//null),
        benchmark_status:(.benchmark_status//null),
@@ -182,6 +183,36 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
     '
     echo
   fi
+
+  # --- Per-version insights (additive; groups session_end by plugin_version) ---
+  # plugin_version is the additive stamp on the session_end event (see
+  # docs/RESULT_SCHEMAS.md §"session_end JSONL hard-signal fields"); events
+  # without it (older logs) group under "unknown". Columns: runs, heal-PASS
+  # rate, avg heal_iterations, avg rubric_score ("M/N" parsed to a percentage).
+  echo "## Per-version insights"
+  echo "_Sessions grouped by the additive \`plugin_version\` field on \`session_end\` (absent in older logs → \"unknown\"). Computed with jq, never guessed._"
+  echo
+  echo "| Version | Runs | Heal-PASS rate | Avg heal iterations | Avg rubric score |"
+  echo "|---|---|---|---|---|"
+  jq -s -r '
+    group_by(.plugin_version // "unknown")
+    | map({
+        version:   (.[0].plugin_version // "unknown"),
+        runs:      length,
+        pass_rate: (((map(select(.heal_decision=="PASS")) | length) * 100 / length) | floor),
+        healed:    (map(select(.heal_iterations != null)) | length),
+        avg_heal:  ((map(select(.heal_iterations != null) | .heal_iterations) | add // 0)
+                    / ((map(select(.heal_iterations != null)) | length) | if . == 0 then 1 else . end)),
+        rubric_pcts: [ .[] | .rubric_score | select(. != null) | tostring
+                       | capture("^(?<m>[0-9]+)\\s*/\\s*(?<n>[0-9]+)$")
+                       | select((.n|tonumber) > 0)
+                       | ((.m|tonumber) * 100 / (.n|tonumber)) ]
+      })
+    | sort_by(.version) | reverse
+    | .[]
+    | "| \(.version) | \(.runs) | \(.pass_rate)% | \(if .healed>0 then (((.avg_heal*100|floor)/100)|tostring) else "—" end) | \(if (.rubric_pcts|length)>0 then "\(((.rubric_pcts|add) / (.rubric_pcts|length))|floor)%" else "—" end) |"
+  ' "$records"
+  echo
 
   # --- Eval fitness function (ALWAYS rendered; "no data yet" when absent) ---
   # Reads .supervisor/eval/results.jsonl (one EVAL_RESULT-plus-recorded_at per line; written by

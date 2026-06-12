@@ -25,6 +25,7 @@ BODY_BEGIN
 ```json
 {
   "agent_type": "code-reviewer",
+  "plugin_version": "<NORMALISED>",
   "primary_error": "Password compared with double-equals instead of timing-safe equals",
   "redacted": true,
   "result_block": "CODE_REVIEW_RESULT:\n  schema_version: 3\n  review_mode: diff_review\n  audit_focus: []\n  trigger_paths_detected: []\n  scope_expanded: []\n  files_checked:\n    - src/auth/login.ts\n  decision: FAIL\n  issues:\n    - severity: HIGH\n      category: new\n      file: src/auth/login.ts\n      line: 42\n      description: Password compared with double-equals instead of timing-safe equals\n      suggestion: Use crypto.timingSafeEqual()\n  summary: 1 HIGH new issue blocks PASS.\n",

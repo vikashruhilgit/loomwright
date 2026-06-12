@@ -163,12 +163,14 @@ extract_would_exit() {
 # the core is intentionally deterministic — no timestamps inside dry-run.
 # We strip only safety-net patterns in case the core ever grows volatile output.
 normalise_for_golden() {
-  # Remove lines that contain runtime-varying tokens. Currently a no-op for
-  # the core's output, but kept defensively.
+  # Remove lines that contain runtime-varying tokens, and normalise the
+  # additive plugin_version stamp (it tracks plugin.json's version, which bumps
+  # every release — goldens must not break on a version bump).
   sed -E \
     -e '/^Generated: /d' \
     -e '/^Hash: /d' \
-    -e '/^Timestamp: /d'
+    -e '/^Timestamp: /d' \
+    -e 's/"plugin_version": "[^"]*"/"plugin_version": "<NORMALISED>"/'
 }
 
 run_core_dry_run() {
@@ -479,6 +481,26 @@ for variant in payload-agent-tp payload-shared-tp; do
 done
 
 rm -rf "$TRANSCRIPT_TMPDIR" 2>/dev/null || true
+
+# ---- Plugin-version stamping (additive plugin_version in redacted payload) ---
+# The core resolves the plugin version from its own manifest
+# (scripts/../.claude-plugin/plugin.json) and stamps it into the redacted
+# Raw Data JSON. Present case: manifest readable → real version (not
+# "unknown"). Absent case: AI_AGENT_MANAGER_PLUGIN_MANIFEST pointed at a
+# nonexistent path → must degrade to "unknown" without changing exit
+# behaviour. Additive only — schema_version stays 1.
+echo ""
+echo "==== Plugin-version stamping (raw_data plugin_version) ===="
+set_state_allow_with_repo
+out_ver="$(run_core_dry_run "$FIXTURES_DIR/supervisor-escalated.json")"
+assert_match "plugin_version_key_present (supervisor-escalated:allow_with_repo)" '"plugin_version": "' "$out_ver"
+assert_not_match "plugin_version_resolved_not_unknown (manifest readable)" '"plugin_version": "unknown"' "$out_ver"
+# Unreadable manifest → "unknown" fallback; rc and WOULD_EXIT unchanged.
+out_nover="$(AI_AGENT_MANAGER_PLUGIN_MANIFEST="/nonexistent/plugin.json" bash "$CORE" --dry-run < "$FIXTURES_DIR/supervisor-escalated.json" 2>&1)"
+rc_nover=$?
+assert_eq "plugin_version_absent_rc=0" "0" "$rc_nover"
+assert_match "plugin_version_falls_back_to_unknown (manifest unreadable)" '"plugin_version": "unknown"' "$out_nover"
+assert_eq "plugin_version_absent_would_exit_unchanged" "0" "$(extract_would_exit "$out_nover")"
 
 # ---- Summary ----------------------------------------------------------------
 TOTAL=$((PASS_COUNT + FAIL_COUNT))

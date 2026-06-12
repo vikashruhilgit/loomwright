@@ -116,6 +116,7 @@ if command -v jq >/dev/null 2>&1; then
         --argjson self_heal_misses "$SELF_HEAL_MISSES" \
         --argjson flow_stages "$FLOW_STAGES_JSON" \
         --arg summary "$SUMMARY" \
+        --arg plugin_version "$(jq -r '.version // "unknown"' "${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json" 2>/dev/null || echo unknown)" \
         '{
            schema_version: 1,
            ts: $ts,
@@ -129,7 +130,8 @@ if command -v jq >/dev/null 2>&1; then
            categories: $categories,
            self_heal_misses: $self_heal_misses,
            flow_stages: $flow_stages,
-           summary: $summary
+           summary: $summary,
+           plugin_version: $plugin_version
          }' >> .supervisor/postmortem/results.jsonl
   } 2>/dev/null || echo "pr-postmortem: trend append failed (best-effort) — report above is complete."
 else
@@ -165,6 +167,7 @@ One JSON object per line in `.supervisor/postmortem/results.jsonl`:
 | `self_heal_misses` | int | count of rounds flagged `self_heal_miss` |
 | `flow_stages` | object | tally per stage `{launch_pad, worker, self_heal, unknowable}` |
 | `summary` | string | one-line root-cause narrative |
+| `plugin_version` | string | **additive, optional** — plugin version at analysis time, read defensively from `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` via jq (`"unknown"` fallback); absent in older lines, which remain valid — `schema_version` stays `1` |
 
 This file is **append-only** and the **seed corpus for the deferred synthetic eval harness**. It is never read back by this skill (write-only trend), and lives under the current working `.supervisor/`, never the analyzed repo.
 
