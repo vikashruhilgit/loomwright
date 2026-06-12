@@ -2,7 +2,7 @@
 name: pr-postmortem
 description: Inline, READ-ONLY post-hoc analysis protocol for `/pr-postmortem <pr-url>` — gathers an existing PR's review/churn signals via pr-postmortem-gather.sh, categorizes each review round into one of 6 root-cause classes, attributes it to a flow stage, prints a human-readable root-cause report, and appends one fail-safe POSTMORTEM_RESULT trend line to .supervisor/postmortem/results.jsonl. Use when implementing or invoking the `/pr-postmortem` command.
 allowed-tools: [Read, Bash]
-version: "1.2.1"
+version: "1.3.0"
 lastUpdated: "2026-06-13"
 ---
 

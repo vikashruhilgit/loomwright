@@ -203,7 +203,7 @@ The Check + Report steps only (read-only). Include: mode, env-block keys present
 
 ## Module: telemetry
 
-DELEGATES — print `Telemetry is managed by /telemetry (consent logic lives there and is not duplicated).`, show the consent state from the dashboard check, and tell the user to run `/telemetry enable | disable | status | test`. If the user selected telemetry from the no-arg multi-select, execute the `/telemetry enable` flow by following `${CLAUDE_PLUGIN_ROOT}/commands/telemetry.md` directly. Never write `.supervisor/telemetry-consent.json` from this command.
+DELEGATES — print `Telemetry is managed by /telemetry (consent logic lives there and is not duplicated).`, show the consent state from the dashboard check, and tell the user to run `/telemetry enable | disable | status | test`. If the user selected telemetry from the no-arg multi-select, execute the `/telemetry enable` flow by following `${CLAUDE_PLUGIN_ROOT}/commands/telemetry.md` directly — on that delegated path the consent-file write is performed by telemetry.md's own enable recipe and is permitted (it happens under telemetry.md's authority). What is forbidden is `/setup`'s OWN logic touching `.supervisor/telemetry-consent.json` — never read-modify-write it, duplicate the consent prompt, or write it outside of executing telemetry.md's recipe verbatim.
 
 ## Module: notifications
 
@@ -225,7 +225,7 @@ Status + guidance only. Report which of `DB_HOST`, `DB_USER`, `DB_PASS`, `DB_NAM
 
 ## Constraints (every module)
 
-- The ONLY files this command may write: `$OBS_DIR/*` (the copied stack + generated `.env`) and `$HOME/.claude/settings.json` (via the merge recipe, backup-first). Everything else is read-only or delegated.
+- The ONLY files this command's OWN logic may write: `$OBS_DIR/*` (the copied stack + generated `.env`) and `$HOME/.claude/settings.json` (via the merge recipe, backup-first). Everything else is read-only or delegated. One delegation carve-out: when the telemetry module executes telemetry.md's enable recipe (see "Module: telemetry"), that recipe writes `.supervisor/telemetry-consent.json` under telemetry.md's authority — setup.md's own logic still never touches that file.
 - Idempotent: re-running any flow against an already-configured module reports "already configured" and offers status/reconfigure/remove — it never blind-overwrites, and never regenerates an existing `.env`.
 - Abort (never half-write) if `~/.claude/settings.json` exists but fails to parse — tell the user the path and the backup convention, and stop.
 - Never print secret VALUES (webhook URL, DB_PASS, header values, generated keys) except the local-only Langfuse dashboard login at the end of a successful local init.

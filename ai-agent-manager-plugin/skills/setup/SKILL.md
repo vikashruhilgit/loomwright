@@ -136,7 +136,9 @@ for i in $(seq 1 60); do  # 60 × 10s = 10 min ceiling (first boot pulls images 
   [ "$total" -gt 0 ] && [ "$healthy" -eq "$total" ] && break
   sleep 10
 done
-[ "$healthy" -eq "$total" ] || { echo "TIMEOUT: $healthy/$total healthy"; exit 1; }
+# Final assertion requires a NON-ZERO total: zero containers (stack never
+# started / wrong project name) must abort, never false-pass as 0 == 0.
+[ "${total:-0}" -gt 0 ] && [ "$healthy" -eq "$total" ] || { echo "TIMEOUT: ${healthy:-0}/${total:-0} healthy"; exit 1; }
 ```
 
 `docker inspect` is used (not `compose ps` text parsing) because output is stable across compose versions, and the collector's health port (13133) is intentionally not published to the host.
@@ -146,6 +148,15 @@ done
 Success is claimed ONLY after a real span round-trips. Emit via OTLP/HTTP JSON to the collector, then poll the Langfuse public API with the generated keypair:
 
 ```bash
+# Source the keypair + ports from the stack's generated .env FIRST — on the
+# reuse/reconfigure path the keys were generated in a prior session, so
+# in-memory $PK/$SK from the generation recipe may be absent/stale (a 401
+# on the poll otherwise).
+PK=$(sed -n 's/^LANGFUSE_INIT_PROJECT_PUBLIC_KEY=//p' "$OBS_DIR/.env")
+SK=$(sed -n 's/^LANGFUSE_INIT_PROJECT_SECRET_KEY=//p' "$OBS_DIR/.env")
+LANGFUSE_PORT=$(sed -n 's/^LANGFUSE_PORT=//p' "$OBS_DIR/.env")
+OTEL_COLLECTOR_PORT=$(sed -n 's/^OTEL_COLLECTOR_PORT=//p' "$OBS_DIR/.env")
+
 TRACE_ID=$(openssl rand -hex 16); SPAN_ID=$(openssl rand -hex 8)
 NOW_NS=$(($(date +%s) * 1000000000))
 curl -sf -X POST "http://localhost:${OTEL_COLLECTOR_PORT:-4318}/v1/traces" \

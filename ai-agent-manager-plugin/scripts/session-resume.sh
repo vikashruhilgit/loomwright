@@ -67,9 +67,11 @@ append() {
 # OTLP observability stack is unreachable. Design constraints:
 #   - Gate: BOTH .env.CLAUDE_CODE_ENABLE_TELEMETRY and
 #     .env.OTEL_EXPORTER_OTLP_ENDPOINT must be present and non-empty in
-#     ~/.claude/settings.json. If either is absent/empty — or the settings
-#     file, jq, or curl is missing — return immediately with ZERO output
-#     delta (AC5: byte-for-byte identical to the pre-probe hook output).
+#     ~/.claude/settings.json, and CLAUDE_CODE_ENABLE_TELEMETRY must not be
+#     an explicit-off value ("0" / "false" — treated as unconfigured). If
+#     either is absent/empty/off — or the settings file, jq, or curl is
+#     missing — return immediately with ZERO output delta (AC5:
+#     byte-for-byte identical to the pre-probe hook output).
 #   - Probe: `curl --max-time 1` against the base of the configured OTLP
 #     endpoint (any HTTP response, even 404, means the collector is up;
 #     connection refused / timeout means down — hence no `-f`).
@@ -92,7 +94,9 @@ observability_probe() {
   local telemetry endpoint
   telemetry="$(jq -r '.env.CLAUDE_CODE_ENABLE_TELEMETRY // empty' "$settings" 2>/dev/null || true)"
   endpoint="$(jq -r '.env.OTEL_EXPORTER_OTLP_ENDPOINT // empty' "$settings" 2>/dev/null || true)"
-  [ -n "$telemetry" ] || return 0
+  # Explicit-off ("0" / "false") is treated the same as unconfigured — a user
+  # who deliberately disabled telemetry must not get down-stack warnings.
+  case "$telemetry" in ""|0|false) return 0 ;; esac
   [ -n "$endpoint" ] || return 0
 
   # Derive the health URL: strip a trailing slash and any OTLP signal path

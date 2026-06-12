@@ -14,6 +14,8 @@
 #
 # Covers the probe's 4 states plus invariants:
 #   1. unconfigured            → no-op, zero output delta (baseline)
+#   1b. explicit-off ("0"/"false") → treated as unconfigured (byte-identical
+#      to baseline, no probe)
 #   2. configured + healthy    → silent (byte-identical to baseline)
 #   3. configured + down       → warning + marker + notify-desktop called
 #   4. configured + down + fresh marker → fully suppressed (byte-identical
@@ -83,6 +85,9 @@ MARKER="$FAKEHOME/.claude/ai-agent-manager/observability/.last-warned"
 configure() {
   printf '%s' '{"env":{"CLAUDE_CODE_ENABLE_TELEMETRY":"1","OTEL_EXPORTER_OTLP_ENDPOINT":"http://localhost:4318"}}' > "$SETTINGS"
 }
+configure_off() { # $1 = explicit-off value ("0" or "false")
+  printf '{"env":{"CLAUDE_CODE_ENABLE_TELEMETRY":"%s","OTEL_EXPORTER_OTLP_ENDPOINT":"http://localhost:4318"}}' "$1" > "$SETTINGS"
+}
 unconfigure() { rm -f "$SETTINGS"; }
 
 # ---- Project fixture (deterministic .supervisor so output is comparable) ----
@@ -105,6 +110,17 @@ BASELINE="$(run_hook resume)"; rc=$?
 printf '%s' "$BASELINE" | grep -qi "observability" && no "probe text leaked into unconfigured output" || ok "no probe text in output"
 [ ! -f "$CURL_LOG_FILE" ] && ok "curl never invoked when unconfigured" || no "curl was invoked when unconfigured"
 [ ! -f "$MARKER" ] && ok "no marker written" || no "marker written when unconfigured"
+
+echo "== 1b. explicit-off telemetry → treated as unconfigured (baseline) =="
+for offval in 0 false; do
+  configure_off "$offval"; rm -f "$MARKER"; reset_logs
+  echo "down" > "$CURL_MODE_FILE"   # stack IS down — but explicit-off must gate first
+  OUT1B="$(run_hook resume)"; rc=$?
+  [ "$rc" -eq 0 ] && ok "exits 0 (CLAUDE_CODE_ENABLE_TELEMETRY=$offval)" || no "rc=$rc (offval=$offval)"
+  [ "$OUT1B" = "$BASELINE" ] && ok "explicit-off ($offval) output byte-identical to baseline" || no "explicit-off ($offval) output differs from baseline"
+  [ ! -f "$CURL_LOG_FILE" ] && ok "curl never invoked when explicitly off ($offval)" || no "curl invoked despite explicit-off ($offval)"
+  [ ! -f "$MARKER" ] && ok "no marker when explicitly off ($offval)" || no "marker written despite explicit-off ($offval)"
+done
 
 echo "== 2. configured + healthy → silent (byte-identical to baseline) =="
 configure; rm -f "$MARKER"; reset_logs

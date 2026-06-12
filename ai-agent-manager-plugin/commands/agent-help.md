@@ -716,6 +716,21 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 
 ---
 
+### 🧩 /setup — Optional-Capability Dashboard & Guided Configuration
+
+**Purpose:** Single entry point for checking and configuring every optional plugin capability across 6 modules — **observability** (local Langfuse v3 + bundled OTel collector; `init | status | remove`), **telemetry** (delegates to `/telemetry`), **notifications**, **webhook**, **Beads**, and **MySQL MCP**. No-arg invocation prints a status dashboard (one real check per module) then offers configuration via multi-select. Every module follows the same contract: check → report → offer → apply → verify — idempotent, never blind-overwrite (settings.json changes are jq-deep-merged with a timestamped backup, aborting on parse failure).
+
+**Usage:**
+```
+/setup                      # status dashboard + multi-select configuration
+/setup observability        # observability module directly: init | status | remove
+/setup telemetry            # delegates to /telemetry
+```
+
+**Learn More:** see `ai-agent-manager-plugin/commands/setup.md` and the `setup` skill (the module-contract authority); the observability architecture reference is `ai-agent-manager-plugin/docs/OBSERVABILITY.md`
+
+---
+
 ### 🩺 /review-pr — Standalone PR Review-and-Heal
 
 **Purpose:** Run the bounded review→fix→re-review loop against an *existing* PR URL — decoupled from a full Supervisor run, so any open PR (human- or agent-authored) can be reviewed and auto-healed in place. Resolves the PR's head branch (`gh pr view --json headRefName`), checks it out, then orchestrates a `code-reviewer` pass + a `general-purpose` fix worker (default 3 iterations) until the diff is clean (`PASS`) or escalates (`ESCALATED`). Pushes fixes (never `--force`); **never auto-merges** — the PR is always left open for a human, and `NEEDS_HUMAN` stops + notifies + posts findings to the PR.
@@ -998,9 +1013,9 @@ bd close BD-XX
 
 ai-agent-manager-plugin/              # Nested plugin root
 ├── .claude-plugin/
-│   └── plugin.json                   # Plugin metadata (v14.23.3)
+│   └── plugin.json                   # Plugin metadata (v14.24.0)
 ├── .mcp.json                         # Bundled MCP servers
-├── commands/                         # Slash commands (17)
+├── commands/                         # Slash commands (18)
 │   ├── launch-pad.md                 # Supervisor readiness
 │   ├── supervisor.md                 # Parallel orchestrator (v4)
 │   ├── autonomous.md                 # Continuous autonomous loop, stacked PRs (v14)
@@ -1017,6 +1032,7 @@ ai-agent-manager-plugin/              # Nested plugin root
 │   ├── obsidian.md                   # Read-only linked Obsidian vault projection (logs + Twin contracts + memory)
 │   ├── pr-postmortem.md              # Read-only on-demand PR review-churn root-cause analyzer
 │   ├── telemetry.md                  # Opt-in GitHub Issues telemetry (status/enable/disable/test)
+│   ├── setup.md                      # Optional-capability dashboard + guided configuration (incl. observability)
 │   └── agent-help.md
 ├── agents/                           # Agent implementations (14 roles)
 │   ├── launch-pad.md                 # Supervisor readiness agent
@@ -1042,7 +1058,7 @@ ai-agent-manager-plugin/              # Nested plugin root
 │   ├── ARCHITECTURE.md
 │   ├── QA_SYSTEM_BLUEPRINT.md
 │   └── SPIKES/                       # Capability spike investigations + deferral records
-└── skills/                           # Skill files (53 skills)
+└── skills/                           # Skill files (54 skills)
     ├── SKILLS_INDEX.md               # Skill catalog with agent mapping
     ├── supervisor-readiness/         # Pre-flight checklist & brief template
     ├── agent-teams/                  # Agent Teams patterns (experimental)
