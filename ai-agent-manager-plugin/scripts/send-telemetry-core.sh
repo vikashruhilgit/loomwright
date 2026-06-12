@@ -44,6 +44,25 @@ CONSENT_FILE="${PWD}/.supervisor/telemetry-consent.json"
 SENT_LOG="$LOG_DIR/telemetry-sent.log"
 mkdir -p "$LOG_DIR" 2>/dev/null || true
 
+# ---- Resolve plugin version (additive, defensive) ------------------------------
+# Read the plugin's own manifest relative to THIS script's location
+# (scripts/ -> ../.claude-plugin/plugin.json) — NOT relative to $PWD, which is the
+# user's project. AI_AGENT_MANAGER_PLUGIN_MANIFEST overrides the path (used by
+# test-telemetry.sh to exercise the unreadable-manifest fallback). Any failure
+# yields "unknown" — version stamping must NEVER break the telemetry pipeline.
+CORE_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
+PLUGIN_MANIFEST="${AI_AGENT_MANAGER_PLUGIN_MANIFEST:-${CORE_SELF_DIR}/../.claude-plugin/plugin.json}"
+PLUGIN_VERSION="unknown"
+if [ -n "$CORE_SELF_DIR" ] && [ -f "$PLUGIN_MANIFEST" ]; then
+  if command -v jq >/dev/null 2>&1; then
+    PLUGIN_VERSION="$(jq -r '.version // "unknown"' "$PLUGIN_MANIFEST" 2>/dev/null)" || PLUGIN_VERSION="unknown"
+  elif command -v python3 >/dev/null 2>&1; then
+    PLUGIN_VERSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("version") or "unknown")' "$PLUGIN_MANIFEST" 2>/dev/null)" || PLUGIN_VERSION="unknown"
+  fi
+fi
+case "$PLUGIN_VERSION" in ""|null) PLUGIN_VERSION="unknown" ;; esac
+export AI_AGENT_MANAGER_PLUGIN_VERSION="$PLUGIN_VERSION"
+
 # ---- Parse flags -------------------------------------------------------------
 DRY_RUN="false"
 if [ "$#" -gt 0 ]; then
@@ -644,6 +663,10 @@ def redact_text(text):
     return out
 
 redacted_block = redact_text(result_block)
+# Additive plugin-version stamp — resolved by the bash layer above from the
+# plugin manifest relative to this script ("unknown" when unreadable). Purely
+# additive to the redacted payload; schema_version stays 1.
+plugin_version = os.environ.get("AI_AGENT_MANAGER_PLUGIN_VERSION", "") or "unknown"
 raw_data = {
     "schema_version": 1,
     "task_id": task_id,
@@ -656,6 +679,7 @@ raw_data = {
     "primary_error": primary_error,
     "redacted": True,
     "result_block": redacted_block,
+    "plugin_version": plugin_version,
 }
 raw_data_json = json.dumps(raw_data, indent=2, sort_keys=True)
 
