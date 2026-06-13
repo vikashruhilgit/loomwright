@@ -99,10 +99,9 @@ Whether Claude Code's native spans carry a usable `agent.name` attribute for sub
 
 ### (a) Collector exits / restarts on first boot — file_storage permission failure
 
-The `otel-collector-contrib` image is **distroless and runs as non-root UID 10001**. A freshly created named volume mounted at the `file_storage` path (`/var/lib/otelcol/file_storage`) is root-owned by default, so the collector's `create_directory`/write can **permission-fail on the very first boot**. Remedies (either):
+The `otel-collector-contrib` image is **distroless and runs as non-root UID 10001** by default. A freshly created named volume mounted at the `file_storage` path (`/var/lib/otelcol/file_storage`) is root-owned, so a non-root collector's `create_directory`/write would **permission-fail on the very first boot** and stall `wait-healthy`. **The bundled compose handles this by setting `user: "0:0"` on the `otel-collector` service** — it runs as root and creates the directory cleanly, so the default first boot needs no manual step. This is an accepted trade for a local-only collector.
 
-- **One-shot root run:** temporarily add `user: "0:0"` to the `otel-collector` service, `up -d` once so the directory is created, then remove the override and recreate the container; or
-- **Pre-seed ownership** of the volume path before first boot (the `-p` flag is load-bearing here — it makes the pre-seed act on the real stack's `ai-agent-manager-observability_otel_collector_queue` volume, not a freshly created `observability_*` one):
+If you prefer to keep the collector non-root (remove the `user: "0:0"` override), pre-seed the volume ownership before first boot instead (the `-p` flag is load-bearing here — it makes the pre-seed act on the real stack's `ai-agent-manager-observability_otel_collector_queue` volume, not a freshly created `observability_*` one):
 
   ```bash
   docker compose -p ai-agent-manager-observability -f ~/.claude/ai-agent-manager/observability/docker-compose.yml run --rm --user 0:0 --entrypoint sh otel-collector -c 'chown -R 10001:10001 /var/lib/otelcol/file_storage'
