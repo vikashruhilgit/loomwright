@@ -88,7 +88,7 @@ while IFS= read -r line; do
   esac
 
   # Extract lesson text: the part after `] ` up to (but not including) the `  <!--` trailer.
-  text="$(printf '%s' "$line" | sed -E 's/^- \[[^]]*\] //; s/[[:space:]]*<!--.*-->[[:space:]]*$//')"
+  text="$(printf '%s' "$line" | sed -E 's/^- \[[^]]*\] //; s/[[:space:]]*<!-- last_verified=.*-->[[:space:]]*$//')"
   fh="$(printf '%s' "$cur_cat $text" | sha)"
   if ! grep -qxF "$fh" "$trusted" 2>/dev/null; then
     printf '[%s] DROPPED unverified lessons line: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" "$line" >> "$LOG"

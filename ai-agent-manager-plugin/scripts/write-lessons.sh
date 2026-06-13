@@ -59,12 +59,14 @@ done
 
 # Sanitize --source of quotes/backslashes/control chars so the no-jq provenance fallback
 # (printf-built JSON) can never emit malformed JSONL even if a caller widens --source.
-SOURCE="$(printf '%s' "$SOURCE" | tr -d '"\\[:cntrl:]')"
+SOURCE="$(printf '%s' "$SOURCE" | tr -d '"\\<>[:cntrl:]')"
 [ -n "$SOURCE" ] || SOURCE="unknown"
 
 # Sanitize --confidence the same way --source is sanitized (it lands in the markdown trailer and
 # is passed to awk via -v, so it must be a clean slug-like value with no quotes/backslashes/ctrl).
-CONFIDENCE="$(printf '%s' "$CONFIDENCE" | tr -d '"\\[:cntrl:]')"
+# `<`/`>` are also dropped so a value like `high-->evil` can't inject comment delimiters into the
+# `<!-- ... -->` trailer (defense-in-depth for the trailer shape the reader anchors to).
+CONFIDENCE="$(printf '%s' "$CONFIDENCE" | tr -d '"\\<>[:cntrl:]')"
 [ -n "$CONFIDENCE" ] || CONFIDENCE="medium"
 
 # Slugify --category: lowercase, strip control chars, spaces/punct -> hyphens, collapse + trim
@@ -108,7 +110,12 @@ mkdir -p "$MEM_DIR" 2>/dev/null || { echo "write-lessons: cannot create $MEM_DIR
 ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
 [ -n "$LAST_VERIFIED" ] || LAST_VERIFIED="$ts"
 
-lesson_oneline="$(printf '%s' "$LESSON" | tr '\n' ' ')"
+# Trim TRAILING whitespace from the one-lined lesson so the stored text and the hashed text agree
+# (command substitution strips trailing newlines but NOT trailing spaces; the reader's trailer
+# strip eats trailing spaces before the trailer, so a divergence here silently drops the lesson).
+# This trims ONLY trailing whitespace — interior backslashes / spaces are untouched. The SAME
+# value feeds both content_hash and the awk-stored line below.
+lesson_oneline="$(printf '%s' "$LESSON" | tr '\n' ' ' | sed -E 's/[[:space:]]+$//')"
 # CRITICAL: content_hash is over category + lesson text ONLY — the freshness trailer never enters
 # it, so re-verification (new last_verified) can never change the hash or break the chain.
 content_hash="$(printf '%s' "$CATSLUG $lesson_oneline" | sha)"

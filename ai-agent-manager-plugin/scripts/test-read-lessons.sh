@@ -8,6 +8,8 @@
 #   2. poison drop (out-of-band un-provenanced line dropped + logged)
 #   3. tamper-detection (corrupting the first provenance content_hash breaks the chain)
 #   4. stale-lint (a ~400-day-old lesson is skipped; a fresh one is emitted)
+#   5. trailer-collision (lesson text with inner <!-- --> and trailing spaces both round-trip)
+#   6. post-eviction read-back (survivors emitted, evicted-oldest not, no survivor DROPPED)
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -72,6 +74,56 @@ echo "$out" | grep -q "fresh new lesson here" && ok "fresh lesson emitted" || no
 # Raising the threshold above the age makes the old lesson fresh again (advisory, env-tunable).
 out2="$( cd "$TMP" && LESSON_STALE_DAYS=100000 bash "$READ" 2>/dev/null )"
 echo "$out2" | grep -q "stale old lesson here" && ok "LESSON_STALE_DAYS override re-admits old lesson" || no "stale threshold override not honored"
+rm -rf "$TMP"
+
+echo "== 5. trailer-collision (inner <!-- --> and trailing-space lessons round-trip) =="
+# Directly guards the HIGH fix: a lesson whose TEXT contains <!-- ... --> must not have the reader's
+# trailer strip over-consume from the inner comment to the real trailer's final -->; and a lesson
+# whose text had trailing spaces must hash-match after the writer's trailing-space trim.
+TMP="$(newrepo)"
+( cd "$TMP" \
+    && bash "$WRITE" --category tcol --lesson "use <!-- html comment --> sparingly in templates" --source s1 \
+    && bash "$WRITE" --category tcol --lesson "arrow operator a --> b means transition" --source s1 \
+    && bash "$WRITE" --category tcol --lesson "trailing space lesson here   " --source s1 ) >/dev/null 2>&1
+out="$( cd "$TMP" && bash "$READ" 2>/dev/null )"
+echo "$out" | grep -qF "use <!-- html comment --> sparingly in templates" && ok "inner-comment lesson round-trips (trailer strip anchored, not greedy)" || no "inner-comment lesson dropped (greedy trailer strip)"
+echo "$out" | grep -qF "arrow operator a --> b means transition" && ok "arrow-operator (-->) lesson round-trips" || no "arrow-operator lesson dropped"
+echo "$out" | grep -qF "trailing space lesson here" && ok "trailing-space lesson round-trips (writer trims, hashes agree)" || no "trailing-space lesson dropped (hash divergence)"
+# None of the three should have been logged DROPPED.
+if [ -f "$TMP/$LOGFILE" ] && grep -qE "DROPPED.*(html comment|arrow operator|trailing space)" "$TMP/$LOGFILE"; then
+  no "a trailer-collision lesson was logged DROPPED"
+else
+  ok "no trailer-collision lesson logged DROPPED"
+fi
+rm -rf "$TMP"
+
+echo "== 6. post-eviction read-back (survivors emitted, evicted not, none DROPPED) =="
+# Mirrors test-project-memory.sh's eviction read-back. Per-category cap is 3: write 5 lessons to
+# ONE category, then assert the 3 survivors ARE emitted, the 2 oldest are NOT, and no survivor was
+# logged DROPPED — this pins the chain walk past the `evict` provenance entries (the most fragile
+# path: a mis-hashed evict entry breaks the chain and silently drops every later survivor).
+TMP="$(newrepo)"
+( cd "$TMP" && for i in 1 2 3 4 5; do bash "$WRITE" --category evic --lesson "evic lesson number $i here" --source s1 >/dev/null 2>&1; done )
+out="$( cd "$TMP" && bash "$READ" 2>/dev/null )"
+surv="$(echo "$out" | grep -cE '^- \[')"; surv="${surv:-0}"
+if [ "$surv" -eq 3 ] \
+   && echo "$out" | grep -qF "evic lesson number 3 here" \
+   && echo "$out" | grep -qF "evic lesson number 4 here" \
+   && echo "$out" | grep -qF "evic lesson number 5 here"; then
+  ok "3 survivors (lessons 3,4,5) emitted past evict provenance entries"
+else
+  no "post-eviction survivors dropped by reader (have $surv emitted, want 3 — evict broke the chain)"
+fi
+if echo "$out" | grep -qF "evic lesson number 1 here" || echo "$out" | grep -qF "evic lesson number 2 here"; then
+  no "an evicted (oldest) lesson was still emitted"
+else
+  ok "the 2 oldest (lessons 1,2) were evicted and not emitted"
+fi
+if [ -f "$TMP/$LOGFILE" ] && grep -qE "DROPPED.*evic lesson number [345] here" "$TMP/$LOGFILE"; then
+  no "a surviving lesson was logged DROPPED across eviction"
+else
+  ok "no surviving lesson logged DROPPED across eviction"
+fi
 rm -rf "$TMP"
 
 echo
