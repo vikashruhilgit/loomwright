@@ -344,6 +344,10 @@ if [ -f "$MEM_SRC" ]; then
     echo
     echo "_Projected from \`$MEM_SRC\` (advisory — subordinate to CLAUDE.md)._"
     echo
+    # DELIBERATE RAW PROJECTION: the Obsidian vault is a local, read-only personal projection, not a
+    # trust boundary, so PROJECT_MEMORY is projected verbatim rather than routed through
+    # read-project-memory.sh (its provenance gate). Routing memory through the read-side gate here is
+    # a future follow-up; same decision is applied symmetrically to LESSONS below.
     cat "$MEM_SRC" 2>/dev/null || true
     echo
     echo "_Back to [[$SLUG — Index]]_"
@@ -366,6 +370,10 @@ if [ -f "$LESSONS_SRC" ]; then
     echo
     echo "_Projected from \`$LESSONS_SRC\` (advisory — subordinate to CLAUDE.md)._"
     echo
+    # DELIBERATE RAW PROJECTION (symmetric with the PROJECT_MEMORY raw `cat` above): the Obsidian
+    # vault is a local, read-only personal projection, not a trust boundary, so LESSONS is projected
+    # verbatim rather than routed through read-lessons.sh (its provenance + stale gate). Routing both
+    # memory files through their read-side gates here is a future follow-up; today they stay raw cats.
     cat "$LESSONS_SRC" 2>/dev/null || true
     echo
     echo "_Back to [[$SLUG — Index]]_"

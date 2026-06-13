@@ -29,6 +29,19 @@ the system trust unvetted self-writes.
 **Non-goals for P2b (deferred):** `LESSONS.md` reflection (P4), reusable playbooks (P4/P5),
 vector/semantic recall (deferred unless file+grep fails at scale), `/dreaming` extension (P4).
 
+> **UPDATE (v14.5.0 — LESSONS provenance + freshness now SHIPPED, parity with PROJECT_MEMORY).**
+> What was deferred to P5 for `LESSONS.md` is now implemented, mirroring this design one-to-one on a
+> LESSONS-SPECIFIC chain: `scripts/write-lessons.sh` hash-chains each add/evict into a **separate**
+> `.supervisor/memory/.lessons-provenance.jsonl` (GENESIS-rooted; one `evict` entry per evicted
+> lesson — kept distinct from PROJECT_MEMORY's `.provenance.jsonl` so the two chain walks never
+> interleave), and the new sole-reader `scripts/read-lessons.sh` is the read-side gate (drops
+> un-provenanced poison lines, distrusts everything after a broken link — the same W1 enforcement as
+> `read-project-memory.sh`). Additionally each lesson carries machine-readable **freshness metadata**
+> (`last_verified` ISO-8601 + `confidence`, appended as an HTML-comment trailer that is excluded from
+> `content_hash`), and the reader applies an advisory **stale-lint** (skips lessons older than
+> `LESSON_STALE_DAYS`, default 90). Self-tests: `scripts/test-lessons.sh` (write-side) and
+> `scripts/test-read-lessons.sh` (read-side).
+
 ---
 
 ## 2. Data layout (all under the already-gitignored `.supervisor/`)

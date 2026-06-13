@@ -9,6 +9,9 @@
 #   3. <=3/category eviction (oldest evicted)
 #   4. two categories independent (both sections coexist)
 #   5. .gitignore coverage of .supervisor/memory/ (checked against the real repo)
+#   6. backslash integrity (awk ENVIRON, not -v)
+#   7. freshness trailer (last_verified + confidence, defaults + overrides; content_hash unchanged)
+#   8. provenance write-side (separate .lessons-provenance.jsonl chain; add + evict entries)
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -80,6 +83,52 @@ if grep -qF 'C:\Users\x and a \n literal' "$wf" 2>/dev/null; then ok "backslashe
 pc="$(awk '/^## paths$/{f=1;next} /^## /{f=0} f && /^- \[/{c++} END{print c+0}' "$wf" 2>/dev/null)"
 [ "$pc" -eq 1 ] && ok "lesson stored as a single entry line" || no "lesson split across lines (have $pc)"
 rm -rf "$WDIR"
+
+echo "== 7. freshness trailer (last_verified + confidence) =="
+FDIR="$(mktemp -d)"; ( cd "$FDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
+# (a) default trailer present with a plausible ISO timestamp + default confidence=medium
+( cd "$FDIR" && bash "$WRITE" --category fresh --lesson "default freshness lesson" --source s ) >/dev/null 2>&1
+ff="$FDIR/$LFILE"
+if grep -qE 'default freshness lesson  <!-- last_verified=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+Z confidence=medium -->' "$ff" 2>/dev/null; then
+  ok "default last_verified+confidence trailer appended"
+else
+  no "default freshness trailer missing/malformed"
+fi
+# Substring grep still matches despite the trailer (dedup-guard invariant)
+grep -qF -- "default freshness lesson" "$ff" 2>/dev/null && ok "substring grep still matches with trailer" || no "trailer broke substring grep"
+# (b) explicit --last-verified + --confidence flags honored
+( cd "$FDIR" && bash "$WRITE" --category fresh2 --lesson "explicit freshness lesson" --last-verified 2020-01-01T00:00:00Z --confidence high --source s ) >/dev/null 2>&1
+if grep -qF -- "explicit freshness lesson  <!-- last_verified=2020-01-01T00:00:00Z confidence=high -->" "$ff" 2>/dev/null; then
+  ok "explicit --last-verified/--confidence honored"
+else
+  no "explicit freshness flags not honored"
+fi
+# (c) content_hash MUST NOT depend on the trailer: same cat+text written twice with DIFFERENT
+#     freshness must produce the SAME [id] and dedup to a single entry.
+( cd "$FDIR" && bash "$WRITE" --category hashstable --lesson "hash stable lesson" --last-verified 2021-01-01T00:00:00Z --confidence low --source s ) >/dev/null 2>&1
+( cd "$FDIR" && bash "$WRITE" --category hashstable --lesson "hash stable lesson" --last-verified 2099-01-01T00:00:00Z --confidence high --source s ) >/dev/null 2>&1
+hc="$(awk '/^## hashstable$/{f=1;next} /^## /{f=0} f && /^- \[/{c++} END{print c+0}' "$ff" 2>/dev/null)"
+[ "$hc" -eq 1 ] && ok "trailer excluded from content_hash (re-verify deduped to one entry)" || no "trailer leaked into hash (have $hc entries, want 1)"
+rm -rf "$FDIR"
+
+echo "== 8. provenance write-side (.lessons-provenance.jsonl) =="
+PDIR="$(mktemp -d)"; ( cd "$PDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
+( cd "$PDIR" && bash "$WRITE" --category prov --lesson "prov lesson one" --source s ) >/dev/null 2>&1
+pj="$PDIR/.supervisor/memory/.lessons-provenance.jsonl"
+# Separate chain file exists and is distinct from PROJECT_MEMORY's .provenance.jsonl
+if [ -f "$pj" ]; then ok "lessons provenance chain file created"; else no "lessons provenance chain file missing"; fi
+[ -e "$PDIR/.supervisor/memory/.provenance.jsonl" ] && no "PROJECT_MEMORY chain file was touched (should be lessons-specific)" || ok "PROJECT_MEMORY chain file untouched (separate chain)"
+# First entry is GENESIS-rooted add
+grep -q '"prev_hash":"GENESIS"' "$pj" 2>/dev/null && grep -q '"action":"add"' "$pj" 2>/dev/null && ok "genesis-rooted add provenance line present" || no "genesis add line missing"
+# Eviction emits per-evicted `evict` provenance lines
+( cd "$PDIR" && for i in 1 2 3 4; do bash "$WRITE" --category evcat --lesson "ev lesson $i" --source s >/dev/null 2>&1; done )
+grep -q '"action":"evict"' "$pj" 2>/dev/null && ok "eviction recorded an evict provenance line" || no "evict provenance line missing"
+# Dedup skip writes NO new provenance line (skip ⇒ touch nothing)
+before="$(wc -l < "$pj" | tr -d ' ')"
+( cd "$PDIR" && bash "$WRITE" --category prov --lesson "prov lesson one" --source s ) >/dev/null 2>&1
+after="$(wc -l < "$pj" | tr -d ' ')"
+[ "$before" = "$after" ] && ok "dedup skip added no provenance line" || no "dedup skip wrote provenance ($before -> $after)"
+rm -rf "$PDIR"
 
 echo
 echo "RESULT: $pass passed, $fail failed"
