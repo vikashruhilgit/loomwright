@@ -31,7 +31,7 @@ Every module implements five phases, in order, every invocation:
 |---|---|
 | **check** | Derive state from REAL commands (file tests, `jq -e`, `docker inspect`, `command -v`). Never assert state you didn't probe. |
 | **report** | Print what check found. `status` subcommands stop here. |
-| **offer** | `AskUserQuestion` with the applicable actions. Already-configured modules offer status/reconfigure/remove — never silently re-apply. |
+| **offer** | `AskUserQuestion` with the applicable actions. Already-configured modules offer status/reconfigure/remove — never silently re-apply. **`AskUserQuestion` caps at 4 options** — the no-arg dashboard must NOT emit one option per module (6 modules > 4); it uses the fixed ≤4-option set in `commands/setup.md` (observability, telemetry, "Other integrations" folding the three guidance-only modules, "Nothing"). |
 | **apply** | Make the change. Backup before any mutation of a pre-existing file. Stop at the first failed step — never continue past a failure to "finish" the flow. |
 | **verify** | Re-run check (+ smoke test where defined) and show before/after. Success is claimed ONLY after verify passes. |
 

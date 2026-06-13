@@ -89,13 +89,17 @@ Print the dashboard:
 | mysql-mcp     | <derived>                               | /setup mysql-mcp      |
 ```
 
-Then use `AskUserQuestion`:
-- `question`: "Which modules do you want to configure now?"
+Then use `AskUserQuestion`. **`AskUserQuestion` accepts at most 4 options**, so do NOT emit one option per unconfigured module (a fresh machine has 5 unconfigured modules → an invalid call). Use this fixed ≤4-option set — the two modules with real apply flows individually, the three status/guidance-only modules folded into one, plus an opt-out:
+- `question`: "Which would you like to configure now?"
 - `header`: "Configure"
 - `multiSelect`: true
-- `options`: one option per module that is not already fully configured (label = module name, description = its current status), plus a "Nothing — just checking" option.
+- `options` (exactly these, in order; append each module's current status to its description):
+  1. **observability** — full local-Langfuse / existing-endpoint / console init flow.
+  2. **telemetry** — delegates to `/telemetry`.
+  3. **Other integrations (webhook · Beads · MySQL MCP)** — print status + setup guidance for all three (these are guidance-only; `notifications` is always-on and needs no action).
+  4. **Nothing — just checking** — stop with the summary line.
 
-Run the corresponding module flow (below) for each selection, in the order listed. If "Nothing", stop with the summary line.
+Run the corresponding module flow (below) for each selection, in the order listed. For option 3, run the `webhook`, `beads`, and `mysql-mcp` status/guidance blocks in turn. If "Nothing", stop with the summary line.
 
 ## `/setup <module>` — jump straight to that module's flow.
 
