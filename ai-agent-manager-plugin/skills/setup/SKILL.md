@@ -210,6 +210,7 @@ For an external/existing endpoint, only the emit half runs (verify 2xx) — arbi
 - Idempotency: run apply twice → assert second run is a no-op offer, `.env` mtime unchanged.
 - Smoke test: assert failure path stops the flow (kill `langfuse-worker`, expect poll timeout → no success claim).
 - Removal: assert exactly the 8 keys are deleted and everything else survives.
+- Healthcheck fragility (functional, not static): the `minio` probe (`mc ready local`) is the most image-version-fragile of the compose healthchecks — it depends on the `local` alias the upstream entrypoint sets up, which the entrypoint override could skip. It is NOT covered by the static self-test; on any minio image bump, functionally verify the container reaches `healthy` before trusting wait-healthy.
 
 ## Related Skills
 

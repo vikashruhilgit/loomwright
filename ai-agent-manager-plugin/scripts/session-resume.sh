@@ -108,7 +108,9 @@ observability_probe() {
   base="${base%/v1/traces}"
   base="${base%/v1/metrics}"
   base="${base%/v1/logs}"
-  if curl -s -o /dev/null --max-time 1 "$base/" 2>/dev/null; then
+  # --connect-timeout bounds DNS/connect separately from --max-time (total
+  # response); both keep this SessionStart probe from ever stalling startup.
+  if curl -s -o /dev/null --connect-timeout 1 --max-time 1 "$base/" 2>/dev/null; then
     return 0 # healthy → silent
   fi
 

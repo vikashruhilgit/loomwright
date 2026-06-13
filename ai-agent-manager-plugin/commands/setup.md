@@ -61,13 +61,14 @@ Run ONE real check per module (never guess; every cell of the dashboard is deriv
 
 1. **observability** —
    - Env block: `[ -f "$SETTINGS" ] && jq -e '.env.CLAUDE_CODE_ENABLE_TELEMETRY == "1"' "$SETTINGS" >/dev/null 2>&1`
-   - Mode: if env block present, read `.env.OTEL_TRACES_EXPORTER` (value `console` → console-debug mode) and `.env.OTEL_EXPORTER_OTLP_ENDPOINT` (`http://localhost:4318` + `$OBS_DIR` exists → local stack; anything else → external endpoint).
-   - Local stack health (only when local): copied stack present (`[ -f "$OBS_DIR/docker-compose.yml" ] && [ -f "$OBS_DIR/.env" ]`) and containers healthy via the wait-healthy probe from the skill (single pass, no loop):
+   - Mode: if env block present, read `.env.OTEL_TRACES_EXPORTER` (value `console` → console-debug mode) and `.env.OTEL_EXPORTER_OTLP_ENDPOINT`. Classify as **local stack** when the endpoint host is `localhost`/`127.0.0.1` (ANY port — do NOT key off the literal `:4318`; the port is parameterized as `$OTEL_COLLECTOR_PORT` and a customized value must still classify as local) AND the copied stack exists (`[ -f "$OBS_DIR/docker-compose.yml" ]`); otherwise **external endpoint**.
+   - Local stack health (only when local): copied stack present (`[ -f "$OBS_DIR/docker-compose.yml" ] && [ -f "$OBS_DIR/.env" ]`) and per-container health via the wait-healthy probe from the skill (single pass, no loop):
      ```bash
      docker compose -p ai-agent-manager-observability -f "$OBS_DIR/docker-compose.yml" --env-file "$OBS_DIR/.env" ps -q \
        | xargs docker inspect -f '{{.Name}} {{.State.Health.Status}}' 2>/dev/null
      ```
-   - Status cell: `configured — local stack N/7 healthy` | `configured — external endpoint` | `configured — console debug` | `partial — env block present, stack down/missing` | `not configured`.
+     Bucket the reported states before choosing the cell: if any container reports `starting`, the stack is **booting** (first boot can take ~10 min — image pulls + ClickHouse migrations), NOT down — surface that distinctly so a just-launched `init` in another pane doesn't read as a failure. **Collector caveat (liveness-only):** `otel-collector`'s healthcheck is `--version` (the contrib image is distroless — no in-container HTTP probe), so a `healthy` collector cell proves the process is *up*, not that it bound `:4318` or is actually ingesting. True readiness is confirmed only by the `init` smoke test (Pattern 6); the dashboard MUST NOT upgrade "N/7 healthy" to "ingesting."
+   - Status cell: `configured — local stack N/7 healthy (collector liveness-only)` | `configured — local stack booting (M/7 healthy, K starting)` | `configured — external endpoint` | `configured — console debug` | `partial — env block present, stack down/missing` | `not configured`.
 2. **telemetry** — read `.supervisor/telemetry-consent.json` (user-project root). `always_allow` + repo → `enabled (target=<owner/repo>)`; `no` → `disabled`; absent/malformed → `unset`.
 3. **notifications** — always-on via plugin hooks (desktop banners at human-decision gates); status cell is `active (built-in hooks)`. No check command needed — note that the webhook variant additionally requires the webhook module below.
 4. **webhook** — `[ -n "${AI_AGENT_MANAGER_WEBHOOK_URL:-}" ]`. Status: `set` / `not set`. NEVER print the URL value (it may embed a token) — print only `set (host: <hostname-only>)`.
@@ -116,7 +117,7 @@ Run the same checks as the dashboard row (env block, mode, copied stack, contain
 ### Report
 
 Print what was found (mode, endpoint, stack health, settings backup count). For `status` subcommand, stop here plus:
-- `curl -sf http://localhost:${LANGFUSE_PORT:-3000}/api/public/health` → Langfuse reachable?
+- Source the stack `.env` FIRST so a customized `LANGFUSE_PORT` is honored (the smoke-test recipe already does this; the health probe must too — otherwise a changed port is probed against the default `3000`): `set -a; . "$OBS_DIR/.env" 2>/dev/null; set +a`, then `curl -sf "http://localhost:${LANGFUSE_PORT:-3000}/api/public/health"` → Langfuse reachable?
 - Container table from the `docker compose ... ps` probe above.
 
 ### Offer
@@ -163,7 +164,7 @@ If already configured, offer instead: `Status` / `Reconfigure (re-run init)` / `
    | `OTEL_TRACES_EXPORTER` | `otlp` |
    | `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` |
    | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:<OTEL_COLLECTOR_PORT>` (default `http://localhost:4318`) |
-   | `OTEL_EXPORTER_OTLP_HEADERS` | `Authorization=Basic <LANGFUSE_BASIC_AUTH>` (the local collector accepts unauthenticated OTLP and ignores it; written anyway so the block shape is identical across backends) |
+   | `OTEL_EXPORTER_OTLP_HEADERS` | `Authorization=Basic <LANGFUSE_BASIC_AUTH>` (the local collector accepts unauthenticated OTLP and ignores it; written anyway so the block shape is identical across backends — note this persists the local Langfuse keypair, base64 `pk:sk`, in plaintext in `settings.json`; acceptable because the keys are local-only, but be aware it lives there) |
    | `OTEL_RESOURCE_ATTRIBUTES` | `service.version=<plugin version from Step 0>` |
 
 7. **Smoke test BEFORE reporting success** — execute the skill's smoke-test recipe: emit a test span via `curl` to `http://localhost:<OTEL_COLLECTOR_PORT>/v1/traces`, then poll the Langfuse API (`/api/public/traces`, Basic auth `pk:sk` from `.env`) until the span lands (up to ~3 minutes — ingestion is async through the worker + ClickHouse). If it never lands: report FAILURE with the collector logs (`docker compose -p ai-agent-manager-observability logs otel-collector --tail 50`) — the env merge stays in place (it is correct), but success is NOT claimed.
@@ -194,7 +195,7 @@ Re-run the Check step and show the before/after status row. Local backend additi
 
 ### Subflow: `/setup observability status`
 
-The Check + Report steps only (read-only). Include: mode, env-block keys present (names only — never print header values beyond the endpoint), container health table, Langfuse `/api/public/health` probe, last settings backup filename.
+The Check + Report steps only (read-only). Include: mode, env-block keys present (names only — never print header values beyond the endpoint), container health table (with the `booting`/collector-liveness-only buckets from the dashboard check), Langfuse `/api/public/health` probe (source `$OBS_DIR/.env` first so a customized `LANGFUSE_PORT` is honored), last settings backup filename.
 
 ### Subflow: `/setup observability remove`
 
