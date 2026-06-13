@@ -84,6 +84,7 @@ while IFS= read -r r; do
       (if .subtasks_completed!=null then "subtasks_completed: \(.subtasks_completed)" else empty end),
       (if .files_changed!=null     then "files_changed: \(.files_changed)"           else empty end),
       (if .duration_seconds!=null  then "duration_seconds: \(.duration_seconds)"     else empty end),
+      "plugin_version: \(.plugin_version)",
       (if .contract_conformance_status!=null then "contract_conformance_status: \(.contract_conformance_status)" else empty end),
       (if .contract_violations!=null then "contract_violations: \(.contract_violations)" else empty end),
       (if .benchmark_status!=null  then "benchmark_status: \(.benchmark_status)"      else empty end),

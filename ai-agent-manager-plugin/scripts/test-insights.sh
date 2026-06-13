@@ -41,6 +41,8 @@ grep -q "50%" "$d" 2>/dev/null && ok "completion rate = 50%" || no "completion r
 grep -q "ccusage" "$d" 2>/dev/null && ok "cost stub points to ccusage" || no "cost stub missing"
 [ -f "$T/.supervisor/insights/runs/sess-a.md" ] && [ -f "$T/.supervisor/insights/runs/sess-b.md" ] && ok "per-run notes written" || no "per-run notes missing"
 grep -qF 'rubric_score: "7/7"' "$T/.supervisor/insights/runs/sess-a.md" 2>/dev/null && ok "run-A frontmatter carries rubric_score" || no "run-A frontmatter wrong"
+# Per-run frontmatter always carries plugin_version; older logs (no plugin_version) render "unknown".
+grep -qF 'plugin_version: unknown' "$T/.supervisor/insights/runs/sess-a.md" 2>/dev/null && ok "run-A (older log) frontmatter carries plugin_version: unknown" || no "run-A missing plugin_version: unknown"
 if grep -q "^rubric_score:" "$T/.supervisor/insights/runs/sess-b.md" 2>/dev/null; then no "run-B invented an absent rubric field"; else ok "run-B omits absent fields (tolerant, no crash)"; fi
 grep -q '```dataview' "$d" 2>/dev/null && ok "dashboard includes the Obsidian/Dataview fence" || no "dataview fence missing"
 order="$(awk '/^\| Session \|/{t=1;next} t&&/sess-b/{print "b";exit} t&&/sess-a/{print "a";exit}' "$d")"
@@ -149,6 +151,7 @@ grep -q "^## Per-version insights" "$vd" 2>/dev/null && ok "per-version section 
 grep -qF "| Version | Runs | Heal-PASS rate | Avg heal iterations | Avg rubric score |" "$vd" 2>/dev/null && ok "per-version table header present" || no "per-version table header wrong"
 grep -qF "| 14.24.0 | 2 | 50% | 2 | 75% |" "$vd" 2>/dev/null && ok "14.24.0 row aggregates correctly (2 runs, 50% PASS, avg heal 2, avg rubric 75%)" || no "14.24.0 row wrong"
 grep -qF "| unknown | 1 | 100% | 2 | — |" "$vd" 2>/dev/null && ok "absent plugin_version groups under \"unknown\"" || no "unknown row wrong"
+grep -qF "plugin_version: 14.24.0" "$V/.supervisor/insights/runs/pv-a.md" 2>/dev/null && ok "run pv-a per-run frontmatter carries explicit plugin_version: 14.24.0" || no "pv-a per-run plugin_version wrong"
 # Existing sections must be untouched by the additive per-version section.
 grep -q "^## Summary" "$vd" 2>/dev/null && grep -q "^## Recent sessions" "$vd" 2>/dev/null && ok "dashboard still renders fully with per-version section" || no "dashboard incomplete with per-version section"
 rm -rf "$V"
