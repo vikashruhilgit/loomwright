@@ -41,10 +41,12 @@ Langfuse v3 (self-hosted) — /api/public/otel (Basic auth)
 | `OTEL_TRACES_EXPORTER` | `otlp` |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | the collector endpoint (default `http://localhost:4318`) |
-| `OTEL_EXPORTER_OTLP_HEADERS` | auth headers for the OTLP hop |
+| `OTEL_EXPORTER_OTLP_HEADERS` | auth headers for the OTLP hop, e.g. `Authorization=Basic <base64(pk:sk)>` |
 | `OTEL_RESOURCE_ATTRIBUTES` | `service.version=<plugin version>` (read from `plugin.json` at init — this is what powers per-plugin-version slicing) |
 
 Console mode is the one sanctioned variant: exporters set to `console`, OTLP keys omitted/removed (useful for verification — see below).
+
+> **External-endpoint header note:** `OTEL_EXPORTER_OTLP_HEADERS` is a comma-separated `key=value` list; a base64 Basic-auth value ends in `=` padding (e.g. `Authorization=Basic dXNlcjpwYXNz==`). The **local** backend is unaffected — the bundled collector accepts unauthenticated OTLP and ignores this header. For the **existing-endpoint** backend the header string is taken verbatim from what you supply, so paste exactly the `Authorization=Basic …` value your provider gives you; if a remote endpoint rejects it, confirm the exporter split the value on the *first* `=` (the OTel default) rather than choking on the trailing pad.
 
 ### settings.json merge semantics
 
@@ -62,6 +64,7 @@ Langfuse's OTLP endpoint (`/api/public/otel`) **accepts traces only** — metric
 
 `${CLAUDE_PLUGIN_ROOT}/scripts/session-resume.sh` (the existing `SessionStart` hook — hook count unchanged at 19) also runs `observability_probe`:
 
+- **Inherits the host hook's outer gates:** `session-resume.sh` only runs on `SessionStart` sources `resume`/`clear`/`compact` (a fresh `startup` is silent) AND early-exits when the working directory has no `.supervisor/` dir. The probe is called after those gates, so — by design — the down-stack warning fires only when you resume/clear/compact **inside a Supervisor-managed repo**. Observability config is global (`~/.claude/settings.json`), so a session in a non-`.supervisor/` repo with a down stack gets no warning; this is intentional (the hook's primary job is Supervisor recovery context, and `/setup observability status` reports stack health on demand anywhere).
 - **Gated on the env block:** runs only when `~/.claude/settings.json` has `env.CLAUDE_CODE_ENABLE_TELEMETRY` truthy (explicit `0`/`false` is treated as unconfigured) AND a non-empty `env.OTEL_EXPORTER_OTLP_ENDPOINT`. Missing `jq`/`curl`/settings → strict no-op, byte-identical to pre-probe hook output.
 - **Probe:** `curl --max-time 1` against the base of the configured OTLP endpoint (any `/v1/traces|metrics|logs` suffix stripped). Any HTTP response counts as up.
 - **Debounce:** on failure it appends a bounded warning and writes a 24h marker file (`~/.claude/ai-agent-manager/observability/.last-warned`); a fresh (<24h) marker suppresses the entire warning.
