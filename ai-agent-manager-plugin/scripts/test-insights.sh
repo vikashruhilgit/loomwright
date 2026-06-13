@@ -3,9 +3,10 @@
 # (never touches the real .supervisor). Exit 0 = all pass, 1 = any failure.
 #
 # Covers: no-logs no-op, dashboard aggregation (counts / completed-failed split / completion
-# rate), per-run note generation, missing-field tolerance, the COST stub, and the System Twin
+# rate), per-run note generation, missing-field tolerance, the COST stub, the System Twin
 # hard-signal aggregation (contract conformance + benchmark) including a backward-compat case
-# where NO run carries the new flat fields.
+# where NO run carries the new flat fields, and the per-version insights table (plugin_version
+# present / absent-groups-under-"unknown" / mixed).
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -40,6 +41,8 @@ grep -q "50%" "$d" 2>/dev/null && ok "completion rate = 50%" || no "completion r
 grep -q "ccusage" "$d" 2>/dev/null && ok "cost stub points to ccusage" || no "cost stub missing"
 [ -f "$T/.supervisor/insights/runs/sess-a.md" ] && [ -f "$T/.supervisor/insights/runs/sess-b.md" ] && ok "per-run notes written" || no "per-run notes missing"
 grep -qF 'rubric_score: "7/7"' "$T/.supervisor/insights/runs/sess-a.md" 2>/dev/null && ok "run-A frontmatter carries rubric_score" || no "run-A frontmatter wrong"
+# Per-run frontmatter always carries plugin_version; older logs (no plugin_version) render "unknown".
+grep -qF 'plugin_version: unknown' "$T/.supervisor/insights/runs/sess-a.md" 2>/dev/null && ok "run-A (older log) frontmatter carries plugin_version: unknown" || no "run-A missing plugin_version: unknown"
 if grep -q "^rubric_score:" "$T/.supervisor/insights/runs/sess-b.md" 2>/dev/null; then no "run-B invented an absent rubric field"; else ok "run-B omits absent fields (tolerant, no crash)"; fi
 grep -q '```dataview' "$d" 2>/dev/null && ok "dashboard includes the Obsidian/Dataview fence" || no "dataview fence missing"
 order="$(awk '/^\| Session \|/{t=1;next} t&&/sess-b/{print "b";exit} t&&/sess-a/{print "a";exit}' "$d")"
@@ -132,6 +135,26 @@ grep -q "^## System Twin growth" "$ad" 2>/dev/null && ok "Twin growth heading pr
 grep -qF "No System Twin contracts recorded yet" "$ad" 2>/dev/null && ok "Twin no-data line rendered" || no "Twin no-data line missing"
 grep -q "^## Summary" "$ad" 2>/dev/null && grep -q "^## Cost" "$ad" 2>/dev/null && ok "dashboard still renders fully (absent case)" || no "dashboard incomplete (absent case)"
 rm -rf "$A"
+
+echo "== 6. Per-version insights (plugin_version grouping) =="
+V="$(mktemp -d)"; ( cd "$V" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$V/.supervisor/logs"
+# pv-a + pv-b: SAME plugin_version (14.24.0) — one heal-PASS rubric 5/5, one FAIL rubric 5/10
+# → expected row: runs=2, heal-PASS rate=50%, avg heal=(1+3)/2=2, avg rubric=(100%+50%)/2=75%
+printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS","heal_iterations":1,"rubric_score":"5/5","plugin_version":"14.24.0"}' > "$V/.supervisor/logs/pv-a.jsonl"
+printf '%s\n' '{"ts":"2026-06-02T10:00:00Z","event":"session_end","status":"failed","heal_decision":"FAIL","heal_iterations":3,"rubric_score":"5/10","plugin_version":"14.24.0"}' > "$V/.supervisor/logs/pv-b.jsonl"
+# pv-c: NO plugin_version (older-log shape) — MUST group under "unknown" (mixed corpus)
+printf '%s\n' '{"ts":"2026-06-03T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS","heal_iterations":2}' > "$V/.supervisor/logs/pv-c.jsonl"
+( cd "$V" && bash "$BUILD" >/dev/null 2>&1 )
+vd="$V/.supervisor/insights/dashboard.md"
+grep -q "^## Per-version insights" "$vd" 2>/dev/null && ok "per-version section rendered" || no "per-version section missing"
+grep -qF "| Version | Runs | Heal-PASS rate | Avg heal iterations | Avg rubric score |" "$vd" 2>/dev/null && ok "per-version table header present" || no "per-version table header wrong"
+grep -qF "| 14.24.0 | 2 | 50% | 2 | 75% |" "$vd" 2>/dev/null && ok "14.24.0 row aggregates correctly (2 runs, 50% PASS, avg heal 2, avg rubric 75%)" || no "14.24.0 row wrong"
+grep -qF "| unknown | 1 | 100% | 2 | — |" "$vd" 2>/dev/null && ok "absent plugin_version groups under \"unknown\"" || no "unknown row wrong"
+grep -qF "plugin_version: 14.24.0" "$V/.supervisor/insights/runs/pv-a.md" 2>/dev/null && ok "run pv-a per-run frontmatter carries explicit plugin_version: 14.24.0" || no "pv-a per-run plugin_version wrong"
+# Existing sections must be untouched by the additive per-version section.
+grep -q "^## Summary" "$vd" 2>/dev/null && grep -q "^## Recent sessions" "$vd" 2>/dev/null && ok "dashboard still renders fully with per-version section" || no "dashboard incomplete with per-version section"
+rm -rf "$V"
 
 echo
 echo "RESULT: $pass passed, $fail failed"

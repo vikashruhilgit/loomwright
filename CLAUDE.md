@@ -12,11 +12,11 @@ Guidance for Claude Code when working in this repository.
 
 **AI Agent Manager** is a Claude Code plugin with 14 agent roles (9 user-facing + 5 internal) for plan-first readiness, parallel execution, requirements, planning, code review, commits, adversarial audits, standalone PR review-and-heal, and dual-agent QA. Supervisor and Launch Pad use `.supervisor/` exclusively for state; Orchestrator and Product Owner can optionally use Beads.
 
+**v14.24.0 — `/setup` umbrella command + observability module:** New `/setup` slash command — a status dashboard plus guided configuration for every optional plugin capability across 6 modules (observability, telemetry, notifications, webhook, Beads, MySQL MCP; `/setup telemetry` delegates to the unchanged `/telemetry`), governed by the new `setup` skill (check → report → offer → apply → verify, idempotent, never blind-overwrite). The observability module performs a full **local-Langfuse init**: bundled stack assets under `scripts/otel/` (Langfuse v3 pinned **3.82.0**, `otel-collector-contrib` pinned **0.116.1**) are copied to `~/.claude/ai-agent-manager/observability/` and the 8-key env block is jq-deep-merged into user-scope `~/.claude/settings.json` (timestamped backup first; abort on parse failure). **Emission is native-OTel-only** — the plugin emits NO spans itself; Claude Code's native telemetry is the sole emitter, the collector renames token attributes to `gen_ai.usage.*`, and Langfuse's OTLP endpoint ingests TRACES ONLY (documented limitation). A **session-start health probe** extends `session-resume.sh` (gated on the env block, 1s curl, 24h debounce marker, never starts Docker — **hook count frozen at 19**, `hooks.json` untouched). Additive **`plugin_version` stamping** flows through supervisor `session_end`, the `POSTMORTEM_RESULT` trend line (pr-postmortem skill → 1.3.0), the telemetry payload, and a per-version `build-insights` table. Reference doc: `ai-agent-manager-plugin/docs/OBSERVABILITY.md`. **No schema_version bumps; counts now 14 agents / 18 commands / 54 skills / 19 hooks.**
+
 **v14.23.3 — `/pr-postmortem` "address code review" adjacency fix (patch):** Closes the third small `is_review_fix` shape gap: the first regex alternative `address(es)? review` required ADJACENCY, so explicit headlines like `fix(reports): address code review findings on favorite-reports feature` / `fix(reporting): address code review findings #3 #5 #7 #10` never matched — the intervening word "code" broke them (verified live on vendsy/hub#139, 2026-06-12: counted `review_rounds: 1` via formal_reviews while 2 explicit review-fix commits went uncounted, true ≈3; the trend line documents the gap). One minimal anchored widening in `scripts/pr-postmortem-gather.sh`: the alternative becomes `address(es)? (code )?review` (case-insensitive), in the same spirit as v14.23.2's explicit forms — NOT a re-broadening to the rejected churn-word class: the literal word "review" stays mandatory, and `nit` / unanchored `round-N` / `findings` stay rejected and test-pinned ("add audit findings export" is the in-fixture negative control). Self-test grows to 15 cases (hub#139-shape fixture: both "address code review findings" headlines flag `is_review_fix`; rounds 1 → 2 via fix_commits); `pr-postmortem` skill → 1.2.1. **POSTMORTEM_RESULT unchanged at `schema_version: 1`; no new agent / command / skill / hook (still 14 / 17 / 53 / 19).** Additive patch on top of v14.23.2.
 
-**v14.23.2 — `/pr-postmortem` HUB-shape review-round detection (patch):** Closes the residual `review_rounds: 0` undercount that BOTH v14.23.1 signals still missed on the HUB shape (verified live on vendsy/hub#146, 2026-06-10: 3 explicit review-fix rounds, counted 0; trend line documents the gap). Two targeted widenings in `scripts/pr-postmortem-gather.sh`; the v14.23.1 architecture is unchanged (three-signal MAX, `review_rounds_source`, per_page-bounded fail-safe comments fetch, `strings`-guarded untrusted fields). **(1) `is_review_fix` gains two EXPLICIT anchored forms** — `pr #[0-9]+ review` and `review #[0-9]+` (case-insensitive, word-bounded so "preview #2" can never match) — covering headlines like `fix(X): PR #146 review — …` / `fix(X): review #2 — …`. This is NOT a re-broadening to the rejected churn-word class: `nit` / unanchored `round-N` / `findings` stay rejected and test-pinned; the new forms carry the literal word "review" adjacent to a PR/round number. **(2) The bot-comment review marker widens** from heading-anchored ("a markdown heading containing review", or "code review") to a word-bounded `review` ANYWHERE in the bot comment body — HUB's `claude[bot]` comments open with `## Overview` and mention review only in running text, so the old marker matched none of them. False-round control still rests on the unchanged author gate + at-least-one-commit-after timestamp anchor, and the "Deploy Preview" non-match guarantee stays test-pinned (word boundary). Self-test grows to 14 cases (HUB-shape fixture: 0 review objects, `## Overview`-headed bot comments, explicit fix headlines — both signals independently count 3); `pr-postmortem` skill → 1.2.0. **POSTMORTEM_RESULT unchanged at `schema_version: 1`; no new agent / command / skill / hook (still 14 / 17 / 53 / 19).** Additive patch on top of v14.23.1.
-
-> 📜 **Full release history** (v14.23.1 → v14.0.0 and earlier) lives in [`CHANGELOG.md`](CHANGELOG.md). CLAUDE.md keeps only the two most recent release notes.
+> 📜 **Full release history** (v14.23.2 → v14.0.0 and earlier) lives in [`CHANGELOG.md`](CHANGELOG.md). CLAUDE.md keeps only the two most recent release notes.
 
 ---
 
@@ -25,10 +25,10 @@ Guidance for Claude Code when working in this repository.
 The repo is a **marketplace wrapper** containing one nested plugin:
 
 - Marketplace manifest: `.claude-plugin/marketplace.json` (root)
-- Plugin manifest: `ai-agent-manager-plugin/.claude-plugin/plugin.json` (v14.23.3)
+- Plugin manifest: `ai-agent-manager-plugin/.claude-plugin/plugin.json` (v14.24.0)
 - Agents: `ai-agent-manager-plugin/agents/` (14 markdown prompts)
-- Commands: `ai-agent-manager-plugin/commands/` (17 entry points)
-- Skills: `ai-agent-manager-plugin/skills/` (53 skills, see `SKILLS_INDEX.md`)
+- Commands: `ai-agent-manager-plugin/commands/` (18 entry points)
+- Skills: `ai-agent-manager-plugin/skills/` (54 skills, see `SKILLS_INDEX.md`)
 - Hooks: `ai-agent-manager-plugin/hooks/hooks.json`
 - Docs: `ai-agent-manager-plugin/docs/`
 - Bundled MCP: read-only MySQL server (`vikashruhil-mysql-mcp`)
@@ -46,11 +46,11 @@ ai-agent-manager/                              # marketplace wrapper
 │   ├── .claude-plugin/plugin.json
 │   ├── .mcp.json                              # bundled MCP servers
 │   ├── agents/                                # 14 markdown prompts
-│   ├── commands/                              # 17 slash commands
+│   ├── commands/                              # 18 slash commands
 │   ├── hooks/hooks.json                       # cross-cutting hooks
-│   ├── skills/                                # 53 skills + SKILLS_INDEX.md
-│   ├── scripts/                               # runtime helpers: telemetry, webhook, notify, resume, memory, lessons, insights (+ self-tests, fixtures)
-│   └── docs/                                  # RESULT_SCHEMAS, FAILURE_ESCALATION, ARCHITECTURE_CONTRACTS, ARCHITECTURE, QA_SYSTEM_BLUEPRINT, TELEMETRY
+│   ├── skills/                                # 54 skills + SKILLS_INDEX.md
+│   ├── scripts/                               # runtime helpers: telemetry, webhook, notify, resume, memory, lessons, insights, otel stack assets (+ self-tests, fixtures)
+│   └── docs/                                  # RESULT_SCHEMAS, FAILURE_ESCALATION, ARCHITECTURE_CONTRACTS, ARCHITECTURE, QA_SYSTEM_BLUEPRINT, TELEMETRY, OBSERVABILITY
 │       └── SPIKES/                            # Capability spike investigations + deferral records
 ├── scripts/                                   # validate-version.sh, check-command-sync.sh
 ├── README.md                                  # user-facing docs
@@ -168,7 +168,7 @@ Every agent (full standard in `AGENT_GUIDELINES.md`):
 | PreToolUse (AskUserQuestion) — v14.1.0 | Plugin about to block on a user question | hooks.json | type:command — `notify-desktop.sh` (OS banner) + `send-webhook.sh` (paused-event POST); scope-gated; always exits 0 |
 | Notification — v14.1.0 | Claude Code signals attention (permission_prompt / idle_prompt / elicitation_*) | hooks.json | type:command — `notify-desktop.sh` (OS banner); matched to exclude `auth_success`; always exits 0 |
 | SubagentStop (launch-pad-runner) — v14.2.0 | Launch Pad `-runner` completes | hooks.json | type:command — `validate-launch-pad-result.py`; validates LAUNCH_PAD_RESULT (schema_version, status, saved_brief_path, summary); exits 0 |
-| SessionStart — v14.2.0 | Session resume / clear / compact | hooks.json | type:command — `session-resume.sh`; injects bounded (≤10k) recovery context; silent on startup; exits 0 |
+| SessionStart — v14.2.0 | Session resume / clear / compact | hooks.json | type:command — `session-resume.sh`; injects bounded (≤10k) recovery context; silent on startup; since v14.24.0 also runs the observability health probe (env-block-gated 1s curl, 24h debounce, never starts Docker — count stays 19); exits 0 |
 
 ---
 
@@ -279,5 +279,5 @@ The loop does not forward unknown flags into the inlined `/supervisor` call. Run
 - User-facing: `README.md`, `.claude-plugin/README.md`
 - Standards: `AGENT_GUIDELINES.md`
 - Manifests: `.claude-plugin/marketplace.json`, `ai-agent-manager-plugin/.claude-plugin/plugin.json`
-- Schemas / contracts / failure modes: `ai-agent-manager-plugin/docs/{RESULT_SCHEMAS,ARCHITECTURE_CONTRACTS,FAILURE_ESCALATION,ARCHITECTURE,QA_SYSTEM_BLUEPRINT,TELEMETRY}.md`
+- Schemas / contracts / failure modes: `ai-agent-manager-plugin/docs/{RESULT_SCHEMAS,ARCHITECTURE_CONTRACTS,FAILURE_ESCALATION,ARCHITECTURE,QA_SYSTEM_BLUEPRINT,TELEMETRY,OBSERVABILITY}.md`
 - Skills index: `ai-agent-manager-plugin/skills/SKILLS_INDEX.md`
