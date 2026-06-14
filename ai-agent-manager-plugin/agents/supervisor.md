@@ -889,16 +889,24 @@ After the Code Reviewer loop has run (regardless of `heal_decision`), execute th
       - On **PASS / loop-skipped** → `**Status:** done`.
       - On **ESCALATED** → `**Status:** done_with_escalation`, plus a `- **Heal:** {needs_human|max_iterations_reached|self_heal_resume_thrash} — {heal_remaining_issues} remaining` line carrying the escalation nuance (mirrors the brief `## Outcome` `**Heal reason:**` / `**Heal remaining issues:**` fields).
 
+      Stamp exactly one of these two literal blocks (no inline comments — stamp the block verbatim, substituting the `{...}` placeholders). On **PASS / loop-skipped**:
       ```markdown
       ## Status
-      - **Status:** done            # `done_with_escalation` on the ESCALATED path
+      - **Status:** done
       - **Completed:** {ISO 8601 timestamp}
       - **Brief:** {done/ brief path}
       - **PR:** {PR URL}
-      # ESCALATED path only — omit on PASS / loop-skipped:
+      ```
+      On **ESCALATED** (same fields, escalated status value, plus one `Heal` line):
+      ```markdown
+      ## Status
+      - **Status:** done_with_escalation
+      - **Completed:** {ISO 8601 timestamp}
+      - **Brief:** {done/ brief path}
+      - **PR:** {PR URL}
       - **Heal:** {needs_human|max_iterations_reached|self_heal_resume_thrash} — {heal_remaining_issues} remaining
       ```
-      **Idempotent — replace, do not duplicate:** if a `## Status` block already exists on the requirement file, **REPLACE it in place** (do not append a second one). This handles the multi-brief case where one requirement spawns several briefs — the latest close-out wins. On success record `record_decision(phase: SELF_HEAL, decision: "requirement_closeout: {done|done_with_escalation}", rationale: "stamped ## Status on {requirement path}")`.
+      **Idempotent — replace, do not duplicate:** if a `## Status` block already exists on the requirement file, **REPLACE it in place** (do not append a second one) — the block spans from its `## Status` heading to the next `##` heading or end-of-file, so replace that whole span. This handles the multi-brief case where one requirement spawns several briefs — the latest close-out wins. On success record `record_decision(phase: SELF_HEAL, decision: "requirement_closeout: {done|done_with_escalation}", rationale: "stamped ## Status on {requirement path}")`.
 
 3. **Reset resume counter (unconditional — runs on every exit path: PASS, ESCALATED, or loop-skipped):** `Context-Keeper(operation: record_self_heal_resume, increment: false)`. The completion tail itself is unconditional; so is the reset.
 
