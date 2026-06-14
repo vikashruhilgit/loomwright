@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# read-lessons.sh — sole sanctioned READER / the read-side provenance + freshness gate (v14.5.0).
+# read-lessons.sh — sole sanctioned READER / the read-side provenance + freshness gate.
+# (New file — shipped on the v14.24.x line; parity with read-project-memory.sh, deferred at v14.5.0.)
 #
 # Emits ONLY LESSONS.md lines that are backed by a chain-valid `add` provenance entry in the
 # LESSONS-SPECIFIC chain file .supervisor/memory/.lessons-provenance.jsonl. Any line that is

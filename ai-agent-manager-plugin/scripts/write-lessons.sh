@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# write-lessons.sh — sole sanctioned WRITER for advisory project LESSONS (v14.5.0).
+# write-lessons.sh — sole sanctioned WRITER for advisory project LESSONS.
+# (Bounded sole-writer introduced v14.5.0; provenance + freshness parity added on the v14.24.x line.)
 #
 # Appends a (human-approved) durable lesson to .supervisor/memory/LESSONS.md, grouped under a
 # `## <category-slug>` heading, enforces a per-category bound of <=3 active entries via
@@ -15,8 +16,8 @@
 # `git worktree remove`. Only callers at the repo root may write. The worktree check is the
 # real enforcement, regardless of caller.
 #
-# PROVENANCE NOTE (v14.5.0 — now SHIPPED, parity with PROJECT_MEMORY): hash-chain provenance is
-# no longer deferred. Each add/evict appends a chained entry to a LESSONS-SPECIFIC chain file,
+# PROVENANCE NOTE (deferred at v14.5.0; SHIPPED on the v14.24.x line, parity with PROJECT_MEMORY):
+# hash-chain provenance is no longer deferred. Each add/evict appends a chained entry to a LESSONS-SPECIFIC chain file,
 # `.supervisor/memory/.lessons-provenance.jsonl` (kept separate from PROJECT_MEMORY's
 # `.provenance.jsonl` — interleaving two chains would break both walks), rooted at GENESIS, with
 # one `evict` entry per evicted lesson. The matching sole-READER and read-side provenance gate is
@@ -25,7 +26,7 @@
 # atomic temp-in-dir + mv write (now of BOTH files, provenance FIRST), and the per-category <=3
 # bound + oldest-eviction.
 #
-# FRESHNESS NOTE (v14.5.0 — now SHIPPED): each stored lesson carries a machine-readable
+# FRESHNESS NOTE (SHIPPED on the v14.24.x line): each stored lesson carries a machine-readable
 # `last_verified` ISO-8601 timestamp and a `confidence` value, appended as a parseable HTML-comment
 # trailer (`<!-- last_verified=... confidence=... -->`) so markdown rendering and substring greps are
 # unaffected and content_hash is NOT changed (the trailer never enters the hash). `read-lessons.sh`
@@ -108,6 +109,20 @@ mkdir -p "$MEM_DIR" 2>/dev/null || { echo "write-lessons: cannot create $MEM_DIR
 
 # Freshness metadata: default last_verified to write time (same expression used elsewhere).
 ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
+# An explicit --last-verified is accepted ONLY if it is a well-formed ISO-8601 UTC stamp
+# (YYYY-MM-DDThh:mm:ssZ); anything else falls back to the write-time default. This keeps
+# LAST_VERIFIED a clean [0-9T:Z-] value with NO spaces / backslashes / angle-brackets — so it
+# can neither distort the `<!-- ... -->` trailer the reader anchors on (e.g. `--last-verified
+# "x --> y"`) nor be reinterpreted by the `awk -v lv=` pass below (which treats backslash escapes).
+# This restores the symmetry with the --source/--confidence sanitizers and makes the awk -v
+# backslash-safety note accurate for lv even when the caller passes the flag explicitly.
+if [ -n "$LAST_VERIFIED" ]; then
+  case "$LAST_VERIFIED" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) : ;;
+    *) echo "write-lessons: --last-verified '$LAST_VERIFIED' is not ISO-8601 UTC (YYYY-MM-DDThh:mm:ssZ) — using write time" >&2
+       LAST_VERIFIED="" ;;
+  esac
+fi
 [ -n "$LAST_VERIFIED" ] || LAST_VERIFIED="$ts"
 
 # Trim TRAILING whitespace from the one-lined lesson so the stored text and the hashed text agree
@@ -157,8 +172,9 @@ trap 'rm -f "$mem_tmp" "$prov_tmp" "$evict_file" 2>/dev/null' EXIT
 # NOTE: the lesson text is passed via ENVIRON (not `-v`) because `awk -v` interprets backslash
 # escape sequences in the value (\n, \t, \\, ...), which would silently corrupt a lesson that
 # legitimately contains a backslash (e.g. a Windows path). ENVIRON values are taken literally.
-# `cat`/`id` (slug/hex), and `lv`/`conf` (safe ISO timestamp + sanitized slug-like value, no
-# backslashes) can't contain backslashes, so they stay on `-v`.
+# `cat`/`id` (slug/hex), `lv` (an ISO-8601 stamp VALIDATED above to `[0-9T:Z-]` only), and `conf`
+# (a sanitized slug-like value, `<>`/quotes/backslashes/ctrl stripped) cannot contain backslashes,
+# so they stay on `-v`.
 LESSON_ONELINE="$lesson_oneline" awk \
   -v cat="$CATSLUG" -v id="$id" -v maxc="$MAX_PER_CAT" \
   -v lv="$LAST_VERIFIED" -v conf="$CONFIDENCE" -v evictfile="$evict_file" '

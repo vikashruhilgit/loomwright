@@ -109,6 +109,15 @@ fi
 ( cd "$FDIR" && bash "$WRITE" --category hashstable --lesson "hash stable lesson" --last-verified 2099-01-01T00:00:00Z --confidence high --source s ) >/dev/null 2>&1
 hc="$(awk '/^## hashstable$/{f=1;next} /^## /{f=0} f && /^- \[/{c++} END{print c+0}' "$ff" 2>/dev/null)"
 [ "$hc" -eq 1 ] && ok "trailer excluded from content_hash (re-verify deduped to one entry)" || no "trailer leaked into hash (have $hc entries, want 1)"
+# (d) a MALFORMED --last-verified must fall back to the write-time default (cannot distort the
+#     trailer the reader anchors on, and keeps lv backslash-safe under awk -v). A value containing
+#     a `-->` and a space would, if accepted verbatim, corrupt the `<!-- ... -->` trailer shape.
+( cd "$FDIR" && bash "$WRITE" --category badlv --lesson "bad lv lesson" --last-verified 'x --> y' --source s ) >/dev/null 2>&1
+if grep -qE 'bad lv lesson  <!-- last_verified=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+Z confidence=medium -->' "$ff" 2>/dev/null; then
+  ok "malformed --last-verified rejected → write-time default stamped (trailer shape intact)"
+else
+  no "malformed --last-verified leaked into the trailer (shape not protected)"
+fi
 rm -rf "$FDIR"
 
 echo "== 8. provenance write-side (.lessons-provenance.jsonl) =="
