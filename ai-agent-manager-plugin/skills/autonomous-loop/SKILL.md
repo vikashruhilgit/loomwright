@@ -208,7 +208,7 @@ Field types: `_v1_note: string` (advisory marker — see above); `mode: "single"
    This protects multi-iteration mode from silently degrading to single-iteration when Launch Pad ignores the inline instruction.
 7. **Persist + freeze an authored rubric (multi-iteration only):** an AUTHORED rubric (from PLAN step 2's conditional auto-authoring directive) lives only in the saved brief at this point, but **every refined-requirement template** (the stacked-mode and merge-and-continue templates in the EVALUATE Signal-1 section, AND the Option-C inter-subtask-gap re-plan template) copies `<original requirement body, including ## Outcomes Rubric verbatim>` from `<requirement_path>` — NOT from the brief — into every iteration N+1. Because the freeze lands in the requirement body, all of these paths inherit the rubric automatically. So an authored rubric must be written back into the requirement body now, or iteration 2+ would score against an absent rubric. This step:
    - **Fires ONLY when ALL of:** `mode == "multi"` AND the **current** requirement file at `<requirement_path>` does NOT yet contain `## Outcomes Rubric` (`! grep -qF "## Outcomes Rubric" "$requirement_path"`) AND the saved brief (`current_brief_path`) now contains an `## Outcomes Rubric` section (Launch Pad auto-authored one and the human approved it at Phase 6). **The grep-on-the-current-file guard is what makes this step idempotent:** on iteration 1 the rubric was just authored and the requirement lacks it → the step fires exactly once; on every later iteration the refined-requirement template (below) already copied the frozen rubric into `<requirement_path>`, so the grep matches and the step is a no-op — it never appends a second `## Outcomes Rubric`. **Do NOT gate on a run-global "had rubric at intake" flag** — such a value never changes across iterations, so it would re-fire the append on every iteration and accumulate duplicate rubric sections.
-   - **Extract + append:** copy the `## Outcomes Rubric` section verbatim from `current_brief_path` (from the `## Outcomes Rubric` header through to the next top-level `## ` header or EOF) and append it to the requirement file body at `<requirement_path>`, so the verbatim refined-requirement templates carry it into every later iteration as the frozen target:
+   - **Extract + append + verify (all inside one idempotency guard):** copy the `## Outcomes Rubric` section verbatim from `current_brief_path` (from the `## Outcomes Rubric` header through to the next top-level `## ` header or EOF), append it to `<requirement_path>`, and confirm it landed — **all within the same guard** so the verification (and its warning) runs ONLY when a freeze was actually attempted, never on the degenerate no-rubric path:
      ```bash
      # Idempotency guard: freeze only when the CURRENT requirement file does not
      # already carry the rubric — true on exactly the iteration that authored it,
@@ -220,18 +220,16 @@ Field types: `_v1_note: string` (advisory marker — see above); `mode: "single"
        # Extract the rubric section verbatim from the saved brief, then append.
        rubric_section="$(awk '/^## Outcomes Rubric/{f=1} f&&/^## /&&!/^## Outcomes Rubric/{exit} f' "$current_brief_path")"
        printf '\n\n%s\n' "$rubric_section" >> "$requirement_path"
+       # Freeze verification — inside the guard, so it only fires after a genuine
+       # append. If the append somehow did NOT take, the verbatim refined-requirement
+       # templates would copy a body with no rubric and iteration 2+ would score
+       # against an absent rubric — surface a warning.
+       if ! grep -qF "## Outcomes Rubric" "$requirement_path"; then
+         echo "WARNING: rubric freeze failed — '## Outcomes Rubric' not found in $requirement_path after append. Later iterations will run under the no-rubric gate." >&2
+       fi
      fi
      ```
-   - **Freeze verification:** after writing, confirm the section landed:
-     ```bash
-     if ! grep -qF "## Outcomes Rubric" "$requirement_path"; then
-       # Freeze did NOT take — the verbatim refined-requirement templates would
-       # copy a body with no rubric, so iteration 2+ would score against an
-       # absent rubric. Surface a warning.
-       echo "WARNING: rubric freeze failed — '## Outcomes Rubric' not found in $requirement_path after append. Later iterations will run under the no-rubric gate." >&2
-     fi
-     ```
-   - **Degenerate-case no-op:** if Launch Pad fell back (no rubric authored — the degenerate-rubric fallback in PLAN step 2's directive), `current_brief_path` has no `## Outcomes Rubric`, the guard's third condition is false, this step is a no-op, and the loop proceeds under its existing no-rubric gate.
+   - **Degenerate-case no-op:** if Launch Pad fell back (no rubric authored — the degenerate-rubric fallback in PLAN step 2's directive), `current_brief_path` has no `## Outcomes Rubric`, the guard's third condition is false, the whole block (append AND verification) is skipped — no misleading "freeze failed" warning — and the loop proceeds under its existing no-rubric gate.
 8. Update `current_brief_path` in state.json. Proceed to EXECUTE.
 
 ## EXECUTE (per iteration)
