@@ -48,7 +48,7 @@ EVALUATE re-plans on the same two `SUPERVISOR_RESULT` signals as v13: `completed
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `"<requirement>"` | One of | Inline requirement string. Loop writes it to `.supervisor/requirements/{session_id}-{slug}.md` (where `session_id` is `auto-{YYYY-MM-DD}-{HHMMSS}` — already date-prefixed, so the path is sortable without a redundant date) with an optional `## Outcomes Rubric` placeholder for the user to fill in. |
-| `--requirement <path>` | One of | Use an existing requirement file. If the file already contains an `## Outcomes Rubric` section, it is preserved and used by multi-iteration mode. |
+| `--requirement <path>` | One of | Use an existing requirement file. If the file already contains an `## Outcomes Rubric` section, it is preserved and used by multi-iteration mode. If it does NOT contain one and multi-iteration mode is active, the loop auto-authors one (see the inline-instruction section below). |
 | `--single-iteration` | No | Disable multi-iter mode; run Launch Pad + Supervisor once and exit (v13-compat behavior). Equivalent to v13's "no `--allow-multi-iteration` passed" default. |
 | `--no-stacked-branches` | No | Iter N+1 branches from `main` instead of `iterations[N].branch`. Disables stacked-PR mode; each iteration produces an independent PR off `main`. Pair with the Signal-1 rubric gate's `merge-and-continue` option for the v13 cadence. |
 | `--notify` | No | Enable webhook gate-event notifications. Requires the `AI_AGENT_MANAGER_WEBHOOK_URL` env var. Fire-and-forget POST via `${CLAUDE_PLUGIN_ROOT}/scripts/send-webhook.sh --event-type gate ...`; the AskUserQuestion fires immediately after backgrounding the POST (no wait on delivery). The webhook URL resolves from `AI_AGENT_MANAGER_WEBHOOK_URL` **or** the `.supervisor/notify-config.json` → `.webhook_url` fallback; if neither is set, `--notify` **fails loud** with one warning at INIT step 0 (it does NOT silently no-op) — desktop banners are unaffected (v14.2.2). |
@@ -131,13 +131,15 @@ Phase 2.5 NO-GO override, Phase 5.5 Plan Reviewer FAIL × 3, Phase 6 save/refine
 
 Adjudication 4-option escalation (when a Worker's `outputs_gap` triggers it) fires in-session. The autonomous loop never auto-picks. If the user picks Option C "Exit to Launch Pad", Supervisor marks the job `failed` with `inter_subtask_gap` recorded — the loop catches that signal in EVALUATE and re-plans.
 
-### Inline instruction to Launch Pad (rubric preservation)
+### Inline instruction to Launch Pad (rubric preservation + auto-authoring)
 
 When `/autonomous` invokes Launch Pad inline, it adds one explicit directive to the inlined workflow body:
 
 > *"If the requirement file at `<requirement_path>` has an `## Outcomes Rubric` section, copy it verbatim into the saved brief during Phase 4 (Brief Assembly). Do not paraphrase, do not drop items."*
 
 After Phase 6 saves, the loop verifies this with `grep -F "## Outcomes Rubric" "$current_brief_path"`. If the section is missing from the saved brief, the iteration aborts cleanly with `status_reason: "rubric_dropped_from_brief"` (a graceful fallback that prevents multi-iteration from silently degrading to single-iteration).
+
+Additionally, when **multi-iteration mode is active AND the requirement has no `## Outcomes Rubric`**, the loop adds a second, conditional directive instructing Launch Pad to **auto-author** one (3–7 diff-checkable bullets derived from the Acceptance Criteria + Phase 3 analysis), have the human approve or edit it at Phase 6, then persist it back into the requirement body so it is frozen for later iterations. The authoring rules are NOT restated here — they live in `skills/autonomous-loop/SKILL.md` PLAN steps 2 & 7 and `skills/supervisor-readiness/SKILL.md` §"Auto-Authoring (multi-iteration)" (the single source of truth). Degenerate fallback: if fewer than 3 diff-checkable bullets are derivable, no rubric is authored and the loop uses its existing no-rubric gate. **Single-iteration mode and the already-has-a-rubric case are unchanged — preserve-only, never auto-authored.**
 
 ## Example Sessions
 

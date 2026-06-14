@@ -2,8 +2,8 @@
 name: supervisor-readiness
 description: Pre-flight checklist, Supervisor-Ready Brief format, jobs folder convention, and failure prevention. Use before launching autonomous workflows or when diagnosing Supervisor failures.
 allowed-tools: [Read, Bash]
-version: "1.1.0"
-lastUpdated: "2026-05-10"
+version: "1.1.1"
+lastUpdated: "2026-06-14"
 ---
 
 # Supervisor Readiness Skill
@@ -173,6 +173,15 @@ Success looks like {measurable outcome}.
 - The PR description does not mention TODO, FIXME, or "deferred".
 - No file outside `src/auth/` is modified.
 ```
+
+### Auto-Authoring (multi-iteration)
+
+This is the rubric's **producer** path. When `/autonomous` runs in **multi-iteration mode** AND the requirement file has **no `## Outcomes Rubric`**, the inlined Launch Pad auto-authors one (guarded step — see `agents/launch-pad.md` Phase 5).
+
+- Authored bullets **derive from the brief's Acceptance Criteria plus the Phase 3 codebase analysis** (file impact map), and MUST obey the **Authoring rules** above (3-7 bullets, observable, **diff-checkable from the PR diff alone**, positive assertions).
+- **Human-gated:** the authored rubric appears in the assembled brief and is surfaced for approve/edit at Launch Pad Phase 6 — never blind-written.
+- **Degenerate-rubric fallback:** if fewer than 3 diff-checkable bullets can be derived (e.g. the goal's outcomes are largely non-diff-checkable / visual), do NOT emit a rubric — fall back to the autonomous loop's existing no-rubric gate. Capture only the diff-checkable subset and document that limitation rather than silently dropping it.
+- **Freeze:** once approved, the rubric is persisted back into the requirement body by the autonomous loop (see `skills/autonomous-loop/SKILL.md`) so every later iteration scores against the same yardstick.
 
 ## Executable Acceptance (optional — System Twin / M2b, v14.19.0+)
 

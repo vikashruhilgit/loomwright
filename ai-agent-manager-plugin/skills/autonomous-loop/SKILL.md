@@ -2,8 +2,8 @@
 name: autonomous-loop
 description: Outer-loop protocol for `/autonomous` — v14 continuous (multi-iteration default with stacked branches), single-iteration opt-in, EVALUATE PR-base verification + Signal-1 stacked rubric gate + no-rubric gate, --notify gate webhooks via send-webhook.sh, CI / non-TTY fail-closed protection, and the AUTONOMOUS_RUN summary format. Use when implementing or invoking the `/autonomous` command.
 allowed-tools: [Read, Write, Bash, Grep, Task, AskUserQuestion]
-version: "1.3.0"
-lastUpdated: "2026-06-06"
+version: "1.3.1"
+lastUpdated: "2026-06-14"
 ---
 
 # Autonomous Loop Skill
@@ -155,6 +155,12 @@ Field types: `_v1_note: string` (advisory marker — see above); `mode: "single"
 
 1. Reference the loaded `commands/launch-pad.md` workflow. Invoke it inline on the main thread, passing the current requirement file path as input.
 2. **Inline-instruction to Launch Pad (no source change):** before invoking Launch Pad, the main thread includes this directive in its inlined Launch Pad context: *"If the requirement file at `<requirement_path>` has an `## Outcomes Rubric` section, copy it verbatim into the saved brief during Phase 4 (Brief Assembly). Do not paraphrase, do not drop items, do not reformat."* Launch Pad will see this as part of the inlined workflow body.
+
+   **Conditional auto-authoring directive (multi-iteration only, no rubric at intake):** when the run is in **multi-iteration mode** (`mode == "multi"`, i.e. NOT `--single-iteration`) AND the requirement file at `<requirement_path>` has **no `## Outcomes Rubric`** section, the inlined directive ALSO instructs Launch Pad to **auto-author** a rubric via its guarded Phase 5 step: *"This requirement has no `## Outcomes Rubric` and the caller is running in multi-iteration mode. During Phase 5, auto-author a rubric — derive 3–7 diff-checkable bullets from the brief's Acceptance Criteria and the Phase 3 analysis, following `agents/launch-pad.md` Phase 5 step 7 and the authoring rules in `skills/supervisor-readiness/SKILL.md` §\"Auto-Authoring (multi-iteration)\". Do not restate those rules here — defer to them as the single source of truth."* (Those producers own the authoring contract; this directive only triggers it — see the S2-landed `### Auto-Authoring (multi-iteration)` subsection.)
+
+   **When the conditional directive does NOT apply:** in **single-iteration mode** (`mode == "single"`, `--single-iteration`) OR when the requirement file **already has an `## Outcomes Rubric`**, ONLY the preserve-verbatim directive above applies — no authoring is requested and behavior is unchanged from prior versions.
+
+   **Degenerate-rubric fallback:** if Launch Pad cannot derive ≥3 diff-checkable bullets (the brief lacks enough concrete, diff-checkable acceptance signal), it emits NO `## Outcomes Rubric` section — and the loop proceeds under its existing no-rubric gate (Signal 1 stacked rubric gate is skipped; see EVALUATE's no-rubric handling). Auto-authoring is best-effort, never a hard precondition.
 3. Launch Pad runs Phases 1–6 inline including:
    - Phase 2.5 feasibility AskUserQuestion (NO-GO → override/revise/abort)
    - Phase 5.5 mandatory plan-reviewer Task spawn (max 3 FAIL retries → AskUserQuestion)
@@ -200,7 +206,25 @@ Field types: `_v1_note: string` (advisory marker — see above); `mode: "single"
    fi
    ```
    This protects multi-iteration mode from silently degrading to single-iteration when Launch Pad ignores the inline instruction.
-7. Update `current_brief_path` in state.json. Proceed to EXECUTE.
+7. **Persist + freeze an authored rubric (multi-iteration only):** an AUTHORED rubric (Edit-1 conditional directive) lives only in the saved brief at this point, but the **stacked-mode and merge-and-continue refined-requirement templates** (in the EVALUATE Signal-1 section below) copy `<original requirement body, including ## Outcomes Rubric verbatim>` from `<requirement_path>` — NOT from the brief — into every iteration N+1. So an authored rubric must be written back into the requirement body now, or iteration 2+ would score against an absent rubric. This step:
+   - **Fires ONLY when ALL of:** `mode == "multi"` AND the requirement file at `<requirement_path>` lacked `## Outcomes Rubric` at intake (record this as `requirement_had_rubric_at_intake = false` in INIT) AND the saved brief (`current_brief_path`) now contains an `## Outcomes Rubric` section (Launch Pad auto-authored one and the human approved it at Phase 6).
+   - **Extract + append:** copy the `## Outcomes Rubric` section verbatim from `current_brief_path` (from the `## Outcomes Rubric` header through to the next top-level `## ` header or EOF) and append it to the requirement file body at `<requirement_path>`, so the verbatim refined-requirement templates carry it into every later iteration as the frozen target:
+     ```bash
+     # Extract the rubric section verbatim from the saved brief.
+     rubric_section="$(awk '/^## Outcomes Rubric/{f=1} f&&/^## /&&!/^## Outcomes Rubric/{exit} f' "$current_brief_path")"
+     printf '\n\n%s\n' "$rubric_section" >> "$requirement_path"
+     ```
+   - **Freeze verification:** after writing, confirm the section landed:
+     ```bash
+     if ! grep -F "## Outcomes Rubric" "$requirement_path"; then
+       # Freeze did NOT take — the verbatim refined-requirement templates would
+       # copy a body with no rubric, so iteration 2+ would score against an
+       # absent rubric. Surface a warning.
+       echo "WARNING: rubric freeze failed — '## Outcomes Rubric' not found in $requirement_path after append. Later iterations will run under the no-rubric gate." >&2
+     fi
+     ```
+   - **Degenerate-case no-op:** if Launch Pad fell back (no rubric authored — the degenerate-rubric fallback in Edit-1's directive), `current_brief_path` has no `## Outcomes Rubric`, this step is a no-op, and the loop proceeds under its existing no-rubric gate.
+8. Update `current_brief_path` in state.json. Proceed to EXECUTE.
 
 ## EXECUTE (per iteration)
 

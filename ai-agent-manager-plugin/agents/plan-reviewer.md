@@ -80,6 +80,13 @@ Check ALL criteria in order. For each, note whether it passes or has issues. Cri
 
 **Severity if failed:** MEDIUM (vague criteria), LOW (missing edge cases)
 
+**Sub-check (conditional — `## Outcomes Rubric` quality):** Run this ONLY when the brief contains a `## Outcomes Rubric` section. **Skip it silently when the section is absent** (same convention as the conditional Criteria 11, 13, and 14, which skip silently when their gating section is absent — but this stays part of Criterion 3, not a new numbered criterion). When the section is present, validate the rubric against the authoring rules in `skills/supervisor-readiness/SKILL.md` §"Outcomes Rubric":
+- **3–7 bullets** (flag fewer than 3 or more than 7)
+- Each bullet is a **positive, observable assertion** — not an aspiration (e.g. "should be nice", "works well")
+- Each bullet is **diff-checkable from the PR diff alone** — no reliance on external state, runtime behavior, or manual steps
+
+**Severity if the rubric is malformed:** MEDIUM (e.g. <3 or >7 bullets, non-observable aspirations, or non-diff-checkable bullets). Report as a criteria-quality finding within Criterion 3 — do not invent a new issue category.
+
 ### 4. Subtask Decomposition
 
 **Check:** Are subtasks 3-7 items, 30-60 min each, single domain/module per subtask?
