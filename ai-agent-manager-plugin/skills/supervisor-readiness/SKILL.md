@@ -2,8 +2,8 @@
 name: supervisor-readiness
 description: Pre-flight checklist, Supervisor-Ready Brief format, jobs folder convention, and failure prevention. Use before launching autonomous workflows or when diagnosing Supervisor failures.
 allowed-tools: [Read, Bash]
-version: "1.1.0"
-lastUpdated: "2026-05-10"
+version: "1.1.1"
+lastUpdated: "2026-06-14"
 ---
 
 # Supervisor Readiness Skill
@@ -173,6 +173,16 @@ Success looks like {measurable outcome}.
 - The PR description does not mention TODO, FIXME, or "deferred".
 - No file outside `src/auth/` is modified.
 ```
+
+### Auto-Authoring (multi-iteration)
+
+This is the rubric's **producer** path. When `/autonomous` runs in **multi-iteration mode** AND the requirement file has **no `## Outcomes Rubric`**, the inlined Launch Pad auto-authors one (guarded step — see `agents/launch-pad.md` Phase 5).
+
+- Authored bullets **derive from the brief's Acceptance Criteria plus the Phase 3 codebase analysis** (file impact map), and MUST obey the **Authoring rules** above (3-7 bullets, observable, **diff-checkable from the PR diff alone**, positive assertions). *(At plan-review time no diff exists yet, so Plan Reviewer applies "diff-checkable" as a phrasing/observability heuristic — see `agents/plan-reviewer.md` Criterion 3.)*
+- **Human-gated:** the authored rubric appears in the assembled brief and is surfaced for approve/edit at Launch Pad Phase 6 — never blind-written. Plan Reviewer (Phase 5.5) validates the auto-authored *draft* against these rules. Per Launch Pad's standard Phase 6 mutation rule (`agents/launch-pad.md` Phase 6), if the human edits the rubric (or any section) the prior PASS is voided and Plan Review re-runs before save (consuming an attempt from the shared 3-spawn cap) — so human edits re-enter validation rather than bypassing it; only an unedited approve-as-is skips a re-review.
+- **Partly non-diff-checkable outcomes:** if some outcomes are non-diff-checkable (e.g. visual) but **3 or more diff-checkable bullets** remain, author the rubric from that diff-checkable subset and document the excluded outcomes as a prose note — do NOT pad the rubric with non-checkable bullets.
+- **Degenerate-rubric fallback:** if **fewer than 3** diff-checkable bullets can be derived at all, do NOT emit a rubric — fall back to the autonomous loop's existing no-rubric gate rather than emitting a weak/degenerate rubric.
+- **Freeze:** once approved, the rubric is persisted back into the requirement body by the autonomous loop (see `skills/autonomous-loop/SKILL.md`) so every later iteration scores against the same yardstick.
 
 ## Executable Acceptance (optional — System Twin / M2b, v14.19.0+)
 

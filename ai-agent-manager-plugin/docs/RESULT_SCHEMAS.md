@@ -1240,6 +1240,8 @@ AUTONOMOUS_RUN:
   rubric_final_score: string | null    # required — last iteration's rubric_score (null when no rubric in requirement OR when total_iterations == 0)
 ```
 
+> **Auto-authored-rubric note (additive; no schema change):** In multi-iteration mode, when the requirement lacked an `## Outcomes Rubric` at intake, Launch Pad may **auto-author** one (human-approved, then frozen into the requirement body), so `rubric_final_score` can be non-null even for a requirement that started without a rubric. If auto-authoring fell back (fewer than 3 diff-checkable bullets were derivable), no rubric exists and `rubric_final_score` stays `null` — the existing no-rubric gate applies, unchanged. See `skills/autonomous-loop/SKILL.md` and `skills/supervisor-readiness/SKILL.md` §"Auto-Authoring (multi-iteration)" for the authoring rules.
+
 **`status_reason` enum** (documented as a closed set; new values require updating both this schema and `skills/autonomous-loop/SKILL.md`). The mapping between `status` and the legal subset of `status_reason` values is fixed:
 
 | `status` | Legal `status_reason` values |
