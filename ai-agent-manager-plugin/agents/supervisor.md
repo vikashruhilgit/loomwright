@@ -885,15 +885,20 @@ After the Code Reviewer loop has run (regardless of `heal_decision`), execute th
    2. **Gate — Beads-absent only:** probe Beads activity using the existing Persistence-Mode / context-setup convention (`test -d .beads && bd --version`). If Beads is **ACTIVE → SKIP entirely** (no file write): `bd close BD-XX` is the sole source of truth for requirement state when Beads is active. Record `record_decision(phase: SELF_HEAL, decision: "requirement_closeout: skipped_beads", rationale: "Beads active — bd close owns requirement state")` and continue to the outer completion-tail step 3 (reset resume counter).
    3. **Read the provenance pointer:** parse the brief being moved to `done/` for a `- **Source requirement:** {path}` line under its `## Environment` section. If the line is **absent → no-op** (backward compatible with pre-feature briefs and direct `/supervisor task:` runs that never stamped a pointer). Record `record_decision(phase: SELF_HEAL, decision: "requirement_closeout: noop_no_pointer", rationale: "no Source requirement pointer on brief")` and continue.
    4. **Resolve + safety-check the path:** resolve `{path}` relative to the project root. **Require the resolved path to be UNDER `.supervisor/requirements/` AND to pass `test -f`** (guards against path traversal / injection via the brief field). If it does not resolve, is outside `.supervisor/requirements/`, or the file does not exist → **logged no-op** (NEVER an error that fails the run): record `record_decision(phase: SELF_HEAL, decision: "requirement_closeout: noop_unresolved", rationale: "Source requirement path missing or outside .supervisor/requirements/")` and continue.
-   5. **Stamp, do not move:** append a `## Status` block to the requirement file **in place** (do NOT move the requirement file — only the brief moves). The block records:
+   5. **Stamp, do not move:** append a `## Status` block to the requirement file **in place** (do NOT move the requirement file — only the brief moves). **Mirror the brief `## Outcome` granularity** so an escalated requirement is not indistinguishable on disk from a clean pass (the very "done and not-done look identical" problem this feature removes):
+      - On **PASS / loop-skipped** → `**Status:** done`.
+      - On **ESCALATED** → `**Status:** done_with_escalation`, plus a `- **Heal:** {needs_human|max_iterations_reached|self_heal_resume_thrash} — {heal_remaining_issues} remaining` line carrying the escalation nuance (mirrors the brief `## Outcome` `**Heal reason:**` / `**Heal remaining issues:**` fields).
+
       ```markdown
       ## Status
-      - **Status:** done
+      - **Status:** done            # `done_with_escalation` on the ESCALATED path
       - **Completed:** {ISO 8601 timestamp}
       - **Brief:** {done/ brief path}
       - **PR:** {PR URL}
+      # ESCALATED path only — omit on PASS / loop-skipped:
+      - **Heal:** {needs_human|max_iterations_reached|self_heal_resume_thrash} — {heal_remaining_issues} remaining
       ```
-      **Idempotent — replace, do not duplicate:** if a `## Status` block already exists on the requirement file, **REPLACE it in place** (do not append a second one). This handles the multi-brief case where one requirement spawns several briefs — the latest close-out wins. On success record `record_decision(phase: SELF_HEAL, decision: "requirement_closeout: done", rationale: "stamped ## Status on {requirement path}")`.
+      **Idempotent — replace, do not duplicate:** if a `## Status` block already exists on the requirement file, **REPLACE it in place** (do not append a second one). This handles the multi-brief case where one requirement spawns several briefs — the latest close-out wins. On success record `record_decision(phase: SELF_HEAL, decision: "requirement_closeout: {done|done_with_escalation}", rationale: "stamped ## Status on {requirement path}")`.
 
 3. **Reset resume counter (unconditional — runs on every exit path: PASS, ESCALATED, or loop-skipped):** `Context-Keeper(operation: record_self_heal_resume, increment: false)`. The completion tail itself is unconditional; so is the reset.
 

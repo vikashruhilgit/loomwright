@@ -1010,10 +1010,12 @@ result on the *brief*, this block records the result on the *originating require
 
 ```markdown
 ## Status
-- **Status:** done
+- **Status:** done            # `done_with_escalation` on the ESCALATED path
 - **Completed:** {ISO 8601 timestamp}
 - **Brief:** {done/ brief path}
 - **PR:** {PR URL}
+# ESCALATED path only — omitted on PASS / loop-skipped:
+- **Heal:** {needs_human|max_iterations_reached|self_heal_resume_thrash} — {N} remaining
 ```
 
 - **Who writes it:** Supervisor Phase 4.5 SELF_HEAL completion-tail step 2.5 (`agents/supervisor.md`),
@@ -1021,9 +1023,12 @@ result on the *brief*, this block records the result on the *originating require
 - **Advisory / Beads-absent only:** stamped ONLY when Beads is inactive (`test -d .beads && bd --version`).
   When Beads is active this step is **skipped entirely** — `bd close BD-XX` is the sole source of truth
   for requirement state.
-- **Success-only:** stamped only on the successful outcomes that move the brief to `done/` —
-  **PASS / loop-skipped / ESCALATED**. A `failed` / aborted / checkpoint run **NEVER** marks a
-  requirement done.
+- **Success-only, with escalation granularity:** stamped only on the successful outcomes that move the
+  brief to `done/` — **PASS / loop-skipped / ESCALATED**. A `failed` / aborted / checkpoint run **NEVER**
+  marks a requirement done. The `Status` value **mirrors the brief `## Outcome` granularity** so an
+  escalated requirement is not indistinguishable from a clean pass: PASS / loop-skipped → `done`;
+  ESCALATED → `done_with_escalation` plus a `- **Heal:**` line recording the escalation reason and
+  remaining-issue count.
 - **Fail-safe:** the whole step is a runtime side-effect emitter — any error (unreadable brief, missing
   file, write failure, malformed pointer, path outside `.supervisor/requirements/`) is a **logged no-op**
   that never propagates to `SUPERVISOR_RESULT.status` and never fails the run (per the CLAUDE.md
