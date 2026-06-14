@@ -1050,8 +1050,9 @@ On **ESCALATED** (same fields, escalated status value, plus one `Heal` line):
   `<!-- ai-agent-manager:requirement-closeout -->` sentinel, **not** by a bare `## Status` heading —
   these `.supervisor/requirements/*.md` files have no fixed heading schema, so keying off the heading name
   would risk clobbering an unrelated `## Status` section a future tool might write. If the sentinel is
-  present, the whole span from the sentinel through the end of its `## Status` block (to the next `##`
-  heading or EOF) is **replaced in place**; if absent, a fresh sentinel-led block is **appended**. The
+  present, the whole span from the sentinel through the end of its `## Status` block (up to the next `##`
+  heading that appears **after** the `## Status` line, or EOF — not the `## Status` heading itself) is
+  **replaced in place**; if absent, a fresh sentinel-led block is **appended**. The
   latest close-out wins in the multi-brief case. The requirement file is stamped **in place**; only the
   brief moves to `done/`.
 - **Vocabulary (intentional):** the requirement `## Status` block uses `done` / `done_with_escalation`,
