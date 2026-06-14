@@ -2,7 +2,7 @@
 name: supervisor-readiness
 description: Pre-flight checklist, Supervisor-Ready Brief format, jobs folder convention, and failure prevention. Use before launching autonomous workflows or when diagnosing Supervisor failures.
 allowed-tools: [Read, Bash]
-version: "1.1.1"
+version: "1.1.2"
 lastUpdated: "2026-06-14"
 ---
 

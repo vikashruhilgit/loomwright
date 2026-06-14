@@ -1008,9 +1008,10 @@ The optional `## Status` block stamped onto a `.supervisor/requirements/*.md` fi
 of the close-out loop. It **mirrors the brief `## Outcome` pattern** — where `## Outcome` records the
 result on the *brief*, this block records the result on the *originating requirement file*:
 
-On **PASS / loop-skipped** (the block is stamped verbatim — no inline comments):
+Each block opens with the namespaced HTML-comment sentinel `<!-- ai-agent-manager:requirement-closeout -->` so the idempotent re-stamp keys off that marker, not a bare `## Status` heading. On **PASS / loop-skipped** (the block is stamped verbatim — no inline comments):
 
 ```markdown
+<!-- ai-agent-manager:requirement-closeout -->
 ## Status
 - **Status:** done
 - **Completed:** {ISO 8601 timestamp}
@@ -1021,12 +1022,13 @@ On **PASS / loop-skipped** (the block is stamped verbatim — no inline comments
 On **ESCALATED** (same fields, escalated status value, plus one `Heal` line):
 
 ```markdown
+<!-- ai-agent-manager:requirement-closeout -->
 ## Status
 - **Status:** done_with_escalation
 - **Completed:** {ISO 8601 timestamp}
 - **Brief:** {done/ brief path}
 - **PR:** {PR URL}
-- **Heal:** {needs_human|max_iterations_reached|self_heal_resume_thrash} — {N} remaining
+- **Heal:** {needs_human|max_iterations_reached|self_heal_resume_thrash} — {heal_remaining_issues} remaining
 ```
 
 - **Who writes it:** Supervisor Phase 4.5 SELF_HEAL completion-tail step 2.5 (`agents/supervisor.md`),
@@ -1044,10 +1046,14 @@ On **ESCALATED** (same fields, escalated status value, plus one `Heal` line):
   file, write failure, malformed pointer, path outside `.supervisor/requirements/`) is a **logged no-op**
   that never propagates to `SUPERVISOR_RESULT.status` and never fails the run (per the CLAUDE.md
   bimodal-failure invariant).
-- **Idempotent:** if a `## Status` block already exists, it is **replaced in place** (not duplicated) —
-  the block spans from its `## Status` heading to the next `##` heading or end-of-file, and that whole
-  span is replaced, so the latest close-out wins in the multi-brief case. The requirement file is stamped
-  **in place**; only the brief moves to `done/`.
+- **Idempotent (sentinel-keyed):** a prior close-out is located by the
+  `<!-- ai-agent-manager:requirement-closeout -->` sentinel, **not** by a bare `## Status` heading —
+  these `.supervisor/requirements/*.md` files have no fixed heading schema, so keying off the heading name
+  would risk clobbering an unrelated `## Status` section a future tool might write. If the sentinel is
+  present, the whole span from the sentinel through the end of its `## Status` block (to the next `##`
+  heading or EOF) is **replaced in place**; if absent, a fresh sentinel-led block is **appended**. The
+  latest close-out wins in the multi-brief case. The requirement file is stamped **in place**; only the
+  brief moves to `done/`.
 - **Vocabulary (intentional):** the requirement `## Status` block uses `done` / `done_with_escalation`,
   while the brief `## Outcome` block uses `completed` / `completed_with_escalation`. This split is
   deliberate — the requirement is "done", the brief is "completed" — and the two are internally

@@ -889,8 +889,9 @@ After the Code Reviewer loop has run (regardless of `heal_decision`), execute th
       - On **PASS / loop-skipped** → `**Status:** done`.
       - On **ESCALATED** → `**Status:** done_with_escalation`, plus a `- **Heal:** {needs_human|max_iterations_reached|self_heal_resume_thrash} — {heal_remaining_issues} remaining` line carrying the escalation nuance (mirrors the brief `## Outcome` `**Heal reason:**` / `**Heal remaining issues:**` fields).
 
-      Stamp exactly one of these two literal blocks (no inline comments — stamp the block verbatim, substituting the `{...}` placeholders). On **PASS / loop-skipped**:
+      Stamp exactly one of these two literal blocks (no inline comments — stamp the block verbatim, substituting the `{...}` placeholders). Each block opens with the namespaced HTML-comment sentinel `<!-- ai-agent-manager:requirement-closeout -->` so the idempotent re-stamp keys off **our** marker, never a bare `## Status` heading some other tool may use. On **PASS / loop-skipped**:
       ```markdown
+      <!-- ai-agent-manager:requirement-closeout -->
       ## Status
       - **Status:** done
       - **Completed:** {ISO 8601 timestamp}
@@ -899,6 +900,7 @@ After the Code Reviewer loop has run (regardless of `heal_decision`), execute th
       ```
       On **ESCALATED** (same fields, escalated status value, plus one `Heal` line):
       ```markdown
+      <!-- ai-agent-manager:requirement-closeout -->
       ## Status
       - **Status:** done_with_escalation
       - **Completed:** {ISO 8601 timestamp}
@@ -906,7 +908,7 @@ After the Code Reviewer loop has run (regardless of `heal_decision`), execute th
       - **PR:** {PR URL}
       - **Heal:** {needs_human|max_iterations_reached|self_heal_resume_thrash} — {heal_remaining_issues} remaining
       ```
-      **Idempotent — replace, do not duplicate:** if a `## Status` block already exists on the requirement file, **REPLACE it in place** (do not append a second one) — the block spans from its `## Status` heading to the next `##` heading or end-of-file, so replace that whole span. This handles the multi-brief case where one requirement spawns several briefs — the latest close-out wins. On success record `record_decision(phase: SELF_HEAL, decision: "requirement_closeout: {done|done_with_escalation}", rationale: "stamped ## Status on {requirement path}")`.
+      **Idempotent — replace, do not duplicate:** locate a prior close-out by the `<!-- ai-agent-manager:requirement-closeout -->` sentinel (NOT by a bare `## Status` heading — other tooling may legitimately use that heading for a different purpose, and these `.supervisor/requirements/*.md` files have no fixed heading schema). If the sentinel is present, **REPLACE the whole span** from the sentinel through the end of the `## Status` block it introduces (to the next `##` heading or end-of-file); if it is absent, **append** a fresh sentinel-led block. Keying the re-stamp to our own marker makes it collision-proof — an unrelated `## Status` section is never clobbered — and handles the multi-brief case where one requirement spawns several briefs (the latest close-out wins). On success record `record_decision(phase: SELF_HEAL, decision: "requirement_closeout: {done|done_with_escalation}", rationale: "stamped ## Status on {requirement path}")`.
 
 3. **Reset resume counter (unconditional — runs on every exit path: PASS, ESCALATED, or loop-skipped):** `Context-Keeper(operation: record_self_heal_resume, increment: false)`. The completion tail itself is unconditional; so is the reset.
 
