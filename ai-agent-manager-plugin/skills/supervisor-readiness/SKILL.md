@@ -179,8 +179,9 @@ Success looks like {measurable outcome}.
 This is the rubric's **producer** path. When `/autonomous` runs in **multi-iteration mode** AND the requirement file has **no `## Outcomes Rubric`**, the inlined Launch Pad auto-authors one (guarded step — see `agents/launch-pad.md` Phase 5).
 
 - Authored bullets **derive from the brief's Acceptance Criteria plus the Phase 3 codebase analysis** (file impact map), and MUST obey the **Authoring rules** above (3-7 bullets, observable, **diff-checkable from the PR diff alone**, positive assertions).
-- **Human-gated:** the authored rubric appears in the assembled brief and is surfaced for approve/edit at Launch Pad Phase 6 — never blind-written.
-- **Degenerate-rubric fallback:** if fewer than 3 diff-checkable bullets can be derived (e.g. the goal's outcomes are largely non-diff-checkable / visual), do NOT emit a rubric — fall back to the autonomous loop's existing no-rubric gate. Capture only the diff-checkable subset and document that limitation rather than silently dropping it.
+- **Human-gated:** the authored rubric appears in the assembled brief and is surfaced for approve/edit at Launch Pad Phase 6 — never blind-written. Plan Reviewer (Phase 5.5) validates the auto-authored *draft* against these rules before the Phase 6 gate; the human's Phase 6 edits are authoritative and are NOT re-validated (the human gate is intentionally the final word).
+- **Partly non-diff-checkable outcomes:** if some outcomes are non-diff-checkable (e.g. visual) but **3 or more diff-checkable bullets** remain, author the rubric from that diff-checkable subset and document the excluded outcomes as a prose note — do NOT pad the rubric with non-checkable bullets.
+- **Degenerate-rubric fallback:** if **fewer than 3** diff-checkable bullets can be derived at all, do NOT emit a rubric — fall back to the autonomous loop's existing no-rubric gate rather than emitting a weak/degenerate rubric.
 - **Freeze:** once approved, the rubric is persisted back into the requirement body by the autonomous loop (see `skills/autonomous-loop/SKILL.md`) so every later iteration scores against the same yardstick.
 
 ## Executable Acceptance (optional — System Twin / M2b, v14.19.0+)

@@ -135,7 +135,7 @@ Adjudication 4-option escalation (when a Worker's `outputs_gap` triggers it) fir
 
 When `/autonomous` invokes Launch Pad inline, it adds one explicit directive to the inlined workflow body:
 
-> *"If the requirement file at `<requirement_path>` has an `## Outcomes Rubric` section, copy it verbatim into the saved brief during Phase 4 (Brief Assembly). Do not paraphrase, do not drop items."*
+> *"If the requirement file at `<requirement_path>` has an `## Outcomes Rubric` section, copy it verbatim into the saved brief during Phase 5 (PACKAGE — Brief Assembly). Do not paraphrase, do not drop items."*
 
 After Phase 6 saves, the loop verifies this with `grep -F "## Outcomes Rubric" "$current_brief_path"`. If the section is missing from the saved brief, the iteration aborts cleanly with `status_reason: "rubric_dropped_from_brief"` (a graceful fallback that prevents multi-iteration from silently degrading to single-iteration).
 
