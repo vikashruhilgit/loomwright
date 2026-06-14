@@ -8,7 +8,7 @@ Comprehensive index of all skills available in the AI Agent Manager plugin.
 
 | Skill Name | Directory | Agent Consumers | Token Est. | Version | Last Updated |
 |------------|-----------|-----------------|------------|---------|--------------|
-| Supervisor Readiness | `supervisor-readiness/` | Launch Pad (preload), Supervisor (preload) | ~800 | 1.1.0 | 2026-05-10 |
+| Supervisor Readiness | `supervisor-readiness/` | Launch Pad (preload), Supervisor (preload) | ~800 | 1.1.1 | 2026-06-14 |
 | Workflow Management | `workflow-management/` | Supervisor (preload) | ~1,200 | 1.0.0 | 2026-03 |
 | Async Orchestration | `async-orchestration/` | Supervisor (preload) | ~1,000 | 1.0.0 | 2026-05-09 |
 | State Management | `state-management/` | Supervisor (preload) | ~900 | 1.1.0 | 2026-05 |
@@ -20,7 +20,7 @@ Comprehensive index of all skills available in the AI Agent Manager plugin.
 | Beads Workflow | `beads-workflow/` | Orchestrator (reference), Product Owner (reference) | ~600 | 1.0.0 | 2026-03 |
 | Telemetry | `telemetry/` | — (reference, shell-script-driven) | ~600 | 1.0.0 | 2026-04 |
 | Memory Tool | `memory-tool/` | — (reference) | ~500 | 1.0.0 | 2026-05-10 |
-| Autonomous Loop | `autonomous-loop/` | `/autonomous` (slash command, reference) | ~2,400 [^al-tokens] | 1.2.1 | 2026-05-31 |
+| Autonomous Loop | `autonomous-loop/` | `/autonomous` (slash command, reference) | ~2,400 [^al-tokens] | 1.3.1 | 2026-06-14 |
 | Review Heal | `review-heal/` | `review-pr-runner` (preload), `/review-pr` + Supervisor + `/autonomous` (reference) | ~1,400 | 1.0.0 | 2026-06-06 |
 | Self-Heal Advisory | `self-heal-advisory/` | Supervisor (on-demand Read at Phase 4.5 entry — deliberately NOT preloaded) | ~2,000 | 1.0.0 | 2026-06-10 |
 | PR Postmortem | `pr-postmortem/` | `/pr-postmortem` (slash command, reference) | ~1,400 | 1.3.0 | 2026-06-13 |
