@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# write-lessons.sh — sole sanctioned WRITER for advisory project LESSONS (v14.5.0).
+# write-lessons.sh — sole sanctioned WRITER for advisory project LESSONS.
+# (Bounded sole-writer introduced v14.5.0; provenance + freshness parity added on the v14.24.x line.)
 #
 # Appends a (human-approved) durable lesson to .supervisor/memory/LESSONS.md, grouped under a
 # `## <category-slug>` heading, enforces a per-category bound of <=3 active entries via
 # write-time eviction of the OLDEST entry in that category, and writes atomically (temp + mv).
+# It also appends a hash-chained provenance entry to .supervisor/memory/.lessons-provenance.jsonl
+# and stamps each lesson with machine-readable freshness metadata (last_verified + confidence).
 #
 # ADVISORY only — subordinate to the human-authored CLAUDE.md; NEVER an enforcement boundary.
 # Promotion is human-gated: callers write only lessons a human has approved.
@@ -13,36 +16,62 @@
 # `git worktree remove`. Only callers at the repo root may write. The worktree check is the
 # real enforcement, regardless of caller.
 #
-# PROVENANCE NOTE (v1): unlike write-project-memory.sh, LESSONS intentionally has NO hash-chain
-# provenance in v1. Lessons are human-approved at write time AND bounded per category. The
-# load-bearing safety properties are: the worktree guard, the atomic temp-in-dir + mv write,
-# and the per-category <=3 bound. Provenance parity with PROJECT_MEMORY (tamper-detection /
-# poison-drop) is a possible P5 hardening, not shipped in v1.
+# PROVENANCE NOTE (deferred at v14.5.0; SHIPPED on the v14.24.x line, parity with PROJECT_MEMORY):
+# hash-chain provenance is no longer deferred. Each add/evict appends a chained entry to a LESSONS-SPECIFIC chain file,
+# `.supervisor/memory/.lessons-provenance.jsonl` (kept separate from PROJECT_MEMORY's
+# `.provenance.jsonl` — interleaving two chains would break both walks), rooted at GENESIS, with
+# one `evict` entry per evicted lesson. The matching sole-READER and read-side provenance gate is
+# `read-lessons.sh` (drops out-of-band / un-provenanced poison lines, distrusts everything after a
+# broken chain link). The remaining load-bearing properties are unchanged: the worktree guard, the
+# atomic temp-in-dir + mv write (now of BOTH files, provenance FIRST), and the per-category <=3
+# bound + oldest-eviction.
 #
-# Usage:  write-lessons.sh --category "<cat>" --lesson "<text>" [--source "<id>"]
+# FRESHNESS NOTE (SHIPPED on the v14.24.x line): each stored lesson carries a machine-readable
+# `last_verified` ISO-8601 timestamp and a `confidence` value, appended as a parseable HTML-comment
+# trailer (`<!-- last_verified=... confidence=... -->`) so markdown rendering and substring greps are
+# unaffected and content_hash is NOT changed (the trailer never enters the hash). `read-lessons.sh`
+# applies a read-side stale-lint (skips lessons older than LESSON_STALE_DAYS, default 90).
+#
+# Usage:  write-lessons.sh --category "<cat>" --lesson "<text>" \
+#                          [--source "<id>"] [--last-verified "<iso8601Z>"] [--confidence "<value>"]
 # Exit:   0 on success or safe no-op (e.g. no sha tool); non-zero only on a disallowed /
 #         would-corrupt condition (so a bad call can never half-write state).
 
 set -uo pipefail
 
-CATEGORY=""; LESSON=""; SOURCE="unknown"
+CATEGORY=""; LESSON=""; SOURCE="unknown"; LAST_VERIFIED=""; CONFIDENCE="medium"
 while [ $# -gt 0 ]; do
   case "$1" in
-    --category)   CATEGORY="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
-    --category=*) CATEGORY="${1#--category=}"; shift ;;
-    --lesson)     LESSON="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
-    --lesson=*)   LESSON="${1#--lesson=}"; shift ;;
-    --source)     SOURCE="${2:-unknown}"; shift; [ $# -gt 0 ] && shift ;;
-    --source=*)   SOURCE="${1#--source=}"; shift ;;
+    --category)        CATEGORY="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
+    --category=*)      CATEGORY="${1#--category=}"; shift ;;
+    --lesson)          LESSON="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
+    --lesson=*)        LESSON="${1#--lesson=}"; shift ;;
+    --source)          SOURCE="${2:-unknown}"; shift; [ $# -gt 0 ] && shift ;;
+    --source=*)        SOURCE="${1#--source=}"; shift ;;
+    --last-verified)   LAST_VERIFIED="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
+    --last-verified=*) LAST_VERIFIED="${1#--last-verified=}"; shift ;;
+    --confidence)      CONFIDENCE="${2:-medium}"; shift; [ $# -gt 0 ] && shift ;;
+    --confidence=*)    CONFIDENCE="${1#--confidence=}"; shift ;;
     *) shift ;;
   esac
 done
 [ -n "$CATEGORY" ] || { echo "write-lessons: --category is required" >&2; exit 2; }
 [ -n "$LESSON" ]   || { echo "write-lessons: --lesson is required" >&2; exit 2; }
 
-# Sanitize --source of quotes/backslashes/control chars (label only — kept for future use).
-SOURCE="$(printf '%s' "$SOURCE" | tr -d '"\\[:cntrl:]')"
+# Sanitize --source of quotes/backslashes/control chars so the no-jq provenance fallback
+# (printf-built JSON) can never emit malformed JSONL even if a caller widens --source.
+SOURCE="$(printf '%s' "$SOURCE" | tr -d '"\\<>[:cntrl:]')"
 [ -n "$SOURCE" ] || SOURCE="unknown"
+
+# Sanitize --confidence the same way --source is sanitized (it lands in the markdown trailer and
+# is passed to awk via -v, so it must have no quotes/backslashes/ctrl). `<`/`>` are also dropped so
+# a value like `high-->evil` can't inject comment delimiters into the `<!-- ... -->` trailer
+# (defense-in-depth for the trailer shape the reader anchors to). NOTE: spaces are intentionally
+# NOT stripped (a value like `high verified` is kept verbatim) — confidence is store-only,
+# future-facing metadata; read-lessons.sh gates ONLY on last_verified and never parses confidence,
+# so a space cannot distort the trailer strip or any gate.
+CONFIDENCE="$(printf '%s' "$CONFIDENCE" | tr -d '"\\<>[:cntrl:]')"
+[ -n "$CONFIDENCE" ] || CONFIDENCE="medium"
 
 # Slugify --category: lowercase, strip control chars, spaces/punct -> hyphens, collapse + trim
 # hyphens. Keeps it safe as a markdown `##` heading and stable for grouping.
@@ -73,37 +102,94 @@ fi
 
 MEM_DIR=".supervisor/memory"
 LESSONS="$MEM_DIR/LESSONS.md"
+PROV="$MEM_DIR/.lessons-provenance.jsonl"
 MAX_PER_CAT=3
+GENESIS="GENESIS"
 
 mkdir -p "$MEM_DIR" 2>/dev/null || { echo "write-lessons: cannot create $MEM_DIR" >&2; exit 2; }
 [ -f "$LESSONS" ] || printf '# Project Lessons (advisory — bounded <=3 active per category; written only via write-lessons.sh)\n' > "$LESSONS"
+[ -f "$PROV" ] || : > "$PROV"
 
-lesson_oneline="$(printf '%s' "$LESSON" | tr '\n' ' ')"
+# Freshness metadata: default last_verified to write time (same expression used elsewhere).
+ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
+# An explicit --last-verified is accepted ONLY if it is a well-formed ISO-8601 UTC stamp
+# (YYYY-MM-DDThh:mm:ssZ); anything else falls back to the write-time default. This keeps
+# LAST_VERIFIED a clean [0-9T:Z-] value with NO spaces / backslashes / angle-brackets — so it
+# can neither distort the `<!-- ... -->` trailer the reader anchors on (e.g. `--last-verified
+# "x --> y"`) nor be reinterpreted by the `awk -v lv=` pass below (which treats backslash escapes).
+# This restores the symmetry with the --source/--confidence sanitizers and makes the awk -v
+# backslash-safety note accurate for lv even when the caller passes the flag explicitly.
+if [ -n "$LAST_VERIFIED" ]; then
+  case "$LAST_VERIFIED" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z) : ;;
+    *) echo "write-lessons: --last-verified '$LAST_VERIFIED' is not ISO-8601 UTC (YYYY-MM-DDThh:mm:ssZ) — using write time" >&2
+       LAST_VERIFIED="" ;;
+  esac
+fi
+[ -n "$LAST_VERIFIED" ] || LAST_VERIFIED="$ts"
+
+# Trim TRAILING whitespace from the one-lined lesson so the stored text and the hashed text agree
+# (command substitution strips trailing newlines but NOT trailing spaces; the reader's trailer
+# strip eats trailing spaces before the trailer, so a divergence here silently drops the lesson).
+# This trims ONLY trailing whitespace — interior backslashes / spaces are untouched. The SAME
+# value feeds both content_hash and the awk-stored line below.
+lesson_oneline="$(printf '%s' "$LESSON" | tr '\n' ' ' | sed -E 's/[[:space:]]+$//')"
+# CRITICAL: content_hash is over category + lesson text ONLY — the freshness trailer never enters
+# it. This is a FORWARD-LOOKING property: a future re-verification path (refreshing last_verified)
+# could update the trailer without changing the hash or breaking the chain. No such path exists
+# today — the dedup guard below short-circuits an identical lesson before any update, so a stored
+# last_verified is effectively write-once until the entry is evicted.
 content_hash="$(printf '%s' "$CATSLUG $lesson_oneline" | sha)"
 id="$(printf '%s' "$content_hash" | cut -c1-8)"
 
 # Dedup guard: id is content-derived (category + lesson), so an identical lesson in the same
-# category yields an identical entry. Skip if already present.
+# category yields an identical entry. The appended trailer is OUTSIDE this substring, so the
+# match still works. Skip (touching nothing — no provenance work) if already present.
 if grep -qF -- "- [$id] $lesson_oneline" "$LESSONS" 2>/dev/null; then
   echo "write-lessons: lesson already present ([$id] in $CATSLUG) — skipping"
   exit 0
 fi
 
+# prov_line <id> <prev_hash> <content_hash> <source> <action>
+# Emits the JSON with NO trailing newline; callers add exactly one via printf '%s\n'.
+# (jq -nc would otherwise append its own newline → blank lines that break the hash chain.)
+prov_line() {
+  if command -v jq >/dev/null 2>&1; then
+    jq -cn --arg id "$1" --arg ph "$2" --arg ch "$3" --arg src "$4" --arg act "$5" --arg ts "$ts" \
+      '{id:$id,prev_hash:$ph,content_hash:$ch,source:$src,action:$act,written_at:$ts}' | tr -d '\n'
+  else
+    printf '{"id":"%s","prev_hash":"%s","content_hash":"%s","source":"%s","action":"%s","written_at":"%s"}' "$1" "$2" "$3" "$4" "$5" "$ts"
+  fi
+}
+
 # Temps live IN the memory dir (not $TMPDIR) so the commit `mv` is a same-filesystem, truly
 # atomic rename — a tmpfs /tmp would otherwise make `mv` a non-atomic cross-device copy+unlink.
-tmp="$(mktemp "$MEM_DIR/.ltmp.XXXXXX")"
-trap 'rm -f "$tmp" 2>/dev/null' EXIT
+mem_tmp="$(mktemp "$MEM_DIR/.ltmp.XXXXXX")"
+prov_tmp="$(mktemp "$MEM_DIR/.lptmp.XXXXXX")"
+evict_file="$(mktemp "$MEM_DIR/.levict.XXXXXX")"
+trap 'rm -f "$mem_tmp" "$prov_tmp" "$evict_file" 2>/dev/null' EXIT
+: > "$evict_file"
 
-# Rebuild the file with awk:
+# Rebuild the LESSONS file with awk:
 #  - locate the `## <CATSLUG>` section; insert the new line at its end (before the next `##` or EOF)
 #  - if the section is absent, append it (heading + line) at EOF
-#  - within the target section, enforce <=MAX_PER_CAT entries by evicting the OLDEST (first) ones
+#  - within the target section, enforce <=MAX_PER_CAT entries by evicting the OLDEST (first) ones,
+#    and record each evicted entry's id to EVICT_FILE so bash can emit its `evict` provenance line.
 # NOTE: the lesson text is passed via ENVIRON (not `-v`) because `awk -v` interprets backslash
 # escape sequences in the value (\n, \t, \\, ...), which would silently corrupt a lesson that
 # legitimately contains a backslash (e.g. a Windows path). ENVIRON values are taken literally.
-# `cat` (a [a-z0-9-] slug) and `id` (hex) can't contain backslashes, so they stay on `-v`.
-LESSON_ONELINE="$lesson_oneline" awk -v cat="$CATSLUG" -v id="$id" -v maxc="$MAX_PER_CAT" '
-  BEGIN { hdr = "## " cat; lesson = ENVIRON["LESSON_ONELINE"]; inserted = 0 }
+# `cat`/`id` (slug/hex), `lv` (an ISO-8601 stamp VALIDATED above to `[0-9T:Z-]` only), and `conf`
+# (a sanitized value, `<>`/quotes/backslashes/ctrl stripped) cannot contain backslashes,
+# so they stay on `-v`.
+LESSON_ONELINE="$lesson_oneline" awk \
+  -v cat="$CATSLUG" -v id="$id" -v maxc="$MAX_PER_CAT" \
+  -v lv="$LAST_VERIFIED" -v conf="$CONFIDENCE" -v evictfile="$evict_file" '
+  BEGIN {
+    hdr = "## " cat
+    lesson = ENVIRON["LESSON_ONELINE"]
+    trailer = "  <!-- last_verified=" lv " confidence=" conf " -->"
+    newline = "- [" id "] " lesson trailer
+  }
   # Collect lines into an array so we can post-process the target section in one pass.
   { lines[NR] = $0 }
   END {
@@ -125,7 +211,7 @@ LESSON_ONELINE="$lesson_oneline" awk -v cat="$CATSLUG" -v id="$id" -v maxc="$MAX
       for (i = 1; i <= n; i++) print lines[i]
       print ""          # blank separator so the new `## <category>` heading is valid markdown
       print hdr
-      print "- [" id "] " lesson
+      print newline
     } else {
       # Print up to (and including) the heading.
       for (i = 1; i <= sec_start; i++) print lines[i]
@@ -134,20 +220,43 @@ LESSON_ONELINE="$lesson_oneline" awk -v cat="$CATSLUG" -v id="$id" -v maxc="$MAX
       for (i = sec_start + 1; i <= sec_end; i++) {
         if (lines[i] ~ /^- \[/) { ec++; entries[ec] = lines[i] }
       }
-      ec++; entries[ec] = "- [" id "] " lesson
-      # Evict the oldest (front) entries until <= maxc remain.
+      ec++; entries[ec] = newline
+      # Evict the oldest (front) entries until <= maxc remain; record each evicted id.
       start = 1
-      while ((ec - start + 1) > maxc) start++
+      while ((ec - start + 1) > maxc) {
+        split(entries[start], a, /[][]/); eid = a[2]
+        print eid >> evictfile
+        start++
+      }
       for (j = start; j <= ec; j++) print entries[j]
       # Print the remainder of the file (from the next section onward).
       for (i = sec_end + 1; i <= n; i++) print lines[i]
     }
   }
-' "$LESSONS" > "$tmp"
+' "$LESSONS" > "$mem_tmp"
 
-mv "$tmp" "$LESSONS" || {
-  echo "write-lessons: atomic rename failed — write aborted" >&2
+# ---- Build the provenance chain into prov_tmp ------------------------------
+# Seed prov_tmp with the existing chain, then append one `add` line, then one chained `evict`
+# line per evicted id (each chained off the running provenance tail — exactly like project-memory).
+cat "$PROV" > "$prov_tmp"
+last_line="$(tail -n1 "$prov_tmp" 2>/dev/null || true)"
+if [ -n "$last_line" ]; then prev_hash="$(printf '%s' "$last_line" | sha)"; else prev_hash="$GENESIS"; fi
+printf '%s\n' "$(prov_line "$id" "$prev_hash" "$content_hash" "$SOURCE" "add")" >> "$prov_tmp"
+
+if [ -s "$evict_file" ]; then
+  while IFS= read -r eid; do
+    [ -n "$eid" ] || continue
+    eph="$(printf '%s' "$(tail -n1 "$prov_tmp")" | sha)"
+    printf '%s\n' "$(prov_line "$eid" "$eph" "" "eviction" "evict")" >> "$prov_tmp"
+  done < "$evict_file"
+fi
+
+# Commit both files. Provenance FIRST: if the second rename fails, the worst case is a provenance
+# entry with no matching memory line — which the read-side gate silently ignores (no orphaned,
+# repeatedly-logged memory line). A failed first rename leaves state untouched.
+mv "$prov_tmp" "$PROV" && mv "$mem_tmp" "$LESSONS" || {
+  echo "write-lessons: atomic rename failed — write aborted; read gate ignores any unmatched provenance" >&2
   exit 2
 }
-echo "write-lessons: stored [$id] in $CATSLUG (source=$SOURCE)"
+echo "write-lessons: stored [$id] in $CATSLUG (source=$SOURCE, last_verified=$LAST_VERIFIED, confidence=$CONFIDENCE)"
 exit 0
