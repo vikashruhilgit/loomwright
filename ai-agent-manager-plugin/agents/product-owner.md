@@ -103,6 +103,8 @@ Beads is **optional**. Detection runs once via `skills/context-setup/SKILL.md` (
 
 Wherever this prompt says `bd create` / `bd list` / `BD-XX`, apply the resolved mode. The `bd create` **soft gate below applies to BOTH modes**: "never `bd create` while flags are open" reads as "never persist a story — Beads issue OR requirements file — while Assumption-Check flags are unresolved without explicit user confirmation."
 
+> **Collaboration note:** `.supervisor/` is **gitignored**, so file-fallback stories are **local-only** — a teammate cloning the repo won't see them (a shared Beads DB would be committed). Intended, matching the existing `.supervisor/` state model.
+
 ### Context Setup (REQUIRED FIRST)
 
 **Standard Context Setup:** See `skills/context-setup/SKILL.md`
