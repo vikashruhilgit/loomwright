@@ -20,15 +20,20 @@ Break incoming goals into actionable tasks with built-in review gates. Understan
 
 ### Persistence Mode (Beads-Optional) — resolve FIRST
 
-Beads is **optional**. Detection runs once via `skills/context-setup/SKILL.md` (probe: `test -d .beads && bd --version`); treat its result as `beads_active` in this prompt:
+Beads is **optional**. Detection runs once via `skills/context-setup/SKILL.md` (probe: `test -d .beads && bd --version`); treat its result as `beads_active` in this prompt.
+
+**Resolve the `goal:` argument first — this is mode-independent (do it whether or not `beads_active`):** if it is a path **under `.supervisor/requirements/`** ending in `.md` that resolves with `test -f` (against the project root — the `--project` value when given, else the auto-detected root — not the current working directory), `Read` it and use its contents (story title, As-a/I-want/so-that, acceptance criteria, priority, dependencies) as the requirement source. Any other value — including a bare repo file such as `README.md` — is the literal objective string. Never invent a file: a `.supervisor/requirements/` path that fails `test -f` falls back to literal handling. If the file resolves but is empty or clearly not a story/requirement (e.g. a stray `*-plan.md` passed by mistake), **stop and ask** rather than planning from its contents.
+
+Then persist the task tree **per mode**:
 
 - **`beads_active` (Beads present):** create the EPIC → TASK → SUBTASK tree as Beads issues with `depends_on` wiring, exactly as written below; use real `bd` commands and `BD-XX` IDs.
 - **NOT `beads_active` (file fallback):** skip ALL `bd` commands and instead:
-  1. **Resolve the `goal:` argument.** If it is a path **under `.supervisor/requirements/`** ending in `.md` that resolves with `test -f` (against the project root — the `--project` value when given, else the auto-detected root — not the current working directory), `Read` it and use its contents (story title, As-a/I-want/so-that, acceptance criteria, priority, dependencies) as the requirement source. Any other value — including a bare repo file such as `README.md` — is the literal objective string. Never invent a file: a `.supervisor/requirements/` path that fails `test -f` falls back to literal handling. If the file resolves but is empty or clearly not a story/requirement (e.g. a stray `*-plan.md` passed by mistake), **stop and ask** rather than planning from its contents.
-  2. **Choose a stable slug** by kebab-casing the requirement title (or the goal string) — e.g. `jwt-guard`. Re-running for the same slug **overwrites** the prior `{slug}-plan.md` (intended — a re-plan replaces rather than duplicates).
-  3. **Write the task tree** as a markdown checklist to `.supervisor/requirements/{slug}-plan.md` (create `.supervisor/requirements/` first if absent, `mkdir -p .supervisor/requirements`), or append a `## Task Plan` section to the handed-off requirements file: same EPIC/TASK/SUBTASK structure, acceptance criteria, ordered dependencies (stated as "blocked by" in prose), and skill references. Use stable slug IDs (e.g. `jwt-guard`, `jwt-guard-review`) instead of `BD-XX`.
+  1. **Choose a stable slug** by kebab-casing the requirement title (or the goal string) — e.g. `jwt-guard`. Re-running for the same slug **overwrites** the prior `{slug}-plan.md` (intended — a re-plan replaces rather than duplicates).
+  2. **Write the task tree** as a markdown checklist to `.supervisor/requirements/{slug}-plan.md` (create `.supervisor/requirements/` first if absent, `mkdir -p .supervisor/requirements`), or append a `## Task Plan` section to the handed-off requirements file: same EPIC/TASK/SUBTASK structure, acceptance criteria, ordered dependencies (stated as "blocked by" in prose), and skill references. Use stable slug IDs (e.g. `jwt-guard`, `jwt-guard-review`) instead of `BD-XX`.
 
 **Review gates are mandatory in BOTH modes** — every implementation task still has a review subtask that must PASS before the next begins. In file-fallback mode this is tracked by checklist state in the plan file rather than enforced by Beads `blocked` status. Wherever this prompt says `bd …` / `BD-XX`, apply the resolved mode.
+
+> **Shared directory:** `.supervisor/requirements/` is written by Product Owner stories (`{ts}-{slug}.md`), Orchestrator plans (`*-plan.md`), and the autonomous-loop (`auto-*.md`). When scanning for prior stories/plans, exclude `*-plan.md` and `auto-*.md` so machine-managed files aren't ingested as stories.
 
 > **Collaboration note:** `.supervisor/` is **gitignored**, so file-fallback plans are **local-only** — a teammate cloning the repo won't see them (a shared Beads DB would be committed). Intended, matching the existing `.supervisor/` state model.
 

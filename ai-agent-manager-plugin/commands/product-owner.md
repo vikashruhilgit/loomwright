@@ -284,11 +284,13 @@ Beads is **optional**. Detection runs once via `skills/context-setup/SKILL.md` (
 
 - **`beads_active` (Beads present):** use every `bd …` command and `BD-XX` reference in this prompt exactly as written.
 - **NOT `beads_active` (file fallback):** skip ALL `bd` commands and instead:
-  1. **Read prior stories** by globbing `.supervisor/requirements/*.md` **excluding `*-plan.md`** (those are Orchestrator task-plan files, not stories).
+  1. **Read prior stories** by globbing `.supervisor/requirements/*.md` **excluding `*-plan.md`** (Orchestrator task-plan files) **and `auto-*.md`** (autonomous-loop requirement/iteration files) — i.e. only PO-authored stories.
   2. **Persist** each new story as `.supervisor/requirements/{YYYY-MM-DD-HHMMSS}-{slug}.md`, where `{slug}` is the story title kebab-cased. Create `.supervisor/requirements/` first if absent (`mkdir -p .supervisor/requirements`); if that exact filename already exists, append a numeric suffix (`-2`, `-3`, …) so a same-second/same-slug story never silently overwrites an earlier one. The file holds the full story body (title, As-a/I-want/so-that, acceptance criteria, priority, assumptions, dependencies, risks).
   3. **Hand off by file path** (`/orchestrator goal: ".supervisor/requirements/<file>.md"`). Never synthesize fake `BD-XX` IDs — use the slug/path as the story handle.
 
 Wherever this prompt says `bd create` / `bd list` / `BD-XX`, apply the resolved mode. The `bd create` **soft gate below applies to BOTH modes**: "never `bd create` while flags are open" reads as "never persist a story — Beads issue OR requirements file — while Assumption-Check flags are unresolved without explicit user confirmation."
+
+> **Shared directory:** `.supervisor/requirements/` is written by Product Owner stories (`{ts}-{slug}.md`), Orchestrator plans (`*-plan.md`), and the autonomous-loop (`auto-*.md`). The prior-stories glob above excludes `*-plan.md` and `auto-*.md` so only PO-authored stories are surfaced.
 
 > **Collaboration note:** `.supervisor/` is **gitignored**, so file-fallback stories are **local-only** — a teammate cloning the repo won't see them (a shared Beads DB would be committed). Intended, matching the existing `.supervisor/` state model.
 
