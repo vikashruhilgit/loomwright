@@ -2,7 +2,7 @@
 name: supervisor-readiness
 description: Pre-flight checklist, Supervisor-Ready Brief format, jobs folder convention, and failure prevention. Use before launching autonomous workflows or when diagnosing Supervisor failures.
 allowed-tools: [Read, Bash]
-version: "1.1.1"
+version: "1.1.2"
 lastUpdated: "2026-06-14"
 ---
 
@@ -126,6 +126,7 @@ The `.supervisor/` directory should be gitignored (Supervisor auto-adds this):
 - **Git:** {clean|dirty} ({N} files), branch: {branch}
 - **GitHub CLI:** ✓ Authenticated | ⚠ Not authenticated
 - **Blockers:** {count} | **Warnings:** {count}
+- **Source requirement:** {repo-root-relative path to the `.supervisor/requirements/*.md` this brief was planned from — OPTIONAL; emitted only when Launch Pad resolved a requirement file at Phase 2 step 0, omitted entirely otherwise}
 
 ## Feasibility (optional — Launch Pad v10.3+)
 

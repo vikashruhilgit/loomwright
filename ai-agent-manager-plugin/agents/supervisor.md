@@ -875,6 +875,41 @@ After the Code Reviewer loop has run (regardless of `heal_decision`), execute th
    - On ESCALATED: Move brief from `in-progress/` → `done/`, append outcome section with `**Status:** completed_with_escalation`, plus `**Heal reason:** {needs_human|max_iterations_reached|self_heal_resume_thrash}`, `**Heal remaining issues:** {count}`.
    - Backward compatibility: If job file is not in `in-progress/`, skip the move step (direct `/supervisor task:` invocation without Launch Pad).
 
+2.5. **Requirement close-out (Beads-absent only — fail-safe side-effect):**
+
+   Runs on the SAME successful outcomes that move the brief to `done/` in step 2 — **PASS / loop-skipped / ESCALATED** (all three move the brief to `done/`, so all three close out the originating requirement). This step closes the requirement→brief→done loop for the Beads-optional flow: Launch Pad (the producer) stamps a `- **Source requirement:** {path}` line on the brief, and this step (the consumer) marks that originating requirement file done.
+
+   This whole step is a **runtime side-effect emitter and MUST fail SAFE** per the CLAUDE.md bimodal-failure invariant: wrap the entire close-out so that ANY error (unreadable brief, missing file, write failure, malformed pointer) is a **logged no-op that NEVER propagates to `SUPERVISOR_RESULT.status` and NEVER fails the run**. It never gates, never alters the PR, never affects control flow — always continue to step 3 regardless of outcome.
+
+   1. **Gate — successful outcome only:** this step runs ONLY on PASS / loop-skipped / ESCALATED. It MUST NOT run on the `failed` / abort / `checkpoint` / invariant-violation / base-mismatch-cleanup paths. **A failed run NEVER marks a requirement done** — those paths exit before this step. (The Phase 4.5 invariant-violation guard above and the base-mismatch cleanup path both exit without reaching here.)
+   2. **Gate — Beads-absent only:** probe Beads activity using the existing Persistence-Mode / context-setup convention (`test -d .beads && bd --version`). If Beads is **ACTIVE → SKIP entirely** (no file write): `bd close BD-XX` is the sole source of truth for requirement state when Beads is active. Record `record_decision(phase: SELF_HEAL, decision: "requirement_closeout: skipped_beads", rationale: "Beads active — bd close owns requirement state")` and continue to the outer completion-tail step 3 (reset resume counter).
+   3. **Read the provenance pointer:** parse the brief (in `done/` when step 2 performed the move; otherwise wherever it remains) for a `- **Source requirement:** {path}` line under its `## Environment` section. If the line is **absent → no-op** (backward compatible with pre-feature briefs and direct `/supervisor task:` runs that never stamped a pointer). Record `record_decision(phase: SELF_HEAL, decision: "requirement_closeout: noop_no_pointer", rationale: "no Source requirement pointer on brief")` and continue.
+   4. **Resolve + safety-check the path:** resolve `{path}` relative to the project root. **Require the resolved path to be UNDER `.supervisor/requirements/` AND to pass `test -f`** (guards against path traversal / injection via the brief field). If it does not resolve, is outside `.supervisor/requirements/`, or the file does not exist → **logged no-op** (NEVER an error that fails the run): record `record_decision(phase: SELF_HEAL, decision: "requirement_closeout: noop_unresolved", rationale: "Source requirement path missing or outside .supervisor/requirements/")` and continue.
+   5. **Stamp, do not move:** append a `## Status` block to the requirement file **in place** (do NOT move the requirement file — only the brief moves). **Mirror the brief `## Outcome` granularity** so an escalated requirement is not indistinguishable on disk from a clean pass (the very "done and not-done look identical" problem this feature removes):
+      - On **PASS / loop-skipped** → `**Status:** done`.
+      - On **ESCALATED** → `**Status:** done_with_escalation`, plus a `- **Heal:** {needs_human|max_iterations_reached|self_heal_resume_thrash} — {heal_remaining_issues} remaining` line carrying the escalation nuance (mirrors the brief `## Outcome` `**Heal reason:**` / `**Heal remaining issues:**` fields).
+
+      Stamp exactly one of these two literal blocks (no inline comments — stamp the block verbatim, substituting the `{...}` placeholders). Each block opens with the namespaced HTML-comment sentinel `<!-- ai-agent-manager:requirement-closeout -->` so the idempotent re-stamp keys off **our** marker, never a bare `## Status` heading some other tool may use. On **PASS / loop-skipped**:
+      ```markdown
+      <!-- ai-agent-manager:requirement-closeout -->
+      ## Status
+      - **Status:** done
+      - **Completed:** {ISO 8601 timestamp}
+      - **Brief:** {done/ brief path}
+      - **PR:** {PR URL}
+      ```
+      On **ESCALATED** (same fields, escalated status value, plus one `Heal` line):
+      ```markdown
+      <!-- ai-agent-manager:requirement-closeout -->
+      ## Status
+      - **Status:** done_with_escalation
+      - **Completed:** {ISO 8601 timestamp}
+      - **Brief:** {done/ brief path}
+      - **PR:** {PR URL}
+      - **Heal:** {needs_human|max_iterations_reached|self_heal_resume_thrash} — {heal_remaining_issues} remaining
+      ```
+      **Idempotent — replace, do not duplicate:** locate a prior close-out by the `<!-- ai-agent-manager:requirement-closeout -->` sentinel (NOT by a bare `## Status` heading — other tooling may legitimately use that heading for a different purpose, and these `.supervisor/requirements/*.md` files have no fixed heading schema). If the sentinel is present, **REPLACE the whole span** from the sentinel through the end of the `## Status` block it introduces — that is, up to the next `##` heading that appears **after** the `## Status` line, or end-of-file (do NOT stop at the `## Status` heading itself, which is the block's own start); if it is absent, **append** a fresh sentinel-led block. Keying the re-stamp to our own marker makes it collision-proof — an unrelated `## Status` section is never clobbered — and handles the multi-brief case where one requirement spawns several briefs (the latest close-out wins). On success record `record_decision(phase: SELF_HEAL, decision: "requirement_closeout: {done|done_with_escalation}", rationale: "stamped ## Status on {requirement path}")`.
+
 3. **Reset resume counter (unconditional — runs on every exit path: PASS, ESCALATED, or loop-skipped):** `Context-Keeper(operation: record_self_heal_resume, increment: false)`. The completion tail itself is unconditional; so is the reset.
 
 4. **Update state:** `Context-Keeper(operation: update_phase, new_phase: LOOP, completed_phases: [..., SELF_HEAL])` and `record_decision(phase: SELF_HEAL, decision: "{PASS|ESCALATED|loop_skipped}", rationale: "{final reason}")`. Status in state file matches the outcome (`completed` or `completed_with_escalation`).
