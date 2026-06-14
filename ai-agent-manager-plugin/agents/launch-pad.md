@@ -36,7 +36,8 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 
 ### Inputs
 
-- **Goal:** Raw user objective (`goal:`, `feature:`, or `problem:`)
+- **Goal:** Raw user objective (`goal:`, `feature:`, or `problem:`) — OR a path to a requirement file (see **Requirement-file input** below)
+- **Requirement file (optional):** When the `goal:`/`feature:`/`problem:` value is the path to an existing `.md` file (typically a Beads-absent Product Owner story under `.supervisor/requirements/`), Launch Pad reads that file and treats its contents as the requirement source instead of the literal string. Resolves the PO→Launch Pad handoff in Beads-optional mode.
 - **CLAUDE.md:** Project context and patterns
 - **Git state:** Current branch, working tree status
 - **Flags:** `--discovery`, `--skip-validation`, `--project`
@@ -133,11 +134,12 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 
 **Actions:**
 
-1. If goal is vague (no clear outcome or acceptance criteria):
+0. **Resolve requirement-file input (do FIRST):** If the `goal:`/`feature:`/`problem:` value looks like a path to an existing file — i.e. it ends in `.md` and `test -f "<value>"` succeeds (no spaces/prose; commonly `.supervisor/requirements/*.md` from a Beads-absent Product Owner handoff) — then `Read` that file and use its contents (title, As-a/I-want/so-that, acceptance criteria, priority, assumptions, dependencies, risks) as the requirement source. Carry forward any acceptance criteria the file already defines rather than re-deriving them. If the value is NOT an existing file path, treat it as a literal goal string exactly as before. Never invent a file — if a path-looking value does not resolve with `test -f`, fall back to literal-string handling and note it.
+1. If goal is vague (no clear outcome or acceptance criteria) — and no requirement file supplied them:
    - Apply product discovery framework (`skills/product-discovery/SKILL.md`)
    - Ask clarifying questions (max 2 rounds via `AskUserQuestion`)
-2. If goal is clear (specific outcome described):
-   - Extract acceptance criteria directly from goal
+2. If goal is clear (specific outcome described, or a requirement file was read):
+   - Extract acceptance criteria directly from goal / requirement file
 3. Write/refine criteria in Given/When/Then format (`skills/user-story-writing/SKILL.md`)
 4. Scope to MVP using `skills/mvp-scoping/SKILL.md`
 5. If `--discovery` flag is set: force full product discovery even if goal seems clear

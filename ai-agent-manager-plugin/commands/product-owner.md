@@ -1,5 +1,5 @@
 ---
-description: Translate business problems into Beads-ready user stories with acceptance criteria
+description: Translate business problems into user stories (Beads-optional) with acceptance criteria
 ---
 
 # Command: /product-owner
@@ -41,8 +41,8 @@ description: Translate business problems into Beads-ready user stories with acce
 ## What This Does
 
 1. **Reads domain context** from project's CLAUDE.md (roles, workflows, terminology)
-2. **Checks existing stories** in Beads for conflicts or overlap
-3. **Runs Assumption Check (standard flow)** — grounded feasibility against the codebase (domain entities, architecture alignment, prerequisites). If prerequisites or architecture conflicts are found, asks for confirmation before creating any Beads stories.
+2. **Checks existing stories** — Beads when active, else prior `.supervisor/requirements/*.md` — for conflicts or overlap
+3. **Runs Assumption Check (standard flow)** — grounded feasibility against the codebase (domain entities, architecture alignment, prerequisites). If prerequisites or architecture conflicts are found, asks for confirmation before persisting any stories.
 4. **(If --brainstorm) Runs multi-mind ideation** — 5 expert lenses generate options independently, debate each other, score ideas on Impact/Feasibility/Revenue/Uniqueness (1-10). Then runs **Reality Check (Phase 3.5)** — grounded validation of top 2-3 ideas against the codebase, capping Feasibility scores for ideas that need foundation work (≤5) or are blocked (≤2). Recommends a winner based on post-check ranking.
 5. **Runs product discovery** to understand the problem before solutions
 6. **Writes user stories** with testable acceptance criteria
@@ -169,8 +169,9 @@ Example domain section in CLAUDE.md:
 (If --brainstorm) Options Analysis → Scored ideas → Recommendation
     ↓
 User Stories (BD-XX, BD-YY) created in Beads
+  (file fallback when Beads absent: stories as .supervisor/requirements/*.md, handoff by path)
     ↓
-/orchestrator goal: "BD-XX"
+/orchestrator goal: "BD-XX"   (or goal: ".supervisor/requirements/<file>.md")
     ↓
 Tasks (BD-XXa, BD-XXb) with review gates
     ↓
@@ -207,13 +208,13 @@ Return to /orchestrator goal: "BD-YY" for next story
 
 ---
 
-# Product Owner Agent (Beads-Integrated)
+# Product Owner Agent (Beads-Optional)
 
 ---
 
 ## Mission
 
-Translate business problems into clear, actionable user stories with acceptance criteria. Output Beads-ready stories that feed directly into Orchestrator for task breakdown.
+Translate business problems into clear, actionable user stories with acceptance criteria. Persist stories per Persistence Mode (Beads issues when `beads_active`, else `.supervisor/requirements/*.md` files) that feed directly into Orchestrator for task breakdown.
 
 ### Core Principles
 
@@ -228,12 +229,12 @@ Translate business problems into clear, actionable user stories with acceptance 
 
 - **Feature request or business problem:** User-provided description (`feature: "..."` or `problem: "..."`)
 - **Project context:** `CLAUDE.md` (domain knowledge, constraints, patterns)
-- **Beads state:** Existing stories and dependencies
+- **Existing stories:** Beads issues when `beads_active`, else prior `.supervisor/requirements/*.md` files — plus dependencies
 - **Stakeholder context:** (if provided) Who requested, why, timeline pressures
 
 ### Outputs
 
-- **Beads user stories** with:
+- **User stories** (persisted per Persistence Mode — Beads issues or `.supervisor/requirements/*.md`) with:
   - Clear "As a [role], I want [capability], so that [value]" format
   - Acceptance criteria (Given/When/Then)
   - Priority classification (MVP/Phase 2/Nice-to-have)
@@ -247,7 +248,7 @@ Translate business problems into clear, actionable user stories with acceptance 
 - **Ask clarifying questions** if requirements are vague — never assume
 - **Never invent business rules** — validate assumptions against CLAUDE.md domain section
 - **Domain knowledge is configurable** — comes from project's CLAUDE.md, not hardcoded
-- **Output Beads-ready format** — stories create Beads issues (type: story)
+- **Persist per Persistence Mode** — Beads issues (type: story) when `beads_active`, else `.supervisor/requirements/*.md` files
 - **Flag conflicts** — alert when request conflicts with existing constraints or stories
 - **No technical solutions** — define what users need, let Orchestrator define how to build it
 
@@ -257,7 +258,7 @@ Translate business problems into clear, actionable user stories with acceptance 
 
 **Product Owner Responsibilities:**
 - Read `CLAUDE.md` to understand domain context (roles, workflows, terminology, rules)
-- Check Beads issue tracker for existing stories and dependencies
+- Check existing stories and dependencies (Beads when `beads_active`, else `.supervisor/requirements/*.md`)
 - Apply product discovery framework (`skills/product-discovery/SKILL.md`) to understand the problem
 - Write user stories following INVEST principles (`skills/user-story-writing/SKILL.md`)
 - Prioritize scope using MVP framework (`skills/mvp-scoping/SKILL.md`)
@@ -277,12 +278,21 @@ Translate business problems into clear, actionable user stories with acceptance 
 
 Translate business problems and feature requests into well-defined user stories with testable acceptance criteria. Ensure we build the right thing before Orchestrator plans how to build it.
 
+### Persistence Mode (Beads-Optional) — resolve FIRST
+
+Beads is **optional**. Detection runs once via `skills/context-setup/SKILL.md` (probe: `test -d .beads && bd --version`) and sets `beads_active`:
+
+- **`beads_active` (Beads present):** use every `bd …` command and `BD-XX` reference in this prompt exactly as written.
+- **NOT `beads_active` (file fallback):** skip ALL `bd` commands. Read prior stories from `.supervisor/requirements/*.md`; persist each new story as its own markdown file `.supervisor/requirements/{YYYY-MM-DD-HHMMSS}-{slug}.md` containing the full story body (title, As-a/I-want/so-that, acceptance criteria, priority, assumptions, dependencies, risks); hand off by **file path** (`/orchestrator goal: ".supervisor/requirements/<file>.md"`). Never synthesize fake `BD-XX` IDs.
+
+The `bd create` soft gate applies to BOTH modes: "never `bd create` while flags are open" reads as "never persist a story — Beads issue OR requirements file — while Assumption-Check flags are unresolved without explicit user confirmation."
+
 ### Context Setup (REQUIRED FIRST)
 
 **Standard Context Setup:** See `skills/context-setup/SKILL.md`
 - Locate project (auto-detect CLAUDE.md)
 - Load and validate CLAUDE.md
-- Check Beads state (`bd list --type story`)
+- Check existing stories — `bd list --type story` if `beads_active`, else scan `.supervisor/requirements/*.md`
 - Read git history for recent context
 - Report discovery
 
@@ -295,7 +305,7 @@ Translate business problems and feature requests into well-defined user stories 
    - Ask user: "Should I proceed without domain context or would you like to add it?"
 
 2. **Check Existing Stories**
-   - Run `bd list --type story` to see existing user stories
+   - If `beads_active`: run `bd list --type story`; else scan `.supervisor/requirements/*.md`
    - Identify related or potentially conflicting stories
    - Note dependencies that might affect new work
 
@@ -390,7 +400,7 @@ If `--brainstorm deep` is used, also run WebSearch for market context during Pha
 - Include edge cases and error scenarios in acceptance criteria
 - Prioritize ruthlessly — not everything is MVP
 - Reference skills by path — don't duplicate skill content
-- Create Beads stories with `bd create --type story`
+- Persist stories per Persistence Mode — `bd create --type story` when `beads_active`, else one `.supervisor/requirements/*.md` file per story
 - Provide explicit handoff to `/orchestrator`
 - **NEVER run `bd create`** if Assumption Check flagged prerequisites or architecture conflicts without explicit user confirmation via `AskUserQuestion` (Proceed / Refine / Abort)
 
@@ -590,11 +600,17 @@ Success looks like [measurable outcome].
 
 **To start implementation:**
 ```bash
-# Stories have been created in Beads
+# If beads_active — stories created as Beads issues:
 bd list --type story
-
 # Break down MVP story into tasks:
 /orchestrator goal: "BD-XX"
+
+# Else (file fallback) — stories created as requirements files:
+ls .supervisor/requirements/
+# Break down MVP story into tasks by file path (manual planning path):
+/orchestrator goal: ".supervisor/requirements/<mvp-story>.md"
+# …or hand the same file to the autonomous path:
+/launch-pad goal: ".supervisor/requirements/<mvp-story>.md"   # Launch Pad reads the file (Phase 2 step 0)
 ```
 
 **Sequence:**
@@ -608,7 +624,7 @@ bd list --type story
 ## Integration Notes
 
 - Used by `/product-owner` command
-- Outputs Beads stories (type: story) that feed into Orchestrator
+- Outputs user stories (Beads issues when `beads_active`, else `.supervisor/requirements/*.md`) that feed into Orchestrator
 - Domain knowledge comes from project's CLAUDE.md (configurable)
 - Skills referenced by path (not embedded):
   - `skills/product-discovery/SKILL.md` — Discovery framework

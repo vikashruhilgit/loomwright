@@ -18,6 +18,7 @@ The Launch Pad agent prepares raw goals for autonomous Supervisor execution. It 
 /launch-pad goal: "add user authentication with JWT"
 /launch-pad feature: "customers need order history"
 /launch-pad problem: "login is broken on mobile"
+/launch-pad goal: ".supervisor/requirements/2026-06-14-staff-shift.md"   # requirement file from Beads-absent Product Owner
 /launch-pad goal: "..." --discovery
 /launch-pad goal: "..." --skip-validation
 /launch-pad goal: "..." --project /path/to/project
@@ -27,8 +28,8 @@ The Launch Pad agent prepares raw goals for autonomous Supervisor execution. It 
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `goal:` | Yes (or `feature:`/`problem:`) | The raw objective to prepare for Supervisor |
-| `feature:` | Alternative to `goal:` | Customer-facing feature description |
+| `goal:` | Yes (or `feature:`/`problem:`) | The raw objective to prepare for Supervisor — OR a path to an existing requirement `.md` file (e.g. a Beads-absent Product Owner story under `.supervisor/requirements/`), which Launch Pad reads and uses as the requirement source |
+| `feature:` | Alternative to `goal:` | Customer-facing feature description (also accepts a requirement-file path) |
 | `problem:` | Alternative to `goal:` | Business problem to solve |
 | `--discovery` | No | Force full product discovery even if goal seems clear |
 | `--skip-validation` | No | Skip environment validation (Phase 1) for speed |
@@ -282,7 +283,8 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 
 ### Inputs
 
-- **Goal:** Raw user objective (`goal:`, `feature:`, or `problem:`)
+- **Goal:** Raw user objective (`goal:`, `feature:`, or `problem:`) — OR a path to a requirement file (see **Requirement-file input** below)
+- **Requirement file (optional):** When the `goal:`/`feature:`/`problem:` value is the path to an existing `.md` file (typically a Beads-absent Product Owner story under `.supervisor/requirements/`), Launch Pad reads that file and treats its contents as the requirement source instead of the literal string. Resolves the PO→Launch Pad handoff in Beads-optional mode.
 - **CLAUDE.md:** Project context and patterns
 - **Git state:** Current branch, working tree status
 - **Flags:** `--discovery`, `--skip-validation`, `--project`
@@ -337,8 +339,9 @@ Skip if `--skip-validation` flag is set.
 
 ### Phase 2: DISCOVER (Requirement Refinement)
 
-1. If goal is vague: apply `skills/product-discovery/SKILL.md`, ask clarifying questions (max 2 rounds)
-2. If goal is clear: extract acceptance criteria directly
+0. **Resolve requirement-file input (do FIRST):** if the `goal:`/`feature:`/`problem:` value ends in `.md` and `test -f "<value>"` succeeds (commonly `.supervisor/requirements/*.md` from a Beads-absent Product Owner handoff), `Read` it and use its contents as the requirement source, carrying forward any acceptance criteria it already defines. Otherwise treat the value as a literal goal string. Never invent a file — a path-looking value that fails `test -f` falls back to literal-string handling.
+1. If goal is vague (and no requirement file supplied criteria): apply `skills/product-discovery/SKILL.md`, ask clarifying questions (max 2 rounds)
+2. If goal is clear (or a requirement file was read): extract acceptance criteria directly
 3. Write criteria in Given/When/Then format (`skills/user-story-writing/SKILL.md`)
 4. Scope to MVP using `skills/mvp-scoping/SKILL.md`
 5. If `--discovery` flag: force full discovery even if goal seems clear
