@@ -781,6 +781,16 @@ manifest is unreadable. Purely additive — events without it remain valid, and 
 groups them under `"unknown"` in its per-version insights section. No `schema_version` change
 anywhere; never rename or restructure the existing flat fields above.
 
+> **Illustrative `plugin_version` values are version-agnostic — do NOT bump them per-release.**
+> The `"14.24.0"` shown in the `e.g.` above and in the sample `session_end` / `POSTMORTEM_RESULT`
+> JSONL blocks elsewhere in this file (and the mirror block in `agents/supervisor.md`) illustrate the
+> *format* only — the real value is read at runtime from `plugin.json` via jq, so these placeholders
+> have no currency requirement and `check-doc-currency.sh` deliberately does not scan them. Bumping
+> them every release is a drift-treadmill the gate cannot enforce (they just re-stale at the next
+> version). Leave them frozen. Only genuine current-claims — the manifest `version`/headline, the
+> `plugin.json (vX.Y.Z)` annotations, and the CLAUDE.md banner — track the live version. See CLAUDE.md
+> §"Doc currency is CI-enforced".
+
 > **ST4 aggregation status (M2b slice 1a):** `build-insights.sh` currently aggregates the
 > `contract_*` / `benchmark_*` flat fields. The `ground_truth_*` flat fields are **written now**
 > (forward-compatible) but their dashboard aggregation is a **deliberate follow-up** — slice 1a
