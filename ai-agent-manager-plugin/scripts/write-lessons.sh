@@ -64,9 +64,12 @@ SOURCE="$(printf '%s' "$SOURCE" | tr -d '"\\<>[:cntrl:]')"
 [ -n "$SOURCE" ] || SOURCE="unknown"
 
 # Sanitize --confidence the same way --source is sanitized (it lands in the markdown trailer and
-# is passed to awk via -v, so it must be a clean slug-like value with no quotes/backslashes/ctrl).
-# `<`/`>` are also dropped so a value like `high-->evil` can't inject comment delimiters into the
-# `<!-- ... -->` trailer (defense-in-depth for the trailer shape the reader anchors to).
+# is passed to awk via -v, so it must have no quotes/backslashes/ctrl). `<`/`>` are also dropped so
+# a value like `high-->evil` can't inject comment delimiters into the `<!-- ... -->` trailer
+# (defense-in-depth for the trailer shape the reader anchors to). NOTE: spaces are intentionally
+# NOT stripped (a value like `high verified` is kept verbatim) — confidence is store-only,
+# future-facing metadata; read-lessons.sh gates ONLY on last_verified and never parses confidence,
+# so a space cannot distort the trailer strip or any gate.
 CONFIDENCE="$(printf '%s' "$CONFIDENCE" | tr -d '"\\<>[:cntrl:]')"
 [ -n "$CONFIDENCE" ] || CONFIDENCE="medium"
 
@@ -132,7 +135,10 @@ fi
 # value feeds both content_hash and the awk-stored line below.
 lesson_oneline="$(printf '%s' "$LESSON" | tr '\n' ' ' | sed -E 's/[[:space:]]+$//')"
 # CRITICAL: content_hash is over category + lesson text ONLY — the freshness trailer never enters
-# it, so re-verification (new last_verified) can never change the hash or break the chain.
+# it. This is a FORWARD-LOOKING property: a future re-verification path (refreshing last_verified)
+# could update the trailer without changing the hash or breaking the chain. No such path exists
+# today — the dedup guard below short-circuits an identical lesson before any update, so a stored
+# last_verified is effectively write-once until the entry is evicted.
 content_hash="$(printf '%s' "$CATSLUG $lesson_oneline" | sha)"
 id="$(printf '%s' "$content_hash" | cut -c1-8)"
 
@@ -173,7 +179,7 @@ trap 'rm -f "$mem_tmp" "$prov_tmp" "$evict_file" 2>/dev/null' EXIT
 # escape sequences in the value (\n, \t, \\, ...), which would silently corrupt a lesson that
 # legitimately contains a backslash (e.g. a Windows path). ENVIRON values are taken literally.
 # `cat`/`id` (slug/hex), `lv` (an ISO-8601 stamp VALIDATED above to `[0-9T:Z-]` only), and `conf`
-# (a sanitized slug-like value, `<>`/quotes/backslashes/ctrl stripped) cannot contain backslashes,
+# (a sanitized value, `<>`/quotes/backslashes/ctrl stripped) cannot contain backslashes,
 # so they stay on `-v`.
 LESSON_ONELINE="$lesson_oneline" awk \
   -v cat="$CATSLUG" -v id="$id" -v maxc="$MAX_PER_CAT" \

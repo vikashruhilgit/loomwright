@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# test-read-lessons.sh — self-tests for the LESSONS read-side provenance + freshness gate (v14.5.0).
+# test-read-lessons.sh — self-tests for the LESSONS read-side provenance + freshness gate.
+# (New file — shipped on the v14.24.x line; parity with test-project-memory.sh, deferred at v14.5.0.)
 # Runs in isolated temp git repos (never touches the real .supervisor/memory). Mirrors the
 # test-project-memory.sh convention. Exit 0 = all pass, 1 = any failure.
 #
