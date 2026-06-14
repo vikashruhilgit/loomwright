@@ -22,8 +22,8 @@ description: Break a goal into minimal actionable tasks with clear acceptance cr
 ## What This Does
 
 1. **Auto-detects your project** by finding CLAUDE.md in current directory or parents
-2. **Reads project context** (CLAUDE.md, Beads issue tracker state)
-3. **Breaks goal into minimal Beads tasks** with clear acceptance criteria
+2. **Reads project context** (CLAUDE.md, Beads when active else `.supervisor/requirements/`)
+3. **Breaks goal into minimal tasks** (Beads or plan file per Persistence Mode) with clear acceptance criteria
 4. **Creates tasks with built-in review gates** (each task has a review subtask)
 5. **Identifies dependencies** and execution order
 6. **Provides structured plan** with skill references for implementation
@@ -87,7 +87,7 @@ cd /path/to/your/project
 ### Step 4: Repeat
 - After work is done, run `/code-reviewer` for review gate
 - Then use commit skill to create conventional commits
-- Then `/orchestrator` for next goal or claim next Beads task
+- Then `/orchestrator` for next goal or claim the next task (Beads when active, else the next unchecked plan-file item)
 
 ---
 
@@ -99,7 +99,7 @@ cd /path/to/your/project
 
 ---
 
-# Orchestrator Agent Prompt
+# Orchestrator Agent Prompt (Beads-Optional)
 
 
 ---
@@ -108,6 +108,25 @@ cd /path/to/your/project
 
 ### Objective
 Coordinate agents, understand the incoming goal, break it into minimal tasks with clear acceptance criteria, and assign work.
+
+### Persistence Mode (Beads-Optional) — resolve FIRST
+
+Beads is **optional**. Detection runs once via `skills/context-setup/SKILL.md` (probe: `test -d .beads && bd --version`); treat its result as `beads_active` in this prompt.
+
+**Resolve the `goal:` argument first — this is mode-independent (do it whether or not `beads_active`):** if it is a path **under `.supervisor/requirements/`** ending in `.md` that resolves with `test -f` (against the project root — the `--project` value when given, else the auto-detected root — not the current working directory), `Read` it and use its contents (story title, As-a/I-want/so-that, acceptance criteria, priority, dependencies) as the requirement source. Any other value — including a bare repo file such as `README.md` — is the literal objective string. Never invent a file: a `.supervisor/requirements/` path that fails `test -f` falls back to literal handling. If the file resolves but is empty or clearly not a story/requirement (e.g. a stray `*-plan.md` passed by mistake), **stop and ask** rather than planning from its contents.
+
+Then persist the task tree **per mode**:
+
+- **`beads_active` (Beads present):** create the EPIC → TASK → SUBTASK tree as Beads issues with `depends_on` wiring, exactly as written below; use real `bd` commands and `BD-XX` IDs.
+- **NOT `beads_active` (file fallback):** skip ALL `bd` commands and instead:
+  1. **Choose a stable slug** by kebab-casing the requirement title (or the goal string) — e.g. `jwt-guard`. Re-running for the same slug **overwrites** the prior `{slug}-plan.md` (intended — a re-plan replaces rather than duplicates).
+  2. **Write the task tree** as a markdown checklist to `.supervisor/requirements/{slug}-plan.md` (create `.supervisor/requirements/` first if absent, `mkdir -p .supervisor/requirements`), or append a `## Task Plan` section to the handed-off requirements file: same EPIC/TASK/SUBTASK structure, acceptance criteria, ordered dependencies (stated as "blocked by" in prose), and skill references. Use stable slug IDs (e.g. `jwt-guard`, `jwt-guard-review`) instead of `BD-XX`.
+
+**Review gates are mandatory in BOTH modes** — every implementation task still has a review subtask that must PASS before the next begins. In file-fallback mode this is tracked by checklist state in the plan file rather than enforced by Beads `blocked` status. Wherever this prompt says `bd …` / `BD-XX`, apply the resolved mode.
+
+> **Shared directory:** `.supervisor/requirements/` is written by Product Owner stories (`{YYYY-MM-DD-HHMMSS}-{slug}.md`), Orchestrator plans (`{slug}-plan.md`), and the autonomous-loop (`auto-*.md`). When scanning for prior context, PO stories and your own `*-plan.md` files are both legitimate; you may skip `auto-*.md` (autonomous-loop state) as noise.
+
+> **Collaboration note:** `.supervisor/` is **gitignored**, so file-fallback plans are **local-only** — a teammate cloning the repo won't see them (a shared Beads DB would be committed). Intended, matching the existing `.supervisor/` state model.
 
 ### Context Setup
 
@@ -121,7 +140,7 @@ Before proceeding, you must establish project context:
 
 2. **Load Context**
    - Read CLAUDE.md → understand codebase patterns, tech stack, conventions
-   - Run `bd list` → understand current open/in-progress Beads tasks
+   - If `beads_active`: run `bd list` → understand current open/in-progress Beads tasks; else scan `.supervisor/requirements/*.md` for prior stories/plans
    - Read recent git commits → understand recent work
 
 3. **Report Discovery**
@@ -133,12 +152,12 @@ Before proceeding, you must establish project context:
 
 1. **Validate and Understand**
    - Read CLAUDE.md: What is this codebase? What patterns exist?
-   - Run `bd list`: What Beads tasks are open/in-progress?
+   - If `beads_active`: run `bd list`: What Beads tasks are open/in-progress?; else scan `.supervisor/requirements/*.md` for prior stories/plans
    - Clarify the goal: What exactly needs to be done?
    - Ask clarifying questions if goal is ambiguous
 
-2. **Plan with Beads**
-   - Break the goal into minimal Beads tasks (3-7 tasks, 30-60 min each)
+2. **Break into Tasks** (Beads issues or plan-file entries per Persistence Mode)
+   - Break the goal into minimal tasks (3-7 tasks, 30-60 min each)
    - Each implementation task gets a review subtask (quality gate)
    - Reference relevant skill files for guidance
    - Define clear, testable acceptance criteria for each task
@@ -163,7 +182,7 @@ Before proceeding, you must establish project context:
 - Do not break tasks too small (each should be ~30-60 min work)
 - Do not make assumptions about acceptance criteria—make them explicit
 - Respect existing CLAUDE.md patterns
-- Use Beads issue tracker only (no TODO.md or memory files)
+- Single tracker: Beads when active, else the `.supervisor/requirements/*-plan.md` checklist (per Persistence Mode) — never scattered TODO.md/memory files
 - Review subtasks block next implementation tasks (quality gates)
 
 ### Quality Checklist
@@ -264,6 +283,8 @@ bd claim BD-21  # Start dark mode implementation
 5. If NEEDS_HUMAN: Fix issues, re-run review
 6. Continue through chain...
 
+> **File-fallback mode:** the same sequence applies with `bd` steps removed — track claim/PASS/close by checking items off in `.supervisor/requirements/*-plan.md`, and capture review findings as bullet entries under the relevant task instead of dependent Beads issues. The review-must-PASS-before-next gate is unchanged.
+
 ## RISKS & MITIGATIONS
 - Risk: Breaking existing theme system
   - Mitigation: Code Reviewer checks patterns first
@@ -276,7 +297,7 @@ bd claim BD-21  # Start dark mode implementation
 ## Integration Notes
 
 - This command finds project context automatically
-- Uses Beads issue tracker for task management (no TODO.md or memory files)
-- Output creates Beads tasks with built-in review gates
+- Tracks tasks in Beads when active, else `.supervisor/requirements/*-plan.md` (per Persistence Mode)
+- Outputs an EPIC → TASK → SUBTASK structure — Beads issues when `beads_active`, else a `.supervisor/requirements/*-plan.md` checklist — with built-in review gates
 - Review subtasks block next implementation tasks (quality gates)
 - Skills linked (not embedded) to keep context small
