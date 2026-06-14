@@ -124,7 +124,7 @@ Then persist the task tree **per mode**:
 
 **Review gates are mandatory in BOTH modes** — every implementation task still has a review subtask that must PASS before the next begins. In file-fallback mode this is tracked by checklist state in the plan file rather than enforced by Beads `blocked` status. Wherever this prompt says `bd …` / `BD-XX`, apply the resolved mode.
 
-> **Shared directory:** `.supervisor/requirements/` is written by Product Owner stories (`{ts}-{slug}.md`), Orchestrator plans (`*-plan.md`), and the autonomous-loop (`auto-*.md`). When scanning for prior stories/plans, exclude `*-plan.md` and `auto-*.md` so machine-managed files aren't ingested as stories.
+> **Shared directory:** `.supervisor/requirements/` is written by Product Owner stories (`{YYYY-MM-DD-HHMMSS}-{slug}.md`), Orchestrator plans (`{slug}-plan.md`), and the autonomous-loop (`auto-*.md`). When scanning for prior context, PO stories and your own `*-plan.md` files are both legitimate; you may skip `auto-*.md` (autonomous-loop state) as noise.
 
 > **Collaboration note:** `.supervisor/` is **gitignored**, so file-fallback plans are **local-only** — a teammate cloning the repo won't see them (a shared Beads DB would be committed). Intended, matching the existing `.supervisor/` state model.
 

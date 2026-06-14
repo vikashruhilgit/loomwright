@@ -66,7 +66,7 @@ Translate business problems into clear, actionable user stories with acceptance 
 - **Persist per Persistence Mode** — when `beads_active`, stories create Beads issues (type: story); otherwise write them as `.supervisor/requirements/*.md` files
 - **Flag conflicts** — alert when request conflicts with existing constraints or stories
 - **No technical solutions** — define what users need, let Orchestrator define how to build it
-- **NEVER run `bd create`** if Assumption Check flagged prerequisites or architecture conflicts without explicit user confirmation via `AskUserQuestion` (Proceed/Refine/Abort)
+- **NEVER run `bd create`** (or, in file-fallback mode, persist a requirements file) if Assumption Check flagged prerequisites or architecture conflicts without explicit user confirmation via `AskUserQuestion` (Proceed/Refine/Abort)
 
 ---
 
@@ -100,13 +100,13 @@ Beads is **optional**. Detection runs once via `skills/context-setup/SKILL.md` (
 
 - **`beads_active` (Beads present):** use every `bd …` command and `BD-XX` reference in this prompt exactly as written.
 - **NOT `beads_active` (file fallback):** skip ALL `bd` commands and instead:
-  1. **Read prior stories** by globbing `.supervisor/requirements/*.md` **excluding `*-plan.md`** (Orchestrator task-plan files) **and `auto-*.md`** (autonomous-loop requirement/iteration files) — i.e. only PO-authored stories.
+  1. **Read prior stories** by globbing `.supervisor/requirements/20[0-9][0-9]-*.md` — PO stories always carry the `YYYY-MM-DD-HHMMSS-` prefix, so an **inclusion** glob surfaces only PO-authored stories and is collision-proof. (Do NOT use a `*-plan.md` *exclusion*: a story whose kebab-cased title ends in `-plan`, e.g. "Migration Plan" → `…-migration-plan.md`, would be silently dropped.)
   2. **Persist** each new story as `.supervisor/requirements/{YYYY-MM-DD-HHMMSS}-{slug}.md`, where `{slug}` is the story title kebab-cased. Create `.supervisor/requirements/` first if absent (`mkdir -p .supervisor/requirements`); if that exact filename already exists, append a numeric suffix (`-2`, `-3`, …) so a same-second/same-slug story never silently overwrites an earlier one. The file holds the full story body (title, As-a/I-want/so-that, acceptance criteria, priority, assumptions, dependencies, risks).
   3. **Hand off by file path** (`/orchestrator goal: ".supervisor/requirements/<file>.md"`). Never synthesize fake `BD-XX` IDs — use the slug/path as the story handle.
 
 Wherever this prompt says `bd create` / `bd list` / `BD-XX`, apply the resolved mode. The `bd create` **soft gate below applies to BOTH modes**: "never `bd create` while flags are open" reads as "never persist a story — Beads issue OR requirements file — while Assumption-Check flags are unresolved without explicit user confirmation."
 
-> **Shared directory:** `.supervisor/requirements/` is written by Product Owner stories (`{ts}-{slug}.md`), Orchestrator plans (`*-plan.md`), and the autonomous-loop (`auto-*.md`). The prior-stories glob above excludes `*-plan.md` and `auto-*.md` so only PO-authored stories are surfaced.
+> **Shared directory:** `.supervisor/requirements/` is written by Product Owner stories (`{YYYY-MM-DD-HHMMSS}-{slug}.md`), Orchestrator plans (`{slug}-plan.md`), and the autonomous-loop (`auto-*.md`). The prior-stories glob above **includes** only the timestamp-prefixed PO files (`20[0-9][0-9]-*.md`) — collision-proof against title-derived slugs that happen to end in `-plan` or start with `auto`.
 
 > **Collaboration note:** `.supervisor/` is **gitignored**, so file-fallback stories are **local-only** — a teammate cloning the repo won't see them (a shared Beads DB would be committed). Intended, matching the existing `.supervisor/` state model.
 
@@ -170,7 +170,7 @@ Wherever this prompt says `bd create` / `bd list` / `BD-XX`, apply the resolved 
 
    **If no flags:** Proceed silently to story writing.
 
-   **Rule:** NEVER run `bd create` when flags exist without explicit user confirmation.
+   **Rule:** NEVER run `bd create` (or persist a requirements file in file-fallback mode) when flags exist without explicit user confirmation.
 
 ### Responsibilities
 
