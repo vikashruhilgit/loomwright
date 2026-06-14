@@ -121,7 +121,7 @@ If `--allow-multi-iteration` is the only mode-flag passed: log one-line warning 
 ### INIT step 1+ — requirement intake
 
 1. Read the requirement — slash command argument string OR `--requirement <path>`.
-2. If string-argument: write `.supervisor/requirements/{session_id}-{slug}.md` (the `session_id` already carries the date — `auto-{YYYY-MM-DD}-{HHMMSS}` — so the path is sortable without a redundant date prefix). The file contains the requirement text and an optional `## Outcomes Rubric` placeholder. If `--requirement <path>` is used and the file already has `## Outcomes Rubric`, leave it intact.
+2. If string-argument: write `.supervisor/requirements/{session_id}-{slug}.md` (the `session_id` already carries the date — `auto-{YYYY-MM-DD}-{HHMMSS}` — so the path is sortable without a redundant date prefix). The file contains the requirement text plus a **non-header** placeholder hint — e.g. the HTML comment `<!-- Outcomes Rubric: leave blank for multi-iteration auto-authoring, or add a "## Outcomes Rubric" section with diff-checkable bullets -->`. **The placeholder MUST NOT begin a line with `## Outcomes Rubric`:** the canonical rubric-presence test below (`has_rubric`, a line-anchored header **plus** ≥1 bullet) would otherwise treat an empty placeholder header as a real rubric and silently suppress auto-authoring on the common inline-string path. If `--requirement <path>` is used and the file already has a real `## Outcomes Rubric` section (header + bullets), leave it intact.
 3. Generate `session_id` of the form `auto-{YYYY-MM-DD}-{HHMMSS}` (or similar — must be unique enough that no two concurrent runs collide; per v1 single-session assumption, a timestamp suffices). **Collision risk in v1:** two sessions started in the same second would produce identical `session_id`s. Moot under the v1 single-session-only assumption (the loop also detects concurrent activity via the brief-save `ls`-diff and aborts with `status_reason: "concurrent_session_detected"`), but a v2 hardening can append a short random suffix (e.g., `auto-{YYYY-MM-DD}-{HHMMSS}-{4hex}`) once concurrent sessions become supported.
 4. Initialize `.supervisor/autonomous/{session_id}/state.json` with the schema below.
 5. Initialize `.supervisor/autonomous/{session_id}/summary.md` (running AUTONOMOUS_RUN summary; will be re-written as iterations complete).
@@ -153,12 +153,27 @@ Field types: `_v1_note: string` (advisory marker — see above); `mode: "single"
 
 ## PLAN (per iteration)
 
+**Rubric-presence test (canonical — used by PLAN step 2, step 6, and step 7).** Everywhere PLAN checks whether `<requirement_path>` or `current_brief_path` "has a rubric", it means a **real, non-empty** Outcomes Rubric: a line-anchored `^## Outcomes Rubric` header **AND** at least one `-`/`*` bullet inside that section. An empty placeholder header, a prose mention, or an HTML-commented header does NOT count (this is why INIT writes a *non-header* placeholder). Use `has_rubric` below for every such check — a `grep -qF` substring match is NOT sufficient (it fires on commented headers, inline mentions, and empty placeholder headers, which would silently suppress auto-authoring):
+
+```bash
+has_rubric() {   # exit 0 = real (non-empty) rubric present; exit 1 = absent/empty
+  # NOTE: set a flag and decide in END — a mid-rule `exit` still runs END,
+  # so an END that calls `exit` would override the rule's status.
+  awk '
+    /^## Outcomes Rubric/                {f=1; next}   # entered the rubric section
+    f && /^## /                          {f=0}        # next top-level section -> left it
+    f && /^[[:space:]]*[-*][[:space:]]/  {found=1}     # a bullet inside the section
+    END                                  {exit (found ? 0 : 1)}
+  ' "$1"
+}
+```
+
 1. Reference the loaded `commands/launch-pad.md` workflow. Invoke it inline on the main thread, passing the current requirement file path as input. On iteration 1 this is the INIT requirement file; on every later iteration it is the refined `{session_id}-iter{N+1}.md` file the prior EVALUATE wrote — **the loop sets `requirement_path` to that new file and persists it in state.json when it loops back**, so `<requirement_path>` always denotes the current iteration's requirement.
 2. **Inline-instruction to Launch Pad (no source change):** before invoking Launch Pad, the main thread includes this directive in its inlined Launch Pad context: *"If the requirement file at `<requirement_path>` has an `## Outcomes Rubric` section, copy it verbatim into the saved brief during Phase 5 (PACKAGE — Brief Assembly). Do not paraphrase, do not drop items, do not reformat."* Launch Pad will see this as part of the inlined workflow body.
 
-   **Conditional auto-authoring directive (multi-iteration only, no rubric at intake):** when the run is in **multi-iteration mode** (`mode == "multi"`, i.e. NOT `--single-iteration`) AND the requirement file at `<requirement_path>` has **no `## Outcomes Rubric`** section, the inlined directive ALSO instructs Launch Pad to **auto-author** a rubric via its guarded Phase 5 step: *"This requirement has no `## Outcomes Rubric` and the caller is running in multi-iteration mode. During Phase 5, auto-author a rubric — derive 3–7 diff-checkable bullets from the brief's Acceptance Criteria and the Phase 3 analysis, following `agents/launch-pad.md` Phase 5 step 7 and the authoring rules in `skills/supervisor-readiness/SKILL.md` §\"Auto-Authoring (multi-iteration)\". Do not restate those rules here — defer to them as the single source of truth."* (Those producers own the authoring contract; this directive only triggers it — see the `### Auto-Authoring (multi-iteration)` subsection in `skills/supervisor-readiness/SKILL.md`.)
+   **Conditional auto-authoring directive (multi-iteration only, no rubric at intake):** when the run is in **multi-iteration mode** (`mode == "multi"`, i.e. NOT `--single-iteration`) AND `! has_rubric "$requirement_path"` (no real rubric per the canonical test above — an empty/placeholder header counts as absent), the inlined directive ALSO instructs Launch Pad to **auto-author** a rubric via its guarded Phase 5 step: *"This requirement has no `## Outcomes Rubric` and the caller is running in multi-iteration mode. During Phase 5, auto-author a rubric — derive 3–7 diff-checkable bullets from the brief's Acceptance Criteria and the Phase 3 analysis, following `agents/launch-pad.md` Phase 5 step 7 and the authoring rules in `skills/supervisor-readiness/SKILL.md` §\"Auto-Authoring (multi-iteration)\". Do not restate those rules here — defer to them as the single source of truth."* (Those producers own the authoring contract; this directive only triggers it — see the `### Auto-Authoring (multi-iteration)` subsection in `skills/supervisor-readiness/SKILL.md`.)
 
-   **When the conditional directive does NOT apply:** in **single-iteration mode** (`mode == "single"`, `--single-iteration`) OR when the requirement file **already has an `## Outcomes Rubric`**, ONLY the preserve-verbatim directive above applies — no authoring is requested and behavior is unchanged from prior versions.
+   **When the conditional directive does NOT apply:** in **single-iteration mode** (`mode == "single"`, `--single-iteration`) OR when `has_rubric "$requirement_path"` (the requirement already has a real rubric), ONLY the preserve-verbatim directive above applies — no authoring is requested and behavior is unchanged from prior versions.
 
    **Degenerate-rubric fallback:** if Launch Pad cannot derive ≥3 diff-checkable bullets (the brief lacks enough concrete, diff-checkable acceptance signal), it emits NO `## Outcomes Rubric` section — and the loop proceeds under its existing no-rubric gate (Signal 1 stacked rubric gate is skipped; see EVALUATE's no-rubric handling). Auto-authoring is best-effort, never a hard precondition.
 3. Launch Pad runs Phases 1–6 inline including:
@@ -195,9 +210,9 @@ Field types: `_v1_note: string` (advisory marker — see above); `mode: "single"
 5. Handle Launch Pad's other abort paths:
    - User aborted at NO-GO → `status_reason: "user_aborted_at_no_go"`. Exit.
    - User aborted after Plan Review FAIL × 3 → `status_reason: "user_aborted_at_plan_review_fail"`. Exit.
-6. **Rubric preservation verification (when applicable):** if the requirement file contained `## Outcomes Rubric`:
+6. **Rubric preservation verification (when applicable):** if `has_rubric "$requirement_path"` (the requirement carried a real rubric at intake):
    ```bash
-   if ! grep -qF "## Outcomes Rubric" "$current_brief_path"; then
+   if ! has_rubric "$current_brief_path"; then
      # Inline-instruction was not honored. Abort cleanly — the loop chose
      # to stop because a precondition for multi-iteration was violated,
      # not because the system itself failed. Pairs with status: aborted
@@ -207,7 +222,7 @@ Field types: `_v1_note: string` (advisory marker — see above); `mode: "single"
    ```
    This protects multi-iteration mode from silently degrading to single-iteration when Launch Pad ignores the inline instruction.
 7. **Persist + freeze an authored rubric (multi-iteration only):** an AUTHORED rubric (from PLAN step 2's conditional auto-authoring directive) lives only in the saved brief at this point, but **every refined-requirement template** (the stacked-mode and merge-and-continue templates in the EVALUATE Signal-1 section, AND the Option-C inter-subtask-gap re-plan template) copies `<original requirement body, including ## Outcomes Rubric verbatim>` from `<requirement_path>` — NOT from the brief — into every iteration N+1. Because the freeze lands in the requirement body, all of these paths inherit the rubric automatically. So an authored rubric must be written back into the requirement body now, or iteration 2+ would score against an absent rubric. This step:
-   - **Fires ONLY when ALL of:** `mode == "multi"` AND the **current** requirement file at `<requirement_path>` does NOT yet contain `## Outcomes Rubric` (`! grep -qF "## Outcomes Rubric" "$requirement_path"`) AND the saved brief (`current_brief_path`) now contains an `## Outcomes Rubric` section (Launch Pad auto-authored one and the human approved it at Phase 6). **The grep-on-the-current-file guard is what makes this step idempotent:** on iteration 1 the rubric was just authored and the requirement lacks it → the step fires exactly once; on every later iteration the refined-requirement template (below) already copied the frozen rubric into `<requirement_path>`, so the grep matches and the step is a no-op — it never appends a second `## Outcomes Rubric`. **Do NOT gate on a run-global "had rubric at intake" flag** — such a value never changes across iterations, so it would re-fire the append on every iteration and accumulate duplicate rubric sections.
+   - **Fires ONLY when ALL of:** `mode == "multi"` AND the **current** requirement file at `<requirement_path>` has no real rubric yet (`! has_rubric "$requirement_path"`) AND the saved brief (`current_brief_path`) now has a real rubric (`has_rubric "$current_brief_path"` — Launch Pad auto-authored one and the human approved it at Phase 6). **The has_rubric-on-the-current-file guard is what makes this step idempotent:** on iteration 1 the rubric was just authored and the requirement lacks it → the step fires exactly once; on every later iteration the refined-requirement template (below) already copied the frozen rubric into `<requirement_path>`, so the grep matches and the step is a no-op — it never appends a second `## Outcomes Rubric`. **Do NOT gate on a run-global "had rubric at intake" flag** — such a value never changes across iterations, so it would re-fire the append on every iteration and accumulate duplicate rubric sections.
    - **Extract + append + verify (all inside one idempotency guard):** copy the `## Outcomes Rubric` section verbatim from `current_brief_path` (from the `## Outcomes Rubric` header through to the next top-level `## ` header or EOF), append it to `<requirement_path>`, and confirm it landed — **all within the same guard** so the verification (and its warning) runs ONLY when a freeze was actually attempted, never on the degenerate no-rubric path:
      ```bash
      # Idempotency guard: freeze only when the CURRENT requirement file does not
@@ -215,8 +230,8 @@ Field types: `_v1_note: string` (advisory marker — see above); `mode: "single"
      # a no-op on every later iteration (the refined-requirement template already
      # copied the frozen rubric into $requirement_path). Never gate on a run-global flag.
      if [ "$mode" = "multi" ] \
-        && ! grep -qF "## Outcomes Rubric" "$requirement_path" \
-        && grep -qF "## Outcomes Rubric" "$current_brief_path"; then
+        && ! has_rubric "$requirement_path" \
+        && has_rubric "$current_brief_path"; then
        # Extract the rubric section verbatim from the saved brief, then append.
        rubric_section="$(awk '/^## Outcomes Rubric/{f=1} f&&/^## /&&!/^## Outcomes Rubric/{exit} f' "$current_brief_path")"
        printf '\n\n%s\n' "$rubric_section" >> "$requirement_path"
@@ -224,7 +239,7 @@ Field types: `_v1_note: string` (advisory marker — see above); `mode: "single"
        # append. If the append somehow did NOT take, the verbatim refined-requirement
        # templates would copy a body with no rubric and iteration 2+ would score
        # against an absent rubric — surface a warning.
-       if ! grep -qF "## Outcomes Rubric" "$requirement_path"; then
+       if ! has_rubric "$requirement_path"; then
          echo "WARNING: rubric freeze failed — '## Outcomes Rubric' not found in $requirement_path after append. Later iterations will run under the no-rubric gate." >&2
        fi
      fi
@@ -740,7 +755,7 @@ Same fields as summary.md, structured as JSON. v1 writes it for two purposes: (a
 | Failure | Detection | Recovery |
 |---|---|---|
 | User discards at Phase 6 | `new_briefs` empty after Phase 6 | Clean exit, summary status=aborted |
-| Launch Pad ignores rubric-preservation inline instruction | `grep -qF "## Outcomes Rubric" "$current_brief_path"` fails | Loop aborts with `status: aborted, status_reason: "rubric_dropped_from_brief"` (no iteration reaches EXECUTE; `total_iterations: 0`, `iterations: []`). **Cleanup required before re-running:** the abort fires *after* Launch Pad's Phase 6 save, so the saved brief is still sitting in `.supervisor/jobs/pending/` (filename starts with this run's `session_id`). The user must move or delete the stale brief before re-running `/autonomous`, otherwise the next run's brief-save `ls`-diff will see it as a "new" file and either pick it up by accident or trip `concurrent_session_detected`. One-liner: `mv .supervisor/jobs/pending/<this-session-id>-*.md .supervisor/jobs/failed/`. **Recovery paths:** re-run without `--allow-multi-iteration` (single-iteration ignores the rubric-preservation gate entirely), or pre-author the brief by hand with the rubric included. |
+| Launch Pad ignores rubric-preservation inline instruction | `has_rubric "$current_brief_path"` returns absent (no real rubric in the saved brief) | Loop aborts with `status: aborted, status_reason: "rubric_dropped_from_brief"` (no iteration reaches EXECUTE; `total_iterations: 0`, `iterations: []`). **Cleanup required before re-running:** the abort fires *after* Launch Pad's Phase 6 save, so the saved brief is still sitting in `.supervisor/jobs/pending/` (filename starts with this run's `session_id`). The user must move or delete the stale brief before re-running `/autonomous`, otherwise the next run's brief-save `ls`-diff will see it as a "new" file and either pick it up by accident or trip `concurrent_session_detected`. One-liner: `mv .supervisor/jobs/pending/<this-session-id>-*.md .supervisor/jobs/failed/`. **Recovery paths:** re-run without `--allow-multi-iteration` (single-iteration ignores the rubric-preservation gate entirely), or pre-author the brief by hand with the rubric included. |
 | Concurrent autonomous run or manual launch-pad | `new_briefs` has >1 entry after Phase 6 | Abort with status_reason="concurrent_session_detected" |
 | Session terminated mid-loop | Process killed, terminal closed, machine restart | **v1: unsupported.** User must clean up `.supervisor/jobs/in-progress/`, close abandoned PRs, restart with `/autonomous`. Resume contract is its own plan (depends on Doc 4 state.json sidecar). |
 | `gh` unavailable for merge check | `gh pr view` returns non-zero | Fallback to `git merge-base --is-ancestor`; if neither confirms, re-prompt user |
