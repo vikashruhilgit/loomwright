@@ -37,7 +37,7 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 ### Inputs
 
 - **Goal:** Raw user objective (`goal:`, `feature:`, or `problem:`) — OR a path to a requirement file (see **Requirement-file input** below)
-- **Requirement file (optional):** When the `goal:`/`feature:`/`problem:` value is the path to an existing `.md` file (typically a Beads-absent Product Owner story under `.supervisor/requirements/`), Launch Pad reads that file and treats its contents as the requirement source instead of the literal string. Resolves the PO→Launch Pad handoff in Beads-optional mode.
+- **Requirement file (optional):** When the `goal:`/`feature:`/`problem:` value is the path to an existing `.md` file **under `.supervisor/requirements/`** (the Beads-absent Product Owner handoff target), Launch Pad reads that file and treats its contents as the requirement source instead of the literal string. Paths outside that directory (e.g. `README.md`) stay literal goals. Resolves the PO→Launch Pad handoff in Beads-optional mode.
 - **CLAUDE.md:** Project context and patterns
 - **Git state:** Current branch, working tree status
 - **Flags:** `--discovery`, `--skip-validation`, `--project`
@@ -134,7 +134,7 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 
 **Actions:**
 
-0. **Resolve requirement-file input (do FIRST):** If the `goal:`/`feature:`/`problem:` value looks like a path to an existing file — i.e. it ends in `.md` and `test -f "<value>"` succeeds (no spaces/prose; commonly `.supervisor/requirements/*.md` from a Beads-absent Product Owner handoff) — then `Read` that file and use its contents (title, As-a/I-want/so-that, acceptance criteria, priority, assumptions, dependencies, risks) as the requirement source. Carry forward any acceptance criteria the file already defines rather than re-deriving them. If the value is NOT an existing file path, treat it as a literal goal string exactly as before. Never invent a file — if a path-looking value does not resolve with `test -f`, fall back to literal-string handling and note it.
+0. **Resolve requirement-file input (do FIRST):** Auto-resolution is **scoped to the handoff directory** to avoid hijacking a goal that merely names a repo file. If the `goal:`/`feature:`/`problem:` value is a path **under `.supervisor/requirements/`** ending in `.md` that resolves with `test -f` (the Beads-absent Product Owner handoff target), then `Read` that file and use its contents (title, As-a/I-want/so-that, acceptance criteria, priority, assumptions, dependencies, risks) as the requirement source. Carry forward any acceptance criteria the file already defines rather than re-deriving them. Resolve the path relative to the **project root** (the `--project` value when given, else the auto-detected root), not the current working directory. **Any other value — including a bare path to an existing repo file such as `README.md` or `docs/spec.md` — is treated as a literal goal string** (so "improve `README.md`" is never silently reinterpreted as a spec to plan from). Never invent a file — a `.supervisor/requirements/` path that fails `test -f` falls back to literal-string handling and is noted.
 1. If goal is vague (no clear outcome or acceptance criteria) — and no requirement file supplied them:
    - Apply product discovery framework (`skills/product-discovery/SKILL.md`)
    - Ask clarifying questions (max 2 rounds via `AskUserQuestion`)
