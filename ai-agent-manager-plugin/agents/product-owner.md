@@ -96,10 +96,13 @@ Translate business problems and feature requests into well-defined user stories 
 
 ### Persistence Mode (Beads-Optional) — resolve FIRST
 
-Beads is **optional**. Detection runs once via `skills/context-setup/SKILL.md` (probe: `test -d .beads && bd --version`) and sets `beads_active`:
+Beads is **optional**. Detection runs once via `skills/context-setup/SKILL.md` (probe: `test -d .beads && bd --version`); treat its result as `beads_active` in this prompt:
 
 - **`beads_active` (Beads present):** use every `bd …` command and `BD-XX` reference in this prompt exactly as written.
-- **NOT `beads_active` (file fallback):** skip ALL `bd` commands. **Read prior stories** by globbing `.supervisor/requirements/*.md` **excluding `*-plan.md`** (those are Orchestrator task-plan files, not stories). **Persist** each new story as its own markdown file `.supervisor/requirements/{YYYY-MM-DD-HHMMSS}-{slug}.md` — create the `.supervisor/requirements/` directory first if absent (`mkdir -p .supervisor/requirements`), and if that exact filename already exists append a numeric suffix (`-2`, `-3`, …) so a same-second/same-slug story never silently overwrites an earlier one. The file contains the full story body (title, As-a/I-want/so-that, acceptance criteria, priority, assumptions, dependencies, risks); hand off by **file path** (`/orchestrator goal: ".supervisor/requirements/<file>.md"`). Never synthesize fake `BD-XX` IDs — use the slug/path as the story handle.
+- **NOT `beads_active` (file fallback):** skip ALL `bd` commands and instead:
+  1. **Read prior stories** by globbing `.supervisor/requirements/*.md` **excluding `*-plan.md`** (those are Orchestrator task-plan files, not stories).
+  2. **Persist** each new story as `.supervisor/requirements/{YYYY-MM-DD-HHMMSS}-{slug}.md`, where `{slug}` is the story title kebab-cased. Create `.supervisor/requirements/` first if absent (`mkdir -p .supervisor/requirements`); if that exact filename already exists, append a numeric suffix (`-2`, `-3`, …) so a same-second/same-slug story never silently overwrites an earlier one. The file holds the full story body (title, As-a/I-want/so-that, acceptance criteria, priority, assumptions, dependencies, risks).
+  3. **Hand off by file path** (`/orchestrator goal: ".supervisor/requirements/<file>.md"`). Never synthesize fake `BD-XX` IDs — use the slug/path as the story handle.
 
 Wherever this prompt says `bd create` / `bd list` / `BD-XX`, apply the resolved mode. The `bd create` **soft gate below applies to BOTH modes**: "never `bd create` while flags are open" reads as "never persist a story — Beads issue OR requirements file — while Assumption-Check flags are unresolved without explicit user confirmation."
 
