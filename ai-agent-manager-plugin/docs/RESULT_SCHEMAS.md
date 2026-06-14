@@ -983,6 +983,60 @@ See `docs/SPIKES/SYSTEM_TWIN_ROADMAP.md §7`.
 
 ---
 
+### `- **Source requirement:**` (brief `## Environment` field — provenance)
+
+The optional `- **Source requirement:** {repo-root-relative path}` field under a brief's `## Environment`
+section records the originating `.supervisor/requirements/*.md` file the brief was planned from. It is
+the producer half of the Beads-optional requirement→brief→done close-out loop.
+
+- **Who writes it:** Launch Pad (the producer) at Phase 5 step 3a (`agents/launch-pad.md`), but ONLY when
+  Phase 2 step 0 resolved the `goal:`/`feature:`/`problem:` input to a `.supervisor/requirements/*.md`
+  file (held in session memory as `source_requirement`). A literal-string goal, or a repo file outside
+  `.supervisor/requirements/`, leaves it unset.
+- **Optional / backward-compatible:** when no requirement file was resolved, the line is **omitted
+  entirely** — never an empty or `"none"` placeholder. Pre-feature briefs and direct `/supervisor task:`
+  runs that never stamped a pointer are unaffected; the consumer treats an absent line as a no-op.
+- **Format / safety:** the value is a repo-root-relative path under `.supervisor/requirements/`
+  (e.g. `.supervisor/requirements/{slug}.md`). Mirrors the brief template in
+  `skills/supervisor-readiness/SKILL.md` §`## Environment`.
+
+**No schema_version bump** — this is a brief file-convention addition, not a result-block schema change.
+
+### `## Status` (requirement-file close-out convention — advisory, Beads-absent only)
+
+The optional `## Status` block stamped onto a `.supervisor/requirements/*.md` file is the consumer half
+of the close-out loop. It **mirrors the brief `## Outcome` pattern** — where `## Outcome` records the
+result on the *brief*, this block records the result on the *originating requirement file*:
+
+```markdown
+## Status
+- **Status:** done
+- **Completed:** {ISO 8601 timestamp}
+- **Brief:** {done/ brief path}
+- **PR:** {PR URL}
+```
+
+- **Who writes it:** Supervisor Phase 4.5 SELF_HEAL completion-tail step 2.5 (`agents/supervisor.md`),
+  reading the brief's `- **Source requirement:**` pointer.
+- **Advisory / Beads-absent only:** stamped ONLY when Beads is inactive (`test -d .beads && bd --version`).
+  When Beads is active this step is **skipped entirely** — `bd close BD-XX` is the sole source of truth
+  for requirement state.
+- **Success-only:** stamped only on the successful outcomes that move the brief to `done/` —
+  **PASS / loop-skipped / ESCALATED**. A `failed` / aborted / checkpoint run **NEVER** marks a
+  requirement done.
+- **Fail-safe:** the whole step is a runtime side-effect emitter — any error (unreadable brief, missing
+  file, write failure, malformed pointer, path outside `.supervisor/requirements/`) is a **logged no-op**
+  that never propagates to `SUPERVISOR_RESULT.status` and never fails the run (per the CLAUDE.md
+  bimodal-failure invariant).
+- **Idempotent:** if a `## Status` block already exists, it is **replaced in place** (not duplicated) —
+  the latest close-out wins in the multi-brief case. The requirement file is stamped **in place**; only
+  the brief moves to `done/`.
+
+**No schema_version bump** — this is a requirement-file convention addition, not a result-block schema
+change.
+
+---
+
 ## POSTMORTEM_RESULT (PR review-churn analyzer)
 
 Appended by the `/pr-postmortem` command (governed by `skills/pr-postmortem/SKILL.md`) — the read-only
