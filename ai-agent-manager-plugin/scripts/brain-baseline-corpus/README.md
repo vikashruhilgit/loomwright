@@ -49,17 +49,17 @@ via environment variables, keyed by the **sanitized** item id (every non-alphanu
 
 | Field | Env var | Default | Values |
 |---|---|---|---|
-| `correct` | `BRAIN_BASELINE_CORRECT_q1_what_calls` | `false` | `1`/`true`/`yes` ⇒ true |
-| `tool_calls` | `BRAIN_BASELINE_TOOLCALLS_q1_what_calls` | `0` | integer |
-| `missed_context` | `BRAIN_BASELINE_MISSED_q1_what_calls` | `false` | `1`/`true`/`yes` ⇒ true |
-| `note` | `BRAIN_BASELINE_NOTE_q1_what_calls` | `""` | free-text one-liner |
+| `correct` | `BRAIN_BASELINE_CORRECT_q1_what_calls_reservationCreate` | `false` | `1`/`true`/`yes` ⇒ true |
+| `tool_calls` | `BRAIN_BASELINE_TOOLCALLS_q1_what_calls_reservationCreate` | `0` | integer |
+| `missed_context` | `BRAIN_BASELINE_MISSED_q1_what_calls_reservationCreate` | `false` | `1`/`true`/`yes` ⇒ true |
+| `note` | `BRAIN_BASELINE_NOTE_q1_what_calls_reservationCreate` | `""` | free-text one-liner |
 
 Example:
 
 ```sh
 BRAIN_BASELINE_MODE=baseline \
-BRAIN_BASELINE_CORRECT_q1_what_calls=true \
-BRAIN_BASELINE_TOOLCALLS_q1_what_calls=7 \
+BRAIN_BASELINE_CORRECT_q1_what_calls_reservationCreate=true \
+BRAIN_BASELINE_TOOLCALLS_q1_what_calls_reservationCreate=7 \
 ai-agent-manager-plugin/scripts/brain-baseline-eval.sh
 ```
 
@@ -76,5 +76,5 @@ The harness always exits 0; un-scored items still produce well-formed records (n
 One JSON object per corpus item, appended to `.supervisor/eval/brain-baseline.jsonl`:
 
 ```json
-{"id":"q1-what-calls","mode":"baseline","correct":false,"tool_calls":0,"missed_context":false,"note":"","recorded_at":"2026-06-16T00:00:00Z"}
+{"id":"q1-what-calls-reservationCreate","mode":"baseline","correct":false,"tool_calls":0,"missed_context":false,"note":"","recorded_at":"2026-06-16T00:00:00Z"}
 ```
