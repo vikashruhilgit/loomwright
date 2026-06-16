@@ -9,8 +9,9 @@
 #
 # DISTINCT from run-eval.sh: that script is the output-quality fitness function over eval-corpus/ and
 # writes .supervisor/eval/results.jsonl, which /insights' "Eval fitness function" section consumes.
-# THIS script is the brain BASELINE instrument: it reads a SEPARATE corpus dir
-# (.supervisor/eval/brain-baseline-corpus/) and writes a SEPARATE history file
+# THIS script is the brain BASELINE instrument: it reads a SEPARATE, version-controlled corpus dir
+# (scripts/brain-baseline-corpus/, a sibling of eval-corpus/ — checked in so runs are reproducible and
+# the corpus is reviewable) and writes a SEPARATE history file
 # (.supervisor/eval/brain-baseline.jsonl). It MUST NOT touch results.jsonl, and per the design doc's
 # v1 rule /insights deliberately IGNORES the baseline file (so the brain baseline never pollutes the
 # existing fitness-function trend). Keeping the files separate is the whole point.
@@ -35,8 +36,8 @@
 # the exit code or stdout.
 #
 # Usage:  brain-baseline-eval.sh [--no-record]
-# Env:    BRAIN_BASELINE_CORPUS_DIR  — override corpus dir (default: $SCRIPT_DIR/../.. resolved to
-#                                      <gitroot>/.supervisor/eval/brain-baseline-corpus)
+# Env:    BRAIN_BASELINE_CORPUS_DIR  — override corpus dir
+#                                      (default: $SCRIPT_DIR/brain-baseline-corpus)
 #         BRAIN_BASELINE_RESULTS_FILE — override history file
 #                                      (default: <gitroot>/.supervisor/eval/brain-baseline.jsonl)
 #         BRAIN_BASELINE_MODE         — "baseline" (default) | "graph-first"
@@ -46,17 +47,14 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Resolve git root once (used for the default corpus + results paths). Empty => fall back to relative.
+# Resolve git root once (used for the default results-history path). Empty => recording skipped.
 GIT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo '')"
 
 # ---- corpus dir -----------------------------------------------------------
-if [ -n "${BRAIN_BASELINE_CORPUS_DIR:-}" ]; then
-  CORPUS="$BRAIN_BASELINE_CORPUS_DIR"
-elif [ -n "$GIT_ROOT" ]; then
-  CORPUS="$GIT_ROOT/.supervisor/eval/brain-baseline-corpus"
-else
-  CORPUS=".supervisor/eval/brain-baseline-corpus"
-fi
+# Version-controlled fixtures live alongside this script (sibling of eval-corpus/), NOT under
+# .supervisor/ — which is gitignored, so a corpus there would be neither checked in nor reviewable.
+# Mirrors run-eval.sh's $SCRIPT_DIR/eval-corpus resolution. Override with BRAIN_BASELINE_CORPUS_DIR.
+CORPUS="${BRAIN_BASELINE_CORPUS_DIR:-$SCRIPT_DIR/brain-baseline-corpus}"
 
 # ---- mode -----------------------------------------------------------------
 MODE="${BRAIN_BASELINE_MODE:-baseline}"
@@ -139,29 +137,29 @@ sanitize_id() { printf '%s' "$1" | tr -c '[:alnum:]' '_'; }
 
 lookup_correct() {        # default false
   local key="BRAIN_BASELINE_CORRECT_$(sanitize_id "$1")"
-  case "$(eval "printf '%s' \"\${$key:-}\"")" in
+  case "${!key:-}" in     # ${!key} indirect expansion — no eval; bash does not re-expand the result
     1|true|TRUE|yes|YES) echo true ;;
     *) echo false ;;
   esac
 }
 lookup_tool_calls() {     # default 0
   local key="BRAIN_BASELINE_TOOLCALLS_$(sanitize_id "$1")"
-  local v; v="$(eval "printf '%s' \"\${$key:-}\"")"
+  local v; v="${!key:-}"
   case "$v" in
     ''|*[!0-9]*) echo 0 ;;
-    *) echo "$v" ;;
+    *) echo "$((10#$v))" ;;   # force base-10 so a leading-zero value (e.g. 08/09) never breaks jq --argjson
   esac
 }
 lookup_missed() {         # default false
   local key="BRAIN_BASELINE_MISSED_$(sanitize_id "$1")"
-  case "$(eval "printf '%s' \"\${$key:-}\"")" in
+  case "${!key:-}" in     # ${!key} indirect expansion — no eval
     1|true|TRUE|yes|YES) echo true ;;
     *) echo false ;;
   esac
 }
 lookup_note() {           # default ""
   local key="BRAIN_BASELINE_NOTE_$(sanitize_id "$1")"
-  eval "printf '%s' \"\${$key:-}\""
+  printf '%s' "${!key:-}"
 }
 
 # ---- discover corpus items (deterministic, sorted) ------------------------
