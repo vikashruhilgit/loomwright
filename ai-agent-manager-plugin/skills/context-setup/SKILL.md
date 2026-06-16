@@ -89,7 +89,7 @@ test -e graphify-out/graph.json && echo "GRAPH_PRESENT"
 [ -n "$AI_AGENT_MANAGER_BRAIN_ROOT" ] && test -d "$AI_AGENT_MANAGER_BRAIN_ROOT/wiki" && echo "BRAIN_ROOT_PRESENT"
 ```
 
-If a brain is detected, agents **MAY** read `skills/brain-context/SKILL.md` on-demand to enrich
+If a brain is detected, agents **MAY** read `${CLAUDE_PLUGIN_ROOT}/skills/brain-context/SKILL.md` on-demand to enrich
 codebase/blast-radius understanding from the Graphify graph + brain wiki. This is **advisory and
 fails SAFE** — it never blocks, gates, or changes a decision, and (per that skill's staleness rule)
 the graph is authoritative only for committed code, never for files this session will edit. Absent a

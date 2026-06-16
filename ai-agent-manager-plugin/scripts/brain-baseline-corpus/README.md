@@ -65,10 +65,16 @@ ai-agent-manager-plugin/scripts/brain-baseline-eval.sh
 
 The harness always exits 0; un-scored items still produce well-formed records (neutral placeholders).
 
+> **Status — seeded, NOT yet decision-grade (v1).** This corpus currently ships **2 of the planned 10
+> items** (target: 5 structural + 3 implementation + 2 review/QA; see `docs/SPIKES/BRAIN_INTEGRATION_EVOLUTION.md`
+> §"Phase 0"). The harness is complete, but the §Phase 0 "graph-first beats baseline" exit criterion
+> cannot be evaluated until the corpus is populated — treat the current numbers as a smoke test of the
+> instrument, not a baseline measurement. Populating the remaining 8 items is a tracked follow-up.
+
 ## Output record schema
 
 One JSON object per corpus item, appended to `.supervisor/eval/brain-baseline.jsonl`:
 
 ```json
-{"id":"q1-what-calls","mode":"baseline","correct":false,"tool_calls":0,"missed_context":false,"note":"","recorded_at":"2026-06-17T00:00:00Z"}
+{"id":"q1-what-calls","mode":"baseline","correct":false,"tool_calls":0,"missed_context":false,"note":"","recorded_at":"2026-06-16T00:00:00Z"}
 ```

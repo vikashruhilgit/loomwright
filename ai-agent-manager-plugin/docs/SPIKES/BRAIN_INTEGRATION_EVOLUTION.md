@@ -308,7 +308,13 @@ Each phase is independently shippable and independently revertible (all advisory
 3. ~~Draft schema.~~ **Resolved** (verified against `wiki-ingest/SKILL.md`): brain drafts use
    `wiki/_drafts/` + `confidence: low` + `draft: true`; the plugin writer matches exactly, no
    brain-side change needed.
-4. **Who owns the eval corpus** — does it live in the plugin repo (`.supervisor/eval/`) or the brain?
+4. ~~**Who owns the eval corpus** — does it live in the plugin repo (`.supervisor/eval/`) or the brain?~~
+   **Resolved (Phase 0 landing):** corpus *input fixtures* are version-controlled in the plugin repo at
+   `ai-agent-manager-plugin/scripts/brain-baseline-corpus/` (a sibling of `eval-corpus/`); only the
+   harness's *output history* `.supervisor/eval/brain-baseline.jsonl` stays gitignored. **Status:** the
+   harness is landed, but the corpus is **seeded with 2 of the planned 10 items** (5 structural + 3
+   implementation + 2 review/QA) — so the §Phase 0 "graph-first beats baseline" exit criterion is NOT
+   yet evaluable; the baseline numbers are not decision-grade until the corpus is populated (follow-up).
 
 ---
 
