@@ -100,10 +100,16 @@ verbatim (intent from `docs/SPIKES/BRAIN_INTEGRATION_EVOLUTION.md` §3):
   - the query returns **no nodes**;
   - the traversal is **too broad** (a generic term like `match`/`court`/`score` that collides
     across repos — scope by `--graph <repo>` first, per the brain's `hot.md` warning);
-  - the matched nodes carry **no cited `source_location` / `source_file`** (Graphify nodes
-    include these; their absence means the answer isn't anchored to real code);
-  - the node `confidence` / `confidence_score` is weak (Graphify stamps `confidence: EXTRACTED`
-    plus a numeric `confidence_score`). The brief pins the exact numeric threshold against
+  - the matched **nodes** carry **no cited `source_location` / `source_file`** — node hits are
+    anchored to real code by these fields (Graphify stamps `source_*` on nodes); their absence
+    means the answer isn't anchored;
+  - the governing **`confidence` / `confidence_score`** is weak (Graphify stamps `confidence:
+    EXTRACTED` plus a numeric score). **Read confidence from whichever graph element the answer
+    rests on, per the graph's actual schema** — for a relationship/path answer ("what calls Z",
+    blast-radius traversals) it typically lives on the **relationship/path edges**, not on the
+    nodes; node hits are judged by their `source_*` anchoring above. Do **not** assume a single
+    fixed location — inspect `graph.json` to confirm where `confidence` / `confidence_score`
+    actually sit before trusting a numeric threshold. The brief pins the exact threshold against
     real query output.
 - **Staleness signal — use the graph's own metadata, NOT `git log` on the file.** The graph
   file is gitignored + symlinked in a configured-brain layout, so `git log

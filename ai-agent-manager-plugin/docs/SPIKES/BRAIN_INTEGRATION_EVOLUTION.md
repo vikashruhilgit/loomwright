@@ -106,10 +106,13 @@ encoded verbatim in the `brain-context` skill:
   answer as low-confidence — and fall back to raw read — when ANY of: the query returns **no nodes**;
   the traversal is **too broad** (a generic term like `match`/`court`/`score` that collides across
   repos — scope by `--graph <repo>` first, per the brain's `hot.md` warning); the matched nodes carry
-  **no cited `source_location`/`source_file`** (Graphify nodes include these — their absence means the
-  answer isn't anchored to real code); or the node `confidence`/`confidence_score` is weak
-  (Graphify stamps `confidence: EXTRACTED` + a numeric `confidence_score` — verified present in
-  `graph.json`). The brief pins the exact numeric threshold against real query output.
+  **no cited `source_location`/`source_file`** (Graphify stamps `source_*` on nodes — their absence
+  means a node hit isn't anchored to real code); or the governing `confidence`/`confidence_score` is
+  weak (Graphify stamps `confidence: EXTRACTED` + a numeric `confidence_score`). **Read confidence from
+  whichever element the answer rests on, per the graph's actual schema** — for relationship/path
+  answers it typically sits on the **relationship/path edges** rather than the nodes (node hits are
+  judged by their `source_*` anchoring). Inspect `graph.json` to confirm where `confidence` lives
+  before trusting a numeric threshold; the brief pins the exact threshold against real query output.
 - **Staleness signal (use the graph's own metadata, NOT `git log` on the file).** The graph file is
   gitignored + symlinked in a configured-brain layout, so `git log graphify-out/graph.json` tracks
   nothing in the app repo. Instead read the graph's embedded `built_at_commit` field (verified
@@ -145,9 +148,12 @@ Build the eval corpus and capture current (grep-first) numbers against the sport
   brain-lift panel.
 
 **Corpus location & scoring (the brief must pin these down):**
-- **Corpus specs** live in-repo as version-controlled fixtures: `.supervisor/eval/brain-corpus/*.md`
-  (one file per item — the question/task, the expected answer or rubric, and the target repo/graph).
-  Checked in so runs are reproducible and the corpus is reviewable.
+- **Corpus specs** live in-repo as version-controlled fixtures:
+  `ai-agent-manager-plugin/scripts/brain-baseline-corpus/*.md` (a sibling of `eval-corpus/`; one file
+  per item — the question/task, the expected answer or rubric, and the target repo/graph). Checked in
+  so runs are reproducible and the corpus is reviewable. (Deliberately **not** under `.supervisor/`,
+  which is gitignored. The harness's *output* history — `.supervisor/eval/brain-baseline.jsonl` — is a
+  runtime artifact and correctly stays gitignored; only the input fixtures are tracked.)
 - **Manual correctness** is recorded per-item by the human running the spike: a `correct` boolean +
   a one-line `note` written into the `brain-baseline.jsonl` record alongside the auto-captured
   `tool_calls`/`missed_context`. (No auto-grader in v1 — the corpus is small by design; a grader is a
