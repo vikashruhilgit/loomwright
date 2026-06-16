@@ -240,6 +240,7 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
    - Grep for keywords, component names, module names
    - Glob for file patterns matching the goal domain
    - Read key files to understand current architecture
+   - **Brain consult (optional, on-demand):** if a brain is detected (`graphify-out/graph.json` present OR `AI_AGENT_MANAGER_BRAIN_ROOT` set — see `skills/context-setup/SKILL.md` step 4.5), you MAY read `${CLAUDE_PLUGIN_ROOT}/skills/brain-context/SKILL.md` to enrich this codebase/blast-radius understanding with graph-backed structural context. Advisory and fail-safe — it never blocks the brief and honors the staleness rule (graph is for committed code only, never for files this work will edit). Absent a brain, skip silently.
 3. Estimate files to **modify** (existing) and **create** (new)
 4. Group files by module/domain — these become subtask boundaries
 5. Detect file overlap between groups (overlap = must serialize)

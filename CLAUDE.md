@@ -12,11 +12,11 @@ Guidance for Claude Code when working in this repository.
 
 **AI Agent Manager** is a Claude Code plugin with 14 agent roles (9 user-facing + 5 internal) for plan-first readiness, parallel execution, requirements, planning, code review, commits, adversarial audits, standalone PR review-and-heal, and dual-agent QA. Supervisor and Launch Pad use `.supervisor/` exclusively for state; Orchestrator and Product Owner can optionally use Beads.
 
+**v14.27.0 — Brain-context read-path skill + baseline eval harness (Phase 0+1):** Lands Phase 0+1 of the brain-integration design doc (`docs/SPIKES/BRAIN_INTEGRATION_EVOLUTION.md`) as an **advisory, read-only, fail-safe** capability. A new `brain-context` skill gives Launch Pad, Code Reviewer, and Supervisor an **on-demand in-repo read path** into accumulated project knowledge (consulted via a deliberate Read at decision points — **NOT preloaded**, so it adds zero spawn-time tokens to those agents), paired with a **baseline eval harness** for measuring read-path usefulness. The read path is strictly advisory: it never gates a PR, never changes a `heal_decision`, and any read miss/parse failure degrades to a logged no-op (per the CLAUDE.md "side-effect emitters fail SAFE" invariant). **One new skill (`brain-context/`); no new agent / command / hook; no schema_version bumps. Counts are now 14 agents / 18 commands / 55 skills / 19 hooks.** Additive on top of v14.26.0.
+
 **v14.26.0 — Requirement→brief→done close-out loop (Beads-optional):** Closes the Beads-absent requirement lifecycle so a `.supervisor/requirements/*.md` story is marked done when its work lands. Launch Pad (the producer) records `source_requirement` provenance at Phase 2 step 0 and stamps a `- **Source requirement:** {path}` line under the brief's `## Environment` (Phase 5 step 3a) — emitted only for `.supervisor/requirements/*.md` inputs, omitted otherwise. Supervisor's Phase 4.5 SELF_HEAL completion tail (the consumer) reads that pointer and stamps an idempotent, sentinel-keyed `## Status` block (`**Status:** done` — or `done_with_escalation` plus a `Heal` line on the ESCALATED path — with `Completed`, `Brief`, `PR`) on the originating requirement file: **Beads-absent only** (`bd close` owns state when Beads is active), **success-only** (PASS / loop-skipped / ESCALATED — never on a failed run), path-guarded (under `.supervisor/requirements/` + `test -f`), **fail-safe** (any error is a logged no-op, never fails the run), and **idempotent** (replace-not-duplicate). Documented in `docs/RESULT_SCHEMAS.md` as two additive brief/requirement file conventions mirroring the brief `## Outcome` pattern. Prompt/doc-only: `agents/launch-pad.md`, `agents/supervisor.md`, `skills/supervisor-readiness/SKILL.md`, `docs/RESULT_SCHEMAS.md`. **No new agent/command/skill/hook; counts unchanged at 14 agents / 18 commands / 54 skills / 19 hooks; no schema_version bumps.** Additive on top of v14.25.1.
 
-**v14.25.1 — Codify illustrative example values as version-agnostic (patch):** Stale-looking `plugin_version` values in *illustrative* example blocks (sample `session_end` / `POSTMORTEM_RESULT` JSONL records + `e.g. "X.Y.Z"` prose placeholders in `docs/RESULT_SCHEMAS.md` and `agents/supervisor.md`) read as drift in review, but they have no currency requirement — the real value is read at runtime from `plugin.json` via jq, and `check-doc-currency.sh` deliberately does not scan them; bumping them per-release is a drift-treadmill the gate cannot enforce. Rather than chase them, this patch **codifies the convention** that illustrative example values are version-agnostic and frozen (documented in §"Doc currency is CI-enforced" and beside the `plugin_version` field spec in `docs/RESULT_SCHEMAS.md`) so future reviews don't re-flag them; genuine current-claims still track the live version and advance to 14.25.1. **No example values bumped. Documentation-only; no schema_version bumps; counts unchanged at 14 agents / 18 commands / 54 skills / 19 hooks.** Additive patch on top of v14.25.0.
-
-> 📜 **Full release history** (v14.25.0 → v14.0.0 and earlier) lives in [`CHANGELOG.md`](CHANGELOG.md). CLAUDE.md keeps only the two most recent release notes.
+> 📜 **Full release history** (v14.25.1 → v14.0.0 and earlier) lives in [`CHANGELOG.md`](CHANGELOG.md). CLAUDE.md keeps only the two most recent release notes.
 
 ---
 
@@ -25,10 +25,10 @@ Guidance for Claude Code when working in this repository.
 The repo is a **marketplace wrapper** containing one nested plugin:
 
 - Marketplace manifest: `.claude-plugin/marketplace.json` (root)
-- Plugin manifest: `ai-agent-manager-plugin/.claude-plugin/plugin.json` (v14.26.0)
+- Plugin manifest: `ai-agent-manager-plugin/.claude-plugin/plugin.json` (v14.27.0)
 - Agents: `ai-agent-manager-plugin/agents/` (14 markdown prompts)
 - Commands: `ai-agent-manager-plugin/commands/` (18 entry points)
-- Skills: `ai-agent-manager-plugin/skills/` (54 skills, see `SKILLS_INDEX.md`)
+- Skills: `ai-agent-manager-plugin/skills/` (55 skills, see `SKILLS_INDEX.md`)
 - Hooks: `ai-agent-manager-plugin/hooks/hooks.json`
 - Docs: `ai-agent-manager-plugin/docs/`
 - Bundled MCP: read-only MySQL server (`vikashruhil-mysql-mcp`)
@@ -48,7 +48,7 @@ ai-agent-manager/                              # marketplace wrapper
 │   ├── agents/                                # 14 markdown prompts
 │   ├── commands/                              # 18 slash commands
 │   ├── hooks/hooks.json                       # cross-cutting hooks
-│   ├── skills/                                # 54 skills + SKILLS_INDEX.md
+│   ├── skills/                                # 55 skills + SKILLS_INDEX.md
 │   ├── scripts/                               # runtime helpers: telemetry, webhook, notify, resume, memory, lessons, insights, otel stack assets (+ self-tests, fixtures)
 │   └── docs/                                  # RESULT_SCHEMAS, FAILURE_ESCALATION, ARCHITECTURE_CONTRACTS, ARCHITECTURE, QA_SYSTEM_BLUEPRINT, TELEMETRY, OBSERVABILITY
 │       └── SPIKES/                            # Capability spike investigations + deferral records

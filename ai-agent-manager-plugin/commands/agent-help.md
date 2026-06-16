@@ -1013,7 +1013,7 @@ bd close BD-XX
 
 ai-agent-manager-plugin/              # Nested plugin root
 ├── .claude-plugin/
-│   └── plugin.json                   # Plugin metadata (v14.26.0)
+│   └── plugin.json                   # Plugin metadata (v14.27.0)
 ├── .mcp.json                         # Bundled MCP servers
 ├── commands/                         # Slash commands (18)
 │   ├── launch-pad.md                 # Supervisor readiness
@@ -1058,7 +1058,7 @@ ai-agent-manager-plugin/              # Nested plugin root
 │   ├── ARCHITECTURE.md
 │   ├── QA_SYSTEM_BLUEPRINT.md
 │   └── SPIKES/                       # Capability spike investigations + deferral records
-└── skills/                           # Skill files (54 skills)
+└── skills/                           # Skill files (55 skills)
     ├── SKILLS_INDEX.md               # Skill catalog with agent mapping
     ├── supervisor-readiness/         # Pre-flight checklist & brief template
     ├── agent-teams/                  # Agent Teams patterns (experimental)

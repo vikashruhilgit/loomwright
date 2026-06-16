@@ -244,6 +244,32 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
   fi
   echo
 
+  # --- Brain Context Baseline (DORMANT in v1 — DO NOT wire into the fitness trend) ---
+  # Phase 0 of the brain-integration arc emits a SEPARATE history file,
+  # .supervisor/eval/brain-baseline.jsonl (written by scripts/brain-baseline-eval.sh), measuring
+  # grep-first vs graph-first behavior. Per docs/SPIKES/BRAIN_INTEGRATION_EVOLUTION.md §"Phase 0 —
+  # Baseline eval harness", /insights INTENTIONALLY IGNORES this file in v1 so the brain baseline
+  # never pollutes the existing eval fitness-function trend above (which reads results.jsonl).
+  #
+  # This block is FULLY DORMANT in v1: both the heading AND any data render are gated behind the
+  # permanently-false guard below, so /insights shows NO empty "Brain Context Baseline" section on
+  # the common no-brain repo, and the existing results.jsonl section's behavior is unchanged. To
+  # activate later, flip the guard — it then renders the heading + a trend from $brain_baseline —
+  # but only once we've decided to surface a brain-lift panel.
+  # shellcheck disable=SC2050  # v1: baseline intentionally dormant; guard is permanently false.
+  if false; then
+    # DEAD in v1 — nothing here runs. Left as the wiring point for a future brain-lift panel;
+    # flipping `if false` to a real check is a deliberate, reviewed change, not an accident.
+    echo "## Brain Context Baseline"
+    echo "_Reserved for the brain-integration baseline (Phase 0). Sourced from a **separate** file"
+    echo "(\`.supervisor/eval/brain-baseline.jsonl\`, written by \`scripts/brain-baseline-eval.sh\`)._"
+    echo "_**v1: intentionally NOT wired into the eval fitness-function trend** — see"
+    echo "\`docs/SPIKES/BRAIN_INTEGRATION_EVOLUTION.md\` §\"Phase 0 — Baseline eval harness\"._"
+    brain_baseline=".supervisor/eval/brain-baseline.jsonl"
+    : "$brain_baseline"  # placeholder reference only — not read into any trend in v1.
+    echo
+  fi
+
   # --- System Twin growth (ALWAYS rendered; "no data yet" when absent) ---
   # contract count = number of .supervisor/twin/contracts/*.md files.
   # growth = cumulative count of .action=="add" provenance entries, grouped by written_at date,
