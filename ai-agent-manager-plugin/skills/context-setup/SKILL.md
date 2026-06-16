@@ -79,6 +79,23 @@ Understand:
 - Skip this step entirely. Do NOT synthesize a fake Beads section.
 - Task source is the invocation argument, Supervisor-Ready Brief, or equivalent.
 
+### 4.5. Detect Brain (optional, on-demand)
+
+Detect whether a knowledge brain is reachable for graph-backed structural context:
+
+```bash
+# Either signal counts; neither present is the common case.
+test -e graphify-out/graph.json && echo "GRAPH_PRESENT"
+[ -n "$AI_AGENT_MANAGER_BRAIN_ROOT" ] && test -d "$AI_AGENT_MANAGER_BRAIN_ROOT/wiki" && echo "BRAIN_ROOT_PRESENT"
+```
+
+If a brain is detected, agents **MAY** read `skills/brain-context/SKILL.md` on-demand to enrich
+codebase/blast-radius understanding from the Graphify graph + brain wiki. This is **advisory and
+fails SAFE** — it never blocks, gates, or changes a decision, and (per that skill's staleness rule)
+the graph is authoritative only for committed code, never for files this session will edit. Absent a
+brain (neither signal present — the default), **skip this step silently**; behave exactly as today.
+The skill is deliberately **not** preloaded into any agent's `skills:` list (mirrors `self-heal-advisory`).
+
 ### 5. Read Recent Git History
 
 ```bash
@@ -154,6 +171,7 @@ Before proceeding with agent work:
 
 ## See Also
 
+- `skills/brain-context/SKILL.md` - Read-on-demand brain-aware context enrichment (consulted when a brain is detected)
 - `skills/claude-md-validation/SKILL.md` - Validate CLAUDE.md freshness
 - `skills/beads-workflow/SKILL.md` - Beads CLI commands
 - `skills/agent-output/SKILL.md` - Standard output format

@@ -260,6 +260,7 @@ Review implementation code against quality standards and provide a clear decisio
 - If `beads_active`: check Beads state (`bd list`)
 - Read git history
 - Report discovery
+- **Brain consult (optional, on-demand):** if a brain is detected (`graphify-out/graph.json` present OR `AI_AGENT_MANAGER_BRAIN_ROOT` set — see `skills/context-setup/SKILL.md` step 4.5), you MAY read `skills/brain-context/SKILL.md` for graph-backed blast-radius / consistency-audit context. Advisory and fail-safe — it never changes a review verdict. **Honor the staleness rule: NEVER trust the graph for any file in the current diff** — those are read raw, every time; the graph is authoritative only for committed code outside the diff. Absent a brain, skip silently.
 
 **Code Reviewer-Specific Additions:**
 

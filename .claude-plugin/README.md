@@ -1,6 +1,6 @@
 # AI Agent Manager Plugin for Claude Code
 
-A Claude Code plugin with 14 agent roles (9 user-facing + 5 internal), 54 focused skills, and optional Beads issue tracker integration. Automates plan-first readiness, parallel workflow execution, requirements definition, code review, adversarial audits, standalone PR review-and-heal (`/review-pr`), and dual-agent QA testing. v14 adds continuous autonomous mode: `/autonomous` chains Launch Pad → Supervisor in a default multi-iteration loop with stacked PRs.
+A Claude Code plugin with 14 agent roles (9 user-facing + 5 internal), 55 focused skills, and optional Beads issue tracker integration. Automates plan-first readiness, parallel workflow execution, requirements definition, code review, adversarial audits, standalone PR review-and-heal (`/review-pr`), and dual-agent QA testing. v14 adds continuous autonomous mode: `/autonomous` chains Launch Pad → Supervisor in a default multi-iteration loop with stacked PRs.
 
 ## Overview
 
@@ -381,7 +381,7 @@ ai-agent-manager/                            # Marketplace wrapper repo
 │   └── README.md                            # This file
 └── ai-agent-manager-plugin/                 # The nested plugin
     ├── .claude-plugin/
-    │   └── plugin.json                      # Plugin manifest (v14.26.0)
+    │   └── plugin.json                      # Plugin manifest (v14.27.0)
     ├── .mcp.json                            # Bundled MCP servers
     ├── agents/                              # Agent prompts (14 roles)
     │   ├── launch-pad.md, supervisor.md, execute-manager.md, context-keeper.md
@@ -394,7 +394,7 @@ ai-agent-manager/                            # Marketplace wrapper repo
     │   └── setup.md, agent-help.md
     ├── hooks/
     │   └── hooks.json                       # 19 quality gate hooks (centralized)
-    ├── skills/                              # 54 focused skill modules
+    ├── skills/                              # 55 focused skill modules
     │   ├── SKILLS_INDEX.md                  # Skill catalog with agent mapping
     │   └── [skill-name]/SKILL.md            # Individual skills
     └── docs/
