@@ -1,0 +1,334 @@
+# Learning Loop Roadmap — Apply Before More Memory
+
+> **Status:** planning spike / Launch Pad input (authored 2026-06-17).
+> This doc sequences the missing pieces around Agent Manager's memory, review quality,
+> churn learning, and brain integration. It complements:
+>
+> - `ENHANCEMENT_PLAN_v15_DRAFT.md` — original OBSERVE -> DISTILL -> PROMOTE -> APPLY -> MEASURE thesis.
+> - `SYSTEM_TWIN_ROADMAP.md` — execution/proof axis: contracts, conformance, benchmark, ground truth.
+> - `BRAIN_INTEGRATION_EVOLUTION.md` — optional external brain integration: Graphify + wiki read/write path.
+
+---
+
+## 0. Thesis
+
+Agent Manager already writes many useful artifacts:
+
+- `.claude/agent-memory/` per-agent memory
+- `.supervisor/memory/PROJECT_MEMORY.md`
+- `.supervisor/memory/LESSONS.md`
+- `.supervisor/logs/*.jsonl`
+- `.supervisor/worker-summaries/*.md`
+- `.supervisor/twin/` System Twin contracts
+- `.supervisor/postmortem/results.jsonl`
+- `.supervisor/eval/*.jsonl`
+- optional Graphify / brain context
+
+The current gap is **not lack of memory**. The gap is inconsistent **APPLY** and
+**MEASURE**: some artifacts are written and reported, but not consistently routed back
+to the next planning/review decision.
+
+The next product move is:
+
+```text
+Stop adding storage surfaces.
+Make existing knowledge actionable.
+Measure whether it helps.
+Then promote durable knowledge to the brain.
+```
+
+---
+
+## 1. Non-Negotiable Requirements
+
+1. **Agent Manager remains standalone.** `personal-brain` is optional, advisory, and fail-safe.
+2. **`CLAUDE.md` remains the human authority.** Memory, lessons, Twin contracts, and brain notes are subordinate.
+3. **No self-trusting memory.** Anything machine-written must be provenance-gated, human-promoted, or advisory-only.
+4. **No new memory surface without a named consumer.** Every stored artifact needs a read path and a measurement path.
+5. **Workers stay focused.** Memory/postmortem context flows through Launch Pad, Supervisor, and reviewers; workers execute richer briefs.
+6. **Advisory first.** Do not change `heal_decision`, review verdicts, or gating behavior until a signal proves itself.
+7. **Use structured facts, not blanket context.** Read scoped memory/lessons/postmortems only when relevant.
+
+---
+
+## 2. Knowledge Layers
+
+| Layer | Store | Current status | Needed next |
+|---|---|---|---|
+| Per-agent memory | `.claude/agent-memory/<agent>/` | Read explicitly in `/dreaming`; normal forward-read is inconsistent | Add scoped read to Code Reviewer and other memory-bearing agents where valuable |
+| Project memory | `.supervisor/memory/PROJECT_MEMORY.md` | Read by Launch Pad and Supervisor through `read-project-memory.sh` | Keep; record when used |
+| Lessons | `.supervisor/memory/LESSONS.md` | Written by `/dreaming`; reader exists; forward APPLY deferred | Wire `read-lessons.sh` into planning |
+| System Twin | `.supervisor/twin/` | Used by Launch Pad and Supervisor Phase 4.5; reported by `/insights` | Continue advisory; measure usefulness |
+| Postmortem corpus | `.supervisor/postmortem/results.jsonl` | Manual / trend seed; not read back | Upgrade into churn ledger and feed planning/self-heal |
+| Brain | Graphify + `personal-brain/wiki/` | Optional read path exists in `brain-context`; write-back deferred | Keep optional; productize after local loop works |
+| Langfuse | OTel traces | Observability only | Use for measurement later, not memory |
+
+---
+
+## 3. Phase Sequence
+
+### Phase 0 — Finish Brain Read-Path Cleanup
+
+Scope: complete the already-started Phase 0/1 brain-context slice so it does not leave a broken eval baseline.
+
+Requirements:
+
+- Keep `brain-context` optional and fail-safe.
+- Keep baseline outputs under `.supervisor/eval/`.
+- Keep baseline corpus fixtures in a tracked path, e.g. `ai-agent-manager-plugin/scripts/brain-baseline-corpus/`.
+- Reconcile naming (`brain-corpus` vs `brain-baseline-corpus`) across docs and scripts.
+- Correct Graphify confidence wording: nodes provide `source_file` / `source_location`; relation confidence lives on links.
+- Normalize manual `tool_calls` input before passing to `jq --argjson`.
+
+Acceptance criteria:
+
+- `brain-baseline-eval.sh` exits 0 for missing corpus / missing jq / malformed env inputs.
+- Tracked corpus fixtures are present in git.
+- `check-doc-currency.sh` and `validate-version.sh` pass.
+
+---
+
+### Phase 1 — Internal Memory APPLY Path
+
+Scope: make existing Agent Manager memory influence planning and review before adding more storage.
+
+Requirements:
+
+- Add explicit Code Reviewer memory consult:
+  - read its own `.claude/agent-memory/...` directory in read-only mode;
+  - read shared project memory via `read-project-memory.sh`;
+  - treat all memory as advisory and subordinate to `CLAUDE.md`;
+  - ignore stale or unrelated entries.
+- Add scoped LESSONS apply path:
+  - Launch Pad reads verified/fresh lessons through `read-lessons.sh`;
+  - Supervisor reads verified/fresh lessons at task acquisition/planning;
+  - include only relevant categories;
+  - skip stale/unverified lessons;
+  - fail safe when reader is absent or emits nothing.
+- Document memory hierarchy:
+  - `CLAUDE.md`
+  - `PROJECT_MEMORY`
+  - `LESSONS`
+  - per-agent memory
+  - brain/wiki hints
+
+Acceptance criteria:
+
+- Launch Pad and Supervisor can cite which verified lessons were considered.
+- Code Reviewer has an explicit, bounded memory read step.
+- No memory read can block a run or change a verdict by itself.
+
+---
+
+### Phase 2 — Knowledge Usage Telemetry
+
+Scope: measure whether applied knowledge is actually used.
+
+Requirements:
+
+- Add an additive usage marker to session/result output:
+
+```json
+"knowledge_sources_used": [
+  "project_memory",
+  "lessons:testing",
+  "agent_memory:code-reviewer",
+  "twin:scripts/build-insights.sh",
+  "brain_context"
+]
+```
+
+- Keep the field optional and additive.
+- Do not gate on it.
+- Let `/insights` surface it later as a trend; no need to block Phase 2 on dashboard work.
+
+Acceptance criteria:
+
+- Runs can distinguish "memory existed" from "memory was actually used."
+- Missing field remains valid for old logs.
+
+---
+
+### Phase 3 — Review Quality: Different Lens + Class-Based Fixer
+
+Scope: reduce real defects earlier. This is separate from brain-context; the brain gives context, not better verdicts.
+
+Requirements:
+
+- Make Phase 4.5 self-heal use a genuinely different second lens where practical:
+  - different reviewer prompt/lens;
+  - optional red-team/adversarial review for high-risk integrated diffs;
+  - avoid "same reviewer twice" as the only strategy.
+- Change fixer behavior from instance-only to class-based:
+  - when one miss-class is flagged, sweep the whole diff for that class;
+  - prioritize behavioral defects first, drift second.
+- Explicit miss-classes:
+  - validation parity
+  - numeric falsy coercion
+  - positional args vs options object misuse
+  - missing branch coverage
+  - count/version/restated-list drift
+  - cross-reference precision drift
+- Keep CI review independent, but enrich its prompt with the same defect classes.
+
+Acceptance criteria:
+
+- Self-heal instructions require a class sweep, not just the flagged instance.
+- CI and local review remain independent; convergence is not the goal.
+- Review quality improves because code is better, not because bots are quieter.
+
+---
+
+### Phase 4 — Churn Loop: Postmortem as Ledger
+
+Scope: close the PR-churn learning loop.
+
+Requirements:
+
+- Treat `/pr-postmortem` output as the PR churn ledger.
+- Enrich `POSTMORTEM_RESULT` with provenance:
+  - `pr_url` / number
+  - `brief_path`
+  - `job_path`
+  - `branch`
+  - `changed_paths`
+  - `review_rounds`
+  - root-cause classes
+  - flow stage
+- Run postmortem on every PR where practical:
+  - clean PRs are useful positive examples;
+  - churned PRs carry lessons.
+- Feed patterns back into:
+  - Launch Pad risks / acceptance criteria;
+  - Supervisor Phase 4.5 review/fix prompt.
+- Do not feed postmortem corpus directly to workers.
+
+Acceptance criteria:
+
+- Future planning can answer: "Have similar PRs churned before, and why?"
+- Launch Pad can surface prior churn risk for touched areas.
+- Self-heal can apply known miss-classes from prior churn.
+
+---
+
+### Phase 5 — Brain Read-Path Consolidation
+
+Scope: keep the brain read path focused on its actual strength.
+
+Requirements:
+
+- Keep `brain-context` optional.
+- Use Graphify/wiki for:
+  - `missing_context`
+  - architecture lookup
+  - blast radius
+  - rationale / decisions / gotchas
+- Do not expect brain-context to solve:
+  - review quality
+  - behavioral bugs
+  - churn loop
+  - two-reviewer divergence
+- Add `/setup brain` only after internal APPLY/MEASURE is working.
+- `/setup brain` remains direct-only unless the dashboard UX is redesigned.
+
+Acceptance criteria:
+
+- Agent Manager behaves unchanged when no brain is configured.
+- Brain reads are advisory and fail safe.
+- Setup productizes a proven integration rather than creating a new dependency.
+
+---
+
+### Phase 6 — Brain Write-Back
+
+Scope: promote only durable, reusable knowledge to `personal-brain`.
+
+Requirements:
+
+- Add `/dreaming --target brain` or equivalent.
+- Write only draft notes to `<BRAIN_ROOT>/wiki/_drafts/`.
+- Use the brain draft schema:
+
+```yaml
+---
+id: <kebab-slug>
+tags: [<reuse-existing-vocabulary>]
+source: <PR URL, commit sha, or run artifact>
+owner: <git user>
+last_verified: <YYYY-MM-DD>
+confidence: low
+draft: true
+---
+```
+
+- Never auto-promote trusted wiki notes.
+- Apply a promotion filter:
+  - durable beyond one run;
+  - reusable;
+  - rationale/gotcha/decision-shaped;
+  - has source provenance;
+  - not already captured in `CLAUDE.md`, `PROJECT_MEMORY`, `LESSONS`, or the brain wiki.
+- Keep local lessons local unless they deserve brain promotion.
+- Optionally add `personal-brain/bin/harvest-plugin-runs.mjs` later.
+
+Acceptance criteria:
+
+- Plugin writes only to `wiki/_drafts/`.
+- Drafts are not added to the trusted index.
+- Brain review remains the promotion gate.
+
+---
+
+## 4. Recommended First Launch Pad Brief
+
+Start with Phase 1 + Phase 2 only.
+
+```text
+Goal: Make existing Agent Manager memory actionable before adding more storage.
+
+Implement a scoped memory APPLY path and usage telemetry:
+- Code Reviewer explicitly consults its per-agent memory and project memory before review.
+- Launch Pad and Supervisor consult verified/fresh LESSONS through read-lessons.sh.
+- All memory is advisory and subordinate to CLAUDE.md.
+- Add additive knowledge_sources_used markers so future insights can measure whether memory was applied.
+- Do not add new storage surfaces.
+- Do not change review verdicts, heal_decision, or gating behavior.
+```
+
+Why first:
+
+- It closes the most obvious local gap.
+- It does not depend on `personal-brain`.
+- It turns existing stored knowledge into decision-time context.
+- It creates the measurement hook needed before expanding the brain loop.
+
+---
+
+## 5. Explicit Non-Goals For The First Slice
+
+- No `/setup brain`.
+- No brain write-back.
+- No trusted wiki writes.
+- No worker memory reads.
+- No gating changes.
+- No new memory directories.
+- No vector/RAG store.
+- No CI reviewer convergence project.
+
+---
+
+## 6. Success Signal
+
+The roadmap is working when future runs can answer all three:
+
+1. **What did we know before planning?**
+   - project memory, lessons, Twin contracts, brain context, postmortem patterns
+2. **Which of those did we actually use?**
+   - `knowledge_sources_used`
+3. **Did using it improve outcomes?**
+   - fewer repeated review classes
+   - fewer self-heal iterations
+   - fewer Plan Review retries
+   - fewer post-PR churn rounds
+
+Until then, more memory is only more files.
