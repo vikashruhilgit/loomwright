@@ -68,6 +68,16 @@ else
   no "leading-zero collapsed the marker to invalid JSON"
 fi
 
+# ---- 3b. hand-typed truthy variants (Y / True) score correct/missed ------
+out="$(BRAIN_BASELINE_CORPUS_DIR="$CORPUS" \
+      BRAIN_BASELINE_RESULTS_FILE="$SANDBOX/r3b.jsonl" \
+      BRAIN_BASELINE_CORRECT_item_a=Y BRAIN_BASELINE_MISSED_item_a=True \
+      bash "$RUN" 2>/dev/null)"
+m="$(marker "$out")"
+ca="$(printf '%s' "$m" | jq -r '.records[] | select(.id=="item-a") | .correct')"
+ma="$(printf '%s' "$m" | jq -r '.records[] | select(.id=="item-a") | .missed_context')"
+{ [ "$ca" = "true" ] && [ "$ma" = "true" ]; } && ok "hand-typed Y/True score as true" || no "Y/True scored correct=$ca missed=$ma (want true/true)"
+
 # ---- 4. records land in the baseline file; results.jsonl never touched ----
 R4="$SANDBOX/r4.jsonl"
 BRAIN_BASELINE_CORPUS_DIR="$CORPUS" BRAIN_BASELINE_RESULTS_FILE="$R4" bash "$RUN" >/dev/null 2>&1

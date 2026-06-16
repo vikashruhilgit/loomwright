@@ -138,7 +138,7 @@ sanitize_id() { printf '%s' "$1" | tr -c '[:alnum:]' '_'; }
 lookup_correct() {        # default false
   local key="BRAIN_BASELINE_CORRECT_$(sanitize_id "$1")"
   case "${!key:-}" in     # ${!key} indirect expansion — no eval; bash does not re-expand the result
-    1|true|TRUE|yes|YES) echo true ;;
+    1|true|TRUE|True|yes|YES|Yes|y|Y) echo true ;;   # human-scored: accept common truthy hand-typed forms
     *) echo false ;;
   esac
 }
@@ -153,7 +153,7 @@ lookup_tool_calls() {     # default 0
 lookup_missed() {         # default false
   local key="BRAIN_BASELINE_MISSED_$(sanitize_id "$1")"
   case "${!key:-}" in     # ${!key} indirect expansion — no eval
-    1|true|TRUE|yes|YES) echo true ;;
+    1|true|TRUE|True|yes|YES|Yes|y|Y) echo true ;;   # human-scored: accept common truthy hand-typed forms
     *) echo false ;;
   esac
 }

@@ -56,6 +56,14 @@ Detection failure of any kind (path missing, env unset, `test` non-zero) is **ne
 error** — it just narrows or disables the brain steps. The "neither" row is the default for
 the vast majority of repos and must be a silent no-op.
 
+> **Scope note — root-level agents only.** Signal 1 (`test -e graphify-out/graph.json`) is
+> **cwd-relative**, so this skill is intended for agents that run at the repo root (Launch Pad
+> Phase 2, Code Reviewer, Supervisor Phase 1.5/2/4.5). Workers operate inside isolated git
+> worktrees where a `graphify-out/` symlink generally will not resolve — detection there simply
+> returns "no brain" and the worker proceeds on grep/read (which is correct: a worker is editing
+> uncommitted code the graph can't describe anyway). The `AI_AGENT_MANAGER_BRAIN_ROOT` signal is
+> absolute and works from any cwd.
+
 ---
 
 ## Query order (graph → wiki → raw)
@@ -66,7 +74,8 @@ result says so:
 
 1. **Graph (`graphify-out/graph.json`)** — for *committed* structure only: "what connects to
    what", "where does concept X live", "blast radius of changing Y", "what calls Z". Scope a
-   broad/generic term with `--graph <repo>` first to avoid cross-repo collisions. If the
+   broad/generic term with the **graphify CLI's** `--graph <repo>` flag first to avoid
+   cross-repo collisions. If the
    query returns empty or low-confidence (see definition below), **fall through to step 3**.
 2. **Wiki (`$AI_AGENT_MANAGER_BRAIN_ROOT/wiki/`)** — for *rationale*: why a decision was made,
    what a community/concept means. See "Wiki access" below. A stale or unanchored note is a

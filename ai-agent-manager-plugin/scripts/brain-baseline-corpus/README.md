@@ -49,9 +49,9 @@ via environment variables, keyed by the **sanitized** item id (every non-alphanu
 
 | Field | Env var | Default | Values |
 |---|---|---|---|
-| `correct` | `BRAIN_BASELINE_CORRECT_q1_what_calls_reservationCreate` | `false` | `1`/`true`/`yes` ⇒ true |
+| `correct` | `BRAIN_BASELINE_CORRECT_q1_what_calls_reservationCreate` | `false` | `1`/`true`/`yes`/`y` (any case: `True`/`YES`/`Y`) ⇒ true |
 | `tool_calls` | `BRAIN_BASELINE_TOOLCALLS_q1_what_calls_reservationCreate` | `0` | integer |
-| `missed_context` | `BRAIN_BASELINE_MISSED_q1_what_calls_reservationCreate` | `false` | `1`/`true`/`yes` ⇒ true |
+| `missed_context` | `BRAIN_BASELINE_MISSED_q1_what_calls_reservationCreate` | `false` | `1`/`true`/`yes`/`y` (any case: `True`/`YES`/`Y`) ⇒ true |
 | `note` | `BRAIN_BASELINE_NOTE_q1_what_calls_reservationCreate` | `""` | free-text one-liner |
 
 Example:
