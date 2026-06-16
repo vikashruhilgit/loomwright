@@ -2,7 +2,7 @@
 name: brain-context
 description: Read-on-demand brain-aware context enrichment (Graphify graph + brain wiki). Advisory only — a missing/broken/stale graph silently falls back to grep/read; NEVER blocks a run and NEVER changes a decision. Deliberately NOT preloaded into any agent frontmatter; agents read it at context-setup / analysis points when a brain is detected.
 version: 1.0.0
-lastUpdated: 2026-06-17
+lastUpdated: 2026-06-16
 allowed-tools: Read, Bash, Grep
 ---
 
