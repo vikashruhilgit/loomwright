@@ -287,6 +287,8 @@ Check ALL criteria in order. For each, note whether it passes or has issues. Cri
 
 **Conditional:** Absent canonical-source claim (no canonical phrasing, or no cited source) → skip silently. Present and the brief's values match the cited source → PASS. Present and a mismatch is found → `canonical_source` finding at the severity above.
 
+**Scope boundary (not full drift coverage):** Criterion 15 catches *claims of canonicity* — it fires only when a brief both uses canonical phrasing **and** cites a source. It is **not** a general count/version/restated-list drift detector: a brief that plainly restates a canonical value without asserting canonicity (e.g. "updates the 14-agent / 18-command counts in `plugin.json`") does **not** trigger it. That broader restated-value-drift class — including the kind that causes post-merge review churn — is caught by the **Code Reviewer `consistency_audit`**, `scripts/check-doc-currency.sh`, and human review, **not** by this criterion. The narrow trigger is intentional (it keeps false positives near zero); do not mistake a PASS here for "no restated-value drift anywhere."
+
 ---
 
 ## Decision Matrix
