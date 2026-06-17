@@ -333,7 +333,7 @@ After an `--until-mergeable` run **finalizes its decision and emits `REVIEW_HEAL
 - The loop's `decision` is **computed and emitted BEFORE** the tail runs. The tail reads it as an input only.
 - The dispatcher (`scripts/dispatch-pr-postmortem.sh`) is **fire-and-forget and `exit 0` on EVERY path** (mirrors `dispatch-pr-review.sh`).
 - `/pr-postmortem` is **read-only** on the analyzed repo and **only appends** one JSONL line to `.supervisor/postmortem/results.jsonl` — it mutates no repo file.
-- Therefore a postmortem dispatcher / gather / append **failure leaves `REVIEW_HEAL_RESULT.decision` unchanged** and the merge-ready result is identical to a run where postmortem succeeded. `postmortem_dispatched` is informational, NEVER a gate input.
+- Therefore a postmortem dispatcher / gather / append **failure leaves `REVIEW_HEAL_RESULT.decision` unchanged** and the merge-ready result is identical to a run where postmortem succeeded. `postmortem_dispatched` is informational, NEVER a gate input — and because the result block is emitted **before** the tail runs, it reports the **churn-gate / dispatch-request** decision (knowable at emit time), **not** a guarantee the postmortem launched or completed (the best-effort dispatcher may still no-op).
 
 ### Churn gate (AC9/AC10/AC11) — fires only on meaningful churn
 
@@ -354,13 +354,13 @@ If **NONE** trip (`fix_cycles ≤ threshold` AND `decision != ESCALATED` AND no 
 
 ### Launch form (R10 — fresh detached process, NEVER a nested Task)
 
-`/pr-postmortem` is dispatched as a **fresh detached `claude` OS process**, exactly mirroring `dispatch-pr-review.sh`'s launch form — NEVER a nested `Task` spawn. The review-heal loop body is itself Task-spawned in the `/autonomous` EVALUATE sense (b), so a nested `Task(/pr-postmortem)` would land one spawn-level too deep (subagents cannot spawn subagents). The dispatcher's launch line is:
+`/pr-postmortem` is dispatched as a **fresh detached HEADLESS `claude -p` OS process** — NEVER a nested `Task` spawn. The review-heal loop body is itself Task-spawned in the `/autonomous` EVALUATE sense (b), so a nested `Task(/pr-postmortem)` would land one spawn-level too deep (subagents cannot spawn subagents). The `-p`/`--print` flag is **required**: plain `claude "<prompt>"` (no `-p`) starts an *interactive REPL* which, detached with stdin from `/dev/null` and no TTY, never executes the slash command and never exits — `-p` runs the prompt non-interactively and exits. The dispatcher's launch line is:
 
 ```
-( nohup "$CLAUDE_BIN" "/pr-postmortem $PR_URL" >>"$RUN_LOG" 2>&1 </dev/null & ) >/dev/null 2>&1 || true
+( nohup "$CLAUDE_BIN" -p "/pr-postmortem $PR_URL" >>"$RUN_LOG" 2>&1 </dev/null & ) >/dev/null 2>&1 || true
 ```
 
-(or a no-op when `claude`/config is absent). A per-PR marker under `.supervisor/postmortem-dispatch/` guards against re-dispatch. The exact invocation the tail makes:
+(or a no-op when `claude`/config is absent). A per-PR marker under `.supervisor/postmortem-dispatch/` guards against re-dispatch — **once per PR per checkout** (persistent, not session-scoped); a PR that re-churns in a later session will not re-dispatch unless its marker file is removed. The exact invocation the tail makes:
 
 ```
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/dispatch-pr-postmortem.sh" "<pr-url>" \

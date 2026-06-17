@@ -42,12 +42,19 @@
 #
 #   COST / RUNAWAY GUARD. A per-PR dispatch marker file under
 #   .supervisor/postmortem-dispatch/ (keyed by a hash of the PR URL) ensures a given PR
-#   is postmortem-dispatched AT MOST ONCE. If the marker already exists, log one line
-#   and exit 0 — prevents a re-dispatch loop (e.g. a re-run of the tail on the same PR).
+#   is postmortem-dispatched AT MOST ONCE PER CHECKOUT. The marker is persistent (never
+#   auto-cleaned) and not session-scoped, so this is "once ever for this PR in this
+#   working copy", not "once per run". If the marker already exists, log one line and
+#   exit 0 — prevents a re-dispatch loop (e.g. a re-run of the tail on the same PR).
+#   DELIBERATE TRADE-OFF: a PR that re-churns in a LATER session will NOT produce a second
+#   trend record — accepted to bound postmortem cost (mirrors dispatch-pr-review.sh). To
+#   force a re-dispatch, delete the PR's marker file under .supervisor/postmortem-dispatch/.
 #
 #   FRESH DETACHED PROCESS (R10). When enabled + gate-tripped + not yet dispatched,
-#   launch a brand-new detached `claude /pr-postmortem <pr-url>` OS process (nohup +
-#   background + full stdio redirection to a log under .supervisor/logs/). A fresh OS
+#   launch a brand-new detached headless `claude -p "/pr-postmortem <pr-url>"` OS process
+#   (nohup + background + full stdio redirection to a log under .supervisor/logs/; `-p`
+#   print-mode runs non-interactively and exits — plain `claude "<prompt>"` would open an
+#   interactive REPL that hangs when detached). A fresh OS
 #   process — NOT a nested Task spawn — is mandatory because subagents cannot spawn
 #   subagents; the review-heal loop body is itself Task-spawned in the /autonomous
 #   EVALUATE sense, so a nested Task(/pr-postmortem) would land one spawn-level too
@@ -238,7 +245,7 @@ fi
 MARKER="$DISPATCH_DIR/$PR_HASH"
 
 if [ -e "$MARKER" ]; then
-  log "PR already postmortem-dispatched this run (marker exists: $MARKER) — skipping re-dispatch"
+  log "PR already postmortem-dispatched for this PR in this checkout (persistent marker exists: $MARKER) — skipping re-dispatch"
   exit 0
 fi
 
@@ -248,7 +255,7 @@ fi
 # is still exercised) WITHOUT requiring the binary — keeps the self-test
 # (test-dispatch-pr-postmortem.sh) claude-independent on CI runners with no `claude`.
 if [ -n "$DRY_RUN" ]; then
-  printf 'DRY_RUN_DISPATCH: %s /pr-postmortem %s\n' "$CLAUDE_BIN" "$PR_URL"
+  printf 'DRY_RUN_DISPATCH: %s -p "/pr-postmortem %s"\n' "$CLAUDE_BIN" "$PR_URL"
   printf '%s\n' "$PR_URL" > "$MARKER" 2>/dev/null || true
   exit 0
 fi
@@ -270,9 +277,15 @@ printf '%s\t%s\n' "$TIMESTAMP" "$PR_URL" > "$MARKER" 2>/dev/null || true
 
 # Fire-and-forget: fully detached so the loop's completion tail returns immediately.
 # nohup + background subshell + all stdio redirected away from the caller's inherited
-# pipes. The detached process is a fresh `claude` invocation of the EXISTING
-# /pr-postmortem command (NOT a nested Task spawn — R10).
-( nohup "$CLAUDE_BIN" "/pr-postmortem $PR_URL" >>"$RUN_LOG" 2>&1 </dev/null & ) >/dev/null 2>&1 || true
+# pipes. The detached process is a fresh HEADLESS `claude -p` (print-mode) invocation of
+# the EXISTING /pr-postmortem command (NOT a nested Task spawn — R10).
+#
+# `-p`/--print is REQUIRED: plain `claude "<prompt>"` (no -p) starts an INTERACTIVE REPL,
+# which — detached with stdin from /dev/null and no TTY — never executes the slash command
+# and never exits cleanly. `-p` runs the prompt non-interactively and exits. /pr-postmortem
+# is read-only (gh reads + a single append to results.jsonl); the detached run relies on the
+# project's existing permission settings, same best-effort posture as dispatch-pr-review.sh.
+( nohup "$CLAUDE_BIN" -p "/pr-postmortem $PR_URL" >>"$RUN_LOG" 2>&1 </dev/null & ) >/dev/null 2>&1 || true
 
 log "dispatched /pr-postmortem for $PR_URL ($TRIGGER_REASON; log: $RUN_LOG)"
 exit 0

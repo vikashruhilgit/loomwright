@@ -1776,7 +1776,7 @@ REVIEW_HEAL_RESULT:
   repeat_check_failure: bool           # a required check that was fixed re-failed in a later round (postmortem input)
   unresolved_bot_feedback: bool        # a bot-authored thread stayed unresolved after >=1 fix cycle (postmortem input)
   postmortem_churn_threshold: int      # the fix-cycle trigger bar in effect (default 2)
-  postmortem_dispatched: bool          # informational — was the churn-gated /pr-postmortem tail fired? NEVER a gate input (AC12)
+  postmortem_dispatched: bool          # informational — did the churn gate trip so the tail was REQUESTED? Emitted BEFORE dispatch, so it reports the gate/dispatch-request decision, NOT postmortem completion (the best-effort dispatcher may still no-op). NEVER a gate input (AC12)
 ```
 
 **Field notes:**
@@ -1797,7 +1797,7 @@ REVIEW_HEAL_RESULT:
 | `repeat_check_failure` | bool | v2 only | `true` when a required check that was fixed re-fails in a later round. An OR-trigger for the postmortem tail (AC10). |
 | `unresolved_bot_feedback` | bool | v2 only | `true` when a bot-authored review thread remains unresolved after >=1 fix cycle. An OR-trigger for the postmortem tail (AC10). |
 | `postmortem_churn_threshold` | int | v2 only | The fix-cycle trigger bar in effect — **default 2**; overridden by `--postmortem-churn-threshold N` or `.postmortem_churn_threshold` in `.supervisor/notify-config.json` (read via jq) (AC11). |
-| `postmortem_dispatched` | bool | v2 only | **Informational only** — whether the churn-gated `/pr-postmortem` tail was fired. The decision is computed and emitted **before** dispatch, so `postmortem_dispatched` is **NEVER a gate input** and can never change `decision` (AC12, see "Postmortem dispatch is read-only / append-only" below). |
+| `postmortem_dispatched` | bool | v2 only | **Informational only** — `true` ⇔ the churn gate tripped AND auto-postmortem was not opted out, so the loop **invoked** the dispatcher. Because `decision`/`REVIEW_HEAL_RESULT` is computed and emitted **before** the tail runs (AC12), this field reports the **gate / dispatch-request** decision (knowable at emit time) — it is **NOT** a guarantee the postmortem actually launched or completed: the dispatcher is best-effort and may still no-op (a prior per-PR marker exists, `claude` not on PATH, etc.). It is **NEVER a gate input** and can never change `decision` (see "Postmortem dispatch is read-only / append-only" below). Inspect `.supervisor/logs/pr-postmortem-dispatch-*.log` / `.supervisor/postmortem/results.jsonl` for actual dispatch/completion. |
 
 **Outcome model:**
 - `PASS` (v1/v2) → clean diff; loop done; `remaining_issues: 0`. The loop **NEVER merges the PR** (no-self-trust: an automated reviewer that also merges removes the human gate). PR is left open for a human to merge.
