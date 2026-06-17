@@ -274,19 +274,25 @@ Review implementation code against quality standards and provide a clear decisio
    - If absent: Fall back to CLAUDE.md patterns only
    - `REVIEW.md` takes precedence over CLAUDE.md for review-specific settings
 
-3. **Determine Review Scope**
+3. **Consult memory (advisory, read-only)**
+   - **Use this agent's preloaded project memory.** Code Reviewer declares `memory: project`, so its per-agent memory is injected at spawn — read it from context, no filesystem call needed. If an explicit filesystem read is required, resolve the matching `.claude/agent-memory/*code-reviewer*` directory **read-only via a glob** (the exact key may be host-sanitized — do NOT hard-code the `…:code-reviewer` colon form).
+   - **Read shared project memory** by running `bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-project-memory.sh"`.
+   - These are **advisory and strictly subordinate to `CLAUDE.md`** — on any conflict, `CLAUDE.md` wins. The reader is fail-safe (it always exits 0 and emits only provenance-verified, non-stale entries); if it emits nothing or is absent, proceed normally. Reading memory MUST NEVER block the run or change a verdict / `heal_decision`.
+   - Filter stale/unrelated entries; focus on prior review miss-classes, drift, security, and framework gotchas relevant to this scope.
+
+4. **Determine Review Scope**
    - If `beads_active`: scope from Beads review task description (e.g., "Review src/auth/jwt.guard.ts")
    - Otherwise: scope from invocation argument or git diff of implementation task files
    - If unclear: ask user which files to review
 
-4. **Load Quality Criteria**
+5. **Load Quality Criteria**
    - Read `skills/quality-checklist/SKILL.md` → standard criteria
    - Adapt to framework if applicable:
      - NestJS: See `skills/nestjs-guards/SKILL.md` patterns section
      - Next.js: See `skills/nextjs-routing/SKILL.md` patterns section
      - TypeScript: Type safety from CLAUDE.md
 
-5. **Validate CLAUDE.md Accuracy**
+6. **Validate CLAUDE.md Accuracy**
    - Check: Do documented patterns match actual codebase behavior?
    - Example: CLAUDE.md says "use Redux" but codebase uses Context API → FLAG MISMATCH
    - Use Context7 to verify library claims (see `skills/context7-lookup/SKILL.md` for 4-tier fallback)
@@ -506,6 +512,14 @@ When Beads is not active: just pass the scope as an argument; the CODE_REVIEW_RE
 Always emit a CODE_REVIEW_RESULT block (machine-readable, schema v3) — this is the canonical output regardless of Beads state. See `docs/RESULT_SCHEMAS.md#code_review_result` for the full field list.
 
 **Schema fields only — no ad-hoc keys.** Every issue object uses exactly these keys: `severity`, `category`, `file`, `description`, `drift_kind` (required when category=drift), `line` (optional), `suggestion` (optional). Do **not** invent keys like `title`, `details`, `rationale`, `notes`, `ref`, etc. — any such key will make the block malformed and fail the plugin hook. Put rationale inside `description`; put the fix inside `suggestion`.
+
+**Optional additive telemetry — `knowledge_sources_used`.** When the "Consult memory (advisory, read-only)" step surfaced anything you actually used, you MAY record it on the `CODE_REVIEW_RESULT` block as an optional `knowledge_sources_used` array of short source-tag strings. **Record only sources this agent actually consulted** — do not copy the full cross-agent vocabulary. The Code Reviewer's consult step reads its own per-agent memory and project memory (and, only when the optional `brain-context` consult fires, brain context), so its **reachable tags** are:
+
+```json
+"knowledge_sources_used": ["project_memory", "agent_memory:code-reviewer", "brain_context"]
+```
+
+The Code Reviewer does NOT run `read-lessons.sh` and does NOT consult the System Twin, so it must never emit a `lessons:<category>` or `twin:<path>` tag — doing so would record a source that was never read. (The full open-set tag vocabulary — `project_memory`, `lessons:<category>`, `agent_memory:<agent>`, `twin:<path>`, `brain_context` — spans all agents and is documented in `docs/RESULT_SCHEMAS.md`; emit only the subset you reached.) The field is **optional, advisory, and non-gating** — absent ⇒ valid (old logs unaffected); NEVER gated on; never changes the decision. It does **NOT** bump `schema_version` (CODE_REVIEW_RESULT stays at **3**), following the additive-field precedent already documented in `docs/RESULT_SCHEMAS.md`.
 
 ### Environment-Blocked Reviews (failure path)
 
