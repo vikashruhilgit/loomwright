@@ -513,13 +513,13 @@ Always emit a CODE_REVIEW_RESULT block (machine-readable, schema v3) — this is
 
 **Schema fields only — no ad-hoc keys.** Every issue object uses exactly these keys: `severity`, `category`, `file`, `description`, `drift_kind` (required when category=drift), `line` (optional), `suggestion` (optional). Do **not** invent keys like `title`, `details`, `rationale`, `notes`, `ref`, etc. — any such key will make the block malformed and fail the plugin hook. Put rationale inside `description`; put the fix inside `suggestion`.
 
-**Optional additive telemetry — `knowledge_sources_used`.** When the "Consult memory (advisory, read-only)" step surfaced anything you actually used, you MAY record it on the `CODE_REVIEW_RESULT` block as an optional `knowledge_sources_used` array of short source-tag strings, e.g.:
+**Optional additive telemetry — `knowledge_sources_used`.** When the "Consult memory (advisory, read-only)" step surfaced anything you actually used, you MAY record it on the `CODE_REVIEW_RESULT` block as an optional `knowledge_sources_used` array of short source-tag strings. **Record only sources this agent actually consulted** — do not copy the full cross-agent vocabulary. The Code Reviewer's consult step reads its own per-agent memory and project memory (and, only when the optional `brain-context` consult fires, brain context), so its **reachable tags** are:
 
 ```json
-"knowledge_sources_used": ["project_memory", "lessons:testing", "agent_memory:code-reviewer", "twin:scripts/build-insights.sh", "brain_context"]
+"knowledge_sources_used": ["project_memory", "agent_memory:code-reviewer", "brain_context"]
 ```
 
-Tag vocabulary (open set, lowercase): `project_memory`, `lessons:<category>`, `agent_memory:<agent>`, `twin:<path>`, `brain_context`. The field is **optional, advisory, and non-gating** — absent ⇒ valid (old logs unaffected); NEVER gated on; never changes the decision. It does **NOT** bump `schema_version` (CODE_REVIEW_RESULT stays at **3**), following the additive-field precedent already documented in `docs/RESULT_SCHEMAS.md`.
+The Code Reviewer does NOT run `read-lessons.sh` and does NOT consult the System Twin, so it must never emit a `lessons:<category>` or `twin:<path>` tag — doing so would record a source that was never read. (The full open-set tag vocabulary — `project_memory`, `lessons:<category>`, `agent_memory:<agent>`, `twin:<path>`, `brain_context` — spans all agents and is documented in `docs/RESULT_SCHEMAS.md`; emit only the subset you reached.) The field is **optional, advisory, and non-gating** — absent ⇒ valid (old logs unaffected); NEVER gated on; never changes the decision. It does **NOT** bump `schema_version` (CODE_REVIEW_RESULT stays at **3**), following the additive-field precedent already documented in `docs/RESULT_SCHEMAS.md`.
 
 ### Environment-Blocked Reviews (failure path)
 
