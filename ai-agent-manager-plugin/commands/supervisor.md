@@ -31,6 +31,8 @@ The Supervisor agent v4 autonomously manages the complete development workflow. 
 /supervisor --skip-preflight-sync              # Short-circuit the Phase 1.5 remote-overlap reconciliation gate (escape hatch)
 /supervisor --auto-review                      # Opt in: dispatch standalone /review-pr review-and-heal on the PR after completion
 /supervisor --no-auto-review                   # Suppress the post-completion auto-review dispatch (overrides notify-config)
+/supervisor --red-team                         # Opt in: advisory (non-gating) red-team review of high-risk integrated diffs in Phase 4.5
+/supervisor --no-red-team                      # Suppress the advisory red-team review (overrides notify-config)
 ```
 
 ## Parameters
@@ -51,6 +53,8 @@ The Supervisor agent v4 autonomously manages the complete development workflow. 
 | `--skip-preflight-sync` | No | Short-circuit the Phase 1.5 PRE-FLIGHT SYNC gate, which reconciles the requested work against recent `origin/$BASE_BRANCH` commits and open PRs (same-file overlap + already-merged equivalents) and classifies the task CLEAR / OVERLAP / SUPERSEDED. The skip is recorded as a deliberate choice (`record_decision`) and `preflight_sync` is set to `skipped`. Escape hatch for when remote-overlap reconciliation is known-unnecessary or when intentionally re-doing landed work. Under `--non-interactive` / CI this is also the only way to proceed past an OVERLAP/SUPERSEDED classification (which otherwise fails closed). |
 | `--auto-review` | No | Opt in to the post-completion auto-review dispatch: on a PASS/normal completion that produced a PR, Phase 4.5's completion tail launches a fresh, detached standalone review-and-heal run (`/review-pr` via `ai-agent-manager-plugin:review-pr-runner`) against the PR. **OFF by default.** Equivalent to setting `.auto_review: true` in `.supervisor/notify-config.json`. Best-effort and fire-and-forget — the dispatcher always exits 0 and never affects the Supervisor result, the PR, or control flow. Because `/review-pr` never creates a PR, there is no review→review recursion. |
 | `--no-auto-review` | No | Suppress the post-completion auto-review dispatch even when `.supervisor/notify-config.json` has `.auto_review: true`. Wins over `--auto-review` if both are passed. |
+| `--red-team` | No | Opt in to an advisory red-team review in Phase 4.5: after the Code Reviewer holistic pass, if the integrated diff is **high-risk** (touches auth/authz, crypto/secrets/tokens, security middleware, payment, or DB migrations — by path or content — OR exceeds > 400 changed lines / > 15 changed files), spawn exactly ONE `red-team-reviewer` pass (outside the heal loop) and post its findings to the PR as a clearly-labelled non-gating comment. **OFF by default** and **high-risk-only** (enabled-but-low-risk skips silently). **Advisory & strictly NON-GATING** — it NEVER changes `heal_decision`, never drives the fix task, never gates, and never blocks the PR; the Code Reviewer's `CODE_REVIEW_RESULT` remains the sole gating signal. **Fail-safe** — any spawn error/timeout or comment failure is a logged no-op and the run continues. Equivalent to setting `.red_team_high_risk: true` in `.supervisor/notify-config.json`. |
+| `--no-red-team` | No | Suppress the advisory red-team review even when `.supervisor/notify-config.json` has `.red_team_high_risk: true`. Wins over `--red-team` if both are passed. |
 
 ## What This Does
 
