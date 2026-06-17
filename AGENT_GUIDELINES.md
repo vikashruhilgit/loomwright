@@ -72,7 +72,7 @@ Comprehensive guidance for AI agents working on any project. Apply these standar
 
 ## Structured Outputs
 
-Agent result blocks (`WORKER_RESULT`, `CODE_REVIEW_RESULT`, `EXECUTE_RESULT`, `EXECUTE_CHECKPOINT`, `SUPERVISOR_RESULT`, `QA_RESULT`, `PLAN_REVIEW_RESULT`, `MISSING_FUNCTIONALITY_REPORT`, `FIX_RESULT`, `CONTEXT_KEEPER_STATE`, `QA_SESSION_PLAN`, `QA_SESSION_COVERAGE`, `AUTONOMOUS_RUN`, `LAUNCH_PAD_RESULT`) are governed by strict contracts. The single source of truth is `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md` — currently CODE_REVIEW_RESULT at `schema_version: 3`, WORKER_RESULT at `schema_version: 2`, AUTONOMOUS_RUN at `schema_version: 2`, all others (incl. LAUNCH_PAD_RESULT, added v14.2.0) at `schema_version: 1`.
+Agent result blocks (`WORKER_RESULT`, `CODE_REVIEW_RESULT`, `EXECUTE_RESULT`, `EXECUTE_CHECKPOINT`, `SUPERVISOR_RESULT`, `QA_RESULT`, `PLAN_REVIEW_RESULT`, `MISSING_FUNCTIONALITY_REPORT`, `FIX_RESULT`, `CONTEXT_KEEPER_STATE`, `QA_SESSION_PLAN`, `QA_SESSION_COVERAGE`, `AUTONOMOUS_RUN`, `LAUNCH_PAD_RESULT`) are governed by strict contracts. The single source of truth is `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md` — currently CODE_REVIEW_RESULT at `schema_version: 3`, WORKER_RESULT at `schema_version: 2`, AUTONOMOUS_RUN at `schema_version: 2`, all others (incl. LAUNCH_PAD_RESULT, added v14.2.0) at `schema_version: 1`. Plan Reviewer's conditional **Criterion 15 (Canonical-List / Source-of-Truth Verification)** — fired only when a brief asserts a canonical-source claim and cites a source — emits findings under the additive free-form `canonical_source` PLAN_REVIEW_RESULT issue category (no `schema_version` bump; the `executable_acceptance` precedent).
 
 **Two enforcement paths, depending on where the agent runs:**
 

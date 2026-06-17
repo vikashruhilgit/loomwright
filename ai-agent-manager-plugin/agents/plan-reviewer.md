@@ -37,15 +37,15 @@ Validate a Supervisor-Ready Brief for quality, completeness, and correctness bef
 
 - **Always verify file paths** — Glob/Read every path in the File Impact Map
 - **Always check CLAUDE.md patterns** — Read CLAUDE.md and compare against brief's approach
-- **Never skip criteria** — All 14 review criteria must be checked (Criteria 11, 13, and 14 are conditional: skip silently when their gating section/field is absent; Criterion 12 is conditional only on an explicit `legacy_brief: true` marker)
+- **Never skip criteria** — All 15 review criteria must be checked (Criteria 11, 13, 14, and 15 are conditional: skip silently when their gating section/field/claim is absent; Criterion 12 is conditional only on an explicit `legacy_brief: true` marker)
 - **FAIL requires evidence** — Every BLOCKING/HIGH issue must cite what was checked and what was wrong
 - **NEEDS_HUMAN is for ambiguity** — Use only when the brief's approach could be valid but you can't confirm
 
 ---
 
-## 14 Review Criteria
+## 15 Review Criteria
 
-Check ALL criteria in order. For each, note whether it passes or has issues. Criterion 11 is conditional: skip silently if the optional `## Feasibility` section is absent. Criterion 13 is conditional: skip silently if no `Base Branch:` line appears in the `## Configuration` block (defaults to `main`). Criterion 14 is conditional: skip silently if the optional `## Executable Acceptance` section is absent. Criterion 12: briefs MUST contain `provides:` / `requires:` contract YAML blocks per subtask — absence is a BLOCKING violation. The only exception is an explicit top-level `legacy_brief: true` marker in the Environment section (the marker is the sole observable signal; the producing runtime's version cannot be inferred from brief text). Without that marker, missing contracts are a BLOCKING `dep_graph` violation.
+Check ALL criteria in order. For each, note whether it passes or has issues. Criterion 11 is conditional: skip silently if the optional `## Feasibility` section is absent. Criterion 13 is conditional: skip silently if no `Base Branch:` line appears in the `## Configuration` block (defaults to `main`). Criterion 14 is conditional: skip silently if the optional `## Executable Acceptance` section is absent. Criterion 15 is conditional: skip silently if the brief asserts no canonical-source claim (no canonical phrasing such as "single source of truth"/"canonical list"/"exact names"/"authoritative", or no cited source). Criterion 12: briefs MUST contain `provides:` / `requires:` contract YAML blocks per subtask — absence is a BLOCKING violation. The only exception is an explicit top-level `legacy_brief: true` marker in the Environment section (the marker is the sole observable signal; the producing runtime's version cannot be inferred from brief text). Without that marker, missing contracts are a BLOCKING `dep_graph` violation.
 
 ### 1. File Path Verification
 
@@ -80,7 +80,7 @@ Check ALL criteria in order. For each, note whether it passes or has issues. Cri
 
 **Severity if failed:** MEDIUM (vague criteria), LOW (missing edge cases)
 
-**Sub-check (conditional — `## Outcomes Rubric` quality):** Run this ONLY when the brief contains a `## Outcomes Rubric` section. **Skip it silently when the section is absent** (same convention as the conditional Criteria 11, 13, and 14, which skip silently when their gating section is absent — but this stays part of Criterion 3, not a new numbered criterion). When the section is present, validate the rubric against the authoring rules in `skills/supervisor-readiness/SKILL.md` §"Outcomes Rubric":
+**Sub-check (conditional — `## Outcomes Rubric` quality):** Run this ONLY when the brief contains a `## Outcomes Rubric` section. **Skip it silently when the section is absent** (same convention as the conditional Criteria 11, 13, 14, and 15, which skip silently when their gating section/claim is absent — but this stays part of Criterion 3, not a new numbered criterion). When the section is present, validate the rubric against the authoring rules in `skills/supervisor-readiness/SKILL.md` §"Outcomes Rubric":
 - **3–7 bullets** (flag fewer than 3 or more than 7)
 - Each bullet is a **positive, observable assertion** — not an aspiration (e.g. "should be nice", "works well")
 - Each bullet is **diff-checkable from the PR diff alone** — no reliance on external state, runtime behavior, or manual steps. **At plan-review time no diff exists yet, so this is a phrasing/observability heuristic, not a literal check:** judge whether the bullet is the *kind* of assertion a future PR diff could confirm (e.g. "function X validates input Y" — yes; "the UX feels faster" — no), rather than attempting to evaluate it against a diff.
@@ -262,13 +262,38 @@ Check ALL criteria in order. For each, note whether it passes or has issues. Cri
 
 **Conditional:** Absent `## Executable Acceptance` section → skip silently. Present without `cmd:`/bare bullets → PASS silently. Present with `cmd:`/bare bullets → LOW `executable_acceptance` issue.
 
+### 15. Canonical-List / Source-of-Truth Verification (v14.31.0+, conditional)
+
+**Check:** If the brief asserts that one of its lists/values is the *canonical source of truth* — and cites the source whose values it claims to match — do the brief's listed values actually match that cited source?
+
+**How:**
+
+- **TRIGGER (gate narrowly — only fire when BOTH halves hold):**
+  1. The brief uses explicit canonical-source phrasing — "single source of truth", "canonical list", "exact names", "authoritative" (or close variants like "the source of truth", "must match exactly", "verbatim from"); **AND**
+  2. The brief **cites a source** — a file path or location (e.g. `plugin.json`, `skills/SKILLS_INDEX.md`, `.git/refs/heads/`) whose values the brief claims to match, restate, or enumerate.
+- **If either half is absent: skip silently — no issue emitted** (fully backward compatible; mirrors Criteria 11, 13, and 14). This narrow gate is what keeps ordinary briefs — which routinely use words like "list" or "source" without claiming canonicity *and* citing a source — free of false positives.
+- When triggered, **read the cited source** (Plan Reviewer is structurally read-only — use `Read`/`Glob`/`Grep` only) and verify the brief's listed/restated values against it:
+  - Compare each value the brief claims to match against the cited source's actual content.
+  - Flag any mismatch with concrete evidence: what was checked (which source path/lines), what the brief asserted, and what the source actually contained.
+  - If the cited source is **unreadable** (path does not exist / cannot be opened), do not fabricate a mismatch — report a LOW advisory noting the source could not be verified.
+
+**Issue category:** `canonical_source` (new category — use this in the issues array for any Criterion 15 finding; same precedent as `executable_acceptance` for Criterion 14).
+
+**Severity if failed:**
+
+- LOW (advisory/default): canonical-source claim present but source unverifiable, OR a minor/cosmetic divergence. By the Decision Matrix a lone LOW issue keeps the decision at **PASS**, so the brief still saves — the value is that the unverified claim is surfaced in the auditable `PLAN_REVIEW_RESULT` record.
+- MEDIUM: the cited source **is** readable AND a concrete value mismatch is found (brief restates a value that differs from the source).
+- BLOCKING: a verified mismatch would break a gate or contract (e.g. the brief restates a canonical enum/count/path that another subtask or a CI gate consumes, and the restated value is wrong).
+
+**Conditional:** Absent canonical-source claim (no canonical phrasing, or no cited source) → skip silently. Present and the brief's values match the cited source → PASS. Present and a mismatch is found → `canonical_source` finding at the severity above.
+
 ---
 
 ## Decision Matrix
 
 | Condition | Decision |
 |-----------|----------|
-| All criteria satisfied (14 total, Criteria 11, 12, 13, and 14 conditional), no BLOCKING/HIGH issues | **PASS** |
+| All criteria satisfied (15 total, Criteria 11, 12, 13, 14, and 15 conditional), no BLOCKING/HIGH issues | **PASS** |
 | Only MEDIUM/LOW issues, design approach unambiguous | **PASS** (all issues recorded for visibility — e.g. a Criterion 14 `executable_acceptance` finding — but the save is not blocked) |
 | Any BLOCKING or HIGH severity issue found | **FAIL** |
 | Only MEDIUM/LOW issues, but design approach is ambiguous | **NEEDS_HUMAN** |
@@ -284,7 +309,7 @@ PLAN_REVIEW_RESULT:
   issues:
     - severity: {BLOCKING | HIGH | MEDIUM | LOW}
       section: "{brief section name}"
-      category: "{dep_graph | missing_field | executable_acceptance | ...}"  # optional — emit when a criterion mandates it (12, 13, 14)
+      category: "{dep_graph | missing_field | executable_acceptance | canonical_source | ...}"  # optional — emit when a criterion mandates it (12, 13, 14, 15)
       description: "{what's wrong}"
       suggestion: "{how to fix}"
   summary: "{concise review summary}"
@@ -338,7 +363,7 @@ PLAN_REVIEW_RESULT:
 ## Quality Checklist
 
 Before producing PLAN_REVIEW_RESULT:
-- [ ] All 14 criteria checked (Criterion 11 conditional on `## Feasibility` section presence; Criterion 12 skipped only when the brief's Environment section declares `legacy_brief: true` — otherwise missing `provides:` / `requires:` blocks are a BLOCKING `dep_graph` violation; Criterion 13 skipped silently when `Base Branch:` is absent from `## Configuration`; Criterion 14 skipped silently when `## Executable Acceptance` is absent — when present with `cmd:`/bare bullets, emit a LOW `executable_acceptance` issue listing them)
+- [ ] All 15 criteria checked (Criterion 11 conditional on `## Feasibility` section presence; Criterion 12 skipped only when the brief's Environment section declares `legacy_brief: true` — otherwise missing `provides:` / `requires:` blocks are a BLOCKING `dep_graph` violation; Criterion 13 skipped silently when `Base Branch:` is absent from `## Configuration`; Criterion 14 skipped silently when `## Executable Acceptance` is absent — when present with `cmd:`/bare bullets, emit a LOW `executable_acceptance` issue listing them; Criterion 15 skipped silently when the brief asserts no canonical-source claim — when present, verify the brief's restated values against the cited source and emit a `canonical_source` finding on mismatch)
 - [ ] Every file path in File Impact Map verified via Read or Glob
 - [ ] CLAUDE.md patterns compared against brief approach
 - [ ] Dependency graph traced for cycles
