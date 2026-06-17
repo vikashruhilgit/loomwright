@@ -109,6 +109,7 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 6. Report blockers vs warnings:
    - **BLOCKER** (must fix before proceeding): Dirty git state with conflicts, missing CLAUDE.md
    - **WARNING** (can proceed): Dirty git state (uncommitted changes), no `gh` auth, orphaned worktrees, stale CLAUDE.md
+7. **Source-doc provenance check (advisory, trigger-gated):** When — and ONLY when — the `goal:`/`feature:`/`problem:` input resolves to a *specific source document* (a path **under `.supervisor/requirements/`** ending in `.md` that resolves with `test -f`, per the Phase 2 step 0 scoped resolution, OR an explicitly named source doc), check whether *that one file* is uncommitted in the working tree (it appears in `git status --porcelain`, i.e. shows as modified or untracked). If it does, emit a **WARNING (never a BLOCKER)**: the source document this brief is being planned from is uncommitted, so its provenance/staleness is unverified — the plan may be built on a draft that is not yet the source of truth. **Scope it narrowly to that one file only** — do NOT raise this warning for a generally-dirty working tree (that is already covered by the "Dirty git state (uncommitted changes)" WARNING above); this warning is specifically about the *source doc's* provenance, not the tree's cleanliness. When the input is a literal-string goal, or resolves to no specific source doc, or the source doc is committed/clean, skip this check silently (behavior byte-unchanged). *(The resolution criteria above are restated inline; keep them in sync with Phase 2 step 0 — the single source of that rule — if either changes.)*
 
 **Skip condition:** If `--skip-validation` flag is set, skip to Phase 2 (report skipped).
 
@@ -122,6 +123,7 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 | Git state | ✓ Clean / ⚠ Dirty ({N} files) | {branch} |
 | Worktrees | ✓ Clean / ⚠ {N} orphaned | |
 | GitHub CLI | ✓ Authenticated / ⚠ Not authenticated | |
+| Source doc | ✓ Committed / ⚠ Uncommitted (provenance unverified) / — (no source doc) | {source doc path, or — for a literal-string goal} |
 
 **Blockers:** {count} | **Warnings:** {count}
 ```
@@ -278,6 +280,8 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 
    The prediction is **advisory only** (sourced from the System Twin contract store, strictly subordinate to `CLAUDE.md` — on any conflict, `CLAUDE.md` wins). It **never blocks, gates, or serializes** anything; it only informs the human reading the brief about likely ripple effects worth a closer look.
 
+9. **Validator-owned-surfaces check (trigger-gated):** When — and ONLY when — a task's acceptance criteria depend on a **generated or mechanical validation script** (the generic class: a task whose acceptance is satisfied by passing some scripted checker — e.g. a doc-currency / lint / codegen / consistency / format checker — rather than by reviewer judgement alone), inspect that validator (read its source or its declared scan set / glob list / config) to learn which files it scans, and either **add those validator-owned surfaces to the File Impact Map** as files that may need updates to keep the checker green, OR add an explicit note that "files scanned by the validator may need updates" when the scan set cannot be enumerated cleanly. Identify the validator by this generic trigger condition — *a task whose acceptance depends on a generated/mechanical validation script* — **never by a hard-coded filename**; any concrete script name is only an illustrative example, never the rule's trigger. When no task's acceptance depends on such a validator, skip this check silently (behavior byte-unchanged — no false positives on ordinary goals).
+
 **Output:**
 ```markdown
 ## Phase 3: ANALYZE
@@ -292,6 +296,8 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 | {domain-a} | `src/auth/guard.ts` | `src/auth/jwt.guard.ts` | HIGH |
 | {domain-b} | `src/api/routes.ts` | `src/api/auth.route.ts` | MEDIUM |
 | {domain-c} | — | `src/tests/auth.spec.ts` | HIGH |
+
+> **Validator-owned surfaces (only when a task's acceptance depends on a generated/mechanical validation script — see Phase 3 action 9):** {list the validator-scanned files folded into the map above, or the note "files scanned by the validator may need updates"; omit this line entirely otherwise}.
 
 ### File Overlap Detection
 
@@ -512,7 +518,7 @@ Task(
 Project CLAUDE.md context:
 {relevant patterns, tech stack, directory structure — max 500 tokens}
 
-Check all 14 review criteria. Output a PLAN_REVIEW_RESULT block.",
+Check all 15 review criteria. Output a PLAN_REVIEW_RESULT block.",
   subagent_type: "ai-agent-manager-plugin:plan-reviewer"
 )
 ```
