@@ -19,6 +19,9 @@
 #   6. --no-auto-review suppression wins even with config auto_review:true.
 #   7. --auto-review + --no-auto-review -> suppression wins (no dispatch).
 #   8. missing PR url -> graceful no-op, exit 0.
+#   9. launch-form contract: emitted command is headless `claude -p --agent <runner> <url>`
+#      (regression guard — `claude --agent <runner> "<prompt>"` WITHOUT -p starts an
+#      interactive session that hangs when detached; --agent does NOT imply headless).
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -144,6 +147,23 @@ if [ "$RUN_RC" -eq 0 ] && ! printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' 
   ok "missing-pr-url: exit 0, no dispatch"
 else
   no "missing-pr-url wrong (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
+fi
+rm -rf "$WD"
+
+echo "== 9. launch-form contract: headless 'claude -p --agent <runner> <url>' (regression guard for the interactive-session bug) =="
+WD="$(fresh_repo)"
+run_dispatch "$WD" "$PR" --auto-review          # force a dispatch so the form is emitted
+LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
+# Must be headless (-p present) AND select the review-pr-runner agent AND carry the PR url.
+# `claude --agent <runner> "<prompt>"` WITHOUT -p starts an interactive session (--agent only
+# selects the agent, it does NOT switch to headless) that hangs when detached with no TTY.
+if [ "$RUN_RC" -eq 0 ] \
+   && printf '%s' "$LINE" | grep -Eq '(^| )-p( |$)|(^| )--print( |$)' \
+   && printf '%s' "$LINE" | grep -q -- '--agent ai-agent-manager-plugin:review-pr-runner' \
+   && printf '%s' "$LINE" | grep -q -- "$PR"; then
+  ok "launch-form: headless -p + --agent <runner> + <url> ($LINE)"
+else
+  no "launch-form missing -p, --agent <runner>, or url (line='$LINE')"
 fi
 rm -rf "$WD"
 

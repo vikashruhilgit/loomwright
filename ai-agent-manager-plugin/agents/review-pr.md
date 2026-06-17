@@ -76,6 +76,21 @@ This loop **NEVER merges a PR** and **never creates a PR** — it only operates 
 
 ---
 
+## Until-Mergeable Mode
+
+`--until-mergeable` is an **opt-in, strictly additive** drain mode layered on top of the default loop above. The full contract is defined by the **`review-heal` skill §"Until-Mergeable Mode"** (plus §"Anti-Churn Guardrail" and §"Postmortem Dispatch Tail") — that skill is the **single source of truth** and where every name below is *coined*. **Follow the skill as the authority; do not re-coin, rename, or redefine anything here.** This section sequences the surface only.
+
+- **Opt-in entry.** When `--until-mergeable` is **absent**, this runner runs the default diff-only review→fix→re-review loop **byte-for-byte** (AC7) — no external-state reads, no postmortem tail, `REVIEW_HEAL_RESULT` at `schema_version: 1`. When present, run the drain loop per the skill: each round reads external state (`gh pr view <url> --json statusCheckRollup,reviews,latestReviews,reviewDecision,mergeable,mergeStateStatus` + `gh api graphql` review threads + branch-protection **required-check discovery**), dispatches a `Task(general-purpose)` fix worker (Read / Write / Edit / Bash / Glob / Grep, **no Task**) for actionable required-check failures and **bot-authored** thread findings, then a regular `git push` (**never `--force`**), then re-polls.
+- **READY exit + notification (AC3).** When **all required checks are green AND no unresolved bot-authored review threads remain**, exit `decision: READY` and fire the desktop + webhook **"ready to merge"** notification best-effort (`${CLAUDE_PLUGIN_ROOT}/scripts/notify-desktop.sh` / `${CLAUDE_PLUGIN_ROOT}/scripts/send-webhook.sh`). Human approval, `reviewDecision: REVIEW_REQUIRED`, and human-authored unresolved threads are **surfaced/notified but NEVER awaited** — the loop never waits on a human.
+- **Fail CLOSED on unknowns (AC14).** A `gh api graphql` thread-query error (thread-state unknown) or unreadable branch-protection required-check metadata must fail **CLOSED** to `decision: ESCALATED` — never claim READY by defaulting to green. The only override is `--required-checks all-non-neutral`, which opts into gating on every non-`NEUTRAL`/`SKIPPED` check when the metadata is unreadable.
+- **`--max-rounds` bound → ESCALATED (AC4).** The drain is bounded by `--max-rounds N` (**default 5**, hard ceiling). On exhaustion without READY, exit `decision: ESCALATED`, post remaining findings via `gh pr comment`, and notify — never unbounded. The anti-churn guardrail runs one deep "fix-the-class" self-review on oscillation but never overrides the ceiling.
+- **Never-merge invariant.** `READY` is terminal-stop-and-notify, merge-identical to `PASS`/`ESCALATED` — **no `gh pr merge` is ever invoked** (AC6). The PR is left open for a human.
+- **Fail-safe churn-gated postmortem tail.** AFTER the decision is computed and `REVIEW_HEAL_RESULT` is emitted, run the Postmortem Dispatch Tail: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/dispatch-pr-postmortem.sh" "<pr-url>" --fix-cycles … --decision …` (fresh detached `claude` process — NEVER a nested `Task`). It is **ON by default within `--until-mergeable` but churn-gated** (silent no-op on clean/low-churn PRs), fires when ANY of `fix_cycles > postmortem-churn-threshold` (**default 2**, via `--postmortem-churn-threshold N` / `.postmortem_churn_threshold`) / `decision == ESCALATED` / a required check re-failed after a fix / bot feedback unresolved after a fix (AC10/AC11), and opts out entirely via `--no-auto-postmortem` (or `auto_postmortem: false`) — AC13. The dispatcher **always exits 0** and can NEVER alter `REVIEW_HEAL_RESULT.decision`; ignore its exit status.
+
+Under `--until-mergeable`, emit `REVIEW_HEAL_RESULT` at `schema_version: 2` with `decision: READY` available (schema owned by `docs/RESULT_SCHEMAS.md`).
+
+---
+
 ## Output — `REVIEW_HEAL_RESULT`
 
 End every run by emitting the `REVIEW_HEAL_RESULT` block defined by the `review-heal` skill (the single source of truth for this shape):
@@ -83,7 +98,7 @@ End every run by emitting the `REVIEW_HEAL_RESULT` block defined by the `review-
 ```
 ## REVIEW_HEAL_RESULT
 - schema_version: 1
-- decision: PASS | ESCALATED        # enum — exactly these two values
+- decision: PASS | ESCALATED        # PASS|ESCALATED (default loop); READY added only under --until-mergeable (schema_version: 2)
 - iterations: <int>                 # how many review→fix→re-review cycles ran
 - issues_fixed: <int>               # count of new+BLOCKING/HIGH issues addressed by fix workers
 - remaining_issues: <int>           # new+BLOCKING/HIGH issues still open at exit
@@ -91,7 +106,7 @@ End every run by emitting the `REVIEW_HEAL_RESULT` block defined by the `review-
 - notified: <bool>                  # true if a NEEDS_HUMAN notification was attempted
 ```
 
-`decision` is **exactly `PASS | ESCALATED`** — there is no `FAIL` in the result block; a reviewer `FAIL` is an internal loop signal.
+In the default loop `decision` is **exactly `PASS | ESCALATED`** (`schema_version: 1`) — there is no `FAIL` in the result block; a reviewer `FAIL` is an internal loop signal. Under `--until-mergeable` the result is at `schema_version: 2` and `READY` is the additional drain terminal decision (schema owned by `docs/RESULT_SCHEMAS.md`).
 
 ---
 

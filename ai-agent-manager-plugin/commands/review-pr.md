@@ -17,14 +17,21 @@ The loop contract is defined by the **`review-heal` skill** (`skills/review-heal
 ## Usage
 
 ```bash
-/review-pr <pr-url>          # Review-and-heal the given PR (e.g. https://github.com/owner/repo/pull/42)
+/review-pr <pr-url>                          # Review-and-heal the given PR (e.g. https://github.com/owner/repo/pull/42)
+/review-pr <pr-url> --until-mergeable        # Opt-in: drain machine-speed external signals until READY (never merges)
+/review-pr <pr-url> --until-mergeable --max-rounds 8 --postmortem-churn-threshold 3
 ```
 
 ## Parameters
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `<pr-url>` | Yes | The full URL of an existing PR. `gh pr view <pr-url> --json headRefName` resolves the head branch, which is fetched + checked out before the loop. The review scope is the PR diff (`git diff <base>...HEAD`, base default `main`). |
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `<pr-url>` | Yes | — | The full URL of an existing PR. `gh pr view <pr-url> --json headRefName` resolves the head branch, which is fetched + checked out before the loop. The review scope is the PR diff (`git diff <base>...HEAD`, base default `main`). |
+| `--until-mergeable` | No | off | **Opt-in, strictly additive** drain mode. Layers the external-signal drain loop on top of the default diff-only loop: reads **required** CI check-runs + automated/bot reviews + unresolved **bot-authored** review threads, auto-fixes the actionable BLOCKING/HIGH items, pushes, and re-polls until **required checks are green AND no unresolved bot-authored review threads remain** → `decision: READY` + "ready to merge" notification. **Never merges.** **Absent ⇒ behavior is byte-for-byte the existing diff-only loop** (AC7). Authority: `review-heal` skill §"Until-Mergeable Mode". |
+| `--max-rounds N` | No | `5` | Hard ceiling on `--until-mergeable` drain rounds. On exhaustion without reaching READY, the loop exits `decision: ESCALATED`, posts remaining findings via `gh pr comment`, and notifies — never unbounded (AC4). Only meaningful with `--until-mergeable`. |
+| `--required-checks all-non-neutral` | No | fail closed | **Opt-in fallback** for `--until-mergeable` when branch-protection required-check metadata is **unreadable** (insufficient permissions / no branch protection / API error). Default behavior **fails CLOSED** — unreadable metadata ⇒ the loop MUST NOT claim READY and exits `ESCALATED` (AC14). Passing `all-non-neutral` opts into treating every check whose state is not `NEUTRAL`/`SKIPPED` as blocking, so the drain can proceed without the metadata. |
+| `--no-auto-postmortem` | No | postmortem on (churn-gated) | Opt out **entirely** of the churn-gated postmortem tail — no `/pr-postmortem` is dispatched regardless of churn (AC13). Config equivalent: `auto_postmortem: false` in `.supervisor/notify-config.json`. Only meaningful with `--until-mergeable`. |
+| `--postmortem-churn-threshold N` | No | `2` | Fix-cycle trigger bar for the churn-gated postmortem tail: postmortem fires only when `fix_cycles > N` (among the other OR-triggers — AC11). Config equivalent: `.postmortem_churn_threshold` in `.supervisor/notify-config.json` (read via jq). Only meaningful with `--until-mergeable`. |
 
 ## What This Does
 
@@ -36,14 +43,26 @@ The loop contract is defined by the **`review-heal` skill** (`skills/review-heal
    - **NEEDS_HUMAN, or the loop exhausts with issues remaining** → **STOP. Do NOT auto-fix, do NOT merge.** Post findings to the PR (`gh pr comment`), fire best-effort notifications (`notify-desktop.sh` / `send-webhook.sh`), exit as `ESCALATED`.
 3. **No auto-merge, no PR creation.** Terminal states leave the PR open: `PASS` (human merges) and `ESCALATED` (human attention). `/review-pr` never creates a PR, which prevents a review→review recursion.
 
+> **Without `--until-mergeable` the behavior above is byte-for-byte the existing diff-only loop (AC7).** The new mode is strictly additive and opt-in — the default path reads no external state, runs no postmortem tail, and emits only `PASS`/`ESCALATED` at `schema_version: 1`.
+
+## `--until-mergeable` mode (opt-in drain)
+
+When `--until-mergeable` is passed, an **additive** drain loop runs on top of the default loop. It drains the **machine-speed** external review signals and never waits on a human. Authority is the `review-heal` skill §"Until-Mergeable Mode"; this command documents the surface only — it does not re-coin any name.
+
+1. **Each round reads external state.** `gh pr view <url> --json statusCheckRollup,reviews,latestReviews,reviewDecision,mergeable,mergeStateStatus` PLUS `gh api graphql` for unresolved review threads (each thread's `isResolved` + first-comment `author.login`/`__typename`) PLUS branch-protection **required-check discovery** (AC14). A GraphQL thread-query error or unreadable required-check metadata fails **CLOSED** to `ESCALATED` (never default-to-green) — unless `--required-checks all-non-neutral` is set.
+2. **Fix → push → re-poll.** Actionable required-check failures and unresolved **bot-authored** threads are handed to a `Task(general-purpose)` fix worker (Read / Write / Edit / Bash / Glob / Grep, **no Task**), followed by a regular `git push` (**never `--force`**), then the loop re-polls.
+3. **READY terminal state (AC3).** When **all required checks are green AND no unresolved bot-authored review threads remain**, the loop exits `decision: READY` and fires the desktop + webhook **"ready to merge"** notification best-effort (`notify-desktop.sh` / `send-webhook.sh`). **It never merges** — there is no `gh pr merge` anywhere; `READY` is terminal-stop-and-notify, merge-identical to `PASS`/`ESCALATED`, and the PR is left open for a human. **READY ⇔ required checks green AND no unresolved bot-authored threads.** Human approval, `reviewDecision: REVIEW_REQUIRED`, and human-authored unresolved threads are **surfaced/notified but NEVER awaited** — the loop never blocks on a human.
+4. **Bounded by `--max-rounds` (default 5).** On exhaustion without reaching READY, the loop exits `decision: ESCALATED` (AC4), posts remaining findings via `gh pr comment`, and notifies — never unbounded. An anti-churn guardrail runs one deep "fix-the-class" self-review on oscillation but never overrides the `--max-rounds` ceiling.
+5. **Churn-gated auto-postmortem tail.** After the decision is computed and `REVIEW_HEAL_RESULT` is emitted, a fail-safe tail conditionally fires the existing read-only `/pr-postmortem <pr-url>` via `scripts/dispatch-pr-postmortem.sh`. It is **ON by default within `--until-mergeable` but churn-gated** — a clean/low-churn PR is a silent no-op. It fires when ANY of: `fix_cycles > postmortem-churn-threshold` (default **2**, set via `--postmortem-churn-threshold N` / `.postmortem_churn_threshold`), `decision == ESCALATED`, a required check re-failed after a fix, or bot feedback remained unresolved after a fix (AC10/AC11). Opt out entirely with `--no-auto-postmortem` (or `auto_postmortem: false`) — AC13. The dispatcher **always exits 0** and can NEVER change `REVIEW_HEAL_RESULT.decision` — the decision is emitted before dispatch.
+
 ## Output — `REVIEW_HEAL_RESULT`
 
-The run ends by emitting a `REVIEW_HEAL_RESULT` block (`schema_version: 1`; defined by the `review-heal` skill):
+The run ends by emitting a `REVIEW_HEAL_RESULT` block (defined by the `review-heal` skill): `schema_version: 1` for the default diff-only loop, or `schema_version: 2` under `--until-mergeable` (which adds the `READY` decision + drain fields — schema owned by `docs/RESULT_SCHEMAS.md`):
 
 ```
 ## REVIEW_HEAL_RESULT
 - schema_version: 1
-- decision: PASS | ESCALATED        # enum — exactly these two values (no FAIL)
+- decision: PASS | ESCALATED        # enum — PASS|ESCALATED (default loop); READY is added only under --until-mergeable (v2)
 - iterations: <int>                 # review→fix→re-review cycles run
 - issues_fixed: <int>               # new+BLOCKING/HIGH issues addressed by fix workers
 - remaining_issues: <int>           # new+BLOCKING/HIGH issues still open at exit
