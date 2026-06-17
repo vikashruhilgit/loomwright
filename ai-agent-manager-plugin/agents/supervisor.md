@@ -877,8 +877,16 @@ else:
                      Report your attack-vector findings per your normal red-team output contract."
           )
           # Post findings to the PR as a clearly-labelled NON-GATING comment.
-          gh pr comment "$PR_URL" --body "🔴 Advisory red-team review (non-gating) — high-risk diff\n\n{rt findings summary}"  || true
-          red_team_advisory = "ran"
+          # Capture the exit status — a comment-post failure is a fail-safe no-op recorded as
+          # "error" per the ADVISORY CONTRACT below, NOT silently masked as a successful "ran".
+          # (Do NOT use a bare `|| true` here: it would swallow the failure and mis-record "ran".)
+          if gh pr comment "$PR_URL" --body "🔴 Advisory red-team review (non-gating) — high-risk diff\n\n{rt findings summary}" ; then
+            red_team_advisory = "ran"
+            rt_findings_oneline = "{one-line risk/findings summary from rt}"
+          else:
+            # comment post failed — fail-safe: log a one-line no-op, record "error", CONTINUE.
+            record_decision(phase: SELF_HEAL, decision: "red_team_advisory_comment_failed", rationale: "gh pr comment returned non-zero")
+            red_team_advisory = "error"
         catch (any spawn error / timeout / non-zero):
           # FAIL-SAFE: log one line and CONTINUE. Never abort the run on this path.
           record_decision(phase: SELF_HEAL, decision: "red_team_advisory_error", rationale: "{brief error}")
@@ -931,9 +939,10 @@ else:
      - **Heal decision:** {PASS|null}
      - **Heal iterations:** {N|null}
      - **Red team advisory:** {ran|skipped_low_risk|disabled|error}
+     - **Red team findings:** {one-line risk/findings summary — include this line ONLY when `red_team_advisory == ran`; omit entirely otherwise. Mirrors the findings carried into `SUPERVISOR_RESULT.summary`; additive markdown only, no schema field.}
      - **Summary:** {brief description of what was done}
      ```
-   - On ESCALATED: Move brief from `in-progress/` → `done/`, append outcome section with `**Status:** completed_with_escalation`, plus `**Heal reason:** {needs_human|max_iterations_reached|self_heal_resume_thrash}`, `**Heal remaining issues:** {count}`.
+   - On ESCALATED: Move brief from `in-progress/` → `done/`, append outcome section with `**Status:** completed_with_escalation`, plus `**Heal reason:** {needs_human|max_iterations_reached|self_heal_resume_thrash}`, `**Heal remaining issues:** {count}`, and the same `**Red team advisory:** {ran|skipped_low_risk|disabled|error}` line (plus the `**Red team findings:**` one-liner when it ran) — the red-team lens runs before the completion tail regardless of `heal_decision`, so its outcome is recorded on both the PASS and ESCALATED paths.
    - Backward compatibility: If job file is not in `in-progress/`, skip the move step (direct `/supervisor task:` invocation without Launch Pad).
 
 2.5. **Requirement close-out (Beads-absent only — fail-safe side-effect):**
