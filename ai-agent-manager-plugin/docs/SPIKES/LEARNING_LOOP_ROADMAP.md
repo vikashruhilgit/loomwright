@@ -227,7 +227,7 @@ Acceptance criteria:
    - Keep the CI review independent; do not try to force identical findings or converge bot behavior.
    - Mention classes as review lenses, not as hard schema.
 
-2. **Taxonomy cleanup**
+2. **R3: Taxonomy cleanup**
    - Split the current drift wording into clear classes:
      - `count/version/restated-list drift`
      - `cross-reference precision drift`
@@ -239,7 +239,7 @@ Acceptance criteria:
    - Capture residual scope so future agents do not rebuild shipped behavior.
    - Keep red-team/adversarial review documented as advisory at first.
 
-4. **Optional red-team lens for high-risk integrated diffs**
+4. **R1: Optional red-team lens for high-risk integrated diffs**
    - Trigger only for high-risk integrated diffs, for example auth/security, data loss, permissions, secrets, migrations, workflow automation, or broad cross-agent prompt changes.
    - Run as an advisory second lens; it must not directly change `heal_decision`, block a PR, or create a new gate in the first slice.
    - Bound it to one pass per run and record findings as review input / risks, not as an unbounded loop.
