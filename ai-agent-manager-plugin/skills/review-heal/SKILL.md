@@ -2,8 +2,8 @@
 name: review-heal
 description: Shared loop contract for the standalone PR review-and-heal workflow (`/review-pr <pr-url>` + `ai-agent-manager-plugin:review-pr-runner`). Single source of truth for the bounded review→fix→re-review loop, PR-URL→branch resolution, the REVIEW_HEAL_RESULT block, and the pinned canonical names consumed by the dispatcher script, the runner agent, and the autonomous EVALUATE step. Use when implementing or invoking standalone PR review-and-heal.
 allowed-tools: [Read, Write, Edit, Bash, Task]
-version: "1.0.0"
-lastUpdated: "2026-06-06"
+version: "1.1.0"
+lastUpdated: "2026-06-17"
 ---
 
 # Review-Heal Skill
@@ -22,13 +22,20 @@ These names are **coined here**. Treat this section as authoritative; all other 
 
 | Kind | Canonical name | Notes |
 |---|---|---|
-| Result block | **`REVIEW_HEAL_RESULT`** | `schema_version: 1`. Fields below. |
+| Result block | **`REVIEW_HEAL_RESULT`** | `schema_version: 1` (default loop) / `schema_version: 2` under `--until-mergeable` (adds the `READY` decision + drain fields — schema owned by `docs/RESULT_SCHEMAS.md`). |
 | New agent | **`ai-agent-manager-plugin:review-pr-runner`** | Registered in `agents/review-pr.md`. |
 | New command | **`/review-pr <pr-url>`** | Inline main-thread workflow body referencing this skill. |
 | New skill | **`review-heal`** | This file. |
 | Opt-out flag | **`--no-auto-review`** | Suppresses the post-`/supervisor` auto-dispatch. |
 | Enable signal | **`auto_review: true`** in `.supervisor/notify-config.json` (or a **`--auto-review`** flag) | Either turns on auto-dispatch. |
 | Dispatcher script | **`ai-agent-manager-plugin/scripts/dispatch-pr-review.sh`** | Gated, config-file-driven, cost/runaway-guarded, **always exits 0**. |
+| Until-mergeable mode | **`--until-mergeable`** | Opt-in drain loop (§"Until-Mergeable Mode"). Strictly additive — **absent ⇒ byte-for-byte the default loop**. |
+| Drain bound | **`--max-rounds N`** (default 5) | Hard ceiling on drain rounds (§"Until-Mergeable Mode"). |
+| Required-check fallback | **`--required-checks all-non-neutral`** | Opt-in fallback when branch-protection metadata is unreadable (default = fail closed → `ESCALATED`). |
+| READY decision | **`READY`** | Drain terminal state — required checks green AND no unresolved bot-authored threads. Merge-identical to `PASS`/`ESCALATED` (**never merges**). Emitted ONLY under `--until-mergeable`. |
+| Postmortem opt-out | **`--no-auto-postmortem`** (or `auto_postmortem: false`) | Suppresses the churn-gated postmortem tail (§"Postmortem Dispatch Tail"). |
+| Postmortem threshold | **`--postmortem-churn-threshold N`** (default 2; `.postmortem_churn_threshold`) | Fix-cycle trigger bar for the postmortem tail. |
+| Postmortem dispatcher | **`ai-agent-manager-plugin/scripts/dispatch-pr-postmortem.sh`** | Churn-gated, config-driven, **always exits 0**, NEVER alters the decision (§"Postmortem Dispatch Tail"). |
 
 ### `REVIEW_HEAL_RESULT` block
 
@@ -171,6 +178,203 @@ Additionally, **`/review-pr` does not create PRs** (it only operates on an exist
 
 ---
 
+## Until-Mergeable Mode
+
+`--until-mergeable` is an **opt-in, strictly additive** drain loop layered *on top of* the default diff-only loop above. It drains the **machine-speed external review signals** on a PR — **required** CI check-runs, automated/bot reviews, and unresolved **bot-authored** review threads — auto-fixing the actionable BLOCKING/HIGH items, pushing, and re-polling until **all required checks are green AND no unresolved bot-authored review threads remain**, then stops with `decision: READY` and fires a "ready to merge" notification. **It NEVER merges** (see "No auto-merge ever") and **NEVER waits on a human** — human approval, `reviewDecision: REVIEW_REQUIRED`, and human-authored unresolved threads are surfaced/notified but are explicitly **not** readiness blockers.
+
+> **AC7 — absent ⇒ unchanged.** When `--until-mergeable` is NOT passed, `/review-pr` runs the existing diff-only review→fix→re-review loop (Step 2) **byte-for-byte** — same `PASS`/`ESCALATED` terminal states, same `REVIEW_HEAL_RESULT` `schema_version: 1`, no external-state reads, no postmortem tail. This mode is purely opt-in; nothing about the default path changes.
+
+### Step U1 — Read external state each round (AC1, PINNED)
+
+Each drain round begins by reading the PR's external review state. Two signals need MORE than `gh pr view --json` — do **not** invent a `--json reviewThreads` flag (it does not exist):
+
+```
+# (a) core PR state — single gh pr view
+gh pr view <pr-url> --json statusCheckRollup,reviews,latestReviews,reviewDecision,mergeable,mergeStateStatus
+
+# (b) unresolved review threads + each thread's first-comment author type — GraphQL only
+gh api graphql -f query='
+  query($owner:String!,$repo:String!,$number:Int!){
+    repository(owner:$owner,name:$repo){
+      pullRequest(number:$number){
+        reviewThreads(first:100){
+          nodes{
+            isResolved
+            comments(first:1){ nodes{ author{ login __typename } } }
+          }
+        }
+      }
+    }
+  }' -F owner=<owner> -F repo=<repo> -F number=<number>
+```
+
+- `mergeStateStatus` / `mergeable` are **corroborating only** — they conflate "required check failing" with "approval missing" (which we deliberately ignore), so they are never the sole basis for a READY/ESCALATED decision.
+- **Fail-safe (R1):** if the GraphQL thread query errors (or returns no parseable thread set), thread-state is **"unknown"** → the loop **MUST NOT claim READY** → it exits `decision: ESCALATED`. Unknown is never treated as "no blocking threads".
+
+### Step U2 — Required-check discovery (AC14, PINNED, fail CLOSED)
+
+"Checks green" gates on **required** checks ONLY (optional/non-required failing checks never block READY). Discover the required contexts from branch-protection metadata:
+
+```
+# REST
+gh api repos/<owner>/<repo>/branches/<base>/protection/required_status_checks
+# …or GraphQL baseRef.branchProtectionRule.requiredStatusCheckContexts
+```
+
+- Gate READY only on the discovered required contexts; cross-reference them against `statusCheckRollup`.
+- **Fail CLOSED:** if required-check metadata is **unavailable** (insufficient permissions, no branch protection, API error), the loop **MUST NOT claim READY** — it exits `decision: ESCALATED`. This is the "correctness gates fail CLOSED" invariant: an unverifiable required-check set is treated as not-green, never as green.
+- **Escape hatch:** `--required-checks all-non-neutral` opts into a fallback that treats **every** check whose state is not `NEUTRAL`/`SKIPPED` as blocking (i.e. ignore the metadata gap and gate on all non-neutral checks). This is the only way to proceed without branch-protection metadata; default behavior remains fail-closed.
+
+### Step U3 — Bot-vs-human thread classification (AC15)
+
+An unresolved review thread is a **READY-blocker ONLY** when its first comment's author is a **bot**:
+
+- `author.__typename == "Bot"`, **OR**
+- `author.login` matches `*[bot]` (the GitHub App login convention).
+
+Human-authored — or **unknown/unclassifiable** — unresolved threads are **surfaced in the notification but NEVER block READY** (AC3): the loop never waits on a human. (Unknown-author threads are surfaced so a human sees them before they merge; per R11 this is acceptable because READY never auto-merges.) Note the asymmetry with U1's fail-safe: a *GraphQL error* (no thread data at all) → `ESCALATED`; a *successfully-read* thread whose author cannot be classified as a bot → does not block (treated like a human thread, surfaced only).
+
+### Step U4 — The bounded drain loop
+
+```
+rounds = 0
+max_rounds = 5                      # default; --max-rounds N overrides; HARD ceiling
+fix_cycles = 0                      # how many fix→push cycles ran (postmortem-gate input)
+churn_rounds = 0                    # consecutive rounds whose fingerprint set didn't shrink
+fingerprints_prev = {}              # see "Anti-Churn Guardrail"
+repeat_check_failure = false        # a required check failed AGAIN after a fix (postmortem input)
+unresolved_bot_feedback = false     # bot thread still open after >=1 fix (postmortem input)
+
+while rounds < max_rounds:
+  read external state            # Step U1
+  required = discover_required_checks()   # Step U2 — ESCALATED (fail closed) if unavailable & not --required-checks all-non-neutral
+  threads  = classify_threads()           # Step U3 — ESCALATED if GraphQL errored (thread-state unknown)
+
+  required_failing = [c for c in required if c.state not in GREEN_STATES]
+  blocking_threads = [t for t in threads if t.unresolved and t.author_is_bot]
+
+  if required_failing == [] and blocking_threads == []:
+    decision = READY                      # AC3 — required green AND no unresolved bot threads
+    notify "ready to merge" (best-effort: desktop + webhook)
+    break
+
+  # else — actionable machine signals remain. Dispatch a fix worker (AC2).
+  fixable = actionable BLOCKING/HIGH items from required_failing + blocking_threads
+  Task(
+    subagent_type: "general-purpose",
+    # Tool allowlist: Read, Write, Edit, Bash, Glob, Grep — NO Task.
+    prompt: "Address ONLY these required-check failures and bot-authored review-thread
+             findings: {fixable}. Do NOT touch human-thread or optional-check items.
+             Update tests if behaviour changes; run type-check + tests locally."
+  )
+  fix_cycles += 1
+
+  git push                              # REGULAR push, NEVER --force (see "Never --force")
+
+  update anti-churn fingerprints        # see "Anti-Churn Guardrail" — may run a deep self-review
+  rounds += 1
+
+# Loop exit without READY → exhausted
+if rounds == max_rounds and decision != READY:
+  decision = ESCALATED                  # AC4 — bounded, never unbounded
+  post remaining findings to PR (gh pr comment ...)
+  notify (best-effort)
+```
+
+`GREEN_STATES` are the check states that count as passing (e.g. `SUCCESS`; `NEUTRAL`/`SKIPPED` are non-blocking). Mark `repeat_check_failure = true` when a required check that was fixed re-fails in a later round, and `unresolved_bot_feedback = true` when a bot-authored thread remains unresolved after at least one fix cycle — both feed the Postmortem Dispatch Tail.
+
+### Terminal states (until-mergeable)
+
+- **`READY`** — required checks green AND no unresolved bot-authored threads. Loop done; **PR left open for a human to merge** (merge-identical to `PASS`); "ready to merge" notification fired.
+- **`ESCALATED`** — `--max-rounds` exhausted with signals remaining, OR a fail-closed condition tripped (GraphQL thread query errored → thread-state unknown; required-check metadata unavailable without `--required-checks all-non-neutral`). Findings posted to the PR, notifications fired, **PR left open**.
+
+There is **no `READY`-that-merges**. `READY` is terminal-stop-and-notify, exactly like `PASS`/`ESCALATED` (AC6).
+
+---
+
+## Anti-Churn Guardrail
+
+The drain loop (and, by extension, any review→fix loop) can **oscillate** — a fix for one finding re-surfaces the same class of finding next round. The guardrail bounds that without ever going unbounded.
+
+### Fingerprint (AC5, R3)
+
+Each actionable finding is fingerprinted by the triple **`{file, issue_category, rule}`**:
+
+- `file` — the path the finding points at.
+- `issue_category` — the `CODE_REVIEW_RESULT`/check category (e.g. `new`, the failing check name, the bot-rule id).
+- `rule` — the specific rule/lint id / check context that flagged it.
+
+Two findings with the same triple across rounds are "the same class".
+
+### Trip condition
+
+The guardrail **trips** when EITHER:
+
+1. a fingerprint that was supposedly fixed **repeats** in a later round (a *repeat* fingerprint after a fix), OR
+2. `churn_rounds ≥ 2` (the same finding-class set has failed to shrink across two consecutive rounds).
+
+### On a trip — ONE deep "fix-the-class" self-review
+
+When tripped, run **exactly one** deep "fix-the-class" self-review pass **per trip**: instead of patching the symptom again, the fix worker is told to find and fix the *whole class* (the root cause shared by the repeating fingerprints), not the single instance. Then continue the loop.
+
+- The deep pass runs **once per trip** — it does not re-fire every round.
+- `--max-rounds` remains the **hard ceiling**: if oscillation persists, the loop still exits `ESCALATED` at `max_rounds`. The guardrail makes oscillation *less likely*, it never overrides the bound (R3 — "could loop forever" mitigation).
+
+This mirrors the spirit of Supervisor Phase 4.5's bounded heal loop: bounded iterations + one escalation lever, never an open-ended retry.
+
+---
+
+## Postmortem Dispatch Tail
+
+After an `--until-mergeable` run **finalizes its decision and emits `REVIEW_HEAL_RESULT`**, a churn-gated, fail-safe tail conditionally fires the EXISTING read-only `/pr-postmortem <pr-url>` so a meaningful-churn PR captures a learning signal. This tail can **NEVER** change whether the PR is declared ready.
+
+### Cardinal guarantee (AC12, R9)
+
+- The loop's `decision` is **computed and emitted BEFORE** the tail runs. The tail reads it as an input only.
+- The dispatcher (`scripts/dispatch-pr-postmortem.sh`) is **fire-and-forget and `exit 0` on EVERY path** (mirrors `dispatch-pr-review.sh`).
+- `/pr-postmortem` is **read-only** on the analyzed repo and **only appends** one JSONL line to `.supervisor/postmortem/results.jsonl` — it mutates no repo file.
+- Therefore a postmortem dispatcher / gather / append **failure leaves `REVIEW_HEAL_RESULT.decision` unchanged** and the merge-ready result is identical to a run where postmortem succeeded. `postmortem_dispatched` is informational, NEVER a gate input.
+
+### Churn gate (AC9/AC10/AC11) — fires only on meaningful churn
+
+Auto-postmortem is **ON by default within `--until-mergeable`** but **churn-gated** — a clean PR is a silent no-op (AC9). The tail dispatches when **ANY** of these OR-triggers is true:
+
+| Trigger | Source |
+|---|---|
+| `fix_cycles > postmortem_churn_threshold` (default **2**) | `--postmortem-churn-threshold N` or `.postmortem_churn_threshold` in `.supervisor/notify-config.json` (read via jq) |
+| `decision == ESCALATED` (escalated / timed-out) | the loop's final decision |
+| same required CI/check failure repeats after a fix | `repeat_check_failure` |
+| bot/automated feedback remained unresolved after ≥1 fix | `unresolved_bot_feedback` |
+
+If **NONE** trip (`fix_cycles ≤ threshold` AND `decision != ESCALATED` AND no repeat check failure AND no lingering bot feedback) → **no postmortem is dispatched** (AC9).
+
+### Opt-out (AC13)
+
+`--no-auto-postmortem` (or `auto_postmortem: false` in `.supervisor/notify-config.json`) opts out **entirely** — no postmortem regardless of churn. (NB: the config value is the boolean `false`; the dispatcher reads it as a raw value, never via jq `// empty`, so the falsy `false` is not silently coerced away.)
+
+### Launch form (R10 — fresh detached process, NEVER a nested Task)
+
+`/pr-postmortem` is dispatched as a **fresh detached `claude` OS process**, exactly mirroring `dispatch-pr-review.sh`'s launch form — NEVER a nested `Task` spawn. The review-heal loop body is itself Task-spawned in the `/autonomous` EVALUATE sense (b), so a nested `Task(/pr-postmortem)` would land one spawn-level too deep (subagents cannot spawn subagents). The dispatcher's launch line is:
+
+```
+( nohup "$CLAUDE_BIN" "/pr-postmortem $PR_URL" >>"$RUN_LOG" 2>&1 </dev/null & ) >/dev/null 2>&1 || true
+```
+
+(or a no-op when `claude`/config is absent). A per-PR marker under `.supervisor/postmortem-dispatch/` guards against re-dispatch. The exact invocation the tail makes:
+
+```
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/dispatch-pr-postmortem.sh" "<pr-url>" \
+  --fix-cycles "$fix_cycles" \
+  --decision "$decision" \
+  $( [ "$repeat_check_failure" = true ] && printf -- '--repeat-check-failure' ) \
+  $( [ "$unresolved_bot_feedback" = true ] && printf -- '--unresolved-bot-feedback' ) \
+  [--postmortem-churn-threshold N] [--no-auto-postmortem]
+```
+
+The tail's exit status is **ignored** — the dispatcher always exits 0 and the decision is already emitted.
+
+---
+
 ## Anti-Patterns
 
 - **Force-pushing the PR branch.** Never `git push --force` — clobbers concurrent author commits. Regular push only.
@@ -179,6 +383,11 @@ Additionally, **`/review-pr` does not create PRs** (it only operates on an exist
 - **Creating a PR from `/review-pr`.** Would open the door to review→review recursion.
 - **Letting notify failures abort the loop.** The notify scripts are fire-and-forget; treat their exit codes as advisory only (they always exit 0 anyway).
 - **Re-coining any pinned name.** Other subtasks consume the names above verbatim — renaming here breaks the contract.
+- **Inventing a `gh pr view --json reviewThreads` flag.** Unresolved threads + author type are GraphQL-only (Step U1). The `--json` flag does not exist; use `gh api graphql`.
+- **Claiming READY when a required-check or thread signal is unknown.** A GraphQL thread error or unreadable branch-protection metadata must fail CLOSED to `ESCALATED` — never default-to-green.
+- **Blocking READY on a human.** Human approval, `REVIEW_REQUIRED`, and human/unknown-author threads are surfaced, never gated (AC3/AC15). The drain loop waits only on bots + required checks.
+- **Letting the postmortem tail change the decision.** The decision is emitted BEFORE dispatch; the dispatcher always exits 0 and only appends to the trend file. A postmortem failure must be invisible to `REVIEW_HEAL_RESULT.decision` (AC12).
+- **Dispatching `/pr-postmortem` as a nested `Task`.** Subagents cannot spawn subagents — launch a fresh detached `claude` process via `dispatch-pr-postmortem.sh` (R10).
 
 ## Related Skills
 
@@ -194,4 +403,7 @@ Additionally, **`/review-pr` does not create PRs** (it only operates on an exist
 - PR-branch pushes are regular (never `--force`).
 - PASS and ESCALATED are the only terminal `decision` values; no auto-merge in either.
 - NEEDS_HUMAN / exhaustion posts findings to the PR and fires best-effort notifications (never blocks the loop).
-- `REVIEW_HEAL_RESULT` emitted with all seven fields at `schema_version: 1`.
+- `REVIEW_HEAL_RESULT` emitted with all seven fields at `schema_version: 1` (default loop); `schema_version: 2` with `decision: READY` under `--until-mergeable`.
+- **`--until-mergeable` absent ⇒ default loop byte-for-byte unchanged** (AC7) — the drain, anti-churn, and postmortem-tail logic are strictly opt-in.
+- Under `--until-mergeable`: external state read via `gh pr view --json statusCheckRollup,…` PLUS `gh api graphql` review-threads PLUS branch-protection required-check discovery; READY gates on **required** checks + **bot-authored** unresolved threads only; fails CLOSED to `ESCALATED` on unknown thread/required-check state; bounded by `--max-rounds` (default 5); **never auto-merges (the no-auto-merge invariant holds — READY is terminal-stop-and-notify)**.
+- Postmortem Dispatch Tail runs AFTER the decision is emitted, is churn-gated (default threshold 2), opt-out via `--no-auto-postmortem`, and can never alter `REVIEW_HEAL_RESULT.decision` (`dispatch-pr-postmortem.sh` always exits 0).
