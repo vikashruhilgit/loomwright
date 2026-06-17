@@ -26,6 +26,8 @@
 #   13. launch-form contract: emitted command is headless `claude -p "/pr-postmortem <url>"`
 #       (regression guard — plain `claude "<prompt>"` without -p opens an interactive REPL
 #       that hangs when detached; F2 review fix).
+#   14. claude binary absent -> fail-safe no-op (non-dry-run; exit 0, no marker, no launch)
+#       — exercises the binary-absent fallback the dry-run cases never reach.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -212,6 +214,20 @@ if [ "$RUN_RC" -eq 0 ] \
   ok "launch-form: headless -p + /pr-postmortem <url> ($LINE)"
 else
   no "launch-form missing -p or slash command (line='$LINE')"
+fi
+rm -rf "$WD"
+
+echo "== 14. claude binary absent -> fail-safe no-op (NOT dry-run; exit 0, no marker, no launch) =="
+WD="$(fresh_repo)"
+# Real (non-dry-run) path with a claude binary that does not exist: the churn gate trips
+# (heavy churn) but the 'claude not on PATH' check must exit 0 WITHOUT writing a marker or
+# launching anything — so a later run that DOES have claude can still dispatch (marker not
+# pre-consumed). Exercises the binary-absent fallback the dry-run cases never reach.
+RUN_OUT="$( cd "$WD" && AI_AGENT_MANAGER_CLAUDE_BIN=claude-does-not-exist-xyz bash "$DISPATCH" "$PR" --fix-cycles 9 --decision ESCALATED 2>/dev/null )"; RUN_RC=$?
+if [ "$RUN_RC" -eq 0 ] && ! printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 0 ]; then
+  ok "claude-absent: exit 0, no marker, no dispatch (fail-safe)"
+else
+  no "claude-absent fallback wrong (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
 fi
 rm -rf "$WD"
 
