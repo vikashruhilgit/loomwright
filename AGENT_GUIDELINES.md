@@ -108,6 +108,14 @@ Agent result blocks (`WORKER_RESULT`, `CODE_REVIEW_RESULT`, `EXECUTE_RESULT`, `E
 
 **LESSONS provenance + freshness (deferred at v14.5.0; SHIPPED on the v14.24.x line, parity with PROJECT_MEMORY):** LESSONS joins the provenance-gated set. `write-lessons.sh` hash-chains every add/evict into a **LESSONS-SPECIFIC** chain file `.supervisor/memory/.lessons-provenance.jsonl` (GENESIS-rooted; one `evict` entry per evicted lesson — kept separate from PROJECT_MEMORY's `.provenance.jsonl` so the two chain walks never interleave), and the new sole-reader `read-lessons.sh` is the read-side provenance gate (drops un-provenanced poison lines, distrusts everything after a broken chain link — same W1 enforcement as `read-project-memory.sh`). Each lesson also carries machine-readable **freshness metadata** (`last_verified` ISO-8601 + `confidence`, in an HTML-comment trailer excluded from `content_hash`); `read-lessons.sh` applies an advisory **stale-lint** (skips lessons older than `LESSON_STALE_DAYS`, default 90). LESSONS-APPLY (wiring the reader into plan time) and auto-demotion remain future work; LESSONS provenance is no longer deferred.
 
+### Memory Hierarchy & APPLY Precedence
+
+When multiple memory layers carry relevant knowledge, resolve precedence **most-authoritative first**:
+
+`CLAUDE.md` > `PROJECT_MEMORY` > `LESSONS` > per-agent memory (`.claude/agent-memory/<agent>/`) > brain/wiki hints.
+
+**Rule:** layers 2–5 (everything below `CLAUDE.md`) are **advisory** and NEVER override `CLAUDE.md` or any gate / verdict / `heal_decision` — agents read only scoped, relevant entries and ignore stale or unrelated content.
+
 ---
 
 ## Advisor Tool (SDK-only pattern)
