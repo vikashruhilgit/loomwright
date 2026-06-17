@@ -48,6 +48,16 @@ jobs:
 
             Use the repository's CLAUDE.md for guidance on style and conventions. Be constructive and helpful in your feedback.
 
+            Additionally, watch for these recurring behavioral/doc miss-classes (defined in ai-agent-manager-plugin/skills/quality-checklist/SKILL.md "Self-Heal Miss-Class Checklist") and call out any you see, mapping the signal to this repo's languages where relevant:
+            - validation parity — a client/frontend-enforced rule with no equivalent server/API-boundary check
+            - numeric falsy coercion — `||`/`!x`/truthiness on a numeric or boolean field where 0/false/"" is legitimate
+            - positional args vs options object misuse — a call site whose argument shape doesn't match an options-object callee
+            - missing branch coverage — a new if/else/switch/ternary/error path with no test exercising each branch
+            - count/version/restated-list drift — a count, version, or restated list changed in one file but not the others that mirror it
+            - cross-reference precision drift — a "see X" / file:line / canonical-name reference that no longer points where it claims
+
+            This is your own independent checklist as a reviewer — apply your own judgment; do not try to match or converge with any other reviewer's findings.
+
             Use `gh pr comment` with your Bash tool to leave your review as a comment on the PR.
 
           claude_args: '--model claude-opus-4-8 --effort high --allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'

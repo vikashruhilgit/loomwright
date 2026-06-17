@@ -164,7 +164,7 @@ Run these checks **only when `review_mode = consistency_audit`**. Results map to
 
 The hook enforces these caps on `drift_kind ↔ severity` combinations — an issue violating a cap is rejected at Stop time.
 
-**Self-heal lens (Supervisor Phase 4.5 / `/review-pr`):** during a self-heal or standalone PR-heal review, ALSO apply the repo-agnostic **Self-Heal Miss-Class Checklist** in `skills/quality-checklist/SKILL.md` — validation parity (backend mirrors frontend), no numeric-falsy coercion, no positional args to options-object functions, branch coverage for new conditionals, and count/cross-ref drift. It is repo-agnostic: it catches these classes on external app repos where the `consistency_audit` triggers above do not fire.
+**Self-heal lens (Supervisor Phase 4.5 / `/review-pr`):** during a self-heal or standalone PR-heal review, ALSO apply the repo-agnostic **Self-Heal Miss-Class Checklist** in `skills/quality-checklist/SKILL.md` — validation parity (backend mirrors frontend), no numeric-falsy coercion, no positional args to options-object functions, branch coverage for new conditionals, count/version/restated-list drift, and cross-reference precision drift. It is repo-agnostic: it catches these classes on external app repos where the `consistency_audit` triggers above do not fire.
 
 ---
 

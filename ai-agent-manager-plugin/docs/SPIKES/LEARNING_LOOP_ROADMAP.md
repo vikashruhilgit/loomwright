@@ -76,7 +76,7 @@ The roadmap is no longer greenfield. Treat the remaining work as incremental sli
 | Phase 0 — Brain read-path cleanup | Shipped in v14.27.0 | Only fix regressions if the baseline harness or `brain-context` docs drift |
 | Phase 1 — Internal memory APPLY | Shipped in v14.28.0 | Monitor prompt behavior; no new storage surfaces |
 | Phase 2 — Knowledge usage telemetry | Foundation shipped in v14.28.0 | Finish measurement: `/insights` consumption + Launch Pad marker |
-| Phase 3 — Review quality | Partially shipped before this roadmap (v14.21.0) | Finish residual: CI miss-class vocabulary, taxonomy cleanup, optional red-team lens |
+| Phase 3 — Review quality | Core shipped in v14.21.0; residual shipped in v14.29.0 | Complete — CI miss-class vocabulary (R4), drift-taxonomy split (R3), and opt-in advisory red-team lens (R1) all landed |
 | Phase 4+ | Not started | Start only after Phase 2 measurement is observable |
 
 Recommended next order:
@@ -220,14 +220,14 @@ Acceptance criteria:
 - CI and local review remain independent; convergence is not the goal.
 - Review quality improves because code is better, not because bots are quieter.
 
-**Phase 3 residual scope — full option:**
+**Phase 3 residual scope — full option:** _(Shipped in v14.29.0 — R4 CI miss-class vocabulary, R3 drift-taxonomy split, and R1 opt-in advisory red-team lens all landed; advisory/non-gating, no `schema_version` bump, counts unchanged.)_
 
 1. **R4: independent CI review prompt miss-class vocabulary**
    - Enrich `.github/workflows/claude-code-review.yml` with the same defect-class vocabulary used by local review/self-heal.
    - Keep the CI review independent; do not try to force identical findings or converge bot behavior.
    - Mention classes as review lenses, not as hard schema.
 
-2. **Taxonomy cleanup**
+2. **R3: Taxonomy cleanup**
    - Split the current drift wording into clear classes:
      - `count/version/restated-list drift`
      - `cross-reference precision drift`
@@ -239,7 +239,7 @@ Acceptance criteria:
    - Capture residual scope so future agents do not rebuild shipped behavior.
    - Keep red-team/adversarial review documented as advisory at first.
 
-4. **Optional red-team lens for high-risk integrated diffs**
+4. **R1: Optional red-team lens for high-risk integrated diffs**
    - Trigger only for high-risk integrated diffs, for example auth/security, data loss, permissions, secrets, migrations, workflow automation, or broad cross-agent prompt changes.
    - Run as an advisory second lens; it must not directly change `heal_decision`, block a PR, or create a new gate in the first slice.
    - Bound it to one pass per run and record findings as review input / risks, not as an unbounded loop.

@@ -39,7 +39,7 @@ Each review round is assigned **exactly ONE** class. Definitions are crisp so ca
 
 ### Optional `self_heal_miss` flag (boolean, per round)
 
-Set `self_heal_miss: true` when the round is something **Supervisor Phase 4.5 self-heal should have caught but didn't** — i.e. the finding falls in the repo-agnostic Self-Heal Miss-Class Checklist (`skills/quality-checklist/SKILL.md`): backend-mirrors-frontend validation parity, `||`/falsy coercion on numeric fields, positional args to options-object functions, missing branch coverage, count/cross-ref drift. These rounds are the highest-signal entries for hardening self-heal. Default `false` when unsure.
+Set `self_heal_miss: true` when the round is something **Supervisor Phase 4.5 self-heal should have caught but didn't** — i.e. the finding falls in the repo-agnostic Self-Heal Miss-Class Checklist (`skills/quality-checklist/SKILL.md`): backend-mirrors-frontend validation parity, `||`/falsy coercion on numeric fields, positional args to options-object functions, missing branch coverage, count/version/restated-list drift, cross-reference precision drift. These rounds are the highest-signal entries for hardening self-heal. Default `false` when unsure.
 
 ### Flow-stage attribution (per round)
 

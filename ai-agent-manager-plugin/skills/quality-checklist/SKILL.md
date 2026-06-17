@@ -152,7 +152,8 @@ Check each class against the integrated diff:
 - [ ] **No falsy coercion on numeric (or boolean) fields.** `value || default` / `if (!count)` silently swallows a legitimate `0` (and `false`, `""`). Use `value ?? default` / explicit `=== undefined` / `== null` checks for fields where zero/empty is valid. Class signal: `||`, `!x`, or truthiness guards applied to a quantity, price, count, offset, or index.
 - [ ] **No positional args to an options-object function.** When a function takes a single options object (`fn({ a, b })`), every call site passes an object — never positional args (`fn(a, b)`), and never in the wrong key order. Class signal: a call site whose argument shape doesn't match the callee's signature.
 - [ ] **Branch coverage for new conditionals.** Every new `if`/`else`/`switch`/ternary/error path introduced by the diff has at least one test exercising each branch (success AND failure). Class signal: a new conditional or early-return with no corresponding test.
-- [ ] **Count / cross-reference drift.** When the change alters a count (N agents/commands/items), a version string, a mirrored prompt, or any "see X" cross-reference, EVERY place that restates that count/version/reference is updated in the same change. Class signal: a number or canonical name that appears in more than one file, changed in one but not the others.
+- [ ] **Count / version / restated-list drift.** When the change alters a count (N agents/commands/items), a version string, a mirrored prompt, or any restated list, EVERY place that restates that count/version/list is updated in the same change. Class signal: a number/version/canonical name that appears in more than one file, changed in one but not the others.
+- [ ] **Cross-reference precision drift.** When the change moves, renames, or removes a target, EVERY "see X" / `file:line` / canonical-name cross-reference that pointed at it is updated in the same change so it still points where it claims. Class signal: a reference whose target moved, was renamed, or no longer exists.
 
 **Language-adaptation note (keeps this repo-agnostic):** the *classes* are language-agnostic, but the inline `Class signal` examples are illustrative and JS/TS-flavored (`||`/`??`, `if (!x)`, Zod/Yup, `fn({ ... })`). On a non-JS repo, map each signal to the target language's equivalent — e.g. Python `or` / `if not x` / `is None` / `**kwargs`; Go zero-value checks / functional-options structs; Rust `Option` / builder structs — and don't treat the literal JS tokens as exhaustive.
 
@@ -163,7 +164,7 @@ Check each class against the integrated diff:
 - Checklist invocation: 50 tokens
 - Framework-specific variations: 100-200 tokens
 - Repo consistency section (audit mode only): +150 tokens
-- Self-Heal Miss-Class Checklist (Phase 4.5 / review-pr heal only): +120 tokens
+- Self-Heal Miss-Class Checklist (Phase 4.5 / review-pr heal only): +140 tokens
 - Total: ~250-400 tokens
 - Context7: Not required
 
