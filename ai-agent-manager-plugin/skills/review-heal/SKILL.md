@@ -42,7 +42,7 @@ These names are **coined here**. Treat this section as authoritative; all other 
 ```
 ## REVIEW_HEAL_RESULT
 - schema_version: 1
-- decision: PASS | ESCALATED        # enum — exactly these two values
+- decision: PASS | ESCALATED        # enum — exactly these two values (READY is added under --until-mergeable, schema v2 — see docs/RESULT_SCHEMAS.md)
 - iterations: <int>                 # how many review→fix→re-review cycles ran
 - issues_fixed: <int>               # count of new+BLOCKING/HIGH issues addressed by fix workers
 - remaining_issues: <int>           # new+BLOCKING/HIGH issues still open at exit
