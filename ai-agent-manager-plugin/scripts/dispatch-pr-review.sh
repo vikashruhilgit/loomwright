@@ -31,11 +31,31 @@
 #   /review-pr NEVER creates a PR, there is no review->review recursion.
 #
 #   FRESH DETACHED PROCESS. When enabled + not yet dispatched, launch a brand-new
-#   detached `claude --agent ai-agent-manager-plugin:review-pr-runner <pr-url>`
+#   detached HEADLESS `claude -p --agent ai-agent-manager-plugin:review-pr-runner <pr-url>`
 #   OS process (nohup + background + full stdio redirection to a log under
 #   .supervisor/logs/). A fresh OS process means the runner is the MAIN agent of
 #   its own session and can therefore spawn its own child agents (code-reviewer /
 #   fix worker) — see skills/review-heal/SKILL.md "Two entry senses of fresh" (a).
+#   `-p` does NOT make the runner a subagent: it is still the top-level/main agent
+#   of its headless session, so Task-spawning children works exactly as before.
+#
+#   `-p`/--print is REQUIRED (mirrors dispatch-pr-postmortem.sh's fix in PR #63).
+#   `--agent` ONLY selects which agent — it does NOT switch to headless mode; the
+#   session is interactive by default (`claude --help`: "starts an interactive
+#   session by default, use -p/--print for non-interactive output"). Detached with
+#   stdin from /dev/null and no TTY, the no-`-p` form is fragile: depending on the
+#   Claude Code version it can hang on the first permission prompt (no TTY to answer
+#   it) rather than exit. `-p` runs the prompt non-interactively, makes permission
+#   handling deterministic (auto-deny instead of a blocking prompt), and exits.
+#
+#   PERMISSIONS — deliberately NO --permission-mode / --dangerously-skip-permissions
+#   (consistent with dispatch-pr-postmortem.sh). The detached run relies on the
+#   project's EXISTING permission settings — best-effort posture. A fire-and-forget,
+#   unattended dispatcher must NOT silently grant itself bypass-all-permissions
+#   authority to run arbitrary edits + `git push`; that is a security decision the
+#   user opts into via their own project settings. Consequence: in a locked-down
+#   project the runner's fixes/pushes may be auto-denied under `-p` (review-only,
+#   best-effort) — but it still exits cleanly and never hangs the dispatcher.
 #
 # USAGE
 #   dispatch-pr-review.sh <pr-url> [--no-auto-review|--auto-review]
@@ -161,7 +181,7 @@ fi
 # `claude` on PATH — previously the claude check below short-circuited first,
 # making the dry-run a no-op on CI.
 if [ -n "$DRY_RUN" ]; then
-  printf 'DRY_RUN_DISPATCH: %s --agent %s %s\n' "$CLAUDE_BIN" "$RUNNER" "$PR_URL"
+  printf 'DRY_RUN_DISPATCH: %s -p --agent %s %s\n' "$CLAUDE_BIN" "$RUNNER" "$PR_URL"
   printf '%s\n' "$PR_URL" > "$MARKER" 2>/dev/null || true
   exit 0
 fi
@@ -184,8 +204,12 @@ printf '%s\t%s\n' "$TIMESTAMP" "$PR_URL" > "$MARKER" 2>/dev/null || true
 # Fire-and-forget: fully detached so the Supervisor completion tail returns
 # immediately. nohup + background subshell + all stdio redirected away from the
 # caller's inherited pipes (a backgrounded child still holding the tail's stdout
-# would keep the tail "running" until it exits).
-( nohup "$CLAUDE_BIN" --agent "$RUNNER" "$PR_URL" >>"$RUN_LOG" 2>&1 </dev/null & ) >/dev/null 2>&1 || true
+# would keep the tail "running" until it exits). HEADLESS `claude -p` (print-mode):
+# `--agent` selects the runner but does NOT imply headless — without `-p` this is an
+# interactive session that, detached + no TTY, can hang on a permission prompt
+# instead of exiting (see header "FRESH DETACHED PROCESS"). No permission-bypass
+# flags by design — relies on the project's existing permission settings.
+( nohup "$CLAUDE_BIN" -p --agent "$RUNNER" "$PR_URL" >>"$RUN_LOG" 2>&1 </dev/null & ) >/dev/null 2>&1 || true
 
 log "dispatched review-pr-runner for $PR_URL (log: $RUN_LOG)"
 exit 0

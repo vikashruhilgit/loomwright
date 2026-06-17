@@ -58,7 +58,7 @@ These names are **coined here**. Treat this section as authoritative; all other 
 
 The loop is "spawned fresh" in two distinct, non-interchangeable ways:
 
-- **(a) Plain `/supervisor` completion-tail → fresh OS process.** After a `/supervisor` run finishes and (per the enable signal) auto-review is on, the dispatcher launches a brand-new `claude --agent ai-agent-manager-plugin:review-pr-runner` **operating-system process**. This is a true fresh session — the runner is the *main agent* of its own session and can therefore spawn child agents.
+- **(a) Plain `/supervisor` completion-tail → fresh OS process.** After a `/supervisor` run finishes and (per the enable signal) auto-review is on, the dispatcher launches a brand-new detached **HEADLESS** `claude -p --agent ai-agent-manager-plugin:review-pr-runner <pr-url>` **operating-system process**. This is a true fresh session — the runner is the *main agent* of its own session and can therefore spawn child agents (`-p` does not change that — it is still the top-level agent of its headless session). The `-p`/`--print` flag is **required**: `--agent` only *selects* the agent, it does NOT switch to headless mode, so plain `claude --agent …:review-pr-runner "<url>"` (no `-p`) is an *interactive* session that — detached with stdin from `/dev/null` and no TTY — is fragile and can hang on the first permission prompt instead of exiting. `-p` runs non-interactively and exits. The dispatcher adds **no** `--permission-mode` / `--dangerously-skip-permissions` (consistent with `dispatch-pr-postmortem.sh`); it relies on the project's existing permission settings (best-effort), so in a locked-down project the runner's fixes/pushes may be auto-denied (review-only) — it still exits cleanly. See `scripts/dispatch-pr-review.sh`.
 - **(b) `/autonomous` EVALUATE → Task-spawned step.** Inside an autonomous run, the review-heal step runs as a **Task-spawned step with fresh isolated context** — NOT a nested `claude` process. (See the execution-contract rule below for why this distinction matters.)
 
 ---
@@ -198,6 +198,7 @@ gh api graphql -f query='
     repository(owner:$owner,name:$repo){
       pullRequest(number:$number){
         reviewThreads(first:100){
+          pageInfo{ hasNextPage }
           nodes{
             isResolved
             comments(first:1){ nodes{ author{ login __typename } } }
@@ -210,6 +211,7 @@ gh api graphql -f query='
 
 - `mergeStateStatus` / `mergeable` are **corroborating only** — they conflate "required check failing" with "approval missing" (which we deliberately ignore), so they are never the sole basis for a READY/ESCALATED decision.
 - **Fail-safe (R1):** if the GraphQL thread query errors (or returns no parseable thread set), thread-state is **"unknown"** → the loop **MUST NOT claim READY** → it exits `decision: ESCALATED`. Unknown is never treated as "no blocking threads".
+- **Truncation is unknown too (fail-CLOSED, >100 threads):** `reviewThreads(first:100)` caps at 100 and is **not paginated**. If `reviewThreads.pageInfo.hasNextPage == true`, the thread set is truncated — an unresolved bot thread could exist beyond #100 that this read never saw, and a truncated read otherwise *looks* like a complete one. So a truncated read is treated as **unknown** thread-state → the loop **MUST NOT claim READY** → it exits `decision: ESCALATED`, exactly like a GraphQL error. (Full pagination is a deliberate non-goal: escalating on the rare >100-thread PR keeps the U1 fail-CLOSED contract consistent — an undetected truncation must never become a false READY — without unbounded paging. The drain also re-polls as it resolves threads, so a genuinely-churning PR converges below the cap.)
 
 ### Step U2 — Required-check discovery (AC14, PINNED, fail CLOSED)
 
@@ -248,7 +250,7 @@ unresolved_bot_feedback = false     # bot thread still open after >=1 fix (postm
 while rounds < max_rounds:
   read external state            # Step U1
   required = discover_required_checks()   # Step U2 — ESCALATED (fail closed) if unavailable & not --required-checks all-non-neutral
-  threads  = classify_threads()           # Step U3 — ESCALATED if GraphQL errored (thread-state unknown)
+  threads  = classify_threads()           # Step U3 — ESCALATED if GraphQL errored OR truncated (pageInfo.hasNextPage) — thread-state unknown
 
   required_failing = [c for c in required if c.state not in GREEN_STATES]
   blocking_threads = [t for t in threads if t.unresolved and t.author_is_bot]
@@ -271,7 +273,16 @@ while rounds < max_rounds:
 
   git push                              # REGULAR push, NEVER --force (see "Never --force")
 
-  update anti-churn fingerprints        # see "Anti-Churn Guardrail" — may run a deep self-review
+  # --- anti-churn bookkeeping (see "Anti-Churn Guardrail" for the rationale) ---
+  fingerprints_now = { fingerprint(f) for f in fixable }   # {file, issue_category, rule} per finding
+  repeat_after_fix = (fingerprints_now ∩ fingerprints_prev) != {}   # a supposedly-fixed class recurred
+  if not (fingerprints_now ⊊ fingerprints_prev):           # set did NOT strictly shrink vs last round
+    churn_rounds += 1
+  else:
+    churn_rounds = 0                                       # progress made → reset
+  if repeat_after_fix or churn_rounds >= 2:                # trip condition (AC5/R3)
+    run ONE deep "fix-the-class" self-review               # exactly once per trip; then continue
+  fingerprints_prev = fingerprints_now
   rounds += 1
 
 # Loop exit without READY → exhausted
@@ -279,6 +290,13 @@ if rounds == max_rounds and decision != READY:
   decision = ESCALATED                  # AC4 — bounded, never unbounded
   post remaining findings to PR (gh pr comment ...)
   notify (best-effort)
+
+# Emit REVIEW_HEAL_RESULT (v2). iterations == rounds — the drain's bounded outer-loop
+# counter IS the v1 `iterations` analogue (the `while rounds < max_rounds` loop mirrors v1's
+# `while heal_iterations < max_heal_iterations`); the back-compat `iterations` field carries
+# the same value as `rounds` so a v1 consumer reads a meaningful count. fix_cycles is the
+# distinct fix→push count (≤ rounds).
+iterations = rounds
 ```
 
 `GREEN_STATES` are the check states that count as passing (e.g. `SUCCESS`; `NEUTRAL`/`SKIPPED` are non-blocking). Mark `repeat_check_failure = true` when a required check that was fixed re-fails in a later round, and `unresolved_bot_feedback = true` when a bot-authored thread remains unresolved after at least one fix cycle — both feed the Postmortem Dispatch Tail.
