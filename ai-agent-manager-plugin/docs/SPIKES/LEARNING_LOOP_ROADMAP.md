@@ -147,6 +147,12 @@ Acceptance criteria:
 - Runs can distinguish "memory existed" from "memory was actually used."
 - Missing field remains valid for old logs.
 
+**Known gaps after the v14.28.0 slice (deliberate follow-ups, not regressions):**
+
+- **Emit-only, not yet consumed.** `knowledge_sources_used` is written to result blocks + the `session_end` JSONL line, but `build-insights.sh` does not yet aggregate/surface it — so the Phase 2 success signal ("distinguish memory existed from memory used") is recorded but not yet observable in `/insights`. Closing the loop = wiring `build-insights.sh` + the `/insights` dashboard to read the flat field.
+- **Launch Pad is unmeasured.** Supervisor and Code Reviewer emit `knowledge_sources_used`; Launch Pad consults lessons/project memory but emits no marker (no field on `LAUNCH_PAD_RESULT` — its usage is only free-text "citation" in the brief). Adding the field to `LAUNCH_PAD_RESULT` would make all three APPLY-path agents machine-measurable.
+- **Claimed vs verified.** The field is model-self-reported and non-gating: it measures *claimed* usage, not machine-verified reads. Fine for advisory telemetry; calibrate trend interpretation accordingly.
+
 ---
 
 ### Phase 3 — Review Quality: Different Lens + Class-Based Fixer
