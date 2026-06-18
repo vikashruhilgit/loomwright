@@ -27,6 +27,8 @@
 #   AC3  branch mismatch -> 0 markers.
 #   AC3  in-progress EMPTY (stale state) -> 0 markers.
 #   AC3  Status completed (stale state) -> 0 markers.
+#   AC5  state.md present but NO `- branch:` line -> dispatch (gate iii falls back to current branch).
+#   AC5  state.md ENTIRELY ABSENT -> dispatch (terms ii,iii skipped; leans on term i).
 #   AC4  opt-out (.auto_review:false) -> 0 markers (wrapper delegates opt-out to dispatcher).
 #   AC6  malformed JSON stdin -> rc 0, 0 markers.
 #   AC6  empty stdin -> rc 0, 0 markers.
@@ -155,6 +157,35 @@ if [ "$RUN_RC" -eq 0 ] && [ "$(marker_count "$WD")" -eq 0 ]; then
   ok "status-completed: exit 0, no dispatch"
 else
   no "status-completed wrong (rc=$RUN_RC markers=$(marker_count "$WD") out='$RUN_OUT')"
+fi
+rm -rf "$WD"
+
+echo "== AC5. state.md present, no '- branch:' line -> dispatch (gate iii falls back to current branch) =="
+WD="$(make_wd "in-progress" "")"        # empty sbranch => no '- branch:' line
+run_wrapper "$WD" "feature/example" "$FIXTURE"
+DRY_LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
+if [ "$RUN_RC" -eq 0 ] \
+   && [ -n "$DRY_LINE" ] \
+   && [ "$(marker_count "$WD")" -eq 1 ] \
+   && printf '%s' "$DRY_LINE" | grep -q -- "$PR"; then
+  ok "no-branch-line: exit 0, 1 marker, DRY_RUN_DISPATCH carries $PR ($DRY_LINE)"
+else
+  no "no-branch-line wrong (rc=$RUN_RC markers=$(marker_count "$WD") line='$DRY_LINE')"
+fi
+rm -rf "$WD"
+
+echo "== AC5. state.md absent -> dispatch (terms ii,iii skipped; leans on term i) =="
+WD="$(make_wd "in-progress" "feature/example")"
+rm -f "$WD/.supervisor/state.md"        # state.md entirely absent
+run_wrapper "$WD" "feature/example" "$FIXTURE"
+DRY_LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
+if [ "$RUN_RC" -eq 0 ] \
+   && [ -n "$DRY_LINE" ] \
+   && [ "$(marker_count "$WD")" -eq 1 ] \
+   && printf '%s' "$DRY_LINE" | grep -q -- "$PR"; then
+  ok "no-state-file: exit 0, 1 marker, DRY_RUN_DISPATCH carries $PR ($DRY_LINE)"
+else
+  no "no-state-file wrong (rc=$RUN_RC markers=$(marker_count "$WD") line='$DRY_LINE')"
 fi
 rm -rf "$WD"
 
