@@ -32,6 +32,8 @@
 #   AC4  opt-out (.auto_review:false) -> 0 markers (wrapper delegates opt-out to dispatcher).
 #   AC6  malformed JSON stdin -> rc 0, 0 markers.
 #   AC6  empty stdin -> rc 0, 0 markers.
+#   AC6  non-Bash tool_name (e.g. "Read") -> rc 0, 0 markers (matcher-defensive no-op).
+#   AC6  jq absent on PATH -> rc 0, 0 markers (fail-safe missing-jq branch).
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -223,6 +225,44 @@ else
   no "empty wrong (rc=$RUN_RC markers=$(marker_count "$WD") out='$RUN_OUT')"
 fi
 rm -rf "$WD"
+
+echo "== AC6. non-Bash tool_name (e.g. 'Read') -> no-op, 0 markers (matcher-defensive) =="
+WD="$(make_wd "running" "feature/example")"
+P="$TMP_PAYLOADS/non-bash.json"
+# Even a gate-passing fixture must no-op when the tool is not Bash (the wrapper's
+# TOOL_NAME != "Bash" early return — defends the matcher:"Bash" registration).
+jq '.tool_name="Read"' "$FIXTURE" > "$P"
+run_wrapper "$WD" "feature/example" "$P"
+if [ "$RUN_RC" -eq 0 ] && [ "$(marker_count "$WD")" -eq 0 ]; then
+  ok "non-Bash: exit 0, no dispatch"
+else
+  no "non-Bash wrong (rc=$RUN_RC markers=$(marker_count "$WD") out='$RUN_OUT')"
+fi
+rm -rf "$WD"
+
+echo "== AC6. jq absent on PATH -> rc 0, 0 markers (fail-safe missing-jq branch) =="
+# Build a minimal bin dir with symlinks to everything the wrapper touches BEFORE
+# the `command -v jq` check (cat, plus dirname/cd/pwd for SCRIPT_DIR) but NOT jq,
+# then run the wrapper with PATH pointed only at it so `command -v jq` fails and
+# the wrapper hits its missing-jq exit-0 branch. We do NOT use run_wrapper here
+# (it would inherit the harness PATH that still has jq).
+NOJQ_BIN="$(mktemp -d)"
+for b in bash cat dirname pwd; do
+  src="$(command -v "$b" 2>/dev/null || true)"
+  [ -n "$src" ] && ln -s "$src" "$NOJQ_BIN/$b"
+done
+WD="$(make_wd "running" "feature/example")"
+RUN_OUT="$( cd "$WD" && AI_AGENT_MANAGER_REVIEW_DISPATCH_DRY_RUN=1 \
+    AI_AGENT_MANAGER_HOOK_CURRENT_BRANCH="feature/example" \
+    PATH="$NOJQ_BIN" "$NOJQ_BIN/bash" "$WRAPPER" < "$FIXTURE" 2>/dev/null )"
+RUN_RC=$?
+# The wrapper's missing-jq branch exits 0 BEFORE writing any marker; assert both.
+if [ "$RUN_RC" -eq 0 ] && [ "$(marker_count "$WD")" -eq 0 ]; then
+  ok "jq-absent: exit 0, no dispatch (missing-jq fail-safe branch)"
+else
+  no "jq-absent wrong (rc=$RUN_RC markers=$(marker_count "$WD") out='$RUN_OUT')"
+fi
+rm -rf "$WD" "$NOJQ_BIN"
 
 echo
 echo "RESULT: $pass passed, $fail failed"
