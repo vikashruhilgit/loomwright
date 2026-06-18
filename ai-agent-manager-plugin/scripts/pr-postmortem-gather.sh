@@ -15,8 +15,13 @@
 #     "review_rounds": 3,
 #     "review_rounds_source": "fix_commits",
 #     "review_comments": [{"author": "...", "snippet": "..."}],
-#     "ci_checks": [{"name": "...", "state": "SUCCESS"}]
+#     "ci_checks": [{"name": "...", "state": "SUCCESS"}],
+#     "pr_url": "https://github.com/owner/repo/pull/42", "branch": "feature/x",
+#     "changed_paths": ["src/a.ts", "src/b.ts"]
 #   }
+# The trailing three keys are PROVENANCE enrichment (Learning Loop Phase 4 — additive,
+# advisory, fail-safe): pr_url/branch from the PR JSON, changed_paths from .files[].path
+# (`// null` and `(.files // [])` so absent/empty input never errors the jq build).
 #
 # On ANY failure (gh/jq missing or unauthenticated, PR private/not-found/inaccessible,
 # unparseable input) it emits a jq-built unavailable object and exits 0:
@@ -171,7 +176,7 @@ esac
 # All field extraction is done from this one JSON blob to minimize gh round-trips.
 # `gh pr view` resolves OWNER/REPO#N via --repo + the number argument.
 PR_JSON="$("$GH_BIN" pr view "$NUMBER" --repo "$REPO" \
-  --json number,title,body,additions,deletions,changedFiles,commits,reviews,statusCheckRollup \
+  --json number,title,body,additions,deletions,changedFiles,commits,reviews,statusCheckRollup,url,headRefName,files \
   2>/dev/null)" || emit_unavailable "pr_inaccessible"
 
 # Empty output or non-JSON => inaccessible/not-found.
@@ -334,7 +339,14 @@ OUTPUT="$(printf '%s' "$PR_JSON" | jq -c \
       review_rounds: $review_rounds,
       review_rounds_source: $review_rounds_source,
       review_comments: $review_comments,
-      ci_checks: $ci_checks
+      ci_checks: $ci_checks,
+      # ---- provenance enrichment (Learning Loop Phase 4 — additive, fail-safe) ----
+      # jq-native sourcing only; never string-interpolated. `// null` and `(.files // [])`
+      # tolerate absent/empty input so the SINGLE jq invocation never errors on PRs whose
+      # JSON omits these keys (old gh, --json mismatch). Advisory only — never gates.
+      pr_url: (.url // null),
+      branch: (.headRefName // null),
+      changed_paths: ([(.files // [])[].path])
     }
   ' 2>/dev/null)" || emit_unavailable "normalize_failed"
 

@@ -63,8 +63,14 @@
 #                     (formal_reviews); "add audit findings export" — a verified
 #                     false-positive of the REJECTED broadened churn-word class —
 #                     stays non-matching.
-#   4. injection-safety -> a title/body/review body with quotes/backslashes/newlines
-#                     round-trips as valid JSON (no parse break).
+#   3i. provenance -> happy-path success JSON carries pr_url (string), branch (string),
+#                     and changed_paths (array of paths), sourced jq-natively from the
+#                     PR JSON's url/headRefName/files (Learning Loop Phase 4, additive).
+#                     The 3c task-id fixture (no url/headRefName/files) also asserts the
+#                     `// null` / `(.files // [])` tolerance: pr_url/branch == null,
+#                     changed_paths == [] with no jq error.
+#   4. injection-safety -> a title/body/review body AND provenance branch/changed_paths
+#                     with quotes/backslashes/newlines round-trip as valid JSON (no parse break).
 #   5. unavailable (stub gh fails / PR inaccessible) -> {"status":"unavailable",...}, exit 0.
 #   6. bad input   -> {"status":"unavailable","reason":"bad_input"}, exit 0.
 #   7. missing gh  -> {"status":"unavailable","reason":"gh_unavailable"}, exit 0.
@@ -116,6 +122,12 @@ cat > "$FIX_OK" <<'FIX'
     {"name": "ci/test", "state": "SUCCESS"},
     {"name": "lint", "state": "FAILURE"},
     {"name": "build", "status": "IN_PROGRESS", "conclusion": ""}
+  ],
+  "url": "https://github.com/acme/widgets/pull/42",
+  "headRefName": "feature/jwt-guard",
+  "files": [
+    {"path": "src/auth/jwt.guard.ts"},
+    {"path": "src/auth/jwt.guard.spec.ts"}
   ]
 }
 FIX
@@ -320,6 +332,12 @@ cat > "$FIX_INJECT" <<'FIX'
   ],
   "statusCheckRollup": [
     {"name": "ci/test", "state": "SUCCESS"}
+  ],
+  "url": "https://github.com/acme/widgets/pull/42",
+  "headRefName": "feature/\"weird\" \\ branch",
+  "files": [
+    {"path": "src/\"quoted\".ts"},
+    {"path": "src/back\\slash.ts"}
   ]
 }
 FIX
@@ -465,8 +483,9 @@ make_gh_stub taskid
 run_gather "$PR_URL"
 if printf '%s' "$RUN_OUT" | jq -e '
     .agent_generated_guess==true and (.review_rounds == 0)
+    and (.pr_url == null) and (.branch == null) and (.changed_paths == [])
   ' >/dev/null 2>&1; then
-  ok "task-id PR: subject-leading id prefix flips agent guess true"
+  ok "task-id PR: subject-leading id prefix flips agent guess true; absent url/headRefName/files degrade to null/null/[] (no jq error)"
 else
   no "(3c) wrong: $RUN_OUT"
 fi
@@ -592,19 +611,40 @@ else
   no "(3h) wrong (rc=$RUN_RC): $RUN_OUT"
 fi
 
+echo "== 3i. provenance enrichment => pr_url (string), branch (string), changed_paths (array) on happy path =="
+make_gh_stub ok
+run_gather "$PR_URL"
+# Learning Loop Phase 4 additive provenance: the gather now requests url/headRefName/files
+# and emits pr_url/branch/changed_paths jq-natively. Happy-path fixture carries all three.
+if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | jq -e '
+    (has("status") | not)
+    and (.pr_url | type=="string") and (.pr_url == "https://github.com/acme/widgets/pull/42")
+    and (.branch | type=="string") and (.branch == "feature/jwt-guard")
+    and (.changed_paths | type=="array")
+    and (.changed_paths == ["src/auth/jwt.guard.ts", "src/auth/jwt.guard.spec.ts"])
+  ' >/dev/null 2>&1; then
+  ok "provenance: pr_url string, branch string, changed_paths array of paths, all sourced jq-natively"
+else
+  no "(3i) wrong (rc=$RUN_RC): $RUN_OUT"
+fi
+
 echo "== 4. injection-safety => quotes/backslashes/newlines round-trip as valid JSON =="
 make_gh_stub inject
 run_gather "$PR_URL"
 # Must be valid JSON, must carry the agent guess from the body, and the snippet must
-# have had its newline collapsed (control chars stripped) — no parse break.
+# have had its newline collapsed (control chars stripped) — no parse break. The
+# provenance fields carry quotes/backslashes too: branch + changed_paths must round-trip
+# as valid JSON (no parse break, no interpolation hazard).
 if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | jq -e '
     (has("status") | not)
     and (.title | test("auth"))
     and .agent_generated_guess==true
     and (.review_comments[0].snippet | test("\n") | not)
     and (.review_comments[0].author=="rev\"er")
+    and (.branch == "feature/\"weird\" \\ branch")
+    and (.changed_paths == ["src/\"quoted\".ts", "src/back\\slash.ts"])
   ' >/dev/null 2>&1; then
-  ok "injection-safe: quotes/backslashes/newline round-trip, snippet de-newlined, valid JSON"
+  ok "injection-safe: quotes/backslashes/newline round-trip (incl. provenance branch/changed_paths), snippet de-newlined, valid JSON"
 else
   no "(4) wrong (rc=$RUN_RC): $RUN_OUT"
 fi

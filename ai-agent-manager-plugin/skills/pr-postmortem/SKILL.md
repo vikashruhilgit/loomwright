@@ -131,7 +131,12 @@ if command -v jq >/dev/null 2>&1; then
            self_heal_misses: $self_heal_misses,
            flow_stages: $flow_stages,
            summary: $summary,
-           plugin_version: $plugin_version
+           plugin_version: $plugin_version,
+           pr_url: .pr_url,
+           branch: .branch,
+           changed_paths: .changed_paths,
+           brief_path: null,
+           job_path: null
          }' >> .supervisor/postmortem/results.jsonl
   } 2>/dev/null || echo "pr-postmortem: trend append failed (best-effort) — report above is complete."
 else
@@ -147,6 +152,8 @@ Where the main thread builds, before the snippet:
 - `SUMMARY` — the one-line root-cause narrative (plain string, passed via `--arg`).
 
 **Injection safety:** every value flows through `--arg`/`--argjson`; the analyzed PR's repo/title/number come straight off the already-jq-built `$GATHERED` object via field access (`.repo`, `.number`, …). No PR text is ever concatenated into a JSON string.
+
+**Provenance fields (additive, Learning Loop Phase 4 — advisory only, never gates):** `pr_url`, `branch`, and `changed_paths` are sourced jq-natively off `$GATHERED` (the gather now emits them — `.pr_url` / `.branch` / `.changed_paths`, each already `null`/`[]`-tolerant at the gather), so no extra interpolation is introduced. `brief_path` and `job_path` are best-effort and typically **unknowable** for an arbitrary external PR — they default to `null` literals (never invent paths). A future enrichment may populate them when the analyzed PR maps to a local `.supervisor/jobs/done/` brief; until then `null` is the correct, honest value. All five are **additive, optional**; old corpus lines without them remain valid and `schema_version` stays `1`.
 
 ---
 
@@ -168,8 +175,13 @@ One JSON object per line in `.supervisor/postmortem/results.jsonl`:
 | `flow_stages` | object | tally per stage `{launch_pad, worker, self_heal, unknowable}` |
 | `summary` | string | one-line root-cause narrative |
 | `plugin_version` | string | **additive, optional** — plugin version at analysis time, read defensively from `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` via jq (`"unknown"` fallback); absent in older lines, which remain valid — `schema_version` stays `1` |
+| `pr_url` | string \| null | **additive, optional** — PR URL (from gather `.url // null`); absent in older lines, which remain valid — `schema_version` stays `1` |
+| `branch` | string \| null | **additive, optional** — PR head branch (from gather `.headRefName // null`); absent in older lines, which remain valid — `schema_version` stays `1` |
+| `changed_paths` | array | **additive, optional** — changed file paths (from gather `[(.files // [])[].path]`, `[]` when absent); absent in older lines, which remain valid — `schema_version` stays `1` |
+| `brief_path` | string \| null | **additive, optional** — local `.supervisor/jobs/done/` brief path when the PR maps to one; `null` by default (unknowable for an external PR — never invented). A future enrichment may populate it; absent in older lines, which remain valid — `schema_version` stays `1` |
+| `job_path` | string \| null | **additive, optional** — local job-file path when known; `null` by default (unknowable for an external PR — never invented); absent in older lines, which remain valid — `schema_version` stays `1` |
 
-This file is **append-only** and the **seed corpus for the deferred synthetic eval harness**. It is never read back by this skill (write-only trend), and lives under the current working `.supervisor/`, never the analyzed repo.
+This file is **append-only** and the **seed corpus for the deferred synthetic eval harness**. It is never read back **by this skill** (write-only trend) — though a separate advisory reader, `scripts/read-postmortem.sh` (Learning Loop Phase 4), now consults it for prior-churn hints — and lives under the current working `.supervisor/`, never the analyzed repo.
 
 ---
 
