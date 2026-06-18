@@ -141,7 +141,7 @@ if [ -f .supervisor/state.md ]; then
   # Strip bold `**` markers FIRST so both `- status:` and `- **Status:**`
   # collapse to a bare `- status:` key, then strip the key + leading space and
   # take the first word.
-  STATUS_WORD="$(grep -m1 -iE '^- (\*\*)?status:?' .supervisor/state.md 2>/dev/null \
+  STATUS_WORD="$(grep -m1 -iE '^- (\*\*)?status:' .supervisor/state.md 2>/dev/null \
     | sed -E 's/\*\*//g' \
     | sed -E 's/^- [Ss][Tt][Aa][Tt][Uu][Ss]:[[:space:]]*//' \
     | awk '{print $1}' || true)"
@@ -177,7 +177,7 @@ if [ -f .supervisor/state.md ]; then
   # Strip bold `**` markers FIRST so both `- branch:` and `- **Branch:**`
   # collapse to a bare `- branch:` key, then strip the key + leading whitespace
   # and any trailing whitespace, yielding a clean branch value.
-  session_branch="$(grep -m1 -iE '^- (\*\*)?branch:?' .supervisor/state.md 2>/dev/null \
+  session_branch="$(grep -m1 -iE '^- (\*\*)?branch:' .supervisor/state.md 2>/dev/null \
     | sed -E 's/\*\*//g' \
     | sed -E 's/^- [Bb][Rr][Aa][Nn][Cc][Hh]:[[:space:]]*//' \
     | sed -E 's/[[:space:]]+$//' || true)"

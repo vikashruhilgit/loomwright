@@ -32,6 +32,7 @@
 #   AC2  bold-format branch-MISMATCH -> 0 markers (anti-hijack preserved in bold form).
 #   AC2  bold-format Status completed -> 0 markers (stale fail-close in bold form).
 #   AC2  bold-format Status completed_with_escalation -> 0 markers (terminal fail-close in bold form).
+#   AC5  bold-format state.md present but NO `- **Branch:**` line -> NO dispatch (gate iii fail-closed; no fallback).
 #   AC5  state.md present but NO `- branch:` line -> NO dispatch (gate iii fail-closed; no fallback).
 #   AC5  state.md ENTIRELY ABSENT -> NO dispatch (gate iii fail-closed; branch unconfirmable).
 #   AC4  opt-out (.auto_review:false) -> 0 markers (wrapper delegates opt-out to dispatcher).
@@ -269,6 +270,17 @@ if [ "$RUN_RC" -eq 0 ] && [ "$(marker_count "$WD")" -eq 0 ]; then
   ok "bold-status-completed_with_escalation: exit 0, no dispatch (terminal fail-close in bold form)"
 else
   no "bold-status-completed_with_escalation wrong (rc=$RUN_RC markers=$(marker_count "$WD") out='$RUN_OUT')"
+fi
+rm -rf "$WD"
+
+echo "== AC5. bold-format state.md present, no '- **Branch:**' line -> NO dispatch (gate iii fail-closed) =="
+WD="$(make_wd_bold "running" "")"        # empty sbranch => no '- **Branch:**' line (bold form)
+run_wrapper "$WD" "feature/example" "$FIXTURE"
+# Bold status present but branch unconfirmable (no '- **Branch:**' to match) -> fail-closed, no fallback.
+if [ "$RUN_RC" -eq 0 ] && [ "$(marker_count "$WD")" -eq 0 ]; then
+  ok "bold-no-branch-line: exit 0, no dispatch (fail-closed on unconfirmable branch in bold form)"
+else
+  no "bold-no-branch-line wrong (rc=$RUN_RC markers=$(marker_count "$WD") out='$RUN_OUT')"
 fi
 rm -rf "$WD"
 
