@@ -23,6 +23,7 @@
 # Covers (each case also asserts rc == 0 — fail-safe exit, AC6):
 #   AC1  dispatch: gate-passing fixture as-is -> 1 marker + DRY_RUN_DISPATCH, URL extracted.
 #   AC2  non-PR Bash (no URL in response) -> 0 markers (no-op).
+#   AC2b non-create command (URL present but command is `gh pr view`) -> 0 markers.
 #   AC3  branch mismatch -> 0 markers.
 #   AC3  in-progress EMPTY (stale state) -> 0 markers.
 #   AC3  Status completed (stale state) -> 0 markers.
@@ -108,6 +109,20 @@ if [ "$RUN_RC" -eq 0 ] && [ "$(marker_count "$WD")" -eq 0 ]; then
   ok "non-PR: exit 0, no dispatch"
 else
   no "non-PR wrong (rc=$RUN_RC markers=$(marker_count "$WD") out='$RUN_OUT')"
+fi
+rm -rf "$WD"
+
+echo "== AC2b. non-create command (URL in response but command is 'gh pr view') -> no-op, 0 markers =="
+WD="$(make_wd "in-progress" "feature/example")"
+P="$TMP_PAYLOADS/pr-view.json"
+# Keep the PR URL in the response, but the command is a read-only `gh pr view` —
+# the command guard must prevent a drain against a foreign PR merely mentioned in output.
+jq '.tool_input.command="gh pr view 42 --json url"' "$FIXTURE" > "$P"
+run_wrapper "$WD" "feature/example" "$P"
+if [ "$RUN_RC" -eq 0 ] && [ "$(marker_count "$WD")" -eq 0 ]; then
+  ok "non-create-command: exit 0, no dispatch (command guard)"
+else
+  no "non-create-command wrong (rc=$RUN_RC markers=$(marker_count "$WD") out='$RUN_OUT')"
 fi
 rm -rf "$WD"
 

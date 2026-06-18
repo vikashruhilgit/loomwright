@@ -84,6 +84,21 @@ if [ -z "$PR_URL" ]; then
   exit 0
 fi
 
+# ---- Confirm the command was a `gh pr create` (defense-in-depth) -------------
+# The PR-URL above is the primary trigger; additionally require the command
+# itself to be a PR-creation so a mid-session `gh pr view`/`gh pr list`/`git log`
+# that merely PRINTS a /pull/<n> URL cannot trigger a drain against a foreign PR
+# (tightens the session gate's false-positive surface). Matches the documented
+# scope: `gh pr create` via the Bash tool.
+CMD="$(printf '%s' "$INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null || true)"
+case "$CMD" in
+  *"pr create"*) : ;;  # a PR-creation command — proceed
+  *)
+    log "command is not a 'gh pr create' (response carried a PR URL) — skipping"
+    exit 0
+    ;;
+esac
+
 # ---- SESSION-SCOPE GATE (AC3) ----------------------------------------------
 # Dispatch ONLY when ALL THREE terms hold. Bare in-progress non-empty is NOT
 # sufficient. Any failing term → log one line + exit 0.
