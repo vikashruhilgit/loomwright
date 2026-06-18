@@ -887,7 +887,7 @@ Use `/supervisor --cheap` to override the execution-shaped roles (orchestrator, 
 
 ### Plugin Hooks (Quality Gates)
 
-The plugin centralizes **19 hooks** in `hooks/hooks.json` that automatically enforce quality and surface notifications (the authoritative table lives in the root `CLAUDE.md`):
+The plugin centralizes **20 hooks** in `hooks/hooks.json` that automatically enforce quality and surface notifications (the authoritative table lives in the root `CLAUDE.md`):
 
 | Hook | When It Fires | What It Checks / Does |
 |------|---------------|----------------|
@@ -1013,7 +1013,7 @@ bd close BD-XX
 
 ai-agent-manager-plugin/              # Nested plugin root
 ├── .claude-plugin/
-│   └── plugin.json                   # Plugin metadata (v14.33.0)
+│   └── plugin.json                   # Plugin metadata (v14.34.0)
 ├── .mcp.json                         # Bundled MCP servers
 ├── commands/                         # Slash commands (18)
 │   ├── launch-pad.md                 # Supervisor readiness
