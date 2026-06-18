@@ -2,7 +2,8 @@
 # dispatch-pr-review.sh — POST-/supervisor REVIEW-DRAIN DISPATCHER (review-heal)
 #
 # Canonical names are coined in skills/review-heal/SKILL.md — consumed VERBATIM here:
-#   legacy enable : auto_review: true   in .supervisor/notify-config.json (or --auto-review)
+#   legacy enable : auto_review: true   in .supervisor/config.json (legacy
+#                   .supervisor/notify-config.json still read as a fallback) (or --auto-review)
 #   opt-out flag  : --no-auto-review    (suppresses the dispatch entirely)
 #   runner agent  : ai-agent-manager-plugin:review-pr-runner
 #   until-mergeable signal (S2-pinned env-var contract — §"Until-Mergeable Dispatch Signal"):
@@ -99,7 +100,10 @@ set -u
 
 log() { printf 'dispatch-pr-review: %s\n' "$1" >&2; }
 
-CONFIG_FILE=".supervisor/notify-config.json"
+# Back-compatible config path: prefer the new .supervisor/config.json, fall back
+# to the legacy .supervisor/notify-config.json (new path wins when both exist).
+CONFIG_FILE=".supervisor/config.json"
+[ -r "$CONFIG_FILE" ] || CONFIG_FILE=".supervisor/notify-config.json"
 DISPATCH_DIR=".supervisor/review-dispatch"
 LOG_DIR=".supervisor/logs"
 CLAUDE_BIN="${AI_AGENT_MANAGER_CLAUDE_BIN:-claude}"

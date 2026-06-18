@@ -136,7 +136,7 @@ rm -rf "$WD"
 
 echo "== 8. config auto_postmortem:false suppresses even on heavy churn (AC13) =="
 WD="$(fresh_repo)"
-printf '{"auto_postmortem": false}\n' > "$WD/.supervisor/notify-config.json"
+printf '{"auto_postmortem": false}\n' > "$WD/.supervisor/config.json"
 run_dispatch "$WD" "$PR" --fix-cycles 9 --decision ESCALATED
 if [ "$RUN_RC" -eq 0 ] && ! printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 0 ]; then
   ok "config auto_postmortem:false: suppressed despite heavy churn"
@@ -145,9 +145,37 @@ else
 fi
 rm -rf "$WD"
 
+echo "== 8b. legacy-path fallback: ONLY .supervisor/notify-config.json present -> read unchanged (AC1) =="
+WD="$(fresh_repo)"
+# Back-compat: an old install with ONLY the legacy file must still be read. The
+# legacy file opts out via auto_postmortem:false; heavy churn would otherwise
+# dispatch. Suppression proves the legacy fallback path is honored.
+printf '{"auto_postmortem": false}\n' > "$WD/.supervisor/notify-config.json"
+run_dispatch "$WD" "$PR" --fix-cycles 9 --decision ESCALATED
+if [ "$RUN_RC" -eq 0 ] && ! printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 0 ]; then
+  ok "legacy-fallback: legacy notify-config.json honored (suppressed despite heavy churn)"
+else
+  no "legacy-fallback wrong (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
+fi
+rm -rf "$WD"
+
+echo "== 8c. both files present -> new .supervisor/config.json wins (AC2) =="
+WD="$(fresh_repo)"
+# New file opts out (auto_postmortem:false); legacy file does NOT opt out
+# (auto_postmortem:true). If new-wins holds, heavy churn is suppressed.
+printf '{"auto_postmortem": false}\n' > "$WD/.supervisor/config.json"
+printf '{"auto_postmortem": true}\n'  > "$WD/.supervisor/notify-config.json"
+run_dispatch "$WD" "$PR" --fix-cycles 9 --decision ESCALATED
+if [ "$RUN_RC" -eq 0 ] && ! printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 0 ]; then
+  ok "both-present: new config.json wins (suppressed), legacy true ignored"
+else
+  no "both-present wrong — new file should win (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
+fi
+rm -rf "$WD"
+
 echo "== 9. configurable threshold via config raises the bar (AC11) =="
 WD="$(fresh_repo)"
-printf '{"postmortem_churn_threshold": 5}\n' > "$WD/.supervisor/notify-config.json"
+printf '{"postmortem_churn_threshold": 5}\n' > "$WD/.supervisor/config.json"
 run_dispatch "$WD" "$PR" --fix-cycles 3 --decision PASS    # 3 > default 2 but not > 5
 if [ "$RUN_RC" -eq 0 ] && ! printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 0 ]; then
   ok "config threshold 5: fix_cycles=3 below raised bar, no dispatch"
@@ -165,7 +193,7 @@ rm -rf "$WD"
 
 echo "== 10. --postmortem-churn-threshold flag overrides config + default (AC11) =="
 WD="$(fresh_repo)"
-printf '{"postmortem_churn_threshold": 5}\n' > "$WD/.supervisor/notify-config.json"
+printf '{"postmortem_churn_threshold": 5}\n' > "$WD/.supervisor/config.json"
 run_dispatch "$WD" "$PR" --fix-cycles 2 --decision PASS --postmortem-churn-threshold 1   # 2 > 1 (flag beats config 5)
 if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 1 ]; then
   ok "--postmortem-churn-threshold 1: overrides config 5, fix_cycles=2 trips, dispatch emitted"

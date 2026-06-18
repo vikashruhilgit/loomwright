@@ -85,7 +85,7 @@ rm -rf "$WD"
 
 echo "== 3. config auto_review:true -> dispatch =="
 WD="$(fresh_repo)"
-printf '{"auto_review": true}\n' > "$WD/.supervisor/notify-config.json"
+printf '{"auto_review": true}\n' > "$WD/.supervisor/config.json"
 run_dispatch "$WD" "$PR"
 if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 1 ]; then
   ok "config-enabled: dispatch emitted + 1 marker written"
@@ -106,7 +106,7 @@ rm -rf "$WD"
 
 echo "== 5. marker prevents re-dispatch (same PR twice) =="
 WD="$(fresh_repo)"
-printf '{"auto_review": true}\n' > "$WD/.supervisor/notify-config.json"
+printf '{"auto_review": true}\n' > "$WD/.supervisor/config.json"
 run_dispatch "$WD" "$PR"                       # first dispatch
 FIRST_RC=$RUN_RC
 run_dispatch "$WD" "$PR"                        # second call, same PR
@@ -128,7 +128,7 @@ rm -rf "$WD"
 
 echo "== 6. --no-auto-review suppresses even with config auto_review:true =="
 WD="$(fresh_repo)"
-printf '{"auto_review": true}\n' > "$WD/.supervisor/notify-config.json"
+printf '{"auto_review": true}\n' > "$WD/.supervisor/config.json"
 run_dispatch "$WD" "$PR" --no-auto-review
 if [ "$RUN_RC" -eq 0 ] && ! printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 0 ]; then
   ok "--no-auto-review: suppressed despite config, no dispatch, no marker"
@@ -139,12 +139,40 @@ rm -rf "$WD"
 
 echo "== 6b. config auto_review:false suppresses the default-ON dispatch =="
 WD="$(fresh_repo)"
-printf '{"auto_review": false}\n' > "$WD/.supervisor/notify-config.json"
+printf '{"auto_review": false}\n' > "$WD/.supervisor/config.json"
 run_dispatch "$WD" "$PR"          # no flag — config false must suppress the default ON
 if [ "$RUN_RC" -eq 0 ] && ! printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 0 ]; then
   ok "config auto_review:false: suppressed despite default-ON, no dispatch, no marker"
 else
   no "config-false-suppress wrong (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
+fi
+rm -rf "$WD"
+
+echo "== 6c. legacy-path fallback: ONLY .supervisor/notify-config.json present -> read unchanged (AC1) =="
+WD="$(fresh_repo)"
+# Back-compat: an old install with ONLY the legacy file must still be read. Here
+# the legacy file opts out via auto_review:false; if the legacy path were ignored
+# the default-ON dispatch would fire (marker written). Suppression proves fallback.
+printf '{"auto_review": false}\n' > "$WD/.supervisor/notify-config.json"
+run_dispatch "$WD" "$PR"
+if [ "$RUN_RC" -eq 0 ] && ! printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 0 ]; then
+  ok "legacy-fallback: legacy notify-config.json honored (suppressed), no dispatch, no marker"
+else
+  no "legacy-fallback wrong (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
+fi
+rm -rf "$WD"
+
+echo "== 6d. both files present -> new .supervisor/config.json wins (AC2) =="
+WD="$(fresh_repo)"
+# New file opts out (auto_review:false); legacy file would enable (auto_review:true).
+# If new-wins holds, the dispatch is suppressed (legacy true is ignored).
+printf '{"auto_review": false}\n' > "$WD/.supervisor/config.json"
+printf '{"auto_review": true}\n'  > "$WD/.supervisor/notify-config.json"
+run_dispatch "$WD" "$PR"
+if [ "$RUN_RC" -eq 0 ] && ! printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 0 ]; then
+  ok "both-present: new config.json wins (suppressed), legacy true ignored"
+else
+  no "both-present wrong — new file should win (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
 fi
 rm -rf "$WD"
 
@@ -160,7 +188,7 @@ rm -rf "$WD"
 
 echo "== 8. missing PR url -> graceful no-op =="
 WD="$(fresh_repo)"
-printf '{"auto_review": true}\n' > "$WD/.supervisor/notify-config.json"
+printf '{"auto_review": true}\n' > "$WD/.supervisor/config.json"
 run_dispatch "$WD" --auto-review            # enabled, but no PR url
 if [ "$RUN_RC" -eq 0 ] && ! printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 0 ]; then
   ok "missing-pr-url: exit 0, no dispatch"
@@ -216,7 +244,7 @@ rm -rf "$WD"
 
 echo "== 11b. config auto_until_mergeable:false opt-out: signal env var NOT set =="
 WD="$(fresh_repo)"
-printf '{"auto_until_mergeable": false}\n' > "$WD/.supervisor/notify-config.json"
+printf '{"auto_until_mergeable": false}\n' > "$WD/.supervisor/config.json"
 run_dispatch "$WD" "$PR"          # no flag — config opts out of until-mergeable only
 LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
 if [ "$RUN_RC" -eq 0 ] \

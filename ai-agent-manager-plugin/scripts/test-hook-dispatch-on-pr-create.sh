@@ -187,7 +187,7 @@ rm -rf "$WD"
 
 echo "== AC4. opt-out (.auto_review:false) -> no-op, 0 markers (dispatcher honors opt-out) =="
 WD="$(make_wd "running" "feature/example")"
-printf '{"auto_review": false}\n' > "$WD/.supervisor/notify-config.json"
+printf '{"auto_review": false}\n' > "$WD/.supervisor/config.json"
 run_wrapper "$WD" "feature/example" "$FIXTURE"
 if [ "$RUN_RC" -eq 0 ] && [ "$(marker_count "$WD")" -eq 0 ]; then
   ok "opt-out: exit 0, dispatcher suppressed, no marker"
