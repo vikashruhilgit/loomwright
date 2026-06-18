@@ -1107,7 +1107,12 @@ harness** (the deferred M2b part-2b headless-`claude` evaluator).
   "self_heal_misses": 3,
   "flow_stages": { "launch_pad": 0, "worker": 1, "self_heal": 3, "unknowable": 0 },
   "summary": "4 rounds; 3 were self-heal misses (validation parity + falsy coercion)",
-  "plugin_version": "14.24.0"
+  "plugin_version": "14.24.0",
+  "pr_url": "https://github.com/owner/repo/pull/43",
+  "branch": "feature/x",
+  "changed_paths": ["src/a.ts", "src/b.ts"],
+  "brief_path": null,
+  "job_path": null
 }
 ```
 
@@ -1137,6 +1142,24 @@ harness** (the deferred M2b part-2b headless-`claude` evaluator).
 - `plugin_version` — string, **additive & optional** — plugin version at analysis time, read
   defensively from `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` via jq with an `"unknown"`
   fallback. Absent in older trend lines, which remain valid — `schema_version` stays `1`.
+- `pr_url` — string \| null, **additive & optional** — the analyzed PR's URL (gather `.url // null`).
+  Absent in older trend lines, which remain valid — `schema_version` stays `1`.
+- `branch` — string \| null, **additive & optional** — the PR head branch (gather `.headRefName // null`).
+  Absent in older trend lines, which remain valid — `schema_version` stays `1`.
+- `changed_paths` — array of strings, **additive & optional** — the PR's changed file paths (gather
+  `[(.files // [])[].path]`; `[]` when the PR JSON omits `files`). Absent in older trend lines, which
+  remain valid — `schema_version` stays `1`.
+- `brief_path` — string \| null, **additive & optional** — local `.supervisor/jobs/done/` brief path
+  when the analyzed PR maps to one; `null` by default (unknowable for an arbitrary external PR — never
+  invented; a future enrichment may populate it). Absent in older trend lines, which remain valid —
+  `schema_version` stays `1`.
+- `job_path` — string \| null, **additive & optional** — local job-file path when known; `null` by
+  default (unknowable for an external PR — never invented). Absent in older trend lines, which remain
+  valid — `schema_version` stays `1`.
+
+**Backward compatibility:** these five provenance fields (`pr_url`, `branch`, `changed_paths`,
+`brief_path`, `job_path`) are purely additive — a pre-Phase-4 corpus line that omits all of them is still
+a valid `schema_version: 1` POSTMORTEM_RESULT line and parses cleanly for any consumer.
 
 **Append-only / write-only:** the file is the seed corpus for the deferred synthetic eval harness; it is
 never read back by the skill and lives under the current working `.supervisor/`, never the analyzed repo.
