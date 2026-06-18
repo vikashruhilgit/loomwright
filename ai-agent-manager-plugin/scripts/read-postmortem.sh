@@ -32,7 +32,7 @@
 #   interpolated into a shell command or another jq program; inputs cross the boundary via
 #   --rawfile / --slurpfile / --argjson only.
 #
-# Exit: always 0; diagnostics go to stderr + .supervisor/logs/memory.log.
+# Exit: always 0; diagnostics go to stderr + .supervisor/logs/memory.log (mirrors read-lessons.sh).
 
 set -uo pipefail   # `set -e` intentionally omitted — a read must NEVER fail its caller.
 
@@ -70,7 +70,9 @@ sort -u "$paths_file" -o "$paths_file" 2>/dev/null || true
 
 # 2. Tooling + corpus presence (fail-safe, quiet).
 if ! command -v jq >/dev/null 2>&1; then
-  echo "read-postmortem: jq unavailable — churn ledger unreadable, emitting nothing (fail-safe)" >&2
+  msg="read-postmortem: jq unavailable — churn ledger unreadable, emitting nothing (fail-safe)"
+  echo "$msg" >&2
+  printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" "$msg" >> "$LOG" 2>/dev/null || true
   exit 0
 fi
 [ -s "$CORPUS" ] || exit 0   # absent or empty corpus → emit nothing
@@ -133,7 +135,9 @@ summary="$(
 
 # jq failure (whole-program) is treated as fail-safe quiet.
 if [ -z "$summary" ]; then
-  echo "read-postmortem: churn-ledger query produced no output (treating as quiet, fail-safe)" >&2
+  msg="read-postmortem: churn-ledger query produced no output (treating as quiet, fail-safe)"
+  echo "$msg" >&2
+  printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" "$msg" >> "$LOG" 2>/dev/null || true
   exit 0
 fi
 

@@ -1162,7 +1162,7 @@ harness** (the deferred M2b part-2b headless-`claude` evaluator).
 a valid `schema_version: 1` POSTMORTEM_RESULT line and parses cleanly for any consumer.
 
 **Append-only / write-only:** the file is the seed corpus for the deferred synthetic eval harness; it is
-never read back by the skill and lives under the current working `.supervisor/`, never the analyzed repo.
+never read back **by this skill** (a separate advisory reader, `scripts/read-postmortem.sh`, now consults it — see Phase 4) and lives under the current working `.supervisor/`, never the analyzed repo.
 See `skills/pr-postmortem/SKILL.md` (the analysis protocol + miss-class taxonomy) and
 `scripts/pr-postmortem-gather.sh` (the read-only gather).
 

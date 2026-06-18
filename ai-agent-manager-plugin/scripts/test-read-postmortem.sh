@@ -54,6 +54,13 @@ write_fixture() {
              changed_paths:["src/unrelated.ts"],
              categories:[{round:1,class:"other",self_heal_miss:false,flow_stage:"worker",evidence:"q"}],
              self_heal_misses:0, flow_stages:{worker:1}, summary:"s5"}'
+    # Single-entry, EMPTY-categories line: matches src/lonely.ts in exactly ONE corpus entry,
+    # and carries categories:[] so classes/stages have nothing to aggregate. Exercises BOTH the
+    # singular "entry" pluralization (ENTRIES=1) and the "(none recorded)" classes/stages fallback.
+    jq -cn '{schema_version:1, number:6, repo:"o/r", branch:"b6", pr_url:"u6",
+             changed_paths:["src/lonely.ts"],
+             categories:[],
+             self_heal_misses:0, flow_stages:{}, summary:"s6"}'
   } > "$repo/$CORPUS"
 }
 
@@ -131,6 +138,20 @@ TMP="$(newrepo)"; write_fixture "$TMP"
 out="$( cd "$TMP" && bash "$READ" </dev/null 2>/dev/null )"; rc=$?
 [ "$rc" -eq 0 ] && ok "exit 0 with no paths" || no "non-zero exit no paths ($rc)"
 [ -z "$out" ] && ok "quiet with no paths" || no "produced output with no paths"
+rm -rf "$TMP"
+
+echo "== 4e. single empty-categories hit → singular \"entry\" + \"(none recorded)\" fallback =="
+TMP="$(newrepo)"; write_fixture "$TMP"
+# src/lonely.ts matches exactly ONE corpus entry whose categories:[] is empty.
+#  - ENTRIES=1 → the pluralization branch must render the SINGULAR word "entry" (not "entries").
+#  - empty categories → classes AND stages have nothing to aggregate → "(none recorded)" fallback.
+out="$( cd "$TMP" && bash "$READ" "src/lonely.ts" 2>/dev/null )"; rc=$?
+[ "$rc" -eq 0 ] && ok "exit 0 on single empty-categories hit" || no "non-zero exit single-empty hit ($rc)"
+echo "$out" | grep -q "src/lonely.ts" && ok "names the lonely churned path" || no "lonely path not named"
+echo "$out" | grep -qE "1 postmortem entry\b" && ok "singular \"entry\" pluralization (ENTRIES=1)" || no "singular \"entry\" not rendered"
+echo "$out" | grep -qE "1 postmortem entries" && no "rendered plural \"entries\" for a single entry" || ok "did not render plural for a single entry"
+echo "$out" | grep -q "recurring root-cause classes: (none recorded)" && ok "(none recorded) fallback for classes" || no "(none recorded) classes fallback missing"
+echo "$out" | grep -q "recurring flow stages: (none recorded)" && ok "(none recorded) fallback for stages" || no "(none recorded) stages fallback missing"
 rm -rf "$TMP"
 
 echo "== 5. jq masked off PATH → exit 0, quiet (missing-tool fail-safe) =="

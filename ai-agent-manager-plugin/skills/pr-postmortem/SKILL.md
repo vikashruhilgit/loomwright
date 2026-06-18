@@ -181,7 +181,7 @@ One JSON object per line in `.supervisor/postmortem/results.jsonl`:
 | `brief_path` | string \| null | **additive, optional** — local `.supervisor/jobs/done/` brief path when the PR maps to one; `null` by default (unknowable for an external PR — never invented). A future enrichment may populate it; absent in older lines, which remain valid — `schema_version` stays `1` |
 | `job_path` | string \| null | **additive, optional** — local job-file path when known; `null` by default (unknowable for an external PR — never invented); absent in older lines, which remain valid — `schema_version` stays `1` |
 
-This file is **append-only** and the **seed corpus for the deferred synthetic eval harness**. It is never read back by this skill (write-only trend), and lives under the current working `.supervisor/`, never the analyzed repo.
+This file is **append-only** and the **seed corpus for the deferred synthetic eval harness**. It is never read back **by this skill** (write-only trend) — though a separate advisory reader, `scripts/read-postmortem.sh` (Learning Loop Phase 4), now consults it for prior-churn hints — and lives under the current working `.supervisor/`, never the analyzed repo.
 
 ---
 
