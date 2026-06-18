@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
-# dispatch-pr-review.sh — POST-/supervisor AUTO-REVIEW DISPATCHER (review-heal)
+# dispatch-pr-review.sh — POST-/supervisor REVIEW-DRAIN DISPATCHER (review-heal)
 #
 # Canonical names are coined in skills/review-heal/SKILL.md — consumed VERBATIM here:
-#   enable signal : auto_review: true   in .supervisor/notify-config.json (or --auto-review)
-#   opt-out flag  : --no-auto-review
+#   legacy enable : auto_review: true   in .supervisor/notify-config.json (or --auto-review)
+#   opt-out flag  : --no-auto-review    (suppresses the dispatch entirely)
 #   runner agent  : ai-agent-manager-plugin:review-pr-runner
+#   until-mergeable signal (S2-pinned env-var contract — §"Until-Mergeable Dispatch Signal"):
+#     AI_AGENT_MANAGER_UNTIL_MERGEABLE     — export "1" by default (opt-out)
+#     AI_AGENT_MANAGER_CHECK_WAIT_TIMEOUT  — optional; export when --check-wait-timeout / config set
+#     AI_AGENT_MANAGER_REVIEW_CHECK_PATTERN — optional; export when --review-check-pattern / config set
+#   until-mergeable opt-out: --no-until-mergeable (or auto_until_mergeable: false; DEFAULT true)
 #
 # CONTRACT
 # --------
@@ -13,15 +18,29 @@
 #   (missing claude/jq/config, malformed config, already-dispatched, disabled) is
 #   absorbed: log exactly ONE line to stderr and exit 0. Fire-and-forget.
 #
-#   GATING (config-file-driven, NOT env-var inheritance — AC5). Auto-review is OFF
-#   by default. It is enabled ONLY when BOTH hold:
-#     1. NOT suppressed: --no-auto-review was not passed.
-#     2. Enabled: --auto-review was passed, OR
-#        .supervisor/notify-config.json has `.auto_review == true`.
+#   DISPATCH GATING (config-file-driven, NOT env-var inheritance — AC5). The review
+#   drain now dispatches BY DEFAULT after PR creation (AC7) — there is exactly ONE
+#   dispatch per PR. It is dispatched UNLESS suppressed:
+#     1. SUPPRESSED when --no-auto-review is passed, OR config `.auto_review == false`.
+#     2. Otherwise ENABLED (default ON; --auto-review / `.auto_review == true` are the
+#        legacy explicit-enable signals, now redundant with the default but still honored).
 #   Reading config from a repo-local JSON file (via jq) — rather than an exported
 #   env var — sidesteps the known ~/.zshrc env-propagation failure class where a
 #   var exported only in an interactive rc never reaches a non-interactive
 #   subprocess (same rationale as send-webhook.sh's webhook_url resolution).
+#
+#   UNTIL-MERGEABLE SIGNAL (AC7 — DEFAULT ON, opt-out). When a dispatch fires, the
+#   detached runner is launched with AI_AGENT_MANAGER_UNTIL_MERGEABLE=1 EXPORTED by
+#   default, so the runner forwards `--until-mergeable` to its inline /review-pr (the
+#   external-channel drain). This is opt-out via --no-until-mergeable OR config
+#   `.auto_until_mergeable == false` — when opted out the env var is NOT exported and
+#   the runner runs the plain diff-only /review-pr loop. The signal is threaded via
+#   ENV VARS (NOT a /review-pr slash string, NOT a new positional) — the --agent
+#   runner form has no flag surface, which deliberately avoids the 11.1.1 spawn-depth
+#   auto-delegation trap (see skills/review-heal/SKILL.md §"Until-Mergeable Dispatch
+#   Signal"). --check-wait-timeout / --review-check-pattern (or their config keys
+#   check_wait_timeout / review_check_pattern) are forwarded ONLY when set, via
+#   AI_AGENT_MANAGER_CHECK_WAIT_TIMEOUT / AI_AGENT_MANAGER_REVIEW_CHECK_PATTERN.
 #
 #   COST / RUNAWAY GUARD. A per-PR dispatch marker file under
 #   .supervisor/review-dispatch/ (keyed by a hash of the PR URL) ensures a given
@@ -58,8 +77,10 @@
 #   best-effort) — but it still exits cleanly and never hangs the dispatcher.
 #
 # USAGE
-#   dispatch-pr-review.sh <pr-url> [--no-auto-review|--auto-review]
-#   dispatch-pr-review.sh --pr-url <pr-url> [--no-auto-review|--auto-review]
+#   dispatch-pr-review.sh <pr-url> [--no-auto-review|--auto-review] \
+#       [--no-until-mergeable] [--check-wait-timeout N] [--review-check-pattern <glob>]
+#   dispatch-pr-review.sh --pr-url <pr-url> [--no-auto-review|--auto-review] \
+#       [--no-until-mergeable] [--check-wait-timeout N] [--review-check-pattern <glob>]
 #
 # ENV (test/escape hatches — all optional)
 #   AI_AGENT_MANAGER_REVIEW_DISPATCH_DRY_RUN=1
@@ -88,9 +109,14 @@ DRY_RUN="${AI_AGENT_MANAGER_REVIEW_DISPATCH_DRY_RUN:-}"
 # ---- Parse args -------------------------------------------------------------
 # First bare (non-flag) argument is treated as the PR URL. --pr-url <url> also
 # supported. --no-auto-review / --auto-review set the suppress/force signals.
+# --no-until-mergeable opts out of the default until-mergeable signal;
+# --check-wait-timeout / --review-check-pattern thread the optional tuning vars.
 PR_URL=""
-SUPPRESS=0   # --no-auto-review seen
-FORCE=0      # --auto-review seen
+SUPPRESS=0            # --no-auto-review seen
+FORCE=0               # --auto-review seen
+NO_UNTIL_MERGEABLE=0  # --no-until-mergeable seen
+CHECK_WAIT_TIMEOUT="" # --check-wait-timeout value (CLI overrides config)
+REVIEW_CHECK_PATTERN="" # --review-check-pattern value (CLI overrides config)
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -110,6 +136,26 @@ while [ $# -gt 0 ]; do
       FORCE=1
       shift
       ;;
+    --no-until-mergeable)
+      NO_UNTIL_MERGEABLE=1
+      shift
+      ;;
+    --check-wait-timeout)
+      CHECK_WAIT_TIMEOUT="${2:-}"
+      shift; [ $# -gt 0 ] && shift
+      ;;
+    --check-wait-timeout=*)
+      CHECK_WAIT_TIMEOUT="${1#--check-wait-timeout=}"
+      shift
+      ;;
+    --review-check-pattern)
+      REVIEW_CHECK_PATTERN="${2:-}"
+      shift; [ $# -gt 0 ] && shift
+      ;;
+    --review-check-pattern=*)
+      REVIEW_CHECK_PATTERN="${1#--review-check-pattern=}"
+      shift
+      ;;
     --*)
       # Unknown flag — ignore (forward compat).
       shift
@@ -124,7 +170,7 @@ done
 
 # ---- Opt-out short-circuit --------------------------------------------------
 if [ "$SUPPRESS" -eq 1 ]; then
-  log "--no-auto-review passed — auto-review suppressed"
+  log "--no-auto-review passed — review-drain dispatch suppressed"
   exit 0
 fi
 
@@ -134,23 +180,51 @@ if [ -z "$PR_URL" ]; then
   exit 0
 fi
 
-# ---- Resolve enable signal --------------------------------------------------
-# Enabled when --auto-review was passed OR notify-config.json has auto_review:true.
+# ---- Resolve enable signal (DEFAULT ON — AC7) -------------------------------
+# The review drain now dispatches BY DEFAULT after PR creation. It is suppressed
+# ONLY by --no-auto-review (handled above) OR config `.auto_review == false`.
+# --auto-review / `.auto_review == true` are the legacy explicit-enable signals —
+# now redundant with the default-ON behavior but still honored (they never DISABLE).
 # Config is read via jq (NOT env var) — see header AC5 rationale.
-ENABLED=0
-if [ "$FORCE" -eq 1 ]; then
-  ENABLED=1
-elif [ -r "$CONFIG_FILE" ] && command -v jq >/dev/null 2>&1; then
-  AUTO_REVIEW="$(jq -r '.auto_review // empty' "$CONFIG_FILE" 2>/dev/null || true)"
-  if [ "$AUTO_REVIEW" = "true" ]; then
-    ENABLED=1
+ENABLED=1
+if [ "$FORCE" -ne 1 ] && [ -r "$CONFIG_FILE" ] && command -v jq >/dev/null 2>&1; then
+  # Read the RAW value (NOT `// empty`) — `.auto_review // empty` coerces the falsy
+  # boolean `false` to empty, which would silently FAIL to suppress (the very case
+  # this gate must honor). Test against the literal "false".
+  AUTO_REVIEW="$(jq -r '.auto_review' "$CONFIG_FILE" 2>/dev/null || true)"
+  if [ "$AUTO_REVIEW" = "false" ]; then
+    ENABLED=0
   fi
 fi
 
 if [ "$ENABLED" -ne 1 ]; then
-  # OFF by default — the common, silent-ish no-op path.
-  log "auto-review disabled (no --auto-review and config .auto_review != true) — skipping"
+  # Explicitly suppressed via config — silent-ish no-op path.
+  log "review-drain disabled (config .auto_review == false) — skipping"
   exit 0
+fi
+
+# ---- Resolve until-mergeable signal (DEFAULT ON — AC7, opt-out) -------------
+# Default ON: export AI_AGENT_MANAGER_UNTIL_MERGEABLE=1 into the detached runner so
+# it forwards --until-mergeable. Opt-out via --no-until-mergeable OR config
+# `.auto_until_mergeable == false`. Note: read the RAW value (not `// empty`) and
+# test against the literal "false" so the falsy boolean is not silently coerced
+# (mirrors dispatch-pr-postmortem.sh's auto_postmortem handling).
+UNTIL_MERGEABLE=1
+if [ "$NO_UNTIL_MERGEABLE" -eq 1 ]; then
+  UNTIL_MERGEABLE=0
+elif [ -r "$CONFIG_FILE" ] && command -v jq >/dev/null 2>&1; then
+  AUTO_UM="$(jq -r '.auto_until_mergeable' "$CONFIG_FILE" 2>/dev/null || true)"
+  if [ "$AUTO_UM" = "false" ]; then
+    UNTIL_MERGEABLE=0
+  fi
+fi
+
+# Optional tuning — fall back to config keys when the CLI flag was not supplied.
+if [ -z "$CHECK_WAIT_TIMEOUT" ] && [ -r "$CONFIG_FILE" ] && command -v jq >/dev/null 2>&1; then
+  CHECK_WAIT_TIMEOUT="$(jq -r '.check_wait_timeout // empty' "$CONFIG_FILE" 2>/dev/null || true)"
+fi
+if [ -z "$REVIEW_CHECK_PATTERN" ] && [ -r "$CONFIG_FILE" ] && command -v jq >/dev/null 2>&1; then
+  REVIEW_CHECK_PATTERN="$(jq -r '.review_check_pattern // empty' "$CONFIG_FILE" 2>/dev/null || true)"
 fi
 
 # ---- Per-PR dispatch marker (cost / runaway guard) --------------------------
@@ -181,7 +255,15 @@ fi
 # `claude` on PATH — previously the claude check below short-circuited first,
 # making the dry-run a no-op on CI.
 if [ -n "$DRY_RUN" ]; then
-  printf 'DRY_RUN_DISPATCH: %s -p --agent %s %s\n' "$CLAUDE_BIN" "$RUNNER" "$PR_URL"
+  # Emit the would-be exported env signal prefix (only the vars actually set) so the
+  # self-test can assert the pinned until-mergeable contract without launching claude.
+  ENV_PREFIX=""
+  if [ "$UNTIL_MERGEABLE" -eq 1 ]; then
+    ENV_PREFIX="AI_AGENT_MANAGER_UNTIL_MERGEABLE=1 "
+    [ -n "$CHECK_WAIT_TIMEOUT" ] && ENV_PREFIX="${ENV_PREFIX}AI_AGENT_MANAGER_CHECK_WAIT_TIMEOUT=${CHECK_WAIT_TIMEOUT} "
+    [ -n "$REVIEW_CHECK_PATTERN" ] && ENV_PREFIX="${ENV_PREFIX}AI_AGENT_MANAGER_REVIEW_CHECK_PATTERN=${REVIEW_CHECK_PATTERN} "
+  fi
+  printf 'DRY_RUN_DISPATCH: %snohup %s -p --agent %s %s\n' "$ENV_PREFIX" "$CLAUDE_BIN" "$RUNNER" "$PR_URL"
   printf '%s\n' "$PR_URL" > "$MARKER" 2>/dev/null || true
   exit 0
 fi
@@ -201,6 +283,21 @@ RUN_LOG="$LOG_DIR/review-pr-dispatch-$TIMESTAMP-$PR_HASH.log"
 # (fail-closed against runaway). The marker records the PR URL + dispatch time.
 printf '%s\t%s\n' "$TIMESTAMP" "$PR_URL" > "$MARKER" 2>/dev/null || true
 
+# Thread the S2-pinned until-mergeable env-var signal into the detached process by
+# EXPORTING the vars before the launch subshell (they are inherited by the child).
+# Default ON: export AI_AGENT_MANAGER_UNTIL_MERGEABLE=1 unless opted out. The runner
+# reads these and translates them into the corresponding inline /review-pr flags
+# (§"Until-Mergeable Dispatch Signal"). Only export the two optional tuning vars
+# when set; never export them in the opted-out (plain diff-only) case.
+if [ "$UNTIL_MERGEABLE" -eq 1 ]; then
+  export AI_AGENT_MANAGER_UNTIL_MERGEABLE=1
+  [ -n "$CHECK_WAIT_TIMEOUT" ] && export AI_AGENT_MANAGER_CHECK_WAIT_TIMEOUT="$CHECK_WAIT_TIMEOUT"
+  [ -n "$REVIEW_CHECK_PATTERN" ] && export AI_AGENT_MANAGER_REVIEW_CHECK_PATTERN="$REVIEW_CHECK_PATTERN"
+  log "until-mergeable drain ENABLED (AI_AGENT_MANAGER_UNTIL_MERGEABLE=1)"
+else
+  log "until-mergeable drain opted out — runner runs plain diff-only /review-pr"
+fi
+
 # Fire-and-forget: fully detached so the Supervisor completion tail returns
 # immediately. nohup + background subshell + all stdio redirected away from the
 # caller's inherited pipes (a backgrounded child still holding the tail's stdout
@@ -208,7 +305,9 @@ printf '%s\t%s\n' "$TIMESTAMP" "$PR_URL" > "$MARKER" 2>/dev/null || true
 # `--agent` selects the runner but does NOT imply headless — without `-p` this is an
 # interactive session that, detached + no TTY, can hang on a permission prompt
 # instead of exiting (see header "FRESH DETACHED PROCESS"). No permission-bypass
-# flags by design — relies on the project's existing permission settings.
+# flags by design — relies on the project's existing permission settings. The
+# until-mergeable signal rides as exported env vars (NOT a /review-pr slash string,
+# NOT a positional) — the --agent form has no flag surface, avoiding the 11.1.1 trap.
 ( nohup "$CLAUDE_BIN" -p --agent "$RUNNER" "$PR_URL" >>"$RUN_LOG" 2>&1 </dev/null & ) >/dev/null 2>&1 || true
 
 log "dispatched review-pr-runner for $PR_URL (log: $RUN_LOG)"

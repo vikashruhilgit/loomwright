@@ -190,6 +190,24 @@ COMMENTS_JSON="$("$GH_BIN" api "repos/$REPO/issues/$NUMBER/comments?per_page=100
 [ -n "$COMMENTS_JSON" ] || COMMENTS_JSON='[]'
 printf '%s' "$COMMENTS_JSON" | jq -e 'type=="array"' >/dev/null 2>&1 || COMMENTS_JSON='[]'
 
+# ---- classify bot-authored review comments (SINGLE SOURCE OF TRUTH) ---------
+# The bot_author_re / review_marker_re patterns and the (author, body) filter live
+# in classify-bot-review.sh ONLY — this script pipes the fetched issue comments
+# through it and consumes the resulting array (the same $bot_review_comments_raw
+# shape the inline filter used to produce: full original comment objects with
+# user.login / created_at / body preserved for timestamp anchoring + snippets).
+# The helper is itself fail-safe (empty/invalid input → [], exit 0); we add a
+# belt-and-braces array guard so a missing/garbled helper degrades to [] too,
+# never an unavailable emit (a comments problem must NEVER fail the gather).
+CLASSIFY_BIN="$(dirname "${BASH_SOURCE[0]}")/classify-bot-review.sh"
+if [ -x "$CLASSIFY_BIN" ]; then
+  BOT_REVIEW_JSON="$(printf '%s' "$COMMENTS_JSON" | bash "$CLASSIFY_BIN" 2>/dev/null)" || BOT_REVIEW_JSON='[]'
+else
+  BOT_REVIEW_JSON='[]'
+fi
+[ -n "$BOT_REVIEW_JSON" ] || BOT_REVIEW_JSON='[]'
+printf '%s' "$BOT_REVIEW_JSON" | jq -e 'type=="array"' >/dev/null 2>&1 || BOT_REVIEW_JSON='[]'
+
 # ---- build the normalized object (SINGLE jq invocation) --------------------
 # All untrusted PR text (title, body, commit messages, review bodies, check names)
 # is passed via --arg/--argjson and processed ENTIRELY inside the jq program. The
@@ -201,7 +219,7 @@ printf '%s' "$COMMENTS_JSON" | jq -e 'type=="array"' >/dev/null 2>&1 || COMMENTS
 OUTPUT="$(printf '%s' "$PR_JSON" | jq -c \
   --arg repo "$REPO" \
   --argjson number "$NUMBER" \
-  --argjson comments "$COMMENTS_JSON" \
+  --argjson bot_review_comments "$BOT_REVIEW_JSON" \
   '
   # ---- heuristic regexes (case-insensitive) ----
   # NB: do NOT embed \uXXXX surrogate escapes in these regex strings — the jq regex
@@ -227,22 +245,14 @@ OUTPUT="$(printf '%s' "$PR_JSON" | jq -c \
   # uncounted (vendsy/hub#139, verified 2026-06-12); the literal word "review"
   # stays mandatory, so "findings" alone still never matches (test-pinned).
   def review_fix_re: "address(es)? (code )?review|review feedback|fix review|self-heal|review comment|\\bpr #[0-9]+ review\\b|\\breview #[0-9]+\\b";
-  # bot-review issue comments: CI review workflows (claude-code-review.yml et al.) post
-  # ISSUE comments, not review objects — anchored ones are review rounds too (header doc).
-  def bot_author_re: "^claude(\\[bot\\])?$|\\[bot\\]$|^github-actions";
-  # review MARKER, tested against the RAW comment body: a word-bounded "review"
-  # ANYWHERE in the body. Strict superset of the original v14.23.1 marker (markdown
-  # heading containing "review", or the phrase "code review") — that heading-anchored
-  # form missed the HUB shape, where claude-bot review comments open with
-  # "## Overview" and mention review only in running text (vendsy/hub#146, verified
-  # 2026-06-10). Word-bounded (\b, Oniguruma) so "preview"/"previews" — e.g. a
-  # vercel[bot] "Deploy Preview for my-app ready!" notice — can never match
-  # (test-pinned). False-round control now rests on the OTHER two gates, which are
-  # unchanged: the author must look like a review bot AND a commit must land after
-  # the comment (timestamp anchor). A non-review bot that merely says "review"
-  # mid-PR is accepted noise for a trend signal (and only surfaces when the bot
-  # count exceeds both legacy signals, since review_rounds takes the MAX).
-  def review_marker_re: "\\breview\\b";
+  # NOTE: bot-review issue comments (CI review workflows like claude-code-review.yml
+  # post ISSUE comments, not review objects) are classified by the SINGLE SOURCE OF
+  # TRUTH helper scripts/classify-bot-review.sh — the bot_author_re / review_marker_re
+  # patterns and the (author, body) filter live THERE, not here. This program receives
+  # the already-classified array as $bot_review_comments (full original comment objects
+  # with user.login / created_at / body preserved), then does the timestamp anchoring
+  # below. Word-bounded marker => "Deploy Preview" can never match; see the helper
+  # header for the full classification contract.
 
   # ---- normalize a free-text snippet: strip control chars, collapse ws, cap 200 ----
   # POSIX classes (jq/Oniguruma): [[:cntrl:]] strips ALL control chars incl. CR/LF/TAB;
@@ -269,25 +279,20 @@ OUTPUT="$(printf '%s' "$PR_JSON" | jq -c \
                   or ( ((.state // "") == "COMMENTED")
                        and (((.body // "") | gsub("[[:space:]]+"; "")) != "") ) )
         | (.submittedAt // empty) ] | map(select(. != "" and . != null)) | unique | length) as $review_ts_count
-  # BOT-review ISSUE comments (third churn signal — see header doc). $comments is the
-  # SECOND, best-effort fetch (REST shape: user.login / created_at / body; degraded to
-  # [] on any fetch failure). A comment is a review COMMENT when the author looks like
-  # a review bot AND the RAW body carries the review marker; it is a review ROUND only
-  # when at least one commit lands AFTER it (created_at vs committedDate — both
-  # ISO-8601 UTC, so plain lexicographic string comparison is correct). $comments is
-  # validated only as "some array", so EVERY field access on a comment element is
-  # double-guarded: the error-suppressing (…)? form absorbs path-access errors
-  # (non-object parents) and `| strings` drops non-string VALUES so the // default
-  # kicks in. The (…)? form ALONE is not enough: a non-string value (e.g.
-  # {"user":{"login":123}}) exists and is truthy, survives //, and then type-errors
-  # in test()/gsub() — aborting the SINGLE jq invocation and turning the whole gather
-  # unavailable, which the header invariant forbids for any comments problem. With the
-  # strings guard a hostile-typed element degrades to a non-match instead.
+  # BOT-review ISSUE comments (third churn signal — see header doc). $bot_review_comments
+  # is the output of classify-bot-review.sh applied to the SECOND, best-effort comments
+  # fetch (REST shape: user.login / created_at / body; degraded to [] on any fetch or
+  # classifier failure). Classification (author looks like a review bot AND the RAW body
+  # carries the review marker) already happened in that helper — the SINGLE SOURCE OF
+  # TRUTH. Here we only apply the ROUND anchor: a classified comment is a review ROUND
+  # only when at least one commit lands AFTER it (created_at vs committedDate — both
+  # ISO-8601 UTC, so plain lexicographic string comparison is correct). Field accesses
+  # stay strings-guarded for the anchor/snippet reads: the helper preserves original
+  # objects verbatim, so a hostile-typed created_at would still type-error here without
+  # the (…)? + `| strings` double-guard, aborting the SINGLE jq invocation and turning
+  # the whole gather unavailable (forbidden for any comments problem).
   | ([ .commits[]? | ((.committedDate)? // "") | select(. != "") ]) as $commit_dates
-  | ([ $comments[]?
-        | select( ((((.user.login)? | strings) // "") | test(bot_author_re; "i"))
-                  and (((((.body)? | strings) // "") | gsub("[[:space:]]+"; "")) != "")
-                  and ((((.body)? | strings) // "") | test(review_marker_re; "i")) ) ]) as $bot_review_comments_raw
+  | $bot_review_comments as $bot_review_comments_raw
   | ([ $bot_review_comments_raw[]
         | (((.created_at)? | strings) // "") as $cat
         | select( ($cat != "")

@@ -11,17 +11,25 @@
 # path while still exercising all the gating + marker logic.
 #
 # Covers:
-#   1. disabled-by-default no-op (no config, no flag) -> no marker, exit 0.
-#   2. missing-config graceful exit 0 (no config file at all) -> no marker.
+#   1. ENABLED-by-default dispatch (no config, no flag) -> marker + DRY_RUN, exit 0
+#      (AC7 — the review drain now dispatches by default after PR creation).
+#   2. missing-config dispatch (no config file at all) -> still dispatches (default ON).
 #   3. config auto_review:true -> dispatch (DRY_RUN line emitted, marker written).
 #   4. --auto-review flag -> dispatch even without config.
 #   5. marker-prevents-re-dispatch: 2nd call on same PR -> no new dispatch.
-#   6. --no-auto-review suppression wins even with config auto_review:true.
+#   6. --no-auto-review suppression wins even with config auto_review:true -> no dispatch.
+#   6b. config auto_review:false suppresses the default-ON dispatch -> no dispatch.
 #   7. --auto-review + --no-auto-review -> suppression wins (no dispatch).
 #   8. missing PR url -> graceful no-op, exit 0.
-#   9. launch-form contract: emitted command is headless `claude -p --agent <runner> <url>`
+#   9. launch-form contract: emitted command is headless `nohup claude -p --agent <runner> <url>`
 #      (regression guard — `claude --agent <runner> "<prompt>"` WITHOUT -p starts an
 #      interactive session that hangs when detached; --agent does NOT imply headless).
+#  10. until-mergeable signal present BY DEFAULT (AC7): AI_AGENT_MANAGER_UNTIL_MERGEABLE=1
+#      is exported into the dispatched invocation by default.
+#  11. --no-until-mergeable opt-out: the signal env var is NOT set (plain diff-only run).
+#  11b. config auto_until_mergeable:false opt-out: the signal env var is NOT set.
+#  12. optional tuning forwarded only when set: --check-wait-timeout / --review-check-pattern
+#      thread AI_AGENT_MANAGER_CHECK_WAIT_TIMEOUT / AI_AGENT_MANAGER_REVIEW_CHECK_PATTERN.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -55,21 +63,21 @@ marker_count() {
   ls -1 "$wd/.supervisor/review-dispatch" 2>/dev/null | grep -c . || true
 }
 
-echo "== 1. disabled by default (no config, no flag) -> no-op =="
+echo "== 1. ENABLED by default (no config, no flag) -> dispatch (AC7) =="
 WD="$(fresh_repo)"
 run_dispatch "$WD" "$PR"
-if [ "$RUN_RC" -eq 0 ] && ! printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 0 ]; then
-  ok "disabled-by-default: exit 0, no dispatch, no marker"
+if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 1 ]; then
+  ok "enabled-by-default: exit 0, dispatch emitted, 1 marker"
 else
-  no "disabled-by-default wrong (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
+  no "enabled-by-default wrong (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
 fi
 rm -rf "$WD"
 
-echo "== 2. missing config file -> graceful exit 0, no dispatch =="
+echo "== 2. missing config file -> still dispatches (default ON), exit 0 =="
 WD="$(mktemp -d)"   # NO .supervisor at all
 run_dispatch "$WD" "$PR"
-if [ "$RUN_RC" -eq 0 ] && ! printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH'; then
-  ok "missing-config: exit 0, no dispatch"
+if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH'; then
+  ok "missing-config: exit 0, dispatch emitted (default ON)"
 else
   no "missing-config wrong (rc=$RUN_RC out='$RUN_OUT')"
 fi
@@ -129,6 +137,17 @@ else
 fi
 rm -rf "$WD"
 
+echo "== 6b. config auto_review:false suppresses the default-ON dispatch =="
+WD="$(fresh_repo)"
+printf '{"auto_review": false}\n' > "$WD/.supervisor/notify-config.json"
+run_dispatch "$WD" "$PR"          # no flag — config false must suppress the default ON
+if [ "$RUN_RC" -eq 0 ] && ! printf '%s' "$RUN_OUT" | grep -q 'DRY_RUN_DISPATCH' && [ "$(marker_count "$WD")" -eq 0 ]; then
+  ok "config auto_review:false: suppressed despite default-ON, no dispatch, no marker"
+else
+  no "config-false-suppress wrong (rc=$RUN_RC out='$RUN_OUT' markers=$(marker_count "$WD"))"
+fi
+rm -rf "$WD"
+
 echo "== 7. --no-auto-review beats --auto-review (suppress wins) =="
 WD="$(fresh_repo)"
 run_dispatch "$WD" "$PR" --auto-review --no-auto-review
@@ -150,22 +169,88 @@ else
 fi
 rm -rf "$WD"
 
-echo "== 9. launch-form contract: headless 'claude -p --agent <runner> <url>' (regression guard for the interactive-session bug) =="
+echo "== 9. launch-form contract: headless 'nohup claude -p --agent <runner> <url>' (regression guard for the interactive-session bug) =="
 WD="$(fresh_repo)"
-run_dispatch "$WD" "$PR" --auto-review          # force a dispatch so the form is emitted
+run_dispatch "$WD" "$PR"          # default dispatch so the form is emitted
 LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
-# Must be headless (-p present) AND select the review-pr-runner agent AND carry the PR url.
-# `claude --agent <runner> "<prompt>"` WITHOUT -p starts an interactive session (--agent only
-# selects the agent, it does NOT switch to headless) that hangs when detached with no TTY.
+# Must be the --agent runner form: headless (-p present) AND select the review-pr-runner
+# agent AND carry the PR url AND NOT be a /review-pr slash string (the 11.1.1 spawn-depth
+# trap). `claude --agent <runner> "<prompt>"` WITHOUT -p starts an interactive session
+# (--agent only selects the agent, it does NOT switch to headless) that hangs when detached.
 if [ "$RUN_RC" -eq 0 ] \
    && printf '%s' "$LINE" | grep -Eq '(^| )-p( |$)|(^| )--print( |$)' \
    && printf '%s' "$LINE" | grep -q -- '--agent ai-agent-manager-plugin:review-pr-runner' \
-   && printf '%s' "$LINE" | grep -q -- "$PR"; then
-  ok "launch-form: headless -p + --agent <runner> + <url> ($LINE)"
+   && printf '%s' "$LINE" | grep -q -- "$PR" \
+   && ! printf '%s' "$LINE" | grep -q -- '/review-pr'; then
+  ok "launch-form: headless -p + --agent <runner> + <url>, no slash string ($LINE)"
 else
-  no "launch-form missing -p, --agent <runner>, or url (line='$LINE')"
+  no "launch-form wrong (missing -p / --agent <runner> / url, or a /review-pr slash present) (line='$LINE')"
 fi
 rm -rf "$WD"
+
+echo "== 10. until-mergeable signal present BY DEFAULT (AC7) =="
+WD="$(fresh_repo)"
+run_dispatch "$WD" "$PR"          # no flag — until-mergeable must be ON by default
+LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
+if [ "$RUN_RC" -eq 0 ] \
+   && printf '%s' "$LINE" | grep -q -- 'AI_AGENT_MANAGER_UNTIL_MERGEABLE=1'; then
+  ok "default until-mergeable: AI_AGENT_MANAGER_UNTIL_MERGEABLE=1 present ($LINE)"
+else
+  no "default until-mergeable signal missing (line='$LINE')"
+fi
+rm -rf "$WD"
+
+echo "== 11. --no-until-mergeable opt-out: signal env var NOT set =="
+WD="$(fresh_repo)"
+run_dispatch "$WD" "$PR" --no-until-mergeable
+LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
+# Dispatch still fires (auto-review default ON) but WITHOUT the until-mergeable signal.
+if [ "$RUN_RC" -eq 0 ] \
+   && printf '%s' "$LINE" | grep -q 'DRY_RUN_DISPATCH' \
+   && ! printf '%s' "$LINE" | grep -q -- 'AI_AGENT_MANAGER_UNTIL_MERGEABLE'; then
+  ok "--no-until-mergeable: dispatch fires, signal NOT set ($LINE)"
+else
+  no "--no-until-mergeable wrong (signal should be absent) (line='$LINE')"
+fi
+rm -rf "$WD"
+
+echo "== 11b. config auto_until_mergeable:false opt-out: signal env var NOT set =="
+WD="$(fresh_repo)"
+printf '{"auto_until_mergeable": false}\n' > "$WD/.supervisor/notify-config.json"
+run_dispatch "$WD" "$PR"          # no flag — config opts out of until-mergeable only
+LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
+if [ "$RUN_RC" -eq 0 ] \
+   && printf '%s' "$LINE" | grep -q 'DRY_RUN_DISPATCH' \
+   && ! printf '%s' "$LINE" | grep -q -- 'AI_AGENT_MANAGER_UNTIL_MERGEABLE'; then
+  ok "config auto_until_mergeable:false: dispatch fires, signal NOT set ($LINE)"
+else
+  no "config-until-mergeable-false wrong (signal should be absent) (line='$LINE')"
+fi
+rm -rf "$WD"
+
+echo "== 12. optional tuning forwarded only when set (timeout + pattern) =="
+WD="$(fresh_repo)"
+run_dispatch "$WD" "$PR" --check-wait-timeout 300 --review-check-pattern 'claude*'
+LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
+if [ "$RUN_RC" -eq 0 ] \
+   && printf '%s' "$LINE" | grep -q -- 'AI_AGENT_MANAGER_UNTIL_MERGEABLE=1' \
+   && printf '%s' "$LINE" | grep -q -- 'AI_AGENT_MANAGER_CHECK_WAIT_TIMEOUT=300' \
+   && printf '%s' "$LINE" | grep -q -- 'AI_AGENT_MANAGER_REVIEW_CHECK_PATTERN=claude\*'; then
+  ok "tuning forwarded: timeout + pattern present ($LINE)"
+else
+  no "tuning forwarding wrong (line='$LINE')"
+fi
+# sanity: tuning vars ABSENT by default (only forwarded when set)
+WD2="$(fresh_repo)"
+run_dispatch "$WD2" "$PR"
+LINE2="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
+if ! printf '%s' "$LINE2" | grep -q -- 'AI_AGENT_MANAGER_CHECK_WAIT_TIMEOUT' \
+   && ! printf '%s' "$LINE2" | grep -q -- 'AI_AGENT_MANAGER_REVIEW_CHECK_PATTERN'; then
+  ok "tuning absent by default (only forwarded when set) ($LINE2)"
+else
+  no "tuning leaked when unset (line='$LINE2')"
+fi
+rm -rf "$WD" "$WD2"
 
 echo
 echo "RESULT: $pass passed, $fail failed"
