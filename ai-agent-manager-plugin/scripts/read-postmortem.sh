@@ -11,7 +11,8 @@
 # values (with counts), prior churn-round count, and whether any round was a self_heal_miss.
 #
 # REPO SCOPING: matches are scoped to the CURRENT repo when it can be derived from the git
-# remote (`owner/repo` parsed from remote.origin.url). The corpus may aggregate entries from
+# remote (`owner/repo` parsed from remote.origin.url). The repo match is CASE-INSENSITIVE
+# (GitHub slugs are case-insensitive). The corpus may aggregate entries from
 # multiple repos because `/pr-postmortem` can analyze an EXTERNAL PR and append its line
 # (carrying that PR's `repo` field) to the single local results.jsonl — so a common path
 # (README.md, package.json, src/index.ts) recorded from an unrelated repo would otherwise
@@ -112,12 +113,15 @@ summary="$(
     ($query | map(select(. != null and . != "")) | unique) as $q
     | ($q | map({(.): true}) | add // {}) as $qset
     # Keep only entries whose changed_paths overlap the query set AND — when the current repo is
-    # known ($cur_repo != "") — whose `repo` matches it. When $cur_repo == "" (undeterminable),
-    # the repo predicate is vacuously true (fail-open / unscoped). Uses (.repo // "") falsy
-    # coercion (NOT // empty) for consistency with the existing discipline.
+    # known ($cur_repo != "") — whose `repo` matches it. The match is CASE-INSENSITIVE (GitHub
+    # slugs are case-insensitive, so a corpus repo:"Owner/Repo" must still match a CUR_REPO of
+    # owner/repo, and vice-versa) — both sides are lowercased inside jq via ascii_downcase.
+    # When $cur_repo == "" (undeterminable), the repo predicate is vacuously true
+    # (fail-open / unscoped). Uses (.repo // "") falsy coercion (NOT // empty) for consistency
+    # with the existing discipline.
     | [ .[]
         | . as $e
-        | select($cur_repo == "" or (($e.repo) // "") == $cur_repo)
+        | select($cur_repo == "" or ((($e.repo) // "") | ascii_downcase) == ($cur_repo | ascii_downcase))
         | ((($e.changed_paths) // []) | map(select($qset[.] == true))) as $overlap
         | select(($overlap | length) > 0)
         | {overlap: $overlap, cats: (($e.categories) // []), shm: (($e.self_heal_misses) // 0)}

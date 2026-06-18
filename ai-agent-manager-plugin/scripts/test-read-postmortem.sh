@@ -178,6 +178,18 @@ echo "$out2" | grep -q "no prior churn recorded for the touched paths" && ok "fo
 echo "$out2" | grep -q "cross-repo-leak" && no "foreign-repo class leaked under scoping" || ok "foreign-repo class correctly excluded"
 rm -rf "$TMP"
 
+echo "== 4g. repo scoping is CASE-INSENSITIVE (GitHub slugs are case-insensitive) =="
+# A mixed/upper-case remote (origin → CUR_REPO="O/R") must STILL match a corpus entry recorded
+# with a lower-case repo:"o/r" — case-insensitive comparison, else a legitimate same-repo
+# prior-churn hit would be silently dropped. The write_fixture entries all carry repo:"o/r".
+TMP="$(newrepo)"; write_fixture "$TMP"
+( cd "$TMP" && git remote add origin https://github.com/O/R.git )
+out="$( cd "$TMP" && bash "$READ" "src/auth/guard.ts" 2>/dev/null )"; rc=$?
+[ "$rc" -eq 0 ] && ok "exit 0 with mixed-case CUR_REPO" || no "non-zero exit with mixed-case CUR_REPO ($rc)"
+echo "$out" | grep -q "src/auth/guard.ts" && ok "case-insensitive: O/R hit against corpus o/r still surfaced" || no "case-insensitive same-repo hit dropped"
+echo "$out" | grep -q "validation-parity" && ok "case-insensitive: own-repo class still surfaced" || no "case-insensitive class lost"
+rm -rf "$TMP"
+
 echo "== 5. jq masked off PATH → exit 0, quiet (missing-tool fail-safe) =="
 TMP="$(newrepo)"; write_fixture "$TMP"
 # Provide a PATH containing only a minimal toolset WITHOUT jq. We hand-pick the dirs that hold
