@@ -134,6 +134,62 @@ assert_eq    "case6 valid json" "gate" "$(printf '%s' "$OUT6" | jq -r '.event_ty
 assert_eq    "case6 context round-trips" 'fix user'"'"'s "auth" bug' "$(printf '%s' "$OUT6" | jq -r '.context // empty')"
 
 echo ""
+echo "==== Case 7: config resolution — LEGACY-ONLY fallback honored ===="
+# Mirrors test-dispatch-pr-postmortem.sh case 8b: an old install with ONLY the
+# legacy .supervisor/notify-config.json must still be read. With
+# AI_AGENT_MANAGER_WEBHOOK_URL UNSET, the URL must come from the legacy file.
+# Observe the resolved URL via a curl STUB on PATH that records its final arg
+# (the webhook URL) — we run a NON-dry-run gate event so curl is actually invoked
+# but the stub captures the target instead of making a network call.
+WD7="$TMPDIR_TEST/case7"
+mkdir -p "$WD7/.supervisor" "$WD7/bin"
+printf '{"webhook_url": "https://legacy.example/hook"}\n' > "$WD7/.supervisor/notify-config.json"
+cat > "$WD7/bin/curl" <<'STUB'
+#!/usr/bin/env bash
+# curl stub: record only the URL (last non-flag arg) and exit 0; no network.
+url=""
+for a in "$@"; do case "$a" in -*) ;; *) url="$a" ;; esac; done
+printf '%s\n' "$url" > "$CURL_TARGET_FILE"
+exit 0
+STUB
+chmod +x "$WD7/bin/curl"
+CURL_TARGET7="$WD7/curl-target.txt"
+( cd "$WD7" \
+  && unset AI_AGENT_MANAGER_WEBHOOK_URL \
+  && CURL_TARGET_FILE="$CURL_TARGET7" PATH="$WD7/bin:$PATH" \
+     bash "$WEBHOOK" --event-type gate --gate-type rubric --iteration 1 --session-id s7 >/dev/null 2>&1 )
+RC7=$?
+URL7="$(cat "$CURL_TARGET7" 2>/dev/null || true)"
+assert_eq "case7 exit 0" "0" "$RC7"
+assert_eq "case7 legacy URL used (fallback honored)" "https://legacy.example/hook" "$URL7"
+
+echo ""
+echo "==== Case 8: config resolution — BOTH present, NEW file wins ===="
+# Mirrors test-dispatch-pr-postmortem.sh case 8c: when both files exist with
+# DIFFERENT webhook_url values, the new .supervisor/config.json must win.
+WD8="$TMPDIR_TEST/case8"
+mkdir -p "$WD8/.supervisor" "$WD8/bin"
+printf '{"webhook_url": "https://new.example/hook"}\n'    > "$WD8/.supervisor/config.json"
+printf '{"webhook_url": "https://legacy.example/hook"}\n' > "$WD8/.supervisor/notify-config.json"
+cat > "$WD8/bin/curl" <<'STUB'
+#!/usr/bin/env bash
+url=""
+for a in "$@"; do case "$a" in -*) ;; *) url="$a" ;; esac; done
+printf '%s\n' "$url" > "$CURL_TARGET_FILE"
+exit 0
+STUB
+chmod +x "$WD8/bin/curl"
+CURL_TARGET8="$WD8/curl-target.txt"
+( cd "$WD8" \
+  && unset AI_AGENT_MANAGER_WEBHOOK_URL \
+  && CURL_TARGET_FILE="$CURL_TARGET8" PATH="$WD8/bin:$PATH" \
+     bash "$WEBHOOK" --event-type gate --gate-type rubric --iteration 1 --session-id s8 >/dev/null 2>&1 )
+RC8=$?
+URL8="$(cat "$CURL_TARGET8" 2>/dev/null || true)"
+assert_eq "case8 exit 0" "0" "$RC8"
+assert_eq "case8 new config.json wins (legacy ignored)" "https://new.example/hook" "$URL8"
+
+echo ""
 TOTAL=$((PASS_COUNT + FAIL_COUNT))
 echo "=========================================="
 echo "RESULT  total=$TOTAL  passed=$PASS_COUNT  failed=$FAIL_COUNT"
