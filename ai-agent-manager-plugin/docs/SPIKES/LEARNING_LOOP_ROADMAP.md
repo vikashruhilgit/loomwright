@@ -79,12 +79,10 @@ The roadmap is no longer greenfield. Treat the remaining work as incremental sli
 | Phase 3 — Review quality | Core shipped in v14.21.0; residual shipped in v14.29.0 | Complete — CI miss-class vocabulary (R4), drift-taxonomy split (R3), and opt-in advisory red-team lens (R1) all landed |
 | Phase 4+ | Not started | Phase 2 measurement is now observable (v14.33.0) — the Phase 4 gate is unblocked |
 
-Recommended next order:
+Recommended next order (remaining — Phase 3 residual shipped v14.29.0, Phase 2B shipped v14.33.0):
 
-1. **Phase 3 residual, full scope:** taxonomy + CI prompt + optional advisory red-team lens.
-2. **Phase 2B measurement close-out:** aggregate `knowledge_sources_used` in `/insights` and add Launch Pad telemetry.
-3. **Phase 4 churn ledger:** feed PR postmortem patterns back into planning and self-heal.
-4. **Phase 5/6 brain consolidation/write-back:** after the local loop proves useful.
+1. **Phase 4 churn ledger:** feed PR postmortem patterns back into planning and self-heal.
+2. **Phase 5/6 brain consolidation/write-back:** after the local loop proves useful.
 
 ---
 
