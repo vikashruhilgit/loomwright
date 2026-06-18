@@ -887,13 +887,14 @@ Use `/supervisor --cheap` to override the execution-shaped roles (orchestrator, 
 
 ### Plugin Hooks (Quality Gates)
 
-The plugin centralizes **19 hooks** in `hooks/hooks.json` that automatically enforce quality and surface notifications (the authoritative table lives in the root `CLAUDE.md`):
+The plugin centralizes **20 hooks** in `hooks/hooks.json` that automatically enforce quality and surface notifications (the authoritative table lives in the root `CLAUDE.md`):
 
 | Hook | When It Fires | What It Checks / Does |
 |------|---------------|----------------|
 | **SubagentStop** (worker, execute-manager, code-reviewer, supervisor-runner, qa-executor, plan-reviewer, launch-pad-runner) | The matching agent completes | Validates its result block (WORKER_RESULT, EXECUTE_*, CODE_REVIEW_RESULT v3, SUPERVISOR_RESULT, QA_RESULT, PLAN_REVIEW_RESULT, LAUNCH_PAD_RESULT) + 3 telemetry + 1 webhook `type: command` hooks |
 | **PreToolUse (AskUserQuestion)** | Plugin about to block on a user question | Desktop banner (`notify-desktop.sh`) + paused-event webhook (v14.1.0) |
 | **Notification** | Claude Code signals attention (permission / idle / elicitation) | Desktop banner (v14.1.0) |
+| **PostToolUse (Bash)** | A Bash tool call completes (e.g. `gh pr create`) | Backstops the until-mergeable review drain on PR creation (`hook-dispatch-on-pr-create.sh`); session-scope gated, fail-safe (v14.34.0) |
 | **SessionStart** | Session resume / clear / compact | Injects bounded recovery context (`session-resume.sh`, v14.2.0) |
 | **Stop / TaskCompleted / WorktreeCreate / StopFailure** | Various | Completeness gate, task-done check, worktree + failure logging |
 
@@ -1013,7 +1014,7 @@ bd close BD-XX
 
 ai-agent-manager-plugin/              # Nested plugin root
 ├── .claude-plugin/
-│   └── plugin.json                   # Plugin metadata (v14.33.0)
+│   └── plugin.json                   # Plugin metadata (v14.34.0)
 ├── .mcp.json                         # Bundled MCP servers
 ├── commands/                         # Slash commands (18)
 │   ├── launch-pad.md                 # Supervisor readiness

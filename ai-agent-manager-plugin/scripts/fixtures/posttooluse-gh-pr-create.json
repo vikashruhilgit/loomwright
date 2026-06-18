@@ -1,0 +1,21 @@
+{
+  "session_id": "056a624a-13a9-48e9-9e0b-95dbe6961a8f",
+  "transcript_path": "/Users/dev/.claude/projects/-example-project/056a624a.jsonl",
+  "cwd": "/Users/dev/example-project",
+  "permission_mode": "default",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "gh pr create --title 'feat: add feature' --body 'Implements the feature' --base main --head feature/example",
+    "description": "Create the pull request"
+  },
+  "tool_response": {
+    "stdout": "https://github.com/acme/widgets/pull/42\n",
+    "stderr": "Warning: 2 uncommitted changes\n",
+    "interrupted": false,
+    "isImage": false,
+    "noOutputExpected": false
+  },
+  "tool_use_id": "toolu_01CTQL5itsXhyVKGqznXU22G",
+  "duration_ms": 650
+}
