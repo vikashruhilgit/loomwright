@@ -32,9 +32,10 @@
 # lifecycle; consumer = this wrapper. No new producer code is introduced.
 #
 # A bare non-empty .supervisor/jobs/in-progress/ is NOT sufficient — ALL THREE
-# gate terms (in-progress job exists AND state.md Status not completed/failed
+# gate terms (in-progress job exists AND state.md Status not completed/completed_with_escalation/failed
 # AND PR head branch == session feature branch) are required before dispatch.
-# The branch term is FAIL-CLOSED: if state.md does not yield a `- branch:` value
+# The branch term is FAIL-CLOSED: if state.md does not yield a branch value in
+# either the canonical lowercase (`- branch:`) or the bold (`- **Branch:**`) form
 # (absent file or no branch line), the PR is unconfirmable and dispatch is skipped
 # (no current-branch fallback) — preserving "never hijack an unrelated manual PR".
 #
@@ -122,27 +123,47 @@ if ! { [ -d .supervisor/jobs/in-progress ] && [ -n "$(ls -A .supervisor/jobs/in-
   exit 0
 fi
 
-# (ii) .supervisor/state.md `- status:` word (lowercase bullet under `## Session`,
-#      per the canonical state-file schema) is NOT completed/failed.
-#      (state.md retains the last session's `- branch:` after completion, so this
+# (ii) .supervisor/state.md status word (under `## Session`) is NOT a TERMINAL
+#      status. Terminal = completed | completed_with_escalation | failed (the
+#      Supervisor Phase 4.5 completion tail flips `- status:` to one of these on
+#      exit). Non-terminal (running | paused) is the only state that permits
+#      dispatch.
+#      FORMAT-TOLERANT: matches BOTH the canonical lowercase bullet
+#      (`- status: running`) AND the inline-Supervisor bold display style
+#      (`- **Status:** running`). Match is case-insensitive on the key and strips
+#      any bold `**` markers before taking the first word, so either form yields
+#      the same status word.
+#      (state.md retains the last session's branch after completion, so this
 #      status term guards the stale-branch case. state.md absent → unknown →
 #      does NOT fail on this term alone.)
 if [ -f .supervisor/state.md ]; then
-  STATUS_WORD="$(grep -m1 '^- status:' .supervisor/state.md 2>/dev/null | sed -E 's/^- status:[[:space:]]*//' | awk '{print $1}' || true)"
+  # NOTE: grep -m1 = first-line-wins; the design writes ONLY the lowercase form, so a coexisting bold+lowercase state.md (latent, never produced) would resolve by first occurrence.
+  # Strip bold `**` markers FIRST so both `- status:` and `- **Status:**`
+  # collapse to a bare `- status:` key, then strip the key + leading space and
+  # take the first word.
+  STATUS_WORD="$(grep -m1 -iE '^- (\*\*)?status:' .supervisor/state.md 2>/dev/null \
+    | sed -E 's/\*\*//g' \
+    | sed -E 's/^- [Ss][Tt][Aa][Tt][Uu][Ss]:[[:space:]]*//' \
+    | awk '{print $1}' || true)"
   case "$STATUS_WORD" in
-    completed|failed)
-      log "session Status is '$STATUS_WORD' (stale) — skipping dispatch"
+    completed|completed_with_escalation|failed)
+      log "session Status is '$STATUS_WORD' (terminal/stale) — skipping dispatch"
       exit 0
       ;;
   esac
 fi
 
 # (iii) BRANCH MATCH: the session feature branch MUST be resolvable from
-#       .supervisor/state.md's `- branch:` line AND equal the current branch.
+#       .supervisor/state.md's branch line AND equal the current branch.
+#       FORMAT-TOLERANT: matches BOTH the canonical lowercase bullet
+#       (`- branch: feature/foo`) AND the inline-Supervisor bold display style
+#       (`- **Branch:** feature/foo`). Match is case-insensitive on the key; the
+#       bold `**` markers, the key, and surrounding whitespace are all stripped so
+#       the bold value is extracted cleanly (no embedded `**`).
 #       The env var is the TEST SEAM (lets the self-test control current branch).
 #
 #       FAIL-CLOSED on a missing branch (no fallback). If state.md yields no
-#       `- branch:` value — whether the file is absent OR present-but-branchless —
+#       branch value — whether the file is absent OR present-but-branchless —
 #       the PR cannot be confirmed as THIS session's, so SKIP. An earlier revision
 #       fell back to current_branch, which made term (iii) trivially pass and
 #       weakened "never hijack an unrelated manual PR" to "(i)+(ii) alone" whenever
@@ -153,10 +174,16 @@ fi
 current_branch="${AI_AGENT_MANAGER_HOOK_CURRENT_BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)}"
 session_branch=""
 if [ -f .supervisor/state.md ]; then
-  session_branch="$(grep -m1 '^- branch:' .supervisor/state.md 2>/dev/null | sed -E 's/^- branch:[[:space:]]*//' | sed -E 's/[[:space:]]+$//' || true)"
+  # Strip bold `**` markers FIRST so both `- branch:` and `- **Branch:**`
+  # collapse to a bare `- branch:` key, then strip the key + leading whitespace
+  # and any trailing whitespace, yielding a clean branch value.
+  session_branch="$(grep -m1 -iE '^- (\*\*)?branch:' .supervisor/state.md 2>/dev/null \
+    | sed -E 's/\*\*//g' \
+    | sed -E 's/^- [Bb][Rr][Aa][Nn][Cc][Hh]:[[:space:]]*//' \
+    | sed -E 's/[[:space:]]+$//' || true)"
 fi
 if [ -z "$session_branch" ]; then
-  log "no '- branch:' in state.md — cannot confirm PR belongs to this session; skipping dispatch"
+  log "no branch line in state.md — cannot confirm PR belongs to this session; skipping dispatch"
   exit 0
 fi
 if [ "$session_branch" != "$current_branch" ]; then

@@ -103,7 +103,7 @@ done <<<"$MANIFEST"
 # when a refactor moves status-literal-bearing text into a new skill, add a
 # row here so the gate's coverage moves with it.
 ENUMS="
-agents/supervisor.md|status|completed,completed_with_escalation,failed,checkpoint,enum,pass,advisory_failures,unverified,skipped
+agents/supervisor.md|status|completed,completed_with_escalation,failed,checkpoint,enum,pass,advisory_failures,unverified,skipped,running
 agents/supervisor.md|heal_decision|PASS,ESCALATED,null,enum
 agents/worker.md|status|completed,failed,partial,present,missing,pending,enum
 agents/qa-executor.md|status|passed,failed,partial,skipped,needs_human,plan_created,all_scopes_completed,enum

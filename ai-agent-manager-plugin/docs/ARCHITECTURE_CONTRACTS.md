@@ -13,7 +13,7 @@
 | Execute Manager | yes | no | yes | no | no | via Context-Keeper | inherit |
 | Worker | no | yes | yes | no | yes | no | inherit |
 | Code Reviewer | no | no | yes (+ LSP) | yes | no | no | inherit (effort: high, permissionMode: plan) |
-| Context-Keeper | no | yes | no | no | no | sole writer | haiku |
+| Context-Keeper | no | yes | no | no | no | sole writer (parallel path) | haiku |
 | Launch Pad | yes (plan-reviewer only) | yes | yes | no | no | jobs/pending/ | inherit |
 | Product Owner | no | no | yes | no | no | no | inherit |
 | Orchestrator | no | no | yes | no | no | no | inherit |
@@ -32,7 +32,7 @@ These are **defense-in-depth** restrictions for accidental misuse, NOT security 
 
 | Agent | disallowedTools | Rationale |
 |-------|----------------|-----------|
-| Context-Keeper | Task, Bash, Glob, Grep | Sole state writer; must never spawn agents or explore |
+| Context-Keeper | Task, Bash, Glob, Grep | Sole state writer on the parallel path (inline main-thread Supervisor writes the `## Session` block directly); must never spawn agents or explore |
 | Worker | Task | Must never spawn subagents |
 | Plan Reviewer | Write, Edit, NotebookEdit, Task, Bash | Read-only; no mutation via any path |
 | Rubric Grader | Write, Edit, Task, NotebookEdit | Read-only Phase 4.5 grader; advisory only — must never mutate the diff it scores or spawn sub-agents |
@@ -85,7 +85,7 @@ These are **defense-in-depth** restrictions for accidental misuse, NOT security 
 
 | Resource | Owner | Access |
 |----------|-------|--------|
-| `.supervisor/state.md` | Context-Keeper (sole writer) | Supervisor, Execute Manager (read via CK query) |
+| `.supervisor/state.md` | Context-Keeper (sole writer on the parallel path; inline Supervisor writes `## Session` directly) | Supervisor, Execute Manager (read via CK query) |
 | `.supervisor/jobs/pending/` | Launch Pad (create) | Supervisor (move to in-progress) |
 | `.supervisor/jobs/in-progress/` | Supervisor (move from pending) | Supervisor (move to done/failed) |
 | `.supervisor/jobs/done/` | Supervisor (move from in-progress) | Read-only after move |
@@ -110,7 +110,7 @@ The **System Twin** maintains a persistent, per-subsystem **System Contract** ar
 | Store layout | `.supervisor/twin/contracts/<subsystem-id>.md` (one SYSTEM_CONTRACT artifact per subsystem; see `docs/RESULT_SCHEMAS.md` §"SYSTEM_CONTRACT") + `.supervisor/twin/.provenance.jsonl` (hash-chained provenance ledger). |
 | **Sole writer** | `scripts/write-system-contract.sh` is the **ONLY** writer of `.supervisor/twin/`. No agent writes the store directly. |
 | Builder/reader split | An ephemeral, Bash-capable **builder** writes contracts via `write-system-contract.sh` from a **pinned repo-root CWD — never worktree-relative**. **Readers** (ST2 read-path, ST3 conformance) use `read-system-contract.sh`, the read-side provenance gate that drops un-provenanced / post-chain-break contracts and logs drops to `.supervisor/logs/twin.log`. |
-| Context-Keeper is OUT | Context-Keeper is **explicitly NOT in this path**. It remains the sole writer of `state.md` only; it neither writes nor gates `.supervisor/twin/`. |
+| Context-Keeper is OUT | Context-Keeper is **explicitly NOT in this path**. It remains the sole writer of `state.md` on the parallel path only; it neither writes nor gates `.supervisor/twin/`. |
 | Worktree-guard = enforcement | The **real enforcement** of the sole-writer / pinned-CWD contract is the writer's worktree-guard: `write-system-contract.sh` refuses to run from a linked git worktree (where the top-level `.git` is a FILE, not a dir) with **exit 3**. A twin write inside a worktree would diverge and be lost on `git worktree remove`. This mirrors `write-project-memory.sh` (red-team F1). |
 | Advisory-subordinate-to-CLAUDE.md | Contracts are propose-only. Any conformance check against them (`SUPERVISOR_RESULT.contract_conformance`) is **advisory only** — it NEVER changes `heal_decision` and NEVER blocks a PR; on conflict, CLAUDE.md wins. |
 | Fail-safe | The writer is a safe no-op (exit 0) when no sha256 tool is available; the reader emits nothing and exits 0 in the same case. Writes are atomic (temp + same-filesystem rename inside the twin dir), bounded by a contract-file cap (`SYSTEM_TWIN_MAX_CONTRACTS`, default 200) with write-time eviction, and de-duplicate identical contract bodies. |
@@ -154,13 +154,13 @@ The loop **NEVER merges a PR** — its only terminal `decision` values are `PASS
 
 ### Fresh-process dispatch contract (post-`/supervisor` auto-review)
 
-The plain-`/supervisor` completion tail can hand off to the review-and-heal loop via a fresh OS process, gated by config:
+The plain-`/supervisor` completion tail hands off to the review-and-heal loop via a fresh OS process **by default** (the AC7 until-mergeable default), opt-out below:
 
 | Property | Value |
 |----------|-------|
 | Dispatcher | `ai-agent-manager-plugin/scripts/dispatch-pr-review.sh` (runtime path `${CLAUDE_PLUGIN_ROOT}/scripts/dispatch-pr-review.sh`). |
 | Dispatch shape | Launches a brand-new detached **headless** `claude -p --agent ai-agent-manager-plugin:review-pr-runner <pr-url>` operating-system process — a true fresh session where the runner is the main agent and can therefore spawn `code-reviewer` / `general-purpose` children (sidesteps the subagents-cannot-spawn-subagents limit). `-p`/`--print` is required: `--agent` only selects the agent, it does NOT imply headless, and the no-`-p` interactive form can hang when detached with no TTY (mirrors `dispatch-pr-postmortem.sh`). No `--permission-mode` / `--dangerously-skip-permissions` by design — best-effort, relies on the project's existing permission settings. |
-| Gating | Enabled only when `auto_review: true` in `.supervisor/config.json` (legacy `.supervisor/notify-config.json` is still read as a fallback; the new path wins when both exist) (or a `--auto-review` flag); suppressed by `--no-auto-review`. Config-file-driven, cost/runaway-guarded. |
+| Gating | **Default-ON** after a PASS/normal completion that produced a PR (the AC7 until-mergeable default). Suppressed by `--no-auto-review` OR `.auto_review == false` in `.supervisor/config.json` (legacy `.supervisor/notify-config.json` still read as a fallback; the new path wins when both exist). `auto_review: true` / `--auto-review` are now **redundant legacy explicit-enable signals** (honored, no-op-equivalent). The until-mergeable drain signal itself is opt-out via `--no-until-mergeable` / `.auto_until_mergeable == false` (when opted out the runner runs the plain diff-only `/review-pr`). Cost/runaway-guarded by the dispatcher's per-PR idempotency marker. |
 | Failure policy | Fire-and-forget; **always exits 0** — a dispatch failure never fails or blocks the completing `/supervisor` run. |
 | `/autonomous` contrast | The `/autonomous` EVALUATE path does NOT use the dispatcher — it chains the review-heal loop body as a Task-spawned step (fresh isolated context, not a nested `claude` process). |
 | No-recursion invariant | `/review-pr` operates only on an existing PR URL and never creates a PR, so the auto-dispatch cannot retrigger itself on a PR it just produced. |

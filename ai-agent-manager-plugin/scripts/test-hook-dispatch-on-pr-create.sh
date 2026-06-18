@@ -27,6 +27,12 @@
 #   AC3  branch mismatch -> 0 markers.
 #   AC3  in-progress EMPTY (stale state) -> 0 markers.
 #   AC3  Status completed (stale state) -> 0 markers.
+#   AC3  Status completed_with_escalation (terminal/stale) -> 0 markers.
+#   AC2  bold-format MATCH (- **Branch:** / - **Status:**) -> dispatch (format-tolerant parse).
+#   AC2  bold-format branch-MISMATCH -> 0 markers (anti-hijack preserved in bold form).
+#   AC2  bold-format Status completed -> 0 markers (stale fail-close in bold form).
+#   AC2  bold-format Status completed_with_escalation -> 0 markers (terminal fail-close in bold form).
+#   AC5  bold-format state.md present but NO `- **Branch:**` line -> NO dispatch (gate iii fail-closed; no fallback).
 #   AC5  state.md present but NO `- branch:` line -> NO dispatch (gate iii fail-closed; no fallback).
 #   AC5  state.md ENTIRELY ABSENT -> NO dispatch (gate iii fail-closed; branch unconfirmable).
 #   AC4  opt-out (.auto_review:false) -> 0 markers (wrapper delegates opt-out to dispatcher).
@@ -66,6 +72,26 @@ make_wd() {
     printf -- '- status: %s\n' "$status"
     if [ -n "$sbranch" ]; then
       printf -- '- branch: %s\n' "$sbranch"
+    fi
+  } > "$d/.supervisor/state.md"
+  printf '%s' "$d"
+}
+
+# make_wd_bold <status> <state_branch> —
+#   Like make_wd, but writes .supervisor/state.md in the INLINE-SUPERVISOR BOLD
+#   display style (`- **Status:** X` / `- **Branch:** Y`) instead of the canonical
+#   lowercase bullets. Exercises the wrapper's format-tolerant parsing. Always
+#   writes a dummy in-progress job. <state_branch> empty => omit the branch line.
+make_wd_bold() {
+  local status="$1" sbranch="$2"
+  local d; d="$(mktemp -d)"
+  mkdir -p "$d/.supervisor/jobs/in-progress"
+  printf 'dummy job\n' > "$d/.supervisor/jobs/in-progress/job.md"
+  {
+    printf '## Session\n'
+    printf -- '- **Status:** %s\n' "$status"
+    if [ -n "$sbranch" ]; then
+      printf -- '- **Branch:** %s\n' "$sbranch"
     fi
   } > "$d/.supervisor/state.md"
   printf '%s' "$d"
@@ -162,6 +188,20 @@ else
 fi
 rm -rf "$WD"
 
+echo "== AC3. Status completed_with_escalation (terminal/stale) -> no-op, 0 markers =="
+# The Supervisor Phase 4.5 ESCALATED completion tail flips `- status:` to
+# `completed_with_escalation`; it is terminal and must fail-close the stale-guard
+# exactly like `completed`/`completed_with_escalation`/`failed` (else a later unrelated PR on the same branch
+# could re-trigger a dispatch on a finished session).
+WD="$(make_wd "completed_with_escalation" "feature/example")"
+run_wrapper "$WD" "feature/example" "$FIXTURE"
+if [ "$RUN_RC" -eq 0 ] && [ "$(marker_count "$WD")" -eq 0 ]; then
+  ok "status-completed_with_escalation: exit 0, no dispatch (terminal fail-close)"
+else
+  no "status-completed_with_escalation wrong (rc=$RUN_RC markers=$(marker_count "$WD") out='$RUN_OUT')"
+fi
+rm -rf "$WD"
+
 echo "== AC5. state.md present, no '- branch:' line -> NO dispatch (gate iii fail-closed) =="
 WD="$(make_wd "running" "")"        # empty sbranch => no '- branch:' line
 run_wrapper "$WD" "feature/example" "$FIXTURE"
@@ -182,6 +222,65 @@ if [ "$RUN_RC" -eq 0 ] && [ "$(marker_count "$WD")" -eq 0 ]; then
   ok "no-state-file: exit 0, no dispatch (fail-closed on unconfirmable branch)"
 else
   no "no-state-file wrong (rc=$RUN_RC markers=$(marker_count "$WD") out='$RUN_OUT')"
+fi
+rm -rf "$WD"
+
+echo "== AC2. bold-format MATCH (- **Branch:** / - **Status:**) -> dispatch (1 marker, DRY_RUN) =="
+WD="$(make_wd_bold "running" "feature/example")"
+run_wrapper "$WD" "feature/example" "$FIXTURE"
+DRY_LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
+if [ "$RUN_RC" -eq 0 ] \
+   && [ -n "$DRY_LINE" ] \
+   && [ "$(marker_count "$WD")" -eq 1 ] \
+   && printf '%s' "$DRY_LINE" | grep -q -- "$PR"; then
+  ok "bold-match: exit 0, 1 marker, branch resolved from bold line ($DRY_LINE)"
+else
+  no "bold-match wrong (rc=$RUN_RC markers=$(marker_count "$WD") line='$DRY_LINE')"
+fi
+rm -rf "$WD"
+
+echo "== AC2. bold-format branch-MISMATCH (- **Branch:** feature/example vs current feature/other) -> no-op =="
+WD="$(make_wd_bold "running" "feature/example")"
+run_wrapper "$WD" "feature/other" "$FIXTURE"
+# Anti-hijack preserved: a bold-format branch that does not match current branch must skip.
+if [ "$RUN_RC" -eq 0 ] && [ "$(marker_count "$WD")" -eq 0 ]; then
+  ok "bold-branch-mismatch: exit 0, no dispatch (anti-hijack preserved in bold form)"
+else
+  no "bold-branch-mismatch wrong (rc=$RUN_RC markers=$(marker_count "$WD") out='$RUN_OUT')"
+fi
+rm -rf "$WD"
+
+echo "== AC2. bold-format Status completed (- **Status:** completed) -> no-op (stale fail-close in bold form) =="
+WD="$(make_wd_bold "completed" "feature/example")"
+run_wrapper "$WD" "feature/example" "$FIXTURE"
+# Stale-status fail-close must work for the bold form too.
+if [ "$RUN_RC" -eq 0 ] && [ "$(marker_count "$WD")" -eq 0 ]; then
+  ok "bold-status-completed: exit 0, no dispatch (stale fail-close in bold form)"
+else
+  no "bold-status-completed wrong (rc=$RUN_RC markers=$(marker_count "$WD") out='$RUN_OUT')"
+fi
+rm -rf "$WD"
+
+echo "== AC2. bold-format Status completed_with_escalation (- **Status:** completed_with_escalation) -> no-op (terminal fail-close in bold form) =="
+WD="$(make_wd_bold "completed_with_escalation" "feature/example")"
+run_wrapper "$WD" "feature/example" "$FIXTURE"
+# Terminal-status fail-close must work for the bold form too (mirrors the lowercase
+# completed_with_escalation terminal case): a finished/escalated session must not re-dispatch.
+if [ "$RUN_RC" -eq 0 ] && [ "$(marker_count "$WD")" -eq 0 ]; then
+  ok "bold-status-completed_with_escalation: exit 0, no dispatch (terminal fail-close in bold form)"
+else
+  no "bold-status-completed_with_escalation wrong (rc=$RUN_RC markers=$(marker_count "$WD") out='$RUN_OUT')"
+fi
+rm -rf "$WD"
+
+echo "== AC5. bold-format state.md present, no '- **Branch:**' line -> NO dispatch (gate iii fail-closed) =="
+WD="$(make_wd_bold "running" "")"        # empty sbranch => no '- **Branch:**' line (bold form)
+run_wrapper "$WD" "feature/example" "$FIXTURE"
+# Bold status present but branch unconfirmable (no '- **Branch:**' to match) -> fail-closed, no fallback.
+if [ "$RUN_RC" -eq 0 ] && [ "$(marker_count "$WD")" -eq 0 ]; then
+  ok "bold-no-branch-line: exit 0, no dispatch (fail-closed on unconfirmable branch in bold form)"
+else
+  no "bold-no-branch-line wrong (rc=$RUN_RC markers=$(marker_count "$WD") out='$RUN_OUT')"
 fi
 rm -rf "$WD"
 

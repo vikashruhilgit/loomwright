@@ -15,7 +15,8 @@
 # `.git` FILE, not a dir) with exit 3 — the ephemeral builder MUST run from the pinned repo-root
 # CWD. A twin write inside a worktree would diverge and be lost on `git worktree remove`. The
 # worktree check is the real enforcement, regardless of caller. Context-Keeper is NOT in this
-# path: it remains the sole writer of state.md only.
+# path: it handles state.md (sole writer on the parallel path; the inline main-thread Supervisor
+# best-effort-writes state.md directly), never the twin store.
 #
 # Usage:  write-system-contract.sh --subsystem "<id>" --contract-file <path> [--source "<id>"]
 #         write-system-contract.sh --subsystem "<id>" --source "<id>"   # body on stdin

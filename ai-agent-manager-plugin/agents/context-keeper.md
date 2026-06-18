@@ -1,6 +1,6 @@
 ---
 name: ai-agent-manager-plugin:context-keeper
-description: On-demand state manager for Supervisor. Sole writer of externalized state file. Returns <50 token confirmations.
+description: On-demand state manager for Supervisor. Sole writer of externalized state file on the parallel path (inline main-thread Supervisor may do an equivalent best-effort direct write). Returns <50 token confirmations.
 tools: Read, Write, Edit
 model: haiku
 maxTurns: 3

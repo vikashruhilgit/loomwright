@@ -12,7 +12,7 @@ Patterns for externalizing Supervisor state to files, enabling cross-session res
 
 ## Quick Rules
 
-- Only Context-Keeper writes the state file (blocking calls for mutations)
+- Context-Keeper writes the state file on the **parallel path** (blocking calls for mutations); on the **inline main-thread path** the Supervisor best-effort-writes the same canonical `## Session` block directly — one canonical lowercase format either way (see "Inline-path write responsibility" below). Workers never write the state file.
 - State file lives in scratchpad during active session
 - Persistent copy in `.supervisor/state.md` for cross-session resume
 - Checkpoints saved to `.supervisor/` only
@@ -74,7 +74,7 @@ Before creating `.supervisor/`, verify `.gitignore` exists. If not, create it wi
 - task_id: BD-XX | task-short-desc
 - branch: feature/BD-XX-desc
 - phase: INIT | ACQUIRE | PLAN | EXECUTE | FINALIZE | SELF_HEAL | LOOP
-- status: running | paused | completed | failed
+- status: running | paused | completed | completed_with_escalation | failed
 - self_heal_resume_count: {integer, default 0}   # optional — increments only on resumes that actually execute the `code-reviewer` Task in Phase 4.5 (first loop iteration), NOT on every `--continue` landing in SELF_HEAL. This prevents Phase 4.5 invariant-violation runs (where `code-reviewer` was never invoked and `--skip-self-heal` was not set) from aging into a `self_heal_resume_thrash` escalation. Resets to 0 on every SELF_HEAL completion-tail exit that reaches the reset step (PASS, ESCALATED, or loop-skipped via `--skip-self-heal`); the invariant-violation path deliberately does NOT reset, preserving prior legitimate reviewer-reaching counts. Thrash guard: if the counter reaches 3, Supervisor aborts the loop and escalates with `self_heal_resume_thrash` reason. Mutated via Context-Keeper's `record_self_heal_resume` operation; read non-mutatively via `query(section: session)`. Lazy-added on first SELF_HEAL resume that runs the reviewer; not present in initial state.
 
 ## Task
@@ -248,7 +248,25 @@ Read {scratchpad}/supervisor-state.md
 
 ### Writing State (Mutations)
 
-All mutations go through Context-Keeper (blocking call). Never write the state file directly from Supervisor or Workers.
+All mutations go through Context-Keeper (blocking call) on the **parallel path**. Workers never write the state file directly.
+
+#### One on-disk format: the canonical lowercase `## Session` block
+
+There is exactly **ONE on-disk format** for `.supervisor/state.md` — the canonical lowercase schema documented in §"State File Schema" above, where the `## Session` block carries lowercase `- branch: <feature-branch>` and `- status: running | paused | completed | completed_with_escalation | failed`. The **bold display blocks** that agents emit to their OUTPUT (the Supervisor's `## ENVIRONMENT` block, the `## Outcome` block — `- **Branch:** …` style) are **human-readable presentation only** and are NOT the state file. Never let a bold-style block become the on-disk state file.
+
+Two downstream consumers read the on-disk canonical lowercase form and break on anything else:
+
+- **`hook-dispatch-on-pr-create.sh`** — the post-PR review-drain backstop greps `^- status:` and `^- branch:`. A stale or bold-only state file makes its session-scope gate fail-closed, so the until-mergeable drain never dispatches.
+- **`/supervisor --continue` resume** — reads the lowercase `status: running` to decide whether/where to resume.
+
+#### Inline-path write responsibility (best-effort, non-fatal)
+
+The canonical `## Session` block MUST land in `.supervisor/state.md` **regardless of whether Context-Keeper was spawned**:
+
+- **Parallel path** (EXECUTE delegated to a Context-Keeper-backed Execute Manager): Context-Keeper is the canonical writer via `set_task` / `update_phase` at ACQUIRE and the SELF_HEAL completion tail.
+- **Inline main-thread path** (where the poll loop is NOT delegated, so no Context-Keeper is spawned): the Supervisor writes the canonical lowercase `## Session` block **directly** — at ACQUIRE (`- status: running`, `- branch: <feature-branch>`) and at the SELF_HEAL completion tail (flip `- status:` to `completed`, or `completed_with_escalation` on ESCALATED).
+
+This direct inline write is **best-effort / non-fatal**: it MUST NEVER block ACQUIRE or fail the run (preserving the fail-safe invariant). A write failure is a logged no-op. The direct write produces the SAME single canonical lowercase format — it does NOT introduce a second/competing format.
 
 **Supported operations:**
 
