@@ -56,7 +56,8 @@ for f in "${files[@]}"; do
        benchmark_status:(.benchmark_status//null),
        benchmark_metric:(.benchmark_metric//null),
        benchmark_value:(.benchmark_value//null),
-       benchmark_delta:(.benchmark_delta//null)}
+       benchmark_delta:(.benchmark_delta//null),
+       knowledge_sources_used:(.knowledge_sources_used//[])}
   ' "$f" 2>/dev/null | tail -1 >> "$records"
 done
 
@@ -90,7 +91,8 @@ while IFS= read -r r; do
       (if .benchmark_status!=null  then "benchmark_status: \(.benchmark_status)"      else empty end),
       (if .benchmark_metric!=null  then "benchmark_metric: \(.benchmark_metric)"      else empty end),
       (if .benchmark_value!=null   then "benchmark_value: \(.benchmark_value)"        else empty end),
-      (if .benchmark_delta!=null   then "benchmark_delta: \(.benchmark_delta)"        else empty end)
+      (if .benchmark_delta!=null   then "benchmark_delta: \(.benchmark_delta)"        else empty end),
+      (if (.knowledge_sources_used|length)>0 then "knowledge_sources_used: [\(.knowledge_sources_used|join(", "))]" else empty end)
     '
     echo 'total_cost: "not captured — see Cost note (npx ccusage@latest)"'
     echo 'total_tokens: "not captured — see Cost note"'
@@ -111,6 +113,7 @@ while IFS= read -r r; do
       (if .benchmark_status!=null
          then "- **Benchmark:** \(.benchmark_status)\(if .benchmark_metric!=null then " — \(.benchmark_metric)" else "" end)\(if .benchmark_value!=null then "=\(.benchmark_value)" else "" end)\(if .benchmark_delta!=null then " (delta \(.benchmark_delta))" else "" end)"
          else empty end),
+      (if (.knowledge_sources_used|length)>0 then "- **Knowledge sources:** \(.knowledge_sources_used|join(", "))" else empty end),
       (if .pr_url!="" then "- **PR:** \(.pr_url)" else empty end)
     '
   } > "$RUNS/$sid.md"
@@ -214,6 +217,33 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
     | "| \(.version) | \(.runs) | \(.pass_rate)% | \(if .healed>0 then (((.avg_heal*100|floor)/100)|tostring) else "—" end) | \(if (.rubric_pcts|length)>0 then "\(((.rubric_pcts|add) / (.rubric_pcts|length))|floor)%" else "—" end) |"
   ' "$records"
   echo
+
+  # --- Knowledge sources (memory APPLY) — additive; suppressed when no run reports one ---
+  # knowledge_sources_used is the additive, flat, lowercase-tag array on the session_end event
+  # (v14.28.0+; see docs/RESULT_SCHEMAS.md). Open set: project_memory, lessons:<category>,
+  # agent_memory:<agent>, twin:<path>, brain_context. Older logs lack it → defaults to [] in the
+  # projection. Mirror the System Twin hard-signal precedent: render ONLY when ≥1 run reports a
+  # source (no fabricated zeros). Computed with jq, never guessed.
+  ks_runs="$(jq -s '[.[]|select((.knowledge_sources_used|length)>0)]|length' "$records")"
+  if [ "${ks_runs:-0}" -gt 0 ]; then
+    echo "## Knowledge sources (memory APPLY)"
+    echo "_Which memory sources runs reported consulting — the additive \`knowledge_sources_used\` array on \`session_end\` (v14.28.0+). Advisory only; absent ⇒ none used. Computed with jq, never guessed._"
+    echo
+    echo "- **Runs reporting a knowledge source:** $ks_runs of $run_count"
+    echo
+    echo "**Top source tags**"
+    echo
+    echo "| Source tag | Runs |"
+    echo "|---|---|"
+    jq -s -r '[.[]|.knowledge_sources_used[]?] | group_by(.) | map({tag:.[0], n:length}) | sort_by([(-.n), .tag]) | .[] | "| \(.tag) | \(.n) |"' "$records"
+    echo
+    echo "**Per-version usage**"
+    echo
+    echo "| Version | Runs with a source |"
+    echo "|---|---|"
+    jq -s -r 'group_by(.plugin_version // "unknown") | map({v:(.[0].plugin_version // "unknown"), n:([.[]|select((.knowledge_sources_used|length)>0)]|length)}) | sort_by(.v) | reverse | .[] | "| \(.v) | \(.n) |"' "$records"
+    echo
+  fi
 
   # --- Eval fitness function (ALWAYS rendered; "no data yet" when absent) ---
   # Reads .supervisor/eval/results.jsonl (one EVAL_RESULT-plus-recorded_at per line; written by

@@ -75,9 +75,9 @@ The roadmap is no longer greenfield. Treat the remaining work as incremental sli
 |---|---|---|
 | Phase 0 — Brain read-path cleanup | Shipped in v14.27.0 | Only fix regressions if the baseline harness or `brain-context` docs drift |
 | Phase 1 — Internal memory APPLY | Shipped in v14.28.0 | Monitor prompt behavior; no new storage surfaces |
-| Phase 2 — Knowledge usage telemetry | Foundation shipped in v14.28.0 | Finish measurement: `/insights` consumption + Launch Pad marker |
+| Phase 2 — Knowledge usage telemetry | Foundation shipped in v14.28.0; measurement close-out (Phase 2B) shipped in v14.33.0 | Complete for the measurement loop — `build-insights.sh` aggregation + `/insights` surfacing landed in v14.33.0. The optional `LAUNCH_PAD_RESULT.knowledge_sources_used` marker remains **explicitly deferred** (validator four-field discipline; Launch Pad emits no `session_end` line, so it would not feed `/insights`) |
 | Phase 3 — Review quality | Core shipped in v14.21.0; residual shipped in v14.29.0 | Complete — CI miss-class vocabulary (R4), drift-taxonomy split (R3), and opt-in advisory red-team lens (R1) all landed |
-| Phase 4+ | Not started | Start only after Phase 2 measurement is observable |
+| Phase 4+ | Not started | Phase 2 measurement is now observable (v14.33.0) — the Phase 4 gate is unblocked |
 
 Recommended next order:
 
@@ -170,23 +170,23 @@ Acceptance criteria:
 
 **Known gaps after the v14.28.0 slice (deliberate follow-ups, not regressions):**
 
-- **Emit-only, not yet consumed.** `knowledge_sources_used` is written to result blocks + the `session_end` JSONL line, but `build-insights.sh` does not yet aggregate/surface it — so the Phase 2 success signal ("distinguish memory existed from memory used") is recorded but not yet observable in `/insights`. Closing the loop = wiring `build-insights.sh` + the `/insights` dashboard to read the flat field.
-- **Launch Pad is unmeasured.** Supervisor and Code Reviewer emit `knowledge_sources_used`; Launch Pad consults lessons/project memory but emits no marker (no field on `LAUNCH_PAD_RESULT` — its usage is only free-text "citation" in the brief). Adding the field to `LAUNCH_PAD_RESULT` would make all three APPLY-path agents machine-measurable.
+- **Emit-only consumption gap — CLOSED in v14.33.0.** `knowledge_sources_used` was emit-only after v14.28.0; as of v14.33.0 `build-insights.sh` aggregates it and `/insights` surfaces it in the `## Knowledge sources (memory APPLY)` dashboard section (runs-reporting-a-source count, top source tags, per-version usage) plus a per-run note bullet — so the Phase 2 success signal ("distinguish memory existed from memory used") is now observable. Section is suppressed when no run reports a source; old logs parse cleanly.
+- **Launch Pad is unmeasured — explicitly DEFERRED.** Supervisor and Code Reviewer emit `knowledge_sources_used`; Launch Pad consults lessons/project memory but emits no marker (no field on `LAUNCH_PAD_RESULT` — its usage is only free-text "citation" in the brief). The optional `LAUNCH_PAD_RESULT.knowledge_sources_used` field remains deferred as a clean fast-follow: (a) `scripts/validate-launch-pad-result.py` enforces a strict four-field discipline (`ALLOWED_KEYS = {schema_version, status, saved_brief_path, summary}`) with a scalar-only parser, so adding an array field is disproportionate and parser-risky for this slice; (b) Launch Pad emits no `session_end` line, so the field would not feed `/insights` anyway — it is decoupled from this measurement close-out.
 - **Claimed vs verified.** The field is model-self-reported and non-gating: it measures *claimed* usage, not machine-verified reads. Fine for advisory telemetry; calibrate trend interpretation accordingly.
 
-**Phase 2B — Measurement close-out (next measurement slice):**
+**Phase 2B — Measurement close-out (SHIPPED in v14.33.0):**
 
-- Wire `build-insights.sh` to read the flat `session_end.knowledge_sources_used` array.
-- Surface per-run knowledge sources in generated run notes and the dashboard summary.
-- Add a small trend view: runs with any knowledge source, top source tags, and per-version usage.
-- Add optional `LAUNCH_PAD_RESULT.knowledge_sources_used` so Launch Pad's project-memory / lessons reads are machine-measurable too.
-- Keep all fields optional, additive, self-reported, and non-gating.
+- ✅ Wired `build-insights.sh` to read the flat `session_end.knowledge_sources_used` array (projection defaults absent → `[]`).
+- ✅ Surfaces per-run knowledge sources in generated run notes (frontmatter `knowledge_sources_used:` + a `- **Knowledge sources:**` body bullet) and a dashboard `## Knowledge sources (memory APPLY)` section.
+- ✅ Added a trend view: runs reporting any knowledge source, top source tags by frequency, and per-version usage; suppressed entirely when no run reports a source (System-Twin-hard-signal precedent).
+- ⏸️ Optional `LAUNCH_PAD_RESULT.knowledge_sources_used` — **explicitly deferred** (validator four-field discipline; Launch Pad emits no `session_end` line, so it would not feed `/insights`). Recorded as a clean fast-follow, not silently dropped.
+- All fields stay optional, additive, self-reported, and non-gating; no `schema_version` bump.
 
-Acceptance criteria for Phase 2B:
+Acceptance criteria for Phase 2B (status):
 
-- `/insights` can answer which knowledge sources were claimed by recent runs.
-- Launch Pad, Supervisor, and Code Reviewer all have a machine-readable usage marker, or the Launch Pad gap remains explicitly documented as deferred.
-- Old logs and old result blocks still parse without the field.
+- ✅ `/insights` can answer which knowledge sources were claimed by recent runs (v14.33.0 dashboard section + per-run notes).
+- ✅ Supervisor and Code Reviewer have a machine-readable usage marker; the Launch Pad gap **remains explicitly documented as deferred** (the AC's sanctioned alternative path).
+- ✅ Old logs and old result blocks still parse without the field (absent ⇒ `[]`; section suppressed when none).
 
 ---
 

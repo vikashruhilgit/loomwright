@@ -27,7 +27,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/build-insights.sh"
 ```
 
 1. Reads every `.supervisor/logs/*.jsonl`, takes each run's `session_end` event (tolerant of older logs with fewer fields), and computes the aggregates with `jq` (real numbers, not estimates).
-2. Writes **`.supervisor/insights/dashboard.md`** — Summary (sessions, completed/failed, completion rate, self-heal PASS count, avg heal iterations, total subtasks/files), an optional **System Twin hard-signal** section (contract-conformance + benchmark trend; see below), a **Per-version insights** section (runs / heal-PASS rate / avg heal iterations / avg rubric score, grouped by the additive `plugin_version` stamp; see below), an **Eval fitness function** section, a **System Twin growth** section, a Recent-sessions table (with a Twin conformance/Δ column), a Cost note, and an Obsidian/Dataview snippet.
+2. Writes **`.supervisor/insights/dashboard.md`** — Summary (sessions, completed/failed, completion rate, self-heal PASS count, avg heal iterations, total subtasks/files), an optional **System Twin hard-signal** section (contract-conformance + benchmark trend; see below), a **Per-version insights** section (runs / heal-PASS rate / avg heal iterations / avg rubric score, grouped by the additive `plugin_version` stamp; see below), a **Knowledge sources** section (which memory sources runs reported consulting; suppressed when none; see below), an **Eval fitness function** section, a **System Twin growth** section, a Recent-sessions table (with a Twin conformance/Δ column), a Cost note, and an Obsidian/Dataview snippet.
 3. Writes **`.supervisor/insights/runs/<session_id>.md`** — one note per run with YAML frontmatter (`status`, `rubric_score`, `heal_iterations`, `subtasks_completed`, `files_changed`, `pr_url`, `plugin_version` (`"unknown"` for older logs), and when present `contract_conformance_status`, `contract_violations`, `benchmark_status`, `benchmark_value`, `benchmark_delta`, …).
 
 ### System Twin hard-signal trend
@@ -48,6 +48,10 @@ Both are advisory and computed with jq (never guessed); both degrade gracefully 
 ### Per-version insights
 
 A dedicated table groups `session_end` events by the **additive `plugin_version` stamp** (recorded since v14.24.0; events from older logs that lack the field group under `"unknown"`). One row per version, newest first: **runs**, **heal-PASS rate**, **avg heal iterations** (across runs that report `heal_iterations`), and **avg rubric score** (each `"M/N"` parsed to a percentage; `—` when no run carries one). This makes quality regressions/improvements visible **release-over-release** — e.g. a heal-PASS rate that drops after a version bump points at that release. Advisory only, computed with jq, tolerant of mixed-version logs.
+
+### Knowledge sources
+
+A dedicated section surfaces the additive **`knowledge_sources_used`** array from the *same* `session_end` events (emitted since v14.28.0) — the flat, lowercase set of memory sources a run reported actually consulting (open set: `project_memory`, `lessons:<category>`, `agent_memory:<agent>`, `twin:<path>`, `brain_context`). The dashboard reports the **count of runs reporting a source** (e.g. `2 of 3`), a **Top source tags** table (each tag by frequency, descending), and a **Per-version usage** table (runs-with-a-source grouped by `plugin_version`, newest first). This is the Phase 2 "memory APPLY" signal — it distinguishes *memory existed* from *memory was actually used*. Advisory only (never blocks a PR or changes a heal decision), computed with jq, and **tolerant of older logs**: runs without the field count as none, and if *no* run reports any source the section is suppressed entirely (no fabricated zeros, mirroring the hard-signal section).
 
 If there are no logs yet, it says so and writes nothing. Re-run any time to refresh.
 
