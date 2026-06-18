@@ -5,8 +5,9 @@
 # Covers: no-logs no-op, dashboard aggregation (counts / completed-failed split / completion
 # rate), per-run note generation, missing-field tolerance, the COST stub, the System Twin
 # hard-signal aggregation (contract conformance + benchmark) including a backward-compat case
-# where NO run carries the new flat fields, and the per-version insights table (plugin_version
-# present / absent-groups-under-"unknown" / mixed).
+# where NO run carries the new flat fields, the per-version insights table (plugin_version
+# present / absent-groups-under-"unknown" / mixed), and the knowledge-sources aggregation
+# (present / absent-suppressed / mixed-corpus, v14.33.0).
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -53,6 +54,8 @@ if grep -q "## System Twin hard signal" "$d" 2>/dev/null; then no "twin section 
 grep -q "^## Summary" "$d" 2>/dev/null && grep -q "^## Recent sessions" "$d" 2>/dev/null && ok "dashboard still renders fully with zero twin fields" || no "dashboard incomplete in twin-absent case"
 # Per-run notes for twin-absent runs must NOT invent the hard-signal frontmatter keys.
 if grep -q "^contract_conformance_status:" "$T/.supervisor/insights/runs/sess-a.md" 2>/dev/null; then no "run-A invented absent contract_conformance_status"; else ok "run-A omits absent twin fields (tolerant)"; fi
+# Knowledge sources: sess-a/sess-b carry NO knowledge_sources_used → section must be suppressed.
+if grep -q "## Knowledge sources" "$d" 2>/dev/null; then no "ks section appeared with no sources"; else ok "ks section suppressed when no run reports a source"; fi
 rm -rf "$T"
 
 echo "== 3. System Twin hard-signal aggregation =="
@@ -155,6 +158,25 @@ grep -qF "plugin_version: 14.24.0" "$V/.supervisor/insights/runs/pv-a.md" 2>/dev
 # Existing sections must be untouched by the additive per-version section.
 grep -q "^## Summary" "$vd" 2>/dev/null && grep -q "^## Recent sessions" "$vd" 2>/dev/null && ok "dashboard still renders fully with per-version section" || no "dashboard incomplete with per-version section"
 rm -rf "$V"
+
+echo "== 7. Knowledge sources aggregation =="
+K="$(mktemp -d)"; ( cd "$K" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$K/.supervisor/logs"
+# ks-a: three sources incl project_memory (14.33.0)
+printf '%s\n' '{"ts":"2026-06-10T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS","heal_iterations":1,"plugin_version":"14.33.0","knowledge_sources_used":["project_memory","lessons:testing","brain_context"]}' > "$K/.supervisor/logs/ks-a.jsonl"
+# ks-b: one source, project_memory (14.33.0)
+printf '%s\n' '{"ts":"2026-06-11T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS","heal_iterations":0,"plugin_version":"14.33.0","knowledge_sources_used":["project_memory"]}' > "$K/.supervisor/logs/ks-b.jsonl"
+# ks-c: old log — NO field, NO plugin_version (mixed corpus → "unknown", 0 with a source)
+printf '%s\n' '{"ts":"2026-06-12T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS","heal_iterations":1}' > "$K/.supervisor/logs/ks-c.jsonl"
+( cd "$K" && bash "$BUILD" >/dev/null 2>&1 )
+kd="$K/.supervisor/insights/dashboard.md"
+grep -q "## Knowledge sources (memory APPLY)" "$kd" 2>/dev/null && ok "knowledge sources section rendered when runs report a source" || no "knowledge sources section missing"
+grep -qF "**Runs reporting a knowledge source:** 2 of 3" "$kd" 2>/dev/null && ok "runs-reporting count = 2 of 3" || no "runs-reporting count wrong"
+grep -qF "| project_memory | 2 |" "$kd" 2>/dev/null && ok "top tag project_memory counted across ks-a + ks-b (2)" || no "top tag project_memory wrong"
+grep -qF -- "- **Knowledge sources:** project_memory, lessons:testing, brain_context" "$K/.supervisor/insights/runs/ks-a.md" 2>/dev/null && ok "ks-a per-run body lists its knowledge sources" || no "ks-a per-run body wrong"
+if grep -q "^knowledge_sources_used:" "$K/.supervisor/insights/runs/ks-c.md" 2>/dev/null; then no "ks-c invented absent knowledge_sources_used frontmatter"; else ok "ks-c omits absent knowledge_sources_used frontmatter"; fi
+grep -qF "| unknown | 0 |" "$kd" 2>/dev/null && ok "per-version usage shows 0 runs-with-a-source for unknown (ks-c)" || no "per-version unknown usage wrong"
+rm -rf "$K"
 
 echo
 echo "RESULT: $pass passed, $fail failed"
