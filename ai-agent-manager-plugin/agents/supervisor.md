@@ -225,6 +225,8 @@ Autonomously manage the complete development workflow from task pickup to PR cre
    Context-Keeper(operation: set_task, task: {title, criteria})
    Context-Keeper(operation: update_phase, new_phase: ACQUIRE)
    ```
+   - **Canonical on-disk state MUST exist after ACQUIRE — regardless of execution mode.** The set_task / update_phase calls above write the canonical lowercase `## Session` block (per `skills/state-management/SKILL.md` §"State File Schema") into `.supervisor/state.md` — at minimum `- status: running` and `- branch: <feature-branch>`, plus the other Session fields (`session_id`, `task_id`, `phase: ACQUIRE`). On the **parallel path** Context-Keeper is the canonical writer. On the **inline main-thread path** (where Context-Keeper is not spawned), the Supervisor MUST instead perform a **direct best-effort write** of that same canonical lowercase `## Session` block to `.supervisor/state.md`. Either way the durable canonical state must land on disk: the `hook-dispatch-on-pr-create.sh` session-scope gate greps `^- status:` / `^- branch:`, and `/supervisor --continue` resume reads the lowercase `status: running` — a stale or bold-only state file silently breaks both.
+   - **Best-effort / non-fatal (fail-safe invariant):** this write MUST NEVER block ACQUIRE or fail the run. A write failure is a logged no-op — proceed to Phase 2 regardless. Do NOT write the human-readable **bold** ENVIRONMENT display block here; the on-disk state file is the canonical lowercase form only.
 
 **Output:**
 ```markdown
@@ -998,6 +1000,8 @@ else:
 3. **Reset resume counter (unconditional — runs on every exit path: PASS, ESCALATED, or loop-skipped):** `Context-Keeper(operation: record_self_heal_resume, increment: false)`. The completion tail itself is unconditional; so is the reset.
 
 4. **Update state:** `Context-Keeper(operation: update_phase, new_phase: LOOP, completed_phases: [..., SELF_HEAL])` and `record_decision(phase: SELF_HEAL, decision: "{PASS|ESCALATED|loop_skipped}", rationale: "{final reason}")`. Status in state file matches the outcome (`completed` or `completed_with_escalation`).
+   - **Canonical on-disk flip MUST happen — regardless of execution mode.** This step flips the canonical lowercase `- status:` line in `.supervisor/state.md` (per `skills/state-management/SKILL.md` §"State File Schema") from `running` to `completed` (or `completed_with_escalation` on the ESCALATED path). On the **parallel path** Context-Keeper performs the flip via `update_phase`. On the **inline main-thread path** (where Context-Keeper is not spawned), the Supervisor MUST instead perform a **direct best-effort write** that flips the same canonical lowercase `- status:` line on disk. This keeps the `hook-dispatch-on-pr-create.sh` session-scope gate (which excludes `completed`/`failed`) and `--continue` resume reading a truthful canonical state.
+   - **Best-effort / non-fatal (fail-safe invariant):** the flip MUST NEVER fail the run — a write failure is a logged no-op. Do NOT touch the human-readable **bold** `## Outcome` display block; only the on-disk canonical lowercase `.supervisor/state.md` is updated here.
 
 4.5. **System Twin contract builder (WRITE path — completion tail only):**
 
