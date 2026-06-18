@@ -40,6 +40,10 @@
 # This hook covers PR creation via `gh pr create` through the Bash tool only
 # (the plugin's only PR-creation path). For any other PR-creation mechanism
 # (e.g. an MCP tool), Supervisor step 5.5 remains the in-context dispatch path.
+# The PR-URL match is github.com-only (the regex anchors on
+# `https://github.com/.../pull/<n>`), so GitHub Enterprise custom domains are
+# NOT recognized and the backstop will not fire there — step 5.5 remains the
+# dispatch path on GHE.
 
 set -u
 # Intentionally NO `set -e` / pipefail — a PostToolUse hook must absorb every
@@ -70,6 +74,22 @@ if [ "$TOOL_NAME" != "Bash" ]; then
   exit 0
 fi
 
+# ---- Most-selective filter FIRST: confirm the command is a `gh pr create` ----
+# matcher:"Bash" fires on EVERY Bash tool call, so short-circuit the
+# overwhelmingly common non-PR Bash call with one jq BEFORE the response-text
+# extraction + URL grep. This also tightens the session gate's false-positive
+# surface: a mid-session `gh pr view`/`gh pr list`/`git log` that merely PRINTS
+# a /pull/<n> URL cannot reach the dispatch path. Matches the documented scope:
+# `gh pr create` via the Bash tool.
+CMD="$(printf '%s' "$INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null || true)"
+case "$CMD" in
+  *"pr create"*) : ;;  # a PR-creation command — proceed
+  *)
+    # Not a PR-creation command (the common case) — no-op.
+    exit 0
+    ;;
+esac
+
 # ---- Extract the tool response text (stdout + stderr) -----------------------
 RESP="$(printf '%s' "$INPUT" | jq -r '(.tool_response.stdout // "") + "\n" + (.tool_response.stderr // "")' 2>/dev/null || true)"
 if [ -z "$RESP" ]; then
@@ -78,26 +98,12 @@ if [ -z "$RESP" ]; then
 fi
 
 # ---- Extract a PR URL from the response (AC2: no URL → not a PR creation) ---
+# Even for a `gh pr create`, require the PR URL in the response before dispatch.
 PR_URL="$(printf '%s' "$RESP" | grep -oE 'https://github\.com/[^/[:space:]]+/[^/[:space:]]+/pull/[0-9]+' | head -1 || true)"
 if [ -z "$PR_URL" ]; then
-  # No PR URL in the response — this Bash call was not a PR creation.
+  # No PR URL in the response — the create did not surface a PR URL.
   exit 0
 fi
-
-# ---- Confirm the command was a `gh pr create` (defense-in-depth) -------------
-# The PR-URL above is the primary trigger; additionally require the command
-# itself to be a PR-creation so a mid-session `gh pr view`/`gh pr list`/`git log`
-# that merely PRINTS a /pull/<n> URL cannot trigger a drain against a foreign PR
-# (tightens the session gate's false-positive surface). Matches the documented
-# scope: `gh pr create` via the Bash tool.
-CMD="$(printf '%s' "$INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null || true)"
-case "$CMD" in
-  *"pr create"*) : ;;  # a PR-creation command — proceed
-  *)
-    log "command is not a 'gh pr create' (response carried a PR URL) — skipping"
-    exit 0
-    ;;
-esac
 
 # ---- SESSION-SCOPE GATE (AC3) ----------------------------------------------
 # Dispatch ONLY when ALL THREE terms hold. Bare in-progress non-empty is NOT
@@ -109,12 +115,13 @@ if ! { [ -d .supervisor/jobs/in-progress ] && [ -n "$(ls -A .supervisor/jobs/in-
   exit 0
 fi
 
-# (ii) .supervisor/state.md first `## Status:` word is NOT completed/failed.
+# (ii) .supervisor/state.md `- status:` word (lowercase bullet under `## Session`,
+#      per the canonical state-file schema) is NOT completed/failed.
 #      (state.md retains the last session's `- branch:` after completion, so this
-#      Status term guards the stale-branch case. state.md absent → unknown →
+#      status term guards the stale-branch case. state.md absent → unknown →
 #      does NOT fail on this term alone.)
 if [ -f .supervisor/state.md ]; then
-  STATUS_WORD="$(grep -m1 '^## Status:' .supervisor/state.md 2>/dev/null | sed -E 's/^## Status:[[:space:]]*//' | awk '{print $1}' || true)"
+  STATUS_WORD="$(grep -m1 '^- status:' .supervisor/state.md 2>/dev/null | sed -E 's/^- status:[[:space:]]*//' | awk '{print $1}' || true)"
   case "$STATUS_WORD" in
     completed|failed)
       log "session Status is '$STATUS_WORD' (stale) — skipping dispatch"

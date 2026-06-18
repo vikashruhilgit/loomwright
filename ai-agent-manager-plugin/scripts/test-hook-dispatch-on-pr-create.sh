@@ -47,7 +47,8 @@ PR="https://github.com/acme/widgets/pull/42"
 #   Build an isolated working dir with a .supervisor/ skeleton:
 #     - .supervisor/jobs/in-progress/ (+ a dummy job file UNLESS empty_inprogress
 #       == "empty").
-#     - .supervisor/state.md with a controllable "## Status:" and "- branch:".
+#     - .supervisor/state.md in the REAL canonical schema: a `## Session` heading
+#       with a controllable `- status:` and `- branch:` (lowercase bullets).
 #   <state_branch> empty string => omit the "- branch:" line entirely.
 make_wd() {
   local status="$1" sbranch="$2" empty="${3:-}"
@@ -57,7 +58,8 @@ make_wd() {
     printf 'dummy job\n' > "$d/.supervisor/jobs/in-progress/job.md"
   fi
   {
-    printf '## Status: %s\n' "$status"
+    printf '## Session\n'
+    printf -- '- status: %s\n' "$status"
     if [ -n "$sbranch" ]; then
       printf -- '- branch: %s\n' "$sbranch"
     fi

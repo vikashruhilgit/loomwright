@@ -894,6 +894,7 @@ The plugin centralizes **20 hooks** in `hooks/hooks.json` that automatically enf
 | **SubagentStop** (worker, execute-manager, code-reviewer, supervisor-runner, qa-executor, plan-reviewer, launch-pad-runner) | The matching agent completes | Validates its result block (WORKER_RESULT, EXECUTE_*, CODE_REVIEW_RESULT v3, SUPERVISOR_RESULT, QA_RESULT, PLAN_REVIEW_RESULT, LAUNCH_PAD_RESULT) + 3 telemetry + 1 webhook `type: command` hooks |
 | **PreToolUse (AskUserQuestion)** | Plugin about to block on a user question | Desktop banner (`notify-desktop.sh`) + paused-event webhook (v14.1.0) |
 | **Notification** | Claude Code signals attention (permission / idle / elicitation) | Desktop banner (v14.1.0) |
+| **PostToolUse (Bash)** | A Bash tool call completes (e.g. `gh pr create`) | Backstops the until-mergeable review drain on PR creation (`hook-dispatch-on-pr-create.sh`); session-scope gated, fail-safe (v14.34.0) |
 | **SessionStart** | Session resume / clear / compact | Injects bounded recovery context (`session-resume.sh`, v14.2.0) |
 | **Stop / TaskCompleted / WorktreeCreate / StopFailure** | Various | Completeness gate, task-done check, worktree + failure logging |
 
