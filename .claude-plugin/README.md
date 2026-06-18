@@ -460,6 +460,7 @@ Agents with `memory: project` build knowledge across sessions:
 - **PreToolUse (AskUserQuestion):** desktop banner + paused-event webhook (v14.1.0)
 - **Notification:** desktop banner on permission/idle/elicitation prompts, `auth_success` excluded (v14.1.0)
 - **SessionStart:** crash/compact recovery context via `session-resume.sh` (v14.2.0)
+- **PostToolUse (Bash):** PR-create backstop for the until-mergeable review drain — fires on `gh pr create`, session-scope gated, fail-safe (v14.34.0)
 - **Stop:** Code Reviewer (completeness gate)
 - **TaskCompleted:** Verify task genuinely done
 - **WorktreeCreate / StopFailure:** Logging

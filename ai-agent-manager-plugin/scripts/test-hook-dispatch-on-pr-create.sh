@@ -91,7 +91,7 @@ cleanup() { rm -rf "$TMP_PAYLOADS"; }
 trap cleanup EXIT
 
 echo "== AC1. gate-passing fixture as-is -> dispatch (1 marker, DRY_RUN, URL extracted) =="
-WD="$(make_wd "in-progress" "feature/example")"
+WD="$(make_wd "running" "feature/example")"
 run_wrapper "$WD" "feature/example" "$FIXTURE"
 DRY_LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
 if [ "$RUN_RC" -eq 0 ] \
@@ -105,7 +105,7 @@ fi
 rm -rf "$WD"
 
 echo "== AC2. non-PR Bash (no URL in response) -> no-op, 0 markers =="
-WD="$(make_wd "in-progress" "feature/example")"
+WD="$(make_wd "running" "feature/example")"
 P="$TMP_PAYLOADS/no-url.json"
 jq '.tool_response.stdout="hello world no url"' "$FIXTURE" > "$P"
 run_wrapper "$WD" "feature/example" "$P"
@@ -117,7 +117,7 @@ fi
 rm -rf "$WD"
 
 echo "== AC2b. non-create command (URL in response but command is 'gh pr view') -> no-op, 0 markers =="
-WD="$(make_wd "in-progress" "feature/example")"
+WD="$(make_wd "running" "feature/example")"
 P="$TMP_PAYLOADS/pr-view.json"
 # Keep the PR URL in the response, but the command is a read-only `gh pr view` —
 # the command guard must prevent a drain against a foreign PR merely mentioned in output.
@@ -131,7 +131,7 @@ fi
 rm -rf "$WD"
 
 echo "== AC3. branch mismatch -> no-op, 0 markers =="
-WD="$(make_wd "in-progress" "feature/example")"
+WD="$(make_wd "running" "feature/example")"
 run_wrapper "$WD" "feature/other" "$FIXTURE"
 if [ "$RUN_RC" -eq 0 ] && [ "$(marker_count "$WD")" -eq 0 ]; then
   ok "branch-mismatch: exit 0, no dispatch"
@@ -141,7 +141,7 @@ fi
 rm -rf "$WD"
 
 echo "== AC3. in-progress EMPTY (stale state) -> no-op, 0 markers =="
-WD="$(make_wd "in-progress" "feature/example" "empty")"
+WD="$(make_wd "running" "feature/example" "empty")"
 run_wrapper "$WD" "feature/example" "$FIXTURE"
 if [ "$RUN_RC" -eq 0 ] && [ "$(marker_count "$WD")" -eq 0 ]; then
   ok "in-progress-empty: exit 0, no dispatch"
@@ -161,7 +161,7 @@ fi
 rm -rf "$WD"
 
 echo "== AC5. state.md present, no '- branch:' line -> dispatch (gate iii falls back to current branch) =="
-WD="$(make_wd "in-progress" "")"        # empty sbranch => no '- branch:' line
+WD="$(make_wd "running" "")"        # empty sbranch => no '- branch:' line
 run_wrapper "$WD" "feature/example" "$FIXTURE"
 DRY_LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
 if [ "$RUN_RC" -eq 0 ] \
@@ -175,7 +175,7 @@ fi
 rm -rf "$WD"
 
 echo "== AC5. state.md absent -> dispatch (terms ii,iii skipped; leans on term i) =="
-WD="$(make_wd "in-progress" "feature/example")"
+WD="$(make_wd "running" "feature/example")"
 rm -f "$WD/.supervisor/state.md"        # state.md entirely absent
 run_wrapper "$WD" "feature/example" "$FIXTURE"
 DRY_LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
@@ -190,7 +190,7 @@ fi
 rm -rf "$WD"
 
 echo "== AC4. opt-out (.auto_review:false) -> no-op, 0 markers (dispatcher honors opt-out) =="
-WD="$(make_wd "in-progress" "feature/example")"
+WD="$(make_wd "running" "feature/example")"
 printf '{"auto_review": false}\n' > "$WD/.supervisor/notify-config.json"
 run_wrapper "$WD" "feature/example" "$FIXTURE"
 if [ "$RUN_RC" -eq 0 ] && [ "$(marker_count "$WD")" -eq 0 ]; then
@@ -201,7 +201,7 @@ fi
 rm -rf "$WD"
 
 echo "== AC6. malformed JSON stdin -> rc 0, 0 markers =="
-WD="$(make_wd "in-progress" "feature/example")"
+WD="$(make_wd "running" "feature/example")"
 P="$TMP_PAYLOADS/malformed.txt"
 printf 'not json\n' > "$P"
 run_wrapper "$WD" "feature/example" "$P"
@@ -213,7 +213,7 @@ fi
 rm -rf "$WD"
 
 echo "== AC6. empty stdin -> rc 0, 0 markers =="
-WD="$(make_wd "in-progress" "feature/example")"
+WD="$(make_wd "running" "feature/example")"
 P="$TMP_PAYLOADS/empty.txt"
 : > "$P"
 run_wrapper "$WD" "feature/example" "$P"
