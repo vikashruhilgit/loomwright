@@ -646,7 +646,7 @@ disable, `unset AI_AGENT_MANAGER_WEBHOOK_URL`.
 { "event": "paused", "question": "<first question text>", "timestamp": "..." }
 ```
 
-**File-config fallback.** When `AI_AGENT_MANAGER_WEBHOOK_URL` is unset, the script falls back to `.supervisor/notify-config.json` → `.webhook_url`. This fixes the common failure where a URL exported only in `~/.zshrc` never reaches the non-interactive (bash) hook subprocess. The env var wins when both are present.
+**File-config fallback.** When `AI_AGENT_MANAGER_WEBHOOK_URL` is unset, the script falls back to `.supervisor/config.json` → `.webhook_url` (legacy `.supervisor/notify-config.json` is still read as a fallback; the new path wins when both exist). This fixes the common failure where a URL exported only in `~/.zshrc` never reaches the non-interactive (bash) hook subprocess. The env var wins when both are present.
 
 **ntfy-aware payload.** When the resolved URL matches `*ntfy.sh/*` (or `AI_AGENT_MANAGER_WEBHOOK_FORMAT=ntfy` is set for self-hosted instances), the `paused` event sends a **plain-text body** plus `Title` / `Priority` / `Tags` headers instead of JSON — so an ntfy phone push is readable rather than a raw JSON blob. All other endpoints (Slack/Discord/custom) receive JSON.
 

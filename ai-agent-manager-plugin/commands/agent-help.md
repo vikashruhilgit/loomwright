@@ -674,7 +674,7 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 
 **Purpose:** Chain `/launch-pad → /supervisor` to drive a requirement to completion. Default mode is **multi-iteration** (cap 10, default 3) with **stacked PRs** — iteration N+1 branches from `iterations[N].branch` — and re-plans on two specific `SUPERVISOR_RESULT` signals. Pass `--single-iteration` (or `--max-iterations 1`) for v13's run-once behavior; `--no-stacked-branches` for the v13 branch-from-`main` cadence.
 
-> **Foreground-assisted automation, not fire-and-forget.** The loop pauses at every existing interactive boundary (Launch Pad Phase 6 save, NO-GO override, Plan Review FAIL × 3, Supervisor adjudication 4-option, and the loop's own rubric gate). You must be at the terminal to answer them — unless you pass `--non-interactive-fallback` (CI / non-TTY: gates fail closed). `--notify` posts a gate-event webhook (resolved from `AI_AGENT_MANAGER_WEBHOOK_URL` or `.supervisor/notify-config.json`) so an out-of-band notifier can ping you.
+> **Foreground-assisted automation, not fire-and-forget.** The loop pauses at every existing interactive boundary (Launch Pad Phase 6 save, NO-GO override, Plan Review FAIL × 3, Supervisor adjudication 4-option, and the loop's own rubric gate). You must be at the terminal to answer them — unless you pass `--non-interactive-fallback` (CI / non-TTY: gates fail closed). `--notify` posts a gate-event webhook (resolved from `AI_AGENT_MANAGER_WEBHOOK_URL` or `.supervisor/config.json`; legacy `.supervisor/notify-config.json` is still read as a fallback, new path wins) so an out-of-band notifier can ping you.
 
 **Usage:**
 ```bash
@@ -1014,7 +1014,7 @@ bd close BD-XX
 
 ai-agent-manager-plugin/              # Nested plugin root
 ├── .claude-plugin/
-│   └── plugin.json                   # Plugin metadata (v14.34.0)
+│   └── plugin.json                   # Plugin metadata (v14.35.0)
 ├── .mcp.json                         # Bundled MCP servers
 ├── commands/                         # Slash commands (18)
 │   ├── launch-pad.md                 # Supervisor readiness

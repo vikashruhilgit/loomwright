@@ -34,7 +34,8 @@
 #     hook_event_name=PreToolUse + tool_name=AskUserQuestion (requires
 #     tool_input.questions). Scope-gated via AI_AGENT_MANAGER_NOTIFY_SCOPE
 #     (plugin default / all). Webhook URL resolves from AI_AGENT_MANAGER_WEBHOOK_URL
-#     or, if unset, the .supervisor/notify-config.json `.webhook_url` fallback.
+#     or, if unset, the .supervisor/config.json (legacy
+#     .supervisor/notify-config.json still read as a fallback) `.webhook_url` fallback.
 #       ntfy.sh URLs (or AI_AGENT_MANAGER_WEBHOOK_FORMAT=ntfy) → plain-text body
 #         + Title/Priority/Tags headers
 #       other URLs → {event:"paused", question, timestamp}
@@ -95,8 +96,12 @@ set -u
 # config file so notification config survives regardless of launch context.
 # The env var wins when both are set.
 WEBHOOK_URL="${AI_AGENT_MANAGER_WEBHOOK_URL:-}"
-if [ -z "$WEBHOOK_URL" ] && [ -r ".supervisor/notify-config.json" ] && command -v jq >/dev/null 2>&1; then
-  WEBHOOK_URL="$(jq -r '.webhook_url // empty' .supervisor/notify-config.json 2>/dev/null || true)"
+# Back-compatible config path: prefer the new .supervisor/config.json, fall back
+# to the legacy .supervisor/notify-config.json (new path wins when both exist).
+CONFIG_FILE=".supervisor/config.json"
+[ -f "$CONFIG_FILE" ] || CONFIG_FILE=".supervisor/notify-config.json"
+if [ -z "$WEBHOOK_URL" ] && [ -r "$CONFIG_FILE" ] && command -v jq >/dev/null 2>&1; then
+  WEBHOOK_URL="$(jq -r '.webhook_url // empty' "$CONFIG_FILE" 2>/dev/null || true)"
 fi
 if [ -z "$WEBHOOK_URL" ]; then
   exit 0

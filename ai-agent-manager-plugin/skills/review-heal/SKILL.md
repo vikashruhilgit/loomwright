@@ -27,7 +27,7 @@ These names are **coined here**. Treat this section as authoritative; all other 
 | New command | **`/review-pr <pr-url>`** | Inline main-thread workflow body referencing this skill. |
 | New skill | **`review-heal`** | This file. |
 | Opt-out flag | **`--no-auto-review`** | Suppresses the post-`/supervisor` auto-dispatch. |
-| Enable signal | **`auto_review: true`** in `.supervisor/notify-config.json` (or a **`--auto-review`** flag) | Either turns on auto-dispatch. |
+| Enable signal | **`auto_review: true`** in `.supervisor/config.json` (legacy `.supervisor/notify-config.json` is still read as a fallback; new path wins when both exist) (or a **`--auto-review`** flag) | Either turns on auto-dispatch. |
 | Dispatcher script | **`ai-agent-manager-plugin/scripts/dispatch-pr-review.sh`** | Gated, config-file-driven, cost/runaway-guarded, **always exits 0**. |
 | Until-mergeable mode | **`--until-mergeable`** | Opt-in drain loop (§"Until-Mergeable Mode"). Strictly additive — **absent ⇒ byte-for-byte the default loop**. |
 | Drain bound | **`--max-rounds N`** (default 5) | Hard ceiling on drain rounds (§"Until-Mergeable Mode"). |
@@ -166,7 +166,7 @@ Pushes that update the PR branch are **regular pushes only**. A force-push would
 When the loop exits as `ESCALATED` (reviewer `NEEDS_HUMAN`, or exhausted with issues), fire **best-effort** notifications. These calls **NEVER block and NEVER fail the loop** — both scripts are designed to always exit 0; any error (missing `jq`, missing `curl`, unset webhook URL, malformed payload) is absorbed silently.
 
 - **Desktop banner:** `${CLAUDE_PLUGIN_ROOT}/scripts/notify-desktop.sh` — reads a JSON hook-style payload on **stdin**, builds a `(title, body)` pair, and fires an OS-native banner (macOS `osascript` / clickable `terminal-notifier`; Linux `notify-send`). It is opt-out via `AI_AGENT_MANAGER_DESKTOP_NOTIFICATIONS=0` and **always exits 0**.
-- **Webhook:** `${CLAUDE_PLUGIN_ROOT}/scripts/send-webhook.sh` — gated on a resolvable webhook URL (`AI_AGENT_MANAGER_WEBHOOK_URL`, or the `.supervisor/notify-config.json` → `.webhook_url` fallback, which the script resolves internally). The `--event-type gate` path takes its fields from CLI flags (`--gate-type`, `--iteration`, `--session-id`, `--context`) and builds the payload with `jq --arg` exclusively (injection-safe). It POSTs fire-and-forget with a hard 5s timeout and **always exits 0**.
+- **Webhook:** `${CLAUDE_PLUGIN_ROOT}/scripts/send-webhook.sh` — gated on a resolvable webhook URL (`AI_AGENT_MANAGER_WEBHOOK_URL`, or the `.supervisor/config.json` → `.webhook_url` fallback, which the script resolves internally). The `--event-type gate` path takes its fields from CLI flags (`--gate-type`, `--iteration`, `--session-id`, `--context`) and builds the payload with `jq --arg` exclusively (injection-safe). It POSTs fire-and-forget with a hard 5s timeout and **always exits 0**.
 
 Set `notified: true` in `REVIEW_HEAL_RESULT` whenever a NEEDS_HUMAN/escalation notification was attempted (regardless of whether the banner/webhook actually delivered — delivery is best-effort and unobservable from the loop).
 
@@ -499,7 +499,7 @@ Auto-postmortem is **ON by default within `--until-mergeable`** but **churn-gate
 
 | Trigger | Source |
 |---|---|
-| `fix_cycles > postmortem_churn_threshold` (default **2**) | `--postmortem-churn-threshold N` or `.postmortem_churn_threshold` in `.supervisor/notify-config.json` (read via jq) |
+| `fix_cycles > postmortem_churn_threshold` (default **2**) | `--postmortem-churn-threshold N` or `.postmortem_churn_threshold` in `.supervisor/config.json` (read via jq) |
 | `decision == ESCALATED` (escalated / timed-out) | the loop's final decision |
 | same required CI/check failure repeats after a fix | `repeat_check_failure` |
 | bot/automated feedback remained unresolved after ≥1 fix | `unresolved_bot_feedback` |
@@ -508,7 +508,7 @@ If **NONE** trip (`fix_cycles ≤ threshold` AND `decision != ESCALATED` AND no 
 
 ### Opt-out (AC13)
 
-`--no-auto-postmortem` (or `auto_postmortem: false` in `.supervisor/notify-config.json`) opts out **entirely** — no postmortem regardless of churn. (NB: the config value is the boolean `false`; the dispatcher reads it as a raw value, never via jq `// empty`, so the falsy `false` is not silently coerced away.)
+`--no-auto-postmortem` (or `auto_postmortem: false` in `.supervisor/config.json`) opts out **entirely** — no postmortem regardless of churn. (NB: the config value is the boolean `false`; the dispatcher reads it as a raw value, never via jq `// empty`, so the falsy `false` is not silently coerced away.)
 
 ### Launch form (R10 — fresh detached process, NEVER a nested Task)
 
@@ -555,7 +555,8 @@ The tail's exit status is **ignored** — the dispatcher always exits 0 and the 
 ## Related Skills
 
 - `skills/autonomous-loop/SKILL.md` — the `/autonomous` outer loop; its EVALUATE step is entry sense (b) for review-heal.
-- `skills/state-management/SKILL.md` — `.supervisor/` conventions, including `notify-config.json` where `auto_review` and `webhook_url` live.
+- `skills/state-management/SKILL.md` — `.supervisor/` state-file conventions.
+- The run-behavior config `.supervisor/config.json` (where `auto_review` and `webhook_url` live; legacy `.supervisor/notify-config.json` is still read as a fallback, new path wins when both exist) is documented in the dispatch scripts (`scripts/dispatch-pr-review.sh`, `scripts/send-webhook.sh`) and `commands/supervisor.md`.
 - Supervisor Phase 4.5 (`agents/supervisor.md`) — the in-Supervisor review→fix→re-review machinery this loop is extracted from.
 
 ## Quality Gates

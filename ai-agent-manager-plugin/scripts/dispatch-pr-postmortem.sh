@@ -25,7 +25,8 @@
 #
 #   OPT-OUT (AC13). No postmortem is dispatched, regardless of churn, when EITHER:
 #     1. --no-auto-postmortem was passed, OR
-#     2. .supervisor/notify-config.json has `.auto_postmortem == false`.
+#     2. .supervisor/config.json (legacy .supervisor/notify-config.json still read
+#        as a fallback) has `.auto_postmortem == false`.
 #   Auto-postmortem is otherwise ON-by-default within --until-mergeable — but always
 #   CHURN-GATED (below); a clean PR is a silent no-op (AC9).
 #
@@ -36,7 +37,8 @@
 #     * --repeat-check-failure                       (same required check failed after a fix)
 #     * --unresolved-bot-feedback                    (bot feedback still open after >=1 fix)
 #   If NONE trip, log one line and exit 0 with NO dispatch (the clean-PR no-op, AC9).
-#   The threshold is read from .supervisor/notify-config.json `.postmortem_churn_threshold`
+#   The threshold is read from .supervisor/config.json (legacy
+#   .supervisor/notify-config.json still read as a fallback) `.postmortem_churn_threshold`
 #   via jq (NOT an env var — same repo-local-config rationale as dispatch-pr-review.sh),
 #   overridable by --postmortem-churn-threshold N; default 2.
 #
@@ -89,7 +91,10 @@ set -u
 
 log() { printf 'dispatch-pr-postmortem: %s\n' "$1" >&2; }
 
-CONFIG_FILE=".supervisor/notify-config.json"
+# Back-compatible config path: prefer the new .supervisor/config.json, fall back
+# to the legacy .supervisor/notify-config.json (new path wins when both exist).
+CONFIG_FILE=".supervisor/config.json"
+[ -f "$CONFIG_FILE" ] || CONFIG_FILE=".supervisor/notify-config.json"
 DISPATCH_DIR=".supervisor/postmortem-dispatch"
 LOG_DIR=".supervisor/logs"
 CLAUDE_BIN="${AI_AGENT_MANAGER_CLAUDE_BIN:-claude}"
