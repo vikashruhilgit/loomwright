@@ -248,7 +248,25 @@ Read {scratchpad}/supervisor-state.md
 
 ### Writing State (Mutations)
 
-All mutations go through Context-Keeper (blocking call). Never write the state file directly from Supervisor or Workers.
+All mutations go through Context-Keeper (blocking call) on the **parallel path**. Workers never write the state file directly.
+
+#### One on-disk format: the canonical lowercase `## Session` block
+
+There is exactly **ONE on-disk format** for `.supervisor/state.md` — the canonical lowercase schema documented in §"State File Schema" above, where the `## Session` block carries lowercase `- branch: <feature-branch>` and `- status: running | paused | completed | failed`. The **bold display blocks** that agents emit to their OUTPUT (the Supervisor's `## ENVIRONMENT` block, the `## Outcome` block — `- **Branch:** …` style) are **human-readable presentation only** and are NOT the state file. Never let a bold-style block become the on-disk state file.
+
+Two downstream consumers read the on-disk canonical lowercase form and break on anything else:
+
+- **`hook-dispatch-on-pr-create.sh`** — the post-PR review-drain backstop greps `^- status:` and `^- branch:`. A stale or bold-only state file makes its session-scope gate fail-closed, so the until-mergeable drain never dispatches.
+- **`/supervisor --continue` resume** — reads the lowercase `status: running` to decide whether/where to resume.
+
+#### Inline-path write responsibility (best-effort, non-fatal)
+
+The canonical `## Session` block MUST land in `.supervisor/state.md` **regardless of whether Context-Keeper was spawned**:
+
+- **Parallel path** (EXECUTE delegated to a Context-Keeper-backed Execute Manager): Context-Keeper is the canonical writer via `set_task` / `update_phase` at ACQUIRE and the SELF_HEAL completion tail.
+- **Inline main-thread path** (where the poll loop is NOT delegated, so no Context-Keeper is spawned): the Supervisor writes the canonical lowercase `## Session` block **directly** — at ACQUIRE (`- status: running`, `- branch: <feature-branch>`) and at the SELF_HEAL completion tail (flip `- status:` to `completed`, or `completed_with_escalation` on ESCALATED).
+
+This direct inline write is **best-effort / non-fatal**: it MUST NEVER block ACQUIRE or fail the run (preserving the fail-safe invariant). A write failure is a logged no-op. The direct write produces the SAME single canonical lowercase format — it does NOT introduce a second/competing format.
 
 **Supported operations:**
 
