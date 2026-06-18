@@ -67,8 +67,13 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 0
 fi
 
-# ---- Defensive: only act on Bash tool calls (AC6 — malformed JSON → empty) --
-TOOL_NAME="$(printf '%s' "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null || true)"
+# ---- Defensive: extract tool_name AND command in a SINGLE jq fork (AC6) -----
+# Runs on EVERY Bash tool call, so fork jq ONCE for both fields. @tsv escapes
+# embedded tabs/newlines so a multiline command can't split the fields. Malformed
+# JSON yields empty META → TOOL_NAME="" (!= "Bash") → exit 0 (fail-safe).
+META="$(printf '%s' "$INPUT" | jq -r '[(.tool_name // ""), (.tool_input.command // "")] | @tsv' 2>/dev/null || true)"
+TOOL_NAME="${META%%$'\t'*}"
+CMD="${META#*$'\t'}"
 if [ "$TOOL_NAME" != "Bash" ]; then
   # Not a Bash tool call (or malformed JSON yielding empty) — no-op.
   exit 0
@@ -80,8 +85,7 @@ fi
 # extraction + URL grep. This also tightens the session gate's false-positive
 # surface: a mid-session `gh pr view`/`gh pr list`/`git log` that merely PRINTS
 # a /pull/<n> URL cannot reach the dispatch path. Matches the documented scope:
-# `gh pr create` via the Bash tool.
-CMD="$(printf '%s' "$INPUT" | jq -r '.tool_input.command // ""' 2>/dev/null || true)"
+# `gh pr create` via the Bash tool. (CMD was extracted above alongside TOOL_NAME.)
 case "$CMD" in
   *"pr create"*) : ;;  # a PR-creation command — proceed
   *)
