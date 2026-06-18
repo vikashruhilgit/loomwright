@@ -12,6 +12,8 @@
 #   5. jq masked off PATH → exit 0, quiet (missing-tool fail-safe)
 #   6. exit code is 0 in every case (asserted inline per case)
 #   + stdin path source, self_heal_miss surfacing, malformed line tolerance, advisory banner.
+#   + repo scoping: when CUR_REPO resolves from a remote, only same-repo entries contribute
+#     (a same-path entry from another repo must NOT produce a false cross-repo churn hit).
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -152,6 +154,28 @@ echo "$out" | grep -qE "1 postmortem entry\b" && ok "singular \"entry\" pluraliz
 echo "$out" | grep -qE "1 postmortem entries" && no "rendered plural \"entries\" for a single entry" || ok "did not render plural for a single entry"
 echo "$out" | grep -q "recurring root-cause classes: (none recorded)" && ok "(none recorded) fallback for classes" || no "(none recorded) classes fallback missing"
 echo "$out" | grep -q "recurring flow stages: (none recorded)" && ok "(none recorded) fallback for stages" || no "(none recorded) stages fallback missing"
+rm -rf "$TMP"
+
+echo "== 4f. repo scoping: same-path entry from ANOTHER repo must NOT contribute =="
+# newrepo() creates a repo with NO remote, so CUR_REPO is empty there and all the cases above
+# stay fail-open (unscoped). For THIS case we set origin=https://github.com/o/r.git so
+# CUR_REPO resolves to "o/r" — matching the fixtures' repo:"o/r".
+TMP="$(newrepo)"; write_fixture "$TMP"
+( cd "$TMP" && git remote add origin https://github.com/o/r.git )
+# (a) With origin=o/r, a query path overlapping an o/r entry STILL hits (scoping keeps own repo).
+out="$( cd "$TMP" && bash "$READ" "src/auth/guard.ts" 2>/dev/null )"; rc=$?
+[ "$rc" -eq 0 ] && ok "exit 0 with resolved CUR_REPO" || no "non-zero exit with resolved CUR_REPO ($rc)"
+echo "$out" | grep -q "src/auth/guard.ts" && ok "own-repo (o/r) hit still surfaced under scoping" || no "own-repo hit lost under scoping"
+echo "$out" | grep -q "validation-parity" && ok "own-repo class still surfaced under scoping" || no "own-repo class lost under scoping"
+# (b) Append a line with the SAME changed_paths but repo:"other/repo" — it must NOT contribute.
+jq -cn '{schema_version:1, number:7, repo:"other/repo", branch:"b7", pr_url:"u7",
+         changed_paths:["src/cross/repo-only.ts"],
+         categories:[{round:1,class:"cross-repo-leak",self_heal_miss:false,flow_stage:"worker",evidence:"x"}],
+         self_heal_misses:0, flow_stages:{worker:1}, summary:"s7"}' >> "$TMP/$CORPUS"
+out2="$( cd "$TMP" && bash "$READ" "src/cross/repo-only.ts" 2>/dev/null )"; rc2=$?
+[ "$rc2" -eq 0 ] && ok "exit 0 querying a foreign-repo-only path" || no "non-zero exit on foreign-repo query ($rc2)"
+echo "$out2" | grep -q "no prior churn recorded for the touched paths" && ok "foreign-repo entry did NOT contribute (no false cross-repo hit)" || no "foreign-repo entry leaked a false hit"
+echo "$out2" | grep -q "cross-repo-leak" && no "foreign-repo class leaked under scoping" || ok "foreign-repo class correctly excluded"
 rm -rf "$TMP"
 
 echo "== 5. jq masked off PATH → exit 0, quiet (missing-tool fail-safe) =="

@@ -10,6 +10,14 @@
 # treated as a prior-churn hit. Aggregates recurring root-cause `class` and `flow_stage`
 # values (with counts), prior churn-round count, and whether any round was a self_heal_miss.
 #
+# REPO SCOPING: matches are scoped to the CURRENT repo when it can be derived from the git
+# remote (`owner/repo` parsed from remote.origin.url). The corpus may aggregate entries from
+# multiple repos because `/pr-postmortem` can analyze an EXTERNAL PR and append its line
+# (carrying that PR's `repo` field) to the single local results.jsonl — so a common path
+# (README.md, package.json, src/index.ts) recorded from an unrelated repo would otherwise
+# produce a FALSE "prior churn" hit. When the current repo is undeterminable (no remote / parse
+# fails), matching falls back to UNSCOPED (fail-open) — same behavior as before this scoping.
+#
 # Output is ADVISORY and prefixed with a subordinate-to-CLAUDE.md banner. This helper NEVER
 # gates anything; its output is always subordinate to CLAUDE.md (on conflict, CLAUDE.md wins).
 #
@@ -38,6 +46,11 @@ set -uo pipefail   # `set -e` intentionally omitted — a read must NEVER fail i
 
 GITROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$GITROOT" 2>/dev/null || true
+
+# Best-effort current-repo slug `owner/repo` from the git remote. Handles both
+# git@host:owner/repo.git and https://host/owner/repo.git; empty if no remote / parse fails.
+# When empty, the jq aggregation below stays UNSCOPED (fail-open) — see header REPO SCOPING.
+CUR_REPO="$(git config --get remote.origin.url 2>/dev/null | sed -E 's#^(git@|https?://)[^/:]+[:/]+##; s#\.git$##' 2>/dev/null || true)"
 
 CORPUS=".supervisor/postmortem/results.jsonl"
 LOG=".supervisor/logs/memory.log"
@@ -91,15 +104,20 @@ query_json="$(jq -R . "$paths_file" 2>/dev/null | jq -s . 2>/dev/null)"
 summary="$(
   jq -R 'fromjson? // empty' "$CORPUS" 2>/dev/null | jq -s \
     --argjson query "$query_json" \
+    --arg cur_repo "$CUR_REPO" \
     --argjson max_paths "$MAX_PATHS" \
     --argjson max_classes "$MAX_CLASSES" \
     --argjson max_stages "$MAX_STAGES" '
     # Set of query paths for fast membership.
     ($query | map(select(. != null and . != "")) | unique) as $q
     | ($q | map({(.): true}) | add // {}) as $qset
-    # Keep only entries whose changed_paths overlap the query set.
+    # Keep only entries whose changed_paths overlap the query set AND — when the current repo is
+    # known ($cur_repo != "") — whose `repo` matches it. When $cur_repo == "" (undeterminable),
+    # the repo predicate is vacuously true (fail-open / unscoped). Uses (.repo // "") falsy
+    # coercion (NOT // empty) for consistency with the existing discipline.
     | [ .[]
         | . as $e
+        | select($cur_repo == "" or (($e.repo) // "") == $cur_repo)
         | ((($e.changed_paths) // []) | map(select($qset[.] == true))) as $overlap
         | select(($overlap | length) > 0)
         | {overlap: $overlap, cats: (($e.categories) // []), shm: (($e.self_heal_misses) // 0)}
