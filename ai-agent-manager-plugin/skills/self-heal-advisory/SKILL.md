@@ -31,6 +31,56 @@ focused on gates).
 
 ---
 
+## Prior-churn advisory (pre-review enrichment)
+
+Unlike the three post-review checks below (which run AFTER the Code Reviewer loop has
+completed), this advisory runs **at Phase 4.5 entry, BEFORE the first Code Reviewer
+spawn** — because its sole purpose is to enrich the reviewer prompt. It feeds the
+prior-churn miss-classes of the integrated diff's touched files into the Code Reviewer
+prompt so the self-heal review prioritizes sweeping for root-cause classes that have
+**churned before on those same files** (recurring `self_heal_miss` / root-cause classes /
+flow stages mined from the postmortem corpus).
+
+> **HARD ADVISORY CONTRACT — `prior_churn` is advisory input to the REVIEW lens ONLY.**
+> Exactly like the contract-conformance / benchmark / ground-truth checks and the Rubric
+> Grader, `prior_churn` is **advisory only**: it **NEVER changes `heal_decision`**,
+> **NEVER drives the fix task** (the corpus is NOT passed to workers/fixers — only the
+> Code Reviewer prompt receives the summary, per the roadmap non-goal), **NEVER triggers a
+> fix iteration on its own**, and **NEVER gates or blocks the PR**. It is **fail-safe**:
+> the reader (`read-postmortem.sh`) ALWAYS exits 0, and on empty output the phase proceeds
+> with **no enrichment** (the reviewer prompt simply omits the prior-churn line). Under
+> tool-budget pressure this step is among the first to skip — the gates in
+> `agents/supervisor.md` still run.
+
+```
+# touched files = the same integrated-diff scope the Code Reviewer reviews. When
+# BASE_BRANCH==main this is `git diff origin/main...HEAD`; for a stacked iteration
+# (BASE_BRANCH != main) it is `git diff $BASE_BRANCH...HEAD` — the SAME DIFF-SCOPE OVERRIDE.
+touched = paths from the integrated diff (read-only):
+          BASE_BRANCH==main  -> git diff --name-only origin/main...HEAD
+          BASE_BRANCH!=main  -> git diff --name-only $BASE_BRANCH...HEAD
+
+prior_churn = ""   # advisory summary; empty string when no prior churn (proceed with no enrichment)
+
+# Pass the touched paths as COMMAND-LINE ARGUMENTS (args take precedence — STDIN is NEVER
+# read, so an args-bearing call can never block on an open-but-idle pipe in a non-TTY agent
+# context). NEVER pipe the paths on stdin. See ${CLAUDE_PLUGIN_ROOT}/scripts/read-postmortem.sh.
+if touched is non-empty:
+  prior_churn = bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-postmortem.sh" <touched files...>
+  # The reader emits a bounded markdown summary (recurring root-cause classes / flow stages /
+  # self_heal_miss for files that churned before) and ALWAYS exits 0; on empty output prior_churn
+  # stays "" and we proceed with no enrichment. Do NOT restate the reader's internals here.
+
+record_decision(phase: SELF_HEAL, decision: "prior_churn: {non-empty | empty}", rationale: "advisory pre-review enrichment — heal_decision unchanged, fixers never see the corpus")
+```
+
+`prior_churn` is threaded into the `code-reviewer` Task prompt as advisory, non-gating
+context (the exact prompt line lives in `agents/supervisor.md` §"Review-and-fix loop").
+It is NOT emitted as a SUPERVISOR_RESULT field and does NOT bump `schema_version` — it is
+additive prose enrichment of the reviewer prompt only.
+
+---
+
 ## Post-review advisory checks
 
 Run all three after the Code Reviewer loop has completed (regardless of
