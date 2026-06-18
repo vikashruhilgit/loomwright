@@ -74,7 +74,7 @@ Before creating `.supervisor/`, verify `.gitignore` exists. If not, create it wi
 - task_id: BD-XX | task-short-desc
 - branch: feature/BD-XX-desc
 - phase: INIT | ACQUIRE | PLAN | EXECUTE | FINALIZE | SELF_HEAL | LOOP
-- status: running | paused | completed | failed
+- status: running | paused | completed | completed_with_escalation | failed
 - self_heal_resume_count: {integer, default 0}   # optional — increments only on resumes that actually execute the `code-reviewer` Task in Phase 4.5 (first loop iteration), NOT on every `--continue` landing in SELF_HEAL. This prevents Phase 4.5 invariant-violation runs (where `code-reviewer` was never invoked and `--skip-self-heal` was not set) from aging into a `self_heal_resume_thrash` escalation. Resets to 0 on every SELF_HEAL completion-tail exit that reaches the reset step (PASS, ESCALATED, or loop-skipped via `--skip-self-heal`); the invariant-violation path deliberately does NOT reset, preserving prior legitimate reviewer-reaching counts. Thrash guard: if the counter reaches 3, Supervisor aborts the loop and escalates with `self_heal_resume_thrash` reason. Mutated via Context-Keeper's `record_self_heal_resume` operation; read non-mutatively via `query(section: session)`. Lazy-added on first SELF_HEAL resume that runs the reviewer; not present in initial state.
 
 ## Task
@@ -252,7 +252,7 @@ All mutations go through Context-Keeper (blocking call) on the **parallel path**
 
 #### One on-disk format: the canonical lowercase `## Session` block
 
-There is exactly **ONE on-disk format** for `.supervisor/state.md` — the canonical lowercase schema documented in §"State File Schema" above, where the `## Session` block carries lowercase `- branch: <feature-branch>` and `- status: running | paused | completed | failed`. The **bold display blocks** that agents emit to their OUTPUT (the Supervisor's `## ENVIRONMENT` block, the `## Outcome` block — `- **Branch:** …` style) are **human-readable presentation only** and are NOT the state file. Never let a bold-style block become the on-disk state file.
+There is exactly **ONE on-disk format** for `.supervisor/state.md` — the canonical lowercase schema documented in §"State File Schema" above, where the `## Session` block carries lowercase `- branch: <feature-branch>` and `- status: running | paused | completed | completed_with_escalation | failed`. The **bold display blocks** that agents emit to their OUTPUT (the Supervisor's `## ENVIRONMENT` block, the `## Outcome` block — `- **Branch:** …` style) are **human-readable presentation only** and are NOT the state file. Never let a bold-style block become the on-disk state file.
 
 Two downstream consumers read the on-disk canonical lowercase form and break on anything else:
 
