@@ -32,7 +32,7 @@
 # lifecycle; consumer = this wrapper. No new producer code is introduced.
 #
 # A bare non-empty .supervisor/jobs/in-progress/ is NOT sufficient — ALL THREE
-# gate terms (in-progress job exists AND state.md Status not completed/failed
+# gate terms (in-progress job exists AND state.md Status not completed/completed_with_escalation/failed
 # AND PR head branch == session feature branch) are required before dispatch.
 # The branch term is FAIL-CLOSED: if state.md does not yield a branch value in
 # either the canonical lowercase (`- branch:`) or the bold (`- **Branch:**`) form
@@ -137,6 +137,7 @@ fi
 #      status term guards the stale-branch case. state.md absent → unknown →
 #      does NOT fail on this term alone.)
 if [ -f .supervisor/state.md ]; then
+  # NOTE: grep -m1 = first-line-wins; the design writes ONLY the lowercase form, so a coexisting bold+lowercase state.md (latent, never produced) would resolve by first occurrence.
   # Strip bold `**` markers FIRST so both `- status:` and `- **Status:**`
   # collapse to a bare `- status:` key, then strip the key + leading space and
   # take the first word.

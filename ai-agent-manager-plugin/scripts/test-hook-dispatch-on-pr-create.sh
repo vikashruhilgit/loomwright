@@ -31,6 +31,7 @@
 #   AC2  bold-format MATCH (- **Branch:** / - **Status:**) -> dispatch (format-tolerant parse).
 #   AC2  bold-format branch-MISMATCH -> 0 markers (anti-hijack preserved in bold form).
 #   AC2  bold-format Status completed -> 0 markers (stale fail-close in bold form).
+#   AC2  bold-format Status completed_with_escalation -> 0 markers (terminal fail-close in bold form).
 #   AC5  state.md present but NO `- branch:` line -> NO dispatch (gate iii fail-closed; no fallback).
 #   AC5  state.md ENTIRELY ABSENT -> NO dispatch (gate iii fail-closed; branch unconfirmable).
 #   AC4  opt-out (.auto_review:false) -> 0 markers (wrapper delegates opt-out to dispatcher).
@@ -189,7 +190,7 @@ rm -rf "$WD"
 echo "== AC3. Status completed_with_escalation (terminal/stale) -> no-op, 0 markers =="
 # The Supervisor Phase 4.5 ESCALATED completion tail flips `- status:` to
 # `completed_with_escalation`; it is terminal and must fail-close the stale-guard
-# exactly like `completed`/`failed` (else a later unrelated PR on the same branch
+# exactly like `completed`/`completed_with_escalation`/`failed` (else a later unrelated PR on the same branch
 # could re-trigger a dispatch on a finished session).
 WD="$(make_wd "completed_with_escalation" "feature/example")"
 run_wrapper "$WD" "feature/example" "$FIXTURE"
@@ -256,6 +257,18 @@ if [ "$RUN_RC" -eq 0 ] && [ "$(marker_count "$WD")" -eq 0 ]; then
   ok "bold-status-completed: exit 0, no dispatch (stale fail-close in bold form)"
 else
   no "bold-status-completed wrong (rc=$RUN_RC markers=$(marker_count "$WD") out='$RUN_OUT')"
+fi
+rm -rf "$WD"
+
+echo "== AC2. bold-format Status completed_with_escalation (- **Status:** completed_with_escalation) -> no-op (terminal fail-close in bold form) =="
+WD="$(make_wd_bold "completed_with_escalation" "feature/example")"
+run_wrapper "$WD" "feature/example" "$FIXTURE"
+# Terminal-status fail-close must work for the bold form too (mirrors the lowercase
+# completed_with_escalation terminal case): a finished/escalated session must not re-dispatch.
+if [ "$RUN_RC" -eq 0 ] && [ "$(marker_count "$WD")" -eq 0 ]; then
+  ok "bold-status-completed_with_escalation: exit 0, no dispatch (terminal fail-close in bold form)"
+else
+  no "bold-status-completed_with_escalation wrong (rc=$RUN_RC markers=$(marker_count "$WD") out='$RUN_OUT')"
 fi
 rm -rf "$WD"
 
