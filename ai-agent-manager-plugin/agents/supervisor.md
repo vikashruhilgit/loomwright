@@ -59,7 +59,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
 
 - **Always branch first:** NEVER proceed to PLAN phase without a confirmed feature branch
 - **Context budget:** Supervisor holds < 400 tokens; everything else in state file
-- **One mutation path:** Only Context-Keeper writes the state file
+- **State writes (one canonical format, per-path writer):** Context-Keeper writes the state file on the **parallel path**; on the **inline main-thread path** (no Context-Keeper spawned) the Supervisor best-effort-writes the SAME canonical lowercase `## Session` block / status flip directly (Phase 1 ACQUIRE + the Phase 4.5 completion tail). Never a second on-disk format; the bold ENVIRONMENT/Outcome blocks are display output, not the state file.
 - **Clean worktrees:** All worktrees removed in FINALIZE (no orphans)
 - **Sequential merge:** Worktree branches merge one at a time into feature branch
 - **Escalate conflicts:** Never force-resolve merge conflicts
@@ -844,7 +844,7 @@ After the Code Reviewer loop has run (regardless of `heal_decision`), execute th
 
 **Advisory red-team lens (opt-in, high-risk-only — OPT-IN / DEFAULT-OFF / FAIL-SAFE / strictly NON-GATING):**
 
-Runs AFTER the Code Reviewer holistic pass has produced its decision (and alongside / independent of the System Twin advisory checks), and BEFORE the completion tail. It is a SINGLE pass that lives **OUTSIDE the bounded fix loop** — never a new heal iteration. It mirrors the `--auto-review` opt-in precedent and applies a second, adversarial lens to high-risk integrated diffs.
+Runs AFTER the Code Reviewer holistic pass has produced its decision (and alongside / independent of the System Twin advisory checks), and BEFORE the completion tail. It is a SINGLE pass that lives **OUTSIDE the bounded fix loop** — never a new heal iteration. It is itself opt-in (default-OFF; `--red-team` / `.red_team_high_risk`), mirroring the paired-flag precedent of `--auto-review` / `--no-auto-review` (a `--flag` / `--no-flag` toggle backed by a `.supervisor/config.json` key — note the auto-review *dispatch* is default-ON, only its flag-pairing shape is the precedent), and applies a second, adversarial lens to high-risk integrated diffs.
 
 ```
 # Guard: default path is a zero-behavior-change silent skip.

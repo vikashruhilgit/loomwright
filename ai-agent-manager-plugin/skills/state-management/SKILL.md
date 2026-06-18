@@ -12,7 +12,7 @@ Patterns for externalizing Supervisor state to files, enabling cross-session res
 
 ## Quick Rules
 
-- Only Context-Keeper writes the state file (blocking calls for mutations)
+- Context-Keeper writes the state file on the **parallel path** (blocking calls for mutations); on the **inline main-thread path** the Supervisor best-effort-writes the same canonical `## Session` block directly — one canonical lowercase format either way (see "Inline-path write responsibility" below). Workers never write the state file.
 - State file lives in scratchpad during active session
 - Persistent copy in `.supervisor/state.md` for cross-session resume
 - Checkpoints saved to `.supervisor/` only

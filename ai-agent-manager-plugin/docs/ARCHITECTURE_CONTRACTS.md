@@ -154,13 +154,13 @@ The loop **NEVER merges a PR** — its only terminal `decision` values are `PASS
 
 ### Fresh-process dispatch contract (post-`/supervisor` auto-review)
 
-The plain-`/supervisor` completion tail can hand off to the review-and-heal loop via a fresh OS process, gated by config:
+The plain-`/supervisor` completion tail hands off to the review-and-heal loop via a fresh OS process **by default** (the AC7 until-mergeable default), opt-out below:
 
 | Property | Value |
 |----------|-------|
 | Dispatcher | `ai-agent-manager-plugin/scripts/dispatch-pr-review.sh` (runtime path `${CLAUDE_PLUGIN_ROOT}/scripts/dispatch-pr-review.sh`). |
 | Dispatch shape | Launches a brand-new detached **headless** `claude -p --agent ai-agent-manager-plugin:review-pr-runner <pr-url>` operating-system process — a true fresh session where the runner is the main agent and can therefore spawn `code-reviewer` / `general-purpose` children (sidesteps the subagents-cannot-spawn-subagents limit). `-p`/`--print` is required: `--agent` only selects the agent, it does NOT imply headless, and the no-`-p` interactive form can hang when detached with no TTY (mirrors `dispatch-pr-postmortem.sh`). No `--permission-mode` / `--dangerously-skip-permissions` by design — best-effort, relies on the project's existing permission settings. |
-| Gating | Enabled only when `auto_review: true` in `.supervisor/config.json` (legacy `.supervisor/notify-config.json` is still read as a fallback; the new path wins when both exist) (or a `--auto-review` flag); suppressed by `--no-auto-review`. Config-file-driven, cost/runaway-guarded. |
+| Gating | **Default-ON** after a PASS/normal completion that produced a PR (the AC7 until-mergeable default). Suppressed by `--no-auto-review` OR `.auto_review == false` in `.supervisor/config.json` (legacy `.supervisor/notify-config.json` still read as a fallback; the new path wins when both exist). `auto_review: true` / `--auto-review` are now **redundant legacy explicit-enable signals** (honored, no-op-equivalent). The until-mergeable drain signal itself is opt-out via `--no-until-mergeable` / `.auto_until_mergeable == false` (when opted out the runner runs the plain diff-only `/review-pr`). Cost/runaway-guarded by the dispatcher's per-PR idempotency marker. |
 | Failure policy | Fire-and-forget; **always exits 0** — a dispatch failure never fails or blocks the completing `/supervisor` run. |
 | `/autonomous` contrast | The `/autonomous` EVALUATE path does NOT use the dispatcher — it chains the review-heal loop body as a Task-spawned step (fresh isolated context, not a nested `claude` process). |
 | No-recursion invariant | `/review-pr` operates only on an existing PR URL and never creates a PR, so the auto-dispatch cannot retrigger itself on a PR it just produced. |
