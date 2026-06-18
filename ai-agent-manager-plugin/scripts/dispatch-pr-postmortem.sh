@@ -94,7 +94,7 @@ log() { printf 'dispatch-pr-postmortem: %s\n' "$1" >&2; }
 # Back-compatible config path: prefer the new .supervisor/config.json, fall back
 # to the legacy .supervisor/notify-config.json (new path wins when both exist).
 CONFIG_FILE=".supervisor/config.json"
-[ -f "$CONFIG_FILE" ] || CONFIG_FILE=".supervisor/notify-config.json"
+[ -r "$CONFIG_FILE" ] || CONFIG_FILE=".supervisor/notify-config.json"
 DISPATCH_DIR=".supervisor/postmortem-dispatch"
 LOG_DIR=".supervisor/logs"
 CLAUDE_BIN="${AI_AGENT_MANAGER_CLAUDE_BIN:-claude}"

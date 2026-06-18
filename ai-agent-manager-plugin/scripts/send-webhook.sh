@@ -99,7 +99,7 @@ WEBHOOK_URL="${AI_AGENT_MANAGER_WEBHOOK_URL:-}"
 # Back-compatible config path: prefer the new .supervisor/config.json, fall back
 # to the legacy .supervisor/notify-config.json (new path wins when both exist).
 CONFIG_FILE=".supervisor/config.json"
-[ -f "$CONFIG_FILE" ] || CONFIG_FILE=".supervisor/notify-config.json"
+[ -r "$CONFIG_FILE" ] || CONFIG_FILE=".supervisor/notify-config.json"
 if [ -z "$WEBHOOK_URL" ] && [ -r "$CONFIG_FILE" ] && command -v jq >/dev/null 2>&1; then
   WEBHOOK_URL="$(jq -r '.webhook_url // empty' "$CONFIG_FILE" 2>/dev/null || true)"
 fi

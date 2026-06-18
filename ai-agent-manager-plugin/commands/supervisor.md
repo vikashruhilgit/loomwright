@@ -31,11 +31,11 @@ The Supervisor agent v4 autonomously manages the complete development workflow. 
 /supervisor --skip-preflight-sync              # Short-circuit the Phase 1.5 remote-overlap reconciliation gate (escape hatch)
 /supervisor                                    # DEFAULT: after PR creation, auto-dispatch the detached until-mergeable review drain (opt-out below)
 /supervisor --no-until-mergeable               # Opt the auto-dispatched drain out of --until-mergeable (runner runs plain diff-only /review-pr)
-/supervisor --no-auto-review                   # Suppress the post-completion review-drain dispatch entirely (overrides notify-config)
+/supervisor --no-auto-review                   # Suppress the post-completion review-drain dispatch entirely (overrides config)
 /supervisor --check-wait-timeout 300           # Forward a scoped check-wait bound (seconds) to the until-mergeable drain
 /supervisor --review-check-pattern 'claude*'   # Forward a review-producing check selector glob to the until-mergeable drain
 /supervisor --red-team                         # Opt in: advisory (non-gating) red-team review of high-risk integrated diffs in Phase 4.5
-/supervisor --no-red-team                      # Suppress the advisory red-team review (overrides notify-config)
+/supervisor --no-red-team                      # Suppress the advisory red-team review (overrides config)
 ```
 
 ## Parameters
