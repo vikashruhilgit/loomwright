@@ -34,6 +34,9 @@
 # A bare non-empty .supervisor/jobs/in-progress/ is NOT sufficient — ALL THREE
 # gate terms (in-progress job exists AND state.md Status not completed/failed
 # AND PR head branch == session feature branch) are required before dispatch.
+# The branch term is FAIL-CLOSED: if state.md does not yield a `- branch:` value
+# (absent file or no branch line), the PR is unconfirmable and dispatch is skipped
+# (no current-branch fallback) — preserving "never hijack an unrelated manual PR".
 #
 # DOCUMENTED LIMITATION
 # ---------------------
@@ -134,18 +137,27 @@ if [ -f .supervisor/state.md ]; then
   esac
 fi
 
-# (iii) BRANCH MATCH: current branch == session feature branch.
+# (iii) BRANCH MATCH: the session feature branch MUST be resolvable from
+#       .supervisor/state.md's `- branch:` line AND equal the current branch.
 #       The env var is the TEST SEAM (lets the self-test control current branch).
+#
+#       FAIL-CLOSED on a missing branch (no fallback). If state.md yields no
+#       `- branch:` value — whether the file is absent OR present-but-branchless —
+#       the PR cannot be confirmed as THIS session's, so SKIP. An earlier revision
+#       fell back to current_branch, which made term (iii) trivially pass and
+#       weakened "never hijack an unrelated manual PR" to "(i)+(ii) alone" whenever
+#       the branch line was missing. A real plugin run always records `- branch:`
+#       at Phase 1 ACQUIRE, so this fail-closed path never blocks the happy path —
+#       it only refuses dispatch in a degraded/foreign state where the branch is
+#       unconfirmable. Keeps the anti-hijack posture fully fail-closed.
 current_branch="${AI_AGENT_MANAGER_HOOK_CURRENT_BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)}"
 session_branch=""
 if [ -f .supervisor/state.md ]; then
   session_branch="$(grep -m1 '^- branch:' .supervisor/state.md 2>/dev/null | sed -E 's/^- branch:[[:space:]]*//' | sed -E 's/[[:space:]]+$//' || true)"
 fi
-# No `- branch:` line in state.md → fall back to current_branch (gate (iii) then
-# passes, relying on (i)+(ii)). Gate (iii) FAILS only when a state.md branch
-# exists AND differs from current_branch.
 if [ -z "$session_branch" ]; then
-  session_branch="$current_branch"
+  log "no '- branch:' in state.md — cannot confirm PR belongs to this session; skipping dispatch"
+  exit 0
 fi
 if [ "$session_branch" != "$current_branch" ]; then
   log "branch mismatch (current='$current_branch' session='$session_branch') — not this session's PR; skipping dispatch"

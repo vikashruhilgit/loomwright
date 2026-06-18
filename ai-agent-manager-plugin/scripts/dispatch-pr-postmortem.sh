@@ -51,7 +51,9 @@
 #   force a re-dispatch, delete the PR's marker file under .supervisor/postmortem-dispatch/.
 #
 #   FRESH DETACHED PROCESS (R10). When enabled + gate-tripped + not yet dispatched,
-#   launch a brand-new detached headless `claude -p "/pr-postmortem <pr-url>"` OS process
+#   launch a brand-new detached headless `claude -p "/ai-agent-manager-plugin:pr-postmortem
+#   <pr-url>"` OS process (the slash command is NAMESPACED — see the launch site below for why
+#   the bare `/pr-postmortem` form fails under detached `claude -p`)
 #   (nohup + background + full stdio redirection to a log under .supervisor/logs/; `-p`
 #   print-mode runs non-interactively and exits — plain `claude "<prompt>"` would open an
 #   interactive REPL that hangs when detached). A fresh OS
@@ -255,7 +257,7 @@ fi
 # is still exercised) WITHOUT requiring the binary — keeps the self-test
 # (test-dispatch-pr-postmortem.sh) claude-independent on CI runners with no `claude`.
 if [ -n "$DRY_RUN" ]; then
-  printf 'DRY_RUN_DISPATCH: %s -p "/pr-postmortem %s"\n' "$CLAUDE_BIN" "$PR_URL"
+  printf 'DRY_RUN_DISPATCH: %s -p "/ai-agent-manager-plugin:pr-postmortem %s"\n' "$CLAUDE_BIN" "$PR_URL"
   printf '%s\n' "$PR_URL" > "$MARKER" 2>/dev/null || true
   exit 0
 fi
@@ -282,10 +284,21 @@ printf '%s\t%s\n' "$TIMESTAMP" "$PR_URL" > "$MARKER" 2>/dev/null || true
 #
 # `-p`/--print is REQUIRED: plain `claude "<prompt>"` (no -p) starts an INTERACTIVE REPL,
 # which — detached with stdin from /dev/null and no TTY — never executes the slash command
-# and never exits cleanly. `-p` runs the prompt non-interactively and exits. /pr-postmortem
-# is read-only (gh reads + a single append to results.jsonl); the detached run relies on the
-# project's existing permission settings, same best-effort posture as dispatch-pr-review.sh.
-( nohup "$CLAUDE_BIN" -p "/pr-postmortem $PR_URL" >>"$RUN_LOG" 2>&1 </dev/null & ) >/dev/null 2>&1 || true
+# and never exits cleanly. `-p` runs the prompt non-interactively and exits.
+#
+# The slash command MUST be NAMESPACED (`/ai-agent-manager-plugin:pr-postmortem`), NOT the bare
+# `/pr-postmortem`: under detached headless `claude -p` a bare plugin slash command is not
+# resolved and the run dies immediately with "Unknown command: /pr-postmortem" (observed on
+# PR #67 — the dispatch log held exactly that one line and NO trend record was appended to
+# results.jsonl). The namespaced form resolves (empirically verified: a detached
+# `claude -p "/ai-agent-manager-plugin:pr-postmortem <url>"` ran the skill end-to-end and
+# appended a results.jsonl line). The sibling dispatch-pr-review.sh sidesteps this entirely by
+# launching a REGISTERED agent (`--agent ai-agent-manager-plugin:review-pr-runner`); /pr-postmortem
+# is inline-only (no runner agent), so namespacing the slash command is the equivalent fix.
+#
+# /pr-postmortem is read-only (gh reads + a single append to results.jsonl); the detached run
+# relies on the project's existing permission settings, same best-effort posture as dispatch-pr-review.sh.
+( nohup "$CLAUDE_BIN" -p "/ai-agent-manager-plugin:pr-postmortem $PR_URL" >>"$RUN_LOG" 2>&1 </dev/null & ) >/dev/null 2>&1 || true
 
 log "dispatched /pr-postmortem for $PR_URL ($TRIGGER_REASON; log: $RUN_LOG)"
 exit 0

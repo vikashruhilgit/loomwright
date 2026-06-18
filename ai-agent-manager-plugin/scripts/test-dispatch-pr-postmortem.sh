@@ -23,9 +23,12 @@
 #   10. --postmortem-churn-threshold flag overrides config + default (AC11).
 #   11. marker prevents re-dispatch (same PR twice); a different PR dispatches.
 #   12. missing PR url -> graceful no-op, exit 0.
-#   13. launch-form contract: emitted command is headless `claude -p "/pr-postmortem <url>"`
-#       (regression guard — plain `claude "<prompt>"` without -p opens an interactive REPL
-#       that hangs when detached; F2 review fix).
+#   13. launch-form contract: emitted command is headless AND NAMESPACED
+#       `claude -p "/ai-agent-manager-plugin:pr-postmortem <url>"` — two regression guards:
+#       (a) bare `/pr-postmortem` (no namespace) is "Unknown command" under detached `claude -p`
+#           (the PR #67 bug — bare plugin slash commands don't resolve in headless print mode);
+#       (b) plain `claude "<prompt>"` without -p opens an interactive REPL that hangs when
+#           detached (F2 review fix).
 #   14. claude binary absent -> fail-safe no-op (non-dry-run; exit 0, no marker, no launch)
 #       — exercises the binary-absent fallback the dry-run cases never reach.
 
@@ -202,18 +205,21 @@ else
 fi
 rm -rf "$WD"
 
-echo "== 13. launch-form contract: headless 'claude -p \"/pr-postmortem <url>\"' (regression guard for the interactive-REPL bug) =="
+echo "== 13. launch-form contract: headless NAMESPACED 'claude -p \"/ai-agent-manager-plugin:pr-postmortem <url>\"' (regression guards: bare-slash-command Unknown-command bug + interactive-REPL bug) =="
 WD="$(fresh_repo)"
 run_dispatch "$WD" "$PR" --fix-cycles 9 --decision ESCALATED          # force a dispatch so the form is emitted
 LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
-# Must be headless (-p present) AND invoke the /pr-postmortem slash command with the PR url.
-# Plain `claude "<prompt>"` (no -p) would open an interactive REPL that hangs when detached.
+# Must be headless (-p present) AND invoke the NAMESPACED slash command with the PR url. Two
+# regressions guarded: (a) bare `/pr-postmortem` is "Unknown command" under detached `claude -p`
+# (the PR #67 bug); (b) plain `claude "<prompt>"` (no -p) opens an interactive REPL that hangs
+# when detached. The namespaced match also fails the bare form: bare emits `"/pr-postmortem `
+# (a `/` before the name) whereas the required form has `:pr-postmortem` (a `:` before it).
 if [ "$RUN_RC" -eq 0 ] \
    && printf '%s' "$LINE" | grep -Eq '(^| )-p( |$)|(^| )--print( |$)' \
-   && printf '%s' "$LINE" | grep -q "/pr-postmortem $PR"; then
-  ok "launch-form: headless -p + /pr-postmortem <url> ($LINE)"
+   && printf '%s' "$LINE" | grep -q "/ai-agent-manager-plugin:pr-postmortem $PR"; then
+  ok "launch-form: headless -p + namespaced /ai-agent-manager-plugin:pr-postmortem <url> ($LINE)"
 else
-  no "launch-form missing -p or slash command (line='$LINE')"
+  no "launch-form missing -p or namespaced slash command (line='$LINE')"
 fi
 rm -rf "$WD"
 
