@@ -192,5 +192,9 @@ printf '%s\n' "- recurring root-cause classes: $churn_classes"
 printf '%s\n' "- recurring flow stages: $churn_stages"
 printf '%s\n' "- prior churn rounds: $churn_rounds (across $churn_entries postmortem entr$( [ "$churn_entries" = "1" ] && printf 'y' || printf 'ies' ))"
 printf '%s\n' "- any self_heal_miss in prior rounds: $churn_shm"
+# Attribution caveat: the ledger records classes/stages per PR-REVIEW-ROUND, not per file, so the
+# above are aggregated at the PR level for entries that touched this path — a directional hint
+# that this AREA has historically churned, NOT file-precise per-path attribution.
+printf '%s\n' "- (attribution: aggregated PR-level for entries that touched the path — the ledger records per-round, not per-file; treat as a directional hint, not file-precise)"
 
 exit 0
