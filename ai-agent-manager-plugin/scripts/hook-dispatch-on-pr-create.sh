@@ -123,7 +123,11 @@ if ! { [ -d .supervisor/jobs/in-progress ] && [ -n "$(ls -A .supervisor/jobs/in-
   exit 0
 fi
 
-# (ii) .supervisor/state.md status word (under `## Session`) is NOT completed/failed.
+# (ii) .supervisor/state.md status word (under `## Session`) is NOT a TERMINAL
+#      status. Terminal = completed | completed_with_escalation | failed (the
+#      Supervisor Phase 4.5 completion tail flips `- status:` to one of these on
+#      exit). Non-terminal (running | paused) is the only state that permits
+#      dispatch.
 #      FORMAT-TOLERANT: matches BOTH the canonical lowercase bullet
 #      (`- status: running`) AND the inline-Supervisor bold display style
 #      (`- **Status:** running`). Match is case-insensitive on the key and strips
@@ -141,8 +145,8 @@ if [ -f .supervisor/state.md ]; then
     | sed -E 's/^- [Ss][Tt][Aa][Tt][Uu][Ss]:[[:space:]]*//' \
     | awk '{print $1}' || true)"
   case "$STATUS_WORD" in
-    completed|failed)
-      log "session Status is '$STATUS_WORD' (stale) — skipping dispatch"
+    completed|completed_with_escalation|failed)
+      log "session Status is '$STATUS_WORD' (terminal/stale) — skipping dispatch"
       exit 0
       ;;
   esac

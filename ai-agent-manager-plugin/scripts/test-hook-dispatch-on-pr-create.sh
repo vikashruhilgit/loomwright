@@ -27,6 +27,7 @@
 #   AC3  branch mismatch -> 0 markers.
 #   AC3  in-progress EMPTY (stale state) -> 0 markers.
 #   AC3  Status completed (stale state) -> 0 markers.
+#   AC3  Status completed_with_escalation (terminal/stale) -> 0 markers.
 #   AC2  bold-format MATCH (- **Branch:** / - **Status:**) -> dispatch (format-tolerant parse).
 #   AC2  bold-format branch-MISMATCH -> 0 markers (anti-hijack preserved in bold form).
 #   AC2  bold-format Status completed -> 0 markers (stale fail-close in bold form).
@@ -182,6 +183,20 @@ if [ "$RUN_RC" -eq 0 ] && [ "$(marker_count "$WD")" -eq 0 ]; then
   ok "status-completed: exit 0, no dispatch"
 else
   no "status-completed wrong (rc=$RUN_RC markers=$(marker_count "$WD") out='$RUN_OUT')"
+fi
+rm -rf "$WD"
+
+echo "== AC3. Status completed_with_escalation (terminal/stale) -> no-op, 0 markers =="
+# The Supervisor Phase 4.5 ESCALATED completion tail flips `- status:` to
+# `completed_with_escalation`; it is terminal and must fail-close the stale-guard
+# exactly like `completed`/`failed` (else a later unrelated PR on the same branch
+# could re-trigger a dispatch on a finished session).
+WD="$(make_wd "completed_with_escalation" "feature/example")"
+run_wrapper "$WD" "feature/example" "$FIXTURE"
+if [ "$RUN_RC" -eq 0 ] && [ "$(marker_count "$WD")" -eq 0 ]; then
+  ok "status-completed_with_escalation: exit 0, no dispatch (terminal fail-close)"
+else
+  no "status-completed_with_escalation wrong (rc=$RUN_RC markers=$(marker_count "$WD") out='$RUN_OUT')"
 fi
 rm -rf "$WD"
 
