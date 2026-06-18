@@ -84,8 +84,9 @@ echo "== 2. query path with NO overlap =="
 TMP="$(newrepo)"; write_fixture "$TMP"
 out="$( cd "$TMP" && bash "$READ" "src/never/touched.ts" 2>/dev/null )"; rc=$?
 [ "$rc" -eq 0 ] && ok "exit 0 on no-overlap" || no "non-zero exit on no-overlap ($rc)"
-echo "$out" | grep -q "no prior churn recorded for the touched paths" && ok "empty-state line emitted" || no "empty-state line missing"
-echo "$out" | grep -q "validation-parity" && no "false hit: unrelated class leaked" || ok "no false hit"
+# Machine-consumer contract: a NO-HIT (corpus present, no overlap) must emit EMPTY output — NOT a
+# "no prior churn" sentinel — so Supervisor's prior_churn non-empty gate omits the enrichment.
+[ -z "$out" ] && ok "no-overlap (corpus present) → EMPTY output (no misleading sentinel)" || no "no-overlap should emit nothing, got: [$out]"
 rm -rf "$TMP"
 
 echo "== 3. empty/absent corpus → exit 0, quiet =="
@@ -174,7 +175,8 @@ jq -cn '{schema_version:1, number:7, repo:"other/repo", branch:"b7", pr_url:"u7"
          self_heal_misses:0, flow_stages:{worker:1}, summary:"s7"}' >> "$TMP/$CORPUS"
 out2="$( cd "$TMP" && bash "$READ" "src/cross/repo-only.ts" 2>/dev/null )"; rc2=$?
 [ "$rc2" -eq 0 ] && ok "exit 0 querying a foreign-repo-only path" || no "non-zero exit on foreign-repo query ($rc2)"
-echo "$out2" | grep -q "no prior churn recorded for the touched paths" && ok "foreign-repo entry did NOT contribute (no false cross-repo hit)" || no "foreign-repo entry leaked a false hit"
+# Foreign-repo entry is the only match → scoping excludes it → NO hit → EMPTY output (no sentinel).
+[ -z "$out2" ] && ok "foreign-repo entry did NOT contribute → EMPTY (no false cross-repo hit)" || no "foreign-repo entry leaked output: [$out2]"
 echo "$out2" | grep -q "cross-repo-leak" && no "foreign-repo class leaked under scoping" || ok "foreign-repo class correctly excluded"
 rm -rf "$TMP"
 

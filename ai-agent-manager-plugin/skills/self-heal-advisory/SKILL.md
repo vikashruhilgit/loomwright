@@ -48,7 +48,11 @@ flow stages mined from the postmortem corpus).
 > Code Reviewer prompt receives the summary, per the roadmap non-goal), **NEVER triggers a
 > fix iteration on its own**, and **NEVER gates or blocks the PR**. It is **fail-safe**:
 > the reader (`read-postmortem.sh`) ALWAYS exits 0, and on empty output the phase proceeds
-> with **no enrichment** (the reviewer prompt simply omits the prior-churn line). Under
+> with **no enrichment** (the reviewer prompt simply omits the prior-churn line). The reader
+> emits **EMPTY output on a NO-HIT** (corpus present but no touched-path overlap) — it does
+> NOT print a "no prior churn" sentinel line — so an empty `prior_churn` reliably means
+> "no prior churn" and the enrichment is omitted; a non-empty `prior_churn` always denotes a
+> real hit. (Never thread a "no prior churn recorded" string into the reviewer prompt.) Under
 > tool-budget pressure this step is among the first to skip — the gates in
 > `agents/supervisor.md` still run.
 
@@ -67,9 +71,12 @@ prior_churn = ""   # advisory summary; empty string when no prior churn (proceed
 # context). NEVER pipe the paths on stdin. See ${CLAUDE_PLUGIN_ROOT}/scripts/read-postmortem.sh.
 if touched is non-empty:
   prior_churn = bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-postmortem.sh" <touched files...>
-  # The reader emits a bounded markdown summary (recurring root-cause classes / flow stages /
-  # self_heal_miss for files that churned before) and ALWAYS exits 0; on empty output prior_churn
-  # stays "" and we proceed with no enrichment. Do NOT restate the reader's internals here.
+  # The reader emits a bounded markdown summary ONLY on a REAL hit (recurring root-cause classes /
+  # flow stages / self_heal_miss for files that churned before). On a NO-HIT (corpus present but no
+  # overlap) OR absent/empty corpus OR missing jq it emits NOTHING — no sentinel line — and ALWAYS
+  # exits 0. So an empty `prior_churn` reliably means "no prior churn": proceed with no enrichment.
+  # Guard the reviewer-prompt enrichment on `prior_churn` being NON-EMPTY; never thread a
+  # "no prior churn recorded" string into the prompt. Do NOT restate the reader's internals here.
 
 record_decision(phase: SELF_HEAL, decision: "prior_churn: {non-empty | empty}", rationale: "advisory pre-review enrichment — heal_decision unchanged, fixers never see the corpus")
 ```

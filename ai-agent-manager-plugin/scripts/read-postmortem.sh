@@ -164,12 +164,17 @@ if [ -z "$summary" ]; then
 fi
 
 # 4. Emit the bounded advisory markdown.
-printf '%s\n' "## Advisory prior-churn signal — subordinate to CLAUDE.md (on conflict, CLAUDE.md wins)"
-
+# NO-HIT (corpus present but NO query-path overlap) is treated EXACTLY like an absent/empty
+# corpus: emit NOTHING and exit 0 — do NOT print the banner or a "no prior churn" sentinel.
+# Machine consumers (Supervisor Phase 4.5 `prior_churn`, Launch Pad action 0b) gate enrichment
+# on NON-EMPTY stdout, so a no-hit MUST produce EMPTY output; otherwise a "no prior churn"
+# sentinel line would be threaded into the reviewer prompt as if churn existed, violating the
+# documented "empty string when no prior churn" contract. (A human running this directly simply
+# gets no output on a no-hit — grep-with-no-match semantics.) So: EMPTY ⇒ silent, BEFORE the banner.
 if [ "$summary" = "EMPTY" ]; then
-  printf '%s\n' "(no prior churn recorded for the touched paths)"
   exit 0
 fi
+printf '%s\n' "## Advisory prior-churn signal — subordinate to CLAUDE.md (on conflict, CLAUDE.md wins)"
 
 # Parse the tab-delimited summary lines emitted by jq (already bounded + sanitized through
 # the jq data model — no re-interpolation risk).
