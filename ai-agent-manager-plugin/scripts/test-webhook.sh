@@ -190,6 +190,42 @@ assert_eq "case8 exit 0" "0" "$RC8"
 assert_eq "case8 new config.json wins (legacy ignored)" "https://new.example/hook" "$URL8"
 
 echo ""
+echo "==== Case 9: config resolution — unreadable NEW file falls back to legacy ===="
+# Proves the `[ -r "$CONFIG_FILE" ]` branch: when .supervisor/config.json exists
+# but is NOT readable (chmod 000), resolution must fall back to the legacy
+# .supervisor/notify-config.json. The new file's webhook_url must NOT be used.
+WD9="$TMPDIR_TEST/case9"
+mkdir -p "$WD9/.supervisor" "$WD9/bin"
+printf '{"webhook_url": "https://unreadable-new.example/hook"}\n' > "$WD9/.supervisor/config.json"
+printf '{"webhook_url": "https://legacy.example/hook"}\n'         > "$WD9/.supervisor/notify-config.json"
+chmod 000 "$WD9/.supervisor/config.json"
+cat > "$WD9/bin/curl" <<'STUB'
+#!/usr/bin/env bash
+url=""
+for a in "$@"; do case "$a" in -*) ;; *) url="$a" ;; esac; done
+printf '%s\n' "$url" > "$CURL_TARGET_FILE"
+exit 0
+STUB
+chmod +x "$WD9/bin/curl"
+# Guard: if the harness runs as a user that can still read a 000 file (e.g. root),
+# the [ -r ] branch can't be exercised — SKIP rather than spuriously fail.
+if [ -r "$WD9/.supervisor/config.json" ]; then
+  echo "SKIP  case9 unreadable-config fallback (platform reports 000 file readable, e.g. root)"
+else
+  CURL_TARGET9="$WD9/curl-target.txt"
+  ( cd "$WD9" \
+    && unset AI_AGENT_MANAGER_WEBHOOK_URL \
+    && CURL_TARGET_FILE="$CURL_TARGET9" PATH="$WD9/bin:$PATH" \
+       bash "$WEBHOOK" --event-type gate --gate-type rubric --iteration 1 --session-id s9 >/dev/null 2>&1 )
+  RC9=$?
+  URL9="$(cat "$CURL_TARGET9" 2>/dev/null || true)"
+  assert_eq "case9 exit 0" "0" "$RC9"
+  assert_eq "case9 unreadable new → legacy URL used" "https://legacy.example/hook" "$URL9"
+fi
+# Restore perms so the trap teardown (rm -rf) can remove the temp dir cleanly.
+chmod 644 "$WD9/.supervisor/config.json" 2>/dev/null || true
+
+echo ""
 TOTAL=$((PASS_COUNT + FAIL_COUNT))
 echo "=========================================="
 echo "RESULT  total=$TOTAL  passed=$PASS_COUNT  failed=$FAIL_COUNT"

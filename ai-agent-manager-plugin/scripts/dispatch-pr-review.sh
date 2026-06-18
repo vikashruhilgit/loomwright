@@ -102,6 +102,7 @@ log() { printf 'dispatch-pr-review: %s\n' "$1" >&2; }
 
 # Back-compatible config path: prefer the new .supervisor/config.json, fall back
 # to the legacy .supervisor/notify-config.json (new path wins when both exist).
+# Resolution is file-level, not a key merge: a partial config.json shadows the legacy file entirely, so migrate the whole file.
 CONFIG_FILE=".supervisor/config.json"
 [ -r "$CONFIG_FILE" ] || CONFIG_FILE=".supervisor/notify-config.json"
 DISPATCH_DIR=".supervisor/review-dispatch"

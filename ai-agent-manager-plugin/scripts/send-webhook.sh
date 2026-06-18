@@ -98,6 +98,7 @@ set -u
 WEBHOOK_URL="${AI_AGENT_MANAGER_WEBHOOK_URL:-}"
 # Back-compatible config path: prefer the new .supervisor/config.json, fall back
 # to the legacy .supervisor/notify-config.json (new path wins when both exist).
+# Resolution is file-level, not a key merge: a partial config.json shadows the legacy file entirely, so migrate the whole file.
 CONFIG_FILE=".supervisor/config.json"
 [ -r "$CONFIG_FILE" ] || CONFIG_FILE=".supervisor/notify-config.json"
 if [ -z "$WEBHOOK_URL" ] && [ -r "$CONFIG_FILE" ] && command -v jq >/dev/null 2>&1; then
