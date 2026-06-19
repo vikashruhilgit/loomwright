@@ -32,9 +32,14 @@
 #   AC2  bold-format branch-MISMATCH -> 0 markers (anti-hijack preserved in bold form).
 #   AC2  bold-format Status completed -> 0 markers (stale fail-close in bold form).
 #   AC2  bold-format Status completed_with_escalation -> 0 markers (terminal fail-close in bold form).
-#   AC5  bold-format state.md present but NO `- **Branch:**` line -> NO dispatch (gate iii fail-closed; no fallback).
-#   AC5  state.md present but NO `- branch:` line -> NO dispatch (gate iii fail-closed; no fallback).
-#   AC5  state.md ENTIRELY ABSENT -> NO dispatch (gate iii fail-closed; branch unconfirmable).
+#   AC5  bold-format state.md present but NO `- **Branch:**` line -> NO dispatch (Source 1 not active; no state.json fallback).
+#   AC5  state.md present but NO `- branch:` line -> NO dispatch (Source 1 not active; no state.json fallback).
+#   AC5  state.md ENTIRELY ABSENT -> NO dispatch (Source 1 not active; no state.json fallback).
+#   AC5(a) HEADLINE: stale TERMINAL state.md + valid active autonomous state.json -> DISPATCH (1 marker). The bug AC5 fixes: a stale terminal state.md must NOT short-circuit ahead of the state.json fallback.
+#   AC5(b) stale autonomous state.json (terminal current_status, or ended_at set) -> fail-closed (0 markers).
+#   AC5(c) MULTIPLE matching autonomous state.json files -> fail-closed (0 markers; not unique).
+#   AC5(d) autonomous state.json branch matches but current_brief_path basename NOT in jobs/in-progress/ -> fail-closed (0 markers; wrong-brief guard).
+#   AC5(e) neither source coherent (terminal/absent state.md AND no matching state.json) -> fail-closed (0 markers).
 #   AC4  opt-out (.auto_review:false) -> 0 markers (wrapper delegates opt-out to dispatcher).
 #   AC6  malformed JSON stdin -> rc 0, 0 markers.
 #   AC6  empty stdin -> rc 0, 0 markers.
@@ -95,6 +100,38 @@ make_wd_bold() {
     fi
   } > "$d/.supervisor/state.md"
   printf '%s' "$d"
+}
+
+# add_autonomous_session <wd> <sid> <current_branch> <current_status> <brief_basename> [ended_at] —
+#   Write an autonomous state.json into <wd>/.supervisor/autonomous/<sid>/state.json
+#   carrying the TOP-LEVEL ACQUIRE signals the consumer reads:
+#     - current_branch  (string)
+#     - current_status  (string)
+#     - current_brief_path  (".supervisor/jobs/in-progress/<brief_basename>" when
+#       brief_basename non-empty; omitted otherwise)
+#     - ended_at  (the literal <ended_at> arg when non-empty; the key is OMITTED
+#       entirely when the arg is empty, so the consumer sees null/absent)
+#   When <brief_basename> is non-empty, ALSO creates the matching in-progress job
+#   file so the consumer's basename-in-jobs/in-progress guard can pass. Uses jq to
+#   emit valid JSON.
+add_autonomous_session() {
+  local wd="$1" sid="$2" cbranch="$3" cstatus="$4" brief="$5" ended="${6:-}"
+  mkdir -p "$wd/.supervisor/autonomous/$sid"
+  local brief_path=""
+  if [ -n "$brief" ]; then
+    brief_path=".supervisor/jobs/in-progress/$brief"
+    mkdir -p "$wd/.supervisor/jobs/in-progress"
+    printf 'auto job\n' > "$wd/.supervisor/jobs/in-progress/$brief"
+  fi
+  jq -n \
+    --arg cb "$cbranch" \
+    --arg cs "$cstatus" \
+    --arg bp "$brief_path" \
+    --arg ea "$ended" \
+    '{current_branch: $cb, current_status: $cs}
+      + (if $bp == "" then {} else {current_brief_path: $bp} end)
+      + (if $ea == "" then {} else {ended_at: $ea} end)' \
+    > "$wd/.supervisor/autonomous/$sid/state.json"
 }
 
 # run_wrapper <workdir> <current_branch> <payload_file> —
@@ -356,6 +393,90 @@ else
   no "jq-absent wrong (rc=$RUN_RC markers=$(marker_count "$WD") out='$RUN_OUT')"
 fi
 rm -rf "$WD" "$NOJQ_BIN"
+
+echo "== AC5(a) HEADLINE REGRESSION. stale TERMINAL state.md + valid active autonomous state.json -> DISPATCH (1 marker) =="
+# THE BUG AC5 FIXES: state.md is stale-terminal (a prior session left
+# `- status: completed` on a different branch), but a valid active autonomous
+# state.json exists for the CURRENT branch. The terminal state.md must NOT
+# short-circuit ahead of the state.json fallback.
+WD="$(make_wd "completed" "feature/stale-old")"   # terminal state.md, prior session's branch
+add_autonomous_session "$WD" "20260619-aaa" "feature/example" "running" "auto-brief.md"
+run_wrapper "$WD" "feature/example" "$FIXTURE"
+DRY_LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
+if [ "$RUN_RC" -eq 0 ] \
+   && [ -n "$DRY_LINE" ] \
+   && [ "$(marker_count "$WD")" -eq 1 ] \
+   && printf '%s' "$DRY_LINE" | grep -q -- "$PR"; then
+  ok "stale-terminal-statemd + active state.json: exit 0, 1 marker, DRY_RUN carries $PR ($DRY_LINE)"
+else
+  no "headline regression wrong (rc=$RUN_RC markers=$(marker_count "$WD") line='$DRY_LINE')"
+fi
+rm -rf "$WD"
+
+echo "== AC5(b1) stale autonomous state.json (current_status=done, terminal) -> fail-closed (0 markers) =="
+WD="$(make_wd "completed" "feature/stale-old")"    # state.md not active
+add_autonomous_session "$WD" "20260619-bbb" "feature/example" "done" "auto-brief.md"
+run_wrapper "$WD" "feature/example" "$FIXTURE"
+if [ "$RUN_RC" -eq 0 ] && [ "$(marker_count "$WD")" -eq 0 ]; then
+  ok "state.json terminal current_status=done: exit 0, no dispatch"
+else
+  no "state.json terminal-status wrong (rc=$RUN_RC markers=$(marker_count "$WD") out='$RUN_OUT')"
+fi
+rm -rf "$WD"
+
+echo "== AC5(b2) autonomous state.json with ended_at set (current_status=running) -> fail-closed (0 markers) =="
+WD="$(make_wd "completed" "feature/stale-old")"    # state.md not active
+add_autonomous_session "$WD" "20260619-bbb2" "feature/example" "running" "auto-brief.md" "2026-06-19T00:00:00Z"
+run_wrapper "$WD" "feature/example" "$FIXTURE"
+# ended_at present => terminal => excluded even though current_status=running.
+if [ "$RUN_RC" -eq 0 ] && [ "$(marker_count "$WD")" -eq 0 ]; then
+  ok "state.json ended_at set: exit 0, no dispatch (terminal via ended_at)"
+else
+  no "state.json ended_at wrong (rc=$RUN_RC markers=$(marker_count "$WD") out='$RUN_OUT')"
+fi
+rm -rf "$WD"
+
+echo "== AC5(c) MULTIPLE matching autonomous state.json files -> fail-closed (0 markers; not unique) =="
+WD="$(make_wd "completed" "feature/stale-old")"    # state.md not active
+# Two sessions both matching branch + non-terminal + their own in-progress brief.
+add_autonomous_session "$WD" "20260619-c1" "feature/example" "running" "auto-brief-1.md"
+add_autonomous_session "$WD" "20260619-c2" "feature/example" "running" "auto-brief-2.md"
+run_wrapper "$WD" "feature/example" "$FIXTURE"
+if [ "$RUN_RC" -eq 0 ] && [ "$(marker_count "$WD")" -eq 0 ]; then
+  ok "multiple matching state.json: exit 0, no dispatch (ambiguous => fail-closed)"
+else
+  no "multiple-match wrong (rc=$RUN_RC markers=$(marker_count "$WD") out='$RUN_OUT')"
+fi
+rm -rf "$WD"
+
+echo "== AC5(d) state.json branch matches but current_brief_path basename NOT in jobs/in-progress/ -> fail-closed (0 markers) =="
+WD="$(make_wd "completed" "feature/stale-old")"    # state.md not active
+# brief_basename empty => helper omits current_brief_path AND creates no in-progress
+# file. But gate (i) needs a non-empty in-progress dir, so seed an UNRELATED job,
+# then point the session at a brief basename that is NOT present.
+add_autonomous_session "$WD" "20260619-ddd" "feature/example" "running" ""
+printf 'unrelated\n' > "$WD/.supervisor/jobs/in-progress/unrelated.md"
+# Rewrite the session to carry a current_brief_path whose basename is absent from in-progress/.
+jq '. + {current_brief_path: ".supervisor/jobs/in-progress/ghost-brief.md"}' \
+  "$WD/.supervisor/autonomous/20260619-ddd/state.json" > "$WD/.supervisor/autonomous/20260619-ddd/state.json.tmp"
+mv "$WD/.supervisor/autonomous/20260619-ddd/state.json.tmp" "$WD/.supervisor/autonomous/20260619-ddd/state.json"
+run_wrapper "$WD" "feature/example" "$FIXTURE"
+if [ "$RUN_RC" -eq 0 ] && [ "$(marker_count "$WD")" -eq 0 ]; then
+  ok "wrong-brief guard: exit 0, no dispatch (brief basename not in in-progress/)"
+else
+  no "wrong-brief-guard wrong (rc=$RUN_RC markers=$(marker_count "$WD") out='$RUN_OUT')"
+fi
+rm -rf "$WD"
+
+echo "== AC5(e) neither source coherent (terminal state.md AND no matching state.json) -> fail-closed (0 markers) =="
+WD="$(make_wd "completed" "feature/stale-old")"    # terminal state.md, no autonomous dir at all
+run_wrapper "$WD" "feature/example" "$FIXTURE"
+if [ "$RUN_RC" -eq 0 ] && [ "$(marker_count "$WD")" -eq 0 ]; then
+  ok "neither-source-coherent: exit 0, no dispatch (fully fail-closed)"
+else
+  no "neither-source-coherent wrong (rc=$RUN_RC markers=$(marker_count "$WD") out='$RUN_OUT')"
+fi
+rm -rf "$WD"
 
 echo
 echo "RESULT: $pass passed, $fail failed"

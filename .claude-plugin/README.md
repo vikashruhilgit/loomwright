@@ -381,7 +381,7 @@ ai-agent-manager/                            # Marketplace wrapper repo
 │   └── README.md                            # This file
 └── ai-agent-manager-plugin/                 # The nested plugin
     ├── .claude-plugin/
-    │   └── plugin.json                      # Plugin manifest (v14.37.0)
+    │   └── plugin.json                      # Plugin manifest (v14.38.0)
     ├── .mcp.json                            # Bundled MCP servers
     ├── agents/                              # Agent prompts (14 roles)
     │   ├── launch-pad.md, supervisor.md, execute-manager.md, context-keeper.md
