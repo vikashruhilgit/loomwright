@@ -30,6 +30,9 @@
 #  11b. config auto_until_mergeable:false opt-out: the signal env var is NOT set.
 #  12. optional tuning forwarded only when set: --check-wait-timeout / --review-check-pattern
 #      thread AI_AGENT_MANAGER_CHECK_WAIT_TIMEOUT / AI_AGENT_MANAGER_REVIEW_CHECK_PATTERN.
+#  13. real-launch RUN_LOG header: a stubbed-claude (non-dry-run) launch writes a
+#      synchronous, non-empty, self-documenting header (DISPATCHED + url + until_mergeable)
+#      BEFORE detaching — so an in-flight drain no longer looks like a 0-byte no-op.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -277,6 +280,41 @@ if ! printf '%s' "$LINE2" | grep -q -- 'AI_AGENT_MANAGER_CHECK_WAIT_TIMEOUT' \
   ok "tuning absent by default (only forwarded when set) ($LINE2)"
 else
   no "tuning leaked when unset (line='$LINE2')"
+fi
+rm -rf "$WD" "$WD2"
+
+echo "== 13. real-launch RUN_LOG header: synchronous, non-empty, self-documenting (0-byte-log fix) =="
+# NOT dry-run: exercise the actual launch path with a stub `claude` (via
+# AI_AGENT_MANAGER_CLAUDE_BIN) so the synchronous RUN_LOG header is written. The
+# header is emitted BEFORE the detached launch, so it is present regardless of what
+# the stub does — proving an in-flight drain no longer looks like a 0-byte no-op.
+WD="$(fresh_repo)"
+STUB="$WD/stub-claude"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$STUB"
+chmod +x "$STUB"
+( cd "$WD" && AI_AGENT_MANAGER_CLAUDE_BIN="$STUB" bash "$DISPATCH" "$PR" >/dev/null 2>&1 )
+RC13=$?
+HDR="$(cat "$WD"/.supervisor/logs/review-pr-dispatch-*.log 2>/dev/null || true)"
+if [ "$RC13" -eq 0 ] \
+   && [ -n "$HDR" ] \
+   && printf '%s' "$HDR" | grep -q 'DISPATCHED' \
+   && printf '%s' "$HDR" | grep -q -- 'until_mergeable=1' \
+   && printf '%s' "$HDR" | grep -qF "url=$PR"; then
+  ok "real-launch RUN_LOG header present + greppable (DISPATCHED + until_mergeable=1 + url)"
+else
+  no "real-launch RUN_LOG header missing/wrong (rc=$RC13 hdr='$HDR')"
+fi
+# opt-out path: header records until_mergeable=0 (drain dispatched plain diff-only)
+WD2="$(fresh_repo)"
+STUB2="$WD2/stub-claude"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$STUB2"
+chmod +x "$STUB2"
+( cd "$WD2" && AI_AGENT_MANAGER_CLAUDE_BIN="$STUB2" bash "$DISPATCH" "$PR" --no-until-mergeable >/dev/null 2>&1 )
+HDR2="$(cat "$WD2"/.supervisor/logs/review-pr-dispatch-*.log 2>/dev/null || true)"
+if printf '%s' "$HDR2" | grep -q 'DISPATCHED' && printf '%s' "$HDR2" | grep -q -- 'until_mergeable=0'; then
+  ok "opt-out header records until_mergeable=0"
+else
+  no "opt-out header wrong (hdr='$HDR2')"
 fi
 rm -rf "$WD" "$WD2"
 
