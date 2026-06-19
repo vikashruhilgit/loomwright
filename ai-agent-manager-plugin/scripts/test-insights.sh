@@ -218,6 +218,26 @@ if grep -q "## Heal-signal catch-rate" "$hd3" 2>/dev/null; then no "section appe
 grep -q "^## Summary" "$hd3" 2>/dev/null && ok "dashboard renders normally with no heal-signal ledger" || no "dashboard broken with no ledger"
 rm -rf "$H3"
 
+echo "== 10. Heal-signal renders a SCORED matrix with recall=n/a (tp+fn=0, not dropped) =="
+# A scored run (n>0) where NO joined PR had a self-heal miss → recall_pct is null. This IS data
+# (coverage + self_heal_share are meaningful), so the section must render with recall "n/a" rather
+# than be silently dropped (the PR #73 review #2 finding). Mixed with a normal scored run to also
+# assert the trend shows the n/a point.
+H4="$(mktemp -d)"; ( cd "$H4" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$H4/.supervisor/logs" "$H4/.supervisor/heal-signal"
+printf '%s\n' '{"ts":"2026-06-19T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$H4/.supervisor/logs/h-a.jsonl"
+{
+  printf '%s\n' '{"schema_version":1,"recorded_at":"2026-06-18T00:00:00Z","repos":["x"],"n":7,"tp":1,"fp":1,"fn":2,"tn":3,"recall_pct":33,"self_heal_share_pct":40,"coverage_pct":50}'
+  printf '%s\n' '{"schema_version":1,"recorded_at":"2026-06-19T00:00:00Z","repos":["x"],"n":5,"tp":0,"fp":1,"fn":0,"tn":4,"recall_pct":null,"self_heal_share_pct":20,"coverage_pct":60}'
+} > "$H4/.supervisor/heal-signal/results.jsonl"
+( cd "$H4" && bash "$BUILD" >/dev/null 2>&1 )
+h4d="$H4/.supervisor/insights/dashboard.md"
+grep -q "## Heal-signal catch-rate (MEASURE)" "$h4d" 2>/dev/null && ok "section renders for a scored recall-null matrix (not dropped)" || no "scored recall-null matrix suppressed the section"
+grep -qF "**Latest catch-rate (recall):** n/a" "$h4d" 2>/dev/null && ok "latest recall shown as n/a (tp+fn=0)" || no "recall-null not rendered as n/a"
+grep -qF "**Coverage:** 60%" "$h4d" 2>/dev/null && ok "latest coverage 60% still surfaced despite null recall" || no "coverage lost on null-recall run"
+grep -qF "33% → n/a" "$h4d" 2>/dev/null && ok "trend shows the n/a point (33% → n/a)" || no "trend dropped/mangled the n/a point"
+rm -rf "$H4"
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
