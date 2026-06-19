@@ -14,6 +14,24 @@
 
 ---
 
+## ⚑ DIRECTION UPDATE — 2026-06-19 (local-first Twin) — READ BEFORE THE PHASES BELOW
+
+A design review refined this plan. The **endgame is unchanged** (Twin = brain, one artifact; advisory → measure → promote; "point at repo → own this"), but **two route decisions below are now superseded**, plus one resequencing. **Where this block and the original sections conflict, this block wins**; the original prose is kept as historical reasoning, not current intent.
+
+1. **Substrate is LOCAL-FIRST, not personal-brain-first.** §0's "adopt `personal-brain` *as* the substrate" is reframed: adopt the *Graphify-graph + wiki/community/freshness **pattern***, but the **substrate is built locally, per repo**. Each repo's Twin = its own `graphify-out/graph.json` (structure) **+ the plugin's own `.supervisor/` findings as the rationale layer** (LESSONS, the postmortem churn ledger, Twin contracts, done-brief `## Outcome` blocks). A single repo needs **no external brain**. `personal-brain` is **demoted to an optional cross-repo *federation* tier** (named global brains, cross-repo notes, draft write-back) — an extension layered on top, never a dependency. The plugin's own findings *are* the local wiki.
+
+2. **Measurement is SELF-HOSTED and artifact-derived, not a hand-authored `sports-management` corpus.** The §"Phase 0" / §6-Q4 ten-item hand-authored corpus (stalled at 2/10, external repo) is superseded by **measuring on the plugin's own run history**: harvest the heal signal from the ~120 done-brief `## Outcome` blocks across all repos, backfill outcome labels from the live PRs via `/pr-postmortem`, and **join on PR URL → a confusion matrix** (catch-rate / false-positive per signal). No external repo, no hand-authoring. This same artifact is the **M3 trust-threshold instrument** (see `SYSTEM_TWIN_ROADMAP.md` §7).
+
+3. **`/setup brain` (Phase 2 below) is resequenced to LAST** — gated behind the local loop being *measured* and the advisory→gating flip. It is the federation tier, built on proof; not the early/next step. (The original `/autonomous` "Phase 5 = `/setup brain`" ask is correspondingly deferred.)
+
+**Sequenced path now:** ① measure (own-run confusion matrix) → ② standing instrument + human-verify labels → ③ produce a local graph where the findings live → ④ bridge findings → graph communities, re-measure (the real "graph-first beats baseline" gate) → ⑤ feed graph-linked context into Launch Pad / Phase 4.5 (APPLY), re-measure → ⑥ flip advisory → gating (Twin M3) → ⑦ federate via `/setup brain`.
+
+> **The full *gated* execution path** — per-step action/output + the gate at each rung, the label-quality ladder, the step↔milestone mapping, and the Step-1 spec — is **`LOCAL_TWIN_PATH.md`** (the ordered "how"). This block is the *why*; that doc is the *order*.
+
+**Status fact:** Learning Loop **Phase 4 (churn ledger) SHIPPED in v14.36.0 (PR #69)** — the "Phase 4 not started" rows in `LEARNING_LOOP_ROADMAP.md` are stale (corrected there).
+
+---
+
 ## 0. The strategic reframe (read this first)
 
 The plugin already declares this north star (`SYSTEM_TWIN_ROADMAP.md`):

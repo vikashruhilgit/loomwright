@@ -10,6 +10,13 @@
 
 ---
 
+## ⚑ DIRECTION UPDATE — 2026-06-19
+
+- **Phase 4 (churn ledger) SHIPPED in v14.36.0 (PR #69)** — the "Phase 4+ Not started" rows below are stale and are corrected in §3 and §"Phase 4".
+- **Phases 5/6 direction revised to LOCAL-FIRST.** The next move is *not* `/setup brain`; it is to **measure the local loop on the plugin's own run history** (a confusion matrix harvested from done-brief `## Outcome` blocks + `/pr-postmortem` backfill), then build the per-repo Twin (graphify + own findings, bridged) and prove it before federating. `/setup brain` is resequenced to **last**. Full statement: `BRAIN_INTEGRATION_EVOLUTION.md` §"⚑ DIRECTION UPDATE — 2026-06-19 (local-first Twin)"; the **ordered, gated execution path** is `LOCAL_TWIN_PATH.md`. Where this and the original phase prose conflict, the DIRECTION UPDATE wins.
+
+---
+
 ## 0. Thesis
 
 Agent Manager already writes many useful artifacts:
@@ -77,12 +84,14 @@ The roadmap is no longer greenfield. Treat the remaining work as incremental sli
 | Phase 1 — Internal memory APPLY | Shipped in v14.28.0 | Monitor prompt behavior; no new storage surfaces |
 | Phase 2 — Knowledge usage telemetry | Foundation shipped in v14.28.0; measurement close-out (Phase 2B) shipped in v14.33.0 | Complete for the measurement loop — `build-insights.sh` aggregation + `/insights` surfacing landed in v14.33.0. The optional `LAUNCH_PAD_RESULT.knowledge_sources_used` marker remains **explicitly deferred** (validator four-field discipline; Launch Pad emits no `session_end` line, so it would not feed `/insights`) |
 | Phase 3 — Review quality | Core shipped in v14.21.0; residual shipped in v14.29.0 | Complete — CI miss-class vocabulary (R4), drift-taxonomy split (R3), and opt-in advisory red-team lens (R1) all landed |
-| Phase 4+ | Not started | Phase 2 measurement is now observable (v14.33.0) — the Phase 4 gate is unblocked |
+| Phase 4 — Churn ledger | **Shipped in v14.36.0 (PR #69)** | Complete — postmortem provenance + read-back into Launch Pad Phase 3 / Supervisor Phase 4.5; `read-postmortem.sh` advisory-only |
+| Phase 5 / 6 — Brain consolidation / write-back | **Not started — direction revised (local-first; see top banner)** | Now build the per-repo Twin (graphify + own findings, bridged) and **measure it on own-run history first**; `/setup brain` resequenced to last |
 
-Recommended next order (remaining — Phase 3 residual shipped v14.29.0, Phase 2B shipped v14.33.0):
+Recommended next order (remaining — Phase 3 residual shipped v14.29.0, Phase 2B shipped v14.33.0, **Phase 4 churn ledger shipped v14.36.0**):
 
-1. **Phase 4 churn ledger:** feed PR postmortem patterns back into planning and self-heal.
-2. **Phase 5/6 brain consolidation/write-back:** after the local loop proves useful.
+1. ✅ **Phase 4 churn ledger (SHIPPED v14.36.0):** postmortem provenance + read-back into Launch Pad / Supervisor Phase 4.5.
+2. **Measure the local loop on own-run history** (confusion matrix over done-brief `## Outcome` blocks + `/pr-postmortem` backfill, joined on PR URL) — the unblocking step for everything below. See the top DIRECTION UPDATE.
+3. **Phase 5/6 — local-first:** build the per-repo Twin (graphify + own findings, bridged), prove it on the measurement, then federate via `/setup brain` (resequenced to last).
 
 ---
 
@@ -254,6 +263,8 @@ Acceptance criteria for the full residual:
 
 ### Phase 4 — Churn Loop: Postmortem as Ledger
 
+> **✅ Status: SHIPPED in v14.36.0 (PR #69).** Postmortem provenance enrichment + read-back wired advisory-only into Launch Pad Phase 3 / Risk and Supervisor Phase 4.5 (`read-postmortem.sh`). The churn ledger is now *also* the labeling substrate for the local-loop measurement (see top DIRECTION UPDATE).
+
 Scope: close the PR-churn learning loop.
 
 Requirements:
@@ -285,6 +296,8 @@ Acceptance criteria:
 ---
 
 ### Phase 5 — Brain Read-Path Consolidation
+
+> **⚑ Direction revised 2026-06-19 (local-first).** This phase is now framed as *building the **local** Twin* — graphify (structure) + the plugin's own `.supervisor/` findings as the rationale layer, bridged findings→graph-communities — and **measuring it on own-run history before any `/setup brain`**. The "add `/setup brain`" requirement below is **resequenced to last** (federation tier, post-proof). See `BRAIN_INTEGRATION_EVOLUTION.md` §"⚑ DIRECTION UPDATE". The "keep brain-context optional / fail-safe / strengths-only" requirements below remain valid.
 
 Scope: keep the brain read path focused on its actual strength.
 
