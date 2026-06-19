@@ -40,6 +40,10 @@
 #   AC5(c) MULTIPLE matching autonomous state.json files -> fail-closed (0 markers; not unique).
 #   AC5(d) autonomous state.json branch matches but current_brief_path basename NOT in jobs/in-progress/ -> fail-closed (0 markers; wrong-brief guard).
 #   AC5(e) neither source coherent (terminal/absent state.md AND no matching state.json) -> fail-closed (0 markers).
+#   AC5(f) HEADLINE: state.md matching branch but NO `- status:` line + no state.json -> NO dispatch (0 markers; Source 1 status-presence guard, then Source 2 fail-closed).
+#   AC5(g) state.md matching branch but NO `- status:` line + valid state.json -> DISPATCH via Source 2 (1 marker; Source 1 falls through on absent status).
+#   AC5(h) state.json with EMPTY current_status (absent-status guard) -> fail-closed (0 markers; Source 2 `[ -n "$sj_status" ]` guard).
+#   AC5(i) non-terminal but branch-MISMATCHED state.md + valid state.json -> DISPATCH via Source 2 (1 marker; Source 1 falls through on branch-mismatch, not only on terminal status).
 #   AC4  opt-out (.auto_review:false) -> 0 markers (wrapper delegates opt-out to dispatcher).
 #   AC6  malformed JSON stdin -> rc 0, 0 markers.
 #   AC6  empty stdin -> rc 0, 0 markers.
@@ -98,6 +102,24 @@ make_wd_bold() {
     if [ -n "$sbranch" ]; then
       printf -- '- **Branch:** %s\n' "$sbranch"
     fi
+  } > "$d/.supervisor/state.md"
+  printf '%s' "$d"
+}
+
+# make_wd_no_status <state_branch> —
+#   Like make_wd, but writes .supervisor/state.md with a `## Session` heading and a
+#   `- branch:` line BUT NO `- status:` line at all — i.e. a partial/status-less
+#   state.md. Exercises the Source 1 status-presence guard: an absent `- status:`
+#   must NOT authorize on branch alone (control must fall through to Source 2).
+#   Always writes a dummy in-progress job.
+make_wd_no_status() {
+  local sbranch="$1"
+  local d; d="$(mktemp -d)"
+  mkdir -p "$d/.supervisor/jobs/in-progress"
+  printf 'dummy job\n' > "$d/.supervisor/jobs/in-progress/job.md"
+  {
+    printf '## Session\n'
+    printf -- '- branch: %s\n' "$sbranch"
   } > "$d/.supervisor/state.md"
   printf '%s' "$d"
 }
@@ -475,6 +497,68 @@ if [ "$RUN_RC" -eq 0 ] && [ "$(marker_count "$WD")" -eq 0 ]; then
   ok "neither-source-coherent: exit 0, no dispatch (fully fail-closed)"
 else
   no "neither-source-coherent wrong (rc=$RUN_RC markers=$(marker_count "$WD") out='$RUN_OUT')"
+fi
+rm -rf "$WD"
+
+echo "== AC5(f) HEADLINE. state.md matching branch but NO '- status:' line, no state.json -> NO dispatch (0 markers) =="
+# THE BUG THIS FIX CLOSES: a partial state.md with only `- branch: <current>` and
+# no `- status:` line must NOT authorize on branch alone. s1_status is empty =>
+# NOT a positive non-terminal signal => Source 1 falls through. With no autonomous
+# session, Source 2 finds nothing => fully fail-closed.
+WD="$(make_wd_no_status "feature/example")"
+run_wrapper "$WD" "feature/example" "$FIXTURE"
+if [ "$RUN_RC" -eq 0 ] && [ "$(marker_count "$WD")" -eq 0 ]; then
+  ok "status-less state.md, no state.json: exit 0, no dispatch (status-presence guard)"
+else
+  no "status-less-no-statejson wrong (rc=$RUN_RC markers=$(marker_count "$WD") out='$RUN_OUT')"
+fi
+rm -rf "$WD"
+
+echo "== AC5(g) state.md matching branch but NO '- status:' line, valid state.json -> DISPATCH via Source 2 (1 marker) =="
+# Source 1 falls through (status absent); Source 2's unique active session for the
+# current branch authorizes.
+WD="$(make_wd_no_status "feature/example")"
+add_autonomous_session "$WD" "auto-x" "feature/example" "running" "autojob.md"
+run_wrapper "$WD" "feature/example" "$FIXTURE"
+DRY_LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
+if [ "$RUN_RC" -eq 0 ] \
+   && [ -n "$DRY_LINE" ] \
+   && [ "$(marker_count "$WD")" -eq 1 ] \
+   && printf '%s' "$DRY_LINE" | grep -q -- "$PR"; then
+  ok "status-less state.md + active state.json: exit 0, 1 marker, DRY_RUN carries $PR ($DRY_LINE)"
+else
+  no "status-less + state.json dispatch wrong (rc=$RUN_RC markers=$(marker_count "$WD") line='$DRY_LINE')"
+fi
+rm -rf "$WD"
+
+echo "== AC5(h) state.json with EMPTY current_status (absent-status guard) -> fail-closed (0 markers) =="
+# Source 1 falls through (terminal state.md). Source 2's session matches branch +
+# brief but current_status is empty => `[ -n "$sj_status" ]` guard fails-closed.
+WD="$(make_wd "completed" "feature/stale")"    # terminal state.md so Source 1 falls through
+add_autonomous_session "$WD" "auto-x" "feature/example" "" "autojob.md"
+run_wrapper "$WD" "feature/example" "$FIXTURE"
+if [ "$RUN_RC" -eq 0 ] && [ "$(marker_count "$WD")" -eq 0 ]; then
+  ok "state.json empty current_status: exit 0, no dispatch (Source 2 status-presence guard)"
+else
+  no "state.json empty-status wrong (rc=$RUN_RC markers=$(marker_count "$WD") out='$RUN_OUT')"
+fi
+rm -rf "$WD"
+
+echo "== AC5(i) non-terminal but branch-MISMATCHED state.md + valid state.json -> DISPATCH via Source 2 (1 marker) =="
+# Proves Source 1 falls through on branch-mismatch (not only on terminal status):
+# state.md is `running` (non-terminal) but on the WRONG branch, so it does NOT
+# authorize; Source 2's unique active session for the current branch does.
+WD="$(make_wd "running" "feature/other")"    # non-terminal, wrong branch
+add_autonomous_session "$WD" "auto-x" "feature/example" "running" "autojob.md"
+run_wrapper "$WD" "feature/example" "$FIXTURE"
+DRY_LINE="$(printf '%s' "$RUN_OUT" | grep 'DRY_RUN_DISPATCH' || true)"
+if [ "$RUN_RC" -eq 0 ] \
+   && [ -n "$DRY_LINE" ] \
+   && [ "$(marker_count "$WD")" -eq 1 ] \
+   && printf '%s' "$DRY_LINE" | grep -q -- "$PR"; then
+  ok "non-terminal branch-mismatch state.md + active state.json: exit 0, 1 marker, DRY_RUN carries $PR ($DRY_LINE)"
+else
+  no "branch-mismatch fallthrough + state.json dispatch wrong (rc=$RUN_RC markers=$(marker_count "$WD") line='$DRY_LINE')"
 fi
 rm -rf "$WD"
 

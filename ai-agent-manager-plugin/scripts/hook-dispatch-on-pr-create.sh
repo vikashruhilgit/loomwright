@@ -160,8 +160,8 @@ current_branch="${AI_AGENT_MANAGER_HOOK_CURRENT_BRANCH:-$(git rev-parse --abbrev
 authorized=0
 
 # ---- Source 1: .supervisor/state.md ----------------------------------------
-# Authorize via state.md ONLY when its status word is NON-terminal AND its branch
-# line is present AND equals the current branch. FORMAT-TOLERANT: both canonical
+# Authorize via state.md ONLY when its status word is PRESENT and NON-terminal AND
+# its branch line is present AND equals the current branch. FORMAT-TOLERANT: both canonical
 # lowercase (`- status:`/`- branch:`) and inline-Supervisor bold
 # (`- **Status:**`/`- **Branch:**`) forms are parsed.
 #
@@ -181,11 +181,21 @@ if [ -f .supervisor/state.md ]; then
     | sed -E 's/^- [Bb][Rr][Aa][Nn][Cc][Hh]:[[:space:]]*//' \
     | sed -E 's/[[:space:]]+$//' || true)"
   s1_terminal=0
+  # The terminal set is the shared 6-member superset; state.md itself only ever
+  # carries running|paused|completed|completed_with_escalation|failed (the last
+  # three terminal). The extra autonomous-layer values (aborted|done|
+  # paused_max_iterations) never appear in state.md, so including them is a
+  # harmless DRY superset, not a claim that state.md can carry them.
   case "$s1_status" in
     completed|completed_with_escalation|failed|aborted|done|paused_max_iterations)
       s1_terminal=1 ;;
   esac
-  if [ "$s1_terminal" -eq 0 ] && [ -n "$s1_branch" ] && [ "$s1_branch" = "$current_branch" ]; then
+  # Require a PRESENT, non-terminal status (an absent/blank `- status:` line yields
+  # an empty s1_status — which is NOT a positive non-terminal signal, so it must
+  # NOT authorize; control falls through to Source 2). This mirrors Source 2's
+  # `[ -n "$sj_status" ]` status-presence guard and the AC5 "non-terminal status"
+  # contract. The earlier revision authorized on a branch-only/status-less state.md.
+  if [ -n "$s1_status" ] && [ "$s1_terminal" -eq 0 ] && [ -n "$s1_branch" ] && [ "$s1_branch" = "$current_branch" ]; then
     authorized=1
   fi
 fi
