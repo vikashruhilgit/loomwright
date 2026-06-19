@@ -308,7 +308,7 @@ fi
 # until exit, so without this an in-flight drain looks identical to a failed no-op
 # (the exact false-negative that made a prior run misreport "not dispatched"). This
 # header self-documents the dispatch (machine-greppable `DISPATCHED` token + url +
-# until_mergeable flag + marker) and states plainly that an empty body below means
+# until_mergeable flag + runner, plus a marker comment) and states plainly that an empty body below means
 # IN FLIGHT, not failed. `>` truncates a fresh, uniquely-named file; the launch
 # appends with `>>`.
 {
