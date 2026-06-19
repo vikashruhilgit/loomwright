@@ -31,13 +31,14 @@ Each rung climbs **only when the prior rung's numbers earn it.** Every rung is i
 ### ✅ Step 0 — Reconcile the docs — **DONE 2026-06-19**
 The three SPIKES docs were made non-contradictory (local-first direction stated once in `BRAIN_INTEGRATION_EVOLUTION.md`; phase-status fixes + pointer banners elsewhere). CI gates green.
 
-### Step 1 — MEASURE (own-run confusion matrix) — **the immediate next move**
+### Step 1 — MEASURE (own-run confusion matrix) — ✅ DONE (2026-06-19)
 - **Do:** a **read-only** script — harvest the heal signal from done-brief `## Outcome` blocks across all repos → backfill outcome labels via `/pr-postmortem` on the live PRs → **join on PR URL → a confusion matrix** for the heal signal (catch-rate, false-positive, with the false-negative candidates surfaced).
 - **Out:** one report (gitignored scratch) + a *directional* catch-rate. Label source = churn (cheapest rung of the label ladder).
 - **GATE:** is heal-`PASS` correlated with reality at all?
   - **Noise → STOP.** The problem is upstream (Launch Pad / worker); you saved the downstream spend. (The honest off-ramp the design demands.)
   - **Signal-with-gaps (expected) → continue**, now knowing *which* miss-classes slip + a baseline to beat.
 - **Spec:** see §4.
+- **✅ Result (2026-06-19, directional — `ai-agent-manager`, N=8 joined):** GATE = **CONTINUE (signal-with-gaps)**. **Recall 0%** (heal escalated on 0/8), **FN 6/8** (PASS PRs that then absorbed 1–6 self-heal-class rework rounds), FP 0%; PASS is non-discriminative (spans 2→7 review rounds, 0→6 misses). **54% of joined churn attributes to the self_heal stage** — the catchable churn is in heal's own lane, exactly where Steps ④–⑤ aim. **Baseline to beat: recall 0% / FN 6/8 / self_heal-stage share 54%.** Caveats: labels are `agent_generated_guess` (FN set pending human-verify, **Step 2a**); coverage 10% (84 heal-signal PRs, 8 labeled+joined). Full report: `.supervisor/scratch/local-twin-step1/report.md` (gitignored).
 
 ### Step 2 — INSTRUMENT + verify labels
 - **Do:** make harvest→join→matrix **repeatable across repos**; wire it into `/insights` (the MEASURE leg); **close the churn-counter blind spots** (CI-check-channel churn invisible to `review_rounds`; repo-shape commit-regex gaps); **human-verify the false-negative set** into a trusted holdout.
