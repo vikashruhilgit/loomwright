@@ -169,7 +169,7 @@ Every agent (full standard in `AGENT_GUIDELINES.md`):
 | Notification — v14.1.0 | Claude Code signals attention (permission_prompt / idle_prompt / elicitation_*) | hooks.json | type:command — `notify-desktop.sh` (OS banner); matched to exclude `auth_success`; always exits 0 |
 | SubagentStop (launch-pad-runner) — v14.2.0 | Launch Pad `-runner` completes | hooks.json | type:command — `validate-launch-pad-result.py`; validates LAUNCH_PAD_RESULT (schema_version, status, saved_brief_path, summary); exits 0 |
 | SessionStart — v14.2.0 | Session resume / clear / compact | hooks.json | type:command — `session-resume.sh`; injects bounded (≤10k) recovery context; silent on startup; since v14.24.0 also runs the observability health probe (env-block-gated 1s curl, 24h debounce, never starts Docker — adds no new hook entry); exits 0 |
-| PostToolUse (Bash) — v14.34.0 | A Bash tool call completes (e.g. `gh pr create`) | hooks.json | type:command — `hook-dispatch-on-pr-create.sh`; backstops the until-mergeable review drain on PR creation. Session-scope gated (in-progress job + state.md Status≠completed/completed_with_escalation/failed + head-branch match); fail-safe, always exits 0 |
+| PostToolUse (Bash) — v14.34.0 | A Bash tool call completes (e.g. `gh pr create`) | hooks.json | type:command — `hook-dispatch-on-pr-create.sh`; backstops the until-mergeable review drain on PR creation. Session-scope gated (in-progress job + a coherent active-session source: non-terminal branch-matching state.md OR a unique active autonomous state.json; stale terminal state.md no longer short-circuits); fail-safe, always exits 0 |
 
 ---
 
