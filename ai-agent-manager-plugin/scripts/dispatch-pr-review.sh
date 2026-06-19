@@ -303,6 +303,22 @@ else
   log "until-mergeable drain opted out — runner runs plain diff-only /review-pr"
 fi
 
+# Synchronous, non-empty RUN_LOG header — written BEFORE the detached launch so the
+# log is never an ambiguous 0-byte file. The detached `claude -p` buffers its stdout
+# until exit, so without this an in-flight drain looks identical to a failed no-op
+# (the exact false-negative that made a prior run misreport "not dispatched"). This
+# header self-documents the dispatch (machine-greppable `DISPATCHED` token + url +
+# until_mergeable flag + runner, plus a marker comment) and states plainly that an empty body below means
+# IN FLIGHT, not failed. `>` truncates a fresh, uniquely-named file; the launch
+# appends with `>>`.
+{
+  printf 'DISPATCHED\tts=%s\turl=%s\tuntil_mergeable=%s\trunner=%s\n' "$TIMESTAMP" "$PR_URL" "$UNTIL_MERGEABLE" "$RUNNER"
+  printf '# marker: %s\n' "$MARKER"
+  printf '# detached `claude -p` buffers stdout until exit — an otherwise-empty body below this\n'
+  printf '# header means the drain is IN FLIGHT, not failed. Liveness: pgrep -lf review-pr-runner\n'
+  printf '# ---- runner output follows ----\n'
+} > "$RUN_LOG" 2>/dev/null || true
+
 # Fire-and-forget: fully detached so the Supervisor completion tail returns
 # immediately. nohup + background subshell + all stdio redirected away from the
 # caller's inherited pipes (a backgrounded child still holding the tail's stdout
