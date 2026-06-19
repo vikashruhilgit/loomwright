@@ -274,6 +274,37 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
   fi
   echo
 
+  # --- Heal-signal catch-rate (MEASURE leg — Local Twin Step 2; SUPPRESSED when no data) ---
+  # Sourced from .supervisor/heal-signal/results.jsonl (written by scripts/measure-heal-signal.sh,
+  # the re-runnable READ-ONLY self-heal confusion-matrix instrument). One append-only trend line
+  # per run carries recall_pct (catch-rate), fn/n, coverage_pct, self_heal_share_pct. Labels are
+  # CHURN (/pr-postmortem) → the numbers are advisory / DIRECTIONAL, never gating. Mirrors the
+  # System-Twin-hard-signal + knowledge-sources precedent: render ONLY when ≥1 run carries a SCORED
+  # matrix (n>0 with a non-null recall_pct); otherwise the section is suppressed ENTIRELY (no
+  # fabricated zeros, no "no data yet" stub). Trend = recall_pct oldest→newest, bounded ~10 points.
+  hsf=".supervisor/heal-signal/results.jsonl"
+  if [ -f "$hsf" ] && [ -s "$hsf" ]; then
+    hs_recalls="$(jq -rs 'map(select((.n // 0) > 0 and .recall_pct != null)) | sort_by(.recorded_at // "") | .[].recall_pct' "$hsf" 2>/dev/null)"
+    if [ -n "$hs_recalls" ]; then
+      hs_latest="$(jq -rs 'map(select((.n // 0) > 0 and .recall_pct != null)) | sort_by(.recorded_at // "") | last' "$hsf" 2>/dev/null)"
+      hs_recall="$(printf '%s' "$hs_latest" | jq -r '.recall_pct')"
+      hs_fn="$(printf '%s' "$hs_latest" | jq -r '.fn // "—"')"
+      hs_n="$(printf '%s' "$hs_latest" | jq -r '.n // "—"')"
+      hs_cov="$(printf '%s' "$hs_latest" | jq -r 'if .coverage_pct!=null then "\(.coverage_pct)%" else "—" end')"
+      hs_share="$(printf '%s' "$hs_latest" | jq -r 'if .self_heal_share_pct!=null then "\(.self_heal_share_pct)%" else "—" end')"
+      hs_total="$(printf '%s\n' "$hs_recalls" | grep -c . 2>/dev/null)"; hs_total="${hs_total:-0}"
+      hs_trend="$(printf '%s\n' "$hs_recalls" | tail -10 | awk 'BEGIN{ORS=""} {if(NR>1)printf " → "; printf "%s%%",$0}')"
+      [ "$hs_total" -gt 10 ] && hs_trend="… → $hs_trend"
+      echo "## Heal-signal catch-rate (MEASURE)"
+      echo "_Self-heal confusion matrix on this repo's own PR history — sourced from \`$hsf\` (written by \`scripts/measure-heal-signal.sh\`). Labels are churn (\`/pr-postmortem\`), so these are **advisory / DIRECTIONAL** — they never gate a PR or change a heal decision. Computed with jq, never guessed._"
+      echo
+      echo "- **Latest catch-rate (recall):** ${hs_recall}%  ·  **False-negatives (missed):** ${hs_fn} of N=${hs_n}"
+      echo "- **Coverage:** ${hs_cov} of heal-signal PRs labeled  ·  **Self-heal-lane churn share:** ${hs_share}"
+      echo "- **Catch-rate trend (oldest → newest):** ${hs_trend}"
+      echo
+    fi
+  fi
+
   # --- Brain Context Baseline (DORMANT in v1 — DO NOT wire into the fitness trend) ---
   # Phase 0 of the brain-integration arc emits a SEPARATE history file,
   # .supervisor/eval/brain-baseline.jsonl (written by scripts/brain-baseline-eval.sh), measuring

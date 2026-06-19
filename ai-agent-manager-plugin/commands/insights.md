@@ -27,7 +27,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/build-insights.sh"
 ```
 
 1. Reads every `.supervisor/logs/*.jsonl`, takes each run's `session_end` event (tolerant of older logs with fewer fields), and computes the aggregates with `jq` (real numbers, not estimates).
-2. Writes **`.supervisor/insights/dashboard.md`** — Summary (sessions, completed/failed, completion rate, self-heal PASS count, avg heal iterations, total subtasks/files), an optional **System Twin hard-signal** section (contract-conformance + benchmark trend; see below), a **Per-version insights** section (runs / heal-PASS rate / avg heal iterations / avg rubric score, grouped by the additive `plugin_version` stamp; see below), a **Knowledge sources** section (which memory sources runs reported consulting; suppressed when none; see below), an **Eval fitness function** section, a **System Twin growth** section, a Recent-sessions table (with a Twin conformance/Δ column), a Cost note, and an Obsidian/Dataview snippet.
+2. Writes **`.supervisor/insights/dashboard.md`** — Summary (sessions, completed/failed, completion rate, self-heal PASS count, avg heal iterations, total subtasks/files), an optional **System Twin hard-signal** section (contract-conformance + benchmark trend; see below), a **Per-version insights** section (runs / heal-PASS rate / avg heal iterations / avg rubric score, grouped by the additive `plugin_version` stamp; see below), a **Knowledge sources** section (which memory sources runs reported consulting; suppressed when none; see below), an **Eval fitness function** section, a **Heal-signal catch-rate (MEASURE)** section (the self-heal confusion-matrix trend; suppressed when no data; see below), a **System Twin growth** section, a Recent-sessions table (with a Twin conformance/Δ column), a Cost note, and an Obsidian/Dataview snippet.
 3. Writes **`.supervisor/insights/runs/<session_id>.md`** — one note per run with YAML frontmatter (`status`, `rubric_score`, `heal_iterations`, `subtasks_completed`, `files_changed`, `pr_url`, `plugin_version` (`"unknown"` for older logs), and when present `contract_conformance_status`, `contract_violations`, `benchmark_status`, `benchmark_value`, `benchmark_delta`, …).
 
 ### System Twin hard-signal trend
@@ -44,6 +44,12 @@ Two sections that are **always rendered** whenever a dashboard is written (unlik
 - **System Twin growth** — how the contract store has grown, sourced from `.supervisor/twin/contracts/*.md` and `.supervisor/twin/.provenance.jsonl`. Shows the current **contract count** (live `*.md` files) and a **cumulative count of `add` events** grouped by date, oldest → newest (e.g. `10 contracts (2 → 4 → 12)`), bounded to ~8 points. The trend counts append-only `add` provenance events, so it can **exceed** the current contract count when contracts are re-added or updated over time (12 add-events vs 10 current files in that example). When the twin store is missing/empty it shows a benign "no data yet" line.
 
 Both are advisory and computed with jq (never guessed); both degrade gracefully (the script always exits 0).
+
+### Heal-signal catch-rate (MEASURE leg)
+
+A section that surfaces **how well the self-heal pass actually catches problems** on this repo's own PR history — the MEASURE leg of the Local Twin path (`docs/SPIKES/LOCAL_TWIN_PATH.md`). It is sourced from `.supervisor/heal-signal/results.jsonl`, an append-only trend ledger written by **`scripts/measure-heal-signal.sh`** (the re-runnable, READ-ONLY self-heal confusion-matrix instrument — harvests the heal signal from done-brief `## Outcome` blocks, joins it to the `/pr-postmortem` churn labels, and emits a recall / false-positive / false-negative matrix). The dashboard shows the **latest catch-rate (recall)**, **false-negatives / N**, **coverage** (share of heal-signal PRs that carry a model-classified label), **self-heal-lane churn share**, and a **catch-rate trend** oldest → newest (bounded ~10 points).
+
+Because the labels are **churn** (`/pr-postmortem`), these numbers are **advisory / DIRECTIONAL** — they never gate a PR or change a heal decision. Like the System-Twin-hard-signal and Knowledge-sources sections, it is **suppressed entirely when no scored matrix exists** (no `results.jsonl`, or only unscored `n=0` records) — no fabricated zeros. Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/measure-heal-signal.sh"` to refresh the ledger (each run appends one trend point); pass `--backfill N` to print a bounded plan for raising coverage (it never auto-dispatches `/pr-postmortem`).
 
 ### Per-version insights
 
@@ -82,5 +88,6 @@ SORT created DESC
 
 ## See Also
 - `scripts/build-insights.sh` — the deterministic aggregator (jq); `scripts/test-insights.sh` — its self-test.
+- `scripts/measure-heal-signal.{sh,py}` — the READ-ONLY self-heal catch-rate instrument feeding the **Heal-signal catch-rate (MEASURE)** section (`scripts/test-measure-heal-signal.sh` — its self-test).
 - `commands/telemetry.md` — the opt-in counterpart that *sends* a scored summary to GitHub Issues; `/insights` is the local, private, visual view.
 - `commands/dreaming.md` — learns from past runs (inward); `commands/capability-check.md` — scans new Claude Code features (outward); `/insights` *measures* the runs.
