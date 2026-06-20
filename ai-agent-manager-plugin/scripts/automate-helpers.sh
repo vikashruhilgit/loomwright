@@ -344,7 +344,10 @@ gate_eval() {
   # never == "true", so it parks. NEVER add a condition written as `= "false"`:
   # the falsy-coercion would make it silently never fire (fail OPEN). Keep all new
   # conditions in the affirmative `!= "true"` ⇒ PARK form.
-  local J; J() { "$JQ" -r "$1 // \"__MISSING__\"" "$ctx"; }
+  # NB: a bash function definition is always global — there is no `local` function
+  # scoping — so J() lives until gate_eval returns and the next call redefines it;
+  # no `local J` (which would only declare an unused local var of that name).
+  J() { "$JQ" -r "$1 // \"__MISSING__\"" "$ctx"; }
 
   # Condition 1 — owned drain == READY.
   if [ "$(J '.drain_result')" != "READY" ]; then
