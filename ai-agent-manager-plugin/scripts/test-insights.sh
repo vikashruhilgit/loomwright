@@ -178,6 +178,66 @@ if grep -q "^knowledge_sources_used:" "$K/.supervisor/insights/runs/ks-c.md" 2>/
 grep -qF "| unknown | 0 |" "$kd" 2>/dev/null && ok "per-version usage shows 0 runs-with-a-source for unknown (ks-c)" || no "per-version unknown usage wrong"
 rm -rf "$K"
 
+echo "== 8. Heal-signal catch-rate (MEASURE leg, Local Twin Step 2) =="
+# Rendered case: a session log (so a dashboard is written) + a heal-signal trend ledger carrying
+# two SCORED matrices (recall 0 → 33) plus one n=0 record that MUST be filtered out of "latest".
+H="$(mktemp -d)"; ( cd "$H" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$H/.supervisor/logs" "$H/.supervisor/heal-signal"
+printf '%s\n' '{"ts":"2026-06-19T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS","heal_iterations":1}' > "$H/.supervisor/logs/h-a.jsonl"
+{
+  printf '%s\n' '{"schema_version":1,"recorded_at":"2026-06-18T00:00:00Z","repos":["x"],"n":8,"tp":0,"fp":0,"fn":6,"tn":2,"recall_pct":0,"false_positive_pct":0,"self_heal_share_pct":54,"coverage_pct":10}'
+  printf '%s\n' '{"schema_version":1,"recorded_at":"2026-06-19T00:00:00Z","repos":["x"],"n":7,"tp":1,"fp":1,"fn":2,"tn":3,"recall_pct":33,"false_positive_pct":25,"self_heal_share_pct":40,"coverage_pct":50}'
+  printf '%s\n' '{"schema_version":1,"recorded_at":"2026-06-20T00:00:00Z","repos":["x"],"n":0,"recall_pct":null}'
+} > "$H/.supervisor/heal-signal/results.jsonl"
+( cd "$H" && bash "$BUILD" >/dev/null 2>&1 )
+hd="$H/.supervisor/insights/dashboard.md"
+grep -q "## Heal-signal catch-rate (MEASURE)" "$hd" 2>/dev/null && ok "heal-signal section rendered when a scored matrix exists" || no "heal-signal section missing"
+grep -qF "**Latest catch-rate (recall):** 33%" "$hd" 2>/dev/null && ok "latest catch-rate = 33% (n=0 record filtered out)" || no "latest catch-rate wrong"
+grep -qF "**False-negatives (missed):** 2 of N=7" "$hd" 2>/dev/null && ok "latest FN = 2 of N=7" || no "latest FN wrong"
+grep -qF "**Coverage:** 50%" "$hd" 2>/dev/null && ok "latest coverage = 50%" || no "latest coverage wrong"
+grep -qF "0% → 33%" "$hd" 2>/dev/null && ok "catch-rate trend 0% → 33% (oldest → newest)" || no "trend wrong"
+grep -q "^## Summary" "$hd" 2>/dev/null && ok "dashboard still renders fully with the heal-signal section" || no "dashboard incomplete with heal-signal section"
+rm -rf "$H"
+
+echo "== 9. Heal-signal section suppressed when no scored data =="
+# (a) ledger with ONLY an n=0 record → no scored matrix → section suppressed.
+H2="$(mktemp -d)"; ( cd "$H2" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$H2/.supervisor/logs" "$H2/.supervisor/heal-signal"
+printf '%s\n' '{"ts":"2026-06-19T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$H2/.supervisor/logs/h-a.jsonl"
+printf '%s\n' '{"schema_version":1,"recorded_at":"2026-06-20T00:00:00Z","repos":["x"],"n":0,"recall_pct":null}' > "$H2/.supervisor/heal-signal/results.jsonl"
+( cd "$H2" && bash "$BUILD" >/dev/null 2>&1 )
+if grep -q "## Heal-signal catch-rate" "$H2/.supervisor/insights/dashboard.md" 2>/dev/null; then no "section appeared with only an n=0 record"; else ok "section suppressed when only unscored (n=0) records exist"; fi
+rm -rf "$H2"
+# (b) no ledger file at all → section suppressed, dashboard still renders.
+H3="$(mktemp -d)"; ( cd "$H3" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$H3/.supervisor/logs"
+printf '%s\n' '{"ts":"2026-06-19T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$H3/.supervisor/logs/h-a.jsonl"
+( cd "$H3" && bash "$BUILD" >/dev/null 2>&1 )
+hd3="$H3/.supervisor/insights/dashboard.md"
+if grep -q "## Heal-signal catch-rate" "$hd3" 2>/dev/null; then no "section appeared with no ledger file"; else ok "section suppressed when no ledger file exists"; fi
+grep -q "^## Summary" "$hd3" 2>/dev/null && ok "dashboard renders normally with no heal-signal ledger" || no "dashboard broken with no ledger"
+rm -rf "$H3"
+
+echo "== 10. Heal-signal renders a SCORED matrix with recall=n/a (tp+fn=0, not dropped) =="
+# A scored run (n>0) where NO joined PR had a self-heal miss → recall_pct is null. This IS data
+# (coverage + self_heal_share are meaningful), so the section must render with recall "n/a" rather
+# than be silently dropped (the PR #73 review #2 finding). Mixed with a normal scored run to also
+# assert the trend shows the n/a point.
+H4="$(mktemp -d)"; ( cd "$H4" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$H4/.supervisor/logs" "$H4/.supervisor/heal-signal"
+printf '%s\n' '{"ts":"2026-06-19T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$H4/.supervisor/logs/h-a.jsonl"
+{
+  printf '%s\n' '{"schema_version":1,"recorded_at":"2026-06-18T00:00:00Z","repos":["x"],"n":7,"tp":1,"fp":1,"fn":2,"tn":3,"recall_pct":33,"self_heal_share_pct":40,"coverage_pct":50}'
+  printf '%s\n' '{"schema_version":1,"recorded_at":"2026-06-19T00:00:00Z","repos":["x"],"n":5,"tp":0,"fp":1,"fn":0,"tn":4,"recall_pct":null,"self_heal_share_pct":20,"coverage_pct":60}'
+} > "$H4/.supervisor/heal-signal/results.jsonl"
+( cd "$H4" && bash "$BUILD" >/dev/null 2>&1 )
+h4d="$H4/.supervisor/insights/dashboard.md"
+grep -q "## Heal-signal catch-rate (MEASURE)" "$h4d" 2>/dev/null && ok "section renders for a scored recall-null matrix (not dropped)" || no "scored recall-null matrix suppressed the section"
+grep -qF "**Latest catch-rate (recall):** n/a" "$h4d" 2>/dev/null && ok "latest recall shown as n/a (tp+fn=0)" || no "recall-null not rendered as n/a"
+grep -qF "**Coverage:** 60%" "$h4d" 2>/dev/null && ok "latest coverage 60% still surfaced despite null recall" || no "coverage lost on null-recall run"
+grep -qF "33% → n/a" "$h4d" 2>/dev/null && ok "trend shows the n/a point (33% → n/a)" || no "trend dropped/mangled the n/a point"
+rm -rf "$H4"
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

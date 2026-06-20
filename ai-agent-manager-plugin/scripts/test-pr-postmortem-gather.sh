@@ -69,6 +69,12 @@
 #                     The 3c task-id fixture (no url/headRefName/files) also asserts the
 #                     `// null` / `(.files // [])` tolerance: pr_url/branch == null,
 #                     changed_paths == [] with no jq error.
+#   3j. large multibyte comments array (PRODUCTION-wedge regression) -> a ~100KB
+#                     issue-comment array (the #54/#59/#37 shape that hung the gather
+#                     for minutes inside classify-bot-review.sh's bash-3.2 O(n^2)
+#                     whitespace-strip) => the gather completes well inside a HARD
+#                     watchdog (RUN_TIMEDOUT==0) and emits a SUCCESS object with all
+#                     60 claude[bot] comments classified and bot-sourced review_rounds.
 #   4. injection-safety -> a title/body/review body AND provenance branch/changed_paths
 #                     with quotes/backslashes/newlines round-trip as valid JSON (no parse break).
 #   5. unavailable (stub gh fails / PR inaccessible) -> {"status":"unavailable",...}, exit 0.
@@ -363,7 +369,27 @@ FIX
 #   hubcomments     — cat the "## Overview"-headed bot comments fixture (3g).
 #   hostile         — cat the hostile-typed comments fixture (3f): VALID array,
 #                     non-string user.login/body/created_at elements.
+#   bigcomments     — cat the ~100KB multibyte comments fixture (3j): the production
+#                     wedge repro (large array that hung classify-bot-review.sh).
 #   fail            — exit 1 (comments endpoint failing — the degrade path, 3e).
+# Large multibyte comments fixture (3j): a ~100KB REST-shaped array — 60 claude[bot]
+# review comments with em-dash/emoji bodies — that reproduces the PRODUCTION wedge the
+# gather hit on real >64KB issue-comment arrays (#54/#59/#37): bash-3.2's O(n^2)
+# whitespace-strip in classify-bot-review.sh hung for minutes. Generated with jq (too
+# large for a heredoc); multibyte is emitted via \uXXXX escapes so this file stays
+# ASCII. Every created_at precedes the botreview fixture's first commit (08:00), so all
+# 60 anchor a bot review round.
+FIX_BIGCOMMENTS="$TMP/fixture-bigcomments.json"
+jq -cn '
+  "\u2014" as $emdash | "\ud83e\udd16" as $bot |
+  [ range(0;60) as $i
+  | { user: { login: "claude[bot]" },
+      created_at: "2026-01-01T07:00:00Z",
+      html_url: "https://github.com/acme/widgets/pull/42#issuecomment-\($i)",
+      body: ("## Code Review \($emdash) round \($i) \($bot). "
+             + ([range(0;25)] | map("\($emdash) review finding lorem ipsum \($bot) ") | add)) } ]' \
+  > "$FIX_BIGCOMMENTS"
+
 make_gh_stub() {
   local mode="$1" api_mode="${2:-empty}" fixture="" api_fixture=""
   case "$mode" in
@@ -380,6 +406,7 @@ make_gh_stub() {
     comments)    api_fixture="$FIX_BOTREVIEW_COMMENTS" ;;
     hubcomments) api_fixture="$FIX_HUBSHAPE_COMMENTS" ;;
     hostile)     api_fixture="$FIX_BOTREVIEW_COMMENTS_HOSTILE" ;;
+    bigcomments) api_fixture="$FIX_BIGCOMMENTS" ;;
   esac
   cat > "$BIN/gh" <<STUB
 #!/usr/bin/env bash
@@ -412,6 +439,24 @@ STUB
 run_gather() {
   RUN_OUT="$( PATH="$BIN:$PATH" bash "$GATHER" "$@" 2>/dev/null )"
   RUN_RC=$?
+}
+
+# run_gather_bounded <secs> <args...> — like run_gather, but under a HARD wall-clock
+# watchdog (stock macOS has no `timeout`/`gtimeout`). Sets RUN_OUT, RUN_RC, and
+# RUN_TIMEDOUT (1 IFF the gather HUNG past <secs> and had to be killed). This is how
+# the large-comments regression PROVES the "gather never wedges" contract: a healthy
+# gather finishes far inside the bound, so RUN_TIMEDOUT must stay 0.
+run_gather_bounded() {
+  local secs="$1"; shift
+  rm -f "$TMP/gtimedout"
+  PATH="$BIN:$PATH" bash "$GATHER" "$@" >"$TMP/gb.out" 2>/dev/null &
+  local cpid=$!
+  ( sleep "$secs"; kill -0 "$cpid" 2>/dev/null && { : >"$TMP/gtimedout"; kill -TERM "$cpid" 2>/dev/null; sleep 1; kill -KILL "$cpid" 2>/dev/null; }; ) &
+  local wpid=$!
+  wait "$cpid" 2>/dev/null; RUN_RC=$?
+  kill "$wpid" 2>/dev/null; wait "$wpid" 2>/dev/null
+  RUN_OUT="$(cat "$TMP/gb.out" 2>/dev/null)"
+  if [ -f "$TMP/gtimedout" ]; then RUN_TIMEDOUT=1; else RUN_TIMEDOUT=0; fi
 }
 
 PR_URL="https://github.com/acme/widgets/pull/42"
@@ -626,6 +671,27 @@ if [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | jq -e '
   ok "provenance: pr_url string, branch string, changed_paths array of paths, all sourced jq-natively"
 else
   no "(3i) wrong (rc=$RUN_RC): $RUN_OUT"
+fi
+
+echo "== 3j. large multibyte comments array => gather completes (NO wedge), success object, all bot rounds classified =="
+make_gh_stub botreview bigcomments
+run_gather_bounded 25 "$PR_URL"
+# Production-wedge regression: a real >64KB issue-comment array hung the gather for
+# MINUTES inside classify-bot-review.sh (bash-3.2 O(n^2) ${//[[:space:]]/}). The gather
+# must now finish far inside the 25s watchdog (RUN_TIMEDOUT==0) and emit a SUCCESS
+# object. All 60 claude[bot] comments classify IN (each carries the word-bounded
+# "review" marker) and anchor a round (created_at 07:00 precedes the 08:00 first
+# commit), so review_rounds is bot_comments-sourced and review_comments lists all 60.
+if [ "$RUN_TIMEDOUT" -eq 0 ] && [ "$RUN_RC" -eq 0 ] && printf '%s' "$RUN_OUT" | jq -e '
+    (has("status") | not)
+    and (.review_comments | length)==60
+    and ([.review_comments[] | select(.author=="claude[bot]")] | length)==60
+    and (.review_rounds >= 1)
+    and (.review_rounds_source == "bot_comments")
+  ' >/dev/null 2>&1; then
+  ok "large multibyte comments array: gather emits success object, 60 bot rounds classified, no wedge (watchdog never fired)"
+else
+  no "(3j) wrong (RUN_TIMEDOUT=${RUN_TIMEDOUT:-?} RUN_RC=$RUN_RC): $(printf '%s' "$RUN_OUT" | head -c 220)"
 fi
 
 echo "== 4. injection-safety => quotes/backslashes/newlines round-trip as valid JSON =="

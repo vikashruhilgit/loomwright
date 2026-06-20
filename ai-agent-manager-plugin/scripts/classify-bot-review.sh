@@ -30,6 +30,16 @@
 #              helper NEVER crashes a caller and NEVER exits non-zero on a data
 #              problem (it only ever emits a JSON array + exit 0).
 #
+#   NEVER-HANGS: the stdin read is BOUNDED (`read -t`, default 10s, overridable via
+#              CLASSIFY_STDIN_TIMEOUT) and the blank-check is an early-exit `case`
+#              glob — NOT an O(n^2) ${//} pattern substitution. So a never-closing
+#              stdin OR a large multibyte comment array degrades to `[]` quickly
+#              instead of wedging, even under concurrent invocation. (Before this,
+#              a plain `cat` could block forever on a missing stdin, and the O(n^2)
+#              whitespace-strip wedged bash 3.2 for minutes on ~96KB arrays.) On a
+#              read TIMEOUT a one-line breadcrumb is written to STDERR (stdout stays
+#              `[]`), so a timeout is distinguishable from an empty endpoint in logs.
+#
 #   HOSTILE-TYPED ELEMENTS: a VALID array whose elements carry non-string
 #              `.user.login` / `.body` values does not abort the program — every
 #              field access is double-guarded (the error-suppressing (…)? form
@@ -58,13 +68,41 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 0
 fi
 
-INPUT="$(cat 2>/dev/null || true)"
+# Read all of stdin, but with a BOUNDED wait so a missing or never-closing stdin
+# (no pipe at all, or a slow/stuck producer under concurrent load) can NEVER wedge
+# this fail-safe helper — its contract is "always exit 0 QUICKLY". `-d ''` reads
+# through to EOF (a NUL byte never appears in JSON comment text, so it is never an
+# early stop); `-t` caps the wait at CLASSIFY_STDIN_TIMEOUT seconds (default 10;
+# bash 3.2 accepts integer seconds only). Because no NUL delimiter is ever seen,
+# `read` returns NON-ZERO on the normal EOF path too, so we deliberately ignore its
+# rc (|| true) and act on the bytes captured in INPUT (empty/partial on timeout,
+# which the blank-check below degrades to []). This replaces a plain `cat`, which
+# blocks forever when stdin is never closed.
+INPUT=""
+_read_rc=0
+_stdin_t0=$SECONDS
+IFS= read -r -d '' -t "${CLASSIFY_STDIN_TIMEOUT:-10}" INPUT || _read_rc=$?
 
-# Blank / missing stdin → [].
-if [ -z "${INPUT//[[:space:]]/}" ]; then
-  printf '[]\n'
-  exit 0
+# Best-effort debug breadcrumb (advisory; NEVER changes the []-and-exit-0 fail-safe):
+# distinguish a stdin TIMEOUT from a genuinely empty endpoint when debugging. bash 4+
+# returns >128 from `read -t` on timeout; bash 3.2 returns 1 for BOTH timeout and clean
+# EOF, so we also treat "waited ~the whole window" (integer SECONDS) as the timeout
+# signal. Goes to STDERR only — stdout stays the JSON-array contract.
+if [ "$_read_rc" -gt 128 ] || [ "$(( SECONDS - _stdin_t0 ))" -ge "${CLASSIFY_STDIN_TIMEOUT:-10}" ]; then
+  printf 'classify-bot-review: stdin read timed out after %ss; degrading to []\n' "${CLASSIFY_STDIN_TIMEOUT:-10}" >&2
 fi
+
+# Blank / missing stdin → []. Use a `case` glob that EARLY-EXITS on the first
+# non-whitespace byte. Do NOT use ${INPUT//[[:space:]]/} here: that is an O(n^2)
+# pattern SUBSTITUTION (it rebuilds the entire string) that wedges bash 3.2 for
+# MINUTES on large multibyte input — a real, reproduced hang on ~96KB issue-comment
+# arrays (e.g. PR #54), non-deterministically triggered under concurrent CPU
+# pressure. The case form scans only until the first non-space char, so a real JSON
+# array returns in microseconds and even an all-whitespace input stays bounded.
+case "$INPUT" in
+  *[![:space:]]*) : ;;            # has a non-whitespace byte → proceed
+  *) printf '[]\n'; exit 0 ;;     # empty or whitespace-only → []
+esac
 
 # The whole filter runs inside ONE jq program. A leading `if type=="array"`
 # guard degrades non-array (and, via the outer 2>/dev/null fallback, invalid)
