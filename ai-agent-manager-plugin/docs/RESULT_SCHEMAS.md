@@ -1620,7 +1620,7 @@ The on-disk layout of the `/automate` engine's run file, `.supervisor/automate/<
 |---|---|
 | `running` | The loop is actively processing (or this is the freshly-created run). |
 | `paused` | Stopped with **work remaining** — always paired with a `pause_reason` in `## Current` (`awaiting_merge` \| `escalated` \| `limit_reached` \| `resume_ambiguous`). |
-| `done` | Set **only** when the Queue is **fully resolved** (no `- [ ]` items remain), with `remaining: 0`. |
+| `done` | Set **only** when the Queue is **fully resolved** (no `- [ ]` items remain), i.e. `remaining: 0`. (`remaining` is **COMPUTED/REPORTED** — the count of `- [ ]` Queue items, derived by `automate-helpers.sh remaining` — **not a persisted run-file field**; there is no `remaining:` line stored in the template.) |
 
 ### `## Queue` checklist convention
 

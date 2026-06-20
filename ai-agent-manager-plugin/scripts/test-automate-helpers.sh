@@ -155,16 +155,18 @@ fi
 run_h bash "$H" remaining "$RF"
 if [ "$RUN_OUT" = "2" ]; then ok "remaining: counts only unchecked (2)"; else no "remaining wrong ($RUN_OUT, want 2)"; fi
 
-# B3. append-only Progress never loses prior lines.
+# B3. append-only Progress never loses prior lines. The 2nd line carries a literal
+#     backslash sequence (\t/\n) to ALSO guard the ENVIRON[...]-not-awk-v fix in
+#     progress_append — backslashes must be stored VERBATIM, never interpreted.
 bash "$H" progress-append "$RF" "t1 ran /autonomous"
-bash "$H" progress-append "$RF" "t2 drain READY"
+bash "$H" progress-append "$RF" 't2 drain READY path\twith\nbackslashes'
 if grep -q '^- t0 picked a.md' "$RF" \
    && grep -q '^- t1 ran /autonomous' "$RF" \
-   && grep -q '^- t2 drain READY' "$RF" \
+   && grep -qF -- '- t2 drain READY path\twith\nbackslashes' "$RF" \
    && [ "$(grep -c '^- t0 picked a.md' "$RF")" -eq 1 ]; then
-  ok "append-only Progress: prior line intact, new lines appended in order"
+  ok "append-only Progress: prior line intact, new lines appended in order (backslashes verbatim)"
 else
-  no "progress-append lost/duplicated lines:\n$(grep -n '^- t' "$RF")"
+  no "progress-append lost/duplicated lines or mangled backslashes:\n$(grep -n '^- t' "$RF")"
 fi
 # the new lines must be UNDER ## Progress, not elsewhere
 if awk '/^## Progress/{p=1} p&&/^- t2 drain READY/{found=1} END{exit !found}' "$RF"; then
@@ -183,10 +185,13 @@ else
 fi
 
 # B5. skipped form: check-off with a reason; remaining drops; never re-counted.
-bash "$H" queue-checkoff "$RF" "b.md" "blocked upstream"
+#     Reason carries a literal backslash sequence (why\tbecause) to ALSO guard the
+#     ENVIRON[...]-not-awk-v fix in queue_checkoff: \t must be stored verbatim,
+#     never interpreted as a tab.
+bash "$H" queue-checkoff "$RF" "b.md" 'blocked upstream why\tbecause'
 run_h bash "$H" remaining "$RF"
-if grep -q '^- \[x\] b.md  # skipped: blocked upstream$' "$RF" && [ "$RUN_OUT" = "0" ]; then
-  ok "skipped form: b.md checked off with reason, remaining now 0 (skipped excluded)"
+if grep -qF -- '- [x] b.md  # skipped: blocked upstream why\tbecause' "$RF" && [ "$RUN_OUT" = "0" ]; then
+  ok "skipped form: b.md checked off with reason (backslash verbatim), remaining now 0 (skipped excluded)"
 else
   no "skipped-form wrong (remaining=$RUN_OUT, line=$(grep 'b.md' "$RF"))"
 fi

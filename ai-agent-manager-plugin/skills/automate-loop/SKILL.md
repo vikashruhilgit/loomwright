@@ -39,6 +39,35 @@ The per-item engine is **source-agnostic** — only the *intake* differs, and in
 
 ---
 
+## §1.5 — Reference implementation (the loop shells out to these)
+
+The scriptable, security-critical steps of this protocol are **NOT re-implemented in prose each run** — the inline `/automate` loop **executes them by shelling out to a single self-tested helper**:
+
+```
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/automate-helpers.sh <subcommand> [args…]"
+```
+
+so **the tested code IS the executed code** (one implementation, guarded by `scripts/test-automate-helpers.sh`). **The SKILL section prose is the SPEC each subcommand implements — single source of truth; the helper conforms to it, never the reverse.** When a contract changes, change the prose here first, then make the helper conform.
+
+| Subcommand | SKILL § | Purpose |
+|------------|---------|---------|
+| `config-suppress` | §7 | Backup `config.json` byte-for-byte, set `auto_review=false` (malformed ⇒ abort exit 2). |
+| `config-restore` | §7 | Overwrite-from-backup OR delete-if-originally-absent; deletes the transient backup. |
+| `config-orig` | §7 | Print the recorded `auto_review_original` (`true`/`false`/`absent`). |
+| `runfile-write` | §3 | Atomic temp+rename write of the run file (content on stdin). |
+| `progress-append` | §3 | Append-only `## Progress` line (never rewrites a prior line). |
+| `queue-checkoff` | §3 | Flip `- [ ]` → `- [x]` (optional `# skipped: <reason>` form, §5). |
+| `remaining` | §3 | Count of `- [ ]` Queue items (COMPUTED — not a stored run-file field). |
+| `resolve-folder` | §2 | List `*.md` in a folder not stamped `## Status: done`. |
+| `resolve-backlog` | §2 | Dependency-ordered items honoring `done`/✅ markers (dir-scan fallback). |
+| `resume-glob` | §4 | List run files not stamped `## Status: done`. |
+| `reconcile-item` | §4 | Reconcile one item's belief vs `gh` ground truth ⇒ `merged`/`awaiting_merge`/`gone`. |
+| `gate-eval` | §10 | The 5-condition fail-CLOSED trusted auto-merge gate — the **only** executor of `gh pr merge --squash`. |
+
+> `automate-helpers.sh` is READ-ONLY toward the work it drives (no source-repo edits, no git mutations; the sole exception is `gate-eval`'s explicit `gh pr merge --squash`). It is an **uncounted plain script** (not an agent/command/skill/hook).
+
+---
+
 ## §2 — Intake: any source → the Queue (convert once, NO adapter framework)
 
 Exactly **one** source is resolved per run. Resolution produces the **FULL** ordered list of items, which is written to `## Queue` and **shown to the user for confirmation before processing** (a prompt that explodes into 40 files never runs silently). Under `--non-interactive-fallback` the confirmation prompt is skipped and the `--limit` cap is enforced without asking.
@@ -107,9 +136,11 @@ queued (- [ ]) → running → pr-open → awaiting_merge → merged (- [x]) | e
 
 - **`running`** — the loop is actively processing (or is the freshly-created run).
 - **`paused`** — stopped with work remaining; always paired with a `pause_reason` (`awaiting_merge` | `escalated` | `limit_reached` | `resume_ambiguous`).
-- **`done`** — set **only** when the Queue is **fully resolved** (no `- [ ]` items remain), with `remaining: 0`.
+- **`done`** — set **only** when the Queue is **fully resolved** (no `- [ ]` items remain), i.e. `remaining: 0`. `remaining` is **COMPUTED/REPORTED** (the count of `- [ ]` Queue items, via `automate-helpers.sh remaining`) — it is **NOT a persisted run-file field**; the template stores no `remaining:` line.
 
 ### Crash-safety contract (HIGH-risk mitigation — run-file is the ONLY copy of resume state)
+
+> **Execute via the helper, not a re-implementation:** the run-file mutations are done by shelling out — `automate-helpers.sh runfile-write <runfile>` (full atomic write, content on stdin), `automate-helpers.sh progress-append <runfile> <line>` (append-only `## Progress`), `automate-helpers.sh queue-checkoff <runfile> <item> [reason]` (flip `- [ ]` → `- [x]`, §5), and `automate-helpers.sh remaining <runfile>` (COMPUTED `- [ ]` count) (§1.5). The contract below is the SPEC those subcommands implement.
 
 - **Atomic write (temp + rename):** every run-file update is written to a temp file and `mv`-renamed into place. A crash mid-write never leaves a half-written file — the prior intact version remains.
 - **`## Progress` is APPEND-ONLY** — it is **never rewritten**. New lines are appended; existing lines are immutable.
@@ -119,6 +150,8 @@ queued (- [ ]) → running → pr-open → awaiting_merge → merged (- [x]) | e
 ---
 
 ## §4 — RESUME = glob + reconcile (run-file is BELIEF; git/gh is TRUTH)
+
+> **Execute via the helper, not a re-implementation:** glob with `automate-helpers.sh resume-glob <automate_dir>` and reconcile each in-flight item's belief vs `gh` ground truth with `automate-helpers.sh reconcile-item <pr_url> <belief>` ⇒ `merged` / `awaiting_merge` / `gone` (§1.5). (`reconcile-item` resolves the `gh`-PR-state half; the complementary `git branch --contains <sha>` corroboration below is done by the loop.) The protocol below is the SPEC those subcommands implement.
 
 **On every start** (including bare `/automate` and any `--resume`):
 
@@ -184,6 +217,8 @@ All `/autonomous` correctness gates still bubble up (NO-GO, Plan Review FAIL×3,
 
 ### Config-toggle contract (byte-for-byte; absent-delete; malformed-abort)
 
+> **Execute via the helper, not a re-implementation:** suppress with `automate-helpers.sh config-suppress <config_path> <backup_path>`, restore with `automate-helpers.sh config-restore <config_path> <backup_path>`, and read the recorded original with `automate-helpers.sh config-orig <config_path>` (§1.5). The prose below is the SPEC those subcommands implement.
+
 - **Backup:** byte-for-byte copy the existing `.supervisor/config.json` to a **transient** `<run_id>.config-backup.json`. Record its path + the original `.auto_review` value in `## Run Config` (`auto_review_original: <true|false|absent>`, `config_backup: <run_id>.config-backup.json`). **Record absence** (`auto_review_original: absent`) if there was no prior config.
 - **Restore:** overwrite `config.json` from the backup **OR delete `config.json` if it was originally absent** — **never leave a partial `config.json` shadowing the legacy `notify-config.json`** (the new path wins when both exist, so a stray empty `config.json` would mask `notify-config.json`).
 - **Malformed pre-existing config ⇒ ABORT.** If the existing `config.json` is not parseable JSON, do not blindly overwrite it — abort the tick (the user has a hand-edited config we must not clobber).
@@ -231,7 +266,9 @@ then `--resume`.
 
 ## §10 — Trusted auto-merge gate (5 conditions, fail CLOSED)
 
-`gh pr merge --squash` fires **ONLY** when **ALL 5** conditions hold. If any fails, is null, or is unreadable ⇒ fail **CLOSED** → park (`pause_reason: awaiting_merge`/`escalated`) + notify. (This gate is the **only** sanctioned `gh pr merge --squash` in the plugin — §11.)
+> **Execute via the helper, not a re-implementation:** the loop pre-resolves the five conditions into a `ctx.json` (via the `gh` reads described below) and hands it to `automate-helpers.sh gate-eval <pr_url> <ctx.json>` (§1.5) — the **single** implementation of this gate and the **only** code path that executes `gh pr merge --squash`. It prints `MERGE` (after merging) or `PARK: <reason>` and is self-tested for fail-closed behaviour on every condition. The conditions below are the SPEC `gate-eval` implements.
+
+`gh pr merge --squash` fires **ONLY** when **ALL 5** conditions hold. If any fails, is null, or is unreadable ⇒ fail **CLOSED** → park (`pause_reason: awaiting_merge`/`escalated`) + notify. (This gate — implemented in `automate-helpers.sh gate-eval` — is the **only** sanctioned, EXECUTED `gh pr merge --squash` in the plugin — §11.)
 
 1. **Owned drain == `READY`.** The engine's own inline `/review-pr --until-mergeable` (§7) returned `READY` (not `ESCALATED`).
 
@@ -266,7 +303,11 @@ On all 5 holding: `gh pr merge --squash <url>`. Then SYNC (`git checkout main &&
 
 ## §11 — Invariant preservation
 
-- **`review-heal` / `/review-pr` / Supervisor Phase 4.5 still NEVER merge.** They terminate at `PASS` / `READY` / `ESCALATED` and leave the PR open. The **ONLY** place in the plugin that **executes** `gh pr merge --squash` is **this `automate-loop` `--auto-merge` gate** (§10). (A positive-form grep — `grep -rn "gh pr merge --squash" ai-agent-manager-plugin/ | grep -viE "no |never |not "` — must resolve ONLY under `skills/automate-loop/` and `commands/automate.md`; the negative-assertion mentions in `review-heal`/`review-pr`/`RESULT_SCHEMAS` are excluded.)
+- **`review-heal` / `/review-pr` / Supervisor Phase 4.5 still NEVER merge.** They terminate at `PASS` / `READY` / `ESCALATED` and leave the PR open. The **invariant — the ONLY place in the plugin that EXECUTES `gh pr merge --squash` is this `automate-loop` `--auto-merge` gate, implemented in `automate-helpers.sh gate-eval`** (§10) — holds regardless of how many docs *describe* it. As a check, a positive-form grep — `grep -rn "gh pr merge --squash" ai-agent-manager-plugin/ | grep -viE "no |never |not "` — must resolve to ONLY these sanctioned surfaces (the executor + the docs/tests that describe it; the negative-assertion mentions in `review-heal`/`review-pr`/`RESULT_SCHEMAS` are correctly excluded by the filter, and `commands/automate.md`'s two mentions are also excluded because both sit beside "NOT"/"NEVER"):
+  - `skills/automate-loop/SKILL.md` — this contract (§10/§11).
+  - `scripts/automate-helpers.sh` — the **actual executor** (`gate-eval`, the only code path that runs the command).
+  - `scripts/test-automate-helpers.sh` — the self-test that exercises the gate.
+  - `commands/agent-help.md` — describes the `--auto-merge` gate as the one place the squash-merge runs.
 - **All `/autonomous` correctness gates bubble up** — NO-GO, Plan Review FAIL×3, Supervisor adjudication, the rubric gate — exactly as they do for a direct `/autonomous` run. The engine never auto-picks an adjudication option.
 - **`--notify` / `--non-interactive-fallback` pass through** to the inner `/autonomous` invocation (forwarded on the RUN step). `--non-interactive-fallback` also governs the engine's own gates (queue-confirm skipped, ambiguous resume fails closed — §2/§4).
 - **Concurrent-run constraint (documented):** the `.auto_review:false` window (§7) is **repo-global** while set. **Do NOT run two `/automate` loops in one repo** — they would collide on the toggle. Single-run-per-repo is an assumed constraint, not enforced.
@@ -344,6 +385,6 @@ The engine is designed to be driven continuously by Claude's `/loop`. Use the **
 - Single drain: `.auto_review:false` set before `/autonomous`, restored finally-style (config-backup deleted on clean restore, crash-restored by RECONCILE); ONE inline `/review-pr --until-mergeable`; `## Current` records `owned_drain_started`/`owned_drain_result`/`suppressed_default_dispatch:true`; no detached `dispatch-pr-review.sh` artifact for the PR.
 - Single-open-PR invariant holds in BOTH modes: `awaiting_merge` resumes on merge, `escalated` parks until human-resolved or the item is `skipped`/`abandoned`.
 - `--auto-merge` executes `gh pr merge --squash` ONLY when ALL 5 trusted-gate conditions hold; fails CLOSED (park + notify) on any blocker (unprotected/toothless, moved SHA, `CHANGES_REQUESTED`/`REVIEW_REQUIRED`, null/unreadable `reviewDecision`, unresolved human thread).
-- `READY`/`PASS` from `review-heal`/`review-pr`/Supervisor Phase 4.5 NEVER merge; the ONLY executed `gh pr merge --squash` is this skill's §10 gate.
+- `READY`/`PASS` from `review-heal`/`review-pr`/Supervisor Phase 4.5 NEVER merge; the ONLY executed `gh pr merge --squash` is the §10 gate implemented in `automate-helpers.sh gate-eval`.
 - All `/autonomous` correctness gates bubble up; `--notify` / `--non-interactive-fallback` pass through to the inner `/autonomous`.
 - Termination: Queue fully resolved ⇒ `## Status: done` / `remaining: 0`; `limit` reached ⇒ `## Status: paused` / `pause_reason: limit_reached` / `remaining: <unchecked>`.

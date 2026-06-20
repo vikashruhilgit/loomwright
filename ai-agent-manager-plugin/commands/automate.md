@@ -73,6 +73,8 @@ This guards against prompt drift: if the loop protocol, `/autonomous`, or `/revi
 
 ### Short overview (detail deferred to the skill)
 
+The scriptable steps — the config toggle, run-file atomic writes / append-only Progress / check-off, resume reconcile, and the 5-condition trusted-merge gate — are implemented + self-tested ONCE in `scripts/automate-helpers.sh`, which the loop **shells out to** (so the tested code is the executed code); the SKILL prose is the spec each subcommand conforms to (see `skills/automate-loop/SKILL.md` §1.5).
+
 `/automate` then executes the protocol in `skills/automate-loop/SKILL.md` — the authority for every step below; this overview is a map, not the contract:
 
 1. **RESUME first.** Glob `.supervisor/automate/*.md` for runs not marked `## Status: done`, reconcile each in-flight item vs ground truth, and offer continue / start-new / archive (fail-closed under `--non-interactive-fallback`). (§4)

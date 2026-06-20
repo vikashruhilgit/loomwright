@@ -7,9 +7,13 @@
 # (the contract)" template.
 #
 # This script is a library of SUBCOMMANDS the inline `/automate` loop shells out
-# to for the few pieces of logic that benefit from being scriptable + self-tested
-# (config suppress/restore, atomic run-file writes, append-only Progress, resume
-# reconcile, the trusted auto-merge gate). It is READ-ONLY toward the work it
+# to (wired in `skills/automate-loop/SKILL.md` §1.5 + the inline "execute via
+# automate-helpers.sh" pointers at §3/§4/§7/§10, and referenced from
+# `commands/automate.md`) for the few pieces of logic that benefit from being
+# scriptable + self-tested (config suppress/restore, atomic run-file writes,
+# append-only Progress, resume reconcile, the trusted auto-merge gate) — so the
+# TESTED code is the EXECUTED code (one implementation, not a prose re-spec). It
+# is READ-ONLY toward the work it
 # drives — it never edits source repos, never runs git mutations of its own, and
 # (outside the explicitly-stubbed `gate-eval` MERGE branch) never calls
 # `gh pr merge`. UNCOUNTED by the doc-currency gate (it is a plain script, not an
@@ -121,8 +125,11 @@ progress_append() {
   local out="$1" line="$2"
   [ -f "$out" ] || die "run file not found: $out"
   local tmp; tmp="$(mktemp "${out}.XXXXXX")"
-  awk -v newline="- $line" '
-    BEGIN { in_prog=0; appended=0; seen_prog=0 }
+  # Pass the new line via the ENVIRONMENT (not awk -v): awk's -v assignment
+  # interprets backslash escapes in the value, which would mangle a path/line
+  # containing a literal backslash. ENVIRON[...] is read verbatim.
+  AH_NEWLINE="- $line" awk '
+    BEGIN { in_prog=0; appended=0; seen_prog=0; newline=ENVIRON["AH_NEWLINE"] }
     /^## Progress/ { print; in_prog=1; seen_prog=1; next }
     /^## / {
       if (in_prog && !appended) { print newline; appended=1; in_prog=0 }
@@ -150,7 +157,11 @@ queue_checkoff() {
   local out="$1" item="$2" reason="${3:-}"
   [ -f "$out" ] || die "run file not found: $out"
   local tmp; tmp="$(mktemp "${out}.XXXXXX")"
-  awk -v item="$item" -v reason="$reason" '
+  # Pass item/reason via the ENVIRONMENT (not awk -v): -v interprets backslash
+  # escapes in the value, which would mangle a path/reason containing a literal
+  # backslash. ENVIRON[...] is read verbatim.
+  AH_ITEM="$item" AH_REASON="$reason" awk '
+    BEGIN { item=ENVIRON["AH_ITEM"]; reason=ENVIRON["AH_REASON"] }
     {
       line=$0
       # Match an unchecked queue line whose payload (after "- [ ] ") equals item.
