@@ -21,6 +21,16 @@
 #                  hostile elements degrade to non-matches (never abort), and original
 #                  metadata (id) is preserved on the survivors.
 #   6. fail-safe non-array / invalid input -> [], exit 0 (never crash a caller).
+#   7. large multibyte array (REGRESSION for the ${//[[:space:]]/} wedge) -> a
+#                  ~160KB array with em-dash/emoji bodies classifies correctly and
+#                  completes FAST under a hard watchdog. Before the fix, the O(n^2)
+#                  bash-3.2 pattern SUBSTITUTION wedged for minutes on such input
+#                  (a real hang reproduced on ~96KB PR-comment arrays).
+#   8. never-closing stdin -> the BOUNDED read (CLASSIFY_STDIN_TIMEOUT) self-exits
+#                  to [] at the timeout; the outer watchdog never has to fire. A
+#                  plain `cat` would block forever here.
+#   9. slow / incomplete stdin -> a producer that dribbles a partial fragment and
+#                  never closes degrades to [] under the bounded read (no hang).
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -39,6 +49,27 @@ fi
 run_classify() {
   RUN_OUT="$( printf '%s' "$1" | bash "$CLASSIFY" 2>/dev/null )"
   RUN_RC=$?
+}
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+# bounded_sh <outer_secs> <out_file> <shell-string> — run a shell command in the
+# background under a HARD wall-clock watchdog (portable; stock macOS has no
+# `timeout`/`gtimeout`). Sets B_RC (exit/kill code) and B_TIMEDOUT (1 IFF the
+# watchdog had to kill it — i.e. the command HUNG past <outer_secs>). This is how
+# the never-hangs cases below PROVE their contract: a correct classify always
+# self-terminates well inside the bound, so B_TIMEDOUT must stay 0.
+bounded_sh() {
+  local secs="$1" outf="$2" cmd="$3"
+  rm -f "$TMP/timedout"
+  bash -c "$cmd" >"$outf" 2>/dev/null &
+  local cpid=$!
+  ( sleep "$secs"; kill -0 "$cpid" 2>/dev/null && { : >"$TMP/timedout"; kill -TERM "$cpid" 2>/dev/null; sleep 1; kill -KILL "$cpid" 2>/dev/null; }; ) &
+  local wpid=$!
+  wait "$cpid" 2>/dev/null; B_RC=$?
+  kill "$wpid" 2>/dev/null; wait "$wpid" 2>/dev/null
+  if [ -f "$TMP/timedout" ]; then B_TIMEDOUT=1; else B_TIMEDOUT=0; fi
 }
 
 # ---------------------------------------------------------------------------
@@ -132,6 +163,59 @@ if [ "$fs_fail" -eq 0 ]; then
   ok "non-array / invalid / empty inputs all degrade to [], exit 0"
 else
   no "(6) one or more fail-safe sub-cases wrong"
+fi
+
+# ---------------------------------------------------------------------------
+echo "== 7. large multibyte array => classified correctly AND fast (regression: the O(n^2) \${//} wedge) =="
+# ~200-element array with multibyte bodies (em-dash —, robot emoji) so the OLD
+# ${INPUT//[[:space:]]/} whitespace-strip wedged bash 3.2 for MINUTES; the fixed
+# early-exit `case` + bounded read must classify it in well under the watchdog.
+# Every 5th element is a claude[bot] review comment (40 of 200) => 40 classified IN;
+# the human-authored ones are dropped on the author test regardless of body.
+BIG="$TMP/big.json"
+jq -cn '
+  ("—") as $emdash | ("🤖") as $bot |
+  [ range(0;200) as $i
+  | { id: $i,
+      user: { login: (if ($i % 5) == 0 then "claude[bot]" else "human\($i)" end) },
+      created_at: "2026-01-01T00:00:00Z",
+      html_url: "https://github.com/o/r/pull/1#issuecomment-\($i)",
+      body: ("## Code Review \($emdash) finding \($i) \($bot). "
+             + ([range(0;30)] | map("\($emdash) padding lorem ipsum \($emdash) review note \($bot) ") | add)) } ]' \
+  > "$BIG"
+BIG_BYTES=$(wc -c < "$BIG" | tr -d ' ')
+bounded_sh 20 "$TMP/c7.out" "cat '$BIG' | bash '$CLASSIFY'"
+if [ "$B_TIMEDOUT" -eq 0 ] && [ "$B_RC" -eq 0 ] && printf '%s' "$(cat "$TMP/c7.out")" | jq -e '
+    (type=="array") and (length==40) and (all(.[]; .user.login=="claude[bot]"))
+  ' >/dev/null 2>&1; then
+  ok "large (~${BIG_BYTES}B) multibyte array classified (40 bot-review IN) without wedging (watchdog never fired)"
+else
+  no "(7) wrong (B_TIMEDOUT=$B_TIMEDOUT B_RC=$B_RC bytes=$BIG_BYTES): $(head -c 200 "$TMP/c7.out")"
+fi
+
+# ---------------------------------------------------------------------------
+echo "== 8. never-closing stdin => bounded read self-exits to [] (does NOT hang) =="
+# A producer that holds the pipe open WITHOUT sending EOF for longer than the inner
+# read timeout. With CLASSIFY_STDIN_TIMEOUT=1 the read gives up at ~1s and degrades
+# to []; the outer 8s watchdog must NOT have to fire. A plain `cat` would block here
+# until the producer finally closed (the latent hang this fix also closes).
+bounded_sh 8 "$TMP/c8.out" "( sleep 3 ) | CLASSIFY_STDIN_TIMEOUT=1 bash '$CLASSIFY'"
+if [ "$B_TIMEDOUT" -eq 0 ] && [ "$B_RC" -eq 0 ] && printf '%s' "$(cat "$TMP/c8.out")" | jq -e '(type=="array") and (length==0)' >/dev/null 2>&1; then
+  ok "never-closing stdin: bounded read times out at ~1s => [], outer watchdog never fired"
+else
+  no "(8) wrong (B_TIMEDOUT=$B_TIMEDOUT B_RC=$B_RC): $(head -c 120 "$TMP/c8.out")"
+fi
+
+# ---------------------------------------------------------------------------
+echo "== 9. slow / incomplete stdin => partial fragment degrades to [] (does NOT hang) =="
+# Producer dribbles an incomplete, non-array fragment then stalls without closing.
+# The bounded read gives up at ~1s; the fragment is not a valid JSON array, so jq
+# + the defensive fallback degrade to []. No hang, exit 0.
+bounded_sh 8 "$TMP/c9.out" "( printf 'partial-fragment-no-eof' ; sleep 3 ) | CLASSIFY_STDIN_TIMEOUT=1 bash '$CLASSIFY'"
+if [ "$B_TIMEDOUT" -eq 0 ] && [ "$B_RC" -eq 0 ] && printf '%s' "$(cat "$TMP/c9.out")" | jq -e '(type=="array") and (length==0)' >/dev/null 2>&1; then
+  ok "slow/incomplete stdin: partial fragment degrades to [] under the bounded read, no hang"
+else
+  no "(9) wrong (B_TIMEDOUT=$B_TIMEDOUT B_RC=$B_RC): $(head -c 120 "$TMP/c9.out")"
 fi
 
 echo
