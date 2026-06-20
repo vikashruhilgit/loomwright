@@ -716,6 +716,40 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 
 ---
 
+### 🤖 /automate — Generic Automation Engine (v14.41.0)
+
+**Purpose:** Walk arbitrary work from any starting point. Converts any source — a prompt (via `/product-owner`), a requirements folder, or a backlog/plan doc — into a full Queue inside a **single run file** `.supervisor/automate/<run_id>.md` (the contract, dashboard, and resume state), then drives each Queue item through the per-item loop: `/autonomous --single-iteration` → **one owned inline `/review-pr --until-mergeable` drain** → trusted-merge-or-park → sync `main` → check the item off. Smart resume globs `.supervisor/automate/*.md` for incomplete runs and reconciles against ground truth before trusting a checkbox.
+
+**Usage:**
+```bash
+/automate "<what you want to automate>"          # prompt source (via /product-owner) → Queue
+/automate                                         # bare → resume an incomplete run, else ASK
+/automate --folder <dir>                          # folder source — each *.md becomes a Queue item
+/automate --backlog <_BACKLOG.md>                 # backlog-doc source — dependency-ordered Queue
+/automate --limit N                               # cap PROCESSED items this run (default 5; full Queue still stored)
+/automate --resume [<run_id>]                     # reconcile + continue a prior incomplete run
+/automate ... --auto-merge                        # opt-in, default-OFF, 5-condition fail-closed merge gate
+```
+
+**Parameters:**
+- `"<what>"` / `--folder <dir>` / `--backlog <doc>` — the source (choose one); bare `/automate` resumes, else asks
+- `--limit N` — cap PROCESSED items this run (default 5); the FULL resolved Queue is still materialized in the run file
+- `--resume [<run_id>]` — reconcile + continue a prior incomplete run (most-recent incomplete if id omitted)
+- `--auto-merge` — opt-in (default OFF) trusted auto-merge behind a 5-condition fail-closed gate; the **only** place in the plugin that executes `gh pr merge --squash`
+- `--notify` / `--non-interactive-fallback` — passthrough to the inner `/autonomous`
+
+**When to Use:**
+- A whole folder of requirements, a backlog doc, or a prompt that fans out into many items
+- You want one item driven to a mergeable PR at a time (single-open-PR invariant), with smart crash resume
+
+**When NOT to Use:**
+- A single requirement → `/autonomous` directly
+- Two concurrent `/automate` runs in one repo (they collide on the repo-global `.auto_review` toggle)
+
+**Learn More:** see `ai-agent-manager-plugin/commands/automate.md`; the protocol authority is `ai-agent-manager-plugin/skills/automate-loop/SKILL.md`, and the run-file layout is documented as `AUTOMATE_RUN` in `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md`.
+
+---
+
 ### 🧩 /setup — Optional-Capability Dashboard & Guided Configuration
 
 **Purpose:** Single entry point for checking and configuring every optional plugin capability across 6 modules — **observability** (local Langfuse v3 + bundled OTel collector; `init | status | remove`), **telemetry** (delegates to `/telemetry`), **notifications**, **webhook**, **Beads**, and **MySQL MCP**. No-arg invocation prints a status dashboard (one real check per module) then offers configuration via multi-select. Every module follows the same contract: check → report → offer → apply → verify — idempotent, never blind-overwrite (settings.json changes are jq-deep-merged with a timestamped backup, aborting on parse failure).
@@ -1014,12 +1048,13 @@ bd close BD-XX
 
 ai-agent-manager-plugin/              # Nested plugin root
 ├── .claude-plugin/
-│   └── plugin.json                   # Plugin metadata (v14.40.0)
+│   └── plugin.json                   # Plugin metadata (v14.41.0)
 ├── .mcp.json                         # Bundled MCP servers
-├── commands/                         # Slash commands (18)
+├── commands/                         # Slash commands (19)
 │   ├── launch-pad.md                 # Supervisor readiness
 │   ├── supervisor.md                 # Parallel orchestrator (v4)
 │   ├── autonomous.md                 # Continuous autonomous loop, stacked PRs (v14)
+│   ├── automate.md                   # Generic automation engine — source → Queue → per-item loop (v14.41.0)
 │   ├── product-owner.md              # Requirements definition
 │   ├── orchestrator.md
 │   ├── code-reviewer.md
@@ -1059,7 +1094,7 @@ ai-agent-manager-plugin/              # Nested plugin root
 │   ├── ARCHITECTURE.md
 │   ├── QA_SYSTEM_BLUEPRINT.md
 │   └── SPIKES/                       # Capability spike investigations + deferral records
-└── skills/                           # Skill files (55 skills)
+└── skills/                           # Skill files (56 skills)
     ├── SKILLS_INDEX.md               # Skill catalog with agent mapping
     ├── supervisor-readiness/         # Pre-flight checklist & brief template
     ├── agent-teams/                  # Agent Teams patterns (experimental)
