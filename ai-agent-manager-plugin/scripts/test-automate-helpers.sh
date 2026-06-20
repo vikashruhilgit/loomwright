@@ -124,6 +124,32 @@ else
 fi
 rm -rf "$WD"
 
+# A5. config-orig reports the recorded original .auto_review across present-true,
+#     present-false, and absent-config (the value stamped into ## Run Config).
+WD="$(mktemp -d)"; CFG="$WD/config.json"
+printf '{"auto_review": true, "notify": "x"}\n' > "$CFG"
+run_h bash "$H" config-orig "$CFG"
+if [ "$RUN_OUT" = "true" ] && [ "$RUN_RC" -eq 0 ]; then
+  ok "config-orig: present auto_review:true ⇒ 'true'"
+else
+  no "config-orig present-true wrong (out='$RUN_OUT' rc=$RUN_RC)"
+fi
+printf '{"auto_review": false, "notify": "x"}\n' > "$CFG"
+run_h bash "$H" config-orig "$CFG"
+if [ "$RUN_OUT" = "false" ] && [ "$RUN_RC" -eq 0 ]; then
+  ok "config-orig: present auto_review:false ⇒ 'false'"
+else
+  no "config-orig present-false wrong (out='$RUN_OUT' rc=$RUN_RC)"
+fi
+rm -f "$CFG"   # absent config
+run_h bash "$H" config-orig "$CFG"
+if [ "$RUN_OUT" = "absent" ] && [ "$RUN_RC" -eq 0 ]; then
+  ok "config-orig: absent config ⇒ 'absent'"
+else
+  no "config-orig absent wrong (out='$RUN_OUT' rc=$RUN_RC)"
+fi
+rm -rf "$WD"
+
 # =============================================================================
 echo "== B. run-file atomic write + append-only Progress + check-off + remaining =="
 
@@ -403,6 +429,22 @@ if [ "$RUN_OUT" = "PARK: rubric_unsatisfied" ] && [ "$(merges)" -eq 0 ]; then
   ok "gate fail-closed: rubric_satisfied=false ⇒ PARK, no merge"
 else
   no "gate rubric-false wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+
+# Null/absent rubric_satisfied ⇒ PARK (load-bearing fail-CLOSED: a JSON null/absent
+# field coerces via `// "__MISSING__"` to a value that is neither "true" nor "na",
+# so an absent rubric never silently merges). Explicit null AND field-omitted both park.
+gate "$(pass_ctx | jq '.rubric_satisfied=null')"
+if [ "$RUN_OUT" = "PARK: rubric_unsatisfied" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: rubric_satisfied=null ⇒ PARK, no merge"
+else
+  no "gate rubric-null wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+gate "$(pass_ctx | jq 'del(.rubric_satisfied)')"
+if [ "$RUN_OUT" = "PARK: rubric_unsatisfied" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: rubric_satisfied ABSENT ⇒ PARK, no merge"
+else
+  no "gate rubric-absent wrong (out='$RUN_OUT' merges=$(merges))"
 fi
 
 # Blocker — malformed (non-JSON) ctx.json ⇒ PARK: ctx_unreadable, no merge.

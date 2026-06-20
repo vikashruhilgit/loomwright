@@ -97,7 +97,12 @@ config_orig() {
   local cfg="$1"
   if [ ! -f "$cfg" ]; then echo "absent"; return 0; fi
   if ! "$JQ" -e . "$cfg" >/dev/null 2>&1; then abort "pre-existing config is not valid JSON: $cfg"; fi
-  local v; v="$("$JQ" -r '.auto_review // "absent"' "$cfg")"
+  # NB: use an explicit null/has() check, NOT `.auto_review // "absent"` — the `//`
+  # operator is FALSY-triggered, so a genuine `false` would collapse to "absent",
+  # making a recorded false original indistinguishable from no config (the same
+  # falsy-coercion hazard documented in gate_eval §10). Emit true|false|absent
+  # faithfully so ## Run Config records the real original.
+  local v; v="$("$JQ" -r 'if has("auto_review") and (.auto_review != null) then .auto_review else "absent" end' "$cfg")"
   echo "$v"
 }
 
