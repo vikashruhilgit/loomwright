@@ -669,7 +669,7 @@ Claude Code caches plugin contents. After pulling new changes (e.g. a fresh `git
    /reload-plugins
    ```
    Run from the repo root so `./` resolves to your local checkout.
-3. Verify with `/skills` — should show all 56 skills under "Plugin skills". Use `/agent-help` to confirm all 18 user-facing commands are registered.
+3. Verify with `/skills` — should show all 56 skills under "Plugin skills". Use `/agent-help` to confirm all 19 slash commands are registered.
 
 **Previously installed via `claude --plugin-dir` (flat layout)?** Older install instructions told you to launch Claude with `--plugin-dir` pointing at the repo root. That no longer works — the plugin is now nested under `ai-agent-manager-plugin/`. Switch to the marketplace flow shown in **Quick Start → 1. Install the Plugin**.
 

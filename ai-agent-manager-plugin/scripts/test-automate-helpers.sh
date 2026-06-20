@@ -14,9 +14,13 @@
 #      `remaining` counts ONLY "- [ ]" lines.
 #   C. folder / backlog-doc resolvers (skip ## Status: done; documented order).
 #   D. resume reconcile: belief pending but gh says merged ⇒ merged; belief checked
-#      but gh says open ⇒ awaiting_merge.
-#   E. auto-merge gate fail-CLOSED on EACH of the 5 blockers individually, AND the
-#      single all-pass MERGE case fires `gh pr merge --squash` exactly once.
+#      but gh says open ⇒ awaiting_merge; gh unreadable ⇒ awaiting_merge (fail closed);
+#      gh CLOSED-unmerged ⇒ gone.
+#   E. auto-merge gate fail-CLOSED on EACH of the 5 conditions individually (incl.
+#      both arms of cond. 2 base/SHA, both blocking reviewDecision arms CHANGES_REQUESTED
+#      and REVIEW_REQUIRED of cond. 3, and both arms of cond. 5 checks/rubric), plus
+#      malformed-ctx (ctx_unreadable) and a merge-command failure (merge_command_failed);
+#      AND the all-pass MERGE case fires `gh pr merge --squash` exactly once.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -255,6 +259,11 @@ run_h env PATH="$BIN:$PATH" bash "$H" reconcile-item "$PR" "merged"
 if [ "$RUN_OUT" = "awaiting_merge" ]; then ok "reconcile: gh unreadable ⇒ fail closed (awaiting_merge)"; else no "reconcile unreadable wrong ($RUN_OUT)"; fi
 rm -f "$GH_STUB_DIR/pr-view-fail"
 
+# D4. belief checked but gh says CLOSED-unmerged ⇒ gone (neither merged nor live; §4 human-resolve).
+printf '{"state":"CLOSED","mergedAt":null}\n' > "$GH_STUB_DIR/pr-view.json"
+run_h env PATH="$BIN:$PATH" bash "$H" reconcile-item "$PR" "merged"
+if [ "$RUN_OUT" = "gone" ]; then ok "reconcile: gh=CLOSED-unmerged ⇒ gone"; else no "reconcile gone wrong ($RUN_OUT)"; fi
+
 unset GH_STUB_DIR
 rm -rf "$WD"
 
@@ -308,12 +317,28 @@ else
   no "gate moved-sha wrong (out='$RUN_OUT' merges=$(merges))"
 fi
 
+# Blocker 2b — base != main (the other half of condition 2; SHA unchanged).
+gate "$(pass_ctx | jq '.base="develop"')"
+if [ "$RUN_OUT" = "PARK: base_not_main" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: base != main ⇒ PARK, no merge"
+else
+  no "gate base-not-main wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+
 # Blocker 3a — CHANGES_REQUESTED.
 gate "$(pass_ctx | jq '.review_decision="CHANGES_REQUESTED"')"
 if [ "$RUN_OUT" = "PARK: review_decision_blocking" ] && [ "$(merges)" -eq 0 ]; then
   ok "gate fail-closed: CHANGES_REQUESTED ⇒ PARK, no merge"
 else
   no "gate changes-requested wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+
+# Blocker 3a' — REVIEW_REQUIRED (distinct blocking arm from CHANGES_REQUESTED).
+gate "$(pass_ctx | jq '.review_decision="REVIEW_REQUIRED"')"
+if [ "$RUN_OUT" = "PARK: review_decision_blocking" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: REVIEW_REQUIRED ⇒ PARK, no merge"
+else
+  no "gate review-required wrong (out='$RUN_OUT' merges=$(merges))"
 fi
 
 # Blocker 3b — null/unreadable reviewDecision.
@@ -338,6 +363,14 @@ if [ "$RUN_OUT" = "PARK: drain_not_ready" ] && [ "$(merges)" -eq 0 ]; then
   ok "gate fail-closed: drain ESCALATED ⇒ PARK, no merge"
 else
   no "gate drain wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+
+# Blocker 5 — required checks not green (the non-rubric half of condition 5).
+gate "$(pass_ctx | jq '.checks_green=false')"
+if [ "$RUN_OUT" = "PARK: checks_not_green" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: checks not green ⇒ PARK, no merge"
+else
+  no "gate checks-not-green wrong (out='$RUN_OUT' merges=$(merges))"
 fi
 
 # All-pass — MERGE fires `gh pr merge --squash` EXACTLY once.
@@ -365,6 +398,26 @@ if [ "$RUN_OUT" = "PARK: rubric_unsatisfied" ] && [ "$(merges)" -eq 0 ]; then
 else
   no "gate rubric-false wrong (out='$RUN_OUT' merges=$(merges))"
 fi
+
+# Blocker — malformed (non-JSON) ctx.json ⇒ PARK: ctx_unreadable, no merge.
+gate 'this is not json {'
+if [ "$RUN_OUT" = "PARK: ctx_unreadable" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: malformed ctx.json ⇒ PARK: ctx_unreadable, no merge"
+else
+  no "gate ctx-unreadable wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+
+# Blocker — all 5 pass but `gh pr merge` itself fails ⇒ PARK: merge_command_failed.
+# The `merge-fail` stub marker makes the stubbed `gh pr merge` log the call THEN exit 1,
+# so the gate sees the merge command fail and parks (no SUCCESSFUL merge).
+touch "$GH_STUB_DIR/merge-fail"
+gate "$(pass_ctx)"
+if [ "$RUN_OUT" = "PARK: merge_command_failed" ]; then
+  ok "gate fail-closed: gh pr merge fails ⇒ PARK: merge_command_failed (no successful merge)"
+else
+  no "gate merge-command-failed wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+rm -f "$GH_STUB_DIR/merge-fail"
 
 unset GH_STUB_DIR
 rm -rf "$WD"

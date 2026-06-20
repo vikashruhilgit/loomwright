@@ -157,8 +157,8 @@ An item the human (or the loop) abandons is written in `## Queue` as:
 For each `- [ ]` Queue item (top-down, single-open-PR invariant permitting — §8):
 
 1. **RECONCILE** — re-check ground truth for any in-flight item before picking (§4); never pick a new item while one has an open unmerged PR (§8).
-2. **RUN** — set `.supervisor/config.json {"auto_review": false}` (the suppress contract, §7) **then** run `/autonomous --single-iteration --requirement <path>`. The suppress MUST wrap the RUN phase: both default dispatches fire *during* `/autonomous` (Supervisor step 5.5 + the `PostToolUse[Bash]` `gh pr create` hook), so toggling at DRAIN is too late. Capture the emitted `SUPERVISOR_RESULT` (status, `pr_url`, `branch`, `rubric_score`, `heal_decision`).
-3. **DRAIN** — own **exactly ONE** inline `/review-pr --until-mergeable` on the PR (§7). Read its terminal `REVIEW_HEAL_RESULT` synchronously; record `owned_drain_started` / `owned_drain_result` / `suppressed_default_dispatch: true` in `## Current`. Then restore `.auto_review` in a finally-style cleanup (§7).
+2. **RUN** — set `.supervisor/config.json {"auto_review": false}` (the suppress contract, §7) **then** run `/autonomous --single-iteration --requirement <path>`. The suppress MUST wrap the RUN phase: both default dispatches fire *during* `/autonomous` (Supervisor step 5.5 + the `PostToolUse[Bash]` `gh pr create` hook), so toggling at DRAIN is too late. Capture the emitted `SUPERVISOR_RESULT` (status, `pr_url`, `branch`, `rubric_score`, `heal_decision`). **Restore `.auto_review` in a finally-style cleanup immediately after `/autonomous` returns *or fails* — i.e. BEFORE the owned DRAIN below** (§7). The owned drain is inline and NOT gated by `.auto_review`, so restoring before it both keeps the suppression window tight and is safe.
+3. **DRAIN** — own **exactly ONE** inline `/review-pr --until-mergeable` on the PR (§7). Read its terminal `REVIEW_HEAL_RESULT` synchronously; record `owned_drain_started` / `owned_drain_result` / `suppressed_default_dispatch: true` in `## Current`.
 4. **GATE** — apply the per-mode decision (§9): safe mode parks `awaiting_merge`; `--auto-merge` runs the 5-condition trusted-merge gate (§10). `ESCALATED` always parks (§9).
 5. **SYNC** — after a successful merge (auto-merge mode), `git checkout main && git pull` so the next item branches off **fresh `main`** (no stale-base / PR-tower).
 6. **CHECK OFF + PROGRESS** — mark the item `- [x]` in `## Queue` and **append** a `## Progress` line, via **one atomic write** (§3). Report `remaining: N` (count of `- [ ]` items).
@@ -180,7 +180,7 @@ All `/autonomous` correctness gates still bubble up (NO-GO, Plan Review FAIL×3,
 
 ### Suppress window (wrap the RUN phase)
 
-- Set `.supervisor/config.json {"auto_review": false}` **BEFORE** invoking `/autonomous` and restore it in a **finally-style cleanup** after `/autonomous` returns *or fails*. Both default dispatches fire *during* `/autonomous`, so setting it at DRAIN is too late.
+- Set `.supervisor/config.json {"auto_review": false}` **BEFORE** invoking `/autonomous` and restore it in a **finally-style cleanup** immediately after `/autonomous` returns *or fails* — i.e. **BEFORE the engine's own inline `/review-pr --until-mergeable` drain** (§6 step 3). Both default dispatches fire *during* `/autonomous`, so setting it at DRAIN is too late; the owned drain is inline and not gated by `.auto_review`, so restoring before it is correct and keeps the suppression window tight.
 
 ### Config-toggle contract (byte-for-byte; absent-delete; malformed-abort)
 

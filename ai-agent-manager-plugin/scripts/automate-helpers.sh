@@ -35,7 +35,6 @@ set -euo pipefail
 
 JQ="${AI_AGENT_MANAGER_JQ_BIN:-jq}"
 GH="${AI_AGENT_MANAGER_GH_BIN:-gh}"
-GIT="${AI_AGENT_MANAGER_GIT_BIN:-git}"
 
 die()   { echo "automate-helpers: $*" >&2; exit 1; }
 abort() { echo "automate-helpers: ABORT: $*" >&2; exit 2; }
@@ -266,7 +265,15 @@ resume_glob() {
 #                     file believed it checked (a premature check-off).
 #   gone            — PR is CLOSED-unmerged (neither merged nor open).
 # Reconcile ALWAYS prefers ground truth (SKILL §4 / Anti-Pattern: never trust a
-# checkbox without reconciling). `gh`/`git` are stubbable via env overrides.
+# checkbox without reconciling). `gh` is stubbable via the AI_AGENT_MANAGER_GH_BIN
+# env override.
+#
+# SCOPE: this helper resolves the gh-PR-STATE half of reconcile only (merged /
+# open / closed-unmerged). The complementary git-branch-LANDED corroboration that
+# SKILL §4 lists ("Branch landed? `git branch --contains <sha>`") is performed by
+# the loop itself, not here — wiring git into this helper would need stub fixtures
+# out of scope for the pure-logic library. So this returning `merged`/`gone` is
+# the gh half; it is NOT incomplete.
 reconcile_item() {
   local url="$1" belief="${2:-}"
   local view state merged
