@@ -36,7 +36,9 @@
 #              stdin OR a large multibyte comment array degrades to `[]` quickly
 #              instead of wedging, even under concurrent invocation. (Before this,
 #              a plain `cat` could block forever on a missing stdin, and the O(n^2)
-#              whitespace-strip wedged bash 3.2 for minutes on ~96KB arrays.)
+#              whitespace-strip wedged bash 3.2 for minutes on ~96KB arrays.) On a
+#              read TIMEOUT a one-line breadcrumb is written to STDERR (stdout stays
+#              `[]`), so a timeout is distinguishable from an empty endpoint in logs.
 #
 #   HOSTILE-TYPED ELEMENTS: a VALID array whose elements carry non-string
 #              `.user.login` / `.body` values does not abort the program — every
@@ -77,7 +79,18 @@ fi
 # which the blank-check below degrades to []). This replaces a plain `cat`, which
 # blocks forever when stdin is never closed.
 INPUT=""
-IFS= read -r -d '' -t "${CLASSIFY_STDIN_TIMEOUT:-10}" INPUT || true
+_read_rc=0
+_stdin_t0=$SECONDS
+IFS= read -r -d '' -t "${CLASSIFY_STDIN_TIMEOUT:-10}" INPUT || _read_rc=$?
+
+# Best-effort debug breadcrumb (advisory; NEVER changes the []-and-exit-0 fail-safe):
+# distinguish a stdin TIMEOUT from a genuinely empty endpoint when debugging. bash 4+
+# returns >128 from `read -t` on timeout; bash 3.2 returns 1 for BOTH timeout and clean
+# EOF, so we also treat "waited ~the whole window" (integer SECONDS) as the timeout
+# signal. Goes to STDERR only — stdout stays the JSON-array contract.
+if [ "$_read_rc" -gt 128 ] || [ "$(( SECONDS - _stdin_t0 ))" -ge "${CLASSIFY_STDIN_TIMEOUT:-10}" ]; then
+  printf 'classify-bot-review: stdin read timed out after %ss; degrading to []\n' "${CLASSIFY_STDIN_TIMEOUT:-10}" >&2
+fi
 
 # Blank / missing stdin → []. Use a `case` glob that EARLY-EXITS on the first
 # non-whitespace byte. Do NOT use ${INPUT//[[:space:]]/} here: that is an O(n^2)

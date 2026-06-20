@@ -27,8 +27,9 @@
 #                  bash-3.2 pattern SUBSTITUTION wedged for minutes on such input
 #                  (a real hang reproduced on ~96KB PR-comment arrays).
 #   8. never-closing stdin -> the BOUNDED read (CLASSIFY_STDIN_TIMEOUT) self-exits
-#                  to [] at the timeout; the outer watchdog never has to fire. A
-#                  plain `cat` would block forever here.
+#                  to [] at the timeout and writes a one-line STDERR breadcrumb; the
+#                  outer watchdog never has to fire. A plain `cat` would block forever
+#                  here. Case 7 also asserts a fast read emits NO false breadcrumb.
 #   9. slow / incomplete stdin -> a producer that dribbles a partial fragment and
 #                  never closes degrades to [] under the bounded read (no hang).
 
@@ -62,8 +63,9 @@ trap 'rm -rf "$TMP"' EXIT
 # self-terminates well inside the bound, so B_TIMEDOUT must stay 0.
 bounded_sh() {
   local secs="$1" outf="$2" cmd="$3"
+  local errf="${outf%.out}.err"   # per-case stderr capture (for the timeout breadcrumb)
   rm -f "$TMP/timedout"
-  bash -c "$cmd" >"$outf" 2>/dev/null &
+  bash -c "$cmd" >"$outf" 2>"$errf" &
   local cpid=$!
   ( sleep "$secs"; kill -0 "$cpid" 2>/dev/null && { : >"$TMP/timedout"; kill -TERM "$cpid" 2>/dev/null; sleep 1; kill -KILL "$cpid" 2>/dev/null; }; ) &
   local wpid=$!
@@ -185,12 +187,15 @@ jq -cn '
   > "$BIG"
 BIG_BYTES=$(wc -c < "$BIG" | tr -d ' ')
 bounded_sh 20 "$TMP/c7.out" "cat '$BIG' | bash '$CLASSIFY'"
-if [ "$B_TIMEDOUT" -eq 0 ] && [ "$B_RC" -eq 0 ] && printf '%s' "$(cat "$TMP/c7.out")" | jq -e '
+# A fast read must NOT emit the timeout breadcrumb (no false positive on healthy input).
+if [ "$B_TIMEDOUT" -eq 0 ] && [ "$B_RC" -eq 0 ] \
+   && ! grep -q 'timed out' "$TMP/c7.err" 2>/dev/null \
+   && printf '%s' "$(cat "$TMP/c7.out")" | jq -e '
     (type=="array") and (length==40) and (all(.[]; .user.login=="claude[bot]"))
   ' >/dev/null 2>&1; then
-  ok "large (~${BIG_BYTES}B) multibyte array classified (40 bot-review IN) without wedging (watchdog never fired)"
+  ok "large (~${BIG_BYTES}B) multibyte array classified (40 bot-review IN) without wedging (no false timeout breadcrumb)"
 else
-  no "(7) wrong (B_TIMEDOUT=$B_TIMEDOUT B_RC=$B_RC bytes=$BIG_BYTES): $(head -c 200 "$TMP/c7.out")"
+  no "(7) wrong (B_TIMEDOUT=$B_TIMEDOUT B_RC=$B_RC bytes=$BIG_BYTES): $(head -c 200 "$TMP/c7.out") err=$(head -c 120 "$TMP/c7.err" 2>/dev/null)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -200,10 +205,14 @@ echo "== 8. never-closing stdin => bounded read self-exits to [] (does NOT hang)
 # to []; the outer 8s watchdog must NOT have to fire. A plain `cat` would block here
 # until the producer finally closed (the latent hang this fix also closes).
 bounded_sh 8 "$TMP/c8.out" "( sleep 3 ) | CLASSIFY_STDIN_TIMEOUT=1 bash '$CLASSIFY'"
-if [ "$B_TIMEDOUT" -eq 0 ] && [ "$B_RC" -eq 0 ] && printf '%s' "$(cat "$TMP/c8.out")" | jq -e '(type=="array") and (length==0)' >/dev/null 2>&1; then
-  ok "never-closing stdin: bounded read times out at ~1s => [], outer watchdog never fired"
+# On timeout: stdout is [], outer watchdog never fires, AND the stderr breadcrumb fires
+# (so a timeout is distinguishable from an empty endpoint in logs).
+if [ "$B_TIMEDOUT" -eq 0 ] && [ "$B_RC" -eq 0 ] \
+   && printf '%s' "$(cat "$TMP/c8.out")" | jq -e '(type=="array") and (length==0)' >/dev/null 2>&1 \
+   && grep -q 'timed out' "$TMP/c8.err" 2>/dev/null; then
+  ok "never-closing stdin: bounded read times out at ~1s => [], watchdog never fired, stderr breadcrumb emitted"
 else
-  no "(8) wrong (B_TIMEDOUT=$B_TIMEDOUT B_RC=$B_RC): $(head -c 120 "$TMP/c8.out")"
+  no "(8) wrong (B_TIMEDOUT=$B_TIMEDOUT B_RC=$B_RC): out=$(head -c 120 "$TMP/c8.out") err=$(head -c 120 "$TMP/c8.err" 2>/dev/null)"
 fi
 
 # ---------------------------------------------------------------------------
