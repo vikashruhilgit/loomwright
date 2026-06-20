@@ -220,11 +220,12 @@ cat > "$BL" <<'EOF'
 - [ ] reqs/01-one.md
 - [ ] reqs/02-two.md  # ✅
 - [ ] reqs/03-three.md
+- [ ] reqs/04-four.md  # Status: done
 EOF
 run_h bash "$H" resolve-backlog "$BL"
 if [ "$RUN_OUT" = "reqs/01-one.md
 reqs/03-three.md" ]; then
-  ok "resolve-backlog: documented order, checked + ✅ excluded (01,03)"
+  ok "resolve-backlog: documented order, checked + ✅ + inline 'Status: done' marker excluded (01,03)"
 else
   no "resolve-backlog wrong:\n$RUN_OUT"
 fi

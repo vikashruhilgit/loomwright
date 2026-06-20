@@ -286,7 +286,11 @@ resume_glob() {
 # out of scope for the pure-logic library. So this returning `merged`/`gone` is
 # the gh half; it is NOT incomplete.
 reconcile_item() {
+  # <belief> is accepted for call-site symmetry with the run file's remembered
+  # status (SKILL §1.5 signature) but is INTENTIONALLY IGNORED — ground truth
+  # (gh/git) always wins (SKILL §4), so it never influences the result.
   local url="$1" belief="${2:-}"
+  : "${belief:-}"   # referenced only to mark it deliberately unused
   local view state merged
   if ! view="$("$GH" pr view "$url" --json state,mergedAt 2>/dev/null)"; then
     # Unreadable ⇒ fail closed to the safe non-merged belief.

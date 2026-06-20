@@ -276,7 +276,7 @@ then `--resume`.
 
 3. **`reviewDecision` clean AND no unresolved human-authored review thread.**
    - `gh pr view <url> --json reviewDecision` ⇒ **NOT** in `{CHANGES_REQUESTED, REVIEW_REQUIRED}`; **null / unreadable `reviewDecision` ⇒ park** (fail closed).
-   - **No unresolved human-authored review thread.** Threads are **GraphQL-only** (there is **no** `gh pr view --json reviewThreads` flag — see `review-heal/SKILL.md` §"Step U1 — All-Channel Read" GraphQL block, and the Anti-Pattern at `review-heal/SKILL.md:544` "Inventing a `gh pr view --json reviewThreads` flag"):
+   - **No unresolved human-authored review thread.** Threads are **GraphQL-only** (there is **no** `gh pr view --json reviewThreads` flag — see `review-heal/SKILL.md` §"Step U1 — All-Channel Read" GraphQL block, and its Anti-Pattern "Inventing a `gh pr view --json reviewThreads` flag"):
      ```
      gh api graphql -f query='
        query($owner:String!,$repo:String!,$number:Int!){
@@ -357,7 +357,7 @@ The engine is designed to be driven continuously by Claude's `/loop`. Use the **
 - **Overwriting a malformed pre-existing `config.json`.** Abort the tick instead — never clobber a hand-edited config (§7).
 - **Picking a new item while a PR is open.** Single-open-PR invariant — `awaiting_merge` and `escalated` both block PICK (§8).
 - **Merging on bare `READY`.** `READY` ignores `REVIEW_REQUIRED` and human threads; `--auto-merge` must pass ALL 5 conditions of the trusted gate (§10) — fail CLOSED otherwise.
-- **Inventing a `gh pr view --json reviewThreads` flag.** Unresolved threads + author type are GraphQL-only (§10 cond. 3; `review-heal/SKILL.md:544`).
+- **Inventing a `gh pr view --json reviewThreads` flag.** Unresolved threads + author type are GraphQL-only (§10 cond. 3; `review-heal/SKILL.md` §"Step U1 — All-Channel Read").
 - **Gating rubric on the autonomous EVALUATE loop.** Single-iteration short-circuits EVALUATE; read the rubric from `SUPERVISOR_RESULT.rubric_score` (Phase 4.5 Rubric Grader), which runs under single-iteration (§10 cond. 5).
 - **Stacking a second PR on `escalated`.** An escalated PR parks the run; resolve it or mark the item `skipped`/`abandoned`, then `--resume` (§5/§9).
 - **Running two `/automate` loops in one repo.** The `.auto_review:false` window is repo-global; single-run-per-repo (§11).
