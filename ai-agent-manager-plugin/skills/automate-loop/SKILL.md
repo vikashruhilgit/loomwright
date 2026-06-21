@@ -56,7 +56,7 @@ so **the tested code IS the executed code** (one implementation, guarded by `scr
 | `config-orig` | §7 | Print the recorded `auto_review_original` (`true`/`false`/`absent`). |
 | `runfile-write` | §3 | Atomic temp+rename write of the run file (content on stdin). |
 | `progress-append` | §3 | Append-only `## Progress` line (never rewrites a prior line). |
-| `queue-checkoff` | §3 | Flip `- [ ]` → `- [x]` (optional `# skipped: <reason>` form, §5). |
+| `queue-checkoff` | §3 | Flip `- [ ]` → `- [x]` (optional `# skipped:`/`# abandoned: <reason>` form via the `mark` arg, default `skipped`, §5). |
 | `remaining` | §3 | Count of `- [ ]` Queue items (COMPUTED — not a stored run-file field). |
 | `resolve-folder` | §2 | List `*.md` in a folder not stamped `## Status: done`. |
 | `resolve-backlog` | §2 | Dependency-ordered items honoring `done`/✅ markers (dir-scan fallback). |
@@ -140,7 +140,7 @@ queued (- [ ]) → running → pr-open → awaiting_merge → merged (- [x]) | e
 
 ### Crash-safety contract (HIGH-risk mitigation — run-file is the ONLY copy of resume state)
 
-> **Execute via the helper, not a re-implementation:** the run-file mutations are done by shelling out — `automate-helpers.sh runfile-write <runfile>` (full atomic write, content on stdin), `automate-helpers.sh progress-append <runfile> <line>` (append-only `## Progress`), `automate-helpers.sh queue-checkoff <runfile> <item> [reason]` (flip `- [ ]` → `- [x]`, §5), and `automate-helpers.sh remaining <runfile>` (COMPUTED `- [ ]` count) (§1.5). The contract below is the SPEC those subcommands implement.
+> **Execute via the helper, not a re-implementation:** the run-file mutations are done by shelling out — `automate-helpers.sh runfile-write <runfile>` (full atomic write, content on stdin), `automate-helpers.sh progress-append <runfile> <line>` (append-only `## Progress`), `automate-helpers.sh queue-checkoff <runfile> <item> [reason] [mark]` (flip `- [ ]` → `- [x]`; `mark` = `skipped` (default) or `abandoned`, §5), and `automate-helpers.sh remaining <runfile>` (COMPUTED `- [ ]` count) (§1.5). The contract below is the SPEC those subcommands implement.
 
 - **Atomic write (temp + rename):** every run-file update is written to a temp file and `mv`-renamed into place. A crash mid-write never leaves a half-written file — the prior intact version remains.
 - **`## Progress` is APPEND-ONLY** — it is **never rewritten**. New lines are appended; existing lines are immutable.
@@ -166,7 +166,7 @@ queued (- [ ]) → running → pr-open → awaiting_merge → merged (- [x]) | e
 3. **RECONCILE also restores a crash-stranded config backup** (§7) — if `## Run Config`'s `config_backup` sidecar still exists on disk, the prior tick died with `.auto_review` suppressed; restore it (or delete `config.json` if originally absent) before proceeding.
 4. **If an incomplete run exists**, `AskUserQuestion`: **continue / start new / archive**.
    - `--resume [<run_id>]` targets one explicitly; with the id omitted it targets the **most-recent incomplete** run.
-   - Under **`--non-interactive-fallback`**, an **ambiguous** resume (more than one incomplete run and no explicit id) **fails closed** → `status_reason: "resume_ambiguous_non_interactive"`, recorded as `pause_reason: resume_ambiguous` in `## Current`.
+   - Under **`--non-interactive-fallback`**, an **ambiguous** resume (more than one incomplete run and no explicit id) **fails closed**. In `AUTOMATE_RUN` this is persisted as **`pause_reason: resume_ambiguous`** in `## Current` (the run file has no `status_reason` field — that identifier belongs to the inner `/autonomous` layer's `AUTONOMOUS_RUN`, which surfaces it as `status_reason: "resume_ambiguous_non_interactive"` when the loop forwards the fallback).
 
 ---
 
@@ -290,6 +290,7 @@ then `--resume`.
        }' -F owner=<owner> -F repo=<repo> -F number=<number>
      ```
      For each `isResolved == false` thread, classify the first comment's author: **bot iff `author.__typename == "Bot"` OR `author.login` matches `*[bot]`** — a bot-authored unresolved thread does NOT block (the drain handles bots); **otherwise BLOCK** (human-authored unresolved thread). **Unreadable ⇒ do-not-merge** (fail closed).
+     - **Loop contract (load-bearing — mirrors cond 3's `"none"` / cond 5's `"na"` rules):** the loop passes `unresolved_human_thread: false` into the gate `ctx.json` **ONLY** on a successfully-read result with NO blocking (human / unknown-author) unresolved thread; on a present blocking thread **OR** an unreadable/errored GraphQL read it passes `true` (or omits the field). `gate-eval` reads this field **WITHOUT** the falsy-coercing `//` (an explicit `has()/!= null` check, like `config-orig`) and **parks unless the value is explicitly `false`** (`!= "false"` ⇒ PARK) — so a missing / null / unreadable value fails **CLOSED**. (A prior `= "true"` form was a fail-OPEN polarity bug: a missing value merged.)
 
 4. **Enforceable branch protection (OR explicit `--trust-unprotected`).** `gh api repos/<owner>/<repo>/branches/main/protection` ⇒ protection is **enforceable** when `required_approving_review_count >= 1` **OR** there are required status checks. **Toothless / unreadable protection ⇒ treated as UNPROTECTED** → do not merge **unless** `--trust-unprotected` was passed. **GitHub rulesets are out of scope in v1** (only classic branch protection is read). This condition is what actually decides a **reviews-not-required** branch (cond 3 `"none"`): a **checks-only-protected** branch (required status checks, `required_approving_review_count == 0`) is enforceable and may merge; a **truly unprotected** branch merges ONLY with `--trust-unprotected`.
 

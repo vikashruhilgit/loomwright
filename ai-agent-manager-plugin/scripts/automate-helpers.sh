@@ -25,7 +25,7 @@
 #   config-orig      <config_path>                     # §7 prints true|false|absent (the recorded auto_review_original)
 #   runfile-write    <runfile_path> < CONTENT          # §3 atomic temp+rename write
 #   progress-append  <runfile_path> <line>             # §3 append-only ## Progress (never rewrites prior lines)
-#   queue-checkoff   <runfile_path> <item> [reason]    # §3/§5 flip - [ ] -> - [x] (with optional "# skipped: reason")
+#   queue-checkoff   <runfile_path> <item> [reason] [mark]  # §3/§5 flip - [ ] -> - [x] (optional "# <skipped|abandoned>: reason"; mark default skipped)
 #   remaining        <runfile_path>                     # §3 count of "- [ ]" lines only
 #   resolve-folder   <dir>                              # §2 list *.md not "## Status: done"
 #   resolve-backlog  <backlog.md>                       # §2 dependency-ordered items honoring done/✅ markers
@@ -154,19 +154,22 @@ progress_append() {
   mv -f "$tmp" "$out"
 }
 
-# queue-checkoff <runfile_path> <item> [reason]
-# Flips "- [ ] <item>" to "- [x] <item>". With a reason, writes the skipped form
-# "- [x] <item>  # skipped: <reason>" (§5). Atomic write. Idempotent on already-
-# checked items (leaves them untouched).
+# queue-checkoff <runfile_path> <item> [reason] [mark]
+# Flips "- [ ] <item>" to "- [x] <item>". With a reason, writes the excluded form
+# "- [x] <item>  # <mark>: <reason>" where <mark> is "skipped" (default) or
+# "abandoned" (§5 — both are checked-off so the item is never re-picked and does not
+# block ## Status: done). Atomic write. Idempotent on already-checked items
+# (leaves them untouched).
 queue_checkoff() {
-  local out="$1" item="$2" reason="${3:-}"
+  local out="$1" item="$2" reason="${3:-}" mark="${4:-skipped}"
+  case "$mark" in skipped|abandoned) ;; *) die "queue-checkoff: mark must be skipped|abandoned (got '$mark')" ;; esac
   [ -f "$out" ] || die "run file not found: $out"
   local tmp; tmp="$(mktemp "${out}.XXXXXX")"
   # Pass item/reason via the ENVIRONMENT (not awk -v): -v interprets backslash
   # escapes in the value, which would mangle a path/reason containing a literal
   # backslash. ENVIRON[...] is read verbatim.
-  AH_ITEM="$item" AH_REASON="$reason" awk '
-    BEGIN { item=ENVIRON["AH_ITEM"]; reason=ENVIRON["AH_REASON"] }
+  AH_ITEM="$item" AH_REASON="$reason" AH_MARK="$mark" awk '
+    BEGIN { item=ENVIRON["AH_ITEM"]; reason=ENVIRON["AH_REASON"]; mark=ENVIRON["AH_MARK"] }
     {
       line=$0
       # Match an unchecked queue line whose payload (after "- [ ] ") equals item.
@@ -174,7 +177,7 @@ queue_checkoff() {
         payload=substr(line, 7)
         if (payload == item) {
           if (reason != "")
-            print "- [x] " item "  # skipped: " reason
+            print "- [x] " item "  # " mark ": " reason
           else
             print "- [x] " item
           next
@@ -333,7 +336,9 @@ reconcile_item() {
 #     "review_decision": "APPROVED|CHANGES_REQUESTED|REVIEW_REQUIRED|none|unreadable",  # cond 3
 #        # "none" = reviews-not-required (the loop maps a successfully-read null here);
 #        # "unreadable" = the gh reviewDecision read failed. Bare null/absent ⇒ fail-closed PARK.
-#     "unresolved_human_thread": true|false,        # cond 3
+#     "unresolved_human_thread": true|false,        # cond 3 — loop passes `false` ONLY on a
+#        # SUCCESSFULLY-read no-unresolved-human-thread result; an unresolved human thread OR an
+#        # unreadable/errored thread read ⇒ pass `true` (or omit) ⇒ fail-closed PARK (`!= "false"`).
 #     "protection_enforceable": true|false,         # cond 4
 #     "trust_unprotected": true|false,              # cond 4 override
 #     "checks_green": true|false,                   # cond 5
@@ -394,7 +399,17 @@ gate_eval() {
     APPROVED|none)                       : ;;   # acceptable — defer protection judgment to cond 4
     *)                                   echo "PARK: review_decision_unreadable"; return 0 ;;
   esac
-  if [ "$(J '.unresolved_human_thread')" = "true" ]; then
+  # FAIL-CLOSED — PARK unless the loop EXPLICITLY passed a readable, non-null `false`.
+  # Read WITHOUT the falsy-coercing `//` (J() would map a legitimate `false` to
+  # __MISSING__ — the same trap config_orig avoids), using an explicit has()/null
+  # check so we can distinguish a real `false` (proceed) from missing/null (PARK).
+  # Missing / null / unreadable / `true` ⇒ PARK: an unresolved human thread OR an
+  # unreadable GraphQL thread read must NEVER merge (SKILL §10 cond 3, "Unreadable ⇒
+  # do-not-merge"; CLAUDE.md bimodal fail-closed invariant). The prior `= "true"`
+  # form was a fail-OPEN polarity bug (a missing value merged).
+  local uht
+  uht="$("$JQ" -r 'if has("unresolved_human_thread") and (.unresolved_human_thread != null) then (.unresolved_human_thread|tostring) else "__MISSING__" end' "$ctx")"
+  if [ "$uht" != "false" ]; then
     echo "PARK: unresolved_human_thread"; return 0
   fi
 

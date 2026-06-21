@@ -148,6 +148,14 @@ if [ "$RUN_OUT" = "absent" ] && [ "$RUN_RC" -eq 0 ]; then
 else
   no "config-orig absent wrong (out='$RUN_OUT' rc=$RUN_RC)"
 fi
+# A6. config-orig on a MALFORMED config ABORTS (exit 2) — never silently report a value.
+printf '{ not json \n' > "$CFG"
+run_h bash "$H" config-orig "$CFG"
+if [ "$RUN_RC" -eq 2 ]; then
+  ok "config-orig: malformed config ⇒ abort (exit 2)"
+else
+  no "config-orig malformed should abort (rc=$RUN_RC out='$RUN_OUT')"
+fi
 rm -rf "$WD"
 
 # =============================================================================
@@ -220,6 +228,48 @@ if grep -qF -- '- [x] b.md  # skipped: blocked upstream why\tbecause' "$RF" && [
   ok "skipped form: b.md checked off with reason (backslash verbatim), remaining now 0 (skipped excluded)"
 else
   no "skipped-form wrong (remaining=$RUN_OUT, line=$(grep 'b.md' "$RF"))"
+fi
+
+# B6. idempotency: check-off an ALREADY-[x] item leaves it untouched (no dup line).
+before_c="$(grep -c '^- \[x\] c.md$' "$RF")"
+bash "$H" queue-checkoff "$RF" "c.md"
+after_c="$(grep -c '^- \[x\] c.md$' "$RF")"
+if [ "$before_c" = "1" ] && [ "$after_c" = "1" ]; then
+  ok "check-off idempotent: already-[x] c.md untouched (no duplicate)"
+else
+  no "idempotency wrong (before=$before_c after=$after_c)"
+fi
+
+# B7. abandoned mark: check-off with mark=abandoned writes the "# abandoned:" form (§5).
+RF2="$WD/automate/run-2.md"
+bash "$H" runfile-write "$RF2" <<'EOF'
+# Automate Run: demo2
+## Status: running
+## Queue
+- [ ] x.md
+## Progress
+- t0
+EOF
+bash "$H" queue-checkoff "$RF2" "x.md" "no longer needed" "abandoned"
+if grep -qF -- '- [x] x.md  # abandoned: no longer needed' "$RF2"; then
+  ok "abandoned mark: x.md checked off with '# abandoned:' form (§5)"
+else
+  no "abandoned-mark wrong (line=$(grep 'x.md' "$RF2"))"
+fi
+
+# B8. progress-append CREATES a "## Progress" section when the file lacks one (no drop).
+RF3="$WD/automate/run-3.md"
+bash "$H" runfile-write "$RF3" <<'EOF'
+# Automate Run: demo3
+## Status: running
+## Queue
+- [ ] y.md
+EOF
+bash "$H" progress-append "$RF3" "t0 created section"
+if grep -q '^## Progress' "$RF3" && grep -qF -- '- t0 created section' "$RF3"; then
+  ok "progress-append: creates ## Progress section when absent (no event dropped)"
+else
+  no "progress-create-section wrong:\n$(cat "$RF3")"
 fi
 rm -rf "$WD"
 
@@ -421,6 +471,20 @@ if [ "$RUN_OUT" = "PARK: unresolved_human_thread" ] && [ "$(merges)" -eq 0 ]; th
   ok "gate fail-closed: unresolved human thread ⇒ PARK, no merge"
 else
   no "gate human-thread wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+# Blocker 3c' — FAIL-OPEN regression guard: a MISSING/null unresolved_human_thread must
+# fail CLOSED (PARK), NOT merge. (The field used `= "true"`, so a missing value merged.)
+gate "$(pass_ctx | jq 'del(.unresolved_human_thread)')"
+if [ "$RUN_OUT" = "PARK: unresolved_human_thread" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: MISSING unresolved_human_thread ⇒ PARK (no fail-open)"
+else
+  no "gate missing-human-thread FAILED OPEN (out='$RUN_OUT' merges=$(merges))"
+fi
+gate "$(pass_ctx | jq '.unresolved_human_thread=null')"
+if [ "$RUN_OUT" = "PARK: unresolved_human_thread" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: null unresolved_human_thread ⇒ PARK (no fail-open)"
+else
+  no "gate null-human-thread FAILED OPEN (out='$RUN_OUT' merges=$(merges))"
 fi
 
 # Blocker bonus — drain not READY (ESCALATED).
