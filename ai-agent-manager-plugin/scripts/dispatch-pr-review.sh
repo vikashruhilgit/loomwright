@@ -263,8 +263,16 @@ if command -v shasum >/dev/null 2>&1; then
   PR_HASH="$(printf '%s' "$PR_URL" | shasum 2>/dev/null | cut -d' ' -f1 || true)"
 elif command -v sha1sum >/dev/null 2>&1; then
   PR_HASH="$(printf '%s' "$PR_URL" | sha1sum 2>/dev/null | cut -d' ' -f1 || true)"
+elif command -v cksum >/dev/null 2>&1; then
+  # POSIX-guaranteed fallback: a numeric CRC, distinct per distinct URL. Keeps PR_HASH a
+  # collision-resistant TOKEN (not a sanitized URL), so PR_HASH_SHORT (first-12, below)
+  # stays unique per PR — a sanitized URL would share the `https-github` scheme+host
+  # prefix across every PR and collide the worktree path.
+  PR_HASH="$(printf '%s' "$PR_URL" | cksum 2>/dev/null | cut -d' ' -f1 || true)"
 fi
-# Fallback to a sanitized URL if no hashing tool is present (still unique per PR).
+# Last resort — only if NONE of shasum/sha1sum/cksum exists, which cannot happen on a
+# normal macOS/Linux (cksum is POSIX-mandatory). The sanitized URL keeps the MARKER and
+# LOCK unique per PR; PR_HASH_SHORT is not distinguishing in this unreachable case.
 if [ -z "$PR_HASH" ]; then
   PR_HASH="$(printf '%s' "$PR_URL" | tr -c 'A-Za-z0-9' '-' )"
 fi
