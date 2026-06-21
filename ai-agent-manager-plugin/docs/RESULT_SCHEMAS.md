@@ -1859,7 +1859,7 @@ LAUNCH_PAD_RESULT:
 
 ## REVIEW_HEAL_RESULT
 
-Produced by the standalone PR **review-and-heal** loop — emitted once at the end of the bounded review→fix→re-review cycle. The loop is the conceptual extraction of Supervisor **Phase 4.5** into a fresh, PR-URL-keyed session (no Supervisor job, no `.supervisor/state.md`, no worktree fan-out). Its canonical names and field list are coined in `skills/review-heal/SKILL.md` (the single source of truth) and consumed verbatim here.
+Produced by the standalone PR **review-and-heal** loop — emitted once at the end of the bounded review→fix→re-review cycle. The loop is the conceptual extraction of Supervisor **Phase 4.5** into a fresh, PR-URL-keyed session (no Supervisor job, no `.supervisor/state.md`). The **inline** `/review-pr` session has no worktree fan-out (it operates on the main thread's checkout); the **detached dispatched** until-mergeable drain runs in its own dispatcher-created sibling worktree (so it never shares a working tree with an inline Phase 4.5 self-heal). Its canonical names and field list are coined in `skills/review-heal/SKILL.md` (the single source of truth) and consumed verbatim here.
 
 **Added in v14.16.0 (schema_version 1); extended to schema_version 2 in v14.30.0** for the opt-in `--until-mergeable` drain mode (which adds the `READY` decision + the drain/postmortem fields below). The block reports the *outcome of the loop*; it does **not** redefine review output. Each review iteration reuses the existing **`CODE_REVIEW_RESULT` schema (v3, `review_mode: diff_review`)** verbatim — the review-and-heal loop consumes `CODE_REVIEW_RESULT` and never re-coins it.
 
