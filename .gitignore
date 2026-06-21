@@ -35,6 +35,9 @@ __pycache__/
 .supervisor/
 .worker-summary*.md
 
+# Graphify local knowledge graph (large runtime state — Local Twin Step 3; never commit)
+graphify-out/
+
 # Build artifacts
 dist/
 build/
