@@ -434,6 +434,15 @@ fi
 # Written BEFORE the marker + launch so an in-flight drain is never an ambiguous
 # 0-byte file. If the header write fails, treat it as a failure: tear down the
 # worktree + lock and exit 0 with NO marker (truthful: no dispatch started).
+# Resolve RUN_LOG to ABSOLUTE up-front (via the repo top-level) so BOTH this header
+# write AND the wrapper's `>>` append below target the SAME file regardless of the
+# dispatcher's cwd — a relative path would split/misplace the log if the dispatcher
+# were ever invoked from a subdirectory (today both call sites run at repo root).
+MAIN_GITDIR="${REPO_TOPLEVEL:-$PWD}"
+case "$RUN_LOG" in
+  /*) RUN_LOG_ABS="$RUN_LOG" ;;
+  *)  RUN_LOG_ABS="$MAIN_GITDIR/$RUN_LOG" ;;
+esac
 if ! {
   printf 'DISPATCHED\tts=%s\turl=%s\tuntil_mergeable=%s\trunner=%s\n' "$TIMESTAMP" "$PR_URL" "$UNTIL_MERGEABLE" "$RUNNER"
   printf '# marker: %s\n' "$MARKER"
@@ -441,8 +450,8 @@ if ! {
   printf '# detached `claude -p` buffers stdout until exit — an otherwise-empty body below this\n'
   printf '# header means the drain is IN FLIGHT, not failed. Liveness: pgrep -lf review-pr-runner\n'
   printf '# ---- runner output follows ----\n'
-} > "$RUN_LOG" 2>/dev/null; then
-  log "RUN_LOG header write failed ($RUN_LOG) — tearing down worktree+lock, skipping (no marker)"
+} > "$RUN_LOG_ABS" 2>/dev/null; then
+  log "RUN_LOG header write failed ($RUN_LOG_ABS) — tearing down worktree+lock, skipping (no marker)"
   git worktree remove --force "$WT_PATH" >/dev/null 2>&1 || true
   rm -rf "$LOCK_DIR" 2>/dev/null || true
   exit 0
@@ -493,15 +502,11 @@ git worktree prune >/dev/null 2>&1 || true
 # against the MAIN repo gitdir and cd's OUT of the worktree before removing it, so
 # cleanup never runs from inside the directory being deleted. `-p` is REQUIRED; no
 # permission-bypass flags by design.
-MAIN_GITDIR="${REPO_TOPLEVEL:-$PWD}"
-# The wrapper cd's INTO the worktree before launching, so RUN_LOG (and the lock dir
-# under .supervisor/) must be ABSOLUTE — a relative path would resolve inside the
+# MAIN_GITDIR + RUN_LOG_ABS were already resolved at the header-write step above.
+# The wrapper cd's INTO the worktree before launching, so RUN_LOG_ABS (and the lock
+# dir under .supervisor/) must be ABSOLUTE — a relative path would resolve inside the
 # worktree (where .supervisor/logs/ does not exist), the `>>` redirect would fail,
-# and bash would abort the command before claude ever runs. Resolve to absolute.
-case "$RUN_LOG" in
-  /*) RUN_LOG_ABS="$RUN_LOG" ;;
-  *)  RUN_LOG_ABS="$MAIN_GITDIR/$RUN_LOG" ;;
-esac
+# and bash would abort the command before claude ever runs.
 case "$LOCK_DIR" in
   /*) LOCK_DIR_ABS="$LOCK_DIR" ;;
   *)  LOCK_DIR_ABS="$MAIN_GITDIR/$LOCK_DIR" ;;
