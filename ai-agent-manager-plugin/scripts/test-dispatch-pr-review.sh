@@ -97,16 +97,22 @@ marker_count() {
 # Echoes the repo path. Sets globals: FX_REPO, FX_BIN, FX_HEAD_SHA, FX_HEAD_REF,
 # FX_GH_LOG (records gh calls), FX_CLAUDE_LOG (records claude calls + cwd).
 fresh_git_repo() {
-  local is_fork="false" head_ref="feature/x"
+  local is_fork="false" head_ref="feature/x" parent_suffix=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --fork) is_fork="true"; shift ;;
       --head-ref) head_ref="$2"; shift 2 ;;
+      --parent-suffix) parent_suffix="$2"; shift 2 ;;
       *) shift ;;
     esac
   done
   local d; d="$(mktemp -d)"
-  FX_REPO="$d/repo"
+  local rbase="$d"
+  # Optionally nest the repo under a parent dir whose name carries shell
+  # metacharacters (space, $) — used to prove the detached-launch wrapper is
+  # quote/$-safe (finding #1). FX_BIN + logs stay on the clean $d path.
+  if [ -n "$parent_suffix" ]; then rbase="$d/$parent_suffix"; mkdir -p "$rbase"; fi
+  FX_REPO="$rbase/repo"
   FX_BIN="$d/bin"
   FX_GH_LOG="$d/gh-calls.log"
   FX_CLAUDE_LOG="$d/claude-calls.log"
@@ -695,6 +701,34 @@ else
   no "READ-ONLY violated (rc=$RC25) — pre/post tree differ"
 fi
 rm -rf "$(dirname "$FX_REPO")"
+
+echo "== 26. (G3/finding#1) metacharacter in repo path: detached-launch wrapper is quote/\$-safe =="
+# The repo lives under a parent dir containing a space AND a '$'. The OLD wrapper
+# interpolated values into a `bash -c` string with the values inside double quotes —
+# a single quote was safe, but a '$' silently expanded inside the inner shell and
+# corrupted $WT_PATH (failed cd -> claude never ran in the worktree -> leaked worktree)
+# AFTER the marker was written: a silent-drop. The positional-args wrapper is immune.
+fresh_git_repo --parent-suffix 'we$ird dir' >/dev/null
+DROOT="$(dirname "$(dirname "$FX_REPO")")"   # the mktemp root, for cleanup
+run_real "$FX_REPO" "$PR"
+RC26=$RUN_RC
+WT="$(expected_wt_path "$FX_REPO")"
+H="$(pr_hash)"
+MARKER_OK=0; [ -f "$FX_REPO/.supervisor/review-dispatch/$H" ] && MARKER_OK=1
+# Wait for the detached wrapper's trap to finish FIRST (claude runs before cleanup),
+# so the claude log is guaranteed populated before we read it (mirrors case 14 — the
+# detached wrapper is async, so checking the log before the wait is a race).
+REMOVED_OK=0; wait_for_no_worktree "$FX_REPO" "$WT" && REMOVED_OK=1
+# Proof the wrapper survived the metachar path: claude ran from INSIDE the worktree
+# whose path contains the space + '$'. With the OLD interpolation this cwd would be
+# wrong (the '$' expanded away inside the inner shell), so this grep would miss.
+CLAUDE_CWD_OK=0; grep -qF "cwd=$WT" "$FX_CLAUDE_LOG" 2>/dev/null && CLAUDE_CWD_OK=1
+if [ "$RC26" -eq 0 ] && [ "$MARKER_OK" -eq 1 ] && [ "$CLAUDE_CWD_OK" -eq 1 ] && [ "$REMOVED_OK" -eq 1 ]; then
+  ok "metachar-path: wrapper quote/\$-safe — claude ran in the worktree, marker written, trap cleaned up"
+else
+  no "metachar-path wrong (rc=$RC26 marker=$MARKER_OK claude_cwd=$CLAUDE_CWD_OK removed=$REMOVED_OK wt=$WT)"
+fi
+rm -rf "$DROOT"
 
 echo
 echo "RESULT: $pass passed, $fail failed"

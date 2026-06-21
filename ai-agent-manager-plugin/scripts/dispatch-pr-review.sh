@@ -399,7 +399,7 @@ fi
 # so the SHA is present locally.
 mkdir -p "$LOG_DIR" 2>/dev/null || true
 
-PR_META="$(gh pr view "$PR_URL" --json headRefOid,headRefName,isCrossRepository,headRepositoryOwner 2>/dev/null || true)"
+PR_META="$(gh pr view "$PR_URL" --json headRefOid,headRefName,isCrossRepository 2>/dev/null || true)"
 if [ -z "$PR_META" ]; then
   log "gh pr view failed for $PR_URL — cannot resolve head SHA, skipping (no marker)"
   rm -rf "$LOCK_DIR" 2>/dev/null || true
@@ -423,6 +423,17 @@ fi
 # detached worktree checkout. A fork's head is not on origin (AC2a degrade) so the
 # fetch is best-effort and its failure is non-fatal.
 git fetch origin "$HEAD_SHA" >/dev/null 2>&1 || git fetch origin >/dev/null 2>&1 || true
+
+# Defensive pre-add cleanup: a hard crash on a prior dispatch (SIGKILL/power-loss in
+# the narrow window between this `git worktree add` and the marker write) can leave a
+# stale dir at the deterministic $WT_PATH with NO marker — a later `git worktree add`
+# would then fail on the existing path and wedge re-dispatch for this PR forever. We
+# hold the per-PR lock here, so clearing ONLY this hash-keyed path is safe (no other
+# dispatch for the same PR can own it). Prune drops any orphaned admin entry the
+# removed dir left behind. (The post-success prune below cannot pre-clean this.)
+git worktree remove --force "$WT_PATH" >/dev/null 2>&1 || true
+rm -rf "$WT_PATH" 2>/dev/null || true
+git worktree prune >/dev/null 2>&1 || true
 
 if ! git worktree add --detach "$WT_PATH" "$HEAD_SHA" >/dev/null 2>&1; then
   log "git worktree add failed for $WT_PATH @ $HEAD_SHA — skipping (no marker)"
@@ -511,18 +522,28 @@ case "$LOCK_DIR" in
   /*) LOCK_DIR_ABS="$LOCK_DIR" ;;
   *)  LOCK_DIR_ABS="$MAIN_GITDIR/$LOCK_DIR" ;;
 esac
+# Build the wrapper body as a FULLY SINGLE-QUOTED string (no interpolation) and pass
+# the runtime values as POSITIONAL ARGS to `bash -c`. This is metacharacter-safe: a
+# `$`, backtick, double-quote, or backslash in any value (most plausibly a repo path)
+# can never break the wrapper string or be re-evaluated by the inner shell. The prior
+# interpolated `'\''"$VAR"'\''` form embedded values inside double quotes, so a single
+# quote was safe but a `$`/backtick/`"` in a path silently corrupted the worktree path
+# (failed cd -> leaked worktree) AFTER the marker was written — the exact silent-drop
+# class this change exists to remove. The trap captures the args into named vars FIRST
+# (a trap function sees its OWN empty positionals on EXIT, not the script's $1..$7).
 WRAPPER='
+_mg="$1"; _wt="$2"; _lock="$3"; _bin="$4"; _runner="$5"; _pr="$6"; _log="$7"
 trap_cleanup() {
-  cd "'"$MAIN_GITDIR"'" 2>/dev/null || cd / 2>/dev/null || true
-  git -C "'"$MAIN_GITDIR"'" worktree remove --force "'"$WT_PATH"'" >/dev/null 2>&1 || true
-  rm -rf "'"$WT_PATH"'" 2>/dev/null || true
-  rm -rf "'"$LOCK_DIR_ABS"'" 2>/dev/null || true
+  cd "$_mg" 2>/dev/null || cd / 2>/dev/null || true
+  git -C "$_mg" worktree remove --force "$_wt" >/dev/null 2>&1 || true
+  rm -rf "$_wt" 2>/dev/null || true
+  rm -rf "$_lock" 2>/dev/null || true
 }
 trap trap_cleanup EXIT
-cd "'"$WT_PATH"'" || exit 0
-"'"$CLAUDE_BIN"'" -p --agent "'"$RUNNER"'" "'"$PR_URL"'" >>"'"$RUN_LOG_ABS"'" 2>&1 </dev/null
+cd "$_wt" || exit 0
+"$_bin" -p --agent "$_runner" "$_pr" >>"$_log" 2>&1 </dev/null
 '
-( nohup bash -c "$WRAPPER" >/dev/null 2>&1 & ) >/dev/null 2>&1 || true
+( nohup bash -c "$WRAPPER" _ "$MAIN_GITDIR" "$WT_PATH" "$LOCK_DIR_ABS" "$CLAUDE_BIN" "$RUNNER" "$PR_URL" "$RUN_LOG_ABS" >/dev/null 2>&1 & ) >/dev/null 2>&1 || true
 
 log "dispatched review-pr-runner for $PR_URL (worktree: $WT_PATH, log: $RUN_LOG)"
 exit 0
