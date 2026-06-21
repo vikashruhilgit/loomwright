@@ -238,6 +238,96 @@ grep -qF "**Coverage:** 60%" "$h4d" 2>/dev/null && ok "latest coverage 60% still
 grep -qF "33% → n/a" "$h4d" 2>/dev/null && ok "trend shows the n/a point (33% → n/a)" || no "trend dropped/mangled the n/a point"
 rm -rf "$H4"
 
+echo "== 11. Missing-drain reconciliation (AC5) — renders + classifies =="
+# A done-brief corpus with three heal-signal PRs:
+#   pull/72 — HAS a matching dispatch marker         → reconciled (NOT listed)
+#   pull/73 — NO marker, durable run-time opt-out evidence in its `## Outcome` block → opted_out
+#   pull/74 — NO marker, NO durable evidence (the silent-drop incident)              → unknown_or_opted_out
+# Also include pull/7 as a marker to prove `/pull/7` does NOT satisfy `/pull/72` (exact-URL join).
+M="$(mktemp -d)"; ( cd "$M" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$M/.supervisor/logs" "$M/.supervisor/jobs/done" "$M/.supervisor/review-dispatch"
+printf '%s\n' '{"ts":"2026-06-19T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$M/.supervisor/logs/sess-m.jsonl"
+URL="https://github.com/o/r/pull"
+# done-brief for pull/72 (has marker)
+cat > "$M/.supervisor/jobs/done/job-72.md" <<EOF
+# Job 72
+## Outcome
+- **Status:** completed
+- **PR:** $URL/72 (base: main)
+- **heal_decision:** PASS
+EOF
+# done-brief for pull/73 (no marker, durable opt-out evidence in Outcome)
+cat > "$M/.supervisor/jobs/done/job-73.md" <<EOF
+# Job 73
+## Outcome
+- **Status:** completed
+- **PR:** $URL/73 (base: main)
+- **heal_decision:** PASS
+- **Note:** drain dispatch suppressed via --no-auto-review for this run
+EOF
+# done-brief for pull/74 (no marker, NO durable evidence — silent drop)
+cat > "$M/.supervisor/jobs/done/job-74.md" <<EOF
+# Job 74
+## Outcome
+- **Status:** completed
+- **PR:** $URL/74 (base: main)
+- **heal_decision:** PASS
+EOF
+# markers: pull/72 (matches job-72) + pull/7 (must NOT match pull/72)
+printf '20260618T195030Z\t%s/72\n' "$URL" > "$M/.supervisor/review-dispatch/aaa"
+printf '20260618T195031Z\t%s/7\n'  "$URL" > "$M/.supervisor/review-dispatch/bbb"
+( cd "$M" && bash "$BUILD" >/dev/null 2>&1 )
+md="$M/.supervisor/insights/dashboard.md"
+grep -q "^## Missing-drain reconciliation" "$md" 2>/dev/null && ok "missing-drain section renders when a heal-signal PR has no marker" || no "missing-drain section missing"
+# pull/72 has a marker → must NOT appear as a missing row.
+mdsec="$(sed -n '/^## Missing-drain reconciliation/,/^## /p' "$md" 2>/dev/null)"
+printf '%s' "$mdsec" | grep -qE "\| $URL/72 \|" && no "pull/72 listed despite having a matching marker" || ok "pull/72 reconciled (has marker, not listed)"
+# pull/73 → opted_out (durable run-time evidence present).
+printf '%s' "$mdsec" | grep -qE "\| $URL/73 \| opted_out \|" && ok "pull/73 classified opted_out (durable run-time evidence)" || no "pull/73 not classified opted_out"
+# pull/74 → unknown_or_opted_out (silent drop, no evidence).
+printf '%s' "$mdsec" | grep -qE "\| $URL/74 \| unknown_or_opted_out \|" && ok "pull/74 classified unknown_or_opted_out (silent drop, no evidence)" || no "pull/74 not classified unknown_or_opted_out"
+# exact-URL join: pull/7 marker must NOT reconcile pull/72.
+printf '%s' "$mdsec" | grep -qF "Missing a drain marker:** 2" && ok "exact-URL join: 2 missing (pull/7 marker did not satisfy pull/72)" || no "missing count wrong (exact-URL join failed)"
+# never a blanket accusation.
+printf '%s' "$mdsec" | grep -qiE "\bdropped\b" && no "section printed a blanket 'dropped' accusation" || ok "no blanket 'dropped' accusation in the section"
+grep -q "^## Summary" "$md" 2>/dev/null && ok "dashboard still renders fully with the missing-drain section" || no "dashboard incomplete with missing-drain section"
+rm -rf "$M"
+
+echo "== 12. Missing-drain: opted_out NOT inferred from current config.json =="
+# A markerless heal-signal PR with NO durable run-time evidence, but config.json says
+# auto_review:false RIGHT NOW. The audit must NOT read config.json → still unknown_or_opted_out
+# (config is mutable; reading it would mislabel a genuine later drop as a deliberate opt-out).
+C="$(mktemp -d)"; ( cd "$C" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$C/.supervisor/logs" "$C/.supervisor/jobs/done" "$C/.supervisor/review-dispatch"
+printf '%s\n' '{"ts":"2026-06-19T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$C/.supervisor/logs/sess-c.jsonl"
+printf '%s\n' '{"auto_review": false}' > "$C/.supervisor/config.json"
+URL="https://github.com/o/r/pull"
+cat > "$C/.supervisor/jobs/done/job-80.md" <<EOF
+# Job 80
+## Outcome
+- **Status:** completed
+- **PR:** $URL/80 (base: main)
+- **heal_decision:** PASS
+EOF
+# a marker for a DIFFERENT pr so the corpus is non-empty and the section renders.
+printf '20260618T195030Z\t%s/81\n' "$URL" > "$C/.supervisor/review-dispatch/zzz"
+( cd "$C" && bash "$BUILD" >/dev/null 2>&1 )
+cd2="$C/.supervisor/insights/dashboard.md"
+csec="$(sed -n '/^## Missing-drain reconciliation/,/^## /p' "$cd2" 2>/dev/null)"
+printf '%s' "$csec" | grep -qE "\| $URL/80 \| unknown_or_opted_out \|" && ok "config.json auto_review:false does NOT yield opted_out (not inferred from current config)" || no "opted_out wrongly inferred from current config.json"
+rm -rf "$C"
+
+echo "== 13. Missing-drain section suppressed when no corpus =="
+# No done-briefs with Outcome PRs AND no markers → section suppressed entirely (no fabricated zeros).
+NS="$(mktemp -d)"; ( cd "$NS" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$NS/.supervisor/logs"
+printf '%s\n' '{"ts":"2026-06-19T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$NS/.supervisor/logs/sess-ns.jsonl"
+( cd "$NS" && bash "$BUILD" >/dev/null 2>&1 )
+nsd="$NS/.supervisor/insights/dashboard.md"
+if grep -q "## Missing-drain reconciliation" "$nsd" 2>/dev/null; then no "missing-drain section appeared with no corpus"; else ok "missing-drain section suppressed when no heal-signal/marker corpus exists"; fi
+grep -q "^## Summary" "$nsd" 2>/dev/null && ok "dashboard renders normally with no missing-drain corpus" || no "dashboard broken with no missing-drain corpus"
+rm -rf "$NS"
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

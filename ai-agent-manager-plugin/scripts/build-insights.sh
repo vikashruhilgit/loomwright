@@ -312,6 +312,111 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
     fi
   fi
 
+  # --- Missing-drain reconciliation (advisory; AC5 — SUPPRESSED when no corpus) ---
+  # Surfaces PRs that carried a heal outcome (a `## Outcome` block with a `**PR:**` URL in the
+  # done-brief corpus under .supervisor/jobs/done/) but have NO matching review-drain dispatch
+  # marker under .supervisor/review-dispatch/ — a possible silently-dropped until-mergeable drain
+  # (the #74 incident). READ-ONLY, advisory, NEVER gating. Mirrors the heal-signal / System-Twin
+  # suppression precedent: render ONLY when a heal-signal/marker corpus exists; otherwise the
+  # section is suppressed ENTIRELY (no fabricated zeros).
+  #
+  # Reason classification per markerless PR — deliberately NON-accusatory (never a blanket "dropped"):
+  #   * opted_out            — ONLY when durable RUN-TIME-recorded opt-out evidence exists for THAT
+  #                            PR: a `--no-auto-review` / `auto_review` / suppress line in that run's
+  #                            dispatch log (.supervisor/logs/review-pr-dispatch-*<...>.log) OR in
+  #                            the job's `## Outcome` block. NEVER inferred from the CURRENT
+  #                            .supervisor/config.json (mutable; reflects NOW, not dispatch-time —
+  #                            reading it would mislabel a genuine later drop as a deliberate opt-out).
+  #                            config.json is NOT read here at all.
+  #   * unknown_or_opted_out — the DEFAULT when no marker exists AND no durable run-time evidence is
+  #                            available (could be a silent drop OR an unrecorded opt-out — not enough
+  #                            to accuse). A genuine silent drop (#74) surfaces here → the signal to
+  #                            investigate.
+  #
+  # Join is by EXACT PR URL — marker bodies are `<ts>\t<url>` lines; we match the full URL with
+  # word boundaries so `/pull/7` is never confused with `/pull/72`.
+  done_dir=".supervisor/jobs/done"
+  dispatch_dir=".supervisor/review-dispatch"
+  # Build the heal-signal corpus: (pr_url <TAB> brief_path) for each done-brief whose `## Outcome`
+  # block carries a `**PR:**` URL. The `## Outcome` block is the heal-signal (it records
+  # heal_decision / heal_iterations). Only briefs WITH such a block + URL are heal-signal PRs.
+  md_corpus="$(mktemp)"; md_markers="$(mktemp)"
+  # NOTE: do NOT glob into a bash array here — under `set -u` an empty nullglob array would be an
+  # unbound-variable error (and without nullglob a no-match leaves a literal pattern). `find` is
+  # both empty-safe and avoids polluting global shell options for the rest of the script.
+  while IFS= read -r b; do
+    [ -f "$b" ] || continue
+    # Extract the `## Outcome` block (from the heading to the next `## ` or EOF), then the PR URL
+    # on its `- **PR:**` line. awk keeps this tolerant of brief ordering.
+    pr_url="$(awk '
+      /^## Outcome[[:space:]]*$/ {in_o=1; next}
+      in_o && /^## / {in_o=0}
+      in_o && /\*\*PR:\*\*/ {
+        if (match($0, /https?:\/\/[^ ()]+\/pull\/[0-9]+/)) { print substr($0, RSTART, RLENGTH); exit }
+      }
+    ' "$b" 2>/dev/null)"
+    [ -n "$pr_url" ] && printf '%s\t%s\n' "$pr_url" "$b" >> "$md_corpus"
+  done < <(find "$done_dir" -maxdepth 1 -type f -name '*.md' 2>/dev/null)
+  # Marker bodies → one PR URL per marker (exact url tokens).
+  while IFS= read -r m; do
+    [ -f "$m" ] || continue
+    grep -ohE 'https?://[^ ()[:space:]]+/pull/[0-9]+' "$m" 2>/dev/null >> "$md_markers"
+  done < <(find "$dispatch_dir" -maxdepth 1 -type f 2>/dev/null)
+  sort -u "$md_markers" -o "$md_markers" 2>/dev/null || true
+  corpus_count="$(grep -c . "$md_corpus" 2>/dev/null)"; corpus_count="${corpus_count:-0}"
+  marker_count="$(grep -c . "$md_markers" 2>/dev/null)"; marker_count="${marker_count:-0}"
+  # SUPPRESS entirely when there is no heal-signal/marker corpus (no fabricated zeros).
+  if [ "$corpus_count" -gt 0 ] || [ "$marker_count" -gt 0 ]; then
+    # For each heal-signal PR, decide present/missing by EXACT url match against the marker set,
+    # and (for the missing ones) classify the reason.
+    md_rows="$(mktemp)"; md_missing=0
+    while IFS="$(printf '\t')" read -r pr brief; do
+      [ -n "$pr" ] || continue
+      # Exact whole-URL match against the sorted marker set — `/pull/7` ≠ `/pull/72` because
+      # grep -x anchors the WHOLE line and -F treats the URL literally.
+      if grep -qxF -- "$pr" "$md_markers" 2>/dev/null; then
+        continue  # has a dispatch marker → nothing to reconcile
+      fi
+      md_missing=$((md_missing+1))
+      # Classify: opted_out ONLY on durable run-time opt-out evidence for THIS pr.
+      reason="unknown_or_opted_out"
+      # (a) the job's own `## Outcome` block recorded an opt-out / suppression.
+      if awk '
+        /^## Outcome[[:space:]]*$/ {in_o=1; next}
+        in_o && /^## / {in_o=0}
+        in_o && (index($0,"--no-auto-review")||index($0,"auto_review")||index($0,"suppress")) {found=1}
+        END {exit (found?0:1)}
+      ' "$brief" 2>/dev/null; then
+        reason="opted_out"
+      else
+        # (b) that run's dispatch log recorded an opt-out / suppression line. Dispatch logs are
+        # .supervisor/logs/review-pr-dispatch-*.log; match the ones that mention THIS exact PR url.
+        while IFS= read -r lg; do
+          [ -f "$lg" ] || continue
+          if grep -qF -- "$pr" "$lg" 2>/dev/null && grep -qF -e '--no-auto-review' -e 'auto_review' -e 'suppress' "$lg" 2>/dev/null; then
+            reason="opted_out"; break
+          fi
+        done < <(find "$LOGS_DIR" -maxdepth 1 -type f -name 'review-pr-dispatch-*.log' 2>/dev/null)
+      fi
+      printf '| %s | %s | %s |\n' "$pr" "$reason" "$(basename "$brief")" >> "$md_rows"
+    done < "$md_corpus"
+    echo "## Missing-drain reconciliation"
+    echo "_Advisory only — READ-ONLY, never gates a PR or changes a heal decision. Heal-signal PRs (a \`## Outcome\` block in \`$done_dir/*.md\`) joined against review-drain dispatch markers under \`$dispatch_dir/\`. A markerless PR may be a silently-missed drain (the #74 incident) OR a deliberate opt-out — the reason is classified, never accused. \`opted_out\` requires durable run-time evidence; \`unknown_or_opted_out\` (the default) is the signal to investigate. \`config.json\` is intentionally NOT consulted (mutable; reflects now, not dispatch-time). Computed with grep/awk, never guessed._"
+    echo
+    echo "- **Heal-signal PRs:** $corpus_count  ·  **Dispatch markers:** $marker_count  ·  **Missing a drain marker:** $md_missing"
+    echo
+    if [ "$md_missing" -gt 0 ]; then
+      echo "| PR (heal-signal, no drain marker) | Reason | Source brief |"
+      echo "|---|---|---|"
+      sort "$md_rows" 2>/dev/null
+    else
+      echo "_All heal-signal PRs have a matching review-drain dispatch marker — nothing to reconcile._"
+    fi
+    echo
+    rm -f "$md_rows" 2>/dev/null
+  fi
+  rm -f "$md_corpus" "$md_markers" 2>/dev/null
+
   # --- Brain Context Baseline (DORMANT in v1 — DO NOT wire into the fitness trend) ---
   # Phase 0 of the brain-integration arc emits a SEPARATE history file,
   # .supervisor/eval/brain-baseline.jsonl (written by scripts/brain-baseline-eval.sh), measuring
