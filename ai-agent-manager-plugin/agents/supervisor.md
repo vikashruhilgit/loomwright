@@ -755,14 +755,20 @@ while heal_iterations < max_heal_iterations:
              1a. **Fix the CLASS, not just the flagged instance (v14.21.0 self-heal hardening).** For each finding, name its *class* (e.g. \"numeric field coerced with `||`\", \"positional arg passed to an options-object function\", \"backend validation missing a rule the frontend schema enforces\", \"count/version/restated-list drift\", \"cross-reference precision drift\", \"new branch with no test\"). Then scan the FULL feature-branch diff (`git diff $BASE_BRANCH...HEAD`, BASE_BRANCH defaults to origin/main) for EVERY other occurrence of that same class and fix them all in this iteration — not only the one file:line the reviewer flagged. The reviewer samples; you must sweep. Stay within the changed surface — fix other instances of the SAME class introduced by this branch; do not refactor unrelated pre-existing code. **Occurrence cap (budget guard, v14.21.0):** if a single class has more than ~10 branch-introduced occurrences, fix a representative handful and REPORT the class with its full occurrence count + locations in `FIX_RESULT.summary` instead of sweeping all of them this iteration — so one finding cannot balloon an iteration's diff or burn the heal budget; the reported remainder is left for the next iteration's re-review or the human.
              2. Update tests if behaviour changes.
              3. Run type-check and tests locally before finishing.
+             3a. **Pre-push self-regression review (anticipatory — REQUIRED, observable).** Before committing, re-read your OWN diff (`git diff $BASE_BRANCH...HEAD` plus your uncommitted changes) and confirm it introduces no downstream regression in **persistence / state / lifecycle / idempotency / concurrency** — e.g. a duplicated write (a split path that now `Save`s twice), changed ordering, a cross-session / cross-request collision (a shared counter or dedup key that now collides), a broken run-once guard, or a new check-then-act race. This is DISTINCT from the step-1a fix-the-class sweep (which sweeps *sibling* instances of the reviewer's finding) and from the Anti-Churn Guardrail (which trips on oscillation across rounds): step 3a re-examines *your own fix* for a regression it might have just introduced. If you find one, fix it in THIS same pass.
              4. Commit with message: \"fix: address review feedback (iteration {N})\"
              5. Do NOT address findings outside the listed classes. (You MUST fix other instances of the SAME class per step 1a; you must NOT chase unrelated findings.)
              6. Do NOT fix pre_existing issues or nits.
 
-             Emit FIX_RESULT block: schema_version: 1, issues_addressed, files_modified, commit_sha, summary.",
+             Emit FIX_RESULT block: schema_version: 1, issues_addressed, files_modified, commit_sha, summary — and the `summary` MUST include an observable `self_review:` clause from step 3a naming the downstream-regression risk classes you checked (persistence / state / lifecycle / idempotency / concurrency) and the result (`self_review: clean` or `self_review: fixed-in-pass — <what>`). A FIX_RESULT whose summary has NO `self_review:` clause is an incomplete fix.",
     model: "sonnet"   # ONLY when cost_profile=cheap; omit entirely when cost_profile=default
   )
   # Parse FIX_RESULT; increment heal_fixable_issues_fixed by FIX_RESULT.issues_addressed
+  # Self-review-note gate (v14.43.0): FIX_RESULT.summary MUST carry a `self_review:` clause naming the
+  # downstream-regression risk classes the fixer checked (persistence/state/lifecycle/idempotency/
+  # concurrency). If absent, treat the fix as INCOMPLETE — re-prompt the SAME fix worker once to perform
+  # and report the pre-push self-review, or surface it for the next re-review. A missing note must never
+  # silently pass as a finished fix. (Best-effort, observable; never --force, never merge.)
 
   git push  # update PR (regular push, NEVER --force)
   record_decision(phase: SELF_HEAL, decision: "fix iteration {heal_iterations+1}", rationale: FIX_RESULT.summary)

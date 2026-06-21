@@ -352,7 +352,30 @@ Review implementation code against quality standards and provide a clear decisio
      - Next.js API: Load `skills/nextjs-api-routes/SKILL.md`
      - API Gateway: Load `skills/gateway-*/SKILL.md` patterns
 
-4. **Flag Issues by Severity** (BLOCKING / HIGH / MEDIUM / LOW)
+4. **Adversarial-Input Lens (interrogate inputs, don't just read them)**
+
+   For EVERY code path the diff adds or changes, do not merely read what the code does on the happy path — actively reason about how each input could break it. For each changed function / handler / branch, ask:
+   - **Boundary & domain values:** negative, zero, empty (string/array/object), `null`/`undefined`/absent, max/overflow, off-by-one. Does a legitimate `0` / `""` / `false` get silently swallowed by a truthiness guard (`x || default`, `if (!x)`)? (See the "no falsy coercion on numeric fields" class in `skills/quality-checklist/SKILL.md`.)
+   - **Replay / idempotency:** if this path mutates state, creates a record, grants/spends a resource, or fires a side-effect — what happens if it runs twice (retry, double-submit, redelivered event)? Is there a run-once / dedup / idempotency-key guard, and does the diff preserve it?
+   - **Concurrency:** if two requests / workers hit this path at once, is there a check-then-act race, a lost update, or a double-grant?
+   - **Validation parity & trust boundary:** is every constraint enforced where it actually matters (the server / API boundary), not only client-side? Is external input trusted in a way that enables injection, path traversal, or unsanitized interpolation?
+
+   This lens is the difference between a checklist read and catching the negative-amount exploit / idempotency hole / run-once violation that a CI bot otherwise finds several rounds later. Any finding from this lens that is a real correctness/security/behavior regression introduced by the diff MUST be severity-classified per the severity-assignment rule in "Flag Issues by Severity" below (HIGH or BLOCKING).
+
+5. **Execution-Grounded Verification (non-mutating only — never fake a pass)**
+
+   A static read is the floor; executed-and-verified is the goal, and the gap between them must be STATED, never silently assumed clean. When the tooling is discoverable and safe, run targeted **non-mutating** checks to ground your review in real behavior:
+   - Type-check the changed scope (e.g. `tsc --noEmit`, `mypy`, `go vet`) — read-only.
+   - Run ONLY the specific existing tests that cover the diff (a targeted, read-only test invocation).
+   - Inspect, don't alter: `git diff`, `git log`, read files.
+
+   **Mutation guardrails (NON-NEGOTIABLE — read-only contract):** NEVER run any command that mutates the working tree, writes artifacts, or changes shared state — specifically NO snapshot updates (`-u` / `--update`), NO auto-fix / auto-format / lint-fix (`--fix`), NO coverage-writing runs, NO migrations, NO seed / DB-write commands, NO codegen / generated-file writes. The reviewer holds a read-only contract (no Write/Edit; Bash is inspection-only).
+
+   **When behavior cannot be verified** — because verification would mutate the tree, write artifacts (snapshots, coverage, caches, temp DB state, generated files), or needs unavailable infra — report that behavior as **`unverified`** in your result summary. **`unverified` is NOT a pass** ("skipped/unverified ⇒ UNVERIFIED, not clean" — the plugin's standing invariant).
+   - **Bind `unverified` to the verdict:** if the unverified behavior is **load-bearing** (central to the diff's correctness / security claim) AND static review cannot establish its safety, return **`NEEDS_HUMAN`** — or raise a `new` HIGH issue when the gap is simply "no test exists" that a fix worker can close — **never `PASS`**. (This mirrors the decision-matrix row "environment prevents a normal review → NEEDS_HUMAN" and honors fail-CLOSED-on-correctness; `NEEDS_HUMAN` maps to `ESCALATED`, leaving the PR open for a human.)
+   - A **non-load-bearing** unverified behavior (tangential, not central to the change's correctness) is reported as `unverified` but does NOT block PASS.
+
+6. **Flag Issues by Severity** (BLOCKING / HIGH / MEDIUM / LOW)
 
    **BLOCKING** (critical — must fix immediately):
    - Data loss or corruption risks
@@ -377,7 +400,9 @@ Review implementation code against quality standards and provide a clear decisio
    - Refactoring opportunities
    - Helpful comments
 
-5. **Categorize Each Issue**
+   **Severity-assignment rule for `new` code-behavior findings (correctness ⇒ HIGH/BLOCKING).** Any **confirmed correctness, security, or behavior regression introduced by the diff** — exactly the class the Adversarial-Input Lens hunts (negative / zero / overflow mishandling, replay / idempotency holes, run-once violations, concurrency races, validation-parity or trust-boundary gaps, injection) — MUST be labeled **HIGH** or **BLOCKING**, never MEDIUM/LOW. MEDIUM/LOW are reserved for maintainability, polish, or non-blocking risk. **Why this is load-bearing:** the diff-review fix paths only auto-fix `new` + BLOCKING/HIGH (Supervisor Phase 4.5 and the default `/review-pr` loop), and this reviewer PASSes when only MEDIUM/LOW remain — so a real correctness bug *mislabeled* MEDIUM is found but never fixed. This rule governs ONLY `category: new` code-behavior findings; it does **NOT** alter the `drift` severity caps (`count` / `version_secondary` ≤ MEDIUM, `hooks_parity` / `wording` ≤ LOW) defined for consistency-audit mode, nor the PASS-on-MEDIUM/LOW decision for genuine maintainability / polish findings.
+
+7. **Categorize Each Issue**
 
    Every issue must include a `category` tag:
    - **new**: Introduced by the current change (the developer wrote this)
@@ -391,13 +416,13 @@ Review implementation code against quality standards and provide a clear decisio
    Rules for Drift" — the capped kinds can never reach HIGH/BLOCKING).
    Pre-existing issues are reported but do not block PR progression.
 
-6. **Provide Specific Fixes**
+8. **Provide Specific Fixes**
    - Every issue: file:line + code snippet + suggestion
    - Show before/after (brief diff)
    - Explain rationale
    - Link to relevant skill if applicable
 
-7. **Check for New Patterns**
+9. **Check for New Patterns**
    - Does code introduce pattern not in CLAUDE.md?
    - Is it reusable and worth documenting?
    - If yes: Propose to CLAUDE.md in the review output (and in the Beads comment when Beads is active) — never update CLAUDE.md directly

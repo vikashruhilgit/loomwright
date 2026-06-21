@@ -2,8 +2,8 @@
 name: review-heal
 description: Shared loop contract for the standalone PR review-and-heal workflow (`/review-pr <pr-url>` + `ai-agent-manager-plugin:review-pr-runner`). Single source of truth for the bounded review→fix→re-review loop, PR-URL→branch resolution, the REVIEW_HEAL_RESULT block, and the pinned canonical names consumed by the dispatcher script, the runner agent, and the autonomous EVALUATE step. Use when implementing or invoking standalone PR review-and-heal.
 allowed-tools: [Read, Write, Edit, Bash, Task]
-version: "1.3.0"
-lastUpdated: "2026-06-21"
+version: "1.4.0"
+lastUpdated: "2026-06-22"
 ---
 
 # Review-Heal Skill
@@ -149,9 +149,18 @@ while heal_iterations < max_heal_iterations:
     # (the fix worker may not dispatch further subagents).
     prompt: "Address ONLY these new+BLOCKING/HIGH review findings: {fixable}.
              Do NOT touch pre_existing issues or nits. Update tests if behaviour
-             changes. Run type-check + tests locally before finishing."
+             changes. Run type-check + tests locally before finishing. Before pushing,
+             PRE-PUSH SELF-REGRESSION REVIEW: re-read your own diff and confirm it introduces no
+             downstream regression in persistence/state/lifecycle/idempotency/concurrency (duplicated
+             writes, changed ordering, cross-session collisions, broken run-once guards, check-then-act
+             races); fix any in this same pass. PRINT an observable `self_review:` line naming the risk
+             classes checked and the result (`clean` | `fixed-in-pass: <what>`) — a fix that pushes with
+             no `self_review:` line is incomplete."
   )
   # issues_fixed += number of findings addressed
+  # Self-review gate (v14.43.0): the fix worker MUST print a `self_review:` line (risk classes checked +
+  # clean|fixed-in-pass). A missing line means the anticipatory self-review was skipped → treat the fix as
+  # incomplete (re-prompt once / surface); never silently accept it as done.
 
   push_fix_to_pr()                 # fork-aware: same-repo ⇒ git push origin HEAD:<head_ref> (REGULAR, NEVER --force); fork ⇒ no push, degrade to ESCALATED (see "Fork-aware push")
   heal_iterations += 1
@@ -399,9 +408,18 @@ while rounds < max_rounds:
              (from reviews, inline threads, PR issue comments, and check outputs): {fixable}.
              Do NOT touch human-authored / unknown-author findings, optional-check items,
              or dismissed/stale findings. Update tests if behaviour changes; run
-             type-check + tests locally."
+             type-check + tests locally. Before pushing, PRE-PUSH SELF-REGRESSION REVIEW:
+             re-read your own diff and confirm it introduces no downstream regression in
+             persistence/state/lifecycle/idempotency/concurrency (duplicated writes, changed ordering,
+             cross-session collisions, broken run-once guards, check-then-act races); fix any in this same
+             pass. PRINT an observable `self_review:` line naming the risk classes checked and the result
+             (`clean` | `fixed-in-pass: <what>`) — a fix that pushes with no `self_review:` line is incomplete."
   )
   fix_cycles += 1
+
+  # Self-review gate (v14.43.0, drain): the drain fix worker MUST print a `self_review:` line (risk classes
+  # checked + clean|fixed-in-pass). A missing line means the anticipatory self-review was skipped → treat the
+  # fix as incomplete (re-prompt once / surface); never silently accept it as done.
 
   push_fix_to_pr()                      # fork-aware: same-repo ⇒ git push origin HEAD:<head_ref> (REGULAR, NEVER --force); fork ⇒ no push, degrade to ESCALATED (see "Fork-aware push")
 
