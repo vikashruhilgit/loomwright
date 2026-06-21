@@ -380,20 +380,28 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
       md_missing=$((md_missing+1))
       # Classify: opted_out ONLY on durable run-time opt-out evidence for THIS pr.
       reason="unknown_or_opted_out"
-      # (a) the job's own `## Outcome` block recorded an opt-out / suppression.
+      # (a) the job's own `## Outcome` block recorded a DURABLE opt-out. Anchor to
+      # specific opt-out FORMS — the `--no-auto-review` flag, or `auto_review` co-occurring
+      # with `false` on one line (auto_review: false / auto_review == false). A bare
+      # mention of "auto_review" or "suppress" in PROSE is NOT evidence — that would
+      # mislabel exactly the #74-class silent-drop (whose Outcome may narrate the word)
+      # as a deliberate opt-out, hiding the signal AC5 exists to surface.
       if awk '
         /^## Outcome[[:space:]]*$/ {in_o=1; next}
         in_o && /^## / {in_o=0}
-        in_o && (index($0,"--no-auto-review")||index($0,"auto_review")||index($0,"suppress")) {found=1}
+        in_o && (index($0,"--no-auto-review") || (index($0,"auto_review") && index($0,"false"))) {found=1}
         END {exit (found?0:1)}
       ' "$brief" 2>/dev/null; then
         reason="opted_out"
       else
-        # (b) that run's dispatch log recorded an opt-out / suppression line. Dispatch logs are
+        # (b) that run's dispatch log recorded a DURABLE opt-out line (same anchored forms
+        # as (a) — never a bare-word match). Dispatch logs are
         # .supervisor/logs/review-pr-dispatch-*.log; match the ones that mention THIS exact PR url.
         while IFS= read -r lg; do
           [ -f "$lg" ] || continue
-          if grep -qF -- "$pr" "$lg" 2>/dev/null && grep -qF -e '--no-auto-review' -e 'auto_review' -e 'suppress' "$lg" 2>/dev/null; then
+          if grep -qF -- "$pr" "$lg" 2>/dev/null \
+             && { grep -qF -- '--no-auto-review' "$lg" 2>/dev/null \
+                  || { grep -F -- 'auto_review' "$lg" 2>/dev/null | grep -qF -- 'false'; }; }; then
             reason="opted_out"; break
           fi
         done < <(find "$LOGS_DIR" -maxdepth 1 -type f -name 'review-pr-dispatch-*.log' 2>/dev/null)

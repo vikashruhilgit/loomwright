@@ -584,7 +584,9 @@ fresh_git_repo --fork >/dev/null
 # Fork head SHA exists locally in this fixture (we reuse the same repo), so the
 # worktree still creates; the AC2a degrade-to-review-only is the RUNNER's job — the
 # dispatcher's contract is to DETECT + THREAD the fork signal. We assert the launch
-# happened (marker) and the fork env var was set for the wrapper.
+# happened (marker) and the fork env var was set for the wrapper. The harder case —
+# a fork head that is NOT local and must be fetched via refs/pull/<n>/head — is
+# covered by case 27 (this case alone would mask that gap).
 run_real "$FX_REPO" "$PR"
 RC20=$RUN_RC
 H="$(pr_hash)"
@@ -729,6 +731,59 @@ else
   no "metachar-path wrong (rc=$RC26 marker=$MARKER_OK claude_cwd=$CLAUDE_CWD_OK removed=$REMOVED_OK wt=$WT)"
 fi
 rm -rf "$DROOT"
+
+echo "== 27. (G3/AC2a) fork PR whose head is NOT local: dispatcher fetches refs/pull/<n>/head =="
+# Faithful fork sim (unlike case 20, which keeps the fork SHA local): a bare "origin"
+# holds the PR head ONLY under refs/pull/42/head (on NO branch); the working repo does
+# NOT have that commit. The OLD fetch (`git fetch origin <sha>` / `git fetch origin`)
+# cannot retrieve a non-branch ref, so the worktree-add would fail and the AC2a
+# review-only-ESCALATED+comment path would be UNREACHABLE. The new
+# `git fetch origin refs/pull/<n>/head` makes the head local => worktree creates =>
+# runner launches (fork signal threaded) => marker written.
+fork_root="$(mktemp -d)"
+ORIGIN="$fork_root/origin.git"; git init -q --bare "$ORIGIN"
+SEED="$fork_root/seed"; mkdir -p "$SEED"
+( cd "$SEED"; git init -q; git config user.email t@t.t; git config user.name t; git config commit.gpgsign false
+  printf 'base\n' > f; git add -A; git commit -qm base; git branch -M main
+  git remote add origin "$ORIGIN"; git push -q origin main
+  printf 'forkhead\n' > f; git commit -qam forkhead
+  git push -q origin "HEAD:refs/pull/42/head" )   # PR head as a pull ref ONLY, not a branch
+FORK_SHA="$( cd "$SEED" && git rev-parse HEAD )"
+FX_REPO="$fork_root/repo"
+# --no-local forces the real fetch transport: a LOCAL clone would hardlink the ENTIRE
+# object DB (incl. the unreferenced forkhead), defeating the not-local premise. With
+# --no-local only main's reachable objects transfer, so FORK_SHA stays absent until the
+# dispatcher fetches refs/pull/42/head.
+git clone -q --no-local --branch main "$ORIGIN" "$FX_REPO" 2>/dev/null
+FX_BIN="$fork_root/bin"; FX_GH_LOG="$fork_root/gh.log"; FX_CLAUDE_LOG="$fork_root/claude.log"
+mkdir -p "$FX_BIN" "$FX_REPO/.supervisor"
+cat > "$FX_BIN/gh" <<GHEOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$FX_GH_LOG"
+[ "\$1" = pr ] && [ "\$2" = view ] && printf '{"headRefOid":"%s","headRefName":"feature/forked","isCrossRepository":true}\n' "$FORK_SHA"
+exit 0
+GHEOF
+cat > "$FX_BIN/stub-claude" <<CLEOF
+#!/usr/bin/env bash
+printf 'cwd=%s args=%s\n' "\$(pwd)" "\$*" >> "$FX_CLAUDE_LOG"
+exit 0
+CLEOF
+chmod +x "$FX_BIN/gh" "$FX_BIN/stub-claude"
+# Sanity: FORK_SHA must NOT be present locally before dispatch (proves the test is real).
+PRESENT_BEFORE=1; ( cd "$FX_REPO" && git cat-file -e "${FORK_SHA}^{commit}" 2>/dev/null ) || PRESENT_BEFORE=0
+run_real "$FX_REPO" "$PR"
+RC27=$RUN_RC
+H="$(pr_hash)"
+MARKER_OK=0; [ -f "$FX_REPO/.supervisor/review-dispatch/$H" ] && MARKER_OK=1
+WT="$(expected_wt_path "$FX_REPO")"
+REMOVED_OK=0; wait_for_no_worktree "$FX_REPO" "$WT" && REMOVED_OK=1
+RAN_OK=0; grep -qF "cwd=$WT" "$FX_CLAUDE_LOG" 2>/dev/null && RAN_OK=1
+if [ "$RC27" -eq 0 ] && [ "$PRESENT_BEFORE" -eq 0 ] && [ "$MARKER_OK" -eq 1 ] && [ "$RAN_OK" -eq 1 ] && [ "$REMOVED_OK" -eq 1 ]; then
+  ok "fork-not-local: refs/pull/N/head fetched => worktree created + runner launched (AC2a path reachable)"
+else
+  no "fork-not-local wrong (rc=$RC27 present_before=$PRESENT_BEFORE marker=$MARKER_OK ran=$RAN_OK removed=$REMOVED_OK)"
+fi
+rm -rf "$fork_root"
 
 echo
 echo "RESULT: $pass passed, $fail failed"

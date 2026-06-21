@@ -328,6 +328,40 @@ if grep -q "## Missing-drain reconciliation" "$nsd" 2>/dev/null; then no "missin
 grep -q "^## Summary" "$nsd" 2>/dev/null && ok "dashboard renders normally with no missing-drain corpus" || no "dashboard broken with no missing-drain corpus"
 rm -rf "$NS"
 
+echo "== 14. Missing-drain: prose mention of auto_review/suppress is NOT opted_out (finding #2) =="
+# A markerless heal-signal PR whose ## Outcome NARRATES the words "auto_review" and
+# "suppress" in prose but records NO durable opt-out FORM (no `--no-auto-review`, no
+# `auto_review ... false`). This is exactly the #74-class silent-drop shape — it MUST
+# classify unknown_or_opted_out, not opted_out (the old bare-word match mislabeled it,
+# hiding the very signal AC5 exists to surface). pull/77 (durable `auto_review == false`)
+# must STILL classify opted_out, proving the tightening didn't over-correct.
+P="$(mktemp -d)"; ( cd "$P" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$P/.supervisor/logs" "$P/.supervisor/jobs/done" "$P/.supervisor/review-dispatch"
+printf '%s\n' '{"ts":"2026-06-19T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$P/.supervisor/logs/sess-p.jsonl"
+URL="https://github.com/o/r/pull"
+cat > "$P/.supervisor/jobs/done/job-76.md" <<EOF
+# Job 76
+## Outcome
+- **Status:** completed
+- **PR:** $URL/76 (base: main)
+- **heal_decision:** PASS
+- **Until-mergeable note:** the agent set auto_review then never re-dispatched; the drain was suppressed and the dispatch was missed (a silent drop to investigate).
+EOF
+cat > "$P/.supervisor/jobs/done/job-77.md" <<EOF
+# Job 77
+## Outcome
+- **Status:** completed
+- **PR:** $URL/77 (base: main)
+- **heal_decision:** PASS
+- **Note:** dispatch disabled (config .auto_review == false) for this run
+EOF
+printf '20260618T195030Z\t%s/78\n' "$URL" > "$P/.supervisor/review-dispatch/zzz"   # non-empty corpus
+( cd "$P" && bash "$BUILD" >/dev/null 2>&1 )
+psec="$(sed -n '/^## Missing-drain reconciliation/,/^## /p' "$P/.supervisor/insights/dashboard.md" 2>/dev/null)"
+printf '%s' "$psec" | grep -qE "\| $URL/76 \| unknown_or_opted_out \|" && ok "prose mention of auto_review/suppress (no durable form) => unknown_or_opted_out (not mislabeled)" || no "prose mention wrongly classified opted_out (finding #2 regression)"
+printf '%s' "$psec" | grep -qE "\| $URL/77 \| opted_out \|" && ok "durable 'auto_review == false' still => opted_out (tightening didn't over-correct)" || no "durable opt-out form no longer detected"
+rm -rf "$P"
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

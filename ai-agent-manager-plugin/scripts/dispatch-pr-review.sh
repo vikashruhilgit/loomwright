@@ -419,9 +419,19 @@ if [ -z "$HEAD_SHA" ]; then
   exit 0
 fi
 
-# For a same-repo PR, fetch origin so the head SHA is present locally before the
-# detached worktree checkout. A fork's head is not on origin (AC2a degrade) so the
-# fetch is best-effort and its failure is non-fatal.
+# Make the PR head SHA present locally before the detached worktree checkout. Prefer
+# the GitHub PR head ref `refs/pull/<n>/head` — it exists for BOTH same-repo AND fork
+# PRs on the BASE repo's origin, so a fork's head (which is on NO origin branch, and
+# which a bare-SHA fetch is usually server-refused for) is still retrievable. This is
+# what makes the AC2a fork "review-only ESCALATED + posted comment" path REACHABLE:
+# without a local head SHA, `git worktree add` fails and the runner never starts to
+# post the escalation. Fall back to a SHA / all-branches fetch for non-GitHub remotes.
+# All best-effort; a failure is non-fatal (the worktree-add below then fails safely —
+# no marker). The PR number is parsed from the URL's /pull/<n> segment.
+PR_NUMBER="$(printf '%s' "$PR_URL" | sed -n 's#.*/pull/\([0-9][0-9]*\).*#\1#p')"
+if [ -n "$PR_NUMBER" ]; then
+  git fetch origin "refs/pull/$PR_NUMBER/head" >/dev/null 2>&1 || true
+fi
 git fetch origin "$HEAD_SHA" >/dev/null 2>&1 || git fetch origin >/dev/null 2>&1 || true
 
 # Defensive pre-add cleanup: a hard crash on a prior dispatch (SIGKILL/power-loss in
