@@ -43,21 +43,44 @@
 #   check_wait_timeout / review_check_pattern) are forwarded ONLY when set, via
 #   AI_AGENT_MANAGER_CHECK_WAIT_TIMEOUT / AI_AGENT_MANAGER_REVIEW_CHECK_PATTERN.
 #
-#   COST / RUNAWAY GUARD. A per-PR dispatch marker file under
-#   .supervisor/review-dispatch/ (keyed by a hash of the PR URL) ensures a given
-#   PR is dispatched AT MOST ONCE. If the marker already exists, log one line and
-#   exit 0 — this prevents a re-dispatch loop (e.g. a Supervisor --continue that
-#   re-runs the completion tail on the same PR). Combined with the fact that
-#   /review-pr NEVER creates a PR, there is no review->review recursion.
+#   COST / RUNAWAY GUARD + ISOLATION LIFECYCLE (AC4a, PINNED ORDER). Two distinct
+#   guards key the dispatch off .supervisor/review-dispatch/:
+#     - an ATOMIC per-PR LOCK (mkdir <pr_hash>.lock) = "someone is dispatching",
+#       taken BEFORE the worktree so a concurrent dispatch (step 5.5 vs the
+#       PostToolUse hook) loses the race and exits 0. Stale-lock reclaim (pid-dead
+#       + no-marker + past-TTL) closes the crash-between-mkdir-and-marker wedge.
+#     - a durable per-PR MARKER (<pr_hash>) = "a dispatch genuinely started",
+#       written ONLY AFTER the worktree + RUN_LOG header succeed (never before), so
+#       the marker NEVER lies: marker present <=> a dispatch genuinely started.
+#   PINNED fail-safe order (do NOT reorder): (1) existing-marker-wins exit 0 ->
+#   (2) verify claude launchable (else exit 0, NO marker) -> (3) atomic lock ->
+#   (4) sibling worktree -> (5) RUN_LOG header -> (6) marker -> (7) launch wrapper.
+#   A given PR is dispatched AT MOST ONCE (re-dispatch on a --continue re-run is
+#   blocked by guard (1)). /review-pr NEVER creates a PR, so no review->review
+#   recursion.
 #
-#   FRESH DETACHED PROCESS. When enabled + not yet dispatched, launch a brand-new
-#   detached HEADLESS `claude -p --agent ai-agent-manager-plugin:review-pr-runner <pr-url>`
-#   OS process (nohup + background + full stdio redirection to a log under
-#   .supervisor/logs/). A fresh OS process means the runner is the MAIN agent of
-#   its own session and can therefore spawn its own child agents (code-reviewer /
-#   fix worker) — see skills/review-heal/SKILL.md "Two entry senses of fresh" (a).
-#   `-p` does NOT make the runner a subagent: it is still the top-level/main agent
-#   of its headless session, so Task-spawning children works exactly as before.
+#   ISOLATED SIBLING WORKTREE (AC1/AC2/AC2b). The detached drain runs in its OWN
+#   git worktree — a plugin-owned SIBLING of the primary checkout, OUTSIDE the
+#   tracked tree (../{project}-review-{pr_hash_short}), created detached-HEAD at the
+#   PR head SHA (`git worktree add --detach <path> <sha>`). This means the drain
+#   NEVER shares a working tree/index with the inline Phase 4.5 self-heal — it
+#   cannot be swept by an inline `git add -A` and pollutes nothing in `git status`.
+#   Detached-HEAD avoids "branch already checked out" when the PR head == the inline
+#   session's current branch (the same-branch case). A sibling path (never nested)
+#   is what makes the collision the prior 4 PRs kept re-exposing structurally
+#   impossible. See skills/review-heal/SKILL.md and agents/supervisor.md step 5.5.
+#
+#   FRESH DETACHED PROCESS + TRAP-OWNED CLEANUP (AC3). The launch is a brand-new
+#   detached HEADLESS `claude -p --agent ai-agent-manager-plugin:review-pr-runner
+#   <pr-url>` OS process, wrapped in a small `bash -c` process that OWNS
+#   `trap cleanup EXIT`. On EXIT (normal, error, OR crash) the trap removes ONLY
+#   this hash-keyed worktree + lock dir (executable cleanup, NOT a prompt
+#   instruction the agent can skip — the exact reliability failure this saga is
+#   about). The trap cd's OUT of the worktree and uses `git -C <main-gitdir>` so it
+#   never runs from inside the dir being deleted. A fresh OS process means the
+#   runner is the MAIN agent of its own session and can spawn child agents
+#   (code-reviewer / fix worker) — see skills/review-heal/SKILL.md "Two entry
+#   senses of fresh" (a). `-p` does NOT make the runner a subagent.
 #
 #   `-p`/--print is REQUIRED (mirrors dispatch-pr-postmortem.sh's fix in PR #63).
 #   `--agent` ONLY selects which agent — it does NOT switch to headless mode; the
@@ -240,25 +263,53 @@ if command -v shasum >/dev/null 2>&1; then
   PR_HASH="$(printf '%s' "$PR_URL" | shasum 2>/dev/null | cut -d' ' -f1 || true)"
 elif command -v sha1sum >/dev/null 2>&1; then
   PR_HASH="$(printf '%s' "$PR_URL" | sha1sum 2>/dev/null | cut -d' ' -f1 || true)"
+elif command -v cksum >/dev/null 2>&1; then
+  # POSIX-guaranteed fallback: a numeric CRC, distinct per distinct URL. Keeps PR_HASH a
+  # collision-resistant TOKEN (not a sanitized URL), so PR_HASH_SHORT (first-12, below)
+  # stays unique per PR — a sanitized URL would share the `https-github` scheme+host
+  # prefix across every PR and collide the worktree path.
+  PR_HASH="$(printf '%s' "$PR_URL" | cksum 2>/dev/null | cut -d' ' -f1 || true)"
 fi
-# Fallback to a sanitized URL if no hashing tool is present (still unique per PR).
+# Last resort — only if NONE of shasum/sha1sum/cksum exists, which cannot happen on a
+# normal macOS/Linux (cksum is POSIX-mandatory). The sanitized URL keeps the MARKER and
+# LOCK unique per PR; PR_HASH_SHORT is not distinguishing in this unreachable case.
 if [ -z "$PR_HASH" ]; then
   PR_HASH="$(printf '%s' "$PR_URL" | tr -c 'A-Za-z0-9' '-' )"
 fi
 MARKER="$DISPATCH_DIR/$PR_HASH"
+LOCK_DIR="$DISPATCH_DIR/$PR_HASH.lock"
+LOCK_META="$LOCK_DIR/meta"
+LOCK_TTL_SECONDS=1800   # conservative stale-lock TTL (30 min) — see AC4a-(i) reclaim
 
+# A short hash slice for the SIBLING worktree path (deterministic from PR hash so
+# the trap-cleanup can target exactly it — AC2b). Keep it short to bound the path.
+PR_HASH_SHORT="$(printf '%s' "$PR_HASH" | cut -c1-12)"
+
+# Resolve the primary repo's main gitdir + project basename so the worktree is a
+# SIBLING of the primary checkout (../{project}-review-{hash}), NEVER nested under
+# the repo working dir (a nested worktree could be swept by an inline `git add -A`,
+# re-creating the very collision this change removes — AC2b).
+REPO_TOPLEVEL="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+PROJECT_BASENAME="$(basename "${REPO_TOPLEVEL:-$PWD}")"
+PARENT_DIR="$(dirname "${REPO_TOPLEVEL:-$PWD}")"
+WT_PATH="$PARENT_DIR/${PROJECT_BASENAME}-review-${PR_HASH_SHORT}"
+
+# ---- ① existing-marker-wins (AC4a, PINNED order — BEFORE lock/worktree) ------
+# If a durable marker already exists for this PR, a dispatch genuinely started —
+# never launch again. This preserves today's double-dispatch protection and must
+# come BEFORE taking any lock or creating any worktree.
 if [ -e "$MARKER" ]; then
   log "PR already dispatched this run (marker exists: $MARKER) — skipping re-dispatch"
   exit 0
 fi
 
-# ---- Dry-run short-circuit (honored BEFORE requiring the claude binary) ------
-# In dry-run the claude process is never launched, so its presence on PATH is
-# irrelevant. Emit the would-be command + write the marker (so the marker-guard
-# path is still exercised) WITHOUT requiring the binary. This keeps the self-test
-# (test-dispatch-pr-review.sh) claude-independent on CI runners that have no
-# `claude` on PATH — previously the claude check below short-circuited first,
-# making the dry-run a no-op on CI.
+# ---- Dry-run short-circuit (TEST-ONLY exception — claude-independent) ---------
+# In dry-run the claude process is never launched (no lock/worktree taken), so its
+# presence on PATH is irrelevant. Emit the would-be command + write the marker (so
+# the marker-guard path is still exercised) WITHOUT requiring the binary. This keeps
+# the self-test (test-dispatch-pr-review.sh) claude-independent on CI runners that
+# have no `claude` on PATH. DRY-RUN is the ONLY path that writes a marker without a
+# real launch (or worktree/lock).
 if [ -n "$DRY_RUN" ]; then
   # Emit the would-be exported env signal prefix (only the vars actually set) so the
   # self-test can assert the pinned until-mergeable contract without launching claude.
@@ -273,23 +324,175 @@ if [ -n "$DRY_RUN" ]; then
   exit 0
 fi
 
-# ---- Require the claude binary ----------------------------------------------
+# ---- ② verify the launcher is launchable (BEFORE lock/worktree/marker) -------
+# A missing binary must NEVER leave a marker (the AC4a binary-check-precedes-marker
+# invariant). This precedes the lock + worktree so we never create artifacts we
+# then have to tear down for a launcher we cannot run.
 if ! command -v "$CLAUDE_BIN" >/dev/null 2>&1; then
-  log "'$CLAUDE_BIN' not on PATH — cannot launch review-pr-runner, skipping"
+  log "'$CLAUDE_BIN' not on PATH — cannot launch review-pr-runner, skipping (no marker)"
   exit 0
 fi
 
-# ---- Launch the fresh detached review-pr-runner process ---------------------
-mkdir -p "$LOG_DIR" 2>/dev/null || true
+# ---- ③ atomic per-PR lock BEFORE worktree creation (AC4a-i) -----------------
+# `mkdir` is atomic: it fails if a concurrent dispatch (step 5.5 vs the PostToolUse
+# hook) already holds the lock. The winner records metadata in the lock dir. The
+# loser exits 0. Stale-lock reclaim (pid-dead + no-marker + past-TTL) closes the
+# crash-between-mkdir-and-marker wedge.
+DISPATCH_PID="$$"
+NOW_EPOCH="$(date -u +%s 2>/dev/null || echo 0)"
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || echo unknown)"
 RUN_LOG="$LOG_DIR/review-pr-dispatch-$TIMESTAMP-$PR_HASH.log"
 
-# Write the marker BEFORE launching so a crash mid-launch still blocks re-dispatch
-# (fail-closed against runaway). The marker records the PR URL + dispatch time.
+write_lock_meta() {
+  {
+    printf 'pr_url\t%s\n' "$PR_URL"
+    printf 'pid\t%s\n' "$DISPATCH_PID"
+    printf 'ts\t%s\n' "$NOW_EPOCH"
+    printf 'worktree\t%s\n' "$WT_PATH"
+    printf 'run_log\t%s\n' "$RUN_LOG"
+  } > "$LOCK_META" 2>/dev/null || true
+}
+
+acquire_lock() {
+  # Returns 0 when the lock is held by us, 1 when lost to a live/fresh dispatch.
+  if mkdir "$LOCK_DIR" 2>/dev/null; then
+    write_lock_meta
+    return 0
+  fi
+  # Lock exists — consider stale-lock reclaim. ALL THREE must hold:
+  #   (a) NO durable marker (asserted — ① already guaranteed this), AND
+  #   (b) recorded pid is NOT alive, AND
+  #   (c) lock ts is older than LOCK_TTL_SECONDS.
+  if [ -e "$MARKER" ]; then
+    log "lost to a genuine dispatch (marker appeared) — skipping"
+    return 1
+  fi
+  local lk_pid lk_ts age
+  lk_pid="$(awk -F'\t' '$1=="pid"{print $2; exit}' "$LOCK_META" 2>/dev/null || true)"
+  lk_ts="$(awk -F'\t' '$1=="ts"{print $2; exit}' "$LOCK_META" 2>/dev/null || true)"
+  # (b) pid alive?
+  if [ -n "$lk_pid" ] && kill -0 "$lk_pid" 2>/dev/null; then
+    log "lost to a live dispatch (pid $lk_pid alive) — skipping"
+    return 1
+  fi
+  # (c) past TTL?
+  age=-1
+  if [ -n "$lk_ts" ] && [ "$lk_ts" -ge 0 ] 2>/dev/null; then
+    age=$(( NOW_EPOCH - lk_ts ))
+  fi
+  if [ "$age" -lt "$LOCK_TTL_SECONDS" ]; then
+    log "lost to a fresh dispatch (lock age ${age}s < ${LOCK_TTL_SECONDS}s TTL) — skipping"
+    return 1
+  fi
+  # Reclaim: clear ONLY this hash-keyed lock dir, then retry the atomic mkdir.
+  log "reclaiming stale lock (pid ${lk_pid:-?} dead, age ${age}s ≥ ${LOCK_TTL_SECONDS}s TTL)"
+  rm -rf "$LOCK_DIR" 2>/dev/null || true
+  if mkdir "$LOCK_DIR" 2>/dev/null; then
+    write_lock_meta
+    return 0
+  fi
+  log "lost the reclaim race to a concurrent dispatch — skipping"
+  return 1
+}
+
+if ! acquire_lock; then
+  exit 0
+fi
+# From here on we OWN the lock; release it on any early-return failure path.
+
+# ---- ④ create the isolated SIBLING worktree (detached-HEAD, AC2/AC2b) --------
+# Detached-HEAD at the PR head SHA avoids "branch already checked out" when the PR
+# head == the inline session's current branch (AC2). Resolve head SHA + fork status
+# via gh; absorb a gh failure (release lock, exit 0). For same-repo PRs fetch first
+# so the SHA is present locally.
+mkdir -p "$LOG_DIR" 2>/dev/null || true
+
+PR_META="$(gh pr view "$PR_URL" --json headRefOid,headRefName,isCrossRepository 2>/dev/null || true)"
+if [ -z "$PR_META" ]; then
+  log "gh pr view failed for $PR_URL — cannot resolve head SHA, skipping (no marker)"
+  rm -rf "$LOCK_DIR" 2>/dev/null || true
+  exit 0
+fi
+HEAD_SHA=""
+HEAD_REF=""
+IS_FORK=""
+if command -v jq >/dev/null 2>&1; then
+  HEAD_SHA="$(printf '%s' "$PR_META" | jq -r '.headRefOid // empty' 2>/dev/null || true)"
+  HEAD_REF="$(printf '%s' "$PR_META" | jq -r '.headRefName // empty' 2>/dev/null || true)"
+  IS_FORK="$(printf '%s' "$PR_META" | jq -r '.isCrossRepository // false' 2>/dev/null || true)"
+fi
+if [ -z "$HEAD_SHA" ]; then
+  log "could not resolve head SHA from gh pr view — skipping (no marker)"
+  rm -rf "$LOCK_DIR" 2>/dev/null || true
+  exit 0
+fi
+
+# Make the PR head SHA present locally before the detached worktree checkout. Prefer
+# the GitHub PR head ref `refs/pull/<n>/head` — it exists for BOTH same-repo AND fork
+# PRs on the BASE repo's origin, so a fork's head (which is on NO origin branch, and
+# which a bare-SHA fetch is usually server-refused for) is still retrievable. This is
+# what makes the AC2a fork "review-only ESCALATED + posted comment" path REACHABLE:
+# without a local head SHA, `git worktree add` fails and the runner never starts to
+# post the escalation. Fall back to a SHA / all-branches fetch for non-GitHub remotes.
+# All best-effort; a failure is non-fatal (the worktree-add below then fails safely —
+# no marker). The PR number is parsed from the URL's /pull/<n> segment.
+PR_NUMBER="$(printf '%s' "$PR_URL" | sed -n 's#.*/pull/\([0-9][0-9]*\).*#\1#p')"
+if [ -n "$PR_NUMBER" ]; then
+  git fetch origin "refs/pull/$PR_NUMBER/head" >/dev/null 2>&1 || true
+fi
+git fetch origin "$HEAD_SHA" >/dev/null 2>&1 || git fetch origin >/dev/null 2>&1 || true
+
+# Defensive pre-add cleanup: a hard crash on a prior dispatch (SIGKILL/power-loss in
+# the narrow window between this `git worktree add` and the marker write) can leave a
+# stale dir at the deterministic $WT_PATH with NO marker — a later `git worktree add`
+# would then fail on the existing path and wedge re-dispatch for this PR forever. We
+# hold the per-PR lock here, so clearing ONLY this hash-keyed path is safe (no other
+# dispatch for the same PR can own it). Prune drops any orphaned admin entry the
+# removed dir left behind. (The post-success prune below cannot pre-clean this.)
+git worktree remove --force "$WT_PATH" >/dev/null 2>&1 || true
+rm -rf "$WT_PATH" 2>/dev/null || true
+git worktree prune >/dev/null 2>&1 || true
+
+if ! git worktree add --detach "$WT_PATH" "$HEAD_SHA" >/dev/null 2>&1; then
+  log "git worktree add failed for $WT_PATH @ $HEAD_SHA — skipping (no marker)"
+  rm -rf "$LOCK_DIR" 2>/dev/null || true
+  exit 0
+fi
+
+# ---- ⑤ write the RUN_LOG header (non-empty, machine-greppable) --------------
+# Written BEFORE the marker + launch so an in-flight drain is never an ambiguous
+# 0-byte file. If the header write fails, treat it as a failure: tear down the
+# worktree + lock and exit 0 with NO marker (truthful: no dispatch started).
+# Resolve RUN_LOG to ABSOLUTE up-front (via the repo top-level) so BOTH this header
+# write AND the wrapper's `>>` append below target the SAME file regardless of the
+# dispatcher's cwd — a relative path would split/misplace the log if the dispatcher
+# were ever invoked from a subdirectory (today both call sites run at repo root).
+MAIN_GITDIR="${REPO_TOPLEVEL:-$PWD}"
+case "$RUN_LOG" in
+  /*) RUN_LOG_ABS="$RUN_LOG" ;;
+  *)  RUN_LOG_ABS="$MAIN_GITDIR/$RUN_LOG" ;;
+esac
+if ! {
+  printf 'DISPATCHED\tts=%s\turl=%s\tuntil_mergeable=%s\trunner=%s\n' "$TIMESTAMP" "$PR_URL" "$UNTIL_MERGEABLE" "$RUNNER"
+  printf '# marker: %s\n' "$MARKER"
+  printf '# worktree: %s (isolated sibling, detached HEAD @ %s)\n' "$WT_PATH" "$HEAD_SHA"
+  printf '# detached `claude -p` buffers stdout until exit — an otherwise-empty body below this\n'
+  printf '# header means the drain is IN FLIGHT, not failed. Liveness: pgrep -lf review-pr-runner\n'
+  printf '# ---- runner output follows ----\n'
+} > "$RUN_LOG_ABS" 2>/dev/null; then
+  log "RUN_LOG header write failed ($RUN_LOG_ABS) — tearing down worktree+lock, skipping (no marker)"
+  git worktree remove --force "$WT_PATH" >/dev/null 2>&1 || true
+  rm -rf "$LOCK_DIR" 2>/dev/null || true
+  exit 0
+fi
+
+# ---- ⑥ write the durable marker (AC4a-ii — ONLY after worktree+header) ------
+# Lock = "someone is dispatching"; marker = "a dispatch genuinely started". The
+# marker is written ONLY now (worktree + header both succeeded) but still BEFORE
+# the launch, so a marker can never claim a dispatch that did not actually start.
 printf '%s\t%s\n' "$TIMESTAMP" "$PR_URL" > "$MARKER" 2>/dev/null || true
 
-# Thread the S2-pinned until-mergeable env-var signal into the detached process by
-# EXPORTING the vars before the launch subshell (they are inherited by the child).
+# ---- Thread the until-mergeable + fork env-var signal into the wrapper -------
 # Default ON: export AI_AGENT_MANAGER_UNTIL_MERGEABLE=1 unless opted out. The runner
 # reads these and translates them into the corresponding inline /review-pr flags
 # (§"Until-Mergeable Dispatch Signal"). Only export the two optional tuning vars
@@ -303,33 +506,62 @@ else
   log "until-mergeable drain opted out — runner runs plain diff-only /review-pr"
 fi
 
-# Synchronous, non-empty RUN_LOG header — written BEFORE the detached launch so the
-# log is never an ambiguous 0-byte file. The detached `claude -p` buffers its stdout
-# until exit, so without this an in-flight drain looks identical to a failed no-op
-# (the exact false-negative that made a prior run misreport "not dispatched"). This
-# header self-documents the dispatch (machine-greppable `DISPATCHED` token + url +
-# until_mergeable flag + runner, plus a marker comment) and states plainly that an empty body below means
-# IN FLIGHT, not failed. `>` truncates a fresh, uniquely-named file; the launch
-# appends with `>>`.
-{
-  printf 'DISPATCHED\tts=%s\turl=%s\tuntil_mergeable=%s\trunner=%s\n' "$TIMESTAMP" "$PR_URL" "$UNTIL_MERGEABLE" "$RUNNER"
-  printf '# marker: %s\n' "$MARKER"
-  printf '# detached `claude -p` buffers stdout until exit — an otherwise-empty body below this\n'
-  printf '# header means the drain is IN FLIGHT, not failed. Liveness: pgrep -lf review-pr-runner\n'
-  printf '# ---- runner output follows ----\n'
-} > "$RUN_LOG" 2>/dev/null || true
+# Fork/cross-repo signal (AC2a): the runner reads this to degrade to review-only
+# (ESCALATED + posted comment) for a fork PR whose head is NOT on origin — a
+# `git push origin HEAD:<ref>` would update the wrong ref or fail. Same-repo PRs
+# push via explicit refspec; the runner reads the head ref for that refspec.
+if [ "$IS_FORK" = "true" ]; then
+  export AI_AGENT_MANAGER_PR_IS_FORK=1
+  log "fork/cross-repo PR — runner degrades to review-only (no push to origin)"
+else
+  export AI_AGENT_MANAGER_PR_IS_FORK=0
+fi
+[ -n "$HEAD_REF" ] && export AI_AGENT_MANAGER_PR_HEAD_REF="$HEAD_REF"
 
-# Fire-and-forget: fully detached so the Supervisor completion tail returns
-# immediately. nohup + background subshell + all stdio redirected away from the
-# caller's inherited pipes (a backgrounded child still holding the tail's stdout
-# would keep the tail "running" until it exits). HEADLESS `claude -p` (print-mode):
-# `--agent` selects the runner but does NOT imply headless — without `-p` this is an
-# interactive session that, detached + no TTY, can hang on a permission prompt
-# instead of exiting (see header "FRESH DETACHED PROCESS"). No permission-bypass
-# flags by design — relies on the project's existing permission settings. The
-# until-mergeable signal rides as exported env vars (NOT a /review-pr slash string,
-# NOT a positional) — the --agent form has no flag surface, avoiding the 11.1.1 trap.
-( nohup "$CLAUDE_BIN" -p --agent "$RUNNER" "$PR_URL" >>"$RUN_LOG" 2>&1 </dev/null & ) >/dev/null 2>&1 || true
+# Bounded prune of provably-stale DISPATCHER-OWNED worktree paths only. `git
+# worktree prune` removes administrative entries for worktree dirs that no longer
+# exist on disk — it NEVER deletes a live worktree dir, so it cannot catch a
+# concurrent drain's worktree. NO broad `*-review-*` glob removal.
+git worktree prune >/dev/null 2>&1 || true
 
-log "dispatched review-pr-runner for $PR_URL (log: $RUN_LOG)"
+# ---- ⑦ launch the detached wrapper that OWNS `trap cleanup EXIT` (AC3) -------
+# The wrapper backgrounds with nohup + full stdio redirection. It sets a trap that
+# removes ONLY this hash-keyed worktree + lock dir on EXIT (normal, error, OR
+# crash) — executable cleanup, not a prompt instruction. The trap uses `git -C`
+# against the MAIN repo gitdir and cd's OUT of the worktree before removing it, so
+# cleanup never runs from inside the directory being deleted. `-p` is REQUIRED; no
+# permission-bypass flags by design.
+# MAIN_GITDIR + RUN_LOG_ABS were already resolved at the header-write step above.
+# The wrapper cd's INTO the worktree before launching, so RUN_LOG_ABS (and the lock
+# dir under .supervisor/) must be ABSOLUTE — a relative path would resolve inside the
+# worktree (where .supervisor/logs/ does not exist), the `>>` redirect would fail,
+# and bash would abort the command before claude ever runs.
+case "$LOCK_DIR" in
+  /*) LOCK_DIR_ABS="$LOCK_DIR" ;;
+  *)  LOCK_DIR_ABS="$MAIN_GITDIR/$LOCK_DIR" ;;
+esac
+# Build the wrapper body as a FULLY SINGLE-QUOTED string (no interpolation) and pass
+# the runtime values as POSITIONAL ARGS to `bash -c`. This is metacharacter-safe: a
+# `$`, backtick, double-quote, or backslash in any value (most plausibly a repo path)
+# can never break the wrapper string or be re-evaluated by the inner shell. The prior
+# interpolated `'\''"$VAR"'\''` form embedded values inside double quotes, so a single
+# quote was safe but a `$`/backtick/`"` in a path silently corrupted the worktree path
+# (failed cd -> leaked worktree) AFTER the marker was written — the exact silent-drop
+# class this change exists to remove. The trap captures the args into named vars FIRST
+# (a trap function sees its OWN empty positionals on EXIT, not the script's $1..$7).
+WRAPPER='
+_mg="$1"; _wt="$2"; _lock="$3"; _bin="$4"; _runner="$5"; _pr="$6"; _log="$7"
+trap_cleanup() {
+  cd "$_mg" 2>/dev/null || cd / 2>/dev/null || true
+  git -C "$_mg" worktree remove --force "$_wt" >/dev/null 2>&1 || true
+  rm -rf "$_wt" 2>/dev/null || true
+  rm -rf "$_lock" 2>/dev/null || true
+}
+trap trap_cleanup EXIT
+cd "$_wt" || exit 0
+"$_bin" -p --agent "$_runner" "$_pr" >>"$_log" 2>&1 </dev/null
+'
+( nohup bash -c "$WRAPPER" _ "$MAIN_GITDIR" "$WT_PATH" "$LOCK_DIR_ABS" "$CLAUDE_BIN" "$RUNNER" "$PR_URL" "$RUN_LOG_ABS" >/dev/null 2>&1 & ) >/dev/null 2>&1 || true
+
+log "dispatched review-pr-runner for $PR_URL (worktree: $WT_PATH, log: $RUN_LOG)"
 exit 0
