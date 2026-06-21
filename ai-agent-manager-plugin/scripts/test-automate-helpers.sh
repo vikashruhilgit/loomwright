@@ -373,12 +373,46 @@ else
   no "gate review-required wrong (out='$RUN_OUT' merges=$(merges))"
 fi
 
-# Blocker 3b — null/unreadable reviewDecision.
+# Blocker 3b — bare null reviewDecision ⇒ fail-CLOSED (treated as unknown; the loop
+# must send the explicit "none"/"unreadable" strings, never bare null).
 gate "$(pass_ctx | jq '.review_decision=null')"
-if [ "$RUN_OUT" = "PARK: review_decision_null" ] && [ "$(merges)" -eq 0 ]; then
-  ok "gate fail-closed: null reviewDecision ⇒ PARK, no merge"
+if [ "$RUN_OUT" = "PARK: review_decision_unreadable" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: bare null reviewDecision ⇒ PARK (unreadable), no merge"
 else
   no "gate null-decision wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+
+# Blocker 3b' — explicit "unreadable" reviewDecision (the gh read failed) ⇒ fail-CLOSED.
+gate "$(pass_ctx | jq '.review_decision="unreadable"')"
+if [ "$RUN_OUT" = "PARK: review_decision_unreadable" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: unreadable reviewDecision ⇒ PARK, no merge"
+else
+  no "gate unreadable-decision wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+
+# Reachability fix (regression guard for the round-6 MEDIUM) — a "none" reviewDecision
+# (reviews-not-required: a successfully-read null) must DEFER to cond 4, NOT park at
+# cond 3. These three were the dead paths before the fix.
+# 3c — none + enforceable (checks-only) protection ⇒ MERGE.
+gate "$(pass_ctx | jq '.review_decision="none"')"
+if [ "$RUN_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ]; then
+  ok "gate: none reviewDecision + enforceable (checks-only) protection ⇒ MERGE (cond 4 reachable)"
+else
+  no "gate none+protected wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+# 3d — none + unprotected + --trust-unprotected ⇒ MERGE (the previously-DEAD flag path).
+gate "$(pass_ctx | jq '.review_decision="none" | .protection_enforceable=false | .trust_unprotected=true')"
+if [ "$RUN_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ]; then
+  ok "gate: none reviewDecision + --trust-unprotected ⇒ MERGE (escape hatch now reachable)"
+else
+  no "gate none+trust wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+# 3e — none + unprotected + NO trust ⇒ PARK: unprotected_branch (cond 4 still guards).
+gate "$(pass_ctx | jq '.review_decision="none" | .protection_enforceable=false | .trust_unprotected=false')"
+if [ "$RUN_OUT" = "PARK: unprotected_branch" ] && [ "$(merges)" -eq 0 ]; then
+  ok "gate fail-closed: none reviewDecision + unprotected + no trust ⇒ PARK"
+else
+  no "gate none+unprotected-no-trust wrong (out='$RUN_OUT' merges=$(merges))"
 fi
 
 # Blocker 3c — unresolved human-authored review thread.

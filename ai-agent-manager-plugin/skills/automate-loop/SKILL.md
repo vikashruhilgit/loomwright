@@ -268,14 +268,14 @@ then `--resume`.
 
 > **Execute via the helper, not a re-implementation:** the loop pre-resolves the five conditions into a `ctx.json` (via the `gh` reads described below) and hands it to `automate-helpers.sh gate-eval <pr_url> <ctx.json>` (§1.5) — the **single** implementation of this gate and the **only** code path that executes `gh pr merge --squash`. It prints `MERGE` (after merging) or `PARK: <reason>` and is self-tested for fail-closed behaviour on every condition. The conditions below are the SPEC `gate-eval` implements.
 
-`gh pr merge --squash` fires **ONLY** when **ALL 5** conditions hold. If any fails, is null, or is unreadable ⇒ fail **CLOSED** → park (`pause_reason: awaiting_merge`/`escalated`) + notify. (This gate — implemented in `automate-helpers.sh gate-eval` — is the **only** sanctioned, EXECUTED `gh pr merge --squash` in the plugin — §11.)
+`gh pr merge --squash` fires **ONLY** when **ALL 5** conditions hold. If any fails or is **unreadable** ⇒ fail **CLOSED** → park (`pause_reason: awaiting_merge`/`escalated`) + notify. (Two values are NOT automatic parks — they have explicit per-condition semantics below: a **reviews-not-required `reviewDecision`** is deferred to cond 4, and an **absent rubric** is N/A — see cond 3 and cond 5.) This gate — implemented in `automate-helpers.sh gate-eval` — is the **only** sanctioned, EXECUTED `gh pr merge --squash` in the plugin (§11).
 
 1. **Owned drain == `READY`.** The engine's own inline `/review-pr --until-mergeable` (§7) returned `READY` (not `ESCALATED`).
 
 2. **Head SHA still == the `READY` SHA AND base == `main`.** Re-read `gh pr view <url> --json headRefOid,baseRefName`; if the head moved since the drain declared `READY` (a new commit landed), or the base is not `main`, **do not merge** (the approved state is stale).
 
-3. **`reviewDecision` clean AND no unresolved human-authored review thread.**
-   - `gh pr view <url> --json reviewDecision` ⇒ **NOT** in `{CHANGES_REQUESTED, REVIEW_REQUIRED}`; **null / unreadable `reviewDecision` ⇒ park** (fail closed).
+3. **`reviewDecision` not blocking AND no unresolved human-authored review thread.**
+   - `gh pr view <url> --json reviewDecision` ⇒ **NOT** in `{CHANGES_REQUESTED, REVIEW_REQUIRED}` (those park). A **`null` `reviewDecision` means the branch does not require approving reviews** (an unprotected branch, or **checks-only protection**) — this is **NOT** a cond-3 blocker; whether such a branch may merge is decided by **cond 4** (enforceable protection OR `--trust-unprotected`). Only a **genuinely unreadable** `reviewDecision` (the `gh` read failed) parks here (fail closed). **Loop contract (load-bearing — mirrors cond 5's `"na"` rule):** the loop MUST pass the literal string **`"none"`** into the gate `ctx.json` `review_decision` for a *successfully-read* null, and **`"unreadable"`** only when the read failed — **never bare JSON `null`/absent** (which `gate-eval` coerces to `__MISSING__` → fail-closed `PARK: review_decision_unreadable`). This is exactly what makes `--trust-unprotected` and the checks-only arm of cond 4 **reachable** (a prior bug parked every `null` here before cond 4 ran).
    - **No unresolved human-authored review thread.** Threads are **GraphQL-only** (there is **no** `gh pr view --json reviewThreads` flag — see `review-heal/SKILL.md` §"Step U1 — All-Channel Read" GraphQL block, and its Anti-Pattern "Inventing a `gh pr view --json reviewThreads` flag"):
      ```
      gh api graphql -f query='
@@ -291,7 +291,7 @@ then `--resume`.
      ```
      For each `isResolved == false` thread, classify the first comment's author: **bot iff `author.__typename == "Bot"` OR `author.login` matches `*[bot]`** — a bot-authored unresolved thread does NOT block (the drain handles bots); **otherwise BLOCK** (human-authored unresolved thread). **Unreadable ⇒ do-not-merge** (fail closed).
 
-4. **Enforceable branch protection (OR explicit `--trust-unprotected`).** `gh api repos/<owner>/<repo>/branches/main/protection` ⇒ protection is **enforceable** when `required_approving_review_count >= 1` **OR** there are required status checks. **Toothless / unreadable protection ⇒ treated as UNPROTECTED** → do not merge **unless** `--trust-unprotected` was passed. **GitHub rulesets are out of scope in v1** (only classic branch protection is read).
+4. **Enforceable branch protection (OR explicit `--trust-unprotected`).** `gh api repos/<owner>/<repo>/branches/main/protection` ⇒ protection is **enforceable** when `required_approving_review_count >= 1` **OR** there are required status checks. **Toothless / unreadable protection ⇒ treated as UNPROTECTED** → do not merge **unless** `--trust-unprotected` was passed. **GitHub rulesets are out of scope in v1** (only classic branch protection is read). This condition is what actually decides a **reviews-not-required** branch (cond 3 `"none"`): a **checks-only-protected** branch (required status checks, `required_approving_review_count == 0`) is enforceable and may merge; a **truly unprotected** branch merges ONLY with `--trust-unprotected`.
 
 5. **Required checks green AND rubric satisfied.**
    - Required checks (the §10-condition-4 required contexts) are all green in `statusCheckRollup`.

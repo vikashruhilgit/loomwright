@@ -330,7 +330,9 @@ reconcile_item() {
 #     "drain_result": "READY|ESCALATED",          # cond 1
 #     "ready_sha": "<sha>", "head_sha": "<sha>",   # cond 2
 #     "base": "main",                               # cond 2
-#     "review_decision": "APPROVED|CHANGES_REQUESTED|REVIEW_REQUIRED|null",  # cond 3
+#     "review_decision": "APPROVED|CHANGES_REQUESTED|REVIEW_REQUIRED|none|unreadable",  # cond 3
+#        # "none" = reviews-not-required (the loop maps a successfully-read null here);
+#        # "unreadable" = the gh reviewDecision read failed. Bare null/absent ⇒ fail-closed PARK.
 #     "unresolved_human_thread": true|false,        # cond 3
 #     "protection_enforceable": true|false,         # cond 4
 #     "trust_unprotected": true|false,              # cond 4 override
@@ -369,12 +371,28 @@ gate_eval() {
     echo "PARK: base_not_main"; return 0
   fi
 
-  # Condition 3 — reviewDecision clean (not CHANGES_REQUESTED/REVIEW_REQUIRED,
-  # not null/unreadable) AND no unresolved human-authored review thread.
+  # Condition 3 — reviewDecision not blocking AND no unresolved human thread.
+  #   CHANGES_REQUESTED / REVIEW_REQUIRED        → PARK (a review is required or negative).
+  #   APPROVED, or "none" (reviews-not-required, i.e. a SUCCESSFULLY-read null
+  #     reviewDecision — the branch does not require approving reviews)
+  #                                              → NOT a cond-3 blocker. Whether an
+  #     unprotected / checks-only branch may actually merge is cond 4's call
+  #     (protection_enforceable OR --trust-unprotected). This is the fix that makes
+  #     --trust-unprotected and the checks-only-protection arm of cond 4 REACHABLE —
+  #     previously a null reviewDecision parked here before cond 4 ever ran.
+  #   anything else (unreadable / __MISSING__ / null / "" / unrecognized)
+  #                                              → PARK (fail-CLOSED; reviewDecision is unknown).
+  # LOAD-BEARING LOOP CONTRACT (mirrors the rubric "na" rule, §10 cond 5): the loop MUST
+  # map a successfully-read null reviewDecision to the literal string "none" (NEVER bare
+  # JSON null/absent, which J() coerces to __MISSING__ → fail-closed PARK), and pass
+  # "unreadable" only when the `gh pr view --json reviewDecision` read actually failed.
+  # So "reviews-not-required" merges (subject to cond 4) while a genuinely-unknown
+  # reviewDecision still fails closed.
   local rd; rd="$(J '.review_decision')"
   case "$rd" in
-    CHANGES_REQUESTED|REVIEW_REQUIRED)            echo "PARK: review_decision_blocking"; return 0 ;;
-    __MISSING__|null|"")                          echo "PARK: review_decision_null"; return 0 ;;
+    CHANGES_REQUESTED|REVIEW_REQUIRED)   echo "PARK: review_decision_blocking"; return 0 ;;
+    APPROVED|none)                       : ;;   # acceptable — defer protection judgment to cond 4
+    *)                                   echo "PARK: review_decision_unreadable"; return 0 ;;
   esac
   if [ "$(J '.unresolved_human_thread')" = "true" ]; then
     echo "PARK: unresolved_human_thread"; return 0
