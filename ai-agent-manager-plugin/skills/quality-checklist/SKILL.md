@@ -148,6 +148,7 @@ Applied by the Code Reviewer during Supervisor Phase 4.5 self-heal (and any stan
 
 Check each class against the integrated diff:
 
+- [ ] **Adversarial-input handling (negative / zero / overflow / empty / replay / concurrent).** Every changed code path that consumes input or mutates state is interrogated against hostile / edge inputs — negative or zero quantities, empty / `null` / absent values, max / overflow, replayed (double-submit / retried / redelivered) calls against run-once or idempotent operations, and concurrent execution (check-then-act races, double-grant). Class signal: a new amount / quantity / state-mutation / resource-grant path with no guard against ≤ 0, replay, or concurrent double-execution.
 - [ ] **Validation parity (backend mirrors frontend).** Every rule a frontend/client schema enforces (required, min/max, enum, format, length) has an equivalent server-side / API-boundary check. A field validated only in the browser is unvalidated. Class signal: a new frontend Zod/Yup/form rule with no matching backend guard.
 - [ ] **No falsy coercion on numeric (or boolean) fields.** `value || default` / `if (!count)` silently swallows a legitimate `0` (and `false`, `""`). Use `value ?? default` / explicit `=== undefined` / `== null` checks for fields where zero/empty is valid. Class signal: `||`, `!x`, or truthiness guards applied to a quantity, price, count, offset, or index.
 - [ ] **No positional args to an options-object function.** When a function takes a single options object (`fn({ a, b })`), every call site passes an object — never positional args (`fn(a, b)`), and never in the wrong key order. Class signal: a call site whose argument shape doesn't match the callee's signature.
@@ -159,12 +160,14 @@ Check each class against the integrated diff:
 
 **Fix-the-class rule (pairs with Supervisor Phase 4.5 fixer):** when any instance above is flagged, the fixer sweeps the whole diff for the same class and fixes all occurrences — the reviewer samples, the fixer sweeps. See `agents/supervisor.md` Phase 4.5 fix-iteration step.
 
+**Correctness-severity rule (pairs with the diff-review fix floor).** When a class above is a confirmed correctness / security / behavior regression introduced by the diff, label it **HIGH or BLOCKING** (not MEDIUM/LOW) so Phase 4.5 / the default `/review-pr` loop actually fix it — the fix floor only addresses `new` + BLOCKING/HIGH. MEDIUM/LOW stay for maintainability / polish. This is the severity-assignment rule mirrored from `agents/code-reviewer.md`'s "Flag Issues by Severity" step; it does NOT touch the `drift` severity caps.
+
 ## Token Cost
 
 - Checklist invocation: 50 tokens
 - Framework-specific variations: 100-200 tokens
 - Repo consistency section (audit mode only): +150 tokens
-- Self-Heal Miss-Class Checklist (Phase 4.5 / review-pr heal only): +140 tokens
+- Self-Heal Miss-Class Checklist (Phase 4.5 / review-pr heal only): +180 tokens
 - Total: ~250-400 tokens
 - Context7: Not required
 
