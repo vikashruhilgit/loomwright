@@ -1570,6 +1570,105 @@ AUTONOMOUS_RUN:
 
 ---
 
+## AUTOMATE_RUN
+
+The on-disk layout of the `/automate` engine's run file, `.supervisor/automate/<run_id>.md` (v14.41.0+; `schema_version: 1`). It is the contract, the dashboard, and the resume state for a `/automate` run — one markdown file per run holds the Source, the resolved Queue, the current item, and an append-only Progress log. Its sections, the item-status enum, and the item lifecycle are coined in `skills/automate-loop/SKILL.md` (the single source of truth — §3 the single run file, §4 resume, §6 the per-item loop); this section documents that layout verbatim and **must not re-coin or rename** any of it.
+
+> ⚠️ **This is a markdown STATE-FILE contract, NOT a hook-validated emitted result block.** Unlike `SUPERVISOR_RESULT`, `CODE_REVIEW_RESULT`, `WORKER_RESULT`, and `REVIEW_HEAL_RESULT` — each of which a `SubagentStop` hook in `hooks.json` enumerates and validates — **NOTHING validates `AUTOMATE_RUN`.** No hook enumerates it; there is no SubagentStop validator. It is the persisted state of an inline main-thread workflow (`/automate` is inline-only, no `-runner` agent), written and re-read directly by the engine on each `/loop` tick. The closest precedent in this file is `AUTONOMOUS_RUN` (another inline-workflow state artifact that is "Not subject to hook validation"); `AUTOMATE_RUN` differs in that it is the live, rewritten-in-place run file rather than a terminal summary.
+
+**Single-file principle.** There is **no manifest, no registry, no `progress.jsonl`, no dashboard file** — this ONE markdown file holds everything. "Find prior runs" = glob `.supervisor/automate/*.md` for files not marked `## Status: done`. The only other on-disk artifact is a *transient* config-backup sidecar (`<run_id>.config-backup.json`) that exists only during a tick (see `skills/automate-loop/SKILL.md` §7).
+
+### Run-file layout (`.supervisor/automate/<run_id>.md`)
+
+```md
+# Automate Run: <title>
+## Status: running          # running | paused | done   (paused = stopped, work remains; done only when the Queue is fully resolved)
+## Source
+- <user prompt text | folder <dir> | backlog <_BACKLOG.md> | ...>
+## Run Config
+- mode: safe|auto-merge | limit: 5 | trust_unprotected: false
+- auto_review_original: <true|false|absent> | config_backup: <run_id>.config-backup.json
+## Queue                    # `- [ ]` queued · `- [x]` done (merged) · `- [x] … # skipped|abandoned:` excluded; order = processing order
+- [ ] <requirement path or generated file>
+- [x] <... merged ...>
+- [x] <... path ...>  # skipped: <reason>     # checked-off so "next unchecked" never re-picks it; reason also in ## Progress
+## Current
+- item: <path> | status: running|awaiting_merge|escalated|failed|done | pr: <url> | branch: <name>
+- pause_reason: awaiting_merge|escalated|limit_reached|resume_ambiguous|null
+- owned_drain_started: <ts> | owned_drain_result: READY|ESCALATED | suppressed_default_dispatch: true
+## Progress                 # APPEND-ONLY (never rewritten)
+- <ts> picked <item>
+- <ts> ran /autonomous → PR <url>
+- <ts> drain READY → awaiting_merge
+```
+
+### Section reference
+
+| Section | Required | Notes |
+|---|---|---|
+| `# Automate Run: <title>` | yes | The run title (H1). |
+| `## Status` | yes | The run-level status — the `/loop` stop signal. Enum below. |
+| `## Source` | yes | The single resolved source for this run — the user's prompt text, `folder <dir>`, or `backlog <_BACKLOG.md>`. Exactly one source is resolved per run (`skills/automate-loop/SKILL.md` §2). |
+| `## Run Config` | yes | `mode` (`safe` \| `auto-merge`), `limit` (PROCESSED-item cap, **default 5** — caps completed items this run, never Queue size), `trust_unprotected` (allows auto-merge onto a branch without enforceable protection), `auto_review_original` (the original `.auto_review` value captured before the suppress window — `true`/`false`/`absent`), `config_backup` (path of the transient byte-for-byte config-backup sidecar). The single-drain config-toggle contract is the skill's domain (`skills/automate-loop/SKILL.md` §7). |
+| `## Queue` | yes | The **FULL** resolved item list, in **processing order** (top-down). Checklist convention below. |
+| `## Current` | yes | The in-flight item, its item-level status, `pause_reason`, and the owned-drain observability fields. Enums below. |
+| `## Progress` | yes | **APPEND-ONLY** event log — one timestamped line per event; never rewritten. |
+
+### `## Status` enum (run-level)
+
+| Value | Meaning |
+|---|---|
+| `running` | The loop is actively processing (or this is the freshly-created run). |
+| `paused` | Stopped with **work remaining** — always paired with a `pause_reason` in `## Current` (`awaiting_merge` \| `escalated` \| `limit_reached` \| `resume_ambiguous`). |
+| `done` | Set **only** when the Queue is **fully resolved** (no `- [ ]` items remain), i.e. `remaining: 0`. (`remaining` is **COMPUTED/REPORTED** — the count of `- [ ]` Queue items, derived by `automate-helpers.sh remaining` — **not a persisted run-file field**; there is no `remaining:` line stored in the template.) |
+
+### `## Queue` checklist convention
+
+- `- [ ] <path>` — **queued** (unprocessed). `remaining` counts only `- [ ]` items.
+- `- [x] <path>` — **done** (merged).
+- `- [x] <path>  # skipped: <reason>` / `- [x] <path>  # abandoned: <reason>` — **excluded**: checked-off so "next unchecked" never re-picks it; the reason is also logged in `## Progress`. Because `remaining` counts only `- [ ]` items, a skipped/abandoned item does **not** block `## Status: done`. (This is the documented way to unblock an `escalated`-parked run without merging — see `skills/automate-loop/SKILL.md` §5/§9.)
+- **Order = processing order** (top-down).
+
+### `## Current` fields
+
+| Field | Values | Notes |
+|---|---|---|
+| `status` (item-level) | `running` \| `awaiting_merge` \| `escalated` \| `failed` \| `done` | The state of the in-flight item. Distinct from the run-level `## Status` enum above. |
+| `pause_reason` | `awaiting_merge` \| `escalated` \| `limit_reached` \| `resume_ambiguous` \| `null` | Non-null whenever `## Status: paused`; `null` while `running`/`done`. |
+| `pr` / `branch` | string / `null` | The in-flight item's PR URL and feature branch. |
+| `owned_drain_started` | `<ts>` | Timestamp the engine's single OWNED inline `/review-pr --until-mergeable` drain started. |
+| `owned_drain_result` | `READY` \| `ESCALATED` | The drain's terminal `REVIEW_HEAL_RESULT.decision`, read synchronously. `READY` is "ready, left open for a human" — the drain **never merges**. |
+| `suppressed_default_dispatch` | `true` | Records that the engine suppressed `/autonomous`'s default detached until-mergeable drain (`.auto_review:false` around the RUN phase) so exactly ONE inline drain runs. Verifiable via these fields **plus** the absence of any detached `dispatch-pr-review.sh` artifact for the PR (`skills/automate-loop/SKILL.md` §7). |
+
+### Item lifecycle
+
+```
+queued (- [ ]) → running → pr-open → awaiting_merge → merged (- [x]) | escalated (parks) | failed | skipped
+```
+
+- `escalated` **parks** the run (`## Status: paused`, `pause_reason: escalated`) and never opens a second PR (single-open-PR invariant — `skills/automate-loop/SKILL.md` §8/§9).
+- `skipped`/`abandoned` items are written `- [x] <path>  # skipped|abandoned: <reason>` (above) so they are never re-picked and do not block `done`.
+
+### Crash-safety contract
+
+The run file is the **only** copy of resume state, so (per `skills/automate-loop/SKILL.md` §3):
+
+- **Atomic write (temp + rename):** every update is written to a temp file and `mv`-renamed into place — a crash mid-write never leaves a half-written file; the prior intact version survives.
+- **`## Progress` is APPEND-ONLY** — never rewritten; existing lines are immutable, new lines are appended.
+- **Rewrites are confined** to `## Queue` checkboxes and the `## Current` block (`## Status` changes atomically and rarely; `## Source`/`## Run Config` change rarely).
+- **Resume = belief vs truth:** the run file is the loop's *belief*; on every start the engine reconciles each in-flight item against ground truth (`gh pr view --json state,mergedAt` / `git branch --contains` / the requirement's `## Status: done` stamp) **before** trusting a checkbox (`skills/automate-loop/SKILL.md` §4).
+
+### Optional terminal JSONL breadcrumb (secondary — never the source of truth)
+
+The engine MAY append **ONE** terminal line per run to the existing `.supervisor/logs/<run_id>.jsonl` (the shared session-log convention) for trend tooling. This is a **secondary breadcrumb only** — the run file (`.supervisor/automate/<run_id>.md`) remains **authoritative** for all resume/state decisions; the JSONL line is never read as the source of truth.
+
+**Cross-references:**
+- `ai-agent-manager-plugin/skills/automate-loop/SKILL.md` — the **authority** for the run-file layout, the item lifecycle, resume/reconcile, the single-drain contract, and the two modes. This section documents §3/§4/§5/§6/§7 of that skill; do NOT change names here without updating the skill first.
+- `ai-agent-manager-plugin/commands/automate.md` — the `/automate` command body.
+- `AUTONOMOUS_RUN` schema (above) — the sibling inline-workflow state artifact (`/autonomous`), likewise not hook-validated; the `/automate` per-item RUN step drives `/autonomous --single-iteration`.
+
+---
+
 ## Schema Versioning
 
 All result schemas include a `schema_version` field. This enables forward compatibility:
