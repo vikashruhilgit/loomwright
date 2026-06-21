@@ -39,15 +39,20 @@ The runner is **NEVER Task-spawned**. A `Task(ai-agent-manager-plugin:review-pr-
 
 ## Workflow
 
-### Step 1 — PR-URL → branch resolution
+### Step 1 — PR-URL → head resolution (isolation-aware)
 
-Per `review-heal` skill Step 1, resolve the PR's head branch and check it out before entering the loop:
+Per `review-heal` skill Step 1, resolve the PR's head before entering the loop. **How** the working tree gets onto the head depends on which entry sense is running:
 
-```bash
-HEAD_REF=$(gh pr view <pr-url> --json headRefName --jq '.headRefName')
-git fetch origin "$HEAD_REF"
-git checkout "$HEAD_REF"
-```
+- **Inline `/review-pr` session (no concurrent self-heal to collide with):** check out the head branch on the main thread's checkout:
+
+  ```bash
+  HEAD_REF=$(gh pr view <pr-url> --json headRefName --jq '.headRefName')
+  git fetch origin "$HEAD_REF"
+  git checkout "$HEAD_REF"
+  ```
+
+- **Detached dispatched drain (the `dispatch-pr-review.sh` → `review-pr-runner` path):** the **dispatcher already created an isolated sibling worktree** (detached-HEAD at the PR head SHA) and launched this runner *inside it*. In that case the runner **does NOT run its own `git checkout "$HEAD_REF"`** — it already operates inside the dispatcher-provided worktree, so it never checks-out / stages / commits in the inline session's working tree. Detect this by checking whether the current working directory is the dispatcher-provided isolated worktree (it is `cd`'d there by the wrapper before launch); when it is, skip the checkout above. See `review-heal` skill §"Isolated worktree for the detached dispatched drain".
+- **Worktree removal is NOT a runner step.** Creation AND removal of the isolated worktree are owned by the dispatcher's `trap cleanup EXIT` wrapper (executable, not a prompt instruction) — the runner never creates or removes the worktree itself (AC3).
 
 The single input is the **PR URL**. The review scope is the PR diff: `git diff <base>...HEAD` for the PR's base branch (default `main`).
 
@@ -58,7 +63,7 @@ Run the loop exactly as the `review-heal` skill specifies (mirrors Supervisor Ph
 1. `Task(subagent_type: "ai-agent-manager-plugin:code-reviewer", ...)` reviewing the PR-branch diff (`git diff <base>...HEAD`), schema `CODE_REVIEW_RESULT` v3, `review_mode: diff_review`. Parse the result block.
 2. **PASS** → `decision = PASS`, `remaining_issues = 0`, break. **Do NOT merge.**
 3. **NEEDS_HUMAN** → `decision = ESCALATED`. STOP — do NOT auto-fix, do NOT merge. Post findings to the PR (`gh pr comment`), fire best-effort notifications, break.
-4. **FAIL** (≥1 `new` + BLOCKING/HIGH issue) → spawn a `Task(subagent_type: "general-purpose", ...)` fix worker, instructing it IN ITS PROMPT to use only Read / Write / Edit / Bash / Glob / Grep and **never Task** (subagents cannot spawn subagents; note the Task call itself cannot restrict a child's toolset — this is a prompt contract, not an enforced allowlist) that addresses ONLY the `new` + BLOCKING/HIGH findings, leaving `pre_existing` issues and nits untouched. Then `git push` to update the PR branch (**regular push, NEVER `--force`**), increment `heal_iterations`, and re-review.
+4. **FAIL** (≥1 `new` + BLOCKING/HIGH issue) → spawn a `Task(subagent_type: "general-purpose", ...)` fix worker, instructing it IN ITS PROMPT to use only Read / Write / Edit / Bash / Glob / Grep and **never Task** (subagents cannot spawn subagents; note the Task call itself cannot restrict a child's toolset — this is a prompt contract, not an enforced allowlist) that addresses ONLY the `new` + BLOCKING/HIGH findings, leaving `pre_existing` issues and nits untouched. Then **fork-aware push** to update the PR branch — same-repo: explicit refspec `git push origin HEAD:<head_ref>` (**regular push, NEVER `--force`**, required because the detached drain worktree has no current branch name to push by default); fork/cross-repo (`gh pr view --json isCrossRepository` ⇒ head NOT on `origin`): do **NOT** push to `origin`, degrade to **review-only** and exit `decision: ESCALATED` with the findings posted as a PR comment. Then increment `heal_iterations`, and re-review. (See `review-heal` skill §"Fork-aware push".)
 5. **Loop exhaustion** (`heal_iterations == max_heal_iterations` and still not PASS) → `decision = ESCALATED`; post findings (`gh pr comment`), fire best-effort notifications.
 
 ### Step 3 — Notify on NEEDS_HUMAN / exhaustion (best-effort)
@@ -92,7 +97,7 @@ When this runner is launched via the **`--agent` form** (`claude -p --agent ai-a
 
 This env-var threading (rather than a slash string / new positional) is what avoids the 11.1.1 spawn-depth auto-delegation trap. The **authoritative setter↔reader contract** (and the Supervisor-layer default-ON/opt-out policy) is the `review-heal` skill **§"Until-Mergeable Dispatch Signal"** — consume those names verbatim; do not re-coin them here.
 
-- **Opt-in entry.** When `--until-mergeable` is **absent**, this runner runs the default diff-only review→fix→re-review loop **byte-for-byte** (AC7) — no external-state reads, no postmortem tail, `REVIEW_HEAL_RESULT` at `schema_version: 1`. When present, run the drain loop per the skill: each round drains **ALL** review channels — required CI check-runs (rollup) plus **formal/bot reviews**, **inline review threads**, **PR issue comments**, and **check-run outputs/annotations** — classified on `(login, body)` text via `scripts/classify-bot-review.sh`; bounded-waits for the **scoped** required + review-producing check set to settle (then re-scans all channels); **validates** every detected bot finding (any stated severity — no BLOCKING/HIGH floor) and dispatches a `Task(general-purpose)` fix worker (Read / Write / Edit / Bash / Glob / Grep, **no Task**) for the confirmed auto-fixable ones plus required-check failures, then a regular `git push` (**never `--force`**), then re-polls. The channel set, scoped wait, and validate-then-fix are defined in the `review-heal` skill §"All-Channel Read" / §"Wait-For-Settled-Checks" / §"Validate-Then-Fix" — follow the skill, do not re-spec here.
+- **Opt-in entry.** When `--until-mergeable` is **absent**, this runner runs the default diff-only review→fix→re-review loop **byte-for-byte** (AC7) — no external-state reads, no postmortem tail, `REVIEW_HEAL_RESULT` at `schema_version: 1`. When present, run the drain loop per the skill: each round drains **ALL** review channels — required CI check-runs (rollup) plus **formal/bot reviews**, **inline review threads**, **PR issue comments**, and **check-run outputs/annotations** — classified on `(login, body)` text via `scripts/classify-bot-review.sh`; bounded-waits for the **scoped** required + review-producing check set to settle (then re-scans all channels); **validates** every detected bot finding (any stated severity — no BLOCKING/HIGH floor) and dispatches a `Task(general-purpose)` fix worker (Read / Write / Edit / Bash / Glob / Grep, **no Task**) for the confirmed auto-fixable ones plus required-check failures, then a **fork-aware push** (same-repo: explicit refspec `git push origin HEAD:<head_ref>`, **regular push, never `--force`**; fork/cross-repo: no push → degrade to `ESCALATED`), then re-polls. The channel set, scoped wait, and validate-then-fix are defined in the `review-heal` skill §"All-Channel Read" / §"Wait-For-Settled-Checks" / §"Validate-Then-Fix" — follow the skill, do not re-spec here.
 - **READY exit + notification (AC3).** When the canonical READY condition holds (`review-heal` skill §"READY redefinition" — the authority; not restated here), exit `decision: READY` and fire the desktop + webhook **"ready to merge"** notification best-effort (`${CLAUDE_PLUGIN_ROOT}/scripts/notify-desktop.sh` / `${CLAUDE_PLUGIN_ROOT}/scripts/send-webhook.sh`). Human approval, `reviewDecision: REVIEW_REQUIRED`, and human-authored / unknown-author unresolved threads & comments are **surfaced/notified but NEVER awaited** — the loop never waits on a human.
 - **Fail CLOSED on unknowns (AC14).** A `gh api graphql` thread-query error (thread-state unknown) or unreadable branch-protection required-check metadata must fail **CLOSED** to `decision: ESCALATED` — never claim READY by defaulting to green. The only override is `--required-checks all-non-neutral`, which opts into gating on every non-`NEUTRAL`/`SKIPPED` check when the metadata is unreadable.
 - **`--max-rounds` bound → ESCALATED (AC4).** The drain is bounded by `--max-rounds N` (**default 5**, hard ceiling). On exhaustion without READY, exit `decision: ESCALATED`, post remaining findings via `gh pr comment`, and notify — never unbounded. The anti-churn guardrail runs one deep "fix-the-class" self-review on oscillation but never overrides the ceiling.

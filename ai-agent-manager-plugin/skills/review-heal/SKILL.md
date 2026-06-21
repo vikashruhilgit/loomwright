@@ -2,15 +2,15 @@
 name: review-heal
 description: Shared loop contract for the standalone PR review-and-heal workflow (`/review-pr <pr-url>` + `ai-agent-manager-plugin:review-pr-runner`). Single source of truth for the bounded review→fix→re-review loop, PR-URL→branch resolution, the REVIEW_HEAL_RESULT block, and the pinned canonical names consumed by the dispatcher script, the runner agent, and the autonomous EVALUATE step. Use when implementing or invoking standalone PR review-and-heal.
 allowed-tools: [Read, Write, Edit, Bash, Task]
-version: "1.2.0"
-lastUpdated: "2026-06-18"
+version: "1.3.0"
+lastUpdated: "2026-06-21"
 ---
 
 # Review-Heal Skill
 
 The **single source of truth** for the standalone PR review-and-heal loop. This skill is where the canonical names below are *coined* — every other surface (the `/review-pr` command, the `ai-agent-manager-plugin:review-pr-runner` agent, the `dispatch-pr-review.sh` dispatcher, and the `/autonomous` EVALUATE step) consumes these names **verbatim** and must not re-coin or rename them.
 
-The loop is conceptually extracted from Supervisor **Phase 4.5**'s review→fix→re-review machinery (`ai-agent-manager-plugin/agents/supervisor.md`, around the `while heal_iterations < max_heal_iterations` block) so it can run **independently in a fresh session keyed off a PR URL** — with no Supervisor job, no `.supervisor/state.md`, and no worktree fan-out. It mirrors Phase 4.5's semantics exactly; it does **not** invent new ones.
+The loop is conceptually extracted from Supervisor **Phase 4.5**'s review→fix→re-review machinery (`ai-agent-manager-plugin/agents/supervisor.md`, around the `while heal_iterations < max_heal_iterations` block) so it can run **independently in a fresh session keyed off a PR URL** — with no Supervisor job and no `.supervisor/state.md`. The **inline** `/review-pr` session has no worktree fan-out (it operates on the main thread's checkout), but the **detached dispatched** until-mergeable drain runs in its own dispatcher-created sibling worktree (see §"Isolated worktree for the detached dispatched drain"). It mirrors Phase 4.5's semantics exactly; it does **not** invent new ones.
 
 > This is a **reference contract** skill (markdown prose, NOT executable code), in the same spirit as `skills/autonomous-loop/SKILL.md` and `skills/state-management/SKILL.md`.
 
@@ -79,18 +79,33 @@ The runner is **NEVER Task-spawned**. A `Task(ai-agent-manager-plugin:review-pr-
 
 ---
 
-## Step 1 — PR-URL → branch resolution
+## Step 1 — PR-URL → head resolution (isolation-aware)
 
-Before the loop runs, resolve the PR's head branch and check it out:
+Before the loop runs, resolve the PR's head and get the working tree onto it. **How** depends on which entry sense (above) is running:
 
-```
-HEAD_REF=$(gh pr view <pr-url> --json headRefName --jq '.headRefName')
-git fetch origin "$HEAD_REF"
-git checkout "$HEAD_REF"
-```
+- **Inline `/review-pr` session (no concurrent self-heal to collide with):** check out the head branch on the main thread's checkout:
 
-- The single input is the **PR URL**. `gh pr view <pr-url> --json headRefName` yields the head branch (`headRefName`); fetch + checkout that branch before entering the loop so the diff and any pushes target the correct branch.
+  ```
+  HEAD_REF=$(gh pr view <pr-url> --json headRefName --jq '.headRefName')
+  git fetch origin "$HEAD_REF"
+  git checkout "$HEAD_REF"
+  ```
+
+- **Detached dispatched drain (the `dispatch-pr-review.sh` → `review-pr-runner` path — runs CONCURRENT with an inline Phase 4.5 self-heal):** the **dispatcher already created an isolated sibling worktree** (detached-HEAD at the PR head SHA) and launched the runner *inside it*. The runner therefore **does NOT run its own `git checkout "$HEAD_REF"`** — it operates inside the dispatcher-provided worktree, so it never checks-out / stages / commits in the inline session's working tree. See §"Isolated worktree for the detached dispatched drain".
+
+- The single input is the **PR URL**. `gh pr view <pr-url> --json headRefName` yields the head branch (`headRefName`).
 - The review scope is the PR diff: `git diff <base>...HEAD` for the PR's base branch (default `main`). The reviewer is told to scope to exactly this diff.
+
+### Isolated worktree for the detached dispatched drain (PINNED)
+
+> **Scope:** isolation targets ONLY the **detached dispatched** drain — the one path that runs CONCURRENT with an inline Phase 4.5 self-heal. The inline `/review-pr` session has no concurrent self-heal and stays worktree-free.
+
+`scripts/dispatch-pr-review.sh` isolates the detached drain so it never shares a working tree/index with the inline self-heal:
+
+- **Sibling worktree, detached HEAD.** The dispatcher creates `../{project}-review-{pr_hash_short}` (a SIBLING of the primary checkout, OUTSIDE the tracked tree — never nested under the repo, which an inline `git add -A` could otherwise sweep) via `git worktree add --detach <path> <head-sha>`. Detached-HEAD at the head SHA avoids "branch already checked out" when the PR head == the inline session's current branch.
+- **Trap-owned cleanup (executable, not a prompt step).** The dispatcher backgrounds a wrapper process that owns `trap cleanup EXIT`; on the runner's exit (READY/ESCALATED, error, OR crash) the trap removes ONLY that hash-keyed worktree + lock dir. Cleanup is NOT a runner markdown instruction the agent can skip.
+- **Marker reflects real dispatch.** An atomic per-PR lock is taken BEFORE the worktree; the durable per-PR marker is written ONLY AFTER the worktree + RUN_LOG header succeed (lock = "someone is dispatching"; marker = "a dispatch genuinely started").
+- **Always fail-safe.** The dispatcher ALWAYS `exit 0`; the drain NEVER merges and NEVER `--force`-pushes.
 
 ---
 
@@ -138,7 +153,7 @@ while heal_iterations < max_heal_iterations:
   )
   # issues_fixed += number of findings addressed
 
-  git push                         # update the PR branch — REGULAR push, NEVER --force
+  push_fix_to_pr()                 # fork-aware: same-repo ⇒ git push origin HEAD:<head_ref> (REGULAR, NEVER --force); fork ⇒ no push, degrade to ESCALATED (see "Fork-aware push")
   heal_iterations += 1
 
 # Loop exit
@@ -152,12 +167,21 @@ if heal_iterations == max_heal_iterations and review.decision != PASS:
 ### Outcome model
 
 - **PASS** → `decision: PASS`. The diff is clean. The loop is **done**. It does **not** merge.
-- **FAIL** (reviewer returned `new` issues with severity BLOCKING/HIGH) → spawn a `Task(general-purpose)` fix worker (allowlist Read / Write / Edit / Bash / Glob / Grep, **no Task**) that addresses ONLY those issues, then `git push` to the PR branch (**never `--force`**), then re-review. Bounded to N iterations (**default 3**).
+- **FAIL** (reviewer returned `new` issues with severity BLOCKING/HIGH) → spawn a `Task(general-purpose)` fix worker (allowlist Read / Write / Edit / Bash / Glob / Grep, **no Task**) that addresses ONLY those issues, then **fork-aware push** to the PR branch (same-repo: explicit refspec, **never `--force`**; fork: degrade to ESCALATED — see "Fork-aware push"), then re-review. Bounded to N iterations (**default 3**).
 - **NEEDS_HUMAN** (reviewer escalates) **or loop exhausts with issues remaining** → **STOP. Do NOT auto-fix, do NOT merge.** Post the findings to the PR via `gh pr comment`, fire notifications best-effort, exit with `decision: ESCALATED`.
 
 ### Never `--force`
 
 Pushes that update the PR branch are **regular pushes only**. A force-push would clobber concurrent commits on the PR branch (the human author may have pushed). This mirrors Phase 4.5's `git push  # ... NEVER --force` rule.
+
+### Fork-aware push (PINNED — same-repo vs cross-repo)
+
+Whether (and how) a fix push happens depends on whether the PR head is on `origin`:
+
+- **Same-repo PR** (`isCrossRepository == false`): push via an **explicit refspec** so the local detached-HEAD worktree updates the exact PR branch — `git push origin HEAD:<head_ref>` (**REGULAR push, NEVER `--force`**). The explicit `HEAD:<head_ref>` form is required because the detached drain worktree has no current branch name to push by default.
+- **Fork / cross-repo PR** (`isCrossRepository == true`, head NOT on `origin`): **do NOT push to `origin`** — `git push origin HEAD:<head_ref>` would update the wrong ref or fail. Instead **degrade to review-only**: post the findings as a PR comment and exit `decision: ESCALATED`. The drain detects fork status from the dispatcher-threaded signal (`AI_AGENT_MANAGER_PR_IS_FORK=1`, head ref in `AI_AGENT_MANAGER_PR_HEAD_REF`) or directly via `gh pr view <pr-url> --json isCrossRepository,headRepositoryOwner`. The default diff-only `/review-pr` loop is fork-aware in the same way.
+
+This closes a latent gap in the prior bare `git push`, which had no fork awareness and would have pushed to the wrong ref on a fork PR.
 
 ---
 
@@ -318,7 +342,7 @@ Human-authored — or **unknown/unclassifiable** — unresolved threads are **su
 For each finding in the classified `bot_findings` UNION (§U1), apply this three-way decision:
 
 1. **Validate (evidence-citing — mitigates R4, no rubber-stamping).** The finding is **confirmed** ONLY when it (a) maps to a **concrete current-branch location** (file + line/region that still exists in the checked-out head state) AND (b) is **actionable** (describes a change that can be made). Validation must **cite the evidence** (the grounding location); a finding that **cannot be grounded** on the current branch is **dismissed, not fixed** — never rubber-stamp a finding into a fix without grounding it.
-2. **Confirmed + auto-fixable → FIX regardless of stated severity.** Dispatch the existing fix-worker model: `Task(general-purpose)` with tool allowlist **Read / Write / Edit / Bash / Glob / Grep — NO Task**, told to address ONLY the validated findings; then `git push` (**REGULAR push, NEVER `--force`**); then **re-scan ALL channels** (U1). A confirmed MEDIUM/LOW is fixed exactly like a confirmed HIGH — there is no severity floor.
+2. **Confirmed + auto-fixable → FIX regardless of stated severity.** Dispatch the existing fix-worker model: `Task(general-purpose)` with tool allowlist **Read / Write / Edit / Bash / Glob / Grep — NO Task**, told to address ONLY the validated findings; then **fork-aware push** (same-repo: explicit refspec, **REGULAR push, NEVER `--force`**; fork: no push → degrade to ESCALATED — see "Fork-aware push"); then **re-scan ALL channels** (U1). A confirmed MEDIUM/LOW is fixed exactly like a confirmed HIGH — there is no severity floor.
 3. **Confirmed but NOT auto-fixable (needs human judgment) → BLOCKS READY.** It is surfaced/escalated (counted in `remaining_issues`); it does not get a blind fix.
 4. **Validated as stale / invalid / already-addressed → DISMISSED.** Recorded as dismissed (`findings_dismissed`); does **NOT** block READY and is **not** fixed.
 
@@ -379,7 +403,7 @@ while rounds < max_rounds:
   )
   fix_cycles += 1
 
-  git push                              # REGULAR push, NEVER --force (see "Never --force")
+  push_fix_to_pr()                      # fork-aware: same-repo ⇒ git push origin HEAD:<head_ref> (REGULAR, NEVER --force); fork ⇒ no push, degrade to ESCALATED (see "Fork-aware push")
 
   # --- anti-churn bookkeeping (see "Anti-Churn Guardrail" for the rationale) ---
   fingerprints_now = { fingerprint(f) for f in fixable }   # {file, issue_category, rule} per finding
@@ -535,7 +559,9 @@ The tail's exit status is **ignored** — the dispatcher always exits 0 and the 
 
 ## Anti-Patterns
 
-- **Force-pushing the PR branch.** Never `git push --force` — clobbers concurrent author commits. Regular push only.
+- **Force-pushing the PR branch.** Never `git push --force` — clobbers concurrent author commits. Regular push only (same-repo via explicit refspec `git push origin HEAD:<head_ref>`).
+- **Pushing to `origin` for a fork/cross-repo PR.** The head ref is NOT on `origin`, so `git push origin HEAD:<head_ref>` updates the wrong ref or fails. Degrade to review-only `ESCALATED` instead (see "Fork-aware push").
+- **The detached drain checking out the PR head in the inline working tree.** The detached dispatched drain runs inside the dispatcher-created sibling worktree — it must NOT `git checkout "$HEAD_REF"` in the inline session's checkout (that is the exact same-tree collision this isolation removes). Worktree creation + removal are owned by the dispatcher's trap-wrapper, never a runner prompt step.
 - **Auto-merging on PASS.** Removes the human gate; explicitly forbidden.
 - **Task-spawning the runner.** `Task(ai-agent-manager-plugin:review-pr-runner)` breaks because the runner must spawn its own children — run it as a session main agent or inline via `/review-pr`.
 - **Creating a PR from `/review-pr`.** Would open the door to review→review recursion.
@@ -561,10 +587,10 @@ The tail's exit status is **ignored** — the dispatcher always exits 0 and the 
 
 ## Quality Gates
 
-- PR-URL → branch resolved via `gh pr view <pr-url> --json headRefName`; branch fetched + checked out before the loop.
+- PR-URL → head resolved via `gh pr view <pr-url> --json headRefName`. **Inline** `/review-pr`: branch fetched + checked out on the main thread's checkout. **Detached dispatched** drain: runs inside the dispatcher-created isolated sibling worktree (detached-HEAD at the head SHA) — no `git checkout` in the inline tree (§"Isolated worktree for the detached dispatched drain").
 - Review uses `CODE_REVIEW_RESULT` v3 with `review_mode: diff_review`.
 - Loop is bounded (default 3); fix worker is `general-purpose` with NO Task in its allowlist.
-- PR-branch pushes are regular (never `--force`).
+- PR-branch pushes are **fork-aware**: same-repo via explicit refspec `git push origin HEAD:<head_ref>` (regular, never `--force`); fork/cross-repo degrades to review-only `ESCALATED` (§"Fork-aware push").
 - PASS and ESCALATED are the only terminal `decision` values; no auto-merge in either.
 - NEEDS_HUMAN / exhaustion posts findings to the PR and fires best-effort notifications (never blocks the loop).
 - `REVIEW_HEAL_RESULT` emitted with all seven fields at `schema_version: 1` (default loop); `schema_version: 2` with `decision: READY` plus additive/optional drain fields (`channels_scanned`, `findings_validated`, `findings_dismissed`, `checks_waited`) under `--until-mergeable` (authoritative schema in `docs/RESULT_SCHEMAS.md`; no bump beyond 2).
