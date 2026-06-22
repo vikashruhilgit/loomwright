@@ -507,11 +507,16 @@ learning_emit() {
   [ -n "$ts" ] || ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)"
   [ -n "$changed_paths_json" ] || changed_paths_json="[]"
 
-  # Deterministic idempotency key: run_id|item|pr_url|source. Built jq-only so a
-  # field containing spaces/quotes can't break the scan. NUL-free delimiter.
+  # Deterministic idempotency key: run_id|item|pr_url|source joined on the ASCII
+  # Unit Separator (U+001F, written as the \u001f jq escape — NOT an empty join;
+  # a raw 0x1F byte renders invisibly in diffs/cat and reads as join("")). The
+  # separator closes the boundary-ambiguity collision class (e.g. run_id="a",
+  # item="bc" vs "ab","c" would collide under an empty join). Built jq-only so a
+  # field containing spaces/quotes can't break the scan; U+001F never appears in a
+  # repo slug / URL / run-id, so the join is exact.
   local key
   key="$("$JQ" -rn --arg a "$run_id" --arg b "$item" --arg c "$pr_url" --arg d "$source" \
-    '[$a,$b,$c,$d] | join("")' 2>/dev/null)"
+    '[$a,$b,$c,$d] | join("\u001f")' 2>/dev/null)"
   [ -n "$key" ] || return 0
 
   # Idempotency skip: if any existing ledger line already carries this key, no-op.

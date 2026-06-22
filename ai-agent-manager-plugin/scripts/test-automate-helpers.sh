@@ -742,11 +742,23 @@ fi
 rm -rf "$WD"
 
 # F10. read-postmortem.sh visibility (reasoned via the reader's OWN selection jq):
-#      read-postmortem.sh (lines 122-127) keeps a corpus line iff its changed_paths overlaps
-#      the query path set AND repo matches (case-insensitive), then counts each categories[]
-#      element as one prior-churn round. Apply that exact predicate to an emitted automate_drain
-#      line to confirm it WOULD be returned as a hit (the reader hardcodes its CORPUS path +
-#      derives repo from the git remote, so we exercise the selection logic directly here).
+#      read-postmortem.sh:124-126 keeps a corpus line iff (a) repo matches the reader's
+#      current repo case-insensitively WHEN the reader's repo is determinable, AND (b) its
+#      changed_paths overlaps the query path set; then it counts each categories[] element as
+#      one prior-churn round. We replicate BOTH predicates faithfully (an earlier version of
+#      this test omitted the repo clause — PR #77 review finding #3 — so it could not have
+#      caught an empty-repo line being dropped; that blind spot is closed below + in F11).
+# reader_select <ledger> <query_path> <cur_repo>  -> JSON array of {rounds} for matching lines.
+reader_select() {
+  jq -R 'fromjson? // empty' "$1" \
+    | jq -s --arg q "$2" --arg cur_repo "$3" '
+        [ .[]
+          | . as $e
+          | select($cur_repo == "" or ((($e.repo) // "") | ascii_downcase) == ($cur_repo | ascii_downcase))
+          | select(((($e.changed_paths) // []) | map(select(. == $q)) | length) > 0)
+          | {rounds: ((($e.categories) // []) | length)}
+        ]' 2>/dev/null
+}
 WD="$(mktemp -d)"; LED="$WD/results.jsonl"
 bash "$H" learning-emit "$LED" \
   --repo "acme/widgets" --number 51 --pr-url "$PR" --run-id "run10" --item "item-j" \
@@ -754,18 +766,38 @@ bash "$H" learning-emit "$LED" \
   --repeat-check-failure false --unresolved-bot-feedback false \
   --changed-paths-json '["src/visible.ts"]' --additions 3 --deletions 1 --changed-files 1 \
   --summary "visible to reader"
-# Replicate read-postmortem.sh:122-127 selection for query path "src/visible.ts":
-HITS="$(jq -R 'fromjson? // empty' "$LED" \
-  | jq -s --arg q "src/visible.ts" '
-      [ .[]
-        | select(((.changed_paths // []) | map(select(. == $q)) | length) > 0)
-        | {rounds: ((.categories // []) | length)}
-      ]' 2>/dev/null)"
+# F10a: matching repo (exact + case-insensitive) AND path overlap ⇒ 1 hit, 1 round.
+HITS="$(reader_select "$LED" "src/visible.ts" "acme/widgets")"
+HITS_CI="$(reader_select "$LED" "src/visible.ts" "ACME/Widgets")"
 if [ "$(printf '%s' "$HITS" | jq 'length')" = "1" ] \
-   && [ "$(printf '%s' "$HITS" | jq '.[0].rounds')" = "1" ]; then
-  ok "read-postmortem visibility: automate_drain line IS a prior-churn hit (changed_paths overlap + 1 categories round)"
+   && [ "$(printf '%s' "$HITS" | jq '.[0].rounds')" = "1" ] \
+   && [ "$(printf '%s' "$HITS_CI" | jq 'length')" = "1" ]; then
+  ok "read-postmortem visibility: automate_drain line IS a prior-churn hit (repo match (case-insensitive) + changed_paths overlap + 1 categories round)"
 else
-  no "read-postmortem visibility wrong (hits='$HITS')"
+  no "read-postmortem visibility wrong (hits='$HITS' hits_ci='$HITS_CI')"
+fi
+rm -rf "$WD"
+
+# F11. --repo is load-bearing for visibility (the PR #77 finding #1 failure mode): a line
+#      emitted with an EMPTY --repo carries repo:"" (NOT null) and is DROPPED by the reader
+#      whenever the reader's repo resolves — yet stays visible only when the reader's repo is
+#      undeterminable (cur_repo=="", the vacuously-true arm). This is the regression guard that
+#      would have surfaced finding #1.
+WD="$(mktemp -d)"; LED="$WD/results.jsonl"
+bash "$H" learning-emit "$LED" \
+  --repo "" --number 52 --pr-url "$PR" --run-id "run11" --item "item-k" \
+  --fix-cycles 1 --drain-result READY \
+  --changed-paths-json '["src/visible.ts"]' --additions 1 --deletions 0 --changed-files 1 \
+  --summary "empty repo"
+EMITTED_REPO="$(tail -1 "$LED" | jq -r '.repo')"
+DROPPED="$(reader_select "$LED" "src/visible.ts" "acme/widgets" | jq 'length')"
+KEPT_WHEN_UNDET="$(reader_select "$LED" "src/visible.ts" "" | jq 'length')"
+if [ "$EMITTED_REPO" = "" ] \
+   && [ "$DROPPED" = "0" ] \
+   && [ "$KEPT_WHEN_UNDET" = "1" ]; then
+  ok "read-postmortem visibility: empty --repo emits repo:\"\" and is DROPPED when the reader's repo resolves (--repo is load-bearing)"
+else
+  no "empty-repo visibility wrong (emitted_repo='$EMITTED_REPO' dropped='$DROPPED' kept_when_undet='$KEPT_WHEN_UNDET')"
 fi
 rm -rf "$WD"
 

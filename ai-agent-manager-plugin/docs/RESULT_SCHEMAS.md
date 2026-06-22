@@ -1191,10 +1191,15 @@ variant:
   a zero-cycle escalation → one `{round: 1, class: "drain_escalation", flow_stage: "self_heal", ...}`.
 - `self_heal_misses` ← `1` if `repeat_check_failure OR unresolved_bot_feedback`, else `0` (the single
   synthetic `categories[]` entry's `self_heal_miss` mirrors `self_heal_misses > 0`).
-- `changed_paths` is **required for `read-postmortem.sh` visibility** — the advisory reader keeps a
-  corpus line only when its `changed_paths` overlaps the query paths, so a drain line without it is
-  invisible. On a failed `gh pr view` fetch it degrades to `changed_paths: []` and integer size fields
-  `0` (NEVER `null`) — the line is still written (fail-safe), just invisible to the reader.
+- `changed_paths` **and** `repo` are **both required for `read-postmortem.sh` visibility** — the advisory
+  reader keeps a corpus line only when its `changed_paths` overlaps the query paths **AND** (when the
+  current repo is determinable) its `repo` matches the reader's repo case-insensitively
+  (`read-postmortem.sh:124-126`). So `repo` is co-load-bearing with `changed_paths`: an `automate_drain`
+  line with `repo: ""` (the helper's default when `--repo` is omitted — emitted as `""`, NOT `null`) is
+  filtered out whenever the reader's repo resolves. The `/automate` wiring therefore derives `repo`
+  (`owner/repo`) from `pr_url` and always passes `--repo`. On a failed `gh pr view` fetch `changed_paths`
+  degrades to `[]` and the integer size fields to `0` (NEVER `null`) — the line is still written
+  (fail-safe), just invisible to the reader.
 
 **Backward compatibility:** these provenance + discriminator fields (`pr_url`, `branch`, `changed_paths`,
 `brief_path`, `job_path`, `source`, `automate_key`) are purely additive — a pre-Phase-4 corpus line that
