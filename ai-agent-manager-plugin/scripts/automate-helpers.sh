@@ -551,8 +551,10 @@ learning_emit() {
     ( if ($cp_raw | type) == "array" then ($cp_raw | map(select(type=="string"))) else [] end ) as $changed_paths
     # self_heal_misses ← 1 if repeat_check_failure OR unresolved_bot_feedback.
     | ( if ($repeat_check_failure == "true") or ($unresolved_bot_feedback == "true") then 1 else 0 end ) as $shm
-    # effective_review_rounds = (ESCALATED and fix_cycles==0) ? 1 : fix_cycles.
-    | ( if ($drain_result == "ESCALATED") and ($fix_cycles == 0) then 1 else $fix_cycles end ) as $err
+    # effective_review_rounds — mirror the categories[] branch order exactly so the
+    # two never disagree (and an unreachable negative fix_cycles clamps to 0/1, never
+    # a negative review_rounds): fix_cycles>0 -> fix_cycles; else ESCALATED -> 1; else 0.
+    | ( if $fix_cycles > 0 then $fix_cycles elif $drain_result == "ESCALATED" then 1 else 0 end ) as $err
     # categories[] zero-rule (read-postmortem counts each element as one round):
     #   fix_cycles>0           -> one drain_churn entry {round: fix_cycles}
     #   fix_cycles==0 ESCALATED -> one drain_escalation entry {round: 1}
