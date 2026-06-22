@@ -2,8 +2,8 @@
 name: automate-loop
 description: Protocol authority for `/automate` — the generic automation engine that converts ANY source (a prompt via /product-owner, a requirements folder, or a backlog-doc) into a FULL Queue with a per-run processing cap inside ONE markdown run file (`.supervisor/automate/<run_id>.md` — the contract, dashboard, and resume state), then drives each Queue item through the per-item loop (`/autonomous --single-iteration` → owned inline `/review-pr --until-mergeable` → trusted-merge-or-park → pull main → check off + append `## Progress`). Smart resume = glob `*.md` for not-done + reconcile-vs-ground-truth. Use when implementing or invoking `/automate`.
 allowed-tools: [Read, Write, Edit, Bash, Task, AskUserQuestion]
-version: "1.0.0"
-lastUpdated: "2026-06-20"
+version: "1.1.0"
+lastUpdated: "2026-06-22"
 ---
 
 # Automate Loop Skill
@@ -63,6 +63,7 @@ so **the tested code IS the executed code** (one implementation, guarded by `scr
 | `resume-glob` | §4 | List run files not stamped `## Status: done`. |
 | `reconcile-item` | §4 | Reconcile one item's belief vs `gh` ground truth ⇒ `merged`/`awaiting_merge`/`gone`. |
 | `gate-eval` | §10 | The 5-condition fail-CLOSED trusted auto-merge gate — the **only** executor of `gh pr merge --squash`. |
+| `learning-emit` | §6 step 3 | Fail-SAFE (always exit 0) engine-native ground-truth line: appends ONE full valid `schema_version: 1` POSTMORTEM_RESULT (`source: "automate_drain"` + `automate_key`) per processed PR from `REVIEW_HEAL_RESULT` + `SUPERVISOR_RESULT` data already in hand; idempotent on `run_id`+item+`pr_url`+`source`. |
 
 > `automate-helpers.sh` is READ-ONLY toward the work it drives (no source-repo edits, no git mutations; the sole exception is `gate-eval`'s explicit `gh pr merge --squash`). It is an **uncounted plain script** (not an agent/command/skill/hook).
 
@@ -191,7 +192,7 @@ For each `- [ ]` Queue item (top-down, single-open-PR invariant permitting — �
 
 1. **RECONCILE** — re-check ground truth for any in-flight item before picking (§4); never pick a new item while one has an open unmerged PR (§8).
 2. **RUN** — set `.supervisor/config.json {"auto_review": false}` (the suppress contract, §7) **then** run `/autonomous --single-iteration --requirement <path>`. The suppress MUST wrap the RUN phase: both default dispatches fire *during* `/autonomous` (Supervisor step 5.5 + the `PostToolUse[Bash]` `gh pr create` hook), so toggling at DRAIN is too late. Capture the emitted `SUPERVISOR_RESULT` (status, `pr_url`, `branch`, `rubric_score`, `heal_decision`). **Restore `.auto_review` in a finally-style cleanup immediately after `/autonomous` returns *or fails* — i.e. BEFORE the owned DRAIN below** (§7). The owned drain is inline and NOT gated by `.auto_review`, so restoring before it both keeps the suppression window tight and is safe.
-3. **DRAIN** — own **exactly ONE** inline `/review-pr --until-mergeable` on the PR (§7). Read its terminal `REVIEW_HEAL_RESULT` synchronously; record `owned_drain_started` / `owned_drain_result` / `suppressed_default_dispatch: true` in `## Current`.
+3. **DRAIN** — own **exactly ONE** inline `/review-pr --until-mergeable --no-auto-postmortem` on the PR (§7). Read its terminal `REVIEW_HEAL_RESULT` synchronously; record `owned_drain_started` / `owned_drain_result` / `suppressed_default_dispatch: true` in `## Current`. **Then, at the END of DRAIN (BEFORE step 4 GATE), emit the engine-native learning line** — see "Learning-emit at end-of-DRAIN" below. This runs for EVERY item that produced a PR (merged OR parked); emitting here (not at step 6 CHECK OFF) covers parked items, which stop at the GATE and never reach CHECK OFF.
 4. **GATE** — apply the per-mode decision (§9): safe mode parks `awaiting_merge`; `--auto-merge` runs the 5-condition trusted-merge gate (§10). `ESCALATED` always parks (§9).
 5. **SYNC** — after a successful merge (auto-merge mode), `git checkout main && git pull` so the next item branches off **fresh `main`** (no stale-base / PR-tower).
 6. **CHECK OFF + PROGRESS** — mark the item `- [x]` in `## Queue` and **append** a `## Progress` line, via **one atomic write** (§3). Report `remaining: N` (count of `- [ ]` items).
@@ -204,6 +205,20 @@ For each `- [ ]` Queue item (top-down, single-open-PR invariant permitting — �
 (A park on `awaiting_merge` or `escalated` — §8/§9 — also stops the loop with the corresponding `pause_reason`.)
 
 All `/autonomous` correctness gates still bubble up (NO-GO, Plan Review FAIL×3, adjudication, rubric gate); `--notify` and `--non-interactive-fallback` pass through to the inner `/autonomous` (§11).
+
+### Learning-emit at end-of-DRAIN (engine-native ground-truth signal)
+
+At the END of §6 step 3 (DRAIN), AFTER reading the terminal `REVIEW_HEAL_RESULT` and BEFORE step 4 (GATE), append **ONE** ground-truth learning line per processed PR (merged OR parked). This replaces the GitHub-blind `/pr-postmortem` for automate'd PRs: the engine already holds the real churn, so it builds an honest line instead of reading a false `review_rounds: 0` off GitHub.
+
+> **Execute via the helper, not a re-implementation (reference-don't-restate, to avoid mirror drift):** call `automate-helpers.sh learning-emit` (§1.5). The helper owns all the record-building logic (the `effective_review_rounds` rule, the `categories[]` zero-rule, `self_heal_misses` derivation, idempotency-skip, jq-only injection-safe construction, always-exit-0). Do NOT restate that logic here — the authoritative field mapping lives in `docs/RESULT_SCHEMAS.md` POSTMORTEM_RESULT §"`source: \"automate_drain\"` variant".
+
+- **Inputs the engine already holds:** from the step-3 `REVIEW_HEAL_RESULT` read `fix_cycles`, `repeat_check_failure`, `unresolved_bot_feedback`, and `decision` (the drain result `READY|ESCALATED`); from the step-2 `SUPERVISOR_RESULT` read `pr_url`, `branch` (and `heal_decision`/`rubric_score` for the summary). **Derive `repo` (`owner/repo`) and `number` from `pr_url`** (parse `…/<owner>/<repo>/pull/<n>`) — `SUPERVISOR_RESULT` does not carry them as bare fields, and a correct `--repo` is **load-bearing for visibility** (next bullet).
+- **The ONE added fetch** (the only data not already in hand): a single `gh pr view "<pr_url>" --json files,additions,deletions,changedFiles`, where `changed_paths = [.files[].path]`. On ANY fetch failure, degrade to `--changed-paths-json '[]'` and `--additions 0 --deletions 0 --changed-files 0` (integers, never `null`) — the line is still emitted, just invisible to `read-postmortem.sh`.
+- **Visibility is gated by BOTH `changed_paths` AND `repo` (load-bearing — pass a real `--repo`).** `read-postmortem.sh` returns a corpus line as a prior-churn hit only when its `changed_paths` overlaps the queried paths **AND** (when the current repo is determinable) its `repo` matches the reader's repo case-insensitively (`read-postmortem.sh:124-126`). The helper defaults `repo` to `""` (emitted as `repo: ""`, **not** `null`), which the reader filters out whenever its own repo resolves — so an empty `--repo` produces a **silently-invisible** line, exactly the failure this feature exists to prevent. Always pass `--repo <owner/repo>` (derived above). Also pass `--plugin-version` (from `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json`) so engine-native lines carry the real version, not `"unknown"`.
+- **Idempotency:** pass `--run-id <run_id> --item <item> --pr-url <pr_url> --source automate_drain` so the helper's `automate_key` skip yields exactly ONE line across a crash between emit and check-off, or a `--resume` re-entry.
+- **Ledger:** `.supervisor/postmortem/results.jsonl` (the same unified corpus `/pr-postmortem` appends to; the `source` field discriminates the two).
+- **Advisory / fail-SAFE — NEVER gating.** `learning-emit` ALWAYS exits 0; the loop **ignores its exit status entirely**. A `learning-emit` failure (jq absent, unwritable ledger, fetch fail, bad arg) NEVER changes `owned_drain_result`, the step-4 GATE / merge-or-park decision, `## Status`, `## Current`, or any inner `/autonomous` gate — exactly like the `postmortem_dispatched`-is-informational invariant.
+- *(Optional, advisory)* the `AUTOMATE_RUN` summary MAY carry a `learning_lines_emitted` counter; skip it if it adds risk.
 
 ---
 
@@ -227,7 +242,7 @@ All `/autonomous` correctness gates still bubble up (NO-GO, Plan Review FAIL×3,
 
 ### Own ONE inline drain
 
-After suppression, DRAIN owns **exactly ONE** inline `/review-pr --until-mergeable` (the standalone review-and-heal drain — authority is `skills/review-heal/SKILL.md` §"Until-Mergeable Mode"). Its **terminal `REVIEW_HEAL_RESULT` is read synchronously** and written to `## Current`:
+After suppression, DRAIN owns **exactly ONE** inline `/review-pr --until-mergeable --no-auto-postmortem` (the standalone review-and-heal drain — authority is `skills/review-heal/SKILL.md` §"Until-Mergeable Mode"). The **`--no-auto-postmortem`** flag suppresses the owned drain's churn-gated Postmortem Dispatch Tail: inside `/automate` the engine emits its OWN honest engine-native learning line (§6 step 3 "Learning-emit at end-of-DRAIN"), so the owned drain must NOT also append a GitHub-blind false-0 postmortem line for the same PR — one honest line, not honest + false-0. (Outside `/automate`, a standalone `/review-pr --until-mergeable` keeps its Postmortem Dispatch Tail unchanged.) Its **terminal `REVIEW_HEAL_RESULT` is read synchronously** and written to `## Current`:
 
 - `owned_drain_started: <ts>`
 - `owned_drain_result: READY | ESCALATED`  (the `--until-mergeable` terminal decision — `READY` is "ready, left open for a human"; it **never merges**)

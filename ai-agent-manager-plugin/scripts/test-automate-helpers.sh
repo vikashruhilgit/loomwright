@@ -21,6 +21,12 @@
 #      and REVIEW_REQUIRED of cond. 3, and both arms of cond. 5 checks/rubric), plus
 #      malformed-ctx (ctx_unreadable) and a merge-command failure (merge_command_failed);
 #      AND the all-pass MERGE case fires `gh pr merge --squash` exactly once.
+#   F. learning-emit (engine-native ground-truth POSTMORTEM_RESULT line): happy path
+#      (fix_cycles>0 → one drain_churn entry, review_rounds==fix_cycles), the zero-rule
+#      (fix_cycles==0 non-escalated → categories:[] + review_rounds:0), zero-cycle
+#      ESCALATED (→ review_rounds:1 + one drain_escalation entry), idempotency skip,
+#      missing-field degrade, jq-absent no-write, fetch-fail integer-0 degrade,
+#      injection-safe jq args, self_heal_misses derivation, read-postmortem visibility.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -566,6 +572,233 @@ fi
 rm -f "$GH_STUB_DIR/merge-fail"
 
 unset GH_STUB_DIR
+rm -rf "$WD"
+
+# =============================================================================
+echo "== F. learning-emit (engine-native ground-truth POSTMORTEM_RESULT line) =="
+
+# F1. happy path fix_cycles>0 → exactly ONE drain_churn categories[] entry,
+#     review_rounds == fix_cycles, valid JSON, source==automate_drain, changed_paths populated.
+WD="$(mktemp -d)"; LED="$WD/results.jsonl"
+bash "$H" learning-emit "$LED" \
+  --repo "acme/widgets" --number 42 --pr-url "$PR" --run-id "run1" --item "item-a" \
+  --fix-cycles 3 --drain-result READY \
+  --repeat-check-failure false --unresolved-bot-feedback false \
+  --changed-paths-json '["src/a.ts","src/b.ts"]' --additions 10 --deletions 2 --changed-files 2 \
+  --summary "automate drain churn"
+if [ -f "$LED" ] && [ "$(wc -l < "$LED" | tr -d ' ')" = "1" ] \
+   && jq -e . "$LED" >/dev/null 2>&1 \
+   && [ "$(jq -r '.source' "$LED")" = "automate_drain" ] \
+   && [ "$(jq -r '.review_rounds' "$LED")" = "3" ] \
+   && [ "$(jq -r '.categories | length' "$LED")" = "1" ] \
+   && [ "$(jq -r '.categories[0].class' "$LED")" = "drain_churn" ] \
+   && [ "$(jq -r '.categories[0].round' "$LED")" = "3" ] \
+   && [ "$(jq -r '.changed_paths | length' "$LED")" = "2" ] \
+   && [ "$(jq -r '.flow_stages.self_heal' "$LED")" = "3" ] \
+   && [ "$(jq -r '.schema_version' "$LED")" = "1" ]; then
+  ok "happy path fix_cycles>0: one drain_churn entry, review_rounds==fix_cycles, changed_paths populated, valid JSON"
+else
+  no "happy-path wrong (line='$(cat "$LED" 2>/dev/null)')"
+fi
+rm -rf "$WD"
+
+# F2. fix_cycles==0 non-escalated → categories: [] AND review_rounds: 0 (zero-rule; NO synthetic entry).
+WD="$(mktemp -d)"; LED="$WD/results.jsonl"
+bash "$H" learning-emit "$LED" \
+  --repo "acme/widgets" --number 43 --pr-url "$PR" --run-id "run2" --item "item-b" \
+  --fix-cycles 0 --drain-result READY \
+  --repeat-check-failure false --unresolved-bot-feedback false \
+  --changed-paths-json '["src/c.ts"]' --additions 1 --deletions 0 --changed-files 1 \
+  --summary "clean merge"
+if jq -e . "$LED" >/dev/null 2>&1 \
+   && [ "$(jq -r '.categories | length' "$LED")" = "0" ] \
+   && [ "$(jq -r '.review_rounds' "$LED")" = "0" ] \
+   && [ "$(jq -r '.flow_stages.self_heal' "$LED")" = "0" ]; then
+  ok "zero-rule: fix_cycles==0 non-escalated ⇒ categories:[] AND review_rounds:0 (no fake churn)"
+else
+  no "zero-rule wrong (line='$(cat "$LED" 2>/dev/null)')"
+fi
+rm -rf "$WD"
+
+# F3. zero-cycle ESCALATED (fix_cycles==0, drain_result==ESCALATED) → review_rounds:1 + ONE drain_escalation entry.
+WD="$(mktemp -d)"; LED="$WD/results.jsonl"
+bash "$H" learning-emit "$LED" \
+  --repo "acme/widgets" --number 44 --pr-url "$PR" --run-id "run3" --item "item-c" \
+  --fix-cycles 0 --drain-result ESCALATED \
+  --repeat-check-failure false --unresolved-bot-feedback false \
+  --changed-paths-json '["src/d.ts"]' --additions 5 --deletions 5 --changed-files 1 \
+  --summary "escalated before any fix cycle"
+if jq -e . "$LED" >/dev/null 2>&1 \
+   && [ "$(jq -r '.review_rounds' "$LED")" = "1" ] \
+   && [ "$(jq -r '.categories | length' "$LED")" = "1" ] \
+   && [ "$(jq -r '.categories[0].class' "$LED")" = "drain_escalation" ] \
+   && [ "$(jq -r '.categories[0].round' "$LED")" = "1" ] \
+   && [ "$(jq -r '.flow_stages.self_heal' "$LED")" = "1" ]; then
+  ok "zero-cycle ESCALATED: review_rounds:1 + ONE drain_escalation entry"
+else
+  no "zero-cycle-escalated wrong (line='$(cat "$LED" 2>/dev/null)')"
+fi
+rm -rf "$WD"
+
+# F4. idempotency: two calls with the SAME run_id+item+pr_url+source → ledger has exactly ONE line.
+WD="$(mktemp -d)"; LED="$WD/results.jsonl"
+for i in 1 2; do
+  bash "$H" learning-emit "$LED" \
+    --repo "acme/widgets" --number 45 --pr-url "$PR" --run-id "run4" --item "item-d" \
+    --fix-cycles 2 --drain-result READY \
+    --repeat-check-failure false --unresolved-bot-feedback false \
+    --changed-paths-json '["src/e.ts"]' --additions 3 --deletions 1 --changed-files 1 \
+    --summary "dup attempt"
+done
+if [ "$(wc -l < "$LED" | tr -d ' ')" = "1" ]; then
+  ok "idempotency: duplicate run_id+item+pr_url+source key ⇒ exactly ONE line"
+else
+  no "idempotency wrong (lines=$(wc -l < "$LED" 2>/dev/null | tr -d ' '))"
+fi
+rm -rf "$WD"
+
+# F5. missing-field degrade (omit --changed-paths-json) → still exit 0, line written with changed_paths: [].
+WD="$(mktemp -d)"; LED="$WD/results.jsonl"
+run_h bash "$H" learning-emit "$LED" \
+  --repo "acme/widgets" --number 46 --pr-url "$PR" --run-id "run5" --item "item-e" \
+  --fix-cycles 1 --drain-result READY \
+  --repeat-check-failure false --unresolved-bot-feedback false \
+  --summary "no changed-paths arg"
+if [ "$RUN_RC" -eq 0 ] && jq -e . "$LED" >/dev/null 2>&1 \
+   && [ "$(jq -r '.changed_paths | length' "$LED")" = "0" ] \
+   && [ "$(jq -r '.changed_paths | type' "$LED")" = "array" ]; then
+  ok "missing-field degrade: exit 0, line written, changed_paths:[]"
+else
+  no "missing-field-degrade wrong (rc=$RUN_RC line='$(cat "$LED" 2>/dev/null)')"
+fi
+rm -rf "$WD"
+
+# F6. jq-absent → exit 0, NO write (point AI_AGENT_MANAGER_JQ_BIN at a nonexistent binary).
+WD="$(mktemp -d)"; LED="$WD/results.jsonl"
+run_h env AI_AGENT_MANAGER_JQ_BIN="$WD/no-such-jq-binary" bash "$H" learning-emit "$LED" \
+  --repo "acme/widgets" --number 47 --pr-url "$PR" --run-id "run6" --item "item-f" \
+  --fix-cycles 1 --drain-result READY --summary "jq absent"
+if [ "$RUN_RC" -eq 0 ] && [ ! -f "$LED" ]; then
+  ok "jq-absent: exit 0, NO write"
+else
+  no "jq-absent wrong (rc=$RUN_RC led-exists=$([ -f "$LED" ] && echo y || echo n))"
+fi
+rm -rf "$WD"
+
+# F7. fetch-fail degrade → changed_paths: [] AND additions/deletions/changed_files are integer 0 (NOT null).
+WD="$(mktemp -d)"; LED="$WD/results.jsonl"
+# Simulate the loop's degraded call: changed_paths_json defaults to [], size fields to 0.
+bash "$H" learning-emit "$LED" \
+  --repo "acme/widgets" --number 48 --pr-url "$PR" --run-id "run7" --item "item-g" \
+  --fix-cycles 0 --drain-result READY \
+  --changed-paths-json '[]' --additions 0 --deletions 0 --changed-files 0 \
+  --summary "fetch failed, degraded"
+if jq -e . "$LED" >/dev/null 2>&1 \
+   && [ "$(jq -r '.changed_paths | length' "$LED")" = "0" ] \
+   && [ "$(jq -r '.additions | type' "$LED")" = "number" ] \
+   && [ "$(jq -r '.additions' "$LED")" = "0" ] \
+   && [ "$(jq -r '.deletions' "$LED")" = "0" ] \
+   && [ "$(jq -r '.changed_files' "$LED")" = "0" ]; then
+  ok "fetch-fail degrade: changed_paths:[], additions/deletions/changed_files integer 0 (not null)"
+else
+  no "fetch-fail-degrade wrong (line='$(cat "$LED" 2>/dev/null)')"
+fi
+rm -rf "$WD"
+
+# F8. injection-safe: --summary / --pr-url with ";, $(...), quotes → still valid single-line JSON, value verbatim.
+WD="$(mktemp -d)"; LED="$WD/results.jsonl"
+INJ_SUMMARY='evil"; rm -rf / $(touch /tmp/pwned) `id` end'
+INJ_URL='https://github.com/a/b/pull/1"; echo hacked #'
+bash "$H" learning-emit "$LED" \
+  --repo "acme/widgets" --number 49 --pr-url "$INJ_URL" --run-id "run8" --item "item-h" \
+  --fix-cycles 1 --drain-result READY \
+  --changed-paths-json '["src/x.ts"]' --additions 1 --deletions 0 --changed-files 1 \
+  --summary "$INJ_SUMMARY"
+if [ "$(wc -l < "$LED" | tr -d ' ')" = "1" ] && jq -e . "$LED" >/dev/null 2>&1 \
+   && [ "$(jq -r '.summary' "$LED")" = "$INJ_SUMMARY" ] \
+   && [ "$(jq -r '.pr_url' "$LED")" = "$INJ_URL" ] \
+   && [ ! -f /tmp/pwned ]; then
+  ok "injection-safe: malicious summary/pr_url preserved verbatim, still valid single-line JSON"
+else
+  no "injection-safe wrong (line='$(cat "$LED" 2>/dev/null)')"
+fi
+rm -f /tmp/pwned
+rm -rf "$WD"
+
+# F9. self_heal_misses derivation: repeat_check_failure=true → self_heal_misses:1 and entry self_heal_miss:true.
+WD="$(mktemp -d)"; LED="$WD/results.jsonl"
+bash "$H" learning-emit "$LED" \
+  --repo "acme/widgets" --number 50 --pr-url "$PR" --run-id "run9" --item "item-i" \
+  --fix-cycles 2 --drain-result READY \
+  --repeat-check-failure true --unresolved-bot-feedback false \
+  --changed-paths-json '["src/y.ts"]' --additions 4 --deletions 2 --changed-files 1 \
+  --summary "repeat check failure"
+if [ "$(jq -r '.self_heal_misses' "$LED")" = "1" ] \
+   && [ "$(jq -r '.categories[0].self_heal_miss' "$LED")" = "true" ]; then
+  ok "self_heal_misses: repeat_check_failure=true ⇒ self_heal_misses:1 + entry self_heal_miss:true"
+else
+  no "self_heal_misses wrong (line='$(cat "$LED" 2>/dev/null)')"
+fi
+rm -rf "$WD"
+
+# F10. read-postmortem.sh visibility (reasoned via the reader's OWN selection jq):
+#      read-postmortem.sh:124-126 keeps a corpus line iff (a) repo matches the reader's
+#      current repo case-insensitively WHEN the reader's repo is determinable, AND (b) its
+#      changed_paths overlaps the query path set; then it counts each categories[] element as
+#      one prior-churn round. We replicate BOTH predicates faithfully (an earlier version of
+#      this test omitted the repo clause — PR #77 review finding #3 — so it could not have
+#      caught an empty-repo line being dropped; that blind spot is closed below + in F11).
+# reader_select <ledger> <query_path> <cur_repo>  -> JSON array of {rounds} for matching lines.
+reader_select() {
+  jq -R 'fromjson? // empty' "$1" \
+    | jq -s --arg q "$2" --arg cur_repo "$3" '
+        [ .[]
+          | . as $e
+          | select($cur_repo == "" or ((($e.repo) // "") | ascii_downcase) == ($cur_repo | ascii_downcase))
+          | select(((($e.changed_paths) // []) | map(select(. == $q)) | length) > 0)
+          | {rounds: ((($e.categories) // []) | length)}
+        ]' 2>/dev/null
+}
+WD="$(mktemp -d)"; LED="$WD/results.jsonl"
+bash "$H" learning-emit "$LED" \
+  --repo "acme/widgets" --number 51 --pr-url "$PR" --run-id "run10" --item "item-j" \
+  --fix-cycles 2 --drain-result READY \
+  --repeat-check-failure false --unresolved-bot-feedback false \
+  --changed-paths-json '["src/visible.ts"]' --additions 3 --deletions 1 --changed-files 1 \
+  --summary "visible to reader"
+# F10a: matching repo (exact + case-insensitive) AND path overlap ⇒ 1 hit, 1 round.
+HITS="$(reader_select "$LED" "src/visible.ts" "acme/widgets")"
+HITS_CI="$(reader_select "$LED" "src/visible.ts" "ACME/Widgets")"
+if [ "$(printf '%s' "$HITS" | jq 'length')" = "1" ] \
+   && [ "$(printf '%s' "$HITS" | jq '.[0].rounds')" = "1" ] \
+   && [ "$(printf '%s' "$HITS_CI" | jq 'length')" = "1" ]; then
+  ok "read-postmortem visibility: automate_drain line IS a prior-churn hit (repo match (case-insensitive) + changed_paths overlap + 1 categories round)"
+else
+  no "read-postmortem visibility wrong (hits='$HITS' hits_ci='$HITS_CI')"
+fi
+rm -rf "$WD"
+
+# F11. --repo is load-bearing for visibility (the PR #77 finding #1 failure mode): a line
+#      emitted with an EMPTY --repo carries repo:"" (NOT null) and is DROPPED by the reader
+#      whenever the reader's repo resolves — yet stays visible only when the reader's repo is
+#      undeterminable (cur_repo=="", the vacuously-true arm). This is the regression guard that
+#      would have surfaced finding #1.
+WD="$(mktemp -d)"; LED="$WD/results.jsonl"
+bash "$H" learning-emit "$LED" \
+  --repo "" --number 52 --pr-url "$PR" --run-id "run11" --item "item-k" \
+  --fix-cycles 1 --drain-result READY \
+  --changed-paths-json '["src/visible.ts"]' --additions 1 --deletions 0 --changed-files 1 \
+  --summary "empty repo"
+EMITTED_REPO="$(tail -1 "$LED" | jq -r '.repo')"
+DROPPED="$(reader_select "$LED" "src/visible.ts" "acme/widgets" | jq 'length')"
+KEPT_WHEN_UNDET="$(reader_select "$LED" "src/visible.ts" "" | jq 'length')"
+if [ "$EMITTED_REPO" = "" ] \
+   && [ "$DROPPED" = "0" ] \
+   && [ "$KEPT_WHEN_UNDET" = "1" ]; then
+  ok "read-postmortem visibility: empty --repo emits repo:\"\" and is DROPPED when the reader's repo resolves (--repo is load-bearing)"
+else
+  no "empty-repo visibility wrong (emitted_repo='$EMITTED_REPO' dropped='$DROPPED' kept_when_undet='$KEPT_WHEN_UNDET')"
+fi
 rm -rf "$WD"
 
 echo

@@ -1156,10 +1156,56 @@ harness** (the deferred M2b part-2b headless-`claude` evaluator).
 - `job_path` — string \| null, **additive & optional** — local job-file path when known; `null` by
   default (unknowable for an external PR — never invented). Absent in older trend lines, which remain
   valid — `schema_version` stays `1`.
+- `source` — string, **additive & optional** — discriminates HOW the line was produced. Two values
+  today: `"github_postmortem"` (the implicit default — a `/pr-postmortem` GitHub-surface analysis;
+  absent on legacy lines, read as `"github_postmortem"` by consumers) and `"automate_drain"` (an
+  engine-native line emitted by `/automate` at end-of-DRAIN from `REVIEW_HEAL_RESULT` + `SUPERVISOR_RESULT`
+  data the engine already holds — see the variant note below). Absent in older trend lines, which remain
+  valid — `schema_version` stays `1`.
+- `automate_key` — string, **additive & optional** — a deterministic idempotency key
+  (`run_id` + item + `pr_url` + `source`) present **only on `source: "automate_drain"` lines**. The
+  `/automate` `learning-emit` helper scans the ledger for an existing line with the same `automate_key`
+  and skips the append if found, so a crash/`--resume` re-entry yields exactly one line per processed PR.
+  Absent on `github_postmortem` lines and older trend lines, which remain valid — `schema_version`
+  stays `1`.
 
-**Backward compatibility:** these five provenance fields (`pr_url`, `branch`, `changed_paths`,
-`brief_path`, `job_path`) are purely additive — a pre-Phase-4 corpus line that omits all of them is still
-a valid `schema_version: 1` POSTMORTEM_RESULT line and parses cleanly for any consumer.
+**`source: "automate_drain"` variant (engine-native ground-truth line).** When `/automate` processes a
+PR-producing item (merged OR parked), it emits ONE full valid `schema_version: 1` POSTMORTEM_RESULT at
+end-of-DRAIN — built jq-only by `scripts/automate-helpers.sh learning-emit` from the owned drain's
+`REVIEW_HEAL_RESULT` (`fix_cycles`, `repeat_check_failure`, `unresolved_bot_feedback`, `decision`) +
+the inner `SUPERVISOR_RESULT` (`repo`, `number`, `pr_url`, `branch`) plus a single
+`gh pr view --json files,additions,deletions,changedFiles` for `changed_paths` and the integer size
+fields. It deliberately does NOT run a `/pr-postmortem` gather (which reads a false `review_rounds: 0`
+on the inline-drain + CI-check + squash flow `/automate` produces). Field-mapping specifics for this
+variant:
+- `review_rounds` is the **`effective_review_rounds`** = the ground-truth drain `fix_cycles` (the real
+  fix→push count), OR `1` for a zero-cycle escalation (`fix_cycles == 0 AND decision == "ESCALATED"`) —
+  it is NOT a GitHub-measured review count. `flow_stages.self_heal` carries the same value; the other
+  flow stages are `0` (the engine cannot attribute drain churn to launch_pad/worker).
+- `categories[]` carries at most ONE synthetic entry, coarser than `/pr-postmortem`'s per-round
+  classification but honestly labeled by `class`. The **zero-rule** (load-bearing because
+  `read-postmortem.sh` counts each `categories[]` element as one prior-churn round): when
+  `effective_review_rounds == 0` (i.e. `fix_cycles == 0 AND decision != "ESCALATED"`), `categories: []`
+  AND `review_rounds: 0` — NEVER a synthetic entry (a synthetic entry would report fake churn). For
+  `fix_cycles > 0` → one `{round: fix_cycles, class: "drain_churn", flow_stage: "self_heal", ...}`; for
+  a zero-cycle escalation → one `{round: 1, class: "drain_escalation", flow_stage: "self_heal", ...}`.
+- `self_heal_misses` ← `1` if `repeat_check_failure OR unresolved_bot_feedback`, else `0` (the single
+  synthetic `categories[]` entry's `self_heal_miss` mirrors `self_heal_misses > 0`).
+- `changed_paths` **and** `repo` are **both required for `read-postmortem.sh` visibility** — the advisory
+  reader keeps a corpus line only when its `changed_paths` overlaps the query paths **AND** (when the
+  current repo is determinable) its `repo` matches the reader's repo case-insensitively
+  (`read-postmortem.sh:124-126`). So `repo` is co-load-bearing with `changed_paths`: an `automate_drain`
+  line with `repo: ""` (the helper's default when `--repo` is omitted — emitted as `""`, NOT `null`) is
+  filtered out whenever the reader's repo resolves. The `/automate` wiring therefore derives `repo`
+  (`owner/repo`) from `pr_url` and always passes `--repo`. On a failed `gh pr view` fetch `changed_paths`
+  degrades to `[]` and the integer size fields to `0` (NEVER `null`) — the line is still written
+  (fail-safe), just invisible to the reader.
+
+**Backward compatibility:** these provenance + discriminator fields (`pr_url`, `branch`, `changed_paths`,
+`brief_path`, `job_path`, `source`, `automate_key`) are purely additive — a pre-Phase-4 corpus line that
+omits all of them is still a valid `schema_version: 1` POSTMORTEM_RESULT line and parses cleanly for any
+consumer (a line with no `source` is read as `"github_postmortem"`; `automate_key` is present only on
+`automate_drain` lines).
 
 **Append-only / write-only:** the file is the seed corpus for the deferred synthetic eval harness; it is
 never read back **by this skill** (a separate advisory reader, `scripts/read-postmortem.sh`, now consults it — see Phase 4) and lives under the current working `.supervisor/`, never the analyzed repo.
@@ -1680,6 +1726,7 @@ All result schemas include a `schema_version` field. This enables forward compat
 
 ### Version History
 
+- **POSTMORTEM_RESULT additive `source` + `automate_key`** (v14.44.0): Added two optional additive fields to POSTMORTEM_RESULT — `source` (`"github_postmortem"` implicit default \| `"automate_drain"`, discriminating a `/pr-postmortem` GitHub-surface line from an engine-native `/automate` end-of-DRAIN line) and `automate_key` (the deterministic `run_id`+item+`pr_url`+`source` idempotency key, present only on `automate_drain` lines so `learning-emit` can skip a crash/`--resume` duplicate). The new `source: "automate_drain"` variant is a FULL valid `schema_version: 1` record carrying the ground-truth drain `fix_cycles` as `effective_review_rounds` (or `1` for a zero-cycle escalation) — NOT a GitHub-measured count — with a single honestly-labeled synthetic `categories[]` entry (`drain_churn` / `drain_escalation`) honoring the zero-rule (`categories: []` only when `effective_review_rounds == 0`), and a required populated `changed_paths` for `read-postmortem.sh` visibility. **No `schema_version` bump** — both fields are optional/additive (same precedent as `pr_url`/`branch`/`changed_paths`/`brief_path`/`job_path`); a line with no `source` reads as `"github_postmortem"`. Additive — all other schemas unchanged.
 - **SUPERVISOR_RESULT + CODE_REVIEW_RESULT v-stable extensions + `session_end` hard-signal field** (v14.28.0): Added the optional additive `knowledge_sources_used: string[]` array on SUPERVISOR_RESULT (stays `schema_version: 1`) and CODE_REVIEW_RESULT (stays `schema_version: 3`), plus the matching FLAT `knowledge_sources_used` array on the `session_end` JSONL line (the surface `build-insights.sh` reads). It records which memory sources a run actually consulted — open-set lowercase tags `project_memory`, `lessons:<category>`, `agent_memory:<agent>`, `twin:<path>`, `brain_context`. **Advisory and non-gating** — NEVER changes `heal_decision` / the review `decision`, NEVER blocks the PR, and NOT enumerated by the Supervisor or Code Reviewer SubagentStop hooks, so blocks with or without it validate unchanged. Absent ⇒ "none used". Follows the `branch_base` / `pr_state` / `preflight_sync` additive precedent (optional, advisory-only, no `schema_version` bump); the nested result-block array and the flat `session_end` array are the same data in two shapes (the `contract_conformance` dual-shape pattern). Part of the v14.28.0 memory APPLY path. Additive — all other schemas unchanged.
 - **POSTMORTEM_RESULT (schema_version 1)** (v14.22.0): New `## POSTMORTEM_RESULT` schema for the read-only `/pr-postmortem` PR review-churn root-cause analyzer. One jq-built JSONL line appended (best-effort, fail-safe, exits 0 on any failure) to `.supervisor/postmortem/results.jsonl` with fields `schema_version`, `ts`, `repo`, `number`, `agent_generated_guess`, `review_rounds`, `additions`, `deletions`, `changed_files`, `categories[]` of `{round, class, self_heal_miss, flow_stage, evidence}`, `self_heal_misses`, `flow_stages{launch_pad, worker, self_heal, unknowable}`, `summary`. Advisory/diagnostic only — never gates, never blocks the PR, write-only trend (never read back), the seed corpus for the deferred synthetic eval harness. No hook validator (the command is the main agent of its own session). Additive — all other schemas unchanged.
 - **GROUND_TRUTH_JSON (schema_version 1) + SUPERVISOR_RESULT v1 extension + `session_end` hard-signal fields** (v14.19.0, System Twin M2b slice 1a): New `## GROUND_TRUTH_JSON` schema for the System Twin **ground-truth instrument** emitted by `scripts/run-ground-truth.sh` (resolves project-declared executable acceptance checks from a brief's `## Executable Acceptance` section or `.supervisor/twin/ground-truth.json`, runs each one, emits a single hard PASS/FAIL signal; fields `schema_version`, `ran`, `status: pass|advisory_failures|unverified|skipped`, `checks_total`, `checks_passed`, `pass_rate` "M/N", `per_check[]` of `{kind: cmd|corpus-task|qa-executor, target, status: pass|fail|unverified, reason?}`, `commit`, `date`; ALWAYS exits 0; `qa-executor` kind recognized but DEFERRED to slice 1b). Added the optional additive `ground_truth` object on SUPERVISOR_RESULT (advisory only — NEVER changes `heal_decision` / blocks the PR; follows the `contract_conformance` precedent) and the matching FLAT `session_end` JSONL scalar fields (`ground_truth_status`, `ground_truth_checks_total`, `ground_truth_checks_passed`, `ground_truth_pass_rate`; readers treat absent as `skipped`). The instrument is **distinct from** the eval harness (`EVAL_RESULT` / `run-eval.sh`) and the canary benchmark (`BENCHMARK_JSON` / `run-benchmark.sh`) — "ground-truth" ≠ "eval" ≠ "benchmark". SUPERVISOR_RESULT and GROUND_TRUTH_JSON both stay at `schema_version: 1` — purely additive; the Supervisor SubagentStop hook does not enumerate `ground_truth`, so pre-M2b blocks remain valid. No hook validates GROUND_TRUTH_JSON (standalone script). Slice 1b (QA-Executor dispatch) and the part-2 CI agent loop are deferred.

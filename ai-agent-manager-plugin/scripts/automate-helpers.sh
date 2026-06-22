@@ -32,8 +32,10 @@
 #   resume-glob      <automate_dir>                     # §4 list *.md not "## Status: done"
 #   reconcile-item   <pr_url> <belief>                  # §4 belief vs gh/git truth -> corrected state
 #   gate-eval        <pr_url> <ctx.json>                # §10 MERGE|PARK 5-condition fail-closed gate
+#   learning-emit    <ledger_path> <flags...>           # §6 step 3 fail-safe (always exit 0) engine-native ground-truth POSTMORTEM_RESULT line; idempotent on run_id+item+pr_url+source
 #
 # Exit codes: 0 success; 1 generic failure; 2 abort (malformed pre-existing config, §7).
+# (learning-emit is the fail-SAFE exception: it ALWAYS exits 0 — never die/abort.)
 
 set -euo pipefail
 
@@ -437,6 +439,178 @@ gate_eval() {
 }
 
 # --------------------------------------------------------------------------- #
+# §6 step 3 — engine-native ground-truth learning line (fail-SAFE, jq-only,
+#             idempotent). Emits ONE full valid schema_version:1 POSTMORTEM_RESULT
+#             per processed PR (merged OR parked) from data the engine already
+#             holds (REVIEW_HEAL_RESULT fix_cycles/repeat_check_failure/
+#             unresolved_bot_feedback/drain_result + SUPERVISOR_RESULT
+#             repo/number/pr_url/branch) plus a single `gh pr view` for
+#             changed_paths + integer size fields. NO /pr-postmortem gather, so no
+#             GitHub-blind false-0. Additive `source:"automate_drain"` +
+#             `automate_key` discriminate it from a github_postmortem line.
+# --------------------------------------------------------------------------- #
+
+# learning-emit <ledger_path> --repo <r> --number <n> --pr-url <url> --run-id <id>
+#   --item <item> --fix-cycles <n> --drain-result <READY|ESCALATED>
+#   --repeat-check-failure <true|false> --unresolved-bot-feedback <true|false>
+#   --changed-paths-json <json-array> --additions <n> --deletions <n>
+#   --changed-files <n> --summary <text> [--plugin-version <v>] [--ts <iso>]
+#   [--branch <b>] [--source <s>]
+#
+# FAIL-SAFE: this is the ONE subcommand that must NEVER die/abort — it runs inside
+# the per-item loop as an advisory side-effect and a failure must NEVER gate the
+# engine. We `set +e` at the top (this lib is `set -euo pipefail`) so any failing
+# command (jq absent, unwritable ledger, bad JSON, missing arg) degrades to a
+# no-op / degraded line and returns 0 — same posture as dispatch-pr-postmortem.sh /
+# send-webhook.sh.
+learning_emit() {
+  set +e   # FAIL-SAFE: always exit 0; never die/abort inside the per-item loop.
+
+  local ledger="${1:-}"; shift || true
+  [ -n "$ledger" ] || return 0
+
+  # Defaults.
+  local repo="" number="0" pr_url="" run_id="" item=""
+  local fix_cycles="0" drain_result="" repeat_check_failure="false" unresolved_bot_feedback="false"
+  local changed_paths_json="[]" additions="0" deletions="0" changed_files="0"
+  local summary="" plugin_version="" ts="" branch="" source="automate_drain"
+
+  # Parse named flags defensively — an unknown/short flag is ignored, never fatal.
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --repo)                    repo="${2:-}"; shift 2 || shift ;;
+      --number)                  number="${2:-0}"; shift 2 || shift ;;
+      --pr-url)                  pr_url="${2:-}"; shift 2 || shift ;;
+      --run-id)                  run_id="${2:-}"; shift 2 || shift ;;
+      --item)                    item="${2:-}"; shift 2 || shift ;;
+      --fix-cycles)              fix_cycles="${2:-0}"; shift 2 || shift ;;
+      --drain-result)            drain_result="${2:-}"; shift 2 || shift ;;
+      --repeat-check-failure)    repeat_check_failure="${2:-false}"; shift 2 || shift ;;
+      --unresolved-bot-feedback) unresolved_bot_feedback="${2:-false}"; shift 2 || shift ;;
+      --changed-paths-json)      changed_paths_json="${2:-[]}"; shift 2 || shift ;;
+      --additions)               additions="${2:-0}"; shift 2 || shift ;;
+      --deletions)               deletions="${2:-0}"; shift 2 || shift ;;
+      --changed-files)           changed_files="${2:-0}"; shift 2 || shift ;;
+      --summary)                 summary="${2:-}"; shift 2 || shift ;;
+      --plugin-version)          plugin_version="${2:-}"; shift 2 || shift ;;
+      --ts)                      ts="${2:-}"; shift 2 || shift ;;
+      --branch)                  branch="${2:-}"; shift 2 || shift ;;
+      --source)                  source="${2:-automate_drain}"; shift 2 || shift ;;
+      *)                         shift ;;   # unknown flag: ignore, never fatal
+    esac
+  done
+
+  # jq-absent guard: degrade to no-op (NO write) if jq isn't runnable.
+  command -v "$JQ" >/dev/null 2>&1 || return 0
+
+  [ -n "$source" ] || source="automate_drain"
+  [ -n "$ts" ] || ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)"
+  [ -n "$changed_paths_json" ] || changed_paths_json="[]"
+
+  # Deterministic idempotency key: run_id|item|pr_url|source joined on the ASCII
+  # Unit Separator (U+001F, written as the \u001f jq escape — NOT an empty join;
+  # a raw 0x1F byte renders invisibly in diffs/cat and reads as join("")). The
+  # separator closes the boundary-ambiguity collision class (e.g. run_id="a",
+  # item="bc" vs "ab","c" would collide under an empty join). Built jq-only so a
+  # field containing spaces/quotes can't break the scan; U+001F never appears in a
+  # repo slug / URL / run-id, so the join is exact.
+  local key
+  key="$("$JQ" -rn --arg a "$run_id" --arg b "$item" --arg c "$pr_url" --arg d "$source" \
+    '[$a,$b,$c,$d] | join("\u001f")' 2>/dev/null)"
+  [ -n "$key" ] || return 0
+
+  # Idempotency skip: if any existing ledger line already carries this key, no-op.
+  if [ -f "$ledger" ]; then
+    if "$JQ" -R 'fromjson? // empty' "$ledger" 2>/dev/null \
+         | "$JQ" -e -s --arg k "$key" 'any(.[]; .automate_key == $k)' >/dev/null 2>&1; then
+      return 0   # already recorded for this run/item/pr/source — exactly-once.
+    fi
+  fi
+
+  # Build the record jq-only (--arg / --argjson ONLY — no string interpolation of
+  # any PR-supplied text; injection-safe, same contract as pr-postmortem-gather.sh).
+  # All churn logic (effective_review_rounds, the categories[] zero-rule,
+  # self_heal_misses, flow_stages) is computed INSIDE jq so it is a single source
+  # of truth and the zero-rule holds exactly.
+  local line
+  line="$("$JQ" -cn \
+    --arg ts "$ts" \
+    --arg repo "$repo" \
+    --argjson number "$( printf '%s' "$number"      | "$JQ" -R 'tonumber? // 0' )" \
+    --argjson fix_cycles "$( printf '%s' "$fix_cycles" | "$JQ" -R 'tonumber? // 0' )" \
+    --arg drain_result "$drain_result" \
+    --arg repeat_check_failure "$repeat_check_failure" \
+    --arg unresolved_bot_feedback "$unresolved_bot_feedback" \
+    --argjson additions "$( printf '%s' "$additions"      | "$JQ" -R 'tonumber? // 0' )" \
+    --argjson deletions "$( printf '%s' "$deletions"      | "$JQ" -R 'tonumber? // 0' )" \
+    --argjson changed_files "$( printf '%s' "$changed_files" | "$JQ" -R 'tonumber? // 0' )" \
+    --arg summary "$summary" \
+    --arg plugin_version "$plugin_version" \
+    --arg pr_url "$pr_url" \
+    --arg branch "$branch" \
+    --arg source "$source" \
+    --arg automate_key "$key" \
+    --argjson cp_raw "$( printf '%s' "$changed_paths_json" | "$JQ" -c 'if type=="array" then . else [] end' 2>/dev/null || echo '[]' )" \
+    '
+    # changed_paths: keep only an array of strings, else [].
+    ( if ($cp_raw | type) == "array" then ($cp_raw | map(select(type=="string"))) else [] end ) as $changed_paths
+    # self_heal_misses ← 1 if repeat_check_failure OR unresolved_bot_feedback.
+    | ( if ($repeat_check_failure == "true") or ($unresolved_bot_feedback == "true") then 1 else 0 end ) as $shm
+    # effective_review_rounds — mirror the categories[] branch order exactly so the
+    # two never disagree (and an unreachable negative fix_cycles clamps to 0/1, never
+    # a negative review_rounds): fix_cycles>0 -> fix_cycles; else ESCALATED -> 1; else 0.
+    | ( if $fix_cycles > 0 then $fix_cycles elif $drain_result == "ESCALATED" then 1 else 0 end ) as $err
+    # categories[] zero-rule (read-postmortem counts each element as one round):
+    #   fix_cycles>0           -> one drain_churn entry {round: fix_cycles}
+    #   fix_cycles==0 ESCALATED -> one drain_escalation entry {round: 1}
+    #   fix_cycles==0 non-esc  -> [] (NEVER a synthetic entry — no fake churn)
+    | ( if $fix_cycles > 0 then
+          [ { round: $fix_cycles, class: "drain_churn", self_heal_miss: ($shm > 0),
+              flow_stage: "self_heal",
+              evidence: ("until-mergeable drain, decision=" + (if $drain_result=="" then "READY" else $drain_result end) + ", fix_cycles=" + ($fix_cycles|tostring)) } ]
+        elif $drain_result == "ESCALATED" then
+          [ { round: 1, class: "drain_escalation", self_heal_miss: ($shm > 0),
+              flow_stage: "self_heal",
+              evidence: "until-mergeable drain escalated before any fix cycle" } ]
+        else
+          []
+        end ) as $categories
+    | {
+        schema_version: 1,
+        ts: $ts,
+        repo: $repo,
+        number: $number,
+        agent_generated_guess: true,
+        review_rounds: $err,
+        additions: $additions,
+        deletions: $deletions,
+        changed_files: $changed_files,
+        categories: $categories,
+        self_heal_misses: $shm,
+        flow_stages: { launch_pad: 0, worker: 0, self_heal: $err, unknowable: 0 },
+        summary: (if $summary == "" then ("automate drain: " + (if $err==0 then "no churn" else (($err|tostring) + " round(s)") end)) else $summary end),
+        plugin_version: (if $plugin_version == "" then "unknown" else $plugin_version end),
+        pr_url: (if $pr_url == "" then null else $pr_url end),
+        branch: (if $branch == "" then null else $branch end),
+        changed_paths: $changed_paths,
+        brief_path: null,
+        job_path: null,
+        source: $source,
+        automate_key: $automate_key
+      }
+    ' 2>/dev/null)"
+
+  # If the record didn't build (jq error), degrade to a no-op rather than write junk.
+  [ -n "$line" ] || return 0
+
+  # Append atomically (append-only — never rewrite the ledger). Create dir best-effort.
+  mkdir -p "$(dirname "$ledger")" 2>/dev/null
+  printf '%s\n' "$line" >> "$ledger" 2>/dev/null
+
+  return 0
+}
+
+# --------------------------------------------------------------------------- #
 # dispatch
 # --------------------------------------------------------------------------- #
 
@@ -455,6 +629,7 @@ main() {
     resume-glob)     resume_glob "$@" ;;
     reconcile-item)  reconcile_item "$@" ;;
     gate-eval)       gate_eval "$@" ;;
+    learning-emit)   learning_emit "$@" ;;
     ""|-h|--help)
       grep -E '^#   [a-z]' "$0" | sed 's/^#   /  /'
       ;;
