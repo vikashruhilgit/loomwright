@@ -15,6 +15,7 @@
 #   7. trend ledger — one appended line per run with recall_pct/fn; --no-ledger writes none.
 #   8. fail-safe empty — a repo with no done briefs → n=0, exit 0, "No joined rows" report.
 #   9. wrapper repo resolution — default-self + $AI_AGENT_MANAGER_HEAL_SIGNAL_REPOS override.
+#  10. PLAIN (non-bold) `- heal_decision:` Outcome bullets — the /automate brief format — harvest.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -40,6 +41,19 @@ write_brief() {
     printf -- '- **%s:** %s\n' "$key" "$dec"
     printf -- '- **Heal iterations:** %s\n' "$iters"
     printf -- '- **PR:** https://github.com/%s/pull/%s\n' "$or" "$num"
+  } > "$repo/.supervisor/jobs/done/$file"
+}
+# write_brief_plain <repo> <file> <heal_key> <decision> <iters> <owner/repo> <number>
+# Same as write_brief but PLAIN bullets (no **) — the /automate brief format that the
+# bold-only regex silently dropped. Guards the harvest fix against regression.
+write_brief_plain() {
+  local repo="$1" file="$2" key="$3" dec="$4" iters="$5" or="$6" num="$7"
+  mkdir -p "$repo/.supervisor/jobs/done"
+  {
+    printf '# brief %s\n\n## Outcome\n' "$file"
+    printf -- '- %s: %s\n' "$key" "$dec"
+    printf -- '- heal_iterations: %s\n' "$iters"
+    printf -- '- PR: https://github.com/%s/pull/%s\n' "$or" "$num"
   } > "$repo/.supervisor/jobs/done/$file"
 }
 # add_label <repo> <json-line>
@@ -193,9 +207,22 @@ TMP9b="$(mktemp -d)"; ( cd "$TMP9b" && git init -q && git config user.email t@t 
 njE="$(S '.pooled.n' "$TMP9b/.supervisor/heal-signal/_summary.json")"
 if [ "$njE" = 7 ]; then ok "wrapper honored \$AI_AGENT_MANAGER_HEAL_SIGNAL_REPOS override (n=7)"; else no "env override wrong (n=$njE)"; fi
 
+echo "== 10. plain (non-bold) Outcome bullets harvest (the /automate brief format) =="
+TMP10="$(mktemp -d)"; OUT10="$(mktemp -d)"
+write_brief_plain "$TMP10" "p.md" "heal_decision" "PASS" 1 "acme/app" 42
+add_label "$TMP10" '{"schema_version":1,"ts":"2026-06-01T00:00:00Z","repo":"acme/app","number":42,"agent_generated_guess":true,"review_rounds":4,"self_heal_misses":2,"review_rounds_source":"fix_commits","flow_stages":{"self_heal":2},"summary":"plain-bullet FN"}'
+run_engine "$TMP10" "$OUT10" --no-ledger >/dev/null 2>&1
+sig10="$("$JQ" -sc '[.[].number]' "$OUT10/signal.jsonl" 2>/dev/null)"
+cell10="$("$JQ" -r 'select(.number==42)|.cell' "$OUT10/joined.jsonl" 2>/dev/null)"
+if printf '%s' "$sig10" | grep -q '42' && [ "$cell10" = FN ]; then
+  ok "plain '- heal_decision: PASS' brief harvested + joined (FN)"
+else
+  no "plain-bullet brief NOT harvested (sig=$sig10 cell=$cell10) — bold-only regex regression"
+fi
+
 # cleanup
 rm -rf "$TMP1" "$OUT1" "$OUT5" "$TMP6" "$OUT6" "$TMP7" "$OUT7" "$OUT7b" "$TMP8" "$OUT8" \
-       "$TMP9" "$TMPe" "$TMP9b" 2>/dev/null
+       "$TMP9" "$TMPe" "$TMP9b" "$TMP10" "$OUT10" 2>/dev/null
 
 echo
 echo "RESULT: $pass passed, $fail failed"

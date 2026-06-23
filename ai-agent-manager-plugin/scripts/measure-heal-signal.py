@@ -48,9 +48,14 @@ import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 
-# ---- regexes (verbatim from the Step-1 spike — preserved) -------------------
+# ---- regexes (PR_URL preserved from the Step-1 spike) -----------------------
 PR_URL_RE = re.compile(r"github\.com/([^/\s]+)/([^/\s)]+?)(?:\.git)?/pull/(\d+)", re.I)
-BULLET_RE = re.compile(r"^\s*-\s*\*\*([^*]+?):\*\*\s*(.*)$")
+# Outcome bullets: tolerate BOTH bold-key (`- **heal_decision:** PASS`, the inline-Supervisor
+# format) AND plain-key (`- heal_decision: PASS`, the /automate brief format). The Step-1 spike's
+# bold-only form silently dropped every plain-bullet brief — e.g. all /automate runs (BetterBlocks:
+# 16 of 21 briefs invisible). Key class `[\w .\-]` accepts real Outcome keys (heal_decision /
+# Heal decision / PR) while rejecting punctuation-heavy prose; bounded to the first colon.
+BULLET_RE = re.compile(r"^\s*-\s*\*{0,2}\s*([\w .\-]+?)\s*:\s*\*{0,2}\s*(.*)$")
 INT_RE = re.compile(r"-?\d+")
 
 
@@ -373,8 +378,9 @@ def write_report(out_dir, summary, joined, labels, signal):
     # ---- provenance / coverage ----
     w("## 1. Data provenance & coverage")
     w("")
-    w("Signal harvested from done-brief `## Outcome` blocks (tolerant of both the inline-Supervisor "
-      "bold form `**Heal decision:**` and the autonomous lowercase form `**heal_decision:**`). "
+    w("Signal harvested from done-brief `## Outcome` blocks (tolerant of the inline-Supervisor "
+      "bold form `- **Heal decision:**`, its lowercase bold variant `- **heal_decision:**`, AND the "
+      "plain `/automate` form `- heal_decision:` with no bold). "
       "Labels read from each repo's `.supervisor/postmortem/results.jsonl`.")
     w("")
     w("| repo | done briefs | w/ `## Outcome` | heal signal rows | no PR | no heal field |")
