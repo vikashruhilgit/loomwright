@@ -88,6 +88,75 @@ additive prose enrichment of the reviewer prompt only.
 
 ---
 
+## Area-knowledge advisory (graph-community bridge)
+
+A **sibling** to the "Prior-churn advisory (pre-review enrichment)" section above — it runs
+at the SAME point (**Phase 4.5 entry, BEFORE the first Code Reviewer spawn**) on the SAME
+integrated-diff touched-file scope, and enriches the SAME reviewer prompt. Where prior-churn
+joins by EXACT path against the postmortem corpus, this advisory joins by **graph community**
+against the pre-built findings→community **bridge** (`read-bridge.sh`): touched paths →
+communities → the prior recorded findings / churn / lessons for those communities. The
+community join catches a near-miss touched path that exact-path matching drops, so the
+self-heal review gets area knowledge even when `prior_churn` is empty for those files. It is
+the community-level companion to `read-postmortem.sh`'s exact-path read — see the shared seam
+in `skills/brain-context/SKILL.md` §"Bridge read (area knowledge)".
+
+> **HARD ADVISORY CONTRACT — `area_knowledge` is advisory input to the REVIEW lens ONLY.**
+> Exactly like `prior_churn`, the contract-conformance / benchmark / ground-truth checks, and
+> the Rubric Grader, `area_knowledge` is **advisory only**: it **NEVER changes `heal_decision`**,
+> **NEVER drives the fix task** (the bridge corpus/index is NOT passed to workers/fixers — only
+> the Code Reviewer prompt receives the summary, keeping the two review lenses independent),
+> **NEVER triggers a fix iteration on its own**, and **NEVER gates or blocks the PR**. It is
+> **fail-safe**: the reader (`read-bridge.sh`) ALWAYS exits 0, and on empty output the phase
+> proceeds with **no enrichment** (the reviewer prompt simply omits the area-knowledge line).
+> The reader emits **EMPTY output on a NO-HIT** (bridge present but no touched-path overlaps any
+> finding-bearing community) — it does NOT print a "no area knowledge" sentinel line — so an
+> empty `area_knowledge` reliably means "no area knowledge" and the enrichment is omitted; a
+> non-empty `area_knowledge` always denotes a real hit. (Never thread a "no area knowledge
+> recorded" string into the reviewer prompt.) Under tool-budget pressure (YELLOW/RED zones) this
+> step is among the FIRST to skip — the gates in `agents/supervisor.md` still run.
+
+```
+# touched files = the same integrated-diff scope the Code Reviewer reviews (and the same the
+# prior-churn advisory above uses). When BASE_BRANCH==main this is `git diff origin/main...HEAD`;
+# for a stacked iteration (BASE_BRANCH != main) it is `git diff $BASE_BRANCH...HEAD` — the SAME
+# DIFF-SCOPE OVERRIDE.
+touched = paths from the integrated diff (read-only):
+          BASE_BRANCH==main  -> git diff --name-only origin/main...HEAD
+          BASE_BRANCH!=main  -> git diff --name-only $BASE_BRANCH...HEAD
+
+area_knowledge = ""   # advisory summary; empty string when no area knowledge (proceed with no enrichment)
+
+# Pass the touched paths as COMMAND-LINE ARGUMENTS (args take precedence — STDIN is NEVER read,
+# so an args-bearing call can never block on an open-but-idle pipe in a non-TTY agent context).
+# NEVER pipe the paths on stdin. read-bridge.sh self-gates on .supervisor/bridge/bridge.json — it
+# is called UNCONDITIONALLY (NOT wrapped in any "if a brain is detected" / graph-presence
+# conditional), exactly like read-postmortem.sh self-gates on the postmortem corpus.
+# See ${CLAUDE_PLUGIN_ROOT}/scripts/read-bridge.sh.
+if touched is non-empty:
+  area_knowledge = bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-bridge.sh" <touched files...>
+  # The reader emits a bounded markdown advisory ONLY on a REAL hit (touched paths fall in a
+  # community with prior recorded findings / churn / lessons). On a NO-HIT (bridge present but no
+  # overlap) OR absent graph/bridge OR missing jq it emits NOTHING — no sentinel line — and ALWAYS
+  # exits 0. A *stale* graph (HEAD past built_at_commit) is NOT a no-op — it still emits, with a
+  # one-line "treat as a hint — graph may be stale" caveat. So an empty `area_knowledge` reliably
+  # means "no area knowledge": proceed with no enrichment. Guard the reviewer-prompt enrichment on
+  # `area_knowledge` being NON-EMPTY; never thread a "no area knowledge recorded" string into the
+  # prompt. Do NOT restate the reader's internals here.
+
+record_decision(phase: SELF_HEAL, decision: "area_knowledge: {non-empty | empty}", rationale: "advisory pre-review enrichment (graph-community bridge) — heal_decision unchanged, fixers never see the corpus")
+```
+
+`area_knowledge` is threaded into the `code-reviewer` Task prompt as advisory, non-gating
+context (the exact **AREA-KNOWLEDGE ADVISORY** prompt line lives in `agents/supervisor.md`
+§"Review-and-fix loop", included only when non-empty). The bridge read counts under the
+existing `brain_context` tag in `knowledge_sources_used` (the bridge IS the brain-context
+read path — see `skills/brain-context/SKILL.md` §"Bridge read") — it does NOT introduce a new
+tag and does NOT bump `schema_version`; it is additive prose enrichment of the reviewer
+prompt only.
+
+---
+
 ## Post-review advisory checks
 
 Run all three after the Code Reviewer loop has completed (regardless of

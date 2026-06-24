@@ -89,6 +89,53 @@ doubt, read raw.
 
 ---
 
+## Bridge read (area knowledge)
+
+The **bridge** is the *community-level* companion to the graph read above. Where the graph
+answers "what connects to what" by walking individual nodes/edges live, the bridge answers a
+different, pre-computed question: **"what do we already KNOW about the areas of code this
+change touches?"** — joining touched paths → graph **communities** → the prior recorded
+**findings / churn / lessons** for those communities. It surfaces area knowledge that the
+existing exact-path `read-postmortem.sh` reader drops, because a near-miss path that
+exact-path matching misses still falls inside a community that has prior recorded misses.
+
+It is read via `${CLAUDE_PLUGIN_ROOT}/scripts/read-bridge.sh` over the touched paths
+(passed as **command-line ARGUMENTS** — args take precedence, STDIN is never read on an
+args-bearing call, so it can never block on an open-but-idle pipe in a non-TTY context). The
+reader consumes the pre-built index at `.supervisor/bridge/bridge.json` (produced by
+`build-bridge.{sh,py}` — operator-invoked, like `/graphify`, never auto-built by any phase)
+and emits a **bounded** markdown advisory on a real hit, EMPTY on a no-hit. Its output
+carries the **same `subordinate-to-CLAUDE.md` banner** as the graph/wiki reads (on conflict,
+CLAUDE.md wins), labeled distinctly as **area-knowledge (graph-community bridge)** so it
+reads as a separate signal from prior-churn.
+
+It carries the **SAME HARD ADVISORY CONTRACT** as everything else in this file: it NEVER
+blocks a run, NEVER fails a task, and NEVER changes a `heal_decision` / review verdict /
+plan.
+
+- **Called UNCONDITIONALLY (self-gating on `bridge.json`).** The reader is invoked
+  unconditionally by its consumers — it self-gates on the presence of `.supervisor/bridge/bridge.json`
+  exactly the way `read-postmortem.sh` self-gates on the postmortem corpus. It is **NOT**
+  wrapped in any "if a brain is detected" / graph-presence conditional. (This is deliberately
+  unlike the live-graph query steps above, which gate on Detection: the bridge read is its
+  own seam.)
+- **Fail-safe detection (silent no-op):** an **absent** graph/bridge — no `graphify-out/graph.json`,
+  no `.supervisor/bridge/bridge.json`, or no `jq` — ⇒ the reader emits nothing and exits 0;
+  behavior is byte-identical to today. Most repos have no graph and MUST be entirely unaffected.
+- **Staleness — emit-with-hint, NOT a no-op.** Honoring the staleness rule below: a *stale*
+  bridge (current HEAD has advanced past the bridge's `built_at_commit`) is **not** a silent
+  no-op — the advisory **still emits**, downgraded with a one-line "treat as a hint — graph may
+  be stale" caveat. Only an *absent* graph/bridge (or missing tooling) is the silent no-op. Per
+  the staleness rule, the graph is authoritative for COMMITTED structure only — never for the
+  files the session is currently editing — which is exactly the directional-hint framing.
+
+This is the **shared seam** referenced by both consumers — Supervisor Phase 4.5 self-heal
+(`skills/self-heal-advisory/SKILL.md` §"Area-knowledge advisory (graph-community bridge)")
+and Launch Pad Phase 3 risk. Both call `read-bridge.sh` unconditionally and thread its
+bounded markdown as advisory, non-gating context only.
+
+---
+
 ## The staleness rule (correctness keystone)
 
 A graph-first agent that trusts a stale graph is *worse* than a grep-first one. Encode this
