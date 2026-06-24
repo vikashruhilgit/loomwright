@@ -35,7 +35,6 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_SH="$HERE/build-bridge.sh"
-BUILD_PY="$HERE/build-bridge.py"
 READ_SH="$HERE/read-bridge.sh"
 PY="$(command -v python3 || command -v python || true)"
 JQ="$(command -v jq || true)"
@@ -123,6 +122,37 @@ write_lessons() {
     printf '## review-process\n'
     printf -- '- [abc12345] When editing lessonfile.md always re-run the doc-currency grep before passing — UNIQUE_LESSON_MARKER applies.\n'
   } > "$repo/.supervisor/memory/LESSONS.md"
+}
+
+# write_joined <repo> <owner_repo_slug> [floor_misses] [joined_only_pr]
+# Writes .supervisor/heal-signal/joined.jsonl. joined.jsonl uses "owner_repo" (NOT "repo") for the
+# slug and carries self_heal_misses but NO changed_paths/categories. Two enrichment rows:
+#   - PR #101 (also in the postmortem corpus, community 1) with a HIGHER self_heal_misses floor —
+#     the by_num floor-raising MUST adopt the joined miss count over the postmortem's.
+#   - PR <joined_only_pr> (ABSENT from the postmortem corpus) — must still become a finding, with
+#     changed_paths git-backfilled from a commit whose subject ends in "(#<pr>)".
+write_joined() {
+  local repo="$1" slug="$2" floor="${3:-5}" jonly="${4:-303}"
+  mkdir -p "$repo/.supervisor/heal-signal"
+  # Create squash-style commits so git_files_for_pr(...) can backfill changed_paths for BOTH the
+  # joined-only PR AND #101 (whose floor-raising adopts the changed_paths-LESS joined record, so its
+  # paths must be recovered via git — exercising the documented git-backfill enrichment path).
+  ( cd "$repo" \
+      && mkdir -p ai-agent-manager-plugin/agents \
+      && printf 'pm-101 change\n' >> ai-agent-manager-plugin/agents/supervisor.md \
+      && git add ai-agent-manager-plugin/agents/supervisor.md \
+      && git commit -qm "fix: pm-101 area (#101)" \
+      && printf 'joined-only change\n' >> ai-agent-manager-plugin/agents/supervisor.md \
+      && git add ai-agent-manager-plugin/agents/supervisor.md \
+      && git commit -qm "feat: joined-only enrichment (#$jonly)" ) >/dev/null 2>&1
+  {
+    "$JQ" -cn --arg or "$slug" --argjson floor "$floor" \
+      '{owner_repo:$or, number:101, pr_url:"u1", heal_decision:"PASS", self_heal_misses:$floor,
+        review_rounds:3, cell:"FN", label_summary:"joined floor-raise for 101"}'
+    "$JQ" -cn --arg or "$slug" --argjson jonly "$jonly" \
+      '{owner_repo:$or, number:$jonly, pr_url:"u303", heal_decision:"PASS", self_heal_misses:4,
+        review_rounds:2, cell:"FN", label_summary:"joined-only finding"}'
+  } > "$repo/.supervisor/heal-signal/joined.jsonl"
 }
 
 # set_remote <repo> <owner/repo>
@@ -313,8 +343,37 @@ Re="$(newrepo)"
 out_ea="$( cd "$Re" && bash "$READ_SH" "nonexistent/path.xyz" </dev/null 2>/dev/null )"; rcea=$?
 [ "$rcea" -eq 0 ] && [ -z "$out_ea" ] && ok "read-bridge nonexistent/path.xyz → exit 0, no output (fail-safe)" || no "fail-safe no-op broken (rc=$rcea out=[$out_ea])"
 
+echo "== 13. HEAL-SIGNAL JOIN ENRICHMENT — joined.jsonl raises the miss floor + adds a joined-only finding =="
+# (a) FAIL-SAFE BASELINE: the canonical fixture (R1) has NO joined.jsonl, yet builds fine — already
+#     exercised by §§1–10 above. Re-confirm community 1's miss came ONLY from the postmortem corpus.
+MISS101_BASE="$(B '.communities["1"].findings[] | select(.pr==101) | .miss' "$BJSON")"
+[ "$MISS101_BASE" = "2" ] && ok "no-joined.jsonl baseline: #101 miss=2 from postmortem corpus (fail-safe path intact)" || no "baseline #101 miss wrong (got: $MISS101_BASE)"
+
+# (b) ENRICHMENT: a fixture WITH joined.jsonl carrying a HIGHER floor for #101 (5 > postmortem 2)
+#     and a joined-ONLY PR #303 (absent from postmortem, paths git-backfilled).
+Rj="$(newrepo)"; set_remote "$Rj" "acme/widget"
+write_findings "$Rj" "acme/widget"                 # postmortem: #101 miss=2 (community 1), #102 (god-node)
+write_lessons "$Rj"
+write_joined "$Rj" "acme/widget" 5 303             # joined: #101 floor=5, joined-only #303 (commits to supervisor.md)
+hj="$( cd "$Rj" && git rev-parse HEAD )"           # stamp graph AFTER the #303 commit so it maps cleanly
+write_graph "$Rj" "${hj:0:7}"
+run_build "$Rj"
+BJj="$Rj/.supervisor/bridge/bridge.json"
+[ -s "$BJj" ] && ok "enriched build wrote bridge.json" || no "enriched build produced no bridge.json"
+# floor-raising: #101's miss must be the JOINED 5, not the postmortem 2.
+MISS101="$(B '.communities["1"].findings[] | select(.pr==101) | .miss' "$BJj")"
+SHM101="$(B '.communities["1"].findings[] | select(.pr==101) | .self_heal_miss' "$BJj")"
+[ "$MISS101" = "5" ] && ok "joined.jsonl raised #101 self_heal_misses floor 2 → 5 (max-floor enrichment)" || no "joined floor not adopted for #101 (got: $MISS101)"
+[ "$SHM101" = "true" ] && ok "#101 self_heal_miss flag true after enrichment" || no "#101 self_heal_miss flag wrong ($SHM101)"
+# joined-ONLY finding: #303 was never in the postmortem corpus but still produces a finding,
+# with changed_paths git-backfilled (supervisor.md → community 1).
+PR303="$(B '[.communities["1"].findings[].pr] | tostring' "$BJj")"
+printf '%s' "$PR303" | grep -q '303' && ok "joined-ONLY PR #303 became a finding (git-backfilled paths → community 1)" || no "joined-only #303 produced no finding ($PR303)"
+MISS303="$(B '.communities["1"].findings[] | select(.pr==303) | .miss' "$BJj")"
+[ "$MISS303" = "4" ] && ok "joined-only #303 carries its self_heal_misses=4" || no "joined-only #303 miss wrong (got: $MISS303)"
+
 # ---- cleanup ----------------------------------------------------------------
-rm -rf "$R1" "$Ra" "$Rb" "$Rs" "$Rn" "$Rg" "$Rp" "$Re" "$maskbin" 2>/dev/null
+rm -rf "$R1" "$Ra" "$Rb" "$Rs" "$Rn" "$Rg" "$Rp" "$Re" "$Rj" "$maskbin" 2>/dev/null
 
 echo
 echo "RESULT: $pass passed, $fail failed"

@@ -175,6 +175,9 @@ def main():
     joined_path = os.path.join(root, ".supervisor", "heal-signal", "joined.jsonl")
     lessons_path = os.path.join(root, ".supervisor", "memory", "LESSONS.md")
     outdir = args.out or os.path.join(root, ".supervisor", "bridge")
+    # A RELATIVE --out resolves against --root (not the process CWD, which need not equal root).
+    if args.out and not os.path.isabs(args.out):
+        outdir = os.path.join(root, args.out)
 
     # ---- graph absent => robust no-op (exit 0), matching the wrapper's fail-safe contract ----
     if not os.path.exists(graph_path):
@@ -272,8 +275,11 @@ def main():
         git_cache[num] = files
         return files
 
-    # ---- 3. findings corpus (postmortem records) ----
+    # ---- 3. findings corpus (postmortem records + heal-signal joins) ----
     pm_raw = load_jsonl(postmortem_path)
+    # heal-signal joins (labeled PRs) — read for self_heal_miss enrichment. A missing/unreadable
+    # file degrades to [] (load_jsonl is itself fail-safe), exactly like the postmortem corpus.
+    joined_raw = load_jsonl(joined_path)
 
     def repo_matches(rec_repo):
         # Fail-open: no derived slug => keep everything (unscoped).
@@ -285,17 +291,39 @@ def main():
             return True
         return str(rec_repo).lower() == repo_slug.lower()
 
-    # dedupe by PR number, keeping the record with the MAX self_heal_misses (floor-raising)
+    # dedupe by PR number, keeping the record with the MAX self_heal_misses (floor-raising).
+    # Both the postmortem corpus and the heal-signal joins feed the SAME by_num dict, so the
+    # floor-raising rule applies uniformly: a PR present in both keeps whichever record carries
+    # the higher self_heal_misses; a PR present ONLY in joined.jsonl still becomes a finding
+    # (this is the documented "self_heal_miss enrichment").
     by_num = {}
+
+    def consider(rec):
+        """Fold one already-repo-scoped record into by_num, keeping MAX self_heal_misses."""
+        num = rec.get("number")
+        if num is None:
+            return
+        prev = by_num.get(num)
+        if prev is None or (rec.get("self_heal_misses", 0) or 0) > (prev.get("self_heal_misses", 0) or 0):
+            by_num[num] = rec
+
     for r in pm_raw:
         if not repo_matches(r.get("repo")):
             continue
-        num = r.get("number")
-        if num is None:
+        consider(r)
+
+    # joined.jsonl uses "owner_repo" (NOT "repo") for the slug and carries no changed_paths /
+    # categories — the finding-build loop git-backfills paths, derives pr_url from repo_slug+num,
+    # and treats absent categories as []. So a joined row only needs to contribute its
+    # self_heal_misses floor (+ pr_url when present).
+    for r in joined_raw:
+        if not repo_matches(r.get("owner_repo")):
             continue
-        prev = by_num.get(num)
-        if prev is None or (r.get("self_heal_misses", 0) or 0) > (prev.get("self_heal_misses", 0) or 0):
-            by_num[num] = r
+        consider({
+            "number": r.get("number"),
+            "self_heal_misses": r.get("self_heal_misses", 0) or 0,
+            "pr_url": r.get("pr_url"),
+        })
 
     findings = []
     for num, r in sorted(by_num.items()):
