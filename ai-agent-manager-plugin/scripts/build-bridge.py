@@ -372,7 +372,14 @@ def main():
 
     # ---- 4. LESSONS (secondary): attach by explicit file-name mention ----
     lesson_rows = []
-    graph_basenames = {os.path.basename(f): f for f in file_to_comms}  # basename -> a repo path
+    # basename -> ALL repo paths sharing it. Many basenames collide in this repo (56 SKILL.md,
+    # repeated README.md / plugin.json, even supervisor.md = agent prompt + command doc), so a
+    # last-writer-wins {basename: one_path} map would anchor a lesson mentioning a shared basename
+    # to a single arbitrary community and silently under-surface it. Union the communities of every
+    # path sharing the basename instead (the reader's god-node suppression handles over-attachment).
+    graph_basenames = defaultdict(list)
+    for f in file_to_comms:
+        graph_basenames[os.path.basename(f)].append(f)
     if os.path.exists(lessons_path):
         cur_cat = None
         with open(lessons_path) as f:
@@ -385,9 +392,10 @@ def main():
                 if lm:
                     text = lm.group(2)
                     comms = set()
-                    for bn, full in graph_basenames.items():
+                    for bn, fulls in graph_basenames.items():
                         if "." in bn and re.search(r"\b" + re.escape(bn) + r"\b", text):
-                            comms |= file_to_comms[full]
+                            for full in fulls:
+                                comms |= file_to_comms[full]
                     lesson_rows.append({
                         "id": lm.group(1),
                         "category": cur_cat,

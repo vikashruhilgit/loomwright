@@ -378,8 +378,34 @@ printf '%s' "$PR303" | grep -q '303' && ok "joined-ONLY PR #303 became a finding
 MISS303="$(B '.communities["1"].findings[] | select(.pr==303) | .miss' "$BJj")"
 [ "$MISS303" = "4" ] && ok "joined-only #303 carries its self_heal_misses=4" || no "joined-only #303 miss wrong (got: $MISS303)"
 
+echo "== 14. LESSON BASENAME-COLLISION — a shared basename anchors to ALL owning communities, not one =="
+# Many basenames collide in the real graph (56 SKILL.md, repeated README.md, even supervisor.md =
+# agent prompt + command doc). A last-writer-wins {basename: one_path} map would anchor a lesson
+# mentioning a shared basename to a single ARBITRARY community and silently under-surface it. Fixture:
+# the SAME basename "shared.md" lives in TWO distinct communities (1 and 5); a lesson mentioning it
+# MUST appear in BOTH communities' lessons[], not just one.
+Rc="$(newrepo)"; set_remote "$Rc" "acme/widget"
+hc="$( cd "$Rc" && git rev-parse HEAD )"
+mkdir -p "$Rc/graphify-out" "$Rc/.supervisor/memory"
+cat > "$Rc/graphify-out/graph.json" <<EOF
+{"built_at_commit":"${hc:0:7}","nodes":[
+  {"id":"a","source_file":"ai-agent-manager-plugin/skills/alpha/shared.md","community":1},
+  {"id":"b","source_file":"ai-agent-manager-plugin/skills/beta/shared.md","community":5},
+  {"id":"c","source_file":"ai-agent-manager-plugin/skills/beta/other.md","community":5}
+],"links":[]}
+EOF
+printf '## testing\n- [dada1234] Editing shared.md requires re-running the suite — COLLISION_LESSON_MARKER.\n' \
+  > "$Rc/.supervisor/memory/LESSONS.md"
+run_build "$Rc"
+BJc="$Rc/.supervisor/bridge/bridge.json"
+L1="$(B '[.communities["1"].lessons[]?.id] | tostring' "$BJc")"
+L5="$(B '[.communities["5"].lessons[]?.id] | tostring' "$BJc")"
+{ printf '%s' "$L1" | grep -q 'dada1234' && printf '%s' "$L5" | grep -q 'dada1234'; } \
+  && ok "collision lesson anchored to BOTH community 1 and 5 (union over all paths sharing 'shared.md')" \
+  || no "collision lesson missing from a community (c1=$L1 c5=$L5) — basename collision under-surfaced it"
+
 # ---- cleanup ----------------------------------------------------------------
-rm -rf "$R1" "$Ra" "$Rb" "$Rs" "$Rn" "$Rg" "$Rp" "$Re" "$Rj" "$maskbin" 2>/dev/null
+rm -rf "$R1" "$Ra" "$Rb" "$Rs" "$Rn" "$Rg" "$Rp" "$Re" "$Rj" "$Rc" "$maskbin" 2>/dev/null
 
 echo
 echo "RESULT: $pass passed, $fail failed"
