@@ -365,6 +365,12 @@ MISS101="$(B '.communities["1"].findings[] | select(.pr==101) | .miss' "$BJj")"
 SHM101="$(B '.communities["1"].findings[] | select(.pr==101) | .self_heal_miss' "$BJj")"
 [ "$MISS101" = "5" ] && ok "joined.jsonl raised #101 self_heal_misses floor 2 → 5 (max-floor enrichment)" || no "joined floor not adopted for #101 (got: $MISS101)"
 [ "$SHM101" = "true" ] && ok "#101 self_heal_miss flag true after enrichment" || no "#101 self_heal_miss flag wrong ($SHM101)"
+# EVIDENCE PRESERVATION (regression): raising the floor from the leaner joined row must NOT drop
+# the postmortem record's root-cause classes / changed_paths. #101's "drift" miss-class (and its
+# community-1 membership via changed_paths, NOT git-backfill) must survive the floor-raise — a
+# replace-instead-of-merge would emit empty miss_classes and could drop #101 from community 1.
+DRIFT101="$(B '.communities["1"].findings[] | select(.pr==101) | .miss_classes | has("drift")' "$BJj")"
+[ "$DRIFT101" = "true" ] && ok "#101 preserved its postmortem miss-class 'drift' through the joined floor-raise (merge, not replace)" || no "#101 lost its miss-classes when joined raised the floor (got has(drift)=$DRIFT101)"
 # joined-ONLY finding: #303 was never in the postmortem corpus but still produces a finding,
 # with changed_paths git-backfilled (supervisor.md → community 1).
 PR303="$(B '[.communities["1"].findings[].pr] | tostring' "$BJj")"

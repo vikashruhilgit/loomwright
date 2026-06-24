@@ -298,14 +298,38 @@ def main():
     # (this is the documented "self_heal_miss enrichment").
     by_num = {}
 
+    def _rich(x):
+        # A record carries root-cause evidence if it has changed_paths or categories
+        # (the postmortem corpus does; a heal-signal join does NOT).
+        return bool(x.get("changed_paths") or x.get("categories"))
+
     def consider(rec):
-        """Fold one already-repo-scoped record into by_num, keeping MAX self_heal_misses."""
+        """Fold one already-repo-scoped record into by_num.
+
+        Dedupe by PR number. When the same PR appears in BOTH corpora, RAISE the
+        self_heal_misses floor and backfill pr_url, but PRESERVE the richer record's
+        changed_paths / categories evidence. A leaner heal-signal join must never
+        overwrite the postmortem row's root-cause classes / paths — doing so would
+        emit empty miss_classes and force a fragile git-log path backfill (which can
+        even drop the finding from its community entirely when the backfill finds
+        nothing). Symmetric in arrival order, so a postmortem row arriving after a
+        leaner joined row still wins the evidence fields while keeping the floor."""
         num = rec.get("number")
         if num is None:
             return
         prev = by_num.get(num)
-        if prev is None or (rec.get("self_heal_misses", 0) or 0) > (prev.get("self_heal_misses", 0) or 0):
-            by_num[num] = rec
+        if prev is None:
+            by_num[num] = dict(rec)
+            return
+        # Prefer whichever record actually carries evidence as the base to preserve.
+        base = rec if (_rich(rec) and not _rich(prev)) else prev
+        other = prev if base is rec else rec
+        merged = dict(base)
+        merged["self_heal_misses"] = max(prev.get("self_heal_misses", 0) or 0,
+                                         rec.get("self_heal_misses", 0) or 0)
+        if not merged.get("pr_url") and other.get("pr_url"):
+            merged["pr_url"] = other.get("pr_url")
+        by_num[num] = merged
 
     for r in pm_raw:
         if not repo_matches(r.get("repo")):
