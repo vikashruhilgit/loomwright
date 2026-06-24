@@ -279,8 +279,11 @@ def main():
         # Fail-open: no derived slug => keep everything (unscoped).
         if not repo_slug:
             return True
-        rr = str(rec_repo or "")
-        return rr.lower() == repo_slug.lower()
+        # Fail-open: a record lacking a repo field is kept (legacy/hand-authored);
+        # only records with a PRESENT, non-matching repo are scoped out.
+        if rec_repo is None:
+            return True
+        return str(rec_repo).lower() == repo_slug.lower()
 
     # dedupe by PR number, keeping the record with the MAX self_heal_misses (floor-raising)
     by_num = {}

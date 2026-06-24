@@ -151,7 +151,7 @@ record_decision(phase: SELF_HEAL, decision: "area_knowledge: {non-empty | empty}
 context (the exact **AREA-KNOWLEDGE ADVISORY** prompt line lives in `agents/supervisor.md`
 §"Review-and-fix loop", included only when non-empty). The bridge read counts under the
 existing `brain_context` tag in `knowledge_sources_used` (the bridge IS the brain-context
-read path — see `skills/brain-context/SKILL.md` §"Bridge read") — it does NOT introduce a new
+read path — see `skills/brain-context/SKILL.md` §"Bridge read (area knowledge)") — it does NOT introduce a new
 tag and does NOT bump `schema_version`; it is additive prose enrichment of the reviewer
 prompt only.
 

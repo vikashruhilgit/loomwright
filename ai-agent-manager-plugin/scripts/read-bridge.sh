@@ -132,9 +132,20 @@ if [ -z "$BUILT_AT" ]; then
   BUILT_AT="$(jq -r '.built_at_commit // empty' "$GRAPH" 2>/dev/null || true)"
 fi
 CUR_HEAD="$(git rev-parse HEAD 2>/dev/null || true)"
+# Prefix-tolerant compare (mirrors build-bridge.py's head_sha.startswith(built_at) or
+# built_at.startswith(head_sha[:12])): built_at_commit may be an ABBREVIATED SHA (7+ chars)
+# while CUR_HEAD is the full 40-char rev-parse, so an exact != would mark every fresh graph
+# stale. Treat as fresh when built_at is a prefix of the full head, or head's 12-char prefix
+# is a prefix of built_at; otherwise stale ⇒ emit-with-hint (NOT a no-op).
 STALE="no"
-if [ -n "$BUILT_AT" ] && [ -n "$CUR_HEAD" ] && [ "$BUILT_AT" != "$CUR_HEAD" ]; then
-  STALE="yes"
+if [ -n "$BUILT_AT" ] && [ -n "$CUR_HEAD" ]; then
+  case "$CUR_HEAD" in
+    "$BUILT_AT"*) : ;;                       # built_at is a prefix of full head → fresh
+    *) case "$BUILT_AT" in
+         "${CUR_HEAD:0:12}"*) : ;;           # head's 12-char prefix is a prefix of built_at → fresh
+         *) STALE="yes" ;;
+       esac ;;
+  esac
 fi
 
 # 4. Build the query-path JSON array (raw strings → jq array; no interpolation).

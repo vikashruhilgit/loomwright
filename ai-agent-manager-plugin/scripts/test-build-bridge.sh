@@ -135,7 +135,11 @@ build_canonical() {
   local R; R="$(newrepo)"
   set_remote "$R" "acme/widget"
   local head; head="$( cd "$R" && git rev-parse HEAD )"
-  local built_at="$head"
+  # Fresh fixture stamps an ABBREVIATED 7-char SHA (the production shape: graph.json's
+  # built_at_commit is extracted as [0-9a-f]{7,}), so the §6 "fresh emits WITHOUT a caveat"
+  # assertion exercises read-bridge.sh's prefix-tolerant staleness compare — an exact
+  # full-vs-abbreviated != would (wrongly) mark every fresh graph stale.
+  local built_at="${head:0:7}"
   [ "$fresh" = "stale" ] && built_at="0000000000000000000000000000000000000000"
   write_graph "$R" "$built_at"
   write_findings "$R" "acme/widget"
