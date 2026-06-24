@@ -393,7 +393,13 @@ def main():
                     text = lm.group(2)
                     comms = set()
                     for bn, fulls in graph_basenames.items():
-                        if "." in bn and re.search(r"\b" + re.escape(bn) + r"\b", text):
+                        # Word-boundary match. A basename starting with a non-word char (dotfiles
+                        # like .mcp.json / .gitignore) has NO leading word boundary — a \b before
+                        # the '.' never matches (both the preceding char and '.' are non-word), so
+                        # drop the leading \b in that case or the mention silently fails to anchor.
+                        # The trailing \b is always safe (basenames end in an extension word char).
+                        lead = r"\b" if re.match(r"\w", bn) else ""
+                        if "." in bn and re.search(lead + re.escape(bn) + r"\b", text):
                             for full in fulls:
                                 comms |= file_to_comms[full]
                     lesson_rows.append({

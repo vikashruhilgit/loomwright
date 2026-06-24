@@ -391,11 +391,16 @@ cat > "$Rc/graphify-out/graph.json" <<EOF
 {"built_at_commit":"${hc:0:7}","nodes":[
   {"id":"a","source_file":"ai-agent-manager-plugin/skills/alpha/shared.md","community":1},
   {"id":"b","source_file":"ai-agent-manager-plugin/skills/beta/shared.md","community":5},
-  {"id":"c","source_file":"ai-agent-manager-plugin/skills/beta/other.md","community":5}
+  {"id":"c","source_file":"ai-agent-manager-plugin/skills/beta/other.md","community":5},
+  {"id":"d","source_file":"ai-agent-manager-plugin/.mcp.json","community":7}
 ],"links":[]}
 EOF
-printf '## testing\n- [dada1234] Editing shared.md requires re-running the suite — COLLISION_LESSON_MARKER.\n' \
-  > "$Rc/.supervisor/memory/LESSONS.md"
+# Two lessons: one on the colliding "shared.md", one on the DOTFILE ".mcp.json" (leading-dot basename
+# has no leading word boundary — a \b before '.' never matches, so it must anchor WITHOUT the leading \b).
+{ printf '## testing\n'
+  printf -- '- [dada1234] Editing shared.md requires re-running the suite — COLLISION_LESSON_MARKER.\n'
+  printf -- '- [d07f11e5] When changing .mcp.json always reinstall the plugin — DOTFILE_LESSON_MARKER.\n'
+} > "$Rc/.supervisor/memory/LESSONS.md"
 run_build "$Rc"
 BJc="$Rc/.supervisor/bridge/bridge.json"
 L1="$(B '[.communities["1"].lessons[]?.id] | tostring' "$BJc")"
@@ -403,6 +408,11 @@ L5="$(B '[.communities["5"].lessons[]?.id] | tostring' "$BJc")"
 { printf '%s' "$L1" | grep -q 'dada1234' && printf '%s' "$L5" | grep -q 'dada1234'; } \
   && ok "collision lesson anchored to BOTH community 1 and 5 (union over all paths sharing 'shared.md')" \
   || no "collision lesson missing from a community (c1=$L1 c5=$L5) — basename collision under-surfaced it"
+# DOTFILE anchoring: the .mcp.json lesson must reach community 7 (leading-dot boundary fix).
+L7="$(B '[.communities["7"].lessons[]?.id] | tostring' "$BJc")"
+printf '%s' "$L7" | grep -q 'd07f11e5' \
+  && ok "dotfile lesson '.mcp.json' anchored to community 7 (leading-dot word-boundary drop)" \
+  || no "dotfile lesson '.mcp.json' did NOT anchor (c7=$L7) — leading \\b silently dropped the mention"
 
 # ---- cleanup ----------------------------------------------------------------
 rm -rf "$R1" "$Ra" "$Rb" "$Rs" "$Rn" "$Rg" "$Rp" "$Re" "$Rj" "$Rc" "$maskbin" 2>/dev/null
