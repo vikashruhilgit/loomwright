@@ -56,13 +56,24 @@ The init flow **never blind-overwrites** `~/.claude/settings.json`:
 2. The env block is applied via **jq deep-merge** — only the 8 keys above are touched; unrelated keys (and unrelated top-level sections) are preserved byte-for-byte.
 3. If the existing file **fails to parse as JSON, the flow aborts** — it never half-writes a corrupted settings file.
 
+## Per-project auto-labeling (`service.name`)
+
+The user-scope env block above sets `OTEL_RESOURCE_ATTRIBUTES=service.version=<plugin version>` globally. To additionally label **each repo** with its own `service.name`, the plugin auto-maintains a per-project override:
+
+- **Trigger:** a `SessionStart` hook (`${CLAUDE_PLUGIN_ROOT}/scripts/set-otel-resource-attrs.sh`, a new entry alongside `session-resume.sh` — it gets its OWN entry because it must also fire on the `startup` source that `session-resume.sh` deliberately skips) AND the `/setup observability` init-tail (run once at the end of a successful init so the current repo is labeled immediately).
+- **Gate:** telemetry enabled — `CLAUDE_CODE_ENABLE_TELEMETRY == "1"` (from `~/.claude/settings.json` OR env). The gate is the enable flag ONLY, not the endpoint/exporter. Off → silent no-op. The helper is fail-safe and ALWAYS exits 0.
+- **Target:** `<project>/.claude/settings.local.json`, key `.env.OTEL_RESOURCE_ATTRIBUTES`. The project-level value overrides the user-level one, so the helper writes `service.name=<repo-basename>,service.version=<plugin version>`.
+- **Value-level merge:** only `service.name`/`service.version` are restated; any OTHER attributes already in the value are preserved.
+
+> **One-session-lag caveat:** `settings.local.json` is read at session start, *before* this SessionStart hook writes it — so a brand-new repo's very first session may emit the prior (or absent) `service.name` value; the label takes effect from the NEXT session. The `/setup observability` init-tail invocation (which labels the current repo synchronously during init) and a best-effort `$CLAUDE_ENV_FILE` write cover the enabling session itself. Removal: `/setup observability remove` best-effort strips the CURRENT repo's label; other repos' auto-written labels are left in place but are INERT while telemetry is off.
+
 ## Documented limitation: Langfuse ingests TRACES ONLY
 
 Langfuse's OTLP endpoint (`/api/public/otel`) **accepts traces only** — metrics and logs are not ingested. Consequence: **Claude Code's native cost/token METRICS do not land in Langfuse.** Token usage is still visible per-trace via the renamed `gen_ai.usage.*` span attributes, but the metrics stream itself terminates in the collector's debug exporter (deliberately, so the CLI never sees export errors). This is documented Langfuse behavior, not something the bundled stack works around.
 
 ## Session-start health probe
 
-`${CLAUDE_PLUGIN_ROOT}/scripts/session-resume.sh` (the existing `SessionStart` hook — hook count unchanged at 19) also runs `observability_probe`:
+`${CLAUDE_PLUGIN_ROOT}/scripts/session-resume.sh` (the recovery-context `SessionStart` hook — the observability probe rides inside it and adds no new hook entry) also runs `observability_probe`:
 
 - **Inherits the host hook's outer gates:** `session-resume.sh` only runs on `SessionStart` sources `resume`/`clear`/`compact` (a fresh `startup` is silent) AND early-exits when the working directory has no `.supervisor/` dir. The probe is called after those gates, so — by design — the down-stack warning fires only when you resume/clear/compact **inside a Supervisor-managed repo**. Observability config is global (`~/.claude/settings.json`), so a session in a non-`.supervisor/` repo with a down stack gets no warning; this is intentional (the hook's primary job is Supervisor recovery context, and `/setup observability status` reports stack health on demand anywhere).
 - **Gated on the env block:** runs only when `~/.claude/settings.json` has `env.CLAUDE_CODE_ENABLE_TELEMETRY` truthy (explicit `0`/`false` is treated as unconfigured) AND a non-empty `env.OTEL_EXPORTER_OTLP_ENDPOINT`. Missing `jq`/`curl`/settings → strict no-op, byte-identical to pre-probe hook output.
@@ -73,6 +84,8 @@ Langfuse's OTLP endpoint (`/api/public/otel`) **accepts traces only** — metric
   ```bash
   docker compose -p ai-agent-manager-observability -f ~/.claude/ai-agent-manager/observability/docker-compose.yml up -d
   ```
+
+> **Note:** the down-stack probe is hosted by `session-resume.sh`. The per-project auto-labeler (`set-otel-resource-attrs.sh`, see "Per-project auto-labeling" above) is a SEPARATE, additional `SessionStart` hook entry — it intentionally also fires on the `startup` source that `session-resume.sh` skips.
 
 ### Compose project-name convention
 

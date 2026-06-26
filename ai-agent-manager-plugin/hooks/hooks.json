@@ -175,6 +175,14 @@
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/session-resume.sh\""
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/set-otel-resource-attrs.sh\""
+          }
+        ]
       }
     ]
   }
