@@ -105,6 +105,35 @@ run "$R" "$H"
 [ "$RC" -eq 0 ] && ok "exit 0 when settings.json absent" || no "non-zero exit absent settings ($RC)"
 [ ! -f "$R/.claude/settings.local.json" ] && ok "no write when settings.json absent + env unset" || no "wrote with absent settings + env unset"
 
+echo "== 1c. HOME UNSET ⇒ fail-safe (exit 0); env-var branch still labels (set -u guard) =="
+# Regression: bare \$HOME under `set -u` aborts with 'HOME: unbound variable'.
+# The settings-file gate must be skipped when HOME is empty; the env-var branch
+# must still work. (a) HOME unset + no telemetry flag ⇒ silent no-op exit 0.
+R="$(newrepo homeoff)"
+( cd "$R" && env -u HOME -u CLAUDE_CODE_ENABLE_TELEMETRY \
+    CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" bash "$SCRIPT" ) >/dev/null 2>&1; RC=$?
+[ "$RC" -eq 0 ] && ok "exit 0 with HOME unset + telemetry off" || no "non-zero exit HOME-unset off ($RC)"
+[ ! -f "$R/.claude/settings.local.json" ] && ok "no write with HOME unset + telemetry off" || no "wrote with HOME unset + off"
+# (b) HOME unset + env-var telemetry ON ⇒ still labels, exit 0.
+R="$(newrepo homeon)"
+( cd "$R" && env -u HOME CLAUDE_CODE_ENABLE_TELEMETRY=1 \
+    CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" bash "$SCRIPT" ) >/dev/null 2>&1; RC=$?
+[ "$RC" -eq 0 ] && ok "exit 0 with HOME unset + env telemetry on" || no "non-zero exit HOME-unset on ($RC)"
+A="$(attrs_of "$R")"
+[ "$A" = "service.name=homeon,service.version=${FIXTURE_VERSION}" ] \
+  && ok "HOME-unset env-only branch still labels" || no "HOME-unset label wrong (got: [$A])"
+
+echo "== 1d. Version fallback — unresolvable plugin.json ⇒ service.version=unknown, exit 0 =="
+# CLAUDE_PLUGIN_ROOT points at a dir with no manifest; the script must still
+# label service.name and fall back to 'unknown' (never error).
+R="$(newrepo verfb)"; H="$(newhome 1)"; NOMANIFEST="$(mktemp -d)"; TMPS+=("$NOMANIFEST")
+( cd "$R" && env -u CLAUDE_CODE_ENABLE_TELEMETRY \
+    HOME="$H" CLAUDE_PLUGIN_ROOT="$NOMANIFEST" bash "$SCRIPT" ) >/dev/null 2>&1; RC=$?
+[ "$RC" -eq 0 ] && ok "exit 0 with unresolvable plugin.json" || no "non-zero exit no-manifest ($RC)"
+A="$(attrs_of "$R")"
+[ "$A" = "service.name=verfb,service.version=unknown" ] \
+  && ok "service.version falls back to 'unknown'" || no "version fallback wrong (got: [$A])"
+
 echo "== 2. Telemetry ON via settings.json ⇒ writes labeled attrs =="
 R="$(newrepo myproj)"; H="$(newhome 1)"
 run "$R" "$H"

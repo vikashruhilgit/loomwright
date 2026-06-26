@@ -238,7 +238,7 @@ The `remove` subflow best-effort strips the CURRENT repo's label (`jq 'del(.env.
 
 ## Quality Gates
 
-- [ ] Sanctioned write domain (setup's OWN logic): `~/.claude/ai-agent-manager/observability/*`, user-scope `~/.claude/settings.json`, and project-scope `<project>/.claude/settings.local.json` (the per-project label — written via the init-tail `set-otel-resource-attrs.sh` invocation and stripped by the `remove` `del`). Every settings(.local).json write path: backup-first, `jq empty` parse gate, tmp+`mv` atomic replace.
+- [ ] Sanctioned write domain (setup's OWN logic): `~/.claude/ai-agent-manager/observability/*`, user-scope `~/.claude/settings.json`, and project-scope `<project>/.claude/settings.local.json` (the per-project label — written via the init-tail `set-otel-resource-attrs.sh` invocation and stripped by the `remove` `del`). setup's OWN settings(.local).json writes (the user-scope merge and the `remove` `del`) are backup-first + `jq empty` parse gate + tmp+`mv` atomic replace; the delegated init-tail `set-otel-resource-attrs.sh` write is parse-gate + atomic + idempotent-skip but NOT backup-first (single-key idempotent merge — nothing destructive to roll back).
 - [ ] Env block is exactly the 8 settled keys (or the documented console variant) — no extras, no renames.
 - [ ] `.env` variable names match what `${CLAUDE_PLUGIN_ROOT}/scripts/otel/docker-compose.yml` consumes (sole exception: `COMPOSE_PROJECT_NAME`, consumed by the compose CLI) — verify against the compose file on any change to either.
 - [ ] Every compose command (recipe or printed) carries `-p ai-agent-manager-observability` — the project-name convention in Pattern 4.

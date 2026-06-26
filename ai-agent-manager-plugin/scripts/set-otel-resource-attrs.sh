@@ -51,9 +51,12 @@ esac
 command -v jq >/dev/null 2>&1 || exit 0
 
 telemetry_on=0
-# settings.json source (read-only). 2>/dev/null so a missing/unreadable file is
-# silent. `jq -e` exit status carries the boolean.
-if jq -e '.env.CLAUDE_CODE_ENABLE_TELEMETRY=="1"' "$HOME/.claude/settings.json" >/dev/null 2>&1; then
+# settings.json source (read-only). Guard $HOME with ${HOME:-} so an unset HOME
+# under `set -u` cannot abort the hook (fail-safe contract) — skip the file
+# branch entirely when HOME is empty; the env-var branch below still applies.
+# 2>/dev/null so a missing/unreadable file is silent. `jq -e` exit status
+# carries the boolean.
+if [ -n "${HOME:-}" ] && jq -e '.env.CLAUDE_CODE_ENABLE_TELEMETRY=="1"' "${HOME}/.claude/settings.json" >/dev/null 2>&1; then
   telemetry_on=1
 fi
 # Live-env source (OR branch). Console/env-only telemetry must still label.
