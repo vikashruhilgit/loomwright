@@ -41,7 +41,7 @@ Every module implements five phases, in order, every invocation:
 
 | Module | Depth (v1) | check probes | apply writes |
 |---|---|---|---|
-| `observability` | FULL init / status / remove | `~/.claude/settings.json` env block; `~/.claude/ai-agent-manager/observability/` copy; `docker inspect` health | asset copy + `.env` + `docker compose` + settings merge |
+| `observability` | FULL init / status / remove | `~/.claude/settings.json` env block; `~/.claude/ai-agent-manager/observability/` copy; `docker inspect` health; current-repo `<project>/.claude/settings.local.json` label | asset copy + `.env` + `docker compose` + settings merge + per-project label (init-tail + remove `del`, see Pattern 7) |
 | `telemetry` | delegate | `.supervisor/telemetry-consent.json` | nothing — `/telemetry` owns it |
 | `notifications` | status + guidance | none (always-on hooks) | nothing |
 | `webhook` | status + guidance | `AI_AGENT_MANAGER_WEBHOOK_URL` set? | nothing (guidance only) |
@@ -190,6 +190,23 @@ done
 
 For an external/existing endpoint, only the emit half runs (verify 2xx) — arbitrary backends can't be polled. **Traces only:** Langfuse's `/api/public/otel` ingests traces, not metrics/logs; the local collector terminates those in a debug exporter by design. Document this, never work around it.
 
+### Pattern 7 — Per-project auto-label (`set-otel-resource-attrs.sh`)
+
+Per-project OTel labeling is auto-maintained by `${CLAUDE_PLUGIN_ROOT}/scripts/set-otel-resource-attrs.sh`, fired two ways:
+
+- **SessionStart hook** (`hooks.json`) — runs on every session start, including `startup` (unlike `session-resume.sh`, which skips `startup`), so it gets its own sibling `SessionStart` entry.
+- **`/setup observability` init-tail** — invoked once at the END of a successful init (any telemetry-enabling backend: local / external / console) so the CURRENT repo is labeled immediately instead of waiting for the next session.
+
+Contract (do not vary):
+
+- **Telemetry gate:** runs only when `CLAUDE_CODE_ENABLE_TELEMETRY == "1"` (from `~/.claude/settings.json` OR env) — gated on the enable flag ONLY, NOT on the endpoint/exporter. Silent no-op when telemetry is off or `jq` is missing.
+- **Fail-safe:** ALWAYS exits 0 (it is a SessionStart hook helper — must never block a session or fail loud).
+- **Target:** `<project>/.claude/settings.local.json`, key `.env.OTEL_RESOURCE_ATTRIBUTES`.
+- **Value-level merge:** writes `service.name=<repo-basename>,service.version=<plugin version>`, preserving any OTHER attributes already in the value (it restates only service.name/service.version).
+- **Version source:** `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` (or a BASH_SOURCE-relative fallback).
+
+The `remove` subflow best-effort strips the CURRENT repo's label (`jq 'del(.env.OTEL_RESOURCE_ATTRIBUTES)'`, same backup-first/parse-gate/atomic discipline); other repos' auto-written labels are left in place but are INERT while telemetry is off.
+
 ## Anti-Patterns
 
 - **String-interpolating user input into the settings JSON.** Always build `$ENV_JSON` with `jq -n --arg` — injection-safe by construction.
@@ -221,7 +238,7 @@ For an external/existing endpoint, only the emit half runs (verify 2xx) — arbi
 
 ## Quality Gates
 
-- [ ] Every settings.json write path: backup-first, `jq empty` parse gate, tmp+`mv` atomic replace.
+- [ ] Sanctioned write domain (setup's OWN logic): `~/.claude/ai-agent-manager/observability/*`, user-scope `~/.claude/settings.json`, and project-scope `<project>/.claude/settings.local.json` (the per-project label — written via the init-tail `set-otel-resource-attrs.sh` invocation and stripped by the `remove` `del`). setup's OWN settings(.local).json writes (the user-scope merge and the `remove` `del`) are backup-first + `jq empty` parse gate + tmp+`mv` atomic replace; the delegated init-tail `set-otel-resource-attrs.sh` write is parse-gate + atomic + idempotent-skip but NOT backup-first (single-key idempotent merge — nothing destructive to roll back).
 - [ ] Env block is exactly the 8 settled keys (or the documented console variant) — no extras, no renames.
 - [ ] `.env` variable names match what `${CLAUDE_PLUGIN_ROOT}/scripts/otel/docker-compose.yml` consumes (sole exception: `COMPOSE_PROJECT_NAME`, consumed by the compose CLI) — verify against the compose file on any change to either.
 - [ ] Every compose command (recipe or printed) carries `-p ai-agent-manager-observability` — the project-name convention in Pattern 4.

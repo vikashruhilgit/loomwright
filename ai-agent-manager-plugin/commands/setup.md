@@ -168,26 +168,34 @@ If already configured, offer instead: `Status` / `Reconfigure (re-run init)` / `
    | `OTEL_RESOURCE_ATTRIBUTES` | `service.version=<plugin version from Step 0>` |
 
 7. **Smoke test BEFORE reporting success** — execute the skill's smoke-test recipe: emit a test span via `curl` to `http://localhost:<OTEL_COLLECTOR_PORT>/v1/traces`, then poll the Langfuse API (`/api/public/traces`, Basic auth `pk:sk` from `.env`) until the span lands (up to ~3 minutes — ingestion is async through the worker + ClickHouse). If it never lands: report FAILURE with the collector logs (`docker compose -p ai-agent-manager-observability logs otel-collector --tail 50`) — the env merge stays in place (it is correct), but success is NOT claimed.
-8. **Report success:**
+8. **Label THIS repo immediately (init-tail).** Now that telemetry is enabled, run the per-project labeler once so the current repo is labeled this session instead of waiting for the next session's SessionStart hook:
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT}/scripts/set-otel-resource-attrs.sh"
+   ```
+   Then read back and report the resulting label in the success summary: `jq -r '.env.OTEL_RESOURCE_ATTRIBUTES // "not set"' "$PWD/.claude/settings.local.json" 2>/dev/null` (expect `service.name=<repo>,service.version=<plugin version>`). The script is fail-safe and always exits 0.
+9. **Report success:**
    - Dashboard: `http://localhost:<LANGFUSE_PORT>` — login with `LANGFUSE_INIT_USER_EMAIL` / `LANGFUSE_INIT_USER_PASSWORD` from `$OBS_DIR/.env` (print both; this is a local-only credential).
+   - Per-project label: report the `service.name`/`service.version` written by the init-tail step above.
    - **"Restart your Claude Code sessions to pick up the env"** — settings.json `env` is read at session start; running sessions keep emitting nothing until restarted.
-   - Optional per-repo `service.name` snippet — offer to print (NOT auto-apply) for the project-level `.claude/settings.json`:
+   - **Per-project labeling is now auto-maintained** by the `set-otel-resource-attrs.sh` SessionStart hook whenever telemetry is enabled: it writes `service.name=<repo-basename>,service.version=<plugin version>` into each repo's `<project>/.claude/settings.local.json` `.env.OTEL_RESOURCE_ATTRIBUTES` (value-level merge — preserves any other attrs you set). You no longer need to hand-author the snippet. *Manual fallback (if you want to set it yourself for a repo):*
      ```json
      { "env": { "OTEL_RESOURCE_ATTRIBUTES": "service.name=<repo-name>,service.version=<plugin version>" } }
      ```
-     Note: project-level `OTEL_RESOURCE_ATTRIBUTES` replaces the user-level value wholesale, so the snippet must restate `service.version`.
+     Note: the project-level `OTEL_RESOURCE_ATTRIBUTES` overrides the user-level value, so both the script's value-level merge and any manual snippet restate `service.name`/`service.version` (other attrs are preserved by the script's merge).
 
 ### Apply — backend 2: existing OTLP endpoint (env-merge only, no Docker)
 
 1. Collect from the user (AskUserQuestion + free-text follow-ups): the OTLP endpoint URL and the headers string (e.g. Langfuse Cloud: endpoint `https://cloud.langfuse.com/api/public/otel`, headers `Authorization=Basic <base64(pk:sk)>`).
 2. Run the same settings-merge recipe with the same 8 keys; `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_HEADERS` from the user's answers.
 3. Smoke test: `curl` a test span to `<endpoint>/v1/traces` with the user's headers and verify a 2xx response (arbitrary backends can't be polled). **Document, don't work around:** if the endpoint is a bare Langfuse `/api/public/otel`, metrics and logs exporters will get rejected — Langfuse ingests traces only; that's expected. Point the endpoint at a collector if the rejection noise matters.
-4. Report: restart note (as above) + optional `service.name` snippet.
+4. **Label THIS repo immediately (init-tail).** Telemetry is now enabled, so run the per-project labeler once: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/set-otel-resource-attrs.sh"` (fail-safe, always exits 0), then read back `jq -r '.env.OTEL_RESOURCE_ATTRIBUTES // "not set"' "$PWD/.claude/settings.local.json" 2>/dev/null`.
+5. Report: restart note (as above) + the per-project `service.name`/`service.version` label written by step 4 (auto-maintained going forward by the SessionStart hook; manual fallback snippet still available).
 
 ### Apply — backend 3: console (debug only)
 
 1. Merge (same recipe, same backup/abort rules) a reduced block: `CLAUDE_CODE_ENABLE_TELEMETRY=1`, `OTEL_METRICS_EXPORTER=console`, `OTEL_LOGS_EXPORTER=console`, `OTEL_TRACES_EXPORTER=console`, `OTEL_RESOURCE_ATTRIBUTES=service.version=<plugin version>`. The OTLP-specific keys (protocol/endpoint/headers) are omitted — nothing is exported over OTLP in this mode; if they linger from a previous OTLP config, remove them in the same merge (`del`).
-2. No Docker, no smoke test. Report: restart note + "console output is for debugging only".
+2. **Label THIS repo immediately (init-tail).** Telemetry is enabled in console mode too, so run the per-project labeler once: `bash "${CLAUDE_PLUGIN_ROOT}/scripts/set-otel-resource-attrs.sh"` (fail-safe, always exits 0), then read back `jq -r '.env.OTEL_RESOURCE_ATTRIBUTES // "not set"' "$PWD/.claude/settings.local.json" 2>/dev/null`.
+3. No Docker, no smoke test. Report: restart note + the per-project `service.name`/`service.version` label written by step 2 + "console output is for debugging only".
 
 ### Verify (all backends)
 
@@ -197,13 +205,16 @@ Re-run the Check step and show the before/after status row. Local backend additi
 
 The Check + Report steps only (read-only). Include: mode, env-block keys present (names only — never print header values beyond the endpoint), container health table (with the `booting`/collector-liveness-only buckets from the dashboard check), Langfuse `/api/public/health` probe (source `$OBS_DIR/.env` first so a customized `LANGFUSE_PORT` is honored), last settings backup filename.
 
+Also report the CURRENT repo's per-project label (read-only): `jq -r '.env.OTEL_RESOURCE_ATTRIBUTES // empty' "$PWD/.claude/settings.local.json" 2>/dev/null` — print `per-project label: service.name=<repo>,service.version=<X>` when set, or `per-project label: not set` when absent/unreadable.
+
 ### Subflow: `/setup observability remove`
 
 1. Confirm via AskUserQuestion. Two-step teardown:
    - `docker compose -p ai-agent-manager-observability -f "$OBS_DIR/docker-compose.yml" --env-file "$OBS_DIR/.env" down` (containers only — data volumes survive).
    - Separately ask before `down -v` (DESTRUCTIVE: deletes all collected traces) and before deleting `$OBS_DIR` (contains `.env` with the keys).
 2. Remove the env block from `$SETTINGS` — same backup-first + abort-on-parse rules, then `jq 'del(.env.CLAUDE_CODE_ENABLE_TELEMETRY, .env.OTEL_METRICS_EXPORTER, .env.OTEL_LOGS_EXPORTER, .env.OTEL_TRACES_EXPORTER, .env.OTEL_EXPORTER_OTLP_PROTOCOL, .env.OTEL_EXPORTER_OTLP_ENDPOINT, .env.OTEL_EXPORTER_OTLP_HEADERS, .env.OTEL_RESOURCE_ATTRIBUTES)'`. Only these 8 keys — everything else in `env` is untouched.
-3. Report what was removed and what was kept, + restart note.
+3. **Strip the CURRENT repo's project-level label (best-effort).** With telemetry off, also remove the auto-written per-project label from `<project>/.claude/settings.local.json` — same backup-first / parse-gate / atomic-write discipline as the user-scope merge: if `$PWD/.claude/settings.local.json` is absent or fails `jq empty`, skip (fail-safe no-op); otherwise back it up, then `jq 'del(.env.OTEL_RESOURCE_ATTRIBUTES)'` and write atomically (temp file + `mv`). Note: `remove` only knows the CURRENT repo. OTHER repos whose labels were auto-written by the SessionStart hook are left in place — they are INERT while telemetry is off (nothing is exported, so the label has no effect) and can be cleaned manually per-repo (`jq 'del(.env.OTEL_RESOURCE_ATTRIBUTES)' .claude/settings.local.json`).
+4. Report what was removed (including whether the current-repo label was stripped) and what was kept, + restart note.
 
 ---
 
@@ -231,7 +242,12 @@ Status + guidance only. Report which of `DB_HOST`, `DB_USER`, `DB_PASS`, `DB_NAM
 
 ## Constraints (every module)
 
-- The ONLY files this command's OWN logic may write: `$OBS_DIR/*` (the copied stack + generated `.env`) and `$HOME/.claude/settings.json` (via the merge recipe, backup-first). Everything else is read-only or delegated. One delegation carve-out: when the telemetry module executes telemetry.md's enable recipe (see "Module: telemetry"), that recipe writes `.supervisor/telemetry-consent.json` under telemetry.md's authority — setup.md's own logic still never touches that file.
+- The ONLY files this command's OWN logic may write:
+  - `$OBS_DIR/*` (the copied stack + generated `.env`),
+  - `$HOME/.claude/settings.json` — user-scope env, via the merge recipe, backup-first, and
+  - `<project>/.claude/settings.local.json` — project-scope, gitignored-by-convention; sanctioned for the `remove` subflow's `jq 'del(.env.OTEL_RESOURCE_ATTRIBUTES)'` (backup-first, like the user-scope merge) and — via the invoked `set-otel-resource-attrs.sh` script — the init-tail per-project label. The script write uses parse-gate (`jq empty`, no clobber on unparseable) + atomic tmp-file-`mv` + idempotent skip-if-unchanged; it does NOT back up (the merge is single-key and idempotent, so there is nothing destructive to roll back).
+
+  Everything else is read-only or delegated. One delegation carve-out: when the telemetry module executes telemetry.md's enable recipe (see "Module: telemetry"), that recipe writes `.supervisor/telemetry-consent.json` under telemetry.md's authority — setup.md's own logic still never touches that file.
 - Idempotent: re-running any flow against an already-configured module reports "already configured" and offers status/reconfigure/remove — it never blind-overwrites, and never regenerates an existing `.env`.
 - Abort (never half-write) if `~/.claude/settings.json` exists but fails to parse — tell the user the path and the backup convention, and stop.
 - Never print secret VALUES (webhook URL, DB_PASS, header values, generated keys) except the local-only Langfuse dashboard login at the end of a successful local init.
