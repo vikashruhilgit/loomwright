@@ -134,6 +134,22 @@ A="$(attrs_of "$R")"
 [ "$A" = "service.name=verfb,service.version=unknown" ] \
   && ok "service.version falls back to 'unknown'" || no "version fallback wrong (got: [$A])"
 
+echo "== 1e. \$CLAUDE_ENV_FILE set+writable ⇒ export line appended (live-session bonus) =="
+# Asserts only the MECHANICAL append (the export line lands), NOT cross-session
+# env propagation (timing-dependent, not mechanically testable — see brief).
+R="$(newrepo envfileproj)"; H="$(newhome 1)"; EF="$(mktemp)"; TMPS+=("$EF")
+( cd "$R" && env -u CLAUDE_CODE_ENABLE_TELEMETRY \
+    HOME="$H" CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" CLAUDE_ENV_FILE="$EF" \
+    bash "$SCRIPT" ) >/dev/null 2>&1; RC=$?
+[ "$RC" -eq 0 ] && ok "exit 0 with CLAUDE_ENV_FILE set" || no "non-zero exit env-file ($RC)"
+grep -q '^export OTEL_RESOURCE_ATTRIBUTES=' "$EF" \
+  && ok "export OTEL_RESOURCE_ATTRIBUTES line appended to \$CLAUDE_ENV_FILE" \
+  || no "no export line in CLAUDE_ENV_FILE (got: [$(cat "$EF")])"
+# The exported value must carry the computed service.name (printf %q may quote it).
+grep -q 'service.name=envfileproj' "$EF" \
+  && ok "appended export carries the computed service.name" \
+  || no "export line missing service.name (got: [$(cat "$EF")])"
+
 echo "== 2. Telemetry ON via settings.json ⇒ writes labeled attrs =="
 R="$(newrepo myproj)"; H="$(newhome 1)"
 run "$R" "$H"

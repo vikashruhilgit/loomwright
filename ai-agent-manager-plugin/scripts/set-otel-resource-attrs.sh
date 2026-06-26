@@ -122,6 +122,13 @@ fi
 # ---- 7. Current-session best-effort (UNVERIFIED bonus) ----------------------
 # If Claude Code exposed a session env file, export the attrs for the live
 # session too. Correctness must NOT depend on this — skip silently on any issue.
+# Intentionally BEFORE the step-8 idempotent-skip: $CLAUDE_ENV_FILE is a fresh,
+# per-session file, so the export must be (re)written every session even when the
+# durable settings.local.json is already current and step 8 short-circuits. The
+# only cost is duplicate identical export lines if SessionStart fires multiple
+# times in one session (resume/clear/compact) — harmless, since the last-sourced
+# line wins. Gating this behind the durable idempotent-skip would silently drop
+# the live-session export on an already-labeled repo's next session.
 if [ -n "${CLAUDE_ENV_FILE:-}" ] && [ -w "${CLAUDE_ENV_FILE}" ]; then
   printf 'export OTEL_RESOURCE_ATTRIBUTES=%q\n' "$ATTR" >> "${CLAUDE_ENV_FILE}" 2>/dev/null || true
 fi
