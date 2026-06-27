@@ -2,8 +2,8 @@
 name: quality-checklist
 description: Pre-task and post-task quality gates extracted from AGENT_GUIDELINES.md. Use when starting implementation, during development, or before completing code review.
 allowed-tools: Read
-version: "1.1.0"
-lastUpdated: "2026-04-13"
+version: "1.2.0"
+lastUpdated: "2026-06-27"
 ---
 
 # Quality Checklist Skill
@@ -33,6 +33,7 @@ During development:
 - [ ] Input validation at system boundaries
 - [ ] Error handling documented
 - [ ] Performance considered (profile if needed)
+- [ ] **Read-before-write verification** — before asserting any exact shape (command/API/dispatch/spawn/flag/file:line), consumer contract ("feeds Y for free" / "Y-compatible"), or absence ("X is missing"), opened the authoritative source and confirmed it (whole predicate / required-field list / a second tool for absence). Before writing something that depends on another artifact, verified that specific dependency's current state. "Pretty sure" → verify. (See AGENT_GUIDELINES.md → "Read-Before-Write Verification Gate".)
 
 ## Post-Task Checklist (Code Review Gate)
 
@@ -164,7 +165,7 @@ Check each class against the integrated diff:
 
 ## Token Cost
 
-- Checklist invocation: 50 tokens
+- Checklist invocation: 60 tokens
 - Framework-specific variations: 100-200 tokens
 - Repo consistency section (audit mode only): +150 tokens
 - Self-Heal Miss-Class Checklist (Phase 4.5 / review-pr heal only): +180 tokens

@@ -6,7 +6,7 @@ Comprehensive guidance for AI agents working on any project. Apply these standar
 
 ## Core Principles (Priority Order)
 
-1. **Quality First** - Thorough, well-tested, correct solutions; proven approaches over shortcuts
+1. **Quality First** - Thorough, well-tested, correct solutions; proven approaches over shortcuts; verify before asserting (see "Read-Before-Write Verification Gate")
 2. **Surgical Changes** - Only modify what's necessary; fix one thing at a time
 3. **Pattern Consistency** - Use existing patterns; learn codebase before implementing
 4. **Type Safety** - Strictest checking; no implicit `any`; equivalent rigor per language
@@ -23,6 +23,20 @@ Comprehensive guidance for AI agents working on any project. Apply these standar
 - [ ] Existing patterns for similar problems, reusable components, utilities
 - [ ] What depends on changes; breaking changes; backward compatibility
 - [ ] Exact requirements, acceptance criteria, performance/security needs
+
+---
+
+## Read-Before-Write Verification Gate
+
+A fabricated detail feels identical to a recalled fact — your own confidence cannot tell the two apart, so it cannot be self-detected. Treat "I'm pretty sure it's X" as a signal to verify, never as license to write. Open the authoritative source and confirm before you assert.
+
+This gate has three facets:
+
+- **(a) Exact-shape** — Never assert a command invocation, API signature, dispatch/spawn shape, flag surface, or `file:line` pointer from memory. Open and read the authoritative line first, then write exactly what you saw.
+- **(b) Consumer-contract** — Before claiming a producer feeds a consumer "for free" or is "Y-compatible," read the consumer's WHOLE match/filter predicate — the lines bracketing the one you cite, and copy the ENTIRE select/filter chain when replicating it — AND its required-field list. "Append-compatible" is not "consumed"; an advisory record that is written but never matched is worse than none.
+- **(c) Existence/absence** — Never claim a file, symbol, or reference is missing on the strength of a single Glob/Grep — tool results can fail silently. Confirm absence with a second, independent tool before using "missing" as part of an argument.
+
+**Targeted-freshness directive:** Before writing anything that depends on another artifact, verify that *specific* dependency's current state — the targeted dependency, not the whole world (this generalizes the Supervisor's PRE-FLIGHT SYNC). If the basis is stale, refresh it or flag it before committing the change.
 
 ---
 
@@ -194,6 +208,8 @@ refactor(components): extract reusable Button
 **Scope:** Don't upgrade dependencies unnecessarily; make breaking changes without migration; modify unrelated code
 
 **Docs/Logging:** Don't skip API docs; add noisy logging; log secrets; leave obscure comments
+
+**Verification:** Don't assert an unverified shape, consumer-contract, or absence from memory instead of reading the authoritative source — see "Read-Before-Write Verification Gate"
 
 ---
 
