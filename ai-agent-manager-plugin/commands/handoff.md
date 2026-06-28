@@ -2,7 +2,7 @@
 description: Catch up / hand off in 2 minutes — a unified, read-only digest (decision · why · tried/rejected · current state · provenance, with freshness) over the plugin's continuity surfaces
 ---
 
-> **Read-only on your work; writes only a derived digest.** `/handoff` reads the continuity surfaces the plugin already wrote (`.supervisor/jobs/`, `.supervisor/autonomous/`, `.supervisor/automate/`, `.supervisor/worker-summaries/`, `.supervisor/state.md`, `.supervisor/logs/*.jsonl`, `.supervisor/memory/`, `.supervisor/postmortem/`) and writes a derived digest to `.supervisor/handoff/digest.md` (gitignored). It touches no code, no agent, no state-of-truth surface, sends nothing anywhere, and always exits 0.
+> **Read-only on your work; writes only a derived digest.** `/handoff` reads the continuity surfaces the plugin already wrote (`.supervisor/jobs/`, `.supervisor/autonomous/`, `.supervisor/automate/`, `.supervisor/state.md`, plus verified project memory / lessons via the sanctioned `read-project-memory.sh` / `read-lessons.sh` readers) and writes a derived digest to `.supervisor/handoff/digest.md` (gitignored). It touches no code, no agent, no state-of-truth surface, sends nothing anywhere, and always exits 0.
 
 # Command: /handoff
 
@@ -10,7 +10,7 @@ description: Catch up / hand off in 2 minutes — a unified, read-only digest (d
 
 ## Purpose
 
-When you (or a teammate) come back to a project, the knowledge needed to continue is **fragmented** across many surfaces the plugin writes: Supervisor jobs (`.supervisor/jobs/`), autonomous runs (`.supervisor/autonomous/`), worker summaries (`.supervisor/worker-summaries/`), the active session (`.supervisor/state.md`), session logs (`.supervisor/logs/*.jsonl`), project memory (`.supervisor/memory/`), and postmortems (`.supervisor/postmortem/`). There's no single place to see *what was decided, why, what was tried and rejected, where it stands now, and how stale that is.* `/handoff` unifies them into ONE recency-focused, **per-work-item** view — mode-agnostic across Supervisor / autonomous / automate work — so a second person can inherit the context without spelunking through directories.
+When you (or a teammate) come back to a project, the knowledge needed to continue is **fragmented** across many surfaces the plugin writes: Supervisor jobs (`.supervisor/jobs/`), autonomous runs (`.supervisor/autonomous/`), automate runs (`.supervisor/automate/`), the active session (`.supervisor/state.md`), and verified project memory / lessons (`.supervisor/memory/`, surfaced via the sanctioned readers). There's no single place to see *what was decided, why, what was tried and rejected, where it stands now, and how stale that is.* `/handoff` unifies them into ONE recency-focused, **per-work-item** view — mode-agnostic across Supervisor / autonomous / automate work — so a second person can inherit the context without spelunking through directories.
 
 ## Usage
 
@@ -28,7 +28,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/build-handoff.sh"
 
 1. Assembles **ONE mode-agnostic digest** by interleaving work items across **Supervisor jobs** (`.supervisor/jobs/{pending,in-progress,done,failed}/*.md`), **autonomous runs** (`.supervisor/autonomous/<session_id>/`), and **automate runs** (`.supervisor/automate/*.md`) into a single newest-first list — not three per-mode digests.
 2. For each item it shows the **five facets where derivable** — **decision · why · tried/rejected · current state · provenance** (the source artifact path it was drawn from) — plus a **freshness / basis line**. A facet that isn't derivable is omitted, never fabricated.
-3. **Freshness is honest about its basis** — mtime and commit-SHA are **never conflated**. A commit-SHA comparison against current `HEAD` appears **only** when an artifact recorded an actual SHA in a structured trailer (match ⇒ fresh; mismatch ⇒ a hint showing both SHAs, never silently dropped). Otherwise (the common case — jobs/logs/worker-summaries/`state.md` carry no SHA) the basis is the artifact's mtime and freshness is reported as **unknown**, with no SHA comparison.
+3. **Freshness is honest about its basis** — mtime and commit-SHA are **never conflated**. A commit-SHA comparison against current `HEAD` appears **only** when an artifact recorded an actual SHA in a structured trailer (match ⇒ fresh; mismatch ⇒ a hint showing both SHAs, never silently dropped). Otherwise (the common case — jobs / autonomous / automate / `state.md` carry no SHA) the basis is the artifact's mtime and freshness is reported as **unknown**, with no SHA comparison.
 4. **Reuses the existing readers** — where it surfaces verified project memory / lessons it **calls** the sanctioned `read-project-memory.sh` / `read-lessons.sh` helpers rather than re-parsing those stores.
 5. **Absent surfaces are silently skipped** (e.g. `.supervisor/automate/` does not exist on every repo); with no continuity surfaces at all it emits a benign "nothing to summarize yet" line. It then writes **`.supervisor/handoff/digest.md`** (gitignored) and **echoes the path**.
 
