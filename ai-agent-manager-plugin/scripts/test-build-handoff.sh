@@ -17,6 +17,13 @@
 #   (f) reuse path — build-handoff.sh source references read-project-memory.sh + read-lessons.sh
 #   (g) freshness contrast — commit-bearing item renders `hint` WITH SHAs; commit-less item renders
 #       `unknown` WITH NO SHA comparison (its line carries no `hint —` token)
+#   (h) real producer Outcome facets — a real `## Outcome` brief renders Status / Heal decision /
+#       Heal iterations / PR facets (keys match agents/supervisor.md, not the old lowercase keys)
+#   (i) reader resolution — with CLAUDE_PLUGIN_ROOT set to the plugin ROOT, the read-* helpers
+#       resolve under $CLAUDE_PLUGIN_ROOT/scripts and their output is incorporated (finding #1)
+#   (j) abbreviated-SHA freshness — a recorded short SHA that prefixes HEAD renders `fresh`, not
+#       `hint` (prefix-tolerant compare, mirrors read-bridge.sh; finding #2)
+#   (k) real automate run-file — a /automate run-file's Status / Source / PR facets render (finding #3)
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -41,11 +48,17 @@ new_repo() {
   printf '%s' "$r"
 }
 
+# The REAL plugin root is the parent of the scripts dir ($HERE). CLAUDE_PLUGIN_ROOT points at the
+# plugin ROOT at runtime (NOT the scripts dir) — the read-* helpers live under its scripts/ subdir.
+# Simulating it correctly here is what catches the finding-#1 class of helper-path bug.
+PLUGIN_ROOT="$(dirname "$HERE")"
+
 # Run build-handoff.sh inside a temp repo. cd so its `git rev-parse --show-toplevel` resolves to
-# the temp repo; CLAUDE_PLUGIN_ROOT=$HERE so the reused read-* helpers resolve to the real scripts.
+# the temp repo; CLAUDE_PLUGIN_ROOT=$PLUGIN_ROOT so the reused read-* helpers resolve to
+# $PLUGIN_ROOT/scripts (the real plugin layout), exactly as in production.
 run_build() {
   local repo="$1"
-  ( cd "$repo" && CLAUDE_PLUGIN_ROOT="$HERE" bash "$BUILD" )
+  ( cd "$repo" && CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" bash "$BUILD" )
 }
 
 # Cross-platform mtime in seconds (GNU stat -c, BSD/macOS stat -f).
@@ -68,6 +81,44 @@ seed_job() {
     printf '# %s\n\n' "$name"
     printf -- '- **Goal:** ship the %s thing\n' "$name"
     [ -n "$extra" ] && printf '%s\n' "$extra"
+  } > "$f"
+  printf '%s' "$f"
+}
+
+# Seed a done job with a REAL Supervisor completion-tail `## Outcome` block (agents/supervisor.md
+# "## Outcome": **Status:** / **PR:** / **Heal loop ran:** / **Heal decision:** / **Heal iterations:**
+# / **Summary:**). The Goal lives under `## Task` as the bare `**Goal:**` form real briefs use.
+seed_job_outcome() {
+  local repo="$1" name="$2"
+  mkdir -p "$repo/.supervisor/jobs/done"
+  local f="$repo/.supervisor/jobs/done/$name.md"
+  {
+    printf '# %s\n\n' "$name"
+    printf '## Task\n**Goal:** ship the %s thing\n\n' "$name"
+    printf '## Outcome\n'
+    printf -- '- **Status:** completed\n'
+    printf -- '- **PR:** https://github.com/o/r/pull/99\n'
+    printf -- '- **Heal loop ran:** true\n'
+    printf -- '- **Heal decision:** PASS\n'
+    printf -- '- **Heal iterations:** 2\n'
+    printf -- '- **Summary:** did the %s thing well\n' "$name"
+  } > "$f"
+  printf '%s' "$f"
+}
+
+# Seed a REAL /automate run-file (skills/automate-loop/SKILL.md "Run-file template"). Echoes the path.
+seed_automate() {
+  local repo="$1" name="$2"
+  mkdir -p "$repo/.supervisor/automate"
+  local f="$repo/.supervisor/automate/$name.md"
+  {
+    printf '# Automate Run: %s\n' "$name"
+    printf '## Status: paused\n'
+    printf '## Source\n- folder .supervisor/requirements/\n'
+    printf '## Run Config\n- mode: safe | limit: 5\n'
+    printf '## Queue\n- [x] req-a.md\n- [ ] req-b.md\n'
+    printf '## Current\n- item: req-a.md | status: awaiting_merge | pr: https://github.com/o/r/pull/77 | branch: feature/req-a\n'
+    printf '## Progress\n- ts ran /autonomous\n'
   } > "$f"
   printf '%s' "$f"
 }
@@ -219,6 +270,81 @@ echo "$LESS_SECTION" | grep -qF "freshness unknown (no commit SHA recorded)" \
   && ok "commit-less item renders 'freshness unknown' (mtime basis)" || no "commit-less item missing 'freshness unknown' line"
 echo "$LESS_SECTION" | grep -qF "hint —" \
   && no "commit-less item incorrectly shows a 'hint —' SHA comparison" || ok "commit-less item shows NO 'hint —' SHA comparison"
+
+# ============================================================================
+echo "== (h) real producer Outcome facets render (Status / Heal decision / Heal iterations / PR) =="
+RH="$(new_repo)"
+seed_job_outcome "$RH" "real-outcome-item" >/dev/null
+run_build "$RH" >/dev/null; rcH=$?
+DIGH="$RH/.supervisor/handoff/digest.md"
+[ "$rcH" -eq 0 ] && ok "exits 0" || no "expected exit 0, got $rcH"
+SECTH="$(awk '/^### real-outcome-item$/{f=1} f&&/^### / && !/^### real-outcome-item$/{exit} f' "$DIGH" 2>/dev/null)"
+echo "$SECTH" | grep -qF "completed" \
+  && ok "Status facet renders (decision shows '— completed')" || no "Status facet missing (decision didn't pick up **Status:**)"
+echo "$SECTH" | grep -qF "self-heal PASS" \
+  && ok "Heal decision facet renders (tried/rejected shows 'self-heal PASS')" || no "Heal decision facet missing"
+echo "$SECTH" | grep -qF "https://github.com/o/r/pull/99" \
+  && ok "PR facet renders" || no "PR facet missing"
+echo "$SECTH" | grep -qF "ship the real-outcome-item thing" \
+  && ok "Goal (why) facet renders from the bare **Goal:** under ## Task" || no "Goal facet missing"
+# Legacy lowercase/underscore Outcome keys must ALSO render (real briefs carry both casings).
+RH2="$(new_repo)"
+mkdir -p "$RH2/.supervisor/jobs/done"
+{ printf '# legacy-keys-item\n\n## Outcome\n'; printf -- '- **status:** completed\n'; \
+  printf -- '- **heal_decision:** PASS\n'; printf -- '- **heal_iterations:** 1\n'; } > "$RH2/.supervisor/jobs/done/legacy-keys-item.md"
+run_build "$RH2" >/dev/null
+SECTH2="$(awk '/^### legacy-keys-item$/{f=1} f&&/^### / && !/^### legacy-keys-item$/{exit} f' "$RH2/.supervisor/handoff/digest.md" 2>/dev/null)"
+echo "$SECTH2" | grep -qF "self-heal PASS" \
+  && ok "legacy lowercase heal_decision key still renders (dual-casing fallback)" || no "legacy lowercase Outcome keys not picked up"
+
+# ============================================================================
+echo "== (i) reader resolution: CLAUDE_PLUGIN_ROOT=plugin-root resolves readers under scripts/ (finding #1) =="
+RI="$(new_repo)"
+seed_job "$RI" done "reader-host" >/dev/null
+SHIMROOT="$(mktmp)"; mkdir -p "$SHIMROOT/scripts"
+printf '#!/usr/bin/env bash\necho "SHIM_MEMORY_SENTINEL_42"\n' > "$SHIMROOT/scripts/read-project-memory.sh"
+printf '#!/usr/bin/env bash\necho "SHIM_LESSONS_SENTINEL_42"\n' > "$SHIMROOT/scripts/read-lessons.sh"
+chmod +x "$SHIMROOT/scripts/read-project-memory.sh" "$SHIMROOT/scripts/read-lessons.sh"
+( cd "$RI" && CLAUDE_PLUGIN_ROOT="$SHIMROOT" bash "$BUILD" ) >/dev/null; rcI=$?
+DIGI="$RI/.supervisor/handoff/digest.md"
+[ "$rcI" -eq 0 ] && ok "exits 0" || no "expected exit 0, got $rcI"
+grep -qF "SHIM_MEMORY_SENTINEL_42" "$DIGI" 2>/dev/null \
+  && ok "read-project-memory.sh resolved under \$CLAUDE_PLUGIN_ROOT/scripts and its output incorporated" \
+  || no "memory reader NOT resolved under \$CLAUDE_PLUGIN_ROOT/scripts (finding #1 regression)"
+grep -qF "SHIM_LESSONS_SENTINEL_42" "$DIGI" 2>/dev/null \
+  && ok "read-lessons.sh resolved under \$CLAUDE_PLUGIN_ROOT/scripts and its output incorporated" \
+  || no "lessons reader NOT resolved under \$CLAUDE_PLUGIN_ROOT/scripts (finding #1 regression)"
+
+# ============================================================================
+echo "== (j) abbreviated recorded SHA prefixes HEAD → 'fresh', not 'hint' (finding #2) =="
+RJ="$(new_repo)"
+SHORTJ="$( cd "$RJ" && git rev-parse --short HEAD )"   # abbreviated current HEAD (prefix of full HEAD)
+seed_job "$RJ" done "fresh-short-sha" "- **built_at_commit:** $SHORTJ" >/dev/null
+run_build "$RJ" >/dev/null; rcJ=$?
+DIGJ="$RJ/.supervisor/handoff/digest.md"
+[ "$rcJ" -eq 0 ] && ok "exits 0" || no "expected exit 0, got $rcJ"
+SECTJ="$(awk '/^### fresh-short-sha$/{f=1} f&&/^### / && !/^### fresh-short-sha$/{exit} f' "$DIGJ" 2>/dev/null)"
+echo "$SECTJ" | grep -qF "fresh (basis" \
+  && ok "abbreviated HEAD SHA renders 'fresh' (prefix-tolerant)" \
+  || no "abbreviated HEAD SHA not 'fresh'; got: $(echo "$SECTJ" | grep -E 'fresh|hint —' || echo '<none>')"
+echo "$SECTJ" | grep -qF "hint —" \
+  && no "abbreviated HEAD SHA wrongly shows 'hint' (finding #2 regression)" \
+  || ok "no false 'hint' for a fresh abbreviated SHA"
+
+# ============================================================================
+echo "== (k) real /automate run-file: Status / Source / PR facets render (finding #3) =="
+RK="$(new_repo)"
+seed_automate "$RK" "automate-run-1" >/dev/null
+run_build "$RK" >/dev/null; rcK=$?
+DIGK="$RK/.supervisor/handoff/digest.md"
+[ "$rcK" -eq 0 ] && ok "exits 0" || no "expected exit 0, got $rcK"
+SECTK="$(awk '/^### automate-run-1$/{f=1} f&&/^### / && !/^### automate-run-1$/{exit} f' "$DIGK" 2>/dev/null)"
+echo "$SECTK" | grep -qF "automate run — paused" \
+  && ok "automate Status facet renders (decision shows '— paused')" || no "automate Status facet missing"
+echo "$SECTK" | grep -qF "folder .supervisor/requirements/" \
+  && ok "automate Source facet renders (why)" || no "automate Source facet missing"
+echo "$SECTK" | grep -qF "https://github.com/o/r/pull/77" \
+  && ok "automate PR facet renders (from ## Current)" || no "automate PR facet missing"
 
 echo
 echo "RESULT: $pass passed, $fail failed"

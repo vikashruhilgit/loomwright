@@ -45,9 +45,13 @@ cd "$GITROOT" 2>/dev/null || true
 # skip-but-exit-0 (the readers below are independently jq-guarded inside themselves).
 command -v jq >/dev/null 2>&1 || { echo "build-handoff: jq required — skipping" >&2; exit 0; }
 
-# Locate sibling read-* helpers robustly at runtime AND under the test harness (AC5).
+# Locate the sibling read-* helpers robustly at runtime AND under the test harness (AC5).
+# CLAUDE_PLUGIN_ROOT, when set, is the plugin ROOT — the read-* helpers live under its `scripts/`
+# subdir (this script itself is invoked as ${CLAUDE_PLUGIN_ROOT}/scripts/build-handoff.sh, cf.
+# commands/handoff.md). Treating CLAUDE_PLUGIN_ROOT as the scripts dir silently skips the readers
+# in real plugin execution. When unset (test harness / direct call) BASH_SOURCE's own dir IS scripts/.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || echo .)"
-HELPERS_DIR="${CLAUDE_PLUGIN_ROOT:-$SCRIPT_DIR}"
+if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ]; then HELPERS_DIR="$CLAUDE_PLUGIN_ROOT/scripts"; else HELPERS_DIR="$SCRIPT_DIR"; fi
 
 OUT_DIR=".supervisor/handoff"
 OUT="$OUT_DIR/digest.md"
@@ -91,12 +95,17 @@ md_field() {
 freshness_line() {
   local file="$1" basis_sha="$2"
   if [ -n "$basis_sha" ] && [ -n "$head_sha" ]; then
-    # (a) ACTUAL SHA → compare to HEAD. mtime is NOT consulted in this branch.
-    if [ "$basis_sha" = "$head_sha" ]; then
-      printf 'fresh (basis %s == HEAD)' "${basis_sha:0:8}"
-    else
-      printf 'hint — basis %s, HEAD %s' "${basis_sha:0:8}" "${head_sha:0:8}"
-    fi
+    # (a) ACTUAL SHA → compare to HEAD, PREFIX-TOLERANT (mirrors read-bridge.sh). A recorded
+    # ABBREVIATED SHA (e.g. `git rev-parse --short HEAD`, 7+ chars) must still read as fresh
+    # against the full 40-char HEAD — an exact `=` would mark every short-SHA artifact stale.
+    # mtime is NEVER consulted in this branch.
+    case "$head_sha" in
+      "$basis_sha"*) printf 'fresh (basis %s == HEAD)' "${basis_sha:0:8}"; return ;;
+    esac
+    case "$basis_sha" in
+      "${head_sha:0:12}"*) printf 'fresh (basis %s == HEAD)' "${basis_sha:0:8}"; return ;;
+    esac
+    printf 'hint — basis %s, HEAD %s' "${basis_sha:0:8}" "${head_sha:0:8}"
   else
     # (b) common case → mtime basis, freshness unknown. NO SHA comparison.
     local e iso
@@ -176,9 +185,17 @@ if [ -s "$index" ]; then
         # Facet extraction — all tolerant of absence (md_field returns empty → facet omitted).
         goal="$(md_field "$path" 'Goal')"
         [ -n "$goal" ] || goal="$(awk '/^\*\*Goal:\*\*/{sub(/^\*\*Goal:\*\*[[:space:]]*/,"");print;exit}' "$path" 2>/dev/null)"
-        outcome="$(md_field "$path" 'outcome')"
-        heal="$(md_field "$path" 'heal_decision')"
-        heal_it="$(md_field "$path" 'heal_iterations')"
+        # Facet keys match the Supervisor completion-tail `## Outcome` producer
+        # (agents/supervisor.md "## Outcome": `**Status:**`, `**Heal decision:**`,
+        # `**Heal iterations:**`, `**PR:**`, `**Summary:**`). Real done-briefs on disk carry BOTH
+        # the canonical Title-Case form AND a legacy lowercase/underscore form
+        # (`heal_decision`/`heal_iterations`/`status`/`summary`) — so try the canonical key first,
+        # then fall back to the legacy one. (The earlier code read ONLY the lowercase keys, so on
+        # canonical briefs 2 of the 5 facets were perennially empty.)
+        status="$(md_field "$path" 'Status')";          [ -n "$status" ]  || status="$(md_field "$path" 'status')"
+        heal="$(md_field "$path" 'Heal decision')";     [ -n "$heal" ]    || heal="$(md_field "$path" 'heal_decision')"
+        heal_it="$(md_field "$path" 'Heal iterations')"; [ -n "$heal_it" ] || heal_it="$(md_field "$path" 'heal_iterations')"
+        summary="$(md_field "$path" 'Summary')";        [ -n "$summary" ] || summary="$(md_field "$path" 'summary')"
         pr="$(md_field "$path" 'PR')"
         # AC4(a): ONLY a STRUCTURED commit-SHA trailer is a basis. PR URL / feature_branch are NOT.
         basis_sha="$(md_field "$path" 'built_at_commit')"
@@ -193,11 +210,11 @@ if [ -s "$index" ]; then
         esac
 
         # Five facets:
-        decision="Supervisor job ($lc)$( [ -n "$outcome" ] && printf ' — outcome: %s' "$outcome" )"
+        decision="Supervisor job ($lc)$( [ -n "$status" ] && printf ' — %s' "$status" )"
         why="$goal"
         tried=""
         [ -n "$heal" ] && tried="self-heal $heal$( [ -n "$heal_it" ] && printf ' (%s)' "$heal_it" )"
-        state="lifecycle: $lc"
+        state="lifecycle: $lc$( [ -n "$summary" ] && printf ' · %s' "$summary" )"
         extra=""
         [ -n "$pr" ] && extra="- **PR:** $pr"
         fresh="$(freshness_line "$path" "$basis_sha")"
@@ -232,18 +249,19 @@ if [ -s "$index" ]; then
         ;;
 
       AUTOMATE)
-        title="$(basename "$path" .md)"
-        goal="$(md_field "$path" 'Goal')"
-        outcome="$(md_field "$path" 'outcome')"
-        basis_sha="$(md_field "$path" 'built_at_commit')"
-        [ -n "$basis_sha" ] || basis_sha="$(md_field "$path" 'commit_sha')"
-        case "$basis_sha" in
-          *[!0-9a-fA-F]*|"") basis_sha="" ;;
-          *) [ "${#basis_sha}" -ge 7 ] && [ "${#basis_sha}" -le 40 ] || basis_sha="" ;;
-        esac
-        decision="automate run$( [ -n "$outcome" ] && printf ' — outcome: %s' "$outcome" )"
-        fresh="$(freshness_line "$path" "$basis_sha")"
-        emit_item "$title" "Automate run" "" "$decision" "$goal" "" "$fresh" "$path" "" >> "$body"
+        # Facets match the /automate run-file template (skills/automate-loop/SKILL.md "Run-file
+        # template"): the `# Automate Run: <title>` heading, the `## Status:` heading, the first
+        # bullet under `## Source`, and the `## Current` line's `pr: <url>`. The run-file carries
+        # NO `Goal`/`outcome` field and NO commit-SHA trailer → mtime basis (AC4b).
+        title="$(sed -nE 's/^#[[:space:]]*Automate Run:[[:space:]]*//p' "$path" 2>/dev/null | head -1)"
+        [ -n "$title" ] || title="$(basename "$path" .md)"
+        a_status="$(sed -nE 's/^##[[:space:]]*Status:[[:space:]]*//p' "$path" 2>/dev/null | head -1)"
+        a_source="$(awk '/^##[[:space:]]*Source/{f=1;next} f&&/^## /{exit} f&&/^-[[:space:]]/{sub(/^-[[:space:]]*/,"");print;exit}' "$path" 2>/dev/null)"
+        a_pr="$(grep -oE 'pr:[[:space:]]*https?://[^ |]+' "$path" 2>/dev/null | head -1 | sed -E 's/^pr:[[:space:]]*//')"
+        decision="automate run$( [ -n "$a_status" ] && printf ' — %s' "$a_status" )"
+        extra=""; [ -n "$a_pr" ] && extra="- **PR:** $a_pr"
+        fresh="$(freshness_line "$path" "")"
+        emit_item "$title" "Automate run" "${a_status:+status: $a_status}" "$decision" "$a_source" "" "$fresh" "$path" "$extra" >> "$body"
         ;;
     esac
   done < <(sort -t "$(printf '\t')" -k1,1nr "$index" 2>/dev/null)
