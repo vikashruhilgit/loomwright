@@ -6,7 +6,7 @@ Comprehensive guidance for AI agents working on any project. Apply these standar
 
 ## Core Principles (Priority Order)
 
-1. **Quality First** - Thorough, well-tested, correct solutions; proven approaches over shortcuts
+1. **Quality First** - Thorough, well-tested, correct solutions; proven approaches over shortcuts; verify before asserting (see "Read-Before-Write Verification Gate")
 2. **Surgical Changes** - Only modify what's necessary; fix one thing at a time
 3. **Pattern Consistency** - Use existing patterns; learn codebase before implementing
 4. **Type Safety** - Strictest checking; no implicit `any`; equivalent rigor per language
@@ -23,6 +23,20 @@ Comprehensive guidance for AI agents working on any project. Apply these standar
 - [ ] Existing patterns for similar problems, reusable components, utilities
 - [ ] What depends on changes; breaking changes; backward compatibility
 - [ ] Exact requirements, acceptance criteria, performance/security needs
+
+---
+
+## Read-Before-Write Verification Gate
+
+A fabricated detail feels identical to a recalled fact — your own confidence cannot tell the two apart, so it cannot be self-detected. Treat "I'm pretty sure it's X" as a signal to verify, never as license to write. Open the authoritative source and confirm before you assert.
+
+This gate has three facets:
+
+- **(a) Exact-shape** — Never assert a command invocation, API signature, dispatch/spawn shape, flag surface, or `file:line` pointer from memory. Open and read the authoritative line first, then write exactly what you saw.
+- **(b) Consumer-contract** — Before claiming a producer feeds a consumer "for free" or is "Y-compatible," read the consumer's WHOLE match/filter predicate — the lines bracketing the one you cite, and copy the ENTIRE select/filter chain when replicating it — AND its required-field list. "Append-compatible" is not "consumed"; an advisory record that is written but never matched is worse than none.
+- **(c) Existence/absence** — Never claim a file, symbol, or reference is missing on the strength of a single Glob/Grep — tool results can fail silently. Confirm absence with a second, independent tool before using "missing" as part of an argument.
+
+**Targeted-freshness directive:** Before writing anything that depends on another artifact, verify that *specific* dependency's current state — the targeted dependency, not the whole world (this generalizes the Supervisor's PRE-FLIGHT SYNC). If the basis is stale, refresh it or flag it before committing the change.
 
 ---
 
@@ -194,6 +208,8 @@ refactor(components): extract reusable Button
 **Scope:** Don't upgrade dependencies unnecessarily; make breaking changes without migration; modify unrelated code
 
 **Docs/Logging:** Don't skip API docs; add noisy logging; log secrets; leave obscure comments
+
+**Verification:** Don't assert an unverified shape, consumer-contract, or absence from memory instead of reading the authoritative source — see "Read-Before-Write Verification Gate"
 
 ---
 
@@ -589,7 +605,7 @@ This format applies to ALL agent outputs (Orchestrator, Code Reviewer, Red Team 
 
 ### Plugin Hooks (Quality Gates)
 
-All hooks are centralized in `hooks.json`. As of v14.47.0 there are **21 hook entries**: `SubagentStop` validators (worker, execute-manager, code-reviewer, supervisor-runner, qa-executor, plan-reviewer, **launch-pad-runner**) + 3 telemetry + 1 webhook `type: command` hooks; `Stop`; `TaskCompleted`; `WorktreeCreate`; `StopFailure`; **`PreToolUse[AskUserQuestion]`**; **`Notification`**; the recovery-context **`SessionStart`**; **`PostToolUse[Bash]`** (the v14.34.0 `gh pr create` until-mergeable review-drain backstop); and the v14.47.0 per-project OTel-labeling **`SessionStart`** (`set-otel-resource-attrs.sh`). CODE_REVIEW_RESULT is validated at `schema_version: 3`. **The authoritative, always-current hook table lives in the root `CLAUDE.md` §"Plugin Hooks (Quality Gates)"** — this guide deliberately does not duplicate it, because that duplicate silently drifted from v10 (9 hooks) to v14 (21 hooks).
+All hooks are centralized in `hooks.json`. As of v14.48.0 there are **21 hook entries**: `SubagentStop` validators (worker, execute-manager, code-reviewer, supervisor-runner, qa-executor, plan-reviewer, **launch-pad-runner**) + 3 telemetry + 1 webhook `type: command` hooks; `Stop`; `TaskCompleted`; `WorktreeCreate`; `StopFailure`; **`PreToolUse[AskUserQuestion]`**; **`Notification`**; the recovery-context **`SessionStart`**; **`PostToolUse[Bash]`** (the v14.34.0 `gh pr create` until-mergeable review-drain backstop); and the v14.47.0 per-project OTel-labeling **`SessionStart`** (`set-otel-resource-attrs.sh`). CODE_REVIEW_RESULT is validated at `schema_version: 3`. **The authoritative, always-current hook table lives in the root `CLAUDE.md` §"Plugin Hooks (Quality Gates)"** — this guide deliberately does not duplicate it, because that duplicate silently drifted from v10 (9 hooks) to v14 (21 hooks).
 
 **Plugin restriction:** Claude Code ignores `hooks`, `mcpServers`, and `permissionMode` in plugin agent frontmatter. Code Reviewer uses `disallowedTools: Write, Edit, NotebookEdit` to enforce read-only behavior since `permissionMode: plan` is ignored for plugins.
 
