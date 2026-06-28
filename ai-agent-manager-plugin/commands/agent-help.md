@@ -662,6 +662,16 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 
 ---
 
+### 🤝 /handoff — Catch-Up / Hand-Off Digest (Read-Only)
+
+**Purpose:** Assemble ONE recency-focused, per-work-item catch-up digest so a second person can pick up where you left off in ~2 minutes. Interleaves work items across Supervisor jobs, autonomous runs, and automate runs into a single newest-first list, surfacing the five facets where derivable — decision · why · tried/rejected · current state · provenance — plus an honest freshness/basis line (mtime vs recorded commit-SHA, never conflated). Reuses the sanctioned `read-project-memory.sh` / `read-lessons.sh` readers, silently skips absent surfaces, and writes a derived digest to `.supervisor/handoff/digest.md` (gitignored) via `scripts/build-handoff.sh`. Read-only on your work; always exits 0. Distinct from `/insights` (run trends/aggregates) and `/obsidian` (external vault projection).
+
+**Usage:** `/handoff`
+
+**Learn More:** see `ai-agent-manager-plugin/commands/handoff.md` for the facet-derivation rules, the freshness-basis contract, and the surfaces it reads
+
+---
+
 ### 🩺 /pr-postmortem — PR Review-Churn Root-Cause Analysis (Read-Only)
 
 **Purpose:** On-demand, read-only diagnostic that analyzes a merged or open PR's review-and-fix churn to find the **root cause** of repeated review rounds. Gathers PR metadata, review threads, and diff stats via `scripts/pr-postmortem-gather.sh`, then buckets each review round into one of six root-cause classes (plan gap, missing context, convention mismatch, execution bug, quality gap, scope too large), flags rounds self-heal should have caught (`self_heal_miss`), and maps where in the agent flow (`launch_pad` / `worker` / `self_heal` / `unknowable`) each should have been caught. Never writes code, never gates, never blocks the PR — it appends one advisory `POSTMORTEM_RESULT` record to `.supervisor/postmortem/results.jsonl`, the seed corpus for a future synthetic eval harness.
@@ -1048,9 +1058,9 @@ bd close BD-XX
 
 ai-agent-manager-plugin/              # Nested plugin root
 ├── .claude-plugin/
-│   └── plugin.json                   # Plugin metadata (v14.48.0)
+│   └── plugin.json                   # Plugin metadata (v14.49.0)
 ├── .mcp.json                         # Bundled MCP servers
-├── commands/                         # Slash commands (19)
+├── commands/                         # Slash commands (20)
 │   ├── launch-pad.md                 # Supervisor readiness
 │   ├── supervisor.md                 # Parallel orchestrator (v4)
 │   ├── autonomous.md                 # Continuous autonomous loop, stacked PRs (v14)
