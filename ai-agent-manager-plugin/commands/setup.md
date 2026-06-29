@@ -43,7 +43,7 @@ Settled design facts (do not re-litigate at runtime):
 
 # Agent Prompt
 
-You are handling the `/setup` slash command inline on the main thread. Parse the FIRST positional argument as the module and the SECOND (observability only) as the subcommand.
+You are handling the `/setup` slash command inline on the main thread. Parse the FIRST positional argument as the module and the SECOND as the subcommand — `observability` takes `init` | `status` | `remove`; `twin` takes `status` (read-only). For `twin status`, run the Check + Report steps ONLY and STOP — it is read-only, so never fall through to the twin Offer/Apply (bootstrap) flow.
 
 ## Step 0 — Load the protocol authority (every invocation)
 
@@ -238,7 +238,9 @@ Print what check found (the four cells + verdict). For the `status` subcommand, 
 
 ### Offer
 
-If the module is un-bootstrapped (`Twin readiness: needs bootstrap`) OR no subcommand was given, use `AskUserQuestion` (cap 4 options):
+Branch on the readiness verdict from Check (never offer Bootstrap to an already-bootstrapped repo):
+
+**If un-bootstrapped** (`Twin readiness: needs bootstrap`) — use `AskUserQuestion` (cap 4 options):
 - `question`: "Bootstrap the Twin for this repo now?"
 - `header`: "Twin"
 - `multiSelect`: false
@@ -247,7 +249,11 @@ If the module is un-bootstrapped (`Twin readiness: needs bootstrap`) OR no subco
   2. `Status only` — "Re-print the readiness report and stop (no writes)."
   3. `Cancel` — "Do nothing."
 
-If the graph is absent, the `Bootstrap now` apply step owns the graphify offer (below). If the module is already bootstrapped and a non-`status` invocation reaches here, offer `Status` / `Re-bootstrap (rebuild bridge / re-validate)` / `Cancel` instead — never silently re-apply.
+If the graph is absent, the `Bootstrap now` apply step owns the graphify offer (below).
+
+**If already bootstrapped** (`Twin readiness: bootstrapped`) — do NOT re-apply silently. Offer `Status` / `Re-bootstrap (rebuild bridge / re-validate CLAUDE.md)` / `Cancel` instead. Only an explicit `Re-bootstrap` runs the Apply step (and even then it never regenerates the graph or overwrites CLAUDE.md).
+
+(A bare `/setup twin` with NO subcommand lands here and branches on readiness exactly as above — un-bootstrapped → Bootstrap offer; bootstrapped → Status / Re-bootstrap offer. A `status` subcommand never reaches this phase — Report already stopped it.)
 
 ### Apply (bootstrap)
 

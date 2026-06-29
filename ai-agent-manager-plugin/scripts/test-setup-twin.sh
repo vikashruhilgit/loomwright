@@ -91,6 +91,16 @@ out_emp="$(twin "$Ea" check)"; rc_emp=$?
 [ "$(verdict_line "$out_emp")" = "needs bootstrap" ] && ok "empty fixture verdict = needs bootstrap" || no "empty verdict not 'needs bootstrap' (got: $(verdict_line "$out_emp"))"
 printf '%s' "$(graph_cell "$out_emp")" | grep -q '^absent$' && ok "empty fixture graph cell = absent" || no "empty graph cell not 'absent' (got: $(graph_cell "$out_emp"))"
 
+# (a2) STALE graph + bridge + CLAUDE.md → verdict 'needs bootstrap' (a drifting graph is NOT
+# bootstrapped; matches the command layer's 'needs bootstrap (stale graph)' dashboard cell).
+A2="$(newgit)"
+write_graph "$A2" "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"   # divergent sha → stale
+mkdir -p "$A2/.supervisor/bridge"; echo '{}' > "$A2/.supervisor/bridge/bridge.json"
+echo "# CLAUDE.md" > "$A2/CLAUDE.md"
+out_a2="$(twin "$A2" check)"
+printf '%s' "$(graph_cell "$out_a2")" | grep -qi 'stale' && ok "stale-graph fixture graph cell = stale" || no "stale-graph cell not stale (got: $(graph_cell "$out_a2"))"
+[ "$(verdict_line "$out_a2")" = "needs bootstrap" ] && ok "stale graph + bridge + CLAUDE.md → verdict 'needs bootstrap' (stale ≠ bootstrapped)" || no "stale-graph fixture wrongly verdict '$(verdict_line "$out_a2")' (expected 'needs bootstrap')"
+
 # ============================================================================
 echo "== (b) prefix-tolerant staleness — guards the exact-'!=' regression =="
 Sb="$(newgit)"

@@ -137,25 +137,33 @@ probe_claude_md() {
     echo "absent"
     return
   fi
-  # Optional mtime-derived age in days (best-effort; portable-ish across BSD/GNU stat).
-  local mtime="" now age
-  mtime="$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null || true)"
-  if [ -n "$mtime" ]; then
-    now="$(date +%s 2>/dev/null || true)"
-    if [ -n "$now" ]; then
-      age=$(( (now - mtime) / 86400 ))
-      echo "present (age: ${age}d)"
-      return
-    fi
-  fi
-  echo "present"
+  # Optional mtime-derived age in days (best-effort; portable across GNU + BSD/macOS stat).
+  # Try GNU `-c %Y` FIRST (the Linux/CI platform), then BSD/macOS `-f %m`. CRITICAL: the WRONG
+  # flavor does not always fail — GNU `stat -f` is filesystem-mode and can return a NON-numeric
+  # value (e.g. `?`/a mount point) with exit 0, so we MUST validate that mtime/now are numeric
+  # before any arithmetic. An unvalidated non-numeric mtime makes `$(( ))` error and leaves `age`
+  # unset, which then trips `set -u` in the echo and silently empties this probe's output
+  # (regression: the populated fixture mis-read as `needs bootstrap` on Linux CI).
+  local mtime now age
+  mtime="$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || true)"
+  case "$mtime" in
+    ''|*[!0-9]*) echo "present"; return ;;   # empty / non-numeric → no age, never crash
+  esac
+  now="$(date +%s 2>/dev/null || true)"
+  case "$now" in
+    ''|*[!0-9]*) echo "present"; return ;;
+  esac
+  age=$(( (now - mtime) / 86400 ))
+  echo "present (age: ${age}d)"
 }
 
-# brain wiki: AI_AGENT_MANAGER_BRAIN_ROOT set AND points to an existing dir.
+# brain wiki: matches brain-context's Signal 2 EXACTLY (skills/brain-context/SKILL.md:42) —
+# AI_AGENT_MANAGER_BRAIN_ROOT set AND it contains a `wiki/` dir. Checking only the root dir
+# would report a false-ready wiki signal that brain-context's read path would then skip.
 probe_brain() {
   local root="${AI_AGENT_MANAGER_BRAIN_ROOT:-}"
-  if [ -n "$root" ] && [ -d "$root" ]; then
-    echo "set ($root)"
+  if [ -n "$root" ] && [ -d "$root/wiki" ]; then
+    echo "set ($root/wiki)"
   else
     echo "not set"
   fi
@@ -176,9 +184,18 @@ render_readiness() {
   echo "  CLAUDE.md:  $claude"
   echo "  brain wiki: $brain"
 
-  # Verdict: bootstrapped only when graph+bridge+CLAUDE.md are all present.
-  case "$graph" in present*) local has_graph="yes" ;; *) local has_graph="no" ;; esac
-  case "$claude" in present*) local has_claude="yes" ;; *) local has_claude="no" ;; esac
+  # Verdict: bootstrapped only when graph+bridge+CLAUDE.md are all present AND the graph is not
+  # stale. A `present (stale …)` graph is built but drifting — it needs a re-graphify, so it does
+  # NOT count as bootstrapped (this matches the command layer's dashboard cell, which renders a
+  # stale graph as `needs bootstrap (stale graph)`). `present (fresh)` / `present (freshness
+  # unknown)` / bare `present` still count.
+  local has_graph has_claude
+  case "$graph" in
+    *stale*)  has_graph="no" ;;
+    present*) has_graph="yes" ;;
+    *)        has_graph="no" ;;
+  esac
+  case "$claude" in present*) has_claude="yes" ;; *) has_claude="no" ;; esac
   if [ "$has_graph" = "yes" ] && [ "$bridge" = "present" ] && [ "$has_claude" = "yes" ]; then
     verdict="bootstrapped"
   else
