@@ -273,6 +273,31 @@ v1="$(verdict_line "$out_b1")"; v2="$(verdict_line "$out_b2")"
 [ -n "$v1" ] && [ "$v1" = "$v2" ] && ok "post-bootstrap readiness verdict unchanged across runs ($v1)" || no "bootstrap verdict changed between runs (v1=$v1 v2=$v2)"
 
 # ============================================================================
+echo "== (f) brain-wiki SET branch + build-bridge-not-found fail-safe branch =="
+# (f-i) probe_brain SET branch — AI_AGENT_MANAGER_BRAIN_ROOT set AND <root>/wiki exists → 'set'.
+Fbrain="$(mkfix)"; mkdir -p "$Fbrain/wiki"
+out_brain="$(AI_AGENT_MANAGER_BRAIN_ROOT="$Fbrain" twin "$(mkfix)" check)"
+printf '%s\n' "$out_brain" | grep -E '^[[:space:]]*brain wiki:' | grep -qi 'set' \
+  && ok "(f-i) brain wiki cell = 'set' when BRAIN_ROOT + wiki/ present" \
+  || no "(f-i) brain wiki cell not 'set' (got: $(printf '%s\n' "$out_brain" | grep -E '^[[:space:]]*brain wiki:'))"
+# and the FALSE-ready guard: BRAIN_ROOT set but NO wiki/ subdir → 'not set' (matches brain-context Signal 2).
+Fnowiki="$(mkfix)"   # no wiki/ subdir
+out_nowiki="$(AI_AGENT_MANAGER_BRAIN_ROOT="$Fnowiki" twin "$(mkfix)" check)"
+printf '%s\n' "$out_nowiki" | grep -E '^[[:space:]]*brain wiki:' | grep -qi 'not set' \
+  && ok "(f-i) brain wiki = 'not set' when BRAIN_ROOT set but wiki/ absent (no false-ready)" \
+  || no "(f-i) brain wiki wrongly 'set' without a wiki/ subdir"
+
+# (f-ii) build-bridge.sh NOT FOUND fail-safe branch. Run a COPY of the helper from a dir with no
+# sibling build-bridge.sh, with CLAUDE_PLUGIN_ROOT unset → BUILD_BRIDGE resolves to the (absent)
+# sibling → the helper prints the fail-safe skip to stderr and STILL exits 0.
+Fcopy="$(mkfix)"; cp "$TWIN" "$Fcopy/setup-twin.sh"   # no build-bridge.sh beside it
+Fbb="$(newgit)"; HEADbb="$( cd "$Fbb" && git rev-parse HEAD )"; write_graph "$Fbb" "${HEADbb:0:8}"
+err_bb="$(env -u CLAUDE_PLUGIN_ROOT bash "$Fcopy/setup-twin.sh" --root "$Fbb" bootstrap 2>&1 >/dev/null)"; rc_bb=$?
+[ "$rc_bb" -eq 0 ] && ok "(f-ii) bootstrap exits 0 when build-bridge.sh is not found (fail-safe)" || no "(f-ii) bootstrap non-zero on missing build-bridge ($rc_bb)"
+printf '%s' "$err_bb" | grep -qi 'build-bridge.sh not found' && ok "(f-ii) prints the 'build-bridge.sh not found' fail-safe diagnostic" || no "(f-ii) missing the not-found diagnostic (got: $err_bb)"
+[ ! -e "$Fbb/.supervisor/bridge/bridge.json" ] && ok "(f-ii) no bridge written when builder absent" || no "(f-ii) bridge unexpectedly written without the builder"
+
+# ============================================================================
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

@@ -277,7 +277,7 @@ do_bootstrap() {
   if [ "$graph_action" = "none" ]; then
     echo "[graph] $graph_state — leaving the existing graph as-is (no graphify needed)."
   else
-    echo "[graph] $graph_state ⇒ graph needs to be ${graph_action}ed."
+    echo "[graph] $graph_state ⇒ graph needs a ${graph_action}."
     if command -v graphify >/dev/null 2>&1; then
       if [ "$RUN_GRAPHIFY" = "yes" ]; then
         echo "[graph] graphify found and --run-graphify set — running 'graphify .' in $repo to ${graph_action} the graph ..."
