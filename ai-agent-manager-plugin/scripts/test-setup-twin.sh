@@ -297,6 +297,12 @@ err_bb="$(env -u CLAUDE_PLUGIN_ROOT bash "$Fcopy/setup-twin.sh" --root "$Fbb" bo
 printf '%s' "$err_bb" | grep -qi 'build-bridge.sh not found' && ok "(f-ii) prints the 'build-bridge.sh not found' fail-safe diagnostic" || no "(f-ii) missing the not-found diagnostic (got: $err_bb)"
 [ ! -e "$Fbb/.supervisor/bridge/bridge.json" ] && ok "(f-ii) no bridge written when builder absent" || no "(f-ii) bridge unexpectedly written without the builder"
 
+# (f-iii) probe_claude_md clamps a future/clock-skewed mtime to 0d (no negative age).
+Fage="$(mkfix)"; echo "# CLAUDE.md" > "$Fage/CLAUDE.md"
+touch -t 203001010000 "$Fage/CLAUDE.md" 2>/dev/null   # future mtime (portable -t form, BSD+GNU)
+cell_age="$(twin "$Fage" check | grep -E '^[[:space:]]*CLAUDE.md:')"
+printf '%s' "$cell_age" | grep -q -- '-' && no "(f-iii) future-mtime CLAUDE.md rendered a NEGATIVE age ($cell_age)" || ok "(f-iii) future-mtime CLAUDE.md age clamped (no negative): $cell_age"
+
 # ============================================================================
 echo
 echo "RESULT: $pass passed, $fail failed"

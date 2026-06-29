@@ -123,7 +123,8 @@ probe_graph() {
     return
   fi
 
-  # Prefix-tolerant compare (mirrors read-bridge.sh:140-149 EXACTLY). built_at may be an
+  # Prefix-tolerant compare (mirrors read-bridge.sh's prefix-tolerant `case "$CUR_HEAD"` staleness
+  # block EXACTLY — anchored by description, not a line range, which drifts). built_at may be an
   # ABBREVIATED SHA while cur_head is the full 40-char rev-parse, so an exact != false-stales.
   local stale="no"
   case "$cur_head" in
@@ -165,6 +166,7 @@ probe_claude_md() {
     ''|*[!0-9]*) echo "present"; return ;;
   esac
   age=$(( (now - mtime) / 86400 ))
+  [ "$age" -lt 0 ] && age=0   # clamp clock-skew / future-mtime negatives to a tidy 0d
   echo "present (age: ${age}d)"
 }
 
@@ -303,7 +305,8 @@ do_bootstrap() {
   # (b) ALWAYS rebuild the bridge after any graph-producing step. build-bridge.sh is itself
   #     fail-safe (no-ops + exit 0 when no graph), so calling it unconditionally is correct.
   #     The explicit --out "$repo/.supervisor/bridge" is MANDATORY — it short-circuits
-  #     build-bridge.sh's config-redirect (build-bridge.sh:79-82), guaranteeing write containment.
+  #     build-bridge.sh's config-redirect (its `[ -z "$OUT" ] && … .build_bridge.out` override
+  #     block, which only fires when --out is empty), guaranteeing write containment.
   if [ -f "$BUILD_BRIDGE" ]; then
     echo "[bridge] rebuilding via $BUILD_BRIDGE ..."
     bash "$BUILD_BRIDGE" --root "$repo" --out "$repo/.supervisor/bridge" \
