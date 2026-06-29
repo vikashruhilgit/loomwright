@@ -169,6 +169,35 @@ printf '%s' "$out_c3" | grep -qi 'stale' && ok "(c3) bootstrap prints a stale-gr
 printf '%s' "$out_c3" | grep -qiE '/graphify|graphify .' && ok "(c3) stale hint points to running graphify" || no "(c3) stale hint does not mention graphify"
 printf '%s' "$(graph_cell "$(twin "$C3" check)")" | grep -qi 'stale' && ok "(c3) graph still stale (plain bootstrap never refreshed it)" || no "(c3) graph unexpectedly changed without --run-graphify"
 
+echo "== (c4) ABSENT graph + --run-graphify + graphify present → graph BUILT (not just refreshed) =="
+# Closes the build-branch (RUN_GRAPHIFY=yes, graphify on PATH, graph absent) — distinct from the
+# (c2) REFRESH branch. Reuses a stub graphify that writes a graph at the current HEAD.
+C4="$(newgit)"   # NO graph written → absent
+mkdir -p "$C4"   # (newgit already made the dir)
+STUBDIR4="$(mkfix)"; mkdir -p "$STUBDIR4/bin"
+cat > "$STUBDIR4/bin/graphify" <<STUB
+#!/usr/bin/env bash
+h="\$(git rev-parse HEAD 2>/dev/null)"
+mkdir -p graphify-out
+printf '{"built_at_commit":"%s","directed":false,"multigraph":false,"graph":{},"nodes":[{"id":"a","source_file":"x.md","community":1}],"links":[]}\n' "\$h" > graphify-out/graph.json
+STUB
+chmod +x "$STUBDIR4/bin/graphify"
+[ ! -e "$C4/graphify-out/graph.json" ] && ok "(c4) precondition: graph absent" || no "(c4) precondition failed: graph present"
+out_c4="$(PATH="$STUBDIR4/bin:$PATH" bash "$TWIN" --root "$C4" bootstrap --run-graphify)"; rc_c4=$?
+[ "$rc_c4" -eq 0 ] && ok "(c4) bootstrap --run-graphify exits 0 on absent graph" || no "(c4) non-zero ($rc_c4)"
+[ -e "$C4/graphify-out/graph.json" ] && ok "(c4) absent graph was BUILT by --run-graphify" || no "(c4) graph not built"
+printf '%s' "$(graph_cell "$(twin "$C4" check)")" | grep -q 'present (fresh)' && ok "(c4) built graph reads 'present (fresh)'" || no "(c4) built graph not fresh (got: $(graph_cell "$(twin "$C4" check)"))"
+
+echo "== (c5) graphify present but NOT confirmed (plain bootstrap, absent graph) → build guidance, no graph =="
+# The 'graphify available but --run-graphify NOT set' guidance branch (build case).
+C5="$(newgit)"   # absent graph
+STUBDIR5="$(mkfix)"; mkdir -p "$STUBDIR5/bin"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$STUBDIR5/bin/graphify"; chmod +x "$STUBDIR5/bin/graphify"
+out_c5="$(PATH="$STUBDIR5/bin:$PATH" bash "$TWIN" --root "$C5" bootstrap)"; rc_c5=$?
+[ "$rc_c5" -eq 0 ] && ok "(c5) plain bootstrap exits 0 (graphify present, unconfirmed)" || no "(c5) non-zero ($rc_c5)"
+printf '%s' "$out_c5" | grep -qiE 'graphify .|run .?graphify|--run-graphify' && ok "(c5) prints build guidance without running graphify" || no "(c5) missing build guidance"
+[ ! -e "$C5/graphify-out/graph.json" ] && ok "(c5) no graph built without --run-graphify (guide-only)" || no "(c5) graph unexpectedly built without confirm"
+
 # ============================================================================
 echo "== (d) scoped-writes invariant — never overwrites/creates CLAUDE.md, never writes settings.json =="
 # (d-i) bootstrap on a fixture that HAS a CLAUDE.md with sentinel content → byte-identical afterward.

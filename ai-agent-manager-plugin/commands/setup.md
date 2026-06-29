@@ -23,7 +23,7 @@ description: Umbrella setup command — status dashboard plus guided configurati
   - If omitted: run the full status dashboard, then offer configuration via `AskUserQuestion` (multi-select).
   - If unrecognised: print this usage block and stop.
 - **observability subcommand** (optional, second positional arg): `init` | `status` | `remove`. If omitted, the module's check step decides — unconfigured → offer `init`; configured → offer `status` / `remove` / reconfigure.
-- **twin subcommand** (optional, second positional arg): `status` = read-only readiness report (no writes). If omitted, the module's check step decides — un-bootstrapped → offer to bootstrap; bootstrapped → offer `status` / re-bootstrap. **`remove` is explicitly N/A for v1** — Twin artifacts (graph / bridge / CLAUDE.md) are committed knowledge, not per-user config, so teardown is out of scope (a deliberate omission, not an oversight).
+- **twin subcommand** (optional, second positional arg): `status` = read-only readiness report (no writes). If omitted, the module's check step decides — un-bootstrapped → offer to bootstrap; bootstrapped → offer `status` / re-bootstrap. **`remove` is explicitly N/A for v1** — Twin artifacts are per-repo, not per-user config (the graph + bridge are gitignored and regenerable from `graphify` / `build-bridge.sh`; `CLAUDE.md` is committed, human-authored), so there is no per-user state to tear down — teardown is out of scope (a deliberate omission, not an oversight).
 
 ## What This Does
 
@@ -226,7 +226,7 @@ Also report the CURRENT repo's per-project label (read-only): `jq -r '.env.OTEL_
 
 Gives a fresh repo its Twin readiness picture and a guided cold-start bootstrap (code graph + findings→community bridge + CLAUDE.md). The deterministic, mechanizable engine is `${CLAUDE_PLUGIN_ROOT}/scripts/setup-twin.sh` (subcommands `check` / `bootstrap [--run-graphify]`); this command owns the INTERACTIVE half — the `AskUserQuestion` offers, running the external `graphify .`, and the confirmed CLAUDE.md write. The helper is fail-safe (always exits 0), write-contained to `.supervisor/bridge/`, and NEVER writes CLAUDE.md or `~/.claude/` — those decisions live here.
 
-> **`remove` is N/A for v1** — Twin artifacts (graph / bridge / CLAUDE.md) are committed knowledge, not per-user config; teardown is deliberately out of scope. There is no `/setup twin remove`.
+> **`remove` is N/A for v1** — Twin artifacts are per-repo, not per-user config (graph + bridge are gitignored/regenerable from `graphify` / `build-bridge.sh`; `CLAUDE.md` is committed); there is no per-user state to tear down, so teardown is deliberately out of scope. There is no `/setup twin remove`.
 
 ### Check
 
@@ -279,7 +279,11 @@ A second `/setup twin` on an already-bootstrapped repo reports "already bootstra
 
 ## Module: telemetry
 
-DELEGATES — print `Telemetry is managed by /telemetry (consent logic lives there and is not duplicated).`, show the consent state from the dashboard check, and tell the user to run `/telemetry enable | disable | status | test`. If the user selected telemetry from the no-arg multi-select, execute the `/telemetry enable` flow by following `${CLAUDE_PLUGIN_ROOT}/commands/telemetry.md` directly — on that delegated path the consent-file write is performed by telemetry.md's own enable recipe and is permitted (it happens under telemetry.md's authority). What is forbidden is `/setup`'s OWN logic touching `.supervisor/telemetry-consent.json` — never read-modify-write it, duplicate the consent prompt, or write it outside of executing telemetry.md's recipe verbatim.
+DELEGATES — print `Telemetry is managed by /telemetry (consent logic lives there and is not duplicated).`, show the consent state from the dashboard check, and tell the user to run `/telemetry enable | disable | status | test`.
+
+**When to auto-run the enable flow (and when NOT to):** only when telemetry was the EXPLICIT target — i.e. invoked directly as `/setup telemetry`. On that explicit path you may execute the `/telemetry enable` flow by following `${CLAUDE_PLUGIN_ROOT}/commands/telemetry.md` directly (the consent-file write is performed by telemetry.md's own enable recipe, permitted under telemetry.md's authority). When telemetry is reached via the no-arg dashboard's bundled **Other integrations (telemetry · webhook · Beads · MySQL MCP)** option, print the delegation message + consent state ONLY and point the user to `/telemetry enable` — do NOT auto-launch the interactive enable / repo-selection flow from the bundle (a user who picked the bundle for webhook/Beads/MySQL must not get a surprise telemetry consent prompt).
+
+What is forbidden on every path is `/setup`'s OWN logic touching `.supervisor/telemetry-consent.json` — never read-modify-write it, duplicate the consent prompt, or write it outside of executing telemetry.md's recipe verbatim.
 
 ## Module: notifications
 
@@ -305,7 +309,7 @@ Status + guidance only. Report which of `DB_HOST`, `DB_USER`, `DB_PASS`, `DB_NAM
   - `$OBS_DIR/*` (the copied stack + generated `.env`),
   - `$HOME/.claude/settings.json` — user-scope env, via the merge recipe, backup-first,
   - `<project>/.claude/settings.local.json` — project-scope, gitignored-by-convention; sanctioned for the `remove` subflow's `jq 'del(.env.OTEL_RESOURCE_ATTRIBUTES)'` (backup-first, like the user-scope merge) and — via the invoked `set-otel-resource-attrs.sh` script — the init-tail per-project label. The script write uses parse-gate (`jq empty`, no clobber on unparseable) + atomic tmp-file-`mv` + idempotent skip-if-unchanged; it does NOT back up (the merge is single-key and idempotent, so there is nothing destructive to roll back), and
-  - **twin** (`/setup twin`): (a) `<project>/.supervisor/bridge/` — written ONLY via `setup-twin.sh`'s `build-bridge.sh --out "$repo/.supervisor/bridge"` call (the explicit `--out` means a repo-local `.supervisor/config.json .build_bridge.out` can NOT redirect it); and (b) the command-layer **confirmed** `<project>/CLAUDE.md` create-when-absent — written ONLY on explicit user confirm AND only while the file is still absent (NEVER overwrite an existing CLAUDE.md). The twin module touches NO `~/.claude/settings.json` and nothing under `~/.claude/` — Twin artifacts are per-repo committed knowledge, not per-user config.
+  - **twin** (`/setup twin`): (a) `<project>/.supervisor/bridge/` — written ONLY via `setup-twin.sh`'s `build-bridge.sh --out "$repo/.supervisor/bridge"` call (the explicit `--out` means a repo-local `.supervisor/config.json .build_bridge.out` can NOT redirect it); and (b) the command-layer **confirmed** `<project>/CLAUDE.md` create-when-absent — written ONLY on explicit user confirm AND only while the file is still absent (NEVER overwrite an existing CLAUDE.md). The twin module touches NO `~/.claude/settings.json` and nothing under `~/.claude/` — Twin artifacts are per-repo (gitignored/regenerable graph + bridge; committed `CLAUDE.md`), not per-user config.
 
   Everything else is read-only or delegated. One delegation carve-out: when the telemetry module executes telemetry.md's enable recipe (see "Module: telemetry"), that recipe writes `.supervisor/telemetry-consent.json` under telemetry.md's authority — setup.md's own logic still never touches that file.
 - Idempotent: re-running any flow against an already-configured module reports "already configured" and offers status/reconfigure/remove — it never blind-overwrites, and never regenerates an existing `.env`.

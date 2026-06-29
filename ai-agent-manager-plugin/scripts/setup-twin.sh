@@ -47,7 +47,9 @@ ROOT_OVERRIDE=""
 RUN_GRAPHIFY="no"
 
 usage() {
-  sed -n '2,33p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  # Print the leading header comment block (line 2 through the last contiguous `#` line),
+  # robust to header edits — no hard-coded line range to drift when the header grows/shrinks.
+  awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "${BASH_SOURCE[0]}"
   exit 0
 }
 
