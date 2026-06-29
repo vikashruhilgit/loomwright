@@ -31,7 +31,7 @@ Every module implements five phases, in order, every invocation:
 |---|---|
 | **check** | Derive state from REAL commands (file tests, `jq -e`, `docker inspect`, `command -v`). Never assert state you didn't probe. |
 | **report** | Print what check found. `status` subcommands stop here. |
-| **offer** | `AskUserQuestion` with the applicable actions. Already-configured modules offer status/reconfigure/remove — never silently re-apply. **`AskUserQuestion` caps at 4 options** — the no-arg dashboard must NOT emit one option per module (6 modules > 4); it uses the fixed ≤4-option set in `commands/setup.md` (observability, telemetry, "Other integrations" folding the three guidance-only modules, "Nothing"). |
+| **offer** | `AskUserQuestion` with the applicable actions. Already-configured modules offer status/reconfigure/remove — never silently re-apply. **`AskUserQuestion` caps at 4 options** — the no-arg dashboard must NOT emit one option per module (7 modules > 4); it uses the fixed ≤4-option set in `commands/setup.md`: observability · twin · "Other integrations" (telemetry · webhook · Beads · MySQL MCP) · "Nothing". observability and twin are the two real-apply slots; telemetry (delegates to `/telemetry`) + webhook + Beads + MySQL MCP fold into "Other integrations". |
 | **apply** | Make the change. Backup before any mutation of a pre-existing file. Stop at the first failed step — never continue past a failure to "finish" the flow. |
 | **verify** | Re-run check (+ smoke test where defined) and show before/after. Success is claimed ONLY after verify passes. |
 
@@ -47,6 +47,7 @@ Every module implements five phases, in order, every invocation:
 | `webhook` | status + guidance | `AI_AGENT_MANAGER_WEBHOOK_URL` set? | nothing (guidance only) |
 | `beads` | status + guidance | `command -v bd`; `.beads/` dir | nothing (guidance only) |
 | `mysql-mcp` | status + guidance | `DB_HOST`/`DB_USER`/`DB_PASS`/`DB_NAME` set? | nothing (guidance only) |
+| `twin` | status / bootstrap (no remove — committed knowledge) | `graphify-out/graph.json` present + prefix-tolerant staleness; `.supervisor/bridge/bridge.json`; `CLAUDE.md`; `AI_AGENT_MANAGER_BRAIN_ROOT` | `.supervisor/bridge/` via `build-bridge.sh --out` (helper); command-layer confirmed `CLAUDE.md` create-when-absent; `graphify-out/` via external `graphify` only on confirm |
 
 New modules append a row here AND a flow section in `commands/setup.md` in the same change.
 
@@ -239,6 +240,7 @@ The `remove` subflow best-effort strips the CURRENT repo's label (`jq 'del(.env.
 ## Quality Gates
 
 - [ ] Sanctioned write domain (setup's OWN logic): `~/.claude/ai-agent-manager/observability/*`, user-scope `~/.claude/settings.json`, and project-scope `<project>/.claude/settings.local.json` (the per-project label — written via the init-tail `set-otel-resource-attrs.sh` invocation and stripped by the `remove` `del`). setup's OWN settings(.local).json writes (the user-scope merge and the `remove` `del`) are backup-first + `jq empty` parse gate + tmp+`mv` atomic replace; the delegated init-tail `set-otel-resource-attrs.sh` write is parse-gate + atomic + idempotent-skip but NOT backup-first (single-key idempotent merge — nothing destructive to roll back).
+- [ ] Sanctioned write domain (`twin` module): the helper (`setup-twin.sh`) writes `<project>/.supervisor/bridge/` ONLY, via the explicit `build-bridge.sh --out "$repo/.supervisor/bridge"` (the `--out` short-circuits any config-redirect); the command layer may create `<project>/CLAUDE.md` ONLY when absent AND user-confirmed (never overwrite an existing one). NO `~/.claude/settings.json` (or anything under `~/.claude/`) write for `twin` — Twin artifacts are per-repo committed knowledge, not per-user config.
 - [ ] Env block is exactly the 8 settled keys (or the documented console variant) — no extras, no renames.
 - [ ] `.env` variable names match what `${CLAUDE_PLUGIN_ROOT}/scripts/otel/docker-compose.yml` consumes (sole exception: `COMPOSE_PROJECT_NAME`, consumed by the compose CLI) — verify against the compose file on any change to either.
 - [ ] Every compose command (recipe or printed) carries `-p ai-agent-manager-observability` — the project-name convention in Pattern 4.
