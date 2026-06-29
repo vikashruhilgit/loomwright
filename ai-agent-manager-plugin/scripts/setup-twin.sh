@@ -217,11 +217,17 @@ render_readiness() {
 
 # ---- starter CLAUDE.md skeleton (stdout-ONLY — NEVER written by this helper) ----
 print_claude_md_skeleton() {
+  # The writable region is delimited by two stable SENTINEL lines so the command layer's
+  # confirmed write is machine-extractable — NOT left to agent judgment. The EXACT bytes to
+  # write to CLAUDE.md are everything strictly BETWEEN the BEGIN and END sentinels (exclude both
+  # sentinel lines and this preamble; there is intentionally NO code fence to strip). A clean
+  # extraction recipe is:  sed -n '/CLAUDE_MD_STARTER:BEGIN/,/CLAUDE_MD_STARTER:END/p' | sed '1d;$d'
   cat <<'SKELETON'
-A repo CLAUDE.md is ABSENT. Below is a minimal starter the command layer can offer to write
-(this helper NEVER writes CLAUDE.md itself):
+A repo CLAUDE.md is ABSENT. This helper NEVER writes CLAUDE.md — the command layer offers to
+write it on confirm. Write ONLY the content strictly between the two sentinel lines below,
+verbatim (omit the sentinels and this preamble; do NOT wrap it in a code fence):
 
-```markdown
+# >>> setup-twin CLAUDE_MD_STARTER:BEGIN (write everything between BEGIN and END, verbatim) >>>
 # CLAUDE.md
 
 Guidance for Claude Code when working in this repository.
@@ -241,7 +247,7 @@ Guidance for Claude Code when working in this repository.
 
 ## How to Run & Test
 <!-- The exact commands to build, run, lint, and test locally. -->
-```
+# <<< setup-twin CLAUDE_MD_STARTER:END <<<
 SKELETON
 }
 

@@ -220,6 +220,17 @@ out_dii="$(twin "$Dii" bootstrap)"; rc_dii=$?
 printf '%s' "$out_dii" | grep -q '# CLAUDE.md' && ok "skeleton '# CLAUDE.md' marker present on stdout" || no "skeleton '# CLAUDE.md' marker missing from stdout"
 printf '%s' "$out_dii" | grep -q 'Tech Stack' && ok "skeleton 'Tech Stack' marker present on stdout" || no "skeleton 'Tech Stack' marker missing from stdout"
 [ ! -e "$Dii/.claude/settings.json" ] && ok "no <root>/.claude/settings.json written (no-CLAUDE.md path)" || no "bootstrap wrote <root>/.claude/settings.json"
+# (d-iii) skeleton is MACHINE-EXTRACTABLE: BEGIN/END sentinels present, and the documented
+# extraction (sed between sentinels, drop both) yields clean CLAUDE.md content with NO preamble
+# and NO code fence — so a confirmed write can't accidentally persist the fence/preamble.
+printf '%s\n' "$out_dii" | grep -q 'CLAUDE_MD_STARTER:BEGIN' && ok "skeleton has BEGIN sentinel" || no "skeleton missing BEGIN sentinel"
+printf '%s\n' "$out_dii" | grep -q 'CLAUDE_MD_STARTER:END' && ok "skeleton has END sentinel" || no "skeleton missing END sentinel"
+extracted="$(printf '%s\n' "$out_dii" | sed -n '/CLAUDE_MD_STARTER:BEGIN/,/CLAUDE_MD_STARTER:END/p' | sed '1d;$d')"
+printf '%s\n' "$extracted" | head -1 | grep -qx '# CLAUDE.md' && ok "(d-iii) extracted region starts exactly at '# CLAUDE.md'" || no "(d-iii) extracted region does not start at '# CLAUDE.md' (got: $(printf '%s' "$extracted" | head -1))"
+printf '%s' "$extracted" | grep -q 'A repo CLAUDE.md is ABSENT' && no "(d-iii) extracted region leaked the preamble" || ok "(d-iii) extracted region excludes the preamble"
+printf '%s' "$extracted" | grep -q '```' && no "(d-iii) extracted region contains a code fence" || ok "(d-iii) extracted region has no code fence"
+printf '%s' "$extracted" | grep -q 'CLAUDE_MD_STARTER' && no "(d-iii) extracted region leaked a sentinel line" || ok "(d-iii) extracted region excludes the sentinels"
+printf '%s' "$extracted" | grep -q 'How to Run & Test' && ok "(d-iii) extracted region includes the full template body" || no "(d-iii) extracted region truncated the template"
 
 # ============================================================================
 echo "== (d2) write-containment vs config redirect (explicit --out beats .build_bridge.out) =="
