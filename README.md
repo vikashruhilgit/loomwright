@@ -75,7 +75,7 @@ your-project/
 └── src/ (your code)
 ```
 
-**Optional integrations in one place:** run `/setup` to configure optional integrations — observability (local Langfuse + OTel collector), telemetry, notifications, webhook, Beads, MySQL MCP — from a single status dashboard.
+**Optional integrations in one place:** run `/setup` to configure optional integrations — observability (local Langfuse + OTel collector), telemetry, notifications, webhook, Beads, MySQL MCP, and Twin cold-start bootstrap (code graph + bridge + starter CLAUDE.md) — from a single status dashboard.
 
 ### 3. (Optional) Enable MySQL MCP
 
@@ -160,7 +160,7 @@ Then call `switch_database(host="prod.example.com")` at runtime to switch betwee
 | **QA Strategist**     | `/qa-strategist src/`           | Risk-based test strategy → coverage targets → assertion quality audit | Before QA, strategy planning    |
 | **QA Executor**       | `/qa-executor`                  | Discover → generate strict tests → find missing functionality → QA_RESULT | Automated QA                    |
 | **Review-PR**         | `/review-pr <pr-url>`           | Standalone review→fix→re-review loop against an existing PR; auto-heals the diff, never auto-merges → REVIEW_HEAL_RESULT | Review/heal any open PR         |
-| **Setup** (command)   | `/setup [module]`               | Status dashboard + guided configuration for every optional capability — observability (local Langfuse + OTel collector), telemetry, notifications, webhook, Beads, MySQL MCP | First install, enabling integrations |
+| **Setup** (command)   | `/setup [module]`               | Status dashboard + guided configuration for every optional capability — observability (local Langfuse + OTel collector), telemetry, notifications, webhook, Beads, MySQL MCP, Twin cold-start bootstrap | First install, enabling integrations |
 
 
 ### Internal Agents (5)

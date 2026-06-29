@@ -1,5 +1,5 @@
 ---
-description: Umbrella setup command — status dashboard plus guided configuration for every optional plugin capability — observability (local Langfuse + OTel collector), telemetry, notifications, webhook, Beads, MySQL MCP
+description: Umbrella setup command — status dashboard plus guided configuration for every optional plugin capability — observability (local Langfuse + OTel collector), Twin cold-start bootstrap, telemetry, notifications, webhook, Beads, MySQL MCP
 ---
 
 # Command: /setup
@@ -9,6 +9,7 @@ description: Umbrella setup command — status dashboard plus guided configurati
 ```
 /setup                      # Status dashboard (one row per module) + multi-select "what do you want to configure?"
 /setup observability        # Observability module directly: init | status | remove
+/setup twin                 # Twin readiness status + guided cold-start bootstrap (graph + bridge + CLAUDE.md): status | (no-arg → bootstrap)
 /setup telemetry            # DELEGATES to /telemetry (no consent logic duplicated here)
 /setup notifications        # Status + guidance (notification hooks are always-on)
 /setup webhook              # Status + guidance (AI_AGENT_MANAGER_WEBHOOK_URL)
@@ -18,10 +19,11 @@ description: Umbrella setup command — status dashboard plus guided configurati
 
 ## Parameters
 
-- **module** (optional): one of `observability`, `telemetry`, `notifications`, `webhook`, `beads`, `mysql-mcp`.
+- **module** (optional): one of `observability`, `telemetry`, `notifications`, `webhook`, `beads`, `mysql-mcp`, `twin`.
   - If omitted: run the full status dashboard, then offer configuration via `AskUserQuestion` (multi-select).
   - If unrecognised: print this usage block and stop.
 - **observability subcommand** (optional, second positional arg): `init` | `status` | `remove`. If omitted, the module's check step decides — unconfigured → offer `init`; configured → offer `status` / `remove` / reconfigure.
+- **twin subcommand** (optional, second positional arg): `status` = read-only readiness report (no writes). If omitted, the module's check step decides — un-bootstrapped → offer to bootstrap; bootstrapped → offer `status` / re-bootstrap. **`remove` is explicitly N/A for v1** — Twin artifacts are per-repo, not per-user config (the graph + bridge are gitignored and regenerable from `graphify` / `build-bridge.sh`; `CLAUDE.md` is committed, human-authored), so there is no per-user state to tear down — teardown is out of scope (a deliberate omission, not an oversight).
 
 ## What This Does
 
@@ -41,7 +43,7 @@ Settled design facts (do not re-litigate at runtime):
 
 # Agent Prompt
 
-You are handling the `/setup` slash command inline on the main thread. Parse the FIRST positional argument as the module and the SECOND (observability only) as the subcommand.
+You are handling the `/setup` slash command inline on the main thread. Parse the FIRST positional argument as the module and the SECOND as the subcommand — `observability` takes `init` | `status` | `remove`; `twin` takes `status` (read-only). For `twin status`, run the Check + Report steps ONLY and STOP — it is read-only, so never fall through to the twin Offer/Apply (bootstrap) flow.
 
 ## Step 0 — Load the protocol authority (every invocation)
 
@@ -74,6 +76,7 @@ Run ONE real check per module (never guess; every cell of the dashboard is deriv
 4. **webhook** — `[ -n "${AI_AGENT_MANAGER_WEBHOOK_URL:-}" ]`. Status: `set` / `not set`. NEVER print the URL value (it may embed a token) — print only `set (host: <hostname-only>)`.
 5. **beads** — `command -v bd >/dev/null 2>&1` and `[ -d .beads ]`. Status: `ready` / `bd installed, repo not initialised` / `not installed`. Note: only Orchestrator/Product Owner use Beads — optional.
 6. **mysql-mcp** — check `DB_HOST`, `DB_USER`, `DB_PASS`, `DB_NAME` env vars are non-empty (`DB_PORT` optional). Status: `configured` / `missing: <names of unset vars>`. NEVER print values — names only.
+7. **twin** — run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-twin.sh" check` and read its output (the `Twin readiness:` verdict plus the per-cell `graph:` / `bridge:` / `CLAUDE.md:` lines). Never guess — every cell is derived from this real probe (the helper is fail-safe and always exits 0). Derive a compact status cell: verdict `bootstrapped` → `bootstrapped`; verdict `needs bootstrap` → name the gap from the cells, e.g. `needs bootstrap (graph absent)` when `graph: absent`, `needs bootstrap (stale graph)` when `graph: present (stale …)`, or `needs bootstrap (CLAUDE.md absent)` / `needs bootstrap (bridge absent)` as applicable.
 
 Print the dashboard:
 
@@ -88,19 +91,20 @@ Print the dashboard:
 | webhook       | <derived>                               | /setup webhook        |
 | beads         | <derived>                               | /setup beads          |
 | mysql-mcp     | <derived>                               | /setup mysql-mcp      |
+| twin          | <derived>                               | /setup twin           |
 ```
 
-Then use `AskUserQuestion`. **`AskUserQuestion` accepts at most 4 options**, so do NOT emit one option per unconfigured module (a fresh machine has 5 unconfigured modules → an invalid call). Use this fixed ≤4-option set — the two modules with real apply flows individually, the three status/guidance-only modules folded into one, plus an opt-out:
+Then use `AskUserQuestion`. **`AskUserQuestion` accepts at most 4 options**, so do NOT emit one option per unconfigured module (a fresh machine has many unconfigured modules → an invalid call). Use this fixed ≤4-option set — the two modules with real apply flows (observability + twin) individually, the four status/guidance-or-delegation-only modules (telemetry · webhook · Beads · MySQL MCP) folded into one, plus an opt-out:
 - `question`: "Which would you like to configure now?"
 - `header`: "Configure"
 - `multiSelect`: true
 - `options` (exactly these, in order; append each module's current status to its description):
   1. **observability** — full local-Langfuse / existing-endpoint / console init flow.
-  2. **telemetry** — delegates to `/telemetry`.
-  3. **Other integrations (webhook · Beads · MySQL MCP)** — print status + setup guidance for all three (these are guidance-only; `notifications` is always-on and needs no action).
+  2. **twin** — Twin cold-start bootstrap: detect/refresh the code graph (guide if `graphify` absent), rebuild the bridge, validate/scaffold CLAUDE.md.
+  3. **Other integrations (telemetry · webhook · Beads · MySQL MCP)** — print status + setup guidance / delegation for these (telemetry delegates to `/telemetry`; webhook · Beads · MySQL MCP are guidance-only; `notifications` is always-on and needs no action).
   4. **Nothing — just checking** — stop with the summary line.
 
-Run the corresponding module flow (below) for each selection, in the order listed. For option 3, run the `webhook`, `beads`, and `mysql-mcp` status/guidance blocks in turn. If "Nothing", stop with the summary line.
+Run the corresponding module flow (below) for each selection, in the order listed. For option 3, run the `telemetry` delegation block plus the `webhook`, `beads`, and `mysql-mcp` status/guidance blocks in turn. If "Nothing", stop with the summary line.
 
 ## `/setup <module>` — jump straight to that module's flow.
 
@@ -218,9 +222,68 @@ Also report the CURRENT repo's per-project label (read-only): `jq -r '.env.OTEL_
 
 ---
 
+## Module: twin
+
+Gives a fresh repo its Twin readiness picture and a guided cold-start bootstrap (code graph + findings→community bridge + CLAUDE.md). The deterministic, mechanizable engine is `${CLAUDE_PLUGIN_ROOT}/scripts/setup-twin.sh` (subcommands `check` / `bootstrap [--run-graphify]`); this command owns the INTERACTIVE half — the `AskUserQuestion` offers, running the external `graphify .`, and the confirmed CLAUDE.md write. The helper is fail-safe (always exits 0), write-contained to `.supervisor/bridge/`, and NEVER writes CLAUDE.md or `~/.claude/` — those decisions live here.
+
+> **`remove` is N/A for v1** — Twin artifacts are per-repo, not per-user config (graph + bridge are gitignored/regenerable from `graphify` / `build-bridge.sh`; `CLAUDE.md` is committed); there is no per-user state to tear down, so teardown is deliberately out of scope. There is no `/setup twin remove`.
+
+### Check
+
+Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-twin.sh" check` and report its readiness cells (graph present / stale / absent, bridge present, CLAUDE.md present, brain-wiki) plus the `Twin readiness:` verdict. Read-only — the `check` subcommand writes nothing.
+
+### Report
+
+Print what check found (the four cells + verdict). For the `status` subcommand, STOP after the report — it is read-only, no writes, no offer.
+
+### Offer
+
+Branch on the readiness verdict from Check (never offer Bootstrap to an already-bootstrapped repo):
+
+**If un-bootstrapped** (`Twin readiness: needs bootstrap`) — use `AskUserQuestion` (cap 4 options):
+- `question`: "Bootstrap the Twin for this repo now?"
+- `header`: "Twin"
+- `multiSelect`: false
+- `options`:
+  1. `Bootstrap now` — "Detect/refresh the code graph (guide if graphify absent), rebuild the bridge, and validate/scaffold CLAUDE.md."
+  2. `Status only` — "Re-print the readiness report and stop (no writes)."
+  3. `Cancel` — "Do nothing."
+
+If the graph is absent, the `Bootstrap now` apply step owns the graphify offer (below).
+
+**If already bootstrapped** (`Twin readiness: bootstrapped`) — do NOT re-apply silently. Offer `Status` / `Re-bootstrap (rebuild bridge / re-validate CLAUDE.md)` / `Cancel` instead. Only an explicit `Re-bootstrap` runs the Apply step (and even then it never regenerates the graph or overwrites CLAUDE.md).
+
+(A bare `/setup twin` with NO subcommand lands here and branches on readiness exactly as above — un-bootstrapped → Bootstrap offer; bootstrapped → Status / Re-bootstrap offer. A `status` subcommand never reaches this phase — Report already stopped it.)
+
+### Apply (bootstrap)
+
+Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-twin.sh" check` and read the `graph:` cell, then take EXACTLY ONE of these paths (they each end in a single `bootstrap` invocation — never run `bootstrap` twice):
+
+1. **Graph absent OR `present (stale …)`** — a graph-(re)producing condition. Use `AskUserQuestion` to offer running `graphify .` (note: `graphify` is the EXTERNAL user-global `/graphify` CLI/skill at `~/.claude/skills/graphify` — the command layer, NOT the helper, owns this offer). A STALE graph matters here: refreshing it is the ONLY way a `needs bootstrap (stale graph)` repo reaches `bootstrapped` — rebuilding the bridge from a stale graph leaves the stale verdict in place.
+   - On confirm AND `command -v graphify >/dev/null 2>&1` succeeds → invoke `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-twin.sh" bootstrap --run-graphify`. This ONE call (re)builds the graph (`graphify .`) AND rebuilds the bridge in the same invocation — **then skip step 2 entirely** (the bridge is already rebuilt; running plain `bootstrap` again would rebuild it a second time for no reason).
+   - On decline OR `graphify` NOT on PATH → print the guidance (run `/graphify .` in this repo to build/refresh the code graph, then re-run `/setup twin`), then proceed to step 2 with plain `bootstrap` — NEVER hard-fail on the missing/declined external CLI.
+2. **Graph `present (fresh)` (or freshness-unknown), OR step 1 declined/guided graphify (did NOT run `--run-graphify`).** Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-twin.sh" bootstrap` — rebuilds the bridge (`build-bridge.sh --out .supervisor/bridge`, write-contained via the explicit `--out`) in the same invocation. **Do NOT run this if step 1 already invoked `bootstrap --run-graphify`** — that path already rebuilt the bridge.
+3. **CLAUDE.md.**
+   - If `setup-twin.sh check` reports CLAUDE.md **present**: run the `claude-md-validation` skill (advisory, non-blocking — read `${CLAUDE_PLUGIN_ROOT}/skills/claude-md-validation/SKILL.md` and apply it). Never block on its findings.
+   - If CLAUDE.md is **absent**: the helper's bootstrap prints a starter skeleton to stdout, delimited by two stable sentinel lines (`# >>> setup-twin CLAUDE_MD_STARTER:BEGIN …` and `# <<< setup-twin CLAUDE_MD_STARTER:END <<<`). The COMMAND LAYER then OFFERS (`AskUserQuestion`) to write it, and on explicit confirm AND only if the file is still absent (`[ ! -f CLAUDE.md ]`), writes **only the bytes strictly between the two sentinels** — never the preamble or the sentinel lines themselves (there is no code fence). Use a deterministic extraction, e.g. capture the bootstrap stdout and run `sed -n '/CLAUDE_MD_STARTER:BEGIN/,/CLAUDE_MD_STARTER:END/p' | sed '1d;$d' > CLAUDE.md`. NEVER overwrite an existing CLAUDE.md. The helper never writes it; this command does the confirmed write.
+
+### Verify
+
+Re-run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-twin.sh" check` and show the before/after readiness verdict (and which cells flipped present).
+
+### Idempotency note
+
+A second `/setup twin` on an already-bootstrapped repo reports "already bootstrapped" and changes nothing without an explicit choice (`Re-bootstrap` rebuilds the bridge / re-validates CLAUDE.md; it never regenerates the graph or overwrites CLAUDE.md).
+
+---
+
 ## Module: telemetry
 
-DELEGATES — print `Telemetry is managed by /telemetry (consent logic lives there and is not duplicated).`, show the consent state from the dashboard check, and tell the user to run `/telemetry enable | disable | status | test`. If the user selected telemetry from the no-arg multi-select, execute the `/telemetry enable` flow by following `${CLAUDE_PLUGIN_ROOT}/commands/telemetry.md` directly — on that delegated path the consent-file write is performed by telemetry.md's own enable recipe and is permitted (it happens under telemetry.md's authority). What is forbidden is `/setup`'s OWN logic touching `.supervisor/telemetry-consent.json` — never read-modify-write it, duplicate the consent prompt, or write it outside of executing telemetry.md's recipe verbatim.
+DELEGATES — print `Telemetry is managed by /telemetry (consent logic lives there and is not duplicated).`, show the consent state from the dashboard check, and tell the user to run `/telemetry enable | disable | status | test`.
+
+**When to auto-run the enable flow (and when NOT to):** only when telemetry was the EXPLICIT target — i.e. invoked directly as `/setup telemetry`. On that explicit path you may execute the `/telemetry enable` flow by following `${CLAUDE_PLUGIN_ROOT}/commands/telemetry.md` directly (the consent-file write is performed by telemetry.md's own enable recipe, permitted under telemetry.md's authority). When telemetry is reached via the no-arg dashboard's bundled **Other integrations (telemetry · webhook · Beads · MySQL MCP)** option, print the delegation message + consent state ONLY and point the user to `/telemetry enable` — do NOT auto-launch the interactive enable / repo-selection flow from the bundle (a user who picked the bundle for webhook/Beads/MySQL must not get a surprise telemetry consent prompt).
+
+What is forbidden on every path is `/setup`'s OWN logic touching `.supervisor/telemetry-consent.json` — never read-modify-write it, duplicate the consent prompt, or write it outside of executing telemetry.md's recipe verbatim.
 
 ## Module: notifications
 
@@ -244,8 +307,9 @@ Status + guidance only. Report which of `DB_HOST`, `DB_USER`, `DB_PASS`, `DB_NAM
 
 - The ONLY files this command's OWN logic may write:
   - `$OBS_DIR/*` (the copied stack + generated `.env`),
-  - `$HOME/.claude/settings.json` — user-scope env, via the merge recipe, backup-first, and
-  - `<project>/.claude/settings.local.json` — project-scope, gitignored-by-convention; sanctioned for the `remove` subflow's `jq 'del(.env.OTEL_RESOURCE_ATTRIBUTES)'` (backup-first, like the user-scope merge) and — via the invoked `set-otel-resource-attrs.sh` script — the init-tail per-project label. The script write uses parse-gate (`jq empty`, no clobber on unparseable) + atomic tmp-file-`mv` + idempotent skip-if-unchanged; it does NOT back up (the merge is single-key and idempotent, so there is nothing destructive to roll back).
+  - `$HOME/.claude/settings.json` — user-scope env, via the merge recipe, backup-first,
+  - `<project>/.claude/settings.local.json` — project-scope, gitignored-by-convention; sanctioned for the `remove` subflow's `jq 'del(.env.OTEL_RESOURCE_ATTRIBUTES)'` (backup-first, like the user-scope merge) and — via the invoked `set-otel-resource-attrs.sh` script — the init-tail per-project label. The script write uses parse-gate (`jq empty`, no clobber on unparseable) + atomic tmp-file-`mv` + idempotent skip-if-unchanged; it does NOT back up (the merge is single-key and idempotent, so there is nothing destructive to roll back), and
+  - **twin** (`/setup twin`): (a) `<project>/.supervisor/bridge/` — written ONLY via `setup-twin.sh`'s `build-bridge.sh --out "$repo/.supervisor/bridge"` call (the explicit `--out` means a repo-local `.supervisor/config.json .build_bridge.out` can NOT redirect it); and (b) the command-layer **confirmed** `<project>/CLAUDE.md` create-when-absent — written ONLY on explicit user confirm AND only while the file is still absent (NEVER overwrite an existing CLAUDE.md). The twin module touches NO `~/.claude/settings.json` and nothing under `~/.claude/` — Twin artifacts are per-repo (gitignored/regenerable graph + bridge; committed `CLAUDE.md`), not per-user config.
 
   Everything else is read-only or delegated. One delegation carve-out: when the telemetry module executes telemetry.md's enable recipe (see "Module: telemetry"), that recipe writes `.supervisor/telemetry-consent.json` under telemetry.md's authority — setup.md's own logic still never touches that file.
 - Idempotent: re-running any flow against an already-configured module reports "already configured" and offers status/reconfigure/remove — it never blind-overwrites, and never regenerates an existing `.env`.
