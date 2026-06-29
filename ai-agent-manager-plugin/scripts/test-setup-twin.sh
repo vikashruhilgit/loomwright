@@ -58,7 +58,11 @@ EOF
 
 # run the twin helper against a fixture; prints stdout, captures rc into the named var.
 # usage: out="$(twin <dir> check)" ; rc=$?
-twin() { bash "$TWIN" --root "$1" "$2" 2>/dev/null; }
+# NOTE: helper stderr is passed THROUGH to the test's stderr (not swallowed) so a fail-safe
+# diagnostic — e.g. "[bridge] build-bridge.sh exited non-zero — continuing" — stays visible in
+# CI logs when a bootstrap exits 0 but a step silently errored. stdout (the parsed cells) is
+# unaffected: command substitution captures stdout only.
+twin() { bash "$TWIN" --root "$1" "$2"; }
 
 # extract the graph cell value from a `check`/render report.
 graph_cell() { printf '%s\n' "$1" | grep -E '^[[:space:]]*graph:' | sed -E 's/^[[:space:]]*graph:[[:space:]]*//'; }
@@ -131,6 +135,39 @@ out_boot="$(twin "$Cc" bootstrap)"; rc_boot=$?
 printf '%s' "$out_boot" | grep -qi 'graphify' && ok "bootstrap stdout mentions graphify (guidance present)" || no "bootstrap stdout lacks graphify guidance"
 printf '%s' "$out_boot" | grep -qiE '/graphify|run .?graphify' && ok "bootstrap guidance tells you to run /graphify" || no "bootstrap guidance does not mention running graphify"
 [ ! -e "$Cc/graphify-out/graph.json" ] && ok "graphify-absent bootstrap wrote NO graph (guide-only, never ran graphify)" || no "bootstrap unexpectedly produced a graph"
+
+# ============================================================================
+echo "== (c2) STALE graph + --run-graphify → graphify REFRESHES it (stale verdict can clear) =="
+# Regression guard for the stale-dead-end: a stale graph must be REFRESHABLE via /setup twin,
+# not just flagged. Uses a STUB graphify on PATH (no real CLI, no network) that rewrites
+# graph.json's built_at_commit to the current HEAD — simulating a refresh.
+C2="$(newgit)"
+HEADc2="$( cd "$C2" && git rev-parse HEAD )"
+write_graph "$C2" "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"   # divergent → stale
+# pre-confirm it reads stale
+printf '%s' "$(graph_cell "$(twin "$C2" check)")" | grep -qi 'stale' && ok "(c2) precondition: graph reads stale" || no "(c2) precondition failed: graph not stale"
+# stub graphify that refreshes built_at to HEAD (runs in repo cwd, like the real one)
+STUBDIR="$(mkfix)"; mkdir -p "$STUBDIR/bin"
+cat > "$STUBDIR/bin/graphify" <<STUB
+#!/usr/bin/env bash
+# stub graphify: rewrite graphify-out/graph.json built_at_commit to the current HEAD
+h="\$(git rev-parse HEAD 2>/dev/null)"
+mkdir -p graphify-out
+printf '{"built_at_commit":"%s","directed":false,"multigraph":false,"graph":{},"nodes":[{"id":"a","source_file":"x.md","community":1}],"links":[]}\n' "\$h" > graphify-out/graph.json
+STUB
+chmod +x "$STUBDIR/bin/graphify"
+out_c2="$(PATH="$STUBDIR/bin:$PATH" bash "$TWIN" --root "$C2" bootstrap --run-graphify)"; rc_c2=$?
+[ "$rc_c2" -eq 0 ] && ok "(c2) bootstrap --run-graphify exits 0" || no "(c2) bootstrap --run-graphify non-zero ($rc_c2)"
+printf '%s' "$(graph_cell "$(twin "$C2" check)")" | grep -q 'present (fresh)' && ok "(c2) stale graph REFRESHED to 'present (fresh)' after --run-graphify (stale dead-end fixed)" || no "(c2) graph still not fresh after refresh (got: $(graph_cell "$(twin "$C2" check)"))"
+
+echo "== (c3) STALE graph WITHOUT --run-graphify → bridge rebuilt, stale hint printed, graph unchanged =="
+C3="$(newgit)"
+write_graph "$C3" "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+out_c3="$(twin "$C3" bootstrap)"; rc_c3=$?
+[ "$rc_c3" -eq 0 ] && ok "(c3) plain bootstrap on stale graph exits 0" || no "(c3) plain bootstrap non-zero ($rc_c3)"
+printf '%s' "$out_c3" | grep -qi 'stale' && ok "(c3) bootstrap prints a stale-graph hint" || no "(c3) no stale hint printed on a stale graph"
+printf '%s' "$out_c3" | grep -qiE '/graphify|graphify .' && ok "(c3) stale hint points to running graphify" || no "(c3) stale hint does not mention graphify"
+printf '%s' "$(graph_cell "$(twin "$C3" check)")" | grep -qi 'stale' && ok "(c3) graph still stale (plain bootstrap never refreshed it)" || no "(c3) graph unexpectedly changed without --run-graphify"
 
 # ============================================================================
 echo "== (d) scoped-writes invariant — never overwrites/creates CLAUDE.md, never writes settings.json =="

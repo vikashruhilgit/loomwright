@@ -54,7 +54,16 @@ usage() {
 while [ $# -gt 0 ]; do
   case "$1" in
     check|bootstrap) [ -z "$SUBCMD" ] && SUBCMD="$1"; shift ;;
-    --root)          ROOT_OVERRIDE="${2:-}"; shift 2 ;;
+    --root)
+      # Require a following value. Shift the flag first, then the value ONLY if present —
+      # a bare trailing `--root` must NOT `shift 2` (that underflows when $#<2 and would
+      # re-process the same arg → spin). A valueless --root is a usage error, not a silent
+      # fall-back to git resolution.
+      if [ $# -lt 2 ]; then
+        echo "setup-twin: --root requires a path argument" >&2
+        exit 0   # fail-safe: never break the caller
+      fi
+      ROOT_OVERRIDE="$2"; shift 2 ;;
     --run-graphify)  RUN_GRAPHIFY="yes"; shift ;;
     -h|--help)       usage ;;
     *) echo "setup-twin: unknown arg '$1' (try --help)" >&2; shift ;;
@@ -244,23 +253,42 @@ do_check() {
 do_bootstrap() {
   echo "== Twin bootstrap for: $repo =="
 
-  # (a / a2) graph step.
-  if [ -e "$repo/graphify-out/graph.json" ]; then
-    echo "[graph] present — skipping graphify (graph already built)."
+  # (a / a2) graph step. A graph that is ABSENT or STALE is a graph-(re)producing condition:
+  # under --run-graphify (post-confirm) we run `graphify .` to (re)build it — refreshing a stale
+  # graph is what lets a `needs bootstrap (stale graph)` repo actually reach `bootstrapped`,
+  # otherwise the stale verdict could never clear via /setup twin. A FRESH (or freshness-unknown)
+  # graph is left as-is. Reuses probe_graph so the staleness rule stays single-sourced.
+  local graph_state graph_action
+  graph_state="$(probe_graph)"
+  case "$graph_state" in
+    absent)  graph_action="build"   ;;   # no graph → build
+    *stale*) graph_action="refresh" ;;   # present-but-stale → refresh
+    *)       graph_action="none"    ;;   # fresh / freshness-unknown → leave as-is
+  esac
+
+  if [ "$graph_action" = "none" ]; then
+    echo "[graph] $graph_state — leaving the existing graph as-is (no graphify needed)."
   else
-    echo "[graph] absent."
+    echo "[graph] $graph_state ⇒ graph needs to be ${graph_action}ed."
     if command -v graphify >/dev/null 2>&1; then
       if [ "$RUN_GRAPHIFY" = "yes" ]; then
-        echo "[graph] graphify found and --run-graphify set — running 'graphify .' in $repo ..."
+        echo "[graph] graphify found and --run-graphify set — running 'graphify .' in $repo to ${graph_action} the graph ..."
         # graphify writes graphify-out/ (graphify's write, not ours). Fail-safe: never break.
         ( cd "$repo" && graphify . ) || echo "[graph] graphify run did not complete cleanly — continuing (fail-safe)." >&2
+      elif [ "$graph_action" = "refresh" ]; then
+        echo "[graph] graphify CLI is available; the graph is STALE — run 'graphify .' in this repo to refresh it."
+        echo "[graph] (the bridge below is rebuilt either way, but the stale verdict clears ONLY after a graph refresh.)"
       else
         echo "[graph] graphify CLI is available; run 'graphify .' in this repo to build the code graph."
         echo "[graph] (the command layer passes --run-graphify only AFTER you confirm; this helper does not prompt.)"
       fi
     else
       echo "[graph] graphify is an EXTERNAL user-global skill/CLI (~/.claude/skills/graphify), triggered by /graphify."
-      echo "[graph] It is not a plugin command. Run '/graphify .' in this repo to build the code graph, then re-run bootstrap."
+      if [ "$graph_action" = "refresh" ]; then
+        echo "[graph] It is not a plugin command. The graph is STALE — run '/graphify .' in this repo to refresh it, then re-run bootstrap."
+      else
+        echo "[graph] It is not a plugin command. Run '/graphify .' in this repo to build the code graph, then re-run bootstrap."
+      fi
     fi
   fi
 
