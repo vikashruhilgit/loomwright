@@ -12,11 +12,11 @@ Guidance for Claude Code when working in this repository.
 
 **AI Agent Manager** is a Claude Code plugin with 14 agent roles (9 user-facing + 5 internal) for plan-first readiness, parallel execution, requirements, planning, code review, commits, adversarial audits, standalone PR review-and-heal, and dual-agent QA. Supervisor and Launch Pad use `.supervisor/` exclusively for state; Orchestrator and Product Owner can optionally use Beads.
 
+**v14.49.0 — new `/handoff` catch-up / hand-off digest command (read-only, additive):** Adds ONE new slash command (`commands/handoff.md`) plus its deterministic assembler `scripts/build-handoff.sh` (and a fixture-driven self-test `scripts/test-build-handoff.sh`, auto-registered by the `ci.yml` `test-*.sh` glob) that assembles **ONE recency-focused, per-work-item catch-up digest** so a second person can pick up where you left off in ~2 minutes. It interleaves work items across **Supervisor jobs**, **autonomous runs**, and **automate runs** into a single newest-first list (mode-agnostic), surfacing the five facets where derivable — **decision · why · tried/rejected · current state · provenance** — plus an honest **freshness / basis line** (artifact mtime vs a recorded commit-SHA, **never conflated**; SHA comparison only when a structured trailer carries one). It **reuses the existing sanctioned readers** (`read-project-memory.sh` / `read-lessons.sh`) rather than re-parsing those stores, **silently skips absent surfaces**, writes a derived digest to `.supervisor/handoff/digest.md` (gitignored), and **always exits 0**. **Read-only / fail-safe** — it touches no code, no agent, no state-of-truth surface, sends nothing anywhere, and never gates or blocks. Distinct from `/insights` (run trends / aggregates) and `/obsidian` (external vault projection). **One new command (count 19 → 20); agent / skill / hook counts unchanged at 14 agents / 56 skills / 21 hooks; no `schema_version` bump.** Additive on top of v14.48.0.
+
 **v14.48.0 — consolidate the three "verify-before-you-assert" lessons into ONE named Read-Before-Write Verification Gate (advisory, additive):** Folds three recurring incident-derived lessons (verify file existence with a second tool before claiming "missing"; verify a consumer's match/filter + required fields before claiming "for free"/"X-compatible"; verify exact command/API/dispatch/spawn shapes from the actual file before asserting them) into ONE named **Read-Before-Write Verification Gate** rule in `AGENT_GUIDELINES.md`, plus a matching pre-write gate item in the preloaded `quality-checklist` skill (bumped 1.1.0 → 1.2.0, `SKILLS_INDEX.md` row synced). **Advisory / non-gating** — the gate is guidance every agent inherits via the standard contract, not a new hook or hard gate. **No new agent / command / skill / hook (counts unchanged at 14 agents / 19 commands / 56 skills / 21 hooks); no `schema_version` bump.** Additive on top of v14.47.0.
 
-**v14.47.0 — per-project OpenTelemetry resource-attribute labeling on session start (telemetry-gated, additive, FIRST hook-count bump since v14.34.0):** Adds ONE new `SessionStart` hook (`scripts/set-otel-resource-attrs.sh`, `type: command`) that auto-maintains each project's `OTEL_RESOURCE_ATTRIBUTES` (`service.name=<repo>`, `service.version=<plugin version>`) inside `<project>/.claude/settings.local.json` so every project's OpenTelemetry traces are labeled with the originating repo + the active plugin version. **Telemetry-gated:** the hook self-gates on telemetry being enabled (no-op otherwise) and is **fail-safe — ALWAYS exits 0** (never blocks session start, never throws on a malformed/absent settings file). The `/setup observability` flow owns the label lifecycle (init / status / remove). Ships with a fixture-driven self-test (`scripts/test-set-otel-resource-attrs.sh`, auto-registered by the `ci.yml` `test-*.sh` glob). The hooks.json wiring brings the leaf count **20 → 21**; setup.md / the setup SKILL / `docs/OBSERVABILITY.md` prose document the new label. **Invariants intact:** advisory / fail-safe — the labeler NEVER blocks a session, NEVER writes outside `<project>/.claude/settings.local.json`, and no-ops entirely when telemetry is off. **One new hook (count 20 → 21); agent / command / skill counts unchanged at 14 agents / 19 commands / 56 skills; no `schema_version` bump.** Additive on top of v14.46.0.
-
-> 📜 **Full release history** (v14.46.0 → v14.0.0 and earlier) lives in [`CHANGELOG.md`](CHANGELOG.md). CLAUDE.md keeps only the two most recent release notes.
+> 📜 **Full release history** (v14.47.0 → v14.0.0 and earlier) lives in [`CHANGELOG.md`](CHANGELOG.md). CLAUDE.md keeps only the two most recent release notes.
 
 ---
 
@@ -25,9 +25,9 @@ Guidance for Claude Code when working in this repository.
 The repo is a **marketplace wrapper** containing one nested plugin:
 
 - Marketplace manifest: `.claude-plugin/marketplace.json` (root)
-- Plugin manifest: `ai-agent-manager-plugin/.claude-plugin/plugin.json` (v14.48.0)
+- Plugin manifest: `ai-agent-manager-plugin/.claude-plugin/plugin.json` (v14.49.0)
 - Agents: `ai-agent-manager-plugin/agents/` (14 markdown prompts)
-- Commands: `ai-agent-manager-plugin/commands/` (19 entry points)
+- Commands: `ai-agent-manager-plugin/commands/` (20 entry points)
 - Skills: `ai-agent-manager-plugin/skills/` (56 skills, see `SKILLS_INDEX.md`)
 - Hooks: `ai-agent-manager-plugin/hooks/hooks.json`
 - Docs: `ai-agent-manager-plugin/docs/`
@@ -46,10 +46,10 @@ ai-agent-manager/                              # marketplace wrapper
 │   ├── .claude-plugin/plugin.json
 │   ├── .mcp.json                              # bundled MCP servers
 │   ├── agents/                                # 14 markdown prompts
-│   ├── commands/                              # 19 slash commands
+│   ├── commands/                              # 20 slash commands
 │   ├── hooks/hooks.json                       # cross-cutting hooks
 │   ├── skills/                                # 56 skills + SKILLS_INDEX.md
-│   ├── scripts/                               # runtime helpers: telemetry, webhook, notify, resume, memory, lessons, insights, findings→community bridge (build-bridge / read-bridge), otel stack assets (+ self-tests, fixtures)
+│   ├── scripts/                               # runtime helpers: telemetry, webhook, notify, resume, memory, lessons, insights, handoff digest (build-handoff), findings→community bridge (build-bridge / read-bridge), otel stack assets (+ self-tests, fixtures)
 │   └── docs/                                  # RESULT_SCHEMAS, FAILURE_ESCALATION, ARCHITECTURE_CONTRACTS, ARCHITECTURE, QA_SYSTEM_BLUEPRINT, TELEMETRY, OBSERVABILITY
 │       └── SPIKES/                            # Capability spike investigations + deferral records
 ├── scripts/                                   # validate-version.sh, check-command-sync.sh
