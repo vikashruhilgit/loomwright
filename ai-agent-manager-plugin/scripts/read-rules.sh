@@ -160,6 +160,8 @@ jq -rs '
           elif (($o.enforcement | type) != "string")
                or (($o.enforcement == "advisory") or ($o.enforcement == "must") | not) then
             {tag: "SKIP", why: ("bad-enforcement id=" + (($o.id // "?")|tostring))}
+          elif ($o | has("check") | not) then
+            {tag: "SKIP", why: ("missing-check id=" + (($o.id // "?")|tostring))}
           elif (($o.check | type) != "string") and (($o.check) != null) then
             {tag: "SKIP", why: ("bad-check id=" + (($o.id // "?")|tostring))}
           elif ($o.provenance | type) != "object" then

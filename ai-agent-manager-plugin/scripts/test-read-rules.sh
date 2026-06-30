@@ -14,8 +14,9 @@
 #   (d) jq-absent simulation                  → emit nothing, exit 0
 #   (e) THE INVARIANT — check is DATA not EXEC → marker file NOT created; check string IS in stdout
 #   (f) empty / all-invalid                    → EMPTY stdout (no banner), exit 0
-#   (g) object validation skip-cases          → (g1) missing field, (g2) bad enforcement, (g3) dup id
-#                                                each SKIPPED; valid siblings still emit; exit 0
+#   (g) object validation skip-cases          → (g1) missing field, (g2) bad enforcement, (g3) dup id,
+#                                                (g4) missing required `check` key, (g5) explicit
+#                                                check:null still valid; invalid SKIPPED, valid emit; exit 0
 #   (h) deterministic ordering                 → multi-rule fixture run twice ⇒ byte-identical stdout
 
 set -uo pipefail
@@ -207,6 +208,35 @@ if echo "$outG3" | grep -qF -- "- First seen dup wins" \
 else
   no "(g3) duplicate-id handling incorrect"
 fi
+
+# (g4) missing `check` key entirely — `check` is a REQUIRED field (schema: string OR null),
+# so an object with NO `check` key is SKIPPED, just like a missing id/statement/etc. Guards the
+# spec-vs-impl gap where a missing key (jq null) slipped past the present-but-wrong-type guard.
+RG4="$(new_repo)"
+seed_rules_file "$RG4" "g4.json" '[
+  {"id":"g4-bad","category":"safety","statement":"missing the required check key","enforcement":"advisory","provenance":{"source":"test"}},
+  {"id":"g4-good","category":"safety","statement":"Valid sibling g4 survives","enforcement":"advisory","check":null,"provenance":{"source":"test"}}
+]'
+outG4="$(run_reader "$RG4")"; rcG4=$?
+[ "$rcG4" -eq 0 ] && ok "(g4 missing check key) exits 0" || no "expected exit 0, got $rcG4"
+if echo "$outG4" | grep -qF -- "- Valid sibling g4 survives" \
+   && ! echo "$outG4" | grep -qF "missing the required check key"; then
+  ok "(g4) missing-check object SKIPPED, valid sibling emitted"
+else
+  no "(g4) missing-check skip incorrect — a rule with no check key must be dropped"
+fi
+
+# (g5) explicit "check": null is STILL valid (present key, null value) — guards against the g4
+# fix over-correcting into rejecting legitimate null checks.
+RG5="$(new_repo)"
+seed_rules_file "$RG5" "g5.json" '[
+  {"id":"g5-nullcheck","category":"safety","statement":"Explicit null check is valid","enforcement":"advisory","check":null,"provenance":{"source":"test"}}
+]'
+outG5="$(run_reader "$RG5")"; rcG5=$?
+[ "$rcG5" -eq 0 ] && ok "(g5 explicit null check) exits 0" || no "expected exit 0, got $rcG5"
+echo "$outG5" | grep -qF -- "- Explicit null check is valid" \
+  && ok "(g5) explicit check:null rule still emitted" \
+  || no "(g5) explicit check:null rule should remain valid"
 
 # ============================================================================
 echo "== (h) deterministic ordering: multi-rule fixture run twice ⇒ byte-identical stdout =="
