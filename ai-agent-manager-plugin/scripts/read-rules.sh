@@ -70,14 +70,13 @@ log_skip() {
   printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" "$1" >> "$LOG" 2>/dev/null || true
 }
 
-# 1. Input contract (no-hang). ARGS TAKE PRECEDENCE: when positional args are present, STDIN is NEVER
-#    read, so an args-bearing call can never block on an open-but-idle stdin in a non-TTY context. When
-#    no args are given AND stdin is not a TTY, we still do NOT read stdin — v1 ignores stdin content
-#    entirely (output is always "all valid rules"). This whole block is therefore purely defensive
-#    against a future caller's idle pipe; it changes nothing about v1 output.
-if [ "$#" -eq 0 ] && [ ! -t 0 ]; then
-  : # intentionally do nothing — v1 ignores stdin; never block on it.
-fi
+# 1. Input contract (no-hang). The reader NEVER reads its OWN stdin (fd 0) in v1: positional args (if
+#    any) are purely informational/forward-compat (§4) and v1 output is always "all valid rules"
+#    regardless. The `while read` loops further below all consume REDIRECTED temp files
+#    (`done < "$files_list"`, `< "$valid_lines"`, `< "$skip_lines"`, `< "$render"`) — never the inherited
+#    fd 0 — so a caller's open-but-idle stdin pipe (a hook/agent in a non-TTY context) can never hang
+#    this reader. (No guard branch is needed to enforce this; the absence of any read FROM fd 0 IS the
+#    contract.)
 
 # 2. Tooling presence (fail-safe, quiet). jq is REQUIRED by this reader (parsing + injection-safe
 #    boundary). Mirror read-bridge.sh: jq unavailable → diagnostic + emit nothing + exit 0.

@@ -104,6 +104,25 @@ outC="$(run_reader "$RC")"; rcC=$?
 echo "$outC" | grep -qF -- "- This valid rule survives" \
   && ok "valid sibling still emitted past the malformed file" || no "valid sibling not emitted"
 
+# (c2) valid JSON but NOT an array (a bare object / scalar) → skipped with diagnostic, NOT crash; a
+# valid-array sibling still emits. The schema requires each *.json be a JSON ARRAY ("never a bare
+# object"); this exercises the reader's `if type=="array" … else empty` non-array branch, distinct
+# from (c)'s truly-malformed-JSON case.
+RC2="$(new_repo)"
+seed_rules_file "$RC2" "good.json" '[
+  {"id":"c2-good","category":"safety","statement":"Array sibling survives the non-array file","enforcement":"advisory","check":null,"provenance":{"source":"test"}}
+]'
+seed_rules_file "$RC2" "object.json" '{"id":"not-an-array","category":"safety","statement":"bare object, not an array","enforcement":"advisory","check":null,"provenance":{"source":"test"}}'
+seed_rules_file "$RC2" "scalar.json" '42'
+outC2="$(run_reader "$RC2")"; rcC2=$?
+[ "$rcC2" -eq 0 ] && ok "(c2 valid-JSON non-array) exits 0" || no "expected exit 0, got $rcC2"
+if echo "$outC2" | grep -qF -- "- Array sibling survives the non-array file" \
+   && ! echo "$outC2" | grep -qF "bare object, not an array"; then
+  ok "(c2) non-array JSON file SKIPPED, array sibling still emitted"
+else
+  no "(c2) non-array JSON file must be skipped while the array sibling emits"
+fi
+
 # ============================================================================
 echo "== (d) jq-absent simulation → emit nothing, exit 0 =="
 RD="$(new_repo)"
