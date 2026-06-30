@@ -97,19 +97,22 @@ LC_ALL=C find "$RULES_DIR" -maxdepth 1 -type f -name '*.json' 2>/dev/null \
 #    (first-seen wins), and emits:
 #      - valid rules as tab-delimited lines (sorted by category then id) for the shell to render,
 #      - skip diagnostics on a separate channel so the shell can log them WITHOUT them reaching stdout.
-#    Untrusted text never leaves the jq data model; the program is fixed text, only data crosses via
-#    --slurpfile. A malformed file makes `--slurpfile` fail for that read → fail-safe quiet.
+#    Untrusted text never leaves the jq data model; the program is fixed text, and the only thing that
+#    crosses into the jq invocation is the FILE PATH (a positional argument, sourced from `find` — never
+#    rule content). A malformed file makes the jq read fail for that file → fail-safe quiet.
 #
-#    To keep injection safety AND ordering, we --slurpfile each file in turn into one combined array,
-#    tagging each element with its (file_index, elem_index) so the "first-seen id" is deterministic.
+#    To keep injection safety AND ordering, we read each file in turn (as a positional jq argument) into
+#    one combined array, tagging each element with its (file_index, elem_index) so the "first-seen id"
+#    is deterministic.
 combined="$(mktemp)"; trap 'rm -f "$files_list" "$combined" 2>/dev/null' EXIT
 : > "$combined"
 fidx=0
 while IFS= read -r rf; do
   [ -n "$rf" ] || continue
-  # Each file must be a JSON ARRAY of objects. Read it injection-safely via --slurpfile, tag each
-  # element with file/elem indices for deterministic first-seen ordering. A non-array or malformed
-  # file yields no rows (fail-safe-skip the whole file) and a diagnostic.
+  # Each file must be a JSON ARRAY of objects. Read it injection-safely as a positional jq file
+  # argument (the path comes from `find`, never rule content), tagging each element with file/elem
+  # indices for deterministic first-seen ordering. A non-array or malformed file yields no rows
+  # (fail-safe-skip the whole file) and a diagnostic.
   rows="$(jq -c \
             --argjson fi "$fidx" '
             if type == "array" then

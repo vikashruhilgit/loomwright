@@ -343,8 +343,8 @@ House Rules substrate — committed `.agent/rules/` conventions store + fail-saf
 ```bash
 /rules list                # show committed House Rules
 /rules suggest             # propose candidate rules from the codebase
-/rules add "<rule text>"   # append a rule to the store
-/rules check               # report (advisory) which rules the working tree satisfies
+/rules add                 # author a rule (confirm-only, append-only)
+/rules check               # human-invoked: display + run must-rule checks only after explicit confirmation
 ```
 
 ---
