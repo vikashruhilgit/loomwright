@@ -672,6 +672,16 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 
 ---
 
+### 📜 /rules — House Rules Substrate (Committed `.agent/rules/`)
+
+**Purpose:** Maintain the plugin's first **committed-convention** surface — `.agent/rules/*.json`, a version-controlled source of truth for project conventions so an implementer can read them on the DO side, not only get caught on review. Four subcommands: `list` (show all valid rules via the fail-safe `read-rules.sh` reader), `suggest` (scan the repo → PROPOSE rules for human review, never auto-writes), `add` (append-only, confirm-only write to a path-contained `.agent/rules/<category-slug>.json`), and `check` (HUMAN-invoked: display + run `must` rules' checks only after explicit confirmation). **Trust boundary:** the reader emits each `check` as DATA and never executes it; `/rules check` requires explicit confirmation. **Substrate only** — enforcement wiring at the worker / Phase 4.5 / nudge seams and unattended `check` execution are DEFERRED to slice #3b-ii. Subordinate to CLAUDE.md (on conflict, CLAUDE.md wins).
+
+**Usage:** `/rules list` · `/rules suggest` · `/rules add` · `/rules check`
+
+**Learn More:** see `ai-agent-manager-plugin/commands/rules.md` and the `rules` skill (`skills/rules/SKILL.md`, the protocol authority) for the schema, the fail-safe read contract, the path-contained atomic-append write discipline, and the `check`-is-arbitrary-shell trust boundary
+
+---
+
 ### 🩺 /pr-postmortem — PR Review-Churn Root-Cause Analysis (Read-Only)
 
 **Purpose:** On-demand, read-only diagnostic that analyzes a merged or open PR's review-and-fix churn to find the **root cause** of repeated review rounds. Gathers PR metadata, review threads, and diff stats via `scripts/pr-postmortem-gather.sh`, then buckets each review round into one of six root-cause classes (plan gap, missing context, convention mismatch, execution bug, quality gap, scope too large), flags rounds self-heal should have caught (`self_heal_miss`), and maps where in the agent flow (`launch_pad` / `worker` / `self_heal` / `unknowable`) each should have been caught. Never writes code, never gates, never blocks the PR — it appends one advisory `POSTMORTEM_RESULT` record to `.supervisor/postmortem/results.jsonl`, the seed corpus for a future synthetic eval harness.
