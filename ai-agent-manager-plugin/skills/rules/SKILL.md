@@ -77,7 +77,7 @@ A skipped object is dropped from output and gets a **one-line diagnostic to `.su
 
 This makes the merged set a pure function of the committed files — identical across runs and across machines.
 
-**Injection safety (jq-only):** untrusted rule text (statements, checks, ids, paths) crosses the boundary via `jq`'s `--rawfile` / `--argjson` / `--arg` ONLY. It is NEVER string-interpolated into a shell command or into a jq program. (Mirrors `read-bridge.sh`.)
+**Injection safety (jq-only):** untrusted rule text (statements, checks, ids, paths) enters jq ONLY by jq reading the rule file as a **positional file-path argument** (`jq … "$file"`, the path sourced from `find`, never from rule content); the only flag-passed value is `--argjson fi`, the trusted integer file index. Rule text is NEVER string-interpolated into a shell command or into a jq program, and the jq program text is fixed. (Same injection-safety *property* as `read-bridge.sh`, but the *mechanism differs*: `read-bridge.sh` passes corpus text via `--rawfile`/`--slurpfile`/`--argjson`, whereas this reader reads each rule file positionally. The `/rules add` **write** path is the one place that uses `jq -n --arg` — see §7 — to build a new object from user input without interpolation.)
 
 ---
 
@@ -174,7 +174,7 @@ A layered model — a company-base rule set composed with per-project overrides 
 ## Anti-Patterns
 
 - **Executing a `check` in the reader (or any unattended path).** The reader emits `check` as data, period. Unattended execution is 3b-ii's gated problem.
-- **String-interpolating untrusted rule text into a shell command or a jq program.** Cross the boundary via `--rawfile` / `--argjson` / `--arg` only.
+- **String-interpolating untrusted rule text into a shell command or a jq program.** Keep rule text inside jq's data model: the reader reads each file as a positional jq file-path argument (§2); the `/rules add` write path builds objects via `jq -n --arg` (§7). Never splice rule text into the program string or a shell command.
 - **`set -e` in the reader, or a non-zero exit on a normal failure path.** A read must never break its caller — ALWAYS exit 0.
 - **Letting `/rules add` write outside `.agent/rules/`.** The category is slugged to a single `[a-z0-9-]` segment and traversal/metachars/empty are rejected.
 - **Clobbering an existing rule file on malformed/non-array JSON.** Parse-gate with `jq -e 'type=="array"'` and abort — never overwrite.
