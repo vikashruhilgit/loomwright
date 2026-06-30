@@ -40,9 +40,11 @@
 # to slice 3b-ii and is NOT this reader's concern.
 #
 # INJECTION SAFETY (jq-only): untrusted rule text (ids, statements, checks, categories, provenance)
-# crosses the boundary via jq's --rawfile / --slurpfile / --argjson / --arg ONLY — it is NEVER
-# string-interpolated into a shell command or into a jq program. A malformed *.json file is fail-safe
-# (its bad objects / the whole file are skipped; never crash; exit 0).
+# enters jq ONLY by jq reading the rule file as a POSITIONAL FILE-PATH argument (the path itself comes
+# from `find`, never from rule content) — it is NEVER string-interpolated into a shell command or into
+# a jq program, and the jq program text is fixed (the only flag-passed value is `--argjson fi`, the
+# trusted integer file index). A malformed *.json file is fail-safe (its bad objects / the whole file
+# are skipped; never crash; exit 0).
 #
 # FAIL-SAFE (hard requirement): ALWAYS exit 0 — a read must never break its caller.
 #   - .agent/rules/ absent / no *.json files  → emit nothing, exit 0
@@ -92,8 +94,9 @@ LC_ALL=C find "$RULES_DIR" -maxdepth 1 -type f -name '*.json' 2>/dev/null \
   | LC_ALL=C sort > "$files_list" 2>/dev/null || true
 [ -s "$files_list" ] || exit 0   # no *.json rule files → nothing to emit
 
-# 4. Merge + validate in a SINGLE jq program. Files are passed via --slurpfile in sorted order; jq
-#    flattens them by file index then by array index, validates each object, drops duplicate ids
+# 4. Merge + validate in TWO jq passes. Pass 1: a per-file loop reads each *.json file in sorted order
+#    as a POSITIONAL jq argument (tagging every element with its file index then array index). Pass 2: a
+#    single `jq -rs` reduce over the accumulated stream validates each object, drops duplicate ids
 #    (first-seen wins), and emits:
 #      - valid rules as tab-delimited lines (sorted by category then id) for the shell to render,
 #      - skip diagnostics on a separate channel so the shell can log them WITHOUT them reaching stdout.

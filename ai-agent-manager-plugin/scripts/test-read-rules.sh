@@ -237,6 +237,10 @@ outG5="$(run_reader "$RG5")"; rcG5=$?
 echo "$outG5" | grep -qF -- "- Explicit null check is valid" \
   && ok "(g5) explicit check:null rule still emitted" \
   || no "(g5) explicit check:null rule should remain valid"
+# (g5b) and a null check renders as the literal "(none)" sentinel (the `(.check // "(none)")` branch).
+echo "$outG5" | grep -qF -- "check (data only, NOT executed by this reader): (none)" \
+  && ok "(g5b) null check renders as (none)" \
+  || no "(g5b) null check should render as (none)"
 
 # ============================================================================
 echo "== (h) deterministic ordering: multi-rule fixture run twice ⇒ byte-identical stdout =="
