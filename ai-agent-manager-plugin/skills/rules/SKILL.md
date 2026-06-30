@@ -163,6 +163,10 @@ The `check` field is **arbitrary shell authored by anyone who cloned or PR'd the
 - **`/rules check` is HUMAN-invoked only** — the trust anchor is the user running it. It DISPLAYS each `must`-rule's `check` and runs it ONLY after explicit confirmation (it never blind-executes a check authored by a cloning teammate).
 - **Unattended execution of `check` commands (the worker / Phase 4.5 enforcement seams) is explicitly DEFERRED to slice #3b-ii and MUST be gated there.** The gating model to inherit is `run-ground-truth.sh --no-cmd`'s machine-authored trust valve (the same boundary Plan Reviewer Criterion 14 enforces for `cmd:` Executable-Acceptance bullets): a machine / unattended caller must NOT execute author-supplied shell without an explicit trust gate. **This requirement is flagged here so 3b-ii inherits it.**
 
+### §9.1 — `/rules add` write path is PROSE-only in v1 — mechanize + test it in 3b-ii (inherited requirement)
+
+In this slice the security-sensitive `/rules add` write discipline (§7) — the slug-to-single-`[a-z0-9-]`-segment containment, the `/`/`..`/leading-dot/metachar/empty rejection, the array-only parse-gate, the atomic temp+`mv`, the read-back verify — is **specified as command/skill PROSE the agent follows at runtime**, with **no dedicated `add-rule.sh` and no test** proving (e.g.) that a `../escape` category is actually rejected. This is intentional and consistent with "substrate only" (the read path, which cannot write, is the mechanized + heavily-tested surface). **3b-ii MUST mechanize the write discipline into a sole-writer helper with a path-traversal-rejection test before any unattended/enforcement seam leans on it** — the write path is where a malicious/typo `category` could escape `.agent/rules/`, so it needs the same code+test rigor the reader already has. Flagged here so 3b-ii inherits it.
+
 ---
 
 ## §10 — Company-base ↔ per-project layering (DEFERRED)

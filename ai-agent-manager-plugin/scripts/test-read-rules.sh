@@ -261,6 +261,76 @@ echo "$outG5" | grep -qF -- "check (data only, NOT executed by this reader): (no
   && ok "(g5b) null check renders as (none)" \
   || no "(g5b) null check should render as (none)"
 
+# (g6) bad-category: non-string `category` → SKIPPED; valid sibling survives. (validation branch)
+RG6="$(new_repo)"
+seed_rules_file "$RG6" "g6.json" '[
+  {"id":"g6-bad","category":123,"statement":"non-string category","enforcement":"advisory","check":null,"provenance":{"source":"test"}},
+  {"id":"g6-good","category":"safety","statement":"Valid sibling g6 survives","enforcement":"advisory","check":null,"provenance":{"source":"test"}}
+]'
+outG6="$(run_reader "$RG6")"; rcG6=$?
+[ "$rcG6" -eq 0 ] && ok "(g6 bad category) exits 0" || no "expected exit 0, got $rcG6"
+echo "$outG6" | grep -qF -- "- Valid sibling g6 survives" && ! echo "$outG6" | grep -qF "non-string category" \
+  && ok "(g6) non-string-category object SKIPPED, valid sibling emitted" \
+  || no "(g6) bad-category skip incorrect"
+
+# (g7) bad-provenance: non-object `provenance` → SKIPPED; valid sibling survives. (validation branch)
+RG7="$(new_repo)"
+seed_rules_file "$RG7" "g7.json" '[
+  {"id":"g7-bad","category":"safety","statement":"string provenance not object","enforcement":"advisory","check":null,"provenance":"oops"},
+  {"id":"g7-good","category":"safety","statement":"Valid sibling g7 survives","enforcement":"advisory","check":null,"provenance":{"source":"test"}}
+]'
+outG7="$(run_reader "$RG7")"; rcG7=$?
+[ "$rcG7" -eq 0 ] && ok "(g7 bad provenance) exits 0" || no "expected exit 0, got $rcG7"
+echo "$outG7" | grep -qF -- "- Valid sibling g7 survives" && ! echo "$outG7" | grep -qF "string provenance not object" \
+  && ok "(g7) non-object-provenance object SKIPPED, valid sibling emitted" \
+  || no "(g7) bad-provenance skip incorrect"
+
+# (g8) present-but-non-string `check` (e.g. a number) → SKIPPED via the bad-check elif. Distinct from
+# g4 (missing key) and g5 (explicit null): here the key is present but neither string nor null.
+RG8="$(new_repo)"
+seed_rules_file "$RG8" "g8.json" '[
+  {"id":"g8-bad","category":"safety","statement":"numeric check is invalid","enforcement":"advisory","check":123,"provenance":{"source":"test"}},
+  {"id":"g8-good","category":"safety","statement":"Valid sibling g8 survives","enforcement":"advisory","check":null,"provenance":{"source":"test"}}
+]'
+outG8="$(run_reader "$RG8")"; rcG8=$?
+[ "$rcG8" -eq 0 ] && ok "(g8 non-string check) exits 0" || no "expected exit 0, got $rcG8"
+echo "$outG8" | grep -qF -- "- Valid sibling g8 survives" && ! echo "$outG8" | grep -qF "numeric check is invalid" \
+  && ok "(g8) non-string-check object SKIPPED, valid sibling emitted" \
+  || no "(g8) bad-check (non-string) skip incorrect"
+
+# (g9) non-object array element (null / scalar inside the array) → SKIPPED via the not-an-object
+# branch; a valid object sibling in the same array still emits.
+RG9="$(new_repo)"
+seed_rules_file "$RG9" "g9.json" '[
+  null,
+  42,
+  {"id":"g9-good","category":"safety","statement":"Valid object among non-object elements","enforcement":"advisory","check":null,"provenance":{"source":"test"}}
+]'
+outG9="$(run_reader "$RG9")"; rcG9=$?
+[ "$rcG9" -eq 0 ] && ok "(g9 non-object element) exits 0" || no "expected exit 0, got $rcG9"
+echo "$outG9" | grep -qF -- "- Valid object among non-object elements" \
+  && ok "(g9) non-object array elements SKIPPED, valid object sibling emitted" \
+  || no "(g9) not-an-object handling incorrect"
+
+# (g10) CROSS-FILE first-seen-id dedup: the SAME id appears in two files; LC_ALL=C path-sort means the
+# alphabetically-earlier filename wins. "aaa.json" sorts before "zzz.json", so aaa's statement emits
+# and zzz's same-id statement is dropped — proving the dedup spans files, not just within one array.
+RG10="$(new_repo)"
+seed_rules_file "$RG10" "zzz.json" '[
+  {"id":"crossdup","category":"safety","statement":"From zzz — should be DROPPED (later in path sort)","enforcement":"advisory","check":null,"provenance":{"source":"test"}}
+]'
+seed_rules_file "$RG10" "aaa.json" '[
+  {"id":"crossdup","category":"safety","statement":"From aaa — first-seen across files WINS","enforcement":"advisory","check":null,"provenance":{"source":"test"}}
+]'
+outG10="$(run_reader "$RG10")"; rcG10=$?
+[ "$rcG10" -eq 0 ] && ok "(g10 cross-file dup) exits 0" || no "expected exit 0, got $rcG10"
+if echo "$outG10" | grep -qF -- "- From aaa — first-seen across files WINS" \
+   && ! echo "$outG10" | grep -qF "From zzz"; then
+  ok "(g10) cross-file duplicate id: LC_ALL=C path-sort first-file wins, later file's dup SKIPPED"
+else
+  no "(g10) cross-file dedup incorrect — earlier-path file must win"
+fi
+
 # ============================================================================
 echo "== (h) deterministic ordering: multi-rule fixture run twice ⇒ byte-identical stdout =="
 RH="$(new_repo)"
@@ -284,6 +354,13 @@ fi
 # Sanity: all four valid rules are present in the deterministic output.
 n_rules="$(printf '%s\n' "$outH1" | grep -cE '^- ')"
 [ "$n_rules" -eq 4 ] && ok "(ordering) all 4 valid rules rendered" || no "(ordering) expected 4 rules, got $n_rules"
+# Assert the EXPECTED sort_by([category,id]) order, not just determinism: categories access(alpha,beta),
+# middleware(mid), zoning(zeta) → alpha, beta, mid, zeta. Extract the statement-bearing rule lines
+# (the "- <statement>" header line of each rule; the [MUST] flag prefixes alpha) in order.
+order="$(printf '%s\n' "$outH1" | grep -E '^- ' | sed -E 's/^- (\[MUST\] )?//' | tr '\n' '|')"
+[ "$order" = "Alpha rule|Beta rule|Mid rule|Zeta rule|" ] \
+  && ok "(ordering) rules emitted in sort_by([category,id]) order (alpha,beta,mid,zeta)" \
+  || no "(ordering) wrong order: got [$order], expected [Alpha rule|Beta rule|Mid rule|Zeta rule|]"
 
 echo
 echo "RESULT: $pass passed, $fail failed"

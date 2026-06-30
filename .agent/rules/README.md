@@ -28,7 +28,7 @@ An object that is missing a required field, carries an unknown `enforcement` val
 
 ## Example
 
-`example.json` is shown here for illustration only (this plugin's own repo ships NO populated live rules — see below). A valid file looks like:
+The example below is shown for illustration only (this plugin's own repo ships NO populated live rules — see below; there is no `example.json` file on disk). A valid rule file looks like:
 
 ```json
 [
