@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# test-rules-docs.sh — STATIC doc-assertion self-test for the /rules substrate docs
+# (commands/rules.md + skills/rules/SKILL.md). STATIC ONLY: greps the committed docs, no
+# network, no jq, no shell execution of any rule — so it runs on the plugin's Ubuntu CI like
+# every other test-*.sh (auto-registered by ci.yml's test-*.sh glob). Exit 0 = all pass, 1 = any fail.
+#
+# Mirrors test-setup-twin.sh / test-build-handoff.sh convention: pass/fail counters, ok()/no()
+# helpers, a "RESULT: N passed, M failed" tail, exit 1 on any failure. Paths resolve from
+# $BASH_SOURCE's dir so it runs from any CWD under the CI glob.
+#
+# Covers (each = an acceptance criterion of Subtask 4):
+#   - commands/rules.md and skills/rules/SKILL.md both EXIST.
+#   - BOTH carry the trust-boundary phrases: reader-never-executes-check (data only),
+#     /rules check requires-confirmation, unattended-execution-DEFERRED-to-3b-ii.
+#   - the category path-containment / slugging rule (slug + [a-z0-9-] + traversal rejection).
+#   - the deterministic-id format (<category-slug>-<statement-slug> with -N collision suffix).
+#   - the array-only parse gate (jq -e 'type=="array"').
+#   - the provenance.source + provenance.added stamping of /rules add.
+
+set -uo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PLUGIN_ROOT="$(cd "$HERE/.." && pwd)"
+CMD="$PLUGIN_ROOT/commands/rules.md"
+SKILL="$PLUGIN_ROOT/skills/rules/SKILL.md"
+
+pass=0; fail=0
+ok() { echo "  ok: $1"; pass=$((pass+1)); }
+no() { echo "  FAIL: $1"; fail=$((fail+1)); }
+
+# has <file> <pattern> — case-insensitive, extended-regex grep -q against a file.
+has() { grep -qiE -- "$2" "$1" 2>/dev/null; }
+
+# ---- (a) both files exist ---------------------------------------------------
+[ -f "$CMD" ]   && ok "commands/rules.md exists"        || no "commands/rules.md MISSING ($CMD)"
+[ -f "$SKILL" ] && ok "skills/rules/SKILL.md exists"    || no "skills/rules/SKILL.md MISSING ($SKILL)"
+
+# ---- (b) trust-boundary phrases present in BOTH files -----------------------
+# reader never executes a check / emits as data only
+for f in "$CMD" "$SKILL"; do
+  base="$(basename "$(dirname "$f")")/$(basename "$f")"
+  has "$f" 'never (execute|run)s? (it|a `?check`?)|`?check`? (as|is) data only|emits .*`?check`? as data|data only.*never (run|execute)|never executed by (it|the reader)' \
+    && ok "[$base] trust-boundary: reader never executes check (data only)" \
+    || no "[$base] MISSING reader-never-executes-check phrasing"
+
+  has "$f" '/rules check.*(confirm|human-invoked)|requires? (explicit )?confirmation|HUMAN-invoked|after explicit confirmation' \
+    && ok "[$base] trust-boundary: /rules check requires confirmation" \
+    || no "[$base] MISSING /rules-check-requires-confirmation phrasing"
+
+  has "$f" '(defer|DEFERRED).*(3b-ii|#3b-ii|slice #?3b-ii)|unattended execution.*defer' \
+    && ok "[$base] trust-boundary: unattended execution deferred to 3b-ii" \
+    || no "[$base] MISSING unattended-execution-deferred-to-3b-ii phrasing"
+done
+
+# ---- (c) category path-containment / slugging (in command and/or skill) -----
+slug_ok=false
+for f in "$CMD" "$SKILL"; do
+  has "$f" 'slug' && has "$f" '\[a-z0-9-\]' \
+    && has "$f" '\.\.|traversal|metachar|escape `?\.agent/rules' \
+    && slug_ok=true
+done
+$slug_ok && ok "category path-containment/slugging documented (slug + [a-z0-9-] + traversal rejection)" \
+         || no "MISSING category path-containment/slugging rule"
+
+# ---- (d) deterministic-id format --------------------------------------------
+id_ok=false
+for f in "$CMD" "$SKILL"; do
+  has "$f" '<category-slug>-<statement-slug>' && has "$f" '-N' && id_ok=true
+done
+$id_ok && ok "deterministic-id format documented (<category-slug>-<statement-slug> with -N suffix)" \
+       || no "MISSING deterministic-id format"
+
+# ---- (e) array-only parse gate ----------------------------------------------
+gate_ok=false
+for f in "$CMD" "$SKILL"; do
+  has "$f" "jq -e 'type==\"array\"'" && gate_ok=true
+done
+$gate_ok && ok "array-only parse gate documented (jq -e 'type==\"array\"')" \
+         || no "MISSING array-only parse gate"
+
+# ---- (f) provenance.source + provenance.added stamping ----------------------
+prov_ok=false
+for f in "$CMD" "$SKILL"; do
+  has "$f" 'provenance\.source' && has "$f" 'provenance\.added' && prov_ok=true
+done
+$prov_ok && ok "provenance.source + provenance.added stamping documented" \
+         || no "MISSING provenance stamping"
+
+# ============================================================================
+echo
+echo "RESULT: $pass passed, $fail failed"
+[ "$fail" -eq 0 ] || exit 1

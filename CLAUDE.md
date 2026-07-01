@@ -12,11 +12,11 @@ Guidance for Claude Code when working in this repository.
 
 **AI Agent Manager** is a Claude Code plugin with 14 agent roles (9 user-facing + 5 internal) for plan-first readiness, parallel execution, requirements, planning, code review, commits, adversarial audits, standalone PR review-and-heal, and dual-agent QA. Supervisor and Launch Pad use `.supervisor/` exclusively for state; Orchestrator and Product Owner can optionally use Beads.
 
+**v14.51.0 — new `/rules` House Rules substrate command (advisory, additive):** Adds ONE new slash command (`commands/rules.md`) and ONE new skill (`skills/rules/`) that establish a committed, project-local **House Rules store** under `.agent/rules/` — durable team conventions that agents can surface but that never gate or execute. `/rules` supports **list / suggest / add / check** verbs over the store, backed by a fail-safe reader `scripts/read-rules.sh` (silently skips an absent store, always exits 0) with self-tests `scripts/test-read-rules.sh` and `scripts/test-rules-docs.sh` (auto-registered by the `ci.yml` `test-*.sh` glob). **Substrate only** — this slice ships the store, command, skill, and reader; **enforcement is deferred to slice #3b-ii**. **Advisory / fail-safe / never-executes-a-check** — it reads and reports conventions but never blocks a PR, changes a `heal_decision`, or runs anything. **One new command (count 20 → 21) and one new skill (count 56 → 57); agent / hook counts unchanged at 14 agents / 21 hooks; no `schema_version` bump.** Additive on top of v14.50.0.
+
 **v14.50.0 — new `/setup twin` cold-start bootstrap module (advisory, additive):** Adds a 7th MODULE to the existing `/setup` umbrella command (a sub-module, NOT a new top-level command) that bootstraps a repo into a Twin-ready state. `/setup twin` reports **Twin-readiness status** (is a code graph built? a findings→community bridge? a project CLAUDE.md present?) and offers a **guided cold-start bootstrap** — rebuilds the bridge and scaffolds a starter CLAUDE.md directly, and builds the code graph when the external `graphify` CLI is present (otherwise it *guides* you to run `/graphify`, since graphify is an external user-global tool the module never hard-depends on) — mirroring the `/setup observability` module contract (check → report → offer → apply → verify). The module is mechanized by `scripts/setup-twin.sh` (the engine) with a fixture-driven self-test `scripts/test-setup-twin.sh` (green in CI; auto-registered by the `ci.yml` `test-*.sh` glob). **Advisory / fail-safe / idempotent / scoped-writes** — it never blind-overwrites, never gates or blocks, and confines writes to the bootstrap targets. **A `/setup` sub-module is NOT a new command/skill/agent/hook: counts unchanged at 14 agents / 20 commands / 56 skills / 21 hooks; no `schema_version` bump.** Additive on top of v14.49.0.
 
-**v14.49.0 — new `/handoff` catch-up / hand-off digest command (read-only, additive):** Adds ONE new slash command (`commands/handoff.md`) plus its deterministic assembler `scripts/build-handoff.sh` (and a fixture-driven self-test `scripts/test-build-handoff.sh`, auto-registered by the `ci.yml` `test-*.sh` glob) that assembles **ONE recency-focused, per-work-item catch-up digest** so a second person can pick up where you left off in ~2 minutes. It interleaves work items across **Supervisor jobs**, **autonomous runs**, and **automate runs** into a single newest-first list (mode-agnostic), surfacing the five facets where derivable — **decision · why · tried/rejected · current state · provenance** — plus an honest **freshness / basis line** (artifact mtime vs a recorded commit-SHA, **never conflated**; SHA comparison only when a structured trailer carries one). It **reuses the existing sanctioned readers** (`read-project-memory.sh` / `read-lessons.sh`) rather than re-parsing those stores, **silently skips absent surfaces**, writes a derived digest to `.supervisor/handoff/digest.md` (gitignored), and **always exits 0**. **Read-only / fail-safe** — it touches no code, no agent, no state-of-truth surface, sends nothing anywhere, and never gates or blocks. Distinct from `/insights` (run trends / aggregates) and `/obsidian` (external vault projection). **One new command (count 19 → 20); agent / skill / hook counts unchanged at 14 agents / 56 skills / 21 hooks; no `schema_version` bump.** Additive on top of v14.48.0.
-
-> 📜 **Full release history** (v14.48.0 → v14.0.0 and earlier) lives in [`CHANGELOG.md`](CHANGELOG.md). CLAUDE.md keeps only the two most recent release notes.
+> 📜 **Full release history** (v14.49.0 → v14.0.0 and earlier) lives in [`CHANGELOG.md`](CHANGELOG.md). CLAUDE.md keeps only the two most recent release notes.
 
 ---
 
@@ -25,10 +25,10 @@ Guidance for Claude Code when working in this repository.
 The repo is a **marketplace wrapper** containing one nested plugin:
 
 - Marketplace manifest: `.claude-plugin/marketplace.json` (root)
-- Plugin manifest: `ai-agent-manager-plugin/.claude-plugin/plugin.json` (v14.50.0)
+- Plugin manifest: `ai-agent-manager-plugin/.claude-plugin/plugin.json` (v14.51.0)
 - Agents: `ai-agent-manager-plugin/agents/` (14 markdown prompts)
-- Commands: `ai-agent-manager-plugin/commands/` (20 entry points)
-- Skills: `ai-agent-manager-plugin/skills/` (56 skills, see `SKILLS_INDEX.md`)
+- Commands: `ai-agent-manager-plugin/commands/` (21 entry points)
+- Skills: `ai-agent-manager-plugin/skills/` (57 skills, see `SKILLS_INDEX.md`)
 - Hooks: `ai-agent-manager-plugin/hooks/hooks.json`
 - Docs: `ai-agent-manager-plugin/docs/`
 - Bundled MCP: read-only MySQL server (`vikashruhil-mysql-mcp`)
@@ -46,9 +46,9 @@ ai-agent-manager/                              # marketplace wrapper
 │   ├── .claude-plugin/plugin.json
 │   ├── .mcp.json                              # bundled MCP servers
 │   ├── agents/                                # 14 markdown prompts
-│   ├── commands/                              # 20 slash commands
+│   ├── commands/                              # 21 slash commands
 │   ├── hooks/hooks.json                       # cross-cutting hooks
-│   ├── skills/                                # 56 skills + SKILLS_INDEX.md
+│   ├── skills/                                # 57 skills + SKILLS_INDEX.md
 │   ├── scripts/                               # runtime helpers: telemetry, webhook, notify, resume, memory, lessons, insights, handoff digest (build-handoff), findings→community bridge (build-bridge / read-bridge), otel stack assets (+ self-tests, fixtures)
 │   └── docs/                                  # RESULT_SCHEMAS, FAILURE_ESCALATION, ARCHITECTURE_CONTRACTS, ARCHITECTURE, QA_SYSTEM_BLUEPRINT, TELEMETRY, OBSERVABILITY
 │       └── SPIKES/                            # Capability spike investigations + deferral records
