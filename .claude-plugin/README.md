@@ -27,7 +27,7 @@ Plus all prior v11.0/v10.3/v10.2 capabilities:
 - **Phase 4.5 self-heal** — Supervisor runs a holistic Code Reviewer pass on the integrated feature branch and auto-fixes bounded BLOCKING/HIGH `new` issues (up to `--heal-iterations`, default 3), eliminating the manual review-and-fix cycle per feature
 - **Beads-optional Code Reviewer** — auto-detects `.beads/` + `bd` CLI; when absent, `CODE_REVIEW_RESULT` is the sole decision channel
 
-### User-Facing Agents (8)
+### User-Facing Agents (9)
 
 - **Launch Pad** (`/launch-pad`) — Prepare goals for autonomous Supervisor execution
 - **Supervisor** (`/supervisor`) — Autonomous parallel workflow orchestrator with git worktrees
@@ -35,6 +35,7 @@ Plus all prior v11.0/v10.3/v10.2 capabilities:
 - **Orchestrator** (`/orchestrator`) — Break goals into tasks with review gates
 - **Code Reviewer** (`/code-reviewer`) — Review code with PASS/FAIL/NEEDS_HUMAN decisions (LSP diagnostics, read-only)
 - **Red Team Reviewer** (`/red-team-reviewer`) — Adversarial audits to break assumptions
+- **Review-PR** (`/review-pr <pr-url>`) — Standalone bounded review→fix→re-review loop against an existing PR; never auto-merges
 - **QA Strategist** (`/qa-strategist`) — Risk-based test strategy and QA audit
 - **QA Executor** (`/qa-executor`) — Discover app, generate Playwright tests, find gaps
 
@@ -51,7 +52,7 @@ Plus all prior v11.0/v10.3/v10.2 capabilities:
 - **Plan Reviewer** — Validates Supervisor-Ready Briefs before execution (spawned by Launch Pad)
 - **Rubric Grader** (shipped in v12.2.0; the "Internal Agents (4) → (5)" count update is a v13.0.0 doc-consistency fix — not a new v13 agent) — Read-only Haiku scorer for the optional Outcomes Rubric (spawned by Supervisor in Phase 4.5 when the brief contains `## Outcomes Rubric` and `heal_decision == PASS`; advisory only — never blocks the PR)
 
-### 50 Skills
+### 57 Skills
 
 Skills are loaded on-demand to keep context small:
 
