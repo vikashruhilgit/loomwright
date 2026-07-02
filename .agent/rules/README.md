@@ -2,13 +2,13 @@
 
 This directory is the repo's **single, version-controlled source of truth for project conventions** ("house rules"). Unlike `.supervisor/` (gitignored, per-user runtime state), **`.agent/rules/` is committed and travels with the repo** — so a rule you author here is visible to every clone, every teammate, and every agent that reads it.
 
-> **Protocol authority:** `ai-agent-manager-plugin/skills/rules/SKILL.md`. The schema below is a summary; the skill governs validation, the reader contract, the scan-to-suggest spec, the `/rules add` write discipline, and the `check` trust boundary. On any conflict, the skill wins.
+> **Protocol authority:** `loomwright/skills/rules/SKILL.md`. The schema below is a summary; the skill governs validation, the reader contract, the scan-to-suggest spec, the `/rules add` write discipline, and the `check` trust boundary. On any conflict, the skill wins.
 
 ## Layout
 
 - `.agent/rules/` holds **zero-or-more `*.json` files**.
 - Each `*.json` file is a **JSON ARRAY of rule objects** (never a bare object — the reader and `/rules add` both require an array).
-- The files are globbed and merged by `ai-agent-manager-plugin/scripts/read-rules.sh` in `LC_ALL=C` repo-relative-path-sorted order; within a file, by array index. The **first valid occurrence of a rule `id` wins**.
+- The files are globbed and merged by `loomwright/scripts/read-rules.sh` in `LC_ALL=C` repo-relative-path-sorted order; within a file, by array index. The **first valid occurrence of a rule `id` wins**.
 
 ## Rule schema
 

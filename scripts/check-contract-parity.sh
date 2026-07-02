@@ -24,7 +24,7 @@
 #
 # Usage: bash scripts/check-contract-parity.sh [--root <dir>]
 #   --root defaults to the repo root (the directory containing
-#   ai-agent-manager-plugin/). The self-test points it at a fixture tree.
+#   loomwright/). The self-test points it at a fixture tree.
 
 set -euo pipefail
 
@@ -33,7 +33,7 @@ if [ "${1:-}" = "--root" ]; then
   ROOT="${2:?--root requires a directory}"
 fi
 
-PLUGIN="$ROOT/ai-agent-manager-plugin"
+PLUGIN="$ROOT/loomwright"
 HOOKS="$PLUGIN/hooks/hooks.json"
 AGENTS="$PLUGIN/agents"
 

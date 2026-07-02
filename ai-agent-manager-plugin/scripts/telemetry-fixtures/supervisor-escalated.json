@@ -1,6 +1,0 @@
-{
-  "session_id": "fixture-sess-supervisor-escalated-0002",
-  "agent_type": "ai-agent-manager-plugin:supervisor-runner",
-  "transcript_path": "fixture://transcripts/supervisor-escalated.jsonl",
-  "result_block": "## SUPERVISOR_RESULT\n- schema_version: 1\n- task_id: fixture-supervisor-escalated-task-0002\n- status: completed_with_escalation\n- heal_loop_ran: true\n- heal_decision: ESCALATED\n- heal_iterations: 3\n- heal_fixable_issues_fixed: 1\n- heal_remaining_issues: 2\n- subtasks_total: 4\n- subtasks_completed: 4\n- subtasks_failed: []\n- pr_url: https://github.com/example/repo/pull/57\n- summary: Heal loop exhausted three iterations; two BLOCKING issues remain that require human review.\n"
-}

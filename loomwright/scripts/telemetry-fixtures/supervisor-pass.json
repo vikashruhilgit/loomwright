@@ -1,0 +1,6 @@
+{
+  "session_id": "fixture-sess-supervisor-pass-0001",
+  "agent_type": "loomwright:supervisor-runner",
+  "transcript_path": "fixture://transcripts/supervisor-pass.jsonl",
+  "result_block": "## SUPERVISOR_RESULT\n- schema_version: 1\n- task_id: fixture-supervisor-pass-task-0001\n- status: completed\n- heal_loop_ran: true\n- heal_decision: PASS\n- heal_iterations: 1\n- heal_fixable_issues_fixed: 2\n- heal_remaining_issues: 0\n- subtasks_total: 3\n- subtasks_completed: 3\n- subtasks_failed: []\n- pr_url: https://github.com/example/repo/pull/42\n- summary: Three subtasks merged cleanly; integration review fixed two minor issues in one heal iteration.\n"
+}

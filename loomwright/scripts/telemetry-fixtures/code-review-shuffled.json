@@ -1,0 +1,6 @@
+{
+  "session_id": "fixture-sess-code-review-shuffled-0006",
+  "agent_type": "loomwright:code-reviewer",
+  "transcript_path": "fixture://transcripts/code-review-shuffled.jsonl",
+  "result_block": "CODE_REVIEW_RESULT:\n  schema_version: 3\n  review_mode: diff_review\n  audit_focus: []\n  trigger_paths_detected: []\n  scope_expanded: []\n  files_checked:\n    - src/auth/login.ts\n  decision: FAIL\n  issues:\n    - severity: HIGH\n      file: src/auth/login.ts\n      line: 42\n      description: Timing attack via double-equals password compare\n      category: new\n      suggestion: Use crypto.timingSafeEqual()\n  summary: 1 HIGH new issue with shuffled field order — primary_error and Issues Detected must still extract.\n"
+}

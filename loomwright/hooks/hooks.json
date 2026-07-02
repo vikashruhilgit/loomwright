@@ -1,0 +1,189 @@
+{
+  "description": "Loomwright quality gates — centralized since v10.0.0. Plugin agents only execute hooks from this file (per-agent frontmatter hooks are silently ignored by Claude Code for plugin-distributed agents). Frontmatter hooks are kept in agent .md files for ~/.claude/agents/ compatibility.",
+  "hooks": {
+    "SubagentStop": [
+      {
+        "matcher": "loomwright:code-reviewer",
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "A Code Reviewer agent just completed. Review its output to verify the CODE_REVIEW_RESULT block. Accept schema_version 2 or 3 only (v1 is no longer accepted — reject with reason 'schema_version 1 is no longer supported; upgrade to v3').\n\nCOMMON (v2 and v3): (A) decision ∈ {PASS, FAIL, NEEDS_HUMAN}, (B) summary field present.\n\nIF schema_version == 2: (a) each issue must include severity ∈ {BLOCKING, HIGH, MEDIUM, LOW}, file (non-empty string), description (non-empty string), and category ∈ {new, pre_existing, nit}; reject any issue missing any of these with reason naming the missing field and issue index; (b) if decision=FAIL, at least one issue must have category='new' with severity ∈ {BLOCKING, HIGH}, (c) if decision ∈ {FAIL, NEEDS_HUMAN}, issues array non-empty.\n\nIF schema_version == 3: (a) review_mode present and ∈ {diff_review, consistency_audit}; (b) audit_focus is an array, non-empty iff review_mode='consistency_audit', each element ∈ {mirrored_prompt, metadata, counts, docs, hooks, plan_prompt}; (c) trigger_paths_detected is an array (may be empty); (d) CROSS-FIELD INVARIANT: if trigger_paths_detected is non-empty, review_mode MUST equal 'consistency_audit' — reject with reason 'non-empty trigger_paths_detected requires review_mode=consistency_audit' otherwise; (e) files_checked is a non-empty array of strings — reject with reason 'files_checked must be a non-empty array' if missing/empty; (f) scope_expanded is an array (may be empty for diff_review); (g) if review_mode='consistency_audit', consistency_checks object is present with all 5 sub-keys (mirrored_prompts, version_strings, counts, workflow_alignment, hooks_parity) each ∈ {pass, fail, not_applicable} AND consistency_summary is a non-empty string; (h) ISSUE SHAPE — every element of issues[] MUST have (h1) severity ∈ {BLOCKING, HIGH, MEDIUM, LOW}, (h2) file as a non-empty string, (h3) description as a non-empty string, (h4) category ∈ {new, pre_existing, nit, drift}. Reject any issue missing any of severity/file/description/category with reason naming the missing field and the issue index. Reject any issue containing ad-hoc keys outside the allowed set {severity, category, drift_kind, file, line, description, suggestion} with reason 'issue[N] contains disallowed key <name>; only schema fields are accepted'. (i) when category='drift', drift_kind ∈ {version_authoritative, version_secondary, mirrored_prompt, count, workflow, hooks_parity, wording} is required; (j) DRIFT SEVERITY CAPS — reject if any issue violates: drift_kind ∈ {count, version_secondary} requires severity ≤ MEDIUM (BLOCKING/HIGH rejected), drift_kind ∈ {hooks_parity, wording} requires severity ≤ LOW (MEDIUM/HIGH/BLOCKING rejected); (k) if decision=FAIL, at least one issue must have category ∈ {new, drift} with severity ∈ {BLOCKING, HIGH} (the caps in (j) prevent count/version_secondary/hooks_parity/wording drift from satisfying this alone); (l) if decision ∈ {FAIL, NEEDS_HUMAN}, issues array non-empty.\n\nContext: $ARGUMENTS. Respond with {\"ok\": true} if valid, or {\"ok\": false, \"reason\": \"...\"} naming the specific failing rule if malformed.",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry.sh\""
+          }
+        ]
+      },
+      {
+        "matcher": "loomwright:qa-executor",
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "A QA Executor agent just completed. Review its output to verify: (1) it produced a QA_RESULT block with schema_version field equal to 1, (2) tests_generated and tests_passed are present as integers, (3) summary field is present, (4) if tests were run, coverage_estimate is present, (5) status is one of [passed, failed, partial, skipped, needs_human, plan_created, all_scopes_completed] (plan_created and all_scopes_completed are session-mode statuses). Context: $ARGUMENTS. Respond with {\"ok\": true} if valid, or {\"ok\": false, \"reason\": \"...\"} if the output is malformed or missing required fields.",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry.sh\""
+          }
+        ]
+      },
+      {
+        "matcher": "loomwright:worker",
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "A worker agent just completed. Review its output to verify: (1) it produced a WORKER_RESULT block with schema_version, task_id, status, files_modified, and summary fields, (2) at least one of files_modified or files_created is non-empty when status=completed (create-only subtasks are valid), (3) a worker summary file was written — either {worktree}/.worker-summary.md (worktree mode) or .supervisor/worker-summaries/{task_id}.md (inline mode) — OR the output records the literal marker summary_file_write_failed (the documented best-effort degradation: the summary file could not be written and the WORKER_RESULT carries the full result instead), (4) no unresolved errors remain, (5) no destructive commands were used (rm -rf, git push, git reset --hard, DROP, TRUNCATE), (6) v12 outputs_verified contract — if schema_version is 2 or higher, BOTH outputs_verified (array, may be empty) AND outputs_gap (string, may be empty) MUST be present; missing either field returns {\"ok\": false, \"reason\": \"WORKER_RESULT schema_version>=2 requires outputs_verified (array) and outputs_gap (string) fields\"}, (7) v12 outputs_verified shape — when present, each entry must include kind (one of file|symbol|type), path (string), and status (one of present|missing); malformed entries return {\"ok\": false, \"reason\": \"outputs_verified entries must include {kind, path, status}\"}, (8) v12 outputs_gap/status invariant — if schema_version >= 2 and outputs_gap is non-empty AND status: completed, return {\"ok\": false, \"reason\": \"outputs_gap non-empty must map to status: partial — a worker that did not deliver all promised outputs has not completed\"}. Context: $ARGUMENTS. Respond with {\"ok\": true} if valid, or {\"ok\": false, \"reason\": \"...\"} if issues found.",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "loomwright:execute-manager",
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "An Execute Manager agent just completed. Review its output to verify: (1) it produced an EXECUTE_RESULT or EXECUTE_CHECKPOINT block with schema_version field, (2) EXECUTE_RESULT contains subtasks_completed (array — may be empty ONLY when subtasks_failed is non-empty and summary records the escalation), worktrees, merge_order (may be empty when no subtask completed), and summary fields, (3) EXECUTE_CHECKPOINT contains completed_so_far, remaining, resume_context, and reason fields, (4) all worktree paths reference valid sibling directories, (5) v12 toolset_gap rule: if the block is an EXECUTE_CHECKPOINT and reason cites 'toolset_gap', 'Task tool unavailable', 'Agent tool unavailable', or any variant claiming the spawning toolset is missing, return {\"ok\": false, \"reason\": \"toolset_gap is not a valid escalation reason; the Execute Manager spawns workers via Task and that capability is guaranteed by the harness — restate the actual blocker without referencing toolset availability\"}, (6) v12 adjudication tri-field invariant (all-or-nothing, BIDIRECTIONAL) — if the block is an EXECUTE_CHECKPOINT, the three fields adjudication_required, missing_outputs, adjudication_options MUST appear together or not at all: (6a) if adjudication_required: true, validate missing_outputs is a non-empty array AND adjudication_options is a non-empty array; missing or empty either one returns {\"ok\": false, \"reason\": \"adjudication_required: true requires non-empty missing_outputs and adjudication_options arrays\"}; (6b) if missing_outputs OR adjudication_options is present (non-empty) but adjudication_required is absent or false, return {\"ok\": false, \"reason\": \"missing_outputs/adjudication_options present without adjudication_required: true — the three fields are all-or-nothing\"}. Context: $ARGUMENTS. Respond with {\"ok\": true} if valid, or {\"ok\": false, \"reason\": \"...\"} if malformed or missing required fields.",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "loomwright:supervisor-runner",
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "A Supervisor agent just completed. Verify: (1) output contains SUPERVISOR_RESULT block with schema_version 1, (2) status is one of [completed, completed_with_escalation, failed, checkpoint], (3) pr_url present and non-empty when status in [completed, completed_with_escalation], (4) heal_loop_ran is boolean, (5) heal_fixable_issues_fixed and heal_remaining_issues are both non-negative integers, (6) when heal_loop_ran=false then heal_iterations=null, heal_decision=null, heal_fixable_issues_fixed=0, and heal_remaining_issues=0 exactly, (7) when heal_loop_ran=true then heal_decision is one of [PASS, ESCALATED] (SKIPPED is NOT allowed here — skipping corresponds to heal_loop_ran=false) and heal_iterations is a non-negative integer, (8) when heal_decision=PASS then heal_remaining_issues=0, (9) when heal_decision=ESCALATED then heal_remaining_issues>=1 OR error is non-empty (the resume-thrash escalation legitimately reports 0 remaining issues with error self_heal_resume_thrash), (10) when status=failed then error is non-empty, (11) summary is non-empty, (12) if cost_profile is present it must be one of [default, cheap, null] — any other value is invalid, (13) rubric_score (v12.2.0+, optional and additive — schema_version stays 1): MUST NOT reject SUPERVISOR_RESULT solely for presence or absence of rubric_score; absent is accepted; null is accepted; when present and non-null, it MUST be a string matching the format \"N/M\" where N is a non-negative integer (>= 0; allows the all-fail case 0/M), M is a positive integer (>= 1; the rubric must contain at least one item if it ran at all), digits only with no leading zeros, and M >= N — any other value (non-string, malformed, M < N, M = 0, negative, non-numeric) returns {\"ok\": false, \"reason\": \"rubric_score must be null or a string 'N/M' with N >= 0, M >= 1, M >= N\"}. Context: $ARGUMENTS. Respond with {\"ok\": true} if valid, or {\"ok\": false, \"reason\": \"...\"} if the output is malformed or any invariant is violated.",
+            "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry.sh\""
+          },
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/send-webhook.sh\""
+          }
+        ]
+      },
+      {
+        "matcher": "loomwright:plan-reviewer",
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "A Plan Reviewer agent just completed. Verify: (1) output contains PLAN_REVIEW_RESULT block with schema_version field equal to 1, (2) decision is one of PASS, FAIL, or NEEDS_HUMAN, (3) if FAIL or NEEDS_HUMAN, issues array is non-empty with severity and description, (4) if decision is FAIL, at least one issue must have severity BLOCKING or HIGH, (5) each issue includes section field, (6) summary field is present. Context: $ARGUMENTS. Respond with {\"ok\": true} if valid, or {\"ok\": false, \"reason\": \"...\"} if malformed.",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "matcher": "loomwright:launch-pad-runner",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/validate-launch-pad-result.py\""
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "An agent is finishing. Determine identity from the AGENT'S OWN SYSTEM PROMPT/MISSION in the transcript, NEVER from message content: the session is the code-reviewer agent ONLY if its system prompt is the Code Reviewer agent prompt (mission \"Code Reviewer Agent (Quality Gate)\" / agent name loomwright:code-reviewer). A main-thread or other session DISCUSSING code reviews, review findings, or CODE_REVIEW_RESULT blocks in prose is NOT the code-reviewer — respond {\"ok\": true} immediately for any non-code-reviewer session. If this IS the code-reviewer agent: verify output contains a CODE_REVIEW_RESULT block with schema_version (2 or 3; v1 is rejected), decision (PASS/FAIL/NEEDS_HUMAN), issues array, and summary. If schema_version=3 also verify review_mode, audit_focus, trigger_paths_detected, scope_expanded, and files_checked fields are present (the SubagentStop hook performs the full cross-field and severity-cap checks). Context: $ARGUMENTS. Respond {\"ok\": true} if valid or not code-reviewer, {\"ok\": false, \"reason\": \"...\"} if code-reviewer output is missing required fields.",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "TaskCompleted": [
+      {
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "A task is being marked complete. Verify from the context that the task appears genuinely done — not just abandoned or skipped. Check: (1) task subject suggests work was done, (2) no obvious incomplete state. Context: $ARGUMENTS. Respond with {\"ok\": true} if complete, or {\"ok\": false, \"reason\": \"...\"} if incomplete.",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "WorktreeCreate": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "INPUT=$(cat) && mkdir -p .supervisor/logs && echo \"[$(date -u +%Y-%m-%dT%H:%M:%SZ)] WORKTREE_CREATED $INPUT\" >> .supervisor/logs/worktrees.log && echo \"$INPUT\" | python3 -c \"import sys,json; print(json.load(sys.stdin).get('worktree_path',''))\" 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "mkdir -p .supervisor/logs && echo \"[$(date -u +%Y-%m-%dT%H:%M:%SZ)] STOP_FAILURE $(cat)\" >> .supervisor/logs/failures.log || true"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook-dispatch-on-pr-create.sh\""
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/notify-desktop.sh\""
+          },
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/send-webhook.sh\""
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "permission_prompt|idle_prompt|elicitation_dialog|elicitation_complete|elicitation_response",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/notify-desktop.sh\""
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/session-resume.sh\""
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/set-otel-resource-attrs.sh\""
+          }
+        ]
+      }
+    ]
+  }
+}
