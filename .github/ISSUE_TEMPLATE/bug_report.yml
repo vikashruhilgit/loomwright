@@ -1,5 +1,5 @@
 name: Bug Report
-description: Report a bug with the ai-agent-manager plugin
+description: Report a bug with the loomwright plugin
 labels: ["bug"]
 body:
   - type: textarea

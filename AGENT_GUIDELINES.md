@@ -86,7 +86,7 @@ This gate has three facets:
 
 ## Structured Outputs
 
-Agent result blocks (`WORKER_RESULT`, `CODE_REVIEW_RESULT`, `EXECUTE_RESULT`, `EXECUTE_CHECKPOINT`, `SUPERVISOR_RESULT`, `QA_RESULT`, `PLAN_REVIEW_RESULT`, `MISSING_FUNCTIONALITY_REPORT`, `FIX_RESULT`, `CONTEXT_KEEPER_STATE`, `QA_SESSION_PLAN`, `QA_SESSION_COVERAGE`, `AUTONOMOUS_RUN`, `LAUNCH_PAD_RESULT`) are governed by strict contracts. The single source of truth is `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md` — currently CODE_REVIEW_RESULT at `schema_version: 3`, WORKER_RESULT at `schema_version: 2`, AUTONOMOUS_RUN at `schema_version: 2`, all others (incl. LAUNCH_PAD_RESULT, added v14.2.0) at `schema_version: 1`. Plan Reviewer's conditional **Criterion 15 (Canonical-List / Source-of-Truth Verification)** — fired only when a brief asserts a canonical-source claim and cites a source — emits findings under the additive free-form `canonical_source` PLAN_REVIEW_RESULT issue category (no `schema_version` bump; the `executable_acceptance` precedent).
+Agent result blocks (`WORKER_RESULT`, `CODE_REVIEW_RESULT`, `EXECUTE_RESULT`, `EXECUTE_CHECKPOINT`, `SUPERVISOR_RESULT`, `QA_RESULT`, `PLAN_REVIEW_RESULT`, `MISSING_FUNCTIONALITY_REPORT`, `FIX_RESULT`, `CONTEXT_KEEPER_STATE`, `QA_SESSION_PLAN`, `QA_SESSION_COVERAGE`, `AUTONOMOUS_RUN`, `LAUNCH_PAD_RESULT`) are governed by strict contracts. The single source of truth is `loomwright/docs/RESULT_SCHEMAS.md` — currently CODE_REVIEW_RESULT at `schema_version: 3`, WORKER_RESULT at `schema_version: 2`, AUTONOMOUS_RUN at `schema_version: 2`, all others (incl. LAUNCH_PAD_RESULT, added v14.2.0) at `schema_version: 1`. Plan Reviewer's conditional **Criterion 15 (Canonical-List / Source-of-Truth Verification)** — fired only when a brief asserts a canonical-source claim and cites a source — emits findings under the additive free-form `canonical_source` PLAN_REVIEW_RESULT issue category (no `schema_version` bump; the `executable_acceptance` precedent).
 
 **Two enforcement paths, depending on where the agent runs:**
 
@@ -94,7 +94,7 @@ Agent result blocks (`WORKER_RESULT`, `CODE_REVIEW_RESULT`, `EXECUTE_RESULT`, `E
    When you build agents on the Anthropic API directly (e.g., a custom orchestrator, a CI worker, an SDK-based pipeline), enforce conformance at the API layer by passing the schema as JSON Schema via `output_config.format` (JSON Schema mode). The model is constrained to produce schema-valid output before the response is returned, which gives guaranteed conformance — there is no need to parse a markdown block, regex a YAML frontmatter, or rely on a downstream validator to catch drift. Translate the schemas in `RESULT_SCHEMAS.md` into JSON Schema (the field types, enums, `required` lists, and cross-field invariants are all expressible) and supply them at request time. **Authoritative field-name reference:** the field has been referred to as `output_config.format`, `response_format`, or equivalent across SDK releases — verify against the Anthropic API reference at `https://docs.anthropic.com/en/api/messages` and your SDK's release notes / TypeScript or Python type stubs (e.g. `node_modules/@anthropic-ai/sdk/resources/messages.d.ts` or the equivalent Python `.pyi`) for the exact field name in your installed version before wiring it into a build.
 
 2. **Claude Code plugin (inside this repo) — `SubagentStop` hooks are the runtime fallback.**
-   Plugin-distributed agents cannot configure `output_config` (Claude Code does not expose API-level constraint mode to plugin agents). Instead, the plugin's `SubagentStop` hooks in `ai-agent-manager-plugin/hooks/hooks.json` validate every result block against the same schemas after the agent finishes. A failed hook rejects the run — see the per-schema validation rules and cross-field invariants in `RESULT_SCHEMAS.md` (e.g., WORKER_RESULT's `outputs_gap` non-empty ⇒ `status: partial` invariant, CODE_REVIEW_RESULT's `drift_kind` severity caps, EXECUTE_CHECKPOINT's `toolset_gap` rejection). This is strictly weaker than API-level enforcement (the agent has already burned tokens producing a malformed block by the time the hook fires), but it is the strongest gate available to plugin agents.
+   Plugin-distributed agents cannot configure `output_config` (Claude Code does not expose API-level constraint mode to plugin agents). Instead, the plugin's `SubagentStop` hooks in `loomwright/hooks/hooks.json` validate every result block against the same schemas after the agent finishes. A failed hook rejects the run — see the per-schema validation rules and cross-field invariants in `RESULT_SCHEMAS.md` (e.g., WORKER_RESULT's `outputs_gap` non-empty ⇒ `status: partial` invariant, CODE_REVIEW_RESULT's `drift_kind` severity caps, EXECUTE_CHECKPOINT's `toolset_gap` rejection). This is strictly weaker than API-level enforcement (the agent has already burned tokens producing a malformed block by the time the hook fires), but it is the strongest gate available to plugin agents.
 
 **Authoring rule:** when you change a schema in `RESULT_SCHEMAS.md`, update both enforcement paths — the corresponding `SubagentStop` hook in `hooks.json` AND any external API-level JSON Schema fixtures consumers may have generated. Bump `schema_version` for breaking changes; document the transition window. The schemas in `RESULT_SCHEMAS.md` remain authoritative — `output_config.format` schemas and hook validators are derived artifacts.
 
@@ -161,9 +161,9 @@ const resp = await client.beta.messages.create({
 
 (Equivalent Python uses `client.beta.messages.create(model="claude-sonnet-4-6", betas=["advisor-tool-2026-03-01"], tools=[{"type": "advisor_20260301", "advisor_model": "claude-opus-4-7"}], ...)`. Same model-slug caveat applies.)
 
-**Authoring rule:** do not add a `--advisor` flag, advisor cost-profile row, or advisor-aware subagent mode to the plugin until the spike triggers in `ai-agent-manager-plugin/docs/SPIKES/advisor.md` are met (Claude Code release notes, subagent docs, or Agent SDK reference must document a way to set `anthropic-beta` headers on subagent inference, OR Claude Code adds an `Advisor` internal tool, OR the Advisor tool exits beta with a Claude Code integration note). The canonical cost/quality knobs in v12.x remain the effort tiering (`xhigh` / `high` / `medium`, per `ai-agent-manager-plugin/docs/ARCHITECTURE_CONTRACTS.md` §"Effort Tiers") and the `/supervisor --cheap` opt-in profile.
+**Authoring rule:** do not add a `--advisor` flag, advisor cost-profile row, or advisor-aware subagent mode to the plugin until the spike triggers in `loomwright/docs/SPIKES/advisor.md` are met (Claude Code release notes, subagent docs, or Agent SDK reference must document a way to set `anthropic-beta` headers on subagent inference, OR Claude Code adds an `Advisor` internal tool, OR the Advisor tool exits beta with a Claude Code integration note). The canonical cost/quality knobs in v12.x remain the effort tiering (`xhigh` / `high` / `medium`, per `loomwright/docs/ARCHITECTURE_CONTRACTS.md` §"Effort Tiers") and the `/supervisor --cheap` opt-in profile.
 
-See `ai-agent-manager-plugin/docs/SPIKES/advisor.md` for the full SDK-ONLY recommendation, the surfaces that were checked, and the re-spike triggers.
+See `loomwright/docs/SPIKES/advisor.md` for the full SDK-ONLY recommendation, the surfaces that were checked, and the re-spike triggers.
 
 ---
 
@@ -292,7 +292,7 @@ Every agent markdown file includes YAML frontmatter that configures Claude Code 
 
 ```yaml
 ---
-name: ai-agent-manager-plugin:{role}    # Unique agent identifier
+name: loomwright:{role}    # Unique agent identifier
 description: {1-2 sentence purpose}      # Shown in /agents menu
 tools: Read, Write, Edit, Bash, ...      # Tool restrictions (allowlist)
 model: opus | sonnet | haiku | inherit | <full model ID>  # Model selection (cost/capability; e.g., claude-sonnet-4-6)
@@ -349,7 +349,7 @@ Agents with `memory: project` store knowledge in `.claude/agent-memory/{agent-na
 
 All validation hooks are centralized in `hooks.json` since v10.0.0. Claude Code silently ignores `hooks`, `mcpServers`, and `permissionMode` in plugin agent frontmatter. Per-agent frontmatter hooks are kept for `~/.claude/agents/` compatibility but do not fire for plugin-distributed agents.
 
-Hooks use prompt-based validation (fast haiku model, 30s timeout). WorktreeCreate and StopFailure use `type: "command"` for zero-latency logging. All hooks validate against result schemas defined in `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md`.
+Hooks use prompt-based validation (fast haiku model, 30s timeout). WorktreeCreate and StopFailure use `type: "command"` for zero-latency logging. All hooks validate against result schemas defined in `loomwright/docs/RESULT_SCHEMAS.md`.
 
 ### Shared Preamble (All Agents)
 
@@ -692,19 +692,19 @@ Agents reference skill files for guidance (don't embed content):
 
 | Skill | Purpose |
 |-------|---------|
-| `ai-agent-manager-plugin/skills/async-orchestration/SKILL.md` | Parallel dispatch and git worktree patterns |
-| `ai-agent-manager-plugin/skills/state-management/SKILL.md` | State file schema and checkpoint protocols |
-| `ai-agent-manager-plugin/skills/workflow-management/SKILL.md` | 7-phase workflow patterns (incl. PRE-FLIGHT SYNC + SELF_HEAL) |
-| `ai-agent-manager-plugin/skills/commit/SKILL.md` | Conventional commits with Beads linking |
-| `ai-agent-manager-plugin/skills/quality-checklist/SKILL.md` | Review gate criteria |
-| `ai-agent-manager-plugin/skills/context-summarization/SKILL.md` | Output compression patterns |
-| `ai-agent-manager-plugin/skills/pattern-detector/SKILL.md` | CLAUDE.md pattern proposals |
-| `ai-agent-manager-plugin/skills/nestjs-*/SKILL.md` | NestJS implementation patterns |
-| `ai-agent-manager-plugin/skills/nextjs-*/SKILL.md` | Next.js implementation patterns |
-| `ai-agent-manager-plugin/skills/gateway-*/SKILL.md` | API Gateway patterns |
-| `ai-agent-manager-plugin/skills/context7-lookup/SKILL.md` | External library docs lookup |
-| `ai-agent-manager-plugin/skills/agent-teams/SKILL.md` | Agent Teams patterns (experimental) |
-| `ai-agent-manager-plugin/hooks/hooks.json` | Plugin quality gate hooks |
+| `loomwright/skills/async-orchestration/SKILL.md` | Parallel dispatch and git worktree patterns |
+| `loomwright/skills/state-management/SKILL.md` | State file schema and checkpoint protocols |
+| `loomwright/skills/workflow-management/SKILL.md` | 7-phase workflow patterns (incl. PRE-FLIGHT SYNC + SELF_HEAL) |
+| `loomwright/skills/commit/SKILL.md` | Conventional commits with Beads linking |
+| `loomwright/skills/quality-checklist/SKILL.md` | Review gate criteria |
+| `loomwright/skills/context-summarization/SKILL.md` | Output compression patterns |
+| `loomwright/skills/pattern-detector/SKILL.md` | CLAUDE.md pattern proposals |
+| `loomwright/skills/nestjs-*/SKILL.md` | NestJS implementation patterns |
+| `loomwright/skills/nextjs-*/SKILL.md` | Next.js implementation patterns |
+| `loomwright/skills/gateway-*/SKILL.md` | API Gateway patterns |
+| `loomwright/skills/context7-lookup/SKILL.md` | External library docs lookup |
+| `loomwright/skills/agent-teams/SKILL.md` | Agent Teams patterns (experimental) |
+| `loomwright/hooks/hooks.json` | Plugin quality gate hooks |
 
 ---
 
@@ -712,5 +712,5 @@ Agents reference skill files for guidance (don't embed content):
 
 - **Project setup:** `README.md`
 - **Project details:** `CLAUDE.md` (in your project)
-- **Agent prompts:** `ai-agent-manager-plugin/agents/` directory
-- **Skills:** `ai-agent-manager-plugin/skills/` directory
+- **Agent prompts:** `loomwright/agents/` directory
+- **Skills:** `loomwright/skills/` directory

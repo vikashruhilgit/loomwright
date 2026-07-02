@@ -1,4 +1,4 @@
-# AI Agent Manager
+# Loomwright
 
 A Claude Code plugin for AI agents to collaborate on software projects. 14 specialized agents (Launch Pad, Supervisor v4, Execute Manager, Context-Keeper, Worker, Plan Reviewer, Rubric Grader, Product Owner, Orchestrator, Code Reviewer, Red Team Reviewer, Review-PR, QA Strategist, QA Executor) and the `/commit` skill automate plan-first readiness, parallel workflow execution, requirements, planning, review, commits, adversarial audits, standalone PR review-and-heal, and dual-agent QA automation.
 
@@ -6,7 +6,7 @@ A Claude Code plugin for AI agents to collaborate on software projects. 14 speci
 
 > **Install the plugin and run slash commands instead of manually managing agents.**
 >
-> **NEW in v14.13.0 — Clickable desktop notifications (opt-in, macOS):** Install [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) (`brew install terminal-notifier`) and the pause-event banner becomes **clickable** — clicking brings the **Claude desktop app to the foreground** (default). Set `AI_AGENT_MANAGER_NOTIFY_CLICK=resume` to instead deep-link to the exact session via `claude://…/resume` — works on older macOS, but on **macOS 26** `terminal-notifier`'s click callback can't fire, so `activate` (focus the app) is the reliable default. Without `terminal-notifier` the existing `osascript` banner is unchanged — **zero regression**. Click logic lives in a **self-tested pure helper** (`scripts/notify-click-target.sh`, 15 cases incl. injection-safety). No new agent / command / skill / hook (still **13 / 15 / 50 / 19**), no schema change.
+> **NEW in v14.13.0 — Clickable desktop notifications (opt-in, macOS):** Install [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) (`brew install terminal-notifier`) and the pause-event banner becomes **clickable** — clicking brings the **Claude desktop app to the foreground** (default). Set `LOOMWRIGHT_NOTIFY_CLICK=resume` to instead deep-link to the exact session via `claude://…/resume` — works on older macOS, but on **macOS 26** `terminal-notifier`'s click callback can't fire, so `activate` (focus the app) is the reliable default. Without `terminal-notifier` the existing `osascript` banner is unchanged — **zero regression**. Click logic lives in a **self-tested pure helper** (`scripts/notify-click-target.sh`, 15 cases incl. injection-safety). No new agent / command / skill / hook (still **13 / 15 / 50 / 19**), no schema change.
 >
 > **NEW in v14.10.0 — System Twin foundation slice (advisory, propose-only):** One thin, additive, reversible vertical that exercises all three System Twin pillars on the plugin's own repo while staying **advisory and strictly subordinate to `CLAUDE.md`**. A `.supervisor/twin/` per-subsystem **System Contract** store is written **only** by the repo-root sole writer `scripts/write-system-contract.sh` (worktree-guard + hash-chained provenance + atomic; read via `read-system-contract.sh`; self-tested). **Predict:** Launch Pad reads the contract's dependency graph for advisory **blast-radius** prediction (graceful fallback when absent). **Prove:** Supervisor Phase 4.5 runs an advisory **contract-conformance check** on the integrated diff plus a **deterministic benchmark**, then an ephemeral builder writes contracts from the pinned repo-root CWD and emits a hard signal to `SUPERVISOR_RESULT` + the session JSONL. **Compound:** `/insights` surfaces the conformance/benchmark trend, `/dreaming` reads contract drift, and the rubric-grader **reports** the signal as advisory lines that never gate. Propose-only, no self-applied writes without the existing human gate — no new agent/command/skill/hook (still 13 / 14 / 50 / 19).
 >
@@ -14,11 +14,11 @@ A Claude Code plugin for AI agents to collaborate on software projects. 14 speci
 >
 > **NEW in v14.3.0 — Advisory project memory (P2b):** Agent-writable, cross-session **project memory** under `.supervisor/memory/` so the plugin stops re-discovering your codebase each run. Built behind guardrails: a **sole writer** (`scripts/write-project-memory.sh`) that **refuses git-worktree CWDs** + hash-chains provenance + caps at 200 lines, and a **read-side gate** (`scripts/read-project-memory.sh`) that emits only chain-verified entries (poisoned lines dropped). Memory is **advisory, subordinate to `CLAUDE.md`, human-gated** — Launch Pad reads it during analysis and *proposes* new facts for your approval. Launch-Pad-only in v1; no new agent/skill/command/hook (still 19 hooks).
 >
-> **NEW in v14.2.2 — Notification polish (patch):** `notify-desktop.sh` now **debounces** rapid notification bursts into a single banner (`AI_AGENT_MANAGER_NOTIFY_DEBOUNCE`, default 5s) and **detects the display** on Linux (skips `notify-send` on headless). `/autonomous --notify` **fails loud** if no webhook URL is resolvable (env var or `.supervisor/notify-config.json`) instead of silently doing nothing. No hook/schema/agent change (still 19 hooks).
+> **NEW in v14.2.2 — Notification polish (patch):** `notify-desktop.sh` now **debounces** rapid notification bursts into a single banner (`LOOMWRIGHT_NOTIFY_DEBOUNCE`, default 5s) and **detects the display** on Linux (skips `notify-send` on headless). `/autonomous --notify` **fails loud** if no webhook URL is resolvable (env var or `.supervisor/notify-config.json`) instead of silently doing nothing. No hook/schema/agent change (still 19 hooks).
 >
-> **NEW in v14.2.1 — Webhook + telemetry result-extraction fix (patch):** The supervisor-completion webhook (`send-webhook.sh`) and the opt-in telemetry post (`send-telemetry-core.sh`) read the finishing agent's output from the **real** `SubagentStop` payload field — `last_assistant_message` (with the legacy `result_block` / `output` / `agent_output` names and the `agent_transcript_path` / `transcript_path` JSONL as fallbacks) — instead of a top-level `result_block` field that Claude Code never actually sends. The pre-fix readers resolved to empty and **silently suppressed every supervisor-completion webhook and telemetry issue** since v14.1.0. No hook-count (still 19), schema, agent, command, or skill change. See `ai-agent-manager-plugin/docs/TELEMETRY.md` §"Result-text extraction".
+> **NEW in v14.2.1 — Webhook + telemetry result-extraction fix (patch):** The supervisor-completion webhook (`send-webhook.sh`) and the opt-in telemetry post (`send-telemetry-core.sh`) read the finishing agent's output from the **real** `SubagentStop` payload field — `last_assistant_message` (with the legacy `result_block` / `output` / `agent_output` names and the `agent_transcript_path` / `transcript_path` JSONL as fallbacks) — instead of a top-level `result_block` field that Claude Code never actually sends. The pre-fix readers resolved to empty and **silently suppressed every supervisor-completion webhook and telemetry issue** since v14.1.0. No hook-count (still 19), schema, agent, command, or skill change. See `loomwright/docs/TELEMETRY.md` §"Result-text extraction".
 >
-> **NEW in v14.0.0 — Continuous autonomous mode with stacked PRs:** `/autonomous` flips to **multi-iteration by default** (cap 10, default `--max-iterations 3`) with **stacked-branch semantics** — iteration N+1 branches from `iterations[N].branch`, producing a reviewable PR stack. Out-of-order merge hazard: reviewers MUST merge the bottom of the stack first (follow `AUTONOMOUS_RUN.iterations[]` order). Restore v13 cadence with `--no-stacked-branches`; reproduce v13's single-iteration default with `--max-iterations 1`. New flags: **`--notify`** (opt-in gate-event webhooks for rubric / adjudication / NO-GO / Plan Review FAIL × 3, gated on `AI_AGENT_MANAGER_WEBHOOK_URL`, jq-only payload construction for injection safety, fire-and-forget POST) and **`--non-interactive-fallback`** (per-gate fail-closed policy for CI / stdin-not-tty: rubric gate aborts, no-rubric `completed` returns `done`, adjudication inherits Supervisor's `--non-interactive` policy when forwarded). Supervisor gains `--base-branch <ref>` + `--non-interactive` + Phase 0/4/4.5 base-mismatch detection + cleanup, and emits optional additive `branch_base` + `pr_state` fields on `SUPERVISOR_RESULT` (schema_version still 1, optional). Context-Keeper gains atomic `set_flag` / `get_flag` / `clear_flag` operations writing under a new `## Phase Flags` section in `state.md`. `AUTONOMOUS_RUN` bumps to **schema_version 2** with nine new closed `status_reason` values. **W-NEW-3 spike PASSED pre-merge**: Code Reviewer + Rubric Grader both honor `DIFF-SCOPE OVERRIDE` inline directives on stacked-branch fixtures. v14 is additive on top of v13: no new agent, no hook count change in v14.0.0 (still 14). **v14.1.0** adds desktop + webhook pause notifications (`PreToolUse[AskUserQuestion]` + `Notification` hooks), bringing the hook count 14 → 17 — see "Enabling notifications" below. **v14.2.0** adds the concurrency/resume layer — a `LAUNCH_PAD_RESULT` schema (so `saved_brief_path` becomes the primary `/autonomous` brief-detection signal, retiring the fragile `ls`-diff) plus a `SessionStart` crash/compact resume hook — bringing the count 17 → 19. All v13.0.0 / v13.0.1 capabilities preserved (foreground-assisted gates, rubric-gate user-merge verification, Option C `inter_subtask_gap` re-plan, webhook empty-payload suppression). 14 agent roles, 21 slash commands, 57 skills, 21 quality gate hooks. All v12.2.0 capabilities preserved (Agent Teams graduation, Outcomes Rubric, `/dreaming`, opt-in SubagentStop webhook hook) and v12.1.0 documentation increments preserved.
+> **NEW in v14.0.0 — Continuous autonomous mode with stacked PRs:** `/autonomous` flips to **multi-iteration by default** (cap 10, default `--max-iterations 3`) with **stacked-branch semantics** — iteration N+1 branches from `iterations[N].branch`, producing a reviewable PR stack. Out-of-order merge hazard: reviewers MUST merge the bottom of the stack first (follow `AUTONOMOUS_RUN.iterations[]` order). Restore v13 cadence with `--no-stacked-branches`; reproduce v13's single-iteration default with `--max-iterations 1`. New flags: **`--notify`** (opt-in gate-event webhooks for rubric / adjudication / NO-GO / Plan Review FAIL × 3, gated on `LOOMWRIGHT_WEBHOOK_URL`, jq-only payload construction for injection safety, fire-and-forget POST) and **`--non-interactive-fallback`** (per-gate fail-closed policy for CI / stdin-not-tty: rubric gate aborts, no-rubric `completed` returns `done`, adjudication inherits Supervisor's `--non-interactive` policy when forwarded). Supervisor gains `--base-branch <ref>` + `--non-interactive` + Phase 0/4/4.5 base-mismatch detection + cleanup, and emits optional additive `branch_base` + `pr_state` fields on `SUPERVISOR_RESULT` (schema_version still 1, optional). Context-Keeper gains atomic `set_flag` / `get_flag` / `clear_flag` operations writing under a new `## Phase Flags` section in `state.md`. `AUTONOMOUS_RUN` bumps to **schema_version 2** with nine new closed `status_reason` values. **W-NEW-3 spike PASSED pre-merge**: Code Reviewer + Rubric Grader both honor `DIFF-SCOPE OVERRIDE` inline directives on stacked-branch fixtures. v14 is additive on top of v13: no new agent, no hook count change in v14.0.0 (still 14). **v14.1.0** adds desktop + webhook pause notifications (`PreToolUse[AskUserQuestion]` + `Notification` hooks), bringing the hook count 14 → 17 — see "Enabling notifications" below. **v14.2.0** adds the concurrency/resume layer — a `LAUNCH_PAD_RESULT` schema (so `saved_brief_path` becomes the primary `/autonomous` brief-detection signal, retiring the fragile `ls`-diff) plus a `SessionStart` crash/compact resume hook — bringing the count 17 → 19. All v13.0.0 / v13.0.1 capabilities preserved (foreground-assisted gates, rubric-gate user-merge verification, Option C `inter_subtask_gap` re-plan, webhook empty-payload suppression). 14 agent roles, 21 slash commands, 57 skills, 21 quality gate hooks. All v12.2.0 capabilities preserved (Agent Teams graduation, Outcomes Rubric, `/dreaming`, opt-in SubagentStop webhook hook) and v12.1.0 documentation increments preserved.
 >
 > **v12.1.0 (preserved):** Documentation + skills increment — Memory Tool skill (Anthropic memory-tool pattern reference), "## Structured Outputs" section in `AGENT_GUIDELINES.md` documenting both enforcement paths (`output_config.format` for direct API agents, `SubagentStop` hooks for plugin agents), and the "## Advisor Tool (SDK-only pattern)" section noting the `advisor-tool-2026-03-01` beta is reachable only via direct `client.beta.messages.create(...)` calls.
 >
@@ -35,11 +35,11 @@ A Claude Code plugin for AI agents to collaborate on software projects. 14 speci
 **Local development (from a checkout of this repo):**
 
 ```
-/plugin marketplace add /path/to/ai-agent-manager
-/plugin install ai-agent-manager-plugin@ai-agent-manager-marketplace
+/plugin marketplace add /path/to/loomwright
+/plugin install loomwright@atelier
 ```
 
-The repo is a marketplace wrapper (`/.claude-plugin/marketplace.json`) with the plugin nested at `ai-agent-manager-plugin/`. The first command registers the marketplace, the second installs the plugin from it.
+The repo is a marketplace wrapper (`/.claude-plugin/marketplace.json`) with the plugin nested at `loomwright/`. The first command registers the marketplace, the second installs the plugin from it.
 
 Once published to the official Anthropic marketplace, installation becomes a single `/plugin install` command without needing a local checkout.
 
@@ -137,7 +137,7 @@ Then call `switch_database(host="prod.example.com")` at runtime to switch betwee
 /autonomous "what you want to accomplish"                                # multi-iter default (3), stacked PRs
 /autonomous "what you want to accomplish" --max-iterations 1             # reproduce v13's single-iter default
 /autonomous "what you want to accomplish" --no-stacked-branches          # v13-style: branch from integration base
-/autonomous "what you want to accomplish" --notify                       # opt-in gate webhooks (AI_AGENT_MANAGER_WEBHOOK_URL)
+/autonomous "what you want to accomplish" --notify                       # opt-in gate webhooks (LOOMWRIGHT_WEBHOOK_URL)
 /autonomous "what you want to accomplish" --non-interactive-fallback     # CI / unattended: per-gate fail-closed policy
 ```
 
@@ -178,7 +178,7 @@ Then call `switch_database(host="prod.example.com")` at runtime to switch betwee
 
 ### Orchestration Shell: `/autonomous` (v14.0.0)
 
-`/autonomous` is **not** a new agent — it is a slash command that chains the agents above. The command body (`ai-agent-manager-plugin/commands/autonomous.md`) is executed inline on the main thread: it reads `commands/launch-pad.md` and `commands/supervisor.md` at Step 0, then runs Launch Pad inline (which still Task-spawns `plan-reviewer`), then runs Supervisor inline (which still Task-spawns `orchestrator` / `execute-manager` / `code-reviewer` / `rubric-grader`). **Default mode is multi-iteration** (cap 10, default `--max-iterations 3`) with **stacked PRs**: iteration N+1 branches from `iterations[N].branch`. The loop re-plans on the same two existing `SUPERVISOR_RESULT` signals as v13 (rubric N<M with user-merge confirmation; `failed + inter_subtask_gap` from Option C adjudication). The protocol skill is at `ai-agent-manager-plugin/skills/autonomous-loop/SKILL.md`.
+`/autonomous` is **not** a new agent — it is a slash command that chains the agents above. The command body (`loomwright/commands/autonomous.md`) is executed inline on the main thread: it reads `commands/launch-pad.md` and `commands/supervisor.md` at Step 0, then runs Launch Pad inline (which still Task-spawns `plan-reviewer`), then runs Supervisor inline (which still Task-spawns `orchestrator` / `execute-manager` / `code-reviewer` / `rubric-grader`). **Default mode is multi-iteration** (cap 10, default `--max-iterations 3`) with **stacked PRs**: iteration N+1 branches from `iterations[N].branch`. The loop re-plans on the same two existing `SUPERVISOR_RESULT` signals as v13 (rubric N<M with user-merge confirmation; `failed + inter_subtask_gap` from Option C adjudication). The protocol skill is at `loomwright/skills/autonomous-loop/SKILL.md`.
 
 ### Stacked PR workflow (v14.0.0+)
 
@@ -189,7 +189,7 @@ The v14 default flips `/autonomous` from "run once, return" to a continuous loop
 - **Base-mismatch detection:** Supervisor's Phase 0/4/4.5 base-mismatch detection (added in v14) catches the case where a stacked iteration is unintentionally run against the wrong base; it emits `branch_base` + `pr_state` on `SUPERVISOR_RESULT` (with `pr_state: "closed_by_loop"` when Phase 4.5 retired the wrong-base PR) and surfaces upward as `supervisor_base_branch_mismatch` on `AUTONOMOUS_RUN.status_reason`.
 - **Opt-out (`--no-stacked-branches`):** Forces every iteration to branch from the integration base — restores v13's branch-from-base cadence. Use this when iterations are truly independent or when your review process can't handle stacks. Each iteration produces a standalone PR.
 - **Single iteration (`--max-iterations 1`):** Reproduces v13's default behavior exactly — runs Launch Pad → Supervisor once and exits. Useful when you just want command chaining without re-planning.
-- **AUTONOMOUS_RUN summary:** Always lists `iterations[]` with `branch`, `pr_url`, and `status`/`status_reason` per iteration. The schema (v2 in v14) is documented in `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md`.
+- **AUTONOMOUS_RUN summary:** Always lists `iterations[]` with `branch`, `pr_url`, and `status`/`status_reason` per iteration. The schema (v2 in v14) is documented in `loomwright/docs/RESULT_SCHEMAS.md`.
 
 ### Running /autonomous in CI / unattended
 
@@ -200,14 +200,14 @@ The v14 default flips `/autonomous` from "run once, return" to a continuous loop
   - **No-rubric `completed` run**: returns `done` with `status_reason: no_rubric_in_non_interactive` — without a rubric there's nothing to evaluate, so the iteration is treated as terminal.
   - **Adjudication gate** (Supervisor's 4-option scope-expansion question): when `--non-interactive-fallback` is set on `/autonomous`, the loop **auto-forwards `--non-interactive` to the inlined `/supervisor`**, so the adjudication gate (and Supervisor's Phase 4 `gh` retry path) fail closed consistently with the loop's own policy. A single `--non-interactive-fallback` on `/autonomous` is sufficient — you do NOT need to also pass `--non-interactive`. (Standalone `/supervisor` invocations still accept `--non-interactive` explicitly; the forwarding only applies inside `/autonomous`.)
   - **Launch Pad NO-GO override + Plan Review FAIL × 3**: with `--non-interactive-fallback` engaged, these gates abort the autonomous run rather than prompt for an override — fail-closed by design.
-- **`--notify` + `AI_AGENT_MANAGER_WEBHOOK_URL`** — opt in to gate-event webhooks for out-of-band notification. Each gate (rubric, adjudication, NO-GO, Plan Review FAIL × 3) emits a JSON event constructed with `jq` (no shell interpolation into the JSON payload, for injection safety). Fire-and-forget POST; failures are logged to the session log but don't abort the run. Combine with `--non-interactive-fallback` for an unattended run that still pings you when a gate triggers — useful for monitoring long-running CI loops.
-- **Recommended CI shape:** `claude /autonomous "..." --non-interactive-fallback --notify --max-iterations 3` with `AI_AGENT_MANAGER_WEBHOOK_URL` set in the CI environment. The loop auto-forwards `--non-interactive` to the inlined `/supervisor`, so you do not need to pass it separately. Examine the JSON sidecar at `.supervisor/autonomous/{session_id}/AUTONOMOUS_RUN.json` after the run; the `status_reason` will tell you exactly which gate (if any) closed the loop.
+- **`--notify` + `LOOMWRIGHT_WEBHOOK_URL`** — opt in to gate-event webhooks for out-of-band notification. Each gate (rubric, adjudication, NO-GO, Plan Review FAIL × 3) emits a JSON event constructed with `jq` (no shell interpolation into the JSON payload, for injection safety). Fire-and-forget POST; failures are logged to the session log but don't abort the run. Combine with `--non-interactive-fallback` for an unattended run that still pings you when a gate triggers — useful for monitoring long-running CI loops.
+- **Recommended CI shape:** `claude /autonomous "..." --non-interactive-fallback --notify --max-iterations 3` with `LOOMWRIGHT_WEBHOOK_URL` set in the CI environment. The loop auto-forwards `--non-interactive` to the inlined `/supervisor`, so you do not need to pass it separately. Examine the JSON sidecar at `.supervisor/autonomous/{session_id}/AUTONOMOUS_RUN.json` after the run; the `status_reason` will tell you exactly which gate (if any) closed the loop.
 
-See `ai-agent-manager-plugin/skills/autonomous-loop/SKILL.md` for the full state machine and per-`status_reason` recovery actions.
+See `loomwright/skills/autonomous-loop/SKILL.md` for the full state machine and per-`status_reason` recovery actions.
 
 ### Automation Engine: `/automate` (v14.41.0)
 
-`/automate` is **not** a new agent — it is an inline main-thread slash command (`ai-agent-manager-plugin/commands/automate.md`, governed by `ai-agent-manager-plugin/skills/automate-loop/SKILL.md`) that walks arbitrary work from any starting point. It converts any **source** — a prompt (via `/product-owner`), a requirements folder, or a backlog/plan doc — into a full Queue inside a **single run file** `.supervisor/automate/<run_id>.md` (the contract, dashboard, and resume state; no manifest/registry/JSONL ledger), then drives each Queue item through the per-item loop: `/autonomous --single-iteration` → **one owned inline `/review-pr --until-mergeable` drain** → trusted-merge-or-park → sync `main` → check the item off. Layering: `/autonomous` (one requirement) ⊂ per-item loop ⊂ `/automate` (source → Queue → loop).
+`/automate` is **not** a new agent — it is an inline main-thread slash command (`loomwright/commands/automate.md`, governed by `loomwright/skills/automate-loop/SKILL.md`) that walks arbitrary work from any starting point. It converts any **source** — a prompt (via `/product-owner`), a requirements folder, or a backlog/plan doc — into a full Queue inside a **single run file** `.supervisor/automate/<run_id>.md` (the contract, dashboard, and resume state; no manifest/registry/JSONL ledger), then drives each Queue item through the per-item loop: `/autonomous --single-iteration` → **one owned inline `/review-pr --until-mergeable` drain** → trusted-merge-or-park → sync `main` → check the item off. Layering: `/autonomous` (one requirement) ⊂ per-item loop ⊂ `/automate` (source → Queue → loop).
 
 ```bash
 /automate "<what you want to automate>"   # prompt source (via /product-owner) → Queue
@@ -223,14 +223,14 @@ See `ai-agent-manager-plugin/skills/autonomous-loop/SKILL.md` for the full state
 - **Single drain, single open PR:** `/automate` suppresses the default detached until-mergeable drain (`.supervisor/config.json {"auto_review": false}` around the inner `/autonomous` RUN phase, restored finally-style) and owns exactly ONE inline `/review-pr --until-mergeable` drain — no double-dispatch. While any item has an open unmerged PR (awaiting_merge or escalated) the loop will not pick a new item.
 - **Merge is opt-in and fail-closed:** default mode never merges (`READY` PRs are left open for a human). `--auto-merge` is the **only** place in the plugin that executes `gh pr merge --squash`, behind a 5-condition fail-closed gate; `review-heal` / Supervisor Phase 4.5 still never merge. `ESCALATED` never merges and parks the run.
 
-See `ai-agent-manager-plugin/commands/automate.md` and the `automate-loop` skill for the full state machine; the run-file layout is documented as `AUTOMATE_RUN` in `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md`.
+See `loomwright/commands/automate.md` and the `automate-loop` skill for the full state machine; the run-file layout is documented as `AUTOMATE_RUN` in `loomwright/docs/RESULT_SCHEMAS.md`.
 
 ### Enabling notifications (desktop + phone) — v14.1.0
 
 The plugin surfaces a notification the moment a run pauses for you (Supervisor adjudication, `/autonomous` rubric gate, Plan Reviewer NEEDS_HUMAN, Launch Pad Phase 6, merge-and-continue) and on Claude Code's own `permission_prompt` / `idle_prompt` / `elicitation_*` events.
 
-- **Desktop banners — work out of the box, no setup.** macOS uses `osascript`, Linux uses `notify-send`. On the first macOS fire, grant your terminal (or "Script Editor") notification permission in **System Settings → Notifications**. Hard-disable with `AI_AGENT_MANAGER_DESKTOP_NOTIFICATIONS=0`. Windows (outside WSL) has no desktop banner yet — use the phone/webhook path below.
-- **Clickable desktop banners (macOS, opt-in) — click the banner to jump straight to Claude.** The built-in `osascript` banner can't carry a click action (clicking it just opens *Script Editor*), so install [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) (`brew install terminal-notifier`) — when present, the banner becomes clickable. Click behaviour is set by `AI_AGENT_MANAGER_NOTIFY_CLICK`:
+- **Desktop banners — work out of the box, no setup.** macOS uses `osascript`, Linux uses `notify-send`. On the first macOS fire, grant your terminal (or "Script Editor") notification permission in **System Settings → Notifications**. Hard-disable with `LOOMWRIGHT_DESKTOP_NOTIFICATIONS=0`. Windows (outside WSL) has no desktop banner yet — use the phone/webhook path below.
+- **Clickable desktop banners (macOS, opt-in) — click the banner to jump straight to Claude.** The built-in `osascript` banner can't carry a click action (clicking it just opens *Script Editor*), so install [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) (`brew install terminal-notifier`) — when present, the banner becomes clickable. Click behaviour is set by `LOOMWRIGHT_NOTIFY_CLICK`:
   - `activate` (default) — click **brings the Claude desktop app to the foreground**. Reliable on modern macOS (incl. macOS 26); for a single active session, focusing the app lands you back on it.
   - `resume` — click opens `claude://claude.ai/resume?session=<id>` to jump back to the **exact** session. ⚠️ Works only where `terminal-notifier`'s `-open` click still fires (older macOS). On **macOS 26 the click callback is dead** (`terminal-notifier` 2.0.0 relies on the deprecated `NSUserNotification` delegate), so a clicked `resume` banner won't navigate — use `activate` there. The `claude://…/resume` route itself is valid (reachable via a direct `open`), it just can't be triggered from a notification click on macOS 26.
   - `auto` — focuses the app when you're already inside the desktop app; otherwise resumes. ⚠️ Its resume branch inherits the same macOS 26 click-callback caveat as `resume` above — so on macOS 26 a terminal/CLI session under `auto` gets the dead-click behaviour; prefer `activate` there.
@@ -238,13 +238,13 @@ The plugin surfaces a notification the moment a run pauses for you (Supervisor a
 
   Notes: do **not** expect the Claude icon on the banner — impersonating Claude's bundle id (`-sender`) is silently dropped by macOS 26, so the banner uses `terminal-notifier`'s own icon. The `claude://` resume route is an **undocumented desktop-app surface**; `resume` always degrades safely to focusing the app. Without `terminal-notifier` installed, everything behaves exactly as before (plain `osascript` banner).
 - **Phone / chat push — set a webhook URL one of two ways:**
-  - export `AI_AGENT_MANAGER_WEBHOOK_URL=...`, **or**
+  - export `LOOMWRIGHT_WEBHOOK_URL=...`, **or**
   - (more robust) create `.supervisor/config.json` → `{"webhook_url":"https://ntfy.sh/your-topic"}`. The hook reads this file directly, so it works even when an env var set only in `~/.zshrc` doesn't propagate to the non-interactive hook shell. (The legacy `.supervisor/notify-config.json` is still read as a fallback; the new path wins when both exist.) Make sure `.supervisor/` is in your project's `.gitignore` (it is by default once `/supervisor` has run) so the URL is never committed. The path resolves relative to the directory Claude Code runs in, so launch from your repo root.
 
     > **Migration note (config file rename):** the run-behavior config file was renamed back-compatibly from `.supervisor/notify-config.json` → `.supervisor/config.json`. Readers prefer the new path and fall back to the legacy one, so **existing installs keep working with no action**. To migrate, either run `mv .supervisor/notify-config.json .supervisor/config.json`, or simply do nothing and let the fallback handle it. Migrate the *whole* file — don't split keys across both, since resolution selects one file (the new one when present), so legacy-only keys in `notify-config.json` would be ignored once `config.json` exists.
-  - **ntfy.sh** URLs get a readable plain-text push (with `Title`/`Priority`/`Tags`) automatically; Slack/Discord/custom endpoints get a JSON payload. Self-hosted ntfy: set `AI_AGENT_MANAGER_WEBHOOK_FORMAT=ntfy` to force the plain-text format.
-- **Test it without a real run:** `AI_AGENT_MANAGER_WEBHOOK_DRY_RUN=1` makes `send-webhook.sh` print the constructed payload instead of POSTing — use it to verify your URL/format before relying on it.
-- **Scope:** `AI_AGENT_MANAGER_NOTIFY_SCOPE=plugin` (default) only fires `AskUserQuestion` notifications when a plugin run is detected; `all` fires on every `AskUserQuestion` in any session.
+  - **ntfy.sh** URLs get a readable plain-text push (with `Title`/`Priority`/`Tags`) automatically; Slack/Discord/custom endpoints get a JSON payload. Self-hosted ntfy: set `LOOMWRIGHT_WEBHOOK_FORMAT=ntfy` to force the plain-text format.
+- **Test it without a real run:** `LOOMWRIGHT_WEBHOOK_DRY_RUN=1` makes `send-webhook.sh` print the constructed payload instead of POSTing — use it to verify your URL/format before relying on it.
+- **Scope:** `LOOMWRIGHT_NOTIFY_SCOPE=plugin` (default) only fires `AskUserQuestion` notifications when a plugin run is detected; `all` fires on every `AskUserQuestion` in any session.
 - **Bidirectional (answer from anywhere):** the pause is a live, *same-session* wait — answering continues the run. To reply remotely (e.g. from your phone) so the session resumes without returning to the terminal, enable **Claude Code Remote Control**: the banner/push tells you to come back; Remote Control lets you answer.
 - Notification stderr (e.g. revoked permissions) is logged to `.supervisor/logs/notifications.log`; webhook hooks always exit 0 (fire-and-forget).
 
@@ -437,8 +437,8 @@ can never block an agent run); the core script fails closed on a regex
 deny-list (tokens, API keys, bearer tokens, home-dir paths, emails,
 `.env`-style assignments) and never emits matched content — only the
 pattern label. To enable, run `/telemetry enable` (and pick a target
-repo) or set `AI_AGENT_MANAGER_TELEMETRY_REPO=owner/repo`. See
-[ai-agent-manager-plugin/docs/TELEMETRY.md](ai-agent-manager-plugin/docs/TELEMETRY.md)
+repo) or set `LOOMWRIGHT_TELEMETRY_REPO=owner/repo`. See
+[loomwright/docs/TELEMETRY.md](loomwright/docs/TELEMETRY.md)
 for the scoring rubric, exit-code table, and wrapper-vs-core
 architecture.
 
@@ -589,14 +589,14 @@ This prevents knowledge loss and helps agents learn from discoveries.
 - **AGENT_GUIDELINES.md:** Development standards, quality checklist
 - **.claude-plugin/marketplace.json:** Marketplace manifest (root)
 - **.claude-plugin/README.md:** Detailed plugin documentation
-- **ai-agent-manager-plugin/.claude-plugin/plugin.json:** Plugin manifest
-- **ai-agent-manager-plugin/agents/*.md:** Individual agent prompts (14 roles)
-- **ai-agent-manager-plugin/skills/*/SKILL.md:** 53 skill files for guidance
-- **ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md:** Structured result contracts
-- **ai-agent-manager-plugin/docs/FAILURE_ESCALATION.md:** Agent failure paths
-- **ai-agent-manager-plugin/docs/ARCHITECTURE_CONTRACTS.md:** Capability matrix, budgets, rules
-- **ai-agent-manager-plugin/docs/ARCHITECTURE.md:** Visual agent topology
-- **ai-agent-manager-plugin/docs/QA_SYSTEM_BLUEPRINT.md:** QA system architecture
+- **loomwright/.claude-plugin/plugin.json:** Plugin manifest
+- **loomwright/agents/*.md:** Individual agent prompts (14 roles)
+- **loomwright/skills/*/SKILL.md:** 53 skill files for guidance
+- **loomwright/docs/RESULT_SCHEMAS.md:** Structured result contracts
+- **loomwright/docs/FAILURE_ESCALATION.md:** Agent failure paths
+- **loomwright/docs/ARCHITECTURE_CONTRACTS.md:** Capability matrix, budgets, rules
+- **loomwright/docs/ARCHITECTURE.md:** Visual agent topology
+- **loomwright/docs/QA_SYSTEM_BLUEPRINT.md:** QA system architecture
 
 ---
 
@@ -604,11 +604,11 @@ This prevents knowledge loss and helps agents learn from discoveries.
 
 To modify or extend agents:
 
-1. Agents are Markdown prompts in `ai-agent-manager-plugin/agents/` (14 files)
-2. Commands are in `ai-agent-manager-plugin/commands/` (21 commands)
-3. Skills are in `ai-agent-manager-plugin/skills/` (57 skills, versioned with SKILLS_INDEX.md)
-4. Hooks: per-agent in frontmatter (Worker, Execute Manager) + cross-cutting in `ai-agent-manager-plugin/hooks/hooks.json` (Code Reviewer, QA Executor, TaskCompleted)
-5. Docs: `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md`, `…/FAILURE_ESCALATION.md`, `…/ARCHITECTURE_CONTRACTS.md`, `…/ARCHITECTURE.md`
+1. Agents are Markdown prompts in `loomwright/agents/` (14 files)
+2. Commands are in `loomwright/commands/` (21 commands)
+3. Skills are in `loomwright/skills/` (57 skills, versioned with SKILLS_INDEX.md)
+4. Hooks: per-agent in frontmatter (Worker, Execute Manager) + cross-cutting in `loomwright/hooks/hooks.json` (Code Reviewer, QA Executor, TaskCompleted)
+5. Docs: `loomwright/docs/RESULT_SCHEMAS.md`, `…/FAILURE_ESCALATION.md`, `…/ARCHITECTURE_CONTRACTS.md`, `…/ARCHITECTURE.md`
 6. All agents follow standard output format (see AGENT_GUIDELINES.md)
 
 To test locally, install via the marketplace flow shown in **Quick Start → 1. Install the Plugin**, then run agents in a test project to verify changes. After pulling new changes, use the refresh flow under **Troubleshooting → Skills / agents / hooks not showing after plugin update**.
@@ -649,7 +649,7 @@ To test locally, install via the marketplace flow shown in **Quick Start → 1. 
 - Run `/agent-help` for command reference
 - Check AGENT_GUIDELINES.md for quality standards
 - Check .claude-plugin/README.md for detailed command documentation
-- Review agent prompts in ai-agent-manager-plugin/agents/
+- Review agent prompts in loomwright/agents/
 
 **Skills / agents / hooks not showing after plugin update?**
 
@@ -657,22 +657,22 @@ Claude Code caches plugin contents. After pulling new changes (e.g. a fresh `git
 
 1. **Minimal flow** — try this first:
    ```
-   /plugin uninstall ai-agent-manager-plugin
-   /plugin install ai-agent-manager-plugin@ai-agent-manager-marketplace
+   /plugin uninstall loomwright
+   /plugin install loomwright@atelier
    /reload-plugins
    ```
 2. **Full reset** — if the minimal flow doesn't pick up your changes, drop the marketplace cache too:
    ```
-   /plugin uninstall ai-agent-manager-plugin
-   /plugin marketplace remove ai-agent-manager-marketplace
+   /plugin uninstall loomwright
+   /plugin marketplace remove atelier
    /plugin marketplace add ./
-   /plugin install ai-agent-manager-plugin@ai-agent-manager-marketplace
+   /plugin install loomwright@atelier
    /reload-plugins
    ```
    Run from the repo root so `./` resolves to your local checkout.
 3. Verify with `/skills` — should show all 57 skills under "Plugin skills". Use `/agent-help` to confirm all 21 slash commands are registered.
 
-**Previously installed via `claude --plugin-dir` (flat layout)?** Older install instructions told you to launch Claude with `--plugin-dir` pointing at the repo root. That no longer works — the plugin is now nested under `ai-agent-manager-plugin/`. Switch to the marketplace flow shown in **Quick Start → 1. Install the Plugin**.
+**Previously installed via `claude --plugin-dir` (flat layout)?** Older install instructions told you to launch Claude with `--plugin-dir` pointing at the repo root. That no longer works — the plugin is now nested under `loomwright/`. Switch to the marketplace flow shown in **Quick Start → 1. Install the Plugin**.
 
 ---
 

@@ -22,15 +22,15 @@ set -uo pipefail
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo_root"
 
-PLUGIN_JSON="ai-agent-manager-plugin/.claude-plugin/plugin.json"
-HOOKS_JSON="ai-agent-manager-plugin/hooks/hooks.json"
+PLUGIN_JSON="loomwright/.claude-plugin/plugin.json"
+HOOKS_JSON="loomwright/hooks/hooks.json"
 
 command -v jq >/dev/null 2>&1 || { echo "check-doc-currency: jq required" >&2; exit 1; }
 
 VERSION="$(jq -r '.version' "$PLUGIN_JSON")"
-AGENTS="$(find ai-agent-manager-plugin/agents -maxdepth 1 -name '*.md' | wc -l | tr -d ' ')"
-COMMANDS="$(find ai-agent-manager-plugin/commands -maxdepth 1 -name '*.md' | wc -l | tr -d ' ')"
-SKILLS="$(find ai-agent-manager-plugin/skills -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
+AGENTS="$(find loomwright/agents -maxdepth 1 -name '*.md' | wc -l | tr -d ' ')"
+COMMANDS="$(find loomwright/commands -maxdepth 1 -name '*.md' | wc -l | tr -d ' ')"
+SKILLS="$(find loomwright/skills -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
 HOOKS="$(jq '[.hooks[][].hooks[]] | length' "$HOOKS_JSON")"
 
 echo "Authoritative → version=$VERSION  agents=$AGENTS  commands=$COMMANDS  skills=$SKILLS  hooks=$HOOKS"
@@ -43,9 +43,9 @@ FILES=(
   .claude-plugin/README.md
   .claude-plugin/marketplace.json
   "$PLUGIN_JSON"
-  ai-agent-manager-plugin/commands/agent-help.md
-  ai-agent-manager-plugin/docs/ARCHITECTURE.md
-  ai-agent-manager-plugin/docs/ARCHITECTURE_CONTRACTS.md
+  loomwright/commands/agent-help.md
+  loomwright/docs/ARCHITECTURE.md
+  loomwright/docs/ARCHITECTURE_CONTRACTS.md
   # .github/workflows/*.yml are deliberately NOT scanned: anthropics/claude-code-action@v1
   # refuses to run when a PR branch's workflow file differs from the default-branch copy,
   # so a count claim there would force a workflow edit on every counts-bump PR — which then
@@ -98,7 +98,7 @@ check_version 'Plugin (manifest|metadata) \(v[0-9]+\.[0-9]+\.[0-9]+\)'  "manifes
 check_version 'AI agents v[0-9]+\.[0-9]+\.[0-9]+'                        "headline-version"
 
 # --- README intro / Overview version claims (the prose that slipped past the gate
-#     once: "The AI Agent Manager Plugin (v14.2.2) includes:"). High-confidence
+#     once: "The Loomwright Plugin (v14.2.2) includes:"). High-confidence
 #     current claims — a parenthesized single version tied to "Plugin" or to an
 #     "includes" feature-list intro. NOT matched by the manifest/metadata patterns
 #     above (which require the word "manifest"/"metadata" between Plugin and the

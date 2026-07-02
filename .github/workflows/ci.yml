@@ -42,8 +42,8 @@ jobs:
           # auto-included — anti-drift), failing the job on the first non-zero exit. nullglob +
           # the count check make a moved/renamed scripts dir fail LOUDLY ("no self-tests found")
           # rather than passing the literal glob to bash as a confusing "No such file".
-          tests=(ai-agent-manager-plugin/scripts/test-*.sh)
-          [ "${#tests[@]}" -gt 0 ] || { echo "no self-tests found (ai-agent-manager-plugin/scripts/test-*.sh) — anti-drift loop matched nothing" >&2; exit 1; }
+          tests=(loomwright/scripts/test-*.sh)
+          [ "${#tests[@]}" -gt 0 ] || { echo "no self-tests found (loomwright/scripts/test-*.sh) — anti-drift loop matched nothing" >&2; exit 1; }
           for t in "${tests[@]}"; do
             echo "== $t =="
             bash "$t"
@@ -51,7 +51,7 @@ jobs:
 
       - name: Advisory fitness report (non-gating)
         continue-on-error: true
-        run: bash ai-agent-manager-plugin/scripts/ci-fitness-report.sh >> "$GITHUB_STEP_SUMMARY" || true
+        run: bash loomwright/scripts/ci-fitness-report.sh >> "$GITHUB_STEP_SUMMARY" || true
 
       - name: Upload eval results history (best-effort)
         if: always()

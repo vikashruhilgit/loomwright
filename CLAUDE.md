@@ -10,13 +10,13 @@ Guidance for Claude Code when working in this repository.
 
 ## Project Overview
 
-**AI Agent Manager** is a Claude Code plugin with 14 agent roles (9 user-facing + 5 internal) for plan-first readiness, parallel execution, requirements, planning, code review, commits, adversarial audits, standalone PR review-and-heal, and dual-agent QA. Supervisor and Launch Pad use `.supervisor/` exclusively for state; Orchestrator and Product Owner can optionally use Beads.
+**Loomwright** is a Claude Code plugin with 14 agent roles (9 user-facing + 5 internal) for plan-first readiness, parallel execution, requirements, planning, code review, commits, adversarial audits, standalone PR review-and-heal, and dual-agent QA. Supervisor and Launch Pad use `.supervisor/` exclusively for state; Orchestrator and Product Owner can optionally use Beads.
+
+**v15.0.0 — rebrand: plugin renamed to Loomwright, marketplace renamed to atelier (breaking, mechanical):** The former `ai-agent-manager-plugin` is now `loomwright` (directory + `plugin.json` `name`); the marketplace wrapper `ai-agent-manager-marketplace` is now `atelier` (`.claude-plugin/marketplace.json` `name`). All internal references follow: agent `subagent_type` values, the `-runner` registered-agent IDs, persistent-memory directory paths (`.claude/agent-memory/loomwright:<agent>/`), skill/command/doc cross-references, and the GitHub repo URL (`github.com/vikashruhilgit/loomwright`). **Env var prefix renamed** `AI_AGENT_MANAGER_*` → `LOOMWRIGHT_*` (25 vars); no back-compat fallback. **Breaking — action required for existing installs:** reinstall as `loomwright@atelier`; rename any local `.claude/agent-memory/ai-agent-manager-plugin:*/` dirs to `.claude/agent-memory/loomwright:*/`; rename any `AI_AGENT_MANAGER_*` env vars to `LOOMWRIGHT_*`. **No functional/behavioral change** — rename-only release. **Counts unchanged: 14 agents / 21 commands / 57 skills / 21 hooks; no `schema_version` bump.**
 
 **v14.51.0 — new `/rules` House Rules substrate command (advisory, additive):** Adds ONE new slash command (`commands/rules.md`) and ONE new skill (`skills/rules/`) that establish a committed, project-local **House Rules store** under `.agent/rules/` — durable team conventions that agents can surface but that never gate or execute. `/rules` supports **list / suggest / add / check** verbs over the store, backed by a fail-safe reader `scripts/read-rules.sh` (silently skips an absent store, always exits 0) with self-tests `scripts/test-read-rules.sh` and `scripts/test-rules-docs.sh` (auto-registered by the `ci.yml` `test-*.sh` glob). **Substrate only** — this slice ships the store, command, skill, and reader; **enforcement is deferred to slice #3b-ii**. **Advisory / fail-safe / never-executes-a-check** — it reads and reports conventions but never blocks a PR, changes a `heal_decision`, or runs anything. **One new command (count 20 → 21) and one new skill (count 56 → 57); agent / hook counts unchanged at 14 agents / 21 hooks; no `schema_version` bump.** Additive on top of v14.50.0.
 
-**v14.50.0 — new `/setup twin` cold-start bootstrap module (advisory, additive):** Adds a 7th MODULE to the existing `/setup` umbrella command (a sub-module, NOT a new top-level command) that bootstraps a repo into a Twin-ready state. `/setup twin` reports **Twin-readiness status** (is a code graph built? a findings→community bridge? a project CLAUDE.md present?) and offers a **guided cold-start bootstrap** — rebuilds the bridge and scaffolds a starter CLAUDE.md directly, and builds the code graph when the external `graphify` CLI is present (otherwise it *guides* you to run `/graphify`, since graphify is an external user-global tool the module never hard-depends on) — mirroring the `/setup observability` module contract (check → report → offer → apply → verify). The module is mechanized by `scripts/setup-twin.sh` (the engine) with a fixture-driven self-test `scripts/test-setup-twin.sh` (green in CI; auto-registered by the `ci.yml` `test-*.sh` glob). **Advisory / fail-safe / idempotent / scoped-writes** — it never blind-overwrites, never gates or blocks, and confines writes to the bootstrap targets. **A `/setup` sub-module is NOT a new command/skill/agent/hook: counts unchanged at 14 agents / 20 commands / 56 skills / 21 hooks; no `schema_version` bump.** Additive on top of v14.49.0.
-
-> 📜 **Full release history** (v14.49.0 → v14.0.0 and earlier) lives in [`CHANGELOG.md`](CHANGELOG.md). CLAUDE.md keeps only the two most recent release notes.
+> 📜 **Full release history** (v14.50.0 → v14.0.0 and earlier) lives in [`CHANGELOG.md`](CHANGELOG.md). CLAUDE.md keeps only the two most recent release notes.
 
 ---
 
@@ -25,24 +25,24 @@ Guidance for Claude Code when working in this repository.
 The repo is a **marketplace wrapper** containing one nested plugin:
 
 - Marketplace manifest: `.claude-plugin/marketplace.json` (root)
-- Plugin manifest: `ai-agent-manager-plugin/.claude-plugin/plugin.json` (v14.51.0)
-- Agents: `ai-agent-manager-plugin/agents/` (14 markdown prompts)
-- Commands: `ai-agent-manager-plugin/commands/` (21 entry points)
-- Skills: `ai-agent-manager-plugin/skills/` (57 skills, see `SKILLS_INDEX.md`)
-- Hooks: `ai-agent-manager-plugin/hooks/hooks.json`
-- Docs: `ai-agent-manager-plugin/docs/`
+- Plugin manifest: `loomwright/.claude-plugin/plugin.json` (v15.0.0)
+- Agents: `loomwright/agents/` (14 markdown prompts)
+- Commands: `loomwright/commands/` (21 entry points)
+- Skills: `loomwright/skills/` (57 skills, see `SKILLS_INDEX.md`)
+- Hooks: `loomwright/hooks/hooks.json`
+- Docs: `loomwright/docs/`
 - Bundled MCP: read-only MySQL server (`vikashruhil-mysql-mcp`)
 
-> **Repo path vs. runtime path:** `ai-agent-manager-plugin/...` is the developer-side path (this repo on disk). Anything invoked by hooks, skills, or agents at *runtime* must reference `${CLAUDE_PLUGIN_ROOT}/...` — that's the canonical Claude Code variable that resolves to the plugin install dir on both dev checkouts and marketplace installs. Never use `ai-agent-manager-plugin/...` paths from the user-project root; they only resolve for the plugin maintainer.
+> **Repo path vs. runtime path:** `loomwright/...` is the developer-side path (this repo on disk). Anything invoked by hooks, skills, or agents at *runtime* must reference `${CLAUDE_PLUGIN_ROOT}/...` — that's the canonical Claude Code variable that resolves to the plugin install dir on both dev checkouts and marketplace installs. Never use `loomwright/...` paths from the user-project root; they only resolve for the plugin maintainer.
 
 ### Directory Structure
 
 ```
-ai-agent-manager/                              # marketplace wrapper
+loomwright/                              # marketplace wrapper
 ├── .claude-plugin/
 │   ├── marketplace.json                       # marketplace manifest (root)
 │   └── README.md                              # plugin-facing usage guide
-├── ai-agent-manager-plugin/                   # nested plugin
+├── loomwright/                   # nested plugin
 │   ├── .claude-plugin/plugin.json
 │   ├── .mcp.json                              # bundled MCP servers
 │   ├── agents/                                # 14 markdown prompts
@@ -62,7 +62,7 @@ ai-agent-manager/                              # marketplace wrapper
 
 ## The 14 Agent Roles
 
-Detailed per-agent purpose, command syntax, and workflow diagrams live in `README.md` §"The 14 Agents" and the agent prompts (`ai-agent-manager-plugin/agents/*.md`). Quick map of what matters for in-codebase work:
+Detailed per-agent purpose, command syntax, and workflow diagrams live in `README.md` §"The 14 Agents" and the agent prompts (`loomwright/agents/*.md`). Quick map of what matters for in-codebase work:
 
 | Agent | Type | Spawned by | Codebase-relevant invariants |
 |---|---|---|---|
@@ -83,9 +83,9 @@ Detailed per-agent purpose, command syntax, and workflow diagrams live in `READM
 
 ### `/autonomous` orchestration shell (v14.0.0)
 
-`/autonomous` is **not a new agent.** It is an inline main-thread slash command (`ai-agent-manager-plugin/commands/autonomous.md`) governed by `ai-agent-manager-plugin/skills/autonomous-loop/SKILL.md`. The same execution model as `/launch-pad` and `/supervisor`: the slash command body is workflow instructions executed inline on the main thread. The main thread reads `commands/launch-pad.md` and `commands/supervisor.md` at Step 0 (to avoid prompt drift), then runs Launch Pad inline (which still Task-spawns `plan-reviewer`), then runs Supervisor inline (which still Task-spawns `orchestrator` / `execute-manager` / `code-reviewer` / `rubric-grader`).
+`/autonomous` is **not a new agent.** It is an inline main-thread slash command (`loomwright/commands/autonomous.md`) governed by `loomwright/skills/autonomous-loop/SKILL.md`. The same execution model as `/launch-pad` and `/supervisor`: the slash command body is workflow instructions executed inline on the main thread. The main thread reads `commands/launch-pad.md` and `commands/supervisor.md` at Step 0 (to avoid prompt drift), then runs Launch Pad inline (which still Task-spawns `plan-reviewer`), then runs Supervisor inline (which still Task-spawns `orchestrator` / `execute-manager` / `code-reviewer` / `rubric-grader`).
 
-**Default mode is now multi-iteration** (cap 10, default `--max-iterations 3`) with **stacked PRs**: iteration N+1 branches from `iterations[N].branch` so the chain is reviewable bottom-up. Reviewers MUST merge the bottom of the stack first; out-of-order merges leave higher iterations rebased against the wrong base. `--no-stacked-branches` opts out and restores v13's branch-from-integration-base cadence. `--max-iterations 1` reproduces v13's single-iteration default. `--notify` opts in to gate-event webhooks (rubric / adjudication / NO-GO / Plan Review FAIL × 3) — payloads built with **jq only** for injection safety, fire-and-forget POST, gated on `AI_AGENT_MANAGER_WEBHOOK_URL`. `--non-interactive-fallback` enables a per-gate fail-closed policy for CI / stdin-not-tty: rubric gate aborts (`rubric_gate_closed_non_interactive`); no-rubric `completed` returns `done` with `no_rubric_in_non_interactive`; adjudication gate inherits Supervisor's `--non-interactive` policy if forwarded.
+**Default mode is now multi-iteration** (cap 10, default `--max-iterations 3`) with **stacked PRs**: iteration N+1 branches from `iterations[N].branch` so the chain is reviewable bottom-up. Reviewers MUST merge the bottom of the stack first; out-of-order merges leave higher iterations rebased against the wrong base. `--no-stacked-branches` opts out and restores v13's branch-from-integration-base cadence. `--max-iterations 1` reproduces v13's single-iteration default. `--notify` opts in to gate-event webhooks (rubric / adjudication / NO-GO / Plan Review FAIL × 3) — payloads built with **jq only** for injection safety, fire-and-forget POST, gated on `LOOMWRIGHT_WEBHOOK_URL`. `--non-interactive-fallback` enables a per-gate fail-closed policy for CI / stdin-not-tty: rubric gate aborts (`rubric_gate_closed_non_interactive`); no-rubric `completed` returns `done` with `no_rubric_in_non_interactive`; adjudication gate inherits Supervisor's `--non-interactive` policy if forwarded.
 
 Re-iteration signals are the same as v13 (rubric_score N<M with user-merge confirmation; `failed + inter_subtask_gap` from Option C adjudication, anchored by `.supervisor/jobs/failed/{basename(current_brief_path)}` existence + `inter_subtask_gap` found in any of the failed brief / `SUPERVISOR_RESULT.error` / `SUPERVISOR_RESULT.summary`; `.supervisor/state.md` intentionally NOT consulted to avoid pre-rewrite stale-content false positives). The loop never auto-picks on adjudication — Supervisor's existing 4-option `AskUserQuestion` surfaces in-session as it does today; foreground-assisted automation, not fire-and-forget.
 
@@ -117,13 +117,13 @@ Every agent (full standard in `AGENT_GUIDELINES.md`):
 
 ## Adding or Modifying Agents
 
-1. **New agent:** `.md` in `ai-agent-manager-plugin/agents/` with YAML frontmatter; output follows Context Read → Plan → Work → Results → Risks
-2. **New slash command:** `.md` in `ai-agent-manager-plugin/commands/` referencing the agent prompt
-3. **New skill:** `SKILL.md` in `ai-agent-manager-plugin/skills/[name]/` with version frontmatter; update `SKILLS_INDEX.md`
+1. **New agent:** `.md` in `loomwright/agents/` with YAML frontmatter; output follows Context Read → Plan → Work → Results → Risks
+2. **New slash command:** `.md` in `loomwright/commands/` referencing the agent prompt
+3. **New skill:** `SKILL.md` in `loomwright/skills/[name]/` with version frontmatter; update `SKILLS_INDEX.md`
 4. **Test locally:**
    ```
-   /plugin uninstall ai-agent-manager-plugin
-   /plugin install ai-agent-manager-plugin@ai-agent-manager-marketplace
+   /plugin uninstall loomwright
+   /plugin install loomwright@atelier
    ```
    Verify with `/agent-help`
 5. **Cite exact `file:line` numbers when referencing code**
@@ -138,7 +138,7 @@ Every agent (full standard in `AGENT_GUIDELINES.md`):
 
 ## Structured Contracts (v9.0.0)
 
-- **Result Schemas** — `ai-agent-manager-plugin/docs/RESULT_SCHEMAS.md`. CODE_REVIEW_RESULT at `schema_version: 3` (adds `review_mode` (`diff_review` | `consistency_audit`), `audit_focus[]`, `trigger_paths_detected[]`, `scope_expanded[]`, `files_checked[]`, `consistency_checks`, `consistency_summary`, and the `drift` issue category with `drift_kind` + severity caps; v2 accepted for legacy artifacts). WORKER_RESULT at `schema_version: 2` (adds `outputs_verified[]` + `outputs_gap`; v1 accepted for the v12.0.0 transition window). AUTONOMOUS_RUN at `schema_version: 2` (v14 — adds nine new closed `status_reason` values for stacked-branch / non-interactive-fallback / webhook-notify failure modes; v1 accepted for the v13 transition window). SUPERVISOR_RESULT remains at `schema_version: 1` with two new optional additive fields in v14 (`branch_base`, `pr_state`). All others at `schema_version: 1`.
+- **Result Schemas** — `loomwright/docs/RESULT_SCHEMAS.md`. CODE_REVIEW_RESULT at `schema_version: 3` (adds `review_mode` (`diff_review` | `consistency_audit`), `audit_focus[]`, `trigger_paths_detected[]`, `scope_expanded[]`, `files_checked[]`, `consistency_checks`, `consistency_summary`, and the `drift` issue category with `drift_kind` + severity caps; v2 accepted for legacy artifacts). WORKER_RESULT at `schema_version: 2` (adds `outputs_verified[]` + `outputs_gap`; v1 accepted for the v12.0.0 transition window). AUTONOMOUS_RUN at `schema_version: 2` (v14 — adds nine new closed `status_reason` values for stacked-branch / non-interactive-fallback / webhook-notify failure modes; v1 accepted for the v13 transition window). SUPERVISOR_RESULT remains at `schema_version: 1` with two new optional additive fields in v14 (`branch_base`, `pr_state`). All others at `schema_version: 1`.
 - **Failure Escalation** — `…/FAILURE_ESCALATION.md` (retry limits, escalation paths)
 - **Architecture Contracts** — `…/ARCHITECTURE_CONTRACTS.md` (capability matrix, context budgets, timeouts, worktree naming)
 - **Job Lifecycle** — briefs flow `pending/` → `in-progress/` → `done/` / `failed/` in `.supervisor/jobs/`
@@ -164,7 +164,7 @@ Every agent (full standard in `AGENT_GUIDELINES.md`):
 | TaskCompleted | Task marked complete | hooks.json | Task genuinely done |
 | WorktreeCreate | Worktree created | hooks.json | type:command, logs `.supervisor/logs/worktrees.log` |
 | StopFailure | Agent API error | hooks.json | type:command, logs `.supervisor/logs/failures.log` |
-| SubagentStop webhook (supervisor-runner) | Supervisor completes | hooks.json | type:command — `send-webhook.sh`; gated on `AI_AGENT_MANAGER_WEBHOOK_URL`; fire-and-forget POST; always exits 0 |
+| SubagentStop webhook (supervisor-runner) | Supervisor completes | hooks.json | type:command — `send-webhook.sh`; gated on `LOOMWRIGHT_WEBHOOK_URL`; fire-and-forget POST; always exits 0 |
 | PreToolUse (AskUserQuestion) — v14.1.0 | Plugin about to block on a user question | hooks.json | type:command — `notify-desktop.sh` (OS banner) + `send-webhook.sh` (paused-event POST); scope-gated; always exits 0 |
 | Notification — v14.1.0 | Claude Code signals attention (permission_prompt / idle_prompt / elicitation_*) | hooks.json | type:command — `notify-desktop.sh` (OS banner); matched to exclude `auth_success`; always exits 0 |
 | SubagentStop (launch-pad-runner) — v14.2.0 | Launch Pad `-runner` completes | hooks.json | type:command — `validate-launch-pad-result.py`; validates LAUNCH_PAD_RESULT (schema_version, status, saved_brief_path, summary); exits 0 |
@@ -176,12 +176,12 @@ Every agent (full standard in `AGENT_GUIDELINES.md`):
 
 ## Telemetry System (opt-in, v11.2.0 — preserved in v14.0.0)
 
-After qualifying runs (`supervisor-runner`, `code-reviewer`, `qa-executor`), a SubagentStop `type: command` hook invokes `${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry.sh` (the wrapper — `${CLAUDE_PLUGIN_ROOT}` is the canonical Claude Code variable for plugin-bundled assets and resolves to the plugin install dir on both dev checkouts and marketplace installs; never use `ai-agent-manager-plugin/...` paths from the user-project root, those only resolve for the plugin maintainer). The wrapper is fire-and-forget and **always exits 0**; it pipes the hook payload to `send-telemetry-core.sh`, which parses the result block, derives a deterministic score, runs a regex-based privacy whitelist, and (when consent + target repo are configured) calls `gh issue create` with a structured body covering Task Summary, Agent Scores, Issues Detected, AI Suggestions, Tools Used, and a redacted JSON payload.
+After qualifying runs (`supervisor-runner`, `code-reviewer`, `qa-executor`), a SubagentStop `type: command` hook invokes `${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry.sh` (the wrapper — `${CLAUDE_PLUGIN_ROOT}` is the canonical Claude Code variable for plugin-bundled assets and resolves to the plugin install dir on both dev checkouts and marketplace installs; never use `loomwright/...` paths from the user-project root, those only resolve for the plugin maintainer). The wrapper is fire-and-forget and **always exits 0**; it pipes the hook payload to `send-telemetry-core.sh`, which parses the result block, derives a deterministic score, runs a regex-based privacy whitelist, and (when consent + target repo are configured) calls `gh issue create` with a structured body covering Task Summary, Agent Scores, Issues Detected, AI Suggestions, Tools Used, and a redacted JSON payload.
 
 - **Privacy fail-closed:** any whitelist match aborts the post; core exits `2`
 - **Core exit codes 0..5:** sent / generic_error / privacy_blocked / no_consent / no_repo_configured / filter_skipped
 - **No origin-remote fallback** — the plugin runs in arbitrary user projects whose origin is the user's app repo, which is the wrong place for telemetry
-- **Disabled by default.** Enable via `/telemetry enable` (interactive — pick target repo) or `AI_AGENT_MANAGER_TELEMETRY_REPO=owner/repo`. Hooks **never** prompt — consent flows only through `/telemetry`.
+- **Disabled by default.** Enable via `/telemetry enable` (interactive — pick target repo) or `LOOMWRIGHT_TELEMETRY_REPO=owner/repo`. Hooks **never** prompt — consent flows only through `/telemetry`.
 
 | Command | Purpose |
 |---------|---------|
@@ -190,7 +190,7 @@ After qualifying runs (`supervisor-runner`, `code-reviewer`, `qa-executor`), a S
 | `/telemetry disable` | writes `{"telemetry":"no"}` to the consent file; subsequent hook fires log a single "denied — skipped" line per session and never call `gh` |
 | `/telemetry test` | dry-run a fixture or the latest log payload through `send-telemetry-core.sh --dry-run`; prints target repo, formatted body, and `WOULD_EXIT` without calling `gh` |
 
-Full design (scoring rubric per result-block schema, privacy whitelist, exit-code table, wrapper-vs-core architecture, plugin-internal vs repo-root `scripts/` convention): `ai-agent-manager-plugin/docs/TELEMETRY.md`.
+Full design (scoring rubric per result-block schema, privacy whitelist, exit-code table, wrapper-vs-core architecture, plugin-internal vs repo-root `scripts/` convention): `loomwright/docs/TELEMETRY.md`.
 
 ---
 
@@ -200,14 +200,14 @@ Agents with `memory: project` in frontmatter accumulate knowledge across session
 
 | Agent | Storage |
 |-------|---------|
-| Launch Pad | `.claude/agent-memory/ai-agent-manager-plugin:launch-pad-runner/` |
-| Code Reviewer | `.claude/agent-memory/ai-agent-manager-plugin:code-reviewer/` |
-| Red Team Reviewer | `.claude/agent-memory/ai-agent-manager-plugin:red-team-reviewer/` |
-| Product Owner | `.claude/agent-memory/ai-agent-manager-plugin:product-owner/` |
-| QA Strategist | `.claude/agent-memory/ai-agent-manager-plugin:qa-strategist/` |
-| QA Executor | `.claude/agent-memory/ai-agent-manager-plugin:qa-executor/` |
+| Launch Pad | `.claude/agent-memory/loomwright:launch-pad-runner/` |
+| Code Reviewer | `.claude/agent-memory/loomwright:code-reviewer/` |
+| Red Team Reviewer | `.claude/agent-memory/loomwright:red-team-reviewer/` |
+| Product Owner | `.claude/agent-memory/loomwright:product-owner/` |
+| QA Strategist | `.claude/agent-memory/loomwright:qa-strategist/` |
+| QA Executor | `.claude/agent-memory/loomwright:qa-executor/` |
 
-> Decision aid for *what* to write to those memory directories: `ai-agent-manager-plugin/skills/memory-tool/SKILL.md` (reference skill — not pre-loaded; consult on demand when tagging conventions or Memory-Tool-vs-file-based questions arise).
+> Decision aid for *what* to write to those memory directories: `loomwright/skills/memory-tool/SKILL.md` (reference skill — not pre-loaded; consult on demand when tagging conventions or Memory-Tool-vs-file-based questions arise).
 
 ## Skills Preloading
 
@@ -226,13 +226,13 @@ Agents with `skills` in frontmatter get content pre-injected at spawn time (no r
 
 ## Agent Teams (Recommended for 3 Use Cases, Experimental for the Rest)
 
-Native Claude Code multi-agent coordination — requires `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`. Best for research, competing hypotheses, cross-layer changes; not for sequential tasks or same-file edits (use Supervisor with worktrees). Patterns + decision matrix: `ai-agent-manager-plugin/skills/agent-teams/SKILL.md`. Complementary to Supervisor v4, not a replacement.
+Native Claude Code multi-agent coordination — requires `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`. Best for research, competing hypotheses, cross-layer changes; not for sequential tasks or same-file edits (use Supervisor with worktrees). Patterns + decision matrix: `loomwright/skills/agent-teams/SKILL.md`. Complementary to Supervisor v4, not a replacement.
 
 ---
 
 ## Cost Profile
 
-`/supervisor --cheap` — opt-in flag that overrides execution-shaped roles (orchestrator, execute-manager, worker, code-reviewer, Phase 4.5 fix tasks) to Sonnet at spawn time. Default behavior (`inherit` for all) unchanged. Profile table, semantics, and Haiku-session caveat: `ai-agent-manager-plugin/docs/ARCHITECTURE_CONTRACTS.md` §"Cost Profiles".
+`/supervisor --cheap` — opt-in flag that overrides execution-shaped roles (orchestrator, execute-manager, worker, code-reviewer, Phase 4.5 fix tasks) to Sonnet at spawn time. Default behavior (`inherit` for all) unchanged. Profile table, semantics, and Haiku-session caveat: `loomwright/docs/ARCHITECTURE_CONTRACTS.md` §"Cost Profiles".
 
 ---
 
@@ -240,7 +240,7 @@ Native Claude Code multi-agent coordination — requires `CLAUDE_CODE_EXPERIMENT
 
 **Bimodal failure philosophy (invariant — do not break):** correctness gates fail **CLOSED** under `--non-interactive` / CI / stdin-not-tty (`preflight_overlap_detected`, `non_interactive_without_fallback`, `rubric_gate_closed_non_interactive`); runtime side-effect emitters (telemetry wrapper, `send-webhook.sh`, the session-resume observability probe) fail **SAFE** and ALWAYS `exit 0`. Inverting either — a gate that silently proceeds without an explicit `--skip-*`, or an emitter that exits non-zero on a normal failure path — is a security regression, not a bug fix. Corollary for advisory signals: `contract_conformance_status: skipped` means UNVERIFIED, not clean (it only runs when a brief authored an `## Executable Acceptance` ground-truth surface), and a green `heal_decision: PASS` does NOT mean the PR is reviewer-clean.
 
-**`gh pr merge --squash` has exactly ONE sanctioned executor (invariant — do not break):** the **only** place in the plugin that EXECUTES `gh pr merge --squash` is the `automate-loop` `--auto-merge` gate (`skills/automate-loop/SKILL.md` §10, implemented by `scripts/automate-helpers.sh`'s `gate-eval`). It is **opt-in, default-OFF**, and fires only when ALL FIVE trusted-merge conditions hold; any failed / null / unreadable condition fails **CLOSED** (park + notify). `review-heal` (`/review-pr`) and Supervisor Phase 4.5 **NEVER merge** — they review-and-heal only and leave the PR open for a human (`READY`/`PASS`/`ESCALATED` are all terminal-stop, merge-identical). The positive-form invariant check is `grep -rn "gh pr merge --squash" ai-agent-manager-plugin/ | grep -viE "no |never |not "` — it resolves to exactly four surfaces: `skills/automate-loop/SKILL.md`, `scripts/automate-helpers.sh` (the executor), `scripts/test-automate-helpers.sh`, and `commands/agent-help.md` (which describes the sanctioned gate). (`commands/automate.md`'s own two mentions are correctly EXCLUDED by the `no|never|not` filter; review-heal / review-pr / RESULT_SCHEMAS likewise keep only their negative-assertion "never merges" mentions.) See `skills/automate-loop/SKILL.md` §11 for the authoritative enumeration. Adding a second executor anywhere else is a regression.
+**`gh pr merge --squash` has exactly ONE sanctioned executor (invariant — do not break):** the **only** place in the plugin that EXECUTES `gh pr merge --squash` is the `automate-loop` `--auto-merge` gate (`skills/automate-loop/SKILL.md` §10, implemented by `scripts/automate-helpers.sh`'s `gate-eval`). It is **opt-in, default-OFF**, and fires only when ALL FIVE trusted-merge conditions hold; any failed / null / unreadable condition fails **CLOSED** (park + notify). `review-heal` (`/review-pr`) and Supervisor Phase 4.5 **NEVER merge** — they review-and-heal only and leave the PR open for a human (`READY`/`PASS`/`ESCALATED` are all terminal-stop, merge-identical). The positive-form invariant check is `grep -rn "gh pr merge --squash" loomwright/ | grep -viE "no |never |not "` — it resolves to exactly four surfaces: `skills/automate-loop/SKILL.md`, `scripts/automate-helpers.sh` (the executor), `scripts/test-automate-helpers.sh`, and `commands/agent-help.md` (which describes the sanctioned gate). (`commands/automate.md`'s own two mentions are correctly EXCLUDED by the `no|never|not` filter; review-heal / review-pr / RESULT_SCHEMAS likewise keep only their negative-assertion "never merges" mentions.) See `skills/automate-loop/SKILL.md` §11 for the authoritative enumeration. Adding a second executor anywhere else is a regression.
 
 **`/automate` single-drain ownership (invariant — do not break):** when the `automate-loop` engine runs an item it sets `.supervisor/config.json {"auto_review": false}` **around** the inner `/autonomous` RUN phase (both of Supervisor's default detached until-mergeable dispatch paths — step 5.5 and the `PostToolUse[Bash]` `gh pr create` hook — fire *during* `/autonomous`, so the toggle must wrap RUN, not DRAIN), then owns **exactly ONE** inline `/review-pr --until-mergeable` drain. The toggle is a byte-for-byte backup to a transient `<run_id>.config-backup.json` restored in a finally-style cleanup (overwrite, or **delete if originally absent**; **malformed pre-existing config ⇒ abort**; RECONCILE restores a crash-stranded backup). This prevents a double until-mergeable drain racing the PR branch. Verifiable via `## Current`'s `suppressed_default_dispatch: true` + `owned_drain_started`/`owned_drain_result` and the absence of any detached `dispatch-pr-review.sh` artifact for the PR.
 
@@ -248,16 +248,16 @@ Native Claude Code multi-agent coordination — requires `CLAUDE_CODE_EXPERIMENT
 
 ### Claimed work is "already merged" / "on main" but isn't (stale-branch trap)?
 - Never assert git merge/PR state from memory or in-context summary — verify with `git log origin/$BASE_BRANCH` and `git branch --contains <sha>` before claiming work landed.
-- This is the **v13.1.0→v14.0.0 stale-branch incident** (work branched from a stale base and re-implemented something already merged) that motivated the Supervisor's Phase 1.5 PRE-FLIGHT SYNC gate (see `ai-agent-manager-plugin/agents/supervisor.md` §"Phase 1.5: PRE-FLIGHT SYNC"). The Supervisor-table row above keeps the quick reference.
+- This is the **v13.1.0→v14.0.0 stale-branch incident** (work branched from a stale base and re-implemented something already merged) that motivated the Supervisor's Phase 1.5 PRE-FLIGHT SYNC gate (see `loomwright/agents/supervisor.md` §"Phase 1.5: PRE-FLIGHT SYNC"). The Supervisor-table row above keeps the quick reference.
 
 ### `/supervisor` or `/launch-pad` aborted with "Task/Agent tool unavailable"?
 - Pre-11.1.1 name-collision trap: the slash command silently auto-delegated to a same-named registered subagent, which couldn't spawn its own children ([docs](https://code.claude.com/docs/en/sub-agents): *"Subagents cannot spawn other subagents"*).
-- Fix in 11.1.1: registered agents are now `ai-agent-manager-plugin:supervisor-runner` and `ai-agent-manager-plugin:launch-pad-runner`. The slash commands are inline main-thread workflows; the `-runner` suffix lets `claude --agent ai-agent-manager-plugin:supervisor-runner` own a session without re-introducing auto-delegation.
+- Fix in 11.1.1: registered agents are now `loomwright:supervisor-runner` and `loomwright:launch-pad-runner`. The slash commands are inline main-thread workflows; the `-runner` suffix lets `claude --agent loomwright:supervisor-runner` own a session without re-introducing auto-delegation.
 - For an agent-owned session: `claude --agent …-runner`. Otherwise stay on the main thread via the slash command.
 
 ### `/supervisor` completed but skipped Phase 4.5 (or Phase 3 child agents)?
 - **What this is:** inline main-thread execution misread as permission to stop orchestrating. "Don't delegate to `supervisor-runner`" does NOT mean "do everything yourself." Still spawn first-level children via Task — `orchestrator` (Phase 2), `execute-manager` or fast-path worker/reviewer (Phase 3), `code-reviewer` + fix loop (Phase 4.5).
-- **Fix in 11.1.2:** Phase 4.5 completion-tail guard (`ai-agent-manager-plugin/agents/supervisor.md`) refuses a successful `SUPERVISOR_RESULT` when `skip_self_heal_requested=false` AND `phase45_review_invoked=false`. Run self-reports `status: failed`; job stays in `in-progress/`.
+- **Fix in 11.1.2:** Phase 4.5 completion-tail guard (`loomwright/agents/supervisor.md`) refuses a successful `SUPERVISOR_RESULT` when `skip_self_heal_requested=false` AND `phase45_review_invoked=false`. Run self-reports `status: failed`; job stays in `in-progress/`.
 - **Recovery for pre-11.1.2 runs (operator workaround — unsupported, manual):**
   1. `/code-reviewer` has no first-class branch-vs-branch diff mode. Compute scope via `git diff --name-only origin/main...HEAD` and pass that file list to `/code-reviewer`, OR pipe `git diff origin/main...HEAD` into a manual review.
   2. Fix any new BLOCKING/HIGH issues; push to feature branch.
@@ -291,6 +291,6 @@ The loop does not forward unknown flags into the inlined `/supervisor` call. Run
 
 - User-facing: `README.md`, `.claude-plugin/README.md`
 - Standards: `AGENT_GUIDELINES.md`
-- Manifests: `.claude-plugin/marketplace.json`, `ai-agent-manager-plugin/.claude-plugin/plugin.json`
-- Schemas / contracts / failure modes: `ai-agent-manager-plugin/docs/{RESULT_SCHEMAS,ARCHITECTURE_CONTRACTS,FAILURE_ESCALATION,ARCHITECTURE,QA_SYSTEM_BLUEPRINT,TELEMETRY,OBSERVABILITY}.md`
-- Skills index: `ai-agent-manager-plugin/skills/SKILLS_INDEX.md`
+- Manifests: `.claude-plugin/marketplace.json`, `loomwright/.claude-plugin/plugin.json`
+- Schemas / contracts / failure modes: `loomwright/docs/{RESULT_SCHEMAS,ARCHITECTURE_CONTRACTS,FAILURE_ESCALATION,ARCHITECTURE,QA_SYSTEM_BLUEPRINT,TELEMETRY,OBSERVABILITY}.md`
+- Skills index: `loomwright/skills/SKILLS_INDEX.md`
