@@ -22,6 +22,16 @@
 # identical to the pre-probe behavior. Warnings are debounced via a 24h
 # marker file. The probe NEVER starts docker itself.
 #
+# Also folds in a no-house-rules nudge (rules enforcement slice #3b-ii): when a
+# plugin-active repo (.supervisor/ present) has NO applicable house rules — gated
+# on the sibling read-rules.sh emitting EMPTY stdout, not on bare file presence,
+# so it also fires for a store holding only invalid rules — it appends ONE
+# advisory line pointing at `/rules suggest` / `/rules add`. Debounced via a 24h
+# mtime-windowed marker (.supervisor/.rules-nudge-shown), mirroring the
+# observability probe. Fail-safe: never fires on an error, never on a repo with
+# ≥1 valid rule, and never in a truly fresh repo (that's `/setup twin`'s job, so
+# it sits after the .supervisor/ bail). Adds NO new hook — hooks stay 21.
+#
 # INVARIANT: ALWAYS exits 0. Hook output is JSON via stdout. Silent-pass
 # on any failure (no .supervisor/, no state, missing tools) so the session
 # starts normally without diagnostic noise.
@@ -147,12 +157,66 @@ observability_probe() {
   return 0
 }
 
+# ---- No-house-rules nudge (rules enforcement slice #3b-ii) ------------------
+# Advisory, fail-safe, debounced nudge that fires ONLY in a plugin-active repo
+# (`.supervisor/` present — guaranteed past the bail above) that has NO
+# applicable house rules, telling the user to author some. Cold-start onboarding
+# of a truly-fresh repo is `/setup twin`'s job, NOT this nudge — that is why the
+# nudge lives strictly AFTER the `[ ! -d ".supervisor" ]` bail. Design:
+#   - Gate on the READER'S OUTPUT being EMPTY (not on bare file existence): the
+#     sibling read-rules.sh emits ALL valid rules and EMPTY stdout when zero
+#     valid rules survive — covering an absent .agent/rules/ dir, an empty dir,
+#     AND a store that holds ONLY invalid rules (all-skipped ⇒ zero valid ⇒
+#     empty). So gating on empty output correctly fires the nudge for an
+#     all-invalid store, and NEVER fires when ≥1 valid rule is present.
+#   - read-rules.sh always exits 0 and is fail-safe (absent reader / jq missing /
+#     malformed store ⇒ treated as "no nudge or safe skip", never an error). A
+#     failure to even run the reader ⇒ skip the nudge (do NOT fire on an error).
+#   - Debounced via an mtime-windowed marker under the already-present
+#     .supervisor/ (mirrors the observability-probe 24h debounce mechanism): a
+#     fresh (<24h) marker suppresses the nudge; when shown, the marker is touched
+#     so it fires at most once per window.
+#   - Appends exactly ONE advisory line to SUMMARY (so it inherits the MAX_CHARS
+#     cap and stays under the 10K additionalContext bound).
+# Every path returns 0 (graceful degradation per skills/error-handling +
+# skills/monitoring-observability fail-safe idioms).
+rules_nudge() {
+  # Locate the sibling reader. If it's not readable, safe-skip (no nudge).
+  local script_dir reader
+  script_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo .)"
+  reader="$script_dir/read-rules.sh"
+  [ -r "$reader" ] || return 0
+
+  # Run the reader; gate on EMPTY stdout. A non-zero exit or any read error is
+  # treated as "cannot determine ⇒ no nudge" (never fire on an error path).
+  local rules_out
+  rules_out="$(bash "$reader" 2>/dev/null || true)"
+  # Non-empty ⇒ ≥1 valid rule present ⇒ NEVER nudge.
+  [ -z "$rules_out" ] || return 0
+
+  # Debounce: a fresh (<24h) marker suppresses the nudge. The marker lives under
+  # the guaranteed-present .supervisor/ (we are past the bail).
+  local marker=".supervisor/.rules-nudge-shown"
+  if [ -f "$marker" ] && [ -n "$(find "$marker" -mmin -1440 2>/dev/null)" ]; then
+    return 0
+  fi
+
+  # Fire: append exactly ONE advisory line, then stamp the debounce marker.
+  append "### House rules"$'\n'
+  append "No committed house rules found — run \`/rules suggest\` to propose some, or \`/rules add\` to author."$'\n\n'
+  : > "$marker" 2>/dev/null || true
+  return 0
+}
+
 append "## Loomwright — prior-session context ($SOURCE)"$'\n\n'
 
 # Section 0: observability health probe (appends only when configured + down,
 # and not debounced; placed right after the header so the warning survives the
 # tail-truncating MAX_CHARS cap) ----
 observability_probe
+
+# Section 0.5: no-house-rules nudge (advisory, debounced, fail-safe) ----
+rules_nudge
 
 # Section 1: in-progress Supervisor jobs ----
 if compgen -G ".supervisor/jobs/in-progress/*.md" > /dev/null 2>&1; then
