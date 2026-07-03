@@ -27,7 +27,7 @@ Comprehensive index of all skills available in the Loomwright plugin.
 | PR Postmortem | `pr-postmortem/` | `/pr-postmortem` (slash command, reference) | ~1,400 | 1.3.0 | 2026-06-13 |
 | Setup | `setup/` | `/setup` (slash command, read at Step 0) | ~1,200 | 1.0.0 | 2026-06-13 |
 | Brain Context | `brain-context/` | Launch Pad / Code Reviewer / Supervisor (on-demand Read — deliberately NOT preloaded) | ~1,500–2,000 | 1.0.0 | 2026-06-16 |
-| Rules | `rules/` | `/rules` (slash command, reference) | ~1,300 | 1.0.0 | 2026-06-30 |
+| Rules | `rules/` | `/rules` (slash command, reference) | ~1,300 | 1.1.0 | 2026-07-03 |
 
 [^al-tokens]: The `autonomous-loop` skill is intentionally larger than the other reference-category skills (~500–600 tokens). It encodes the full `/autonomous` orchestration protocol (loop phases, EVALUATE branching, signal-extraction algorithms, refined-requirement templates, `AUTONOMOUS_RUN` summary format, failure-modes table) — comprehensive by design because it is the single source of truth for the loop's behavior, read at runtime by the main thread via Step 0. Splitting it across smaller files would fragment the protocol and risk drift; the trade-off is the higher token cost on the one slash command that loads it.
 

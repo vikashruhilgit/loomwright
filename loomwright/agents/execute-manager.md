@@ -172,7 +172,7 @@ For each worktree created:
 ```
 Task(
   description: "Implement {subtask_id}",
-  prompt: "Worker prompt with subtask details, worktree path, criteria, skills,\n    and the subtask's `provides:` list verbatim from the brief's Subtask Contracts\n    (REQUIRED — the worker's Step 5.5 outputs-verification re-reads `provides:` from\n    the spawn brief; omitting it silently no-ops the v12 outputs gate)...",
+  prompt: "Worker prompt with subtask details, worktree path, criteria, skills,\n    and the subtask's `provides:` list verbatim from the brief's Subtask Contracts\n    (REQUIRED — the worker's Step 5.5 outputs-verification re-reads `provides:` from\n    the spawn brief; omitting it silently no-ops the v12 outputs gate).\n    ALSO inject applicable house rules into the worker's Project context, MATCHING the\n    Supervisor fast-path spawn (agents/supervisor.md §Spawn Contracts → Worker): run\n    `bash \"${CLAUDE_PLUGIN_ROOT}/scripts/read-rules.sh\" <touched paths...>` (args, never\n    stdin — no-hang) and inject its output into this worker's prompt ONLY when NON-EMPTY;\n    EMPTY output ⇒ inject nothing (the reader always exits 0 and emits EMPTY on no valid\n    rule — never a 'no rules' sentinel). ADVISORY / fail-safe / NEVER-gating: house rules\n    never fail a worker, never gate a PR, are never a SUPERVISOR_RESULT field, and never\n    bump `schema_version`; they are subordinate to CLAUDE.md (on conflict, CLAUDE.md wins).\n    Call the READER ONLY — never pipe/eval/source/`bash -c` the reader output; a rule's\n    `check` is DATA for the worker, never executed...",
   subagent_type: "loomwright:worker",
   run_in_background: true,
   model: "sonnet"   # ONLY when cost_profile=cheap; omit entirely when cost_profile=default

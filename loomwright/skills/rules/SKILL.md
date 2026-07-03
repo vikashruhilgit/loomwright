@@ -1,8 +1,8 @@
 ---
 name: rules
-description: Protocol authority for the /rules command and the committed .agent/rules/ house-rules substrate — the rule JSON schema + per-object fail-safe-skip validation, the v1 "applicable = all valid rules" read contract, the scan-to-suggest spec, the advisory/must/no-op-when-absent reader contract (read-rules.sh), the /rules add path-contained atomic-append write discipline, the /rules check human-invoked+confirmed execution semantics, and the check-is-arbitrary-shell trust boundary (unattended execution DEFERRED to slice 3b-ii). Use when running /rules or modifying any part of the rules substrate.
-version: "1.0.0"
-lastUpdated: "2026-06-30"
+description: Protocol authority for the /rules command and the committed .agent/rules/ house-rules substrate — the rule JSON schema + per-object fail-safe-skip validation, the v1 "applicable = all valid rules" read contract, the scan-to-suggest spec, the advisory/must/no-op-when-absent reader contract (read-rules.sh), the /rules add path-contained atomic-append write discipline (mechanized in add-rule.sh), the /rules check human-invoked+confirmed execution semantics (mechanized in rules-check.sh), and the check-is-arbitrary-shell trust boundary (unattended `check` execution is now GATED via rules-check.sh --no-cmd). Use when running /rules or modifying any part of the rules substrate.
+version: "1.1.0"
+lastUpdated: "2026-07-03"
 ---
 
 # Rules Skill
@@ -11,7 +11,7 @@ Protocol authority for `/rules` (see `${CLAUDE_PLUGIN_ROOT}/commands/rules.md` f
 
 > This is a **reference contract** skill (markdown prose, NOT executable code), in the same spirit as `skills/setup/SKILL.md` and `skills/automate-loop/SKILL.md`. There is **no `-runner` agent** — `/rules` is inline-only (agents stay 14).
 
-`.agent/rules/` is the plugin's **first committed-convention surface**: a single, version-controlled source of truth for project conventions so an implementer can read them on the DO side, not only get caught on the REVIEW side. This skill governs **slice #3b-i: the SUBSTRATE only** — the store, the schema, the fail-safe reader, and the `/rules` authoring command. **Enforcement wiring at the three seams (worker / Phase 4.5 / nudge), close-the-loop, and unattended `check` execution are slice #3b-ii** and are explicitly out of scope here.
+`.agent/rules/` is the plugin's **first committed-convention surface**: a single, version-controlled source of truth for project conventions so an implementer can read them on the DO side, not only get caught on the REVIEW side. Slice #3b-i shipped the **SUBSTRATE** — the store, the schema, the fail-safe reader, and the `/rules` authoring command. **Slice #3b-ii (this skill's current state) adds ADVISORY enforcement:** the reader is now consumed (advisorily, never-gating) at the worker / Phase 4.5-self-heal / SessionStart-nudge seams; the `/rules add` write path is mechanized into the sole-writer `add-rule.sh` (with a real path-traversal-rejection test); and `/rules check` is mechanized into `rules-check.sh` with a default-off `--no-cmd` unattended trust valve. The reader still emits `check` as DATA and **NEVER executes it**. (Company-base ↔ per-project layering and Tier-3 learned conventions remain deferred — §10.)
 
 ---
 
@@ -24,7 +24,7 @@ Protocol authority for `/rules` (see `${CLAUDE_PLUGIN_ROOT}/commands/rules.md` f
 ## When NOT to Use
 
 - Project memory / lessons — those live in `.claude/agent-memory/` and `.supervisor/` (gitignored, per-user) and are read via `read-project-memory.sh` / `read-lessons.sh`. `.agent/rules/` is **committed** and travels with the repo.
-- Enforcement at the worker / Phase 4.5 / nudge seams — **slice #3b-ii**, not this slice.
+- Enforcement at the worker / Phase 4.5 / nudge seams is now WIRED (advisory, never-gating) in slice #3b-ii — the reader is consumed at those seams, but it is context enrichment, not a gate.
 - Bootstrapping a fresh repo into a Twin-ready state — `/setup twin` *bootstraps*; `/rules` *maintains*. (Division per `docs/SPIKES/NORTH_STAR_DIRECTION.md`.)
 
 ---
@@ -53,7 +53,7 @@ Protocol authority for `/rules` (see `${CLAUDE_PLUGIN_ROOT}/commands/rules.md` f
 | `enforcement` | enum | **yes** | EXACTLY one of `advisory` \| `must`. Any other value ⇒ the object is SKIPPED (§2). |
 | `check` | string \| null | **yes** | A runnable shell string OR `null`. **Emitted as DATA only by the reader — NEVER executed by it** (§5, §9). |
 | `provenance` | object | **yes** | e.g. `{source, added, ...}`. `source` records who/what added the rule; `added` is a UTC ISO-8601 timestamp. |
-| `applies_to` | path-glob / language / category | **no (optional)** | **RESERVED for slice #3b-ii enforcement filtering. NOT consulted by the v1 reader.** Forward-compat only — present in the schema so 3b-ii needs no schema change. |
+| `applies_to` | path-glob / language / category | **no (optional)** | **RESERVED for a later slice's path/scope filtering. STILL inert — NOT consulted by the v1 reader (even after 3b-ii wired advisory enforcement, `applies_to` remains unactivated).** Forward-compat only — present in the schema so a later slice needs no schema change. |
 
 The `check` value is **arbitrary shell** authored by anyone who clones or PRs the repo. Treat it as untrusted data everywhere except the one human-invoked + confirmed path (§8, §9).
 
@@ -85,7 +85,7 @@ This makes the merged set a pure function of the committed files — identical a
 
 In v1 there is **NO path/scope filtering**. The reader emits **ALL valid rules** in the merged set — full stop. There is no heuristic that tries to guess which rules apply to a given file or change; doing so without an explicit, tested contract would be guessing, so v1 doesn't.
 
-`applies_to` exists in the schema (§1) but is **inert in v1** — reserved for slice #3b-ii, which will define and test path/scope/language filtering. Until then, "applicable" means "valid".
+`applies_to` exists in the schema (§1) but is **still inert** — reserved for a later slice, which will define and test path/scope/language filtering (3b-ii wired advisory enforcement WITHOUT activating `applies_to`). Until then, "applicable" means "valid".
 
 ---
 
@@ -93,7 +93,7 @@ In v1 there is **NO path/scope filtering**. The reader emits **ALL valid rules**
 
 `read-rules.sh` mirrors `read-postmortem.sh` / `read-bridge.sh`:
 
-- It accepts **OPTIONAL positional args**. In v1 these are **informational / forward-compat only — they do NOT change the v1 output** (which is always "all valid rules"). They reserve the calling shape 3b-ii will use for scope filtering.
+- It accepts **OPTIONAL positional args**. In v1 these are **informational / forward-compat only — they do NOT change the v1 output** (which is always "all valid rules"). They reserve the calling shape a later `applies_to` slice will use for scope filtering.
 - It **NEVER blocks on stdin in a non-TTY context.** Args take precedence; **if no args are given AND stdin is not a TTY, the reader does NOT read stdin.** So a future hook / agent caller (whose stdin is an open-but-idle pipe) can never hang it.
 
 ---
@@ -161,11 +161,11 @@ The `check` field is **arbitrary shell authored by anyone who cloned or PR'd the
 
 - **The reader (`read-rules.sh`) emits `check` as DATA and NEVER runs it** — safe for any unattended caller (a hook, a worker, a future enforcement seam) with zero code-execution risk.
 - **`/rules check` is HUMAN-invoked only** — the trust anchor is the user running it. It DISPLAYS each `must`-rule's `check` and runs it ONLY after explicit confirmation (it never blind-executes a check authored by a cloning teammate).
-- **Unattended execution of `check` commands (the worker / Phase 4.5 enforcement seams) is explicitly DEFERRED to slice #3b-ii and MUST be gated there.** The gating model to inherit is `run-ground-truth.sh --no-cmd`'s machine-authored trust valve (the same boundary Plan Reviewer Criterion 14 enforces for `cmd:` Executable-Acceptance bullets): a machine / unattended caller must NOT execute author-supplied shell without an explicit trust gate. **This requirement is flagged here so 3b-ii inherits it.**
+- **Unattended execution of `check` commands is now MECHANIZED + GATED in `rules-check.sh`.** The checker carries a default-off `--no-cmd` unattended trust valve (mirroring `run-ground-truth.sh --no-cmd`, the same boundary Plan Reviewer Criterion 14 enforces for `cmd:` Executable-Acceptance bullets): a machine / unattended caller must NOT execute author-supplied shell without an explicit trust gate. **`--no-cmd` WINS over `--confirm`** if both are passed (fail-safe). No advisory seam ever calls `rules-check.sh` with execution enabled — the worker / Phase 4.5 / SessionStart-nudge seams consume `read-rules.sh` (which surfaces each `check` as DATA) and **the reader still never executes a check**.
 
-### §9.1 — `/rules add` write path is PROSE-only in v1 — mechanize + test it in 3b-ii (inherited requirement)
+### §9.1 — `/rules add` write path is MECHANIZED as the sole-writer `add-rule.sh` (with a real traversal-rejection test)
 
-In this slice the security-sensitive `/rules add` write discipline (§7) — the slug-to-single-`[a-z0-9-]`-segment containment, the `/`/`..`/leading-dot/metachar/empty rejection, the array-only parse-gate, the atomic temp+`mv`, the read-back verify — is **specified as command/skill PROSE the agent follows at runtime**, with **no dedicated `add-rule.sh` and no test** proving (e.g.) that a `../escape` category is actually rejected. This is intentional and consistent with "substrate only" (the read path, which cannot write, is the mechanized + heavily-tested surface). **3b-ii MUST mechanize the write discipline into a sole-writer helper with a path-traversal-rejection test before any unattended/enforcement seam leans on it** — the write path is where a malicious/typo `category` could escape `.agent/rules/`, so it needs the same code+test rigor the reader already has. Flagged here so 3b-ii inherits it.
+The security-sensitive `/rules add` write discipline (§7) — the slug-to-single-`[a-z0-9-]`-segment containment, the `/`/`..`/leading-dot/metachar/empty rejection, the array-only parse-gate, the atomic temp+`mv`, the read-back verify — is now **mechanized in code** as the sole-writer helper `${CLAUDE_PLUGIN_ROOT}/scripts/add-rule.sh`. `/rules add` is a thin caller that delegates to it. A dedicated test, `${CLAUDE_PLUGIN_ROOT}/scripts/test-add-rule.sh`, proves the containment holds — it asserts that `../escape`, `a/b`, `.hidden`, shell-metachar (`foo;rm -rf`, backtick), and empty categories are REJECTED (non-zero, diagnostic, no traversal write), that a clean category writes exactly `.agent/rules/<slug>.json`, and that the array-only parse-gate aborts rather than clobbers a non-array target. The write path — where a malicious/typo `category` could otherwise escape `.agent/rules/` — now has the same code+test rigor the reader already had.
 
 ---
 
@@ -177,13 +177,13 @@ A layered model — a company-base rule set composed with per-project overrides 
 
 ## Anti-Patterns
 
-- **Executing a `check` in the reader (or any unattended path).** The reader emits `check` as data, period. Unattended execution is 3b-ii's gated problem.
+- **Executing a `check` in the reader (or any unattended path).** The reader emits `check` as data, period. Unattended execution is now gated in `rules-check.sh --no-cmd` (default-off valve; `--no-cmd` wins over `--confirm`) — and no advisory seam ever enables it.
 - **String-interpolating untrusted rule text into a shell command or a jq program.** Keep rule text inside jq's data model: the reader reads each file as a positional jq file-path argument (§2); the `/rules add` write path builds objects via `jq -n --arg` (§7). Never splice rule text into the program string or a shell command.
 - **`set -e` in the reader, or a non-zero exit on a normal failure path.** A read must never break its caller — ALWAYS exit 0.
 - **Letting `/rules add` write outside `.agent/rules/`.** The category is slugged to a single `[a-z0-9-]` segment and traversal/metachars/empty are rejected.
 - **Clobbering an existing rule file on malformed/non-array JSON.** Parse-gate with `jq -e 'type=="array"'` and abort — never overwrite.
 - **Blind-writing on `add` or `suggest`.** Both write ONLY on explicit user confirmation.
-- **Guessing which rules "apply" in v1.** Applicable = all valid rules; `applies_to` is inert until 3b-ii.
+- **Guessing which rules "apply" in v1.** Applicable = all valid rules; `applies_to` is still inert (a later slice will define path/scope filtering — 3b-ii wired advisory enforcement without activating it).
 - **Adding `.agent/` to `.gitignore`.** Rules are committed and must travel with the repo.
 
 ## Related Skills
@@ -197,10 +197,10 @@ A layered model — a company-base rule set composed with per-project overrides 
 ## Quality Gates
 
 - [ ] `.agent/rules/` is NOT in `.gitignore` (rules are committed).
-- [ ] The reader NEVER executes a `check` value (emits as data only); `/rules check` runs checks ONLY human-invoked + confirmed; unattended execution is DEFERRED to 3b-ii (flagged).
+- [ ] The reader NEVER executes a `check` value (emits as data only); `/rules check` runs checks ONLY human-invoked + confirmed (via `rules-check.sh`); unattended execution is GATED via `rules-check.sh --no-cmd` (default-off valve, `--no-cmd` wins over `--confirm`) and no advisory seam enables it.
 - [ ] Reader is `set -uo pipefail` (no `-e`), ALWAYS exits 0, READ-ONLY, emits the subordinate-to-CLAUDE.md banner only when a rule applies (EMPTY otherwise).
 - [ ] Per-object validation is fail-safe-skip (missing field / unknown `enforcement` / duplicate `id` → skip + diagnostic to `.supervisor/logs/`, never crash); merge order is `LC_ALL=C` path-sorted, first-seen-id-wins.
-- [ ] `applies_to` is documented as reserved for 3b-ii and NOT consulted by the v1 reader.
+- [ ] `applies_to` is documented as reserved for a later slice (still inert) and NOT consulted by the v1 reader.
 - [ ] `/rules add` slugs the category to a single `[a-z0-9-]` segment (rejects `/`, `..`, leading dot, metachars, empty), parse-gates with `jq -e 'type=="array"'`, assigns a deterministic unique id, stamps `provenance.source`/`provenance.added`, writes via temp-file + atomic `mv`, verifies read-back, and writes ONLY on confirmation (append-only).
 - [ ] No secret values written into a rule object.
 

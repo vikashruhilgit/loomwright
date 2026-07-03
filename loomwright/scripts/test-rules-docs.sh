@@ -11,7 +11,8 @@
 # Covers (each = an acceptance criterion of Subtask 4):
 #   - commands/rules.md and skills/rules/SKILL.md both EXIST.
 #   - BOTH carry the trust-boundary phrases: reader-never-executes-check (data only),
-#     /rules check requires-confirmation, unattended-execution-DEFERRED-to-3b-ii.
+#     /rules check requires-confirmation, and the 3b-ii contract — unattended `check`
+#     execution GATED via rules-check.sh --no-cmd, and /rules add mechanized via add-rule.sh.
 #   - the category path-containment / slugging rule (slug + [a-z0-9-] + traversal rejection).
 #   - the deterministic-id format (<category-slug>-<statement-slug> with -N collision suffix).
 #   - the array-only parse gate (jq -e 'type=="array"').
@@ -46,9 +47,15 @@ for f in "$CMD" "$SKILL"; do
     && ok "[$base] trust-boundary: /rules check requires confirmation" \
     || no "[$base] MISSING /rules-check-requires-confirmation phrasing"
 
-  has "$f" '(defer|DEFERRED).*(3b-ii|#3b-ii|slice #?3b-ii)|unattended execution.*defer' \
-    && ok "[$base] trust-boundary: unattended execution deferred to 3b-ii" \
-    || no "[$base] MISSING unattended-execution-deferred-to-3b-ii phrasing"
+  # 3b-ii contract: unattended `check` execution is GATED via rules-check.sh --no-cmd.
+  has "$f" 'rules-check\.sh' && has "$f" '\-\-no-cmd' \
+    && ok "[$base] trust-boundary: unattended check execution GATED via rules-check.sh --no-cmd" \
+    || no "[$base] MISSING unattended-execution-gated-via-rules-check.sh--no-cmd phrasing"
+
+  # 3b-ii contract: /rules add write path mechanized into the sole-writer add-rule.sh.
+  has "$f" 'add-rule\.sh' \
+    && ok "[$base] /rules add mechanized via add-rule.sh" \
+    || no "[$base] MISSING add-rule.sh mechanization phrasing"
 done
 
 # ---- (c) category path-containment / slugging (in command and/or skill) -----

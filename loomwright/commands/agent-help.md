@@ -674,7 +674,7 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 
 ### 📜 /rules — House Rules Substrate (Committed `.agent/rules/`)
 
-**Purpose:** Maintain the plugin's first **committed-convention** surface — `.agent/rules/*.json`, a version-controlled source of truth for project conventions so an implementer can read them on the DO side, not only get caught on review. Four subcommands: `list` (show all valid rules via the fail-safe `read-rules.sh` reader), `suggest` (scan the repo → PROPOSE rules for human review, never auto-writes), `add` (append-only, confirm-only write to a path-contained `.agent/rules/<category-slug>.json`), and `check` (HUMAN-invoked: display + run `must` rules' checks only after explicit confirmation). **Trust boundary:** the reader emits each `check` as DATA and never executes it; `/rules check` requires explicit confirmation. **Substrate only** — enforcement wiring at the worker / Phase 4.5 / nudge seams and unattended `check` execution are DEFERRED to slice #3b-ii. Subordinate to CLAUDE.md (on conflict, CLAUDE.md wins).
+**Purpose:** Maintain the plugin's first **committed-convention** surface — `.agent/rules/*.json`, a version-controlled source of truth for project conventions so an implementer can read them on the DO side, not only get caught on review. Four subcommands: `list` (show all valid rules via the fail-safe `read-rules.sh` reader), `suggest` (scan the repo → PROPOSE rules for human review, never auto-writes), `add` (append-only, confirm-only write to a path-contained `.agent/rules/<category-slug>.json`), and `check` (HUMAN-invoked: display + run `must` rules' checks only after explicit confirmation). **Trust boundary:** the reader emits each `check` as DATA and never executes it; `/rules check` requires explicit confirmation (mechanized in `rules-check.sh`, with a default-off `--no-cmd` unattended valve that wins over `--confirm`). **Advisory enforcement is wired (never-gating)** at the worker / Phase 4.5 self-heal / SessionStart-nudge seams (the reader is consumed as review/DO-side context, never a gate); `/rules add` is mechanized into the sole-writer `add-rule.sh`. Subordinate to CLAUDE.md (on conflict, CLAUDE.md wins).
 
 **Usage:** `/rules list` · `/rules suggest` · `/rules add` · `/rules check`
 
@@ -1069,7 +1069,7 @@ bd close BD-XX
 
 loomwright/              # Nested plugin root
 ├── .claude-plugin/
-│   └── plugin.json                   # Plugin metadata (v15.0.0)
+│   └── plugin.json                   # Plugin metadata (v15.1.0)
 ├── .mcp.json                         # Bundled MCP servers
 ├── commands/                         # Slash commands (21)
 │   ├── launch-pad.md                 # Supervisor readiness
