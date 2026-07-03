@@ -216,6 +216,31 @@ out_d3="$(run_checker "$RD3" --confirm)"; rc_d3=$?
 echo "$out_d3" | grep -qF "Checks passed: 1/1" \
   && ok "(d3) exactly the one valid must-rule selected (1/1)" || no "(d3) expected 1/1, got: $out_d3"
 
+# ============================================================================
+echo "== (e) unknown arg WARNS on stderr (fail-safe) and does NOT change the gate =="
+# A typo'd safety flag (e.g. --no-cmnd for --no-cmd) must be a LOUD no-op, not silent —
+# else combined with --confirm/TTY the checks would execute against the caller's intent.
+RE="$(new_repo)"
+MARKER_E="$ROOT/e_unknownarg_marker_$$"
+rm -f "$MARKER_E" 2>/dev/null
+seed_rules_file "$RE" "e.json" "[
+  {\"id\":\"e-run\",\"category\":\"safety\",\"statement\":\"unknown arg must not silently drop the gate\",\"enforcement\":\"must\",\"check\":\"touch $MARKER_E\",\"provenance\":{\"source\":\"test\"}}
+]"
+# (e1) a typo'd --no-cmd (`--no-cmnd`) is NOT honored as --no-cmd, but ALSO must not silently
+#      execute: with no valid confirmation it stays in the default need-confirm skip. Capture stderr.
+err_e1="$( cd "$RE" && bash "$CHECKER" --no-cmnd </dev/null 2>&1 >/dev/null )"; rc_e1=$?
+[ "$rc_e1" -eq 0 ] && ok "(e1) unknown arg still exits 0 (fail-safe)" || no "(e1) expected exit 0, got $rc_e1"
+printf '%s\n' "$err_e1" | grep -qF -- "--no-cmnd" \
+  && ok "(e1) unknown arg produces a stderr warning naming it" \
+  || no "(e1) expected a stderr warning naming --no-cmnd, got: $err_e1"
+[ ! -e "$MARKER_E" ] && ok "(e1) typo'd flag left the default skip in place — check NOT executed" \
+  || no "(e1) REGRESSION: a typo'd flag let the check execute unconfirmed"
+# (e2) the warning does not perturb a legitimate gate: unknown arg + --no-cmd still SKIPS execution.
+rm -f "$MARKER_E" 2>/dev/null
+run_checker "$RE" --frobnicate --no-cmd >/dev/null 2>&1
+[ ! -e "$MARKER_E" ] && ok "(e2) unknown arg alongside --no-cmd preserves the --no-cmd skip" \
+  || no "(e2) REGRESSION: unknown arg defeated --no-cmd"
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

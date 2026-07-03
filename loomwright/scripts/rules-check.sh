@@ -74,7 +74,13 @@ while [ "$#" -gt 0 ]; do
     -h|--help)
       grep -E '^# ' "$0" | sed -E 's/^# ?//'
       exit 0 ;;
-    *) shift ;;   # tolerate/ignore unknown args (fail-safe)
+    *)
+      # Fail-safe: an unknown arg is ignored, NEVER executed — but warn on stderr so a
+      # typo'd safety flag (e.g. `--no-cmnd` for `--no-cmd`) is not a SILENT no-op.
+      # Without this warning a mistyped `--no-cmd` would be dropped, and a co-present
+      # `--confirm`/TTY would then execute checks against the caller's intent.
+      printf 'rules-check.sh: warning: ignoring unrecognized argument %s (did you mean --no-cmd or --confirm?)\n' "$1" >&2
+      shift ;;
   esac
 done
 

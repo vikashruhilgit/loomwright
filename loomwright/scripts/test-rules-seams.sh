@@ -80,9 +80,14 @@ for f in "${SEAMS[@]}"; do
       *read-rules.sh*) ;;
       *) continue ;;
     esac
-    # allowlist lines that NEGATE execution (invariant assertions, not violations)
+    # allowlist ONLY lines that explicitly NEGATE execution (invariant assertions).
+    # Scoped tight to `never`/`NEVER` — the exact phrasing the seams use ("NEVER
+    # pipes/evals/sources/`bash -c`s the reader output"). Deliberately NOT allowlisting
+    # a bare `not`/`NOT`/`# comment`: those are too broad and could mask a genuine
+    # exec-leak line that merely happened to contain "not" or sit in a comment. The
+    # precise positive sink match below — not this allowlist — is the real guarantee.
     case "$line" in
-      *never*|*NEVER*|*not\ *|*NOT\ *|*does\ not*|*"# "*) continue ;;
+      *never*|*NEVER*) continue ;;
     esac
     # flag genuine executor sinks piping/substituting the reader output
     case "$line" in

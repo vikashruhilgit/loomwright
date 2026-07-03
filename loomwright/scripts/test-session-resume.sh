@@ -156,6 +156,28 @@ fi
 ( printf '' | bash "$HOOK" ) >/dev/null 2>&1; rcFe=$?
 [ "$rcFe" -eq 0 ] && ok "(f) exits 0 on empty stdin" || no "(f) expected exit 0 on empty stdin, got $rcFe"
 
+# ============================================================================
+echo "== (g) LOOMWRIGHT_RULES_NUDGE opt-out ⇒ nudge permanently silenced (nudge-eligible repo) =="
+RG="$(new_repo)"; make_plugin_active "$RG"   # absent .agent/rules/ ⇒ nudge would otherwise fire
+for optout in 0 off false no; do
+  ctxG="$( cd "$RG" && LOOMWRIGHT_RULES_NUDGE="$optout" printf '{"source":"resume"}' | LOOMWRIGHT_RULES_NUDGE="$optout" bash "$HOOK" \
+            | jq -r '.hookSpecificOutput.additionalContext // ""' 2>/dev/null )"; rcG=$?
+  [ "$rcG" -eq 0 ] && ok "(g) exits 0 with LOOMWRIGHT_RULES_NUDGE=$optout" \
+    || no "(g) expected exit 0 with opt-out=$optout, got $rcG"
+  if printf '%s\n' "$ctxG" | grep -qF -- "$NUDGE_LINE"; then
+    no "(g) nudge must be silenced when LOOMWRIGHT_RULES_NUDGE=$optout"
+  else
+    ok "(g) opt-out=$optout suppresses the nudge"
+  fi
+done
+# Control: the SAME repo with no opt-out DOES nudge (proves the suppression is the env var, not the repo).
+ctxGc="$(run_hook_ctx "$RG" resume)"
+if printf '%s\n' "$ctxGc" | grep -qF -- "$NUDGE_LINE"; then
+  ok "(g) control — same repo nudges without the opt-out (marker was never stamped under opt-out)"
+else
+  no "(g) control — repo should nudge once the opt-out is removed"
+fi
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

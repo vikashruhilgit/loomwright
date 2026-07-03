@@ -28,7 +28,10 @@
 # so it also fires for a store holding only invalid rules — it appends ONE
 # advisory line pointing at `/rules suggest` / `/rules add`. Debounced via a 24h
 # mtime-windowed marker (.supervisor/.rules-nudge-shown), mirroring the
-# observability probe. Fail-safe: never fires on an error, never on a repo with
+# observability probe. A team that has deliberately opted out of house rules can
+# silence it permanently with LOOMWRIGHT_RULES_NUDGE=0|off|false|no (an env-block
+# gate mirroring the observability probe's opt-out — the 24h marker only
+# re-suppresses per-window). Fail-safe: never fires on an error, never on a repo with
 # ≥1 valid rule, and never in a truly fresh repo (that's `/setup twin`'s job, so
 # it sits after the .supervisor/ bail). Adds NO new hook — hooks stay 21.
 #
@@ -181,6 +184,13 @@ observability_probe() {
 # Every path returns 0 (graceful degradation per skills/error-handling +
 # skills/monitoring-observability fail-safe idioms).
 rules_nudge() {
+  # Permanent opt-out: a team that has DELIBERATELY chosen not to adopt house
+  # rules can silence the nudge for good via LOOMWRIGHT_RULES_NUDGE=0|off|false
+  # (mirrors the observability probe's env-block gate — the 24h marker only
+  # re-suppresses per-window, so without this the nudge would recur forever for
+  # a rules-averse repo). Set ⇒ silent no-op.
+  case "${LOOMWRIGHT_RULES_NUDGE:-}" in 0|off|false|no) return 0 ;; esac
+
   # Locate the sibling reader. If it's not readable, safe-skip (no nudge).
   local script_dir reader
   script_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo .)"
