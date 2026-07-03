@@ -71,13 +71,21 @@ The path-containment and validation guarantees are proven by `scripts/test-add-r
 
 ### `check` (§8 — HUMAN-invoked only)
 
-The ONLY path in this slice that runs a rule's `check`:
+`check` is a **thin caller** of the sole-execution helper `${CLAUDE_PLUGIN_ROOT}/scripts/rules-check.sh` — it does **not** re-implement check execution in prose. The helper is the ONLY path in the whole slice that runs a rule's `check`, and it does so only behind an explicit confirmation gate:
 
-- Runs ONLY `must` rules whose `check` is **non-null** (advisory and null-check rules skipped).
-- Each command runs from the **repo root** via `bash -c`.
-- **Every command is DISPLAYED before running and executes ONLY after explicit confirmation.**
-- Under **non-interactive / no-confirm** (CI, stdin-not-tty, `--no-confirm`), it does **NOT run any check** — it reports `skipped — needs confirmation` for each.
-- Reports an **aggregate pass/fail** summary.
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/rules-check.sh" \
+  --confirm       # execute the checks (equivalently RULES_CHECK_CONFIRM=1, or an interactive TTY confirm)
+# bash "${CLAUDE_PLUGIN_ROOT}/scripts/rules-check.sh" --no-cmd   # unattended trust valve: skip ALL execution
+```
+
+The helper, per `rules-check.sh` (mechanizing SKILL.md §8):
+
+- **Reads the store DIRECTLY via jq** for the RAW `.check` string — reusing `read-rules.sh`'s per-object validation + `LC_ALL=C` first-seen-`id`-wins dedup. It **never parses the reader's human-facing markdown** (whose `gsub("[\t\n]"; " ")` render is LOSSY); the executed command is **byte-exact** to the authored rule.
+- Runs ONLY `must` rules whose `check` is a **non-null string** (advisory rules and null-check rules are skipped — never run).
+- Each selected command runs from the **repo root** via `bash -c`, **DISPLAYED before running**, and an **aggregate pass/fail** summary is printed.
+- **Confirmation gate:** executes ONLY after explicit confirmation — an interactive TTY prompt, `--confirm`, or `RULES_CHECK_CONFIRM=1`. Under **non-interactive / no-confirm** (CI, stdin-not-tty, no flag) it runs **nothing** and reports `skipped — needs confirmation` for each.
+- **Default-off unattended valve `--no-cmd` (or `RULES_CHECK_NO_CMD=1`)** skips all execution, recording `cmd execution disabled` — and **`--no-cmd` WINS over `--confirm`** if both are passed (fail-safe). This mirrors `run-ground-truth.sh --no-cmd`, the trust valve for machine/unattended callers.
 - It is **NOT an unattended gate** in this slice — human-invoked only; it never blocks a PR, a worker, or a merge.
 
 ## Trust boundary (`check` is arbitrary shell — §9)
