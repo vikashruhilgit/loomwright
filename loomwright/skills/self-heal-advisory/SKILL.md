@@ -157,6 +157,79 @@ prompt only.
 
 ---
 
+## House-rules advisory (committed convention enrichment)
+
+A **sibling** to the "Prior-churn advisory (pre-review enrichment)" and "Area-knowledge
+advisory (graph-community bridge)" sections above — it runs at the SAME point (**Phase 4.5
+entry, BEFORE the first Code Reviewer spawn**) on the SAME integrated-diff touched-file scope,
+and enriches the SAME reviewer prompt. Where prior-churn joins by EXACT path against the
+postmortem corpus and area-knowledge joins by graph community against the bridge, this advisory
+reads the committed **house-rules substrate** (`.agent/rules/*.json`) via `read-rules.sh` and
+threads the surviving valid team conventions into the reviewer prompt as a bias for the review
+lens. It is the house-rules companion to `read-postmortem.sh` / `read-bridge.sh` — see the
+substrate + reader contract in `skills/rules/SKILL.md`.
+
+> **HARD ADVISORY CONTRACT — `house_rules` is advisory input to the REVIEW lens ONLY.**
+> Exactly like `prior_churn` / `area_knowledge`, the contract-conformance / benchmark /
+> ground-truth checks, and the Rubric Grader, `house_rules` is **advisory only**: it **NEVER
+> changes `heal_decision`**, **NEVER drives the fix task** (the rules text is NOT passed to
+> workers/fixers via this seam — only the Code Reviewer prompt receives it, keeping the review
+> lens independent), **NEVER triggers a fix iteration on its own**, and **NEVER gates or blocks
+> the PR**. It is **subordinate to CLAUDE.md — on any conflict, CLAUDE.md wins.** It is
+> **fail-safe**: the reader (`read-rules.sh`) ALWAYS exits 0, and on empty output the phase
+> proceeds with **no enrichment** (the reviewer prompt simply omits the house-rules line). The
+> reader emits **EMPTY output on no valid rule** (substrate absent, no `*.json`, or zero valid
+> rules survive) — it does NOT print a "no rules" sentinel line — so an empty `house_rules`
+> reliably means "no house rules" and the enrichment is omitted; a non-empty `house_rules`
+> always denotes at least one surviving valid rule. (Never thread a "no house rules recorded"
+> string into the reviewer prompt.) The reader emits each rule's `check` as **DATA (text) only —
+> it NEVER executes, evals, sources, or `bash -c`s a `check`**; this seam calls the READER ONLY
+> and NEVER pipes/evals/sources the reader output. Under tool-budget pressure (YELLOW/RED zones)
+> this step is among the FIRST to skip — the gates in `agents/supervisor.md` still run.
+
+```
+# touched files = the same integrated-diff scope the Code Reviewer reviews (and the same the
+# prior-churn / area-knowledge advisories above use). When BASE_BRANCH==main this is
+# `git diff origin/main...HEAD`; for a stacked iteration (BASE_BRANCH != main) it is
+# `git diff $BASE_BRANCH...HEAD` — the SAME DIFF-SCOPE OVERRIDE.
+touched = paths from the integrated diff (read-only):
+          BASE_BRANCH==main  -> git diff --name-only origin/main...HEAD
+          BASE_BRANCH!=main  -> git diff --name-only $BASE_BRANCH...HEAD
+
+house_rules = ""   # advisory summary; empty string when no valid house rules (proceed with no enrichment)
+
+# Pass the touched paths as COMMAND-LINE ARGUMENTS (args take precedence — STDIN is NEVER read,
+# so an args-bearing call can never block on an open-but-idle pipe in a non-TTY agent context).
+# NEVER pipe the paths on stdin. read-rules.sh self-gates on .agent/rules/*.json — call it
+# UNCONDITIONALLY (NOT wrapped in any "if a rules store is detected" conditional), exactly like
+# read-postmortem.sh / read-bridge.sh self-gate. See ${CLAUDE_PLUGIN_ROOT}/scripts/read-rules.sh.
+#
+# v1 NOTE (forward-compat call shape): in v1 the house-rules substrate applies REPO-WIDE —
+# read-rules.sh emits ALL valid rules regardless of the touched paths (the `applies_to` field is
+# INERT / reserved for slice 3b-ii enforcement filtering). STILL pass the diff scope as args, both
+# for forward-compat (so path filtering wires in with no seam change) and to keep the args-not-stdin
+# no-hang call shape identical to the two advisories above. The reader NEVER executes a `check` —
+# checks are surfaced as DATA only.
+house_rules = bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-rules.sh" <touched files...>
+  # The reader emits a bounded advisory markdown block (subordinate-to-CLAUDE.md header + one bullet
+  # per surviving valid rule, `must` rules flagged, each `check` shown as DATA text) ONLY when >=1
+  # valid rule survives. On no valid rule (absent substrate / no *.json / all skipped) OR missing jq
+  # it emits NOTHING — no sentinel line — and ALWAYS exits 0. So an empty `house_rules` reliably means
+  # "no house rules": proceed with no enrichment. Guard the reviewer-prompt enrichment on `house_rules`
+  # being NON-EMPTY; never thread a "no house rules recorded" string into the prompt. Do NOT restate
+  # the reader's internals here.
+
+record_decision(phase: SELF_HEAL, decision: "house_rules: {non-empty | empty}", rationale: "advisory pre-review enrichment (committed house rules) — heal_decision unchanged, subordinate to CLAUDE.md, fixers never act on it as a gate")
+```
+
+`house_rules` is threaded into the `code-reviewer` Task prompt as advisory, non-gating
+context (the exact **HOUSE-RULES ADVISORY** prompt line lives in `agents/supervisor.md`
+§"Review-and-fix loop", included only when non-empty). It is NOT emitted as a SUPERVISOR_RESULT
+field and does NOT bump `schema_version` — it is additive prose enrichment of the reviewer
+prompt only, subordinate to CLAUDE.md.
+
+---
+
 ## Post-review advisory checks
 
 Run all three after the Code Reviewer loop has completed (regardless of
