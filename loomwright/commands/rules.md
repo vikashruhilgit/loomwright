@@ -46,14 +46,28 @@ Analyze the repo and **PROPOSE** rules — never blank-slate-ask, never auto-wri
 
 ### `add` (§7 — append-only write discipline, confirm-only)
 
-Writes ONLY on explicit user confirmation; append-only (never edits or removes an existing rule in this slice). The discipline mirrors the setup settings-merge (parse-gate → atomic write → verify):
+`add` is a **thin caller** of the sole-writer helper `${CLAUDE_PLUGIN_ROOT}/scripts/add-rule.sh` — it does **not** re-implement the write in prose. The helper enforces the §7 write discipline **in code** (path containment + value validation + array-only parse-gate + atomic append), so the command just collects the fields and delegates:
 
-1. **Target filename = slugified category (path containment).** The target is `.agent/rules/<category-slug>.json`, where `<category-slug>` is the `category` lowercased and reduced to `[a-z0-9-]` only. **REJECT / sanitize** any `category` containing `/`, `..`, a leading dot, shell metacharacters, or empty-after-slugging — so the write can **NEVER escape `.agent/rules/`** (always a single path segment under that dir). An invalid category aborts the add (never falls through to a default path).
-2. **Array-only parse-gate the existing target.** If the file exists, gate it with `jq -e 'type=="array"'`. **ABORT — never clobber —** on malformed JSON OR valid-but-non-array JSON (rule files MUST be arrays). If absent, create it as a single-element array.
-3. **Deterministic unique `id`.** `id = "<category-slug>-<statement-slug>"`. On collision against the **merged set** (not just the target file), append a numeric `-N` suffix (`-2`, `-3`, …) until unique.
-4. **Stamp provenance.** Set `provenance.source = "/rules add"` (or a user-provided source) and `provenance.added = <UTC ISO-8601>`.
-5. **Append via jq, atomically.** Build the object with `jq -n --arg …` (never string-interpolate untrusted input), append to the array, write to a **temp file**, then **atomic `mv`** over the target.
-6. **Verify.** Read the appended rule back (via `read-rules.sh` or a `jq` re-parse) to confirm it landed and parses.
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/add-rule.sh" \
+  --category "<category>" \
+  --statement "<statement>" \
+  --enforcement "<advisory|must>" \   # optional, default advisory
+  --check "<shell string>" \          # optional, default null (omit for a null check)
+  --source "<who/what added it>" \    # optional, default "/rules add"
+  --confirm                           # write only when passed (see confirm-only)
+```
+
+The helper, per `add-rule.sh` (mechanizing SKILL.md §7):
+
+1. **Category containment (in code).** Slugs a **legitimate** `category` to a single `[a-z0-9-]` path segment via benign normalization only, and **REJECTS** (aborts, non-zero, with a diagnostic — never silently sanitizes) any `category` containing `/`, `..`, a leading dot, shell metacharacters, or that is empty / empty-after-slug. The write can **NEVER escape `.agent/rules/`**.
+2. **Value validation before writing** (so it never authors a rule `read-rules.sh` would skip): non-empty `statement` + non-empty derived `statement-slug`; `enforcement` exactly `advisory`|`must`; `check` a string or null.
+3. **Array-only parse-gate** the target `.agent/rules/<category-slug>.json` with `jq -e 'type=="array"'` — **ABORT, never clobber** a malformed or valid-but-non-array pre-existing file; create as a single-element array if absent.
+4. **Deterministic unique `id`** = `<category-slug>-<statement-slug>`, suffixed `-N` (`-2`, `-3`, …) on collision across the **merged set** (matching the reader's global dedup scope).
+5. **Stamps** `provenance.source` (from `--source`) + `provenance.added` (UTC ISO-8601), builds the object with `jq -n --arg …` (never string-interpolating untrusted input), writes via **temp-file + atomic `mv`**, then **read-back verifies** the file parses and contains the new id.
+6. **Confirm-only:** writes ONLY when `--confirm` is passed (or an interactive TTY confirms). With no `--confirm` and non-interactive, it **prints the planned write and writes nothing**. Append-only — never edits or removes an existing rule in this slice.
+
+The path-containment and validation guarantees are proven by `scripts/test-add-rule.sh` (rejects `../escape`, `a/b`, `.hidden`, `foo;rm -rf`, backtick, and empty categories; asserts no traversal write).
 
 ### `check` (§8 — HUMAN-invoked only)
 
