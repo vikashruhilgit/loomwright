@@ -10,7 +10,7 @@
 #
 # SCOPE (deliberately narrow to avoid false positives): only high-confidence
 # "current claim" phrasings are checked — version annotations next to
-# `plugin.json` / the `AI agents vX.Y.Z` headline / the README intro's
+# `plugin.json` / the `Loomwright vX.Y.Z` headline / the README intro's
 # `Plugin (vX.Y.Z)` and `(vX.Y.Z) includes:` claims, and explicit count phrases
 # ("N quality gate hooks", "N agent roles", "Slash commands (N)", ...). It never
 # scans bare numbers, so dated changelog entries like "v12.2.0 took the count
@@ -95,7 +95,7 @@ echo "Scanning $(echo "${FILES[@]}" | wc -w | tr -d ' ') surfaces..."
 # --- Version annotations (anchored so historical "(v12.2.0)" mentions are skipped) ---
 check_version 'plugin\.json[^[:space:]]* \(v[0-9]+\.[0-9]+\.[0-9]+\)' "manifest-version"
 check_version 'Plugin (manifest|metadata) \(v[0-9]+\.[0-9]+\.[0-9]+\)'  "manifest-version"
-check_version 'AI agents v[0-9]+\.[0-9]+\.[0-9]+'                        "headline-version"
+check_version 'Loomwright v[0-9]+\.[0-9]+\.[0-9]+'                       "headline-version"
 
 # --- README intro / Overview version claims (the prose that slipped past the gate
 #     once: "The Loomwright Plugin (v14.2.2) includes:"). High-confidence
