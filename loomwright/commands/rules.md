@@ -1,12 +1,12 @@
 ---
-description: Maintain the committed .agent/rules/ house-rules substrate — list / suggest / add / check project conventions an implementer can read on the DO side, not only get caught on the REVIEW side. Substrate only; enforcement deferred to slice 3b-ii.
+description: Maintain the committed .agent/rules/ house-rules substrate — list / suggest / add / check project conventions an implementer can read on the DO side, not only get caught on the REVIEW side. Advisory enforcement is wired (never-gating) at the worker / Phase 4.5 / SessionStart-nudge seams; `add` is mechanized in add-rule.sh, `check` in rules-check.sh (unattended `check` execution gated via --no-cmd).
 ---
 
 > **Reads code read-only on `list` / `suggest` / `check`; the only write path is `add`, which append-only writes a single path-contained `*.json` under `.agent/rules/` on explicit confirmation.** `.agent/rules/` is the plugin's first **committed-convention** surface — version-controlled, travels with the repo (unlike the gitignored `.supervisor/` / `.claude/agent-memory/`). The protocol authority for every flow is `${CLAUDE_PLUGIN_ROOT}/skills/rules/SKILL.md` — read it at Step 0; when this command and that skill disagree, **the skill wins**.
 
 # Command: /rules
 
-> **The committed house-rules substrate.** `/rules` maintains a single, version-controlled source of truth for project conventions (`.agent/rules/*.json`) so an implementer can read them while doing the work, not only get caught on review. This slice ships the **SUBSTRATE only** — the store, the schema, the fail-safe reader (`read-rules.sh`), and this authoring command. **Enforcement wiring at the worker / Phase 4.5 / nudge seams, close-the-loop, and unattended `check` execution are slice #3b-ii and explicitly out of scope here.**
+> **The committed house-rules substrate.** `/rules` maintains a single, version-controlled source of truth for project conventions (`.agent/rules/*.json`) so an implementer can read them while doing the work, not only get caught on review. The substrate (store, schema, fail-safe reader `read-rules.sh`, this authoring command) shipped in slice #3b-i; **slice #3b-ii added ADVISORY enforcement** — the reader is consumed (never-gating, subordinate to CLAUDE.md) at the worker / Phase 4.5 self-heal / SessionStart-nudge seams; `/rules add` is mechanized into the sole-writer `add-rule.sh`; and `/rules check` is mechanized into `rules-check.sh` with a default-off `--no-cmd` unattended trust valve. The reader still surfaces each `check` as DATA and **never executes it**.
 
 ## Purpose
 
@@ -33,7 +33,7 @@ Invoke the fail-safe reader and show its advisory output verbatim:
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-rules.sh"
 ```
 
-The reader merges `.agent/rules/*.json` in `LC_ALL=C` path-sorted, first-seen-`id`-wins order, fail-safe-skips any invalid object (missing field / unknown `enforcement` / duplicate `id`), and emits an advisory markdown block headed `## Advisory house rules — subordinate to CLAUDE.md (on conflict, CLAUDE.md wins)` listing each rule's `statement`, `category`, a `must` flag for `must` rules, and its `check` **shown as DATA only — text, never executed by the reader.** It emits NOTHING and exits 0 when no valid rule exists (so machine consumers can gate on non-empty stdout). v1 emits **all valid rules** — there is no path/scope guessing; `applies_to` is inert (reserved for 3b-ii).
+The reader merges `.agent/rules/*.json` in `LC_ALL=C` path-sorted, first-seen-`id`-wins order, fail-safe-skips any invalid object (missing field / unknown `enforcement` / duplicate `id`), and emits an advisory markdown block headed `## Advisory house rules — subordinate to CLAUDE.md (on conflict, CLAUDE.md wins)` listing each rule's `statement`, `category`, a `must` flag for `must` rules, and its `check` **shown as DATA only — text, never executed by the reader.** It emits NOTHING and exits 0 when no valid rule exists (so machine consumers can gate on non-empty stdout). v1 emits **all valid rules** — there is no path/scope guessing; `applies_to` is still inert (reserved for a later slice — 3b-ii wired advisory enforcement without activating it).
 
 ### `suggest` (§6 — scan-to-suggest, propose-only)
 
@@ -94,7 +94,7 @@ A `check` value is **arbitrary shell authored by anyone who cloned or PR'd the r
 
 - **The reader (`read-rules.sh`) emits `check` as DATA and the `check` is never executed by the reader** — there is no code path in it that runs a `check`. Safe for any unattended caller (a hook, a worker, a future enforcement seam) with zero code-execution risk.
 - **`/rules check` requires confirmation** — it is HUMAN-invoked only, DISPLAYS each `must`-rule's `check`, and runs it ONLY after explicit confirmation. It never blind-executes a check authored by a cloning teammate.
-- **Unattended execution of `check` commands (the worker / Phase 4.5 enforcement seams) is explicitly DEFERRED to slice #3b-ii and MUST be gated there** — inheriting `run-ground-truth.sh --no-cmd`'s machine-authored trust valve (the same boundary Plan Reviewer Criterion 14 enforces). Flagged here so 3b-ii inherits it.
+- **Unattended execution of `check` commands is now MECHANIZED + GATED in `rules-check.sh`** — its default-off `--no-cmd` valve (which WINS over `--confirm`) inherits `run-ground-truth.sh --no-cmd`'s machine-authored trust boundary (the same boundary Plan Reviewer Criterion 14 enforces). The advisory seams (worker / Phase 4.5 / SessionStart-nudge) consume the READER only — which surfaces each `check` as DATA and never executes it.
 
 ## See Also
 - `skills/rules/SKILL.md` — the protocol authority (schema, validation, merge order, read/write/check contracts, trust boundary).

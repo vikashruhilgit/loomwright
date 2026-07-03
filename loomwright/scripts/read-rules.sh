@@ -36,8 +36,9 @@
 #
 # THE INVARIANT (§9): the reader emits each rule's `check` as DATA (text) only — there is NO code path
 # that runs, evals, sources, or `bash -c`s a `check` value. This is what makes the reader safe to call
-# from a future unattended seam with zero code-execution risk. Unattended `check` execution is DEFERRED
-# to slice 3b-ii and is NOT this reader's concern.
+# from an unattended seam with zero code-execution risk. Unattended `check` execution is now GATED in the
+# separate rules-check.sh --no-cmd helper and is NOT this reader's concern — this reader still never
+# executes a check.
 #
 # INJECTION SAFETY (jq-only): untrusted rule text (ids, statements, checks, categories, provenance)
 # enters jq ONLY by jq reading the rule file as a POSITIONAL FILE-PATH argument (the path itself comes
