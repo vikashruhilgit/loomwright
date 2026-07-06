@@ -330,7 +330,7 @@ If no scratchpad state but `.supervisor/state.md` exists:
 
 ### Resume validation gate
 
-**The authoritative validation contract for `/supervisor --continue` (v15.3.0).** The Supervisor runs this gate at the earliest consumption point (Phase 0 INIT step 2), BEFORE any loaded state is consumed — regardless of whether the state came from the scratchpad or `.supervisor/state.md`. Every result block in the system is hook-validated; this gate closes the equivalent hole for resume-loaded local state.
+**The authoritative validation contract for `/supervisor --continue` (v15.3.0).** The Supervisor runs this gate at the earliest consumption point (the Phase 0 INIT resume-state check — protocol in `skills/supervisor-config/SKILL.md`), BEFORE any loaded state is consumed — regardless of whether the state came from the scratchpad or `.supervisor/state.md`. Every result block in the system is hook-validated; this gate closes the equivalent hole for resume-loaded local state.
 
 1. **`## Session` block must exist** in the loaded file.
 2. **`phase` must be in the closed set** `INIT | ACQUIRE | PLAN | EXECUTE | FINALIZE | SELF_HEAL | LOOP` — verbatim from §"State File Schema" above. `PRE_FLIGHT_SYNC` is a `record_decision`-only phase label used in Decisions Log entries (see §"Phase 1.5 Pre-Flight Summary"); it is NOT a valid state-file `phase` and fails this check.

@@ -28,7 +28,7 @@ entry/exit conditions. The protocol prose below is moved verbatim from the Super
 
 **Actions:**
 
-1. **Skip check (AC5):** If `--skip-preflight-sync` was passed (parsed in Phase 0's base-branch / non-interactive preamble — the step 5a block), record the skip as a deliberate choice and short-circuit straight to Phase 2:
+1. **Skip check (AC5):** If `--skip-preflight-sync` was passed (parsed in Phase 0's base-branch / non-interactive preamble — see `skills/supervisor-config/SKILL.md`), record the skip as a deliberate choice and short-circuit straight to Phase 2:
    ```
    Context-Keeper(operation: record_decision, phase: PRE_FLIGHT_SYNC,
                   decision: "preflight_skipped", rationale: "--skip-preflight-sync flag")

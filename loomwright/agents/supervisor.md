@@ -105,92 +105,17 @@ Autonomously manage the complete development workflow from task pickup to PR cre
 
 **Purpose:** Configure session preferences before any work begins.
 
-**Actions:**
-1. Auto-detect environment:
-   - Check if `.supervisor/` exists (previous sessions)
-   - Check git status (clean/dirty)
-   - Check for existing worktrees (`git worktree list`)
-2. Check for resume state:
-   - If `--continue` flag: load state from scratchpad → `.supervisor/state.md` (priority order)
-   - **Resume validation gate (fail-closed — runs BEFORE any loaded state is consumed):** when a state file WAS loaded (from either location), validate it against `skills/state-management/SKILL.md` §"Resume validation gate" (the authoritative contract) before reading any field out of it or acting on its content:
-     a. The `## Session` block must exist.
-     b. `phase` must be one of `INIT | ACQUIRE | PLAN | EXECUTE | FINALIZE | SELF_HEAL | LOOP` and `status` one of `running | paused | completed | completed_with_escalation | failed` — the closed sets from that skill's §"State File Schema". Note: `PRE_FLIGHT_SYNC` is a `record_decision`-only phase label (it appears in the Decisions Log), NOT a valid state-file `phase` — a state file asserting it fails this gate.
-     c. If the `## Session` block asserts a `branch:` field, `git rev-parse --verify <branch>` must succeed (the branch must still exist locally). The value is untrusted: pass it as a single quoted argument and pre-check `git check-ref-format --branch <value>` first (per `skills/state-management/SKILL.md` §"Resume validation gate") — a value failing ref-format fails this check.
-     On ANY violation: REFUSE the resume. Emit `SUPERVISOR_RESULT` with `status: failed` and `error: "resume_state_invalid"`, plus a clear user message: inspect or delete `.supervisor/state.md` (and the scratchpad copy, if that is what failed), or start fresh without `--continue`. NEVER silently fall back to a fresh start — that would mask corruption. There is NO escape-hatch flag for this gate (deleting the bad state file IS the escape hatch). A MISSING state file is NOT a violation — "no state found → start fresh" is unchanged; the gate only fires on a file that loaded but does not parse against the contract.
-   - If resume state found:
-     a. **Before jumping to the saved phase**, hydrate session config from the loaded state: read `config.cost_profile` (default `default` if absent — handles pre-cheap state files). This ensures `cost_profile` is in memory for every subsequent spawn, regardless of which phase is resumed.
-     b. If `--cheap` was also passed on this invocation: override to `cost_profile = cheap`.
-     c. Jump to the saved phase.
-3. Ask user (via `AskUserQuestion`) if not resuming:
-   - "Max parallel workers?" (default: 2; skip if `--sequential`)
-   - "Specific task to work on?" (or user provides via `task:` parameter)
-3a. Parse cost profile flag (fresh start only — resume path handled in step 2):
-   - If `--cheap` was passed: set `cost_profile = cheap`.
-   - Otherwise: `cost_profile = default`.
-   - Record in session memory — used at every subagent spawn in Phases 2, 3, and 4.5.
-4. Create `.supervisor/` directory structure if not exists:
-   ```bash
-   mkdir -p .supervisor/history .supervisor/jobs/pending .supervisor/jobs/in-progress .supervisor/jobs/done .supervisor/jobs/failed .supervisor/logs
-   grep -qxF '.supervisor/' .gitignore 2>/dev/null || echo '.supervisor/' >> .gitignore
-   ```
-5. Initialize scratchpad state file via Context-Keeper:
-   ```
-   Context-Keeper(operation: initialize, config: {max_workers, mode, cost_profile}, session: {...})
-   ```
+**Entry:** Session start — every invocation, fresh or `--continue` resume. When a `job:` brief is supplied, the planning questions are pre-answered by the brief: environment validation is skipped (already done by Launch Pad), the brief is moved `pending/` → `in-progress/` (skip the move if the path doesn't match `pending/` — backward compatibility with the old flat `jobs/` layout), and the session jumps to Phase 1 with enriched context — planning phases are pre-answered by the brief, freeing budget for Phase 3 execution. The flag-parsing preamble still runs on every entry.
 
-5a. **Phase 0 (NEW preamble) — base-branch + non-interactive setup (v14.0.0):**
+**Protocol authority:** at phase entry, `Read("${CLAUDE_PLUGIN_ROOT}/skills/supervisor-config/SKILL.md")` and execute that protocol: environment auto-detection, resume-state loading + the fail-closed Resume validation gate, config prompts (`AskUserQuestion`), cost-profile resolution, the base-branch + non-interactive preamble (flag parsing/defaults, crash-recovery flag clearing per the read-on-start, clear-on-start invariant), `.supervisor/` directory bootstrap, Context-Keeper initialization, and job-file loading. The skill is deliberately NOT preloaded — Read it on demand.
 
-   This preamble runs on **every** Phase 0 entry — both fresh start and `--continue` resume. The two `clear_flag` calls implement the **read-on-start, clear-on-start invariant** (see `skills/state-management/SKILL.md` §"Phase Flags") for crash-recovery flags: any pre-existing flag left over from a crashed prior session is cleared before this session can act on it.
+**Exit conditions (summary — the skill is authoritative):**
+- Resolved config recorded in session memory and echoed for cross-phase recall (`### Session Configuration` block): `BASE_BRANCH` (from `--base-branch <name>`, default `main`), `NON_INTERACTIVE`, `RED_TEAM_ENABLED`.
+- `--non-interactive` recorded as a Phase Flag (`set_flag non_interactive`) when true, so later phases can re-read it after context loss; stale crash-recovery flags (`base_mismatch_detected`, `non_interactive`) cleared on entry.
+- `cost_profile` resolved: `--cheap` → `cheap`, else `default` (resume hydrates from saved state) — consumed at every subagent spawn in Phases 2, 3, and 4.5. Loop-shaping flags (`--skip-self-heal`, `--heal-iterations`) are likewise INIT-parsed and consumed by Phase 4.5.
+- Resume path (`--continue`): loaded state MUST pass the fail-closed Resume validation gate — any violation refuses the resume with `status: failed`, `error: "resume_state_invalid"` (never silently fall back to a fresh start); on pass, hydrate config and jump to the saved phase.
 
-   1. Parse `--base-branch <name>` from argv. Default to `main` if absent. Record as `BASE_BRANCH` in session memory (used by Phase 4 FINALIZE PR creation, Phase 4 self-verify, and Phase 4.5 spawn prompts).
-   2. Parse `--non-interactive` from argv. Default to `false` if absent. Record as `NON_INTERACTIVE` in session memory.
-   2.5. Parse `--skip-preflight-sync` from argv. Default to `false` if absent. Record as `SKIP_PREFLIGHT_SYNC` in session memory (consumed by Phase 1.5 PRE-FLIGHT SYNC — the skip check in `skills/preflight-sync/SKILL.md` short-circuits the gate as a deliberate choice).
-   2.6. Parse `--no-auto-review` and `--auto-review` from argv. Default: **neither** (record `AUTO_REVIEW_FLAG = none`). If `--no-auto-review` is present record `AUTO_REVIEW_FLAG = suppress`; else if `--auto-review` is present record `AUTO_REVIEW_FLAG = force`. (`--no-auto-review` wins if both appear.) Consumed by Phase 4.5's completion-tail review-drain dispatch step. **As of the until-mergeable default (AC7), the post-`/supervisor` review drain dispatches BY DEFAULT** on a PASS/normal completion that produced a PR — `AUTO_REVIEW_FLAG == suppress` (or `.supervisor/config.json` `.auto_review == false`; legacy `.supervisor/notify-config.json` is still read as a fallback, the new path wins when both exist) is now the OPT-OUT; `--auto-review` / `.auto_review == true` are the legacy explicit-enable signals, now redundant with the default but still honored. This only controls the post-`/supervisor` standalone review-and-heal dispatch — it never affects the in-Supervisor Phase 4.5 review-and-fix loop.
-   2.6a. Parse the **until-mergeable** flags (consumed by the same Phase 4.5 dispatch step): `--no-until-mergeable` (record `UNTIL_MERGEABLE_FLAG = suppress`; else `none`) opts the dispatched drain out of `--until-mergeable` (the runner then runs the plain diff-only `/review-pr`); when `none`, `.supervisor/config.json` `.auto_until_mergeable` decides (**DEFAULT true** — the drain runs until-mergeable). Also capture the optional tuning values `--check-wait-timeout N` (record `CHECK_WAIT_TIMEOUT`) and `--review-check-pattern <glob>` (record `REVIEW_CHECK_PATTERN`); both are forwarded to the dispatcher ONLY when set and thread to the runner via the S2-pinned env-var signal contract (`skills/review-heal/SKILL.md` §"Until-Mergeable Dispatch Signal").
-   2.7. Parse `--no-red-team` and `--red-team` from argv (mirrors the 2.6 auto-review precedent). Default: **neither** (record `RED_TEAM_FLAG = none`). If `--no-red-team` is present record `RED_TEAM_FLAG = suppress`; else if `--red-team` is present record `RED_TEAM_FLAG = enable`. (`--no-red-team` wins if both appear.) When `RED_TEAM_FLAG == none`, `.supervisor/config.json` `.red_team_high_risk` (boolean; default false/absent) decides. Resolve and record `RED_TEAM_ENABLED = true` iff (`RED_TEAM_FLAG == enable`) OR (`RED_TEAM_FLAG == none` AND config `.red_team_high_risk == true`); otherwise `RED_TEAM_ENABLED = false`. Consumed by Phase 4.5's **Advisory red-team lens** step — an OPT-IN, DEFAULT-OFF, FAIL-SAFE, strictly NON-GATING advisory pass for high-risk integrated diffs. It NEVER changes `heal_decision`, never drives the fix task, never gates, and never blocks the PR/run.
-   3. **W-NEW-14 mitigation — clear any stale `base_mismatch_detected` flag from a crashed prior session before this session can act on it:**
-      ```
-      Context-Keeper(operation: clear_flag, key: "base_mismatch_detected")
-      ```
-   4. **W-NEW-15 mitigation — autonomous-loop's session-scoped `non_interactive` flag is consumed read-once at every Phase 0; standalone `/supervisor` must treat the terminal as interactive:**
-      ```
-      Context-Keeper(operation: clear_flag, key: "non_interactive")
-      ```
-   5. **If `NON_INTERACTIVE == true`, re-arm the flag for this session** (so Phase 4 FINALIZE / Phase 4.5 can re-read it after a context-summarization round-trip — W-NEW-10 LLM-recall residual mitigation):
-      ```
-      Context-Keeper(operation: set_flag, key: "non_interactive",
-                     value: {set_at: "<ISO 8601>", source: "supervisor_flag"})
-      ```
-      When `NON_INTERACTIVE == false` the flag stays cleared.
-   6. **Echo the resolved values prominently** (placed AFTER environment detection, BEFORE the Status output, so later phases can re-derive these values via LLM recall even if scratchpad state is summarized away):
-      ```markdown
-      ### Session Configuration (echoed for cross-phase recall)
-      - **BASE_BRANCH:** {BASE_BRANCH value or "main"}
-      - **NON_INTERACTIVE:** {true or false}
-      - **RED_TEAM_ENABLED:** {true or false}
-      ```
-
-6. Check for job file:
-   - If `job:` parameter provided: read brief from path
-   - If no `job:` but `.supervisor/jobs/pending/` has files < 24h old: ask user if they want to use one
-   - If job file loaded:
-     - Move brief from `pending/` → `in-progress/` (if brief is in `pending/`; skip move if path doesn't match `pending/` for backward compatibility with old flat `jobs/` layout)
-     - Skip environment validation (already done by Launch Pad)
-     - Pre-populate: task details, acceptance criteria, subtask hints, parallelism analysis, skill references
-     - Jump to Phase 1 with enriched context — planning phases are pre-answered by the brief, freeing budget for Phase 3 execution
-
-**Output:**
-```markdown
-## SUPERVISOR v4: Starting Parallel Workflow
-
-## ENVIRONMENT
-- **Path:** {project_path}
-- **CLAUDE.md:** ✓ Found | ✗ Missing
-- **Git:** clean | dirty ({N} files)
-- **Branch:** {current_branch}
-- **Worktrees:** {count} existing
-- **Config:** workers={N}, mode={parallel|sequential}
-```
+**Output:** the `## SUPERVISOR v4: Starting Parallel Workflow` + `## ENVIRONMENT` block defined in the skill (path, CLAUDE.md presence, git state, branch, worktree count, workers/mode config).
 
 **Supervisor context after INIT:** ~200 tokens (config only)
 
@@ -205,7 +130,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
    - **Consult verified lessons (advisory — read-only):** also run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-lessons.sh"` (no args; honors `LESSON_STALE_DAYS`, default 90) and fold only the relevant `## <category>` groups into your understanding of this task. These are **advisory and strictly subordinate to `CLAUDE.md`** — on any conflict, `CLAUDE.md` wins. The reader is fail-safe (it always exits 0 and emits only provenance-verified, non-stale entries); if it emits nothing or is absent, proceed normally. Reading memory MUST NEVER block the run or change a verdict / `heal_decision`. The verified lessons you considered may be cited in the run's reasoning. (Read-only — the Supervisor does not write lessons.)
 1. Select task:
    - User describes task via `task:` parameter
-   - Or read from `.supervisor/state.md` (resume) — **gated:** the loaded file must already have passed the Phase 0 INIT step 2 **Resume validation gate** (fail-closed; authoritative contract in `skills/state-management/SKILL.md` §"Resume validation gate" — do not re-enumerate the closed sets here). A file that failed the gate is never consumed at this step: the run has already refused with `status: failed`, `error: "resume_state_invalid"`.
+   - Or read from `.supervisor/state.md` (resume) — **gated:** the loaded file must already have passed the Phase 0 INIT **Resume validation gate** (the resume-state check in `skills/supervisor-config/SKILL.md`) (fail-closed; authoritative contract in `skills/state-management/SKILL.md` §"Resume validation gate" — do not re-enumerate the closed sets here). A file that failed the gate is never consumed at this step: the run has already refused with `status: failed`, `error: "resume_state_invalid"`.
    - Or user provides description interactively
 2. Load task details:
    - User provides title and criteria
@@ -215,7 +140,8 @@ Autonomously manage the complete development workflow from task pickup to PR cre
    - If clear criteria exist: proceed
 4. **MANDATORY: Create feature branch** (before ANY code work):
    ```bash
-   # BASE_BRANCH was resolved in Phase 0 (step 5a.1) — default "main", or
+   # BASE_BRANCH was resolved in Phase 0 (the base-branch preamble in
+   # skills/supervisor-config/SKILL.md) — default "main", or
    # the value of --base-branch <name> when the /autonomous loop stacks
    # iter N+1 on iter N's branch. Iter 1 of an autonomous run, and every
    # standalone /supervisor invocation, resolves to "main".
@@ -233,15 +159,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
    - **Canonical on-disk state MUST exist after ACQUIRE — and the Supervisor itself writes it directly, always.** Execution mode (inline fast-path vs. delegated parallel) is not decided until Phase 3, so ACQUIRE cannot branch on it. Therefore the Supervisor performs a **direct best-effort write itself, unconditionally and regardless of execution mode**, ensuring the canonical lowercase `## Session` block (per `skills/state-management/SKILL.md` §"State File Schema") exists in `.supervisor/state.md` — at minimum `- status: running` and `- branch: <feature-branch>`, plus the other Session fields (`session_id`, `task_id`, `phase: ACQUIRE`). The `Context-Keeper(set_task / update_phase)` calls shown above emit the **identical canonical lowercase format**, so when Context-Keeper is later spawned (the parallel path) its write is a **harmless idempotent overlap** — NOT a conflict, and NOT a reason to skip the unconditional direct write. (Do the direct write in addition to, never "in place of," those calls.) Writing directly here strengthens the guarantee: the canonical state lands even if a later Context-Keeper spawn never happens or fails. The direct write is a **targeted in-place edit of the `## Session` block only** that preserves any other sections already in the file (`## Decisions Log`, `## Phase Flags` (consumed by autonomous-loop for stacked-branch handoff), `## Checkpoint`), performed as a single atomic update where feasible (e.g. temp-file + rename) to match Context-Keeper's documented atomic-write guarantee. The durable canonical state must land on disk because the `hook-dispatch-on-pr-create.sh` session-scope gate greps `^- status:` / `^- branch:`, and `/supervisor --continue` resume reads the lowercase `status: running` — a stale or bold-only state file silently breaks both.
    - **Best-effort / non-fatal (fail-safe invariant):** this write MUST NEVER block ACQUIRE or fail the run. A write failure is a logged no-op — proceed to Phase 2 regardless. Do NOT write the human-readable **bold** ENVIRONMENT display block here; the on-disk state file is the canonical lowercase form only.
 
-**Output:**
-```markdown
-### Phase 1: ACQUIRE
-- Task: {task_id} ({priority})
-- Title: {title}
-- Criteria: {count} items
-- Branch: feature/{task_id}-{short-desc} ← CREATED
-- Requirements: Clear | Refined by Product Owner
-```
+**Output:** the `### Phase 1: ACQUIRE` block shown in §"Output Format (Complete Example)" — Task (with priority when known), Title, Criteria count, `Branch: feature/{task_id}-{short-desc} ← CREATED`, and `Requirements:` reading `Clear` or `Refined by Product Owner`.
 
 **Checkpoint:** State saved to `.supervisor/` after branch creation.
 
@@ -298,14 +216,7 @@ BLOCKED if:
   - Files overlap with a LAUNCHABLE subtask
 ```
 
-**Output:**
-```markdown
-### Phase 2: PLAN
-- Subtasks: {count} ({IDs})
-- Parallelism: {launchable_count} launchable, {blocked_count} blocked
-- Mode: parallel (workers: {N}) | sequential | inline (single subtask)
-- First batch: [{launchable IDs}]
-```
+**Output:** the `### Phase 2: PLAN` block shown in §"Output Format (Complete Example)" — subtask count + IDs, launchable/blocked parallelism split, first batch, and `Mode:` reading one of `parallel (workers: {N})` | `sequential` | `inline (single subtask)`.
 
 **Supervisor context after PLAN:** ~400 tokens
 
@@ -406,15 +317,7 @@ When the Execute Manager surfaces an `EXECUTE_CHECKPOINT` with `adjudication_req
 
 **Hard rule:** the Supervisor never picks an option silently — it always asks the user. Auto-selection (e.g., "C is safest, pick C") is forbidden because each option has different irreversible consequences (job failure, brief mutation, plan mutation).
 
-**Output:**
-```markdown
-### Phase 3: EXECUTE
-- Mode: delegated (Execute Manager) | inline (fast-path)
-- Subtasks completed: {count}/{total}
-- Reviews passed: {count}
-- Merge order: [{dependency-ordered branch names}]
-- Tool calls: Supervisor {N}/50, Execute Manager {M}/60
-```
+**Output:** the `### Phase 3: EXECUTE` block shown in §"Output Format (Complete Example)" — `Mode:` reading `delegated (Execute Manager)` or `inline (fast-path)`, subtasks completed `{count}/{total}`, reviews passed, dependency-ordered merge order, and `Tool calls: Supervisor {N}/50, Execute Manager {M}/60`.
 
 **Supervisor context during EXECUTE:** ~50 tokens (single Task call + result parsing)
 
@@ -481,7 +384,7 @@ When the Execute Manager surfaces an `EXECUTE_CHECKPOINT` with `adjudication_req
    git push -u origin feature/{task_id}-{desc}
    gh pr create --base "$BASE_BRANCH" --title "{task_id}: {title}" --body "{PR body}"
    ```
-   `BASE_BRANCH` is the value resolved at Phase 0 (Phase 0 step 5a) from the `--base-branch` flag, defaulting to `main`. The autonomous-loop multi-iteration mode passes a sibling feature branch (e.g., `feature/v14-iter1`) so iteration N+1 stacks on iteration N's PR.
+   `BASE_BRANCH` is the value resolved at Phase 0 (the base-branch + non-interactive preamble in `skills/supervisor-config/SKILL.md`) from the `--base-branch` flag, defaulting to `main`. The autonomous-loop multi-iteration mode passes a sibling feature branch (e.g., `feature/v14-iter1`) so iteration N+1 stacks on iteration N's PR.
 
 6.5. **Phase 4 FINALIZE self-verify — PR base branch (v14.0.0, AC-7 + AC-14):**
 
@@ -545,16 +448,7 @@ Closes {task_id}
 Generated by Supervisor Agent v4
 ```
 
-**Output:**
-```markdown
-### Phase 4: FINALIZE
-- Merges: {count} subtask branches → feature/{task_id}-{desc}
-- Conflicts: none | {details}
-- Worktrees cleaned: {count}
-- Commit: {short SHA} — {message}
-- PR: #{number} — {url}
-- Task: {task_id} [MERGED — pending self-heal]
-```
+**Output:** the `### Phase 4: FINALIZE` block shown in §"Output Format (Complete Example)" — pre-merge validation result, worktree commits, merges into the feature branch, `Conflicts:` reading `none` or the conflict details, worktrees cleaned, commit SHA + message, PR number + URL, and `Task: {task_id} [MERGED — pending self-heal]`.
 
 ---
 
