@@ -192,6 +192,19 @@ EOF
   out="$(CHECK_SKILLS_DIR="$tmp/skills" CHECK_SKILLS_INDEX="$tmp/index-bad-version.md" bash "$0" 2>&1)"; rc=$?
   assert "wrong-version-fails" 1 "$rc" "$out" "DRIFT [version] beta"
 
+  # (a2) versionless skill: skipped by check 1, row validated for shape only → exit 0
+  mkdir -p "$tmp/skills/nover"
+  printf -- '# NoVer skill, no frontmatter\n' > "$tmp/skills/nover/SKILL.md"
+  { cat "$tmp/index.md"; printf '| NoVer | `nover/` | — | ~100 | 1.0.0 | 2026-01 |\n'; } > "$tmp/index-nover.md"
+  out="$(CHECK_SKILLS_DIR="$tmp/skills" CHECK_SKILLS_INDEX="$tmp/index-nover.md" bash "$0" 2>&1)"; rc=$?
+  assert "versionless-skill-skipped" 0 "$rc" "$out"
+  rm -rf "$tmp/skills/nover"
+
+  # (a3) table format changed (zero data rows parsed) → exit 1 tripwire
+  printf '# Fixture Index\n\nNo table here anymore.\n' > "$tmp/index-notable.md"
+  out="$(CHECK_SKILLS_DIR="$tmp/skills" CHECK_SKILLS_INDEX="$tmp/index-notable.md" bash "$0" 2>&1)"; rc=$?
+  assert "no-rows-tripwire-fails" 1 "$rc" "$out"
+
   # (b2) malformed version cell (non-X.Y.Z) → exit 1 via the malformed-cell branch
   sed 's/| 2\.1\.0 |/| TBD |/' "$tmp/index.md" > "$tmp/index-malformed.md"
   out="$(CHECK_SKILLS_DIR="$tmp/skills" CHECK_SKILLS_INDEX="$tmp/index-malformed.md" bash "$0" 2>&1)"; rc=$?
