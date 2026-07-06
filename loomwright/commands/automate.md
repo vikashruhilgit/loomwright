@@ -35,6 +35,7 @@ The intake is **source-agnostic** — only the *intake* differs, and intake is j
 /automate ... --trust-unprotected            # allow auto-merge onto a branch without enforceable protection (gate escape hatch)
 /automate ... --notify                       # passthrough to inner /autonomous (gate webhooks)
 /automate ... --non-interactive-fallback     # passthrough to inner /autonomous + engine gates fail closed
+/automate ... --cheap                        # passthrough to inner /autonomous (Sonnet cost profile → /supervisor; not persisted — re-pass on --resume)
 
 # Driven continuously by Claude's /loop — use the NAMESPACED form headless (bare /automate is "Unknown command" under detached claude -p):
 /loop /loomwright:automate [...]
@@ -54,6 +55,7 @@ The intake is **source-agnostic** — only the *intake* differs, and intake is j
 | `--trust-unprotected` | No | off | The auto-merge gate escape hatch — allows merge onto a branch without enforceable branch protection. Meaningful only with `--auto-merge`. §10 condition 4. |
 | `--notify` | No | off | Passthrough to the inner `/autonomous` — POSTs gate-event payloads to `LOOMWRIGHT_WEBHOOK_URL`. §11. |
 | `--non-interactive-fallback` | No | off | Passthrough to the inner `/autonomous` AND governs the engine's own gates: the queue-confirm prompt is skipped and an ambiguous resume fails closed (`resume_ambiguous_non_interactive`). Required for CI / non-TTY. §2 / §4 / §11. |
+| `--cheap` | No | off | **Passthrough to the inner `/autonomous` (v15.2.0+)** — forwarded on the per-item RUN step, and `/autonomous` in turn forwards it to every inlined `/supervisor`, completing the `/automate → /autonomous → /supervisor` Sonnet cost-profile chain. **Passthrough-only:** the engine never interprets it and it is NOT persisted in the run file's `## Run Config` (same convention as `--notify` / `--non-interactive-fallback`) — re-pass it on each `/automate --resume` or `/loop` tick. Profile table + Haiku-session caveat: `docs/ARCHITECTURE_CONTRACTS.md` §"Cost Profiles". §11. |
 
 > **Run-file layout, the 5-condition trusted-merge gate, the suppress/restore config-toggle contract, and the single-open-PR invariant are defined ONCE in `skills/automate-loop/SKILL.md`** (and the run-file layout is documented as a markdown state-file contract in `docs/RESULT_SCHEMAS.md` §"AUTOMATE_RUN"). They are deliberately **not** restated in this table — reference the skill for the deep contract.
 
