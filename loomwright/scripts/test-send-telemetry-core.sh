@@ -355,6 +355,16 @@ rc=$?
 assert_eq "consent_allow_no_repo_exit=4" "4" "$rc"
 assert_match "consent_allow_no_repo_marker" "no_repo_configured" "$out"
 
+# (d2) always_allow + malformed repo (non-empty, no slash) -> exit 1.
+#      Verified against the code first (send-telemetry-core.sh:903-906: repo
+#      failing the ^owner/repo$ grep emits 'invalid_repo_format repo=<value>'
+#      to stderr and exits 1 — even under --dry-run; no gh reach).
+consent_write '{"telemetry": "always_allow", "telemetry_repo": "invalidformat"}'
+out="$(run_core "$FIXDIR/consent-escalated.json" --dry-run)"
+rc=$?
+assert_eq "consent_invalid_repo_format_exit=1" "1" "$rc"
+assert_match "consent_invalid_repo_format_marker" "invalid_repo_format repo=invalidformat" "$out"
+
 # (e) always_allow + telemetry_repo + --dry-run -> would-send (WOULD_EXIT=0).
 consent_write '{"telemetry": "always_allow", "telemetry_repo": "example/repo"}'
 out="$(run_core "$FIXDIR/consent-escalated.json" --dry-run)"
