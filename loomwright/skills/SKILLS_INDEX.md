@@ -24,6 +24,7 @@ Comprehensive index of all skills available in the Loomwright plugin.
 | Automate Loop | `automate-loop/` | `/automate` (slash command, reference) | ~3,200 | 1.2.0 | 2026-07-06 |
 | Review Heal | `review-heal/` | `review-pr-runner` (preload), `/review-pr` + Supervisor + `/autonomous` (reference) | ~3,000 | 1.4.0 | 2026-06-22 |
 | Self-Heal Advisory | `self-heal-advisory/` | Supervisor (on-demand Read at Phase 4.5 entry — deliberately NOT preloaded) | ~2,000 | 1.0.0 | 2026-06-10 |
+| Preflight Sync | `preflight-sync/` | Supervisor (on-demand Read at Phase 1.5 entry — deliberately NOT preloaded) | ~1,600 | 1.0.0 | 2026-07-06 |
 | PR Postmortem | `pr-postmortem/` | `/pr-postmortem` (slash command, reference) | ~1,400 | 1.3.0 | 2026-06-13 |
 | Setup | `setup/` | `/setup` (slash command, read at Step 0) | ~1,200 | 1.0.0 | 2026-06-13 |
 | Brain Context | `brain-context/` | Launch Pad / Code Reviewer / Supervisor (on-demand Read — deliberately NOT preloaded) | ~1,500–2,000 | 1.0.0 | 2026-06-16 |
