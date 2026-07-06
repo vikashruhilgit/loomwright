@@ -335,7 +335,7 @@ If no scratchpad state but `.supervisor/state.md` exists:
 1. **`## Session` block must exist** in the loaded file.
 2. **`phase` must be in the closed set** `INIT | ACQUIRE | PLAN | EXECUTE | FINALIZE | SELF_HEAL | LOOP` — verbatim from §"State File Schema" above. `PRE_FLIGHT_SYNC` is a `record_decision`-only phase label used in Decisions Log entries (see §"Phase 1.5 Pre-Flight Summary"); it is NOT a valid state-file `phase` and fails this check.
 3. **`status` must be in the closed set** `running | paused | completed | completed_with_escalation | failed` — verbatim from §"State File Schema" above.
-4. **If a `branch:` field is asserted** in the `## Session` block, `git rev-parse --verify <branch>` must succeed (the branch must still exist locally).
+4. **If a `branch:` field is asserted** in the `## Session` block, `git rev-parse --verify <branch>` must succeed (the branch must still exist locally). The value comes from an untrusted file (the gate's own premise): pass it as a single quoted argument, and pre-validate with `git check-ref-format --branch <value>` — a value failing ref-format fails this check.
 
 **On ANY violation the resume is REFUSED:** the Supervisor emits `SUPERVISOR_RESULT` with `status: failed` and `error: "resume_state_invalid"`, plus a user instruction to inspect or delete `.supervisor/state.md` (or start fresh without `--continue`). It NEVER silently falls back to a fresh start — that would mask corruption. There is deliberately NO `--skip-*` / `--force-resume` escape hatch in v1: deleting the bad state file IS the escape hatch.
 
