@@ -2,8 +2,8 @@
 name: automate-loop
 description: Protocol authority for `/automate` — the generic automation engine that converts ANY source (a prompt via /product-owner, a requirements folder, or a backlog-doc) into a FULL Queue with a per-run processing cap inside ONE markdown run file (`.supervisor/automate/<run_id>.md` — the contract, dashboard, and resume state), then drives each Queue item through the per-item loop (`/autonomous --single-iteration` → owned inline `/review-pr --until-mergeable` → trusted-merge-or-park → pull main → check off + append `## Progress`). Smart resume = glob `*.md` for not-done + reconcile-vs-ground-truth. Use when implementing or invoking `/automate`.
 allowed-tools: [Read, Write, Edit, Bash, Task, AskUserQuestion]
-version: "1.1.0"
-lastUpdated: "2026-06-22"
+version: "1.2.0"
+lastUpdated: "2026-07-06"
 ---
 
 # Automate Loop Skill

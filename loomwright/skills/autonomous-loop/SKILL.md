@@ -2,8 +2,8 @@
 name: autonomous-loop
 description: Outer-loop protocol for `/autonomous` — v14 continuous (multi-iteration default with stacked branches), single-iteration opt-in, EVALUATE PR-base verification + Signal-1 stacked rubric gate + no-rubric gate, --notify gate webhooks via send-webhook.sh, CI / non-TTY fail-closed protection, and the AUTONOMOUS_RUN summary format. Use when implementing or invoking the `/autonomous` command.
 allowed-tools: [Read, Write, Bash, Grep, Task, AskUserQuestion]
-version: "1.3.1"
-lastUpdated: "2026-06-14"
+version: "1.4.0"
+lastUpdated: "2026-07-06"
 ---
 
 # Autonomous Loop Skill

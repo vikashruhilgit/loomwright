@@ -20,8 +20,8 @@ Comprehensive index of all skills available in the Loomwright plugin.
 | Beads Workflow | `beads-workflow/` | Orchestrator (reference), Product Owner (reference) | ~600 | 1.0.0 | 2026-03 |
 | Telemetry | `telemetry/` | — (reference, shell-script-driven) | ~600 | 1.0.0 | 2026-04 |
 | Memory Tool | `memory-tool/` | — (reference) | ~500 | 1.0.0 | 2026-05-10 |
-| Autonomous Loop | `autonomous-loop/` | `/autonomous` (slash command, reference) | ~2,800 [^al-tokens] | 1.3.1 | 2026-06-14 |
-| Automate Loop | `automate-loop/` | `/automate` (slash command, reference) | ~3,200 | 1.0.0 | 2026-06-20 |
+| Autonomous Loop | `autonomous-loop/` | `/autonomous` (slash command, reference) | ~2,800 [^al-tokens] | 1.4.0 | 2026-07-06 |
+| Automate Loop | `automate-loop/` | `/automate` (slash command, reference) | ~3,200 | 1.2.0 | 2026-07-06 |
 | Review Heal | `review-heal/` | `review-pr-runner` (preload), `/review-pr` + Supervisor + `/autonomous` (reference) | ~3,000 | 1.4.0 | 2026-06-22 |
 | Self-Heal Advisory | `self-heal-advisory/` | Supervisor (on-demand Read at Phase 4.5 entry — deliberately NOT preloaded) | ~2,000 | 1.0.0 | 2026-06-10 |
 | PR Postmortem | `pr-postmortem/` | `/pr-postmortem` (slash command, reference) | ~1,400 | 1.3.0 | 2026-06-13 |
