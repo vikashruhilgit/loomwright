@@ -1,0 +1,217 @@
+#!/usr/bin/env bash
+# check-skills-index-sync.sh — structural SKILLS_INDEX.md ↔ SKILL.md version parity gate.
+#
+# WHY: per-row skill `version:` cells in SKILLS_INDEX.md are a documented
+# doc-currency-gate blind spot (see CLAUDE.md §"Adding or Modifying Agents") —
+# rows drift whenever a release touches a skill and only get fixed when a later
+# release happens to sweep them (supervisor-readiness drifted 1.1.1 vs 1.1.2;
+# automate-loop drifted the same way before v15.2.0 swept it). This gate makes
+# the parity mechanical.
+#
+# WHAT (structural only — never scans changelog prose or example blocks):
+#   1. For every loomwright/skills/*/SKILL.md carrying a `version:` frontmatter
+#      field: SKILLS_INDEX.md must have exactly ONE table row whose Directory
+#      cell (the backticked `name/` cell — NOT the display name) matches that
+#      skill dir, and that row's Version cell must equal the frontmatter value.
+#   NOTE: every index row must carry an X.Y.Z Version cell — a skill listed in
+#      the index is required to have `version:` frontmatter (fail-loud, stricter
+#      than the minimum: no placeholder cells).
+#   2. Every index row's Directory cell must reference an existing skill dir
+#      containing a SKILL.md (no ghost rows).
+#   Index follows skill — fix the index row, never a SKILL.md version/lastUpdated.
+#
+# Rows are keyed on the Directory cell so display-name phrasing ("Supervisor
+# Readiness" vs `supervisor-readiness/`) can never false-positive.
+#
+# bash-3.2-safe (no mapfile / associative arrays), no network, pure grep/awk.
+#
+# Usage:
+#   bash scripts/check-skills-index-sync.sh              # gate (exit 0 clean, 1 drift)
+#   bash scripts/check-skills-index-sync.sh --self-test  # synthetic negative/positive proof
+#
+# Env overrides (used by --self-test; also handy for fixtures):
+#   CHECK_SKILLS_DIR    — skills root (default loomwright/skills)
+#   CHECK_SKILLS_INDEX  — index file  (default $CHECK_SKILLS_DIR/SKILLS_INDEX.md)
+
+set -uo pipefail
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$repo_root"
+
+SKILLS_DIR="${CHECK_SKILLS_DIR:-loomwright/skills}"
+INDEX="${CHECK_SKILLS_INDEX:-$SKILLS_DIR/SKILLS_INDEX.md}"
+
+# --- helpers -----------------------------------------------------------------
+
+# Print the frontmatter `version:` value of a SKILL.md (empty if none).
+# Reads ONLY the first `--- ... ---` block — never body prose or changelogs.
+frontmatter_version() {
+  awk '
+    NR == 1 && !/^---[[:space:]]*$/ { exit }   # frontmatter must open on line 1
+    /^---[[:space:]]*$/ { c++; if (c == 2) exit; next }
+    c == 1 && /^version:/ {
+      sub(/^version:[[:space:]]*/, "")
+      gsub(/["'"'"'[:space:]]/, "")
+      print
+      exit
+    }
+  ' "$1"
+}
+
+# Emit "<dir>\t<version-cell>" for every data row of the index table.
+# A data row is identified structurally: its 2nd column is a backticked
+# directory path (`name/`). Header ("Directory") and separator ("-----")
+# rows can never match; prose outside tables is never scanned.
+index_pairs() {
+  awk -F'|' '
+    /^\|/ {
+      dir = $3
+      gsub(/^[ \t]+|[ \t]+$/, "", dir)
+      if (dir !~ /^`[A-Za-z0-9._-]+\/`$/) next
+      gsub(/[`\/]/, "", dir)
+      ver = $6
+      gsub(/[ \t]/, "", ver)
+      print dir "\t" ver
+    }
+  ' "$1"
+}
+
+# --- the check ---------------------------------------------------------------
+
+run_check() {
+  local fail=0 pairs d skill f v rows n row_ver
+  [ -f "$INDEX" ] || { echo "check-skills-index-sync: index not found: $INDEX" >&2; return 1; }
+  [ -d "$SKILLS_DIR" ] || { echo "check-skills-index-sync: skills dir not found: $SKILLS_DIR" >&2; return 1; }
+
+  pairs="$(mktemp)"
+  index_pairs "$INDEX" > "$pairs"
+
+  if [ ! -s "$pairs" ]; then
+    echo "check-skills-index-sync: no data rows parsed from $INDEX — table format changed?" >&2
+    rm -f "$pairs"
+    return 1
+  fi
+
+  # 1) Every versioned skill has exactly one index row with a matching version cell.
+  for d in "$SKILLS_DIR"/*/; do
+    [ -d "$d" ] || continue
+    skill="$(basename "$d")"
+    f="$d/SKILL.md"
+    [ -f "$f" ] || continue
+    v="$(frontmatter_version "$f")"
+    [ -n "$v" ] || continue   # no version: frontmatter — out of scope
+    rows="$(awk -F'\t' -v s="$skill" '$1 == s { print $2 }' "$pairs")"
+    if [ -z "$rows" ]; then
+      echo "  DRIFT [missing-row] $skill — SKILL.md frontmatter is $v but SKILLS_INDEX.md has no \`$skill/\` row"
+      fail=1
+      continue
+    fi
+    n="$(printf '%s\n' "$rows" | grep -c .)"
+    if [ "$n" -gt 1 ]; then
+      echo "  DRIFT [duplicate-row] $skill — $n index rows for \`$skill/\` (expected exactly 1)"
+      fail=1
+      continue
+    fi
+    if [ "$rows" != "$v" ]; then
+      echo "  DRIFT [version] $skill — index row says ${rows:-<empty>} but SKILL.md frontmatter is $v"
+      fail=1
+    fi
+  done
+
+  # 2) Every index row references an existing skill dir with a SKILL.md.
+  while IFS="$(printf '\t')" read -r skill row_ver; do
+    [ -n "$skill" ] || continue
+    if [ ! -d "$SKILLS_DIR/$skill" ]; then
+      echo "  DRIFT [ghost-row] \`$skill/\` — index row references a nonexistent skill dir"
+      fail=1
+    elif [ ! -f "$SKILLS_DIR/$skill/SKILL.md" ]; then
+      echo "  DRIFT [ghost-row] \`$skill/\` — skill dir exists but has no SKILL.md"
+      fail=1
+    fi
+    if ! printf '%s' "$row_ver" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+      echo "  DRIFT [malformed-cell] \`$skill/\` — version cell \"${row_ver:-<empty>}\" is not X.Y.Z"
+      fail=1
+    fi
+  done < "$pairs"
+
+  rm -f "$pairs"
+
+  if [ "$fail" -ne 0 ]; then
+    echo "✗ skills-index drift detected — fix the SKILLS_INDEX.md rows above (index follows skill; never edit a SKILL.md version to make the index fit)."
+    return 1
+  fi
+  echo "✓ skills-index-sync: every versioned SKILL.md has exactly one matching index row; no ghost rows."
+  return 0
+}
+
+# --- self-test (synthetic fixture — independent of live repo state) ----------
+
+self_test() {
+  local tmp rc pass=0 fail=0
+  tmp="$(mktemp -d)"
+  # Expand $tmp NOW — a deferred '$tmp' would be unbound at EXIT (local var, set -u).
+  trap "rm -rf '$tmp'" EXIT
+
+  mkdir -p "$tmp/skills/alpha" "$tmp/skills/beta"
+  printf -- '---\nname: alpha\nversion: 1.0.0\n---\n# Alpha\n' > "$tmp/skills/alpha/SKILL.md"
+  printf -- '---\nname: beta\nversion: "2.1.0"\n---\n# Beta\n' > "$tmp/skills/beta/SKILL.md"
+
+  cat > "$tmp/index.md" <<'EOF'
+# Fixture Index
+
+| Skill Name | Directory | Agent Consumers | Token Est. | Version | Last Updated |
+|------------|-----------|-----------------|------------|---------|--------------|
+| Alpha | `alpha/` | — | ~100 | 1.0.0 | 2026-01 |
+| Beta | `beta/` | — | ~100 | 2.1.0 | 2026-01 |
+EOF
+
+  assert() { # <label> <expected_rc> <actual_rc> <output> [<must-contain>]
+    local label="$1" want="$2" got="$3" out="$4" needle="${5:-}"
+    if [ "$got" -ne "$want" ]; then
+      echo "SELF-TEST FAIL [$label] expected exit $want, got $got"; echo "$out" | sed 's/^/    /'
+      fail=$((fail + 1)); return
+    fi
+    if [ -n "$needle" ] && ! printf '%s' "$out" | grep -qF "$needle"; then
+      echo "SELF-TEST FAIL [$label] output missing \"$needle\""; echo "$out" | sed 's/^/    /'
+      fail=$((fail + 1)); return
+    fi
+    echo "SELF-TEST PASS [$label]"
+    pass=$((pass + 1))
+  }
+
+  local out
+
+  # (a) aligned fixture → exit 0
+  out="$(CHECK_SKILLS_DIR="$tmp/skills" CHECK_SKILLS_INDEX="$tmp/index.md" bash "$0" 2>&1)"; rc=$?
+  assert "aligned-passes" 0 "$rc" "$out"
+
+  # (b) corrupted version cell → exit 1, names the skill (the negative-test proof)
+  sed 's/| 2\.1\.0 |/| 9.9.9 |/' "$tmp/index.md" > "$tmp/index-bad-version.md"
+  out="$(CHECK_SKILLS_DIR="$tmp/skills" CHECK_SKILLS_INDEX="$tmp/index-bad-version.md" bash "$0" 2>&1)"; rc=$?
+  assert "wrong-version-fails" 1 "$rc" "$out" "DRIFT [version] beta"
+
+  # (c) ghost row (nonexistent dir) → exit 1
+  { cat "$tmp/index.md"; printf '| Gamma | `gamma/` | — | ~100 | 1.0.0 | 2026-01 |\n'; } > "$tmp/index-ghost.md"
+  out="$(CHECK_SKILLS_DIR="$tmp/skills" CHECK_SKILLS_INDEX="$tmp/index-ghost.md" bash "$0" 2>&1)"; rc=$?
+  assert "ghost-row-fails" 1 "$rc" "$out" "DRIFT [ghost-row] \`gamma/\`"
+
+  # (d) missing row for a versioned skill → exit 1
+  grep -v '`beta/`' "$tmp/index.md" > "$tmp/index-missing.md"
+  out="$(CHECK_SKILLS_DIR="$tmp/skills" CHECK_SKILLS_INDEX="$tmp/index-missing.md" bash "$0" 2>&1)"; rc=$?
+  assert "missing-row-fails" 1 "$rc" "$out" "DRIFT [missing-row] beta"
+
+  # (e) duplicate rows for one dir → exit 1
+  { cat "$tmp/index.md"; printf '| Beta again | `beta/` | — | ~100 | 2.1.0 | 2026-01 |\n'; } > "$tmp/index-dup.md"
+  out="$(CHECK_SKILLS_DIR="$tmp/skills" CHECK_SKILLS_INDEX="$tmp/index-dup.md" bash "$0" 2>&1)"; rc=$?
+  assert "duplicate-row-fails" 1 "$rc" "$out" "DRIFT [duplicate-row] beta"
+
+  echo "self-test: $pass passed, $fail failed"
+  [ "$fail" -eq 0 ]
+}
+
+# --- entrypoint --------------------------------------------------------------
+
+case "${1:-}" in
+  --self-test) self_test ;;
+  "")          run_check ;;
+  *)           echo "usage: $0 [--self-test]" >&2; exit 2 ;;
+esac

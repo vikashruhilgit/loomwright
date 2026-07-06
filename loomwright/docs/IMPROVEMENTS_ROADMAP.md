@@ -1,5 +1,17 @@
 # Improvements Roadmap
 
+> **⚠️ Planning snapshot — pre-hooks.json-centralization (~v9 era). NOT current-state documentation.**
+>
+> **Re-verified 2026-07-06 against the live repo**, superseding the 2026-07-05 review pass; each of the 18 items below carries an inline re-verified `[VERDICT: …]` line. Summary:
+>
+> - **RESOLVED (10):** items 1, 2, 4, 7, 8, 13, 14, 15, 16, 17
+> - **DEFERRED (7):** items 3, 5, 9, 10, 11, 12, 18
+> - **OPEN (1):** item 6 — `WorktreeCreate` hook shipped, but a `WorktreeRemove` hook is still absent from `loomwright/hooks/hooks.json`
+>
+> (The 2026-07-05 review pass spoke of "19 items"; this document has 18 numbered items — the count discrepancy is noted, not a missing item. Items are globally numbered `### 1.`–`### 18.` under the `## P0`–`## P3` tier sections; there are no literal `P#-#` IDs.)
+>
+> **Current-state authority:** `CLAUDE.md` + `loomwright/hooks/hooks.json` + `loomwright/.claude-plugin/plugin.json`. When this document disagrees with those, they win — do not re-litigate RESOLVED/DEFERRED items from this snapshot's framing.
+
 Detailed analysis of every proposed improvement, prioritized by criticality, with performance impact assessment and risk evaluation.
 
 ---
@@ -7,6 +19,8 @@ Detailed analysis of every proposed improvement, prioritized by criticality, wit
 ## P0 — Critical (Plugin May Be Broken Today)
 
 ### 1. Plugin Security Restriction — Per-Agent Hooks/PermissionMode Silently Ignored
+
+**[VERDICT: RESOLVED — all validation hooks are centralized in `loomwright/hooks/hooks.json` (21 entries) since v10.0.0; the frontmatter-ignore gotcha is documented in CLAUDE.md §"Adding or Modifying Agents" ("Hook gotcha") and AGENT_GUIDELINES.md §hooks, with frontmatter copies kept only for `~/.claude/agents/` compatibility]**
 
 **What's happening now:**
 `code-reviewer.md` has `permissionMode: plan` (line 7) and a `Stop` hook (line 17-21). `worker.md` has a `SubagentStop` hook (line 9-13). `execute-manager.md` has a `SubagentStop` hook (line 12-16). These are all in agent frontmatter.
@@ -33,6 +47,8 @@ Only `hooks.json` hooks still work because they're cross-cutting, not per-agent 
 ---
 
 ### 2. Add Supervisor Validation Hook
+
+**[VERDICT: RESOLVED — `loomwright/hooks/hooks.json` carries a `SubagentStop` validator for `loomwright:supervisor-runner` (prompt validation of the `SUPERVISOR_RESULT` block, plus telemetry + webhook `type: command` entries on the same matcher)]**
 
 **What's happening now:**
 The Supervisor (`supervisor.md`) has NO validation hook — not in frontmatter, not in `hooks.json`. It's the most critical agent (7-phase orchestrator, creates PRs, manages branches, manages worktrees) and it can finish with:
@@ -62,6 +78,8 @@ The Supervisor can silently claim "done" without actually completing. Every othe
 ## P1 — Leverage New Claude Code Features
 
 ### 3. Upgrade Hooks from `type: "prompt"` to `type: "agent"`
+
+**[VERDICT: DEFERRED — no `type: "agent"` hooks exist in `loomwright/hooks/hooks.json`; the plugin instead pairs `type: "prompt"` (haiku, 30s) validators with zero-latency `type: "command"` scripts, which took the filesystem/git-verification niche this item proposed agent hooks for]**
 
 **What's happening now:**
 All hooks use `type: "prompt"` — a single-turn haiku evaluation that reads `$ARGUMENTS` (the agent's output text) and returns ok/not-ok. Example from `hooks.json` line 9-11: the Code Reviewer hook reads the output text and checks if `CODE_REVIEW_RESULT` has the right fields.
@@ -93,6 +111,8 @@ Spawns a subagent with tool access (Read, Bash, Glob, etc.). It can actually ver
 
 ### 4. Add `effort` to Agent Frontmatter
 
+**[VERDICT: RESOLVED — `agents/red-team-reviewer.md:7` carries `effort: xhigh` (exceeding the proposed `high`), and effort tiering is now the canonical cost/quality knob across 11 of 14 agents (`loomwright/docs/ARCHITECTURE_CONTRACTS.md` §"Effort Tier", v12.0.0). Context-Keeper carries no `effort` field but runs `model: haiku` + `maxTurns: 3` (`agents/context-keeper.md`), which delivers this item's cheap-fast intent]**
+
 **What's happening now:**
 Only Code Reviewer has `effort: high` (line 6). All other agents use the default effort level (medium).
 
@@ -123,6 +143,8 @@ Controls how deeply the model thinks before responding. Options: `low`, `medium`
 
 ### 5. Add `initialPrompt` to Supervisor/Launch Pad
 
+**[VERDICT: DEFERRED — skipped by design, exactly per this item's own "SKIP THIS" recommendation; no `initialPrompt` field exists in any `loomwright/agents/*.md` frontmatter (grep-clean 2026-07-06)]**
+
 **What's happening now:**
 When Supervisor spawns, its first turn is spent reading the context, understanding the task, and deciding what to do. This "cold start" turn consumes 1 of its tool-call budget reading CLAUDE.md, `.supervisor/state.md`, `git log`, etc.
 
@@ -149,6 +171,8 @@ initialPrompt: "Read .supervisor/state.md and git log --oneline -5 to determine 
 
 ### 6. Add WorktreeCreate/WorktreeRemove Hooks
 
+**[VERDICT: OPEN (half-shipped) — the `WorktreeCreate` `type: "command"` hook exists in `loomwright/hooks/hooks.json` (logs to `.supervisor/logs/worktrees.log`), but a `WorktreeRemove` hook is still absent from `loomwright/hooks/hooks.json`, so cleanup verification remains manual (CLAUDE.md §"Orphaned worktrees after crash?")]**
+
 **What's happening now:**
 The Supervisor creates worktrees for parallel workers, but there's no hook tracking when worktrees are created or cleaned up. If a crash happens between creation and cleanup, orphaned worktrees accumulate. CLAUDE.md already documents this as a "Common Pitfall" with manual `git worktree remove` as the fix.
 
@@ -168,6 +192,8 @@ The Supervisor creates worktrees for parallel workers, but there's no hook track
 ---
 
 ### 7. Add StopFailure Hook for API Error Recovery
+
+**[VERDICT: RESOLVED — a `StopFailure` `type: "command"` hook in `loomwright/hooks/hooks.json` appends to `.supervisor/logs/failures.log`, exactly the shape this item recommended]**
 
 **What's happening now:**
 If an agent's turn fails due to an API error (rate limit, timeout, server error), the agent just stops. No logging, no state save, no recovery. For the Supervisor in the middle of a 7-phase workflow, this means lost progress.
@@ -196,6 +222,8 @@ Fires when an agent turn ends due to an API error. You can:
 
 ### 8. Ship a `bin/` Directory with Helper Scripts
 
+**[VERDICT: RESOLVED (in substance) — the plugin ships `loomwright/scripts/` with 80+ runtime helpers (telemetry, webhook, notify, resume, memory, lessons, rules, dispatch, insights, handoff, twin/otel assets + self-tests) invoked via `${CLAUDE_PLUGIN_ROOT}/scripts/…`; realized as `scripts/` rather than a PATH-exposed `bin/`, which fulfills this item's tool-call-efficiency intent]**
+
 **What's happening now:**
 Agents use Bash tool calls to run git commands, file operations, and state management. Each bash call is a separate tool invocation consuming the agent's tool-call budget.
 
@@ -220,6 +248,8 @@ Plugin ships executables that agents can invoke as bare commands. Instead of 3 s
 
 ### 9. Add `userConfig` for Install-Time Configuration
 
+**[VERDICT: DEFERRED — no `userConfig` block exists in `loomwright/.claude-plugin/plugin.json`; guided configuration landed post-install instead, via the `/setup` status-dashboard command (`loomwright/commands/setup.md`: observability, telemetry, notifications, webhook, Beads, MySQL MCP, Twin modules)]**
+
 **What's happening now:**
 Users configure the plugin by editing CLAUDE.md, environment variables, and manually setting up `.supervisor/`. There's no standard way to set preferences like "max 2 workers" or "always use my-feature-branch naming".
 
@@ -240,6 +270,8 @@ Plugin prompts users at install time for configuration. Values stored in setting
 
 ### 10. Use `${CLAUDE_PLUGIN_DATA}` for Persistent Plugin State
 
+**[VERDICT: DEFERRED — `${CLAUDE_PLUGIN_DATA}` is unused anywhere in the plugin (this roadmap is its only repo mention, grep 2026-07-06); `.supervisor/` intentionally stays project-local, per this item's own "don't move it" recommendation]**
+
 **What's happening now:**
 Plugin state lives in `.supervisor/` inside the project directory. This gets committed to git (or gitignored), varies per project, and can be accidentally deleted.
 
@@ -255,6 +287,8 @@ Gives you a persistent directory that survives plugin updates, outside the proje
 ---
 
 ### 11. Evaluate Claude Agent SDK for Supervisor
+
+**[VERDICT: DEFERRED — no SDK rewrite; orchestration remains markdown-prompt-based (inline slash commands + Task spawns, per CLAUDE.md §"`/autonomous` orchestration shell"). `AGENT_GUIDELINES.md` §"Advisor Tool (SDK-only pattern)" documents why deeper SDK/API integration is structurally blocked for plugin subagents today]**
 
 **What's happening now:**
 The Supervisor orchestrates via prompt-based coordination — it spawns agents using the Task tool, reads their output, and decides next steps. This is all LLM-mediated: every decision costs a tool call and tokens.
@@ -278,6 +312,8 @@ Programmatic Python/TypeScript orchestration with `query()` function, hooks as c
 ---
 
 ### 12. Differentiate from `/batch`
+
+**[VERDICT: DEFERRED — the literal ask (a README `/batch` comparison) was never implemented: neither `README.md` nor `.claude-plugin/README.md` mentions `/batch` (grep 2026-07-06). Positioning evolved differently — the v15.2.1 "Which command?" decision table covers intent-routing, and the north-star direction explicitly declines vendor-parity chasing (`loomwright/docs/SPIKES/NORTH_STAR_DIRECTION.md`), superseding a feature-comparison table]**
 
 **What's happening now:**
 Claude Code now ships `/batch` — a built-in command that does parallel work in isolated git worktrees, each opening a PR. This overlaps with the Supervisor's core value proposition.
@@ -312,6 +348,8 @@ Update `README.md` to position Supervisor as "what you need when `/batch` isn't 
 
 ### 13. Add Missing Output Schemas (Launch Pad, Red Team)
 
+**[VERDICT: RESOLVED — both schemas now exist in `loomwright/docs/RESULT_SCHEMAS.md`: `RED_TEAM_RESULT` (schema_version 1, advisory audit tail) and `LAUNCH_PAD_RESULT` (schema_version 1, added v14.2.0, hook-validated by `scripts/validate-launch-pad-result.py`)]**
+
 **What's happening now:**
 `RESULT_SCHEMAS.md` defines schemas for `WORKER_RESULT`, `EXECUTE_RESULT`, `CODE_REVIEW_RESULT`, `QA_RESULT`, `QA_SESSION`, `MISSING_FUNCTIONALITY_REPORT`. But Launch Pad and Red Team Reviewer produce structured output with no formal schema.
 
@@ -322,6 +360,8 @@ Update `README.md` to position Supervisor as "what you need when `/batch` isn't 
 ---
 
 ### 14. Add QA Failure Escalation to Docs
+
+**[VERDICT: RESOLVED — `loomwright/docs/FAILURE_ESCALATION.md` now documents both "QA Executor Failure" and "QA Strategist Failure" escalation paths, and its header lists QA Strategist + QA Executor among the referencing agents]**
 
 **What's happening now:**
 `FAILURE_ESCALATION.md` covers Worker, Execute Manager, and Supervisor failure paths. QA Strategist and QA Executor have no documented escalation — if QA Executor's Playwright tests fail to install, or QA Strategist's verdict is rejected, there's no documented recovery path.
@@ -336,6 +376,8 @@ Update `README.md` to position Supervisor as "what you need when `/batch` isn't 
 
 ### 15. Fix Version References in AGENT_GUIDELINES.md
 
+**[VERDICT: RESOLVED — the stale references this item names ("Supervisor v3", "v5.x", "v7.x") no longer exist in `AGENT_GUIDELINES.md` (grep-clean 2026-07-06); the remaining version mentions there are dated historical notes, not stale current-state claims, and hook/count claims match the authoritative sources]**
+
 **What:** Lines referencing "Supervisor v3" should say "v4". Multiple places say "v5.x", "v7.x" patterns.
 
 **Performance impact:** ZERO. Documentation clarity. But stale version references confuse agents that read `AGENT_GUIDELINES.md` at startup — they might apply outdated patterns.
@@ -345,6 +387,8 @@ Update `README.md` to position Supervisor as "what you need when `/batch` isn't 
 ---
 
 ### 16. Add Supervisor `maxTurns`
+
+**[VERDICT: RESOLVED — `agents/supervisor.md:6` carries `maxTurns: 60`; the item body below already records the resolution]**
 
 **What's happening now:**
 **Resolved — `supervisor.md` frontmatter now carries `maxTurns: 60`** (historically it had none and relied solely on its internal tool-call budget). But `maxTurns` is enforced by Claude Code infrastructure — without it, the Supervisor could theoretically run indefinitely if its self-tracking fails.
@@ -358,6 +402,8 @@ Update `README.md` to position Supervisor as "what you need when `/batch` isn't 
 ---
 
 ### 17. Fix Code Reviewer Hook Naming
+
+**[VERDICT: RESOLVED — the Code Reviewer `Stop` completeness hook now lives in `loomwright/hooks/hooks.json` (alongside its `SubagentStop` validator), per this item's "keep both, move to hooks.json" recommendation; the frontmatter copy is retained only for `~/.claude/agents/` compatibility]**
 
 **What's happening now:**
 `code-reviewer.md` line 18 uses `Stop:` while Worker and Execute Manager use `SubagentStop:`. These are different hook events:
@@ -381,6 +427,8 @@ This is actually **correct and intentional** — double validation. The naming i
 ---
 
 ### 18. Consider Prisma/GraphQL/gRPC Skills
+
+**[VERDICT: DEFERRED — on-demand as this item recommended; no `prisma`/`graphql`/`grpc` skill dirs exist among the 57 skills in `loomwright/skills/` (2026-07-06), and no user demand has materialized]**
 
 **What's happening now:**
 49 skills covering NestJS, Next.js, TypeORM, Drizzle, MySQL, PostgreSQL, Redis, Docker, etc. Missing: Prisma ORM, GraphQL, gRPC.

@@ -23,6 +23,11 @@ jobs:
       - name: Check documentation currency (version/count drift gate)
         run: bash scripts/check-doc-currency.sh
 
+      - name: Check skills-index sync (SKILLS_INDEX.md version-cell parity gate)
+        run: |
+          bash scripts/check-skills-index-sync.sh --self-test
+          bash scripts/check-skills-index-sync.sh
+
       - name: Check hook-prompt contract parity (hook-rejection-trap gate)
         run: bash scripts/check-contract-parity.sh
 

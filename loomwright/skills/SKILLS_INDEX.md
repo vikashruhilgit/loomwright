@@ -8,7 +8,7 @@ Comprehensive index of all skills available in the Loomwright plugin.
 
 | Skill Name | Directory | Agent Consumers | Token Est. | Version | Last Updated |
 |------------|-----------|-----------------|------------|---------|--------------|
-| Supervisor Readiness | `supervisor-readiness/` | Launch Pad (preload), Supervisor (preload) | ~800 | 1.1.1 | 2026-06-14 |
+| Supervisor Readiness | `supervisor-readiness/` | Launch Pad (preload), Supervisor (preload) | ~800 | 1.1.2 | 2026-06-14 |
 | Workflow Management | `workflow-management/` | Supervisor (preload) | ~1,200 | 1.0.0 | 2026-03 |
 | Async Orchestration | `async-orchestration/` | Supervisor (preload) | ~1,000 | 1.0.0 | 2026-05-09 |
 | State Management | `state-management/` | Supervisor (preload) | ~900 | 1.1.0 | 2026-05 |
@@ -107,4 +107,4 @@ Comprehensive index of all skills available in the Loomwright plugin.
 
 **Total: 57 skills**
 
-_Last updated: 2026-06-20_
+_Last updated: 2026-07-06_
