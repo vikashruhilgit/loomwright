@@ -6,6 +6,8 @@ A Claude Code plugin for AI agents to collaborate on software projects. 14 speci
 
 > **Install the plugin and run slash commands instead of manually managing agents.**
 >
+> **NEW in v15.2.3 — SKILLS_INDEX version-cell CI parity gate + roadmap de-staling (doc-hygiene):** New repo-root validator `scripts/check-skills-index-sync.sh` mechanically enforces `SKILLS_INDEX.md` ↔ SKILL.md frontmatter version parity (rows keyed on the backticked dir-path cell; ghost/duplicate/malformed rows also fail) — a documented doc-currency blind spot, now a hard CI gate with a synthetic-fixture `--self-test` (every DRIFT branch proven to fail via synthetic fixtures). Fixes the one live drifted row (supervisor-readiness 1.1.1 → 1.1.2). `docs/IMPROVEMENTS_ROADMAP.md` gains a dated planning-snapshot banner + 18 re-verified inline `[VERDICT: …]` lines (10 RESOLVED / 7 DEFERRED / 1 OPEN — only the `WorktreeRemove` hook remains open). Both Quick Starts add a one-line `/setup` pointer. Counts UNCHANGED: 14 agents / 21 commands / 57 skills / 21 hooks.
+>
 > **NEW in v15.2.2 — direct deterministic self-test for the telemetry core (tests-only):** New `loomwright/scripts/test-send-telemetry-core.sh` unit-tests `send-telemetry-core.sh`'s privacy/consent/dedup pipeline directly (83 assertions across a 7-group matrix): all 9 `PRIVACY_PATTERNS` labels pinned to exit 2 + their exact `PRIVACY_BLOCKED` stderr line, the v11.2.0 privacy-before-consent ordering guarantee, the malformed-consent fail-closed path, nullable/missing-key discipline, seeded dedup determinism, and `[REDACTED:<label>]` markers exercised via the extracted production stage-1 code. `gh` is proven never-invoked (fail-loud PATH shim + dry-run-only would-send paths); everything runs in a mktemp sandbox. Zero behavior change. Counts UNCHANGED: 14 agents / 21 commands / 57 skills / 21 hooks.
 >
 > **NEW in v15.2.1 — "Which command?" decision table + flag-table completeness audit (docs-only):** README, the plugin README, and `/agent-help` now open their Commands sections with a consistent "Which command?" decision table (per-row notes on what each command does NOT do — none merge except `/automate --auto-merge`, opt-in). The Parameters tables in `commands/supervisor.md` / `autonomous.md` / `automate.md` were audited for completeness (defaults + "only meaningful when" preconditions; the forwarded-flag set in `autonomous.md` now mirrors the autonomous-loop skill exactly). No behavior change. Counts UNCHANGED: 14 agents / 21 commands / 57 skills / 21 hooks.
@@ -152,6 +154,8 @@ Then call `switch_database(host="prod.example.com")` at runtime to switch betwee
 /autonomous "what you want to accomplish" --notify                       # opt-in gate webhooks (LOOMWRIGHT_WEBHOOK_URL)
 /autonomous "what you want to accomplish" --non-interactive-fallback     # CI / unattended: per-gate fail-closed policy
 ```
+
+Optional next: run `/setup` for a status dashboard and guided configuration of optional capabilities (observability, telemetry, notifications, Twin bootstrap).
 
 ### Which command?
 

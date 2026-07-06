@@ -121,6 +121,8 @@ your-project/
 /orchestrator goal: "add dark mode to UI"
 ```
 
+Optional next: run `/setup` for a status dashboard and guided configuration of optional capabilities (observability, telemetry, notifications, Twin bootstrap).
+
 ---
 
 ## Commands
@@ -425,7 +427,7 @@ loomwright/                            # Marketplace wrapper repo
 │   └── README.md                            # This file
 └── loomwright/                 # The nested plugin
     ├── .claude-plugin/
-    │   └── plugin.json                      # Plugin manifest (v15.2.2)
+    │   └── plugin.json                      # Plugin manifest (v15.2.3)
     ├── .mcp.json                            # Bundled MCP servers
     ├── agents/                              # Agent prompts (14 roles)
     │   ├── launch-pad.md, supervisor.md, execute-manager.md, context-keeper.md
