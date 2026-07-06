@@ -222,7 +222,7 @@ Fires when an agent turn ends due to an API error. You can:
 
 ### 8. Ship a `bin/` Directory with Helper Scripts
 
-**[VERDICT: RESOLVED (in substance) — the plugin ships `loomwright/scripts/` with 80+ runtime helpers (telemetry, webhook, notify, resume, memory, lessons, rules, dispatch, insights, handoff, twin/otel assets + self-tests) invoked via `${CLAUDE_PLUGIN_ROOT}/scripts/…`; realized as `scripts/` rather than a PATH-exposed `bin/`, which fulfills this item's tool-call-efficiency intent]**
+**[VERDICT: RESOLVED (in substance) — the plugin ships `loomwright/scripts/` with 83 runtime helpers (telemetry, webhook, notify, resume, memory, lessons, rules, dispatch, insights, handoff, twin/otel assets + self-tests) invoked via `${CLAUDE_PLUGIN_ROOT}/scripts/…`; realized as `scripts/` rather than a PATH-exposed `bin/`, which fulfills this item's tool-call-efficiency intent]**
 
 **What's happening now:**
 Agents use Bash tool calls to run git commands, file operations, and state management. Each bash call is a separate tool invocation consuming the agent's tool-call budget.
