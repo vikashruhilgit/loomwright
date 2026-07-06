@@ -118,6 +118,8 @@ exit
 
 If `--allow-multi-iteration` is the only mode-flag passed: log one-line warning `"DEPRECATED: --allow-multi-iteration is the default in v14.0.0; flag is a no-op."` to stderr, proceed in multi-iter mode.
 
+**`--cheap` cost-profile flag (v15.2.0+):** INIT parses `--cheap` and carries it as run state for the whole invocation (e.g., `cheap=true` in memory; it is NOT persisted to state.json). The flag changes nothing at INIT or PLAN — its only effect is that EXECUTE step 1 appends `--cheap` to **every** inlined `/supervisor job:` invocation (see EXECUTE step 1 §"Auto-forwarded flags"). Valid in both single- and multi-iteration mode, stacked or non-stacked; it has no flag-conflict rules and is NOT gated on `--non-interactive-fallback`. Supervisor's existing cost-profile engine is reused unchanged — for semantics and the Haiku-session caveat see `docs/ARCHITECTURE_CONTRACTS.md` §"Cost Profiles" (single source of truth; not restated here).
+
 ### INIT step 1+ — requirement intake
 
 1. Read the requirement — slash command argument string OR `--requirement <path>`.
@@ -280,6 +282,24 @@ has_rubric() {   # exit 0 = real (non-empty) rubric present; exit 1 = absent/emp
    **`--no-stacked-branches` mode and iter 1:** do NOT pass `--base-branch`. Supervisor's Phase 0 defaults to `main` when the flag is absent, which is the correct behavior for both cases. Iter 1 of every autonomous run is unstacked by definition (no parent iter exists).
 
    **`--non-interactive-fallback` mode:** also pass `--non-interactive` to Supervisor so its Phase 4 gh-failure path and any AskUserQuestion gates fail closed consistently with the loop's own non-interactive policy. Without this, the loop is fail-closed at gates it owns but Supervisor's Phase 4 retry-loop AskUserQuestion is still interactive.
+
+   **`--cheap` cost-profile forward (v15.2.0+):** when `--cheap` was passed to `/autonomous` at INIT, append `--cheap` to the inlined `/supervisor job:` invocation — **unconditionally-when-present, in every iteration** (single- and multi-iteration; stacked and non-stacked alike):
+
+   ```text
+   /supervisor job: <current_brief_path> [--base-branch "$expected_base"] [--non-interactive] --cheap
+   ```
+
+   This forward is NOT gated on `--non-interactive-fallback` (that gate governs only the `--non-interactive` forward) and never varies per iteration — if the flag was present at INIT, every iteration's `/supervisor` invocation carries it exactly once. Supervisor's cost-profile engine (INIT parse → `cost_profile=cheap` → Sonnet overrides on execution-shaped spawns) is reused unchanged; for the profile table and the Haiku-session caveat see `docs/ARCHITECTURE_CONTRACTS.md` §"Cost Profiles" (single source — not restated here).
+
+   **Auto-forwarded flags (the complete forward set):** the loop forwards exactly three flags to the inlined `/supervisor` invocation, each under its own condition:
+
+   | Flag | Forwarded when |
+   |---|---|
+   | `--base-branch "$expected_base"` | stacked multi-iter run AND `iteration > 1` (`--no-stacked-branches` NOT active) |
+   | `--non-interactive` | `--non-interactive-fallback` was passed at INIT |
+   | `--cheap` | `--cheap` was passed to `/autonomous` at INIT (unconditional-when-present, every iteration) |
+
+   No other flag is forwarded — `--skip-preflight-sync` in particular is NOT passed through (see §"Phase 1.5 pre-flight gate" below). (This subsection supersedes the earlier "forwards ONLY `--non-interactive`" phrasing — the loop has always also conditionally forwarded `--base-branch`, and v15.2.0 adds `--cheap`.)
 
 2. Supervisor runs its existing 7-phase workflow inline (orchestrator → execute-manager → worker → code-reviewer → Phase 4.5 self-heal → Rubric Grader → **Phase 4.5 step 5.5 until-mergeable review-drain dispatch**). Adjudication 4-option AskUserQuestion (when outputs_gap triggers it) bubbles to the user in-session per existing FAILURE_ESCALATION; the autonomous loop never auto-picks.
 
@@ -712,7 +732,7 @@ Not a re-planning signal — this is the catch-all branch when neither Signal 1 
 Supervisor's Phase 1.5 PRE-FLIGHT SYNC gate runs *after* task acquisition (Phase 1 ACQUIRE) and *before* Phase 2 PLAN spawns the Orchestrator or any worker. It fetches remote state, inspects recent `origin/$BASE_BRANCH` commits and open PRs, and classifies the requested work as `CLEAR | OVERLAP | SUPERSEDED`. The autonomous loop interacts with that gate only through `SUPERVISOR_RESULT`:
 
 - **CI fail-closed behavior.** When the inlined `/supervisor` invocation runs under `--non-interactive` (auto-forwarded by the loop's `--non-interactive-fallback` policy — see EXECUTE step 1, "Auto-forwarded flags") or a non-TTY session, an `OVERLAP` or `SUPERSEDED` pre-flight classification cannot be escalated interactively. Supervisor therefore fails closed: it aborts with `SUPERVISOR_RESULT.status: failed` and `error`/`status_reason` = `preflight_overlap_detected`, rather than silently spending tokens on decomposition and execution. The loop maps that outcome to `terminate` (see the Default-termination table row above) and surfaces it as `AUTONOMOUS_RUN.status_reason: "preflight_overlap_detected"`. This is a terminal outcome — the loop does **not** re-iterate, because the overlap is a precondition violation the user must resolve (revise scope, or re-run with Supervisor's `--skip-preflight-sync` escape hatch), not a quality signal the next iteration could improve on.
-  - **Flag-forwarding note:** the loop forwards ONLY `--non-interactive` to the inlined `/supervisor` (see "Auto-forwarded flags" above); it does **not** forward `--skip-preflight-sync` (same as `--cheap` — unknown flags are not passed through). The Phase 1.5 gate therefore runs in **every** autonomous iteration. To deliberately skip it, run `/supervisor --skip-preflight-sync` manually for a one-off requirement.
+  - **Flag-forwarding note:** the loop's complete forward set is `--base-branch` (stacked multi-iter, iter > 1), `--non-interactive` (under `--non-interactive-fallback`), and `--cheap` (when passed at INIT — forwarded, v15.2.0+); see EXECUTE step 1 §"Auto-forwarded flags". It does **not** forward `--skip-preflight-sync`. The Phase 1.5 gate therefore runs in **every** autonomous iteration. To deliberately skip it, run `/supervisor --skip-preflight-sync` manually for a one-off requirement.
 
 - **Complements — does NOT double-fire with — EVALUATE PR-base verification + stacked `--base-branch` passthrough.** The Phase 1.5 pre-flight gate and the loop's existing EVALUATE PR-base verification (see "EVALUATE PR-base verification") cover **different failure modes at different points in the lifecycle** and never overlap:
   - The **pre-flight gate** verifies *work overlap before* decomposition/execution — it inspects whether the requested *work* intersects recent commits / open PRs on `$BASE_BRANCH` (same-file overlap or an already-merged equivalent), and fires *between Phase 1 and Phase 2*, before any worker is spawned.
@@ -803,7 +823,7 @@ Same fields as summary.md, structured as JSON. v1 writes it for two purposes: (a
 ## Cross-References
 
 - `${CLAUDE_PLUGIN_ROOT}/commands/launch-pad.md` — inline workflow Step 0 loads at runtime
-- `${CLAUDE_PLUGIN_ROOT}/commands/supervisor.md` — inline workflow Step 0 loads at runtime; v14 `--base-branch` + `--non-interactive` flags surface here
+- `${CLAUDE_PLUGIN_ROOT}/commands/supervisor.md` — inline workflow Step 0 loads at runtime; v14 `--base-branch` + `--non-interactive` flags and the v15.2 `--cheap` cost-profile forward surface here
 - `${CLAUDE_PLUGIN_ROOT}/skills/autonomous-loop/SKILL.md` — this skill; Step 0 loads at runtime
 - `${CLAUDE_PLUGIN_ROOT}/skills/review-heal/SKILL.md` — authority for the chained EVALUATE review-heal step (entry sense (b): Task-spawned step with fresh isolated context, NOT a nested `claude` process; emits `REVIEW_HEAL_RESULT`)
 - `${CLAUDE_PLUGIN_ROOT}/scripts/send-webhook.sh` — `--event-type gate` path used by every gate-firing site when `--notify` is set
