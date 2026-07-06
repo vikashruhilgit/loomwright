@@ -6,6 +6,8 @@ A Claude Code plugin for AI agents to collaborate on software projects. 14 speci
 
 > **Install the plugin and run slash commands instead of manually managing agents.**
 >
+> **NEW in v15.2.1 — "Which command?" decision table + flag-table completeness audit (docs-only):** README, the plugin README, and `/agent-help` now open their Commands sections with a consistent "Which command?" decision table (per-row notes on what each command does NOT do — none merge except `/automate --auto-merge`, opt-in). The Parameters tables in `commands/supervisor.md` / `autonomous.md` / `automate.md` were audited for completeness (defaults + "only meaningful when" preconditions; the forwarded-flag set in `autonomous.md` now mirrors the autonomous-loop skill exactly). No behavior change. Counts UNCHANGED: 14 agents / 21 commands / 57 skills / 21 hooks.
+>
 > **NEW in v15.2.0 — `--cheap` cost profile forwarded through `/automate → /autonomous → /supervisor` (additive):** `--cheap` is now a real, forwarded flag on `/autonomous` and `/automate` — the Sonnet cost profile propagates through the full nesting chain to the Supervisor's existing cost-profile engine (reused unchanged). Strictly opt-in; no-flag behavior is byte-for-byte unchanged. Counts UNCHANGED: 14 agents / 21 commands / 57 skills / 21 hooks; no `schema_version` bump.
 >
 > **NEW in v15.1.0 — advisory house-rules ENFORCEMENT wired at 3 seams + `/rules add`/`check` mechanized (slice #3b-ii, additive):** Completes the `.agent/rules/` House Rules slice. The fail-safe reader `read-rules.sh` is now consumed as ADVISORY, never-gating context at three seams — the worker DO-side (rules injected into worker prompts), the Phase 4.5 self-heal REVIEW lens (a HOUSE-RULES ADVISORY line threaded into the `code-reviewer` prompt), and a SessionStart nudge folded into `session-resume.sh` (hook-neutral) — mirroring the `prior_churn` advisory pattern, never changing a `heal_decision` or gating a PR. `/rules add` is mechanized into the sole-writer `add-rule.sh` (path-containment + traversal rejection, proven by `test-add-rule.sh`); `/rules check` is mechanized into `rules-check.sh` with a default-off `--no-cmd` unattended trust valve (which wins over `--confirm`); the reader still never executes a `check`. Counts UNCHANGED: 14 agents / 21 commands / 57 skills / 21 hooks; no `schema_version` bump. Additive on top of v15.0.0.
@@ -148,6 +150,16 @@ Then call `switch_database(host="prod.example.com")` at runtime to switch betwee
 /autonomous "what you want to accomplish" --notify                       # opt-in gate webhooks (LOOMWRIGHT_WEBHOOK_URL)
 /autonomous "what you want to accomplish" --non-interactive-fallback     # CI / unattended: per-gate fail-closed policy
 ```
+
+### Which command?
+
+| I want to… | Run | What it does NOT do |
+|---|---|---|
+| Start a new task/goal | `/launch-pad goal: "..."` then `/supervisor job: <brief>` (or `/autonomous` for the chained loop) | Never merges — the PR is left open for a human |
+| Multi-iteration on ONE goal, with stacked PRs | `/autonomous "<requirement>"` | Never merges — stacked PRs are merged bottom-up by a human |
+| Work through a queue of independent goals (folder / backlog / prompt) | `/automate ...` | Default mode never merges; only the opt-in `--auto-merge` gate (default OFF) can merge |
+| Review-and-heal an existing PR | `/review-pr <pr-url>` | Never merges — pushes fixes, leaves the PR open |
+| Review-only of my diff, no fixes | `/code-reviewer` | Read-only — no fixes, no commits, never merges |
 
 ---
 

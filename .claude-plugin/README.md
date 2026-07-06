@@ -125,6 +125,18 @@ your-project/
 
 ## Commands
 
+### Which command?
+
+| I want to… | Run | What it does NOT do |
+|---|---|---|
+| Start a new task/goal | `/launch-pad goal: "..."` then `/supervisor job: <brief>` (or `/autonomous` for the chained loop) | Never merges — the PR is left open for a human |
+| Multi-iteration on ONE goal, with stacked PRs | `/autonomous "<requirement>"` | Never merges — stacked PRs are merged bottom-up by a human |
+| Work through a queue of independent goals (folder / backlog / prompt) | `/automate ...` | Default mode never merges; only the opt-in `--auto-merge` gate (default OFF) can merge |
+| Review-and-heal an existing PR | `/review-pr <pr-url>` | Never merges — pushes fixes, leaves the PR open |
+| Review-only of my diff, no fixes | `/code-reviewer` | Read-only — no fixes, no commits, never merges |
+
+---
+
 ### /launch-pad goal: "\<goal\>"
 
 Prepare a goal for autonomous Supervisor execution. Analyzes codebase, estimates file impact, validates environment.
@@ -413,7 +425,7 @@ loomwright/                            # Marketplace wrapper repo
 │   └── README.md                            # This file
 └── loomwright/                 # The nested plugin
     ├── .claude-plugin/
-    │   └── plugin.json                      # Plugin manifest (v15.2.0)
+    │   └── plugin.json                      # Plugin manifest (v15.2.1)
     ├── .mcp.json                            # Bundled MCP servers
     ├── agents/                              # Agent prompts (14 roles)
     │   ├── launch-pad.md, supervisor.md, execute-manager.md, context-keeper.md
