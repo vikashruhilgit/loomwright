@@ -22,6 +22,16 @@ Shows all available agent commands and quick usage examples.
 
 The Loomwright plugin provides **14 agent roles** (9 user-facing + 5 internal) for your development workflow:
 
+**Which command?** (condensed — full table in `README.md` / `.claude-plugin/README.md`)
+
+| I want to… | Run | Does NOT do |
+|---|---|---|
+| New task/goal | `/launch-pad` then `/supervisor` (or `/autonomous`) | Never merges |
+| Multi-iteration on ONE goal, stacked PRs | `/autonomous` | Never merges (stack merges bottom-up, by a human) |
+| Queue of independent goals (folder/backlog) | `/automate` | Never merges by default; only opt-in `--auto-merge` (default OFF) can |
+| Existing PR to review-and-heal | `/review-pr <pr-url>` | Never merges (pushes fixes, PR stays open) |
+| Review-only of my diff, no fixes | `/code-reviewer` | Read-only — no fixes, no commits, never merges |
+
 **Readiness Pipeline (2 agent roles):**
 ```
 /launch-pad  →  Env validation + codebase analysis + brief → Plan Review (gate) → .supervisor/jobs/pending/
@@ -1069,7 +1079,7 @@ bd close BD-XX
 
 loomwright/              # Nested plugin root
 ├── .claude-plugin/
-│   └── plugin.json                   # Plugin metadata (v15.2.0)
+│   └── plugin.json                   # Plugin metadata (v15.2.1)
 ├── .mcp.json                         # Bundled MCP servers
 ├── commands/                         # Slash commands (21)
 │   ├── launch-pad.md                 # Supervisor readiness
