@@ -45,7 +45,7 @@ The Supervisor agent v4 autonomously manages the complete development workflow. 
 | `task:` | No | Specific task ID to work on (e.g., `task: BD-15` or `task: user-auth`) |
 | `--max-workers N` | No | Maximum parallel worktrees (default: 2) |
 | `--sequential` | No | Force sequential execution — no worktrees or parallelism |
-| `--continue` | No | Resume workflow from last checkpoint |
+| `--continue` | No | Resume workflow from last checkpoint. Resumed state is **schema-validated fail-closed** (v15.3.0): before any loaded state is consumed, the `## Session` block must exist, `phase`/`status` must be in the closed enums, and any asserted `branch:` must `git rev-parse --verify` — per `skills/state-management/SKILL.md` §"Resume validation gate". An invalid file refuses the resume with `error: "resume_state_invalid"` (no override flag — inspect or delete `.supervisor/state.md`; see Troubleshooting). |
 | `--dry-run` | No | Preview the workflow phases without executing any actions |
 | `job:` | No | Path to Supervisor-Ready Brief from Launch Pad (e.g., `.supervisor/jobs/pending/{file}.md`) — skips Phases 0-2, moves brief through lifecycle (pending → in-progress → done/failed) |
 | `--skip-self-heal` | No | Bypass the Phase 4.5 integration review + fix loop. Phase 4.5 still transitions in state and runs the completion tail, but no review is performed. Use for emergency merges; the heal fields in SUPERVISOR_RESULT will show `heal_loop_ran: false`. **Absence of this flag makes Phase 4.5 mandatory** — reaching the completion tail without having invoked the `code-reviewer` Task is an internal workflow error (the completion-tail guard will emit `status: failed` and leave the job in `in-progress/`). |
@@ -441,6 +441,11 @@ For complex tasks, use Launch Pad to plan and Supervisor to execute:
 **"Context limit reached"**
 - Supervisor saves checkpoint automatically
 - Resume with: `/supervisor --continue task: BD-XX`
+
+**"Resume aborted with `resume_state_invalid`"**
+- `--continue` loaded a state file (scratchpad or `.supervisor/state.md`) that failed the fail-closed **resume validation gate**: missing `## Session` block, `phase`/`status` outside the closed enums (`phase`: `INIT | ACQUIRE | PLAN | EXECUTE | FINALIZE | SELF_HEAL | LOOP`; `status`: `running | paused | completed | completed_with_escalation | failed`), or an asserted `branch:` that no longer exists locally (`git rev-parse --verify` failed). Authoritative contract: `skills/state-management/SKILL.md` §"Resume validation gate"
+- Recover: inspect `.supervisor/state.md` and fix the offending field, or delete the file and start fresh without `--continue`. There is deliberately no override flag — deleting the bad state file IS the escape hatch
+- The Supervisor never silently falls back to a fresh start on an invalid file (that would mask corruption); a *missing* state file still starts fresh normally
 
 **"NEEDS_HUMAN escalation"**
 - Read the escalation message for context

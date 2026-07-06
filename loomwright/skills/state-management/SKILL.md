@@ -2,8 +2,8 @@
 name: state-management
 description: State file schema, .supervisor/ directory setup, checkpoint and resume protocols. Use when managing Supervisor session state across phases.
 allowed-tools: [Read, Write, Edit, Bash]
-version: "1.1.0"
-lastUpdated: "2026-05"
+version: "1.2.0"
+lastUpdated: "2026-07"
 ---
 
 # State Management Skill
@@ -327,6 +327,23 @@ If no scratchpad state but `.supervisor/state.md` exists:
 2. .supervisor/state.md (persistent, cross-session)
 3. No state found → start fresh (Phase 0)
 ```
+
+### Resume validation gate
+
+**The authoritative validation contract for `/supervisor --continue` (v15.3.0).** The Supervisor runs this gate at the earliest consumption point (Phase 0 INIT step 2), BEFORE any loaded state is consumed — regardless of whether the state came from the scratchpad or `.supervisor/state.md`. Every result block in the system is hook-validated; this gate closes the equivalent hole for resume-loaded local state.
+
+1. **`## Session` block must exist** in the loaded file.
+2. **`phase` must be in the closed set** `INIT | ACQUIRE | PLAN | EXECUTE | FINALIZE | SELF_HEAL | LOOP` — verbatim from §"State File Schema" above. `PRE_FLIGHT_SYNC` is a `record_decision`-only phase label used in Decisions Log entries (see §"Phase 1.5 Pre-Flight Summary"); it is NOT a valid state-file `phase` and fails this check.
+3. **`status` must be in the closed set** `running | paused | completed | completed_with_escalation | failed` — verbatim from §"State File Schema" above.
+4. **If a `branch:` field is asserted** in the `## Session` block, `git rev-parse --verify <branch>` must succeed (the branch must still exist locally). The value comes from an untrusted file (the gate's own premise): pass it as a single quoted argument, and pre-validate with `git check-ref-format --branch <value>` — a value failing ref-format fails this check.
+
+**On ANY violation the resume is REFUSED:** the Supervisor emits `SUPERVISOR_RESULT` with `status: failed` and `error: "resume_state_invalid"`, plus a user instruction to inspect or delete `.supervisor/state.md` (or start fresh without `--continue`). It NEVER silently falls back to a fresh start — that would mask corruption. There is deliberately NO `--skip-*` / `--force-resume` escape hatch in v1: deleting the bad state file IS the escape hatch.
+
+Scope notes:
+
+- **A missing state file is NOT a violation.** "No state found → start fresh" (Resume Priority item 3 above) is unchanged; the gate fires only on a file that loaded but does not parse against this contract.
+- **READ-side gate only.** The Context-Keeper sole-writer contract and the inline-path best-effort write responsibility (§"Inline-path write responsibility") are untouched — this gate validates what resume READS; it changes nothing about who WRITES.
+- **A valid file resumes exactly as before** — the happy path (including `config.cost_profile` hydration at Phase 0) is behaviorally identical; only invalid files see new behavior.
 
 ---
 
