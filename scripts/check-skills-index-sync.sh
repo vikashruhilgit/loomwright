@@ -18,7 +18,7 @@
 #      is skipped by check 1, so its row is validated for shape/existence only.
 #   COLUMN ORDER IS LOAD-BEARING: the parser reads Directory from column 3 and
 #      Version from column 6 of the index tables — reordering SKILLS_INDEX
-#      columns requires updating index_rows() in the same change.
+#      columns requires updating index_pairs() in the same change.
 #   2. Every index row's Directory cell must reference an existing skill dir
 #      containing a SKILL.md (no ghost rows).
 #   Index follows skill — fix the index row, never a SKILL.md version/lastUpdated.
@@ -209,6 +209,13 @@ EOF
   sed 's/| 2\.1\.0 |/| TBD |/' "$tmp/index.md" > "$tmp/index-malformed.md"
   out="$(CHECK_SKILLS_DIR="$tmp/skills" CHECK_SKILLS_INDEX="$tmp/index-malformed.md" bash "$0" 2>&1)"; rc=$?
   assert "malformed-cell-fails" 1 "$rc" "$out" "DRIFT [malformed-cell] \`beta/\`"
+
+  # (c2) ghost row (dir exists, no SKILL.md) → exit 1 via the second ghost sub-branch
+  mkdir -p "$tmp/skills/empty"
+  { cat "$tmp/index.md"; printf '| Empty | `empty/` | — | ~100 | 1.0.0 | 2026-01 |\n'; } > "$tmp/index-noskillmd.md"
+  out="$(CHECK_SKILLS_DIR="$tmp/skills" CHECK_SKILLS_INDEX="$tmp/index-noskillmd.md" bash "$0" 2>&1)"; rc=$?
+  assert "ghost-row-no-skillmd-fails" 1 "$rc" "$out" "skill dir exists but has no SKILL.md"
+  rm -rf "$tmp/skills/empty"
 
   # (c) ghost row (nonexistent dir) → exit 1
   { cat "$tmp/index.md"; printf '| Gamma | `gamma/` | — | ~100 | 1.0.0 | 2026-01 |\n'; } > "$tmp/index-ghost.md"
