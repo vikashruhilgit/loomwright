@@ -168,6 +168,7 @@ queued (- [ ]) → running → pr-open → awaiting_merge → merged (- [x]) | e
 4. **If an incomplete run exists**, `AskUserQuestion`: **continue / start new / archive**.
    - `--resume [<run_id>]` targets one explicitly; with the id omitted it targets the **most-recent incomplete** run.
    - Under **`--non-interactive-fallback`**, an **ambiguous** resume (more than one incomplete run and no explicit id) **fails closed**. In `AUTOMATE_RUN` this is persisted as **`pause_reason: resume_ambiguous`** in `## Current` (the run file has no `status_reason` field — that identifier belongs to the inner `/autonomous` layer's `AUTONOMOUS_RUN`, which surfaces it as `status_reason: "resume_ambiguous_non_interactive"` when the loop forwards the fallback).
+5. **Re-pass non-persisted passthrough flags.** `## Run Config` does NOT store `--notify` / `--non-interactive-fallback` / `--cheap` (§11) — a resume or `/loop` tick that omits them silently reverts to defaults. This matters most for **`--cheap`**: omitting it reverts the remaining queue to the full-cost profile with cumulative dollar impact, so re-pass `--cheap` on **every** `/automate --resume` invocation and `/loop` tick of a cheap run.
 
 ---
 
