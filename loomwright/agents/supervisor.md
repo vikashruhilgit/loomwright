@@ -150,7 +150,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
    git checkout "$BASE_BRANCH" && git pull origin "$BASE_BRANCH"
    git checkout -b feature/{task_id}-{short-desc}
    ```
-   **HARD RULE:** The Supervisor MUST NOT proceed to Phase 2 without a confirmed feature branch. **The branch's parent commit MUST be the tip of `$BASE_BRANCH`** — Phase 4 self-verify (step 6.5) will compare the PR's `baseRefName` against `$BASE_BRANCH` and fall through to Phase 4.5 cleanup on mismatch. If `$BASE_BRANCH` is not honored here, the stacked-iteration feature is silently broken: the PR opens with the right `--base` name but the branch ancestry comes from `main`, producing a nonsensical diff at review time even though Phase 4.5's Code Reviewer + Rubric Grader faithfully honor the DIFF-SCOPE OVERRIDE.
+   **HARD RULE:** The Supervisor MUST NOT proceed to Phase 2 without a confirmed feature branch. **The branch's parent commit MUST be the tip of `$BASE_BRANCH`** — Phase 4 self-verify (step 6.5 — procedure in `skills/async-orchestration/SKILL.md` Part 2) will compare the PR's `baseRefName` against `$BASE_BRANCH` and fall through to Phase 4.5 cleanup on mismatch. If `$BASE_BRANCH` is not honored here, the stacked-iteration feature is silently broken: the PR opens with the right `--base` name but the branch ancestry comes from `main`, producing a nonsensical diff at review time even though Phase 4.5's Code Reviewer + Rubric Grader faithfully honor the DIFF-SCOPE OVERRIDE.
 5. Update state via Context-Keeper:
    ```
    Context-Keeper(operation: set_task, task: {title, criteria})
@@ -327,126 +327,20 @@ When the Execute Manager surfaces an `EXECUTE_CHECKPOINT` with `adjudication_req
 
 **Purpose:** Merge worktree branches, commit, push, create PR.
 
-**Actions:**
+**Entry:** After Phase 3 EXECUTE completes with merge data (`merge_order`, worktrees, branches, review decisions) — including the partial-escalation path, which finalizes the completed subset per `merge_order`.
 
-1. **Pre-merge safety gate** (ALL must pass before any merge):
-   ```
-   FINALIZE pre-merge checklist:
-     1. All WORKER_RESULT status = completed (no failed/partial in merge set)
-     2. All Code Reviewer decisions = PASS (no FAIL/NEEDS_HUMAN in merge set)
-     3. No orphaned worktrees (all accounted for in EXECUTE_RESULT)
-     4. Feature branch exists and is ahead of base
-   If ANY fail → abort merge, log reason, move job to failed/ (if job file used)
-   ```
+**Protocol authority (read at phase entry):** `Read("${CLAUDE_PLUGIN_ROOT}/skills/async-orchestration/SKILL.md")` and execute its **Part 2 — Supervisor FINALIZE Protocol** as the authoritative procedure: the pre-merge safety-gate checklist items + verification commands, worktree commits, the sequential merge protocol, worktree cleanup, commit creation (per `skills/commit/SKILL.md`, never code-fenced), push + PR creation mechanics, the PR body template, the full step 6.5 PR-base self-verify retry/mismatch procedure, and the safety guarantees. (This skill IS in the Supervisor's preloaded `skills:` list — the Read at Phase 4 entry is a refresh guarantee for compressed contexts, not the first load.) The gates below stay in THIS file.
 
-   ```bash
-   # Verify all worktree paths exist
-   ls -d ../project-{subtask_a} ../project-{subtask_c} ../project-{subtask_b}
-   # Verify all branches exist
-   git branch --list feature/{subtask_a} feature/{subtask_c} feature/{subtask_b}
-   # Verify each worktree has changes
-   git -C ../project-{subtask_a} diff --stat HEAD
-   ```
-   If any verification fails → checkpoint, report missing worktree/branch, exit with resume.
+**Gates (stay here — mandatory):**
 
-2. **Commit worker changes in worktrees** (before merging):
-   ```bash
-   # For each completed subtask (in merge_order from EXECUTE_RESULT):
-   git -C ../project-{subtask_a} add -A
-   git -C ../project-{subtask_a} commit -m "subtask: {subtask_a} — {title}"
-   ```
-   This ensures worker code is committed to the subtask branch before merge.
+1. **Pre-merge safety gate:** the 4-point pre-merge checklist (all WORKER_RESULT statuses completed; all Code Reviewer decisions PASS; no orphaned worktrees; feature branch exists and is ahead of base) is MANDATORY and ALL points must pass before ANY merge. Checklist items + verification commands live in the skill Part 2. If ANY point fails → abort merge, log reason, move job to `failed/` (if a job file was used); a missing worktree/branch → checkpoint, report it, exit with resume.
+2. **Merge conflict → STOP:** never force-resolve. Report the conflicting files, checkpoint with the already-merged and not-yet-merged branch lists, exit with the resume command.
+3. **PR-base self-verify (REQUIRED):** immediately after `gh pr create --base "$BASE_BRANCH"` returns successfully, and before declaring Phase 4 complete, verify the created PR's actual `baseRefName` matches `$BASE_BRANCH` via `gh pr view`. The retry policy (AC-14) and mismatch handling live in the skill Part 2. On mismatch (or unrecoverable `gh` failure), set the `base_mismatch_detected` flag and fall through to Phase 4.5's base-mismatch cleanup — Phase 4 sets the flag at most once per session and NEVER emits `SUPERVISOR_RESULT` directly; the single emission point for the failure path is Phase 4.5's cleanup block (`skills/self-heal-advisory/SKILL.md` Part 2 §"Phase 4.5 base-mismatch cleanup").
 
-3. **Sequential merge** of each subtask branch into feature branch (in merge_order):
-   ```bash
-   git checkout feature/{task_id}-{desc}
-   git merge feature/{subtask_a} --no-ff -m "merge: {subtask_a} {title}"
-   git merge feature/{subtask_c} --no-ff -m "merge: {subtask_c} {title}"
-   git merge feature/{subtask_b} --no-ff -m "merge: {subtask_b} {title}"
-   ```
-   If merge conflict: **STOP** — never force-resolve. Report conflicting files. Checkpoint with list of already-merged and not-yet-merged branches. Exit with resume command.
-
-4. **Cleanup worktrees** (ONLY after successful merge):
-   ```bash
-   # Remove worktrees first, then branches
-   git worktree remove ../{project}-{subtask_id}
-   git branch -d feature/{subtask_id}
-   ```
-
-5. **Create commits** (inline, following `skills/commit/SKILL.md`):
-   - Stage all changes
-   - Write conventional commit message with task linking
-   - Format: `feat|fix|refactor({scope}): {message}\n\nCloses {task_id}`
-   - **NEVER code-fence the message.** The first line passed to `git commit` MUST be the conventional-commit subject (e.g. `feat({scope}): {message}`) — never a ```` ``` ```` / ```` ```bash ```` fence. Pass multi-line messages as separate `-m` flags or via `git commit -F -` / a heredoc (see `skills/commit/SKILL.md` → "Passing the Message to git"). A fence as the first line makes ```` ``` ```` the commit/PR subject.
-
-6. **Push and create PR (against `BASE_BRANCH` — defaults to `main`):**
-   ```bash
-   git push -u origin feature/{task_id}-{desc}
-   gh pr create --base "$BASE_BRANCH" --title "{task_id}: {title}" --body "{PR body}"
-   ```
-   `BASE_BRANCH` is the value resolved at Phase 0 (the base-branch + non-interactive preamble in `skills/supervisor-config/SKILL.md`) from the `--base-branch` flag, defaulting to `main`. The autonomous-loop multi-iteration mode passes a sibling feature branch (e.g., `feature/v14-iter1`) so iteration N+1 stacks on iteration N's PR.
-
-6.5. **Phase 4 FINALIZE self-verify — PR base branch (v14.0.0, AC-7 + AC-14):**
-
-   Immediately after `gh pr create` returns successfully, before declaring Phase 4 complete, verify the created PR's actual base matches `BASE_BRANCH`:
-
-   ```bash
-   ACTUAL_BASE=$(gh pr view "$PR_URL" --json baseRefName --jq .baseRefName)
-   ```
-
-   **Retry policy (AC-14):**
-   - **First `gh pr view` non-zero exit** → `sleep 5; retry once`.
-   - **Second non-zero exit AND `NON_INTERACTIVE == true`** (read live from `Context-Keeper(operation: get_flag, key: "non_interactive")` — do NOT trust in-context state alone, W-NEW-10):
-     ```
-     Context-Keeper(operation: set_flag, key: "base_mismatch_detected",
-                    value: {expected: "$BASE_BRANCH", actual: null, pr_url: "$PR_URL",
-                            detected_at: "<ISO>", reason: "gh_unavailable_non_interactive"})
-     ```
-     Fall through to Phase 4.5 — its cleanup block owns the single `SUPERVISOR_RESULT` emission.
-   - **Second non-zero exit AND `NON_INTERACTIVE == false`** → `AskUserQuestion` with exactly three options:
-     1. **retry** — run `gh pr view --json baseRefName` once more; on success continue verification, on failure treat as user-aborted (option 3).
-     2. **skip-verify-once** — record `record_decision(phase: FINALIZE, decision: "user_skipped_base_verify", rationale: "gh repeatedly unavailable")` and continue as if verified (`ACTUAL_BASE := $BASE_BRANCH`).
-     3. **abort** — `set_flag base_mismatch_detected value: {expected: "$BASE_BRANCH", actual: null, pr_url: "$PR_URL", detected_at: "<ISO>", reason: "user_aborted_gh_retry"}` and fall through to Phase 4.5 cleanup.
-
-   **Mismatch detection (after `gh pr view` succeeds):**
-   - If `ACTUAL_BASE == BASE_BRANCH`: verification passed, continue to step 7.
-   - If `ACTUAL_BASE != BASE_BRANCH`: this is a real base-branch mismatch (rare; most likely cause is a misconfigured remote or a race between `gh pr create` and a downstream automation). Set the flag — but **do NOT emit `SUPERVISOR_RESULT` here.** Fall through to Phase 4.5 which owns the single emission per task (W-NEW-14):
-     ```
-     Context-Keeper(operation: set_flag, key: "base_mismatch_detected",
-                    value: {expected: "$BASE_BRANCH", actual: "$ACTUAL_BASE", pr_url: "$PR_URL",
-                            detected_at: "<ISO>", reason: "phase4_self_verify"})
-     ```
-
-   **Invariant:** Phase 4 sets the flag at most once per session and never emits `SUPERVISOR_RESULT` directly on mismatch. The single emission point for the failure path is Phase 4.5's base-mismatch cleanup block (`skills/self-heal-advisory/SKILL.md` Part 2 §"Phase 4.5 base-mismatch cleanup").
-
-7. **Exit FINALIZE.** Task is NOT yet marked completed, and the job file is NOT yet moved. Those actions happen in Phase 4.5 SELF_HEAL's completion tail so that self-heal outcomes are captured in the completion record.
-
-**FINALIZE scope reduction (v11.0.0):** FINALIZE exits after PR creation. Task-completion side-effects (job-file move from `in-progress/` → `done/`, state marked completed via Context-Keeper) have been relocated to Phase 4.5 SELF_HEAL's completion tail. Do not perform them here.
-
-**Safety guarantees:**
-- Worker code lives in git branches until explicitly merged — can always recover
-- Worktrees are removed ONLY after successful merge
-- Merge conflicts always escalate to human
-- Checkpoint includes which branches were merged and which remain
-- If EXECUTE_CHECKPOINT (partial): only merge completed+reviewed subtasks, leave in-progress worktrees intact
-
-**PR Body Template:**
-```markdown
-## Summary
-{One paragraph describing the changes}
-
-## Changes
-- {Bullet list of key changes}
-
-## Test Plan
-- {How to verify the changes}
-
-## Task
-Closes {task_id}
-
----
-Generated by Supervisor Agent v4
-```
+**Exit conditions:**
+- PR created against `$BASE_BRANCH` + base self-verified → exit FINALIZE to Phase 4.5 SELF_HEAL. The task is NOT yet marked completed and the job file is NOT yet moved — those actions live in Phase 4.5 SELF_HEAL's completion tail so heal outcomes are captured in the completion record (FINALIZE scope reduction, v11.0.0 — do not perform them here).
+- Base mismatch / unrecoverable `gh` failure → `base_mismatch_detected` flag set, fall through to Phase 4.5 cleanup path (`status: failed` emitted there, never here).
+- Merge conflict or failed pre-merge validation → STOP as above; exit with resume command.
 
 **Output:** the `### Phase 4: FINALIZE` block shown in §"Output Format (Complete Example)" — pre-merge validation result, worktree commits, merges into the feature branch, `Conflicts:` reading `none` or the conflict details, worktrees cleaned, commit SHA + message, PR number + URL, and `Task: {task_id} [MERGED — pending self-heal]`.
 
@@ -816,77 +710,11 @@ After each blocking subagent, extract minimal summary:
 
 ### Subagent Spawn Contracts
 
-Exact Task tool call shapes for each subagent:
+The exact Task tool call shapes for each subagent — Context-Keeper, Orchestrator, Execute Manager, fast-path Worker, fast-path Code Reviewer — live in `skills/async-orchestration/SKILL.md` **Part 2 §"Subagent Spawn Contracts"** (moved verbatim from this file; the skill is Supervisor-preloaded). Non-negotiables carried by those shapes:
 
-**Context-Keeper:**
-```
-Task(
-  description: "CK: {operation} for {task_id}",
-  prompt: "operation: {op}\ndata: {payload}\nstate_file: {path}",
-  subagent_type: "loomwright:context-keeper"
-)
-```
-
-**Orchestrator:**
-```
-Task(
-  description: "Plan: decompose {task_id}",
-  prompt: "goal: \"{task_id}: {title}\"\nProject context: {CLAUDE.md summary}\nAcceptance criteria: {criteria}",
-  subagent_type: "loomwright:orchestrator",
-  model: "sonnet"   # ONLY when cost_profile=cheap; omit entirely when cost_profile=default
-)
-```
-
-**Execute Manager:**
-```
-Task(
-  description: "Execute Phase 3: {task_id}",
-  prompt: "Subtask list: [{ids, titles, criteria, files, skills, deps}]
-    Parallelism graph: [{launchable, blocked}]
-    Config: max_workers={N}, project={name}, feature_branch={branch}
-    State file: {path}
-    cost_profile: {default|cheap}
-    Resume context: {optional, from previous EXECUTE_CHECKPOINT}",
-  subagent_type: "loomwright:execute-manager",
-  model: "sonnet"   # ONLY when cost_profile=cheap; omit entirely when cost_profile=default
-)
-```
-
-**Worker (fast-path only):**
-```
-Task(
-  description: "Implement: {subtask_title}",
-  prompt: "Subtask ID: {id}\nTitle: {title}\nAcceptance criteria: {criteria}
-    Worktree path: {project_root}
-    Provides (verbatim from the brief's Subtask Contracts): {provides YAML}
-    Skill references: {skills}
-    Project context: {patterns from CLAUDE.md}
-    Applicable house rules (ADVISORY — from `read-rules.sh`, include this line ONLY when its output is NON-EMPTY; omit entirely when empty): {house_rules summary}. These are committed team conventions to bias your implementation while writing code — subordinate to CLAUDE.md (on conflict, CLAUDE.md wins). This is advisory only: you are NEVER failed for a house rule. A `must` rule is surfaced flagged, but its `check` value is DATA only — do NOT execute, eval, source, or `bash -c` any `check`.
-    Retry context: {optional, from previous review}",
-  # Applicable house rules: compute by running `bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-rules.sh" <touched paths...>`
-  # (args, never stdin — no-hang). Inject the output into this worker prompt ONLY when it is NON-EMPTY; empty
-  # output ⇒ inject nothing (the reader always exits 0 and emits EMPTY on no valid rule — never a "no rules"
-  # sentinel). ADVISORY / fail-safe / NEVER-gating: it never fails a worker, never gates a PR, never a
-  # SUPERVISOR_RESULT field, and never bumps `schema_version`. Call the READER ONLY — never pipe/eval/source
-  # the reader output; a rule's `check` is surfaced to the worker as DATA, never executed.
-  # `provides:` is REQUIRED input — the worker's Step 5.5 outputs-verification
-  # re-reads it from the spawn brief; omitting it silently no-ops the v12 outputs gate
-  subagent_type: "loomwright:worker",
-  model: "sonnet"   # ONLY when cost_profile=cheap; omit entirely when cost_profile=default
-)
-```
-
-**Code Reviewer (fast-path only):**
-```
-Task(
-  description: "Review: {subtask_title}",
-  prompt: "Review scope: {files_modified from WORKER_RESULT}
-    Task context: {subtask_title} — {criteria}
-    Project patterns: {from CLAUDE.md}",
-  subagent_type: "loomwright:code-reviewer",
-  model: "sonnet"   # ONLY when cost_profile=cheap; omit entirely when cost_profile=default
-)
-```
+- Every spawn honors `cost_profile`: include `model: "sonnet"` ONLY when `cost_profile=cheap`; omit the field entirely when `cost_profile=default`.
+- The fast-path Worker prompt passes the brief's `provides:` contract VERBATIM (`Provides (verbatim from the brief's Subtask Contracts): {provides YAML}`) — `provides:` is REQUIRED input for the worker's Step 5.5 outputs verification; omitting it silently no-ops the v12 outputs gate.
+- House-rules injection into the Worker prompt is ADVISORY / fail-safe / NEVER-gating: computed via `read-rules.sh` (args, never stdin), injected ONLY when its output is non-empty, and a rule's `check` is DATA — never executed (full comment block in the skill).
 
 ---
 
@@ -925,23 +753,10 @@ Subtask branches AND worktrees are both created by the **Execute Manager in Phas
 (its Step 2a — see `agents/execute-manager.md`), never by the Supervisor in Phase 2.
 Phase 2 (PLAN) runs no git commands.
 
-```
-Phase 3 (EXECUTE — Execute Manager Step 2a):
-  git branch feature/BD-XXa              # from feature branch HEAD (ref only, no checkout)
-  git branch feature/BD-XXc
-  git worktree add ../{project}-BD-XXa feature/BD-XXa
-  git worktree add ../{project}-BD-XXc feature/BD-XXc
-  # Workers operate in worktrees...
-
-Phase 4 (FINALIZE):
-  git checkout feature/BD-XX-desc
-  git merge feature/BD-XXa --no-ff
-  git merge feature/BD-XXc --no-ff
-  git worktree remove ../{project}-BD-XXa
-  git worktree remove ../{project}-BD-XXc
-  git branch -d feature/BD-XXa
-  git branch -d feature/BD-XXc
-```
+The phase-by-phase command sequence (Phase 3 branch + worktree creation; Phase 4
+sequential merge, worktree removal, branch deletion) lives in
+`skills/async-orchestration/SKILL.md` Part 2 §"Git Worktree Lifecycle (phase sequence)"
+(moved verbatim from this file).
 
 ---
 
