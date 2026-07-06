@@ -13,9 +13,9 @@
 #      field: SKILLS_INDEX.md must have exactly ONE table row whose Directory
 #      cell (the backticked `name/` cell — NOT the display name) matches that
 #      skill dir, and that row's Version cell must equal the frontmatter value.
-#   NOTE: every index row must carry an X.Y.Z Version cell — a skill listed in
-#      the index is required to have `version:` frontmatter (fail-loud, stricter
-#      than the minimum: no placeholder cells).
+#   NOTE: every index row must carry a well-formed X.Y.Z Version cell (no
+#      placeholder cells — malformed cells fail loudly). A versionless SKILL.md
+#      is skipped by check 1, so its row is validated for shape/existence only.
 #   2. Every index row's Directory cell must reference an existing skill dir
 #      containing a SKILL.md (no ghost rows).
 #   Index follows skill — fix the index row, never a SKILL.md version/lastUpdated.
