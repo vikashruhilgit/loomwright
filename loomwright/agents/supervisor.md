@@ -112,6 +112,11 @@ Autonomously manage the complete development workflow from task pickup to PR cre
    - Check for existing worktrees (`git worktree list`)
 2. Check for resume state:
    - If `--continue` flag: load state from scratchpad → `.supervisor/state.md` (priority order)
+   - **Resume validation gate (fail-closed — runs BEFORE any loaded state is consumed):** when a state file WAS loaded (from either location), validate it against `skills/state-management/SKILL.md` §"Resume validation gate" (the authoritative contract) before reading any field out of it or acting on its content:
+     a. The `## Session` block must exist.
+     b. `phase` must be one of `INIT | ACQUIRE | PLAN | EXECUTE | FINALIZE | SELF_HEAL | LOOP` and `status` one of `running | paused | completed | completed_with_escalation | failed` — the closed sets from that skill's §"State File Schema". Note: `PRE_FLIGHT_SYNC` is a `record_decision`-only phase label (it appears in the Decisions Log), NOT a valid state-file `phase` — a state file asserting it fails this gate.
+     c. If the `## Session` block asserts a `branch:` field, `git rev-parse --verify <branch>` must succeed (the branch must still exist locally).
+     On ANY violation: REFUSE the resume. Emit `SUPERVISOR_RESULT` with `status: failed` and `error: "resume_state_invalid"`, plus a clear user message: inspect or delete `.supervisor/state.md` (and the scratchpad copy, if that is what failed), or start fresh without `--continue`. NEVER silently fall back to a fresh start — that would mask corruption. There is NO escape-hatch flag for this gate (deleting the bad state file IS the escape hatch). A MISSING state file is NOT a violation — "no state found → start fresh" is unchanged; the gate only fires on a file that loaded but does not parse against the contract.
    - If resume state found:
      a. **Before jumping to the saved phase**, hydrate session config from the loaded state: read `config.cost_profile` (default `default` if absent — handles pre-cheap state files). This ensures `cost_profile` is in memory for every subsequent spawn, regardless of which phase is resumed.
      b. If `--cheap` was also passed on this invocation: override to `cost_profile = cheap`.
@@ -200,7 +205,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
    - **Consult verified lessons (advisory — read-only):** also run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-lessons.sh"` (no args; honors `LESSON_STALE_DAYS`, default 90) and fold only the relevant `## <category>` groups into your understanding of this task. These are **advisory and strictly subordinate to `CLAUDE.md`** — on any conflict, `CLAUDE.md` wins. The reader is fail-safe (it always exits 0 and emits only provenance-verified, non-stale entries); if it emits nothing or is absent, proceed normally. Reading memory MUST NEVER block the run or change a verdict / `heal_decision`. The verified lessons you considered may be cited in the run's reasoning. (Read-only — the Supervisor does not write lessons.)
 1. Select task:
    - User describes task via `task:` parameter
-   - Or read from `.supervisor/state.md` (resume)
+   - Or read from `.supervisor/state.md` (resume) — **gated:** the loaded file must already have passed the Phase 0 INIT step 2 **Resume validation gate** (fail-closed; authoritative contract in `skills/state-management/SKILL.md` §"Resume validation gate" — do not re-enumerate the closed sets here). A file that failed the gate is never consumed at this step: the run has already refused with `status: failed`, `error: "resume_state_invalid"`.
    - Or user provides description interactively
 2. Load task details:
    - User provides title and criteria
