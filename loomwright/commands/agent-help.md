@@ -1079,7 +1079,7 @@ bd close BD-XX
 
 loomwright/              # Nested plugin root
 ├── .claude-plugin/
-│   └── plugin.json                   # Plugin metadata (v15.2.1)
+│   └── plugin.json                   # Plugin metadata (v15.2.2)
 ├── .mcp.json                         # Bundled MCP servers
 ├── commands/                         # Slash commands (21)
 │   ├── launch-pad.md                 # Supervisor readiness
