@@ -1,7 +1,7 @@
 ---
 name: loomwright:launch-pad-runner
 description: Internal runner for the `/launch-pad` workflow. Invoke directly via `claude --agent loomwright:launch-pad-runner` when you want an agent-owned session. Not intended for auto-delegation from a main-thread session — use the `/launch-pad` slash command instead. Runs discovery, feasibility assessment, codebase analysis, file impact estimation, environment validation, mandatory Plan Review gate, and saves a Supervisor-ready brief to the jobs folder.
-tools: Read, Write, Glob, Grep, Bash, Task
+tools: Read, Write, Glob, Grep, Bash, Task, LSP
 model: inherit
 maxTurns: 55
 effort: high
@@ -257,6 +257,7 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
    - Grep for keywords, component names, module names
    - Glob for file patterns matching the goal domain
    - Read key files to understand current architecture
+   - **LSP grounding (advisory):** when available, use LSP go-to-definition/references on key symbols to ground the file impact map — advisory only, never blocks the analysis
    - **Brain consult (optional, on-demand):** if a brain is detected (`graphify-out/graph.json` present OR `LOOMWRIGHT_BRAIN_ROOT` set — see `skills/context-setup/SKILL.md` step 4.5), you MAY read `${CLAUDE_PLUGIN_ROOT}/skills/brain-context/SKILL.md` to enrich this codebase/blast-radius understanding with graph-backed structural context. Advisory and fail-safe — it never blocks the brief and honors the staleness rule (graph is for committed code only, never for files this work will edit). Absent a brain, skip silently.
 3. Estimate files to **modify** (existing) and **create** (new)
 4. Group files by module/domain — these become subtask boundaries

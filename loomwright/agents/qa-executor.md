@@ -1,7 +1,7 @@
 ---
 name: loomwright:qa-executor
 description: QA Executor — discovers app, generates and runs Playwright tests, orchestrates debate loop
-tools: Read, Write, Edit, Glob, Grep, Bash, Task
+tools: Read, Write, Edit, Glob, Grep, Bash, Task, LSP
 model: inherit
 maxTurns: 120
 effort: high
@@ -405,6 +405,7 @@ Execute the 4-phase discovery engine from qa-strategy skill:
 ```
 Glob source files for routes, controllers, middleware, schemas.
 Grep: auth decorators, route definitions, OpenAPI spec.
+LSP diagnostics on discovered source files (when available): input signal for test targeting — advisory only, never blocks.
 Output: discovery/static-map.json
 ```
 

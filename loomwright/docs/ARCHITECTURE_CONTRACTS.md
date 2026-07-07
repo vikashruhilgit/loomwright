@@ -11,17 +11,17 @@
 |-------|-------|-------|------|--------|-------|-------|-------|
 | Supervisor | yes | yes | yes | no | no | via Context-Keeper | inherit |
 | Execute Manager | yes | no | yes | no | no | via Context-Keeper | inherit |
-| Worker | no | yes | yes | no | yes | no | inherit |
+| Worker | no | yes | yes (+ LSP) | no | yes | no | inherit |
 | Code Reviewer | no | no | yes (+ LSP) | yes | no | no | inherit (effort: high, permissionMode: plan) |
 | Context-Keeper | no | yes | no | no | no | sole writer (parallel path) | haiku |
-| Launch Pad | yes (plan-reviewer only) | yes | yes | no | no | jobs/pending/ | inherit |
+| Launch Pad | yes (plan-reviewer only) | yes | yes (+ LSP) | no | no | jobs/pending/ | inherit |
 | Product Owner | no | no | yes | no | no | no | inherit |
 | Orchestrator | no | no | yes | no | no | no | inherit |
 | Red Team Reviewer | no | no | yes | no | no | no | inherit |
 | QA Strategist | no | no | yes | no | no | no | inherit |
 | Plan Reviewer | no | no | no | yes | no | no | inherit (effort: high) |
 | Rubric Grader | no | no | yes (read-only git only) | yes (rubric scoring) | no | no | haiku |
-| QA Executor | yes | yes | yes | no | yes | no | inherit |
+| QA Executor | yes | yes | yes (+ LSP) | no | yes | no | inherit |
 | review-pr-runner | yes (code-reviewer + general-purpose fix worker) | yes (fix worker pushes the PR branch) | yes (`gh`/`git`) | yes (via code-reviewer) | no | no | inherit |
 
 > **review-pr-runner is NEVER `Task`-spawned (AC9).** It must run only as the **main agent of its own session** (`claude --agent loomwright:review-pr-runner`, launched fresh from the plain-`/supervisor` completion tail) or **inline on the main thread** via `/review-pr <pr-url>`. Because it spawns its own children (`code-reviewer` for review, `general-purpose` for the bounded fix), `Task`-spawning the runner would land it one spawn-level too deep and its child `Task` calls would fail (subagents cannot spawn subagents). In the `/autonomous` EVALUATE sense, the review-heal *loop body* runs as a Task step that performs review-and-fix inline — it does NOT `Task`-spawn the `-runner` agent. Canonical contract: `skills/review-heal/SKILL.md`.
