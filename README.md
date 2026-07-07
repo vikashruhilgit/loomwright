@@ -6,6 +6,8 @@ A Claude Code plugin for AI agents to collaborate on software projects. 14 speci
 
 > **Install the plugin and run slash commands instead of manually managing agents.**
 >
+> **NEW in v15.4.0 — Supervisor prompt refactor: phase protocol bodies extracted into 4 authority skills (structure-only, zero behavior change):** `agents/supervisor.md` shrinks 1652 → 748 lines (the per-session context win comes from the three on-demand skills; the FINALIZE/Session-Logging text moved into Supervisor-preloaded skills relocates rather than removes those lines). Phase 1.5 PRE-FLIGHT SYNC → NEW `skills/preflight-sync/SKILL.md` and Phase 0 INIT → NEW `skills/supervisor-config/SKILL.md` (both read at phase entry — deliberately NOT preloaded); the Phase 4.5 SELF_HEAL loop protocol → `skills/self-heal-advisory/SKILL.md` Part 2; Phase 4 FINALIZE mechanics + Subagent Spawn Contracts + Git Worktree Lifecycle → `skills/async-orchestration/SKILL.md` Part 2; the Session Logging event catalog → `skills/state-management/SKILL.md`. Every gate stays in the agent file (completion-tail guard verbatim; pre-merge safety gate; PR-base self-verify; budgets 50/60); `SUPERVISOR_RESULT` schema untouched. Counts: 14 agents / 21 commands / 59 skills (57 → 59) / 21 hooks; no `schema_version` bump.
+>
 > **NEW in v15.3.0 — fail-closed resume validation gate (`resume_state_invalid`):** `/supervisor --continue` now schema-validates the loaded `.supervisor/state.md` BEFORE consuming it: the `## Session` block must exist, `phase`/`status` must be in the closed enums, and any asserted `branch:` must `git rev-parse --verify` (authoritative contract: `skills/state-management/SKILL.md` §"Resume validation gate", skill 1.1.0 → 1.2.0). Any violation refuses the resume with `error: "resume_state_invalid"` and an inspect-or-delete instruction — never a silent fresh-start fallback, and no override flag (deleting the bad state file is the escape hatch). A missing state file still starts fresh unchanged; a valid file resumes identically. READ-side only — the Context-Keeper sole-writer contract is untouched. Counts UNCHANGED: 14 agents / 21 commands / 57 skills / 21 hooks; no `schema_version` bump.
 >
 > **NEW in v15.2.3 — SKILLS_INDEX version-cell CI parity gate + roadmap de-staling (doc-hygiene):** New repo-root validator `scripts/check-skills-index-sync.sh` mechanically enforces `SKILLS_INDEX.md` ↔ SKILL.md frontmatter version parity (rows keyed on the backticked dir-path cell; ghost/duplicate/malformed rows also fail) — a documented doc-currency blind spot, now a hard CI gate with a synthetic-fixture `--self-test` (every DRIFT branch proven to fail via synthetic fixtures). Fixes the one live drifted row (supervisor-readiness 1.1.1 → 1.1.2). `docs/IMPROVEMENTS_ROADMAP.md` gains a dated planning-snapshot banner + 18 re-verified inline `[VERDICT: …]` lines (10 RESOLVED / 7 DEFERRED / 1 OPEN — only the `WorktreeRemove` hook remains open). Both Quick Starts add a one-line `/setup` pointer. Counts UNCHANGED: 14 agents / 21 commands / 57 skills / 21 hooks.
@@ -634,7 +636,7 @@ To modify or extend agents:
 
 1. Agents are Markdown prompts in `loomwright/agents/` (14 files)
 2. Commands are in `loomwright/commands/` (21 commands)
-3. Skills are in `loomwright/skills/` (57 skills, versioned with SKILLS_INDEX.md)
+3. Skills are in `loomwright/skills/` (59 skills, versioned with SKILLS_INDEX.md)
 4. Hooks: per-agent in frontmatter (Worker, Execute Manager) + cross-cutting in `loomwright/hooks/hooks.json` (Code Reviewer, QA Executor, TaskCompleted)
 5. Docs: `loomwright/docs/RESULT_SCHEMAS.md`, `…/FAILURE_ESCALATION.md`, `…/ARCHITECTURE_CONTRACTS.md`, `…/ARCHITECTURE.md`
 6. All agents follow standard output format (see AGENT_GUIDELINES.md)
@@ -698,7 +700,7 @@ Claude Code caches plugin contents. After pulling new changes (e.g. a fresh `git
    /reload-plugins
    ```
    Run from the repo root so `./` resolves to your local checkout.
-3. Verify with `/skills` — should show all 57 skills under "Plugin skills". Use `/agent-help` to confirm all 21 slash commands are registered.
+3. Verify with `/skills` — should show all 59 skills under "Plugin skills". Use `/agent-help` to confirm all 21 slash commands are registered.
 
 **Previously installed via `claude --plugin-dir` (flat layout)?** Older install instructions told you to launch Claude with `--plugin-dir` pointing at the repo root. That no longer works — the plugin is now nested under `loomwright/`. Switch to the marketplace flow shown in **Quick Start → 1. Install the Plugin**.
 

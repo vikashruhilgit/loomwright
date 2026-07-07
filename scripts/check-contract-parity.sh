@@ -110,7 +110,9 @@ agents/qa-executor.md|status|passed,failed,partial,skipped,needs_human,plan_crea
 agents/execute-manager.md|status|completed,failed,in_progress,pending,running,missing,checkpoint,enum
 agents/code-reviewer.md|decision|PASS,FAIL,NEEDS_HUMAN,enum
 agents/plan-reviewer.md|decision|PASS,FAIL,NEEDS_HUMAN,enum
-skills/self-heal-advisory/SKILL.md|status|pass,advisory_failures,advisory_violations,unverified,skipped,enum
+skills/self-heal-advisory/SKILL.md|status|pass,advisory_failures,advisory_violations,unverified,skipped,failed,checkpoint,enum
+skills/preflight-sync/SKILL.md|status|checkpoint,failed,enum
+skills/supervisor-config/SKILL.md|status|failed,enum
 skills/self-heal-advisory/SKILL.md|heal_decision|PASS,ESCALATED,null,enum
 "
 
