@@ -348,7 +348,7 @@ When the Execute Manager surfaces an `EXECUTE_CHECKPOINT` with `adjudication_req
 
    Before any other completion-tail action, check both tracked booleans:
 
-   - **Thrash-escalation exception:** if this run reached the completion tail via the resume-thrash guard (on-entry step 3, `error: "self_heal_resume_thrash"`), the guard below does NOT apply — the escalation is valid because `error` is non-empty, even though this run never invoked the reviewer. Proceed with the normal completion tail.
+   - **Thrash-escalation exception:** if this run reached the completion tail via the resume-thrash guard (self-heal-advisory Part 2 on-entry step 3, `error: "self_heal_resume_thrash"`), the guard below does NOT apply — the escalation is valid because `error` is non-empty, even though this run never invoked the reviewer. Proceed with the normal completion tail.
 
    - Otherwise, if `skip_self_heal_requested == false` AND `phase45_review_invoked == false` → **abort with internal workflow error**:
      - Emit a `SUPERVISOR_RESULT` block with `status: failed`, `error: "Phase 4.5 invariant violation: code-reviewer Task was not invoked and --skip-self-heal was not set"`, and `summary: "Aborted at Phase 4.5 completion-tail guard — the integration review is mandatory when --skip-self-heal is absent."`
