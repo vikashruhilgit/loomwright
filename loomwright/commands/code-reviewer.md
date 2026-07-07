@@ -213,10 +213,9 @@ When reviewing server-side code, the reviewer applies:
 - **API Gateway:** Auth middleware, proxy patterns, rate limiting, correlation IDs
 
 **Skill References:**
-- `skills/nestjs-guards/SKILL.md`
-- `skills/nestjs-services/SKILL.md`
-- `skills/nextjs-api-routes/SKILL.md`
-- `skills/gateway-*/SKILL.md`
+- `skills/error-handling/SKILL.md`
+- `skills/unit-testing/SKILL.md`
+- Framework-specific skills (NestJS, Next.js API routes, API Gateway) from the stackpack@atelier plugin, when installed
 
 ### Mixed Projects
 For full-stack projects, the reviewer:

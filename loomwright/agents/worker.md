@@ -284,12 +284,10 @@ Workers receive skill references from the Supervisor. Common skills:
 
 | Skill | When Referenced |
 |-------|----------------|
-| `skills/nestjs-*/SKILL.md` | NestJS implementation |
-| `skills/nextjs-*/SKILL.md` | Next.js implementation |
-| `skills/gateway-*/SKILL.md` | API Gateway patterns |
 | `skills/quality-checklist/SKILL.md` | Pre-completion checks |
-| `skills/nestjs-typeorm/SKILL.md` | TypeORM patterns |
-| `skills/mysql/SKILL.md` | MySQL database patterns |
+| `skills/unit-testing/SKILL.md` | Test writing and structure |
+| `skills/error-handling/SKILL.md` | Error paths and exceptions |
+| `skills/{domain}/SKILL.md` | Framework/stack patterns (e.g., stackpack@atelier NestJS/Next.js/gateway/database skills when installed) |
 
 ---
 

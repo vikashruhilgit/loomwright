@@ -1,0 +1,28 @@
+{
+  "name": "mysql-mcp",
+  "version": "1.0.0",
+  "description": "Mysql-mcp v1.0.0 — the read-only MySQL MCP server (vikashruhil-mysql-mcp via uvx) spun out of Loomwright. Resolves DB_HOST/DB_USER/DB_PASS/DB_NAME(/DB_PORT) from the environment. No agents/commands/skills/hooks.",
+  "author": {
+    "name": "vikash ruhil"
+  },
+  "license": "MIT",
+  "mcpServers": {
+    "mysql": {
+      "command": "uvx",
+      "args": ["--from", "vikashruhil-mysql-mcp", "--refresh", "mysql-mcp"],
+      "env": {
+        "DB_HOST": "${DB_HOST}",
+        "DB_USER": "${DB_USER}",
+        "DB_PASS": "${DB_PASS}",
+        "DB_NAME": "${DB_NAME}",
+        "DB_PORT": "${DB_PORT}"
+      }
+    }
+  },
+  "keywords": [
+    "mcp",
+    "mysql",
+    "database",
+    "read-only"
+  ]
+}

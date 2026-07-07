@@ -44,7 +44,6 @@ Comprehensive index of all skills available in the Loomwright plugin.
 | Unit Testing | `unit-testing/` | Worker (reference), Code Reviewer (preload) | ~800 | 1.0.0 | 2026-03 |
 | Error Handling | `error-handling/` | Worker (reference), Code Reviewer (preload) | ~900 | 1.0.0 | 2026-03 |
 | CI/CD | `ci-cd/` | Orchestrator (reference), Worker (reference) | ~900 | 1.0.0 | 2026-03 |
-| Docker | `docker/` | Worker (reference) | ~800 | 1.0.0 | 2026-03 |
 | Monitoring & Observability | `monitoring-observability/` | Red Team Reviewer (reference), Code Reviewer (preload) | ~900 | 1.0.0 | 2026-03 |
 
 ## Product / Discovery
@@ -57,35 +56,11 @@ Comprehensive index of all skills available in the Loomwright plugin.
 | Domain Knowledge | `domain-knowledge/` | Product Owner (reference) | ~400 | 1.0.0 | 2026-03 |
 | Brainstorming | `brainstorming/` | Product Owner (preload) | ~1,000 | 1.0.0 | 2026-04 |
 
-## Framework — NestJS
+## Frontend
 
 | Skill Name | Directory | Agent Consumers | Token Est. | Version | Last Updated |
 |------------|-----------|-----------------|------------|---------|--------------|
-| NestJS Controllers | `nestjs-controllers/` | Worker (reference) | ~700 | 1.0.0 | 2026-03 |
-| NestJS Services | `nestjs-services/` | Worker (reference) | ~700 | 1.0.0 | 2026-03 |
-| NestJS Guards | `nestjs-guards/` | Worker (reference) | ~600 | 1.0.0 | 2026-03 |
-| NestJS TypeORM | `nestjs-typeorm/` | Worker (reference) | ~800 | 1.0.0 | 2026-03 |
-| NestJS Drizzle | `nestjs-drizzle/` | Worker (reference) | ~700 | 1.0.0 | 2026-03 |
-
-## Framework — Next.js
-
-| Skill Name | Directory | Agent Consumers | Token Est. | Version | Last Updated |
-|------------|-----------|-----------------|------------|---------|--------------|
-| Next.js Routing | `nextjs-routing/` | Worker (reference) | ~600 | 1.0.0 | 2026-03 |
-| Next.js Components | `nextjs-components/` | Worker (reference) | ~700 | 1.0.0 | 2026-03 |
-| Next.js API Routes | `nextjs-api-routes/` | Worker (reference) | ~600 | 1.0.0 | 2026-03 |
-| Next.js Data Fetching | `nextjs-data-fetching/` | Worker (reference) | ~700 | 1.0.0 | 2026-03 |
-| Next.js Auth | `nextjs-auth/` | Worker (reference) | ~700 | 1.0.0 | 2026-03 |
 | Frontend UI | `frontend-ui/` | Worker (reference) | ~600 | 1.0.0 | 2026-03 |
-
-## Framework — API Gateway
-
-| Skill Name | Directory | Agent Consumers | Token Est. | Version | Last Updated |
-|------------|-----------|-----------------|------------|---------|--------------|
-| Gateway Auth Middleware | `gateway-auth-middleware/` | Worker (reference) | ~600 | 1.0.0 | 2026-03 |
-| Gateway Correlation | `gateway-correlation/` | Worker (reference) | ~500 | 1.0.0 | 2026-03 |
-| Gateway Proxy Patterns | `gateway-proxy-patterns/` | Worker (reference) | ~600 | 1.0.0 | 2026-03 |
-| Gateway Rate Limiting | `gateway-rate-limiting/` | Worker (reference) | ~500 | 1.0.0 | 2026-03 |
 
 ## Testing / QA
 
@@ -97,16 +72,10 @@ Comprehensive index of all skills available in the Loomwright plugin.
 | QA Test Patterns | `qa-test-patterns/` | QA Executor (preload) | ~1,800 | 1.0.0 | 2026-06-10 |
 | QA Orchestration | `qa-orchestration/` | QA Executor (reference) | ~900 | 1.0.0 | 2026-03 |
 
-## Database
-
-| Skill Name | Directory | Agent Consumers | Token Est. | Version | Last Updated |
-|------------|-----------|-----------------|------------|---------|--------------|
-| MySQL | `mysql/` | Worker (reference) | ~700 | 1.0.0 | 2026-03 |
-| PostgreSQL | `postgresql/` | Worker (reference) | ~800 | 1.0.0 | 2026-03 |
-| Redis Caching | `redis-caching/` | Worker (reference) | ~800 | 1.0.0 | 2026-03 |
-
 ---
 
-**Total: 59 skills**
+**Total: 41 skills**
 
-_Last updated: 2026-07-06_
+> **Moved (v15.6.0):** the 18 tech-stack skills (Next.js ×5, NestJS ×5, API Gateway ×4, MySQL/PostgreSQL/Redis Caching, Docker) now live in the **stackpack@atelier** plugin — `/plugin install stackpack@atelier`.
+
+_Last updated: 2026-07-07_

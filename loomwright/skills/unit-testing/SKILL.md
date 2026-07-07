@@ -22,7 +22,7 @@ Patterns for writing reliable, maintainable unit tests with Jest and Vitest.
 ## When NOT to Use
 
 - E2E or integration tests spanning multiple services — use `playwright-e2e`
-- Database query testing — use `mysql` or `postgresql` skills
+- Database query testing — use the `mysql` or `postgresql` skills (stackpack@atelier plugin)
 - Load/performance testing — use dedicated performance tools
 
 ## Core Patterns
@@ -197,7 +197,7 @@ npx vitest run src/services/user.service.spec.ts
 
 - `playwright-e2e` — E2E and integration testing with Playwright
 - `quality-checklist` — Coverage thresholds and review criteria
-- `nestjs-services` — NestJS service patterns that need unit tests
+- `nestjs-services` (stackpack@atelier plugin) — NestJS service patterns that need unit tests
 - `error-handling` — Testing error paths and exception scenarios
 
 ## Quality Gates

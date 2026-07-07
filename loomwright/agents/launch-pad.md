@@ -262,7 +262,7 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 3. Estimate files to **modify** (existing) and **create** (new)
 4. Group files by module/domain — these become subtask boundaries
 5. Detect file overlap between groups (overlap = must serialize)
-6. Identify relevant skills per group (e.g., `skills/nestjs-guards/SKILL.md`)
+6. Identify relevant skills per group (e.g., `skills/error-handling/SKILL.md`, or installed stackpack@atelier skills)
 7. Mark confidence: HIGH (clear match) / MEDIUM (likely) / LOW (uncertain)
 8. **Blast-radius / impact prediction (advisory, System Twin read-path, v14.10.0; full-graph + incident history, v14.15.0):** After the file impact map is settled, predict the *indirect* blast radius — subsystems that depend on what you're touching, AND subsystems that *depend on* what you're touching, neither of which the keyword/glob search above would surface. For each touched subsystem/file group, do two reads:
 
@@ -324,8 +324,8 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 
 | Group | Skills |
 |-------|--------|
-| {domain-a} | `skills/nestjs-guards/SKILL.md` |
-| {domain-b} | `skills/nextjs-api-routes/SKILL.md` |
+| {domain-a} | `skills/error-handling/SKILL.md` |
+| {domain-b} | `skills/unit-testing/SKILL.md` |
 
 ### Blast-Radius / Impact Prediction
 
@@ -791,9 +791,9 @@ subtask_4:
 ```
 
 ## Skill References
-- `skills/nestjs-guards/SKILL.md` (Subtask 1)
-- `skills/nestjs-services/SKILL.md` (Subtask 2)
-- `skills/nestjs-controllers/SKILL.md` (Subtask 3)
+- `skills/error-handling/SKILL.md` (Subtask 1)
+- `skills/unit-testing/SKILL.md` (Subtask 2)
+- `skills/{domain}/SKILL.md` (Subtask 3)
 - `skills/playwright-e2e/SKILL.md` (Subtask 4)
 
 ## Risk Assessment

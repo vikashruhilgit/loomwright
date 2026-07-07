@@ -173,7 +173,7 @@ The hook enforces these caps on `drift_kind ↔ severity` combinations — an is
 **Code Reviewer Responsibilities:**
 - Review code against `CLAUDE.md` patterns and `skills/quality-checklist/SKILL.md` criteria
 - **Validate CLAUDE.md accuracy:** Check documented patterns match actual codebase; flag when outdated
-- **Map domain-specific skills:** Identify which skills apply (frontend-ui, nestjs-guards, etc.) based on review scope
+- **Map domain-specific skills:** Identify which skills apply (frontend-ui, error-handling, installed stackpack@atelier skills, etc.) based on review scope
 - **Enforce UI consistency:** For frontend code, verify design-system usage, accessibility, responsive design (via `skills/frontend-ui/SKILL.md`)
 - Determine review outcome: PASS / FAIL / NEEDS_HUMAN
 - For each issue: severity (BLOCKING/HIGH/MEDIUM/LOW), category (new/pre_existing/nit/drift), `drift_kind` when category=drift (respect severity caps: count/version_secondary ≤ MEDIUM; hooks_parity/wording ≤ LOW), file:line, suggestion, rationale
@@ -288,8 +288,9 @@ Review implementation code against quality standards and provide a clear decisio
 5. **Load Quality Criteria**
    - Read `skills/quality-checklist/SKILL.md` → standard criteria
    - Adapt to framework if applicable:
-     - NestJS: See `skills/nestjs-guards/SKILL.md` patterns section
-     - Next.js: See `skills/nextjs-routing/SKILL.md` patterns section
+     - Error paths: See `skills/error-handling/SKILL.md` patterns section
+     - Tests: See `skills/unit-testing/SKILL.md` patterns section
+     - Framework-specific (NestJS, Next.js, gateways, databases): use the matching stackpack@atelier skills when that plugin is installed
      - TypeScript: Type safety from CLAUDE.md
 
 6. **Validate CLAUDE.md Accuracy**
@@ -348,9 +349,8 @@ Review implementation code against quality standards and provide a clear decisio
 
    **For BACKEND code specifically:**
    - Apply framework-specific skills:
-     - NestJS: Load `skills/nestjs-guards/SKILL.md`, `skills/nestjs-services/SKILL.md`
-     - Next.js API: Load `skills/nextjs-api-routes/SKILL.md`
-     - API Gateway: Load `skills/gateway-*/SKILL.md` patterns
+     - Always available: `skills/error-handling/SKILL.md`, `skills/unit-testing/SKILL.md`, `skills/monitoring-observability/SKILL.md`
+     - Framework-specific (NestJS guards/services, Next.js API routes, API Gateway patterns): load the matching stackpack@atelier skills when that plugin is installed
 
 4. **Adversarial-Input Lens (interrogate inputs, don't just read them)**
 
@@ -625,7 +625,7 @@ Open design decision flagged for human judgment.
 ### Issues Found
 - **MEDIUM** src/auth/refresh.ts:8 — Retry-on-failure vs fail-fast is an architectural choice
   - Details: Both are defensible here; CLAUDE.md documents neither. The reviewer cannot adjudicate.
-  - Suggestion: Decide the policy; see skills/gateway-proxy-patterns/SKILL.md circuit breaker
+  - Suggestion: Decide the policy; see skills/error-handling/SKILL.md retry/fail-fast patterns
 
 ### Bug Issues
 - Created: BD-52 Design Review: Error Retry Policy (blocks this review)

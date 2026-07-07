@@ -67,7 +67,7 @@ Then persist the task tree **per mode**:
 
 - **No ad-hoc TODO files:** Use Beads when active, else the single `.supervisor/requirements/*-plan.md` checklist (per Persistence Mode) — never scattered TODO.md/memory files
 - **Review is mandatory:** Every implementation has a review subtask (both modes)
-- **Skills, not prompts:** Reference skill files for guidance (e.g., "see skills/nestjs-guards/SKILL.md")
+- **Skills, not prompts:** Reference skill files for guidance (e.g., "see skills/error-handling/SKILL.md")
 - **No invented scope:** Only break down what's in the goal
 - **Pattern detection:** Flag opportunities for CLAUDE.md updates
 - **If missing info:** Stop and ask before proceeding
@@ -76,7 +76,7 @@ Then persist the task tree **per mode**:
 
 ## Role: Orchestrator (Planning Agent)
 
-**Standard Output Format:** Context Read → Current State → Plan (Beads structure) → Work/Results → Risks & Next Steps. Each implementation task automatically has a review subtask that blocks the next task until completed (PASS/FAIL/NEEDS_HUMAN). Skills referenced by path (e.g., "see skills/nestjs-guards/SKILL.md for guard patterns"), never embedded.
+**Standard Output Format:** Context Read → Current State → Plan (Beads structure) → Work/Results → Risks & Next Steps. Each implementation task automatically has a review subtask that blocks the next task until completed (PASS/FAIL/NEEDS_HUMAN). Skills referenced by path (e.g., "see skills/error-handling/SKILL.md for error patterns"), never embedded.
 
 ### Context Setup (REQUIRED FIRST)
 
@@ -158,7 +158,7 @@ Then persist the task tree **per mode**:
 
 5. **Link to Skills**
    - Reference relevant skill files in task descriptions
-   - Example: "See `skills/nestjs-guards/SKILL.md` for guard patterns"
+   - Example: "See `skills/error-handling/SKILL.md` for error-path patterns" (framework-specific skills come from stackpack@atelier when installed)
    - Example: "See `skills/quality-checklist/SKILL.md` for review criteria"
    - Don't embed skill content; just point to it
 
@@ -255,7 +255,7 @@ Examples:
   - Guard validates Bearer token from Authorization header
   - Extracts user payload to `request.user`
   - Returns 401 on invalid/missing token
-  - See `skills/nestjs-guards/SKILL.md` for patterns
+  - See `skills/{domain}/SKILL.md` for patterns (e.g., a stackpack@atelier guard skill when installed)
 - **Depends On:** None
 - **Files:** `[TO BE CREATED]` src/auth/jwt.guard.ts
 - **Estimated:** 30-45 min
@@ -267,7 +267,7 @@ Examples:
   - Error handling: Specific exceptions (UnauthorizedException)
   - Tests pass: Unit test coverage ≥ 80%
   - Security: No sensitive data in error messages
-  - Pattern match: Aligns with `skills/nestjs-guards/SKILL.md`
+  - Pattern match: Aligns with the referenced `skills/{domain}/SKILL.md`
   - See `skills/quality-checklist/SKILL.md` for gate criteria
 - **Depends On:** BD-48
 - **Decision:** PASS / FAIL / NEEDS_HUMAN
@@ -279,7 +279,7 @@ Examples:
   - POST /auth/refresh accepts refreshToken
   - Returns new accessToken with 15m expiry
   - Returns new refreshToken with 7d expiry
-  - See `skills/nestjs-controllers/SKILL.md` for controller patterns
+  - See `skills/{domain}/SKILL.md` for controller patterns (e.g., a stackpack@atelier controller skill when installed)
 - **Depends On:** BD-49 (blocked until review passes)
 - **Files:** `[TO BE CREATED]` src/auth/refresh.controller.ts
 - **Estimated:** 30-45 min
@@ -291,7 +291,7 @@ Examples:
   - Secure cookie handling (httpOnly, secure flags)
   - Tests pass with edge cases (expired tokens, old refreshes)
   - Error handling comprehensive
-  - Pattern match: Aligns with `skills/nestjs-controllers/SKILL.md`
+  - Pattern match: Aligns with the referenced `skills/{domain}/SKILL.md`
   - See `skills/quality-checklist/SKILL.md`
 - **Depends On:** BD-50
 - **Decision:** PASS / FAIL / NEEDS_HUMAN
@@ -373,8 +373,7 @@ bd claim BD-48  # Start JwtGuard implementation
 
 ### Skill References
 
-- **JwtGuard patterns:** `skills/nestjs-guards/SKILL.md`
-- **Controller patterns:** `skills/nestjs-controllers/SKILL.md`
+- **Domain patterns (guards, controllers):** `skills/{domain}/SKILL.md` (e.g., stackpack@atelier NestJS skills when installed)
 - **Quality checklist:** `skills/quality-checklist/SKILL.md`
 - **Commit format:** `skills/commit/SKILL.md`
 - **Token refresh logic:** Use Context7 if needed (`skills/context7-lookup/SKILL.md`)

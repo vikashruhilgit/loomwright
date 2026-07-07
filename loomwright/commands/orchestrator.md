@@ -46,7 +46,7 @@ Refined: "Implement dark mode toggle in Settings component, persist to localStor
 
 #### BD-16: Implement dark mode toggle (TASK)
 - Acceptance: Toggle appears in Settings, persists to localStorage
-- Skills: See skills/nextjs-components/SKILL.md
+- Skills: See skills/{domain}/SKILL.md (e.g., a stackpack@atelier component skill when installed)
 - Depends On: None
 
 #### BD-17: Code Review - Dark mode (SUBTASK) ← blocks BD-18
@@ -236,7 +236,7 @@ I understand: Implement a dark mode toggle in the Settings component that:
   - Toggle appears in Settings component
   - Mode persists across sessions (localStorage)
   - Works with Tailwind dark: classes
-- **Skills:** See `skills/nextjs-components/SKILL.md`
+- **Skills:** See `skills/{domain}/SKILL.md` (e.g., a stackpack@atelier component skill when installed)
 - **Depends On:** None
 - **Estimated:** 45 min
 

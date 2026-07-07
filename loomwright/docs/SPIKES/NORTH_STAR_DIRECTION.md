@@ -162,6 +162,11 @@ on-demand reference or extract; keep the depth that earns its keep, cut the dorm
 agents" — that critique misread the subagent-isolation runtime; per-run token cost is not 14× and the agents
 provide real distinct value.)
 
+> **Status (2026-07-07): SHIPPED in v15.6.0.** The extract half of this action landed — the 18 tech-stack
+> skills (Next.js ×5, NestJS ×5, gateway ×4, mysql/postgresql/redis-caching, docker) moved to the sibling
+> **stackpack@atelier** plugin, and the bundled MySQL MCP server moved to **mysql-mcp@atelier**. Loomwright
+> keeps the 41 orchestration-core skills.
+
 ## Sequencing — where to start
 
 1. **Read-before-write rule** (Bet 3 write-side) — promote the 3 existing feedback lessons to ONE named rule in

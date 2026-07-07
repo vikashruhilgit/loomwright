@@ -207,9 +207,9 @@ export class LoggingInterceptor implements NestInterceptor {
 ## Related Skills
 
 - `error-handling` — Error classification and logging levels
-- `gateway-correlation` — Correlation ID at the API gateway layer
-- `redis-caching` — Cache hit/miss metrics
-- `docker` — Container health checks and log drivers
+- `gateway-correlation` (stackpack@atelier plugin) — Correlation ID at the API gateway layer
+- `redis-caching` (stackpack@atelier plugin) — Cache hit/miss metrics
+- `docker` (stackpack@atelier plugin) — Container health checks and log drivers
 
 ## Quality Gates
 

@@ -126,7 +126,7 @@ Check ALL criteria in order. For each, note whether it passes or has issues. Cri
 
 **How:**
 - Verify each skill file exists: `Glob` for `skills/{name}/SKILL.md`
-- Check skill matches the subtask's domain (e.g., nestjs-guards for auth, not nextjs-auth for backend)
+- Check skill matches the subtask's domain (e.g., error-handling for error paths, not frontend-ui for backend; framework skills may come from the stackpack@atelier plugin when installed)
 - Flag missing skill references for obvious domains
 
 **Severity if failed:** MEDIUM (wrong skill), LOW (missing optional skill)

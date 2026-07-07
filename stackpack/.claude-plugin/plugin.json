@@ -1,0 +1,20 @@
+{
+  "name": "stackpack",
+  "version": "1.0.0",
+  "description": "Stackpack v1.0.0 — generic tech-stack reference skills (Next.js, NestJS, API-gateway patterns, MySQL, PostgreSQL, Redis, Docker) spun out of Loomwright; 18 skills, no agents/commands/hooks. Install alongside loomwright@atelier.",
+  "author": {
+    "name": "vikash ruhil"
+  },
+  "license": "MIT",
+  "keywords": [
+    "skills",
+    "nextjs",
+    "nestjs",
+    "gateway",
+    "mysql",
+    "postgresql",
+    "redis",
+    "docker",
+    "reference"
+  ]
+}
