@@ -800,7 +800,7 @@ subtask_4:
 | Risk | Impact | Mitigation |
 |------|--------|------------|
 | Token storage strategy unclear | HIGH | Clarify DB vs Redis in Subtask 2 |
-| Refresh token rotation complexity | MEDIUM | Use established pattern from nestjs-guards skill |
+| Refresh token rotation complexity | MEDIUM | Use established pattern from the relevant guard skill (stackpack@atelier plugin) |
 
 ## Configuration
 - **Workers:** 2
