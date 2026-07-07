@@ -19,6 +19,21 @@
 # produce a FALSE "prior churn" hit. When the current repo is undeterminable (no remote / parse
 # fails), matching falls back to UNSCOPED (fail-open) — same behavior as before this scoping.
 #
+# CURATION (in-ledger): the ledger may also contain curation records — jq-built JSONL lines with
+# `source:"curation"`, `curation_action:"retract"|"supersede"`, and a `target_key` naming a data
+# line's `automate_key` OR `pr_url` (EXACT string equality) — appended ONLY by
+# curate-postmortem.sh (the human-gated sole curator writer). This reader (a) NEVER counts a
+# curation record as a churn hit itself, and (b) EXCLUDES any data entry whose automate_key or
+# pr_url is named by a well-formed curation record. Presence discipline: a curation record whose
+# target_key is MISSING, null, non-string, or empty is malformed and contributes NO target — the
+# entries it meant to curate stay LIVE (skip the record, never guess). Additive: curation lines
+# stay at schema_version 1; old readers fail-safe-skip them (they carry no changed_paths).
+#
+# STALENESS: a data entry whose `ts` parses as ISO-8601 and is older than CHURN_STALE_DAYS
+# (env override, default 180 days) vs now is EXCLUDED from the aggregation. A MISSING or
+# unparseable `ts` is treated as FRESH (fail-open — an old-format line must never vanish
+# silently); parsing uses jq's `fromdateiso8601?` so a bad ts can never crash the query.
+#
 # Output is ADVISORY and prefixed with a subordinate-to-CLAUDE.md banner. This helper NEVER
 # gates anything; its output is always subordinate to CLAUDE.md (on conflict, CLAUDE.md wins).
 #
@@ -61,6 +76,21 @@ mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
 MAX_PATHS=5
 MAX_CLASSES=8
 MAX_STAGES=8
+
+# Staleness horizon (days) for churn hits — see header STALENESS. Env-overridable; a
+# non-numeric override falls back to the 180-day default (validated HERE so only a clean
+# integer ever crosses into jq via --argjson).
+CHURN_STALE_DAYS="${CHURN_STALE_DAYS:-180}"
+case "$CHURN_STALE_DAYS" in
+  ''|*[!0-9]*) CHURN_STALE_DAYS=180 ;;
+esac
+# Now-epoch computed in shell and passed into jq (keeps the boundary explicit). Validated
+# numeric before use; an unparseable value degrades to 0, which makes every entry compare
+# FRESH (fail-open — a broken clock must never hide the whole ledger).
+NOW_EPOCH="$(date -u +%s 2>/dev/null || true)"
+case "$NOW_EPOCH" in
+  ''|*[!0-9]*) NOW_EPOCH=0 ;;
+esac
 
 # 1. Collect touched paths. ARGS TAKE PRECEDENCE: when path args are present, STDIN is NEVER
 #    read, so an args-bearing call can never block on an open-but-idle stdin in a non-TTY
@@ -108,10 +138,24 @@ summary="$(
     --arg cur_repo "$CUR_REPO" \
     --argjson max_paths "$MAX_PATHS" \
     --argjson max_classes "$MAX_CLASSES" \
-    --argjson max_stages "$MAX_STAGES" '
+    --argjson max_stages "$MAX_STAGES" \
+    --argjson stale_days "$CHURN_STALE_DAYS" \
+    --argjson now_epoch "$NOW_EPOCH" '
     # Set of query paths for fast membership.
     ($query | map(select(. != null and . != "")) | unique) as $q
     | ($q | map({(.): true}) | add // {}) as $qset
+    | ($stale_days * 86400) as $stale_secs
+    # Curation target set (see header CURATION): target_keys named by curation records
+    # (source=="curation") that carry a PRESENT, non-empty string target_key. Presence
+    # discipline via has() — a record whose target_key is missing/null/non-string/empty is
+    # malformed and contributes NO target (its intended entries stay live). Built over the
+    # WHOLE corpus, independent of repo scoping.
+    | ([ .[]
+         | select(type == "object")
+         | select((.source // "") == "curation")
+         | select(has("target_key") and ((.target_key | type) == "string") and (.target_key != ""))
+         | .target_key
+       ] | map({(.): true}) | add // {}) as $curated
     # Keep only entries whose changed_paths overlap the query set AND — when the current repo is
     # known ($cur_repo != "") — whose `repo` matches it. The match is CASE-INSENSITIVE (GitHub
     # slugs are case-insensitive, so a corpus repo:"Owner/Repo" must still match a CUR_REPO of
@@ -121,6 +165,18 @@ summary="$(
     # with the existing discipline.
     | [ .[]
         | . as $e
+        # Curation-aware filtering (see header CURATION): a curation record is NEVER a churn
+        # hit itself, and a data entry whose automate_key OR pr_url is in the curated target
+        # set is excluded. Non-string automate_key/pr_url degrade to "" (never a set member —
+        # target_key is enforced non-empty above), so a weird value can never crash the query.
+        | select((($e.source) // "") != "curation")
+        | (((($e.automate_key) // "") | if type == "string" then . else "" end)) as $akey
+        | (((($e.pr_url) // "") | if type == "string" then . else "" end)) as $purl
+        | select((($curated[$akey] // false) or ($curated[$purl] // false)) | not)
+        # Staleness (see header STALENESS): a ts older than CHURN_STALE_DAYS vs now is
+        # excluded; missing/unparseable ts ⇒ null epoch ⇒ kept (FRESH, fail-open).
+        | ((($e.ts) // null) | if type == "string" then (fromdateiso8601? // null) else null end) as $ts_epoch
+        | select(($ts_epoch == null) or (($now_epoch - $ts_epoch) <= $stale_secs))
         | select($cur_repo == "" or ((($e.repo) // "") | ascii_downcase) == ($cur_repo | ascii_downcase))
         | ((($e.changed_paths) // []) | map(select($qset[.] == true))) as $overlap
         | select(($overlap | length) > 0)
