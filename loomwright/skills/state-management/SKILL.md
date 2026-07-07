@@ -2,8 +2,8 @@
 name: state-management
 description: State file schema, .supervisor/ directory setup, checkpoint and resume protocols. Use when managing Supervisor session state across phases.
 allowed-tools: [Read, Write, Edit, Bash]
-version: "1.2.0"
-lastUpdated: "2026-07"
+version: "1.3.0"
+lastUpdated: "2026-07-06"
 ---
 
 # State Management Skill
@@ -357,6 +357,37 @@ When a session completes (Phase 5 LOOP → no more tasks):
    ```
 2. Clear active state file
 3. State file remains for reference but `status: completed`
+
+---
+
+## Session Logging (moved from agents/supervisor.md)
+
+> Event-catalog and field-spec authority for the Supervisor's per-session JSONL log. The agent file (`agents/supervisor.md` §"Session Logging") keeps only the path convention + the `session_end` requirement and points here.
+
+**Log entries** (`.supervisor/logs/{session_id}.jsonl`):
+```jsonl
+{"ts":"2026-03-09T14:30:00Z","type":"phase_transition","from":"INIT","to":"ACQUIRE","task_id":"user-auth"}
+{"ts":"2026-03-09T14:30:05Z","type":"agent_spawn","agent":"orchestrator","task_id":"user-auth","description":"Plan: decompose user-auth"}
+{"ts":"2026-03-09T14:30:15Z","type":"agent_result","agent":"orchestrator","task_id":"user-auth","subtasks":3}
+{"ts":"2026-03-09T14:30:16Z","type":"agent_spawn","agent":"execute-manager","task_id":"user-auth","subtask_count":3}
+{"ts":"2026-03-09T14:32:00Z","type":"agent_result","agent":"execute-manager","task_id":"user-auth","status":"completed","subtasks_completed":3}
+{"ts":"2026-03-09T14:32:05Z","type":"phase_transition","from":"EXECUTE","to":"FINALIZE","task_id":"user-auth"}
+{"ts":"2026-03-09T14:32:30Z","type":"merge","branch":"feature/user-auth-a","into":"feature/user-auth","status":"success"}
+{"ts":"2026-03-09T14:33:00Z","type":"pr_created","task_id":"user-auth","pr_number":42,"url":"https://github.com/org/repo/pull/42"}
+{"ts":"2026-03-09T14:34:00Z","event":"session_end","type":"session_end","task_id":"user-auth","status":"completed","contract_conformance_status":"pass","contract_violations":0,"benchmark_status":"pass","benchmark_metric":"selftest_pass_count","benchmark_value":4,"benchmark_delta":0,"ground_truth_status":"skipped","ground_truth_checks_total":0,"ground_truth_checks_passed":0,"ground_truth_pass_rate":"0/0","knowledge_sources_used":["project_memory","lessons:testing","twin:scripts/build-insights.sh","brain_context"],"plugin_version":"14.24.0"}
+```
+
+**System Twin hard-signal fields on `session_end` (System Twin / ST3 + M2b slice 1a):** the `session_end` event carries FLAT scalar fields — the six `contract_*` / `benchmark_*` fields (`contract_conformance_status`, `contract_violations`, `benchmark_status`, `benchmark_metric`, `benchmark_value`, `benchmark_delta`) and, added in v14.19.0, the four `ground_truth_*` fields (`ground_truth_status`, `ground_truth_checks_total`, `ground_truth_checks_passed`, `ground_truth_pass_rate`) — written from Phase 4.5's completion tail with the SAME data as the nested `SUPERVISOR_RESULT.contract_conformance` / `benchmark_result` / `ground_truth` objects (field correspondence table in `skills/self-heal-advisory/SKILL.md` §"Hard-signal dual emission"). `build-insights.sh` (ST4) reads these via `select(.event=="session_end")` exactly as it reads `rubric_score`; it does NOT parse the nested objects. **These flat field names are a hard contract with ST4 — do NOT rename them.** They are additive: a `session_end` event without them remains valid (a reader treats absent `ground_truth_*` as `"skipped"`). `benchmark_value` / `benchmark_delta` may be `null` (not measured / no baseline). ST4 aggregates the `contract_*`/`benchmark_*` fields today; `ground_truth_*` is written-now with aggregation a forward-compat follow-up. The matching `event` key (in addition to the existing `type`) is what ST4's `select(.event=="session_end")` filter keys on. The `session_end` event also carries the additive `plugin_version` string (e.g. `"14.24.0"`, read at emission time from `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` via jq with an `"unknown"` fallback) for per-version aggregation — absent `plugin_version` stays valid (older events group under `"unknown"`). The `session_end` event ALSO carries the additive FLAT `knowledge_sources_used` array (v14.28.0 — e.g. `["project_memory","lessons:testing","twin:scripts/build-insights.sh","brain_context"]`), stamped with the SAME data as the nested `SUPERVISOR_RESULT.knowledge_sources_used` array (the dual-shape pattern `contract_conformance` uses), recording which memory the run consulted. It is additive and ADVISORY: readers/`build-insights.sh` treat an absent field as "none used", it is NEVER gated on, and it does NOT bump `schema_version`. As of v14.33.0 `build-insights.sh` / `/insights` aggregates and surfaces it in the `## Knowledge sources (memory APPLY)` dashboard section (runs-reporting-a-source count, top source tags, per-version usage); this surface ensures the field is emitted.
+
+**Retention:** 7 days (clean up in INIT phase).
+
+**When to log:**
+- Phase transitions
+- Agent spawns and results
+- Merge operations
+- PR creation
+- Errors and escalations
+- Checkpoint events
 
 ---
 

@@ -2,7 +2,7 @@
 name: async-orchestration
 description: Background dispatch patterns, non-blocking polling, parallelism decisions, and git worktree lifecycle. Use when running parallel workers in Supervisor workflows. Part 2 — the Supervisor Phase 4 FINALIZE protocol (pre-merge safety gate, sequential merge, worktree cleanup, commit/push/PR creation, PR-base self-verify), the verbatim Subagent Spawn Contracts, and the worktree-lifecycle phase sequence, moved from agents/supervisor.md, which keeps the phase stanza + gates.
 allowed-tools: [Read, Bash]
-version: "1.1.0"
+version: "1.1.1"
 lastUpdated: "2026-07-06"
 ---
 
@@ -77,9 +77,9 @@ If `--sequential` flag:
 
 ## Git Worktree Lifecycle
 
-### Phase 2 (PLAN): Create Branches
+### Phase 3 (EXECUTE — Execute Manager Step 2a): Create Branches
 
-After parallelism analysis, create branches for launchable subtasks:
+After Phase 2's parallelism analysis, the **Execute Manager** creates branches for launchable subtasks at Phase 3 entry (its Step 2a) — never the Supervisor in Phase 2; Phase 2 (PLAN) runs no git commands (the same ownership invariant stated in Part 2 §"Git Worktree Lifecycle (phase sequence)"):
 
 ```bash
 # From the feature branch

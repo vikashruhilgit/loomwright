@@ -216,7 +216,7 @@ BLOCKED if:
   - Files overlap with a LAUNCHABLE subtask
 ```
 
-**Output:** the `### Phase 2: PLAN` block shown in §"Output Format (Complete Example)" — subtask count + IDs, launchable/blocked parallelism split, first batch, and `Mode:` reading one of `parallel (workers: {N})` | `sequential` | `inline (single subtask)`.
+**Output:** emit a `### Phase 2: PLAN` block — subtask count + IDs, launchable/blocked parallelism split, first batch, and `Mode:` reading one of `parallel (workers: {N})` | `sequential` | `inline (single subtask)`.
 
 **Supervisor context after PLAN:** ~400 tokens
 
@@ -263,35 +263,14 @@ EXECUTE_RESULT has no top-level `status:` field — the discriminator is
 **`subtasks_failed`: escalation ⇔ `subtasks_failed` is non-empty** (see
 `docs/RESULT_SCHEMAS.md` §EXECUTE_RESULT).
 
-```
-if EXECUTE_RESULT and subtasks_failed is empty (all done):
-  → Extract: merge_order, worktrees, branches, review decisions
-  → Proceed to Phase 4 FINALIZE with merge data
-
-if EXECUTE_RESULT and subtasks_failed is non-empty (escalation):
-  → If subtasks_completed is ALSO non-empty (partial escalation — the common
-    shape): proceed to Phase 4 FINALIZE with the completed subset (merge per
-    merge_order, which already lists only completed branches), THEN report the
-    failed subtasks to the user as an escalation in the same run.
-  → If subtasks_completed is empty (all-failed): checkpoint via Context-Keeper
-    and report the escalation to the user with the resume command — nothing to
-    merge.
-
-if EXECUTE_CHECKPOINT (partial):
-  → Context-Keeper: checkpoint
-  → Ask user: merge completed subtasks now, or spawn fresh Execute Manager?
-  → If merge now: proceed to FINALIZE with completed subset
-  → If continue: spawn fresh Execute Manager with remaining subtasks + resume context
-```
-
 **Error handling during EXECUTE:**
 
 | Situation | Action |
 |-----------|--------|
-| EXECUTE_RESULT, `subtasks_failed` empty (completed) | Extract merge data, proceed to FINALIZE |
-| EXECUTE_RESULT, `subtasks_failed` non-empty + `subtasks_completed` non-empty (partial escalation) | FINALIZE the completed subset per `merge_order`, then report failures |
-| EXECUTE_RESULT, `subtasks_completed` empty (all-failed escalation) | Checkpoint, report to human — nothing to merge |
-| EXECUTE_CHECKPOINT (partial) | Ask user, merge subset or continue |
+| EXECUTE_RESULT, `subtasks_failed` empty (completed) | Extract merge data (`merge_order`, worktrees, branches, review decisions), proceed to FINALIZE |
+| EXECUTE_RESULT, `subtasks_failed` non-empty + `subtasks_completed` non-empty (partial escalation — the common shape) | FINALIZE the completed subset per `merge_order` (which already lists only completed branches), THEN report the failed subtasks to the user as an escalation in the same run |
+| EXECUTE_RESULT, `subtasks_completed` empty (all-failed escalation) | Checkpoint via Context-Keeper, report to human with resume command — nothing to merge |
+| EXECUTE_CHECKPOINT (partial) | Checkpoint via Context-Keeper; ask user: merge completed subset now (→ FINALIZE with subset) or continue (→ spawn fresh Execute Manager with remaining subtasks + resume context) |
 | EXECUTE_CHECKPOINT (`adjudication_required: true`) | Pause EXECUTE, surface 4-option choice via AskUserQuestion (see "Adjudication Handling" below) |
 | Execute Manager crash | Checkpoint, report worktree state, exit with resume |
 | Tool budget warning | Checkpoint, exit with resume command |
@@ -317,7 +296,7 @@ When the Execute Manager surfaces an `EXECUTE_CHECKPOINT` with `adjudication_req
 
 **Hard rule:** the Supervisor never picks an option silently — it always asks the user. Auto-selection (e.g., "C is safest, pick C") is forbidden because each option has different irreversible consequences (job failure, brief mutation, plan mutation).
 
-**Output:** the `### Phase 3: EXECUTE` block shown in §"Output Format (Complete Example)" — `Mode:` reading `delegated (Execute Manager)` or `inline (fast-path)`, subtasks completed `{count}/{total}`, reviews passed, dependency-ordered merge order, and `Tool calls: Supervisor {N}/50, Execute Manager {M}/60`.
+**Output:** emit a `### Phase 3: EXECUTE` block — `Mode:` reading `delegated (Execute Manager)` or `inline (fast-path)`, subtasks completed `{count}/{total}`, reviews passed, dependency-ordered merge order, and `Tool calls: Supervisor {N}/50, Execute Manager {M}/60`.
 
 **Supervisor context during EXECUTE:** ~50 tokens (single Task call + result parsing)
 
@@ -342,7 +321,7 @@ When the Execute Manager surfaces an `EXECUTE_CHECKPOINT` with `adjudication_req
 - Base mismatch / unrecoverable `gh` failure → `base_mismatch_detected` flag set, fall through to Phase 4.5 cleanup path (`status: failed` emitted there, never here).
 - Merge conflict or failed pre-merge validation → STOP as above; exit with resume command.
 
-**Output:** the `### Phase 4: FINALIZE` block shown in §"Output Format (Complete Example)" — pre-merge validation result, worktree commits, merges into the feature branch, `Conflicts:` reading `none` or the conflict details, worktrees cleaned, commit SHA + message, PR number + URL, and `Task: {task_id} [MERGED — pending self-heal]`.
+**Output:** emit a `### Phase 4: FINALIZE` block — pre-merge validation result, worktree commits, merges into the feature branch, `Conflicts:` reading `none` or the conflict details, worktrees cleaned, commit SHA + message, PR number + URL, and `Task: {task_id} [MERGED — pending self-heal]`.
 
 ---
 
@@ -485,10 +464,7 @@ Everything else lives in the state file, managed by Context-Keeper. Phase 3 poll
 
 ### Resume Protocol
 
-Priority order for loading state:
-1. Scratchpad state file (freshest, same session)
-2. `.supervisor/state.md` (persistent, cross-session)
-3. No state found → fresh start (Phase 0)
+Priority order: scratchpad state file (freshest, same session) → `.supervisor/state.md` (persistent, cross-session) → no state found = fresh start (Phase 0). Full protocol + the fail-closed Resume validation gate: `skills/state-management/SKILL.md` §§"Resume Protocol" / "Resume validation gate" (Supervisor-preloaded).
 
 ---
 
@@ -514,17 +490,11 @@ Priority order for loading state:
 ```
 /supervisor                                    # Interactive task selection
 /supervisor task: "add user authentication"    # Work on specific task
-/supervisor --max-workers 3                    # Up to 3 parallel workers
-/supervisor --sequential                       # No parallelism
-/supervisor --continue                         # Resume from checkpoint
-/supervisor --continue task: user-auth         # Resume specific task
-/supervisor --dry-run                          # Preview only
+/supervisor --continue task: user-auth         # Resume specific task from checkpoint
 /supervisor job: .supervisor/jobs/pending/2026-02-08-jwt-auth.md   # Execute from Launch Pad brief
-/supervisor --cheap                            # Cost-optimized: orchestrator, execute-manager, workers, code-reviewer, fix tasks run on Sonnet
-/supervisor --base-branch feature/v14-iter1    # Stack PR on a non-main base (v14 autonomous-loop multi-iter)
-/supervisor --non-interactive                  # Fail closed instead of prompting on gh/adjudication gates
-/supervisor --skip-preflight-sync              # Short-circuit the Phase 1.5 remote-overlap reconciliation gate
 ```
+
+All flags in the "Flags and Options" table above combine with these shapes; the full user-facing Parameters table lives in `commands/supervisor.md`.
 
 ---
 
@@ -549,36 +519,7 @@ Priority order for loading state:
 - Branch: feature/user-auth ← CREATED
 - Requirements: Clear
 
-### Phase 1.5: PRE-FLIGHT SYNC
-- Canonical version: 14.8.0 | Base tip: a1b2c3d
-- Open PRs scanned: 2 | Recent commits scanned: 20
-- Classification: CLEAR
-- Overlap: none
-- Decision: proceed (silent)
-- preflight_sync: clear
-
-### Phase 2: PLAN
-- Subtasks: 3 (user-auth-a, user-auth-b, user-auth-c)
-- Parallelism: 2 launchable, 1 blocked
-- Mode: parallel (workers: 2)
-- First batch: [user-auth-a, user-auth-c]
-
-### Phase 3: EXECUTE
-- Mode: delegated (Execute Manager)
-- Subtasks completed: 3/3
-- Reviews passed: 3
-- Merge order: [user-auth-a, user-auth-c, user-auth-b]
-- Tool calls: Supervisor 16/50, Execute Manager 42/60
-
-### Phase 4: FINALIZE
-- Pre-merge validation: ✓ all worktrees and branches verified
-- Commits: 3 subtask commits in worktrees
-- Merges: 3 subtask branches → feature/user-auth
-- Conflicts: none
-- Worktrees cleaned: 3
-- Commit: a1b2c3d — feat(auth): implement JWT authentication with refresh tokens
-- PR: #42 — https://github.com/org/repo/pull/42
-- Task: user-auth [MERGED — pending self-heal]
+… (Phases 1.5–4 example blocks omitted — the per-phase Output pointers above define the shapes; Phase 1.5's block is defined in `skills/preflight-sync/SKILL.md`)
 
 ### Phase 4.5: SELF_HEAL
 - Heal loop ran: true
@@ -598,42 +539,7 @@ Priority order for loading state:
 - Action: Session complete
 ```
 
-**SUPERVISOR_RESULT block (emitted from Phase 4.5 completion tail, one per task — see "Result Block" section below for schema):**
-```
-SUPERVISOR_RESULT:
-  schema_version: 1
-  task_id: user-auth
-  status: completed
-  pr_url: https://github.com/org/repo/pull/42
-  branch: feature/user-auth
-  subtasks_completed: 3
-  subtasks_failed: 0
-  heal_loop_ran: true
-  heal_iterations: 1
-  heal_decision: PASS
-  heal_fixable_issues_fixed: 2
-  heal_remaining_issues: 0
-  error: null
-  summary: 3/3 subtasks merged. Self-heal fixed 2 integration issues in 1 iteration; final review PASSED. PR #42 ready.
-  cost_profile: null
-  rubric_score: "5/5"
-  preflight_sync: clear
-  contract_conformance:
-    checked: true
-    status: pass
-    contracts_evaluated: 2
-    violations: 0
-    findings: []
-  benchmark_result:
-    ran: true
-    status: pass
-    name: system-twin-selftest
-    metric: selftest_pass_count
-    value: 4
-    baseline: 4
-    delta: 0
-    unit: assertions
-```
+**SUPERVISOR_RESULT block:** emitted from the Phase 4.5 completion tail, one per task — full schema + invariants in §"Result Block (SUPERVISOR_RESULT)" below; worked examples (happy path, escalated, skip-flag) in `docs/RESULT_SCHEMAS.md`.
 
 ---
 
@@ -720,30 +626,9 @@ The exact Task tool call shapes for each subagent — Context-Keeper, Orchestrat
 
 ## Session Logging
 
-**Log entries** (`.supervisor/logs/{session_id}.jsonl`):
-```jsonl
-{"ts":"2026-03-09T14:30:00Z","type":"phase_transition","from":"INIT","to":"ACQUIRE","task_id":"user-auth"}
-{"ts":"2026-03-09T14:30:05Z","type":"agent_spawn","agent":"orchestrator","task_id":"user-auth","description":"Plan: decompose user-auth"}
-{"ts":"2026-03-09T14:30:15Z","type":"agent_result","agent":"orchestrator","task_id":"user-auth","subtasks":3}
-{"ts":"2026-03-09T14:30:16Z","type":"agent_spawn","agent":"execute-manager","task_id":"user-auth","subtask_count":3}
-{"ts":"2026-03-09T14:32:00Z","type":"agent_result","agent":"execute-manager","task_id":"user-auth","status":"completed","subtasks_completed":3}
-{"ts":"2026-03-09T14:32:05Z","type":"phase_transition","from":"EXECUTE","to":"FINALIZE","task_id":"user-auth"}
-{"ts":"2026-03-09T14:32:30Z","type":"merge","branch":"feature/user-auth-a","into":"feature/user-auth","status":"success"}
-{"ts":"2026-03-09T14:33:00Z","type":"pr_created","task_id":"user-auth","pr_number":42,"url":"https://github.com/org/repo/pull/42"}
-{"ts":"2026-03-09T14:34:00Z","event":"session_end","type":"session_end","task_id":"user-auth","status":"completed","contract_conformance_status":"pass","contract_violations":0,"benchmark_status":"pass","benchmark_metric":"selftest_pass_count","benchmark_value":4,"benchmark_delta":0,"ground_truth_status":"skipped","ground_truth_checks_total":0,"ground_truth_checks_passed":0,"ground_truth_pass_rate":"0/0","knowledge_sources_used":["project_memory","lessons:testing","twin:scripts/build-insights.sh","brain_context"],"plugin_version":"14.24.0"}
-```
+**Log path convention:** JSONL, one file per session — `.supervisor/logs/{session_id}.jsonl`. Log phase transitions, agent spawns/results, merge operations, PR creation, errors/escalations, and checkpoint events. **Retention:** 7 days (clean up in INIT phase).
 
-**System Twin hard-signal fields on `session_end` (System Twin / ST3 + M2b slice 1a):** the `session_end` event carries FLAT scalar fields — the six `contract_*` / `benchmark_*` fields (`contract_conformance_status`, `contract_violations`, `benchmark_status`, `benchmark_metric`, `benchmark_value`, `benchmark_delta`) and, added in v14.19.0, the four `ground_truth_*` fields (`ground_truth_status`, `ground_truth_checks_total`, `ground_truth_checks_passed`, `ground_truth_pass_rate`) — written from Phase 4.5's completion tail with the SAME data as the nested `SUPERVISOR_RESULT.contract_conformance` / `benchmark_result` / `ground_truth` objects (field correspondence table in `skills/self-heal-advisory/SKILL.md` §"Hard-signal dual emission"). `build-insights.sh` (ST4) reads these via `select(.event=="session_end")` exactly as it reads `rubric_score`; it does NOT parse the nested objects. **These flat field names are a hard contract with ST4 — do NOT rename them.** They are additive: a `session_end` event without them remains valid (a reader treats absent `ground_truth_*` as `"skipped"`). `benchmark_value` / `benchmark_delta` may be `null` (not measured / no baseline). ST4 aggregates the `contract_*`/`benchmark_*` fields today; `ground_truth_*` is written-now with aggregation a forward-compat follow-up. The matching `event` key (in addition to the existing `type`) is what ST4's `select(.event=="session_end")` filter keys on. The `session_end` event also carries the additive `plugin_version` string (e.g. `"14.24.0"`, read at emission time from `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` via jq with an `"unknown"` fallback) for per-version aggregation — absent `plugin_version` stays valid (older events group under `"unknown"`). The `session_end` event ALSO carries the additive FLAT `knowledge_sources_used` array (v14.28.0 — e.g. `["project_memory","lessons:testing","twin:scripts/build-insights.sh","brain_context"]`), stamped with the SAME data as the nested `SUPERVISOR_RESULT.knowledge_sources_used` array (the dual-shape pattern `contract_conformance` uses), recording which memory the run consulted. It is additive and ADVISORY: readers/`build-insights.sh` treat an absent field as "none used", it is NEVER gated on, and it does NOT bump `schema_version`. As of v14.33.0 `build-insights.sh` / `/insights` aggregates and surfaces it in the `## Knowledge sources (memory APPLY)` dashboard section (runs-reporting-a-source count, top source tags, per-version usage); this surface ensures the field is emitted.
-
-**Retention:** 7 days (clean up in INIT phase).
-
-**When to log:**
-- Phase transitions
-- Agent spawns and results
-- Merge operations
-- PR creation
-- Errors and escalations
-- Checkpoint events
+**`session_end` is REQUIRED:** Phase 4.5's completion tail MUST emit a `session_end` event carrying the FLAT hard-signal fields (`contract_*`, `benchmark_*`, `ground_truth_*`, `knowledge_sources_used`, `plugin_version`) — those flat field names are a hard contract with `build-insights.sh` (ST4); do NOT rename them. The full event catalog (example JSONL lines) and the field-by-field `session_end` spec live in `skills/state-management/SKILL.md` §"Session Logging (moved from agents/supervisor.md)" (Supervisor-preloaded).
 
 ---
 
@@ -780,22 +665,9 @@ Before completing workflow:
 
 ## Integration Notes
 
-- State stored in scratchpad (active) + `.supervisor/` (persistent)
-- Workers use `agents/worker.md` template
-- State operations use `agents/context-keeper.md`
-
-### Plugin Hooks
-
-The `hooks/hooks.json` plugin hooks provide automatic quality gates:
-- **SubagentStop (worker):** Auto-validates worker output format when a Worker completes — catches missing WORKER_RESULT blocks or unresolved errors before the Execute Manager processes them
-- **SubagentStop (execute-manager):** Auto-validates Execute Manager output contains EXECUTE_RESULT or EXECUTE_CHECKPOINT block
-- **TaskCompleted:** Validates tasks are genuinely complete before closure — prevents premature task closure
-
-These hooks reduce the need for manual validation. The Execute Manager can rely on hook-validated worker output, and the Supervisor can rely on hook-validated Execute Manager output.
-
-### Agent Teams (Alternative Parallel Strategy)
-
-For research or exploration tasks, users can manually use Claude Code Agent Teams as an alternative to git worktrees. See `skills/agent-teams/SKILL.md` for patterns and decision matrix. The Supervisor v4 workflow continues to use git worktrees as the default parallel execution strategy.
+- State stored in scratchpad (active) + `.supervisor/` (persistent); workers use `agents/worker.md`, state operations use `agents/context-keeper.md`
+- **Plugin hooks (`hooks/hooks.json`) pre-validate child output:** SubagentStop validates WORKER_RESULT (worker) and EXECUTE_RESULT / EXECUTE_CHECKPOINT (execute-manager); TaskCompleted prevents premature task closure. The Execute Manager can rely on hook-validated worker output, and the Supervisor on hook-validated Execute Manager output.
+- **Agent Teams (alternative parallel strategy):** for research/exploration tasks only — patterns + decision matrix in `skills/agent-teams/SKILL.md`; Supervisor v4 keeps git worktrees as the default parallel execution strategy.
 
 ---
 
