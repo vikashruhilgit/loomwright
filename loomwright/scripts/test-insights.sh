@@ -375,8 +375,8 @@ printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"comp
 {
   printf '%s\n' '{"ts":"2026-06-01T00:00:00Z","pr_url":"https://github.com/o/r/pull/1","changed_paths":["a"],"review_rounds":2}'
   printf '%s\n' '{"ts":"2020-01-01T00:00:00Z","pr_url":"https://github.com/o/r/pull/2","changed_paths":["b"],"review_rounds":1}'
-  printf '%s\n' '{"ts":"2026-06-02T00:00:00Z","source":"curation","action":"retract","target_key":"https://github.com/o/r/pull/2"}'
-  printf '%s\n' '{"ts":"2026-06-03T00:00:00Z","source":"curation","action":"supersede","target_key":"https://github.com/o/r/pull/2"}'
+  printf '%s\n' '{"schema_version":1,"source":"curation","curation_action":"retract","target_key":"https://github.com/o/r/pull/2","replacement":null,"reason":"noise","ts":"2026-06-02T00:00:00Z"}'
+  printf '%s\n' '{"schema_version":1,"source":"curation","curation_action":"supersede","target_key":"https://github.com/o/r/pull/2","replacement":"https://github.com/o/r/pull/5","reason":"replaced by a later PR","ts":"2026-06-03T00:00:00Z"}'
 } > "$CH/.supervisor/postmortem/results.jsonl"
 fresh_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 {
@@ -434,9 +434,9 @@ printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"comp
 {
   printf '%s\n' '{"ts":"2026-06-01T00:00:00Z","pr_url":"https://github.com/o/r/pull/3","changed_paths":["a"]}'
   printf '%s\n' '{not json at all'
-  printf '%s\n' '{"source":"curation","action":"retract"'
-  printf '%s\n' '{"source":"curation","action":"retract","target_key":null}'
-  printf '%s\n' '{"source":"curation","action":"retract"}'
+  printf '%s\n' '{"source":"curation","curation_action":"retract"'
+  printf '%s\n' '{"schema_version":1,"source":"curation","curation_action":"retract","target_key":null,"replacement":null,"reason":"explicit null key","ts":"2026-06-02T00:00:00Z"}'
+  printf '%s\n' '{"schema_version":1,"source":"curation","curation_action":"retract","replacement":null,"reason":"missing key","ts":"2026-06-02T00:00:00Z"}'
 } > "$CM/.supervisor/postmortem/results.jsonl"
 {
   printf '%s\n' "# Lessons"

@@ -44,10 +44,11 @@
 #                          [--source "<id>"] [--last-verified "<iso8601Z>"] [--confidence "<value>"]
 #         write-lessons.sh retract <category> <lesson-text> [--source "<id>"]
 #         write-lessons.sh retract --hash <content_hash>    [--source "<id>"]
-# Exit:   0 on success or safe no-op (e.g. no sha tool); non-zero only on a disallowed /
-#         would-corrupt condition (so a bad call can never half-write state). retract exits 4
-#         when the target is absent from LESSONS.md or not chain-trusted (fail loud, never
-#         tombstone a nonexistent lesson silently).
+# Exit:   0 on success or safe no-op (e.g. `add` with no sha tool; a sha-less `retract` FAILS
+#         LOUD with exit 2 — a curation verb must never silently no-op); non-zero only on a
+#         disallowed / would-corrupt condition (so a bad call can never half-write state).
+#         retract exits 4 when the target is absent from LESSONS.md or not chain-trusted
+#         (fail loud, never tombstone a nonexistent lesson silently).
 
 set -uo pipefail
 
@@ -130,6 +131,13 @@ cd "$GITROOT" || { echo "write-lessons: cannot cd to repo root" >&2; exit 2; }
 if command -v sha256sum >/dev/null 2>&1; then   sha() { sha256sum | cut -d' ' -f1; }
 elif command -v shasum  >/dev/null 2>&1; then   sha() { shasum -a 256 | cut -d' ' -f1; }
 else
+  # `add` stays a fail-safe no-op (exit 0 — a missed advisory write is harmless). `retract` is a
+  # curation verb and must FAIL LOUD instead: a silent no-op would leave the caller believing the
+  # tombstone was written while the lesson stays live (exit 2, state untouched either way).
+  if [ "$ACTION" = "retract" ]; then
+    echo "write-lessons: no sha256 tool (sha256sum/shasum) — cannot retract, failing loud" >&2
+    exit 2
+  fi
   echo "write-lessons: no sha256 tool (sha256sum/shasum) — writes disabled, fail-safe no-op" >&2
   exit 0
 fi

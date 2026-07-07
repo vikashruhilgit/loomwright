@@ -1218,8 +1218,8 @@ curation record because it carries no `changed_paths`, so the overlap filter can
   human trail, not a reader input.
 - `target_key` — required non-empty string; matches a data line's `automate_key` **OR** `pr_url` by
   **EXACT string equality** (`read-postmortem.sh` then excludes every matched entry from churn hits).
-  Newlines/CRs are rejected at write time (they could never match a single JSONL line's key and would
-  only produce a dead record).
+  Newlines/CRs and whitespace-only values are rejected at write time (they could never match a real
+  JSONL line's key and would only produce a dead record).
 - `replacement` — `pr_url` string on `supersede`; `null` on `retract` (the writer REJECTS
   `--replacement` on a retract, exit 2).
 - `reason` — required non-empty free text (jq-escaped; embedded newlines become `\n` inside the JSON
@@ -1231,8 +1231,10 @@ curation record because it carries no `changed_paths`, so the overlap filter can
 never writes unattended**; with `--confirm` it appends exactly ONE line (append-only — an existing
 ledger line is NEVER rewritten, edited, or removed; correcting a bad curation record means appending a
 new one) and read-back-verifies the ledger tail. All JSON is jq-built (`jq -n --arg`) — user input is
-never string-interpolated. As a WRITER it fails LOUD (exit 2 validation / 3 no-jq), unlike the fail-safe
-readers (bimodal failure philosophy).
+never string-interpolated. As a WRITER it fails LOUD (exit 2 validation / write error; exit 3 refused —
+jq unavailable OR run from a git worktree: like `write-lessons.sh`'s red-team-F1 guard, curation writes
+only from the repo main checkout, since a worktree's gitignored `.supervisor/` is silently lost on
+`git worktree remove`), unlike the fail-safe readers (bimodal failure philosophy).
 
 **Reader behavior** (`read-postmortem.sh`): (a) a curation record is **NEVER counted as a churn hit
 itself**; (b) the curated `target_key` set is built over the WHOLE corpus first — independent of repo

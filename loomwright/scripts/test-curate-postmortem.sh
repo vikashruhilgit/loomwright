@@ -12,7 +12,7 @@
 #   3. hostile --reason strings round-trip EXACTLY (quotes, backslashes, $(id), newlines
 #      allowed-and-escaped for reason; newlines REJECTED for --target)
 #   4. validation failures fail loud (exit 2): retract+--replacement, missing --target,
-#      missing --reason, bad action — nothing written on any of them
+#      whitespace-only --target, missing --reason, bad action — nothing written on any of them
 #   5. supersede replacement semantics (url present vs explicit null when omitted)
 #   6. reader hides a retracted entry by automate_key (sibling entries stay live)
 #   7. reader hides a superseded entry by pr_url
@@ -23,6 +23,8 @@
 #  10. staleness: ts 2020 excluded by default; missing/unparseable ts fail-open (still hit);
 #      CHURN_STALE_DAYS override honored; non-numeric override falls back to 180
 #  11. reader still exits 0 on every path incl. malformed corpus lines
+#  12. worktree guard (red-team F1): writer refuses from a linked worktree (exit 3), nothing
+#      written in EITHER location (worktree or main checkout)
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -124,6 +126,9 @@ TMP="$(newrepo)"
 [ "$rc" -eq 2 ] && ok "retract with --replacement rejected (exit 2)" || no "retract+replacement not rejected ($rc)"
 ( cd "$TMP" && bash "$CURATE" retract --reason r --confirm ) >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 2 ] && ok "missing --target rejected (exit 2)" || no "missing --target not rejected ($rc)"
+ws=$'  \t '
+( cd "$TMP" && bash "$CURATE" retract --target "$ws" --reason r --confirm ) >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 2 ] && ok "whitespace-only --target rejected (exit 2)" || no "whitespace-only --target not rejected ($rc)"
 ( cd "$TMP" && bash "$CURATE" retract --target K --confirm ) >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 2 ] && ok "missing --reason rejected (exit 2)" || no "missing --reason not rejected ($rc)"
 ( cd "$TMP" && bash "$CURATE" nuke --target K --reason r --confirm ) >/dev/null 2>&1; rc=$?
@@ -244,6 +249,16 @@ echo "$out" | grep -q "alpha" && ok "valid data line still hits past malformed +
 out="$( cd "$TMP" && bash "$READ" "src/never/touched.ts" 2>/dev/null )"; rc=$?
 [ "$rc" -eq 0 ] && [ -z "$out" ] && ok "no-overlap stays EMPTY + exit 0 with curation records present" || no "no-overlap contract broken (rc=$rc out=[$out])"
 rm -rf "$TMP"
+
+echo "== 12. worktree guard (red-team F1): refuses from a linked worktree, exit 3 =="
+TMP="$(newrepo)"
+git -C "$TMP" worktree add -q "$TMP-wt" -b wt >/dev/null 2>&1
+( cd "$TMP-wt" && bash "$CURATE" retract --target K1 --reason "should be refused" --confirm ) >/dev/null 2>&1; rc=$?
+[ "$rc" -eq 3 ] && ok "curator refuses from a worktree (exit 3)" || no "curator did NOT refuse worktree (exit $rc)"
+[ ! -e "$TMP-wt/$CORPUS" ] && ok "no ledger written under the worktree" || no "ledger leaked into the worktree"
+[ ! -e "$TMP/$CORPUS" ] && ok "no ledger written in the main checkout either" || no "ledger leaked into the main checkout"
+git -C "$TMP" worktree remove --force "$TMP-wt" >/dev/null 2>&1
+rm -rf "$TMP" "$TMP-wt"
 
 echo
 echo "RESULT: $pass passed, $fail failed"

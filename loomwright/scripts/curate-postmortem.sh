@@ -21,8 +21,8 @@
 #   3. jq-only JSON construction (`jq -n --arg ...`) — user input is NEVER string-interpolated
 #      into JSON.
 #   4. Validate BEFORE writing (fail loud, exit 2): action must be retract|supersede; --target
-#      non-empty and newline-free; --reason non-empty; --replacement only meaningful for
-#      supersede (rejected on retract).
+#      non-empty (whitespace-only rejected) and newline-free; --reason non-empty; --replacement
+#      only meaningful for supersede (rejected on retract).
 #   5. Read-back verify: after the append, the ledger's tail line must parse and carry our
 #      target_key.
 #
@@ -30,7 +30,8 @@
 #   curate-postmortem.sh retract|supersede --target <key> --reason <text>
 #                        [--replacement <pr_url>] [--confirm]
 # Exit: 0 = wrote ; 1 = dry-run (nothing written — pass --confirm to write) ;
-#       2 = validation / write error ; 3 = jq unavailable.
+#       2 = validation / write error ; 3 = refused (jq unavailable, OR run from a git worktree
+#       — curate only from the repo main checkout; red-team F1, mirrors write-lessons.sh).
 #
 # This is a WRITER: unlike the fail-safe readers it MAY exit non-zero (bimodal failure
 # philosophy — gates/writers fail LOUD, readers/emitters fail SAFE).
@@ -85,6 +86,13 @@ case "$target" in
   *"$nl"*) die "rejected: --target may not contain newline characters" ;;
   *"$cr"*) die "rejected: --target may not contain carriage-return characters" ;;
 esac
+# A whitespace-only target (e.g. "   ") passes the non-empty test above but could never equal a
+# real automate_key/pr_url either — reject it too (bash-3.2-safe pattern match: require at least
+# one non-whitespace character; no regex / no ${var//...} needed).
+case "$target" in
+  *[![:space:]]*) : ;;
+  *) die "rejected: --target must contain at least one non-whitespace character (whitespace-only value)" ;;
+esac
 
 [ -n "$reason" ] || die "rejected: --reason is required and must be non-empty"
 
@@ -98,6 +106,15 @@ command -v jq >/dev/null 2>&1 || die "jq is required but not available" 3
 # Resolve the ledger path (repo-root anchored, matching read-postmortem.sh).
 # ---------------------------------------------------------------------------
 GITROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+# ---- Worktree guard (red-team F1 — mirrors write-lessons.sh) ---------------
+# A linked worktree's top-level has a `.git` FILE ("gitdir: ..."); the main checkout has a dir.
+# A curation append from a worktree would land in that worktree's gitignored .supervisor/ and be
+# silently lost on `git worktree remove` — a wrong-store no-op. This is a fail-LOUD writer: refuse.
+if [ -f "$GITROOT/.git" ]; then
+  die "refusing to write from a git worktree ($GITROOT) — curate only from the repo main checkout (red-team F1)" 3
+fi
+
 CORPUS="$GITROOT/.supervisor/postmortem/results.jsonl"
 
 # ---------------------------------------------------------------------------

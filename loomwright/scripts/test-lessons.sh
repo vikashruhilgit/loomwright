@@ -16,6 +16,8 @@
 #      with distinct RETRACTED label; nonexistent-target refusal; malformed retract entries
 #      fail-safe — missing key AND explicit-empty both; re-add re-trusts; --hash form; chain
 #      stays valid end-to-end)
+#  10. sha-tool-absent branch (PATH sandbox): `add` stays a fail-safe no-op (exit 0, nothing
+#      written) but `retract` FAILS LOUD (non-zero — a curation verb must never silently no-op)
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -215,6 +217,24 @@ rc=$?
 out="$( cd "$RDIR" && bash "$READ" 2>/dev/null )"
 if echo "$out" | grep -qF "retract me lesson"; then no "--hash retract did not untrust the lesson"; else ok "--hash retract removes + untrusts (add→retract→re-add→retract)"; fi
 rm -rf "$RDIR"
+
+echo "== 10. sha-tool-absent branch: add = fail-safe no-op, retract = fail LOUD =="
+# PATH sandbox: a bin dir with ONLY the tools the writer needs BEFORE the sha() selection
+# (bash/git/tr/sed) — sha256sum AND shasum are deliberately absent so `command -v` misses both.
+SB="$(mktemp -d)"
+for t in bash git tr sed; do
+  p="$(command -v "$t" 2>/dev/null)" && ln -s "$p" "$SB/$t"
+done
+SDIR="$(mktemp -d)"; ( cd "$SDIR" && git init -q )
+( cd "$SDIR" && PATH="$SB" bash "$WRITE" --category shaless --lesson "harmless add" --source t ) >/dev/null 2>&1
+rc=$?
+[ "$rc" -eq 0 ] && ok "sha-less add is a fail-safe no-op (exit 0)" || no "sha-less add exited $rc (expected 0)"
+[ ! -e "$SDIR/$LFILE" ] && ok "sha-less add wrote nothing" || no "sha-less add wrote LESSONS.md"
+( cd "$SDIR" && PATH="$SB" bash "$WRITE" retract shaless "harmless add" ) >/dev/null 2>&1
+rc=$?
+[ "$rc" -ne 0 ] && ok "sha-less retract FAILS LOUD (exit $rc, non-zero)" || no "sha-less retract silently exited 0"
+[ ! -e "$SDIR/$LFILE" ] && [ ! -e "$SDIR/$PJFILE" ] && ok "sha-less retract touched nothing" || no "sha-less retract wrote state"
+rm -rf "$SB" "$SDIR"
 
 echo
 echo "RESULT: $pass passed, $fail failed"
