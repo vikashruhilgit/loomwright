@@ -13,6 +13,13 @@
 # logged as STALE. A lesson with a missing/unparseable last_verified is treated as FRESH (fail-open
 # for the lint — the provenance gate is the real security boundary; the stale-lint is advisory).
 #
+# RETRACT (curation verb — write side in write-lessons.sh): the chain walk honors last-action-wins.
+# A chain-valid `action:"retract"` entry REMOVES its content_hash from the trusted set (a later
+# re-add re-trusts). A LESSONS.md line whose hash was retracted is dropped like an unverified line
+# but logged with a distinct RETRACTED label for auditability. A malformed retract entry
+# (missing or empty content_hash) contributes nothing and never crashes the walk (fail-safe:
+# malformed curation metadata ⇒ the targeted entries stay live).
+#
 # Output is ADVISORY and prefixed with a subordinate-to-CLAUDE.md banner. Agents call this instead
 # of `cat`-ing the file. Fail-safe: if no sha tool, emit nothing.
 #
@@ -31,6 +38,9 @@ LOG=".supervisor/logs/memory.log"
 mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
 
 LESSON_STALE_DAYS="${LESSON_STALE_DAYS:-90}"
+# Numeric guard (parity with read-postmortem.sh / build-insights.sh): a non-numeric override
+# would make the stale-secs arithmetic evaluate to 0 and silently hide every trailered lesson.
+case "$LESSON_STALE_DAYS" in ''|*[!0-9]*) LESSON_STALE_DAYS=90 ;; esac
 
 [ -f "$LESSONS" ] || exit 0   # no lessons yet → emit nothing
 
@@ -51,8 +61,12 @@ iso_to_epoch() {
   printf '%s' "$e"
 }
 
-# 1. Walk the provenance chain; collect content_hashes of chain-valid `add` entries.
-trusted="$(mktemp)"; trap 'rm -f "$trusted" 2>/dev/null' EXIT
+# 1. Walk the provenance chain; collect content_hashes of chain-valid `add` entries. Last action
+#    wins: a chain-valid `retract` entry removes its hash from the trusted set (and records it in
+#    the retracted set so the drop below can carry a distinct RETRACTED label); a later re-add
+#    re-trusts.
+trusted="$(mktemp)"; retracted="$(mktemp)"
+trap 'rm -f "$trusted" "$trusted.n" "$retracted" 2>/dev/null' EXIT
 prev="GENESIS"; n=0
 if [ -f "$PROV" ]; then
   while IFS= read -r p; do
@@ -62,8 +76,20 @@ if [ -f "$PROV" ]; then
       echo "read-lessons: provenance chain broken at entry $n (prev_hash mismatch — tampering, or a value that defeated field extraction) — distrusting it and everything after" >&2
       break
     fi
-    if [ "$(field "$p" action)" = "add" ]; then
+    act="$(field "$p" action)"
+    if [ "$act" = "add" ]; then
       ch="$(field "$p" content_hash)"; [ -n "$ch" ] && printf '%s\n' "$ch" >> "$trusted"
+    elif [ "$act" = "retract" ]; then
+      # Key-presence check FIRST (nullable-required discipline): `field` echoes the WHOLE entry
+      # when the key is absent, so gate on the literal key before extracting. A malformed retract
+      # (missing/empty content_hash) contributes nothing — fail-safe, the walk continues.
+      ch=""
+      case "$p" in *'"content_hash":"'*) ch="$(field "$p" content_hash)" ;; esac
+      if [ -n "$ch" ]; then
+        grep -vxF -- "$ch" "$trusted" > "$trusted.n" 2>/dev/null || true
+        mv "$trusted.n" "$trusted"
+        printf '%s\n' "$ch" >> "$retracted"
+      fi
     fi
     prev="$(printf '%s' "$p" | sha)"
   done < "$PROV"
@@ -76,7 +102,7 @@ stale_secs=$(( LESSON_STALE_DAYS * 86400 ))
 #    Track the current `## <cat>` heading; emit the heading before its first emitted entry so
 #    grouping is preserved. Apply the stale-lint after provenance verification.
 printf '%s\n' "## Advisory project lessons — subordinate to CLAUDE.md (on conflict, CLAUDE.md wins)"
-emitted=0; dropped=0; stale=0
+emitted=0; dropped=0; stale=0; retr=0
 cur_cat=""; cur_cat_emitted=0
 while IFS= read -r line; do
   case "$line" in
@@ -92,8 +118,15 @@ while IFS= read -r line; do
   text="$(printf '%s' "$line" | sed -E 's/^- \[[^]]*\] //; s/[[:space:]]*<!-- last_verified=.*-->[[:space:]]*$//')"
   fh="$(printf '%s' "$cur_cat $text" | sha)"
   if ! grep -qxF "$fh" "$trusted" 2>/dev/null; then
-    printf '[%s] DROPPED unverified lessons line: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" "$line" >> "$LOG"
-    dropped=$((dropped+1))
+    # Distinct label for auditability: a line whose hash was TOMBSTONED via a chain-valid retract
+    # is logged RETRACTED; anything else untrusted stays DROPPED (out-of-band poison / post-break).
+    if grep -qxF "$fh" "$retracted" 2>/dev/null; then
+      printf '[%s] RETRACTED lessons line (tombstoned via provenance): %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" "$line" >> "$LOG"
+      retr=$((retr+1))
+    else
+      printf '[%s] DROPPED unverified lessons line: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" "$line" >> "$LOG"
+      dropped=$((dropped+1))
+    fi
     continue
   fi
 
@@ -117,5 +150,6 @@ done < "$LESSONS"
 
 [ "$emitted" -eq 0 ] && printf '%s\n' "(no verified lessons entries)"
 [ "$dropped" -gt 0 ] && echo "read-lessons: dropped $dropped unverified line(s) — see $LOG" >&2
+[ "$retr" -gt 0 ] && echo "read-lessons: dropped $retr retracted (tombstoned) line(s) — see $LOG" >&2
 [ "$stale" -gt 0 ] && echo "read-lessons: skipped $stale stale (>${LESSON_STALE_DAYS}d) line(s) — see $LOG" >&2
 exit 0

@@ -194,7 +194,7 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
   # without it (older logs) group under "unknown". Columns: runs, heal-PASS
   # rate, avg heal_iterations, avg rubric_score ("M/N" parsed to a percentage).
   echo "## Per-version insights"
-  echo "_Sessions grouped by the additive \`plugin_version\` field on \`session_end\` (absent in older logs → \"unknown\"). Computed with jq, never guessed._"
+  echo "_Sessions grouped by the additive \`plugin_version\` field on \`session_end\` (absent in older logs → \"unknown\"). Computed with jq, never guessed. To curate: \`curate-postmortem.sh retract|supersede --target <key> --reason <text> --confirm\` (churn ledger) / \`write-lessons.sh retract <category> <lesson-text>\` (lessons)._"
   echo
   echo "| Version | Runs | Heal-PASS rate | Avg heal iterations | Avg rubric score |"
   echo "|---|---|---|---|---|"
@@ -499,6 +499,105 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
     | (if .benchmark_delta!=null then (.benchmark_delta|tostring) else "—" end) as $delta
     | "| \(.sid) | \(.status) | \(.heal_decision // "—") (\(.heal_iterations // "—")) | \(.rubric_score // "—") | \(.subtasks_completed // "—") | \(.files_changed // "—") | \($conf) / \($delta) | \(if .pr_url!="" then "[PR](\(.pr_url))" else "—" end) |"' "$records"
   echo
+
+  # --- Corpus health (curation advisory — ALWAYS rendered; degrades per-corpus) ---
+  # One best-effort line per knowledge corpus: the churn ledger (.supervisor/postmortem/results.jsonl)
+  # and the lessons store (.supervisor/memory/LESSONS.md + .lessons-provenance.jsonl). Advisory ONLY —
+  # never gates anything and NEVER causes a non-zero exit; absent corpora degrade to an "absent" note
+  # (or a single "(no corpora found)" line when both are missing), malformed JSONL lines are skipped
+  # per-line (jq `fromjson? // empty`), never crash.
+  #
+  # Record shapes are the cross-subtask curation contract — key ONLY off these, never off prose:
+  #   * a curation record in the churn ledger has `source == "curation"`; "curated" counts DISTINCT
+  #     present, non-empty string `target_key` values (jq has() presence discipline — an explicit
+  #     null target_key is NOT curated).
+  #   * a lessons retraction is a provenance line with `action == "retract"`.
+  # Staleness: churn `ts` older than CHURN_STALE_DAYS (env, default 180; non-numeric → 180) is stale;
+  # lessons `<!-- last_verified=... -->` older than LESSON_STALE_DAYS (env, default 90 — same default
+  # as read-lessons.sh) is stale. Missing/unparseable timestamps count as FRESH (fail-open, matching
+  # read-lessons.sh). ISO→epoch mirrors read-lessons.sh's iso_to_epoch (GNU `date -d`, then BSD
+  # `date -u -j -f`), with a numeric-validation guard (stat-flavor lesson: succeed-with-garbage +
+  # `set -u` arithmetic silently corrupts counts).
+  echo "## Corpus health"
+  echo "_Advisory curation snapshot of the knowledge corpora — the churn ledger (\`.supervisor/postmortem/results.jsonl\`) and the lessons store (\`.supervisor/memory/LESSONS.md\` + provenance). Best-effort counts: malformed lines are skipped, absent corpora degrade to a note, and this section never gates anything. Curated/retracted figures are raw recorded directives (upper bounds), not chain-validated net effects. Computed with jq, never guessed._"
+  echo
+  ch_ledger=".supervisor/postmortem/results.jsonl"
+  ch_lessons=".supervisor/memory/LESSONS.md"
+  ch_prov=".supervisor/memory/.lessons-provenance.jsonl"
+  # Defensive: the script already exits early without jq (top of file), but keep this section
+  # self-contained so a future refactor can't silently turn it into a crash path.
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "(jq unavailable — corpus health skipped)"
+  elif [ ! -f "$ch_ledger" ] && [ ! -f "$ch_lessons" ]; then
+    echo "(no corpora found)"
+  else
+    CHURN_STALE_DAYS="${CHURN_STALE_DAYS:-180}"
+    case "$CHURN_STALE_DAYS" in ''|*[!0-9]*) CHURN_STALE_DAYS=180 ;; esac
+    LESSON_STALE_DAYS="${LESSON_STALE_DAYS:-90}"
+    case "$LESSON_STALE_DAYS" in ''|*[!0-9]*) LESSON_STALE_DAYS=90 ;; esac
+    ch_now="$(date -u +%s 2>/dev/null || echo 0)"
+    case "$ch_now" in ''|*[!0-9]*) ch_now=0 ;; esac    # ch_now=0 → cutoffs go negative → everything reads FRESH (fail-open)
+    # (1) churn ledger — entries / curated / stale in one per-line-tolerant jq pass.
+    if [ -f "$ch_ledger" ]; then
+      ch_cutoff=$(( ch_now - CHURN_STALE_DAYS * 86400 ))
+      churn_line="$(jq -rnR --argjson cutoff "$ch_cutoff" '
+        [inputs | fromjson? // empty] as $recs
+        | ($recs | map(select(type=="object")) | map(select((.source == "curation") | not))) as $data
+        | ($recs
+            | map(select(type=="object"
+                         and (.source == "curation")
+                         and has("target_key")
+                         and (.target_key | type == "string")
+                         and (.target_key != "")))
+            | map(.target_key) | unique | length) as $curated
+        | ($data
+            | map( select(type=="object")
+                   | (.ts // null)
+                   | select(type=="string")
+                   | (fromdateiso8601? // null)
+                   | values
+                   | select(. < $cutoff) )
+            | length) as $stale
+        | "\($data | length) entries, \($curated) curation targets (retracted/superseded), \($stale) stale"
+      ' "$ch_ledger" 2>/dev/null)"
+      if [ -n "$churn_line" ]; then
+        echo "- churn ledger: $churn_line (>${CHURN_STALE_DAYS}d)"
+      else
+        echo "- churn ledger: unreadable (skipped)"
+      fi
+    else
+      echo "- churn ledger: absent"
+    fi
+    # (2) lessons — entry lines from LESSONS.md, retractions from provenance, staleness from trailers.
+    if [ -f "$ch_lessons" ]; then
+      lessons_entries="$(grep -c '^- \[' "$ch_lessons" 2>/dev/null)"
+      case "$lessons_entries" in ''|*[!0-9]*) lessons_entries=0 ;; esac
+      lessons_retracted=0
+      # NOTE: this "retracted" count is a RAW count of retract provenance records — an upper
+      # bound, NOT chain-validated like read-lessons.sh's last-action-wins walk.
+      if [ -f "$ch_prov" ]; then
+        lessons_retracted="$(jq -nR '[inputs | fromjson? // empty | select(type=="object" and .action == "retract")] | length' "$ch_prov" 2>/dev/null)"
+        case "$lessons_retracted" in ''|*[!0-9]*) lessons_retracted=0 ;; esac
+      fi
+      lessons_stale=0
+      lesson_stale_secs=$(( LESSON_STALE_DAYS * 86400 ))
+      while IFS= read -r ch_line; do
+        lv="$(printf '%s' "$ch_line" | sed -nE 's/.*<!--.*last_verified=([^ ]+).*-->.*/\1/p')"
+        [ -n "$lv" ] || continue   # no trailer → fresh
+        lv_epoch="$(date -d "$lv" +%s 2>/dev/null || true)"
+        [ -n "$lv_epoch" ] || lv_epoch="$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$lv" +%s 2>/dev/null || true)"
+        case "$lv_epoch" in ''|*[!0-9]*) lv_epoch="" ;; esac   # unparseable/garbage → fresh
+        if [ -n "$lv_epoch" ] && [ "$ch_now" -gt 0 ] && [ $(( ch_now - lv_epoch )) -gt "$lesson_stale_secs" ]; then
+          lessons_stale=$((lessons_stale+1))
+        fi
+      done < <(grep '^- \[' "$ch_lessons" 2>/dev/null)
+      echo "- lessons: ${lessons_entries} entries, ${lessons_retracted} retracted, ${lessons_stale} stale (>${LESSON_STALE_DAYS}d)"
+    else
+      echo "- lessons: absent"
+    fi
+  fi
+  echo
+
   echo "## View in Obsidian (optional)"
   echo "Point an Obsidian vault at \`.supervisor/\` (or symlink \`.supervisor/insights\` into a vault). With the **Dataview** plugin this renders as a live, sortable board:"
   echo '```dataview'
