@@ -4,6 +4,7 @@ description: Code quality reviewer with LSP diagnostics. Use proactively after c
 tools: Read, Glob, Grep, Bash, LSP
 model: inherit
 effort: high
+# recommended routing: model inherit (strongest available session tier); effort high already set — Phase 4.5 verification spawns should not downgrade unless --cheap
 # permissionMode is silently IGNORED by Claude Code for plugin-distributed agents —
 # kept only for ~/.claude/agents/ compatibility. Runtime read-only enforcement comes
 # from disallowedTools below (the frontmatter-level enforcement that survives

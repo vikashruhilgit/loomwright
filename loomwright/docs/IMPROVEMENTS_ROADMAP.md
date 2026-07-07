@@ -5,7 +5,8 @@
 > **Re-verified 2026-07-06 against the live repo**, superseding the 2026-07-05 review pass; each of the 18 items below carries an inline re-verified `[VERDICT: …]` line. Summary:
 >
 > - **RESOLVED (11):** items 1, 2, 4, 6, 7, 8, 13, 14, 15, 16, 17
-> - **DEFERRED (7):** items 3, 5, 9, 10, 11, 12, 18
+> - **DEFERRED (6):** items 3, 5, 9, 10, 12, 18
+> - **SPIKED (1):** item 11 — quarantined SDK runner shipped in v15.8.0 (`loomwright/sdk-spike/` + opt-in `--sdk-runner` seam); graduation to a v16 runner gated on `docs/SPIKES/FABLE_PARITY_EVAL.md`'s pre-registered decision rule
 > - **OPEN (0):** none — item 6 (the last OPEN item) closed in v15.5.0: a `WorktreeRemove` hook now sits alongside `WorktreeCreate` in `loomwright/hooks/hooks.json`
 >
 > (The 2026-07-05 review pass spoke of "19 items"; this document has 18 numbered items — the count discrepancy is noted, not a missing item. Items are globally numbered `### 1.`–`### 18.` under the `## P0`–`## P3` tier sections; there are no literal `P#-#` IDs.)
@@ -288,7 +289,7 @@ Gives you a persistent directory that survives plugin updates, outside the proje
 
 ### 11. Evaluate Claude Agent SDK for Supervisor
 
-**[VERDICT: DEFERRED — no SDK rewrite; orchestration remains markdown-prompt-based (inline slash commands + Task spawns, per CLAUDE.md §"`/autonomous` orchestration shell"). `AGENT_GUIDELINES.md` §"Advisor Tool (SDK-only pattern)" documents why deeper SDK/API integration is structurally blocked for plugin subagents today]**
+**[VERDICT: SPIKED (v15.8.0) — quarantined SDK runner at `loomwright/sdk-spike/` (TypeScript port of ONLY Execute Manager's Phase 3 poll loop, schema-forced WORKER_RESULT v2 / CODE_REVIEW_RESULT v3, dry-run self-tested) + opt-in fail-closed `--sdk-runner` Supervisor seam; provisional GO/NO-GO per `docs/SPIKES/SDK_RUNNER_SPIKE.md`; graduation to a v16 runner gated on `docs/SPIKES/FABLE_PARITY_EVAL.md`'s pre-registered decision rule (arm 3 must beat arm 2 on defects or rounds without >1.5× token cost, else the spike is cut). Default orchestration remains markdown-prompt-based]**
 
 **What's happening now:**
 The Supervisor orchestrates via prompt-based coordination — it spawns agents using the Task tool, reads their output, and decides next steps. This is all LLM-mediated: every decision costs a tool call and tokens.
@@ -453,7 +454,7 @@ The tech-stack reference skills (NestJS, Next.js, TypeORM, Drizzle, MySQL, Postg
 | 8 | `bin/` directory | Saves tool calls, adds maintenance | Moderate | **DEFER** |
 | 9 | `userConfig` | Zero runtime | Zero | **v10** |
 | 10 | `${CLAUDE_PLUGIN_DATA}` | Neutral | Low-High | **CROSS-PROJECT ONLY** |
-| 11 | Agent SDK for Supervisor | Potentially much faster | High (rewrite) | **DEFER v11+** |
+| 11 | Agent SDK for Supervisor | Potentially much faster | High (rewrite) | **SPIKED v15.8.0** — quarantined `sdk-spike/` runner + opt-in `--sdk-runner`; graduation gated on `SPIKES/FABLE_PARITY_EVAL.md` |
 | 12 | Differentiate from `/batch` | N/A (positioning) | N/A | **YES (README)** |
 | 13 | Launch Pad + Red Team schemas | Zero (docs only) | Zero | **YES** |
 | 14 | QA failure escalation docs | Zero (docs only) | Zero | **YES** |

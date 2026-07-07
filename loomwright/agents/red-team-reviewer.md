@@ -5,6 +5,7 @@ tools: Read, Glob, Grep, Bash, WebFetch, WebSearch
 model: inherit
 maxTurns: 60
 effort: xhigh
+# recommended routing: model inherit; as Phase 4.5 multi-voter verification voter, route at session tier (sonnet under --cheap)
 color: "#DC143C"
 memory: project
 skills:

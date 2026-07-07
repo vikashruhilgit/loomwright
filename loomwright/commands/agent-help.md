@@ -943,7 +943,7 @@ Every agent has YAML frontmatter that configures its behavior automatically:
 | Code Reviewer | inherit | Matches user's choice + memory |
 | Red Team Reviewer | inherit | Matches user's choice + memory |
 
-Use `/supervisor --cheap` to override the execution-shaped roles (orchestrator, execute-manager, worker, code-reviewer, Phase 4.5 fix tasks) to Sonnet at spawn time. See `docs/ARCHITECTURE_CONTRACTS.md` §"Cost Profiles" for the full profile table and Haiku-session caveat. Since v15.2.0, `/autonomous` and `/automate` also forward `--cheap` down the chain to every inlined `/supervisor` run.
+Use `/supervisor --cheap` to override the execution-shaped roles (orchestrator, execute-manager, worker, code-reviewer, Phase 4.5 fix tasks, and — when `--multi-voter-heal` is ON — the multi-voter verification voters/refute spawn) to Sonnet at spawn time. See `docs/ARCHITECTURE_CONTRACTS.md` §"Cost Profiles" for the full profile table and Haiku-session caveat. Since v15.2.0, `/autonomous` and `/automate` also forward `--cheap` down the chain to every inlined `/supervisor` run.
 
 **Agents with Persistent Memory:**
 - Code Reviewer — remembers past review patterns, recurring issues
@@ -1079,7 +1079,7 @@ bd close BD-XX
 
 loomwright/              # Nested plugin root
 ├── .claude-plugin/
-│   └── plugin.json                   # Plugin metadata (v15.7.0)
+│   └── plugin.json                   # Plugin metadata (v15.8.0)
 ├── commands/                         # Slash commands (21)
 │   ├── launch-pad.md                 # Supervisor readiness
 │   ├── supervisor.md                 # Parallel orchestrator (v4)

@@ -1,0 +1,18 @@
+{
+  "name": "loomwright-sdk-spike",
+  "version": "0.1.0",
+  "private": true,
+  "description": "QUARANTINED spike: TypeScript port of Execute Manager's Phase 3 poll loop using @anthropic-ai/claude-agent-sdk. NOT part of the loomwright plugin manifest surface.",
+  "main": "dist/runner.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "self-test": "bash test/self-test.sh"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.202"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.4.0"
+  }
+}

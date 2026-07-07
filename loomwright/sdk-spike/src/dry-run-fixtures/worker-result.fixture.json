@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "task_id": "FIXTURE-TASK",
+  "status": "completed",
+  "files_modified": ["src/example/changed.ts"],
+  "files_created": ["src/example/created.ts"],
+  "tests_added": [],
+  "tests_passed": true,
+  "outputs_verified": [
+    { "kind": "file", "path": "src/example/created.ts", "status": "present" },
+    { "kind": "symbol", "path": "src/example/created.ts", "name": "createdExample", "status": "present" }
+  ],
+  "outputs_gap": "",
+  "summary": "Dry-run fixture: canned schema-valid WORKER_RESULT v2. No API call was made and no files were actually changed."
+}

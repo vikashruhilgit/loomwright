@@ -349,14 +349,17 @@ Applies when `/supervisor --cheap` is passed. Supervisor and Execute Manager app
 | execute-manager | inherit | **sonnet** |
 | orchestrator | inherit | **sonnet** |
 | phase45-fix-task (general-purpose) | inherit | **sonnet** |
+| phase45-multi-voter-verification (code-reviewer + red-team-reviewer voter) | inherit | **sonnet** (both voter spawns follow the code-reviewer override; the refute spawn too) |
 | supervisor | inherit | inherit (main thread; uses session model) |
 | context-keeper | haiku | haiku (already minimal) |
 | launch-pad | inherit | inherit (out of v1 scope) |
 | product-owner | inherit | inherit (judgment) |
 | plan-reviewer | inherit | inherit (gating) |
 | qa-strategist | inherit | inherit (gating) |
-| red-team-reviewer | inherit | inherit (adversarial creativity) |
+| red-team-reviewer | inherit | inherit (adversarial creativity; as multi-voter VOTER see the phase45-multi-voter-verification row) |
 | qa-executor | inherit | future — not spawned by `/supervisor`; deferred to v2 when `/qa-executor --cheap` ships |
+
+The `phase45-multi-voter-verification` stage exists only when `--multi-voter-heal` is ON (authority: `skills/self-heal-advisory/SKILL.md` Part 2 §Multi-voter verification); when NOT in `--cheap`, Phase 4.5 verification spawns should route at the strongest available session tier — `model: inherit` stays the default everywhere, and no model IDs are hardcoded (Fable-class models are only available when the session itself runs on them).
 
 **Semantics:** `--cheap` overrides roles marked **sonnet** in the table to Sonnet, full stop. No runtime session detection. Consequences:
 - Opus session + `--cheap` → roles marked **sonnet** run on Sonnet (intended saving)
