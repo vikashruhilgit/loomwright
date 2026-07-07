@@ -1,0 +1,25 @@
+{
+  "schema_version": 3,
+  "review_mode": "diff_review",
+  "audit_focus": [],
+  "trigger_paths_detected": [],
+  "scope_expanded": [],
+  "files_checked": ["src/example/changed.ts", "src/example/created.ts"],
+  "consistency_checks": null,
+  "consistency_summary": null,
+  "decision": "FAIL",
+  "issues": [
+    {
+      "severity": "BLOCKING",
+      "category": "new",
+      "drift_kind": null,
+      "file": "src/example/changed.ts",
+      "line": 1,
+      "description": "Dry-run FAILURE fixture: simulated blocking issue (nothing was actually reviewed).",
+      "suggestion": null
+    }
+  ],
+  "pattern_proposals": [],
+  "knowledge_sources_used": [],
+  "summary": "Dry-run FAILURE fixture: canned schema-valid CODE_REVIEW_RESULT v3 with decision FAIL. Exercises the review-FAIL branch + blocked-forever sweep offline. No API call was made."
+}

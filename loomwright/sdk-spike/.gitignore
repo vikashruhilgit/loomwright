@@ -1,0 +1,6 @@
+# QUARANTINED spike build artifacts — never committed
+# (package-lock.json IS committed, for reproducible installs)
+node_modules/
+dist/
+*.tsbuildinfo
+.self-test-*.log

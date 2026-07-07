@@ -1,8 +1,8 @@
 ---
 name: self-heal-advisory
 description: Supervisor Phase 4.5 protocol authority. Part 1 — advisory-only machinery (pre-review enrichments, System Twin conformance/benchmark/ground-truth, contract-builder WRITE path, delta line, hard-signal dual emission; never changes heal_decision or blocks the PR). Part 2 — the full Phase 4.5 SELF_HEAL loop protocol (on-entry actions, base-mismatch cleanup, bounded review-and-fix loop, rubric grading, red-team lens, completion-tail procedure), Read on demand at Phase 4.5 entry, deliberately not preloaded.
-version: "1.1.0"
-lastUpdated: 2026-07-06
+version: "1.2.0"
+lastUpdated: 2026-07-07
 ---
 
 # Self-Heal Protocol (Supervisor Phase 4.5)
@@ -699,6 +699,32 @@ if heal_iterations == max_heal_iterations AND review.decision != PASS:
   heal_remaining_issues = count(review.issues where category=new AND severity in [BLOCKING, HIGH])
   post findings to PR as comment (when a step-1a class-sweep ran on this FINAL iteration, the comment MUST also note: "class-sweep applied on the final heal iteration — its own edits were NOT re-reviewed; eyeball the swept files", so a human knows to check them)
 ```
+
+**Multi-voter verification (`--multi-voter-heal` — OPT-IN, DEFAULT OFF; changes WHICH findings get fixed, not the gate shape):**
+
+Resolved at Phase 0 INIT (`skills/supervisor-config/SKILL.md` preamble step 2.9, recorded as `MULTI_VOTER_HEAL`): `--multi-voter-heal` on the command line OR `.supervisor/config.json` `.multi_voter_heal: true` turns it ON; the flag wins over config, and `--no-multi-voter-heal` suppresses even a `true` config value. When `MULTI_VOTER_HEAL == false` (the default), the review-and-fix loop above runs EXACTLY as written — zero behavior change.
+
+When ON, each iteration of the review-and-fix loop above changes in exactly two places:
+
+1. **Two independent parallel reviewers (the vote).** The iteration's review step spawns TWO reviewers in parallel on the SAME integrated feature-branch diff (same DIFF-SCOPE OVERRIDE, same BASE_BRANCH):
+   - the existing `loomwright:code-reviewer` Task — **unchanged contract, spawn prompt verbatim as above** (advisory enrichments included, `phase45_review_invoked` still flips on it). Its `CODE_REVIEW_RESULT` remains **THE gating signal**: the loop's PASS / NEEDS_HUMAN / FAIL branching and the `heal_decision` derivation stay keyed to it exactly as written above.
+   - a `loomwright:red-team-reviewer` Task as an independent **verification voter** on the same diff scope. This is NOT the standalone advisory red-team lens (see the interaction sub-note below) — the voter runs INSIDE the loop, once per iteration, and its BLOCKING/HIGH-severity findings on this branch's newly-introduced surface (map its severity vocabulary to BLOCKING/HIGH; pre-existing issues stay out of scope, mirroring the `category=new` filter) enter the merge rule below. It votes on findings; it never decides the gate — `heal_decision` NEVER derives from its output (a surviving voter finding can only delay finalization within the existing bound; see the delay-vs-decide invariant below).
+2. **Second-opinion refute check (the merge rule — decides WHICH findings get fixed).** Collect the iteration's BLOCKING/HIGH `new` findings from BOTH lenses. A finding triggers a fix task ONLY if it **survives a refute check by the OTHER lens**: ask the other lens — via at most ONE bounded refute spawn PER LENS per iteration (batch that lens's cross-findings into it), or by folding the refute question into the next combined prompt — whether each finding is a false positive, unreachable, or already handled; the refute step's ceiling is therefore ≤2 spawns per iteration (one per lens). Findings the other lens REFUTES are **LOGGED, NOT FIXED**: record each via `record_decision(phase: SELF_HEAL, decision: "multi_voter_refuted", rationale: "<finding> refuted by <lens>")` and include them in the PR comment, clearly labelled refuted/not-fixed. Findings that SURVIVE form the iteration's `fixable_issues` set fed to the fix task above (replacing the single-lens `fixable_issues` derivation for that iteration; the fix-task spawn contract is otherwise unchanged).
+
+**Delay-vs-decide (the precise invariant):** `heal_decision` — the GATE — still derives ONLY from the code-reviewer's `CODE_REVIEW_RESULT` (PASS only from a code-reviewer PASS; ESCALATED on NEEDS_HUMAN / max iterations / thrash); the `--heal-iterations` bound, never-merge, the completion-tail guard, and the completion-tail procedure below are all IDENTICAL to the single-voter path. What the voter CAN do is extend LOOP CONTINUATION within that existing bound: a code-reviewer PASS becomes FINAL only once the iteration's surviving finding set is empty (or the bound escalates), so a surviving voter finding can DELAY finalization by another bounded fix-and-re-review iteration — it can never FLIP a decision (never turns a PASS into FAIL, nor a FAIL into PASS). Multi-voter edits the `fixable_issues` set and the finalization timing inside each iteration; nothing else. Edge rules:
+- Code-reviewer PASS + zero surviving red-team findings → PASS, exactly as above.
+- Code-reviewer PASS + ≥1 surviving red-team BLOCKING/HIGH finding → spawn a fix task on the surviving set and re-review next iteration (still bounded by `--heal-iterations`; the PASS becomes final only when the surviving set is empty or the bound escalates).
+- Code-reviewer FAIL with ALL of its findings refuted (surviving set empty) → do NOT spawn a fix task and do NOT auto-PASS; exit the loop with `heal_decision = ESCALATED` and post the refutation log to the PR — a fully-refuted FAIL is a human call, never a silent pass.
+- **Fail-safe degradation:** if the red-team voter (or a refute spawn) errors/times out, log one line via `record_decision` and degrade THAT iteration to the single-voter default above (code-reviewer findings fixed as written; unrefutable voter findings logged, not fixed). Never abort the run on the voter path.
+
+**Per-run counters (additive prose — NO schema bump):** track across all iterations `findings_raised` (BLOCKING/HIGH `new` findings raised by either lens), `findings_refuted` (refuted → logged, not fixed), and `findings_fixed` (survived → dispatched to fix tasks), and carry them inside the `SUPERVISOR_RESULT` `summary` string (e.g. `multi_voter: findings_raised=3 findings_refuted=1 findings_fixed=2`) and the job `## Outcome` block — additive prose only, exactly the `red_team_advisory`-in-summary precedent; do NOT add a new `SUPERVISOR_RESULT` field; `schema_version` stays `1` (see `docs/RESULT_SCHEMAS.md` §SUPERVISOR_RESULT).
+
+**Interaction with the standalone `--red-team` advisory lens (this sub-note is the ONE authority for the interaction — other surfaces cross-reference it, never restate it):**
+- The standalone `--red-team` / `--no-red-team` advisory lens (further down in this Part) is **UNTOUCHED and fully independent**: it stays advisory-only, high-risk-only, non-gating, a single pass OUTSIDE the heal loop, resolved by its own `RED_TEAM_ENABLED` (supervisor-config step 2.7) — none of its semantics change whether multi-voter is ON or OFF.
+- The flags do NOT alias each other: `--multi-voter-heal` does not enable the advisory lens, `--red-team` does not enable multi-voter, `--no-red-team` does not suppress the verification voter, and `--no-multi-voter-heal` does not suppress the lens.
+- When BOTH are active, `red-team-reviewer` may legitimately be spawned twice in one Phase 4.5 with different roles: (1) the verification VOTER inside the loop (per-iteration; feeds the merge rule) and (2) the advisory LENS outside it (single pass, high-risk-only; never feeds any fix). Record their outcomes distinctly (the `multi_voter` counters vs `red_team_advisory`).
+
+**Cost note:** multi-voter is ~2× review spawns per heal iteration (plus the bounded refute spawn). It stays opt-in / default-OFF and graduates to default ONLY if the `docs/SPIKES/FABLE_PARITY_EVAL.md` arm-3 runs show it earns its cost (fewer post-merge defects or review rounds without >1.5× token cost).
 
 **Outcomes Rubric grading (v12.2.0+, runs only after Code Reviewer PASS):**
 
