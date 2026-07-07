@@ -194,7 +194,7 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
   # without it (older logs) group under "unknown". Columns: runs, heal-PASS
   # rate, avg heal_iterations, avg rubric_score ("M/N" parsed to a percentage).
   echo "## Per-version insights"
-  echo "_Sessions grouped by the additive \`plugin_version\` field on \`session_end\` (absent in older logs → \"unknown\"). Computed with jq, never guessed._"
+  echo "_Sessions grouped by the additive \`plugin_version\` field on \`session_end\` (absent in older logs → \"unknown\"). Computed with jq, never guessed. To curate: \`curate-postmortem.sh retract|supersede --target <key> --reason <text> --confirm\` (churn ledger) / \`write-lessons.sh retract <category> <lesson-text>\` (lessons)._"
   echo
   echo "| Version | Runs | Heal-PASS rate | Avg heal iterations | Avg rubric score |"
   echo "|---|---|---|---|---|"

@@ -38,6 +38,9 @@ LOG=".supervisor/logs/memory.log"
 mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
 
 LESSON_STALE_DAYS="${LESSON_STALE_DAYS:-90}"
+# Numeric guard (parity with read-postmortem.sh / build-insights.sh): a non-numeric override
+# would make the stale-secs arithmetic evaluate to 0 and silently hide every trailered lesson.
+case "$LESSON_STALE_DAYS" in ''|*[!0-9]*) LESSON_STALE_DAYS=90 ;; esac
 
 [ -f "$LESSONS" ] || exit 0   # no lessons yet → emit nothing
 
