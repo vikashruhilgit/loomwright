@@ -26,12 +26,22 @@ check() { # $1 desc, $2 expected exit (0|1), then the command
 make_fixture() { # $1 = fixture dir; writes a minimal valid tree
   local d="$1"
   mkdir -p "$d/loomwright/hooks" "$d/loomwright/agents" \
-           "$d/loomwright/skills/self-heal-advisory"
+           "$d/loomwright/skills/self-heal-advisory" \
+           "$d/loomwright/skills/preflight-sync" \
+           "$d/loomwright/skills/supervisor-config"
   # the gate's ENUMS scope includes this skill (v14.23.0 supervisor diet) and
   # errs loudly when a scoped file is missing — fixtures must provide it
   cat >"$d/loomwright/skills/self-heal-advisory/SKILL.md" <<'EOF2'
 Advisory statuses: status: pass, status: advisory_failures, status: advisory_violations,
 status: unverified, status: skipped. Gating: heal_decision: PASS / heal_decision: ESCALATED / heal_decision: null.
+EOF2
+  # v15.4.0 supervisor prompt refactor moved SUPERVISOR_RESULT emit sites into
+  # these two skills; the ENUMS scope covers them, so fixtures must provide them
+  cat >"$d/loomwright/skills/preflight-sync/SKILL.md" <<'EOF2'
+Preflight emit sites: status: checkpoint on revise-scope, status: failed on abort/fail-closed.
+EOF2
+  cat >"$d/loomwright/skills/supervisor-config/SKILL.md" <<'EOF2'
+Resume-gate refusal emit: status: failed with error resume_state_invalid.
 EOF2
   # hooks.json mentioning every manifest field for every matcher (pin guard satisfied)
   python3 - "$d/loomwright/hooks/hooks.json" <<'PY'
