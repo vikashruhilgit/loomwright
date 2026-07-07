@@ -214,7 +214,7 @@ export class OrderRepository {
 - `nestjs-typeorm` — TypeORM integration with NestJS
 - `nestjs-drizzle` — Drizzle ORM patterns
 - `redis-caching` — Caching layer in front of PostgreSQL
-- `monitoring-observability` — Database connection pool and query metrics
+- `monitoring-observability` (loomwright@atelier plugin) — Database connection pool and query metrics
 
 ## Quality Gates
 

@@ -31,7 +31,7 @@
       "run_in_background workers",
       "skills (frontmatter preloading)",
       "agent persistent memory (memory: project)",
-      "bundled MCP servers (.mcp.json / plugin.json mcpServers)",
+      "MCP servers via sibling plugin (since v15.6.0 the MySQL MCP ships as mysql-mcp@atelier, not bundled)",
       "${CLAUDE_PLUGIN_ROOT} path resolution",
       "AskUserQuestion gated prompts",
       "SessionStart additionalContext injection"
