@@ -5,7 +5,11 @@
   "trigger_paths_detected": [],
   "scope_expanded": [],
   "files_checked": ["src/example/changed.ts", "src/example/created.ts"],
+  "consistency_checks": null,
+  "consistency_summary": null,
   "decision": "PASS",
   "issues": [],
+  "pattern_proposals": [],
+  "knowledge_sources_used": [],
   "summary": "Dry-run fixture: canned schema-valid CODE_REVIEW_RESULT v3 (diff_review, PASS, no issues). No API call was made."
 }

@@ -74,7 +74,12 @@ in this file.
    `SUPERVISOR_RESULT.summary` + the finding's absence from the fix commits). This is the
    requirement's deferred "≥1 real run showing a refuted finding NOT fixed" evidence for
    `--multi-voter-heal`; if no organic refutation occurs in 5 runs, record that fact — do not
-   manufacture one.
+   manufacture one. **Confirm item:** for every refuted finding captured, also verify it
+   **surfaced to a human** — either the run ended `ESCALATED` or the finding is logged in the PR
+   record (Outcome block / `SUPERVISOR_RESULT.summary`), never silently dropped. A refuted-but-
+   genuine finding vanishing without a human-visible trace is the specific failure mode the
+   refute rule introduces; a demonstration that only shows "not fixed" without showing "still
+   surfaced" is incomplete evidence.
 6. **Budget:** **15 runs = 5 requirements × 3 arms, hard cap.** If the cap is hit before the corpus
    completes, report what exists — do not extend silently.
 7. **Recording:** one row per run in the results table below, filled at run time, never

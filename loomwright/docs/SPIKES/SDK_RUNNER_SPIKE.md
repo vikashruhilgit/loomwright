@@ -4,7 +4,9 @@
 **Date:** 2026-07-07
 **Provenance:** Fable-parity job (review-remediation item 09; roadmap item 11 was `DEFERRED — no SDK rewrite`).
 Artifact under test: the quarantined TypeScript runner at `loomwright/sdk-spike/` (uncounted — not an
-agent, command, skill, or hook; no runtime path references it) plus the opt-in, fail-closed
+agent, command, skill, or hook; referenced ONLY by the opt-in `--sdk-runner` seam below, default OFF
+with `dist/` gitignored so nothing resolves until a one-time build — no default/always-on path
+reaches it) plus the opt-in, fail-closed
 `--sdk-runner` Supervisor seam (`commands/supervisor.md` Parameters table, `agents/supervisor.md`
 Phase 3 §"`--sdk-runner` branch", `skills/supervisor-config/SKILL.md` step 2.8). Sibling records:
 `FABLE_PARITY_EVAL.md` (the pre-registered decision rule that gates graduation),
@@ -55,6 +57,7 @@ fail-closed error handling)? And is the result cheaper/faster enough to justify 
 | No native sandbox | SDK runs in `cwd` (capability row 7, verified 2026-07-07). Isolation comes from external `git worktree` per worker + per-query `cwd` — the same design the prompt loop already uses, so this is parity-by-construction, not a regression. |
 | Structured output is per-`query()` top-level | The `output_format` schema applies to the query's single top-level result (capability row 2, https://code.claude.com/docs/en/agent-sdk/structured-outputs.md, verified 2026-07-07), so per-worker schemas force **one `query()` per worker/reviewer** — no multiplexing several schema-forced roles inside one session. Cost implication measured by the live comparison below. |
 | Exact TS option spellings | `output_format` vs `outputFormat`, top-level `effort`, the structured-payload field on the result message — coded defensively with `// NEEDS VERIFICATION vs docs` markers in `src/runner.ts` (capability row 5). |
+| json_schema strictness semantics — **NEEDS VERIFICATION** | Does the SDK require all-properties-required under `additionalProperties: false` (as OpenAI strict mode canonically does)? `src/schemas.ts` now adopts the strict-mode-safe posture (every declared property required, previously-optional ones nullable), which is valid under either semantics — but the SDK's actual enforcement is unverified; a rejecting backend would have exhausted structured-output retries on every live `query()` while the offline suite stayed green. |
 | Spike simplifications (not SDK limits) | No fix-worker retry loop after a non-PASS review, no Context-Keeper, no tool-call budget / EXECUTE_CHECKPOINT, no Step 2a dependency materialization (producer branches are not merged into dependent worktrees), no branch merge/delete (FINALIZE's job, per the seam's documented delta). |
 
 ### Residual known divergences from the real protocol (review findings, subtask-1 review)

@@ -122,8 +122,8 @@ fi
 #      Key lists mirror src/schemas.ts `required` arrays; a drift guard below
 #      greps each key back against schemas.ts.
 # ---------------------------------------------------------------------------
-WORKER_REQUIRED="schema_version task_id status files_modified outputs_verified outputs_gap summary"
-REVIEW_REQUIRED="schema_version review_mode audit_focus trigger_paths_detected scope_expanded files_checked decision issues summary"
+WORKER_REQUIRED="schema_version task_id status files_modified files_created tests_added tests_passed outputs_verified outputs_gap memory_candidates summary error"
+REVIEW_REQUIRED="schema_version review_mode audit_focus trigger_paths_detected scope_expanded files_checked consistency_checks consistency_summary decision issues pattern_proposals knowledge_sources_used summary"
 
 check_fixture_node() {
   # $1 = fixture path, $2 = space-separated required keys, $3 = expected schema_version

@@ -6,9 +6,11 @@ using `@anthropic-ai/claude-agent-sdk`, with schema-forced worker/reviewer resul
 
 > **Quarantine statement:** this directory is **NOT part of the plugin manifest
 > surface**; it is **uncounted** (not an agent, command, skill, or hook) and
-> **no runtime path references it**. Nothing in `loomwright/agents/`,
-> `commands/`, `skills/`, `hooks/`, or the plugin manifests points here. It
-> exists solely to answer the fable-parity spike question recorded in
+> referenced ONLY by the **opt-in `--sdk-runner` Supervisor seam** (default
+> OFF; `dist/` is gitignored, so nothing here resolves until a one-time
+> `npm install && npm run build`). **No default or always-on path reaches it**,
+> and no plugin manifest points here. It exists solely to answer the
+> fable-parity spike question recorded in
 > `loomwright/docs/SPIKES/SDK_RUNNER_SPIKE.md`.
 
 ## CLI contract
@@ -94,6 +96,20 @@ The self-test is **offline-safe**: without `node_modules` it SKIPs the compile,
 degrades the dry-run to fixture-vs-schema required-key checks (node, jq
 fallback), and still asserts the fail-closed handling — it passes with zero
 network. `node_modules/` and `dist/` are gitignored locally.
+
+### What the self-test cannot prove
+
+The suite is honest about its reach — the following are **grep/source-asserted
+or dry-run-only**, never exercised against the live SDK:
+
+- The live `makeLiveQuery` fail-closed branches (error subtype, missing
+  structured payload, payload failing local re-validation) — asserted by
+  grepping `src/runner.ts`, not by triggering them.
+- The stale-branch abort and the `commitWorktree` clean-worktree warning —
+  source-level greps; no live worktree lifecycle runs.
+- In degraded offline mode (no `node_modules`) the result is **"0 failures"
+  with the compile and dry-run SKIPped — not 20 passes**; only a full install
+  + build yields the 20/20 run.
 
 ## What this proves / what it can't
 

@@ -18,15 +18,25 @@
  * to stay inside the most conservative JSON Schema subset.
  * // NEEDS VERIFICATION vs docs: whether the SDK's json_schema subset accepts
  * // `const`; single-value `enum` is equivalent and safer.
+ *
+ * STRICT-MODE POSTURE: every declared property is listed in `required`, with
+ * previously-optional fields made nullable (`"type": ["string","null"]`, enums
+ * including null, arrays default-able to []). Several structured-output
+ * backends (OpenAI strict mode canonically) reject `additionalProperties:
+ * false` combined with properties absent from `required`; whether the Agent
+ * SDK enforces the same is a NEEDS VERIFICATION item in
+ * docs/SPIKES/SDK_RUNNER_SPIKE.md — this shape is valid either way.
  */
 
 // ---------------------------------------------------------------------------
 // WORKER_RESULT (schema_version 2)
-// Required keys mirror docs/RESULT_SCHEMAS.md §WORKER_RESULT validation rules:
+// Mandatory keys per docs/RESULT_SCHEMAS.md §WORKER_RESULT validation rules:
 // schema_version, task_id, status, files_modified, outputs_verified,
 // outputs_gap, summary. `error` is conditionally required (status=failed) —
 // JSON Schema conditionals are avoided to keep the schema simple/subset-safe;
-// the runner re-checks that invariant in code.
+// the runner re-checks that invariant in code. Per the strict-mode posture
+// above, ALL declared properties are in `required`; docs-optional ones are
+// nullable / default-[] instead of absent.
 // ---------------------------------------------------------------------------
 export const WORKER_RESULT_SCHEMA = {
   type: "object",
@@ -36,9 +46,14 @@ export const WORKER_RESULT_SCHEMA = {
     "task_id",
     "status",
     "files_modified",
+    "files_created",
+    "tests_added",
+    "tests_passed",
     "outputs_verified",
     "outputs_gap",
+    "memory_candidates",
     "summary",
+    "error",
   ],
   properties: {
     schema_version: { type: "integer", enum: [2] },
@@ -47,17 +62,17 @@ export const WORKER_RESULT_SCHEMA = {
     files_modified: { type: "array", items: { type: "string" } },
     files_created: { type: "array", items: { type: "string" } },
     tests_added: { type: "array", items: { type: "string" } },
-    tests_passed: { type: "boolean" },
+    tests_passed: { type: ["boolean", "null"] },
     outputs_verified: {
       type: "array",
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["kind", "path", "status"],
+        required: ["kind", "path", "name", "status"],
         properties: {
           kind: { type: "string", enum: ["file", "symbol", "type"] },
           path: { type: "string" },
-          name: { type: "string" },
+          name: { type: ["string", "null"] },
           status: { type: "string", enum: ["present", "missing"] },
         },
       },
@@ -65,7 +80,7 @@ export const WORKER_RESULT_SCHEMA = {
     outputs_gap: { type: "string" },
     memory_candidates: { type: "array", items: { type: "string" } },
     summary: { type: "string" },
-    error: { type: "string" },
+    error: { type: ["string", "null"] },
   },
 } as const;
 
@@ -87,8 +102,12 @@ export const CODE_REVIEW_RESULT_SCHEMA = {
     "trigger_paths_detected",
     "scope_expanded",
     "files_checked",
+    "consistency_checks",
+    "consistency_summary",
     "decision",
     "issues",
+    "pattern_proposals",
+    "knowledge_sources_used",
     "summary",
   ],
   properties: {
@@ -105,8 +124,15 @@ export const CODE_REVIEW_RESULT_SCHEMA = {
     scope_expanded: { type: "array", items: { type: "string" } },
     files_checked: { type: "array", items: { type: "string" }, minItems: 1 },
     consistency_checks: {
-      type: "object",
+      type: ["object", "null"],
       additionalProperties: false,
+      required: [
+        "mirrored_prompts",
+        "version_strings",
+        "counts",
+        "workflow_alignment",
+        "hooks_parity",
+      ],
       properties: {
         mirrored_prompts: { type: "string", enum: ["pass", "fail", "not_applicable"] },
         version_strings: { type: "string", enum: ["pass", "fail", "not_applicable"] },
@@ -115,19 +141,27 @@ export const CODE_REVIEW_RESULT_SCHEMA = {
         hooks_parity: { type: "string", enum: ["pass", "fail", "not_applicable"] },
       },
     },
-    consistency_summary: { type: "string" },
+    consistency_summary: { type: ["string", "null"] },
     decision: { type: "string", enum: ["PASS", "FAIL", "NEEDS_HUMAN"] },
     issues: {
       type: "array",
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["severity", "category", "file", "description"],
+        required: [
+          "severity",
+          "category",
+          "drift_kind",
+          "file",
+          "line",
+          "description",
+          "suggestion",
+        ],
         properties: {
           severity: { type: "string", enum: ["BLOCKING", "HIGH", "MEDIUM", "LOW"] },
           category: { type: "string", enum: ["new", "pre_existing", "nit", "drift"] },
           drift_kind: {
-            type: "string",
+            type: ["string", "null"],
             enum: [
               "version_authoritative",
               "version_secondary",
@@ -136,12 +170,13 @@ export const CODE_REVIEW_RESULT_SCHEMA = {
               "workflow",
               "hooks_parity",
               "wording",
+              null,
             ],
           },
           file: { type: "string" },
-          line: { type: "integer" },
+          line: { type: ["integer", "null"] },
           description: { type: "string" },
-          suggestion: { type: "string" },
+          suggestion: { type: ["string", "null"] },
         },
       },
     },
@@ -172,19 +207,19 @@ export interface WorkerResult {
   task_id: string;
   status: "completed" | "failed" | "partial";
   files_modified: string[];
-  files_created?: string[];
-  tests_added?: string[];
-  tests_passed?: boolean;
+  files_created?: string[] | null;
+  tests_added?: string[] | null;
+  tests_passed?: boolean | null;
   outputs_verified: Array<{
     kind: "file" | "symbol" | "type";
     path: string;
-    name?: string;
+    name?: string | null;
     status: "present" | "missing";
   }>;
   outputs_gap: string;
-  memory_candidates?: string[];
+  memory_candidates?: string[] | null;
   summary: string;
-  error?: string;
+  error?: string | null;
 }
 
 export interface CodeReviewResult {
@@ -194,20 +229,20 @@ export interface CodeReviewResult {
   trigger_paths_detected: string[];
   scope_expanded: string[];
   files_checked: string[];
-  consistency_checks?: Record<string, string>;
-  consistency_summary?: string;
+  consistency_checks?: Record<string, string> | null;
+  consistency_summary?: string | null;
   decision: "PASS" | "FAIL" | "NEEDS_HUMAN";
   issues: Array<{
     severity: "BLOCKING" | "HIGH" | "MEDIUM" | "LOW";
     category: "new" | "pre_existing" | "nit" | "drift";
-    drift_kind?: string;
+    drift_kind?: string | null;
     file: string;
-    line?: number;
+    line?: number | null;
     description: string;
-    suggestion?: string;
+    suggestion?: string | null;
   }>;
-  pattern_proposals?: Array<{ pattern: string; file: string; description: string }>;
-  knowledge_sources_used?: string[];
+  pattern_proposals?: Array<{ pattern: string; file: string; description: string }> | null;
+  knowledge_sources_used?: string[] | null;
   summary: string;
 }
 
