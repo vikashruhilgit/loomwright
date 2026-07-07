@@ -1134,9 +1134,9 @@ loomwright/              # Nested plugin root
     ├── context-summarization/
     ├── commit/
     ├── quality-checklist/
-    ├── nestjs-*/
-    ├── nextjs-*/
-    └── ...
+    ├── error-handling/
+    ├── unit-testing/
+    └── ...                           # (tech-stack skills: stackpack@atelier)
 ```
 
 ### Project Files
