@@ -153,8 +153,8 @@ The spike's *compression* and *speed* numbers are real, but validation overturne
 conclusion: the **ranking measured the wrong thing**. Revised tier decision:
 
 - **Precise code structure (callers / blast-radius / "which files central")** → **LSP (Tier-0)** — exhaustive,
-  deterministic, always fresh, zero cache, already in code-reviewer. The workhorse. *Pending: wire it into
-  worker / QA / launch-pad.*
+  deterministic, always fresh, zero cache, already in code-reviewer. The workhorse. *Wired into
+  worker / QA / launch-pad (advisory) in v15.5.0.*
 - **Feature/concept navigation + "surprising connections"** → **graphify** (already integrated, advisory,
   validated good for this). Complementary to LSP.
 - **Tier-1 reposcan repo-map** → **PARKED.** Ranking failed validation; the import-edge fix (7/10) is the resume
@@ -168,7 +168,7 @@ Net: **no code graph needs to be built.** LSP + graphify cover the code half; th
 ## Next steps (status)
 
 - **DEFERRED** (reposcan parked): ~~Langfuse A/B~~, ~~generalize reposcan~~, ~~wire repo-map through brain-context~~.
-- **Active:** wire `LSP` from code-reviewer into worker / qa-executor / launch-pad — the one remaining Bet-1 item.
+- **Shipped (v15.5.0):** `LSP` wired from code-reviewer into worker / qa-executor / launch-pad (advisory, never-gating) — the last Bet-1 item is closed (agents' `tools:` frontmatter + the `ARCHITECTURE_CONTRACTS.md` capability matrix).
 - **Kept:** the validation harness (`validate.py` / `validate_gen.py`) as the gate for any future graph.
 
 ## Validation (the turning point — 2026-06-27)

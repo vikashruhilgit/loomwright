@@ -194,6 +194,7 @@ run_sut() {
       LOOMWRIGHT_NOTIFY_SCOPE=all \
       DISPLAY= WAYLAND_DISPLAY= \
       CLAUDE_CODE_SESSION_ID= \
+      CLAUDE_CODE_ENTRYPOINT= \
       "$@" "$BASH_BIN" "$SUT" ) >/dev/null 2>"$ERRFILE" || RC=$?
 }
 
@@ -212,6 +213,7 @@ rerun_sut_same_wd() {
       LOOMWRIGHT_NOTIFY_SCOPE=all \
       DISPLAY= WAYLAND_DISPLAY= \
       CLAUDE_CODE_SESSION_ID= \
+      CLAUDE_CODE_ENTRYPOINT= \
       "$@" "$BASH_BIN" "$SUT" ) >/dev/null 2>>"$ERRFILE" || RC=$?
 }
 

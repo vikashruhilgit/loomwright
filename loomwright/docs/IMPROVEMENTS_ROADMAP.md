@@ -4,9 +4,9 @@
 >
 > **Re-verified 2026-07-06 against the live repo**, superseding the 2026-07-05 review pass; each of the 18 items below carries an inline re-verified `[VERDICT: …]` line. Summary:
 >
-> - **RESOLVED (10):** items 1, 2, 4, 7, 8, 13, 14, 15, 16, 17
+> - **RESOLVED (11):** items 1, 2, 4, 6, 7, 8, 13, 14, 15, 16, 17
 > - **DEFERRED (7):** items 3, 5, 9, 10, 11, 12, 18
-> - **OPEN (1):** item 6 — `WorktreeCreate` hook shipped, but a `WorktreeRemove` hook is still absent from `loomwright/hooks/hooks.json`
+> - **OPEN (0):** none — item 6 (the last OPEN item) closed in v15.5.0: a `WorktreeRemove` hook now sits alongside `WorktreeCreate` in `loomwright/hooks/hooks.json`
 >
 > (The 2026-07-05 review pass spoke of "19 items"; this document has 18 numbered items — the count discrepancy is noted, not a missing item. Items are globally numbered `### 1.`–`### 18.` under the `## P0`–`## P3` tier sections; there are no literal `P#-#` IDs.)
 >
@@ -20,7 +20,7 @@ Detailed analysis of every proposed improvement, prioritized by criticality, wit
 
 ### 1. Plugin Security Restriction — Per-Agent Hooks/PermissionMode Silently Ignored
 
-**[VERDICT: RESOLVED — all validation hooks are centralized in `loomwright/hooks/hooks.json` (21 entries) since v10.0.0; the frontmatter-ignore gotcha is documented in CLAUDE.md §"Adding or Modifying Agents" ("Hook gotcha") and AGENT_GUIDELINES.md §hooks, with frontmatter copies kept only for `~/.claude/agents/` compatibility]**
+**[VERDICT: RESOLVED — all validation hooks are centralized in `loomwright/hooks/hooks.json` (22 entries) since v10.0.0; the frontmatter-ignore gotcha is documented in CLAUDE.md §"Adding or Modifying Agents" ("Hook gotcha") and AGENT_GUIDELINES.md §hooks, with frontmatter copies kept only for `~/.claude/agents/` compatibility]**
 
 **What's happening now:**
 `code-reviewer.md` has `permissionMode: plan` (line 7) and a `Stop` hook (line 17-21). `worker.md` has a `SubagentStop` hook (line 9-13). `execute-manager.md` has a `SubagentStop` hook (line 12-16). These are all in agent frontmatter.
@@ -171,7 +171,7 @@ initialPrompt: "Read .supervisor/state.md and git log --oneline -5 to determine 
 
 ### 6. Add WorktreeCreate/WorktreeRemove Hooks
 
-**[VERDICT: OPEN (half-shipped) — the `WorktreeCreate` `type: "command"` hook exists in `loomwright/hooks/hooks.json` (logs to `.supervisor/logs/worktrees.log`), but a `WorktreeRemove` hook is still absent from `loomwright/hooks/hooks.json`, so cleanup verification remains manual (CLAUDE.md §"Orphaned worktrees after crash?")]**
+**[VERDICT: RESOLVED — closed in v15.5.0: a `WorktreeRemove` `type: "command"` hook now exists in `loomwright/hooks/hooks.json` mirroring the long-shipped `WorktreeCreate` (appends `WORKTREE_REMOVED` lines to `.supervisor/logs/worktrees.log`), so worktree cleanup is verifiable from the log instead of manual-only; the `WorktreeRemove` event is verified supported per the official Claude Code hooks docs]**
 
 **What's happening now:**
 The Supervisor creates worktrees for parallel workers, but there's no hook tracking when worktrees are created or cleaned up. If a crash happens between creation and cleanup, orphaned worktrees accumulate. CLAUDE.md already documents this as a "Common Pitfall" with manual `git worktree remove` as the fix.
