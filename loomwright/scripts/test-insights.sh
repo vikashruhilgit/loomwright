@@ -393,7 +393,7 @@ out="$( cd "$CH" && bash "$BUILD" 2>&1 )"; rc=$?
 chd="$CH/.supervisor/insights/dashboard.md"
 [ "$rc" -eq 0 ] && ok "build exits 0 (corpus health present case)" || no "build rc != 0 (corpus health present, rc=$rc)"
 grep -q "^## Corpus health" "$chd" 2>/dev/null && ok "corpus health section rendered" || no "corpus health section missing"
-grep -qF -- "- churn ledger: 2 entries, 1 curated (retracted/superseded), 1 stale (>180d)" "$chd" 2>/dev/null && ok "churn line correct (2 entries, 1 DISTINCT curated across 2 records, 1 stale)" || no "churn line wrong"
+grep -qF -- "- churn ledger: 2 entries, 1 curation targets (retracted/superseded), 1 stale (>180d)" "$chd" 2>/dev/null && ok "churn line correct (2 entries, 1 DISTINCT curated across 2 records, 1 stale)" || no "churn line wrong"
 grep -qF -- "- lessons: 2 entries, 1 retracted, 1 stale (>90d)" "$chd" 2>/dev/null && ok "lessons line correct (2 entries, 1 retracted, 1 stale)" || no "lessons line wrong"
 # Additive: existing sections must be untouched, and the section sits before the Obsidian footer.
 grep -q "^## Summary" "$chd" 2>/dev/null && grep -q "^## Recent sessions" "$chd" 2>/dev/null && grep -q "^## View in Obsidian" "$chd" 2>/dev/null && ok "dashboard still renders fully with corpus health" || no "dashboard incomplete with corpus health"
@@ -420,7 +420,7 @@ printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"comp
 printf '%s\n' '{"ts":"2026-06-01T00:00:00Z","pr_url":"https://github.com/o/r/pull/9","changed_paths":["c"]}' > "$CB/.supervisor/postmortem/results.jsonl"
 ( cd "$CB" && bash "$BUILD" >/dev/null 2>&1 )
 cbd="$CB/.supervisor/insights/dashboard.md"
-grep -qF -- "- churn ledger: 1 entries, 0 curated (retracted/superseded), 0 stale (>180d)" "$cbd" 2>/dev/null && ok "churn line renders alone (1 entry, zeros)" || no "churn-only line wrong"
+grep -qF -- "- churn ledger: 1 entries, 0 curation targets (retracted/superseded), 0 stale (>180d)" "$cbd" 2>/dev/null && ok "churn line renders alone (1 entry, zeros)" || no "churn-only line wrong"
 grep -qF -- "- lessons: absent" "$cbd" 2>/dev/null && ok "lessons absent note rendered" || no "lessons absent note missing"
 rm -rf "$CB"
 
@@ -450,7 +450,7 @@ printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"comp
 out="$( cd "$CM" && bash "$BUILD" 2>&1 )"; rc=$?
 cmd2="$CM/.supervisor/insights/dashboard.md"
 [ "$rc" -eq 0 ] && ok "build exits 0 despite malformed JSONL in both corpora" || no "build rc != 0 (malformed case, rc=$rc)"
-grep -qF -- "- churn ledger: 1 entries, 0 curated (retracted/superseded), 0 stale (>180d)" "$cmd2" 2>/dev/null && ok "malformed + null/missing target_key skipped (1 entry, 0 curated)" || no "malformed-ledger counts wrong"
+grep -qF -- "- churn ledger: 1 entries, 0 curation targets (retracted/superseded), 0 stale (>180d)" "$cmd2" 2>/dev/null && ok "malformed + null/missing target_key skipped (1 entry, 0 curated)" || no "malformed-ledger counts wrong"
 grep -qF -- "- lessons: 1 entries, 1 retracted, 0 stale (>90d)" "$cmd2" 2>/dev/null && ok "lessons: malformed provenance skipped, trailerless lesson counts fresh" || no "malformed-lessons counts wrong"
 rm -rf "$CM"
 
@@ -466,11 +466,11 @@ printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"comp
 } > "$CO/.supervisor/postmortem/results.jsonl"
 cod="$CO/.supervisor/insights/dashboard.md"
 ( cd "$CO" && bash "$BUILD" >/dev/null 2>&1 )
-grep -qF -- "- churn ledger: 2 entries, 0 curated (retracted/superseded), 1 stale (>180d)" "$cod" 2>/dev/null && ok "default threshold: 1 stale (>180d)" || no "default-threshold stale count wrong"
+grep -qF -- "- churn ledger: 2 entries, 0 curation targets (retracted/superseded), 1 stale (>180d)" "$cod" 2>/dev/null && ok "default threshold: 1 stale (>180d)" || no "default-threshold stale count wrong"
 ( cd "$CO" && CHURN_STALE_DAYS=100000 bash "$BUILD" >/dev/null 2>&1 )
-grep -qF -- "- churn ledger: 2 entries, 0 curated (retracted/superseded), 0 stale (>100000d)" "$cod" 2>/dev/null && ok "CHURN_STALE_DAYS=100000: 0 stale and suffix reflects override" || no "override stale count/suffix wrong"
+grep -qF -- "- churn ledger: 2 entries, 0 curation targets (retracted/superseded), 0 stale (>100000d)" "$cod" 2>/dev/null && ok "CHURN_STALE_DAYS=100000: 0 stale and suffix reflects override" || no "override stale count/suffix wrong"
 ( cd "$CO" && CHURN_STALE_DAYS=abc bash "$BUILD" >/dev/null 2>&1 )
-grep -qF -- "- churn ledger: 2 entries, 0 curated (retracted/superseded), 1 stale (>180d)" "$cod" 2>/dev/null && ok "non-numeric CHURN_STALE_DAYS falls back to 180" || no "non-numeric override did not fall back to 180"
+grep -qF -- "- churn ledger: 2 entries, 0 curation targets (retracted/superseded), 1 stale (>180d)" "$cod" 2>/dev/null && ok "non-numeric CHURN_STALE_DAYS falls back to 180" || no "non-numeric override did not fall back to 180"
 rm -rf "$CO"
 
 echo

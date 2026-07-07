@@ -22,13 +22,16 @@
 #      into JSON.
 #   4. Validate BEFORE writing (fail loud, exit 2): action must be retract|supersede; --target
 #      non-empty (whitespace-only rejected) and newline-free; --reason non-empty; --replacement
-#      only meaningful for supersede (rejected on retract).
+#      REQUIRED for supersede (a supersede without a replacement would be an indistinguishable
+#      synonym for retract) and rejected on retract.
+#      `curation_action`/`replacement` are recorded for audit + future use — no reader consumes
+#      the retract-vs-supersede distinction yet (both hide the target identically today).
 #   5. Read-back verify: after the append, the ledger's tail line must parse and carry our
 #      target_key.
 #
 # Usage:
-#   curate-postmortem.sh retract|supersede --target <key> --reason <text>
-#                        [--replacement <pr_url>] [--confirm]
+#   curate-postmortem.sh retract   --target <key> --reason <text> [--confirm]
+#   curate-postmortem.sh supersede --target <key> --reason <text> --replacement <pr_url> [--confirm]
 # Exit: 0 = wrote ; 1 = dry-run (nothing written — pass --confirm to write) ;
 #       2 = validation / write error ; 3 = refused (jq unavailable, OR run from a git worktree
 #       — curate only from the repo main checkout; red-team F1, mirrors write-lessons.sh).
@@ -98,6 +101,9 @@ esac
 
 if [ "$action" = "retract" ] && [ "$replacement_set" -eq 1 ]; then
   die "rejected: --replacement is only meaningful for supersede (a retract has no replacement)"
+fi
+if [ "$action" = "supersede" ] && [ "$replacement_set" -ne 1 ]; then
+  die "rejected: supersede requires --replacement <pr_url> (without one it is indistinguishable from retract — use retract instead)"
 fi
 
 command -v jq >/dev/null 2>&1 || die "jq is required but not available" 3

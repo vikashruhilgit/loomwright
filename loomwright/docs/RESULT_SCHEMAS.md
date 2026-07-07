@@ -1220,8 +1220,9 @@ curation record because it carries no `changed_paths`, so the overlap filter can
   **EXACT string equality** (`read-postmortem.sh` then excludes every matched entry from churn hits).
   Newlines/CRs and whitespace-only values are rejected at write time (they could never match a real
   JSONL line's key and would only produce a dead record).
-- `replacement` — `pr_url` string on `supersede`; `null` on `retract` (the writer REJECTS
-  `--replacement` on a retract, exit 2).
+- `replacement` — REQUIRED `pr_url` string on `supersede` (the writer REJECTS a replacement-less
+  supersede, exit 2 — it would be an indistinguishable synonym for retract); `null` on `retract`
+  (the writer likewise REJECTS `--replacement` on a retract, exit 2).
 - `reason` — required non-empty free text (jq-escaped; embedded newlines become `\n` inside the JSON
   string so the record stays a single line).
 - `ts` — ISO 8601 UTC at append time.

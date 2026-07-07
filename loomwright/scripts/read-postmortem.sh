@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # read-postmortem.sh — fail-safe ADVISORY read-back of the postmortem churn ledger.
-# (New file — Learning Loop Phase 4 churn-ledger read side; parity with read-lessons.sh /
+# (Learning Loop Phase 4 churn-ledger read side; parity with read-lessons.sh /
 #  read-project-memory.sh advisory-reader convention.)
 #
 # Given a set of touched file paths, summarize prior churn from

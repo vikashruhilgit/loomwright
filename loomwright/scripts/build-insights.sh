@@ -558,7 +558,7 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
                    | values
                    | select(. < $cutoff) )
             | length) as $stale
-        | "\($data | length) entries, \($curated) curated (retracted/superseded), \($stale) stale"
+        | "\($data | length) entries, \($curated) curation targets (retracted/superseded), \($stale) stale"
       ' "$ch_ledger" 2>/dev/null)"
       if [ -n "$churn_line" ]; then
         echo "- churn ledger: $churn_line (>${CHURN_STALE_DAYS}d)"
@@ -573,6 +573,8 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
       lessons_entries="$(grep -c '^- \[' "$ch_lessons" 2>/dev/null)"
       case "$lessons_entries" in ''|*[!0-9]*) lessons_entries=0 ;; esac
       lessons_retracted=0
+      # NOTE: this "retracted" count is a RAW count of retract provenance records — an upper
+      # bound, NOT chain-validated like read-lessons.sh's last-action-wins walk.
       if [ -f "$ch_prov" ]; then
         lessons_retracted="$(jq -nR '[inputs | fromjson? // empty | select(type=="object" and .action == "retract")] | length' "$ch_prov" 2>/dev/null)"
         case "$lessons_retracted" in ''|*[!0-9]*) lessons_retracted=0 ;; esac

@@ -147,13 +147,11 @@ if tail -n 1 "$TMP/$CORPUS" | jq -e '(.curation_action == "supersede") and (.rep
 else
   no "replacement pr_url wrong"
 fi
+before_sup="$(wc -l < "$TMP/$CORPUS" 2>/dev/null || echo 0)"
 ( cd "$TMP" && bash "$CURATE" supersede --target uOLD2 --reason "no repl" --confirm ) >/dev/null 2>&1; rc=$?
-[ "$rc" -eq 0 ] && ok "supersede without --replacement accepted" || no "supersede sans replacement failed ($rc)"
-if tail -n 1 "$TMP/$CORPUS" | jq -e '(has("replacement")) and (.replacement == null)' >/dev/null 2>&1; then
-  ok "omitted replacement recorded as explicit null (key present)"
-else
-  no "omitted replacement not explicit null"
-fi
+[ "$rc" -eq 2 ] && ok "supersede without --replacement rejected (exit 2 — would be a silent retract synonym)" || no "supersede sans replacement not rejected ($rc)"
+after_sup="$(wc -l < "$TMP/$CORPUS" 2>/dev/null || echo 0)"
+[ "$before_sup" = "$after_sup" ] && ok "rejected replacement-less supersede wrote nothing" || no "rejected replacement-less supersede leaked a write"
 rm -rf "$TMP"
 
 echo "== 6. reader hides a retracted entry by automate_key =="
