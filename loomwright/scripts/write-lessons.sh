@@ -32,14 +32,29 @@
 # unaffected and content_hash is NOT changed (the trailer never enters the hash). `read-lessons.sh`
 # applies a read-side stale-lint (skips lessons older than LESSON_STALE_DAYS, default 90).
 #
+# RETRACT NOTE (curation verb): `retract` tombstones an existing lesson. It verifies the target is
+# (1) present in LESSONS.md AND (2) chain-trusted — the LAST chain-valid action for its
+# content_hash is `add` (last-action-wins: a prior retract untrusts, a later re-add re-trusts) —
+# then appends a chain-valid `action:"retract"` provenance entry (the auditable tombstone; NEVER a
+# silent deletion) and atomically rewrites LESSONS.md with the one entry line removed. The
+# `## <category>` heading is left in place — read-lessons.sh already skips headings with no
+# emitted entries. Unlike the fail-safe readers, retract is a gate-side tool and FAILS LOUD.
+#
 # Usage:  write-lessons.sh --category "<cat>" --lesson "<text>" \
 #                          [--source "<id>"] [--last-verified "<iso8601Z>"] [--confidence "<value>"]
+#         write-lessons.sh retract <category> <lesson-text> [--source "<id>"]
+#         write-lessons.sh retract --hash <content_hash>    [--source "<id>"]
 # Exit:   0 on success or safe no-op (e.g. no sha tool); non-zero only on a disallowed /
-#         would-corrupt condition (so a bad call can never half-write state).
+#         would-corrupt condition (so a bad call can never half-write state). retract exits 4
+#         when the target is absent from LESSONS.md or not chain-trusted (fail loud, never
+#         tombstone a nonexistent lesson silently).
 
 set -uo pipefail
 
 CATEGORY=""; LESSON=""; SOURCE="unknown"; LAST_VERIFIED=""; CONFIDENCE="medium"
+# Subcommand detection: a leading `retract` selects the tombstone flow (default action is add).
+ACTION="add"; HASH=""
+if [ "${1:-}" = "retract" ]; then ACTION="retract"; shift; fi
 while [ $# -gt 0 ]; do
   case "$1" in
     --category)        CATEGORY="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
@@ -52,11 +67,30 @@ while [ $# -gt 0 ]; do
     --last-verified=*) LAST_VERIFIED="${1#--last-verified=}"; shift ;;
     --confidence)      CONFIDENCE="${2:-medium}"; shift; [ $# -gt 0 ] && shift ;;
     --confidence=*)    CONFIDENCE="${1#--confidence=}"; shift ;;
-    *) shift ;;
+    --hash)            HASH="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
+    --hash=*)          HASH="${1#--hash=}"; shift ;;
+    *) # retract accepts positional <category> <lesson-text> (in that order); add ignores strays.
+       if [ "$ACTION" = "retract" ] && [ -z "$CATEGORY" ]; then CATEGORY="$1"
+       elif [ "$ACTION" = "retract" ] && [ -z "$LESSON" ]; then LESSON="$1"
+       fi
+       shift ;;
   esac
 done
-[ -n "$CATEGORY" ] || { echo "write-lessons: --category is required" >&2; exit 2; }
-[ -n "$LESSON" ]   || { echo "write-lessons: --lesson is required" >&2; exit 2; }
+if [ "$ACTION" = "retract" ]; then
+  if [ -n "$HASH" ]; then
+    # --hash identifies the target directly; must be a full lowercase sha256 (it feeds the
+    # content-derived [id] grep below, so a partial/garbage value could mis-target an entry).
+    case "$HASH" in
+      *[!a-f0-9]*) echo "write-lessons: --hash must be lowercase sha256 hex" >&2; exit 2 ;;
+    esac
+    [ "${#HASH}" -eq 64 ] || { echo "write-lessons: --hash must be a full 64-char sha256" >&2; exit 2; }
+  else
+    { [ -n "$CATEGORY" ] && [ -n "$LESSON" ]; } || { echo "write-lessons: retract requires <category> <lesson-text> (or --hash <content_hash>)" >&2; exit 2; }
+  fi
+else
+  [ -n "$CATEGORY" ] || { echo "write-lessons: --category is required" >&2; exit 2; }
+  [ -n "$LESSON" ]   || { echo "write-lessons: --lesson is required" >&2; exit 2; }
+fi
 
 # Sanitize --source of quotes/backslashes/control chars so the no-jq provenance fallback
 # (printf-built JSON) can never emit malformed JSONL even if a caller widens --source.
@@ -107,8 +141,12 @@ MAX_PER_CAT=3
 GENESIS="GENESIS"
 
 mkdir -p "$MEM_DIR" 2>/dev/null || { echo "write-lessons: cannot create $MEM_DIR" >&2; exit 2; }
-[ -f "$LESSONS" ] || printf '# Project Lessons (advisory — bounded <=3 active per category; written only via write-lessons.sh)\n' > "$LESSONS"
-[ -f "$PROV" ] || : > "$PROV"
+# Only `add` bootstraps the store — `retract` on an absent store has nothing to tombstone and
+# must fail loud below without creating files (a refused retract leaves state byte-identical).
+if [ "$ACTION" = "add" ]; then
+  [ -f "$LESSONS" ] || printf '# Project Lessons (advisory — bounded <=3 active per category; written only via write-lessons.sh)\n' > "$LESSONS"
+  [ -f "$PROV" ] || : > "$PROV"
+fi
 
 # Freshness metadata: default last_verified to write time (same expression used elsewhere).
 ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
@@ -134,18 +172,24 @@ fi
 # This trims ONLY trailing whitespace — interior backslashes / spaces are untouched. The SAME
 # value feeds both content_hash and the awk-stored line below.
 lesson_oneline="$(printf '%s' "$LESSON" | tr '\n' ' ' | sed -E 's/[[:space:]]+$//')"
+# retract --hash targets the lesson directly by its content_hash; otherwise (add, or retract by
+# <category> <lesson-text>) the hash is computed EXACTLY as add computes it: sha("<cat> <text>").
+if [ "$ACTION" = "retract" ] && [ -n "$HASH" ]; then
+  content_hash="$HASH"
+else
 # CRITICAL: content_hash is over category + lesson text ONLY — the freshness trailer never enters
 # it. This is a FORWARD-LOOKING property: a future re-verification path (refreshing last_verified)
 # could update the trailer without changing the hash or breaking the chain. No such path exists
 # today — the dedup guard below short-circuits an identical lesson before any update, so a stored
 # last_verified is effectively write-once until the entry is evicted.
 content_hash="$(printf '%s' "$CATSLUG $lesson_oneline" | sha)"
+fi
 id="$(printf '%s' "$content_hash" | cut -c1-8)"
 
-# Dedup guard: id is content-derived (category + lesson), so an identical lesson in the same
-# category yields an identical entry. The appended trailer is OUTSIDE this substring, so the
+# Dedup guard (add only): id is content-derived (category + lesson), so an identical lesson in the
+# same category yields an identical entry. The appended trailer is OUTSIDE this substring, so the
 # match still works. Skip (touching nothing — no provenance work) if already present.
-if grep -qF -- "- [$id] $lesson_oneline" "$LESSONS" 2>/dev/null; then
+if [ "$ACTION" = "add" ] && grep -qF -- "- [$id] $lesson_oneline" "$LESSONS" 2>/dev/null; then
   echo "write-lessons: lesson already present ([$id] in $CATSLUG) — skipping"
   exit 0
 fi
@@ -161,6 +205,65 @@ prov_line() {
     printf '{"id":"%s","prev_hash":"%s","content_hash":"%s","source":"%s","action":"%s","written_at":"%s"}' "$1" "$2" "$3" "$4" "$5" "$ts"
   fi
 }
+
+# ---- RETRACT flow (tombstone verb) -----------------------------------------
+# Gate-side curation: FAILS LOUD (exit 4) rather than silently tombstoning a nonexistent lesson.
+# The `retract` provenance entry IS the auditable tombstone; the LESSONS.md rewrite removes ONLY
+# the target entry line (every other line is preserved byte-for-byte; the `## <category>` heading
+# is left in place — read-lessons.sh skips headings with no emitted entries).
+if [ "$ACTION" = "retract" ]; then
+  if [ ! -f "$LESSONS" ] || [ ! -f "$PROV" ]; then
+    echo "write-lessons: retract [$id] — no lessons store yet ($LESSONS / $PROV missing) — refusing" >&2
+    exit 4
+  fi
+  # (1) The target entry line must currently exist. [id] is content-derived (first 8 hex of
+  #     sha("<cat> <text>")), so an id-prefix match identifies exactly the pair being retracted.
+  if ! grep -qF -- "- [$id] " "$LESSONS" 2>/dev/null; then
+    echo "write-lessons: retract target [$id] not found in $LESSONS — refusing (never tombstone silently)" >&2
+    exit 4
+  fi
+  # (2) ...and its hash must be chain-trusted: walk the chain exactly like read-lessons.sh, with
+  #     last-action-wins (add → trusted, later retract → untrusted, re-add → re-trusted). A broken
+  #     link distrusts everything after it, so a poisoned/out-of-band line can never be laundered
+  #     into a legitimate-looking tombstone.
+  field() { printf '%s' "$1" | sed -E "s/.*\"$2\":\"([^\"]*)\".*/\1/"; }
+  target_trusted=0; prev="$GENESIS"
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    [ "$(field "$p" prev_hash)" = "$prev" ] || break   # chain broken → distrust the rest
+    # Key-presence check first (nullable-required discipline): `field` echoes the WHOLE entry when
+    # the key is absent, so gate on the literal key before extracting the value.
+    ch=""
+    case "$p" in *'"content_hash":"'*) ch="$(field "$p" content_hash)" ;; esac
+    if [ -n "$ch" ] && [ "$ch" = "$content_hash" ]; then
+      case "$(field "$p" action)" in
+        add)     target_trusted=1 ;;
+        retract) target_trusted=0 ;;
+      esac
+    fi
+    prev="$(printf '%s' "$p" | sha)"
+  done < "$PROV"
+  if [ "$target_trusted" -ne 1 ]; then
+    echo "write-lessons: retract target [$id] is not chain-trusted (never added, already retracted, or beyond a chain break) — refusing" >&2
+    exit 4
+  fi
+
+  # (3) Append the chained retract tombstone + rewrite LESSONS.md without the entry line.
+  #     Same atomic discipline and commit ORDER as add: temps IN the memory dir, provenance FIRST.
+  mem_tmp="$(mktemp "$MEM_DIR/.ltmp.XXXXXX")"
+  prov_tmp="$(mktemp "$MEM_DIR/.lptmp.XXXXXX")"
+  trap 'rm -f "$mem_tmp" "$prov_tmp" 2>/dev/null' EXIT
+  awk -v pfx="- [$id] " 'index($0, pfx) != 1 { print }' "$LESSONS" > "$mem_tmp"
+  cat "$PROV" > "$prov_tmp"
+  prev_hash="$(printf '%s' "$(tail -n1 "$prov_tmp")" | sha)"
+  printf '%s\n' "$(prov_line "$id" "$prev_hash" "$content_hash" "$SOURCE" "retract")" >> "$prov_tmp"
+  mv "$prov_tmp" "$PROV" && mv "$mem_tmp" "$LESSONS" || {
+    echo "write-lessons: atomic rename failed — retract aborted; read gate ignores any unmatched provenance" >&2
+    exit 2
+  }
+  echo "write-lessons: retracted [$id] (source=$SOURCE) — provenance tombstone appended, entry line removed"
+  exit 0
+fi
 
 # Temps live IN the memory dir (not $TMPDIR) so the commit `mv` is a same-filesystem, truly
 # atomic rename — a tmpfs /tmp would otherwise make `mv` a non-atomic cross-device copy+unlink.
