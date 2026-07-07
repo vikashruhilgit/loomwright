@@ -1202,14 +1202,65 @@ variant:
   degrades to `[]` and the integer size fields to `0` (NEVER `null`) — the line is still written
   (fail-safe), just invisible to the reader.
 
+**`source: "curation"` variant (curation record — retract / supersede).** The ledger may also contain
+**curation records** — jq-built JSONL lines appended ONLY by `scripts/curate-postmortem.sh` (the
+human-gated **sole curator writer**, mirroring the `add-rule.sh` writer precedent) so the advisory reader
+can hide retracted / superseded entries. A curation record is NOT a churn data line — it names one:
+
+```json
+{"schema_version":1,"source":"curation","curation_action":"retract","target_key":"<automate_key or pr_url>","replacement":null,"reason":"root-cause classification was wrong — re-analyzed","ts":"2026-07-07T12:00:00Z"}
+```
+
+Field contract for this variant (ADDITIVE — `schema_version` stays `1`; an OLD reader fail-safe-skips a
+curation record because it carries no `changed_paths`, so the overlap filter can never match it):
+- `curation_action` — `"retract"` (the target entry is wrong/noise) \| `"supersede"` (a later PR replaced
+  the analysis). **Both actions hide the target identically today** — `replacement` is provenance for the
+  human trail, not a reader input.
+- `target_key` — required non-empty string; matches a data line's `automate_key` **OR** `pr_url` by
+  **EXACT string equality** (`read-postmortem.sh` then excludes every matched entry from churn hits).
+  Newlines/CRs are rejected at write time (they could never match a single JSONL line's key and would
+  only produce a dead record).
+- `replacement` — `pr_url` string on `supersede`; `null` on `retract` (the writer REJECTS
+  `--replacement` on a retract, exit 2).
+- `reason` — required non-empty free text (jq-escaped; embedded newlines become `\n` inside the JSON
+  string so the record stays a single line).
+- `ts` — ISO 8601 UTC at append time.
+
+**Human gate + write discipline** (enforced in code by `curate-postmortem.sh`, never as prose): WITHOUT
+`--confirm` the writer prints the exact would-append JSON line + a dry-run notice and **exits 1 — it
+never writes unattended**; with `--confirm` it appends exactly ONE line (append-only — an existing
+ledger line is NEVER rewritten, edited, or removed; correcting a bad curation record means appending a
+new one) and read-back-verifies the ledger tail. All JSON is jq-built (`jq -n --arg`) — user input is
+never string-interpolated. As a WRITER it fails LOUD (exit 2 validation / 3 no-jq), unlike the fail-safe
+readers (bimodal failure philosophy).
+
+**Reader behavior** (`read-postmortem.sh`): (a) a curation record is **NEVER counted as a churn hit
+itself**; (b) the curated `target_key` set is built over the WHOLE corpus first — independent of repo
+scoping and of where in the file the record sits — and any data entry whose `automate_key` OR `pr_url`
+is in that set is excluded from the aggregation. **Presence discipline:** a curation record whose
+`target_key` is missing, `null`, non-string, or empty is malformed and contributes NO target — the
+entries it meant to curate stay LIVE (skip the record, never guess). The reader's EMPTY⇒silent and
+always-exit-0 contracts are unchanged.
+
+**Staleness (`CHURN_STALE_DAYS`):** independently of curation, the reader now EXCLUDES any data entry
+whose `ts` parses as ISO 8601 and is older than `CHURN_STALE_DAYS` days (env override; default `180`; a
+non-numeric override falls back to 180) vs now. A **missing or unparseable `ts` is treated as FRESH**
+(fail-open — an old-format line must never vanish silently); parsing uses jq's `fromdateiso8601?` so a
+bad `ts` can never crash the query. The `/insights` `## Corpus health` section reports the same counts
+advisorily (entries / curated / stale) using the same record shapes.
+
 **Backward compatibility:** these provenance + discriminator fields (`pr_url`, `branch`, `changed_paths`,
 `brief_path`, `job_path`, `source`, `automate_key`) are purely additive — a pre-Phase-4 corpus line that
 omits all of them is still a valid `schema_version: 1` POSTMORTEM_RESULT line and parses cleanly for any
 consumer (a line with no `source` is read as `"github_postmortem"`; `automate_key` is present only on
-`automate_drain` lines).
+`automate_drain` lines). The `source: "curation"` record variant is likewise additive: `schema_version`
+stays `1`, and a pre-curation reader fail-safe-skips it via the `changed_paths` overlap filter.
 
 **Append-only / write-only:** the file is the seed corpus for the deferred synthetic eval harness; it is
 never read back **by this skill** (a separate advisory reader, `scripts/read-postmortem.sh`, now consults it — see Phase 4) and lives under the current working `.supervisor/`, never the analyzed repo.
+The ledger has exactly three sanctioned appenders — `/pr-postmortem` (data lines), `/automate`
+`learning-emit` (`automate_drain` data lines), and `curate-postmortem.sh` (`curation` records) — and
+NONE of them ever rewrites an existing line.
 See `skills/pr-postmortem/SKILL.md` (the analysis protocol + miss-class taxonomy) and
 `scripts/pr-postmortem-gather.sh` (the read-only gather).
 
@@ -1727,6 +1778,7 @@ All result schemas include a `schema_version` field. This enables forward compat
 
 ### Version History
 
+- **POSTMORTEM_RESULT `source: "curation"` record variant + reader staleness** (v15.7.0): Added the human-gated curation record variant to the churn ledger — `{schema_version:1, source:"curation", curation_action:"retract"\|"supersede", target_key, replacement, reason, ts}` lines appended ONLY by `scripts/curate-postmortem.sh` (dry-run exit 1 without `--confirm`; append-only; jq-built). `read-postmortem.sh` excludes any data entry whose `automate_key` OR `pr_url` exactly equals a well-formed record's `target_key` (presence-disciplined — a malformed record curates nothing) and never counts a curation record as a hit; it also drops data entries with a parseable `ts` older than `CHURN_STALE_DAYS` (env, default 180 days; missing/unparseable `ts` = FRESH, fail-open). **No `schema_version` bump** — the variant is additive; old readers fail-safe-skip it via the `changed_paths` overlap filter. Additive — all other schemas unchanged.
 - **POSTMORTEM_RESULT additive `source` + `automate_key`** (v14.44.0): Added two optional additive fields to POSTMORTEM_RESULT — `source` (`"github_postmortem"` implicit default \| `"automate_drain"`, discriminating a `/pr-postmortem` GitHub-surface line from an engine-native `/automate` end-of-DRAIN line) and `automate_key` (the deterministic `run_id`+item+`pr_url`+`source` idempotency key, present only on `automate_drain` lines so `learning-emit` can skip a crash/`--resume` duplicate). The new `source: "automate_drain"` variant is a FULL valid `schema_version: 1` record carrying the ground-truth drain `fix_cycles` as `effective_review_rounds` (or `1` for a zero-cycle escalation) — NOT a GitHub-measured count — with a single honestly-labeled synthetic `categories[]` entry (`drain_churn` / `drain_escalation`) honoring the zero-rule (`categories: []` only when `effective_review_rounds == 0`), and a required populated `changed_paths` for `read-postmortem.sh` visibility. **No `schema_version` bump** — both fields are optional/additive (same precedent as `pr_url`/`branch`/`changed_paths`/`brief_path`/`job_path`); a line with no `source` reads as `"github_postmortem"`. Additive — all other schemas unchanged.
 - **SUPERVISOR_RESULT + CODE_REVIEW_RESULT v-stable extensions + `session_end` hard-signal field** (v14.28.0): Added the optional additive `knowledge_sources_used: string[]` array on SUPERVISOR_RESULT (stays `schema_version: 1`) and CODE_REVIEW_RESULT (stays `schema_version: 3`), plus the matching FLAT `knowledge_sources_used` array on the `session_end` JSONL line (the surface `build-insights.sh` reads). It records which memory sources a run actually consulted — open-set lowercase tags `project_memory`, `lessons:<category>`, `agent_memory:<agent>`, `twin:<path>`, `brain_context`. **Advisory and non-gating** — NEVER changes `heal_decision` / the review `decision`, NEVER blocks the PR, and NOT enumerated by the Supervisor or Code Reviewer SubagentStop hooks, so blocks with or without it validate unchanged. Absent ⇒ "none used". Follows the `branch_base` / `pr_state` / `preflight_sync` additive precedent (optional, advisory-only, no `schema_version` bump); the nested result-block array and the flat `session_end` array are the same data in two shapes (the `contract_conformance` dual-shape pattern). Part of the v14.28.0 memory APPLY path. Additive — all other schemas unchanged.
 - **POSTMORTEM_RESULT (schema_version 1)** (v14.22.0): New `## POSTMORTEM_RESULT` schema for the read-only `/pr-postmortem` PR review-churn root-cause analyzer. One jq-built JSONL line appended (best-effort, fail-safe, exits 0 on any failure) to `.supervisor/postmortem/results.jsonl` with fields `schema_version`, `ts`, `repo`, `number`, `agent_generated_guess`, `review_rounds`, `additions`, `deletions`, `changed_files`, `categories[]` of `{round, class, self_heal_miss, flow_stage, evidence}`, `self_heal_misses`, `flow_stages{launch_pad, worker, self_heal, unknowable}`, `summary`. Advisory/diagnostic only — never gates, never blocks the PR, write-only trend (never read back), the seed corpus for the deferred synthetic eval harness. No hook validator (the command is the main agent of its own session). Additive — all other schemas unchanged.
