@@ -22,13 +22,14 @@ node dist/runner.js --brief <path> [--dry-run]
 Full option set:
 
 ```
-node dist/runner.js --brief <path> [--dry-run] [--max-workers N] [--model M] [--effort E] [--branch B]
+node dist/runner.js --brief <path> [--dry-run] [--dry-run-fixture-set default|fail|review-fail] [--max-workers N] [--model M] [--effort E] [--branch B]
 ```
 
 | Flag | Meaning |
 |---|---|
 | `--brief <path>` | Supervisor-Ready Brief to execute (required). The runner parses its `## Subtask Structure` table and `### Subtask contracts` YAML. |
 | `--dry-run` | **No API calls, no worktrees, no git.** Workers/reviewers are replaced by an injected fake that returns canned schema-valid fixtures from `src/dry-run-fixtures/`. Fully offline and deterministic. |
+| `--dry-run-fixture-set` | Which fixture set the dry-run fake returns (default `default`). `fail` makes workers return `status: failed` (exercises the worker-failed gate + blocked-forever sweep offline); `review-fail` makes workers succeed and reviewers return `decision: FAIL` (exercises the review-FAIL branch + blocked sweep). Both failure sets exit 1 with the failures in `subtasks_failed`. |
 | `--max-workers N` | Concurrent worker cap (default 2) — the in-code equivalent of the poll loop's `max_workers`. |
 | `--model M` | Pass-through model for worker/reviewer `query()` calls (default: SDK default / inherit). |
 | `--effort E` | Pass-through effort (`low..max`) — see NEEDS VERIFICATION note below. |
@@ -106,10 +107,15 @@ or dry-run-only**, never exercised against the live SDK:
   structured payload, payload failing local re-validation) — asserted by
   grepping `src/runner.ts`, not by triggering them.
 - The stale-branch abort and the `commitWorktree` clean-worktree warning —
-  source-level greps; no live worktree lifecycle runs.
+  source-level greps; no live worktree lifecycle runs (these paths shell out
+  to git and stay unexercised offline).
+- The worker-failed gate, the review-FAIL branch, and the blocked-forever
+  sweep ARE now exercised offline (via the `--dry-run-fixture-set fail` /
+  `review-fail` failure dry-runs) — but only through the dry-run seam; their
+  live-`query()` counterparts remain pending.
 - In degraded offline mode (no `node_modules`) the result is **"0 failures"
-  with the compile and dry-run SKIPped — not 21 passes**; only a full install
-  + build yields the 21/21 run.
+  with the compile and dry-run SKIPped — not 25 passes**; only a full install
+  + build yields the 25/25 run.
 
 ## What this proves / what it can't
 

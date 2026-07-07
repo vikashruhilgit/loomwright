@@ -23,13 +23,16 @@ HAVE_JQ=0;   command -v jq   >/dev/null 2>&1 && HAVE_JQ=1
 
 WORKER_FIXTURE="src/dry-run-fixtures/worker-result.fixture.json"
 REVIEW_FIXTURE="src/dry-run-fixtures/code-review-result.fixture.json"
+WORKER_FAIL_FIXTURE="src/dry-run-fixtures/worker-result-fail.fixture.json"
+REVIEW_FAIL_FIXTURE="src/dry-run-fixtures/code-review-result-fail.fixture.json"
 MINI_BRIEF="test/fixtures/mini-brief.md"
 
 # ---------------------------------------------------------------------------
 # (0) Static file presence
 # ---------------------------------------------------------------------------
 for f in package.json tsconfig.json src/runner.ts src/schemas.ts README.md \
-         "$WORKER_FIXTURE" "$REVIEW_FIXTURE" "$MINI_BRIEF"; do
+         "$WORKER_FIXTURE" "$REVIEW_FIXTURE" \
+         "$WORKER_FAIL_FIXTURE" "$REVIEW_FAIL_FIXTURE" "$MINI_BRIEF"; do
   if [ -f "$f" ]; then
     pass "file present: $f"
   else
@@ -114,6 +117,46 @@ if [ "$RUNNER_RAN" = 1 ]; then
   else
     skip "dry-run output assertions skipped — neither node nor jq available"
   fi
+fi
+
+# ---------------------------------------------------------------------------
+# (b1b) Failure-path dry-runs (offline): --dry-run-fixture-set fail /
+#       review-fail exercise the worker-failed gate, the review-FAIL branch,
+#       and the blocked-forever sweep (dependent subtask lands failed).
+# ---------------------------------------------------------------------------
+if [ "$HAVE_NODE" = 1 ] && [ -f dist/runner.js ]; then
+  FAIL_OUT=$(node dist/runner.js --brief "$MINI_BRIEF" --dry-run --dry-run-fixture-set fail 2>&1)
+  FAIL_CODE=$?
+  if [ "$FAIL_CODE" = 1 ] && printf '%s' "$FAIL_OUT" | node -e '
+      const r = JSON.parse(require("fs").readFileSync(0, "utf8"));
+      const problems = [];
+      if (r.subtasks_completed.length !== 0) problems.push("expected 0 completed");
+      if (r.subtasks_failed.length !== 2) problems.push("expected 2 failed (worker-failed + blocked dependent)");
+      if (!r.subtasks_failed.some((s) => s.error.includes("status=failed"))) problems.push("worker-failed gate error missing");
+      if (!r.subtasks_failed.some((s) => s.error.includes("blocked"))) problems.push("blocked-forever sweep error missing");
+      if (problems.length) { console.error(problems.join("; ")); process.exit(1); }
+    '; then
+    pass "failure dry-run (fixture-set fail): worker-failed gate + blocked-forever sweep, exit 1"
+  else
+    fail "failure dry-run (fixture-set fail) assertions failed (exit $FAIL_CODE): $FAIL_OUT"
+  fi
+  REVFAIL_OUT=$(node dist/runner.js --brief "$MINI_BRIEF" --dry-run --dry-run-fixture-set review-fail 2>&1)
+  REVFAIL_CODE=$?
+  if [ "$REVFAIL_CODE" = 1 ] && printf '%s' "$REVFAIL_OUT" | node -e '
+      const r = JSON.parse(require("fs").readFileSync(0, "utf8"));
+      const problems = [];
+      if (r.subtasks_completed.length !== 0) problems.push("expected 0 completed");
+      if (r.subtasks_failed.length !== 2) problems.push("expected 2 failed (review FAIL + blocked dependent)");
+      if (!r.subtasks_failed.some((s) => s.error.includes("review decision FAIL"))) problems.push("review-FAIL branch error missing");
+      if (!r.subtasks_failed.some((s) => s.error.includes("blocked"))) problems.push("blocked-forever sweep error missing");
+      if (problems.length) { console.error(problems.join("; ")); process.exit(1); }
+    '; then
+    pass "failure dry-run (fixture-set review-fail): review-FAIL branch + blocked-forever sweep, exit 1"
+  else
+    fail "failure dry-run (fixture-set review-fail) assertions failed (exit $REVFAIL_CODE): $REVFAIL_OUT"
+  fi
+else
+  skip "failure-path dry-runs skipped — dist/runner.js not available"
 fi
 
 # ---------------------------------------------------------------------------

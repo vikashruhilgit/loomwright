@@ -71,9 +71,12 @@ interface Subtask {
   requires: ContractItem[];
 }
 
+type DryRunFixtureSet = "default" | "fail" | "review-fail";
+
 interface CliArgs {
   brief: string;
   dryRun: boolean;
+  dryRunFixtureSet: DryRunFixtureSet;
   maxWorkers: number;
   model?: string;
   effort?: string;
@@ -107,11 +110,11 @@ type QueryFn = (
 // ---------------------------------------------------------------------------
 
 function usage(): string {
-  return "Usage: node dist/runner.js --brief <path> [--dry-run] [--max-workers N] [--model M] [--effort E] [--branch B]";
+  return "Usage: node dist/runner.js --brief <path> [--dry-run] [--dry-run-fixture-set default|fail|review-fail] [--max-workers N] [--model M] [--effort E] [--branch B]";
 }
 
 function parseArgs(argv: string[]): CliArgs {
-  const args: CliArgs = { brief: "", dryRun: false, maxWorkers: 2 };
+  const args: CliArgs = { brief: "", dryRun: false, dryRunFixtureSet: "default", maxWorkers: 2 };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     switch (a) {
@@ -121,6 +124,14 @@ function parseArgs(argv: string[]): CliArgs {
       case "--dry-run":
         args.dryRun = true;
         break;
+      case "--dry-run-fixture-set": {
+        const set = argv[++i] ?? "";
+        if (set !== "default" && set !== "fail" && set !== "review-fail") {
+          throw new Error(`--dry-run-fixture-set must be default|fail|review-fail. ${usage()}`);
+        }
+        args.dryRunFixtureSet = set;
+        break;
+      }
       case "--max-workers": {
         const n = Number(argv[++i]);
         if (!Number.isInteger(n) || n < 1) throw new Error(`--max-workers must be a positive integer. ${usage()}`);
@@ -321,11 +332,24 @@ function fixtureDir(): string {
  * --dry-run query: NO API calls, NO network, NO worktrees. Returns canned
  * schema-valid objects from src/dry-run-fixtures/, re-validated against the
  * same schema the live path would force. Deterministic and fully offline.
+ *
+ * Fixture sets (--dry-run-fixture-set) exercise the failure paths offline:
+ *   default     — success fixtures (both roles succeed)
+ *   fail        — workers return status "failed" (worker gate + blocked-forever sweep)
+ *   review-fail — workers succeed, reviewers return decision FAIL
+ *                 (review-FAIL branch + blocked-forever sweep)
  */
-function makeDryRunQuery(): QueryFn {
+function makeDryRunQuery(fixtureSet: DryRunFixtureSet): QueryFn {
   const dir = fixtureDir();
   return async (kind, _prompt, schema, _opts) => {
-    const file = kind === "worker" ? "worker-result.fixture.json" : "code-review-result.fixture.json";
+    const file =
+      kind === "worker"
+        ? fixtureSet === "fail"
+          ? "worker-result-fail.fixture.json"
+          : "worker-result.fixture.json"
+        : fixtureSet === "review-fail"
+          ? "code-review-result-fail.fixture.json"
+          : "code-review-result.fixture.json";
     const raw = JSON.parse(fs.readFileSync(path.join(dir, file), "utf8"));
     const errors = validateAgainstSchema(raw, schema as never);
     if (errors.length > 0) {
@@ -509,7 +533,7 @@ async function main(): Promise<number> {
     featureBranch = "dry-run/feature";
   }
 
-  const queryFn: QueryFn = args.dryRun ? makeDryRunQuery() : makeLiveQuery();
+  const queryFn: QueryFn = args.dryRun ? makeDryRunQuery(args.dryRunFixtureSet) : makeLiveQuery();
 
   const completed = new Map<number, SubtaskOutcome>();
   const failed = new Map<number, SubtaskOutcome>();

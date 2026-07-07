@@ -37,7 +37,7 @@ fail-closed error handling)? And is the result cheaper/faster enough to justify 
 
 ## Parity matrix
 
-### What ported cleanly (dry-run-proven in `sdk-spike/`, self-test 21/21)
+### What ported cleanly (dry-run-proven in `sdk-spike/`, self-test 25/25)
 
 | Prompt-loop element | Port | Evidence |
 |---|---|---|
@@ -82,10 +82,13 @@ fail-closed error handling)? And is the result cheaper/faster enough to justify 
    this gap surfaces in the measured comparison rather than staying theoretical.
 
 **Live-path coverage honesty:** the live git lifecycle — the stale-branch abort, the
-`commitWorktree` clean-worktree skip/warn, the `removeWorktree` error path, and the
-blocked-forever sweep — is **source-verified only** (self-test greps `src/runner.ts`; no executing
-test drives these branches against a real repo or the live SDK). The eval must NOT treat these
-paths as behaviorally proven; arm-3 runs are their first live exercise.
+`commitWorktree` clean-worktree skip/warn, and the `removeWorktree` error path — is
+**source-verified only** (self-test greps `src/runner.ts`; no executing test drives these branches
+against a real repo or the live SDK). The worker-failed gate, the review-FAIL branch, and the
+blocked-forever sweep ARE exercised offline via the `--dry-run-fixture-set fail`/`review-fail`
+failure dry-runs, but only through the dry-run seam — their live-`query()` counterparts remain
+unproven. The eval must NOT treat the git-lifecycle or live-query failure paths as behaviorally
+proven; arm-3 runs are their first live exercise.
 
 ## TypeScript choice (capability row 5)
 
@@ -129,7 +132,7 @@ Honest reading of the parity matrix:
   dependency-driven scheduling, schema-forced WORKER_RESULT v2 / CODE_REVIEW_RESULT v3 (versions
   preserved), worktree isolation with commit-before-remove, fail-closed error handling,
   EXECUTE_RESULT shape — ported to ~500 lines of deterministic TypeScript, dry-run-proven offline
-  (self-test 21/21). Nothing in the port required weakening a contract.
+  (self-test 25/25). Nothing in the port required weakening a contract.
 - **The gaps are known and bounded, not disqualifying:** two NEEDS-VERIFICATION items (hooks.json
   firing — mitigated by runner self-validation; skills preload/agent memory — workaroundable by
   prompt inlining) and two residual divergences (§above), one of which FINALIZE already backstops.
