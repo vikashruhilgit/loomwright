@@ -519,7 +519,7 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
   # `date -u -j -f`), with a numeric-validation guard (stat-flavor lesson: succeed-with-garbage +
   # `set -u` arithmetic silently corrupts counts).
   echo "## Corpus health"
-  echo "_Advisory curation snapshot of the knowledge corpora — the churn ledger (\`.supervisor/postmortem/results.jsonl\`) and the lessons store (\`.supervisor/memory/LESSONS.md\` + provenance). Best-effort counts: malformed lines are skipped, absent corpora degrade to a note, and this section never gates anything. Computed with jq, never guessed._"
+  echo "_Advisory curation snapshot of the knowledge corpora — the churn ledger (\`.supervisor/postmortem/results.jsonl\`) and the lessons store (\`.supervisor/memory/LESSONS.md\` + provenance). Best-effort counts: malformed lines are skipped, absent corpora degrade to a note, and this section never gates anything. Curated/retracted figures are raw recorded directives (upper bounds), not chain-validated net effects. Computed with jq, never guessed._"
   echo
   ch_ledger=".supervisor/postmortem/results.jsonl"
   ch_lessons=".supervisor/memory/LESSONS.md"
@@ -542,7 +542,7 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
       ch_cutoff=$(( ch_now - CHURN_STALE_DAYS * 86400 ))
       churn_line="$(jq -rnR --argjson cutoff "$ch_cutoff" '
         [inputs | fromjson? // empty] as $recs
-        | ($recs | map(select((type=="object" and (.source == "curation")) | not))) as $data
+        | ($recs | map(select(type=="object")) | map(select((.source == "curation") | not))) as $data
         | ($recs
             | map(select(type=="object"
                          and (.source == "curation")

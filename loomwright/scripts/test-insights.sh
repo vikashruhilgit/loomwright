@@ -425,7 +425,8 @@ grep -qF -- "- lessons: absent" "$cbd" 2>/dev/null && ok "lessons absent note re
 rm -rf "$CB"
 
 echo "== 17. Corpus health — malformed JSONL lines skipped, presence discipline honored =="
-# Ledger: 1 good data line + 2 malformed lines + curation records with explicit-null and MISSING
+# Ledger: 1 good data line + 2 malformed lines + a valid-JSON non-object scalar line (`42` —
+# must NOT count as a data entry; object-only insulation) + curation records with explicit-null and MISSING
 # target_key (jq has() presence discipline — neither may count as curated). Provenance: 1 retract
 # + 1 malformed line. Nothing crashes; remaining counts stay correct.
 CM="$(mktemp -d)"; ( cd "$CM" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
@@ -434,6 +435,7 @@ printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"comp
 {
   printf '%s\n' '{"ts":"2026-06-01T00:00:00Z","pr_url":"https://github.com/o/r/pull/3","changed_paths":["a"]}'
   printf '%s\n' '{not json at all'
+  printf '%s\n' '42'
   printf '%s\n' '{"source":"curation","curation_action":"retract"'
   printf '%s\n' '{"schema_version":1,"source":"curation","curation_action":"retract","target_key":null,"replacement":null,"reason":"explicit null key","ts":"2026-06-02T00:00:00Z"}'
   printf '%s\n' '{"schema_version":1,"source":"curation","curation_action":"retract","replacement":null,"reason":"missing key","ts":"2026-06-02T00:00:00Z"}'
@@ -450,7 +452,7 @@ printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"comp
 out="$( cd "$CM" && bash "$BUILD" 2>&1 )"; rc=$?
 cmd2="$CM/.supervisor/insights/dashboard.md"
 [ "$rc" -eq 0 ] && ok "build exits 0 despite malformed JSONL in both corpora" || no "build rc != 0 (malformed case, rc=$rc)"
-grep -qF -- "- churn ledger: 1 entries, 0 curation targets (retracted/superseded), 0 stale (>180d)" "$cmd2" 2>/dev/null && ok "malformed + null/missing target_key skipped (1 entry, 0 curated)" || no "malformed-ledger counts wrong"
+grep -qF -- "- churn ledger: 1 entries, 0 curation targets (retracted/superseded), 0 stale (>180d)" "$cmd2" 2>/dev/null && ok "malformed + bare-scalar + null/missing target_key skipped (1 entry, 0 curated)" || no "malformed-ledger counts wrong"
 grep -qF -- "- lessons: 1 entries, 1 retracted, 0 stale (>90d)" "$cmd2" 2>/dev/null && ok "lessons: malformed provenance skipped, trailerless lesson counts fresh" || no "malformed-lessons counts wrong"
 rm -rf "$CM"
 
