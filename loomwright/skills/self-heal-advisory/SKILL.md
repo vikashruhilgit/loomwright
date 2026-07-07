@@ -501,7 +501,7 @@ The contract-conformance result, the benchmark result, and the ground-truth resu
    | `ground_truth_checks_passed` | `ground_truth.checks_passed` |
    | `ground_truth_pass_rate` (string "M/N") | the runner's `pass_rate` |
 
-   See the `session_end` log line in `agents/supervisor.md` §"Session Logging" for the exact shape. The flat fields are additive — a `session_end` event without them remains valid (a reader treats absent fields as "not reported this session"; for the `ground_truth_*` fields a reader treats absent as `skipped`).
+   See the `session_end` log line in `skills/state-management/SKILL.md` §"Session Logging (moved from agents/supervisor.md)" for the exact shape. The flat fields are additive — a `session_end` event without them remains valid (a reader treats absent fields as "not reported this session"; for the `ground_truth_*` fields a reader treats absent as `skipped`).
 
 ---
 
