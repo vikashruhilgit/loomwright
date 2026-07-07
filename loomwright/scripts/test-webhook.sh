@@ -14,6 +14,13 @@
 # to stdout instead of POSTed, and asserts on it. The always-exit-0 invariant is
 # asserted on every case.
 #
+# Cases 10+ (script-test gap closure): hostile-string EXACT round-trip proofs
+# on the gate path (--context/--session-id) and the supervisor_result path
+# (flat top-level fallback + in-block yaml_field line), paused-event
+# format-branch coverage (ntfy.sh URL / LOOMWRIGHT_WEBHOOK_FORMAT=ntfy /
+# default JSON — which is also the Slack shape: send-webhook.sh has no
+# dedicated Slack branch), and exit-0-on-every-failure-path assertions.
+#
 # EXIT: 0 on full pass, 1 on any failure.
 
 set -u
@@ -50,6 +57,14 @@ assert_empty() {
   local label="$1" value="$2"
   if [ -z "$value" ]; then pass "$label"; else fail "$label  expected empty, got '$value'"; fi
 }
+assert_valid_json() {
+  local label="$1" json="$2"
+  if printf '%s' "$json" | jq -e . >/dev/null 2>&1; then pass "$label"; else fail "$label  not valid JSON: '$json'"; fi
+}
+assert_absent() {
+  local label="$1" path="$2"
+  if [ ! -e "$path" ]; then pass "$label"; else fail "$label  file unexpectedly exists: $path"; fi
+}
 
 # run_dry_run <payload_json>  →  sets OUT (stdout), ERR (stderr), RC.
 run_dry_run() {
@@ -58,6 +73,33 @@ run_dry_run() {
   OUT="$(printf '%s' "$payload" \
     | LOOMWRIGHT_WEBHOOK_URL=test LOOMWRIGHT_WEBHOOK_DRY_RUN=1 \
       bash "$WEBHOOK" 2>"$errtmp")"
+  RC=$?
+  ERR="$(cat "$errtmp")"
+  rm -f "$errtmp"
+}
+
+# run_paused <webhook_url> <format_or_empty> <payload_json>  →  sets OUT, ERR, RC.
+# Paused-event dry-run with a controlled URL. LOOMWRIGHT_NOTIFY_SCOPE=all makes
+# the scope gate deterministic (independent of any .supervisor/ state in the
+# cwd). When <format_or_empty> is empty, LOOMWRIGHT_WEBHOOK_FORMAT is scrubbed
+# via `env -u` so a dev-environment export can never flip the asserted branch
+# (repo lesson: scrub webhook/telemetry env vars wherever an OFF-path is
+# asserted).
+run_paused() {
+  local url="$1" fmt="$2" payload="$3" errtmp
+  errtmp="$(mktemp)"
+  if [ -n "$fmt" ]; then
+    OUT="$(printf '%s' "$payload" \
+      | env LOOMWRIGHT_WEBHOOK_URL="$url" LOOMWRIGHT_WEBHOOK_DRY_RUN=1 \
+            LOOMWRIGHT_NOTIFY_SCOPE=all LOOMWRIGHT_WEBHOOK_FORMAT="$fmt" \
+        bash "$WEBHOOK" 2>"$errtmp")"
+  else
+    OUT="$(printf '%s' "$payload" \
+      | env -u LOOMWRIGHT_WEBHOOK_FORMAT \
+            LOOMWRIGHT_WEBHOOK_URL="$url" LOOMWRIGHT_WEBHOOK_DRY_RUN=1 \
+            LOOMWRIGHT_NOTIFY_SCOPE=all \
+        bash "$WEBHOOK" 2>"$errtmp")"
+  fi
   RC=$?
   ERR="$(cat "$errtmp")"
   rm -f "$errtmp"
@@ -224,6 +266,140 @@ else
 fi
 # Restore perms so the trap teardown (rm -rf) can remove the temp dir cleanly.
 chmod 644 "$WD9/.supervisor/config.json" 2>/dev/null || true
+
+echo ""
+echo "==== Case 10: gate path — hostile-string EXACT round-trip (injection safety) ===="
+# Hostile value covering the full injection-safety contract: double quotes,
+# backslashes, an embedded newline, $(...)/backtick command-substitution TEXT,
+# single quotes, and multibyte unicode. Built via literal-segment concatenation
+# (no ${var//...} pattern-sub — bash-3.2 lesson) around a REAL marker path so
+# that if any layer ever eval'd the string, the marker file would appear and
+# assert_absent would fail.
+PWNED_MARKER="$TMPDIR_TEST/pwned-marker"
+NL=$'\n'
+HOSTILE_Q='he said "hi" with \back\slash and '\''single quotes'\'''
+HOSTILE_CMD='$(touch '"$PWNED_MARKER"') and `touch '"$PWNED_MARKER"'`'
+HOSTILE_UNI='ünïcødé — 日本語 ✓'
+HOSTILE="${HOSTILE_Q}${NL}${HOSTILE_CMD}${NL}${HOSTILE_UNI}"
+HOSTILE_SID='sid "quoted" \back'
+OUT10="$(LOOMWRIGHT_WEBHOOK_URL=test LOOMWRIGHT_WEBHOOK_DRY_RUN=1 \
+  bash "$WEBHOOK" --event-type gate --gate-type rubric --iteration 3 \
+    --session-id "$HOSTILE_SID" --context "$HOSTILE" 2>/dev/null)"
+RC10=$?
+assert_eq         "case10 exit 0" "0" "$RC10"
+assert_valid_json "case10 payload is valid JSON" "$OUT10"
+assert_eq         "case10 context round-trips EXACTLY" "$HOSTILE" "$(printf '%s' "$OUT10" | jq -r '.context')"
+assert_eq         "case10 session_id round-trips EXACTLY" "$HOSTILE_SID" "$(printf '%s' "$OUT10" | jq -r '.session_id')"
+assert_absent     "case10 command substitution NOT executed" "$PWNED_MARKER"
+
+echo ""
+echo "==== Case 11: supervisor_result path — hostile summary via top-level fields ===="
+# Flat-object fixture shape (documented fallback: top-level .status/.summary
+# are consulted when the result text carries no `key: value` line). The full
+# hostile string — including double quotes and the embedded newline — must
+# round-trip EXACTLY through the stdin → jq extraction → jq --arg composition.
+PAYLOAD11="$(jq -nc --arg s "$HOSTILE" \
+  '{session_id:"s11", agent_type:"loomwright:supervisor-runner",
+    last_assistant_message:"prose without a result block",
+    status:"completed", pr_url:"https://github.com/example/repo/pull/44", summary:$s}')"
+run_dry_run "$PAYLOAD11"
+assert_eq         "case11 exit 0" "0" "$RC"
+assert_valid_json "case11 payload is valid JSON" "$OUT"
+assert_eq         "case11 status=completed" "completed" "$(printf '%s' "$OUT" | jq -r '.status')"
+assert_eq         "case11 hostile summary round-trips EXACTLY" "$HOSTILE" "$(printf '%s' "$OUT" | jq -r '.summary')"
+assert_absent     "case11 command substitution NOT executed" "$PWNED_MARKER"
+
+echo ""
+echo "==== Case 12: supervisor_result path — hostile summary INSIDE the result block ===="
+# The yaml_field extractor is documented single-line and stops at the first
+# embedded double-quote (send-webhook.sh "Value-shape assumption" comment), so
+# this case uses the yaml-safe hostile subset: command-substitution text,
+# backticks, single quotes, backslashes, unicode — no double quotes, no newline.
+HOSTILE_LINE='fix user'\''s $(touch '"$PWNED_MARKER"') and `touch '"$PWNED_MARKER"'` — ünïcødé \back\slash'
+RESULT_TEXT12="## SUPERVISOR_RESULT
+- schema_version: 1
+- status: completed
+- pr_url: https://github.com/example/repo/pull/45
+- summary: $HOSTILE_LINE"
+PAYLOAD12="$(jq -nc --arg m "$RESULT_TEXT12" \
+  '{session_id:"s12", agent_type:"loomwright:supervisor-runner", last_assistant_message:$m}')"
+run_dry_run "$PAYLOAD12"
+assert_eq         "case12 exit 0" "0" "$RC"
+assert_valid_json "case12 payload is valid JSON" "$OUT"
+assert_eq         "case12 hostile summary line round-trips EXACTLY" "$HOSTILE_LINE" "$(printf '%s' "$OUT" | jq -r '.summary')"
+assert_absent     "case12 command substitution NOT executed" "$PWNED_MARKER"
+
+echo ""
+echo "==== Case 13: paused event — ntfy.sh URL selects the plain-text ntfy branch ===="
+PAUSED_PAYLOAD="$(jq -nc \
+  '{hook_event_name:"PreToolUse", tool_name:"AskUserQuestion",
+    tool_input:{questions:[{question:"Merge iteration 2 before continuing?"}]}}')"
+run_paused "https://ntfy.sh/loomwright-test" "" "$PAUSED_PAYLOAD"
+assert_eq    "case13 exit 0" "0" "$RC"
+assert_match "case13 ntfy plain-text branch taken" "NTFY paused: title=[Claude needs your input]" "$OUT"
+assert_match "case13 question in ntfy body" "Merge iteration 2 before continuing?" "$OUT"
+
+echo ""
+echo "==== Case 14: paused event — LOOMWRIGHT_WEBHOOK_FORMAT=ntfy forces ntfy on a generic URL ===="
+run_paused "https://example.com/generic-hook" "ntfy" "$PAUSED_PAYLOAD"
+assert_eq    "case14 exit 0" "0" "$RC"
+assert_match "case14 ntfy branch via FORMAT env" "NTFY paused: title=[Claude needs your input]" "$OUT"
+
+echo ""
+echo "==== Case 15: paused event — Slack-shaped URL takes the default JSON branch ===="
+# send-webhook.sh has NO dedicated Slack branch: everything that is not ntfy
+# ("Everything else (Slack/Discord/custom) gets the structured JSON payload")
+# receives {event:"paused", question, timestamp}. Assert that shape on a
+# hooks.slack.com URL, with the hostile question proving jq --arg round-trip
+# on this path too. LOOMWRIGHT_WEBHOOK_FORMAT is scrubbed (env -u) so a dev
+# export of the ntfy format cannot flip the asserted branch.
+PAUSED_HOSTILE="$(jq -nc --arg q "$HOSTILE" \
+  '{hook_event_name:"PreToolUse", tool_name:"AskUserQuestion",
+    tool_input:{questions:[{question:$q}]}}')"
+run_paused "https://hooks.slack.com/services/T000/B000/XXXX" "" "$PAUSED_HOSTILE"
+assert_eq         "case15 exit 0" "0" "$RC"
+assert_valid_json "case15 payload is valid JSON (not ntfy plain text)" "$OUT"
+assert_eq         "case15 event=paused" "paused" "$(printf '%s' "$OUT" | jq -r '.event')"
+assert_eq         "case15 hostile question round-trips EXACTLY" "$HOSTILE" "$(printf '%s' "$OUT" | jq -r '.question')"
+assert_absent     "case15 command substitution NOT executed" "$PWNED_MARKER"
+
+echo ""
+echo "==== Case 16: paused event — URL merely containing 'ntfy' stays JSON ===="
+# Regression guard for the tightened ntfy glob (*ntfy.sh/*): a hostname that
+# contains "ntfy" but is NOT the ntfy.sh service (e.g. ntfy.example.com) must
+# NOT receive an ntfy-shaped plain-text request.
+run_paused "https://ntfy.example.com/hook" "" "$PAUSED_PAYLOAD"
+assert_eq         "case16 exit 0" "0" "$RC"
+assert_valid_json "case16 JSON branch taken (not ntfy)" "$OUT"
+assert_eq         "case16 event=paused" "paused" "$(printf '%s' "$OUT" | jq -r '.event')"
+
+echo ""
+echo "==== Case 17: gate event without --gate-type → skip, exit 0 ===="
+ERR17_TMP="$(mktemp)"
+OUT17="$(LOOMWRIGHT_WEBHOOK_URL=test LOOMWRIGHT_WEBHOOK_DRY_RUN=1 \
+  bash "$WEBHOOK" --event-type gate --iteration 1 --session-id s17 2>"$ERR17_TMP")"
+RC17=$?
+ERR17="$(cat "$ERR17_TMP")"
+rm -f "$ERR17_TMP"
+assert_eq    "case17 exit 0 on failure path" "0" "$RC17"
+assert_empty "case17 no payload printed" "$OUT17"
+assert_match "case17 skip message on stderr" "--gate-type is required" "$ERR17"
+
+echo ""
+echo "==== Case 18: malformed (non-JSON) stdin on supervisor_result path → skip, exit 0 ===="
+run_dry_run 'this is {{{ not json'
+assert_eq    "case18 exit 0 on failure path" "0" "$RC"
+assert_empty "case18 no payload printed" "$OUT"
+assert_match "case18 skip message on stderr" "skipping POST" "$ERR"
+
+echo ""
+echo "==== Case 19: AskUserQuestion payload lacking tool_input.questions → skip, exit 0 ===="
+# Defense-in-depth guard runs BEFORE the scope gate; assert the exact skip.
+PAYLOAD19="$(jq -nc '{hook_event_name:"PreToolUse", tool_name:"AskUserQuestion", tool_input:{}}')"
+run_paused "https://example.com/hook" "" "$PAYLOAD19"
+assert_eq    "case19 exit 0 on failure path" "0" "$RC"
+assert_empty "case19 no payload printed" "$OUT"
+assert_match "case19 skip message on stderr" "lacks tool_input.questions" "$ERR"
 
 echo ""
 TOTAL=$((PASS_COUNT + FAIL_COUNT))

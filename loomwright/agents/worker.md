@@ -1,7 +1,7 @@
 ---
 name: loomwright:worker
 description: Isolated implementation worker. Operates in git worktrees for parallel execution.
-tools: Read, Write, Edit, Bash, Glob, Grep
+tools: Read, Write, Edit, Bash, Glob, Grep, LSP
 model: inherit
 maxTurns: 40
 effort: high
@@ -94,6 +94,7 @@ Implement a single subtask in an isolated git worktree. Operate independently, f
 ### Step 5: Verify
 
 1. Check for type errors (if TypeScript/typed language)
+   - When available, run LSP diagnostics on your modified files and fix real type errors you introduced — advisory input only, never a new blocker or gate
 2. Run tests if test infrastructure exists:
    - Check for test runner: `package.json` scripts, `pytest.ini`, `go.mod`, etc.
    - Run relevant tests (not full suite unless small)
