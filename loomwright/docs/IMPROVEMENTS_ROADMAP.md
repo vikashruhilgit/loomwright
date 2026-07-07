@@ -431,7 +431,7 @@ This is actually **correct and intentional** — double validation. The naming i
 **[VERDICT: DEFERRED — on-demand as this item recommended; no `prisma`/`graphql`/`grpc` skill dirs exist among the skills in `loomwright/skills/` (59 at the time, pre-v15.6.0 spin-off; 2026-07-06), and no user demand has materialized]**
 
 **What's happening now:**
-49 skills covering NestJS, Next.js, TypeORM, Drizzle, MySQL, PostgreSQL, Redis, Docker, etc. Missing: Prisma ORM, GraphQL, gRPC.
+The tech-stack reference skills (NestJS, Next.js, TypeORM, Drizzle, MySQL, PostgreSQL, Redis, Docker) moved to the sibling `stackpack@atelier` plugin in v15.6.0; loomwright keeps the 41 orchestration/product skills. Still missing (and still on-demand-only): Prisma ORM, GraphQL, gRPC — any future addition belongs in stackpack.
 
 **Performance impact:** NONE for existing users. Skills are only loaded when referenced by agents. New skills don't slow anything down.
 
