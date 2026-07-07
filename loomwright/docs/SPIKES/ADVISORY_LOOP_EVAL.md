@@ -31,7 +31,7 @@ No third outcome. "It feels helpful" does not count; only the metrics below coun
 
 | Metric | Source | Direction |
 |---|---|---|
-| Review rounds to READY | POSTMORTEM_RESULT `fix_cycles` / effective review rounds (via `/pr-postmortem` or the drain's `REVIEW_HEAL_RESULT`) | lower is better |
+| Review rounds to READY | POSTMORTEM_RESULT `review_rounds` (= the drain's effective review rounds / `REVIEW_HEAL_RESULT` `fix_cycles`; via `/pr-postmortem` or the automate drain) | lower is better |
 | Phase 4.5 `heal_iterations` | SUPERVISOR_RESULT / `session_end` JSONL | lower is better |
 | `rubric_score` (where the brief has an `## Outcomes Rubric`) | SUPERVISOR_RESULT | higher is better |
 
