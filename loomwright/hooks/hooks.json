@@ -12,7 +12,7 @@
           },
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry.sh\""
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry.sh\" || true"
           }
         ]
       },
@@ -26,7 +26,7 @@
           },
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry.sh\""
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry.sh\" || true"
           }
         ]
       },
@@ -60,11 +60,11 @@
           },
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry.sh\""
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry.sh\" || true"
           },
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/send-webhook.sh\""
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/send-webhook.sh\" || true"
           }
         ]
       },
@@ -83,7 +83,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/validate-launch-pad-result.py\""
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/validate-launch-pad-result.py\" || true"
           }
         ]
       }
@@ -120,6 +120,16 @@
         ]
       }
     ],
+    "WorktreeRemove": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "INPUT=$(cat) && mkdir -p .supervisor/logs && echo \"[$(date -u +%Y-%m-%dT%H:%M:%SZ)] WORKTREE_REMOVED $INPUT\" >> .supervisor/logs/worktrees.log && echo \"$INPUT\" | python3 -c \"import sys,json; print(json.load(sys.stdin).get('worktree_path',''))\" 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
     "StopFailure": [
       {
         "hooks": [
@@ -136,7 +146,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook-dispatch-on-pr-create.sh\""
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook-dispatch-on-pr-create.sh\" || true"
           }
         ]
       }
@@ -147,11 +157,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/notify-desktop.sh\""
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/notify-desktop.sh\" || true"
           },
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/send-webhook.sh\""
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/send-webhook.sh\" || true"
           }
         ]
       }
@@ -162,7 +172,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/notify-desktop.sh\""
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/notify-desktop.sh\" || true"
           }
         ]
       }
@@ -172,7 +182,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/session-resume.sh\""
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/session-resume.sh\" || true"
           }
         ]
       },
@@ -180,7 +190,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/set-otel-resource-attrs.sh\""
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/set-otel-resource-attrs.sh\" || true"
           }
         ]
       }
