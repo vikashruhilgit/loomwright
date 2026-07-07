@@ -1,6 +1,6 @@
 # Skills Index
 
-Comprehensive index of all skills available in the Stackpack plugin — generic tech-stack reference skills spun out of Loomwright (≤ v15.5.0). All skills here are consumed on demand; no agent preloads them.
+Comprehensive index of all skills available in the Stackpack plugin — generic tech-stack reference skills spun out of Loomwright (≤ v15.5.0). All skills here are consumed on demand; no agent preloads them. (Skill consumers — Worker, Code Reviewer, etc. — live in the loomwright@atelier plugin; install stackpack alongside it.)
 
 ---
 

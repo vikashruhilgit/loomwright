@@ -1,7 +1,40 @@
 #!/bin/bash
 set -euo pipefail
 
-MARKETPLACE_JSON=".claude-plugin/marketplace.json"
+# Env override (used by --self-test to point the gate at a fixture tree's manifest).
+MARKETPLACE_JSON="${CHECK_MARKETPLACE_JSON:-.claude-plugin/marketplace.json}"
+
+# --self-test: negative-path proof for the per-plugin loop (mirrors check-skills-index-sync.sh).
+# Builds throwaway fixtures and asserts: aligned passes; bad .source, missing manifest,
+# version mismatch, and empty plugins[] each exit 1.
+if [ "${1:-}" = "--self-test" ]; then
+  SCRIPT="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+  TMP=$(mktemp -d)
+  trap "rm -rf '$TMP'" EXIT
+  pass=0; fail=0
+  check() { # name expected_rc marketplace_path
+    local rc=0
+    ( cd "$TMP" && CHECK_MARKETPLACE_JSON="$3" bash "$SCRIPT" >/dev/null 2>&1 ) || rc=$?
+    if [ "$rc" -eq "$2" ]; then pass=$((pass+1)); echo "  ✓ self-test: $1"
+    else fail=$((fail+1)); echo "  ✗ self-test: $1 (expected rc=$2, got rc=$rc)"; fi
+  }
+  mkdir -p "$TMP/good/.claude-plugin"
+  echo '{"name":"good","version":"1.2.3"}' > "$TMP/good/.claude-plugin/plugin.json"
+  echo '{"plugins":[{"name":"good","source":"./good","version":"1.2.3"}]}' > "$TMP/aligned.json"
+  check "aligned marketplace passes" 0 aligned.json
+  echo '{"plugins":[{"name":"bad","source":"./nope","version":"1.2.3"}]}' > "$TMP/badsource.json"
+  check "unresolvable .source fails" 1 badsource.json
+  mkdir -p "$TMP/hollow"
+  echo '{"plugins":[{"name":"hollow","source":"./hollow","version":"1.2.3"}]}' > "$TMP/nomanifest.json"
+  check "missing plugin manifest fails" 1 nomanifest.json
+  echo '{"plugins":[{"name":"good","source":"./good","version":"9.9.9"}]}' > "$TMP/mismatch.json"
+  check "version mismatch fails" 1 mismatch.json
+  echo '{"plugins":[]}' > "$TMP/empty.json"
+  check "empty plugins[] fails" 1 empty.json
+  echo "self-test: $pass passed, $fail failed"
+  [ "$fail" -eq 0 ]
+  exit $?
+fi
 
 PLUGIN_COUNT=$(jq '.plugins | length' "$MARKETPLACE_JSON")
 if [ "$PLUGIN_COUNT" -eq 0 ]; then

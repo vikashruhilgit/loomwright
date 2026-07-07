@@ -608,7 +608,7 @@ None
 - Proper error handling with UnauthorizedException
 - Type safety with JWTPayload interface
 - Comprehensive test coverage (85%)
-- Follows nestjs/guards.md patterns
+- Follows established guard patterns
 
 ### Pattern Proposals
 None
