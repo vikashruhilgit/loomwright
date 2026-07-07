@@ -281,13 +281,21 @@ export interface ExecuteResultEquivalent {
 }
 
 // ---------------------------------------------------------------------------
-// Minimal local validator — required keys, enums, array-ness, plus ONE level
-// of recursion into array items (object items validated against `items`'s
-// required/properties; scalar items checked against `items.enum`/type).
+// Minimal local validator — enforces what the schemas above declare:
+// required keys, enums, array-ness, `minItems` on arrays, `minLength` on
+// strings, ONE level of recursion into array items (object items validated
+// against `items`'s required/properties; scalar items checked against
+// `items.enum`/type), and recursion into non-array OBJECT properties that
+// carry their own required/properties (e.g. consistency_checks — null is
+// accepted where the type union permits it).
 // Used (a) to validate dry-run fixtures deterministically offline and
 // (b) as a fail-closed double-check on live structured outputs (the SDK
 // already retries/errors on schema violations; this is belt-and-suspenders).
 // Deliberately NOT a full JSON Schema implementation (no deps in the spike).
+// Still deliberately NON-enforced: `additionalProperties: false` (unknown
+// keys are ignored, not rejected), type checks on nullable union types
+// (`["boolean","null"]` etc. — enums still apply, but a wrong-typed value
+// with no enum passes), and any keyword not listed above.
 // ---------------------------------------------------------------------------
 export function validateAgainstSchema(
   obj: unknown,
@@ -309,7 +317,10 @@ export function validateAgainstSchema(
     if (prop.type === "array") {
       if (!Array.isArray(value)) {
         errors.push(`key ${label} must be an array`);
-      } else if (prop.items) {
+      } else if (typeof prop.minItems === "number" && value.length < prop.minItems) {
+        errors.push(`key ${label} must have at least ${prop.minItems} item(s), got ${value.length}`);
+      }
+      if (Array.isArray(value) && prop.items) {
         // One level of item recursion (our schemas are non-recursive, so this
         // covers outputs_verified[], issues[], etc. completely).
         (value as unknown[]).forEach((el, i) => {
@@ -330,8 +341,30 @@ export function validateAgainstSchema(
     if (prop.type === "string" && typeof value !== "string") {
       errors.push(`key ${label} must be a string`);
     }
+    if (
+      typeof prop.minLength === "number" &&
+      typeof value === "string" &&
+      value.length < prop.minLength
+    ) {
+      errors.push(`key ${label} must have length >= ${prop.minLength}`);
+    }
     if (prop.type === "integer" && typeof value !== "number") {
       errors.push(`key ${label} must be a number`);
+    }
+    // Recurse into non-array OBJECT properties that declare their own shape
+    // (e.g. consistency_checks). Applies when the declared type is/includes
+    // "object" and the value is a non-null object; null is left to the type
+    // union (["object","null"]).
+    const typeIncludesObject =
+      prop.type === "object" || (Array.isArray(prop.type) && prop.type.includes("object"));
+    if (
+      typeIncludesObject &&
+      (prop.required || prop.properties) &&
+      value !== null &&
+      typeof value === "object" &&
+      !Array.isArray(value)
+    ) {
+      errors.push(...validateAgainstSchema(value, prop, `${label}.`));
     }
     if (Array.isArray(prop.enum) && (typeof value === "string" || typeof value === "number")) {
       if (!prop.enum.includes(value as never)) {

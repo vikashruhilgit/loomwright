@@ -518,9 +518,11 @@ async function main(): Promise<number> {
 
   const runSubtask = async (subtask: Subtask): Promise<void> => {
     const taskId = `subtask-${subtask.id}`;
-    // Dry-run synthesizes the per-subtask branch name the live path would
-    // create, keeping merge_order distinct and deterministic.
-    let branch = args.dryRun ? `sdk-spike/subtask-${subtask.id}` : featureBranch;
+    // Both modes record the INTENDED deterministic per-subtask branch name up
+    // front (dry-run synthesizes it; live addWorktree creates exactly this
+    // name) — so an early failure (e.g. addWorktree throwing) never records
+    // the feature branch as the subtask's branch.
+    let branch = `sdk-spike/subtask-${subtask.id}`;
     let wtPath = "(dry-run: worktree skipped)";
     const record: WorktreeRecord = { taskId, wtPath, branch, created: false, removed: false };
     worktrees.push(record);
@@ -644,7 +646,14 @@ async function main(): Promise<number> {
       task_id: w.taskId,
       path: w.wtPath,
       branch: w.branch,
-      status: w.removed ? ("cleaned" as const) : failed.has(Number(w.taskId.replace("subtask-", ""))) ? ("failed" as const) : ("completed" as const),
+      // Outcome first, so "failed"/"completed" stay meaningful in live mode
+      // (where every created worktree is removed on exit): a failed subtask
+      // reports "failed" even after its worktree was cleaned up.
+      status: failed.has(Number(w.taskId.replace("subtask-", "")))
+        ? ("failed" as const)
+        : w.removed
+          ? ("cleaned" as const)
+          : ("completed" as const),
     })),
     branches: Array.from(new Set(worktrees.filter((w) => w.created || args.dryRun).map((w) => w.branch))),
     summary: `${completed.size}/${subtasks.length} subtasks completed${failed.size > 0 ? `, ${failed.size} failed` : ""} (${args.dryRun ? "dry-run: no API calls, no worktrees" : "live: worker output committed per subtask branch; worktrees removed; branches kept — merge per merge_order, then delete"}).`,

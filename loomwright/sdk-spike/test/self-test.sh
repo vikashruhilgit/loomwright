@@ -238,6 +238,30 @@ if [ "$HAVE_NODE" = 1 ] && [ -f dist/schemas.js ]; then
   else
     fail "validateAgainstSchema does not catch nested array-item violations"
   fi
+  # minItems + nested object-property (consistency_checks) violations
+  if node -e '
+    const { validateAgainstSchema, CODE_REVIEW_RESULT_SCHEMA } = require("./dist/schemas.js");
+    const good = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+    if (validateAgainstSchema(good, CODE_REVIEW_RESULT_SCHEMA).length !== 0) {
+      console.error("good review fixture unexpectedly failed"); process.exit(1);
+    }
+    const minItemsBad = JSON.parse(JSON.stringify(good));
+    minItemsBad.files_checked = []; // schema declares minItems: 1
+    const e1 = validateAgainstSchema(minItemsBad, CODE_REVIEW_RESULT_SCHEMA);
+    if (!e1.some((m) => m.includes("files_checked") && m.includes("at least"))) {
+      console.error("minItems violation not caught: " + JSON.stringify(e1)); process.exit(1);
+    }
+    const nestedBad = JSON.parse(JSON.stringify(good));
+    nestedBad.consistency_checks = { mirrored_prompts: "not-an-enum-value" }; // 4 required keys missing + bad enum
+    const e2 = validateAgainstSchema(nestedBad, CODE_REVIEW_RESULT_SCHEMA);
+    if (e2.length < 5 || !e2.some((m) => m.includes("consistency_checks."))) {
+      console.error("nested consistency_checks violations not caught: " + JSON.stringify(e2)); process.exit(1);
+    }
+  ' "$REVIEW_FIXTURE"; then
+    pass "validateAgainstSchema enforces minItems and recurses into object properties (consistency_checks)"
+  else
+    fail "validateAgainstSchema misses minItems or nested object-property violations"
+  fi
 else
   skip "validator recursion check skipped — dist/schemas.js not available"
 fi

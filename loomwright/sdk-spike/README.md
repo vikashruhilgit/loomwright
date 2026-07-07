@@ -108,8 +108,8 @@ or dry-run-only**, never exercised against the live SDK:
 - The stale-branch abort and the `commitWorktree` clean-worktree warning —
   source-level greps; no live worktree lifecycle runs.
 - In degraded offline mode (no `node_modules`) the result is **"0 failures"
-  with the compile and dry-run SKIPped — not 20 passes**; only a full install
-  + build yields the 20/20 run.
+  with the compile and dry-run SKIPped — not 21 passes**; only a full install
+  + build yields the 21/21 run.
 
 ## What this proves / what it can't
 
@@ -138,6 +138,10 @@ or dry-run-only**, never exercised against the live SDK:
 - Simplifications vs the real loop: no fix-worker retries, no Context-Keeper,
   no tool-call budget/EXECUTE_CHECKPOINT, and no Step 2a dependency
   materialization (producer branches are not merged into dependent worktrees).
+  Concretely: `requires` only delays **spawn order**, not **visibility** — a
+  dependent worktree branches from the feature branch and does NOT see producer
+  commits, so a subtask with a real cross-subtask file dependency will not find
+  the producer's files on disk in live mode.
 - Branch lifecycle simplification: the runner commits each worker's output on
   its `sdk-spike/subtask-<n>` branch (so worktree removal never destroys work)
   but does **not** merge or delete branches — merging them in `merge_order`

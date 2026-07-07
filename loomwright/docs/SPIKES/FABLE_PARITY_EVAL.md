@@ -53,7 +53,12 @@ in this file.
 
 1. **Corpus selection:** pick **5 requirements** (small-to-medium, orchestration-shaped — multi-file
    with at least one dependency between subtasks, so the Phase 3 loop is actually exercised); reuse
-   completed historical requirements from `.supervisor/jobs/done/` where possible.
+   completed historical requirements from `.supervisor/jobs/done/` where possible. **At least ONE of
+   the 5 MUST have a REAL cross-subtask file dependency** (a dependent subtask that reads/imports a
+   file the producer subtask creates) — the SDK runner's known live-mode gap is that `requires` only
+   delays SPAWN ORDER: dependents branch from the feature branch and do NOT see producer commits
+   (no Step 2a dependency materialization; `SDK_RUNNER_SPIKE.md` residual divergence 3). The corpus
+   must surface that gap in the measured arm-3 comparison, not leave it theoretical.
 2. **Arms (3 per requirement, 15 runs total):**
    - **Arm 1 — bare Claude Code:** the requirement text given directly to a plain session (no
      Loomwright commands), implemented on a scratch branch.
