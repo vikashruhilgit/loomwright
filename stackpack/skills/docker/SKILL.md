@@ -21,7 +21,7 @@ Patterns for building efficient, secure Docker images and compose configurations
 
 ## When NOT to Use
 
-- CI/CD pipeline configuration — use `ci-cd` skill
+- CI/CD pipeline configuration — use the `ci-cd` skill (loomwright@atelier plugin)
 - Kubernetes orchestration — separate concern
 - Cloud provider-specific container services (ECS, Cloud Run) — separate concern
 
@@ -199,8 +199,8 @@ CMD ["node", "dist/main.js"]
 
 ## Related Skills
 
-- `ci-cd` — Building and pushing images in CI pipelines
-- `monitoring-observability` — Container logging and metrics
+- `ci-cd` (loomwright@atelier plugin) — Building and pushing images in CI pipelines
+- `monitoring-observability` (loomwright@atelier plugin) — Container logging and metrics
 - `mysql` — Database container setup
 - `redis-caching` — Redis container configuration
 

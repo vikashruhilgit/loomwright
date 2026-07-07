@@ -220,9 +220,9 @@ const redis = new Redis({
 ## Related Skills
 
 - `mysql` / `postgresql` — Primary data store that cache sits in front of
-- `error-handling` — Graceful degradation when Redis is unavailable
+- `error-handling` (loomwright@atelier plugin) — Graceful degradation when Redis is unavailable
 - `docker` — Redis container setup in docker-compose
-- `monitoring-observability` — Cache hit/miss ratio metrics
+- `monitoring-observability` (loomwright@atelier plugin) — Cache hit/miss ratio metrics
 
 ## Quality Gates
 

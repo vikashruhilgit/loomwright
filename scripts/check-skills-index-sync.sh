@@ -9,7 +9,7 @@
 # the parity mechanical.
 #
 # WHAT (structural only — never scans changelog prose or example blocks):
-#   1. For every loomwright/skills/*/SKILL.md carrying a `version:` frontmatter
+#   1. For every {plugin}/skills/*/SKILL.md carrying a `version:` frontmatter
 #      field: SKILLS_INDEX.md must have exactly ONE table row whose Directory
 #      cell (the backticked `name/` cell — NOT the display name) matches that
 #      skill dir, and that row's Version cell must equal the frontmatter value.
@@ -26,13 +26,20 @@
 # Rows are keyed on the Directory cell so display-name phrasing ("Supervisor
 # Readiness" vs `supervisor-readiness/`) can never false-positive.
 #
-# bash-3.2-safe (no mapfile / associative arrays), no network, pure grep/awk.
+# MULTI-PLUGIN (v15.6.0): the gate runs once per marketplace plugin whose source
+# dir has a skills/ tree (loomwright, stackpack, ...). Plugins that ship no
+# skills dir (mysql-mcp) are skipped silently. A skills/ dir WITHOUT a
+# SKILLS_INDEX.md fails loudly (run_check's index-not-found branch).
+#
+# bash-3.2-safe (no mapfile / associative arrays), no network, grep/awk + jq
+# (jq only for marketplace.json plugin discovery — already a hard CI dependency).
 #
 # Usage:
 #   bash scripts/check-skills-index-sync.sh              # gate (exit 0 clean, 1 drift)
 #   bash scripts/check-skills-index-sync.sh --self-test  # synthetic negative/positive proof
 #
-# Env overrides (used by --self-test; also handy for fixtures):
+# Env overrides (used by --self-test; also handy for fixtures — when either is
+# set, the gate checks ONLY that single skills-dir/index pair, no plugin loop):
 #   CHECK_SKILLS_DIR    — skills root (default loomwright/skills)
 #   CHECK_SKILLS_INDEX  — index file  (default $CHECK_SKILLS_DIR/SKILLS_INDEX.md)
 
@@ -40,8 +47,7 @@ set -uo pipefail
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo_root"
 
-SKILLS_DIR="${CHECK_SKILLS_DIR:-loomwright/skills}"
-INDEX="${CHECK_SKILLS_INDEX:-$SKILLS_DIR/SKILLS_INDEX.md}"
+MARKETPLACE_JSON=".claude-plugin/marketplace.json"
 
 # --- helpers -----------------------------------------------------------------
 
@@ -80,7 +86,8 @@ index_pairs() {
 
 # --- the check ---------------------------------------------------------------
 
-run_check() {
+run_check() { # $1 = skills dir, $2 = index file
+  local SKILLS_DIR="$1" INDEX="$2"
   local fail=0 pairs d skill f v rows n row_ver
   [ -f "$INDEX" ] || { echo "check-skills-index-sync: index not found: $INDEX" >&2; return 1; }
   [ -d "$SKILLS_DIR" ] || { echo "check-skills-index-sync: skills dir not found: $SKILLS_DIR" >&2; return 1; }
@@ -139,11 +146,36 @@ run_check() {
   rm -f "$pairs"
 
   if [ "$fail" -ne 0 ]; then
-    echo "✗ skills-index drift detected — fix the SKILLS_INDEX.md rows above (index follows skill; never edit a SKILL.md version to make the index fit)."
+    echo "✗ skills-index drift detected in $INDEX — fix the SKILLS_INDEX.md rows above (index follows skill; never edit a SKILL.md version to make the index fit)."
     return 1
   fi
-  echo "✓ skills-index-sync: every versioned SKILL.md has exactly one matching index row; no ghost rows."
+  echo "✓ skills-index-sync [$SKILLS_DIR]: every versioned SKILL.md has exactly one matching index row; no ghost rows."
   return 0
+}
+
+# Gate mode: env override → single check (fixtures / --self-test recursion);
+# otherwise loop over every marketplace plugin source that has a skills/ dir.
+run_gate() {
+  if [ -n "${CHECK_SKILLS_DIR:-}" ] || [ -n "${CHECK_SKILLS_INDEX:-}" ]; then
+    local dir="${CHECK_SKILLS_DIR:-loomwright/skills}"
+    run_check "$dir" "${CHECK_SKILLS_INDEX:-$dir/SKILLS_INDEX.md}"
+    return $?
+  fi
+  command -v jq >/dev/null 2>&1 || { echo "check-skills-index-sync: jq required for marketplace plugin discovery" >&2; return 1; }
+  [ -f "$MARKETPLACE_JSON" ] || { echo "check-skills-index-sync: marketplace manifest not found: $MARKETPLACE_JSON" >&2; return 1; }
+  local rc=0 checked=0 src sdir
+  while IFS= read -r src; do
+    [ -n "$src" ] && [ "$src" != "null" ] || continue
+    sdir="${src#./}"; sdir="${sdir%/}/skills"
+    [ -d "$sdir" ] || continue   # plugin ships no skills (e.g. mysql-mcp) — out of scope, skip silently
+    checked=$((checked + 1))
+    run_check "$sdir" "$sdir/SKILLS_INDEX.md" || rc=1
+  done < <(jq -r '.plugins[].source' "$MARKETPLACE_JSON")
+  if [ "$checked" -eq 0 ]; then
+    echo "check-skills-index-sync: no skills-bearing plugin sources found via $MARKETPLACE_JSON — gate matched nothing (anti-drift tripwire)" >&2
+    return 1
+  fi
+  return $rc
 }
 
 # --- self-test (synthetic fixture — independent of live repo state) ----------
@@ -240,6 +272,6 @@ EOF
 
 case "${1:-}" in
   --self-test) self_test ;;
-  "")          run_check ;;
+  "")          run_gate ;;
   *)           echo "usage: $0 [--self-test]" >&2; exit 2 ;;
 esac

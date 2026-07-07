@@ -21,7 +21,7 @@ GitHub Actions pipeline patterns for reliable builds, tests, and deployments.
 
 ## When NOT to Use
 
-- Docker image building only — use `docker` skill
+- Docker image building only — use the `docker` skill (stackpack@atelier plugin)
 - Application-level testing patterns — use `unit-testing` or `playwright-e2e`
 - Infrastructure provisioning (Terraform, Pulumi) — separate concern
 
@@ -236,7 +236,7 @@ jobs:
 
 ## Related Skills
 
-- `docker` — Container image builds in CI
+- `docker` (stackpack@atelier plugin) — Container image builds in CI
 - `unit-testing` — Test execution in pipelines
 - `playwright-e2e` — E2E tests in CI with browser setup
 - `monitoring-observability` — Post-deploy monitoring

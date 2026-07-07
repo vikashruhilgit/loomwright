@@ -22,7 +22,7 @@ Patterns for consistent, debuggable error handling across backend and frontend.
 ## When NOT to Use
 
 - Monitoring and alerting setup — use `monitoring-observability`
-- Security-specific error masking — consult `gateway-auth-middleware`
+- Security-specific error masking — consult `gateway-auth-middleware` (stackpack@atelier plugin)
 - Test error assertions — see `unit-testing`
 
 ## Core Patterns
@@ -252,9 +252,9 @@ export class OrderService {
 ## Related Skills
 
 - `monitoring-observability` — Logging and alerting for caught errors
-- `nestjs-controllers` — Controller-level error handling in NestJS
+- `nestjs-controllers` (stackpack@atelier plugin) — Controller-level error handling in NestJS
 - `unit-testing` — Testing error paths and exception scenarios
-- `gateway-auth-middleware` — Auth error handling at the gateway layer
+- `gateway-auth-middleware` (stackpack@atelier plugin) — Auth error handling at the gateway layer
 
 ## Quality Gates
 

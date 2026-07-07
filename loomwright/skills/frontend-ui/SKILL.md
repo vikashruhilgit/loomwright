@@ -879,8 +879,8 @@ export default defineComponent({
 
 ## Related Skills
 
-- `skills/nextjs-components/SKILL.md` - Next.js Server/Client component patterns
-- `skills/nextjs-routing/SKILL.md` - Next.js App Router file-based routing
+- `nextjs-components` (stackpack@atelier plugin) - Next.js Server/Client component patterns
+- `nextjs-routing` (stackpack@atelier plugin) - Next.js App Router file-based routing
 - `skills/quality-checklist/SKILL.md` - General code quality gates
 - `skills/pattern-detector/SKILL.md` - Detecting new patterns for CLAUDE.md
 

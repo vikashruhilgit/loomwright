@@ -12,26 +12,26 @@ Guidance for Claude Code when working in this repository.
 
 **Loomwright** is a Claude Code plugin with 14 agent roles (9 user-facing + 5 internal) for plan-first readiness, parallel execution, requirements, planning, code review, commits, adversarial audits, standalone PR review-and-heal, and dual-agent QA. Supervisor and Launch Pad use `.supervisor/` exclusively for state; Orchestrator and Product Owner can optionally use Beads.
 
+**v15.6.0 — stackpack + mysql-mcp spin-off: 18 tech-stack skills and the bundled MySQL MCP server move to sibling plugins (marketplace now lists 3 plugins):** Sharpens Loomwright's identity as the orchestration core. (1) The 18 generic tech-stack skills (`nextjs-*` ×5, `nestjs-*` ×5, `gateway-*` ×4, `mysql`, `postgresql`, `redis-caching`, `docker` — dependency audit PASSED: none was agent-preloaded) `git mv`-ed to the NEW sibling plugin **stackpack** (`/plugin install stackpack@atelier`). (2) The bundled read-only MySQL MCP server (`vikashruhil-mysql-mcp`) moved to the NEW sibling plugin **mysql-mcp** (`/plugin install mysql-mcp@atelier`) — loomwright's `.mcp.json` and plugin.json `mcpServers` block removed; the `/setup mysql-mcp` module stays as status+guidance pointing at the new plugin. (3) Reference sweep across loomwright: staying-skill Related-skills pointers rewritten to "(stackpack@atelier plugin)" install pointers; agent/command illustrative examples genericized to staying skills or `skills/{domain}/SKILL.md` placeholders (zero `skills/<moved-name>/` paths survive in loomwright/); SKILLS_INDEX pruned to 41 rows + moved-note; NORTH_STAR_DIRECTION.md prune-action stamped SHIPPED. Migration note in README + CHANGELOG. **Counts: 14 agents / 21 commands / 41 skills (59 → 41: 18 moved to stackpack) / 22 hooks; no `schema_version` bump.** Additive on top of v15.5.0.
+
 **v15.5.0 — script-test gap closure: WorktreeRemove hook (roadmap item #6 closed), `|| true` fail-safe sweep, two hardened test suites, advisory LSP for implementation agents:** Four slices plus the docs sweep. (1) `scripts/test-webhook.sh` gains cases 10–19 — hostile-string EXACT round-trip proofs on the gate path (`--context`/`--session-id`) and the `supervisor_result` path (flat top-level fallback + in-block yaml_field line), paused-event format-branch coverage (ntfy.sh URL / `LOOMWRIGHT_WEBHOOK_FORMAT=ntfy` / default JSON — also the Slack shape), and exit-0-on-every-failure-path assertions. (2) NEW `scripts/test-notify-desktop.sh` (40 cases) — PATH-sandboxed self-test proving `notify-desktop.sh` is a fail-safe emitter on EVERY path (stub notifiers record markers instead of firing real notifications; Darwin/Linux dispatch branches host-guarded; bash-3.2 + Linux-CI safe). (3) `hooks.json`: NEW `WorktreeRemove` `type: command` hook mirroring `WorktreeCreate` (appends `WORKTREE_REMOVED` to `.supervisor/logs/worktrees.log`; verified supported per the official hooks docs) — closes the last OPEN item (#6) in `docs/IMPROVEMENTS_ROADMAP.md`, hook count 21 → 22 — plus a `|| true` belt-and-suspenders sweep on 11 `type: command` hook invocations so the fail-SAFE emitter invariant (§"Failure-Mode Invariants") holds even if a script itself exits non-zero. (4) `LSP` added (advisory, never-gating) to worker (Step 5 diagnostics on modified files), qa-executor (discovery-phase diagnostics signal), and launch-pad (file-impact grounding); `ARCHITECTURE_CONTRACTS.md` capability matrix updated to match. **Counts: 14 agents / 21 commands / 59 skills / 22 hooks (21 → 22: WorktreeRemove is NEW); no `schema_version` bump.** Additive on top of v15.4.0.
 
-**v15.4.0 — Supervisor prompt refactor: phase protocol bodies extracted into 4 authority skills (structure-only, ZERO behavior change):** `agents/supervisor.md` shrinks 1652 → 748 lines by moving phase-protocol PROCEDURE bodies verbatim into skills, while every gate and invariant stays in the agent file. The four extractions: Phase 1.5 PRE-FLIGHT SYNC → NEW `skills/preflight-sync/SKILL.md` and Phase 0 INIT → NEW `skills/supervisor-config/SKILL.md` (both read at phase entry — deliberately NOT preloaded); Phase 4.5 SELF_HEAL loop protocol → `skills/self-heal-advisory/SKILL.md` Part 2 (→ 1.1.0); Phase 4 FINALIZE mechanics + Subagent Spawn Contracts + Git Worktree Lifecycle → `skills/async-orchestration/SKILL.md` Part 2 (→ 1.1.1 — the patch also retitles Part 1's contradictory "Phase 2 (PLAN): Create Branches" heading to the Execute Manager Phase 3 Step 2a ownership the file already asserted elsewhere). The Session Logging event catalog + `session_end` field spec moved to `skills/state-management/SKILL.md` §"Session Logging (moved from agents/supervisor.md)" (1.2.0 → 1.3.0); the agent keeps the log-path convention + the emit-`session_end` requirement. What stays in the agent file: the Phase 4.5 completion-tail guard (verbatim), the pre-merge safety gate / merge-conflict STOP / PR-base self-verify gate conditions, the Phase 4.5 mandate + invariant tracking (`skip_self_heal_requested`, `phase45_review_invoked`), budgets 50/60 + the GREEN/YELLOW/RED bands, the Error Handling table, and the full SUPERVISOR_RESULT Result Block (schema untouched). `commands/supervisor.md` mirrored per slice — §"Inline-path canonical state writes" survives. **Counts: 14 agents / 21 commands / 59 skills (57 → 59: preflight-sync + supervisor-config are NEW) / 21 hooks; no `schema_version` bump.** Additive on top of v15.3.0.
-
-> 📜 **Full release history** (v15.3.0 → v14.0.0 and earlier) lives in [`CHANGELOG.md`](CHANGELOG.md). CLAUDE.md keeps only the two most recent release notes.
+> 📜 **Full release history** (v15.4.0 → v14.0.0 and earlier) lives in [`CHANGELOG.md`](CHANGELOG.md). CLAUDE.md keeps only the two most recent release notes.
 
 ---
 
 ## Plugin Layout
 
-The repo is a **marketplace wrapper** containing one nested plugin:
+The repo is a **marketplace wrapper** containing three sibling plugins (loomwright, stackpack, mysql-mcp):
 
 - Marketplace manifest: `.claude-plugin/marketplace.json` (root)
-- Plugin manifest: `loomwright/.claude-plugin/plugin.json` (v15.5.0)
+- Plugin manifest: `loomwright/.claude-plugin/plugin.json` (v15.6.0)
 - Agents: `loomwright/agents/` (14 markdown prompts)
 - Commands: `loomwright/commands/` (21 entry points)
-- Skills: `loomwright/skills/` (59 skills, see `SKILLS_INDEX.md`)
+- Skills: `loomwright/skills/` (41 skills, see `SKILLS_INDEX.md`)
 - Hooks: `loomwright/hooks/hooks.json`
 - Docs: `loomwright/docs/`
-- Bundled MCP: read-only MySQL server (`vikashruhil-mysql-mcp`)
+- Sibling plugins: `stackpack/` (18 tech-stack reference skills, v1.0.0) and `mysql-mcp/` (read-only MySQL MCP server `vikashruhil-mysql-mcp`, v1.0.0)
 
 > **Repo path vs. runtime path:** `loomwright/...` is the developer-side path (this repo on disk). Anything invoked by hooks, skills, or agents at *runtime* must reference `${CLAUDE_PLUGIN_ROOT}/...` — that's the canonical Claude Code variable that resolves to the plugin install dir on both dev checkouts and marketplace installs. Never use `loomwright/...` paths from the user-project root; they only resolve for the plugin maintainer.
 
@@ -42,17 +42,18 @@ loomwright/                              # marketplace wrapper
 ├── .claude-plugin/
 │   ├── marketplace.json                       # marketplace manifest (root)
 │   └── README.md                              # plugin-facing usage guide
-├── loomwright/                   # nested plugin
+├── loomwright/                   # nested plugin (orchestration core)
 │   ├── .claude-plugin/plugin.json
-│   ├── .mcp.json                              # bundled MCP servers
 │   ├── agents/                                # 14 markdown prompts
 │   ├── commands/                              # 21 slash commands
 │   ├── hooks/hooks.json                       # cross-cutting hooks
-│   ├── skills/                                # 59 skills + SKILLS_INDEX.md
+│   ├── skills/                                # 41 skills + SKILLS_INDEX.md
 │   ├── scripts/                               # runtime helpers: telemetry, webhook, notify, resume, memory, lessons, insights, handoff digest (build-handoff), findings→community bridge (build-bridge / read-bridge), otel stack assets (+ self-tests, fixtures)
 │   └── docs/                                  # RESULT_SCHEMAS, FAILURE_ESCALATION, ARCHITECTURE_CONTRACTS, ARCHITECTURE, QA_SYSTEM_BLUEPRINT, TELEMETRY, OBSERVABILITY
 │       └── SPIKES/                            # Capability spike investigations + deferral records
-├── scripts/                                   # validate-version.sh, check-command-sync.sh
+├── stackpack/                                 # sibling plugin: 18 tech-stack reference skills (v1.0.0)
+├── mysql-mcp/                                 # sibling plugin: read-only MySQL MCP server (v1.0.0)
+├── scripts/                                   # CI validators (version, doc-currency, skills-index, command-sync, contract-parity)
 ├── README.md                                  # user-facing docs
 ├── AGENT_GUIDELINES.md                        # standards, agent contract
 └── CLAUDE.md                                  # this file

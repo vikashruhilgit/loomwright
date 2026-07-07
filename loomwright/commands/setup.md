@@ -14,7 +14,7 @@ description: Umbrella setup command — status dashboard plus guided configurati
 /setup notifications        # Status + guidance (notification hooks are always-on)
 /setup webhook              # Status + guidance (LOOMWRIGHT_WEBHOOK_URL)
 /setup beads                # Status + guidance (bd CLI + .beads/)
-/setup mysql-mcp            # Status + guidance (DB_* env for the bundled read-only MySQL MCP)
+/setup mysql-mcp            # Status + guidance (DB_* env for the read-only MySQL MCP — separate mysql-mcp@atelier plugin)
 ```
 
 ## Parameters
@@ -299,7 +299,7 @@ Status + guidance only. Report `bd` availability and `.beads/` presence. Guidanc
 
 ## Module: mysql-mcp
 
-Status + guidance only. Report which of `DB_HOST`, `DB_USER`, `DB_PASS`, `DB_NAME` (+ optional `DB_PORT`) are unset — names only, never values. Guidance: the bundled MySQL MCP server is read-only and resolves these from the environment; set them in the shell profile or project `.mcp.json` env. This command does NOT write credentials anywhere.
+Status + guidance only. Report which of `DB_HOST`, `DB_USER`, `DB_PASS`, `DB_NAME` (+ optional `DB_PORT`) are unset — names only, never values. Guidance: the read-only MySQL MCP server is provided by the separate `mysql-mcp@atelier` plugin (`/plugin install mysql-mcp@atelier`) and resolves these from the environment; set them in the shell profile or project `.mcp.json` env. This command does NOT write credentials anywhere and does NOT install the plugin.
 
 ---
 
