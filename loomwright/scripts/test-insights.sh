@@ -6,8 +6,10 @@
 # rate), per-run note generation, missing-field tolerance, the COST stub, the System Twin
 # hard-signal aggregation (contract conformance + benchmark) including a backward-compat case
 # where NO run carries the new flat fields, the per-version insights table (plugin_version
-# present / absent-groups-under-"unknown" / mixed), and the knowledge-sources aggregation
-# (present / absent-suppressed / mixed-corpus, v14.33.0).
+# present / absent-groups-under-"unknown" / mixed), the knowledge-sources aggregation
+# (present / absent-suppressed / mixed-corpus, v14.33.0), and the Corpus health advisory
+# section (churn-ledger + lessons counts, curation/retract records, staleness thresholds,
+# absent-corpora degradation, malformed-line tolerance, CHURN_STALE_DAYS override).
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -361,6 +363,115 @@ psec="$(sed -n '/^## Missing-drain reconciliation/,/^## /p' "$P/.supervisor/insi
 printf '%s' "$psec" | grep -qE "\| $URL/76 \| unknown_or_opted_out \|" && ok "prose mention of auto_review/suppress (no durable form) => unknown_or_opted_out (not mislabeled)" || no "prose mention wrongly classified opted_out (finding #2 regression)"
 printf '%s' "$psec" | grep -qE "\| $URL/77 \| opted_out \|" && ok "durable 'auto_review == false' still => opted_out (tightening didn't over-correct)" || no "durable opt-out form no longer detected"
 rm -rf "$P"
+
+echo "== 15. Corpus health — renders with correct counts (both corpora present) =="
+# Churn ledger fixture: 2 data lines (one with a hard-coded stale 2020 ts) + 2 curation records
+# BOTH targeting the same data entry (curated must count DISTINCT target_key values → 1).
+# Lessons fixture: 2 lesson lines (one fresh trailer computed at runtime so the fixture never ages,
+# one hard-coded stale 2020 trailer) + a provenance file with 1 add + 1 retract.
+CH="$(mktemp -d)"; ( cd "$CH" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$CH/.supervisor/logs" "$CH/.supervisor/postmortem" "$CH/.supervisor/memory"
+printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$CH/.supervisor/logs/sess-ch.jsonl"
+{
+  printf '%s\n' '{"ts":"2026-06-01T00:00:00Z","pr_url":"https://github.com/o/r/pull/1","changed_paths":["a"],"review_rounds":2}'
+  printf '%s\n' '{"ts":"2020-01-01T00:00:00Z","pr_url":"https://github.com/o/r/pull/2","changed_paths":["b"],"review_rounds":1}'
+  printf '%s\n' '{"ts":"2026-06-02T00:00:00Z","source":"curation","action":"retract","target_key":"https://github.com/o/r/pull/2"}'
+  printf '%s\n' '{"ts":"2026-06-03T00:00:00Z","source":"curation","action":"supersede","target_key":"https://github.com/o/r/pull/2"}'
+} > "$CH/.supervisor/postmortem/results.jsonl"
+fresh_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+{
+  printf '%s\n' "# Lessons"
+  printf '%s\n' "## testing"
+  printf '%s\n' "- [testing] run scripts via bash, never inline zsh <!-- last_verified=$fresh_iso -->"
+  printf '%s\n' "- [process] an old lesson nobody re-verified <!-- last_verified=2020-01-01T00:00:00Z -->"
+} > "$CH/.supervisor/memory/LESSONS.md"
+{
+  printf '%s\n' '{"action":"add","category":"testing","content_hash":"aaa","prev_hash":"GENESIS"}'
+  printf '%s\n' '{"action":"retract","target_key":"testing run scripts via bash, never inline zsh","prev_hash":"bbb"}'
+} > "$CH/.supervisor/memory/.lessons-provenance.jsonl"
+out="$( cd "$CH" && bash "$BUILD" 2>&1 )"; rc=$?
+chd="$CH/.supervisor/insights/dashboard.md"
+[ "$rc" -eq 0 ] && ok "build exits 0 (corpus health present case)" || no "build rc != 0 (corpus health present, rc=$rc)"
+grep -q "^## Corpus health" "$chd" 2>/dev/null && ok "corpus health section rendered" || no "corpus health section missing"
+grep -qF -- "- churn ledger: 2 entries, 1 curated (retracted/superseded), 1 stale (>180d)" "$chd" 2>/dev/null && ok "churn line correct (2 entries, 1 DISTINCT curated across 2 records, 1 stale)" || no "churn line wrong"
+grep -qF -- "- lessons: 2 entries, 1 retracted, 1 stale (>90d)" "$chd" 2>/dev/null && ok "lessons line correct (2 entries, 1 retracted, 1 stale)" || no "lessons line wrong"
+# Additive: existing sections must be untouched, and the section sits before the Obsidian footer.
+grep -q "^## Summary" "$chd" 2>/dev/null && grep -q "^## Recent sessions" "$chd" 2>/dev/null && grep -q "^## View in Obsidian" "$chd" 2>/dev/null && ok "dashboard still renders fully with corpus health" || no "dashboard incomplete with corpus health"
+chorder="$(grep -n "^## Corpus health\|^## View in Obsidian" "$chd" 2>/dev/null | head -1)"
+printf '%s' "$chorder" | grep -q "Corpus health" && ok "corpus health placed before the Obsidian footer" || no "corpus health placed after the footer"
+rm -rf "$CH"
+
+echo "== 16. Corpus health — absent corpora degrade gracefully =="
+# (a) neither corpus exists → single "(no corpora found)" note, exit 0.
+CA="$(mktemp -d)"; ( cd "$CA" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$CA/.supervisor/logs"
+printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$CA/.supervisor/logs/sess-ca.jsonl"
+out="$( cd "$CA" && bash "$BUILD" 2>&1 )"; rc=$?
+cad="$CA/.supervisor/insights/dashboard.md"
+[ "$rc" -eq 0 ] && ok "build exits 0 (both corpora absent)" || no "build rc != 0 (both absent, rc=$rc)"
+grep -q "^## Corpus health" "$cad" 2>/dev/null && ok "corpus health heading present when corpora absent" || no "corpus health heading missing (absent case)"
+grep -qF "(no corpora found)" "$cad" 2>/dev/null && ok "no-corpora note rendered" || no "no-corpora note missing"
+grep -q "^## Summary" "$cad" 2>/dev/null && grep -q "^## Cost" "$cad" 2>/dev/null && ok "dashboard still renders fully (corpora absent)" || no "dashboard incomplete (corpora absent)"
+rm -rf "$CA"
+# (b) ledger present, lessons absent → churn counts + per-corpus "absent" note.
+CB="$(mktemp -d)"; ( cd "$CB" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$CB/.supervisor/logs" "$CB/.supervisor/postmortem"
+printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$CB/.supervisor/logs/sess-cb.jsonl"
+printf '%s\n' '{"ts":"2026-06-01T00:00:00Z","pr_url":"https://github.com/o/r/pull/9","changed_paths":["c"]}' > "$CB/.supervisor/postmortem/results.jsonl"
+( cd "$CB" && bash "$BUILD" >/dev/null 2>&1 )
+cbd="$CB/.supervisor/insights/dashboard.md"
+grep -qF -- "- churn ledger: 1 entries, 0 curated (retracted/superseded), 0 stale (>180d)" "$cbd" 2>/dev/null && ok "churn line renders alone (1 entry, zeros)" || no "churn-only line wrong"
+grep -qF -- "- lessons: absent" "$cbd" 2>/dev/null && ok "lessons absent note rendered" || no "lessons absent note missing"
+rm -rf "$CB"
+
+echo "== 17. Corpus health — malformed JSONL lines skipped, presence discipline honored =="
+# Ledger: 1 good data line + 2 malformed lines + curation records with explicit-null and MISSING
+# target_key (jq has() presence discipline — neither may count as curated). Provenance: 1 retract
+# + 1 malformed line. Nothing crashes; remaining counts stay correct.
+CM="$(mktemp -d)"; ( cd "$CM" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$CM/.supervisor/logs" "$CM/.supervisor/postmortem" "$CM/.supervisor/memory"
+printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$CM/.supervisor/logs/sess-cm.jsonl"
+{
+  printf '%s\n' '{"ts":"2026-06-01T00:00:00Z","pr_url":"https://github.com/o/r/pull/3","changed_paths":["a"]}'
+  printf '%s\n' '{not json at all'
+  printf '%s\n' '{"source":"curation","action":"retract"'
+  printf '%s\n' '{"source":"curation","action":"retract","target_key":null}'
+  printf '%s\n' '{"source":"curation","action":"retract"}'
+} > "$CM/.supervisor/postmortem/results.jsonl"
+{
+  printf '%s\n' "# Lessons"
+  printf '%s\n' "## testing"
+  printf '%s\n' "- [testing] a lesson with no trailer at all"
+} > "$CM/.supervisor/memory/LESSONS.md"
+{
+  printf '%s\n' '{"action":"retract","target_key":"testing a lesson","prev_hash":"aaa"}'
+  printf '%s\n' 'garbage not json'
+} > "$CM/.supervisor/memory/.lessons-provenance.jsonl"
+out="$( cd "$CM" && bash "$BUILD" 2>&1 )"; rc=$?
+cmd2="$CM/.supervisor/insights/dashboard.md"
+[ "$rc" -eq 0 ] && ok "build exits 0 despite malformed JSONL in both corpora" || no "build rc != 0 (malformed case, rc=$rc)"
+grep -qF -- "- churn ledger: 1 entries, 0 curated (retracted/superseded), 0 stale (>180d)" "$cmd2" 2>/dev/null && ok "malformed + null/missing target_key skipped (1 entry, 0 curated)" || no "malformed-ledger counts wrong"
+grep -qF -- "- lessons: 1 entries, 1 retracted, 0 stale (>90d)" "$cmd2" 2>/dev/null && ok "lessons: malformed provenance skipped, trailerless lesson counts fresh" || no "malformed-lessons counts wrong"
+rm -rf "$CM"
+
+echo "== 18. Corpus health — CHURN_STALE_DAYS override changes the stale count =="
+# Same fixture 3× — default (2020 ts stale at >180d), a huge override (nothing stale, and the
+# suffix reflects the override), and a NON-NUMERIC override (must fall back to 180).
+CO="$(mktemp -d)"; ( cd "$CO" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$CO/.supervisor/logs" "$CO/.supervisor/postmortem"
+printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$CO/.supervisor/logs/sess-co.jsonl"
+{
+  printf '%s\n' '{"ts":"2026-06-01T00:00:00Z","pr_url":"https://github.com/o/r/pull/4","changed_paths":["a"]}'
+  printf '%s\n' '{"ts":"2020-01-01T00:00:00Z","pr_url":"https://github.com/o/r/pull/5","changed_paths":["b"]}'
+} > "$CO/.supervisor/postmortem/results.jsonl"
+cod="$CO/.supervisor/insights/dashboard.md"
+( cd "$CO" && bash "$BUILD" >/dev/null 2>&1 )
+grep -qF -- "- churn ledger: 2 entries, 0 curated (retracted/superseded), 1 stale (>180d)" "$cod" 2>/dev/null && ok "default threshold: 1 stale (>180d)" || no "default-threshold stale count wrong"
+( cd "$CO" && CHURN_STALE_DAYS=100000 bash "$BUILD" >/dev/null 2>&1 )
+grep -qF -- "- churn ledger: 2 entries, 0 curated (retracted/superseded), 0 stale (>100000d)" "$cod" 2>/dev/null && ok "CHURN_STALE_DAYS=100000: 0 stale and suffix reflects override" || no "override stale count/suffix wrong"
+( cd "$CO" && CHURN_STALE_DAYS=abc bash "$BUILD" >/dev/null 2>&1 )
+grep -qF -- "- churn ledger: 2 entries, 0 curated (retracted/superseded), 1 stale (>180d)" "$cod" 2>/dev/null && ok "non-numeric CHURN_STALE_DAYS falls back to 180" || no "non-numeric override did not fall back to 180"
+rm -rf "$CO"
 
 echo
 echo "RESULT: $pass passed, $fail failed"
