@@ -1,6 +1,6 @@
 ---
 name: async-orchestration
-description: Background dispatch patterns, non-blocking polling, parallelism decisions, and git worktree lifecycle. Use when running parallel workers in Supervisor workflows. Part 2 — the Supervisor Phase 4 FINALIZE protocol (pre-merge safety gate, sequential merge, worktree cleanup, commit/push/PR creation, PR-base self-verify), the verbatim Subagent Spawn Contracts, and the worktree-lifecycle phase sequence, moved from agents/supervisor.md, which keeps the phase stanza + gates.
+description: Background dispatch patterns, non-blocking polling, parallelism decisions, and git worktree lifecycle. Use when running parallel workers in Supervisor workflows. Part 2 — the Supervisor Phase 4 FINALIZE protocol (pre-merge safety gate, sequential merge, worktree cleanup, commit/push/PR creation, PR-base self-verify), the verbatim Subagent Spawn Contracts, and the worktree-lifecycle phase sequence, moved from agents/supervisor.md.
 allowed-tools: [Read, Bash]
 version: "1.1.1"
 lastUpdated: "2026-07-06"
