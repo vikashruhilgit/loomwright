@@ -739,6 +739,8 @@ SYSTEM_CONTRACT:
 
 ## `session_end` JSONL hard-signal fields (System Twin)
 
+> **Related additive session-log event (not a result-block schema):** `"event":"token_ledger"` lines may also appear in `.supervisor/logs/{session_id}.jsonl`, emitted fail-SAFE by `scripts/emit-token-ledger.sh` on SubagentStop. Schema, proxy rules, and hook coverage live in `docs/TELEMETRY.md` §Token ledger — not duplicated here. `/insights` surfaces an advisory `## Token economics` rollup from those lines.
+
 The System Twin hard signal is emitted not only as the nested `SUPERVISOR_RESULT.contract_conformance`
 / `.benchmark_result` objects (see SUPERVISOR_RESULT, above) but ALSO as **FLAT scalar fields on the
 `session_end` event** in the per-session log `.supervisor/logs/{session}.jsonl`. This is what
