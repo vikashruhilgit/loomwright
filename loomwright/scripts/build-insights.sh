@@ -565,7 +565,7 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
             | ($real | map(cache_create) | add) as $cc
             | ($real | map(inp) | add) as $in
             | (($cr + $cc + $in) | if . == 0 then 1 else . end) as $den
-            | "- **Cache-hit ratio (real usage only):** \((($cr * 100 / $den)|floor))% (cache_read=\($cr) / cache_read+cache_creation+input=\($cr+$cc+$in))"
+            | "- **cache_read share of (cache_read+cache_creation+input)** (real usage only; not Anthropic hit-rate): \((($cr * 100 / $den)|floor))% (cache_read=\($cr) / denom=\($cr+$cc+$in))"
           end
       ' "$te_lines" 2>/dev/null)"
       if [ -n "$te_cache_line" ]; then

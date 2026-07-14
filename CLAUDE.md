@@ -160,7 +160,7 @@ Every agent (full standard in `AGENT_GUIDELINES.md`):
 | SubagentStop (supervisor) | Supervisor completes | hooks.json | Session outcome, subtask statuses, PR URL |
 | SubagentStop (qa-executor) | QA Executor completes | hooks.json | QA_RESULT (tests_generated, tests_passed, summary) |
 | SubagentStop (plan-reviewer) | Plan Reviewer completes | hooks.json | PLAN_REVIEW_RESULT (schema_version, decision, issues, summary) |
-| SubagentStop telemetry × 3 | code-reviewer / qa-executor / supervisor-runner complete | hooks.json | type:command — wrapper exits 0 always; pipes payload to `send-telemetry-core.sh` |
+| SubagentStop telemetry × 3 | code-reviewer / qa-executor / supervisor-runner complete | hooks.json | type:command — stdin fan-out (`payload=$(cat)`): `send-telemetry.sh` → `send-telemetry-core.sh` **and** `emit-token-ledger.sh` (session JSONL `token_ledger`); both always exit 0 |
 | Stop (code-reviewer) | Code Reviewer finishing | hooks.json + frontmatter | CODE_REVIEW_RESULT block present |
 | TaskCompleted | Task marked complete | hooks.json | Task genuinely done |
 | WorktreeCreate | Worktree created | hooks.json | type:command, logs `.supervisor/logs/worktrees.log` |
@@ -178,7 +178,7 @@ Every agent (full standard in `AGENT_GUIDELINES.md`):
 
 ## Telemetry System (opt-in, v11.2.0 — preserved in v14.0.0)
 
-After qualifying runs (`supervisor-runner`, `code-reviewer`, `qa-executor`), a SubagentStop `type: command` hook invokes `${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry.sh` (the wrapper — `${CLAUDE_PLUGIN_ROOT}` is the canonical Claude Code variable for plugin-bundled assets and resolves to the plugin install dir on both dev checkouts and marketplace installs; never use `loomwright/...` paths from the user-project root, those only resolve for the plugin maintainer). The wrapper is fire-and-forget and **always exits 0**; it pipes the hook payload to `send-telemetry-core.sh`, which parses the result block, derives a deterministic score, runs a regex-based privacy whitelist, and (when consent + target repo are configured) calls `gh issue create` with a structured body covering Task Summary, Agent Scores, Issues Detected, AI Suggestions, Tools Used, and a redacted JSON payload.
+After qualifying runs (`supervisor-runner`, `code-reviewer`, `qa-executor`), a SubagentStop `type: command` hook fans out the same stdin payload (`payload=$(cat)`) to `${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry.sh` **and** `${CLAUDE_PLUGIN_ROOT}/scripts/emit-token-ledger.sh` (both fire-and-forget, **always exit 0** — `${CLAUDE_PLUGIN_ROOT}` is the canonical Claude Code variable for plugin-bundled assets and resolves to the plugin install dir on both dev checkouts and marketplace installs; never use `loomwright/...` paths from the user-project root, those only resolve for the plugin maintainer). `send-telemetry.sh` pipes to `send-telemetry-core.sh`, which parses the result block, derives a deterministic score, runs a regex-based privacy whitelist, and (when consent + target repo are configured) calls `gh issue create` with a structured body covering Task Summary, Agent Scores, Issues Detected, AI Suggestions, Tools Used, and a redacted JSON payload. `emit-token-ledger.sh` appends an additive `token_ledger` line to `.supervisor/logs/{session_id}.jsonl` (real usage when present, else a labeled transcript-byte proxy — never invents tokens).
 
 - **Privacy fail-closed:** any whitelist match aborts the post; core exits `2`
 - **Core exit codes 0..5:** sent / generic_error / privacy_blocked / no_consent / no_repo_configured / filter_skipped
