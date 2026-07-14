@@ -1,0 +1,13 @@
+{
+  "session_id": "fixture-token-ledger-usage-001",
+  "agent_type": "loomwright:supervisor-runner",
+  "agent_id": "agent-fixture-usage",
+  "hook_event_name": "SubagentStop",
+  "usage": {
+    "input_tokens": 1200,
+    "output_tokens": 340,
+    "cache_read_input_tokens": 50,
+    "cache_creation_input_tokens": 10
+  },
+  "last_assistant_message": "## SUPERVISOR_RESULT\n- status: completed\n"
+}
