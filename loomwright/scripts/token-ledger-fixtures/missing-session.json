@@ -1,0 +1,7 @@
+{
+  "agent_type": "loomwright:code-reviewer",
+  "agent_id": "agent-fixture-no-session",
+  "transcript_path": "/nonexistent/path.jsonl",
+  "hook_event_name": "SubagentStop",
+  "last_assistant_message": "## CODE_REVIEW_RESULT\n- decision: PASS\n"
+}
