@@ -512,7 +512,7 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
   if [ "$te_count" -eq 0 ]; then
     echo "_No \`token_ledger\` events recorded yet — the ledger fills as SubagentStop telemetry hooks fire (\`emit-token-ledger.sh\`). Until then, use ccusage for \$ (see Cost above)._"
   else
-    # Real usage path (proxy == false): per-role totals. Cache-hit ratio ONLY when at
+    # Real usage path (proxy == false): per-role totals. cache_read *share* ONLY when at
     # least one real event carries a cache_* field (top-level or under .usage).
     te_real_n="$(jq -s '[.[] | select(.proxy == false)] | length' "$te_lines" 2>/dev/null)"; te_real_n="${te_real_n:-0}"
     te_proxy_n="$(jq -s '[.[] | select(.proxy == true)] | length' "$te_lines" 2>/dev/null)"; te_proxy_n="${te_proxy_n:-0}"
@@ -541,7 +541,8 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
         | "| \(.role) | \(.n) | \(.input) | \(.output) |"
       ' "$te_lines" 2>/dev/null
       echo
-      # Cache-hit ratio: omit entirely unless any real event has a cache field present.
+      # cache_read share of (cache_read+cache_creation+input): omit unless a cache field is present.
+      # This is NOT Anthropic "cache hit rate" — input_tokens may already include cache_read.
       te_cache_line="$(jq -s -r '
         def n($x): if $x == null then 0 elif ($x|type)=="number" then $x else 0 end;
         # Presence check: parentheses around (.usage|has(...)) are required — jq "|" binds

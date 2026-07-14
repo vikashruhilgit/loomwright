@@ -518,7 +518,7 @@ grep -qF "**Real usage (per role)**" "$trd" 2>/dev/null && ok "real-usage per-ro
 grep -qF "| loomwright:supervisor-runner | 1 | 1200 | 340 |" "$trd" 2>/dev/null && ok "supervisor-runner real totals (1200/340)" || no "supervisor-runner real row wrong"
 grep -qF "| loomwright:code-reviewer | 1 | 800 | 100 |" "$trd" 2>/dev/null && ok "code-reviewer real totals (800/100)" || no "code-reviewer real row wrong"
 # Nested usage carries cache fields → cache-hit ratio MUST appear; top-level-only row has none but section still shows ratio from the nested one.
-grep -qF "Cache-hit ratio (real usage only)" "$trd" 2>/dev/null && ok "cache-hit ratio shown when cache fields exist" || no "cache-hit ratio missing despite cache fields"
+grep -qF "cache_read share of (cache_read+cache_creation+input)" "$trd" 2>/dev/null && ok "cache_read share shown when cache fields exist" || no "cache_read share missing despite cache fields"
 # Must NOT claim the real path is a proxy / transcript_bytes table for these events.
 tesec="$(sed -n '/^## Token economics/,/^## Recent sessions/p' "$trd" 2>/dev/null)"
 printf '%s' "$tesec" | grep -qF "Transcript-byte proxy" && no "proxy subsection appeared with only real-usage lines" || ok "no proxy subsection on real-only corpus"
