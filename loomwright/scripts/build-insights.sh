@@ -5,9 +5,10 @@
 # computed, not guessed.
 #
 # WORK + SESSION-PERFORMANCE + QUALITY come from the logs the plugin already writes.
-# COST (tokens/$) is intentionally NOT computed here — this plugin never records token usage;
-# that data lives in Claude Code's own transcripts. The dashboard prints a COST stub pointing
-# to `npx ccusage@latest`. (Adding real cost capture is a separate, deferred enhancement.)
+# COST ($ billing) is intentionally NOT computed here — dollar figures live in Claude Code's
+# own transcripts; the dashboard prints a COST stub pointing to `npx ccusage@latest`.
+# TOKEN ECONOMICS (advisory) separately aggregates additive `token_ledger` JSONL events
+# (real usage when present; otherwise a transcript-byte proxy — never labelled as tokens).
 #
 # Usage:  build-insights.sh
 # Exit:   0 always — a reporting tool must never break its caller. Prints the output path.
@@ -488,9 +489,124 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
   echo
 
   echo "## Cost"
-  echo "> **Not captured by this plugin.** Token/\$ usage lives in Claude Code's own transcripts, not in \`.supervisor/\`."
-  echo "> For real figures run \`npx ccusage@latest\` (daily) or \`npx ccusage@latest session\` (per-session), or Claude Code's \`/cost\`."
+  echo "> **Dollar cost is not captured by this plugin.** Billing token/\$ figures live in Claude Code's own transcripts, not in \`.supervisor/\` — run \`npx ccusage@latest\` (daily) or \`npx ccusage@latest session\` (per-session), or Claude Code's \`/cost\`."
+  echo "> Separately, **Token economics** (next) is an advisory ledger/proxy rollup from \`.supervisor/logs\` \`token_ledger\` events — it does **not** invent dollar amounts and is not a substitute for ccusage."
   echo
+
+  # --- Token economics (ALWAYS rendered; advisory; degrades when absent) ---
+  # Aggregate `"event":"token_ledger"` lines from .supervisor/logs/*.jsonl (see
+  # docs/TELEMETRY.md §Token ledger). Field namespace freeze (ST1):
+  #   proxy:false + usage/input_tokens/output_tokens/cache_*  → real usage
+  #   proxy:true + token_proxy_kind:"transcript_bytes" + token_proxy_transcript_bytes → proxy
+  # Reserved (do not require/emit here): graph_context_used.
+  # Advisory ONLY — never gates, never non-zero exit; malformed JSONL lines skipped
+  # per-line (jq fromjson?); absent ledger → heading + degrade note (Corpus health style).
+  echo "## Token economics"
+  echo "_Advisory only — never gates a PR or changes a heal decision. Aggregated from \`token_ledger\` lines in \`$LOGS_DIR/*.jsonl\`. Distinguishes **real usage** (\`proxy: false\` + usage/token fields when present) from the **transcript-byte proxy** (\`proxy: true\`, \`token_proxy_kind: transcript_bytes\` — byte counts, **not** tokens, never labelled as tokens). Malformed lines are skipped. Computed with jq, never guessed. Dollar/\$ cost remains the Cost / ccusage note above._"
+  echo
+  te_lines="$(mktemp)"
+  for f in "${files[@]}"; do
+    jq -cnR 'inputs | fromjson? // empty | select(type=="object" and .event=="token_ledger")' "$f" 2>/dev/null >> "$te_lines" || true
+  done
+  te_count="$(grep -c . "$te_lines" 2>/dev/null)"; te_count="${te_count:-0}"
+  if [ "$te_count" -eq 0 ]; then
+    echo "_No \`token_ledger\` events recorded yet — the ledger fills as SubagentStop telemetry hooks fire (\`emit-token-ledger.sh\`). Until then, use ccusage for \$ (see Cost above)._"
+  else
+    # Real usage path (proxy == false): per-role totals. cache_read *share* ONLY when at
+    # least one real event carries a cache_* field (top-level or under .usage).
+    te_real_n="$(jq -s '[.[] | select(.proxy == false)] | length' "$te_lines" 2>/dev/null)"; te_real_n="${te_real_n:-0}"
+    te_proxy_n="$(jq -s '[.[] | select(.proxy == true)] | length' "$te_lines" 2>/dev/null)"; te_proxy_n="${te_proxy_n:-0}"
+    echo "- **Ledger events:** $te_count  ·  **Real usage (\`proxy: false\`):** $te_real_n  ·  **Proxy (\`proxy: true\`):** $te_proxy_n"
+    echo
+    if [ "$te_real_n" -gt 0 ]; then
+      echo "**Real usage (per role)** — \`proxy: false\`"
+      echo
+      echo "| Role (agent_type) | Events | Input tokens | Output tokens |"
+      echo "|---|---|---|---|"
+      jq -s -r '
+        def role: (if (.agent_type|type)=="string" and .agent_type!="" then .agent_type else "(unknown)" end);
+        def n($x): if $x == null then 0 elif ($x|type)=="number" then $x else 0 end;
+        def inp: n(.input_tokens // .usage.input_tokens // null);
+        def out: n(.output_tokens // .usage.output_tokens // null);
+        [.[] | select(.proxy == false)]
+        | group_by(role)
+        | map({
+            role: (.[0]|role),
+            n: length,
+            input: (map(inp)|add),
+            output: (map(out)|add)
+          })
+        | sort_by(.role)
+        | .[]
+        | "| \(.role) | \(.n) | \(.input) | \(.output) |"
+      ' "$te_lines" 2>/dev/null
+      echo
+      # cache_read share of (cache_read+cache_creation+input): omit unless a cache field is present.
+      # This is NOT Anthropic "cache hit rate" — input_tokens may already include cache_read.
+      te_cache_line="$(jq -s -r '
+        def n($x): if $x == null then 0 elif ($x|type)=="number" then $x else 0 end;
+        # Presence check: parentheses around (.usage|has(...)) are required — jq "|" binds
+        # looser than "and", so bare `.usage|has(k) and .usage.k != null` wrongly evaluates
+        # `.usage.k` in the usage-object context (looks for nested .usage.usage.k).
+        def has_cache:
+          ((has("cache_read_input_tokens") and .cache_read_input_tokens != null)
+           or (has("cache_creation_input_tokens") and .cache_creation_input_tokens != null)
+           or (((.usage|type)=="object") and (
+                ((.usage|has("cache_read_input_tokens")) and (.usage.cache_read_input_tokens != null))
+                or ((.usage|has("cache_creation_input_tokens")) and (.usage.cache_creation_input_tokens != null))
+              )));
+        def cache_read: n(.cache_read_input_tokens // .usage.cache_read_input_tokens // null);
+        def cache_create: n(.cache_creation_input_tokens // .usage.cache_creation_input_tokens // null);
+        def inp: n(.input_tokens // .usage.input_tokens // null);
+        [.[] | select(.proxy == false)] as $real
+        | ($real | map(select(has_cache)) | length) as $with
+        | if $with == 0 then empty
+          else
+            ($real | map(cache_read) | add) as $cr
+            | ($real | map(cache_create) | add) as $cc
+            | ($real | map(inp) | add) as $in
+            | (($cr + $cc + $in) | if . == 0 then 1 else . end) as $den
+            | "- **cache_read share of (cache_read+cache_creation+input)** (real usage only; not Anthropic hit-rate): \((($cr * 100 / $den)|floor))% (cache_read=\($cr) / denom=\($cr+$cc+$in))"
+          end
+      ' "$te_lines" 2>/dev/null)"
+      if [ -n "$te_cache_line" ]; then
+        echo "$te_cache_line"
+        echo
+      fi
+    else
+      echo "_No real-usage (\`proxy: false\`) ledger lines — SubagentStop payloads typically lack usage fields today; see the proxy section below._"
+      echo
+    fi
+    if [ "$te_proxy_n" -gt 0 ]; then
+      echo "**Transcript-byte proxy (per role)** — \`proxy: true\` (byte counts, **not** tokens)"
+      echo
+      echo "| Role (agent_type) | Events | Transcript bytes |"
+      echo "|---|---|---|"
+      jq -s -r '
+        def role: (if (.agent_type|type)=="string" and .agent_type!="" then .agent_type else "(unknown)" end);
+        def nbytes: (if (.token_proxy_transcript_bytes|type)=="number" then .token_proxy_transcript_bytes else 0 end);
+        [.[] | select(.proxy == true)]
+        | group_by(role)
+        | map({
+            role: (.[0]|role),
+            n: length,
+            bytes: (map(nbytes)|add)
+          })
+        | sort_by(.role)
+        | .[]
+        | "| \(.role) | \(.n) | \(.bytes) |"
+      ' "$te_lines" 2>/dev/null
+      te_proxy_bytes="$(jq -s '[.[] | select(.proxy == true) | (.token_proxy_transcript_bytes // 0) | numbers] | add // 0' "$te_lines" 2>/dev/null)"
+      echo
+      echo "- **Proxy events:** $te_proxy_n  ·  **Total transcript bytes:** ${te_proxy_bytes:-0}  ·  **kind:** transcript_bytes"
+      echo
+    else
+      echo "_No proxy (\`proxy: true\`) ledger lines in this corpus._"
+      echo
+    fi
+  fi
+  rm -f "$te_lines" 2>/dev/null
+
   echo "## Recent sessions"
   echo "| Session | Status | Self-heal | Rubric | Subtasks | Files | Twin (conformance / Δ) | PR |"
   echo "|---|---|---|---|---|---|---|---|"

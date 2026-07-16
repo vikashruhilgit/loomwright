@@ -1,0 +1,7 @@
+{
+  "session_id": "fixture-token-ledger-proxy-001",
+  "agent_type": "loomwright:code-reviewer",
+  "agent_id": "agent-fixture-proxy",
+  "hook_event_name": "SubagentStop",
+  "last_assistant_message": "## CODE_REVIEW_RESULT\n- decision: PASS\n"
+}

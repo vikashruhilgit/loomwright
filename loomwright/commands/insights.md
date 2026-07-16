@@ -2,11 +2,11 @@
 description: Generate a local, Obsidian-friendly insights dashboard (work · quality · session performance) from the plugin's session logs — read-only, no data leaves your machine
 ---
 
-> **Read-only on your work; writes only a derived report.** `/insights` reads the session logs the plugin already wrote (`.supervisor/logs/*.jsonl`) and writes a derived dashboard to `.supervisor/insights/` (gitignored). It touches no code, no agent, no state, and sends nothing anywhere. It does **not** compute token/dollar **cost** — that data lives in Claude Code's own transcripts, not here (see the Cost note below).
+> **Read-only on your work; writes only a derived report.** `/insights` reads the session logs the plugin already wrote (`.supervisor/logs/*.jsonl`) and writes a derived dashboard to `.supervisor/insights/` (gitignored). It touches no code, no agent, no state, and sends nothing anywhere. It does **not** compute token/dollar **billing cost** — that data lives in Claude Code's own transcripts (see the Cost note / `ccusage`). Separately it may roll up an advisory **Token economics** section from additive `token_ledger` events (real usage vs transcript-byte proxy) when those lines exist.
 
 # Command: /insights
 
-> **This is the plugin's deterministic _run scoreboard_** — it measures *this plugin's own runs* (work, quality, session performance, eval pass-rate, System Twin growth) from the logs it writes, computed with jq. For whole-usage **coaching** across all your Claude Code work, use **Claude Code Insights** (the built-in feature); for token/$ **cost**, use **`ccusage`** (see the Cost note below). `/insights` is distinct from, not a replacement for, either.
+> **This is the plugin's deterministic _run scoreboard_** — it measures *this plugin's own runs* (work, quality, session performance, eval pass-rate, System Twin growth) from the logs it writes, computed with jq. For whole-usage **coaching** across all your Claude Code work, use **Claude Code Insights** (the built-in feature); for token/$ **billing cost**, use **`ccusage`** (see the Cost note below). The dashboard's **Token economics** section is a separate advisory ledger/proxy rollup from `token_ledger` events — not a substitute for ccusage. `/insights` is distinct from, not a replacement for, either.
 
 ## Purpose
 
@@ -27,7 +27,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/build-insights.sh"
 ```
 
 1. Reads every `.supervisor/logs/*.jsonl`, takes each run's `session_end` event (tolerant of older logs with fewer fields), and computes the aggregates with `jq` (real numbers, not estimates).
-2. Writes **`.supervisor/insights/dashboard.md`** — Summary (sessions, completed/failed, completion rate, self-heal PASS count, avg heal iterations, total subtasks/files), an optional **System Twin hard-signal** section (contract-conformance + benchmark trend; see below), a **Per-version insights** section (runs / heal-PASS rate / avg heal iterations / avg rubric score, grouped by the additive `plugin_version` stamp; see below), a **Knowledge sources** section (which memory sources runs reported consulting; suppressed when none; see below), an **Eval fitness function** section, a **Heal-signal catch-rate (MEASURE)** section (the self-heal confusion-matrix trend; suppressed when no data; see below), a **System Twin growth** section, a Recent-sessions table (with a Twin conformance/Δ column), a Cost note, and an Obsidian/Dataview snippet.
+2. Writes **`.supervisor/insights/dashboard.md`** — Summary (sessions, completed/failed, completion rate, self-heal PASS count, avg heal iterations, total subtasks/files), an optional **System Twin hard-signal** section (contract-conformance + benchmark trend; see below), a **Per-version insights** section (runs / heal-PASS rate / avg heal iterations / avg rubric score, grouped by the additive `plugin_version` stamp; see below), a **Knowledge sources** section (which memory sources runs reported consulting; suppressed when none; see below), an **Eval fitness function** section, a **Heal-signal catch-rate (MEASURE)** section (the self-heal confusion-matrix trend; suppressed when no data; see below), a **System Twin growth** section, a Cost note (ccusage $), an advisory **Token economics** section (`token_ledger` real vs proxy), a Recent-sessions table (with a Twin conformance/Δ column), a **Corpus health** section, and an Obsidian/Dataview snippet.
 3. Writes **`.supervisor/insights/runs/<session_id>.md`** — one note per run with YAML frontmatter (`status`, `rubric_score`, `heal_iterations`, `subtasks_completed`, `files_changed`, `pr_url`, `plugin_version` (`"unknown"` for older logs), and when present `contract_conformance_status`, `contract_violations`, `benchmark_status`, `benchmark_value`, `benchmark_delta`, …).
 
 ### System Twin hard-signal trend
@@ -63,14 +63,24 @@ If there are no logs yet, it says so and writes nothing. Re-run any time to refr
 
 ## Cost (tokens / $)
 
-**Not captured by this plugin** — by design it records *what work was done and how well*, not *how many tokens it cost*. Token/$ usage lives in Claude Code's own transcripts (`~/.claude/projects/`). For real figures use:
+**Dollar / billing cost is not captured by this plugin** — by design it records *what work was done and how well*, not *how many dollars it cost*. Token/$ billing figures live in Claude Code's own transcripts (`~/.claude/projects/`). For real figures use:
 
 ```bash
 npx ccusage@latest            # daily token/$ table
 npx ccusage@latest session    # per-session breakdown
 ```
 
-…or Claude Code's built-in `/cost`. The dashboard shows an explicit "not captured" stub rather than faking numbers.
+…or Claude Code's built-in `/cost`. The dashboard shows an explicit Cost stub pointing at `ccusage` rather than faking dollar amounts.
+
+## Token economics
+
+An **advisory** section (always rendered when a dashboard is written; never gates) that rolls up additive `"event":"token_ledger"` lines from `.supervisor/logs/*.jsonl` (emitted by `scripts/emit-token-ledger.sh` on SubagentStop telemetry hooks — see `docs/TELEMETRY.md` §Token ledger). It is **separate from Cost / ccusage**:
+
+- **Real usage** (`proxy: false`) — when usage/token fields are present; per-`agent_type` input/output totals. A **cache-hit ratio** is shown only when real cache fields (`cache_read_input_tokens` / `cache_creation_input_tokens`, top-level or under `usage`) exist; otherwise that line is omitted.
+- **Transcript-byte proxy** (`proxy: true`, `token_proxy_kind: transcript_bytes`) — byte counts of agent transcripts, **explicitly labelled as a proxy and never as tokens** (the expected path today when SubagentStop lacks usage).
+- **Absent / malformed** — heading + a short degrade note when no ledger lines exist (Corpus health style); malformed JSONL lines are skipped per-line; the script always exits 0.
+
+Reserved future key `graph_context_used` is ignored by this reader (emitters must not write it yet).
 
 ## View in Obsidian (optional)
 

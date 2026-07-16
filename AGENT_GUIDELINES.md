@@ -319,6 +319,8 @@ hooks:                                   # Per-agent hooks (optional)
 - **Skills preloading eliminates latency:** Referenced skills are injected at spawn time (no file reads needed)
 - **Per-agent hooks validate results:** Worker and Execute Manager have SubagentStop hooks in frontmatter for schema-based validation
 
+**Stable-prefix-first spawn prompts:** When authoring or editing Task/`prompt:` strings for subagents (see `skills/async-orchestration/SKILL.md` §Subagent Spawn Contracts), put stable content — role instructions, skill references, project-pattern guidance, cost_profile notes, house-rules advisory text — before volatile interpolations such as task id, title, criteria body, worktree/feature_branch/state_file paths, resume context, files_modified lists, and operation/data payloads. Prompt caching is prefix-match: an early volatile value breaks the shared prefix and invalidates the cache for every subsequent spawn of that role.
+
 ### Persistent Memory Patterns
 
 Agents with `memory: project` store knowledge in `.claude/agent-memory/{agent-name}/`:

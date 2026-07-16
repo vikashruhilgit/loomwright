@@ -7,9 +7,11 @@
 # hard-signal aggregation (contract conformance + benchmark) including a backward-compat case
 # where NO run carries the new flat fields, the per-version insights table (plugin_version
 # present / absent-groups-under-"unknown" / mixed), the knowledge-sources aggregation
-# (present / absent-suppressed / mixed-corpus, v14.33.0), and the Corpus health advisory
+# (present / absent-suppressed / mixed-corpus, v14.33.0), the Corpus health advisory
 # section (churn-ledger + lessons counts, curation/retract records, staleness thresholds,
-# absent-corpora degradation, malformed-line tolerance, CHURN_STALE_DAYS override).
+# absent-corpora degradation, malformed-line tolerance, CHURN_STALE_DAYS override), and
+# the Token economics advisory section (token_ledger real vs proxy rollup, absent degrade,
+# malformed-line skip).
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -474,6 +476,83 @@ grep -qF -- "- churn ledger: 2 entries, 0 curation targets (retracted/superseded
 ( cd "$CO" && CHURN_STALE_DAYS=abc bash "$BUILD" >/dev/null 2>&1 )
 grep -qF -- "- churn ledger: 2 entries, 0 curation targets (retracted/superseded), 1 stale (>180d)" "$cod" 2>/dev/null && ok "non-numeric CHURN_STALE_DAYS falls back to 180" || no "non-numeric override did not fall back to 180"
 rm -rf "$CO"
+
+echo "== 19. Token economics — proxy ledger lines → section + proxy label =="
+# session_end (required for a dashboard) + two token_ledger proxy lines across roles.
+TP="$(mktemp -d)"; ( cd "$TP" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$TP/.supervisor/logs"
+{
+  printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}'
+  printf '%s\n' '{"event":"token_ledger","session_id":"sess-tp","ts":"2026-06-01T10:01:00Z","agent_type":"loomwright:code-reviewer","proxy":true,"token_proxy_kind":"transcript_bytes","token_proxy_transcript_bytes":1000}'
+  printf '%s\n' '{"event":"token_ledger","session_id":"sess-tp","ts":"2026-06-01T10:02:00Z","agent_type":"loomwright:supervisor-runner","proxy":true,"token_proxy_kind":"transcript_bytes","token_proxy_transcript_bytes":2500}'
+} > "$TP/.supervisor/logs/sess-tp.jsonl"
+out="$( cd "$TP" && bash "$BUILD" 2>&1 )"; rc=$?
+tpd="$TP/.supervisor/insights/dashboard.md"
+[ "$rc" -eq 0 ] && ok "build exits 0 (token economics proxy case)" || no "build rc != 0 (proxy case, rc=$rc)"
+grep -q "^## Token economics" "$tpd" 2>/dev/null && ok "Token economics section rendered (proxy fixture)" || no "Token economics section missing (proxy)"
+grep -qiE "proxy" "$tpd" 2>/dev/null && ok "section labels proxy path" || no "proxy label missing"
+grep -qF "transcript_bytes" "$tpd" 2>/dev/null && ok "proxy kind transcript_bytes surfaced" || no "transcript_bytes kind missing"
+grep -qF "| loomwright:code-reviewer | 1 | 1000 |" "$tpd" 2>/dev/null && ok "proxy per-role row for code-reviewer (1000 bytes)" || no "code-reviewer proxy row wrong"
+grep -qF "**Total transcript bytes:** 3500" "$tpd" 2>/dev/null && ok "proxy total transcript bytes = 3500" || no "proxy byte total wrong"
+# Cost stub still present and distinct from Token economics.
+grep -q "ccusage" "$tpd" 2>/dev/null && ok "Cost/ccusage stub still present alongside Token economics" || no "Cost stub lost"
+# Placement: Cost → Token economics → Recent sessions
+te_order="$(awk '/^## Cost$/{c=NR} /^## Token economics$/{t=NR} /^## Recent sessions$/{r=NR} END{print c+0,t+0,r+0}' "$tpd")"
+set -- $te_order
+[ "$1" -gt 0 ] && [ "$2" -gt "$1" ] && [ "$3" -gt "$2" ] && ok "Token economics placed after Cost and before Recent sessions" || no "Token economics placement wrong (Cost=$1 TE=$2 Recent=$3)"
+rm -rf "$TP"
+
+echo "== 20. Token economics — real usage (proxy:false) → non-proxy path =="
+TR="$(mktemp -d)"; ( cd "$TR" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$TR/.supervisor/logs"
+{
+  printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}'
+  printf '%s\n' '{"event":"token_ledger","session_id":"sess-tr","ts":"2026-06-01T10:01:00Z","agent_type":"loomwright:supervisor-runner","proxy":false,"usage":{"input_tokens":1200,"output_tokens":340,"cache_read_input_tokens":50,"cache_creation_input_tokens":10}}'
+  printf '%s\n' '{"event":"token_ledger","session_id":"sess-tr","ts":"2026-06-01T10:02:00Z","agent_type":"loomwright:code-reviewer","proxy":false,"input_tokens":800,"output_tokens":100}'
+} > "$TR/.supervisor/logs/sess-tr.jsonl"
+( cd "$TR" && bash "$BUILD" >/dev/null 2>&1 )
+trd="$TR/.supervisor/insights/dashboard.md"
+grep -q "^## Token economics" "$trd" 2>/dev/null && ok "Token economics section rendered (real-usage fixture)" || no "Token economics section missing (real)"
+grep -qF "**Real usage (\`proxy: false\`):** 2" "$trd" 2>/dev/null && ok "real-usage event count = 2" || no "real-usage count wrong"
+grep -qF "**Real usage (per role)**" "$trd" 2>/dev/null && ok "real-usage per-role heading present (non-proxy path)" || no "real-usage heading missing"
+grep -qF "| loomwright:supervisor-runner | 1 | 1200 | 340 |" "$trd" 2>/dev/null && ok "supervisor-runner real totals (1200/340)" || no "supervisor-runner real row wrong"
+grep -qF "| loomwright:code-reviewer | 1 | 800 | 100 |" "$trd" 2>/dev/null && ok "code-reviewer real totals (800/100)" || no "code-reviewer real row wrong"
+# Nested usage carries cache fields → cache-hit ratio MUST appear; top-level-only row has none but section still shows ratio from the nested one.
+grep -qF "cache_read share of (cache_read+cache_creation+input)" "$trd" 2>/dev/null && ok "cache_read share shown when cache fields exist" || no "cache_read share missing despite cache fields"
+# Must NOT claim the real path is a proxy / transcript_bytes table for these events.
+tesec="$(sed -n '/^## Token economics/,/^## Recent sessions/p' "$trd" 2>/dev/null)"
+printf '%s' "$tesec" | grep -qF "Transcript-byte proxy" && no "proxy subsection appeared with only real-usage lines" || ok "no proxy subsection on real-only corpus"
+rm -rf "$TR"
+
+echo "== 21. Token economics — absent ledger → degrade note =="
+TA="$(mktemp -d)"; ( cd "$TA" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$TA/.supervisor/logs"
+printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$TA/.supervisor/logs/sess-ta.jsonl"
+out="$( cd "$TA" && bash "$BUILD" 2>&1 )"; rc=$?
+tad="$TA/.supervisor/insights/dashboard.md"
+[ "$rc" -eq 0 ] && ok "build exits 0 (token economics absent)" || no "build rc != 0 (absent TE, rc=$rc)"
+grep -q "^## Token economics" "$tad" 2>/dev/null && ok "Token economics heading present when ledger absent" || no "Token economics heading missing (absent)"
+grep -qF "No \`token_ledger\` events recorded yet" "$tad" 2>/dev/null && ok "absent-ledger degrade note rendered" || no "absent-ledger degrade note missing"
+grep -q "^## Summary" "$tad" 2>/dev/null && grep -q "^## Cost" "$tad" 2>/dev/null && ok "dashboard still renders fully (token ledger absent)" || no "dashboard incomplete (token ledger absent)"
+rm -rf "$TA"
+
+echo "== 22. Token economics — malformed JSONL line skipped =="
+# One good proxy line + garbage lines; counts must reflect only the good line; exit 0.
+TM="$(mktemp -d)"; ( cd "$TM" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$TM/.supervisor/logs"
+{
+  printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}'
+  printf '%s\n' '{not valid json'
+  printf '%s\n' '42'
+  printf '%s\n' '{"event":"token_ledger","session_id":"sess-tm","agent_type":"loomwright:qa-executor","proxy":true,"token_proxy_kind":"transcript_bytes","token_proxy_transcript_bytes":42}'
+  printf '%s\n' '{"event":"token_ledger"'
+} > "$TM/.supervisor/logs/sess-tm.jsonl"
+out="$( cd "$TM" && bash "$BUILD" 2>&1 )"; rc=$?
+tmd="$TM/.supervisor/insights/dashboard.md"
+[ "$rc" -eq 0 ] && ok "build exits 0 despite malformed token_ledger JSONL" || no "build rc != 0 (malformed TE, rc=$rc)"
+grep -qF "**Proxy (\`proxy: true\`):** 1" "$tmd" 2>/dev/null && ok "malformed lines skipped (1 proxy event counted)" || no "malformed skip counts wrong"
+grep -qF "| loomwright:qa-executor | 1 | 42 |" "$tmd" 2>/dev/null && ok "only the good proxy line aggregated" || no "good proxy line lost among malformed"
+rm -rf "$TM"
 
 echo
 echo "RESULT: $pass passed, $fail failed"
