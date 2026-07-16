@@ -1,0 +1,10 @@
+{
+  "session_id": "fixture-token-ledger-usage-top-001",
+  "agent_type": "loomwright:code-reviewer",
+  "agent_id": "agent-fixture-usage-top",
+  "hook_event_name": "SubagentStop",
+  "input_tokens": 900,
+  "output_tokens": 210,
+  "cache_read_input_tokens": 0,
+  "last_assistant_message": "## CODE_REVIEW_RESULT\n- decision: PASS\n"
+}

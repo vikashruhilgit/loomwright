@@ -18,6 +18,8 @@
 #   8. active state.md session_id wins over CC uuid (+ cc_session_id retained)
 #   9. completed state.md is ignored (stale) → falls back to CC uuid
 #  10. ledger-only file under plugin sid (no session_end) is written to join path
+#  11. top-level usage keys (no nested usage object) → proxy:false, fields copied
+#  12. unrelated dict field with a usage sub-object stays proxy:true (scoped scan)
 
 # EXIT: 0 on full pass, 1 on any failed assertion.
 # Style mirrors test-insights.sh / test-send-telemetry-core.sh.
@@ -317,6 +319,47 @@ if jq -e 'select(.event=="session_end")' "$LOG10" >/dev/null 2>&1; then
 else
   ok "case10 ledger-only (no session_end) — join path ready"
 fi
+
+echo "== 11. top-level usage keys (no nested usage object) → proxy:false, fields copied =="
+# Deactivate the sandbox state.md so the CC uuid join path is exercised.
+rm -f "$SANDBOX/.supervisor/state.md" 2>/dev/null || true
+USAGE_TOP_SID="fixture-token-ledger-usage-top-001"
+OUT11="$(run_sut "$FIXDIR/usage-top-level.json")"
+RC11="$(printf '%s\n' "$OUT11" | grep '^RC=' | tail -1 | cut -d= -f2)"
+assert_eq "case11 exit 0" "0" "$RC11"
+LOG11="$SANDBOX/.supervisor/logs/${USAGE_TOP_SID}.jsonl"
+if [ -f "$LOG11" ]; then ok "case11 log file created"; else no "case11 log file missing"; fi
+LINE11="$(tail -1 "$LOG11" 2>/dev/null)"
+assert_eq "case11 event" "token_ledger" "$(printf '%s' "$LINE11" | jq -r '.event')"
+assert_eq "case11 proxy=false" "false" "$(printf '%s' "$LINE11" | jq -r '.proxy')"
+assert_eq "case11 top-level input_tokens copied" "900" "$(printf '%s' "$LINE11" | jq -r '.input_tokens')"
+assert_eq "case11 top-level output_tokens copied" "210" "$(printf '%s' "$LINE11" | jq -r '.output_tokens')"
+# Numeric-zero must be preserved, not dropped (cache_read_input_tokens: 0).
+assert_eq "case11 zero cache_read preserved" "0" "$(printf '%s' "$LINE11" | jq -r '.cache_read_input_tokens')"
+# No nested usage object and no proxy fields on this path.
+if printf '%s' "$LINE11" | jq -e 'has("usage") or has("token_proxy_kind") or has("token_proxy_transcript_bytes")' >/dev/null 2>&1; then
+  no "case11 leaked usage object or proxy fields onto top-level-usage path"
+else
+  ok "case11 no usage object / proxy fields on top-level-usage path"
+fi
+
+echo "== 12. unrelated dict field with usage sub-object does NOT flip to real-usage =="
+TRANSCRIPT12="$SANDBOX/agent-transcript-12.jsonl"
+printf 'FFFFFFFFFFFF' > "$TRANSCRIPT12"   # 12 bytes
+PAYLOAD12="$SANDBOX/unrelated-usage-payload.json"
+jq -n --arg tp "$TRANSCRIPT12" '{
+  session_id: "fixture-token-ledger-unrelated-001",
+  agent_type: "loomwright:qa-executor",
+  agent_transcript_path: $tp,
+  some_random_field: { usage: { widgets: 7 } }
+}' > "$PAYLOAD12"
+OUT12="$(run_sut "$PAYLOAD12")"
+RC12="$(printf '%s\n' "$OUT12" | grep '^RC=' | tail -1 | cut -d= -f2)"
+assert_eq "case12 exit 0" "0" "$RC12"
+LOG12="$SANDBOX/.supervisor/logs/fixture-token-ledger-unrelated-001.jsonl"
+LINE12="$(tail -1 "$LOG12" 2>/dev/null)"
+assert_eq "case12 stays proxy:true despite unrelated usage sub-object" "true" "$(printf '%s' "$LINE12" | jq -r '.proxy')"
+assert_eq "case12 transcript bytes recorded" "12" "$(printf '%s' "$LINE12" | jq -r '.token_proxy_transcript_bytes')"
 
 echo ""
 echo "RESULT  pass=$PASS_COUNT  fail=$FAIL_COUNT"

@@ -89,6 +89,9 @@ USAGE_TOP_KEYS = (
     "cache_creation_input_tokens",
 )
 
+# Known one-level container keys a future payload shape might nest usage under.
+NESTED_USAGE_CONTAINERS = ("result", "message", "response")
+
 def usage_present(payload):
     """True when any known usage signal is present and non-null."""
     if not isinstance(payload, dict):
@@ -106,8 +109,11 @@ def usage_present(payload):
                 return True
         else:
             return True
-    # Nested usage object one level deep (forward-compat).
-    for val in payload.values():
+    # Nested usage object one level deep (forward-compat) — scoped to known
+    # container keys only, so an arbitrary dict field carrying an unrelated
+    # "usage" sub-object cannot flip the proxy decision.
+    for key in NESTED_USAGE_CONTAINERS:
+        val = payload.get(key)
         if isinstance(val, dict) and isinstance(val.get("usage"), dict) and val["usage"]:
             return True
     return False
@@ -172,7 +178,8 @@ if usage_present(payload):
         if key in payload and payload[key] is not None:
             event[key] = payload[key]
     if "usage" not in event:
-        for val in payload.values():
+        for key in NESTED_USAGE_CONTAINERS:
+            val = payload.get(key)
             if isinstance(val, dict) and isinstance(val.get("usage"), dict) and val["usage"]:
                 event["usage"] = val["usage"]
                 break
