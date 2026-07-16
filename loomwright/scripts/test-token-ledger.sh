@@ -20,6 +20,7 @@
 #  10. ledger-only file under plugin sid (no session_end) is written to join path
 #  11. top-level usage keys (no nested usage object) → proxy:false, fields copied
 #  12. unrelated dict field with a usage sub-object stays proxy:true (scoped scan)
+#  13. all-zero usage falls back to proxy; any non-zero field stays real usage
 
 # EXIT: 0 on full pass, 1 on any failed assertion.
 # Style mirrors test-insights.sh / test-send-telemetry-core.sh.
@@ -360,6 +361,38 @@ LOG12="$SANDBOX/.supervisor/logs/fixture-token-ledger-unrelated-001.jsonl"
 LINE12="$(tail -1 "$LOG12" 2>/dev/null)"
 assert_eq "case12 stays proxy:true despite unrelated usage sub-object" "true" "$(printf '%s' "$LINE12" | jq -r '.proxy')"
 assert_eq "case12 transcript bytes recorded" "12" "$(printf '%s' "$LINE12" | jq -r '.token_proxy_transcript_bytes')"
+
+echo "== 13. all-zero usage payload falls back to transcript-byte proxy =="
+TRANSCRIPT13="$SANDBOX/agent-transcript-13.jsonl"
+printf 'GGGGGGGG' > "$TRANSCRIPT13"   # 8 bytes
+PAYLOAD13="$SANDBOX/all-zero-usage-payload.json"
+jq -n --arg tp "$TRANSCRIPT13" '{
+  session_id: "fixture-token-ledger-allzero-001",
+  agent_type: "loomwright:code-reviewer",
+  agent_transcript_path: $tp,
+  input_tokens: 0,
+  output_tokens: 0,
+  usage: { input_tokens: 0, output_tokens: 0 }
+}' > "$PAYLOAD13"
+OUT13="$(run_sut "$PAYLOAD13")"
+RC13="$(printf '%s\n' "$OUT13" | grep '^RC=' | tail -1 | cut -d= -f2)"
+assert_eq "case13 exit 0" "0" "$RC13"
+LOG13="$SANDBOX/.supervisor/logs/fixture-token-ledger-allzero-001.jsonl"
+LINE13="$(tail -1 "$LOG13" 2>/dev/null)"
+assert_eq "case13 all-zero usage → proxy:true" "true" "$(printf '%s' "$LINE13" | jq -r '.proxy')"
+assert_eq "case13 transcript bytes recorded" "8" "$(printf '%s' "$LINE13" | jq -r '.token_proxy_transcript_bytes')"
+# Mixed case: any non-zero usage field must still be treated as real usage.
+PAYLOAD13B="$SANDBOX/mixed-zero-usage-payload.json"
+jq -n --arg tp "$TRANSCRIPT13" '{
+  session_id: "fixture-token-ledger-mixedzero-001",
+  agent_type: "loomwright:code-reviewer",
+  agent_transcript_path: $tp,
+  usage: { input_tokens: 0, output_tokens: 5 }
+}' > "$PAYLOAD13B"
+OUT13B="$(run_sut "$PAYLOAD13B")"
+LINE13B="$(tail -1 "$SANDBOX/.supervisor/logs/fixture-token-ledger-mixedzero-001.jsonl" 2>/dev/null)"
+assert_eq "case13b mixed-zero usage stays proxy:false" "false" "$(printf '%s' "$LINE13B" | jq -r '.proxy')"
+assert_eq "case13b zero field preserved inside usage" "0" "$(printf '%s' "$LINE13B" | jq -r '.usage.input_tokens')"
 
 echo ""
 echo "RESULT  pass=$PASS_COUNT  fail=$FAIL_COUNT"

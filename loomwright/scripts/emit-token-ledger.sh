@@ -92,29 +92,35 @@ USAGE_TOP_KEYS = (
 # Known one-level container keys a future payload shape might nest usage under.
 NESTED_USAGE_CONTAINERS = ("result", "message", "response")
 
+def _nonzero_signal(val):
+    """True when a usage value carries real information. All-zero usage is
+    treated as ABSENT so the transcript-byte proxy (the only size signal in
+    that case) is not silently skipped — placeholder zeros are not usage."""
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return val != 0
+    if isinstance(val, dict):
+        return any(_nonzero_signal(v) for v in val.values())
+    if isinstance(val, str):
+        return val != ""
+    return val is not None
+
 def usage_present(payload):
-    """True when any known usage signal is present and non-null."""
+    """True when any known usage signal is present and non-zero."""
     if not isinstance(payload, dict):
         return False
     for key in USAGE_TOP_KEYS:
         if key not in payload:
             continue
-        val = payload[key]
-        if val is None:
-            continue
-        if key == "usage":
-            if isinstance(val, dict) and len(val) > 0:
-                return True
-            if not isinstance(val, dict) and val not in ("", 0, False):
-                return True
-        else:
+        if _nonzero_signal(payload[key]):
             return True
     # Nested usage object one level deep (forward-compat) — scoped to known
     # container keys only, so an arbitrary dict field carrying an unrelated
     # "usage" sub-object cannot flip the proxy decision.
     for key in NESTED_USAGE_CONTAINERS:
         val = payload.get(key)
-        if isinstance(val, dict) and isinstance(val.get("usage"), dict) and val["usage"]:
+        if isinstance(val, dict) and isinstance(val.get("usage"), dict) and _nonzero_signal(val["usage"]):
             return True
     return False
 
