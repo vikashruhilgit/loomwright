@@ -159,6 +159,12 @@ by the **plugin** session id (e.g. `supervisor-2026-07-07-fable-parity`). To kee
 2. Falls back to the Claude Code UUID from the payload otherwise.
 3. Always records the Claude Code UUID as additive `cc_session_id` when present.
 
+> **Best-effort join caveat:** the state.md join is per-project, not per-subagent —
+> while a Supervisor run is `running`/`checkpoint`, a qualifying subagent completing
+> for an UNRELATED context in the same project (e.g. a standalone `/review-pr` drain
+> or an ad-hoc `/code-reviewer`) will land its `token_ledger` line in that run's log.
+> Advisory-only data; use `cc_session_id` to disambiguate when it matters.
+
 **Event schema** (`"event":"token_ledger"` — matches session-log conventions):
 
 ```json

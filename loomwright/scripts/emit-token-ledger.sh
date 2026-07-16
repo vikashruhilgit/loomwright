@@ -76,7 +76,9 @@ fi
 export PLUGIN_SESSION_ID
 
 # ---- Build one JSONL line (or empty → no-op) ---------------------------------
-LINE="$(printf '%s' "$INPUT" | python3 -c '
+# Single python3 invocation emits TWO lines: the resolved session id, then the
+# JSONL event — avoids a second interpreter spawn just to re-parse session_id.
+OUT="$(printf '%s' "$INPUT" | python3 -c '
 import json, os, sys
 
 USAGE_TOP_KEYS = (
@@ -186,27 +188,31 @@ else:
 # RESERVED (do not emit): graph_context_used — reserved for future job 04.
 
 try:
-    sys.stdout.write(json.dumps(event, separators=(",", ":"), ensure_ascii=False))
-    sys.stdout.write("\n")
+    line = json.dumps(event, separators=(",", ":"), ensure_ascii=False)
 except Exception:
     sys.exit(0)
+# Line 1: session id (shell log-file key). Line 2: the JSONL event.
+sys.stdout.write(log_session_id + "\n")
+sys.stdout.write(line + "\n")
 ' 2>/dev/null || true)"
 
-if [ -z "$LINE" ]; then
+if [ -z "$OUT" ]; then
   exit 0
 fi
 
-SESSION_ID="$(printf '%s' "$LINE" | python3 -c '
-import json, sys
-try:
-    print(json.loads(sys.stdin.read()).get("session_id", ""))
-except Exception:
-    print("")
-' 2>/dev/null || true)"
+SESSION_ID="${OUT%%
+*}"
+LINE="${OUT#*
+}"
 
-if [ -z "$SESSION_ID" ]; then
+# Guard: need both lines, and the event line must be a JSON object.
+if [ -z "$SESSION_ID" ] || [ "$LINE" = "$OUT" ]; then
   exit 0
 fi
+case "$LINE" in
+  "{"*) ;;
+  *) exit 0 ;;
+esac
 
 mkdir -p "$LOG_DIR" 2>/dev/null || true
 LOG_FILE="$LOG_DIR/${SESSION_ID}.jsonl"
