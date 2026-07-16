@@ -143,15 +143,29 @@ token counts.
 **Emitter:** `${CLAUDE_PLUGIN_ROOT}/scripts/emit-token-ledger.sh` — fail-SAFE,
 always exits 0. Reads SubagentStop JSON from stdin; appends **one** additive
 line to `.supervisor/logs/{session_id}.jsonl` (creates the dir/file as needed).
-Missing `session_id`, empty stdin, or unreadable proxy paths → silent no-op,
-exit 0.
+Requires `python3` (same dependency as `send-telemetry.sh`); when python3 is
+absent the emitter no-ops and prints a **one-time** stderr note (flag file under
+`.supervisor/logs/`). Empty stdin, unreadable proxy paths, or no resolvable
+session id → silent no-op, exit 0.
+
+**Session-id resolution (join key):** SubagentStop's `session_id` is Claude
+Code's session UUID, but plugin session logs (including `session_end`) are named
+by the **plugin** session id (e.g. `supervisor-2026-07-07-fable-parity`). To keep
+`token_ledger` joinable to a run/PR for `/insights` and job 04's
+`graph_context_used` pairing, the emitter:
+
+1. Prefers `.supervisor/state.md`'s `- session_id:` when `- status:` is
+   `running` or `checkpoint` (active Supervisor run).
+2. Falls back to the Claude Code UUID from the payload otherwise.
+3. Always records the Claude Code UUID as additive `cc_session_id` when present.
 
 **Event schema** (`"event":"token_ledger"` — matches session-log conventions):
 
 ```json
 {
   "event": "token_ledger",
-  "session_id": "…",
+  "session_id": "supervisor-2026-07-14-token-ledger",
+  "cc_session_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
   "ts": "2026-07-14T09:00:00Z",
   "agent_type": "loomwright:code-reviewer",
   "agent_id": "…",
@@ -163,11 +177,13 @@ exit 0.
 
 | Field | When | Meaning |
 |-------|------|---------|
+| `session_id` | always (when emitted) | Plugin session id when an active `state.md` run is present; else the Claude Code UUID. Log filename key. |
+| `cc_session_id` | when SubagentStop carries `session_id` | Claude Code UUID retained for debug / cross-tool correlation |
 | `proxy` | always | `false` when any real usage signal is present; `true` for the transcript-byte fallback |
 | `usage` / `input_tokens` / `output_tokens` / `cache_*` | usage present only | Copied from the payload as-is — never invented |
 | `token_proxy_kind` | proxy path only | Closed value today: `"transcript_bytes"` |
-| `token_proxy_transcript_bytes` | proxy path only | Byte size of `agent_transcript_path` (preferred) or `transcript_path` via `os.path.getsize` / `wc -c` / `stat` |
-| `agent_type`, `agent_id`, `session_id`, `ts` | optional / when present | Identity + UTC timestamp; omitted when absent |
+| `token_proxy_transcript_bytes` | proxy path only | Byte size of `agent_transcript_path` (preferred) or `transcript_path` via `os.path.getsize` only |
+| `agent_type`, `agent_id`, `ts` | optional / when present | Identity + UTC ISO timestamp; **omitted when absent** (never the literal `"unknown"`) |
 
 **Reserved future key (do not emit yet):** `graph_context_used` — reserved for
 job 04 (graph/brain context attribution). Leave room in readers; the emitter

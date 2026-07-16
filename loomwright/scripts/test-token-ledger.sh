@@ -14,7 +14,11 @@
 #   4. usage-present (synthetic) — proxy:false + real usage fields
 #   5. unreadable proxy paths — no-op
 #   6. agent_transcript_path preferred over transcript_path
-#
+#   7. real repo .supervisor/logs untouched
+#   8. active state.md session_id wins over CC uuid (+ cc_session_id retained)
+#   9. completed state.md is ignored (stale) → falls back to CC uuid
+#  10. ledger-only file under plugin sid (no session_end) is written to join path
+
 # EXIT: 0 on full pass, 1 on any failed assertion.
 # Style mirrors test-insights.sh / test-send-telemetry-core.sh.
 
@@ -105,7 +109,14 @@ assert_eq "case1 proxy=true" "true" "$(printf '%s' "$LINE1" | jq -r '.proxy')"
 assert_eq "case1 token_proxy_kind" "transcript_bytes" "$(printf '%s' "$LINE1" | jq -r '.token_proxy_kind')"
 assert_eq "case1 transcript_bytes" "$EXPECTED_BYTES" "$(printf '%s' "$LINE1" | jq -r '.token_proxy_transcript_bytes')"
 assert_eq "case1 session_id" "$PROXY_SID" "$(printf '%s' "$LINE1" | jq -r '.session_id')"
+assert_eq "case1 cc_session_id retained" "$PROXY_SID" "$(printf '%s' "$LINE1" | jq -r '.cc_session_id')"
 assert_eq "case1 agent_type" "loomwright:code-reviewer" "$(printf '%s' "$LINE1" | jq -r '.agent_type')"
+# ts must be ISO or omitted — never the literal "unknown"
+TS1="$(printf '%s' "$LINE1" | jq -r '.ts // empty')"
+case "$TS1" in
+  ""|[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*) ok "case1 ts iso-or-absent" ;;
+  *) no "case1 ts invalid: $TS1" ;;
+esac
 # Must NOT invent token counts or claim proxy is tokens.
 if printf '%s' "$LINE1" | jq -e 'has("input_tokens") or has("output_tokens")' >/dev/null 2>&1; then
   no "case1 invented token count fields"
@@ -200,6 +211,112 @@ assert_eq "case6 prefers agent transcript bytes (4)" "4" "$(printf '%s' "$LINE6"
 echo "== 7. real repo .supervisor/logs untouched =="
 REAL_AFTER="$(snapshot_real)"
 assert_eq "real logs snapshot unchanged" "$REAL_BEFORE" "$REAL_AFTER"
+
+echo "== 8. active state.md session_id wins over CC uuid =="
+PLUGIN_SID="supervisor-fixture-active-001"
+CC_UUID="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+mkdir -p "$SANDBOX/.supervisor"
+cat > "$SANDBOX/.supervisor/state.md" <<EOF
+## Session
+- session_id: $PLUGIN_SID
+- status: running
+- phase: EXECUTE
+- branch: feature/token-ledger
+EOF
+TRANSCRIPT8="$SANDBOX/state-join-transcript.jsonl"
+printf 'CCCCCCCC' > "$TRANSCRIPT8"   # 8 bytes
+PAYLOAD8="$SANDBOX/state-join.json"
+jq -n --arg tp "$TRANSCRIPT8" --arg cc "$CC_UUID" '{
+  session_id: $cc,
+  agent_type: "loomwright:code-reviewer",
+  agent_transcript_path: $tp
+}' > "$PAYLOAD8"
+OUT8="$(run_sut "$PAYLOAD8")"
+RC8="$(printf '%s\n' "$OUT8" | grep '^RC=' | tail -1 | cut -d= -f2)"
+assert_eq "case8 exit 0" "0" "$RC8"
+# Must write under the PLUGIN sid, not the CC uuid.
+if [ -f "$SANDBOX/.supervisor/logs/${PLUGIN_SID}.jsonl" ]; then
+  ok "case8 wrote plugin-sid log (join path)"
+else
+  no "case8 missing plugin-sid log"
+fi
+if [ -f "$SANDBOX/.supervisor/logs/${CC_UUID}.jsonl" ]; then
+  no "case8 incorrectly wrote CC-uuid log"
+else
+  ok "case8 no CC-uuid log file"
+fi
+LINE8="$(tail -1 "$SANDBOX/.supervisor/logs/${PLUGIN_SID}.jsonl")"
+assert_eq "case8 session_id=plugin" "$PLUGIN_SID" "$(printf '%s' "$LINE8" | jq -r '.session_id')"
+assert_eq "case8 cc_session_id=uuid" "$CC_UUID" "$(printf '%s' "$LINE8" | jq -r '.cc_session_id')"
+assert_eq "case8 proxy bytes" "8" "$(printf '%s' "$LINE8" | jq -r '.token_proxy_transcript_bytes')"
+
+echo "== 9. completed state.md is ignored (stale) → CC uuid fallback =="
+# Overwrite state.md as completed — must NOT join to that finished run.
+cat > "$SANDBOX/.supervisor/state.md" <<EOF
+## Session
+- session_id: supervisor-fixture-stale-completed
+- status: completed
+- phase: FINALIZE
+- branch: feature/old
+EOF
+STALE_CC="bbbbbbbb-cccc-dddd-eeee-ffffffffffff"
+TRANSCRIPT9="$SANDBOX/stale-transcript.jsonl"
+printf 'DDDDDD' > "$TRANSCRIPT9"   # 6 bytes
+PAYLOAD9="$SANDBOX/stale.json"
+jq -n --arg tp "$TRANSCRIPT9" --arg cc "$STALE_CC" '{
+  session_id: $cc,
+  agent_type: "loomwright:qa-executor",
+  agent_transcript_path: $tp
+}' > "$PAYLOAD9"
+OUT9="$(run_sut "$PAYLOAD9")"
+RC9="$(printf '%s\n' "$OUT9" | grep '^RC=' | tail -1 | cut -d= -f2)"
+assert_eq "case9 exit 0" "0" "$RC9"
+if [ -f "$SANDBOX/.supervisor/logs/${STALE_CC}.jsonl" ]; then
+  ok "case9 wrote CC-uuid log (stale state ignored)"
+else
+  no "case9 missing CC-uuid fallback log"
+fi
+if [ -f "$SANDBOX/.supervisor/logs/supervisor-fixture-stale-completed.jsonl" ]; then
+  no "case9 polluted completed session log"
+else
+  ok "case9 did not write to completed session log"
+fi
+LINE9="$(tail -1 "$SANDBOX/.supervisor/logs/${STALE_CC}.jsonl")"
+assert_eq "case9 session_id=cc" "$STALE_CC" "$(printf '%s' "$LINE9" | jq -r '.session_id')"
+assert_eq "case9 cc_session_id=cc" "$STALE_CC" "$(printf '%s' "$LINE9" | jq -r '.cc_session_id')"
+
+echo "== 10. ledger-only file under plugin sid (join path ready for session_end) =="
+# Re-activate state.md and confirm a ledger-only JSONL (no session_end) lands
+# on the plugin sid path — the file job 04 / insights will later join against.
+rm -f "$SANDBOX/.supervisor/logs/${PLUGIN_SID}.jsonl"
+cat > "$SANDBOX/.supervisor/state.md" <<EOF
+## Session
+- session_id: $PLUGIN_SID
+- status: running
+- phase: EXECUTE
+- branch: feature/token-ledger
+EOF
+TRANSCRIPT10="$SANDBOX/ledger-only.jsonl"
+printf 'EEEEEEEEEE' > "$TRANSCRIPT10"   # 10 bytes
+PAYLOAD10="$SANDBOX/ledger-only-payload.json"
+jq -n --arg tp "$TRANSCRIPT10" --arg cc "cccccccc-dddd-eeee-ffff-000000000000" '{
+  session_id: $cc,
+  agent_type: "loomwright:supervisor-runner",
+  agent_transcript_path: $tp
+}' > "$PAYLOAD10"
+OUT10="$(run_sut "$PAYLOAD10")"
+RC10="$(printf '%s\n' "$OUT10" | grep '^RC=' | tail -1 | cut -d= -f2)"
+assert_eq "case10 exit 0" "0" "$RC10"
+LOG10="$SANDBOX/.supervisor/logs/${PLUGIN_SID}.jsonl"
+if [ -f "$LOG10" ]; then ok "case10 ledger-only plugin-sid file exists"; else no "case10 ledger-only file missing"; fi
+# Confirm the file has token_ledger and NO session_end (ledger-only).
+EVENTS10="$(jq -r '.event' "$LOG10" 2>/dev/null | sort -u | tr '\n' ',')"
+assert_eq "case10 only token_ledger event" "token_ledger," "$EVENTS10"
+if jq -e 'select(.event=="session_end")' "$LOG10" >/dev/null 2>&1; then
+  no "case10 unexpectedly contains session_end"
+else
+  ok "case10 ledger-only (no session_end) — join path ready"
+fi
 
 echo ""
 echo "RESULT  pass=$PASS_COUNT  fail=$FAIL_COUNT"
