@@ -342,7 +342,9 @@ A CI ratchet on **spawn-time prompt inventory**. Each agent's effective weight i
 | `supervisor`        | 51221 | 46564 | 7 |
 | `worker`            | 4574  | 4158  | 0 |
 
-Self-test: `bash scripts/test-check-token-budget.sh` (offline; pass / breach / missing-preloaded-skill / no-budget / frontmatter-bounded-parsing cases). Wired into CI alongside the other repo-root validators. Skills counted are **frontmatter-preloaded only** — command docs and on-demand skills are not spawn-time weight and are out of scope.
+Self-test: `bash scripts/test-check-token-budget.sh` (offline; pass / breach / missing-preloaded-skill / no-budget / frontmatter-bounded-parsing / empty-agents-dir / inline-flow-style-skills / orphaned-budget / live-repo cases). Wired into CI alongside the other repo-root validators. Skills counted are **frontmatter-preloaded only** — command docs and on-demand skills are not spawn-time weight and are out of scope. The gate also fails CLOSED on an unsupported inline/flow-style `skills:` list (would silently under-count) and on an orphaned budget entry (a budget key with no matching agent `.md`).
+
+**`measured` is a frozen authoring-time baseline, not an enforced value** — the gate compares live weight only against `budget`; the `measured` column here and in the JSON are authoring snapshots (v15.10.0) that the gate never re-derives. Do **not** chase or re-bump them each release (same spirit as CLAUDE.md's frozen-example-value convention). **When you raise a budget in `prompt-token-budgets.json`, update this table row in the same edit** (this human mirror is not yet machine-synced to the JSON).
 
 ---
 

@@ -6,14 +6,18 @@
 # overrides — the real repo is never touched. No GNU-only stat/sed/date flags
 # (memory: stat-flavor set-u trap; macOS-green != CI-green).
 #
-# Cases:
-#   1. PASS   — agent (+ preloaded skill) under budget -> exit 0
-#   2. BREACH — agent over budget -> exit 1 + a readable BREACH row
-#   3. MISSING-FRONTMATTER-SKILL — frontmatter names a skill whose SKILL.md is
-#      absent -> exit 1 + an ERROR row (broken preload reference)
-#   4. NO-BUDGET — agent with no JSON budget entry -> exit 1 + ERROR row
-#   5. FRONTMATTER-BOUNDED PARSING — a body `- ` bullet is NOT counted as a skill
-#   6. LIVE REPO — the real gate passes against the checked-in repo
+# Cases (by category — assertion counts are intentionally not restated in docs,
+# to avoid the very count-drift this repo gates against):
+#   1.  PASS   — agent (+ preloaded skill) under budget -> exit 0
+#   2.  BREACH — agent over budget -> exit 1 + a readable BREACH row
+#   3.  MISSING-PRELOADED-SKILL — frontmatter names a skill whose SKILL.md is
+#       absent -> exit 1 + an ERROR row (broken preload reference)
+#   4.  NO-BUDGET — agent with no JSON budget entry -> exit 1 + ERROR row
+#   5.  FRONTMATTER-BOUNDED PARSING — a body `- ` bullet is NOT counted as a skill
+#   5b. EMPTY-AGENTS-DIR — a 0-agent run fails CLOSED (no false-green ratchet)
+#   5c. INLINE/FLOW-STYLE skills: — unsupported form ERRORs (would under-count)
+#   5d. ORPHANED-BUDGET — a budget key with no matching agent .md ERRORs
+#   6.  LIVE REPO — the real gate passes against the checked-in repo
 
 set -uo pipefail
 
@@ -136,6 +140,30 @@ JSON
 run_gate "$A5b" "$S5b" "$TMP/c5b/budgets.json"
 check "case5b empty agents dir exits 1" 1 "$RC"
 contains "case5b names the empty dir" "$OUT" "no agent .md files found"
+
+# ---------------------------------------------------------------------------
+# Case 5c — INLINE/FLOW-STYLE skills: list must ERROR (would silently under-count)
+# ---------------------------------------------------------------------------
+A5c="$TMP/c5c/agents"; S5c="$TMP/c5c/skills"; mkdir -p "$A5c" "$S5c"
+mk_agent "$A5c" "epsilon" "skills: [shared, other]" 400   # flow style — unsupported
+cat > "$TMP/c5c/budgets.json" <<'JSON'
+{ "proxy_bytes_per_token": 4, "agents": { "epsilon": { "budget": 9999, "measured": 0 } } }
+JSON
+run_gate "$A5c" "$S5c" "$TMP/c5c/budgets.json"
+check "case5c inline skills exits 1" 1 "$RC"
+contains "case5c ERROR names inline/flow-style" "$OUT" "inline/flow-style"
+
+# ---------------------------------------------------------------------------
+# Case 5d — ORPHANED budget entry (no matching agent .md) must ERROR
+# ---------------------------------------------------------------------------
+A5d="$TMP/c5d/agents"; S5d="$TMP/c5d/skills"; mkdir -p "$A5d" "$S5d"
+mk_agent "$A5d" "zeta" "" 400
+cat > "$TMP/c5d/budgets.json" <<'JSON'
+{ "proxy_bytes_per_token": 4, "agents": { "zeta": { "budget": 9999, "measured": 0 }, "ghost-agent": { "budget": 100, "measured": 0 } } }
+JSON
+run_gate "$A5d" "$S5d" "$TMP/c5d/budgets.json"
+check "case5d orphaned budget exits 1" 1 "$RC"
+contains "case5d ERROR names orphaned" "$OUT" "orphaned budget"
 
 # ---------------------------------------------------------------------------
 # Case 6 — LIVE REPO: the real gate passes against the checked-in budgets

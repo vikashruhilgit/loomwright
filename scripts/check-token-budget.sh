@@ -21,7 +21,7 @@
 #
 # Budgets are declared in ONE authoritative machine-readable source
 # (loomwright/docs/prompt-token-budgets.json), mirrored for humans in
-# loomwright/docs/ARCHITECTURE_CONTRACTS.md #"Prompt Token Budgets". To raise a
+# loomwright/docs/ARCHITECTURE_CONTRACTS.md §"Prompt Token Budgets". To raise a
 # budget: raise it in prompt-token-budgets.json in the SAME PR that breaches it,
 # with a one-line justification in the `note` field — the gate reads the JSON,
 # so the raise is visible in the PR diff.
@@ -60,6 +60,23 @@ proxy_tokens() {
   echo "$(( b / DIVISOR ))"
 }
 
+# has_inline_skills FILE -> exit 0 if the frontmatter has a `skills:` key with a
+# NON-empty inline value (flow style `skills: [a, b]` or a scalar). We only
+# support the block form (`skills:` then `- name` lines); an inline form would
+# parse to ZERO skills and silently UNDER-count, defeating the fail-closed
+# ratchet. Callers treat a true result as an ERROR, not a 0.
+has_inline_skills() {
+  awk '
+    NR==1 && $0=="---" { infm=1; next }
+    infm && $0=="---"  { exit 1 }
+    !infm              { next }
+    /^skills:[[:space:]]*$/          { next }            # block form -> fine
+    /^skills:[[:space:]]*#/          { next }            # only a comment -> fine
+    /^skills:[[:space:]]*[^[:space:]]/ { found=1; exit }  # inline value -> flag
+    END { exit (found ? 0 : 1) }
+  ' "$1"
+}
+
 # preloaded_skills FILE -> prints one skill name per line from the frontmatter
 # `skills:` YAML list. Parsing is BOUNDED to the frontmatter (between the first
 # two `^---$` lines) so body bullets and prose never leak in. Inline `# comment`
@@ -95,6 +112,15 @@ for agent_file in "$AGENTS_DIR"/*.md; do
   [ -f "$agent_file" ] || continue
   agent_count=$((agent_count + 1))
   stem="$(basename "$agent_file" .md)"
+
+  # Fail CLOSED on an unsupported inline/flow-style `skills:` list — it would
+  # parse to zero skills and silently under-measure (defeating the ratchet).
+  if has_inline_skills "$agent_file"; then
+    printf "%-22s %8s %8s  %-6s  %s\n" "$stem" "-" "-" "ERROR" "unsupported inline/flow-style 'skills:' list — use the block form ('skills:' then '- name' lines)"
+    errors=$((errors + 1))
+    exit_code=1
+    continue
+  fi
 
   total="$(proxy_tokens "$agent_file")"
   nskills=0
@@ -143,6 +169,20 @@ if [ "$agent_count" -eq 0 ]; then
   echo "check-token-budget: no agent .md files found in $AGENTS_DIR — refusing to pass a 0-agent ratchet" >&2
   exit 1
 fi
+
+# Orphaned-budget detection (symmetric with the per-agent no-budget ERROR): a
+# budget key with no matching agent .md is stale (e.g. an agent was deleted but
+# its entry lingers). Fail CLOSED so the JSON stays self-cleaning.
+while IFS= read -r key; do
+  [ -n "$key" ] || continue
+  if [ ! -f "$AGENTS_DIR/$key.md" ]; then
+    printf "%-22s %8s %8s  %-6s  %s\n" "$key" "-" "-" "ERROR" "orphaned budget in $BUDGET_JSON — no $AGENTS_DIR/$key.md (remove the stale entry)"
+    errors=$((errors + 1))
+    exit_code=1
+  fi
+done <<EOF
+$(jq -r '.agents | keys[]' "$BUDGET_JSON" 2>/dev/null)
+EOF
 
 echo "------------------------------------------------------------------------------"
 echo "agents checked: $agent_count | breaches: $breaches | errors: $errors | proxy tokens = bytes/$DIVISOR (NOT exact Anthropic counts)"
