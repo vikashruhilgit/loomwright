@@ -86,7 +86,8 @@ preloaded_skills() {
     NR==1 && $0=="---" { infm=1; next }        # opening fence
     infm && $0=="---"  { exit }                # closing fence -> stop
     !infm              { next }                # never parse the body
-    /^skills:[[:space:]]*$/ { insk=1; next }   # enter the skills: list
+    /^skills:[[:space:]]*$/    { insk=1; next }   # enter the list (bare "skills:")
+    /^skills:[[:space:]]*#/    { insk=1; next }   # ...or "skills:  # trailing comment"
     insk && /^[A-Za-z_][A-Za-z0-9_-]*:/ { insk=0 }  # next top-level key -> leave
     insk && /^[[:space:]]*-[[:space:]]*/ {
       line=$0

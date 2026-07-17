@@ -53,7 +53,7 @@ loomwright/                              # marketplace wrapper
 │       └── SPIKES/                            # Capability spike investigations + deferral records
 ├── stackpack/                                 # sibling plugin: 18 tech-stack reference skills (v1.0.0)
 ├── mysql-mcp/                                 # sibling plugin: read-only MySQL MCP server (v1.0.0)
-├── scripts/                                   # CI validators (version, doc-currency, skills-index, command-sync, contract-parity)
+├── scripts/                                   # CI validators (version, doc-currency, skills-index, command-sync, contract-parity, token-budget)
 ├── README.md                                  # user-facing docs
 ├── AGENT_GUIDELINES.md                        # standards, agent contract
 └── CLAUDE.md                                  # this file

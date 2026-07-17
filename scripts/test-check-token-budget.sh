@@ -17,6 +17,7 @@
 #   5b. EMPTY-AGENTS-DIR — a 0-agent run fails CLOSED (no false-green ratchet)
 #   5c. INLINE/FLOW-STYLE skills: — unsupported form ERRORs (would under-count)
 #   5d. ORPHANED-BUDGET — a budget key with no matching agent .md ERRORs
+#   5e. COMMENT-TRAILING skills: opener still counts its block items
 #   6.  LIVE REPO — the real gate passes against the checked-in repo
 
 set -uo pipefail
@@ -164,6 +165,20 @@ JSON
 run_gate "$A5d" "$S5d" "$TMP/c5d/budgets.json"
 check "case5d orphaned budget exits 1" 1 "$RC"
 contains "case5d ERROR names orphaned" "$OUT" "orphaned budget"
+
+# ---------------------------------------------------------------------------
+# Case 5e — `skills:  # trailing comment` opener followed by block items must
+# still be counted (both parser + inline-check must agree it is block-form).
+# ---------------------------------------------------------------------------
+A5e="$TMP/c5e/agents"; S5e="$TMP/c5e/skills"; mkdir -p "$A5e" "$S5e"
+mk_agent "$A5e" "eta" "$(printf 'skills:   # preloaded\n  - shared')" 400
+mk_skill "$S5e" "shared" 400
+cat > "$TMP/c5e/budgets.json" <<'JSON'
+{ "proxy_bytes_per_token": 4, "agents": { "eta": { "budget": 9999, "measured": 0 } } }
+JSON
+run_gate "$A5e" "$S5e" "$TMP/c5e/budgets.json"
+check "case5e comment-trailing skills opener exits 0" 0 "$RC"
+contains "case5e counts the block skill (not 0)" "$OUT" "1 preloaded skills"
 
 # ---------------------------------------------------------------------------
 # Case 6 — LIVE REPO: the real gate passes against the checked-in budgets
