@@ -315,6 +315,37 @@ Tracked in `.supervisor/observations/metrics.jsonl` when learning system is acti
 
 ---
 
+## Prompt Token Budgets
+
+A CI ratchet on **spawn-time prompt inventory**. Each agent's effective weight is its `.md` prompt **plus every skill preloaded via its frontmatter `skills:` list** (those skills are injected at spawn time). `scripts/check-token-budget.sh` measures that weight and fails the build (exit 1) when it exceeds the agent's declared budget.
+
+> **Proxy, not an exact token count.** The weight is an **offline proxy** — `bytes / 4`, never a call to Anthropic's `count_tokens` API (CI has no network). It therefore controls **prompt inventory growth** (how many words we ship per spawn), **not live tokenizer inflation** (e.g. Opus vs pre-4.7 token ratios) — a byte proxy cannot track tokenizer changes. Every number the gate and this table surface is **proxy tokens**, never an exact Anthropic count.
+
+**Authoritative source:** `loomwright/docs/prompt-token-budgets.json` — the gate reads that JSON; the table below **mirrors** it for humans. On any change, edit the JSON (the table is a doc mirror, like the CLAUDE.md Skills Preloading table).
+
+**Raise rule:** to raise a budget, edit `.agents[<stem>].budget` in `prompt-token-budgets.json` **in the same PR that breaches it** and add a one-line justification to that agent's `note`. Because the gate reads the JSON, every raise shows up in the PR diff and is reviewable. Budgets are a **ratchet against unmeasured growth, not a diet** — shrinking prompts is separate follow-up. Initial budgets (v15.10.0) = measured proxy value + ~10% headroom, so nothing fails at introduction.
+
+| Agent (`loomwright/agents/<stem>.md`) | Budget (proxy tokens) | Measured @ v15.10.0 | Preloaded skills |
+|---|---|---|---|
+| `code-reviewer`     | 24330 | 22118 | 5 |
+| `context-keeper`    | 3052  | 2774  | 0 |
+| `execute-manager`   | 25941 | 23582 | 3 |
+| `launch-pad`        | 34478 | 31343 | 7 |
+| `orchestrator`      | 8665  | 7877  | 1 |
+| `plan-reviewer`     | 7032  | 6392  | 0 |
+| `product-owner`     | 13807 | 12551 | 3 |
+| `qa-executor`       | 47559 | 43235 | 5 |
+| `qa-strategist`     | 22877 | 20797 | 3 |
+| `red-team-reviewer` | 6065  | 5513  | 1 |
+| `review-pr`         | 24230 | 22027 | 2 |
+| `rubric-grader`     | 2086  | 1896  | 0 |
+| `supervisor`        | 51221 | 46564 | 7 |
+| `worker`            | 4574  | 4158  | 0 |
+
+Self-test: `bash scripts/test-check-token-budget.sh` (offline; pass / breach / missing-preloaded-skill / no-budget / frontmatter-bounded-parsing cases). Wired into CI alongside the other repo-root validators. Skills counted are **frontmatter-preloaded only** — command docs and on-demand skills are not spawn-time weight and are out of scope.
+
+---
+
 ## Failure Escalation Summary
 
 See `docs/FAILURE_ESCALATION.md` for full paths.
