@@ -127,6 +127,17 @@ check "case5 body-bullet not parsed as skill (exits 0)" 0 "$RC"
 contains "case5 reports 0 preloaded skills" "$OUT" "0 preloaded skills"
 
 # ---------------------------------------------------------------------------
+# Case 5b — EMPTY agents dir must fail LOUDLY (no false-green 0-agent ratchet)
+# ---------------------------------------------------------------------------
+A5b="$TMP/c5b/agents"; S5b="$TMP/c5b/skills"; mkdir -p "$A5b" "$S5b"
+cat > "$TMP/c5b/budgets.json" <<'JSON'
+{ "proxy_bytes_per_token": 4, "agents": {} }
+JSON
+run_gate "$A5b" "$S5b" "$TMP/c5b/budgets.json"
+check "case5b empty agents dir exits 1" 1 "$RC"
+contains "case5b names the empty dir" "$OUT" "no agent .md files found"
+
+# ---------------------------------------------------------------------------
 # Case 6 — LIVE REPO: the real gate passes against the checked-in budgets
 # ---------------------------------------------------------------------------
 OUT="$(bash "$GATE" 2>&1)"; RC=$?

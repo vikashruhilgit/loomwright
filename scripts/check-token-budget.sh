@@ -136,6 +136,14 @@ EOF
   fi
 done
 
+# Anti-drift: an empty/misconfigured agents dir must fail LOUDLY, not silently pass
+# (a 0-agent run of a fail-closed ratchet is a false green). Mirrors the ci.yml
+# self-test loop's `[ "${#tests[@]}" -gt 0 ] || exit 1` guard.
+if [ "$agent_count" -eq 0 ]; then
+  echo "check-token-budget: no agent .md files found in $AGENTS_DIR — refusing to pass a 0-agent ratchet" >&2
+  exit 1
+fi
+
 echo "------------------------------------------------------------------------------"
 echo "agents checked: $agent_count | breaches: $breaches | errors: $errors | proxy tokens = bytes/$DIVISOR (NOT exact Anthropic counts)"
 
