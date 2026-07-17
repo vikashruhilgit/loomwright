@@ -19,6 +19,14 @@
 # injected at spawn time). Command docs, on-demand skills, and non-preloaded
 # references are deliberately excluded — they are not part of spawn-time weight.
 #
+# CAVEAT: the weight sizes the ENTIRE agent .md and SKILL.md, frontmatter
+# included — it is NOT the literal injected system prompt (frontmatter tools/
+# model/hooks blocks are metadata the model never sees; Claude Code even ignores
+# plugin-agent frontmatter hooks at runtime). This is a deliberate, CONSISTENT
+# over-count: safe for a fail-closed ratchet (over-counting only makes the gate
+# stricter, never lets real growth slip through). Do NOT chase frontmatter bytes
+# when trimming a prompt — they inflate the proxy but not real tokens.
+#
 # Budgets are declared in ONE authoritative machine-readable source
 # (loomwright/docs/prompt-token-budgets.json), mirrored for humans in
 # loomwright/docs/ARCHITECTURE_CONTRACTS.md §"Prompt Token Budgets". To raise a
