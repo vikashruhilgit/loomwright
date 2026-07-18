@@ -25,7 +25,8 @@
  *                                 merge and then delete
  *
  * CLI contract:
- *   node dist/runner.js --brief <path> [--dry-run] [--max-workers N] [--model M] [--effort E] [--branch B]
+ *   node dist/runner.js --brief <path> [--dry-run] [--max-workers N] [--model M]
+ *     [--effort E] [--worker-effort E] [--reviewer-effort E] [--task-budget N] [--branch B]
  *
  * Spike simplifications vs the real Execute Manager (documented in README.md):
  *   - no fix-worker retry loop on review FAIL (single attempt; FAIL = subtask failed)
@@ -49,6 +50,8 @@ import {
   WorkerResult,
   CodeReviewResult,
   ExecuteResultEquivalent,
+  RoleTokenUsage,
+  SubtaskTokenUsage,
   validateAgainstSchema,
 } from "./schemas";
 
@@ -79,7 +82,13 @@ interface CliArgs {
   dryRunFixtureSet: DryRunFixtureSet;
   maxWorkers: number;
   model?: string;
-  effort?: string;
+  /** global effort override — applies to BOTH roles (per-role flags win) */
+  effort?: EffortLevel;
+  /** per-role overrides (win over --effort; default comes from ROLE_CONFIG) */
+  workerEffort?: EffortLevel;
+  reviewerEffort?: EffortLevel;
+  /** opt-in per-WORKER-query token budget (>= TASK_BUDGET_MIN_TOKENS); omitted from Options entirely when unset */
+  taskBudget?: number;
   branch?: string;
 }
 
@@ -93,6 +102,53 @@ interface WorktreeRecord {
 
 type QueryKind = "worker" | "reviewer";
 
+// ---------------------------------------------------------------------------
+// ROLE CONFIG TABLE — the single source of per-role query configuration.
+// Call sites MUST resolve effort via resolveRoleConfig() (this table), never
+// hard-code a level inline.
+//
+// Effort defaults (SDK EffortLevel set, sdk.d.ts:522; Options.effort at :1620):
+//   worker   → "medium"  (mechanical, schema-bounded implementation subtasks)
+//   reviewer → "high"    (deliberately a higher named level from the same
+//                         table: review is the spike's only quality gate —
+//                         no fix-worker retry loop — so it gets deeper
+//                         reasoning than the worker default)
+//
+// Override precedence (all values fail-closed validated at parse time,
+// BEFORE any query is issued):
+//   --worker-effort / --reviewer-effort  >  --effort (both roles)  >  ROLE_CONFIG
+// ---------------------------------------------------------------------------
+const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
+type EffortLevel = (typeof EFFORT_LEVELS)[number];
+
+const ROLE_CONFIG: Readonly<Record<QueryKind, { effort: EffortLevel }>> = {
+  worker: { effort: "medium" },
+  reviewer: { effort: "high" },
+};
+
+/**
+ * Documented minimum for the SDK's @alpha `taskBudget` option
+ * (sdk.d.ts:1647-1649, beta header task-budgets-2026-03-13). The type carries
+ * no floor, so the runner enforces the documented 20k-token minimum itself —
+ * fail CLOSED below it, before any query is issued.
+ */
+const TASK_BUDGET_MIN_TOKENS = 20000;
+
+function resolveRoleConfig(kind: QueryKind, args: CliArgs): { effort: EffortLevel } {
+  const perRole = kind === "worker" ? args.workerEffort : args.reviewerEffort;
+  return { effort: perRole ?? args.effort ?? ROLE_CONFIG[kind].effort };
+}
+
+/** What a query() invocation reports back through the seam: the structured
+ * payload plus per-query token accounting. `proxy: true` marks synthesized
+ * (dry-run) numbers — never invented, always zeros (mirrors the plugin's
+ * token-ledger convention). */
+interface QueryOutcome {
+  payload: unknown;
+  usage: RoleTokenUsage;
+  proxy: boolean;
+}
+
 /**
  * The injected query seam. Live mode wires this to the Agent SDK's `query()`;
  * --dry-run injects a fake that returns canned fixtures (no API calls, no
@@ -102,15 +158,67 @@ type QueryFn = (
   kind: QueryKind,
   prompt: string,
   schema: object,
-  opts: { cwd?: string; model?: string; effort?: string }
-) => Promise<unknown>;
+  opts: { cwd?: string; model?: string; effort?: string; taskBudget?: number }
+) => Promise<QueryOutcome>;
+
+function zeroUsage(): RoleTokenUsage {
+  return {
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_creation_input_tokens: 0,
+    cache_read_input_tokens: 0,
+    total_cost_usd: 0,
+    num_turns: 0,
+  };
+}
+
+function asFiniteNumber(v: unknown): number {
+  return typeof v === "number" && Number.isFinite(v) ? v : 0;
+}
+
+/** Aggregate worker + reviewer per-query usage into the additive
+ * `token_usage` object emitted on the EXECUTE_RESULT-equivalent block. */
+function aggregateTokenUsage(
+  worker: QueryOutcome | null,
+  reviewer: QueryOutcome | null
+): SubtaskTokenUsage {
+  const roles = [worker, reviewer].filter((r): r is QueryOutcome => r !== null);
+  return {
+    worker: worker ? worker.usage : null,
+    reviewer: reviewer ? reviewer.usage : null,
+    total_tokens: roles.reduce(
+      (sum, r) =>
+        sum +
+        r.usage.input_tokens +
+        r.usage.output_tokens +
+        r.usage.cache_creation_input_tokens +
+        r.usage.cache_read_input_tokens,
+      0
+    ),
+    total_cost_usd: roles.reduce((sum, r) => sum + r.usage.total_cost_usd, 0),
+    // No real query behind the numbers (empty roles) is proxy by definition;
+    // otherwise proxy iff any contributing query was synthesized (dry-run).
+    proxy: roles.length === 0 ? true : roles.some((r) => r.proxy),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // CLI parsing
 // ---------------------------------------------------------------------------
 
 function usage(): string {
-  return "Usage: node dist/runner.js --brief <path> [--dry-run] [--dry-run-fixture-set default|fail|review-fail] [--max-workers N] [--model M] [--effort E] [--branch B]";
+  return "Usage: node dist/runner.js --brief <path> [--dry-run] [--dry-run-fixture-set default|fail|review-fail] [--max-workers N] [--model M] [--effort E] [--worker-effort E] [--reviewer-effort E] [--task-budget N] [--branch B]";
+}
+
+/** FAIL CLOSED on any effort value outside the SDK's EffortLevel set
+ * (sdk.d.ts:522) — thrown from parseArgs, i.e. before ANY query is issued. */
+function parseEffortValue(flag: string, value: string | undefined): EffortLevel {
+  if (!value || !(EFFORT_LEVELS as readonly string[]).includes(value)) {
+    throw new Error(
+      `${flag} must be one of ${EFFORT_LEVELS.join("|")} (got "${value ?? ""}"). ${usage()}`
+    );
+  }
+  return value as EffortLevel;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -142,8 +250,29 @@ function parseArgs(argv: string[]): CliArgs {
         args.model = argv[++i];
         break;
       case "--effort":
-        args.effort = argv[++i];
+        args.effort = parseEffortValue("--effort", argv[++i]);
         break;
+      case "--worker-effort":
+        args.workerEffort = parseEffortValue("--worker-effort", argv[++i]);
+        break;
+      case "--reviewer-effort":
+        args.reviewerEffort = parseEffortValue("--reviewer-effort", argv[++i]);
+        break;
+      case "--task-budget": {
+        // FAIL CLOSED: non-integer or below the documented 20k minimum aborts
+        // here in parseArgs — before ANY query is issued.
+        const n = Number(argv[++i]);
+        if (!Number.isInteger(n)) {
+          throw new Error(`--task-budget must be an integer token count. ${usage()}`);
+        }
+        if (n < TASK_BUDGET_MIN_TOKENS) {
+          throw new Error(
+            `--task-budget must be >= ${TASK_BUDGET_MIN_TOKENS} (the documented task-budget minimum); got ${n}. ${usage()}`
+          );
+        }
+        args.taskBudget = n;
+        break;
+      }
       case "--branch":
         args.branch = argv[++i];
         break;
@@ -355,7 +484,12 @@ function makeDryRunQuery(fixtureSet: DryRunFixtureSet): QueryFn {
     if (errors.length > 0) {
       throw new Error(`dry-run fixture ${file} fails its schema: ${errors.join("; ")}`);
     }
-    return raw;
+    // Fixtures are WORKER_RESULT/CODE_REVIEW_RESULT payloads — usage lives on
+    // the result MESSAGE, not the payload — so the dry-run seam synthesizes a
+    // zero-usage outcome instead of touching the fixtures. `proxy: true`
+    // labels the zeros as synthetic (never invent token counts; mirrors the
+    // plugin's token-ledger convention).
+    return { payload: raw, usage: zeroUsage(), proxy: true };
   };
 }
 
@@ -393,17 +527,38 @@ function makeLiveQuery(): QueryFn {
     if (opts.cwd) options.cwd = opts.cwd; // per-query cwd = the subtask's worktree (capability row 7)
     if (opts.model) options.model = opts.model;
     if (opts.effort) {
-      // NEEDS VERIFICATION vs docs: `effort` is documented on AgentDefinition
-      // (capability row 6, low..max); whether a top-level query() accepts it
-      // directly is unverified — passed through defensively.
+      // Per-role effort resolved via ROLE_CONFIG / resolveRoleConfig at the
+      // call sites. `Options.effort` is typed at sdk.d.ts:1620 (EffortLevel
+      // set at :522); values are fail-closed validated in parseArgs.
       options.effort = opts.effort;
+    }
+    if (opts.taskBudget !== undefined) {
+      // Opt-in per-query task budget: `taskBudget?: { total: number }` at
+      // sdk.d.ts:1647-1649 (@alpha, beta header task-budgets-2026-03-13).
+      // When unset the field is OMITTED entirely (never null/0); the
+      // documented 20k-token minimum is enforced fail-closed in parseArgs.
+      options.taskBudget = { total: opts.taskBudget };
     }
 
     let structured: unknown = null;
     let sawResult = false;
+    let usage: RoleTokenUsage = zeroUsage();
     for await (const msg of sdk.query({ prompt, options })) {
       if (!msg || msg["type"] !== "result") continue;
       sawResult = true;
+      // Per-subtask token accounting: capture `usage` / `total_cost_usd` /
+      // `num_turns` from the terminal result message (SDKResultSuccess at
+      // sdk.d.ts:4024, fields :4037-4042). Absent fields default to 0 via
+      // asFiniteNumber — nothing is invented.
+      const u = (msg["usage"] ?? {}) as Record<string, unknown>;
+      usage = {
+        input_tokens: asFiniteNumber(u["input_tokens"]),
+        output_tokens: asFiniteNumber(u["output_tokens"]),
+        cache_creation_input_tokens: asFiniteNumber(u["cache_creation_input_tokens"]),
+        cache_read_input_tokens: asFiniteNumber(u["cache_read_input_tokens"]),
+        total_cost_usd: asFiniteNumber(msg["total_cost_usd"]),
+        num_turns: asFiniteNumber(msg["num_turns"]),
+      };
       const subtype = String(msg["subtype"] ?? "");
       if (subtype === "error_max_structured_output_retries") {
         // FAIL CLOSED: the SDK exhausted its structured-output retries — never
@@ -430,7 +585,7 @@ function makeLiveQuery(): QueryFn {
     if (errors.length > 0) {
       throw new Error(`${kind} structured output failed local re-validation: ${errors.join("; ")} — failing closed`);
     }
-    return structured;
+    return { payload: structured, usage, proxy: false };
   };
 }
 
@@ -502,6 +657,8 @@ interface SubtaskOutcome {
   wtPath: string;
   workerResult?: WorkerResult;
   reviewResult?: CodeReviewResult;
+  /** aggregated worker+reviewer token accounting; undefined when no query ran */
+  tokenUsage?: SubtaskTokenUsage;
   error?: string;
 }
 
@@ -550,6 +707,11 @@ async function main(): Promise<number> {
     let wtPath = "(dry-run: worktree skipped)";
     const record: WorktreeRecord = { taskId, wtPath, branch, created: false, removed: false };
     worktrees.push(record);
+    // Per-query outcomes tracked outside the try so a mid-subtask failure
+    // (e.g. review FAIL after a successful worker query) still reports the
+    // token usage accumulated up to that point.
+    let workerQuery: QueryOutcome | null = null;
+    let reviewerQuery: QueryOutcome | null = null;
     try {
       // Step 2: worktree per launchable subtask (SKIPPED entirely in --dry-run)
       if (!args.dryRun) {
@@ -560,13 +722,16 @@ async function main(): Promise<number> {
         record.created = true;
       }
 
-      // Step 3: one worker query(), schema-forced to WORKER_RESULT v2
-      const workerRaw = await queryFn("worker", workerPrompt(subtask, wtPath), WORKER_RESULT_SCHEMA, {
+      // Step 3: one worker query(), schema-forced to WORKER_RESULT v2.
+      // Effort resolves via the ROLE_CONFIG table (never hard-coded here);
+      // the opt-in --task-budget applies to WORKER queries only.
+      workerQuery = await queryFn("worker", workerPrompt(subtask, wtPath), WORKER_RESULT_SCHEMA, {
         cwd: args.dryRun ? undefined : wtPath,
         model: args.model,
-        effort: args.effort,
+        effort: resolveRoleConfig("worker", args).effort,
+        taskBudget: args.taskBudget,
       });
-      const workerResult = { ...(workerRaw as WorkerResult), task_id: taskId };
+      const workerResult = { ...(workerQuery.payload as WorkerResult), task_id: taskId };
 
       // Mirror of the real loop's v12 outputs gate: partial/failed workers do
       // NOT proceed to review (execute-manager.md Step 4).
@@ -587,23 +752,44 @@ async function main(): Promise<number> {
         }
       }
 
-      // Step 4 (per-completion): one reviewer query(), schema-forced to CODE_REVIEW_RESULT v3
-      const reviewRaw = await queryFn("reviewer", reviewerPrompt(subtask, workerResult, wtPath), CODE_REVIEW_RESULT_SCHEMA, {
+      // Step 4 (per-completion): one reviewer query(), schema-forced to CODE_REVIEW_RESULT v3.
+      // Effort resolves via ROLE_CONFIG (reviewer default is the table's
+      // higher level). Reviewer queries deliberately get NO taskBudget:
+      // reviewer output is bounded by the CODE_REVIEW_RESULT schema (a
+      // structured verdict, not open-ended implementation work), so a token
+      // budget adds mid-review truncation risk without a cost upside.
+      reviewerQuery = await queryFn("reviewer", reviewerPrompt(subtask, workerResult, wtPath), CODE_REVIEW_RESULT_SCHEMA, {
         cwd: args.dryRun ? undefined : wtPath,
         model: args.model,
-        effort: args.effort,
+        effort: resolveRoleConfig("reviewer", args).effort,
       });
-      const reviewResult = reviewRaw as CodeReviewResult;
+      const reviewResult = reviewerQuery.payload as CodeReviewResult;
 
       if (reviewResult.decision !== "PASS") {
         // Spike simplification: no fix-worker retry loop; FAIL/NEEDS_HUMAN = subtask failed.
         throw new Error(`review decision ${reviewResult.decision}: ${reviewResult.summary}`);
       }
 
-      completed.set(subtask.id, { subtask, branch, wtPath, workerResult, reviewResult });
+      completed.set(subtask.id, {
+        subtask,
+        branch,
+        wtPath,
+        workerResult,
+        reviewResult,
+        tokenUsage: aggregateTokenUsage(workerQuery, reviewerQuery),
+      });
       mergeOrder.push(branch);
     } catch (err) {
-      failed.set(subtask.id, { subtask, branch, wtPath, error: (err as Error).message });
+      failed.set(subtask.id, {
+        subtask,
+        branch,
+        wtPath,
+        error: (err as Error).message,
+        // Report usage where available (e.g. worker ran, review failed);
+        // undefined when no query completed for this subtask.
+        tokenUsage:
+          workerQuery || reviewerQuery ? aggregateTokenUsage(workerQuery, reviewerQuery) : undefined,
+      });
     }
   };
 
@@ -658,12 +844,19 @@ async function main(): Promise<number> {
         ...(o.workerResult?.files_created ?? []),
       ],
       review_decision: o.reviewResult?.decision ?? "PASS",
+      // ADDITIVE per-subtask token accounting. Completed subtasks always have
+      // it (both queries ran); the fallback is defensive-only and honestly
+      // proxy-labeled zeros (never invent token counts).
+      token_usage: o.tokenUsage ?? aggregateTokenUsage(null, null),
     })),
     subtasks_failed: Array.from(failed.values()).map((o) => ({
       task_id: `subtask-${o.subtask.id}`,
       status: "failed" as const,
       error: o.error ?? "(unknown)",
       retry_count: 0,
+      // ADDITIVE — where available (e.g. worker ran before the failure);
+      // null when no query ran (e.g. blocked-forever sweep).
+      token_usage: o.tokenUsage ?? null,
     })),
     merge_order: mergeOrder,
     worktrees: worktrees.map((w) => ({

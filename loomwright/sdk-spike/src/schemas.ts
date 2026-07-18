@@ -247,11 +247,40 @@ export interface CodeReviewResult {
 }
 
 // ---------------------------------------------------------------------------
+// Per-subtask token accounting (ADDITIVE — token-levers job).
+// Captured from each query()'s terminal result message (SDKResultSuccess,
+// sdk.d.ts:4024: `usage` / `total_cost_usd` / `num_turns` at :4037-4042).
+// In --dry-run the fixtures carry no real usage, so the runner emits zeros
+// with `proxy: true` — mirroring the plugin's token-ledger convention
+// (never invent token counts; label synthetic numbers as proxy).
+// ---------------------------------------------------------------------------
+export interface RoleTokenUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens: number;
+  cache_read_input_tokens: number;
+  total_cost_usd: number;
+  num_turns: number;
+}
+
+export interface SubtaskTokenUsage {
+  /** null when the role's query never ran (e.g. worker failed before review) */
+  worker: RoleTokenUsage | null;
+  reviewer: RoleTokenUsage | null;
+  /** sum of input+output+cache_creation+cache_read across both roles */
+  total_tokens: number;
+  total_cost_usd: number;
+  /** true when the numbers are synthesized (dry-run), false when read from real result messages */
+  proxy: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // EXECUTE_RESULT-equivalent — the block the runner prints to stdout.
 // Field names and shapes mirror docs/RESULT_SCHEMAS.md §EXECUTE_RESULT
 // (schema_version 1). The extra `mode` field is spike-local telemetry
 // ("live" | "dry-run"); the block is NOT hook-validated (this is a spike,
-// not the plugin runtime path), so the additive field is safe.
+// not the plugin runtime path), so the additive fields (`mode`,
+// `token_usage`) are safe.
 // ---------------------------------------------------------------------------
 export interface ExecuteResultEquivalent {
   schema_version: 1;
@@ -262,12 +291,16 @@ export interface ExecuteResultEquivalent {
     branch: string;
     files_modified: string[];
     review_decision: string;
+    /** ADDITIVE per-subtask token accounting (worker + reviewer queries) */
+    token_usage: SubtaskTokenUsage;
   }>;
   subtasks_failed: Array<{
     task_id: string;
     status: "failed";
     error: string;
     retry_count: number;
+    /** ADDITIVE — present where available; null when no query ran (e.g. blocked-forever) */
+    token_usage: SubtaskTokenUsage | null;
   }>;
   merge_order: string[];
   worktrees: Array<{
