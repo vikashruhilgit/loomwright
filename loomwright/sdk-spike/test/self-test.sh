@@ -271,6 +271,20 @@ if [ "$HAVE_NODE" = 1 ] && [ -f dist/runner.js ]; then
   else
     fail "--task-budget 100 did not fail closed citing the minimum (exit $TBLO_CODE): $TBLO_OUT"
   fi
+  TBNI_OUT=$(node dist/runner.js --brief "$MINI_BRIEF" --dry-run --task-budget 1.5 2>&1)
+  TBNI_CODE=$?
+  if [ "$TBNI_CODE" != 0 ] && printf '%s' "$TBNI_OUT" | grep -q -- "--task-budget must be an integer"; then
+    pass "--task-budget 1.5 (non-integer) fails closed (exit $TBNI_CODE)"
+  else
+    fail "--task-budget 1.5 did not fail closed on the non-integer branch (exit $TBNI_CODE): $TBNI_OUT"
+  fi
+  REFF_OUT=$(node dist/runner.js --brief "$MINI_BRIEF" --dry-run --reviewer-effort bogus 2>&1)
+  REFF_CODE=$?
+  if [ "$REFF_CODE" != 0 ] && printf '%s' "$REFF_OUT" | grep -q -- "--reviewer-effort must be one of"; then
+    pass "invalid --reviewer-effort fails closed (exit $REFF_CODE, names the flag + allowed set)"
+  else
+    fail "invalid --reviewer-effort did not fail closed (exit $REFF_CODE): $REFF_OUT"
+  fi
   TBOK_OUT=$(node dist/runner.js --brief "$MINI_BRIEF" --dry-run --task-budget 20000 2>&1)
   TBOK_CODE=$?
   if [ "$TBOK_CODE" = 0 ]; then
