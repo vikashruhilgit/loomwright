@@ -71,6 +71,8 @@ each query's terminal result message (`SDKResultSuccess` at `sdk.d.ts:4024` —
 }
 ```
 
+- `total_tokens` is a **volume** figure (cache-read tokens counted 1:1), not a
+  cost proxy — cost is `total_cost_usd`.
 - `subtasks_completed[]` entries always carry it (both queries ran).
 - `subtasks_failed[]` entries carry it **where available** (e.g. worker ran,
   review failed); `null` when no query ran (e.g. the blocked-forever sweep).
@@ -155,8 +157,8 @@ or dry-run-only**, never exercised against the live SDK:
   `review-fail` failure dry-runs) — but only through the dry-run seam; their
   live-`query()` counterparts remain pending.
 - In degraded offline mode (no `node_modules`) the result is **"0 failures"
-  with the compile and dry-run SKIPped — not 33 passes**; only a full install
-  + build yields the 33/33 run.
+  with the compile and dry-run SKIPped — not 34 passes**; only a full install
+  + build yields the 34/34 run.
 
 ## What this proves / what it can't
 

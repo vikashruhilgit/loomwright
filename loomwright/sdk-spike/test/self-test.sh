@@ -213,6 +213,34 @@ if [ "$HAVE_NODE" = 1 ] && [ -f dist/runner.js ]; then
   else
     fail "failure dry-run token accounting assertions failed: $FAIL_OUT"
   fi
+  # QueryFailedError fold-back (offline): fixture-set throw-usage makes the
+  # reviewer query throw AFTER usage capture; the runSubtask catch must fold
+  # the thrown query's synthetic usage (proxy:true — never invented as real)
+  # into the failed entry's token_usage.reviewer.
+  THROW_OUT=$(node dist/runner.js --brief "$MINI_BRIEF" --dry-run --dry-run-fixture-set throw-usage 2>&1)
+  THROW_CODE=$?
+  if [ "$THROW_CODE" = 1 ] && printf '%s' "$THROW_OUT" | node -e '
+      const r = JSON.parse(require("fs").readFileSync(0, "utf8"));
+      const problems = [];
+      if (r.subtasks_completed.length !== 0) problems.push("expected 0 completed");
+      const thrown = (r.subtasks_failed ?? []).filter((s) => s.error.includes("throw-usage fixture"));
+      if (thrown.length === 0) problems.push("no reviewer-threw entry found");
+      for (const s of thrown) {
+        const t = s.token_usage;
+        if (!t || typeof t !== "object") { problems.push(s.task_id + ": token_usage missing on thrown entry"); continue; }
+        if (!t.reviewer) { problems.push(s.task_id + ": reviewer usage not folded back from QueryFailedError"); continue; }
+        if (t.reviewer.input_tokens !== 1000 || t.reviewer.output_tokens !== 200 ||
+            t.reviewer.cache_creation_input_tokens !== 50 || t.reviewer.cache_read_input_tokens !== 300)
+          problems.push(s.task_id + ": folded reviewer usage does not match the thrown fixture usage");
+        if (t.proxy !== true) problems.push(s.task_id + ": proxy must be true (synthetic thrown usage)");
+        if (!t.worker) problems.push(s.task_id + ": worker usage missing (worker ran before the throw)");
+      }
+      if (problems.length) { console.error(problems.join("; ")); process.exit(1); }
+    '; then
+    pass "failure dry-run (fixture-set throw-usage): QueryFailedError usage folded into failed entry (proxy:true), exit 1"
+  else
+    fail "failure dry-run (fixture-set throw-usage) fold-back assertions failed (exit $THROW_CODE): $THROW_OUT"
+  fi
 else
   skip "failure-path dry-runs skipped — dist/runner.js not available"
 fi

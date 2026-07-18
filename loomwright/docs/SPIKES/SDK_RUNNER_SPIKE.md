@@ -43,13 +43,16 @@ metric in the runner's EXECUTE_RESULT-equivalent output — every subtask entry 
 `token_usage` object aggregated from its worker + reviewer `query()` results (real `usage` /
 `total_cost_usd` / `num_turns` in live mode, including `QueryFailedError` fold-back of a failing
 query's real spend into the failed entry; `proxy: true`-labeled zeros on `--dry-run` — token counts
-are never invented). **Live verification of the `taskBudget` / `effort` / `QueryFailedError` paths
-is PENDING** — the first live eval run (`FABLE_PARITY_EVAL.md`) is their first exercise; offline
-coverage is config-plumbing + dry-run only.
+are never invented). The aggregate `total_tokens` is a volume figure (cache-read tokens counted
+1:1), not a cost proxy — cost is `total_cost_usd`. **Live verification of the `taskBudget` /
+`effort` / `QueryFailedError` paths is PENDING** — the first live eval run (`FABLE_PARITY_EVAL.md`)
+is their first exercise; offline coverage is config-plumbing + dry-run (the `QueryFailedError`
+fold-back mechanics are now dry-run-exercised via `--dry-run-fixture-set throw-usage`, but the
+live usage-capture-before-throw path itself remains unexercised).
 
 ## Parity matrix
 
-### What ported cleanly (dry-run-proven in `sdk-spike/`, self-test 33/33)
+### What ported cleanly (dry-run-proven in `sdk-spike/`, self-test 34/34)
 
 | Prompt-loop element | Port | Evidence |
 |---|---|---|
@@ -144,7 +147,7 @@ Honest reading of the parity matrix:
   dependency-driven scheduling, schema-forced WORKER_RESULT v2 / CODE_REVIEW_RESULT v3 (versions
   preserved), worktree isolation with commit-before-remove, fail-closed error handling,
   EXECUTE_RESULT shape — ported to ~500 lines of deterministic TypeScript, dry-run-proven offline
-  (self-test 33/33). Nothing in the port required weakening a contract.
+  (self-test 34/34). Nothing in the port required weakening a contract.
 - **The gaps are known and bounded, not disqualifying:** two NEEDS-VERIFICATION items (hooks.json
   firing — mitigated by runner self-validation; skills preload/agent memory — workaroundable by
   prompt inlining) and two residual divergences (§above), one of which FINALIZE already backstops.

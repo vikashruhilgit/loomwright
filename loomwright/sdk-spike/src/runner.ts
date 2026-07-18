@@ -74,7 +74,7 @@ interface Subtask {
   requires: ContractItem[];
 }
 
-type DryRunFixtureSet = "default" | "fail" | "review-fail";
+type DryRunFixtureSet = "default" | "fail" | "review-fail" | "throw-usage";
 
 interface CliArgs {
   brief: string;
@@ -161,7 +161,9 @@ class QueryFailedError extends Error {
   constructor(
     message: string,
     public readonly kind: QueryKind,
-    public readonly usage: RoleTokenUsage
+    public readonly usage: RoleTokenUsage,
+    /** True when `usage` is synthesized (test fixtures), never on live throws. */
+    public readonly proxy: boolean = false
   ) {
     super(message);
     this.name = "QueryFailedError";
@@ -205,6 +207,8 @@ function aggregateTokenUsage(
   return {
     worker: worker ? worker.usage : null,
     reviewer: reviewer ? reviewer.usage : null,
+    // total_tokens is a VOLUME figure (cache-read tokens counted 1:1), not a
+    // cost proxy — cost lives in total_cost_usd.
     total_tokens: roles.reduce(
       (sum, r) =>
         sum +
@@ -226,7 +230,7 @@ function aggregateTokenUsage(
 // ---------------------------------------------------------------------------
 
 function usage(): string {
-  return "Usage: node dist/runner.js --brief <path> [--dry-run] [--dry-run-fixture-set default|fail|review-fail] [--max-workers N] [--model M] [--effort E] [--worker-effort E] [--reviewer-effort E] [--task-budget N] [--branch B]";
+  return "Usage: node dist/runner.js --brief <path> [--dry-run] [--dry-run-fixture-set default|fail|review-fail|throw-usage] [--max-workers N] [--model M] [--effort E] [--worker-effort E] [--reviewer-effort E] [--task-budget N] [--branch B]";
 }
 
 /** FAIL CLOSED on any effort value outside the SDK's EffortLevel set
@@ -253,8 +257,8 @@ function parseArgs(argv: string[]): CliArgs {
         break;
       case "--dry-run-fixture-set": {
         const set = argv[++i] ?? "";
-        if (set !== "default" && set !== "fail" && set !== "review-fail") {
-          throw new Error(`--dry-run-fixture-set must be default|fail|review-fail. ${usage()}`);
+        if (set !== "default" && set !== "fail" && set !== "review-fail" && set !== "throw-usage") {
+          throw new Error(`--dry-run-fixture-set must be default|fail|review-fail|throw-usage. ${usage()}`);
         }
         args.dryRunFixtureSet = set;
         break;
@@ -486,10 +490,32 @@ function fixtureDir(): string {
  *   fail        — workers return status "failed" (worker gate + blocked-forever sweep)
  *   review-fail — workers succeed, reviewers return decision FAIL
  *                 (review-FAIL branch + blocked-forever sweep)
+ *   throw-usage — workers succeed, reviewers throw QueryFailedError carrying
+ *                 synthetic captured usage (proxy:true — never invented as
+ *                 real) to exercise the runSubtask catch fold-back offline
  */
 function makeDryRunQuery(fixtureSet: DryRunFixtureSet): QueryFn {
   const dir = fixtureDir();
   return async (kind, _prompt, schema, _opts) => {
+    if (fixtureSet === "throw-usage" && kind === "reviewer") {
+      // Offline stand-in for the live fail-closed throws: the reviewer query
+      // dies AFTER usage was captured. Synthetic numbers, labeled proxy:true
+      // (never invent token counts); the catch must fold them into the
+      // failed entry's token_usage.
+      throw new QueryFailedError(
+        "reviewer query failed after usage capture (throw-usage fixture)",
+        "reviewer",
+        {
+          input_tokens: 1000,
+          output_tokens: 200,
+          cache_creation_input_tokens: 50,
+          cache_read_input_tokens: 300,
+          total_cost_usd: 0.01,
+          num_turns: 3,
+        },
+        true
+      );
+    }
     const file =
       kind === "worker"
         ? fixtureSet === "fail"
@@ -824,7 +850,7 @@ async function main(): Promise<number> {
       // failed entry's token_usage includes the real spend of the query
       // that threw (never overwrite a role outcome that already returned).
       if (err instanceof QueryFailedError) {
-        const failedOutcome: QueryOutcome = { payload: null, usage: err.usage, proxy: false };
+        const failedOutcome: QueryOutcome = { payload: null, usage: err.usage, proxy: err.proxy };
         if (err.kind === "worker" && workerQuery === null) workerQuery = failedOutcome;
         else if (err.kind === "reviewer" && reviewerQuery === null) reviewerQuery = failedOutcome;
       }
