@@ -119,6 +119,19 @@ check "case4 no-budget exits 1" 1 "$RC"
 contains "case4 ERROR names no-budget" "$OUT" "no budget declared"
 
 # ---------------------------------------------------------------------------
+# Case 4b — NON-INTEGER budget (float / hand-edit typo) must fail CLOSED, not
+# fall into the OK branch via an errored -gt test (false green).
+# ---------------------------------------------------------------------------
+A4B="$TMP/c4b/agents"; S4B="$TMP/c4b/skills"; mkdir -p "$A4B" "$S4B"
+mk_agent "$A4B" "delta" "" 400
+cat > "$TMP/c4b/budgets.json" <<'JSON'
+{ "proxy_bytes_per_token": 4, "agents": { "delta": { "budget": "12.5", "measured": 0 } } }
+JSON
+run_gate "$A4B" "$S4B" "$TMP/c4b/budgets.json"
+check "case4b non-integer budget exits 1" 1 "$RC"
+contains "case4b ERROR names non-integer" "$OUT" "non-integer budget"
+
+# ---------------------------------------------------------------------------
 # Case 5 — FRONTMATTER-BOUNDED: a NO-skills agent must count 0 preloaded skills,
 # proving the body `- bullet` is not mistaken for a skill (would 404 otherwise).
 # ---------------------------------------------------------------------------

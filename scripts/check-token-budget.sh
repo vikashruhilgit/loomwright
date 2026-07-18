@@ -162,6 +162,16 @@ EOF
     continue
   fi
 
+  # Fail CLOSED on a non-integer budget (float, stray space, quoted typo): the
+  # -gt test below would error out falsy and fall into the OK branch — a false
+  # green in a fail-closed gate (§Failure-Mode Invariants).
+  case "$budget" in ''|*[!0-9]*)
+    printf "%-22s %8s %8s  %-6s  %s\n" "$stem" "$total" "$budget" "ERROR" "non-integer budget in $BUDGET_JSON (must be a positive integer)"
+    errors=$((errors + 1))
+    exit_code=1
+    continue ;;
+  esac
+
   if [ "$total" -gt "$budget" ]; then
     printf "%-22s %8s %8s  %-6s  %s\n" "$stem" "$total" "$budget" "BREACH" "over by $((total - budget)) proxy tokens ($nskills preloaded skills) — raise the budget in the same PR (with a note) or trim the prompt"
     breaches=$((breaches + 1))
