@@ -22,14 +22,14 @@ node dist/runner.js --brief <path> [--dry-run]
 Full option set:
 
 ```
-node dist/runner.js --brief <path> [--dry-run] [--dry-run-fixture-set default|fail|review-fail] [--max-workers N] [--model M] [--effort E] [--worker-effort E] [--reviewer-effort E] [--task-budget N] [--branch B]
+node dist/runner.js --brief <path> [--dry-run] [--dry-run-fixture-set default|fail|review-fail|throw-usage] [--max-workers N] [--model M] [--effort E] [--worker-effort E] [--reviewer-effort E] [--task-budget N] [--branch B]
 ```
 
 | Flag | Meaning |
 |---|---|
 | `--brief <path>` | Supervisor-Ready Brief to execute (required). The runner parses its `## Subtask Structure` table and `### Subtask contracts` YAML. |
 | `--dry-run` | **No API calls, no worktrees, no git.** Workers/reviewers are replaced by an injected fake that returns canned schema-valid fixtures from `src/dry-run-fixtures/`. Fully offline and deterministic. |
-| `--dry-run-fixture-set` | Which fixture set the dry-run fake returns (default `default`). `fail` makes workers return `status: failed` (exercises the worker-failed gate + blocked-forever sweep offline); `review-fail` makes workers succeed and reviewers return `decision: FAIL` (exercises the review-FAIL branch + blocked sweep). Both failure sets exit 1 with the failures in `subtasks_failed`. |
+| `--dry-run-fixture-set` | Which fixture set the dry-run fake returns (default `default`). `fail` makes workers return `status: failed` (exercises the worker-failed gate + blocked-forever sweep offline); `review-fail` makes workers succeed and reviewers return `decision: FAIL` (exercises the review-FAIL branch + blocked sweep). Both failure sets exit 1 with the failures in `subtasks_failed`. `throw-usage` is test-internal: the reviewer query throws a `QueryFailedError` carrying synthetic `proxy: true` usage, exercising the fold-back that preserves a failing query's captured spend (exit 1). |
 | `--max-workers N` | Concurrent worker cap (default 2) — the in-code equivalent of the poll loop's `max_workers`. |
 | `--model M` | Pass-through model for worker/reviewer `query()` calls (default: SDK default / inherit). |
 | `--effort E` | Global effort override for **both** roles (`low\|medium\|high\|xhigh\|max`, the SDK `EffortLevel` set at `sdk.d.ts:522`; `Options.effort` typed at `:1620`). Per-role flags win over it. Invalid values **fail closed** (stderr error, exit 2, before any query). |
