@@ -155,8 +155,8 @@ or dry-run-only**, never exercised against the live SDK:
   `review-fail` failure dry-runs) — but only through the dry-run seam; their
   live-`query()` counterparts remain pending.
 - In degraded offline mode (no `node_modules`) the result is **"0 failures"
-  with the compile and dry-run SKIPped — not 25 passes**; only a full install
-  + build yields the 25/25 run.
+  with the compile and dry-run SKIPped — not 33 passes**; only a full install
+  + build yields the 33/33 run.
 
 ## What this proves / what it can't
 

@@ -34,10 +34,22 @@ fail-closed error handling)? And is the result cheaper/faster enough to justify 
 | 5 | TS vs Python maturity | NEEDS VERIFICATION | Docs treat both equally; TS bundles the CC binary → **pick TypeScript, reason recorded** |
 | 6 | Per-agent model + effort | SUPPORTED | AgentDefinition `model` (incl. `inherit`) + `effort` (`low..max`) |
 | 7 | Worktree/sandbox isolation | PARTIAL | No native sandbox; SDK runs in cwd — external `git worktree` per worker (matches our existing design); per-query `cwd` |
+| 8 | Per-role effort config (token-levers job, doc-verified 2026-07-18 vs pinned 0.3.202 `sdk.d.ts`) | SUPPORTED | `Options.effort?: EffortLevel` at `sdk.d.ts:1620`; `EffortLevel = 'low'\|'medium'\|'high'\|'xhigh'\|'max'` at `:522`. Runner: `ROLE_CONFIG` table (worker `medium`, reviewer `high`), per-role/global CLI overrides, invalid values fail closed before any query |
+| 9 | Per-subtask task budget (token-levers job, doc-verified 2026-07-18 vs pinned 0.3.202 `sdk.d.ts`) | SUPPORTED @alpha | `taskBudget?: {total: number}` at `sdk.d.ts:1647-1649` (beta header `task-budgets-2026-03-13`). NO type-level floor — the documented 20k minimum is enforced runner-side (`--task-budget` < 20000 fails closed; omitted entirely from `Options` when unset; worker queries only) |
+| 10 | Context editing / history pruning (token-levers job, doc-verified 2026-07-18 vs pinned 0.3.202 `sdk.d.ts`) | NOT-EXPOSED-BY-SDK | No per-query context-editing/prune option on `Options` in pinned 0.3.202 — the closest surfaces are the PreCompact/PostCompact hooks, `getContextUsage()` (`sdk.d.ts:2369`), and settings-level autoCompact controls. Recorded as a gap per the token-levers constraint; the pin is unchanged (no SDK upgrade in that job) |
+
+**Token accounting (token-levers job):** token-cost-per-subtask is now a first-class recorded
+metric in the runner's EXECUTE_RESULT-equivalent output — every subtask entry carries an additive
+`token_usage` object aggregated from its worker + reviewer `query()` results (real `usage` /
+`total_cost_usd` / `num_turns` in live mode, including `QueryFailedError` fold-back of a failing
+query's real spend into the failed entry; `proxy: true`-labeled zeros on `--dry-run` — token counts
+are never invented). **Live verification of the `taskBudget` / `effort` / `QueryFailedError` paths
+is PENDING** — the first live eval run (`FABLE_PARITY_EVAL.md`) is their first exercise; offline
+coverage is config-plumbing + dry-run only.
 
 ## Parity matrix
 
-### What ported cleanly (dry-run-proven in `sdk-spike/`, self-test 25/25)
+### What ported cleanly (dry-run-proven in `sdk-spike/`, self-test 33/33)
 
 | Prompt-loop element | Port | Evidence |
 |---|---|---|
@@ -132,7 +144,7 @@ Honest reading of the parity matrix:
   dependency-driven scheduling, schema-forced WORKER_RESULT v2 / CODE_REVIEW_RESULT v3 (versions
   preserved), worktree isolation with commit-before-remove, fail-closed error handling,
   EXECUTE_RESULT shape — ported to ~500 lines of deterministic TypeScript, dry-run-proven offline
-  (self-test 25/25). Nothing in the port required weakening a contract.
+  (self-test 33/33). Nothing in the port required weakening a contract.
 - **The gaps are known and bounded, not disqualifying:** two NEEDS-VERIFICATION items (hooks.json
   firing — mitigated by runner self-validation; skills preload/agent memory — workaroundable by
   prompt inlining) and two residual divergences (§above), one of which FINALIZE already backstops.
