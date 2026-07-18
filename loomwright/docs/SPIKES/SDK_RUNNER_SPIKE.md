@@ -45,7 +45,7 @@ metric in the runner's EXECUTE_RESULT-equivalent output — every subtask entry 
 query's real spend into the failed entry; `proxy: true`-labeled zeros on `--dry-run` — token counts
 are never invented). The aggregate `total_tokens` is a volume figure (cache-read tokens counted
 1:1), not a cost proxy — cost is `total_cost_usd`. **Live verification of the `taskBudget` /
-`effort` / `QueryFailedError` paths is PENDING** — the first live eval run (`FABLE_PARITY_EVAL.md`)
+`effort` / `QueryFailedError` paths is PENDING** (live checklist also: confirm the terminal result message's `usage` is cumulative-per-query, not last-turn-only — if last-turn, multi-turn queries under-report `total_tokens` silently) — the first live eval run (`FABLE_PARITY_EVAL.md`)
 is their first exercise; offline coverage is config-plumbing + dry-run (the `QueryFailedError`
 fold-back mechanics are now dry-run-exercised via `--dry-run-fixture-set throw-usage`, but the
 live usage-capture-before-throw path itself remains unexercised).

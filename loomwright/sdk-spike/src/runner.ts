@@ -230,7 +230,7 @@ function aggregateTokenUsage(
 // ---------------------------------------------------------------------------
 
 function usage(): string {
-  return "Usage: node dist/runner.js --brief <path> [--dry-run] [--dry-run-fixture-set default|fail|review-fail|throw-usage] [--max-workers N] [--model M] [--effort E] [--worker-effort E] [--reviewer-effort E] [--task-budget N] [--branch B]";
+  return "Usage: node dist/runner.js --brief <path> [--dry-run] [--dry-run-fixture-set default|fail|review-fail|throw-usage (test-internal)] [--max-workers N] [--model M] [--effort E] [--worker-effort E] [--reviewer-effort E] [--task-budget N] [--branch B]";
 }
 
 /** FAIL CLOSED on any effort value outside the SDK's EffortLevel set
