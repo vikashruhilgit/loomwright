@@ -150,6 +150,25 @@ interface QueryOutcome {
 }
 
 /**
+ * Live-mode fail-closed error that CARRIES the token usage captured from the
+ * terminal result message before the throw. Without this, a failing query's
+ * real spend (usage was already read at the top of the result handler) would
+ * escape aggregateTokenUsage entirely and the failed entry's token_usage
+ * would silently under-report. runSubtask's catch folds `usage` back into
+ * the failing role's outcome. Never thrown on the dry-run path.
+ */
+class QueryFailedError extends Error {
+  constructor(
+    message: string,
+    public readonly kind: QueryKind,
+    public readonly usage: RoleTokenUsage
+  ) {
+    super(message);
+    this.name = "QueryFailedError";
+  }
+}
+
+/**
  * The injected query seam. Live mode wires this to the Agent SDK's `query()`;
  * --dry-run injects a fake that returns canned fixtures (no API calls, no
  * network, deterministic) — the "MockTransport" of this spike.
@@ -562,13 +581,20 @@ function makeLiveQuery(): QueryFn {
       const subtype = String(msg["subtype"] ?? "");
       if (subtype === "error_max_structured_output_retries") {
         // FAIL CLOSED: the SDK exhausted its structured-output retries — never
-        // fabricate or accept a schema-invalid result.
-        throw new Error(
-          `error_max_structured_output_retries: ${kind} query() could not produce schema-valid output — failing closed`
+        // fabricate or accept a schema-invalid result. Usage was captured
+        // above, so the typed error carries the real spend of the failed query.
+        throw new QueryFailedError(
+          `error_max_structured_output_retries: ${kind} query() could not produce schema-valid output — failing closed`,
+          kind,
+          usage
         );
       }
       if (subtype.startsWith("error")) {
-        throw new Error(`${kind} query() returned an error result (subtype: ${subtype}) — failing closed`);
+        throw new QueryFailedError(
+          `${kind} query() returned an error result (subtype: ${subtype}) — failing closed`,
+          kind,
+          usage
+        );
       }
       // NEEDS VERIFICATION vs docs: exact field name carrying the structured
       // payload on the final result message; both snake_case and camelCase are
@@ -578,12 +604,25 @@ function makeLiveQuery(): QueryFn {
         msg["structuredOutput"] ??
         (typeof msg["result"] === "string" ? tryParseJson(msg["result"]) : null);
     }
-    if (!sawResult || structured === null || structured === undefined) {
+    if (!sawResult) {
+      // No result message at all — no usage was ever captured, so a plain
+      // Error is honest here (nothing to carry; do NOT claim real zero spend).
       throw new Error(`${kind} query() produced no structured result — failing closed`);
+    }
+    if (structured === null || structured === undefined) {
+      throw new QueryFailedError(
+        `${kind} query() produced no structured result — failing closed`,
+        kind,
+        usage
+      );
     }
     const errors = validateAgainstSchema(structured, schema as never);
     if (errors.length > 0) {
-      throw new Error(`${kind} structured output failed local re-validation: ${errors.join("; ")} — failing closed`);
+      throw new QueryFailedError(
+        `${kind} structured output failed local re-validation: ${errors.join("; ")} — failing closed`,
+        kind,
+        usage
+      );
     }
     return { payload: structured, usage, proxy: false };
   };
@@ -780,6 +819,15 @@ async function main(): Promise<number> {
       });
       mergeOrder.push(branch);
     } catch (err) {
+      // Live-mode fail-closed throws (QueryFailedError) carry the failing
+      // query's captured usage — fold it into that role's outcome so the
+      // failed entry's token_usage includes the real spend of the query
+      // that threw (never overwrite a role outcome that already returned).
+      if (err instanceof QueryFailedError) {
+        const failedOutcome: QueryOutcome = { payload: null, usage: err.usage, proxy: false };
+        if (err.kind === "worker" && workerQuery === null) workerQuery = failedOutcome;
+        else if (err.kind === "reviewer" && reviewerQuery === null) reviewerQuery = failedOutcome;
+      }
       failed.set(subtask.id, {
         subtask,
         branch,
