@@ -18,7 +18,10 @@
 #   5c. INLINE/FLOW-STYLE skills: — unsupported form ERRORs (would under-count)
 #   5d. ORPHANED-BUDGET — a budget key with no matching agent .md ERRORs
 #   5e. COMMENT-TRAILING skills: opener still counts its block items
-#   6.  LIVE REPO — the real gate passes against the checked-in repo
+#   5f. MIRROR-TABLE SYNC — contracts table drift / missing row / ghost row /
+#       missing file all fail CLOSED; matching mirror passes
+#   6.  LIVE REPO — the real gate passes against the checked-in repo (this run
+#       also exercises the REAL mirror table, since no override is set)
 
 set -uo pipefail
 
@@ -63,8 +66,10 @@ mk_skill() { # mk_skill <dir> <name> <bytes>
   { while [ "$i" -lt "$bytes" ]; do printf 'y'; i=$((i+1)); done; echo; } > "$dir/$name/SKILL.md"
 }
 
-run_gate() { # run_gate <agents> <skills> <json>  -> sets OUT, RC
-  OUT="$(TOKEN_BUDGET_AGENTS_DIR="$1" TOKEN_BUDGET_SKILLS_DIR="$2" TOKEN_BUDGET_JSON="$3" bash "$GATE" 2>&1)"
+run_gate() { # run_gate <agents> <skills> <json> [contracts-md]  -> sets OUT, RC
+  # 4th arg omitted => TOKEN_BUDGET_CONTRACTS_MD set EMPTY, which skips the
+  # mirror-table check (hermetic fixtures). Pass a fixture path to exercise it.
+  OUT="$(TOKEN_BUDGET_AGENTS_DIR="$1" TOKEN_BUDGET_SKILLS_DIR="$2" TOKEN_BUDGET_JSON="$3" TOKEN_BUDGET_CONTRACTS_MD="${4-}" bash "$GATE" 2>&1)"
   RC=$?
 }
 
@@ -192,6 +197,42 @@ JSON
 run_gate "$A5e" "$S5e" "$TMP/c5e/budgets.json"
 check "case5e comment-trailing skills opener exits 0" 0 "$RC"
 contains "case5e counts the block skill (not 0)" "$OUT" "1 preloaded skills"
+
+# ---------------------------------------------------------------------------
+# Case 5f — MIRROR-TABLE SYNC: the ARCHITECTURE_CONTRACTS human mirror must
+# match the JSON budgets (machine-synced; drift/missing/ghost rows fail CLOSED).
+# Reuses the c1 fixtures (alpha, budget 250).
+# ---------------------------------------------------------------------------
+mk_contracts() { # mk_contracts <file> <rows...>
+  local f="$1"; shift
+  { echo "## Prompt Token Budgets"
+    echo ""
+    echo "| Agent | Budget (proxy tokens) | Measured | Preloaded skills |"
+    echo "|---|---|---|---|"
+    for r in "$@"; do echo "$r"; done
+    echo ""
+    echo "## Next Section"
+  } > "$f"
+}
+
+mk_contracts "$TMP/c5f-ok.md"      '| `alpha` | 250 | 200 | 1 |'
+run_gate "$A" "$S" "$TMP/c1/budgets.json" "$TMP/c5f-ok.md"
+check "case5f matching mirror passes" 0 "$RC"
+
+mk_contracts "$TMP/c5f-drift.md"   '| `alpha` | 999 | 200 | 1 |'
+run_gate "$A" "$S" "$TMP/c1/budgets.json" "$TMP/c5f-drift.md"
+check "case5f drifted budget cell exits 1" 1 "$RC"
+contains "case5f names mirror drift" "$OUT" "mirror drift"
+
+mk_contracts "$TMP/c5f-missing.md" '| `someone-else` | 250 | 200 | 1 |'
+run_gate "$A" "$S" "$TMP/c1/budgets.json" "$TMP/c5f-missing.md"
+check "case5f missing row exits 1" 1 "$RC"
+contains "case5f names missing mirror row" "$OUT" "no row in"
+contains "case5f flags the ghost row too" "$OUT" "ghost mirror row"
+
+run_gate "$A" "$S" "$TMP/c1/budgets.json" "$TMP/c5f-does-not-exist.md"
+check "case5f missing contracts file exits 1" 1 "$RC"
+contains "case5f names missing contracts file" "$OUT" "contracts mirror file not found"
 
 # ---------------------------------------------------------------------------
 # Case 6 — LIVE REPO: the real gate passes against the checked-in budgets

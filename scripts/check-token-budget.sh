@@ -203,6 +203,60 @@ done <<EOF
 $(jq -r '.agents | keys[]' "$BUDGET_JSON" 2>/dev/null)
 EOF
 
+# Mirror-table sync (mechanized — the ARCHITECTURE_CONTRACTS human mirror was
+# the one unguarded drift surface left; same move as check-skills-index-sync.sh
+# for SKILLS_INDEX version cells). Every JSON agent must have a table row whose
+# budget cell equals .agents[<stem>].budget, and every table row must have a
+# JSON entry (no ghost rows). TOKEN_BUDGET_CONTRACTS_MD set-but-EMPTY skips the
+# check (hermetic self-test fixtures only); unset uses the real file; a missing
+# file fails CLOSED.
+CONTRACTS_MD="${TOKEN_BUDGET_CONTRACTS_MD-loomwright/docs/ARCHITECTURE_CONTRACTS.md}"
+if [ -n "$CONTRACTS_MD" ]; then
+  if [ ! -f "$CONTRACTS_MD" ]; then
+    printf "%-22s %8s %8s  %-6s  %s\n" "(mirror)" "-" "-" "ERROR" "contracts mirror file not found: $CONTRACTS_MD"
+    errors=$((errors + 1))
+    exit_code=1
+  else
+    # Body rows of the §Prompt Token Budgets table: "| `stem` | budget | ..."
+    mirror_rows="$(awk '/^## Prompt Token Budgets/{s=1;next} s && /^## /{exit} s && /^\| `/ {print}' "$CONTRACTS_MD")"
+
+    # (a) every JSON agent has a row with an equal budget cell
+    while IFS= read -r key; do
+      [ -n "$key" ] || continue
+      jbudget="$(jq -r --arg k "$key" '.agents[$k].budget' "$BUDGET_JSON")"
+      row="$(printf '%s\n' "$mirror_rows" | awk -F'|' -v k="$key" '{s=$2; gsub(/[` ]/,"",s); if (s==k) {print; exit}}')"
+      if [ -z "$row" ]; then
+        printf "%-22s %8s %8s  %-6s  %s\n" "$key" "-" "$jbudget" "ERROR" "no row in $CONTRACTS_MD §'Prompt Token Budgets' — add the mirror row in the same edit"
+        errors=$((errors + 1))
+        exit_code=1
+      else
+        mbudget="$(printf '%s\n' "$row" | awk -F'|' '{b=$3; gsub(/[[:space:]]/,"",b); print b}')"
+        if [ "$mbudget" != "$jbudget" ]; then
+          printf "%-22s %8s %8s  %-6s  %s\n" "$key" "-" "$jbudget" "ERROR" "mirror drift: table budget cell '$mbudget' != JSON budget '$jbudget' in $CONTRACTS_MD — update both in the same edit"
+          errors=$((errors + 1))
+          exit_code=1
+        fi
+      fi
+    done <<EOF
+$(jq -r '.agents | keys[]' "$BUDGET_JSON" 2>/dev/null)
+EOF
+
+    # (b) no ghost rows (a table row whose stem has no JSON entry)
+    while IFS= read -r row; do
+      [ -n "$row" ] || continue
+      rstem="$(printf '%s\n' "$row" | awk -F'|' '{s=$2; gsub(/[` ]/,"",s); print s}')"
+      [ -n "$rstem" ] || continue
+      if ! jq -e --arg k "$rstem" '.agents | has($k)' "$BUDGET_JSON" >/dev/null 2>&1; then
+        printf "%-22s %8s %8s  %-6s  %s\n" "$rstem" "-" "-" "ERROR" "ghost mirror row: table lists an agent with no entry in $BUDGET_JSON"
+        errors=$((errors + 1))
+        exit_code=1
+      fi
+    done <<EOF
+$mirror_rows
+EOF
+  fi
+fi
+
 echo "------------------------------------------------------------------------------"
 echo "agents checked: $agent_count | breaches: $breaches | errors: $errors | proxy tokens = bytes/$DIVISOR (NOT exact Anthropic counts)"
 
