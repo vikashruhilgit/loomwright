@@ -120,6 +120,38 @@ if [ "$RUNNER_RAN" = 1 ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# (b1a) Per-subtask token accounting on completed entries (dry-run zeros are
+#       synthesized, so every completed entry must carry token_usage with
+#       proxy:true — never invented token counts).
+# ---------------------------------------------------------------------------
+if [ "$RUNNER_RAN" = 1 ] && [ "$HAVE_NODE" = 1 ]; then
+  if printf '%s' "$RUNNER_OUT" | node -e '
+      const r = JSON.parse(require("fs").readFileSync(0, "utf8"));
+      const problems = [];
+      if (!Array.isArray(r.subtasks_completed) || r.subtasks_completed.length === 0)
+        problems.push("no completed entries to check token_usage on");
+      for (const s of r.subtasks_completed ?? []) {
+        const t = s.token_usage;
+        if (!t || typeof t !== "object") { problems.push(s.task_id + ": token_usage missing"); continue; }
+        if (t.proxy !== true) problems.push(s.task_id + ": proxy !== true on dry-run entry");
+        for (const role of ["worker", "reviewer"]) {
+          if (!t[role] || typeof t[role].input_tokens !== "number" || typeof t[role].total_cost_usd !== "number")
+            problems.push(s.task_id + ": " + role + " role usage missing/malformed");
+        }
+        if (typeof t.total_tokens !== "number" || typeof t.total_cost_usd !== "number")
+          problems.push(s.task_id + ": total_tokens/total_cost_usd missing");
+      }
+      if (problems.length) { console.error(problems.join("; ")); process.exit(1); }
+    '; then
+    pass "dry-run completed entries carry token_usage (worker+reviewer roles, proxy:true)"
+  else
+    fail "dry-run completed entries missing/malformed token_usage (proxy:true expected)"
+  fi
+else
+  skip "token-accounting check on completed entries skipped — dry-run output or node unavailable"
+fi
+
+# ---------------------------------------------------------------------------
 # (b1b) Failure-path dry-runs (offline): --dry-run-fixture-set fail /
 #       review-fail exercise the worker-failed gate, the review-FAIL branch,
 #       and the blocked-forever sweep (dependent subtask lands failed).
@@ -155,8 +187,173 @@ if [ "$HAVE_NODE" = 1 ] && [ -f dist/runner.js ]; then
   else
     fail "failure dry-run (fixture-set review-fail) assertions failed (exit $REVFAIL_CODE): $REVFAIL_OUT"
   fi
+  # Token accounting on the failure path: the worker-failed entry ran ONLY the
+  # worker query (worker usage present, reviewer null — review never ran); the
+  # blocked-forever entry ran NO query (token_usage null, nothing invented).
+  if printf '%s' "$FAIL_OUT" | node -e '
+      const r = JSON.parse(require("fs").readFileSync(0, "utf8"));
+      const problems = [];
+      const workerFailed = (r.subtasks_failed ?? []).filter((s) => s.error.includes("status=failed"));
+      const blocked = (r.subtasks_failed ?? []).filter((s) => s.error.includes("blocked"));
+      if (workerFailed.length === 0) problems.push("no worker-failed entry found");
+      if (blocked.length === 0) problems.push("no blocked entry found");
+      for (const s of workerFailed) {
+        const t = s.token_usage;
+        if (!t || typeof t !== "object") { problems.push(s.task_id + ": worker-failed entry missing token_usage"); continue; }
+        if (!t.worker || typeof t.worker.input_tokens !== "number")
+          problems.push(s.task_id + ": worker usage missing on worker-failed entry");
+        if (t.reviewer !== null) problems.push(s.task_id + ": reviewer must be null (review never ran)");
+      }
+      for (const s of blocked) {
+        if (s.token_usage !== null) problems.push(s.task_id + ": blocked entry token_usage must be null");
+      }
+      if (problems.length) { console.error(problems.join("; ")); process.exit(1); }
+    '; then
+    pass "failure dry-run token accounting: worker-failed entry has worker usage + reviewer null; blocked entry null"
+  else
+    fail "failure dry-run token accounting assertions failed: $FAIL_OUT"
+  fi
+  # QueryFailedError fold-back (offline): fixture-set throw-usage makes the
+  # reviewer query throw AFTER usage capture; the runSubtask catch must fold
+  # the thrown query's synthetic usage (proxy:true — never invented as real)
+  # into the failed entry's token_usage.reviewer.
+  THROW_OUT=$(node dist/runner.js --brief "$MINI_BRIEF" --dry-run --dry-run-fixture-set throw-usage 2>&1)
+  THROW_CODE=$?
+  if [ "$THROW_CODE" = 1 ] && printf '%s' "$THROW_OUT" | node -e '
+      const r = JSON.parse(require("fs").readFileSync(0, "utf8"));
+      const problems = [];
+      if (r.subtasks_completed.length !== 0) problems.push("expected 0 completed");
+      const thrown = (r.subtasks_failed ?? []).filter((s) => s.error.includes("throw-usage fixture"));
+      if (thrown.length === 0) problems.push("no reviewer-threw entry found");
+      for (const s of thrown) {
+        const t = s.token_usage;
+        if (!t || typeof t !== "object") { problems.push(s.task_id + ": token_usage missing on thrown entry"); continue; }
+        if (!t.reviewer) { problems.push(s.task_id + ": reviewer usage not folded back from QueryFailedError"); continue; }
+        if (t.reviewer.input_tokens !== 1000 || t.reviewer.output_tokens !== 200 ||
+            t.reviewer.cache_creation_input_tokens !== 50 || t.reviewer.cache_read_input_tokens !== 300)
+          problems.push(s.task_id + ": folded reviewer usage does not match the thrown fixture usage");
+        if (t.proxy !== true) problems.push(s.task_id + ": proxy must be true (synthetic thrown usage)");
+        if (!t.worker) problems.push(s.task_id + ": worker usage missing (worker ran before the throw)");
+      }
+      if (problems.length) { console.error(problems.join("; ")); process.exit(1); }
+    '; then
+    pass "failure dry-run (fixture-set throw-usage): QueryFailedError usage folded into failed entry (proxy:true), exit 1"
+  else
+    fail "failure dry-run (fixture-set throw-usage) fold-back assertions failed (exit $THROW_CODE): $THROW_OUT"
+  fi
+  # Symmetric WORKER-arm fold-back (offline): fixture-set throw-usage-worker
+  # makes the WORKER query throw after usage capture; the catch must fold the
+  # usage into token_usage.worker, and reviewer stays null (never ran).
+  THROWW_OUT=$(node dist/runner.js --brief "$MINI_BRIEF" --dry-run --dry-run-fixture-set throw-usage-worker 2>&1)
+  THROWW_CODE=$?
+  if [ "$THROWW_CODE" = 1 ] && printf '%s' "$THROWW_OUT" | node -e '
+      const r = JSON.parse(require("fs").readFileSync(0, "utf8"));
+      const problems = [];
+      if (r.subtasks_completed.length !== 0) problems.push("expected 0 completed");
+      const thrown = (r.subtasks_failed ?? []).filter((s) => s.error.includes("throw-usage-worker fixture"));
+      if (thrown.length === 0) problems.push("no worker-threw entry found");
+      for (const s of thrown) {
+        const t = s.token_usage;
+        if (!t || typeof t !== "object") { problems.push(s.task_id + ": token_usage missing on thrown entry"); continue; }
+        if (!t.worker) { problems.push(s.task_id + ": worker usage not folded back from QueryFailedError"); continue; }
+        if (t.worker.input_tokens !== 700 || t.worker.output_tokens !== 150 ||
+            t.worker.cache_creation_input_tokens !== 40 || t.worker.cache_read_input_tokens !== 250)
+          problems.push(s.task_id + ": folded worker usage does not match the thrown fixture usage");
+        if (t.proxy !== true) problems.push(s.task_id + ": proxy must be true (synthetic thrown usage)");
+        if (t.reviewer !== null) problems.push(s.task_id + ": reviewer must be null (reviewer never ran)");
+      }
+      if (problems.length) { console.error(problems.join("; ")); process.exit(1); }
+    '; then
+    pass "failure dry-run (fixture-set throw-usage-worker): worker-arm fold-back proven (worker usage folded, reviewer null, proxy:true, exit 1)"
+  else
+    fail "failure dry-run (fixture-set throw-usage-worker) fold-back assertions failed (exit $THROWW_CODE): $THROWW_OUT"
+  fi
 else
   skip "failure-path dry-runs skipped — dist/runner.js not available"
+fi
+
+# ---------------------------------------------------------------------------
+# (b1c) Config-lever CLI validation (fail-closed, BEFORE any query) +
+#       task-budget boundary acceptance — dist-guarded like (b1b).
+# ---------------------------------------------------------------------------
+if [ "$HAVE_NODE" = 1 ] && [ -f dist/runner.js ]; then
+  WEFF_OUT=$(node dist/runner.js --brief "$MINI_BRIEF" --dry-run --worker-effort turbo 2>&1)
+  WEFF_CODE=$?
+  if [ "$WEFF_CODE" != 0 ] && printf '%s' "$WEFF_OUT" | grep -q -- "--worker-effort must be one of"; then
+    pass "invalid --worker-effort fails closed (exit $WEFF_CODE, names the flag + allowed set)"
+  else
+    fail "invalid --worker-effort did not fail closed (exit $WEFF_CODE): $WEFF_OUT"
+  fi
+  GEFF_OUT=$(node dist/runner.js --brief "$MINI_BRIEF" --dry-run --effort ludicrous 2>&1)
+  GEFF_CODE=$?
+  if [ "$GEFF_CODE" != 0 ] && printf '%s' "$GEFF_OUT" | grep -q -- "--effort must be one of"; then
+    pass "invalid --effort fails closed (exit $GEFF_CODE, names the flag + allowed set)"
+  else
+    fail "invalid --effort did not fail closed (exit $GEFF_CODE): $GEFF_OUT"
+  fi
+  TBLO_OUT=$(node dist/runner.js --brief "$MINI_BRIEF" --dry-run --task-budget 100 2>&1)
+  TBLO_CODE=$?
+  if [ "$TBLO_CODE" != 0 ] && printf '%s' "$TBLO_OUT" | grep -q "20000"; then
+    pass "--task-budget 100 fails closed citing the 20000-token minimum (exit $TBLO_CODE)"
+  else
+    fail "--task-budget 100 did not fail closed citing the minimum (exit $TBLO_CODE): $TBLO_OUT"
+  fi
+  TBNI_OUT=$(node dist/runner.js --brief "$MINI_BRIEF" --dry-run --task-budget 1.5 2>&1)
+  TBNI_CODE=$?
+  if [ "$TBNI_CODE" != 0 ] && printf '%s' "$TBNI_OUT" | grep -q -- "--task-budget must be an integer"; then
+    pass "--task-budget 1.5 (non-integer) fails closed (exit $TBNI_CODE)"
+  else
+    fail "--task-budget 1.5 did not fail closed on the non-integer branch (exit $TBNI_CODE): $TBNI_OUT"
+  fi
+  REFF_OUT=$(node dist/runner.js --brief "$MINI_BRIEF" --dry-run --reviewer-effort bogus 2>&1)
+  REFF_CODE=$?
+  if [ "$REFF_CODE" != 0 ] && printf '%s' "$REFF_OUT" | grep -q -- "--reviewer-effort must be one of"; then
+    pass "invalid --reviewer-effort fails closed (exit $REFF_CODE, names the flag + allowed set)"
+  else
+    fail "invalid --reviewer-effort did not fail closed (exit $REFF_CODE): $REFF_OUT"
+  fi
+  TBOK_OUT=$(SDK_SPIKE_TRACE_OPTS=1 node dist/runner.js --brief "$MINI_BRIEF" --dry-run --task-budget 20000 2>&1)
+  TBOK_CODE=$?
+  if [ "$TBOK_CODE" = 0 ]; then
+    pass "--task-budget 20000 boundary accepted (dry-run completes, exit 0)"
+  else
+    fail "--task-budget 20000 boundary rejected (exit $TBOK_CODE): $TBOK_OUT"
+  fi
+
+  # Positive-path effort-precedence assertions (via the dry-run seam's
+  # DRY-RUN opts trace on stderr — asserts the RESOLVED values the real call
+  # sites pass, closing the gap where a precedence regression would pass
+  # silently offline because dry-run never acts on effort).
+  PDEF_OUT=$(SDK_SPIKE_TRACE_OPTS=1 node dist/runner.js --brief "$MINI_BRIEF" --dry-run 2>&1)
+  if printf '%s' "$PDEF_OUT" | grep -q "DRY-RUN worker opts: effort=medium taskBudget=(omitted)" \
+     && printf '%s' "$PDEF_OUT" | grep -q "DRY-RUN reviewer opts: effort=high taskBudget=(omitted)"; then
+    pass "effort precedence (no flags): ROLE_CONFIG defaults resolve (worker=medium, reviewer=high; taskBudget omitted)"
+  else
+    fail "effort precedence (no flags) trace missing or wrong: $PDEF_OUT"
+  fi
+  PGLO_OUT=$(SDK_SPIKE_TRACE_OPTS=1 node dist/runner.js --brief "$MINI_BRIEF" --dry-run --effort low 2>&1)
+  if printf '%s' "$PGLO_OUT" | grep -q "DRY-RUN worker opts: effort=low" \
+     && printf '%s' "$PGLO_OUT" | grep -q "DRY-RUN reviewer opts: effort=low"; then
+    pass "effort precedence (--effort low): global override beats ROLE_CONFIG for BOTH roles"
+  else
+    fail "effort precedence (--effort low) trace missing or wrong: $PGLO_OUT"
+  fi
+  PPER_OUT=$(SDK_SPIKE_TRACE_OPTS=1 node dist/runner.js --brief "$MINI_BRIEF" --dry-run --effort low --worker-effort max 2>&1)
+  if printf '%s' "$PPER_OUT" | grep -q "DRY-RUN worker opts: effort=max" \
+     && printf '%s' "$PPER_OUT" | grep -q "DRY-RUN reviewer opts: effort=low"; then
+    pass "effort precedence (--worker-effort max --effort low): per-role beats global; other role keeps global"
+  else
+    fail "effort precedence (per-role over global) trace missing or wrong: $PPER_OUT"
+  fi
+  # Worker-only taskBudget passthrough: reviewer stays (omitted) even when set.
+  if printf '%s' "$TBOK_OUT" | grep -q "DRY-RUN worker opts: effort=medium taskBudget=20000" \
+     && printf '%s' "$TBOK_OUT" | grep -q "DRY-RUN reviewer opts: effort=high taskBudget=(omitted)"; then
+    pass "--task-budget 20000 reaches WORKER queries only (reviewer trace shows taskBudget omitted)"
+  else
+    fail "worker-only taskBudget passthrough trace missing or wrong: $TBOK_OUT"
+  fi
+else
+  skip "config-lever CLI validation checks skipped — dist/runner.js not available"
 fi
 
 # ---------------------------------------------------------------------------
@@ -307,6 +504,26 @@ if [ "$HAVE_NODE" = 1 ] && [ -f dist/schemas.js ]; then
   fi
 else
   skip "validator recursion check skipped — dist/schemas.js not available"
+fi
+
+# ---------------------------------------------------------------------------
+# (c4) Config-lever source invariants (static, always run)
+#      - taskBudget is omit-when-unset: guarded by a strict `!== undefined`
+#        check (never sent as null/0 when the flag is absent)
+#      - ROLE_CONFIG table is the single source of per-role effort defaults
+#        (worker medium, reviewer high — not hard-coded inline at call sites)
+# ---------------------------------------------------------------------------
+if grep -q "opts.taskBudget !== undefined" src/runner.ts; then
+  pass "runner.ts guards taskBudget with !== undefined (omitted from Options when unset)"
+else
+  fail "runner.ts missing the taskBudget !== undefined omit-when-unset guard"
+fi
+if grep -q "ROLE_CONFIG" src/runner.ts \
+   && grep -q 'worker: { effort: "medium" }' src/runner.ts \
+   && grep -q 'reviewer: { effort: "high" }' src/runner.ts; then
+  pass "runner.ts ROLE_CONFIG table present (worker: medium, reviewer: high)"
+else
+  fail "runner.ts missing ROLE_CONFIG table with worker medium + reviewer high defaults"
 fi
 
 # README contract + quarantine statement (cheap contract checks)

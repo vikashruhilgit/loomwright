@@ -34,10 +34,26 @@ fail-closed error handling)? And is the result cheaper/faster enough to justify 
 | 5 | TS vs Python maturity | NEEDS VERIFICATION | Docs treat both equally; TS bundles the CC binary → **pick TypeScript, reason recorded** |
 | 6 | Per-agent model + effort | SUPPORTED | AgentDefinition `model` (incl. `inherit`) + `effort` (`low..max`) |
 | 7 | Worktree/sandbox isolation | PARTIAL | No native sandbox; SDK runs in cwd — external `git worktree` per worker (matches our existing design); per-query `cwd` |
+| 8 | Per-role effort config (token-levers job, doc-verified 2026-07-18 vs pinned 0.3.202 `sdk.d.ts`) | SUPPORTED | `Options.effort?: EffortLevel` at `sdk.d.ts:1620` (top-level per-`query()` surface — distinct from the `AgentDefinition.effort` surface in row 6); `EffortLevel = 'low'\|'medium'\|'high'\|'xhigh'\|'max'` at `:522`. Runner: `ROLE_CONFIG` table (worker `medium`, reviewer `high`), per-role/global CLI overrides, invalid values fail closed before any query |
+| 9 | Per-subtask task budget (token-levers job, doc-verified 2026-07-18 vs pinned 0.3.202 `sdk.d.ts`) | SUPPORTED @alpha | `taskBudget?: {total: number}` at `sdk.d.ts:1647-1649` (beta header `task-budgets-2026-03-13`). NO type-level floor — the documented 20k minimum is enforced runner-side (`--task-budget` < 20000 fails closed; omitted entirely from `Options` when unset; worker queries only) |
+| 10 | Context editing / history pruning (token-levers job, doc-verified 2026-07-18 vs pinned 0.3.202 `sdk.d.ts`) | NOT-EXPOSED-BY-SDK | No per-query context-editing/prune option on `Options` in pinned 0.3.202 — the closest surfaces are the PreCompact/PostCompact hooks, `getContextUsage()` (`sdk.d.ts:2369`), and settings-level autoCompact controls. Recorded as a gap per the token-levers constraint; the pin is unchanged (no SDK upgrade in that job) |
+
+**Token accounting (token-levers job):** token-cost-per-subtask is now a first-class recorded
+metric in the runner's EXECUTE_RESULT-equivalent output — every subtask entry carries an additive
+`token_usage` object aggregated from its worker + reviewer `query()` results (real `usage` /
+`total_cost_usd` / `num_turns` in live mode, including `QueryFailedError` fold-back of a failing
+query's real spend into the failed entry; `proxy: true`-labeled zeros on `--dry-run` — token counts
+are never invented). The aggregate `total_tokens` is a volume figure (cache-read tokens counted
+1:1), not a cost proxy — cost is `total_cost_usd`. **Live verification of the `taskBudget` /
+`effort` / `QueryFailedError` paths is PENDING** (live checklist also: confirm the terminal result message's `usage` is cumulative-per-query, not last-turn-only — if last-turn, multi-turn queries under-report `total_tokens` silently; and confirm `total_cost_usd` is per-query, not process-cumulative — if cumulative, summing worker+reviewer per subtask in `aggregateTokenUsage` would double-count cost) — the first live eval run (`FABLE_PARITY_EVAL.md`)
+is their first exercise; offline coverage is config-plumbing + dry-run (the `QueryFailedError`
+fold-back mechanics are now dry-run-exercised on BOTH arms via `--dry-run-fixture-set
+throw-usage` / `throw-usage-worker`, but the live usage-capture-before-throw path itself
+remains unexercised).
 
 ## Parity matrix
 
-### What ported cleanly (dry-run-proven in `sdk-spike/`, self-test 25/25)
+### What ported cleanly (dry-run-proven in `sdk-spike/`, self-test 41/41)
 
 | Prompt-loop element | Port | Evidence |
 |---|---|---|
@@ -56,7 +72,7 @@ fail-closed error handling)? And is the result cheaper/faster enough to justify 
 | Skills preload & agent memory for SDK-defined agents — **NEEDS VERIFICATION** | The plugin's `skills:` frontmatter preload and `memory: project` persistence are Claude Code plugin-agent features; nothing in the SDK docs verified 2026-07-07 (subagents.md / structured-outputs.md) states that AgentDefinition-declared agents receive either. The spike's workers run without preloaded skills or persistent memory; a v16 runner would need to inline skill content into prompts (workaround exists) and re-verify memory. Marked needs-verification, not confirmed-absent. |
 | No native sandbox | SDK runs in `cwd` (capability row 7, verified 2026-07-07). Isolation comes from external `git worktree` per worker + per-query `cwd` — the same design the prompt loop already uses, so this is parity-by-construction, not a regression. |
 | Structured output is per-`query()` top-level | The `output_format` schema applies to the query's single top-level result (capability row 2, https://code.claude.com/docs/en/agent-sdk/structured-outputs.md, verified 2026-07-07), so per-worker schemas force **one `query()` per worker/reviewer** — no multiplexing several schema-forced roles inside one session. Cost implication measured by the live comparison below. |
-| Exact TS option spellings | `output_format` vs `outputFormat`, top-level `effort`, the structured-payload field on the result message — coded defensively with `// NEEDS VERIFICATION vs docs` markers in `src/runner.ts` (capability row 5). |
+| Exact TS option spellings | `output_format` vs `outputFormat`, the structured-payload field on the result message — coded defensively with `// NEEDS VERIFICATION vs docs` markers in `src/runner.ts` (capability row 5). |
 | json_schema strictness semantics — **NEEDS VERIFICATION** | Does the SDK require all-properties-required under `additionalProperties: false` (as OpenAI strict mode canonically does)? `src/schemas.ts` now adopts the strict-mode-safe posture (every declared property required, previously-optional ones nullable), which is valid under either semantics — but the SDK's actual enforcement is unverified; a rejecting backend would have exhausted structured-output retries on every live `query()` while the offline suite stayed green. |
 | Spike simplifications (not SDK limits) | No fix-worker retry loop after a non-PASS review, no Context-Keeper, no tool-call budget / EXECUTE_CHECKPOINT, no Step 2a dependency materialization (producer branches are not merged into dependent worktrees), no branch merge/delete (FINALIZE's job, per the seam's documented delta). |
 
@@ -132,7 +148,7 @@ Honest reading of the parity matrix:
   dependency-driven scheduling, schema-forced WORKER_RESULT v2 / CODE_REVIEW_RESULT v3 (versions
   preserved), worktree isolation with commit-before-remove, fail-closed error handling,
   EXECUTE_RESULT shape — ported to ~500 lines of deterministic TypeScript, dry-run-proven offline
-  (self-test 25/25). Nothing in the port required weakening a contract.
+  (self-test 41/41). Nothing in the port required weakening a contract.
 - **The gaps are known and bounded, not disqualifying:** two NEEDS-VERIFICATION items (hooks.json
   firing — mitigated by runner self-validation; skills preload/agent memory — workaroundable by
   prompt inlining) and two residual divergences (§above), one of which FINALIZE already backstops.

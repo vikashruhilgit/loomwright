@@ -22,20 +22,63 @@ node dist/runner.js --brief <path> [--dry-run]
 Full option set:
 
 ```
-node dist/runner.js --brief <path> [--dry-run] [--dry-run-fixture-set default|fail|review-fail] [--max-workers N] [--model M] [--effort E] [--branch B]
+node dist/runner.js --brief <path> [--dry-run] [--dry-run-fixture-set default|fail|review-fail|throw-usage|throw-usage-worker (throw-* test-internal)] [--max-workers N] [--model M] [--effort E] [--worker-effort E] [--reviewer-effort E] [--task-budget N] [--branch B]
 ```
 
 | Flag | Meaning |
 |---|---|
 | `--brief <path>` | Supervisor-Ready Brief to execute (required). The runner parses its `## Subtask Structure` table and `### Subtask contracts` YAML. |
 | `--dry-run` | **No API calls, no worktrees, no git.** Workers/reviewers are replaced by an injected fake that returns canned schema-valid fixtures from `src/dry-run-fixtures/`. Fully offline and deterministic. |
-| `--dry-run-fixture-set` | Which fixture set the dry-run fake returns (default `default`). `fail` makes workers return `status: failed` (exercises the worker-failed gate + blocked-forever sweep offline); `review-fail` makes workers succeed and reviewers return `decision: FAIL` (exercises the review-FAIL branch + blocked sweep). Both failure sets exit 1 with the failures in `subtasks_failed`. |
+| `--dry-run-fixture-set` | Which fixture set the dry-run fake returns (default `default`). `fail` makes workers return `status: failed` (exercises the worker-failed gate + blocked-forever sweep offline); `review-fail` makes workers succeed and reviewers return `decision: FAIL` (exercises the review-FAIL branch + blocked sweep). Both failure sets exit 1 with the failures in `subtasks_failed`. `throw-usage` and `throw-usage-worker` are test-internal: the reviewer (resp. worker) query throws a `QueryFailedError` carrying synthetic `proxy: true` usage, exercising both arms of the fold-back that preserves a failing query's captured spend (exit 1; in the worker variant the reviewer never runs, so its usage stays `null`). Note: these are the one deliberate exception to the "dry-run emits zeros" rule — the thrown usage is non-zero synthetic data, labeled `proxy: true`. |
 | `--max-workers N` | Concurrent worker cap (default 2) — the in-code equivalent of the poll loop's `max_workers`. |
 | `--model M` | Pass-through model for worker/reviewer `query()` calls (default: SDK default / inherit). |
-| `--effort E` | Pass-through effort (`low..max`) — see NEEDS VERIFICATION note below. |
+| `--effort E` | Global effort override for **both** roles (`low\|medium\|high\|xhigh\|max`, the SDK `EffortLevel` set at `sdk.d.ts:522`; `Options.effort` typed at `:1620`). Per-role flags win over it. Invalid values **fail closed** (stderr error, exit 2, before any query). |
+| `--worker-effort E` | Per-role effort override for worker queries (same value set / fail-closed validation). |
+| `--reviewer-effort E` | Per-role effort override for reviewer queries (same value set / fail-closed validation). |
+| `--task-budget N` | Opt-in per-**worker**-query token budget, passed as `taskBudget: { total: N }` (`sdk.d.ts:1647-1649`, **@alpha**, beta header `task-budgets-2026-03-13`). The runner enforces the documented **20,000-token minimum** (`N < 20000` fails closed, exit 2, before any query). When unset the field is **omitted entirely** from `Options` (never `null`/`0`). Reviewer queries never get a budget — their output is bounded by the CODE_REVIEW_RESULT schema, so a budget adds mid-review truncation risk without a cost upside. |
 | `--branch B` | Feature branch to base worktrees on (default: the brief's `Suggested branch:`, else the current branch). |
 
-Exit codes: `0` all subtasks completed+PASS · `1` one or more subtasks failed/blocked · `2` fatal (bad args, unreadable brief, SDK missing in live mode).
+Exit codes: `0` all subtasks completed+PASS · `1` one or more subtasks failed/blocked · `2` fatal (bad args — including invalid effort/budget values — unreadable brief, SDK missing in live mode).
+
+### Per-role effort defaults (ROLE_CONFIG)
+
+Effort is resolved via the runner's single `ROLE_CONFIG` table (`src/runner.ts`) —
+never hard-coded at the call sites:
+
+| Role | Default effort | Why |
+|---|---|---|
+| worker | `medium` | Mechanical, schema-bounded implementation subtasks. |
+| reviewer | `high` | The higher named level from the same table: review is the spike's only quality gate (no fix-worker retry loop), so it gets deeper reasoning. |
+
+Override precedence (all values fail-closed validated at parse time):
+`--worker-effort` / `--reviewer-effort` > `--effort` (both roles) > `ROLE_CONFIG` default.
+
+### Per-subtask token accounting
+
+Each subtask entry in the EXECUTE_RESULT-equivalent block carries an **additive**
+`token_usage` object aggregating its worker + reviewer queries, captured from
+each query's terminal result message (`SDKResultSuccess` at `sdk.d.ts:4024` —
+`usage` / `total_cost_usd` / `num_turns` at `:4037-4042`):
+
+```
+"token_usage": {
+  "worker":   { "input_tokens", "output_tokens", "cache_creation_input_tokens",
+                "cache_read_input_tokens", "total_cost_usd", "num_turns" },
+  "reviewer": { ...same shape, or null if that query never ran... },
+  "total_tokens": <sum of all four token fields across both roles>,
+  "total_cost_usd": <sum across both roles>,
+  "proxy": false
+}
+```
+
+- `total_tokens` is a **volume** figure (cache-read tokens counted 1:1), not a
+  cost proxy — cost is `total_cost_usd`.
+- `subtasks_completed[]` entries always carry it (both queries ran).
+- `subtasks_failed[]` entries carry it **where available** (e.g. worker ran,
+  review failed); `null` when no query ran (e.g. the blocked-forever sweep).
+- In `--dry-run` the fixtures carry no real usage, so the runner emits **zeros
+  with `proxy: true`** — it never invents token counts (mirrors the plugin's
+  token-ledger convention of proxy-labeling synthetic numbers).
 
 ## What it does
 
@@ -114,8 +157,8 @@ or dry-run-only**, never exercised against the live SDK:
   `review-fail` failure dry-runs) — but only through the dry-run seam; their
   live-`query()` counterparts remain pending.
 - In degraded offline mode (no `node_modules`) the result is **"0 failures"
-  with the compile and dry-run SKIPped — not 25 passes**; only a full install
-  + build yields the 25/25 run.
+  with the compile and dry-run SKIPped — not 36 passes**; only a full install
+  + build yields the 41/41 run.
 
 ## What this proves / what it can't
 
@@ -136,9 +179,18 @@ or dry-run-only**, never exercised against the live SDK:
   `settingSources` includes `"project"` — whether the plugin's
   `hooks/hooks.json` SubagentStop validators fire for workers spawned via
   `query()` is unverified and recorded as a spike finding, not assumed.
-- Exact TS SDK option spellings (`output_format` vs `outputFormat`, top-level
-  `effort`, structured-payload field on the result message) — coded
-  defensively with `// NEEDS VERIFICATION vs docs` markers in `src/runner.ts`.
+- Exact TS SDK option spellings (`output_format` vs `outputFormat`,
+  structured-payload field on the result message) — coded defensively with
+  `// NEEDS VERIFICATION vs docs` markers in `src/runner.ts`. (Top-level
+  `effort` is no longer on this list — it is doc-verified on `Options` at
+  `sdk.d.ts:1620`, as is `taskBudget` at `:1647-1649` (@alpha).)
+- **Context editing / history pruning: NOT exposed by the pinned SDK version —
+  recorded as a gap.** `@anthropic-ai/claude-agent-sdk` 0.3.202 offers no
+  per-query context-editing/prune option on `Options`; the closest surfaces are
+  the PreCompact/PostCompact hooks, `getContextUsage()`, and settings-level
+  autoCompact controls. Per the token-levers job's constraint, the runner does
+  NOT hack around this and the SDK pin is unchanged; the lever is documented as
+  a gap (no code).
 - Live token/latency vs the prompt-based Execute Manager — requires the live
   arm of `loomwright/docs/SPIKES/FABLE_PARITY_EVAL.md`.
 - Simplifications vs the real loop: no fix-worker retries, no Context-Keeper,

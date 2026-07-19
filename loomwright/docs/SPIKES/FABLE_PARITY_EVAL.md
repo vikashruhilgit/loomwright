@@ -49,6 +49,16 @@ counters (from `SUPERVISOR_RESULT.summary`), wall-clock notes.
 **No metric may be added after the first run;** a metric may only be dropped with a written reason
 in this file.
 
+> **Amendment (amended 2026-07-18, before any run — additive):** **token-cost-per-subtask** is
+> added as a RECORDED secondary observable for arm-3 runs: the additive per-subtask `token_usage`
+> object on the SDK runner's EXECUTE_RESULT-equivalent output (worker + reviewer `usage` fields
+> aggregated per subtask, plus `total_cost_usd` / `num_turns`; `proxy: true` labels synthesized
+> dry-run values — real token counts are never invented). This observable is **explicitly NOT a
+> decision input** — the pre-committed decision rule above (including the 1.5× arm-3-vs-arm-2
+> wall-token cap) is byte-unchanged by this amendment, and the Results table below was verified
+> still EMPTY at amendment time. Recorded per the pre-registration discipline: amendments are
+> additive, datestamped, and made strictly before the first run.
+
 ## Protocol
 
 1. **Corpus selection:** pick **5 requirements** (small-to-medium, orchestration-shaped — multi-file
