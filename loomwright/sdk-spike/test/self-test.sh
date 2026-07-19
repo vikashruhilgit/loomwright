@@ -285,12 +285,45 @@ if [ "$HAVE_NODE" = 1 ] && [ -f dist/runner.js ]; then
   else
     fail "invalid --reviewer-effort did not fail closed (exit $REFF_CODE): $REFF_OUT"
   fi
-  TBOK_OUT=$(node dist/runner.js --brief "$MINI_BRIEF" --dry-run --task-budget 20000 2>&1)
+  TBOK_OUT=$(SDK_SPIKE_TRACE_OPTS=1 node dist/runner.js --brief "$MINI_BRIEF" --dry-run --task-budget 20000 2>&1)
   TBOK_CODE=$?
   if [ "$TBOK_CODE" = 0 ]; then
     pass "--task-budget 20000 boundary accepted (dry-run completes, exit 0)"
   else
     fail "--task-budget 20000 boundary rejected (exit $TBOK_CODE): $TBOK_OUT"
+  fi
+
+  # Positive-path effort-precedence assertions (via the dry-run seam's
+  # DRY-RUN opts trace on stderr — asserts the RESOLVED values the real call
+  # sites pass, closing the gap where a precedence regression would pass
+  # silently offline because dry-run never acts on effort).
+  PDEF_OUT=$(SDK_SPIKE_TRACE_OPTS=1 node dist/runner.js --brief "$MINI_BRIEF" --dry-run 2>&1)
+  if printf '%s' "$PDEF_OUT" | grep -q "DRY-RUN worker opts: effort=medium taskBudget=(omitted)" \
+     && printf '%s' "$PDEF_OUT" | grep -q "DRY-RUN reviewer opts: effort=high taskBudget=(omitted)"; then
+    pass "effort precedence (no flags): ROLE_CONFIG defaults resolve (worker=medium, reviewer=high; taskBudget omitted)"
+  else
+    fail "effort precedence (no flags) trace missing or wrong: $PDEF_OUT"
+  fi
+  PGLO_OUT=$(SDK_SPIKE_TRACE_OPTS=1 node dist/runner.js --brief "$MINI_BRIEF" --dry-run --effort low 2>&1)
+  if printf '%s' "$PGLO_OUT" | grep -q "DRY-RUN worker opts: effort=low" \
+     && printf '%s' "$PGLO_OUT" | grep -q "DRY-RUN reviewer opts: effort=low"; then
+    pass "effort precedence (--effort low): global override beats ROLE_CONFIG for BOTH roles"
+  else
+    fail "effort precedence (--effort low) trace missing or wrong: $PGLO_OUT"
+  fi
+  PPER_OUT=$(SDK_SPIKE_TRACE_OPTS=1 node dist/runner.js --brief "$MINI_BRIEF" --dry-run --effort low --worker-effort max 2>&1)
+  if printf '%s' "$PPER_OUT" | grep -q "DRY-RUN worker opts: effort=max" \
+     && printf '%s' "$PPER_OUT" | grep -q "DRY-RUN reviewer opts: effort=low"; then
+    pass "effort precedence (--worker-effort max --effort low): per-role beats global; other role keeps global"
+  else
+    fail "effort precedence (per-role over global) trace missing or wrong: $PPER_OUT"
+  fi
+  # Worker-only taskBudget passthrough: reviewer stays (omitted) even when set.
+  if printf '%s' "$TBOK_OUT" | grep -q "DRY-RUN worker opts: effort=medium taskBudget=20000" \
+     && printf '%s' "$TBOK_OUT" | grep -q "DRY-RUN reviewer opts: effort=high taskBudget=(omitted)"; then
+    pass "--task-budget 20000 reaches WORKER queries only (reviewer trace shows taskBudget omitted)"
+  else
+    fail "worker-only taskBudget passthrough trace missing or wrong: $TBOK_OUT"
   fi
 else
   skip "config-lever CLI validation checks skipped — dist/runner.js not available"

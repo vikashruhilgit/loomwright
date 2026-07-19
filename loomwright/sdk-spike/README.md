@@ -22,7 +22,7 @@ node dist/runner.js --brief <path> [--dry-run]
 Full option set:
 
 ```
-node dist/runner.js --brief <path> [--dry-run] [--dry-run-fixture-set default|fail|review-fail|throw-usage] [--max-workers N] [--model M] [--effort E] [--worker-effort E] [--reviewer-effort E] [--task-budget N] [--branch B]
+node dist/runner.js --brief <path> [--dry-run] [--dry-run-fixture-set default|fail|review-fail|throw-usage (test-internal)] [--max-workers N] [--model M] [--effort E] [--worker-effort E] [--reviewer-effort E] [--task-budget N] [--branch B]
 ```
 
 | Flag | Meaning |
@@ -158,7 +158,7 @@ or dry-run-only**, never exercised against the live SDK:
   live-`query()` counterparts remain pending.
 - In degraded offline mode (no `node_modules`) the result is **"0 failures"
   with the compile and dry-run SKIPped — not 36 passes**; only a full install
-  + build yields the 36/36 run.
+  + build yields the 40/40 run.
 
 ## What this proves / what it can't
 

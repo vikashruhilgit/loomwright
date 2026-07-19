@@ -52,7 +52,7 @@ live usage-capture-before-throw path itself remains unexercised).
 
 ## Parity matrix
 
-### What ported cleanly (dry-run-proven in `sdk-spike/`, self-test 36/36)
+### What ported cleanly (dry-run-proven in `sdk-spike/`, self-test 40/40)
 
 | Prompt-loop element | Port | Evidence |
 |---|---|---|
@@ -147,7 +147,7 @@ Honest reading of the parity matrix:
   dependency-driven scheduling, schema-forced WORKER_RESULT v2 / CODE_REVIEW_RESULT v3 (versions
   preserved), worktree isolation with commit-before-remove, fail-closed error handling,
   EXECUTE_RESULT shape — ported to ~500 lines of deterministic TypeScript, dry-run-proven offline
-  (self-test 36/36). Nothing in the port required weakening a contract.
+  (self-test 40/40). Nothing in the port required weakening a contract.
 - **The gaps are known and bounded, not disqualifying:** two NEEDS-VERIFICATION items (hooks.json
   firing — mitigated by runner self-validation; skills preload/agent memory — workaroundable by
   prompt inlining) and two residual divergences (§above), one of which FINALIZE already backstops.

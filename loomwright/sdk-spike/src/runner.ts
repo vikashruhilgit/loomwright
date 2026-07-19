@@ -496,7 +496,19 @@ function fixtureDir(): string {
  */
 function makeDryRunQuery(fixtureSet: DryRunFixtureSet): QueryFn {
   const dir = fixtureDir();
-  return async (kind, _prompt, schema, _opts) => {
+  return async (kind, _prompt, schema, opts) => {
+    // Opt-in trace (stderr, dry-run only, gated on SDK_SPIKE_TRACE_OPTS=1):
+    // echo the RESOLVED effort/taskBudget the call site passed through the
+    // seam, so the offline self-test can assert ROLE_CONFIG precedence and
+    // taskBudget omit-when-unset / worker-only end-to-end. Dry-run never
+    // acts on these opts; gated so default dry-run output stays byte-stable.
+    if (process.env["SDK_SPIKE_TRACE_OPTS"] === "1") {
+      console.error(
+        `DRY-RUN ${kind} opts: effort=${opts.effort ?? "(unset)"} taskBudget=${
+          opts.taskBudget !== undefined ? opts.taskBudget : "(omitted)"
+        }`
+      );
+    }
     if (fixtureSet === "throw-usage" && kind === "reviewer") {
       // Offline stand-in for the live fail-closed throws: the reviewer query
       // dies AFTER usage was captured. Synthetic numbers, labeled proxy:true
