@@ -604,7 +604,7 @@ function makeLiveQuery(): QueryFn {
     };
     if (opts.cwd) options.cwd = opts.cwd; // per-query cwd = the subtask's worktree (capability row 7)
     if (opts.model) options.model = opts.model;
-    if (opts.effort) {
+    if (opts.effort !== undefined) {
       // Per-role effort resolved via ROLE_CONFIG / resolveRoleConfig at the
       // call sites. `Options.effort` is typed at sdk.d.ts:1620 (EffortLevel
       // set at :522); values are fail-closed validated in parseArgs.
