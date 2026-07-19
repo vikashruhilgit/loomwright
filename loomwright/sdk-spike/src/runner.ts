@@ -74,7 +74,7 @@ interface Subtask {
   requires: ContractItem[];
 }
 
-type DryRunFixtureSet = "default" | "fail" | "review-fail" | "throw-usage";
+type DryRunFixtureSet = "default" | "fail" | "review-fail" | "throw-usage" | "throw-usage-worker";
 
 interface CliArgs {
   brief: string;
@@ -230,7 +230,7 @@ function aggregateTokenUsage(
 // ---------------------------------------------------------------------------
 
 function usage(): string {
-  return "Usage: node dist/runner.js --brief <path> [--dry-run] [--dry-run-fixture-set default|fail|review-fail|throw-usage (test-internal)] [--max-workers N] [--model M] [--effort E] [--worker-effort E] [--reviewer-effort E] [--task-budget N] [--branch B]";
+  return "Usage: node dist/runner.js --brief <path> [--dry-run] [--dry-run-fixture-set default|fail|review-fail|throw-usage|throw-usage-worker (throw-* test-internal)] [--max-workers N] [--model M] [--effort E] [--worker-effort E] [--reviewer-effort E] [--task-budget N] [--branch B]";
 }
 
 /** FAIL CLOSED on any effort value outside the SDK's EffortLevel set
@@ -257,8 +257,8 @@ function parseArgs(argv: string[]): CliArgs {
         break;
       case "--dry-run-fixture-set": {
         const set = argv[++i] ?? "";
-        if (set !== "default" && set !== "fail" && set !== "review-fail" && set !== "throw-usage") {
-          throw new Error(`--dry-run-fixture-set must be default|fail|review-fail|throw-usage. ${usage()}`);
+        if (set !== "default" && set !== "fail" && set !== "review-fail" && set !== "throw-usage" && set !== "throw-usage-worker") {
+          throw new Error(`--dry-run-fixture-set must be default|fail|review-fail|throw-usage|throw-usage-worker. ${usage()}`);
         }
         args.dryRunFixtureSet = set;
         break;
@@ -493,6 +493,9 @@ function fixtureDir(): string {
  *   throw-usage — workers succeed, reviewers throw QueryFailedError carrying
  *                 synthetic captured usage (proxy:true — never invented as
  *                 real) to exercise the runSubtask catch fold-back offline
+ *   throw-usage-worker — the WORKER query throws the same QueryFailedError
+ *                 shape, exercising the symmetric worker arm of the fold-back
+ *                 (reviewer never runs; its usage stays null)
  */
 function makeDryRunQuery(fixtureSet: DryRunFixtureSet): QueryFn {
   const dir = fixtureDir();
@@ -507,6 +510,24 @@ function makeDryRunQuery(fixtureSet: DryRunFixtureSet): QueryFn {
         `DRY-RUN ${kind} opts: effort=${opts.effort ?? "(unset)"} taskBudget=${
           opts.taskBudget !== undefined ? opts.taskBudget : "(omitted)"
         }`
+      );
+    }
+    if (fixtureSet === "throw-usage-worker" && kind === "worker") {
+      // Symmetric worker-arm variant of throw-usage: the WORKER query dies
+      // after usage capture, so the fold-back's worker branch is dry-run-
+      // proven too (reviewer never runs for the subtask).
+      throw new QueryFailedError(
+        "worker query failed after usage capture (throw-usage-worker fixture)",
+        "worker",
+        {
+          input_tokens: 700,
+          output_tokens: 150,
+          cache_creation_input_tokens: 40,
+          cache_read_input_tokens: 250,
+          total_cost_usd: 0.008,
+          num_turns: 2,
+        },
+        true
       );
     }
     if (fixtureSet === "throw-usage" && kind === "reviewer") {

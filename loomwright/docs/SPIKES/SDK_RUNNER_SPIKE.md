@@ -45,14 +45,15 @@ metric in the runner's EXECUTE_RESULT-equivalent output — every subtask entry 
 query's real spend into the failed entry; `proxy: true`-labeled zeros on `--dry-run` — token counts
 are never invented). The aggregate `total_tokens` is a volume figure (cache-read tokens counted
 1:1), not a cost proxy — cost is `total_cost_usd`. **Live verification of the `taskBudget` /
-`effort` / `QueryFailedError` paths is PENDING** (live checklist also: confirm the terminal result message's `usage` is cumulative-per-query, not last-turn-only — if last-turn, multi-turn queries under-report `total_tokens` silently) — the first live eval run (`FABLE_PARITY_EVAL.md`)
+`effort` / `QueryFailedError` paths is PENDING** (live checklist also: confirm the terminal result message's `usage` is cumulative-per-query, not last-turn-only — if last-turn, multi-turn queries under-report `total_tokens` silently; and confirm `total_cost_usd` is per-query, not process-cumulative — if cumulative, summing worker+reviewer per subtask in `aggregateTokenUsage` would double-count cost) — the first live eval run (`FABLE_PARITY_EVAL.md`)
 is their first exercise; offline coverage is config-plumbing + dry-run (the `QueryFailedError`
-fold-back mechanics are now dry-run-exercised via `--dry-run-fixture-set throw-usage`, but the
-live usage-capture-before-throw path itself remains unexercised).
+fold-back mechanics are now dry-run-exercised on BOTH arms via `--dry-run-fixture-set
+throw-usage` / `throw-usage-worker`, but the live usage-capture-before-throw path itself
+remains unexercised).
 
 ## Parity matrix
 
-### What ported cleanly (dry-run-proven in `sdk-spike/`, self-test 40/40)
+### What ported cleanly (dry-run-proven in `sdk-spike/`, self-test 41/41)
 
 | Prompt-loop element | Port | Evidence |
 |---|---|---|
@@ -147,7 +148,7 @@ Honest reading of the parity matrix:
   dependency-driven scheduling, schema-forced WORKER_RESULT v2 / CODE_REVIEW_RESULT v3 (versions
   preserved), worktree isolation with commit-before-remove, fail-closed error handling,
   EXECUTE_RESULT shape — ported to ~500 lines of deterministic TypeScript, dry-run-proven offline
-  (self-test 40/40). Nothing in the port required weakening a contract.
+  (self-test 41/41). Nothing in the port required weakening a contract.
 - **The gaps are known and bounded, not disqualifying:** two NEEDS-VERIFICATION items (hooks.json
   firing — mitigated by runner self-validation; skills preload/agent memory — workaroundable by
   prompt inlining) and two residual divergences (§above), one of which FINALIZE already backstops.

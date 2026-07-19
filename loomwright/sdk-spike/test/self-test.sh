@@ -241,6 +241,33 @@ if [ "$HAVE_NODE" = 1 ] && [ -f dist/runner.js ]; then
   else
     fail "failure dry-run (fixture-set throw-usage) fold-back assertions failed (exit $THROW_CODE): $THROW_OUT"
   fi
+  # Symmetric WORKER-arm fold-back (offline): fixture-set throw-usage-worker
+  # makes the WORKER query throw after usage capture; the catch must fold the
+  # usage into token_usage.worker, and reviewer stays null (never ran).
+  THROWW_OUT=$(node dist/runner.js --brief "$MINI_BRIEF" --dry-run --dry-run-fixture-set throw-usage-worker 2>&1)
+  THROWW_CODE=$?
+  if [ "$THROWW_CODE" = 1 ] && printf '%s' "$THROWW_OUT" | node -e '
+      const r = JSON.parse(require("fs").readFileSync(0, "utf8"));
+      const problems = [];
+      if (r.subtasks_completed.length !== 0) problems.push("expected 0 completed");
+      const thrown = (r.subtasks_failed ?? []).filter((s) => s.error.includes("throw-usage-worker fixture"));
+      if (thrown.length === 0) problems.push("no worker-threw entry found");
+      for (const s of thrown) {
+        const t = s.token_usage;
+        if (!t || typeof t !== "object") { problems.push(s.task_id + ": token_usage missing on thrown entry"); continue; }
+        if (!t.worker) { problems.push(s.task_id + ": worker usage not folded back from QueryFailedError"); continue; }
+        if (t.worker.input_tokens !== 700 || t.worker.output_tokens !== 150 ||
+            t.worker.cache_creation_input_tokens !== 40 || t.worker.cache_read_input_tokens !== 250)
+          problems.push(s.task_id + ": folded worker usage does not match the thrown fixture usage");
+        if (t.proxy !== true) problems.push(s.task_id + ": proxy must be true (synthetic thrown usage)");
+        if (t.reviewer !== null) problems.push(s.task_id + ": reviewer must be null (reviewer never ran)");
+      }
+      if (problems.length) { console.error(problems.join("; ")); process.exit(1); }
+    '; then
+    pass "failure dry-run (fixture-set throw-usage-worker): worker-arm fold-back proven (worker usage folded, reviewer null, proxy:true, exit 1)"
+  else
+    fail "failure dry-run (fixture-set throw-usage-worker) fold-back assertions failed (exit $THROWW_CODE): $THROWW_OUT"
+  fi
 else
   skip "failure-path dry-runs skipped — dist/runner.js not available"
 fi
