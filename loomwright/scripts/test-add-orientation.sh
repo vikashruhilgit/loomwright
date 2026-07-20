@@ -258,6 +258,19 @@ else
 fi
 
 # ============================================================================
+# 13. reserved slug 'readme' rejected (would clobber the store's README.md on
+#     case-insensitive filesystems, and the reader excludes README.md by name)
+R13="$(new_repo)"
+b13="$(mk_body "$R13")"
+run_writer "$R13" "readme" "s" "$b13"; rc_r1="$RC"
+if [ "$rc_r1" -ne 0 ] && [ "$(count_store_files "$R13")" = "0" ] \
+   && printf '%s' "$OUT" | grep -qi "reserved"; then
+  ok "reserved slug 'readme' rejected, nothing written"
+else
+  no "reserved slug readme (rc=$rc_r1 files=$(count_store_files "$R13") out=[$OUT])"
+fi
+
+# ============================================================================
 echo
 if [ "$fail" -eq 0 ]; then
   echo "ALL TESTS PASSED ($pass/$pass)"

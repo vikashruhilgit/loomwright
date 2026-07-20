@@ -100,6 +100,7 @@ case "$slug" in
   *..*) die "rejected: area-slug may not contain '..': $slug" ;;
   .*)   die "rejected: area-slug may not start with a dot: $slug" ;;
   -*|*-) die "rejected: area-slug may not start or end with '-': $slug" ;;
+  readme) die "rejected: 'readme' is reserved (collides with the store's README.md on case-insensitive filesystems)" ;;
 esac
 case "$slug" in
   *[!a-z0-9-]*) die "rejected: area-slug must be a single [a-z0-9-]+ segment (no spaces/metachars/uppercase): $slug" ;;

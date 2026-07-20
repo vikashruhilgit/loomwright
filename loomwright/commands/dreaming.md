@@ -218,6 +218,8 @@ On Accept, a lesson is written via `write-lessons.sh` (see Phase 4 / APPROVE).
 
 When the gitignored `.supervisor/orientation-proposals/` directory holds proposal `.md` files (written by the Supervisor Phase 4.5 completion tail — see `skills/self-heal-advisory/SKILL.md` Part 2), `/dreaming` appends a promotion queue after the six report sections, listing each proposal's area slug, one-line summary, and file path, labeled **PENDING USER APPROVAL**. This is a promotion queue, not a seventh mandatory report section — it appears only when proposals exist. Per-item **Accept** promotes the proposal into the committed `.agent/orientation/` store via `add-orientation.sh … --confirm` and deletes the promoted proposal file; **Reject** deletes the proposal file without writing; **Edit** revises the proposal text before a re-offered Accept (see Phase 4 / APPROVE for the exact invocation and argv discipline).
 
+### Empty-state suppression
+
 If, after dedup against existing project memory and after bounding LESSONS per category, there are **no new candidates and no new lessons**, `/dreaming` says so in a single line (e.g., "No new memory candidates or lessons after dedup/bounding — nothing to propose.") and **writes nothing**. This keeps reports rare and actionable rather than padding every run with already-known facts.
 
 ### APPLY deferral (v14.5.0 scope)
