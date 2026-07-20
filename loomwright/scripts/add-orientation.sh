@@ -171,6 +171,11 @@ sha="$(git -C "$REPO_DIR" rev-parse --short HEAD 2>/dev/null)" \
   || die "cannot resolve HEAD sha in repo: $REPO_DIR (is it a git repo with commits?)"
 
 areas_val="${areas_arg:-$slug}"
+# Bare-slug fallback rarely matches a real tracked path, so the reader's staleness
+# check would never fire for this memo — surface the sharp edge (fail-safe: warn only).
+if [ -z "$areas_arg" ]; then
+  echo "warning: --areas not given; defaulting to bare slug '$slug' — if that matches no tracked path, staleness detection will never fire for this memo. Pass --areas \"<repo-relative path prefixes>\"." >&2
+fi
 [ -n "$areas_val" ] || die "rejected: --areas is empty"
 # Benign character set only (letters, digits, dot, underscore, slash, space, hyphen) — a '|'
 # or '<'/'>' etc. would break the pipe-delimited header comment; '..' is traversal-shaped.

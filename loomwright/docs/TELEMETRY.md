@@ -191,7 +191,7 @@ by the **plugin** session id (e.g. `supervisor-2026-07-07-fable-parity`). To kee
 | `token_proxy_transcript_bytes` | proxy path only | Byte size of `agent_transcript_path` (preferred) or `transcript_path` via `os.path.getsize` only |
 | `agent_type`, `agent_id`, `ts` | optional / when present | Identity + UTC ISO timestamp; **omitted when absent** (never the literal `"unknown"`) |
 
-**Additive key (v15.12.0+):** `orientation_source` — emitted only when `LOOMWRIGHT_ORIENTATION_SOURCE` is one of `memos|repo_map|graphify|none` (orientation attribution); omitted on unset/empty/invalid (fail-safe — the event line still writes).
+**Additive key (v15.12.0+):** `orientation_source` — emitted only when `LOOMWRIGHT_ORIENTATION_SOURCE` is one of `memos|repo_map|graphify|none` (orientation attribution); omitted on unset/empty/invalid (fail-safe — the event line still writes). **Reader-side plumbing only in v15.12.0 — no in-repo producer sets the env var yet.** The emitter runs inside a SubagentStop `type: command` hook, which inherits the MAIN session environment — an `export` inside a subagent's Bash call (where the orientation tier is actually known) does NOT reach the hook process. The intended producer (a follow-up) writes the tier to a small gitignored state file under `.supervisor/` that the hook-side emitter reads; until that lands, the field is reserved plumbing and is simply omitted.
 
 **Reserved future key (do not emit yet):** `graph_context_used` — reserved for
 job 04 (graph/brain context attribution). Leave room in readers; the emitter

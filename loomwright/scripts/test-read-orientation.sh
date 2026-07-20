@@ -222,6 +222,22 @@ else
 fi
 
 # ============================================================================
+# 11. hostile-marker list parity: the reader's and writer's marker lists are a
+#     security-parity surface kept in sync — assert mechanically, not by comment.
+extract_markers() {
+  # Pull the quoted strings out of the `for m in ...` marker loop (2 physical lines).
+  sed -n '/^ *for m in "ignore previous"/,/; do$/p' "$1" \
+    | grep -o '"[^"]*"' | sed 's/^"//; s/"$//' | sort
+}
+rlist="$(extract_markers "$SCRIPT_DIR/read-orientation.sh")"
+wlist="$(extract_markers "$SCRIPT_DIR/add-orientation.sh")"
+if [ -n "$rlist" ] && [ "$rlist" = "$wlist" ]; then
+  ok "hostile-marker lists identical in reader and writer ($(printf '%s\n' "$rlist" | wc -l | tr -d ' ') markers)"
+else
+  no "hostile-marker list drift between reader and writer (reader=[$rlist] writer=[$wlist])"
+fi
+
+# ============================================================================
 echo
 if [ "$fail" -eq 0 ]; then
   echo "ALL TESTS PASSED ($pass/$pass)"

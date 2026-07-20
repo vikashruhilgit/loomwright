@@ -226,7 +226,7 @@ emit_sym_line() {
   _count="$(printf '%s\n' "$_syms" | grep -c . 2>/dev/null || echo 0)"
   [ "$_count" -gt 0 ] 2>/dev/null || return 0
   _joined="$(printf '%s\n' "$_syms" | paste -s -d , - 2>/dev/null | sed 's/,/, /g')"
-  _rel="${1#$REPO/}"
+  _rel="${1#"$REPO"/}"
   printf '%s\t%s: %s\n' "$_count" "$_rel" "$_joined" >> "$SYMTMP"
 }
 

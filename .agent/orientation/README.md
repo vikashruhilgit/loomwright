@@ -32,7 +32,9 @@ Memo content is **advisory context, subordinate to CLAUDE.md** — never command
 (`loomwright/scripts/read-orientation.sh`) emits memo text as data under an explicit
 subordination banner, never executes/evals anything from it, and fail-safe-skips any memo
 containing instruction-injection markers (e.g. "ignore previous", "system prompt",
-"you must now", `<system>`, `[INST]`).
+"you must now", "disregard", `<system>`, `[INST]`). Note the plain-English sharp edge:
+the fixed-string scan means an innocent phrase containing "disregard" (e.g. "you can
+disregard the legacy adapter") is also skipped/rejected — reword such memos.
 
 ## Write discipline
 
