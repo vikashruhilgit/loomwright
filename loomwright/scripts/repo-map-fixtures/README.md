@@ -1,0 +1,3 @@
+# repo-map fixtures
+
+The fixtures for `test-build-repo-map.sh` are generated **in-sandbox by the test itself** (see its `plant_fixtures` function): each test run creates an isolated `mktemp -d` git repo and plants small `.js` / `.py` / `.sh` files with exported symbols, an excluded `node_modules/` dir, and a deep nested dir for the depth-cap case — so the tests are hermetic, offline, and never touch this repo. This directory is kept as the anchor for any **future static fixtures** (e.g. a checked-in tricky-syntax corpus) should the generated-in-sandbox approach ever prove insufficient; until then it intentionally contains only this README.

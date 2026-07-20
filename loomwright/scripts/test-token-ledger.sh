@@ -21,6 +21,8 @@
 #  11. top-level usage keys (no nested usage object) → proxy:false, fields copied
 #  12. unrelated dict field with a usage sub-object stays proxy:true (scoped scan)
 #  13. all-zero usage falls back to proxy; any non-zero field stays real usage
+#  14. orientation_source: valid LOOMWRIGHT_ORIENTATION_SOURCE value emitted;
+#      unset ⇒ field absent; invalid value ⇒ field absent (fail-safe omission)
 
 # EXIT: 0 on full pass, 1 on any failed assertion.
 # Style mirrors test-insights.sh / test-send-telemetry-core.sh.
@@ -75,15 +77,29 @@ trap cleanup EXIT INT TERM
 run_sut() {
   # Usage: run_sut <payload-file-or--> [stdin via file]
   # Echoes rc on last line as RC=<n>; stdout ignored (SUT is silent).
+  # LOOMWRIGHT_ORIENTATION_SOURCE is scrubbed via `env -u` so a dev-environment
+  # export can never flip the orientation_source-absent assertions (case 14b and
+  # all pre-14 cases); case 14 sets it explicitly via run_sut_env.
   local payload="$1"
   local out rc
   if [ "$payload" = "--empty" ]; then
-    out="$( cd "$SANDBOX" && bash "$SUT" </dev/null 2>&1 )"
+    out="$( cd "$SANDBOX" && env -u LOOMWRIGHT_ORIENTATION_SOURCE bash "$SUT" </dev/null 2>&1 )"
     rc=$?
   else
-    out="$( cd "$SANDBOX" && bash "$SUT" < "$payload" 2>&1 )"
+    out="$( cd "$SANDBOX" && env -u LOOMWRIGHT_ORIENTATION_SOURCE bash "$SUT" < "$payload" 2>&1 )"
     rc=$?
   fi
+  printf '%s\n' "$out"
+  printf 'RC=%s\n' "$rc"
+}
+
+run_sut_env() {
+  # Usage: run_sut_env <LOOMWRIGHT_ORIENTATION_SOURCE-value> <payload-file>
+  # Same contract as run_sut, with the orientation env var set explicitly.
+  local osrc="$1" payload="$2"
+  local out rc
+  out="$( cd "$SANDBOX" && env LOOMWRIGHT_ORIENTATION_SOURCE="$osrc" bash "$SUT" < "$payload" 2>&1 )"
+  rc=$?
   printf '%s\n' "$out"
   printf 'RC=%s\n' "$rc"
 }
@@ -393,6 +409,80 @@ OUT13B="$(run_sut "$PAYLOAD13B")"
 LINE13B="$(tail -1 "$SANDBOX/.supervisor/logs/fixture-token-ledger-mixedzero-001.jsonl" 2>/dev/null)"
 assert_eq "case13b mixed-zero usage stays proxy:false" "false" "$(printf '%s' "$LINE13B" | jq -r '.proxy')"
 assert_eq "case13b zero field preserved inside usage" "0" "$(printf '%s' "$LINE13B" | jq -r '.usage.input_tokens')"
+
+echo "== 14. orientation_source — valid emitted / unset absent / invalid absent =="
+TRANSCRIPT14="$SANDBOX/agent-transcript-14.jsonl"
+printf 'HHHHHH' > "$TRANSCRIPT14"   # 6 bytes
+# 14a: valid value ("memos") → field present with that exact value.
+PAYLOAD14A="$SANDBOX/orientation-valid-payload.json"
+jq -n --arg tp "$TRANSCRIPT14" '{
+  session_id: "fixture-token-ledger-orientation-valid-001",
+  agent_type: "loomwright:code-reviewer",
+  agent_transcript_path: $tp
+}' > "$PAYLOAD14A"
+OUT14A="$(run_sut_env memos "$PAYLOAD14A")"
+RC14A="$(printf '%s\n' "$OUT14A" | grep '^RC=' | tail -1 | cut -d= -f2)"
+assert_eq "case14a exit 0" "0" "$RC14A"
+LINE14A="$(tail -1 "$SANDBOX/.supervisor/logs/fixture-token-ledger-orientation-valid-001.jsonl" 2>/dev/null)"
+assert_eq "case14a orientation_source=memos" "memos" "$(printf '%s' "$LINE14A" | jq -r '.orientation_source')"
+# Also prove a second enum value round-trips (repo_map — underscore, not hyphen).
+PAYLOAD14A2="$SANDBOX/orientation-valid2-payload.json"
+jq -n --arg tp "$TRANSCRIPT14" '{
+  session_id: "fixture-token-ledger-orientation-valid-002",
+  agent_type: "loomwright:code-reviewer",
+  agent_transcript_path: $tp
+}' > "$PAYLOAD14A2"
+OUT14A2="$(run_sut_env repo_map "$PAYLOAD14A2")"
+LINE14A2="$(tail -1 "$SANDBOX/.supervisor/logs/fixture-token-ledger-orientation-valid-002.jsonl" 2>/dev/null)"
+assert_eq "case14a2 orientation_source=repo_map" "repo_map" "$(printf '%s' "$LINE14A2" | jq -r '.orientation_source')"
+# 14b: unset → field absent (run_sut scrubs the env var).
+PAYLOAD14B="$SANDBOX/orientation-unset-payload.json"
+jq -n --arg tp "$TRANSCRIPT14" '{
+  session_id: "fixture-token-ledger-orientation-unset-001",
+  agent_type: "loomwright:code-reviewer",
+  agent_transcript_path: $tp
+}' > "$PAYLOAD14B"
+OUT14B="$(run_sut "$PAYLOAD14B")"
+RC14B="$(printf '%s\n' "$OUT14B" | grep '^RC=' | tail -1 | cut -d= -f2)"
+assert_eq "case14b exit 0" "0" "$RC14B"
+LINE14B="$(tail -1 "$SANDBOX/.supervisor/logs/fixture-token-ledger-orientation-unset-001.jsonl" 2>/dev/null)"
+if printf '%s' "$LINE14B" | jq -e 'has("orientation_source")' >/dev/null 2>&1; then
+  no "case14b orientation_source present despite unset env"
+else
+  ok "case14b orientation_source absent when env unset"
+fi
+# 14c: invalid value → field absent (fail-safe omission, exit still 0).
+PAYLOAD14C="$SANDBOX/orientation-invalid-payload.json"
+jq -n --arg tp "$TRANSCRIPT14" '{
+  session_id: "fixture-token-ledger-orientation-invalid-001",
+  agent_type: "loomwright:code-reviewer",
+  agent_transcript_path: $tp
+}' > "$PAYLOAD14C"
+OUT14C="$(run_sut_env "bogus-source" "$PAYLOAD14C")"
+RC14C="$(printf '%s\n' "$OUT14C" | grep '^RC=' | tail -1 | cut -d= -f2)"
+assert_eq "case14c exit 0" "0" "$RC14C"
+LINE14C="$(tail -1 "$SANDBOX/.supervisor/logs/fixture-token-ledger-orientation-invalid-001.jsonl" 2>/dev/null)"
+if printf '%s' "$LINE14C" | jq -e 'has("orientation_source")' >/dev/null 2>&1; then
+  no "case14c orientation_source present despite invalid value"
+else
+  ok "case14c orientation_source absent on invalid value"
+fi
+# The line itself must still be written (invalid attribution never drops the event).
+assert_eq "case14c event still written" "token_ledger" "$(printf '%s' "$LINE14C" | jq -r '.event')"
+# Empty-string value behaves like unset.
+PAYLOAD14D="$SANDBOX/orientation-empty-payload.json"
+jq -n --arg tp "$TRANSCRIPT14" '{
+  session_id: "fixture-token-ledger-orientation-empty-001",
+  agent_type: "loomwright:code-reviewer",
+  agent_transcript_path: $tp
+}' > "$PAYLOAD14D"
+OUT14D="$(run_sut_env "" "$PAYLOAD14D")"
+LINE14D="$(tail -1 "$SANDBOX/.supervisor/logs/fixture-token-ledger-orientation-empty-001.jsonl" 2>/dev/null)"
+if printf '%s' "$LINE14D" | jq -e 'has("orientation_source")' >/dev/null 2>&1; then
+  no "case14d orientation_source present despite empty-string value"
+else
+  ok "case14d orientation_source absent on empty-string value"
+fi
 
 echo ""
 echo "RESULT  pass=$PASS_COUNT  fail=$FAIL_COUNT"

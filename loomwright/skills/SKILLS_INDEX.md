@@ -23,12 +23,12 @@ Comprehensive index of all skills available in the Loomwright plugin.
 | Autonomous Loop | `autonomous-loop/` | `/autonomous` (slash command, reference) | ~2,800 [^al-tokens] | 1.4.0 | 2026-07-06 |
 | Automate Loop | `automate-loop/` | `/automate` (slash command, reference) | ~3,200 | 1.2.0 | 2026-07-06 |
 | Review Heal | `review-heal/` | `review-pr-runner` (preload), `/review-pr` + Supervisor + `/autonomous` (reference) | ~3,000 | 1.4.0 | 2026-06-22 |
-| Self-Heal Advisory | `self-heal-advisory/` | Supervisor (on-demand Read at Phase 4.5 entry — deliberately NOT preloaded; Part 1 advisory machinery + Part 2 full Phase 4.5 loop protocol) | ~7,000 | 1.2.0 | 2026-07-07 |
+| Self-Heal Advisory | `self-heal-advisory/` | Supervisor (on-demand Read at Phase 4.5 entry — deliberately NOT preloaded; Part 1 advisory machinery + Part 2 full Phase 4.5 loop protocol) | ~7,000 | 1.3.0 | 2026-07-20 |
 | Preflight Sync | `preflight-sync/` | Supervisor (on-demand Read at Phase 1.5 entry — deliberately NOT preloaded) | ~1,600 | 1.0.0 | 2026-07-06 |
 | Supervisor Config | `supervisor-config/` | Supervisor (on-demand Read at Phase 0 entry — deliberately NOT preloaded) | ~2,400 | 1.1.0 | 2026-07-07 |
 | PR Postmortem | `pr-postmortem/` | `/pr-postmortem` (slash command, reference) | ~1,400 | 1.3.0 | 2026-06-13 |
 | Setup | `setup/` | `/setup` (slash command, read at Step 0) | ~1,200 | 1.0.0 | 2026-06-13 |
-| Brain Context | `brain-context/` | Launch Pad / Code Reviewer / Supervisor (on-demand Read — deliberately NOT preloaded) | ~1,500–2,000 | 1.0.0 | 2026-06-16 |
+| Brain Context | `brain-context/` | Launch Pad / Orchestrator / Code Reviewer / Supervisor (on-demand Read — deliberately NOT preloaded) | ~2,000–2,500 | 1.1.0 | 2026-07-20 |
 | Rules | `rules/` | `/rules` (slash command, reference) | ~1,300 | 1.1.0 | 2026-07-03 |
 
 [^al-tokens]: The `autonomous-loop` skill is intentionally larger than the other reference-category skills (~500–600 tokens). It encodes the full `/autonomous` orchestration protocol (loop phases, EVALUATE branching, signal-extraction algorithms, refined-requirement templates, `AUTONOMOUS_RUN` summary format, failure-modes table) — comprehensive by design because it is the single source of truth for the loop's behavior, read at runtime by the main thread via Step 0. Splitting it across smaller files would fragment the protocol and risk drift; the trade-off is the higher token cost on the one slash command that loads it.

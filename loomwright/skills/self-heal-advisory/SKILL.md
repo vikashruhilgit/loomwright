@@ -1,8 +1,8 @@
 ---
 name: self-heal-advisory
 description: Supervisor Phase 4.5 protocol authority. Part 1 — advisory-only machinery (pre-review enrichments, System Twin conformance/benchmark/ground-truth, contract-builder WRITE path, delta line, hard-signal dual emission; never changes heal_decision or blocks the PR). Part 2 — the full Phase 4.5 SELF_HEAL loop protocol (on-entry actions, base-mismatch cleanup, bounded review-and-fix loop, rubric grading, red-team lens, completion-tail procedure), Read on demand at Phase 4.5 entry, deliberately not preloaded.
-version: "1.2.0"
-lastUpdated: 2026-07-07
+version: "1.3.0"
+lastUpdated: 2026-07-20
 ---
 
 # Self-Heal Protocol (Supervisor Phase 4.5)
@@ -924,6 +924,14 @@ else:
       - **Heal:** {needs_human|max_iterations_reached|self_heal_resume_thrash} — {heal_remaining_issues} remaining
       ```
       **Idempotent — replace, do not duplicate:** locate a prior close-out by the `<!-- loomwright:requirement-closeout -->` sentinel (NOT by a bare `## Status` heading — other tooling may legitimately use that heading for a different purpose, and these `.supervisor/requirements/*.md` files have no fixed heading schema). If the sentinel is present, **REPLACE the whole span** from the sentinel through the end of the `## Status` block it introduces — that is, up to the next `##` heading that appears **after** the `## Status` line, or end-of-file (do NOT stop at the `## Status` heading itself, which is the block's own start); if it is absent, **append** a fresh sentinel-led block. Keying the re-stamp to our own marker makes it collision-proof — an unrelated `## Status` section is never clobbered — and handles the multi-brief case where one requirement spawns several briefs (the latest close-out wins). On success record `record_decision(phase: SELF_HEAL, decision: "requirement_closeout: {done|done_with_escalation}", rationale: "stamped ## Status on {requirement path}")`.
+
+2.6. **Orientation memo proposals (success-only, fail-safe side-effect — additive):**
+
+   Runs on the SAME successful outcomes as step 2.5 — **PASS / loop-skipped / ESCALATED** only; it MUST NOT run on the `failed` / abort / `checkpoint` / invariant-violation / base-mismatch-cleanup paths. The run **MAY** (optional — skip silently when there is nothing durable to say) propose per-area **orientation memos** for the areas this run touched, by writing one proposal file named `<area-slug>.md` (a single `[a-z0-9-]+` segment — the same slug rules `add-orientation.sh` enforces, `readme` reserved) per area to the **gitignored** `.supervisor/orientation-proposals/` directory (`mkdir -p` it first). Each proposal uses the SAME memo format the committed store documents in `.agent/orientation/README.md`: line 1 a machine-parsed header comment `<!-- written_at: <ISO-8601 UTC> | head_sha: <short HEAD sha> | areas: <space-separated repo-relative path prefixes> -->`, line 2 a one-line summary, then a free-form markdown body — the WHOLE file ≤1000 chars (an over-cap proposal would be rejected at promotion time by `add-orientation.sh`, so cap it here).
+
+   **NEVER writes the committed `.agent/orientation/` store.** Promotion into the committed store happens ONLY via the `/dreaming` per-item-approval flow calling `add-orientation.sh` (the store's confirm-gated sole writer) — an automated run proposing memos here can never mutate the committed store.
+
+   This whole step is a **runtime side-effect emitter and MUST fail SAFE** per the CLAUDE.md bimodal-failure invariant: ANY write failure (unwritable/uncreatable dir, disk error) is a **silent logged no-op** — record `record_decision(phase: SELF_HEAL, decision: "orientation_proposals: {n written|noop_write_failed|skipped}", rationale: "advisory — non-fatal")` and continue. It NEVER blocks the completion tail, NEVER changes `heal_decision`, NEVER gates the PR or the run — always continue to step 3 regardless of outcome.
 
 3. **Reset resume counter (unconditional — runs on every exit path: PASS, ESCALATED, or loop-skipped):** `Context-Keeper(operation: record_self_heal_resume, increment: false)`. The completion tail itself is unconditional; so is the reset.
 
