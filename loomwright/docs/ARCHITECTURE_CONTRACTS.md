@@ -340,9 +340,9 @@ A CI ratchet on **spawn-time prompt inventory**. Each agent's effective weight i
 | `review-pr`         | 24230 | 22027 | 2 |
 | `rubric-grader`     | 2330  | 1896  | 0 |
 | `supervisor`        | 51221 | 46564 | 7 |
-| `worker`            | 4574  | 4158  | 0 |
+| `worker`            | 5045  | 4158  | 0 |
 
-> **Raise log:** `rubric-grader` 2086 → 2330 — the shared-agent-prefix block (`loomwright/docs/shared-agent-prefix.md`) added to every agent `.md`; measured 2118 + ~10% headroom per the raise rule.
+> **Raise log:** `rubric-grader` 2086 → 2330 — the shared-agent-prefix block (`loomwright/docs/shared-agent-prefix.md`) added to every agent `.md`; measured 2118 + ~10% headroom per the raise rule. `worker` 4574 → 5045 — same shared block plus the pointer-contract consumer text (bounded-summary + pinned-brief Inputs/Step-1 additions); measured 4586 + ~10% headroom per the raise rule (v15.13.0).
 
 Self-test: `bash scripts/test-check-token-budget.sh` (offline; pass / breach / missing-preloaded-skill / no-budget / frontmatter-bounded-parsing / empty-agents-dir / inline-flow-style-skills / orphaned-budget / live-repo cases). Wired into CI alongside the other repo-root validators. Skills counted are **frontmatter-preloaded only** — command docs and on-demand skills are not spawn-time weight and are out of scope. The gate also fails CLOSED on an unsupported inline/flow-style `skills:` list (would silently under-count) and on an orphaned budget entry (a budget key with no matching agent `.md`).
 
