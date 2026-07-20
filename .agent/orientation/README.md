@@ -59,4 +59,8 @@ disregard the legacy adapter") is also skipped/rejected — reword such memos.
 The reader annotates a memo as `[stale — area changed since <written_at>, verify before
 trusting]` when commits touched its `areas` after `head_sha`, and demotes stale memos after
 fresh ones (never drops them). An unparseable sha / any git error is treated as
-fresh-unknown — staleness detection never blocks a read.
+fresh-unknown — staleness detection never blocks a read. Squash-merge caveat: a `head_sha`
+stamped on a feature branch disappears from history once that branch is squash-merged and
+deleted, so such memos become permanently fresh-unknown (presented WITHOUT a stale
+annotation even when old) — prefer stamping/promoting memos from `main`, and treat
+`written_at` as the honest age signal when in doubt.
