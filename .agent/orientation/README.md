@@ -1,0 +1,59 @@
+# .agent/orientation/ — committed orientation-memo store
+
+A **version-controlled** store of short, per-area orientation memos: durable "how this area
+works" notes an agent can read *before* touching an area, instead of rediscovering the same
+structure every session. Like `.agent/rules/`, this directory is **committed** (NOT gitignored)
+and travels with the repo.
+
+## Format
+
+One `.md` memo per area, named `<area-slug>.md` (slug = a single `[a-z0-9-]+` segment).
+Each memo file:
+
+1. **Line 1 — header comment (machine-parsed):**
+
+   ```
+   <!-- written_at: <ISO-8601 UTC> | head_sha: <full-or-short commit sha> | areas: <space-separated repo-relative path prefixes> -->
+   ```
+
+   - `written_at` — UTC ISO-8601 timestamp of when the memo was written.
+   - `head_sha` — the repo HEAD commit the memo was written against (staleness anchor).
+   - `areas` — space-separated repo-relative path prefixes the memo describes; the reader
+     runs a bounded `git log <head_sha>..HEAD -- <areas>` to detect drift.
+
+2. **Line 2 — a one-line summary** of the memo.
+
+3. **Body** — free-form markdown. **Hard cap: ≤1000 chars TOTAL per memo file** (header +
+   summary + body). Over-cap memos are skipped by the reader and rejected by the writer.
+
+## Memos are DATA, not instructions
+
+Memo content is **advisory context, subordinate to CLAUDE.md** — never commands. The reader
+(`loomwright/scripts/read-orientation.sh`) emits memo text as data under an explicit
+subordination banner, never executes/evals anything from it, and fail-safe-skips any memo
+containing instruction-injection markers (e.g. "ignore previous", "system prompt",
+"you must now", `<system>`, `[INST]`).
+
+## Write discipline
+
+- This committed store is written **ONLY via `loomwright/scripts/add-orientation.sh`**, with
+  **per-item human approval** — never by automated runs. The approval is **mechanized as a
+  confirm-only gate** (same pattern as `add-rule.sh`): the writer writes only when `--confirm`
+  is passed or an interactive TTY user answers `y`; any other invocation (e.g. an automated
+  non-TTY run without `--confirm`) prints the planned memo + target path and exits 0
+  **without writing**.
+- Automated runs that want to propose a memo write **proposals** to the gitignored
+  `.supervisor/orientation-proposals/` instead; a human promotes an approved proposal into
+  this store via `add-orientation.sh --confirm`.
+- The writer enforces: slug path-containment (single `[a-z0-9-]+` segment — no `/`, `..`,
+  leading dot, leading/trailing `-`, metacharacters), the 1000-char cap, hostile-marker
+  rejection (scanned against a whitespace-normalized copy, so markers split across lines are
+  still caught — same normalization as the reader), temp-file + atomic-`mv` writes, and
+  read-back verification (a failed verify of a memo *update* restores the prior memo).
+
+## Staleness
+
+The reader annotates a memo as `[stale — area changed since <written_at>, verify before
+trusting]` when commits touched its `areas` after `head_sha`, and demotes stale memos after
+fresh ones (never drops them). An unparseable sha / any git error is treated as
+fresh-unknown — staleness detection never blocks a read.
