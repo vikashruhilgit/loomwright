@@ -59,6 +59,7 @@ Then persist the task tree **per mode**:
 ### Inputs
 
 - **Goal:** User-provided objective (`goal: "add JWT authentication"`)
+- **Brief pointer (Supervisor `job:` path):** when spawned by Supervisor from a Launch Pad brief, the spawn prompt passes `Brief: {brief_path}` (a `.supervisor/jobs/in-progress/*.md` path) plus a ≤200-char goal summary instead of pasted criteria — Read the brief's Task / Acceptance Criteria / `## Subtask Contracts` sections for the full requirements before decomposing; the summary is orientation only
 - **Project context:** `CLAUDE.md` (patterns, tech stack)
 - **Beads repository:** Current issue tracker state
 - **Git history:** Recent commits and branches
