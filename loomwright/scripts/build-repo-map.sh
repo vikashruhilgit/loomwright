@@ -17,6 +17,10 @@
 #   Tier A (best-effort, optional): if a `tree-sitter` CLI is on PATH *and* has configured
 #     grammars, attempt `tree-sitter tags` signature extraction per file. On ANY error / empty
 #     result it silently degrades to Tier B. NOTHING is ever installed to make Tier A work.
+#     UNVERIFIED against a live tree-sitter install (CLI absent in dev/CI): the
+#     `dump-languages`/`tags` subcommand names may not match every CLI version — if they
+#     don't, Tier A just always degrades to Tier B (safe). Verify on a real install before
+#     relying on Tier A output.
 #   Tier B (zero-dep floor, the deliverable): pure find + grep -E + sed. Always available.
 #
 # USAGE
@@ -88,6 +92,13 @@ case "$MAX" in
 esac
 if [ "$MAX" -le 0 ] 2>/dev/null; then
   err "--max-chars must be > 0 — using default 8000"
+  MAX=8000
+fi
+# A cap smaller than the truncation marker itself cannot honor the "total file
+# fits the cap INCLUDING the marker" contract — treat as invalid, fall back.
+_min_cap=40
+if [ "$MAX" -lt "$_min_cap" ] 2>/dev/null; then
+  err "--max-chars must be >= ${_min_cap} (truncation marker must fit) — using default 8000"
   MAX=8000
 fi
 
