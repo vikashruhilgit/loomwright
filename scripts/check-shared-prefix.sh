@@ -109,7 +109,8 @@ for agent_file in "$AGENTS_DIR"/*.md; do
     continue
   fi
   if [ "$n_begin" != "1" ] || [ "$n_end" != "1" ]; then
-    echo "  DUPLICATE $stem — block markers must appear exactly once (found BEGIN=$n_begin END=$n_end)"
+    if [ "$n_begin" = "$n_end" ]; then label="DUPLICATE"; else label="MALFORMED"; fi
+    echo "  $label $stem — block markers must appear exactly once and balanced (found BEGIN=$n_begin END=$n_end)"
     fail=1
     continue
   fi

@@ -142,6 +142,12 @@ grep -vF '<!-- SHARED-AGENT-PREFIX v1 END -->' "$CANON" > "$CANON.new"
 mv "$CANON.new" "$CANON"
 run_case "canonical without END marker fails" nonzero "exactly one BEGIN and one END"
 
+# --- 8. asymmetric markers in an agent (END deleted) -------------------------
+reset_fixture
+grep -vF '<!-- SHARED-AGENT-PREFIX v1 END -->' "$AGENTS/beta.md" > "$AGENTS/beta.md.new"
+mv "$AGENTS/beta.md.new" "$AGENTS/beta.md"
+run_case "agent with BEGIN but no END fails as MALFORMED" nonzero "MALFORMED beta.md"
+
 # --- Summary -----------------------------------------------------------------
 echo "----------------------------------------"
 echo "test-check-shared-prefix: $pass passed, $fail failed"
