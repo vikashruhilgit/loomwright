@@ -15,7 +15,7 @@
     "qa-strategist":     { "budget": 22877, "measured": 20797, "note": "authoring baseline v15.10.0; 3 preloaded skills" },
     "red-team-reviewer": { "budget": 6065,  "measured": 5513,  "note": "authoring baseline v15.10.0; 1 preloaded skill" },
     "review-pr":         { "budget": 24230, "measured": 22027, "note": "authoring baseline v15.10.0; 2 preloaded skills (name: loomwright:review-pr-runner)" },
-    "rubric-grader":     { "budget": 2086,  "measured": 1896,  "note": "authoring baseline v15.10.0; 0 preloaded skills" },
+    "rubric-grader":     { "budget": 2330,  "measured": 1896,  "note": "authoring baseline v15.10.0; 0 preloaded skills; raised 2086->2330 for the shared-agent-prefix block (docs/shared-agent-prefix.md): measured 2118 + ~10%" },
     "supervisor":        { "budget": 51221, "measured": 46564, "note": "authoring baseline v15.10.0; 7 preloaded skills (name: loomwright:supervisor-runner)" },
     "worker":            { "budget": 4574,  "measured": 4158,  "note": "authoring baseline v15.10.0; 0 preloaded skills" }
   }

@@ -427,7 +427,7 @@ loomwright/                            # Marketplace wrapper repo
 ├── mysql-mcp/                               # Sibling plugin: read-only MySQL MCP server
 └── loomwright/                 # The nested plugin
     ├── .claude-plugin/
-    │   └── plugin.json                      # Plugin manifest (v15.12.0)
+    │   └── plugin.json                      # Plugin manifest (v15.13.0)
     ├── agents/                              # Agent prompts (14 roles)
     │   ├── launch-pad.md, supervisor.md, execute-manager.md, context-keeper.md
     │   ├── worker.md, plan-reviewer.md, rubric-grader.md, product-owner.md, orchestrator.md

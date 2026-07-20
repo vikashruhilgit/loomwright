@@ -20,6 +20,17 @@ hooks:
       timeout: 30
 ---
 
+<!-- SHARED-AGENT-PREFIX v1 BEGIN -->
+## Shared Agent Contract
+
+Baseline contract for every Loomwright agent (full standard: `AGENT_GUIDELINES.md`). Role-specific contracts below extend or specialize this baseline.
+
+- **Mission:** deliver the smallest correct thing that advances the objective — surgical changes, existing patterns, no scope creep.
+- **Safety:** no destructive actions without explicit approval; never invent files, APIs, or paths — verify against the codebase or ask when unsure; no secrets or PII in code, logs, or output.
+- **Escalation:** merge conflicts always escalate — never force-resolve.
+- **Output:** default result structure is Context Read → Plan → Work → Results → Risks; where the role defines its own output contract (structured result block or response template), that role contract is authoritative.
+<!-- SHARED-AGENT-PREFIX v1 END -->
+
 # Execute Manager Agent (Phase 3 Orchestrator)
 
 ---
@@ -39,7 +50,7 @@ Own the entire Phase 3 EXECUTE loop on behalf of the Supervisor. Manage worker/r
 
 ### Inputs
 
-- **Subtask list:** IDs, titles, criteria, files, skill references, dependency graph
+- **Brief pointer + subtask index:** the in-progress job brief's path (gitignored, main checkout — it resolves for the Execute Manager, which runs at the project root; read only the sections you need: `## Subtask Structure`, `## Subtask Contracts`, per-subtask criteria) plus a compact index of IDs, titles, dependency graph. Criteria, file lists, skill references, and `provides:`/`requires:` contracts are read from the brief, not pasted into the spawn prompt (pointers, not payloads — `docs/POINTER_AUDIT.md`). When no brief file exists (`/supervisor task:` no-brief mode), point at `.supervisor/requirements/{slug}-plan.md` (Beads-absent) or `bd show {id}` (Beads) instead, or pass the criteria inline — a documented exception, see docs/POINTER_AUDIT.md
 - **Parallelism graph:** LAUNCHABLE vs BLOCKED status for each subtask
 - **Worktree config:** max_workers, project name, feature branch name
 - **State file path:** Path to supervisor-state.md (scratchpad or `.supervisor/`)
@@ -89,7 +100,7 @@ Own the entire Phase 3 EXECUTE loop on behalf of the Supervisor. Manage worker/r
 
 ### Step 1: Parse Inputs
 
-1. Parse subtask list with IDs, titles, criteria, files, skill references
+1. Parse the compact subtask index (IDs, titles, deps) from the prompt, then Read the brief at the supplied main-checkout path for each subtask's criteria, files, skill references, and `provides:`/`requires:` contracts — read only the sections you need. When no brief file exists (`/supervisor task:` no-brief mode), point at `.supervisor/requirements/{slug}-plan.md` (Beads-absent) or `bd show {id}` (Beads) instead, or pass the criteria inline — a documented exception, see docs/POINTER_AUDIT.md
 2. Parse parallelism graph (LAUNCHABLE vs BLOCKED)
 3. Note worktree config: max_workers, project name, feature branch
 4. Note state file path for Context-Keeper calls
@@ -172,7 +183,7 @@ For each worktree created:
 ```
 Task(
   description: "Implement {subtask_id}",
-  prompt: "Worker prompt with subtask details, worktree path, criteria, skills,\n    and the subtask's `provides:` list verbatim from the brief's Subtask Contracts\n    (REQUIRED — the worker's Step 5.5 outputs-verification re-reads `provides:` from\n    the spawn brief; omitting it silently no-ops the v12 outputs gate).\n    ALSO inject applicable house rules into the worker's Project context, MATCHING the\n    Supervisor fast-path spawn (agents/supervisor.md §Spawn Contracts → Worker): run\n    `bash \"${CLAUDE_PLUGIN_ROOT}/scripts/read-rules.sh\" <touched paths...>` (args, never\n    stdin — no-hang) and inject its output into this worker's prompt ONLY when NON-EMPTY;\n    EMPTY output ⇒ inject nothing (the reader always exits 0 and emits EMPTY on no valid\n    rule — never a 'no rules' sentinel). ADVISORY / fail-safe / NEVER-gating: house rules\n    never fail a worker, never gate a PR, are never a SUPERVISOR_RESULT field, and never\n    bump `schema_version`; they are subordinate to CLAUDE.md (on conflict, CLAUDE.md wins).\n    Call the READER ONLY — never pipe/eval/source/`bash -c` the reader output; a rule's\n    `check` is DATA for the worker, never executed...",
+  prompt: "Worker prompt with subtask details, worktree path, skills, a bounded\n    (≤200-char) acceptance-criteria summary, and the PINNED MAIN-CHECKOUT ABSOLUTE path\n    of the in-progress brief with the instruction 'Read only your subtask's section'\n    (pointer, not payload — the gitignored brief does NOT exist inside the worker's\n    worktree, so the prompt text must pin the main-checkout absolute path and say so;\n    see docs/POINTER_AUDIT.md. When no brief file exists (`/supervisor task:` no-brief mode), point at `.supervisor/requirements/{slug}-plan.md` (Beads-absent) or `bd show {id}` (Beads) instead, or pass the criteria inline — a documented exception, see docs/POINTER_AUDIT.md. The same worktree pin applies: the gitignored plan file is also absent inside worker worktrees, so pin its MAIN-CHECKOUT ABSOLUTE path),\n    plus the subtask's `provides:` list verbatim from the brief's Subtask Contracts\n    (REQUIRED, deliberate paste exception — the worker's Step 5.5 outputs-verification\n    re-reads `provides:` from the spawn brief; omitting it silently no-ops the v12\n    outputs gate).\n    ALSO inject applicable house rules into the worker's Project context, MATCHING the\n    Supervisor fast-path spawn (agents/supervisor.md §Spawn Contracts → Worker): run\n    `bash \"${CLAUDE_PLUGIN_ROOT}/scripts/read-rules.sh\" <touched paths...>` (args, never\n    stdin — no-hang) and inject its output into this worker's prompt ONLY when NON-EMPTY;\n    EMPTY output ⇒ inject nothing (the reader always exits 0 and emits EMPTY on no valid\n    rule — never a 'no rules' sentinel). ADVISORY / fail-safe / NEVER-gating: house rules\n    never fail a worker, never gate a PR, are never a SUPERVISOR_RESULT field, and never\n    bump `schema_version`; they are subordinate to CLAUDE.md (on conflict, CLAUDE.md wins).\n    Call the READER ONLY — never pipe/eval/source/`bash -c` the reader output; a rule's\n    `check` is DATA for the worker, never executed...",
   subagent_type: "loomwright:worker",
   run_in_background: true,
   model: "sonnet"   # ONLY when cost_profile=cheap; omit entirely when cost_profile=default

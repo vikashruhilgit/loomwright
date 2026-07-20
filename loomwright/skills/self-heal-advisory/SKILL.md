@@ -649,6 +649,12 @@ while heal_iterations < max_heal_iterations:
   Task(
     subagent_type: "general-purpose",
     # Tool allowlist: Read, Write, Edit, Bash, Glob, Grep (no Task — fix agent may not dispatch further subagents)
+    # Pointer-audit note (deliberate paste — see docs/POINTER_AUDIT.md): the findings list below is
+    # NOT file-backed (CODE_REVIEW_RESULT exists only in the reviewer Task's transcript, never on
+    # disk), is already bounded by construction (category=new + severity>=HIGH only), and the fix
+    # worker provably needs each finding's full file:line + description + suggestion every time —
+    # they ARE the work items. Keep the paste; do NOT write findings to a scratch file just to
+    # point at it (that would add a write path to a review seam that has none).
     working_dir: main checkout on feature branch,
     prompt: "You are fixing a feature branch before review passes.
              Feature branch: {branch}

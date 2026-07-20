@@ -38,6 +38,11 @@ jobs:
           bash scripts/test-check-token-budget.sh
           bash scripts/check-token-budget.sh
 
+      - name: Check shared agent prefix (byte-identity gate)
+        run: |
+          bash scripts/test-check-shared-prefix.sh
+          bash scripts/check-shared-prefix.sh
+
       - name: Run full deterministic self-test suite (hard gate)
         env:
           # build-vault.sh's idempotency assertion (#3 in test-build-vault.sh) FAILS on

@@ -338,9 +338,11 @@ A CI ratchet on **spawn-time prompt inventory**. Each agent's effective weight i
 | `qa-strategist`     | 22877 | 20797 | 3 |
 | `red-team-reviewer` | 6065  | 5513  | 1 |
 | `review-pr`         | 24230 | 22027 | 2 |
-| `rubric-grader`     | 2086  | 1896  | 0 |
+| `rubric-grader`     | 2330  | 1896  | 0 |
 | `supervisor`        | 51221 | 46564 | 7 |
 | `worker`            | 4574  | 4158  | 0 |
+
+> **Raise log:** `rubric-grader` 2086 → 2330 — the shared-agent-prefix block (`loomwright/docs/shared-agent-prefix.md`) added to every agent `.md`; measured 2118 + ~10% headroom per the raise rule.
 
 Self-test: `bash scripts/test-check-token-budget.sh` (offline; pass / breach / missing-preloaded-skill / no-budget / frontmatter-bounded-parsing / empty-agents-dir / inline-flow-style-skills / orphaned-budget / live-repo cases). Wired into CI alongside the other repo-root validators. Skills counted are **frontmatter-preloaded only** — command docs and on-demand skills are not spawn-time weight and are out of scope. The gate also fails CLOSED on an unsupported inline/flow-style `skills:` list (would silently under-count) and on an orphaned budget entry (a budget key with no matching agent `.md`).
 
@@ -402,6 +404,22 @@ The `phase45-multi-voter-verification` stage exists only when `--multi-voter-hea
 **Propagation:** `cost_profile` is a session attribute. Supervisor records it in `.supervisor/state.md` (via Context-Keeper `initialize`) and passes it to Execute Manager via the Task prompt. Supervisor applies overrides for Orchestrator, Execute Manager, Phase 4.5 Code Reviewer, and Phase 4.5 fix tasks. Execute Manager reads `cost_profile` from its incoming prompt and applies overrides for Worker and Code Reviewer spawns within the poll loop.
 
 **Frontmatter unchanged:** No agent's `model:` frontmatter is modified. The override is applied at spawn time via the Task tool's `model` parameter. If the Task `model` override is ever removed in a future Claude Code release, the profile degrades gracefully to `inherit`.
+
+### Async analysis surfaces (v15.13.0)
+
+Default model routing for plugin-invoked **async analysis** spawns — backward-looking, read-only, advisory work where quality tolerance allows a cheaper tier. Verified surfaces only; scope is strictly the REFLECTION-mode spawns listed below.
+
+| Surface | Spawned role (mode) | Default | Override |
+|---|---|---|---|
+| `/dreaming` Phase 2 | code-reviewer (REFLECTION mode — read-only log analysis) | **sonnet** (spawn-time Task `model` param) | `/dreaming --full-model` → `inherit` |
+| `/dreaming` Phase 2 | red-team-reviewer (REFLECTION mode — read-only log analysis) | **sonnet** (spawn-time Task `model` param) | `/dreaming --full-model` → `inherit` |
+| `/dreaming` Phase 2 | qa-executor (REFLECTION mode — read-only log analysis) | **sonnet** (spawn-time Task `model` param) | `/dreaming --full-model` → `inherit` |
+
+**Scope guard — reflection-mode rows only:** these rows apply EXCLUSIVELY to the `/dreaming` reflection spawns (backward log analysis that proposes, never gates). They do **not** downgrade code-reviewer in its forward diff-review/gating role, red-team-reviewer as an adversarial auditor or multi-voter VOTER, or qa-executor in forward test execution — those keep the `--cheap` table above as their only routing surface. rubric-grader is already Haiku by frontmatter and needs no row.
+
+**Surfaces verified to spawn NO models today (recorded, no rows):** `/pr-postmortem` is an inline main-thread workflow (script-gathered evidence, no Task spawns) and `/insights` is script-driven (`build-insights.sh`) — neither makes a model spawn, so neither gets a routing row. Re-audit if either ever gains a Task spawn. Batch-API routing remains a documented roadmap note only (`docs/POINTER_AUDIT.md` §Roadmap) — no code path exists on the subscription runtime.
+
+**Mechanism:** `commands/dreaming.md` applies `model: "sonnet"` on each reflection Task spawn unless `--full-model` is passed (then the `model` param is omitted → `inherit`). Same spawn-time mechanism as `--cheap`; no agent frontmatter changes; degrades gracefully to `inherit` if the Task `model` override is ever removed.
 
 ---
 

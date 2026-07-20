@@ -23,6 +23,8 @@
 #  13. all-zero usage falls back to proxy; any non-zero field stays real usage
 #  14. orientation_source: valid LOOMWRIGHT_ORIENTATION_SOURCE value emitted;
 #      unset ⇒ field absent; invalid value ⇒ field absent (fail-safe omission)
+#  15. shared_prefix: LOOMWRIGHT_SHARED_PREFIX=1 ⇒ shared_prefix:true emitted;
+#      unset ⇒ field absent; any other value ⇒ field absent (fail-safe omission)
 
 # EXIT: 0 on full pass, 1 on any failed assertion.
 # Style mirrors test-insights.sh / test-send-telemetry-core.sh.
@@ -77,16 +79,18 @@ trap cleanup EXIT INT TERM
 run_sut() {
   # Usage: run_sut <payload-file-or--> [stdin via file]
   # Echoes rc on last line as RC=<n>; stdout ignored (SUT is silent).
-  # LOOMWRIGHT_ORIENTATION_SOURCE is scrubbed via `env -u` so a dev-environment
-  # export can never flip the orientation_source-absent assertions (case 14b and
-  # all pre-14 cases); case 14 sets it explicitly via run_sut_env.
+  # LOOMWRIGHT_ORIENTATION_SOURCE and LOOMWRIGHT_SHARED_PREFIX are scrubbed via
+  # `env -u` so a dev-environment export can never flip the field-absent
+  # assertions (cases 14b/15b and all pre-14 cases); case 14 sets the
+  # orientation var explicitly via run_sut_env, case 15 the prefix var via
+  # run_sut_sp.
   local payload="$1"
   local out rc
   if [ "$payload" = "--empty" ]; then
-    out="$( cd "$SANDBOX" && env -u LOOMWRIGHT_ORIENTATION_SOURCE bash "$SUT" </dev/null 2>&1 )"
+    out="$( cd "$SANDBOX" && env -u LOOMWRIGHT_ORIENTATION_SOURCE -u LOOMWRIGHT_SHARED_PREFIX bash "$SUT" </dev/null 2>&1 )"
     rc=$?
   else
-    out="$( cd "$SANDBOX" && env -u LOOMWRIGHT_ORIENTATION_SOURCE bash "$SUT" < "$payload" 2>&1 )"
+    out="$( cd "$SANDBOX" && env -u LOOMWRIGHT_ORIENTATION_SOURCE -u LOOMWRIGHT_SHARED_PREFIX bash "$SUT" < "$payload" 2>&1 )"
     rc=$?
   fi
   printf '%s\n' "$out"
@@ -95,10 +99,23 @@ run_sut() {
 
 run_sut_env() {
   # Usage: run_sut_env <LOOMWRIGHT_ORIENTATION_SOURCE-value> <payload-file>
-  # Same contract as run_sut, with the orientation env var set explicitly.
+  # Same contract as run_sut, with the orientation env var set explicitly
+  # (the shared-prefix var stays scrubbed).
   local osrc="$1" payload="$2"
   local out rc
-  out="$( cd "$SANDBOX" && env LOOMWRIGHT_ORIENTATION_SOURCE="$osrc" bash "$SUT" < "$payload" 2>&1 )"
+  out="$( cd "$SANDBOX" && env -u LOOMWRIGHT_SHARED_PREFIX LOOMWRIGHT_ORIENTATION_SOURCE="$osrc" bash "$SUT" < "$payload" 2>&1 )"
+  rc=$?
+  printf '%s\n' "$out"
+  printf 'RC=%s\n' "$rc"
+}
+
+run_sut_sp() {
+  # Usage: run_sut_sp <LOOMWRIGHT_SHARED_PREFIX-value> <payload-file>
+  # Same contract as run_sut, with the shared-prefix env var set explicitly
+  # (the orientation var stays scrubbed).
+  local spv="$1" payload="$2"
+  local out rc
+  out="$( cd "$SANDBOX" && env -u LOOMWRIGHT_ORIENTATION_SOURCE LOOMWRIGHT_SHARED_PREFIX="$spv" bash "$SUT" < "$payload" 2>&1 )"
   rc=$?
   printf '%s\n' "$out"
   printf 'RC=%s\n' "$rc"
@@ -483,6 +500,66 @@ if printf '%s' "$LINE14D" | jq -e 'has("orientation_source")' >/dev/null 2>&1; t
 else
   ok "case14d orientation_source absent on empty-string value"
 fi
+
+echo "== 15. shared_prefix — =1 emitted / unset absent / other value absent =="
+TRANSCRIPT15="$SANDBOX/agent-transcript-15.jsonl"
+printf 'IIIIII' > "$TRANSCRIPT15"   # 6 bytes
+# 15a: LOOMWRIGHT_SHARED_PREFIX=1 → shared_prefix:true present (JSON boolean).
+PAYLOAD15A="$SANDBOX/shared-prefix-on-payload.json"
+jq -n --arg tp "$TRANSCRIPT15" '{
+  session_id: "fixture-token-ledger-sharedprefix-on-001",
+  agent_type: "loomwright:code-reviewer",
+  agent_transcript_path: $tp
+}' > "$PAYLOAD15A"
+OUT15A="$(run_sut_sp "1" "$PAYLOAD15A")"
+RC15A="$(printf '%s\n' "$OUT15A" | grep '^RC=' | tail -1 | cut -d= -f2)"
+assert_eq "case15a exit 0" "0" "$RC15A"
+LINE15A="$(tail -1 "$SANDBOX/.supervisor/logs/fixture-token-ledger-sharedprefix-on-001.jsonl" 2>/dev/null)"
+assert_eq "case15a shared_prefix=true" "true" "$(printf '%s' "$LINE15A" | jq -r '.shared_prefix')"
+# Must be the JSON boolean true, not the string "true".
+if printf '%s' "$LINE15A" | jq -e '.shared_prefix == true' >/dev/null 2>&1; then
+  ok "case15a shared_prefix is JSON boolean true"
+else
+  no "case15a shared_prefix is not the JSON boolean true"
+fi
+# 15b: unset → field absent (run_sut scrubs the env var).
+PAYLOAD15B="$SANDBOX/shared-prefix-unset-payload.json"
+jq -n --arg tp "$TRANSCRIPT15" '{
+  session_id: "fixture-token-ledger-sharedprefix-unset-001",
+  agent_type: "loomwright:code-reviewer",
+  agent_transcript_path: $tp
+}' > "$PAYLOAD15B"
+OUT15B="$(run_sut "$PAYLOAD15B")"
+RC15B="$(printf '%s\n' "$OUT15B" | grep '^RC=' | tail -1 | cut -d= -f2)"
+assert_eq "case15b exit 0" "0" "$RC15B"
+LINE15B="$(tail -1 "$SANDBOX/.supervisor/logs/fixture-token-ledger-sharedprefix-unset-001.jsonl" 2>/dev/null)"
+if printf '%s' "$LINE15B" | jq -e 'has("shared_prefix")' >/dev/null 2>&1; then
+  no "case15b shared_prefix present despite unset env"
+else
+  ok "case15b shared_prefix absent when env unset"
+fi
+# 15c: any other value ("0", "true", empty) → field absent, event still written.
+for spv in "0" "true" ""; do
+  SPSLUG="$(printf '%s' "$spv" | tr -cd 'a-z0-9')"
+  SPSID="fixture-token-ledger-sharedprefix-off-${SPSLUG:-empty}-001"
+  PAYLOAD15C="$SANDBOX/shared-prefix-off-${SPSLUG:-empty}-payload.json"
+  jq -n --arg tp "$TRANSCRIPT15" --arg sid "$SPSID" '{
+    session_id: $sid,
+    agent_type: "loomwright:code-reviewer",
+    agent_transcript_path: $tp
+  }' > "$PAYLOAD15C"
+  OUT15C="$(run_sut_sp "$spv" "$PAYLOAD15C")"
+  RC15C="$(printf '%s\n' "$OUT15C" | grep '^RC=' | tail -1 | cut -d= -f2)"
+  assert_eq "case15c(${spv:-empty}) exit 0" "0" "$RC15C"
+  LINE15C="$(tail -1 "$SANDBOX/.supervisor/logs/${SPSID}.jsonl" 2>/dev/null)"
+  if printf '%s' "$LINE15C" | jq -e 'has("shared_prefix")' >/dev/null 2>&1; then
+    no "case15c(${spv:-empty}) shared_prefix present despite non-1 value"
+  else
+    ok "case15c(${spv:-empty}) shared_prefix absent on non-1 value"
+  fi
+  # The line itself must still be written (marker never drops the event).
+  assert_eq "case15c(${spv:-empty}) event still written" "token_ledger" "$(printf '%s' "$LINE15C" | jq -r '.event')"
+done
 
 echo ""
 echo "RESULT  pass=$PASS_COUNT  fail=$FAIL_COUNT"

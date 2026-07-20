@@ -613,11 +613,13 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 /dreaming --agent red-team --sessions 10       # Red Team, last 10 sessions
 /dreaming --agent qa-executor --sessions 3     # QA Executor, last 3 sessions
 /dreaming --agent all --sessions 20            # All agents, deeper history
+/dreaming --full-model                         # Reflection spawns inherit the session model (skip sonnet default)
 ```
 
 **Parameters:**
 - `--agent all|code-reviewer|red-team|qa-executor` (default `all`)
 - `--sessions N` (default `5`)
+- `--full-model` (default off — reflection spawns default to `model: "sonnet"` per `docs/ARCHITECTURE_CONTRACTS.md` §Cost Profiles → "Async analysis surfaces"; flag restores `inherit`)
 
 **What it does:**
 - Reads the N most recent `.supervisor/logs/{session_id}.jsonl` files (read-only)
@@ -1079,7 +1081,7 @@ bd close BD-XX
 
 loomwright/              # Nested plugin root
 ├── .claude-plugin/
-│   └── plugin.json                   # Plugin metadata (v15.12.0)
+│   └── plugin.json                   # Plugin metadata (v15.13.0)
 ├── commands/                         # Slash commands (21)
 │   ├── launch-pad.md                 # Supervisor readiness
 │   ├── supervisor.md                 # Parallel orchestrator (v4)
@@ -1203,7 +1205,7 @@ These are Claude Code slash commands, so you can type them directly:
 | Agent | Purpose | When | Input | Output |
 |-------|---------|------|-------|--------|
 | **Supervisor** | Parallel orchestration | Autonomous task completion | Task description or Launch Pad brief | Completed tasks with PRs |
-| **Execute Manager** | Phase 3 execution | Delegated by Supervisor | Subtask list + config | EXECUTE_RESULT / EXECUTE_CHECKPOINT |
+| **Execute Manager** | Phase 3 execution | Delegated by Supervisor | Brief pointer + subtask index + config | EXECUTE_RESULT / EXECUTE_CHECKPOINT |
 | **Context-Keeper** | State management | On-demand (Supervisor/EM calls) | State operations | State file updates |
 | **Worker** | Implementation | Background (parallel) | Subtask + worktree path | WORKER_RESULT + .worker-summary.md |
 
