@@ -10,7 +10,7 @@ Comprehensive index of all skills available in the Loomwright plugin.
 |------------|-----------|-----------------|------------|---------|--------------|
 | Supervisor Readiness | `supervisor-readiness/` | Launch Pad (preload), Supervisor (preload) | ~800 | 1.1.2 | 2026-06-14 |
 | Workflow Management | `workflow-management/` | Supervisor (preload) | ~1,200 | 1.0.0 | 2026-03 |
-| Async Orchestration | `async-orchestration/` | Supervisor (preload) | ~1,600 | 1.2.0 | 2026-07-14 |
+| Async Orchestration | `async-orchestration/` | Supervisor (preload) | ~1,600 | 1.3.0 | 2026-07-20 |
 | State Management | `state-management/` | Supervisor (preload) | ~1,500 | 1.3.0 | 2026-07-06 |
 | Context Summarization | `context-summarization/` | Supervisor (preload) | ~600 | 1.0.0 | 2026-03 |
 | Context Setup | `context-setup/` | Launch Pad (preload) | ~500 | 1.0.0 | 2026-03 |
