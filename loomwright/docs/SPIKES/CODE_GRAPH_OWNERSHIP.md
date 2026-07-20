@@ -170,6 +170,7 @@ Net: **no code graph needs to be built.** LSP + graphify cover the code half; th
 - **DEFERRED** (reposcan parked): ~~Langfuse A/B~~, ~~generalize reposcan~~, ~~wire repo-map through brain-context~~.
 - **Shipped (v15.5.0):** `LSP` wired from code-reviewer into worker / qa-executor / launch-pad (advisory, never-gating) — the last Bet-1 item is closed (agents' `tools:` frontmatter + the `ARCHITECTURE_CONTRACTS.md` capability matrix).
 - **Kept:** the validation harness (`validate.py` / `validate_gen.py`) as the gate for any future graph.
+- **Productized (v15.12.0):** the parked repo-map tier shipped as `loomwright/scripts/build-repo-map.sh` — the flat Tier B floor (directory skeleton + exported-symbol scan, best-effort tree-sitter Tier A); the PageRank ranker is still NOT ported (it failed validation and stays parked).
 
 ## Validation (the turning point — 2026-06-27)
 
