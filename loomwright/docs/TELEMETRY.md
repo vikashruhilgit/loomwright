@@ -191,6 +191,8 @@ by the **plugin** session id (e.g. `supervisor-2026-07-07-fable-parity`). To kee
 | `token_proxy_transcript_bytes` | proxy path only | Byte size of `agent_transcript_path` (preferred) or `transcript_path` via `os.path.getsize` only |
 | `agent_type`, `agent_id`, `ts` | optional / when present | Identity + UTC ISO timestamp; **omitted when absent** (never the literal `"unknown"`) |
 
+**Additive key (v15.12.0+):** `orientation_source` — emitted only when `LOOMWRIGHT_ORIENTATION_SOURCE` is one of `memos|repo_map|graphify|none` (orientation attribution); omitted on unset/empty/invalid (fail-safe — the event line still writes).
+
 **Reserved future key (do not emit yet):** `graph_context_used` — reserved for
 job 04 (graph/brain context attribution). Leave room in readers; the emitter
 MUST NOT write this key today.

@@ -21,6 +21,10 @@
 # No-op (exit 0) when: empty stdin, missing/empty session_id (both sources),
 # unreadable proxy paths, missing python3, or any parse/write failure.
 #
+# Additive-if-present: `orientation_source` (memos|repo_map|graphify|none) read
+# from the LOOMWRIGHT_ORIENTATION_SOURCE env var — any other/unset value omits
+# the field entirely (fail-safe; never invented, never validated loudly).
+#
 # RESERVED (do not emit): graph_context_used — reserved for future job 04.
 #
 # Authoritative spec: loomwright/docs/TELEMETRY.md §Token ledger
@@ -198,7 +202,16 @@ else:
     event["token_proxy_kind"] = "transcript_bytes"
     event["token_proxy_transcript_bytes"] = int(nbytes)
 
+# Additive-if-present: orientation_source from the LOOMWRIGHT_ORIENTATION_SOURCE
+# env var (inherited from the hook invocation environment). Only the four known
+# values are emitted; anything else — including unset/empty — omits the field
+# entirely (fail-safe: never a guess, never an error).
+orientation_source = os.environ.get("LOOMWRIGHT_ORIENTATION_SOURCE", "")
+if orientation_source in ("memos", "repo_map", "graphify", "none"):
+    event["orientation_source"] = orientation_source
+
 # RESERVED (do not emit): graph_context_used — reserved for future job 04.
+# (orientation_source is emitted above since v15.12.0 and is NOT a reserved key.)
 
 try:
     line = json.dumps(event, separators=(",", ":"), ensure_ascii=False)

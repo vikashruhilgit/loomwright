@@ -632,7 +632,7 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 **Read-only contract:**
 - `/dreaming` does not modify code, agent memory, or `CLAUDE.md`
 - Every proposed update is labeled **PENDING USER APPROVAL**
-- Persistence to `.claude/agent-memory/` or `CLAUDE.md` happens **only after** the user explicitly approves each item; the user (or a separate follow-up command) performs the write — `/dreaming` itself never writes
+- Persistence happens **only after** the user explicitly approves each item: on per-item Accept, `/dreaming` writes project-memory facts + LESSONS via the repo-root sole writers and promotes orientation proposals via `add-orientation.sh --confirm` (literal argv); CLAUDE.md and legacy agent-memory proposals stay paste-to-apply
 
 **When to Use:**
 - After a streak of completed `/supervisor` sessions, to surface recurring issues
@@ -1079,7 +1079,7 @@ bd close BD-XX
 
 loomwright/              # Nested plugin root
 ├── .claude-plugin/
-│   └── plugin.json                   # Plugin metadata (v15.11.0)
+│   └── plugin.json                   # Plugin metadata (v15.12.0)
 ├── commands/                         # Slash commands (21)
 │   ├── launch-pad.md                 # Supervisor readiness
 │   ├── supervisor.md                 # Parallel orchestrator (v4)
