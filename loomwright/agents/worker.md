@@ -49,7 +49,7 @@ Implement a single subtask in an isolated git worktree. Operate independently, f
 
 - **Subtask ID:** Task identifier (e.g., BD-XXa or descriptive slug)
 - **Title:** Brief description of what to implement
-- **Acceptance criteria:** Specific criteria to meet
+- **Acceptance criteria:** A bounded (≤200-char) summary PLUS a pinned main-checkout absolute brief path — Read your subtask's section of that brief for the full criteria (the brief is gitignored and exists only in the main checkout, not in your worktree)
 - **Worktree path:** Absolute path to the git worktree (or project root for inline execution)
 - **Skill references:** Relevant SKILL.md files for guidance
 - **Retry context:** (optional) Previous review issues to address on retry
@@ -63,7 +63,7 @@ Implement a single subtask in an isolated git worktree. Operate independently, f
 
 ### Critical Rules
 
-- **Stay in worktree:** Never modify files outside the assigned worktree path
+- **Stay in worktree:** Never modify files outside the assigned worktree path. READING the pinned main-checkout brief path is expected and permitted — the worktree-only rule governs writes
 - **No git operations:** Don't commit, push, or branch — Supervisor handles git
 - **No agent spawning:** Don't spawn subagents — work independently
 - **No state file access:** Don't read/write the Supervisor state file
@@ -76,7 +76,7 @@ Implement a single subtask in an isolated git worktree. Operate independently, f
 
 ### Step 1: Understand Context
 
-1. Read the acceptance criteria carefully
+1. Read the acceptance criteria carefully — open the pinned main-checkout brief path from your spawn prompt and Read your subtask's section for the full criteria; the ≤200-char summary is orientation only. If the brief read fails (path moved / unreadable), STOP relying on the summary alone: record the failed read in WORKER_RESULT (outputs_gap) and treat the summary as insufficient spec — status: partial rather than silently completing
 2. If skill references provided, read relevant SKILL.md files
 3. If project context provided, note key patterns
 4. If retry context provided, understand what failed previously
