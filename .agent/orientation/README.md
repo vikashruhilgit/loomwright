@@ -46,7 +46,8 @@ containing instruction-injection markers (e.g. "ignore previous", "system prompt
   `.supervisor/orientation-proposals/` instead; a human promotes an approved proposal into
   this store via `add-orientation.sh --confirm`.
 - The writer enforces: slug path-containment (single `[a-z0-9-]+` segment — no `/`, `..`,
-  leading dot, leading/trailing `-`, metacharacters), the 1000-char cap, hostile-marker
+  leading dot, leading/trailing `-`, metacharacters; `readme` is reserved — it collides
+  with this README on case-insensitive filesystems), the 1000-char cap, hostile-marker
   rejection (scanned against a whitespace-normalized copy, so markers split across lines are
   still caught — same normalization as the reader), temp-file + atomic-`mv` writes, and
   read-back verification (a failed verify of a memo *update* restores the prior memo).
