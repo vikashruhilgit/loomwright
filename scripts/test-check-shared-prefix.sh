@@ -10,6 +10,7 @@
 #   5. duplicate block  — block present twice in one agent -> exit != 0
 #   6. empty agents dir -> exit != 0 (0-agent false-green guard)
 #   7. malformed canonical (no END marker) -> exit != 0
+#   8. asymmetric markers — an agent with BEGIN but no END -> exit != 0, MALFORMED label
 #
 # Portability: bash 3.2 safe (macOS) + Linux CI. No sed -i, no mapfile, offline.
 
