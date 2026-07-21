@@ -161,6 +161,7 @@ After the `.worker-summary.md` file has been written and BEFORE emitting the fin
    - `completed` if `outputs_gap` is empty (all promised outputs present).
    - `partial` if `outputs_gap` is non-empty (worker did not deliver all promised outputs — implementation may otherwise be sane, but the contract was not fully met).
    - `failed` for crash / unfixable error (unchanged from prior behavior).
+   - Exception: the Step 1 brief-unreadable case returns `partial` with `outputs_gap: ""` (see the invariant carve-out below).
 
 If the subtask brief has no `provides:` list, treat `outputs_verified` as `[]` and `outputs_gap` as `""` (empty), and use the prior `completed` / `failed` rules.
 
@@ -210,6 +211,7 @@ Produce the structured WORKER_RESULT block (see Output Format below).
 - `status: completed` ⇔ `outputs_gap == ""` (all `provides` items verified present)
 - `status: partial` ⇔ `outputs_gap != ""` (one or more `provides` items missing)
 - `status: failed` ⇒ crash / unfixable error; `outputs_verified` and `outputs_gap` should still be populated best-effort.
+- **Carve-out (brief unreadable / insufficient spec, per Step 1):** a worker that could not read its pinned brief returns `status: partial` with `outputs_gap: ""` — the failed read is recorded in `summary`, and `outputs_gap` stays reserved for missing `provides:` items. Consumers must not infer `outputs_gap != ""` from `partial` alone.
 
 **v1 backward compatibility:** Older artifacts emitted `schema_version: 1` and omitted `outputs_verified` + `outputs_gap`. Consumers should accept v1 blocks (treating the two new fields as `[]` and `""` respectively) for legacy logs only — new emissions MUST be v2.
 
