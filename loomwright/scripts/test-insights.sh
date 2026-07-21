@@ -9,9 +9,12 @@
 # present / absent-groups-under-"unknown" / mixed), the knowledge-sources aggregation
 # (present / absent-suppressed / mixed-corpus, v14.33.0), the Corpus health advisory
 # section (churn-ledger + lessons counts, curation/retract records, staleness thresholds,
-# absent-corpora degradation, malformed-line tolerance, CHURN_STALE_DAYS override), and
+# absent-corpora degradation, malformed-line tolerance, CHURN_STALE_DAYS override),
 # the Token economics advisory section (token_ledger real vs proxy rollup, absent degrade,
-# malformed-line skip).
+# malformed-line skip), and the Loop evidence section (data path with strict clean=="yes"
+# headline counting + era table + pointer line and NO inlined per-run table; no-usable-records,
+# builder-absent, and garbage-emitting-builder degradations — all rendering the one-line
+# "no data" note without ever failing the dashboard build).
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -553,6 +556,90 @@ tmd="$TM/.supervisor/insights/dashboard.md"
 grep -qF "**Proxy (\`proxy: true\`):** 1" "$tmd" 2>/dev/null && ok "malformed lines skipped (1 proxy event counted)" || no "malformed skip counts wrong"
 grep -qF "| loomwright:qa-executor | 1 | 42 |" "$tmd" 2>/dev/null && ok "only the good proxy line aggregated" || no "good proxy line lost among malformed"
 rm -rf "$TM"
+
+echo "== 23. Loop evidence — data path (runs + era bucket, strict clean counting) =="
+# Two runs, both plugin_version 15.12.0 (→ one post_orientation_memos era bucket):
+#   le-a: PR 1, postmortem review_rounds=0, heal_iterations=1 → clean == "yes"
+#   le-b: PR 2, postmortem review_rounds=2, heal_iterations=3 → clean == "no (…)"
+# → headline MUST read "1 of 2" (strict clean=="yes" counting — le-b counts against it).
+# Neither PR is in the temp repo's git history → landed 0/2, durable 0/2 in the era row.
+LE="$(mktemp -d)"; ( cd "$LE" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$LE/.supervisor/logs" "$LE/.supervisor/postmortem"
+printf '%s\n' '{"ts":"2026-07-20T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS","heal_iterations":1,"plugin_version":"15.12.0","pr_url":"https://github.com/o/r/pull/1"}' > "$LE/.supervisor/logs/le-a.jsonl"
+printf '%s\n' '{"ts":"2026-07-20T11:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS","heal_iterations":3,"plugin_version":"15.12.0","pr_url":"https://github.com/o/r/pull/2"}' > "$LE/.supervisor/logs/le-b.jsonl"
+{
+  printf '%s\n' '{"ts":"2026-07-20T12:00:00Z","repo":"o/r","number":1,"pr_url":"https://github.com/o/r/pull/1","changed_paths":["a"],"review_rounds":0}'
+  printf '%s\n' '{"ts":"2026-07-20T12:00:00Z","repo":"o/r","number":2,"pr_url":"https://github.com/o/r/pull/2","changed_paths":["b"],"review_rounds":2}'
+} > "$LE/.supervisor/postmortem/results.jsonl"
+out="$( cd "$LE" && bash "$BUILD" 2>&1 )"; rc=$?
+led="$LE/.supervisor/insights/dashboard.md"
+[ "$rc" -eq 0 ] && ok "build exits 0 (loop evidence data path)" || no "build rc != 0 (loop evidence data path, rc=$rc)"
+grep -q "^## Loop evidence (unattended-quality funnel)" "$led" 2>/dev/null && ok "loop evidence section rendered" || no "loop evidence section missing"
+grep -qF -- "- **Funnel headline:** 1 of 2 runs verifiably clean" "$led" 2>/dev/null && ok "headline counts strict clean==yes only (1 of 2 — the review_rounds=2 run counts against)" || no "funnel headline wrong (strict clean counting broken)"
+grep -qF "| post_orientation_memos | 2 | 0/2 | 1/2 | 0/2 | 2.0 | 1.0 | 0 |" "$led" 2>/dev/null && ok "era-buckets row correct (2 runs, 1 clean, avg heal 2.0, avg rounds 1.0)" || no "era-buckets row wrong"
+grep -qF "Full per-run funnel table (deliberately NOT inlined" "$led" 2>/dev/null && ok "pointer line to the full per-run table present" || no "pointer line missing"
+if grep -qF "| run | version | landed | clean | durable | cheap |" "$led" 2>/dev/null; then no "full per-run funnel table leaked into the dashboard"; else ok "per-run funnel table NOT inlined (dashboard stays skimmable)"; fi
+grep -q "^## Summary" "$led" 2>/dev/null && grep -q "^## Recent sessions" "$led" 2>/dev/null && ok "dashboard still renders fully with the loop evidence section" || no "dashboard incomplete with loop evidence section"
+rm -rf "$LE"
+
+echo "== 24. Loop evidence — builder present but no usable records → no-data note =="
+# A copied build-insights.sh whose SIBLING builder exists but emits only a data_quality
+# record (zero type=="run" lines) → le_total=0 → one-line no-data note; build still exits 0.
+LN="$(mktemp -d)"; ( cd "$LN" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$LN/.supervisor/logs"
+printf '%s\n' '{"ts":"2026-07-20T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$LN/.supervisor/logs/sess-ln.jsonl"
+SDN="$(mktemp -d)"
+cp "$BUILD" "$SDN/build-insights.sh"
+cat > "$SDN/build-loop-evidence.sh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' '{"type":"data_quality","notes":["no runs observable"]}'
+exit 0
+EOF
+out="$( cd "$LN" && bash "$SDN/build-insights.sh" 2>&1 )"; rc=$?
+lnd="$LN/.supervisor/insights/dashboard.md"
+[ "$rc" -eq 0 ] && ok "build exits 0 (builder emits no run records)" || no "build rc != 0 (no-usable-records case, rc=$rc)"
+grep -q "^## Loop evidence (unattended-quality funnel)" "$lnd" 2>/dev/null && ok "loop evidence heading still rendered (always-rendered convention)" || no "loop evidence heading missing (no-usable-records)"
+grep -qF "_No loop-evidence data yet" "$lnd" 2>/dev/null && ok "one-line no-data note rendered" || no "no-data note missing (no-usable-records)"
+if grep -qF "Funnel headline" "$lnd" 2>/dev/null; then no "headline fabricated with zero run records"; else ok "no fabricated headline on zero run records"; fi
+grep -q "^## Summary" "$lnd" 2>/dev/null && grep -q "^## View in Obsidian" "$lnd" 2>/dev/null && ok "dashboard still renders fully (no-usable-records)" || no "dashboard incomplete (no-usable-records)"
+rm -rf "$LN" "$SDN"
+
+echo "== 25. Loop evidence — builder script absent → note, build succeeds =="
+# A copied build-insights.sh with NO sibling build-loop-evidence.sh at all → the [ -f ] guard
+# skips the invocation entirely → no-data note; dashboard build still succeeds.
+LA="$(mktemp -d)"; ( cd "$LA" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$LA/.supervisor/logs"
+printf '%s\n' '{"ts":"2026-07-20T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$LA/.supervisor/logs/sess-la.jsonl"
+SDA="$(mktemp -d)"
+cp "$BUILD" "$SDA/build-insights.sh"   # deliberately NO sibling build-loop-evidence.sh
+out="$( cd "$LA" && bash "$SDA/build-insights.sh" 2>&1 )"; rc=$?
+lad="$LA/.supervisor/insights/dashboard.md"
+[ "$rc" -eq 0 ] && ok "build exits 0 with the builder script absent" || no "build rc != 0 (builder-absent case, rc=$rc)"
+grep -q "^## Loop evidence (unattended-quality funnel)" "$lad" 2>/dev/null && grep -qF "_No loop-evidence data yet" "$lad" 2>/dev/null && ok "builder-absent degrades to the no-data note" || no "builder-absent note missing"
+grep -q "^## Summary" "$lad" 2>/dev/null && grep -q "^## View in Obsidian" "$lad" 2>/dev/null && ok "dashboard still renders fully (builder absent)" || no "dashboard incomplete (builder absent)"
+rm -rf "$LA" "$SDA"
+
+echo "== 26. Loop evidence — builder emits garbage + non-zero exit → note, dashboard survives =="
+# A sibling builder that spews non-JSONL garbage AND exits 3 — the guarded `|| true` subshell +
+# numeric normalization must degrade to the no-data note without killing the set -u/pipefail build.
+LG="$(mktemp -d)"; ( cd "$LG" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$LG/.supervisor/logs"
+printf '%s\n' '{"ts":"2026-07-20T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$LG/.supervisor/logs/sess-lg.jsonl"
+SDG="$(mktemp -d)"
+cp "$BUILD" "$SDG/build-insights.sh"
+cat > "$SDG/build-loop-evidence.sh" <<'EOF'
+#!/usr/bin/env bash
+echo '<<< definitely not JSONL >>>'
+echo 'more garbage: {"type": broken'
+exit 3
+EOF
+out="$( cd "$LG" && bash "$SDG/build-insights.sh" 2>&1 )"; rc=$?
+lgd="$LG/.supervisor/insights/dashboard.md"
+[ "$rc" -eq 0 ] && ok "build exits 0 despite garbage-emitting builder with non-zero exit" || no "build rc != 0 (garbage-builder case, rc=$rc)"
+grep -q "^## Loop evidence (unattended-quality funnel)" "$lgd" 2>/dev/null && grep -qF "_No loop-evidence data yet" "$lgd" 2>/dev/null && ok "garbage output degrades to the no-data note" || no "garbage-builder note missing"
+if grep -qF "definitely not JSONL" "$lgd" 2>/dev/null; then no "builder garbage leaked into the dashboard"; else ok "builder garbage never leaks into the dashboard"; fi
+grep -q "^## System Twin growth" "$lgd" 2>/dev/null && grep -q "^## View in Obsidian" "$lgd" 2>/dev/null && ok "sections after loop evidence still render (build not truncated)" || no "dashboard truncated after garbage builder"
+rm -rf "$LG" "$SDG"
 
 echo
 echo "RESULT: $pass passed, $fail failed"
