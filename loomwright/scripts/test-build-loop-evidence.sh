@@ -19,6 +19,18 @@
 #       LABELED Data-quality note ("log file <name> unparseable ...") and exit 0 — its
 #       runs are omitted but never silently dropped.
 #   (8) a 2-run log file's ledger sum is counted ONCE in the era total (no N-fold inflation).
+#   (9) durable=no path: a follow-up `fix:`-subject commit within 14 days touching the
+#       SAME file as the landed PR => `no (follow-up fix ... touched same files <14d)`
+#       plus the hot-file-sensitivity Data-quality note.
+#  (10) squash-merge path: a PR landed as a single non-merge "(#N)" commit => landed=yes,
+#       drain-cycle commit signal degraded with the LABELED "squash-merged PRs collapse
+#       branch history" Data-quality note (clean falls back to fix_cycles/heal_iterations).
+#  (11) landed edge paths: a pr_url with NO matching commit in history => no(not_in_history)
+#       (durable "-"); a run with NO pr_url at all => insufficient_data(no_pr_url).
+#  (12) era_of branches (via --jsonl): plugin_version 15.12.0 => post_orientation_memos;
+#       version-less run with a parseable ts in a fallback window => date_fallback:-labeled
+#       era bucket; no version AND no parseable ts => unknown bucket — each with its
+#       labeled Data-quality note.
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -235,6 +247,139 @@ if printf '%s\n' "$OUT" | grep -Fq "era totals count each file's sum exactly ONC
   ok "Data quality note explains the once-per-file attribution"
 else
   no "once-per-file attribution note missing from Data quality"
+fi
+
+# ============================================================================
+# Fixture G: second temp git repo exercising the CLASSIFICATION branches the published
+# SPIKE verdicts rest on (durable=no, squash-merge landing, not-in-history). Commit dates
+# are PINNED via GIT_COMMITTER_DATE so the durable 14-day window is deterministic forever:
+#   - PR #11 lands via a TRUE merge commit at 2026-06-01; a follow-up `fix:`-subject commit
+#     at 2026-06-03 (inside the window) touches the SAME file (b.txt) => durable=no.
+#   - PR #12 lands SQUASH-style: a single non-merge commit "feat: add c widget (#12)"
+#     touching only c.txt (no overlap with the follow-up fix) => durable=yes, and the
+#     drain-cycle commit signal is unavailable (labeled under Data quality).
+#   - PR #99 has NO landing commit in this repo's history at all.
+REPO2="$ROOT/repo2"
+mkdir -p "$REPO2"
+(
+  cd "$REPO2" || exit 1
+  git init -q
+  git config user.email t@t
+  git config user.name t
+  export GIT_AUTHOR_DATE="2026-06-01T10:00:00Z" GIT_COMMITTER_DATE="2026-06-01T10:00:00Z"
+  printf 'b1\nb2\n' > b.txt
+  git add b.txt && git commit -qm "init"
+  git checkout -q -b topic11
+  echo "feature eleven" >> b.txt && git add b.txt && git commit -qm "feat: widget eleven"
+  git checkout -q - >/dev/null 2>&1 || git checkout -q master 2>/dev/null || git checkout -q main
+  git merge -q --no-ff -m "Merge pull request #11 from acme/topic11" topic11
+  echo "c" > c.txt && git add c.txt && git commit -qm "feat: add c widget (#12)"
+  export GIT_AUTHOR_DATE="2026-06-03T10:00:00Z" GIT_COMMITTER_DATE="2026-06-03T10:00:00Z"
+  echo "hotfix" >> b.txt && git add b.txt && git commit -qm "fix: hotpatch widget eleven regression"
+) >/dev/null 2>&1
+
+SD_G="$REPO2/.supervisor"
+mkdir -p "$SD_G/logs" "$SD_G/postmortem"
+cat > "$SD_G/logs/g.jsonl" <<'EOF'
+{"ts":"2026-06-01T12:00:00Z","event":"session_end","task_id":"g-eleven","status":"completed","pr_url":"https://github.com/acme/widgets/pull/11","heal_iterations":0,"plugin_version":"15.4.0"}
+{"ts":"2026-06-01T13:00:00Z","event":"session_end","task_id":"g-twelve","status":"completed","pr_url":"https://github.com/acme/widgets/pull/12","heal_iterations":0,"plugin_version":"15.4.0"}
+{"ts":"2026-06-01T14:00:00Z","event":"session_end","task_id":"g-ghost","status":"completed","pr_url":"https://github.com/acme/widgets/pull/99","heal_iterations":0,"plugin_version":"15.4.0"}
+EOF
+cat > "$SD_G/postmortem/results.jsonl" <<'EOF'
+{"schema_version":1,"ts":"2026-06-02T12:00:00Z","repo":"acme/widgets","number":11,"review_rounds":0,"categories":[],"changed_paths":["b.txt"],"summary":"fixture"}
+{"schema_version":1,"ts":"2026-06-02T12:00:00Z","repo":"acme/widgets","number":12,"review_rounds":0,"categories":[],"changed_paths":["c.txt"],"summary":"fixture"}
+EOF
+
+echo "== (9) durable=no: follow-up fix commit <14d touching the same file =="
+run_builder --state-dir "$SD_G"
+row11="$(printf '%s\n' "$OUT" | grep -F "| g-eleven |" | head -1)"
+if [ "$RC" -eq 0 ] \
+   && printf '%s\n' "$row11" | grep -Fq "no (follow-up fix " \
+   && printf '%s\n' "$row11" | grep -Fq "touched same files <14d)"; then
+  ok "PR #11 durable=no (follow-up fix ... touched same files <14d), rc=0"
+else
+  no "durable=no branch not taken — row: $row11 (rc=$RC)"
+fi
+if printf '%s\n' "$OUT" | grep -Fq "durable is a file-overlap heuristic and is SENSITIVE to hot shared files"; then
+  ok "hot-file-sensitivity dq_once note present alongside durable=no"
+else
+  no "hot-file-sensitivity Data-quality note missing"
+fi
+
+# ============================================================================
+echo "== (10) squash-merge landing: landed=yes, drain-cycle signal labeled unavailable =="
+row12="$(printf '%s\n' "$OUT" | grep -F "| g-twelve |" | head -1)"
+if printf '%s\n' "$row12" | grep -Fq "| yes | yes | yes |"; then
+  ok "squash-landed PR #12: landed=yes, clean=yes, durable=yes (no file overlap with the fix)"
+else
+  no "squash-merge row wrong — row: $row12"
+fi
+if printf '%s\n' "$OUT" | grep -Fq "squash-merged PRs collapse branch history — drain-cycle commit signal unavailable there (clean relies on fix_cycles/heal_iterations for those)"; then
+  ok "squash drain-cycle degradation LABELED under Data quality (exact builder string)"
+else
+  no "squash-merge Data-quality note missing"
+fi
+
+# ============================================================================
+echo "== (11) landed edges: not-in-history and no-pr_url =="
+row99="$(printf '%s\n' "$OUT" | grep -F "| g-ghost |" | head -1)"
+if printf '%s\n' "$row99" | grep -Fq "| no(not_in_history) |" \
+   && printf '%s\n' "$row99" | grep -Fq "| - |"; then
+  ok "PR #99 with no landing commit => landed=no(not_in_history), durable '-'"
+else
+  no "not-in-history branch wrong — row: $row99"
+fi
+
+# ============================================================================
+# Fixture H: era_of branches — three version/date shapes, parent deliberately NOT a git
+# repo (era bucketing is git-independent; these runs also carry NO pr_url, which doubles
+# as the landed=insufficient_data(no_pr_url) edge assertion).
+SD_H="$ROOT/eras/.supervisor"
+mkdir -p "$SD_H/logs"
+cat > "$SD_H/logs/era-a.jsonl" <<'EOF'
+{"ts":"2026-07-20T10:00:00Z","event":"session_end","task_id":"era-post-memos","status":"completed","plugin_version":"15.12.0"}
+EOF
+cat > "$SD_H/logs/era-b.jsonl" <<'EOF'
+{"ts":"2026-07-10T10:00:00Z","event":"session_end","task_id":"era-datefallback","status":"completed"}
+EOF
+cat > "$SD_H/logs/era-c.jsonl" <<'EOF'
+{"event":"session_end","task_id":"era-unknown","status":"completed"}
+EOF
+
+echo "== (12) era_of branches: version bucket, date fallback, unknown =="
+run_builder --state-dir "$SD_H" --jsonl
+if [ "$RC" -eq 0 ] \
+   && [ "$(printf '%s\n' "$OUT" | jq -r 'select(.type=="run" and .run=="era-post-memos") | .era' 2>/dev/null)" = "post_orientation_memos" ]; then
+  ok "plugin_version 15.12.0 bucketed post_orientation_memos (rc=0)"
+else
+  no "15.12.0 era bucket wrong (rc=$RC)"
+fi
+if [ "$(printf '%s\n' "$OUT" | jq -r 'select(.type=="run" and .run=="era-datefallback") | .era' 2>/dev/null)" = "post_rules_seams" ] \
+   && [ "$(printf '%s\n' "$OUT" | jq -r 'select(.type=="run" and .run=="era-datefallback") | .version' 2>/dev/null)" = "date_fallback:2026-07-10" ]; then
+  ok "version-less run bucketed by ship-date fallback (post_rules_seams, date_fallback: label)"
+else
+  no "date-fallback era branch wrong"
+fi
+if printf '%s\n' "$OUT" | jq -r 'select(.type=="data_quality") | .notes[]' 2>/dev/null | grep -Fq "bucketed by ship-date fallback (labeled date_fallback)"; then
+  ok "date-fallback dq_once note present"
+else
+  no "date-fallback Data-quality note missing"
+fi
+if [ "$(printf '%s\n' "$OUT" | jq -r 'select(.type=="run" and .run=="era-unknown") | .era' 2>/dev/null)" = "unknown" ] \
+   && [ "$(printf '%s\n' "$OUT" | jq -r 'select(.type=="run" and .run=="era-unknown") | .version' 2>/dev/null)" = "unknown" ]; then
+  ok "no-version no-parseable-ts run lands in the unknown bucket (version unknown)"
+else
+  no "unknown era branch wrong"
+fi
+if printf '%s\n' "$OUT" | jq -r 'select(.type=="data_quality") | .notes[]' 2>/dev/null | grep -Fq "lack BOTH plugin_version and a parseable ts — era bucket unknown"; then
+  ok "unknown-era dq_once note present"
+else
+  no "unknown-era Data-quality note missing"
+fi
+if [ "$(printf '%s\n' "$OUT" | jq -r 'select(.type=="run" and .run=="era-post-memos") | .landed' 2>/dev/null)" = "insufficient_data(no_pr_url)" ]; then
+  ok "run with NO pr_url => landed=insufficient_data(no_pr_url)"
+else
+  no "no-pr_url landed label wrong"
 fi
 
 # ============================================================================
