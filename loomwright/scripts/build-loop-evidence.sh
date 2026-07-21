@@ -323,6 +323,9 @@ era_of() {
 
 find_landing() {
   # $1 = PR number. Sets L_SHA L_CT L_PARENTS ("" if not found).
+  # CAVEAT (heuristic): GITLOG is newest-first and the awk exits on the FIRST subject
+  # matching "(#N)" or "Merge pull request #N" — newest reference wins, so a LATER
+  # revert/reference commit mentioning (#N) becomes the landing SHA for that PR.
   L_SHA=""; L_CT=""; L_PARENTS=""
   [ "$GIT_OK" -eq 1 ] || return 0
   is_num "${1:-}" || return 0
@@ -385,6 +388,10 @@ durable_check() {
     || : > "$_lfiles"
   if [ ! -s "$_lfiles" ]; then DURABLE="insufficient_data"; return 0; fi
   # candidate follow-ups: revert/fix-style subjects landed inside the window (bounded 50)
+  # CAVEAT (heuristic): the subject regex below is a conventional-prefix heuristic —
+  # non-conventional follow-up subjects ("bug:", "correct ...", "repair ...") are missed
+  # entirely → possible false durable=yes. Matching behavior is deliberately FROZEN
+  # (the published SPIKE verdicts rest on it); this note is documentation only.
   _cands="$(awk -F'\t' -v lo="$2" -v hi="$_win_end" '
     ($2 ~ /^[0-9]+$/) && ($2 + 0 > lo + 0) && ($2 + 0 <= hi + 0) \
       && ($4 ~ /^([Rr]evert|fix|Fix|hotfix)/) { print $1 }

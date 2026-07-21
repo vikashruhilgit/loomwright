@@ -347,9 +347,16 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
     # both count against the headline (never inflated by unverifiable runs).
     le_clean="$(jq -s '[.[] | select(type=="object" and .type=="run" and .clean=="yes")] | length' "$le_jsonl" 2>/dev/null)"
     case "${le_clean:-}" in ''|*[!0-9]*) le_clean=0 ;; esac
+    # "measured" = runs whose clean stage could actually be evaluated — i.e. clean is
+    # anything OTHER than an insufficient_data(...) label (review data existed to say yes
+    # or no). Derived from the SAME --jsonl records as the headline so the denominators
+    # can never drift apart; the headline keeps the honest all-runs denominator and adds
+    # the measured subset parenthetically.
+    le_measured="$(jq -s '[.[] | select(type=="object" and .type=="run" and (((.clean // "") | tostring | startswith("insufficient_data")) | not))] | length' "$le_jsonl" 2>/dev/null)"
+    case "${le_measured:-}" in ''|*[!0-9]*) le_measured=0 ;; esac
     echo "_Advisory only — never gates a PR or changes a heal decision. Bounded summary of \`scripts/build-loop-evidence.sh\` (the READ-ONLY unattended-quality funnel: **landed → clean → durable → cheap** per run; \"clean\" applies the false-zero rule, so drain-internal fix signals count against a 0-review-round PR). Computed with jq, never guessed._"
     echo
-    echo "- **Funnel headline:** $le_clean of $le_total runs verifiably clean (clean = yes; unverifiable runs count as not clean)"
+    echo "- **Funnel headline:** $le_clean of $le_total runs verifiably clean ($le_clean of $le_measured measured runs — runs with review data; clean = yes, unverifiable runs count as not clean)"
     echo
     echo "**Era buckets** (advisory surfaces: rules seams >=15.1.0, orientation memos >=15.12.0)"
     echo

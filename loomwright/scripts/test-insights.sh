@@ -12,7 +12,8 @@
 # absent-corpora degradation, malformed-line tolerance, CHURN_STALE_DAYS override),
 # the Token economics advisory section (token_ledger real vs proxy rollup, absent degrade,
 # malformed-line skip), and the Loop evidence section (data path with strict clean=="yes"
-# headline counting + era table + pointer line and NO inlined per-run table; no-usable-records,
+# headline counting over the all-runs denominator plus the measured-subset parenthetical
+# + era table + pointer line and NO inlined per-run table; no-usable-records,
 # builder-absent, and garbage-emitting-builder degradations — all rendering the one-line
 # "no data" note without ever failing the dashboard build).
 
@@ -558,15 +559,20 @@ grep -qF "| loomwright:qa-executor | 1 | 42 |" "$tmd" 2>/dev/null && ok "only th
 rm -rf "$TM"
 
 echo "== 23. Loop evidence — data path (runs + era bucket, strict clean counting) =="
-# Two runs, both plugin_version 15.12.0 (→ one post_orientation_memos era bucket):
+# Three runs, all plugin_version 15.12.0 (→ one post_orientation_memos era bucket):
 #   le-a: PR 1, postmortem review_rounds=0, heal_iterations=1 → clean == "yes"
 #   le-b: PR 2, postmortem review_rounds=2, heal_iterations=3 → clean == "no (…)"
-# → headline MUST read "1 of 2" (strict clean=="yes" counting — le-b counts against it).
-# Neither PR is in the temp repo's git history → landed 0/2, durable 0/2 in the era row.
+#   le-c: PR 3, NO postmortem entry, heal_iterations=1 → clean == "insufficient_data(no_postmortem)"
+# → headline MUST read "1 of 3 ... (1 of 2 measured runs — runs with review data; ...)":
+#   strict clean=="yes" counting over the ALL-runs denominator, with the measured subset
+#   (clean != insufficient_data*) parenthetical — le-c is unmeasured, so measured (2) < total (3)
+#   proves the measured count is derived from clean labels, not just echoing the total.
+# No PR is in the temp repo's git history → landed 0/3, durable 0/3 in the era row.
 LE="$(mktemp -d)"; ( cd "$LE" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
 mkdir -p "$LE/.supervisor/logs" "$LE/.supervisor/postmortem"
 printf '%s\n' '{"ts":"2026-07-20T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS","heal_iterations":1,"plugin_version":"15.12.0","pr_url":"https://github.com/o/r/pull/1"}' > "$LE/.supervisor/logs/le-a.jsonl"
 printf '%s\n' '{"ts":"2026-07-20T11:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS","heal_iterations":3,"plugin_version":"15.12.0","pr_url":"https://github.com/o/r/pull/2"}' > "$LE/.supervisor/logs/le-b.jsonl"
+printf '%s\n' '{"ts":"2026-07-20T12:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS","heal_iterations":1,"plugin_version":"15.12.0","pr_url":"https://github.com/o/r/pull/3"}' > "$LE/.supervisor/logs/le-c.jsonl"
 {
   printf '%s\n' '{"ts":"2026-07-20T12:00:00Z","repo":"o/r","number":1,"pr_url":"https://github.com/o/r/pull/1","changed_paths":["a"],"review_rounds":0}'
   printf '%s\n' '{"ts":"2026-07-20T12:00:00Z","repo":"o/r","number":2,"pr_url":"https://github.com/o/r/pull/2","changed_paths":["b"],"review_rounds":2}'
@@ -575,8 +581,8 @@ out="$( cd "$LE" && bash "$BUILD" 2>&1 )"; rc=$?
 led="$LE/.supervisor/insights/dashboard.md"
 [ "$rc" -eq 0 ] && ok "build exits 0 (loop evidence data path)" || no "build rc != 0 (loop evidence data path, rc=$rc)"
 grep -q "^## Loop evidence (unattended-quality funnel)" "$led" 2>/dev/null && ok "loop evidence section rendered" || no "loop evidence section missing"
-grep -qF -- "- **Funnel headline:** 1 of 2 runs verifiably clean" "$led" 2>/dev/null && ok "headline counts strict clean==yes only (1 of 2 — the review_rounds=2 run counts against)" || no "funnel headline wrong (strict clean counting broken)"
-grep -qF "| post_orientation_memos | 2 | 0/2 | 1/2 | 0/2 | 2.0 | 1.0 | 0 |" "$led" 2>/dev/null && ok "era-buckets row correct (2 runs, 1 clean, avg heal 2.0, avg rounds 1.0)" || no "era-buckets row wrong"
+grep -qF -- "- **Funnel headline:** 1 of 3 runs verifiably clean (1 of 2 measured runs — runs with review data; clean = yes, unverifiable runs count as not clean)" "$led" 2>/dev/null && ok "headline exact: strict clean==yes over all runs + measured subset (le-c unmeasured, le-b counts against)" || no "funnel headline wrong (strict clean counting or measured denominator broken)"
+grep -qF "| post_orientation_memos | 3 | 0/3 | 1/3 | 0/3 | 1.7 | 1.0 | 0 |" "$led" 2>/dev/null && ok "era-buckets row correct (3 runs, 1 clean, avg heal 1.7, avg rounds 1.0)" || no "era-buckets row wrong"
 grep -qF "Full per-run funnel table (deliberately NOT inlined" "$led" 2>/dev/null && ok "pointer line to the full per-run table present" || no "pointer line missing"
 if grep -qF "| run | version | landed | clean | durable | cheap |" "$led" 2>/dev/null; then no "full per-run funnel table leaked into the dashboard"; else ok "per-run funnel table NOT inlined (dashboard stays skimmable)"; fi
 grep -q "^## Summary" "$led" 2>/dev/null && grep -q "^## Recent sessions" "$led" 2>/dev/null && ok "dashboard still renders fully with the loop evidence section" || no "dashboard incomplete with loop evidence section"
