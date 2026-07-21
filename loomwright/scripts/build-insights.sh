@@ -15,6 +15,12 @@
 
 set -uo pipefail
 
+# Resolve this script's own directory BEFORE cd'ing to the git root ($0 may be relative) —
+# used to invoke the sibling build-loop-evidence.sh for the Loop-evidence section. Fail-safe:
+# if resolution fails, SCRIPT_DIR is empty and the Loop-evidence section degrades to its
+# "no data" note (it never fails the dashboard build).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)" || SCRIPT_DIR=""
+
 GITROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$GITROOT" 2>/dev/null || true
 
@@ -312,6 +318,54 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
       echo
     fi
   fi
+
+  # --- Loop evidence (unattended-quality funnel — ALWAYS rendered; "no data" note when absent) ---
+  # BOUNDED summary of the READ-ONLY funnel builder scripts/build-loop-evidence.sh
+  # (landed → clean → durable → cheap per run, bucketed into advisory-surface eras).
+  # Embeds ONLY the era-buckets table + a one-line funnel headline — NEVER the full
+  # per-run table (27+ rows; the dashboard stays skimmable — the pointer line below
+  # runs the builder directly for the per-run detail). The builder is itself
+  # advisory/always-exit-0; this section mirrors that and is guarded so the dashboard
+  # build can NEVER fail because of it: the invocation runs in a `|| true` subshell and
+  # ANY degradation (builder missing, unparseable output, zero runs) renders the
+  # one-line "no data" note. Convention choice: ALWAYS rendered + degrade note (the
+  # Eval-fitness / Token-economics style used by the cheap-to-compute sections), NOT
+  # full suppression — suppression exists to avoid fabricated zeros, which a labeled
+  # note already avoids.
+  echo "## Loop evidence (unattended-quality funnel)"
+  le_builder="${SCRIPT_DIR:-}/build-loop-evidence.sh"
+  le_jsonl="$(mktemp)"
+  if [ -n "${SCRIPT_DIR:-}" ] && [ -f "$le_builder" ]; then
+    # --jsonl is the builder's machine contract (type:"run" / "era_bucket" records) —
+    # sturdier to consume than scraping its markdown tables. Guarded: never fails the build.
+    ( bash "$le_builder" --state-dir "$GITROOT/.supervisor" --jsonl 2>/dev/null || true ) > "$le_jsonl" 2>/dev/null || true
+  fi
+  le_total="$(jq -s '[.[] | select(type=="object" and .type=="run")] | length' "$le_jsonl" 2>/dev/null)"
+  case "${le_total:-}" in ''|*[!0-9]*) le_total=0 ;; esac
+  if [ "$le_total" -gt 0 ]; then
+    # "verifiably clean" = clean=="yes" EXACTLY — "no (…)" and insufficient_data(...) rows
+    # both count against the headline (never inflated by unverifiable runs).
+    le_clean="$(jq -s '[.[] | select(type=="object" and .type=="run" and .clean=="yes")] | length' "$le_jsonl" 2>/dev/null)"
+    case "${le_clean:-}" in ''|*[!0-9]*) le_clean=0 ;; esac
+    echo "_Advisory only — never gates a PR or changes a heal decision. Bounded summary of \`scripts/build-loop-evidence.sh\` (the READ-ONLY unattended-quality funnel: **landed → clean → durable → cheap** per run; \"clean\" applies the false-zero rule, so drain-internal fix signals count against a 0-review-round PR). Computed with jq, never guessed._"
+    echo
+    echo "- **Funnel headline:** $le_clean of $le_total runs verifiably clean (clean = yes; unverifiable runs count as not clean)"
+    echo
+    echo "**Era buckets** (advisory surfaces: rules seams >=15.1.0, orientation memos >=15.12.0)"
+    echo
+    echo "| Era | Runs | Landed | Clean | Durable | Avg heal iters | Avg review rounds | fix_cycles | Root-cause class mix | Advisory tokens |"
+    echo "|---|---|---|---|---|---|---|---|---|---|"
+    jq -s -r '
+      [.[] | select(type=="object" and .type=="era_bucket")] | .[]
+      | "| \(.era // "-") | \(.runs // "-") | \(.landed // "-")/\(.runs // "-") | \(.clean // "-")/\(.runs // "-") | \(.durable // "-")/\(.runs // "-") | \(.avg_heal_iterations // "-") | \(.avg_review_rounds // "-") | \(.fix_cycles // "-") | \(.class_mix // "-") | \(.advisory_tokens // "-") |"
+    ' "$le_jsonl" 2>/dev/null
+    echo
+    echo "- Full per-run funnel table (deliberately NOT inlined — the dashboard stays skimmable): run \`bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/build-loop-evidence.sh\"\` directly (add \`--jsonl\` for machine-readable records)."
+  else
+    echo "_No loop-evidence data yet (builder unavailable or no runs observable) — populate \`.supervisor/logs/*.jsonl\` via \`/supervisor\`, or run \`bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/build-loop-evidence.sh\"\` directly for the full (labeled) funnel readout._"
+  fi
+  echo
+  rm -f "$le_jsonl" 2>/dev/null
 
   # --- Missing-drain reconciliation (advisory; AC5 — SUPPRESSED when no corpus) ---
   # Surfaces PRs that carried a heal outcome (a `## Outcome` block with a `**PR:**` URL in the
