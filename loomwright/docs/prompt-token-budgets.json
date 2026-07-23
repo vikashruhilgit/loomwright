@@ -1,22 +1,78 @@
 {
-  "_comment": "Authoritative per-agent spawn-time prompt-inventory budgets, enforced by scripts/check-token-budget.sh. Weight = agent .md + every frontmatter-preloaded SKILL.md, measured as an OFFLINE PROXY (bytes / proxy_bytes_per_token). This is NOT an Anthropic token count and does NOT track live tokenizer inflation — it is a ratchet on prompt inventory growth only. ARCHITECTURE_CONTRACTS.md §'Prompt Token Budgets' mirrors this file for humans; THIS JSON is the single source of truth the gate reads. Keys are agent filename stems (loomwright/agents/<stem>.md). NOTE: the gate consumes ONLY .agents[<stem>].budget — the `measured` and `note` fields (including the '... N preloaded skills' counts in each note) are DECORATIVE, FROZEN authoring-time metadata the gate never re-derives or asserts (do not chase or re-bump them each release; they are authoring snapshots, like CLAUDE.md's frozen-example-value convention). The live preloaded-skill count IS computed and printed per run, but is not gated against these notes. The proxy sizes the whole .md/SKILL.md incl. frontmatter — a deliberate, safe over-count, not the literal system prompt.",
+  "_comment": "Authoritative per-agent spawn-time prompt-inventory budgets, enforced by scripts/check-token-budget.sh. Weight = agent .md + every frontmatter-preloaded SKILL.md, measured as an OFFLINE PROXY (bytes / proxy_bytes_per_token). This is NOT an Anthropic token count and does NOT track live tokenizer inflation \u2014 it is a ratchet on prompt inventory growth only. ARCHITECTURE_CONTRACTS.md \u00a7'Prompt Token Budgets' mirrors this file for humans; THIS JSON is the single source of truth the gate reads. Keys are agent filename stems (loomwright/agents/<stem>.md). NOTE: the gate consumes ONLY .agents[<stem>].budget \u2014 the `measured` and `note` fields (including the '... N preloaded skills' counts in each note) are DECORATIVE, FROZEN authoring-time metadata the gate never re-derives or asserts (do not chase or re-bump them each release; they are authoring snapshots, like CLAUDE.md's frozen-example-value convention). The live preloaded-skill count IS computed and printed per run, but is not gated against these notes. The proxy sizes the whole .md/SKILL.md incl. frontmatter \u2014 a deliberate, safe over-count, not the literal system prompt.",
   "proxy_bytes_per_token": 4,
-  "proxy_label": "proxy tokens (bytes/4 — offline proxy, not an exact Anthropic count)",
-  "raise_rule": "To raise a budget, edit its .agents[<stem>].budget here in the SAME PR that breaches it and add a one-line justification to that agent's `note`, AND update the mirrored row in ARCHITECTURE_CONTRACTS.md §'Prompt Token Budgets' in the same edit (machine-enforced: the gate asserts each table budget cell equals this JSON; drifted/missing/ghost rows fail CI closed). The gate reads this JSON, so every raise is visible in the PR diff and reviewable. Budgets are a ratchet against unmeasured growth, not a hard diet — shrinking prompts is separate follow-up work. Initial budgets = measured proxy value at authoring time (v15.10.0) + ~10% headroom, so no agent fails at introduction.",
+  "proxy_label": "proxy tokens (bytes/4 \u2014 offline proxy, not an exact Anthropic count)",
+  "raise_rule": "To raise a budget, edit its .agents[<stem>].budget here in the SAME PR that breaches it and add a one-line justification to that agent's `note`, AND update the mirrored row in ARCHITECTURE_CONTRACTS.md \u00a7'Prompt Token Budgets' in the same edit (machine-enforced: the gate asserts each table budget cell equals this JSON; drifted/missing/ghost rows fail CI closed). The gate reads this JSON, so every raise is visible in the PR diff and reviewable. Budgets are a ratchet against unmeasured growth, not a hard diet \u2014 shrinking prompts is separate follow-up work. Initial budgets = measured proxy value at authoring time (v15.10.0) + ~10% headroom, so no agent fails at introduction.",
   "agents": {
-    "code-reviewer":     { "budget": 24330, "measured": 22118, "note": "authoring baseline v15.10.0 (measured 22118 + ~10%); 5 preloaded skills" },
-    "context-keeper":    { "budget": 3052,  "measured": 2774,  "note": "authoring baseline v15.10.0; 0 preloaded skills" },
-    "execute-manager":   { "budget": 25941, "measured": 23582, "note": "authoring baseline v15.10.0; 3 preloaded skills" },
-    "launch-pad":        { "budget": 34478, "measured": 31343, "note": "authoring baseline v15.10.0; 7 preloaded skills (name: loomwright:launch-pad-runner)" },
-    "orchestrator":      { "budget": 8665,  "measured": 7877,  "note": "authoring baseline v15.10.0; 1 preloaded skill" },
-    "plan-reviewer":     { "budget": 7032,  "measured": 6392,  "note": "authoring baseline v15.10.0; 0 preloaded skills" },
-    "product-owner":     { "budget": 13807, "measured": 12551, "note": "authoring baseline v15.10.0; 3 preloaded skills" },
-    "qa-executor":       { "budget": 47559, "measured": 43235, "note": "authoring baseline v15.10.0; 5 preloaded skills" },
-    "qa-strategist":     { "budget": 22877, "measured": 20797, "note": "authoring baseline v15.10.0; 3 preloaded skills" },
-    "red-team-reviewer": { "budget": 6065,  "measured": 5513,  "note": "authoring baseline v15.10.0; 1 preloaded skill" },
-    "review-pr":         { "budget": 24230, "measured": 22027, "note": "authoring baseline v15.10.0; 2 preloaded skills (name: loomwright:review-pr-runner)" },
-    "rubric-grader":     { "budget": 2086,  "measured": 1896,  "note": "authoring baseline v15.10.0; 0 preloaded skills" },
-    "supervisor":        { "budget": 51221, "measured": 46564, "note": "authoring baseline v15.10.0; 7 preloaded skills (name: loomwright:supervisor-runner)" },
-    "worker":            { "budget": 4574,  "measured": 4158,  "note": "authoring baseline v15.10.0; 0 preloaded skills" }
+    "code-reviewer": {
+      "budget": 24330,
+      "measured": 22118,
+      "note": "authoring baseline v15.10.0 (measured 22118 + ~10%); 5 preloaded skills"
+    },
+    "context-keeper": {
+      "budget": 3052,
+      "measured": 2774,
+      "note": "authoring baseline v15.10.0; 0 preloaded skills"
+    },
+    "execute-manager": {
+      "budget": 25941,
+      "measured": 23582,
+      "note": "authoring baseline v15.10.0; 3 preloaded skills"
+    },
+    "launch-pad": {
+      "budget": 34478,
+      "measured": 31343,
+      "note": "authoring baseline v15.10.0; 7 preloaded skills (name: loomwright:launch-pad-runner)"
+    },
+    "orchestrator": {
+      "budget": 8665,
+      "measured": 7877,
+      "note": "authoring baseline v15.10.0; 1 preloaded skill"
+    },
+    "plan-reviewer": {
+      "budget": 7032,
+      "measured": 6392,
+      "note": "authoring baseline v15.10.0; 0 preloaded skills"
+    },
+    "product-owner": {
+      "budget": 13807,
+      "measured": 12551,
+      "note": "authoring baseline v15.10.0; 3 preloaded skills"
+    },
+    "qa-executor": {
+      "budget": 47559,
+      "measured": 43235,
+      "note": "authoring baseline v15.10.0; 5 preloaded skills"
+    },
+    "qa-strategist": {
+      "budget": 22877,
+      "measured": 20797,
+      "note": "authoring baseline v15.10.0; 3 preloaded skills"
+    },
+    "red-team-reviewer": {
+      "budget": 6065,
+      "measured": 5513,
+      "note": "authoring baseline v15.10.0; 1 preloaded skill"
+    },
+    "review-pr": {
+      "budget": 24230,
+      "measured": 22027,
+      "note": "authoring baseline v15.10.0; 2 preloaded skills (name: loomwright:review-pr-runner)"
+    },
+    "rubric-grader": {
+      "budget": 2330,
+      "measured": 1896,
+      "note": "authoring baseline v15.10.0; 0 preloaded skills; raised 2086->2330 for the shared-agent-prefix block (docs/shared-agent-prefix.md): measured 2118 + ~10%"
+    },
+    "supervisor": {
+      "budget": 51221,
+      "measured": 46564,
+      "note": "authoring baseline v15.10.0; 7 preloaded skills (name: loomwright:supervisor-runner)"
+    },
+    "worker": {
+      "budget": 5045,
+      "measured": 4158,
+      "note": "authoring baseline v15.10.0; 0 preloaded skills; raised 4574\u21925045 for the shared-agent-prefix block + pointer-contract consumer text (measured 4586 + ~10%, v15.13.0)"
+    }
   }
 }

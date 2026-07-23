@@ -1,8 +1,8 @@
 ---
 name: self-heal-advisory
 description: Supervisor Phase 4.5 protocol authority. Part 1 — advisory-only machinery (pre-review enrichments, System Twin conformance/benchmark/ground-truth, contract-builder WRITE path, delta line, hard-signal dual emission; never changes heal_decision or blocks the PR). Part 2 — the full Phase 4.5 SELF_HEAL loop protocol (on-entry actions, base-mismatch cleanup, bounded review-and-fix loop, rubric grading, red-team lens, completion-tail procedure), Read on demand at Phase 4.5 entry, deliberately not preloaded.
-version: "1.3.0"
-lastUpdated: 2026-07-20
+version: "1.4.0"
+lastUpdated: "2026-07-20"
 ---
 
 # Self-Heal Protocol (Supervisor Phase 4.5)
@@ -649,6 +649,12 @@ while heal_iterations < max_heal_iterations:
   Task(
     subagent_type: "general-purpose",
     # Tool allowlist: Read, Write, Edit, Bash, Glob, Grep (no Task — fix agent may not dispatch further subagents)
+    # Pointer-audit note (deliberate paste — see docs/POINTER_AUDIT.md): the findings list below is
+    # NOT file-backed (CODE_REVIEW_RESULT exists only in the reviewer Task's transcript, never on
+    # disk), is already bounded by construction (category=new + severity>=HIGH only), and the fix
+    # worker provably needs each finding's full file:line + description + suggestion every time —
+    # they ARE the work items. Keep the paste; do NOT write findings to a scratch file just to
+    # point at it (that would add a write path to a review seam that has none).
     working_dir: main checkout on feature branch,
     prompt: "You are fixing a feature branch before review passes.
              Feature branch: {branch}

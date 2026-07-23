@@ -25,6 +25,10 @@
 # from the LOOMWRIGHT_ORIENTATION_SOURCE env var — any other/unset value omits
 # the field entirely (fail-safe; never invented, never validated loudly).
 #
+# Additive-if-present: `shared_prefix: true` marker emitted only when the
+# LOOMWRIGHT_SHARED_PREFIX env var is exactly "1" — any other/unset value omits
+# the field entirely (fail-safe; same namespace discipline as orientation_source).
+#
 # RESERVED (do not emit): graph_context_used — reserved for future job 04.
 #
 # Authoritative spec: loomwright/docs/TELEMETRY.md §Token ledger
@@ -210,8 +214,17 @@ orientation_source = os.environ.get("LOOMWRIGHT_ORIENTATION_SOURCE", "")
 if orientation_source in ("memos", "repo_map", "graphify", "none"):
     event["orientation_source"] = orientation_source
 
+# Additive-if-present: shared_prefix marker from the LOOMWRIGHT_SHARED_PREFIX
+# env var (inherited from the hook invocation environment — same namespace
+# discipline as orientation_source above). Only the exact value "1" emits
+# `"shared_prefix": true`; anything else — including unset/empty — omits the
+# field entirely (fail-safe: never a guess, never an error).
+if os.environ.get("LOOMWRIGHT_SHARED_PREFIX", "") == "1":
+    event["shared_prefix"] = True
+
 # RESERVED (do not emit): graph_context_used — reserved for future job 04.
-# (orientation_source is emitted above since v15.12.0 and is NOT a reserved key.)
+# (orientation_source is emitted above since v15.12.0 and shared_prefix since
+# v15.13.0 — neither is a reserved key.)
 
 try:
     line = json.dumps(event, separators=(",", ":"), ensure_ascii=False)

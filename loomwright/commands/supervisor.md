@@ -356,6 +356,8 @@ The Supervisor uses externalized state and tool call budgets:
 | Worker crash | Retry once, then escalate |
 | Worktree fails | Fall back to sequential mode |
 
+**Rule:** Never force-resolve merge conflicts — a merge conflict always STOPs the run and escalates to a human (mirrored from the shared agent prefix; inline command surfaces never load the agents/*.md block).
+
 ## Dry Run Mode
 
 Preview without executing:

@@ -17,6 +17,17 @@ skills:
   - quality-checklist
 ---
 
+<!-- SHARED-AGENT-PREFIX v1 BEGIN -->
+## Shared Agent Contract
+
+Baseline contract for every Loomwright agent (full standard: `AGENT_GUIDELINES.md`). Role-specific contracts below extend or specialize this baseline.
+
+- **Mission:** deliver the smallest correct thing that advances the objective — surgical changes, existing patterns, no scope creep.
+- **Safety:** no destructive actions without explicit approval; never invent files, APIs, or paths — verify against the codebase or ask when unsure; no secrets or PII in code, logs, or output.
+- **Escalation:** merge conflicts always escalate — never force-resolve.
+- **Output:** default result structure is Context Read → Plan → Work → Results → Risks; where the role defines its own output contract (structured result block or response template), that role contract is authoritative.
+<!-- SHARED-AGENT-PREFIX v1 END -->
+
 # Supervisor Agent v4 (Parallel Orchestrator)
 
 > **Model Warning:** Supervisor orchestrates complex 7-phase workflows with parallel execution, merge conflict detection, post-merge self-heal, and multi-agent coordination. Models below Sonnet may produce suboptimal plans and miss merge conflicts. Use Sonnet or Opus for best results.
@@ -62,7 +73,6 @@ Autonomously manage the complete development workflow from task pickup to PR cre
 - **State writes (one canonical format, per-path writer):** Context-Keeper writes the state file on the **parallel path**; on the **inline main-thread path** (no Context-Keeper spawned) the Supervisor best-effort-writes the SAME canonical lowercase `## Session` block / status flip directly (Phase 1 ACQUIRE + the Phase 4.5 completion tail). Never a second on-disk format; the bold ENVIRONMENT/Outcome blocks are display output, not the state file.
 - **Clean worktrees:** All worktrees removed in FINALIZE (no orphans)
 - **Sequential merge:** Worktree branches merge one at a time into feature branch
-- **Escalate conflicts:** Never force-resolve merge conflicts
 - **Exit gracefully:** At tool call budget limit, checkpoint and exit with resume command
 - **Inline execution does not waive child-agent spawning:** Running `/supervisor` inline on the main thread is allowed and preferred (it avoids the `supervisor-runner` subagent-spawn trap). It does NOT waive spawning first-level child agents via the Task tool. Manual implementation in the main thread is not a substitute for `execute-manager` or fast-path worker/reviewer behavior in Phase 3, nor for `code-reviewer` in Phase 4.5. If you find yourself about to write implementation code directly in the main thread during Phase 3, or about to skip the `code-reviewer` Task call in Phase 4.5, stop and spawn the child agent instead. The Phase 4.5 completion-tail guard will refuse to emit a successful `SUPERVISOR_RESULT` if the review was skipped without `--skip-self-heal`.
 
@@ -190,7 +200,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
 
 **Actions:**
 1. Spawn Orchestrator (blocking):
-   - Input: `goal: "{task_id}: {title}"`
+   - Input: `goal: "{task_id}: {title}"` + brief pointer ({brief_path}, "read only the sections you need") + bounded ≤200-char criteria summary — pointers, not pasted brief bodies; exact shape in `skills/async-orchestration/SKILL.md` Part 2 §"Subagent Spawn Contracts"
    - Capture: subtask list with titles, criteria, dependencies, file estimates
    - When `cost_profile=cheap`: include `model: "sonnet"` in the Task call
 2. Analyze parallelism (per `skills/async-orchestration/SKILL.md`):
@@ -258,11 +268,14 @@ If ≤ 1 subtask OR `--sequential`:
 result = Task(
   description: "Execute Phase 3: implement and review subtasks",
   prompt: "Execute Manager prompt with:
-    - Subtask list: [{ids, titles, criteria, files, skills, deps}]
+    - Brief: {brief_path} — read only the sections you need (## Subtask Structure, ## Subtask Contracts, per-subtask criteria). Gitignored main-checkout path: resolves for the Execute Manager (project root), NOT inside worker worktrees. When no brief file exists (`/supervisor task:` no-brief mode), point at `.supervisor/requirements/{slug}-plan.md` (Beads-absent) or `bd show {id}` (Beads) instead, or pass the criteria inline — a documented exception, see docs/POINTER_AUDIT.md.
+    - Subtask index (compact — ids/titles/deps only, no pasted criteria/file lists): [{ids, titles, deps}]
     - Parallelism graph: [{launchable, blocked}]
     - Config: max_workers={N}, project={name}, feature_branch={branch}
     - State file: {path}
     - cost_profile: {default|cheap}",   # always include so Execute Manager can propagate overrides
+  # Pointer, not payload (transport-only; see docs/POINTER_AUDIT.md) — the exact shape mirrors
+  # skills/async-orchestration/SKILL.md Part 2 §"Subagent Spawn Contracts" (the authority); keep in sync.
   subagent_type: "loomwright:execute-manager",
   model: "sonnet"   # ONLY when cost_profile=cheap; omit entirely when cost_profile=default
 )
