@@ -64,12 +64,15 @@ This makes `/dreaming` the safe, auditable counterpart to live execution: read p
 │                                                                 │
 │  Phase 4: APPROVE (Per-item user gate — write-on-Accept)        │
 │     └─> User reviews each proposed item and chooses             │
-│         Accept / Reject / Edit. On Accept, /dreaming writes     │
-│         project-memory facts + LESSONS via the repo-root sole   │
-│         writers; CLAUDE.md + legacy agent-memory stay           │
-│         paste-to-apply. Pending orientation proposals promote   │
-│         via add-orientation.sh (Reject deletes, never writes).  │
-│         No auto-write, no bulk-accept.                          │
+│         Accept / Reject / Edit / Supersede / Retract.           │
+│         On Accept, /dreaming writes project-memory facts +      │
+│         LESSONS via the repo-root sole writers; CLAUDE.md +     │
+│         legacy agent-memory stay paste-to-apply. Pending        │
+│         orientation proposals promote via add-orientation.sh    │
+│         (Reject deletes, never writes). Supersede/Retract       │
+│         curate an EXISTING corpus entry (composing the store's  │
+│         own supersede/retract verb) instead of adding a new      │
+│         one. No auto-write, no bulk-accept.                     │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -81,14 +84,20 @@ This makes `/dreaming` the safe, auditable counterpart to live execution: read p
    - Distill those into candidate insights
    - **Propose** memory entries and `CLAUDE.md` paragraphs **without writing anything**
 3. **Output a structured reflection report** — `/dreaming` aggregates per-agent proposals, collected worker memory candidates, and distilled LESSONS into a single report with the six mandatory sections listed below.
-4. **Per-item user approval (write-on-Accept for memory/LESSONS)** — The user is presented with each proposal in turn. The approval mechanism is the harness `AskUserQuestion` tool (or, when unavailable, a numbered list with typed responses): each proposal is displayed with its target and verbatim text and the user picks `Accept`, `Reject`, or `Edit`. There is no bulk-accept; each item is gated individually. On `Accept`:
+4. **Per-item user approval (write-on-Accept for memory/LESSONS)** — The user is presented with each proposal in turn. The approval mechanism is the harness `AskUserQuestion` tool (or, when unavailable, a numbered list with typed responses): each proposal is displayed with its target and verbatim text and the user picks `Accept`, `Reject`, `Edit`, `Supersede`, or `Retract`. There is no bulk-accept; each item is gated individually. `Accept` / `Reject` / `Edit` are as before (see below). **`Supersede` and `Retract` are curation actions that target an EXISTING corpus entry** (a live LESSONS entry, or — for the orientation promotion queue — a live committed memo) instead of writing a brand-new one; each composes the target store's own curation verb through its sole writer, per-item, human-gated exactly like `Accept`:
+   - **`Supersede`** — offered when a proposed LESSON (§6) or promoted orientation memo would replace an existing corpus entry. Instead of a plain `Accept`, the user picks `Supersede` and confirms which existing entry it replaces; `/dreaming` then invokes the target store's `supersede`/`--supersedes` verb (see the §6 and promotion-queue subsections below) rather than a bare add.
+   - **`Retract`** — offered on an EXISTING corpus entry that reflection determined is simply wrong, stale, or no longer applicable, with **no replacement**. The user picks `Retract`, confirms, and `/dreaming` invokes the target store's `retract` action through its sole writer. `Retract` never adds anything.
+   - Both actions are **per-item and human-gated** exactly like `Accept` — no bulk-supersede, no bulk-retract, and both still route through the store's own sole writer (never a direct file edit by `/dreaming`).
+
+   On `Accept`:
    - **PROJECT_MEMORY facts** (including accepted collected worker candidates) are written by `/dreaming` itself via `bash "${CLAUDE_PLUGIN_ROOT}/scripts/write-project-memory.sh" --fact "<text>" --source "dreaming"`.
-   - **LESSONS** are written by `/dreaming` itself via `bash "${CLAUDE_PLUGIN_ROOT}/scripts/write-lessons.sh" --category "<cat>" --lesson "<text>" --source "dreaming"`. Lessons now carry machine-readable freshness metadata — `last_verified` (optional `--last-verified`, defaults to write time) and `confidence` (optional `--confidence`, defaults to `medium`) — appended as a parseable HTML-comment trailer (the existing invocation above is unchanged since both flags are optional with safe defaults). These lessons are *intended* to be read back through the provenance-gated, stale-linting `read-lessons.sh`; that reader is shipped and self-tested, but wiring it into a consumer (plan-time LESSONS-APPLY) is the next step — no agent invokes it yet.
+   - **LESSONS** are written by `/dreaming` itself via `bash "${CLAUDE_PLUGIN_ROOT}/scripts/write-lessons.sh" --category "<cat>" --lesson "<text>" --source "dreaming"`. Lessons now carry machine-readable freshness metadata — `last_verified` (optional `--last-verified`, defaults to write time) and `confidence` (optional `--confidence`, defaults to `medium`) — appended as a parseable HTML-comment trailer (the existing invocation above is unchanged since both flags are optional with safe defaults). These lessons are read back through the provenance-gated, stale-linting `read-lessons.sh`, which **has a live consumer**: Supervisor Phase 1 ACQUIRE (`agents/supervisor.md:140`) runs it as an advisory, read-only, strictly-subordinate-to-CLAUDE.md context read before task selection.
    - **Pass `<text>` / `<cat>` as literal argv values, never by interpolating them into a shell string** — approved proposal text may contain quotes, `$`, backticks, or other shell metacharacters. Supply each as a single argument (the writers slugify `--category`, sanitize `--source`, and treat `--fact`/`--lesson` as opaque text), so a lesson like `He said "run $PATH"` is stored verbatim and cannot break or inject the command.
    - **Orientation-memo proposals** (files under `.supervisor/orientation-proposals/`, written by the Supervisor Phase 4.5 completion tail) are promoted by `/dreaming` itself on per-item Accept via `bash "${CLAUDE_PLUGIN_ROOT}/scripts/add-orientation.sh" <area-slug> <summary-line> <body-file> --confirm` — the committed `.agent/orientation/` store's confirm-gated sole writer. Derive `<area-slug>` from the proposal filename, `<summary-line>` from the proposal's line-2 summary, and `<body-file>` from a temp file holding the proposal body (the header comment is re-stamped by the writer, never copied; optionally forward the header's `areas:` value via `--areas`). Pass every value as a **literal argv argument, never interpolated into a shell string** — the writer itself REJECTS hostile slugs, over-cap memos, and instruction-injection markers, and a rejected promotion is reported with the proposal file left in place for editing. On a successful promotion the proposal file is **deleted**; on **Reject** the proposal file is deleted **without writing**.
    - **CLAUDE.md** and **legacy `.claude/agent-memory/`** proposals remain **paste-to-apply** — the user (or a follow-up turn) performs those writes; `/dreaming` does not.
+   - **Idempotent harness-memory pointer (LESSONS only):** whenever this Accept persists a LESSON (a plain new lesson, or the replacement half of a `Supersede`), `/dreaming` additionally ensures **ONE** idempotent pointer line exists in the repo's Claude-harness memory naming `.supervisor/memory/LESSONS.md` as the durable lessons store — see "Harness-memory pointer" below for the exact contract.
 
-   `Reject` and `Edit` never write (an `Edit` only revises the proposed text, which can then be re-offered for Accept). Because `/dreaming` runs at the repo root, the sole writers' worktree-guard is satisfied; both writers also enforce their own bounds/provenance, so even an accepted item is subject to their caps. There is still **no auto-write** — every persisted item requires an explicit per-item Accept.
+   `Reject` and `Edit` never write (an `Edit` only revises the proposed text, which can then be re-offered for Accept). `Supersede` and `Retract` write ONLY through the target store's own curation verb (see §6 / the promotion-queue subsection below for the exact invocations) — never a direct file edit. Because `/dreaming` runs at the repo root, the sole writers' worktree-guard is satisfied; every writer also enforces its own bounds/provenance, so even an accepted/superseded/retracted item is subject to its caps. There is still **no auto-write** — every persisted, superseded, or retracted item requires an explicit per-item user choice.
 
    **Applying paste-to-apply items.** Each CLAUDE.md / legacy-memory proposal lists its target path (e.g., `.claude/agent-memory/loomwright:code-reviewer/patterns.md`) and the verbatim text to write. After `/dreaming` exits, the user — or a follow-up turn in the same session — applies an accepted proposal directly with the `Write` tool (for new files) or `Edit` tool (for in-place additions). The proposal text is already in the form that should be written, so the apply step is a verbatim paste at the cited path. The per-item review-and-apply pattern keeps the user in the loop and forces them to read each proposal before it lands.
 
@@ -216,9 +225,68 @@ Distilled, **category-tagged** lessons, **bounded ≤3 active per category**. Be
 
 On Accept, a lesson is written via `write-lessons.sh` (see Phase 4 / APPROVE).
 
+#### Curating existing LESSONS (Supersede / Retract)
+
+Reflection may also surface that an **existing** `LESSONS.md` entry (not just a newly-distilled §6 candidate) is now wrong, contradicted by a more recent pattern, or simply stale. When it does, `/dreaming` offers that existing entry for **`Supersede`** or **`Retract`** alongside the normal §6 proposals — same per-item `AskUserQuestion` gate, no bulk action:
+
+- **`Supersede`** — offered when a §6 proposal is framed as replacing a *specific* existing lesson (not merely "the oldest in a full category" — see the ≤3-bound note above, which is a capacity eviction, distinct from this explicit curation action). On the user picking `Supersede` (instead of a plain `Accept`), `/dreaming` invokes the target's own `supersede` verb, composing PRE-CHECK → RETRACT → ADD in one call (this ordering is enforced inside `write-lessons.sh`, never by `/dreaming` sequencing two separate calls):
+
+  ```bash
+  bash "${CLAUDE_PLUGIN_ROOT}/scripts/write-lessons.sh" supersede "<category>" "<old lesson text>" \
+    --replacement "<new lesson text>" --source "dreaming"
+  ```
+
+  `--replacement` is **required** (a supersede without one is indistinguishable from a `Retract`). On success the new lesson carries `supersedes=<hash-of-old>` in its trailer and the old entry is gone; on a pre-check failure (target absent or not chain-trusted) the verb fails loud (exit 4) and `LESSONS.md` is left byte-identical — `/dreaming` surfaces that failure to the user rather than silently dropping the item.
+
+- **`Retract`** — offered on an existing lesson reflection determined is simply wrong or no longer applicable, **with no replacement**. On the user picking `Retract`, `/dreaming` invokes the already-shipped retract verb:
+
+  ```bash
+  bash "${CLAUDE_PLUGIN_ROOT}/scripts/write-lessons.sh" retract "<category>" "<lesson text>" --source "dreaming"
+  ```
+
+  This is the same `retract` flow `write-lessons.sh` has shipped since the curation/anti-rot work landed (tombstoned via provenance, entry line removed, `read-lessons.sh` labels it `RETRACTED` if it's ever inspected historically) — `/dreaming` is simply a new per-item-gated CALLER of it, not a reimplementation.
+
+Both actions pass `<category>` / `<lesson text>` / `<new lesson text>` as **literal argv values**, never interpolated into a shell string — matching the argv discipline already required for §6 Accept (see Phase 4 / APPROVE).
+
 ### Pending orientation proposals (promotion queue)
 
 When the gitignored `.supervisor/orientation-proposals/` directory holds proposal `.md` files (written by the Supervisor Phase 4.5 completion tail — see `skills/self-heal-advisory/SKILL.md` Part 2), `/dreaming` appends a promotion queue after the six report sections, listing each proposal's area slug, one-line summary, and file path, labeled **PENDING USER APPROVAL**. This is a promotion queue, not a seventh mandatory report section — it appears only when proposals exist. Per-item **Accept** promotes the proposal into the committed `.agent/orientation/` store via `add-orientation.sh … --confirm` and deletes the promoted proposal file; **Reject** deletes the proposal file without writing; **Edit** revises the proposal text before a re-offered Accept (see Phase 4 / APPROVE for the exact invocation and argv discipline).
+
+**Supersede / Retract for existing committed memos.** When a pending proposal's area-slug logically replaces a *different*, already-committed memo (e.g. an area was renamed or split), or when reflection independently determines an existing committed memo is stale with no proposal replacing it, `/dreaming` offers the same two curation actions on the existing `.agent/orientation/<slug>.md` entry, per-item-gated exactly like the proposal actions above:
+
+- **`Supersede`** — promotes the pending proposal as the declared replacement of an existing memo (rather than a plain new/updated memo at its own slug):
+
+  ```bash
+  bash "${CLAUDE_PLUGIN_ROOT}/scripts/add-orientation.sh" --supersedes \
+    --target "<old-area-slug>" --replacement "<new-area-slug>" --reason "<text>" --confirm
+  ```
+
+  Both `<old-area-slug>` and `<new-area-slug>` must already exist as parseable memos (the replacement is normally the just-promoted proposal, so promote it first via the plain create path, then supersede). `--replacement` is required; the target memo file itself is left in place — `read-orientation.sh` is what hides a superseded memo from output (single-hop, non-transitive), not deletion.
+
+- **`Retract`** — removes an existing committed memo outright, with no replacement:
+
+  ```bash
+  bash "${CLAUDE_PLUGIN_ROOT}/scripts/add-orientation.sh" --retract \
+    --target "<area-slug>" --reason "<text>" --confirm
+  ```
+
+  There is no in-store home for the reason (no provenance sidecar for this store — adding one would violate the curation freeze), so the writer **prints** a one-line provenance record to stdout; the commit that lands the removal is the durable record. `/dreaming` surfaces that printed line to the user as confirmation.
+
+### Harness-memory pointer (on LESSONS Accept)
+
+Whenever a per-item `Accept` (or the replacement half of a `Supersede`) persists a LESSON via `write-lessons.sh`, `/dreaming` additionally ensures **exactly ONE** idempotent pointer line exists in the repo's Claude-harness memory (the harness's own `MEMORY.md`/memory-index surface under `.claude/`), naming `.supervisor/memory/LESSONS.md` as the durable, machine-readable lessons store — for example, a line such as:
+
+```
+- [Verified project LESSONS](../../.supervisor/memory/LESSONS.md) — machine-readable, provenance-gated lessons written via /dreaming; read back by read-lessons.sh.
+```
+
+**This is a signpost, not a sync.** `/dreaming` is NOT copying lesson content into harness memory, NOT keeping the two in lockstep beyond this one line, and NOT writing one pointer line per lesson — it is a single, idempotent "look here" breadcrumb for the harness's own memory system, written once per repo and left alone on every subsequent Accept once it already exists (a plain string-presence check before writing, so re-running `/dreaming` many times never duplicates the line).
+
+**Where and when this runs is load-bearing, not incidental:**
+
+- It is documented here as executing **at `/dreaming` runtime, from the repo root** — `/dreaming` is an inline main-thread command (never Task-spawned into a worker), so it always runs at the repo root where `.claude/` actually exists and is writable.
+- It must **never** be attempted from a worker worktree. `.claude/` is **gitignored**, so a worktree's copy of it (if any) is not the real, committed-adjacent directory the user's harness reads — a write there would be silently lost the moment `git worktree remove` runs. This is exactly the hazard `write-lessons.sh` itself guards against for `LESSONS.md`: it **hard-refuses to run from a git worktree, exiting 3** (see its own worktree-guard, closing red-team F1) — the harness-pointer write inherits the identical rationale even though it targets a different file, and `/dreaming`'s repo-root-only execution model is what keeps it consistent with that guard rather than fighting it.
+- Because `/dreaming` never runs from a worktree in the first place, there is no separate flag or check needed here beyond stating the invariant plainly: this pointer write is a repo-root-only operation, full stop.
 
 ### Empty-state suppression
 
@@ -236,10 +304,11 @@ If, after dedup against existing project memory and after bounding LESSONS per c
 - **Agent memory is read-only during reflection.** `.claude/agent-memory/` is opened only for reading. The reflection-mode prompt explicitly forbids writes to that directory. Reflection agents that would normally append to memory must instead emit proposals into the report.
 - **`CLAUDE.md` is read-only.** The project `CLAUDE.md` (and any files it references) are opened only for reading.
 - **`/dreaming` only PROPOSES until you Accept.** Every memory, LESSONS, and `CLAUDE.md` update appears in the report as a proposal labeled **PENDING USER APPROVAL**. Nothing is written during GATHER, REFLECT, or AGGREGATE.
-- **User must explicitly approve each proposed item.** Approval is **per-item**, not bulk. The user chooses Accept, Reject, or Edit for each proposal. Acceptance is required before any persistence. There is **no auto-write**.
-- **On Accept, `/dreaming` writes only PROJECT_MEMORY facts, LESSONS, and orientation-memo promotions — and only through the sole writers.** Accepted facts go through `bash "${CLAUDE_PLUGIN_ROOT}/scripts/write-project-memory.sh" --fact "<text>" --source "dreaming"`; accepted lessons through `bash "${CLAUDE_PLUGIN_ROOT}/scripts/write-lessons.sh" --category "<cat>" --lesson "<text>" --source "dreaming"`; accepted orientation proposals through `bash "${CLAUDE_PLUGIN_ROOT}/scripts/add-orientation.sh" <area-slug> <summary-line> <body-file> --confirm` (the committed `.agent/orientation/` store's confirm-gated sole writer; the promoted proposal file is then deleted). `/dreaming` runs at the repo root, satisfying the sole writers' worktree-guard. Reject/Edit never writes (a Reject on an orientation proposal deletes the proposal file — the committed store is untouched).
+- **User must explicitly approve each proposed item.** Approval is **per-item**, not bulk. The user chooses Accept, Reject, Edit, Supersede, or Retract for each proposal/entry. Acceptance (or a Supersede/Retract selection) is required before any persistence. There is **no auto-write**.
+- **On Accept, `/dreaming` writes only PROJECT_MEMORY facts, LESSONS, and orientation-memo promotions — and only through the sole writers.** Accepted facts go through `bash "${CLAUDE_PLUGIN_ROOT}/scripts/write-project-memory.sh" --fact "<text>" --source "dreaming"`; accepted lessons through `bash "${CLAUDE_PLUGIN_ROOT}/scripts/write-lessons.sh" --category "<cat>" --lesson "<text>" --source "dreaming"`; accepted orientation proposals through `bash "${CLAUDE_PLUGIN_ROOT}/scripts/add-orientation.sh" <area-slug> <summary-line> <body-file> --confirm` (the committed `.agent/orientation/` store's confirm-gated sole writer; the promoted proposal file is then deleted). `/dreaming` runs at the repo root, satisfying the sole writers' worktree-guard. On a LESSON Accept/Supersede, `/dreaming` also ensures the idempotent harness-memory pointer line exists (see "Harness-memory pointer" above) — repo-root-only, never from a worktree. Reject/Edit never writes (a Reject on an orientation proposal deletes the proposal file — the committed store is untouched).
+- **`Supersede` and `Retract` write only through the target store's own curation verb.** A `Supersede` on an existing LESSON invokes `write-lessons.sh supersede <category> <lesson-text> --replacement "<new text>" --source "dreaming"`; a `Retract` invokes `write-lessons.sh retract <category> <lesson-text> --source "dreaming"`. The equivalent orientation-store actions invoke `add-orientation.sh --supersedes --target <old-slug> --replacement <new-slug> --reason "<text>" --confirm` and `add-orientation.sh --retract --target <slug> --reason "<text>" --confirm`. Both are per-item, human-gated, and never bulk (see "Curating existing LESSONS" and the promotion-queue subsection above).
 - **`CLAUDE.md` and legacy `.claude/agent-memory/` proposals stay paste-to-apply.** `/dreaming` never writes those directly — they are not the sole writers' domain; after approval the user (or a follow-up turn) performs those writes.
-- **Aborting before Accept is always safe.** Until you Accept an item, the command has written nothing; cancelling at any point during GATHER/REFLECT/AGGREGATE — including mid-report — leaves the project, agent memory, LESSONS, and `CLAUDE.md` exactly as they were when `/dreaming` started.
+- **Aborting before Accept is always safe.** Until you Accept, Supersede, or Retract an item, the command has written nothing; cancelling at any point during GATHER/REFLECT/AGGREGATE — including mid-report — leaves the project, agent memory, LESSONS, and `CLAUDE.md` exactly as they were when `/dreaming` started.
 
 This contract is non-negotiable: a `/dreaming` invocation that mutates code, agent memory, LESSONS, the `.agent/orientation/` store, or `CLAUDE.md` **without an explicit per-item Accept** — or that auto-writes, bulk-accepts, or writes memory/LESSONS/orientation memos by any path other than their sole writers — is a defect, not a feature request.
 
