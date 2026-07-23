@@ -362,6 +362,118 @@ order="$(printf '%s\n' "$outH1" | grep -E '^- ' | sed -E 's/^- (\[MUST\] )?//' |
   && ok "(ordering) rules emitted in sort_by([category,id]) order (alpha,beta,mid,zeta)" \
   || no "(ordering) wrong order: got [$order], expected [Alpha rule|Beta rule|Mid rule|Zeta rule|]"
 
+# ============================================================================
+echo "== (i) SUPERSESSION (curation/anti-rot ST-1) — single-hop, non-transitive, demote-never-crash =="
+
+# (i1) a live rule's `supersedes` hides the rule it names (acceptance criterion #1, mechanical test).
+RI1="$(new_repo)"
+seed_rules_file "$RI1" "core.json" '[
+  {"id":"i1-new","category":"safety","statement":"New replaces old","enforcement":"advisory","check":null,"provenance":{"source":"test"},"supersedes":"i1-old"},
+  {"id":"i1-old","category":"safety","statement":"Old rule hidden","enforcement":"advisory","check":null,"provenance":{"source":"test"}}
+]'
+outI1="$(run_reader "$RI1")"; rcI1=$?
+[ "$rcI1" -eq 0 ] && ok "(i1 supersession) exits 0" || no "(i1) expected exit 0, got $rcI1"
+if echo "$outI1" | grep -qF -- "- New replaces old" && ! echo "$outI1" | grep -qF "Old rule hidden"; then
+  ok "(i1) superseding rule visible, superseded target HIDDEN from reader output"
+else
+  no "(i1) supersession not honored: $outI1"
+fi
+
+# (i2) malformed `supersedes` shapes (non-string / wrong type / empty) are IGNORED — the carrying
+# entry is still emitted, and (since the field is invalid) nothing is hidden by it.
+RI2="$(new_repo)"
+seed_rules_file "$RI2" "core.json" '[
+  {"id":"i2-numeric","category":"safety","statement":"Numeric supersedes is ignored","enforcement":"advisory","check":null,"provenance":{"source":"test"},"supersedes":42},
+  {"id":"i2-object","category":"safety","statement":"Object supersedes is ignored","enforcement":"advisory","check":null,"provenance":{"source":"test"},"supersedes":{"x":1}},
+  {"id":"i2-empty","category":"safety","statement":"Empty-string supersedes is ignored","enforcement":"advisory","check":null,"provenance":{"source":"test"},"supersedes":""},
+  {"id":"i2-null","category":"safety","statement":"Explicit null supersedes is ignored","enforcement":"advisory","check":null,"provenance":{"source":"test"},"supersedes":null}
+]'
+outI2="$(run_reader "$RI2")"; rcI2=$?
+[ "$rcI2" -eq 0 ] && ok "(i2 malformed supersedes) exits 0" || no "(i2) expected exit 0, got $rcI2"
+if echo "$outI2" | grep -qF -- "- Numeric supersedes is ignored" \
+   && echo "$outI2" | grep -qF -- "- Object supersedes is ignored" \
+   && echo "$outI2" | grep -qF -- "- Empty-string supersedes is ignored" \
+   && echo "$outI2" | grep -qF -- "- Explicit null supersedes is ignored"; then
+  ok "(i2) malformed supersedes (numeric/object/empty-string/null) all IGNORED — every carrier still emitted"
+else
+  no "(i2) a malformed-supersedes carrier was wrongly hidden/dropped: $outI2"
+fi
+
+# (i3) self-referential `supersedes` (an entry naming its own id) is IGNORED — still emitted.
+RI3="$(new_repo)"
+seed_rules_file "$RI3" "core.json" '[
+  {"id":"i3-self","category":"safety","statement":"Self-referential supersedes is ignored","enforcement":"advisory","check":null,"provenance":{"source":"test"},"supersedes":"i3-self"}
+]'
+outI3="$(run_reader "$RI3")"; rcI3=$?
+[ "$rcI3" -eq 0 ] && ok "(i3 self-referential) exits 0" || no "(i3) expected exit 0, got $rcI3"
+echo "$outI3" | grep -qF -- "- Self-referential supersedes is ignored" \
+  && ok "(i3) self-referential supersedes IGNORED — entry still emitted, does not hide itself" \
+  || no "(i3) self-referential supersedes wrongly hid its own entry: $outI3"
+
+# (i4) dangling `supersedes` (names an id absent from the store entirely) is IGNORED — still emitted.
+RI4="$(new_repo)"
+seed_rules_file "$RI4" "core.json" '[
+  {"id":"i4-dangling","category":"safety","statement":"Dangling supersedes is ignored","enforcement":"advisory","check":null,"provenance":{"source":"test"},"supersedes":"no-such-rule-id-anywhere"}
+]'
+outI4="$(run_reader "$RI4")"; rcI4=$?
+[ "$rcI4" -eq 0 ] && ok "(i4 dangling target) exits 0" || no "(i4) expected exit 0, got $rcI4"
+echo "$outI4" | grep -qF -- "- Dangling supersedes is ignored" \
+  && ok "(i4) dangling supersedes IGNORED — carrying entry still emitted" \
+  || no "(i4) dangling supersedes wrongly suppressed its carrier: $outI4"
+
+# (i4b) dangling supersedes where the "target" is a REAL id but only inside a SKIPped/invalid object
+# (never validation-survived) — still counts as dangling (target never entered the OK set), so the
+# carrier is unaffected and still emitted; the invalid sibling stays dropped for its own reasons.
+RI4B="$(new_repo)"
+seed_rules_file "$RI4B" "core.json" '[
+  {"id":"i4b-carrier","category":"safety","statement":"Points at an invalid, never-OK sibling","enforcement":"advisory","check":null,"provenance":{"source":"test"},"supersedes":"i4b-invalid"},
+  {"id":"i4b-invalid","category":"safety","enforcement":"advisory","check":null,"provenance":{"source":"test"}}
+]'
+outI4B="$(run_reader "$RI4B")"; rcI4B=$?
+[ "$rcI4B" -eq 0 ] && ok "(i4b dangling-via-invalid-target) exits 0" || no "(i4b) expected exit 0, got $rcI4B"
+echo "$outI4B" | grep -qF -- "- Points at an invalid, never-OK sibling" \
+  && ok "(i4b) supersedes targeting a never-OK (SKIPped) sibling is dangling — carrier still emitted" \
+  || no "(i4b) carrier wrongly suppressed when its target never validation-survived: $outI4B"
+
+# (i5) mutually-cyclic supersedes (A supersedes B AND B supersedes A) is IGNORED on BOTH sides — BOTH
+# entries stay visible. Proves single-hop non-transitivity: hiding both halves of a 2-cycle would
+# silently drop two rules from one misconfiguration, contradicting the fail-safe "read it anyway,
+# never hide it" default (the pinned contract explicitly lists "cyclic" alongside malformed/self-ref/
+# dangling as an IGNORED shape).
+RI5="$(new_repo)"
+seed_rules_file "$RI5" "core.json" '[
+  {"id":"i5-a","category":"safety","statement":"Cycle member A stays visible","enforcement":"advisory","check":null,"provenance":{"source":"test"},"supersedes":"i5-b"},
+  {"id":"i5-b","category":"safety","statement":"Cycle member B stays visible","enforcement":"advisory","check":null,"provenance":{"source":"test"},"supersedes":"i5-a"}
+]'
+outI5="$(run_reader "$RI5")"; rcI5=$?
+[ "$rcI5" -eq 0 ] && ok "(i5 mutual cycle) exits 0" || no "(i5) expected exit 0, got $rcI5"
+if echo "$outI5" | grep -qF -- "- Cycle member A stays visible" \
+   && echo "$outI5" | grep -qF -- "- Cycle member B stays visible"; then
+  ok "(i5) mutually-cyclic supersedes IGNORED on both sides — BOTH entries remain visible (single-hop, non-transitive)"
+else
+  no "(i5) a mutual-cycle member was wrongly hidden: $outI5"
+fi
+
+# (i6) non-cyclic one-way chain (A supersedes B, and B — independently — supersedes C) hides BOTH B
+# and C: each live rule's own supersedes is applied independently (no transitive "chase" needed for
+# this to happen — it falls out of evaluating every live rule's own edge once, not from A reaching
+# through B to C).
+RI6="$(new_repo)"
+seed_rules_file "$RI6" "core.json" '[
+  {"id":"i6-a","category":"safety","statement":"Chain head A stays visible","enforcement":"advisory","check":null,"provenance":{"source":"test"},"supersedes":"i6-b"},
+  {"id":"i6-b","category":"safety","statement":"Chain middle B is hidden by A","enforcement":"advisory","check":null,"provenance":{"source":"test"},"supersedes":"i6-c"},
+  {"id":"i6-c","category":"safety","statement":"Chain tail C is hidden by B","enforcement":"advisory","check":null,"provenance":{"source":"test"}}
+]'
+outI6="$(run_reader "$RI6")"; rcI6=$?
+[ "$rcI6" -eq 0 ] && ok "(i6 one-way chain) exits 0" || no "(i6) expected exit 0, got $rcI6"
+if echo "$outI6" | grep -qF -- "- Chain head A stays visible" \
+   && ! echo "$outI6" | grep -qF "Chain middle B is hidden by A" \
+   && ! echo "$outI6" | grep -qF "Chain tail C is hidden by B"; then
+  ok "(i6) chain head A visible; B (hidden by A) and C (hidden by B) both absent"
+else
+  no "(i6) one-way chain hiding incorrect: $outI6"
+fi
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
