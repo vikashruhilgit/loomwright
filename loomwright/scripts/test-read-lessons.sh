@@ -11,6 +11,10 @@
 #   4. stale-lint (a ~400-day-old lesson is skipped; a fresh one is emitted)
 #   5. trailer-collision (lesson text with inner <!-- --> and trailing spaces both round-trip)
 #   6. post-eviction read-back (survivors emitted, evicted-oldest not, no survivor DROPPED)
+#   7. supersede (ST-3): the reader requires NO supersession logic of its own — the replacement's
+#      `supersedes=<hash>` trailer field still strips cleanly (last_verified stays first) and the
+#      superseded text is gone only because write-lessons.sh's supersede verb already retracted it
+#      (rule 1: lessons supersession is writer-side, never a reader-side skip)
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -125,6 +129,19 @@ if [ -f "$TMP/$LOGFILE" ] && grep -qE "DROPPED.*evic lesson number [345] here" "
 else
   ok "no surviving lesson logged DROPPED across eviction"
 fi
+rm -rf "$TMP"
+
+echo "== 7. supersede: replacement round-trips (trailer strip unaffected by supersedes=), superseded text gone, no reader-side skip logic needed =="
+TMP="$(newrepo)"
+( cd "$TMP" && bash "$WRITE" --category sup --lesson "old superseded lesson text" --source s1 ) >/dev/null 2>&1
+( cd "$TMP" && bash "$WRITE" supersede sup "old superseded lesson text" --replacement "new replacement lesson text" --source curator ) >/dev/null 2>&1
+out="$( cd "$TMP" && bash "$READ" 2>/dev/null )"
+echo "$out" | grep -qF "new replacement lesson text" && ok "replacement lesson emitted (supersedes= trailer stripped from hashed text)" || no "replacement lesson not emitted"
+if echo "$out" | grep -qF "old superseded lesson text"; then no "superseded lesson text still emitted"; else ok "superseded lesson text absent from reader output"; fi
+# Trailer shape sanity: last_verified stays first even with supersedes appended after confidence.
+grep -qE '<!-- last_verified=[0-9TZ:-]+ confidence=[a-z]+ supersedes=[0-9a-f]{8} -->' "$TMP/$LFILE" 2>/dev/null \
+  && ok "on-disk trailer keeps last_verified first, supersedes appended after confidence" \
+  || no "on-disk trailer shape unexpected"
 rm -rf "$TMP"
 
 echo

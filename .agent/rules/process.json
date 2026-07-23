@@ -1,0 +1,14 @@
+[
+  {
+    "id": "process-advisory-surface-freeze-no-new-advisory-readers-stores-emitters-memos-ledgers-lenses-bridges-may-ship-until-a-at-least-one-real-before-after-measurement-has-run-and-b-supersession-decay-unlearning-exists-for-the-existing-stores-bugfixes-and-consumers-of-existing-signals-are-exempt",
+    "category": "process",
+    "statement": "Advisory-surface freeze: no NEW advisory readers/stores/emitters (memos, ledgers, lenses, bridges) may ship until (a) at least one real before/after measurement has run and (b) supersession/decay/unlearning exists for the existing stores. Bugfixes and consumers of EXISTING signals are exempt.",
+    "enforcement": "advisory",
+    "check": null,
+    "provenance": {
+      "source": ".supervisor/requirements/twin-remediation/00-overview.md §Standing policy (curation/anti-rot remediation, item 02)",
+      "added": "2026-07-23T12:44:10Z"
+    },
+    "applies_to": null
+  }
+]

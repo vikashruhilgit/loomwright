@@ -17,6 +17,13 @@
 #   - the deterministic-id format (<category-slug>-<statement-slug> with -N collision suffix).
 #   - the array-only parse gate (jq -e 'type=="array"').
 #   - the provenance.source + provenance.added stamping of /rules add.
+#
+# Curation/anti-rot (ST-5a) additions — the retract action + the --supersedes flag on add:
+#   - BOTH files document `--supersedes` as an optional flag on `add` (never a separate verb).
+#   - BOTH files document the `retract` action's --target/--reason and its ALWAYS-REJECTED
+#     --replacement.
+#   - BOTH files document single-hop, non-transitive supersession (the reader hides the named
+#     rule; it does not chase a chain).
 
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -91,6 +98,38 @@ for f in "$CMD" "$SKILL"; do
 done
 $prov_ok && ok "provenance.source + provenance.added stamping documented" \
          || no "MISSING provenance stamping"
+
+# ---- (g) --supersedes documented as an optional ADD flag (curation/anti-rot) ------------
+for f in "$CMD" "$SKILL"; do
+  base="$(basename "$(dirname "$f")")/$(basename "$f")"
+  has "$f" '\-\-supersedes' \
+    && ok "[$base] --supersedes flag documented" \
+    || no "[$base] MISSING --supersedes flag documentation"
+done
+
+# ---- (h) retract action documented: --target / --reason / --replacement rejected --------
+for f in "$CMD" "$SKILL"; do
+  base="$(basename "$(dirname "$f")")/$(basename "$f")"
+  has "$f" 'retract' \
+    && ok "[$base] retract action documented" \
+    || no "[$base] MISSING retract action documentation"
+
+  has "$f" '\-\-target' && has "$f" '\-\-reason' \
+    && ok "[$base] retract --target/--reason documented" \
+    || no "[$base] MISSING retract --target/--reason documentation"
+
+  has "$f" '\-\-replacement.*(reject|never)|(reject|never).*\-\-replacement|always rejected' \
+    && ok "[$base] retract --replacement-always-rejected documented" \
+    || no "[$base] MISSING retract --replacement-rejected documentation"
+done
+
+# ---- (i) single-hop, non-transitive supersession semantics -------------------
+for f in "$CMD" "$SKILL"; do
+  base="$(basename "$(dirname "$f")")/$(basename "$f")"
+  has "$f" 'single-hop' && has "$f" 'non-transitive|does not chase' \
+    && ok "[$base] single-hop non-transitive supersession documented" \
+    || no "[$base] MISSING single-hop/non-transitive supersession documentation"
+done
 
 # ============================================================================
 echo

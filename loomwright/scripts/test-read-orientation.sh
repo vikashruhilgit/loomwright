@@ -18,6 +18,16 @@
 #   9. missing-header memo       → skipped while a valid sibling memo is still emitted
 #  10. split-line hostile marker → memo with a marker broken across a newline is still skipped
 #      (whitespace-normalized scan) while a valid sibling memo is emitted
+#  11. hostile-marker list parity → reader/writer marker lists stay identical
+#  12. supersedes hides its target (mechanical, acceptance criterion #1)
+#  13. malformed supersedes (not a bare [a-z0-9-]+ slug) → IGNORED, declaring memo still emitted
+#  14. self-referential supersedes → IGNORED, memo still emitted
+#  15. dangling supersedes (no such memo in store) → IGNORED, memo still emitted
+#  16. mutually-cyclic supersedes (A supersedes B AND B supersedes A) → IGNORED, BOTH visible
+#  17. MANDATORY regression: a memo carrying supersedes still resolves its OWN `areas` value
+#      and staleness correctly (the greedy-capture hazard this file's header-parse fix closes),
+#      while its named target is hidden
+#  18. legacy 3-field header AND new 4-field header coexist in one store (backward compat)
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -53,9 +63,16 @@ seed_memo() {
   printf '%s' "$3" > "$1/.agent/orientation/$2"
 }
 
-# Standard well-formed memo content. $1 sha  $2 summary  $3 body
+# Standard well-formed memo content (legacy 3-field header). $1 sha  $2 summary  $3 body
 memo_content() {
   printf '<!-- written_at: 2026-07-20T00:00:00Z | head_sha: %s | areas: src -->\n%s\n%s\n' "$1" "$2" "$3"
+}
+
+# New 4-field header (supersedes PINNED between head_sha and areas).
+# $1 sha  $2 supersedes-target-slug  $3 summary  $4 body
+memo_content_v4() {
+  printf '<!-- written_at: 2026-07-20T00:00:00Z | head_sha: %s | supersedes: %s | areas: src -->\n%s\n%s\n' \
+    "$1" "$2" "$3" "$4"
 }
 
 # Run the reader (always via bash, never sourced). $1 repo. Sets OUT and RC.
@@ -235,6 +252,171 @@ if [ -n "$rlist" ] && [ "$rlist" = "$wlist" ]; then
   ok "hostile-marker lists identical in reader and writer ($(printf '%s\n' "$rlist" | wc -l | tr -d ' ') markers)"
 else
   no "hostile-marker list drift between reader and writer (reader=[$rlist] writer=[$wlist])"
+fi
+
+# ============================================================================
+# 12. supersedes hides its target (mechanical, acceptance criterion #1)
+R12="$(new_repo)"
+sha12="$(git -C "$R12" rev-parse --short HEAD)"
+seed_memo "$R12" "oldarea.md" "$(memo_content "$sha12" "OLD-AREA-SUMMARY-MARKER" "Old body.")"
+seed_memo "$R12" "newarea.md" "$(memo_content_v4 "$sha12" "oldarea" "NEW-AREA-SUMMARY-MARKER" "New body.")"
+run_reader "$R12"
+if [ "$RC" -eq 0 ] \
+   && printf '%s' "$OUT" | grep -qF "NEW-AREA-SUMMARY-MARKER" \
+   && ! printf '%s' "$OUT" | grep -qF "OLD-AREA-SUMMARY-MARKER"; then
+  ok "supersedes hides its target memo; superseding memo still emitted"
+else
+  no "supersedes hide (rc=$RC out=[$OUT])"
+fi
+
+# ============================================================================
+# 13. malformed supersedes (not a bare [a-z0-9-]+ slug) → IGNORED, declaring memo still emitted
+R13="$(new_repo)"
+sha13="$(git -C "$R13" rev-parse --short HEAD)"
+seed_memo "$R13" "badsuper.md" "$(memo_content_v4 "$sha13" "UPPERCASE-TARGET" "BADSUPER-SUMMARY-MARKER" "Body.")"
+run_reader "$R13"
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -qF "BADSUPER-SUMMARY-MARKER"; then
+  ok "malformed supersedes field ignored; declaring memo still emitted, reader exits 0"
+else
+  no "malformed supersedes (rc=$RC out=[$OUT])"
+fi
+
+# ============================================================================
+# 14. self-referential supersedes → IGNORED, memo still emitted
+R14="$(new_repo)"
+sha14="$(git -C "$R14" rev-parse --short HEAD)"
+seed_memo "$R14" "selfref.md" "$(memo_content_v4 "$sha14" "selfref" "SELFREF-SUMMARY-MARKER" "Body.")"
+run_reader "$R14"
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -qF "SELFREF-SUMMARY-MARKER"; then
+  ok "self-referential supersedes ignored; memo still emitted"
+else
+  no "self-ref supersedes (rc=$RC out=[$OUT])"
+fi
+
+# ============================================================================
+# 15. dangling supersedes (no such memo in store) → IGNORED, memo still emitted
+R15="$(new_repo)"
+sha15="$(git -C "$R15" rev-parse --short HEAD)"
+seed_memo "$R15" "dangling.md" "$(memo_content_v4 "$sha15" "nosuchmemo" "DANGLING-SUMMARY-MARKER" "Body.")"
+run_reader "$R15"
+if [ "$RC" -eq 0 ] && printf '%s' "$OUT" | grep -qF "DANGLING-SUMMARY-MARKER"; then
+  ok "dangling supersedes target ignored; declaring memo still emitted"
+else
+  no "dangling supersedes (rc=$RC out=[$OUT])"
+fi
+
+# ============================================================================
+# 16. mutually-cyclic supersedes (A supersedes B AND B supersedes A) → IGNORED, BOTH visible
+R16="$(new_repo)"
+sha16="$(git -C "$R16" rev-parse --short HEAD)"
+seed_memo "$R16" "cyca.md" "$(memo_content_v4 "$sha16" "cycb" "CYCA-SUMMARY-MARKER" "Body A.")"
+seed_memo "$R16" "cycb.md" "$(memo_content_v4 "$sha16" "cyca" "CYCB-SUMMARY-MARKER" "Body B.")"
+run_reader "$R16"
+if [ "$RC" -eq 0 ] \
+   && printf '%s' "$OUT" | grep -qF "CYCA-SUMMARY-MARKER" \
+   && printf '%s' "$OUT" | grep -qF "CYCB-SUMMARY-MARKER"; then
+  ok "mutually-cyclic supersedes (A<->B) ignored; both memos remain visible"
+else
+  no "cyclic supersedes (rc=$RC out=[$OUT])"
+fi
+
+# ============================================================================
+# 17. MANDATORY regression: a memo carrying supersedes still resolves its OWN `areas` value
+#     and staleness correctly (the greedy-capture hazard this file's header-parse fix closes).
+#     Its named target is ALSO hidden (supersession + staleness both exercised on one memo).
+R17="$(new_repo)"
+old_sha17="$(git -C "$R17" rev-parse --short HEAD)"
+add_src_commit "$R17"
+seed_memo "$R17" "hiddentarget.md" "$(memo_content "$old_sha17" "HIDDENTARGET-SUMMARY-MARKER" "Hidden body.")"
+seed_memo "$R17" "superstale.md" "$(memo_content_v4 "$old_sha17" "hiddentarget" "SUPERSTALE-SUMMARY-MARKER" "Superseding + stale body.")"
+run_reader "$R17"
+stale_annot17="[stale — area changed since 2026-07-20T00:00:00Z, verify before trusting]"
+if [ "$RC" -eq 0 ] \
+   && printf '%s' "$OUT" | grep -qF "SUPERSTALE-SUMMARY-MARKER" \
+   && printf '%s' "$OUT" | grep -qF "$stale_annot17" \
+   && ! printf '%s' "$OUT" | grep -qF "HIDDENTARGET-SUMMARY-MARKER"; then
+  ok "REGRESSION: memo carrying supersedes still resolves areas+staleness correctly; its target is hidden"
+else
+  no "supersedes+staleness regression (rc=$RC out=[$OUT])"
+fi
+
+# ============================================================================
+# 18. legacy 3-field header AND new 4-field header coexist in one store (backward compat)
+R18="$(new_repo)"
+sha18="$(git -C "$R18" rev-parse --short HEAD)"
+seed_memo "$R18" "legacyshape.md" "$(memo_content "$sha18" "LEGACYSHAPE-SUMMARY-MARKER" "Legacy 3-field body.")"
+seed_memo "$R18" "newshape.md" "$(memo_content_v4 "$sha18" "nonexistenttarget" "NEWSHAPE-SUMMARY-MARKER" "New 4-field body.")"
+run_reader "$R18"
+if [ "$RC" -eq 0 ] \
+   && printf '%s' "$OUT" | grep -qF "LEGACYSHAPE-SUMMARY-MARKER" \
+   && printf '%s' "$OUT" | grep -qF "NEWSHAPE-SUMMARY-MARKER" \
+   && ! printf '%s' "$OUT" | grep -qF "[stale"; then
+  ok "legacy 3-field header AND new 4-field header coexist; both parse+emit correctly (backward compat)"
+else
+  no "header-shape coexistence (rc=$RC out=[$OUT])"
+fi
+
+# ============================================================================
+# 19. n=3 cyclic supersedes (A supersedes B, B supersedes C, C supersedes A) — bot-review HIGH-2
+#     regression: the pre-fix pairwise-mutual-only check special-cased ONLY a 2-memo A<->B cycle,
+#     so every member of a 3-memo cycle had a live incoming hider and ALL THREE were silently
+#     hidden (0 visible). The fix generalizes to a full functional-graph walk: ALL THREE must
+#     stay VISIBLE.
+R19="$(new_repo)"
+sha19="$(git -C "$R19" rev-parse --short HEAD)"
+seed_memo "$R19" "n3a.md" "$(memo_content_v4 "$sha19" "n3b" "N3A-SUMMARY-MARKER" "Body A.")"
+seed_memo "$R19" "n3b.md" "$(memo_content_v4 "$sha19" "n3c" "N3B-SUMMARY-MARKER" "Body B.")"
+seed_memo "$R19" "n3c.md" "$(memo_content_v4 "$sha19" "n3a" "N3C-SUMMARY-MARKER" "Body C.")"
+run_reader "$R19"
+if [ "$RC" -eq 0 ] \
+   && printf '%s' "$OUT" | grep -qF "N3A-SUMMARY-MARKER" \
+   && printf '%s' "$OUT" | grep -qF "N3B-SUMMARY-MARKER" \
+   && printf '%s' "$OUT" | grep -qF "N3C-SUMMARY-MARKER"; then
+  ok "n=3 cyclic supersedes: ALL THREE members stay VISIBLE (generalized cycle detection, not pairwise-only)"
+else
+  no "n=3 cycle wrongly hid one or more members (0-visible regression) (rc=$RC out=[$OUT])"
+fi
+
+# ============================================================================
+# 20. n=4 cyclic supersedes (A->B->C->D->A) — same generalization, one size up.
+R20="$(new_repo)"
+sha20="$(git -C "$R20" rev-parse --short HEAD)"
+seed_memo "$R20" "n4a.md" "$(memo_content_v4 "$sha20" "n4b" "N4A-SUMMARY-MARKER" "Body A.")"
+seed_memo "$R20" "n4b.md" "$(memo_content_v4 "$sha20" "n4c" "N4B-SUMMARY-MARKER" "Body B.")"
+seed_memo "$R20" "n4c.md" "$(memo_content_v4 "$sha20" "n4d" "N4C-SUMMARY-MARKER" "Body C.")"
+seed_memo "$R20" "n4d.md" "$(memo_content_v4 "$sha20" "n4a" "N4D-SUMMARY-MARKER" "Body D.")"
+run_reader "$R20"
+if [ "$RC" -eq 0 ] \
+   && printf '%s' "$OUT" | grep -qF "N4A-SUMMARY-MARKER" \
+   && printf '%s' "$OUT" | grep -qF "N4B-SUMMARY-MARKER" \
+   && printf '%s' "$OUT" | grep -qF "N4C-SUMMARY-MARKER" \
+   && printf '%s' "$OUT" | grep -qF "N4D-SUMMARY-MARKER"; then
+  ok "n=4 cyclic supersedes: ALL FOUR members stay VISIBLE (generalized cycle detection)"
+else
+  no "n=4 cycle wrongly hid one or more members (rc=$RC out=[$OUT])"
+fi
+
+# ============================================================================
+# 21. cycle-plus-tail: D supersedes A, where A->B->C->A is itself a 3-memo cycle. D is OUTSIDE
+#     the cycle (nothing points back to D), so D's edge is an ORDINARY live single-hop hider — D
+#     still hides A exactly as normal supersession would. Only the cycle's OWN internal edges
+#     (A->B, B->C, C->A) are dropped, so B and C remain visible, A is hidden by D specifically
+#     (not by the cycle), and D itself is visible (nothing supersedes D).
+R21="$(new_repo)"
+sha21="$(git -C "$R21" rev-parse --short HEAD)"
+seed_memo "$R21" "taila.md" "$(memo_content_v4 "$sha21" "tailb" "TAILA-SUMMARY-MARKER" "Body A.")"
+seed_memo "$R21" "tailb.md" "$(memo_content_v4 "$sha21" "tailc" "TAILB-SUMMARY-MARKER" "Body B.")"
+seed_memo "$R21" "tailc.md" "$(memo_content_v4 "$sha21" "taila" "TAILC-SUMMARY-MARKER" "Body C.")"
+seed_memo "$R21" "taild.md" "$(memo_content_v4 "$sha21" "taila" "TAILD-SUMMARY-MARKER" "Body D.")"
+run_reader "$R21"
+if [ "$RC" -eq 0 ] \
+   && ! printf '%s' "$OUT" | grep -qF "TAILA-SUMMARY-MARKER" \
+   && printf '%s' "$OUT" | grep -qF "TAILB-SUMMARY-MARKER" \
+   && printf '%s' "$OUT" | grep -qF "TAILC-SUMMARY-MARKER" \
+   && printf '%s' "$OUT" | grep -qF "TAILD-SUMMARY-MARKER"; then
+  ok "cycle-plus-tail: A hidden by external D (ordinary single-hop); B, C, D all visible (sane, non-crashing)"
+else
+  no "cycle-plus-tail behaved insanely (rc=$RC out=[$OUT])"
 fi
 
 # ============================================================================

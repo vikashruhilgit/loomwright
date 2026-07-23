@@ -25,6 +25,10 @@
 #      unset ⇒ field absent; invalid value ⇒ field absent (fail-safe omission)
 #  15. shared_prefix: LOOMWRIGHT_SHARED_PREFIX=1 ⇒ shared_prefix:true emitted;
 #      unset ⇒ field absent; any other value ⇒ field absent (fail-safe omission)
+#  16. advisory_total: LOOMWRIGHT_ADVISORY_TOTAL_BYTES=<non-negative int> ⇒
+#      advisory_total + advisory_total_kind:"context_bytes" emitted; unset ⇒ both
+#      fields absent; a negative/float/non-numeric value ⇒ both fields absent
+#      (fail-safe omission); event is still written in every case
 
 # EXIT: 0 on full pass, 1 on any failed assertion.
 # Style mirrors test-insights.sh / test-send-telemetry-core.sh.
@@ -87,10 +91,10 @@ run_sut() {
   local payload="$1"
   local out rc
   if [ "$payload" = "--empty" ]; then
-    out="$( cd "$SANDBOX" && env -u LOOMWRIGHT_ORIENTATION_SOURCE -u LOOMWRIGHT_SHARED_PREFIX bash "$SUT" </dev/null 2>&1 )"
+    out="$( cd "$SANDBOX" && env -u LOOMWRIGHT_ORIENTATION_SOURCE -u LOOMWRIGHT_SHARED_PREFIX -u LOOMWRIGHT_ADVISORY_TOTAL_BYTES bash "$SUT" </dev/null 2>&1 )"
     rc=$?
   else
-    out="$( cd "$SANDBOX" && env -u LOOMWRIGHT_ORIENTATION_SOURCE -u LOOMWRIGHT_SHARED_PREFIX bash "$SUT" < "$payload" 2>&1 )"
+    out="$( cd "$SANDBOX" && env -u LOOMWRIGHT_ORIENTATION_SOURCE -u LOOMWRIGHT_SHARED_PREFIX -u LOOMWRIGHT_ADVISORY_TOTAL_BYTES bash "$SUT" < "$payload" 2>&1 )"
     rc=$?
   fi
   printf '%s\n' "$out"
@@ -100,10 +104,10 @@ run_sut() {
 run_sut_env() {
   # Usage: run_sut_env <LOOMWRIGHT_ORIENTATION_SOURCE-value> <payload-file>
   # Same contract as run_sut, with the orientation env var set explicitly
-  # (the shared-prefix var stays scrubbed).
+  # (the shared-prefix + advisory-total vars stay scrubbed).
   local osrc="$1" payload="$2"
   local out rc
-  out="$( cd "$SANDBOX" && env -u LOOMWRIGHT_SHARED_PREFIX LOOMWRIGHT_ORIENTATION_SOURCE="$osrc" bash "$SUT" < "$payload" 2>&1 )"
+  out="$( cd "$SANDBOX" && env -u LOOMWRIGHT_SHARED_PREFIX -u LOOMWRIGHT_ADVISORY_TOTAL_BYTES LOOMWRIGHT_ORIENTATION_SOURCE="$osrc" bash "$SUT" < "$payload" 2>&1 )"
   rc=$?
   printf '%s\n' "$out"
   printf 'RC=%s\n' "$rc"
@@ -112,10 +116,22 @@ run_sut_env() {
 run_sut_sp() {
   # Usage: run_sut_sp <LOOMWRIGHT_SHARED_PREFIX-value> <payload-file>
   # Same contract as run_sut, with the shared-prefix env var set explicitly
-  # (the orientation var stays scrubbed).
+  # (the orientation + advisory-total vars stay scrubbed).
   local spv="$1" payload="$2"
   local out rc
-  out="$( cd "$SANDBOX" && env -u LOOMWRIGHT_ORIENTATION_SOURCE LOOMWRIGHT_SHARED_PREFIX="$spv" bash "$SUT" < "$payload" 2>&1 )"
+  out="$( cd "$SANDBOX" && env -u LOOMWRIGHT_ORIENTATION_SOURCE -u LOOMWRIGHT_ADVISORY_TOTAL_BYTES LOOMWRIGHT_SHARED_PREFIX="$spv" bash "$SUT" < "$payload" 2>&1 )"
+  rc=$?
+  printf '%s\n' "$out"
+  printf 'RC=%s\n' "$rc"
+}
+
+run_sut_at() {
+  # Usage: run_sut_at <LOOMWRIGHT_ADVISORY_TOTAL_BYTES-value> <payload-file>
+  # Same contract as run_sut, with the advisory-total env var set explicitly
+  # (the orientation + shared-prefix vars stay scrubbed).
+  local atv="$1" payload="$2"
+  local out rc
+  out="$( cd "$SANDBOX" && env -u LOOMWRIGHT_ORIENTATION_SOURCE -u LOOMWRIGHT_SHARED_PREFIX LOOMWRIGHT_ADVISORY_TOTAL_BYTES="$atv" bash "$SUT" < "$payload" 2>&1 )"
   rc=$?
   printf '%s\n' "$out"
   printf 'RC=%s\n' "$rc"
@@ -559,6 +575,84 @@ for spv in "0" "true" ""; do
   fi
   # The line itself must still be written (marker never drops the event).
   assert_eq "case15c(${spv:-empty}) event still written" "token_ledger" "$(printf '%s' "$LINE15C" | jq -r '.event')"
+done
+
+echo "== 16. advisory_total — valid int emitted / unset absent / invalid absent =="
+TRANSCRIPT16="$SANDBOX/agent-transcript-16.jsonl"
+printf 'JJJJJJ' > "$TRANSCRIPT16"   # 6 bytes
+# 16a: LOOMWRIGHT_ADVISORY_TOTAL_BYTES=4096 → advisory_total:4096 + advisory_total_kind present.
+PAYLOAD16A="$SANDBOX/advisory-total-on-payload.json"
+jq -n --arg tp "$TRANSCRIPT16" '{
+  session_id: "fixture-token-ledger-advisorytotal-on-001",
+  agent_type: "loomwright:code-reviewer",
+  agent_transcript_path: $tp
+}' > "$PAYLOAD16A"
+OUT16A="$(run_sut_at "4096" "$PAYLOAD16A")"
+RC16A="$(printf '%s\n' "$OUT16A" | grep '^RC=' | tail -1 | cut -d= -f2)"
+assert_eq "case16a exit 0" "0" "$RC16A"
+LINE16A="$(tail -1 "$SANDBOX/.supervisor/logs/fixture-token-ledger-advisorytotal-on-001.jsonl" 2>/dev/null)"
+assert_eq "case16a advisory_total=4096" "4096" "$(printf '%s' "$LINE16A" | jq -r '.advisory_total')"
+assert_eq "case16a advisory_total_kind" "context_bytes" "$(printf '%s' "$LINE16A" | jq -r '.advisory_total_kind')"
+# Must be the JSON number 4096, not the string "4096".
+if printf '%s' "$LINE16A" | jq -e '.advisory_total == 4096' >/dev/null 2>&1; then
+  ok "case16a advisory_total is a JSON number"
+else
+  no "case16a advisory_total is not a JSON number"
+fi
+# 16a2: "0" is a valid non-negative integer → emitted (not treated as absent/false-y).
+PAYLOAD16A2="$SANDBOX/advisory-total-zero-payload.json"
+jq -n --arg tp "$TRANSCRIPT16" '{
+  session_id: "fixture-token-ledger-advisorytotal-zero-001",
+  agent_type: "loomwright:code-reviewer",
+  agent_transcript_path: $tp
+}' > "$PAYLOAD16A2"
+OUT16A2="$(run_sut_at "0" "$PAYLOAD16A2")"
+RC16A2="$(printf '%s\n' "$OUT16A2" | grep '^RC=' | tail -1 | cut -d= -f2)"
+assert_eq "case16a2 exit 0" "0" "$RC16A2"
+LINE16A2="$(tail -1 "$SANDBOX/.supervisor/logs/fixture-token-ledger-advisorytotal-zero-001.jsonl" 2>/dev/null)"
+if printf '%s' "$LINE16A2" | jq -e '.advisory_total == 0' >/dev/null 2>&1; then
+  ok "case16a2 advisory_total=0 emitted (zero is valid, not absent)"
+else
+  no "case16a2 advisory_total=0 not emitted as JSON number 0"
+fi
+# 16b: unset → both fields absent (run_sut scrubs the env var).
+PAYLOAD16B="$SANDBOX/advisory-total-unset-payload.json"
+jq -n --arg tp "$TRANSCRIPT16" '{
+  session_id: "fixture-token-ledger-advisorytotal-unset-001",
+  agent_type: "loomwright:code-reviewer",
+  agent_transcript_path: $tp
+}' > "$PAYLOAD16B"
+OUT16B="$(run_sut "$PAYLOAD16B")"
+RC16B="$(printf '%s\n' "$OUT16B" | grep '^RC=' | tail -1 | cut -d= -f2)"
+assert_eq "case16b exit 0" "0" "$RC16B"
+LINE16B="$(tail -1 "$SANDBOX/.supervisor/logs/fixture-token-ledger-advisorytotal-unset-001.jsonl" 2>/dev/null)"
+if printf '%s' "$LINE16B" | jq -e 'has("advisory_total") or has("advisory_total_kind")' >/dev/null 2>&1; then
+  no "case16b advisory_total(_kind) present despite unset env"
+else
+  ok "case16b advisory_total(_kind) absent when env unset"
+fi
+# 16c: negative / float / non-numeric / empty / hex-like / exponent → both fields
+# absent, event still written.
+for atv in "-1" "3.5" "abc" "" "1e3" "0x10"; do
+  ATSLUG="$(printf '%s' "$atv" | tr -cd 'a-z0-9')"
+  ATSID="fixture-token-ledger-advisorytotal-off-${ATSLUG:-empty}-001"
+  PAYLOAD16C="$SANDBOX/advisory-total-off-${ATSLUG:-empty}-payload.json"
+  jq -n --arg tp "$TRANSCRIPT16" --arg sid "$ATSID" '{
+    session_id: $sid,
+    agent_type: "loomwright:code-reviewer",
+    agent_transcript_path: $tp
+  }' > "$PAYLOAD16C"
+  OUT16C="$(run_sut_at "$atv" "$PAYLOAD16C")"
+  RC16C="$(printf '%s\n' "$OUT16C" | grep '^RC=' | tail -1 | cut -d= -f2)"
+  assert_eq "case16c(${atv:-empty}) exit 0" "0" "$RC16C"
+  LINE16C="$(tail -1 "$SANDBOX/.supervisor/logs/${ATSID}.jsonl" 2>/dev/null)"
+  if printf '%s' "$LINE16C" | jq -e 'has("advisory_total") or has("advisory_total_kind")' >/dev/null 2>&1; then
+    no "case16c(${atv:-empty}) advisory_total(_kind) present despite invalid value"
+  else
+    ok "case16c(${atv:-empty}) advisory_total(_kind) absent on invalid value"
+  fi
+  # The line itself must still be written (marker never drops the event).
+  assert_eq "case16c(${atv:-empty}) event still written" "token_ledger" "$(printf '%s' "$LINE16C" | jq -r '.event')"
 done
 
 echo ""

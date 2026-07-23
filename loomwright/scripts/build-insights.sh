@@ -360,13 +360,14 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
     echo
     echo "**Era buckets** (advisory surfaces: rules seams >=15.1.0, orientation memos >=15.12.0)"
     echo
-    echo "| Era | Runs | Landed | Clean | Durable | Avg heal iters | Avg review rounds | fix_cycles | Root-cause class mix | Advisory tokens |"
+    echo "| Era | Runs | Landed | Clean | Durable | Avg heal iters | Avg review rounds | fix_cycles | Root-cause class mix | Advisory tokens (compute-spend) |"
     echo "|---|---|---|---|---|---|---|---|---|---|"
     jq -s -r '
       [.[] | select(type=="object" and .type=="era_bucket")] | .[]
       | "| \(.era // "-") | \(.runs // "-") | \(.landed // "-")/\(.runs // "-") | \(.clean // "-")/\(.runs // "-") | \(.durable // "-")/\(.runs // "-") | \(.avg_heal_iterations // "-") | \(.avg_review_rounds // "-") | \(.fix_cycles // "-") | \(.class_mix // "-") | \(.advisory_tokens // "-") |"
     ' "$le_jsonl" 2>/dev/null
     echo
+    echo "- **Advisory tokens (compute-spend)** here is a per-era proxy for the COST of running the loop (real usage tokens, else a transcript-byte stand-in — see build-loop-evidence.sh) — it is NOT a measure of how much advisory context was injected. For a per-run CONTEXT-SIZE measure across memos + rules + bridge + brain-context, see **Whole-stack advisory budget** under Token economics below — the two are DELIBERATELY DISTINCT and neither supersedes the other."
     echo "- Full per-run funnel table (deliberately NOT inlined — the dashboard stays skimmable): run \`bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/build-loop-evidence.sh\"\` directly (add \`--jsonl\` for machine-readable records)."
   else
     echo "_No loop-evidence data yet (builder unavailable or no runs observable) — populate \`.supervisor/logs/*.jsonl\` via \`/supervisor\`, or run \`bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/build-loop-evidence.sh\"\` directly for the full (labeled) funnel readout._"
@@ -666,6 +667,36 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
       echo
     fi
   fi
+
+  # --- Whole-stack advisory budget (per-run TOTAL context size — ST-4 addition) ---
+  # DISTINCT from the "Advisory tokens (compute-spend)" column in the Loop-evidence era-bucket
+  # table above (build-loop-evidence.sh's `advisory_tokens` — a per-era COST proxy for running
+  # the loop; it says nothing about how much advisory context was injected). This subsection
+  # aggregates the additive `advisory_total` field emitted by emit-token-ledger.sh: a per-run
+  # TOTAL size (bytes) of the advisory context actually assembled from memos + rules + bridge +
+  # brain-context, reported against a documented soft target. Advisory only — never gates,
+  # never invents a number; absent ⇒ degrade note (Corpus health / Token economics style).
+  echo "### Whole-stack advisory budget (per-run TOTAL, bytes)"
+  echo "_DISTINCT from the **Advisory tokens (compute-spend)** column in the Loop-evidence era-bucket table above — that column is a per-era proxy for the COST of running the loop, not a context-size measure. This aggregates the additive \`advisory_total\` field on \`token_ledger\` events (emitted by \`emit-token-ledger.sh\` from \`LOOMWRIGHT_ADVISORY_TOTAL_BYTES\` when a read seam exports it) — a per-run TOTAL size (bytes) of the advisory context assembled from memos + rules + bridge + brain-context. Advisory only — never gates a PR or changes a heal decision; reported against a documented soft target (\`ADVISORY_BUDGET_TARGET_BYTES\`, default 20000, env-overridable). Computed with jq, never guessed._"
+  echo
+  ADVISORY_BUDGET_TARGET_BYTES="${ADVISORY_BUDGET_TARGET_BYTES:-20000}"
+  case "$ADVISORY_BUDGET_TARGET_BYTES" in ''|*[!0-9]*) ADVISORY_BUDGET_TARGET_BYTES=20000 ;; esac
+  at_count=0
+  if [ -s "$te_lines" ]; then
+    at_count="$(jq -s '[.[] | select(has("advisory_total"))] | length' "$te_lines" 2>/dev/null)"
+    case "$at_count" in ''|*[!0-9]*) at_count=0 ;; esac
+  fi
+  if [ "$at_count" -eq 0 ]; then
+    echo "_No \`advisory_total\` events recorded yet — the field fills in once a read seam exports \`LOOMWRIGHT_ADVISORY_TOTAL_BYTES\` before a SubagentStop fires (see emit-token-ledger.sh). Until then this budget cannot be reported; the Loop-evidence \"Advisory tokens (compute-spend)\" column above remains a DIFFERENT (cost) measure and is not a substitute._"
+  else
+    at_latest="$(jq -s 'map(select(has("advisory_total"))) | sort_by(.ts // "") | last | .advisory_total' "$te_lines" 2>/dev/null)"
+    at_avg="$(jq -s '[.[] | select(has("advisory_total")) | .advisory_total] | (add / length) | floor' "$te_lines" 2>/dev/null)"
+    at_max="$(jq -s '[.[] | select(has("advisory_total")) | .advisory_total] | max' "$te_lines" 2>/dev/null)"
+    at_over="$(jq -s --argjson t "$ADVISORY_BUDGET_TARGET_BYTES" '[.[] | select(has("advisory_total")) | select(.advisory_total > $t)] | length' "$te_lines" 2>/dev/null)"
+    echo "- **Events with \`advisory_total\`:** $at_count  ·  **Latest:** ${at_latest:-—} bytes  ·  **Avg:** ${at_avg:-—} bytes  ·  **Max:** ${at_max:-—} bytes"
+    echo "- **Target:** ≤${ADVISORY_BUDGET_TARGET_BYTES} bytes/run (soft, advisory; override via \`ADVISORY_BUDGET_TARGET_BYTES\`)  ·  **Over target:** ${at_over:-0} of $at_count event(s)"
+  fi
+  echo
   rm -f "$te_lines" 2>/dev/null
 
   echo "## Recent sessions"
@@ -678,11 +709,16 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
   echo
 
   # --- Corpus health (curation advisory — ALWAYS rendered; degrades per-corpus) ---
-  # One best-effort line per knowledge corpus: the churn ledger (.supervisor/postmortem/results.jsonl)
-  # and the lessons store (.supervisor/memory/LESSONS.md + .lessons-provenance.jsonl). Advisory ONLY —
+  # One best-effort line per knowledge corpus: the churn ledger (.supervisor/postmortem/results.jsonl),
+  # the lessons store (.supervisor/memory/LESSONS.md + .lessons-provenance.jsonl), the rules store
+  # (.agent/rules/*.json), and the orientation-memo store (.agent/orientation/*.md). Advisory ONLY —
   # never gates anything and NEVER causes a non-zero exit; absent corpora degrade to an "absent" note
-  # (or a single "(no corpora found)" line when both are missing), malformed JSONL lines are skipped
-  # per-line (jq `fromjson? // empty`), never crash.
+  # (or a single "(no corpora found)" line ONLY when ALL FOUR corpora — churn ledger, lessons, rules,
+  # orientation — are absent/empty; any one present corpus suppresses the message so it can never
+  # co-render with a populated decay/entry line for a sibling corpus), malformed
+  # JSONL/JSON lines are skipped per-line/per-object (jq `fromjson? // empty` / per-object try), never
+  # crash. FLAG ONLY — this section never deletes, retracts, or supersedes anything; it is a read-only
+  # snapshot for a human (or `/dreaming`) to act on via the dedicated curation verbs.
   #
   # Record shapes are the cross-subtask curation contract — key ONLY off these, never off prose:
   #   * a curation record in the churn ledger has `source == "curation"`; "curated" counts DISTINCT
@@ -695,25 +731,63 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
   # read-lessons.sh). ISO→epoch mirrors read-lessons.sh's iso_to_epoch (GNU `date -d`, then BSD
   # `date -u -j -f`), with a numeric-validation guard (stat-flavor lesson: succeed-with-garbage +
   # `set -u` arithmetic silently corrupts counts).
+  #
+  # DECAY (ST-4 addition — flag only, never auto-delete):
+  #   * rules (.agent/rules/*.json): a rule carries no `head_sha`/basis to re-resolve — its only decay
+  #     signal is AGE. `provenance.added` older than RULES_STALE_DAYS (env, default 180; non-numeric
+  #     → 180) is a decay candidate. Missing/unparseable `provenance.added` counts as FRESH (fail-open,
+  #     same discipline as the churn/lessons blocks above).
+  #   * orientation (.agent/orientation/*.md): a memo's basis IS its `head_sha` — this reads the SAME
+  #     line-1 header read-orientation.sh parses (tolerant of both the legacy 3-field and current
+  #     4-field header shapes; see read-orientation.sh's own header comment for the field-order
+  #     rationale). A memo is a decay candidate when EITHER (a) `head_sha` no longer resolves to a
+  #     commit in this repo's history (`git cat-file -e <sha>^{commit}` fails — e.g. a rewritten/rebased
+  #     history orphaned the basis; read-orientation.sh's OWN `git log <sha>..HEAD` staleness check
+  #     degrades to "fresh-unknown" on the same failure, so this dashboard-only decay flag is the one
+  #     place that surfaces an orphaned basis) OR (b) `written_at` age exceeds ORIENTATION_STALE_DAYS
+  #     (env, default 180; non-numeric → 180). Missing/unparseable fields count as FRESH (fail-open).
+  #   Both counts are best-effort UPPER BOUNDS (like the churn/lessons figures above) — a human decides
+  #   whether to act via the dedicated `add-rule.sh --retract` / `add-orientation.sh --retract` verbs;
+  #   this section never calls them.
   echo "## Corpus health"
-  echo "_Advisory curation snapshot of the knowledge corpora — the churn ledger (\`.supervisor/postmortem/results.jsonl\`) and the lessons store (\`.supervisor/memory/LESSONS.md\` + provenance). Best-effort counts: malformed lines are skipped, absent corpora degrade to a note, and this section never gates anything. Curated/retracted figures are raw recorded directives (upper bounds), not chain-validated net effects. Computed with jq, never guessed._"
+  echo "_Advisory curation snapshot of the knowledge corpora — the churn ledger (\`.supervisor/postmortem/results.jsonl\`), the lessons store (\`.supervisor/memory/LESSONS.md\` + provenance), the rules store (\`.agent/rules/*.json\`), and the orientation-memo store (\`.agent/orientation/*.md\`). Best-effort counts: malformed lines/objects are skipped, absent corpora degrade to a note, and this section never gates anything — it FLAGS decay candidates only, it never deletes/retracts/supersedes anything (use \`add-rule.sh --retract\` / \`add-orientation.sh --retract\` / \`write-lessons.sh retract\` for that, human-gated). Curated/retracted/decayed figures are raw recorded directives or best-effort computed upper bounds, not chain-validated net effects. Computed with jq, never guessed._"
   echo
   ch_ledger=".supervisor/postmortem/results.jsonl"
   ch_lessons=".supervisor/memory/LESSONS.md"
   ch_prov=".supervisor/memory/.lessons-provenance.jsonl"
+  ch_rules_dir=".agent/rules"
+  ch_orient_dir=".agent/orientation"
   # Defensive: the script already exits early without jq (top of file), but keep this section
   # self-contained so a future refactor can't silently turn it into a crash path.
   if ! command -v jq >/dev/null 2>&1; then
     echo "(jq unavailable — corpus health skipped)"
-  elif [ ! -f "$ch_ledger" ] && [ ! -f "$ch_lessons" ]; then
-    echo "(no corpora found)"
   else
     CHURN_STALE_DAYS="${CHURN_STALE_DAYS:-180}"
     case "$CHURN_STALE_DAYS" in ''|*[!0-9]*) CHURN_STALE_DAYS=180 ;; esac
     LESSON_STALE_DAYS="${LESSON_STALE_DAYS:-90}"
     case "$LESSON_STALE_DAYS" in ''|*[!0-9]*) LESSON_STALE_DAYS=90 ;; esac
+    RULES_STALE_DAYS="${RULES_STALE_DAYS:-180}"
+    case "$RULES_STALE_DAYS" in ''|*[!0-9]*) RULES_STALE_DAYS=180 ;; esac
+    ORIENTATION_STALE_DAYS="${ORIENTATION_STALE_DAYS:-180}"
+    case "$ORIENTATION_STALE_DAYS" in ''|*[!0-9]*) ORIENTATION_STALE_DAYS=180 ;; esac
     ch_now="$(date -u +%s 2>/dev/null || echo 0)"
     case "$ch_now" in ''|*[!0-9]*) ch_now=0 ;; esac    # ch_now=0 → cutoffs go negative → everything reads FRESH (fail-open)
+    # Presence probes for the two curatable-any-time corpora (rules/orientation), computed UP
+    # FRONT so the "(no corpora found)" gate below can require ALL FOUR corpora absent — this is
+    # the fix for the co-render bug (bot-review HIGH-3): the message used to gate on churn+lessons
+    # only, so a populated rules/orientation decay line could render directly beneath it.
+    ch_rules_present=0
+    shopt -s nullglob 2>/dev/null || true
+    ch_rule_precheck=("$ch_rules_dir"/*.json)
+    [ ${#ch_rule_precheck[@]} -gt 0 ] && ch_rules_present=1
+    ch_orient_present=0
+    if [ -d "$ch_orient_dir" ]; then
+      ch_orient_precheck="$(find "$ch_orient_dir" -maxdepth 1 -type f -name '*.md' ! -name 'README.md' 2>/dev/null | head -1)"
+      [ -n "$ch_orient_precheck" ] && ch_orient_present=1
+    fi
+  if [ ! -f "$ch_ledger" ] && [ ! -f "$ch_lessons" ] && [ "$ch_rules_present" -eq 0 ] && [ "$ch_orient_present" -eq 0 ]; then
+    echo "(no corpora found)"
+  else
     # (1) churn ledger — entries / curated / stale in one per-line-tolerant jq pass.
     if [ -f "$ch_ledger" ]; then
       ch_cutoff=$(( ch_now - CHURN_STALE_DAYS * 86400 ))
@@ -772,6 +846,70 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
     else
       echo "- lessons: absent"
     fi
+    # (3) rules — entry count / decay candidates. Rules carry no head_sha/basis to re-resolve
+    # (unlike orientation memos), so the only decay signal is AGE of provenance.added.
+    shopt -s nullglob 2>/dev/null || true
+    ch_rule_files=("$ch_rules_dir"/*.json)
+    if [ ${#ch_rule_files[@]} -gt 0 ]; then
+      rules_cutoff=$(( ch_now - RULES_STALE_DAYS * 86400 ))
+      rules_line="$(jq -rs --argjson cutoff "$rules_cutoff" '
+        ( [ .[] | (if type=="array" then .[]? else empty end) ] ) as $all
+        | ($all | map(select(type=="object"))) as $objs
+        | ($objs | length) as $n
+        | ($objs
+            | map( (.provenance.added // null)
+                   | select(type=="string")
+                   | (fromdateiso8601? // null)
+                   | values
+                   | select(. < $cutoff) )
+            | length) as $decayed
+        | "\($n) entries, \($decayed) decayed"
+      ' "${ch_rule_files[@]}" 2>/dev/null)"
+      if [ -n "$rules_line" ]; then
+        echo "- rules: $rules_line (age >${RULES_STALE_DAYS}d; flag only, never auto-deleted)"
+      else
+        echo "- rules: unreadable (skipped)"
+      fi
+    else
+      echo "- rules: absent"
+    fi
+    # (4) orientation — entry count / decay candidates. A memo's basis IS its head_sha; decay
+    # is EITHER an unresolvable head_sha (orphaned basis — e.g. rewritten history) OR
+    # written_at age exceeding ORIENTATION_STALE_DAYS. Header parse mirrors read-orientation.sh's
+    # own per-key sed extraction (tolerant of both the legacy 3-field and current 4-field header).
+    if [ -d "$ch_orient_dir" ]; then
+      orient_entries=0
+      orient_decayed=0
+      orient_stale_secs=$(( ORIENTATION_STALE_DAYS * 86400 ))
+      while IFS= read -r ofile; do
+        [ -f "$ofile" ] || continue
+        orient_entries=$((orient_entries + 1))
+        ohline="$(head -n 1 "$ofile" 2>/dev/null)"
+        o_written_at="$(printf '%s' "$ohline" | sed -nE 's/^<!-- written_at: ([^|]+) \|.*-->$/\1/p' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+        o_head_sha="$(printf '%s' "$ohline" | sed -nE 's/^<!-- written_at: [^|]+ \| head_sha: ([^|]+) \|.*-->$/\1/p' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+        o_decayed=0
+        if [ -n "$o_head_sha" ] && ! git cat-file -e "${o_head_sha}^{commit}" 2>/dev/null; then
+          o_decayed=1   # basis no longer resolves (e.g. rewritten/rebased history)
+        fi
+        if [ "$o_decayed" -eq 0 ] && [ -n "$o_written_at" ]; then
+          ow_epoch="$(date -d "$o_written_at" +%s 2>/dev/null || true)"
+          [ -n "$ow_epoch" ] || ow_epoch="$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$o_written_at" +%s 2>/dev/null || true)"
+          case "$ow_epoch" in ''|*[!0-9]*) ow_epoch="" ;; esac   # unparseable/garbage → fresh
+          if [ -n "$ow_epoch" ] && [ "$ch_now" -gt 0 ] && [ $(( ch_now - ow_epoch )) -gt "$orient_stale_secs" ]; then
+            o_decayed=1
+          fi
+        fi
+        [ "$o_decayed" -eq 1 ] && orient_decayed=$((orient_decayed + 1))
+      done < <(find "$ch_orient_dir" -maxdepth 1 -type f -name '*.md' ! -name 'README.md' 2>/dev/null)
+      if [ "$orient_entries" -gt 0 ]; then
+        echo "- orientation: ${orient_entries} entries, ${orient_decayed} decayed (unresolvable head_sha or age >${ORIENTATION_STALE_DAYS}d; flag only, never auto-deleted)"
+      else
+        echo "- orientation: 0 memos"
+      fi
+    else
+      echo "- orientation: absent"
+    fi
+  fi
   fi
   echo
 

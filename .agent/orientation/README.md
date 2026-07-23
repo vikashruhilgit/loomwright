@@ -16,10 +16,28 @@ Each memo file:
    <!-- written_at: <ISO-8601 UTC> | head_sha: <full-or-short commit sha> | areas: <space-separated repo-relative path prefixes> -->
    ```
 
+   Since v15.14.0 an optional `supersedes` field may appear, giving the **4-field** shape:
+
+   ```
+   <!-- written_at: <ISO-8601 UTC> | head_sha: <sha> | supersedes: <area-slug> | areas: <paths> -->
+   ```
+
    - `written_at` — UTC ISO-8601 timestamp of when the memo was written.
    - `head_sha` — the repo HEAD commit the memo was written against (staleness anchor).
+   - `supersedes` *(optional)* — the area-slug of another memo this one replaces. The reader
+     hides the named memo (single-hop, non-transitive). A malformed, self-referential,
+     dangling, or cyclic value is fail-safe-ignored — the carrying memo is still emitted.
    - `areas` — space-separated repo-relative path prefixes the memo describes; the reader
-     runs a bounded `git log <head_sha>..HEAD -- <areas>` to detect drift.
+     runs a bounded `git log <head_sha>..HEAD -- <areas>` to detect drift. May be empty
+     (staleness then degrades to fresh-unknown).
+
+   > **Field ORDER is load-bearing — `areas` MUST stay last.** The reader extracts `areas`
+   > with a trailing `(.*)` capture, so any field appended *after* it is swallowed into the
+   > `areas` value and then passed to git as a pathspec — which matches nothing and silently
+   > disables staleness detection for that memo. Put `supersedes` **between `head_sha` and
+   > `areas`**, exactly as shown. Both the 3-field and 4-field shapes parse; hand-authoring a
+   > memo with `supersedes` appended after `areas` does NOT error, it is silently ignored.
+   > The sole writer (`add-orientation.sh`) always emits the correct position.
 
 2. **Line 2 — a one-line summary** of the memo.
 

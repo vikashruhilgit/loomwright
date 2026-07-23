@@ -16,6 +16,38 @@
 #   check       (string | null)       A runnable shell string OR null. EMITTED AS DATA ONLY — NEVER RUN.
 #   provenance  (object)
 #   applies_to  (optional)            RESERVED for slice 3b-ii enforcement filtering — INERT in v1.
+#   supersedes  (optional string)     Curation/anti-rot (ST-1). Names the `id` of ANOTHER rule this one
+#                                     replaces. See "SUPERSESSION" below.
+#
+# SUPERSESSION (curation/anti-rot ST-1, normative encoding contract — PINNED, do not redesign):
+#   A LIVE (validation-surviving) rule's `supersedes` field HIDES the rule it names from this reader's
+#   output — single-hop only, NEVER transitive/chased (rule 3: "A supersedes B hides B; it does not
+#   chase B's own supersedes"). A `supersedes` value is a hiding edge ONLY when it is a non-null STRING,
+#   not equal to the rule's own id (excludes self-referential), and resolves to another rule that ALSO
+#   survived per-object validation (excludes dangling — a target that doesn't exist, or that only exists
+#   as a SKIPped/invalid object, cannot be hidden). ANY other shape (missing key, non-string, empty,
+#   self-referential, dangling) is a no-op: the field is IGNORED and the CARRYING entry is still emitted
+#   normally — demote-never-crash (rule 2), this reader NEVER hides an entry due to its OWN malformed
+#   `supersedes`.
+#
+#   CYCLE DETECTION IS GENERAL, NOT PAIRWISE-ONLY (bot-review HIGH-1 fix): because each rule carries at
+#   most ONE `supersedes` value, the declared edges form a "functional graph" (out-degree <= 1 per node),
+#   so every cycle — of ANY length, not just a mutual 2-entry pair — is found by, for each node with an
+#   outgoing edge, walking that single edge chain for a number of steps bounded by the total edge count
+#   and checking whether the walk returns to its own starting node. Any node whose walk returns to itself
+#   is a cycle member; EVERY edge originating from a cycle member is dropped (never used to hide anything)
+#   — this generalizes the old 2-node-only mutual check, which only special-cased A<->B and left an
+#   n>2 cycle (e.g. A supersedes B, B supersedes C, C supersedes A) with every member holding a live
+#   "incoming hider", silently hiding ALL of them. Hiding every member of a cycle would silently drop N
+#   rules from one misconfiguration, which contradicts the fail-safe "read it anyway, never hide it"
+#   default (rule 2 lists "cyclic" alongside the other ignored shapes). A node OUTSIDE the cycle whose
+#   OWN supersedes points INTO a cycle (e.g. D supersedes A, where A->B->C->A) is NOT itself a cycle
+#   member (nothing points back to D), so D's edge is a normal, live, single-hop hiding edge — D still
+#   hides A per the ordinary rule; only the cycle's OWN internal edges (A->B, B->C, C->A) are dropped, so
+#   B and C remain visible and A is hidden by D exactly as an ordinary single-hop supersession would be.
+#   This computation is a single BOUNDED, non-recursive pass (a fixed `range(0; edge_count)` walk per
+#   node — never an open-ended/recursive graph traversal), so an arbitrarily malformed / cyclic
+#   `supersedes` graph can never loop or hang the reader (rule 3: "Cycles cannot loop by construction").
 #
 # v1 "applicable = ALL valid rules" (§3): no path/scope filtering. Positional args are accepted but
 # are informational / forward-compat ONLY — they do NOT change v1 output. `applies_to` is inert in v1.
@@ -183,11 +215,71 @@ jq -rs '
         end
     )
   | .out
-  # Emit SKIP diagnostics first (the shell partitions on the SKIP\t prefix), then the sorted valid
-  # rules. Valid rules are sorted by category then id for stable output. Tabs/newlines inside any
-  # rendered cell are neutralized so they cannot break the line framing.
+  # --- Supersession (single-hop, non-transitive -- see "SUPERSESSION" in the header docstring). Only a
+  #     LIVE (OK) rule supersedes field can hide another rule. A hiding EDGE requires: a non-null
+  #     STRING value, not equal to the own id of the rule (excludes self-referential), and a target that
+  #     is ALSO in the OK set (excludes dangling).
+  | ( [ .[] | select(.kind == "OK") | .obj ] ) as $ok_objs
+  | ( $ok_objs | map(.id) ) as $ok_ids
+  | (
+      $ok_objs
+      | map(
+          # NOTE: `index(FILTER)` evaluates FILTER against the ARRAY it is piped into, NOT the outer
+          # ".", so `.supersedes`/`.id` must be captured into variables BEFORE piping into `$ok_ids |
+          # index(...)` below (a bare `$ok_ids | index(.supersedes)` here would try `.supersedes` on
+          # the ARRAY itself and error "Cannot index array with string").
+          . as $o
+          | ($o.supersedes) as $tgt
+          | select( ($tgt | type) == "string" )
+          | select( $tgt != $o.id )
+          | select( ($ok_ids | index($tgt)) != null )
+          | { from: $o.id, to: $tgt }
+        )
+    ) as $edges
+  | ( ( $edges | map({ (.from): .to }) | add ) // {} ) as $edge_map
+  # Cycle detection, GENERALIZED to any length (bot-review HIGH-1 -- see the "SUPERSESSION" header
+  # comment for the full rationale). Since out-degree is <= 1 per node, a node is a cycle member iff
+  # following its OWN edge chain returns to itself within a number of steps bounded by the total edge
+  # count -- a single fixed-length (non-recursive) `range` walk per candidate node, so this can never
+  # loop or hang on a malformed/cyclic graph.
+  | ( $edges | map(.from) ) as $edge_from_ids
+  | ( $edge_from_ids | length ) as $edge_n
+  | (
+      $edge_from_ids
+      | map(
+          . as $start
+          | (
+              reduce range(0; $edge_n) as $i (
+                { cur: $edge_map[$start], hit: false };
+                if .hit or (.cur == null) then .
+                elif .cur == $start then { cur: .cur, hit: true }
+                else { cur: ($edge_map[.cur] // null), hit: false }
+                end
+              )
+            ) as $walk
+          | select($walk.hit)
+          | $start
+        )
+    ) as $cycle_members
+  # Drop EVERY edge whose origin is a cycle member (this is exactly the set of intra-cycle edges,
+  # since a cycle members single outgoing edge IS the edge that closes its own cycle) -- every cycle
+  # member therefore keeps zero incoming hiders FROM its own cycle and stays visible. An edge from a
+  # node OUTSIDE any cycle (even one that targets a cycle member) is left live -- ordinary single-hop
+  # supersession still applies to it.
+  | ( $edges | map(select( (.from) as $ef | ($cycle_members | index($ef)) == null )) ) as $edges_live
+  | ( $edges_live | map(.to) ) as $hidden_ids
+  # Emit SKIP diagnostics first (the shell partitions on the SKIP\t prefix — this now includes a
+  # diagnostic line per rule hidden by supersession), then the sorted valid, non-hidden rules. Valid
+  # rules are sorted by category then id for stable output. Tabs/newlines inside any rendered cell are
+  # neutralized so they cannot break the line framing. (Same `index(...)` capture-before-pipe caveat
+  # as above: `.id` is bound to $rid before `$hidden_ids | index($rid)`.)
   | ( [ .[] | select(.kind == "SKIP") | "SKIP\t" + .why ]
-      + ( [ .[] | select(.kind == "OK") | .obj ]
+      + ( $ok_objs
+          | map(select( (.id) as $rid | ($hidden_ids | index($rid)) != null ))
+          | map("SKIP\tsuperseded id=" + .id)
+        )
+      + ( $ok_objs
+          | map(select( (.id) as $rid | ($hidden_ids | index($rid)) == null ))
           | sort_by([.category, .id])
           | map(
               "RULE\t"

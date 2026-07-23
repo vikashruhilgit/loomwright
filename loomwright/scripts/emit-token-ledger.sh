@@ -29,6 +29,20 @@
 # LOOMWRIGHT_SHARED_PREFIX env var is exactly "1" — any other/unset value omits
 # the field entirely (fail-safe; same namespace discipline as orientation_source).
 #
+# Additive-if-present: `advisory_total` (+ `advisory_total_kind: "context_bytes"`) — a
+# per-run TOTAL advisory-context size (bytes) spanning memos + rules + bridge +
+# brain-context, read from the LOOMWRIGHT_ADVISORY_TOTAL_BYTES env var. This is a
+# DIFFERENT measure from the pre-existing era-bucket `advisory_tokens` proxy emitted by
+# build-loop-evidence.sh (that field is a per-era COMPUTE-SPEND proxy — real usage
+# tokens or a transcript-byte stand-in for running the loop; it says nothing about how
+# much advisory context was injected). `advisory_total` is a size-of-injected-context
+# measure, not a spend measure — see docs/TELEMETRY.md §Token ledger and
+# build-insights.sh's "Whole-stack advisory budget" subsection for the reconciliation.
+# Same namespace discipline as orientation_source: the env var must be a bare
+# non-negative integer string (`^[0-9]+$`); any other/unset value — including a
+# negative number, a float, or empty — omits BOTH fields entirely (fail-safe; never
+# invented, never validated loudly). Mirrors orientation_source's convention exactly.
+#
 # RESERVED (do not emit): graph_context_used — reserved for future job 04.
 #
 # Authoritative spec: loomwright/docs/TELEMETRY.md §Token ledger
@@ -222,9 +236,23 @@ if orientation_source in ("memos", "repo_map", "graphify", "none"):
 if os.environ.get("LOOMWRIGHT_SHARED_PREFIX", "") == "1":
     event["shared_prefix"] = True
 
+# Additive-if-present: advisory_total (+ advisory_total_kind) from the
+# LOOMWRIGHT_ADVISORY_TOTAL_BYTES env var — a per-run TOTAL advisory-context size
+# (bytes) across memos + rules + bridge + brain-context. Only a bare non-negative
+# integer string is accepted (str.isdigit() rejects "", signs, floats, and any
+# non-digit character); anything else — including unset — omits BOTH fields
+# entirely (fail-safe: never a guess, never an error). This is DISTINCT from the
+# pre-existing era-bucket `advisory_tokens` proxy (build-loop-evidence.sh) — that
+# is a per-era compute-SPEND proxy, not a context-size measure; see the header
+# comment above for the reconciliation.
+advisory_total_raw = os.environ.get("LOOMWRIGHT_ADVISORY_TOTAL_BYTES", "")
+if advisory_total_raw.isdigit():
+    event["advisory_total"] = int(advisory_total_raw)
+    event["advisory_total_kind"] = "context_bytes"
+
 # RESERVED (do not emit): graph_context_used — reserved for future job 04.
-# (orientation_source is emitted above since v15.12.0 and shared_prefix since
-# v15.13.0 — neither is a reserved key.)
+# (orientation_source is emitted above since v15.12.0, shared_prefix since
+# v15.13.0, and advisory_total since v15.14.0 — none of these are reserved keys.)
 
 try:
     line = json.dumps(event, separators=(",", ":"), ensure_ascii=False)

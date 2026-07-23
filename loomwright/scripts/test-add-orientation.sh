@@ -19,6 +19,18 @@
 #      NOTHING written); non-TTY WITH --confirm ⇒ writes
 #  11. split-line hostile marker (marker broken across a newline) rejected
 #  12. slug starting or ending with '-' (incl. bare '-') rejected
+#  13. reserved slug 'readme' rejected (already covered in the test body below)
+#  14. --supersedes stamps `supersedes: <target>` into the REPLACEMENT memo's header, in the
+#      pinned position (between head_sha and areas); target memo itself is untouched
+#  15. --supersedes without --replacement rejected (REQUIRED on supersede)
+#  16. --retract with --replacement rejected (REJECTED on retract)
+#  17. --retract removes the memo file and PRINTS a one-line provenance reason to stdout
+#      (no in-store provenance home by design — assert on the printed reason)
+#  18. --retract dry-run (no --confirm): file NOT removed, plan printed, exit 0
+#  19. --supersedes dry-run (no --confirm): replacement file NOT modified, plan printed, exit 0
+#  20. --supersedes / --retract validate-before-write: nonexistent --target or --replacement
+#      rejected, store left byte-identical
+#  21. --supersedes rejects --target == --replacement (a memo cannot supersede itself)
 #
 # NB: run_writer passes --confirm (the mechanized per-item human-approval gate) so the write
 # cases exercise the write path; case 10 covers the gate itself via run_writer_noconfirm.
@@ -268,6 +280,152 @@ if [ "$rc_r1" -ne 0 ] && [ "$(count_store_files "$R13")" = "0" ] \
   ok "reserved slug 'readme' rejected, nothing written"
 else
   no "reserved slug readme (rc=$rc_r1 files=$(count_store_files "$R13") out=[$OUT])"
+fi
+
+# ============================================================================
+# 14. --supersedes stamps `supersedes: <target>` into the REPLACEMENT memo's header, in the
+#     pinned position (between head_sha and areas); the target memo itself is untouched.
+R14="$(new_repo)"
+bt14="$(mk_body "$R14")"
+run_writer "$R14" "oldarea14" "Old area summary." "$bt14"
+old_hash14="$(cat "$R14/.agent/orientation/oldarea14.md")"
+br14="$(mk_body "$R14")"
+run_writer "$R14" "newarea14" "New area summary." "$br14"
+run_writer "$R14" --supersedes --target oldarea14 --replacement newarea14 --reason "old merged into new"
+hline14="$(head -n 1 "$R14/.agent/orientation/newarea14.md" 2>/dev/null)"
+after_old14="$(cat "$R14/.agent/orientation/oldarea14.md" 2>/dev/null)"
+case14_ok=1
+[ "$RC" -eq 0 ] || case14_ok=0
+printf '%s' "$hline14" | grep -qE '^<!-- written_at: .+ \| head_sha: .+ \| supersedes: oldarea14 \| areas: .+ -->$' || case14_ok=0
+[ "$after_old14" = "$old_hash14" ] || case14_ok=0   # target memo byte-identical (not touched)
+sed -n '2p' "$R14/.agent/orientation/newarea14.md" | grep -qF "New area summary." || case14_ok=0  # body preserved
+if [ "$case14_ok" -eq 1 ]; then
+  ok "--supersedes stamps 'supersedes: <target>' into replacement header (pinned position); target untouched"
+else
+  no "--supersedes stamp (rc=$RC hline=[$hline14] out=[$OUT])"
+fi
+
+# ============================================================================
+# 15. --supersedes without --replacement rejected (REQUIRED on supersede)
+R15="$(new_repo)"
+b15a="$(mk_body "$R15")"; run_writer "$R15" "tgt15" "s" "$b15a"
+b15b="$(mk_body "$R15")"; run_writer "$R15" "rep15" "s" "$b15b"
+before15="$(cat "$R15/.agent/orientation/rep15.md")"
+run_writer "$R15" --supersedes --target tgt15 --reason "no replacement given"
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -qi "replacement" \
+   && [ "$(cat "$R15/.agent/orientation/rep15.md")" = "$before15" ]; then
+  ok "--supersedes without --replacement rejected; replacement memo left byte-identical"
+else
+  no "--supersedes missing --replacement (rc=$RC out=[$OUT])"
+fi
+
+# ============================================================================
+# 16. --retract with --replacement rejected (REJECTED on retract)
+R16="$(new_repo)"
+b16="$(mk_body "$R16")"; run_writer "$R16" "onlytarget16" "s" "$b16"
+run_writer "$R16" --retract --target onlytarget16 --reason "x" --replacement "y16"
+if [ "$RC" -ne 0 ] && [ -f "$R16/.agent/orientation/onlytarget16.md" ] \
+   && printf '%s' "$OUT" | grep -qi "replacement"; then
+  ok "--retract with --replacement rejected; nothing removed"
+else
+  no "--retract with --replacement (rc=$RC out=[$OUT])"
+fi
+
+# ============================================================================
+# 17. --retract removes the memo file and PRINTS a one-line provenance reason to stdout
+#     (no in-store provenance home by design — the commit is the durable record).
+R17="$(new_repo)"
+b17="$(mk_body "$R17")"; run_writer "$R17" "gonearea17" "s" "$b17"
+[ -f "$R17/.agent/orientation/gonearea17.md" ] || no "case-17 precondition: seeding failed"
+run_writer "$R17" --retract --target gonearea17 --reason "area consolidated away"
+if [ "$RC" -eq 0 ] && [ ! -e "$R17/.agent/orientation/gonearea17.md" ] \
+   && printf '%s' "$OUT" | grep -qF "gonearea17" \
+   && printf '%s' "$OUT" | grep -qF "area consolidated away"; then
+  ok "--retract removes the memo file and prints a one-line provenance reason"
+else
+  no "--retract (rc=$RC out=[$OUT] present=$([ -e "$R17/.agent/orientation/gonearea17.md" ] && echo yes || echo no))"
+fi
+
+# ============================================================================
+# 18. --retract dry-run (no --confirm): file NOT removed, plan printed, exit 0
+R18="$(new_repo)"
+b18="$(mk_body "$R18")"; run_writer "$R18" "keeparea18" "s" "$b18"
+run_writer_noconfirm "$R18" --retract --target keeparea18 --reason "dry run only"
+if [ "$RC" -eq 0 ] && [ -f "$R18/.agent/orientation/keeparea18.md" ] \
+   && printf '%s' "$OUT" | grep -qF "PLANNED RETRACT" \
+   && printf '%s' "$OUT" | grep -qi "dry-run"; then
+  ok "--retract dry-run (no --confirm): exit 0, plan printed, file NOT removed"
+else
+  no "--retract dry-run (rc=$RC out=[$OUT])"
+fi
+
+# ============================================================================
+# 19. --supersedes dry-run (no --confirm): replacement file NOT modified, plan printed, exit 0
+R19="$(new_repo)"
+b19a="$(mk_body "$R19")"; run_writer "$R19" "tgt19" "s" "$b19a"
+b19b="$(mk_body "$R19")"; run_writer "$R19" "rep19" "s" "$b19b"
+before19="$(cat "$R19/.agent/orientation/rep19.md")"
+run_writer_noconfirm "$R19" --supersedes --target tgt19 --replacement rep19 --reason "dry run only"
+after19="$(cat "$R19/.agent/orientation/rep19.md")"
+if [ "$RC" -eq 0 ] && [ "$before19" = "$after19" ] \
+   && printf '%s' "$OUT" | grep -qF "PLANNED SUPERSEDE" \
+   && printf '%s' "$OUT" | grep -qi "dry-run"; then
+  ok "--supersedes dry-run (no --confirm): exit 0, plan printed, replacement byte-identical"
+else
+  no "--supersedes dry-run (rc=$RC out=[$OUT])"
+fi
+
+# ============================================================================
+# 20. --supersedes / --retract validate-before-write: nonexistent --target or --replacement
+#     rejected, store left byte-identical.
+R20="$(new_repo)"
+b20="$(mk_body "$R20")"; run_writer "$R20" "onlyone20" "s" "$b20"
+before_count20="$(count_store_files "$R20")"
+run_writer "$R20" --supersedes --target "nosuchtarget20" --replacement onlyone20 --reason "x"
+rc_s1="$RC"
+run_writer "$R20" --supersedes --target onlyone20 --replacement "nosuchrepl20" --reason "x"
+rc_s2="$RC"
+run_writer "$R20" --retract --target "nosuchtarget20b" --reason "x"
+rc_r2="$RC"
+after_count20="$(count_store_files "$R20")"
+if [ "$rc_s1" -ne 0 ] && [ "$rc_s2" -ne 0 ] && [ "$rc_r2" -ne 0 ] \
+   && [ "$before_count20" = "$after_count20" ]; then
+  ok "--supersedes/--retract with a nonexistent --target or --replacement rejected; store unchanged"
+else
+  no "validate-before-write (rc_s1=$rc_s1 rc_s2=$rc_s2 rc_r2=$rc_r2 counts $before_count20->$after_count20)"
+fi
+
+# ============================================================================
+# 21. --supersedes rejects --target == --replacement (a memo cannot supersede itself)
+R21="$(new_repo)"
+b21="$(mk_body "$R21")"; run_writer "$R21" "samearea21" "s" "$b21"
+before21="$(cat "$R21/.agent/orientation/samearea21.md")"
+run_writer "$R21" --supersedes --target samearea21 --replacement samearea21 --reason "x"
+after21="$(cat "$R21/.agent/orientation/samearea21.md")"
+if [ "$RC" -ne 0 ] && [ "$before21" = "$after21" ]; then
+  ok "--supersedes rejects --target == --replacement; memo left byte-identical"
+else
+  no "--supersedes self-target (rc=$RC out=[$OUT])"
+fi
+
+# ============================================================================
+# 22. REGRESSION (bot-review F4): a replacement memo whose `areas` value is legitimately
+#     EMPTY must still supersede successfully. read-orientation.sh documents empty areas as
+#     legal (staleness degrades to fresh-unknown); the read-back verify used to require
+#     `areas: .+`, rejecting it with a misleading "header missing/unparseable" diagnostic.
+R22="$(new_repo)"
+b22a="$(mk_body "$R22")"; run_writer "$R22" "tgt22" "s" "$b22a"
+b22b="$(mk_body "$R22")"; run_writer "$R22" "rep22" "s" "$b22b"
+# hand-author the empty-areas header the create path cannot produce
+rep22="$R22/.agent/orientation/rep22.md"
+{ printf '<!-- written_at: 2026-07-23T00:00:00Z | head_sha: abc1234 | areas:  -->\n'
+  tail -n +2 "$rep22"; } > "$rep22.tmp" && mv "$rep22.tmp" "$rep22"
+run_writer_noconfirm "$R22" --supersedes --target tgt22 --replacement rep22 --reason "empty areas is legal" --confirm
+if [ "$RC" -eq 0 ] \
+   && head -n 1 "$rep22" | grep -qF "supersedes: tgt22"; then
+  ok "empty \`areas\` replacement memo supersedes successfully (F4 regression)"
+else
+  no "empty-areas supersede rejected (rc=$RC out=[$OUT] hdr=[$(head -n1 "$rep22")])"
 fi
 
 # ============================================================================
