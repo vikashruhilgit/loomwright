@@ -338,7 +338,7 @@ skip_set="$TMPD/skip_set"   # lines: target_name<TAB>declaring_name (both fields
 : > "$skip_set"
 while IFS="$TAB" read -r from to; do
   if grep -qxF "$from" "$cycle_members" 2>/dev/null; then
-    skip "${from}.md" "ignoring cyclic supersedes (in a cycle, edge to $to dropped)"
+    printf 'read-orientation: ignoring edge from %s (cyclic supersedes -> %s); memo itself still emitted\n' "${from}.md" "$to" >&2
     continue
   fi
   printf '%s\t%s\n' "$to" "$from" >> "$skip_set"

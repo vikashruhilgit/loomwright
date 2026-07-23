@@ -26,8 +26,8 @@
 #  16. --retract with --replacement rejected (REJECTED on retract)
 #  17. --retract removes the memo file and PRINTS a one-line provenance reason to stdout
 #      (no in-store provenance home by design — assert on the printed reason)
-#  18. --retract dry-run (no --confirm): file NOT removed, plan printed, exit 1
-#  19. --supersedes dry-run (no --confirm): replacement file NOT modified, plan printed, exit 1
+#  18. --retract dry-run (no --confirm): file NOT removed, plan printed, exit 0
+#  19. --supersedes dry-run (no --confirm): replacement file NOT modified, plan printed, exit 0
 #  20. --supersedes / --retract validate-before-write: nonexistent --target or --replacement
 #      rejected, store left byte-identical
 #  21. --supersedes rejects --target == --replacement (a memo cannot supersede itself)
@@ -347,30 +347,30 @@ else
 fi
 
 # ============================================================================
-# 18. --retract dry-run (no --confirm): file NOT removed, plan printed, exit 1
+# 18. --retract dry-run (no --confirm): file NOT removed, plan printed, exit 0
 R18="$(new_repo)"
 b18="$(mk_body "$R18")"; run_writer "$R18" "keeparea18" "s" "$b18"
 run_writer_noconfirm "$R18" --retract --target keeparea18 --reason "dry run only"
-if [ "$RC" -eq 1 ] && [ -f "$R18/.agent/orientation/keeparea18.md" ] \
+if [ "$RC" -eq 0 ] && [ -f "$R18/.agent/orientation/keeparea18.md" ] \
    && printf '%s' "$OUT" | grep -qF "PLANNED RETRACT" \
    && printf '%s' "$OUT" | grep -qi "dry-run"; then
-  ok "--retract dry-run (no --confirm): exit 1, plan printed, file NOT removed"
+  ok "--retract dry-run (no --confirm): exit 0, plan printed, file NOT removed"
 else
   no "--retract dry-run (rc=$RC out=[$OUT])"
 fi
 
 # ============================================================================
-# 19. --supersedes dry-run (no --confirm): replacement file NOT modified, plan printed, exit 1
+# 19. --supersedes dry-run (no --confirm): replacement file NOT modified, plan printed, exit 0
 R19="$(new_repo)"
 b19a="$(mk_body "$R19")"; run_writer "$R19" "tgt19" "s" "$b19a"
 b19b="$(mk_body "$R19")"; run_writer "$R19" "rep19" "s" "$b19b"
 before19="$(cat "$R19/.agent/orientation/rep19.md")"
 run_writer_noconfirm "$R19" --supersedes --target tgt19 --replacement rep19 --reason "dry run only"
 after19="$(cat "$R19/.agent/orientation/rep19.md")"
-if [ "$RC" -eq 1 ] && [ "$before19" = "$after19" ] \
+if [ "$RC" -eq 0 ] && [ "$before19" = "$after19" ] \
    && printf '%s' "$OUT" | grep -qF "PLANNED SUPERSEDE" \
    && printf '%s' "$OUT" | grep -qi "dry-run"; then
-  ok "--supersedes dry-run (no --confirm): exit 1, plan printed, replacement byte-identical"
+  ok "--supersedes dry-run (no --confirm): exit 0, plan printed, replacement byte-identical"
 else
   no "--supersedes dry-run (rc=$RC out=[$OUT])"
 fi
@@ -406,6 +406,26 @@ if [ "$RC" -ne 0 ] && [ "$before21" = "$after21" ]; then
   ok "--supersedes rejects --target == --replacement; memo left byte-identical"
 else
   no "--supersedes self-target (rc=$RC out=[$OUT])"
+fi
+
+# ============================================================================
+# 22. REGRESSION (bot-review F4): a replacement memo whose `areas` value is legitimately
+#     EMPTY must still supersede successfully. read-orientation.sh documents empty areas as
+#     legal (staleness degrades to fresh-unknown); the read-back verify used to require
+#     `areas: .+`, rejecting it with a misleading "header missing/unparseable" diagnostic.
+R22="$(new_repo)"
+b22a="$(mk_body "$R22")"; run_writer "$R22" "tgt22" "s" "$b22a"
+b22b="$(mk_body "$R22")"; run_writer "$R22" "rep22" "s" "$b22b"
+# hand-author the empty-areas header the create path cannot produce
+rep22="$R22/.agent/orientation/rep22.md"
+{ printf '<!-- written_at: 2026-07-23T00:00:00Z | head_sha: abc1234 | areas:  -->\n'
+  tail -n +2 "$rep22"; } > "$rep22.tmp" && mv "$rep22.tmp" "$rep22"
+run_writer_noconfirm "$R22" --supersedes --target tgt22 --replacement rep22 --reason "empty areas is legal" --confirm
+if [ "$RC" -eq 0 ] \
+   && head -n 1 "$rep22" | grep -qF "supersedes: tgt22"; then
+  ok "empty \`areas\` replacement memo supersedes successfully (F4 regression)"
+else
+  no "empty-areas supersede rejected (rc=$RC out=[$OUT] hdr=[$(head -n1 "$rep22")])"
 fi
 
 # ============================================================================

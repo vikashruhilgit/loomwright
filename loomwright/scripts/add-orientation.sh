@@ -64,7 +64,7 @@
 #     replacement — supersede is the verb for that).
 #
 #   Exit codes for BOTH curation actions (distinct from the create/update path below):
-#     0 = applied + verified ; 1 = dry-run (no --confirm — nothing written, plan printed) ;
+#     0 = applied + verified, OR dry-run (no --confirm — nothing written, plan printed) ;
 #     2 = validation / write error (fail loud, no partial write).
 #
 # Usage:
@@ -164,7 +164,8 @@ STORE_DIR="${store_arg:-${ORIENTATION_STORE_DIR:-}}"
 # ---------------------------------------------------------------------------
 # Curation actions: --retract and --supersedes. Both take NO positional area-slug/summary/
 # body — --target/--reason(/--replacement)/--confirm only. Exit codes: 0 = applied,
-# 1 = dry-run (nothing written), 2 = validation/write error (store left byte-identical).
+# dry-run also exits 0 (nothing written) — matching add-rule.sh and this file's create path;
+# 2 = validation/write error (store left byte-identical).
 # ---------------------------------------------------------------------------
 do_retract() {
   [ -n "$curate_target" ] || die "rejected: --target is required for --retract" 2
@@ -181,7 +182,7 @@ do_retract() {
     printf '  target: %s\n' "$retract_path"
     printf '  reason: %s\n' "$curate_reason"
     printf '%s: dry-run, pass --confirm to retract (nothing removed)\n' "$PROG" >&2
-    exit 1
+    exit 0
   fi
 
   rm -f "$retract_path" || die "removal failed: $retract_path" 2
@@ -254,7 +255,7 @@ do_supersede() {
     printf '  new header: %s\n' "$new_header"
     rm -rf "$rwork" 2>/dev/null
     printf '%s: dry-run, pass --confirm to apply (nothing written)\n' "$PROG" >&2
-    exit 1
+    exit 0
   fi
 
   local rprior rtmp_in_store
@@ -272,7 +273,7 @@ do_supersede() {
   local rfirst_line rverify_total
   rfirst_line="$(head -n 1 "$repl_path" 2>/dev/null)"
   if ! printf '%s' "$rfirst_line" \
-     | grep -qE '^<!-- written_at: .+ \| head_sha: .+ \| supersedes: .+ \| areas: .+ -->$'; then
+     | grep -qE '^<!-- written_at: .+ \| head_sha: .+ \| supersedes: .+ \| areas: .* -->$'; then
     cat "$rprior" > "$repl_path" 2>/dev/null
     rm -rf "$rwork" 2>/dev/null
     die "read-back verify failed: header line missing/unparseable after supersede — restored prior replacement memo at $repl_path" 2
