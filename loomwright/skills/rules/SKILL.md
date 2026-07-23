@@ -1,6 +1,6 @@
 ---
 name: rules
-description: Protocol authority for the /rules command and the committed .agent/rules/ house-rules substrate — the rule JSON schema + per-object fail-safe-skip validation, the v1 "applicable = all valid rules" read contract, the scan-to-suggest spec, the advisory/must/no-op-when-absent reader contract (read-rules.sh), the /rules add path-contained atomic-append write discipline (mechanized in add-rule.sh), the /rules check human-invoked+confirmed execution semantics (mechanized in rules-check.sh), and the check-is-arbitrary-shell trust boundary (unattended `check` execution is now GATED via rules-check.sh --no-cmd). Use when running /rules or modifying any part of the rules substrate.
+description: Protocol authority for the /rules command and the committed .agent/rules/ house-rules substrate — the rule JSON schema + per-object fail-safe-skip validation, the v1 "applicable = all valid rules" read contract, the scan-to-suggest spec, the advisory/must/no-op-when-absent reader contract (read-rules.sh), the /rules add path-contained atomic-append write discipline (mechanized in add-rule.sh, with an optional `--supersedes` flag), the /rules retract remove-only write discipline (also mechanized in add-rule.sh), the /rules check human-invoked+confirmed execution semantics (mechanized in rules-check.sh), the single-hop supersession read contract, and the check-is-arbitrary-shell trust boundary (unattended `check` execution is now GATED via rules-check.sh --no-cmd). Use when running /rules or modifying any part of the rules substrate.
 version: "1.1.0"
 lastUpdated: "2026-07-03"
 ---
@@ -54,6 +54,7 @@ Protocol authority for `/rules` (see `${CLAUDE_PLUGIN_ROOT}/commands/rules.md` f
 | `check` | string \| null | **yes** | A runnable shell string OR `null`. **Emitted as DATA only by the reader — NEVER executed by it** (§5, §9). |
 | `provenance` | object | **yes** | e.g. `{source, added, ...}`. `source` records who/what added the rule; `added` is a UTC ISO-8601 timestamp. |
 | `applies_to` | path-glob / language / category | **no (optional)** | **RESERVED for a later slice's path/scope filtering. STILL inert — NOT consulted by the v1 reader (even after 3b-ii wired advisory enforcement, `applies_to` remains unactivated).** Forward-compat only — present in the schema so a later slice needs no schema change. |
+| `supersedes` | string (rule `id`) | **no (optional)** | **Curation/anti-rot.** Names the `id` of an OLDER rule this one replaces. A LIVE rule's `supersedes` HIDES the named rule from `read-rules.sh` output (single-hop, non-transitive — see §5). Stamped only via `/rules add --supersedes <rule-id>`; OMITTED entirely (never an explicit `null`) when not supplied. A malformed / self-referential / dangling value is fail-safe-ignored by the reader (demote-never-crash, §5) — never a crash, never a suppression of the entry that carries it. |
 
 The `check` value is **arbitrary shell** authored by anyone who clones or PRs the repo. Treat it as untrusted data everywhere except the one human-invoked + confirmed path (§8, §9).
 
@@ -112,6 +113,7 @@ In v1 there is **NO path/scope filtering**. The reader emits **ALL valid rules**
   listing each applicable rule with its `statement`, its `category`, **`must` flagged** (advisory rules unflagged), and its `check` shown as **DATA only** (text — never run). Emit rules in a **deterministic order** (e.g. category then id) so output is stable across runs.
 - **Empty when nothing applies:** emits NOTHING (no banner) when no valid rule exists — so machine consumers can gate on **non-empty stdout**.
 - **The invariant (§9):** the reader emits each `check` as data and **NEVER executes it** — there is no code path in the reader that runs a `check` value. This is what makes the reader safe to call from a future unattended seam with zero code-execution risk.
+- **Supersession (curation/anti-rot, single-hop, non-transitive):** a LIVE (validation-surviving) rule's `supersedes` field HIDES the rule it names from this reader's output. "A supersedes B hides B; it does not chase B's own `supersedes`" — cycles cannot loop by construction. A `supersedes` value is a hiding edge ONLY when it is a non-null string naming another LIVE rule's `id`; a malformed, self-referential, or dangling `supersedes` is **fail-safe-ignored** (demote-never-crash) — the entry carrying it is still emitted normally, and the reader still exits 0 unconditionally. A mutual 2-entry cycle (A supersedes B AND B supersedes A) is also ignored on both sides rather than hidden or looped.
 
 ---
 
@@ -139,6 +141,23 @@ Append-only authoring. The discipline mirrors the setup settings-merge (parse-ga
 4. **Stamp provenance.** Set `provenance.source = "/rules add"` (or the user-provided source) and `provenance.added = <UTC ISO-8601>`.
 5. **Append via jq, atomically.** Build the new object with `jq -n --arg …` (never string-interpolate untrusted input), append to the array, write to a **temp file**, then **atomic `mv`** over the target.
 6. **Verify.** Read the appended rule back (e.g. via `read-rules.sh` or a `jq` re-parse) to confirm it landed and parses.
+
+**`--supersedes <rule-id>` (curation/anti-rot, optional).** An optional flag on the ADD action — NOT a separate verb. Stamps a `supersedes` member on the newly-authored object naming the id of an OLDER rule it replaces; OMITTED entirely (never an explicit `null`) when not supplied. Purely declarative: the named older rule is left untouched in its file — `read-rules.sh` is what hides it at read time (§5). Validated non-empty and newline-free at write time; a self-reference against the about-to-be-created id is rejected (exit non-zero); a dangling/unresolvable target is **not** rejected at write time (rejecting it would be a stricter, divergent policy from the reader's own fail-safe tolerance of a dangling `supersedes`). No `--replacement` flag exists here — the newly-added rule itself *is* the replacement content, unlike `retract` (§7.5) where a bare removal has no replacement to name.
+
+---
+
+## §7.5 — `/rules retract` write discipline (exact)
+
+**Curation/anti-rot** added a second write action, `retract`, mirroring `curate-postmortem.sh`'s shape (`--target`/`--reason`/`--replacement`/`--confirm`) and its validate-before-write / fail-loud discipline — mechanized in the same sole-writer, `add-rule.sh`.
+
+1. **Mutually exclusive.** `--retract` cannot be combined with any add-only flag (`--category`/`--statement`/`--check`/`--supersedes`) — combining them is rejected outright (non-zero), never silently ignored.
+2. **`--target <rule-id>` required** — non-empty, newline/CR-free.
+3. **`--reason <text>` required** — non-empty; this is the text printed in the provenance record (there is no in-store home for it — see below).
+4. **`--replacement` is ALWAYS REJECTED** on `retract` (non-zero) — the inverse of `curate-postmortem.sh`'s own rationale for requiring `--replacement` on its `supersede` verb ("a supersede without a replacement would be an indistinguishable synonym for retract"): here, a replacement on a pure retract is the contradiction.
+5. **Locate the target** across every **well-formed** (`jq -e 'type=="array"'`) `.agent/rules/*.json` array, `LC_ALL=C` path-sorted, first match. Not found (including "found only inside a malformed sibling file") ⇒ fail loud, nothing written.
+6. **Confirm-only** — identical gate semantics to `add`: writes only on `--confirm` or an interactive TTY confirm; otherwise prints the planned retract and exits 0 without writing.
+7. **Remove via temp-file + atomic `mv`** (never a partial/in-place edit); **read-back verify** the file still parses as an array AND no longer contains the target id.
+8. **No in-store home for the reason.** `.agent/rules/` keeps `provenance` as a field INSIDE each rule object — deleting the object deletes its provenance, and adding a sidecar file for a post-deletion reason would violate the curation freeze (no new stores). The writer instead **PRINTS** a single provenance line to stdout naming the id, source file, and reason — this **IS** the durable record; the commit that lands the removal is the audit trail. There is **no in-place `retracted: true` marker** anywhere in this store — retraction REMOVES the object, matching the same "removes, not marks" semantics `write-lessons.sh retract` already ships for the lessons store.
 
 ---
 
@@ -185,6 +204,9 @@ A layered model — a company-base rule set composed with per-project overrides 
 - **Blind-writing on `add` or `suggest`.** Both write ONLY on explicit user confirmation.
 - **Guessing which rules "apply" in v1.** Applicable = all valid rules; `applies_to` is still inert (a later slice will define path/scope filtering — 3b-ii wired advisory enforcement without activating it).
 - **Adding `.agent/` to `.gitignore`.** Rules are committed and must travel with the repo.
+- **Chasing a `supersedes` chain transitively, or looping on a cycle.** Supersession is single-hop only (§5) — a mutual or n-hop cycle is fail-safe-ignored on every side, never chased and never a hang.
+- **Adding a `--replacement` flag to `retract`, or a `--replacement`-less `supersede` verb.** `retract` has no replacement (§7.5); `--supersedes` (§7) is a flag on `add`, not a separate verb — this file has no `supersede` action.
+- **Adding an in-store tombstone / `retracted: true` marker, or a provenance sidecar for retraction reasons.** Retraction REMOVES the object outright; the writer prints the reason to stdout and the commit is the durable record (§7.5) — a sidecar would violate the curation freeze (no new stores).
 
 ## Related Skills
 
@@ -202,6 +224,9 @@ A layered model — a company-base rule set composed with per-project overrides 
 - [ ] Per-object validation is fail-safe-skip (missing field / unknown `enforcement` / duplicate `id` → skip + diagnostic to `.supervisor/logs/`, never crash); merge order is `LC_ALL=C` path-sorted, first-seen-id-wins.
 - [ ] `applies_to` is documented as reserved for a later slice (still inert) and NOT consulted by the v1 reader.
 - [ ] `/rules add` slugs the category to a single `[a-z0-9-]` segment (rejects `/`, `..`, leading dot, metachars, empty), parse-gates with `jq -e 'type=="array"'`, assigns a deterministic unique id, stamps `provenance.source`/`provenance.added`, writes via temp-file + atomic `mv`, verifies read-back, and writes ONLY on confirmation (append-only).
+- [ ] `/rules add --supersedes <id>` is an optional flag (not a separate verb), OMITS the member entirely when unsupplied, and rejects only a self-reference at write time (a dangling target is the reader's fail-safe-ignore concern, not the writer's).
+- [ ] `/rules retract` is mutually exclusive with add-only flags, requires `--target`+`--reason`, ALWAYS rejects `--replacement`, removes via temp-file + atomic `mv`, read-back verifies the id is gone, and PRINTS (never stores) the provenance reason.
+- [ ] `read-rules.sh` hides a rule named by a LIVE rule's `supersedes` — single-hop, non-transitive — and fail-safe-ignores (never crashes on, never over-hides for) a malformed/self-referential/dangling/cyclic `supersedes`.
 - [ ] No secret values written into a rule object.
 
 ## Token Cost
