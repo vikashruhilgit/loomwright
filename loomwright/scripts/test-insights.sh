@@ -647,6 +647,131 @@ if grep -qF "definitely not JSONL" "$lgd" 2>/dev/null; then no "builder garbage 
 grep -q "^## System Twin growth" "$lgd" 2>/dev/null && grep -q "^## View in Obsidian" "$lgd" 2>/dev/null && ok "sections after loop evidence still render (build not truncated)" || no "dashboard truncated after garbage builder"
 rm -rf "$LG" "$SDG"
 
+echo "== 27. Corpus health — rules decay: aged entry flagged, fresh entry not, absent dir noted =="
+RD="$(mktemp -d)"; ( cd "$RD" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$RD/.supervisor/logs" "$RD/.agent/rules"
+printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$RD/.supervisor/logs/sess-rd.jsonl"
+cat > "$RD/.agent/rules/general.json" <<'EOF'
+[
+  {"id":"r-old","category":"general","statement":"old one","enforcement":"advisory","check":null,"provenance":{"source":"x","added":"2020-01-01T00:00:00Z"}},
+  {"id":"r-fresh","category":"general","statement":"fresh one","enforcement":"advisory","check":null,"provenance":{"source":"x","added":"2026-06-01T00:00:00Z"}}
+]
+EOF
+( cd "$RD" && bash "$BUILD" >/dev/null 2>&1 )
+rdd="$RD/.supervisor/insights/dashboard.md"
+grep -qF -- "- rules: 2 entries, 1 decayed (age >180d; flag only, never auto-deleted)" "$rdd" 2>/dev/null && ok "rules: 1 of 2 aged entries flagged decayed (fresh entry untouched)" || no "rules decay count wrong"
+# The store on disk must be BYTE-IDENTICAL — flag-only, never auto-delete.
+grep -qF '"id":"r-old"' "$RD/.agent/rules/general.json" 2>/dev/null && grep -qF '"id":"r-fresh"' "$RD/.agent/rules/general.json" 2>/dev/null && ok "rules store untouched (flag only, never auto-deleted)" || no "rules store was mutated by a read-only dashboard build"
+rm -rf "$RD"
+
+RA="$(mktemp -d)"; ( cd "$RA" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$RA/.supervisor/logs"
+printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$RA/.supervisor/logs/sess-ra.jsonl"
+( cd "$RA" && bash "$BUILD" >/dev/null 2>&1 )
+grep -qF -- "- rules: absent" "$RA/.supervisor/insights/dashboard.md" 2>/dev/null && ok "rules: absent dir degrades to a note" || no "rules-absent note missing"
+rm -rf "$RA"
+
+echo "== 28. Corpus health — orientation decay: unresolvable head_sha + aged written_at, fresh memo not flagged =="
+OD="$(mktemp -d)"; ( cd "$OD" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$OD/.supervisor/logs" "$OD/.agent/orientation"
+printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$OD/.supervisor/logs/sess-od.jsonl"
+HEAD_SHA="$(cd "$OD" && git rev-parse HEAD)"
+{
+  printf '%s\n' "<!-- written_at: 2020-01-01T00:00:00Z | head_sha: deadbeefdeadbeefdeadbeefdeadbeefdeadbeef | areas: scripts -->"
+  printf '%s\n' "summary of a dangling-basis memo"
+  printf '%s\n' "body"
+} > "$OD/.agent/orientation/area-dangling.md"
+{
+  printf '%s\n' "<!-- written_at: 2020-01-01T00:00:00Z | head_sha: ${HEAD_SHA} | areas: scripts -->"
+  printf '%s\n' "summary of an aged-but-resolvable memo"
+  printf '%s\n' "body"
+} > "$OD/.agent/orientation/area-aged.md"
+{
+  printf '%s\n' "<!-- written_at: $(date -u +%Y-%m-%dT%H:%M:%SZ) | head_sha: ${HEAD_SHA} | areas: scripts -->"
+  printf '%s\n' "summary of a fresh, resolvable memo"
+  printf '%s\n' "body"
+} > "$OD/.agent/orientation/area-fresh.md"
+( cd "$OD" && bash "$BUILD" >/dev/null 2>&1 )
+odd="$OD/.supervisor/insights/dashboard.md"
+grep -qF -- "- orientation: 3 entries, 2 decayed (unresolvable head_sha or age >180d; flag only, never auto-deleted)" "$odd" 2>/dev/null && ok "orientation: dangling-basis + aged memo both decayed, fresh memo is not" || no "orientation decay count wrong"
+# The store on disk must be untouched — flag-only, never auto-delete (all 3 memo files still exist).
+if [ -f "$OD/.agent/orientation/area-dangling.md" ] && [ -f "$OD/.agent/orientation/area-aged.md" ] && [ -f "$OD/.agent/orientation/area-fresh.md" ]; then
+  ok "orientation store untouched (flag only, never auto-deleted)"
+else
+  no "an orientation memo was deleted by a read-only dashboard build"
+fi
+rm -rf "$OD"
+
+OA="$(mktemp -d)"; ( cd "$OA" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$OA/.supervisor/logs"
+printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$OA/.supervisor/logs/sess-oa.jsonl"
+( cd "$OA" && bash "$BUILD" >/dev/null 2>&1 )
+grep -qF -- "- orientation: absent" "$OA/.supervisor/insights/dashboard.md" 2>/dev/null && ok "orientation: absent dir degrades to a note" || no "orientation-absent note missing"
+rm -rf "$OA"
+
+echo "== 29. Corpus health — RULES_STALE_DAYS / ORIENTATION_STALE_DAYS overrides + non-numeric fallback =="
+RO="$(mktemp -d)"; ( cd "$RO" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$RO/.supervisor/logs" "$RO/.agent/rules"
+printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$RO/.supervisor/logs/sess-ro.jsonl"
+cat > "$RO/.agent/rules/general.json" <<'EOF'
+[{"id":"r-old","category":"general","statement":"old one","enforcement":"advisory","check":null,"provenance":{"source":"x","added":"2020-01-01T00:00:00Z"}}]
+EOF
+rod="$RO/.supervisor/insights/dashboard.md"
+( cd "$RO" && bash "$BUILD" >/dev/null 2>&1 )
+grep -qF -- "- rules: 1 entries, 1 decayed (age >180d; flag only, never auto-deleted)" "$rod" 2>/dev/null && ok "rules default threshold: 1 decayed (>180d)" || no "rules default-threshold decay count wrong"
+( cd "$RO" && RULES_STALE_DAYS=100000 bash "$BUILD" >/dev/null 2>&1 )
+grep -qF -- "- rules: 1 entries, 0 decayed (age >100000d; flag only, never auto-deleted)" "$rod" 2>/dev/null && ok "RULES_STALE_DAYS=100000: 0 decayed and suffix reflects override" || no "rules override decay count/suffix wrong"
+( cd "$RO" && RULES_STALE_DAYS=abc bash "$BUILD" >/dev/null 2>&1 )
+grep -qF -- "- rules: 1 entries, 1 decayed (age >180d; flag only, never auto-deleted)" "$rod" 2>/dev/null && ok "non-numeric RULES_STALE_DAYS falls back to 180" || no "non-numeric rules override did not fall back to 180"
+rm -rf "$RO"
+
+OO="$(mktemp -d)"; ( cd "$OO" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$OO/.supervisor/logs" "$OO/.agent/orientation"
+printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$OO/.supervisor/logs/sess-oo.jsonl"
+OO_SHA="$(cd "$OO" && git rev-parse HEAD)"
+{
+  printf '%s\n' "<!-- written_at: 2020-01-01T00:00:00Z | head_sha: ${OO_SHA} | areas: scripts -->"
+  printf '%s\n' "summary of an aged-but-resolvable memo"
+  printf '%s\n' "body"
+} > "$OO/.agent/orientation/area-aged.md"
+ood="$OO/.supervisor/insights/dashboard.md"
+( cd "$OO" && bash "$BUILD" >/dev/null 2>&1 )
+grep -qF -- "- orientation: 1 entries, 1 decayed (unresolvable head_sha or age >180d; flag only, never auto-deleted)" "$ood" 2>/dev/null && ok "orientation default threshold: 1 decayed (>180d, aged written_at)" || no "orientation default-threshold decay count wrong"
+( cd "$OO" && ORIENTATION_STALE_DAYS=100000 bash "$BUILD" >/dev/null 2>&1 )
+grep -qF -- "- orientation: 1 entries, 0 decayed (unresolvable head_sha or age >100000d; flag only, never auto-deleted)" "$ood" 2>/dev/null && ok "ORIENTATION_STALE_DAYS=100000: 0 decayed and suffix reflects override" || no "orientation override decay count/suffix wrong"
+( cd "$OO" && ORIENTATION_STALE_DAYS=abc bash "$BUILD" >/dev/null 2>&1 )
+grep -qF -- "- orientation: 1 entries, 1 decayed (unresolvable head_sha or age >180d; flag only, never auto-deleted)" "$ood" 2>/dev/null && ok "non-numeric ORIENTATION_STALE_DAYS falls back to 180" || no "non-numeric orientation override did not fall back to 180"
+rm -rf "$OO"
+
+echo "== 30. Whole-stack advisory budget — advisory_total aggregation, target compare, absent degrade =="
+AB="$(mktemp -d)"; ( cd "$AB" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$AB/.supervisor/logs"
+{
+  printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}'
+  printf '%s\n' '{"event":"token_ledger","session_id":"sess-ab","ts":"2026-06-01T10:01:00Z","proxy":true,"token_proxy_kind":"transcript_bytes","token_proxy_transcript_bytes":100,"advisory_total":15000,"advisory_total_kind":"context_bytes"}'
+  printf '%s\n' '{"event":"token_ledger","session_id":"sess-ab","ts":"2026-06-01T10:02:00Z","proxy":true,"token_proxy_kind":"transcript_bytes","token_proxy_transcript_bytes":200,"advisory_total":25000,"advisory_total_kind":"context_bytes"}'
+} > "$AB/.supervisor/logs/sess-ab.jsonl"
+abd="$AB/.supervisor/insights/dashboard.md"
+( cd "$AB" && bash "$BUILD" >/dev/null 2>&1 )
+grep -q "^### Whole-stack advisory budget" "$abd" 2>/dev/null && ok "whole-stack advisory budget subsection rendered" || no "whole-stack advisory budget subsection missing"
+grep -qF -- "**Events with \`advisory_total\`:** 2  ·  **Latest:** 25000 bytes  ·  **Avg:** 20000 bytes  ·  **Max:** 25000 bytes" "$abd" 2>/dev/null && ok "advisory_total aggregation (count/latest/avg/max) correct" || no "advisory_total aggregation wrong"
+grep -qF -- "**Target:** ≤20000 bytes/run" "$abd" 2>/dev/null && grep -qF -- "**Over target:** 1 of 2 event(s)" "$abd" 2>/dev/null && ok "default target 20000 and over-target count (1 of 2) correct" || no "default target/over-target wrong"
+( cd "$AB" && ADVISORY_BUDGET_TARGET_BYTES=30000 bash "$BUILD" >/dev/null 2>&1 )
+grep -qF -- "**Target:** ≤30000 bytes/run" "$abd" 2>/dev/null && grep -qF -- "**Over target:** 0 of 2 event(s)" "$abd" 2>/dev/null && ok "ADVISORY_BUDGET_TARGET_BYTES override changes target + over-target count" || no "target override did not apply"
+# Distinctness: the reconciliation note must be present, naming the pre-existing era-bucket
+# proxy explicitly, so the dashboard never carries two unexplained advisory-token numbers.
+grep -qF "DISTINCT from the **Advisory tokens (compute-spend)** column in the Loop-evidence era-bucket table" "$abd" 2>/dev/null && ok "reconciliation note distinguishes advisory_total from the era-bucket advisory_tokens proxy" || no "reconciliation note missing"
+rm -rf "$AB"
+
+AN="$(mktemp -d)"; ( cd "$AN" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$AN/.supervisor/logs"
+printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$AN/.supervisor/logs/sess-an.jsonl"
+and="$AN/.supervisor/insights/dashboard.md"
+out="$( cd "$AN" && bash "$BUILD" 2>&1 )"; rc=$?
+[ "$rc" -eq 0 ] && ok "build exits 0 with no advisory_total events at all" || no "build rc != 0 (no advisory_total events, rc=$rc)"
+grep -qF "No \`advisory_total\` events recorded yet" "$and" 2>/dev/null && ok "absent advisory_total degrades to a note" || no "absent advisory_total degrade note missing"
+rm -rf "$AN"
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
