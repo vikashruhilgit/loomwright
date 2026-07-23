@@ -40,22 +40,53 @@
 # `## <category>` heading is left in place — read-lessons.sh already skips headings with no
 # emitted entries. Unlike the fail-safe readers, retract is a gate-side tool and FAILS LOUD.
 #
+# SUPERSEDE NOTE (curation verb; composes with retract — does NOT reimplement it): `supersede`
+# targets an existing lesson EXACTLY like `retract` (positional <category> <lesson-text> or
+# --hash <content_hash>) and additionally REQUIRES --replacement "<new lesson text>" (a supersede
+# without a replacement would be an indistinguishable synonym for retract — same rationale as
+# curate-postmortem.sh). Order is LOAD-BEARING and enforced in code, never left to caller
+# discipline: PRE-CHECK -> RETRACT -> ADD.
+#   1. PRE-CHECK the target is present in LESSONS.md AND chain-trusted (the exact retract walk).
+#      If not: fail loud (exit 4) and leave LESSONS.md + the provenance chain BYTE-IDENTICAL —
+#      never a partial write.
+#   2. RETRACT the target via the existing retract flow (same tombstone provenance entry, same
+#      atomic rewrite) — this is NOT a second/divergent retraction mechanism.
+#   3. ADD the replacement as a new lesson (same category as the target unless an explicit
+#      --category was also given) carrying `supersedes=<8-char-hash-of-the-old-entry>` in its
+#      HTML-comment trailer, with `last_verified=` kept FIRST in the trailer so
+#      read-lessons.sh's existing greedy `<!-- last_verified=.*-->` strip still matches unchanged.
+#   Retract-first is mandatory: the add path (below) evicts the OLDEST entry in a category once
+#   it exceeds the <=3 bound. Add-then-retract on a FULL category would transiently push it to 4
+#   and evict an unrelated entry that was never superseded or retracted — retract-first keeps the
+#   category at 3 -> 2 -> 3 so eviction never fires.
+#   PARTIAL-COMPLETION BOUND (precise, do not overclaim): the pre-check + retract-first ordering
+#   eliminates the partial-write case where BOTH the old and new entries end up live. It does NOT
+#   make the verb fully atomic end-to-end: if the ADD half fails AFTER a successful retract (e.g.
+#   the atomic rename fails, or the dedup guard short-circuits), the superseded entry is already
+#   gone and the replacement never lands. Recovery: re-run a plain `add` with the same category and
+#   replacement text — the retract half is already recorded in the provenance chain and will not be
+#   redone.
+#
 # Usage:  write-lessons.sh --category "<cat>" --lesson "<text>" \
 #                          [--source "<id>"] [--last-verified "<iso8601Z>"] [--confidence "<value>"]
 #         write-lessons.sh retract <category> <lesson-text> [--source "<id>"]
 #         write-lessons.sh retract --hash <content_hash>    [--source "<id>"]
-# Exit:   0 on success or safe no-op (e.g. `add` with no sha tool; a sha-less `retract` FAILS
-#         LOUD with exit 2 — a curation verb must never silently no-op); non-zero only on a
+#         write-lessons.sh supersede <category> <lesson-text> --replacement "<new text>" [--source "<id>"]
+#         write-lessons.sh supersede --hash <content_hash>    --replacement "<new text>" [--source "<id>"] [--category "<cat>"]
+# Exit:   0 on success or safe no-op (e.g. `add` with no sha tool; a sha-less `retract`/`supersede`
+#         FAILS LOUD with exit 2 — a curation verb must never silently no-op); non-zero only on a
 #         disallowed / would-corrupt condition (so a bad call can never half-write state).
-#         retract exits 4 when the target is absent from LESSONS.md or not chain-trusted
-#         (fail loud, never tombstone a nonexistent lesson silently).
+#         retract/supersede exit 4 when the target is absent from LESSONS.md or not chain-trusted
+#         (fail loud, never tombstone a nonexistent lesson silently; store left byte-identical).
 
 set -uo pipefail
 
-CATEGORY=""; LESSON=""; SOURCE="unknown"; LAST_VERIFIED=""; CONFIDENCE="medium"
-# Subcommand detection: a leading `retract` selects the tombstone flow (default action is add).
+CATEGORY=""; LESSON=""; SOURCE="unknown"; LAST_VERIFIED=""; CONFIDENCE="medium"; REPLACEMENT=""
+# Subcommand detection: a leading `retract`/`supersede` selects that flow (default action is add).
 ACTION="add"; HASH=""
-if [ "${1:-}" = "retract" ]; then ACTION="retract"; shift; fi
+if [ "${1:-}" = "retract" ]; then ACTION="retract"; shift
+elif [ "${1:-}" = "supersede" ]; then ACTION="supersede"; shift
+fi
 while [ $# -gt 0 ]; do
   case "$1" in
     --category)        CATEGORY="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
@@ -70,14 +101,16 @@ while [ $# -gt 0 ]; do
     --confidence=*)    CONFIDENCE="${1#--confidence=}"; shift ;;
     --hash)            HASH="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
     --hash=*)          HASH="${1#--hash=}"; shift ;;
-    *) # retract accepts positional <category> <lesson-text> (in that order); add ignores strays.
-       if [ "$ACTION" = "retract" ] && [ -z "$CATEGORY" ]; then CATEGORY="$1"
-       elif [ "$ACTION" = "retract" ] && [ -z "$LESSON" ]; then LESSON="$1"
+    --replacement)     REPLACEMENT="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
+    --replacement=*)   REPLACEMENT="${1#--replacement=}"; shift ;;
+    *) # retract/supersede accept positional <category> <lesson-text> (in that order); add ignores strays.
+       if { [ "$ACTION" = "retract" ] || [ "$ACTION" = "supersede" ]; } && [ -z "$CATEGORY" ]; then CATEGORY="$1"
+       elif { [ "$ACTION" = "retract" ] || [ "$ACTION" = "supersede" ]; } && [ -z "$LESSON" ]; then LESSON="$1"
        fi
        shift ;;
   esac
 done
-if [ "$ACTION" = "retract" ]; then
+if [ "$ACTION" = "retract" ] || [ "$ACTION" = "supersede" ]; then
   if [ -n "$HASH" ]; then
     # --hash identifies the target directly; must be a full lowercase sha256 (it feeds the
     # content-derived [id] grep below, so a partial/garbage value could mis-target an entry).
@@ -86,7 +119,12 @@ if [ "$ACTION" = "retract" ]; then
     esac
     [ "${#HASH}" -eq 64 ] || { echo "write-lessons: --hash must be a full 64-char sha256" >&2; exit 2; }
   else
-    { [ -n "$CATEGORY" ] && [ -n "$LESSON" ]; } || { echo "write-lessons: retract requires <category> <lesson-text> (or --hash <content_hash>)" >&2; exit 2; }
+    { [ -n "$CATEGORY" ] && [ -n "$LESSON" ]; } || { echo "write-lessons: $ACTION requires <category> <lesson-text> (or --hash <content_hash>)" >&2; exit 2; }
+  fi
+  if [ "$ACTION" = "supersede" ]; then
+    [ -n "$REPLACEMENT" ] || { echo "write-lessons: supersede requires --replacement \"<new lesson text>\" (a supersede without a replacement is an indistinguishable synonym for retract)" >&2; exit 2; }
+  elif [ -n "$REPLACEMENT" ]; then
+    echo "write-lessons: --replacement is only meaningful for supersede (a retract has no replacement)" >&2; exit 2
   fi
 else
   [ -n "$CATEGORY" ] || { echo "write-lessons: --category is required" >&2; exit 2; }
@@ -131,11 +169,12 @@ cd "$GITROOT" || { echo "write-lessons: cannot cd to repo root" >&2; exit 2; }
 if command -v sha256sum >/dev/null 2>&1; then   sha() { sha256sum | cut -d' ' -f1; }
 elif command -v shasum  >/dev/null 2>&1; then   sha() { shasum -a 256 | cut -d' ' -f1; }
 else
-  # `add` stays a fail-safe no-op (exit 0 — a missed advisory write is harmless). `retract` is a
-  # curation verb and must FAIL LOUD instead: a silent no-op would leave the caller believing the
-  # tombstone was written while the lesson stays live (exit 2, state untouched either way).
-  if [ "$ACTION" = "retract" ]; then
-    echo "write-lessons: no sha256 tool (sha256sum/shasum) — cannot retract, failing loud" >&2
+  # `add` stays a fail-safe no-op (exit 0 — a missed advisory write is harmless). `retract` and
+  # `supersede` are curation verbs and must FAIL LOUD instead: a silent no-op would leave the
+  # caller believing the tombstone (and, for supersede, the replacement) was written while the
+  # old lesson stays live (exit 2, state untouched either way).
+  if [ "$ACTION" = "retract" ] || [ "$ACTION" = "supersede" ]; then
+    echo "write-lessons: no sha256 tool (sha256sum/shasum) — cannot $ACTION, failing loud" >&2
     exit 2
   fi
   echo "write-lessons: no sha256 tool (sha256sum/shasum) — writes disabled, fail-safe no-op" >&2
@@ -180,9 +219,11 @@ fi
 # This trims ONLY trailing whitespace — interior backslashes / spaces are untouched. The SAME
 # value feeds both content_hash and the awk-stored line below.
 lesson_oneline="$(printf '%s' "$LESSON" | tr '\n' ' ' | sed -E 's/[[:space:]]+$//')"
-# retract --hash targets the lesson directly by its content_hash; otherwise (add, or retract by
-# <category> <lesson-text>) the hash is computed EXACTLY as add computes it: sha("<cat> <text>").
-if [ "$ACTION" = "retract" ] && [ -n "$HASH" ]; then
+# retract/supersede --hash targets the lesson directly by its content_hash; otherwise (add, or
+# retract/supersede by <category> <lesson-text>) the hash is computed EXACTLY as add computes it:
+# sha("<cat> <text>"). For supersede this identifies the TARGET (old) entry only — the
+# replacement's own id/content_hash is computed separately, later, after the retract half lands.
+if { [ "$ACTION" = "retract" ] || [ "$ACTION" = "supersede" ]; } && [ -n "$HASH" ]; then
   content_hash="$HASH"
 else
 # CRITICAL: content_hash is over category + lesson text ONLY — the freshness trailer never enters
@@ -214,22 +255,33 @@ prov_line() {
   fi
 }
 
-# ---- RETRACT flow (tombstone verb) -----------------------------------------
+# ---- RETRACT flow (tombstone verb; also the first two-thirds of SUPERSEDE) -------------
 # Gate-side curation: FAILS LOUD (exit 4) rather than silently tombstoning a nonexistent lesson.
 # The `retract` provenance entry IS the auditable tombstone; the LESSONS.md rewrite removes ONLY
 # the target entry line (every other line is preserved byte-for-byte; the `## <category>` heading
 # is left in place — read-lessons.sh skips headings with no emitted entries).
-if [ "$ACTION" = "retract" ]; then
+#
+# For `supersede` this block performs steps 1 (pre-check) and 2 (retract) of the pinned
+# PRE-CHECK -> RETRACT -> ADD order; it falls through (no `exit`) into the ADD flow below instead
+# of exiting, after re-pointing id/content_hash/lesson_oneline at the REPLACEMENT so the shared
+# ADD code appends it (carrying supersedes=<old id> in its trailer). Add-then-retract is never
+# reachable through this code path — the retract's rewrite is always committed before the ADD
+# flow's awk pass ever reads $LESSONS.
+if [ "$ACTION" = "retract" ] || [ "$ACTION" = "supersede" ]; then
   if [ ! -f "$LESSONS" ] || [ ! -f "$PROV" ]; then
-    echo "write-lessons: retract [$id] — no lessons store yet ($LESSONS / $PROV missing) — refusing" >&2
+    echo "write-lessons: $ACTION [$id] — no lessons store yet ($LESSONS / $PROV missing) — refusing" >&2
     exit 4
   fi
   # (1) The target entry line must currently exist. [id] is content-derived (first 8 hex of
   #     sha("<cat> <text>")), so an id-prefix match identifies exactly the pair being retracted.
   if ! grep -qF -- "- [$id] " "$LESSONS" 2>/dev/null; then
-    echo "write-lessons: retract target [$id] not found in $LESSONS — refusing (never tombstone silently)" >&2
+    echo "write-lessons: $ACTION target [$id] not found in $LESSONS — refusing (never tombstone silently)" >&2
     exit 4
   fi
+  # Capture the target's OWN category (heading immediately above its entry line) BEFORE the file
+  # is rewritten, so supersede can place the replacement in the same category when the caller
+  # targeted by --hash alone (no --category given). Harmless no-op for a plain retract.
+  target_catslug="$(awk -v pfx="- [$id] " 'BEGIN{cat=""} /^## /{cat=substr($0,4)} index($0,pfx)==1{print cat; exit}' "$LESSONS" 2>/dev/null)"
   # (2) ...and its hash must be chain-trusted: walk the chain exactly like read-lessons.sh, with
   #     last-action-wins (add → trusted, later retract → untrusted, re-add → re-trusted). A broken
   #     link distrusts everything after it, so a poisoned/out-of-band line can never be laundered
@@ -252,7 +304,7 @@ if [ "$ACTION" = "retract" ]; then
     prev="$(printf '%s' "$p" | sha)"
   done < "$PROV"
   if [ "$target_trusted" -ne 1 ]; then
-    echo "write-lessons: retract target [$id] is not chain-trusted (never added, already retracted, or beyond a chain break) — refusing" >&2
+    echo "write-lessons: $ACTION target [$id] is not chain-trusted (never added, already retracted, or beyond a chain break) — refusing" >&2
     exit 4
   fi
 
@@ -266,11 +318,36 @@ if [ "$ACTION" = "retract" ]; then
   prev_hash="$(printf '%s' "$(tail -n1 "$prov_tmp")" | sha)"
   printf '%s\n' "$(prov_line "$id" "$prev_hash" "$content_hash" "$SOURCE" "retract")" >> "$prov_tmp"
   mv "$prov_tmp" "$PROV" && mv "$mem_tmp" "$LESSONS" || {
-    echo "write-lessons: atomic rename failed — retract aborted; read gate ignores any unmatched provenance" >&2
+    echo "write-lessons: atomic rename failed — $ACTION aborted; read gate ignores any unmatched provenance" >&2
     exit 2
   }
-  echo "write-lessons: retracted [$id] (source=$SOURCE) — provenance tombstone appended, entry line removed"
-  exit 0
+  if [ "$ACTION" = "retract" ]; then
+    echo "write-lessons: retracted [$id] (source=$SOURCE) — provenance tombstone appended, entry line removed"
+    exit 0
+  fi
+
+  # ---- supersede: fall through into the ADD flow with the REPLACEMENT lesson --------------
+  # The target is gone from $LESSONS/$PROV as of the mv above (retract half is durable and
+  # already recorded in the chain — see the partial-completion bound documented at the top of
+  # the file). Re-point id/content_hash/lesson_oneline at the replacement so the shared ADD code
+  # below appends it, and remember the old id so the trailer can carry supersedes=<old id>.
+  echo "write-lessons: retracted [$id] (source=$SOURCE) as part of supersede — appending replacement next" >&2
+  SUPERSEDES_ID="$id"
+  # Category for the replacement: an explicit --category (already slugified into CATSLUG) wins;
+  # otherwise reuse the target's own category (captured above, before its heading could vanish).
+  if [ -z "$CATEGORY" ] && [ -n "$target_catslug" ]; then
+    CATSLUG="$target_catslug"
+  fi
+  lesson_oneline="$(printf '%s' "$REPLACEMENT" | tr '\n' ' ' | sed -E 's/[[:space:]]+$//')"
+  content_hash="$(printf '%s' "$CATSLUG $lesson_oneline" | sha)"
+  id="$(printf '%s' "$content_hash" | cut -c1-8)"
+  # Dedup guard for the replacement half (mirrors the add-only guard above): if the exact
+  # replacement content already lives elsewhere in this category, the retract half is already
+  # durable (committed above) — skip appending a duplicate and touch nothing further.
+  if grep -qF -- "- [$id] $lesson_oneline" "$LESSONS" 2>/dev/null; then
+    echo "write-lessons: replacement already present ([$id] in $CATSLUG) — retract done, add skipped (dedup)"
+    exit 0
+  fi
 fi
 
 # Temps live IN the memory dir (not $TMPDIR) so the commit `mv` is a same-filesystem, truly
@@ -292,13 +369,19 @@ trap 'rm -f "$mem_tmp" "$prov_tmp" "$evict_file" 2>/dev/null' EXIT
 # `cat`/`id` (slug/hex), `lv` (an ISO-8601 stamp VALIDATED above to `[0-9T:Z-]` only), and `conf`
 # (a sanitized value, `<>`/quotes/backslashes/ctrl stripped) cannot contain backslashes,
 # so they stay on `-v`.
+# `sup` (the 8-char id of the entry this one supersedes) is empty for a plain `add` and for a
+# `retract`-only call never reaches this point at all; only `supersede`'s fall-through sets it.
+# It is appended AFTER confidence, never before last_verified (read-lessons.sh:118 strips
+# `<!-- last_verified=.*-->` greedily — last_verified must stay first or the strip still works
+# fine either way, but the contract pins it first for clarity/stability across future trailer
+# fields).
 LESSON_ONELINE="$lesson_oneline" awk \
   -v cat="$CATSLUG" -v id="$id" -v maxc="$MAX_PER_CAT" \
-  -v lv="$LAST_VERIFIED" -v conf="$CONFIDENCE" -v evictfile="$evict_file" '
+  -v lv="$LAST_VERIFIED" -v conf="$CONFIDENCE" -v evictfile="$evict_file" -v sup="${SUPERSEDES_ID:-}" '
   BEGIN {
     hdr = "## " cat
     lesson = ENVIRON["LESSON_ONELINE"]
-    trailer = "  <!-- last_verified=" lv " confidence=" conf " -->"
+    trailer = "  <!-- last_verified=" lv " confidence=" conf (sup != "" ? " supersedes=" sup : "") " -->"
     newline = "- [" id "] " lesson trailer
   }
   # Collect lines into an array so we can post-process the target section in one pass.
@@ -369,5 +452,9 @@ mv "$prov_tmp" "$PROV" && mv "$mem_tmp" "$LESSONS" || {
   echo "write-lessons: atomic rename failed — write aborted; read gate ignores any unmatched provenance" >&2
   exit 2
 }
-echo "write-lessons: stored [$id] in $CATSLUG (source=$SOURCE, last_verified=$LAST_VERIFIED, confidence=$CONFIDENCE)"
+if [ -n "${SUPERSEDES_ID:-}" ]; then
+  echo "write-lessons: superseded [$SUPERSEDES_ID] -> stored [$id] in $CATSLUG (source=$SOURCE, last_verified=$LAST_VERIFIED, confidence=$CONFIDENCE, supersedes=$SUPERSEDES_ID)"
+else
+  echo "write-lessons: stored [$id] in $CATSLUG (source=$SOURCE, last_verified=$LAST_VERIFIED, confidence=$CONFIDENCE)"
+fi
 exit 0

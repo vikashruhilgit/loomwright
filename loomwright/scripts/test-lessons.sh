@@ -18,6 +18,19 @@
 #      stays valid end-to-end)
 #  10. sha-tool-absent branch (PATH sandbox): `add` stays a fail-safe no-op (exit 0, nothing
 #      written) but `retract` FAILS LOUD (non-zero — a curation verb must never silently no-op)
+#  11. supersede verb (PRE-CHECK -> RETRACT -> ADD, ST-3):
+#      (a) MANDATORY eviction regression — supersede the MIDDLE entry of a FULL 3-entry category;
+#          the other two survive (retract-first keeps the category at 3->2->3 so add-time
+#          evict-oldest never fires; add-then-retract would have destroyed the oldest survivor)
+#      (b) MANDATORY --replacement required (missing --replacement refused, store untouched;
+#          --replacement rejected on a plain retract too)
+#      (c) MANDATORY byte-identical refusal — target absent, and target present-but-not-chain-
+#          trusted (a lingering out-of-band line), both fail loud (exit 4) with LESSONS.md AND
+#          the provenance chain byte-identical to before
+#      (d) trailer shape — supersedes=<8-char-hash> appended after confidence, last_verified
+#          stays FIRST (read-lessons.sh's greedy strip still matches); reader emits the
+#          replacement (hashed text unaffected by the trailer) and never emits the superseded text
+#      (e) --hash form with auto-detected category (no explicit --category given)
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -235,6 +248,98 @@ rc=$?
 [ "$rc" -ne 0 ] && ok "sha-less retract FAILS LOUD (exit $rc, non-zero)" || no "sha-less retract silently exited 0"
 [ ! -e "$SDIR/$LFILE" ] && [ ! -e "$SDIR/$PJFILE" ] && ok "sha-less retract touched nothing" || no "sha-less retract wrote state"
 rm -rf "$SB" "$SDIR"
+
+echo "== 11. supersede verb (PRE-CHECK -> RETRACT -> ADD) =="
+
+echo "-- 11a. MANDATORY: full 3-entry category, supersede the MIDDLE entry, other two survive --"
+SDIR2="$(mktemp -d)"; ( cd "$SDIR2" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
+( cd "$SDIR2" && bash "$WRITE" --category cap --lesson "cap lesson one" --source s \
+    && bash "$WRITE" --category cap --lesson "cap lesson two" --source s \
+    && bash "$WRITE" --category cap --lesson "cap lesson three" --source s ) >/dev/null 2>&1
+s2f="$SDIR2/$LFILE"
+cnt="$(awk '/^## cap$/{f=1;next} /^## /{f=0} f && /^- \[/{c++} END{print c+0}' "$s2f" 2>/dev/null)"
+[ "$cnt" -eq 3 ] && ok "category full at 3 before supersede" || no "setup: category not full (have $cnt)"
+( cd "$SDIR2" && bash "$WRITE" supersede cap "cap lesson two" --replacement "cap replacement two" --source curator ) >/dev/null 2>&1
+rc=$?
+[ "$rc" -eq 0 ] && ok "supersede of middle entry exits 0" || no "supersede of middle entry failed (exit $rc)"
+cnt2="$(awk '/^## cap$/{f=1;next} /^## /{f=0} f && /^- \[/{c++} END{print c+0}' "$s2f" 2>/dev/null)"
+[ "$cnt2" -eq 3 ] && ok "category still has exactly 3 entries after supersede (no eviction fired)" || no "eviction fired or entry lost (have $cnt2, want 3)"
+grep -qF -- "cap lesson one" "$s2f" 2>/dev/null && ok "oldest entry (cap lesson one) SURVIVES the middle-entry supersede" || no "REGRESSION: oldest entry was destroyed by add-then-retract-shaped eviction"
+grep -qF -- "cap lesson three" "$s2f" 2>/dev/null && ok "newest entry (cap lesson three) survives" || no "newest entry lost"
+grep -qF -- "cap lesson two" "$s2f" 2>/dev/null && no "superseded entry (cap lesson two) still present" || ok "superseded entry (cap lesson two) removed"
+grep -qF -- "cap replacement two" "$s2f" 2>/dev/null && ok "replacement entry (cap replacement two) present" || no "replacement entry missing"
+old_id8="$(printf '%s' "cap cap lesson two" | sha | cut -c1-8)"
+if grep -qE -- "cap replacement two  <!-- last_verified=[0-9TZ:-]+ confidence=[a-z]+ supersedes=${old_id8} -->" "$s2f" 2>/dev/null; then
+  ok "replacement trailer carries supersedes=<8-char-hash-of-old-entry>, last_verified first"
+else
+  no "replacement trailer missing/malformed supersedes field"
+fi
+sp2j="$SDIR2/$PJFILE"
+grep -q "\"action\":\"retract\"" "$sp2j" 2>/dev/null && ok "retract provenance entry recorded for the superseded target" || no "retract provenance missing"
+grep -q "\"action\":\"add\"" "$sp2j" 2>/dev/null && ok "add provenance entry recorded for the replacement" || no "add provenance missing"
+out2="$( cd "$SDIR2" && bash "$READ" 2>/dev/null )"
+echo "$out2" | grep -qF "cap lesson two" && no "reader still emits the superseded lesson text" || ok "reader no longer emits the superseded lesson text"
+echo "$out2" | grep -qF "cap replacement two" && ok "reader emits the replacement lesson" || no "reader does not emit the replacement lesson"
+echo "$out2" | grep -qF "cap lesson one" && ok "reader still emits the surviving oldest entry" || no "reader lost the surviving oldest entry"
+echo "$out2" | grep -qF "cap lesson three" && ok "reader still emits the surviving newest entry" || no "reader lost the surviving newest entry"
+rm -rf "$SDIR2"
+
+echo "-- 11b. MANDATORY: --replacement required for supersede; rejected on retract --"
+RDIR2="$(mktemp -d)"; ( cd "$RDIR2" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
+( cd "$RDIR2" && bash "$WRITE" --category repl --lesson "needs replacement lesson" --source s ) >/dev/null 2>&1
+r2f="$RDIR2/$LFILE"; r2j="$RDIR2/$PJFILE"
+cp "$r2f" "$r2f.snap"; cp "$r2j" "$r2j.snap"
+( cd "$RDIR2" && bash "$WRITE" supersede repl "needs replacement lesson" --source curator ) >/dev/null 2>&1
+rc=$?
+[ "$rc" -ne 0 ] && ok "supersede without --replacement refused (exit $rc)" || no "supersede without --replacement exited 0"
+cmp -s "$r2f" "$r2f.snap" && ok "LESSONS.md unchanged when --replacement missing" || no "LESSONS.md changed despite missing --replacement"
+cmp -s "$r2j" "$r2j.snap" && ok "provenance unchanged when --replacement missing" || no "provenance changed despite missing --replacement"
+( cd "$RDIR2" && bash "$WRITE" retract repl "needs replacement lesson" --replacement "nope" --source curator ) >/dev/null 2>&1
+rc=$?
+[ "$rc" -ne 0 ] && ok "retract with --replacement is rejected (exit $rc — replacement only meaningful for supersede)" || no "retract with --replacement was accepted"
+cmp -s "$r2f" "$r2f.snap" && ok "LESSONS.md unchanged after rejected retract+--replacement" || no "LESSONS.md changed after rejected retract+--replacement"
+rm -f "$r2f.snap" "$r2j.snap"
+rm -rf "$RDIR2"
+
+echo "-- 11c. MANDATORY: byte-identical refusal (absent target; present-but-not-chain-trusted target) --"
+TDIR="$(mktemp -d)"; ( cd "$TDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
+( cd "$TDIR" && bash "$WRITE" --category trust --lesson "trust me lesson" --source s ) >/dev/null 2>&1
+tf="$TDIR/$LFILE"; tj="$TDIR/$PJFILE"
+# (i) absent target: never written at all.
+cp "$tf" "$tf.snap1"; cp "$tj" "$tj.snap1"
+( cd "$TDIR" && bash "$WRITE" supersede trust "never existed lesson" --replacement "x" --source curator ) >/dev/null 2>&1
+rc=$?
+[ "$rc" -ne 0 ] && ok "supersede of an absent target refused (exit $rc)" || no "supersede of an absent target exited 0"
+cmp -s "$tf" "$tf.snap1" && ok "LESSONS.md byte-identical after absent-target refusal" || no "LESSONS.md changed after absent-target refusal"
+cmp -s "$tj" "$tj.snap1" && ok "provenance byte-identical after absent-target refusal" || no "provenance changed after absent-target refusal"
+rm -f "$tf.snap1" "$tj.snap1"
+# (ii) present-but-not-chain-trusted: retract the lesson (untrusts + removes the line), then
+# re-append the original line out-of-band so it is PRESENT again but its hash is still untrusted.
+target_line="$(grep -F -- "trust me lesson" "$tf")"
+( cd "$TDIR" && bash "$WRITE" retract trust "trust me lesson" --source curator ) >/dev/null 2>&1
+printf '%s\n' "$target_line" >> "$tf"
+cp "$tf" "$tf.snap2"; cp "$tj" "$tj.snap2"
+( cd "$TDIR" && bash "$WRITE" supersede trust "trust me lesson" --replacement "y" --source curator ) >/dev/null 2>&1
+rc=$?
+[ "$rc" -ne 0 ] && ok "supersede of a present-but-untrusted target refused (exit $rc)" || no "supersede of an untrusted target exited 0"
+cmp -s "$tf" "$tf.snap2" && ok "LESSONS.md byte-identical after untrusted-target refusal" || no "LESSONS.md changed after untrusted-target refusal"
+cmp -s "$tj" "$tj.snap2" && ok "provenance byte-identical after untrusted-target refusal" || no "provenance changed after untrusted-target refusal"
+rm -f "$tf.snap2" "$tj.snap2"
+rm -rf "$TDIR"
+
+echo "-- 11e. --hash form with auto-detected category (no explicit --category given) --"
+HDIR="$(mktemp -d)"; ( cd "$HDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
+( cd "$HDIR" && bash "$WRITE" --category hashcat --lesson "hash form target lesson" --source s ) >/dev/null 2>&1
+htarget_hash="$(printf '%s' "hashcat hash form target lesson" | sha)"
+( cd "$HDIR" && bash "$WRITE" supersede --hash "$htarget_hash" --replacement "hash form replacement lesson" --source curator ) >/dev/null 2>&1
+rc=$?
+[ "$rc" -eq 0 ] && ok "supersede --hash accepted" || no "supersede --hash failed (exit $rc)"
+hf="$HDIR/$LFILE"
+grep -qF -- "hash form replacement lesson" "$hf" 2>/dev/null && grep -q '^## hashcat$' "$hf" 2>/dev/null \
+  && ok "--hash supersede auto-detected the target's category (hashcat) for the replacement" \
+  || no "--hash supersede did not place the replacement under the auto-detected category"
+grep -qF -- "hash form target lesson" "$hf" 2>/dev/null && no "superseded (--hash targeted) entry still present" || ok "superseded (--hash targeted) entry removed"
+rm -rf "$HDIR"
 
 echo
 echo "RESULT: $pass passed, $fail failed"
