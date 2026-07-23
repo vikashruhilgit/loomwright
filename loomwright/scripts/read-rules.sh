@@ -16,6 +16,24 @@
 #   check       (string | null)       A runnable shell string OR null. EMITTED AS DATA ONLY — NEVER RUN.
 #   provenance  (object)
 #   applies_to  (optional)            RESERVED for slice 3b-ii enforcement filtering — INERT in v1.
+#   supersedes  (optional string)     Curation/anti-rot (ST-1). Names the `id` of ANOTHER rule this one
+#                                     replaces. See "SUPERSESSION" below.
+#
+# SUPERSESSION (curation/anti-rot ST-1, normative encoding contract — PINNED, do not redesign):
+#   A LIVE (validation-surviving) rule's `supersedes` field HIDES the rule it names from this reader's
+#   output — single-hop only, NEVER transitive/chased (rule 3: "A supersedes B hides B; it does not
+#   chase B's own supersedes"). A `supersedes` value is a hiding edge ONLY when it is a non-null STRING,
+#   not equal to the rule's own id (excludes self-referential), and resolves to another rule that ALSO
+#   survived per-object validation (excludes dangling — a target that doesn't exist, or that only exists
+#   as a SKIPped/invalid object, cannot be hidden). ANY other shape (missing key, non-string, empty,
+#   self-referential, dangling) is a no-op: the field is IGNORED and the CARRYING entry is still emitted
+#   normally — demote-never-crash (rule 2), this reader NEVER hides an entry due to its OWN malformed
+#   `supersedes`. A mutual 2-entry cycle (A supersedes B AND B supersedes A) is ALSO ignored on BOTH
+#   sides — hiding both halves of a cycle would silently drop two rules from one misconfiguration, which
+#   contradicts the fail-safe "read it anyway, never hide it" default (rule 2 lists "cyclic" alongside
+#   the other ignored shapes). This computation is a single non-recursive pass over declared edges (no
+#   graph traversal), so an arbitrarily malformed / cyclic `supersedes` graph can never loop or hang the
+#   reader (rule 3: "Cycles cannot loop by construction").
 #
 # v1 "applicable = ALL valid rules" (§3): no path/scope filtering. Positional args are accepted but
 # are informational / forward-compat ONLY — they do NOT change v1 output. `applies_to` is inert in v1.
@@ -183,11 +201,44 @@ jq -rs '
         end
     )
   | .out
-  # Emit SKIP diagnostics first (the shell partitions on the SKIP\t prefix), then the sorted valid
-  # rules. Valid rules are sorted by category then id for stable output. Tabs/newlines inside any
-  # rendered cell are neutralized so they cannot break the line framing.
+  # --- Supersession (single-hop, non-transitive -- see "SUPERSESSION" in the header docstring). Only a
+  #     LIVE (OK) rule supersedes field can hide another rule. A hiding EDGE requires: a non-null
+  #     STRING value, not equal to the own id of the rule (excludes self-referential), and a target that
+  #     is ALSO in the OK set (excludes dangling). A mutual 2-entry cycle is detected and BOTH sides are
+  #     dropped from the edge set (neither hides the other) -- everything else here is a single flat pass
+  #     over the already-computed OK objects, never a recursive chase.
+  | ( [ .[] | select(.kind == "OK") | .obj ] ) as $ok_objs
+  | ( $ok_objs | map(.id) ) as $ok_ids
+  | (
+      $ok_objs
+      | map(
+          # NOTE: `index(FILTER)` evaluates FILTER against the ARRAY it is piped into, NOT the outer
+          # ".", so `.supersedes`/`.id` must be captured into variables BEFORE piping into `$ok_ids |
+          # index(...)` below (a bare `$ok_ids | index(.supersedes)` here would try `.supersedes` on
+          # the ARRAY itself and error "Cannot index array with string").
+          . as $o
+          | ($o.supersedes) as $tgt
+          | select( ($tgt | type) == "string" )
+          | select( $tgt != $o.id )
+          | select( ($ok_ids | index($tgt)) != null )
+          | { from: $o.id, to: $tgt }
+        )
+    ) as $edges
+  | ( ( $edges | map({ (.from): .to }) | add ) // {} ) as $edge_map
+  | ( $edges | map(select( ($edge_map[.to] // null) != .from )) ) as $edges_live
+  | ( $edges_live | map(.to) ) as $hidden_ids
+  # Emit SKIP diagnostics first (the shell partitions on the SKIP\t prefix — this now includes a
+  # diagnostic line per rule hidden by supersession), then the sorted valid, non-hidden rules. Valid
+  # rules are sorted by category then id for stable output. Tabs/newlines inside any rendered cell are
+  # neutralized so they cannot break the line framing. (Same `index(...)` capture-before-pipe caveat
+  # as above: `.id` is bound to $rid before `$hidden_ids | index($rid)`.)
   | ( [ .[] | select(.kind == "SKIP") | "SKIP\t" + .why ]
-      + ( [ .[] | select(.kind == "OK") | .obj ]
+      + ( $ok_objs
+          | map(select( (.id) as $rid | ($hidden_ids | index($rid)) != null ))
+          | map("SKIP\tsuperseded id=" + .id)
+        )
+      + ( $ok_objs
+          | map(select( (.id) as $rid | ($hidden_ids | index($rid)) == null ))
           | sort_by([.category, .id])
           | map(
               "RULE\t"

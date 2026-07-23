@@ -254,6 +254,150 @@ else
   no "(H) dry-run behavior incorrect (rc=$RC files=$(count_rule_files "$RH"))"
 fi
 
+# ============================================================================
+echo "== (I) --supersedes (curation/anti-rot ST-1): stamps the field on the ADD action =="
+RI1="$(new_repo)"
+run_writer "$RI1" --category "sup" --statement "replacement rule" --supersedes "old-id-123" --confirm
+[ "$RC" -eq 0 ] && ok "(I1) add with --supersedes exits 0" || no "(I1) expected 0, got $RC ($OUT)"
+sup_val="$(jq -r '.[0].supersedes' "$RI1/.agent/rules/sup.json" 2>/dev/null)"
+[ "$sup_val" = "old-id-123" ] && ok "(I1) supersedes field stamped onto the new rule object" \
+  || no "(I1) expected supersedes=old-id-123, got [$sup_val]"
+
+# (I2) omitted --supersedes ⇒ the member is OMITTED entirely (not stamped as an explicit null).
+RI2="$(new_repo)"
+run_writer "$RI2" --category "sup" --statement "no supersedes here" --confirm
+has_key="$(jq -r '.[0] | has("supersedes")' "$RI2/.agent/rules/sup.json" 2>/dev/null)"
+[ "$has_key" = "false" ] && ok "(I2) --supersedes omitted ⇒ 'supersedes' member entirely absent (not null)" \
+  || no "(I2) expected the supersedes key to be absent, has(\"supersedes\")=[$has_key]"
+
+# (I3) self-reference guard: --supersedes naming the about-to-be-created id itself is rejected,
+# nothing written.
+RI3="$(new_repo)"
+run_writer "$RI3" --category "sup" --statement "self ref test" --supersedes "sup-self-ref-test" --confirm
+if [ "$RC" -ne 0 ] && [ "$(count_rule_files "$RI3")" = "0" ]; then
+  ok "(I3) self-referential --supersedes rejected, nothing written"
+else
+  no "(I3) self-referential --supersedes NOT rejected (rc=$RC files=$(count_rule_files "$RI3"))"
+fi
+
+# ============================================================================
+echo "== (J) --retract removes the target rule object from the JSON array =="
+RJ="$(new_repo)"
+mkdir -p "$RJ/.agent/rules"
+printf '%s' '[
+  {"id":"j-keep","category":"safety","statement":"kept sibling","enforcement":"advisory","check":null,"provenance":{"source":"seed","added":"2026-01-01T00:00:00Z"}},
+  {"id":"j-gone","category":"safety","statement":"retracted target","enforcement":"advisory","check":null,"provenance":{"source":"seed","added":"2026-01-01T00:00:00Z"}}
+]' > "$RJ/.agent/rules/safety.json"
+run_writer "$RJ" --retract --target "j-gone" --reason "superseded by a clearer rule" --confirm
+[ "$RC" -eq 0 ] && ok "(J) --retract exits 0" || no "(J) expected 0, got $RC ($OUT)"
+if jq -e 'type=="array" and length==1 and .[0].id=="j-keep"' "$RJ/.agent/rules/safety.json" >/dev/null 2>&1; then
+  ok "(J) retracted object REMOVED from the array; sibling survives, file remains a valid array"
+else
+  no "(J) array not correctly reduced to the surviving sibling: $(cat "$RJ/.agent/rules/safety.json" 2>/dev/null)"
+fi
+if jq -e --arg t "j-gone" 'any(.[]?; (type=="object") and (.id==$t))' "$RJ/.agent/rules/safety.json" >/dev/null 2>&1; then
+  no "(J) REGRESSION: retracted id still present in the file"
+else
+  ok "(J) retracted id no longer present anywhere in the file"
+fi
+
+# (J2) --retract PRINTS a one-line provenance reason to stdout (there is no in-store home for it —
+# the commit that lands the removal is the durable record; test asserts on the printed text).
+echo "$OUT" | grep -qF "j-gone" && echo "$OUT" | grep -qF "superseded by a clearer rule" \
+  && ok "(J2) retract prints a one-line provenance reason naming the target id + reason" \
+  || no "(J2) provenance reason not printed to stdout: $OUT"
+
+# ============================================================================
+echo "== (K) refused/invalid retract leaves the store byte-identical =="
+seed_store() {
+  # $1 repo — seeds a fixed one-rule store and echoes its content for a before/after comparison.
+  mkdir -p "$1/.agent/rules"
+  printf '%s' '[{"id":"k-untouched","category":"safety","statement":"must survive every invalid retract","enforcement":"advisory","check":null,"provenance":{"source":"seed","added":"2026-01-01T00:00:00Z"}}]' \
+    > "$1/.agent/rules/safety.json"
+  cat "$1/.agent/rules/safety.json"
+}
+
+# (K1) --retract with --replacement is REJECTED (replacement has no meaning on a pure retract).
+RK1="$(new_repo)"; before_k1="$(seed_store "$RK1")"
+run_writer "$RK1" --retract --target "k-untouched" --reason "x" --replacement "some-new-id" --confirm
+after_k1="$(cat "$RK1/.agent/rules/safety.json")"
+if [ "$RC" -ne 0 ] && [ "$before_k1" = "$after_k1" ]; then
+  ok "(K1) --replacement on --retract rejected, store left byte-identical"
+else
+  no "(K1) --replacement on --retract NOT rejected/protected (rc=$RC)"
+fi
+
+# (K2) --retract without --target is rejected, store untouched.
+RK2="$(new_repo)"; before_k2="$(seed_store "$RK2")"
+run_writer "$RK2" --retract --reason "x" --confirm
+after_k2="$(cat "$RK2/.agent/rules/safety.json")"
+if [ "$RC" -ne 0 ] && [ "$before_k2" = "$after_k2" ]; then
+  ok "(K2) --retract without --target rejected, store left byte-identical"
+else
+  no "(K2) missing --target NOT rejected/protected (rc=$RC)"
+fi
+
+# (K3) --retract without --reason is rejected, store untouched.
+RK3="$(new_repo)"; before_k3="$(seed_store "$RK3")"
+run_writer "$RK3" --retract --target "k-untouched" --confirm
+after_k3="$(cat "$RK3/.agent/rules/safety.json")"
+if [ "$RC" -ne 0 ] && [ "$before_k3" = "$after_k3" ]; then
+  ok "(K3) --retract without --reason rejected, store left byte-identical"
+else
+  no "(K3) missing --reason NOT rejected/protected (rc=$RC)"
+fi
+
+# (K4) --retract combined with an add-only flag (--category) is rejected, store untouched.
+RK4="$(new_repo)"; before_k4="$(seed_store "$RK4")"
+run_writer "$RK4" --retract --category "x" --target "k-untouched" --reason "x" --confirm
+after_k4="$(cat "$RK4/.agent/rules/safety.json")"
+if [ "$RC" -ne 0 ] && [ "$before_k4" = "$after_k4" ]; then
+  ok "(K4) --retract combined with --category rejected, store left byte-identical"
+else
+  no "(K4) --retract+--category NOT rejected/protected (rc=$RC)"
+fi
+
+# (K5) --retract of a nonexistent target is rejected, store untouched.
+RK5="$(new_repo)"; before_k5="$(seed_store "$RK5")"
+run_writer "$RK5" --retract --target "no-such-id" --reason "x" --confirm
+after_k5="$(cat "$RK5/.agent/rules/safety.json")"
+if [ "$RC" -ne 0 ] && [ "$before_k5" = "$after_k5" ]; then
+  ok "(K5) --retract of a nonexistent target rejected, store left byte-identical"
+else
+  no "(K5) nonexistent-target retract NOT rejected/protected (rc=$RC)"
+fi
+
+# (K6) the ADD action rejects retract-only flags (--target/--reason/--replacement) without --retract.
+RK6="$(new_repo)"; before_k6="$(seed_store "$RK6")"
+run_writer "$RK6" --category "safety" --statement "should not write" --target "k-untouched" --reason "x" --confirm
+after_k6="$(cat "$RK6/.agent/rules/safety.json")"
+if [ "$RC" -ne 0 ] && [ "$before_k6" = "$after_k6" ]; then
+  ok "(K6) ADD action rejects --target/--reason without --retract, store left byte-identical"
+else
+  no "(K6) ADD action did not reject retract-only flags (rc=$RC)"
+fi
+
+# ============================================================================
+echo "== (L) existing hostile-category REJECT + traversal guards still fire alongside new flags =="
+# Defense-in-depth: confirm the new --supersedes flag does not create a bypass path around the
+# pre-existing category containment guard from section (A).
+RL1="$(new_repo)"
+run_writer "$RL1" --category "../escape" --statement "x" --supersedes "y" --confirm
+if [ "$RC" -ne 0 ] && [ "$(count_rule_files "$RL1")" = "0" ]; then
+  ok "(L1) hostile category still REJECTED when combined with --supersedes (no bypass)"
+else
+  no "(L1) hostile category + --supersedes NOT rejected (rc=$RC files=$(count_rule_files "$RL1"))"
+fi
+# And --retract itself does not bypass category containment either — a hostile category alongside
+# --retract is rejected by the mode-exclusivity guard (K4-style), so no traversal write can occur.
+RL2="$(new_repo)"
+run_writer "$RL2" --retract --category "../escape" --target "x" --reason "y" --confirm
+if [ "$RC" -ne 0 ] && [ "$(count_rule_files "$RL2")" = "0" ]; then
+  ok "(L2) hostile category alongside --retract still rejected, no traversal write"
+else
+  no "(L2) hostile category + --retract NOT rejected (rc=$RC files=$(count_rule_files "$RL2"))"
+fi
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
