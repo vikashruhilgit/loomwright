@@ -28,12 +28,26 @@
 #   as a SKIPped/invalid object, cannot be hidden). ANY other shape (missing key, non-string, empty,
 #   self-referential, dangling) is a no-op: the field is IGNORED and the CARRYING entry is still emitted
 #   normally — demote-never-crash (rule 2), this reader NEVER hides an entry due to its OWN malformed
-#   `supersedes`. A mutual 2-entry cycle (A supersedes B AND B supersedes A) is ALSO ignored on BOTH
-#   sides — hiding both halves of a cycle would silently drop two rules from one misconfiguration, which
-#   contradicts the fail-safe "read it anyway, never hide it" default (rule 2 lists "cyclic" alongside
-#   the other ignored shapes). This computation is a single non-recursive pass over declared edges (no
-#   graph traversal), so an arbitrarily malformed / cyclic `supersedes` graph can never loop or hang the
-#   reader (rule 3: "Cycles cannot loop by construction").
+#   `supersedes`.
+#
+#   CYCLE DETECTION IS GENERAL, NOT PAIRWISE-ONLY (bot-review HIGH-1 fix): because each rule carries at
+#   most ONE `supersedes` value, the declared edges form a "functional graph" (out-degree <= 1 per node),
+#   so every cycle — of ANY length, not just a mutual 2-entry pair — is found by, for each node with an
+#   outgoing edge, walking that single edge chain for a number of steps bounded by the total edge count
+#   and checking whether the walk returns to its own starting node. Any node whose walk returns to itself
+#   is a cycle member; EVERY edge originating from a cycle member is dropped (never used to hide anything)
+#   — this generalizes the old 2-node-only mutual check, which only special-cased A<->B and left an
+#   n>2 cycle (e.g. A supersedes B, B supersedes C, C supersedes A) with every member holding a live
+#   "incoming hider", silently hiding ALL of them. Hiding every member of a cycle would silently drop N
+#   rules from one misconfiguration, which contradicts the fail-safe "read it anyway, never hide it"
+#   default (rule 2 lists "cyclic" alongside the other ignored shapes). A node OUTSIDE the cycle whose
+#   OWN supersedes points INTO a cycle (e.g. D supersedes A, where A->B->C->A) is NOT itself a cycle
+#   member (nothing points back to D), so D's edge is a normal, live, single-hop hiding edge — D still
+#   hides A per the ordinary rule; only the cycle's OWN internal edges (A->B, B->C, C->A) are dropped, so
+#   B and C remain visible and A is hidden by D exactly as an ordinary single-hop supersession would be.
+#   This computation is a single BOUNDED, non-recursive pass (a fixed `range(0; edge_count)` walk per
+#   node — never an open-ended/recursive graph traversal), so an arbitrarily malformed / cyclic
+#   `supersedes` graph can never loop or hang the reader (rule 3: "Cycles cannot loop by construction").
 #
 # v1 "applicable = ALL valid rules" (§3): no path/scope filtering. Positional args are accepted but
 # are informational / forward-compat ONLY — they do NOT change v1 output. `applies_to` is inert in v1.
@@ -204,9 +218,7 @@ jq -rs '
   # --- Supersession (single-hop, non-transitive -- see "SUPERSESSION" in the header docstring). Only a
   #     LIVE (OK) rule supersedes field can hide another rule. A hiding EDGE requires: a non-null
   #     STRING value, not equal to the own id of the rule (excludes self-referential), and a target that
-  #     is ALSO in the OK set (excludes dangling). A mutual 2-entry cycle is detected and BOTH sides are
-  #     dropped from the edge set (neither hides the other) -- everything else here is a single flat pass
-  #     over the already-computed OK objects, never a recursive chase.
+  #     is ALSO in the OK set (excludes dangling).
   | ( [ .[] | select(.kind == "OK") | .obj ] ) as $ok_objs
   | ( $ok_objs | map(.id) ) as $ok_ids
   | (
@@ -225,7 +237,36 @@ jq -rs '
         )
     ) as $edges
   | ( ( $edges | map({ (.from): .to }) | add ) // {} ) as $edge_map
-  | ( $edges | map(select( ($edge_map[.to] // null) != .from )) ) as $edges_live
+  # Cycle detection, GENERALIZED to any length (bot-review HIGH-1 -- see the "SUPERSESSION" header
+  # comment for the full rationale). Since out-degree is <= 1 per node, a node is a cycle member iff
+  # following its OWN edge chain returns to itself within a number of steps bounded by the total edge
+  # count -- a single fixed-length (non-recursive) `range` walk per candidate node, so this can never
+  # loop or hang on a malformed/cyclic graph.
+  | ( $edges | map(.from) ) as $edge_from_ids
+  | ( $edge_from_ids | length ) as $edge_n
+  | (
+      $edge_from_ids
+      | map(
+          . as $start
+          | (
+              reduce range(0; $edge_n) as $i (
+                { cur: $edge_map[$start], hit: false };
+                if .hit or (.cur == null) then .
+                elif .cur == $start then { cur: .cur, hit: true }
+                else { cur: ($edge_map[.cur] // null), hit: false }
+                end
+              )
+            ) as $walk
+          | select($walk.hit)
+          | $start
+        )
+    ) as $cycle_members
+  # Drop EVERY edge whose origin is a cycle member (this is exactly the set of intra-cycle edges,
+  # since a cycle members single outgoing edge IS the edge that closes its own cycle) -- every cycle
+  # member therefore keeps zero incoming hiders FROM its own cycle and stays visible. An edge from a
+  # node OUTSIDE any cycle (even one that targets a cycle member) is left live -- ordinary single-hop
+  # supersession still applies to it.
+  | ( $edges | map(select( (.from) as $ef | ($cycle_members | index($ef)) == null )) ) as $edges_live
   | ( $edges_live | map(.to) ) as $hidden_ids
   # Emit SKIP diagnostics first (the shell partitions on the SKIP\t prefix — this now includes a
   # diagnostic line per rule hidden by supersession), then the sorted valid, non-hidden rules. Valid

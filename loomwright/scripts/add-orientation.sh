@@ -207,6 +207,20 @@ do_supersede() {
   [ -f "$supersede_target_path" ] || die "rejected: no memo found for --target '$curate_target' at $supersede_target_path" 2
   [ -f "$repl_path" ] || die "rejected: no memo found for --replacement '$replacement' at $repl_path" 2
 
+  # --target must ALSO be a parseable memo, not merely a file that happens to exist at that
+  # path (matches the doc contract in this file's header comment + commands/dreaming.md: "both
+  # ... must already exist as parseable memos"). This is enforced even though the write itself
+  # only needs the target's SLUG (not its header content) — an unparseable target would fail PASS
+  # A validation in read-orientation.sh, silently downgrading the freshly-written supersedes edge
+  # to "dangling" (ignored) at read time; fail loud here instead of authoring a no-op edge.
+  local thline twritten_at thead_sha
+  thline="$(head -n 1 "$supersede_target_path" 2>/dev/null)"
+  twritten_at="$(printf '%s' "$thline" | sed -nE 's/^<!-- written_at: ([^|]+) \|.*-->$/\1/p' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+  thead_sha="$(printf '%s' "$thline"   | sed -nE 's/^<!-- written_at: [^|]+ \| head_sha: ([^|]+) \|.*-->$/\1/p' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+  if [ -z "$twritten_at" ] || [ -z "$thead_sha" ]; then
+    die "rejected: --target memo header is unparseable: $supersede_target_path" 2
+  fi
+
   local rhline rwritten_at rhead_sha rareas
   rhline="$(head -n 1 "$repl_path" 2>/dev/null)"
   rwritten_at="$(printf '%s' "$rhline" | sed -nE 's/^<!-- written_at: ([^|]+) \|.*-->$/\1/p' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"

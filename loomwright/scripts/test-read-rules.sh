@@ -18,6 +18,12 @@
 #                                                (g4) missing required `check` key, (g5) explicit
 #                                                check:null still valid; invalid SKIPPED, valid emit; exit 0
 #   (h) deterministic ordering                 → multi-rule fixture run twice ⇒ byte-identical stdout
+#   (i) SUPERSESSION incl. GENERALIZED cycle detection (bot-review HIGH-1) → (i1)-(i6) single-hop/
+#                                                malformed/self-ref/dangling/mutual-2-cycle/one-way-chain;
+#                                                (i7) n=3 cycle ⇒ all 3 VISIBLE, (i8) n=4 cycle ⇒ all 4
+#                                                VISIBLE, (i9) cycle-plus-tail (external D supersedes a
+#                                                cycle member) ⇒ D hides that member normally, the
+#                                                cycle's OWN 3 members otherwise stay visible
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -472,6 +478,68 @@ if echo "$outI6" | grep -qF -- "- Chain head A stays visible" \
   ok "(i6) chain head A visible; B (hidden by A) and C (hidden by B) both absent"
 else
   no "(i6) one-way chain hiding incorrect: $outI6"
+fi
+
+# (i7) n=3 cycle (A supersedes B, B supersedes C, C supersedes A) — bot-review HIGH-1 regression:
+# the pre-fix pairwise-mutual-only check special-cased ONLY a 2-node A<->B cycle, so every member of
+# a 3-node cycle had a live "incoming hider" and ALL THREE were silently hidden (0 visible). The fix
+# generalizes to a full-graph (functional-graph walk) cycle detection: ALL THREE must stay VISIBLE.
+RI7="$(new_repo)"
+seed_rules_file "$RI7" "core.json" '[
+  {"id":"i7-a","category":"safety","statement":"3-cycle member A stays visible","enforcement":"advisory","check":null,"provenance":{"source":"test"},"supersedes":"i7-b"},
+  {"id":"i7-b","category":"safety","statement":"3-cycle member B stays visible","enforcement":"advisory","check":null,"provenance":{"source":"test"},"supersedes":"i7-c"},
+  {"id":"i7-c","category":"safety","statement":"3-cycle member C stays visible","enforcement":"advisory","check":null,"provenance":{"source":"test"},"supersedes":"i7-a"}
+]'
+outI7="$(run_reader "$RI7")"; rcI7=$?
+[ "$rcI7" -eq 0 ] && ok "(i7 n=3 cycle) exits 0" || no "(i7) expected exit 0, got $rcI7"
+if echo "$outI7" | grep -qF -- "- 3-cycle member A stays visible" \
+   && echo "$outI7" | grep -qF -- "- 3-cycle member B stays visible" \
+   && echo "$outI7" | grep -qF -- "- 3-cycle member C stays visible"; then
+  ok "(i7) n=3 cycle: ALL THREE members stay VISIBLE (generalized cycle detection, not pairwise-only)"
+else
+  no "(i7) n=3 cycle wrongly hid one or more members (0-visible regression): $outI7"
+fi
+
+# (i8) n=4 cycle (A->B->C->D->A) — same generalization, one size up.
+RI8="$(new_repo)"
+seed_rules_file "$RI8" "core.json" '[
+  {"id":"i8-a","category":"safety","statement":"4-cycle member A stays visible","enforcement":"advisory","check":null,"provenance":{"source":"test"},"supersedes":"i8-b"},
+  {"id":"i8-b","category":"safety","statement":"4-cycle member B stays visible","enforcement":"advisory","check":null,"provenance":{"source":"test"},"supersedes":"i8-c"},
+  {"id":"i8-c","category":"safety","statement":"4-cycle member C stays visible","enforcement":"advisory","check":null,"provenance":{"source":"test"},"supersedes":"i8-d"},
+  {"id":"i8-d","category":"safety","statement":"4-cycle member D stays visible","enforcement":"advisory","check":null,"provenance":{"source":"test"},"supersedes":"i8-a"}
+]'
+outI8="$(run_reader "$RI8")"; rcI8=$?
+[ "$rcI8" -eq 0 ] && ok "(i8 n=4 cycle) exits 0" || no "(i8) expected exit 0, got $rcI8"
+if echo "$outI8" | grep -qF -- "- 4-cycle member A stays visible" \
+   && echo "$outI8" | grep -qF -- "- 4-cycle member B stays visible" \
+   && echo "$outI8" | grep -qF -- "- 4-cycle member C stays visible" \
+   && echo "$outI8" | grep -qF -- "- 4-cycle member D stays visible"; then
+  ok "(i8) n=4 cycle: ALL FOUR members stay VISIBLE (generalized cycle detection)"
+else
+  no "(i8) n=4 cycle wrongly hid one or more members: $outI8"
+fi
+
+# (i9) cycle-plus-tail: D supersedes A, where A->B->C->A is itself a 3-cycle. D is OUTSIDE the
+# cycle (nothing points back to D), so D's edge is an ORDINARY live single-hop hider — D still
+# hides A exactly as a normal supersession would. Only the cycle's OWN internal edges (A->B, B->C,
+# C->A) are dropped, so B and C (which have no OTHER live hider) remain visible, while A is hidden
+# by D specifically (not by the cycle) and D itself is visible (nothing supersedes D).
+RI9="$(new_repo)"
+seed_rules_file "$RI9" "core.json" '[
+  {"id":"i9-a","category":"safety","statement":"Cycle-plus-tail member A hidden by external D","enforcement":"advisory","check":null,"provenance":{"source":"test"},"supersedes":"i9-b"},
+  {"id":"i9-b","category":"safety","statement":"Cycle-plus-tail member B stays visible","enforcement":"advisory","check":null,"provenance":{"source":"test"},"supersedes":"i9-c"},
+  {"id":"i9-c","category":"safety","statement":"Cycle-plus-tail member C stays visible","enforcement":"advisory","check":null,"provenance":{"source":"test"},"supersedes":"i9-a"},
+  {"id":"i9-d","category":"safety","statement":"Cycle-plus-tail external D stays visible","enforcement":"advisory","check":null,"provenance":{"source":"test"},"supersedes":"i9-a"}
+]'
+outI9="$(run_reader "$RI9")"; rcI9=$?
+[ "$rcI9" -eq 0 ] && ok "(i9 cycle-plus-tail) exits 0" || no "(i9) expected exit 0, got $rcI9"
+if ! echo "$outI9" | grep -qF "Cycle-plus-tail member A hidden by external D" \
+   && echo "$outI9" | grep -qF -- "- Cycle-plus-tail member B stays visible" \
+   && echo "$outI9" | grep -qF -- "- Cycle-plus-tail member C stays visible" \
+   && echo "$outI9" | grep -qF -- "- Cycle-plus-tail external D stays visible"; then
+  ok "(i9) cycle-plus-tail: A hidden by external D (ordinary single-hop); B, C, D all visible"
+else
+  no "(i9) cycle-plus-tail behaved insanely: $outI9"
 fi
 
 echo

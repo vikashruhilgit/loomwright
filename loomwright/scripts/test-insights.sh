@@ -665,8 +665,13 @@ grep -qF '"id":"r-old"' "$RD/.agent/rules/general.json" 2>/dev/null && grep -qF 
 rm -rf "$RD"
 
 RA="$(mktemp -d)"; ( cd "$RA" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
-mkdir -p "$RA/.supervisor/logs"
+mkdir -p "$RA/.supervisor/logs" "$RA/.supervisor/postmortem"
 printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$RA/.supervisor/logs/sess-ra.jsonl"
+# Seed the churn ledger so a non-absent sibling corpus keeps the "(no corpora found)" gate from
+# firing here — this fixture's intent is "rules dir absent, degrade gracefully", not "everything
+# absent" (that all-four-absent case is covered separately by test 16(a) and the HIGH-3 regression
+# test below; co-rendering "(no corpora found)" with a populated line is exactly bot-review HIGH-3).
+printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","source":"other"}' > "$RA/.supervisor/postmortem/results.jsonl"
 ( cd "$RA" && bash "$BUILD" >/dev/null 2>&1 )
 grep -qF -- "- rules: absent" "$RA/.supervisor/insights/dashboard.md" 2>/dev/null && ok "rules: absent dir degrades to a note" || no "rules-absent note missing"
 rm -rf "$RA"
@@ -703,8 +708,11 @@ fi
 rm -rf "$OD"
 
 OA="$(mktemp -d)"; ( cd "$OA" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
-mkdir -p "$OA/.supervisor/logs"
+mkdir -p "$OA/.supervisor/logs" "$OA/.supervisor/postmortem"
 printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$OA/.supervisor/logs/sess-oa.jsonl"
+# Seed the churn ledger (see the RA fixture comment above) so this stays a "orientation dir
+# absent, degrade gracefully" case rather than a redundant all-four-absent case.
+printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","source":"other"}' > "$OA/.supervisor/postmortem/results.jsonl"
 ( cd "$OA" && bash "$BUILD" >/dev/null 2>&1 )
 grep -qF -- "- orientation: absent" "$OA/.supervisor/insights/dashboard.md" 2>/dev/null && ok "orientation: absent dir degrades to a note" || no "orientation-absent note missing"
 rm -rf "$OA"
@@ -771,6 +779,40 @@ out="$( cd "$AN" && bash "$BUILD" 2>&1 )"; rc=$?
 [ "$rc" -eq 0 ] && ok "build exits 0 with no advisory_total events at all" || no "build rc != 0 (no advisory_total events, rc=$rc)"
 grep -qF "No \`advisory_total\` events recorded yet" "$and" 2>/dev/null && ok "absent advisory_total degrades to a note" || no "absent advisory_total degrade note missing"
 rm -rf "$AN"
+
+echo "== 31. Corpus health — bot-review HIGH-3 regression: '(no corpora found)' never co-renders with a =="
+echo "==     populated rules/orientation decay line (seed ONLY rules+orientation; churn+lessons absent) =="
+# This is the exact co-render bug: the gate used to fire on churn+lessons ALONE, so a populated
+# rules/orientation line could render directly beneath "(no corpora found)". Seed ONLY rules +
+# orientation (no .supervisor/postmortem/results.jsonl, no .supervisor/memory/LESSONS.md) and
+# assert the two states are mutually exclusive in the rendered dashboard.
+CR="$(mktemp -d)"; ( cd "$CR" && git init -q && git config user.email t@t && git config user.name t && echo x>f && git add f && git commit -qm i )
+mkdir -p "$CR/.supervisor/logs" "$CR/.agent/rules" "$CR/.agent/orientation"
+printf '%s\n' '{"ts":"2026-06-01T10:00:00Z","event":"session_end","status":"completed","heal_decision":"PASS"}' > "$CR/.supervisor/logs/sess-cr.jsonl"
+cat > "$CR/.agent/rules/general.json" <<'EOF'
+[
+  {"id":"cr-rule","category":"general","statement":"a live rule","enforcement":"advisory","check":null,"provenance":{"source":"x","added":"2026-06-01T00:00:00Z"}}
+]
+EOF
+CR_HEAD_SHA="$(cd "$CR" && git rev-parse HEAD)"
+{
+  printf '%s\n' "<!-- written_at: $(date -u +%Y-%m-%dT%H:%M:%SZ) | head_sha: ${CR_HEAD_SHA} | areas: scripts -->"
+  printf '%s\n' "summary of a live orientation memo"
+  printf '%s\n' "body"
+} > "$CR/.agent/orientation/area-live.md"
+out="$( cd "$CR" && bash "$BUILD" 2>&1 )"; rc=$?
+crd="$CR/.supervisor/insights/dashboard.md"
+[ "$rc" -eq 0 ] && ok "build exits 0 (rules+orientation only, churn+lessons absent)" || no "build rc != 0 (rules+orientation only, rc=$rc)"
+grep -qF -- "- rules: 1 entries, 0 decayed" "$crd" 2>/dev/null && ok "rules line renders (populated, not decayed)" || no "rules line missing/wrong when only rules+orientation seeded"
+grep -qF -- "- orientation: 1 entries, 0 decayed" "$crd" 2>/dev/null && ok "orientation line renders (populated, not decayed)" || no "orientation line missing/wrong when only rules+orientation seeded"
+grep -qF -- "- churn ledger: absent" "$crd" 2>/dev/null && ok "churn ledger absent note renders independently" || no "churn ledger absent note missing"
+grep -qF -- "- lessons: absent" "$crd" 2>/dev/null && ok "lessons absent note renders independently" || no "lessons absent note missing"
+if grep -qF "(no corpora found)" "$crd" 2>/dev/null; then
+  no "HIGH-3 REGRESSION: '(no corpora found)' co-rendered alongside a populated rules/orientation line: $(grep -A2 -B2 'no corpora found' "$crd" 2>/dev/null)"
+else
+  ok "'(no corpora found)' does NOT co-render with a populated rules/orientation line (HIGH-3 fixed)"
+fi
+rm -rf "$CR"
 
 echo
 echo "RESULT: $pass passed, $fail failed"

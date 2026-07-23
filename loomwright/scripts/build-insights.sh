@@ -713,8 +713,9 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
   # the lessons store (.supervisor/memory/LESSONS.md + .lessons-provenance.jsonl), the rules store
   # (.agent/rules/*.json), and the orientation-memo store (.agent/orientation/*.md). Advisory ONLY —
   # never gates anything and NEVER causes a non-zero exit; absent corpora degrade to an "absent" note
-  # (or a single "(no corpora found)" line when the churn ledger AND lessons are both missing —
-  # rules/orientation degrade independently since they are curatable ANY time, per-store), malformed
+  # (or a single "(no corpora found)" line ONLY when ALL FOUR corpora — churn ledger, lessons, rules,
+  # orientation — are absent/empty; any one present corpus suppresses the message so it can never
+  # co-render with a populated decay/entry line for a sibling corpus), malformed
   # JSONL/JSON lines are skipped per-line/per-object (jq `fromjson? // empty` / per-object try), never
   # crash. FLAG ONLY — this section never deletes, retracts, or supersedes anything; it is a read-only
   # snapshot for a human (or `/dreaming`) to act on via the dedicated curation verbs.
@@ -771,7 +772,20 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
     case "$ORIENTATION_STALE_DAYS" in ''|*[!0-9]*) ORIENTATION_STALE_DAYS=180 ;; esac
     ch_now="$(date -u +%s 2>/dev/null || echo 0)"
     case "$ch_now" in ''|*[!0-9]*) ch_now=0 ;; esac    # ch_now=0 → cutoffs go negative → everything reads FRESH (fail-open)
-  if [ ! -f "$ch_ledger" ] && [ ! -f "$ch_lessons" ]; then
+    # Presence probes for the two curatable-any-time corpora (rules/orientation), computed UP
+    # FRONT so the "(no corpora found)" gate below can require ALL FOUR corpora absent — this is
+    # the fix for the co-render bug (bot-review HIGH-3): the message used to gate on churn+lessons
+    # only, so a populated rules/orientation decay line could render directly beneath it.
+    ch_rules_present=0
+    shopt -s nullglob 2>/dev/null || true
+    ch_rule_precheck=("$ch_rules_dir"/*.json)
+    [ ${#ch_rule_precheck[@]} -gt 0 ] && ch_rules_present=1
+    ch_orient_present=0
+    if [ -d "$ch_orient_dir" ]; then
+      ch_orient_precheck="$(find "$ch_orient_dir" -maxdepth 1 -type f -name '*.md' ! -name 'README.md' 2>/dev/null | head -1)"
+      [ -n "$ch_orient_precheck" ] && ch_orient_present=1
+    fi
+  if [ ! -f "$ch_ledger" ] && [ ! -f "$ch_lessons" ] && [ "$ch_rules_present" -eq 0 ] && [ "$ch_orient_present" -eq 0 ]; then
     echo "(no corpora found)"
   else
     # (1) churn ledger — entries / curated / stale in one per-line-tolerant jq pass.
@@ -832,7 +846,6 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
     else
       echo "- lessons: absent"
     fi
-  fi
     # (3) rules — entry count / decay candidates. Rules carry no head_sha/basis to re-resolve
     # (unlike orientation memos), so the only decay signal is AGE of provenance.added.
     shopt -s nullglob 2>/dev/null || true
@@ -896,6 +909,7 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
     else
       echo "- orientation: absent"
     fi
+  fi
   fi
   echo
 

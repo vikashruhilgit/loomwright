@@ -357,6 +357,69 @@ else
 fi
 
 # ============================================================================
+# 19. n=3 cyclic supersedes (A supersedes B, B supersedes C, C supersedes A) — bot-review HIGH-2
+#     regression: the pre-fix pairwise-mutual-only check special-cased ONLY a 2-memo A<->B cycle,
+#     so every member of a 3-memo cycle had a live incoming hider and ALL THREE were silently
+#     hidden (0 visible). The fix generalizes to a full functional-graph walk: ALL THREE must
+#     stay VISIBLE.
+R19="$(new_repo)"
+sha19="$(git -C "$R19" rev-parse --short HEAD)"
+seed_memo "$R19" "n3a.md" "$(memo_content_v4 "$sha19" "n3b" "N3A-SUMMARY-MARKER" "Body A.")"
+seed_memo "$R19" "n3b.md" "$(memo_content_v4 "$sha19" "n3c" "N3B-SUMMARY-MARKER" "Body B.")"
+seed_memo "$R19" "n3c.md" "$(memo_content_v4 "$sha19" "n3a" "N3C-SUMMARY-MARKER" "Body C.")"
+run_reader "$R19"
+if [ "$RC" -eq 0 ] \
+   && printf '%s' "$OUT" | grep -qF "N3A-SUMMARY-MARKER" \
+   && printf '%s' "$OUT" | grep -qF "N3B-SUMMARY-MARKER" \
+   && printf '%s' "$OUT" | grep -qF "N3C-SUMMARY-MARKER"; then
+  ok "n=3 cyclic supersedes: ALL THREE members stay VISIBLE (generalized cycle detection, not pairwise-only)"
+else
+  no "n=3 cycle wrongly hid one or more members (0-visible regression) (rc=$RC out=[$OUT])"
+fi
+
+# ============================================================================
+# 20. n=4 cyclic supersedes (A->B->C->D->A) — same generalization, one size up.
+R20="$(new_repo)"
+sha20="$(git -C "$R20" rev-parse --short HEAD)"
+seed_memo "$R20" "n4a.md" "$(memo_content_v4 "$sha20" "n4b" "N4A-SUMMARY-MARKER" "Body A.")"
+seed_memo "$R20" "n4b.md" "$(memo_content_v4 "$sha20" "n4c" "N4B-SUMMARY-MARKER" "Body B.")"
+seed_memo "$R20" "n4c.md" "$(memo_content_v4 "$sha20" "n4d" "N4C-SUMMARY-MARKER" "Body C.")"
+seed_memo "$R20" "n4d.md" "$(memo_content_v4 "$sha20" "n4a" "N4D-SUMMARY-MARKER" "Body D.")"
+run_reader "$R20"
+if [ "$RC" -eq 0 ] \
+   && printf '%s' "$OUT" | grep -qF "N4A-SUMMARY-MARKER" \
+   && printf '%s' "$OUT" | grep -qF "N4B-SUMMARY-MARKER" \
+   && printf '%s' "$OUT" | grep -qF "N4C-SUMMARY-MARKER" \
+   && printf '%s' "$OUT" | grep -qF "N4D-SUMMARY-MARKER"; then
+  ok "n=4 cyclic supersedes: ALL FOUR members stay VISIBLE (generalized cycle detection)"
+else
+  no "n=4 cycle wrongly hid one or more members (rc=$RC out=[$OUT])"
+fi
+
+# ============================================================================
+# 21. cycle-plus-tail: D supersedes A, where A->B->C->A is itself a 3-memo cycle. D is OUTSIDE
+#     the cycle (nothing points back to D), so D's edge is an ORDINARY live single-hop hider — D
+#     still hides A exactly as normal supersession would. Only the cycle's OWN internal edges
+#     (A->B, B->C, C->A) are dropped, so B and C remain visible, A is hidden by D specifically
+#     (not by the cycle), and D itself is visible (nothing supersedes D).
+R21="$(new_repo)"
+sha21="$(git -C "$R21" rev-parse --short HEAD)"
+seed_memo "$R21" "taila.md" "$(memo_content_v4 "$sha21" "tailb" "TAILA-SUMMARY-MARKER" "Body A.")"
+seed_memo "$R21" "tailb.md" "$(memo_content_v4 "$sha21" "tailc" "TAILB-SUMMARY-MARKER" "Body B.")"
+seed_memo "$R21" "tailc.md" "$(memo_content_v4 "$sha21" "taila" "TAILC-SUMMARY-MARKER" "Body C.")"
+seed_memo "$R21" "taild.md" "$(memo_content_v4 "$sha21" "taila" "TAILD-SUMMARY-MARKER" "Body D.")"
+run_reader "$R21"
+if [ "$RC" -eq 0 ] \
+   && ! printf '%s' "$OUT" | grep -qF "TAILA-SUMMARY-MARKER" \
+   && printf '%s' "$OUT" | grep -qF "TAILB-SUMMARY-MARKER" \
+   && printf '%s' "$OUT" | grep -qF "TAILC-SUMMARY-MARKER" \
+   && printf '%s' "$OUT" | grep -qF "TAILD-SUMMARY-MARKER"; then
+  ok "cycle-plus-tail: A hidden by external D (ordinary single-hop); B, C, D all visible (sane, non-crashing)"
+else
+  no "cycle-plus-tail behaved insanely (rc=$RC out=[$OUT])"
+fi
+
+# ============================================================================
 echo
 if [ "$fail" -eq 0 ]; then
   echo "ALL TESTS PASSED ($pass/$pass)"

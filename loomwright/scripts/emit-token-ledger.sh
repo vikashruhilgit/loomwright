@@ -252,7 +252,7 @@ if advisory_total_raw.isdigit():
 
 # RESERVED (do not emit): graph_context_used — reserved for future job 04.
 # (orientation_source is emitted above since v15.12.0, shared_prefix since
-# v15.13.0, and advisory_total since v15.13.0 — none of these are reserved keys.)
+# v15.13.0, and advisory_total since v15.14.0 — none of these are reserved keys.)
 
 try:
     line = json.dumps(event, separators=(",", ":"), ensure_ascii=False)

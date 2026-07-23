@@ -39,10 +39,27 @@
 #   A live memo may declare `supersedes: <area-slug>` in its header. Any OTHER live memo NAMED
 #   by that slug is SKIPPED (hidden from output) — "A supersedes B hides B; it does not chase
 #   B's own supersedes." Demote-never-crash: a `supersedes` value that is malformed (not a bare
-#   [a-z0-9-]+ slug), self-referential (targets its own memo), dangling (names no memo present
-#   in the store), or mutually cyclic (A supersedes B AND B supersedes A) is IGNORED — the
-#   declaring memo is still emitted normally, and the reader still exits 0. Cycles resolve to
-#   "neither hides the other" (a symmetric check at both directions), never a crash or a loop.
+#   [a-z0-9-]+ slug), self-referential (targets its own memo), or dangling (names no memo present
+#   in the store) is IGNORED — the declaring memo is still emitted normally, and the reader still
+#   exits 0.
+#
+#   CYCLE DETECTION IS GENERAL, NOT PAIRWISE-ONLY (bot-review HIGH-2 — same fix class as
+#   read-rules.sh's HIGH-1): because each memo carries at most ONE `supersedes` value, the
+#   declared edges form a "functional graph" (out-degree <= 1 per node), so every cycle of ANY
+#   length — not just a mutual 2-memo pair — is found the same way: for each memo with an
+#   outgoing edge, walk that single edge chain a number of steps bounded by the total edge count
+#   and check whether the walk returns to its own starting memo. Any memo whose walk returns to
+#   itself is a cycle member; EVERY edge originating from a cycle member is dropped (never used to
+#   hide anything) — this generalizes the old 2-memo-only mutual check, which special-cased ONLY
+#   A<->B and left an n>2 cycle (e.g. A supersedes B, B supersedes C, C supersedes A) with every
+#   member holding a live incoming hider, silently hiding ALL of them (0 visible — the exact
+#   failure mode this substrate exists to prevent). A memo OUTSIDE the cycle whose OWN supersedes
+#   points INTO a cycle (e.g. D supersedes A, where A->B->C->A) is NOT itself a cycle member
+#   (nothing points back to D), so D's edge stays a normal, live, single-hop hiding edge — D still
+#   hides A exactly as ordinary single-hop supersession would; only the cycle's OWN internal edges
+#   are dropped, so the other cycle members remain visible. This computation is a single BOUNDED,
+#   non-recursive walk per candidate memo (never an open-ended/recursive graph traversal), so an
+#   arbitrarily malformed/cyclic `supersedes` graph can never loop or hang the reader.
 #
 # STALENESS: parse head_sha + areas from the header; run a BOUNDED
 #   `git log --oneline <sha>..HEAD -- <areas> 2>/dev/null | head -5`.
@@ -227,9 +244,10 @@ done < "$sorted"
 # ---------------------------------------------------------------------------
 # Build the supersession skip-set from valid entries' `supersedes` field (rule 1 of the
 # pinned encoding contract — rules + orientation only). Demote-never-crash (rule 2):
-# malformed / self-referential / dangling / mutually-cyclic supersedes is IGNORED — the
-# declaring memo is still emitted normally. Single-hop, not transitive (rule 3): this walks
-# each entry's OWN supersedes value once; it never chases a target's own supersedes chain.
+# malformed / self-referential / dangling / cyclic (of ANY length — bot-review HIGH-2, see the
+# "SUPERSESSION" header comment for the full rationale) supersedes is IGNORED — the declaring
+# memo is still emitted normally. Single-hop, not transitive (rule 3): this walks each entry's
+# OWN supersedes value once; it never chases a target's own supersedes chain.
 # ---------------------------------------------------------------------------
 valid_slug() {
   case "$1" in
@@ -248,17 +266,13 @@ name_exists() {
   return 1
 }
 
-supersedes_of() {
-  # Prints the `supersedes` field of the entry named $1 (may be empty); returns 1 if not found.
-  local target="$1" nm ss
-  while IFS="$US" read -r _m nm ss _w _h _a _p; do
-    if [ "$nm" = "$target" ]; then printf '%s' "$ss"; return 0; fi
-  done < "$entries"
-  return 1
-}
-
-skip_set="$TMPD/skip_set"   # lines: target_name<TAB>declaring_name (both fields always non-empty)
-: > "$skip_set"
+# 1. Hygiene pass: build $edges_file (declaring_name<TAB>target_name) from every entry's
+#    supersedes field that is a valid slug, non-self-referential, and resolves to a memo that
+#    survived PASS A. Each name has AT MOST one outgoing edge (one supersedes field per memo), so
+#    the resulting graph is a "functional graph" — this is what makes the bounded per-node walk
+#    below a complete cycle detector (see the header comment).
+edges_file="$TMPD/edges"
+: > "$edges_file"
 while IFS="$US" read -r _m nm ss _w _h _a p; do
   [ -n "$ss" ] || continue
   base_p="$(basename "$p")"
@@ -274,13 +288,61 @@ while IFS="$US" read -r _m nm ss _w _h _a p; do
     skip "$base_p" "ignoring dangling supersedes (no such memo in store): $ss"
     continue
   fi
-  target_ss="$(supersedes_of "$ss")"
-  if [ "$target_ss" = "$nm" ]; then
-    skip "$base_p" "ignoring cyclic supersedes (mutual with $ss)"
+  printf '%s\t%s\n' "$nm" "$ss" >> "$edges_file"
+done < "$entries"
+
+edge_target() {
+  # Prints the target ($2 field) of the (at most one) edge whose declaring name is $1; returns 1
+  # if $1 has no outgoing edge.
+  local from="$1" f t
+  while IFS="$TAB" read -r f t; do
+    if [ "$f" = "$from" ]; then printf '%s' "$t"; return 0; fi
+  done < "$edges_file"
+  return 1
+}
+
+# 2. GENERALIZED cycle detection (any length, not just a mutual 2-memo pair). Since out-degree is
+#    <= 1 per node, a name is a cycle member iff following its OWN edge chain returns to itself
+#    within a number of steps bounded by the total edge count — a single fixed-length,
+#    non-recursive walk per candidate name, so an arbitrarily malformed/cyclic graph can never
+#    loop or hang this reader.
+edge_count="$(wc -l < "$edges_file" 2>/dev/null | tr -d '[:space:]')"
+case "$edge_count" in ''|*[!0-9]*) edge_count=0 ;; esac
+
+cycle_members="$TMPD/cycle_members"
+: > "$cycle_members"
+while IFS="$TAB" read -r start _to0; do
+  [ -n "$start" ] || continue
+  grep -qxF "$start" "$cycle_members" 2>/dev/null && continue   # already classified
+  cur="$(edge_target "$start" 2>/dev/null || true)"
+  hit=0
+  steps=0
+  while [ "$steps" -lt "$edge_count" ]; do
+    [ -n "$cur" ] || break
+    if [ "$cur" = "$start" ]; then
+      hit=1
+      break
+    fi
+    cur="$(edge_target "$cur" 2>/dev/null || true)"
+    steps=$((steps + 1))
+  done
+  [ "$hit" -eq 1 ] && printf '%s\n' "$start" >> "$cycle_members"
+done < "$edges_file"
+
+# 3. Drop EVERY edge whose origin is a cycle member (exactly the set of intra-cycle edges, since
+#    a cycle member's single outgoing edge IS the edge that closes its own cycle) -- every cycle
+#    member therefore keeps zero incoming hiders FROM its own cycle and stays visible. An edge
+#    from a name OUTSIDE any cycle (even one that targets a cycle member) is left live -- ordinary
+#    single-hop supersession still applies to it.
+skip_set="$TMPD/skip_set"   # lines: target_name<TAB>declaring_name (both fields always non-empty)
+: > "$skip_set"
+while IFS="$TAB" read -r from to; do
+  if grep -qxF "$from" "$cycle_members" 2>/dev/null; then
+    skip "${from}.md" "ignoring cyclic supersedes (in a cycle, edge to $to dropped)"
     continue
   fi
-  printf '%s\t%s\n' "$ss" "$nm" >> "$skip_set"
-done < "$entries"
+  printf '%s\t%s\n' "$to" "$from" >> "$skip_set"
+done < "$edges_file"
 
 is_superseded() {
   # Prints the declaring memo's name if $1 is a live target of a supersedes; else returns 1.
