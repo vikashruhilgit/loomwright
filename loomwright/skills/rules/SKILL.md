@@ -1,8 +1,8 @@
 ---
 name: rules
 description: Protocol authority for the /rules command and the committed .agent/rules/ house-rules substrate — the rule JSON schema + per-object fail-safe-skip validation, the v1 "applicable = all valid rules" read contract, the scan-to-suggest spec, the advisory/must/no-op-when-absent reader contract (read-rules.sh), the /rules add path-contained atomic-append write discipline (mechanized in add-rule.sh, with an optional `--supersedes` flag), the /rules retract remove-only write discipline (also mechanized in add-rule.sh), the /rules check human-invoked+confirmed execution semantics (mechanized in rules-check.sh), the single-hop supersession read contract, and the check-is-arbitrary-shell trust boundary (unattended `check` execution is now GATED via rules-check.sh --no-cmd). Use when running /rules or modifying any part of the rules substrate.
-version: "1.1.0"
-lastUpdated: "2026-07-03"
+version: "1.2.0"
+lastUpdated: "2026-07-23"
 ---
 
 # Rules Skill
