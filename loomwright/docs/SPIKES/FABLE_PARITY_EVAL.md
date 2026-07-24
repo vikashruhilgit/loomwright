@@ -168,7 +168,7 @@ claude
 # Run the standard Loomwright flow with eval-specific flags:
 /launch-pad
 # (paste the requirement, let it produce a brief, then:)
-/supervisor job: .supervisor/jobs/pending/<saved-brief> --skip-preflight-sync
+/supervisor job: .supervisor/jobs/pending/<saved-brief> --skip-preflight-sync --base-branch eval/<slug>/arm-2-default
 # Record metrics and exit.
 ```
 
@@ -184,7 +184,7 @@ claude
 # only --base-branch, --non-interactive, --cheap). Use the manual two-step path:
 /launch-pad
 # (paste the requirement, let it produce a brief, then:)
-/supervisor job: .supervisor/jobs/pending/<saved-brief> --sdk-runner --multi-voter-heal --skip-preflight-sync
+/supervisor job: .supervisor/jobs/pending/<saved-brief> --sdk-runner --multi-voter-heal --skip-preflight-sync --base-branch eval/<slug>/arm-3-extras
 # Record metrics and exit.
 ```
 
@@ -194,7 +194,7 @@ claude
 > or incorrect output that the default path (arm 2) avoids via sequential worktree merges. This is
 > the gap the eval is designed to measure.
 
-### Ablation arms (additive amendment — budgeted separately per §Protocol step 6)
+### Ablation arms (additive amendment — budgeted separately from §Protocol step 6)
 
 Each ablation arm modifies ONE lever. Execute from the same base commit as the corresponding
 requirement's base arms. Use arm-2 (Loomwright default) as the baseline — the ablation removes one
@@ -225,8 +225,12 @@ INTENT
 claude
 /launch-pad
 # (paste the requirement, let it produce a brief, then:)
-/supervisor job: .supervisor/jobs/pending/<saved-brief> --skip-preflight-sync
+/supervisor job: .supervisor/jobs/pending/<saved-brief> --skip-preflight-sync --base-branch eval/<slug>/arm-ablation-a-no-qa-rules
 ```
+
+> **Note:** ablation (a) creates a transient `qa-intent` skill that is NOT registered in
+> `SKILLS_INDEX.md` or counted in the plugin skill tally — it exists only on the eval branch
+> and is discarded after recording. Do not bump skill counts for it.
 
 **Incident-class regression check (ablation a):** the QA rule libraries encode test-isolation
 patterns, infrastructure-aware fixtures (Mailpit/MailHog), and budget zones (80/110/60). Watch for:
@@ -253,7 +257,7 @@ git checkout -b eval/<slug>/arm-ablation-c-soft-budgets <base-commit>
 claude
 /launch-pad
 # (paste the requirement, let it produce a brief, then:)
-/supervisor job: .supervisor/jobs/pending/<saved-brief> --skip-preflight-sync
+/supervisor job: .supervisor/jobs/pending/<saved-brief> --skip-preflight-sync --base-branch eval/<slug>/arm-ablation-c-soft-budgets
 ```
 
 **Incident-class regression check (ablation c):** magic budgets prevent runaway token spend and
