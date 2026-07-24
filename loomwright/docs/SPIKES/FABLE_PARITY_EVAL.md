@@ -137,7 +137,13 @@ Examples: `eval/curation-anti-rot/arm-1-bare`, `eval/rules-enforcement/arm-2-def
 
 ### Per-requirement arm execution
 
-For each of the 5 corpus requirements, execute 3 arms from the same base commit:
+For each of the 5 corpus requirements, execute 3 arms from the same base commit.
+
+> **Eval-specific flags (all Loomwright arms):** every `/supervisor` invocation below passes
+> `--skip-preflight-sync` (the corpus re-implements already-merged work — Phase 1.5 would classify
+> it as SUPERSEDED and halt) and `--base-branch eval/<slug>/arm-N` (prevents FINALIZE from creating
+> a PR to `main` — the eval's own Isolation protocol says "NO PRs to main"). The created PR targets
+> the eval scratch branch itself, which is deleted after metric extraction.
 
 **Arm 1 — Bare Claude Code (no Loomwright)**
 
@@ -146,6 +152,9 @@ git checkout -b eval/<slug>/arm-1-bare <base-commit>
 # Start a plain Claude Code session (no plugin commands):
 claude
 # Paste the requirement text from the brief's ## Task / ## Goal section.
+# NOTE: arm 1 receives the raw requirement goal only (not the full Launch Pad brief),
+# because the eval measures the FULL Loomwright stack including Launch Pad's planning.
+# This input asymmetry is intentional — document it if adjusting the protocol.
 # Implement on this branch. Do NOT use /supervisor, /launch-pad, or any Loomwright commands.
 # When done, record metrics (see Recording Protocol below) and exit.
 ```
@@ -156,12 +165,10 @@ claude
 git checkout -b eval/<slug>/arm-2-default <base-commit>
 # Start a Claude Code session with the plugin:
 claude
-# Run the standard Loomwright flow:
-/autonomous --single-iteration --requirement .supervisor/jobs/done/<brief-file>
-# Or equivalently:
+# Run the standard Loomwright flow with eval-specific flags:
 /launch-pad
 # (paste the requirement, let it produce a brief, then:)
-/supervisor job: .supervisor/jobs/pending/<saved-brief>
+/supervisor job: .supervisor/jobs/pending/<saved-brief> --skip-preflight-sync
 # Record metrics and exit.
 ```
 
@@ -177,7 +184,7 @@ claude
 # only --base-branch, --non-interactive, --cheap). Use the manual two-step path:
 /launch-pad
 # (paste the requirement, let it produce a brief, then:)
-/supervisor job: .supervisor/jobs/pending/<saved-brief> --sdk-runner --multi-voter-heal
+/supervisor job: .supervisor/jobs/pending/<saved-brief> --sdk-runner --multi-voter-heal --skip-preflight-sync
 # Record metrics and exit.
 ```
 
@@ -214,9 +221,11 @@ applicable. Verify: (1) golden path works, (2) edge cases don't crash, (3) no re
 existing tests. Prefer integration tests over unit tests for orchestration-shaped requirements.
 INTENT
 # Update qa-executor agent frontmatter to preload qa-intent instead of the three libraries.
-# Then run the standard Loomwright flow:
+# Then run the standard Loomwright flow with eval-specific flags:
 claude
-/autonomous --single-iteration --requirement .supervisor/jobs/done/<brief-file>
+/launch-pad
+# (paste the requirement, let it produce a brief, then:)
+/supervisor job: .supervisor/jobs/pending/<saved-brief> --skip-preflight-sync
 ```
 
 **Incident-class regression check (ablation a):** the QA rule libraries encode test-isolation
@@ -240,9 +249,11 @@ git checkout -b eval/<slug>/arm-ablation-c-soft-budgets <base-commit>
 #   stated reasoning if a phase requires more)"
 # - agents/execute-manager.md: similar for 60-call budget
 # - agents/qa-executor.md: similar for 80/110/60 zones
-# Then run:
+# Then run with eval-specific flags:
 claude
-/autonomous --single-iteration --requirement .supervisor/jobs/done/<brief-file>
+/launch-pad
+# (paste the requirement, let it produce a brief, then:)
+/supervisor job: .supervisor/jobs/pending/<saved-brief> --skip-preflight-sync
 ```
 
 **Incident-class regression check (ablation c):** magic budgets prevent runaway token spend and
@@ -255,7 +266,7 @@ After each arm completes, extract and record the pre-registered metrics:
 
 | Metric | Arm 1 (bare) source | Arm 2/3 (Loomwright) source |
 |--------|--------------------|-----------------------------|
-| `review_rounds_to_READY` | Manual count of review→fix cycles on the scratch branch (count commits that are fix responses to review feedback) | `POSTMORTEM_RESULT.review_rounds` in `.supervisor/logs/{session_id}.jsonl` (event `postmortem_complete`), OR `REVIEW_HEAL_RESULT.fix_cycles` from the drain log |
+| `review_rounds_to_READY` | Manual count of review→fix cycles on the scratch branch (count commits that are fix responses to review feedback) | `POSTMORTEM_RESULT.review_rounds` in `.supervisor/postmortem/results.jsonl`, OR `REVIEW_HEAL_RESULT.fix_cycles` from the drain log |
 | `heal_iterations` | N/A — record `-` | `SUPERVISOR_RESULT.heal_iterations` in `.supervisor/logs/{session_id}.jsonl` (event `session_end`) |
 | `post_merge_defects` | Run ONE independent `/code-reviewer` pass on the arm's final branch diff (`git diff <base>..<arm-branch>`) — count BLOCKING + HIGH `new` findings | Same — run the SAME `/code-reviewer` configuration on each arm's diff for a fair comparison |
 | `wall_tokens` | Session usage total (Claude Code reports this at session end) | `token_ledger` event in `.supervisor/logs/{session_id}.jsonl` (field `token_proxy_transcript_bytes` when `proxy: true`, or real token counts when available) |
