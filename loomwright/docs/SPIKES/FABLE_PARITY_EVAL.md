@@ -173,9 +173,11 @@ cd loomwright/sdk-spike && npm install --no-audit --no-fund && npm run build && 
 
 git checkout -b eval/<slug>/arm-3-extras <base-commit>
 claude
-/autonomous --single-iteration --requirement .supervisor/jobs/done/<brief-file>
-# When the /supervisor step runs, pass both experimental flags:
-/supervisor job: <brief> --sdk-runner --multi-voter-heal
+# NOTE: /autonomous does NOT forward --sdk-runner or --multi-voter-heal (it forwards
+# only --base-branch, --non-interactive, --cheap). Use the manual two-step path:
+/launch-pad
+# (paste the requirement, let it produce a brief, then:)
+/supervisor job: .supervisor/jobs/pending/<saved-brief> --sdk-runner --multi-voter-heal
 # Record metrics and exit.
 ```
 
@@ -221,6 +223,9 @@ claude
 patterns, infrastructure-aware fixtures (Mailpit/MailHog), and budget zones (80/110/60). Watch for:
 tests that leak state across runs, missing infrastructure detection, or budget exhaustion causing
 premature test-suite termination.
+
+> **Ablation (b) — minus prompt-hook schema validators:** deferred from round 1. If budget permits
+> after (a) and (c), add this arm per the original requirement §Scope item 2(b).
 
 **Ablation (c) — minus magic budgets/caps**
 
