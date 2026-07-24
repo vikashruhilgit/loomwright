@@ -142,8 +142,11 @@ For each of the 5 corpus requirements, execute 3 arms from the same base commit.
 > **Eval-specific flags (all Loomwright arms):** every `/supervisor` invocation below passes
 > `--skip-preflight-sync` (the corpus re-implements already-merged work — Phase 1.5 would classify
 > it as SUPERSEDED and halt) and `--base-branch eval/<slug>/arm-N` (prevents FINALIZE from creating
-> a PR to `main` — the eval's own Isolation protocol says "NO PRs to main"). The created PR targets
-> the eval scratch branch itself, which is deleted after metric extraction.
+> a PR to `main` — the eval's own Isolation protocol says "NO PRs to main"). The branch MUST be
+> pushed to origin before `/supervisor` runs — ACQUIRE does `git fetch origin "$BASE_BRANCH"` and
+> FINALIZE does `gh pr create --base "$BASE_BRANCH"`, both of which require a remote ref. The
+> created PR targets the eval scratch branch itself; both the branch and the throwaway PR are
+> deleted after metric extraction (see Isolation protocol).
 
 **Arm 1 — Bare Claude Code (no Loomwright)**
 
@@ -163,6 +166,7 @@ claude
 
 ```bash
 git checkout -b eval/<slug>/arm-2-default <base-commit>
+git push -u origin eval/<slug>/arm-2-default
 # Start a Claude Code session with the plugin:
 claude
 # Run the standard Loomwright flow with eval-specific flags:
@@ -179,6 +183,7 @@ claude
 cd loomwright/sdk-spike && npm install --no-audit --no-fund && npm run build && cd -
 
 git checkout -b eval/<slug>/arm-3-extras <base-commit>
+git push -u origin eval/<slug>/arm-3-extras
 claude
 # NOTE: /autonomous does NOT forward --sdk-runner or --multi-voter-heal (it forwards
 # only --base-branch, --non-interactive, --cheap). Use the manual two-step path:
@@ -208,6 +213,7 @@ prescriptive patterns. The QA Executor agent prompt and Phase 3 execution are un
 
 ```bash
 git checkout -b eval/<slug>/arm-ablation-a-no-qa-rules <base-commit>
+git push -u origin eval/<slug>/arm-ablation-a-no-qa-rules
 # Before starting the session, create the replacement intent doc:
 cat > loomwright/skills/qa-intent/SKILL.md << 'INTENT'
 ---
@@ -248,6 +254,7 @@ Modify the agent prompts to present each budget as "default N, override with jus
 
 ```bash
 git checkout -b eval/<slug>/arm-ablation-c-soft-budgets <base-commit>
+git push -u origin eval/<slug>/arm-ablation-c-soft-budgets
 # Before starting the session, edit agent prompts to soften budgets:
 # - agents/supervisor.md: "budget: 50 tool calls" → "default budget: 50 tool calls (override with
 #   stated reasoning if a phase requires more)"
@@ -270,7 +277,7 @@ After each arm completes, extract and record the pre-registered metrics:
 
 | Metric | Arm 1 (bare) source | Arm 2/3 (Loomwright) source |
 |--------|--------------------|-----------------------------|
-| `review_rounds_to_READY` | Manual count of review→fix cycles on the scratch branch (count commits that are fix responses to review feedback) | `POSTMORTEM_RESULT.review_rounds` in `.supervisor/postmortem/results.jsonl`, OR `REVIEW_HEAL_RESULT.fix_cycles` from the drain log |
+| `review_rounds_to_READY` | Manual count of review→fix cycles on the scratch branch (count commits that are fix responses to review feedback) | `POSTMORTEM_RESULT.review_rounds` in `.supervisor/postmortem/results.jsonl`, OR `REVIEW_HEAL_RESULT.fix_cycles` from the drain log. **Note:** these are produced by the until-mergeable review drain / `/pr-postmortem`, not by Supervisor's core Phase 4.5. The eval arms use manual `/launch-pad + /supervisor` (no `/autonomous`), so the default `auto_review` dispatch must fire after FINALIZE creates the PR, OR the operator must run `/review-pr --until-mergeable <pr-url>` manually on the throwaway PR. If neither runs, this cell will be blank — record `N/A (no drain)` and fall back to manual commit-count. |
 | `heal_iterations` | N/A — record `-` | `SUPERVISOR_RESULT.heal_iterations` in `.supervisor/logs/{session_id}.jsonl` (event `session_end`) |
 | `post_merge_defects` | Run ONE independent `/code-reviewer` pass on the arm's final branch diff (`git diff <base>..<arm-branch>`) — count BLOCKING + HIGH `new` findings | Same — run the SAME `/code-reviewer` configuration on each arm's diff for a fair comparison |
 | `wall_tokens` | Session usage total (Claude Code reports this at session end) | `token_ledger` event in `.supervisor/logs/{session_id}.jsonl` (field `token_proxy_transcript_bytes` when `proxy: true`, or real token counts when available) |
@@ -284,9 +291,20 @@ counters (from `SUPERVISOR_RESULT.summary`), wall-clock notes,
 
 1. All eval work happens on scratch branches — **NO PRs to main from eval runs**.
 2. Same base commit for all 3 arms of a requirement (enforced by the Corpus table above).
-3. After metrics are extracted and recorded in the Results table, delete eval branches:
+3. After metrics are extracted and recorded in the Results table, close throwaway PRs and delete
+   eval branches (local + remote):
    ```bash
-   git branch -D eval/<slug>/arm-1-bare eval/<slug>/arm-2-default eval/<slug>/arm-3-extras
+   # Close any throwaway PRs created by Supervisor FINALIZE against eval branches:
+   for arm in arm-2-default arm-3-extras arm-ablation-a-no-qa-rules arm-ablation-c-soft-budgets; do
+     gh pr list --base "eval/<slug>/$arm" --state open --json number --jq '.[].number' \
+       | xargs -I{} gh pr close {} --comment "Eval throwaway PR — metrics extracted"
+   done
+   # Delete local branches:
+   git branch -D eval/<slug>/arm-1-bare eval/<slug>/arm-2-default eval/<slug>/arm-3-extras \
+     eval/<slug>/arm-ablation-a-no-qa-rules eval/<slug>/arm-ablation-c-soft-budgets
+   # Delete remote branches (arm-1 is local-only; Loomwright arms were pushed for --base-branch):
+   git push origin --delete eval/<slug>/arm-2-default eval/<slug>/arm-3-extras \
+     eval/<slug>/arm-ablation-a-no-qa-rules eval/<slug>/arm-ablation-c-soft-budgets
    ```
 4. Eval session logs in `.supervisor/logs/` and `.supervisor/jobs/` artifacts are retained for
    audit but are not merged to main.
