@@ -100,6 +100,258 @@ in this file.
 7. **Recording:** one row per run in the results table below, filled at run time, never
    retroactively edited (append a correction row instead).
 
+## Corpus
+
+Five requirements selected from `.supervisor/jobs/done/`. Selection criteria per §Protocol step 1:
+small-to-medium, orchestration-shaped (multi-subtask, Phase 3 loop exercised), at least one with a
+real cross-subtask file dependency. All base commits verified reachable via `git cat-file -t`.
+
+| # | Slug | Brief | Base commit | PR | Subtasks | Cross-subtask dependency | Selection rationale |
+|---|------|-------|-------------|-----|----------|--------------------------|---------------------|
+| 1 | curation-anti-rot | `2026-07-23-curation-anti-rot.md` | `f55380b` | #106 | 6 (3 LAUNCHABLE batch 1 + 3 batch 2) | **YES — ST-4 requires ST-3's `write-lessons.sh supersede` verb** (kind: subcommand); ST-5a requires ST-1/ST-2 interface shapes for docs | Most recent (v15.14.0), multi-batch, largest subtask count; dependency-materialization gap will surface if arm-3's SDK runner cannot merge ST-3 into ST-4's worktree |
+| 2 | rules-enforcement | `2026-07-01-rules-enforcement.md` | `872cc81` | #88 | 4 (ST-2 BLOCKED by ST-1) | **YES — ST-2 shares `commands/rules.md` with ST-1** (kind: symbol); ST-3/ST-4 advisory wiring reads ST-1's `add-rule.sh` | Multi-seam wiring (3 advisory integration points across agents/commands/scripts); BLOCKED subtask exercises dependency ordering |
+| 3 | learning-loop-phase1-2 | `auto-2026-06-17-040909-learning-loop-phase1-2.md` | `516687a` | #61 | 4 (all LAUNCHABLE) | No — parallel independent subtasks | Tests fully parallel orchestration (4 independent agent-prompt edits); no dependency ordering needed; baseline for "does the orchestration add value over sequential?" |
+| 4 | review-drain-worktree-isolation | `2026-06-21-review-drain-worktree-isolation.md` | `142319e` | #75 | 3 (ST-3 BLOCKED by ST-1+ST-2) | **YES — ST-3 depends on ST-1+ST-2 for accurate version bump** | Multi-dependency (ST-3 requires TWO providers); 8-file modification in ST-1 with lifecycle/cleanup/failure-injection gates |
+| 5 | handoff-digest | `2026-06-28-handoff-digest.md` | `49868b1` | #82 | 4 (ST-2 BLOCKED by ST-1) | YES — ST-2 tests ST-1's `build-handoff.sh` output | Create-then-test pattern (engine + fixture-driven test); new file creation (not just modification); mirrors the `/insights` deterministic-assembler idiom |
+
+**Dependency-materialization gap coverage (§Protocol step 1 hard requirement):** corpus entries #1
+(curation-anti-rot), #2 (rules-enforcement), and #5 (handoff-digest) each have a real cross-subtask
+file dependency where a dependent subtask reads/invokes a file the producer subtask creates or
+modifies. Under arm 3 (SDK runner), the known residual divergence 3 (`SDK_RUNNER_SPIKE.md`) means
+these dependents will branch from the feature branch without the producer's commits — the eval must
+surface whether this causes test failures or incorrect output in the measured comparison. Entries #1
+and #2 are the **primary** carriers because the dependent subtask directly calls a new subcommand /
+symbol the producer introduces (immediate crash on absence); #5's ST-2 tests ST-1's output file
+(create-then-test — a genuine materialization case, but failure is a test assertion rather than a
+missing-symbol crash, so it's a softer signal). #4's dependency is coordination/ordering (version
+bump accuracy), not file materialization.
+
+## Execution Runbook
+
+Step-by-step instructions for executing each arm. All runs use the same base commit per requirement
+(column "Base commit" in the Corpus table above).
+
+### Scratch branch naming
+
+```
+eval/<slug>/arm-<N>[-<variant>]
+```
+
+Examples: `eval/curation-anti-rot/arm-1-bare`, `eval/rules-enforcement/arm-2-default`,
+`eval/handoff-digest/arm-3-extras`, `eval/curation-anti-rot/arm-ablation-a-no-qa-rules`.
+
+### Per-requirement arm execution
+
+For each of the 5 corpus requirements, execute 3 arms from the same base commit.
+
+> **Eval-specific flags (all Loomwright arms):** every `/supervisor` invocation below passes
+> `--skip-preflight-sync` (the corpus re-implements already-merged work — Phase 1.5 would classify
+> it as SUPERSEDED and halt) and `--base-branch eval/<slug>/arm-N` (prevents FINALIZE from creating
+> a PR to `main` — the eval's own Isolation protocol says "NO PRs to main"). The branch MUST be
+> pushed to origin before `/supervisor` runs — ACQUIRE does `git fetch origin "$BASE_BRANCH"` and
+> FINALIZE does `gh pr create --base "$BASE_BRANCH"`, both of which require a remote ref. The
+> created PR targets the eval scratch branch itself; both the branch and the throwaway PR are
+> deleted after metric extraction (see Isolation protocol).
+
+**Arm 1 — Bare Claude Code (no Loomwright)**
+
+```bash
+git checkout -b eval/<slug>/arm-1-bare <base-commit>
+# Start a plain Claude Code session (no plugin commands):
+claude
+# Paste the requirement text from the brief's ## Task / ## Goal section.
+# NOTE: arm 1 receives the raw requirement goal only (not the full Launch Pad brief),
+# because the eval measures the FULL Loomwright stack including Launch Pad's planning.
+# This input asymmetry is intentional — document it if adjusting the protocol.
+# Implement on this branch. Do NOT use /supervisor, /launch-pad, or any Loomwright commands.
+# When done, record metrics (see Recording Protocol below) and exit.
+```
+
+**Arm 2 — Loomwright default**
+
+```bash
+git checkout -b eval/<slug>/arm-2-default <base-commit>
+git push -u origin eval/<slug>/arm-2-default
+# Start a Claude Code session with the plugin:
+claude
+# Run the standard Loomwright flow with eval-specific flags:
+/launch-pad
+# (paste the requirement, let it produce a brief, then:)
+/supervisor job: .supervisor/jobs/pending/<saved-brief> --skip-preflight-sync --base-branch eval/<slug>/arm-2-default
+# Record metrics and exit.
+```
+
+**Arm 3 — Loomwright + SDK runner + multi-voter heal**
+
+```bash
+# Pre-requisite: build the SDK spike runner (once per machine):
+cd loomwright/sdk-spike && npm install --no-audit --no-fund && npm run build && cd -
+
+git checkout -b eval/<slug>/arm-3-extras <base-commit>
+git push -u origin eval/<slug>/arm-3-extras
+claude
+# NOTE: /autonomous does NOT forward --sdk-runner or --multi-voter-heal (it forwards
+# only --base-branch, --non-interactive, --cheap). Use the manual two-step path:
+/launch-pad
+# (paste the requirement, let it produce a brief, then:)
+/supervisor job: .supervisor/jobs/pending/<saved-brief> --sdk-runner --multi-voter-heal --skip-preflight-sync --base-branch eval/<slug>/arm-3-extras
+# Record metrics and exit.
+```
+
+> **Known gap (arm 3):** the SDK runner's residual divergence 3 (`SDK_RUNNER_SPIKE.md`) means
+> dependent subtasks branch from the feature branch, not from producer output. For corpus entries
+> #1, #2, and #5 (which have real cross-subtask file dependencies), arm-3 runs may surface test
+> failures or incorrect output that the default path (arm 2) avoids via sequential worktree merges.
+> This is the gap the eval is designed to measure.
+
+### Ablation arms (additive amendment — budgeted separately from §Protocol step 6)
+
+Each ablation arm modifies ONE lever. Execute from the same base commit as the corresponding
+requirement's base arms. Use arm-2 (Loomwright default) as the baseline — the ablation removes one
+layer from the default stack.
+
+**Ablation (a) — minus QA rule libraries**
+
+Replace `qa-test-patterns/SKILL.md`, `qa-gates/SKILL.md`, and `qa-strategy/SKILL.md` (combined
+~1,900 lines) with a single ~50-line intent document that states the testing goals without
+prescriptive patterns. The QA Executor agent prompt and Phase 3 execution are unchanged.
+
+```bash
+git checkout -b eval/<slug>/arm-ablation-a-no-qa-rules <base-commit>
+# Create the replacement intent doc:
+mkdir -p loomwright/skills/qa-intent
+cat > loomwright/skills/qa-intent/SKILL.md << 'INTENT'
+---
+name: qa-intent
+version: 1.0.0
+description: Lightweight QA intent (ablation — replaces qa-test-patterns + qa-gates + qa-strategy)
+---
+# QA Intent
+Test the implementation against the acceptance criteria. Use Playwright for E2E tests where
+applicable. Verify: (1) golden path works, (2) edge cases don't crash, (3) no regressions in
+existing tests. Prefer integration tests over unit tests for orchestration-shaped requirements.
+INTENT
+# Update qa-executor agent frontmatter to preload qa-intent instead of the three libraries.
+# CRITICAL: commit + push the ablation edits BEFORE starting the session.
+# Skills are preloaded from ${CLAUDE_PLUGIN_ROOT} (the install dir), not the checkout,
+# and Supervisor workers run in worktrees created from the pushed branch tip — uncommitted
+# edits never reach either surface.
+git add loomwright/skills/qa-intent/ loomwright/agents/qa-executor.md
+git commit -m "eval(ablation-a): replace QA rule libraries with intent doc"
+git push -u origin eval/<slug>/arm-ablation-a-no-qa-rules
+# Reinstall the plugin from the modified local source so the running session loads
+# the ablation edits (skills preload from the install dir, not the working tree):
+claude
+/plugin uninstall loomwright
+/plugin install loomwright@atelier
+# Now run the standard Loomwright flow with eval-specific flags:
+/launch-pad
+# (paste the requirement, let it produce a brief, then:)
+/supervisor job: .supervisor/jobs/pending/<saved-brief> --skip-preflight-sync --base-branch eval/<slug>/arm-ablation-a-no-qa-rules
+```
+
+> **Note:** ablation (a) creates a transient `qa-intent` skill that is NOT registered in
+> `SKILLS_INDEX.md` or counted in the plugin skill tally — it exists only on the eval branch
+> and is discarded after recording. Do not bump skill counts for it.
+
+**Incident-class regression check (ablation a):** the QA rule libraries encode test-isolation
+patterns, infrastructure-aware fixtures (Mailpit/MailHog), and budget zones (80/110/60). Watch for:
+tests that leak state across runs, missing infrastructure detection, or budget exhaustion causing
+premature test-suite termination.
+
+> **Ablation (b) — minus prompt-hook schema validators:** deferred from round 1. If budget permits
+> after (a) and (c), add this arm per the original requirement §Scope item 2(b).
+
+**Ablation (c) — minus magic budgets/caps**
+
+Convert hardcoded numeric budgets (Supervisor 50-call, Execute Manager 60-call, QA Executor
+80/110/60, worker turn limits) to soft defaults the model may override with stated reasoning.
+Modify the agent prompts to present each budget as "default N, override with justification."
+
+```bash
+git checkout -b eval/<slug>/arm-ablation-c-soft-budgets <base-commit>
+# Edit agent prompts to soften budgets:
+# - agents/supervisor.md: "budget: 50 tool calls" → "default budget: 50 tool calls (override with
+#   stated reasoning if a phase requires more)"
+# - agents/execute-manager.md: similar for 60-call budget
+# - agents/qa-executor.md: similar for 80/110/60 zones
+# CRITICAL: commit + push the ablation edits BEFORE starting the session.
+# Skills are preloaded from ${CLAUDE_PLUGIN_ROOT} (the install dir), not the checkout,
+# and Supervisor workers run in worktrees created from the pushed branch tip — uncommitted
+# edits never reach either surface.
+git add loomwright/agents/supervisor.md loomwright/agents/execute-manager.md loomwright/agents/qa-executor.md
+git commit -m "eval(ablation-c): soften magic budgets to overridable defaults"
+git push -u origin eval/<slug>/arm-ablation-c-soft-budgets
+# Reinstall the plugin from the modified local source so the running session loads
+# the ablation edits (agent prompts are read from the install dir):
+claude
+/plugin uninstall loomwright
+/plugin install loomwright@atelier
+# Now run with eval-specific flags:
+/launch-pad
+# (paste the requirement, let it produce a brief, then:)
+/supervisor job: .supervisor/jobs/pending/<saved-brief> --skip-preflight-sync --base-branch eval/<slug>/arm-ablation-c-soft-budgets
+```
+
+**Incident-class regression check (ablation c):** magic budgets prevent runaway token spend and
+context exhaustion. Watch for: sessions that consume >2× the default arm's wall tokens, phases
+that loop without terminating, or context-window exhaustion causing mid-task failures.
+
+### Recording protocol
+
+After each arm completes, extract and record the pre-registered metrics:
+
+| Metric | Arm 1 (bare) source | Arm 2/3 (Loomwright) source |
+|--------|--------------------|-----------------------------|
+| `review_rounds_to_READY` | Manual count of review→fix cycles on the scratch branch (count commits that are fix responses to review feedback) | `POSTMORTEM_RESULT.review_rounds` in `.supervisor/postmortem/results.jsonl`, OR `REVIEW_HEAL_RESULT.fix_cycles` from the drain log. **Note:** these are produced by the until-mergeable review drain / `/pr-postmortem`, not by Supervisor's core Phase 4.5. The eval arms use manual `/launch-pad + /supervisor` (no `/autonomous`), so the default `auto_review` dispatch must fire after FINALIZE creates the PR, OR the operator must run `/review-pr --until-mergeable <pr-url>` manually on the throwaway PR. If neither runs, this cell will be blank — record `N/A (no drain)` and fall back to manual commit-count. |
+| `heal_iterations` | N/A — record `-` | `SUPERVISOR_RESULT.heal_iterations` in `.supervisor/logs/{session_id}.jsonl` (event `session_end`) |
+| `post_merge_defects` | Run ONE independent `/code-reviewer` pass on the arm's final branch diff (`git diff <base>..<arm-branch>`) — count BLOCKING + HIGH `new` findings | Same — run the SAME `/code-reviewer` configuration on each arm's diff for a fair comparison |
+| `wall_tokens` | Session usage total (Claude Code reports this at session end) | `token_ledger` event in `.supervisor/logs/{session_id}.jsonl` (field `token_proxy_transcript_bytes` when `proxy: true`, or real token counts when available) |
+
+**Secondary observables** (recorded, not decision inputs): `heal_decision`, `rubric_score` (where
+the brief has an `## Outcomes Rubric`), arm-3 `findings_raised`/`findings_refuted`/`findings_fixed`
+counters (from `SUPERVISOR_RESULT.summary`), wall-clock notes,
+`token-cost-per-subtask` (arm-3 only, per the 2026-07-18 amendment).
+
+### Isolation protocol
+
+1. All eval work happens on scratch branches — **NO PRs to main from eval runs**.
+2. Same base commit for all 3 arms of a requirement (enforced by the Corpus table above).
+3. After metrics are extracted and recorded in the Results table, close throwaway PRs and delete
+   eval branches (local + remote):
+   ```bash
+   # Close throwaway PRs and capture their head branches for cleanup:
+   head_branches=()
+   for arm in arm-2-default arm-3-extras arm-ablation-a-no-qa-rules arm-ablation-c-soft-budgets; do
+     for pr in $(gh pr list --base "eval/<slug>/$arm" --state open --json number,headRefName \
+       --jq '.[] | "\(.number):\(.headRefName)"'); do
+       num="${pr%%:*}"; head="${pr#*:}"
+       gh pr close "$num" --comment "Eval throwaway PR — metrics extracted"
+       head_branches+=("$head")
+     done
+   done
+   # Delete local branches (arm-1 is local-only; Loomwright arms pushed for --base-branch):
+   git branch -D eval/<slug>/arm-1-bare eval/<slug>/arm-2-default eval/<slug>/arm-3-extras \
+     eval/<slug>/arm-ablation-a-no-qa-rules eval/<slug>/arm-ablation-c-soft-budgets
+   # Delete Supervisor's feature-branch heads (created by ACQUIRE, pushed by FINALIZE):
+   for h in "${head_branches[@]}"; do git branch -D "$h" 2>/dev/null; done
+   # Delete remote branches — eval base branches + Supervisor head branches:
+   git push origin --delete eval/<slug>/arm-2-default eval/<slug>/arm-3-extras \
+     eval/<slug>/arm-ablation-a-no-qa-rules eval/<slug>/arm-ablation-c-soft-budgets \
+     "${head_branches[@]}"
+   ```
+4. Eval session logs in `.supervisor/logs/` and `.supervisor/jobs/` artifacts are retained for
+   audit but are not merged to main.
+
+### Re-run protocol (standing — per original requirement §Scope item 4)
+
+Re-run the ablation set on every major model release (e.g., Claude 5 → Claude 6). Use the same
+corpus, same base commits, same metrics. Compare cross-model results to detect release-dependent
+verdicts. If a layer that was CUT on model N becomes competitive on model N+1, record the finding
+but do NOT re-add the layer without a fresh eval cycle (pre-register the re-add hypothesis first).
+A `model-capability` configuration knob is a possible follow-up ONLY if re-run results show
+release-dependent verdicts — do not build it speculatively.
+
 ## Results (per-run — EMPTY until runs execute; no metric added after first run)
 
 | requirement | arm | review_rounds_to_READY | heal_iterations | post_merge_defects | wall_tokens | notes |
