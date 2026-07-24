@@ -115,11 +115,16 @@ real cross-subtask file dependency. All base commits verified reachable via `git
 | 5 | handoff-digest | `2026-06-28-handoff-digest.md` | `49868b1` | #82 | 4 (ST-2 BLOCKED by ST-1) | YES — ST-2 tests ST-1's `build-handoff.sh` output | Create-then-test pattern (engine + fixture-driven test); new file creation (not just modification); mirrors the `/insights` deterministic-assembler idiom |
 
 **Dependency-materialization gap coverage (§Protocol step 1 hard requirement):** corpus entries #1
-(curation-anti-rot) and #2 (rules-enforcement) each have a real cross-subtask file dependency where
-a dependent subtask reads/invokes a file the producer subtask creates or modifies. Under arm 3 (SDK
-runner), the known residual divergence 3 (`SDK_RUNNER_SPIKE.md`) means these dependents will branch
-from the feature branch without the producer's commits — the eval must surface whether this causes
-test failures or incorrect output in the measured comparison.
+(curation-anti-rot), #2 (rules-enforcement), and #5 (handoff-digest) each have a real cross-subtask
+file dependency where a dependent subtask reads/invokes a file the producer subtask creates or
+modifies. Under arm 3 (SDK runner), the known residual divergence 3 (`SDK_RUNNER_SPIKE.md`) means
+these dependents will branch from the feature branch without the producer's commits — the eval must
+surface whether this causes test failures or incorrect output in the measured comparison. Entries #1
+and #2 are the **primary** carriers because the dependent subtask directly calls a new subcommand /
+symbol the producer introduces (immediate crash on absence); #5's ST-2 tests ST-1's output file
+(create-then-test — a genuine materialization case, but failure is a test assertion rather than a
+missing-symbol crash, so it's a softer signal). #4's dependency is coordination/ordering (version
+bump accuracy), not file materialization.
 
 ## Execution Runbook
 
@@ -195,9 +200,9 @@ claude
 
 > **Known gap (arm 3):** the SDK runner's residual divergence 3 (`SDK_RUNNER_SPIKE.md`) means
 > dependent subtasks branch from the feature branch, not from producer output. For corpus entries
-> #1 and #2 (which have real cross-subtask file dependencies), arm-3 runs may surface test failures
-> or incorrect output that the default path (arm 2) avoids via sequential worktree merges. This is
-> the gap the eval is designed to measure.
+> #1, #2, and #5 (which have real cross-subtask file dependencies), arm-3 runs may surface test
+> failures or incorrect output that the default path (arm 2) avoids via sequential worktree merges.
+> This is the gap the eval is designed to measure.
 
 ### Ablation arms (additive amendment — budgeted separately from §Protocol step 6)
 
@@ -213,8 +218,8 @@ prescriptive patterns. The QA Executor agent prompt and Phase 3 execution are un
 
 ```bash
 git checkout -b eval/<slug>/arm-ablation-a-no-qa-rules <base-commit>
-git push -u origin eval/<slug>/arm-ablation-a-no-qa-rules
-# Before starting the session, create the replacement intent doc:
+# Create the replacement intent doc:
+mkdir -p loomwright/skills/qa-intent
 cat > loomwright/skills/qa-intent/SKILL.md << 'INTENT'
 ---
 name: qa-intent
@@ -227,8 +232,19 @@ applicable. Verify: (1) golden path works, (2) edge cases don't crash, (3) no re
 existing tests. Prefer integration tests over unit tests for orchestration-shaped requirements.
 INTENT
 # Update qa-executor agent frontmatter to preload qa-intent instead of the three libraries.
-# Then run the standard Loomwright flow with eval-specific flags:
+# CRITICAL: commit + push the ablation edits BEFORE starting the session.
+# Skills are preloaded from ${CLAUDE_PLUGIN_ROOT} (the install dir), not the checkout,
+# and Supervisor workers run in worktrees created from the pushed branch tip — uncommitted
+# edits never reach either surface.
+git add loomwright/skills/qa-intent/ loomwright/agents/qa-executor.md
+git commit -m "eval(ablation-a): replace QA rule libraries with intent doc"
+git push -u origin eval/<slug>/arm-ablation-a-no-qa-rules
+# Reinstall the plugin from the modified local source so the running session loads
+# the ablation edits (skills preload from the install dir, not the working tree):
 claude
+/plugin uninstall loomwright
+/plugin install loomwright@atelier
+# Now run the standard Loomwright flow with eval-specific flags:
 /launch-pad
 # (paste the requirement, let it produce a brief, then:)
 /supervisor job: .supervisor/jobs/pending/<saved-brief> --skip-preflight-sync --base-branch eval/<slug>/arm-ablation-a-no-qa-rules
@@ -254,14 +270,24 @@ Modify the agent prompts to present each budget as "default N, override with jus
 
 ```bash
 git checkout -b eval/<slug>/arm-ablation-c-soft-budgets <base-commit>
-git push -u origin eval/<slug>/arm-ablation-c-soft-budgets
-# Before starting the session, edit agent prompts to soften budgets:
+# Edit agent prompts to soften budgets:
 # - agents/supervisor.md: "budget: 50 tool calls" → "default budget: 50 tool calls (override with
 #   stated reasoning if a phase requires more)"
 # - agents/execute-manager.md: similar for 60-call budget
 # - agents/qa-executor.md: similar for 80/110/60 zones
-# Then run with eval-specific flags:
+# CRITICAL: commit + push the ablation edits BEFORE starting the session.
+# Skills are preloaded from ${CLAUDE_PLUGIN_ROOT} (the install dir), not the checkout,
+# and Supervisor workers run in worktrees created from the pushed branch tip — uncommitted
+# edits never reach either surface.
+git add loomwright/agents/supervisor.md loomwright/agents/execute-manager.md loomwright/agents/qa-executor.md
+git commit -m "eval(ablation-c): soften magic budgets to overridable defaults"
+git push -u origin eval/<slug>/arm-ablation-c-soft-budgets
+# Reinstall the plugin from the modified local source so the running session loads
+# the ablation edits (agent prompts are read from the install dir):
 claude
+/plugin uninstall loomwright
+/plugin install loomwright@atelier
+# Now run with eval-specific flags:
 /launch-pad
 # (paste the requirement, let it produce a brief, then:)
 /supervisor job: .supervisor/jobs/pending/<saved-brief> --skip-preflight-sync --base-branch eval/<slug>/arm-ablation-c-soft-budgets
@@ -294,17 +320,25 @@ counters (from `SUPERVISOR_RESULT.summary`), wall-clock notes,
 3. After metrics are extracted and recorded in the Results table, close throwaway PRs and delete
    eval branches (local + remote):
    ```bash
-   # Close any throwaway PRs created by Supervisor FINALIZE against eval branches:
+   # Close throwaway PRs and capture their head branches for cleanup:
+   head_branches=()
    for arm in arm-2-default arm-3-extras arm-ablation-a-no-qa-rules arm-ablation-c-soft-budgets; do
-     gh pr list --base "eval/<slug>/$arm" --state open --json number --jq '.[].number' \
-       | xargs -I{} gh pr close {} --comment "Eval throwaway PR — metrics extracted"
+     for pr in $(gh pr list --base "eval/<slug>/$arm" --state open --json number,headRefName \
+       --jq '.[] | "\(.number):\(.headRefName)"'); do
+       num="${pr%%:*}"; head="${pr#*:}"
+       gh pr close "$num" --comment "Eval throwaway PR — metrics extracted"
+       head_branches+=("$head")
+     done
    done
-   # Delete local branches:
+   # Delete local branches (arm-1 is local-only; Loomwright arms pushed for --base-branch):
    git branch -D eval/<slug>/arm-1-bare eval/<slug>/arm-2-default eval/<slug>/arm-3-extras \
      eval/<slug>/arm-ablation-a-no-qa-rules eval/<slug>/arm-ablation-c-soft-budgets
-   # Delete remote branches (arm-1 is local-only; Loomwright arms were pushed for --base-branch):
+   # Delete Supervisor's feature-branch heads (created by ACQUIRE, pushed by FINALIZE):
+   for h in "${head_branches[@]}"; do git branch -D "$h" 2>/dev/null; done
+   # Delete remote branches — eval base branches + Supervisor head branches:
    git push origin --delete eval/<slug>/arm-2-default eval/<slug>/arm-3-extras \
-     eval/<slug>/arm-ablation-a-no-qa-rules eval/<slug>/arm-ablation-c-soft-budgets
+     eval/<slug>/arm-ablation-a-no-qa-rules eval/<slug>/arm-ablation-c-soft-budgets \
+     "${head_branches[@]}"
    ```
 4. Eval session logs in `.supervisor/logs/` and `.supervisor/jobs/` artifacts are retained for
    audit but are not merged to main.
