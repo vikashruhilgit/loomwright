@@ -184,6 +184,14 @@ For each of the 5 corpus requirements, execute 3 arms from the same base commit.
 > **Arm 1 needs no reinstall** (it runs no plugin commands), but the ablated plugin from a prior
 > arm must still be cleaned up — see Isolation protocol step 5.
 
+> **Do NOT "simplify" the arms back to `/autonomous`.** §Protocol step 4 expresses a preference for
+> the in-session `/autonomous` path, and every Loomwright arm below deliberately uses the manual
+> `/launch-pad + /supervisor` two-step instead. This is not drift: the manual path is still fully
+> in-session, and it is the only way to pass the eval-critical flags. `/autonomous` forwards
+> **exactly** `--base-branch`, `--non-interactive`, `--cheap` (`commands/autonomous.md`) — it
+> silently drops `--skip-preflight-sync` (⇒ Phase 1.5 halts the run as SUPERSEDED) and, for arm 3,
+> `--sdk-runner` / `--multi-voter-heal` (⇒ arm 3 silently degrades into an arm-2 duplicate).
+
 **Arm 1 — Bare Claude Code (no Loomwright)**
 
 ```bash
@@ -348,7 +356,7 @@ After each arm completes, extract and record the pre-registered metrics:
 
 | Metric | Arm 1 (bare) source | Arm 2/3 (Loomwright) source |
 |--------|--------------------|-----------------------------|
-| `review_rounds_to_READY` | Manual count of review→fix cycles on the scratch branch (count commits that are fix responses to review feedback) | `POSTMORTEM_RESULT.review_rounds` in `.supervisor/postmortem/results.jsonl`, OR `REVIEW_HEAL_RESULT.fix_cycles` from the drain log. **Note:** these are produced by the until-mergeable review drain / `/pr-postmortem`, not by Supervisor's core Phase 4.5. The eval arms use manual `/launch-pad + /supervisor` (no `/autonomous`), so the default `auto_review` dispatch must fire after FINALIZE creates the PR, OR the operator must run `/review-pr --until-mergeable <pr-url>` manually on the throwaway PR. If neither runs, this cell will be blank — record `N/A (no drain)` and fall back to manual commit-count. |
+| `review_rounds_to_READY` | Manual count of review→fix cycles on the scratch branch (count commits that are fix responses to review feedback) | `POSTMORTEM_RESULT.review_rounds` in `.supervisor/postmortem/results.jsonl`, OR `REVIEW_HEAL_RESULT.fix_cycles` from the drain log. **Note:** these are produced by the until-mergeable review drain / `/pr-postmortem`, not by Supervisor's core Phase 4.5. The eval arms use manual `/launch-pad + /supervisor` (no `/autonomous`), so the default `auto_review` dispatch must fire after FINALIZE creates the PR, OR the operator must run `/review-pr --until-mergeable <pr-url>` manually on the throwaway PR. If neither runs, this cell will be blank — record `N/A (no drain)` and fall back to manual commit-count. **`READY` is unreachable by default on eval branches — pass `--required-checks all-non-neutral`:** the dispatch itself is NOT base-gated (verified: neither `dispatch-pr-review.sh` nor `hook-dispatch-on-pr-create.sh` filters on the PR's base), so the drain does fire for a non-`main`-base PR. But `review-heal` §U2 fails **CLOSED** when branch-protection metadata is unavailable, and *"no branch protection"* is explicitly one of those cases — an `eval/<slug>/arm-N` scratch branch has none, so the drain exits `ESCALATED` and never emits `READY`. `fix_cycles` is still populated (rounds run before the escalation), so the metric is recoverable either way; record the terminal decision alongside it. To make `READY` reachable, run the drain manually with the documented escape hatch: `/review-pr <pr-url> --until-mergeable --required-checks all-non-neutral`. |
 | `heal_iterations` | N/A — record `-` | `SUPERVISOR_RESULT.heal_iterations` in `.supervisor/logs/{session_id}.jsonl` (event `session_end`) |
 | `post_merge_defects` | Run ONE independent `/code-reviewer` pass on the arm's final branch diff (`git diff <base>..<arm-branch>`) — count BLOCKING + HIGH `new` findings | Same — run the SAME `/code-reviewer` configuration on each arm's diff for a fair comparison |
 | `wall_tokens` | Session usage total (Claude Code reports this at session end) | `token_ledger` event in `.supervisor/logs/{session_id}.jsonl` (field `token_proxy_transcript_bytes` when `proxy: true`, or real token counts when available) |
@@ -365,6 +373,7 @@ counters (from `SUPERVISOR_RESULT.summary`), wall-clock notes,
 3. After metrics are extracted and recorded in the Results table, close throwaway PRs and delete
    eval branches (local + remote):
    ```bash
+   # ⚠️ REPLACE <slug> THROUGHOUT BEFORE RUNNING — this block is not executable as pasted.
    # Step off the eval branches first — `git branch -D` refuses to delete the checked-out branch:
    git checkout main
    # Close throwaway PRs and capture their head branches for cleanup:
