@@ -153,6 +153,37 @@ For each of the 5 corpus requirements, execute 3 arms from the same base commit.
 > created PR targets the eval scratch branch itself; both the branch and the throwaway PR are
 > deleted after metric extraction (see Isolation protocol).
 
+> **Plugin version control (MANDATORY — all Loomwright arms):** this eval re-implements
+> Loomwright's *own* history, so the installed plugin is part of the experimental condition, not a
+> fixed background. **Every** Loomwright arm (2, 3, and both ablations) MUST reinstall the plugin
+> from the eval branch checkout *before* running any plugin command:
+>
+> ```bash
+> # With the eval branch checked out at <base-commit>:
+> claude
+> /plugin marketplace add <absolute-path-to-this-checkout>   # first time only
+> /plugin uninstall loomwright
+> /plugin install loomwright@atelier
+> ```
+>
+> This is load-bearing for two reasons, and skipping it invalidates the arm:
+> 1. **Version constancy.** `${CLAUDE_PLUGIN_ROOT}` is a *single shared install dir* — whatever was
+>    installed last is what runs. If an ablation arm reinstalls but its arm-2 baseline does not,
+>    the two arms differ by both the removed lever AND the plugin version. Reinstalling every arm
+>    from the same base commit holds the version constant within a requirement.
+> 2. **Solution leakage.** The currently-installed plugin is at `main`, which already *contains*
+>    the merged work the corpus requirement asks the agent to re-implement. Running an arm against
+>    it lets the agent read the finished answer out of its own preloaded skills/agent prompts.
+>    Installing from `<base-commit>` restores the pre-merge state.
+>
+> **Precondition:** `atelier` must be the **local-path** marketplace registered from this checkout
+> (`/plugin marketplace add /path/to/loomwright`, per README §Quick Start) — a git-remote-backed
+> marketplace of the same name would install the remote default branch and silently discard both
+> the base-commit pin and any ablation edits. Verify with `/plugin marketplace list` before arm 1.
+>
+> **Arm 1 needs no reinstall** (it runs no plugin commands), but the ablated plugin from a prior
+> arm must still be cleaned up — see Isolation protocol step 5.
+
 **Arm 1 — Bare Claude Code (no Loomwright)**
 
 ```bash
@@ -174,6 +205,10 @@ git checkout -b eval/<slug>/arm-2-default <base-commit>
 git push -u origin eval/<slug>/arm-2-default
 # Start a Claude Code session with the plugin:
 claude
+# MANDATORY: pin the plugin to this base commit (see "Plugin version control" above) —
+# the currently-installed plugin is at main and already contains the merged answer:
+/plugin uninstall loomwright
+/plugin install loomwright@atelier
 # Run the standard Loomwright flow with eval-specific flags:
 /launch-pad
 # (paste the requirement, let it produce a brief, then:)
@@ -190,6 +225,9 @@ cd loomwright/sdk-spike && npm install --no-audit --no-fund && npm run build && 
 git checkout -b eval/<slug>/arm-3-extras <base-commit>
 git push -u origin eval/<slug>/arm-3-extras
 claude
+# MANDATORY: pin the plugin to this base commit (see "Plugin version control" above):
+/plugin uninstall loomwright
+/plugin install loomwright@atelier
 # NOTE: /autonomous does NOT forward --sdk-runner or --multi-voter-heal (it forwards
 # only --base-branch, --non-interactive, --cheap). Use the manual two-step path:
 /launch-pad
@@ -214,7 +252,10 @@ layer from the default stack.
 
 Replace `qa-test-patterns/SKILL.md`, `qa-gates/SKILL.md`, and `qa-strategy/SKILL.md` (combined
 ~1,900 lines) with a single ~50-line intent document that states the testing goals without
-prescriptive patterns. The QA Executor agent prompt and Phase 3 execution are unchanged.
+prescriptive patterns. The QA Executor's **behavioral prompt body** and Phase 3 execution are
+unchanged — the only edit to `agents/qa-executor.md` is swapping the `skills:` preload list in its
+frontmatter to point at `qa-intent` instead of the three libraries. This keeps the ablation on a
+single lever (the rule libraries), not the agent's instructions.
 
 ```bash
 git checkout -b eval/<slug>/arm-ablation-a-no-qa-rules <base-commit>
@@ -240,7 +281,9 @@ git add loomwright/skills/qa-intent/ loomwright/agents/qa-executor.md
 git commit -m "eval(ablation-a): replace QA rule libraries with intent doc"
 git push -u origin eval/<slug>/arm-ablation-a-no-qa-rules
 # Reinstall the plugin from the modified local source so the running session loads
-# the ablation edits (skills preload from the install dir, not the working tree):
+# the ablation edits (skills preload from the install dir, not the working tree).
+# This is the SAME mandated reinstall as "Plugin version control" above — installing
+# from the eval branch pins the base-commit version AND applies the ablation edits:
 claude
 /plugin uninstall loomwright
 /plugin install loomwright@atelier
@@ -283,7 +326,9 @@ git add loomwright/agents/supervisor.md loomwright/agents/execute-manager.md loo
 git commit -m "eval(ablation-c): soften magic budgets to overridable defaults"
 git push -u origin eval/<slug>/arm-ablation-c-soft-budgets
 # Reinstall the plugin from the modified local source so the running session loads
-# the ablation edits (agent prompts are read from the install dir):
+# the ablation edits (agent prompts are read from the install dir).
+# This is the SAME mandated reinstall as "Plugin version control" above — installing
+# from the eval branch pins the base-commit version AND applies the ablation edits:
 claude
 /plugin uninstall loomwright
 /plugin install loomwright@atelier
@@ -320,6 +365,8 @@ counters (from `SUPERVISOR_RESULT.summary`), wall-clock notes,
 3. After metrics are extracted and recorded in the Results table, close throwaway PRs and delete
    eval branches (local + remote):
    ```bash
+   # Step off the eval branches first — `git branch -D` refuses to delete the checked-out branch:
+   git checkout main
    # Close throwaway PRs and capture their head branches for cleanup:
    head_branches=()
    for arm in arm-2-default arm-3-extras arm-ablation-a-no-qa-rules arm-ablation-c-soft-budgets; do
@@ -342,6 +389,21 @@ counters (from `SUPERVISOR_RESULT.summary`), wall-clock notes,
    ```
 4. Eval session logs in `.supervisor/logs/` and `.supervisor/jobs/` artifacts are retained for
    audit but are not merged to main.
+5. **Restore a clean plugin after every arm.** `${CLAUDE_PLUGIN_ROOT}` is a single shared install
+   dir, so an ablated or base-commit-pinned plugin persists into the *next* session — including a
+   different requirement's arms — and silently invalidates it. After each arm's metrics are
+   recorded:
+   ```bash
+   git checkout main
+   claude
+   /plugin uninstall loomwright
+   /plugin install loomwright@atelier   # reinstalls from main = the clean, current plugin
+   ```
+   **Ordering rule (belt-and-suspenders):** run the two ablation arms **last** within a
+   requirement, after arm-1/2/3, so a missed restore degrades one arm rather than the baselines it
+   is compared against. Verify the active install from the `/plugin` panel's listed version before
+   starting any arm — do **not** infer it from `~/.claude/plugins/cache/`, which retains stale
+   leftovers and disagrees with the desktop app's own install.
 
 ### Re-run protocol (standing — per original requirement §Scope item 4)
 
