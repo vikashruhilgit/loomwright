@@ -100,6 +100,412 @@ in this file.
 7. **Recording:** one row per run in the results table below, filled at run time, never
    retroactively edited (append a correction row instead).
 
+## Corpus
+
+> ### ⚠️ SUPERSEDED — the corpus below is retained for the record, NOT for execution
+>
+> **Amended 2026-07-27, before any run.** The Loomwright-history corpus in this section is
+> **superseded** by §"Corpus v2 (active)" further down. It is kept verbatim because the *reason*
+> it was replaced is itself a finding worth preserving. Three defects, all discovered by probing
+> rather than reasoning:
+>
+> 1. **Solution leakage.** Re-implementing Loomwright's own merged history means the running
+>    plugin already *contains* the answer the agent is asked to build. No pinning scheme fully
+>    removes this — it is inherent to using your own history as the corpus.
+> 2. **Arm 3 impossible on 4 of 5 entries.** `--sdk-runner` and `--multi-voter-heal` were
+>    introduced in **v15.8.0**, but four base commits predate it (v15.0.0 / v14.27.0 / v14.41.0 /
+>    v14.48.0 — verified by grepping `commands/supervisor.md` at each SHA). Under base-commit
+>    pinning, arm 3 would run at **n=1**, making the SDK-runner verdict `INSUFFICIENT DATA` by
+>    construction.
+> 3. **The plugin directory was renamed** (`ai-agent-manager-plugin/` → `loomwright/`), so a single
+>    hardcoded `--plugin-dir` path is wrong for the three older entries.
+>
+> **Consequence:** the "plugin-version policy" open decision recorded in §Amendment history is
+> **RESOLVED by this swap, not by choosing between its options** — Corpus v2's work is genuinely
+> unimplemented, so there is nothing to leak, no rewind, and every arm runs one fixed plugin
+> version with arm 3 available throughout.
+
+Five requirements selected from `.supervisor/jobs/done/`. Selection criteria per §Protocol step 1:
+small-to-medium, orchestration-shaped (multi-subtask, Phase 3 loop exercised), at least one with a
+real cross-subtask file dependency. All base commits verified reachable via `git cat-file -t`.
+
+| # | Slug | Brief | Base commit | PR | Subtasks | Cross-subtask dependency | Selection rationale |
+|---|------|-------|-------------|-----|----------|--------------------------|---------------------|
+| 1 | curation-anti-rot | `2026-07-23-curation-anti-rot.md` | `f55380b` | #106 | 6 (3 LAUNCHABLE batch 1 + 3 batch 2) | **YES — ST-4 requires ST-3's `write-lessons.sh supersede` verb** (kind: subcommand); ST-5a requires ST-1/ST-2 interface shapes for docs | Most recent (v15.14.0), multi-batch, largest subtask count; dependency-materialization gap will surface if arm-3's SDK runner cannot merge ST-3 into ST-4's worktree |
+| 2 | rules-enforcement | `2026-07-01-rules-enforcement.md` | `872cc81` | #88 | 4 (ST-2 BLOCKED by ST-1) | **YES — ST-2 shares `commands/rules.md` with ST-1** (kind: symbol); ST-3/ST-4 advisory wiring reads ST-1's `add-rule.sh` | Multi-seam wiring (3 advisory integration points across agents/commands/scripts); BLOCKED subtask exercises dependency ordering |
+| 3 | learning-loop-phase1-2 | `auto-2026-06-17-040909-learning-loop-phase1-2.md` | `516687a` | #61 | 4 (all LAUNCHABLE) | No — parallel independent subtasks | Tests fully parallel orchestration (4 independent agent-prompt edits); no dependency ordering needed; baseline for "does the orchestration add value over sequential?" |
+| 4 | review-drain-worktree-isolation | `2026-06-21-review-drain-worktree-isolation.md` | `142319e` | #75 | 3 (ST-3 BLOCKED by ST-1+ST-2) | **YES — ST-3 depends on ST-1+ST-2 for accurate version bump** | Multi-dependency (ST-3 requires TWO providers); 8-file modification in ST-1 with lifecycle/cleanup/failure-injection gates |
+| 5 | handoff-digest | `2026-06-28-handoff-digest.md` | `49868b1` | #82 | 4 (ST-2 BLOCKED by ST-1) | YES — ST-2 tests ST-1's `build-handoff.sh` output | Create-then-test pattern (engine + fixture-driven test); new file creation (not just modification); mirrors the `/insights` deterministic-assembler idiom |
+
+**Dependency-materialization gap coverage (§Protocol step 1 hard requirement):** corpus entries #1
+(curation-anti-rot), #2 (rules-enforcement), and #5 (handoff-digest) each have a real cross-subtask
+file dependency where a dependent subtask reads/invokes a file the producer subtask creates or
+modifies. Under arm 3 (SDK runner), the known residual divergence 3 (`SDK_RUNNER_SPIKE.md`) means
+these dependents will branch from the feature branch without the producer's commits — the eval must
+surface whether this causes test failures or incorrect output in the measured comparison. Entries #1
+and #2 are the **primary** carriers because the dependent subtask directly calls a new subcommand /
+symbol the producer introduces (immediate crash on absence); #5's ST-2 tests ST-1's output file
+(create-then-test — a genuine materialization case, but failure is a test assertion rather than a
+missing-symbol crash, so it's a softer signal). #4's dependency is coordination/ordering (version
+bump accuracy), not file materialization.
+
+## Corpus v2 (ACTIVE — amended 2026-07-27, before any run)
+
+**Repository: `vikashruhilgit/ntfs-tool`** — a Swift NTFS read/write toolkit (NTFSCore library +
+`ntfsctl` CLI + FSKit extension + menu-bar app), 155 commits, fully owned by the operator.
+**Single base commit for every arm of every requirement: `5df1ded`** (`origin/main`,
+2026-07-27). All arms run **plugin v15.14.0**.
+
+Why this corpus resolves what the superseded one could not:
+
+| Problem with Corpus v1 | Status under Corpus v2 |
+|---|---|
+| Solution leakage — plugin contains the merged answer | **Gone.** The plugin has no NTFS implementation; the work is genuinely unbuilt. |
+| Arm 3 impossible on 4/5 entries (flags postdate base commits) | **Gone.** One base commit at plugin v15.14.0 ⇒ `--sdk-runner` + `--multi-voter-heal` available on all 5. |
+| Plugin-dir rename across base commits | **Gone.** No rewind; one path. |
+| Version confound between arms | **Gone.** Version is constant by construction, so an ablation differs from arm 2 by exactly one lever. |
+
+Requirements are the five in `docs/backlog/pending-followups/` on `ntfs-tool@main`. **Each was
+verified open against source, not taken from the project's own backlog prose** — that check
+mattered: two other STATUS.md items claimed pending were already implemented, and a third
+(`renameItem`) was wrong in three separate places.
+
+| # | Requirement | Doc | Verified open by | Subtask shape | Cross-subtask dependency |
+|---|---|---|---|---|---|
+| 1 | `ntfsctl tree` + `find` | `03-tree-and-find.md` | neither in `ntfsctl.swift:17` `subcommands:` | 3 (walker → 2 consumers) | **YES — strongest.** ST-2 (`tree`) and ST-3 (`find`) both *call* the shared recursive walker ST-1 creates. Consumers cannot compile until the producer lands. |
+| 2 | Streaming `$Bitmap` reader | `02-streaming-bitmap.md` | `Bitmap.swift:12` holds whole `Data` blob | 3-4 (core + consumers + tests) | **YES.** Allocator (`findFreeRun`, `_allocHint`, `allocateIndexClusters`) and `RunlistBitmapAudit` all consume the changed API. |
+| 3 | `NTFSError` structured model | `05-ntfserror-model.md` | flat enum; `isOverflowDescription` (`Volume.swift:6081`) string-matches | 3-4 (model + migration + tests) | **YES.** Every `catch … where isOverflowDescription(desc)` site must migrate to the new `kind` in lockstep with the model. |
+| 4 | `cp --resume` | `01-cp-resume.md` | no `resume` symbol in `Cp.swift` | 2-3 (flag + compare + tests) | Moderate — tests depend on the comparison helper. |
+| 5 | FSKit `createLink` | `04-fskit-link-callbacks.md` | `NTFSVolume.swift:389` returns `posixError(EROFS)` | 2-3 | Moderate — errno mapping + oracle validation depend on the write path. |
+
+**Dependency-materialization gap coverage (§Protocol step 1 hard requirement — satisfied):**
+entry **1** is the cleanest instance the eval has had. `tree` and `find` are separate subtasks that
+*import and call* a walker a third subtask creates, so under arm 3 the SDK runner's residual
+divergence 3 (`SDK_RUNNER_SPIKE.md` — dependents branch from the feature branch without producer
+commits) produces a **compile failure**, not a subtle behavioural difference. Entries 2 and 3 are
+secondary carriers. This is a stronger signal than Corpus v1 offered, where the dependency was a
+new subcommand's *runtime* absence.
+
+**Metric availability check (done, not assumed):** `ntfs-tool` has `ci.yml`, `release.yml`, and —
+as of 2026-07-27 — a working `claude-code-review.yml`, so `review_rounds_to_READY` has a real
+independent review signal. Getting that reviewer to actually post took four config fixes
+(`pull-requests: write` + `concurrency`; `--comment` + `issues: write` + `fetch-depth: 0`;
+`--allowed-tools` + `actions: read`; an instruction preamble around the slash command) — **each of
+which failed GREEN**. Before trusting this metric during a run, assert on posted comments
+(`gh pr view <n> --json comments`), never on the check's conclusion.
+
+**Pre-flight additions learned the hard way (add to the runbook's checklist):**
+- **GitHub Actions spending limit.** A burst of `claude-code-review` runs (~$0.50 and 20+ turns
+  each) exhausted the account limit mid-session on 2026-07-27 and failed every subsequent job in
+  ~2s at startup. 17-25 eval runs are far heavier. Check headroom before starting, and note that
+  a **public** repo gets free Actions minutes (`ntfs-tool` was made public for this reason).
+- **Branch protection.** `loomwright@main` requires 1 approving review + `ci`; an author cannot
+  approve their own PR, so an unattended run will park at `BLOCKED`. Verify the eval repo's
+  protection (`gh api repos/<o>/<r>/branches/main/protection`) before assuming a PR can land.
+
+## Execution Runbook
+
+Step-by-step instructions for executing each arm. All runs use the same base commit per requirement
+(column "Base commit" in the Corpus table above).
+
+### Scratch branch naming
+
+```
+eval/<slug>/arm-<N>[-<variant>]
+```
+
+Examples: `eval/curation-anti-rot/arm-1-bare`, `eval/rules-enforcement/arm-2-default`,
+`eval/handoff-digest/arm-3-extras`, `eval/curation-anti-rot/arm-ablation-a-no-qa-rules`.
+
+### Per-requirement arm execution
+
+For each of the 5 corpus requirements, execute 3 arms from the same base commit.
+
+> **Eval-specific flags (all Loomwright arms):** every `/supervisor` invocation below passes
+> `--skip-preflight-sync` (the corpus re-implements already-merged work — Phase 1.5 would classify
+> it as SUPERSEDED and halt) and `--base-branch eval/<slug>/arm-N` (prevents FINALIZE from creating
+> a PR to `main` — the eval's own Isolation protocol says "NO PRs to main"). The branch MUST be
+> pushed to origin before `/supervisor` runs — ACQUIRE does `git fetch origin "$BASE_BRANCH"` and
+> FINALIZE does `gh pr create --base "$BASE_BRANCH"`, both of which require a remote ref. The
+> created PR targets the eval scratch branch itself; both the branch and the throwaway PR are
+> deleted after metric extraction (see Isolation protocol).
+
+> **Plugin version control (MANDATORY — all Loomwright arms):** this eval re-implements
+> Loomwright's *own* history, so the plugin the agent runs is part of the experimental condition,
+> not a fixed background. **Every** Loomwright arm (2, 3, and both ablations) MUST launch with
+> `--plugin-dir` pointed at the eval branch checkout:
+>
+> ```bash
+> # With the eval branch checked out at <base-commit>:
+> claude --plugin-dir <absolute-path-to-this-checkout>/loomwright
+> ```
+>
+> Note the path is the **nested plugin dir** (`<checkout>/loomwright`), not the marketplace-wrapper
+> repo root. `--plugin-dir` loads the plugin from disk **for that session only**.
+>
+> This is load-bearing for two reasons, and skipping it invalidates the arm:
+> 1. **Version constancy.** The arm must run the plugin as of its own base commit. Because
+>    `--plugin-dir` is session-scoped and reads the working tree, every arm of a requirement runs
+>    the same version, and an ablation differs from its arm-2 baseline by the removed lever ONLY.
+> 2. **Solution leakage.** Any globally-installed plugin is at `main`, which already *contains* the
+>    merged work the corpus requirement asks the agent to re-implement — letting it read the
+>    finished answer out of its own preloaded skills/agent prompts. Pointing at `<base-commit>`
+>    restores the pre-merge state.
+>
+> **Why NOT `/plugin install loomwright@atelier` (verified 2026-07-27, do not reintroduce):** an
+> earlier draft of this runbook mandated a global uninstall/reinstall to pin the version. That is
+> **broken and must not be used.** On the maintainer's machine `claude plugin marketplace list`
+> shows `atelier` is **Git-remote-backed** (`github.com/vikashruhilgit/loomwright.git`), not a
+> local path — so the reinstall pulls the remote default branch and silently discards **both** the
+> base-commit pin and any ablation edits. The same probe found the CLI-scope install stale and
+> disabled (`loomwright@atelier` v15.9.0, `Status: ✘ disabled`) while the desktop session was
+> actually running v15.14.0 from a separate session-scoped path — three divergent surfaces, none
+> of which the reinstall reliably controls. `--plugin-dir` sidesteps all three.
+>
+> **Corollary — no cleanup step is needed.** Because `--plugin-dir` never mutates the global
+> install, an ablated plugin cannot leak into a later arm or a later requirement. There is no
+> shared `${CLAUDE_PLUGIN_ROOT}` to restore between arms.
+>
+> **Arm 1 precondition (assert, don't assume):** arm 1 must run with **no** Loomwright loaded —
+> which means omitting `--plugin-dir` *and* confirming no globally-enabled install is present.
+> Verify before the first arm-1 run:
+>
+> ```bash
+> claude plugin list | grep -A3 loomwright   # must be absent, or Status: ✘ disabled
+> ```
+>
+> If it is enabled, disable it for the duration of the eval (`claude plugin disable loomwright`)
+> and record that in the run notes — an arm-1 that silently had the plugin loaded invalidates the
+> baseline every other arm is measured against.
+
+> **Do NOT "simplify" the arms back to `/autonomous`.** §Protocol step 4 expresses a preference for
+> the in-session `/autonomous` path, and every Loomwright arm below deliberately uses the manual
+> `/launch-pad + /supervisor` two-step instead. This is not drift: the manual path is still fully
+> in-session, and it is the only way to pass the eval-critical flags. `/autonomous` forwards
+> **exactly** `--base-branch`, `--non-interactive`, `--cheap` (`commands/autonomous.md`) — it
+> silently drops `--skip-preflight-sync` (⇒ Phase 1.5 halts the run as SUPERSEDED) and, for arm 3,
+> `--sdk-runner` / `--multi-voter-heal` (⇒ arm 3 silently degrades into an arm-2 duplicate).
+
+**Arm 1 — Bare Claude Code (no Loomwright)**
+
+```bash
+git checkout -b eval/<slug>/arm-1-bare <base-commit>
+# Start a plain Claude Code session (no plugin commands):
+claude
+# Paste the requirement text from the brief's ## Task / ## Goal section.
+# NOTE: arm 1 receives the raw requirement goal only (not the full Launch Pad brief),
+# because the eval measures the FULL Loomwright stack including Launch Pad's planning.
+# This input asymmetry is intentional — document it if adjusting the protocol.
+# Implement on this branch. Do NOT use /supervisor, /launch-pad, or any Loomwright commands.
+# When done, record metrics (see Recording Protocol below) and exit.
+```
+
+**Arm 2 — Loomwright default**
+
+```bash
+git checkout -b eval/<slug>/arm-2-default <base-commit>
+git push -u origin eval/<slug>/arm-2-default
+# Start a Claude Code session with the plugin PINNED to this base commit
+# (see "Plugin version control" above — a global install would be at main and
+# would already contain the merged answer):
+claude --plugin-dir <absolute-path-to-this-checkout>/loomwright
+# Run the standard Loomwright flow with eval-specific flags:
+/launch-pad
+# (paste the requirement, let it produce a brief, then:)
+/supervisor job: .supervisor/jobs/pending/<saved-brief> --skip-preflight-sync --base-branch eval/<slug>/arm-2-default
+# Record metrics and exit.
+```
+
+**Arm 3 — Loomwright + SDK runner + multi-voter heal**
+
+```bash
+# Pre-requisite: build the SDK spike runner (once per machine):
+cd loomwright/sdk-spike && npm install --no-audit --no-fund && npm run build && cd -
+
+git checkout -b eval/<slug>/arm-3-extras <base-commit>
+git push -u origin eval/<slug>/arm-3-extras
+# Plugin PINNED to this base commit (see "Plugin version control" above):
+claude --plugin-dir <absolute-path-to-this-checkout>/loomwright
+# NOTE: /autonomous does NOT forward --sdk-runner or --multi-voter-heal (it forwards
+# only --base-branch, --non-interactive, --cheap). Use the manual two-step path:
+/launch-pad
+# (paste the requirement, let it produce a brief, then:)
+/supervisor job: .supervisor/jobs/pending/<saved-brief> --sdk-runner --multi-voter-heal --skip-preflight-sync --base-branch eval/<slug>/arm-3-extras
+# Record metrics and exit.
+```
+
+> **Known gap (arm 3):** the SDK runner's residual divergence 3 (`SDK_RUNNER_SPIKE.md`) means
+> dependent subtasks branch from the feature branch, not from producer output. For corpus entries
+> #1, #2, and #5 (which have real cross-subtask file dependencies), arm-3 runs may surface test
+> failures or incorrect output that the default path (arm 2) avoids via sequential worktree merges.
+> This is the gap the eval is designed to measure.
+
+### Ablation arms (additive amendment — budgeted separately from §Protocol step 6)
+
+Each ablation arm modifies ONE lever. Execute from the same base commit as the corresponding
+requirement's base arms. Use arm-2 (Loomwright default) as the baseline — the ablation removes one
+layer from the default stack.
+
+**Ablation (a) — minus QA rule libraries**
+
+Replace `qa-test-patterns/SKILL.md`, `qa-gates/SKILL.md`, and `qa-strategy/SKILL.md` (combined
+~1,900 lines) with a single ~50-line intent document that states the testing goals without
+prescriptive patterns. The QA Executor's **behavioral prompt body** and Phase 3 execution are
+unchanged — the only edit to `agents/qa-executor.md` is swapping the `skills:` preload list in its
+frontmatter to point at `qa-intent` instead of the three libraries. This keeps the ablation on a
+single lever (the rule libraries), not the agent's instructions.
+
+```bash
+git checkout -b eval/<slug>/arm-ablation-a-no-qa-rules <base-commit>
+# Create the replacement intent doc:
+mkdir -p loomwright/skills/qa-intent
+cat > loomwright/skills/qa-intent/SKILL.md << 'INTENT'
+---
+name: qa-intent
+version: 1.0.0
+description: Lightweight QA intent (ablation — replaces qa-test-patterns + qa-gates + qa-strategy)
+---
+# QA Intent
+Test the implementation against the acceptance criteria. Use Playwright for E2E tests where
+applicable. Verify: (1) golden path works, (2) edge cases don't crash, (3) no regressions in
+existing tests. Prefer integration tests over unit tests for orchestration-shaped requirements.
+INTENT
+# Update qa-executor agent frontmatter to preload qa-intent instead of the three libraries.
+# CRITICAL: commit + push the ablation edits BEFORE starting the session.
+# Skills are preloaded from ${CLAUDE_PLUGIN_ROOT} (the install dir), not the checkout,
+# and Supervisor workers run in worktrees created from the pushed branch tip — uncommitted
+# edits never reach either surface.
+git add loomwright/skills/qa-intent/ loomwright/agents/qa-executor.md
+git commit -m "eval(ablation-a): replace QA rule libraries with intent doc"
+git push -u origin eval/<slug>/arm-ablation-a-no-qa-rules
+# Launch with --plugin-dir so the session loads the ablation edits from this branch.
+# This is the SAME mandated pin as "Plugin version control" above — pointing at the
+# eval checkout pins the base-commit version AND applies the ablation edits in one step:
+claude --plugin-dir <absolute-path-to-this-checkout>/loomwright
+# Now run the standard Loomwright flow with eval-specific flags:
+/launch-pad
+# (paste the requirement, let it produce a brief, then:)
+/supervisor job: .supervisor/jobs/pending/<saved-brief> --skip-preflight-sync --base-branch eval/<slug>/arm-ablation-a-no-qa-rules
+```
+
+> **Note:** ablation (a) creates a transient `qa-intent` skill that is NOT registered in
+> `SKILLS_INDEX.md` or counted in the plugin skill tally — it exists only on the eval branch
+> and is discarded after recording. Do not bump skill counts for it.
+
+**Incident-class regression check (ablation a):** the QA rule libraries encode test-isolation
+patterns, infrastructure-aware fixtures (Mailpit/MailHog), and budget zones (80/110/60). Watch for:
+tests that leak state across runs, missing infrastructure detection, or budget exhaustion causing
+premature test-suite termination.
+
+> **Ablation (b) — minus prompt-hook schema validators:** deferred from round 1. If budget permits
+> after (a) and (c), add this arm per the original requirement §Scope item 2(b).
+
+**Ablation (c) — minus magic budgets/caps**
+
+Convert hardcoded numeric budgets (Supervisor 50-call, Execute Manager 60-call, QA Executor
+80/110/60, worker turn limits) to soft defaults the model may override with stated reasoning.
+Modify the agent prompts to present each budget as "default N, override with justification."
+
+```bash
+git checkout -b eval/<slug>/arm-ablation-c-soft-budgets <base-commit>
+# Edit agent prompts to soften budgets:
+# - agents/supervisor.md: "budget: 50 tool calls" → "default budget: 50 tool calls (override with
+#   stated reasoning if a phase requires more)"
+# - agents/execute-manager.md: similar for 60-call budget
+# - agents/qa-executor.md: similar for 80/110/60 zones
+# CRITICAL: commit + push the ablation edits BEFORE starting the session.
+# Skills are preloaded from ${CLAUDE_PLUGIN_ROOT} (the install dir), not the checkout,
+# and Supervisor workers run in worktrees created from the pushed branch tip — uncommitted
+# edits never reach either surface.
+git add loomwright/agents/supervisor.md loomwright/agents/execute-manager.md loomwright/agents/qa-executor.md
+git commit -m "eval(ablation-c): soften magic budgets to overridable defaults"
+git push -u origin eval/<slug>/arm-ablation-c-soft-budgets
+# Launch with --plugin-dir so the session loads the ablation edits from this branch.
+# This is the SAME mandated pin as "Plugin version control" above — pointing at the
+# eval checkout pins the base-commit version AND applies the ablation edits in one step:
+claude --plugin-dir <absolute-path-to-this-checkout>/loomwright
+# Now run with eval-specific flags:
+/launch-pad
+# (paste the requirement, let it produce a brief, then:)
+/supervisor job: .supervisor/jobs/pending/<saved-brief> --skip-preflight-sync --base-branch eval/<slug>/arm-ablation-c-soft-budgets
+```
+
+**Incident-class regression check (ablation c):** magic budgets prevent runaway token spend and
+context exhaustion. Watch for: sessions that consume >2× the default arm's wall tokens, phases
+that loop without terminating, or context-window exhaustion causing mid-task failures.
+
+### Recording protocol
+
+After each arm completes, extract and record the pre-registered metrics:
+
+| Metric | Arm 1 (bare) source | Arm 2/3 (Loomwright) source |
+|--------|--------------------|-----------------------------|
+| `review_rounds_to_READY` | Manual count of review→fix cycles on the scratch branch (count commits that are fix responses to review feedback) | `POSTMORTEM_RESULT.review_rounds` in `.supervisor/postmortem/results.jsonl`, OR `REVIEW_HEAL_RESULT.fix_cycles` from the drain log. **Note:** these are produced by the until-mergeable review drain / `/pr-postmortem`, not by Supervisor's core Phase 4.5. The eval arms use manual `/launch-pad + /supervisor` (no `/autonomous`), so the default `auto_review` dispatch must fire after FINALIZE creates the PR, OR the operator must run `/review-pr --until-mergeable <pr-url>` manually on the throwaway PR. If neither runs, this cell will be blank — record `N/A (no drain)` and fall back to manual commit-count. **`READY` is unreachable by default on eval branches — pass `--required-checks all-non-neutral`:** the dispatch itself is NOT base-gated (verified: neither `dispatch-pr-review.sh` nor `hook-dispatch-on-pr-create.sh` filters on the PR's base), so the drain does fire for a non-`main`-base PR. But `review-heal` §U2 fails **CLOSED** when branch-protection metadata is unavailable, and *"no branch protection"* is explicitly one of those cases — an `eval/<slug>/arm-N` scratch branch has none, so the drain exits `ESCALATED` and never emits `READY`. `fix_cycles` is still populated (rounds run before the escalation), so the metric is recoverable either way; record the terminal decision alongside it. To make `READY` reachable, run the drain manually with the documented escape hatch: `/review-pr <pr-url> --until-mergeable --required-checks all-non-neutral`. |
+| `heal_iterations` | N/A — record `-` | `SUPERVISOR_RESULT.heal_iterations` in `.supervisor/logs/{session_id}.jsonl` (event `session_end`) |
+| `post_merge_defects` | Run ONE independent `/code-reviewer` pass on the arm's final branch diff (`git diff <base>..<arm-branch>`) — count BLOCKING + HIGH `new` findings | Same — run the SAME `/code-reviewer` configuration on each arm's diff for a fair comparison |
+| `wall_tokens` | Session usage total (Claude Code reports this at session end) | `token_ledger` event in `.supervisor/logs/{session_id}.jsonl` (field `token_proxy_transcript_bytes` when `proxy: true`, or real token counts when available) |
+
+**Secondary observables** (recorded, not decision inputs): `heal_decision`, `rubric_score` (where
+the brief has an `## Outcomes Rubric`), arm-3 `findings_raised`/`findings_refuted`/`findings_fixed`
+counters (from `SUPERVISOR_RESULT.summary`), wall-clock notes,
+`token-cost-per-subtask` (arm-3 only, per the 2026-07-18 amendment).
+
+### Isolation protocol
+
+1. All eval work happens on scratch branches — **NO PRs to main from eval runs**.
+2. Same base commit for all 3 arms of a requirement (enforced by the Corpus table above).
+3. After metrics are extracted and recorded in the Results table, close throwaway PRs and delete
+   eval branches (local + remote):
+   ```bash
+   # ⚠️ REPLACE <slug> THROUGHOUT BEFORE RUNNING — this block is not executable as pasted.
+   # Step off the eval branches first — `git branch -D` refuses to delete the checked-out branch:
+   git checkout main
+   # Close throwaway PRs and capture their head branches for cleanup:
+   head_branches=()
+   for arm in arm-2-default arm-3-extras arm-ablation-a-no-qa-rules arm-ablation-c-soft-budgets; do
+     for pr in $(gh pr list --base "eval/<slug>/$arm" --state open --json number,headRefName \
+       --jq '.[] | "\(.number):\(.headRefName)"'); do
+       num="${pr%%:*}"; head="${pr#*:}"
+       gh pr close "$num" --comment "Eval throwaway PR — metrics extracted"
+       head_branches+=("$head")
+     done
+   done
+   # Delete local branches (arm-1 is local-only; Loomwright arms pushed for --base-branch):
+   git branch -D eval/<slug>/arm-1-bare eval/<slug>/arm-2-default eval/<slug>/arm-3-extras \
+     eval/<slug>/arm-ablation-a-no-qa-rules eval/<slug>/arm-ablation-c-soft-budgets
+   # Delete Supervisor's feature-branch heads (created by ACQUIRE, pushed by FINALIZE):
+   for h in "${head_branches[@]}"; do git branch -D "$h" 2>/dev/null; done
+   # Delete remote branches — eval base branches + Supervisor head branches:
+   git push origin --delete eval/<slug>/arm-2-default eval/<slug>/arm-3-extras \
+     eval/<slug>/arm-ablation-a-no-qa-rules eval/<slug>/arm-ablation-c-soft-budgets \
+     "${head_branches[@]}"
+   ```
+4. Eval session logs in `.supervisor/logs/` and `.supervisor/jobs/` artifacts are retained for
+   audit but are not merged to main.
+5. **Plugin state needs no cleanup — by construction.** Because every Loomwright arm launches with
+   session-scoped `--plugin-dir` (§"Plugin version control") and never installs globally, an
+   ablated or base-commit-pinned plugin **cannot** persist into the next arm or the next
+   requirement. There is no shared install dir to restore and no ordering rule to remember.
+   > This replaces an earlier draft that mandated a per-arm global uninstall/reinstall plus an
+   > "ablations last" ordering rule. Both were mitigations for a shared-install hazard that
+   > `--plugin-dir` removes outright — and the reinstall itself was independently broken (see
+   > §"Why NOT `/plugin install loomwright@atelier`"). Do not reintroduce either.
+
+   The one piece of global state still worth asserting is the **arm-1 baseline**: confirm no
+   globally-enabled Loomwright is present before each arm-1 run (`claude plugin list | grep -A3
+   loomwright`). Do **not** infer plugin state from `~/.claude/plugins/cache/` — it retains stale
+   leftovers and disagreed with both the CLI-scope install and the running desktop session when
+   this was probed.
+
+### Re-run protocol (standing — per original requirement §Scope item 4)
+
+Re-run the ablation set on every major model release (e.g., Claude 5 → Claude 6). Use the same
+corpus, same base commits, same metrics. Compare cross-model results to detect release-dependent
+verdicts. If a layer that was CUT on model N becomes competitive on model N+1, record the finding
+but do NOT re-add the layer without a fresh eval cycle (pre-register the re-add hypothesis first).
+A `model-capability` configuration knob is a possible follow-up ONLY if re-run results show
+release-dependent verdicts — do not build it speculatively.
+
 ## Results (per-run — EMPTY until runs execute; no metric added after first run)
 
 | requirement | arm | review_rounds_to_READY | heal_iterations | post_merge_defects | wall_tokens | notes |
@@ -110,3 +516,108 @@ in this file.
 
 _Pending. To be filled after the 15 runs, followed by the decision-rule verdict per layer:
 SDK runner graduates to v16 OR is cut; each Loomwright layer that fails to beat arm 1 is cut._
+
+## Per-layer verdict (EMPTY until runs execute — closed 3-value enum, no third outcome)
+
+One row per layer under test. **`verdict` is a closed enum: `KEEP` | `CUT` | `INSUFFICIENT DATA`.**
+The pre-committed decision rule (§"Decision rule") admits no fourth value — in particular there is
+no "keep with caveats" and no "defer". A layer that did not move its metric is `CUT`, not defended.
+
+- **`KEEP`** requires naming the metric that moved *and* the magnitude, cited from the Results table.
+- **`CUT`** requires a follow-up requirement stub to exist before this row is final (§Scope item 5;
+  no deletions are performed in this item — verdicts only).
+- **`INSUFFICIENT DATA`** is legitimate ONLY when the run cap was hit or an arm failed to execute;
+  it must name what would resolve it. It is not a way to avoid cutting a layer.
+
+| Layer under test | Arms compared | Metric that moved (cite Results row) | Magnitude | Verdict | Follow-up stub (CUT only) |
+|---|---|---|---|---|---|
+| SDK runner | arm 2 vs arm 3 | | | | |
+| Multi-voter heal | arm 2 vs arm 3 | | | | |
+| QA rule libraries (~1,904 lines) | arm 2 vs ablation (a) | | | | |
+| Magic budgets / caps | arm 2 vs ablation (c) | | | | |
+| Whole Loomwright stack | arm 1 vs arm 2 | | | | |
+
+> **Arm-3 confound (record, do not silently split):** arm 3 moves **two** levers at once (SDK runner
+> AND multi-voter heal), so an arm-2-vs-arm-3 delta cannot by itself attribute the change to either
+> row above. If the delta is non-zero, both rows are `INSUFFICIENT DATA` pending a single-lever
+> follow-up arm — not a split guess. This is a known limitation of the pre-registered 3-arm shape,
+> surfaced here rather than resolved by inference.
+
+## Incident-class regression log (EMPTY until ablation arms execute)
+
+§Scope item 3: incident-derived guards are **tested, not presumed** — an ablation that removes a
+guard must watch for the original incident class recurring, and *a guard that still prevents its
+incident KEEPS regardless of metric movement* (empirical incident data overrides the Bitter Lesson
+prior). One row per ablated guard; the watch criteria are defined per-arm in §"Ablation arms".
+
+| Ablated guard | Arm | Incident class watched for | Recurred? | Evidence | Effect on verdict |
+|---|---|---|---|---|---|
+| QA rule libraries | ablation (a) | State leaking across test runs; missing infrastructure detection (Mailpit/MailHog); budget exhaustion terminating the suite early | | | |
+| Magic budgets / caps | ablation (c) | Session >2× default arm's wall tokens; non-terminating phase loop; context-window exhaustion mid-task | | | |
+
+> **Precedence rule:** if `Recurred? = YES`, the layer is `KEEP` in the verdict table even when its
+> pre-registered metric did not move. Record the incident evidence in both tables.
+
+## Amendment history
+
+Pre-registration discipline (§Protocol): amendments are **additive only**, recorded with a date,
+and never weaken the original protocol. The original §Question → §Protocol text is byte-unchanged
+above; verify with `git diff origin/main...HEAD -- <this file> | grep -c '^-[^-]'` → must be `0`.
+
+| Date | Amendment | Additive? | Results table state at amendment time |
+|---|---|---|---|
+| 2026-07-18 | Added `token-cost-per-subtask` as an arm-3 secondary observable (§"Pre-registered metrics") | Yes — new observable, no metric removed or redefined | EMPTY (verified) |
+| 2026-07-24 | Added §Corpus (5 requirements + base commits) and §"Execution Runbook" (3 base arms + ablation arms (a)/(c); (b) deferred and recorded) | Yes — operationalizes the existing protocol; no protocol text altered | EMPTY (verified) |
+| 2026-07-27 | Replaced the arm plugin-pinning mechanism with session-scoped `--plugin-dir` after empirically falsifying the global uninstall/reinstall path (§"Why NOT `/plugin install loomwright@atelier`"); added §"Per-layer verdict", §"Incident-class regression log", and this history | Yes — corrects an execution mechanism and adds recording surfaces; no metric, arm, or decision rule changed | EMPTY (verified) |
+| 2026-07-27 | **Corpus swapped to `vikashruhilgit/ntfs-tool` (§"Corpus v2")**, single base commit `5df1ded`, all arms at plugin v15.14.0. Corpus v1 marked SUPERSEDED and retained verbatim with its three defects recorded. Added the metric-availability check and two pre-flight items (Actions spending limit, branch protection) | Yes — §Question, §Decision rule, §Pre-registered metrics and §Protocol are byte-unchanged; only *which* requirements are measured changed, and the v1 table is retained rather than deleted | EMPTY (verified) |
+
+> **Not yet amended — open decision before the first run.** §Scope item 2 requires "≥2 single-lever
+> ablation arms" but does not pin *how many requirements* each ablation runs against. The runbook
+> says ablations execute "from the same base commit as the corresponding requirement's base arms"
+> without fixing the set. Both readings are live: **2 ablation runs total** (~17 sessions) or
+> **2 arms × 5 requirements** (~25 sessions). Ablations are budgeted separately from the 15-run hard
+> cap either way. **Decide and record this as an amendment BEFORE the first ablation run** — pinning
+> it afterward is a retroactive protocol edit, which the pre-registration forbids.
+
+> ### ✅ RESOLVED by the Corpus v2 swap — retained for the record
+>
+> The blocker below was **dissolved, not decided**: none of its three options (A/B/C) was chosen.
+> Moving to a corpus of genuinely-unimplemented work removed the conflict at its source — there is
+> no rewind, so no version to pin, no leakage, and arm 3 is available on all five entries. Kept
+> because the *mechanism* of the conflict is worth remembering: pinning the plugin to a historical
+> base commit silently un-provisions any flag introduced after it.
+>
+> **BLOCKER — open decision before ANY run: plugin-version policy vs arm 3 (found 2026-07-27).**
+> §"Plugin version control" pins each arm's plugin to its requirement's **base commit**. But
+> `--sdk-runner` and `--multi-voter-heal` were introduced in **v15.8.0**, and 4 of the 5 corpus
+> base commits predate it — so arm 3 is **impossible** for them under base-commit pinning:
+>
+> | Corpus | Base commit | Plugin dir at that commit | Version | Arm 3 supported |
+> |---|---|---|---|---|
+> | #1 curation-anti-rot | `f55380b` | `loomwright/` | v15.13.0 | **yes** |
+> | #2 rules-enforcement | `872cc81` | `loomwright/` | v15.0.0 | no |
+> | #3 learning-loop-phase1-2 | `516687a` | `ai-agent-manager-plugin/` | v14.27.0 | no |
+> | #4 review-drain-worktree-isolation | `142319e` | `ai-agent-manager-plugin/` | v14.41.0 | no |
+> | #5 handoff-digest | `49868b1` | `ai-agent-manager-plugin/` | v14.48.0 | no |
+>
+> Note also the **plugin directory was renamed** (`ai-agent-manager-plugin/` → `loomwright/`), so
+> the `--plugin-dir <checkout>/loomwright` path in the arm blocks is wrong for entries #3–#5 under
+> base-commit pinning — the path must follow the commit.
+>
+> Resolve by choosing ONE policy and recording it as an amendment **before the first run**:
+> - **(A) Single fixed plugin version for the whole eval** (recommended) — pin every arm of every
+>   requirement to one recorded plugin SHA at ≥ v15.8.0 (e.g. current `main`). Arm 3 becomes
+>   executable across the full corpus; version stops being a variable entirely, so an ablation
+>   differs from its arm-2 baseline by exactly one lever. Cost: the harness is newer than the
+>   working tree, so a Loomwright arm *could* read post-merge code out of the plugin dir. That
+>   leakage applies **uniformly to all Loomwright arms**, so arm-2-vs-arm-3 and
+>   arm-2-vs-ablation (the comparisons that drive the per-layer verdicts) stay clean; only
+>   **arm-1-vs-arm-2** carries the asymmetry — record it as a stated limitation.
+> - **(B) Keep base-commit pinning, drop arm 3 to n=1** — only corpus #1 gets an arm 3. Preserves
+>   zero leakage; guts arm-3 statistical power and leaves the SDK-runner verdict at
+>   `INSUFFICIENT DATA` by construction.
+> - **(C) Change the corpus off Loomwright's own history** — eliminates leakage at the root and is
+>   the strongest science, but is a substantial protocol change (new corpus, new base commits, new
+>   selection rationale) and re-opens §Corpus.
+
+
