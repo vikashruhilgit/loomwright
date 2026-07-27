@@ -102,6 +102,29 @@ in this file.
 
 ## Corpus
 
+> ### ⚠️ SUPERSEDED — the corpus below is retained for the record, NOT for execution
+>
+> **Amended 2026-07-27, before any run.** The Loomwright-history corpus in this section is
+> **superseded** by §"Corpus v2 (active)" further down. It is kept verbatim because the *reason*
+> it was replaced is itself a finding worth preserving. Three defects, all discovered by probing
+> rather than reasoning:
+>
+> 1. **Solution leakage.** Re-implementing Loomwright's own merged history means the running
+>    plugin already *contains* the answer the agent is asked to build. No pinning scheme fully
+>    removes this — it is inherent to using your own history as the corpus.
+> 2. **Arm 3 impossible on 4 of 5 entries.** `--sdk-runner` and `--multi-voter-heal` were
+>    introduced in **v15.8.0**, but four base commits predate it (v15.0.0 / v14.27.0 / v14.41.0 /
+>    v14.48.0 — verified by grepping `commands/supervisor.md` at each SHA). Under base-commit
+>    pinning, arm 3 would run at **n=1**, making the SDK-runner verdict `INSUFFICIENT DATA` by
+>    construction.
+> 3. **The plugin directory was renamed** (`ai-agent-manager-plugin/` → `loomwright/`), so a single
+>    hardcoded `--plugin-dir` path is wrong for the three older entries.
+>
+> **Consequence:** the "plugin-version policy" open decision recorded in §Amendment history is
+> **RESOLVED by this swap, not by choosing between its options** — Corpus v2's work is genuinely
+> unimplemented, so there is nothing to leak, no rewind, and every arm runs one fixed plugin
+> version with arm 3 available throughout.
+
 Five requirements selected from `.supervisor/jobs/done/`. Selection criteria per §Protocol step 1:
 small-to-medium, orchestration-shaped (multi-subtask, Phase 3 loop exercised), at least one with a
 real cross-subtask file dependency. All base commits verified reachable via `git cat-file -t`.
@@ -125,6 +148,60 @@ symbol the producer introduces (immediate crash on absence); #5's ST-2 tests ST-
 (create-then-test — a genuine materialization case, but failure is a test assertion rather than a
 missing-symbol crash, so it's a softer signal). #4's dependency is coordination/ordering (version
 bump accuracy), not file materialization.
+
+## Corpus v2 (ACTIVE — amended 2026-07-27, before any run)
+
+**Repository: `vikashruhilgit/ntfs-tool`** — a Swift NTFS read/write toolkit (NTFSCore library +
+`ntfsctl` CLI + FSKit extension + menu-bar app), 155 commits, fully owned by the operator.
+**Single base commit for every arm of every requirement: `5df1ded`** (`origin/main`,
+2026-07-27). All arms run **plugin v15.14.0**.
+
+Why this corpus resolves what the superseded one could not:
+
+| Problem with Corpus v1 | Status under Corpus v2 |
+|---|---|
+| Solution leakage — plugin contains the merged answer | **Gone.** The plugin has no NTFS implementation; the work is genuinely unbuilt. |
+| Arm 3 impossible on 4/5 entries (flags postdate base commits) | **Gone.** One base commit at plugin v15.14.0 ⇒ `--sdk-runner` + `--multi-voter-heal` available on all 5. |
+| Plugin-dir rename across base commits | **Gone.** No rewind; one path. |
+| Version confound between arms | **Gone.** Version is constant by construction, so an ablation differs from arm 2 by exactly one lever. |
+
+Requirements are the five in `docs/backlog/pending-followups/` on `ntfs-tool@main`. **Each was
+verified open against source, not taken from the project's own backlog prose** — that check
+mattered: two other STATUS.md items claimed pending were already implemented, and a third
+(`renameItem`) was wrong in three separate places.
+
+| # | Requirement | Doc | Verified open by | Subtask shape | Cross-subtask dependency |
+|---|---|---|---|---|---|
+| 1 | `ntfsctl tree` + `find` | `03-tree-and-find.md` | neither in `ntfsctl.swift:17` `subcommands:` | 3 (walker → 2 consumers) | **YES — strongest.** ST-2 (`tree`) and ST-3 (`find`) both *call* the shared recursive walker ST-1 creates. Consumers cannot compile until the producer lands. |
+| 2 | Streaming `$Bitmap` reader | `02-streaming-bitmap.md` | `Bitmap.swift:12` holds whole `Data` blob | 3-4 (core + consumers + tests) | **YES.** Allocator (`findFreeRun`, `_allocHint`, `allocateIndexClusters`) and `RunlistBitmapAudit` all consume the changed API. |
+| 3 | `NTFSError` structured model | `05-ntfserror-model.md` | flat enum; `isOverflowDescription` (`Volume.swift:6081`) string-matches | 3-4 (model + migration + tests) | **YES.** Every `catch … where isOverflowDescription(desc)` site must migrate to the new `kind` in lockstep with the model. |
+| 4 | `cp --resume` | `01-cp-resume.md` | no `resume` symbol in `Cp.swift` | 2-3 (flag + compare + tests) | Moderate — tests depend on the comparison helper. |
+| 5 | FSKit `createLink` | `04-fskit-link-callbacks.md` | `NTFSVolume.swift:389` returns `posixError(EROFS)` | 2-3 | Moderate — errno mapping + oracle validation depend on the write path. |
+
+**Dependency-materialization gap coverage (§Protocol step 1 hard requirement — satisfied):**
+entry **1** is the cleanest instance the eval has had. `tree` and `find` are separate subtasks that
+*import and call* a walker a third subtask creates, so under arm 3 the SDK runner's residual
+divergence 3 (`SDK_RUNNER_SPIKE.md` — dependents branch from the feature branch without producer
+commits) produces a **compile failure**, not a subtle behavioural difference. Entries 2 and 3 are
+secondary carriers. This is a stronger signal than Corpus v1 offered, where the dependency was a
+new subcommand's *runtime* absence.
+
+**Metric availability check (done, not assumed):** `ntfs-tool` has `ci.yml`, `release.yml`, and —
+as of 2026-07-27 — a working `claude-code-review.yml`, so `review_rounds_to_READY` has a real
+independent review signal. Getting that reviewer to actually post took four config fixes
+(`pull-requests: write` + `concurrency`; `--comment` + `issues: write` + `fetch-depth: 0`;
+`--allowed-tools` + `actions: read`; an instruction preamble around the slash command) — **each of
+which failed GREEN**. Before trusting this metric during a run, assert on posted comments
+(`gh pr view <n> --json comments`), never on the check's conclusion.
+
+**Pre-flight additions learned the hard way (add to the runbook's checklist):**
+- **GitHub Actions spending limit.** A burst of `claude-code-review` runs (~$0.50 and 20+ turns
+  each) exhausted the account limit mid-session on 2026-07-27 and failed every subsequent job in
+  ~2s at startup. 17-25 eval runs are far heavier. Check headroom before starting, and note that
+  a **public** repo gets free Actions minutes (`ntfs-tool` was made public for this reason).
+- **Branch protection.** `loomwright@main` requires 1 approving review + `ci`; an author cannot
+  approve their own PR, so an unattended run will park at `BLOCKED`. Verify the eval repo's
+  protection (`gh api repos/<o>/<r>/branches/main/protection`) before assuming a PR can land.
 
 ## Execution Runbook
 
@@ -492,6 +569,7 @@ above; verify with `git diff origin/main...HEAD -- <this file> | grep -c '^-[^-]
 | 2026-07-18 | Added `token-cost-per-subtask` as an arm-3 secondary observable (§"Pre-registered metrics") | Yes — new observable, no metric removed or redefined | EMPTY (verified) |
 | 2026-07-24 | Added §Corpus (5 requirements + base commits) and §"Execution Runbook" (3 base arms + ablation arms (a)/(c); (b) deferred and recorded) | Yes — operationalizes the existing protocol; no protocol text altered | EMPTY (verified) |
 | 2026-07-27 | Replaced the arm plugin-pinning mechanism with session-scoped `--plugin-dir` after empirically falsifying the global uninstall/reinstall path (§"Why NOT `/plugin install loomwright@atelier`"); added §"Per-layer verdict", §"Incident-class regression log", and this history | Yes — corrects an execution mechanism and adds recording surfaces; no metric, arm, or decision rule changed | EMPTY (verified) |
+| 2026-07-27 | **Corpus swapped to `vikashruhilgit/ntfs-tool` (§"Corpus v2")**, single base commit `5df1ded`, all arms at plugin v15.14.0. Corpus v1 marked SUPERSEDED and retained verbatim with its three defects recorded. Added the metric-availability check and two pre-flight items (Actions spending limit, branch protection) | Yes — §Question, §Decision rule, §Pre-registered metrics and §Protocol are byte-unchanged; only *which* requirements are measured changed, and the v1 table is retained rather than deleted | EMPTY (verified) |
 
 > **Not yet amended — open decision before the first run.** §Scope item 2 requires "≥2 single-lever
 > ablation arms" but does not pin *how many requirements* each ablation runs against. The runbook
@@ -501,6 +579,14 @@ above; verify with `git diff origin/main...HEAD -- <this file> | grep -c '^-[^-]
 > cap either way. **Decide and record this as an amendment BEFORE the first ablation run** — pinning
 > it afterward is a retroactive protocol edit, which the pre-registration forbids.
 
+> ### ✅ RESOLVED by the Corpus v2 swap — retained for the record
+>
+> The blocker below was **dissolved, not decided**: none of its three options (A/B/C) was chosen.
+> Moving to a corpus of genuinely-unimplemented work removed the conflict at its source — there is
+> no rewind, so no version to pin, no leakage, and arm 3 is available on all five entries. Kept
+> because the *mechanism* of the conflict is worth remembering: pinning the plugin to a historical
+> base commit silently un-provisions any flag introduced after it.
+>
 > **BLOCKER — open decision before ANY run: plugin-version policy vs arm 3 (found 2026-07-27).**
 > §"Plugin version control" pins each arm's plugin to its requirement's **base commit**. But
 > `--sdk-runner` and `--multi-voter-heal` were introduced in **v15.8.0**, and 4 of the 5 corpus
