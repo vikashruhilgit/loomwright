@@ -23,7 +23,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          # 0, not 1: a depth-1 shallow clone cannot resolve commits outside the PR
+          # tip, so the reviewer cannot run `git cat-file -t <sha>` or
+          # `git show <base>:<path>` to check claims against history. On PR #107
+          # three separate review rounds each reported "shallow clone (depth 1) —
+          # could not verify the base-commit SHAs" and had to take the author's
+          # word for it. Full history makes those claims checkable.
+          fetch-depth: 0
 
       - name: Run Claude Code Review
         id: claude-review
