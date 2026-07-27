@@ -512,6 +512,43 @@ release-dependent verdicts — do not build it speculatively.
 |---|---|---|---|---|---|---|
 | tree-and-find | 1 (bare) | N/A (no drain — branch never pushed, no reviewer in loop) | - | 0 | out 82,290 · cache-create 172,468 · cache-read 11,830,096 · in 176 · $9.70 | commit `4406708`, 98 turns, 41m04s. 1,838 ins / 12 files (impl 759, tests 1,027). Tests green: NTFSCore 286 (2 skipped, 0 fail), ntfsctl 35 (0 fail). Reviewer PASS — 0 BLOCKING, 0 HIGH, 2 MEDIUM/new, 3 LOW/new, 1 LOW/pre-existing. Baseline cleanliness VERIFIED by session-start-time (transcript born 20:05:27 vs `settings.json` disable 19:54:36). |
 
+> **Arm 2 (tree-and-find) — NOT COMPLETED, no row. Blocked by a structural incompatibility
+> between Supervisor and headless `claude -p`.** Recorded here because the blocker is a finding,
+> not a mishap. Supervisor reached Phase 4 FINALIZE, merged all 5 subtask branches
+> (`52944d1`, 8 files, +1623/−4, worktrees cleaned), then started the integrated test suite as a
+> **background task, armed a watcher, and ended its turn** stating *"I'll resume automatically when
+> the suite finishes."* In an interactive session it would be re-invoked when that task completed;
+> under `claude -p` there is no next turn, so the session ended mid-FINALIZE. It **never pushed,
+> never opened the PR, and never ran Phase 4.5** — so `review_rounds_to_READY`, `heal_iterations`,
+> and `rubric_score` are all unobtainable for this run. It did not hit the turn cap (29 of 500).
+> Cost: $43.63, 2h35m.
+>
+> **Compounding defect — resume is unsafe, not merely unavailable.** `.supervisor/state.md` was
+> left at `phase: ACQUIRE` with all five subtasks `PENDING`, despite all five being complete and
+> merged. Context-Keeper never advanced it. A `/supervisor --continue` would therefore restore a
+> belief of "no work done" and re-execute the entire job. This is a real defect independent of the
+> eval: **a crash between EXECUTE and FINALIZE leaves an un-resumable session whose state file
+> actively lies about progress.** Worth its own follow-up requirement.
+>
+> **Consequence for the protocol:** the "arms execute headless" amendment above holds for arm 1
+> (bare Claude Code has no async-orchestration pattern) but does **NOT** hold for any Loomwright
+> arm. Arms 2, 3, and both ablations depend on Supervisor's background-dispatch-then-poll design,
+> which requires a session that gets re-invoked. **Loomwright arms must run interactively.**
+
+> **Void runs retained (arm 2, not rows).** Two earlier arm-2 attempts failed on prompt design
+> before the run above. (1) `arm-2-VOID-launchpad-executed` (`121d4e6`) — with the operational tail
+> reduced to *"Commit your work on the current branch when done."*, **Launch Pad implemented and
+> committed the work inline instead of producing a brief**, violating its own documented plan-only
+> contract ($11.15). (2) An earlier attempt whose tail also carried *"Do not push. Do not open a PR
+> against main."* planned correctly but baked that constraint into the brief as risk R8, which
+> would have suppressed FINALIZE's PR and silently voided `review_rounds_to_READY` ($5.86).
+> Removing the operational tail entirely produced correct plan-only behaviour ($7.68). Across the
+> three variants behaviour tracked the prompt rather than varying randomly, but at n=1 per variant
+> that is an observation, not a demonstrated mechanism. **Protocol consequence:** Loomwright arms
+> receive the requirement body ONLY — any commit/push/PR instruction either leaks into the brief as
+> a constraint or trips the plan/execute boundary. Arm 1 keeps its operational tail because nothing
+> else will commit for it; the requirement body is byte-identical across arms (verified by `diff`).
+
 **Measurement instrument (identical across all arms).** `post_merge_defects` is produced by one
 headless `/loomwright:code-reviewer` pass with the plugin pinned via `--plugin-dir`, prompt held
 byte-identical in `reviewer-prompt.txt`, scoped to `git diff 5df1ded..HEAD`, counting `new`
