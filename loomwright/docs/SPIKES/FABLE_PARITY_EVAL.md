@@ -506,11 +506,36 @@ but do NOT re-add the layer without a fresh eval cycle (pre-register the re-add 
 A `model-capability` configuration knob is a possible follow-up ONLY if re-run results show
 release-dependent verdicts — do not build it speculatively.
 
-## Results (per-run — EMPTY until runs execute; no metric added after first run)
+## Results (per-run — rows filled AT RUN TIME; no metric added after first run)
 
 | requirement | arm | review_rounds_to_READY | heal_iterations | post_merge_defects | wall_tokens | notes |
 |---|---|---|---|---|---|---|
-| | | | | | | |
+| tree-and-find | 1 (bare) | N/A (no drain — branch never pushed, no reviewer in loop) | - | 0 | out 82,290 · cache-create 172,468 · cache-read 11,830,096 · in 176 · $9.70 | commit `4406708`, 98 turns, 41m04s. 1,838 ins / 12 files (impl 759, tests 1,027). Tests green: NTFSCore 286 (2 skipped, 0 fail), ntfsctl 35 (0 fail). Reviewer PASS — 0 BLOCKING, 0 HIGH, 2 MEDIUM/new, 3 LOW/new, 1 LOW/pre-existing. Baseline cleanliness VERIFIED by session-start-time (transcript born 20:05:27 vs `settings.json` disable 19:54:36). |
+
+**Measurement instrument (identical across all arms).** `post_merge_defects` is produced by one
+headless `/loomwright:code-reviewer` pass with the plugin pinned via `--plugin-dir`, prompt held
+byte-identical in `reviewer-prompt.txt`, scoped to `git diff 5df1ded..HEAD`, counting `new`
+findings at BLOCKING + HIGH. Arm-1 instrument cost: $2.47 / 27 turns (not counted in the arm's own
+`wall_tokens`).
+
+### Amendments — recorded at run time (additive; original protocol byte-preserved above)
+
+| date | amendment | pre-registration preserved? |
+|---|---|---|
+| 2026-07-27 | **Arms execute headless** via `claude -p … --output-format json` rather than an interactive session, applied **uniformly to every arm**. Reason: the operator drives the eval through an assistant that cannot type into a terminal or IDE (computer-use grants those "click" tier). Side benefit: `wall_tokens` comes from the returned `usage` object rather than a human reading `/cost`. | Yes — §Question, §Decision rule, §Pre-registered metrics and §Corpus unchanged; only the *session mode* changed, held constant across arms. |
+| 2026-07-27 | **Arm-1 precondition strengthened.** The runbook's check (`claude plugin list \| grep -A3 loomwright`) is **necessary but not sufficient** — it says nothing about *when* the session started, and plugins load at session start, so `claude plugin disable` does not affect an already-running session. New rule: assert the plugin was disabled **before** session start, verifiable after the fact by comparing the session transcript's birth time (`stat -f %SB ~/.claude/projects/<encoded-cwd>/<sid>.jsonl`) against `~/.claude/settings.json` mtime. Grepping a transcript for `loomwright` proves it was never *invoked*, not that it was never *loaded*. | Yes — tightens an existing precondition, adds no metric. |
+| 2026-07-27 | **Enablement is user-scope and shared** — `~/.claude/settings.json` → `enabledPlugins["loomwright@atelier"]` is read by BOTH the desktop app and a bare CLI `claude` (all processes run `--setting-sources=user,project,local`). "The plugin is only installed in the desktop app" is false and must not be assumed. Verified by probe: a session started with the flag `true` lists `loomwright:*` commands; one started after it flipped to `false` does not. | Yes — corrects a factual premise in §"Plugin version control". |
+
+**Discarded run retained as a side observation (NOT a Results row).** The first arm-1 attempt
+(`eval/tree-and-find/arm-1-CONTAMINATED-plugin-loaded`, commit `69feda2`) ran ~37 min with the
+plugin **loaded but never invoked** (0 `loomwright` occurrences in its transcript). It is excluded
+because `wall_tokens` is inflated by construction when the plugin's prompt inventory rides in every
+turn. Kept because the comparison is interesting: 1,658 ins / 10 files (impl 505, tests 1,079;
+ratio 2.14) vs the clean baseline's 1,838 / 12 (impl 759, tests 1,027; ratio 1.35). Test *volume*
+is near-identical — the ratio gap is a denominator effect from the clean run factoring out
+`Glob.swift` / `FileName.swift` / `WalkTarget.swift`. The one suggestive behavioural difference:
+the contaminated run also stamped `STATUS.md` and the backlog overview as done, which resembles
+Loomwright's completion-tail discipline. Corpus v2 makes solution leakage impossible either way.
 
 ## Outcome
 
