@@ -500,3 +500,38 @@ above; verify with `git diff origin/main...HEAD -- <this file> | grep -c '^-[^-]
 > **2 arms × 5 requirements** (~25 sessions). Ablations are budgeted separately from the 15-run hard
 > cap either way. **Decide and record this as an amendment BEFORE the first ablation run** — pinning
 > it afterward is a retroactive protocol edit, which the pre-registration forbids.
+
+> **BLOCKER — open decision before ANY run: plugin-version policy vs arm 3 (found 2026-07-27).**
+> §"Plugin version control" pins each arm's plugin to its requirement's **base commit**. But
+> `--sdk-runner` and `--multi-voter-heal` were introduced in **v15.8.0**, and 4 of the 5 corpus
+> base commits predate it — so arm 3 is **impossible** for them under base-commit pinning:
+>
+> | Corpus | Base commit | Plugin dir at that commit | Version | Arm 3 supported |
+> |---|---|---|---|---|
+> | #1 curation-anti-rot | `f55380b` | `loomwright/` | v15.13.0 | **yes** |
+> | #2 rules-enforcement | `872cc81` | `loomwright/` | v15.0.0 | no |
+> | #3 learning-loop-phase1-2 | `516687a` | `ai-agent-manager-plugin/` | v14.27.0 | no |
+> | #4 review-drain-worktree-isolation | `142319e` | `ai-agent-manager-plugin/` | v14.41.0 | no |
+> | #5 handoff-digest | `49868b1` | `ai-agent-manager-plugin/` | v14.48.0 | no |
+>
+> Note also the **plugin directory was renamed** (`ai-agent-manager-plugin/` → `loomwright/`), so
+> the `--plugin-dir <checkout>/loomwright` path in the arm blocks is wrong for entries #3–#5 under
+> base-commit pinning — the path must follow the commit.
+>
+> Resolve by choosing ONE policy and recording it as an amendment **before the first run**:
+> - **(A) Single fixed plugin version for the whole eval** (recommended) — pin every arm of every
+>   requirement to one recorded plugin SHA at ≥ v15.8.0 (e.g. current `main`). Arm 3 becomes
+>   executable across the full corpus; version stops being a variable entirely, so an ablation
+>   differs from its arm-2 baseline by exactly one lever. Cost: the harness is newer than the
+>   working tree, so a Loomwright arm *could* read post-merge code out of the plugin dir. That
+>   leakage applies **uniformly to all Loomwright arms**, so arm-2-vs-arm-3 and
+>   arm-2-vs-ablation (the comparisons that drive the per-layer verdicts) stay clean; only
+>   **arm-1-vs-arm-2** carries the asymmetry — record it as a stated limitation.
+> - **(B) Keep base-commit pinning, drop arm 3 to n=1** — only corpus #1 gets an arm 3. Preserves
+>   zero leakage; guts arm-3 statistical power and leaves the SDK-runner verdict at
+>   `INSUFFICIENT DATA` by construction.
+> - **(C) Change the corpus off Loomwright's own history** — eliminates leakage at the root and is
+>   the strongest science, but is a substantial protocol change (new corpus, new base commits, new
+>   selection rationale) and re-opens §Corpus.
+
+
