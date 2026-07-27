@@ -154,35 +154,52 @@ For each of the 5 corpus requirements, execute 3 arms from the same base commit.
 > deleted after metric extraction (see Isolation protocol).
 
 > **Plugin version control (MANDATORY — all Loomwright arms):** this eval re-implements
-> Loomwright's *own* history, so the installed plugin is part of the experimental condition, not a
-> fixed background. **Every** Loomwright arm (2, 3, and both ablations) MUST reinstall the plugin
-> from the eval branch checkout *before* running any plugin command:
+> Loomwright's *own* history, so the plugin the agent runs is part of the experimental condition,
+> not a fixed background. **Every** Loomwright arm (2, 3, and both ablations) MUST launch with
+> `--plugin-dir` pointed at the eval branch checkout:
 >
 > ```bash
 > # With the eval branch checked out at <base-commit>:
-> claude
-> /plugin marketplace add <absolute-path-to-this-checkout>   # first time only
-> /plugin uninstall loomwright
-> /plugin install loomwright@atelier
+> claude --plugin-dir <absolute-path-to-this-checkout>/loomwright
 > ```
 >
+> Note the path is the **nested plugin dir** (`<checkout>/loomwright`), not the marketplace-wrapper
+> repo root. `--plugin-dir` loads the plugin from disk **for that session only**.
+>
 > This is load-bearing for two reasons, and skipping it invalidates the arm:
-> 1. **Version constancy.** `${CLAUDE_PLUGIN_ROOT}` is a *single shared install dir* — whatever was
->    installed last is what runs. If an ablation arm reinstalls but its arm-2 baseline does not,
->    the two arms differ by both the removed lever AND the plugin version. Reinstalling every arm
->    from the same base commit holds the version constant within a requirement.
-> 2. **Solution leakage.** The currently-installed plugin is at `main`, which already *contains*
->    the merged work the corpus requirement asks the agent to re-implement. Running an arm against
->    it lets the agent read the finished answer out of its own preloaded skills/agent prompts.
->    Installing from `<base-commit>` restores the pre-merge state.
+> 1. **Version constancy.** The arm must run the plugin as of its own base commit. Because
+>    `--plugin-dir` is session-scoped and reads the working tree, every arm of a requirement runs
+>    the same version, and an ablation differs from its arm-2 baseline by the removed lever ONLY.
+> 2. **Solution leakage.** Any globally-installed plugin is at `main`, which already *contains* the
+>    merged work the corpus requirement asks the agent to re-implement — letting it read the
+>    finished answer out of its own preloaded skills/agent prompts. Pointing at `<base-commit>`
+>    restores the pre-merge state.
 >
-> **Precondition:** `atelier` must be the **local-path** marketplace registered from this checkout
-> (`/plugin marketplace add /path/to/loomwright`, per README §Quick Start) — a git-remote-backed
-> marketplace of the same name would install the remote default branch and silently discard both
-> the base-commit pin and any ablation edits. Verify with `/plugin marketplace list` before arm 1.
+> **Why NOT `/plugin install loomwright@atelier` (verified 2026-07-27, do not reintroduce):** an
+> earlier draft of this runbook mandated a global uninstall/reinstall to pin the version. That is
+> **broken and must not be used.** On the maintainer's machine `claude plugin marketplace list`
+> shows `atelier` is **Git-remote-backed** (`github.com/vikashruhilgit/loomwright.git`), not a
+> local path — so the reinstall pulls the remote default branch and silently discards **both** the
+> base-commit pin and any ablation edits. The same probe found the CLI-scope install stale and
+> disabled (`loomwright@atelier` v15.9.0, `Status: ✘ disabled`) while the desktop session was
+> actually running v15.14.0 from a separate session-scoped path — three divergent surfaces, none
+> of which the reinstall reliably controls. `--plugin-dir` sidesteps all three.
 >
-> **Arm 1 needs no reinstall** (it runs no plugin commands), but the ablated plugin from a prior
-> arm must still be cleaned up — see Isolation protocol step 5.
+> **Corollary — no cleanup step is needed.** Because `--plugin-dir` never mutates the global
+> install, an ablated plugin cannot leak into a later arm or a later requirement. There is no
+> shared `${CLAUDE_PLUGIN_ROOT}` to restore between arms.
+>
+> **Arm 1 precondition (assert, don't assume):** arm 1 must run with **no** Loomwright loaded —
+> which means omitting `--plugin-dir` *and* confirming no globally-enabled install is present.
+> Verify before the first arm-1 run:
+>
+> ```bash
+> claude plugin list | grep -A3 loomwright   # must be absent, or Status: ✘ disabled
+> ```
+>
+> If it is enabled, disable it for the duration of the eval (`claude plugin disable loomwright`)
+> and record that in the run notes — an arm-1 that silently had the plugin loaded invalidates the
+> baseline every other arm is measured against.
 
 > **Do NOT "simplify" the arms back to `/autonomous`.** §Protocol step 4 expresses a preference for
 > the in-session `/autonomous` path, and every Loomwright arm below deliberately uses the manual
@@ -211,12 +228,10 @@ claude
 ```bash
 git checkout -b eval/<slug>/arm-2-default <base-commit>
 git push -u origin eval/<slug>/arm-2-default
-# Start a Claude Code session with the plugin:
-claude
-# MANDATORY: pin the plugin to this base commit (see "Plugin version control" above) —
-# the currently-installed plugin is at main and already contains the merged answer:
-/plugin uninstall loomwright
-/plugin install loomwright@atelier
+# Start a Claude Code session with the plugin PINNED to this base commit
+# (see "Plugin version control" above — a global install would be at main and
+# would already contain the merged answer):
+claude --plugin-dir <absolute-path-to-this-checkout>/loomwright
 # Run the standard Loomwright flow with eval-specific flags:
 /launch-pad
 # (paste the requirement, let it produce a brief, then:)
@@ -232,10 +247,8 @@ cd loomwright/sdk-spike && npm install --no-audit --no-fund && npm run build && 
 
 git checkout -b eval/<slug>/arm-3-extras <base-commit>
 git push -u origin eval/<slug>/arm-3-extras
-claude
-# MANDATORY: pin the plugin to this base commit (see "Plugin version control" above):
-/plugin uninstall loomwright
-/plugin install loomwright@atelier
+# Plugin PINNED to this base commit (see "Plugin version control" above):
+claude --plugin-dir <absolute-path-to-this-checkout>/loomwright
 # NOTE: /autonomous does NOT forward --sdk-runner or --multi-voter-heal (it forwards
 # only --base-branch, --non-interactive, --cheap). Use the manual two-step path:
 /launch-pad
@@ -288,13 +301,10 @@ INTENT
 git add loomwright/skills/qa-intent/ loomwright/agents/qa-executor.md
 git commit -m "eval(ablation-a): replace QA rule libraries with intent doc"
 git push -u origin eval/<slug>/arm-ablation-a-no-qa-rules
-# Reinstall the plugin from the modified local source so the running session loads
-# the ablation edits (skills preload from the install dir, not the working tree).
-# This is the SAME mandated reinstall as "Plugin version control" above — installing
-# from the eval branch pins the base-commit version AND applies the ablation edits:
-claude
-/plugin uninstall loomwright
-/plugin install loomwright@atelier
+# Launch with --plugin-dir so the session loads the ablation edits from this branch.
+# This is the SAME mandated pin as "Plugin version control" above — pointing at the
+# eval checkout pins the base-commit version AND applies the ablation edits in one step:
+claude --plugin-dir <absolute-path-to-this-checkout>/loomwright
 # Now run the standard Loomwright flow with eval-specific flags:
 /launch-pad
 # (paste the requirement, let it produce a brief, then:)
@@ -333,13 +343,10 @@ git checkout -b eval/<slug>/arm-ablation-c-soft-budgets <base-commit>
 git add loomwright/agents/supervisor.md loomwright/agents/execute-manager.md loomwright/agents/qa-executor.md
 git commit -m "eval(ablation-c): soften magic budgets to overridable defaults"
 git push -u origin eval/<slug>/arm-ablation-c-soft-budgets
-# Reinstall the plugin from the modified local source so the running session loads
-# the ablation edits (agent prompts are read from the install dir).
-# This is the SAME mandated reinstall as "Plugin version control" above — installing
-# from the eval branch pins the base-commit version AND applies the ablation edits:
-claude
-/plugin uninstall loomwright
-/plugin install loomwright@atelier
+# Launch with --plugin-dir so the session loads the ablation edits from this branch.
+# This is the SAME mandated pin as "Plugin version control" above — pointing at the
+# eval checkout pins the base-commit version AND applies the ablation edits in one step:
+claude --plugin-dir <absolute-path-to-this-checkout>/loomwright
 # Now run with eval-specific flags:
 /launch-pad
 # (paste the requirement, let it produce a brief, then:)
@@ -398,21 +405,20 @@ counters (from `SUPERVISOR_RESULT.summary`), wall-clock notes,
    ```
 4. Eval session logs in `.supervisor/logs/` and `.supervisor/jobs/` artifacts are retained for
    audit but are not merged to main.
-5. **Restore a clean plugin after every arm.** `${CLAUDE_PLUGIN_ROOT}` is a single shared install
-   dir, so an ablated or base-commit-pinned plugin persists into the *next* session — including a
-   different requirement's arms — and silently invalidates it. After each arm's metrics are
-   recorded:
-   ```bash
-   git checkout main
-   claude
-   /plugin uninstall loomwright
-   /plugin install loomwright@atelier   # reinstalls from main = the clean, current plugin
-   ```
-   **Ordering rule (belt-and-suspenders):** run the two ablation arms **last** within a
-   requirement, after arm-1/2/3, so a missed restore degrades one arm rather than the baselines it
-   is compared against. Verify the active install from the `/plugin` panel's listed version before
-   starting any arm — do **not** infer it from `~/.claude/plugins/cache/`, which retains stale
-   leftovers and disagrees with the desktop app's own install.
+5. **Plugin state needs no cleanup — by construction.** Because every Loomwright arm launches with
+   session-scoped `--plugin-dir` (§"Plugin version control") and never installs globally, an
+   ablated or base-commit-pinned plugin **cannot** persist into the next arm or the next
+   requirement. There is no shared install dir to restore and no ordering rule to remember.
+   > This replaces an earlier draft that mandated a per-arm global uninstall/reinstall plus an
+   > "ablations last" ordering rule. Both were mitigations for a shared-install hazard that
+   > `--plugin-dir` removes outright — and the reinstall itself was independently broken (see
+   > §"Why NOT `/plugin install loomwright@atelier`"). Do not reintroduce either.
+
+   The one piece of global state still worth asserting is the **arm-1 baseline**: confirm no
+   globally-enabled Loomwright is present before each arm-1 run (`claude plugin list | grep -A3
+   loomwright`). Do **not** infer plugin state from `~/.claude/plugins/cache/` — it retains stale
+   leftovers and disagreed with both the CLI-scope install and the running desktop session when
+   this was probed.
 
 ### Re-run protocol (standing — per original requirement §Scope item 4)
 
@@ -433,3 +439,64 @@ release-dependent verdicts — do not build it speculatively.
 
 _Pending. To be filled after the 15 runs, followed by the decision-rule verdict per layer:
 SDK runner graduates to v16 OR is cut; each Loomwright layer that fails to beat arm 1 is cut._
+
+## Per-layer verdict (EMPTY until runs execute — closed 3-value enum, no third outcome)
+
+One row per layer under test. **`verdict` is a closed enum: `KEEP` | `CUT` | `INSUFFICIENT DATA`.**
+The pre-committed decision rule (§"Decision rule") admits no fourth value — in particular there is
+no "keep with caveats" and no "defer". A layer that did not move its metric is `CUT`, not defended.
+
+- **`KEEP`** requires naming the metric that moved *and* the magnitude, cited from the Results table.
+- **`CUT`** requires a follow-up requirement stub to exist before this row is final (§Scope item 5;
+  no deletions are performed in this item — verdicts only).
+- **`INSUFFICIENT DATA`** is legitimate ONLY when the run cap was hit or an arm failed to execute;
+  it must name what would resolve it. It is not a way to avoid cutting a layer.
+
+| Layer under test | Arms compared | Metric that moved (cite Results row) | Magnitude | Verdict | Follow-up stub (CUT only) |
+|---|---|---|---|---|---|
+| SDK runner | arm 2 vs arm 3 | | | | |
+| Multi-voter heal | arm 2 vs arm 3 | | | | |
+| QA rule libraries (~1,904 lines) | arm 2 vs ablation (a) | | | | |
+| Magic budgets / caps | arm 2 vs ablation (c) | | | | |
+| Whole Loomwright stack | arm 1 vs arm 2 | | | | |
+
+> **Arm-3 confound (record, do not silently split):** arm 3 moves **two** levers at once (SDK runner
+> AND multi-voter heal), so an arm-2-vs-arm-3 delta cannot by itself attribute the change to either
+> row above. If the delta is non-zero, both rows are `INSUFFICIENT DATA` pending a single-lever
+> follow-up arm — not a split guess. This is a known limitation of the pre-registered 3-arm shape,
+> surfaced here rather than resolved by inference.
+
+## Incident-class regression log (EMPTY until ablation arms execute)
+
+§Scope item 3: incident-derived guards are **tested, not presumed** — an ablation that removes a
+guard must watch for the original incident class recurring, and *a guard that still prevents its
+incident KEEPS regardless of metric movement* (empirical incident data overrides the Bitter Lesson
+prior). One row per ablated guard; the watch criteria are defined per-arm in §"Ablation arms".
+
+| Ablated guard | Arm | Incident class watched for | Recurred? | Evidence | Effect on verdict |
+|---|---|---|---|---|---|
+| QA rule libraries | ablation (a) | State leaking across test runs; missing infrastructure detection (Mailpit/MailHog); budget exhaustion terminating the suite early | | | |
+| Magic budgets / caps | ablation (c) | Session >2× default arm's wall tokens; non-terminating phase loop; context-window exhaustion mid-task | | | |
+
+> **Precedence rule:** if `Recurred? = YES`, the layer is `KEEP` in the verdict table even when its
+> pre-registered metric did not move. Record the incident evidence in both tables.
+
+## Amendment history
+
+Pre-registration discipline (§Protocol): amendments are **additive only**, recorded with a date,
+and never weaken the original protocol. The original §Question → §Protocol text is byte-unchanged
+above; verify with `git diff origin/main...HEAD -- <this file> | grep -c '^-[^-]'` → must be `0`.
+
+| Date | Amendment | Additive? | Results table state at amendment time |
+|---|---|---|---|
+| 2026-07-18 | Added `token-cost-per-subtask` as an arm-3 secondary observable (§"Pre-registered metrics") | Yes — new observable, no metric removed or redefined | EMPTY (verified) |
+| 2026-07-24 | Added §Corpus (5 requirements + base commits) and §"Execution Runbook" (3 base arms + ablation arms (a)/(c); (b) deferred and recorded) | Yes — operationalizes the existing protocol; no protocol text altered | EMPTY (verified) |
+| 2026-07-27 | Replaced the arm plugin-pinning mechanism with session-scoped `--plugin-dir` after empirically falsifying the global uninstall/reinstall path (§"Why NOT `/plugin install loomwright@atelier`"); added §"Per-layer verdict", §"Incident-class regression log", and this history | Yes — corrects an execution mechanism and adds recording surfaces; no metric, arm, or decision rule changed | EMPTY (verified) |
+
+> **Not yet amended — open decision before the first run.** §Scope item 2 requires "≥2 single-lever
+> ablation arms" but does not pin *how many requirements* each ablation runs against. The runbook
+> says ablations execute "from the same base commit as the corresponding requirement's base arms"
+> without fixing the set. Both readings are live: **2 ablation runs total** (~17 sessions) or
+> **2 arms × 5 requirements** (~25 sessions). Ablations are budgeted separately from the 15-run hard
+> cap either way. **Decide and record this as an amendment BEFORE the first ablation run** — pinning
+> it afterward is a retroactive protocol edit, which the pre-registration forbids.
