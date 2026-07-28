@@ -194,14 +194,21 @@ or dry-run-only**, never exercised against the live SDK:
 - Live token/latency vs the prompt-based Execute Manager — requires the live
   arm of `loomwright/docs/SPIKES/FABLE_PARITY_EVAL.md`.
 - Simplifications vs the real loop: no fix-worker retries, no Context-Keeper,
-  no tool-call budget/EXECUTE_CHECKPOINT, and no Step 2a dependency
-  materialization (producer branches are not merged into dependent worktrees).
-  Concretely: `requires` only delays **spawn order**, not **visibility** — a
-  dependent worktree branches from the feature branch and does NOT see producer
-  commits, so a subtask with a real cross-subtask file dependency will not find
-  the producer's files on disk in live mode.
-- Branch lifecycle simplification: the runner commits each worker's output on
-  its `sdk-spike/subtask-<n>` branch (so worktree removal never destroys work)
-  but does **not** merge or delete branches — merging them in `merge_order`
-  into the feature branch and deleting them afterwards is the caller's job
-  (the spike stops where the real FINALIZE phase would take over).
+  no tool-call budget/EXECUTE_CHECKPOINT.
+- **Dependency materialization — FIXED 2026-07-28 (was the blocker that aborted
+  FABLE_PARITY_EVAL arm 3).** Previously `requires` only delayed **spawn order**,
+  not **visibility**: a dependent worktree branched from the feature branch and
+  did NOT see producer commits, so any subtask importing a producer's symbol
+  could not compile. Measured live on `ntfs-tool 03-tree-and-find`, where `tree`
+  and `find` both consume a walker a third subtask creates — the run was aborted
+  rather than completed. `materializeWave` now merges each completed wave into
+  the feature branch **before** the next wave's worktrees are created, so
+  `git worktree add … featureBranch` inherits everything already landed. It
+  **fails CLOSED** on a conflicting merge: the merge is aborted, the tree is left
+  clean, and the run is marked failed rather than handing the next wave a
+  conflicted index.
+- Branch lifecycle: the runner commits each worker's output on its
+  `sdk-spike/subtask-<n>` branch (so worktree removal never destroys work) and
+  merges each wave into the feature branch as it goes. The caller still owns the
+  **final** merge of the feature branch and the branch deletion (the spike stops
+  where the real FINALIZE phase takes over).

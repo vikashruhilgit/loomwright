@@ -539,6 +539,143 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Launch Pad brief shape (regression — FABLE_PARITY_EVAL arm 3, 2026-07-28)
+#
+# The runner's own mini-brief.md fixture agreed with the parser on all three axes, so a real
+# Launch Pad brief parsing to an EMPTY dependency graph was invisible to every existing check.
+# ---------------------------------------------------------------------------
+LP_BRIEF="test/fixtures/launchpad-brief.md"
+if [ "$HAVE_NODE" = 1 ] && [ -f dist/runner.js ] && [ -f "$LP_BRIEF" ]; then
+  LP_OUT=$(node -e "
+    const {parseBrief} = require('$SPIKE_DIR/dist/runner.js');
+    const r = parseBrief(require('fs').readFileSync('$SPIKE_DIR/$LP_BRIEF','utf8'));
+    const ids = r.subtasks.map(s => s.id).join(',');
+    const edges = r.subtasks.reduce((n,s) => n + s.requires.length, 0);
+    console.log(ids + '|' + edges);
+  " 2>/dev/null)
+  LP_IDS="${LP_OUT%%|*}"
+  LP_EDGES="${LP_OUT##*|}"
+
+  # Natural order matters: a plain string sort yields 1a,1b,10,2 and breaks wave scheduling.
+  if [ "$LP_IDS" = "1a,1b,2,10" ]; then
+    pass "parseBrief: alpha-suffixed ids parsed in natural order (1a,1b,2,10)"
+  else
+    fail "parseBrief: expected ids 1a,1b,2,10 — got '$LP_IDS'"
+  fi
+
+  # THE regression: 0 here is the arm-3 failure — every edge silently discarded.
+  if [ "$LP_EDGES" = "3" ]; then
+    pass "parseBrief: dependency edges survive a real Launch Pad brief (3 edges)"
+  else
+    fail "parseBrief: expected 3 requires edges — got '$LP_EDGES' (0 = the arm-3 silent-drop bug)"
+  fi
+
+  # external_requires must NOT be swallowed by the requires: pattern.
+  if node -e "
+    const {parseBrief} = require('$SPIKE_DIR/dist/runner.js');
+    const r = parseBrief(require('fs').readFileSync('$SPIKE_DIR/$LP_BRIEF','utf8'));
+    const one_a = r.subtasks.find(s => s.id === '1a');
+    process.exit(one_a && one_a.requires.length === 0 && one_a.provides.length === 2 ? 0 : 1);
+  " 2>/dev/null; then
+    pass "parseBrief: 'requires: []' stays empty and external_requires is not absorbed"
+  else
+    fail "parseBrief: empty-requires / external_requires handling regressed"
+  fi
+else
+  skip "parseBrief Launch Pad shape regression (needs node + built dist/ + fixture)"
+fi
+
+# ---------------------------------------------------------------------------
+# Dependency materialization (regression — FABLE_PARITY_EVAL arm 3, 2026-07-28)
+#
+# THE bug this closes: `requires` delayed spawn order but not visibility, so a
+# dependent worktree branched from the feature branch and could not see one line
+# its producer wrote. Asserted here against a REAL git repo, because the failure
+# was invisible to every fixture-based check in this file.
+# ---------------------------------------------------------------------------
+if [ "$HAVE_NODE" = 1 ] && [ -f dist/runner.js ]; then
+  MW_TMP=$(mktemp -d 2>/dev/null || mktemp -d -t mw)
+  MW_REPO="$MW_TMP/repo"
+  mkdir -p "$MW_REPO"
+  git -C "$MW_REPO" init -q 2>/dev/null
+  git -C "$MW_REPO" config user.email t@t.t
+  git -C "$MW_REPO" config user.name t
+  git -C "$MW_REPO" commit -q --allow-empty -m base
+  git -C "$MW_REPO" checkout -q -b feature/x
+  # Producer subtask commits a file on its own branch, exactly as commitWorktree does.
+  git -C "$MW_REPO" checkout -q -b sdk-spike/subtask-1
+  printf 'walker\n' > "$MW_REPO/DirectoryWalker.swift"
+  git -C "$MW_REPO" add -A && git -C "$MW_REPO" commit -q -m "subtask 1: walker"
+  git -C "$MW_REPO" checkout -q feature/x
+
+  # BEFORE the fix this assertion fails: feature/x has no walker, so a dependent
+  # worktree created from it cannot compile against the producer's output.
+  if node -e "
+    const {materializeWave} = require('$SPIKE_DIR/dist/runner.js');
+    materializeWave('$MW_REPO', 'feature/x', ['sdk-spike/subtask-1']);
+  " >/dev/null 2>&1 && [ -f "$MW_REPO/DirectoryWalker.swift" ]; then
+    pass "materializeWave: producer output is visible on the feature branch"
+  else
+    fail "materializeWave: producer output NOT materialized into the feature branch"
+  fi
+
+  # A dependent worktree created AFTER materialization must see the producer's file.
+  MW_WT="$MW_TMP/wt2"
+  if git -C "$MW_REPO" worktree add -q -b sdk-spike/subtask-2 "$MW_WT" feature/x 2>/dev/null \
+     && [ -f "$MW_WT/DirectoryWalker.swift" ]; then
+    pass "materializeWave: dependent worktree inherits producer output (the arm-3 blocker)"
+  else
+    fail "materializeWave: dependent worktree does NOT see producer output"
+  fi
+  git -C "$MW_REPO" worktree remove --force "$MW_WT" >/dev/null 2>&1
+
+  # Idempotence: re-merging an already-ancestor branch must be a no-op, not an error.
+  if node -e "
+    const {materializeWave} = require('$SPIKE_DIR/dist/runner.js');
+    materializeWave('$MW_REPO', 'feature/x', ['sdk-spike/subtask-1']);
+  " >/dev/null 2>&1; then
+    pass "materializeWave: already-merged branch is skipped, not re-merged"
+  else
+    fail "materializeWave: re-merging an ancestor branch errored"
+  fi
+
+  # FAIL CLOSED on conflict — and leave the tree clean for the caller.
+  git -C "$MW_REPO" checkout -q -b sdk-spike/subtask-3 feature/x
+  printf 'theirs\n' > "$MW_REPO/DirectoryWalker.swift"
+  git -C "$MW_REPO" add -A && git -C "$MW_REPO" commit -q -m "subtask 3: conflicting"
+  git -C "$MW_REPO" checkout -q feature/x
+  printf 'ours\n' > "$MW_REPO/DirectoryWalker.swift"
+  git -C "$MW_REPO" add -A && git -C "$MW_REPO" commit -q -m "feature: conflicting"
+  if node -e "
+    const {materializeWave} = require('$SPIKE_DIR/dist/runner.js');
+    materializeWave('$MW_REPO', 'feature/x', ['sdk-spike/subtask-3']);
+  " >/dev/null 2>&1; then
+    fail "materializeWave: conflicting merge SUCCEEDED (must fail closed)"
+  else
+    if [ -z "$(git -C "$MW_REPO" status --porcelain)" ]; then
+      pass "materializeWave: conflict fails closed AND leaves the tree clean"
+    else
+      fail "materializeWave: conflict threw but left the tree dirty (merge not aborted)"
+    fi
+  fi
+
+  # Wrong HEAD must refuse rather than merge into an unrelated branch.
+  git -C "$MW_REPO" checkout -q -b unrelated
+  if node -e "
+    const {materializeWave} = require('$SPIKE_DIR/dist/runner.js');
+    materializeWave('$MW_REPO', 'feature/x', ['sdk-spike/subtask-1']);
+  " >/dev/null 2>&1; then
+    fail "materializeWave: merged while repo root was on the WRONG branch"
+  else
+    pass "materializeWave: refuses when repo root is not on the feature branch"
+  fi
+
+  rm -rf "$MW_TMP"
+else
+  skip "materializeWave regression (needs node + built dist/)"
+fi
+
+# ---------------------------------------------------------------------------
 printf '\n%s\n' "self-test: $FAILURES failure(s)"
 [ "$FAILURES" = 0 ] || exit 1
 exit 0
