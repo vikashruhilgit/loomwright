@@ -530,7 +530,7 @@ ls .supervisor/requirements/
 
 **Sequence:**
 1. `/orchestrator goal: "BD-XX"` (or the requirements file path) — Break into implementation tasks
-2. Implement tasks with code review gates
+2. Implement task(s); review gate applies only above the Decomposition Threshold (Phase 4.5 is the gate below it)
 3. Return here for Phase 2 stories when MVP ships
 
 ---

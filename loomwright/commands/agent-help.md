@@ -834,7 +834,7 @@ approved: QA complete | rejected: re-run with gaps addressed
 cd /path/to/my-app
 /orchestrator goal: "Add dark mode UI to settings page"
 ```
-→ Agent creates Beads tasks with review gates
+→ Agent creates task(s) per the Decomposition Threshold (default one task; a review-gate task is added only above the threshold — see `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold")
 
 ### Start Work: Claim Task
 ```bash
@@ -880,16 +880,16 @@ bd close BD-21
 ### Scenario 2: Add a Feature
 ```
 /orchestrator goal: "Add dark mode to application"
-→ Creates EPIC with tasks and review gates
-→ BD-40: Implement → BD-41: Review (blocks) → BD-42: Tests → BD-43: Commit
-→ Work through chain, reviews unlock next tasks
+→ Creates EPIC — one task by default; splits (with a review-gate task per split) only above the Decomposition Threshold
+→ Below threshold: BD-40: Implement → BD-41: Commit (Supervisor's Phase 4.5 integrated review is the gate, no per-task reviewer)
+→ Above threshold (example): BD-40: Implement → BD-41: Review (blocks) → BD-42: Tests → BD-43: Commit
 → bd close each task when done
 ```
 
 ### Scenario 3: Refactor Code
 ```
 /orchestrator goal: "Refactor Settings component to use hooks"
-→ Creates Beads tasks with review gates
+→ Creates task(s) per the Decomposition Threshold (review-gate task added only above threshold)
 → /code-reviewer checks pattern consistency
 → Commit with Beads linking
 ```
@@ -1081,7 +1081,7 @@ bd close BD-XX
 
 loomwright/              # Nested plugin root
 ├── .claude-plugin/
-│   └── plugin.json                   # Plugin metadata (v15.14.0)
+│   └── plugin.json                   # Plugin metadata (v15.15.0)
 ├── commands/                         # Slash commands (21)
 │   ├── launch-pad.md                 # Supervisor readiness
 │   ├── supervisor.md                 # Parallel orchestrator (v4)

@@ -44,6 +44,16 @@ its cost, and they were not run. **Nothing below should be read as "parallelism 
 
 ## Fix 1 — Decomposition has no counter-pressure, and there is no single-agent path
 
+> **STATUS 2026-07-28:** steps (a), (b), and (c) below **SHIPPED** in **v15.15.0** via `feature/single-agent-default` — the decomposition default is inverted (ONE subtask default, split requires one of three
+> named reasons, single home `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold"), a true
+> Single-Agent Path exists in `agents/supervisor.md` (one worker, all criteria, one context, no per-subtask
+> Code Reviewer — Phase 4.5 is the sole review), and it is a threshold (above it, worktrees/Execute
+> Manager/per-subtask review are byte-identical to before). See `CHANGELOG.md` v15.15.0 for the full list of
+> synced surfaces. **Correction to the problem table below, found during planning:** the *"stated 5×"* count
+> for the mandatory-paired-review rule in `agents/orchestrator.md` was wrong — re-counted by anchor-phrase
+> grep at plan time, the true count in the pre-change file was **12×** (lines 45, 54, 81, 91, 155, 156, 157,
+> 187, 195, 207, 208, 398), not 5. Recorded here rather than silently rewritten.
+
 **Highest value. This is the 6.4×.**
 
 ### Problem
@@ -53,7 +63,7 @@ Three rules combine to guarantee fan-out, and nothing opposes them:
 | Location | Rule | Effect |
 |---|---|---|
 | `skills/supervisor-readiness/SKILL.md:359` | *"Map each criterion to exactly one subtask"* | acceptance criteria **manufacture** subtasks |
-| `agents/orchestrator.md:54, 81, 155, 156, 187` | *"Every task includes mandatory code review subtask"* (stated 5×) | **doubles** whatever the above produced |
+| `agents/orchestrator.md:54, 81, 155, 156, 187` | *"Every task includes mandatory code review subtask"* (stated 5×; **corrected 2026-07-28 — true count was 12×**, see STATUS note above) | **doubles** whatever the above produced |
 | `agents/supervisor.md:216, 253` | Fast path fires only `If ≤ 1 subtask OR --sequential` | fast path is **unreachable** for any multi-criterion requirement |
 
 7 acceptance criteria → 5 implementation subtasks → 5 paired review subtasks → **10 agent cold
