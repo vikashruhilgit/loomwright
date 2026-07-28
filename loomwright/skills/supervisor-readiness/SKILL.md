@@ -309,9 +309,10 @@ Subtask 2 (independent)
 
 ## Configuration
 - **Workers:** {recommended count}
-- **Mode:** parallel | sequential
+- **Mode:** parallel | sequential | single-agent
 - **Estimated batches:** {N}
 - **Base Branch:** main  # optional (v14.0.0+) — defaults to "main" when omitted. Autonomous-loop iter N+1 sets this to the parent iteration's feature branch for stacked PRs (e.g., `feature/v14-iter1`). Plan Reviewer Criterion 13 validates that the named branch exists locally (`main` always passes); a named-but-unresolvable branch FAILs the brief.
+- **Split reason:** <file-conflict|context-bound|genuine-parallelism>  # optional — see `## Decomposition Threshold`; required when the brief has more than 1 subtask, omitted for a single-subtask brief
 
 ## Handoff
 ```
@@ -350,13 +351,44 @@ The `Base Branch:` line in `## Configuration` is **optional** and defaults to `m
 
 **Pre-v14 briefs:** Briefs created before v14.0.0 do not include this field. They continue to work unchanged — Supervisor treats them as `Base Branch: main`.
 
+## Decomposition Threshold
+
+The default is **ONE subtask**. Acceptance criteria are a **checklist for one worker to satisfy**, not a template for generating subtasks — do not decompose unless a split is justified by one of exactly three named reasons below. When a split fires, record the triggering reason verbatim in the brief's `## Configuration` block on a `- **Split reason:** <reason>` line (omitted entirely for a single-subtask brief).
+
+**The three legal split reasons — no other reason justifies a split:**
+1. `file-conflict` — two coherent work groups would edit the same file (they must serialize anyway; splitting makes the ordering explicit).
+2. `context-bound` — the estimated change exceeds one worker's context: **> 12 files changed OR > 800 changed lines**.
+3. `genuine-parallelism` — **≥ 2 groups with zero file overlap AND each group ≥ 3 files** (below that, the cold start costs more than the parallelism saves).
+
+**Calibration honesty:** the numeric bounds in (2) and (3) are an **initial calibration, not a measured optimum** — set so the measured `tree-and-find` corpus entry (5 criteria, 6 files) lands single-agent. They are explicitly tunable as more data accumulates; do not present them as derived.
+
+**Single-subtask form (below-threshold default):** `## Subtask Structure` and `## Parallelism Analysis` remain **required** sections (Plan Reviewer Criterion 9 treats their absence as BLOCKING) even when there is only one subtask — they take this reduced legal form instead of being omitted:
+
+```markdown
+## Subtask Structure
+
+| # | Title | Acceptance Criteria Subset | Est. Files (modify/create) | Skills | Status |
+|---|-------|---------------------------|---------------------------|--------|--------|
+| 1 | {title} | all | {M} modify, {C} create | {skill refs} | LAUNCHABLE |
+
+## Parallelism Analysis
+
+single-agent (no fan-out)
+
+### Batch Plan
+- **Recommended workers:** 1
+```
+
+**Single home:** this section is the sole authority for the threshold — no mirror copy exists elsewhere. Orchestrator does not preload this skill and cites this section by path (`skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold") rather than restating the numbers.
+
 ## Common Failure Modes
 
 | Failure | Cause | Prevention |
 |---------|-------|------------|
 | Supervisor re-does Phases 0-2 | Brief not loaded (wrong path or missing `job:` flag) | Verify path exists before handing off |
 | Workers modify same files | File overlap not detected in brief | Check overlap matrix carefully, mark overlapping subtasks as BLOCKED |
-| Subtask criteria too vague | Acceptance criteria not broken down per subtask | Map each criterion to exactly one subtask |
+| Subtask criteria too vague | Acceptance criteria not broken down per subtask | Acceptance criteria are a checklist for one worker, not a subtask generator — see `## Decomposition Threshold` |
+| Work fanned out with no stated reason | Split decided without checking `## Decomposition Threshold` | Default to one subtask; split only for one of the three named reasons, recorded as `Split reason:` in `## Configuration` |
 | Worker confused by scope | Subtask has too many files or mixed concerns | Keep subtasks focused: one module/domain per subtask |
 | Parallelism overestimated | Dependencies missed or file overlap ignored | Conservative: when in doubt, mark as BLOCKED |
 | Environment changed between brief and execution | Time gap between Launch Pad and Supervisor | Re-validate environment in Supervisor Phase 0 (quick check) |
@@ -380,7 +412,7 @@ Before saving a brief:
 - [ ] Goal is a single clear sentence
 - [ ] Acceptance criteria are testable (Given/When/Then)
 - [ ] Every file path in impact map has been verified to exist (or marked as "create")
-- [ ] Subtasks are 3-7 items, each 30-60 min scope
+- [ ] Subtask count follows `## Decomposition Threshold` (default 1; split only for a named reason, recorded as `Split reason:`)
 - [ ] Parallelism analysis is conservative (no false LAUNCHABLE)
 - [ ] Brief follows the complete template (all 9 required sections present; Feasibility optional)
 - [ ] If Phase 2.5 ran, Feasibility verdict recorded in the optional `## Feasibility` section
