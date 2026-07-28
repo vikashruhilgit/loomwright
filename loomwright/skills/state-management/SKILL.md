@@ -337,7 +337,11 @@ If no scratchpad state but `.supervisor/state.md` exists:
 3. **`status` must be in the closed set** `running | paused | completed | completed_with_escalation | failed` — verbatim from §"State File Schema" above.
 4. **If a `branch:` field is asserted** in the `## Session` block, `git rev-parse --verify <branch>` must succeed (the branch must still exist locally). The value comes from an untrusted file (the gate's own premise): pass it as a single quoted argument, and pre-validate with `git check-ref-format --branch <value>` — a value failing ref-format fails this check.
 
-**On ANY violation the resume is REFUSED:** the Supervisor emits `SUPERVISOR_RESULT` with `status: failed` and `error: "resume_state_invalid"`, plus a user instruction to inspect or delete `.supervisor/state.md` (or start fresh without `--continue`). It NEVER silently falls back to a fresh start — that would mask corruption. There is deliberately NO `--skip-*` / `--force-resume` escape hatch in v1: deleting the bad state file IS the escape hatch.
+5. **Not-stale (v15.15.0).** Checks 1–4 prove the file parses; this proves it isn't lying. Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/reconcile-resume-state.sh" <state_file> .` — `CLEAN`/0 proceeds, `STALE`/3 refuses as `resume_state_stale`, `UNKNOWN`/4 refuses (fail closed). Never `|| true`. Rationale + incident: the script's header comment.
+
+**On ANY violation of 1–4 the resume is REFUSED:** the Supervisor emits `SUPERVISOR_RESULT` with `status: failed` and `error: "resume_state_invalid"`, plus a user instruction to inspect or delete `.supervisor/state.md` (or start fresh without `--continue`). It NEVER silently falls back to a fresh start — that would mask corruption. There is deliberately NO `--skip-*` / `--force-resume` escape hatch in v1: deleting the bad state file IS the escape hatch.
+
+**Check 5 refuses with a DISTINCT error** because the operator response differs: *invalid* = corrupt, delete it; *stale* = intact but behind, and the work it calls pending is already committed. Relay the reconciler's per-subtask lines so the operator resumes from the true position instead of redoing merged work.
 
 Scope notes:
 
