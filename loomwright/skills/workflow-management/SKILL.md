@@ -58,8 +58,8 @@ PRE-FLIGHT SYNC:
 
 PLAN:
   - subtasks created + parallelism analyzed → EXECUTE
-  - single subtask → EXECUTE (fast-path, no worktrees)
-  - --sequential → EXECUTE (no worktrees)
+  - exactly 1 subtask → EXECUTE (Single-Agent Path, no worktrees, no per-subtask reviewer)
+  - --sequential (more than 1 subtask) → EXECUTE (Sequential Path, no worktrees, per-subtask reviewer runs)
 
 EXECUTE:
   - EXECUTE_RESULT (completed) → FINALIZE

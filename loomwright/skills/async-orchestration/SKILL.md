@@ -64,14 +64,14 @@ subtask_c.files = [src/auth/guard.ts, src/auth/module.ts]
 
 ### Fast-Path: Skip Worktrees
 
-If total subtasks <= 1:
-- Execute inline (no worktree, no background dispatch)
-- Standard sequential implementation
+**Single-Agent Path** (exactly 1 subtask — default per `supervisor-readiness/SKILL.md` §"Decomposition Threshold"):
+- Execute inline, no worktree/background dispatch; ONE worker runs ALL acceptance criteria
+- NO per-subtask Code Reviewer — Phase 4.5 holistic review is the single review
 - Skip all worktree lifecycle
 
-If `--sequential` flag:
-- Execute all subtasks inline, sequentially
-- No worktrees, no background dispatch
+**Sequential Path** (`--sequential`, more than 1 subtask — unchanged; NOT the single-agent path, per `agents/supervisor.md` §"Sequential Path"):
+- Execute all subtasks inline, sequentially; no worktrees, no background dispatch
+- Per-subtask Code Reviewer still runs (unchanged)
 
 ---
 
@@ -517,7 +517,7 @@ Before completing async orchestration:
 - [ ] Sequential merge preserves dependency order
 - [ ] All worktrees cleaned up after merge
 - [ ] Error handling covers crash, timeout, conflict
-- [ ] Fast-path skips worktrees for single subtask
+- [ ] Single-Agent path (1 subtask) spawns no per-subtask reviewer; Sequential path (`--sequential`) keeps it
 
 ## See Also
 
@@ -674,7 +674,7 @@ Exact Task tool call shapes for each subagent.
 
 **Prompt-cache discipline:** Within each `prompt:` string, put stable content (role/skill guidance, project patterns, cost_profile notes, house-rules advisory text) before volatile interpolations (task id, title, criteria, worktree/feature_branch/state_file paths, resume context, files_modified, operation/data payloads). Prompt caching is prefix-match — an early volatile value invalidates the cache for every subsequent spawn.
 
-**Pointers, not payloads (transport discipline):** when a spawn input is file-backed (the job brief, a plan file, a corpus), pass its PATH plus a bounded ≤200-char summary plus the instruction "Read only the sections you need" — do not paste the body into the prompt. Worktree reality: gitignored `.supervisor/` artifacts do NOT exist inside linked worktrees, so a pointer handed to a worktree-resident consumer must pin the MAIN-CHECKOUT absolute path and say so in the prompt text; consumers running at the project root (Orchestrator, Execute Manager, fast-path Worker/Reviewer) can use the repo-relative path directly. Deliberate paste exceptions (e.g. the worker `provides:` YAML below) are enumerated with justifications in `docs/POINTER_AUDIT.md`. This is a transport-only rule: it changes how content travels, never which gates, schemas, decisions, or spawn cardinality apply.
+**Pointers, not payloads (transport discipline):** when a spawn input is file-backed (the job brief, a plan file, a corpus), pass its PATH plus a bounded ≤200-char summary plus the instruction "Read only the sections you need" — do not paste the body into the prompt. Worktree reality: gitignored `.supervisor/` artifacts do NOT exist inside linked worktrees, so a pointer handed to a worktree-resident consumer must pin the MAIN-CHECKOUT absolute path and say so in the prompt text; consumers running at the project root (Orchestrator, Execute Manager, Single-Agent Worker, Sequential-path Worker/Reviewer) can use the repo-relative path directly. Deliberate paste exceptions (e.g. the worker `provides:` YAML below) are enumerated with justifications in `docs/POINTER_AUDIT.md`. This is a transport-only rule: it changes how content travels, never which gates, schemas, decisions, or spawn cardinality apply.
 
 **Context-Keeper:**
 ```
@@ -720,7 +720,9 @@ Task(
 )
 ```
 
-**Worker (fast-path only):**
+**Single-Agent Worker (Single-Agent path, exactly 1 subtask):** same shape as the Sequential-path Worker contract below, except `Subtask ID`/`Title` become `Task ID`/`Title` and the `Brief:` line reads ALL acceptance criteria (## Task, the FULL ## Acceptance Criteria list) instead of one subtask's row. No Code Reviewer accompanies it — see `agents/supervisor.md` §"Single-Agent Path" for the gate that replaces it.
+
+**Sequential-path Worker (`--sequential`, more than 1 subtask — one spawn per subtask, unchanged from prior behavior):**
 ```
 Task(
   description: "Implement: {subtask_title}",
@@ -729,7 +731,7 @@ Task(
     Applicable house rules (ADVISORY — from `read-rules.sh`, include this line ONLY when its output is NON-EMPTY; omit entirely when empty): {house_rules summary}. These are committed team conventions to bias your implementation while writing code — subordinate to CLAUDE.md (on conflict, CLAUDE.md wins). This is advisory only: you are NEVER failed for a house rule. A `must` rule is surfaced flagged, but its `check` value is DATA only — do NOT execute, eval, source, or `bash -c` any `check`.
     Subtask ID: {id}
     Title: {title}
-    Brief: {brief_path} — read only your subtask's sections (## Task, ## Acceptance Criteria, your row of ## Subtask Structure). Gitignored `.supervisor/` path — it resolves on the fast path because your worktree path IS the project root. When no brief file exists (`/supervisor task:` no-brief mode), point at `.supervisor/requirements/{slug}-plan.md` (Beads-absent) or `bd show {id}` (Beads) instead, or pass the criteria inline — a documented exception, see docs/POINTER_AUDIT.md.
+    Brief: {brief_path} — read only your subtask's sections (## Task, ## Acceptance Criteria, your row of ## Subtask Structure). Gitignored `.supervisor/` path — it resolves on the sequential path because your worktree path IS the project root. When no brief file exists (`/supervisor task:` no-brief mode), point at `.supervisor/requirements/{slug}-plan.md` (Beads-absent) or `bd show {id}` (Beads) instead, or pass the criteria inline — a documented exception, see docs/POINTER_AUDIT.md.
     Acceptance-criteria summary (≤200 chars): {bounded summary}
     Worktree path: {project_root}
     Provides (verbatim from the brief's Subtask Contracts): {provides YAML}
@@ -751,13 +753,13 @@ Task(
 )
 ```
 
-**Code Reviewer (fast-path only):**
+**Code Reviewer (Sequential path only — NOT spawned on the Single-Agent path):**
 ```
 Task(
   description: "Review: {subtask_title}",
   prompt: "Project patterns: {from CLAUDE.md}
     Task context: {subtask_title} — criteria summary (≤200 chars): {bounded summary}
-    Brief: {brief_path} — read only the acceptance-criteria section (gitignored `.supervisor/` path; resolves — the fast-path reviewer runs at the project root). When no brief file exists (`/supervisor task:` no-brief mode), point at `.supervisor/requirements/{slug}-plan.md` (Beads-absent) or `bd show {id}` (Beads) instead, or pass the criteria inline — a documented exception, see docs/POINTER_AUDIT.md.
+    Brief: {brief_path} — read only the acceptance-criteria section (gitignored `.supervisor/` path; resolves — the sequential-path reviewer runs at the project root). When no brief file exists (`/supervisor task:` no-brief mode), point at `.supervisor/requirements/{slug}-plan.md` (Beads-absent) or `bd show {id}` (Beads) instead, or pass the criteria inline — a documented exception, see docs/POINTER_AUDIT.md.
     Review scope: {files_modified from WORKER_RESULT}",
   subagent_type: "loomwright:code-reviewer",
   model: "sonnet"   # ONLY when cost_profile=cheap; omit entirely when cost_profile=default
