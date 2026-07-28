@@ -510,6 +510,7 @@ release-dependent verdicts — do not build it speculatively.
 
 | requirement | arm | review_rounds_to_READY | heal_iterations | post_merge_defects | wall_tokens | notes |
 |---|---|---|---|---|---|---|
+| tree-and-find | 3 (SDK runner + multi-voter) | **ABORTED — could not execute** | n/a (never reached Phase 4.5) | n/a | out 18,130 · cache-create 92,811 · cache-read 2,324,039 · $2.62 (LP 6.97 + Supervisor 2.62 = **$9.59** spent to establish non-viability) | Phase 3 abort, 32 turns, 4m31s. Two independent blockers: brief parser drops all dependency edges (non-numeric ids + comment-style keys) ⇒ 2 and 3 spawned concurrently onto the same file; and no dependency materialization ⇒ dependents cannot compile. **Verdict: SDK runner CUT.** `--multi-voter-heal` never ran — remains unmeasured, NOT cut. |
 | tree-and-find | 2 (Loomwright default) | drain `ESCALATED` — structurally unreachable `READY` on an unprotected base (predicted by §Recording protocol); drain `fix_cycles` 0; Phase 4.5 `heal_iterations` 0 + 1 out-of-loop review-driven fix commit `3dda850` | 0 | 0 | out 90,473 · cache-create 526,110 · cache-read 15,191,782 · **$61.76** (LP 7.68 + Supervisor 43.63 + resume 10.45) — see METRIC DEFECT note: token columns under-count sub-agents, cost is the valid comparator | PR [#58](https://github.com/vikashruhilgit/ntfs-tool/pull/58), head `3dda850`, 1,656 ins / 10 files. `heal_decision: PASS`, `rubric_score: 6/6`. Reviewer PASS — 0 BLOCKING, 0 HIGH, 4 MEDIUM/new, 6 LOW/new. Ran as 3 sessions (Launch Pad → Supervisor → `--resume`); the middle one stalled mid-FINALIZE and was recovered by explicit re-invocation, not re-run. Two earlier prompt-design attempts discarded (see void-runs note). |
 | tree-and-find | 1 (bare) | N/A (no drain — branch never pushed, no reviewer in loop) | - | 0 | out 82,290 · cache-create 172,468 · cache-read 11,830,096 · in 176 · $9.70 | commit `4406708`, 98 turns, 41m04s. 1,838 ins / 12 files (impl 759, tests 1,027). Tests green: NTFSCore 286 (2 skipped, 0 fail), ntfsctl 35 (0 fail). Reviewer PASS — 0 BLOCKING, 0 HIGH, 2 MEDIUM/new, 3 LOW/new, 1 LOW/pre-existing. Baseline cleanliness VERIFIED by session-start-time (transcript born 20:05:27 vs `settings.json` disable 19:54:36). |
 
@@ -578,6 +579,92 @@ release-dependent verdicts — do not build it speculatively.
 > receive the requirement body ONLY — any commit/push/PR instruction either leaks into the brief as
 > a constraint or trips the plan/execute boundary. Arm 1 keeps its operational tail because nothing
 > else will commit for it; the requirement body is byte-identical across arms (verified by `diff`).
+
+### Arm 3 (tree-and-find) — ABORTED at Phase 3. SDK runner **cannot execute** the brief.
+
+Not a run that failed; a run that **could not start**, for two independent reasons the agent
+established by reading `sdk-spike/src/runner.ts:315-399` rather than inferring. Cost $2.62, 32
+turns, 4m31s. No commits, no PR, `--multi-voter-heal` never reached.
+
+**Blocker 1 — the brief parser silently discards every dependency edge.** The runner's contract
+(`test/fixtures/mini-brief.md`) expects numeric ids and `subtask_N:` YAML keys. A real Launch Pad
+brief matches on none of three axes:
+
+| Runner expects | Launch Pad emits | Effect |
+|---|---|---|
+| `/^\|\s*(\d+)\s*\|/` table rows | `\| 1a \|`, `\| 1b \|` | rows dropped entirely — the walker is assigned to nobody |
+| `subtask_<digits>:` YAML keys | `# Subtask 1a — …` comments | `current` never set ⇒ **all `provides`/`requires` discarded** ⇒ every subtask parses `requires: []` |
+| `from: 1` (unquoted int) | `from: "1a"` | third break, moot given the above |
+
+Consequence observed live: with every edge gone, **everything looked launchable** and subtasks 2 and
+3 were spawned concurrently — both editing `ntfsctl.swift`'s `subcommands:` array, precisely the
+overlap the brief serialized. This is a **silent correctness failure, not a crash**: on a brief
+whose subtasks happen to touch disjoint files it would appear to work while providing no ordering
+guarantee at all.
+
+> **CORRECTION (2026-07-28, same day) — blocker 1 is NON-DETERMINISM, not a fixed format mismatch.**
+> Checked after the fact: the arm-**2** brief, produced from the *byte-identical* prompt for the
+> *same* requirement, used purely **numeric** ids (`1`–`5`, confirmed by its `subtask: N` commits),
+> which the runner's parser **would have accepted**. The arm-3 brief mixed both schemes
+> (`1`–`5` in one table, `1a`/`1b` in another). So Launch Pad does **not** emit a stable id scheme
+> across runs, and the runner's parser therefore succeeds or **silently discards the entire
+> dependency graph depending on which brief you happened to get**. That is worse than a permanent
+> mismatch — a permanent one fails every time and gets noticed — but it is a *different claim* than
+> "Launch Pad's format is incompatible", and the original wording overstated it. **Blocker 1 alone
+> would NOT justify the CUT**; it justifies "unreliable". The CUT rests on blocker 2.
+
+**Blocker 2 — no dependency materialization (residual divergence 3), fatal independently, and
+INDEPENDENT of id format.** The
+spike documents it: *"`requires` only delays spawn order, not visibility — a dependent worktree
+branches from the feature branch and does NOT see producer commits."* Subtasks 2 and 3 both consume
+subtask 1a's `DirectoryWalker.swift`, so dependent worktrees branch from a tree lacking the walker
+and **cannot compile**. Fixing the id parsing would not rescue the run.
+
+**This is exactly what §Protocol step 1 required the corpus to surface** — "must surface that gap in
+the measured arm-3 comparison, not leave it theoretical." It is now measured.
+
+**Two behaviours worth crediting:** the runner honoured its "NEVER silently falls back to the default
+path" contract, and Supervisor **stopped for a human decision instead of auto-picking** a fallback
+that would have quietly changed what arm 3 measures. Both are the fail-closed discipline working.
+
+**State clean:** runner killed (exit 144), both worktrees removed, `sdk-spike/subtask-2/-3` branches
+deleted, no committed work, uncommitted partial preserved to `scratchpad/aborted-sdk-run/`, brief in
+`jobs/in-progress/`, root cause checkpointed.
+
+#### Verdict — SDK runner: **CUT** (per the pre-committed decision rule)
+
+> *"The SDK runner graduates to v16 ONLY if arm 3 beats arm 2 on defects or rounds without >1.5×
+> token cost. Otherwise the spike is cut."*
+
+It does not beat arm 2 on anything: it cannot execute a serial, dependency-carrying Launch Pad brief
+— **the normal shape of Launch Pad output**, not an edge case. n=1 on the corpus, but this is a
+*structural* incapacity rather than a metric shortfall, which is stronger evidence than a numeric
+comparison would have been. The cost clause never even engages.
+
+**What the verdict does and does not rest on (stated precisely, after the blocker-1 correction):**
+
+- **Rests on blocker 2** — no dependency materialization. Documented by the spike itself, independent
+  of id format, and fatal for any brief whose subtasks consume each other's files. §Protocol step 1
+  *required* the corpus to contain such a brief precisely so this would be measured rather than
+  assumed.
+- **Does NOT rest on blocker 1** — the parser non-determinism is an "unreliable" finding, not a
+  "cannot work" one. Recorded, but not load-bearing for the CUT.
+- **Honest scope of the claim:** the runner was never shown to fail on a brief with numeric ids AND
+  no cross-subtask file dependencies. It may well work there. The CUT says it cannot do the
+  orchestration-shaped work Loomwright exists to do — not that it fails universally.
+- **Falsifiable:** one arm-3 run on a numeric-id, dependency-free brief that completes cleanly would
+  narrow this verdict to "unsuitable for dependency-carrying work" rather than CUT. That run was not
+  performed. Anyone re-opening this should run it before re-adding the layer.
+
+Per §Scope item 5 of the originating requirement, a CUT verdict becomes a follow-up stub: remove
+`sdk-spike/` and the `--sdk-runner` seam (`SUPERVISOR_RESULT`, `supervisor-config`, the flag row in
+`commands/supervisor.md`). **Not performed here** — this item is verdicts-only.
+
+> **`--multi-voter-heal` remains UNMEASURED.** It never ran, because arm 3 aborted in Phase 3 before
+> Phase 4.5. The decision rule is explicitly **per-layer** ("a layer that does not move its metric is
+> removed"), so the SDK runner's structural failure must NOT be recorded as a verdict against
+> multi-voter heal. Isolating it needs one additive run — arm 2's configuration plus
+> `--multi-voter-heal` alone. Recorded as pending, not inferred.
 
 ### Preliminary reading — tree-and-find, arms 1 vs 2 (n=1 requirement; NOT a verdict)
 
