@@ -31,14 +31,22 @@
  * Spike simplifications vs the real Execute Manager (documented in README.md):
  *   - no fix-worker retry loop on review FAIL (single attempt; FAIL = subtask failed)
  *   - no Context-Keeper batching (state lives in-process)
- *   - dependency materialization is simplified: dependents branch from the
- *     feature branch after producers complete; producer branches are NOT
- *     merged into the dependent worktree (Step 2a of the real protocol)
  *   - no tool-call budget / EXECUTE_CHECKPOINT — failures land in
  *     subtasks_failed of the final block instead
- *   - branch lifecycle: the runner commits worker output (mirroring FINALIZE
- *     step 2 of skills/async-orchestration/SKILL.md) but does NOT merge —
- *     merging the branches in merge_order and deleting them is the caller's job
+ *
+ * FIXED 2026-07-28 (was the blocker that aborted FABLE_PARITY_EVAL arm 3):
+ *   - dependency materialization. Previously dependents branched from the feature
+ *     branch after producers completed, and producer branches were never merged
+ *     during the run — so `requires` bought ordering in TIME but nothing in
+ *     CONTENT, and any dependent importing a producer's symbol could not compile.
+ *     `materializeWave` now merges each completed wave into the feature branch
+ *     BEFORE the next wave's worktrees are created, so `git worktree add …
+ *     featureBranch` inherits everything already landed. Fails CLOSED on conflict
+ *     (merge aborted, tree left clean, run marked failed).
+ *   - branch lifecycle: the runner commits worker output on each per-subtask
+ *     branch (mirroring FINALIZE step 2 of skills/async-orchestration/SKILL.md)
+ *     AND now merges each wave into the feature branch as it goes. The caller
+ *     still owns the FINAL merge of the feature branch and branch deletion.
  */
 
 import * as fs from "fs";
@@ -63,11 +71,11 @@ interface ContractItem {
   kind: string;
   path: string;
   name?: string;
-  from?: number; // producing subtask id (requires entries)
+  from?: string; // producing subtask id (requires entries) — string: Launch Pad emits "1a"/"1b" as well as "1"
 }
 
 interface Subtask {
-  id: number;
+  id: string;
   title: string;
   tableStatus: string; // Status cell from the Subtask Structure table (informational)
   provides: ContractItem[];
@@ -314,7 +322,7 @@ function parseArgs(argv: string[]): CliArgs {
 
 export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch?: string } {
   const lines = text.split(/\r?\n/);
-  const byId = new Map<number, Subtask>();
+  const byId = new Map<string, Subtask>();
 
   // --- Subtask Structure table: | # | Title | Est. files | Status | ---
   let inStructure = false;
@@ -325,9 +333,13 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
     }
     if (inStructure && /^##\s/.test(line)) inStructure = false; // next H2 ends the section (### stays inside)
     if (!inStructure) continue;
-    const m = line.match(/^\|\s*(\d+)\s*\|([^|]+)\|[^|]*\|([^|]+)\|/);
+    // Ids are matched as `\d+[a-z]?` — Launch Pad emits BOTH `1`..`N` and `1a`/`1b` for the same
+    // requirement across runs (verified 2026-07-28: the arm-2 and arm-3 briefs, produced from a
+    // byte-identical prompt, used different schemes). A `\d+`-only pattern silently DROPPED the
+    // `1a`/`1b` rows, which is how arm 3 ended up with every dependency edge missing.
+    const m = line.match(/^\|\s*(\d+[a-z]?)\s*\|([^|]+)\|[^|]*\|([^|]+)\|/);
     if (m) {
-      const id = Number(m[1]);
+      const id = m[1];
       byId.set(id, {
         id,
         title: m[2].trim(),
@@ -359,9 +371,13 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
       inContracts = false;
       continue;
     }
-    let m = line.match(/^subtask_(\d+):/);
+    // Two accepted key forms. `subtask_1:` is the runner's original contract; `# Subtask 1a — …`
+    // is what Launch Pad actually writes. Only the first was matched before, so `current` stayed
+    // null for a real brief and EVERY provides/requires line below was silently discarded (both
+    // handlers guard on `current`) — the whole dependency graph vanished without a warning.
+    let m = line.match(/^subtask_(\d+[a-z]?):/) ?? line.match(/^#\s*[Ss]ubtask\s+(\d+[a-z]?)\b/);
     if (m) {
-      const id = Number(m[1]);
+      const id = m[1];
       if (!byId.has(id)) {
         byId.set(id, { id, title: `subtask_${id}`, tableStatus: "", provides: [], requires: [] });
       }
@@ -369,7 +385,12 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
       listKey = null;
       continue;
     }
-    m = line.match(/^\s+(provides|requires):\s*(\[\s*\])?\s*(#.*)?$/);
+    // Leading whitespace is OPTIONAL: real Launch Pad briefs put `provides:` / `requires:` at
+    // column 0 under a `# Subtask <id>` comment, while the runner's own fixture indents them. The
+    // `^\s+` form matched only the fixture, so every list header in a real brief was skipped and
+    // the dependency graph came out empty. The `^` anchor still keeps `external_requires:` from
+    // matching `requires:`.
+    m = line.match(/^\s*(provides|requires):\s*(\[\s*\])?\s*(#.*)?$/);
     if (m && current) {
       listKey = m[1] as "provides" | "requires";
       if (m[2]) {
@@ -382,8 +403,9 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
     if (m && current && listKey) {
       const body = m[1];
       const item: ContractItem = { kind: "", path: "" };
-      const from = body.match(/\bfrom:\s*(\d+)/);
-      if (from) item.from = Number(from[1]);
+      // `from: 1`, `from: "1a"` and `from: 1a` all appear in the wild — accept all three.
+      const from = body.match(/\bfrom:\s*"?(\d+[a-z]?)"?/);
+      if (from) item.from = from[1];
       const kind = body.match(/\bkind:\s*([A-Za-z_]+)/);
       if (kind) item.kind = kind[1];
       const p = body.match(/\bpath:\s*"([^"]*)"/) ?? body.match(/\bpath:\s*([^,}]+)/);
@@ -396,7 +418,14 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
 
   const branchMatch = text.match(/Suggested branch:\s*([^\s|`]+)/);
   return {
-    subtasks: Array.from(byId.values()).sort((a, b) => a.id - b.id),
+    // Natural order: numeric prefix first, then any alpha suffix, so "1" < "1a" < "1b" < "2" < "10".
+    // A plain string sort would put "10" before "2" and break wave ordering on 10+ subtasks.
+    subtasks: Array.from(byId.values()).sort((a, b) => {
+      const na = parseInt(a.id, 10);
+      const nb = parseInt(b.id, 10);
+      if (na !== nb) return na - nb;
+      return a.id.localeCompare(b.id);
+    }),
     suggestedBranch: branchMatch ? branchMatch[1] : undefined,
   };
 }
@@ -409,7 +438,7 @@ function git(cwd: string, ...argv: string[]): string {
   return execFileSync("git", argv, { cwd, encoding: "utf8" }).trim();
 }
 
-function addWorktree(repoRoot: string, wtPath: string, subtaskId: number, featureBranch: string): string {
+function addWorktree(repoRoot: string, wtPath: string, subtaskId: string, featureBranch: string): string {
   // Always create the deterministic per-subtask branch off the feature branch
   // (the real Execute Manager's pattern — git refuses to double-checkout the
   // feature branch itself, and a shared branch would interleave subtask work).
@@ -445,6 +474,72 @@ function commitWorktree(wtPath: string, subtask: Subtask): boolean {
   git(wtPath, "add", "-A");
   git(wtPath, "commit", "-m", `subtask ${subtask.id}: ${subtask.title}`);
   return true;
+}
+
+/**
+ * Materialize a completed wave's output into the feature branch.
+ *
+ * WHY THIS EXISTS — this was residual divergence 3, and it made the runner unusable on any brief
+ * whose subtasks consume each other's files (measured 2026-07-28, FABLE_PARITY_EVAL arm 3).
+ *
+ * The wave scheduler already honours `requires` correctly: subtask 2 does not START until subtask 1
+ * has COMPLETED. But `addWorktree` branches every worktree from `featureBranch`, and worker output
+ * is committed to the per-subtask branch `sdk-spike/subtask-N` — which was never merged back during
+ * the run. So a dependent got ordering in TIME but nothing in CONTENT: it started after its producer
+ * finished and still could not see one line the producer wrote. On a brief where subtask 2 imports a
+ * type subtask 1 creates, that is a guaranteed compile failure, not a subtle difference.
+ *
+ * Merging each wave into `featureBranch` before the next wave's worktrees are created closes the
+ * gap without touching `addWorktree` — the next `git worktree add … featureBranch` now inherits
+ * everything already landed, which is exactly how the prompt-driven Execute Manager behaves via its
+ * sequential merges.
+ *
+ * FAILS CLOSED. A conflicting merge is aborted and thrown, never left half-applied: continuing with
+ * a conflicted index would hand the next wave a broken tree and corrupt every downstream subtask.
+ * The caller marks the run failed. This mirrors FINALIZE's pre-merge safety gate
+ * (skills/async-orchestration/SKILL.md) — the merge is the dangerous step, so it is the guarded one.
+ */
+export function materializeWave(repoRoot: string, featureBranch: string, branches: string[]): void {
+  if (branches.length === 0) return;
+
+  // The merge target must actually be checked out in the main worktree. Supervisor's ACQUIRE leaves
+  // repoRoot on the feature branch; assert rather than assume, because merging into whatever happens
+  // to be checked out would silently corrupt an unrelated branch.
+  const head = git(repoRoot, "branch", "--show-current");
+  if (head !== featureBranch) {
+    throw new Error(
+      `cannot materialize wave: repo root is on "${head}", expected feature branch "${featureBranch}". ` +
+        `Check out ${featureBranch} in the main worktree before running.`
+    );
+  }
+
+  for (const branch of branches) {
+    // Ask git whether this branch actually carries work, rather than trusting a plumbed flag: a
+    // worker that produced no changes leaves nothing to commit, and `git merge` on an
+    // already-ancestor branch is a no-op we skip explicitly so the log stays honest.
+    let ahead = "0";
+    try {
+      ahead = git(repoRoot, "rev-list", "--count", `${featureBranch}..${branch}`);
+    } catch {
+      // Unresolvable branch — nothing to merge, and addWorktree already failed closed if it mattered.
+      continue;
+    }
+    if (ahead === "0") continue;
+
+    try {
+      git(repoRoot, "merge", "--no-ff", "-m", `merge: ${branch}`, branch);
+    } catch (err) {
+      try {
+        git(repoRoot, "merge", "--abort");
+      } catch {
+        // A merge that never started leaves nothing to abort; the throw below is the real signal.
+      }
+      throw new Error(
+        `dependency materialization failed: merging ${branch} into ${featureBranch} conflicted. ` +
+          `The merge was aborted and the tree left clean. ${(err as Error).message}`
+      );
+    }
+  }
 }
 
 function removeWorktree(repoRoot: string, wtPath: string): void {
@@ -790,8 +885,8 @@ async function main(): Promise<number> {
 
   const queryFn: QueryFn = args.dryRun ? makeDryRunQuery(args.dryRunFixtureSet) : makeLiveQuery();
 
-  const completed = new Map<number, SubtaskOutcome>();
-  const failed = new Map<number, SubtaskOutcome>();
+  const completed = new Map<string, SubtaskOutcome>();
+  const failed = new Map<string, SubtaskOutcome>();
   const worktrees: WorktreeRecord[] = [];
   const mergeOrder: string[] = [];
 
@@ -911,6 +1006,18 @@ async function main(): Promise<number> {
     if (launchable.length === 0) break;
     pending = pending.filter((s) => !launchable.includes(s));
     await runPool(launchable, args.maxWorkers, runSubtask);
+
+    // Materialize this wave into the feature branch BEFORE the next wave's worktrees are created
+    // (addWorktree branches from featureBranch). Without this the next wave sees an empty tree —
+    // `requires` would buy spawn ordering and nothing else. Only branches that actually carry a
+    // commit are merged: a subtask whose worker produced no changes has no branch to merge.
+    if (!args.dryRun) {
+      const waveBranches = launchable
+        .map((s) => completed.get(s.id))
+        .filter((o): o is SubtaskOutcome => o !== undefined && Boolean(o.branch))
+        .map((o) => o.branch);
+      materializeWave(repoRoot, featureBranch, waveBranches);
+    }
   }
 
   // Anything still pending is blocked forever (producer failed or never ran).
@@ -973,7 +1080,7 @@ async function main(): Promise<number> {
       // Outcome first, so "failed"/"completed" stay meaningful in live mode
       // (where every created worktree is removed on exit): a failed subtask
       // reports "failed" even after its worktree was cleaned up.
-      status: failed.has(Number(w.taskId.replace("subtask-", "")))
+      status: failed.has(w.taskId.replace("subtask-", ""))
         ? ("failed" as const)
         : w.removed
           ? ("cleaned" as const)
@@ -987,9 +1094,16 @@ async function main(): Promise<number> {
   return failed.size > 0 ? 1 : 0;
 }
 
-main()
-  .then((code) => process.exit(code))
-  .catch((err) => {
-    console.error(`FATAL: ${(err as Error).message}`);
-    process.exit(2);
-  });
+// Run the CLI only when executed directly. Without this guard, `require()`-ing this module for a
+// unit test starts the CLI, which exits(2) on the missing --brief — so a test that imports an
+// exported helper is killed by an unrelated argv check while its own assertion is still in flight.
+// (Found 2026-07-28 while adding the materializeWave regression: the merge under test actually
+// succeeded, then the async main() rejection exited the process and the harness read it as failure.)
+if (require.main === module) {
+  main()
+    .then((code) => process.exit(code))
+    .catch((err) => {
+      console.error(`FATAL: ${(err as Error).message}`);
+      process.exit(2);
+    });
+}
