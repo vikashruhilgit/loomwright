@@ -11,7 +11,7 @@ Comprehensive index of all skills available in the Loomwright plugin.
 | Supervisor Readiness | `supervisor-readiness/` | Launch Pad (preload), Supervisor (preload) | ~800 | 1.2.0 | 2026-07-28 |
 | Workflow Management | `workflow-management/` | Supervisor (preload) | ~1,200 | 1.1.0 | 2026-07-28 |
 | Async Orchestration | `async-orchestration/` | Supervisor (preload) | ~1,600 | 1.4.0 | 2026-07-28 |
-| State Management | `state-management/` | Supervisor (preload) | ~1,500 | 1.3.0 | 2026-07-06 |
+| State Management | `state-management/` | Supervisor (preload) | ~1,500 | 1.4.0 | 2026-07-28 |
 | Context Summarization | `context-summarization/` | Supervisor (preload) | ~600 | 1.0.0 | 2026-03 |
 | Context Setup | `context-setup/` | Launch Pad (preload) | ~500 | 1.0.0 | 2026-03 |
 | Claude MD Validation | `claude-md-validation/` | Launch Pad (preload) | ~400 | 1.0.0 | 2026-03 |
@@ -25,7 +25,7 @@ Comprehensive index of all skills available in the Loomwright plugin.
 | Review Heal | `review-heal/` | `review-pr-runner` (preload), `/review-pr` + Supervisor + `/autonomous` (reference) | ~3,000 | 1.4.0 | 2026-06-22 |
 | Self-Heal Advisory | `self-heal-advisory/` | Supervisor (on-demand Read at Phase 4.5 entry — deliberately NOT preloaded; Part 1 advisory machinery + Part 2 full Phase 4.5 loop protocol) | ~7,000 | 1.4.0 | 2026-07-20 |
 | Preflight Sync | `preflight-sync/` | Supervisor (on-demand Read at Phase 1.5 entry — deliberately NOT preloaded) | ~1,600 | 1.0.0 | 2026-07-06 |
-| Supervisor Config | `supervisor-config/` | Supervisor (on-demand Read at Phase 0 entry — deliberately NOT preloaded) | ~2,400 | 1.1.0 | 2026-07-07 |
+| Supervisor Config | `supervisor-config/` | Supervisor (on-demand Read at Phase 0 entry — deliberately NOT preloaded) | ~2,400 | 1.2.0 | 2026-07-28 |
 | PR Postmortem | `pr-postmortem/` | `/pr-postmortem` (slash command, reference) | ~1,400 | 1.3.0 | 2026-06-13 |
 | Setup | `setup/` | `/setup` (slash command, read at Step 0) | ~1,200 | 1.0.0 | 2026-06-13 |
 | Brain Context | `brain-context/` | Launch Pad / Orchestrator / Code Reviewer / Supervisor (on-demand Read — deliberately NOT preloaded) | ~2,000–2,500 | 1.1.0 | 2026-07-20 |

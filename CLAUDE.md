@@ -258,7 +258,7 @@ Native Claude Code multi-agent coordination — requires `CLAUDE_CODE_EXPERIMENT
 - For an agent-owned session: `claude --agent …-runner`. Otherwise stay on the main thread via the slash command.
 
 ### `/supervisor` completed but skipped Phase 4.5 (or Phase 3 child agents)?
-- **What this is:** inline main-thread execution misread as permission to stop orchestrating. "Don't delegate to `supervisor-runner`" does NOT mean "do everything yourself." Still spawn first-level children via Task — `orchestrator` (Phase 2), `execute-manager` or fast-path worker/reviewer (Phase 3), `code-reviewer` + fix loop (Phase 4.5).
+- **What this is:** inline main-thread execution misread as permission to stop orchestrating. "Don't delegate to `supervisor-runner`" does NOT mean "do everything yourself." Still spawn first-level children via Task — `orchestrator` (Phase 2), `execute-manager` or Single-Agent/Sequential-path worker/reviewer (Phase 3), `code-reviewer` + fix loop (Phase 4.5).
 - **Fix in 11.1.2:** Phase 4.5 completion-tail guard (`loomwright/agents/supervisor.md`) refuses a successful `SUPERVISOR_RESULT` when `skip_self_heal_requested=false` AND `phase45_review_invoked=false`. Run self-reports `status: failed`; job stays in `in-progress/`.
 - **Recovery for pre-11.1.2 runs (operator workaround — unsupported, manual):**
   1. `/code-reviewer` has no first-class branch-vs-branch diff mode. Compute scope via `git diff --name-only origin/main...HEAD` and pass that file list to `/code-reviewer`, OR pipe `git diff origin/main...HEAD` into a manual review.

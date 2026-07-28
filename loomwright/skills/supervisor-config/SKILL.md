@@ -1,8 +1,8 @@
 ---
 name: supervisor-config
 description: Protocol authority for Supervisor Phase 0 INIT configuration resolution — flag/defaults table, cost-profile resolution, base-branch handling, environment detection. Read on demand at phase entry, deliberately not preloaded.
-version: "1.1.0"
-lastUpdated: "2026-07-07"
+version: "1.2.0"
+lastUpdated: "2026-07-28"
 ---
 
 # Supervisor Config Protocol (Supervisor Phase 0 INIT)
