@@ -553,7 +553,7 @@ Before completing async orchestration:
    ```
    FINALIZE pre-merge checklist:
      1. All WORKER_RESULT status = completed (no failed/partial in merge set)
-     2. All Code Reviewer decisions = PASS (no FAIL/NEEDS_HUMAN in merge set) — **N/A on the Single-Agent Path**, which produces zero reviewer decisions: the deterministic `outputs_verified` + tests/lint/LSP gate and Phase 4.5 replace it, so treat this item as vacuously satisfied (mirrors Plan Reviewer Criterion 6's vacuous pass)
+     2. All Code Reviewer decisions = PASS (no FAIL/NEEDS_HUMAN in merge set) — **N/A on the Single-Agent Path**, which produces zero reviewer decisions: the deterministic `outputs_verified` + tests/lint (plus the worker's own LSP diagnostics) gate and Phase 4.5 replace it, so treat this item as vacuously satisfied (mirrors Plan Reviewer Criterion 6's vacuous pass)
      3. No orphaned worktrees (all accounted for in EXECUTE_RESULT)
      4. Feature branch exists and is ahead of base
    If ANY fail → abort merge, log reason, move job to failed/ (if job file used)
