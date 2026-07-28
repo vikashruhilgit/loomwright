@@ -100,14 +100,15 @@ Check ALL criteria in order. For each, note whether it passes or has issues. Cri
 
 ### 4. Subtask Decomposition
 
-**Check:** Are subtasks 3-7 items, 30-60 min each, single domain/module per subtask?
+**Check:** Does subtask count honor `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold" (single home — no mirror copy elsewhere)?
 
 **How:**
-- Count subtasks (reject < 3 or > 7)
-- Check each subtask maps to a coherent file group
-- Flag subtasks that mix unrelated domains
+- 1 subtask is valid and EXPECTED — the default. Never reject for having fewer than 3.
+- \> 1 subtask requires a `- **Split reason:** <reason>` line in `## Configuration`; missing → FAIL. When present, the value must be one of the three legal tokens (`file-conflict`, `context-bound`, `genuine-parallelism`) — any other value FAILs.
+- \> 7 subtasks still FAILs (upper bound unchanged).
+- Check each subtask maps to a coherent file group; flag subtasks that mix unrelated domains.
 
-**Severity if failed:** HIGH (< 3 or > 7 subtasks), MEDIUM (mixed domains)
+**Severity if failed:** HIGH (> 1 subtask with missing/invalid `Split reason:`, or > 7 subtasks), MEDIUM (mixed domains)
 
 ### 5. Dependency Correctness
 
@@ -128,6 +129,7 @@ Check ALL criteria in order. For each, note whether it passes or has issues. Cri
 - Compare file lists between all LAUNCHABLE subtasks
 - Check for shared config files, shared test fixtures, shared module indexes
 - Verify overlap matrix is complete
+- **Single-subtask brief:** exactly one LAUNCHABLE subtask, zero pairs to compare — this criterion PASSES vacuously (no error, no FAIL)
 
 **Severity if failed:** BLOCKING (LAUNCHABLE subtasks with file overlap), HIGH (missing overlap entries)
 
@@ -173,16 +175,18 @@ Check ALL criteria in order. For each, note whether it passes or has issues. Cri
 
 **Note:** The `## Feasibility` section (Launch Pad v10.3+) is **optional** — its absence is not BLOCKING and is not evaluated here. See Criterion 11.
 
+**Note (single-subtask briefs):** `Subtask Structure` and `Parallelism Analysis` remain required even with only one subtask — accept the reduced single-subtask form (one-row table; `single-agent (no fan-out)` with `Recommended workers: 1`, per `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold") as satisfying this criterion.
+
 ### 10. Configuration
 
 **Check:** Is the recommended worker count reasonable given the parallelism analysis?
 
 **How:**
-- Workers should not exceed the number of LAUNCHABLE subtasks in the first batch
-- Workers should be 1-3 (max recommended)
-- Mode should match: "parallel" if LAUNCHABLE > 1, "sequential" if all BLOCKED
+- Workers should not exceed the width of the **largest parallel batch** (not just the first) — a staged plan whose Batch 1 is a single authority subtask may legitimately declare peak workers from a later batch
+- Workers should be 1-3 (max recommended); `Workers: 1` is valid for `Mode: single-agent`
+- Mode should match: `single-agent` for a 1-subtask brief, `parallel` if any batch has LAUNCHABLE > 1, `sequential` if all BLOCKED
 
-**Severity if failed:** MEDIUM (workers > launchable), LOW (suboptimal but functional)
+**Severity if failed:** MEDIUM (workers > largest batch width), LOW (suboptimal but functional)
 
 ### 11. Feasibility Section (Optional)
 
@@ -210,6 +214,7 @@ Check ALL criteria in order. For each, note whether it passes or has issues. Cri
 - Verify any subtask with non-empty `requires` is marked **BLOCKED** in the parallelism analysis (never LAUNCHABLE)
 - Reject vague provides entries (`"adds feature"`, `"updates code"`, free-text strings without `{kind, path}`): every entry MUST be `{kind: file|symbol|type, path, name?}` addressable on disk
 - `external_requires` items must NOT appear as `from` references in any `requires` entry (the `from` field always points at a sibling subtask ID)
+- **Single-subtask briefs:** a lone subtask has no siblings — `requires: []` is correct and expected. The `provides:`/`requires:` contract YAML block itself remains BLOCKING-if-absent (see Conditional below).
 
 **Issue category:** `dep_graph` — use this category in the issues array of PLAN_REVIEW_RESULT for any Criterion 12 violation.
 
@@ -335,7 +340,7 @@ PLAN_REVIEW_RESULT:
   schema_version: 1
   decision: PASS
   issues: []
-  summary: "Brief is well-structured. All 9 file paths verified, dependency graph is acyclic, LAUNCHABLE subtasks have zero file overlap. Acceptance criteria are testable. Skill references match project stack."
+  summary: "Brief is well-structured. All 9 file paths verified, dependency graph is acyclic, LAUNCHABLE subtasks have zero file overlap, decomposition matches its recorded Split reason. Acceptance criteria are testable. Skill references match project stack."
 ```
 
 ### Example: FAIL
@@ -380,7 +385,7 @@ Before producing PLAN_REVIEW_RESULT:
 - [ ] Every file path in File Impact Map verified via Read or Glob
 - [ ] CLAUDE.md patterns compared against brief approach
 - [ ] Dependency graph traced for cycles
-- [ ] File overlap checked between ALL LAUNCHABLE pairs
+- [ ] File overlap checked between ALL LAUNCHABLE pairs (vacuously PASS on a single-subtask brief — no pairs exist)
 - [ ] Every BLOCKING/HIGH issue has evidence (what was checked, what was found)
 - [ ] Decision matches issue severities (FAIL if any BLOCKING/HIGH)
 
