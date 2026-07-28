@@ -523,6 +523,14 @@ release-dependent verdicts — do not build it speculatively.
 > and `rubric_score` are all unobtainable for this run. It did not hit the turn cap (29 of 500).
 > Cost: $43.63, 2h35m.
 >
+> **Follow-up durability note.** The requirement files this section points at live under
+> `.supervisor/requirements/`, which is **gitignored** (`.gitignore:35`) — they are local working
+> artifacts, not repo-visible records, and a reader cloning this repo will not find them. The
+> durable record of each defect is the narrative in this section plus its PR. Defect 2 shipped as
+> a fix (see PR "fix(resume): reconcile state against git ground truth"); the write-side follow-up
+> it recommends is `one-writer-derived-state.md`, whose substance is summarised in that PR's
+> description so it survives independently of the untracked file.
+>
 > **Compounding defect — resume is unsafe, not merely unavailable.** `.supervisor/state.md` was
 > left at `phase: ACQUIRE` with all five subtasks `PENDING`, despite all five being complete and
 > merged. Context-Keeper never advanced it. A `/supervisor --continue` would therefore restore a
@@ -624,7 +632,24 @@ prior). One row per ablated guard; the watch criteria are defined per-arm in §"
 
 Pre-registration discipline (§Protocol): amendments are **additive only**, recorded with a date,
 and never weaken the original protocol. The original §Question → §Protocol text is byte-unchanged
-above; verify with `git diff origin/main...HEAD -- <this file> | grep -c '^-[^-]'` → must be `0`.
+above; verify with:
+
+```bash
+# Scope the check to the pre-registered region (§Question → §Protocol). The whole-file form
+# reports deletions once runs begin — filling the Results table necessarily replaces its "EMPTY
+# until runs execute" header and its empty placeholder row — and a reader running the unscoped
+# command would get a false "the protocol was weakened" signal.
+awk '/^## Question/{p=1} /^## Corpus/{p=0} p' "$file"   # the region that must not change
+git diff origin/main...HEAD -- <this file> | grep -c '^-[^-]'   # whole-file: 0 BEFORE first run only
+```
+
+**Once runs have started, only the §Question → §Protocol region carries the byte-unchanged
+guarantee.** Deletions below §Corpus (Results header, placeholder rows) are expected and do not
+indicate a weakened pre-registration.
+
+> **Run-time amendments live in a second table** — §Results → "Amendments — recorded at run time".
+> They are kept separate because they cannot claim `EMPTY (verified)` in the last column below (by
+> definition a run had already executed). Read both tables for the complete amendment log.
 
 | Date | Amendment | Additive? | Results table state at amendment time |
 |---|---|---|---|
