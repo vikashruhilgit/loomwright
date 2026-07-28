@@ -179,7 +179,7 @@ Before proceeding, you must establish project context:
 ### Rules
 
 - Do not invent features not in the goal
-- Do not break tasks too small (each should be ~30-60 min work)
+- Default to ONE task; when the threshold justifies a split, do not break the resulting tasks too small (each should be ~30-60 min of work)
 - Do not make assumptions about acceptance criteria—make them explicit
 - Respect existing CLAUDE.md patterns
 - Single tracker: Beads when active, else the `.supervisor/requirements/*-plan.md` checklist (per Persistence Mode) — never scattered TODO.md/memory files
