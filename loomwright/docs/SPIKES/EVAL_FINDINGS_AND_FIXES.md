@@ -10,6 +10,13 @@ rather than the claim removed.
 Sibling records: `FABLE_PARITY_EVAL.md` (the pre-registered protocol + Results),
 `SDK_RUNNER_SPIKE.md` (the layer item 1 addresses), `NORTH_STAR_DIRECTION.md`.
 
+> **Extended 2026-07-28 (same day, follow-on session).** Items **4e, 4f, 4g and Fix 7** were added
+> after a structural audit of the prompt/hook/review surfaces. They are additive — no existing
+> finding, number, or ordering rationale was altered. Each carries its own `file:line` citation and
+> was verified against the working tree, not inferred. Overlap check performed against
+> `.supervisor/requirements/token-economy/` (items 01–06) before adding: none of the four duplicate a
+> shipped or pending item there.
+
 ---
 
 ## The evidence in one table
@@ -47,7 +54,7 @@ Three rules combine to guarantee fan-out, and nothing opposes them:
 |---|---|---|
 | `skills/supervisor-readiness/SKILL.md:359` | *"Map each criterion to exactly one subtask"* | acceptance criteria **manufacture** subtasks |
 | `agents/orchestrator.md:54, 81, 155, 156, 187` | *"Every task includes mandatory code review subtask"* (stated 5×) | **doubles** whatever the above produced |
-| `agents/supervisor.md:19` | Fast path fires only `If ≤ 1 subtask OR --sequential` | fast path is **unreachable** for any multi-criterion requirement |
+| `agents/supervisor.md:216, 253` | Fast path fires only `If ≤ 1 subtask OR --sequential` | fast path is **unreachable** for any multi-criterion requirement |
 
 7 acceptance criteria → 5 implementation subtasks → 5 paired review subtasks → **10 agent cold
 starts**. Each starts with an empty context and re-reads the same files. That re-acquisition — not
@@ -98,6 +105,12 @@ arm-1-like cost and wall clock, retaining the plan review, the PR, and the doc-d
 ---
 
 ## Fix 2 — Finish the SDK runner instead of cutting it
+
+> **STATUS 2026-07-28:** steps 1 and 2 below (wave materialization + tolerant parser) **SHIPPED and
+> MERGED** via PR #111 (carried into main by PR #113's merge). Remaining Fix 2 work: the **arm-3
+> re-run** (recorded as a second row beside the abort row) and the **Launch Pad id-determinism**
+> defect. The owner's standing decision: the SDK runner is the chosen substrate — fix it, don't cut
+> it; see `FINAL_STATE_GOAL.md`.
 
 **Correction to an earlier verdict in `FABLE_PARITY_EVAL.md`.** Arm 3 aborted, and the CUT recorded
 there is correct *under the pre-committed rule* — but the rule measured an **unfinished artifact**,
@@ -231,6 +244,91 @@ behind it is what gets over.)
 starts line 508. Phase 4.5 needs **Part 2** and currently reads the whole file, per heal iteration.
 Split at 508. Route-before-split just pulls the same bulk through a different door.
 
+### 4e. Six hooks spend a model call to do schema validation
+
+`hooks.json` holds **22 entries across 10 events. Eight are `type: prompt`** — each one a model call
+carrying the finishing agent's transcript, at a 30s timeout. Six of the eight assert nothing but the
+presence and shape of a JSON result block:
+
+| Matcher | Asserts |
+|---|---|
+| `SubagentStop[worker]` | `WORKER_RESULT` has `schema_version`, `task_id`, `status`, `files_modified` |
+| `SubagentStop[code-reviewer]` | `CODE_REVIEW_RESULT` v3 fields + issue categories |
+| `SubagentStop[execute-manager]` | `EXECUTE_RESULT` / `EXECUTE_CHECKPOINT` |
+| `SubagentStop[supervisor-runner]` | `SUPERVISOR_RESULT` outcome, subtask statuses, PR URL |
+| `SubagentStop[qa-executor]` | `QA_RESULT` counts + summary |
+| `SubagentStop[plan-reviewer]` | `PLAN_REVIEW_RESULT` decision + issues |
+
+The remaining two match on `*` — `Stop` (identify the agent from its own system prompt, then check
+its result block) and `TaskCompleted` — so they fire far more broadly than the six above.
+
+**The counter-example is already in this repo.** `SubagentStop[launch-pad-runner]` runs
+`scripts/validate-launch-pad-result.py` as `type: command` and validates
+`LAUNCH_PAD_RESULT` deterministically, for zero tokens, exiting 0 by contract. That is the same job.
+
+On the 10-cold-start run measured above, the six fire roughly 13–14 times.
+
+> **This is Fix 3's thesis applied to validation.** Fix 3 measured hooks firing 560 times while
+> agent-instructed events landed 6 — *"hooks fire because the runtime fires them."* The same
+> asymmetry says a hook that merely checks field presence should be a script, not a prompt. Unlike
+> 4a, this one does **not** inherit the adherence problem: it removes an instruction rather than
+> adding one.
+
+**Caveat before converting all six:** the `code-reviewer` prompt is 3,120 chars and runs cross-field
++ severity-cap checks that are richer than presence-checking. Convert the five mechanical ones first;
+port the reviewer's severity-cap logic to script deliberately, or leave it as the one prompt hook
+that earns its call.
+
+### 4f. Route skills instead of preloading them — and the A/B is already built
+
+The Supervisor exists on two paths, and only one of them preloads:
+
+| Path | Preloaded via frontmatter | Read on demand |
+|---|---|---|
+| `--agent loomwright:supervisor-runner` | **7 skills** (`agents/supervisor.md` frontmatter) | 4 (`supervisor-config`, `preflight-sync`, `async-orchestration`, `self-heal-advisory`) |
+| inline `/supervisor` — **the recommended path** | none | 5 at phase entry |
+
+Same workflow, same phases, both shipping. **The inline path is the existing proof that preloading
+is not required.**
+
+**Concrete double-pay on the agent path:** `async-orchestration` appears in the frontmatter
+`skills:` list *and* is `Read` at Phase 4 entry — **9,078 proxy tokens paid twice** in one context.
+**Caveat (verified after first writing this):** the double-load is *documented as intentional* —
+`agents/supervisor.md:336` calls the Phase-4 Read "a refresh guarantee for compressed contexts, not
+the first load." So this is a stated trade-off against context compaction, not an oversight; the
+fix must argue the trade-off (routing + re-Read-on-compaction beats always-preload), not report a bug.
+
+**Fix:** replace the frontmatter `skills:` block on `supervisor-runner` with the phase-entry `Read`
+calls the inline path already uses. Preloading guarantees payment; a routed read makes it
+conditional on the phase actually being reached — and a run that ends at Phase 3 never pays for
+Phase 4.5's protocol at all.
+
+**Ordering:** strictly after **4d**. Routing an unsplit 110,714-byte skill changes when it is paid,
+not how much.
+
+### 4g. Brief staleness is never checked — only remote overlap is
+
+Phase 1.5 PRE-FLIGHT SYNC reconciles the *requested work* against remote state and classifies
+CLEAR / OVERLAP / SUPERSEDED (`skills/preflight-sync/SKILL.md`). It never asks whether **the brief
+itself** has gone stale between Launch Pad writing it and Supervisor executing it.
+
+It also cannot: Launch Pad records `source_requirement` as a path (`agents/launch-pad.md:149`,
+emitted at `:469`) but **stamps no base commit**, so there is no anchor to measure drift from.
+
+**Fix, in the order the dependency requires:**
+
+1. Launch Pad Phase 5 PACKAGE stamps `- **Base commit:** {sha}` beside the existing
+   `- **Source requirement:**` line under `## Environment`.
+2. Phase 1.5 gains a **fourth signal** keyed on churn over the anticipated file set — which
+   preflight-sync already computes for its file-intersection test:
+   ```bash
+   git log --oneline "$BRIEF_BASE_SHA"..origin/"$BASE_BRANCH" -- $ANTICIPATED_PATHS | wc -l
+   ```
+
+**Use churn, not elapsed time.** A three-week-old brief against an untouched subsystem is fine; a
+two-hour-old brief against one someone just refactored is not. The clock measures the wrong thing,
+and the file-set intersection is already there.
+
 ---
 
 ## Fix 5 — Measurement defects (record; do not silently patch)
@@ -278,6 +376,59 @@ stopped — check `pgrep` and the branch. Same discipline as 6a.
 
 ---
 
+## Fix 7 — The review layer has no counter-pressure either
+
+**Fix 1's sibling.** Fix 1 shows nothing opposes subtask fan-out. The same is true of review passes:
+every reviewing layer was added independently, each defaults ON, and no rule anywhere says a later
+pass should skip what an earlier one already covered. 4b adds that sentence for Phase 4.5 vs
+per-subtask review; this is the rest of the surface.
+
+**What runs by default on one PR, verified:**
+
+| # | Pass | Default | Citation |
+|---|---|---|---|
+| 1 | per-subtask `code-reviewer`, one per subtask | on | Fix 1 above (5 spawns on the measured run) |
+| 2 | Phase 4.5 `code-reviewer` on the integrated diff | on unless `--skip-self-heal` | `agents/supervisor.md:361` |
+| 3 | detached `/review-pr --until-mergeable` drain | **on** — `auto_until_mergeable` default `true` | `commands/supervisor.md:60` |
+| 4 | CI `claude-review` | on `opened, synchronize, ready_for_review, reopened` | `.github/workflows/claude-code-review.yml` |
+
+**Be precise about which of these is duplication.** Pass 3 has two jobs: it re-reviews the diff
+*and* it drains external channels (CI checks, bot threads, review comments). **The channel-draining
+is not duplicative — it is the healing arm for pass 4.** Its own diff review, layered on top of pass
+2's, is. So the real finding is: **two LLM reviews of the same diff before a human sees it (2 and
+3's review half), plus a third independent one in CI whose findings 3 then heals.**
+
+**Two qualifiers that stop this being a clean cut:**
+
+- `claude-code-action` **skips itself on any PR touching a workflow file** and still exits 0 — a
+  green check with zero comments. So pass 4 is not reliably present, and a PR that modifies CI can
+  never be reviewed by it.
+- The drain can **exit before a slow CI review posts** — the dispatch marker means *dispatched*, not
+  *completed*. Dropping pass 3 without confirming pass 4 actually posted would remove the only thing
+  that heals CI findings.
+
+### Fix
+
+**Two independent lenses, not four passes.** Keep pass 2 (sees working tree + brief + rubric) and
+pass 4 (independent context, sees only the PR — different information, therefore different
+findings). Drop pass 1 per Fix 1's deterministic gate. Reduce pass 3 to its **drain-only** role:
+heal what pass 4 raised, skip its own redundant diff review.
+
+**Verify before cutting anything:** assert on posted comments and reviews
+(`gh pr view <n> --json comments,reviews`), never on run conclusion — a green `claude-review` is not
+evidence a review happened.
+
+**Measure it afterwards.** `/pr-postmortem` already classifies review rounds into six root-cause
+classes into `.supervisor/postmortem/results.jsonl`. Whether dropping a pass raised the defect rate
+is answerable from data already being collected — don't argue it.
+
+> **Counter-pressure, not deletion — same shape as Fix 1(c).** Review count is not review quality:
+> four passes with the same lens over the same diff find the same things four times. Two passes with
+> *different information* find different things. The goal is a stated rule about when a pass is
+> owed, which is what the plugin has never had.
+
+---
+
 ## Deliberately NOT doing
 
 - **Finishing the 5-requirement corpus as-is.** With 5a unresolved, four more requirements buy four
@@ -300,11 +451,19 @@ stopped — check `pgrep` and the branch. Same discipline as 6a.
 |---|---|---|
 | 1 | **Fix 1** — decomposition + single-agent path | The 6.4×. Needs no new experiment to justify; measurable against arm-1/arm-2 data already in hand |
 | 2 | **Fix 3** — one writer, derived state | Deletes ~200 prompt lines *and* closes a data-loss hole. Independent of Fix 1 |
-| 3 | **Fix 4a/4b/4d** | Cheap, verified, low risk. 4d unblocks any later routing work |
-| 4 | **Fix 5** — one arm-2 run on corpus entry 3 | Decides whether the eval can continue at all, for ~$60 |
-| 5 | **Fix 2** — finish + re-measure the SDK runner | Real work with uncertain payoff; do it after Fix 1, since Fix 1 may reduce how much Phase 3 orchestration is left to optimise |
-| 6 | **Fix 4c** — unify tools lists | Plugin-wide frontmatter change; own PR |
+| 3 | **Fix 4a/4b/4d/4e** | Cheap, verified, low risk. 4d unblocks 4f; 4e removes model calls rather than adding instructions |
+| 4 | **Fix 7** — review counter-pressure | Fix 1's sibling and partly subsumed by it (pass 1 dies with Fix 1). Do the pass-3 reduction after, once the drain's CI-healing role is confirmed live |
+| 5 | **Fix 5** — one arm-2 run on corpus entry 3 | Decides whether the eval can continue at all, for ~$60 |
+| 6 | **Fix 2** — finish + re-measure the SDK runner | Real work with uncertain payoff; do it after Fix 1, since Fix 1 may reduce how much Phase 3 orchestration is left to optimise |
+| 7 | **Fix 4f** — route instead of preload | Strictly after 4d. Fixes the `async-orchestration` double-pay in the same change |
+| 8 | **Fix 4g** — brief staleness signal | Two-part (Launch Pad stamp, then preflight signal); no value until the stamp exists |
+| 9 | **Fix 4c** — unify tools lists | Plugin-wide frontmatter change; own PR |
 
 > **Fix 1 before Fix 2 is load-bearing.** If Fix 1 collapses most runs to a single agent, the SDK
 > runner is optimising a fan-out path that fires far less often — which changes whether finishing it
 > is worth the effort at all.
+
+> **Fix 1 before Fix 7, for the same reason.** Fix 1's deterministic per-subtask gate already removes
+> review pass 1. Sequencing Fix 7 first would cut a pass that Fix 1 is about to delete anyway, and
+> would leave the harder judgment — how much of the drain to keep — decided without knowing how much
+> fan-out survives.
