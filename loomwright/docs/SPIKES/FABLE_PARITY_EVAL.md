@@ -537,7 +537,13 @@ release-dependent verdicts — do not build it speculatively.
 > merged. Context-Keeper never advanced it. A `/supervisor --continue` would therefore restore a
 > belief of "no work done" and re-execute the entire job. This is a real defect independent of the
 > eval: **a crash between EXECUTE and FINALIZE leaves an un-resumable session whose state file
-> actively lies about progress.** Worth its own follow-up requirement.
+> actively lies about progress.** Worth its own follow-up requirement **for the write-side fix**;
+> the read-side reconciliation already shipped (see the durability note above). The two are
+> deliberately separate, not two names for one thing: **`supervisor-resume-state-lies.md`** is the
+> read-side guard — detect the lie at resume time and refuse (shipped). **`one-writer-derived-state.md`**
+> is the write-side redesign — stop the lie being written at all, by replacing six prompt-instructed
+> bookkeeping mechanisms with one hook-triggered writer and deriving `state.md` from an append-only
+> log. Shipping the first does not close the second.
 >
 > **CORRECTED 2026-07-28 — arm 2 subsequently COMPLETED; see its Results row.** The claim below
 > ("Loomwright arms must run interactively") was **too strong** and is superseded. The session did
@@ -692,7 +698,7 @@ above; verify with:
 # reports deletions once runs begin — filling the Results table necessarily replaces its "EMPTY
 # until runs execute" header and its empty placeholder row — and a reader running the unscoped
 # command would get a false "the protocol was weakened" signal.
-awk '/^## Question/{p=1} /^## Corpus/{p=0} p' "$file"   # the region that must not change
+awk '/^## Question/{p=1} /^## Corpus/{p=0} p' <this file>   # the region that must not change
 git diff origin/main...HEAD -- <this file> | grep -c '^-[^-]'   # whole-file: 0 BEFORE first run only
 ```
 
