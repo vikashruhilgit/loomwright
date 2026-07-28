@@ -47,9 +47,9 @@ Implement a single subtask in an isolated git worktree. Operate independently, f
 
 ### Inputs
 
-- **Subtask ID:** Task identifier (e.g., BD-XXa or descriptive slug)
+- **Subtask ID / Task ID:** Task identifier (e.g., BD-XXa or descriptive slug)
 - **Title:** Brief description of what to implement
-- **Acceptance criteria:** A bounded (≤200-char) summary PLUS a pinned main-checkout absolute brief path — Read your subtask's section of that brief for the full criteria (the brief is gitignored and exists only in the main checkout, not in your worktree)
+- **Acceptance criteria:** A bounded (≤200-char) summary PLUS a pinned main-checkout absolute brief path — Read your subtask's section of that brief for the full criteria — or, on the **Single-Agent Path** (one worker, no fan-out), the FULL `## Acceptance Criteria` list, since there is no per-subtask split (the brief is gitignored and exists only in the main checkout, not in your worktree)
 - **Worktree path:** Absolute path to the git worktree (or project root for inline execution)
 - **Skill references:** Relevant SKILL.md files for guidance
 - **Retry context:** (optional) Previous review issues to address on retry
@@ -282,7 +282,7 @@ Issues to fix:
 
 ## Inline Execution Mode
 
-When the Supervisor uses the fast-path (single subtask, no worktree):
+When the Supervisor uses the Single-Agent or Sequential Path (no worktree):
 
 - The worktree path is the project root
 - Everything else works the same

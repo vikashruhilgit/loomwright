@@ -332,7 +332,7 @@ When the Execute Manager surfaces an `EXECUTE_CHECKPOINT` with `adjudication_req
 
 **Hard rule:** the Supervisor never picks an option silently — it always asks the user. Auto-selection (e.g., "C is safest, pick C") is forbidden because each option has different irreversible consequences (job failure, brief mutation, plan mutation).
 
-**Output:** emit a `### Phase 3: EXECUTE` block — `Mode:` reading `delegated (Execute Manager)` | `single-agent` | `sequential (inline)`, subtasks completed `{count}/{total}`, reviews passed, dependency-ordered merge order, and `Tool calls: Supervisor {N}/50, Execute Manager {M}/60`.
+**Output:** emit a `### Phase 3: EXECUTE` block — `Mode:` reading `delegated (Execute Manager)` | `single-agent` | `sequential (inline)`, subtasks completed `{count}/{total}`, reviews passed (`N/A` on the Single-Agent Path — Phase 4.5 is the sole review), dependency-ordered merge order, and `Tool calls: Supervisor {N}/50, Execute Manager {M}/60`.
 
 **Supervisor context during EXECUTE:** ~50 tokens (single Task call + result parsing)
 

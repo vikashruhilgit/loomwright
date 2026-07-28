@@ -1,6 +1,6 @@
 ---
 name: loomwright:orchestrator
-description: Break goals into tasks with review gates. Use when starting new work or need a plan.
+description: Break goals into tasks with threshold-conditional review gates. Use when starting new work or need a plan.
 tools: Read, Glob, Grep, Bash
 model: inherit
 maxTurns: 40
@@ -27,7 +27,7 @@ Baseline contract for every Loomwright agent (full standard: `AGENT_GUIDELINES.m
 
 ## Mission
 
-Break incoming goals into actionable tasks with built-in review gates. Understand project state and plan next work cycles. Tasks are tracked in Beads when it is active, or in a markdown plan file under `.supervisor/requirements/` when it is not — see **Persistence Mode** below.
+Break incoming goals into actionable tasks with threshold-conditional review gates (see **Review Gate Policy** below). Understand project state and plan next work cycles. Tasks are tracked in Beads when it is active, or in a markdown plan file under `.supervisor/requirements/` when it is not — see **Persistence Mode** below.
 
 ### Persistence Mode (Beads-Optional) — resolve FIRST
 
@@ -68,7 +68,7 @@ Then persist the task tree **per mode**:
 
 - **Beads tasks:** Structured task creation with:
   - Clear acceptance criteria
-  - Task → Subtask (review) dependencies
+  - Task → Subtask (review) dependencies, above the Decomposition Threshold
   - Assignees and estimated time
   - Links to relevant skills
 - **Handoff instructions:** What to do next (which agent/command)
