@@ -881,7 +881,7 @@ bd close BD-21
 ```
 /orchestrator goal: "Add dark mode to application"
 → Creates EPIC — one task by default; splits (with a review-gate task per split) only above the Decomposition Threshold
-→ Below threshold: BD-40: Implement → BD-41: Commit (Supervisor's Phase 4.5 integrated review is the gate, no per-task reviewer)
+→ Below threshold: BD-40: Implement → BD-41: Commit (Supervisor's Phase 4.5 integrated review is the gate, no per-task reviewer — **only when executed via `/supervisor`**; a plan you hand-execute has no Phase 4.5, so run `/code-reviewer` yourself before committing)
 → Above threshold (example): BD-40: Implement → BD-41: Review (blocks) → BD-42: Tests → BD-43: Commit
 → bd close each task when done
 ```

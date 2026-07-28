@@ -258,6 +258,9 @@ The default path below `skills/supervisor-readiness/SKILL.md` §"Decomposition T
 3. **Deterministic gate (zero-token, no reviewer spawn):** check the worker's own `outputs_verified`/`outputs_gap` fields — the same check the Execute Manager runs pre-spawn (`agents/execute-manager.md:222`) — plus tests/lint/LSP on the branch. `outputs_gap` non-empty or `status != completed` → retry (bounded) or pause, per existing WORKER_RESULT handling.
 4. Skip all worktree logic and Execute Manager delegation. Proceed directly to Phase 4 FINALIZE.
 
+> **⚠️ `--skip-self-heal` on this path leaves NO semantic review.** Phase 4.5's Code Reviewer is the only one the Single-Agent Path has, so combining the flag with a single-subtask job (the default shape) leaves only the deterministic gate — `outputs_verified` + tests/lint/LSP — and nothing reads the code for intent. This is a **behavior change from the pre-v15.15.0 fast path**, which spawned a per-subtask reviewer regardless of the flag and so always yielded one review. `--skip-self-heal` is an emergency bypass; do not pair it with the default single-agent shape unless you are reviewing by hand.
+
+
 #### Sequential Path (`--sequential`, more than 1 subtask)
 
 Unchanged from prior behavior: `--sequential` keeps its existing meaning (no worktrees, serial execution) and is selected by the flag, not by subtask count — it is a distinct path from Single-Agent above and still spawns a per-subtask Code Reviewer.

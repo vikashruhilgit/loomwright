@@ -822,7 +822,7 @@ subtask_4:
 - **Split reason:** genuine-parallelism (Subtask 1 and Subtask 2 have zero file overlap and each touches ≥3 files — see `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold"; a smaller goal would stay single-subtask)
 
 ## Handoff
-/supervisor job: .supervisor/jobs/pending/2026-02-08-jwt-auth.md
+/supervisor job: .supervisor/jobs/pending/2026-02-08-jwt-auth-split.md
 ```
 
 ---
