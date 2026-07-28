@@ -194,9 +194,9 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
    - **NO-GO:** Goal contradicts architecture fundamentally (e.g., "add microservice" to tightly-coupled monolith with no service discovery)
    - **CAUTION:** Goal stretches current architecture
 
-4. **Scope vs Supervisor Capability** — Can the goal decompose into 3-7 subtasks of 30-60 min each?
-   - **NO-GO:** Clearly too large (10+ subtasks, multi-repo, infrastructure provisioning required)
-   - **CAUTION:** Borderline scope
+4. **Scope vs Supervisor Capability** — Does the goal fit the single-agent default, or does it need a split per `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold" (three named reasons: `file-conflict`, `context-bound`, `genuine-parallelism`)?
+   - **NO-GO:** Clearly too large even under a justified split (10+ subtasks, multi-repo, infrastructure provisioning required)
+   - **CAUTION:** Borderline — likely needs a stated split reason
 
 5. **Hard Blockers** — Check for showstoppers: missing migration framework for DB changes, missing credentials/config, referenced modules that don't exist.
    - **NO-GO:** Hard blocker found
@@ -355,17 +355,17 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 
 ### Phase 4: DECOMPOSE (Subtask Structure)
 
-**Purpose:** Break work into 3-7 subtasks with dependency and parallelism analysis.
+**Purpose:** Default to ONE subtask; split only per `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold" (three named reasons: `file-conflict`, `context-bound`, `genuine-parallelism`).
 
 **Actions:**
 
-1. Break into 3-7 subtasks (30-60 min each), one per file group from Phase 3
+1. Default to a single subtask whose acceptance criteria are the **checklist for one worker** — not a template for generating subtasks. Split a Phase 3 file group off into its own subtask only when one of the threshold's three named reasons fires; when it does, record the triggering reason verbatim as `- **Split reason:** <reason>` in the brief's `## Configuration` (omit the line entirely for a single-subtask brief — see the threshold section for the exact recording rule)
 2. For each subtask: title, acceptance criteria subset, estimated files, skill references, **structured `provides` / `requires` / `external_requires` lists**
 3. Analyze dependencies (which subtasks depend on which) — derive these from `requires` entries, not free-form prose
 4. Compute parallelism:
    - **LAUNCHABLE:** Empty `requires` + no file overlap with other LAUNCHABLE subtasks
    - **BLOCKED:** Non-empty `requires`, OR file overlap with a LAUNCHABLE subtask
-5. Estimate batches and recommended worker count
+5. Estimate batches and recommended worker count (single-subtask brief: 1 batch, 1 worker)
 
 #### Provides / Requires / External Requires Schema
 
@@ -817,6 +817,7 @@ subtask_4:
 - **Workers:** 2
 - **Mode:** parallel
 - **Estimated batches:** 3
+- **Split reason:** genuine-parallelism (Subtask 1 and Subtask 2 have zero file overlap and each touches ≥3 files — see `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold"; a smaller goal would stay single-subtask)
 
 ## Handoff
 /supervisor job: .supervisor/jobs/pending/2026-02-08-jwt-auth.md
@@ -846,7 +847,7 @@ Before offering save:
 - [ ] Feasibility check passed (GO, CAUTION acknowledged, or NO-GO user-overridden)
 - [ ] File impact map includes only verified paths
 - [ ] Confidence levels assigned to all estimates
-- [ ] Subtasks are 3-7 items, 30-60 min each
+- [ ] Subtask count follows `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold" (default 1; split only for a named reason, recorded as `Split reason:`)
 - [ ] Parallelism analysis is conservative (no false LAUNCHABLE)
 - [ ] Brief follows Supervisor-Ready format from supervisor-readiness skill
 - [ ] Risk assessment included
