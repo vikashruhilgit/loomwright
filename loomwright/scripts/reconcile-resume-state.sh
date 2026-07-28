@@ -84,6 +84,12 @@ SUBJECTS=$(git -C "$REPO_ROOT" log --format='%s' "$BRANCH" 2>/dev/null) \
 # Pattern 2 is deliberately permissive: on `merge: subtask 8 — x` it yields the id "subtask", which
 # is harmless — a junk id simply never matches a real `## Subtasks` row. Git's own default
 # "Merge branch 'x'" subject is capitalised and so matches nothing here.
+#
+# KNOWN LIMITATION (accepted): a `git revert` of a subtask leaves the original `subtask: {id}`
+# subject in history, so a reverted-and-genuinely-pending subtask still reads as committed and can
+# produce a false STALE. Rare, and it fails toward refusing a resume rather than silently
+# re-executing work, which is the safer direction for this gate. Detecting it would require diffing
+# tree state per subtask, which the byproduct-signal design deliberately avoids.
 DONE_IDS=$(printf '%s\n' "$SUBJECTS" \
   | sed -n \
       -e 's/^subtask:[[:space:]]*\([A-Za-z0-9_.-]\{1,\}\).*/\1/p' \
@@ -154,7 +160,11 @@ for row in $ROWS; do
   is_terminal_status "$status" && continue
 
   # State says this subtask is NOT finished. Does git disagree?
-  if printf '%s\n' "$DONE_IDS" | grep -qx "$id"; then
+  # -F is load-bearing: ids may contain `.` (e.g. BD-1.2), which as a BRE matches any character —
+  # `grep -x "BD-1.2"` also matches a committed `BD-1x2`, yielding a FALSE STALE that refuses an
+  # otherwise-legitimate resume. That is the harmful direction for a fail-closed gate, and
+  # pure-numeric fixtures never surface it.
+  if printf '%s\n' "$DONE_IDS" | grep -Fqx "$id"; then
     STALE_COUNT=$((STALE_COUNT + 1))
     STALE_LINES="${STALE_LINES}stale_subtask: id=${id} state_says=${status:-<empty>} git_says=COMMITTED
 "

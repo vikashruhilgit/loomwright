@@ -147,6 +147,26 @@ git -C "$MREPO" commit -q --allow-empty -m "Merge branch 'main' into feat"
 mkstate "$TMPROOT/gitmerge.md" feat "| main | not a subtask | PENDING |"
 assert_verdict "git's default 'Merge branch' subject is not a completion record" CLEAN 0 "$TMPROOT/gitmerge.md" "$MREPO"
 
+printf '\n=== ID MATCHING: fixed-string, not regex (false-STALE regression) ===\n'
+# `.` is BRE-special. Without grep -F, a dotted id `BD-1.2` also matches a committed `BD-1x2`,
+# producing a FALSE STALE that refuses a legitimate resume — the harmful direction for a
+# fail-closed gate. Pure-numeric fixtures never expose it.
+DREPO="$TMPROOT/dotted"
+mkdir -p "$DREPO"
+git -C "$DREPO" init -q 2>/dev/null
+git -C "$DREPO" config user.email t@t.t
+git -C "$DREPO" config user.name t
+git -C "$DREPO" commit -q --allow-empty -m "base"
+git -C "$DREPO" checkout -q -b feat
+git -C "$DREPO" commit -q --allow-empty -m "subtask: BD-1x2 — a DIFFERENT subtask"
+
+mkstate "$TMPROOT/dotted.md" feat '| BD-1.2 | genuinely pending | PENDING |'
+assert_verdict "dotted id must not regex-match a near-miss commit" CLEAN 0 "$TMPROOT/dotted.md" "$DREPO"
+
+git -C "$DREPO" commit -q --allow-empty -m "subtask: BD-1.2 — the real one"
+mkstate "$TMPROOT/dotted2.md" feat '| BD-1.2 | now committed | PENDING |'
+assert_verdict "exact dotted id still detected when truly committed" STALE 3 "$TMPROOT/dotted2.md" "$DREPO"
+
 printf '\n=== ANTI-SPOOF: prose must not masquerade as completion ===\n'
 git -C "$REPO" checkout -q -b feature/spoof
 git -C "$REPO" commit -q --allow-empty -m "docs: mention subtask: 9 in passing prose"

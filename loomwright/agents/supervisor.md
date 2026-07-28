@@ -123,7 +123,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
 - Resolved config recorded in session memory and echoed for cross-phase recall (`### Session Configuration` block): `BASE_BRANCH` (from `--base-branch <name>`, default `main`), `NON_INTERACTIVE`, `RED_TEAM_ENABLED`.
 - `--non-interactive` recorded as a Phase Flag (`set_flag non_interactive`) when true, so later phases can re-read it after context loss; stale crash-recovery flags (`base_mismatch_detected`, `non_interactive`) cleared on entry.
 - `cost_profile` resolved: `--cheap` → `cheap`, else `default` (resume hydrates from saved state) — consumed at every subagent spawn in Phases 2, 3, and 4.5. Loop-shaping flags (`--skip-self-heal`, `--heal-iterations`) are likewise INIT-parsed and consumed by Phase 4.5.
-- Resume path (`--continue`): loaded state MUST pass the fail-closed Resume validation gate — any violation refuses the resume with `status: failed`, `error: "resume_state_invalid"` (never silently fall back to a fresh start); on pass, hydrate config and jump to the saved phase.
+- Resume path (`--continue`): loaded state MUST pass the fail-closed Resume validation gate — any schema violation refuses with `status: failed`, `error: "resume_state_invalid"`, and the gate's ground-truth reconciliation check (state that parses but under-reports committed work) refuses with `error: "resume_state_stale"` (never silently fall back to a fresh start); on pass, hydrate config and jump to the saved phase.
 
 **Output:** the `## SUPERVISOR v4: Starting Parallel Workflow` + `## ENVIRONMENT` block defined in the skill (path, CLAUDE.md presence, git state, branch, worktree count, workers/mode config).
 

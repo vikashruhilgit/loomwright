@@ -459,6 +459,12 @@ For complex tasks, use Launch Pad to plan and Supervisor to execute:
 - Recover: inspect `.supervisor/state.md` and fix the offending field, or delete the file and start fresh without `--continue`. There is deliberately no override flag — deleting the bad state file IS the escape hatch
 - The Supervisor never silently falls back to a fresh start on an invalid file (that would mask corruption); a *missing* state file still starts fresh normally
 
+**"Resume aborted with `resume_state_stale`"**
+- Distinct from `resume_state_invalid`, and the recovery is the **opposite**. The file is intact and schema-valid — it is simply **behind reality**: subtasks it lists as pending are already committed on the branch. Resuming would re-execute merged work. Detected by `scripts/reconcile-resume-state.sh`, which reconciles the `## Subtasks` rows against `subtask:` / `merge:` commits reachable from the asserted branch
+- Recover: **do NOT delete the state file** (that is the `invalid` remedy and would discard a usable session). The refusal prints one `stale_subtask:` line per divergence plus the branch carrying the real work — correct those rows' `Status` to match, then `--continue` again. Or, if the run is not worth resuming, delete it deliberately and start fresh
+- `VERDICT: UNKNOWN` (ground truth unreadable — no git, unresolvable branch) also refuses, by design: this gate fails closed
+- Real incident it exists to prevent (2026-07-27): all 5 subtasks merged while `state.md` read `phase: ACQUIRE` / all `PENDING`. Schema-valid, therefore invisible to the checks above
+
 **"NEEDS_HUMAN escalation"**
 - Read the escalation message for context
 - Fix the issue manually
