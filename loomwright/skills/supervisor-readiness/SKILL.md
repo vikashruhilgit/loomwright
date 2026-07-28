@@ -387,7 +387,7 @@ single-agent (no fan-out)
 |---|---|
 | `agents/plan-reviewer.md` Criterion 4 ("Cross-check the reason's PREDICATE") | Plan Reviewer does not preload this skill, and its predicate check is worthless without the concrete bounds |
 
-These are the ONLY sanctioned **live** restatements — every other surface cites this section by path. **Release banners are exempt:** the `v15.15.0` notes in `CLAUDE.md`, `CHANGELOG.md`, and the `README.md` banner are historical snapshots of what shipped in that release and are deliberately NOT retuned (same convention as CHANGELOG entries and frozen example values). Verify after a retune with `grep -rn "800 changed\|> 12 files" loomwright/ README.md CLAUDE.md` and update only the live mirror in the table above.
+These are the ONLY sanctioned **live** restatements — every other surface cites this section by path. **Release banners are exempt:** the `v15.15.0` notes in `CLAUDE.md`, `CHANGELOG.md`, and the `README.md` banner are historical snapshots of what shipped in that release and are deliberately NOT retuned (same convention as CHANGELOG entries and frozen example values). Verify after a retune with `grep -rnE "800 changed|12 files|[≥>]=? ?3 files|[≥>]=? ?2 .*group" loomwright/ README.md CLAUDE.md` — the pattern must cover **both** predicates, since `genuine-parallelism`'s bounds (≥ 2 groups, ≥ 3 files) are restated in the sanctioned mirror and in `agents/launch-pad.md`'s worked example, not just `context-bound`'s. Update only the live mirror in the table above (worked examples are illustrative and re-checked by Criterion 4, but keep them internally consistent).
 
 ## Common Failure Modes
 
