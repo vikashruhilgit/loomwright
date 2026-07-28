@@ -71,11 +71,11 @@ interface ContractItem {
   kind: string;
   path: string;
   name?: string;
-  from?: number; // producing subtask id (requires entries)
+  from?: string; // producing subtask id (requires entries) — string: Launch Pad emits "1a"/"1b" as well as "1"
 }
 
 interface Subtask {
-  id: number;
+  id: string;
   title: string;
   tableStatus: string; // Status cell from the Subtask Structure table (informational)
   provides: ContractItem[];
@@ -322,7 +322,7 @@ function parseArgs(argv: string[]): CliArgs {
 
 export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch?: string } {
   const lines = text.split(/\r?\n/);
-  const byId = new Map<number, Subtask>();
+  const byId = new Map<string, Subtask>();
 
   // --- Subtask Structure table: | # | Title | Est. files | Status | ---
   let inStructure = false;
@@ -333,9 +333,13 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
     }
     if (inStructure && /^##\s/.test(line)) inStructure = false; // next H2 ends the section (### stays inside)
     if (!inStructure) continue;
-    const m = line.match(/^\|\s*(\d+)\s*\|([^|]+)\|[^|]*\|([^|]+)\|/);
+    // Ids are matched as `\d+[a-z]?` — Launch Pad emits BOTH `1`..`N` and `1a`/`1b` for the same
+    // requirement across runs (verified 2026-07-28: the arm-2 and arm-3 briefs, produced from a
+    // byte-identical prompt, used different schemes). A `\d+`-only pattern silently DROPPED the
+    // `1a`/`1b` rows, which is how arm 3 ended up with every dependency edge missing.
+    const m = line.match(/^\|\s*(\d+[a-z]?)\s*\|([^|]+)\|[^|]*\|([^|]+)\|/);
     if (m) {
-      const id = Number(m[1]);
+      const id = m[1];
       byId.set(id, {
         id,
         title: m[2].trim(),
@@ -367,9 +371,13 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
       inContracts = false;
       continue;
     }
-    let m = line.match(/^subtask_(\d+):/);
+    // Two accepted key forms. `subtask_1:` is the runner's original contract; `# Subtask 1a — …`
+    // is what Launch Pad actually writes. Only the first was matched before, so `current` stayed
+    // null for a real brief and EVERY provides/requires line below was silently discarded (both
+    // handlers guard on `current`) — the whole dependency graph vanished without a warning.
+    let m = line.match(/^subtask_(\d+[a-z]?):/) ?? line.match(/^#\s*[Ss]ubtask\s+(\d+[a-z]?)\b/);
     if (m) {
-      const id = Number(m[1]);
+      const id = m[1];
       if (!byId.has(id)) {
         byId.set(id, { id, title: `subtask_${id}`, tableStatus: "", provides: [], requires: [] });
       }
@@ -377,7 +385,12 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
       listKey = null;
       continue;
     }
-    m = line.match(/^\s+(provides|requires):\s*(\[\s*\])?\s*(#.*)?$/);
+    // Leading whitespace is OPTIONAL: real Launch Pad briefs put `provides:` / `requires:` at
+    // column 0 under a `# Subtask <id>` comment, while the runner's own fixture indents them. The
+    // `^\s+` form matched only the fixture, so every list header in a real brief was skipped and
+    // the dependency graph came out empty. The `^` anchor still keeps `external_requires:` from
+    // matching `requires:`.
+    m = line.match(/^\s*(provides|requires):\s*(\[\s*\])?\s*(#.*)?$/);
     if (m && current) {
       listKey = m[1] as "provides" | "requires";
       if (m[2]) {
@@ -390,8 +403,9 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
     if (m && current && listKey) {
       const body = m[1];
       const item: ContractItem = { kind: "", path: "" };
-      const from = body.match(/\bfrom:\s*(\d+)/);
-      if (from) item.from = Number(from[1]);
+      // `from: 1`, `from: "1a"` and `from: 1a` all appear in the wild — accept all three.
+      const from = body.match(/\bfrom:\s*"?(\d+[a-z]?)"?/);
+      if (from) item.from = from[1];
       const kind = body.match(/\bkind:\s*([A-Za-z_]+)/);
       if (kind) item.kind = kind[1];
       const p = body.match(/\bpath:\s*"([^"]*)"/) ?? body.match(/\bpath:\s*([^,}]+)/);
@@ -404,7 +418,14 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
 
   const branchMatch = text.match(/Suggested branch:\s*([^\s|`]+)/);
   return {
-    subtasks: Array.from(byId.values()).sort((a, b) => a.id - b.id),
+    // Natural order: numeric prefix first, then any alpha suffix, so "1" < "1a" < "1b" < "2" < "10".
+    // A plain string sort would put "10" before "2" and break wave ordering on 10+ subtasks.
+    subtasks: Array.from(byId.values()).sort((a, b) => {
+      const na = parseInt(a.id, 10);
+      const nb = parseInt(b.id, 10);
+      if (na !== nb) return na - nb;
+      return a.id.localeCompare(b.id);
+    }),
     suggestedBranch: branchMatch ? branchMatch[1] : undefined,
   };
 }
@@ -417,7 +438,7 @@ function git(cwd: string, ...argv: string[]): string {
   return execFileSync("git", argv, { cwd, encoding: "utf8" }).trim();
 }
 
-function addWorktree(repoRoot: string, wtPath: string, subtaskId: number, featureBranch: string): string {
+function addWorktree(repoRoot: string, wtPath: string, subtaskId: string, featureBranch: string): string {
   // Always create the deterministic per-subtask branch off the feature branch
   // (the real Execute Manager's pattern — git refuses to double-checkout the
   // feature branch itself, and a shared branch would interleave subtask work).
@@ -864,8 +885,8 @@ async function main(): Promise<number> {
 
   const queryFn: QueryFn = args.dryRun ? makeDryRunQuery(args.dryRunFixtureSet) : makeLiveQuery();
 
-  const completed = new Map<number, SubtaskOutcome>();
-  const failed = new Map<number, SubtaskOutcome>();
+  const completed = new Map<string, SubtaskOutcome>();
+  const failed = new Map<string, SubtaskOutcome>();
   const worktrees: WorktreeRecord[] = [];
   const mergeOrder: string[] = [];
 
@@ -1059,7 +1080,7 @@ async function main(): Promise<number> {
       // Outcome first, so "failed"/"completed" stay meaningful in live mode
       // (where every created worktree is removed on exit): a failed subtask
       // reports "failed" even after its worktree was cleaned up.
-      status: failed.has(Number(w.taskId.replace("subtask-", "")))
+      status: failed.has(w.taskId.replace("subtask-", ""))
         ? ("failed" as const)
         : w.removed
           ? ("cleaned" as const)

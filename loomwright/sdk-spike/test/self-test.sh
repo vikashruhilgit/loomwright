@@ -539,6 +539,53 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Launch Pad brief shape (regression — FABLE_PARITY_EVAL arm 3, 2026-07-28)
+#
+# The runner's own mini-brief.md fixture agreed with the parser on all three axes, so a real
+# Launch Pad brief parsing to an EMPTY dependency graph was invisible to every existing check.
+# ---------------------------------------------------------------------------
+LP_BRIEF="test/fixtures/launchpad-brief.md"
+if [ "$HAVE_NODE" = 1 ] && [ -f dist/runner.js ] && [ -f "$LP_BRIEF" ]; then
+  LP_OUT=$(node -e "
+    const {parseBrief} = require('$SPIKE_DIR/dist/runner.js');
+    const r = parseBrief(require('fs').readFileSync('$SPIKE_DIR/$LP_BRIEF','utf8'));
+    const ids = r.subtasks.map(s => s.id).join(',');
+    const edges = r.subtasks.reduce((n,s) => n + s.requires.length, 0);
+    console.log(ids + '|' + edges);
+  " 2>/dev/null)
+  LP_IDS="${LP_OUT%%|*}"
+  LP_EDGES="${LP_OUT##*|}"
+
+  # Natural order matters: a plain string sort yields 1a,1b,10,2 and breaks wave scheduling.
+  if [ "$LP_IDS" = "1a,1b,2,10" ]; then
+    pass "parseBrief: alpha-suffixed ids parsed in natural order (1a,1b,2,10)"
+  else
+    fail "parseBrief: expected ids 1a,1b,2,10 — got '$LP_IDS'"
+  fi
+
+  # THE regression: 0 here is the arm-3 failure — every edge silently discarded.
+  if [ "$LP_EDGES" = "3" ]; then
+    pass "parseBrief: dependency edges survive a real Launch Pad brief (3 edges)"
+  else
+    fail "parseBrief: expected 3 requires edges — got '$LP_EDGES' (0 = the arm-3 silent-drop bug)"
+  fi
+
+  # external_requires must NOT be swallowed by the requires: pattern.
+  if node -e "
+    const {parseBrief} = require('$SPIKE_DIR/dist/runner.js');
+    const r = parseBrief(require('fs').readFileSync('$SPIKE_DIR/$LP_BRIEF','utf8'));
+    const one_a = r.subtasks.find(s => s.id === '1a');
+    process.exit(one_a && one_a.requires.length === 0 && one_a.provides.length === 2 ? 0 : 1);
+  " 2>/dev/null; then
+    pass "parseBrief: 'requires: []' stays empty and external_requires is not absorbed"
+  else
+    fail "parseBrief: empty-requires / external_requires handling regressed"
+  fi
+else
+  skip "parseBrief Launch Pad shape regression (needs node + built dist/ + fixture)"
+fi
+
+# ---------------------------------------------------------------------------
 # Dependency materialization (regression — FABLE_PARITY_EVAL arm 3, 2026-07-28)
 #
 # THE bug this closes: `requires` delayed spawn order but not visibility, so a
