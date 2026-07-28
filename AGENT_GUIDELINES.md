@@ -642,7 +642,7 @@ All hooks are centralized in `hooks.json`. As of v15.5.0 there are **22 hook ent
 **Task Structure:**
 - **EPIC:** Large feature (contains multiple tasks)
 - **TASK:** Implementation work (30-60 min)
-- **SUBTASK:** Review gate (blocks next task)
+- **SUBTASK:** Review gate (blocks next task) — above the Decomposition Threshold
 
 **Review Gates (threshold-conditional — see `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold"):**
 - Above the threshold, every implementation task has a review subtask that blocks the next implementation task

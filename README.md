@@ -550,7 +550,7 @@ Beads is an optional issue tracker used by Orchestrator and Product Owner. The S
 
 - **EPIC:** Large feature (contains multiple tasks)
 - **TASK:** Implementation work (30-60 min)
-- **SUBTASK:** Review gate (blocks next task)
+- **SUBTASK:** Review gate (blocks next task) — above the Decomposition Threshold
 
 **Review Gates (threshold-conditional — see `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold"):**
 
