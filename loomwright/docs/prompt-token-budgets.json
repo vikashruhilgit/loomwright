@@ -15,9 +15,9 @@
       "note": "authoring baseline v15.10.0; 0 preloaded skills"
     },
     "execute-manager": {
-      "budget": 25941,
+      "budget": 28550,
       "measured": 23582,
-      "note": "authoring baseline v15.10.0; 3 preloaded skills"
+      "note": "authoring baseline v15.10.0; 3 preloaded skills. Raised 25941 -> 28550 (v15.15.0): the Single-Agent Path carve-out grew the preloaded async-orchestration/SKILL.md, leaving only 22 proxy tokens of headroom; restored to measured + ~10% per the initial-budget convention."
     },
     "launch-pad": {
       "budget": 34478,
@@ -30,9 +30,9 @@
       "note": "authoring baseline v15.10.0; 1 preloaded skill"
     },
     "plan-reviewer": {
-      "budget": 7032,
+      "budget": 7750,
       "measured": 6392,
-      "note": "authoring baseline v15.10.0; 0 preloaded skills"
+      "note": "authoring baseline v15.10.0; 0 preloaded skills. Raised 7032 -> 7750 (v15.15.0): the inverted Criterion 4 plus its split-reason predicate cross-check left only 42 proxy tokens; restored to measured + ~10% per the initial-budget convention."
     },
     "product-owner": {
       "budget": 13807,

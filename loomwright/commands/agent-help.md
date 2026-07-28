@@ -113,7 +113,7 @@ The Loomwright plugin provides **14 agent roles** (9 user-facing + 5 internal) f
 - Refines requirements using product discovery and MVP scoping
 - **Checks feasibility (Phase 2.5 soft gate)** — tech stack, dependencies, architecture, scope, hard blockers. GO/CAUTION/NO-GO verdict. NO-GO stops pipeline (user can override); CAUTION feeds into Risk Assessment
 - Analyzes codebase for file impact estimation (grep/glob/read)
-- Decomposes into 3-7 subtasks with dependency analysis
+- Decomposes per `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold" (default ONE subtask; split only for a named reason) with dependency analysis
 - Computes parallelism (LAUNCHABLE vs BLOCKED based on file overlap)
 - Validates brief via Plan Reviewer (mandatory gate — PASS enables save; NEEDS_HUMAN enables save only with explicit user override; FAIL never enables save)
 - Saves Supervisor-Ready Brief to `.supervisor/jobs/pending/`
@@ -352,9 +352,9 @@ $ /supervisor
 **What it does:**
 - Understands your goal
 - Reads project context (CLAUDE.md, Beads issue tracker state)
-- Creates 3-7 Beads tasks with review gates
-- Each implementation task gets a review subtask
-- Identifies dependencies (review blocks next task)
+- Defaults to one Beads task per `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold" (split only for a named reason); applies the threshold-conditional Review Gate Policy
+- Above the threshold, each implementation task gets a review subtask; below it, Supervisor's Phase 4.5 integrated review is the gate
+- Identifies dependencies (when a review subtask exists, it blocks next task)
 - Provides clear acceptance criteria and skill references
 
 **Example Output:**
@@ -834,7 +834,7 @@ approved: QA complete | rejected: re-run with gaps addressed
 cd /path/to/my-app
 /orchestrator goal: "Add dark mode UI to settings page"
 ```
-→ Agent creates Beads tasks with review gates
+→ Agent creates task(s) per the Decomposition Threshold (default one task; a review-gate task is added only above the threshold — see `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold")
 
 ### Start Work: Claim Task
 ```bash
@@ -880,16 +880,16 @@ bd close BD-21
 ### Scenario 2: Add a Feature
 ```
 /orchestrator goal: "Add dark mode to application"
-→ Creates EPIC with tasks and review gates
-→ BD-40: Implement → BD-41: Review (blocks) → BD-42: Tests → BD-43: Commit
-→ Work through chain, reviews unlock next tasks
+→ Creates EPIC — one task by default; splits (with a review-gate task per split) only above the Decomposition Threshold
+→ Below threshold: BD-40: Implement → BD-41: Commit (Supervisor's Phase 4.5 integrated review is the gate, no per-task reviewer — **only when executed via `/supervisor`**; a plan you hand-execute has no Phase 4.5, so run `/code-reviewer` yourself before committing)
+→ Above threshold (example): BD-40: Implement → BD-41: Review (blocks) → BD-42: Tests → BD-43: Commit
 → bd close each task when done
 ```
 
 ### Scenario 3: Refactor Code
 ```
 /orchestrator goal: "Refactor Settings component to use hooks"
-→ Creates Beads tasks with review gates
+→ Creates task(s) per the Decomposition Threshold (review-gate task added only above threshold)
 → /code-reviewer checks pattern consistency
 → Commit with Beads linking
 ```
@@ -1081,7 +1081,7 @@ bd close BD-XX
 
 loomwright/              # Nested plugin root
 ├── .claude-plugin/
-│   └── plugin.json                   # Plugin metadata (v15.14.0)
+│   └── plugin.json                   # Plugin metadata (v15.15.0)
 ├── commands/                         # Slash commands (21)
 │   ├── launch-pad.md                 # Supervisor readiness
 │   ├── supervisor.md                 # Parallel orchestrator (v4)
@@ -1219,7 +1219,7 @@ These are Claude Code slash commands, so you can type them directly:
 
 | Agent | Purpose | When | Input | Output |
 |-------|---------|------|-------|--------|
-| **Orchestrator** | Plan work | Start of task | Goal or story | Beads tasks with review gates |
+| **Orchestrator** | Plan work | Start of task | Goal or story | Beads tasks, default one task, threshold-conditional review gates |
 | **Code Reviewer** | Review code | During development | Files/diff | PASS/FAIL/NEEDS_HUMAN + issues |
 | **/commit** (skill) | Create commits | When done coding | Staged changes | Conventional commits + Beads links |
 

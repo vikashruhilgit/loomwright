@@ -6,6 +6,7 @@ A Claude Code plugin for AI agents to collaborate on software projects. 14 speci
 
 > **Install the plugin and run slash commands instead of manually managing agents.**
 >
+> **NEW in v15.15.0 — decomposition default inverted to single-agent (Fix 1 / D3):** the default is now **ONE subtask** — acceptance criteria are a checklist for one worker, not a subtask generator. A split requires one of exactly three named reasons (`file-conflict`, `context-bound` (> 12 files OR > 800 changed lines), `genuine-parallelism` (≥ 2 zero-overlap groups, each ≥ 3 files)), recorded as `- **Split reason:** <reason>` in the brief — the single home is `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold", cited by path from both Launch Pad and Orchestrator. Supervisor gains a true **Single-Agent Path**: below the threshold, one worker executes all acceptance criteria in one context and no per-subtask Code Reviewer is spawned — the Phase 4.5 holistic review is the sole review. Plan Reviewer Criterion 4 is inverted (1 subtask is valid and expected; >1 subtask with no/invalid `Split reason:` FAILs HIGH). Above the threshold, worktrees/Execute Manager/per-subtask review are unchanged. Counts unchanged: 14 agents / 21 commands / 41 skills / 22 hooks.
 > **NEW in v15.14.0 — curation/anti-rot (supersession + retraction + freeze rule):** the three curated advisory stores now support supersession and retraction — `add-rule.sh`/`add-orientation.sh` gain `--supersedes` (declarative, reader hides the superseded entry) and a `--retract --target/--reason --confirm` action; `write-lessons.sh` gains a `supersede` verb that composes with its existing `retract` (PRE-CHECK → RETRACT → ADD, avoiding an add-time evict-oldest regression); `read-orientation.sh`'s header parse moves to per-key extraction, fixing a bug where a misplaced field silently disabled staleness detection. `## Corpus health` extends with rules/orientation decay flagging (flag-only); the token ledger gains an additive whole-stack `advisory_total`; `/dreaming` gains per-item Supersede/Retract actions. The standing advisory-surface freeze (no NEW advisory reader/store/emitter without a before/after measurement AND a curation mechanism) is now committed as a `.agent/rules/` entry so it survives sessions. Counts unchanged: 14 agents / 21 commands / 41 skills / 22 hooks.
 > **NEW in v15.13.0 — pointers-not-payloads + shared agent prefix + async downpricing:** spawn prompts / inter-agent handoffs pass pointers (path + bounded summary) instead of pasted bodies, audited in NEW `docs/POINTER_AUDIT.md` (Batch-API routing = roadmap note only); all 14 `agents/*.md` open with a byte-identical shared block from canonical `docs/shared-agent-prefix.md`, enforced by the NEW fail-CLOSED `scripts/check-shared-prefix.sh` CI gate (+ 1-char-drift self-test) — honest framing: the block buys consistency/dedup, NOT cross-agent cache hits (the real cache win is same-role respawns via volatile-last ordering); Cost Profiles gains "Async analysis surfaces" rows routing `/dreaming` reflection spawns to sonnet by default (`--full-model` restores inherit; forward/gating roles never downgraded; `/pr-postmortem` + `/insights` spawn no models); additive env-gated `shared_prefix` token-ledger marker (`LOOMWRIGHT_SHARED_PREFIX=1`). Counts unchanged: 14 agents / 21 commands / 41 skills / 22 hooks.
 > **NEW in v15.12.0 — orientation memos + owned flat repo-map (advisory memos-first orientation):** committed `.agent/orientation/` memo store with a fail-safe staleness-annotating reader (`read-orientation.sh`, ≤3k-char bound) and confirm-gated sole writer (`add-orientation.sh`); zero-dep `build-repo-map.sh` Tier A/B cold-start map; advisory memos-first steps in Launch Pad Phase 3 + Orchestrator Context Setup (byte-equivalent when nothing exists); success-only completion-tail proposals to gitignored `.supervisor/orientation-proposals/` promoted only via `/dreaming` → `add-orientation.sh --confirm`; additive `orientation_source` token-ledger field. Counts unchanged: 14 agents / 21 commands / 41 skills / 22 hooks.
@@ -197,7 +198,7 @@ Optional next: run `/setup` for a status dashboard and guided configuration of o
 | **Launch Pad**        | `/launch-pad goal: "..."`       | Prepare goals for autonomous Supervisor execution with feasibility gate (Phase 2.5: GO/CAUTION/NO-GO) and mandatory Plan Review (Phase 5.5) | Before `/supervisor`, planning  |
 | **Supervisor**        | `/supervisor task: "..."`       | Autonomous workflow → Phase 1.5 PRE-FLIGHT SYNC (remote-overlap gate) → parallel workers → PR creation | Full automation                 |
 | **Product Owner**     | `/product-owner feature: "..."` | Define requirements → create user stories with acceptance criteria. Assumption Check (standard flow, user gate before `bd create` if flags) + Reality Check (brainstorm flow, VIABLE/NEEDS_FOUNDATION/BLOCKED with Feasibility score caps). Use `--brainstorm` for multi-mind ideation. | New feature, vague requirements, exploring directions |
-| **Orchestrator**      | `/orchestrator goal: "..."`     | Plan work → create tasks with review gates                         | Starting implementation         |
+| **Orchestrator**      | `/orchestrator goal: "..."`     | Plan work → default one task (Decomposition Threshold), threshold-conditional review gates | Starting implementation         |
 | **Code Reviewer**     | `/code-reviewer src/`           | Review code → output PASS/FAIL/NEEDS_HUMAN                         | After writing code              |
 | **Commit** (skill)    | `/commit`                       | Stage changes → create conventional commits                        | Ready to commit                 |
 | **Red Team Reviewer** | `/red-team-reviewer`            | Adversarial audit → find production failures                       | Pre-launch, security            |
@@ -308,6 +309,8 @@ PR created, next task or exit
 
 ### Autonomous Workflow (Supervisor v4)
 
+Path is selected by subtask count (`skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold"): the default below threshold is **ONE subtask, single-agent execution** (one worker, no per-subtask reviewer, Phase 4.5 is the review). The diagram below shows the **Parallel Path** — the above-threshold case, reached only when a split is justified by a named reason (`file-conflict` / `context-bound` / `genuine-parallelism`); it is byte-identical to prior behavior.
+
 ```
 /supervisor task: "add user authentication"
     ↓
@@ -319,9 +322,9 @@ PRE-FLIGHT SYNC: Fetch remote → scan recent commits + open PRs → classify
                  CLEAR / OVERLAP / SUPERSEDED (silent on CLEAR; soft-gate or
                  fail-closed on overlap; --skip-preflight-sync escape hatch)
     ↓
-PLAN: Orchestrator → Subtasks → Parallelism analysis
+PLAN: Orchestrator → default one subtask, split only for a named reason → Parallelism analysis
     ↓
-EXECUTE: → Execute Manager (isolated context, 60 tool call budget)
+EXECUTE (Parallel Path — split justified): → Execute Manager (isolated context, 60 tool call budget)
          Worktree A ─→ Worker A ─→ Reviewer A ─→ PASS
          Worktree C ─→ Worker C ─→ Reviewer C ─→ PASS
          (unblocked) → Worktree B → Worker B → PASS
@@ -337,7 +340,7 @@ LOOP: Next task or exit
 ```
 Product Owner → Create user stories (requirements)
     ↓
-Orchestrator → Break into tasks (EPIC → TASK → SUBTASK)
+Orchestrator → Default one task per Decomposition Threshold (EPIC → TASK → SUBTASK; split only for a named reason)
     ↓
 You code
     ↓
@@ -547,12 +550,12 @@ Beads is an optional issue tracker used by Orchestrator and Product Owner. The S
 
 - **EPIC:** Large feature (contains multiple tasks)
 - **TASK:** Implementation work (30-60 min)
-- **SUBTASK:** Review gate (blocks next task)
+- **SUBTASK:** Review gate (blocks next task) — above the Decomposition Threshold
 
-**Review Gates:**
+**Review Gates (threshold-conditional — see `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold"):**
 
-- Every implementation task has a review subtask
-- Review subtask blocks next implementation task
+- Above the threshold, every implementation task has a review subtask that blocks the next implementation task
+- Below the threshold (single-agent default), no per-subtask reviewer — Supervisor's Phase 4.5 integrated review is the gate
 - Review decisions: PASS (proceed), FAIL (fix and re-review), NEEDS_HUMAN (creates bug issues)
 
 ---

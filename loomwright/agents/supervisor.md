@@ -74,7 +74,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
 - **Clean worktrees:** All worktrees removed in FINALIZE (no orphans)
 - **Sequential merge:** Worktree branches merge one at a time into feature branch
 - **Exit gracefully:** At tool call budget limit, checkpoint and exit with resume command
-- **Inline execution does not waive child-agent spawning:** Running `/supervisor` inline on the main thread is allowed and preferred (it avoids the `supervisor-runner` subagent-spawn trap). It does NOT waive spawning first-level child agents via the Task tool. Manual implementation in the main thread is not a substitute for `execute-manager` or fast-path worker/reviewer behavior in Phase 3, nor for `code-reviewer` in Phase 4.5. If you find yourself about to write implementation code directly in the main thread during Phase 3, or about to skip the `code-reviewer` Task call in Phase 4.5, stop and spawn the child agent instead. The Phase 4.5 completion-tail guard will refuse to emit a successful `SUPERVISOR_RESULT` if the review was skipped without `--skip-self-heal`.
+- **Inline execution does not waive child-agent spawning:** Running `/supervisor` inline on the main thread is allowed and preferred (it avoids the `supervisor-runner` subagent-spawn trap). It does NOT waive spawning first-level child agents via the Task tool. Manual implementation in the main thread is not a substitute for `execute-manager` or Single-Agent/Sequential-path worker/reviewer behavior in Phase 3, nor for `code-reviewer` in Phase 4.5. If you find yourself about to write implementation code directly in the main thread during Phase 3, or about to skip the `code-reviewer` Task call in Phase 4.5, stop and spawn the child agent instead. The Phase 4.5 completion-tail guard will refuse to emit a successful `SUPERVISOR_RESULT` if the review was skipped without `--skip-self-heal`.
 
 ---
 
@@ -166,7 +166,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
    Context-Keeper(operation: set_task, task: {title, criteria})
    Context-Keeper(operation: update_phase, new_phase: ACQUIRE)
    ```
-   - **Canonical on-disk state MUST exist after ACQUIRE — and the Supervisor itself writes it directly, always.** Execution mode (inline fast-path vs. delegated parallel) is not decided until Phase 3, so ACQUIRE cannot branch on it. Therefore the Supervisor performs a **direct best-effort write itself, unconditionally and regardless of execution mode**, ensuring the canonical lowercase `## Session` block (per `skills/state-management/SKILL.md` §"State File Schema") exists in `.supervisor/state.md` — at minimum `- status: running` and `- branch: <feature-branch>`, plus the other Session fields (`session_id`, `task_id`, `phase: ACQUIRE`). The `Context-Keeper(set_task / update_phase)` calls shown above emit the **identical canonical lowercase format**, so when Context-Keeper is later spawned (the parallel path) its write is a **harmless idempotent overlap** — NOT a conflict, and NOT a reason to skip the unconditional direct write. (Do the direct write in addition to, never "in place of," those calls.) Writing directly here strengthens the guarantee: the canonical state lands even if a later Context-Keeper spawn never happens or fails. The direct write is a **targeted in-place edit of the `## Session` block only** that preserves any other sections already in the file (`## Decisions Log`, `## Phase Flags` (consumed by autonomous-loop for stacked-branch handoff), `## Checkpoint`), performed as a single atomic update where feasible (e.g. temp-file + rename) to match Context-Keeper's documented atomic-write guarantee. The durable canonical state must land on disk because the `hook-dispatch-on-pr-create.sh` session-scope gate greps `^- status:` / `^- branch:`, and `/supervisor --continue` resume reads the lowercase `status: running` — a stale or bold-only state file silently breaks both.
+   - **Canonical on-disk state MUST exist after ACQUIRE — and the Supervisor itself writes it directly, always.** Execution mode (inline single-agent vs. delegated parallel) is not decided until Phase 3, so ACQUIRE cannot branch on it. Therefore the Supervisor performs a **direct best-effort write itself, unconditionally and regardless of execution mode**, ensuring the canonical lowercase `## Session` block (per `skills/state-management/SKILL.md` §"State File Schema") exists in `.supervisor/state.md` — at minimum `- status: running` and `- branch: <feature-branch>`, plus the other Session fields (`session_id`, `task_id`, `phase: ACQUIRE`). The `Context-Keeper(set_task / update_phase)` calls shown above emit the **identical canonical lowercase format**, so when Context-Keeper is later spawned (the parallel path) its write is a **harmless idempotent overlap** — NOT a conflict, and NOT a reason to skip the unconditional direct write. (Do the direct write in addition to, never "in place of," those calls.) Writing directly here strengthens the guarantee: the canonical state lands even if a later Context-Keeper spawn never happens or fails. The direct write is a **targeted in-place edit of the `## Session` block only** that preserves any other sections already in the file (`## Decisions Log`, `## Phase Flags` (consumed by autonomous-loop for stacked-branch handoff), `## Checkpoint`), performed as a single atomic update where feasible (e.g. temp-file + rename) to match Context-Keeper's documented atomic-write guarantee. The durable canonical state must land on disk because the `hook-dispatch-on-pr-create.sh` session-scope gate greps `^- status:` / `^- branch:`, and `/supervisor --continue` resume reads the lowercase `status: running` — a stale or bold-only state file silently breaks both.
    - **Best-effort / non-fatal (fail-safe invariant):** this write MUST NEVER block ACQUIRE or fail the run. A write failure is a logged no-op — proceed to Phase 2 regardless. Do NOT write the human-readable **bold** ENVIRONMENT display block here; the on-disk state file is the canonical lowercase form only.
 
 **Output:** the `### Phase 1: ACQUIRE` block shown in §"Output Format (Complete Example)" — Task (with priority when known), Title, Criteria count, `Branch: feature/{task_id}-{short-desc} ← CREATED`, and `Requirements:` reading `Clear` or `Refined by Product Owner`.
@@ -213,7 +213,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
    Context-Keeper(operation: set_subtasks, subtasks: [...], parallelism: {...})
    Context-Keeper(operation: update_phase, new_phase: PLAN)
    ```
-4. Fast-path check: if ≤ 1 subtask, skip worktree setup (execute inline)
+4. Path selection: exactly 1 subtask → Single-Agent Path (skip worktree setup, execute inline, no per-subtask reviewer); `--sequential` with more than 1 subtask → Sequential Path (skip worktree setup, execute inline, per-subtask reviewer runs); otherwise → Parallel Path (Execute Manager, worktrees)
 
 **Parallelism rules:**
 ```
@@ -226,7 +226,7 @@ BLOCKED if:
   - Files overlap with a LAUNCHABLE subtask
 ```
 
-**Output:** emit a `### Phase 2: PLAN` block — subtask count + IDs, launchable/blocked parallelism split, first batch, and `Mode:` reading one of `parallel (workers: {N})` | `sequential` | `inline (single subtask)`.
+**Output:** emit a `### Phase 2: PLAN` block — subtask count + IDs, launchable/blocked parallelism split, first batch, and `Mode:` reading one of `parallel (workers: {N})` | `sequential` | `single-agent`.
 
 **Supervisor context after PLAN:** ~400 tokens
 
@@ -238,7 +238,7 @@ BLOCKED if:
 
 #### `--sdk-runner` branch (EXPERIMENTAL — opt-in, default OFF)
 
-When `--sdk-runner` was passed (recorded at Phase 0 INIT — `skills/supervisor-config/SKILL.md`), Phase 3 does NOT Task-spawn `execute-manager` (or the inline fast-path worker/reviewer loop). Instead:
+When `--sdk-runner` was passed (recorded at Phase 0 INIT — `skills/supervisor-config/SKILL.md`), Phase 3 does NOT Task-spawn `execute-manager` (or the inline Single-Agent/Sequential-path worker/reviewer loop). Instead:
 
 1. **Fail-closed probe (run FIRST):** `command -v node` AND `test -f "${CLAUDE_PLUGIN_ROOT}/sdk-spike/dist/runner.js"` AND `(cd "${CLAUDE_PLUGIN_ROOT}/sdk-spike" && node -e "require.resolve('@anthropic-ai/claude-agent-sdk')")` — the third predicate catches a built `dist/` whose `node_modules/` was pruned after the build. If any fails, ABORT the run with `error: "sdk_runner_unavailable"` — NEVER silently fall back to the default path. Error guidance: `dist/` is gitignored and marketplace installs ship source only — build once with `npm install && npm run build` inside `${CLAUDE_PLUGIN_ROOT}/sdk-spike`.
 2. Shell out to the quarantined spike runner (cwd stays the user project): `node "${CLAUDE_PLUGIN_ROOT}/sdk-spike/dist/runner.js" --brief <brief path> --branch <feature branch>` (CLI contract: `sdk-spike/README.md`). **Not threaded in this spike:** the brief's Max-workers and the `--cheap` cost profile are NOT forwarded to the runner (its `--max-workers`/`--model` flags exist but are unforwarded; the runner defaults to 2 concurrent lanes).
@@ -248,9 +248,23 @@ When `--sdk-runner` was passed (recorded at Phase 0 INIT — `skills/supervisor-
 
 Zero change to the default path when the flag is absent (byte-identical behavior with flag off). Spike-grade (see `docs/SPIKES/SDK_RUNNER_SPIKE.md`): `hooks.json` validators may not fire for SDK-spawned workers — the runner self-validates result schemas.
 
-#### Fast-Path (single subtask or sequential mode)
+#### Single-Agent Path (exactly 1 subtask)
 
-If ≤ 1 subtask OR `--sequential`:
+The default path below `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold". One worker executes ALL acceptance criteria in a single context; **no per-subtask Code Reviewer is spawned** — the Phase 4.5 holistic Code Reviewer (below) is the single review of the integrated result.
+
+1. Spawn ONE implementation worker (blocking, in project root) — the prompt passes ALL acceptance criteria, not one subtask's row (spawn shape: `skills/async-orchestration/SKILL.md` §"Subagent Spawn Contracts" → Single-Agent Worker)
+   - When `cost_profile=cheap`: include `model: "sonnet"` in the Task call
+2. Record result via Context-Keeper
+3. **Deterministic gate (zero-token, no reviewer spawn):** check the worker's own `outputs_verified`/`outputs_gap` fields — the same check the Execute Manager runs pre-spawn (`agents/execute-manager.md:222`) — plus tests/lint on the branch (run by the Supervisor via Bash). **LSP diagnostics are the worker's own** — `agents/worker.md` declares the `LSP` tool and runs them during implementation; the Supervisor has no LSP tool, so nothing re-runs them here. Deeper semantic review is Phase 4.5's. `outputs_gap` non-empty or `status != completed` → retry (bounded) or pause, per existing WORKER_RESULT handling.
+4. Skip all worktree logic and Execute Manager delegation. Proceed directly to Phase 4 FINALIZE.
+
+> **⚠️ `--skip-self-heal` on this path leaves NO semantic review.** Phase 4.5's Code Reviewer is the only one the Single-Agent Path has, so combining the flag with a single-subtask job (the default shape) leaves only the deterministic gate — `outputs_verified` + tests/lint (plus the worker's own LSP diagnostics) — and nothing reads the code for intent. This is a **behavior change from the pre-v15.15.0 fast path**, which spawned a per-subtask reviewer regardless of the flag and so always yielded one review. `--skip-self-heal` is an emergency bypass; do not pair it with the default single-agent shape unless you are reviewing by hand.
+
+
+#### Sequential Path (`--sequential`, more than 1 subtask)
+
+Unchanged from prior behavior: `--sequential` keeps its existing meaning (no worktrees, serial execution) and is selected by the flag, not by subtask count — it is a distinct path from Single-Agent above and still spawns a per-subtask Code Reviewer.
+
 1. For each subtask (in order):
    - Spawn implementation worker (blocking, in project root)
      - When `cost_profile=cheap`: include `model: "sonnet"` in the Task call
@@ -321,7 +335,7 @@ When the Execute Manager surfaces an `EXECUTE_CHECKPOINT` with `adjudication_req
 
 **Hard rule:** the Supervisor never picks an option silently — it always asks the user. Auto-selection (e.g., "C is safest, pick C") is forbidden because each option has different irreversible consequences (job failure, brief mutation, plan mutation).
 
-**Output:** emit a `### Phase 3: EXECUTE` block — `Mode:` reading `delegated (Execute Manager)` or `inline (fast-path)`, subtasks completed `{count}/{total}`, reviews passed, dependency-ordered merge order, and `Tool calls: Supervisor {N}/50, Execute Manager {M}/60`.
+**Output:** emit a `### Phase 3: EXECUTE` block — `Mode:` reading `delegated (Execute Manager)` | `single-agent` | `sequential (inline)`, subtasks completed `{count}/{total}`, reviews passed (`N/A` on the Single-Agent Path — Phase 4.5 is the sole review), dependency-ordered merge order, and `Tool calls: Supervisor {N}/50, Execute Manager {M}/60`.
 
 **Supervisor context during EXECUTE:** ~50 tokens (single Task call + result parsing)
 
@@ -620,8 +634,8 @@ All flags in the "Flags and Options" table above combine with these shapes; the 
 | **Product Owner** | Phase 1 (if vague reqs) | Blocking | Refine requirements |
 | **Orchestrator** | Phase 2 | Blocking | Decompose into subtasks |
 | **Execute Manager** | Phase 3 (multi-subtask) | Blocking | Own poll loop + worker/reviewer lifecycle |
-| **Worker** | Phase 3 (fast-path only) | Blocking | Implement single subtask inline |
-| **Code Reviewer** | Phase 3 (fast-path only) | Blocking | Review single subtask inline |
+| **Worker** | Phase 3 (Single-Agent or Sequential path) | Blocking | Single-Agent: implement ALL criteria inline in one worker; Sequential: implement one subtask inline per worker |
+| **Code Reviewer** | Phase 3 (Sequential path only) | Blocking | Review each subtask inline — NOT spawned on the Single-Agent path (Phase 4.5 is the single review there) |
 
 **Note:** In multi-subtask workflows, Worker and Code Reviewer are spawned by the Execute Manager, not directly by the Supervisor.
 
@@ -635,17 +649,17 @@ After each blocking subagent, extract minimal summary:
 | Product Owner | `"Story: {title}. Criteria: {count} items."` |
 | Orchestrator | `"Created {N} subtasks: {IDs}. Launchable: {IDs}"` |
 | Execute Manager | Parse EXECUTE_RESULT or EXECUTE_CHECKPOINT block |
-| Worker (fast-path) | Parse WORKER_RESULT block from output |
-| Code Reviewer (fast-path, Phase 3) | Parse CODE_REVIEW_RESULT block from output |
+| Worker (Single-Agent / Sequential path) | Parse WORKER_RESULT block from output |
+| Code Reviewer (Sequential path, Phase 3) | Parse CODE_REVIEW_RESULT block from output |
 | Code Reviewer (Phase 4.5 integration review) | Parse CODE_REVIEW_RESULT block; filter issues where category=new AND severity in [BLOCKING, HIGH] for fix-task input |
 | Fix task (Phase 4.5) | Parse FIX_RESULT block from output |
 
 ### Subagent Spawn Contracts
 
-The exact Task tool call shapes for each subagent — Context-Keeper, Orchestrator, Execute Manager, fast-path Worker, fast-path Code Reviewer — live in `skills/async-orchestration/SKILL.md` **Part 2 §"Subagent Spawn Contracts"** (moved verbatim from this file; the skill is Supervisor-preloaded). Non-negotiables carried by those shapes:
+The exact Task tool call shapes for each subagent — Context-Keeper, Orchestrator, Execute Manager, Single-Agent Worker, Sequential-path Worker, Sequential-path Code Reviewer — live in `skills/async-orchestration/SKILL.md` **Part 2 §"Subagent Spawn Contracts"** (moved verbatim from this file; the skill is Supervisor-preloaded). Non-negotiables carried by those shapes:
 
 - Every spawn honors `cost_profile`: include `model: "sonnet"` ONLY when `cost_profile=cheap`; omit the field entirely when `cost_profile=default`.
-- The fast-path Worker prompt passes the brief's `provides:` contract VERBATIM (`Provides (verbatim from the brief's Subtask Contracts): {provides YAML}`) — `provides:` is REQUIRED input for the worker's Step 5.5 outputs verification; omitting it silently no-ops the v12 outputs gate.
+- The Single-Agent and Sequential-path Worker prompts pass the brief's `provides:` contract VERBATIM (`Provides (verbatim from the brief's Subtask Contracts): {provides YAML}`) — `provides:` is REQUIRED input for the worker's Step 5.5 outputs verification; omitting it silently no-ops the v12 outputs gate.
 - House-rules injection into the Worker prompt is ADVISORY / fail-safe / NEVER-gating: computed via `read-rules.sh` (args, never stdin), injected ONLY when its output is non-empty, and a rule's `check` is DATA — never executed (full comment block in the skill).
 
 ---

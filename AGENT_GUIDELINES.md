@@ -435,7 +435,7 @@ This format applies to ALL agent outputs (Orchestrator, Code Reviewer, Red Team 
 | **Context-Keeper** | State file | State file (sole writer) | Externalized state management |
 | **Worker** | Code files in worktree | Code files in worktree | Isolated implementation in git worktrees |
 | **Product Owner** | CLAUDE.md, domain context, Beads | Beads stories | Requirements, user stories |
-| **Orchestrator** | CLAUDE.md, Beads state, git history | Beads tasks (proposes) | Planning, task breakdown with review gates |
+| **Orchestrator** | CLAUDE.md, Beads state, git history | Beads tasks (proposes) | Planning, task breakdown with threshold-conditional review gates |
 | **Code Reviewer** | CLAUDE.md, code files, Beads task | Beads comments (review decisions) | Code quality, security, PASS/FAIL/NEEDS_HUMAN |
 | **Red Team Reviewer** | CLAUDE.md, code files, Context7 docs | Audit report | Adversarial review, find production failures |
 | **QA Strategist** | Source code, discovery data, .qa-summary.md | Risk classification, STRATEGIST_VERDICT | Risk-based test strategy and audit |
@@ -491,15 +491,15 @@ This format applies to ALL agent outputs (Orchestrator, Code Reviewer, Red Team 
   - Never access the Supervisor state file
 
 #### **Orchestrator** (Planning Agent)
-- **Objective:** Break goals into Beads tasks with built-in review gates
+- **Objective:** Break goals into Beads tasks (default ONE task, split only for a named reason) with threshold-conditional review gates
 - **Reads:** CLAUDE.md, Beads state (`bd list`), git history
 - **Writes:** Beads tasks (EPIC → TASK → SUBTASK structure)
 - **Responsibilities:**
   - Run `bd list` to understand current open/in-progress tasks
   - Understand goal/task-details (inline: `goal: "add JWT with refresh tokens"`)
   - If CLAUDE.md missing: auto-detect tech stack, suggest initial structure
-  - Create Beads tasks with clear subtasks for implementation + review
-  - Every implementation task gets a review subtask (quality gate)
+  - Default to one Beads task per `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold"; split only for a named reason
+  - Above the threshold, every implementation task gets a review subtask (quality gate); below it, Supervisor's Phase 4.5 integrated review is the gate
   - Reference relevant skill files for guidance
   - Output: Context summary + Beads task structure + skill references
 - **Output (follows standard format):**
@@ -553,7 +553,7 @@ This format applies to ALL agent outputs (Orchestrator, Code Reviewer, Red Team 
   - Validate environment readiness (git, CLAUDE.md, worktrees, gh)
   - Refine requirements using product discovery and MVP scoping skills
   - Analyze codebase for file impact estimation
-  - Decompose into 3-7 subtasks with parallelism analysis
+  - Decompose per `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold" (default ONE subtask; split only for a named reason) with parallelism analysis
   - Save brief for clean-context Supervisor handoff
 - **Safety:**
   - Never invoke Supervisor — saves to file, user starts fresh session
@@ -642,11 +642,11 @@ All hooks are centralized in `hooks.json`. As of v15.5.0 there are **22 hook ent
 **Task Structure:**
 - **EPIC:** Large feature (contains multiple tasks)
 - **TASK:** Implementation work (30-60 min)
-- **SUBTASK:** Review gate (blocks next task)
+- **SUBTASK:** Review gate (blocks next task) — above the Decomposition Threshold
 
-**Review Gates:**
-- Every implementation task has a review subtask
-- Review subtask blocks next implementation task
+**Review Gates (threshold-conditional — see `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold"):**
+- Above the threshold, every implementation task has a review subtask that blocks the next implementation task
+- Below the threshold (single-agent default), no per-subtask reviewer — Supervisor's Phase 4.5 integrated review is the gate
 - Review decisions: PASS (proceed), FAIL (fix and re-review), NEEDS_HUMAN (creates bug issues)
 
 **Project Files:**

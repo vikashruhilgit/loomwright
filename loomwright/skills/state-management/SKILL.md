@@ -2,8 +2,8 @@
 name: state-management
 description: State file schema, .supervisor/ directory setup, checkpoint and resume protocols. Use when managing Supervisor session state across phases.
 allowed-tools: [Read, Write, Edit, Bash]
-version: "1.3.0"
-lastUpdated: "2026-07-06"
+version: "1.4.0"
+lastUpdated: "2026-07-28"
 ---
 
 # State Management Skill
@@ -66,7 +66,7 @@ Before creating `.supervisor/`, verify `.gitignore` exists. If not, create it wi
 
 ## Config
 - max_workers: 2
-- mode: parallel | sequential
+- mode: parallel | sequential | single-agent
 - cost_profile: default | cheap   # optional — default "default"; set from --cheap flag at INIT; read back during resume to keep cheap runs cheap across checkpoints
 
 ## Session

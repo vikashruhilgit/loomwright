@@ -2,8 +2,8 @@
 name: workflow-management
 description: Patterns for managing autonomous workflows including context, checkpoints, parallel execution, and permissions. Use when orchestrating multi-stage agent workflows.
 allowed-tools: [Read, Bash]
-version: "1.0.0"
-lastUpdated: "2026-03"
+version: "1.1.0"
+lastUpdated: "2026-07-28"
 ---
 
 # Workflow Management Skill
@@ -58,8 +58,8 @@ PRE-FLIGHT SYNC:
 
 PLAN:
   - subtasks created + parallelism analyzed → EXECUTE
-  - single subtask → EXECUTE (fast-path, no worktrees)
-  - --sequential → EXECUTE (no worktrees)
+  - exactly 1 subtask → EXECUTE (Single-Agent Path, no worktrees, no per-subtask reviewer)
+  - --sequential (more than 1 subtask) → EXECUTE (Sequential Path, no worktrees, per-subtask reviewer runs)
 
 EXECUTE:
   - EXECUTE_RESULT (completed) → FINALIZE

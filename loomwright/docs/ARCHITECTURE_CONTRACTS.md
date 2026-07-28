@@ -329,10 +329,10 @@ A CI ratchet on **spawn-time prompt inventory**. Each agent's effective weight i
 |---|---|---|---|
 | `code-reviewer`     | 24330 | 22118 | 5 |
 | `context-keeper`    | 3052  | 2774  | 0 |
-| `execute-manager`   | 25941 | 23582 | 3 |
+| `execute-manager`   | 28550 | 23582 | 3 |
 | `launch-pad`        | 34478 | 31343 | 7 |
 | `orchestrator`      | 8665  | 7877  | 1 |
-| `plan-reviewer`     | 7032  | 6392  | 0 |
+| `plan-reviewer`     | 7750  | 6392  | 0 |
 | `product-owner`     | 13807 | 12551 | 3 |
 | `qa-executor`       | 47559 | 43235 | 5 |
 | `qa-strategist`     | 22877 | 20797 | 3 |
@@ -342,7 +342,7 @@ A CI ratchet on **spawn-time prompt inventory**. Each agent's effective weight i
 | `supervisor`        | 51221 | 46564 | 7 |
 | `worker`            | 5045  | 4158  | 0 |
 
-> **Raise log:** `rubric-grader` 2086 → 2330 — the shared-agent-prefix block (`loomwright/docs/shared-agent-prefix.md`) added to every agent `.md`; measured 2118 + ~10% headroom per the raise rule. `worker` 4574 → 5045 — same shared block plus the pointer-contract consumer text (bounded-summary + pinned-brief Inputs/Step-1 additions); measured 4586 + ~10% headroom per the raise rule (v15.13.0).
+> **Raise log:** `rubric-grader` 2086 → 2330 — the shared-agent-prefix block (`loomwright/docs/shared-agent-prefix.md`) added to every agent `.md`; measured 2118 + ~10% headroom per the raise rule. `worker` 4574 → 5045 — same shared block plus the pointer-contract consumer text (bounded-summary + pinned-brief Inputs/Step-1 additions); measured 4586 + ~10% headroom per the raise rule (v15.13.0). `execute-manager` 25941 -> 28550 — the Single-Agent Path pre-merge-gate carve-out grew the preloaded `async-orchestration/SKILL.md`, cutting headroom to 22 proxy tokens; restored to a current re-measure of 25919 + ~10% so this change does not strand the next unrelated PR (v15.15.0). `plan-reviewer` 7032 -> 7750 — the inverted Criterion 4 and its split-reason predicate cross-check; current re-measure 6990 + ~10% (v15.15.0). **Note for both v15.15.0 rows:** the figures above are live re-measures taken at raise time; the `measured` COLUMN in the table and the `measured` field in the JSON remain the frozen v15.10.0 authoring baselines (23582 / 6392) per the frozen-metadata convention, so `budget - measured` is NOT the real headroom.
 
 Self-test: `bash scripts/test-check-token-budget.sh` (offline; pass / breach / missing-preloaded-skill / no-budget / frontmatter-bounded-parsing / empty-agents-dir / inline-flow-style-skills / orphaned-budget / live-repo cases). Wired into CI alongside the other repo-root validators. Skills counted are **frontmatter-preloaded only** — command docs and on-demand skills are not spawn-time weight and are out of scope. The gate also fails CLOSED on an unsupported inline/flow-style `skills:` list (would silently under-count) and on an orphaned budget entry (a budget key with no matching agent `.md`).
 
