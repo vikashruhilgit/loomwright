@@ -510,6 +510,7 @@ release-dependent verdicts — do not build it speculatively.
 
 | requirement | arm | review_rounds_to_READY | heal_iterations | post_merge_defects | wall_tokens | notes |
 |---|---|---|---|---|---|---|
+| tree-and-find | 2 (Loomwright default) | drain `ESCALATED` — structurally unreachable `READY` on an unprotected base (predicted by §Recording protocol); drain `fix_cycles` 0; Phase 4.5 `heal_iterations` 0 + 1 out-of-loop review-driven fix commit `3dda850` | 0 | 0 | out 90,473 · cache-create 526,110 · cache-read 15,191,782 · **$61.76** (LP 7.68 + Supervisor 43.63 + resume 10.45) — see METRIC DEFECT note: token columns under-count sub-agents, cost is the valid comparator | PR [#58](https://github.com/vikashruhilgit/ntfs-tool/pull/58), head `3dda850`, 1,656 ins / 10 files. `heal_decision: PASS`, `rubric_score: 6/6`. Reviewer PASS — 0 BLOCKING, 0 HIGH, 4 MEDIUM/new, 6 LOW/new. Ran as 3 sessions (Launch Pad → Supervisor → `--resume`); the middle one stalled mid-FINALIZE and was recovered by explicit re-invocation, not re-run. Two earlier prompt-design attempts discarded (see void-runs note). |
 | tree-and-find | 1 (bare) | N/A (no drain — branch never pushed, no reviewer in loop) | - | 0 | out 82,290 · cache-create 172,468 · cache-read 11,830,096 · in 176 · $9.70 | commit `4406708`, 98 turns, 41m04s. 1,838 ins / 12 files (impl 759, tests 1,027). Tests green: NTFSCore 286 (2 skipped, 0 fail), ntfsctl 35 (0 fail). Reviewer PASS — 0 BLOCKING, 0 HIGH, 2 MEDIUM/new, 3 LOW/new, 1 LOW/pre-existing. Baseline cleanliness VERIFIED by session-start-time (transcript born 20:05:27 vs `settings.json` disable 19:54:36). |
 
 > **Arm 2 (tree-and-find) — NOT COMPLETED, no row. Blocked by a structural incompatibility
@@ -538,10 +539,25 @@ release-dependent verdicts — do not build it speculatively.
 > eval: **a crash between EXECUTE and FINALIZE leaves an un-resumable session whose state file
 > actively lies about progress.** Worth its own follow-up requirement.
 >
-> **Consequence for the protocol:** the "arms execute headless" amendment above holds for arm 1
+> **CORRECTED 2026-07-28 — arm 2 subsequently COMPLETED; see its Results row.** The claim below
+> ("Loomwright arms must run interactively") was **too strong** and is superseded. The session did
+> not fail; it was *waiting*. `claude -p --resume <session_id> "Continue"` supplies exactly the
+> re-invocation an interactive session would have supplied automatically, and the stalled run then
+> pushed, opened PR #58, and completed Phase 4.5 normally (45 turns, 23 min, $10.45).
+>
+> **Corrected rule:** Loomwright arms CAN run headless, but a headless run is **not fire-and-forget**
+> — whenever Supervisor backgrounds work and yields, the operator must re-invoke with `--resume`.
+> Detect the state by polling the branch/PR rather than assuming completion: the process exits 0
+> with `subtype: "success"` while the job is objectively unfinished, so **exit status is not a
+> completion signal here.**
+>
+> The underlying defect stands and is unchanged: Supervisor's dispatch-then-poll design assumes
+> re-invocation that `claude -p` does not provide on its own.
+>
+> ~~**Consequence for the protocol:** the "arms execute headless" amendment above holds for arm 1
 > (bare Claude Code has no async-orchestration pattern) but does **NOT** hold for any Loomwright
 > arm. Arms 2, 3, and both ablations depend on Supervisor's background-dispatch-then-poll design,
-> which requires a session that gets re-invoked. **Loomwright arms must run interactively.**
+> which requires a session that gets re-invoked. **Loomwright arms must run interactively.**~~
 
 > **Void runs retained (arm 2, not rows).** Two earlier arm-2 attempts failed on prompt design
 > before the run above. (1) `arm-2-VOID-launchpad-executed` (`121d4e6`) — with the operational tail
@@ -556,6 +572,43 @@ release-dependent verdicts — do not build it speculatively.
 > receive the requirement body ONLY — any commit/push/PR instruction either leaks into the brief as
 > a constraint or trips the plan/execute boundary. Arm 1 keeps its operational tail because nothing
 > else will commit for it; the requirement body is byte-identical across arms (verified by `diff`).
+
+### Preliminary reading — tree-and-find, arms 1 vs 2 (n=1 requirement; NOT a verdict)
+
+| | Arm 1 (bare) | Arm 2 (Loomwright) |
+|---|---|---|
+| cost (incl. sub-agents) | **$9.70** | **$61.76** (LP 7.68 + Sup 43.63 + resume 10.45) |
+| `post_merge_defects` (BLOCKING+HIGH `new`) | **0** | **0** |
+| other `new` findings | 2 MED + 3 LOW | 4 MED + 6 LOW |
+| diff | 1,838 ins / 12 files | 1,656 ins / 10 files |
+| `heal_iterations` | – | 0 (`heal_decision: PASS`, rubric 6/6) |
+| review-driven fix commits | 0 | 1 (`3dda850`, doc-drift, out-of-loop) |
+
+**On the pre-registered metric the two arms TIE at 0, while arm 2 costs 6.4×.** Arm 2 also carried
+more sub-blocking findings (10 vs 5 `new`) on a *smaller* diff. Three caveats before anyone reads a
+verdict into that:
+
+1. **n=1 requirement.** The decision rule needs the corpus, not one entry.
+2. **`post_merge_defects` had zero discriminating power here.** Both arms produced work with no
+   BLOCKING or HIGH findings, so the metric could not separate them at all. A metric that returns
+   0/0 is not evidence of parity — it is evidence the threshold is too coarse for requirements this
+   size. **Do NOT add a metric** (pre-registration forbids it); record the limitation and let the
+   remaining corpus entries show whether 0/0 is systematic.
+3. **What arm 2 bought is not in the metrics.** Its reviewer caught a doc-drift cluster arm 1 had no
+   mechanism to catch — `CLI.md` still advertising this exact feature as "future work", a README
+   subcommand count off by two, a missing CHANGELOG entry. Real defects, all below the BLOCKING/HIGH
+   line the metric counts. Whether that is worth 6.4× is exactly the question, and the current
+   metric set cannot answer it.
+
+> **METRIC DEFECT — `wall_tokens` under-counts multi-agent arms by ~6× (recorded, not fixed).** The
+> pre-registered source is "session usage totals", but the `usage` object counts only the
+> orchestrating thread. Arm 2's Supervisor session reports 14,756 output tokens against $43.63 —
+> the orchestrator, 5 workers, 5 reviewers, Phase 4.5 reviewer and rubric grader are all absent from
+> the token counts while fully present in `total_cost_usd`. Naively compared, output tokens show
+> arm 2 at **1.1×** arm 1 (90,473 vs 82,290) while cost shows **6.4×**. The 1.1× is an artifact and
+> would have produced a badly wrong verdict. **Cost is the valid comparator for multi-agent arms;
+> the token columns are recorded for the record only.** Not corrected in-flight — the
+> pre-registration forbids changing a metric after the first run.
 
 **Measurement instrument (identical across all arms).** `post_merge_defects` is produced by one
 headless `/loomwright:code-reviewer` pass with the plugin pinned via `--plugin-dir`, prompt held
