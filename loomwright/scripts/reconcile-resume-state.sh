@@ -70,8 +70,25 @@ git -C "$REPO_ROOT" rev-parse --verify "$BRANCH" >/dev/null 2>&1 \
 SUBJECTS=$(git -C "$REPO_ROOT" log --format='%s' "$BRANCH" 2>/dev/null) \
   || die_unknown "git log failed for branch: $BRANCH"
 
+# THREE distinct commit subjects can prove a subtask landed. They need separate patterns — an
+# earlier single-pattern version required a literal `subtask:` token after an optional `merge: `
+# prefix, which the mandated merge format does not contain, so the merge arm was DEAD CODE. It went
+# unnoticed because fixtures always carried a plain `subtask:` commit alongside the merge. On a
+# squash merge or a rebased history, where ONLY the merge subject survives, completion was missed
+# and the resume proceeded — reproducing the very incident this gate exists to stop.
+#
+#   1. `subtask: {id} — {title}`   worker commit      (async-orchestration/SKILL.md:576)
+#   2. `merge: {id} {title}`       mandated merge     (async-orchestration/SKILL.md:120-122, :583)
+#   3. `merge: subtask {id} …`     observed in the wild (sup-2026-07-27-tree-and-find)
+#
+# Pattern 2 is deliberately permissive: on `merge: subtask 8 — x` it yields the id "subtask", which
+# is harmless — a junk id simply never matches a real `## Subtasks` row. Git's own default
+# "Merge branch 'x'" subject is capitalised and so matches nothing here.
 DONE_IDS=$(printf '%s\n' "$SUBJECTS" \
-  | sed -n 's/^\(merge: \)\{0,1\}subtask:[[:space:]]*\([A-Za-z0-9_.-]\{1,\}\).*/\2/p' \
+  | sed -n \
+      -e 's/^subtask:[[:space:]]*\([A-Za-z0-9_.-]\{1,\}\).*/\1/p' \
+      -e 's/^merge:[[:space:]]*subtask:\{0,1\}[[:space:]]*\([A-Za-z0-9_.-]\{1,\}\).*/\1/p' \
+      -e 's/^merge:[[:space:]]*\([A-Za-z0-9_.-]\{1,\}\).*/\1/p' \
   | sort -u)
 
 # --- Parse the ## Subtasks table ----------------------------------------------------------------
@@ -117,6 +134,12 @@ for row in $ROWS; do
     *---*) continue ;;
   esac
 
+  # COLUMN CONTRACT: ID is data column 1, Status is data column 3 — `$2` and `$4` after splitting
+  # on `|` (field 1 is the empty string before the leading pipe). This holds for the canonical
+  # 7-column schema `| ID | Title | Status | Worker | Worktree | Review | Attempts |`
+  # (state-management/SKILL.md §"State File Schema") AND for the abbreviated 3-column form seen in
+  # practice, because Status is the 3rd data column in both. **If that schema ever reorders, update
+  # these indices** — a mis-read Status silently flips the verdict in either direction.
   id=$(printf '%s' "$row" | awk -F'|' '{gsub(/^[ \t]+|[ \t]+$/,"",$2); print $2}')
   status=$(printf '%s' "$row" | awk -F'|' '{gsub(/^[ \t]+|[ \t]+$/,"",$4); print toupper($4)}')
 

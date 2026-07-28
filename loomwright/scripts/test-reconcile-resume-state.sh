@@ -117,6 +117,36 @@ assert_verdict "non-git repo root => UNKNOWN" UNKNOWN 4 "$TMPROOT/nogit.md" "$TM
 _out=$(bash "$SUT" 2>&1); _rc=$?
 if [ "$_rc" = "4" ]; then ok "no argument => UNKNOWN (fail closed)"; else bad "no argument" "exit 4" "exit $_rc"; fi
 
+printf '\n=== MERGE-ONLY REACHABILITY (regression: the merge arm was dead code) ===\n'
+# A squash merge or a rebased history leaves ONLY the merge subject. The original single-pattern
+# extraction required a literal `subtask:` token after `merge: `, which the MANDATED merge format
+# (async-orchestration/SKILL.md:120-122 `merge: {subtask_id} {title}`) does not contain — so these
+# branches returned CLEAN and the resume re-executed merged work. Fixtures hid it by always
+# including a plain `subtask:` commit too; these cases deliberately do not.
+MREPO="$TMPROOT/mergeonly"
+mkdir -p "$MREPO"
+git -C "$MREPO" init -q 2>/dev/null
+git -C "$MREPO" config user.email t@t.t
+git -C "$MREPO" config user.name t
+git -C "$MREPO" commit -q --allow-empty -m "base"
+git -C "$MREPO" checkout -q -b feat
+git -C "$MREPO" commit -q --allow-empty -m "merge: 7 implement thing seven"
+git -C "$MREPO" commit -q --allow-empty -m "merge: subtask 8 — thing eight"
+
+mkstate "$TMPROOT/mandated.md" feat '| 7 | thing seven | PENDING |'
+assert_verdict "mandated 'merge: {id} {title}' alone => STALE" STALE 3 "$TMPROOT/mandated.md" "$MREPO"
+
+mkstate "$TMPROOT/observed.md" feat '| 8 | thing eight | PENDING |'
+assert_verdict "observed 'merge: subtask {id}' alone => STALE" STALE 3 "$TMPROOT/observed.md" "$MREPO"
+
+mkstate "$TMPROOT/mergenone.md" feat '| 99 | never merged | PENDING |'
+assert_verdict "id absent from all merge subjects => CLEAN" CLEAN 0 "$TMPROOT/mergenone.md" "$MREPO"
+
+# git's own default merge subject is capitalised and must never be mistaken for a subtask record.
+git -C "$MREPO" commit -q --allow-empty -m "Merge branch 'main' into feat"
+mkstate "$TMPROOT/gitmerge.md" feat "| main | not a subtask | PENDING |"
+assert_verdict "git's default 'Merge branch' subject is not a completion record" CLEAN 0 "$TMPROOT/gitmerge.md" "$MREPO"
+
 printf '\n=== ANTI-SPOOF: prose must not masquerade as completion ===\n'
 git -C "$REPO" checkout -q -b feature/spoof
 git -C "$REPO" commit -q --allow-empty -m "docs: mention subtask: 9 in passing prose"
