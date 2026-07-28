@@ -213,7 +213,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
    Context-Keeper(operation: set_subtasks, subtasks: [...], parallelism: {...})
    Context-Keeper(operation: update_phase, new_phase: PLAN)
    ```
-4. Fast-path check: if ≤ 1 subtask, skip worktree setup (execute inline)
+4. Path selection: exactly 1 subtask → Single-Agent Path (skip worktree setup, execute inline, no per-subtask reviewer); `--sequential` with more than 1 subtask → Sequential Path (skip worktree setup, execute inline, per-subtask reviewer runs); otherwise → Parallel Path (Execute Manager, worktrees)
 
 **Parallelism rules:**
 ```
@@ -226,7 +226,7 @@ BLOCKED if:
   - Files overlap with a LAUNCHABLE subtask
 ```
 
-**Output:** emit a `### Phase 2: PLAN` block — subtask count + IDs, launchable/blocked parallelism split, first batch, and `Mode:` reading one of `parallel (workers: {N})` | `sequential` | `inline (single subtask)`.
+**Output:** emit a `### Phase 2: PLAN` block — subtask count + IDs, launchable/blocked parallelism split, first batch, and `Mode:` reading one of `parallel (workers: {N})` | `sequential` | `single-agent`.
 
 **Supervisor context after PLAN:** ~400 tokens
 
@@ -248,9 +248,20 @@ When `--sdk-runner` was passed (recorded at Phase 0 INIT — `skills/supervisor-
 
 Zero change to the default path when the flag is absent (byte-identical behavior with flag off). Spike-grade (see `docs/SPIKES/SDK_RUNNER_SPIKE.md`): `hooks.json` validators may not fire for SDK-spawned workers — the runner self-validates result schemas.
 
-#### Fast-Path (single subtask or sequential mode)
+#### Single-Agent Path (exactly 1 subtask)
 
-If ≤ 1 subtask OR `--sequential`:
+The default path below `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold". One worker executes ALL acceptance criteria in a single context; **no per-subtask Code Reviewer is spawned** — the Phase 4.5 holistic Code Reviewer (below) is the single review of the integrated result.
+
+1. Spawn ONE implementation worker (blocking, in project root) — the prompt passes ALL acceptance criteria, not one subtask's row (spawn shape: `skills/async-orchestration/SKILL.md` §"Subagent Spawn Contracts" → Single-Agent Worker)
+   - When `cost_profile=cheap`: include `model: "sonnet"` in the Task call
+2. Record result via Context-Keeper
+3. **Deterministic gate (zero-token, no reviewer spawn):** check the worker's own `outputs_verified`/`outputs_gap` fields — the same check the Execute Manager runs pre-spawn (`agents/execute-manager.md:222`) — plus tests/lint/LSP on the branch. `outputs_gap` non-empty or `status != completed` → retry (bounded) or pause, per existing WORKER_RESULT handling.
+4. Skip all worktree logic and Execute Manager delegation. Proceed directly to Phase 4 FINALIZE.
+
+#### Sequential Path (`--sequential`, more than 1 subtask)
+
+Unchanged from prior behavior: `--sequential` keeps its existing meaning (no worktrees, serial execution) and is selected by the flag, not by subtask count — it is a distinct path from Single-Agent above and still spawns a per-subtask Code Reviewer.
+
 1. For each subtask (in order):
    - Spawn implementation worker (blocking, in project root)
      - When `cost_profile=cheap`: include `model: "sonnet"` in the Task call
@@ -321,7 +332,7 @@ When the Execute Manager surfaces an `EXECUTE_CHECKPOINT` with `adjudication_req
 
 **Hard rule:** the Supervisor never picks an option silently — it always asks the user. Auto-selection (e.g., "C is safest, pick C") is forbidden because each option has different irreversible consequences (job failure, brief mutation, plan mutation).
 
-**Output:** emit a `### Phase 3: EXECUTE` block — `Mode:` reading `delegated (Execute Manager)` or `inline (fast-path)`, subtasks completed `{count}/{total}`, reviews passed, dependency-ordered merge order, and `Tool calls: Supervisor {N}/50, Execute Manager {M}/60`.
+**Output:** emit a `### Phase 3: EXECUTE` block — `Mode:` reading `delegated (Execute Manager)` | `single-agent` | `sequential (inline)`, subtasks completed `{count}/{total}`, reviews passed, dependency-ordered merge order, and `Tool calls: Supervisor {N}/50, Execute Manager {M}/60`.
 
 **Supervisor context during EXECUTE:** ~50 tokens (single Task call + result parsing)
 
@@ -620,8 +631,8 @@ All flags in the "Flags and Options" table above combine with these shapes; the 
 | **Product Owner** | Phase 1 (if vague reqs) | Blocking | Refine requirements |
 | **Orchestrator** | Phase 2 | Blocking | Decompose into subtasks |
 | **Execute Manager** | Phase 3 (multi-subtask) | Blocking | Own poll loop + worker/reviewer lifecycle |
-| **Worker** | Phase 3 (fast-path only) | Blocking | Implement single subtask inline |
-| **Code Reviewer** | Phase 3 (fast-path only) | Blocking | Review single subtask inline |
+| **Worker** | Phase 3 (Single-Agent or Sequential path) | Blocking | Single-Agent: implement ALL criteria inline in one worker; Sequential: implement one subtask inline per worker |
+| **Code Reviewer** | Phase 3 (Sequential path only) | Blocking | Review each subtask inline — NOT spawned on the Single-Agent path (Phase 4.5 is the single review there) |
 
 **Note:** In multi-subtask workflows, Worker and Code Reviewer are spawned by the Execute Manager, not directly by the Supervisor.
 
@@ -635,17 +646,17 @@ After each blocking subagent, extract minimal summary:
 | Product Owner | `"Story: {title}. Criteria: {count} items."` |
 | Orchestrator | `"Created {N} subtasks: {IDs}. Launchable: {IDs}"` |
 | Execute Manager | Parse EXECUTE_RESULT or EXECUTE_CHECKPOINT block |
-| Worker (fast-path) | Parse WORKER_RESULT block from output |
-| Code Reviewer (fast-path, Phase 3) | Parse CODE_REVIEW_RESULT block from output |
+| Worker (Single-Agent / Sequential path) | Parse WORKER_RESULT block from output |
+| Code Reviewer (Sequential path, Phase 3) | Parse CODE_REVIEW_RESULT block from output |
 | Code Reviewer (Phase 4.5 integration review) | Parse CODE_REVIEW_RESULT block; filter issues where category=new AND severity in [BLOCKING, HIGH] for fix-task input |
 | Fix task (Phase 4.5) | Parse FIX_RESULT block from output |
 
 ### Subagent Spawn Contracts
 
-The exact Task tool call shapes for each subagent — Context-Keeper, Orchestrator, Execute Manager, fast-path Worker, fast-path Code Reviewer — live in `skills/async-orchestration/SKILL.md` **Part 2 §"Subagent Spawn Contracts"** (moved verbatim from this file; the skill is Supervisor-preloaded). Non-negotiables carried by those shapes:
+The exact Task tool call shapes for each subagent — Context-Keeper, Orchestrator, Execute Manager, Single-Agent Worker, Sequential-path Worker, Sequential-path Code Reviewer — live in `skills/async-orchestration/SKILL.md` **Part 2 §"Subagent Spawn Contracts"** (moved verbatim from this file; the skill is Supervisor-preloaded). Non-negotiables carried by those shapes:
 
 - Every spawn honors `cost_profile`: include `model: "sonnet"` ONLY when `cost_profile=cheap`; omit the field entirely when `cost_profile=default`.
-- The fast-path Worker prompt passes the brief's `provides:` contract VERBATIM (`Provides (verbatim from the brief's Subtask Contracts): {provides YAML}`) — `provides:` is REQUIRED input for the worker's Step 5.5 outputs verification; omitting it silently no-ops the v12 outputs gate.
+- The Single-Agent and Sequential-path Worker prompts pass the brief's `provides:` contract VERBATIM (`Provides (verbatim from the brief's Subtask Contracts): {provides YAML}`) — `provides:` is REQUIRED input for the worker's Step 5.5 outputs verification; omitting it silently no-ops the v12 outputs gate.
 - House-rules injection into the Worker prompt is ADVISORY / fail-safe / NEVER-gating: computed via `read-rules.sh` (args, never stdin), injected ONLY when its output is non-empty, and a rule's `check` is DATA — never executed (full comment block in the skill).
 
 ---
