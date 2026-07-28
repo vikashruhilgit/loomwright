@@ -31,14 +31,22 @@
  * Spike simplifications vs the real Execute Manager (documented in README.md):
  *   - no fix-worker retry loop on review FAIL (single attempt; FAIL = subtask failed)
  *   - no Context-Keeper batching (state lives in-process)
- *   - dependency materialization is simplified: dependents branch from the
- *     feature branch after producers complete; producer branches are NOT
- *     merged into the dependent worktree (Step 2a of the real protocol)
  *   - no tool-call budget / EXECUTE_CHECKPOINT — failures land in
  *     subtasks_failed of the final block instead
- *   - branch lifecycle: the runner commits worker output (mirroring FINALIZE
- *     step 2 of skills/async-orchestration/SKILL.md) but does NOT merge —
- *     merging the branches in merge_order and deleting them is the caller's job
+ *
+ * FIXED 2026-07-28 (was the blocker that aborted FABLE_PARITY_EVAL arm 3):
+ *   - dependency materialization. Previously dependents branched from the feature
+ *     branch after producers completed, and producer branches were never merged
+ *     during the run — so `requires` bought ordering in TIME but nothing in
+ *     CONTENT, and any dependent importing a producer's symbol could not compile.
+ *     `materializeWave` now merges each completed wave into the feature branch
+ *     BEFORE the next wave's worktrees are created, so `git worktree add …
+ *     featureBranch` inherits everything already landed. Fails CLOSED on conflict
+ *     (merge aborted, tree left clean, run marked failed).
+ *   - branch lifecycle: the runner commits worker output on each per-subtask
+ *     branch (mirroring FINALIZE step 2 of skills/async-orchestration/SKILL.md)
+ *     AND now merges each wave into the feature branch as it goes. The caller
+ *     still owns the FINAL merge of the feature branch and branch deletion.
  */
 
 import * as fs from "fs";
@@ -445,6 +453,72 @@ function commitWorktree(wtPath: string, subtask: Subtask): boolean {
   git(wtPath, "add", "-A");
   git(wtPath, "commit", "-m", `subtask ${subtask.id}: ${subtask.title}`);
   return true;
+}
+
+/**
+ * Materialize a completed wave's output into the feature branch.
+ *
+ * WHY THIS EXISTS — this was residual divergence 3, and it made the runner unusable on any brief
+ * whose subtasks consume each other's files (measured 2026-07-28, FABLE_PARITY_EVAL arm 3).
+ *
+ * The wave scheduler already honours `requires` correctly: subtask 2 does not START until subtask 1
+ * has COMPLETED. But `addWorktree` branches every worktree from `featureBranch`, and worker output
+ * is committed to the per-subtask branch `sdk-spike/subtask-N` — which was never merged back during
+ * the run. So a dependent got ordering in TIME but nothing in CONTENT: it started after its producer
+ * finished and still could not see one line the producer wrote. On a brief where subtask 2 imports a
+ * type subtask 1 creates, that is a guaranteed compile failure, not a subtle difference.
+ *
+ * Merging each wave into `featureBranch` before the next wave's worktrees are created closes the
+ * gap without touching `addWorktree` — the next `git worktree add … featureBranch` now inherits
+ * everything already landed, which is exactly how the prompt-driven Execute Manager behaves via its
+ * sequential merges.
+ *
+ * FAILS CLOSED. A conflicting merge is aborted and thrown, never left half-applied: continuing with
+ * a conflicted index would hand the next wave a broken tree and corrupt every downstream subtask.
+ * The caller marks the run failed. This mirrors FINALIZE's pre-merge safety gate
+ * (skills/async-orchestration/SKILL.md) — the merge is the dangerous step, so it is the guarded one.
+ */
+export function materializeWave(repoRoot: string, featureBranch: string, branches: string[]): void {
+  if (branches.length === 0) return;
+
+  // The merge target must actually be checked out in the main worktree. Supervisor's ACQUIRE leaves
+  // repoRoot on the feature branch; assert rather than assume, because merging into whatever happens
+  // to be checked out would silently corrupt an unrelated branch.
+  const head = git(repoRoot, "branch", "--show-current");
+  if (head !== featureBranch) {
+    throw new Error(
+      `cannot materialize wave: repo root is on "${head}", expected feature branch "${featureBranch}". ` +
+        `Check out ${featureBranch} in the main worktree before running.`
+    );
+  }
+
+  for (const branch of branches) {
+    // Ask git whether this branch actually carries work, rather than trusting a plumbed flag: a
+    // worker that produced no changes leaves nothing to commit, and `git merge` on an
+    // already-ancestor branch is a no-op we skip explicitly so the log stays honest.
+    let ahead = "0";
+    try {
+      ahead = git(repoRoot, "rev-list", "--count", `${featureBranch}..${branch}`);
+    } catch {
+      // Unresolvable branch — nothing to merge, and addWorktree already failed closed if it mattered.
+      continue;
+    }
+    if (ahead === "0") continue;
+
+    try {
+      git(repoRoot, "merge", "--no-ff", "-m", `merge: ${branch}`, branch);
+    } catch (err) {
+      try {
+        git(repoRoot, "merge", "--abort");
+      } catch {
+        // A merge that never started leaves nothing to abort; the throw below is the real signal.
+      }
+      throw new Error(
+        `dependency materialization failed: merging ${branch} into ${featureBranch} conflicted. ` +
+          `The merge was aborted and the tree left clean. ${(err as Error).message}`
+      );
+    }
+  }
 }
 
 function removeWorktree(repoRoot: string, wtPath: string): void {
@@ -911,6 +985,18 @@ async function main(): Promise<number> {
     if (launchable.length === 0) break;
     pending = pending.filter((s) => !launchable.includes(s));
     await runPool(launchable, args.maxWorkers, runSubtask);
+
+    // Materialize this wave into the feature branch BEFORE the next wave's worktrees are created
+    // (addWorktree branches from featureBranch). Without this the next wave sees an empty tree —
+    // `requires` would buy spawn ordering and nothing else. Only branches that actually carry a
+    // commit are merged: a subtask whose worker produced no changes has no branch to merge.
+    if (!args.dryRun) {
+      const waveBranches = launchable
+        .map((s) => completed.get(s.id))
+        .filter((o): o is SubtaskOutcome => o !== undefined && Boolean(o.branch))
+        .map((o) => o.branch);
+      materializeWave(repoRoot, featureBranch, waveBranches);
+    }
   }
 
   // Anything still pending is blocked forever (producer failed or never ran).
@@ -987,9 +1073,16 @@ async function main(): Promise<number> {
   return failed.size > 0 ? 1 : 0;
 }
 
-main()
-  .then((code) => process.exit(code))
-  .catch((err) => {
-    console.error(`FATAL: ${(err as Error).message}`);
-    process.exit(2);
-  });
+// Run the CLI only when executed directly. Without this guard, `require()`-ing this module for a
+// unit test starts the CLI, which exits(2) on the missing --brief — so a test that imports an
+// exported helper is killed by an unrelated argv check while its own assertion is still in flight.
+// (Found 2026-07-28 while adding the materializeWave regression: the merge under test actually
+// succeeded, then the async main() rejection exited the process and the harness read it as failure.)
+if (require.main === module) {
+  main()
+    .then((code) => process.exit(code))
+    .catch((err) => {
+      console.error(`FATAL: ${(err as Error).message}`);
+      process.exit(2);
+    });
+}
