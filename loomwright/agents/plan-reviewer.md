@@ -100,7 +100,7 @@ Check ALL criteria in order. For each, note whether it passes or has issues. Cri
 
 ### 4. Subtask Decomposition
 
-**Check:** Does subtask count honor `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold" (single home — no mirror copy elsewhere)?
+**Check:** Does subtask count honor `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold" (the authority; this criterion is its one sanctioned derived mirror — retune both together)?
 
 **How:**
 - 1 subtask is valid and EXPECTED — the default. Never reject for having fewer than 3.

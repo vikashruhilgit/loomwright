@@ -321,7 +321,7 @@ Path selection is by subtask count, per `skills/supervisor-readiness/SKILL.md` �
 ### Single-Agent Path (exactly 1 subtask, default below threshold)
 - One worker executes ALL acceptance criteria in a single context (no worktree overhead)
 - **No per-subtask Code Reviewer spawned** — Phase 4.5's holistic Code Reviewer is the single review of the integrated result
-- Deterministic gate only (`outputs_verified`/`outputs_gap` plus tests/lint/LSP on the branch)
+- Deterministic gate only (`outputs_verified`/`outputs_gap` plus tests/lint on the branch (LSP diagnostics are the worker's own, run during implementation — the Supervisor has no LSP tool))
 - Automatic, no flag needed — selected by subtask count, not by `--sequential` (see `agents/supervisor.md` §"Single-Agent Path")
 
 ### Sequential Path (`--sequential`, more than 1 subtask)
