@@ -23,8 +23,8 @@ description: Break a goal into minimal actionable tasks with clear acceptance cr
 
 1. **Auto-detects your project** by finding CLAUDE.md in current directory or parents
 2. **Reads project context** (CLAUDE.md, Beads when active else `.supervisor/requirements/`)
-3. **Breaks goal into minimal tasks** (Beads or plan file per Persistence Mode) with clear acceptance criteria
-4. **Creates tasks with built-in review gates** (each task has a review subtask)
+3. **Defaults to one task** per `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold" (Beads or plan file per Persistence Mode) with clear acceptance criteria; splits only for a named reason
+4. **Applies the threshold-conditional Review Gate Policy** (mandatory review subtask above threshold; Supervisor's Phase 4.5 integrated review is the gate below it)
 5. **Identifies dependencies** and execution order
 6. **Provides structured plan** with skill references for implementation
 
@@ -122,7 +122,7 @@ Then persist the task tree **per mode**:
   1. **Choose a stable slug** by kebab-casing the requirement title (or the goal string) — e.g. `jwt-guard`. Re-running for the same slug **overwrites** the prior `{slug}-plan.md` (intended — a re-plan replaces rather than duplicates).
   2. **Write the task tree** as a markdown checklist to `.supervisor/requirements/{slug}-plan.md` (create `.supervisor/requirements/` first if absent, `mkdir -p .supervisor/requirements`), or append a `## Task Plan` section to the handed-off requirements file: same EPIC/TASK/SUBTASK structure, acceptance criteria, ordered dependencies (stated as "blocked by" in prose), and skill references. Use stable slug IDs (e.g. `jwt-guard`, `jwt-guard-review`) instead of `BD-XX`.
 
-**Review gates are mandatory in BOTH modes** — every implementation task still has a review subtask that must PASS before the next begins. In file-fallback mode this is tracked by checklist state in the plan file rather than enforced by Beads `blocked` status. Wherever this prompt says `bd …` / `BD-XX`, apply the resolved mode.
+**Review gates are threshold-conditional in both modes** — see `agents/orchestrator.md` §"Review Gate Policy", cited from `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold". Above the threshold, every implementation task has a review subtask that must PASS before the next begins (in file-fallback mode this is tracked by checklist state in the plan file rather than enforced by Beads `blocked` status); below it (single-agent default), no per-subtask reviewer is created — Supervisor's Phase 4.5 integrated review plus the zero-token `outputs_verified`/tests/lint gate is the gate. Wherever this prompt says `bd …` / `BD-XX`, apply the resolved mode.
 
 > **Shared directory:** `.supervisor/requirements/` is written by Product Owner stories (`{YYYY-MM-DD-HHMMSS}-{slug}.md`), Orchestrator plans (`{slug}-plan.md`), and the autonomous-loop (`auto-*.md`). When scanning for prior context, PO stories and your own `*-plan.md` files are both legitimate; you may skip `auto-*.md` (autonomous-loop state) as noise.
 
@@ -157,14 +157,14 @@ Before proceeding, you must establish project context:
    - Ask clarifying questions if goal is ambiguous
 
 2. **Break into Tasks** (Beads issues or plan-file entries per Persistence Mode)
-   - Break the goal into minimal tasks (3-7 tasks, 30-60 min each)
-   - Each implementation task gets a review subtask (quality gate)
+   - Default to one task per `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold"; split only for a named reason
+   - Review subtask: threshold-conditional (mandatory above threshold; Phase 4.5 integrated review is the gate below it — see Review Gate Policy)
    - Reference relevant skill files for guidance
    - Define clear, testable acceptance criteria for each task
-   - Consider dependencies: Review blocks next implementation
+   - Consider dependencies: when a review subtask exists, it blocks next implementation
 
 3. **Coordinate**
-   - Determine sequence: Review subtasks block next implementation tasks
+   - Determine sequence: when review subtasks exist (above threshold), they block next implementation tasks
    - Identify risks and mitigation
    - Link to relevant skills (don't embed content)
    - Note next actions (which task to claim first)
@@ -183,13 +183,13 @@ Before proceeding, you must establish project context:
 - Do not make assumptions about acceptance criteria—make them explicit
 - Respect existing CLAUDE.md patterns
 - Single tracker: Beads when active, else the `.supervisor/requirements/*-plan.md` checklist (per Persistence Mode) — never scattered TODO.md/memory files
-- Review subtasks block next implementation tasks (quality gates)
+- Review-subtask policy is threshold-conditional (see Review Gate Policy) — a quality gate either way
 
 ### Quality Checklist
 
 Before outputting plan, verify:
 - [ ] Goal is clear and unambiguous
-- [ ] Task breakdown is minimal (3-7 tasks typical)
+- [ ] Task breakdown follows the Decomposition Threshold (default 1 task; split only for a named reason)
 - [ ] Each task is assignable to one agent
 - [ ] Acceptance criteria are testable
 - [ ] Dependencies are identified
@@ -298,6 +298,6 @@ bd claim BD-21  # Start dark mode implementation
 
 - This command finds project context automatically
 - Tracks tasks in Beads when active, else `.supervisor/requirements/*-plan.md` (per Persistence Mode)
-- Outputs an EPIC → TASK → SUBTASK structure — Beads issues when `beads_active`, else a `.supervisor/requirements/*-plan.md` checklist — with built-in review gates
-- Review subtasks block next implementation tasks (quality gates)
+- Outputs an EPIC → TASK → SUBTASK structure — Beads issues when `beads_active`, else a `.supervisor/requirements/*-plan.md` checklist — with threshold-conditional review gates
+- Review-subtask policy is threshold-conditional (see Review Gate Policy) — a quality gate either way
 - Skills linked (not embedded) to keep context small

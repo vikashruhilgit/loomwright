@@ -197,7 +197,7 @@ Optional next: run `/setup` for a status dashboard and guided configuration of o
 | **Launch Pad**        | `/launch-pad goal: "..."`       | Prepare goals for autonomous Supervisor execution with feasibility gate (Phase 2.5: GO/CAUTION/NO-GO) and mandatory Plan Review (Phase 5.5) | Before `/supervisor`, planning  |
 | **Supervisor**        | `/supervisor task: "..."`       | Autonomous workflow → Phase 1.5 PRE-FLIGHT SYNC (remote-overlap gate) → parallel workers → PR creation | Full automation                 |
 | **Product Owner**     | `/product-owner feature: "..."` | Define requirements → create user stories with acceptance criteria. Assumption Check (standard flow, user gate before `bd create` if flags) + Reality Check (brainstorm flow, VIABLE/NEEDS_FOUNDATION/BLOCKED with Feasibility score caps). Use `--brainstorm` for multi-mind ideation. | New feature, vague requirements, exploring directions |
-| **Orchestrator**      | `/orchestrator goal: "..."`     | Plan work → create tasks with review gates                         | Starting implementation         |
+| **Orchestrator**      | `/orchestrator goal: "..."`     | Plan work → default one task (Decomposition Threshold), threshold-conditional review gates | Starting implementation         |
 | **Code Reviewer**     | `/code-reviewer src/`           | Review code → output PASS/FAIL/NEEDS_HUMAN                         | After writing code              |
 | **Commit** (skill)    | `/commit`                       | Stage changes → create conventional commits                        | Ready to commit                 |
 | **Red Team Reviewer** | `/red-team-reviewer`            | Adversarial audit → find production failures                       | Pre-launch, security            |
@@ -308,6 +308,8 @@ PR created, next task or exit
 
 ### Autonomous Workflow (Supervisor v4)
 
+Path is selected by subtask count (`skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold"): the default below threshold is **ONE subtask, single-agent execution** (one worker, no per-subtask reviewer, Phase 4.5 is the review). The diagram below shows the **Parallel Path** — the above-threshold case, reached only when a split is justified by a named reason (`file-conflict` / `context-bound` / `genuine-parallelism`); it is byte-identical to prior behavior.
+
 ```
 /supervisor task: "add user authentication"
     ↓
@@ -319,9 +321,9 @@ PRE-FLIGHT SYNC: Fetch remote → scan recent commits + open PRs → classify
                  CLEAR / OVERLAP / SUPERSEDED (silent on CLEAR; soft-gate or
                  fail-closed on overlap; --skip-preflight-sync escape hatch)
     ↓
-PLAN: Orchestrator → Subtasks → Parallelism analysis
+PLAN: Orchestrator → default one subtask, split only for a named reason → Parallelism analysis
     ↓
-EXECUTE: → Execute Manager (isolated context, 60 tool call budget)
+EXECUTE (Parallel Path — split justified): → Execute Manager (isolated context, 60 tool call budget)
          Worktree A ─→ Worker A ─→ Reviewer A ─→ PASS
          Worktree C ─→ Worker C ─→ Reviewer C ─→ PASS
          (unblocked) → Worktree B → Worker B → PASS
@@ -337,7 +339,7 @@ LOOP: Next task or exit
 ```
 Product Owner → Create user stories (requirements)
     ↓
-Orchestrator → Break into tasks (EPIC → TASK → SUBTASK)
+Orchestrator → Default one task per Decomposition Threshold (EPIC → TASK → SUBTASK; split only for a named reason)
     ↓
 You code
     ↓
@@ -549,10 +551,10 @@ Beads is an optional issue tracker used by Orchestrator and Product Owner. The S
 - **TASK:** Implementation work (30-60 min)
 - **SUBTASK:** Review gate (blocks next task)
 
-**Review Gates:**
+**Review Gates (threshold-conditional — see `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold"):**
 
-- Every implementation task has a review subtask
-- Review subtask blocks next implementation task
+- Above the threshold, every implementation task has a review subtask that blocks the next implementation task
+- Below the threshold (single-agent default), no per-subtask reviewer — Supervisor's Phase 4.5 integrated review is the gate
 - Review decisions: PASS (proceed), FAIL (fix and re-review), NEEDS_HUMAN (creates bug issues)
 
 ---

@@ -58,7 +58,7 @@ The Launch Pad executes a **7-phase readiness workflow** (primary Phases 1–7, 
 │     └─> Grep/glob codebase, file grouping, overlap detection    │
 │                                                                 │
 │  Phase 4: DECOMPOSE (Subtask Structure)                         │
-│     └─> 3-7 subtasks, dependencies, parallelism graph           │
+│     └─> Decomposition Threshold (default 1; split for a reason) │
 │                                                                 │
 │  Phase 5: PACKAGE (Assemble Brief)                              │
 │     └─> Supervisor-Ready Brief with all sections                │
@@ -109,18 +109,18 @@ The Supervisor's context budget gets consumed by Phases 0-2 (planning) before an
 
 | # | Title | Est. Files | Status |
 |---|-------|-----------|--------|
-| 1 | JWT guard + strategy | 3 modify, 2 create | LAUNCHABLE |
-| 2 | Refresh token service | 1 modify, 2 create | LAUNCHABLE |
-| 3 | Auth controller + routes | 2 modify, 1 create | BLOCKED (by #1) |
+| 1 | JWT authentication (guard, strategy, refresh, controller) | 6 modify, 5 create | LAUNCHABLE |
 
 ## Parallelism Analysis
-- Batch 1: Subtask 1, Subtask 2 (parallel)
-- Batch 2: Subtask 3 (after Subtask 1)
-- Recommended workers: 2
+single-agent (no fan-out)
+
+- Recommended workers: 1
 
 ## Handoff
 /supervisor job: .supervisor/jobs/pending/2026-02-08-jwt-auth.md
 ```
+
+> This example shows the below-threshold default (one subtask). See `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold" for when a split is justified, and `agents/launch-pad.md`'s worked example for a `Split reason: genuine-parallelism` case.
 
 ## Interactive Refinement
 
@@ -314,7 +314,7 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 - Validate environment readiness (git, CLAUDE.md, worktrees, gh)
 - Refine requirements using product discovery and MVP scoping skills
 - Analyze codebase for file impact estimation (grep/glob/read)
-- Decompose into 3-7 subtasks with dependency analysis
+- Decompose per `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold" (default ONE subtask; split only for a named reason) with dependency analysis
 - Compute parallelism (LAUNCHABLE vs BLOCKED based on file overlap)
 - Assemble and save Supervisor-Ready Brief
 - Provide interactive refinement (save/refine/edit/discard)
@@ -353,7 +353,7 @@ Run 5 grounded checks (CLAUDE.md + grep/glob/read), output GO/CAUTION/NO-GO:
 1. **Tech Stack Compatibility** — goal matches project's stack?
 2. **Dependency Availability** — required libs/services present or addable?
 3. **Architecture Fit** — goal aligns with CLAUDE.md architecture?
-4. **Scope vs Supervisor** — decomposable into 3-7 subtasks of 30-60 min?
+4. **Scope vs Supervisor Capability** — Does the goal fit the single-agent default, or does it need a split per `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold" (three named reasons: `file-conflict`, `context-bound`, `genuine-parallelism`)?
 5. **Hard Blockers** — migration framework, credentials, missing modules?
 
 **Flow:**
@@ -375,8 +375,8 @@ Run 5 grounded checks (CLAUDE.md + grep/glob/read), output GO/CAUTION/NO-GO:
 
 ### Phase 4: DECOMPOSE (Subtask Structure)
 
-1. Break into 3-7 subtasks, one per file group
-2. For each: title, criteria subset, estimated files, skill references
+1. Default to a single subtask whose acceptance criteria are the checklist for one worker — not a template for generating subtasks. Split a file group off into its own subtask only when one of `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold"'s three named reasons fires; record the triggering reason as `- **Split reason:** <reason>` in `## Configuration`
+2. For each subtask: title, criteria subset, estimated files, skill references
 3. Analyze dependencies between subtasks
 4. Compute parallelism: LAUNCHABLE (no deps + no overlap) vs BLOCKED
 5. Estimate batches and recommended worker count
@@ -416,7 +416,7 @@ Before offering save:
 - [ ] Feasibility check passed (GO, CAUTION acknowledged, or NO-GO user-overridden)
 - [ ] File impact map includes only verified paths
 - [ ] Confidence levels assigned to all estimates
-- [ ] Subtasks are 3-7 items, 30-60 min each
+- [ ] Subtask count follows `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold" (default 1; split only for a named reason, recorded as `Split reason:`)
 - [ ] Parallelism analysis is conservative
 - [ ] Brief follows complete template (9 required sections, plus optional Feasibility)
 - [ ] Risk assessment included (with CAUTION findings from Phase 2.5 if any)

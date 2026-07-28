@@ -314,23 +314,26 @@ The Supervisor uses externalized state and tool call budgets:
 - 40-46 (92%): RED — force checkpoint, suggest new session
 - 46+: RED — checkpoint + exit with resume command
 
-## Parallel vs Sequential
+## Execution Paths
 
-### Parallel Mode (default)
+Path selection is by subtask count, per `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold": exactly 1 subtask → Single-Agent Path; `--sequential` with more than 1 subtask → Sequential Path; otherwise → Parallel Path.
+
+### Single-Agent Path (exactly 1 subtask, default below threshold)
+- One worker executes ALL acceptance criteria in a single context (no worktree overhead)
+- **No per-subtask Code Reviewer spawned** — Phase 4.5's holistic Code Reviewer is the single review of the integrated result
+- Deterministic gate only (`outputs_verified`/`outputs_gap` plus tests/lint/LSP on the branch)
+- Automatic, no flag needed — selected by subtask count, not by `--sequential` (see `agents/supervisor.md` §"Single-Agent Path")
+
+### Sequential Path (`--sequential`, more than 1 subtask)
+- All subtasks execute one at a time, no git worktrees created
+- Still spawns a per-subtask Code Reviewer — unchanged from prior behavior; keeps its existing meaning and is a distinct path from Single-Agent above (per D-e in `docs/SPIKES/FINAL_STATE_GOAL.md`)
+- Useful for debugging or constrained environments
+
+### Parallel Path (multi-subtask, default above threshold)
 - Independent subtasks run concurrently in git worktrees
 - Max `--max-workers` concurrent workers (default: 2)
 - Subtasks with dependencies wait for predecessors
 - Sequential merge into feature branch after completion
-
-### Sequential Mode (`--sequential`)
-- All subtasks execute one at a time
-- No git worktrees created
-- Simpler but slower
-- Useful for debugging or constrained environments
-
-### Fast-Path (automatic)
-- If only 1 subtask: executes inline (no worktree overhead)
-- Automatic, no flag needed
 
 ## Permissions
 
