@@ -381,12 +381,11 @@ single-agent (no fan-out)
 
 **Single home:** this section is the sole **authority** for the threshold — tune the numbers here first. Orchestrator does not preload this skill and cites this section by path (`skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold") rather than restating the numbers.
 
-**Derived mirrors (must be updated in the SAME change when you retune a bound — nothing in CI couples them):**
+**Derived mirror (must be updated in the SAME change when you retune a bound — nothing in CI couples them):**
 
 | Mirror | Why it restates the numbers |
 |---|---|
 | `agents/plan-reviewer.md` Criterion 4 ("Cross-check the reason's PREDICATE") | Plan Reviewer does not preload this skill, and its predicate check is worthless without the concrete bounds |
-| `README.md` release banner | user-facing summary of the rule |
 
 These are the ONLY sanctioned **live** restatements — every other surface cites this section by path. **Release banners are exempt:** the `v15.15.0` notes in `CLAUDE.md`, `CHANGELOG.md`, and the `README.md` banner are historical snapshots of what shipped in that release and are deliberately NOT retuned (same convention as CHANGELOG entries and frozen example values). Verify after a retune with `grep -rn "800 changed\|> 12 files" loomwright/ README.md CLAUDE.md` and update only the live mirror in the table above.
 

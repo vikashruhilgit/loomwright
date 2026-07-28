@@ -9,7 +9,7 @@
 # dir so it runs from any CWD under the CI glob.
 #
 # The FOUR advisory seams (worker DO-side + Phase 4.5 self-heal review + SessionStart nudge):
-#   - agents/supervisor.md              (Phase 4.5 self-heal review lens + worker fast-path spawn)
+#   - agents/supervisor.md              (Phase 4.5 self-heal review lens + worker Single-Agent-path spawn)
 #   - agents/execute-manager.md         (parallel-path worker spawn injects house rules)
 #   - skills/self-heal-advisory/SKILL.md (the self-heal advisory contract)
 #   - scripts/session-resume.sh         (the SessionStart nudge)
