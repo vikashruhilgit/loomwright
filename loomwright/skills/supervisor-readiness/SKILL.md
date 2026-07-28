@@ -379,7 +379,16 @@ single-agent (no fan-out)
 - **Recommended workers:** 1
 ```
 
-**Single home:** this section is the sole authority for the threshold — no mirror copy exists elsewhere. Orchestrator does not preload this skill and cites this section by path (`skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold") rather than restating the numbers.
+**Single home:** this section is the sole **authority** for the threshold — tune the numbers here first. Orchestrator does not preload this skill and cites this section by path (`skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold") rather than restating the numbers.
+
+**Derived mirrors (must be updated in the SAME change when you retune a bound — nothing in CI couples them):**
+
+| Mirror | Why it restates the numbers |
+|---|---|
+| `agents/plan-reviewer.md` Criterion 4 ("Cross-check the reason's PREDICATE") | Plan Reviewer does not preload this skill, and its predicate check is worthless without the concrete bounds |
+| `README.md` release banner | user-facing summary of the rule |
+
+These are the ONLY sanctioned restatements. Every other surface cites this section by path. Verify after a retune with `grep -rn "800 changed\|> 12 files" loomwright/ README.md`.
 
 ## Common Failure Modes
 

@@ -447,7 +447,9 @@ Subtask 2 (independent)
 
 (Edges derived from `requires.from` entries: each `from: "X"` becomes an edge `consumer → X`.)
 
-### Parallelism Analysis
+#> **Reading this example under the Decomposition Threshold:** only subtasks 1 and 2 justify the split (5 and 3 files, zero overlap → `genuine-parallelism`). Subtasks 3 and 4 are dependency-ordered extensions riding on that already-justified split, not independent grounds to fan out — a smaller goal with no qualifying reason stays a SINGLE subtask.
+
+## Parallelism Analysis
 
 - **Batch 1:** Subtask 1, Subtask 2 (parallel — both have empty `requires`)
 - **Batch 2:** Subtask 3 (after Subtask 1 — has `requires` entries pointing at Subtask 1)
