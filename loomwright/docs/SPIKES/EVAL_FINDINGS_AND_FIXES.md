@@ -281,7 +281,9 @@ procedures Part 2 calls, which is the split undone. 4d is dropped from the Fix 4
 
 ### 4e. Six hooks spend a model call to do schema validation
 
-**Status: LANDED in v15.17.0 (2026-07-29).** Five of the six mechanical prompt validators — `worker`,
+**Status: LANDED alongside 4a/4b in the Fix 4 cheap batch (2026-07-29); ships in the next release.**
+(No version number is asserted here: at the time of writing `plugin.json` still reads 15.16.0 and the
+bump is a later subtask of the same batch.) Five of the six mechanical prompt validators — `worker`,
 `execute-manager`, `supervisor-runner`, `qa-executor`, `plan-reviewer` — were converted to
 `type: command` scripts (a shared `result_block_parser.py` plus five per-schema validators, all
 exit-0-by-contract). The **`code-reviewer` prompt hook was deliberately retained** per the caveat at
@@ -342,9 +344,11 @@ is not required.**
 **Concrete double-pay on the agent path:** `async-orchestration` appears in the frontmatter
 `skills:` list *and* is `Read` at Phase 4 entry — **9,078 proxy tokens paid twice** in one context.
 **Caveat (verified after first writing this):** the double-load is *documented as intentional* —
-`agents/supervisor.md:336` calls the Phase-4 Read "a refresh guarantee for compressed contexts, not
-the first load." So this is a stated trade-off against context compaction, not an oversight; the
-fix must argue the trade-off (routing + re-Read-on-compaction beats always-preload), not report a bug.
+`agents/supervisor.md` Phase 4 §"Protocol authority (read at phase entry)" calls the Phase-4 Read "a
+refresh guarantee for compressed contexts, not the first load." (Cited by section name per §4d's
+convention note; the original `:336` pin had already drifted — that sentence now sits at `:361` and
+line 336 is an unrelated "Re-queue producer" bullet.) So this is a stated trade-off against context
+compaction, not an oversight; the fix must argue the trade-off (routing + re-Read-on-compaction beats always-preload), not report a bug.
 
 **Fix:** replace the frontmatter `skills:` block on `supervisor-runner` with the phase-entry `Read`
 calls the inline path already uses. Preloading guarantees payment; a routed read makes it
@@ -509,11 +513,11 @@ is answerable from data already being collected — don't argue it.
 |---|---|---|
 | 1 | **Fix 1** — decomposition + single-agent path | The 6.4×. Needs no new experiment to justify; measurable against arm-1/arm-2 data already in hand |
 | 2 | **Fix 3** — one writer, derived state | Deletes ~200 prompt lines *and* closes a data-loss hole. Independent of Fix 1 |
-| 3 | **Fix 4a/4b/4d/4e** | Cheap, verified, low risk. 4d unblocks 4f; 4e removes model calls rather than adding instructions |
+| 3 | **Fix 4a/4b/4e** | Cheap, verified, low risk. 4e removes model calls rather than adding instructions. **Corrected 2026-07-29:** this row read *"Fix 4a/4b/4d/4e … 4d unblocks 4f"*. **4d was evaluated and REJECTED** on measurement and never unblocked anything — see §4d |
 | 4 | **Fix 7** — review counter-pressure | Fix 1's sibling and partly subsumed by it (pass 1 dies with Fix 1). Do the pass-3 reduction after, once the drain's CI-healing role is confirmed live |
 | 5 | **Fix 5** — one arm-2 run on corpus entry 3 | Decides whether the eval can continue at all, for ~$60 |
 | 6 | **Fix 2** — finish + re-measure the SDK runner | Real work with uncertain payoff; do it after Fix 1, since Fix 1 may reduce how much Phase 3 orchestration is left to optimise |
-| 7 | **Fix 4f** — route instead of preload | Strictly after 4d. Fixes the `async-orchestration` double-pay in the same change |
+| 7 | **Fix 4f** — route instead of preload | Fixes the `async-orchestration` double-pay in the same change. **Corrected 2026-07-29:** this row read *"Strictly after 4d."* — a void precondition (`self-heal-advisory` is not a 4f routing target); step 7 has no precondition, see §4f |
 | 8 | **Fix 4g** — brief staleness signal | Two-part (Launch Pad stamp, then preflight signal); no value until the stamp exists |
 | 9 | **Fix 4c** — unify tools lists | Plugin-wide frontmatter change; own PR |
 
