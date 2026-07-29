@@ -70,7 +70,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
 
 - **Always branch first:** NEVER proceed to PLAN phase without a confirmed feature branch
 - **Context budget:** Supervisor holds < 400 tokens; everything else in state file
-- **State writes (one canonical format, per-path writer):** Context-Keeper writes the state file on the **parallel path**; on the **inline main-thread path** (no Context-Keeper spawned) the Supervisor best-effort-writes the SAME canonical lowercase `## Session` block / status flip directly (Phase 1 ACQUIRE + the Phase 4.5 completion tail). Never a second on-disk format; the bold ENVIRONMENT/Outcome blocks are display output, not the state file.
+- **Progress state is derived, not written:** the canonical lowercase `## Session` block (`session_id`/`branch`/`status`/`phase`) in `.supervisor/state.md` is not written by the Supervisor or Context-Keeper — it is derived by the hook-triggered `scripts/emit-progress-event.sh` and projected by `scripts/build-state.sh` (see Phase 1 ACQUIRE step 5, `docs/TELEMETRY.md`, and CLAUDE.md §Failure-Mode Invariants). The bold ENVIRONMENT/Outcome blocks are display output, not the state file.
 - **Clean worktrees:** All worktrees removed in FINALIZE (no orphans)
 - **Sequential merge:** Worktree branches merge one at a time into feature branch
 - **Exit gracefully:** At tool call budget limit, checkpoint and exit with resume command
@@ -161,13 +161,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
    git checkout -b feature/{task_id}-{short-desc}
    ```
    **HARD RULE:** The Supervisor MUST NOT proceed to Phase 2 without a confirmed feature branch. **The branch's parent commit MUST be the tip of `$BASE_BRANCH`** — Phase 4 self-verify (step 6.5 — procedure in `skills/async-orchestration/SKILL.md` Part 2) will compare the PR's `baseRefName` against `$BASE_BRANCH` and fall through to Phase 4.5 cleanup on mismatch. If `$BASE_BRANCH` is not honored here, the stacked-iteration feature is silently broken: the PR opens with the right `--base` name but the branch ancestry comes from `main`, producing a nonsensical diff at review time even though Phase 4.5's Code Reviewer + Rubric Grader faithfully honor the DIFF-SCOPE OVERRIDE.
-5. Update state via Context-Keeper:
-   ```
-   Context-Keeper(operation: set_task, task: {title, criteria})
-   Context-Keeper(operation: update_phase, new_phase: ACQUIRE)
-   ```
-   - **Canonical on-disk state MUST exist after ACQUIRE — and the Supervisor itself writes it directly, always.** Execution mode (inline single-agent vs. delegated parallel) is not decided until Phase 3, so ACQUIRE cannot branch on it. Therefore the Supervisor performs a **direct best-effort write itself, unconditionally and regardless of execution mode**, ensuring the canonical lowercase `## Session` block (per `skills/state-management/SKILL.md` §"State File Schema") exists in `.supervisor/state.md` — at minimum `- status: running` and `- branch: <feature-branch>`, plus the other Session fields (`session_id`, `task_id`, `phase: ACQUIRE`). The `Context-Keeper(set_task / update_phase)` calls shown above emit the **identical canonical lowercase format**, so when Context-Keeper is later spawned (the parallel path) its write is a **harmless idempotent overlap** — NOT a conflict, and NOT a reason to skip the unconditional direct write. (Do the direct write in addition to, never "in place of," those calls.) Writing directly here strengthens the guarantee: the canonical state lands even if a later Context-Keeper spawn never happens or fails. The direct write is a **targeted in-place edit of the `## Session` block only** that preserves any other sections already in the file (`## Decisions Log`, `## Phase Flags` (consumed by autonomous-loop for stacked-branch handoff), `## Checkpoint`), performed as a single atomic update where feasible (e.g. temp-file + rename) to match Context-Keeper's documented atomic-write guarantee. The durable canonical state must land on disk because the `hook-dispatch-on-pr-create.sh` session-scope gate greps `^- status:` / `^- branch:`, and `/supervisor --continue` resume reads the lowercase `status: running` — a stale or bold-only state file silently breaks both.
-   - **Best-effort / non-fatal (fail-safe invariant):** this write MUST NEVER block ACQUIRE or fail the run. A write failure is a logged no-op — proceed to Phase 2 regardless. Do NOT write the human-readable **bold** ENVIRONMENT display block here; the on-disk state file is the canonical lowercase form only.
+5. Progress state (the canonical lowercase `## Session` block — `session_id`/`branch`/`status`/`phase` — in `.supervisor/state.md`) is not written here. It is derived by the hook-triggered `scripts/emit-progress-event.sh` (fired at the `loomwright:worker` `SubagentStop` hook) and projected by `scripts/build-state.sh`. See `docs/TELEMETRY.md` and CLAUDE.md §Failure-Mode Invariants.
 
 **Output:** the `### Phase 1: ACQUIRE` block shown in §"Output Format (Complete Example)" — Task (with priority when known), Title, Criteria count, `Branch: feature/{task_id}-{short-desc} ← CREATED`, and `Requirements:` reading `Clear` or `Refined by Product Owner`.
 
@@ -208,11 +202,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
    - Check file overlap between independent subtasks
    - Mark each subtask as LAUNCHABLE or BLOCKED
    - If `--sequential` flag: mark all as sequential (no parallelism)
-3. Update state via Context-Keeper:
-   ```
-   Context-Keeper(operation: set_subtasks, subtasks: [...], parallelism: {...})
-   Context-Keeper(operation: update_phase, new_phase: PLAN)
-   ```
+3. Progress state is not written here — see the pointer in Phase 1 ACQUIRE step 5.
 4. Path selection: exactly 1 subtask → Single-Agent Path (skip worktree setup, execute inline, no per-subtask reviewer); `--sequential` with more than 1 subtask → Sequential Path (skip worktree setup, execute inline, per-subtask reviewer runs); otherwise → Parallel Path (Execute Manager, worktrees)
 
 **Parallelism rules:**
@@ -330,7 +320,7 @@ When the Execute Manager surfaces an `EXECUTE_CHECKPOINT` with `adjudication_req
 4. **Apply the chosen option**, then resume EXECUTE:
    - **A:** spawn a fresh Execute Manager invocation with the producer re-queued (acceptance criteria amended to call out the missing outputs).
    - **B:** insert the remediation subtask into the plan (update parallelism graph: consumer now `requires` the remediation), then resume Execute Manager with the new subtask launchable and the consumer blocked.
-   - **C:** call `Context-Keeper(operation: checkpoint, ...)`, mark the job `failed` with `reason: inter_subtask_gap`, move the brief to `.supervisor/jobs/failed/`, exit cleanly.
+   - **C:** mark the job `failed` with `reason: inter_subtask_gap`, move the brief to `.supervisor/jobs/failed/`, exit cleanly.
    - **D:** edit the in-progress brief in `.supervisor/jobs/in-progress/` to drop the failing `requires` entry from the consumer, record a `record_decision` entry noting the brief edit, then resume Execute Manager with the amended consumer.
 
 **Hard rule:** the Supervisor never picks an option silently — it always asks the user. Auto-selection (e.g., "C is safest, pick C") is forbidden because each option has different irreversible consequences (job failure, brief mutation, plan mutation).

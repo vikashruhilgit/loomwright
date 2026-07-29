@@ -100,18 +100,13 @@ LOOP:
 
 **Key difference from v3:** Phase 3 poll loop is delegated to Execute Manager, keeping Supervisor context minimal. Tool call counting replaces unenforceable percentage-based thresholds.
 
-## Checkpoint Format (v4)
+## State File Locations
 
-Save checkpoint via Context-Keeper after each phase:
-
-```
-Context-Keeper(operation: checkpoint, project_dir: {path}, task_id: {id})
-```
-
-**State file location:**
 - Active: `{scratchpad}/supervisor-state.md`
 - Persistent: `{project}/.supervisor/state.md`
 - History: `{project}/.supervisor/history/{date}-{task}.md`
+
+Progress state (`## Session`) is derived by the hook-triggered `scripts/emit-progress-event.sh` + `scripts/build-state.sh` projector — not written via a Context-Keeper checkpoint call. See `docs/TELEMETRY.md`.
 
 ## Context Monitoring (Tool Call Counter)
 

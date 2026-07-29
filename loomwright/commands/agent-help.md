@@ -239,7 +239,7 @@ project-BD-15c/             ← worktree for Worker C
 
 **State Management:**
 - State externalized to `.supervisor/` directory (auto-created, gitignored)
-- Context-Keeper manages all state mutations
+- Context-Keeper manages `## Decisions Log` / `## Worker Results` / `## Error Log` / `## Phase Flags`; the `## Session` block (phase/status) is derived from the session's event log by `scripts/build-state.sh`
 - Supervisor budget: 50 tool calls (including Phase 4.5); Execute Manager budget: 60 tool calls
 - Cross-session resume from `.supervisor/state.md`
 
