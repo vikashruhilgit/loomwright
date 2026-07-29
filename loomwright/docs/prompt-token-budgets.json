@@ -10,14 +10,14 @@
       "note": "authoring baseline v15.10.0 (measured 22118 + ~10%); 5 preloaded skills"
     },
     "context-keeper": {
-      "budget": 3052,
-      "measured": 2774,
-      "note": "authoring baseline v15.10.0; 0 preloaded skills"
+      "budget": 2837,
+      "measured": 2780,
+      "note": "authoring baseline v15.10.0; 0 preloaded skills. Re-measured for the one-writer-derived-state change (v15.16.0 in progress): deleting set_task/set_subtasks/update_phase/checkpoint (Subtask 2) moved measured 2995 -> 2780 (delta -215; pre-deletion figure at git 36c39de). That pre-deletion 2995 already reflected unrelated growth since the frozen v15.10.0 baseline (2774) — the post-deletion 2780 happens to land close to that old baseline by coincidence, not by design. Budget tightened by the same -215 delta, 3052 -> 2837, preserving the existing ~1.9% margin rather than resetting to a fresh measured+10%."
     },
     "execute-manager": {
       "budget": 28550,
-      "measured": 23582,
-      "note": "authoring baseline v15.10.0; 3 preloaded skills. Raised 25941 -> 28550 (v15.15.0): the Single-Agent Path carve-out grew the preloaded async-orchestration/SKILL.md, leaving only 22 proxy tokens of headroom; restored to measured + ~10% per the initial-budget convention."
+      "measured": 26357,
+      "note": "authoring baseline v15.10.0; 3 preloaded skills. Raised 25941 -> 28550 (v15.15.0): the Single-Agent Path carve-out grew the preloaded async-orchestration/SKILL.md, leaving only 22 proxy tokens of headroom; restored to measured + ~10% per the initial-budget convention. Re-measured for the one-writer-derived-state change (v15.16.0 in progress): deleting queue_ck_update/flush_ck_batch/record_batch (Subtask 2) removed prose, but the SAME commit bundled a bug fix (record_review now recorded on the FAIL==3 and NEEDS_HUMAN terminal branches, previously unrecorded) that added more than the deletion removed — measured moved 25934 -> 26357 (delta +423, an INCREASE; pre/post at git 36c39de/dd41ab5). Budget left UNCHANGED at 28550 (2193 headroom, no breach); deliberately NOT lowered, contrary to the source brief's Subtask 3 framing — the measured data does not support a decrease here."
     },
     "launch-pad": {
       "budget": 34478,
@@ -65,9 +65,9 @@
       "note": "authoring baseline v15.10.0; 0 preloaded skills; raised 2086->2330 for the shared-agent-prefix block (docs/shared-agent-prefix.md): measured 2118 + ~10%"
     },
     "supervisor": {
-      "budget": 51221,
-      "measured": 46564,
-      "note": "authoring baseline v15.10.0; 7 preloaded skills (name: loomwright:supervisor-runner)"
+      "budget": 50802,
+      "measured": 50040,
+      "note": "authoring baseline v15.10.0; 7 preloaded skills (name: loomwright:supervisor-runner). Re-measured for the one-writer-derived-state change (v15.16.0 in progress): deleting the ACQUIRE/PLAN inline `## Session` writes and the progress-event half of Session Logging (Subtask 2) moved measured 50459 -> 50040 (delta -419; pre-deletion figure at git 36c39de). The frozen v15.10.0 baseline (46564) predates several releases' worth of unrelated growth, so pre-deletion usage was already close to budget (762 headroom, 1.5%). Budget tightened by the same -419 delta, 51221 -> 50802, preserving that existing margin rather than resetting to a fresh measured+10% (~55044), which would raise the budget and paper over the unrelated growth — out of this subtask's scope."
     },
     "worker": {
       "budget": 5045,

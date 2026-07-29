@@ -217,6 +217,208 @@ see the payload; hook entry count stays 22):
 Self-test: `scripts/test-token-ledger.sh` (fixtures under
 `scripts/token-ledger-fixtures/`).
 
+### Progress state (`subtask_complete` event — one-writer-derived-state, v15.16.0)
+
+**Probe result / why this exists:** progress state (`state.md`'s `## Session`
+block — `session_id`/`branch`/`status`/`phase`) used to be written by
+prompt-instructed Context-Keeper operations (`set_task` / `set_subtasks` /
+`update_phase` / `checkpoint`) that the model had to remember to call while
+doing the real work. This repo's own logs measured the miss rate: **785**
+hook-written `token_ledger` events vs **6** agent-written `phase_transition`
+events across 11+ sessions (a live re-count during this change; the
+2026-07-28 requirement and CLAUDE.md cite an earlier **560**-event count —
+785 supersedes it, cite 785 going forward). A second live re-count taken at
+authoring time of this subtask (Subtask 3, one grep-hop later) found
+**836** `token_ledger` events across **30** log files and **still only 6**
+`phase_transition` events — the growth is this job's own Subtask 1/2
+worker and reviewer spawns adding more `token_ledger` lines, while the
+`phase_transition` count stayed flat at 6 even though those same
+Subtask-1/2 workers ran under the **pre-deletion** prompts (the deletion
+only lands in the files ST-2 itself edits) and so still had the mechanism
+available to invoke — reinforcing, not just repeating, the miss-rate
+finding. Numbers drift between any two counts taken hours apart in an
+active repo; re-run these two commands from the repo root for a number
+current to your own moment, rather than trusting either 785 or 836 as a
+fixed constant — **note the two events are written with different JSON
+keys** (`token_ledger` uses `"event":`, `phase_transition` uses `"type":`;
+a single grep pattern does not catch both):
+
+```
+grep -o '"event":"token_ledger"' .supervisor/logs/*.jsonl | wc -l
+grep -o '"type":"phase_transition"' .supervisor/logs/*.jsonl | wc -l
+```
+
+Re-run at authoring time of this fix (2026-07-29): **843** `token_ledger`
+events (across 30 log files) vs **6** `phase_transition` events (across 4
+log files) — consistent with the miss-rate finding above; this is a
+point-in-time snapshot, not a new constant to cite in place of 785/836. On
+2026-07-27 all 5 subtasks of
+a job were merged while `state.md` still read `phase: ACQUIRE` / all
+`PENDING` — `--continue` would have silently re-executed the whole job. The
+fix follows the exact `token_ledger` shape above: replace prompt-instructed
+bookkeeping with a single hook-triggered writer, and derive `state.md` from
+the log instead of trusting an agent to keep it current.
+
+**What fires it.** A `type: command` entry under the **existing**
+`loomwright:worker` `SubagentStop` matcher in `hooks/hooks.json` (stdin
+fan-out, same shape as the `token_ledger` chain):
+
+```json
+{
+  "type": "command",
+  "command": "payload=$(cat); printf '%s' \"$payload\" | bash \"${CLAUDE_PLUGIN_ROOT}/scripts/emit-progress-event.sh\" || true"
+}
+```
+
+Unlike `token_ledger` (chained onto `code-reviewer` / `qa-executor` /
+`supervisor-runner`), this event fires **only** on `loomwright:worker`
+completion — the Single-Agent Path's one worker and every subtask worker on
+the Parallel Path, but not the reviewer, Execute Manager, or Supervisor
+itself. `emit-progress-event.sh` reads the same verified `SubagentStop`
+payload shape documented above (`last_assistant_message` /
+`agent_transcript_path`, no `result_block`) — proven by a committed fixture
+at `loomwright/scripts/progress-event-fixtures/`, not by an invented key.
+
+**What it writes.** One additive JSONL line per worker completion, appended
+to `.supervisor/logs/{session_id}.jsonl` (the SAME log file `token_ledger`
+and `session_end` already write to — one append-only log per session, not a
+new file):
+
+```json
+{"event":"subtask_complete","type":"subtask_complete","session_id":"supervisor-2026-07-28-one-writer","cc_session_id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","agent_type":"loomwright:worker","agent_id":"…","branch":"feature/one-writer-derived-state","ts":"2026-07-29T05:23:00Z"}
+```
+
+| Field | When | Meaning |
+|-------|------|---------|
+| `session_id` | always (when emitted) | Same two-source join key as `token_ledger`: the plugin session id from `.supervisor/state.md`'s `- session_id:` when `- status:` is `running` (`checkpoint` also accepted, backward-compat only — it is not in the closed status enum and the projector never emits it), else the Claude Code UUID. Log filename key. |
+| `cc_session_id` | when SubagentStop carries `session_id` | Claude Code UUID, retained even when `session_id` above resolved to the plugin id |
+| `agent_type`, `agent_id` | when present in the payload | Copied as-is |
+| `branch` | always when resolvable | The **session** feature branch (see anchoring below) — never a subtask branch, never empty on a successful write |
+| `ts` | when `date -u` succeeds | UTC ISO-8601; omitted (not `"unknown"`) on failure |
+
+**Always-exit-0 fail-safe contract.** `emit-progress-event.sh` is modelled
+line-for-line in discipline on `emit-token-ledger.sh`: `set -u` with **no**
+`set -e`, `trap 'exit 0' EXIT`, and every failure mode absorbs to a silent
+no-op — empty stdin, missing `python3`/`jq`, an unresolvable main worktree,
+an unwritable log dir, malformed JSON, or a not-a-git-repo cwd all exit 0
+with zero side effects. This is what makes the `hooks.json` entry's
+trailing `\|\| true` legal per CLAUDE.md §Failure-Mode Invariants — it is
+legal **only** because the emitter is fail-SAFE by construction, never
+because the hook wrapper masks a real failure.
+
+**Main-worktree anchoring (and why it exists).** Never bare `$PWD`, bare
+`git branch --show-current`, or `dirname` of the git common dir — a worker
+on the Parallel Path runs inside a **linked git worktree** on a **subtask**
+branch (or detached), with no `.supervisor/` directory of its own. A bare
+derivation would silently write to the wrong (or a nonexistent) log path,
+or project a wrong/empty `- branch:`, which fails the equality guard at
+`hook-dispatch-on-pr-create.sh:198` and kills the until-mergeable review
+drain with no error. Both `emit-progress-event.sh` and `build-state.sh`
+instead resolve the **main worktree by name** (`git worktree list
+--porcelain`'s first entry) plus a `--show-toplevel` cross-check that
+aborts (exit 0) on mismatch — verified empirically 2026-07-28 on git 2.50.1
+from inside a real linked worktree, where `git branch --show-current`
+returned empty and no `.supervisor/` existed. `emit-token-ledger.sh` was
+updated to the same anchoring (keeping its `$PWD` fallback only for
+byte-identical compatibility with its proven 785-event history); the new
+emitter has no such legacy fallback and simply exits 0 when anchoring
+fails.
+
+**How `build-state.sh` projects `## Session`.** `emit-progress-event.sh`
+invokes `scripts/build-state.sh <session_id> <main_root>` after every
+append. The projector reads the append-only log and derives `## Session`
+from evidence only — it never guesses:
+
+| Field | Derived from | Absent-evidence behavior |
+|---|---|---|
+| `session_id` | the id the emitter resolved | file not written |
+| `branch` | **live** `git -C main_root branch --show-current` at projection time (a property of the checkout, not stored per-event) | field omitted |
+| `status` | ≥1 `subtask_complete` and no `session_end` ⇒ `running`; `session_end` present ⇒ its `status` mapped into `completed \| completed_with_escalation \| failed` (unrecognized/missing status on a present `session_end` ⇒ `completed`, the closest safe closed-enum reading — not a zero-evidence guess) | `status` is **never** omitted once the file exists — an absent `- status:` trips the presence guard at `hook-dispatch-on-pr-create.sh:198` and fails closed |
+| `phase` | `subtask_complete` present ⇒ `EXECUTE`; `session_end` present ⇒ `LOOP` | file not written |
+
+Both fields always land inside the closed enums in
+`skills/state-management/SKILL.md` §"State File Schema". The write is a
+**targeted in-place edit of `## Session` only** (temp-file + rename),
+preserving `## Decisions Log`, `## Phase Flags`, `## Checkpoint`, and every
+other section byte-for-byte. An absent/empty log means **no `state.md` at
+all** — start-fresh, strictly better than the pre-change failure mode (a
+stale lie left on disk). Self-test: `scripts/test-progress-state.sh`
+(fixture-driven; 90 assertions covering idempotency, every fail-safe path,
+the worktree-anchoring hazard from inside a real `git worktree add`, the
+Parallel-Path case, projector round-trip byte-identity, section
+preservation, and the AC-5 hook-dispatch positive/negative cases).
+
+**Honest limits of this change (not papered over):**
+
+**1. The operator re-measurement procedure (AC-8 iii).** A live
+post-change adherence count is **not producible inside this PR**: the
+installed plugin at `~/.claude/plugins/cache/atelier/loomwright/<version>`
+is a **copy**, not a symlink (verified — distinct inodes for
+`hooks/hooks.json` before vs. after this change), so the edited hook does
+not fire until the plugin is reinstalled from this checkout. To measure the
+real before/after adherence after merging, an operator runs:
+
+1. Reinstall the plugin from this checkout so the edited `hooks.json` takes
+   effect: `/plugin uninstall loomwright` then `/plugin install
+   loomwright@atelier` (or the equivalent local-marketplace reinstall for a
+   dev checkout).
+2. Confirm the new hook is live: `grep -n "emit-progress-event"
+   ~/.claude/plugins/cache/atelier/loomwright/*/hooks/hooks.json`
+   should show the `type: command` entry from this change.
+3. Run at least one `/supervisor` job with ≥1 subtask to completion (the
+   Single-Agent Path's single worker is sufficient — it still fires
+   `SubagentStop` once).
+4. Count `subtask_complete` events written since reinstall: `grep -l
+   '"event":"subtask_complete"' .supervisor/logs/*.jsonl | wc -l` (per-file
+   presence) or `grep -c '"event":"subtask_complete"'
+   .supervisor/logs/*.jsonl` (per-file event count) across the sessions run
+   after step 1.
+5. Compare against the **785**-vs-**6** pre-change baseline (`token_ledger`
+   vs `phase_transition`, this repo's logs as of 2026-07-28): the new
+   number should track 1:1 with completed workers, not lag behind them —
+   that is the adherence fix landing for real, as opposed to in a PR
+   description.
+
+**2. Residual — terminal status can go stale (graceful degradation).**
+`build-state.sh` derives terminal status (`completed` /
+`completed_with_escalation` / `failed`) **only** from a `session_end`
+event, and `session_end` is itself agent-written (Phase 4.5's completion
+tail), so it inherits the same class of miss rate this change exists to
+remove. If a run's completion tail never emits `session_end`, `state.md`
+stays at `running` after the run has actually ended. This is the
+**opposite** of the 2026-07-27 incident shape: that incident **under**-
+reported (all subtasks merged, `state.md` still said `phase: ACQUIRE`,
+`--continue` would have silently redone finished work); a missed
+`session_end` **over**-reports (state claims `running` after the run is
+genuinely done). The consequences are benign, not silent: a stale
+`running` at worst causes `hook-dispatch-on-pr-create.sh` to authorize a
+redundant review-drain dispatch (idempotent per-PR marker — a harmless
+no-op re-check), and `--continue` hits `scripts/reconcile-resume-state.sh`,
+which reconciles against actual subtask/merge commits on the branch and
+reports the run's true position rather than trusting the stale `running`.
+Do **not** close this residual by re-adding a "flip the status" prompt
+instruction — that is the exact anti-pattern this change removes. Making
+the terminal flip mechanical needs a completion-side hook that does not
+exist on the inline Single-Agent Path today; that is a separate design
+surface, not a gap in this change's scope.
+
+**3. Residual — the base-mismatch cleanup path is invisible to every
+automated read-side check.** When a subtask worktree's base branch no
+longer matches the expected merge base, the completion tail's
+base-mismatch cleanup path returns **before** reaching the completion tail
+that would emit `session_end` — so that path's `failed` outcome is never
+derived into `state.md` at all (not even as a stale `running`; there is
+simply no evidence for the projector to read). **No automated read-side
+check catches this.** `scripts/reconcile-resume-state.sh` reads only the
+`## Session` block's `branch` field and the `## Subtasks` table's `Status`
+column — it never reads `.supervisor/jobs/failed/` (where the job file
+actually lands on this path) and never reads `## Decisions Log` (where the
+`record_decision` call on this path — retained, see the delete-set
+scope deviations — is the only durable record of what happened). An
+operator investigating a job that silently stopped progressing must check
+`.supervisor/jobs/failed/` and the Decisions Log directly; `state.md` and
+`reconcile-resume-state.sh` alone will not surface this path.
+
 ### Script-location convention
 
 - `loomwright/scripts/` — **plugin-runtime** scripts shipped
