@@ -108,6 +108,8 @@ The Supervisor executes a **7-phase parallel workflow**:
 
 **Phase 0 (INIT):** Session configuration resolution before any work begins — environment auto-detection, resume-state loading behind the fail-closed resume validation gate, config prompts, cost-profile resolution (`--cheap`), base-branch handling (`--base-branch`, default `main`), `--non-interactive` recording as a Phase Flag, `.supervisor/` bootstrap, and job-brief loading. Protocol authority: `skills/supervisor-config/SKILL.md` (Read at phase entry — deliberately not preloaded); `agents/supervisor.md` "Phase 0: INIT" keeps the short phase stanza with entry/exit conditions. The user-facing flag table above remains this command surface's own authority for flag syntax.
 
+**Phase 1 (ACQUIRE) — idempotent branch creation (v15.16.x fix):** Task selection and the mandatory feature-branch creation (`git checkout -b feature/{task_id}-{short-desc}` off the fetched `$BASE_BRANCH` tip) are specified in `agents/supervisor.md` "Phase 1: ACQUIRE" step 4, which this inline path follows. Branch creation is **idempotent**: it detects an existing same-named branch first, reuses it only when its tip is byte-identical to the current `$BASE_BRANCH` tip (provably zero commits beyond base), and otherwise stops with a diagnostic (`error: "acquire_branch_collision"`) rather than guessing or deleting anything. This closes a hard-error resume gap — see `docs/TELEMETRY.md`'s honest-limits list residual 6: nothing writes `.supervisor/state.md` between branch creation and the first worker completion, so a crash in that window used to make `/supervisor --continue`'s "start fresh" path re-run `git checkout -b` against a branch the crashed run had already created.
+
 **Phase 1.5 (v14.8.0):** After ACQUIRE produces a task and a fresh feature branch, and before PLAN spawns the Orchestrator or any worker, Supervisor reconciles the *requested work* against remote state. It fetches `origin/$BASE_BRANCH`, scans recent commits and open PRs (bounded: ≤ 6 tool calls + a short timeout), derives the canonical version + base tip, and classifies the task **CLEAR / OVERLAP / SUPERSEDED** — flagging (a) recent/in-flight work touching the **same files** and (b) an **already-merged equivalent** of the requested work (the v13.1.0→v14.0.0 stale-branch case). CLEAR proceeds silently. OVERLAP/SUPERSEDED prompts the human (proceed-anyway / revise-scope / abort) citing the specific commits/PRs + intersecting paths interactively, or **fails closed** under `--non-interactive`/CI with `status_reason: preflight_overlap_detected`. Degrades gracefully (one warning, `preflight_sync: unverified`, continue) if `gh`/`git fetch` is unavailable, and is short-circuited by `--skip-preflight-sync`. It does **not** duplicate ACQUIRE's fetch/pull or the Phase 4 base-mismatch check — it adds semantic work-overlap reconciliation. Protocol authority: `skills/preflight-sync/SKILL.md` (Read at phase entry — deliberately not preloaded); `agents/supervisor.md` "Phase 1.5: PRE-FLIGHT SYNC" keeps the short phase stanza with entry/exit conditions.
 
 **Phase 4 (FINALIZE):** The merge/commit/PR protocol authority is `skills/async-orchestration/SKILL.md` **Part 2 — Supervisor FINALIZE Protocol** (the pre-merge safety-gate checklist items, sequential merge, worktree cleanup, commit/push/`gh pr create` mechanics, and the step 6.5 PR-base self-verify procedure; Supervisor-preloaded, Read again at Phase 4 entry) — `agents/supervisor.md` "Phase 4: FINALIZE" keeps the short phase stanza with the mandatory gates (pre-merge safety gate, merge-conflict STOP, PR-base self-verify) and entry/exit conditions.
@@ -133,11 +135,9 @@ Record `until_mergeable_dispatched: {UM_DISPATCHED}` on the job `## Outcome` blo
 
 ### Inline-path canonical state writes (Phase 1 ACQUIRE + Phase 4.5 completion tail)
 
-> **Why this lives here (load-bearing — do not delete):** the inline `/supervisor` and `/autonomous` paths execute this workflow on the **main thread** by reading `commands/launch-pad.md` + `commands/supervisor.md` (this file) at Step 0 — they **never load `agents/supervisor.md`**. The canonical `.supervisor/state.md` write directives below MUST therefore be present *here* on the loaded file, not only in `agents/supervisor.md`. (This section deliberately stays IN PLACE even though `skills/self-heal-advisory/SKILL.md` Part 2 is now the Phase 4.5 protocol authority — the skill is Read only at Phase 4.5 entry, while the Phase 1 ACQUIRE write below must already be loaded long before that.) On the inline path **no Context-Keeper is spawned**, so the Supervisor itself MUST write the on-disk state — otherwise `.supervisor/state.md` (with `- branch:`) never lands, the `hook-dispatch-on-pr-create.sh` PostToolUse hook fires on `gh pr create`, finds no session branch, fail-closes, and the until-mergeable review drain is never dispatched.
+> **Why this lives here:** the inline `/supervisor` and `/autonomous` paths execute this workflow on the **main thread** by reading `commands/launch-pad.md` + `commands/supervisor.md` (this file) at Step 0 — they **never load `agents/supervisor.md`**. Directives that must be visible to the inline path therefore live here too, not only in `agents/supervisor.md`.
 
-**Mirrored prompt pair (MUST stay in sync):** the two **state.md** directives below (the `state.json` write between them is `/autonomous`-only and not mirrored) are the inline-path mirror of `agents/supervisor.md` Phase 1 ACQUIRE (step 5) and the Phase 4.5 completion-tail "Update state" step (step 4 — its procedure now lives in `skills/self-heal-advisory/SKILL.md` Part 2; the guard stays in `agents/supervisor.md`). They use the **identical canonical lowercase `## Session` format** per `skills/state-management/SKILL.md` §"State File Schema". `agents/supervisor.md` is NOT removed — the delegated `supervisor-runner` agent path still loads and needs it. When you edit one side of this pair, edit the other in the same change so the inline and delegated paths never diverge.
-
-**Phase 1 ACQUIRE — direct best-effort `.supervisor/state.md` write (Fix A, load-bearing):** Immediately after creating the feature branch and BEFORE any `gh pr create`, the inline Supervisor performs a **direct best-effort write** of the canonical lowercase `## Session` block to `.supervisor/state.md` — at minimum `- status: running` and `- branch: <feature-branch>`, plus the other Session fields (`session_id`, `task_id`, `phase: ACQUIRE`). It is a **targeted in-place edit of the `## Session` block only**, preserving any other sections already in the file (`## Decisions Log`, `## Phase Flags`, `## Checkpoint`), performed as a single atomic update where feasible (temp-file + rename). **Best-effort / non-fatal (fail-safe invariant):** this write MUST NEVER block ACQUIRE or fail the run — a write failure is a logged no-op; proceed to Phase 1.5 / Phase 2 regardless. Do NOT write the human-readable **bold** ENVIRONMENT display block to the on-disk state file — the canonical state file is the lowercase form only. The durable canonical state must land because the `hook-dispatch-on-pr-create.sh` session-scope gate greps `^- status:` / `^- branch:`, and `/supervisor --continue` resume reads the lowercase `status: running` — a stale, bold-only, or absent state file silently breaks both, and on the inline path no Context-Keeper exists to write it.
+**`.supervisor/state.md`'s `## Session` block (`session_id`/`branch`/`status`/`phase`) is not written by the Supervisor on any path.** It is derived by the hook-triggered `scripts/emit-progress-event.sh` — fired at the `loomwright:worker` `SubagentStop` hook, which fires on the inline path too, since the Single-Agent and Sequential paths both spawn a worker Task — and projected into `.supervisor/state.md` by `scripts/build-state.sh`. See `docs/TELEMETRY.md` and CLAUDE.md §Failure-Mode Invariants. This pointer is mirrored with `agents/supervisor.md` Phase 1 ACQUIRE step 5 and `skills/self-heal-advisory/SKILL.md`'s completion-tail step 4 — keep the three in sync.
 
 **Phase 1 ACQUIRE — `/autonomous`-only `state.json` write (Fix B producer):** In the SAME ACQUIRE location (after branch creation, before `gh pr create`), **when the inline Supervisor is running under `/autonomous`** — i.e. the autonomous loop inlined this `commands/supervisor.md` at its EXECUTE step and an active `.supervisor/autonomous/{session_id}/state.json` exists for THIS run — additionally update that ONE `state.json` with two **top-level** fields:
 - `current_branch`: string — the feature-branch name just created. (Today this is `null`/absent in every state.json; the branch only reaches `iterations[-1].branch` at EVALUATE, which is post-PR / too late for the hook.)
@@ -145,9 +145,9 @@ Record `until_mergeable_dispatched: {UM_DISPATCHED}` on the job `## Outcome` blo
 
   **Session identification:** identify the active session as the one whose `current_brief_path` basename matches the `job:` brief this Supervisor run is executing. If that is ambiguous or no such session is identifiable, **SKIP this write** (best-effort). Use a **jq-based atomic update** (read → `jq` set fields → temp-file → rename); fall back to a **logged no-op** on any error. **Best-effort / non-fatal — NEVER gates or fails the run.**
 
-  **This is a CROSS-LAYER write** — the inlined Supervisor updating the autonomous *loop's* own state.json. This is the placement-risk site, which is exactly why this directive MUST live in the loaded `commands/supervisor.md` (not only `agents/supervisor.md`). **Note:** this `state.json` write does NOT help the direct `/supervisor job:` path (there is no autonomous `state.json` there) — **Fix A (the `.supervisor/state.md` write above) remains the only cross-path producer** of the session branch the hook reads.
+  **This is a CROSS-LAYER write** — the inlined Supervisor updating the autonomous *loop's* own state.json. This is the placement-risk site, which is exactly why this directive MUST live in the loaded `commands/supervisor.md` (not only `agents/supervisor.md`). **Note:** this `state.json` write does NOT help the direct `/supervisor job:` path (there is no autonomous `state.json` there) — the hook-triggered `scripts/emit-progress-event.sh` + `scripts/build-state.sh` projector (pointer above) is the cross-path producer of the session branch the hook reads.
 
-**Phase 4.5 completion tail — `.supervisor/state.md` status flip:** On the inline path, in the Phase 4.5 completion tail (mirroring completion-tail step 4 "Update state" in `skills/self-heal-advisory/SKILL.md` Part 2, moved there from `agents/supervisor.md`), the Supervisor performs a **direct best-effort flip** of the canonical lowercase `- status:` line in `.supervisor/state.md` from `running` → `completed` (or `completed_with_escalation` on the ESCALATED path). On the parallel path Context-Keeper performs this flip via `update_phase`; on the inline main-thread path (no Context-Keeper) the Supervisor does it directly. This keeps the `hook-dispatch-on-pr-create.sh` session-scope gate (which excludes `completed`/`completed_with_escalation`/`failed`) and `--continue` resume reading a truthful canonical state. **Best-effort / non-fatal** — a write failure is a logged no-op; do NOT touch the human-readable bold `## Outcome` display block. (The autonomous `state.json` is NOT flipped at completion here — the consumer additionally guards on `ended_at` being null and the `current_brief_path` basename being present in `jobs/in-progress/`, so a stale `state.json` with `current_status:"running"` but a moved-out brief is correctly rejected.)
+**Phase 4.5 completion tail — terminal status:** `.supervisor/state.md`'s terminal `- status:` (`completed` / `completed_with_escalation` / `failed`) is derived by `scripts/build-state.sh` from the run's `session_end` event (see the pointer above) — it is not flipped here on any path. (The autonomous `state.json` is NOT flipped at completion here — the consumer additionally guards on `ended_at` being null and the `current_brief_path` basename being present in `jobs/in-progress/`, so a stale `state.json` with `current_status:"running"` but a moved-out brief is correctly rejected.)
 
 ### Architecture
 
@@ -276,11 +276,11 @@ The `.supervisor/` directory is auto-created and gitignored.
 
 ## Checkpoints and Resume
 
-The Supervisor saves checkpoints after every phase transition:
+The Supervisor does not checkpoint on every phase transition — `.supervisor/state.md`'s `## Session` block is derived automatically (not agent-written) at each worker completion and at session end (see `docs/TELEMETRY.md`), so a pause between those points has no fresher on-disk snapshot to resume from than the last derived one:
 
 ```bash
 # If workflow pauses (NEEDS_HUMAN, merge conflict, or context limit):
-# State is saved automatically
+# The most recently derived state.md is what --continue reads
 
 # Resume from checkpoint:
 /supervisor --continue                   # Resume last task
@@ -288,8 +288,7 @@ The Supervisor saves checkpoints after every phase transition:
 ```
 
 **Checkpoint data includes:**
-- Current phase (e.g., EXECUTE)
-- Subtask progress (e.g., 2/3 complete)
+- Current phase and status (`## Session` — derived from the session's event log by `scripts/build-state.sh`, not written by Context-Keeper or the Supervisor; see `skills/state-management/SKILL.md` §"Progress state")
 - Branch name and worktree state
 - Worker/reviewer tracking
 - All decisions and results
@@ -304,7 +303,7 @@ The Supervisor uses externalized state and tool call budgets:
 
 - **Supervisor:** 50 tool call budget (~400 tokens context)
 - **Execute Manager:** 60 tool call budget (isolated context for Phase 3)
-- **State file:** Full session state managed by Context-Keeper
+- **State file:** `## Decisions Log` / `## Worker Results` / `## Error Log` / `## Phase Flags` managed by Context-Keeper; the `## Session` block is derived (see `skills/state-management/SKILL.md`)
 - **Workers:** Run in background with their own isolated context
 - **Reviewers:** Run in background with their own isolated context
 
@@ -454,7 +453,7 @@ For complex tasks, use Launch Pad to plan and Supervisor to execute:
 - Supervisor will warn and ask for approval
 
 **"Context limit reached"**
-- Supervisor saves checkpoint automatically
+- Supervisor exits with a resume command; `.supervisor/state.md` reflects whatever the derivation mechanism (`scripts/build-state.sh`) last projected as of the most recent worker completion or session end — not a fresh write at this exact moment
 - Resume with: `/supervisor --continue task: BD-XX`
 
 **"Resume aborted with `resume_state_invalid`"**

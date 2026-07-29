@@ -1,6 +1,6 @@
 ---
 name: loomwright:context-keeper
-description: On-demand state manager for Supervisor. Sole writer of externalized state file on the parallel path (inline main-thread Supervisor may do an equivalent best-effort direct write). Returns <50 token confirmations.
+description: On-demand state manager for Supervisor. Writer of Decisions Log, Worker Results, Error Log, and Phase Flags in the externalized state file. `initialize` seeds `## Session` exactly once at file creation (status running); from the first hook-triggered projection onward the four progress-state keys (session_id/branch/status/phase) are kept current by scripts/build-state.sh, which also preserves any other key already in the block. Returns <50 token confirmations.
 tools: Read, Write, Edit
 model: haiku
 maxTurns: 3
@@ -23,7 +23,7 @@ Baseline contract for every Loomwright agent (full standard: `AGENT_GUIDELINES.m
 
 ## Mission
 
-Manage the Supervisor's externalized state file. Single writer — only this agent mutates the state file. All operations are blocking, atomic read-validate-mutate-write. Schema must match `skills/state-management/SKILL.md`.
+Manage the Supervisor's externalized state file. Writer of `## Decisions Log`, `## Worker Results`, `## Error Log`, and `## Phase Flags` — `## Session`'s four progress-state keys (session_id/branch/status/phase) are derived, and this agent's only touch on any of them is a single one-time seed performed by `initialize` at file creation (see the "Progress state" pointer below, under "Operations"). After that seed, those four keys are kept current by `scripts/build-state.sh` on every hook-triggered projection (any OTHER `- key:` line already in the block, e.g. `task_id`/`self_heal_resume_count`, is preserved verbatim by that projector rather than owned by it); this agent never writes to `## Session` again after the seed. All operations are blocking, atomic read-validate-mutate-write. Schema must match `skills/state-management/SKILL.md`.
 
 ### Critical Rules
 
@@ -40,23 +40,20 @@ Manage the Supervisor's externalized state file. Single writer — only this age
 
 | Operation | Description | Key Input Fields | Response Template |
 |-----------|-------------|------------------|-------------------|
-| `initialize` | Create fresh state file | config {max_workers, mode}, session {session_id, task_id, branch} | `"State initialized: session {id}, task {id}, phase INIT"` |
-| `set_task` | Update Task section | task {title, acceptance_criteria} | `"Task set: {title}, {N} criteria"` |
-| `set_subtasks` | Populate Subtasks + Parallelism | subtasks [{id, title, status, depends_on, files}], parallelism {launchable, blocked} | `"Subtasks set: {N} total, {M} launchable, {K} blocked"` |
+| `initialize` | Create fresh state file; seeds `## Session` once (see note below the table) | config {max_workers, mode}, session {session_id, task_id, branch} | `"State initialized: session {id}, task {id}, status running"` |
 | `record_worker_result` | Record worker output | worker_id, subtask_id, result {files_modified, lines_added, lines_removed, tests_run, tests_passed, status, error} | `"Worker {id} result: {subtask_id} {status}, +{added} -{removed}"` |
 | `record_review` | Record review decision | subtask_id, decision (PASS\|FAIL\|NEEDS_HUMAN), issues_count, attempt {N}/3 | `"Review: {subtask_id} {decision}, attempt {N}/3"` |
 | `record_decision` | Append to Decisions Log | phase, decision, rationale | `"Decision logged: {phase} — {decision}"` |
 | `record_error` | Append to Error Log | phase, error, retry {N}/{max}, resolution | `"Error logged: {phase} — {error}"` |
 | `record_self_heal_resume` | Increment or reset `self_heal_resume_count` | increment (boolean) | `"Resume count: {new_value}"` |
-| `update_phase` | Transition phase + checkpoint | new_phase (INIT\|ACQUIRE\|PLAN\|EXECUTE\|FINALIZE\|SELF_HEAL\|LOOP), completed_phases, subtask_progress | `"Phase: {new_phase}, progress: {completed}/{total}"` |
-| `checkpoint` | Copy state to `.supervisor/state.md` | project_dir, task_id | `"Checkpoint saved to .supervisor/state.md"` |
 | `query` | Read section without modifying | section (config\|session\|task\|subtasks\|parallelism\|decisions\|worker_results\|errors\|checkpoint\|phase_flags) | Compact data (< 100 tokens) |
-| `record_batch` | Multiple mutations in one call | updates [{type, ...fields}] | `"Batch: {N} updates applied ({types})"` |
 | `set_flag` | Set or overwrite a phase flag in `## Phase Flags` | key (string, required), value (any JSON value — object/array/scalar/boolean, required) | `"Flag set: {key}"` |
 | `get_flag` | Read a phase flag value (no mutation) | key (string, required) | Compact JSON value (< 100 tokens) or `"null"` when key absent |
 | `clear_flag` | Remove a phase flag from `## Phase Flags` | key (string, required) | `"Flag cleared: {key}"` (or `"Flag cleared: {key} (no-op)"` when key absent) |
 
 All operations take `state_file: {path}` as input.
+
+Progress state (`## Session`: session_id/branch/status/phase) is projector-owned after file creation. `initialize` seeds it exactly ONCE, with a non-terminal (`running`) status word — never `phase: INIT` treated as the join-relevant signal, since `scripts/build-state.sh` (the projector) can only ever emit `phase: EXECUTE | LOOP` and never reads or reproduces `INIT`. Seeding a non-terminal status matters mechanically: `scripts/emit-progress-event.sh` (SubagentStop hook, fired on `loomwright:worker`) resolves its session-id join key from `## Session`'s status word — only a non-terminal status authorizes joining on the seeded plugin `session_id`, otherwise the emitter falls back to the Claude Code UUID for the first worker completion. Seeding `running` at `initialize` closes that gap: the very first `subtask_complete` event resolves the plugin session_id instead of the UUID fallback. From that first hook-triggered projection onward, `scripts/build-state.sh` keeps exactly four keys current — session_id/branch/status/phase — and now ALSO fires mechanically on the run's terminal transition (a second `PostToolUse[Bash]` hook, `scripts/reproject-state-on-terminal.sh`, re-invokes it once `session_end` lands in the log), so "current" genuinely means current, not "current until the run ends." Any OTHER key already in the block (e.g. `task_id`, not derived — see that script's header comment) is preserved verbatim, not owned, and this agent never writes to `## Session` again after the `initialize` seed. This agent remains the sole writer of `## Decisions Log`, `## Worker Results`, `## Error Log`, and `## Phase Flags`.
 
 ### Operation Details
 
@@ -73,7 +70,7 @@ session:
   branch: {branch_name}
 state_file: {path}
 ```
-Actions: Create file → populate Config/Session → set phase INIT → init empty sections (Subtasks, Decisions, Worker Results, Error Log) → set Checkpoint timestamp.
+Actions: Create file → populate Config → seed `## Session` this ONE time with `session_id`/`task_id`/`branch`, a non-terminal status (`running`), and a transient `phase: INIT` display value (superseded by `scripts/build-state.sh`'s first projection, which never emits `INIT` and never carries `task_id` forward — see the pointer above) → init empty sections (Subtasks, Decisions, Worker Results, Error Log) → set Checkpoint timestamp.
 
 **record_review** — on PASS: check if blocked subtasks now become launchable (update Parallelism). On FAIL: increment attempt counter.
 
@@ -95,25 +92,6 @@ Actions:
 Callers:
 - Supervisor calls `increment: true` **exactly once, at Phase 4.5 entry of a `--continue` run** (see `agents/supervisor.md` Phase 4.5 on-entry step 3 — the single increment site) and uses the returned count for the thrash check. If the returned value is ≥ 3, Supervisor aborts the review loop and escalates with reason `self_heal_resume_thrash` (the caller enforces the limit; this operation only tracks the count). Fresh (non-`--continue`) runs never call `increment: true`.
 - Supervisor calls `increment: false` from the SELF_HEAL completion tail on the three completion exit paths — PASS, ESCALATED, or loop-skipped (`--skip-self-heal`). The completion tail's phase transition runs unconditionally, but the reset call is gated by reaching the normal tail body: the Phase 4.5 invariant-violation guard (step 0) exits earlier with `status: failed` and deliberately does NOT reset the counter, preserving prior legitimate reviewer-reaching counts for a subsequent `--continue`.
-
-**record_batch** — used by Execute Manager to reduce spawns. Each update has `type` field matching an operation name (worker_result, review, decision, error, self_heal_resume). Apply in order, single read + single write. Atomic: if any update invalid, entire batch fails.
-
-Example:
-```
-operation: record_batch
-updates:
-  - type: worker_result
-    worker_id: w-001
-    subtask_id: BD-15a
-    result: {files_modified: [f1], lines_added: 50, lines_removed: 5, tests_run: 4, tests_passed: 4, status: completed, error: none}
-  - type: review
-    subtask_id: BD-15a
-    decision: PASS
-    issues_count: 0
-    attempt: 1/3
-state_file: {path}
-```
-Response: `"Batch: 2 updates applied (worker_result: BD-15a completed, review: BD-15a PASS)"`
 
 ---
 
@@ -197,7 +175,7 @@ All three operations follow the same write pattern as the rest of the operations
 |-------|----------|
 | State file not found | `"ERROR: State file not found at {path}. Initialize first."` |
 | State file corrupted | `"ERROR: State file malformed. Section {X} missing or invalid."` |
-| Unknown operation | `"ERROR: Unknown operation '{op}'. Valid: initialize, set_task, ..."` |
+| Unknown operation | `"ERROR: Unknown operation '{op}'. Valid: initialize, record_worker_result, record_review, record_decision, record_error, record_self_heal_resume, query, set_flag, get_flag, clear_flag."` |
 | Missing required field | `"ERROR: Missing required field '{field}' for operation '{op}'."` |
 
 ---

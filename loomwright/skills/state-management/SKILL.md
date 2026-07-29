@@ -12,7 +12,7 @@ Patterns for externalizing Supervisor state to files, enabling cross-session res
 
 ## Quick Rules
 
-- Context-Keeper writes the state file on the **parallel path** (blocking calls for mutations); on the **inline main-thread path** the Supervisor best-effort-writes the same canonical `## Session` block directly — one canonical lowercase format either way (see "Inline-path write responsibility" below). Workers never write the state file.
+- Context-Keeper mutates the non-Session sections of the state file (Worker Results, Decisions Log, Error Log, Phase Flags) on the **parallel path** (blocking calls). The canonical `## Session` block (session_id/branch/status/phase) is no longer written by Context-Keeper or the Supervisor — it is derived by the hook-triggered `scripts/emit-progress-event.sh` + `scripts/build-state.sh` projector (see below). Workers never write the state file.
 - State file lives in scratchpad during active session
 - Persistent copy in `.supervisor/state.md` for cross-session resume
 - Checkpoints saved to `.supervisor/` only
@@ -259,42 +259,24 @@ Two downstream consumers read the on-disk canonical lowercase form and break on 
 - **`hook-dispatch-on-pr-create.sh`** — the post-PR review-drain backstop greps `^- status:` and `^- branch:`. A stale or bold-only state file makes its session-scope gate fail-closed, so the until-mergeable drain never dispatches.
 - **`/supervisor --continue` resume** — reads the lowercase `status: running` to decide whether/where to resume.
 
-#### Inline-path write responsibility (best-effort, non-fatal)
+#### Progress state (`## Session`) — how it lands on disk now
 
-The canonical `## Session` block MUST land in `.supervisor/state.md` **regardless of whether Context-Keeper was spawned**:
+The canonical `## Session` block is no longer written by Context-Keeper or by a Supervisor inline write. It is derived by the hook-triggered `scripts/emit-progress-event.sh` (fired at the `loomwright:worker` `SubagentStop` hook) and projected into `.supervisor/state.md` by `scripts/build-state.sh`. See `docs/TELEMETRY.md`.
 
-- **Parallel path** (EXECUTE delegated to a Context-Keeper-backed Execute Manager): Context-Keeper is the canonical writer via `set_task` / `update_phase` at ACQUIRE and the SELF_HEAL completion tail.
-- **Inline main-thread path** (where the poll loop is NOT delegated, so no Context-Keeper is spawned): the Supervisor writes the canonical lowercase `## Session` block **directly** — at ACQUIRE (`- status: running`, `- branch: <feature-branch>`) and at the SELF_HEAL completion tail (flip `- status:` to `completed`, or `completed_with_escalation` on ESCALATED).
-
-This direct inline write is **best-effort / non-fatal**: it MUST NEVER block ACQUIRE or fail the run (preserving the fail-safe invariant). A write failure is a logged no-op. The direct write produces the SAME single canonical lowercase format — it does NOT introduce a second/competing format.
-
-**Supported operations:**
+**Supported operations (state sections other than `## Session`):**
 
 | Operation | What Changes | When |
 |-----------|-------------|------|
 | `initialize` | Creates full state file | Phase 0 (INIT) |
-| `set_task` | Updates Session + Task sections | Phase 1 (ACQUIRE) |
-| `set_subtasks` | Updates Subtasks + Parallelism | Phase 2 (PLAN) |
 | `record_worker_result` | Updates Worker Results + Subtask row | Phase 3 (EXECUTE) |
 | `record_review` | Updates Subtask review column | Phase 3 (EXECUTE) |
 | `record_decision` | Appends to Decisions Log | Any phase |
 | `record_error` | Appends to Error Log | Any phase |
-| `update_phase` | Updates Session.phase + Checkpoint | Phase transitions |
-| `record_batch` | Multiple mutations in single call | Phase 3 (EXECUTE) |
-| `checkpoint` | Full state snapshot to `.supervisor/` | After each phase |
 | `set_flag` / `get_flag` / `clear_flag` | Mutates / reads / removes a key in `## Phase Flags` | Any phase (most often: producer phase sets, consumer phase reads + clears on entry) |
 
 ### Checkpoint Protocol
 
-After each phase transition:
-
-1. Context-Keeper updates `Session.phase` and `Checkpoint` section
-2. Copy scratchpad state → `.supervisor/state.md`
-
-```bash
-# Checkpoint to .supervisor/
-cp {scratchpad}/supervisor-state.md {project}/.supervisor/state.md
-```
+Phase-transition checkpointing of `Session.phase` no longer exists as a discrete prompt-instructed step — `## Session` (which carries `phase`) is derived, not checkpointed; see "Progress state (`## Session`) — how it lands on disk now" above. The scratchpad-to-`.supervisor/` copy for the OTHER sections (`## Decisions Log` / `## Worker Results` / `## Error Log` / `## Phase Flags`) still happens via the normal Context-Keeper write path described under "Supported operations" above — there is no separate checkpoint step to run after each phase transition.
 
 ---
 
@@ -346,8 +328,10 @@ If no scratchpad state but `.supervisor/state.md` exists:
 Scope notes:
 
 - **A missing state file is NOT a violation.** "No state found → start fresh" (Resume Priority item 3 above) is unchanged; the gate fires only on a file that loaded but does not parse against this contract.
-- **READ-side gate only.** The Context-Keeper sole-writer contract and the inline-path best-effort write responsibility (§"Inline-path write responsibility") are untouched — this gate validates what resume READS; it changes nothing about who WRITES.
+- **READ-side gate only.** This gate validates what resume READS; it changes nothing about how `## Session` lands on disk — see §"Progress state (`## Session`) — how it lands on disk now" for the current write path (derived, not Context-Keeper or inline-path writes).
 - **A valid file resumes exactly as before** — the happy path (including `config.cost_profile` hydration at Phase 0) is behaviorally identical; only invalid files see new behavior.
+
+**Known residual — resuming straight into FINALIZE/Phase 4.5 leaves the until-mergeable drain undispatched.** A valid resume that jumps directly to FINALIZE or Phase 4.5 (all subtasks already completed in a prior session) never runs a `loomwright:worker` in the resumed session, so `## Session` is never re-derived for this run (see "Progress state" above). `scripts/hook-dispatch-on-pr-create.sh`'s Source 1 authorization requires a present, non-terminal `state.md` status, which a carried-over completed/absent file does not provide — control falls through to its Source 2 (`/autonomous` state.json) fallback, and outside `/autonomous` the backstop fails closed for that PR. Consequence is a silently-undispatched review drain, not data loss; the operator fallback is `/review-pr --until-mergeable <url>` run inline. Full writeup: `docs/TELEMETRY.md` honest-limits list (residual 4) and the DOCUMENTED LIMITATION block in `scripts/hook-dispatch-on-pr-create.sh`. Do not close this by adding a state write to the resumed path.
 
 ---
 
@@ -368,30 +352,14 @@ When a session completes (Phase 5 LOOP → no more tasks):
 
 > Event-catalog and field-spec authority for the Supervisor's per-session JSONL log. The agent file (`agents/supervisor.md` §"Session Logging") keeps only the path convention + the `session_end` requirement and points here.
 
-**Log entries** (`.supervisor/logs/{session_id}.jsonl`):
+**Log entries** (`.supervisor/logs/{session_id}.jsonl`). Progress-event logging (phase transitions, agent spawns/results, merges, PR creation) is no longer agent-written prose — the hook-triggered `scripts/emit-progress-event.sh` writes the `subtask_complete` event on the `loomwright:worker` `SubagentStop` hook (see `docs/TELEMETRY.md`). `session_end` remains a required, separately-emitted event with the FLAT field contract below:
 ```jsonl
-{"ts":"2026-03-09T14:30:00Z","type":"phase_transition","from":"INIT","to":"ACQUIRE","task_id":"user-auth"}
-{"ts":"2026-03-09T14:30:05Z","type":"agent_spawn","agent":"orchestrator","task_id":"user-auth","description":"Plan: decompose user-auth"}
-{"ts":"2026-03-09T14:30:15Z","type":"agent_result","agent":"orchestrator","task_id":"user-auth","subtasks":3}
-{"ts":"2026-03-09T14:30:16Z","type":"agent_spawn","agent":"execute-manager","task_id":"user-auth","subtask_count":3}
-{"ts":"2026-03-09T14:32:00Z","type":"agent_result","agent":"execute-manager","task_id":"user-auth","status":"completed","subtasks_completed":3}
-{"ts":"2026-03-09T14:32:05Z","type":"phase_transition","from":"EXECUTE","to":"FINALIZE","task_id":"user-auth"}
-{"ts":"2026-03-09T14:32:30Z","type":"merge","branch":"feature/user-auth-a","into":"feature/user-auth","status":"success"}
-{"ts":"2026-03-09T14:33:00Z","type":"pr_created","task_id":"user-auth","pr_number":42,"url":"https://github.com/org/repo/pull/42"}
 {"ts":"2026-03-09T14:34:00Z","event":"session_end","type":"session_end","task_id":"user-auth","status":"completed","contract_conformance_status":"pass","contract_violations":0,"benchmark_status":"pass","benchmark_metric":"selftest_pass_count","benchmark_value":4,"benchmark_delta":0,"ground_truth_status":"skipped","ground_truth_checks_total":0,"ground_truth_checks_passed":0,"ground_truth_pass_rate":"0/0","knowledge_sources_used":["project_memory","lessons:testing","twin:scripts/build-insights.sh","brain_context"],"plugin_version":"14.24.0"}
 ```
 
 **System Twin hard-signal fields on `session_end` (System Twin / ST3 + M2b slice 1a):** the `session_end` event carries FLAT scalar fields — the six `contract_*` / `benchmark_*` fields (`contract_conformance_status`, `contract_violations`, `benchmark_status`, `benchmark_metric`, `benchmark_value`, `benchmark_delta`) and, added in v14.19.0, the four `ground_truth_*` fields (`ground_truth_status`, `ground_truth_checks_total`, `ground_truth_checks_passed`, `ground_truth_pass_rate`) — written from Phase 4.5's completion tail with the SAME data as the nested `SUPERVISOR_RESULT.contract_conformance` / `benchmark_result` / `ground_truth` objects (field correspondence table in `skills/self-heal-advisory/SKILL.md` §"Hard-signal dual emission"). `build-insights.sh` (ST4) reads these via `select(.event=="session_end")` exactly as it reads `rubric_score`; it does NOT parse the nested objects. **These flat field names are a hard contract with ST4 — do NOT rename them.** They are additive: a `session_end` event without them remains valid (a reader treats absent `ground_truth_*` as `"skipped"`). `benchmark_value` / `benchmark_delta` may be `null` (not measured / no baseline). ST4 aggregates the `contract_*`/`benchmark_*` fields today; `ground_truth_*` is written-now with aggregation a forward-compat follow-up. The matching `event` key (in addition to the existing `type`) is what ST4's `select(.event=="session_end")` filter keys on. The `session_end` event also carries the additive `plugin_version` string (e.g. `"14.24.0"`, read at emission time from `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` via jq with an `"unknown"` fallback) for per-version aggregation — absent `plugin_version` stays valid (older events group under `"unknown"`). The `session_end` event ALSO carries the additive FLAT `knowledge_sources_used` array (v14.28.0 — e.g. `["project_memory","lessons:testing","twin:scripts/build-insights.sh","brain_context"]`), stamped with the SAME data as the nested `SUPERVISOR_RESULT.knowledge_sources_used` array (the dual-shape pattern `contract_conformance` uses), recording which memory the run consulted. It is additive and ADVISORY: readers/`build-insights.sh` treat an absent field as "none used", it is NEVER gated on, and it does NOT bump `schema_version`. As of v14.33.0 `build-insights.sh` / `/insights` aggregates and surfaces it in the `## Knowledge sources (memory APPLY)` dashboard section (runs-reporting-a-source count, top source tags, per-version usage); this surface ensures the field is emitted.
 
 **Retention:** 7 days (clean up in INIT phase).
-
-**When to log:**
-- Phase transitions
-- Agent spawns and results
-- Merge operations
-- PR creation
-- Errors and escalations
-- Checkpoint events
 
 ---
 
@@ -400,10 +368,9 @@ When a session completes (Phase 5 LOOP → no more tasks):
 Before completing state management:
 - [ ] `.supervisor/` directory exists with `.gitignore` entry
 - [ ] State file has all required sections
-- [ ] Checkpoint written after each phase transition
+- [ ] `## Session` reflects the latest `subtask_complete`/`session_end` event (verify via the log, not a written checkpoint — see "Progress state")
 - [ ] Resume tested from both scratchpad and `.supervisor/`
-- [ ] Batch updates used where possible (Execute Manager)
-- [ ] Only Context-Keeper mutates state file
+- [ ] Context-Keeper mutations are scoped to `## Decisions Log` / `## Worker Results` / `## Error Log` / `## Phase Flags` only
 - [ ] Session history saved on completion
 
 ## See Also

@@ -69,6 +69,25 @@
 # `https://github.com/.../pull/<n>`), so GitHub Enterprise custom domains are
 # NOT recognized and the backstop will not fire there — step 5.5 remains the
 # dispatch path on GHE.
+#
+# DOCUMENTED LIMITATION — resume-without-a-fresh-worker (one-writer-derived-state)
+# ----------------------------------------------------------------------------
+# Source 1 above authorizes only from a state.md whose status word is PRESENT
+# and non-terminal. Since the Phase 1 ACQUIRE direct-write was retired (see
+# docs/TELEMETRY.md's "one-writer-derived-state" residuals list, item 4),
+# state.md's `## Session` block is derived solely from `loomwright:worker`
+# SubagentStop events in THIS session. On a `/supervisor --continue` resume
+# that lands straight in FINALIZE or Phase 4.5 after all subtasks completed in
+# a PRIOR session, no worker fires in the resumed session, so nothing
+# re-derives state.md — a carried-over absent/terminal state.md does not
+# authorize here, and control falls through to Source 2. Outside `/autonomous`
+# there is no state.json either, so this backstop fails closed (logs one line,
+# no dispatch) for that `gh pr create` call; Supervisor's step-5.5 in-context
+# dispatch is the only remaining path on this shape. This is a KNOWN, accepted
+# gap, not a bug — see docs/TELEMETRY.md for the full writeup and the
+# fallbacks that still apply (Source 2 under `/autonomous`; a manual
+# `/review-pr --until-mergeable <url>`). Do NOT close it by reintroducing a
+# state.md write on the resumed ACQUIRE/FINALIZE path.
 
 set -u
 # Intentionally NO `set -e` / pipefail — a PostToolUse hook must absorb every

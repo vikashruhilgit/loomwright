@@ -45,7 +45,7 @@ Own the entire Phase 3 EXECUTE loop on behalf of the Supervisor. Manage worker/r
 - **Context isolation:** All poll loop tool calls stay in Execute Manager's context, not Supervisor's
 - **Summary-first:** Read `.worker-summary.md` files instead of full TaskOutput content
 - **Tool call budget:** Track every tool invocation; checkpoint before exceeding budget
-- **Batch updates:** Use `record_batch` for Context-Keeper to minimize spawns
+- **Progress state:** written by the hook-triggered emitter, not by this loop — see `scripts/emit-progress-event.sh` (SubagentStop hook) and `scripts/build-state.sh` (projector)
 - **Work preservation:** Always return worktree paths, branch names, and merge order
 
 ### Inputs
@@ -67,7 +67,6 @@ Own the entire Phase 3 EXECUTE loop on behalf of the Supervisor. Manage worker/r
 - **No code modification; dependency-materialization merges are the only permitted git merge operations, and only within a dependent worktree — never on the main repo's HEAD.**
 - **Tool call budget:** 60 calls maximum. At 36 (60%): compress. At 48 (80%): checkpoint. At 55 (92%): exit
 - **Summary files first (workers only):** Read `.worker-summary.md` before falling back to TaskOutput. Reviewer results come from TaskOutput directly — the Code Reviewer is read-only (`disallowedTools: Write, Edit`) and writes no summary file
-- **Batch Context-Keeper calls:** Use `record_batch` to combine multiple updates
 - **Always output result:** Even on failure/budget exceeded, output EXECUTE_RESULT or EXECUTE_CHECKPOINT
 - **No System Twin contract WRITE here (worktree-safety invariant):** The Execute Manager and its workers run inside linked git worktrees, and `scripts/write-system-contract.sh` **refuses to run from a worktree (exit 3)** — its sole-writer / pinned-CWD guard. So neither the Execute Manager nor any worker writes `.supervisor/twin/`. The System Twin contract builder runs **only** in the Supervisor's Phase 4.5 SELF_HEAL completion tail, from the pinned repo-root CWD (the main checkout), after Phase 4 FINALIZE has removed the worktrees. See `agents/supervisor.md` §"Phase 4.5 … System Twin contract builder" and `docs/ARCHITECTURE_CONTRACTS.md` §"System Twin homing contract".
 
@@ -249,8 +248,23 @@ for iteration in 1..max_iterations:
         # Supervisor will resolve adjudication and instruct next action.
         skip_to_next_iteration
 
-      # Queue for Context-Keeper batch update
-      queue_ck_update(type: worker_result, subtask_id, summary)
+      # Record worker result (direct call — de-batched, one call per event;
+      # the retired batching wrapper is gone, this call is not).
+      Task(
+        Context-Keeper,
+        operation: record_worker_result,
+        worker_id: {worker_id}, subtask_id: {subtask_id},
+        result: {files_modified, lines_added, lines_removed, tests_run, tests_passed, status, error},
+        state_file: {state_file_path}
+      )
+      tool_calls += 1
+
+      # NOTE: the `## Session` block (session_id/branch/status/phase) is
+      # separately derived by the hook-triggered emitter
+      # (scripts/emit-progress-event.sh, wired at the loomwright:worker
+      # SubagentStop hook) and projected by scripts/build-state.sh — that
+      # mechanism does NOT populate `## Worker Results`, which is what the
+      # record_worker_result call above is for.
 
       # Spawn reviewer in background (only when worker delivered all outputs)
       Task(
@@ -276,27 +290,45 @@ for iteration in 1..max_iterations:
       tool_calls += 1
 
       if PASS:
-        queue_ck_update(type: review, subtask_id, decision: PASS)
+        Task(
+          Context-Keeper,
+          operation: record_review,
+          subtask_id: {subtask_id}, decision: PASS, issues_count: 0, attempt: {N},
+          state_file: {state_file_path}
+        )
+        tool_calls += 1
         # Check if blocked subtasks now launchable
         # Launch newly launchable subtasks
       if FAIL (attempt < 3):
-        queue_ck_update(type: review, subtask_id, decision: FAIL)
+        Task(
+          Context-Keeper,
+          operation: record_review,
+          subtask_id: {subtask_id}, decision: FAIL, issues_count: {N}, attempt: {N},
+          state_file: {state_file_path}
+        )
+        tool_calls += 1
         # Spawn fix worker (background) with retry context
         # When cost_profile=cheap: include model: "sonnet" in this Task call
         tool_calls += 1
       if FAIL (attempt 3):
+        Task(
+          Context-Keeper,
+          operation: record_review,
+          subtask_id: {subtask_id}, decision: FAIL, issues_count: {N}, attempt: 3,
+          state_file: {state_file_path}
+        )
+        tool_calls += 1
         # Checkpoint and report escalation
-        flush_ck_batch()
         → output EXECUTE_RESULT with escalation
       if NEEDS_HUMAN:
-        flush_ck_batch()
+        Task(
+          Context-Keeper,
+          operation: record_review,
+          subtask_id: {subtask_id}, decision: NEEDS_HUMAN, issues_count: {N}, attempt: {N},
+          state_file: {state_file_path}
+        )
+        tool_calls += 1
         → output EXECUTE_CHECKPOINT with pause reason
-
-  # --- Flush Context-Keeper batch if queued ---
-  if ck_queue has updates:
-    Task(Context-Keeper, operation: record_batch, updates: [...])
-    tool_calls += 1
-    ck_queue = []
 
   # --- Launch newly launchable subtasks ---
   for subtask in newly_launchable:
@@ -316,7 +348,6 @@ for iteration in 1..max_iterations:
 
   # --- Tool call budget check ---
   if tool_calls >= 55:
-    → flush_ck_batch()
     → output EXECUTE_CHECKPOINT
     → EXIT
   if tool_calls >= 48:
@@ -398,7 +429,7 @@ Track your tool call count mentally. Increment by 1 for each tool invocation (Ta
 | Tool Calls | Level | Action |
 |-----------|-------|--------|
 | 0-36 (60%) | GREEN | Normal poll intervals (2s) |
-| 36-48 (80%) | YELLOW | Longer intervals (5s), compress summaries <100 tokens, batch Context-Keeper calls |
+| 36-48 (80%) | YELLOW | Longer intervals (5s), compress summaries <100 tokens |
 | 48-55 (92%) | ORANGE | Force checkpoint, prepare EXECUTE_CHECKPOINT |
 | 55+ | RED | Immediately output EXECUTE_CHECKPOINT and exit |
 
@@ -431,25 +462,9 @@ After TaskOutput confirms a reviewer is complete:
 
 ---
 
-## Batched Context-Keeper Updates
+## Progress State
 
-Instead of spawning Context-Keeper once per worker result and once per review, batch updates:
-
-```
-Task(
-  description: "Record batch results",
-  prompt: "Context-Keeper batch update...",
-  subagent_type: "loomwright:context-keeper"
-)
-
-operation: record_batch
-updates:
-  - type: worker_result, worker_id: w-001, subtask_id: {id}, result: {...}
-  - type: review, subtask_id: {id}, decision: PASS, attempt: 1/3
-state_file: {path}
-```
-
-This saves 1 Context-Keeper spawn per worker (2 updates in 1 call instead of 2 calls).
+Only the `## Session` block (session_id/branch/status/phase) is derived — it is written by the hook-triggered `scripts/emit-progress-event.sh` at the `loomwright:worker` `SubagentStop` hook and projected into `.supervisor/state.md` by `scripts/build-state.sh`. See `docs/TELEMETRY.md`. Worker and review completion recording — `Context-Keeper(operation: record_worker_result, ...)` and `Context-Keeper(operation: record_review, ...)`, both direct per-event calls made by this loop — is unaffected and continues as described above under "Worker Summary File Protocol"; those operations populate `## Worker Results` and the `## Subtasks` table, neither of which the hook-triggered emitter touches.
 
 ---
 
@@ -460,10 +475,10 @@ This saves 1 Context-Keeper spawn per worker (2 updates in 1 call instead of 2 c
 | Review PASS | Record, check if blocked subtasks now launchable, launch them |
 | Review FAIL (attempt < 3) | Spawn fix worker with issue details in background |
 | Review FAIL (attempt 3) | Record escalation, output EXECUTE_RESULT with escalation |
-| Review NEEDS_HUMAN | Flush CK batch, output EXECUTE_CHECKPOINT with pause |
+| Review NEEDS_HUMAN | Output EXECUTE_CHECKPOINT with pause |
 | Worker crash/timeout | Record error, retry once in same worktree, then escalate |
 | Worktree creation fails | Report in EXECUTE_RESULT, skip that subtask |
-| Tool budget 55+ | Flush CK batch, output EXECUTE_CHECKPOINT immediately |
+| Tool budget 55+ | Output EXECUTE_CHECKPOINT immediately |
 | Summary file missing | Fall back to parsing full TaskOutput |
 | All workers idle >5 min | Check TaskOutput with block=true, report if still idle |
 
@@ -589,7 +604,6 @@ EXECUTE_RESULT:
 Before outputting result:
 - [ ] All launchable subtasks were dispatched
 - [ ] Poll loop checked both workers and reviewers
-- [ ] Context-Keeper batch updates flushed
 - [ ] Tool call count tracked accurately
 - [ ] EXECUTE_RESULT includes all worktree paths and branch names
 - [ ] EXECUTE_RESULT includes merge_order in dependency order

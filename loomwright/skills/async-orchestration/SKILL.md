@@ -241,7 +241,17 @@ for iteration in 1..max_iterations:
       tool_calls += 1
       # If missing: fall back to parsing full TaskOutput
 
-      → Queue Context-Keeper batch update
+      # Record worker result (direct call — de-batched, one call per event)
+      Task(Context-Keeper, operation: record_worker_result,
+           worker_id: {worker_id}, subtask_id: {subtask_id},
+           result: {files_modified, lines_added, lines_removed, tests_run, tests_passed, status, error},
+           state_file: {state_file_path})
+      tool_calls += 1
+      # NOTE: the `## Session` block (session_id/branch/status/phase) is
+      # separately derived by the hook-triggered emitter
+      # (scripts/emit-progress-event.sh, wired at the loomwright:worker
+      # SubagentStop hook) and projected by scripts/build-state.sh — it does
+      # NOT populate `## Worker Results`, which the call above is for.
       → Spawn Reviewer in background
       → Move worker to completed
 
@@ -259,28 +269,38 @@ for iteration in 1..max_iterations:
       tool_calls += 1
 
       if PASS:
-        → Queue CK update
+        Task(Context-Keeper, operation: record_review,
+             subtask_id: {subtask_id}, decision: PASS, issues_count: 0, attempt: {N},
+             state_file: {state_file_path})
+        tool_calls += 1
         → Check if blocked subtasks now launchable
         → Launch newly launchable subtasks
       if FAIL (attempts < 3):
+        Task(Context-Keeper, operation: record_review,
+             subtask_id: {subtask_id}, decision: FAIL, issues_count: {N}, attempt: {N},
+             state_file: {state_file_path})
+        tool_calls += 1
         → Spawn fix worker (background)
       if FAIL (attempts >= 3):
-        → Flush CK batch, escalate to human
+        Task(Context-Keeper, operation: record_review,
+             subtask_id: {subtask_id}, decision: FAIL, issues_count: {N}, attempt: 3,
+             state_file: {state_file_path})
+        tool_calls += 1
+        → Escalate to human
       if NEEDS_HUMAN:
-        → Flush CK batch, pause, exit with EXECUTE_CHECKPOINT
+        Task(Context-Keeper, operation: record_review,
+             subtask_id: {subtask_id}, decision: NEEDS_HUMAN, issues_count: {N}, attempt: {N},
+             state_file: {state_file_path})
+        tool_calls += 1
+        → Pause, exit with EXECUTE_CHECKPOINT
 
-  # 3. Flush Context-Keeper batch if queued
-  if ck_queue has updates:
-    → Task(Context-Keeper, operation: record_batch, updates: [...])
-    tool_calls += 1
-
-  # 4. Launch newly launchable subtasks
+  # 3. Launch newly launchable subtasks
   for subtask in newly_launchable:
     if active_worktrees < max_workers:
       → Create worktree + spawn worker
       tool_calls += 2
 
-  # 5. Back-off on idle
+  # 4. Back-off on idle
   if not results_found:
     idle_streak += 1
     if idle_streak >= 3:
@@ -289,9 +309,8 @@ for iteration in 1..max_iterations:
     TaskOutput(task_id=earliest.id, block=true, timeout=poll_interval)
     tool_calls += 1
 
-  # 6. Tool call budget check
+  # 5. Tool call budget check
   if tool_calls >= 55:
-    → Flush CK batch
     → Output EXECUTE_CHECKPOINT and EXIT
   if tool_calls >= 48:
     poll_interval = max(poll_interval, 5000)  # longer intervals
@@ -321,8 +340,7 @@ After TaskOutput returns:
 
 1. Read the summary file from worktree (preferred) or parse full output (fallback)
 2. Extract: files modified, test results, decision
-3. Queue for Context-Keeper batch update (not individual calls)
-4. Flush batch periodically or when queue has 2+ items
+3. Record the extracted data to Context-Keeper via `record_worker_result` / `record_review` (direct per-event calls, see the poll loop above). Only the derived `## Session` block (session_id/branch/status/phase) is recorded by the hook-triggered `scripts/emit-progress-event.sh` instead — not `## Worker Results` or the `## Subtasks` table, which stay Result Collection's responsibility.
 
 ---
 
@@ -376,8 +394,7 @@ Reviewers MUST output a structured decision:
 | Active workers (id, subtask, worktree_path) | ~100 per worker |
 | Active reviewers (id, subtask, worktree_path) | ~100 per reviewer |
 | Parallelism state (launchable, blocked lists) | ~100 |
-| CK batch queue | ~100 |
-| **Total (2 workers + 2 reviewers)** | **~550 tokens** |
+| **Total (2 workers + 2 reviewers)** | **~450 tokens** |
 
 ### Supervisor holds during Phase 3:
 
