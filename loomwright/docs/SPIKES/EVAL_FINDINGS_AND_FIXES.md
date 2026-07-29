@@ -281,9 +281,9 @@ procedures Part 2 calls, which is the split undone. 4d is dropped from the Fix 4
 
 ### 4e. Six hooks spend a model call to do schema validation
 
-**Status: LANDED alongside 4a/4b in the Fix 4 cheap batch (2026-07-29); ships in the next release.**
-(No version number is asserted here: at the time of writing `plugin.json` still reads 15.16.0 and the
-bump is a later subtask of the same batch.) Five of the six mechanical prompt validators — `worker`,
+**Status: LANDED alongside 4a/4b in the Fix 4 cheap batch (2026-07-29); ships in v15.17.0.**
+(The version is asserted now that the release subtask of the same batch has bumped `plugin.json` to
+15.17.0 — verified against the manifest, not assumed.) Five of the six mechanical prompt validators — `worker`,
 `execute-manager`, `supervisor-runner`, `qa-executor`, `plan-reviewer` — were converted to
 `type: command` scripts (a shared `result_block_parser.py` plus five per-schema validators, all
 exit-0-by-contract). The **`code-reviewer` prompt hook was deliberately retained** per the caveat at
