@@ -9,12 +9,18 @@
 #      must (a) still appear in that validator's RULE SOURCE — the `type:
 #      prompt` prompt string, or (since v15.17.0, for validators converted to
 #      `type: command`) the source of the referenced validate-<x>-result.py
-#      script WITH ITS DOCSTRINGS STRIPPED, so that a rule transcribed in prose
-#      cannot stand in for the executable check (pin-drift guard: if the hook
-#      changes, the manifest must change with it) — and (b) appear in the
-#      matched agent's prompt file (an agent
+#      script WITH ITS PROSE STRIPPED — every string-literal statement
+#      (docstrings included) and every `#` comment (pin-drift guard: if the hook
+#      changes, the manifest must change with it) — and (b) appear
+#      in the matched agent's prompt file (an agent
 #      told to emit a block must name every hook-required field somewhere in
 #      its emit instructions).
+#
+#      GUARD STRENGTH, stated honestly: after the strip, check (a)'s floor is
+#      "the field name appears somewhere in non-docstring, non-comment source".
+#      That is NOT "the field is checked" — a name in a string constant or an
+#      orphaned reason constant still satisfies it. See the residual enumerated
+#      above hook_prompt().
 #
 #   2. ENUM LITERALS — for result status/decision keys whose hook validator
 #      enumerates a closed enum, any literal `key: token` in the agent prompt
@@ -82,19 +88,33 @@ PARITY_UNRESOLVED="__PARITY_UNRESOLVED__"
 #   * taking the first entry fails CLOSED with spurious red CI and couples the
 #     gate to hook ordering that nothing asserts.
 #
-# DOCSTRINGS ARE STRIPPED from the resolved validator source before it is
-# returned, and that is load-bearing too. Every ST-1 validator opens with a
-# module docstring transcribing its numbered rules VERBATIM ("(4) if tests were
-# run, coverage_estimate is present"), and several function docstrings quote
-# field names as well. Grepping the raw source therefore lets PROSE satisfy the
-# pin-drift guard: deleting the executable rule-4 block from
-# validate-qa-result.py leaves zero coverage_estimate mentions outside the
-# docstring, yet an unstripped guard still prints ✓ and exits 0 — the same
-# fail-open class as the concat reading above, one layer deeper. Since the five
-# prompt strings this guard used to grep are gone, it is the only thing between
-# a silently-weakened validator and CI, so it must grep CODE, not commentary.
+# PROSE IS STRIPPED from the resolved validator source before it is returned —
+# every string-literal STATEMENT (docstrings included) AND every `#` comment —
+# and that is load-bearing too. Python source is code, strings and comments, so
+# prose can hide in exactly four separable places, and all four are real here:
+#   1. the MODULE docstring — every ST-1 validator opens with one transcribing
+#      its numbered rules VERBATIM ("(4) if tests were run, coverage_estimate is
+#      present");
+#   2. CLASS / FUNCTION docstrings — several quote field names too;
+#   3. `#` COMMENTS — every rule block carries a section-header comment naming
+#      its field ("# ── (4) coverage_estimate present when tests were run ──";
+#      4 of the 5 converted validators have them — qa 4 comment-lines, execute
+#      2, supervisor 2, plan-review 2, worker 0);
+#   4. BARE STRING STATEMENTS that are not body[0] — the PEP-258 "attribute
+#      docstring" convention, or a stray one left by a partial deletion.
+# Grepping the raw source therefore lets PROSE satisfy the pin-drift guard:
+# deleting the executable rule-4 block from validate-qa-result.py leaves zero
+# coverage_estimate mentions in code, yet a guard that misses ANY ONE of the
+# four still prints ✓ and exits 0 — the same fail-open class as the concat
+# reading above, one layer deeper. Since the five prompt strings this guard used
+# to grep are gone, it is the only thing between a silently-weakened validator
+# and CI, so it must grep CODE, not commentary. Each of the four was verified by
+# construction against an implementation handling only the preceding ones — 1
+# passed a raw grep, 2 passed a module-only strip, 3 passed a docstring-only
+# strip, 4 passed a body[0]-only strip.
 #
-# Removal is by AST NODE SPAN, and both obvious shortcuts are wrong:
+# String-statement removal is by AST NODE SPAN, and both obvious shortcuts are
+# wrong:
 #   * `src.replace(ast.get_docstring(tree), "")` removes the docstring TEXT
 #     wherever it occurs, not the node — a short docstring whose wording recurs
 #     in a string constant would be over-stripped;
@@ -107,9 +127,39 @@ PARITY_UNRESOLVED="__PARITY_UNRESOLVED__"
 # only in _non_empty_list()'s docstring and worktrees only in
 # _check_worktree_paths()'s if their executable checks are deleted, so a
 # module-only strip would narrow this hole rather than close it.
+#
+# Comment removal is by TOKENIZE, never by a line-based `#` strip: `#` inside a
+# string literal is not a comment, and a regex/prefix strip would corrupt the
+# very code the grep then inspects. Not hypothetical — validate-launch-pad-
+# result.py:118 is `line.strip().startswith("#")`, the parser's own
+# comment-marker literal; a naive strip would leave `line.strip().startswith("`
+# and change what the following grep sees. (Checked all six validators by
+# tokenizing them: that file is the only one with `#` inside a string today, and
+# it is exactly the kind of line a MANIFEST row could reach tomorrow.) tokenize
+# reports COMMENT spans as CHARACTER
+# offsets into each str line, while ast reports BYTE offsets (see the note in
+# strip_string_statements) — the two passes are sequential and each slices with
+# its own convention, so the conventions are never mixed.
+#
+# WHAT THIS DOES AND DOES NOT BUY — the honest floor, so a future reader does
+# not over-trust it. After both strips, the guard proves only that THE FIELD
+# NAME APPEARS SOMEWHERE IN NON-DOCSTRING, NON-COMMENT SOURCE. It does NOT prove
+# the field is CHECKED. The residual is not mechanically separable and is
+# knowingly accepted:
+#   * a field name in a string constant is indistinguishable from one used as a
+#     lookup key — `present(fields, "pr_url")` and `emit(False, "pr_url must be
+#     present...")` are both an ast.Constant in executable position;
+#   * these validators promote reason text to module-level constants
+#     (REASON_V2_FIELDS, REASON_GAP_STATUS, REASON_TOOLSET_GAP,
+#     REASON_ADJUDICATION_*, MISSING_BLOCK, REASON_RUBRIC_SCORE), so an ORPHANED
+#     reason constant left behind by a partial deletion satisfies pin-drift with
+#     no executable check anywhere.
+# Closing that would need dataflow analysis of each validator, not a grep. The
+# strips close the four prose placements that ARE separable; string constants
+# and reason strings remain the acknowledged floor.
 hook_prompt() { # $1 = matcher substring; prints rule source, or PARITY_UNRESOLVED + reason
   python3 - "$HOOKS" "$1" "$PLUGIN" "$PARITY_UNRESOLVED" <<'PY'
-import ast,json,os,re,sys
+import ast,io,json,os,re,sys,tokenize
 hooks_path, needle, plugin, sentinel = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 h=json.load(open(hooks_path))
 
@@ -125,8 +175,26 @@ def _is_str_const(node):
         return True
     return node.__class__.__name__ == "Str"
 
-def strip_docstrings(src, path):
-    """Blank every module/class/function docstring, by node span.
+def strip_string_statements(src, path):
+    """Blank every string-literal expression STATEMENT, by node span.
+
+    Docstrings are exactly the body[0] case of this rule, but restricting the
+    rule to body[0] leaves a fifth prose placement open: a BARE string statement
+    elsewhere in a body is equally non-executable prose and equally satisfies
+    the pin-drift grep. The PEP-258 "attribute docstring" convention puts one
+    directly after a module-level constant —
+
+        REQUIRED = [...]
+        \"\"\"The required fields, including coverage_estimate.\"\"\"
+
+    — and a partial deletion can leave a stray one mid-function. Verified by
+    construction: replacing validate-qa-result.py's executable rule-4 block with
+    a single bare string statement passed a body[0]-only strip. Matching any
+    ast.Expr whose value is a string is both simpler and strictly stronger, and
+    it cannot over-strip: a string in ast.Expr position is a statement evaluated
+    for no effect, so it can never be a lookup key or an emit() reason. (No real
+    validator has one today — checked across all six.) JoinedStr is included so
+    an f-string statement is not a loophole.
 
     Fails CLOSED (bail) rather than returning prose-bearing source: an
     unparseable validator cannot be verified, and a validator that does not
@@ -142,23 +210,33 @@ def strip_docstrings(src, path):
              % (path, type(exc).__name__, exc))
     spans=[]
     for node in ast.walk(tree):
-        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+        if not isinstance(node, ast.Expr):
             continue
-        body = getattr(node, "body", None) or []
-        if not body:
+        s = node.value
+        if not (_is_str_const(s) or isinstance(s, ast.JoinedStr)):
             continue
-        first = body[0]
-        if not (isinstance(first, ast.Expr) and _is_str_const(first.value)):
-            continue
-        s = first.value
         if getattr(s, "end_lineno", None) is None or getattr(s, "end_col_offset", None) is None:
             bail("python %d.%d cannot report AST end positions (added in 3.8), so "
-                 "docstrings in '%s' cannot be stripped by span — the pin-drift "
+                 "prose strings in '%s' cannot be stripped by span — the pin-drift "
                  "guard would let prose satisfy it; run this gate on python >= 3.8"
                  % (sys.version_info[0], sys.version_info[1], path))
         spans.append((s.lineno, s.col_offset, s.end_lineno, s.end_col_offset))
     lines = src.splitlines(True)
-    # Docstring spans are disjoint; edit right-to-left so earlier offsets stay valid.
+    # ast's col_offset/end_col_offset are UTF-8 BYTE offsets, but the slicing
+    # below indexes a Python str (characters). Latent, not live: no string
+    # statement's delimiter line in these validators carries non-ASCII before
+    # its end_col_offset today. The skew direction is also safe for this guard's
+    # purpose — bytes >= chars means the slice removes MORE, never less, so a
+    # non-ASCII docstring cannot leak prose into the grep (it could only cause a
+    # spurious pin-drift, i.e. fail CLOSED). If that ever bites, convert the
+    # line to bytes, slice, and decode back.
+    #
+    # Spans are disjoint and each line is REPLACED in place (never inserted or
+    # deleted), so indices cannot shift and the iteration order is irrelevant to
+    # correctness; reverse order is kept only because reading a text edit
+    # bottom-up is easier to follow. Interior lines are rewritten as "\n"
+    # regardless of the source's line endings — cosmetic only, and this repo is
+    # unix-EOL throughout.
     for (l1, c1, l2, c2) in sorted(spans, reverse=True):
         if l1 == l2:
             lines[l1-1] = lines[l1-1][:c1] + lines[l1-1][c2:]
@@ -167,6 +245,40 @@ def strip_docstrings(src, path):
             for i in range(l1, l2-1):
                 lines[i] = "\n"
             lines[l2-1] = lines[l2-1][c2:]
+    return "".join(lines)
+
+def strip_comments(src, path):
+    """Blank every `#` comment, by token span.
+
+    `#` comments are not AST nodes, so strip_string_statements() leaves them
+    intact — the fourth prose placement. A section-header comment naming a
+    pinned field ("# ── (4) coverage_estimate present when tests were run ──")
+    survives the deletion of the executable block it labels and satisfies the
+    pin-drift grep on its own.
+
+    tokenize, NOT a line-based `#` strip: `#` occurs inside string literals in
+    these validators, and a textual strip would corrupt the code the grep then
+    inspects. tokenize's start/end columns are CHARACTER offsets into each str
+    line (unlike ast's byte offsets), which is what the slicing below assumes.
+
+    Fails CLOSED (bail) for the same reason strip_string_statements does: source
+    cannot be tokenized cannot have its prose separated from its checks.
+    """
+    try:
+        toks = list(tokenize.generate_tokens(io.StringIO(src).readline))
+    except (tokenize.TokenError, SyntaxError) as exc:
+        # IndentationError is a SyntaxError subclass, so it is covered here.
+        bail("validator source '%s' does not tokenize (%s: %s) — the pin-drift "
+             "guard cannot separate its executable checks from its comments"
+             % (path, type(exc).__name__, exc))
+    lines = src.splitlines(True)
+    # A `#` comment runs to end of line, so a COMMENT token never spans lines
+    # and at most one can occur per line; each edit replaces its line in place.
+    for tok in toks:
+        if tok.type != tokenize.COMMENT:
+            continue
+        (row, c0), (_, c1) = tok.start, tok.end
+        lines[row-1] = lines[row-1][:c0] + lines[row-1][c1:]
     return "".join(lines)
 
 prompts=[]; commands=[]
@@ -209,7 +321,8 @@ try:
 except (OSError, UnicodeDecodeError) as exc:
     bail("matcher '%s': cannot read validator source '%s' (%s)" % (needle, path, exc))
 # Prose must not satisfy the pin-drift grep — see the comment block above.
-sys.stdout.write(strip_docstrings(src, path))
+# Docstrings first (by AST span), then `#` comments (by token span).
+sys.stdout.write(strip_comments(strip_string_statements(src, path), path))
 PY
 }
 
