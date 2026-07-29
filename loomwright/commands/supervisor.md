@@ -108,6 +108,8 @@ The Supervisor executes a **7-phase parallel workflow**:
 
 **Phase 0 (INIT):** Session configuration resolution before any work begins — environment auto-detection, resume-state loading behind the fail-closed resume validation gate, config prompts, cost-profile resolution (`--cheap`), base-branch handling (`--base-branch`, default `main`), `--non-interactive` recording as a Phase Flag, `.supervisor/` bootstrap, and job-brief loading. Protocol authority: `skills/supervisor-config/SKILL.md` (Read at phase entry — deliberately not preloaded); `agents/supervisor.md` "Phase 0: INIT" keeps the short phase stanza with entry/exit conditions. The user-facing flag table above remains this command surface's own authority for flag syntax.
 
+**Phase 1 (ACQUIRE) — idempotent branch creation (v15.16.x fix):** Task selection and the mandatory feature-branch creation (`git checkout -b feature/{task_id}-{short-desc}` off the fetched `$BASE_BRANCH` tip) are specified in `agents/supervisor.md` "Phase 1: ACQUIRE" step 4, which this inline path follows. Branch creation is **idempotent**: it detects an existing same-named branch first, reuses it only when its tip is byte-identical to the current `$BASE_BRANCH` tip (provably zero commits beyond base), and otherwise stops with a diagnostic (`error: "acquire_branch_collision"`) rather than guessing or deleting anything. This closes a hard-error resume gap — see `docs/TELEMETRY.md`'s honest-limits list residual 6: nothing writes `.supervisor/state.md` between branch creation and the first worker completion, so a crash in that window used to make `/supervisor --continue`'s "start fresh" path re-run `git checkout -b` against a branch the crashed run had already created.
+
 **Phase 1.5 (v14.8.0):** After ACQUIRE produces a task and a fresh feature branch, and before PLAN spawns the Orchestrator or any worker, Supervisor reconciles the *requested work* against remote state. It fetches `origin/$BASE_BRANCH`, scans recent commits and open PRs (bounded: ≤ 6 tool calls + a short timeout), derives the canonical version + base tip, and classifies the task **CLEAR / OVERLAP / SUPERSEDED** — flagging (a) recent/in-flight work touching the **same files** and (b) an **already-merged equivalent** of the requested work (the v13.1.0→v14.0.0 stale-branch case). CLEAR proceeds silently. OVERLAP/SUPERSEDED prompts the human (proceed-anyway / revise-scope / abort) citing the specific commits/PRs + intersecting paths interactively, or **fails closed** under `--non-interactive`/CI with `status_reason: preflight_overlap_detected`. Degrades gracefully (one warning, `preflight_sync: unverified`, continue) if `gh`/`git fetch` is unavailable, and is short-circuited by `--skip-preflight-sync`. It does **not** duplicate ACQUIRE's fetch/pull or the Phase 4 base-mismatch check — it adds semantic work-overlap reconciliation. Protocol authority: `skills/preflight-sync/SKILL.md` (Read at phase entry — deliberately not preloaded); `agents/supervisor.md` "Phase 1.5: PRE-FLIGHT SYNC" keeps the short phase stanza with entry/exit conditions.
 
 **Phase 4 (FINALIZE):** The merge/commit/PR protocol authority is `skills/async-orchestration/SKILL.md` **Part 2 — Supervisor FINALIZE Protocol** (the pre-merge safety-gate checklist items, sequential merge, worktree cleanup, commit/push/`gh pr create` mechanics, and the step 6.5 PR-base self-verify procedure; Supervisor-preloaded, Read again at Phase 4 entry) — `agents/supervisor.md` "Phase 4: FINALIZE" keeps the short phase stanza with the mandatory gates (pre-merge safety gate, merge-conflict STOP, PR-base self-verify) and entry/exit conditions.
@@ -274,11 +276,11 @@ The `.supervisor/` directory is auto-created and gitignored.
 
 ## Checkpoints and Resume
 
-The Supervisor saves checkpoints after every phase transition:
+The Supervisor does not checkpoint on every phase transition — `.supervisor/state.md`'s `## Session` block is derived automatically (not agent-written) at each worker completion and at session end (see `docs/TELEMETRY.md`), so a pause between those points has no fresher on-disk snapshot to resume from than the last derived one:
 
 ```bash
 # If workflow pauses (NEEDS_HUMAN, merge conflict, or context limit):
-# State is saved automatically
+# The most recently derived state.md is what --continue reads
 
 # Resume from checkpoint:
 /supervisor --continue                   # Resume last task
@@ -451,7 +453,7 @@ For complex tasks, use Launch Pad to plan and Supervisor to execute:
 - Supervisor will warn and ask for approval
 
 **"Context limit reached"**
-- Supervisor saves checkpoint automatically
+- Supervisor exits with a resume command; `.supervisor/state.md` reflects whatever the derivation mechanism (`scripts/build-state.sh`) last projected as of the most recent worker completion or session end — not a fresh write at this exact moment
 - Resume with: `/supervisor --continue task: BD-XX`
 
 **"Resume aborted with `resume_state_invalid`"**

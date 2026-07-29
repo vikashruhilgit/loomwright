@@ -43,11 +43,11 @@ Autonomously manage the complete development workflow from task pickup to PR cre
 - **Pure orchestrator:** Hold only phase, task_id, branch, worker_ids (~400 tokens)
 - **Delegate EXECUTE:** Phase 3 delegated to Execute Manager for multi-subtask workflows
 - **Parallel execution:** Independent subtasks run concurrently in git worktrees
-- **Externalized state:** Context-Keeper manages all persistent state
-- **Mandatory branching:** Feature branch created BEFORE any code work (non-negotiable)
+- **Externalized state:** Context-Keeper manages `## Decisions Log` / `## Worker Results` / `## Error Log` / `## Phase Flags`; the canonical `## Session` block is **derived**, not agent-written — see Phase 1 ACQUIRE step 5, `docs/TELEMETRY.md`
+- **Mandatory branching:** Feature branch created BEFORE any code work (non-negotiable); idempotent against a crashed prior session's same-named branch — see Phase 1 ACQUIRE step 4
 - **Quality gates:** Pause on NEEDS_HUMAN, retry on FAIL (max 3x), continue on PASS
 - **Self-healing:** Post-merge holistic review + bounded fix loop (Phase 4.5) before task handoff
-- **Error recovery:** Checkpoint after every phase; resume from any interruption
+- **Error recovery:** progress state re-derives automatically at each worker completion and at session end (no per-phase checkpoint write); resume validates it against git/branch reality first — see `skills/state-management/SKILL.md` §"Resume validation gate", `docs/TELEMETRY.md`
 - **Tool call budget:** 50 calls maximum for Supervisor (including Phase 4.5); Execute Manager has its own 60-call budget
 
 ### Inputs
@@ -148,24 +148,45 @@ Autonomously manage the complete development workflow from task pickup to PR cre
 3. Requirements check:
    - If requirements are vague (no acceptance criteria): spawn Product Owner (blocking)
    - If clear criteria exist: proceed
-4. **MANDATORY: Create feature branch** (before ANY code work):
+4. **MANDATORY: Create feature branch** (before ANY code work) — **idempotent** (v15.16.x fix): no `state.md` exists between branch creation and the first worker `SubagentStop` (step 5), so a crash there makes `/supervisor --continue` "start fresh" and re-enter this step for the SAME `{task_id}-{short-desc}`; `git checkout -b` must not hard-error on a branch that already exists:
    ```bash
-   # BASE_BRANCH was resolved in Phase 0 (the base-branch preamble in
-   # skills/supervisor-config/SKILL.md) — default "main", or
-   # the value of --base-branch <name> when the /autonomous loop stacks
-   # iter N+1 on iter N's branch. Iter 1 of an autonomous run, and every
-   # standalone /supervisor invocation, resolves to "main".
+   # BASE_BRANCH resolved in Phase 0 (skills/supervisor-config/SKILL.md) —
+   # default "main", or --base-branch <name> for stacked /autonomous iters.
    BASE_BRANCH="${BASE_BRANCH:-main}"
    git fetch origin "$BASE_BRANCH"
    git checkout "$BASE_BRANCH" && git pull origin "$BASE_BRANCH"
-   git checkout -b feature/{task_id}-{short-desc}
+
+   FEATURE_BRANCH="feature/{task_id}-{short-desc}"
+   if git rev-parse --verify --quiet "refs/heads/$FEATURE_BRANCH" >/dev/null; then
+     # Exists already — decide SAFELY, never guess, never delete.
+     BASE_TIP="$(git rev-parse "$BASE_BRANCH")"
+     BRANCH_TIP="$(git rev-parse "$FEATURE_BRANCH")"
+     if [ "$BRANCH_TIP" = "$BASE_TIP" ]; then
+       # PROVABLY SAFE: zero commits beyond $BASE_BRANCH — its tip IS the
+       # current base tip, so reuse == fresh create (HARD RULE below holds).
+       # Exactly the shape a crash leaves: branched, nothing committed yet.
+       git checkout "$FEATURE_BRANCH"
+     else
+       # UNSAFE to reuse silently — unattributable commits (another
+       # session's in-flight work, a further-along crash, or an unrelated
+       # same-named branch). Do not check out, do not delete. STOP.
+       echo "error: branch '$FEATURE_BRANCH' already exists and is NOT identical to $BASE_BRANCH tip ($BRANCH_TIP vs $BASE_TIP)." >&2
+       echo "Inspect: git log $FEATURE_BRANCH --oneline -5 ; git diff $BASE_BRANCH...$FEATURE_BRANCH --stat" >&2
+       echo "Then: resume it yourself if it's your crashed run, delete/rename it if disposable, or pick a different task_id/short-desc." >&2
+       exit 1
+     fi
+   else
+     git checkout -b "$FEATURE_BRANCH"
+   fi
    ```
-   **HARD RULE:** The Supervisor MUST NOT proceed to Phase 2 without a confirmed feature branch. **The branch's parent commit MUST be the tip of `$BASE_BRANCH`** — Phase 4 self-verify (step 6.5 — procedure in `skills/async-orchestration/SKILL.md` Part 2) will compare the PR's `baseRefName` against `$BASE_BRANCH` and fall through to Phase 4.5 cleanup on mismatch. If `$BASE_BRANCH` is not honored here, the stacked-iteration feature is silently broken: the PR opens with the right `--base` name but the branch ancestry comes from `main`, producing a nonsensical diff at review time even though Phase 4.5's Code Reviewer + Rubric Grader faithfully honor the DIFF-SCOPE OVERRIDE.
-5. Progress state (the canonical lowercase `## Session` block — `session_id`/`branch`/`status`/`phase` — in `.supervisor/state.md`) is not written here. It is derived by the hook-triggered `scripts/emit-progress-event.sh` (fired at the `loomwright:worker` `SubagentStop` hook) and projected by `scripts/build-state.sh`. See `docs/TELEMETRY.md` and CLAUDE.md §Failure-Mode Invariants.
+   On `exit 1` above: MUST NOT proceed to Phase 1.5/2 — emit `SUPERVISOR_RESULT` with `status: failed`, `error: "acquire_branch_collision: {FEATURE_BRANCH} diverges from {BASE_BRANCH} tip"`; leave any job file untouched (nothing was acquired). Distinct from `resume_state_invalid`/`resume_state_stale` (those are about a wrong existing `state.md`; this is a *branch* with no `state.md` to explain it) — don't conflate the three.
 
-**Output:** the `### Phase 1: ACQUIRE` block shown in §"Output Format (Complete Example)" — Task (with priority when known), Title, Criteria count, `Branch: feature/{task_id}-{short-desc} ← CREATED`, and `Requirements:` reading `Clear` or `Refined by Product Owner`.
+   **HARD RULE (unchanged):** confirmed feature branch required before Phase 2; **its parent commit MUST be the tip of `$BASE_BRANCH`** — Phase 4 self-verify (step 6.5, `skills/async-orchestration/SKILL.md` Part 2) compares the PR's `baseRefName` against `$BASE_BRANCH` and falls through to Phase 4.5 cleanup on mismatch; an unhonored `$BASE_BRANCH` here silently breaks stacked iterations (right `--base` name, wrong ancestry). The reuse branch above preserves this by construction (byte-identical-tip reuse only); `--base-branch` / stacked-iteration behavior is unaffected.
+5. Progress state (the canonical lowercase `## Session` block — `session_id`/`branch`/`status`/`phase` — in `.supervisor/state.md`) is not written here. It is derived by the hook-triggered `scripts/emit-progress-event.sh` (fired at the `loomwright:worker` `SubagentStop` hook) and projected by `scripts/build-state.sh`. See `docs/TELEMETRY.md` and CLAUDE.md §Failure-Mode Invariants. The branch guard above turns a crash in this projector-blind window into a survivable resume rather than a hard-error one; the window itself is unchanged and documented as a residual in `docs/TELEMETRY.md`.
 
-**Checkpoint:** State saved to `.supervisor/` after branch creation.
+**Output:** the `### Phase 1: ACQUIRE` block shown in §"Output Format (Complete Example)" — Task (with priority when known), Title, Criteria count, `Branch: feature/{task_id}-{short-desc} ← CREATED` (or `← REUSED` on the guard's reuse path), and `Requirements:` reading `Clear` or `Refined by Product Owner`.
+
+**Checkpoint:** none — no progress-state file is written after branch creation (see step 5). The branch itself (`git branch --contains` / `git log`), and once Phase 3 completes a worker the derived `state.md`, are the only durable evidence a session reached this phase.
 
 ---
 

@@ -65,9 +65,9 @@
       "note": "authoring baseline v15.10.0; 0 preloaded skills; raised 2086->2330 for the shared-agent-prefix block (docs/shared-agent-prefix.md): measured 2118 + ~10%"
     },
     "supervisor": {
-      "budget": 50802,
-      "measured": 50040,
-      "note": "authoring baseline v15.10.0; 7 preloaded skills (name: loomwright:supervisor-runner). Re-measured for the one-writer-derived-state change (v15.16.0 in progress): deleting the ACQUIRE/PLAN inline `## Session` writes and the progress-event half of Session Logging (Subtask 2) moved measured 50459 -> 50040 (delta -419; pre-deletion figure at git 36c39de). The frozen v15.10.0 baseline (46564) predates several releases' worth of unrelated growth, so pre-deletion usage was already close to budget (762 headroom, 1.5%). Budget tightened by the same -419 delta, 51221 -> 50802, preserving that existing margin rather than resetting to a fresh measured+10% (~55044), which would raise the budget and paper over the unrelated growth — out of this subtask's scope."
+      "budget": 51700,
+      "measured": 50959,
+      "note": "authoring baseline v15.10.0; 7 preloaded skills (name: loomwright:supervisor-runner). Re-measured for the one-writer-derived-state change (v15.16.0 in progress): deleting the ACQUIRE/PLAN inline `## Session` writes and the progress-event half of Session Logging (Subtask 2) moved measured 50459 -> 50040 (delta -419; pre-deletion figure at git 36c39de). The frozen v15.10.0 baseline (46564) predates several releases' worth of unrelated growth, so pre-deletion usage was already close to budget (762 headroom, 1.5%). PR #116 review round (Finding 1) then ADDED the Phase 1 ACQUIRE idempotent-branch-creation guard (existing-branch detection + safe-reuse-vs-stop decision) plus three falsified-claim rewrites (Finding 2) — a real fix, not bloat, measured 50040 -> 50959 (delta +919). Budget raised 50802 -> 51700 to restore the ~1.5% margin the pre-Finding-1 state held, rather than resetting to a fresh measured+10% (~56055)."
     },
     "worker": {
       "budget": 5045,

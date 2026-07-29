@@ -512,6 +512,41 @@ Edit-tool writes to also participate in a shared lock, which is out of this
 change's scope (Context-Keeper is a separate agent process, not a script
 this repo's shell-level lock can reach).
 
+**6. Residual — the ACQUIRE→first-worker-completion window has zero
+`state.md` evidence (PR #116 follow-up review, Finding 1).** Deleting the
+old Phase 1 ACQUIRE direct-write means nothing creates `state.md` until the
+first `loomwright:worker` `SubagentStop` fires in Phase 3 EXECUTE — the
+span covering Phase 1.5 PRE-FLIGHT SYNC and all of Phase 2 PLAN has no
+on-disk trace that a session is in flight. A crash in that window leaves
+`/supervisor --continue` finding no state file at all, which correctly
+routes to "start fresh" (`skills/state-management/SKILL.md` Resume
+Priority item 3) — that path is unchanged and was already correct. What
+was NOT survivable is what "start fresh" then does: it re-enters Phase 1
+ACQUIRE and re-selects the same `{task_id}-{short-desc}`, whose branch the
+crashed run already created. **This is now handled at the point that
+actually breaks — the ACQUIRE branch-creation step itself is idempotent**
+(see Phase 1 ACQUIRE step 4 in `agents/supervisor.md`): it checks for an
+existing same-named branch first, reuses it when its tip is byte-identical
+to the current `$BASE_BRANCH` tip (provably zero commits beyond base — the
+exact shape a crash in this window leaves), and otherwise stops with a
+diagnostic rather than guessing or deleting anything. **What this does and
+does NOT affect:** it closes the hard-error crash (`fatal: a branch named
+'...' already exists`) for the specific case this window creates. It does
+**not** put any evidence back on disk for the window itself — Phase 1.5 and
+Phase 2 still produce nothing durable if the run is interrupted mid-phase
+and NOT re-run (e.g., the operator kills the session and never calls
+`--continue`); there is simply nothing to reconcile because nothing was
+acquired durably yet. That is an accepted gap, not a silent one: the only
+thing a session commits to disk in this window is the branch itself
+(inspectable via plain `git branch`/`git log`, independent of `state.md`),
+so an operator auditing "was a session here" during this window reads git,
+not `state.md`. Do **not** close this residual by re-adding a `state.md`
+write inside ACQUIRE or PLAN — that is the exact prompt-instructed
+bookkeeping this whole change deletes; the branch-guard above is the
+narrower, mechanical fix for the one failure mode this window actually
+produces (a hard-erroring resume), not a reintroduction of per-phase
+checkpointing.
+
 ### Script-location convention
 
 - `loomwright/scripts/` — **plugin-runtime** scripts shipped
