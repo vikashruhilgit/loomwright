@@ -331,6 +331,8 @@ Scope notes:
 - **READ-side gate only.** This gate validates what resume READS; it changes nothing about how `## Session` lands on disk — see §"Progress state (`## Session`) — how it lands on disk now" for the current write path (derived, not Context-Keeper or inline-path writes).
 - **A valid file resumes exactly as before** — the happy path (including `config.cost_profile` hydration at Phase 0) is behaviorally identical; only invalid files see new behavior.
 
+**Known residual — resuming straight into FINALIZE/Phase 4.5 leaves the until-mergeable drain undispatched.** A valid resume that jumps directly to FINALIZE or Phase 4.5 (all subtasks already completed in a prior session) never runs a `loomwright:worker` in the resumed session, so `## Session` is never re-derived for this run (see "Progress state" above). `scripts/hook-dispatch-on-pr-create.sh`'s Source 1 authorization requires a present, non-terminal `state.md` status, which a carried-over completed/absent file does not provide — control falls through to its Source 2 (`/autonomous` state.json) fallback, and outside `/autonomous` the backstop fails closed for that PR. Consequence is a silently-undispatched review drain, not data loss; the operator fallback is `/review-pr --until-mergeable <url>` run inline. Full writeup: `docs/TELEMETRY.md` honest-limits list (residual 4) and the DOCUMENTED LIMITATION block in `scripts/hook-dispatch-on-pr-create.sh`. Do not close this by adding a state write to the resumed path.
+
 ---
 
 ## Session History

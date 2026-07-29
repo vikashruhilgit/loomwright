@@ -10,9 +10,9 @@
       "note": "authoring baseline v15.10.0 (measured 22118 + ~10%); 5 preloaded skills"
     },
     "context-keeper": {
-      "budget": 2837,
-      "measured": 2780,
-      "note": "authoring baseline v15.10.0; 0 preloaded skills. Re-measured for the one-writer-derived-state change (v15.16.0 in progress): deleting set_task/set_subtasks/update_phase/checkpoint (Subtask 2) moved measured 2995 -> 2780 (delta -215; pre-deletion figure at git 36c39de). That pre-deletion 2995 already reflected unrelated growth since the frozen v15.10.0 baseline (2774) — the post-deletion 2780 happens to land close to that old baseline by coincidence, not by design. Budget tightened by the same -215 delta, 3052 -> 2837, preserving the existing ~1.9% margin rather than resetting to a fresh measured+10%."
+      "budget": 3483,
+      "measured": 3166,
+      "note": "authoring baseline v15.10.0; 0 preloaded skills. Re-measured for the one-writer-derived-state change (v15.16.0 in progress): deleting set_task/set_subtasks/update_phase/checkpoint (Subtask 2) moved measured 2995 -> 2780 (delta -215; pre-deletion figure at git 36c39de). That pre-deletion 2995 already reflected unrelated growth since the frozen v15.10.0 baseline (2774) — the post-deletion 2780 happens to land close to that old baseline by coincidence, not by design. Budget tightened by the same -215 delta, 3052 -> 2837, preserving the existing ~1.9% margin rather than resetting to a fresh measured+10%. Raised again 2837 -> 3483 (PR #116 bot-review fixes): reconciling the initialize/`## Session` contradiction (F1) added an explicit one-time-seed explanation (description, Mission, Operations pointer, and the initialize example) — measured moved to 3166, breaching 2837; restored to measured + ~10% per the raise rule."
     },
     "execute-manager": {
       "budget": 28550,

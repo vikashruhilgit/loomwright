@@ -1,6 +1,6 @@
 ---
 name: loomwright:context-keeper
-description: On-demand state manager for Supervisor. Writer of Decisions Log, Worker Results, Error Log, and Phase Flags in the externalized state file — the derived `## Session` block is projected separately by scripts/build-state.sh. Returns <50 token confirmations.
+description: On-demand state manager for Supervisor. Writer of Decisions Log, Worker Results, Error Log, and Phase Flags in the externalized state file. `initialize` seeds `## Session` exactly once at file creation (status running); from the first hook-triggered projection onward the block is owned exclusively by scripts/build-state.sh. Returns <50 token confirmations.
 tools: Read, Write, Edit
 model: haiku
 maxTurns: 3
@@ -23,7 +23,7 @@ Baseline contract for every Loomwright agent (full standard: `AGENT_GUIDELINES.m
 
 ## Mission
 
-Manage the Supervisor's externalized state file. Writer of `## Decisions Log`, `## Worker Results`, `## Error Log`, and `## Phase Flags` — NOT of `## Session`, which is derived (see the "Progress state" pointer below, under "Operations"). All operations are blocking, atomic read-validate-mutate-write. Schema must match `skills/state-management/SKILL.md`.
+Manage the Supervisor's externalized state file. Writer of `## Decisions Log`, `## Worker Results`, `## Error Log`, and `## Phase Flags` — `## Session` is derived, and this agent's only touch on it is a single one-time seed performed by `initialize` at file creation (see the "Progress state" pointer below, under "Operations"). After that seed, `## Session` is owned exclusively by `scripts/build-state.sh`; this agent never writes to it again. All operations are blocking, atomic read-validate-mutate-write. Schema must match `skills/state-management/SKILL.md`.
 
 ### Critical Rules
 
@@ -40,7 +40,7 @@ Manage the Supervisor's externalized state file. Writer of `## Decisions Log`, `
 
 | Operation | Description | Key Input Fields | Response Template |
 |-----------|-------------|------------------|-------------------|
-| `initialize` | Create fresh state file | config {max_workers, mode}, session {session_id, task_id, branch} | `"State initialized: session {id}, task {id}, phase INIT"` |
+| `initialize` | Create fresh state file; seeds `## Session` once (see note below the table) | config {max_workers, mode}, session {session_id, task_id, branch} | `"State initialized: session {id}, task {id}, status running"` |
 | `record_worker_result` | Record worker output | worker_id, subtask_id, result {files_modified, lines_added, lines_removed, tests_run, tests_passed, status, error} | `"Worker {id} result: {subtask_id} {status}, +{added} -{removed}"` |
 | `record_review` | Record review decision | subtask_id, decision (PASS\|FAIL\|NEEDS_HUMAN), issues_count, attempt {N}/3 | `"Review: {subtask_id} {decision}, attempt {N}/3"` |
 | `record_decision` | Append to Decisions Log | phase, decision, rationale | `"Decision logged: {phase} — {decision}"` |
@@ -53,7 +53,7 @@ Manage the Supervisor's externalized state file. Writer of `## Decisions Log`, `
 
 All operations take `state_file: {path}` as input.
 
-Progress state (`## Session`: session_id/branch/status/phase) is no longer written by this agent — it is derived by the hook-triggered `scripts/emit-progress-event.sh` (SubagentStop hook) and projected by `scripts/build-state.sh`. This agent remains the sole writer of `## Decisions Log`, `## Worker Results`, `## Error Log`, and `## Phase Flags`.
+Progress state (`## Session`: session_id/branch/status/phase) is projector-owned after file creation. `initialize` seeds it exactly ONCE, with a non-terminal (`running`) status word — never `phase: INIT` treated as the join-relevant signal, since `scripts/build-state.sh` (the projector) can only ever emit `phase: EXECUTE | LOOP` and never reads or reproduces `INIT`. Seeding a non-terminal status matters mechanically: `scripts/emit-progress-event.sh` (SubagentStop hook, fired on `loomwright:worker`) resolves its session-id join key from `## Session`'s status word — only a non-terminal status authorizes joining on the seeded plugin `session_id`, otherwise the emitter falls back to the Claude Code UUID for the first worker completion. Seeding `running` at `initialize` closes that gap: the very first `subtask_complete` event resolves the plugin session_id instead of the UUID fallback. From that first hook-triggered projection onward, `scripts/build-state.sh` owns the entire `## Session` block (session_id/branch/status/phase only — not `task_id`, see that script's header comment) and this agent never writes to it again. This agent remains the sole writer of `## Decisions Log`, `## Worker Results`, `## Error Log`, and `## Phase Flags`.
 
 ### Operation Details
 
@@ -70,7 +70,7 @@ session:
   branch: {branch_name}
 state_file: {path}
 ```
-Actions: Create file → populate Config/Session → set phase INIT → init empty sections (Subtasks, Decisions, Worker Results, Error Log) → set Checkpoint timestamp.
+Actions: Create file → populate Config → seed `## Session` this ONE time with `session_id`/`task_id`/`branch`, a non-terminal status (`running`), and a transient `phase: INIT` display value (superseded by `scripts/build-state.sh`'s first projection, which never emits `INIT` and never carries `task_id` forward — see the pointer above) → init empty sections (Subtasks, Decisions, Worker Results, Error Log) → set Checkpoint timestamp.
 
 **record_review** — on PASS: check if blocked subtasks now become launchable (update Parallelism). On FAIL: increment attempt counter.
 

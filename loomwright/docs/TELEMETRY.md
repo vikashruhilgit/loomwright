@@ -203,7 +203,9 @@ MUST NOT write this key today.
 
 **Hook coverage:** the emitter is chained on the **same** `type: command`
 hook lines that already run `send-telemetry.sh` (stdin fan-out — both scripts
-see the payload; hook entry count stays 22):
+see the payload; chaining onto an existing hook line adds no new hook
+entry — see CLAUDE.md §"Plugin Hooks (Quality Gates)" for the authoritative,
+current count):
 
 | Matcher | Emits `token_ledger`? |
 |---------|----------------------|
@@ -402,6 +404,28 @@ the terminal flip mechanical needs a completion-side hook that does not
 exist on the inline Single-Agent Path today; that is a separate design
 surface, not a gap in this change's scope.
 
+**Extension — the join key that matters for this residual.** `session_end`
+only over-reports `state.md`'s `- status:` line usefully if it is appended
+to the SAME log file `subtask_complete` events already landed in — the
+projector only reads one file per invocation (`build-state.sh <session_id>`).
+Both writers resolve `{session_id}` for `.supervisor/logs/{session_id}.jsonl`
+from the identical source: `## Session`'s seeded/derived `session_id`
+(seeded once by Context-Keeper's `initialize`, see `agents/context-keeper.md`
+§"Progress state"). Before that seed existed, the FIRST `subtask_complete`
+event of a fresh run would have found no `## Session` block yet and fallen
+back to the Claude Code SubagentStop UUID (`scripts/emit-progress-event.sh`'s
+documented fallback) — a DIFFERENT id than whatever plugin-generated
+`session_id` Supervisor separately carries forward to its own `session_end`
+append, splitting the two writers across two log files with no terminal
+evidence ever landing where `subtask_complete` events accumulated.
+`initialize`'s one-time seed (status `running`) closes this for the ordinary
+fresh-run case: the first `subtask_complete` event now resolves the same
+seeded plugin `session_id` Supervisor uses for `session_end`, so both writers
+target one file. The join is NOT independently guaranteed by anything that
+validates it at write time — it holds because both call sites are documented
+to read/reuse the same `## Session.session_id`, not because either script
+cross-checks the other.
+
 **3. Residual — the base-mismatch cleanup path is invisible to every
 automated read-side check.** When a subtask worktree's base branch no
 longer matches the expected merge base, the completion tail's
@@ -418,6 +442,37 @@ scope deviations — is the only durable record of what happened). An
 operator investigating a job that silently stopped progressing must check
 `.supervisor/jobs/failed/` and the Decisions Log directly; `state.md` and
 `reconcile-resume-state.sh` alone will not surface this path.
+
+**4. Residual — a `/supervisor --continue` resume straight into FINALIZE or
+Phase 4.5 leaves the until-mergeable review drain silently undispatched.**
+The correctness argument for deleting the Phase 1 ACQUIRE direct-write ("a
+worker `SubagentStop` fires before `gh pr create`") holds for a fresh run,
+where at least one `loomwright:worker` completes in-session before PR
+creation and derives `state.md` for that session. It does NOT hold for a
+resume that lands directly in FINALIZE or Phase 4.5 after every subtask
+already completed in a **prior** session: no `loomwright:worker` fires in
+the resumed session, so nothing re-derives `state.md` for it. If the
+carried-over `state.md` is absent, or its `- status:` word is one of the
+terminal set (`completed`/`completed_with_escalation`/`failed`), then
+`hook-dispatch-on-pr-create.sh`'s Source 1 does not authorize (its gate
+requires a present, non-terminal status word AND a matching branch — see
+that script's header) and control falls through to Source 2 (the
+`/autonomous` state.json fallback). Outside `/autonomous`, no state.json
+exists either, so authorization fails closed and the backstop silently does
+not dispatch the drain for that `gh pr create` call — Supervisor's own
+step-5.5 in-context dispatch remains the only path on this shape, and if it
+is skipped the drain never fires at all this run. **Consequence, precisely
+stated:** a silently-undispatched review drain, not data loss or a
+corrupted merge — the PR is still opened normally. **Fallbacks that still
+apply:** running under `/autonomous`, Source 2's state.json (when its
+`.current_branch`/`.current_status`/`.current_brief_path` conditions are
+met) still authorizes; and an operator can always run `/review-pr
+--until-mergeable <url>` inline to drain the same PR by hand. Do **not**
+close this residual by re-adding a `state.md` write to the resumed session's
+ACQUIRE/FINALIZE path — that reintroduces the exact prompt-instructed
+bookkeeping this change removes; the gap is in `hook-dispatch-on-pr-create.sh`'s
+authorization sources, not in the derivation mechanism, and is deliberately
+left open here as a known, accepted limitation of this change's scope.
 
 ### Script-location convention
 
