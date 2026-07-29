@@ -248,13 +248,51 @@ the shared prefix then extends a shared span instead of being decorative. (Cavea
 prefix is 512 tokens — a small tools block may not clear the floor alone; the shared prefix stacked
 behind it is what gets over.)
 
-### 4d. Split `self-heal-advisory` before routing anything
+### 4d. Split `self-heal-advisory` before routing anything — EVALUATED AND REJECTED (2026-07-29)
 
-110,714 bytes / 1,015 lines. Part 1 (advisory machinery) starts line 45; Part 2 (the loop protocol)
-starts line 508. Phase 4.5 needs **Part 2** and currently reads the whole file, per heal iteration.
-Split at 508. Route-before-split just pulls the same bulk through a different door.
+**Status: rejected on measurement, not deferred.** The proposal below is preserved as originally
+written; the correction follows it. Recorded here rather than deleted so the reasoning is auditable
+and item 07 does not inherit a dead precondition.
+
+> *As originally written:* "110,714 bytes / 1,015 lines. Part 1 (advisory machinery) starts line 45;
+> Part 2 (the loop protocol) starts line 508. Phase 4.5 needs **Part 2** and currently reads the
+> whole file, per heal iteration. Split at 508. Route-before-split just pulls the same bulk through
+> a different door."
+
+**Why it was rejected.** Every load-bearing clause of that premise is wrong or overstated. Measured
+2026-07-29 against `loomwright/skills/self-heal-advisory/SKILL.md` as it stands after 4b landed:
+
+| Claim | Measured reality |
+|---|---|
+| "Phase 4.5 needs **Part 2**" | **Part 2 invokes all ten Part 1 sections.** Its steps **1c / 1d / 1e** each read *"run the … step from **Part 1** of this skill"* verbatim, and it calls back again at §"System Twin advisory checks" (*"protocol in Part 1 of this skill"*, which pulls in §Post-review advisory checks and its three children), §"Contract builder", §"Advisory Twin delta line", and §"Hard-signal dual emission". The ten Part 1 sections are §Prior-churn advisory, §Area-knowledge advisory, §House-rules advisory, §Post-review advisory checks, §Contract-conformance check, §Benchmark run, §Ground-truth execution, §Contract builder (WRITE path), §Advisory Twin delta line, §Hard-signal dual emission. **There is no Part 1 material Phase 4.5 does not use.** |
+| "reads the whole file, **per heal iteration**" | The Read happens **once at phase entry**, not per iteration — `agents/supervisor.md` Phase 4.5 §"Protocol authority (read at phase entry)", corroborated by Part 2 step 1a and by `commands/supervisor.md` on the inline path. |
+| "110,714 bytes / 1,015 lines" | **112,455 bytes / 1,016 lines** (`wc -c` / `wc -l`, 2026-07-29). The figure had already drifted when written and drifts again on every edit — which is why the sizes here carry a measurement date. |
+| implied saving | Part 2 (from the `# Part 2 — Phase 4.5 SELF_HEAL Loop Protocol` heading to EOF) is **73,142 bytes / 509 lines — 65% of the file**. Part 1 proper is 36,645 bytes / 463 lines. So even a clean split defers a minority of **one** read. |
+
+Consequence: the sub-fix's own acceptance criterion — *"Phase 4.5 reads only Part 2 post-split
+(verified by the Read call sites)"* — is **not satisfiable** without also moving the Part 1
+procedures Part 2 calls, which is the split undone. 4d is dropped from the Fix 4 batch; 4a, 4b and
+4e landed without it.
+
+> **Citation convention for this section.** Part 1 / Part 2 material is cited by **section name, not
+> absolute line number**. `self-heal-advisory/SKILL.md` is a 1,000+-line file under active edit; the
+> original 4d text pinned "line 508" and "line 45" and both were already at risk, per the repo's own
+> *absolute line-ref drift in prose edits* lesson.
 
 ### 4e. Six hooks spend a model call to do schema validation
+
+**Status: LANDED in v15.17.0 (2026-07-29).** Five of the six mechanical prompt validators — `worker`,
+`execute-manager`, `supervisor-runner`, `qa-executor`, `plan-reviewer` — were converted to
+`type: command` scripts (a shared `result_block_parser.py` plus five per-schema validators, all
+exit-0-by-contract). The **`code-reviewer` prompt hook was deliberately retained** per the caveat at
+the end of this section: its cross-field + severity-cap logic is richer than presence-checking, and
+it is now the one remaining prompt validator on a `SubagentStop` matcher. Hook count unchanged (type
+conversions, not additions); the saving is **runtime model calls avoided**, not prompt-inventory
+bytes.
+
+> The measurement below is a **frozen as-measured snapshot** from the original spike and is
+> deliberately NOT restated to post-change values — it records what was true when the finding was
+> made.
 
 `hooks.json` holds **22 entries across 10 events. Eight are `type: prompt`** — each one a model call
 carrying the finishing agent's transcript, at a 30s timeout. Six of the eight assert nothing but the
@@ -313,8 +351,18 @@ calls the inline path already uses. Preloading guarantees payment; a routed read
 conditional on the phase actually being reached — and a run that ends at Phase 3 never pays for
 Phase 4.5's protocol at all.
 
-**Ordering:** strictly after **4d**. Routing an unsplit 110,714-byte skill changes when it is paid,
-not how much.
+**Ordering: no precondition — 4f is independent of 4d** (corrected 2026-07-29; this previously read
+*"strictly after 4d — routing an unsplit 110,714-byte skill changes when it is paid, not how much"*).
+That sentence modelled `self-heal-advisory` as a 4f routing target. **It is not one.**
+`agents/supervisor.md` frontmatter preloads exactly the seven skills the table above counts, and
+they are `workflow-management`, `async-orchestration`, `state-management`, `context-summarization`,
+`supervisor-readiness`, `commit`, `quality-checklist`. `self-heal-advisory` is **absent** from that
+list and is already read-on-demand at Phase 4.5 entry on **both** the agent and inline paths — as
+this section's own table shows, in the "Read on demand" column of both rows. There is nothing for 4f
+to route it *from*. 4f's actual double-pay is **`async-orchestration` at 9,078 proxy tokens**, the
+one skill that is both frontmatter-preloaded and Read at Phase 4 entry — and its size is unaffected
+by anything 4d proposed. **4d has since been evaluated and rejected** (§4d above), which strands
+nothing here: item 07 is unblocked.
 
 ### 4g. Brief staleness is never checked — only remote overlap is
 

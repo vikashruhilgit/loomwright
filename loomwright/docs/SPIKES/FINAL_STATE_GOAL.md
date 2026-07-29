@@ -69,18 +69,27 @@ that activates above a stated bound; default to the cheap path below it.
 |---|---|---|
 | 1 | **Fix 1** — decomposition threshold + true single-agent path (D3) | `EVAL_FINDINGS_AND_FIXES.md` Fix 1 |
 | 2 | **Fix 3** — one writer, derived state (D5) + `.supervisor/requirements/one-writer-derived-state.md` | Fix 3 |
-| 3 | **Fix 4a/4b/4d/4e** — cheap verified batch (leaf budgets, anti-overlap sentence, split self-heal-advisory at line ~508, prompt-hooks → scripts) | Fix 4 |
+| 3 | **Fix 4a/4b/4e** — cheap verified batch (leaf budgets, anti-overlap sentence, prompt-hooks → scripts). **4d (split self-heal-advisory) was evaluated and REJECTED 2026-07-29** — its premise was falsified on measurement; see `EVAL_FINDINGS_AND_FIXES.md` §4d | Fix 4 |
 | 4 | **Fix 7** — collapse to two lenses; drain → heal-only AFTER confirming its CI-healing role live via posted comments (D4) | Fix 7 |
 | 5 | **Arm-3 re-run** on tree-and-find, same base `5df1ded`, second row (D1, D11); also fix Launch Pad id non-determinism | Fix 2 remainder |
 | 6 | **Fix 5** — one arm-2 run on corpus entry 3 (~$60) to learn whether the corpus can measure quality layers at all | Fix 5 |
-| 7 | **Fix 4f/4g/4c** — route-not-preload (after 4d), staleness stamps (D8), unify tools lists (D7) | Fix 4 |
+| 7 | **Fix 4f/4g/4c** — route-not-preload (**no precondition**; the former "after 4d" dependency was void — see below), staleness stamps (D8), unify tools lists (D7) | Fix 4 |
 | 8 | **D6 worker context digest + lanes**, carried by the SDK runner | this file |
 | 9 | **D9 CLAUDE.md diet via /dreaming** (twin-remediation 04) + remaining automate queue 03/05/06 | twin-remediation folder |
 | 10 | **D2 standalone app** — planned only after 5 proves the runner end-to-end | this file |
 
 **Load-bearing orderings:** Fix 1 before Fix 2/7 (if most runs collapse to one agent, both the
-runner's fan-out path and review pass 1 shrink — decide with that knowledge, not before). 4d before
-4f (routing an unsplit 110k-byte skill changes when it's paid, not how much).
+runner's fan-out path and review pass 1 shrink — decide with that knowledge, not before).
+
+> **Correction (2026-07-29) — the "4d before 4f" ordering is REMOVED; it never existed.** This
+> previously read *"4d before 4f (routing an unsplit 110k-byte skill changes when it's paid, not how
+> much)"*, which treated `self-heal-advisory` as a step-7 routing target. It is not one:
+> `agents/supervisor.md` frontmatter preloads exactly seven skills and `self-heal-advisory` is not
+> among them — it is already read-on-demand at Phase 4.5 entry on both the agent and the inline
+> path. 4f's real double-pay is `async-orchestration` (9,078 proxy tokens), which 4d would not have
+> touched. 4d itself was separately evaluated and rejected on measurement. **Step 7 / item 07 is
+> therefore unblocked and always was.** This corrects an ordering *rationale* only — no D-decision
+> is renumbered or re-litigated. Detail: `EVAL_FINDINGS_AND_FIXES.md` §4d and §4f.
 
 ## Deliberately NOT doing (re-affirmed)
 
