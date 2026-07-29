@@ -17,7 +17,7 @@
 #      its emit instructions).
 #
 #      GUARD STRENGTH, stated honestly: after the strip, check (a)'s floor is
-#      "the field name appears somewhere in non-docstring, non-comment source".
+#      "the field name appears somewhere in non-prose source (no string statements, no comments)".
 #      That is NOT "the field is checked" — a name in a string constant or an
 #      orphaned reason constant still satisfies it. See the residual enumerated
 #      above hook_prompt().
@@ -171,9 +171,15 @@ def _is_str_const(node):
     # py3.8+ spells a string literal ast.Constant; py<=3.7 spells it ast.Str.
     # The name is compared instead of referencing ast.Str, which is deprecated
     # (and warns) on py3.12+.
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+    # bytes is included alongside str: a bare b"""...""" statement is not a
+    # documentation convention anyone uses, but it IS separable prose by the
+    # same structural argument as str -- a constant in ast.Expr position is
+    # evaluated and discarded, so it can never be a lookup key or an emit()
+    # reason. Accepting it keeps the "separable placements" enumeration
+    # exhaustive rather than nearly so.
+    if isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)):
         return True
-    return node.__class__.__name__ == "Str"
+    return node.__class__.__name__ in ("Str", "Bytes")
 
 def strip_string_statements(src, path):
     """Blank every string-literal expression STATEMENT, by node span.
