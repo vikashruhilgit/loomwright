@@ -22,7 +22,8 @@ tests_generated > 0)". That is the interpretation implemented here — not a
 guess. Note rule (4) is a PRESENCE check (including present-but-null being a
 distinct outcome from absent), not a range check on the value.
 
-INVARIANT: ALWAYS exits 0. Decision on stdout only.
+INVARIANT: ALWAYS exits 0. Decision on stdout only — including when the shared
+module below cannot be imported (see the guard).
 """
 
 import os
@@ -30,15 +31,37 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from result_block_parser import (  # noqa: E402
-    as_int,
-    as_text,
-    emit,
-    is_empty_scalar,
-    load_block,
-    present,
-    run_validator,
-)
+try:
+    from result_block_parser import (  # noqa: E402
+        as_int,
+        as_text,
+        emit,
+        is_empty_scalar,
+        load_block,
+        present,
+        run_validator,
+    )
+except BaseException as _import_exc:  # noqa: BLE001 — LAST LINE OF DEFENCE
+    # R3, IMPORT-TIME edition. run_validator() cannot guard its own import: an
+    # absent or syntactically broken result_block_parser.py exits 1 with a
+    # traceback and NOTHING on stdout, which `|| true` then MASKS — a silently
+    # dead validator. Fail SAFE, byte-identically to emit(True). Full rationale:
+    # validate-worker-result.py's copy of this guard.
+    import json as _json
+
+    try:
+        sys.stderr.write(
+            "validate-qa-result: result_block_parser unavailable, failing "
+            "safe (ok:true): %s: %s\n" % (type(_import_exc).__name__, _import_exc)
+        )
+    except BaseException:
+        pass
+    try:
+        sys.stdout.write(_json.dumps({"ok": True}) + "\n")
+        sys.stdout.flush()
+    except BaseException:
+        pass
+    os._exit(0)
 
 BLOCK = "QA_RESULT"
 

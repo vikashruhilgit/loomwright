@@ -20,7 +20,8 @@ strings VERBATIM; those exact strings are reproduced below.
   (5) v12 toolset_gap rule
   (6) v12 adjudication tri-field invariant (all-or-nothing, BIDIRECTIONAL)
 
-INVARIANT: ALWAYS exits 0. Decision on stdout only.
+INVARIANT: ALWAYS exits 0. Decision on stdout only — including when the shared
+module below cannot be imported (see the guard).
 """
 
 import os
@@ -29,16 +30,38 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from result_block_parser import (  # noqa: E402
-    as_bool,
-    as_int,
-    as_text,
-    emit,
-    is_empty_scalar,
-    load_block,
-    present,
-    run_validator,
-)
+try:
+    from result_block_parser import (  # noqa: E402
+        as_bool,
+        as_int,
+        as_text,
+        emit,
+        is_empty_scalar,
+        load_block,
+        present,
+        run_validator,
+    )
+except BaseException as _import_exc:  # noqa: BLE001 — LAST LINE OF DEFENCE
+    # R3, IMPORT-TIME edition. run_validator() cannot guard its own import: an
+    # absent or syntactically broken result_block_parser.py exits 1 with a
+    # traceback and NOTHING on stdout, which `|| true` then MASKS — a silently
+    # dead validator. Fail SAFE, byte-identically to emit(True). Full rationale:
+    # validate-worker-result.py's copy of this guard.
+    import json as _json
+
+    try:
+        sys.stderr.write(
+            "validate-execute-result: result_block_parser unavailable, failing "
+            "safe (ok:true): %s: %s\n" % (type(_import_exc).__name__, _import_exc)
+        )
+    except BaseException:
+        pass
+    try:
+        sys.stdout.write(_json.dumps({"ok": True}) + "\n")
+        sys.stdout.flush()
+    except BaseException:
+        pass
+    os._exit(0)
 
 RESULT_BLOCK = "EXECUTE_RESULT"
 CHECKPOINT_BLOCK = "EXECUTE_CHECKPOINT"
@@ -94,18 +117,61 @@ def _non_empty(items):
     return bool(items) and any(not is_empty_scalar(item) for item in items)
 
 
-def _check_worktree_paths(worktrees):
+def _project_root(payload):
+    """The project root that worktree paths must be siblings OF.
+
+    The hook payload's own `cwd` is AUTHORITATIVE; the hook process's
+    os.getcwd() is only the fallback. This module already treats the payload
+    cwd as authoritative in worker_summary_file_evidence, and rule 4 must agree
+    with it: keying on os.getcwd() alone meant that a hook invoked with its cwd
+    set to the project's PARENT — precisely where the `../{project}-{subtask_id}`
+    siblings live — classified every one of them as "inside the project root"
+    and rejected every healthy EXECUTE_RESULT.
+    """
+    if isinstance(payload, dict):
+        cwd = payload.get("cwd")
+        if isinstance(cwd, str) and cwd.strip():
+            return os.path.realpath(cwd.strip())
+    return os.path.realpath(os.getcwd())
+
+
+def _check_worktree_paths(worktrees, payload):
     """(4) all worktree paths reference valid sibling directories.
 
-    SHAPE check, deliberately not an on-disk existence check: the Execute
-    Manager removes worktrees during cleanup BEFORE emitting its result block,
-    so an existence check would fail every healthy run. What is verifiable
-    after cleanup is that each recorded path is a non-empty ABSOLUTE path that
-    is a SIBLING of the project — i.e. not the project root itself and not
+    SHAPE check, deliberately not an on-disk existence check. TWO reasons, both
+    verified — an earlier revision justified this with the claim that "the
+    Execute Manager removes worktrees during cleanup BEFORE emitting its result
+    block", which is FALSE: worktree removal is Supervisor Phase 4 FINALIZE
+    step 4 (`skills/async-orchestration/SKILL.md` §"Cleanup worktrees"), which
+    runs AFTER the Execute Manager has returned, and the Execute Manager's own
+    Output Format records `worktrees:` explicitly "for cleanup"
+    (`agents/execute-manager.md` §"Output Format"). The real reasons:
+
+      1. An existence probe is RACY against FINALIZE. This SubagentStop hook
+         fires when the Execute Manager finishes, i.e. BEFORE FINALIZE removes
+         the worktrees — but a checkpoint/resume run, a crash, or a re-emitted
+         block can land on either side of that removal. The same healthy run
+         would then pass or fail depending on timing.
+      2. The hook's cwd is not guaranteed to be the main checkout, so a
+         filesystem probe is not a reliable signal in the first place (the very
+         defect _project_root above exists to contain).
+
+    What IS reliably verifiable is the recorded SHAPE: a non-empty path that
+    resolves to a SIBLING of the project root — not the root itself and not
     nested inside it (the `../{project}-{subtask_id}` convention in
     docs/ARCHITECTURE_CONTRACTS.md).
+
+    ABSOLUTE-PATH DEMAND: DROPPED, deliberately. An earlier revision rejected
+    any non-absolute path, which the replaced prompt did not require — its rule
+    4 asks only for "valid sibling directories". Since the convention is
+    literally written as the RELATIVE `../{project}-{subtask_id}`, that added
+    demand was a silent strengthening (R4 warns against exactly this) with a
+    real false-fail cost. A relative path is now resolved against the project
+    root and then held to the same sibling test, so `../myapp-a` passes while
+    `relative/not/absolute` still fails — as a non-sibling, which is the rule
+    actually being enforced.
     """
-    root = os.path.realpath(os.getcwd())
+    root = _project_root(payload)
     for index, entry in enumerate(worktrees):
         if isinstance(entry, dict):
             path = as_text(entry.get("path")).strip()
@@ -114,23 +180,20 @@ def _check_worktree_paths(worktrees):
         if not path:
             return (
                 "worktrees[%d] has no path — every worktree entry must record the "
-                "absolute sibling directory it used (rule 4)" % index
+                "sibling directory it used (rule 4)" % index
             )
-        if not os.path.isabs(path):
-            return (
-                "worktrees[%d].path %r is not an absolute path; worktrees are "
-                "recorded as absolute sibling directories (rule 4)" % (index, path)
-            )
-        resolved = os.path.realpath(path)
+        resolved = os.path.realpath(
+            path if os.path.isabs(path) else os.path.join(root, path)
+        )
         if resolved == root or resolved.startswith(root + os.sep):
             return (
-                "worktrees[%d].path %r is inside the project root, not a sibling "
-                "directory (rule 4)" % (index, path)
+                "worktrees[%d].path %r resolves inside the project root (%s), not "
+                "to a sibling directory (rule 4)" % (index, path, root)
             )
     return None
 
 
-def _validate_result(fields):
+def _validate_result(fields, payload):
     missing = [f for f in RESULT_REQUIRED if not present(fields, f)]
     if missing:
         emit(
@@ -162,12 +225,12 @@ def _validate_result(fields):
                 "escalation (rule 2)",
             )
 
-    problem = _check_worktree_paths(worktrees)
+    problem = _check_worktree_paths(worktrees, payload)
     if problem:
         emit(False, problem)
 
 
-def _validate_checkpoint(fields):
+def _validate_checkpoint(fields, payload):
     missing = [f for f in CHECKPOINT_REQUIRED if not present(fields, f)]
     if missing:
         emit(
@@ -189,7 +252,7 @@ def _validate_checkpoint(fields):
     # (4) also applies to a checkpoint's recorded worktrees, when present.
     worktrees = _as_list(fields.get("worktrees"))
     if worktrees:
-        problem = _check_worktree_paths(worktrees)
+        problem = _check_worktree_paths(worktrees, payload)
         if problem:
             emit(False, problem)
 
@@ -224,7 +287,7 @@ def _validate_checkpoint(fields):
 
 
 def main():
-    name, fields, _text, _payload = load_block(BLOCKS, MISSING_BLOCK)
+    name, fields, _text, payload = load_block(BLOCKS, MISSING_BLOCK)
 
     # ── (1) schema_version present ───────────────────────────────────────────
     if not present(fields, "schema_version"):
@@ -237,9 +300,9 @@ def main():
         )
 
     if name == RESULT_BLOCK:
-        _validate_result(fields)
+        _validate_result(fields, payload)
     else:
-        _validate_checkpoint(fields)
+        _validate_checkpoint(fields, payload)
 
     emit(True)
 

@@ -75,9 +75,34 @@ trap cleanup EXIT INT TERM
 # SANDBOX is the cwd every validator runs in: an empty dir carrying a
 # .worker-summary.md so the worker validator's strongest (on-disk) rule-3 tier
 # is the one under test, not the transcript-evidence fallback.
+#
+# The file carries a REALISTIC WORKER_SUMMARY body naming its task. Rule 3's
+# tier 1 is task-scoped by content (the file name is task-agnostic by
+# contract), so an EMPTY file would no longer satisfy it — that is the point:
+# a stale `.worker-summary.md` must not vouch for a later, unrelated worker.
+# Two sandboxes because the committed fixtures and the synthesized blocks use
+# different task_ids.
+write_summary() {  # write_summary <dir> <task_id>
+  mkdir -p "$1"
+  cat > "$1/.worker-summary.md" <<EOF
+## WORKER_SUMMARY
+- subtask_id: $2
+- status: completed
+- files_modified: [a.py]
+- notes: harness fixture summary for $2
+EOF
+}
+
 SANDBOX="$TMPROOT/sandbox"
-mkdir -p "$SANDBOX"
-: > "$SANDBOX/.worker-summary.md"
+write_summary "$SANDBOX" "st1"
+
+# The committed worker fixtures use task_id add-jwt-guard.
+SANDBOX_JWT="$TMPROOT/sandbox-jwt"
+write_summary "$SANDBOX_JWT" "add-jwt-guard"
+
+# STALE carries someone ELSE's summary file — the finding-6a scenario.
+STALE="$TMPROOT/stale"
+write_summary "$STALE" "some-other-subtask"
 
 # BARE is a cwd with NO summary-file evidence at all (rule 3 negative case).
 BARE="$TMPROOT/bare"
@@ -124,6 +149,31 @@ run_v() {
 run_raw() {
   local validator="$1" stdinfile="$2" wd="${3:-$SANDBOX}"
   LAST_OUT="$( ( cd "$wd" && python3 "$validator" < "$stdinfile" ) 2>/dev/null)"
+  LAST_RC=$?
+}
+
+# text_payload_cwd <textfile> <cwd> — like text_payload, but carrying the
+# payload's own `cwd` field, which is what the validators treat as the
+# authoritative project root.
+text_payload_cwd() {
+  python3 -c 'import json,sys
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    text = fh.read()
+sys.stdout.write(json.dumps({
+    "session_id": "test-result-validators",
+    "hook_event_name": "SubagentStop",
+    "agent_type": "test",
+    "cwd": sys.argv[2],
+    "last_assistant_message": text,
+}))' "$1" "$2"
+}
+
+# run_v_cwd <validator> <textfile> <payload_cwd> <process_cwd> — the two cwds
+# are deliberately independent: the hook PROCESS can run anywhere, and the
+# payload states where the project actually is.
+run_v_cwd() {
+  local validator="$1" textfile="$2" pcwd="$3" wd="$4"
+  LAST_OUT="$(text_payload_cwd "$textfile" "$pcwd" | ( cd "$wd" && python3 "$validator" ) 2>/dev/null)"
   LAST_RC=$?
 }
 
@@ -395,6 +445,91 @@ check("as_bool accepts true/True/TRUE",
       and R.as_bool("TRUE")[0] is True)
 check("as_bool accepts the false spellings", R.as_bool("FALSE")[0] is False)
 check("as_bool rejects 'yes'", R.as_bool("yes")[0] is None)
+
+# --- FINDING 3: a blank line INSIDE a block must not truncate it -------------
+# Before the fix, strict blank-line termination produced MISLEADING verdicts:
+# a SUPERVISOR_RESULT with one internal blank line reported "missing the
+# heal_loop_ran field" when the field was present just past the break, and a
+# `## WORKER_RESULT` heading followed by the conventional markdown blank line
+# reported "missing block". Both emission shapes are asserted here.
+text = "\n".join([
+    "SUPERVISOR_RESULT:",
+    "  schema_version: 1",
+    "  status: completed",
+    "  pr_url: https://example.invalid/pull/1",
+    "",
+    "  heal_loop_ran: false",
+    "  summary: one internal blank line",
+])
+fields, errors = R.parse_block(R.find_last_block(text, "SUPERVISOR_RESULT"))
+check("yaml form: an internal blank line does not truncate the block",
+      errors == [] and R.present(fields, "heal_loop_ran")
+      and fields.get("summary") == "one internal blank line")
+
+blk = R.find_last_block(
+    "## WORKER_RESULT\n\n- schema_version: 2\n- task_id: st1\n"
+    "- summary: heading then the conventional markdown blank line\n",
+    "WORKER_RESULT")
+check("markdown form: heading + conventional blank line is still FOUND", blk is not None)
+fields, errors = R.parse_block(blk) if blk else ({}, ["block not found"])
+check("markdown form: heading + blank line parses every bullet",
+      errors == [] and fields.get("task_id") == "st1")
+
+# ...and the tolerance is BOUNDED: it must not over-read past the block.
+fields, errors = R.parse_block(R.find_last_block(
+    "SUPERVISOR_RESULT:\n  schema_version: 1\n  summary: done\n\n"
+    "  This indented paragraph is prose, not a body line.\n", "SUPERVISOR_RESULT"))
+check("yaml form: indented trailing PROSE after a blank line is NOT swallowed",
+      errors == [] and set(fields) == {"schema_version", "summary"})
+
+fields, errors = R.parse_block(R.find_last_block(
+    "## X_RESULT\n- a: 1\n\nNext steps:\n- run the tests\n", "X_RESULT"))
+check("markdown form: a following unrelated bullet list is NOT swallowed",
+      errors == [] and set(fields) == {"a"})
+
+fields, _ = R.parse_block(R.find_last_block(
+    "X_RESULT:\n  a: first\n\nX_RESULT:\n  a: second\n", "X_RESULT"))
+check("blank-line tolerance still respects LAST-block-wins on adjacent blocks",
+      fields.get("a") == "second")
+
+# --- FINDING 4: non-negations must not disarm the destructive tripwire -------
+# `check`, `scan`, `scanned`, `scanning`, `skip`, `skipped` and `blocked` are
+# not negations, and `\bno\b` matched inside `no-op`. Each line below was a
+# VERIFIED non-detection before the cue set was restricted.
+must_fire = [
+    ("rm -rf dist  # to check the build", "rm -rf"),
+    ("rm -rf dist to scan for leftovers", "rm -rf"),
+    ("$ git push origin feature/x  (skipped review)", "git push"),
+    ("git reset --hard HEAD~1 in the no-op branch", "git reset --hard"),
+    ("rm -rf build/  # blocked nothing", "rm -rf"),
+    ("git push --force  # scanned the diff first", "git push"),
+    ("DROP TABLE audit;  -- check with the DBA", "DROP"),
+]
+for line, label in must_fire:
+    check("destructive scan FIRES despite a non-negation cue: %r" % line,
+          R.find_destructive_command(line) == label)
+
+# The cue must PRECEDE the match: this pair proves the filter is live AND that
+# it is direction-scoped (the third line was suppressed before the fix).
+check("destructive scan: a PRECEDING negation still suppresses",
+      R.find_destructive_command("echo no; rm -rf dist") is None)
+check("destructive scan: the same line without a cue fires",
+      R.find_destructive_command("echo yes; rm -rf dist") == "rm -rf")
+check("destructive scan: a cue that only FOLLOWS the match does not disarm it",
+      R.find_destructive_command("echo yes; rm -rf dist  # not a drill") == "rm -rf")
+check("destructive scan: 'no-op' does not read as the negation 'no'",
+      R.find_destructive_command("echo x; rm -rf no-op/") == "rm -rf")
+
+# --- FINDING 6c: bracketed plain scalars fail EXPLICITLY, with a fix named ---
+_, errs = R.parse_block("X_RESULT:\n  summary: [WIP] refactored the guard")
+check("bracketed plain scalar is an explicit failure naming the quoting fix",
+      errs != [] and "quote it" in errs[0])
+fields, errs = R.parse_block('X_RESULT:\n  summary: "[WIP] refactored the guard"')
+check("quoting the bracketed prefix parses cleanly (the documented workaround)",
+      errs == [] and fields.get("summary") == "[WIP] refactored the guard")
+_, errs = R.parse_block("X_RESULT:\n  files_modified: [a.py, b.py")
+check("a genuinely truncated flow array is STILL an error, not a fallback string",
+      errs != [])
 PYEOF
 
 PARSER_RESULTS="$(python3 "$PARSER_TESTS" "$SCRIPT_DIR" 2>&1)"
@@ -409,10 +544,10 @@ done <<< "$PARSER_RESULTS"
 # ── B. worker validator ──────────────────────────────────────────────────────
 echo "== B. validate-worker-result.py — 8 rules =="
 
-run_v "$V_WORKER" "$FIXDIR/worker-valid-bullet.md"
+run_v "$V_WORKER" "$FIXDIR/worker-valid-bullet.md" "$SANDBOX_JWT"
 assert_pass "worker: valid markdown-bullet block (committed fixture)"
 
-run_v "$V_WORKER" "$FIXDIR/worker-valid-yaml.md"
+run_v "$V_WORKER" "$FIXDIR/worker-valid-yaml.md" "$SANDBOX_JWT"
 assert_pass "worker: valid YAML-form block, status partial with a non-empty outputs_gap"
 
 mk worker-no-block.md <<'EOF'
@@ -644,6 +779,102 @@ EOF
 run_v "$V_WORKER" "$F"
 assert_pass "worker: non-empty outputs_gap with status partial is the VALID shape [rule 8]"
 
+# --- FINDING 2: present-but-null on the v12 contract fails OPEN -------------
+# `outputs_verified: null` was coerced to [], so rule 7's entry-shape checks
+# never ran; `outputs_gap: null` satisfied "(string)" and short-circuited rule
+# 8's cross-field invariant via an empty as_text(). A wrong-typed SCALAR was
+# already rejected, so null was the single non-conforming value slipping
+# through. Both spellings must now be rejected, and with a reason that reads
+# DIFFERENTLY from the absent-field case (the nullable-vs-absent lesson).
+mk worker-null-verified.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- outputs_verified: null
+- outputs_gap: ""
+- summary: outputs_verified is EXPLICITLY null, not absent
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: EXPLICIT-NULL outputs_verified [rule 6, nullable-vs-absent]" \
+  "outputs_verified is present but null"
+
+mk worker-null-gap.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- outputs_verified: []
+- outputs_gap: null
+- summary: outputs_gap is EXPLICITLY null, which used to satisfy "(string)"
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: EXPLICIT-NULL outputs_gap [rule 6, nullable-vs-absent]" \
+  "outputs_gap is present but null"
+
+# The null spelling must not be able to smuggle a bad entry past rule 7 either.
+mk worker-null-verified-bad-entry.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- outputs_verified:
+- outputs_gap: ""
+- summary: empty-after-colon is one of the five null spellings
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: empty-after-colon outputs_verified is null too [rule 6]" \
+  "outputs_verified is present but null"
+
+# --- FINDING 6a: a STALE .worker-summary.md must not vouch for a later worker
+# Rule 3 tier 1 keys on a file whose NAME is task-agnostic by contract, so one
+# stale file at the cwd used to satisfy rule 3 for every subsequent worker,
+# whatever its task_id. (The committed fixtures never mention
+# `.worker-summary.md` in prose, so tier 5 cannot rescue this case.)
+run_v "$V_WORKER" "$FIXDIR/worker-valid-bullet.md" "$STALE"
+assert_fail "worker: a .worker-summary.md naming ANOTHER task does not satisfy rule 3" \
+  "(rule 3)"
+
+run_v "$V_WORKER" "$FIXDIR/worker-valid-bullet.md" "$SANDBOX_JWT"
+assert_pass "worker: a .worker-summary.md naming THIS task does satisfy rule 3"
+
+# --- FINDING 6b: status=partial is a RECORDED exemption from rule 4 ----------
+# agents/worker.md's own worked `partial` example carries a non-empty error
+# alongside a non-empty outputs_gap, so an outstanding error is the POINT of
+# that status. Extending rule 4 to cover it would false-fail the documented
+# shape; the exemption is asserted here so it stays deliberate.
+mk worker-partial-error.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: partial
+- files_modified: [a.py]
+- outputs_verified: [{kind: symbol, path: a.py, name: Foo, status: missing}]
+- outputs_gap: "a.py:Foo"
+- error: Tests fail — the rotation test expects a cookie the HttpOnly flag hides
+- summary: partial legitimately carries an outstanding error
+EOF
+run_v "$V_WORKER" "$F"
+assert_pass "worker: status=partial with a non-empty error is EXEMPT from rule 4"
+
+# --- FINDING 3 (validator level): the conventional markdown blank line -------
+mk worker-blank-after-heading.md <<'EOF'
+## WORKER_RESULT
+
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- outputs_verified: []
+- outputs_gap: ""
+- summary: a blank line after the heading is conventional markdown
+EOF
+run_v "$V_WORKER" "$F"
+assert_pass "worker: heading + conventional blank line is not reported as a MISSING block"
+
 # ── C. execute-manager validator ─────────────────────────────────────────────
 echo "== C. validate-execute-result.py — 6 rules =="
 
@@ -773,7 +1004,7 @@ EXECUTE_RESULT:
   summary: worktree path is relative
 EOF
 run_v "$V_EXECUTE" "$F"
-assert_fail "execute: worktree path is not an absolute sibling directory [rule 4]" "(rule 4)"
+assert_fail "execute: a relative path resolving INSIDE the project is not a sibling [rule 4]" "(rule 4)"
 
 mk execute-no-worktree-path.md <<'EOF'
 EXECUTE_RESULT:
@@ -896,6 +1127,85 @@ EXECUTE_CHECKPOINT:
 EOF
 run_v "$V_EXECUTE" "$F"
 assert_pass "execute: all three adjudication fields absent is the other legal shape [rule 6]"
+
+# --- FINDING 5: rule 4 must key on the PAYLOAD's cwd, not the hook's ---------
+# Keying on os.getcwd() meant a hook invoked with its cwd set to the project's
+# PARENT — exactly where the `../{project}-{subtask_id}` siblings live —
+# classified every sibling as "inside the project root" and rejected every
+# healthy EXECUTE_RESULT. The payload's own `cwd` is authoritative, matching
+# what worker_summary_file_evidence already does.
+WT_PARENT="$TMPROOT/wt"
+WT_PROJ="$WT_PARENT/myapp"
+mkdir -p "$WT_PROJ" "$WT_PARENT/myapp-a"
+
+mk execute-sibling-abs.md <<EOF
+EXECUTE_RESULT:
+  schema_version: 1
+  subtasks_completed:
+    - task_id: a
+      status: completed
+      branch: feature/a
+  merge_order: [feature/a]
+  worktrees:
+    - task_id: a
+      path: $WT_PARENT/myapp-a
+      branch: feature/a
+      status: completed
+  summary: "1/1 subtasks completed."
+EOF
+EXE_SIBLING="$F"
+
+run_v_cwd "$V_EXECUTE" "$EXE_SIBLING" "$WT_PROJ" "$WT_PARENT"
+assert_pass "execute: payload cwd is authoritative — hook running from the project's PARENT [rule 4]"
+
+run_v_cwd "$V_EXECUTE" "$EXE_SIBLING" "$WT_PROJ" "$WT_PROJ"
+assert_pass "execute: same block also passes with the hook inside the project [rule 4]"
+
+run_v "$V_EXECUTE" "$EXE_SIBLING" "$WT_PROJ"
+assert_pass "execute: os.getcwd() is still the fallback when the payload carries no cwd [rule 4]"
+
+# The sibling rule itself is unchanged — a nested path still fails, and it
+# fails from the parent too (i.e. the fix did not simply disable the check).
+mk execute-nested.md <<EOF
+EXECUTE_RESULT:
+  schema_version: 1
+  subtasks_completed:
+    - task_id: a
+      status: completed
+      branch: feature/a
+  merge_order: [feature/a]
+  worktrees:
+    - task_id: a
+      path: $WT_PROJ/nested/worktree-a
+      branch: feature/a
+      status: completed
+  summary: "worktree nested inside the project root"
+EOF
+run_v_cwd "$V_EXECUTE" "$F" "$WT_PROJ" "$WT_PARENT"
+assert_fail "execute: a path nested INSIDE the project root still fails from the parent [rule 4]" \
+  "(rule 4)"
+
+# The added ABSOLUTE-path demand was DROPPED (the replaced prompt never asked
+# for it, and the convention is written as the relative `../{project}-{sub}`).
+# A relative path now resolves against the project root and faces the same
+# sibling test.
+mk execute-relative.md <<'EOF'
+EXECUTE_RESULT:
+  schema_version: 1
+  subtasks_completed:
+    - task_id: a
+      status: completed
+      branch: feature/a
+  merge_order: [feature/a]
+  worktrees:
+    - task_id: a
+      path: ../myapp-a
+      branch: feature/a
+      status: completed
+  summary: "the documented relative ../{project}-{subtask_id} form"
+EOF
+run_v_cwd "$V_EXECUTE" "$F" "$WT_PROJ" "$WT_PARENT"
+assert_pass "execute: relative ../{project}-{subtask} path accepted (absolute demand dropped) [rule 4]"
 
 # ── D. supervisor-runner validator ───────────────────────────────────────────
 echo "== D. validate-supervisor-result.py — 13 rules =="
@@ -1254,6 +1564,28 @@ EOF
 run_v "$V_SUPERVISOR" "$F"
 assert_pass "supervisor: ABSENT rubric_score accepted (rule 13 forbids rejecting on absence)"
 
+# --- FINDING 3 (validator level): an internal blank line must not truncate ---
+# SUPERVISOR_RESULT carries ~20 fields including nested blocks, so this is the
+# most reachable case. Before the fix this reported "missing the heal_loop_ran
+# field" — a fail-closed but actively misleading reason, since the field is
+# present just past the break.
+mk sup-internal-blank.md <<'EOF'
+SUPERVISOR_RESULT:
+  schema_version: 1
+  task_id: t
+  status: completed
+  pr_url: https://github.com/o/r/pull/9
+
+  heal_loop_ran: false
+  heal_iterations: null
+  heal_decision: null
+  heal_fixable_issues_fixed: 0
+  heal_remaining_issues: 0
+  summary: one internal blank line, every field present
+EOF
+run_v "$V_SUPERVISOR" "$F"
+assert_pass "supervisor: an internal blank line does not truncate the block into a false missing-field"
+
 # ── E. qa-executor validator ─────────────────────────────────────────────────
 echo "== E. validate-qa-result.py — 5 rules =="
 
@@ -1594,9 +1926,51 @@ LAST_RC=$?
 assert_fail "worker: full real-field-set payload with no result block" "missing WORKER_RESULT block"
 
 echo "== I. --raw mode (stdin IS the agent text, no JSON envelope) =="
-LAST_OUT="$( ( cd "$SANDBOX" && python3 "$V_WORKER" --raw ) < "$FIXDIR/worker-valid-bullet.md" 2>/dev/null)"
+LAST_OUT="$( ( cd "$SANDBOX_JWT" && python3 "$V_WORKER" --raw ) < "$FIXDIR/worker-valid-bullet.md" 2>/dev/null)"
 LAST_RC=$?
 assert_pass "worker: --raw mode accepts the bare agent text"
+
+echo "== J. import-time fail-safe — shared module ABSENT or CORRUPT (R3) =="
+# run_validator() guarantees exit 0 for anything raised INSIDE main(), but it
+# cannot guard its own import. With result_block_parser.py absent or
+# syntactically broken, the validator used to exit 1 with a traceback and put
+# NOTHING on stdout; the `type: command` + `|| true` wiring MASKS that, so the
+# hook silently validated nothing — the security regression CLAUDE.md
+# §Failure-Mode Invariants names. This edge belongs to the shared-module
+# design: the template these are modelled on (validate-launch-pad-result.py)
+# is self-contained and has no import to fail.
+#
+# The probe input is DISCRIMINATING on purpose: it carries no result block, so
+# a WORKING validator answers ok:FALSE. ok:true therefore proves the fail-safe
+# path was taken, and the assertion cannot pass vacuously.
+mk import-guard-probe.md <<'EOF'
+There is no result block anywhere in this text, so a WORKING validator answers ok:false.
+EOF
+GUARD_PROBE="$F"
+
+NOMOD="$TMPROOT/nomod"
+BADMOD="$TMPROOT/badmod"
+mkdir -p "$NOMOD" "$BADMOD"
+# A module that exists but does not compile (SyntaxError at import time).
+printf 'def broken(:\n' > "$BADMOD/result_block_parser.py"
+
+for v in $V_WORKER $V_EXECUTE $V_SUPERVISOR $V_QA $V_PLAN; do
+  base="$(basename "$v")"
+  cp "$v" "$NOMOD/$base"
+  cp "$v" "$BADMOD/$base"
+
+  # Control: the same probe against the REAL validator must answer ok:false,
+  # proving the input discriminates and the two assertions below are not
+  # vacuously green.
+  run_v "$v" "$GUARD_PROBE"
+  assert_fail "$base: control — the probe is rejected when the module IS importable"
+
+  run_v "$NOMOD/$base" "$GUARD_PROBE"
+  assert_pass "$base: result_block_parser ABSENT -> exit 0 + ok:true (never a masked traceback)"
+
+  run_v "$BADMOD/$base" "$GUARD_PROBE"
+  assert_pass "$base: result_block_parser CORRUPT -> exit 0 + ok:true (never a masked traceback)"
+done
 
 echo ""
 echo "RESULT  pass=$PASS_COUNT  fail=$FAIL_COUNT"

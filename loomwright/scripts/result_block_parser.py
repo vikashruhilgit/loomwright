@@ -22,6 +22,7 @@ Behaviour-compatible with, and lifted from, `validate-launch-pad-result.py`:
                        plan-reviewer, qa-executor)
        (b) Markdown    `## WORKER_RESULT` + `- key: value` bullets
            bullet form (agents/worker.md's Output Format)
+     A blank line INSIDE a block does not truncate it (see find_last_block).
 
   3. NESTED-YAML-SUBSET PARSE (`parse_block`)
      Returns (fields, errors). Supported subset:
@@ -263,6 +264,33 @@ def _space_indent(line):
     return len(line) - len(line.lstrip(" "))
 
 
+def _is_bullet(line):
+    """True when `line` is a markdown `- ` list item (or a bare `-`)."""
+    stripped = line.lstrip(" \t")
+    return stripped.startswith("- ") or stripped == "-"
+
+
+def _looks_like_yaml_body(line):
+    """True when `line` could belong to a YAML-form result-block body.
+
+    Used ONLY to decide whether a blank line INSIDE a block terminates it.
+    Deliberately narrow — a `key:` entry or a `- ` sequence item. Indented
+    PROSE (a continued paragraph, a fenced snippet, a table row) is not a body
+    line, so blank-line tolerance cannot swallow trailing narrative and turn a
+    valid block into a parse failure.
+    """
+    if _is_bullet(line):
+        return True
+    return bool(_KEY_RE.match(line.lstrip(" \t")))
+
+
+def _next_content_index(lines, j):
+    """Index of the next non-blank line at or after `j`, or None if there is none."""
+    while j < len(lines) and lines[j].strip() == "":
+        j += 1
+    return j if j < len(lines) else None
+
+
 def find_last_block(text, name):
     """Return the LAST `name` block in `text` (header line + body), or None.
 
@@ -278,9 +306,20 @@ def find_last_block(text, name):
     emission wins"): agents legitimately restate example blocks while
     summarising what they emitted.
 
-    Termination is deliberately STRICT (same posture as
-    validate-launch-pad-result.py): a blank line, a dedent to the header's own
-    level, or any line that does not belong to the body ends the block.
+    BLANK LINES INSIDE A BLOCK DO NOT TRUNCATE IT. An earlier revision ended
+    the block at the first blank line, which produced actively MISLEADING
+    verdicts rather than unsafe ones: a SUPERVISOR_RESULT (~20 fields, nested
+    blocks) with one internal blank line reported "missing the heal_loop_ran
+    field" when the field was present just past the break, and the entirely
+    conventional `## WORKER_RESULT` + blank line + bullets shape reported
+    "missing block". Both fail closed, but the reason defeats diagnosis.
+
+    Tolerance is bounded so it cannot over-read: a blank line only continues
+    the block when the NEXT non-blank line is still (a) indented deeper than
+    the header, for the YAML form — or a bullet at/inside the block's own
+    bullet indent, for the markdown form — AND (b) shaped like a body line
+    (`key:` or `- item`). Trailing prose, a dedented sibling block, and a
+    following unrelated heading all still terminate the block.
     """
     if not isinstance(text, str) or not text:
         return None
@@ -301,7 +340,16 @@ def find_last_block(text, name):
             while j < len(lines):
                 nxt = lines[j]
                 if nxt.strip() == "":
-                    break
+                    k = _next_content_index(lines, j)
+                    if (
+                        k is None
+                        or _indent_of(lines[k]) <= base
+                        or not _looks_like_yaml_body(lines[k])
+                    ):
+                        break
+                    block.extend(lines[j:k])
+                    j = k
+                    continue
                 if _indent_of(nxt) > base:
                     block.append(nxt)
                     j += 1
@@ -318,7 +366,17 @@ def find_last_block(text, name):
             while j < len(lines):
                 nxt = lines[j]
                 if nxt.strip() == "":
-                    break
+                    k = _next_content_index(lines, j)
+                    if k is None or not _is_bullet(lines[k]):
+                        break
+                    if (
+                        first_bullet_indent is not None
+                        and _indent_of(lines[k]) < first_bullet_indent
+                    ):
+                        break
+                    block.extend(lines[j:k])
+                    j = k
+                    continue
                 ind = _indent_of(nxt)
                 stripped = nxt.lstrip(" \t")
                 if stripped.startswith("- ") or stripped == "-":
@@ -533,6 +591,18 @@ def parse_value(raw):
     Dispatches to the flow parser for `[`/`{` leaders, otherwise to
     parse_scalar. Junk trailing a closed flow collection is an EXPLICIT
     failure — never a silent coercion to a string.
+
+    DOCUMENTED CONSTRAINT (deliberate, not an oversight): a leading `[` or `{`
+    ALWAYS selects the flow parser, so a plain scalar that merely STARTS with a
+    bracket — `summary: [WIP] refactored the guard` — is a parse failure, not
+    the string it looks like. That is real YAML semantics, and the alternative
+    (fall back to parse_scalar whenever the flow parse fails) would silently
+    reinterpret `files_modified: [a.py, b.py` — a genuinely truncated array —
+    as the STRING "[a.py, b.py", which is exactly the silent coercion this
+    module exists to prevent. The constraint is kept and the reason string is
+    made actionable instead: it names the quoting fix. Emitters that need a
+    bracketed prefix in free text must quote the value
+    (`summary: "[WIP] refactored the guard"`), which parses fine.
     """
     s = raw.strip()
     if not s:
@@ -540,10 +610,18 @@ def parse_value(raw):
     if s[0] in "[{":
         val, idx, err = _flow_value(s, 0)
         if err:
-            return None, err
+            return None, "%s (a value starting with %r is parsed as a flow %s; if it is plain text, quote it)" % (
+                err,
+                s[0],
+                "sequence" if s[0] == "[" else "mapping",
+            )
         tail = s[idx:].strip()
         if tail and not tail.startswith("#"):
-            return None, "trailing content after flow collection: %r" % tail
+            return None, (
+                "trailing content after flow collection: %r (a value starting "
+                "with %r is parsed as a flow collection; if it is plain text, "
+                "quote it)" % (tail, s[0])
+            )
         return val, None
     return parse_scalar(s)
 
@@ -909,10 +987,10 @@ DESTRUCTIVE_COMMANDS = ("rm -rf", "git push", "git reset --hard", "DROP", "TRUNC
 
 # Command position: start of line, or after a shell separator. Matching bare
 # substrings would fire on the many prose mentions ("no git push", "never
-# rm -rf"), so the patterns are anchored to command position and lines
-# carrying a negation cue are skipped — the same negation-filter convention
-# CLAUDE.md already uses for the `gh pr merge --squash` invariant check
-# (`grep -viE "no |never |not "`).
+# rm -rf"), so the patterns are anchored to command position and a match
+# PRECEDED on its line by a negation cue is skipped — the same negation-filter
+# convention CLAUDE.md already uses for the `gh pr merge --squash` invariant
+# check (`grep -viE "no |never |not "`).
 _CMD_START = r"(?:^|(?<=&&)|(?<=\|\|)|(?<=;)|(?<=`)|(?<=\$\())[ \t]*(?:[$>][ \t]+)?"
 
 _DESTRUCTIVE_PATTERNS = (
@@ -924,10 +1002,23 @@ _DESTRUCTIVE_PATTERNS = (
     ("TRUNCATE", re.compile(r"\bTRUNCATE[ \t]+(?:TABLE[ \t]|[A-Za-z_])")),
 )
 
+# ACTUAL NEGATIONS ONLY. An earlier revision also listed `check`, `scan`,
+# `scanned`, `scanning`, `skip`, `skipped` and `blocked` — none of which negate
+# anything — and matched `no` with a plain `\b`, which fires INSIDE `no-op`.
+# Measured consequence: `rm -rf dist  # to check the build`,
+# `rm -rf dist to scan for leftovers`, `$ git push origin feature/x  (skipped
+# review)` and `git reset --hard HEAD~1 in the no-op branch` all evaded the
+# tripwire. "check" and "scan" are high-frequency words in worker output, so
+# ordinary prose disarmed rule 5. The cue set is now the closed list of real
+# negations; `not` subsumes the multi-word forms ("must not", "do not",
+# "did not"), and the contractions are listed because they do not contain a
+# free-standing `not`.
+#
+# The `(?<![\w-])` / `(?![\w-])` guards (rather than `\b`) keep `no` from
+# matching inside hyphenated compounds such as `no-op` and `no-ff`.
 _NEGATION_RE = re.compile(
-    r"(?i)\b(?:no|not|non|never|without|avoid|avoided|avoids|forbid\w*|prohibit\w*|"
-    r"disallow\w*|refus\w*|skip|skipped|blocked|must[ \t]not|cannot|can't|don't|"
-    r"do[ \t]not|did[ \t]not|didn't|check|scan|scanned|scanning)\b"
+    r"(?i)(?<![\w-])(?:no|not|never|without|avoid\w*|forbid\w*|prohibit\w*|"
+    r"disallow\w*|cannot|can't|don't|doesn't|didn't|won't)(?![\w-])"
 )
 
 
@@ -935,29 +1026,57 @@ def find_destructive_command(text):
     """Return the destructive command found in `text` as an executed command, else None.
 
     HONEST LIMITS: this is a heuristic, exactly as the haiku prompt it replaces
-    was a judgement call. It anchors to command position and skips lines
-    carrying a negation cue, so the plugin's own prose ("no destructive
-    commands (rm -rf, git push, ...)") does not false-positive. It can still be
-    evaded by an unusual invocation form; it is a tripwire, not a sandbox.
+    was a judgement call. It anchors to command position and skips a match that
+    is PRECEDED on its own line by a negation cue, so the plugin's own prose
+    ("no destructive commands (rm -rf, git push, ...)") does not false-positive.
+    It can still be evaded by an unusual invocation form; it is a tripwire, not
+    a sandbox.
+
+    The cue must PRECEDE the match. A cue that only follows it does not negate
+    it — `git reset --hard HEAD~1 in the no-op branch` describes a command that
+    was RUN, and a trailing parenthetical must not be able to disarm the rule.
     """
     if not text:
         return None
     for label, pattern in _DESTRUCTIVE_PATTERNS:
         for match in pattern.finditer(text):
             line_start = text.rfind("\n", 0, match.start()) + 1
-            line_end = text.find("\n", match.end())
-            line = text[line_start:line_end if line_end != -1 else len(text)]
-            if _NEGATION_RE.search(line):
+            # Only the part of the line BEFORE the match can negate it.
+            if _NEGATION_RE.search(text[line_start:match.start()]):
                 continue
             return label
     return None
+
+
+def _summary_file_matches_task(path, task_id):
+    """True when `.worker-summary.md` at `path` is THIS worker's summary.
+
+    The file name is task-agnostic by contract (`.worker-summary.md`, always
+    that name), so its mere existence is weak evidence: one stale file left at
+    the cwd would otherwise satisfy rule 3 for every LATER worker, whatever its
+    task_id. The documented WORKER_SUMMARY format opens with
+    `- subtask_id: {subtask_id}`, so when a task_id is known we require it to
+    appear in the file.
+
+    Fail-OPEN on an unreadable file (returns True): rule 3 asks whether a
+    summary was WRITTEN, and an existing-but-unreadable file is still evidence
+    that it was. Only a readable file that names a DIFFERENT task is rejected.
+    """
+    if not task_id:
+        return True
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            return task_id in fh.read()
+    except OSError:
+        return True
 
 
 def worker_summary_file_evidence(task_id, text, payload):
     """True when there is evidence a worker summary file was written.
 
     Checked in order (strongest first):
-      1. `{cwd}/.worker-summary.md`                       (inline / worktree cwd)
+      1. `{cwd}/.worker-summary.md`, NAMING this task_id      (inline / worktree
+         cwd — see _summary_file_matches_task for why the content check)
       2. `{cwd}/.supervisor/worker-summaries/{task_id}.md` (inline mode)
       3. `../*{task_id}/.worker-summary.md`                (sibling worktree, per
          the ARCHITECTURE_CONTRACTS worktree naming convention)
@@ -965,12 +1084,20 @@ def worker_summary_file_evidence(task_id, text, payload):
          documented best-effort degradation)
       5. the output naming the summary file it wrote
 
-    Tier 5 exists for PARITY, not laxity: the prompt hook this replaces was a
-    model call with only the transcript — it had NO filesystem access at all,
-    so text evidence was its ONLY evidence. Tiers 1-3 are a strict improvement
-    over that; dropping tier 5 would make the check stricter than the thing it
-    replaces and would false-fail every worktree whose directory name does not
-    embed the task_id.
+    DISCLOSED LAXITY (both tiers are deliberate, neither is an oversight):
+
+      * Tier 1 is task-scoped only as far as the file's CONTENT allows. A stale
+        `.worker-summary.md` that happens to contain this task_id, or one that
+        cannot be read, still satisfies it. Tightening further (mtime, exact
+        line match) trades a rare false-accept for a false-REJECT of healthy
+        runs, which is the worse error for a non-blocking advisory hook.
+      * Tier 5 exists for PARITY, not laxity: the prompt hook this replaces was
+        a model call with only the transcript — it had NO filesystem access at
+        all, so text evidence was its ONLY evidence. Tiers 1-3 are a strict
+        improvement over that; dropping tier 5 would make the check stricter
+        than the thing it replaces and would false-fail every worktree whose
+        directory name does not embed the task_id. It is also task-agnostic:
+        any output mentioning `.worker-summary.md` satisfies it.
     """
     roots = [os.getcwd()]
     if isinstance(payload, dict):
@@ -980,7 +1107,10 @@ def worker_summary_file_evidence(task_id, text, payload):
 
     for root in roots:
         try:
-            if os.path.exists(os.path.join(root, ".worker-summary.md")):
+            candidate = os.path.join(root, ".worker-summary.md")
+            if os.path.exists(candidate) and _summary_file_matches_task(
+                candidate, task_id
+            ):
                 return True
             if task_id and os.path.exists(
                 os.path.join(root, ".supervisor", "worker-summaries", task_id + ".md")
