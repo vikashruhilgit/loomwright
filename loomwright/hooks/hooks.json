@@ -151,6 +151,10 @@
           {
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/hook-dispatch-on-pr-create.sh\" || true"
+          },
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/reproject-state-on-terminal.sh\" || true"
           }
         ]
       }

@@ -57,6 +57,32 @@
 #       fields it actually documents (extra real-world fields are ignored,
 #       not merely present-but-unused)
 #
+# --- PR #116 review round (Findings 1-4) ---
+#   24. build-state.sh: multi-task ordering — session_end followed by a
+#       LATER subtask_complete reads as running/EXECUTE, not completed
+#       (Finding 1, second half)
+#   25. build-state.sh: unrecognized ## Session keys (task_id,
+#       self_heal_resume_count) survive projection verbatim, stable order
+#       across repeats (Finding 4)
+#   26. build-state.sh: permissions preserved — 644 stays 644 (Finding 3)
+#   27. build-state.sh: permissions preserved — 600 stays 600 (Finding 3)
+#   28. build-state.sh: lock contention — a concurrent (fresh, non-stale)
+#       lock holder makes this invocation skip safely, exit 0, leave
+#       state.md untouched (Finding 2)
+#   29. build-state.sh: a STALE lock (age >= 60s) is aged out and stolen —
+#       no permanent wedge (Finding 2)
+#   30. build-state.sh: the lock is released on the normal exit path
+#       (Finding 2)
+#   31. reproject-state-on-terminal.sh: fast no-op when no session_end is
+#       in the log yet (Finding 1 hook)
+#   32. reproject-state-on-terminal.sh: fast no-op when status is already
+#       terminal (Finding 1 hook)
+#   33. reproject-state-on-terminal.sh: THE FIX — mechanically re-projects a
+#       session_end appended with no loomwright:worker SubagentStop
+#       afterward (the production miss this whole finding is about)
+#   34. reproject-state-on-terminal.sh: no-op, no side effects, when
+#       state.md does not exist at all
+#
 # EXIT: 0 on full pass, 1 on any failed assertion.
 
 set -u
@@ -68,11 +94,12 @@ EMITTER="$SCRIPT_DIR/emit-progress-event.sh"
 PROJECTOR="$SCRIPT_DIR/build-state.sh"
 LEDGER="$SCRIPT_DIR/emit-token-ledger.sh"
 DISPATCH_WRAPPER="$SCRIPT_DIR/hook-dispatch-on-pr-create.sh"
+REPROJECT_HOOK="$SCRIPT_DIR/reproject-state-on-terminal.sh"
 PR_FIXTURE="$SCRIPT_DIR/fixtures/posttooluse-gh-pr-create.json"
 FIXDIR="$SCRIPT_DIR/progress-event-fixtures"
 FULL_FIXTURE="$FIXDIR/subagentstop-full.json"
 
-for f in "$EMITTER" "$PROJECTOR" "$LEDGER" "$DISPATCH_WRAPPER" "$PR_FIXTURE" "$FULL_FIXTURE"; do
+for f in "$EMITTER" "$PROJECTOR" "$LEDGER" "$DISPATCH_WRAPPER" "$REPROJECT_HOOK" "$PR_FIXTURE" "$FULL_FIXTURE"; do
   if [ ! -e "$f" ]; then
     echo "FATAL  required file not found: $f" >&2
     exit 1
@@ -154,7 +181,7 @@ init_repo() {
 # fail for a specific tool without disturbing every other tool the SUT
 # needs (this machine colocates python3/jq/git/sed/etc in the same real
 # bin dir, so a directory-level PATH edit would break unrelated tools).
-CURATED_TOOLS="cat git sed tr python3 mkdir date dirname jq mktemp awk mv rm wc head bash"
+CURATED_TOOLS="cat git sed tr python3 mkdir date dirname jq mktemp awk mv rm wc head bash tail stat chmod rmdir touch"
 build_curated_path() {
   # Usage: build_curated_path <space-separated excluded tool names>
   local exclude=" ${1:-} "
@@ -549,13 +576,11 @@ else
 fi
 assert_eq "case21 new session_id" "sid-case21" "$(sed -nE 's/^- session_id:[[:space:]]*//p' "$S21")"
 assert_eq "case21 new status" "running" "$(sed -nE 's/^- status:[[:space:]]*//p' "$S21")"
-# task_id is intentionally NOT re-derived (not in scope's derivation table) —
-# confirm it does not survive as a stray field either (whole block replaced).
-if printf '%s' "$(sed -n '/^## Session/,/^## Decisions Log/p' "$S21")" | grep -q "^- task_id:"; then
-  no "case21 unexpectedly carried forward a non-derived task_id field"
-else
-  ok "case21 non-derived fields (task_id) not carried forward"
-fi
+# task_id is NOT re-derived (not in scope's derivation table) but per the
+# PR #116 review Finding 4 fix, non-derived `- key:` lines already in the
+# block ARE now preserved verbatim (the projector owns exactly
+# session_id/branch/status/phase, not the whole block).
+assert_eq "case21 non-derived task_id line PRESERVED verbatim" "- task_id: old-task" "$(grep -m1 '^- task_id:' "$S21")"
 
 echo "== 22. AC-5: projected state.md (running, matching branch) satisfies hook-dispatch Source 1 =="
 REPO22="$(init_repo "feature/example")"
@@ -635,6 +660,194 @@ for undocumented in cwd permission_mode effort stop_hook_active background_tasks
     ok "case23 undocumented field correctly ignored: $undocumented"
   fi
 done
+
+echo "== 24. build-state.sh: multi-task ordering (PR #116 review Finding 1, second half) =="
+# A session_end followed by a LATER subtask_complete (the /autonomous LOOP
+# shape: task 1 ends, task 2's first worker completes) must read as running,
+# NOT completed — the old "any session_end present" rule got this wrong.
+REPO24="$(init_repo "feature/case24")"
+mkdir -p "$REPO24/.supervisor/logs"
+{
+  echo '{"event":"subtask_complete","type":"subtask_complete","session_id":"sid-case24"}'
+  echo '{"event":"session_end","type":"session_end","session_id":"sid-case24","status":"completed"}'
+  echo '{"event":"subtask_complete","type":"subtask_complete","session_id":"sid-case24"}'
+} > "$REPO24/.supervisor/logs/sid-case24.jsonl"
+bash "$PROJECTOR" "sid-case24" "$REPO24" >/dev/null 2>&1
+S24="$REPO24/.supervisor/state.md"
+assert_eq "case24 status is running (last event wins, not 'any session_end')" "running" "$(sed -nE 's/^- status:[[:space:]]*//p' "$S24")"
+assert_eq "case24 phase is EXECUTE" "EXECUTE" "$(sed -nE 's/^- phase:[[:space:]]*//p' "$S24")"
+
+echo "== 25. build-state.sh: unrecognized ## Session keys survive projection (Finding 4) =="
+REPO25="$(init_repo "feature/case25")"
+mkdir -p "$REPO25/.supervisor/logs"
+cat > "$REPO25/.supervisor/state.md" <<'EOF'
+# Supervisor State
+
+## Session
+- session_id: STALE-25
+- task_id: task-25
+- branch: feature/stale-25
+- phase: ACQUIRE
+- status: running
+- self_heal_resume_count: 2
+
+## Decisions Log
+| # | Phase | Decision | Rationale |
+EOF
+echo '{"event":"subtask_complete","type":"subtask_complete","session_id":"sid-case25"}' > "$REPO25/.supervisor/logs/sid-case25.jsonl"
+bash "$PROJECTOR" "sid-case25" "$REPO25" >/dev/null 2>&1
+S25="$REPO25/.supervisor/state.md"
+assert_eq "case25 task_id preserved" "- task_id: task-25" "$(grep -m1 '^- task_id:' "$S25")"
+assert_eq "case25 self_heal_resume_count preserved" "- self_heal_resume_count: 2" "$(grep -m1 '^- self_heal_resume_count:' "$S25")"
+assert_eq "case25 session_id re-derived (not the stale one)" "sid-case25" "$(sed -nE 's/^- session_id:[[:space:]]*//p' "$S25")"
+assert_eq "case25 status re-derived" "running" "$(sed -nE 's/^- status:[[:space:]]*//p' "$S25")"
+# Round-trip: project again, key order must be stable/deterministic.
+BLOCK25_A="$(sed -n '/^## Session/,/^## Decisions Log/p' "$S25")"
+bash "$PROJECTOR" "sid-case25" "$REPO25" >/dev/null 2>&1
+BLOCK25_B="$(sed -n '/^## Session/,/^## Decisions Log/p' "$S25")"
+assert_eq "case25 ## Session key order stable across repeated projection" "$BLOCK25_A" "$BLOCK25_B"
+
+echo "== 26. build-state.sh: permissions preserved — 644 stays 644 =="
+REPO26="$(init_repo "feature/case26")"
+mkdir -p "$REPO26/.supervisor/logs"
+printf '# Supervisor State\n\n## Session\n- session_id: old\n- status: running\n- phase: EXECUTE\n\n' > "$REPO26/.supervisor/state.md"
+chmod 644 "$REPO26/.supervisor/state.md"
+echo '{"event":"subtask_complete","type":"subtask_complete","session_id":"sid-case26"}' > "$REPO26/.supervisor/logs/sid-case26.jsonl"
+bash "$PROJECTOR" "sid-case26" "$REPO26" >/dev/null 2>&1
+MODE26="$(stat -f %Lp "$REPO26/.supervisor/state.md" 2>/dev/null || stat -c %a "$REPO26/.supervisor/state.md" 2>/dev/null)"
+assert_eq "case26 mode stays 644 after projection" "644" "$MODE26"
+
+echo "== 27. build-state.sh: permissions preserved — 600 stays 600 =="
+REPO27="$(init_repo "feature/case27")"
+mkdir -p "$REPO27/.supervisor/logs"
+printf '# Supervisor State\n\n## Session\n- session_id: old\n- status: running\n- phase: EXECUTE\n\n' > "$REPO27/.supervisor/state.md"
+chmod 600 "$REPO27/.supervisor/state.md"
+echo '{"event":"subtask_complete","type":"subtask_complete","session_id":"sid-case27"}' > "$REPO27/.supervisor/logs/sid-case27.jsonl"
+bash "$PROJECTOR" "sid-case27" "$REPO27" >/dev/null 2>&1
+MODE27="$(stat -f %Lp "$REPO27/.supervisor/state.md" 2>/dev/null || stat -c %a "$REPO27/.supervisor/state.md" 2>/dev/null)"
+assert_eq "case27 mode stays 600 after projection (narrower than the mktemp-default coincidence)" "600" "$MODE27"
+
+echo "== 28. build-state.sh: lock contention — concurrent projection skips safely =="
+REPO28="$(init_repo "feature/case28")"
+mkdir -p "$REPO28/.supervisor/logs"
+echo '{"event":"subtask_complete","type":"subtask_complete","session_id":"sid-case28"}' > "$REPO28/.supervisor/logs/sid-case28.jsonl"
+bash "$PROJECTOR" "sid-case28" "$REPO28" >/dev/null 2>&1
+S28="$REPO28/.supervisor/state.md"
+CONTENT28_BEFORE="$(cat "$S28")"
+# Simulate a concurrent holder: pre-create a FRESH (non-stale) lock dir.
+mkdir -p "$REPO28/.supervisor/.state.lock"
+echo '{"event":"subtask_complete","type":"subtask_complete","session_id":"sid-case28"}' >> "$REPO28/.supervisor/logs/sid-case28.jsonl"
+OUT28="$(bash "$PROJECTOR" "sid-case28" "$REPO28" 2>&1)"
+RC28=$?
+assert_eq "case28 exit 0 even under lock contention" "0" "$RC28"
+CONTENT28_AFTER="$(cat "$S28")"
+assert_eq "case28 state.md UNCHANGED — projection safely skipped under contention" "$CONTENT28_BEFORE" "$CONTENT28_AFTER"
+if [ -d "$REPO28/.supervisor/.state.lock" ]; then
+  ok "case28 the OTHER holder's (simulated) lock dir is left alone — this run did not touch a lock it did not acquire"
+else
+  no "case28 unexpectedly removed a lock dir it never acquired"
+fi
+rmdir "$REPO28/.supervisor/.state.lock" 2>/dev/null || true
+
+echo "== 29. build-state.sh: stale lock is aged out and stolen (no permanent wedge) =="
+REPO29="$(init_repo "feature/case29")"
+mkdir -p "$REPO29/.supervisor/logs"
+echo '{"event":"subtask_complete","type":"subtask_complete","session_id":"sid-case29"}' > "$REPO29/.supervisor/logs/sid-case29.jsonl"
+mkdir -p "$REPO29/.supervisor/.state.lock"
+# Back-date the lock dir well past the 60s staleness threshold (portable
+# touch -t, works with both BSD and GNU touch).
+OLD_STAMP="$(date -v-1H +%Y%m%d%H%M 2>/dev/null || date -d '1 hour ago' +%Y%m%d%H%M 2>/dev/null)"
+if [ -n "$OLD_STAMP" ]; then
+  touch -t "$OLD_STAMP" "$REPO29/.supervisor/.state.lock" 2>/dev/null || true
+fi
+OUT29="$(bash "$PROJECTOR" "sid-case29" "$REPO29" 2>&1)"
+RC29=$?
+assert_eq "case29 exit 0" "0" "$RC29"
+S29="$REPO29/.supervisor/state.md"
+if [ -f "$S29" ]; then
+  assert_eq "case29 stale lock stolen — projection succeeded" "running" "$(sed -nE 's/^- status:[[:space:]]*//p' "$S29")"
+else
+  no "case29 projection did not run despite a stale (ageable) lock"
+fi
+if [ -d "$REPO29/.supervisor/.state.lock" ]; then
+  no "case29 lock dir left behind after a successful stolen-lock projection (WEDGE)"
+else
+  ok "case29 lock released on exit — no permanent wedge"
+fi
+
+echo "== 30. build-state.sh: lock released on the normal (uncontended) exit path =="
+REPO30="$(init_repo "feature/case30")"
+mkdir -p "$REPO30/.supervisor/logs"
+echo '{"event":"subtask_complete","type":"subtask_complete","session_id":"sid-case30"}' > "$REPO30/.supervisor/logs/sid-case30.jsonl"
+bash "$PROJECTOR" "sid-case30" "$REPO30" >/dev/null 2>&1
+if [ -d "$REPO30/.supervisor/.state.lock" ]; then
+  no "case30 lock dir left behind after a normal successful projection"
+else
+  ok "case30 lock released after the normal exit path"
+fi
+
+echo "== 31. reproject-state-on-terminal.sh: fast no-op when no session_end present =="
+REPO31="$(init_repo "feature/case31")"
+mkdir -p "$REPO31/.supervisor/logs"
+echo '{"event":"subtask_complete","type":"subtask_complete","session_id":"sid-case31"}' > "$REPO31/.supervisor/logs/sid-case31.jsonl"
+bash "$PROJECTOR" "sid-case31" "$REPO31" >/dev/null 2>&1
+S31="$REPO31/.supervisor/state.md"
+CONTENT31_BEFORE="$(cat "$S31")"
+OUT31="$( cd "$REPO31" && "$REALBASH" "$REPROJECT_HOOK" 2>&1 )"
+RC31=$?
+assert_eq "case31 exit 0" "0" "$RC31"
+CONTENT31_AFTER="$(cat "$S31")"
+assert_eq "case31 state.md unchanged (no session_end -> fast no-op, never touches the projector)" "$CONTENT31_BEFORE" "$CONTENT31_AFTER"
+
+echo "== 32. reproject-state-on-terminal.sh: fast no-op when status already terminal =="
+REPO32="$(init_repo "feature/case32")"
+mkdir -p "$REPO32/.supervisor/logs"
+{
+  echo '{"event":"subtask_complete","type":"subtask_complete","session_id":"sid-case32"}'
+  echo '{"event":"session_end","type":"session_end","session_id":"sid-case32","status":"completed"}'
+} > "$REPO32/.supervisor/logs/sid-case32.jsonl"
+bash "$PROJECTOR" "sid-case32" "$REPO32" >/dev/null 2>&1
+S32="$REPO32/.supervisor/state.md"
+assert_eq "case32 pre-condition: already terminal" "completed" "$(sed -nE 's/^- status:[[:space:]]*//p' "$S32")"
+CONTENT32_BEFORE="$(cat "$S32")"
+OUT32="$( cd "$REPO32" && "$REALBASH" "$REPROJECT_HOOK" 2>&1 )"
+RC32=$?
+assert_eq "case32 exit 0" "0" "$RC32"
+CONTENT32_AFTER="$(cat "$S32")"
+assert_eq "case32 state.md unchanged (already terminal -> fast no-op)" "$CONTENT32_BEFORE" "$CONTENT32_AFTER"
+
+echo "== 33. reproject-state-on-terminal.sh: THE FIX — re-projects a missed terminal transition =="
+# This is Finding 1's headline reproduction: a session_end is appended to the
+# log (simulating Phase 4.5's completion tail) with NO loomwright:worker
+# SubagentStop firing afterward (simulating the Single-Agent Path, where
+# Phase 4.5 fix tasks spawn as general-purpose, never re-invoking the
+# projector). Before this fix, state.md would stay at running/EXECUTE
+# forever. The hook must mechanically catch this on the next Bash call.
+REPO33="$(init_repo "feature/case33")"
+mkdir -p "$REPO33/.supervisor/logs"
+echo '{"event":"subtask_complete","type":"subtask_complete","session_id":"sid-case33"}' > "$REPO33/.supervisor/logs/sid-case33.jsonl"
+bash "$PROJECTOR" "sid-case33" "$REPO33" >/dev/null 2>&1
+S33="$REPO33/.supervisor/state.md"
+assert_eq "case33 pre-condition: running before the completion tail" "running" "$(sed -nE 's/^- status:[[:space:]]*//p' "$S33")"
+# The completion tail appends session_end directly (NOT via the emitter/worker path).
+echo '{"event":"session_end","type":"session_end","session_id":"sid-case33","status":"completed_with_escalation"}' >> "$REPO33/.supervisor/logs/sid-case33.jsonl"
+OUT33="$( cd "$REPO33" && "$REALBASH" "$REPROJECT_HOOK" 2>&1 )"
+RC33=$?
+assert_eq "case33 exit 0" "0" "$RC33"
+assert_eq "case33 THE FIX: status mechanically flips to terminal" "completed_with_escalation" "$(sed -nE 's/^- status:[[:space:]]*//p' "$S33")"
+assert_eq "case33 phase flips to LOOP" "LOOP" "$(sed -nE 's/^- phase:[[:space:]]*//p' "$S33")"
+
+echo "== 34. reproject-state-on-terminal.sh: no-op when state.md is absent =="
+REPO34="$(mktemp -d)"
+CLEANUP_DIRS+=("$REPO34")
+OUT34="$( cd "$REPO34" && "$REALBASH" "$REPROJECT_HOOK" 2>&1 )"
+RC34=$?
+assert_eq "case34 exit 0 (no state.md)" "0" "$RC34"
+if [ -f "$REPO34/.supervisor/state.md" ]; then
+  no "case34 unexpectedly created state.md from nothing"
+else
+  ok "case34 no state.md created when none existed"
+fi
 
 echo "== real repo .supervisor/logs untouched =="
 assert_eq "real logs snapshot unchanged" "$REAL_BEFORE" "$(snapshot_real)"

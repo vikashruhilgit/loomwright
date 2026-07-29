@@ -313,9 +313,9 @@ because the hook wrapper masks a real failure.
 on the Parallel Path runs inside a **linked git worktree** on a **subtask**
 branch (or detached), with no `.supervisor/` directory of its own. A bare
 derivation would silently write to the wrong (or a nonexistent) log path,
-or project a wrong/empty `- branch:`, which fails the equality guard at
-`hook-dispatch-on-pr-create.sh:198` and kills the until-mergeable review
-drain with no error. Both `emit-progress-event.sh` and `build-state.sh`
+or project a wrong/empty `- branch:`, which fails the `s1_branch` equality
+guard in `hook-dispatch-on-pr-create.sh`'s Source 1 block and kills the
+until-mergeable review drain with no error. Both `emit-progress-event.sh` and `build-state.sh`
 instead resolve the **main worktree by name** (`git worktree list
 --porcelain`'s first entry) plus a `--show-toplevel` cross-check that
 aborts (exit 0) on mismatch — verified empirically 2026-07-28 on git 2.50.1
@@ -335,8 +335,9 @@ from evidence only — it never guesses:
 |---|---|---|
 | `session_id` | the id the emitter resolved | file not written |
 | `branch` | **live** `git -C main_root branch --show-current` at projection time (a property of the checkout, not stored per-event) | field omitted |
-| `status` | ≥1 `subtask_complete` and no `session_end` ⇒ `running`; `session_end` present ⇒ its `status` mapped into `completed \| completed_with_escalation \| failed` (unrecognized/missing status on a present `session_end` ⇒ `completed`, the closest safe closed-enum reading — not a zero-evidence guess) | `status` is **never** omitted once the file exists — an absent `- status:` trips the presence guard at `hook-dispatch-on-pr-create.sh:198` and fails closed |
-| `phase` | `subtask_complete` present ⇒ `EXECUTE`; `session_end` present ⇒ `LOOP` | file not written |
+| `status` | **ordering rule** (PR #116 review fix, replacing "any `session_end` present"): the LAST of `{subtask_complete, session_end}` in the log decides. Last event `subtask_complete` ⇒ `running` (even when an EARLIER `session_end` exists — the multi-task `/autonomous` LOOP case, so task 1's `session_end` can't mark task 2 `completed`); last event `session_end` ⇒ its own `status` mapped into `completed \| completed_with_escalation \| failed` (unrecognized/missing status ⇒ `completed`, the closest safe closed-enum reading — not a zero-evidence guess) | `status` is **never** omitted once the file exists — an absent `- status:` trips the `s1_status` presence guard in `hook-dispatch-on-pr-create.sh`'s Source 1 block and fails closed |
+| `phase` | same ordering rule: last event `subtask_complete` ⇒ `EXECUTE`; last event `session_end` ⇒ `LOOP` | file not written |
+| *(non-derived keys, e.g. `task_id`, `self_heal_resume_count`)* | preserved verbatim from the pre-projection `## Session` block, in original order (PR #116 review fix — this projector owns exactly the four keys above, not the whole block) | n/a — nothing to preserve on a brand-new block |
 
 Both fields always land inside the closed enums in
 `skills/state-management/SKILL.md` §"State File Schema". The write is a
@@ -345,10 +346,12 @@ preserving `## Decisions Log`, `## Phase Flags`, `## Checkpoint`, and every
 other section byte-for-byte. An absent/empty log means **no `state.md` at
 all** — start-fresh, strictly better than the pre-change failure mode (a
 stale lie left on disk). Self-test: `scripts/test-progress-state.sh`
-(fixture-driven; 90 assertions covering idempotency, every fail-safe path,
+(fixture-driven; 117 assertions covering idempotency, every fail-safe path,
 the worktree-anchoring hazard from inside a real `git worktree add`, the
 Parallel-Path case, projector round-trip byte-identity, section
-preservation, and the AC-5 hook-dispatch positive/negative cases).
+preservation, the AC-5 hook-dispatch positive/negative cases, and the
+PR #116 review round's ordering rule, mkdir-lock, permission-preservation,
+non-derived-key-preservation, and `reproject-state-on-terminal.sh` cases).
 
 **Honest limits of this change (not papered over):**
 
@@ -381,28 +384,32 @@ real before/after adherence after merging, an operator runs:
    that is the adherence fix landing for real, as opposed to in a PR
    description.
 
-**2. Residual — terminal status can go stale (graceful degradation).**
-`build-state.sh` derives terminal status (`completed` /
-`completed_with_escalation` / `failed`) **only** from a `session_end`
-event, and `session_end` is itself agent-written (Phase 4.5's completion
-tail), so it inherits the same class of miss rate this change exists to
-remove. If a run's completion tail never emits `session_end`, `state.md`
-stays at `running` after the run has actually ended. This is the
-**opposite** of the 2026-07-27 incident shape: that incident **under**-
-reported (all subtasks merged, `state.md` still said `phase: ACQUIRE`,
-`--continue` would have silently redone finished work); a missed
-`session_end` **over**-reports (state claims `running` after the run is
-genuinely done). The consequences are benign, not silent: a stale
-`running` at worst causes `hook-dispatch-on-pr-create.sh` to authorize a
-redundant review-drain dispatch (idempotent per-PR marker — a harmless
-no-op re-check), and `--continue` hits `scripts/reconcile-resume-state.sh`,
-which reconciles against actual subtask/merge commits on the branch and
-reports the run's true position rather than trusting the stale `running`.
-Do **not** close this residual by re-adding a "flip the status" prompt
-instruction — that is the exact anti-pattern this change removes. Making
-the terminal flip mechanical needs a completion-side hook that does not
-exist on the inline Single-Agent Path today; that is a separate design
-surface, not a gap in this change's scope.
+**2. Terminal status now fires mechanically (PR #116 review Finding 1 —
+fixed, not merely "less stale").** Before the review round, `build-state.sh`
+only ever ran when `emit-progress-event.sh` invoked it, and that emitter
+only fires on the `loomwright:worker` `SubagentStop` matcher — so a
+Phase 4.5 completion tail that appends `session_end` had nothing to
+re-invoke the projector afterward, and `state.md` sat at `running`/`EXECUTE`
+for the rest of the run's on-disk life (the "headline claim doesn't fire"
+finding). This is now closed by a SECOND `type: command` hook,
+`scripts/reproject-state-on-terminal.sh`, registered under the *existing*
+`PostToolUse[Bash]` matcher (already firing on every Bash tool call for the
+PR-create backstop). It cheaply checks whether `state.md`'s status is
+non-terminal and the session log's tail carries a `session_end` event, and
+if so invokes `build-state.sh` to re-derive `## Session`. Because
+`session_end` itself is appended via a Bash-tool command (a JSONL append),
+the very Bash call that writes `session_end` is itself followed by this
+hook firing — the terminal flip typically lands within the same tool call
+that produced the evidence, not on some later unrelated Bash invocation.
+**Residual, now narrower:** if a future code path ever appended
+`session_end` via a non-Bash mechanism (it does not today), the flip would
+wait for the next Bash tool call in that session rather than firing
+immediately — still bounded, still mechanical, just not same-call. Do
+**not** close that narrower residual by re-adding a "flip the status"
+prompt instruction — that is the exact anti-pattern this whole change
+removes; the fix is another mechanical hook site if a non-Bash
+`session_end` writer is ever introduced, not a written-instruction
+workaround.
 
 **Extension — the join key that matters for this residual.** `session_end`
 only over-reports `state.md`'s `- status:` line usefully if it is appended
@@ -473,6 +480,37 @@ ACQUIRE/FINALIZE path — that reintroduces the exact prompt-instructed
 bookkeeping this change removes; the gap is in `hook-dispatch-on-pr-create.sh`'s
 authorization sources, not in the derivation mechanism, and is deliberately
 left open here as a known, accepted limitation of this change's scope.
+
+**5. Honest limits — `state.md` went from one serialized writer to two
+(PR #116 review Finding 2).** Before this fix, `build-state.sh`'s
+read-modify-write (whole-file read → awk → temp file → rename) was the
+file's only writer of any kind touching `## Session`, and Context-Keeper's
+own read-modify-write (via the Edit tool) against `## Decisions Log` /
+`## Worker Results` / `## Error Log` / `## Phase Flags` could interleave
+with it — reproduced deterministically 6/6: an interleaved Context-Keeper
+write-back clobbers the freshly projected `## Session` block (the
+*projection* is lost, not the decision — note the direction, it is easy to
+misstate). `build-state.sh` now takes a portable `mkdir`-based lock
+(`.supervisor/.state.lock`; `flock(1)` is not on stock macOS) around its
+read-modify-write. **What the lock guarantees:** no two `build-state.sh`
+invocations can be inside the read-modify-write at the same time, so a
+projection can no longer be clobbered mid-write by a concurrent projection.
+**What it does NOT guarantee:** it does nothing to serialize against
+Context-Keeper's Edit-tool write-back, which does not take this lock (Edit
+is a harness-level operation, not a shell process this script can
+coordinate with) — the two writers are still, in principle, two independent
+serialized-with-themselves writers of the same file, not one arbiter over
+both. **Why skipping under contention is safe:** the log is append-only, so
+a projection that loses the lock race (or a stale lock older than 60s that
+gets stolen — see the script's `acquire_lock`/`lock_age_seconds` comments
+for the exact staleness policy) simply does not run; the very next
+`subtask_complete`/`session_end` event re-derives the identical `## Session`
+content from the same evidence, so a skipped projection is a delay, never a
+lost fact. This narrows Finding 2's clobber window without closing the
+class of problem it identified — a full fix would require Context-Keeper's
+Edit-tool writes to also participate in a shared lock, which is out of this
+change's scope (Context-Keeper is a separate agent process, not a script
+this repo's shell-level lock can reach).
 
 ### Script-location convention
 
