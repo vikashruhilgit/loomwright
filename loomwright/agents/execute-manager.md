@@ -15,9 +15,8 @@ hooks:
   # hooks.json is authoritative at runtime. This copy mirrors hooks.json for
   # ~/.claude/agents/ compatibility; keep the two in sync.
   SubagentStop:
-    - type: prompt
-      prompt: "An Execute Manager agent just completed. Review its output to verify: (1) it produced an EXECUTE_RESULT or EXECUTE_CHECKPOINT block with schema_version field, (2) EXECUTE_RESULT contains subtasks_completed (array — may be empty ONLY when subtasks_failed is non-empty and summary records the escalation), worktrees, merge_order (may be empty when no subtask completed), and summary fields, (3) EXECUTE_CHECKPOINT contains completed_so_far, remaining, resume_context, and reason fields, (4) all worktree paths reference valid sibling directories, (5) v12 toolset_gap rule: if the block is an EXECUTE_CHECKPOINT and reason cites 'toolset_gap', 'Task tool unavailable', 'Agent tool unavailable', or any variant claiming the spawning toolset is missing, return {\"ok\": false, \"reason\": \"toolset_gap is not a valid escalation reason; the Execute Manager spawns workers via Task and that capability is guaranteed by the harness — restate the actual blocker without referencing toolset availability\"}, (6) v12 adjudication tri-field invariant (all-or-nothing, BIDIRECTIONAL) — if the block is an EXECUTE_CHECKPOINT, the three fields adjudication_required, missing_outputs, adjudication_options MUST appear together or not at all: (6a) if adjudication_required: true, validate missing_outputs is a non-empty array AND adjudication_options is a non-empty array; missing or empty either one returns {\"ok\": false, \"reason\": \"adjudication_required: true requires non-empty missing_outputs and adjudication_options arrays\"}; (6b) if missing_outputs OR adjudication_options is present (non-empty) but adjudication_required is absent or false, return {\"ok\": false, \"reason\": \"missing_outputs/adjudication_options present without adjudication_required: true — the three fields are all-or-nothing\"}. Context: $ARGUMENTS. Respond with {\"ok\": true} if valid, or {\"ok\": false, \"reason\": \"...\"} if malformed or missing required fields."
-      timeout: 30
+    - type: command
+      command: 'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/validate-execute-result.py" || true'
 ---
 
 <!-- SHARED-AGENT-PREFIX v1 BEGIN -->

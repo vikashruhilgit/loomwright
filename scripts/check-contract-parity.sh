@@ -4,13 +4,15 @@
 # Two mechanical checks, deliberately conservative (high-confidence only, same
 # philosophy as check-doc-currency.sh):
 #
-#   1. FIELD PRESENCE — for each prompt-type SubagentStop validator in
-#      hooks.json, every hook-required result-block field name (pinned in the
-#      MANIFEST below) must (a) still appear in the hooks.json validator prompt
-#      (pin-drift guard: if the hook changes, the manifest must change with it)
-#      and (b) appear in the matched agent's prompt file (an agent told to emit
-#      a block must name every hook-required field somewhere in its emit
-#      instructions).
+#   1. FIELD PRESENCE — for each SubagentStop validator in hooks.json, every
+#      hook-required result-block field name (pinned in the MANIFEST below)
+#      must (a) still appear in that validator's RULE SOURCE — the `type:
+#      prompt` prompt string, or (since v15.17.0, for validators converted to
+#      `type: command`) the source of the referenced validate-<x>-result.py
+#      script (pin-drift guard: if the hook changes, the manifest must change
+#      with it) — and (b) appear in the matched agent's prompt file (an agent
+#      told to emit a block must name every hook-required field somewhere in
+#      its emit instructions).
 #
 #   2. ENUM LITERALS — for result status/decision keys whose hook validator
 #      enumerates a closed enum, any literal `key: token` in the agent prompt
@@ -42,19 +44,90 @@ AGENTS="$PLUGIN/agents"
 fail=0
 err() { echo "  PARITY [$1] $2" >&2; fail=1; }
 
-# Flattened hooks.json text for matcher-scoped prompt extraction (python for
-# reliable JSON parsing; jq is not guaranteed on every dev machine).
-hook_prompt() { # $1 = matcher substring
-  python3 - "$HOOKS" "$1" <<'PY'
-import json,sys
-h=json.load(open(sys.argv[1]))
-needle=sys.argv[2]
+# Sentinel emitted by hook_prompt() when a matcher's rule source cannot be
+# resolved unambiguously. Callers MUST treat it as a hard pin-drift error —
+# never as "no rule to check".
+PARITY_UNRESOLVED="__PARITY_UNRESOLVED__"
+
+# Resolve a matcher's RUNTIME RULE SOURCE — the text the pin-drift guard greps
+# for hook-required field names (python for reliable JSON parsing; jq is not
+# guaranteed on every dev machine).
+#
+# Two sources, in order:
+#   1. `type: prompt` hooks — the historical source; their prompt strings.
+#   2. FALLBACK (v15.17.0): when the matcher has no prompt hook, the SOURCE of
+#      the `validate-<x>-result.py` script referenced by one of its `type:
+#      command` hooks. Five SubagentStop validators were converted from prompt
+#      strings to deterministic scripts; the rule source moved from a prompt
+#      into a .py file, so the guard follows it there. Field names appear
+#      literally in those scripts (as dict keys / constants), which is what
+#      makes the pin-drift grep still meaningful.
+#
+# The fallback's SELECTION RULE is load-bearing and deliberately fails CLOSED:
+# exactly ONE command entry may reference a validate-*-result.py script, and it
+# must name exactly one such script. Zero or more than one is a hard error.
+# Three affected matchers carry ADDITIONAL command entries after the
+# conversion — loomwright:worker also has emit-progress-event.sh,
+# loomwright:qa-executor also has the telemetry fan-out, and
+# loomwright:supervisor-runner has both the telemetry fan-out and
+# send-webhook.sh — so "the matcher's command entry" is not well defined and
+# both naive readings are wrong:
+#   * concatenating every command entry's source fails OPEN —
+#     send-telemetry-core.sh alone mentions pr_url / heal_decision /
+#     heal_loop_ran / summary / schema_version, so a pin-drift grep would PASS
+#     on a field the real validator had dropped, leaving the gate green while
+#     enforcing nothing;
+#   * taking the first entry fails CLOSED with spurious red CI and couples the
+#     gate to hook ordering that nothing asserts.
+hook_prompt() { # $1 = matcher substring; prints rule source, or PARITY_UNRESOLVED + reason
+  python3 - "$HOOKS" "$1" "$PLUGIN" "$PARITY_UNRESOLVED" <<'PY'
+import json,os,re,sys
+hooks_path, needle, plugin, sentinel = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+h=json.load(open(hooks_path))
+
+def bail(msg):
+    print("%s %s" % (sentinel, msg))
+    sys.exit(0)
+
+prompts=[]; commands=[]
 for ev in h.get("hooks",{}).values():
     for e in ev if isinstance(ev,list) else []:
         if needle in str(e.get("matcher","")):
             for hk in e.get("hooks",[]):
                 if hk.get("type")=="prompt":
-                    print(hk["prompt"])
+                    prompts.append(hk.get("prompt",""))
+                elif hk.get("type")=="command":
+                    commands.append(str(hk.get("command","")))
+
+if prompts:
+    for p in prompts:
+        print(p)
+    sys.exit(0)
+
+# ── fallback: the rule source moved into a validator script ──────────────────
+REF=re.compile(r'[\w./${}-]*\bvalidate-[A-Za-z0-9_-]+-result\.py')
+matching=[c for c in commands if REF.search(c)]
+if len(matching)!=1:
+    bail("matcher '%s' has no type:prompt hook and %d of its %d type:command "
+         "entries reference a validate-*-result.py script (exactly 1 required) "
+         "— the rule source is ambiguous; fix hooks.json or the MANIFEST"
+         % (needle, len(matching), len(commands)))
+refs=sorted(set(REF.findall(matching[0])))
+if len(refs)!=1:
+    bail("matcher '%s': its validator command entry references %d distinct "
+         "validate-*-result.py scripts (exactly 1 required) — the rule source "
+         "is ambiguous" % (needle, len(refs)))
+
+path=refs[0]
+for var in ("${CLAUDE_PLUGIN_ROOT}", "$CLAUDE_PLUGIN_ROOT"):
+    path=path.replace(var, plugin)
+if not os.path.isabs(path):
+    path=os.path.join(plugin, path)
+try:
+    with open(path, encoding="utf-8") as fh:
+        sys.stdout.write(fh.read())
+except (OSError, UnicodeDecodeError) as exc:
+    bail("matcher '%s': cannot read validator source '%s' (%s)" % (needle, path, exc))
 PY
 }
 
@@ -76,12 +149,19 @@ while IFS='|' read -r matcher agent block fields; do
   agent_path="$AGENTS/$agent"
   [ -f "$agent_path" ] || { err field-presence "$agent missing at $agent_path"; continue; }
   prompt="$(hook_prompt "$matcher")"
-  [ -n "$prompt" ] || { err pin-drift "no prompt-type hook found for matcher '$matcher' in hooks.json — update the MANIFEST"; continue; }
+  # An unresolvable rule source is a HARD error, never a silent pass: falling
+  # through to an unrelated script (or to "no rule") is exactly how this guard
+  # would go green while enforcing nothing.
+  case "$prompt" in
+    "$PARITY_UNRESOLVED"*) err pin-drift "${prompt#"$PARITY_UNRESOLVED" }"; continue ;;
+  esac
+  [ -n "$prompt" ] || { err pin-drift "no prompt-type hook and no validator command hook found for matcher '$matcher' in hooks.json — update the MANIFEST"; continue; }
   IFS=',' read -ra fl <<<"$fields"
   for f in "${fl[@]}"; do
-    # (a) pin-drift guard: hooks.json must still require this field
+    # (a) pin-drift guard: the matcher's rule source (prompt string, or the
+    #     referenced validator script's source) must still require this field
     if ! grep -qw -- "$f" <<<"$prompt"; then
-      err pin-drift "hooks.json [$matcher] no longer mentions '$f' — update the MANIFEST in this script"
+      err pin-drift "hooks.json [$matcher] rule source no longer mentions '$f' — update the MANIFEST in this script"
     fi
     # (b) agent prompt must name the field. NOTE guard strength: this is
     #     name-presence anywhere in the file, not emit-block membership — it

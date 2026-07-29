@@ -25,7 +25,7 @@ check() { # $1 desc, $2 expected exit (0|1), then the command
 
 make_fixture() { # $1 = fixture dir; writes a minimal valid tree
   local d="$1"
-  mkdir -p "$d/loomwright/hooks" "$d/loomwright/agents" \
+  mkdir -p "$d/loomwright/hooks" "$d/loomwright/agents" "$d/loomwright/scripts" \
            "$d/loomwright/skills/self-heal-advisory" \
            "$d/loomwright/skills/preflight-sync" \
            "$d/loomwright/skills/supervisor-config"
@@ -89,6 +89,55 @@ decision: FAIL and decision: NEEDS_HUMAN are the other outcomes.
 EOF
 }
 
+# ── fallback-branch fixture helpers (v15.17.0) ───────────────────────────────
+# make_fixture() gives EVERY matcher a `type: prompt` hook, so on its own it
+# gives the guard's command-type fallback ZERO coverage. These helpers rewrite
+# a matcher into the post-conversion `type: command` shape so the fallback's
+# selection rule can be exercised — and falsified.
+
+set_command_hooks() { # $1 fixture dir, $2 matcher substring, $3.. command strings
+  local d="$1" matcher="$2"; shift 2
+  python3 - "$d/loomwright/hooks/hooks.json" "$matcher" "$@" <<'PY'
+import json,sys
+p,matcher,cmds=sys.argv[1],sys.argv[2],sys.argv[3:]
+h=json.load(open(p))
+for e in h["hooks"]["SubagentStop"]:
+    if matcher in e["matcher"]:
+        e["hooks"]=[{"type":"command","command":c} for c in cmds]
+json.dump(h,open(p,"w"))
+PY
+}
+
+write_validator() { # $1 fixture dir, $2 plugin-relative path, $3 comma-separated fields
+  local d="$1" rel="$2" fields="$3" f
+  mkdir -p "$(dirname "$d/loomwright/$rel")"
+  {
+    echo '#!/usr/bin/env python3'
+    echo '"""Stand-in validator. Real validators name required fields as dict'
+    echo 'keys / constants — that literal presence is what pin-drift follows."""'
+    echo 'REQUIRED = ['
+    IFS=',' read -ra _fl <<<"$fields"
+    for f in "${_fl[@]}"; do echo "    \"$f\","; done
+    echo ']'
+  } >"$d/loomwright/$rel"
+}
+
+write_decoy() { # $1 fixture dir, $2 plugin-relative path, $3 comma-separated fields
+  local d="$1" rel="$2" fields="$3" f
+  mkdir -p "$(dirname "$d/loomwright/$rel")"
+  {
+    echo '#!/usr/bin/env bash'
+    echo '# Unrelated sibling command hook — models send-telemetry-core.sh,'
+    echo '# which really does mention result-block field names in passing.'
+    IFS=',' read -ra _fl <<<"$fields"
+    for f in "${_fl[@]}"; do echo "echo \"reporting $f\""; done
+  } >"$d/loomwright/$rel"
+}
+
+QA_FIELDS='schema_version,tests_generated,tests_passed,summary,coverage_estimate'
+VALIDATOR_CMD='python3 "${CLAUDE_PLUGIN_ROOT}/scripts/validate-qa-result.py" || true'
+DECOY_CMD='payload=$(cat); printf "%s" "$payload" | bash "${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry-core.sh" || true'
+
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -120,6 +169,55 @@ for e in h["hooks"]["SubagentStop"]:
 json.dump(h,open(p,"w"))
 PY
 check "hooks.json pin-drift fails" 1 bash "$GUARD" --root "$TMP/pin-drift"
+
+# ── 6-9: the command-type fallback branch (AC-6c) ────────────────────────────
+# Cases 1-4 above never reach it: make_fixture gives every matcher a prompt
+# hook. Without these, the only thing touching the fallback is case 5 ("real
+# repo tree passes") — a one-directional green check a fail-OPEN implementation
+# satisfies just as happily as a correct one.
+
+# 6. (a-i) No prompt hook + exactly one validator command hook → the guard
+#    resolves the validator's SOURCE as the rule text and passes. A decoy
+#    sibling command entry is present, mirroring the real post-conversion
+#    matchers that also carry telemetry / progress-event hooks.
+make_fixture "$TMP/cmd-fallback-ok"
+write_validator "$TMP/cmd-fallback-ok" scripts/validate-qa-result.py "$QA_FIELDS"
+write_decoy "$TMP/cmd-fallback-ok" scripts/send-telemetry-core.sh "$QA_FIELDS"
+set_command_hooks "$TMP/cmd-fallback-ok" qa-executor "$VALIDATOR_CMD" "$DECOY_CMD"
+check "command-fallback resolves the validator source" 0 bash "$GUARD" --root "$TMP/cmd-fallback-ok"
+
+# 7. (a-ii) THE FAIL-OPEN FALSIFICATION (R0b). Same shape, but coverage_estimate
+#    is dropped from the validator source while the decoy sibling script still
+#    mentions it. An implementation that concatenated every command entry's
+#    source would find the field in send-telemetry-core.sh and PASS — green
+#    while enforcing nothing. Correct selection greps only the validator and
+#    fires pin-drift.
+make_fixture "$TMP/cmd-fallback-drift"
+write_validator "$TMP/cmd-fallback-drift" scripts/validate-qa-result.py \
+  'schema_version,tests_generated,tests_passed,summary'
+write_decoy "$TMP/cmd-fallback-drift" scripts/send-telemetry-core.sh "$QA_FIELDS"
+set_command_hooks "$TMP/cmd-fallback-drift" qa-executor "$VALIDATOR_CMD" "$DECOY_CMD"
+check "command-fallback pin-drift fails despite decoy sibling mentioning the field" 1 \
+  bash "$GUARD" --root "$TMP/cmd-fallback-drift"
+
+# 8. (b) Zero validator command entries — only unrelated scripts. Must ERROR,
+#    not fall through to an unrelated script and not silently pass.
+make_fixture "$TMP/cmd-fallback-none"
+write_decoy "$TMP/cmd-fallback-none" scripts/send-telemetry-core.sh "$QA_FIELDS"
+set_command_hooks "$TMP/cmd-fallback-none" qa-executor "$DECOY_CMD" \
+  'bash "${CLAUDE_PLUGIN_ROOT}/scripts/send-webhook.sh" || true'
+check "no validator command entry errors (not silently passes)" 1 \
+  bash "$GUARD" --root "$TMP/cmd-fallback-none"
+
+# 9. (c) Two validator-matching command entries — ambiguous rule source. Must
+#    ERROR rather than pick one by hook ordering that nothing asserts.
+make_fixture "$TMP/cmd-fallback-two"
+write_validator "$TMP/cmd-fallback-two" scripts/validate-qa-result.py "$QA_FIELDS"
+write_validator "$TMP/cmd-fallback-two" scripts/validate-qa2-result.py "$QA_FIELDS"
+set_command_hooks "$TMP/cmd-fallback-two" qa-executor "$VALIDATOR_CMD" \
+  'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/validate-qa2-result.py" || true'
+check "two validator command entries error (ambiguous rule source)" 1 \
+  bash "$GUARD" --root "$TMP/cmd-fallback-two"
 
 # 5. The guard passes against the REAL repo tree. Deliberately NOT a pure
 #    fixture test: this is an integration invariant (the gate must hold on the
