@@ -28,6 +28,8 @@ Behaviour-compatible with, and lifted from, `validate-launch-pad-result.py`:
      Returns (fields, errors). Supported subset:
        - scalars, incl. all five YAML null spellings:
          empty-after-colon, `~`, `null`, `Null`, `NULL`
+       - trailing `#` comments (see `strip_comment` for the exact rule and its
+         one documented deviation from strict YAML)
        - quoted literals — a quoted "null" is the STRING "null", not null
        - inline flow sequences        `[a, b]`
        - inline flow mappings         `{k: v}`
@@ -465,6 +467,100 @@ def _skip_ws(s, i):
 
 _DQ_ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "0": "\0", "\\": "\\", '"': '"', "/": "/"}
 
+_COMMENT_TRUNCATION_HINT = (
+    " — note: a '#' comment was removed before parsing, and a YAML comment runs "
+    "to the end of the line, so it truncates anything after it on that line"
+)
+
+_COMMENT_NO_SPACE_HINT = (
+    " — a '#' starts a YAML comment only when preceded by whitespace; put a "
+    "space before it, or quote the value if the '#' is part of it"
+)
+
+
+def strip_comment(raw):
+    """Remove a trailing `#` comment from one line of value text, quote-aware.
+
+    THIS IS THE FIX FOR THE FOLD-THE-COMMENT-INTO-THE-VALUE DEFECT. Before it
+    existed, `status: completed  # done` parsed to the STRING
+    "completed  # done", which is not a coercion the caller can see: every
+    equality/enum test downstream simply stopped matching. In
+    validate-worker-result.py that silently DISABLED rules 2, 4 and 8 (all
+    three are guarded by `status == "completed"`), i.e. it failed OPEN on the
+    exact defects those rules exist to catch, while the other validators —
+    whose comparable fields are enum- or int-checked — merely rejected valid
+    blocks. Comments are stripped in exactly one place, here, so the plain
+    scalar, flow-collection and block-sequence paths cannot drift apart again.
+
+    THE RULE. A `#` introduces a comment when BOTH hold:
+      (a) it is OUTSIDE a quoted scalar, and
+      (b) it is preceded by a space or tab which is itself preceded by at
+          least one non-whitespace character of value text.
+
+    Everything from that `#` to the end of the string is dropped. Consequences,
+    each of which is a committed test case:
+
+      status: completed  # done      -> "completed"   (the reported defect)
+      summary: "fixed the # parse"   -> unchanged     (inside quotes)
+      tag: v1#2                      -> unchanged     (no preceding whitespace)
+      files: [a, b]  # note          -> "[a, b]"
+      - item  # note                 -> "item"
+      [a # x, b]                     -> "[a"  -> EXPLICIT unterminated-sequence
+                                        failure, which is what YAML means: the
+                                        comment eats the closing bracket.
+
+    DOCUMENTED DEVIATION FROM STRICT YAML (deliberate, clause (b)). A value
+    whose first non-whitespace character is `#` — `color: #ff0000` — is kept as
+    the plain scalar "#ff0000". Strict YAML reads that as a comment and the
+    value as null. The deviation is chosen because it is the reading a result-
+    block emitter means, and because BOTH readings fail CLOSED for every field
+    these validators check (a null and a "#..." string are each rejected by the
+    presence/enum/int tests), so nothing turns fail-open on the choice. The one
+    place strict YAML is honoured instead is a key line with a comment and a
+    nested body (`resume_context:  # note` + indented keys), which _parse_mapping
+    handles explicitly — see there.
+
+    HONEST LIMIT. An unquoted value that legitimately contains ` # ` IS
+    truncated (`summary: fixed the # parsing` -> "fixed the"). That is real
+    YAML semantics and the reason emitters must quote such values; the module
+    cannot both honour comments and preserve them.
+
+    An UNTERMINATED quote suppresses stripping for the rest of the string, so
+    `a: "oops # x` still reaches parse_scalar and is reported as an
+    unterminated quoted scalar rather than being silently repaired.
+    """
+    if not isinstance(raw, str) or "#" not in raw:
+        return raw
+    quote = None
+    seen_content = False
+    i = 0
+    n = len(raw)
+    while i < n:
+        c = raw[i]
+        if quote is None:
+            if c in "\"'":
+                quote = c
+                seen_content = True
+                i += 1
+                continue
+            if c == "#" and seen_content and i > 0 and raw[i - 1] in " \t":
+                return raw[:i]
+            if c not in " \t":
+                seen_content = True
+            i += 1
+            continue
+        # inside a quoted scalar — no comment can start here
+        if quote == '"' and c == "\\":
+            i += 2
+            continue
+        if c == quote:
+            if quote == "'" and i + 1 < n and raw[i + 1] == "'":
+                i += 2  # '' is an escaped quote in a single-quoted scalar
+                continue
+            quote = None
+        i += 1
+    return raw
+
 
 def _read_quoted(s, i):
     """s[i] must be a quote character. Returns (value, next_index, err)."""
@@ -496,8 +592,12 @@ def parse_scalar(raw):
     never the null value. Everything else is returned as a str (numbers and
     booleans are NOT coerced here; validators do their own typed reads so the
     reason strings can name the offending literal verbatim).
+
+    A trailing `#` comment is removed first (see strip_comment). The call is
+    idempotent, so this is safe whether the caller pre-stripped or not — and it
+    keeps parse_scalar correct when called directly, not only via parse_value.
     """
-    s = raw.strip()
+    s = strip_comment(raw).strip()
     if s == "" or s in NULL_SPELLINGS:
         return None, None
     if s[0] in "\"'":
@@ -505,8 +605,13 @@ def parse_scalar(raw):
         if err:
             return None, err
         tail = s[idx:].strip()
-        if tail and not tail.startswith("#"):
-            return None, "trailing content after quoted scalar: %r" % tail
+        if tail:
+            # strip_comment has already removed any legitimate comment, so a
+            # residual `#` here had no whitespace before it and is NOT one.
+            return None, "trailing content after quoted scalar: %r%s" % (
+                tail,
+                _COMMENT_NO_SPACE_HINT if tail.startswith("#") else "",
+            )
         return val, None
     if s[0] in _UNSUPPORTED_LEADERS:
         return None, "unsupported YAML construct: %s" % _UNSUPPORTED_LEADERS[s[0]]
@@ -622,24 +727,40 @@ def parse_value(raw):
     made actionable instead: it names the quoting fix. Emitters that need a
     bracketed prefix in free text must quote the value
     (`summary: "[WIP] refactored the guard"`), which parses fine.
+
+    COMMENTS ARE REMOVED HERE, ONCE, FOR EVERY SHAPE. parse_value is the single
+    entry point for the right-hand side of a `key:` line, for a block-sequence
+    item's content, and for a nested single-scalar body, so stripping here fixes
+    the plain-scalar, flow-collection and block-sequence paths together rather
+    than in three places that can drift apart (see strip_comment).
     """
-    s = raw.strip()
+    stripped = strip_comment(raw)
+    had_comment = stripped != raw
+    s = stripped.strip()
     if not s:
         return None, None
     if s[0] in "[{":
         val, idx, err = _flow_value(s, 0)
         if err:
-            return None, "%s (a value starting with %r is parsed as a flow %s; if it is plain text, quote it)" % (
+            return None, "%s (a value starting with %r is parsed as a flow %s; if it is plain text, quote it)%s" % (
                 err,
                 s[0],
                 "sequence" if s[0] == "[" else "mapping",
+                _COMMENT_TRUNCATION_HINT if had_comment else "",
             )
         tail = s[idx:].strip()
-        if tail and not tail.startswith("#"):
+        if tail:
+            # A residual `#` cannot be a comment: strip_comment already removed
+            # every `#` that YAML would treat as one.
             return None, (
                 "trailing content after flow collection: %r (a value starting "
                 "with %r is parsed as a flow collection; if it is plain text, "
-                "quote it)" % (tail, s[0])
+                "quote it)%s"
+                % (
+                    tail,
+                    s[0],
+                    _COMMENT_NO_SPACE_HINT if tail.startswith("#") else "",
+                )
             )
         return val, None
     return parse_scalar(s)
@@ -790,13 +911,29 @@ def _parse_mapping(toks, i, indent, errors):
         rest = match.group(2)
         if key in result:
             errors.append("line %d: duplicate key %r" % (tok.no, key))
-        if rest is None or rest.strip() == "":
+        # A key line carrying ONLY a comment (`resume_context:  # note`) is the
+        # one place strict YAML is honoured over strip_comment's clause (b):
+        # here the `#` is unambiguously preceded by the `key:` separator, and a
+        # nested body may follow. _KEY_RE consumes exactly one separator space,
+        # so the "is there content before the #" test cannot be made at
+        # parse_value level for this shape — it needs the key line.
+        rest_stripped = "" if rest is None else rest.strip()
+        comment_only = rest_stripped.startswith("#")
+        if rest is None or rest_stripped == "" or comment_only:
             body, i = _collect_body(toks, i + 1, indent)
             if body:
                 result[key] = _parse_nested(body, errors)
-            else:
+                continue
+            if not comment_only:
                 # empty-after-colon — one of the five YAML null spellings
                 result[key] = None
+                continue
+            # Comment-only remainder with NO nested body: fall through to the
+            # documented plain-scalar reading rather than inventing a null.
+            val, err = parse_value(rest)
+            if err:
+                errors.append("line %d: %s" % (tok.no, err))
+            result[key] = val
             continue
         val, err = parse_value(rest)
         if err:

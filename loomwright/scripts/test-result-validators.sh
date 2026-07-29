@@ -530,6 +530,144 @@ check("quoting the bracketed prefix parses cleanly (the documented workaround)",
 _, errs = R.parse_block("X_RESULT:\n  files_modified: [a.py, b.py")
 check("a genuinely truncated flow array is STILL an error, not a fallback string",
       errs != [])
+
+# --- FINDING 7: a trailing `#` comment must NOT be folded into the value -----
+#
+# THE DEFECT. `status: completed  # done` parsed to the STRING
+# "completed  # done". Nothing reported it, because absorbing a comment is not
+# a construct failure — every downstream `==` simply stopped matching. In
+# validate-worker-result.py that silently disabled rules 2, 4 and 8 (all three
+# are guarded by `status == "completed"`), so a block with no files, an
+# unresolved error AND a non-empty outputs_gap answered ok:true. The other four
+# validators, whose comparable fields are enum- or int-checked, instead
+# REJECTED valid blocks. Fail-open on one side, spurious rejects on the other.
+#
+# HOW TO READ THE LABELS — this distinction is the evidence, not decoration:
+#   [FALSIFIES] verified to FAIL against the pre-fix parser (HEAD 03b5535).
+#   [CONTROL]   passes before AND after. Present to prove the fix did not
+#               over-reach; on its own a control proves nothing.
+# Each fail-open case is PAIRED with a comment-free control that was already
+# rejected pre-fix, so the pair proves the block is non-conforming for reasons
+# other than the comment and that the fix restored the rule, not the reason.
+
+# [FALSIFIES] the reported bug, in both emission shapes.
+fields, errors = R.parse_block("X_RESULT:\n  status: completed  # all good")
+check("[FALSIFIES] plain scalar: a trailing comment is stripped, not absorbed",
+      errors == [] and fields.get("status") == "completed")
+fields, errors = R.parse_block(
+    R.find_last_block("## X_RESULT\n- status: completed  # all good\n", "X_RESULT"))
+check("[FALSIFIES] markdown bullet form: trailing comment stripped",
+      errors == [] and fields.get("status") == "completed")
+fields, errors = R.parse_block("X_RESULT:\n  n: 2\t# tab-separated comment")
+check("[FALSIFIES] a TAB before the '#' also introduces a comment",
+      errors == [] and fields.get("n") == "2")
+
+# [CONTROL] quoted scalars are untouched — a '#' inside quotes is content.
+fields, errors = R.parse_block('X_RESULT:\n  summary: "fixed the # parsing"')
+check("[CONTROL] a '#' inside a double-quoted scalar is NOT stripped",
+      errors == [] and fields.get("summary") == "fixed the # parsing")
+fields, errors = R.parse_block("X_RESULT:\n  summary: 'fixed the # parsing'")
+check("[CONTROL] a '#' inside a single-quoted scalar is NOT stripped",
+      errors == [] and fields.get("summary") == "fixed the # parsing")
+fields, errors = R.parse_block('X_RESULT:\n  summary: "a # b"  # real comment')
+check("[CONTROL] quoted '#' survives while a REAL trailing comment is stripped",
+      errors == [] and fields.get("summary") == "a # b")
+
+# [CONTROL] no preceding whitespace => not a comment (the stated control).
+fields, errors = R.parse_block("X_RESULT:\n  tag: v1#2")
+check("[CONTROL] a '#' with no preceding whitespace stays part of the value",
+      errors == [] and fields.get("tag") == "v1#2")
+fields, errors = R.parse_block("X_RESULT:\n  color: #ff0000")
+check("[CONTROL] a value BEGINNING with '#' is kept as a plain scalar",
+      errors == [] and fields.get("color") == "#ff0000")
+
+# Flow collections. The TRAILING-comment case already worked (parse_value's
+# tail check tolerated a leading '#'), so it is a control, not a bug fix — but
+# a comment INSIDE the collection was absorbed into an element, which is the
+# same defect one level down.
+fields, errors = R.parse_block("X_RESULT:\n  files: [a.py, b.py]  # two files")
+check("[CONTROL] flow sequence with a TRAILING comment already parsed cleanly",
+      errors == [] and fields.get("files") == ["a.py", "b.py"])
+fields, errors = R.parse_block("X_RESULT:\n  files: [a.py # first, b.py]")
+check("[FALSIFIES] a comment INSIDE a flow sequence is an EXPLICIT failure "
+      "(it eats the ']'), never an element carrying '# first'",
+      errors != [] and "unterminated flow sequence" in errors[0])
+fields, errors = R.parse_block(
+    "X_RESULT:\n  outputs_verified: [{kind: file, path: a.ts  # the module, "
+    "status: present}]")
+check("[FALSIFIES] a comment inside a flow SEQ-OF-MAPPINGS is an explicit failure",
+      errors != [] and "unterminated flow mapping" in errors[0])
+fields, errors = R.parse_block('X_RESULT:\n  files: ["a # b", c]  # note')
+check("[CONTROL] a quoted '#' inside a flow element survives the trailing strip",
+      errors == [] and fields.get("files") == ["a # b", "c"])
+
+# Block sequences — the plain-scalar path one level down. Both were absorbing.
+fields, errors = R.parse_block(
+    "X_RESULT:\n  merge_order:\n    - feature/a  # merged first\n    - feature/b")
+check("[FALSIFIES] block sequence entry: trailing comment stripped",
+      errors == [] and fields.get("merge_order") == ["feature/a", "feature/b"])
+fields, errors = R.parse_block(
+    "X_RESULT:\n  outputs_verified:\n    - kind: file  # the module\n"
+    "      path: a.ts\n      status: present  # verified on disk")
+seq = fields.get("outputs_verified")
+check("[FALSIFIES] block sequence OF MAPPINGS: trailing comments stripped",
+      errors == []
+      and seq == [{"kind": "file", "path": "a.ts", "status": "present"}])
+
+# A residual '#' can no longer masquerade as a comment. Pre-fix both of these
+# were silently ACCEPTED (the tail checks tolerated any leading '#'), which
+# contradicted the very rule the strip implements.
+_, errors = R.parse_block('X_RESULT:\n  a: "abc"#note')
+check("[FALSIFIES] '#' with no preceding whitespace after a quoted scalar is "
+      "an explicit failure, not a silently accepted comment",
+      errors != [] and "trailing content after quoted scalar" in errors[0])
+_, errors = R.parse_block("X_RESULT:\n  a: [x, y]#note")
+check("[FALSIFIES] '#' with no preceding whitespace after a flow collection is "
+      "an explicit failure",
+      errors != [] and "trailing content after flow collection" in errors[0])
+
+# A key line carrying ONLY a comment. With a nested body this is ordinary YAML
+# and pre-fix it produced a bogus 'unexpected indentation' error.
+fields, errors = R.parse_block(
+    "X_RESULT:\n  resume_context:  # carried forward\n    tool_calls_used: 58")
+check("[FALSIFIES] a key line with only a comment, then a nested body, parses",
+      errors == []
+      and fields.get("resume_context") == {"tool_calls_used": "58"})
+fields, errors = R.parse_block("X_RESULT:\n  a: # nothing to say\n  b: 1")
+check("[CONTROL] a comment-only value with NO body keeps the documented "
+      "plain-scalar reading (both readings fail closed downstream)",
+      errors == [] and fields.get("a") == "# nothing to say")
+fields, errors = R.parse_block("X_RESULT:\n  # a whole-line comment\n  a: 1")
+check("[CONTROL] a whole-line comment inside a block is skipped, as before",
+      errors == [] and set(fields) == {"a"})
+
+# Guards on the tightened tail checks: the pre-existing explicit failures must
+# still be explicit failures, and an unterminated quote must not be repaired.
+_, errors = R.parse_block("X_RESULT:\n  a: [1, 2] junk")
+check("[CONTROL] trailing junk after a flow collection is still an error",
+      errors != [])
+_, errors = R.parse_block('X_RESULT:\n  a: "oops # x')
+check("[CONTROL] an unterminated quote is still reported, not silently closed "
+      "by the comment strip",
+      errors != [] and "unterminated quoted scalar" in errors[0])
+
+# The cost of the fix, asserted so it can never change by accident: an
+# UNQUOTED value that legitimately contains ' # ' IS truncated. That is real
+# YAML and the reason emitters must quote such values. Labelled honestly — it
+# also falsifies against the pre-fix parser, because it IS a behaviour change,
+# not a control.
+fields, errors = R.parse_block("X_RESULT:\n  summary: fixed the # parsing")
+check("[FALSIFIES / DOCUMENTED LIMIT] an unquoted ' # ' truncates the value "
+      "(quote it) — the accepted cost of honouring comments",
+      errors == [] and fields.get("summary") == "fixed the")
+
+# strip_comment as a unit (the helper is new, so there is no pre-fix baseline).
+check("[NEW API] strip_comment is idempotent",
+      R.strip_comment(R.strip_comment("a  # b")) == R.strip_comment("a  # b"))
+check("[NEW API] strip_comment leaves a comment-free string identical",
+      R.strip_comment("plain value") == "plain value")
+check("[NEW API] strip_comment does not scan past an unterminated quote",
+      R.strip_comment('"oops # x') == '"oops # x')
 PYEOF
 
 PARSER_RESULTS="$(python3 "$PARSER_TESTS" "$SCRIPT_DIR" 2>&1)"
@@ -874,6 +1012,157 @@ mk worker-blank-after-heading.md <<'EOF'
 EOF
 run_v "$V_WORKER" "$F"
 assert_pass "worker: heading + conventional blank line is not reported as a MISSING block"
+
+# --- FINDING 7 (validator level): a trailing comment on `status` failed OPEN --
+#
+# Rules 2, 4 and 8 are ALL guarded by `status == "completed"`. When the parser
+# folded a trailing comment into the value, `completed  # done` matched none of
+# them, so all three checks were silently SKIPPED — the fail-open class this
+# whole PR exists to prevent, and invisible because these run as `type: command`
+# hooks under `|| true`. Worker is the only one of the five validators where
+# this fails OPEN rather than merely rejecting: its `status` is a DELIBERATE
+# non-enum (see the module docstring), so a polluted value slips past the `==`
+# instead of tripping an enum or int guard.
+#
+# Each of the three is a PAIR: the commented block (which answered ok:true
+# pre-fix) and the identical block with the comment removed (which was already
+# rejected pre-fix). The pair is what proves the fix restored the RULE and not
+# merely the reason string.
+
+# rule 2 — no files touched.
+mk worker-c7-rule2-comment.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed  # all good
+- files_modified: []
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- error: none
+- summary: claims completion having touched no files
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: [FALSIFIES] trailing comment on status no longer skips rule 2" \
+  "(rule 2)"
+
+mk worker-c7-rule2-control.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: []
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- error: none
+- summary: claims completion having touched no files
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: [CONTROL] the same block WITHOUT the comment was already rejected" \
+  "(rule 2)"
+
+# rule 4 — an unresolved error alongside status=completed.
+mk worker-c7-rule4-comment.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed  # done
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- error: the migration step never completed
+- summary: completed with an unresolved error still recorded
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: [FALSIFIES] trailing comment on status no longer skips rule 4" \
+  "(rule 4)"
+
+mk worker-c7-rule4-control.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- error: the migration step never completed
+- summary: completed with an unresolved error still recorded
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: [CONTROL] the same block WITHOUT the comment was already rejected" \
+  "(rule 4)"
+
+# rule 8 — outputs_gap non-empty must map to status: partial.
+mk worker-c7-rule8-comment.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed  # shipped
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: [{kind: file, path: a.py, status: present}]
+- outputs_gap: "src/x.py:Foo"
+- error: none
+- summary: completed while a promised output is still missing
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: [FALSIFIES] trailing comment on status no longer skips rule 8" \
+  "outputs_gap non-empty must map to status: partial"
+
+mk worker-c7-rule8-control.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: [{kind: file, path: a.py, status: present}]
+- outputs_gap: "src/x.py:Foo"
+- error: none
+- summary: completed while a promised output is still missing
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: [CONTROL] the same block WITHOUT the comment was already rejected" \
+  "outputs_gap non-empty must map to status: partial"
+
+# The OTHER half of the defect: on every typed/enum field the same pollution
+# produced a SPURIOUS REJECT of a conforming block. Both of these answered
+# ok:false pre-fix.
+mk worker-c7-spurious.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2  # v2 contract
+- task_id: st1
+- status: completed  # all criteria met
+- files_modified: [a.py]  # one file
+- files_created: []
+- outputs_verified:
+    - kind: file  # the module itself
+      path: a.py
+      status: present  # verified on disk
+- outputs_gap: ""  # nothing missing
+- error: none
+- summary: "a conforming block that annotates itself — including a # inside quotes"
+EOF
+run_v "$V_WORKER" "$F"
+assert_pass "worker: [FALSIFIES] a fully conforming block with trailing comments is accepted"
+
+mk worker-c7-hash-in-value.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- error: none
+- summary: "closes #118 — the '#' must survive inside a quoted scalar"
+EOF
+run_v "$V_WORKER" "$F"
+assert_pass "worker: [CONTROL] a '#' inside a quoted summary is content, not a comment"
 
 # ── C. execute-manager validator ─────────────────────────────────────────────
 echo "== C. validate-execute-result.py — 6 rules =="
@@ -1716,6 +2005,35 @@ EOF
   run_v "$V_QA" "$F"
   assert_pass "qa: status '$st' accepted [rule 5]"
 done
+
+# --- FINDING 7 (second validator): the SPURIOUS-REJECT half of the defect ----
+# Worker showed the fail-OPEN half. Here is the other half on a different
+# schema: QA's status IS enum-checked, so a polluted `passed  # all green`
+# tripped rule 5 and REJECTED a conforming block. Both halves come from the one
+# parser defect, which is why the fix is in the parser and not in any validator.
+mk qa-c7-comment.md <<'EOF'
+QA_RESULT:
+  schema_version: 1  # v1
+  status: passed  # all green
+  tests_generated: 4  # four scenarios
+  tests_passed: 4
+  coverage_estimate: 0.82  # rough
+  summary: "a conforming block that annotates itself, including a # in quotes"
+EOF
+run_v "$V_QA" "$F"
+assert_pass "qa: [FALSIFIES] trailing comments no longer cause a spurious reject"
+
+mk qa-c7-control.md <<'EOF'
+QA_RESULT:
+  schema_version: 1
+  status: passed#green
+  tests_generated: 0
+  tests_passed: 0
+  summary: a '#' with no preceding whitespace is part of the value, so this is out-of-enum
+EOF
+run_v "$V_QA" "$F"
+assert_fail "qa: [CONTROL] a '#' with no preceding whitespace is NOT a comment [rule 5]" \
+  "(rule 5)"
 
 # ── F. plan-reviewer validator ───────────────────────────────────────────────
 echo "== F. validate-plan-review-result.py — 6 rules =="
