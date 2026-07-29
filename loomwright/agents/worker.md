@@ -68,6 +68,7 @@ Implement a single subtask in an isolated git worktree. Operate independently, f
 - **No state file access:** Don't read/write the Supervisor state file
 - **Complete or fail:** Always produce a WORKER_RESULT, even on failure
 - **Write summary file:** Always write `.worker-summary.md` in worktree (parallel mode) or `.supervisor/worker-summaries/{subtask_id}.md` (inline mode) before final output
+- **Turn budget — 40 turns (advisory):** Your `maxTurns` ceiling is 40; budget exploration so the WORKER_RESULT gets written before you reach it. Stated for visibility only — the harness enforces the ceiling either way, prompt-stated budgets measure only ~90% adherence in this repo, and this line is **not** expected to change behavior.
 
 ---
 
