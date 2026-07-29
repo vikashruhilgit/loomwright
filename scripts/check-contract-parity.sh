@@ -9,8 +9,10 @@
 #      must (a) still appear in that validator's RULE SOURCE — the `type:
 #      prompt` prompt string, or (since v15.17.0, for validators converted to
 #      `type: command`) the source of the referenced validate-<x>-result.py
-#      script (pin-drift guard: if the hook changes, the manifest must change
-#      with it) — and (b) appear in the matched agent's prompt file (an agent
+#      script WITH ITS DOCSTRINGS STRIPPED, so that a rule transcribed in prose
+#      cannot stand in for the executable check (pin-drift guard: if the hook
+#      changes, the manifest must change with it) — and (b) appear in the
+#      matched agent's prompt file (an agent
 #      told to emit a block must name every hook-required field somewhere in
 #      its emit instructions).
 #
@@ -79,15 +81,93 @@ PARITY_UNRESOLVED="__PARITY_UNRESOLVED__"
 #     enforcing nothing;
 #   * taking the first entry fails CLOSED with spurious red CI and couples the
 #     gate to hook ordering that nothing asserts.
+#
+# DOCSTRINGS ARE STRIPPED from the resolved validator source before it is
+# returned, and that is load-bearing too. Every ST-1 validator opens with a
+# module docstring transcribing its numbered rules VERBATIM ("(4) if tests were
+# run, coverage_estimate is present"), and several function docstrings quote
+# field names as well. Grepping the raw source therefore lets PROSE satisfy the
+# pin-drift guard: deleting the executable rule-4 block from
+# validate-qa-result.py leaves zero coverage_estimate mentions outside the
+# docstring, yet an unstripped guard still prints ✓ and exits 0 — the same
+# fail-open class as the concat reading above, one layer deeper. Since the five
+# prompt strings this guard used to grep are gone, it is the only thing between
+# a silently-weakened validator and CI, so it must grep CODE, not commentary.
+#
+# Removal is by AST NODE SPAN, and both obvious shortcuts are wrong:
+#   * `src.replace(ast.get_docstring(tree), "")` removes the docstring TEXT
+#     wherever it occurs, not the node — a short docstring whose wording recurs
+#     in a string constant would be over-stripped;
+#   * that same call also silently does NOTHING for indented function/class
+#     docstrings, because get_docstring() dedents (clean=True) so its result is
+#     not present verbatim in the source. Verified: the cleaned text of
+#     validate-worker-result.py's module docstring is found in the source, its
+#     _non_empty_list() docstring's is not.
+# ALL docstrings are stripped, not just the module's: files_modified survives
+# only in _non_empty_list()'s docstring and worktrees only in
+# _check_worktree_paths()'s if their executable checks are deleted, so a
+# module-only strip would narrow this hole rather than close it.
 hook_prompt() { # $1 = matcher substring; prints rule source, or PARITY_UNRESOLVED + reason
   python3 - "$HOOKS" "$1" "$PLUGIN" "$PARITY_UNRESOLVED" <<'PY'
-import json,os,re,sys
+import ast,json,os,re,sys
 hooks_path, needle, plugin, sentinel = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 h=json.load(open(hooks_path))
 
 def bail(msg):
     print("%s %s" % (sentinel, msg))
     sys.exit(0)
+
+def _is_str_const(node):
+    # py3.8+ spells a string literal ast.Constant; py<=3.7 spells it ast.Str.
+    # The name is compared instead of referencing ast.Str, which is deprecated
+    # (and warns) on py3.12+.
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return True
+    return node.__class__.__name__ == "Str"
+
+def strip_docstrings(src, path):
+    """Blank every module/class/function docstring, by node span.
+
+    Fails CLOSED (bail) rather than returning prose-bearing source: an
+    unparseable validator cannot be verified, and a validator that does not
+    parse is itself dead at runtime (its traceback is swallowed by the hook's
+    `|| true`), so red CI is the correct signal.
+    """
+    try:
+        tree = ast.parse(src)
+    except (SyntaxError, ValueError) as exc:
+        bail("validator source '%s' does not parse as Python (%s: %s) — the "
+             "pin-drift guard cannot distinguish its executable checks from "
+             "its prose, and an unparseable validator is dead at runtime"
+             % (path, type(exc).__name__, exc))
+    spans=[]
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        body = getattr(node, "body", None) or []
+        if not body:
+            continue
+        first = body[0]
+        if not (isinstance(first, ast.Expr) and _is_str_const(first.value)):
+            continue
+        s = first.value
+        if getattr(s, "end_lineno", None) is None or getattr(s, "end_col_offset", None) is None:
+            bail("python %d.%d cannot report AST end positions (added in 3.8), so "
+                 "docstrings in '%s' cannot be stripped by span — the pin-drift "
+                 "guard would let prose satisfy it; run this gate on python >= 3.8"
+                 % (sys.version_info[0], sys.version_info[1], path))
+        spans.append((s.lineno, s.col_offset, s.end_lineno, s.end_col_offset))
+    lines = src.splitlines(True)
+    # Docstring spans are disjoint; edit right-to-left so earlier offsets stay valid.
+    for (l1, c1, l2, c2) in sorted(spans, reverse=True):
+        if l1 == l2:
+            lines[l1-1] = lines[l1-1][:c1] + lines[l1-1][c2:]
+        else:
+            lines[l1-1] = lines[l1-1][:c1] + "\n"
+            for i in range(l1, l2-1):
+                lines[i] = "\n"
+            lines[l2-1] = lines[l2-1][c2:]
+    return "".join(lines)
 
 prompts=[]; commands=[]
 for ev in h.get("hooks",{}).values():
@@ -125,9 +205,11 @@ if not os.path.isabs(path):
     path=os.path.join(plugin, path)
 try:
     with open(path, encoding="utf-8") as fh:
-        sys.stdout.write(fh.read())
+        src=fh.read()
 except (OSError, UnicodeDecodeError) as exc:
     bail("matcher '%s': cannot read validator source '%s' (%s)" % (needle, path, exc))
+# Prose must not satisfy the pin-drift grep — see the comment block above.
+sys.stdout.write(strip_docstrings(src, path))
 PY
 }
 

@@ -134,6 +134,40 @@ write_decoy() { # $1 fixture dir, $2 plugin-relative path, $3 comma-separated fi
   } >"$d/loomwright/$rel"
 }
 
+write_prose_validator() { # $1 dir, $2 rel path, $3 code fields, $4 prose-only field, $5 module|function
+  # A stand-in validator that names $4 ONLY inside a docstring, never in
+  # executable code — the shape a real validator takes when its executable rule
+  # block is deleted but its docstring keeps transcribing the rule verbatim.
+  local d="$1" rel="$2" fields="$3" prose="$4" where="$5" f
+  mkdir -p "$(dirname "$d/loomwright/$rel")"
+  {
+    echo '#!/usr/bin/env python3'
+    if [ "$where" = module ]; then
+      echo '"""Stand-in validator whose module docstring transcribes its numbered'
+      echo 'rules verbatim, exactly as every real ST-1 validator does:'
+      echo ''
+      echo "  (4) if tests were run, $prose is present"
+      echo '"""'
+    else
+      echo '"""Stand-in validator. Rule text lives on the helper below."""'
+    fi
+    echo 'REQUIRED = ['
+    IFS=',' read -ra _fl <<<"$fields"
+    for f in "${_fl[@]}"; do echo "    \"$f\","; done
+    echo ']'
+    echo ''
+    echo ''
+    echo 'def _missing(fields):'
+    if [ "$where" = function ]; then
+      echo '    """Presence helper.'
+      echo ''
+      echo "    Rule (4): $prose is present when tests were run."
+      echo '    """'
+    fi
+    echo '    return [k for k in REQUIRED if k not in fields]'
+  } >"$d/loomwright/$rel"
+}
+
 QA_FIELDS='schema_version,tests_generated,tests_passed,summary,coverage_estimate'
 VALIDATOR_CMD='python3 "${CLAUDE_PLUGIN_ROOT}/scripts/validate-qa-result.py" || true'
 DECOY_CMD='payload=$(cat); printf "%s" "$payload" | bash "${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry-core.sh" || true'
@@ -218,6 +252,37 @@ set_command_hooks "$TMP/cmd-fallback-two" qa-executor "$VALIDATOR_CMD" \
   'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/validate-qa2-result.py" || true'
 check "two validator command entries error (ambiguous rule source)" 1 \
   bash "$GUARD" --root "$TMP/cmd-fallback-two"
+
+# ── 10-11: PROSE MUST NOT SATISFY THE PIN-DRIFT GREP ─────────────────────────
+# The R0b fail-open class one layer deeper. Cases 6-9 all put field names in
+# executable code, so they cannot tell a guard that greps the validator's RAW
+# source from one that greps only its CODE. Every real ST-1 validator opens
+# with a docstring transcribing its numbered rules verbatim, so deleting an
+# executable rule block leaves the field named in prose and an unstripped guard
+# stays green while enforcing nothing.
+
+# 10. Field named ONLY in the MODULE docstring → pin-drift, not a pass.
+make_fixture "$TMP/cmd-fallback-prose-module"
+write_prose_validator "$TMP/cmd-fallback-prose-module" scripts/validate-qa-result.py \
+  'schema_version,tests_generated,tests_passed,summary' coverage_estimate module
+set_command_hooks "$TMP/cmd-fallback-prose-module" qa-executor "$VALIDATOR_CMD"
+check "field named only in the module docstring fails (prose is not a check)" 1 \
+  bash "$GUARD" --root "$TMP/cmd-fallback-prose-module"
+
+# 11. Same, but the field survives only in a FUNCTION docstring. Stripping just
+#     the module docstring narrows the hole without closing it: on the real
+#     tree files_modified survives only in validate-worker-result.py's
+#     _non_empty_list() docstring, and worktrees only in
+#     validate-execute-result.py's _check_worktree_paths(), once their
+#     executable checks are deleted. Verified: this fixture passes against a
+#     module-docstring-only strip, so without it the two implementations are
+#     indistinguishable to this suite.
+make_fixture "$TMP/cmd-fallback-prose-fn"
+write_prose_validator "$TMP/cmd-fallback-prose-fn" scripts/validate-qa-result.py \
+  'schema_version,tests_generated,tests_passed,summary' coverage_estimate function
+set_command_hooks "$TMP/cmd-fallback-prose-fn" qa-executor "$VALIDATOR_CMD"
+check "field named only in a function docstring fails (module-only strip is not enough)" 1 \
+  bash "$GUARD" --root "$TMP/cmd-fallback-prose-fn"
 
 # 5. The guard passes against the REAL repo tree. Deliberately NOT a pure
 #    fixture test: this is an integration invariant (the gate must hold on the
