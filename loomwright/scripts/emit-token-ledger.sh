@@ -59,11 +59,44 @@ if [ -z "$INPUT" ]; then
   exit 0
 fi
 
+# ---- Worktree-safe anchoring (R1 fix, v15.16.0) ------------------------------
+# Resolve the MAIN worktree by name — `git worktree list --porcelain`'s first
+# entry is always the main worktree, correct from inside any linked worktree
+# (including a DETACHED one — this repo's own review-drain worktrees are
+# detached-HEAD, see CLAUDE.md "Orphaned worktrees after crash?") and
+# unaffected by --separate-git-dir/submodule layouts. NEVER bare `$PWD`,
+# NEVER bare `git branch --show-current` (empirically returns EMPTY inside a
+# detached worktree, verified 2026-07-28 on git 2.50.1 — see
+# emit-progress-event.sh's header for the full R1 writeup this anchoring
+# mirrors). UNLIKE that new emitter, this proven emitter (785 real events)
+# falls back to `$PWD` when git resolution is unavailable — preserving
+# BYTE-IDENTICAL pre-change behaviour ONLY when cwd is exactly the git
+# TOPLEVEL of the main checkout (`$PWD` == `git rev-parse --show-toplevel`),
+# NOT an arbitrary subdirectory of it — from a subdirectory the fallback
+# resolves LOG_DIR relative to that subdirectory's own `$PWD`, a
+# pre-existing (unchanged) property of the `$PWD` fallback, not something
+# this fix introduces. This fix changes ONLY the worktree case.
+#
+# Resolved BEFORE the python3 check below (deliberately reordered) so the
+# one-time python3-missing flag file also anchors to `$main_root` instead of
+# a bare `$PWD` — the flag write is not part of this emitter's 785-event
+# proven write path (that path requires python3 to even reach the JSONL
+# append), so reordering here does not touch byte-identical behaviour on the
+# proven path; it only fixes where the flag itself lands.
+main_root="$(git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')"
+if [ -n "$main_root" ] && [ -d "$main_root" ]; then
+  top="$(git -C "$main_root" rev-parse --path-format=absolute --show-toplevel 2>/dev/null || true)"
+  [ "$top" = "$main_root" ] || main_root=""
+fi
+[ -n "$main_root" ] || main_root="${PWD}"
+
 if ! command -v python3 >/dev/null 2>&1; then
   # One-time (per logs dir) stderr note — otherwise silent forever with no signal.
-  _flag="${PWD}/.supervisor/logs/token-ledger-python3-missing.flag"
+  # Anchored to $main_root (see anchoring block above), not a bare $PWD, so the
+  # flag lands in the same logs dir the rest of this emitter would have used.
+  _flag="${main_root}/.supervisor/logs/token-ledger-python3-missing.flag"
   if [ ! -f "$_flag" ]; then
-    mkdir -p "${PWD}/.supervisor/logs" 2>/dev/null || true
+    mkdir -p "${main_root}/.supervisor/logs" 2>/dev/null || true
     echo "emit-token-ledger: python3 not found — token_ledger will not be written (one-time note)" >&2
     : > "$_flag" 2>/dev/null || true
   fi
@@ -77,14 +110,15 @@ case "$UTC_TS" in
   [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*) ;;
   *) UTC_TS="" ;;
 esac
-LOG_DIR="${PWD}/.supervisor/logs"
+
+LOG_DIR="${main_root}/.supervisor/logs"
 export UTC_TS
 
 # ---- Resolve plugin session id from state.md (active run only) --------------
 # Match build-handoff.sh / Supervisor Session block: `- session_id: …`
 PLUGIN_SESSION_ID=""
 PLUGIN_STATUS=""
-STATE_MD="${PWD}/.supervisor/state.md"
+STATE_MD="${main_root}/.supervisor/state.md"
 if [ -f "$STATE_MD" ]; then
   PLUGIN_SESSION_ID="$(sed -nE 's/^- session_id:[[:space:]]*//p' "$STATE_MD" 2>/dev/null | head -1 || true)"
   PLUGIN_STATUS="$(sed -nE 's/^- status:[[:space:]]*//p' "$STATE_MD" 2>/dev/null | head -1 || true)"

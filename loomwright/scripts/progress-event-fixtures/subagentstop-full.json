@@ -1,0 +1,15 @@
+{
+  "session_id": "fixture-progress-event-full-001",
+  "transcript_path": "/nonexistent/transcript.jsonl",
+  "cwd": "/nonexistent/cwd",
+  "permission_mode": "default",
+  "agent_id": "agent-fixture-full",
+  "agent_type": "loomwright:worker",
+  "effort": "medium",
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "agent_transcript_path": "/nonexistent/agent-transcript.jsonl",
+  "last_assistant_message": "## WORKER_RESULT\n- status: completed\n",
+  "background_tasks": [],
+  "session_crons": []
+}
