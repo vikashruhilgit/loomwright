@@ -212,8 +212,8 @@ current count):
 | `loomwright:code-reviewer` | yes |
 | `loomwright:qa-executor` | yes |
 | `loomwright:supervisor-runner` | yes |
-| `loomwright:worker` | **no** — prompt-only SubagentStop today; no telemetry command hook |
-| `loomwright:execute-manager` | **no** — prompt-only SubagentStop today; no telemetry command hook |
+| `loomwright:worker` | **no** — its SubagentStop hooks are validator/progress-event command hooks; no telemetry command hook |
+| `loomwright:execute-manager` | **no** — its SubagentStop hooks are validator/progress-event command hooks; no telemetry command hook |
 | `loomwright:plan-reviewer` / `loomwright:launch-pad-runner` | no |
 
 Self-test: `scripts/test-token-ledger.sh` (fixtures under
