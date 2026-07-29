@@ -270,6 +270,14 @@ def _is_bullet(line):
     return stripped.startswith("- ") or stripped == "-"
 
 
+# Maximum consecutive blank lines a block may span. One blank line is the
+# conventional markdown gap between a `## NAME` heading and its bullets; more
+# than that is a paragraph break, not an intra-block gap. Without this cap the
+# tolerance was shape-only and could bridge an arbitrary distance (50 blank
+# lines still reconnected), which overstated what the bound guaranteed.
+_MAX_BLANK_RUN = 2
+
+
 def _looks_like_yaml_body(line):
     """True when `line` could belong to a YAML-form result-block body.
 
@@ -318,8 +326,18 @@ def find_last_block(text, name):
     the block when the NEXT non-blank line is still (a) indented deeper than
     the header, for the YAML form — or a bullet at/inside the block's own
     bullet indent, for the markdown form — AND (b) shaped like a body line
-    (`key:` or `- item`). Trailing prose, a dedented sibling block, and a
-    following unrelated heading all still terminate the block.
+    (`key:` or `- item`) — AND (c) separated by at most `_MAX_BLANK_RUN` blank
+    lines.
+
+    HONEST BOUND (do not overstate this): a dedented sibling block and a
+    following unrelated heading are reliably terminating, and the tolerance can
+    never merge two different named blocks. Trailing PROSE is only terminating
+    when it does not itself look like a body line — indented English containing
+    a colon matches `_KEY_RE`, so a line such as `  Next: see the follow-up` IS
+    absorbed and then fails the value parse. That outcome is fail-closed on a
+    non-gating advisory hook and the reason string names the offending line, so
+    it is a diagnosis cost rather than a correctness one; the blank-run cap is
+    what keeps it from reaching arbitrarily far past the block.
     """
     if not isinstance(text, str) or not text:
         return None
@@ -343,6 +361,7 @@ def find_last_block(text, name):
                     k = _next_content_index(lines, j)
                     if (
                         k is None
+                        or k - j > _MAX_BLANK_RUN
                         or _indent_of(lines[k]) <= base
                         or not _looks_like_yaml_body(lines[k])
                     ):
@@ -367,7 +386,7 @@ def find_last_block(text, name):
                 nxt = lines[j]
                 if nxt.strip() == "":
                     k = _next_content_index(lines, j)
-                    if k is None or not _is_bullet(lines[k]):
+                    if k is None or k - j > _MAX_BLANK_RUN or not _is_bullet(lines[k]):
                         break
                     if (
                         first_bullet_indent is not None
@@ -1018,7 +1037,7 @@ _DESTRUCTIVE_PATTERNS = (
 # matching inside hyphenated compounds such as `no-op` and `no-ff`.
 _NEGATION_RE = re.compile(
     r"(?i)(?<![\w-])(?:no|not|never|without|avoid\w*|forbid\w*|prohibit\w*|"
-    r"disallow\w*|cannot|can't|don't|doesn't|didn't|won't)(?![\w-])"
+    r"disallow\w*|refus\w*|declin\w*|cannot|can't|don't|doesn't|didn't|won't)(?![\w-])"
 )
 
 
