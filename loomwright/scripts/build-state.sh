@@ -217,9 +217,14 @@ STALE_LOCK_SECONDS=60
 
 lock_age_seconds() {
   local dir="$1" mtime now
-  mtime="$(stat -f %m "$dir" 2>/dev/null)"
+  # GNU first: BSD `stat -c` FAILS cleanly, whereas GNU `stat -f` SUCCEEDS
+  # while printing a filesystem dump. Trying BSD first would capture that
+  # garbage on Linux; the numeric guard below catches it either way, but
+  # GNU-first avoids relying on the guard at all (repo convention — see
+  # build-handoff.sh / read-orientation.sh).
+  mtime="$(stat -c %Y "$dir" 2>/dev/null)"
   case "$mtime" in
-    ''|*[!0-9]*) mtime="$(stat -c %Y "$dir" 2>/dev/null)" ;;
+    ''|*[!0-9]*) mtime="$(stat -f %m "$dir" 2>/dev/null)" ;;
   esac
   case "$mtime" in
     ''|*[!0-9]*) return 1 ;;
@@ -320,14 +325,19 @@ fi
 # ---- Preserve the original file's permission mode (Finding 3) ---------------
 # `mktemp` creates $TMP 0600; a bare `mv -f` would carry that onto state.md,
 # silently narrowing an existing 644 file to 600 on the first projection.
-# Read the ORIGINAL mode portably: try BSD `stat -f %Lp` first, fall back to
-# GNU `stat -c %a` — never assume a flavor (see header note; this repo has
-# already shipped a Linux-CI failure from exactly this BSD/GNU divergence).
+# Read the ORIGINAL mode portably, GNU (`stat -c %a`) FIRST then BSD
+# (`stat -f %Lp`) — never assume a flavor, and never branch on stat's exit
+# code. GNU `stat -f` means "report FILE SYSTEM status": it exits 0 while
+# printing a filesystem dump, so a BSD-first probe captures garbage on Linux
+# that only an output guard can catch. BSD `stat -c` fails cleanly, so
+# GNU-first degrades safely on both. (Repo convention — build-handoff.sh,
+# read-orientation.sh. This repo has already shipped a Linux-CI failure from
+# exactly this divergence, and did so again in this PR's own test code.)
 ORIG_MODE=""
 if [ -f "$STATE_MD" ]; then
-  ORIG_MODE="$(stat -f %Lp "$STATE_MD" 2>/dev/null)"
+  ORIG_MODE="$(stat -c %a "$STATE_MD" 2>/dev/null)"
   case "$ORIG_MODE" in
-    ''|*[!0-7]*) ORIG_MODE="$(stat -c %a "$STATE_MD" 2>/dev/null)" ;;
+    ''|*[!0-7]*) ORIG_MODE="$(stat -f %Lp "$STATE_MD" 2>/dev/null)" ;;
   esac
   case "$ORIG_MODE" in
     ''|*[!0-7]*) ORIG_MODE="" ;;

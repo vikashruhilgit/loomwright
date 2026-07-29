@@ -707,6 +707,19 @@ bash "$PROJECTOR" "sid-case25" "$REPO25" >/dev/null 2>&1
 BLOCK25_B="$(sed -n '/^## Session/,/^## Decisions Log/p' "$S25")"
 assert_eq "case25 ## Session key order stable across repeated projection" "$BLOCK25_A" "$BLOCK25_B"
 
+# Read a file's octal mode portably. NEVER branch on stat's exit code: GNU
+# `stat -f` means "report FILE SYSTEM status" and exits 0 while printing a
+# filesystem dump, so `stat -f %Lp x || stat -c %a x` silently captures garbage
+# on Linux (macOS-green, CI-red — this repo has shipped that bug before).
+# Validate the OUTPUT is octal instead, mirroring build-state.sh's own guard.
+file_mode() {
+  local m
+  m="$(stat -c %a "$1" 2>/dev/null)"          # GNU first: BSD `stat -c` fails cleanly
+  case "$m" in ''|*[!0-7]*) m="$(stat -f %Lp "$1" 2>/dev/null)" ;; esac
+  case "$m" in ''|*[!0-7]*) m="" ;; esac       # still not octal => report empty, never garbage
+  printf '%s' "$m"
+}
+
 echo "== 26. build-state.sh: permissions preserved — 644 stays 644 =="
 REPO26="$(init_repo "feature/case26")"
 mkdir -p "$REPO26/.supervisor/logs"
@@ -714,7 +727,7 @@ printf '# Supervisor State\n\n## Session\n- session_id: old\n- status: running\n
 chmod 644 "$REPO26/.supervisor/state.md"
 echo '{"event":"subtask_complete","type":"subtask_complete","session_id":"sid-case26"}' > "$REPO26/.supervisor/logs/sid-case26.jsonl"
 bash "$PROJECTOR" "sid-case26" "$REPO26" >/dev/null 2>&1
-MODE26="$(stat -f %Lp "$REPO26/.supervisor/state.md" 2>/dev/null || stat -c %a "$REPO26/.supervisor/state.md" 2>/dev/null)"
+MODE26="$(file_mode "$REPO26/.supervisor/state.md")"
 assert_eq "case26 mode stays 644 after projection" "644" "$MODE26"
 
 echo "== 27. build-state.sh: permissions preserved — 600 stays 600 =="
@@ -724,7 +737,7 @@ printf '# Supervisor State\n\n## Session\n- session_id: old\n- status: running\n
 chmod 600 "$REPO27/.supervisor/state.md"
 echo '{"event":"subtask_complete","type":"subtask_complete","session_id":"sid-case27"}' > "$REPO27/.supervisor/logs/sid-case27.jsonl"
 bash "$PROJECTOR" "sid-case27" "$REPO27" >/dev/null 2>&1
-MODE27="$(stat -f %Lp "$REPO27/.supervisor/state.md" 2>/dev/null || stat -c %a "$REPO27/.supervisor/state.md" 2>/dev/null)"
+MODE27="$(file_mode "$REPO27/.supervisor/state.md")"
 assert_eq "case27 mode stays 600 after projection (narrower than the mktemp-default coincidence)" "600" "$MODE27"
 
 echo "== 28. build-state.sh: lock contention — concurrent projection skips safely =="
