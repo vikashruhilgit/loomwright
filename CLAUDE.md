@@ -12,11 +12,9 @@ Guidance for Claude Code when working in this repository.
 
 **Loomwright** is a Claude Code plugin with 14 agent roles (9 user-facing + 5 internal) for plan-first readiness, parallel execution, requirements, planning, code review, commits, adversarial audits, standalone PR review-and-heal, and dual-agent QA. Supervisor and Launch Pad use `.supervisor/` exclusively for state; Orchestrator and Product Owner can optionally use Beads.
 
-**v15.18.0 — Fix 7 / D4: two review lenses, not four passes — the drain becomes deterministically heal-only with an earned fallback, and the per-subtask LLM reviewer is gone above threshold:** Executes `docs/SPIKES/FINAL_STATE_GOAL.md` D4. **(1) Counter-pressure rule.** NEW `## Review Counter-Pressure Rule` in `AGENT_GUIDELINES.md`: a pass is owed only if it has information the prior pass lacked, ALSO owed when the pass expected to supply that information verifiably did not run (asserted on posted output, never run conclusion), and deterministic gates are never traded against it. Records the two sanctioned lenses' information advantages (Phase 4.5: working tree + brief + rubric; CI review: independent context). **(2) Drain heal-only + earned fallback.** Four surfaces previously disagreed on whether `--until-mergeable`'s drain re-reviews the diff; all four (`skills/review-heal/SKILL.md`, `agents/review-pr.md`, `commands/review-pr.md`, §U4's pseudocode) now state identically that the drain is heal-only by default, with ONE exception — a new "Earned Fallback Review" runs exactly one bounded `code-reviewer` diff review per drain run when §U1's EXISTING all-channel read (issue-comment channel, never `--json reviews`) shows no review-producing lens actually posted, failing CLOSED **toward running** the review. `READY`/`ESCALATED`, never-merges, `--max-rounds`, and the flag-absent diff-only loop all stay byte-for-byte unchanged. **(3) Per-subtask LLM reviewer removed above threshold.** `agents/execute-manager.md`'s per-subtask `code-reviewer` spawn and poll arm are gone, and with them v15.16.0's FAIL==3/NEEDS_HUMAN `record_review` CALLS — deleted, not re-pointed, since the deterministic gate has no review decision to log (the Context-Keeper `record_review` OPERATION itself is retained, now with no current caller); `agents/orchestrator.md` §"Review Gate Policy" now applies the same rule at every threshold — no paired review subtask is ever generated, the deterministic `outputs_verified` gate plus tests/lint is the per-subtask gate, Phase 4.5's integrated review is the sole LLM gate. Side benefit: eliminates the worktree-isolation cross-file false-positive class. **(4) Supervisor mirrors + schema.** `agents/supervisor.md`/`commands/supervisor.md` synced (dispatch paths themselves untouched); `docs/RESULT_SCHEMAS.md` confirms Fix 7 needed **no** schema change (`REVIEW_HEAL_RESULT` stays `schema_version: 2`; `EXECUTE_RESULT.review_decision` stays required, reinterpreted as the deterministic gate's outcome above threshold). **(5) Measurement recorded, not argued.** `docs/SPIKES/EVAL_FINDINGS_AND_FIXES.md` Fix 7 gains a "Baseline (pre-change)" block: the postmortem corpus (n=77 at 2026-07-29; per-source `review_rounds` means legacy 3.42/n50, `automate_drain` 2.82/n17, `manual_postmortem` 3.80/n10, overall 3.34) labeled explicitly a TREND baseline, not a controlled before/after; plus a live CI-healing verification (captured 2026-07-30, four PRs) showing `claude-code-action` self-skips on workflow-touching PRs while exiting 0 (#117: 2 workflow files, pass in 14s, 0 comments, 0 reviews) and that `reviews` was empty on all four PRs — every finding arrived as a posted issue comment, which is why the drain's channel-healing half stays load-bearing. `FINAL_STATE_GOAL.md` D4 marked SHIPPED with the fallback amendment recorded. **(6) Four token-budget raises** (restoring each row's prior proportional margin, not a fresh measured+10%): `context-keeper` 3483→3818 (marking `record_review` retained-but-uncalled moved measured 3166→3471, leaving 12 proxy tokens of headroom), `orchestrator` 8665→9558, `review-pr` 24230→27955 (the Earned Fallback Review subsection), `supervisor` 51700→52568. Version 15.17.0 → 15.18.0 in both manifests. **Counts UNCHANGED: 14 agents / 21 commands / 41 skills / 24 hooks; no `schema_version` bump anywhere.** Additive on top of v15.17.0.
+**Two review lenses, not four passes** (the current review-lane contract): the `--until-mergeable` drain is **heal-only by default**, with one Earned Fallback Review that runs when no review-producing lens verifiably posted (fails closed *toward* running it); and **no per-subtask LLM reviewer is spawned at any threshold** — the deterministic `outputs_verified` gate plus tests/lint is the per-subtask gate, and Phase 4.5's integrated review is the sole LLM gate.
 
-**v15.17.0 — Fix 4 cheap batch: five mechanical prompt hooks become deterministic scripts (4a + 4b + 4e; 4d dropped on a falsified premise):** (1) **4e — the substance.** Five `type: prompt` `SubagentStop` validators (`worker`, `execute-manager`, `supervisor-runner`, `qa-executor`, `plan-reviewer`) became `type: command` scripts: a shared `scripts/result_block_parser.py` (payload-extraction ladder + last-block-wins nested-YAML-subset parse) plus five thin per-schema validators, all **exit-0-by-contract**, deciding via stdout `{"ok": …}`, covered by a 313-case `test-result-validators.sh` over fixtures. The **`code-reviewer` prompt hook is deliberately retained** — its cross-field + severity-cap logic is richer than presence-checking — and is now the ONE remaining prompt validator on a `SubagentStop` matcher. **Hook count is UNCHANGED at 24; the TYPE MIX changed: 16 command + 8 prompt → 21 command + 3 prompt.** The three survivors are exactly `SubagentStop[loomwright:code-reviewer]`, `Stop`, `TaskCompleted`. `scripts/check-contract-parity.sh` gained a fail-closed command-type fallback (its pin-drift guard keyed on `type=="prompt"` and would have died with the prompts): it selects the entry whose command references `validate-<x>-result.py` and **hard-errors as `pin-drift` on 0 or >1 matches** rather than falling through to an unrelated script — the fail-OPEN reading (concatenating every command entry) would have passed on fields only `send-telemetry-core.sh` mentions. (2) **4a:** `agents/worker.md` and `agents/code-reviewer.md` now state their own 40-turn budget in prose, **with the honesty caveat** (advisory, ~90% adherence, expect no behavior change). (3) **4b:** an ANTI-OVERLAP rule in `self-heal-advisory` Part 2 — do not re-derive what a prior gate already found. (4) **4d was evaluated and REJECTED, not silently dropped** — its premise was falsified by measurement (Part 2 invokes all ten Part 1 sections; the Read is once at phase entry, not per iteration), and the void "4f strictly after 4d" ordering was corrected at all four doc surfaces so item 07 inherits a true premise. **Honest measurement:** the saving is **runtime model calls avoided — five haiku calls per qualifying run, each carrying the finishing agent's transcript at a 30s timeout, now zero-token scripts — NOT prompt-inventory bytes.** 10,409 prompt characters were deleted — **6,754 from `hooks.json` and 3,655 from the two inert `~/.claude/agents/`-compat frontmatter mirrors, counted as DECODED prompt-string characters** (the same five hooks.json strings measure 6,908 as JSON-escaped source bytes, 6,918 counting their enclosing quotes; state the encoding or the figure is unreproducible — an earlier "6,782" reproduced under no encoding, and the old 10,543 total inherited it). `hooks.json` itself fell 17,522 → 10,912 bytes. Against that: **5,374 lines of new script** (2,723 parser+validators, 2,651 test harness) — this change *adds* far more repo LOC than it removes. Prompt-inventory proxy deltas are small and mixed: `worker` −345, `execute-manager` −472 (both from the frontmatter deletion), `code-reviewer` **+88** (4a prose; its frontmatter `Stop` hook was untouched by design). **No converted hook has been observed FIRING** — the installed plugin is a copy, not a symlink (verified: different inodes), so hook changes need a reinstall; self-tests over fixtures are the in-PR evidence and live adherence is an operator step. **Counts: 14 agents / 21 commands / 41 skills / 24 hooks (UNCHANGED); no `schema_version` bump.** Additive on top of v15.16.0.
-
-> 📜 **Full release history** (v15.16.0 → v14.0.0 and earlier) lives in [`CHANGELOG.md`](CHANGELOG.md). CLAUDE.md keeps only the two most recent release notes.
+> 📜 **Full release history** (every version, including the current one) lives in [`CHANGELOG.md`](CHANGELOG.md). CLAUDE.md keeps only the one-paragraph current-version summary above — full release notes belong in the changelog, not here.
 
 ---
 
@@ -34,30 +32,6 @@ The repo is a **marketplace wrapper** containing three sibling plugins (loomwrig
 - Sibling plugins: `stackpack/` (18 tech-stack reference skills, v1.0.0) and `mysql-mcp/` (read-only MySQL MCP server `vikashruhil-mysql-mcp`, v1.0.0)
 
 > **Repo path vs. runtime path:** `loomwright/...` is the developer-side path (this repo on disk). Anything invoked by hooks, skills, or agents at *runtime* must reference `${CLAUDE_PLUGIN_ROOT}/...` — that's the canonical Claude Code variable that resolves to the plugin install dir on both dev checkouts and marketplace installs. Never use `loomwright/...` paths from the user-project root; they only resolve for the plugin maintainer.
-
-### Directory Structure
-
-```
-loomwright/                              # marketplace wrapper
-├── .claude-plugin/
-│   ├── marketplace.json                       # marketplace manifest (root)
-│   └── README.md                              # plugin-facing usage guide
-├── loomwright/                   # nested plugin (orchestration core)
-│   ├── .claude-plugin/plugin.json
-│   ├── agents/                                # 14 markdown prompts
-│   ├── commands/                              # 21 slash commands
-│   ├── hooks/hooks.json                       # cross-cutting hooks
-│   ├── skills/                                # 41 skills + SKILLS_INDEX.md
-│   ├── scripts/                               # runtime helpers: telemetry, webhook, notify, resume, memory, lessons, insights, handoff digest (build-handoff), findings→community bridge (build-bridge / read-bridge), otel stack assets (+ self-tests, fixtures)
-│   └── docs/                                  # RESULT_SCHEMAS, FAILURE_ESCALATION, ARCHITECTURE_CONTRACTS, ARCHITECTURE, QA_SYSTEM_BLUEPRINT, TELEMETRY, OBSERVABILITY, POINTER_AUDIT
-│       └── SPIKES/                            # Capability spike investigations + deferral records
-├── stackpack/                                 # sibling plugin: 18 tech-stack reference skills (v1.0.0)
-├── mysql-mcp/                                 # sibling plugin: read-only MySQL MCP server (v1.0.0)
-├── scripts/                                   # CI validators (version, doc-currency, skills-index, command-sync, contract-parity, token-budget, shared-prefix)
-├── README.md                                  # user-facing docs
-├── AGENT_GUIDELINES.md                        # standards, agent contract
-└── CLAUDE.md                                  # this file
-```
 
 ---
 
@@ -151,7 +125,7 @@ Every agent (full standard in `AGENT_GUIDELINES.md`):
 
 ## Plugin Hooks (Quality Gates)
 
-24 hooks centralized in `hooks.json` (the v12.2.0 webhook hook brought the count 13 → 14; v13.0.0 / v14.0.0 added none — v14's `--notify` gate-event webhooks are emitted inline by the autonomous-loop, not by a hook; **v14.1.0 added 2 events / 3 entries** — `PreToolUse[AskUserQuestion]` (notify-desktop + send-webhook) and `Notification` (notify-desktop) — bringing the count 14 → 17; **v14.2.0 added 2 entries** — a `SessionStart` → `session-resume.sh` and a `launch-pad-runner` SubagentStop → `validate-launch-pad-result.py` — bringing the count 17 → 19; **v14.34.0 added 1 entry** — a `PostToolUse[Bash]` → `hook-dispatch-on-pr-create.sh` backstop — bringing the count 19 → 20; **v14.47.0 added 1 entry** — a `SessionStart` → `set-otel-resource-attrs.sh` per-project OTel labeler — bringing the count 20 → 21; **v15.5.0 added 1 entry** — a `WorktreeRemove` → `worktrees.log` logger mirroring `WorktreeCreate` — bringing the count 21 → 22; **v15.16.0 added 1 entry** — a `type: command` hook under the existing `loomwright:worker` `SubagentStop` matcher → `emit-progress-event.sh`, appending a `subtask_complete` JSONL event consumed by `build-state.sh` to project `.supervisor/state.md` — bringing the count 22 → 23; **v15.16.0's PR #116 review round added 1 more entry** — a SECOND `type: command` hook under the existing `PostToolUse[Bash]` matcher → `reproject-state-on-terminal.sh`, mechanically re-invoking `build-state.sh` once a `session_end` event lands in the log (fixing the projector's terminal-status branch, which the single worker-triggered emitter alone could never reach) — bringing the count 23 → 24, still v15.16.0, no version bump; **v15.17.0 added ZERO entries and CONVERTED five** — the mechanical `type: prompt` `SubagentStop` validators for `worker`, `execute-manager`, `supervisor-runner`, `qa-executor` and `plan-reviewer` became `type: command` scripts (`validate-<x>-result.py`, sharing `result_block_parser.py`), leaving the count at 24 but shifting the TYPE MIX from 16 command + 8 prompt to **21 command + 3 prompt**). **Only THREE hooks still use prompt-based validation (fast haiku model, 30s timeout): `SubagentStop[loomwright:code-reviewer]`, `Stop`, and `TaskCompleted`** — the `code-reviewer` validator was deliberately retained in v15.17.0 because its cross-field + severity-cap logic is richer than presence-checking, and it is now the ONE remaining prompt validator on any `SubagentStop` matcher. Every other hook is `type: command` for zero-latency: the five v15.17.0 result-block validators / launch-pad-result / WorktreeCreate / WorktreeRemove / StopFailure / telemetry / webhook / notification / resume / OTel-labeling / progress-event / progress-state-re-projection. **`|| true` convention (v15.5.0):** every `type: command` hook string carries `|| true` as belt-and-suspenders for missing-interpreter/syntax-error edges — valid ONLY because all of them are always-exit-0 fail-safe emitters/validators (`validate-launch-pad-result.py` included: it decides via stdout JSON, exit-0-by-contract). A future blocking gate (non-zero-exit) added as a `type: command` hook must NOT carry `|| true` — that would silently neuter it (see §Failure-Mode Invariants).
+24 hooks centralized in `hooks.json`, **21 `type: command` + 3 `type: prompt`**. **Only three still use prompt-based validation** (fast haiku model, 30s timeout): `SubagentStop[loomwright:code-reviewer]`, `Stop`, and `TaskCompleted` — the `code-reviewer` validator is deliberately retained because its cross-field + severity-cap logic is richer than presence-checking, and it is the ONE remaining prompt validator on any `SubagentStop` matcher. Every other hook is `type: command` for zero-latency. **`|| true` convention:** every `type: command` hook string carries `|| true` as belt-and-suspenders for missing-interpreter/syntax-error edges — valid ONLY because all of them are always-exit-0 fail-safe emitters/validators (`validate-launch-pad-result.py` included: it decides via stdout JSON, exit-0-by-contract). A future blocking gate (non-zero-exit) added as a `type: command` hook must NOT carry `|| true` — that would silently neuter it (see §Failure-Mode Invariants). Per-hook version provenance lives in `CHANGELOG.md`; the authoritative current wiring is `hooks.json` itself, mirrored in the table below.
 
 | Hook | Trigger | Location | Validation |
 |------|---------|----------|------------|
@@ -179,55 +153,21 @@ Every agent (full standard in `AGENT_GUIDELINES.md`):
 
 ---
 
-## Telemetry System (opt-in, v11.2.0 — preserved in v14.0.0)
+## Telemetry System (opt-in)
 
-After qualifying runs (`supervisor-runner`, `code-reviewer`, `qa-executor`), a SubagentStop `type: command` hook fans out the same stdin payload (`payload=$(cat)`) to `${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry.sh` **and** `${CLAUDE_PLUGIN_ROOT}/scripts/emit-token-ledger.sh` (both fire-and-forget, **always exit 0** — `${CLAUDE_PLUGIN_ROOT}` is the canonical Claude Code variable for plugin-bundled assets and resolves to the plugin install dir on both dev checkouts and marketplace installs; never use `loomwright/...` paths from the user-project root, those only resolve for the plugin maintainer). `send-telemetry.sh` pipes to `send-telemetry-core.sh`, which parses the result block, derives a deterministic score, runs a regex-based privacy whitelist, and (when consent + target repo are configured) calls `gh issue create` with a structured body covering Task Summary, Agent Scores, Issues Detected, AI Suggestions, Tools Used, and a redacted JSON payload. `emit-token-ledger.sh` appends an additive `token_ledger` line to `.supervisor/logs/{session_id}.jsonl` (real usage when present, else a labeled transcript-byte proxy — never invents tokens).
+**Disabled by default.** Opt in via `/telemetry enable` (interactive) or `LOOMWRIGHT_TELEMETRY_REPO=owner/repo`; `/telemetry status|disable|test` manage it. Hooks **never** prompt — consent flows only through `/telemetry`.
 
-- **Privacy fail-closed:** any whitelist match aborts the post; core exits `2`
-- **Core exit codes 0..5:** sent / generic_error / privacy_blocked / no_consent / no_repo_configured / filter_skipped
-- **No origin-remote fallback** — the plugin runs in arbitrary user projects whose origin is the user's app repo, which is the wrong place for telemetry
-- **Disabled by default.** Enable via `/telemetry enable` (interactive — pick target repo) or `LOOMWRIGHT_TELEMETRY_REPO=owner/repo`. Hooks **never** prompt — consent flows only through `/telemetry`.
+Two invariants worth knowing here: it **fails CLOSED on privacy** (any whitelist match aborts the post, core exits `2`), and there is **no origin-remote fallback** — the plugin runs in arbitrary user projects whose origin is the wrong place for telemetry.
 
-| Command | Purpose |
-|---------|---------|
-| `/telemetry status` | consent state, resolved target repo + source, last-sent timestamp, retained per-session pending markers (~24h window) |
-| `/telemetry enable` | interactive — collects target repo via `AskUserQuestion`, writes `{"telemetry":"always_allow","telemetry_repo":"<owner/repo>"}` to `.supervisor/telemetry-consent.json`. Sole first-run consent path. |
-| `/telemetry disable` | writes `{"telemetry":"no"}` to the consent file; subsequent hook fires log a single "denied — skipped" line per session and never call `gh` |
-| `/telemetry test` | dry-run a fixture or the latest log payload through `send-telemetry-core.sh --dry-run`; prints target repo, formatted body, and `WOULD_EXIT` without calling `gh` |
-
-Full design (scoring rubric per result-block schema, privacy whitelist, exit-code table, wrapper-vs-core architecture, plugin-internal vs repo-root `scripts/` convention): `loomwright/docs/TELEMETRY.md`.
+Full design (wrapper-vs-core architecture, scoring rubric, privacy whitelist, exit-code table 0..5): `loomwright/docs/TELEMETRY.md`.
 
 ---
 
-## Persistent Memory
+## Persistent Memory & Skills Preloading
 
-Agents with `memory: project` in frontmatter accumulate knowledge across sessions:
-
-| Agent | Storage |
-|-------|---------|
-| Launch Pad | `.claude/agent-memory/loomwright:launch-pad-runner/` |
-| Code Reviewer | `.claude/agent-memory/loomwright:code-reviewer/` |
-| Red Team Reviewer | `.claude/agent-memory/loomwright:red-team-reviewer/` |
-| Product Owner | `.claude/agent-memory/loomwright:product-owner/` |
-| QA Strategist | `.claude/agent-memory/loomwright:qa-strategist/` |
-| QA Executor | `.claude/agent-memory/loomwright:qa-executor/` |
+Agents opt in via frontmatter: `memory: project` gives an agent a persistent store at `.claude/agent-memory/loomwright:<agent>/`; `skills:` pre-injects those skill bodies at spawn time (no runtime file-read). Both lists are authoritative in `loomwright/agents/*.md` frontmatter — read there, not from a table here.
 
 > Decision aid for *what* to write to those memory directories: `loomwright/skills/memory-tool/SKILL.md` (reference skill — not pre-loaded; consult on demand when tagging conventions or Memory-Tool-vs-file-based questions arise).
-
-## Skills Preloading
-
-Agents with `skills` in frontmatter get content pre-injected at spawn time (no runtime file-read):
-
-| Agent | Pre-loaded skills |
-|-------|-------------------|
-| Launch Pad | supervisor-readiness, context-setup, claude-md-validation, product-discovery, mvp-scoping, quality-checklist, context7-lookup |
-| Supervisor | workflow-management, async-orchestration, state-management, context-summarization, supervisor-readiness, commit, quality-checklist |
-| Orchestrator | quality-checklist |
-| Code Reviewer | quality-checklist, context7-lookup, unit-testing, error-handling, monitoring-observability |
-| Red Team Reviewer | context7-lookup |
-| QA Strategist | qa-strategy, qa-gates, quality-checklist |
-| QA Executor | qa-strategy, qa-test-patterns, qa-gates, playwright-e2e, quality-checklist |
-| Product Owner | brainstorming, product-discovery, mvp-scoping |
 
 ## Agent Teams (Recommended for 3 Use Cases, Experimental for the Rest)
 
