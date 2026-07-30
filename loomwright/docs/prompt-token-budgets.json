@@ -27,7 +27,7 @@
     "orchestrator": {
       "budget": 9558,
       "measured": 8688,
-      "note": "authoring baseline v15.10.0; 1 preloaded skill. Raised 8665 -> 9558 (v15.18.0, Fix 7 item 4/Subtask 3): agents/orchestrator.md §\"Review Gate Policy\" was rewritten so neither side of the Decomposition Threshold generates a paired per-subtask LLM review subtask (the deterministic outputs_verified gate + integrated Phase 4.5 review is now the gate on both sides) plus a Review Counter-Pressure Rule citation; measured moved 7877 -> 8688 (+811), breaching by 23. Restored the same ~10% margin this row has held since authoring (never previously raised) rather than resetting to a fresh measured+10%, which coincides with the same formula here since the prior margin already was 10%."
+      "note": "authoring baseline v15.10.0; 1 preloaded skill. Raised 8665 -> 9558 (v15.18.0, Fix 7 item 4/Subtask 3): agents/orchestrator.md §\"Review Gate Policy\" was rewritten so neither side of the Decomposition Threshold generates a paired per-subtask LLM review subtask (the deterministic outputs_verified gate + integrated Phase 4.5 review is now the gate on both sides) plus a Review Counter-Pressure Rule citation; measured moved 7877 -> 8688 (+811), breaching by 23. Restored the same ~10% margin this row has held since authoring (never previously raised): prior margin 8665/7877 = 1.100038, and 8688 * 1.100038 = 9557.1 (plain measured + ~10% gives 9556.8, essentially the same figure since the prior margin already was ~10%); the declared budget is that figure rounded up to 9558."
     },
     "plan-reviewer": {
       "budget": 7750,
