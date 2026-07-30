@@ -80,7 +80,7 @@ cd /path/to/your/project
 - No need to copy-paste context
 
 ### Step 4: Repeat
-- After work is done, run `/code-reviewer` for review gate
+- After work is done, you can manually run `/code-reviewer` for a human-invoked review gate (not the retired automatic per-subtask gate — no such subtask is created at any threshold)
 - Then use commit skill to create conventional commits
 - Then `/orchestrator` for next goal or claim the next task (Beads when active, else the next unchecked plan-file item)
 

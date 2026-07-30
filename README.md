@@ -616,7 +616,7 @@ See `AGENT_GUIDELINES.md` for detailed standards per language.
 2. **Use Supervisor for automation:** Run `/supervisor` for fully autonomous task completion
 3. **Or start with Orchestrator:** Run `/orchestrator goal: "..."` for manual control
 4. **Review iteratively:** Run `/code-reviewer` multiple times as you fix issues
-5. **Review gates:** Wait for PASS before moving to next task
+5. **Review gates (manual, human-invoked):** If you choose to run `/code-reviewer` yourself between tasks, wait for PASS before moving to the next one — this is not the retired automatic per-subtask gate
 6. **Adversarial audit:** Run `/red-team-reviewer` before launch
 
 ### CLAUDE.md Proposal Workflow

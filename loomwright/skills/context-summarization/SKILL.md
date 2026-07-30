@@ -264,7 +264,6 @@ Normal:
 ```
 Created 3 subtasks: BD-23a, BD-23b, BD-23c
 First: BD-23a - Implement JwtGuard
-Review gates: 3
 Estimated: 2-3 hours
 ```
 
