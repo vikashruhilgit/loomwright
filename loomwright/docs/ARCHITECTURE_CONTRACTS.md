@@ -406,7 +406,7 @@ The `phase45-multi-voter-verification` stage exists only when `--multi-voter-hea
 - Sonnet session + `--cheap` → roles marked **sonnet** already match; behavior identical to no-flag path
 - Haiku session + `--cheap` → roles marked **sonnet** **upgrade** to Sonnet (costs more). Haiku users should not pass `--cheap`.
 
-**Propagation:** `cost_profile` is a session attribute. Supervisor records it in `.supervisor/state.md` (via Context-Keeper `initialize`) and passes it to Execute Manager via the Task prompt. Supervisor applies overrides for Orchestrator, Execute Manager, Phase 4.5 Code Reviewer, and Phase 4.5 fix tasks. Execute Manager reads `cost_profile` from its incoming prompt and applies overrides for Worker and Code Reviewer spawns within the poll loop.
+**Propagation:** `cost_profile` is a session attribute. Supervisor records it in `.supervisor/state.md` (via Context-Keeper `initialize`) and passes it to Execute Manager via the Task prompt. Supervisor applies overrides for Orchestrator, Execute Manager, Phase 4.5 Code Reviewer, and Phase 4.5 fix tasks. Execute Manager reads `cost_profile` from its incoming prompt and applies the override to Worker spawns within the poll loop — Execute Manager no longer spawns a per-subtask Code Reviewer at all; the `--cheap` profile's Code Reviewer override applies only at the Phase 4.5 integrated-review spawn (Supervisor-owned, above), not inside the poll loop.
 
 **Frontmatter unchanged:** No agent's `model:` frontmatter is modified. The override is applied at spawn time via the Task tool's `model` parameter. If the Task `model` override is ever removed in a future Claude Code release, the profile degrades gracefully to `inherit`.
 

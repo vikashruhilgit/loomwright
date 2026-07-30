@@ -2,8 +2,8 @@
 name: review-heal
 description: Shared loop contract for the standalone PR review-and-heal workflow (`/review-pr <pr-url>` + `loomwright:review-pr-runner`). Single source of truth for the bounded review→fix→re-review loop, PR-URL→branch resolution, the REVIEW_HEAL_RESULT block, and the pinned canonical names consumed by the dispatcher script, the runner agent, and the autonomous EVALUATE step. Use when implementing or invoking standalone PR review-and-heal.
 allowed-tools: [Read, Write, Edit, Bash, Task]
-version: "1.4.0"
-lastUpdated: "2026-06-22"
+version: "1.5.0"
+lastUpdated: "2026-07-30"
 ---
 
 # Review-Heal Skill

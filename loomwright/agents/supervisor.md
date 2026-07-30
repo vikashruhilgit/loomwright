@@ -74,7 +74,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
 - **Clean worktrees:** All worktrees removed in FINALIZE (no orphans)
 - **Sequential merge:** Worktree branches merge one at a time into feature branch
 - **Exit gracefully:** At tool call budget limit, checkpoint and exit with resume command
-- **Inline execution does not waive child-agent spawning:** Running `/supervisor` inline on the main thread is allowed and preferred (it avoids the `supervisor-runner` subagent-spawn trap). It does NOT waive spawning first-level child agents via the Task tool. Manual implementation in the main thread is not a substitute for `execute-manager` or Single-Agent/Sequential-path worker/reviewer behavior in Phase 3, nor for `code-reviewer` in Phase 4.5. If you find yourself about to write implementation code directly in the main thread during Phase 3, or about to skip the `code-reviewer` Task call in Phase 4.5, stop and spawn the child agent instead. The Phase 4.5 completion-tail guard will refuse to emit a successful `SUPERVISOR_RESULT` if the review was skipped without `--skip-self-heal`.
+- **Inline execution does not waive child-agent spawning:** Running `/supervisor` inline on the main thread is allowed and preferred (it avoids the `supervisor-runner` subagent-spawn trap). It does NOT waive spawning first-level child agents via the Task tool. Manual implementation in the main thread is not a substitute for `execute-manager` or Single-Agent/Sequential-path worker behavior in Phase 3, nor for `code-reviewer` in Phase 4.5. If you find yourself about to write implementation code directly in the main thread during Phase 3, or about to skip the `code-reviewer` Task call in Phase 4.5, stop and spawn the child agent instead. The Phase 4.5 completion-tail guard will refuse to emit a successful `SUPERVISOR_RESULT` if the review was skipped without `--skip-self-heal`.
 
 ---
 
@@ -90,7 +90,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
            │              │
     ┌──────▼──────┐ ┌────▼──────────────────────────────────────┐
     │  Context    │ │  Execute Manager (Phase 3, budget: 60)     │
-    │  Keeper     │ │  Owns: poll loop, worker/reviewer lifecycle │
+    │  Keeper     │ │  Owns: poll loop, worker lifecycle          │
     │  (on-demand)│ └────┬──────────────┬──────────────────────┘
     └──────┬──────┘      │              │
            │       ┌─────▼─────────┐ ┌──▼────────────────┐
@@ -249,7 +249,7 @@ BLOCKED if:
 
 #### `--sdk-runner` branch (EXPERIMENTAL — opt-in, default OFF)
 
-When `--sdk-runner` was passed (recorded at Phase 0 INIT — `skills/supervisor-config/SKILL.md`), Phase 3 does NOT Task-spawn `execute-manager` (or the inline Single-Agent/Sequential-path worker/reviewer loop). Instead:
+When `--sdk-runner` was passed (recorded at Phase 0 INIT — `skills/supervisor-config/SKILL.md`), Phase 3 does NOT Task-spawn `execute-manager` (or the inline Single-Agent/Sequential-path worker loop). Instead:
 
 1. **Fail-closed probe (run FIRST):** `command -v node` AND `test -f "${CLAUDE_PLUGIN_ROOT}/sdk-spike/dist/runner.js"` AND `(cd "${CLAUDE_PLUGIN_ROOT}/sdk-spike" && node -e "require.resolve('@anthropic-ai/claude-agent-sdk')")` — the third predicate catches a built `dist/` whose `node_modules/` was pruned after the build. If any fails, ABORT the run with `error: "sdk_runner_unavailable"` — NEVER silently fall back to the default path. Error guidance: `dist/` is gitignored and marketplace installs ship source only — build once with `npm install && npm run build` inside `${CLAUDE_PLUGIN_ROOT}/sdk-spike`.
 2. Shell out to the quarantined spike runner (cwd stays the user project): `node "${CLAUDE_PLUGIN_ROOT}/sdk-spike/dist/runner.js" --brief <brief path> --branch <feature branch>` (CLI contract: `sdk-spike/README.md`). **Not threaded in this spike:** the brief's Max-workers and the `--cheap` cost profile are NOT forwarded to the runner (its `--max-workers`/`--model` flags exist but are unforwarded; the runner defaults to 2 concurrent lanes).
@@ -642,7 +642,7 @@ All flags in the "Flags and Options" table above combine with these shapes; the 
 | **Context-Keeper** | Every phase | Blocking | State file mutations |
 | **Product Owner** | Phase 1 (if vague reqs) | Blocking | Refine requirements |
 | **Orchestrator** | Phase 2 | Blocking | Decompose into subtasks |
-| **Execute Manager** | Phase 3 (multi-subtask) | Blocking | Own poll loop + worker/reviewer lifecycle |
+| **Execute Manager** | Phase 3 (multi-subtask) | Blocking | Own poll loop + worker lifecycle |
 | **Worker** | Phase 3 (Single-Agent or Sequential path) | Blocking | Single-Agent: implement ALL criteria inline in one worker; Sequential: implement one subtask inline per worker |
 
 **Note:** No per-subtask Code Reviewer is spawned on any Phase 3 path (Single-Agent, Sequential, or Parallel) — the deterministic `outputs_verified`/tests-lint gate is each subtask's gate; Phase 4.5's holistic Code Reviewer is the sole LLM review, run once over the integrated result. See `agents/orchestrator.md` §"Review Gate Policy". In multi-subtask workflows, Worker is spawned by the Execute Manager, not directly by the Supervisor.

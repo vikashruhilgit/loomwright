@@ -41,7 +41,7 @@ The Loomwright plugin provides **14 agent roles** (9 user-facing + 5 internal) f
 **Autonomous Workflow (5 agent roles):**
 ```
 /supervisor  →  Parallel orchestrator: Task → Branch → Execute Manager → PR → Loop
-  ├─ Execute Manager  →  Phase 3 poll loop, worker/reviewer lifecycle (blocking)
+  ├─ Execute Manager  →  Phase 3 poll loop, worker lifecycle (blocking)
   ├─ Context-Keeper   →  Externalized state management (on-demand)
   ├─ Worker           →  Isolated implementation in git worktrees (background)
   └─ Rubric Grader    →  Phase 4.5 read-only Haiku scorer for the optional Outcomes Rubric (advisory only)
@@ -197,7 +197,7 @@ To execute: /supervisor job: .supervisor/jobs/pending/2026-02-08-jwt-auth.md
 - Picks up tasks (user description or `.supervisor/state.md`)
 - Creates feature branch (MANDATORY before any code work)
 - Delegates Phase 3 execution to Execute Manager:
-  - Execute Manager (Phase 3 poll loop, worker/reviewer lifecycle, blocking)
+  - Execute Manager (Phase 3 poll loop, worker lifecycle, blocking)
   - Context-Keeper (state management, on-demand)
   - Product Owner (if requirements unclear, blocking)
   - Orchestrator (task decomposition, blocking)

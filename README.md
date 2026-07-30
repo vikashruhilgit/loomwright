@@ -217,7 +217,7 @@ Optional next: run `/setup` for a status dashboard and guided configuration of o
 
 | Agent               | Spawned By                   | Purpose                                                               |
 | ------------------- | ---------------------------- | --------------------------------------------------------------------- |
-| **Execute Manager** | Supervisor (Phase 3)         | Own poll loop, worker/reviewer lifecycle, Context-Keeper coordination |
+| **Execute Manager** | Supervisor (Phase 3)         | Own poll loop, worker lifecycle, Context-Keeper coordination (no per-subtask reviewer — see `AGENT_GUIDELINES.md` §"Review Counter-Pressure Rule") |
 | **Context-Keeper**  | Supervisor / Execute Manager | Manage externalized state file (sole writer)                          |
 | **Worker**          | Execute Manager / Supervisor | Implement a single subtask in an isolated git worktree                |
 | **Plan Reviewer**   | Launch Pad                   | Validate Supervisor-Ready Briefs before execution                     |

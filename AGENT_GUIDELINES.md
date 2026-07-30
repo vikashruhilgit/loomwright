@@ -452,7 +452,7 @@ This format applies to ALL agent outputs (Orchestrator, Code Reviewer, Red Team 
 |-------|-------|--------|------------------------|
 | **Launch Pad** | CLAUDE.md, codebase, git state | `.supervisor/jobs/pending/` briefs | Supervisor readiness, codebase analysis |
 | **Supervisor** | CLAUDE.md, state file, git state | Worker dispatch, PR creation, SUPERVISOR_RESULT | Parallel orchestration, 7-phase workflow (incl. Phase 1.5 pre-flight sync + Phase 4.5 self-heal) |
-| **Execute Manager** | State file, worker summaries | Poll loop coordination | Phase 3 worker/reviewer lifecycle |
+| **Execute Manager** | State file, worker summaries | Poll loop coordination | Phase 3 worker lifecycle (no per-subtask reviewer spawn — see `agents/orchestrator.md` §"Review Gate Policy") |
 | **Context-Keeper** | State file | State file (sole writer) | Externalized state management |
 | **Worker** | Code files in worktree | Code files in worktree | Isolated implementation in git worktrees |
 | **Product Owner** | CLAUDE.md, domain context, Beads | Beads stories | Requirements, user stories |
@@ -582,7 +582,7 @@ This format applies to ALL agent outputs (Orchestrator, Code Reviewer, Red Team 
   - Conservative parallelism (LAUNCHABLE only if genuinely independent)
 
 #### **Execute Manager** (Phase 3 Orchestrator)
-- **Objective:** Own Phase 3 EXECUTE loop — worker/reviewer lifecycle
+- **Objective:** Own Phase 3 EXECUTE loop — worker lifecycle (deterministic `outputs_verified` + tests/lint is the per-subtask gate; no per-subtask LLM reviewer at any threshold — see `AGENT_GUIDELINES.md` §"Review Counter-Pressure Rule")
 - **Reads:** State file (via Context-Keeper), worker summary files
 - **Writes:** Worker/reviewer dispatches, EXECUTE_RESULT/EXECUTE_CHECKPOINT
 - **Responsibilities:**
@@ -663,7 +663,7 @@ All hooks are centralized in `hooks.json`. As of v15.17.0 there are **24 hook en
 **Task Structure:**
 - **EPIC:** Large feature (contains multiple tasks)
 - **TASK:** Implementation work (30-60 min)
-- **SUBTASK:** Smallest independently-verifiable unit of implementation work (not a review gate — see below)
+- **SUBTASK:** Not a Beads issue type — the Orchestrator's own output is EPIC → TASK only (`agents/orchestrator.md` §"Review Gate Policy"). "Subtask" here names the Supervisor/Execute-Manager **runtime** unit of work (one TASK executed by one worker in Phase 3): the smallest independently-verifiable unit of implementation work, and not itself a review gate — see below
 
 **Review Gates (no per-subtask LLM reviewer at any threshold — authoritative policy: `agents/orchestrator.md` §"Review Gate Policy"; split trigger: `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold"):**
 - At every threshold, above or below, the deterministic `outputs_verified` gate plus tests/lint is the per-subtask gate — no LLM review subtask is generated either side of the threshold
