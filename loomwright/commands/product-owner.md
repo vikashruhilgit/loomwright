@@ -123,7 +123,7 @@ Or for problems:
 
 ### Step 4: Implement
 
-- Orchestrator creates tasks per the Decomposition Threshold (review-gate task added only above threshold — `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold")
+- Orchestrator creates tasks per the Decomposition Threshold (splits task count only, no review task at any threshold — `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold")
 - Implement tasks with `/code-reviewer` checkpoints
 - Use `/commit` for commits
 
@@ -173,7 +173,7 @@ User Stories (BD-XX, BD-YY) created in Beads
     ↓
 /orchestrator goal: "BD-XX"   (or goal: ".supervisor/requirements/<file>.md")
     ↓
-Task(s) (default one; BD-XXa/BD-XXb split + review gate only above threshold)
+Task(s) (default one; BD-XXa/BD-XXb split only above threshold, no review subtask at any threshold)
     ↓
 Implementation with /code-reviewer checkpoints
     ↓
@@ -622,7 +622,7 @@ ls .supervisor/requirements/
 
 **Sequence:**
 1. `/orchestrator goal: "BD-XX"` — Break into implementation tasks
-2. Implement task(s); review gate applies only above the Decomposition Threshold (Phase 4.5 is the gate below it)
+2. Implement task(s); no per-subtask review gate at any threshold — the deterministic `outputs_verified`/tests-lint gate applies always, and Phase 4.5's integrated review is the sole LLM gate
 3. Return here for Phase 2 stories when MVP ships
 ```
 

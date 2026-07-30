@@ -1218,7 +1218,7 @@ These are Claude Code slash commands, so you can type them directly:
 
 | Agent | Purpose | When | Input | Output |
 |-------|---------|------|-------|--------|
-| **Orchestrator** | Plan work | Start of task | Goal or story | Beads tasks, default one task, threshold-conditional review gates |
+| **Orchestrator** | Plan work | Start of task | Goal or story | Beads tasks, default one task, no per-subtask review gate at any threshold |
 | **Code Reviewer** | Review code | During development | Files/diff | PASS/FAIL/NEEDS_HUMAN + issues |
 | **/commit** (skill) | Create commits | When done coding | Staged changes | Conventional commits + Beads links |
 

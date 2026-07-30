@@ -51,13 +51,12 @@ Dependencies: BD-21 (database schema)
 
 ### Orchestrator Output
 
-**Input:** Full task breakdown with subtasks, review gates, skill references
+**Input:** Full task breakdown with subtasks, skill references (no per-subtask review subtask at any threshold — see `agents/orchestrator.md` §"Review Gate Policy")
 
 **Summary Format:**
 ```
 Created [N] subtasks: [ID1], [ID2], [ID3]
 First: [ID] - [title]
-Review gates: [N]
 Estimated: [time]
 ```
 
@@ -65,7 +64,6 @@ Estimated: [time]
 ```
 Created 3 subtasks: BD-23a, BD-23b, BD-23c
 First: BD-23a - Implement JwtGuard
-Review gates: 3
 Estimated: 2-3 hours
 ```
 

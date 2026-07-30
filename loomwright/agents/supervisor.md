@@ -289,7 +289,7 @@ The default path below `skills/supervisor-readiness/SKILL.md` §"Decomposition T
 
 ```
 result = Task(
-  description: "Execute Phase 3: implement and review subtasks",
+  description: "Execute Phase 3: implement subtasks (deterministic outputs_verified gate; no LLM review subtask)",
   prompt: "Execute Manager prompt with:
     - Brief: {brief_path} — read only the sections you need (## Subtask Structure, ## Subtask Contracts, per-subtask criteria). Gitignored main-checkout path: resolves for the Execute Manager (project root), NOT inside worker worktrees. When no brief file exists (`/supervisor task:` no-brief mode), point at `.supervisor/requirements/{slug}-plan.md` (Beads-absent) or `bd show {id}` (Beads) instead, or pass the criteria inline — a documented exception, see docs/POINTER_AUDIT.md.
     - Subtask index (compact — ids/titles/deps only, no pasted criteria/file lists): [{ids, titles, deps}]

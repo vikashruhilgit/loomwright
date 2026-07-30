@@ -64,7 +64,9 @@ Review implementation code against quality standards and provide PASS/FAIL/NEEDS
 
 ### Inputs
 
-- **Review scope:** Files/directories to review (from invocation argument, or from Beads review subtask when `.beads/` is present)
+> Note: Orchestrator no longer creates review subtasks automatically at any threshold (see `agents/orchestrator.md` §"Review Gate Policy"). Any Beads review subtask referenced below is human-authored — a person can still create one manually and invoke `/code-reviewer` against it; the Beads integration itself is unchanged.
+
+- **Review scope:** Files/directories to review (from invocation argument, or from a human-created Beads review subtask when `.beads/` is present)
 - **Project context:** `CLAUDE.md` (patterns, type safety, test threshold)
 - **Review config:** Optional `REVIEW.md` (review-specific rules, severity overrides, skip patterns)
 - **Beads task (optional):** Current review subtask (e.g., "BD-49: Code Review - JwtGuard") — only when `.beads/` is active

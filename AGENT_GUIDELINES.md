@@ -514,7 +514,7 @@ This format applies to ALL agent outputs (Orchestrator, Code Reviewer, Red Team 
 #### **Orchestrator** (Planning Agent)
 - **Objective:** Break goals into Beads tasks (default ONE task, split only for a named reason); review gate policy is fixed at every threshold — see `agents/orchestrator.md` §"Review Gate Policy"
 - **Reads:** CLAUDE.md, Beads state (`bd list`), git history
-- **Writes:** Beads tasks (EPIC → TASK → SUBTASK structure)
+- **Writes:** Beads tasks (EPIC → TASK structure, task-to-task dependencies only)
 - **Responsibilities:**
   - Run `bd list` to understand current open/in-progress tasks
   - Understand goal/task-details (inline: `goal: "add JWT with refresh tokens"`)
@@ -526,7 +526,7 @@ This format applies to ALL agent outputs (Orchestrator, Code Reviewer, Red Team 
 - **Output (follows standard format):**
   - Context Read: CLAUDE.md, Beads state, goal understood
   - Current State: Open/in-progress tasks, blockers
-  - Plan: Beads task structure (EPIC → TASK → SUBTASK)
+  - Plan: Beads task structure (EPIC → TASK)
   - Work/Results: Tasks created with dependencies
   - Risks & Next Steps: What to claim first, blockers
 
