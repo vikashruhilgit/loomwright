@@ -131,12 +131,14 @@ PARITY_UNRESOLVED="__PARITY_UNRESOLVED__"
 # Comment removal is by TOKENIZE, never by a line-based `#` strip: `#` inside a
 # string literal is not a comment, and a regex/prefix strip would corrupt the
 # very code the grep then inspects. Not hypothetical — validate-launch-pad-
-# result.py:118 is `line.strip().startswith("#")`, the parser's own
-# comment-marker literal; a naive strip would leave `line.strip().startswith("`
-# and change what the following grep sees. (Checked all six validators by
-# tokenizing them: that file is the only one with `#` inside a string today, and
-# it is exactly the kind of line a MANIFEST row could reach tomorrow.) tokenize
-# reports COMMENT spans as CHARACTER
+# result.py contains `line.strip().startswith("#")`, the parser's own
+# comment-marker literal. (Cited by NAME, not by line number: this change
+# retired absolute line-refs precisely to stop that drift class, and this one
+# points into a file we do not own.) A naive strip would leave
+# `line.strip().startswith("` and change what the following grep sees. (Checked
+# all six validators by tokenizing them: that file is the only one with `#`
+# inside a string today, and it is exactly the kind of line a MANIFEST row could
+# reach tomorrow.) tokenize reports COMMENT spans as CHARACTER
 # offsets into each str line, while ast reports BYTE offsets (see the note in
 # strip_string_statements) — the two passes are sequential and each slices with
 # its own convention, so the conventions are never mixed.

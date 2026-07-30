@@ -185,8 +185,8 @@ write_hashstring_validator() { # $1 dir, $2 rel path, $3 comma-separated code fi
   # A stand-in validator that is FULLY compliant — every pinned field appears in
   # executable code — but which carries a `#` INSIDE a string literal, with $4's
   # only mention after it on the same line. Models
-  # validate-launch-pad-result.py:118 (`line.strip().startswith("#")`), the
-  # parser's own comment-marker literal.
+  # validate-launch-pad-result.py's `line.strip().startswith("#")`, that
+  # parser's own comment-marker literal (cited by name, not line).
   #
   # This is the falsification for the tokenize-vs-regex implementation choice:
   # a line-based strip ("drop from the first `#` to end of line") deletes the
@@ -368,7 +368,7 @@ check "field named only in a bare string statement fails (body[0]-only strip is 
 #     inside the string, corrupting the source it hands to the grep; tokenize
 #     removes only the real trailing comment. Verified: this fixture FAILS
 #     (spurious pin-drift) against a line-based strip and passes against
-#     tokenize. Models validate-launch-pad-result.py:118.
+#     tokenize. Models validate-launch-pad-result.py's `startswith("#")` literal.
 make_fixture "$TMP/cmd-fallback-hash-in-string"
 write_hashstring_validator "$TMP/cmd-fallback-hash-in-string" scripts/validate-qa-result.py \
   'schema_version,tests_generated,tests_passed,summary' coverage_estimate

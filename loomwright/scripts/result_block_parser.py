@@ -279,19 +279,68 @@ def _is_bullet(line):
 # lines still reconnected), which overstated what the bound guaranteed.
 _MAX_BLANK_RUN = 2
 
+# Maximum consecutive whole-line comments the blank-line tolerance may cross in
+# the markdown-bullet form. Bounded for the same reason _MAX_BLANK_RUN is: a
+# shape-only rule could otherwise reconnect across an arbitrary distance.
+_MAX_COMMENT_RUN = 3
+
+
+def _is_comment_line(line):
+    """True when `line` is a whole-line YAML comment.
+
+    Uses _tokenize's own test (`body.startswith("#")`) so the FRAMING predicates
+    and the TOKENIZER agree about what a comment is. They did not agree before:
+    _tokenize skipped comment lines while the framing predicates did not
+    recognise them at all, so a blank line followed by a `#` line TERMINATED the
+    block and silently discarded every field after it. That is a fail-OPEN, not
+    a diagnosis cost: an OPTIONAL field whose only failure mode is
+    present-and-bad (WORKER_RESULT.error under `status: completed`, rule 4;
+    SUPERVISOR_RESULT.rubric_score, rule 13) simply vanished, and the validator
+    returned ok:true with no error and no diagnostic. Both are committed
+    regression cases.
+    """
+    return line.lstrip(" \t").startswith("#")
+
 
 def _looks_like_yaml_body(line):
     """True when `line` could belong to a YAML-form result-block body.
 
     Used ONLY to decide whether a blank line INSIDE a block terminates it.
-    Deliberately narrow — a `key:` entry or a `- ` sequence item. Indented
-    PROSE (a continued paragraph, a fenced snippet, a table row) is not a body
-    line, so blank-line tolerance cannot swallow trailing narrative and turn a
-    valid block into a parse failure.
+    Deliberately narrow — a `key:` entry, a `- ` sequence item, or a whole-line
+    `#` comment. Indented PROSE (a continued paragraph, a fenced snippet, a
+    table row) is not a body line, so blank-line tolerance cannot swallow
+    trailing narrative and turn a valid block into a parse failure.
+
+    COMMENTS COUNT AS BODY. The blank-line tolerance exists precisely because
+    emitters put blank lines inside blocks, and this repo's own templates
+    annotate heavily with `#`; a post-blank comment must therefore CONTINUE the
+    block. The existing bounds still apply unchanged — in the YAML form the
+    comment must be indented deeper than the header, so a dedented `#` heading
+    at or outside the header's own indent still terminates.
     """
+    if _is_comment_line(line):
+        return True
     if _is_bullet(line):
         return True
     return bool(_KEY_RE.match(line.lstrip(" \t")))
+
+
+def _is_kv_bullet(line):
+    """True when `line` is a `- key: value` bullet (not merely any `- ` item).
+
+    The markdown-bullet form needs a STRICTER resume test than the YAML form
+    after crossing a comment, because in that form a `#` line is genuinely
+    ambiguous: `# addendum from the worker` (a YAML comment the tokenizer skips)
+    and `## Next steps` (a following markdown SECTION heading) are structurally
+    indistinguishable. Requiring the line that RESUMES the block to be a real
+    `key: value` bullet keeps the common prose case terminating — a
+    `## Next steps` section whose bullets are sentences ends the block exactly
+    as it does today — while still reconnecting the annotated-field case.
+    """
+    stripped = line.lstrip(" \t")
+    if not stripped.startswith("- "):
+        return False
+    return bool(_KEY_RE.match(stripped[2:].lstrip(" ")))
 
 
 def _next_content_index(lines, j):
@@ -299,6 +348,28 @@ def _next_content_index(lines, j):
     while j < len(lines) and lines[j].strip() == "":
         j += 1
     return j if j < len(lines) else None
+
+
+def _skip_comment_run(lines, k):
+    """From content index `k`, skip a BOUNDED run of whole-line comments.
+
+    Returns the index of the first non-comment content line, or None when the
+    run is unbounded (more than `_MAX_COMMENT_RUN` comments), when a gap inside
+    the run exceeds `_MAX_BLANK_RUN`, or when the text ends inside the run.
+    Used by the markdown-bullet form only; the YAML form reconnects through
+    `_looks_like_yaml_body` and is bounded by its indent rule instead.
+    """
+    seen = 0
+    while k is not None and k < len(lines) and _is_comment_line(lines[k]):
+        seen += 1
+        if seen > _MAX_COMMENT_RUN:
+            return None
+        j = k + 1
+        nxt = _next_content_index(lines, j)
+        if nxt is None or nxt - j > _MAX_BLANK_RUN:
+            return None
+        k = nxt
+    return k
 
 
 def find_last_block(text, name):
@@ -328,18 +399,43 @@ def find_last_block(text, name):
     the block when the NEXT non-blank line is still (a) indented deeper than
     the header, for the YAML form — or a bullet at/inside the block's own
     bullet indent, for the markdown form — AND (b) shaped like a body line
-    (`key:` or `- item`) — AND (c) separated by at most `_MAX_BLANK_RUN` blank
-    lines.
+    (`key:`, `- item`, or a whole-line `#` comment) — AND (c) separated by at
+    most `_MAX_BLANK_RUN` blank lines.
+
+    A POST-BLANK COMMENT CONTINUES THE BLOCK. It did not until this revision,
+    and the gap was a fail-OPEN rather than a diagnosis cost: `_tokenize` skips
+    comment lines, but the framing predicates did not recognise one, so a blank
+    line followed by `# note` ENDED the block and every field after it was
+    discarded with no error. Any OPTIONAL field whose only failure mode is
+    present-and-bad then escaped its rule entirely — `WORKER_RESULT.error`
+    under `status: completed` (rule 4) and `SUPERVISOR_RESULT.rubric_score`
+    (rule 13) both returned ok:true where the identical unbroken block
+    correctly rejects. Both are committed regression cases.
+
+    The two forms reconnect under DIFFERENT bounds, deliberately:
+      * YAML form — the comment must be indented deeper than the header, the
+        same rule every other body line obeys. A dedented `#` still terminates.
+      * markdown-bullet form — `#` is genuinely ambiguous there (`# addendum`
+        is a comment; `## Next steps` is a following SECTION heading, and
+        nothing distinguishes them), so the comment run is capped at
+        `_MAX_COMMENT_RUN` and the line that RESUMES the block must be a real
+        `- key: value` bullet (`_is_kv_bullet`). A `## Next steps` section
+        whose bullets are sentences therefore still terminates, exactly as it
+        does today.
 
     HONEST BOUND (do not overstate this): a dedented sibling block and a
     following unrelated heading are reliably terminating, and the tolerance can
     never merge two different named blocks. Trailing PROSE is only terminating
     when it does not itself look like a body line — indented English containing
     a colon matches `_KEY_RE`, so a line such as `  Next: see the follow-up` IS
-    absorbed and then fails the value parse. That outcome is fail-closed on a
-    non-gating advisory hook and the reason string names the offending line, so
-    it is a diagnosis cost rather than a correctness one; the blank-run cap is
-    what keeps it from reaching arbitrarily far past the block.
+    absorbed and then fails the value parse. The comment tolerance adds one
+    case of the same shape: a following markdown section whose heading is `#`-
+    led AND whose first bullet happens to be `- key: value` is absorbed. That
+    is fail-CLOSED in every reachable form — an unknown key is ignored by the
+    validators, a REPEATED key is an explicit duplicate-key error, and a
+    non-`key: value` bullet ends the block — so it is a diagnosis cost rather
+    than a correctness one; the blank-run and comment-run caps are what keep it
+    from reaching arbitrarily far past the block.
     """
     if not isinstance(text, str) or not text:
         return None
@@ -388,7 +484,18 @@ def find_last_block(text, name):
                 nxt = lines[j]
                 if nxt.strip() == "":
                     k = _next_content_index(lines, j)
-                    if k is None or k - j > _MAX_BLANK_RUN or not _is_bullet(lines[k]):
+                    if k is None or k - j > _MAX_BLANK_RUN:
+                        break
+                    if _is_comment_line(lines[k]):
+                        # A post-blank comment CONTINUES the block (see
+                        # _is_comment_line), but in this form the resuming line
+                        # must be a real `- key: value` bullet — see
+                        # _is_kv_bullet for why the stricter test is needed here
+                        # and not in the YAML form.
+                        k = _skip_comment_run(lines, k)
+                        if k is None or not _is_kv_bullet(lines[k]):
+                            break
+                    elif not _is_bullet(lines[k]):
                         break
                     if (
                         first_bullet_indent is not None
@@ -1138,9 +1245,12 @@ def load_block(names, missing_reason, argv=None, stream=None):
 
 # ── shared worker-side helpers (kept here so they are self-tested once) ──────
 
-#: The destructive commands the worker SubagentStop prompt scans for.
-DESTRUCTIVE_COMMANDS = ("rm -rf", "git push", "git reset --hard", "DROP", "TRUNCATE")
-
+# The destructive commands the worker SubagentStop prompt scans for are the
+# LABELS of _DESTRUCTIVE_PATTERNS below — that tuple is the single source of
+# truth. An earlier revision also carried a hand-written DESTRUCTIVE_COMMANDS
+# tuple here; it was referenced nowhere and duplicated those labels, so it was a
+# second source of truth that could drift from the patterns it described.
+#
 # Command position: start of line, or after a shell separator. Matching bare
 # substrings would fire on the many prose mentions ("no git push", "never
 # rm -rf"), so the patterns are anchored to command position and a match
