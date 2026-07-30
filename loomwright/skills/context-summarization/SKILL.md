@@ -161,7 +161,7 @@ CK: {operation} — {confirmation}
 **Example:**
 ```
 CK: record_worker_result — BD-15a completed, +145 -3
-CK: record_review — BD-15a PASS, attempt 1/3
+CK: record_decision — EXECUTE, outputs_verified PASS
 ```
 
 ### Execute Manager Output
