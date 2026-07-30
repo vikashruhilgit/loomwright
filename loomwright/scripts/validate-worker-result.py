@@ -22,7 +22,8 @@ string verbatim, that exact string is used.
       DROP, TRUNCATE)
   (6) v12 outputs_verified contract — schema_version >= 2 requires BOTH
       outputs_verified (array) AND outputs_gap (string) to be PRESENT
-  (7) v12 outputs_verified shape — each entry needs kind (file|symbol|type),
+  (7) v12 outputs_verified shape — WHEN PRESENT (the prompt's own scoping, at
+      any schema_version), each entry needs kind (file|symbol|type),
       path (string), status (present|missing)
   (8) v12 outputs_gap/status invariant — outputs_gap non-empty with
       status: completed is rejected
@@ -252,22 +253,36 @@ def main():
         if not isinstance(outputs_gap_raw, str):
             emit(False, REASON_V2_FIELDS)
 
-        # ── (7) outputs_verified entry shape ─────────────────────────────────
-        for entry in outputs_verified:
-            if not isinstance(entry, dict):
-                emit(False, REASON_ENTRY_SHAPE)
-            for required in ("kind", "path", "status"):
-                if required not in entry or is_empty_scalar(entry.get(required)):
-                    emit(False, REASON_ENTRY_SHAPE)
-            if as_text(entry.get("kind")).strip() not in VALID_KINDS:
-                emit(False, REASON_ENTRY_SHAPE)
-            if as_text(entry.get("status")).strip() not in VALID_ENTRY_STATUS:
-                emit(False, REASON_ENTRY_SHAPE)
-
         # ── (8) outputs_gap / status cross-field invariant ───────────────────
         outputs_gap = as_text(outputs_gap_raw).strip()
         if outputs_gap and status == "completed":
             emit(False, REASON_GAP_STATUS)
+
+    # ── (7) outputs_verified entry shape ─────────────────────────────────────
+    # SCOPED BY PRESENCE, NOT BY schema_version — deliberately OUTSIDE the
+    # `schema_version >= 2` block above. Rules 6 and 8 say "if schema_version is
+    # 2 or higher" verbatim; rule 7 says "WHEN PRESENT". A v1 block is not
+    # required to carry outputs_verified, but if it does, the entries still have
+    # to be well-formed, and gating this loop on the version silently exempted
+    # exactly that case from any shape check.
+    if present(fields, "outputs_verified"):
+        entries = fields.get("outputs_verified")
+        # A null or wrong-typed outputs_verified is rule 6's business and is
+        # already rejected above for v2. On a v1 block there is no such rule to
+        # lean on, so a non-list is simply not iterable entry-shape data — skip
+        # rather than invent a v1 type rule the prompt never stated (R4:
+        # transcribe, do not silently strengthen).
+        if isinstance(entries, list):
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    emit(False, REASON_ENTRY_SHAPE)
+                for required in ("kind", "path", "status"):
+                    if required not in entry or is_empty_scalar(entry.get(required)):
+                        emit(False, REASON_ENTRY_SHAPE)
+                if as_text(entry.get("kind")).strip() not in VALID_KINDS:
+                    emit(False, REASON_ENTRY_SHAPE)
+                if as_text(entry.get("status")).strip() not in VALID_ENTRY_STATUS:
+                    emit(False, REASON_ENTRY_SHAPE)
 
     emit(True)
 

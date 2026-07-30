@@ -372,6 +372,39 @@ def _skip_comment_run(lines, k):
     return k
 
 
+def _md_comment_resume(lines, k, first_bullet_indent):
+    """Resume index for the markdown-bullet form after a comment run at `k`.
+
+    `lines[k]` MUST be a whole-line comment. Returns the index of the line that
+    RESUMES the block, or None when the block must terminate here.
+
+    ONE helper for BOTH arrival paths, deliberately. The markdown-bullet form
+    can reach a comment either after a blank line or with no blank line at all,
+    and those two paths used to disagree: the post-blank path reconnected while
+    the no-blank path fell through to the bullet test and BROKE. The no-blank
+    variant was the worse of the two failures — it silently truncated the block
+    and the validator then reported "missing required field(s)" for fields that
+    were present just past the comment, a diagnostic that actively misdirects.
+    Routing both through one helper is what makes the two bounds identical
+    rather than merely similar.
+
+    The bounds are the ones already in force:
+      * the comment run is capped at `_MAX_COMMENT_RUN`, and each gap inside it
+        at `_MAX_BLANK_RUN` (both enforced by `_skip_comment_run`);
+      * the resuming line must be a real `- key: value` bullet
+        (`_is_kv_bullet`) — see there for why this form needs the stricter test
+        that the YAML form does not;
+      * the resuming bullet may not be dedented out of the block's own bullet
+        indent.
+    """
+    k = _skip_comment_run(lines, k)
+    if k is None or not _is_kv_bullet(lines[k]):
+        return None
+    if first_bullet_indent is not None and _indent_of(lines[k]) < first_bullet_indent:
+        return None
+    return k
+
+
 def find_last_block(text, name):
     """Return the LAST `name` block in `text` (header line + body), or None.
 
@@ -488,19 +521,29 @@ def find_last_block(text, name):
                         break
                     if _is_comment_line(lines[k]):
                         # A post-blank comment CONTINUES the block (see
-                        # _is_comment_line), but in this form the resuming line
-                        # must be a real `- key: value` bullet — see
-                        # _is_kv_bullet for why the stricter test is needed here
-                        # and not in the YAML form.
-                        k = _skip_comment_run(lines, k)
-                        if k is None or not _is_kv_bullet(lines[k]):
+                        # _is_comment_line and _md_comment_resume).
+                        k = _md_comment_resume(lines, k, first_bullet_indent)
+                        if k is None:
                             break
-                    elif not _is_bullet(lines[k]):
-                        break
-                    if (
-                        first_bullet_indent is not None
-                        and _indent_of(lines[k]) < first_bullet_indent
-                    ):
+                    else:
+                        if not _is_bullet(lines[k]):
+                            break
+                        if (
+                            first_bullet_indent is not None
+                            and _indent_of(lines[k]) < first_bullet_indent
+                        ):
+                            break
+                    block.extend(lines[j:k])
+                    j = k
+                    continue
+                if _is_comment_line(nxt):
+                    # A comment reached with NO intervening blank line continues
+                    # the block too, under the IDENTICAL bounds. Without this
+                    # the line fell through to the bullet test below and broke
+                    # the block — the fail-OPEN variant with the misleading
+                    # diagnostic described in _md_comment_resume.
+                    k = _md_comment_resume(lines, j, first_bullet_indent)
+                    if k is None:
                         break
                     block.extend(lines[j:k])
                     j = k
@@ -599,10 +642,10 @@ def strip_comment(raw):
     blocks. Comments are stripped in exactly one place, here, so the plain
     scalar, flow-collection and block-sequence paths cannot drift apart again.
 
-    THE RULE. A `#` introduces a comment when BOTH hold:
+    THE RULE (plain YAML — there is no longer any deviation). A `#` introduces a
+    comment when BOTH hold:
       (a) it is OUTSIDE a quoted scalar, and
-      (b) it is preceded by a space or tab which is itself preceded by at
-          least one non-whitespace character of value text.
+      (b) it is at the start of the string, or preceded by a space or tab.
 
     Everything from that `#` to the end of the string is dropped. Consequences,
     each of which is a committed test case:
@@ -612,20 +655,39 @@ def strip_comment(raw):
       tag: v1#2                      -> unchanged     (no preceding whitespace)
       files: [a, b]  # note          -> "[a, b]"
       - item  # note                 -> "item"
+      color: #ff0000                 -> ""  -> null   (a whole-value comment)
       [a # x, b]                     -> "[a"  -> EXPLICIT unterminated-sequence
                                         failure, which is what YAML means: the
                                         comment eats the closing bracket.
 
-    DOCUMENTED DEVIATION FROM STRICT YAML (deliberate, clause (b)). A value
-    whose first non-whitespace character is `#` — `color: #ff0000` — is kept as
-    the plain scalar "#ff0000". Strict YAML reads that as a comment and the
-    value as null. The deviation is chosen because it is the reading a result-
-    block emitter means, and because BOTH readings fail CLOSED for every field
-    these validators check (a null and a "#..." string are each rejected by the
-    presence/enum/int tests), so nothing turns fail-open on the choice. The one
-    place strict YAML is honoured instead is a key line with a comment and a
-    nested body (`resume_context:  # note` + indented keys), which _parse_mapping
-    handles explicitly — see there.
+    THE `color: #ff0000` DEVIATION IS GONE, AND ITS OLD JUSTIFICATION WAS FALSE.
+    A previous revision kept such a value as the plain scalar "#ff0000" and
+    justified it by claiming "BOTH readings fail CLOSED for every field these
+    validators check". That is untrue of every non-empty-STRING presence check,
+    because a "#..." string IS non-empty and therefore satisfies one, while a
+    null does not. Three demonstrated counterexamples, one per validator, each
+    of which answered ok:true where the explicit-null control correctly fires:
+
+        EXECUTE_CHECKPOINT  reason:  # ran out of budget      (rule 3)
+        SUPERVISOR (failed) error:   # base branch mismatch   (rule 10)
+        QA_RESULT           summary: # nothing to report       (rule 3)
+
+    A fourth, in SEQUENCE position, is why the fix lives HERE and not only in
+    _parse_mapping's key-line branch: `files_modified:` / `- # nothing yet`
+    parsed to the one-element list `["# nothing yet"]`, whose element is
+    non-empty, so `_non_empty_list` reported the field populated and WORKER_RESULT
+    rule 2 (`status: completed` requires a non-empty files_modified or
+    files_created) passed on a block that named no file at all. Fixing only the
+    key line would have left that one live and undisclosed.
+
+    The reading is genuinely BINARY — `key: #x` and `key:  # comment` are
+    structurally indistinguishable — so one side must lose, and null is the right
+    loser: no field in any of the five schemas takes a legitimately `#`-leading
+    literal (they are enums, integers, paths, URLs and prose). An emitter that
+    really means one quotes it (`color: "#ff0000"`), which still parses to the
+    string. This also brings strip_comment into agreement with `_is_comment_line`
+    and `_tokenize`, which have always treated a leading `#` as a comment; the
+    three now share one definition instead of two.
 
     HONEST LIMIT. An unquoted value that legitimately contains ` # ` IS
     truncated (`summary: fixed the # parsing` -> "fixed the"). That is real
@@ -639,7 +701,6 @@ def strip_comment(raw):
     if not isinstance(raw, str) or "#" not in raw:
         return raw
     quote = None
-    seen_content = False
     i = 0
     n = len(raw)
     while i < n:
@@ -647,13 +708,13 @@ def strip_comment(raw):
         if quote is None:
             if c in "\"'":
                 quote = c
-                seen_content = True
                 i += 1
                 continue
-            if c == "#" and seen_content and i > 0 and raw[i - 1] in " \t":
+            # Clause (b): start-of-string, or preceded by whitespace. The
+            # `i == 0` arm is what removes the old `color: #ff0000` deviation;
+            # `tag: v1#2` is still untouched because `1` is not whitespace.
+            if c == "#" and (i == 0 or raw[i - 1] in " \t"):
                 return raw[:i]
-            if c not in " \t":
-                seen_content = True
             i += 1
             continue
         # inside a quoted scalar — no comment can start here
@@ -1018,12 +1079,36 @@ def _parse_mapping(toks, i, indent, errors):
         rest = match.group(2)
         if key in result:
             errors.append("line %d: duplicate key %r" % (tok.no, key))
-        # A key line carrying ONLY a comment (`resume_context:  # note`) is the
-        # one place strict YAML is honoured over strip_comment's clause (b):
-        # here the `#` is unambiguously preceded by the `key:` separator, and a
-        # nested body may follow. _KEY_RE consumes exactly one separator space,
-        # so the "is there content before the #" test cannot be made at
+        # A key line whose whole remainder is a `#` comment. STRICT YAML IS
+        # HONOURED HERE, on both sub-shapes: the key is PRESENT and its value is
+        # null. This is the one place strip_comment's clause (b) is overridden,
+        # and it is overridden because here the `#` is unambiguously preceded by
+        # the `key:` separator. _KEY_RE consumes exactly one separator space, so
+        # the "is there value text before the #" test cannot be made at
         # parse_value level for this shape — it needs the key line.
+        #
+        # WHY NULL AND NOT THE `"#..."` STRING (this was a real fail-OPEN, with
+        # one demonstrated counterexample per validator). The earlier reading
+        # kept the comment text as a plain scalar and justified itself with the
+        # claim that "both readings fail CLOSED for every field these validators
+        # check". That claim was FALSE for every non-empty-string presence
+        # check, because a "#..." string is non-empty and therefore SATISFIES
+        # them, while a null does not:
+        #     EXECUTE_CHECKPOINT  reason:  # ran out of budget    -> ok:true
+        #     SUPERVISOR (failed) error:   # base branch mismatch -> ok:true
+        #     QA_RESULT           summary: # nothing to report     -> ok:true
+        # In each case the identical block written with an explicit `null`
+        # correctly fires the rule (3, 10 and 3 respectively). All six are
+        # committed regression cases.
+        #
+        # The reading is genuinely BINARY — `key: #x` and `key:  # comment` are
+        # structurally indistinguishable, so one of them must lose. Null is the
+        # right loser: no field in any of the five schemas takes a legitimately
+        # `#`-leading literal (they are enums, integers, paths, URLs and prose),
+        # so honouring YAML costs nothing real, and it makes the fail-closed
+        # claim TRUE instead of merely asserted. An emitter that really means a
+        # `#`-leading value quotes it (`color: "#ff0000"`), which parses to the
+        # string exactly as before.
         rest_stripped = "" if rest is None else rest.strip()
         comment_only = rest_stripped.startswith("#")
         if rest is None or rest_stripped == "" or comment_only:
@@ -1031,16 +1116,9 @@ def _parse_mapping(toks, i, indent, errors):
             if body:
                 result[key] = _parse_nested(body, errors)
                 continue
-            if not comment_only:
-                # empty-after-colon — one of the five YAML null spellings
-                result[key] = None
-                continue
-            # Comment-only remainder with NO nested body: fall through to the
-            # documented plain-scalar reading rather than inventing a null.
-            val, err = parse_value(rest)
-            if err:
-                errors.append("line %d: %s" % (tok.no, err))
-            result[key] = val
+            # empty-after-colon, or a comment-only remainder: both are one of
+            # the five YAML null spellings. PRESENT, and null.
+            result[key] = None
             continue
         val, err = parse_value(rest)
         if err:
@@ -1078,6 +1156,26 @@ def _normalize_body(block, errors):
         for offset, line in enumerate(body):
             if line.strip() == "":
                 out.append("")
+                continue
+            if _is_comment_line(line):
+                # A whole-line comment is not a bullet at ANY indent, so it must
+                # be recognised BEFORE the bullet/indent dispatch below. Framing
+                # (find_last_block) has already decided it belongs to the block;
+                # what remained was this function rejecting it with "'# note' is
+                # not a '- key: value' bullet", which turned a legitimately
+                # annotated block into a parse failure.
+                #
+                # Emitted STRIPPED, not dedented: the bullet-width shift below
+                # would chop into the comment text (`'# note'[2:] == 'ote'`), and
+                # a comment carries no structure, so its indentation is
+                # semantically void — _tokenize discards the line either way.
+                # DISCLOSED CONSEQUENCE of stripping: a TAB-indented comment is
+                # accepted here, where a tab-indented BULLET is still rejected by
+                # _tokenize. That is not the silent-normalisation this module
+                # forbids — normalising a tab would hide a structural construct
+                # outside the supported subset, and a comment has no structure to
+                # hide.
+                out.append(line.strip())
                 continue
             ind = _indent_of(line)
             if ind == base:

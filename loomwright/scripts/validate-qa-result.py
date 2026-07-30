@@ -22,6 +22,16 @@ tests_generated > 0)". That is the interpretation implemented here — not a
 guess. Note rule (4) is a PRESENCE check (including present-but-null being a
 distinct outcome from absent), not a range check on the value.
 
+DELIBERATE STRENGTHENING BEYOND THE PROMPT (recorded, not accidental):
+  * Rule (2) rejects a NEGATIVE tests_generated / tests_passed. The prompt
+    required only that they be "present as integers", so `tests_passed: -1`
+    would have satisfied it. The strengthening is kept because a negative test
+    count is not a state any QA Executor can legitimately report and rule (4)'s
+    `tests_generated > 0` conditional reads a signed value, but it IS a
+    deviation from the transcribed rule and is disclosed here rather than left
+    for a reader to discover — R4 in the brief asks that the transcription not
+    silently drift from the prompt in EITHER direction.
+
 INVARIANT: ALWAYS exits 0. Decision on stdout only — including when the shared
 module below cannot be imported (see the guard).
 """

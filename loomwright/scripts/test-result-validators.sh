@@ -138,9 +138,21 @@ LAST_OUT=""
 LAST_RC=""
 
 # run_v <validator> <textfile> [cwd] — run a validator over wrapped text.
+#
+# THE PAYLOAD IS MATERIALISED TO A FILE AND REDIRECTED, NEVER PIPED. Piping it
+# made this helper intermittently report a FALSE failure, and the mechanism is
+# worth recording because it looks like a validator bug and is not:
+# the import-guard paths (sections J's ABSENT / CORRUPT module cases) fail
+# before any stdin read and `os._exit(0)` immediately, so the writing process
+# gets EPIPE on a payload larger than the pipe buffer, dies with rc 1/120, and
+# `set -o pipefail` promotes THAT to the pipeline's status. The validator's own
+# verdict and exit code were correct every time; only the harness lied. Observed
+# as a one-off `exit 120, expected 0` and reproduced deterministically at a
+# 200KB payload. A file redirect has no writer to break.
 run_v() {
   local validator="$1" textfile="$2" wd="${3:-$SANDBOX}"
-  LAST_OUT="$(text_payload "$textfile" | ( cd "$wd" && python3 "$validator" ) 2>/dev/null)"
+  text_payload "$textfile" > "$TMPROOT/.payload.json"
+  LAST_OUT="$( ( cd "$wd" && python3 "$validator" < "$TMPROOT/.payload.json" ) 2>/dev/null)"
   LAST_RC=$?
 }
 
@@ -173,7 +185,9 @@ sys.stdout.write(json.dumps({
 # payload states where the project actually is.
 run_v_cwd() {
   local validator="$1" textfile="$2" pcwd="$3" wd="$4"
-  LAST_OUT="$(text_payload_cwd "$textfile" "$pcwd" | ( cd "$wd" && python3 "$validator" ) 2>/dev/null)"
+  # File-redirected, not piped — see run_v for the EPIPE/pipefail reason.
+  text_payload_cwd "$textfile" "$pcwd" > "$TMPROOT/.payload.json"
+  LAST_OUT="$( ( cd "$wd" && python3 "$validator" < "$TMPROOT/.payload.json" ) 2>/dev/null)"
   LAST_RC=$?
 }
 
@@ -242,8 +256,34 @@ sys.path.insert(0, sys.argv[1])
 import result_block_parser as R
 
 
+_CHECKS = [0]
+
+
 def check(label, cond):
+    _CHECKS[0] += 1
     print(("PASS " if cond else "FAIL ") + label)
+
+
+def emit_trailer():
+    """Print the self-declared check count as the LAST line of this harness.
+
+    THE HARNESS USED TO LOSE CASES SILENTLY. This whole file is one python
+    script whose stdout a bash `case` consumes, matching only `PASS `/`FAIL `
+    prefixes. An exception anywhere aborts the script, every later check() call
+    emits nothing at all, and the traceback matches neither prefix — so cases
+    VANISHED rather than failing, and nothing compared the number that arrived
+    against the number that should have. Measured: three checks disappeared
+    (290 -> 287) while the suite still reported fail=0 and exited 0.
+
+    That matters more here than it would in an ordinary suite: no converted hook
+    has been observed FIRING (the installed plugin is a copy, not a symlink), so
+    this suite is the change's ONLY evidence. Evidence that can quietly shrink
+    is not evidence.
+
+    The fix is a trailer the bash side REQUIRES. Its absence is itself a
+    failure, so a mid-script crash can no longer read as a clean run.
+    """
+    print("CHECKS %d" % _CHECKS[0])
 
 
 # --- the five YAML null spellings, all PRESENT-but-null ----------------------
@@ -577,9 +617,28 @@ check("[CONTROL] quoted '#' survives while a REAL trailing comment is stripped",
 fields, errors = R.parse_block("X_RESULT:\n  tag: v1#2")
 check("[CONTROL] a '#' with no preceding whitespace stays part of the value",
       errors == [] and fields.get("tag") == "v1#2")
+
+# FINDING 8a: a value that is ENTIRELY a comment reads as YAML null, in EVERY
+# position. This flips two assertions that a previous revision shipped as
+# [CONTROL]s, on a justification that measurement falsified — see the
+# strip_comment docstring for the three demonstrated fail-opens (one per
+# validator, each answering ok:true where the explicit-null control fires).
 fields, errors = R.parse_block("X_RESULT:\n  color: #ff0000")
-check("[CONTROL] a value BEGINNING with '#' is kept as a plain scalar",
+check("[FALSIFIES] a value that is ENTIRELY a comment is YAML null, PRESENT "
+      "(was the '#ff0000' string, which satisfied every non-empty-string rule)",
+      errors == [] and R.present(fields, "color") and fields.get("color") is None)
+fields, errors = R.parse_block('X_RESULT:\n  color: "#ff0000"')
+check("[CONTROL] QUOTING a '#'-leading value still yields the string — the "
+      "documented escape for an emitter that really means one",
       errors == [] and fields.get("color") == "#ff0000")
+fields, errors = R.parse_block(
+    "X_RESULT:\n  files_modified:\n    - # nothing yet")
+check("[FALSIFIES] a comment-only SEQUENCE ELEMENT is null, not a non-empty "
+      "string — this one made WORKER_RESULT rule 2 pass on a block naming no file",
+      errors == [] and fields.get("files_modified") == [None])
+fields, errors = R.parse_block("X_RESULT:\n  files_modified: [# nothing yet]")
+check("[FALSIFIES] same in FLOW element position",
+      errors == [] and fields.get("files_modified") == [None])
 
 # Flow collections. The TRAILING-comment case already worked (parse_value's
 # tail check tolerated a leading '#'), so it is a control, not a bug fix — but
@@ -634,9 +693,10 @@ check("[FALSIFIES] a key line with only a comment, then a nested body, parses",
       errors == []
       and fields.get("resume_context") == {"tool_calls_used": "58"})
 fields, errors = R.parse_block("X_RESULT:\n  a: # nothing to say\n  b: 1")
-check("[CONTROL] a comment-only value with NO body keeps the documented "
-      "plain-scalar reading (both readings fail closed downstream)",
-      errors == [] and fields.get("a") == "# nothing to say")
+check("[FALSIFIES] a comment-only value with NO nested body is PRESENT-and-null, "
+      "not the '# nothing to say' string (the reading that failed OPEN)",
+      errors == [] and R.present(fields, "a") and fields.get("a") is None
+      and fields.get("b") == "1")
 fields, errors = R.parse_block("X_RESULT:\n  # a whole-line comment\n  a: 1")
 check("[CONTROL] a whole-line comment inside a block is skipped, as before",
       errors == [] and set(fields) == {"a"})
@@ -668,16 +728,129 @@ check("[NEW API] strip_comment leaves a comment-free string identical",
       R.strip_comment("plain value") == "plain value")
 check("[NEW API] strip_comment does not scan past an unterminated quote",
       R.strip_comment('"oops # x') == '"oops # x')
+
+# --- FINDING 8b: COMMENT LINES vs BLOCK FRAMING ------------------------------
+#
+# THE DEFECT. `_tokenize` has always skipped whole-line `#` comments, but
+# `find_last_block`'s framing predicates did not recognise one, so a comment
+# inside a block TERMINATED it and every field past the comment was silently
+# discarded. Fail-OPEN, not merely a diagnosis cost: any OPTIONAL field whose
+# only failure mode is present-and-bad simply vanished and its rule never ran.
+#
+# LABELS ARE MEASURED, not asserted — each was run against the two prior parser
+# revisions materialised from git. This distinction is the evidence:
+#   [FALSIFIES @4f63dea]  fails against the CURRENTLY COMMITTED parser.
+#   [CONTROL @4f63dea]    already correct there; falsifies against 03b5535
+#                         (pre-framing-fix) and is kept so the earlier half of
+#                         the fix cannot silently regress.
+#   [CONTROL]             correct in all three revisions — a bound guard,
+#                         proving the tolerance did not over-reach. On its own
+#                         a control proves nothing.
+#
+# Measured matrix (fields recovered from `a: 1` + comment + `b: 2`):
+#   case                    03b5535     4f63dea              now
+#   md blank+comment        [a] silent  [a,b] + PARSE ERROR  [a,b] clean
+#   md comment NO blank     [a] silent  [a] silent           [a,b] clean
+#   yaml blank+comment      [a] silent  [a,b] clean          [a,b] clean
+#   yaml comment NO blank   [a,b]       [a,b]                [a,b]
+
+MD_BLANK = "## W_RESULT\n- a: 1\n\n# note from the worker\n- b: 2\n"
+fields, errors = R.parse_block(R.find_last_block(MD_BLANK, "W_RESULT"))
+check("[FALSIFIES @4f63dea] markdown form: blank line + comment + more bullets "
+      "parses cleanly (was an explicit '# note ... is not a bullet' failure, "
+      "which rejected a legitimately annotated block)",
+      errors == [] and fields.get("a") == "1" and fields.get("b") == "2")
+
+MD_NOBLANK = "## W_RESULT\n- a: 1\n# note from the worker\n- b: 2\n"
+fields, errors = R.parse_block(R.find_last_block(MD_NOBLANK, "W_RESULT"))
+check("[FALSIFIES @4f63dea] markdown form: comment with NO preceding blank line "
+      "continues the block (was a SILENT truncation that dropped every later "
+      "field and then blamed the emitter for omitting them)",
+      errors == [] and fields.get("a") == "1" and fields.get("b") == "2")
+
+YAML_BLANK = "W_RESULT:\n  a: 1\n\n  # note from the agent\n  b: 2\n"
+fields, errors = R.parse_block(R.find_last_block(YAML_BLANK, "W_RESULT"))
+check("[CONTROL @4f63dea] YAML form: blank line + comment + more fields "
+      "(falsifies against 03b5535; guards the committed half of the fix)",
+      errors == [] and fields.get("a") == "1" and fields.get("b") == "2")
+
+YAML_NOBLANK = "W_RESULT:\n  a: 1\n  # note from the agent\n  b: 2\n"
+fields, errors = R.parse_block(R.find_last_block(YAML_NOBLANK, "W_RESULT"))
+check("[CONTROL] YAML form: comment with no blank line was always fine",
+      errors == [] and fields.get("a") == "1" and fields.get("b") == "2")
+
+# BOUND GUARDS. The tolerance must not reach into a FOLLOWING section. All four
+# of these terminate the block in every revision; they are what makes the
+# comment tolerance a bounded rule rather than a shape-only one.
+fields, _ = R.parse_block(
+    R.find_last_block("## W_RESULT\n- a: 1\n\n## Next steps\n- ship it now\n",
+                      "W_RESULT"))
+check("[CONTROL] a following '## Next steps' section whose bullets are PROSE "
+      "still terminates the block (_is_kv_bullet is why)",
+      set(fields) == {"a"})
+fields, _ = R.parse_block(
+    R.find_last_block("## W_RESULT\n- a: 1\n# c1\n# c2\n# c3\n# c4\n- b: 2\n",
+                      "W_RESULT"))
+check("[CONTROL] a comment run longer than _MAX_COMMENT_RUN terminates the block",
+      set(fields) == {"a"})
+fields, _ = R.parse_block(
+    R.find_last_block("## W_RESULT\n- a: 1\n\n\n\n# note\n- b: 2\n", "W_RESULT"))
+check("[CONTROL] a blank run longer than _MAX_BLANK_RUN terminates the block "
+      "even when a comment follows",
+      set(fields) == {"a"})
+fields, _ = R.parse_block(
+    R.find_last_block("## W_RESULT\n- a: 1\n# note\n- just a sentence\n",
+                      "W_RESULT"))
+check("[CONTROL] a comment resumed by a NON-'key: value' bullet terminates",
+      set(fields) == {"a"})
+block = R.find_last_block(
+    "W_RESULT:\n  a: 1\n\n# dedented heading, not a body line\n  b: 2\n",
+    "W_RESULT")
+fields, _ = R.parse_block(block)
+check("[CONTROL] YAML form: a comment DEDENTED to the header's own indent still "
+      "terminates (the YAML form's bound is the indent rule, not a run cap)",
+      set(fields) == {"a"})
+
+# The tolerance can never MERGE two differently-named blocks, comment or not.
+two = "W_RESULT:\n  a: 1\n\n# note\nOTHER_RESULT:\n  b: 2\n"
+fields, _ = R.parse_block(R.find_last_block(two, "W_RESULT"))
+check("[CONTROL] a comment cannot bridge into a DIFFERENT named block",
+      set(fields) == {"a"})
+
+emit_trailer()
 PYEOF
 
+# Consume the parser harness's output. Three guards, all added because the
+# earlier loop could DISCARD cases (see emit_trailer above):
+#   1. a line matching neither prefix goes to STDERR, not stdout — a traceback
+#      must be loud, not a tidy "(parser harness) ..." note in the pass stream;
+#   2. the `CHECKS n` trailer is REQUIRED, and n must equal the number of
+#      PASS/FAIL lines actually consumed — a crash mid-script drops the trailer
+#      and is reported as a failure instead of vanishing;
+#   3. a non-zero exit from python3 is reported too.
 PARSER_RESULTS="$(python3 "$PARSER_TESTS" "$SCRIPT_DIR" 2>&1)"
+PARSER_RC=$?
+PARSER_SEEN=0
+PARSER_DECLARED=""
 while IFS= read -r line; do
   case "$line" in
-    "PASS "*) ok "${line#PASS }" ;;
-    "FAIL "*) no "${line#FAIL }" ;;
-    *) [ -n "$line" ] && echo "  (parser harness) $line" ;;
+    "PASS "*) ok "${line#PASS }"; PARSER_SEEN=$((PARSER_SEEN + 1)) ;;
+    "FAIL "*) no "${line#FAIL }"; PARSER_SEEN=$((PARSER_SEEN + 1)) ;;
+    "CHECKS "*) PARSER_DECLARED="${line#CHECKS }" ;;
+    *) [ -n "$line" ] && echo "  (parser harness, unrecognised output) $line" >&2 ;;
   esac
 done <<< "$PARSER_RESULTS"
+
+if [ "$PARSER_RC" != "0" ]; then
+  no "parser harness exited $PARSER_RC (expected 0) — output above may be truncated"
+fi
+if [ -z "$PARSER_DECLARED" ]; then
+  no "parser harness emitted no CHECKS trailer — it aborted part-way and its later cases were LOST (see the traceback on stderr)"
+elif [ "$PARSER_DECLARED" != "$PARSER_SEEN" ]; then
+  no "parser harness declared $PARSER_DECLARED checks but $PARSER_SEEN reached the harness — cases were lost in transit"
+else
+  ok "parser harness case accounting: $PARSER_SEEN/$PARSER_DECLARED cases arrived (no silent loss)"
+fi
 
 # ── B. worker validator ──────────────────────────────────────────────────────
 echo "== B. validate-worker-result.py — 8 rules =="
@@ -1163,6 +1336,110 @@ mk worker-c7-hash-in-value.md <<'EOF'
 EOF
 run_v "$V_WORKER" "$F"
 assert_pass "worker: [CONTROL] a '#' inside a quoted summary is content, not a comment"
+
+# --- FINDING 8c: the framing defect END-TO-END, through the validator --------
+#
+# The parser-level cases live in section A; these prove the CONSEQUENCE, which
+# is the part that matters: a comment line truncated the block, so an OPTIONAL
+# field past the comment was discarded and its rule NEVER RAN. `error` under
+# `status: completed` (rule 4) is the worker's instance — the field is optional,
+# its only failure mode is present-and-bad, and dropping it is therefore
+# invisible.
+#
+# Measured against the committed parser at 4f63dea:
+#   blank + comment  -> ok:FALSE, but on a bogus "'# note' is not a bullet"
+#                       PARSE error, so rule 4 still never ran
+#   comment NO blank -> ok:TRUE   <-- the outright fail-open
+mk worker-f8-rule4-blank-comment.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- summary: an annotated block whose error field follows a blank line and a comment
+
+# addendum from the worker
+- error: the migration step never completed
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: [FALSIFIES @4f63dea] blank line + comment no longer hides the error field from rule 4" \
+  "(rule 4)"
+
+mk worker-f8-rule4-noblank-comment.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- summary: an annotated block whose error field follows a comment with no blank line
+# addendum from the worker
+- error: the migration step never completed
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: [FALSIFIES @4f63dea] comment with NO blank line was an outright fail-OPEN (ok:true) on rule 4" \
+  "(rule 4)"
+
+mk worker-f8-rule4-unbroken.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- summary: the same block with no comment at all
+- error: the migration step never completed
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: [CONTROL] the same block with NO comment was always rejected — so the comment was the only difference" \
+  "(rule 4)"
+
+# --- rule 7 is scoped BY PRESENCE, not by schema_version ---------------------
+# The prompt says "when present"; rules 6 and 8 say "if schema_version is 2 or
+# higher". Keeping rule 7's loop inside the version gate exempted a v1 block
+# carrying outputs_verified from ANY shape check. Measured at 4f63dea: ok:true.
+mk worker-v1-bad-entry.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 1
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- outputs_verified: [{kind: bogus, path: a.py, status: present}]
+- summary: a v1 block whose outputs_verified entry has an invalid kind
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: [FALSIFIES @4f63dea] rule 7 applies to a v1 block that CARRIES outputs_verified" \
+  "outputs_verified entries must include {kind, path, status}"
+
+mk worker-v1-good-entry.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 1
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- outputs_verified: [{kind: file, path: a.py, status: present}]
+- summary: a v1 block whose outputs_verified entry is well formed
+EOF
+run_v "$V_WORKER" "$F"
+assert_pass "worker: [CONTROL] a v1 block with a WELL-FORMED entry still passes (the hoist did not add a v1 requirement)"
+
+mk worker-v1-no-verified.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 1
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- summary: a v1 block with no outputs_verified at all, which v1 does not require
+EOF
+run_v "$V_WORKER" "$F"
+assert_pass "worker: [CONTROL] v1 without outputs_verified is still accepted (rules 6/8 stay version-gated)"
 
 # ── C. execute-manager validator ─────────────────────────────────────────────
 echo "== C. validate-execute-result.py — 6 rules =="
@@ -1874,6 +2151,82 @@ SUPERVISOR_RESULT:
 EOF
 run_v "$V_SUPERVISOR" "$F"
 assert_pass "supervisor: an internal blank line does not truncate the block into a false missing-field"
+
+# --- FINDING 8d: the framing defect on SUPERVISOR_RESULT.rubric_score --------
+#
+# rubric_score is the supervisor's optional present-and-bad-only field, exactly
+# as `error` is the worker's, so truncating the block before it makes rule 13
+# unreachable. `9/4` is deliberately invalid (N > M) so a REACHED rule always
+# rejects — ok:true therefore proves the field was never seen.
+#
+# HONEST CLASSIFICATION, measured per emission form:
+#   YAML form, blank + comment      -> already correct at 4f63dea. This is a
+#                                      CONTROL there; it falsifies against
+#                                      03b5535, the pre-framing-fix parser, and
+#                                      is kept so that earlier half of the fix
+#                                      cannot silently regress.
+#   markdown-bullet form, no blank  -> ok:TRUE at 4f63dea. A genuine fail-open,
+#                                      and the reason this pair is not
+#                                      YAML-only: the two forms had DIFFERENT
+#                                      bugs and only one was fixed.
+mk sup-f8-yaml-blank-comment.md <<'EOF'
+SUPERVISOR_RESULT:
+  schema_version: 1
+  task_id: t
+  status: completed
+  pr_url: https://github.com/o/r/pull/9
+  heal_loop_ran: true
+  heal_iterations: 1
+  heal_decision: PASS
+  heal_fixable_issues_fixed: 0
+  heal_remaining_issues: 0
+  summary: rubric recorded after a blank line and a comment
+
+  # the rubric grader answered late
+  rubric_score: "9/4"
+EOF
+run_v "$V_SUPERVISOR" "$F"
+assert_fail "supervisor: [CONTROL @4f63dea / FALSIFIES @03b5535] YAML blank+comment keeps rubric_score reachable by rule 13" \
+  "rubric_score must be null or a string 'N/M' with N >= 0, M >= 1, M >= N"
+
+mk sup-f8-md-noblank-comment.md <<'EOF'
+## SUPERVISOR_RESULT
+- schema_version: 1
+- task_id: t
+- status: completed
+- pr_url: https://github.com/o/r/pull/9
+- heal_loop_ran: true
+- heal_iterations: 1
+- heal_decision: PASS
+- heal_fixable_issues_fixed: 0
+- heal_remaining_issues: 0
+- summary: rubric recorded after a comment with no blank line
+# the rubric grader answered late
+- rubric_score: "9/4"
+EOF
+run_v "$V_SUPERVISOR" "$F"
+assert_fail "supervisor: [FALSIFIES @4f63dea] markdown form, comment with NO blank line was an outright fail-OPEN (ok:true) on rule 13" \
+  "rubric_score must be null or a string 'N/M' with N >= 0, M >= 1, M >= N"
+
+mk sup-f8-md-blank-comment.md <<'EOF'
+## SUPERVISOR_RESULT
+- schema_version: 1
+- task_id: t
+- status: completed
+- pr_url: https://github.com/o/r/pull/9
+- heal_loop_ran: true
+- heal_iterations: 1
+- heal_decision: PASS
+- heal_fixable_issues_fixed: 0
+- heal_remaining_issues: 0
+- summary: rubric recorded after a blank line and a comment
+
+# the rubric grader answered late
+- rubric_score: "9/4"
+EOF
+run_v "$V_SUPERVISOR" "$F"
+assert_fail "supervisor: [FALSIFIES @4f63dea] markdown form, blank+comment was rejected on a bogus parse error so rule 13 never ran" \
+  "rubric_score must be null or a string 'N/M' with N >= 0, M >= 1, M >= N"
 
 # ── E. qa-executor validator ─────────────────────────────────────────────────
 echo "== E. validate-qa-result.py — 5 rules =="

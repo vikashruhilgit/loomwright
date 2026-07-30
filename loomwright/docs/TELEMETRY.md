@@ -213,7 +213,7 @@ current count):
 | `loomwright:qa-executor` | yes |
 | `loomwright:supervisor-runner` | yes |
 | `loomwright:worker` | **no** — its SubagentStop hooks are validator/progress-event command hooks; no telemetry command hook |
-| `loomwright:execute-manager` | **no** — its SubagentStop hooks are validator/progress-event command hooks; no telemetry command hook |
+| `loomwright:execute-manager` | **no** — its only SubagentStop hook is the validator command hook; no telemetry command hook (and no progress-event hook either — `emit-progress-event.sh` is on the `loomwright:worker` matcher above, not this one) |
 | `loomwright:plan-reviewer` / `loomwright:launch-pad-runner` | no |
 
 Self-test: `scripts/test-token-ledger.sh` (fixtures under
