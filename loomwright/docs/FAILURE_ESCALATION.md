@@ -12,7 +12,7 @@ Worker fails (WORKER_RESULT status=failed)
     ↓
 Execute Manager retries ONCE in same worktree
     ↓ (retry succeeds)
-    → Continue with review
+    → Continue (deterministic `outputs_verified`/tests-lint gate; no per-subtask reviewer)
     ↓ (retry fails)
     → Execute Manager escalates to Supervisor with WORKER_RESULT(status=failed)
     → Supervisor creates bug issue or skips subtask
@@ -51,35 +51,35 @@ Supervisor spawns fresh Execute Manager with resume context
 
 ---
 
-## Code Reviewer Decisions
+## Phase 4.5 SELF_HEAL: Code Reviewer Decisions
+
+> **Not a Phase 3 per-subtask flow.** No Phase 3 path (Single-Agent, Sequential, or Parallel) spawns a per-subtask Code Reviewer any more — each subtask's gate is the deterministic `outputs_verified`/tests-lint check (see "Worker Failure" above and `agents/orchestrator.md` §"Review Gate Policy"). The ONE remaining Code Reviewer in the workflow runs once, holistically, in Phase 4.5 SELF_HEAL, against the integrated feature-branch diff, after FINALIZE creates the PR. Full protocol: `skills/self-heal-advisory/SKILL.md` Part 2.
 
 ```
 Code Reviewer returns PASS
-    → Continue; launch newly unblocked subtasks
+    → heal_decision = PASS; proceed to completion tail
 
-Code Reviewer returns FAIL (attempt 1 or 2)
-    → Spawn fix worker with retry context (previous issues + review feedback)
-    → Re-review after fix
+Code Reviewer returns FAIL (iteration < --heal-iterations, default 3)
+    → Spawn fix task for bounded new BLOCKING/HIGH issues (previous issues + review feedback)
+    → Re-review after fix (next iteration)
 
-Code Reviewer returns FAIL (attempt 3)
-    → Supervisor checkpoints and escalates to human
-    → Creates issue describing persistent failure
-    → Exits with resume command
+Code Reviewer returns FAIL at the final iteration (max --heal-iterations reached)
+    → heal_decision = ESCALATED
+    → Findings posted to the PR as a comment
+    → Job moves to done/ with escalation fields (heal reason, heal_remaining_issues)
 
 Code Reviewer returns NEEDS_HUMAN
-    → Supervisor pauses current subtask
-    → Creates issue describing what needs human attention
-    → Moves to next independent subtask (if any)
-    → After 3 consecutive NEEDS_HUMAN across different subtasks:
-        → Supervisor halts entire workflow
-        → Exits with resume command and full issue list
+    → heal_decision = ESCALATED (immediate, does not consume remaining iterations)
+    → Findings posted to the PR as a comment
+    → Job moves to done/ with escalation fields
 ```
 
 **Rules:**
-- Max 3 FAIL retries per subtask before escalation
-- NEEDS_HUMAN always creates an issue for tracking
-- 3 consecutive NEEDS_HUMAN = workflow halt (not just per-subtask, across the session)
-- Supervisor never force-resolves review issues
+- Bounded by `--heal-iterations` (default 3) per Phase 4.5 run — not a per-subtask retry count
+- NEEDS_HUMAN always escalates immediately (no partial-workflow continuation — Phase 4.5 is a single integrated review, not per-subtask)
+- `heal_decision` is derived ONLY from the Code Reviewer's `CODE_REVIEW_RESULT` (PASS only from a reviewer PASS; ESCALATED on NEEDS_HUMAN, max iterations, or resume-thrash)
+- Supervisor never force-resolves review issues; ESCALATED always leaves the PR open for a human — the heal loop never merges
+- A fully-refuted FAIL (multi-voter mode) is still a human call, never a silent auto-PASS (`skills/self-heal-advisory/SKILL.md` §"Delay-vs-decide")
 
 ---
 

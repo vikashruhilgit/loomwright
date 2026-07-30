@@ -42,7 +42,7 @@ Manage the Supervisor's externalized state file. Writer of `## Decisions Log`, `
 |-----------|-------------|------------------|-------------------|
 | `initialize` | Create fresh state file; seeds `## Session` once (see note below the table) | config {max_workers, mode}, session {session_id, task_id, branch} | `"State initialized: session {id}, task {id}, status running"` |
 | `record_worker_result` | Record worker output | worker_id, subtask_id, result {files_modified, lines_added, lines_removed, tests_run, tests_passed, status, error} | `"Worker {id} result: {subtask_id} {status}, +{added} -{removed}"` |
-| `record_review` | Record review decision | subtask_id, decision (PASS\|FAIL\|NEEDS_HUMAN), issues_count, attempt {N}/3 | `"Review: {subtask_id} {decision}, attempt {N}/3"` |
+| `record_review` | Record review decision — **retained, no current caller** (the Phase 3 per-subtask reviewer this served was retired; superseded by the deterministic `outputs_verified` gate plus tests/lint) | subtask_id, decision (PASS\|FAIL\|NEEDS_HUMAN), issues_count, attempt {N}/3 | `"Review: {subtask_id} {decision}, attempt {N}/3"` |
 | `record_decision` | Append to Decisions Log | phase, decision, rationale | `"Decision logged: {phase} — {decision}"` |
 | `record_error` | Append to Error Log | phase, error, retry {N}/{max}, resolution | `"Error logged: {phase} — {error}"` |
 | `record_self_heal_resume` | Increment or reset `self_heal_resume_count` | increment (boolean) | `"Resume count: {new_value}"` |
@@ -72,7 +72,7 @@ state_file: {path}
 ```
 Actions: Create file → populate Config → seed `## Session` this ONE time with `session_id`/`task_id`/`branch`, a non-terminal status (`running`), and a transient `phase: INIT` display value (superseded by `scripts/build-state.sh`'s first projection, which never emits `INIT` and never carries `task_id` forward — see the pointer above) → init empty sections (Subtasks, Decisions, Worker Results, Error Log) → set Checkpoint timestamp.
 
-**record_review** — on PASS: check if blocked subtasks now become launchable (update Parallelism). On FAIL: increment attempt counter.
+**record_review** — **retained for schema completeness, no current caller** (the Phase 3 per-subtask reviewer this served was retired at every threshold; the deterministic `outputs_verified` gate plus tests/lint is now the per-subtask gate). Behavior if ever invoked: on PASS, check if blocked subtasks now become launchable (update Parallelism); on FAIL, increment attempt counter.
 
 **record_self_heal_resume** — added in v11.0.0. Mutates the Session-scoped `self_heal_resume_count` field (see `skills/state-management/SKILL.md` and `CONTEXT_KEEPER_STATE` in `docs/RESULT_SCHEMAS.md`).
 
@@ -175,7 +175,7 @@ All three operations follow the same write pattern as the rest of the operations
 |-------|----------|
 | State file not found | `"ERROR: State file not found at {path}. Initialize first."` |
 | State file corrupted | `"ERROR: State file malformed. Section {X} missing or invalid."` |
-| Unknown operation | `"ERROR: Unknown operation '{op}'. Valid: initialize, record_worker_result, record_review, record_decision, record_error, record_self_heal_resume, query, set_flag, get_flag, clear_flag."` |
+| Unknown operation | `"ERROR: Unknown operation '{op}'. Valid: initialize, record_worker_result, record_review (retained, no current caller), record_decision, record_error, record_self_heal_resume, query, set_flag, get_flag, clear_flag."` |
 | Missing required field | `"ERROR: Missing required field '{field}' for operation '{op}'."` |
 
 ---

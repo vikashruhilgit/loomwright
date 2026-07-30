@@ -530,7 +530,7 @@ ls .supervisor/requirements/
 
 **Sequence:**
 1. `/orchestrator goal: "BD-XX"` (or the requirements file path) — Break into implementation tasks
-2. Implement task(s); review gate applies only above the Decomposition Threshold (Phase 4.5 is the gate below it)
+2. Implement task(s); no per-subtask review gate at any threshold — the deterministic `outputs_verified`/tests-lint gate applies always, and Phase 4.5's integrated review is the sole LLM gate
 3. Return here for Phase 2 stories when MVP ships
 
 ---

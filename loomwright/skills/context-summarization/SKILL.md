@@ -51,13 +51,12 @@ Dependencies: BD-21 (database schema)
 
 ### Orchestrator Output
 
-**Input:** Full task breakdown with subtasks, review gates, skill references
+**Input:** Full task breakdown with subtasks, skill references (no per-subtask review subtask at any threshold — see `agents/orchestrator.md` §"Review Gate Policy")
 
 **Summary Format:**
 ```
 Created [N] subtasks: [ID1], [ID2], [ID3]
 First: [ID] - [title]
-Review gates: [N]
 Estimated: [time]
 ```
 
@@ -65,7 +64,6 @@ Estimated: [time]
 ```
 Created 3 subtasks: BD-23a, BD-23b, BD-23c
 First: BD-23a - Implement JwtGuard
-Review gates: 3
 Estimated: 2-3 hours
 ```
 
@@ -161,7 +159,7 @@ CK: {operation} — {confirmation}
 **Example:**
 ```
 CK: record_worker_result — BD-15a completed, +145 -3
-CK: record_review — BD-15a PASS, attempt 1/3
+CK: record_decision — EXECUTE, outputs_verified PASS
 ```
 
 ### Execute Manager Output
@@ -266,7 +264,6 @@ Normal:
 ```
 Created 3 subtasks: BD-23a, BD-23b, BD-23c
 First: BD-23a - Implement JwtGuard
-Review gates: 3
 Estimated: 2-3 hours
 ```
 
@@ -294,12 +291,12 @@ For complex workflows with multiple agents:
 [Worker-A] BD-23a: +145 lines, tests pass (parallel)
 [Worker-C] BD-23c: +67 lines, tests pass (parallel)
   ↓
-[Review-A] PASS, 0 issues → BD-23b unblocked
-[Review-C] PASS, 0 issues
+[Gate] BD-23a outputs_verified, tests/lint pass → BD-23b unblocked
+[Gate] BD-23c outputs_verified, tests/lint pass
   ↓
 [Worker-B] BD-23b: +89 lines, tests pass
   ↓
-[Review-B] PASS, 0 issues
+[Gate] BD-23b outputs_verified, tests/lint pass
   ↓
 [CK] Checkpoint: 3/3 complete, phase FINALIZE
 ```

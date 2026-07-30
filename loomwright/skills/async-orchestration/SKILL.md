@@ -2,8 +2,8 @@
 name: async-orchestration
 description: Background dispatch patterns, non-blocking polling, parallelism decisions, and git worktree lifecycle. Use when running parallel workers in Supervisor workflows. Part 2 — the Supervisor Phase 4 FINALIZE protocol (pre-merge safety gate, sequential merge, worktree cleanup, commit/push/PR creation, PR-base self-verify), the verbatim Subagent Spawn Contracts, and the worktree-lifecycle phase sequence, moved from agents/supervisor.md.
 allowed-tools: [Read, Bash]
-version: "1.4.0"
-lastUpdated: "2026-07-28"
+version: "1.5.0"
+lastUpdated: "2026-07-30"
 ---
 
 # Async Orchestration Skill
@@ -38,7 +38,9 @@ After the Orchestrator produces a subtask list with dependencies:
 ```
 For each subtask S:
   LAUNCHABLE if:
-    1. All depends_on tasks are completed (review PASS)
+    1. All depends_on tasks are completed (deterministic outputs_verified + tests/lint
+       gate passed — no per-subtask reviewer decision gates this at any threshold; see
+       "Single-Agent / Sequential Paths" below and `agents/orchestrator.md` §"Review Gate Policy")
     2. S.files do NOT overlap with any other LAUNCHABLE subtask's files
     3. Number of active worktrees < config.max_workers
 
@@ -69,9 +71,9 @@ subtask_c.files = [src/auth/guard.ts, src/auth/module.ts]
 - NO per-subtask Code Reviewer — Phase 4.5 holistic review is the single review
 - Skip all worktree lifecycle
 
-**Sequential Path** (`--sequential`, more than 1 subtask — unchanged; NOT the single-agent path, per `agents/supervisor.md` §"Sequential Path"):
+**Sequential Path** (`--sequential`, more than 1 subtask — NOT the single-agent path, per `agents/supervisor.md` §"Sequential Path"):
 - Execute all subtasks inline, sequentially; no worktrees, no background dispatch
-- Per-subtask Code Reviewer still runs (unchanged)
+- **NO per-subtask Code Reviewer** — same as the Single-Agent Path and the above-threshold parallel path, no per-subtask reviewer is spawned on the Sequential Path either. The deterministic `outputs_verified` gate plus tests/lint is each subtask's gate; Phase 4.5's integrated review (Supervisor, post-FINALIZE) is the sole LLM gate. See `agents/orchestrator.md` §"Review Gate Policy" (authoritative).
 
 ---
 
@@ -213,11 +215,10 @@ You are an implementation worker operating in a git worktree.
 
 ### Poll Loop Pattern (Execute Manager)
 
-The poll loop runs inside the Execute Manager (not the Supervisor), with iteration limits and back-off:
+The poll loop runs inside the Execute Manager (not the Supervisor), with iteration limits and back-off. **No per-subtask reviewer is spawned above threshold** — the deterministic `outputs_verified` gate (`agents/execute-manager.md` Step 4, the authoritative pseudocode) plus tests/lint is the per-subtask gate; Phase 4.5's integrated review (Supervisor, post-FINALIZE) is the sole LLM gate. See `agents/orchestrator.md` §"Review Gate Policy".
 
 ```
 active_workers = {worker_id: {subtask_id, output_file, worktree_path, status}}
-active_reviewers = {reviewer_id: {subtask_id, output_file, worktree_path, status}}
 
 max_iterations = 30
 poll_interval = 2000    # ms, start at 2s
@@ -252,64 +253,34 @@ for iteration in 1..max_iterations:
       # (scripts/emit-progress-event.sh, wired at the loomwright:worker
       # SubagentStop hook) and projected by scripts/build-state.sh — it does
       # NOT populate `## Worker Results`, which the call above is for.
-      → Spawn Reviewer in background
+      #
+      # No reviewer is spawned here. If the worker's own outputs_verified gate
+      # passed (no outputs_gap — see agents/execute-manager.md Step 4 for the
+      # full gate pseudocode), the subtask is complete: no `record_review` call
+      # exists to make (there is no reviewer decision to log), and there is no
+      # separate reviewer-polling arm below. Newly-launchable subtasks are
+      # checked in step 2 below regardless — dependency materialization
+      # (Step 2a/2b) was already keyed on producer completion, never on a
+      # reviewer decision.
       → Move worker to completed
+      → Check if blocked subtasks now launchable
 
-  # 2. Check running reviewers (non-blocking)
-  for reviewer_id in active_reviewers:
-    result = TaskOutput(task_id=reviewer_id, block=false, timeout=poll_interval)
-    tool_calls += 1
-    if result.is_complete:
-      results_found = true
-      idle_streak = 0
-      poll_interval = 2000
-
-      # Parse CODE_REVIEW_RESULT from the reviewer's TaskOutput
-      # (no summary file — the Code Reviewer is read-only and cannot write one)
-      tool_calls += 1
-
-      if PASS:
-        Task(Context-Keeper, operation: record_review,
-             subtask_id: {subtask_id}, decision: PASS, issues_count: 0, attempt: {N},
-             state_file: {state_file_path})
-        tool_calls += 1
-        → Check if blocked subtasks now launchable
-        → Launch newly launchable subtasks
-      if FAIL (attempts < 3):
-        Task(Context-Keeper, operation: record_review,
-             subtask_id: {subtask_id}, decision: FAIL, issues_count: {N}, attempt: {N},
-             state_file: {state_file_path})
-        tool_calls += 1
-        → Spawn fix worker (background)
-      if FAIL (attempts >= 3):
-        Task(Context-Keeper, operation: record_review,
-             subtask_id: {subtask_id}, decision: FAIL, issues_count: {N}, attempt: 3,
-             state_file: {state_file_path})
-        tool_calls += 1
-        → Escalate to human
-      if NEEDS_HUMAN:
-        Task(Context-Keeper, operation: record_review,
-             subtask_id: {subtask_id}, decision: NEEDS_HUMAN, issues_count: {N}, attempt: {N},
-             state_file: {state_file_path})
-        tool_calls += 1
-        → Pause, exit with EXECUTE_CHECKPOINT
-
-  # 3. Launch newly launchable subtasks
+  # 2. Launch newly launchable subtasks
   for subtask in newly_launchable:
     if active_worktrees < max_workers:
       → Create worktree + spawn worker
       tool_calls += 2
 
-  # 4. Back-off on idle
+  # 3. Back-off on idle
   if not results_found:
     idle_streak += 1
     if idle_streak >= 3:
       poll_interval = min(poll_interval * 2, 30000)  # exponential, cap 30s
-    earliest = min(active_workers + active_reviewers, key=start_time)
+    earliest = min(active_workers, key=start_time)
     TaskOutput(task_id=earliest.id, block=true, timeout=poll_interval)
     tool_calls += 1
 
-  # 5. Tool call budget check
+  # 4. Tool call budget check
   if tool_calls >= 55:
     → Output EXECUTE_CHECKPOINT and EXIT
   if tool_calls >= 48:
@@ -332,15 +303,15 @@ else:
   → Fall back to parsing full TaskOutput
 ```
 
-Reviewers have NO summary file — the Code Reviewer is read-only (`disallowedTools: Write, Edit`); parse `CODE_REVIEW_RESULT` from its TaskOutput directly.
+No per-subtask reviewer is spawned above threshold or on the Sequential Path, so there is no separate reviewer-result channel here — see "Poll Loop Pattern" above.
 
 ### Result Collection
 
 After TaskOutput returns:
 
 1. Read the summary file from worktree (preferred) or parse full output (fallback)
-2. Extract: files modified, test results, decision
-3. Record the extracted data to Context-Keeper via `record_worker_result` / `record_review` (direct per-event calls, see the poll loop above). Only the derived `## Session` block (session_id/branch/status/phase) is recorded by the hook-triggered `scripts/emit-progress-event.sh` instead — not `## Worker Results` or the `## Subtasks` table, which stay Result Collection's responsibility.
+2. Extract: files modified, test results, outputs_verified gate outcome
+3. Record the extracted data to Context-Keeper via `record_worker_result` (direct per-event call, see the poll loop above — no `record_review` call, since no per-subtask reviewer decision exists to log). Only the derived `## Session` block (session_id/branch/status/phase) is recorded by the hook-triggered `scripts/emit-progress-event.sh` instead — not `## Worker Results` or the `## Subtasks` table, which stay Result Collection's responsibility.
 
 ---
 
@@ -365,22 +336,14 @@ Workers MUST output a structured result block:
 - notes: {brief implementation notes}
 ```
 
-### Reviewer Output Format
+### No Per-Subtask Reviewer Output
 
-Reviewers MUST output a structured decision:
-
-```markdown
-## REVIEW_RESULT
-- subtask_id: BD-XXa
-- decision: PASS | FAIL | NEEDS_HUMAN
-- issues_count: 0
-- blocking_issues: 0
-- high_issues: 0
-- medium_issues: 0
-- low_issues: 0
-- issues: [{severity}: {description} at {file}:{line}]
-- proposals: [{CLAUDE.md proposal description}]
-```
+No per-subtask reviewer is spawned above threshold or on the Sequential Path — there is
+no `REVIEW_RESULT`/`CODE_REVIEW_RESULT` block to collect here. The `outputs_verified` gate
+(parsed from the worker's own `WORKER_RESULT`) plus tests/lint is the per-subtask gate;
+Phase 4.5's integrated review (Supervisor, post-FINALIZE) is the sole LLM gate and
+produces its own `CODE_REVIEW_RESULT` with a `PASS | FAIL | NEEDS_HUMAN` decision — see
+`agents/code-reviewer.md` and `docs/RESULT_SCHEMAS.md` §CODE_REVIEW_RESULT.
 
 ---
 
@@ -392,9 +355,8 @@ Reviewers MUST output a structured decision:
 |------|--------|
 | Config (max_workers, mode) | ~50 |
 | Active workers (id, subtask, worktree_path) | ~100 per worker |
-| Active reviewers (id, subtask, worktree_path) | ~100 per reviewer |
 | Parallelism state (launchable, blocked lists) | ~100 |
-| **Total (2 workers + 2 reviewers)** | **~450 tokens** |
+| **Total (2 workers, no reviewer — none is spawned above threshold or on the Sequential Path)** | **~350 tokens** |
 
 ### Supervisor holds during Phase 3:
 
@@ -534,7 +496,7 @@ Before completing async orchestration:
 - [ ] Sequential merge preserves dependency order
 - [ ] All worktrees cleaned up after merge
 - [ ] Error handling covers crash, timeout, conflict
-- [ ] Single-Agent path (1 subtask) spawns no per-subtask reviewer; Sequential path (`--sequential`) keeps it
+- [ ] No per-subtask reviewer is spawned at any threshold — Single-Agent path, the above-threshold parallel path, and the Sequential path (`--sequential`) all rely on the deterministic `outputs_verified`/tests-lint gate plus Phase 4.5's integrated review
 
 ## See Also
 
@@ -570,7 +532,7 @@ Before completing async orchestration:
    ```
    FINALIZE pre-merge checklist:
      1. All WORKER_RESULT status = completed (no failed/partial in merge set)
-     2. All Code Reviewer decisions = PASS (no FAIL/NEEDS_HUMAN in merge set) — **N/A on the Single-Agent Path**, which produces zero reviewer decisions: the deterministic `outputs_verified` + tests/lint (plus the worker's own LSP diagnostics) gate and Phase 4.5 replace it, so treat this item as vacuously satisfied (mirrors Plan Reviewer Criterion 6's vacuous pass)
+     2. All Code Reviewer decisions = PASS (no FAIL/NEEDS_HUMAN in merge set) — **N/A at every threshold**: no per-subtask reviewer runs on the Single-Agent Path, the above-threshold parallel path, or the Sequential Path, so this item produces zero reviewer decisions to check. The deterministic `outputs_verified` + tests/lint (plus the worker's own LSP diagnostics) gate and Phase 4.5's integrated review replace it, so treat this item as vacuously satisfied (mirrors Plan Reviewer Criterion 6's vacuous pass)
      3. No orphaned worktrees (all accounted for in EXECUTE_RESULT)
      4. Feature branch exists and is ahead of base
    If ANY fail → abort merge, log reason, move job to failed/ (if job file used)
@@ -665,7 +627,7 @@ Before completing async orchestration:
 - Worktrees are removed ONLY after successful merge
 - Merge conflicts always escalate to human
 - Checkpoint includes which branches were merged and which remain
-- If EXECUTE_CHECKPOINT (partial): only merge completed+reviewed subtasks, leave in-progress worktrees intact
+- If EXECUTE_CHECKPOINT (partial): only merge subtasks whose `outputs_verified` gate passed (no per-subtask reviewer decision to gate on), leave in-progress worktrees intact
 
 **PR Body Template:**
 ```markdown
@@ -691,7 +653,7 @@ Exact Task tool call shapes for each subagent.
 
 **Prompt-cache discipline:** Within each `prompt:` string, put stable content (role/skill guidance, project patterns, cost_profile notes, house-rules advisory text) before volatile interpolations (task id, title, criteria, worktree/feature_branch/state_file paths, resume context, files_modified, operation/data payloads). Prompt caching is prefix-match — an early volatile value invalidates the cache for every subsequent spawn.
 
-**Pointers, not payloads (transport discipline):** when a spawn input is file-backed (the job brief, a plan file, a corpus), pass its PATH plus a bounded ≤200-char summary plus the instruction "Read only the sections you need" — do not paste the body into the prompt. Worktree reality: gitignored `.supervisor/` artifacts do NOT exist inside linked worktrees, so a pointer handed to a worktree-resident consumer must pin the MAIN-CHECKOUT absolute path and say so in the prompt text; consumers running at the project root (Orchestrator, Execute Manager, Single-Agent Worker, Sequential-path Worker/Reviewer) can use the repo-relative path directly. Deliberate paste exceptions (e.g. the worker `provides:` YAML below) are enumerated with justifications in `docs/POINTER_AUDIT.md`. This is a transport-only rule: it changes how content travels, never which gates, schemas, decisions, or spawn cardinality apply.
+**Pointers, not payloads (transport discipline):** when a spawn input is file-backed (the job brief, a plan file, a corpus), pass its PATH plus a bounded ≤200-char summary plus the instruction "Read only the sections you need" — do not paste the body into the prompt. Worktree reality: gitignored `.supervisor/` artifacts do NOT exist inside linked worktrees, so a pointer handed to a worktree-resident consumer must pin the MAIN-CHECKOUT absolute path and say so in the prompt text; consumers running at the project root (Orchestrator, Execute Manager, Single-Agent Worker, Sequential-path Worker) can use the repo-relative path directly. Deliberate paste exceptions (e.g. the worker `provides:` YAML below) are enumerated with justifications in `docs/POINTER_AUDIT.md`. This is a transport-only rule: it changes how content travels, never which gates, schemas, decisions, or spawn cardinality apply.
 
 **Context-Keeper:**
 ```
@@ -739,7 +701,7 @@ Task(
 
 **Single-Agent Worker (Single-Agent path, exactly 1 subtask):** same shape as the Sequential-path Worker contract below, except `Subtask ID`/`Title` become `Task ID`/`Title` and the `Brief:` line reads ALL acceptance criteria (## Task, the FULL ## Acceptance Criteria list) instead of one subtask's row. No Code Reviewer accompanies it — see `agents/supervisor.md` §"Single-Agent Path" for the gate that replaces it.
 
-**Sequential-path Worker (`--sequential`, more than 1 subtask — one spawn per subtask, unchanged from prior behavior):**
+**Sequential-path Worker (`--sequential`, more than 1 subtask — one spawn per subtask, unchanged from prior behavior):** no Code Reviewer spawn follows this worker either — the deterministic `outputs_verified` gate plus tests/lint is the per-subtask gate on the Sequential Path too; see `agents/orchestrator.md` §"Review Gate Policy".
 ```
 Task(
   description: "Implement: {subtask_title}",
@@ -752,7 +714,7 @@ Task(
     Acceptance-criteria summary (≤200 chars): {bounded summary}
     Worktree path: {project_root}
     Provides (verbatim from the brief's Subtask Contracts): {provides YAML}
-    Retry context: {optional, from previous review}",
+    Retry context: {optional, from a previous outputs_verified gate gap or worker crash/timeout — no per-subtask review retry path exists}",
   # Applicable house rules: compute by running `bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-rules.sh" <touched paths...>`
   # (args, never stdin — no-hang). Inject the output into this worker prompt ONLY when it is NON-EMPTY; empty
   # output ⇒ inject nothing (the reader always exits 0 and emits EMPTY on no valid rule — never a "no rules"
@@ -770,18 +732,7 @@ Task(
 )
 ```
 
-**Code Reviewer (Sequential path only — NOT spawned on the Single-Agent path):**
-```
-Task(
-  description: "Review: {subtask_title}",
-  prompt: "Project patterns: {from CLAUDE.md}
-    Task context: {subtask_title} — criteria summary (≤200 chars): {bounded summary}
-    Brief: {brief_path} — read only the acceptance-criteria section (gitignored `.supervisor/` path; resolves — the sequential-path reviewer runs at the project root). When no brief file exists (`/supervisor task:` no-brief mode), point at `.supervisor/requirements/{slug}-plan.md` (Beads-absent) or `bd show {id}` (Beads) instead, or pass the criteria inline — a documented exception, see docs/POINTER_AUDIT.md.
-    Review scope: {files_modified from WORKER_RESULT}",
-  subagent_type: "loomwright:code-reviewer",
-  model: "sonnet"   # ONLY when cost_profile=cheap; omit entirely when cost_profile=default
-)
-```
+**No per-subtask Code Reviewer spawn contract (any threshold):** above threshold, on the Sequential Path, and on the Single-Agent Path alike, no `Task(subagent_type: "loomwright:code-reviewer", ...)` spawn follows a worker. The deterministic `outputs_verified` gate plus tests/lint is the per-subtask gate; the Supervisor's integrated Phase 4.5 review (post-FINALIZE, holistic, over the merged feature branch) is the sole `loomwright:code-reviewer` spawn in the default flow. See `agents/orchestrator.md` §"Review Gate Policy" (authoritative) for why no per-subtask lens survives here.
 
 ## Git Worktree Lifecycle (phase sequence)
 

@@ -41,7 +41,7 @@ The Loomwright plugin provides **14 agent roles** (9 user-facing + 5 internal) f
 **Autonomous Workflow (5 agent roles):**
 ```
 /supervisor  →  Parallel orchestrator: Task → Branch → Execute Manager → PR → Loop
-  ├─ Execute Manager  →  Phase 3 poll loop, worker/reviewer lifecycle (blocking)
+  ├─ Execute Manager  →  Phase 3 poll loop, worker lifecycle (blocking)
   ├─ Context-Keeper   →  Externalized state management (on-demand)
   ├─ Worker           →  Isolated implementation in git worktrees (background)
   └─ Rubric Grader    →  Phase 4.5 read-only Haiku scorer for the optional Outcomes Rubric (advisory only)
@@ -197,7 +197,7 @@ To execute: /supervisor job: .supervisor/jobs/pending/2026-02-08-jwt-auth.md
 - Picks up tasks (user description or `.supervisor/state.md`)
 - Creates feature branch (MANDATORY before any code work)
 - Delegates Phase 3 execution to Execute Manager:
-  - Execute Manager (Phase 3 poll loop, worker/reviewer lifecycle, blocking)
+  - Execute Manager (Phase 3 poll loop, worker lifecycle, blocking)
   - Context-Keeper (state management, on-demand)
   - Product Owner (if requirements unclear, blocking)
   - Orchestrator (task decomposition, blocking)
@@ -232,10 +232,9 @@ project-BD-15a/             ← worktree for Worker A
 project-BD-15c/             ← worktree for Worker C
 ```
 
-**Review Gates:**
-- **PASS:** Continue; launch newly unblocked subtasks
-- **FAIL:** Spawn fix worker with retry context (max 3 attempts)
-- **NEEDS_HUMAN:** Checkpoint, pause, exit with resume instructions
+**Gates:**
+- Per-subtask: deterministic `outputs_verified` + tests/lint gate — **PASS:** continue, launch newly unblocked subtasks (no per-subtask LLM reviewer at any threshold)
+- Phase 4.5 holistic Code Reviewer (sole LLM review, once after FINALIZE) — **PASS:** mark completed. **FAIL:** spawn fix worker with retry context (max 3 attempts). **NEEDS_HUMAN:** checkpoint, pause, exit with resume instructions
 
 **State Management:**
 - State externalized to `.supervisor/` directory (auto-created, gitignored)
@@ -257,9 +256,9 @@ $ /supervisor
 - Subtasks: 3, Parallel: 2 launchable, 1 blocked
 
 ### Phase 3: EXECUTE
-- BD-15a: PASS ✓ (parallel)
-- BD-15c: PASS ✓ (parallel)
-- BD-15b: PASS ✓ (unblocked after BD-15a)
+- BD-15a: outputs_verified + tests/lint PASS ✓ (parallel)
+- BD-15c: outputs_verified + tests/lint PASS ✓ (parallel)
+- BD-15b: outputs_verified + tests/lint PASS ✓ (unblocked after BD-15a)
 
 ### Phase 4: FINALIZE
 - PR: #42 — https://github.com/org/repo/pull/42
@@ -352,17 +351,16 @@ $ /supervisor
 **What it does:**
 - Understands your goal
 - Reads project context (CLAUDE.md, Beads issue tracker state)
-- Defaults to one Beads task per `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold" (split only for a named reason); applies the threshold-conditional Review Gate Policy
-- Above the threshold, each implementation task gets a review subtask; below it, Supervisor's Phase 4.5 integrated review is the gate
-- Identifies dependencies (when a review subtask exists, it blocks next task)
+- Defaults to one Beads task per `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold" (split only for a named reason); applies the Review Gate Policy
+- No per-subtask review subtask is generated at any threshold — the deterministic `outputs_verified`/tests-lint gate plus Supervisor's Phase 4.5 integrated review is the gate throughout (see `agents/orchestrator.md` §"Review Gate Policy")
+- Identifies dependencies (task-to-task only — no review subtask ever blocks the next task)
 - Provides clear acceptance criteria and skill references
 
 **Example Output:**
 - BD-20: Dark Mode Toggle (EPIC)
 - BD-21: Implement dark mode toggle (TASK)
-- BD-22: Code Review - Dark mode (SUBTASK) ← blocks BD-23
-- BD-23: Add tests (TASK)
-- BD-24: Commit & Link (TASK)
+- BD-22: Add tests (TASK)
+- BD-23: Commit & Link (TASK)
 
 **When to Use:**
 - Start of new work
@@ -871,26 +869,26 @@ bd close BD-21
 ### Scenario 1: Fix a Bug
 ```
 /orchestrator goal: "Fix login button not working on mobile"
-→ Creates Beads tasks: BD-30 (fix), BD-31 (review), BD-32 (commit)
+→ Creates Beads tasks: BD-30 (fix), BD-31 (commit) — no per-subtask review task at any threshold (see agents/orchestrator.md §"Review Gate Policy")
 → bd claim BD-30, implement fix
-→ /code-reviewer to verify → PASS on BD-31
-→ Commit and bd close BD-32
+→ Supervisor's Phase 4.5 integrated review is the gate (only when executed via `/supervisor`); hand-executing the plan? run `/code-reviewer` yourself first
+→ Commit and bd close BD-31
 ```
 
 ### Scenario 2: Add a Feature
 ```
 /orchestrator goal: "Add dark mode to application"
-→ Creates EPIC — one task by default; splits (with a review-gate task per split) only above the Decomposition Threshold
+→ Creates EPIC — one task by default; splits only above the Decomposition Threshold. No per-subtask review task is ever generated (see Review Gate Policy)
 → Below threshold: BD-40: Implement → BD-41: Commit (Supervisor's Phase 4.5 integrated review is the gate, no per-task reviewer — **only when executed via `/supervisor`**; a plan you hand-execute has no Phase 4.5, so run `/code-reviewer` yourself before committing)
-→ Above threshold (example): BD-40: Implement → BD-41: Review (blocks) → BD-42: Tests → BD-43: Commit
+→ Above threshold (example): BD-40: Implement → BD-41: Tests → BD-42: Commit (same gate as below threshold — task-to-task dependencies only, no per-task reviewer)
 → bd close each task when done
 ```
 
 ### Scenario 3: Refactor Code
 ```
 /orchestrator goal: "Refactor Settings component to use hooks"
-→ Creates task(s) per the Decomposition Threshold (review-gate task added only above threshold)
-→ /code-reviewer checks pattern consistency
+→ Creates task(s) per the Decomposition Threshold — no per-subtask review task at any threshold (see Review Gate Policy)
+→ /code-reviewer checks pattern consistency (or Supervisor's Phase 4.5 integrated review, when run via `/supervisor`)
 → Commit with Beads linking
 ```
 
@@ -1081,7 +1079,7 @@ bd close BD-XX
 
 loomwright/              # Nested plugin root
 ├── .claude-plugin/
-│   └── plugin.json                   # Plugin metadata (v15.17.0)
+│   └── plugin.json                   # Plugin metadata (v15.18.0)
 ├── commands/                         # Slash commands (21)
 │   ├── launch-pad.md                 # Supervisor readiness
 │   ├── supervisor.md                 # Parallel orchestrator (v4)
@@ -1219,7 +1217,7 @@ These are Claude Code slash commands, so you can type them directly:
 
 | Agent | Purpose | When | Input | Output |
 |-------|---------|------|-------|--------|
-| **Orchestrator** | Plan work | Start of task | Goal or story | Beads tasks, default one task, threshold-conditional review gates |
+| **Orchestrator** | Plan work | Start of task | Goal or story | Beads tasks, default one task, no per-subtask review gate at any threshold |
 | **Code Reviewer** | Review code | During development | Files/diff | PASS/FAIL/NEEDS_HUMAN + issues |
 | **/commit** (skill) | Create commits | When done coding | Staged changes | Conventional commits + Beads links |
 

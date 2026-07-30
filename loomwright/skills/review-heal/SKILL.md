@@ -2,8 +2,8 @@
 name: review-heal
 description: Shared loop contract for the standalone PR review-and-heal workflow (`/review-pr <pr-url>` + `loomwright:review-pr-runner`). Single source of truth for the bounded review→fix→re-review loop, PR-URL→branch resolution, the REVIEW_HEAL_RESULT block, and the pinned canonical names consumed by the dispatcher script, the runner agent, and the autonomous EVALUATE step. Use when implementing or invoking standalone PR review-and-heal.
 allowed-tools: [Read, Write, Edit, Bash, Task]
-version: "1.4.0"
-lastUpdated: "2026-06-22"
+version: "1.5.0"
+lastUpdated: "2026-07-30"
 ---
 
 # Review-Heal Skill
@@ -29,7 +29,8 @@ These names are **coined here**. Treat this section as authoritative; all other 
 | Opt-out flag | **`--no-auto-review`** | Suppresses the post-`/supervisor` auto-dispatch. |
 | Enable signal | **`auto_review: true`** in `.supervisor/config.json` (legacy `.supervisor/notify-config.json` is still read as a fallback; new path wins when both exist) (or a **`--auto-review`** flag) | Either turns on auto-dispatch. |
 | Dispatcher script | **`loomwright/scripts/dispatch-pr-review.sh`** | Gated, config-file-driven, cost/runaway-guarded, **always exits 0**. |
-| Until-mergeable mode | **`--until-mergeable`** | Opt-in drain loop (§"Until-Mergeable Mode"). Strictly additive — **absent ⇒ byte-for-byte the default loop**. |
+| Until-mergeable mode | **`--until-mergeable`** | Opt-in, **heal-only** drain loop (§"Until-Mergeable Mode") that **replaces** the default loop's review half — **absent ⇒ byte-for-byte the default loop**. |
+| Earned fallback trigger | **`no_review_lens_posted`** | Coined in §"Earned Fallback Review — `no_review_lens_posted`". True when §U1's existing read shows no bot-authored finding in any channel AND every review-producing check is green-with-empty-output/absent/skipped. Gates the drain's ONE exception to heal-only: exactly one `code-reviewer` diff review per drain run, fail-CLOSED toward running it. |
 | Drain bound | **`--max-rounds N`** (default 5) | Hard ceiling on drain rounds (§"Until-Mergeable Mode"). |
 | Required-check fallback | **`--required-checks all-non-neutral`** | Opt-in fallback when branch-protection metadata is unreadable (default = fail closed → `ESCALATED`). |
 | Scoped check-wait bound | **`--check-wait-timeout N`** (seconds) | Bounded wait for the **scoped set** (required + review-producing checks) to settle (§"Wait-For-Settled-Checks"). Only applies under `--until-mergeable`; **default 600** (10 min), polled every **15s**. Forwarded from the dispatcher via `LOOMWRIGHT_CHECK_WAIT_TIMEOUT`. |
@@ -220,7 +221,7 @@ Additionally, **`/review-pr` does not create PRs** (it only operates on an exist
 
 > **This whole section is the SINGLE SOURCE OF TRUTH for until-mergeable readiness semantics.** Other subtasks (the `/review-pr` command body, the `review-pr-runner` agent, the dispatcher script, and `docs/RESULT_SCHEMAS.md`) **reference** the definitions coined here — the channel set (§"All-Channel Read"), the scoped wait (§"Wait-For-Settled-Checks"), validate-then-fix (§"Validate-Then-Fix"), the READY equivalence (§"READY redefinition"), and the dispatch signal contract (§"Until-Mergeable Dispatch Signal") — and must NOT re-duplicate or re-coin them.
 
-`--until-mergeable` is an **opt-in, strictly additive** drain loop layered *on top of* the default diff-only loop above. It drains the **machine-speed external review signals** on a PR across **ALL review channels** — **required** CI check-runs, **review-producing** checks, automated/bot **formal reviews**, **inline review threads**, **PR issue comments**, and **bot check-run output/annotations** — **validating** each detected bot finding and auto-fixing the validated ones (regardless of the bot's stated severity), pushing, and re-polling until the **READY** condition (§"READY redefinition") holds, then stops with `decision: READY` and fires a "ready to merge" notification. **It NEVER merges** (see "No auto-merge ever") and **NEVER waits on a human** — human approval, `reviewDecision: REVIEW_REQUIRED`, and human-authored unresolved threads/comments are surfaced/notified but are explicitly **not** readiness blockers.
+`--until-mergeable` is an **opt-in, heal-only** drain loop that **replaces** the default diff-only loop's review half above — under this flag the drain runs **no `code-reviewer` of its own by default** (§U4's pseudocode spawns only the `general-purpose` fix worker). The **ONE exception** is the **earned fallback** (§"Earned Fallback Review — `no_review_lens_posted`" below): at most one diff review per drain run, run only when the drain's own read shows no review lens actually posted. It drains the **machine-speed external review signals** on a PR across **ALL review channels** — **required** CI check-runs, **review-producing** checks, automated/bot **formal reviews**, **inline review threads**, **PR issue comments**, and **bot check-run output/annotations** — **validating** each detected bot finding and auto-fixing the validated ones (regardless of the bot's stated severity), pushing, and re-polling until the **READY** condition (§"READY redefinition") holds, then stops with `decision: READY` and fires a "ready to merge" notification. **It NEVER merges** (see "No auto-merge ever") and **NEVER waits on a human** — human approval, `reviewDecision: REVIEW_REQUIRED`, and human-authored unresolved threads/comments are surfaced/notified but are explicitly **not** readiness blockers.
 
 > **AC7 — absent ⇒ unchanged.** When `--until-mergeable` is NOT passed, `/review-pr` runs the existing diff-only review→fix→re-review loop (Step 2) **byte-for-byte** — same `PASS`/`ESCALATED` terminal states, same `REVIEW_HEAL_RESULT` `schema_version: 1`, no external-state reads, no all-channel scan, no scoped check-wait, no postmortem tail. This mode is purely opt-in; nothing about the default path changes.
 
@@ -370,12 +371,19 @@ unresolved_bot_feedback = false     # bot finding (any channel) still open after
 dismissed = []                      # findings validated as stale/invalid/already-addressed (additive result field)
 channels_scanned = []               # which channels were read this run (additive result field)
 checks_waited = []                  # scoped checks the loop waited on to settle (additive result field)
+fallback_review_ran = false         # run-scoped (AC3); the earned fallback below fires at MOST once per drain run —
+                                     # this flag, not a per-round reset, is what the `while rounds < max_rounds`
+                                     # loop cannot re-trigger it through
 
 while rounds < max_rounds:
   required = discover_required_checks()   # Step U2 — ESCALATED (fail closed) if unavailable & not --required-checks all-non-neutral
   wait_for_scoped_checks_to_settle()      # Step U2.5 — bounded; ESCALATED if a required/review-producing check is still in flight at the bound (optional pending never escalates)
   scan = read_all_channels()             # Step U1 — re-scans ALL channels AFTER the scoped set settles; ESCALATED if any gated channel is "unknown"
   bot_findings = classify_all_channels(scan)   # Step U1 — UNION across reviews/latestReviews/reviewThreads/issue-comments/check-outputs via scripts/classify-bot-review.sh
+  # NOTE (AC1): this loop deliberately spawns NO Task(loomwright:code-reviewer) of its own — the drain is
+  # heal-only by default. The ONE exception is the earned fallback below (see the READY branch and
+  # §"Earned Fallback Review — `no_review_lens_posted`"), gated on `no_review_lens_posted` and capped at
+  # exactly one spawn per drain run via `fallback_review_ran`.
 
   required_failing = [c for c in required if c.state not in GREEN_STATES]
 
@@ -385,8 +393,40 @@ while rounds < max_rounds:
   auto_fixable   = [f for f in validated if is_auto_fixable(f)]
   needs_human    = [f for f in validated if not is_auto_fixable(f)]        # confirmed but not auto-fixable → blocks READY
 
+  # Earned fallback gate (AC3) — the ONE exception to heal-only, checked ONLY on a round that would
+  # otherwise declare READY, and at most once per drain run (fallback_review_ran). Full contract:
+  # §"Earned Fallback Review — `no_review_lens_posted`" below — not restated here.
+  if required_failing == [] and auto_fixable == [] and needs_human == [] and not fallback_review_ran:
+    fallback_review_ran = true            # set BEFORE the spawn — never re-triggers, even on error
+    if compute_no_review_lens_posted(bot_findings, scan):   # reuses THIS round's §U1 read, no new fetch;
+                                                             # fails CLOSED to true (run it) on ambiguity
+      fallback_review = Task(
+        subagent_type: "loomwright:code-reviewer",
+        prompt: "Review the PR-branch diff (git diff <base>...HEAD).
+                 Schema: CODE_REVIEW_RESULT v3, review_mode: diff_review."
+      )
+      # REASSIGN (not just describe) — this is what makes the READY test below read POST-fallback
+      # values instead of the stale pre-fallback ones computed at lines 391-394. Feed
+      # fallback_review.issues into THIS round's §U3.5 Validate-Then-Fix pipeline exactly like any
+      # other channel's bot_findings (`new`-category only, matching Step 2's CATEGORY filter — but per
+      # §U3.5 there is no severity floor here, so a validated MEDIUM/LOW is fixed exactly like a HIGH):
+      fallback_findings = [i for i in fallback_review.issues if i.category == "new"]
+      validated    += [f for f in fallback_findings if validate(f) == CONFIRMED]
+      dismissed    += [f for f in fallback_findings if validate(f) == STALE_OR_INVALID]
+      auto_fixable  = [f for f in validated if is_auto_fixable(f)]        # RE-DERIVE from the now-larger
+      needs_human   = [f for f in validated if not is_auto_fixable(f)]   # `validated` — not appended to the
+                                                                          # stale lists from 393-394
+      # A PASS result (no `new` issues) leaves fallback_findings == [] so auto_fixable/needs_human are
+      # unchanged and the READY test below still passes. A FAIL result with an auto-fixable finding now
+      # populates auto_fixable, so the READY test below correctly fails and the round falls through to
+      # the existing fix-dispatch branch (Task(general-purpose) + fork-aware push) — the fallback finding
+      # reaches the fix worker exactly like a channel finding would. A FAIL result with a confirmed-but-
+      # not-auto-fixable finding populates needs_human, so the READY test below fails and the round falls
+      # into the "needs_human != [] and auto_fixable == []" branch → decision = ESCALATED — it blocks
+      # READY instead of being silently discarded.
+
   # READY ⇔ required green AND scoped review-producing checks settled (already true here) AND
-  #         no unresolved VALIDATED bot findings remain across ALL channels.
+  #         no unresolved VALIDATED bot findings remain across ALL channels (fallback findings included).
   if required_failing == [] and auto_fixable == [] and needs_human == []:
     decision = READY                      # AC6 — see "READY redefinition"
     notify "ready to merge" (best-effort: desktop + webhook)
@@ -405,7 +445,8 @@ while rounds < max_rounds:
     subagent_type: "general-purpose",
     # Tool allowlist: Read, Write, Edit, Bash, Glob, Grep — NO Task.
     prompt: "Address ONLY these required-check failures and VALIDATED bot findings
-             (from reviews, inline threads, PR issue comments, and check outputs): {fixable}.
+             (from reviews, inline threads, PR issue comments, check outputs, or the earned-fallback
+             diff review): {fixable}.
              Do NOT touch human-authored / unknown-author findings, optional-check items,
              or dismissed/stale findings. Update tests if behaviour changes; run
              type-check + tests locally. Before pushing, PRE-PUSH SELF-REGRESSION REVIEW:
@@ -450,6 +491,34 @@ iterations = rounds
 ```
 
 `GREEN_STATES` are the check states that count as passing (e.g. `SUCCESS`; `NEUTRAL`/`SKIPPED` are non-blocking). Mark `repeat_check_failure = true` when a required check that was fixed re-fails in a later round, and `unresolved_bot_feedback = true` when a bot-authored finding **(from any channel — thread, review, issue comment, or check output)** remains unresolved after at least one fix cycle — both feed the Postmortem Dispatch Tail.
+
+---
+
+### Earned Fallback Review — `no_review_lens_posted` (AC3, PINNED)
+
+> **This subsection is the SINGLE SOURCE OF TRUTH for the earned fallback.** `agents/review-pr.md` and `commands/review-pr.md` reference `no_review_lens_posted` by name; they do not restate its trigger or contract.
+
+The drain is **heal-only by default** (§U4) — it spawns no `code-reviewer` of its own. But Finding B (verified live against PRs #118/#117/#116/#115, per `docs/SPIKES/EVAL_FINDINGS_AND_FIXES.md` Fix 7) showed a real gap: `claude-code-action` **self-skips on any workflow-touching PR and still exits 0** (#117: green in 14s, zero posted comments, vs #118's 3m53s with a real posted review). A blanket heal-only cut would leave exactly **ONE** LLM lens on such a PR — the opposite of the two-lens intent. The fallback closes that gap by running the drain's own diff review **only when it is earned** — i.e. only when the pass that was supposed to supply that information verifiably did not run. This is exactly `AGENT_GUIDELINES.md` §"Review Counter-Pressure Rule" part 2 applied to the drain — **cite that section for why the fallback exists; it is not restated here.**
+
+**Trigger, computed from §U1's existing read — NO new fetch.** `no_review_lens_posted` is true when BOTH hold, using the SAME `bot_findings` / `scan` §U1 already produced this round:
+
+1. `bot_findings` (the §U1 UNION across reviews/latestReviews/reviewThreads/issue-comments/check-outputs) is **empty**, AND
+2. every **review-producing** check (§U2.5's classification) is **green-with-empty-output, absent, or skipped** — no review-producing check posted a non-empty finding.
+
+**The issue-comment channel is authoritative for "posted"; never gate on `--json reviews` alone.** All four measured PRs (#118/#117/#116/#115) had `reviews: 0` while every real finding arrived as an issue comment — so, like §U1 itself, this trigger reads the FULL `bot_findings` union (which already includes the issue-comment channel), never `reviews`/`latestReviews` in isolation.
+
+**Effect — exactly one fallback review per drain run.** See the `fallback_review_ran` gate in §U4's pseudocode above (set to `true` BEFORE the spawn, so it never re-triggers even on error): on a round that would otherwise declare READY, if `no_review_lens_posted` holds, the drain runs exactly one `Task(loomwright:code-reviewer)` diff review reusing Step 2's machinery (`review_mode: diff_review`). Its findings are folded into the SAME round's §U3.5 Validate-Then-Fix inputs as any other channel's `bot_findings` — no separate fix mechanism, no separate push path. The run remains bounded by `--max-rounds` exactly like every other round.
+
+**Fail-CLOSED direction is TO RUNNING the review — deliberately the opposite of the channel-unknown ⇒ `ESCALATED` rule, and both apply.** If the trigger itself cannot be computed (e.g. a review-producing check's output/annotation emptiness is ambiguous even though every §U1-gated channel read succeeded), treat `no_review_lens_posted` as **true** and run the fallback. This does not weaken §U1's existing unknown-channel rule: if any §U1-gated channel is genuinely **unknown** (a GraphQL thread error/truncation, an errored issue-comment read, an errored required/review-producing check-output fetch), §U1's existing fail-closed rule already forces `ESCALATED` before this trigger is even reached — `ESCALATED` still wins for readiness in that case. This trigger's own fail-closed gap is narrower: a successfully-read scan whose "did a review lens post anything" classification is itself ambiguous. There the two directions diverge on purpose, and the reason is asymmetric cost: an unnecessary review wastes tokens; a skipped necessary one ships a defect (`AGENT_GUIDELINES.md` §"Review Counter-Pressure Rule", part 2) — running the extra review is the cheaper mistake.
+
+**Why the `Task(loomwright:code-reviewer)` spawn is legal here (spawn-depth reachability — this repo's most expensive trap).** §U4's loop otherwise spawns only `general-purpose`; the fallback is the first place the drain loop itself spawns a `code-reviewer`, making the drain spawn-dependent for the first time. That is safe **only because every caller that can reach `--until-mergeable` runs as the main agent of its own process** — the detached `-runner` launched by `dispatch-pr-review.sh` (a fresh headless `claude -p` OS process), or an inline `/review-pr` on the main thread — both are spawn-capable top-level agents. The `/autonomous` EVALUATE step is explicitly **not** such a caller, for two SEPARATE reasons cited from two SEPARATE subsections of `docs/RESULT_SCHEMAS.md` §"REVIEW_HEAL_RESULT" (conflating them produces an unsupported sentence):
+
+- it is a **non-`--until-mergeable` caller** and therefore continues to emit `schema_version: 1` — see §"Schema versions (v1 still accepted)", the `schema_version: 2` bullet, which is where the non-caller set is actually enumerated ("every non-`--until-mergeable` caller — the default `/review-pr` loop, the plain-`/supervisor` completion-tail auto-dispatch, and the `/autonomous` EVALUATE step — continues to emit `schema_version: 1`");
+- and, separately, it runs as a **Task-spawned step** with fresh isolated context — see §"Emission contexts" (a bold paragraph, not a `###` heading — grep the text; it says only that the step is Task-spawned and parses the block, and does NOT itself support the non-caller claim above).
+
+Routing the drain through a Task step in the future would turn this fallback into a hard failure — *subagents cannot spawn subagents* (this skill's §"Execution-contract rule (AC9)"; `agents/review-pr.md`'s mirror of the same rule; the 11.1.1 `-runner` trap) — so a future caller-side change that Task-spawns a `--until-mergeable` drain would silently break this fallback's `code-reviewer` spawn. Keep this note next to the fallback so that change cannot land unnoticed.
+
+---
 
 ### READY redefinition (AC6, canonical single source of truth)
 
@@ -615,3 +684,4 @@ The tail's exit status is **ignored** — the dispatcher always exits 0 and the 
 - **`--until-mergeable` absent ⇒ default loop byte-for-byte unchanged** (AC7) — the all-channel scan, scoped check-wait, validate-then-fix, anti-churn, and postmortem-tail logic are strictly opt-in.
 - Under `--until-mergeable`: ALL channels read each round — `gh pr view --json statusCheckRollup,reviews,latestReviews,…` PLUS `gh api graphql` review-threads PLUS `gh api .../issues/<n>/comments` (these comment/review/thread channels classified through `scripts/classify-bot-review.sh`, no re-implemented regexes) PLUS review-producing check-run output/annotations (gated by §U2.5's review-producing classification, NOT the comment author/marker regex); the scoped wait (§U2.5) settles required + review-producing checks before each READY test (optional checks excluded); every bot finding is validate-then-fixed (no severity floor); **READY ⇔ required green AND scoped review-producing settled AND no unresolved validated bot findings across ALL channels** (§"READY redefinition"); fails CLOSED to `ESCALATED` on any unknown gated channel or an elapsed scoped wait; bounded by `--max-rounds` (default 5); **never auto-merges — no `gh pr merge` anywhere — and never waits on a human (AC8)**.
 - Postmortem Dispatch Tail runs AFTER the decision is emitted, is churn-gated (default threshold 2), opt-out via `--no-auto-postmortem`, and can never alter `REVIEW_HEAL_RESULT.decision` (`dispatch-pr-postmortem.sh` always exits 0).
+- **Under `--until-mergeable` the drain is heal-only by default** — it spawns NO `Task(loomwright:code-reviewer)` of its own. The **ONE exception** is the earned fallback: when `no_review_lens_posted` holds (§U1's existing read shows no review lens posted in any channel AND every review-producing check is green-with-empty-output/absent/skipped), the drain runs exactly one diff review per drain run before declaring READY, fail-CLOSED toward running it (§"Earned Fallback Review — `no_review_lens_posted`").

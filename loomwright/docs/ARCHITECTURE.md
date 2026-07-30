@@ -123,7 +123,7 @@ PR created
 ```
 /product-owner → User Stories
     ↓
-/orchestrator → Tasks with Review Gates
+/orchestrator → Tasks (deterministic outputs_verified gate, no per-subtask review)
     ↓
 Implement → /code-reviewer → PASS/FAIL/NEEDS_HUMAN
     ↓

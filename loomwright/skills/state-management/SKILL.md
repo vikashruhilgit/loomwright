@@ -86,7 +86,9 @@ Before creating `.supervisor/`, verify `.gitignore` exists. If not, create it wi
 ## Subtasks
 | ID | Title | Status | Worker | Worktree | Review | Attempts |
 |----|-------|--------|--------|----------|--------|----------|
-| {id} | {title} | pending/in_progress/completed/failed | {worker-id} | {path} | --/PASS/FAIL | 0/3 |
+| {id} | {title} | pending/in_progress/completed/failed | {worker-id} | {path} | -- | 0/3 |
+
+The `Review` column shows permanently `--` — the per-subtask reviewer that used to populate it (via `record_review`) has been retired at every threshold; the deterministic `outputs_verified` gate plus tests/lint is now the per-subtask gate. The column is kept for schema completeness (see `record_review` in the operations table above) rather than removed.
 
 ## Parallelism
 - launchable: [{ids}]
@@ -269,7 +271,7 @@ The canonical `## Session` block is no longer written by Context-Keeper or by a 
 |-----------|-------------|------|
 | `initialize` | Creates full state file | Phase 0 (INIT) |
 | `record_worker_result` | Updates Worker Results + Subtask row | Phase 3 (EXECUTE) |
-| `record_review` | Updates Subtask review column | Phase 3 (EXECUTE) |
+| `record_review` | Updates Subtask review column | **Retained for schema completeness — no current caller.** The Phase 3 per-subtask reviewer this operation served was retired (superseded by the deterministic `outputs_verified` gate plus tests/lint); Context-Keeper still accepts the operation, but nothing invokes it today. |
 | `record_decision` | Appends to Decisions Log | Any phase |
 | `record_error` | Appends to Error Log | Any phase |
 | `set_flag` / `get_flag` / `clear_flag` | Mutates / reads / removes a key in `## Phase Flags` | Any phase (most often: producer phase sets, consumer phase reads + clears on entry) |

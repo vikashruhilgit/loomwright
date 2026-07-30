@@ -1,8 +1,8 @@
 {
-  "_comment": "Authoritative per-agent spawn-time prompt-inventory budgets, enforced by scripts/check-token-budget.sh. Weight = agent .md + every frontmatter-preloaded SKILL.md, measured as an OFFLINE PROXY (bytes / proxy_bytes_per_token). This is NOT an Anthropic token count and does NOT track live tokenizer inflation \u2014 it is a ratchet on prompt inventory growth only. ARCHITECTURE_CONTRACTS.md \u00a7'Prompt Token Budgets' mirrors this file for humans; THIS JSON is the single source of truth the gate reads. Keys are agent filename stems (loomwright/agents/<stem>.md). NOTE: the gate consumes ONLY .agents[<stem>].budget \u2014 the `measured` and `note` fields (including the '... N preloaded skills' counts in each note) are DECORATIVE, FROZEN authoring-time metadata the gate never re-derives or asserts (do not chase or re-bump them each release; they are authoring snapshots, like CLAUDE.md's frozen-example-value convention). The live preloaded-skill count IS computed and printed per run, but is not gated against these notes. The proxy sizes the whole .md/SKILL.md incl. frontmatter \u2014 a deliberate, safe over-count, not the literal system prompt.",
+  "_comment": "Authoritative per-agent spawn-time prompt-inventory budgets, enforced by scripts/check-token-budget.sh. Weight = agent .md + every frontmatter-preloaded SKILL.md, measured as an OFFLINE PROXY (bytes / proxy_bytes_per_token). This is NOT an Anthropic token count and does NOT track live tokenizer inflation — it is a ratchet on prompt inventory growth only. ARCHITECTURE_CONTRACTS.md §'Prompt Token Budgets' mirrors this file for humans; THIS JSON is the single source of truth the gate reads. Keys are agent filename stems (loomwright/agents/<stem>.md). NOTE: the gate consumes ONLY .agents[<stem>].budget — the `measured` and `note` fields (including the '... N preloaded skills' counts in each note) are DECORATIVE, FROZEN authoring-time metadata the gate never re-derives or asserts (do not chase or re-bump them each release; they are authoring snapshots, like CLAUDE.md's frozen-example-value convention). The live preloaded-skill count IS computed and printed per run, but is not gated against these notes. The proxy sizes the whole .md/SKILL.md incl. frontmatter — a deliberate, safe over-count, not the literal system prompt.",
   "proxy_bytes_per_token": 4,
-  "proxy_label": "proxy tokens (bytes/4 \u2014 offline proxy, not an exact Anthropic count)",
-  "raise_rule": "To raise a budget, edit its .agents[<stem>].budget here in the SAME PR that breaches it and add a one-line justification to that agent's `note`, AND update the mirrored row in ARCHITECTURE_CONTRACTS.md \u00a7'Prompt Token Budgets' in the same edit (machine-enforced: the gate asserts each table budget cell equals this JSON; drifted/missing/ghost rows fail CI closed). The gate reads this JSON, so every raise is visible in the PR diff and reviewable. Budgets are a ratchet against unmeasured growth, not a hard diet \u2014 shrinking prompts is separate follow-up work. Initial budgets = measured proxy value at authoring time (v15.10.0) + ~10% headroom, so no agent fails at introduction.",
+  "proxy_label": "proxy tokens (bytes/4 — offline proxy, not an exact Anthropic count)",
+  "raise_rule": "To raise a budget, edit its .agents[<stem>].budget here in the SAME PR that breaches it and add a one-line justification to that agent's `note`, AND update the mirrored row in ARCHITECTURE_CONTRACTS.md §'Prompt Token Budgets' in the same edit (machine-enforced: the gate asserts each table budget cell equals this JSON; drifted/missing/ghost rows fail CI closed). The gate reads this JSON, so every raise is visible in the PR diff and reviewable. Budgets are a ratchet against unmeasured growth, not a hard diet — shrinking prompts is separate follow-up work. Initial budgets = measured proxy value at authoring time (v15.10.0) + ~10% headroom, so no agent fails at introduction.",
   "agents": {
     "code-reviewer": {
       "budget": 24330,
@@ -10,9 +10,9 @@
       "note": "authoring baseline v15.10.0 (measured 22118 + ~10%); 5 preloaded skills"
     },
     "context-keeper": {
-      "budget": 3483,
-      "measured": 3166,
-      "note": "authoring baseline v15.10.0; 0 preloaded skills. Re-measured for the one-writer-derived-state change (v15.16.0 in progress): deleting set_task/set_subtasks/update_phase/checkpoint (Subtask 2) moved measured 2995 -> 2780 (delta -215; pre-deletion figure at git 36c39de). That pre-deletion 2995 already reflected unrelated growth since the frozen v15.10.0 baseline (2774) — the post-deletion 2780 happens to land close to that old baseline by coincidence, not by design. Budget tightened by the same -215 delta, 3052 -> 2837, preserving the existing ~1.9% margin rather than resetting to a fresh measured+10%. Raised again 2837 -> 3483 (PR #116 bot-review fixes): reconciling the initialize/`## Session` contradiction (F1) added an explicit one-time-seed explanation (description, Mission, Operations pointer, and the initialize example) — measured moved to 3166, breaching 2837; restored to measured + ~10% per the raise rule."
+      "budget": 3818,
+      "measured": 3471,
+      "note": "authoring baseline v15.10.0; 0 preloaded skills. Re-measured for the one-writer-derived-state change (v15.16.0 in progress): deleting set_task/set_subtasks/update_phase/checkpoint (Subtask 2) moved measured 2995 -> 2780 (delta -215; pre-deletion figure at git 36c39de). That pre-deletion 2995 already reflected unrelated growth since the frozen v15.10.0 baseline (2774) — the post-deletion 2780 happens to land close to that old baseline by coincidence, not by design. Budget tightened by the same -215 delta, 3052 -> 2837, preserving the existing ~1.9% margin rather than resetting to a fresh measured+10%. Raised again 2837 -> 3483 (PR #116 bot-review fixes): reconciling the initialize/`## Session` contradiction (F1) added an explicit one-time-seed explanation (description, Mission, Operations pointer, and the initialize example) — measured moved to 3166, breaching 2837; restored to measured + ~10% per the raise rule. Raised again 3483 -> 3818 (Fix 7 heal iteration 3): marking `record_review` retained-but-uncalled (operations-table row + record_review Details paragraph + the Unknown-operation error string, all annotated to say the Phase 3 per-subtask reviewer this served was retired) moved measured 3166 -> 3471, leaving only 12 proxy tokens of headroom; restored to measured + ~10% per the initial-budget convention (matching the `plan-reviewer` v15.15.0 precedent), not the compressed-margin convention used for this same row's earlier context-keeper/supervisor re-measures."
     },
     "execute-manager": {
       "budget": 28550,
@@ -25,9 +25,9 @@
       "note": "authoring baseline v15.10.0; 7 preloaded skills (name: loomwright:launch-pad-runner)"
     },
     "orchestrator": {
-      "budget": 8665,
-      "measured": 7877,
-      "note": "authoring baseline v15.10.0; 1 preloaded skill"
+      "budget": 9558,
+      "measured": 8688,
+      "note": "authoring baseline v15.10.0; 1 preloaded skill. Raised 8665 -> 9558 (v15.18.0, Fix 7 item 4/Subtask 3): agents/orchestrator.md §\"Review Gate Policy\" was rewritten so neither side of the Decomposition Threshold generates a paired per-subtask LLM review subtask (the deterministic outputs_verified gate + integrated Phase 4.5 review is now the gate on both sides) plus a Review Counter-Pressure Rule citation; measured moved 7877 -> 8688 (+811), breaching by 23. Restored the same ~10% margin this row has held since authoring (never previously raised): prior margin 8665/7877 = 1.100038, and 8688 * 1.100038 = 9557.1 (plain measured + ~10% gives 9556.8, essentially the same figure since the prior margin already was ~10%); the declared budget is that figure rounded up to 9558."
     },
     "plan-reviewer": {
       "budget": 7750,
@@ -55,9 +55,9 @@
       "note": "authoring baseline v15.10.0; 1 preloaded skill"
     },
     "review-pr": {
-      "budget": 24230,
-      "measured": 22027,
-      "note": "authoring baseline v15.10.0; 2 preloaded skills (name: loomwright:review-pr-runner)"
+      "budget": 27955,
+      "measured": 25413,
+      "note": "authoring baseline v15.10.0; 2 preloaded skills (name: loomwright:review-pr-runner). Raised 24230 -> 27955 (v15.18.0, Fix 7 item 2/Subtask 2): the new \"Earned Fallback Review\" subsection (no_review_lens_posted trigger, the fail-CLOSED-to-running-the-review contract, and the reachability argument for why the drain's Task(loomwright:code-reviewer) spawn is legal) is a real new contract, not bloat -- measured moved 22027 -> 25413 (+3386), breaching by 1183. Restored the same ~10% margin this row has held since authoring (never previously raised) rather than resetting to a fresh measured+10%, which coincides with the same formula here since the prior margin already was 10%."
     },
     "rubric-grader": {
       "budget": 2330,
@@ -65,14 +65,14 @@
       "note": "authoring baseline v15.10.0; 0 preloaded skills; raised 2086->2330 for the shared-agent-prefix block (docs/shared-agent-prefix.md): measured 2118 + ~10%"
     },
     "supervisor": {
-      "budget": 51700,
-      "measured": 50959,
-      "note": "authoring baseline v15.10.0; 7 preloaded skills (name: loomwright:supervisor-runner). Re-measured for the one-writer-derived-state change (v15.16.0 in progress): deleting the ACQUIRE/PLAN inline `## Session` writes and the progress-event half of Session Logging (Subtask 2) moved measured 50459 -> 50040 (delta -419; pre-deletion figure at git 36c39de). The frozen v15.10.0 baseline (46564) predates several releases' worth of unrelated growth, so pre-deletion usage was already close to budget (762 headroom, 1.5%). PR #116 review round (Finding 1) then ADDED the Phase 1 ACQUIRE idempotent-branch-creation guard (existing-branch detection + safe-reuse-vs-stop decision) plus three falsified-claim rewrites (Finding 2) — a real fix, not bloat, measured 50040 -> 50959 (delta +919). Budget raised 50802 -> 51700 to restore the ~1.5% margin the pre-Finding-1 state held, rather than resetting to a fresh measured+10% (~56055)."
+      "budget": 52568,
+      "measured": 51814,
+      "note": "authoring baseline v15.10.0; 7 preloaded skills (name: loomwright:supervisor-runner). Re-measured for the one-writer-derived-state change (v15.16.0 in progress): deleting the ACQUIRE/PLAN inline `## Session` writes and the progress-event half of Session Logging (Subtask 2) moved measured 50459 -> 50040 (delta -419; pre-deletion figure at git 36c39de). The frozen v15.10.0 baseline (46564) predates several releases' worth of unrelated growth, so pre-deletion usage was already close to budget (762 headroom, 1.5%). PR #116 review round (Finding 1) then ADDED the Phase 1 ACQUIRE idempotent-branch-creation guard (existing-branch detection + safe-reuse-vs-stop decision) plus three falsified-claim rewrites (Finding 2) — a real fix, not bloat, measured 50040 -> 50959 (delta +919). Budget raised 50802 -> 51700 to restore the ~1.5% margin the pre-Finding-1 state held, rather than resetting to a fresh measured+10% (~56055). Raised again 51700 -> 52568 (v15.18.0, Fix 7 item 4/Subtask 4): syncing the Phase 4.5 step 5.5 dispatch prose, the auto_until_mergeable default-ON description, and Phase-3 prose to heal-only + the earned fallback moved measured 50959 -> 51814 (+855), breaching by 114. Restored the same ~1.454% margin this row has held since the v15.16.0 restore (741/50959), rather than resetting to a fresh measured+10% (~56995, which would have granted far more headroom than this row has ever carried)."
     },
     "worker": {
       "budget": 5045,
       "measured": 4158,
-      "note": "authoring baseline v15.10.0; 0 preloaded skills; raised 4574\u21925045 for the shared-agent-prefix block + pointer-contract consumer text (measured 4586 + ~10%, v15.13.0)"
+      "note": "authoring baseline v15.10.0; 0 preloaded skills; raised 4574→5045 for the shared-agent-prefix block + pointer-contract consumer text (measured 4586 + ~10%, v15.13.0)"
     }
   }
 }

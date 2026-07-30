@@ -201,8 +201,11 @@ Before outputting:
 - Description: Create authentication guard
 - Acceptance: Token validated, 401 on invalid
 
-### BD-49: Code Review - JwtGuard (SUBTASK)
-- Decision: PASS/FAIL/NEEDS_HUMAN
+### BD-49: Add JWT tests (TASK)
+- Depends on: BD-48
+- No paired review subtask — the deterministic `outputs_verified` + tests/lint
+  gate is BD-48's gate; Phase 4.5's holistic Code Reviewer is the sole LLM
+  review, run once after FINALIZE.
 
 ## Work/Results
 This agent's work: Planning only. No code changes.
@@ -214,14 +217,14 @@ bd claim BD-48
 ```
 ```
 
-### Code Reviewer Output (Abbreviated)
+### Standalone Code Reviewer Output (Abbreviated — a manually-tracked review, not an Orchestrator subtask)
 
 ```markdown
 ## Context Read
 **Review Scope:** src/auth/jwt.guard.ts
 
 ## Current State
-**Beads Task:** BD-49 (Code Review - JwtGuard)
+**Beads Task:** BD-54 (Code Review - JwtGuard, created manually by the user)
 
 ## Plan
 Check type safety, security, tests, patterns
@@ -237,7 +240,7 @@ Check type safety, security, tests, patterns
 - 85% test coverage
 
 ## Risks & Next Steps
-**Next task:** BD-50 (Add JWT tests) now unblocked
+**Task:** BD-54 marked complete
 ```
 
 ---

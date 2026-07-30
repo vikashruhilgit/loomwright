@@ -27,7 +27,7 @@ each such exception is enumerated in the table with its justification.
 exist inside linked git worktrees. A pointer handed to a worktree-resident consumer
 (parallel-path workers) must **pin the main-checkout absolute path and say so in the
 prompt text**. Consumers running at the project root (Orchestrator, Execute Manager,
-Single-Agent-/Sequential-path Worker/Reviewer, Phase 4.5 spawns) can use the repo-relative path directly.
+Single-Agent-/Sequential-path Worker, Phase 4.5 spawns) can use the repo-relative path directly.
 The normative statement of this rule lives in `skills/async-orchestration/SKILL.md`
 Part 2 §"Subagent Spawn Contracts" ("Pointers, not payloads" paragraph).
 

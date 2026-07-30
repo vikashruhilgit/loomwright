@@ -32,7 +32,7 @@ Plus all prior v11.0/v10.3/v10.2 capabilities:
 - **Launch Pad** (`/launch-pad`) — Prepare goals for autonomous Supervisor execution
 - **Supervisor** (`/supervisor`) — Autonomous parallel workflow orchestrator with git worktrees
 - **Product Owner** (`/product-owner`) — Translate business problems into user stories. Supports `--brainstorm` for multi-mind ideation
-- **Orchestrator** (`/orchestrator`) — Break goals into tasks with review gates
+- **Orchestrator** (`/orchestrator`) — Break goals into tasks (deterministic per-subtask gate; Phase 4.5 is the sole review)
 - **Code Reviewer** (`/code-reviewer`) — Review code with PASS/FAIL/NEEDS_HUMAN decisions (LSP diagnostics, read-only)
 - **Red Team Reviewer** (`/red-team-reviewer`) — Adversarial audits to break assumptions
 - **Review-PR** (`/review-pr <pr-url>`) — Standalone bounded review→fix→re-review loop against an existing PR; never auto-merges
@@ -46,7 +46,7 @@ Plus all prior v11.0/v10.3/v10.2 capabilities:
 ### Internal Agents (5)
 
 
-- **Execute Manager** — Owns Phase 3 worker/reviewer lifecycle (spawned by Supervisor)
+- **Execute Manager** — Owns Phase 3 worker lifecycle (no per-subtask reviewer — spawned by Supervisor)
 - **Context-Keeper** — Sole writer of externalized state file (spawned on-demand)
 - **Worker** — Implements a single subtask in an isolated git worktree (spawned by Execute Manager)
 - **Plan Reviewer** — Validates Supervisor-Ready Briefs before execution (spawned by Launch Pad)
@@ -229,14 +229,14 @@ Translate business problems into user stories with acceptance criteria.
 
 ### /orchestrator goal: "\<what to do\>"
 
-Break a goal into tasks with mandatory code review subtasks.
+Break a goal into tasks. No per-subtask review subtask is created at any threshold — the deterministic `outputs_verified` gate plus tests/lint is the per-subtask gate, and Supervisor's integrated Phase 4.5 review is the sole LLM review lens.
 
 ```bash
 /orchestrator goal: "add dark mode to UI"
 /orchestrator goal: "fix login bug" --project /path/to/project
 ```
 
-**Output:** Beads task structure (EPIC -> TASK -> SUBTASK) with review gates
+**Output:** Beads task structure (EPIC -> TASK, task-to-task dependencies only; no paired review SUBTASK is created at any threshold)
 
 ---
 
@@ -427,7 +427,7 @@ loomwright/                            # Marketplace wrapper repo
 ├── mysql-mcp/                               # Sibling plugin: read-only MySQL MCP server
 └── loomwright/                 # The nested plugin
     ├── .claude-plugin/
-    │   └── plugin.json                      # Plugin manifest (v15.17.0)
+    │   └── plugin.json                      # Plugin manifest (v15.18.0)
     ├── agents/                              # Agent prompts (14 roles)
     │   ├── launch-pad.md, supervisor.md, execute-manager.md, context-keeper.md
     │   ├── worker.md, plan-reviewer.md, rubric-grader.md, product-owner.md, orchestrator.md
