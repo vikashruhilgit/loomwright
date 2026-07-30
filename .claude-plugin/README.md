@@ -427,7 +427,7 @@ loomwright/                            # Marketplace wrapper repo
 ├── mysql-mcp/                               # Sibling plugin: read-only MySQL MCP server
 └── loomwright/                 # The nested plugin
     ├── .claude-plugin/
-    │   └── plugin.json                      # Plugin manifest (v15.16.0)
+    │   └── plugin.json                      # Plugin manifest (v15.17.0)
     ├── agents/                              # Agent prompts (14 roles)
     │   ├── launch-pad.md, supervisor.md, execute-manager.md, context-keeper.md
     │   ├── worker.md, plan-reviewer.md, rubric-grader.md, product-owner.md, orchestrator.md
@@ -501,7 +501,7 @@ Agents with `memory: project` build knowledge across sessions:
 ### Quality Gate Hooks
 
 24 hooks centralized in `hooks.json` validate agent output and surface notifications:
-- **SubagentStop:** Worker, Execute Manager, Code Reviewer, Supervisor, QA Executor, Plan Reviewer (6 prompt validators) + 3 `type: command` telemetry hooks on Code Reviewer, QA Executor, Supervisor + 1 `type: command` opt-in webhook hook (v12.2.0) + `launch-pad-runner` `LAUNCH_PAD_RESULT` validator (v14.2.0) + 1 `type: command` progress-event hook (`emit-progress-event.sh`, v15.16.0) on the Worker matcher
+- **SubagentStop:** Worker, Execute Manager, Code Reviewer, Supervisor, QA Executor, Plan Reviewer — **1 prompt validator (Code Reviewer) + 5 `type: command` validator scripts** (`validate-worker-result.py`, `validate-execute-result.py`, `validate-supervisor-result.py`, `validate-qa-result.py`, `validate-plan-review-result.py`, all sharing `result_block_parser.py` and exit-0-by-contract; converted from prompt hooks in v15.17.0, Code Reviewer deliberately retained as a prompt because its cross-field + severity-cap logic is richer than presence-checking) + 3 `type: command` telemetry hooks on Code Reviewer, QA Executor, Supervisor + 1 `type: command` opt-in webhook hook (v12.2.0) + `launch-pad-runner` `LAUNCH_PAD_RESULT` validator (v14.2.0) + 1 `type: command` progress-event hook (`emit-progress-event.sh`, v15.16.0) on the Worker matcher
 - **PreToolUse (AskUserQuestion):** desktop banner + paused-event webhook (v14.1.0)
 - **Notification:** desktop banner on permission/idle/elicitation prompts, `auth_success` excluded (v14.1.0)
 - **SessionStart:** crash/compact recovery context via `session-resume.sh` (v14.2.0) + per-project OpenTelemetry resource-attribute labeling via `set-otel-resource-attrs.sh` — telemetry-gated, fail-safe (v14.47.0)

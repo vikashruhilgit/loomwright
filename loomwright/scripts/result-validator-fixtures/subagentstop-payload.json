@@ -1,0 +1,15 @@
+{
+  "session_id": "fixture-result-validator-001",
+  "transcript_path": "/nonexistent/session.jsonl",
+  "agent_transcript_path": "/nonexistent/agent.jsonl",
+  "cwd": "/nonexistent/project",
+  "permission_mode": "default",
+  "agent_id": "agent-fixture-result-validator",
+  "agent_type": "loomwright:worker",
+  "effort": "medium",
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "background_tasks": [],
+  "session_crons": [],
+  "last_assistant_message": "No result block was emitted in this turn — only prose about what happened."
+}

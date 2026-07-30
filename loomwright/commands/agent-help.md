@@ -958,14 +958,14 @@ The plugin centralizes **24 hooks** in `hooks/hooks.json` that automatically enf
 
 | Hook | When It Fires | What It Checks / Does |
 |------|---------------|----------------|
-| **SubagentStop** (worker, execute-manager, code-reviewer, supervisor-runner, qa-executor, plan-reviewer, launch-pad-runner) | The matching agent completes | Validates its result block (WORKER_RESULT, EXECUTE_*, CODE_REVIEW_RESULT v3, SUPERVISOR_RESULT, QA_RESULT, PLAN_REVIEW_RESULT, LAUNCH_PAD_RESULT) + 3 telemetry + 1 webhook + 1 progress-event `type: command` hooks |
+| **SubagentStop** (worker, execute-manager, code-reviewer, supervisor-runner, qa-executor, plan-reviewer, launch-pad-runner) | The matching agent completes | Validates its result block (WORKER_RESULT, EXECUTE_*, CODE_REVIEW_RESULT v3, SUPERVISOR_RESULT, QA_RESULT, PLAN_REVIEW_RESULT, LAUNCH_PAD_RESULT). Since v15.17.0 all of these are `type: command` validator scripts **except `code-reviewer`**, which stays a prompt hook. Plus 3 telemetry + 1 webhook + 1 progress-event `type: command` hooks |
 | **PreToolUse (AskUserQuestion)** | Plugin about to block on a user question | Desktop banner (`notify-desktop.sh`) + paused-event webhook (v14.1.0) |
 | **Notification** | Claude Code signals attention (permission / idle / elicitation) | Desktop banner (v14.1.0) |
 | **PostToolUse (Bash)** | A Bash tool call completes (e.g. `gh pr create`) | Backstops the until-mergeable review drain on PR creation (`hook-dispatch-on-pr-create.sh`); session-scope gated, fail-safe (v14.34.0). PLUS a second entry (`reproject-state-on-terminal.sh`, PR #116 review round) that mechanically re-invokes `build-state.sh` once `session_end` lands in the session log |
 | **SessionStart** | Session resume / clear / compact | Injects bounded recovery context (`session-resume.sh`, v14.2.0); also maintains per-project OpenTelemetry resource attributes (`set-otel-resource-attrs.sh`, telemetry-gated, fail-safe, v14.47.0) |
 | **Stop / TaskCompleted / WorktreeCreate / WorktreeRemove / StopFailure** | Various | Completeness gate, task-done check, worktree create/remove + failure logging (`WorktreeRemove` added v15.5.0) |
 
-These hooks run automatically — no configuration needed. They use fast prompt-based validation (haiku model, 30s timeout).
+These hooks run automatically — no configuration needed. Most are `type: command` scripts that cost no model call; only three still use prompt-based validation (haiku model, 30s timeout): the `code-reviewer` SubagentStop validator, `Stop`, and `TaskCompleted`.
 
 ### Agent Teams (Experimental)
 
@@ -1081,7 +1081,7 @@ bd close BD-XX
 
 loomwright/              # Nested plugin root
 ├── .claude-plugin/
-│   └── plugin.json                   # Plugin metadata (v15.16.0)
+│   └── plugin.json                   # Plugin metadata (v15.17.0)
 ├── commands/                         # Slash commands (21)
 │   ├── launch-pad.md                 # Supervisor readiness
 │   ├── supervisor.md                 # Parallel orchestrator (v4)

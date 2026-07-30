@@ -62,7 +62,8 @@ These are **defense-in-depth** restrictions for accidental misuse, NOT security 
 
 ## Hook Performance Rules
 
-- **Prompt hooks:** Execution < 5 seconds, timeout 30 seconds
+- **Prompt hooks:** Execution < 5 seconds, timeout 30 seconds. As of v15.17.0 only three remain (`SubagentStop[loomwright:code-reviewer]`, `Stop`, `TaskCompleted`) — reserve them for genuine judgement; a mechanical check (presence, type, enum membership, cross-field invariants) belongs in a `type: command` script.
+- **Command hooks:** the default (21 of 24). Deterministic, zero model tokens. Every one is **exit-0-by-contract** — it signals via stdout JSON, never via exit status — which is what makes the `|| true` convention safe. A *blocking* gate must therefore never be written as a `type: command` hook carrying `|| true`.
 - **Agent-based hooks:** Execution < 30 seconds (future)
 - No network calls in prompt hooks
 - No long file parsing — validate structure, not semantics

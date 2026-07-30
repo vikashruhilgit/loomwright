@@ -12,9 +12,8 @@ hooks:
   # hooks.json is authoritative at runtime. This copy mirrors hooks.json for
   # ~/.claude/agents/ compatibility; keep the two in sync.
   SubagentStop:
-    - type: prompt
-      prompt: "A worker agent just completed. Review its output to verify: (1) it produced a WORKER_RESULT block with schema_version, task_id, status, files_modified, and summary fields, (2) at least one of files_modified or files_created is non-empty when status=completed (create-only subtasks are valid), (3) a worker summary file was written — either {worktree}/.worker-summary.md (worktree mode) or .supervisor/worker-summaries/{task_id}.md (inline mode) — OR the output records the literal marker summary_file_write_failed (the documented best-effort degradation: the summary file could not be written and the WORKER_RESULT carries the full result instead), (4) no unresolved errors remain, (5) no destructive commands were used (rm -rf, git push, git reset --hard, DROP, TRUNCATE), (6) v12 outputs_verified contract — if schema_version is 2 or higher, BOTH outputs_verified (array, may be empty) AND outputs_gap (string, may be empty) MUST be present; missing either field returns {\"ok\": false, \"reason\": \"WORKER_RESULT schema_version>=2 requires outputs_verified (array) and outputs_gap (string) fields\"}, (7) v12 outputs_verified shape — when present, each entry must include kind (one of file|symbol|type), path (string), and status (one of present|missing); malformed entries return {\"ok\": false, \"reason\": \"outputs_verified entries must include {kind, path, status}\"}, (8) v12 outputs_gap/status invariant — if schema_version >= 2 and outputs_gap is non-empty AND status: completed, return {\"ok\": false, \"reason\": \"outputs_gap non-empty must map to status: partial — a worker that did not deliver all promised outputs has not completed\"}. Context: $ARGUMENTS. Respond with {\"ok\": true} if valid, or {\"ok\": false, \"reason\": \"...\"} if issues found."
-      timeout: 30
+    - type: command
+      command: 'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/validate-worker-result.py" || true'
 ---
 
 <!-- SHARED-AGENT-PREFIX v1 BEGIN -->
@@ -69,6 +68,7 @@ Implement a single subtask in an isolated git worktree. Operate independently, f
 - **No state file access:** Don't read/write the Supervisor state file
 - **Complete or fail:** Always produce a WORKER_RESULT, even on failure
 - **Write summary file:** Always write `.worker-summary.md` in worktree (parallel mode) or `.supervisor/worker-summaries/{subtask_id}.md` (inline mode) before final output
+- **Turn budget — 40 turns (advisory):** Your `maxTurns` ceiling is 40; budget exploration so the WORKER_RESULT gets written before you reach it. Stated for visibility only — the harness enforces the ceiling either way, prompt-stated budgets measure only ~90% adherence in this repo, and this line is **not** expected to change behavior.
 
 ---
 

@@ -91,6 +91,7 @@ Review implementation code against quality standards and provide PASS/FAIL/NEEDS
 - **Diff-first, expand when needed:** Start from changed files. Expand scope automatically when (a) a mirrored file exists (agents/X ↔ commands/X), (b) metadata/docs/workflow/version strings are touched, (c) prompt or architecture behavior changes. Record every expansion in `scope_expanded[]`. See "Review Modes & Scope Expansion" below.
 - **Pattern proposals:** Flag only (do NOT update CLAUDE.md directly)
 - **Read-only via Bash too:** `disallowedTools` blocks Write/Edit, but Bash is unrestricted by the harness — `echo > file`, `sed -i`, `git commit` would all succeed. Read-only is a contract this agent must honor with Bash limited to non-mutating commands (git diff/log/show, ls, test runners); never use Bash to modify files or git state.
+- **Turn budget — 40 turns (advisory):** Your `maxTurns` ceiling is 40; budget the review so the CODE_REVIEW_RESULT block gets emitted before you reach it. Stated for visibility only — the harness enforces the ceiling either way, prompt-stated budgets measure only ~90% adherence in this repo, and this line is **not** expected to change behavior.
 
 ---
 

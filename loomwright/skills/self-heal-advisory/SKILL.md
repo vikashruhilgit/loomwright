@@ -1,8 +1,8 @@
 ---
 name: self-heal-advisory
 description: Supervisor Phase 4.5 protocol authority. Part 1 — advisory-only machinery (pre-review enrichments, System Twin conformance/benchmark/ground-truth, contract-builder WRITE path, delta line, hard-signal dual emission; never changes heal_decision or blocks the PR). Part 2 — the full Phase 4.5 SELF_HEAL loop protocol (on-entry actions, base-mismatch cleanup, bounded review-and-fix loop, rubric grading, red-team lens, completion-tail procedure), Read on demand at Phase 4.5 entry, deliberately not preloaded.
-version: "1.4.0"
-lastUpdated: "2026-07-20"
+version: "1.5.0"
+lastUpdated: "2026-07-29"
 ---
 
 # Self-Heal Protocol (Supervisor Phase 4.5)
@@ -613,6 +613,8 @@ while heal_iterations < max_heal_iterations:
              **DIFFERENT-LENS DIRECTIVE (non-stacked / BASE_BRANCH == \"main\" only — v14.21.0 self-heal hardening):** when BASE_BRANCH == \"main\" (the DIFF-SCOPE OVERRIDE above does NOT apply), this is the holistic post-PR review whose blind spots motivated this directive — a plain re-run of the same diff-scoped reviewer rubber-stamps the same classes it already missed per-subtask. Apply a DIFFERENT lens, not the same one again:
                1. **Run `consistency_audit` mode when self-repo trigger paths match.** If the integrated diff touches any of the `consistency_audit` trigger surfaces defined in `agents/code-reviewer.md`'s **Trigger rule** table (the single authoritative review-trigger taxonomy — do NOT restate the list here; a restated copy is exactly the cross-file drift this phase exists to catch), you MUST run in `review_mode: consistency_audit` (exhaustive cross-file analysis: every count, version string, mirrored prompt, and cross-reference), NOT a plain `diff_review`.
                2. **ALWAYS apply the Self-Heal Miss-Class Checklist regardless of repo.** On EVERY non-stacked heal review — plugin-self OR any external repo where the consistency_audit triggers do not fire — additionally apply the repo-agnostic \"Self-Heal Miss-Class Checklist\" in `skills/quality-checklist/SKILL.md` (backend/API validation mirrors every frontend-schema rule; no `||`/falsy coercion on numeric fields; no positional args to options-object functions; missing branch test coverage; count/version/restated-list drift; cross-reference precision drift). These are the classes that today only surface in 3–6 rounds of post-PR review; catch them here.
+
+             **ANTI-OVERLAP (every iteration, applies whether or not the DIFF-SCOPE OVERRIDE above is in force):** do not re-derive what a prior gate already found — an issue that a per-subtask review, a deterministic gate, or an earlier heal iteration of this run already surfaced AND that is already fixed on this branch must not be re-reported; spend the pass on what the integrated view newly exposes. This never licenses skipping a check class or deferring to a prior lens: a prior finding still open in the diff is squarely in scope, and the DIFFERENT-LENS DIRECTIVE above still governs, **where it applies**, WHICH classes you sweep.
 
              **PRIOR-CHURN ADVISORY (non-gating — include this line ONLY when `prior_churn` is non-empty; omit entirely when empty):** these touched files have churned before with the following recurring root-cause classes — prioritize sweeping for those classes: {prior_churn summary}. This is advisory context, not a gate: it NEVER changes your `decision`, the Supervisor NEVER changes `heal_decision` because of it, it NEVER drives the fix task on its own, and it NEVER gates or blocks the PR. Use it to bias WHERE you look, not WHETHER the diff passes.
 

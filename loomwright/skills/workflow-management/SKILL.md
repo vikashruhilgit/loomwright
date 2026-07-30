@@ -331,7 +331,7 @@ Plugin hooks in `hooks/hooks.json` provide automatic quality gates that run with
 
 ### SubagentStop Hook (Worker Validation)
 
-When a Worker subagent completes, a prompt-based hook auto-validates its output:
+When a Worker subagent completes, a hook auto-validates its output. Since v15.17.0 this is a deterministic `type: command` script (no model call):
 
 ```json
 {
@@ -340,9 +340,8 @@ When a Worker subagent completes, a prompt-based hook auto-validates its output:
       "matcher": "loomwright:worker",
       "hooks": [
         {
-          "type": "prompt",
-          "prompt": "Verify: (1) WORKER_RESULT block present, (2) files_modified not empty, (3) no unresolved errors...",
-          "timeout": 30
+          "type": "command",
+          "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/validate-worker-result.py\" || true"
         }
       ]
     }
@@ -374,12 +373,22 @@ When any task is marked complete, a hook validates it's genuinely done:
 
 **What this prevents:** Premature task closure (tasks marked done that are actually incomplete).
 
-### Why Prompt-Based Hooks
+### Command Hooks vs Prompt Hooks
 
-- No shell scripts to maintain — cross-platform (macOS, Linux, Windows)
-- Uses fast haiku model for evaluation
-- Falls back gracefully if hook fails (doesn't block workflow)
-- Lighter than spawning a full reviewer subagent for simple checks
+Both kinds fail gracefully (they never block the workflow) and both are far lighter than spawning a
+full reviewer subagent. Which to use depends on whether the check is mechanical:
+
+- **`type: command` (the default, and the large majority).** Use when the check is mechanical —
+  presence, type, enum membership, cross-field invariants. Deterministic, zero model tokens, no
+  latency, and self-testable over fixtures in CI. The `TaskCompleted` example above is prompt-shaped
+  only because judging "genuinely done vs abandoned" is not mechanical.
+- **`type: prompt` (reserve for genuine judgement).** As of v15.17.0 only three remain:
+  the `code-reviewer` `SubagentStop` validator, `Stop`, and `TaskCompleted`. Each spends a haiku call
+  (30s timeout) carrying the finishing agent's transcript.
+
+> v15.17.0 converted the five mechanical `SubagentStop` prompt validators (worker, execute-manager,
+> supervisor-runner, qa-executor, plan-reviewer) to command scripts. If you are adding a hook whose
+> rules you could write as `if` statements, write a script — do not spend a model call on it.
 
 ## Alternative Parallel Execution: Agent Teams
 

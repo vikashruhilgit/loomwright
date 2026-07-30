@@ -49,7 +49,7 @@ Only `hooks.json` hooks still work because they're cross-cutting, not per-agent 
 
 ### 2. Add Supervisor Validation Hook
 
-**[VERDICT: RESOLVED — `loomwright/hooks/hooks.json` carries a `SubagentStop` validator for `loomwright:supervisor-runner` (prompt validation of the `SUPERVISOR_RESULT` block, plus telemetry + webhook `type: command` entries on the same matcher)]**
+**[VERDICT: RESOLVED — `loomwright/hooks/hooks.json` carries a `SubagentStop` validator for `loomwright:supervisor-runner` (validation of the `SUPERVISOR_RESULT` block, plus telemetry + webhook `type: command` entries on the same matcher). As of v15.17.0 that validator is a `type: command` script, `validate-supervisor-result.py` — it was a prompt hook when this item was written, so the performance argument below is historical: the real cost today is zero model tokens, not the ~2-5s haiku evaluation it estimated.]**
 
 **What's happening now:**
 The Supervisor (`supervisor.md`) has NO validation hook — not in frontmatter, not in `hooks.json`. It's the most critical agent (7-phase orchestrator, creates PRs, manages branches, manages worktrees) and it can finish with:

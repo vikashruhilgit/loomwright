@@ -14,6 +14,15 @@ Validation outcome is communicated via stdout JSON only:
 
 Schema authoritative in docs/RESULT_SCHEMAS.md §"LAUNCH_PAD_RESULT".
 
+KNOWN DIVERGENCE from result_block_parser.py (disclosed, deliberately NOT fixed
+here): this script does not strip trailing `#` comments, so an annotated value
+such as `status: aborted  # user cancelled` is rejected on the polluted literal
+("got 'aborted  # user cancelled'") rather than read as `aborted`. It fails
+CLOSED — a valid block is refused, nothing invalid is accepted — so the real fix
+is deferred to a follow-up rather than bundled into the Fix 4 / 4e conversion
+that introduced the shared parser. The five validate-<x>-result.py scripts DO
+handle comments, via result_block_parser.strip_comment.
+
 Why we don't depend on PyYAML:
     macOS system Python 3 does not ship PyYAML; a bundled-with-plugin yaml
     dependency would add an install footprint for a script that only ever
