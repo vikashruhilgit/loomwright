@@ -291,12 +291,12 @@ For complex workflows with multiple agents:
 [Worker-A] BD-23a: +145 lines, tests pass (parallel)
 [Worker-C] BD-23c: +67 lines, tests pass (parallel)
   ↓
-[Review-A] PASS, 0 issues → BD-23b unblocked
-[Review-C] PASS, 0 issues
+[Gate] BD-23a outputs_verified, tests/lint pass → BD-23b unblocked
+[Gate] BD-23c outputs_verified, tests/lint pass
   ↓
 [Worker-B] BD-23b: +89 lines, tests pass
   ↓
-[Review-B] PASS, 0 issues
+[Gate] BD-23b outputs_verified, tests/lint pass
   ↓
 [CK] Checkpoint: 3/3 complete, phase FINALIZE
 ```

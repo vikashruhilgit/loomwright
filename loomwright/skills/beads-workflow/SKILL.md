@@ -32,11 +32,13 @@ bd create "Feature name (EPIC)" --type epic
 bd create "Implementation" --type task --depends-on BD-47
 # Output: Created BD-48
 
-bd create "Code Review" --type subtask --depends-on BD-48
-# Output: Created BD-49
+# No paired review subtask is created — the deterministic outputs_verified +
+# tests/lint gate is each task's gate; Phase 4.5's holistic Code Reviewer is
+# the sole LLM review, run once over the integrated diff (see
+# agents/orchestrator.md §"Review Gate Policy").
 
-# 3. Set blocking relationships
-bd dep BD-49 BD-50  # BD-49 blocks BD-50
+# 3. Set blocking relationships between implementation tasks
+bd dep BD-48 BD-49  # BD-48 blocks BD-49
 
 # 4. Sync to remote so team sees tasks
 bd sync
@@ -58,7 +60,9 @@ bd sync
 7. Closes task: `bd close BD-XX`
 8. Syncs completion: `bd sync`
 
-### Code Reviewer
+### Code Reviewer (standalone `/code-reviewer` invocation only — never an Orchestrator-generated subtask)
+
+Orchestrator never creates a paired review subtask (see `agents/orchestrator.md` §"Review Gate Policy"); the deterministic `outputs_verified` + tests/lint gate is each task's gate, and Phase 4.5's holistic Code Reviewer is the sole LLM review, run once after FINALIZE. A Beads task for a *standalone* `/code-reviewer` run is something a user creates manually, if they want one tracked at all.
 
 **Two scenarios:**
 
@@ -67,7 +71,7 @@ bd sync
 2. Suggests creating task to track review
 3. Asks user if should continue
 
-**B. Review task exists:**
+**B. A manually-created review task exists:**
 1. Claims task: `bd claim BD-XX`
 2. Syncs: `bd sync`
 3. Performs review
@@ -96,14 +100,11 @@ bd create "JWT Authentication (EPIC)" --type epic
 bd create "Implement JwtGuard" --type task --depends-on BD-50
 # Output: Created BD-51
 
-bd create "Code Review - JwtGuard" --type subtask --depends-on BD-51
+# No paired "Code Review" subtask — the deterministic outputs_verified +
+# tests/lint gate is BD-51's gate; no bd task tracks it.
+
+bd create "Add JWT tests" --type task --depends-on BD-51
 # Output: Created BD-52
-
-bd create "Add JWT tests" --type task --depends-on BD-52
-# Output: Created BD-53
-
-# Set dependencies
-bd dep BD-52 BD-53  # Review blocks tests
 
 # Sync to remote
 bd sync
@@ -116,38 +117,38 @@ bd sync
 ## Beads Task Structure Created
 - BD-50: JWT Authentication (EPIC)
 - BD-51: Implement JwtGuard (TASK) - **CLAIMED, starting work**
-- BD-52: Code Review - JwtGuard (SUBTASK) - blocks BD-53
-- BD-53: Add JWT tests (TASK)
+- BD-52: Add JWT tests (TASK) - blocked on BD-51
 
 Now starting work on BD-51...
 ```
 
-### Code Reviewer with Existing Task
+### Standalone Code Reviewer with a Manually-Tracked Task
 
 ```bash
 # User runs: /code-reviewer src/auth/jwt.guard.ts
+# (a standalone review the user chose to track — NOT an Orchestrator-generated subtask)
 
 # Agent checks for task
 bd list | grep "Code Review"
-# Output: BD-52 [open] Code Review - JwtGuard
+# Output: BD-54 [open] Code Review - JwtGuard (created manually by the user)
 
 # Claim and sync
-bd claim BD-52
+bd claim BD-54
 bd sync
 
 # Perform review...
 
 # Add decision comment
-bd comment BD-52 "Decision: PASS - All criteria met. Type safety ✓, Tests ≥80% ✓, Pattern match ✓"
+bd comment BD-54 "Decision: PASS - All criteria met. Type safety ✓, Tests ≥80% ✓, Pattern match ✓"
 
 # Close and sync
-bd close BD-52
+bd close BD-54
 bd sync
 
 # Agent outputs:
 ## Code Review Decision: PASS
 
-BD-52 marked complete. BD-53 (Add JWT tests) is now unblocked.
+BD-54 marked complete.
 ```
 
 ### Code Reviewer with No Task
@@ -172,19 +173,19 @@ Continue with review? (Y/n)
 
 ## Common Patterns
 
-### Claiming Next Task After Review Passes
+### Claiming Next Task After the Gate Passes
 
 ```bash
-# Review completed and passed
-bd close BD-52
+# outputs_verified + tests/lint gate passed for BD-51
+bd close BD-51
 bd sync
 
 # Check what unblocked
 bd list | grep "open"
-# Output: BD-53 [open] Add JWT tests
+# Output: BD-52 [open] Add JWT tests
 
 # Claim next task
-bd claim BD-53
+bd claim BD-52
 bd sync
 ```
 
@@ -250,7 +251,7 @@ bd sync --pull
 
 Use this skill to ensure:
 - [ ] All created tasks have clear titles
-- [ ] Dependencies properly set (review blocks next task)
+- [ ] Dependencies properly set (task-to-task, never task-to-review-subtask)
 - [ ] Tasks claimed before starting work
 - [ ] Status synced after every change
 - [ ] Comments include decision rationale

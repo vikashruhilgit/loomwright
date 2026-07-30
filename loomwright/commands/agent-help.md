@@ -232,10 +232,9 @@ project-BD-15a/             ← worktree for Worker A
 project-BD-15c/             ← worktree for Worker C
 ```
 
-**Review Gates:**
-- **PASS:** Continue; launch newly unblocked subtasks
-- **FAIL:** Spawn fix worker with retry context (max 3 attempts)
-- **NEEDS_HUMAN:** Checkpoint, pause, exit with resume instructions
+**Gates:**
+- Per-subtask: deterministic `outputs_verified` + tests/lint gate — **PASS:** continue, launch newly unblocked subtasks (no per-subtask LLM reviewer at any threshold)
+- Phase 4.5 holistic Code Reviewer (sole LLM review, once after FINALIZE) — **PASS:** mark completed. **FAIL:** spawn fix worker with retry context (max 3 attempts). **NEEDS_HUMAN:** checkpoint, pause, exit with resume instructions
 
 **State Management:**
 - State externalized to `.supervisor/` directory (auto-created, gitignored)
@@ -257,9 +256,9 @@ $ /supervisor
 - Subtasks: 3, Parallel: 2 launchable, 1 blocked
 
 ### Phase 3: EXECUTE
-- BD-15a: PASS ✓ (parallel)
-- BD-15c: PASS ✓ (parallel)
-- BD-15b: PASS ✓ (unblocked after BD-15a)
+- BD-15a: outputs_verified + tests/lint PASS ✓ (parallel)
+- BD-15c: outputs_verified + tests/lint PASS ✓ (parallel)
+- BD-15b: outputs_verified + tests/lint PASS ✓ (unblocked after BD-15a)
 
 ### Phase 4: FINALIZE
 - PR: #42 — https://github.com/org/repo/pull/42

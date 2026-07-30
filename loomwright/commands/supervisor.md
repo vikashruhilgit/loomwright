@@ -157,10 +157,9 @@ SUPERVISOR (pure orchestrator, budget: 50 tool calls)
     ├─> Product Owner (blocking, if vague requirements)
     ├─> Orchestrator (blocking, task decomposition)
     └─> Execute Manager (blocking, Phase 3, budget: 60 tool calls)
-        ├─> Worker A (background, git worktree A)
-        ├─> Worker B (background, git worktree B)
-        ├─> Reviewer A (background, after Worker A)
-        └─> Reviewer B (background, after Worker B)
+        ├─> Worker A (background, git worktree A) → outputs_verified gate
+        └─> Worker B (background, git worktree B) → outputs_verified gate
+        (no per-subtask reviewer — Phase 4.5's holistic Code Reviewer is the sole LLM review, run once after FINALIZE)
 ```
 
 ### Parallel Execution via Git Worktree
@@ -214,17 +213,17 @@ $ /supervisor
 ### Phase 3: EXECUTE — BD-15a
 - Worker: parallel
 - Files: src/auth/jwt.guard.ts
-- Review: PASS ✓
+- Gate: outputs_verified + tests/lint PASS ✓
 
 ### Phase 3: EXECUTE — BD-15c
 - Worker: parallel
 - Files: src/auth/cookie.service.ts
-- Review: PASS ✓
+- Gate: outputs_verified + tests/lint PASS ✓
 
 ### Phase 3: EXECUTE — BD-15b (unblocked)
 - Worker: parallel
 - Files: src/auth/refresh.controller.ts
-- Review: PASS ✓
+- Gate: outputs_verified + tests/lint PASS ✓
 
 ### Phase 4: FINALIZE
 - Merges: 3 branches → feature/BD-15-user-auth
@@ -247,15 +246,21 @@ $ /supervisor
 
 The `SUPERVISOR_RESULT` block (schema v1, validated by the SubagentStop hook) is emitted from Phase 4.5's completion tail — one block per task. Phase 5 LOOP emits nothing. In multi-task sessions, multiple blocks appear in order; the hook validates the last one. See `docs/RESULT_SCHEMAS.md` for the full schema.
 
-## Review Gates
+## Gate Decisions
 
-The Supervisor handles review decisions:
+Per-subtask, the deterministic `outputs_verified` + tests/lint gate decides:
 
 | Decision | Action |
 |----------|--------|
 | **PASS** | Continue; launch newly unblocked subtasks |
-| **FAIL** (< 3 attempts) | Spawn fix worker with retry context |
-| **FAIL** (3 attempts) | Checkpoint, escalate to human |
+
+Phase 4.5's holistic Code Reviewer (the sole LLM review, run once after FINALIZE) decides:
+
+| Decision | Action |
+|----------|--------|
+| **PASS** | Mark task completed |
+| **FAIL** (< `--heal-iterations`) | Spawn fix worker with retry context |
+| **FAIL** (max iterations) | Checkpoint, escalate to human |
 | **NEEDS_HUMAN** | Checkpoint, pause, exit with resume command |
 
 ## State Persistence

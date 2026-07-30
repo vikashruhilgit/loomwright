@@ -100,10 +100,12 @@ Autonomously manage the complete development workflow from task pickup to PR cre
     │   visor/)   │└────┬──────────┘ └──────┬────────────┘
     └─────────────┘     │                    │
                    ┌────▼──────────┐ ┌──────▼────────────┐
-                   │  Reviewer A   │ │  Reviewer B       │
-                   │  (background) │ │  (background)     │
+                   │  Gate A       │ │  Gate B           │
+                   │  (determ.)    │ │  (determ.)        │
                    └───────────────┘ └───────────────────┘
 ```
+
+No per-subtask LLM reviewer is spawned at any threshold — Phase 4.5's holistic Code Reviewer is the sole LLM review, run once over the integrated diff after FINALIZE (see `agents/orchestrator.md` §"Review Gate Policy").
 
 ---
 
