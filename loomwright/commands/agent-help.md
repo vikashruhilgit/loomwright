@@ -352,17 +352,16 @@ $ /supervisor
 **What it does:**
 - Understands your goal
 - Reads project context (CLAUDE.md, Beads issue tracker state)
-- Defaults to one Beads task per `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold" (split only for a named reason); applies the threshold-conditional Review Gate Policy
-- Above the threshold, each implementation task gets a review subtask; below it, Supervisor's Phase 4.5 integrated review is the gate
-- Identifies dependencies (when a review subtask exists, it blocks next task)
+- Defaults to one Beads task per `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold" (split only for a named reason); applies the Review Gate Policy
+- No per-subtask review subtask is generated at any threshold — the deterministic `outputs_verified`/tests-lint gate plus Supervisor's Phase 4.5 integrated review is the gate throughout (see `agents/orchestrator.md` §"Review Gate Policy")
+- Identifies dependencies (task-to-task only — no review subtask ever blocks the next task)
 - Provides clear acceptance criteria and skill references
 
 **Example Output:**
 - BD-20: Dark Mode Toggle (EPIC)
 - BD-21: Implement dark mode toggle (TASK)
-- BD-22: Code Review - Dark mode (SUBTASK) ← blocks BD-23
-- BD-23: Add tests (TASK)
-- BD-24: Commit & Link (TASK)
+- BD-22: Add tests (TASK)
+- BD-23: Commit & Link (TASK)
 
 **When to Use:**
 - Start of new work
@@ -871,26 +870,26 @@ bd close BD-21
 ### Scenario 1: Fix a Bug
 ```
 /orchestrator goal: "Fix login button not working on mobile"
-→ Creates Beads tasks: BD-30 (fix), BD-31 (review), BD-32 (commit)
+→ Creates Beads tasks: BD-30 (fix), BD-31 (commit) — no per-subtask review task at any threshold (see agents/orchestrator.md §"Review Gate Policy")
 → bd claim BD-30, implement fix
-→ /code-reviewer to verify → PASS on BD-31
-→ Commit and bd close BD-32
+→ Supervisor's Phase 4.5 integrated review is the gate (only when executed via `/supervisor`); hand-executing the plan? run `/code-reviewer` yourself first
+→ Commit and bd close BD-31
 ```
 
 ### Scenario 2: Add a Feature
 ```
 /orchestrator goal: "Add dark mode to application"
-→ Creates EPIC — one task by default; splits (with a review-gate task per split) only above the Decomposition Threshold
+→ Creates EPIC — one task by default; splits only above the Decomposition Threshold. No per-subtask review task is ever generated (see Review Gate Policy)
 → Below threshold: BD-40: Implement → BD-41: Commit (Supervisor's Phase 4.5 integrated review is the gate, no per-task reviewer — **only when executed via `/supervisor`**; a plan you hand-execute has no Phase 4.5, so run `/code-reviewer` yourself before committing)
-→ Above threshold (example): BD-40: Implement → BD-41: Review (blocks) → BD-42: Tests → BD-43: Commit
+→ Above threshold (example): BD-40: Implement → BD-41: Tests → BD-42: Commit (same gate as below threshold — task-to-task dependencies only, no per-task reviewer)
 → bd close each task when done
 ```
 
 ### Scenario 3: Refactor Code
 ```
 /orchestrator goal: "Refactor Settings component to use hooks"
-→ Creates task(s) per the Decomposition Threshold (review-gate task added only above threshold)
-→ /code-reviewer checks pattern consistency
+→ Creates task(s) per the Decomposition Threshold — no per-subtask review task at any threshold (see Review Gate Policy)
+→ /code-reviewer checks pattern consistency (or Supervisor's Phase 4.5 integrated review, when run via `/supervisor`)
 → Commit with Beads linking
 ```
 
@@ -1081,7 +1080,7 @@ bd close BD-XX
 
 loomwright/              # Nested plugin root
 ├── .claude-plugin/
-│   └── plugin.json                   # Plugin metadata (v15.17.0)
+│   └── plugin.json                   # Plugin metadata (v15.18.0)
 ├── commands/                         # Slash commands (21)
 │   ├── launch-pad.md                 # Supervisor readiness
 │   ├── supervisor.md                 # Parallel orchestrator (v4)

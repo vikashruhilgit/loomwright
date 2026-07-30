@@ -224,7 +224,7 @@ Autonomously manage the complete development workflow from task pickup to PR cre
    - Mark each subtask as LAUNCHABLE or BLOCKED
    - If `--sequential` flag: mark all as sequential (no parallelism)
 3. Progress state is not written here — see the pointer in Phase 1 ACQUIRE step 5.
-4. Path selection: exactly 1 subtask → Single-Agent Path (skip worktree setup, execute inline, no per-subtask reviewer); `--sequential` with more than 1 subtask → Sequential Path (skip worktree setup, execute inline, per-subtask reviewer runs); otherwise → Parallel Path (Execute Manager, worktrees)
+4. Path selection: exactly 1 subtask → Single-Agent Path (skip worktree setup, execute inline, no per-subtask reviewer); `--sequential` with more than 1 subtask → Sequential Path (skip worktree setup, execute inline, no per-subtask reviewer — same deterministic gate as every other threshold, see `agents/orchestrator.md` §"Review Gate Policy"); otherwise → Parallel Path (Execute Manager, worktrees, no per-subtask reviewer)
 
 **Parallelism rules:**
 ```
@@ -269,20 +269,18 @@ The default path below `skills/supervisor-readiness/SKILL.md` §"Decomposition T
 3. **Deterministic gate (zero-token, no reviewer spawn):** check the worker's own `outputs_verified`/`outputs_gap` fields — the same check the Execute Manager runs pre-spawn (`agents/execute-manager.md:222`) — plus tests/lint on the branch (run by the Supervisor via Bash). **LSP diagnostics are the worker's own** — `agents/worker.md` declares the `LSP` tool and runs them during implementation; the Supervisor has no LSP tool, so nothing re-runs them here. Deeper semantic review is Phase 4.5's. `outputs_gap` non-empty or `status != completed` → retry (bounded) or pause, per existing WORKER_RESULT handling.
 4. Skip all worktree logic and Execute Manager delegation. Proceed directly to Phase 4 FINALIZE.
 
-> **⚠️ `--skip-self-heal` on this path leaves NO semantic review.** Phase 4.5's Code Reviewer is the only one the Single-Agent Path has, so combining the flag with a single-subtask job (the default shape) leaves only the deterministic gate — `outputs_verified` + tests/lint (plus the worker's own LSP diagnostics) — and nothing reads the code for intent. This is a **behavior change from the pre-v15.15.0 fast path**, which spawned a per-subtask reviewer regardless of the flag and so always yielded one review. `--skip-self-heal` is an emergency bypass; do not pair it with the default single-agent shape unless you are reviewing by hand.
+> **⚠️ `--skip-self-heal` leaves NO semantic review — true at EVERY threshold, not just this path.** Phase 4.5's Code Reviewer is the SOLE LLM review lens across all three Phase 3 paths (Single-Agent, Sequential, Parallel) — no path spawns a per-subtask reviewer any more (see `agents/orchestrator.md` §"Review Gate Policy" and `AGENT_GUIDELINES.md` §"Review Counter-Pressure Rule"), so combining the flag with ANY job shape leaves only the deterministic gate — `outputs_verified` + tests/lint (plus the worker's own LSP diagnostics) — and nothing reads the code for intent. This is a **behavior change from the pre-v15.15.0 fast path** (which spawned a per-subtask reviewer on Single-Agent-shaped jobs regardless of the flag) and from the pre-Fix-7 Sequential/Parallel paths (which spawned a per-subtask reviewer unconditionally). `--skip-self-heal` is an emergency bypass; do not pair it with any default job shape unless you are reviewing by hand.
 
 
 #### Sequential Path (`--sequential`, more than 1 subtask)
 
-Unchanged from prior behavior: `--sequential` keeps its existing meaning (no worktrees, serial execution) and is selected by the flag, not by subtask count — it is a distinct path from Single-Agent above and still spawns a per-subtask Code Reviewer.
+`--sequential` keeps its existing meaning (no worktrees, serial execution) and is selected by the flag, not by subtask count — it is a distinct path from Single-Agent above. **No per-subtask Code Reviewer is spawned** — the deterministic `outputs_verified`/tests-lint gate is each subtask's gate, and Phase 4.5's holistic Code Reviewer (below) is the sole LLM review of the integrated result, same as every other threshold (see `agents/orchestrator.md` §"Review Gate Policy").
 
 1. For each subtask (in order):
    - Spawn implementation worker (blocking, in project root)
      - When `cost_profile=cheap`: include `model: "sonnet"` in the Task call
    - Record result via Context-Keeper
-   - Spawn Code Reviewer (blocking)
-     - When `cost_profile=cheap`: include `model: "sonnet"` in the Task call
-   - Handle decision: PASS → next, FAIL → retry, NEEDS_HUMAN → pause
+   - **Deterministic gate (zero-token, no reviewer spawn):** check the worker's own `outputs_verified`/`outputs_gap` fields plus tests/lint on the branch — same check as the Single-Agent Path step 3 above. `outputs_gap` non-empty or `status != completed` → retry (bounded) or pause, per existing WORKER_RESULT handling.
 2. Skip all worktree logic and Execute Manager delegation
 
 #### Parallel Path (multi-subtask)
@@ -414,7 +412,7 @@ When the Execute Manager surfaces an `EXECUTE_CHECKPOINT` with `adjudication_req
 
 **One-line pointers (full procedure in the skill Part 2):**
 - **Rubric grader spawn condition:** spawn `loomwright:rubric-grader` ONLY when the in-progress brief has an `## Outcomes Rubric` section AND `heal_decision == PASS`; read-only and advisory; `rubric_score = null` otherwise (no rubric, ESCALATED path, or grader parse failure — never fails the task).
-- **Until-mergeable drain dispatch (completion-tail step 5.5):** DEFAULT ON after a PASS/normal completion that produced a PR; opt-outs: `--no-auto-review` / `.auto_review == false` (suppress the dispatch entirely), `--no-until-mergeable` / `.auto_until_mergeable == false` (dispatched runner runs the plain diff-only `/review-pr`). Best-effort, fire-and-forget, never merges, never affects `SUPERVISOR_RESULT` or control flow.
+- **Until-mergeable drain dispatch (completion-tail step 5.5):** DEFAULT ON after a PASS/normal completion that produced a PR; opt-outs: `--no-auto-review` / `.auto_review == false` (suppress the dispatch entirely), `--no-until-mergeable` / `.auto_until_mergeable == false` (dispatched runner runs the plain diff-only `/review-pr`). **The dispatched `--until-mergeable` drain is heal-only by default — it spawns no `code-reviewer` diff review of its own** (its only spawn is the `general-purpose` fix worker), with **exactly ONE exception**: the earned fallback (`no_review_lens_posted`, `skills/review-heal/SKILL.md` §"Earned Fallback Review"), which runs at most one diff review per drain run when the drain's own read shows no review lens actually posted, fail-CLOSED toward running it. Not restated here — semantics owned by the skill. Best-effort, fire-and-forget, never merges, never affects `SUPERVISOR_RESULT` or control flow.
 - **`until_mergeable_dispatched` marker-reconcile rule:** resolve from the on-disk per-PR dispatch marker (`.supervisor/review-dispatch/`), NEVER from "did I dispatch" — the `PostToolUse[Bash]` hook backstop dispatches invisibly to this context, so keying on control flow records false negatives. The awk marker-check snippet's single agent-side home is the skill Part 2, completion-tail step 5.5 "Observability (AC8b)" (the inline path's mirror copy in `commands/supervisor.md` §Observability stays in place there).
 - **Advisory red-team lens:** opt-in (`--red-team` / `.red_team_high_risk`), DEFAULT-OFF, high-risk-only, a single pass OUTSIDE the heal loop, strictly NON-GATING and fail-safe — `red_team_advisory` (`ran|skipped_low_risk|disabled|error`) is carried into `SUPERVISOR_RESULT.summary` + the job `## Outcome` block.
 - **Multi-voter verification (`--multi-voter-heal`):** opt-in, DEFAULT-OFF (config `.multi_voter_heal`; `--no-multi-voter-heal` suppresses; flag wins — resolved at Phase 0 as `MULTI_VOTER_HEAL`). When enabled, the loop's review step spawns a second independent `red-team-reviewer` verification vote alongside `code-reviewer` (NOT the standalone `--red-team` lens) and a BLOCKING/HIGH `new` finding is fixed ONLY if it survives the other lens's refute check — refuted findings are logged, not fixed; per-run `findings_raised`/`findings_refuted`/`findings_fixed` counters are carried in `SUPERVISOR_RESULT.summary` (additive prose, no schema bump). `CODE_REVIEW_RESULT` stays the sole gating signal; heal_decision semantics, `--heal-iterations` bounds, never-merge, and the completion tail are unchanged — multi-voter changes WHICH findings get fixed, not the gate shape. Protocol authority (incl. the `--red-team` interaction): the skill Part 2 §"Multi-voter verification".
@@ -646,9 +644,8 @@ All flags in the "Flags and Options" table above combine with these shapes; the 
 | **Orchestrator** | Phase 2 | Blocking | Decompose into subtasks |
 | **Execute Manager** | Phase 3 (multi-subtask) | Blocking | Own poll loop + worker/reviewer lifecycle |
 | **Worker** | Phase 3 (Single-Agent or Sequential path) | Blocking | Single-Agent: implement ALL criteria inline in one worker; Sequential: implement one subtask inline per worker |
-| **Code Reviewer** | Phase 3 (Sequential path only) | Blocking | Review each subtask inline — NOT spawned on the Single-Agent path (Phase 4.5 is the single review there) |
 
-**Note:** In multi-subtask workflows, Worker and Code Reviewer are spawned by the Execute Manager, not directly by the Supervisor.
+**Note:** No per-subtask Code Reviewer is spawned on any Phase 3 path (Single-Agent, Sequential, or Parallel) — the deterministic `outputs_verified`/tests-lint gate is each subtask's gate; Phase 4.5's holistic Code Reviewer is the sole LLM review, run once over the integrated result. See `agents/orchestrator.md` §"Review Gate Policy". In multi-subtask workflows, Worker is spawned by the Execute Manager, not directly by the Supervisor.
 
 ### Summary Extraction
 
@@ -660,14 +657,13 @@ After each blocking subagent, extract minimal summary:
 | Product Owner | `"Story: {title}. Criteria: {count} items."` |
 | Orchestrator | `"Created {N} subtasks: {IDs}. Launchable: {IDs}"` |
 | Execute Manager | Parse EXECUTE_RESULT or EXECUTE_CHECKPOINT block |
-| Worker (Single-Agent / Sequential path) | Parse WORKER_RESULT block from output |
-| Code Reviewer (Sequential path, Phase 3) | Parse CODE_REVIEW_RESULT block from output |
+| Worker (Single-Agent / Sequential path) | Parse WORKER_RESULT block from output; deterministic `outputs_verified`/`outputs_gap` gate replaces a per-subtask reviewer parse |
 | Code Reviewer (Phase 4.5 integration review) | Parse CODE_REVIEW_RESULT block; filter issues where category=new AND severity in [BLOCKING, HIGH] for fix-task input |
 | Fix task (Phase 4.5) | Parse FIX_RESULT block from output |
 
 ### Subagent Spawn Contracts
 
-The exact Task tool call shapes for each subagent — Context-Keeper, Orchestrator, Execute Manager, Single-Agent Worker, Sequential-path Worker, Sequential-path Code Reviewer — live in `skills/async-orchestration/SKILL.md` **Part 2 §"Subagent Spawn Contracts"** (moved verbatim from this file; the skill is Supervisor-preloaded). Non-negotiables carried by those shapes:
+The exact Task tool call shapes for each subagent — Context-Keeper, Orchestrator, Execute Manager, Single-Agent Worker, Sequential-path Worker (no per-subtask Code Reviewer spawn accompanies either worker contract) — live in `skills/async-orchestration/SKILL.md` **Part 2 §"Subagent Spawn Contracts"** (moved verbatim from this file; the skill is Supervisor-preloaded). Non-negotiables carried by those shapes:
 
 - Every spawn honors `cost_profile`: include `model: "sonnet"` ONLY when `cost_profile=cheap`; omit the field entirely when `cost_profile=default`.
 - The Single-Agent and Sequential-path Worker prompts pass the brief's `provides:` contract VERBATIM (`Provides (verbatim from the brief's Subtask Contracts): {provides YAML}`) — `provides:` is REQUIRED input for the worker's Step 5.5 outputs verification; omitting it silently no-ops the v12 outputs gate.

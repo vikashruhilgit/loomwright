@@ -40,6 +40,25 @@ This gate has three facets:
 
 ---
 
+## Review Counter-Pressure Rule
+
+A review pass is a cost (tokens, latency, a human's attention) that must be earned, not assumed. Before adding, keeping, or defending a review pass on a PR, answer "is this pass owed?" against the three parts below.
+
+1. **A pass is owed only if it has information the prior pass lacked.** Same lens over the same diff finds the same things — review *count* is not review *quality*. A pass that cannot name what it sees that the prior pass didn't is redundant by construction.
+2. **A pass is ALSO owed when the pass expected to supply that information verifiably did not run.** "Verifiably" means asserted on *posted output* (comments/reviews), never on a run conclusion — a green check is not evidence a review happened. Concrete case: PR #117 in this repo touched 2 `.github/workflows/*` files and its `claude-review` check passed **green in 14 seconds with zero posted comments** — the documented `claude-code-action` self-skip on workflow-touching PRs, which still exits 0. PR #118, by contrast, passed in 3m53s with a real posted review. Treat this as one confirming instance of a documented upstream mechanism, not a measured rate.
+3. **Deterministic gates are not passes and are never traded against this rule.** Things like the `outputs_verified` gate, tests, and lint cost no tokens and carry no lens — they are prerequisites, not competitors, to the two lenses below.
+
+**The default flow's two sanctioned lenses**, each with an information advantage the other lacks:
+
+| Lens | Information it has that the other lacks |
+|---|---|
+| Phase 4.5 integrated review | The working tree, the brief, and the Outcomes Rubric — it can check intent-vs-implementation, not just the diff |
+| CI review (`claude-review`) | Fully independent context, PR-only — no memory of the authoring session, so it cannot inherit the implementer's blind spots |
+
+A fifth pass (or a third lens) has to name an information advantage neither row above already covers, or show that one of these two rows verifiably did not run. Every surviving pass elsewhere in this repo cites this section by path — it is not restated.
+
+---
+
 ## Implementation Standards
 
 ### Type Safety & Code Style
@@ -437,7 +456,7 @@ This format applies to ALL agent outputs (Orchestrator, Code Reviewer, Red Team 
 | **Context-Keeper** | State file | State file (sole writer) | Externalized state management |
 | **Worker** | Code files in worktree | Code files in worktree | Isolated implementation in git worktrees |
 | **Product Owner** | CLAUDE.md, domain context, Beads | Beads stories | Requirements, user stories |
-| **Orchestrator** | CLAUDE.md, Beads state, git history | Beads tasks (proposes) | Planning, task breakdown with threshold-conditional review gates |
+| **Orchestrator** | CLAUDE.md, Beads state, git history | Beads tasks (proposes) | Planning, task breakdown; review gate policy fixed at every threshold (see `agents/orchestrator.md` §"Review Gate Policy") |
 | **Code Reviewer** | CLAUDE.md, code files, Beads task | Beads comments (review decisions) | Code quality, security, PASS/FAIL/NEEDS_HUMAN |
 | **Red Team Reviewer** | CLAUDE.md, code files, Context7 docs | Audit report | Adversarial review, find production failures |
 | **QA Strategist** | Source code, discovery data, .qa-summary.md | Risk classification, STRATEGIST_VERDICT | Risk-based test strategy and audit |
@@ -493,7 +512,7 @@ This format applies to ALL agent outputs (Orchestrator, Code Reviewer, Red Team 
   - Never access the Supervisor state file
 
 #### **Orchestrator** (Planning Agent)
-- **Objective:** Break goals into Beads tasks (default ONE task, split only for a named reason) with threshold-conditional review gates
+- **Objective:** Break goals into Beads tasks (default ONE task, split only for a named reason); review gate policy is fixed at every threshold — see `agents/orchestrator.md` §"Review Gate Policy"
 - **Reads:** CLAUDE.md, Beads state (`bd list`), git history
 - **Writes:** Beads tasks (EPIC → TASK → SUBTASK structure)
 - **Responsibilities:**
@@ -501,7 +520,7 @@ This format applies to ALL agent outputs (Orchestrator, Code Reviewer, Red Team 
   - Understand goal/task-details (inline: `goal: "add JWT with refresh tokens"`)
   - If CLAUDE.md missing: auto-detect tech stack, suggest initial structure
   - Default to one Beads task per `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold"; split only for a named reason
-  - Above the threshold, every implementation task gets a review subtask (quality gate); below it, Supervisor's Phase 4.5 integrated review is the gate
+  - No per-subtask LLM review subtask at any threshold — the deterministic `outputs_verified` gate plus tests/lint is the per-subtask gate, and Supervisor's Phase 4.5 integrated review is the sole LLM gate (see `agents/orchestrator.md` §"Review Gate Policy")
   - Reference relevant skill files for guidance
   - Output: Context summary + Beads task structure + skill references
 - **Output (follows standard format):**
@@ -644,12 +663,12 @@ All hooks are centralized in `hooks.json`. As of v15.17.0 there are **24 hook en
 **Task Structure:**
 - **EPIC:** Large feature (contains multiple tasks)
 - **TASK:** Implementation work (30-60 min)
-- **SUBTASK:** Review gate (blocks next task) — above the Decomposition Threshold
+- **SUBTASK:** Smallest independently-verifiable unit of implementation work (not a review gate — see below)
 
-**Review Gates (threshold-conditional — see `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold"):**
-- Above the threshold, every implementation task has a review subtask that blocks the next implementation task
-- Below the threshold (single-agent default), no per-subtask reviewer — Supervisor's Phase 4.5 integrated review is the gate
-- Review decisions: PASS (proceed), FAIL (fix and re-review), NEEDS_HUMAN (creates bug issues)
+**Review Gates (no per-subtask LLM reviewer at any threshold — authoritative policy: `agents/orchestrator.md` §"Review Gate Policy"; split trigger: `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold"):**
+- At every threshold, above or below, the deterministic `outputs_verified` gate plus tests/lint is the per-subtask gate — no LLM review subtask is generated either side of the threshold
+- Supervisor's Phase 4.5 integrated review is the sole LLM gate, run once against the integrated diff
+- Phase 4.5's `CODE_REVIEW_RESULT` decision: PASS (proceed), FAIL (fix and re-review), NEEDS_HUMAN (creates bug issues)
 
 **Project Files:**
 ```

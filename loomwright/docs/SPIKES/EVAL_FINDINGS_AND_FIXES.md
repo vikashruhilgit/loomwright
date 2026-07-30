@@ -440,6 +440,16 @@ stopped — check `pgrep` and the branch. Same discipline as 6a.
 
 ## Fix 7 — The review layer has no counter-pressure either
 
+> **STATUS 2026-07-30:** **SHIPPED in v15.18.0** — the Review Counter-Pressure Rule was written
+> (`AGENT_GUIDELINES.md` §"Review Counter-Pressure Rule"), the `--until-mergeable` drain (pass 3) is
+> now deterministically heal-only by default with an evidence-gated "Earned Fallback Review" (see
+> `skills/review-heal/SKILL.md` §"Until-Mergeable Mode"), and the per-subtask `code-reviewer` (pass 1)
+> is gone above the Decomposition Threshold and on the Sequential Path (already gone below it, per
+> Fix 1 / v15.15.0) — see `agents/orchestrator.md` §"Review Gate Policy". The problem-statement prose
+> below (what ran by default, and why a blanket cut was wrong) is preserved **as a historical
+> description of the pre-fix state** — the "Baseline (pre-change)" block at the end of this section
+> records the measurement + live verification taken before the change landed.
+
 **Fix 1's sibling.** Fix 1 shows nothing opposes subtask fan-out. The same is true of review passes:
 every reviewing layer was added independently, each defaults ON, and no rule anywhere says a later
 pass should skip what an earlier one already covered. 4b adds that sentence for Phase 4.5 vs
@@ -488,6 +498,48 @@ is answerable from data already being collected — don't argue it.
 > four passes with the same lens over the same diff find the same things four times. Two passes with
 > *different information* find different things. The goal is a stated rule about when a pass is
 > owed, which is what the plugin has never had.
+
+### Baseline (pre-change)
+
+**Postmortem corpus baseline.** Corpus: `.supervisor/postmortem/results.jsonl`, **n=77 at
+2026-07-29**. Per-source `review_rounds` means: **legacy (`source: null`) n=50 mean 3.42** (5
+zero-round); **`automate_drain` n=17 mean 2.82** (2 zero-round); **`manual_postmortem` n=10 mean
+3.80** (0 zero-round); **overall mean 3.34**. Re-measure command, so an after-figure is produced the
+same way:
+
+```
+jq -rs 'group_by(.source)[]|{src:(.[0].source//"legacy"),n:length,mean:((([.[].review_rounds]|add)/length)*100|round/100)}' .supervisor/postmortem/results.jsonl
+```
+
+**Honesty note (required):** these means mix requirement difficulty and plugin version across
+months and are **not** a controlled before/after. They are a *trend* baseline; a rise after this
+change is a prompt to investigate, not proof of causation — not a measured result.
+
+**Live CI-healing verification (captured 2026-07-30).** Asserted on posted comments/reviews, never
+on run conclusion, per the "verify before cutting anything" rule above:
+
+| PR | Files | `claude-review` check | Posted comments | Posted reviews |
+|---|---|---|---|---|
+| #118 | 37 | pass, 3m53s | 1 | 0 |
+| #117 | 2, both `.github/workflows/*` | pass, **14s** (self-skip) | 0 | 0 |
+| #116 | — | pass | 5 | 0 |
+| #115 | — | pass | 12 | 0 |
+
+Exact commands used, per PR:
+
+```
+gh pr view <n> --json comments,reviews \
+  -q '"comments: \(.comments|length) | reviews: \(.reviews|length)", (.comments[]|"  C \(.author.login)")'
+gh pr checks <n>          # for the check name + duration (14s self-skip vs 3m53s real review)
+gh pr view <n> --json files -q '[.files[].path]|map(select(test("\\.github/workflows")))'
+```
+
+**`reviews` was EMPTY (0) on all four PRs** — every real finding arrived as a PR **issue comment**,
+never as a GitHub "review." This is why the drain's channel-draining half is load-bearing (it is the
+only thing that heals those findings) and why detection must never gate on `--json reviews`. These
+are **four observations on one repo, not a controlled sample** — the self-skip *mechanism*
+(`claude-code-action` skipping itself on any workflow-touching PR while still exiting 0) is documented
+upstream behaviour, and #117 is one confirming instance of it, not a measured rate.
 
 ---
 

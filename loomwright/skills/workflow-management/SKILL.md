@@ -59,7 +59,7 @@ PRE-FLIGHT SYNC:
 PLAN:
   - subtasks created + parallelism analyzed → EXECUTE
   - exactly 1 subtask → EXECUTE (Single-Agent Path, no worktrees, no per-subtask reviewer)
-  - --sequential (more than 1 subtask) → EXECUTE (Sequential Path, no worktrees, per-subtask reviewer runs)
+  - --sequential (more than 1 subtask) → EXECUTE (Sequential Path, no worktrees, no per-subtask reviewer — same deterministic gate + Phase 4.5 review as every other threshold, see `agents/orchestrator.md` §"Review Gate Policy")
 
 EXECUTE:
   - EXECUTE_RESULT (completed) → FINALIZE
@@ -241,8 +241,10 @@ while uncompleted > 0:
   # Check workers (non-blocking)
   TaskOutput(worker_id, block=false, timeout=1000)
 
-  # Check reviewers (non-blocking)
-  TaskOutput(reviewer_id, block=false, timeout=1000)
+  # No reviewer to poll — no per-subtask reviewer is spawned above threshold
+  # or on the Sequential Path (see agents/orchestrator.md §"Review Gate Policy").
+  # The deterministic outputs_verified gate plus tests/lint is the per-subtask
+  # gate; Phase 4.5's integrated review is the sole LLM gate.
 
   # Launch newly unblocked subtasks
   # If idle, block on earliest pending
@@ -262,8 +264,8 @@ See `skills/async-orchestration/SKILL.md` for full details.
 
 | Error | Max Retries | Action |
 |-------|-------------|--------|
-| Code review FAIL | 3 | Fix issues, re-review |
-| Code review FAIL (3x) | - | Checkpoint, escalate to human |
+| `outputs_verified` gate gap (per-subtask) | - | Emit EXECUTE_CHECKPOINT with `adjudication_required: true` — no per-subtask review retry loop exists; see `agents/execute-manager.md` Step 4 |
+| Phase 4.5 integrated review FAIL | up to `--heal-iterations` (default 3) | Fix issues, re-review (self-heal loop, not per-subtask) |
 | NEEDS_HUMAN decision | - | Checkpoint, pause, await input |
 | Merge conflict | - | STOP, report files, await resolution |
 | Worker crash/timeout | 1 | Retry once, then escalate |
@@ -302,9 +304,8 @@ See `skills/async-orchestration/SKILL.md` for full details.
 | Context-Keeper | Blocking | State file mutations |
 | Product Owner | Blocking | Requirements refinement |
 | Orchestrator | Blocking | Task decomposition |
-| Execute Manager | Blocking | Phase 3 poll loop + worker/reviewer lifecycle |
+| Execute Manager | Blocking | Phase 3 poll loop + worker lifecycle (no per-subtask reviewer) |
 | Worker | Background (via EM) | Implementation (parallel) |
-| Code Reviewer | Background (via EM) | Review (parallel) |
 
 ### Summary Extraction
 
@@ -316,7 +317,6 @@ After each subagent, extract minimal summary:
 | Product Owner | `"Story: {title}. Criteria: {count} items."` |
 | Orchestrator | `"Created {N} subtasks: {IDs}. Launchable: {IDs}"` |
 | Worker (bg) | Parse WORKER_RESULT block |
-| Code Reviewer (bg) | Parse REVIEW_RESULT block |
 
 ## Task Selection
 

@@ -48,6 +48,7 @@ Before marking complete:
 - [ ] Docs/comments updated
 - [ ] Input validation in place
 - [ ] Related CLAUDE.md patterns reflected
+- [ ] **Is this review pass owed?** Before adding or running a review pass, check `AGENT_GUIDELINES.md` §"Review Counter-Pressure Rule" (citation only — not restated here).
 
 ## Code Quality Standards
 

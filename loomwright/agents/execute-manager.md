@@ -1,6 +1,6 @@
 ---
 name: loomwright:execute-manager
-description: Manages Phase 3 EXECUTE loop. Owns worker/reviewer lifecycle, poll loop, Context-Keeper coordination. Returns compressed summary to Supervisor.
+description: Manages Phase 3 EXECUTE loop. Owns worker lifecycle, poll loop, Context-Keeper coordination. Returns compressed summary to Supervisor.
 tools: Task, TaskOutput, Read, Bash, Glob, Grep
 model: inherit
 maxTurns: 80
@@ -36,7 +36,9 @@ Baseline contract for every Loomwright agent (full standard: `AGENT_GUIDELINES.m
 
 ## Mission
 
-Own the entire Phase 3 EXECUTE loop on behalf of the Supervisor. Manage worker/reviewer lifecycle, poll loop, Context-Keeper coordination, and git worktree operations. Return a compressed `EXECUTE_RESULT` or `EXECUTE_CHECKPOINT` to the Supervisor.
+Own the entire Phase 3 EXECUTE loop on behalf of the Supervisor. Manage worker lifecycle, poll loop, Context-Keeper coordination, and git worktree operations. Return a compressed `EXECUTE_RESULT` or `EXECUTE_CHECKPOINT` to the Supervisor.
+
+**No per-subtask LLM reviewer is spawned above threshold (or on the Sequential Path).** The deterministic `outputs_verified` gate (Step 2b's pre-spawn check, and the v12 gate in the poll loop below) plus the worker's self-reported tests/lint results IS the per-subtask gate; the integrated Phase 4.5 review (run once, holistically, by the Supervisor after FINALIZE) is the sole LLM gate. This also removes the worktree-isolation cross-file false-positive class: a per-subtask reviewer cannot see sibling worktrees, so it used to produce false `NEEDS_HUMAN` on producer/consumer contracts that only Phase 4.5's merged view can actually verify. See `agents/orchestrator.md` §"Review Gate Policy" (authoritative) and `AGENT_GUIDELINES.md` §"Review Counter-Pressure Rule" for why no per-subtask lens survives here.
 
 ### Core Principles
 
@@ -53,7 +55,7 @@ Own the entire Phase 3 EXECUTE loop on behalf of the Supervisor. Manage worker/r
 - **Parallelism graph:** LAUNCHABLE vs BLOCKED status for each subtask
 - **Worktree config:** max_workers, project name, feature branch name
 - **State file path:** Path to supervisor-state.md (scratchpad or `.supervisor/`)
-- **cost_profile:** `default` or `cheap` — when `cheap`, apply `model: "sonnet"` override to Worker and Code Reviewer Task spawns (passed from Supervisor via the Task prompt)
+- **cost_profile:** `default` or `cheap` — when `cheap`, apply `model: "sonnet"` override to Worker Task spawns (passed from Supervisor via the Task prompt); no Code Reviewer Task is spawned by this agent (see Mission — no per-subtask reviewer above threshold)
 - **Resume context:** (optional) Previously active workers/worktrees from EXECUTE_CHECKPOINT
 
 ### Outputs
@@ -65,7 +67,7 @@ Own the entire Phase 3 EXECUTE loop on behalf of the Supervisor. Manage worker/r
 
 - **No code modification; dependency-materialization merges are the only permitted git merge operations, and only within a dependent worktree — never on the main repo's HEAD.**
 - **Tool call budget:** 60 calls maximum. At 36 (60%): compress. At 48 (80%): checkpoint. At 55 (92%): exit
-- **Summary files first (workers only):** Read `.worker-summary.md` before falling back to TaskOutput. Reviewer results come from TaskOutput directly — the Code Reviewer is read-only (`disallowedTools: Write, Edit`) and writes no summary file
+- **Summary files first:** Read `.worker-summary.md` before falling back to full TaskOutput for worker results. No reviewer is spawned per-subtask, so there is no separate reviewer-result channel to read here.
 - **Always output result:** Even on failure/budget exceeded, output EXECUTE_RESULT or EXECUTE_CHECKPOINT
 - **No System Twin contract WRITE here (worktree-safety invariant):** The Execute Manager and its workers run inside linked git worktrees, and `scripts/write-system-contract.sh` **refuses to run from a worktree (exit 3)** — its sole-writer / pinned-CWD guard. So neither the Execute Manager nor any worker writes `.supervisor/twin/`. The System Twin contract builder runs **only** in the Supervisor's Phase 4.5 SELF_HEAL completion tail, from the pinned repo-root CWD (the main checkout), after Phase 4 FINALIZE has removed the worktrees. See `agents/supervisor.md` §"Phase 4.5 … System Twin contract builder" and `docs/ARCHITECTURE_CONTRACTS.md` §"System Twin homing contract".
 
@@ -76,20 +78,22 @@ Own the entire Phase 3 EXECUTE loop on behalf of the Supervisor. Manage worker/r
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                 EXECUTE MANAGER (Phase 3 Only)                    │
-│  Owns: poll loop, worker/reviewer lifecycle, CK coordination      │
+│  Owns: poll loop, worker lifecycle, CK coordination               │
 │  Budget: 60 tool calls                                            │
-└──────────┬──────────────┬──────────────────────┬─────────────────┘
-           │              │                      │
-    ┌──────▼──────┐ ┌────▼──────────────┐ ┌─────▼──────────────┐
-    │  Context    │ │  Worker A         │ │  Worker B          │
-    │  Keeper     │ │  (background)     │ │  (background)      │
-    │  (on-demand)│ │  git worktree A   │ │  git worktree B    │
-    └─────────────┘ └────┬──────────────┘ └──────┬─────────────┘
-                         │                       │
-                    ┌────▼──────────────┐ ┌──────▼─────────────┐
-                    │  Reviewer A       │ │  Reviewer B        │
-                    │  (background)     │ │  (background)      │
-                    └───────────────────┘ └────────────────────┘
+│  No per-subtask reviewer — deterministic gate only; Phase 4.5     │
+│  (Supervisor, post-FINALIZE) is the sole LLM review lens          │
+└──────────┬──────────────────────────────────┬─────────────────────┘
+           │                                  │
+    ┌──────▼──────┐                    ┌──────▼──────────────┐
+    │  Context    │                    │  Worker A            │
+    │  Keeper     │                    │  (background)        │
+    │  (on-demand)│                    │  git worktree A       │
+    └─────────────┘                    └───────────────────────┘
+                                        ┌───────────────────────┐
+                                        │  Worker B             │
+                                        │  (background)         │
+                                        │  git worktree B       │
+                                        └───────────────────────┘
 ```
 
 ---
@@ -102,7 +106,7 @@ Own the entire Phase 3 EXECUTE loop on behalf of the Supervisor. Manage worker/r
 2. Parse parallelism graph (LAUNCHABLE vs BLOCKED)
 3. Note worktree config: max_workers, project name, feature branch
 4. Note state file path for Context-Keeper calls
-5. Parse `cost_profile` from prompt (default: `default`). When `cheap`, Worker and Code Reviewer Task calls must include `model: "sonnet"`.
+5. Parse `cost_profile` from prompt (default: `default`). When `cheap`, Worker Task calls must include `model: "sonnet"` (no Code Reviewer Task is spawned by this agent).
 6. If resume context provided: restore active worker/worktree tracking
 7. Initialize tool call counter: `tool_calls = 0`
 
@@ -217,11 +221,15 @@ for iteration in 1..max_iterations:
         # Fall back to parsing full TaskOutput
         pass
 
-      # --- v12 outputs_verified gate (BEFORE spawning reviewer) ---
+      # --- v12 outputs_verified gate (the per-subtask gate — no reviewer is
+      # spawned above threshold or on the Sequential Path; Phase 4.5 is the
+      # sole LLM gate. See agents/orchestrator.md §"Review Gate Policy" (also
+      # cited in this file's Mission section, which is the single citation of
+      # AGENT_GUIDELINES.md §"Review Counter-Pressure Rule" in this file). ---
       # Parse WORKER_RESULT block from TaskOutput (or summary).
       # If status=partial OR outputs_gap is non-empty, the worker self-reported
-      # incomplete delivery — escalate via adjudication CHECKPOINT instead of
-      # spawning a reviewer. Do NOT proceed to review on a partial worker.
+      # incomplete delivery — escalate via adjudication CHECKPOINT. Do NOT mark
+      # this subtask complete on a partial worker.
       worker_result = parse_worker_result(result)
       if worker_result.status == "partial" OR (worker_result.outputs_gap exists AND worker_result.outputs_gap != ""):
         # Build missing_outputs from outputs_verified entries with status: missing
@@ -243,7 +251,7 @@ for iteration in 1..max_iterations:
           adjudication_options: ["A: Re-queue producer", "B: Insert remediation subtask",
                                  "C: Exit to Launch Pad", "D: Update consumer brief"]
           reason: "Worker {subtask_id} reported outputs_gap: {worker_result.outputs_gap}"
-        # Do NOT spawn reviewer. Do NOT continue with this subtask.
+        # Do NOT mark this subtask complete. Do NOT continue with this subtask.
         # Supervisor will resolve adjudication and instruct next action.
         skip_to_next_iteration
 
@@ -265,69 +273,33 @@ for iteration in 1..max_iterations:
       # mechanism does NOT populate `## Worker Results`, which is what the
       # record_worker_result call above is for.
 
-      # Spawn reviewer in background (only when worker delivered all outputs)
-      Task(
-        description: "Review {subtask_id}",
-        prompt: "Reviewer prompt with worktree path...",
-        subagent_type: "loomwright:code-reviewer",
-        run_in_background: true,
-        model: "sonnet"   # ONLY when cost_profile=cheap; omit entirely when cost_profile=default
-      )
-      tool_calls += 1
-
-  # --- Check reviewers (non-blocking) ---
-  for each running reviewer:
-    review = TaskOutput(reviewer_id, block=false, timeout=poll_interval)
-    tool_calls += 1
-    if complete:
-      results_found = true
-      idle_streak = 0
-      poll_interval = 2000
-
-      # Parse CODE_REVIEW_RESULT from the reviewer's TaskOutput
-      # (no summary file — the Code Reviewer is read-only and cannot write one)
-      tool_calls += 1
-
-      if PASS:
-        Task(
-          Context-Keeper,
-          operation: record_review,
-          subtask_id: {subtask_id}, decision: PASS, issues_count: 0, attempt: {N},
-          state_file: {state_file_path}
-        )
-        tool_calls += 1
-        # Check if blocked subtasks now launchable
-        # Launch newly launchable subtasks
-      if FAIL (attempt < 3):
-        Task(
-          Context-Keeper,
-          operation: record_review,
-          subtask_id: {subtask_id}, decision: FAIL, issues_count: {N}, attempt: {N},
-          state_file: {state_file_path}
-        )
-        tool_calls += 1
-        # Spawn fix worker (background) with retry context
-        # When cost_profile=cheap: include model: "sonnet" in this Task call
-        tool_calls += 1
-      if FAIL (attempt 3):
-        Task(
-          Context-Keeper,
-          operation: record_review,
-          subtask_id: {subtask_id}, decision: FAIL, issues_count: {N}, attempt: 3,
-          state_file: {state_file_path}
-        )
-        tool_calls += 1
-        # Checkpoint and report escalation
-        → output EXECUTE_RESULT with escalation
-      if NEEDS_HUMAN:
-        Task(
-          Context-Keeper,
-          operation: record_review,
-          subtask_id: {subtask_id}, decision: NEEDS_HUMAN, issues_count: {N}, attempt: {N},
-          state_file: {state_file_path}
-        )
-        tool_calls += 1
-        → output EXECUTE_CHECKPOINT with pause reason
+      # --- Subtask complete: outputs_verified gate PASSED, no reviewer spawned ---
+      # This gate (above) plus the worker's self-reported tests/lint results
+      # (already captured in `result` and forwarded via record_worker_result:
+      # tests_run/tests_passed/status/error) IS the per-subtask gate — nothing
+      # further to spawn or poll for this subtask. The subtask is now eligible
+      # for the "Launch newly launchable subtasks" section below (dependency
+      # materialization, Step 2a/2b, was already keyed on producer completion,
+      # never on a reviewer decision, so removing the reviewer does not change
+      # what "newly launchable" means).
+      #
+      # STATE-TRACE NOTE (why the old reviewer-polling arm is REMOVED, not
+      # re-pointed): the v15.16.0 fix's `record_review` calls on the reviewer's
+      # FAIL(attempt 3) and NEEDS_HUMAN terminal branches were bookkeeping for a
+      # *reviewer decision* (PASS/FAIL/NEEDS_HUMAN) that no longer exists above
+      # threshold. The deterministic gate above has only two outcomes — gap
+      # (adjudication CHECKPOINT, handled above) or no-gap (this branch) — and
+      # neither is a "review decision" to log via `record_review`; the adjudication
+      # CHECKPOINT already carries its own reason/missing_outputs. There is no
+      # equivalent terminal state to re-point those calls onto, so they are
+      # deleted along with the reviewer they described. The surviving poll-loop
+      # bookkeeping (`results_found`, `idle_streak`, `poll_interval`) is untouched:
+      # all three are still set correctly by the worker loop above (lines setting
+      # them on worker completion) and consumed by the shared idle back-off and
+      # budget-check sections below, which never depended on the reviewer arm.
+      # Phase 4.5 (Supervisor, post-FINALIZE, integrated review of the merged
+      # feature branch) is the sole LLM gate for this diff — see
+      # agents/orchestrator.md §"Review Gate Policy".
 
   # --- Launch newly launchable subtasks ---
   for subtask in newly_launchable:
@@ -371,12 +343,17 @@ There is no top-level `status:` field — consumers discriminate on
 all-failed). `merge_order` lists only completed branches, so a partial
 escalation is directly mergeable from it.
 
-**If all subtasks completed and reviewed:**
+**If all subtasks completed:**
+
+Note: `review_decision: PASS` below is set once the deterministic `outputs_verified` gate
+(plus tests/lint) has passed for that subtask — no per-subtask LLM reviewer runs above
+threshold, so the field no longer reflects an LLM decision; it is retained verbatim here
+because `docs/RESULT_SCHEMAS.md` (owned by a different subtask) still defines it as required.
 
 ```yaml
 EXECUTE_RESULT:
   schema_version: 1
-  subtasks_completed:                 # one entry per subtask that passed review
+  subtasks_completed:                 # one entry per subtask that passed the deterministic gate
     - task_id: {subtask_id}
       status: completed
       branch: {branch name}
@@ -449,21 +426,18 @@ After TaskOutput confirms a worker is complete:
 2. **If missing:** Parse WORKER_RESULT from full TaskOutput (more expensive)
 3. **Use summary data** (not full TaskOutput) for Context-Keeper recording
 
-### Reading Reviewer Results
+### No Per-Subtask Reviewer Results To Read
 
-After TaskOutput confirms a reviewer is complete:
-
-1. Parse the `CODE_REVIEW_RESULT` block from the reviewer's TaskOutput — this is the
-   primary (and only) channel. The Code Reviewer is read-only (`disallowedTools: Write,
-   Edit`) and never writes a summary file.
-2. Record only the decision + issue counts to Context-Keeper (compress — do not forward
-   the full issue list).
+No reviewer is spawned per-subtask above threshold (or on the Sequential Path) — there is
+no `CODE_REVIEW_RESULT` channel to read here. The `outputs_verified` gate above (parsed from
+the worker's own `WORKER_RESULT`/summary) plus tests/lint IS the per-subtask gate; the
+integrated Phase 4.5 review (Supervisor, post-FINALIZE) is the sole LLM gate for this diff.
 
 ---
 
 ## Progress State
 
-Only the `## Session` block (session_id/branch/status/phase) is derived — it is written by the hook-triggered `scripts/emit-progress-event.sh` at the `loomwright:worker` `SubagentStop` hook and projected into `.supervisor/state.md` by `scripts/build-state.sh`. See `docs/TELEMETRY.md`. Worker and review completion recording — `Context-Keeper(operation: record_worker_result, ...)` and `Context-Keeper(operation: record_review, ...)`, both direct per-event calls made by this loop — is unaffected and continues as described above under "Worker Summary File Protocol"; those operations populate `## Worker Results` and the `## Subtasks` table, neither of which the hook-triggered emitter touches.
+Only the `## Session` block (session_id/branch/status/phase) is derived — it is written by the hook-triggered `scripts/emit-progress-event.sh` at the `loomwright:worker` `SubagentStop` hook and projected into `.supervisor/state.md` by `scripts/build-state.sh`. See `docs/TELEMETRY.md`. Worker completion recording — `Context-Keeper(operation: record_worker_result, ...)`, a direct per-event call made by this loop — is unaffected and continues as described above under "Worker Summary File Protocol"; that operation populates `## Worker Results` and the `## Subtasks` table, neither of which the hook-triggered emitter touches. (No `record_review` calls remain in this loop — no reviewer is spawned per-subtask above threshold, so there is no review decision to record; see Step 4's poll-loop comments for the state-trace of that removal.)
 
 ---
 
@@ -471,10 +445,7 @@ Only the `## Session` block (session_id/branch/status/phase) is derived — it i
 
 | Error | Action |
 |-------|--------|
-| Review PASS | Record, check if blocked subtasks now launchable, launch them |
-| Review FAIL (attempt < 3) | Spawn fix worker with issue details in background |
-| Review FAIL (attempt 3) | Record escalation, output EXECUTE_RESULT with escalation |
-| Review NEEDS_HUMAN | Output EXECUTE_CHECKPOINT with pause |
+| `outputs_verified` gate gap (partial worker / non-empty `outputs_gap`) | Emit EXECUTE_CHECKPOINT with `adjudication_required: true` (Step 2b / poll-loop gate); do not mark the subtask complete |
 | Worker crash/timeout | Record error, retry once in same worktree, then escalate |
 | Worktree creation fails | Report in EXECUTE_RESULT, skip that subtask |
 | Tool budget 55+ | Output EXECUTE_CHECKPOINT immediately |
@@ -524,7 +495,7 @@ EXECUTE_RESULT:
       branch: feature/BD-15c
       status: completed
   branches: [feature/BD-15a, feature/BD-15b, feature/BD-15c]
-  summary: "3/3 subtasks completed and reviewed PASS. Tool calls used: 42/60."
+  summary: "3/3 subtasks completed (outputs_verified gate passed for each). Tool calls used: 42/60."
 ```
 
 ### EXECUTE_CHECKPOINT (Budget Exceeded or Partial)
@@ -554,7 +525,7 @@ EXECUTE_CHECKPOINT:
     tool_calls_used: 55
     active_worktrees: [../project-BD-15b]
     feature_branch: feature/BD-15
-  reason: "Tool budget RED zone (55/60); BD-15b still running, 2/3 reviewed PASS"
+  reason: "Tool budget RED zone (55/60); BD-15b still running, 2/3 passed the outputs_verified gate"
 ```
 
 ### EXECUTE_RESULT with Escalation
@@ -576,8 +547,8 @@ EXECUTE_RESULT:
   subtasks_failed:
     - task_id: BD-15b
       status: failed
-      error: "Review FAIL 3/3: {brief issue summary}"
-      retry_count: 3
+      error: "Worker crash/timeout, retried once, failed again: {brief error summary}"
+      retry_count: 1
   merge_order: [feature/BD-15a, feature/BD-15c]
   worktrees:
     - task_id: BD-15a
@@ -593,7 +564,7 @@ EXECUTE_RESULT:
       branch: feature/BD-15c
       status: completed
   branches: [feature/BD-15a, feature/BD-15b, feature/BD-15c]
-  summary: "2/3 subtasks completed; BD-15b ESCALATED after review FAIL 3/3. Tool calls used: 48/60."
+  summary: "2/3 subtasks completed; BD-15b ESCALATED after worker crash/timeout retry failed. Tool calls used: 48/60."
 ```
 
 ---
@@ -602,7 +573,7 @@ EXECUTE_RESULT:
 
 Before outputting result:
 - [ ] All launchable subtasks were dispatched
-- [ ] Poll loop checked both workers and reviewers
+- [ ] Poll loop checked workers (no per-subtask reviewer is spawned above threshold — the `outputs_verified` gate plus tests/lint is the per-subtask gate)
 - [ ] Tool call count tracked accurately
 - [ ] EXECUTE_RESULT includes all worktree paths and branch names
 - [ ] EXECUTE_RESULT includes merge_order in dependency order

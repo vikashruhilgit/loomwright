@@ -6,6 +6,7 @@ A Claude Code plugin for AI agents to collaborate on software projects. 14 speci
 
 > **Install the plugin and run slash commands instead of manually managing agents.**
 >
+> **NEW in v15.18.0 — two review lenses, not four passes (Fix 7 / D4): the `--until-mergeable` drain becomes deterministically heal-only, with an earned fallback, and the per-subtask LLM reviewer is gone above threshold:** a NEW `## Review Counter-Pressure Rule` in `AGENT_GUIDELINES.md` states when a review pass is owed — only if it has information the prior pass lacked, or if the pass expected to supply that information verifiably did not run — and records the two sanctioned lenses' information advantages (Phase 4.5: working tree + brief + rubric; CI review: independent context, no memory of the authoring session). **Honest limit #1:** before this change, whether the drain re-reviewed the diff at all was genuinely undefined — four surfaces (`skills/review-heal/SKILL.md`, `agents/review-pr.md` (which contradicted itself), `commands/review-pr.md`, and §U4's pseudocode) disagreed, so behavior depended on which sentence the executing model happened to follow. All four now say the same thing: heal-only by default. **Honest limit #2:** an unconditional cut would have opened a real hole, so this ships WITH an evidence-gated "Earned Fallback Review" — at most one bounded diff review per drain run, triggered only when no review-producing lens actually posted (read from the issue-comment channel, never `--json reviews`), failing CLOSED **toward running** the review. The reason is verified live, not assumed: `claude-code-action` self-skips on any workflow-touching PR and still exits 0 — PR #117 (2 `.github/workflows/*` files) showed `claude-review` green in **14 seconds** with **zero** posted comments, versus PR #118's 3m53s with one real posted comment; `reviews` was empty on all four PRs checked, confirming every real finding arrives as a PR issue comment, never a GitHub "review." Separately, the per-subtask `code-reviewer` is now gone above the Decomposition Threshold and on the Sequential Path (already gone below it since v15.15.0) — the deterministic `outputs_verified`/tests-lint gate plus Phase 4.5's integrated review is the sole per-subtask + LLM gate at every threshold. **Honest limit #3:** the accompanying postmortem-corpus measurement (n=77, per-source `review_rounds` means) is recorded as a **trend baseline**, not a controlled before/after — it mixes requirement difficulty and plugin version across months, so a rise afterward is a prompt to investigate, not proof of causation. No `REVIEW_HEAL_RESULT`/`CODE_REVIEW_RESULT` schema change. Counts: 14 agents / 21 commands / 41 skills / **24 hooks** (unchanged); no `schema_version` bump.
 > **NEW in v15.17.0 — five mechanical prompt hooks become deterministic scripts (Fix 4: 4a + 4b + 4e):** the `SubagentStop` validators for `worker`, `execute-manager`, `supervisor-runner`, `qa-executor` and `plan-reviewer` were `type: prompt` hooks — each one a haiku call carrying the finishing agent's transcript at a 30s timeout, to assert nothing but the presence and shape of a result block. All five are now `type: command` scripts: a shared `scripts/result_block_parser.py` plus five per-schema validators, every one **exit-0-by-contract** (they signal via stdout `{"ok": …}`, never via exit status), covered by a 313-case self-test over fixtures. The **`code-reviewer` prompt hook is deliberately retained** — its cross-field + severity-cap logic is real judgement, not presence-checking — leaving exactly three prompt hooks in the plugin (`SubagentStop[code-reviewer]`, `Stop`, `TaskCompleted`). Also: agents now state their own turn budget in prose with an honesty caveat (advisory, ~90% adherence), and Phase 4.5 gains an anti-overlap rule so a heal iteration does not re-derive what a prior gate already found. **Honest accounting — the saving is runtime model calls avoided, not prompt-inventory bytes:** five haiku calls per qualifying run become zero-token scripts, but the change *adds* 5,374 lines of script against 10,409 prompt characters deleted (decoded prompt-string characters — 6,754 from `hooks.json` plus 3,655 from the two inert frontmatter mirrors), and prompt-inventory proxy deltas are small and mixed (`worker` −345, `execute-manager` −472, `code-reviewer` **+88**). **Hook count UNCHANGED at 24** — the type mix moved from 16 command + 8 prompt to **21 command + 3 prompt**. Counts: 14 agents / 21 commands / 41 skills / **24 hooks**; no `schema_version` bump.
 > **NEW in v15.16.0 — one writer for progress state, derived `state.md` (Fix 3 / D5):** Replaces prompt-instructed progress-state bookkeeping with a single hook-triggered event writer. `scripts/emit-progress-event.sh`, wired to the existing `loomwright:worker` `SubagentStop` hook, appends one `subtask_complete` JSONL event per completion; `scripts/build-state.sh` projects the canonical lowercase `## Session` block from that append-only log — `state.md` is now DERIVED, not written by any agent. Five prompt-instructed mechanisms deleted (not deprecated) across 11 files: Context-Keeper `set_task`/`set_subtasks`/`update_phase`/`checkpoint`, Execute Manager `queue_ck_update`/`flush_ck_batch` (+ `record_batch`), the Supervisor's inline `## Session` write on all three mirrored surfaces, and the progress half of the Session Logging catalog; `record_decision` is RETAINED (Decisions Log is a different concern; 42 call sites). Honest measurement, not overstated: committed line delta -46 across 11 files (121+/167-), and net ~-211 proxy tokens across the three budgeted agents (`supervisor`, `execute-manager`, `context-keeper`), with `execute-manager` INCREASING by 423 tokens — a bundled bug fix (the poll loop now records `record_review` on the FAIL==3 and NEEDS_HUMAN terminal branches, previously never recorded) outweighs its deletion. This is a reliability change first; the token saving is modest. Known residual: terminal status derives from the agent-written `session_end`; the base-mismatch cleanup path never emits one and no automated check catches it. Counts: 14 agents / 21 commands / 41 skills / **24 hooks** (22 → 24); no `schema_version` bump.
 > **NEW in v15.15.0 — decomposition default inverted to single-agent (Fix 1 / D3):** the default is now **ONE subtask** — acceptance criteria are a checklist for one worker, not a subtask generator. A split requires one of exactly three named reasons (`file-conflict`, `context-bound` (> 12 files OR > 800 changed lines), `genuine-parallelism` (≥ 2 zero-overlap groups, each ≥ 3 files)), recorded as `- **Split reason:** <reason>` in the brief — the single home is `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold", cited by path from both Launch Pad and Orchestrator. Supervisor gains a true **Single-Agent Path**: below the threshold, one worker executes all acceptance criteria in one context and no per-subtask Code Reviewer is spawned — the Phase 4.5 holistic review is the sole review. Plan Reviewer Criterion 4 is inverted (1 subtask is valid and expected; >1 subtask with no/invalid `Split reason:` FAILs HIGH). Above the threshold, worktrees/Execute Manager/per-subtask review are unchanged. Counts unchanged: 14 agents / 21 commands / 41 skills / 22 hooks.
@@ -311,7 +312,7 @@ PR created, next task or exit
 
 ### Autonomous Workflow (Supervisor v4)
 
-Path is selected by subtask count (`skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold"): the default below threshold is **ONE subtask, single-agent execution** (one worker, no per-subtask reviewer, Phase 4.5 is the review). The diagram below shows the **Parallel Path** — the above-threshold case, reached only when a split is justified by a named reason (`file-conflict` / `context-bound` / `genuine-parallelism`); it is byte-identical to prior behavior.
+Path is selected by subtask count (`skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold"): the default below threshold is **ONE subtask, single-agent execution** (one worker, no per-subtask reviewer, Phase 4.5 is the review). The diagram below shows the **Parallel Path** — the above-threshold case, reached only when a split is justified by a named reason (`file-conflict` / `context-bound` / `genuine-parallelism`). **Since v15.18.0 (Fix 7), the above-threshold case ALSO has no per-subtask LLM reviewer** — each worker's own deterministic `outputs_verified`/tests-lint gate replaces the per-subtask `code-reviewer` spawn; Phase 4.5's integrated review (run once, holistically, after FINALIZE) is the sole LLM review lane at every threshold.
 
 ```
 /supervisor task: "add user authentication"
@@ -327,9 +328,10 @@ PRE-FLIGHT SYNC: Fetch remote → scan recent commits + open PRs → classify
 PLAN: Orchestrator → default one subtask, split only for a named reason → Parallelism analysis
     ↓
 EXECUTE (Parallel Path — split justified): → Execute Manager (isolated context, 60 tool call budget)
-         Worktree A ─→ Worker A ─→ Reviewer A ─→ PASS
-         Worktree C ─→ Worker C ─→ Reviewer C ─→ PASS
-         (unblocked) → Worktree B → Worker B → PASS
+         Worktree A ─→ Worker A ─→ outputs_verified gate ─→ PASS
+         Worktree C ─→ Worker C ─→ outputs_verified gate ─→ PASS
+         (unblocked) → Worktree B → Worker B → outputs_verified gate → PASS
+         (no per-subtask LLM reviewer — Phase 4.5's integrated review is the sole LLM gate, run once after FINALIZE)
          ← EXECUTE_RESULT (merge_order, worktrees, branches)
     ↓
 FINALIZE: Pre-merge validation → Commit in worktrees → Sequential merge → PR
@@ -342,7 +344,7 @@ LOOP: Next task or exit
 ```
 Product Owner → Create user stories (requirements)
     ↓
-Orchestrator → Default one task per Decomposition Threshold (EPIC → TASK → SUBTASK; split only for a named reason)
+Orchestrator → Default one task per Decomposition Threshold (EPIC → TASK; split only for a named reason; no per-subtask review task at any threshold — see agents/orchestrator.md §"Review Gate Policy")
     ↓
 You code
     ↓
@@ -552,13 +554,12 @@ Beads is an optional issue tracker used by Orchestrator and Product Owner. The S
 
 - **EPIC:** Large feature (contains multiple tasks)
 - **TASK:** Implementation work (30-60 min)
-- **SUBTASK:** Review gate (blocks next task) — above the Decomposition Threshold
 
-**Review Gates (threshold-conditional — see `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold"):**
+**Review Gate (same at every threshold — see `agents/orchestrator.md` §"Review Gate Policy", Fix 7 / v15.18.0):**
 
-- Above the threshold, every implementation task has a review subtask that blocks the next implementation task
-- Below the threshold (single-agent default), no per-subtask reviewer — Supervisor's Phase 4.5 integrated review is the gate
-- Review decisions: PASS (proceed), FAIL (fix and re-review), NEEDS_HUMAN (creates bug issues)
+- No per-subtask review task is ever generated, above or below the Decomposition Threshold (`skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold") — tasks chain task-to-task for sequencing only
+- Every task's own deterministic `outputs_verified`/tests-lint gate (zero tokens) is the per-task gate; Supervisor's Phase 4.5 integrated review, run once holistically after FINALIZE, is the sole LLM review lane
+- Phase 4.5 review decisions: PASS (proceed), FAIL (fix and re-review), NEEDS_HUMAN (creates bug issues)
 
 ---
 
