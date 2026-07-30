@@ -91,7 +91,7 @@ The Supervisor executes a **7-phase parallel workflow**:
 │     └─> Orchestrator → Subtasks → Parallelism graph             │
 │                                                                 │
 │  Phase 3: EXECUTE (Delegated to Execute Manager)                │
-│     └─> Execute Manager → Worktrees → Workers → Reviews         │
+│     └─> Execute Manager → Worktrees → Workers → Gate            │
 │                                                                 │
 │  Phase 4: FINALIZE (Merge + Commit + PR)                        │
 │     └─> Sequential merge → Commit → Push → PR → exit            │
@@ -290,7 +290,7 @@ The Supervisor does not checkpoint on every phase transition — `.supervisor/st
 **Checkpoint data includes:**
 - Current phase and status (`## Session` — derived from the session's event log by `scripts/build-state.sh`, not written by Context-Keeper or the Supervisor; see `skills/state-management/SKILL.md` §"Progress state")
 - Branch name and worktree state
-- Worker/reviewer tracking
+- Worker tracking
 - All decisions and results
 
 **Resume priority:**

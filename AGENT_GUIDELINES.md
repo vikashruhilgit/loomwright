@@ -472,7 +472,7 @@ This format applies to ALL agent outputs (Orchestrator, Code Reviewer, Red Team 
   - Run 7-phase workflow: INIT → ACQUIRE → PRE-FLIGHT SYNC → PLAN → EXECUTE → FINALIZE → SELF_HEAL → LOOP
   - Create feature branch BEFORE any code work (mandatory)
   - Analyze parallelism and dispatch workers via git worktrees
-  - Poll background workers and reviewers (non-blocking)
+  - Poll background workers (non-blocking)
   - Sequential merge of worktree branches into feature branch
   - Checkpoint state after every phase transition
   - Use `.supervisor/` for state management; delegate Phase 3 to Execute Manager
@@ -584,10 +584,10 @@ This format applies to ALL agent outputs (Orchestrator, Code Reviewer, Red Team 
 #### **Execute Manager** (Phase 3 Orchestrator)
 - **Objective:** Own Phase 3 EXECUTE loop — worker lifecycle (deterministic `outputs_verified` + tests/lint is the per-subtask gate; no per-subtask LLM reviewer at any threshold — see `AGENT_GUIDELINES.md` §"Review Counter-Pressure Rule")
 - **Reads:** State file (via Context-Keeper), worker summary files
-- **Writes:** Worker/reviewer dispatches, EXECUTE_RESULT/EXECUTE_CHECKPOINT
+- **Writes:** Worker dispatches, EXECUTE_RESULT/EXECUTE_CHECKPOINT
 - **Responsibilities:**
   - Create git worktrees for parallel workers
-  - Spawn workers and reviewers in background
+  - Spawn workers in background (no per-subtask reviewer — see §"Review Counter-Pressure Rule")
   - Poll for completion (read `.worker-summary.md`)
   - Batch update state via Context-Keeper
   - Return merge order and worktree data to Supervisor
