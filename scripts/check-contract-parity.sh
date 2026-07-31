@@ -335,7 +335,11 @@ PY
 }
 
 # ── MANIFEST ─────────────────────────────────────────────────────────────────
-# matcher | agent file | block name | comma-separated hook-required fields
+# matcher | agent file | block name | comma-separated hook-ENFORCED fields
+#   "enforced" = required OR validated-when-present. `out_of_lane` is the latter:
+#   validate-worker-result.py rule 9 accepts its ABSENCE at any schema_version but rejects a
+#   present-but-malformed value. Both of this gate's real checks (pin-drift against the
+#   validator source, field-presence in the agent prompt) are satisfied either way.
 MANIFEST="
 worker|worker.md|WORKER_RESULT|schema_version,task_id,status,files_modified,summary,outputs_verified,outputs_gap,out_of_lane
 execute-manager|execute-manager.md|EXECUTE_RESULT|schema_version,subtasks_completed,worktrees,merge_order,summary

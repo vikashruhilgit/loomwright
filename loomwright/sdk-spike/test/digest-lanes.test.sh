@@ -498,6 +498,91 @@ else
   fail "parseBrief: an unparseable from: value did NOT throw — the edge would be silently dropped"
 fi
 
+# ---------------------------------------------------------------------------
+# CONTRACT-VALUE SHAPE MATRIX. Every shape a contract value can take, asserted in ONE
+# table so a branch cannot be hardened in isolation.
+#
+# WHY A MATRIX: the fail-closed guard was first written inside the bracketed-inline branch
+# only, so `requires: [free text]` threw while the non-bracketed twin `requires: free text`
+# silently dropped the edge and scheduled the dependent into wave 1 -- the exact failure the
+# guard exists to stop. A single-shape test passed. Coverage asymmetry across branches is
+# invisible unless the shapes are enumerated together, so they are.
+#
+# Columns: <label> | <yaml body for subtask_2> | throw|nothrow
+# ---------------------------------------------------------------------------
+_shape_brief() {  # $1 = subtask_2 body
+  cat <<EOF
+## Subtask Structure
+
+| # | Title | Est. Files | Skills | Status |
+|---|-------|-----------|--------|--------|
+| 1 | A | 1 | x | LAUNCHABLE |
+| 2 | B | 1 | x | LAUNCHABLE |
+
+### Subtask contracts
+
+\`\`\`yaml
+subtask_1:
+  provides:
+    - {kind: file, path: a.ts}
+  requires: []
+  lanes: ["a.ts"]
+subtask_2:
+$1
+\`\`\`
+EOF
+}
+
+_shape_case() {  # $1 label  $2 body  $3 expect(throw|nothrow)
+  _sc_out=0
+  printf '%s' "$(_shape_brief "$2")" | node -e "
+    const { parseBrief } = require(process.argv[1]);
+    let t=''; process.stdin.on('data',d=>t+=d).on('end',()=>{
+      try { parseBrief(t); process.exit(0); } catch (e) { process.exit(3); }
+    });
+  " "$SPIKE_DIR/dist/runner.js" 2>/dev/null || _sc_out=$?
+  if [ "$3" = "throw" ]; then
+    if [ "$_sc_out" -eq 3 ]; then pass "shape matrix: $1 -> throws (fail-closed)"
+    else fail "shape matrix: $1 -> did NOT throw; an unverifiable contract silently schedules the subtask into wave 1"; fi
+  else
+    if [ "$_sc_out" -eq 0 ]; then pass "shape matrix: $1 -> parses (legitimate shape, not flagged)"
+    else fail "shape matrix: $1 -> threw on a LEGITIMATE shape (false positive aborts a valid brief)"; fi
+  fi
+}
+
+# --- unverifiable values: MUST fail closed, in EVERY shape ---
+_shape_case "non-bracketed prose" \
+  '  provides: updated docs
+  requires: the output of subtask 1' throw
+_shape_case "bracketed prose" \
+  '  provides: [updated docs]
+  requires: [the output of subtask 1]' throw
+_shape_case "prose on provides only" \
+  '  provides: some description
+  requires: []
+  lanes: ["b.ts"]' throw
+
+# --- legitimate values: MUST parse ---
+_shape_case "multi-line brace items" \
+  '  provides:
+    - {kind: file, path: b.ts}
+  requires: []
+  lanes: ["b.ts"]' nothrow
+_shape_case "inline brace items" \
+  '  provides: [{kind: file, path: b.ts}]
+  requires: []
+  lanes: ["b.ts"]' nothrow
+_shape_case "explicit all-empty (coordination-only)" \
+  '  provides: []
+  requires: []
+  lanes: []' nothrow
+_shape_case "block-form lanes" \
+  '  provides:
+    - {kind: file, path: b.ts}
+  requires: []
+  lanes:
+    - "b.ts"' nothrow
+
 printf '\n%s\n' "digest-lanes.test.sh: $FAILURES failure(s)"
 [ "$FAILURES" = 0 ] || exit 1
 exit 0

@@ -106,6 +106,14 @@ interface Subtask {
    *  separately so the guard keeps catching this while no longer false-positiving on a
    *  legitimately empty `provides: []`. */
   sawUnparseableValue: boolean;
+  /** Contract keys that were declared with a NON-EMPTY, non-`[]` value. Resolved at the END of
+   *  parsing: if such a key still has zero parsed items, its value was prose where addressable
+   *  {kind, path} entries belong, and the subtask is vacuously LAUNCHABLE. Recorded as a
+   *  DEFERRED list rather than decided at header time because items may legitimately arrive on
+   *  following lines, and shape-independently rather than per-branch because a branch-local
+   *  check covered only the bracketed form -- `requires: [free text]` threw while the
+   *  non-bracketed twin `requires: free text` silently dropped the edge. */
+  declaredNonEmpty: string[];
 }
 
 type DryRunFixtureSet = "default" | "fail" | "review-fail" | "throw-usage" | "throw-usage-worker";
@@ -368,7 +376,7 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
       const id = m[1];
       byId.set(id, {
         id,
-        sawContractKey: false, sawUnparseableValue: false,
+        sawContractKey: false, sawUnparseableValue: false, declaredNonEmpty: [],
         title: m[2].trim(),
         tableStatus: m[3].trim(),
         provides: [],
@@ -394,7 +402,7 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
     // alternation: `S` would otherwise never match lowercase `subtask_`, the group would fall
     // through to `(\d+...)`, hit `s`, and the whole match would fail -- yielding
     // `from: undefined`, which the wave scheduler reads as NO DEPENDENCY.
-    const from = body.match(/\bfrom:\s*"?(?:subtask_|ST|S)?(\d+[a-z]?)"?/i);
+    const from = body.match(/\bfrom:\s*"?(?:subtask[_-]|ST-?|S-?)?(\d+[a-z]?)"?/i);
     if (from) item.from = from[1];
     // FAIL-CLOSED on an unparseable `from:`. A silently-dropped edge is the exact
     // silent-empty-graph failure this file already guards against at the contract level, and
@@ -407,7 +415,7 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
         `parseBrief: unparseable \`from:\` reference in contract item {${body}} — refusing to ` +
           `silently drop a dependency edge (an unresolved \`from\` is read by the wave scheduler ` +
           `as NO dependency, which schedules dependents into wave 1). Accepted forms: ` +
-          `1, "1a", S3, ST1, subtask_1.`
+          `1, "1a", S3, S-3, ST1, ST-1, subtask_1, subtask-1.`
       );
     }
     const kind = body.match(/\bkind:\s*([A-Za-z_]+)/);
@@ -513,7 +521,7 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
     if (subtaskHeading) {
       const id = subtaskHeading[1];
       if (!byId.has(id)) {
-        byId.set(id, { id, title: `subtask_${id}`, tableStatus: "", provides: [], requires: [], laneGlobs: [], sawContractKey: false, sawUnparseableValue: false });
+        byId.set(id, { id, title: `subtask_${id}`, tableStatus: "", provides: [], requires: [], laneGlobs: [], sawContractKey: false, sawUnparseableValue: false, declaredNonEmpty: [] });
       }
       current = byId.get(id)!;
       listKey = null;
@@ -550,7 +558,7 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
     if (m) {
       const id = m[1];
       if (!byId.has(id)) {
-        byId.set(id, { id, title: `subtask_${id}`, tableStatus: "", provides: [], requires: [], laneGlobs: [], sawContractKey: false, sawUnparseableValue: false });
+        byId.set(id, { id, title: `subtask_${id}`, tableStatus: "", provides: [], requires: [], laneGlobs: [], sawContractKey: false, sawUnparseableValue: false, declaredNonEmpty: [] });
       }
       current = byId.get(id)!;
       listKey = null;
@@ -591,6 +599,9 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
         current.sawContractKey = true;
         claimed.add(current.id);
         const rest = m[2].replace(/\s*#.*$/, "").trim();
+        // Shape-INDEPENDENT: any non-empty, non-`[]` inline value claims to declare something.
+        // Whether it actually yielded items is resolved after parsing (see declaredNonEmpty).
+        if (rest !== "" && !/^\[\s*\]$/.test(rest)) current.declaredNonEmpty.push(m[1]);
         if (rest === "") {
           // Bare key — items follow on subsequent lines (existing multi-line path below).
         } else if (/^\[\s*\]$/.test(rest)) {
@@ -616,13 +627,6 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
               if (lane) current.laneGlobs.push(lane);
             }
           } else {
-            if (braceItems.length === 0 && inner.trim() !== "") {
-              // Non-empty inline value that contains no `{...}` item at all -- free-text prose
-              // where addressable {kind, path} entries belong. The key WAS seen, so this is not
-              // an unparsed block, but nothing was captured either: the subtask would end up
-              // vacuously LAUNCHABLE. Record it so the fail-closed guard still fires.
-              current.sawUnparseableValue = true;
-            }
             for (const raw of braceItems) {
               current[listKey].push(parseBraceItem(raw.slice(1, -1)));
             }
@@ -633,8 +637,11 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
         // list — e.g. a brief whose `provides:`/`requires:` values are unstructured description
         // text rather than `{kind, path}` items) falls through with listKey still set to the
         // header's key; the multi-line brace-item scan below simply finds nothing to push, which
-        // is the CORRECT behavior — such a brief has declared no verifiable contract item, and
-        // the fail-closed guard below is right to flag it rather than the parser inventing one.
+        // is the CORRECT behavior — such a brief has declared no verifiable contract item. The
+        // key was recorded in `declaredNonEmpty` above, so the end-of-parse resolution below
+        // marks it unparseable and the fail-closed guard fires. (This comment previously
+        // asserted the guard covered this case while nothing actually set the flag on this
+        // path — the check lived inside the bracketed branch only.)
       }
       continue;
     }
@@ -660,6 +667,22 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
   }
 
   const subtasksList = Array.from(byId.values());
+
+  // Resolve deferred unparseable-value declarations. A key declared with a non-empty, non-`[]`
+  // value that still holds ZERO items got prose where addressable {kind, path} entries belong:
+  // the key was seen (so the block WAS found), but nothing verifiable was captured, and the
+  // subtask would schedule as unconstrained. Done here, after the whole block is parsed, so a
+  // value whose items legitimately arrive on FOLLOWING lines is not mis-flagged.
+  for (const st of subtasksList) {
+    for (const key of st.declaredNonEmpty) {
+      const got =
+        key === "lanes" ? st.laneGlobs.length
+        : key === "provides" ? st.provides.length
+        : st.requires.length;
+      if (got === 0) { st.sawUnparseableValue = true; break; }
+    }
+  }
+
   // FAIL CLOSED (v15.20.0, AC12): a Subtask Structure table with more than one row but ZERO
   // provides/requires items parsed is the exact silent-empty-graph signature — every subtask's
   // `requires` stays the vacuous `[]` it was initialized with, `s.requires.every(...)` in the

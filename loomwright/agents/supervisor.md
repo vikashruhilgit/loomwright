@@ -283,7 +283,14 @@ The default path below `skills/supervisor-readiness/SKILL.md` §"Decomposition T
 
 1. Spawn ONE implementation worker (blocking, in project root) — the prompt passes ALL acceptance criteria, not one subtask's row (spawn shape: `skills/async-orchestration/SKILL.md` §"Subagent Spawn Contracts" → Single-Agent Worker)
    - When `cost_profile=cheap`: include `model: "sonnet"` in the Task call
-2. Record result via Context-Keeper
+2. Record result via Context-Keeper — **including the worker's `out_of_lane` field**, so the
+   lane report reaches `state.md`'s `## Worker Results` instead of being silently dropped.
+   The Single-Agent worker inherits the Sequential-path spawn template, which DOES paste
+   `lanes:`, so it emits the field. **Recording only — escalation is vacuous here**: with
+   exactly one subtask there is no sibling lane to collide with, so there is nothing the
+   collision rule could fire on (same reasoning as the Sequential Path below, which is
+   ordered rather than singular). This path is the DEFAULT post-Fix-1, so omitting the
+   record would no-op the lane gate on the path most runs actually take.
 3. **Deterministic gate (zero-token, no reviewer spawn):** check the worker's own `outputs_verified`/`outputs_gap` fields — the same check the Execute Manager runs pre-spawn (`agents/execute-manager.md:222`) — plus tests/lint on the branch (run by the Supervisor via Bash). **LSP diagnostics are the worker's own** — `agents/worker.md` declares the `LSP` tool and runs them during implementation; the Supervisor has no LSP tool, so nothing re-runs them here. Deeper semantic review is Phase 4.5's. `outputs_gap` non-empty or `status != completed` → retry (bounded) or pause, per existing WORKER_RESULT handling.
 4. Skip all worktree logic and Execute Manager delegation. Proceed directly to Phase 4 FINALIZE.
 
