@@ -359,6 +359,7 @@ Phase 4.5's protocol at all.
 *"strictly after 4d — routing an unsplit 110,714-byte skill changes when it is paid, not how much"*).
 That sentence modelled `self-heal-advisory` as a 4f routing target. **It is not one.**
 `agents/supervisor.md` frontmatter preloads exactly the seven skills the table above counts, and
+[**state as of 2026-07-29, pre-4f.** 4f SHIPPED in v15.19.0 and routed all seven out — the frontmatter `skills:` key is now omitted entirely. Retained in its original tense because it is the evidence for the no-precondition correction; the `self-heal-advisory`-is-absent point stands.]
 they are `workflow-management`, `async-orchestration`, `state-management`, `context-summarization`,
 `supervisor-readiness`, `commit`, `quality-checklist`. `self-heal-advisory` is **absent** from that
 list and is already read-on-demand at Phase 4.5 entry on **both** the agent and inline paths — as
