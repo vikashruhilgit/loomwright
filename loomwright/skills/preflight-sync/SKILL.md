@@ -1,8 +1,8 @@
 ---
 name: preflight-sync
 description: Protocol authority for Supervisor Phase 1.5 PRE-FLIGHT SYNC — CLEAR/OVERLAP/SUPERSEDED remote-state reconciliation of the requested work against recent origin/$BASE_BRANCH commits and open PRs, before Phase 2 PLAN spawns anything. Read on demand at phase entry, deliberately not preloaded.
-version: "1.0.0"
-lastUpdated: "2026-07-06"
+version: "1.1.0"
+lastUpdated: "2026-07-31"
 ---
 
 # Pre-Flight Sync Protocol (Supervisor Phase 1.5)
@@ -52,10 +52,21 @@ entry/exit conditions. The protocol prose below is moved verbatim from the Super
 
 3. **Determine the task's anticipated file set:** use the job brief's **File Impact Map** when present (the `job:` brief lists per-subtask MODIFY/CREATE paths); otherwise derive from the task title + criteria.
 
-4. **Classify CLEAR | OVERLAP | SUPERSEDED** using these required signals:
+4. **Classify CLEAR | OVERLAP | SUPERSEDED** using these two required signals:
    - **(a) same-file overlap → OVERLAP:** a recent `origin/$BASE_BRANCH` commit (from `git log`) OR an open PR whose changed files intersect the task's anticipated file set. Record the intersecting paths and the commit SHAs / PR numbers.
    - **(b) already-merged equivalent → SUPERSEDED:** recent `origin/$BASE_BRANCH` history already implements the requested work. This is the motivating case behind the **v13.1.0→v14.0.0 stale-branch incident** (work was branched from a stale base and re-implemented something already merged) — cite the specific landing commit(s). SUPERSEDED requires BOTH a topic match (the commit message or PR title names the same feature / versioned component as the task) AND a file overlap (changed files intersect the anticipated file set) — either signal alone is insufficient (prevents a topic-only false SUPERSEDED).
    - Otherwise → **CLEAR.**
+
+   **(c) brief-staleness churn — ADVISORY ONLY, not a classification input (v15.19.0 — 4g(b)):** when the `job:` brief's `## Environment` section carries a `- **Base commit:** {sha}` line (stamped by Launch Pad Phase 5 PACKAGE step 3a, see `agents/launch-pad.md`), compute churn over the SAME anticipated file set already derived in action 3, from that stamp forward to the current base tip. Extract the two variables literally before running the churn command — `BRIEF_BASE_SHA` is read straight from the brief's `- **Base commit:** {sha}` line (e.g. `BRIEF_BASE_SHA=$(grep -m1 '\*\*Base commit:\*\*' "$BRIEF_PATH" | sed -E 's/.*Base commit:\*\* //')`), and `ANTICIPATED_PATHS` is simply the same anticipated file-path list action 3 already derived (the job brief's File Impact Map paths, or the title/criteria-derived set) — no new derivation, just reuse it:
+     ```bash
+     git log --oneline "$BRIEF_BASE_SHA".."origin/$BASE_BRANCH" -- $ANTICIPATED_PATHS | wc -l
+     ```
+     (`$ANTICIPATED_PATHS` is intentionally **unquoted** so it word-splits into multiple pathspec
+     arguments. That assumes the File Impact Map's paths contain no spaces or glob-special
+     characters — true for every path the plugin derives itself. If this is ever lifted into a real
+     `scripts/*.sh`, switch to an array / `xargs` form rather than inheriting the split. A
+     mis-split only corrupts an advisory count, never a classification.)
+     Record the resulting count in the pre-flight summary / Decisions Log rationale (e.g. `"...; churn_since_brief=3"`) so a human reviewing the run can see how much unrelated activity landed on the brief's touched paths since it was planned. **This signal is ADVISORY ONLY and MUST NOT, by itself, change the CLEAR | OVERLAP | SUPERSEDED classification** — it is not a third classification input alongside (a) and (b); it never turns a CLEAR into an OVERLAP, never triggers the `AskUserQuestion` soft-gate, and never contributes to a `preflight_overlap_detected` fail-closed abort. A brief can show high churn on (c) and still classify CLEAR, provided (a) and (b) are both negative — churn alone proves nothing about *this specific* task's file set having been touched by *competing* work; (a)/(b) already answer that question precisely. **Fail-safe degradation:** if `$BRIEF_BASE_SHA` is absent (no `job:` brief, or a brief written before this change with no `Base commit` line), empty, or fails to parse as a valid SHA (`git rev-parse --verify --quiet "$BRIEF_BASE_SHA^{commit}"` fails), **skip signal (c) silently** — no warning, no gate, no classification change, no error; proceed with classification from (a)/(b) alone exactly as before this change. This is the same posture as the rest of Phase 1.5's graceful-degradation handling (Bounded budget, above) — it never turns an advisory read into a new blocking requirement.
 
 5. **Stacked-iteration scoping (AC6):** when `$BASE_BRANCH ≠ main` (the `/autonomous` loop stacks iteration N+1 on iteration N's branch), scope the overlap comparison to `$BASE_BRANCH` only and do NOT flag the **parent iteration's own commits or PR** as overlap — those are the legitimate base this iteration builds on, not a competing change. No false positive against the stacked-PR chain.
 
@@ -92,6 +103,7 @@ entry/exit conditions. The protocol prose below is moved verbatim from the Super
 - PRs file-inspected: {n} of {open_count}
 - Classification: CLEAR | OVERLAP | SUPERSEDED | UNVERIFIED (tooling degraded) | SKIPPED (--skip-preflight-sync)
 - Overlap: none | {cited commit SHAs / PR #s + intersecting paths}
+- Churn since brief: {N} commits touching anticipated paths since {BRIEF_BASE_SHA} (advisory only — never affects classification) | n/a (no Base commit stamp on this brief)
 - Decision: proceed (silent) | proceed-anyway | revise-scope | aborted (fail-closed) | skipped
 - preflight_sync: clear | overlap_proceed | superseded_proceed | skipped | unverified
 ```

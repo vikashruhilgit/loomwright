@@ -12,7 +12,7 @@ Guidance for Claude Code when working in this repository.
 
 **Loomwright** is a Claude Code plugin with 14 agent roles (9 user-facing + 5 internal) for plan-first readiness, parallel execution, requirements, planning, code review, commits, adversarial audits, standalone PR review-and-heal, and dual-agent QA. Supervisor and Launch Pad use `.supervisor/` exclusively for state; Orchestrator and Product Owner can optionally use Beads.
 
-**Two review lenses, not four passes** (the current review-lane contract): the `--until-mergeable` drain is **heal-only by default**, with one Earned Fallback Review that runs when no review-producing lens verifiably posted (fails closed *toward* running it); and **no per-subtask LLM reviewer is spawned at any threshold** — the deterministic `outputs_verified` gate plus tests/lint is the per-subtask gate, and Phase 4.5's integrated review is the sole LLM gate.
+**Two review lenses, not four passes** (the current review-lane contract): the `--until-mergeable` drain is **heal-only by default**, with one Earned Fallback Review that runs when no review-producing lens verifiably posted (fails closed *toward* running it); and **no per-subtask LLM reviewer is spawned at any threshold** — the deterministic `outputs_verified` gate plus tests/lint is the per-subtask gate, and Phase 4.5's integrated review is the sole LLM gate. **Supervisor's frontmatter is now skill-routed, not preloaded (4f, v15.19.0):** `loomwright:supervisor-runner`'s `skills:` list dropped from seven frontmatter-preloaded skills to zero — each protocol skill is Read on demand at its actual phase entry instead, matching the inline `/supervisor` path's long-standing zero-preload pattern (`agents/supervisor.md` §"Preloaded Skill Routing (4f)"); the Launch Pad brief also now stamps a `Base commit` freshness anchor that Phase 1.5 PRE-FLIGHT SYNC reads as a purely advisory churn signal (4g) — it degrades silently on older briefs and can never by itself flip a CLEAR classification to OVERLAP.
 
 > 📜 **Full release history** (every version, including the current one) lives in [`CHANGELOG.md`](CHANGELOG.md). CLAUDE.md keeps only the one-paragraph current-version summary above — full release notes belong in the changelog, not here.
 
@@ -23,7 +23,7 @@ Guidance for Claude Code when working in this repository.
 The repo is a **marketplace wrapper** containing three sibling plugins (loomwright, stackpack, mysql-mcp):
 
 - Marketplace manifest: `.claude-plugin/marketplace.json` (root)
-- Plugin manifest: `loomwright/.claude-plugin/plugin.json` (v15.18.0)
+- Plugin manifest: `loomwright/.claude-plugin/plugin.json` (v15.19.0)
 - Agents: `loomwright/agents/` (14 markdown prompts)
 - Commands: `loomwright/commands/` (21 entry points)
 - Skills: `loomwright/skills/` (41 skills, see `SKILLS_INDEX.md`)

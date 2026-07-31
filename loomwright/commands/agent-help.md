@@ -932,7 +932,7 @@ Every agent has YAML frontmatter that configures its behavior automatically:
 | `model` | Sets model for the agent | Context-Keeper uses haiku (fast, cheap) |
 | `maxTurns` | Limits API round-trips | Context-Keeper: 3 turns max |
 | `memory: project` | Persistent memory across sessions | Code Reviewer remembers past patterns |
-| `skills` | Pre-loads skill content | Supervisor gets workflow-management pre-injected |
+| `skills` | Pre-loads skill content | Code Reviewer gets quality-checklist pre-injected |
 
 **Agent Model Assignments:**
 | Agent | Model | Why |
@@ -1079,7 +1079,7 @@ bd close BD-XX
 
 loomwright/              # Nested plugin root
 ├── .claude-plugin/
-│   └── plugin.json                   # Plugin metadata (v15.18.0)
+│   └── plugin.json                   # Plugin metadata (v15.19.0)
 ├── commands/                         # Slash commands (21)
 │   ├── launch-pad.md                 # Supervisor readiness
 │   ├── supervisor.md                 # Parallel orchestrator (v4)
