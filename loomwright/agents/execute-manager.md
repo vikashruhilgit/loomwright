@@ -295,7 +295,8 @@ for iteration in 1..max_iterations:
             # Do NOT mark this subtask complete. Supervisor resolves adjudication.
             skip_to_next_iteration
         # No colliding sibling found for any out_of_lane path: fall through.
-        # out_of_lane is still forwarded into EXECUTE_RESULT/state for visibility
+        # out_of_lane -> record_worker_result -> `## Worker Results`.
+        # NOT an EXECUTE_RESULT field (docs/RESULT_SCHEMAS.md §EXECUTE_RESULT)
         # (see record_worker_result below) but never blocks completion — a
         # legitimate cross-cutting edit with no live sibling claim is not an error.
 

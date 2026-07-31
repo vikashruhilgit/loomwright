@@ -51,6 +51,7 @@ export const WORKER_RESULT_SCHEMA = {
     "tests_passed",
     "outputs_verified",
     "outputs_gap",
+    "out_of_lane",
     "memory_candidates",
     "summary",
     "error",
@@ -78,6 +79,14 @@ export const WORKER_RESULT_SCHEMA = {
       },
     },
     outputs_gap: { type: "string" },
+    // Optional/additive at schema_version 2 (no bump) -- mirrors the Task-spawn
+    // contract in docs/RESULT_SCHEMAS.md. Declared here because this schema is
+    // `additionalProperties: false` and is used to FORCE structured output: a
+    // worker cannot emit a property the schema omits, so without this the
+    // prompt's "reportable via out_of_lane" instruction is unfulfillable on
+    // this carrier. Per the file's own convention (all declared props are in
+    // `required`), it is required-but-defaultable to [] rather than absent.
+    out_of_lane: { type: "array", items: { type: "string" } },
     memory_candidates: { type: "array", items: { type: "string" } },
     summary: { type: "string" },
     error: { type: ["string", "null"] },
@@ -217,6 +226,9 @@ export interface WorkerResult {
     status: "present" | "missing";
   }>;
   outputs_gap: string;
+  /** Paths modified outside the subtask's declared `lanes:`. Report-only --
+   *  never flips `status`, never merged into `outputs_gap`. */
+  out_of_lane: string[];
   memory_candidates?: string[] | null;
   summary: string;
   error?: string | null;

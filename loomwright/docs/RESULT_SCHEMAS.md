@@ -102,6 +102,13 @@ WORKER_RESULT:
 
 Produced by Execute Manager when all subtasks are completed.
 
+> **`out_of_lane` is NOT an `EXECUTE_RESULT` field.** A worker's lane report reaches
+> durable state through Context-Keeper's `record_worker_result` (whose parameter
+> contract in `agents/context-keeper.md` declares it), landing in `state.md`'s
+> `## Worker Results`. `EXECUTE_RESULT` stays at `schema_version: 1`, unchanged.
+> This is deliberate: lane reporting is report-only and per-worker, so it belongs
+> in the per-worker record, not in the aggregate execute summary.
+
 ```yaml
 EXECUTE_RESULT:
   schema_version: 1                    # integer, required — always 1

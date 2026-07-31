@@ -7,10 +7,16 @@
   "tests_added": [],
   "tests_passed": null,
   "outputs_verified": [
-    { "kind": "file", "path": "src/example/created.ts", "name": null, "status": "missing" }
+    {
+      "kind": "file",
+      "path": "src/example/created.ts",
+      "name": null,
+      "status": "missing"
+    }
   ],
   "outputs_gap": "src/example/created.ts was never created",
   "memory_candidates": [],
   "summary": "Dry-run FAILURE fixture: canned schema-valid WORKER_RESULT v2 with status failed. Exercises the worker gate + blocked-forever sweep offline. No API call was made.",
-  "error": "Dry-run failure fixture: simulated worker failure (nothing was actually run)."
+  "error": "Dry-run failure fixture: simulated worker failure (nothing was actually run).",
+  "out_of_lane": []
 }
