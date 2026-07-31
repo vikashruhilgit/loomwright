@@ -518,9 +518,11 @@ Before completing async orchestration:
 > phase Output block), the "Agents Spawned by Supervisor" table + Summary Extraction
 > rules, and the worktree-ownership invariant (branches + worktrees are created by the
 > Execute Manager in Phase 3 Step 2a, never in Phase 2) — and points here for the
-> procedures. The Supervisor Reads this file at Phase 4 FINALIZE entry (this skill is
-> ALSO in the Supervisor's preloaded `skills:` list, so that Read is a refresh
-> guarantee, not the first load). Step numbering (1–7 incl. 6.5) is preserved verbatim,
+> procedures. The Supervisor Reads this file at Phase 4 FINALIZE entry. As of the 4f
+> routing change (v15.19.0) this skill is no longer in the Supervisor's preloaded
+> `skills:` list (the list is now empty) — Phase 2 PLAN performs the session's genuine
+> first Read of this file, and the Phase 4 FINALIZE Read is a second, refresh Read, not
+> the first load. Step numbering (1–7 incl. 6.5) is preserved verbatim,
 > so cross-file references to e.g. "Phase 4 self-verify (step 6.5)" remain valid — they
 > now resolve here.
 
