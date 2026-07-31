@@ -1,8 +1,8 @@
 ---
 name: preflight-sync
 description: Protocol authority for Supervisor Phase 1.5 PRE-FLIGHT SYNC — CLEAR/OVERLAP/SUPERSEDED remote-state reconciliation of the requested work against recent origin/$BASE_BRANCH commits and open PRs, before Phase 2 PLAN spawns anything. Read on demand at phase entry, deliberately not preloaded.
-version: "1.0.0"
-lastUpdated: "2026-07-06"
+version: "1.1.0"
+lastUpdated: "2026-07-31"
 ---
 
 # Pre-Flight Sync Protocol (Supervisor Phase 1.5)
@@ -57,7 +57,7 @@ entry/exit conditions. The protocol prose below is moved verbatim from the Super
    - **(b) already-merged equivalent → SUPERSEDED:** recent `origin/$BASE_BRANCH` history already implements the requested work. This is the motivating case behind the **v13.1.0→v14.0.0 stale-branch incident** (work was branched from a stale base and re-implemented something already merged) — cite the specific landing commit(s). SUPERSEDED requires BOTH a topic match (the commit message or PR title names the same feature / versioned component as the task) AND a file overlap (changed files intersect the anticipated file set) — either signal alone is insufficient (prevents a topic-only false SUPERSEDED).
    - Otherwise → **CLEAR.**
 
-   **(c) brief-staleness churn — ADVISORY ONLY, not a classification input (v15.19.0 — 4g(b)):** when the `job:` brief's `## Environment` section carries a `- **Base commit:** {sha}` line (stamped by Launch Pad Phase 5 PACKAGE step 3a, see `agents/launch-pad.md`), compute churn over the SAME anticipated file set already derived in action 3, from that stamp forward to the current base tip:
+   **(c) brief-staleness churn — ADVISORY ONLY, not a classification input (v15.19.0 — 4g(b)):** when the `job:` brief's `## Environment` section carries a `- **Base commit:** {sha}` line (stamped by Launch Pad Phase 5 PACKAGE step 3a, see `agents/launch-pad.md`), compute churn over the SAME anticipated file set already derived in action 3, from that stamp forward to the current base tip. Extract the two variables literally before running the churn command — `BRIEF_BASE_SHA` is read straight from the brief's `- **Base commit:** {sha}` line (e.g. `BRIEF_BASE_SHA=$(grep -m1 '\*\*Base commit:\*\*' "$BRIEF_PATH" | sed -E 's/.*Base commit:\*\* //')`), and `ANTICIPATED_PATHS` is simply the same anticipated file-path list action 3 already derived (the job brief's File Impact Map paths, or the title/criteria-derived set) — no new derivation, just reuse it:
      ```bash
      git log --oneline "$BRIEF_BASE_SHA".."origin/$BASE_BRANCH" -- $ANTICIPATED_PATHS | wc -l
      ```

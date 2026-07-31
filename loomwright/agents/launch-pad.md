@@ -745,6 +745,7 @@ Minimal subagent overhead (up to 3 Plan Reviewer spawns total per session). No s
 - **CLAUDE.md:** ✓ Found (fresh)
 - **Git:** clean, branch: main
 - **GitHub CLI:** ✓ Authenticated
+- **Base commit:** a3f9c21e7d4b8f0912e6c5d4a7b8091234f5e6d7
 - **Blockers:** 0 | **Warnings:** 0
 
 ## Task
