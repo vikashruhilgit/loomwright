@@ -80,6 +80,12 @@ interface Subtask {
   tableStatus: string; // Status cell from the Subtask Structure table (informational)
   provides: ContractItem[];
   requires: ContractItem[];
+  // Verbatim `lanes:` glob list from the brief's Subtask Contracts YAML — the
+  // paths this subtask is expected to modify/create. Named `laneGlobs`, NOT
+  // `lanes` (that bare name is already an unrelated `Promise<void>[]`
+  // concurrency local in runPool, below). Empty when the subtask has no
+  // declared lane (pre-lane-declaration brief).
+  laneGlobs: string[];
 }
 
 type DryRunFixtureSet = "default" | "fail" | "review-fail" | "throw-usage" | "throw-usage-worker";
@@ -346,17 +352,25 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
         tableStatus: m[3].trim(),
         provides: [],
         requires: [],
+        laneGlobs: [],
       });
     }
   }
 
-  // --- ### Subtask contracts YAML block ---
+  // --- Subtask contracts YAML block ---
+  // Two accepted heading spellings, both in live use across this repo's archived briefs
+  // (measured 2026-07-31: 8 use "### Subtask contracts", 6 use "### Provides / Requires
+  // Contracts"). Matching only the first silently skipped the entire YAML block on a brief
+  // using the second spelling — every subtask parsed with EMPTY provides/requires, and the
+  // wave scheduler below (`s.requires.every(...)`) marked EVERY subtask LAUNCHABLE in wave 1,
+  // running subtasks concurrently that the brief ordered sequentially onto shared files. Same
+  // silent-empty-graph class already documented below at the `subtask_(\d+[a-z]?):` fix.
   let inContracts = false;
   let inYaml = false;
   let current: Subtask | null = null;
-  let listKey: "provides" | "requires" | null = null;
+  let listKey: "provides" | "requires" | "lanes" | null = null;
   for (const line of lines) {
-    if (/^###\s+Subtask contracts\b/.test(line)) {
+    if (/^###\s+(Subtask contracts|Provides \/ Requires Contracts)\b/.test(line)) {
       inContracts = true;
       continue;
     }
@@ -379,7 +393,7 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
     if (m) {
       const id = m[1];
       if (!byId.has(id)) {
-        byId.set(id, { id, title: `subtask_${id}`, tableStatus: "", provides: [], requires: [] });
+        byId.set(id, { id, title: `subtask_${id}`, tableStatus: "", provides: [], requires: [], laneGlobs: [] });
       }
       current = byId.get(id)!;
       listKey = null;
@@ -390,13 +404,31 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
     // `^\s+` form matched only the fixture, so every list header in a real brief was skipped and
     // the dependency graph came out empty. The `^` anchor still keeps `external_requires:` from
     // matching `requires:`.
-    m = line.match(/^\s*(provides|requires):\s*(\[\s*\])?\s*(#.*)?$/);
+    // `lanes` is now a recognized list header too (alongside `provides`/`requires`) so it
+    // RESETS `listKey`. Before this fix `lanes:` never matched here, so `listKey` stayed
+    // whatever it was left at by the PRECEDING list (typically `requires`) — a brace-form
+    // item authored under `lanes:` would have silently been appended into `requires` instead
+    // of being ignored. Today real briefs quote lane entries as plain strings (never brace
+    // form), so this was latent, not yet observed in the wild — but it is a live landmine the
+    // moment a brief's authoring convention drifts, and is fixed here defensively.
+    m = line.match(/^\s*(provides|requires|lanes):\s*(\[\s*\])?\s*(#.*)?$/);
     if (m && current) {
-      listKey = m[1] as "provides" | "requires";
+      listKey = m[1] as "provides" | "requires" | "lanes";
       if (m[2]) {
-        current[listKey] = []; // explicit empty list, e.g. `requires: []`
+        // explicit empty list, e.g. `requires: []` / `lanes: []`
+        if (listKey === "lanes") current.laneGlobs = [];
+        else current[listKey] = [];
         listKey = null;
       }
+      continue;
+    }
+    if (listKey === "lanes" && current) {
+      // Lane entries are plain quoted (or bare) strings, e.g. `- "loomwright/agents/worker.md"`
+      // — never the brace-object form `provides`/`requires` items use. A bare `#`-prefixed
+      // comment line (briefs sometimes annotate lane lists) matches neither pattern below and
+      // is skipped, same as everywhere else in this parser.
+      const laneItem = line.match(/^\s+-\s+"([^"]*)"/) ?? line.match(/^\s+-\s+([^\s#][^#]*?)\s*(#.*)?$/);
+      if (laneItem) current.laneGlobs.push(laneItem[1].trim());
       continue;
     }
     m = line.match(/^\s+-\s+\{(.+)\}/);
@@ -412,7 +444,40 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
       if (p) item.path = p[1].trim();
       const name = body.match(/\bname:\s*"([^"]*)"/) ?? body.match(/\bname:\s*([^,}]+)/);
       if (name) item.name = name[1].trim();
-      current[listKey].push(item);
+      // Narrowed explicitly (not just `listKey`'s truthiness): the "lanes" arm above always
+      // `continue`s before reaching here, but TS does not carry that flow-narrowing across a
+      // mutable outer-scope `let` inside a loop, so `current[listKey]` would otherwise widen
+      // to include a nonexistent `current["lanes"]` index.
+      if (listKey === "provides" || listKey === "requires") {
+        current[listKey].push(item);
+      }
+    }
+  }
+
+  const subtasksList = Array.from(byId.values());
+  // FAIL CLOSED (v15.20.0, AC12): a Subtask Structure table with more than one row but ZERO
+  // provides/requires items parsed is the exact silent-empty-graph signature — every subtask's
+  // `requires` stays the vacuous `[]` it was initialized with, `s.requires.every(...)` in the
+  // wave scheduler is vacuously true for all of them, and the runner spawns every subtask
+  // CONCURRENTLY in wave 1 regardless of what the brief's Subtask Structure table ordered
+  // sequentially. This is exactly the class of defect that dropped all 9 dependency edges in
+  // FABLE_PARITY_EVAL arm 3 (see the file-header comment) — except this variant produces NO
+  // thrown error at all today, only a silently-wrong schedule. A single-subtask brief is exempt:
+  // with nothing to sequence against a sibling, an all-LAUNCHABLE "wave" of one is correct
+  // regardless of whether any contracts were authored.
+  if (subtasksList.length > 1) {
+    const totalContractItems = subtasksList.reduce(
+      (n, s) => n + s.provides.length + s.requires.length,
+      0
+    );
+    if (totalContractItems === 0) {
+      throw new Error(
+        `parseBrief: Subtask Structure table lists ${subtasksList.length} subtasks but zero ` +
+          `provides/requires items were parsed from the contracts YAML — refusing to emit an ` +
+          `all-LAUNCHABLE wave. Check the contracts heading spelling ("### Subtask contracts" or ` +
+          `"### Provides / Requires Contracts"), the \`\`\`yaml fence, and that ids match the ` +
+          `Subtask Structure table (both "subtask_1:" and "# Subtask 1a — ..." forms are accepted).`
+      );
     }
   }
 
@@ -420,7 +485,7 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
   return {
     // Natural order: numeric prefix first, then any alpha suffix, so "1" < "1a" < "1b" < "2" < "10".
     // A plain string sort would put "10" before "2" and break wave ordering on 10+ subtasks.
-    subtasks: Array.from(byId.values()).sort((a, b) => {
+    subtasks: subtasksList.sort((a, b) => {
       const na = parseInt(a.id, 10);
       const nb = parseInt(b.id, 10);
       if (na !== nb) return na - nb;
@@ -786,24 +851,80 @@ function makeLiveQuery(): QueryFn {
 // Prompt builders (worker + reviewer)
 // ---------------------------------------------------------------------------
 
-function workerPrompt(subtask: Subtask, wtPath: string): string {
+/**
+ * Build the context-digest pointer line handed to every worker spawn — the SDK-runner carrier
+ * named in docs/RESULT_SCHEMAS.md §CONTEXT_DIGEST ("... on both the Task-spawn carrier and the
+ * SDK-runner carrier ... `sdk-spike/src/runner.ts`'s `contextDigestPointer`"), mirroring the
+ * Task-spawn carrier's wording in skills/async-orchestration/SKILL.md §"Context digest pointer":
+ * path + a bounded (<=200 char) summary + "Read only the sections you need" — never the digest
+ * body itself (pointer, not payload).
+ *
+ * Every subtask this runner spawns a worker for is worktree-resident (`addWorktree` always
+ * creates one per live-mode subtask — this runner has no project-root-resident/sequential
+ * shape), so the ONLY correct form is the MAIN-CHECKOUT ABSOLUTE path: gitignored
+ * `.supervisor/` artifacts do not exist inside linked git worktrees
+ * (docs/POINTER_AUDIT.md §"Worktree reality"), the same rule already governing the brief
+ * pointer. `repoRoot` MUST be the main checkout (git's `--show-toplevel` captured in `main()`
+ * BEFORE any subtask worktree is created), never a worktree path.
+ *
+ * Advisory only: returns `undefined` (never a placeholder string pointing at nothing) when the
+ * digest file has not been produced yet (a pre-v15.20.0 brief, or a job whose Launch Pad
+ * Phase 5 has not run) — callers omit the line entirely rather than spawning a dead pointer.
+ */
+export function contextDigestPointer(repoRoot: string, briefPath: string): string | undefined {
+  const digestPath = path.resolve(repoRoot, ".supervisor", "jobs", "context-digests", path.basename(briefPath));
+  if (!fs.existsSync(digestPath)) return undefined;
+  const summary =
+    "File Impact Map, interfaces touched, conventions, sibling-subtask summary, and cross-lane " +
+    "provides/requires/lanes contracts for this job."; // 141 chars, kept <=200 per the pointer contract
+  return (
+    `Context digest: ${digestPath} — MAIN-CHECKOUT ABSOLUTE path (resolves for you even though ` +
+    `you run in a worktree; gitignored .supervisor/ artifacts do not exist inside linked worktrees). ` +
+    `Summary: ${summary} Read only the sections you need. Advisory only — proceed without it if the ` +
+    `file does not exist.`
+  );
+}
+
+// Exported (alongside parseBrief / materializeWave / contextDigestPointer) so
+// digest-lanes.test.sh can assert the digest pointer + lane text actually land in the
+// composed prompt, without shelling out to a live SDK query().
+export function workerPrompt(subtask: Subtask, wtPath: string, digestPointer?: string): string {
   const provides =
     subtask.provides.length > 0
       ? subtask.provides
           .map((p) => `- {kind: ${p.kind}, path: ${p.path}${p.name ? `, name: "${p.name}"` : ""}}`)
           .join("\n")
       : "(none listed)";
-  return [
+  const lines = [
     `You are an implementation worker. Implement subtask ${subtask.id}: ${subtask.title}.`,
     `Work ONLY inside this directory (your git worktree): ${wtPath}`,
     `Do NOT run any git commit/branch/push operations.`,
     ``,
+  ];
+  if (digestPointer) {
+    lines.push(digestPointer, ``);
+  }
+  if (subtask.laneGlobs.length > 0) {
+    // Verbatim from the brief's Subtask Contracts `lanes:` — the paths this subtask is expected
+    // to modify/create, mirroring agents/worker.md's "Lane declaration" spawn input. Pasted
+    // directly (not a pointer) because, unlike the Task-spawn worker, this SDK-spawned worker
+    // has no separate brief-read step of its own to re-derive its lane from — same "deliberate
+    // paste exception" reasoning docs/POINTER_AUDIT.md already applies to `provides:` below.
+    lines.push(
+      `Your declared lane (paths you are expected to modify/create — touching a path outside`,
+      `this list is reportable via out_of_lane, never blocking):`,
+      ...subtask.laneGlobs.map((g) => `- ${g}`),
+      ``
+    );
+  }
+  lines.push(
     `Promised outputs (provides) — verify each before finishing and report`,
     `them in outputs_verified; list anything missing in outputs_gap:`,
     provides,
     ``,
-    `Report your result as a WORKER_RESULT object (schema_version 2).`,
-  ].join("\n");
+    `Report your result as a WORKER_RESULT object (schema_version 2).`
+  );
+  return lines.join("\n");
 }
 
 function reviewerPrompt(subtask: Subtask, workerResult: WorkerResult, wtPath: string): string {
@@ -885,6 +1006,12 @@ async function main(): Promise<number> {
 
   const queryFn: QueryFn = args.dryRun ? makeDryRunQuery(args.dryRunFixtureSet) : makeLiveQuery();
 
+  // Advisory pointer, computed once per run (not per subtask — same digest file for every
+  // worker on this job). Skipped in --dry-run: repoRoot is never resolved there (no worktrees,
+  // no live queries — the dry-run query seam ignores its `prompt` argument entirely), so there
+  // is nothing meaningful to point at.
+  const digestPointer = args.dryRun ? undefined : contextDigestPointer(repoRoot, briefPath);
+
   const completed = new Map<string, SubtaskOutcome>();
   const failed = new Map<string, SubtaskOutcome>();
   const worktrees: WorktreeRecord[] = [];
@@ -918,7 +1045,7 @@ async function main(): Promise<number> {
       // Step 3: one worker query(), schema-forced to WORKER_RESULT v2.
       // Effort resolves via the ROLE_CONFIG table (never hard-coded here);
       // the opt-in --task-budget applies to WORKER queries only.
-      workerQuery = await queryFn("worker", workerPrompt(subtask, wtPath), WORKER_RESULT_SCHEMA, {
+      workerQuery = await queryFn("worker", workerPrompt(subtask, wtPath, digestPointer), WORKER_RESULT_SCHEMA, {
         cwd: args.dryRun ? undefined : wtPath,
         model: args.model,
         effort: resolveRoleConfig("worker", args).effort,
