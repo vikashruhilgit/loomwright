@@ -240,6 +240,40 @@ fi
 
 # =============================================================================
 TOTAL=$((PASS + FAIL))
+# ---------------------------------------------------------------------------
+# Group D — COMMITTED real-layout fixture (durable CI protection).
+#
+# `.supervisor/jobs/` is GITIGNORED, so a corpus-only test protects nothing in a
+# fresh clone or in CI: it would skip forever and silently. This fixture is a
+# trimmed real brief carrying the section shapes briefs ACTUALLY use, and it is
+# the regression guard for the finding that shipped once already -- the digest
+# rendered `_(none found)_` for File Impact Map and Conventions on ~every real
+# brief because the extractor was written against Launch Pad's Phase 3 ANALYZE
+# *printed template* rather than the assembled brief it is really fed.
+# ---------------------------------------------------------------------------
+FIXTURE="$REPO_ROOT/loomwright/sdk-spike/test/fixtures/brief-digest-sections.md"
+if [ ! -f "$FIXTURE" ]; then
+  no "committed digest fixture missing: $FIXTURE"
+  TOTAL=$((TOTAL+1))
+else
+  OUT_D="$(mktemp -t digestfix.XXXXXX)"
+  bash "$REPO_ROOT/loomwright/scripts/build-context-digest.sh" \
+    --brief "$FIXTURE" --out "$OUT_D" >/dev/null 2>&1
+  # Every rendered section must carry real content -- an `_(none found)_` here is
+  # precisely the regression this group exists to catch.
+  EMPTY_SECTIONS="$(awk '
+    /^## /   { sect=$0; getline l; while (l ~ /^[[:space:]]*$/ && (getline l) > 0) ; 
+               if (l ~ /none found/) print sect }
+  ' "$OUT_D")"
+  TOTAL=$((TOTAL+1))
+  if [ -z "$EMPTY_SECTIONS" ]; then
+    ok "committed fixture: every digest section is populated (no _(none found)_ on a real-layout brief)"
+  else
+    no "committed fixture: these digest sections rendered empty on a real-layout brief -> $(echo "$EMPTY_SECTIONS" | tr '\n' ' ')"
+  fi
+  rm -f "$OUT_D"
+fi
+
 if [ "$FAIL" -eq 0 ]; then
   echo "ALL TESTS PASSED ($PASS/$TOTAL)"
   exit 0

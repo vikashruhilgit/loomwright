@@ -285,6 +285,143 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# (5) Committed real-layout fixtures (loomwright/sdk-spike/test/fixtures/) — these give DURABLE
+#     CI protection: `.supervisor/` is gitignored (absent in a fresh clone), so the heredoc
+#     fixtures above and these committed files are the only regression protection this parser
+#     has in CI. Each fixture is trimmed from a real archived brief that used to throw before the
+#     fixes below landed.
+# ---------------------------------------------------------------------------
+FIXDIR="$SPIKE_DIR/test/fixtures"
+
+# Per-subtask MARKDOWN heading anchor, no umbrella heading at all (trimmed from
+# 2026-07-30-fix7-two-review-lenses.md).
+if node -e "
+  const { parseBrief } = require(process.argv[1]);
+  const fs = require('fs');
+  const r = parseBrief(fs.readFileSync(process.argv[2], 'utf8'));
+  const s1 = r.subtasks.find((s) => s.id === '1');
+  const s2 = r.subtasks.find((s) => s.id === '2');
+  const problems = [];
+  if (!s1 || !s2) problems.push('subtask 1 or 2 missing');
+  if (s1 && s1.provides.length !== 2) problems.push('subtask 1: expected 2 provides, got ' + (s1 && s1.provides.length));
+  if (s2 && (s2.requires.length !== 1 || s2.requires[0].from !== '1')) problems.push('subtask 2: expected 1 requires item with from=1');
+  if (problems.length) { console.error(problems.join('; ')); process.exit(1); }
+" "$DIST" "$FIXDIR/brief-per-subtask-heading.md"; then
+  pass "fixture brief-per-subtask-heading.md: per-subtask markdown heading anchor (no umbrella heading) parses"
+else
+  fail "fixture brief-per-subtask-heading.md did not parse as expected"
+fi
+
+# "Provides / Requires Schema" heading + inline flow-style arrays + S<N>: id keys + from: S<N>
+# normalization (trimmed from 2026-06-19-automate-engine.md / 2026-07-07-script-test-gaps-and-
+# roadmap-remainders.md).
+if node -e "
+  const { parseBrief } = require(process.argv[1]);
+  const fs = require('fs');
+  const r = parseBrief(fs.readFileSync(process.argv[2], 'utf8'));
+  const s1 = r.subtasks.find((s) => s.id === '1');
+  const s2 = r.subtasks.find((s) => s.id === '2');
+  const problems = [];
+  if (!s1 || !s2) problems.push('subtask 1 or 2 missing (S<N>: id-key form did not resolve to plain numeric ids)');
+  if (s1 && s1.provides.length !== 1) problems.push('subtask 1: expected 1 provides item (inline array), got ' + (s1 && s1.provides.length));
+  if (s2 && (s2.requires.length !== 1 || s2.requires[0].from !== '1')) problems.push('subtask 2: expected 1 requires item with from=1 (normalized from \"S1\")');
+  if (problems.length) { console.error(problems.join('; ')); process.exit(1); }
+" "$DIST" "$FIXDIR/brief-inline-array-contracts.md"; then
+  pass "fixture brief-inline-array-contracts.md: 'Provides / Requires Schema' heading + inline arrays + S<N>: ids parse"
+else
+  fail "fixture brief-inline-array-contracts.md did not parse as expected"
+fi
+
+# Positional fallback: no id marker of any kind, id implied by table row order (trimmed from
+# 2026-06-14-requirement-closeout-loop.md).
+if node -e "
+  const { parseBrief } = require(process.argv[1]);
+  const fs = require('fs');
+  const r = parseBrief(fs.readFileSync(process.argv[2], 'utf8'));
+  const s1 = r.subtasks.find((s) => s.id === '1');
+  const s2 = r.subtasks.find((s) => s.id === '2');
+  const problems = [];
+  if (!s1 || !s2) problems.push('subtask 1 or 2 missing (positional fallback did not bind ids)');
+  if (s1 && s1.provides.length !== 1) problems.push('subtask 1: expected 1 provides item, got ' + (s1 && s1.provides.length));
+  if (s2 && (s2.requires.length !== 1 || s2.requires[0].from !== '1')) problems.push('subtask 2: expected 1 requires item with from=1');
+  if (problems.length) { console.error(problems.join('; ')); process.exit(1); }
+" "$DIST" "$FIXDIR/brief-positional-no-id.md"; then
+  pass "fixture brief-positional-no-id.md: positional (id-less) contracts fallback binds ids in table order"
+else
+  fail "fixture brief-positional-no-id.md did not parse as expected"
+fi
+
+# Digest section-shape fixture also parses cleanly as a brief (shared with test-context-digest.sh).
+if node -e "
+  const { parseBrief } = require(process.argv[1]);
+  const fs = require('fs');
+  const r = parseBrief(fs.readFileSync(process.argv[2], 'utf8'));
+  process.exit(r.subtasks.length === 2 ? 0 : 1);
+" "$DIST" "$FIXDIR/brief-digest-sections.md"; then
+  pass "fixture brief-digest-sections.md: parses as a 2-subtask brief (shared digest/parser fixture)"
+else
+  fail "fixture brief-digest-sections.md did not parse as a 2-subtask brief"
+fi
+
+# ---------------------------------------------------------------------------
+# (6) OPT-IN local corpus sweep: `.supervisor/jobs/{done,in-progress}/*.md` is gitignored and
+#     absent in a fresh clone/CI checkout — this section runs ONLY when that directory exists
+#     locally, and ANNOUNCES the skip (never silently no-ops) when it does not. This is
+#     ADDITIONAL, opportunistic protection on top of the committed fixtures above (5), which are
+#     the durable CI-covered regression guard; this sweep is what an operator sees when running
+#     the suite locally against the real, gitignored job corpus.
+# ---------------------------------------------------------------------------
+REPO_ROOT_FOR_CORPUS="$(cd "$SPIKE_DIR/../.." && pwd)"
+CORPUS_DIRS="$REPO_ROOT_FOR_CORPUS/.supervisor/jobs/done $REPO_ROOT_FOR_CORPUS/.supervisor/jobs/in-progress"
+CORPUS_FOUND=0
+for d in $CORPUS_DIRS; do [ -d "$d" ] && CORPUS_FOUND=1; done
+
+if [ "$CORPUS_FOUND" != 1 ]; then
+  skip "local corpus sweep: .supervisor/jobs/{done,in-progress}/ not present (gitignored, expected absent in CI/fresh clone) — skipping, not a failure"
+else
+  CORPUS_OUT=$(node -e "
+    const fs = require('fs');
+    const path = require('path');
+    const { parseBrief } = require(process.argv[1]);
+    const dirs = process.argv.slice(2);
+    let total = 0, thrown = 0;
+    const throwList = [];
+    for (const dir of dirs) {
+      if (!fs.existsSync(dir)) continue;
+      for (const f of fs.readdirSync(dir)) {
+        if (!f.endsWith('.md')) continue;
+        const p = path.join(dir, f);
+        const text = fs.readFileSync(p, 'utf8');
+        if (!/^\s*(provides|requires):/m.test(text)) continue;
+        total++;
+        try {
+          parseBrief(text);
+        } catch (e) {
+          thrown++;
+          throwList.push(f + ' :: ' + e.message.split('\n')[0].slice(0, 140));
+        }
+      }
+    }
+    console.log('CORPUS_TOTAL=' + total);
+    console.log('CORPUS_THROWN=' + thrown);
+    throwList.forEach((l) => console.log('CORPUS_THROW_DETAIL: ' + l));
+  " "$DIST" $CORPUS_DIRS 2>&1)
+  echo "$CORPUS_OUT" | grep -v '^CORPUS_TOTAL=\|^CORPUS_THROWN=' | while IFS= read -r line; do [ -n "$line" ] && echo "  $line"; done
+  CORPUS_TOTAL=$(echo "$CORPUS_OUT" | grep '^CORPUS_TOTAL=' | cut -d= -f2)
+  CORPUS_THROWN=$(echo "$CORPUS_OUT" | grep '^CORPUS_THROWN=' | cut -d= -f2)
+  if [ -n "$CORPUS_THROWN" ] && [ "$CORPUS_THROWN" = 0 ]; then
+    pass "local corpus sweep: parseBrief threw on 0/$CORPUS_TOTAL contract-bearing briefs in .supervisor/jobs/"
+  else
+    # NOT a hard failure of this committed suite: a genuinely malformed brief in the local,
+    # uncommitted job corpus (e.g. free-text provides/requires values with no {kind,path}
+    # structure — a real authoring defect, not a parser bug) is expected to keep throwing, and
+    # this sweep has no way to distinguish that from a real regression. Reported loudly as a
+    # named exception rather than silently passed or hard-failed.
+    echo "NOTE: local corpus sweep found $CORPUS_THROWN/$CORPUS_TOTAL contract-bearing briefs still throwing (see CORPUS_THROW_DETAIL lines above) — investigate each by name before assuming regression; a known one is 2026-07-18-sdk-runner-token-levers.md (free-text provides/requires values, not {kind,path} items — a genuine brief defect)."
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 printf '\n%s\n' "digest-lanes.test.sh: $FAILURES failure(s)"
 [ "$FAILURES" = 0 ] || exit 1
 exit 0

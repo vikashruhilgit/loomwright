@@ -33,12 +33,19 @@
 #
 # OUTPUT FORMAT
 #   # Context Digest — <brief title, or its basename>
-#   ## File Impact Map                        (verbatim from the brief's Phase 3 table)
+#   ## File Impact Map                        (verbatim `## File Impact Map` when the brief has one
+#                                                — measured 10/73 briefs; the other 63 fall back to
+#                                                the brief's `## Subtask Structure` table (72/73) +
+#                                                `### File Overlap Matrix` (28/73) when present —
+#                                                a bounded proxy for "what files does this job
+#                                                touch", never a hard failure when both are absent)
 #   ## Interfaces touched                      (deduped `path :: name (kind)` list, derived from
 #                                                every `{kind: symbol|type, ...}` provides/requires
 #                                                entry across all subtasks)
-#   ## Conventions                             (the brief's `**Tech Stack:**` / `**Architecture:**`
-#                                                lines)
+#   ## Conventions                             (`## Environment` (71/73) + `## Skill References`
+#                                                (54/73) — measured 2026-07-31: the prior
+#                                                `**Tech Stack:**`/`**Architecture:**` bold-line
+#                                                grep matched 0/73 real briefs and was dead code)
 #   ## Sibling-subtask summary                 (verbatim copy of the brief's Subtask Structure
 #                                                table)
 #   ## Cross-lane producer/consumer contracts  (verbatim copy of the brief's Subtask Contracts
@@ -192,9 +199,35 @@ extract_section() {
 }
 
 # ---------------------------------------------------------------------------
-# 1. File Impact Map — verbatim.
+# 1. File Impact Map — verbatim `## File Impact Map` when present (measured 10/73 briefs).
+#    Real Launch Pad briefs overwhelmingly do NOT carry this exact section (63/73 don't), so a
+#    bare `_(none found)_` on the common case defeats the section's purpose. Fall back to the
+#    brief's `## Subtask Structure` table (72/73) plus `### File Overlap Matrix` (28/73) when
+#    present — together the closest bounded proxy this repo's brief templates actually carry for
+#    "what files does this job touch, and where might they collide". Still `_(none found)_` when
+#    none of the three sections exist (single-subtask legacy briefs).
 # ---------------------------------------------------------------------------
 FILE_IMPACT="$(extract_section "file impact map")"
+if [ -z "$FILE_IMPACT" ]; then
+  _STRUCT_FALLBACK="$(extract_section "subtask structure")"
+  _OVERLAP_FALLBACK="$(extract_section "file overlap matrix")"
+  if [ -n "$_STRUCT_FALLBACK" ] || [ -n "$_OVERLAP_FALLBACK" ]; then
+    FILE_IMPACT="$(
+      {
+        printf '_No `## File Impact Map` section in this brief — derived from Subtask Structure / File Overlap Matrix instead._\n'
+        if [ -n "$_STRUCT_FALLBACK" ]; then
+          printf '\n'
+          printf '%s\n' "$_STRUCT_FALLBACK"
+        fi
+        if [ -n "$_OVERLAP_FALLBACK" ]; then
+          printf '\n**File Overlap Matrix:**\n\n'
+          printf '%s\n' "$_OVERLAP_FALLBACK"
+        fi
+      }
+    )"
+  fi
+  unset _STRUCT_FALLBACK _OVERLAP_FALLBACK
+fi
 
 # ---------------------------------------------------------------------------
 # 2. Interfaces touched — deduped `path :: name (kind)` derived from every symbol/type
@@ -208,9 +241,23 @@ INTERFACES="$(
 )"
 
 # ---------------------------------------------------------------------------
-# 3. Conventions — Tech Stack / Architecture lines from the brief's Phase 3 header.
+# 3. Conventions — `## Environment` (71/73) + `## Skill References` (54/73). The prior
+#    `**Tech Stack:**` / `**Architecture:**` bold-line grep matched 0/73 real briefs (measured
+#    2026-07-31 across .supervisor/jobs/{done,in-progress}/) — those lines are never emitted by
+#    the current brief templates, so that grep was dead code kept alive only by its own docstring.
 # ---------------------------------------------------------------------------
-CONVENTIONS="$(grep -E '^\*\*(Tech Stack|Architecture):\*\*' "$BRIEF_FILE" 2>/dev/null)"
+_ENV_SECTION="$(extract_section "environment")"
+_SKILLS_SECTION="$(extract_section "skill references")"
+CONVENTIONS="$(
+  {
+    [ -n "$_ENV_SECTION" ] && printf '%s\n' "$_ENV_SECTION"
+    if [ -n "$_SKILLS_SECTION" ]; then
+      [ -n "$_ENV_SECTION" ] && printf '\n'
+      printf '**Skill References:**\n\n%s\n' "$_SKILLS_SECTION"
+    fi
+  }
+)"
+unset _ENV_SECTION _SKILLS_SECTION
 
 # ---------------------------------------------------------------------------
 # 4. Sibling-subtask summary — verbatim Subtask Structure table.
@@ -293,6 +340,12 @@ else
   TRUNCATED=1
 fi
 
+# Report the size actually written to disk, not the pre-truncation assembled size — those two
+# differ by construction whenever TRUNCATED=1, and reporting the pre-truncation figure next to
+# "wrote <path>" previously read as (and was) the on-disk size, which it was not.
+WRITTEN_SIZE="$(wc -c < "$TMPOUT" 2>/dev/null | tr -d '[:space:]')"
+case "$WRITTEN_SIZE" in ''|*[!0-9]*) WRITTEN_SIZE="$SIZE" ;; esac
+
 if mv -f "$TMPOUT" "$OUT" 2>/dev/null; then
   TMPOUT=""
 else
@@ -301,5 +354,9 @@ else
   exit 0
 fi
 
-echo "build-context-digest: wrote $OUT ($SIZE bytes$( [ "$TRUNCATED" -eq 1 ] && printf ', truncated to %s' "$MAX" ))"
+if [ "$TRUNCATED" -eq 1 ]; then
+  echo "build-context-digest: wrote $OUT ($WRITTEN_SIZE bytes on disk, truncated down from ${SIZE} assembled bytes to fit --max-chars ${MAX})"
+else
+  echo "build-context-digest: wrote $OUT ($WRITTEN_SIZE bytes)"
+fi
 exit 0

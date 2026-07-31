@@ -358,49 +358,155 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
   }
 
   // --- Subtask contracts YAML block ---
-  // Two accepted heading spellings, both in live use across this repo's archived briefs
-  // (measured 2026-07-31: 8 use "### Subtask contracts", 6 use "### Provides / Requires
-  // Contracts"). Matching only the first silently skipped the entire YAML block on a brief
-  // using the second spelling — every subtask parsed with EMPTY provides/requires, and the
-  // wave scheduler below (`s.requires.every(...)`) marked EVERY subtask LAUNCHABLE in wave 1,
-  // running subtasks concurrently that the brief ordered sequentially onto shared files. Same
-  // silent-empty-graph class already documented below at the `subtask_(\d+[a-z]?):` fix.
+  // Parses a single `{...}` brace item (both the multi-line `- {...}` form and each element of
+  // an inline flow-style array `provides: [ {...}, {...} ]` share this exact body grammar).
+  // `from: 1`, `from: "1a"` and `from: 1a` all appear in the wild — accept all three. An optional
+  // `S`/`ST` prefix (`from: S3`, `from: "ST1"`) is stripped so it resolves to the SAME plain
+  // numeric id the Subtask Structure table and the `S<N>:`/`ST<N>:` id-key form above use
+  // (measured `script-test-gaps-and-roadmap-remainders.md`: `from: S3` must resolve to table id
+  // "3", not the literal string "S3", or the wave scheduler's `completed.has(r.from)` check can
+  // never match and the dependent subtask blocks forever).
+  function parseBraceItem(body: string): ContractItem {
+    const item: ContractItem = { kind: "", path: "" };
+    const from = body.match(/\bfrom:\s*"?(?:ST|S)?(\d+[a-z]?)"?/);
+    if (from) item.from = from[1];
+    const kind = body.match(/\bkind:\s*([A-Za-z_]+)/);
+    if (kind) item.kind = kind[1];
+    const p = body.match(/\bpath:\s*"([^"]*)"/) ?? body.match(/\bpath:\s*([^,}]+)/);
+    if (p) item.path = p[1].trim();
+    const name = body.match(/\bname:\s*"([^"]*)"/) ?? body.match(/\bname:\s*([^,}]+)/);
+    if (name) item.name = name[1].trim();
+    return item;
+  }
+
+  // Three accepted umbrella heading spellings, all in live use across this repo's archived
+  // briefs (measured 2026-07-31 over 73 briefs: 8 use "### Subtask contracts", 6 use
+  // "### Provides / Requires Contracts", 10 use "### Provides / Requires Schema"). Matching only
+  // a subset silently skipped the entire YAML block on a brief using an unmatched spelling —
+  // every subtask parsed with EMPTY provides/requires, and the wave scheduler below
+  // (`s.requires.every(...)`) marked EVERY subtask LAUNCHABLE in wave 1, running subtasks
+  // concurrently that the brief ordered sequentially onto shared files. Same silent-empty-graph
+  // class already documented below at the `subtask_(\d+[a-z]?):` fix.
+  //
+  // `inContracts` and `inYaml` are now two INDEPENDENT flags (previously `inYaml` could only be
+  // entered from inside `inContracts`) — content is scanned whenever EITHER is true
+  // (`active = inContracts || inYaml`, computed per line below). This closes three more
+  // silent-empty-graph gaps measured 2026-07-31 across archived real briefs, on top of the two
+  // above:
+  //   - a ```yaml fence containing `provides:`/`requires:` with NO preceding recognized heading
+  //     at all (e.g. `curation-corpora-and-eval-scaffold.md`: the fence sits directly under
+  //     "## Subtask Structure" with no "Subtask Contracts" heading of its own). `inYaml` now
+  //     opens on ANY ```yaml/```yml fence unconditionally, so this parses via the existing
+  //     in-fence `subtask_N:` / `# Subtask N` id forms with no other change needed.
+  //   - an umbrella heading followed by MULTIPLE SEPARATE per-subtask fences, each with NO id
+  //     marker inside it at all — only bold prose (`**Subtask 1 — ...**`, not a markdown
+  //     heading) immediately before each fence (e.g. `read-before-write-rule.md`,
+  //     `handoff-digest.md`, `setup-twin-bootstrap.md`, `rules-substrate.md`,
+  //     `rules-enforcement.md`). See the POSITIONAL FALLBACK block below.
+  //   - contracts content with NO fence at all — raw `provides:`/`requires:` lines directly
+  //     under the umbrella heading, subtasks separated only by a bare "Subtask N" text line
+  //     (e.g. `prove-the-loop.md`). `active` now includes `inContracts` on its own (not gated on
+  //     `inYaml`), so un-fenced content under a recognized heading is scanned too.
   let inContracts = false;
   let inYaml = false;
   let current: Subtask | null = null;
   let listKey: "provides" | "requires" | "lanes" | null = null;
+  // POSITIONAL FALLBACK bookkeeping: some real briefs (enumerated above) declare a
+  // `provides:`/`requires:` block with NO id-anchor of any kind — id is implied purely by
+  // POSITION, matching the Subtask Structure table's row order. `tableOrder` is exactly that
+  // order (Map insertion order from the table-parsing loop above, i.e. top-to-bottom row order).
+  // Whenever a `provides:`/`requires:` header line is reached with `current` still null (no
+  // subtask_N:/`# Subtask N`/`S<N>:`/bare "Subtask N"/markdown-heading anchor bound it), claim
+  // the next NOT-YET-CLAIMED id from `tableOrder`, in order. This is a last resort — every
+  // explicit id form above always wins when present.
+  const tableOrder = Array.from(byId.keys());
+  const claimed = new Set<string>();
+  let positionalIdx = 0;
+  function claimNextPositional(): Subtask | null {
+    while (positionalIdx < tableOrder.length && claimed.has(tableOrder[positionalIdx])) positionalIdx++;
+    if (positionalIdx >= tableOrder.length) return null;
+    return byId.get(tableOrder[positionalIdx])!;
+  }
+
   for (const line of lines) {
+    // Fence toggles are checked FIRST and UNCONDITIONALLY — a ```yaml fence can legally appear
+    // with or without a preceding recognized heading (see the curation-corpora case above).
+    if (!inYaml && /^```ya?ml\s*$/.test(line)) {
+      inYaml = true;
+      current = null; // require an explicit (re-)bind inside this fence: id anchor or positional
+      listKey = null;
+      continue;
+    }
+    if (inYaml && /^```\s*$/.test(line)) {
+      inYaml = false;
+      current = null;
+      listKey = null;
+      continue;
+    }
+
     // Case-INSENSITIVE and heading-depth-tolerant (`##` or `###`), deliberately.
     // `agents/launch-pad.md` — the producer — emits BOTH `### Subtask Contracts`
     // (Title-Case, :422) and `## Subtask Contracts` (H2, in its complete example
-    // at :796), and archived briefs additionally use `### Subtask contracts` and
-    // `### Provides / Requires Contracts`. A case-sensitive `###`-only match
-    // covers NONE of the producer's own two templates. That was previously a
-    // latent silent-empty-graph bug; once the fail-closed guard below landed it
-    // would have become a hard throw on every real multi-subtask brief, so the
-    // guard made getting this right load-bearing. Mirrors the deliberately
-    // case-insensitive / depth-agnostic `extract_section` in
-    // `scripts/build-context-digest.sh`.
-    if (/^#{2,3}\s+(Subtask contracts|Provides \/ Requires Contracts)\b/i.test(line)) {
+    // at :796), and archived briefs additionally use `### Subtask contracts`,
+    // `### Provides / Requires Contracts`, and `### Provides / Requires Schema`. A
+    // case-sensitive `###`-only match covers NONE of the producer's own two templates. That
+    // was previously a latent silent-empty-graph bug; once the fail-closed guard below landed
+    // it would have become a hard throw on every real multi-subtask brief, so the guard made
+    // getting this right load-bearing. Mirrors the deliberately case-insensitive /
+    // depth-agnostic `extract_section` in `scripts/build-context-digest.sh`.
+    if (/^#{2,3}\s+(Subtask contracts|Provides \/ Requires Contracts|Provides \/ Requires Schema)\b/i.test(line)) {
       inContracts = true;
       continue;
     }
-    if (inContracts && !inYaml) {
-      if (/^```ya?ml\s*$/.test(line)) inYaml = true;
-      else if (/^##/.test(line)) inContracts = false; // section ended without a yaml fence
+    // Per-subtask MARKDOWN heading anchor, e.g. `### Subtask 1 — Title (LAUNCHABLE)`: measured
+    // 2026-07-31, some real briefs (e.g. archived `fix7-two-review-lenses.md`,
+    // `one-writer-derived-state.md`) carry NO umbrella "Subtask Contracts" heading at all —
+    // each subtask's own `### Subtask N — Title` markdown heading is followed directly by prose
+    // and then its OWN ```yaml fence with `provides:`/`requires:` at column 0. Without this
+    // branch `inContracts` never became true for those briefs and the entire YAML block for
+    // every subtask was silently skipped (same silent-empty-graph class as above). Requires a
+    // digit immediately after "Subtask " so it never collides with the umbrella headings above
+    // (none of which are followed by a number) or with the in-fence `# Subtask N` YAML-comment
+    // anchor below (single `#`, this pattern requires 2–4). Binds `current` directly from the
+    // heading itself — this layout has no separate `# Subtask N` comment inside its fence.
+    const subtaskHeading = line.match(/^#{2,4}\s+Subtask\s+(\d+[a-z]?)\b/i);
+    if (subtaskHeading) {
+      const id = subtaskHeading[1];
+      if (!byId.has(id)) {
+        byId.set(id, { id, title: `subtask_${id}`, tableStatus: "", provides: [], requires: [], laneGlobs: [] });
+      }
+      current = byId.get(id)!;
+      listKey = null;
+      inContracts = true;
       continue;
     }
-    if (!inYaml) continue;
-    if (/^```\s*$/.test(line)) {
-      inYaml = false;
+
+    const active = inContracts || inYaml;
+    if (!active) continue;
+
+    // Any OTHER heading-like line reaching this point (i.e. not the umbrella/per-subtask forms
+    // matched above, and not inside a fence — headings inside a fence would be unusual YAML and
+    // are left alone) ends the un-fenced `inContracts` region: a genuinely different section has
+    // started (e.g. "## Parallelism Analysis").
+    if (!inYaml && /^#{1,4}\s+/.test(line)) {
       inContracts = false;
       continue;
     }
-    // Two accepted key forms. `subtask_1:` is the runner's original contract; `# Subtask 1a — …`
-    // is what Launch Pad actually writes. Only the first was matched before, so `current` stayed
-    // null for a real brief and EVERY provides/requires line below was silently discarded (both
-    // handlers guard on `current`) — the whole dependency graph vanished without a warning.
-    let m = line.match(/^subtask_(\d+[a-z]?):/) ?? line.match(/^#\s*[Ss]ubtask\s+(\d+[a-z]?)\b/);
+
+    // Id-anchor forms recognized INSIDE contracts content (fenced or not):
+    //   subtask_1:            — the runner's original contract
+    //   # Subtask 1a — ...    — a YAML comment Launch Pad actually writes inside a fence
+    //   S1: / ST1:            — a bare map-key id form (measured `script-test-gaps-and-
+    //                           roadmap-remainders.md`: "S1:"/"S2:"/... keyed directly off the
+    //                           Subtask Structure table's plain numeric ids)
+    //   Subtask 1             — a bare, punctuation-free text line (measured `prove-the-loop.md`:
+    //                           un-fenced contracts content separated only by this line, never a
+    //                           markdown heading and never inside a fence)
+    let m =
+      line.match(/^subtask_(\d+[a-z]?):/) ??
+      line.match(/^#\s*[Ss]ubtask\s+(\d+[a-z]?)\b/) ??
+      line.match(/^(?:ST|S)(\d+[a-z]?):\s*$/) ??
+      line.match(/^Subtask\s+(\d+[a-z]?)\s*$/i);
     if (m) {
       const id = m[1];
       if (!byId.has(id)) {
@@ -422,14 +528,51 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
     // of being ignored. Today real briefs quote lane entries as plain strings (never brace
     // form), so this was latent, not yet observed in the wild — but it is a live landmine the
     // moment a brief's authoring convention drifts, and is fixed here defensively.
-    m = line.match(/^\s*(provides|requires|lanes):\s*(\[\s*\])?\s*(#.*)?$/);
-    if (m && current) {
-      listKey = m[1] as "provides" | "requires" | "lanes";
-      if (m[2]) {
-        // explicit empty list, e.g. `requires: []` / `lanes: []`
-        if (listKey === "lanes") current.laneGlobs = [];
-        else current[listKey] = [];
-        listKey = null;
+    // The header's VALUE now also accepts an INLINE flow-style array on the same line, e.g.
+    // `provides: [ { kind: file, path: foo } ]` (measured 2026-06-19-automate-engine.md: every
+    // `provides:`/`requires:` line uses this single-line form, never the multi-line `- {...}`
+    // form). Before this fix that line matched NEITHER the explicit-empty-list branch (content
+    // between the brackets is non-empty) NOR the bare-key branch (there IS trailing content) —
+    // the whole regex failed to match, the line was silently skipped, and every item inside it
+    // was lost with no error.
+    m = line.match(/^\s*(provides|requires|lanes):\s*(.*)$/);
+    if (m) {
+      // POSITIONAL FALLBACK: no id-anchor of any kind preceded this header — claim the next
+      // not-yet-claimed subtask from the Subtask Structure table, in table order (see the
+      // bookkeeping comment above `claimNextPositional`).
+      if (!current) current = claimNextPositional();
+      if (current) {
+        listKey = m[1] as "provides" | "requires" | "lanes";
+        claimed.add(current.id);
+        const rest = m[2].replace(/\s*#.*$/, "").trim();
+        if (rest === "") {
+          // Bare key — items follow on subsequent lines (existing multi-line path below).
+        } else if (/^\[\s*\]$/.test(rest)) {
+          // Explicit empty list, e.g. `requires: []` / `lanes: []`.
+          if (listKey === "lanes") current.laneGlobs = [];
+          else current[listKey] = [];
+          listKey = null;
+        } else if (rest.startsWith("[") && rest.endsWith("]")) {
+          // Inline flow-style array on one line: extract every `{...}` group inside the brackets.
+          const inner = rest.slice(1, -1);
+          const braceItems = inner.match(/\{[^}]*\}/g) ?? [];
+          if (listKey === "lanes") {
+            // Lanes are authored as plain (quoted or bare) strings, never brace objects in any
+            // measured brief — an inline brace-form `lanes:` value is unexpected; skip
+            // defensively rather than mis-parse it as a path.
+          } else {
+            for (const raw of braceItems) {
+              current[listKey].push(parseBraceItem(raw.slice(1, -1)));
+            }
+          }
+          listKey = null; // fully consumed on this one line — nothing to continue on the next
+        }
+        // Any other shape (unrecognized inline value, or free-text prose that is not a `{...}`
+        // list — e.g. a brief whose `provides:`/`requires:` values are unstructured description
+        // text rather than `{kind, path}` items) falls through with listKey still set to the
+        // header's key; the multi-line brace-item scan below simply finds nothing to push, which
+        // is the CORRECT behavior — such a brief has declared no verifiable contract item, and
+        // the fail-closed guard below is right to flag it rather than the parser inventing one.
       }
       continue;
     }
@@ -444,23 +587,12 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
     }
     m = line.match(/^\s+-\s+\{(.+)\}/);
     if (m && current && listKey) {
-      const body = m[1];
-      const item: ContractItem = { kind: "", path: "" };
-      // `from: 1`, `from: "1a"` and `from: 1a` all appear in the wild — accept all three.
-      const from = body.match(/\bfrom:\s*"?(\d+[a-z]?)"?/);
-      if (from) item.from = from[1];
-      const kind = body.match(/\bkind:\s*([A-Za-z_]+)/);
-      if (kind) item.kind = kind[1];
-      const p = body.match(/\bpath:\s*"([^"]*)"/) ?? body.match(/\bpath:\s*([^,}]+)/);
-      if (p) item.path = p[1].trim();
-      const name = body.match(/\bname:\s*"([^"]*)"/) ?? body.match(/\bname:\s*([^,}]+)/);
-      if (name) item.name = name[1].trim();
       // Narrowed explicitly (not just `listKey`'s truthiness): the "lanes" arm above always
       // `continue`s before reaching here, but TS does not carry that flow-narrowing across a
       // mutable outer-scope `let` inside a loop, so `current[listKey]` would otherwise widen
       // to include a nonexistent `current["lanes"]` index.
       if (listKey === "provides" || listKey === "requires") {
-        current[listKey].push(item);
+        current[listKey].push(parseBraceItem(m[1]));
       }
     }
   }
@@ -499,10 +631,12 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
         `parseBrief: Subtask Structure table lists ${subtasksList.length} subtasks but zero ` +
           `provides/requires items were parsed for ${allEmpty ? "ANY of them" : `subtask(s) [${ids}]`} ` +
           `— refusing to emit an all-LAUNCHABLE wave for ` +
-          `${allEmpty ? "them" : "those rows"}. Check the contracts heading (matched ` +
-          `case-insensitively at "##"/"###" depth: "Subtask contracts" or ` +
-          `"Provides / Requires Contracts"), the \`\`\`yaml fence, and that ids match the ` +
-          `Subtask Structure table (both "subtask_1:" and "# Subtask 1a — ..." forms are accepted).`
+          `${allEmpty ? "them" : "those rows"}. Check the contracts anchor (matched ` +
+          `case-insensitively at "##"/"###" depth: an umbrella "Subtask contracts" / ` +
+          `"Provides / Requires Contracts" / "Provides / Requires Schema" heading, OR a ` +
+          `per-subtask "### Subtask N — Title" markdown heading), the \`\`\`yaml fence, an ` +
+          `inline flow-style \`provides: [ {...} ]\` array being well-formed, and that ids match ` +
+          `the Subtask Structure table (both "subtask_1:" and "# Subtask 1a — ..." forms are accepted).`
       );
     }
   }
