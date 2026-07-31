@@ -676,6 +676,22 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Dispatch sibling suites so a new test/*.test.sh cannot be silently orphaned.
+# Without this, a suite is only ever run by hand -- which is exactly how the
+# parser regressions these suites guard (heading-spelling parity, the
+# lanes:/requires: list-key leak, the fail-closed zero-contract throw) would
+# reach main unnoticed. `sdk-spike/` is outside CI's loomwright/scripts/test-*.sh
+# glob, so `npm run self-test` is the only harness that can enforce them.
+# Use SCRIPT_DIR captured at the top of this file, BEFORE the `cd "$SPIKE_DIR"`
+# above -- re-deriving it from $0 here resolves against the changed cwd and
+# silently matches nothing, which makes this dispatcher fail OPEN.
+for _suite in "$SCRIPT_DIR"/*.test.sh; do
+  [ -e "$_suite" ] || continue          # nullglob-free guard (bash 3.2 safe)
+  printf '\n--- %s ---\n' "$(basename "$_suite")"
+  if bash "$_suite"; then :; else FAILURES=$((FAILURES + 1)); fi
+done
+
+# ---------------------------------------------------------------------------
 printf '\n%s\n' "self-test: $FAILURES failure(s)"
 [ "$FAILURES" = 0 ] || exit 1
 exit 0

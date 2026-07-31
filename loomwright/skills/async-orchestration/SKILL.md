@@ -720,6 +720,7 @@ Task(
     Acceptance-criteria summary (≤200 chars): {bounded summary}
     Worktree path: {project_root}
     Provides (verbatim from the brief's Subtask Contracts): {provides YAML}
+    Lanes (verbatim from the brief's Subtask Contracts): {lanes YAML}
     Retry context: {optional, from a previous outputs_verified gate gap or worker crash/timeout — no per-subtask review retry path exists}",
   # Applicable house rules: compute by running `bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-rules.sh" <touched paths...>`
   # (args, never stdin — no-hang). Inject the output into this worker prompt ONLY when it is NON-EMPTY; empty
@@ -729,6 +730,13 @@ Task(
   # the reader output; a rule's `check` is surfaced to the worker as DATA, never executed.
   # `provides:` is REQUIRED input — the worker's Step 5.5 outputs-verification
   # re-reads it from the spawn brief; omitting it silently no-ops the v12 outputs gate
+  # `lanes:` is REQUIRED input for the SAME reason — the worker's lane-check step
+  # re-reads `lanes:` from the spawn brief to populate `out_of_lane`; omitting it
+  # silently no-ops the lane gate. This paste MUST match the parallel path
+  # (`agents/execute-manager.md` §Task template), which already marks it REQUIRED —
+  # and it matters MOST here, because the Single-Agent path below is the DEFAULT
+  # shape post-Fix-1, so a gap on this template no-ops the lane gate on the path
+  # most runs actually take. Both are deliberate paste exceptions (docs/POINTER_AUDIT.md).
   # Pointer-audit note: the `provides:` YAML is a DELIBERATE paste exception (small, and required
   # verbatim in the spawn prompt by the outputs gate above — a pointer would make the gate depend on
   # a file read the worker may skip). The acceptance criteria travel as pointer + bounded summary
