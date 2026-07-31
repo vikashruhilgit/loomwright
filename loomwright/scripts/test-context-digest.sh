@@ -174,7 +174,8 @@ reachable() {
 }
 
 # ordered <a> <b> <closure> — true (0) iff a and b are sequentially ordered (either direction),
-# i.e. the wave scheduler would NOT place them in the same wave.
+# i.e. they are ORDERED relative to each other, so not a collision ("same-wave" is a
+# shorthand for mutual unreachability, not a computable wave index).
 ordered() {
   reachable "$1" "$2" "$3" && return 0
   reachable "$2" "$1" "$3" && return 0

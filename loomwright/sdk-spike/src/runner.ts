@@ -480,9 +480,17 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
   // where subtask 1 declares contracts and subtask 2 declares none sums to > 0 and passes, while
   // subtask 2 silently keeps the vacuous `requires: []` and is scheduled as unconstrained — the
   // very failure this guard exists to stop, just narrowed to one row instead of all of them.
+  // `laneGlobs` is the discriminator between "the parser found nothing" (the defect this guard
+  // exists for) and "the author genuinely declared nothing" (a sanctioned brief shape). The
+  // authoring rules in `agents/launch-pad.md` explicitly permit `provides: []` for a
+  // pure-deletion subtask and `requires: []` for a dependency-free one — a subtask that is BOTH
+  // is legal, and a provides+requires-only count would throw on it, indistinguishable from a
+  // heading mismatch. But `lanes:` is mandatory for every subtask with a contract block
+  // (Plan Reviewer Criterion 16), so a parsed `lanes` list proves the block WAS found and read.
+  // Only a subtask with no provides, no requires, AND no lanes is genuinely unparsed.
   if (subtasksList.length > 1) {
     const contractless = subtasksList.filter(
-      (s) => s.provides.length + s.requires.length === 0
+      (s) => s.provides.length + s.requires.length + (s.laneGlobs?.length ?? 0) === 0
     );
     if (contractless.length > 0) {
       const ids = contractless.map((s) => s.id).join(", ");
