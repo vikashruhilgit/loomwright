@@ -801,23 +801,32 @@ subtask_1:
     - {kind: file, path: src/auth/jwt.guard.ts}
     - {kind: symbol, path: src/auth/jwt.strategy.ts, name: JwtStrategy}
   requires: []
+  lanes:
+    - "src/auth/jwt.guard.ts"
+    - "src/auth/jwt.strategy.ts"
   external_requires: []
 subtask_2:
   provides:
     - {kind: file, path: src/auth/refresh.service.ts}
   requires: []
+  lanes:
+    - "src/auth/refresh.service.ts"
   external_requires: []
 subtask_3:
   provides:
     - {kind: file, path: src/auth/auth.controller.ts}
   requires:
     - {from: "subtask_1", kind: symbol, path: src/auth/jwt.strategy.ts, name: JwtStrategy}
+  lanes:
+    - "src/auth/auth.controller.ts"
   external_requires: []
 subtask_4:
   provides:
     - {kind: file, path: e2e/auth.spec.ts}
   requires:
     - {from: "subtask_3", kind: file, path: src/auth/auth.controller.ts}
+  lanes:
+    - "e2e/auth.spec.ts"
   external_requires: []
 ```
 

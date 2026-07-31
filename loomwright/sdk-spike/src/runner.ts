@@ -370,7 +370,18 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
   let current: Subtask | null = null;
   let listKey: "provides" | "requires" | "lanes" | null = null;
   for (const line of lines) {
-    if (/^###\s+(Subtask contracts|Provides \/ Requires Contracts)\b/.test(line)) {
+    // Case-INSENSITIVE and heading-depth-tolerant (`##` or `###`), deliberately.
+    // `agents/launch-pad.md` — the producer — emits BOTH `### Subtask Contracts`
+    // (Title-Case, :422) and `## Subtask Contracts` (H2, in its complete example
+    // at :796), and archived briefs additionally use `### Subtask contracts` and
+    // `### Provides / Requires Contracts`. A case-sensitive `###`-only match
+    // covers NONE of the producer's own two templates. That was previously a
+    // latent silent-empty-graph bug; once the fail-closed guard below landed it
+    // would have become a hard throw on every real multi-subtask brief, so the
+    // guard made getting this right load-bearing. Mirrors the deliberately
+    // case-insensitive / depth-agnostic `extract_section` in
+    // `scripts/build-context-digest.sh`.
+    if (/^#{2,3}\s+(Subtask contracts|Provides \/ Requires Contracts)\b/i.test(line)) {
       inContracts = true;
       continue;
     }
@@ -465,17 +476,24 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
   // thrown error at all today, only a silently-wrong schedule. A single-subtask brief is exempt:
   // with nothing to sequence against a sibling, an all-LAUNCHABLE "wave" of one is correct
   // regardless of whether any contracts were authored.
+  // The check is PER-SUBTASK, not a whole-brief sum. A whole-brief total is too weak: a brief
+  // where subtask 1 declares contracts and subtask 2 declares none sums to > 0 and passes, while
+  // subtask 2 silently keeps the vacuous `requires: []` and is scheduled as unconstrained — the
+  // very failure this guard exists to stop, just narrowed to one row instead of all of them.
   if (subtasksList.length > 1) {
-    const totalContractItems = subtasksList.reduce(
-      (n, s) => n + s.provides.length + s.requires.length,
-      0
+    const contractless = subtasksList.filter(
+      (s) => s.provides.length + s.requires.length === 0
     );
-    if (totalContractItems === 0) {
+    if (contractless.length > 0) {
+      const ids = contractless.map((s) => s.id).join(", ");
+      const allEmpty = contractless.length === subtasksList.length;
       throw new Error(
         `parseBrief: Subtask Structure table lists ${subtasksList.length} subtasks but zero ` +
-          `provides/requires items were parsed from the contracts YAML — refusing to emit an ` +
-          `all-LAUNCHABLE wave. Check the contracts heading spelling ("### Subtask contracts" or ` +
-          `"### Provides / Requires Contracts"), the \`\`\`yaml fence, and that ids match the ` +
+          `provides/requires items were parsed for ${allEmpty ? "ANY of them" : `subtask(s) [${ids}]`} ` +
+          `— refusing to emit an all-LAUNCHABLE wave for ` +
+          `${allEmpty ? "them" : "those rows"}. Check the contracts heading (matched ` +
+          `case-insensitively at "##"/"###" depth: "Subtask contracts" or ` +
+          `"Provides / Requires Contracts"), the \`\`\`yaml fence, and that ids match the ` +
           `Subtask Structure table (both "subtask_1:" and "# Subtask 1a — ..." forms are accepted).`
       );
     }

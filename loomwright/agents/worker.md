@@ -214,7 +214,7 @@ Produce the structured WORKER_RESULT block (see Output Format below).
 - tests_failed: {number or "n/a"}
 - outputs_verified: [{kind: file|symbol|type, path: <path>, name?: <name>, status: present|missing}, ...]
 - outputs_gap: "{comma-separated missing items, or empty string if all present}"
-- out_of_lane: [{comma-separated paths you touched outside your own declared lane, or empty array}]   # OPTIONAL, additive at schema_version 2 (D6) — REPORT-ONLY, see Step 5.65; NEVER affects status or outputs_gap; omit the field entirely (or emit `[]`) when your subtask has no `lanes:` declaration or every touched path is in-lane
+- out_of_lane: ["<path you touched outside your own declared lane>", ...]   # array of plain STRINGS (not objects, unlike outputs_verified); `[]` when none   # OPTIONAL, additive at schema_version 2 (D6) — REPORT-ONLY, see Step 5.65; NEVER affects status or outputs_gap; omit the field entirely (or emit `[]`) when your subtask has no `lanes:` declaration or every touched path is in-lane
 - memory_candidates: ["<one-line durable fact>", ...]   # OPTIONAL array of strings — omit the field entirely if no candidates
 - error: none | {brief error description}
 - summary: {1-2 sentence implementation summary, max 200 tokens}
