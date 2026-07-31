@@ -86,6 +86,19 @@ interface Subtask {
   // concurrency local in runPool, below). Empty when the subtask has no
   // declared lane (pre-lane-declaration brief).
   laneGlobs: string[];
+  /** True once ANY contract key (`provides:`/`requires:`/`lanes:`/`external_requires:`) was
+   *  SEEN for this subtask -- regardless of whether the list turned out empty. This is what
+   *  distinguishes "the author declared nothing" (a sanctioned shape) from "the parser never
+   *  found the block" (the defect the fail-closed guard exists for). Counting list LENGTHS
+   *  cannot tell those apart. */
+  sawContractKey: boolean;
+  /** True when an INLINE contract value was present but yielded ZERO parseable items --
+   *  e.g. `provides: [some free-text prose describing the work]`. The key was seen, so
+   *  `sawContractKey` alone would call this "declared", but nothing addressable was
+   *  actually captured, so the subtask still ends up vacuously LAUNCHABLE. Tracked
+   *  separately so the guard keeps catching this while no longer false-positiving on a
+   *  legitimately empty `provides: []`. */
+  sawUnparseableValue: boolean;
 }
 
 type DryRunFixtureSet = "default" | "fail" | "review-fail" | "throw-usage" | "throw-usage-worker";
@@ -348,6 +361,7 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
       const id = m[1];
       byId.set(id, {
         id,
+        sawContractKey: false, sawUnparseableValue: false,
         title: m[2].trim(),
         tableStatus: m[3].trim(),
         provides: [],
@@ -492,7 +506,7 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
     if (subtaskHeading) {
       const id = subtaskHeading[1];
       if (!byId.has(id)) {
-        byId.set(id, { id, title: `subtask_${id}`, tableStatus: "", provides: [], requires: [], laneGlobs: [] });
+        byId.set(id, { id, title: `subtask_${id}`, tableStatus: "", provides: [], requires: [], laneGlobs: [], sawContractKey: false, sawUnparseableValue: false });
       }
       current = byId.get(id)!;
       listKey = null;
@@ -529,7 +543,7 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
     if (m) {
       const id = m[1];
       if (!byId.has(id)) {
-        byId.set(id, { id, title: `subtask_${id}`, tableStatus: "", provides: [], requires: [], laneGlobs: [] });
+        byId.set(id, { id, title: `subtask_${id}`, tableStatus: "", provides: [], requires: [], laneGlobs: [], sawContractKey: false, sawUnparseableValue: false });
       }
       current = byId.get(id)!;
       listKey = null;
@@ -562,6 +576,12 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
       if (!current) current = claimNextPositional();
       if (current) {
         listKey = m[1] as "provides" | "requires" | "lanes";
+        // A contract key was SEEN for this subtask -- even if its list is empty. This is the
+        // fail-closed guard's real discriminator (see the guard below): an all-empty but
+        // explicitly-declared subtask is a SANCTIONED shape per
+        // skills/supervisor-readiness/SKILL.md, while a subtask the parser never reached is
+        // the defect. Length-based counting conflates the two.
+        current.sawContractKey = true;
         claimed.add(current.id);
         const rest = m[2].replace(/\s*#.*$/, "").trim();
         if (rest === "") {
@@ -576,10 +596,26 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
           const inner = rest.slice(1, -1);
           const braceItems = inner.match(/\{[^}]*\}/g) ?? [];
           if (listKey === "lanes") {
-            // Lanes are authored as plain (quoted or bare) strings, never brace objects in any
-            // measured brief — an inline brace-form `lanes:` value is unexpected; skip
-            // defensively rather than mis-parse it as a path.
+            // Lanes ARE plain strings, never brace objects -- which is exactly why scanning for
+            // `{...}` groups here found nothing and silently produced an EMPTY laneGlobs for the
+            // perfectly natural single-line form `lanes: ["a.ts", "b.ts"]`. That is not a
+            // harmless miss: workerPrompt only emits the lane-boundary text when
+            // laneGlobs.length > 0, so a worker spawned from an inline-authored brief received
+            // NO lane boundaries at all -- quietly defeating this feature for that authoring
+            // style. (The multi-line `lanes:` + `- "a.ts"` block form always worked.)
+            // Split on commas OUTSIDE quotes, then strip quotes/whitespace.
+            for (const rawLane of inner.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/)) {
+              const lane = rawLane.trim().replace(/^["']|["']$/g, "").trim();
+              if (lane) current.laneGlobs.push(lane);
+            }
           } else {
+            if (braceItems.length === 0 && inner.trim() !== "") {
+              // Non-empty inline value that contains no `{...}` item at all -- free-text prose
+              // where addressable {kind, path} entries belong. The key WAS seen, so this is not
+              // an unparsed block, but nothing was captured either: the subtask would end up
+              // vacuously LAUNCHABLE. Record it so the fail-closed guard still fires.
+              current.sawUnparseableValue = true;
+            }
             for (const raw of braceItems) {
               current[listKey].push(parseBraceItem(raw.slice(1, -1)));
             }
@@ -640,9 +676,12 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
   // (Plan Reviewer Criterion 16), so a parsed `lanes` list proves the block WAS found and read.
   // Only a subtask with no provides, no requires, AND no lanes is genuinely unparsed.
   if (subtasksList.length > 1) {
-    const contractless = subtasksList.filter(
-      (s) => s.provides.length + s.requires.length + (s.laneGlobs?.length ?? 0) === 0
-    );
+    // Discriminate on whether a contract key was SEEN, not on list lengths. A subtask that
+    // explicitly declares `provides: []` / `requires: []` / `lanes: []` (a coordination-only
+    // subtask that "genuinely touches nothing addressable", sanctioned by
+    // skills/supervisor-readiness/SKILL.md) sums to zero on every list and would otherwise be
+    // reported as unparsed -- a false positive that aborts a perfectly valid brief.
+    const contractless = subtasksList.filter((s) => !s.sawContractKey || s.sawUnparseableValue);
     if (contractless.length > 0) {
       const ids = contractless.map((s) => s.id).join(", ");
       const allEmpty = contractless.length === subtasksList.length;

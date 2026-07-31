@@ -242,10 +242,33 @@ fi
 #    provides/requires entry, quoted or unquoted YAML flow-map style (both appear in this repo's
 #    brief-producing templates).
 # ---------------------------------------------------------------------------
+# KEY-ORDER-INDEPENDENT by construction. The previous form anchored on the literal
+# `{kind:` -- i.e. it required `kind:` to be the FIRST key -- which silently dropped
+# EVERY `requires` entry, because the documented schema leads those with `from:`
+# (`{from: "1", kind: "symbol", path: ..., name: ...}`). The effect was that the one
+# section a worker most wants -- a sibling's public surface it must consume -- only
+# ever listed same-subtask `provides`, never a single cross-subtask interface. It was
+# invisible in testing because the fixture's requires-side symbol was ALSO provided by
+# a sibling, so dedup made the two indistinguishable.
 INTERFACES="$(
-  grep -E '\{kind:[[:space:]]*"?(symbol|type)"?,' "$BRIEF_FILE" 2>/dev/null \
-    | sed -E 's/.*kind:[[:space:]]*"?(symbol|type)"?,[[:space:]]*path:[[:space:]]*"?([^,"}]*)"?,[[:space:]]*name:[[:space:]]*"?([^,"}]*)"?.*/\2 :: \3 (\1)/' \
-    | sort -u
+  awk '
+    {
+      line = $0
+      # Walk every {...} brace item on the line independently.
+      while (match(line, /\{[^{}]*\}/)) {
+        item = substr(line, RSTART, RLENGTH)
+        line = substr(line, RSTART + RLENGTH)
+        if (item !~ /kind:[[:space:]]*"?(symbol|type)"?/) continue
+        k = item; sub(/.*kind:[[:space:]]*"?/, "", k); sub(/"?[,}].*/, "", k)
+        p = item; if (p !~ /path:/) continue
+        sub(/.*path:[[:space:]]*"?/, "", p); sub(/"?[,}].*/, "", p)
+        n = item; if (n !~ /name:/) continue
+        sub(/.*name:[[:space:]]*"?/, "", n); sub(/"?[,}].*/, "", n)
+        gsub(/^[ \t]+|[ \t]+$/, "", k); gsub(/^[ \t]+|[ \t]+$/, "", p); gsub(/^[ \t]+|[ \t]+$/, "", n)
+        if (k != "" && p != "" && n != "") print p " :: " n " (" k ")"
+      }
+    }
+  ' "$BRIEF_FILE" 2>/dev/null | sort -u
 )"
 
 # ---------------------------------------------------------------------------

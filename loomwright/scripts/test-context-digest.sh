@@ -341,6 +341,49 @@ else
 fi
 rm -f "$NUMBRIEF" "$OUT_F"
 
+# ---------------------------------------------------------------------------
+# Group G — `## Interfaces touched` must index BOTH sides of the contract.
+#
+# The extractor previously anchored on the literal `{kind:`, i.e. it required `kind:`
+# to be the FIRST key -- so every `requires` entry (which leads with `from:`) was
+# silently skipped, and the section listed only same-subtask `provides`. The bug was
+# invisible because the committed fixture's requires-side symbol is ALSO provided by a
+# sibling, so dedup hid it, and no test asserted section CONTENT -- only non-emptiness.
+# This fixture uses a requires-only symbol that appears in no `provides` anywhere.
+# ---------------------------------------------------------------------------
+IFBRIEF="$(mktemp -t ifbrief.XXXXXX)"
+cat > "$IFBRIEF" <<'EOF'
+# Interfaces Both Sides
+
+## Subtask Structure
+
+| # | Title | Est. Files | Skills | Status |
+|---|-------|-----------|--------|--------|
+| 1 | Alpha | 1 modify | x | LAUNCHABLE |
+
+### Subtask contracts
+
+```yaml
+subtask_1:
+  provides:
+    - {kind: "symbol", path: "src/mine.ts", name: "PROVIDES_SIDE_SYMBOL"}
+  requires:
+    - {from: "9", kind: "symbol", path: "vendor/lib.ts", name: "REQUIRES_SIDE_SYMBOL"}
+  lanes: ["src/mine.ts"]
+```
+EOF
+OUT_G="$(mktemp -t ifout.XXXXXX)"
+bash "$REPO_ROOT/loomwright/scripts/build-context-digest.sh" --brief "$IFBRIEF" --out "$OUT_G" >/dev/null 2>&1
+IFSEC="$(sed -n '/^## Interfaces touched/,/^## /p' "$OUT_G")"
+TOTAL=$((TOTAL+1))
+if printf '%s' "$IFSEC" | grep -q 'PROVIDES_SIDE_SYMBOL' \
+   && printf '%s' "$IFSEC" | grep -q 'REQUIRES_SIDE_SYMBOL'; then
+  ok "Interfaces touched indexes BOTH provides-side and requires-side symbols (key-order independent)"
+else
+  no "Interfaces touched dropped a side — provides:$(printf '%s' "$IFSEC" | grep -c 'PROVIDES_SIDE_SYMBOL') requires:$(printf '%s' "$IFSEC" | grep -c 'REQUIRES_SIDE_SYMBOL') (requires entries lead with from:, so a '{kind:'-anchored match silently skips them)"
+fi
+rm -f "$IFBRIEF" "$OUT_G"
+
 if [ "$FAIL" -eq 0 ]; then
   echo "ALL TESTS PASSED ($PASS/$TOTAL)"
   exit 0

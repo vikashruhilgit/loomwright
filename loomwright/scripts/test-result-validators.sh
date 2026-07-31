@@ -2644,6 +2644,87 @@ for v in $V_WORKER $V_EXECUTE $V_SUPERVISOR $V_QA $V_PLAN; do
 done
 
 echo ""
+# ---------------------------------------------------------------------------
+# rule 9 — out_of_lane (v15.20.0, D6). Optional + additive at schema_version 2, so
+# ABSENCE must pass; when PRESENT it must be an array of non-empty strings. The rule
+# must never touch status/outputs_gap (the `completed` iff `outputs_gap == ""`
+# biconditional is independent of it). These branches had zero coverage here --
+# only the MANIFEST name-pin was checked, which cannot see behavior.
+# ---------------------------------------------------------------------------
+mk worker-r9-absent.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- summary: out_of_lane absent entirely — optional/additive, must still validate
+EOF
+run_v "$V_WORKER" "$F"
+assert_ok "worker: rule 9 — out_of_lane ABSENT is accepted (optional/additive, no schema bump)"
+
+mk worker-r9-empty.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- out_of_lane: []
+- summary: explicit empty list — the in-lane case
+EOF
+run_v "$V_WORKER" "$F"
+assert_ok "worker: rule 9 — out_of_lane [] is accepted (in-lane, presence-gated not truthiness-gated)"
+
+mk worker-r9-populated.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py, shared/types.ts]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- out_of_lane: [shared/types.ts]
+- summary: REPORT-ONLY — a populated out_of_lane must NOT flip status away from completed
+EOF
+run_v "$V_WORKER" "$F"
+assert_ok "worker: rule 9 — populated out_of_lane coexists with status:completed + empty outputs_gap (report-only, invariant untouched)"
+
+mk worker-r9-nonlist.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- out_of_lane: "shared/types.ts"
+- summary: present but a bare string, not an array
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: rule 9 — out_of_lane present-but-NOT-a-list is rejected" "rule 9"
+
+mk worker-r9-emptystring.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- out_of_lane: ["", "shared/types.ts"]
+- summary: present list containing an empty-string entry
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: rule 9 — out_of_lane with an empty-string entry is rejected" "rule 9"
+
 echo "RESULT  pass=$PASS_COUNT  fail=$FAIL_COUNT"
 if [ "$FAIL_COUNT" -eq 0 ]; then
   exit 0
