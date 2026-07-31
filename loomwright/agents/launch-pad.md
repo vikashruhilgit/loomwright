@@ -565,7 +565,7 @@ Task(
 Project CLAUDE.md context:
 {relevant patterns, tech stack, directory structure — max 500 tokens}
 
-Check all 15 review criteria. Output a PLAN_REVIEW_RESULT block.",
+Check all 16 review criteria. Output a PLAN_REVIEW_RESULT block.",
   subagent_type: "loomwright:plan-reviewer"
 )
 ```
