@@ -2663,7 +2663,7 @@ mk worker-r9-absent.md <<'EOF'
 - summary: out_of_lane absent entirely — optional/additive, must still validate
 EOF
 run_v "$V_WORKER" "$F"
-assert_ok "worker: rule 9 — out_of_lane ABSENT is accepted (optional/additive, no schema bump)"
+assert_pass "worker: rule 9 — out_of_lane ABSENT is accepted (optional/additive, no schema bump)"
 
 mk worker-r9-empty.md <<'EOF'
 ## WORKER_RESULT
@@ -2678,7 +2678,7 @@ mk worker-r9-empty.md <<'EOF'
 - summary: explicit empty list — the in-lane case
 EOF
 run_v "$V_WORKER" "$F"
-assert_ok "worker: rule 9 — out_of_lane [] is accepted (in-lane, presence-gated not truthiness-gated)"
+assert_pass "worker: rule 9 — out_of_lane [] is accepted (in-lane, presence-gated not truthiness-gated)"
 
 mk worker-r9-populated.md <<'EOF'
 ## WORKER_RESULT
@@ -2693,7 +2693,7 @@ mk worker-r9-populated.md <<'EOF'
 - summary: REPORT-ONLY — a populated out_of_lane must NOT flip status away from completed
 EOF
 run_v "$V_WORKER" "$F"
-assert_ok "worker: rule 9 — populated out_of_lane coexists with status:completed + empty outputs_gap (report-only, invariant untouched)"
+assert_pass "worker: rule 9 — populated out_of_lane coexists with status:completed + empty outputs_gap (report-only, invariant untouched)"
 
 mk worker-r9-nonlist.md <<'EOF'
 ## WORKER_RESULT

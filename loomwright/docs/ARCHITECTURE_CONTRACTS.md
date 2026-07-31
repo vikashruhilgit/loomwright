@@ -330,7 +330,7 @@ A CI ratchet on **spawn-time prompt inventory**. Each agent's effective weight i
 |---|---|---|---|
 | `code-reviewer`     | 24330 | 22118 | 5 |
 | `context-keeper`    | 3818  | 3471¹ | 0 |
-| `execute-manager`   | 31400 | 28550¹ | 3 |
+| `execute-manager`   | 31400 | 26357¹ | 3 |
 | `launch-pad`        | 38673 | 31343 | 7 |
 | `orchestrator`      | 9558  | 8688¹ | 1 |
 | `plan-reviewer`     | 9180  | 6392  | 0 |

@@ -674,14 +674,14 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
   // where subtask 1 declares contracts and subtask 2 declares none sums to > 0 and passes, while
   // subtask 2 silently keeps the vacuous `requires: []` and is scheduled as unconstrained — the
   // very failure this guard exists to stop, just narrowed to one row instead of all of them.
-  // `laneGlobs` is the discriminator between "the parser found nothing" (the defect this guard
-  // exists for) and "the author genuinely declared nothing" (a sanctioned brief shape). The
-  // authoring rules in `agents/launch-pad.md` explicitly permit `provides: []` for a
+  // The authoring rules in `agents/launch-pad.md` explicitly permit `provides: []` for a
   // pure-deletion subtask and `requires: []` for a dependency-free one — a subtask that is BOTH
-  // is legal, and a provides+requires-only count would throw on it, indistinguishable from a
-  // heading mismatch. But `lanes:` is mandatory for every subtask with a contract block
-  // (Plan Reviewer Criterion 16), so a parsed `lanes` list proves the block WAS found and read.
-  // Only a subtask with no provides, no requires, AND no lanes is genuinely unparsed.
+  // is legal. So a count over provides+requires(+lanes) would throw on that sanctioned shape,
+  // indistinguishable from a block the parser never found. `laneGlobs` was tried as the
+  // discriminator and is NOT sufficient either: `lanes: []` is permitted under the same
+  // empty-with-justification carve-out (`skills/supervisor-readiness/SKILL.md`), so an
+  // all-empty coordination-only subtask still summed to zero. The shipped discriminator is
+  // `sawContractKey || sawUnparseableValue` — see the block immediately below.
   if (subtasksList.length > 1) {
     // Discriminate on whether a contract key was SEEN, not on list lengths. A subtask that
     // explicitly declares `provides: []` / `requires: []` / `lanes: []` (a coordination-only

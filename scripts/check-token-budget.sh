@@ -236,6 +236,20 @@ if [ -n "$CONTRACTS_MD" ]; then
           errors=$((errors + 1))
           exit_code=1
         fi
+        # ALSO sync the MEASURED column (v15.20.0). Previously only the budget cell was
+        # checked, so a raise that also overwrote the frozen `Measured` cell — with the OLD
+        # BUDGET value, contradicting both the authoritative JSON `.measured` and the footnote
+        # that owns the cell — passed CI silently. A falsified historical measurement is worse
+        # than a stale one: it is the baseline every future raise argues from. Footnote markers
+        # (`26357¹`) are stripped before comparison; an EMPTY measured cell is tolerated (some
+        # rows legitimately carry no baseline yet), a MISMATCHED one is not.
+        jmeasured="$(jq -r --arg k "$key" '.agents[$k].measured // ""' "$BUDGET_JSON")"
+        mmeasured="$(printf '%s\n' "$row" | awk -F'|' '{m=$4; gsub(/[[:space:]]/,"",m); print m}' | sed 's/[^0-9]//g')"
+        if [ -n "$jmeasured" ] && [ -n "$mmeasured" ] && [ "$mmeasured" != "$jmeasured" ]; then
+          printf "%-22s %8s %8s  %-6s  %s\n" "$key" "-" "$jbudget" "ERROR" "mirror drift: table MEASURED cell '$mmeasured' != JSON measured '$jmeasured' in $CONTRACTS_MD — the measured column is a FROZEN baseline; a raise changes only the budget column"
+          errors=$((errors + 1))
+          exit_code=1
+        fi
       fi
     done <<EOF
 $(jq -r '.agents | keys[]' "$BUDGET_JSON" 2>/dev/null)

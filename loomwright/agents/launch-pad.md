@@ -492,8 +492,11 @@ Subtask 2 (independent)
    When both hold, EMIT a `## Executable Acceptance` section declaring `- corpus-task: doc-currency-green` and `- corpus-task: version-consistent`, so Supervisor Phase 4.5 `ground_truth` runs the doc/version invariants (`status != "skipped"`) instead of finding nothing to execute. Outside this plugin's repo, omit the section unless a plugin-bundled `corpus-task:` id genuinely matches the run's acceptance (usually none does — see `skills/supervisor-readiness/SKILL.md`).
 7. **Outcomes Rubric auto-authoring (guarded — fires ONLY on the `/autonomous` producer seam).** This step runs **only when the inlined caller explicitly requests rubric authoring** — i.e. the `/autonomous` loop's inline directive asks Launch Pad to author a rubric because the run is multi-iteration AND the requirement lacks `## Outcomes Rubric`. In every other invocation (normal `/launch-pad`, single-iteration, or a requirement that already has a rubric) this step is a **no-op** — preserve-verbatim behavior is unchanged. When it fires, derive **3-7 diff-checkable bullets** from the brief's Acceptance Criteria + the Phase 3 File Impact Map, following the authoring rules in `skills/supervisor-readiness/SKILL.md` §"Outcomes Rubric" / §"Auto-Authoring (multi-iteration)" (reference them — do NOT restate the rules), and include the result as a `## Outcomes Rubric` section in the assembled brief so Phase 6 surfaces it for human approve/edit. **Fallback:** if fewer than 3 diff-checkable bullets are derivable, emit NO rubric section and note that the run will use the no-rubric gate. This guarded step is a deliberate, documented deviation from Launch Pad's usual "inline-instruction, no source change" convention — it is the rubric **producer seam**; it stays guarded so default behavior is untouched.
 8. Present the complete brief to the user
-9. **Context digest emission (unconditional, v15.20.0 — D6).** Immediately after the brief is assembled (this step runs regardless of Phase 5.5 Plan Review's later outcome — the digest is a derived analysis artifact, not the brief itself, so it is NOT gated on Plan Review the way the brief's own save is):
-   - Serialize the assembled brief text from this Phase into a scratch file. **This serialization happens HERE, first** — Phase 5.5 action 1 then reuses this scratch file for the reviewer spawn rather than re-assembling the brief. (Stated in this direction deliberately: Phase 5 completes before Phase 5.5 begins, so this step cannot "reuse" anything Phase 5.5 produces.)
+9. **MATERIALIZE — scratch file + context digest (unconditional, v15.20.0 — D6).** Immediately after the brief is assembled (this step runs regardless of Phase 5.5 Plan Review's later outcome — the digest is a derived analysis artifact, not the brief itself, so it is NOT gated on Plan Review the way the brief's own save is).
+
+   > **MATERIALIZE is IDEMPOTENT and RE-RUNNABLE, and it is the ONLY step that writes either artifact.** Every path that revises the brief after this point — the Phase 5.5 FAIL/refine retry loop, and Phase 6's "Refine further" / "Edit sections" — MUST re-run this step before the brief is re-reviewed or saved. Both artifacts are derived from the brief text, so a revision that does not re-run MATERIALIZE leaves them describing a version that no longer exists: the reviewer would re-review the PRE-revision text (silently degrading the mandatory gate to one effective review), and workers would be pointer-handed the lanes from a plan Plan Review had just REJECTED. Re-running is cheap and safe; skipping it is neither.
+
+   - Serialize the assembled brief text from this Phase into a scratch file — overwriting any previous content, so the scratch file always holds the brief **as last assembled**. **This serialization happens HERE, first** — Phase 5.5 action 1 then reuses this scratch file for the reviewer spawn rather than re-assembling the brief. (Stated in this direction deliberately: Phase 5 completes before Phase 5.5 begins, so this step cannot "reuse" anything Phase 5.5 produces.)
    - Compute the job's basename exactly as Phase 6 will (`{YYYY-MM-DD}-{slug}.md`) so the digest and the eventual brief file share a basename.
    - Invoke `bash "${CLAUDE_PLUGIN_ROOT}/scripts/build-context-digest.sh" --brief <scratch-file> --out .supervisor/jobs/context-digests/{date}-{slug}.md` (see `docs/RESULT_SCHEMAS.md` §"CONTEXT_DIGEST" for the artifact contract: File Impact Map, interfaces touched, conventions, sibling-subtask summary, cross-lane producer/consumer contracts — bounded, with an explicit truncation marker when exceeded).
    - This is the artifact later handed to every spawned worker as a **pointer** (`docs/POINTER_AUDIT.md` §"Context digest") — path + ≤200-char summary + "Read only the sections you need" — on both the Task-spawn carrier (`skills/async-orchestration/SKILL.md` §"Context digest pointer") and the SDK-runner carrier. The builder is fail-safe (always exits 0); if it reports a write failure, proceed with brief assembly regardless — a missing digest never blocks Plan Review or save.
@@ -508,7 +511,7 @@ Subtask 2 (independent)
 
 **Actions:**
 
-1. Reuse the scratch file Phase 5 step 9 already serialized (do NOT re-assemble the brief — re-assembling risks reviewing text that differs from what step 9 wrote and what Phase 6 will save); if that scratch file is missing, serialize the assembled brief from Phase 5 into a text block here as a fallback
+1. Reuse the scratch file **as last written by Phase 5 step 9 MATERIALIZE** (do NOT re-assemble the brief here — re-assembling in this action risks reviewing text that differs from what MATERIALIZE wrote and what Phase 6 will save). **On a retry, MATERIALIZE has already been re-run by the FAIL branch below, so this file holds the REVISED brief** — that is what makes the retry a genuine second review rather than a re-read of the rejected text. If the scratch file is missing, serialize the assembled brief from Phase 5 into a text block here as a fallback
 2. Spawn Plan Reviewer as a subagent with brief text + CLAUDE.md context
 3. Parse PLAN_REVIEW_RESULT from reviewer output
 4. Decision handling:
@@ -548,6 +551,11 @@ loop:
     else:
       → fix issues from reviewer feedback
       → re-assemble brief
+      → RE-RUN Phase 5 step 9 MATERIALIZE  # rewrites the scratch file AND rebuilds the
+        # digest from the revised text. WITHOUT THIS the loop re-enters action 1, which
+        # reuses the scratch file — and would hand the reviewer the byte-identical
+        # PRE-FIX text, so attempt 2 reviews the same brief attempt 1 rejected. The
+        # mandatory 3-attempt gate would collapse to one effective review.
       → loop
 ```
 
@@ -599,12 +607,12 @@ Check all 16 review criteria. Output a PLAN_REVIEW_RESULT block.",
 1. Present the assembled brief from Phase 5 with Plan Review status
 2. If Plan Review returned NEEDS_HUMAN: use `AskUserQuestion` with 3 options:
    - **"Override and save"** — User acknowledges warnings and takes responsibility. Write brief to `.supervisor/jobs/pending/{date}-{slug}.md` with `## Plan Review: NEEDS_HUMAN (user override)` section
-   - **"Refine further"** — Loop back to fix issues, then re-run Plan Review
+   - **"Refine further"** — Loop back to fix issues, **re-run Phase 5 step 9 MATERIALIZE** (rewrites the scratch file + rebuilds the digest from the revised text), then re-run Plan Review
    - **"Discard"** — Cancel without saving
 3. If Plan Review returned PASS: use `AskUserQuestion` with 4 options:
    - **"Save and exit"** — Write brief to `.supervisor/jobs/pending/{date}-{slug}.md`, output `/supervisor job: {path}` command
-   - **"Refine further"** — Ask clarifying questions, update sections, then **re-run Plan Review before save** (consumes an attempt from the shared 3-spawn cap; the PASS is void once the brief is mutated)
-   - **"Edit sections"** — User specifies what to change, update in-place, then **re-run Plan Review before save** (same rule: any post-PASS mutation voids the PASS and requires re-review; consumes an attempt from the shared cap). **Corner case:** if the PASS landed on the 3rd (final) spawn, no attempts remain — "Refine further"/"Edit sections" are not offered; only "Save and exit" (the unmutated PASSed brief) or "Discard"
+   - **"Refine further"** — Ask clarifying questions, update sections, **re-run Phase 5 step 9 MATERIALIZE**, then **re-run Plan Review before save** (consumes an attempt from the shared 3-spawn cap; the PASS is void once the brief is mutated)
+   - **"Edit sections"** — User specifies what to change, update in-place, **re-run Phase 5 step 9 MATERIALIZE**, then **re-run Plan Review before save** (same rule: any post-PASS mutation voids the PASS and requires re-review; consumes an attempt from the shared cap). **Corner case:** if the PASS landed on the 3rd (final) spawn, no attempts remain — "Refine further"/"Edit sections" are not offered; only "Save and exit" (the unmutated PASSed brief) or "Discard"
    - **"Discard"** — Cancel without saving
 4. If Plan Review returned FAIL (after 3 attempts — the cap is exhausted): use `AskUserQuestion` with 2 options. **FAIL never enables save**, and the 3-spawn cap is never reset within a session:
    - **"Refine offline"** — Exit without saving (`status: blocked`); the user fixes the issues and starts a new Launch Pad session
