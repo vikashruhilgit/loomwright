@@ -49,7 +49,7 @@ import json,sys
 def prompt(fields): return "Verify block contains " + ", ".join(fields) + " fields."
 mk=lambda m,f:{"matcher":f"loomwright:{m}","hooks":[{"type":"prompt","prompt":prompt(f),"timeout":30}]}
 h={"hooks":{"SubagentStop":[
-  mk("worker",["schema_version","task_id","status","files_modified","summary","outputs_verified","outputs_gap"]),
+  mk("worker",["schema_version","task_id","status","files_modified","summary","outputs_verified","outputs_gap","out_of_lane"]),
   mk("execute-manager",["schema_version","subtasks_completed","worktrees","merge_order","summary","completed_so_far","remaining","resume_context","reason"]),
   mk("qa-executor",["schema_version","tests_generated","tests_passed","summary","coverage_estimate"]),
   mk("supervisor-runner",["schema_version","status","pr_url","heal_loop_ran","heal_iterations","heal_decision","heal_fixable_issues_fixed","heal_remaining_issues","error","summary"]),
@@ -61,7 +61,8 @@ PY
   # agent prompts naming every required field, with in-enum literals only
   cat >"$d/loomwright/agents/worker.md" <<'EOF'
 Emit WORKER_RESULT: schema_version, task_id, status: completed, files_modified,
-summary, outputs_verified (status: present / status: missing), outputs_gap.
+summary, outputs_verified (status: present / status: missing), outputs_gap,
+out_of_lane (optional, additive at schema_version 2 — report-only).
 Other statuses: status: failed, status: partial.
 EOF
   cat >"$d/loomwright/agents/execute-manager.md" <<'EOF'

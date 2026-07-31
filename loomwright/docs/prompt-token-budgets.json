@@ -20,9 +20,9 @@
       "note": "authoring baseline v15.10.0; 3 preloaded skills. Raised 25941 -> 28550 (v15.15.0): the Single-Agent Path carve-out grew the preloaded async-orchestration/SKILL.md, leaving only 22 proxy tokens of headroom; restored to measured + ~10% per the initial-budget convention. Re-measured for the one-writer-derived-state change (v15.16.0 in progress): deleting queue_ck_update/flush_ck_batch/record_batch (Subtask 2) removed prose, but the SAME commit bundled a bug fix (record_review now recorded on the FAIL==3 and NEEDS_HUMAN terminal branches, previously unrecorded) that added more than the deletion removed — measured moved 25934 -> 26357 (delta +423, an INCREASE; pre/post at git 36c39de/e644d9f). Budget left UNCHANGED at 28550 (2193 headroom, no breach); deliberately NOT lowered, contrary to the source brief's Subtask 3 framing — the measured data does not support a decrease here."
     },
     "launch-pad": {
-      "budget": 34478,
+      "budget": 38673,
       "measured": 31343,
-      "note": "authoring baseline v15.10.0; 7 preloaded skills (name: loomwright:launch-pad-runner)"
+      "note": "authoring baseline v15.10.0; 7 preloaded skills (name: loomwright:launch-pad-runner). Raised 34478 -> 38673 (D6, v15.20.0): Phase 5 PACKAGE gained the unconditional 'Context digest emission' step (docs/RESULT_SCHEMAS.md CONTEXT_DIGEST + the Lane Declaration Schema's lanes: authoring rule cross-reference); current re-measure 35157 + ~10% per the initial-budget convention. Per the frozen-metadata convention, the `measured` field/column here stays the v15.10.0 authoring baseline (31343) — the live re-measure figure (35157) lives in this note and in ARCHITECTURE_CONTRACTS.md's Raise log paragraph, not in this field."
     },
     "orchestrator": {
       "budget": 9558,
@@ -30,9 +30,9 @@
       "note": "authoring baseline v15.10.0; 1 preloaded skill. Raised 8665 -> 9558 (v15.18.0, Fix 7 item 4/Subtask 3): agents/orchestrator.md §\"Review Gate Policy\" was rewritten so neither side of the Decomposition Threshold generates a paired per-subtask LLM review subtask (the deterministic outputs_verified gate + integrated Phase 4.5 review is now the gate on both sides) plus a Review Counter-Pressure Rule citation; measured moved 7877 -> 8688 (+811), breaching by 23. Restored the same ~10% margin this row has held since authoring (never previously raised): prior margin 8665/7877 = 1.100038, and 8688 * 1.100038 = 9557.1 (plain measured + ~10% gives 9556.8, essentially the same figure since the prior margin already was ~10%); the declared budget is that figure rounded up to 9558."
     },
     "plan-reviewer": {
-      "budget": 7750,
+      "budget": 9180,
       "measured": 6392,
-      "note": "authoring baseline v15.10.0; 0 preloaded skills. Raised 7032 -> 7750 (v15.15.0): the inverted Criterion 4 plus its split-reason predicate cross-check left only 42 proxy tokens; restored to measured + ~10% per the initial-budget convention."
+      "note": "authoring baseline v15.10.0; 0 preloaded skills. Raised 7032 -> 7750 (v15.15.0): the inverted Criterion 4 plus its split-reason predicate cross-check left only 42 proxy tokens; restored to measured + ~10% per the initial-budget convention (current re-measure at that time was 6990, per ARCHITECTURE_CONTRACTS.md's Raise log). Raised again 7750 -> 9180 (D6, v15.20.0): NEW Criterion 16 (Lane Declaration Validation) plus its criteria-count updates across the file (16 total, Decision Matrix, Output Format category enum, Quality Checklist); current re-measure 8345 + ~10% per the initial-budget convention. Per the frozen-metadata convention this row has held since v15.10.0, the `measured` field/column stays the authoring baseline (6392) — live re-measure figures live in this note and in ARCHITECTURE_CONTRACTS.md's Raise log paragraph, not in this field."
     },
     "product-owner": {
       "budget": 13807,
@@ -70,9 +70,9 @@
       "note": "Re-baselined 51814 -> 21029 (4f, v15.19.0): routed all 7 frontmatter-preloaded skills out of loomwright:supervisor-runner's `skills:` list (now 0 preloaded skills — the key is omitted entirely) in favor of on-demand phase-entry Reads for the 3 genuinely needed (async-orchestration at Phase 2 + refreshed at Phase 4, commit at Phase 4, state-management at Phase 4.5) and outright removal of the other 4 (workflow-management, context-summarization, supervisor-readiness, quality-checklist — zero body usage found on audit; see agents/supervisor.md §\"Preloaded Skill Routing (4f)\"). This is a structural re-baseline (a large drop), not a marginal raise, so the initial-budget convention applies here rather than the compressed-margin convention this row's prior restores used (~1.45%/~1.5%, both explicitly chosen to avoid resetting to a fresh measured+10% after a marginal raise) — the two conventions exist for different situations, and this one is the re-baseline case, not the marginal-raise case. Budget set to measured + ~10% (20591 * 1.10 = 22650.1, rounded up to 22651), restoring genuine headroom after the drop rather than inheriting the prior ~1.45% margin against a now-much-smaller measured value. FINAL-MEASURE NOTE (recorded at end of PR, deliberately not re-raised): the 22651 budget was computed from the FIRST post-routing measure (20591 + ~10% = 22650.1 -> 22651). Later edits inside this same PR — the Phase 4.5 heal commit and an added paragraph clarifying that the re-baseline is spawn-time frontmatter weight rather than a session total — moved measured to 21029, so the realized margin is ~7.7%, not the ~10% the sentence above describes at the moment the budget was chosen. The budget is NOT re-raised for this: the gate compares live weight against budget only and is not breached (1622 proxy tokens of headroom), and chasing every in-PR edit with a fresh raise is exactly the treadmill the frozen-metadata convention exists to avoid. The measured field here is the live end-of-PR value, not the mid-PR one."
     },
     "worker": {
-      "budget": 5045,
+      "budget": 5905,
       "measured": 4158,
-      "note": "authoring baseline v15.10.0; 0 preloaded skills; raised 4574→5045 for the shared-agent-prefix block + pointer-contract consumer text (measured 4586 + ~10%, v15.13.0)"
+      "note": "authoring baseline v15.10.0; 0 preloaded skills; raised 4574→5045 for the shared-agent-prefix block + pointer-contract consumer text (measured 4586 + ~10%, v15.13.0). Raised again 5045 -> 5905 (D6, v15.20.0, Subtask 2): out_of_lane reporting + lane-collision semantics text; current re-measure 5368 + ~10% per the initial-budget convention. Per the frozen-metadata convention, the `measured` field/column here stays the v15.10.0 authoring baseline (4158) — the live re-measure figure lives in this note and in ARCHITECTURE_CONTRACTS.md's Raise log paragraph, not in this field."
     }
   }
 }
