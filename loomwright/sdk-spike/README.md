@@ -195,6 +195,21 @@ or dry-run-only**, never exercised against the live SDK:
   arm of `loomwright/docs/SPIKES/FABLE_PARITY_EVAL.md`.
 - Simplifications vs the real loop: no fix-worker retries, no Context-Keeper,
   no tool-call budget/EXECUTE_CHECKPOINT.
+- **`out_of_lane` is collected but NOT acted on (D6, v15.20.0).** The spike does
+  the producing half: `workerPrompt` states the subtask's lane boundary and
+  `WORKER_RESULT_SCHEMA` forces the worker to emit `out_of_lane`. It does NOT do
+  the consuming half — the value is never logged, never surfaced in
+  `ExecuteResultEquivalent`, and never matched against a sibling's `laneGlobs`.
+  In the real loop that consumption lives in Execute Manager's poll loop, which
+  escalates a genuine collision (an out-of-lane path inside a mutually-unreachable
+  sibling's declared lane) through `EXECUTE_CHECKPOINT`/`adjudication_required`,
+  and carries the value into `state.md` via Context-Keeper's
+  `record_worker_result` — neither of which this spike has. **Consequence:** with
+  `--max-workers` > 1, the exact case D6 exists for, a live spike run cannot
+  observe a lane collision even when one occurs. Closing this requires an
+  escalation surface the spike deliberately does not model (see the
+  no-Context-Keeper / no-EXECUTE_CHECKPOINT simplification above), so it is
+  recorded here rather than half-built.
 - **Dependency materialization — FIXED 2026-07-28 (was the blocker that aborted
   FABLE_PARITY_EVAL arm 3).** Previously `requires` only delayed **spawn order**,
   not **visibility**: a dependent worktree branched from the feature branch and

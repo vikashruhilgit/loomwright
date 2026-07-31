@@ -86,11 +86,18 @@ interface Subtask {
   // concurrency local in runPool, below). Empty when the subtask has no
   // declared lane (pre-lane-declaration brief).
   laneGlobs: string[];
-  /** True once ANY contract key (`provides:`/`requires:`/`lanes:`/`external_requires:`) was
-   *  SEEN for this subtask -- regardless of whether the list turned out empty. This is what
-   *  distinguishes "the author declared nothing" (a sanctioned shape) from "the parser never
-   *  found the block" (the defect the fail-closed guard exists for). Counting list LENGTHS
-   *  cannot tell those apart. */
+  /** True once a contract key was SEEN for this subtask -- regardless of whether the list
+   *  turned out empty. This is what distinguishes "the author declared nothing" (a sanctioned
+   *  shape) from "the parser never found the block" (the defect the fail-closed guard exists
+   *  for). Counting list LENGTHS cannot tell those apart.
+   *
+   *  The recognized set is exactly `provides:`/`requires:`/`lanes:` -- the list-header regex
+   *  below. `external_requires:` deliberately does NOT set this: it is a free-text list naming
+   *  things OUTSIDE the brief's scope, never cross-referenced from `requires`, so it proves
+   *  nothing about whether this subtask's own dependency contract was found. (A subtask
+   *  declaring `external_requires:` and none of the other three is not a realistic authoring
+   *  shape, so this narrowing costs no real coverage -- but the flag must not claim breadth
+   *  it does not have.) */
   sawContractKey: boolean;
   /** True when an INLINE contract value was present but yielded ZERO parseable items --
    *  e.g. `provides: [some free-text prose describing the work]`. The key was seen, so

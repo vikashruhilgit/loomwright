@@ -325,9 +325,21 @@ if node -e "
   if (!s1 || !s2) problems.push('subtask 1 or 2 missing (S<N>: id-key form did not resolve to plain numeric ids)');
   if (s1 && s1.provides.length !== 1) problems.push('subtask 1: expected 1 provides item (inline array), got ' + (s1 && s1.provides.length));
   if (s2 && (s2.requires.length !== 1 || s2.requires[0].from !== '1')) problems.push('subtask 2: expected 1 requires item with from=1 (normalized from \"S1\")');
+  // INLINE lanes regression: lanes are plain strings, so the {...}-group scan used for
+  // provides/requires finds nothing in them. An earlier cut silently left laneGlobs EMPTY here,
+  // and workerPrompt emits lane-boundary text only when laneGlobs.length > 0 — so the worker got
+  // no lane at all. Assert BOTH entries so a comma-splitting regression cannot pass on the first.
+  if (s1 && (s1.laneGlobs.length !== 2
+             || !s1.laneGlobs.includes('loomwright/scripts/produced.sh')
+             || !s1.laneGlobs.includes('loomwright/scripts/produced-helper.sh'))) {
+    problems.push('subtask 1: inline lanes: [\"a\", \"b\"] did not populate laneGlobs; got ' + JSON.stringify(s1.laneGlobs));
+  }
+  if (s2 && (s2.laneGlobs.length !== 1 || s2.laneGlobs[0] !== 'loomwright/scripts/consumed.sh')) {
+    problems.push('subtask 2: single-entry inline lanes did not populate laneGlobs; got ' + JSON.stringify(s2.laneGlobs));
+  }
   if (problems.length) { console.error(problems.join('; ')); process.exit(1); }
 " "$DIST" "$FIXDIR/brief-inline-array-contracts.md"; then
-  pass "fixture brief-inline-array-contracts.md: 'Provides / Requires Schema' heading + inline arrays + S<N>: ids parse"
+  pass "fixture brief-inline-array-contracts.md: 'Provides / Requires Schema' heading + inline arrays + S<N>: ids + inline lanes parse"
 else
   fail "fixture brief-inline-array-contracts.md did not parse as expected"
 fi

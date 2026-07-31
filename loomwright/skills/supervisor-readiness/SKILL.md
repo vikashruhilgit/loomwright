@@ -253,6 +253,9 @@ provides:
   - {kind: "file", path: "src/auth/types.ts"}
   - {kind: "type", path: "src/auth/types.ts", name: "AuthContext"}
 requires: []
+lanes:
+  - "src/auth/jwt.guard.ts"
+  - "src/auth/types.ts"
 external_requires:
   - "@nestjs/passport >= 10.0"
 
@@ -263,6 +266,8 @@ provides:
 requires:
   - {from: "1", kind: "symbol", path: "src/auth/jwt.guard.ts", name: "JwtAuthGuard"}
   - {from: "1", kind: "type",   path: "src/auth/types.ts",     name: "AuthContext"}
+lanes:
+  - "src/auth/auth.controller.ts"
 external_requires: []
 ```
 
@@ -285,7 +290,7 @@ lanes:
 
 A subtask's declared `lanes` is the set of paths it is expected to modify/create. When a worker writes to a path matching no glob in its OWN subtask's `lanes`, that path is recorded in a new `out_of_lane` field on `WORKER_RESULT` (see `docs/RESULT_SCHEMAS.md` §"WORKER_RESULT"). The `out_of_lane` field itself, and the worker/async-orchestration seam that populates it, belong to that schema and to `agents/worker.md` — this section defines the CONTRACT the gate consumes (what a lane IS, and when a violation is a real cross-subtask collision), not the gate's own mechanics.
 
-**The lane-collision test — reachability, not edges.** Two subtasks A and B may legally **collide** (i.e. an out-of-lane write into a sibling's lane is a flaggable divergent-interface hazard) **iff neither is reachable from the other in the `requires` DAG (transitive closure)** — i.e. the two are unordered relative to each other, so nothing guarantees one finishes before the other starts. (Do NOT restate this as "the scheduler puts them in the same wave": Execute Manager's poll loop is event-driven, launching each subtask as its dependencies clear and a slot frees, so two mutually-unreachable subtasks at different chain depths can overlap in wall-clock time without sharing any wave number. Reachability is the test; wave membership is not a valid proxy.) **This is NOT "no direct `requires` edge between A and B."** That phrasing reads as *direct adjacency* and would falsely flag every transitively-ordered pair: two subtasks two or more waves apart via an intermediate dependency (e.g. A → B → C, so A and C share no direct edge) are still correctly ordered — C is reachable from A — and MUST NOT be flagged, even though no `requires` entry names them directly. If either subtask **is** reachable from the other, they are sequentially ordered: a shared file between them is **legal** and must not be flagged as a collision.
+**The lane-collision test — reachability, not edges.** Two subtasks A and B may legally **collide** (i.e. an out-of-lane write into a sibling's lane is a flaggable divergent-interface hazard) **iff neither is reachable from the other in the `requires` DAG (transitive closure)** — i.e. the two are unordered relative to each other, so nothing guarantees one finishes before the other starts. (Do NOT restate this as "the scheduler puts them in the same wave" — see the terminology paragraph directly below for why wave membership is not a valid proxy.) **This is NOT "no direct `requires` edge between A and B."** That phrasing reads as *direct adjacency* and would falsely flag every transitively-ordered pair: two subtasks two or more waves apart via an intermediate dependency (e.g. A → B → C, so A and C share no direct edge) are still correctly ordered — C is reachable from A — and MUST NOT be flagged, even though no `requires` entry names them directly. If either subtask **is** reachable from the other, they are sequentially ordered: a shared file between them is **legal** and must not be flagged as a collision.
 
 **Terminology — "same-wave" is a SHORTHAND for exactly this reachability condition, nothing more.** The phrase appears in Plan Reviewer Criterion 16, the seam tests, and the CHANGELOG; everywhere it appears it MEANS "mutually unreachable in the `requires` DAG." It is NOT a claim that the runtime assigns wave numbers you could compute and compare: Execute Manager's poll loop is event-driven, launching each subtask as its dependencies clear and a slot frees, so two mutually-unreachable subtasks at different chain depths can overlap in wall-clock time without ever sharing a wave index. Read "same-wave" as "unordered relative to each other"; never implement it by comparing wave numbers.
 

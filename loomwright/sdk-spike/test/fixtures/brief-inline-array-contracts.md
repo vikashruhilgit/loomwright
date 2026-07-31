@@ -8,6 +8,12 @@ present in a fresh clone, hence this committed fixture. Covers TWO things at onc
   - INLINE flow-style `provides: [ {...} ]` / `requires: [ {...} ]` arrays on a single line
     (never the multi-line `- {...}` form), including a bare `S<N>:` id-key form and a
     `from: S<N>` reference that must normalize to the plain numeric id "1".
+  - INLINE single-line `lanes: ["a", "b"]` string arrays. Lanes are plain strings, never brace
+    objects, so the `{...}`-group scan used for provides/requires finds nothing in them — an
+    earlier cut of the parser silently produced an EMPTY `laneGlobs` for this perfectly natural
+    authoring form, and `workerPrompt` only emits lane-boundary text when `laneGlobs.length > 0`,
+    so a worker spawned from an inline-authored brief received NO lane boundaries at all. This
+    fixture pins that regression.
 
 ## Subtask Structure
 
@@ -22,10 +28,12 @@ present in a fresh clone, hence this committed fixture. Covers TWO things at onc
 S1:
   provides: [{kind: file, path: loomwright/scripts/produced.sh}]
   requires: []
+  lanes: ["loomwright/scripts/produced.sh", "loomwright/scripts/produced-helper.sh"]
 S2:
   provides: [{kind: file, path: loomwright/scripts/consumed.sh}]
   requires:
     - {kind: file, path: loomwright/scripts/produced.sh, from: S1}
+  lanes: ["loomwright/scripts/consumed.sh"]
 ```
 
 ## Configuration

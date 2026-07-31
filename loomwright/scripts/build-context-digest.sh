@@ -335,7 +335,11 @@ fi
 # a heading with no data behind it.
 if [ -z "$CONTRACTS" ]; then
   CONTRACTS="$(awk '
-    /^```ya?ml[[:space:]]*$/ { inf=1; n=0; has=0; next }
+    # Case-INSENSITIVE fence marker (```yaml / ```YAML / ```Yml). This is the LAST-RESORT
+    # tier: a brief reaching here matched no heading rule at all, so a case-sensitive miss
+    # here means the section renders `_(none found)_` with no further fallback -- the exact
+    # "heading present, no data behind it" failure this tier exists to close.
+    tolower($0) ~ /^```ya?ml[[:space:]]*$/ { inf=1; n=0; has=0; next }
     inf && /^```[[:space:]]*$/ {
       if (has) { for (i=1;i<=n;i++) print buf[i]; print "" }
       inf=0; n=0; has=0; next
