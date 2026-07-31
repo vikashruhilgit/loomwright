@@ -1987,12 +1987,21 @@ A per-job **file artifact** — not an agent result block — built by `${CLAUDE
 [context-digest truncated at N chars]
 ```
 
+> **Sizing contract (v15.20.0).** The digest is bounded (default 6000 bytes) and the bound is
+> honored by **per-section budgeting**, not by truncating the tail. Every heading is emitted
+> UNCONDITIONALLY, and a section that was clipped says so with its own marker — so a consumer can
+> always distinguish "the brief declared none" (`_(none found)_`) from "the cap clipped it"
+> (`_(truncated …)_`). Budget is granted in priority order — contracts, interfaces, sibling
+> summary, conventions, then File Impact Map last — because tail-first truncation previously
+> deleted the Cross-lane contracts section outright on 8 of 72 archived briefs, i.e. on the
+> largest and most parallel jobs, which is exactly where lane ownership matters most.
+
 **Sections (in order):**
-1. `## File Impact Map` — verbatim copy of the brief's Phase 3 File Impact Map table (Files to Modify / Files to Create / Confidence).
+1. `## File Impact Map` — the brief's `## File Impact Map` table verbatim **when present**, which is the RARE case: measured 2026-07-31, only 10 of 73 archived briefs carry that heading. Otherwise derived from `## Subtask Structure` + `### File Overlap Matrix` (72/73 and 28/73) — the common path — with a note recording which source was used. This section is allocated budget LAST (see the size note below), so it is the one that absorbs a cap squeeze.
 2. `## Interfaces touched` — deduplicated bullet list of every `{kind: symbol|type, path, name}` entry across all subtasks' `provides`/`requires` YAML, rendered `path :: name (kind)`.
-3. `## Conventions` — the brief's Phase 3 `**Tech Stack:**` / `**Architecture:**` lines (the pattern Launch Pad detected from CLAUDE.md).
+3. `## Conventions` — the brief's `## Environment` block plus `## Skill References` (71/73 and 54/73). **Not** `**Tech Stack:**` / `**Architecture:**` bold lines: that was the original implementation and it was measured (2026-07-31) to match **0 of 73** real briefs — dead code, removed in v15.20.0.
 4. `## Sibling-subtask summary` — verbatim copy of the brief's Subtask Structure table (title / criteria subset / files / skills / status per subtask).
-5. `## Cross-lane producer/consumer contracts` — verbatim copy of the brief's Subtask Contracts YAML block(s), i.e. every subtask's `provides` / `requires` / `lanes` / `external_requires` together — this IS the producer/consumer + lane-ownership data; the digest does not re-derive lane-collision logic (that rule lives in `skills/supervisor-readiness/SKILL.md` §"Lane Declaration Schema" and the worker-side `out_of_lane` gate — see the `WORKER_RESULT` schema above).
+5. `## Cross-lane producer/consumer contracts` — the brief's contract YAML block(s) verbatim, resolved through a layout ladder because real briefs use at least six shapes: the umbrella headings `Subtask contracts` / `Provides / Requires Contracts` / `Provides / Requires Schema` / `Subtask Detail`, then per-subtask `### Subtask N` / `### ST N` headings with no umbrella, then a STRUCTURAL fallback collecting any fenced block carrying a contract key. Measured after v15.20.0: 54/54 contract-bearing briefs populate this section (a single-heading lookup left 54 of 72 empty), i.e. every subtask's `provides` / `requires` / `lanes` / `external_requires` together — this IS the producer/consumer + lane-ownership data; the digest does not re-derive lane-collision logic (that rule lives in `skills/supervisor-readiness/SKILL.md` §"Lane Declaration Schema" and the worker-side `out_of_lane` gate — see the `WORKER_RESULT` schema above).
 
 A section with no matching content in the source brief is rendered `_(none found)_` rather than a hard failure — the builder is **fail-safe** (always exits 0, mirroring the sibling `build-*.sh` advisory-artifact convention: `build-repo-map.sh`, `build-handoff.sh`). Correctness enforcement (bound honored, truncation marker present, worktree-absolute pointer form, same-wave lane overlap flagged vs sequentially-ordered sharing not flagged) is `scripts/test-context-digest.sh`'s job, which — per that same sibling convention — is allowed to fail loudly on a genuine assertion failure; the builder itself never is.
 

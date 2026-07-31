@@ -4,7 +4,7 @@
 #
 # WHAT: extracts Launch Pad's already-computed analysis out of an assembled Supervisor-Ready
 # Brief (File Impact Map, subtask contracts w/ `provides`/`requires`/`lanes`, Subtask Structure,
-# Tech Stack / Architecture) into ONE small, bounded, pointer-handed markdown artifact so every
+# Environment + Skill References) into ONE small, bounded, pointer-handed markdown artifact so every
 # spawned worker on the job can read it instead of re-deriving the same codebase understanding
 # from scratch. See docs/RESULT_SCHEMAS.md §"CONTEXT_DIGEST" for the artifact contract this
 # script implements, and docs/POINTER_AUDIT.md §"Context digest" for the pointer/worktree rule
@@ -268,7 +268,54 @@ SUBTASK_SUMMARY="$(extract_section "subtask structure")"
 # 5. Cross-lane producer/consumer contracts — verbatim Subtask Contracts YAML block. Try the
 #    now-canonical heading first, then the legacy capitalized form some templates still show.
 # ---------------------------------------------------------------------------
+# Contract extraction must accept EVERY layout real briefs use -- the same set
+# `sdk-spike/src/runner.ts` parseBrief accepts. A single-heading lookup was the
+# third instance of this PR's recurring root cause (extractor written against ONE
+# template): measured over the 72 archived briefs, `subtask contracts` alone left
+# this section `_(none found)_` on 54 of them -- including briefs that plainly
+# carry contracts -- so the digest shipped a heading with no data behind it.
 CONTRACTS="$(extract_section "subtask contracts")"
+[ -n "$CONTRACTS" ] || CONTRACTS="$(extract_section "provides / requires contracts")"
+[ -n "$CONTRACTS" ] || CONTRACTS="$(extract_section "provides / requires schema")"
+[ -n "$CONTRACTS" ] || CONTRACTS="$(extract_section "subtask detail")"
+
+# Fallback: per-subtask INLINE contracts with no umbrella heading at all -- keys sit
+# at column 0 under `### Subtask N — Title` markdown headings (e.g.
+# 2026-07-30-fix7-two-review-lenses.md). Collect each subtask heading followed by its
+# provides/requires/lanes/external_requires block.
+if [ -z "$CONTRACTS" ]; then
+  CONTRACTS="$(awk '
+    /^###[[:space:]]+([Ss]ubtask|ST|St)[[:space:]]*[0-9]/ { hdr=$0; pending=1; inblk=0; next }
+    /^(provides|requires|lanes|external_requires):/ {
+      if (pending) { if (seen) print ""; print hdr; seen=1; pending=0 }
+      if (seen)    { print; inblk=1; next }
+    }
+    inblk && /^[[:space:]]+-[[:space:]]/ { print; next }
+    inblk && /^[^[:space:]]/            { inblk=0 }
+  ' "$BRIEF_FILE" 2>/dev/null || true)"
+fi
+
+# TERMINAL fallback -- STRUCTURAL, not heading-dependent. Some briefs put contracts in
+# ```yaml fences with no adjacent recognizable subtask heading at all, so no heading rule
+# can reach them. Collect every fenced block that actually contains a contract key at
+# column 0. Scoping to `provides:`/`requires:` keeps unrelated YAML examples out; and
+# because this section is ADVISORY (the worker still has the brief one Read away), an
+# occasional extra block is far cheaper than the alternative this PR shipped twice --
+# a heading with no data behind it.
+if [ -z "$CONTRACTS" ]; then
+  CONTRACTS="$(awk '
+    /^```ya?ml[[:space:]]*$/ { inf=1; n=0; has=0; next }
+    inf && /^```[[:space:]]*$/ {
+      if (has) { for (i=1;i<=n;i++) print buf[i]; print "" }
+      inf=0; n=0; has=0; next
+    }
+    inf {
+      buf[++n]=$0
+      if ($0 ~ /^(provides|requires|lanes|external_requires):/) has=1
+      if ($0 ~ /^subtask_[0-9]/) has=1
+    }
+  ' "$BRIEF_FILE" 2>/dev/null || true)"
+fi
 
 # ---------------------------------------------------------------------------
 # Title — first `# ` (H1) line, else the brief's own basename.
@@ -280,36 +327,102 @@ TITLE="$(grep -m1 -E '^# ' "$BRIEF_FILE" 2>/dev/null | sed -E 's/^#[[:space:]]*/
 # Assemble + cap + atomic write.
 # ---------------------------------------------------------------------------
 CONTENT="$WORKDIR/content"
+# ---------------------------------------------------------------------------
+# PER-SECTION BUDGETING (replaces tail-first truncation).
+#
+# WHY: the digest was assembled in one stream and clipped from the TAIL, so the
+# LAST section -- `## Cross-lane producer/consumer contracts`, which IS the
+# lane/producer-consumer data this whole feature exists to deliver -- was the
+# first thing deleted. Measured over the 72 archived briefs: 16 exceeded the cap
+# and 8 lost that section entirely, heading and all. Worst of all, that happened
+# on the LARGEST, most-parallel jobs -- exactly where lane ownership matters most
+# -- and a worker following the pointer could not tell "the brief declared none"
+# from "the cap ate it".
+#
+# NOW: every heading is emitted UNCONDITIONALLY, and each section carries its own
+# marker distinguishing genuinely-absent (`_(none found)_`) from clipped
+# (`_(truncated ...)_`). Budget is allocated in PRIORITY order from a shrinking
+# pool, so the sections that carry contract/lane semantics are served before the
+# big, compressible prose. `## File Impact Map` is deliberately allocated LAST:
+# it is the largest and most redundant section (the brief itself remains one Read
+# away), so it absorbs the squeeze instead of the contracts.
+# ---------------------------------------------------------------------------
+TRUNC_NOTE='_(truncated to fit the digest cap — read the brief for the full section)_'
+
+# clip <body> <budget> -> prints body, clipped on a line boundary when over budget,
+# followed by the per-section truncation marker. Never emits a partial trailing line.
+clip() {
+  _c_body="$1"; _c_budget="$2"
+  if [ "${#_c_body}" -le "$_c_budget" ]; then
+    printf '%s\n' "$_c_body"
+    return 0
+  fi
+  _c_room=$(( _c_budget - ${#TRUNC_NOTE} - 2 ))
+  [ "$_c_room" -lt 0 ] && _c_room=0
+  printf '%s' "$_c_body" | head -c "$_c_room" | sed '$d' 2>/dev/null || true
+  printf '%s\n' "$TRUNC_NOTE"
+}
+
+CROSS_LANE_EXPLAINER='_provides / requires / lanes / external_requires together, verbatim from the brief — this IS the producer/consumer + lane-ownership data; lane-collision logic is NOT re-derived here (see skills/supervisor-readiness/SKILL.md §"Lane Declaration Schema")._'
+
+# Fixed overhead: title, generated line, five headings, the cross-lane explainer,
+# blank lines, and headroom for the five possible per-section markers.
+OVERHEAD=$(( 260 + ${#TITLE} + ${#CROSS_LANE_EXPLAINER} + 5 * ${#TRUNC_NOTE} ))
+POOL=$(( MAX - OVERHEAD ))
+[ "$POOL" -lt 0 ] && POOL=0
+
+# take <outvar> <len> -> assigns the granted budget to <outvar> and DECREMENTS the
+# pool. Deliberately NOT a command-substitution helper: `X="$(take N)"` would run
+# the function in a SUBSHELL, so the `POOL=` decrement would be discarded and every
+# section would be granted the full pool -- which is exactly the bug that made the
+# first cut of this budgeting no-op (assembled size still overshot MAX, the
+# whole-file backstop fired, and the last section was deleted again).
+take() {
+  _t_out="$1"; _t_need="$2"
+  if [ "$_t_need" -le "$POOL" ]; then _t_give="$_t_need"; else _t_give="$POOL"; fi
+  POOL=$(( POOL - _t_give ))
+  eval "$_t_out=\$_t_give"
+}
+
+# Priority order (highest first). File Impact Map is intentionally LAST.
+# `INTERFACES` is rendered with a "- " prefix per line, so budget for that growth.
+INTERFACES_RENDERED="$(printf '%s\n' "$INTERFACES" | while IFS= read -r line; do
+  [ -n "$line" ] && printf -- '- %s\n' "$line"
+done)"
+take B_CONTRACTS   ${#CONTRACTS}
+take B_INTERFACES  ${#INTERFACES_RENDERED}
+take B_SUBTASKS    ${#SUBTASK_SUMMARY}
+take B_CONVENTIONS ${#CONVENTIONS}
+take B_IMPACT      ${#FILE_IMPACT}
+
 {
   printf '# Context Digest — %s\n\n' "$TITLE"
   printf '_Generated %s — bounded, pointer-handed to every worker on this job. Read only the sections you need._\n\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
 
   printf '## File Impact Map\n\n'
-  if [ -n "$FILE_IMPACT" ]; then printf '%s\n' "$FILE_IMPACT"; else printf '_(none found)_\n'; fi
+  if [ -n "$FILE_IMPACT" ]; then clip "$FILE_IMPACT" "$B_IMPACT"; else printf '_(none found)_\n'; fi
   printf '\n'
 
   printf '## Interfaces touched\n\n'
   if [ -n "$INTERFACES" ]; then
-    printf '%s\n' "$INTERFACES" | while IFS= read -r line; do
-      [ -n "$line" ] && printf -- '- %s\n' "$line"
-    done
+    clip "$INTERFACES_RENDERED" "$B_INTERFACES"
   else
     printf '_(none found)_\n'
   fi
   printf '\n'
 
   printf '## Conventions\n\n'
-  if [ -n "$CONVENTIONS" ]; then printf '%s\n' "$CONVENTIONS"; else printf '_(none found)_\n'; fi
+  if [ -n "$CONVENTIONS" ]; then clip "$CONVENTIONS" "$B_CONVENTIONS"; else printf '_(none found)_\n'; fi
   printf '\n'
 
   printf '## Sibling-subtask summary\n\n'
-  if [ -n "$SUBTASK_SUMMARY" ]; then printf '%s\n' "$SUBTASK_SUMMARY"; else printf '_(none found)_\n'; fi
+  if [ -n "$SUBTASK_SUMMARY" ]; then clip "$SUBTASK_SUMMARY" "$B_SUBTASKS"; else printf '_(none found)_\n'; fi
   printf '\n'
 
   printf '## Cross-lane producer/consumer contracts\n\n'
-  printf '_provides / requires / lanes / external_requires together, verbatim from the brief — this IS the producer/consumer + lane-ownership data; lane-collision logic is NOT re-derived here (see skills/supervisor-readiness/SKILL.md §"Lane Declaration Schema")._\n\n'
-  if [ -n "$CONTRACTS" ]; then printf '%s\n' "$CONTRACTS"; else printf '_(none found)_\n'; fi
+  printf '%s\n\n' "$CROSS_LANE_EXPLAINER"
+  if [ -n "$CONTRACTS" ]; then clip "$CONTRACTS" "$B_CONTRACTS"; else printf '_(none found)_\n'; fi
 } > "$CONTENT" 2>/dev/null || true
 
 if [ ! -s "$CONTENT" ]; then
@@ -326,12 +439,13 @@ if [ -z "$TMPOUT" ]; then
   exit 0
 fi
 
+# Backstop only. Per-section budgeting above should keep the total under MAX; this
+# whole-file clip remains so AC2 ("never unbounded") holds even if an overhead
+# estimate drifts. It is expected NOT to fire in normal operation.
 TRUNCATED=0
 if [ "$SIZE" -le "$MAX" ]; then
   cat "$CONTENT" > "$TMPOUT" 2>/dev/null || true
 else
-  # Truncate so TOTAL output (content + newline + marker line) fits within MAX bytes (AC2 — the
-  # digest is NEVER unbounded).
   MARKER="[context-digest truncated at ${MAX} chars]"
   ALLOWED=$(( MAX - ${#MARKER} - 2 ))
   [ "$ALLOWED" -lt 0 ] && ALLOWED=0

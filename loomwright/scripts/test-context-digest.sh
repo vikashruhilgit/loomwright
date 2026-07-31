@@ -274,6 +274,33 @@ else
   rm -f "$OUT_D"
 fi
 
+# ---------------------------------------------------------------------------
+# Group E — contract-doc drift guard.
+#
+# build-context-digest.sh's own header names docs/RESULT_SCHEMAS.md §CONTEXT_DIGEST as
+# "the artifact contract this script implements", which makes that section authoritative
+# rather than narrative. It went stale inside a single PR: the Tech Stack/Architecture
+# grep was deleted as dead code (0/73 briefs matched) and the doc kept describing it.
+# This asserts the doc never POSITIVELY claims a source the script no longer reads.
+# ---------------------------------------------------------------------------
+SCHEMA_DOC="$REPO_ROOT/loomwright/docs/RESULT_SCHEMAS.md"
+BUILDER_SRC="$REPO_ROOT/loomwright/scripts/build-context-digest.sh"
+TOTAL=$((TOTAL+1))
+if [ ! -f "$SCHEMA_DOC" ] || [ ! -f "$BUILDER_SRC" ]; then
+  no "contract-doc drift guard: RESULT_SCHEMAS.md or build-context-digest.sh missing"
+else
+  # Live (non-comment) use of the retired bold-line grep in the builder.
+  LIVE_TECHSTACK="$(grep -v '^[[:space:]]*#' "$BUILDER_SRC" | grep -c 'Tech Stack' || true)"
+  # A positive doc claim = a CONTEXT_DIGEST line naming Tech Stack WITHOUT negating it.
+  DOC_POSITIVE="$(awk '/^## CONTEXT_DIGEST/{f=1} f&&/^## [A-Z]/&&!/CONTEXT_DIGEST/{f=0} f' "$SCHEMA_DOC" \
+    | grep 'Tech Stack' | grep -vciE '\*\*Not\*\*|never|no longer|dead code|removed' || true)"
+  if [ "$LIVE_TECHSTACK" -eq 0 ] && [ "$DOC_POSITIVE" -eq 0 ]; then
+    ok "contract-doc drift guard: RESULT_SCHEMAS §CONTEXT_DIGEST makes no positive claim the builder dropped"
+  else
+    no "contract-doc drift guard: builder live 'Tech Stack' uses=$LIVE_TECHSTACK, doc positive claims=$DOC_POSITIVE (expected 0/0)"
+  fi
+fi
+
 if [ "$FAIL" -eq 0 ]; then
   echo "ALL TESTS PASSED ($PASS/$TOTAL)"
   exit 0
