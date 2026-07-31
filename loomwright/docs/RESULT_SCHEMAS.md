@@ -1963,6 +1963,33 @@ LAUNCH_PAD_RESULT:
 
 ---
 
+## CONTEXT_DIGEST
+
+A per-job **file artifact** — not an agent result block — built by `${CLAUDE_PLUGIN_ROOT}/scripts/build-context-digest.sh` from the assembled Supervisor-Ready Brief text and pointer-handed to every worker spawned on the job, on both the Task-spawn carrier and the SDK-runner carrier (`skills/async-orchestration/SKILL.md` §"Context digest pointer"; `sdk-spike/src/runner.ts`'s `contextDigestPointer`). It carries **no `schema_version` field** and is **not validated by any `SubagentStop` hook** — correctness enforcement lives in `scripts/test-context-digest.sh` instead (see below). Introduced in v15.20.0 (D6 — worker shared-context digest + explicit file lanes): spawned workers cold-start with an empty context and each re-derives the same codebase understanding Launch Pad already computed at Phase 3 (the File Impact Map) and Phase 4 (subtask contracts); the digest hands that analysis over once per job instead of once per worker.
+
+**Producer:** Launch Pad, Phase 5 PACKAGE, immediately after the brief is assembled (`agents/launch-pad.md` §"Phase 5: PACKAGE" — "Context digest emission"). The write is **NOT gated on Phase 5.5 Plan Review** — the digest is a derived analysis artifact (File Impact Map, subtask contracts, lanes), not the brief itself, so it exists as soon as Phase 5 PACKAGE completes even if the brief later fails review or is discarded. This is a deliberate divergence from the brief's own gated save (`docs/POINTER_AUDIT.md` row 7, "the brief is not file-backed at review time") — a stray digest file left behind by a discarded/failed-review brief is harmless: it is bounded, gitignored, and has no downstream consumer without a matching saved brief to point at it.
+
+**Path convention:** `.supervisor/jobs/context-digests/{basename(brief_path)}` — the same basename as the brief file, in a sibling directory under `.supervisor/jobs/`, mirroring the existing `{pending,in-progress,done,failed}/{basename}` lifecycle-directory convention (the `{basename(current_brief_path)}` anchor pattern already used by `skills/autonomous-loop/SKILL.md`). Callers pass this path explicitly via `build-context-digest.sh --out`; the script's own built-in default (`.supervisor/jobs/context-digests/context-digest.md`) is a single-file fallback for ad-hoc/manual invocations only, not the documented per-job path.
+
+**Bound + truncation marker (AC2 — the digest is NEVER unbounded):** hard cap of 6000 bytes by default (`CONTEXT_DIGEST_MAX_CHARS` env override; `--max-chars` flag; measured in bytes as a chars proxy), mirroring `build-repo-map.sh`'s `--max-chars` cap contract exactly. When the assembled digest exceeds the cap, it is truncated so the TOTAL file (content + marker) fits within the cap, with a final line:
+
+```
+[context-digest truncated at N chars]
+```
+
+**Sections (in order):**
+1. `## File Impact Map` — verbatim copy of the brief's Phase 3 File Impact Map table (Files to Modify / Files to Create / Confidence).
+2. `## Interfaces touched` — deduplicated bullet list of every `{kind: symbol|type, path, name}` entry across all subtasks' `provides`/`requires` YAML, rendered `path :: name (kind)`.
+3. `## Conventions` — the brief's Phase 3 `**Tech Stack:**` / `**Architecture:**` lines (the pattern Launch Pad detected from CLAUDE.md).
+4. `## Sibling-subtask summary` — verbatim copy of the brief's Subtask Structure table (title / criteria subset / files / skills / status per subtask).
+5. `## Cross-lane producer/consumer contracts` — verbatim copy of the brief's Subtask Contracts YAML block(s), i.e. every subtask's `provides` / `requires` / `lanes` / `external_requires` together — this IS the producer/consumer + lane-ownership data; the digest does not re-derive lane-collision logic (that rule lives in `skills/supervisor-readiness/SKILL.md` §"Lane Declaration Schema" and the worker-side `out_of_lane` gate — see the `WORKER_RESULT` schema above).
+
+A section with no matching content in the source brief is rendered `_(none found)_` rather than a hard failure — the builder is **fail-safe** (always exits 0, mirroring the sibling `build-*.sh` advisory-artifact convention: `build-repo-map.sh`, `build-handoff.sh`). Correctness enforcement (bound honored, truncation marker present, worktree-absolute pointer form, same-wave lane overlap flagged vs sequentially-ordered sharing not flagged) is `scripts/test-context-digest.sh`'s job, which — per that same sibling convention — is allowed to fail loudly on a genuine assertion failure; the builder itself never is.
+
+**Consumption:** pointer-handed as `path + ≤200-char summary + "Read only the sections you need"` (`docs/POINTER_AUDIT.md` §"The rule" and §"Context digest"). Parallel-path (worktree-resident) workers receive the **main-checkout absolute path** — gitignored `.supervisor/` artifacts do not exist inside linked git worktrees (`docs/POINTER_AUDIT.md` §"Worktree reality") — while Single-Agent-/Sequential-path workers and Execute Manager (all project-root-resident) may use the repo-relative path directly. The exact spawn-prompt wording lives in `skills/async-orchestration/SKILL.md` §"Context digest pointer" (Task-spawn carrier) and `sdk-spike/src/runner.ts`'s `contextDigestPointer` (SDK-runner carrier) — this section documents the artifact contract only, not the spawn-prompt text.
+
+---
+
 ## REVIEW_HEAL_RESULT
 
 Produced by the standalone PR **review-and-heal** loop — emitted once at the end of the bounded review→fix→re-review cycle. The loop is the conceptual extraction of Supervisor **Phase 4.5** into a fresh, PR-URL-keyed session (no Supervisor job, no `.supervisor/state.md`). The **inline** `/review-pr` session has no worktree fan-out (it operates on the main thread's checkout); the **detached dispatched** until-mergeable drain runs in its own dispatcher-created sibling worktree (so it never shares a working tree with an inline Phase 4.5 self-heal). Its canonical names and field list are coined in `skills/review-heal/SKILL.md` (the single source of truth) and consumed verbatim here.

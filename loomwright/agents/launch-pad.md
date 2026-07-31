@@ -360,16 +360,16 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 **Actions:**
 
 1. Default to a single subtask whose acceptance criteria are the **checklist for one worker** — not a template for generating subtasks. Split a Phase 3 file group off into its own subtask only when one of the threshold's three named reasons fires; when it does, record the triggering reason verbatim as `- **Split reason:** <reason>` in the brief's `## Configuration` (omit the line entirely for a single-subtask brief — see the threshold section for the exact recording rule)
-2. For each subtask: title, acceptance criteria subset, estimated files, skill references, **structured `provides` / `requires` / `external_requires` lists**
+2. For each subtask: title, acceptance criteria subset, estimated files, skill references, **structured `provides` / `requires` / `external_requires` / `lanes` lists**
 3. Analyze dependencies (which subtasks depend on which) — derive these from `requires` entries, not free-form prose
 4. Compute parallelism:
    - **LAUNCHABLE:** Empty `requires` + no file overlap with other LAUNCHABLE subtasks
    - **BLOCKED:** Non-empty `requires`, OR file overlap with a LAUNCHABLE subtask
 5. Estimate batches and recommended worker count (single-subtask brief: 1 batch, 1 worker)
 
-#### Provides / Requires / External Requires Schema
+#### Provides / Requires / External Requires / Lanes Schema
 
-Every subtask MUST declare what it produces (`provides`) and what it consumes from siblings (`requires`). These structured lists replace ad-hoc dependency prose and feed Plan Reviewer Criterion 12 plus Execute Manager's pre-spawn verification gate.
+Every subtask MUST declare what it produces (`provides`), what it consumes from siblings (`requires`), and what paths it owns (`lanes`). These structured lists replace ad-hoc dependency prose and feed Plan Reviewer Criterion 12 (provides/requires) and Criterion 16 (lanes) plus Execute Manager's pre-spawn verification gate.
 
 **`provides` items** — one of three kinds, all addressable on disk after the subtask completes:
 
@@ -383,6 +383,8 @@ Every subtask MUST declare what it produces (`provides`) and what it consumes fr
 
 **`external_requires`** — a separate top-level YAML list of free-text strings naming things outside the brief's scope (third-party APIs, OS-level CLIs, undocumented Claude Code features). These are NOT cross-referenced from `requires`.
 
+**`lanes`** — a separate top-level YAML list of repo-relative path globs the subtask OWNS. Full contract, including the reachability-based lane-collision test and the visibility-vs-preservation distinction: `skills/supervisor-readiness/SKILL.md` §"Lane Declaration Schema" (do not restate it here).
+
 **Example subtask block:**
 
 ```yaml
@@ -391,16 +393,19 @@ provides:
   - {kind: "symbol", path: "src/auth/jwt.guard.ts", name: "JwtAuthGuard"}
 requires:
   - {from: "S1", kind: "type", path: "src/auth/types.ts", name: "AuthContext"}
+lanes:
+  - "src/auth/jwt.guard.ts"
 external_requires:
   - "@nestjs/passport >= 10.0"
 ```
 
-**Authoring rules (enforced by Plan Reviewer Criterion 12):**
+**Authoring rules (enforced by Plan Reviewer Criterion 12 for provides/requires, Criterion 16 for lanes):**
 
 - Every subtask SHOULD have a non-empty `provides`. Purely-deletion subtasks may use `provides: []` but MUST include a justification comment on the line above (e.g. `# provides: [] — pure deletion, removes deprecated module`)
 - Reject vague provides like `"adds feature"` or `"updates code"` — every entry MUST be a `{kind: file|symbol|type, path, name?}` addressable on disk
 - `external_requires` is for things outside the brief's scope; do NOT cross-reference it from `requires` (the `from` field of `requires` MUST point to a sibling subtask ID, never an external item)
 - A subtask with non-empty `requires` is BLOCKED. The parallelism analysis MUST show it as blocked by the producing subtask(s) listed in its `requires.from` set, never as LAUNCHABLE
+- Every subtask MUST also declare `lanes:` (non-empty, same `[]`-with-justification exception as `provides`)
 
 **Output:**
 ```markdown
@@ -416,7 +421,7 @@ external_requires:
 
 ### Subtask Contracts
 
-For each subtask, emit a YAML block with `provides`, `requires`, and `external_requires`:
+For each subtask, emit a YAML block with `provides`, `requires`, `lanes`, and `external_requires`:
 
 ```yaml
 # Subtask 1
@@ -425,6 +430,9 @@ provides:
   - {kind: "symbol", path: "src/auth/jwt.guard.ts", name: "JwtAuthGuard"}
   - {kind: "type", path: "src/auth/types.ts", name: "AuthContext"}
 requires: []
+lanes:
+  - "src/auth/jwt.guard.ts"
+  - "src/auth/types.ts"
 external_requires:
   - "@nestjs/passport >= 10.0"
 
@@ -435,6 +443,8 @@ provides:
 requires:
   - {from: "1", kind: "symbol", path: "src/auth/jwt.guard.ts", name: "JwtAuthGuard"}
   - {from: "1", kind: "type", path: "src/auth/types.ts", name: "AuthContext"}
+lanes:
+  - "src/auth/auth.controller.ts"
 external_requires: []
 ```
 
@@ -482,6 +492,11 @@ Subtask 2 (independent)
    When both hold, EMIT a `## Executable Acceptance` section declaring `- corpus-task: doc-currency-green` and `- corpus-task: version-consistent`, so Supervisor Phase 4.5 `ground_truth` runs the doc/version invariants (`status != "skipped"`) instead of finding nothing to execute. Outside this plugin's repo, omit the section unless a plugin-bundled `corpus-task:` id genuinely matches the run's acceptance (usually none does — see `skills/supervisor-readiness/SKILL.md`).
 7. **Outcomes Rubric auto-authoring (guarded — fires ONLY on the `/autonomous` producer seam).** This step runs **only when the inlined caller explicitly requests rubric authoring** — i.e. the `/autonomous` loop's inline directive asks Launch Pad to author a rubric because the run is multi-iteration AND the requirement lacks `## Outcomes Rubric`. In every other invocation (normal `/launch-pad`, single-iteration, or a requirement that already has a rubric) this step is a **no-op** — preserve-verbatim behavior is unchanged. When it fires, derive **3-7 diff-checkable bullets** from the brief's Acceptance Criteria + the Phase 3 File Impact Map, following the authoring rules in `skills/supervisor-readiness/SKILL.md` §"Outcomes Rubric" / §"Auto-Authoring (multi-iteration)" (reference them — do NOT restate the rules), and include the result as a `## Outcomes Rubric` section in the assembled brief so Phase 6 surfaces it for human approve/edit. **Fallback:** if fewer than 3 diff-checkable bullets are derivable, emit NO rubric section and note that the run will use the no-rubric gate. This guarded step is a deliberate, documented deviation from Launch Pad's usual "inline-instruction, no source change" convention — it is the rubric **producer seam**; it stays guarded so default behavior is untouched.
 8. Present the complete brief to the user
+9. **Context digest emission (unconditional, v15.20.0 — D6).** Immediately after the brief is assembled (this step runs regardless of Phase 5.5 Plan Review's later outcome — the digest is a derived analysis artifact, not the brief itself, so it is NOT gated on Plan Review the way the brief's own save is):
+   - Serialize the assembled brief text from this Phase into a scratch file (the same serialized text Phase 5.5 action 1 produces for the reviewer spawn — reuse it rather than re-assembling).
+   - Compute the job's basename exactly as Phase 6 will (`{YYYY-MM-DD}-{slug}.md`) so the digest and the eventual brief file share a basename.
+   - Invoke `bash "${CLAUDE_PLUGIN_ROOT}/scripts/build-context-digest.sh" --brief <scratch-file> --out .supervisor/jobs/context-digests/{date}-{slug}.md` (see `docs/RESULT_SCHEMAS.md` §"CONTEXT_DIGEST" for the artifact contract: File Impact Map, interfaces touched, conventions, sibling-subtask summary, cross-lane producer/consumer contracts — bounded, with an explicit truncation marker when exceeded).
+   - This is the artifact later handed to every spawned worker as a **pointer** (`docs/POINTER_AUDIT.md` §"Context digest") — path + ≤200-char summary + "Read only the sections you need" — on both the Task-spawn carrier (`skills/async-orchestration/SKILL.md` §"Context digest pointer") and the SDK-runner carrier. The builder is fail-safe (always exits 0); if it reports a write failure, proceed with brief assembly regardless — a missing digest never blocks Plan Review or save.
 
 **Output:** The full Supervisor-Ready Brief (see `skills/supervisor-readiness/SKILL.md` for template).
 

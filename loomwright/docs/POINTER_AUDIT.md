@@ -57,6 +57,26 @@ Part 2 §"Subagent Spawn Contracts" ("Pointers, not payloads" paragraph).
 Sites 1–5 and 18 were converted in this change; sites 6–9 are the justified exceptions;
 sites 10–17 were audited and found already compliant, below threshold, or out of scope.
 
+### Context digest
+
+**New pointer-native artifact (v15.20.0, D6 — worker shared-context digest + explicit file
+lanes).** The per-job `CONTEXT_DIGEST` file (`.supervisor/jobs/context-digests/{basename(brief_path)}`,
+built by `scripts/build-context-digest.sh` — see `docs/RESULT_SCHEMAS.md` §"CONTEXT_DIGEST" for
+the full artifact contract) is handed to every worker spawned on the job — on both the
+Task-spawn carrier (`skills/async-orchestration/SKILL.md` §"Context digest pointer") and the
+SDK-runner carrier (`sdk-spike/src/runner.ts`'s `contextDigestPointer`) — as a pointer from day
+one; it is never pasted. The pointer is `path + ≤200-char summary + "Read only the sections you
+need"`, following exactly **The rule** stated above.
+
+**The worktree rule applies here too.** The digest lives under gitignored `.supervisor/`, so it
+does **not exist inside a linked git worktree**. Parallel-path (worktree-resident) workers MUST
+receive the **main-checkout absolute path** with the prompt saying so explicitly — the same rule
+already governing the brief pointer at site 5 in the audit table above. Single-Agent-/
+Sequential-path workers and Execute Manager (all project-root-resident) may use the repo-relative
+path directly. A digest pointer resolved from inside a worktree would silently point at nothing —
+this is the exact worktree-reality failure mode the **Worktree reality** paragraph above exists to
+prevent, now extended to a second artifact alongside the brief itself.
+
 ## HONEST CACHE EXPECTATION (do not overclaim)
 
 **Cross-agent prompt-cache reuse is structurally ZERO.** Prompt caching is a prefix
