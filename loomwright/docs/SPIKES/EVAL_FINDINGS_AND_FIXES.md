@@ -332,6 +332,7 @@ that earns its call.
 ### 4f. Route skills instead of preloading them — and the A/B is already built
 
 The Supervisor exists on two paths, and only one of them preloads:
+[**state as of the 4f analysis, pre-implementation.** 4f SHIPPED in v15.19.0 and routed the agent path's seven preloaded skills out, so **neither** path preloads now — the asymmetry this table documents is exactly what 4f removed, and the inline path's zero-preload column is what the agent path was converged onto. Retained as the evidence for that decision.]
 
 | Path | Preloaded via frontmatter | Read on demand |
 |---|---|---|
@@ -382,7 +383,8 @@ emitted at `:469`) but **stamps no base commit**, so there is no anchor to measu
 
 1. Launch Pad Phase 5 PACKAGE stamps `- **Base commit:** {sha}` beside the existing
    `- **Source requirement:**` line under `## Environment`.
-2. Phase 1.5 gains a **fourth signal** keyed on churn over the anticipated file set — which
+2. Phase 1.5 gains a **third signal** keyed on churn over the anticipated file set — which
+   [corrected 2026-07-31: this read "**fourth signal**" and was wrong at the source — `preflight-sync` §Protocol step 4 declared only TWO required signals, (a) and (b), so the advisory churn signal shipped as **(c)**, the third. The same error was inherited by `FINAL_STATE_GOAL.md`'s D8 row and by the item-07 requirement; all three are now fixed] — which
    preflight-sync already computes for its file-intersection test:
    ```bash
    git log --oneline "$BRIEF_BASE_SHA"..origin/"$BASE_BRANCH" -- $ANTICIPATED_PATHS | wc -l
