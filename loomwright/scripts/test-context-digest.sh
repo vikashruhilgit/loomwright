@@ -301,6 +301,46 @@ else
   fi
 fi
 
+# ---------------------------------------------------------------------------
+# Group F — NUMBERED brief headings ("## 5. File Impact Map").
+#
+# extract_section matches with index(heading, want) == 1, a strict PREFIX test, so an
+# unstripped section number made every lookup miss and produced a wholly empty digest
+# -- measured on 2026-04-25-github-issues-telemetry-system.md: 660 bytes with all five
+# sections `_(none found)_` despite the brief carrying every one of them. Silent and total.
+# ---------------------------------------------------------------------------
+NUMBRIEF="$(mktemp -t numbrief.XXXXXX)"
+cat > "$NUMBRIEF" <<'EOF'
+# Numbered Brief
+
+## 1. Environment
+- **Project:** /tmp/demo
+
+## 2. Subtask Structure
+
+| # | Title | Est. Files | Skills | Status |
+|---|-------|-----------|--------|--------|
+| 1 | Alpha | 1 modify | x | LAUNCHABLE |
+
+## 3. Skill References
+| Subtask | Skills |
+|---|---|
+| 1 | quality-checklist |
+EOF
+OUT_F="$(mktemp -t numout.XXXXXX)"
+bash "$REPO_ROOT/loomwright/scripts/build-context-digest.sh" --brief "$NUMBRIEF" --out "$OUT_F" >/dev/null 2>&1
+EMPTY_N="$(grep -c 'none found' "$OUT_F" 2>/dev/null || true)"
+TOTAL=$((TOTAL+1))
+# Environment, Subtask Structure and Skill References are all present under NUMBERED
+# headings, so Conventions and Sibling-subtask summary must both resolve. Allow the two
+# genuinely-absent sections (Interfaces, Cross-lane) to report empty.
+if [ "${EMPTY_N:-9}" -le 3 ]; then
+  ok "numbered headings (## N. Title) resolve — digest is not wholly empty ($EMPTY_N empty sections)"
+else
+  no "numbered headings did NOT resolve — $EMPTY_N of 5 sections empty (the silent-total-miss regression)"
+fi
+rm -f "$NUMBRIEF" "$OUT_F"
+
 if [ "$FAIL" -eq 0 ]; then
   echo "ALL TESTS PASSED ($PASS/$TOTAL)"
   exit 0

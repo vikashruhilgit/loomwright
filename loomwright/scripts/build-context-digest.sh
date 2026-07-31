@@ -188,6 +188,12 @@ extract_section() {
       }
       if (!infence && match(line, /^#{1,4}[ \t]+/)) {
         heading = substr(line, RLENGTH + 1)
+        # Strip a leading section NUMBER ("## 5. File Impact Map" -> "File Impact Map").
+        # The prefix test below is index()==1, so an unstripped "5. " never matches and the
+        # WHOLE digest comes back `_(none found)_` -- measured on
+        # 2026-04-25-github-issues-telemetry-system.md: a 660-byte digest with all five
+        # sections empty despite the brief carrying every one of them.
+        sub(/^[0-9]+\.[ \t]*/, "", heading)
         htl = tolower(heading)
         if (on) { exit }
         if (index(htl, want) == 1) { on = 1; next }
@@ -214,11 +220,13 @@ if [ -z "$FILE_IMPACT" ]; then
   if [ -n "$_STRUCT_FALLBACK" ] || [ -n "$_OVERLAP_FALLBACK" ]; then
     FILE_IMPACT="$(
       {
-        printf '_No `## File Impact Map` section in this brief — derived from Subtask Structure / File Overlap Matrix instead._\n'
-        if [ -n "$_STRUCT_FALLBACK" ]; then
-          printf '\n'
-          printf '%s\n' "$_STRUCT_FALLBACK"
-        fi
+        # Do NOT re-embed the Subtask Structure table here: `## Sibling-subtask summary`
+        # already reproduces it verbatim, so embedding it made 34/73 digests carry the same
+        # table TWICE, each copy drawing its own allocation from the one 6000-byte pool. On
+        # the worst case that squeeze left this very section as a bare `_(truncated)_` marker
+        # with zero content. Point at the sibling section instead and spend the budget on the
+        # File Overlap Matrix, which appears nowhere else.
+        printf '_No `## File Impact Map` section in this brief — see `## Sibling-subtask summary` below for the per-subtask file breakdown; the File Overlap Matrix (if any) follows here._\n'
         if [ -n "$_OVERLAP_FALLBACK" ]; then
           printf '\n**File Overlap Matrix:**\n\n'
           printf '%s\n' "$_OVERLAP_FALLBACK"

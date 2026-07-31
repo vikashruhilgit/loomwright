@@ -368,8 +368,27 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
   // never match and the dependent subtask blocks forever).
   function parseBraceItem(body: string): ContractItem {
     const item: ContractItem = { kind: "", path: "" };
-    const from = body.match(/\bfrom:\s*"?(?:ST|S)?(\d+[a-z]?)"?/);
+    // `subtask_1` is the PRODUCER'S OWN canonical spelling (agents/launch-pad.md's complete
+    // Subtask Contracts example) and appears in archived briefs. It must come FIRST in the
+    // alternation: `S` would otherwise never match lowercase `subtask_`, the group would fall
+    // through to `(\d+...)`, hit `s`, and the whole match would fail -- yielding
+    // `from: undefined`, which the wave scheduler reads as NO DEPENDENCY.
+    const from = body.match(/\bfrom:\s*"?(?:subtask_|ST|S)?(\d+[a-z]?)"?/i);
     if (from) item.from = from[1];
+    // FAIL-CLOSED on an unparseable `from:`. A silently-dropped edge is the exact
+    // silent-empty-graph failure this file already guards against at the contract level, and
+    // the contractless guard CANNOT see it: `provides`/`lanes` parse fine, so nothing throws
+    // while every dependent subtask is scheduled into wave 1. Prefix drift has now bitten this
+    // parser four times (heading spelling, id-key form, `S`/`ST` refs, `subtask_` refs), so the
+    // rule is inverted here: any `from:` we cannot resolve is an ERROR, not a dropped edge.
+    else if (/\bfrom:/.test(body)) {
+      throw new Error(
+        `parseBrief: unparseable \`from:\` reference in contract item {${body}} — refusing to ` +
+          `silently drop a dependency edge (an unresolved \`from\` is read by the wave scheduler ` +
+          `as NO dependency, which schedules dependents into wave 1). Accepted forms: ` +
+          `1, "1a", S3, ST1, subtask_1.`
+      );
+    }
     const kind = body.match(/\bkind:\s*([A-Za-z_]+)/);
     if (kind) item.kind = kind[1];
     const p = body.match(/\bpath:\s*"([^"]*)"/) ?? body.match(/\bpath:\s*([^,}]+)/);

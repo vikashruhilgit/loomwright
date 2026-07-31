@@ -297,7 +297,19 @@ The default path below `skills/supervisor-readiness/SKILL.md` §"Decomposition T
 1. For each subtask (in order):
    - Spawn implementation worker (blocking, in project root)
      - When `cost_profile=cheap`: include `model: "sonnet"` in the Task call
-   - Record result via Context-Keeper
+   - Record result via Context-Keeper — **including the worker's `out_of_lane` field**, so the
+     lane report reaches `state.md`'s `## Worker Results` instead of being silently dropped
+     (the Sequential spawn template DOES paste `lanes:`, so these workers do emit it).
+   - **Lane reports on this path are RECORD-ONLY — no collision escalation, by construction.**
+     The divergent-interface hazard the lane gate exists to catch is two subtasks writing the
+     same file *without being able to see each other*. This path executes subtasks strictly
+     serially in one working tree, so a later subtask always observes everything an earlier one
+     already wrote — the concurrent-sibling condition can never hold, and Execute Manager's
+     reachability-based escalation (`agents/execute-manager.md`) has nothing to fire on. What
+     remains is the visibility-vs-PRESERVATION case (a later subtask clobbering an earlier
+     one's `provides` symbol), which is a manual authoring/review discipline documented in
+     `skills/supervisor-readiness/SKILL.md` §"Lane Declaration Schema" — deliberately NOT an
+     automated gate here.
    - **Deterministic gate (zero-token, no reviewer spawn):** check the worker's own `outputs_verified`/`outputs_gap` fields plus tests/lint on the branch — same check as the Single-Agent Path step 3 above. `outputs_gap` non-empty or `status != completed` → retry (bounded) or pause, per existing WORKER_RESULT handling.
 2. Skip all worktree logic and Execute Manager delegation
 

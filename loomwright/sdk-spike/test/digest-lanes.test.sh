@@ -422,6 +422,70 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# `from:` reference forms. A dropped edge is INVISIBLE to the contractless guard
+# (provides/lanes parse fine, so nothing throws) while the wave scheduler reads an
+# undefined `from` as NO dependency and launches every dependent in wave 1. Prefix
+# drift has bitten this parser repeatedly, so both arms are pinned: every accepted
+# spelling must RESOLVE, and an unrecognised one must THROW rather than drop.
+# ---------------------------------------------------------------------------
+_mk_from_brief() {  # $1 = the from: value, verbatim
+  cat <<EOF
+## Subtask Structure
+
+| # | Title | Est. Files | Skills | Status |
+|---|-------|-----------|--------|--------|
+| 1 | A | 1 | x | LAUNCHABLE |
+| 2 | B | 1 | x | BLOCKED (by #1) |
+
+### Subtask contracts
+
+\`\`\`yaml
+subtask_1:
+  provides:
+    - {kind: file, path: a.ts}
+  requires: []
+  lanes: ["a.ts"]
+subtask_2:
+  provides:
+    - {kind: file, path: b.ts}
+  requires:
+    - {from: $1, kind: file, path: a.ts}
+  lanes: ["b.ts"]
+\`\`\`
+EOF
+}
+
+for _form in '"subtask_1"' 'subtask_1' '"1"' '1' 'S1' '"ST1"'; do
+  _brief="$(_mk_from_brief "$_form")"
+  if printf '%s' "$_brief" | node -e "
+    const { parseBrief } = require(process.argv[1]);
+    let t=''; process.stdin.on('data',d=>t+=d).on('end',()=>{
+      const r = parseBrief(t);
+      const dep = r.subtasks.find(s => s.id === '2');
+      const from = dep && dep.requires[0] && dep.requires[0].from;
+      if (from !== '1') { console.error('from resolved to ' + JSON.stringify(from) + ', wanted \"1\"'); process.exit(1); }
+    });
+  " "$SPIKE_DIR/dist/runner.js" 2>/dev/null; then
+    pass "parseBrief: from: $_form resolves to subtask id 1 (edge NOT dropped)"
+  else
+    fail "parseBrief: from: $_form did NOT resolve to id 1 — a silently dropped edge schedules the dependent into wave 1"
+  fi
+done
+
+# An unrecognised `from:` spelling must FAIL CLOSED, never silently drop the edge.
+_brief_bad="$(_mk_from_brief '"totally_unknown_form"')"
+if printf '%s' "$_brief_bad" | node -e "
+  const { parseBrief } = require(process.argv[1]);
+  let t=''; process.stdin.on('data',d=>t+=d).on('end',()=>{
+    try { parseBrief(t); process.exit(1); } catch (e) { process.exit(0); }
+  });
+" "$SPIKE_DIR/dist/runner.js" 2>/dev/null; then
+  pass "parseBrief: an unparseable from: value throws (fails closed, never a dropped edge)"
+else
+  fail "parseBrief: an unparseable from: value did NOT throw — the edge would be silently dropped"
+fi
+
 printf '\n%s\n' "digest-lanes.test.sh: $FAILURES failure(s)"
 [ "$FAILURES" = 0 ] || exit 1
 exit 0
