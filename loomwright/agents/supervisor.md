@@ -309,7 +309,8 @@ The default path below `skills/supervisor-readiness/SKILL.md` §"Decomposition T
 result = Task(
   description: "Execute Phase 3: implement subtasks (deterministic outputs_verified gate; no LLM review subtask)",
   prompt: "Execute Manager prompt with:
-    - Brief: {brief_path} — read only the sections you need (## Subtask Structure, ## Subtask Contracts, per-subtask criteria). Gitignored main-checkout path: resolves for the Execute Manager (project root), NOT inside worker worktrees. When no brief file exists (`/supervisor task:` no-brief mode), point at `.supervisor/requirements/{slug}-plan.md` (Beads-absent) or `bd show {id}` (Beads) instead, or pass the criteria inline — a documented exception, see docs/POINTER_AUDIT.md.
+    - Brief: {brief_path} — read only the sections you need (## Subtask Structure, ## Subtask Contracts, per-subtask criteria, per-subtask `lanes:`). Gitignored main-checkout path: resolves for the Execute Manager (project root), NOT inside worker worktrees. When no brief file exists (`/supervisor task:` no-brief mode), point at `.supervisor/requirements/{slug}-plan.md` (Beads-absent) or `bd show {id}` (Beads) instead, or pass the criteria inline — a documented exception, see docs/POINTER_AUDIT.md.
+    - Context digest: {context_digest_path} — MAIN-CHECKOUT ABSOLUTE path (`.supervisor/jobs/context-digests/{basename(brief_path)}`) + ≤200-char summary + "Read only the sections you need" (`skills/async-orchestration/SKILL.md` §"Context digest pointer"). Advisory only — proceed without it if the file does not exist.
     - Subtask index (compact — ids/titles/deps only, no pasted criteria/file lists): [{ids, titles, deps}]
     - Parallelism graph: [{launchable, blocked}]
     - Config: max_workers={N}, project={name}, feature_branch={branch}

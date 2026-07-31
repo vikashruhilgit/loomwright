@@ -49,6 +49,8 @@ Implement a single subtask in an isolated git worktree. Operate independently, f
 - **Subtask ID / Task ID:** Task identifier (e.g., BD-XXa or descriptive slug)
 - **Title:** Brief description of what to implement
 - **Acceptance criteria:** A bounded (≤200-char) summary PLUS a pinned main-checkout absolute brief path — Read your subtask's section of that brief for the full criteria — or, on the **Single-Agent Path** (one worker, no fan-out), the FULL `## Acceptance Criteria` list, since there is no per-subtask split (the brief is gitignored and exists only in the main checkout, not in your worktree)
+- **Lane declaration:** (optional — present when the brief has a Subtask Contracts block) your OWN subtask's `lanes:` list verbatim from the brief — the path globs you are expected to modify/create. Used by Step 5.65 below to populate `out_of_lane`. When absent (pre-lane-declaration brief, or a job with no contract block), treat your lane as unconstrained: skip the lane check and emit `out_of_lane: []`
+- **Context digest pointer:** (optional) a pointer to the per-job `CONTEXT_DIGEST` artifact — path + ≤200-char summary + "Read only the sections you need". On the parallel path (you are in a worktree) the path is the MAIN-CHECKOUT ABSOLUTE path, because gitignored `.supervisor/` artifacts do not exist inside your worktree; on the Single-Agent/Sequential path the path is repo-relative, because your worktree path IS the project root. Advisory context only — if the file is absent, proceed without it
 - **Worktree path:** Absolute path to the git worktree (or project root for inline execution)
 - **Skill references:** Relevant SKILL.md files for guidance
 - **Retry context:** (optional) Previous review issues to address on retry
@@ -165,6 +167,16 @@ After the `.worker-summary.md` file has been written and BEFORE emitting the fin
 
 If the subtask brief has no `provides:` list, treat `outputs_verified` as `[]` and `outputs_gap` as `""` (empty), and use the prior `completed` / `failed` rules.
 
+### Step 5.65: Record out-of-lane writes (lane gate — REPORT-ONLY, D6)
+
+After Step 5.5's outputs verification, check every path you touched against your OWN subtask's declared lane:
+
+1. **Re-read your subtask's own `lanes:` list** from the spawn brief's Subtask Contracts (the same brief section `provides:`/`requires:` come from — see the "Lane declaration" spawn input above).
+2. **For each path in `files_modified` + `files_created`** (the same lists you are about to emit on `WORKER_RESULT`), check whether it matches at least one glob in your OWN subtask's `lanes:` list.
+3. **Build `out_of_lane`** as an array of the touched paths that matched NO glob in your own declared lane. Empty array (`[]`) when every touched path is in-lane, or when your subtask has no declared `lanes:` (pre-lane-declaration brief) — there is nothing to check.
+4. **This is REPORT-ONLY and a SEPARATE field from `outputs_gap` — it NEVER influences `status`.** A subtask can be `status: completed` with a non-empty `out_of_lane` (a legitimate cross-cutting edit, or a real divergent-interface hazard the consumer should investigate) and can be `status: partial` with an empty `out_of_lane`. Never write lane data into `outputs_gap`, and never flip `status` because of a lane finding — see the invariant block below.
+5. You do not need to know whether an out-of-lane path collides with a sibling's lane, or whether that sibling is concurrently running — that reachability/collision judgment is made by the CONSUMER of your `WORKER_RESULT` (Execute Manager's poll loop on the parallel path — `agents/execute-manager.md` — or the Supervisor on the sequential path), not by you. Your job is only to report what you touched outside your own lane, accurately.
+
 ### Step 5.6: Optional — propose project-memory candidates
 
 OPTIONALLY populate the additive `memory_candidates` field on WORKER_RESULT with short, one-line strings capturing learnings about *this codebase* that are worth remembering across sessions. Only do so for facts that are **durable, reusable, and decision-changing** — and that are NOT already in `CLAUDE.md` (per the Memory Core Principle in `AGENT_GUIDELINES.md`). Examples: a non-obvious module boundary, a build/test invariant that surprised you, a convention enforced implicitly. Transient details (what you changed this run, ticket-specific notes) are NOT memory-worthy.
@@ -202,6 +214,7 @@ Produce the structured WORKER_RESULT block (see Output Format below).
 - tests_failed: {number or "n/a"}
 - outputs_verified: [{kind: file|symbol|type, path: <path>, name?: <name>, status: present|missing}, ...]
 - outputs_gap: "{comma-separated missing items, or empty string if all present}"
+- out_of_lane: [{comma-separated paths you touched outside your own declared lane, or empty array}]   # OPTIONAL, additive at schema_version 2 (D6) — REPORT-ONLY, see Step 5.65; NEVER affects status or outputs_gap; omit the field entirely (or emit `[]`) when your subtask has no `lanes:` declaration or every touched path is in-lane
 - memory_candidates: ["<one-line durable fact>", ...]   # OPTIONAL array of strings — omit the field entirely if no candidates
 - error: none | {brief error description}
 - summary: {1-2 sentence implementation summary, max 200 tokens}
@@ -212,6 +225,7 @@ Produce the structured WORKER_RESULT block (see Output Format below).
 - `status: partial` ⇔ `outputs_gap != ""` (one or more `provides` items missing)
 - `status: failed` ⇒ crash / unfixable error; `outputs_verified` and `outputs_gap` should still be populated best-effort.
 - **Carve-out (brief unreadable / insufficient spec, per Step 1):** a worker that could not read its pinned brief returns `status: partial` with `outputs_gap: ""` — the failed read is recorded in `summary`, and `outputs_gap` stays reserved for missing `provides:` items. Consumers must not infer `outputs_gap != ""` from `partial` alone.
+- **`out_of_lane` is a SEPARATE, REPORT-ONLY field and is NOT part of this invariant.** It never influences `status` and is never written into `outputs_gap`. A `status: completed` result can carry a non-empty `out_of_lane`, and a `status: partial` result can carry an empty `out_of_lane` — the two fields vary independently. Lane collision escalation (when an out-of-lane path lands in a sibling's declared lane and the two subtasks are not sequentially ordered) is decided and surfaced by the CONSUMER of this result (Execute Manager's poll loop, or the Supervisor on the sequential path) through the existing adjudication surface — never by the worker flipping its own `status`.
 
 **v1 backward compatibility:** Older artifacts emitted `schema_version: 1` and omitted `outputs_verified` + `outputs_gap`. Consumers should accept v1 blocks (treating the two new fields as `[]` and `""` respectively) for legacy logs only — new emissions MUST be v2.
 
@@ -233,6 +247,7 @@ Produce the structured WORKER_RESULT block (see Output Format below).
 - tests_failed: 0
 - outputs_verified: [{kind: file, path: src/auth/auth.module.ts, status: present}, {kind: file, path: src/auth/jwt.guard.ts, status: present}, {kind: file, path: src/auth/jwt.guard.spec.ts, status: present}]
 - outputs_gap: ""
+- out_of_lane: []
 - error: none
 - summary: Implemented JwtGuard with token validation and refresh support. Added unit tests covering valid tokens, expired tokens, and malformed tokens.
 ```
@@ -253,8 +268,9 @@ Produce the structured WORKER_RESULT block (see Output Format below).
 - tests_failed: 2
 - outputs_verified: [{kind: file, path: src/auth/refresh.controller.ts, status: present}, {kind: file, path: src/auth/refresh.controller.spec.ts, status: present}, {kind: symbol, path: src/auth/refresh.controller.ts, name: rotateRefreshToken, status: missing}]
 - outputs_gap: "src/auth/refresh.controller.ts:rotateRefreshToken"
+- out_of_lane: [src/auth/shared-types.ts]
 - error: Tests fail: refresh token rotation test expects cookie but HttpOnly flag prevents access in test environment
-- summary: Implemented refresh endpoint controller and spec but did not deliver the promised rotateRefreshToken symbol; status: partial because outputs_gap is non-empty per the v2 invariant.
+- summary: Implemented refresh endpoint controller and spec but did not deliver the promised rotateRefreshToken symbol; status: partial because outputs_gap is non-empty per the v2 invariant. out_of_lane is unrelated — a shared-types edit outside this subtask's declared lane, reported independently and never affecting status.
 ```
 
 ---

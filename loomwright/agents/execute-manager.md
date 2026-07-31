@@ -51,7 +51,8 @@ Own the entire Phase 3 EXECUTE loop on behalf of the Supervisor. Manage worker l
 
 ### Inputs
 
-- **Brief pointer + subtask index:** the in-progress job brief's path (gitignored, main checkout — it resolves for the Execute Manager, which runs at the project root; read only the sections you need: `## Subtask Structure`, `## Subtask Contracts`, per-subtask criteria) plus a compact index of IDs, titles, dependency graph. Criteria, file lists, skill references, and `provides:`/`requires:` contracts are read from the brief, not pasted into the spawn prompt (pointers, not payloads — `docs/POINTER_AUDIT.md`). When no brief file exists (`/supervisor task:` no-brief mode), point at `.supervisor/requirements/{slug}-plan.md` (Beads-absent) or `bd show {id}` (Beads) instead, or pass the criteria inline — a documented exception, see docs/POINTER_AUDIT.md
+- **Brief pointer + subtask index:** the in-progress job brief's path (gitignored, main checkout — it resolves for the Execute Manager, which runs at the project root; read only the sections you need: `## Subtask Structure`, `## Subtask Contracts`, per-subtask criteria) plus a compact index of IDs, titles, dependency graph. Criteria, file lists, skill references, and `provides:`/`requires:`/`lanes:` contracts are read from the brief, not pasted into the spawn prompt (pointers, not payloads — `docs/POINTER_AUDIT.md`). When no brief file exists (`/supervisor task:` no-brief mode), point at `.supervisor/requirements/{slug}-plan.md` (Beads-absent) or `bd show {id}` (Beads) instead, or pass the criteria inline — a documented exception, see docs/POINTER_AUDIT.md
+- **Context digest pointer:** the per-job `CONTEXT_DIGEST` artifact's MAIN-CHECKOUT ABSOLUTE path (`docs/RESULT_SCHEMAS.md` §"CONTEXT_DIGEST"; `skills/async-orchestration/SKILL.md` §"Context digest pointer") — resolves for the Execute Manager at the project root; forward the SAME absolute path unchanged to every worker spawned into a worktree (gitignored `.supervisor/` is absent inside worktrees). Advisory only — proceed without it if the file does not exist
 - **Parallelism graph:** LAUNCHABLE vs BLOCKED status for each subtask
 - **Worktree config:** max_workers, project name, feature branch name
 - **State file path:** Path to supervisor-state.md (scratchpad or `.supervisor/`)
@@ -185,7 +186,7 @@ For each worktree created:
 ```
 Task(
   description: "Implement {subtask_id}",
-  prompt: "Worker prompt with subtask details, worktree path, skills, a bounded\n    (≤200-char) acceptance-criteria summary, and the PINNED MAIN-CHECKOUT ABSOLUTE path\n    of the in-progress brief with the instruction 'Read only your subtask's section'\n    (pointer, not payload — the gitignored brief does NOT exist inside the worker's\n    worktree, so the prompt text must pin the main-checkout absolute path and say so;\n    see docs/POINTER_AUDIT.md. When no brief file exists (`/supervisor task:` no-brief mode), point at `.supervisor/requirements/{slug}-plan.md` (Beads-absent) or `bd show {id}` (Beads) instead, or pass the criteria inline — a documented exception, see docs/POINTER_AUDIT.md. The same worktree pin applies: the gitignored plan file is also absent inside worker worktrees, so pin its MAIN-CHECKOUT ABSOLUTE path),\n    plus the subtask's `provides:` list verbatim from the brief's Subtask Contracts\n    (REQUIRED, deliberate paste exception — the worker's Step 5.5 outputs-verification\n    re-reads `provides:` from the spawn brief; omitting it silently no-ops the v12\n    outputs gate).\n    ALSO inject applicable house rules into the worker's Project context, MATCHING the\n    Supervisor Single-Agent-path spawn (agents/supervisor.md §Spawn Contracts → Worker): run\n    `bash \"${CLAUDE_PLUGIN_ROOT}/scripts/read-rules.sh\" <touched paths...>` (args, never\n    stdin — no-hang) and inject its output into this worker's prompt ONLY when NON-EMPTY;\n    EMPTY output ⇒ inject nothing (the reader always exits 0 and emits EMPTY on no valid\n    rule — never a 'no rules' sentinel). ADVISORY / fail-safe / NEVER-gating: house rules\n    never fail a worker, never gate a PR, are never a SUPERVISOR_RESULT field, and never\n    bump `schema_version`; they are subordinate to CLAUDE.md (on conflict, CLAUDE.md wins).\n    Call the READER ONLY — never pipe/eval/source/`bash -c` the reader output; a rule's\n    `check` is DATA for the worker, never executed...",
+  prompt: "Worker prompt with subtask details, worktree path, skills, a bounded\n    (≤200-char) acceptance-criteria summary, and the PINNED MAIN-CHECKOUT ABSOLUTE path\n    of the in-progress brief with the instruction 'Read only your subtask's section'\n    (pointer, not payload — the gitignored brief does NOT exist inside the worker's\n    worktree, so the prompt text must pin the main-checkout absolute path and say so;\n    see docs/POINTER_AUDIT.md. When no brief file exists (`/supervisor task:` no-brief mode), point at `.supervisor/requirements/{slug}-plan.md` (Beads-absent) or `bd show {id}` (Beads) instead, or pass the criteria inline — a documented exception, see docs/POINTER_AUDIT.md. The same worktree pin applies: the gitignored plan file is also absent inside worker worktrees, so pin its MAIN-CHECKOUT ABSOLUTE path),\n    plus the subtask's `provides:` list verbatim from the brief's Subtask Contracts\n    (REQUIRED, deliberate paste exception — the worker's Step 5.5 outputs-verification\n    re-reads `provides:` from the spawn brief; omitting it silently no-ops the v12\n    outputs gate),\n    plus the subtask's OWN `lanes:` list verbatim from the brief's Subtask Contracts\n    (REQUIRED — the worker's lane-check step re-reads `lanes:` from the spawn brief to\n    populate `out_of_lane`; omitting it silently no-ops the lane gate),\n    plus the Context digest pointer: the MAIN-CHECKOUT ABSOLUTE path of the per-job\n    `CONTEXT_DIGEST` artifact you were handed (forwarded UNCHANGED — see this file's\n    Inputs and `skills/async-orchestration/SKILL.md` §\"Context digest pointer\") + a\n    ≤200-char summary + 'Read only the sections you need'. Advisory only — the worker\n    proceeds without it if the file does not exist.\n    ALSO inject applicable house rules into the worker's Project context, MATCHING the\n    Supervisor Single-Agent-path spawn (agents/supervisor.md §Spawn Contracts → Worker): run\n    `bash \"${CLAUDE_PLUGIN_ROOT}/scripts/read-rules.sh\" <touched paths...>` (args, never\n    stdin — no-hang) and inject its output into this worker's prompt ONLY when NON-EMPTY;\n    EMPTY output ⇒ inject nothing (the reader always exits 0 and emits EMPTY on no valid\n    rule — never a 'no rules' sentinel). ADVISORY / fail-safe / NEVER-gating: house rules\n    never fail a worker, never gate a PR, are never a SUPERVISOR_RESULT field, and never\n    bump `schema_version`; they are subordinate to CLAUDE.md (on conflict, CLAUDE.md wins).\n    Call the READER ONLY — never pipe/eval/source/`bash -c` the reader output; a rule's\n    `check` is DATA for the worker, never executed...",
   subagent_type: "loomwright:worker",
   run_in_background: true,
   model: "sonnet"   # ONLY when cost_profile=cheap; omit entirely when cost_profile=default
@@ -255,13 +256,56 @@ for iteration in 1..max_iterations:
         # Supervisor will resolve adjudication and instruct next action.
         skip_to_next_iteration
 
+      # --- Lane-collision gate (D6, v15.20.0) — `out_of_lane` itself is a
+      # REPORT-ONLY field (agents/worker.md §"Output Format") and never blocks a
+      # subtask on its own. This check fires ONLY when an out-of-lane path lands
+      # inside a SIBLING subtask's declared `lanes:` AND that sibling is NOT
+      # reachable from this subtask in either direction in the `requires` DAG
+      # (the reachability test — skills/supervisor-readiness/SKILL.md
+      # §"Lane Declaration Schema"). A sequentially-ordered shared file (either
+      # subtask reachable from the other) is legal and is never flagged — this
+      # is the divergent-interface hazard the check exists to catch, surfaced
+      # through the SAME adjudication surface as the outputs_gap gate above,
+      # inventing no new escalation path. ---
+      if worker_result.out_of_lane is non-empty:
+        for each path in worker_result.out_of_lane:
+          # matching_sibling: the OTHER subtask (from the brief's Subtask
+          # Contracts already read at Inputs) whose declared `lanes:` contains a
+          # glob matching `path`. None if no sibling owns it (an unowned path is
+          # not a collision — just an out-of-lane write with no colliding owner).
+          matching_sibling = sibling subtask whose lanes: glob-matches path
+          if matching_sibling exists AND matching_sibling is NOT reachable from
+             {subtask_id} in EITHER direction over the requires DAG (transitive
+             closure — same-wave test):
+            emit EXECUTE_CHECKPOINT:
+              schema_version: 1
+              completed_so_far: [...]
+              remaining: [...]
+              resume_context:
+                tool_calls_used: {N}
+                active_worktrees: [{paths}]
+                feature_branch: {branch}
+              adjudication_required: true
+              reason: "Lane collision: {subtask_id} wrote {path}, inside sibling
+                {matching_sibling}'s declared lane, and neither subtask is
+                reachable from the other in the requires DAG (divergent-interface
+                hazard)"
+              adjudication_options: ["A: Re-queue producer", "B: Insert remediation subtask",
+                                     "C: Exit to Launch Pad", "D: Update consumer brief"]
+            # Do NOT mark this subtask complete. Supervisor resolves adjudication.
+            skip_to_next_iteration
+        # No colliding sibling found for any out_of_lane path: fall through.
+        # out_of_lane is still forwarded into EXECUTE_RESULT/state for visibility
+        # (see record_worker_result below) but never blocks completion — a
+        # legitimate cross-cutting edit with no live sibling claim is not an error.
+
       # Record worker result (direct call — de-batched, one call per event;
       # the retired batching wrapper is gone, this call is not).
       Task(
         Context-Keeper,
         operation: record_worker_result,
         worker_id: {worker_id}, subtask_id: {subtask_id},
-        result: {files_modified, lines_added, lines_removed, tests_run, tests_passed, status, error},
+        result: {files_modified, lines_added, lines_removed, tests_run, tests_passed, status, error, out_of_lane},
         state_file: {state_file_path}
       )
       tool_calls += 1

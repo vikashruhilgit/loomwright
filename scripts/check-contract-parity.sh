@@ -337,7 +337,7 @@ PY
 # ── MANIFEST ─────────────────────────────────────────────────────────────────
 # matcher | agent file | block name | comma-separated hook-required fields
 MANIFEST="
-worker|worker.md|WORKER_RESULT|schema_version,task_id,status,files_modified,summary,outputs_verified,outputs_gap
+worker|worker.md|WORKER_RESULT|schema_version,task_id,status,files_modified,summary,outputs_verified,outputs_gap,out_of_lane
 execute-manager|execute-manager.md|EXECUTE_RESULT|schema_version,subtasks_completed,worktrees,merge_order,summary
 execute-manager|execute-manager.md|EXECUTE_CHECKPOINT|completed_so_far,remaining,resume_context,reason
 qa-executor|qa-executor.md|QA_RESULT|schema_version,tests_generated,tests_passed,summary,coverage_estimate
