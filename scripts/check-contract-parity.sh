@@ -375,7 +375,7 @@ while IFS='|' read -r matcher agent block fields; do
     #     catches a field deleted entirely (the v14.22.x trap class) but not
     #     one mentioned in prose yet dropped from the emit format.
     if ! grep -qw -- "$f" "$agent_path"; then
-      err field-presence "$agent: hook-required $block field '$f' not found anywhere in the agent prompt"
+      err field-presence "$agent: hook-enforced $block field '$f' (required, or validated-when-present) not found anywhere in the agent prompt"
     fi
   done
 done <<<"$MANIFEST"
@@ -422,4 +422,4 @@ if [ "$fail" -ne 0 ]; then
   echo "✗ contract-parity: drift detected — fix the agent prompt, the hook, or the pinned MANIFEST/ENUMS (keep all three in sync)." >&2
   exit 1
 fi
-echo "✓ contract-parity: all hook-required fields present and all status/decision literals in-enum."
+echo "✓ contract-parity: all hook-enforced fields present and all status/decision literals in-enum."

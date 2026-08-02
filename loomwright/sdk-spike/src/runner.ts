@@ -612,9 +612,22 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
         current.sawContractKey = true;
         claimed.add(current.id);
         const rest = m[2].replace(/\s*#.*$/, "").trim();
-        // Shape-INDEPENDENT: any non-empty, non-`[]` inline value claims to declare something.
-        // Whether it actually yielded items is resolved after parsing (see declaredNonEmpty).
-        if (rest !== "" && !/^\[\s*\]$/.test(rest)) current.declaredNonEmpty.push(m[1]);
+        // Shape-INDEPENDENT: a key CLAIMS to declare items when its value is a non-empty,
+        // non-`[]` inline value OR when it is a BARE key (whose items must then arrive on
+        // following lines). Only the explicit `[]` spelling declares emptiness. Whether the
+        // claim was actually honored is resolved after parsing (see declaredNonEmpty).
+        //
+        // The bare-key half closes the last escape hatch in this guard: a bare `requires:`
+        // followed by unstructured PROSE continuation lines (no `- {...}` dash-brace form)
+        // parses to an empty list, and with only the inline form recorded here nothing ever
+        // marked it unparseable -- so `sawContractKey` said "declared" and the wave scheduler
+        // read the dependency as vacuously satisfied. Reproduced: a 2-subtask brief whose
+        // table marks subtask 2 BLOCKED scheduled BOTH subtasks into wave 1. Same
+        // silent-empty-graph class this parser already fails closed on four other ways, in the
+        // one shape none of them covered. The sanctioned spelling for "genuinely nothing" is
+        // the explicit `requires: []` (skills/supervisor-readiness/SKILL.md), so treating a
+        // bare key that yields nothing as unparseable costs no legitimate authoring shape.
+        if (!/^\[\s*\]$/.test(rest)) current.declaredNonEmpty.push(m[1]);
         if (rest === "") {
           // Bare key — items follow on subsequent lines (existing multi-line path below).
         } else if (/^\[\s*\]$/.test(rest)) {
@@ -676,6 +689,31 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
       // to include a nonexistent `current["lanes"]` index.
       if (listKey === "provides" || listKey === "requires") {
         current[listKey].push(parseBraceItem(m[1]));
+      }
+      continue;
+    }
+
+    // BARE SUBTASK REFERENCE under `requires:` -- `- subtask_1`, `- 1`, `- S2`, `- ST-3`,
+    // optionally with a trailing `# comment`. A real, measured authoring shape (archived
+    // `2026-06-02-preflight-sync-gate.md`, `2026-06-06-auto-pr-review-heal.md`) that carries
+    // the dependency in the ITEM rather than in a `{from: ...}` map. Before this, only the
+    // brace form was parsed, so these briefs produced `requires: []` and the wave scheduler
+    // marked every subtask LAUNCHABLE -- the silent-empty-graph failure again, in the shape
+    // that made the bare-key guard above look like it was false-positiving when it was in fact
+    // detecting a genuinely unparsed edge. Parsing it is strictly better than throwing on it:
+    // it RESTORES the ordering the brief actually declared.
+    //
+    // Scoped to `requires` deliberately. Under `provides`, a bare dash item is prose, not an
+    // addressable output -- there is no id to resolve and nothing to schedule on, so it must
+    // keep falling through to the unparseable-value guard rather than silently counting as a
+    // declared output.
+    if (current && listKey === "requires") {
+      const bare = line.match(
+        /^\s+-\s+"?(?:subtask[_-]|ST-?|S-?)?(\d+[a-z]?)"?\s*(?:#.*)?$/i
+      );
+      if (bare) {
+        current.requires.push({ kind: "", path: "", from: bare[1] });
+        continue;
       }
     }
   }

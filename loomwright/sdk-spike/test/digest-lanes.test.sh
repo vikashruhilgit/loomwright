@@ -694,6 +694,86 @@ else
   fail "legacy_brief carve-out leaked: a brief marked \`false\` with no contracts parsed (rc=$_lb_neg) — the guard must still throw on a genuine parse miss"
 fi
 
+# ---------------------------------------------------------------------------
+# BARE KEY + PROSE, and BARE SUBTASK REFERENCES (bot-review round 3).
+#
+# Two shapes the fail-closed guard did not cover, both the same silent-empty-graph class this
+# parser already fails closed on four other ways:
+#   (a) `requires:` as a BARE key followed by unstructured PROSE lines. Only an inline value was
+#       recorded as "claimed to declare something", so nothing ever marked it unparseable —
+#       `sawContractKey` said "declared", `requires` stayed `[]`, and the wave scheduler read the
+#       dependency as vacuously satisfied. MUST THROW.
+#   (b) `requires:` followed by BARE dash references (`- subtask_1`, `- 1`, `- S2`). Only the
+#       `- {...}` brace form was parsed, so these produced `requires: []` SILENTLY — measured on
+#       two archived briefs (`2026-06-02-preflight-sync-gate.md`,
+#       `2026-06-06-auto-pr-review-heal.md`), which at the time parsed to ZERO dependency edges
+#       and scheduled every subtask into wave 1. MUST PARSE, with the edges recovered — throwing
+#       here would be wrong; the brief did declare an ordering, the parser just could not read it.
+# ---------------------------------------------------------------------------
+_bare_brief() {   # $1 = the requires: block body, verbatim
+  cat <<EOF
+# Bare Key Fixture
+
+## Subtask Structure
+
+| # | Title | Est. Files | Skills | Status |
+|---|-------|-----------|--------|--------|
+| 1 | A | 1 | x | LAUNCHABLE |
+| 2 | B | 1 | x | BLOCKED |
+
+### Subtask contracts
+
+\`\`\`yaml
+subtask_1:
+  provides:
+    - {kind: file, path: a.ts}
+  requires: []
+  lanes:
+    - "a.ts"
+subtask_2:
+  provides:
+    - {kind: file, path: b.ts}
+$1
+  lanes:
+    - "b.ts"
+\`\`\`
+EOF
+}
+
+# (a) bare key + prose -> must FAIL CLOSED
+_bk_rc=0
+printf '%s' "$(_bare_brief '  requires:
+    the output of subtask 1, described in prose
+    across multiple lines with no dash-brace syntax')" | node -e "
+  const { parseBrief } = require(process.argv[1]);
+  let t=''; process.stdin.on('data',d=>t+=d).on('end',()=>{
+    try { parseBrief(t); process.exit(0); } catch (e) { process.exit(3); }
+  });
+" "$SPIKE_DIR/dist/runner.js" 2>/dev/null || _bk_rc=$?
+if [ "$_bk_rc" -eq 3 ]; then
+  pass "bare \`requires:\` key followed by PROSE fails CLOSED (a bare key claims items; yielding none is unparseable, not 'declared nothing')"
+else
+  fail "bare-key+prose did NOT fail closed (rc=$_bk_rc) — \`requires\` stays [] and the wave scheduler reads the dependency as vacuously satisfied, scheduling a BLOCKED subtask into wave 1"
+fi
+
+# (b) bare dash references -> must PARSE, and the edge must be RECOVERED
+_br_out="$(printf '%s' "$(_bare_brief '  requires:
+    - subtask_1   # gate semantics')" | node -e "
+  const { parseBrief } = require(process.argv[1]);
+  let t=''; process.stdin.on('data',d=>t+=d).on('end',()=>{
+    try {
+      const r = parseBrief(t);
+      const st2 = r.subtasks.find(s => s.id === '2');
+      console.log(JSON.stringify({edges: st2.requires.length, from: st2.requires[0] && st2.requires[0].from}));
+    } catch (e) { console.log('THREW'); }
+  });
+" "$SPIKE_DIR/dist/runner.js" 2>/dev/null)"
+if [ "$_br_out" = '{"edges":1,"from":"1"}' ]; then
+  pass "bare \`- subtask_1\` reference under \`requires:\` parses into a real dependency edge (from=1) — the shape two archived briefs use, previously dropped silently"
+else
+  fail "bare subtask reference not recovered: got [$_br_out], expected {\"edges\":1,\"from\":\"1\"} — an unparsed edge here is a silently-wrong SCHEDULE, not a visible error"
+fi
+
 printf '\n%s\n' "digest-lanes.test.sh: $FAILURES failure(s)"
 [ "$FAILURES" = 0 ] || exit 1
 exit 0

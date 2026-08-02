@@ -461,8 +461,29 @@ CROSS_LANE_EXPLAINER="$CROSS_LANE_EXPLAINER_FULL"
 
 # Fixed overhead: title, generated line, five headings, the cross-lane explainer,
 # blank lines, and headroom for the five possible per-section markers.
+# DERIVED, not guessed. `260` was a hand-estimated constant and it was ~21 bytes SHORT of the
+# real frame (title line + generated line + five headings + their blank lines), which is what
+# actually produced the one measured cap overshoot -- the whole-file backstop then fired and
+# clipped the TAIL, i.e. the Cross-lane contracts section this budgeting exists to protect.
+# A magic number that drifts every time a heading is reworded is the wrong shape here, so the
+# frame is measured from THE SAME literal strings the emit block below prints. `_FRAME_HEADINGS`
+# is asserted against those printfs by scripts/test-context-digest.sh, so a reworded heading
+# cannot silently desynchronize the two.
+_FRAME_HEADINGS='## File Impact Map
+## Interfaces touched
+## Conventions
+## Sibling-subtask summary
+## Cross-lane producer/consumer contracts'
+# Title line ("# Context Digest — " + title + "\n\n"), the generated line with its 20-byte
+# ISO-8601 timestamp, each heading followed by "\n\n" and each section by a trailing "\n",
+# plus clip()'s own trailing newline per populated section.
+_FRAME_TITLE_LIT='# Context Digest — '
+_FRAME_GEN_LIT='_Generated 0000-00-00T00:00:00Z — bounded, pointer-handed to every worker on this job. Read only the sections you need._'
 compute_pool() {
-  OVERHEAD=$(( 260 + $(blen "$TITLE") + $(blen "$CROSS_LANE_EXPLAINER") + 5 * $(blen "$TRUNC_NOTE") ))
+  # 5 headings x (2 newlines after + 1 section-trailing newline + 1 clip newline) = 20 bytes,
+  # + 2 newlines after the title line, + 2 after the generated line.
+  _frame=$(( $(blen "$_FRAME_HEADINGS") + $(blen "$_FRAME_TITLE_LIT") + $(blen "$_FRAME_GEN_LIT") + 20 + 4 ))
+  OVERHEAD=$(( _frame + $(blen "$TITLE") + $(blen "$CROSS_LANE_EXPLAINER") + 5 * $(blen "$TRUNC_NOTE") ))
   POOL=$(( MAX - OVERHEAD ))
   [ "$POOL" -lt 0 ] && POOL=0
 }

@@ -302,7 +302,7 @@ A subtask's declared `lanes` is the set of paths it is expected to modify/create
 - Every subtask with a contract block MUST declare `lanes:` (mirrors the `provides` mandate above — non-empty except for a subtask that genuinely touches nothing addressable, same `provides: []`-with-justification precedent)
 - Every lane path SHOULD resolve to an existing file, OR have an existing parent directory (a legitimate create target) — validated by Plan Reviewer's dedicated lane criterion (Criterion 16)
 - `lanes` entries share the SAME path space as `provides`/`requires` `path` fields — repo-relative, no leading `./`
-- A same-wave lane overlap (per the reachability test above) between two LAUNCHABLE-in-the-same-batch subtasks is a genuine authoring defect at brief time, distinct from a worker later writing out of its own lane at runtime
+- A same-wave lane overlap (per the reachability test above) between two MUTUALLY-UNREACHABLE subtasks is a genuine authoring defect at brief time, distinct from a worker later writing out of its own lane at runtime. (Phrased as reachability, not as "LAUNCHABLE in the same batch" — the terminology note above is explicit that batch/wave membership is not a valid proxy for this test, and this bullet must not reintroduce the framing it warns against.)
 
 ## Parallelism Analysis
 

@@ -36,9 +36,35 @@ FAIL=0
 ok()  { echo "PASS: $1"; PASS=$((PASS + 1)); }
 no()  { echo "FAIL: $1" >&2; FAIL=$((FAIL + 1)); }
 
-# Helper-SHAPED call names. Deliberately narrow: these are the assertion vocabularies actually
-# used by this repo's suites. A broad "any bare word" scan would drown in shell builtins.
-HELPER_RE='^[[:space:]]*(assert[a-zA-Z0-9_]*|ok|no|pass|fail|check[a-zA-Z0-9_]*|expect[a-zA-Z0-9_]*|require[a-zA-Z0-9_]*)[[:space:]]'
+# Helper-SHAPED call names. Deliberately narrow on the NAME vocabulary: these are the assertion
+# vocabularies actually used by this repo's suites. A broad "any bare word" scan would drown in
+# shell builtins.
+#
+# The POSITION, however, must not be narrow. Anchoring on `^[[:space:]]*` alone caught a helper
+# only as the first token of a physical line, which misses the `&&`/`||`/`;` idiom this repo uses
+# heavily — measured: `test-add-rule.sh` alone has 20+ call sites of the form
+# `[ "$RC" -eq 0 ] && ok "..." || no "..."`, every one of them invisible to the old pattern.
+# Since this meta-test exists precisely because the FIRST undefined-helper regression escaped
+# detection, a blind spot covering the repo's most common assertion idiom defeats its purpose.
+# Accept a helper at line start OR immediately after one of the shell SEPARATORS `&&`, `||`, `;`.
+# Deliberately NOT after `(` or `{`: those also open ordinary parenthesised PROSE inside quoted
+# assertion messages ("(expected 1 rule file)"), which produced false "undefined helper" reports
+# for words like `expected` that are not calls at all. Separators cannot appear inside such prose
+# without already being shell syntax, so they are the safe widening.
+#
+# `grep -oE` has no lookbehind, so the matched text INCLUDES the separator; callers strip the
+# leading non-letters (see the `sed` in the two scan sites below) before comparing against the
+# set of defined function names.
+HELPER_NAMES='(assert[a-zA-Z0-9_]*|ok|no|pass|fail|check[a-zA-Z0-9_]*|expect[a-zA-Z0-9_]*|require[a-zA-Z0-9_]*)'
+HELPER_RE="(^|&&|\|\||;)[[:space:]]*${HELPER_NAMES}[[:space:]]"
+# Strip the separator/whitespace prefix `grep -oE` necessarily captures with the name.
+HELPER_STRIP='s/^[^a-zA-Z]*//'
+# Widening the position to accept `&&`/`||`/`;` also made ordinary PROSE reachable: a comment
+# like `# ... exits 0 BEFORE writing any marker; assert both.` now matches. Comments are not
+# code, so drop whole-line comments before scanning. Deliberately whole-line only — stripping
+# from a mid-line `#` would corrupt any `#` inside a quoted assertion message, and every false
+# positive this actually produced (4 of them, across 4 suites) was a whole-line comment.
+STRIP_COMMENTS="/^[[:space:]]*#/d"
 
 # strip_heredocs FILE — echo FILE with every heredoc BODY removed (delimiter lines kept, so line
 # structure outside the body is preserved). Handles <<EOF, <<-EOF, <<'EOF', <<"EOF".
@@ -83,7 +109,7 @@ for f in $SUITES; do
 
   stripped="$(strip_heredocs "$f")"
   defs="$(printf '%s\n' "$stripped" | grep -oE '^[a-zA-Z_][a-zA-Z0-9_]*\(\)' | tr -d '()' | sort -u)"
-  calls="$(printf '%s\n' "$stripped" | grep -oE "$HELPER_RE" | tr -d ' \t' | sort -u)"
+  calls="$(printf '%s\n' "$stripped" | sed "$STRIP_COMMENTS" | grep -oE "$HELPER_RE" | sed -E "$HELPER_STRIP" | tr -d ' \t' | sort -u)"
 
   for c in $calls; do
     [ -n "$c" ] || continue
@@ -117,7 +143,7 @@ not_a_helper = 1
 PY
 CANARY
 _c_defs="$(strip_heredocs "$TMPD/loomwright/scripts/test-canary.sh" | grep -oE '^[a-zA-Z_][a-zA-Z0-9_]*\(\)' | tr -d '()' | sort -u)"
-_c_calls="$(strip_heredocs "$TMPD/loomwright/scripts/test-canary.sh" | grep -oE "$HELPER_RE" | tr -d ' \t' | sort -u)"
+_c_calls="$(strip_heredocs "$TMPD/loomwright/scripts/test-canary.sh" | sed "$STRIP_COMMENTS" | grep -oE "$HELPER_RE" | sed -E "$HELPER_STRIP" | tr -d ' \t' | sort -u)"
 _c_dead=0
 for c in $_c_calls; do
   printf '%s\n' "$_c_defs" | grep -qx "$c" && continue
