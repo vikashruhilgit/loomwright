@@ -121,6 +121,10 @@ if [ "$MAX" -le 0 ] 2>/dev/null; then
 fi
 # A cap smaller than the truncation marker itself cannot honor the "total file
 # fits the cap INCLUDING the marker" contract — treat as invalid, fall back.
+# NOTE: this is only an early sanity floor, NOT the real cap check. The binding
+# check is the CAP-vs-OVERHEAD reconciliation further down, which compares MAX
+# against the digest's ACTUAL fixed overhead (~900 bytes, title-dependent) — it
+# cannot run here because the overhead depends on the brief's own title.
 _min_cap=60
 if [ "$MAX" -lt "$_min_cap" ] 2>/dev/null; then
   err "--max-chars must be >= ${_min_cap} (truncation marker must fit) — using default 6000"
@@ -382,29 +386,72 @@ CONTENT="$WORKDIR/content"
 # it is the largest and most redundant section (the brief itself remains one Read
 # away), so it absorbs the squeeze instead of the contracts.
 # ---------------------------------------------------------------------------
-TRUNC_NOTE='_(truncated to fit the digest cap — read the brief for the full section)_'
+TRUNC_NOTE_LONG='_(truncated to fit the digest cap — read the brief for the full section)_'
+TRUNC_NOTE_SHORT='_(truncated)_'
+TRUNC_NOTE="$TRUNC_NOTE_LONG"
 
 # clip <body> <budget> -> prints body, clipped on a line boundary when over budget,
 # followed by the per-section truncation marker. Never emits a partial trailing line.
+#
+# <budget> is a CONTENT budget and deliberately EXCLUDES the marker: OVERHEAD below
+# already reserves `5 * ${#TRUNC_NOTE}` outside the pool, once per possible section, so
+# subtracting the marker again here would double-charge it. That double-charge is not
+# cosmetic -- it is what turned a section granted a small-but-real budget into a bare
+# marker with zero content (room went negative and clamped to 0), which is the
+# "heading with no data behind it" failure this whole builder exists to avoid.
 clip() {
   _c_body="$1"; _c_budget="$2"
   if [ "${#_c_body}" -le "$_c_budget" ]; then
     printf '%s\n' "$_c_body"
     return 0
   fi
-  _c_room=$(( _c_budget - ${#TRUNC_NOTE} - 2 ))
-  [ "$_c_room" -lt 0 ] && _c_room=0
-  printf '%s' "$_c_body" | head -c "$_c_room" | sed '$d' 2>/dev/null || true
+  if [ "$_c_budget" -ge 1 ]; then
+    printf '%s' "$_c_body" | head -c "$_c_budget" | sed '$d' 2>/dev/null || true
+  fi
   printf '%s\n' "$TRUNC_NOTE"
 }
 
-CROSS_LANE_EXPLAINER='_provides / requires / lanes / external_requires together, verbatim from the brief — this IS the producer/consumer + lane-ownership data; lane-collision logic is NOT re-derived here (see skills/supervisor-readiness/SKILL.md §"Lane Declaration Schema")._'
+CROSS_LANE_EXPLAINER_FULL='_provides / requires / lanes / external_requires together, verbatim from the brief — this IS the producer/consumer + lane-ownership data; lane-collision logic is NOT re-derived here (see skills/supervisor-readiness/SKILL.md §"Lane Declaration Schema")._'
+CROSS_LANE_EXPLAINER="$CROSS_LANE_EXPLAINER_FULL"
 
 # Fixed overhead: title, generated line, five headings, the cross-lane explainer,
 # blank lines, and headroom for the five possible per-section markers.
-OVERHEAD=$(( 260 + ${#TITLE} + ${#CROSS_LANE_EXPLAINER} + 5 * ${#TRUNC_NOTE} ))
-POOL=$(( MAX - OVERHEAD ))
-[ "$POOL" -lt 0 ] && POOL=0
+compute_pool() {
+  OVERHEAD=$(( 260 + ${#TITLE} + ${#CROSS_LANE_EXPLAINER} + 5 * ${#TRUNC_NOTE} ))
+  POOL=$(( MAX - OVERHEAD ))
+  [ "$POOL" -lt 0 ] && POOL=0
+}
+compute_pool
+
+# ---------------------------------------------------------------------------
+# CAP-vs-OVERHEAD RECONCILIATION.
+#
+# The fixed overhead above is ~900 bytes with the long marker and the full explainer.
+# Nothing previously checked MAX against it -- the only guard was `_min_cap=60`, ~15x
+# too low -- so ANY cap below roughly 1200 produced a digest of headings and truncation
+# markers with ZERO section content, and reported success. Measured before this fix:
+# --max-chars 900/1000/1500 all yielded three markers and no content at all, including
+# `## Cross-lane producer/consumer contracts`, the highest-priority section, which is
+# allocated FIRST. The contentless output was indistinguishable from a real build.
+#
+# Tier 1 (above) is the full-fidelity form. Tier 2 shrinks the FIXED overhead -- short
+# marker, no explainer -- rather than the content, because at a tight cap the caller
+# wants the brief's data, not the builder's own prose. Tier 3 refuses: a cap that
+# cannot fund even a floor of content produces nothing, on stderr, exit 0. An ABSENT
+# digest is honest and every consumer already handles it (contextDigestPointer returns
+# undefined; the spawn contracts all say "proceed without it") -- a contentless one
+# claims to carry analysis it does not have.
+# ---------------------------------------------------------------------------
+_CONTENT_FLOOR=300
+if [ "$POOL" -lt "$_CONTENT_FLOOR" ]; then
+  TRUNC_NOTE="$TRUNC_NOTE_SHORT"
+  CROSS_LANE_EXPLAINER=""
+  compute_pool
+fi
+if [ "$POOL" -lt 1 ]; then
+  err "--max-chars ${MAX} is below the digest's own fixed overhead (${OVERHEAD}) — every section would be an empty truncation marker; nothing written (fail-safe). Use --max-chars >= $(( OVERHEAD + _CONTENT_FLOOR ))."
+  exit 0
+fi
 
 # take <outvar> <len> -> assigns the granted budget to <outvar> and DECREMENTS the
 # pool. Deliberately NOT a command-substitution helper: `X="$(take N)"` would run
@@ -456,7 +503,9 @@ take B_IMPACT      ${#FILE_IMPACT}
   printf '\n'
 
   printf '## Cross-lane producer/consumer contracts\n\n'
-  printf '%s\n\n' "$CROSS_LANE_EXPLAINER"
+  # Dropped entirely under the tier-2 tight-cap shrink above — at that cap the budget
+  # belongs to the brief's contract data, not to the builder's own explanatory prose.
+  [ -n "$CROSS_LANE_EXPLAINER" ] && printf '%s\n\n' "$CROSS_LANE_EXPLAINER"
   if [ -n "$CONTRACTS" ]; then clip "$CONTRACTS" "$B_CONTRACTS"; else printf '_(none found)_\n'; fi
 } > "$CONTENT" 2>/dev/null || true
 

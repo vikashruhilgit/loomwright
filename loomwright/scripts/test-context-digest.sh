@@ -87,13 +87,17 @@ BIG_OUT="$ROOT/out/big.md"
 bash "$BUILDER" --brief "$BIG_BRIEF" --out "$BIG_OUT" --max-chars "$CAP" >/dev/null 2>&1
 RC=$?
 BIGSIZE="$(wc -c < "$BIG_OUT" 2>/dev/null | tr -d '[:space:]')"
-LASTLINE="$(tail -n 1 "$BIG_OUT" 2>/dev/null)"
+# Clipping must remain VISIBLE, but assert on the CONTRACT ("a clipped digest says it was
+# clipped") rather than on which of the two mechanisms fired. Asserting specifically on the
+# whole-file backstop marker was wrong: per-section budgeting is the intended path and the
+# backstop is documented as "expected NOT to fire in normal operation", so the old assertion
+# quietly required the fallback to fire on every run.
 if [ "$RC" -eq 0 ] && [ -f "$BIG_OUT" ] \
    && [ -n "$BIGSIZE" ] && [ "$BIGSIZE" -le "$CAP" ] \
-   && [ "$LASTLINE" = "[context-digest truncated at ${CAP} chars]" ]; then
-  ok "oversized digest: total output <= cap ($BIGSIZE <= $CAP), exact truncation marker is the final line"
+   && grep -q -e '_(truncated' -e "\[context-digest truncated at ${CAP} chars\]" "$BIG_OUT"; then
+  ok "oversized digest: total output <= cap ($BIGSIZE <= $CAP) and the clip is marked"
 else
-  no "oversized digest not honored (rc=$RC size=$BIGSIZE last='$LASTLINE')"
+  no "oversized digest not honored (rc=$RC size=$BIGSIZE)"
 fi
 
 # The digest is NEVER unbounded even when a smaller cap is requested again.
@@ -105,6 +109,68 @@ if [ -n "$BIGSIZE2" ] && [ "$BIGSIZE2" -le "$CAP2" ]; then
   ok "a second, different cap ($CAP2) is independently honored — bound is never skipped"
 else
   no "second cap not honored (size=$BIGSIZE2 cap=$CAP2)"
+fi
+
+# ---------------------------------------------------------------------------
+# CAP vs FIXED OVERHEAD. Size-only assertions cannot see the failure these cover: a
+# digest of headings and truncation markers with ZERO section content satisfies
+# "size <= cap" perfectly while carrying none of the analysis it claims to. Measured
+# before the fix: --max-chars 900/1000/1500 each produced three markers and no content
+# at all, including the highest-priority Cross-lane contracts section, and the builder
+# reported success. The two assertions below are the ones that actually bite.
+# ---------------------------------------------------------------------------
+CONTRACT_BRIEF="$ROOT/contract-brief.md"
+cat > "$CONTRACT_BRIEF" <<'EOF'
+# Supervisor Job: contract-bearing fixture
+
+## Subtask contracts
+
+```yaml
+subtask_1:
+  provides:
+    - {kind: file, path: src/alpha/one.ts}
+    - {kind: file, path: src/alpha/two.ts}
+    - {kind: symbol, path: src/alpha/one.ts, name: AlphaOne}
+  requires: []
+  lanes:
+    - "src/alpha/**"
+subtask_2:
+  provides:
+    - {kind: file, path: src/beta/three.ts}
+  requires:
+    - {from: "1", kind: symbol, path: src/alpha/one.ts, name: AlphaOne}
+  lanes:
+    - "src/beta/**"
+```
+EOF
+
+TIGHT_CAP=1000
+TIGHT_OUT="$ROOT/out/tight.md"
+bash "$BUILDER" --brief "$CONTRACT_BRIEF" --out "$TIGHT_OUT" --max-chars "$TIGHT_CAP" >/dev/null 2>&1
+TIGHTSIZE="$(wc -c < "$TIGHT_OUT" 2>/dev/null | tr -d '[:space:]')"
+# Real content under the contracts heading — not a marker, not the explainer, not blank.
+CONTRACT_BODY="$(sed -n '/^## Cross-lane producer\/consumer contracts/,$p' "$TIGHT_OUT" 2>/dev/null \
+  | grep -c -E '^[[:space:]]*(provides|requires|lanes|subtask_[0-9]+):|^[[:space:]]+- ' || true)"
+if [ -n "$TIGHTSIZE" ] && [ "$TIGHTSIZE" -le "$TIGHT_CAP" ] \
+   && [ -n "$CONTRACT_BODY" ] && [ "$CONTRACT_BODY" -ge 1 ]; then
+  ok "tight cap ($TIGHT_CAP): the highest-priority contracts section carries REAL content ($CONTRACT_BODY lines), not just a marker"
+else
+  no "tight cap produced a contentless contracts section (size=$TIGHTSIZE contract_body_lines=$CONTRACT_BODY)"
+fi
+
+# A cap below the builder's own fixed overhead writes NOTHING and still exits 0. An ABSENT
+# digest is honest (every consumer already handles absence — contextDigestPointer returns
+# undefined, the spawn contracts all say "proceed without it"); a contentless one claims to
+# carry analysis it does not have.
+TINY_OUT="$ROOT/out/tiny.md"
+rm -f "$TINY_OUT"
+TINY_ERR="$(bash "$BUILDER" --brief "$CONTRACT_BRIEF" --out "$TINY_OUT" --max-chars 120 2>&1 >/dev/null)"
+TINY_RC=$?
+if [ "$TINY_RC" -eq 0 ] && [ ! -f "$TINY_OUT" ] \
+   && printf '%s' "$TINY_ERR" | grep -q "below the digest's own fixed overhead"; then
+  ok "cap below the fixed overhead: nothing written, reason on stderr, still exit 0 (fail-safe)"
+else
+  no "sub-overhead cap not refused cleanly (rc=$TINY_RC file_exists=$([ -f "$TINY_OUT" ] && echo yes || echo no) err='$TINY_ERR')"
 fi
 
 # =============================================================================

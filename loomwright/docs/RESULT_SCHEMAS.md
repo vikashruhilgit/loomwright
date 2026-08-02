@@ -1995,6 +1995,16 @@ A per-job **file artifact** — not an agent result block — built by `${CLAUDE
 > summary, conventions, then File Impact Map last — because tail-first truncation previously
 > deleted the Cross-lane contracts section outright on 8 of 72 archived briefs, i.e. on the
 > largest and most parallel jobs, which is exactly where lane ownership matters most.
+>
+> **Cap floor.** The digest has a fixed overhead of its own (~900 bytes: title, headings, the
+> cross-lane explainer, and the per-section marker reserve), so a cap must fund that *plus* a
+> content floor. A cap below the full-fidelity overhead first triggers a **shrink** — short
+> truncation markers, explainer dropped — spending the budget on the brief's data rather than
+> the builder's prose. A cap that cannot fund even the shrunk form writes **nothing**, reports
+> why on stderr, and still exits 0: an absent digest is honest and every consumer already
+> handles absence, whereas a digest of headings and empty markers claims to carry analysis it
+> does not have. (Before v15.20.0's cap-floor fix, any `--max-chars` below ~1200 produced
+> exactly that contentless output and reported success.)
 
 **Sections (in order):**
 1. `## File Impact Map` — the brief's `## File Impact Map` table verbatim **when present**, which is the RARE case: measured 2026-07-31, only 10 of 73 archived briefs carry that heading. Otherwise derived from `## Subtask Structure` + `### File Overlap Matrix` (72/73 and 28/73) — the common path — with a note recording which source was used. This section is allocated budget LAST (see the size note below), so it is the one that absorbs a cap squeeze.

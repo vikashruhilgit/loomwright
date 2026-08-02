@@ -612,7 +612,6 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
         } else if (rest.startsWith("[") && rest.endsWith("]")) {
           // Inline flow-style array on one line: extract every `{...}` group inside the brackets.
           const inner = rest.slice(1, -1);
-          const braceItems = inner.match(/\{[^}]*\}/g) ?? [];
           if (listKey === "lanes") {
             // Lanes ARE plain strings, never brace objects -- which is exactly why scanning for
             // `{...}` groups here found nothing and silently produced an EMPTY laneGlobs for the
@@ -627,7 +626,9 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
               if (lane) current.laneGlobs.push(lane);
             }
           } else {
-            for (const raw of braceItems) {
+            // Scoped to this branch: lanes never carry `{...}` groups, so computing them
+            // for the lanes arm above was dead work.
+            for (const raw of inner.match(/\{[^}]*\}/g) ?? []) {
               current[listKey].push(parseBraceItem(raw.slice(1, -1)));
             }
           }
