@@ -245,7 +245,11 @@ if [ -n "$CONTRACTS_MD" ]; then
         # rows legitimately carry no baseline yet), a MISMATCHED one is not.
         jmeasured="$(jq -r --arg k "$key" '.agents[$k].measured // ""' "$BUDGET_JSON")"
         mmeasured="$(printf '%s\n' "$row" | awk -F'|' '{m=$4; gsub(/[[:space:]]/,"",m); print m}' | sed 's/[^0-9]//g')"
-        if [ -n "$jmeasured" ] && [ -n "$mmeasured" ] && [ "$mmeasured" != "$jmeasured" ]; then
+        # `0` (and empty) mean NO BASELINE RECORDED, not "measured zero" — a real agent always
+        # measures > 0. Skipping them keeps the check off rows that have no baseline yet.
+        if [ -n "$jmeasured" ] && [ "$jmeasured" != "0" ] \
+           && [ -n "$mmeasured" ] && [ "$mmeasured" != "0" ] \
+           && [ "$mmeasured" != "$jmeasured" ]; then
           printf "%-22s %8s %8s  %-6s  %s\n" "$key" "-" "$jbudget" "ERROR" "mirror drift: table MEASURED cell '$mmeasured' != JSON measured '$jmeasured' in $CONTRACTS_MD — the measured column is a FROZEN baseline; a raise changes only the budget column"
           errors=$((errors + 1))
           exit_code=1

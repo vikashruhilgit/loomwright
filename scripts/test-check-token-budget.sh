@@ -224,6 +224,27 @@ run_gate "$A" "$S" "$TMP/c1/budgets.json" "$TMP/c5f-drift.md"
 check "case5f drifted budget cell exits 1" 1 "$RC"
 contains "case5f names mirror drift" "$OUT" "mirror drift"
 
+# case5g — the MEASURED column is mirrored too (v15.20.0). A budget RAISE that also
+# overwrites the frozen Measured cell previously passed CI silently, leaving a falsified
+# historical baseline — the number every future raise argues from. `measured: 0` means NO
+# BASELINE RECORDED (a real agent always measures > 0), so those rows are skipped, not compared.
+cat > "$TMP/c5g-budgets.json" <<'JSON'
+{ "proxy_bytes_per_token": 4, "agents": { "alpha": { "budget": 250, "measured": 200 } } }
+JSON
+mk_contracts "$TMP/c5g-ok.md"       '| `alpha` | 250 | 200 | 1 |'
+run_gate "$A" "$S" "$TMP/c5g-budgets.json" "$TMP/c5g-ok.md"
+check "case5g matching measured cell passes" 0 "$RC"
+
+mk_contracts "$TMP/c5g-drift.md"    '| `alpha` | 250 | 999 | 1 |'
+run_gate "$A" "$S" "$TMP/c5g-budgets.json" "$TMP/c5g-drift.md"
+check "case5g drifted MEASURED cell exits 1" 1 "$RC"
+contains "case5g names the measured drift" "$OUT" "MEASURED cell"
+
+# a footnote marker on the measured cell must not be read as drift
+mk_contracts "$TMP/c5g-footnote.md" '| `alpha` | 250 | 200¹ | 1 |'
+run_gate "$A" "$S" "$TMP/c5g-budgets.json" "$TMP/c5g-footnote.md"
+check "case5g footnote-marked measured cell still passes" 0 "$RC"
+
 mk_contracts "$TMP/c5f-missing.md" '| `someone-else` | 250 | 200 | 1 |'
 run_gate "$A" "$S" "$TMP/c1/budgets.json" "$TMP/c5f-missing.md"
 check "case5f missing row exits 1" 1 "$RC"
