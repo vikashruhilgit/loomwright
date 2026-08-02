@@ -719,7 +719,21 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
   // empty-with-justification carve-out (`skills/supervisor-readiness/SKILL.md`), so an
   // all-empty coordination-only subtask still summed to zero. The shipped discriminator is
   // `sawContractKey || sawUnparseableValue` — see the block immediately below.
-  if (subtasksList.length > 1) {
+  // LEGACY-BRIEF CARVE-OUT. A brief carrying an explicit top-level `legacy_brief: true` marker
+  // in its Environment section is a SANCTIONED contract-free shape: `agents/plan-reviewer.md`
+  // Criterion 12 exempts exactly this marker from the `provides:`/`requires:` mandate, and
+  // Criterion 16 "shares that same gate". Without this carve-out the guard below hard-throws on
+  // a brief the repo's own plan gate declared legal, and the thrown message directs the operator
+  // to fix a contracts anchor that legitimately does not exist — measured on the archived
+  // `.supervisor/jobs/done/2026-07-07-stackpack-mysql-mcp-spinoff.md`. Matched over the whole
+  // brief text (not a parsed field) because the marker's spelling varies across real briefs
+  // (`- **legacy_brief:** true`, `| **legacy_brief:** false`, bare `legacy_brief: true`) and the
+  // marker is, per Criterion 12, "the sole observable signal" — there is no structured source.
+  // NOTE this exempts ONLY the fail-closed guard. A legacy brief still parses to empty
+  // `requires` and therefore still schedules all-LAUNCHABLE — which is CORRECT for a brief that
+  // genuinely declares no ordering, and is precisely the distinction the guard could not draw.
+  const legacyBrief = /^[\s|>*-]*\**legacy_brief\**\s*:\**\s*true\b/im.test(text);
+  if (subtasksList.length > 1 && !legacyBrief) {
     // Discriminate on whether a contract key was SEEN, not on list lengths. A subtask that
     // explicitly declares `provides: []` / `requires: []` / `lanes: []` (a coordination-only
     // subtask that "genuinely touches nothing addressable", sanctioned by

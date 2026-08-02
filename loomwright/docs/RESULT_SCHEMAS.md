@@ -1981,7 +1981,8 @@ A per-job **file artifact** — not an agent result block — built by `${CLAUDE
 
 **Path convention:** `.supervisor/jobs/context-digests/{basename(brief_path)}` — the same basename as the brief file, in a sibling directory under `.supervisor/jobs/`, mirroring the existing `{pending,in-progress,done,failed}/{basename}` lifecycle-directory convention (the `{basename(current_brief_path)}` anchor pattern already used by `skills/autonomous-loop/SKILL.md`). Callers pass this path explicitly via `build-context-digest.sh --out`; the script's own built-in default (`.supervisor/jobs/context-digests/context-digest.md`) is a single-file fallback for ad-hoc/manual invocations only, not the documented per-job path.
 
-**Bound + truncation marker (AC2 — the digest is NEVER unbounded):** hard cap of 6000 bytes by default (`CONTEXT_DIGEST_MAX_CHARS` env override; `--max-chars` flag; measured in bytes as a chars proxy), mirroring `build-repo-map.sh`'s `--max-chars` cap contract exactly. When the assembled digest exceeds the cap, it is truncated so the TOTAL file (content + marker) fits within the cap, with a final line:
+**Bound + truncation marker (AC2 — the digest is NEVER unbounded):** hard cap of 6000 bytes by default (`CONTEXT_DIGEST_MAX_CHARS` env override; `--max-chars` flag; the flag keeps `build-repo-map.sh`'s `chars` spelling but the cap and every
+budget derived from it are measured in **bytes**), mirroring `build-repo-map.sh`'s `--max-chars` cap contract exactly. When the assembled digest exceeds the cap, it is truncated so the TOTAL file (content + marker) fits within the cap, with a final line:
 
 ```
 [context-digest truncated at N chars]
@@ -1995,6 +1996,22 @@ A per-job **file artifact** — not an agent result block — built by `${CLAUDE
 > summary, conventions, then File Impact Map last — because tail-first truncation previously
 > deleted the Cross-lane contracts section outright on 8 of 72 archived briefs, i.e. on the
 > largest and most parallel jobs, which is exactly where lane ownership matters most.
+>
+> **Per-section floor.** Priority order governs the *surplus*, not the whole pool: each of the
+> five sections may first reserve up to 10% of the pool (capped at what it actually needs, so an
+> absent or short section returns the remainder immediately), and only then is the rest granted
+> in priority order. Without that floor the highest-priority section can consume the entire pool
+> and every later section renders as a bare `_(truncated)_` with ZERO content — measured on 15 of
+> 72 archived briefs, worst case 4 of 5 sections. A floor too small to hold one whole line
+> (<80 bytes, i.e. only at a very tight cap) is skipped in favour of pure priority order, since
+> `clip` cuts on line boundaries and a sub-line floor would yield nothing but the marker.
+>
+> **Budgets are measured in BYTES**, matching the unit the cap is enforced in (`wc -c`). Shell
+> `${#var}` is a *character* count under a UTF-8 locale; on this repo's em-dash-dense briefs the
+> two diverged enough to overshoot the cap (5973 chars = 6004 bytes on one archived brief) and
+> fire the whole-file backstop, which clips the tail — deleting the very Cross-lane contracts
+> section the priority ordering protects. The backstop remains as a last-resort invariant guard
+> and is asserted **not to fire** across the archived corpus by `scripts/test-context-digest.sh`.
 >
 > **Cap floor.** The digest has a fixed overhead of its own (~900 bytes: title, headings, the
 > cross-lane explainer, and the per-section marker reserve), so a cap must fund that *plus* a

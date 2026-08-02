@@ -639,6 +639,61 @@ else
   fail "un-fenced \`# Subtask N\` no longer fails closed (rc=$_ufa_out) — parseBrief's id-anchor comment says this form is fence-only; if that changed deliberately, update the comment AND this assertion together"
 fi
 
+# ---------------------------------------------------------------------------
+# LEGACY-BRIEF CARVE-OUT (v15.20.0 review round 2).
+#
+# `agents/plan-reviewer.md` Criterion 12 exempts a brief carrying an explicit top-level
+# `legacy_brief: true` marker from the provides:/requires: mandate, and Criterion 16
+# "shares that same gate". The fail-closed guard shipped without that carve-out and hard-
+# threw on the archived `2026-07-07-stackpack-mysql-mcp-spinoff.md` — a shape this repo's
+# own plan gate had declared legal — while telling the operator to fix a contracts anchor
+# that legitimately does not exist. Both directions are asserted: the marker must exempt,
+# and its ABSENCE must still fail closed (the carve-out must not become a blanket bypass).
+# The `- **legacy_brief:** true` spelling is the one real briefs actually use; the bare
+# `legacy_brief: true` form is what the Criterion 12 prose documents.
+_legacy_brief() {
+  cat <<EOF
+# Legacy Brief
+
+## Environment
+$1
+
+## Subtask Structure
+
+| # | Title | Est. Files | Skills | Status |
+|---|-------|-----------|--------|--------|
+| 1 | A | 1 | x | LAUNCHABLE |
+| 2 | B | 1 | x | LAUNCHABLE |
+EOF
+}
+
+_parses() {
+  printf '%s' "$1" | node -e "
+    const { parseBrief } = require(process.argv[1]);
+    let t=''; process.stdin.on('data',d=>t+=d).on('end',()=>{
+      try { parseBrief(t); process.exit(0); } catch (e) { process.exit(3); }
+    });
+  " "$SPIKE_DIR/dist/runner.js" 2>/dev/null
+}
+
+for _marker in '- **legacy_brief:** true' 'legacy_brief: true'; do
+  _lb_out=0
+  _parses "$(_legacy_brief "$_marker")" || _lb_out=$?
+  if [ "$_lb_out" -eq 0 ]; then
+    pass "legacy_brief carve-out: contract-free brief marked \`$_marker\` parses (Criterion 12's sanctioned shape is not aborted)"
+  else
+    fail "legacy_brief carve-out: \`$_marker\` still throws (rc=$_lb_out) — the fail-closed guard must exempt the marker Plan Reviewer Criterion 12 exempts"
+  fi
+done
+
+_lb_neg=0
+_parses "$(_legacy_brief '- **legacy_brief:** false')" || _lb_neg=$?
+if [ "$_lb_neg" -eq 3 ]; then
+  pass "legacy_brief carve-out is NOT a blanket bypass — \`false\` (and any unmarked brief) still fails closed"
+else
+  fail "legacy_brief carve-out leaked: a brief marked \`false\` with no contracts parsed (rc=$_lb_neg) — the guard must still throw on a genuine parse miss"
+fi
+
 printf '\n%s\n' "digest-lanes.test.sh: $FAILURES failure(s)"
 [ "$FAILURES" = 0 ] || exit 1
 exit 0

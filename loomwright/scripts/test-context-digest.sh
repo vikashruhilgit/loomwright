@@ -450,6 +450,67 @@ else
 fi
 rm -f "$IFBRIEF" "$OUT_G"
 
+# ---------------------------------------------------------------------------
+# CORPUS REGRESSION GATE (v15.20.0 review round 2).
+#
+# Three defects shipped past the fixture suite because every fixture is small enough
+# that neither the pool nor the byte/char divergence ever binds. They were only visible
+# by replaying the builder over the REAL archived brief corpus, which is also this
+# repo's standing lesson: an extractor over repo-authored markdown must be validated
+# against `.supervisor/jobs/`, never against a fixture alone.
+#
+#   1. NO CONTENTLESS SECTION. Strict priority order let the first section eat the whole
+#      pool; every later section rendered as a bare `_(truncated)_` with ZERO content.
+#      Measured before the floor pass: 15 of 72 briefs, worst case 4 of 5 sections.
+#   2. NO OVER-CAP FILE. Budgets were counted in CHARACTERS (`${#var}` under UTF-8) while
+#      the cap is enforced in BYTES (`wc -c`); the assembled digest overshot MAX.
+#   3. BACKSTOP MUST NOT FIRE. It clips the TAIL, i.e. deletes from `## Cross-lane
+#      producer/consumer contracts` — the section the priority ordering exists to protect.
+#      It is documented as "expected NOT to fire in normal operation"; assert that.
+#
+# Skips silently when no corpus is present (a fresh clone / a consumer's repo).
+# ---------------------------------------------------------------------------
+CORPUS_N=0; CORPUS_STARVED=""; CORPUS_OVER=""; CORPUS_BACKSTOP=""
+for _cb in "$REPO_ROOT"/.supervisor/jobs/done/*.md "$REPO_ROOT"/.supervisor/jobs/pending/*.md "$REPO_ROOT"/.supervisor/jobs/failed/*.md; do
+  [ -f "$_cb" ] || continue
+  _co="$(mktemp -t corpusdg.XXXXXX)"
+  bash "$REPO_ROOT/loomwright/scripts/build-context-digest.sh" --brief "$_cb" --out "$_co" >/dev/null 2>&1
+  [ -s "$_co" ] || { rm -f "$_co"; continue; }
+  CORPUS_N=$((CORPUS_N+1))
+  _csz="$(wc -c < "$_co" | tr -d '[:space:]')"
+  [ "$_csz" -gt 6000 ] && CORPUS_OVER="$CORPUS_OVER $(basename "$_cb")($_csz)"
+  grep -q 'context-digest truncated at' "$_co" && CORPUS_BACKSTOP="$CORPUS_BACKSTOP $(basename "$_cb")"
+  # A section is contentless when the line two below its `## ` heading is the marker itself.
+  _cn="$(awk '/^## /{getline; getline; if ($0 ~ /^_\(truncated/) c++} END{print c+0}' "$_co")"
+  [ "$_cn" -gt 0 ] && CORPUS_STARVED="$CORPUS_STARVED $(basename "$_cb")($_cn)"
+  rm -f "$_co"
+done
+
+if [ "$CORPUS_N" -eq 0 ]; then
+  echo "SKIP: no archived brief corpus under .supervisor/jobs/ — corpus regression gate not run"
+else
+  TOTAL=$((TOTAL+1))
+  if [ -z "$CORPUS_STARVED" ]; then
+    ok "corpus ($CORPUS_N briefs): no digest section is a bare truncation marker with zero content"
+  else
+    no "corpus: contentless section(s) —$CORPUS_STARVED (the per-section floor pass in build-context-digest.sh regressed: strict priority order starves later sections to a bare marker)"
+  fi
+
+  TOTAL=$((TOTAL+1))
+  if [ -z "$CORPUS_OVER" ]; then
+    ok "corpus ($CORPUS_N briefs): every digest is within the 6000-byte cap"
+  else
+    no "corpus: digest exceeded the byte cap —$CORPUS_OVER (budgets must be measured with blen(), not \${#var}: the latter counts CHARACTERS under UTF-8 while the cap is BYTES)"
+  fi
+
+  TOTAL=$((TOTAL+1))
+  if [ -z "$CORPUS_BACKSTOP" ]; then
+    ok "corpus ($CORPUS_N briefs): whole-file backstop never fires (per-section budgeting holds)"
+  else
+    no "corpus: whole-file backstop fired on —$CORPUS_BACKSTOP (it clips the TAIL, deleting the cross-lane contracts section the priority order protects; per-section budgeting should make it unreachable)"
+  fi
+fi
+
 if [ "$FAIL" -eq 0 ]; then
   echo "ALL TESTS PASSED ($PASS/$TOTAL)"
   exit 0

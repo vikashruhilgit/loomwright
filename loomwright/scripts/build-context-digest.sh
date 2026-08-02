@@ -399,9 +399,19 @@ TRUNC_NOTE="$TRUNC_NOTE_LONG"
 # cosmetic -- it is what turned a section granted a small-but-real budget into a bare
 # marker with zero content (room went negative and clamped to 0), which is the
 # "heading with no data behind it" failure this whole builder exists to avoid.
+# blen <string> -> BYTE length. Deliberately NOT `${#var}`: under a UTF-8 locale that is a
+# CHARACTER count, while the `--max-chars` cap is enforced against `wc -c` BYTES further down.
+# This repo's briefs are dense with multi-byte punctuation (— ≤ §), so the two diverge by
+# hundreds of bytes on a real brief: measured on 2026-05-16-v14-autonomous-continuous-mode.md
+# the assembled digest was 5973 chars but 6004 BYTES, overshooting a 6000 cap and firing the
+# whole-file backstop — which clips the TAIL, i.e. deletes from `## Cross-lane producer/consumer
+# contracts`, the exact section the priority ordering below exists to protect. Every length that
+# feeds the pool arithmetic must therefore be measured in the same unit the cap is.
+blen() { printf '%s' "$1" | wc -c | tr -d '[:space:]'; }
+
 clip() {
   _c_body="$1"; _c_budget="$2"
-  if [ "${#_c_body}" -le "$_c_budget" ]; then
+  if [ "$(blen "$_c_body")" -le "$_c_budget" ]; then
     printf '%s\n' "$_c_body"
     return 0
   fi
@@ -417,7 +427,7 @@ CROSS_LANE_EXPLAINER="$CROSS_LANE_EXPLAINER_FULL"
 # Fixed overhead: title, generated line, five headings, the cross-lane explainer,
 # blank lines, and headroom for the five possible per-section markers.
 compute_pool() {
-  OVERHEAD=$(( 260 + ${#TITLE} + ${#CROSS_LANE_EXPLAINER} + 5 * ${#TRUNC_NOTE} ))
+  OVERHEAD=$(( 260 + $(blen "$TITLE") + $(blen "$CROSS_LANE_EXPLAINER") + 5 * $(blen "$TRUNC_NOTE") ))
   POOL=$(( MAX - OVERHEAD ))
   [ "$POOL" -lt 0 ] && POOL=0
 }
@@ -453,17 +463,43 @@ if [ "$POOL" -lt 1 ]; then
   exit 0
 fi
 
-# take <outvar> <len> -> assigns the granted budget to <outvar> and DECREMENTS the
-# pool. Deliberately NOT a command-substitution helper: `X="$(take N)"` would run
+# TWO-PASS ALLOCATION: floors first, then priority surplus.
+#
+# WHY the floor pass exists: strict priority order with no reserve lets the FIRST
+# section consume the ENTIRE pool, leaving every later section a budget of 0 -- which
+# renders as a bare `_(truncated)_` marker with ZERO content. That is the very
+# "heading with no data behind it" failure this builder's every other guard exists to
+# prevent, and the one the tier-3 cap reconciliation above REFUSES TO WRITE for.
+# Measured across all 72 archived briefs before this fix: 15 produced a digest with at
+# least one contentless section, worst case 4 of 5 (2026-07-31-worker-context-digest-
+# lanes.md, this feature's own brief). Priority ordering is still honored -- it now
+# governs the SURPLUS, not the whole pool.
+#
+# grant <outvar> <need> <cap> -> pass 1. Gives min(need, cap, POOL); a short or absent
+# section returns its unused floor to the pool immediately, so floors are never wasted.
+# top_up <outvar> <need>      -> pass 2. Tops the section up toward its full need from
+# whatever remains, in priority order.
+#
+# Both are deliberately NOT command-substitution helpers: `X="$(grant ...)"` would run
 # the function in a SUBSHELL, so the `POOL=` decrement would be discarded and every
 # section would be granted the full pool -- which is exactly the bug that made the
 # first cut of this budgeting no-op (assembled size still overshot MAX, the
 # whole-file backstop fired, and the last section was deleted again).
-take() {
-  _t_out="$1"; _t_need="$2"
-  if [ "$_t_need" -le "$POOL" ]; then _t_give="$_t_need"; else _t_give="$POOL"; fi
-  POOL=$(( POOL - _t_give ))
-  eval "$_t_out=\$_t_give"
+grant() {
+  _g_out="$1"; _g_give="$2"
+  [ "$_g_give" -gt "$3" ] && _g_give="$3"
+  [ "$_g_give" -gt "$POOL" ] && _g_give="$POOL"
+  POOL=$(( POOL - _g_give ))
+  eval "$_g_out=\$_g_give"
+}
+top_up() {
+  _u_out="$1"; _u_need="$2"
+  eval "_u_have=\$$_u_out"
+  _u_want=$(( _u_need - _u_have ))
+  [ "$_u_want" -lt 0 ] && _u_want=0
+  [ "$_u_want" -gt "$POOL" ] && _u_want="$POOL"
+  POOL=$(( POOL - _u_want ))
+  eval "$_u_out=\$(( _u_have + _u_want ))"
 }
 
 # Priority order (highest first). File Impact Map is intentionally LAST.
@@ -471,11 +507,33 @@ take() {
 INTERFACES_RENDERED="$(printf '%s\n' "$INTERFACES" | while IFS= read -r line; do
   [ -n "$line" ] && printf -- '- %s\n' "$line"
 done)"
-take B_CONTRACTS   ${#CONTRACTS}
-take B_INTERFACES  ${#INTERFACES_RENDERED}
-take B_SUBTASKS    ${#SUBTASK_SUMMARY}
-take B_CONVENTIONS ${#CONVENTIONS}
-take B_IMPACT      ${#FILE_IMPACT}
+L_CONTRACTS="$(blen "$CONTRACTS")"
+L_INTERFACES="$(blen "$INTERFACES_RENDERED")"
+L_SUBTASKS="$(blen "$SUBTASK_SUMMARY")"
+L_CONVENTIONS="$(blen "$CONVENTIONS")"
+L_IMPACT="$(blen "$FILE_IMPACT")"
+
+# Each of the five sections may reserve up to 10% of the pool, so floors claim at most
+# half of it and the priority sweep still controls the other half. `clip` cuts on a LINE
+# boundary, so a floor too small to hold one whole line yields nothing but the marker --
+# strictly worse than concentrating the budget. Below that threshold, skip the floor pass
+# entirely and fall back to pure priority order (the pre-fix behavior, correct at a cap
+# that tight).
+_FLOOR=$(( POOL / 10 ))
+_FLOOR_MIN_USEFUL=80
+[ "$_FLOOR" -lt "$_FLOOR_MIN_USEFUL" ] && _FLOOR=0
+
+grant B_CONTRACTS   "$L_CONTRACTS"   "$_FLOOR"
+grant B_INTERFACES  "$L_INTERFACES"  "$_FLOOR"
+grant B_SUBTASKS    "$L_SUBTASKS"    "$_FLOOR"
+grant B_CONVENTIONS "$L_CONVENTIONS" "$_FLOOR"
+grant B_IMPACT      "$L_IMPACT"      "$_FLOOR"
+
+top_up B_CONTRACTS   "$L_CONTRACTS"
+top_up B_INTERFACES  "$L_INTERFACES"
+top_up B_SUBTASKS    "$L_SUBTASKS"
+top_up B_CONVENTIONS "$L_CONVENTIONS"
+top_up B_IMPACT      "$L_IMPACT"
 
 {
   printf '# Context Digest — %s\n\n' "$TITLE"
@@ -533,7 +591,10 @@ else
   MARKER="[context-digest truncated at ${MAX} chars]"
   ALLOWED=$(( MAX - ${#MARKER} - 2 ))
   [ "$ALLOWED" -lt 0 ] && ALLOWED=0
-  head -c "$ALLOWED" "$CONTENT" > "$TMPOUT" 2>/dev/null || true
+  # `sed '$d'` drops the partial trailing line `head -c` leaves behind — without it the
+  # backstop could end the file mid-marker (observed: a bare `_(truncated to fit the digest `
+  # with no closing underscore, directly above the file-level marker below).
+  head -c "$ALLOWED" "$CONTENT" | sed '$d' > "$TMPOUT" 2>/dev/null || true
   printf '\n%s\n' "$MARKER" >> "$TMPOUT" 2>/dev/null || true
   TRUNCATED=1
 fi
