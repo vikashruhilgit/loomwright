@@ -65,6 +65,13 @@ HELPER_STRIP='s/^[^a-zA-Z]*//'
 # from a mid-line `#` would corrupt any `#` inside a quoted assertion message, and every false
 # positive this actually produced (4 of them, across 4 suites) was a whole-line comment.
 STRIP_COMMENTS="/^[[:space:]]*#/d"
+# Blank DOUBLE-QUOTED spans too. A helper CALL is never inside a quoted string, but assertion
+# MESSAGES routinely contain prose like "...normal=[$x]; expected exactly ..." — and with the
+# position match widened to accept `;`, that prose reads as a separator followed by a helper
+# name. Caught immediately on a real file (test-no-junk-tracked-files.sh) the first time both
+# changes met. Arguments survive as `helper ""`, which still matches HELPER_RE, so real calls
+# are unaffected.
+STRIP_QUOTED='s/"[^"]*"/""/g'
 
 # strip_heredocs FILE — echo FILE with every heredoc BODY removed (delimiter lines kept, so line
 # structure outside the body is preserved). Handles <<EOF, <<-EOF, <<'EOF', <<"EOF".
@@ -109,7 +116,7 @@ for f in $SUITES; do
 
   stripped="$(strip_heredocs "$f")"
   defs="$(printf '%s\n' "$stripped" | grep -oE '^[a-zA-Z_][a-zA-Z0-9_]*\(\)' | tr -d '()' | sort -u)"
-  calls="$(printf '%s\n' "$stripped" | sed "$STRIP_COMMENTS" | grep -oE "$HELPER_RE" | sed -E "$HELPER_STRIP" | tr -d ' \t' | sort -u)"
+  calls="$(printf '%s\n' "$stripped" | sed "$STRIP_COMMENTS" | sed -E "$STRIP_QUOTED" | grep -oE "$HELPER_RE" | sed -E "$HELPER_STRIP" | tr -d ' \t' | sort -u)"
 
   for c in $calls; do
     [ -n "$c" ] || continue
@@ -143,7 +150,7 @@ not_a_helper = 1
 PY
 CANARY
 _c_defs="$(strip_heredocs "$TMPD/loomwright/scripts/test-canary.sh" | grep -oE '^[a-zA-Z_][a-zA-Z0-9_]*\(\)' | tr -d '()' | sort -u)"
-_c_calls="$(strip_heredocs "$TMPD/loomwright/scripts/test-canary.sh" | sed "$STRIP_COMMENTS" | grep -oE "$HELPER_RE" | sed -E "$HELPER_STRIP" | tr -d ' \t' | sort -u)"
+_c_calls="$(strip_heredocs "$TMPD/loomwright/scripts/test-canary.sh" | sed "$STRIP_COMMENTS" | sed -E "$STRIP_QUOTED" | grep -oE "$HELPER_RE" | sed -E "$HELPER_STRIP" | tr -d ' \t' | sort -u)"
 _c_dead=0
 for c in $_c_calls; do
   printf '%s\n' "$_c_defs" | grep -qx "$c" && continue

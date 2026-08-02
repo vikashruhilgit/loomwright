@@ -2,8 +2,8 @@
 name: state-management
 description: State file schema, .supervisor/ directory setup, checkpoint and resume protocols. Use when managing Supervisor session state across phases.
 allowed-tools: [Read, Write, Edit, Bash]
-version: "1.4.0"
-lastUpdated: "2026-07-28"
+version: "1.5.0"
+lastUpdated: "2026-08-02"
 ---
 
 # State Management Skill
@@ -105,6 +105,7 @@ _The Phase 1.5 PRE-FLIGHT SYNC outcome is recorded here as an ordinary Decisions
 - lines: +{added} -{removed}
 - tests: pass/fail ({count})
 - review: --/PASS/FAIL/NEEDS_HUMAN
+- out_of_lane: [{paths}]   # empty when none; REPORT-ONLY (v15.20.0, D6)
 
 ## Error Log
 | # | Phase | Error | Retry | Resolution |
