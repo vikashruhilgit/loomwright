@@ -55,8 +55,10 @@ Part 2 §"Subagent Spawn Contracts" ("Pointers, not payloads" paragraph).
 | 17 | `/autonomous` refined-requirement templates (`<original requirement body … verbatim>`) | `skills/autonomous-loop/SKILL.md` ~L512/L578/L671 | n/a | **OUT OF SCOPE (no change)** | These are file-**authoring** templates: they produce the next iteration's requirement file — the durable artifact that later handoffs point AT. The copy is artifact creation (with the rubric-freeze invariant attached), not a spawn-prompt paste. |
 | 18 | Part 1 "Worker Prompt Template" teaching sketch (`**Acceptance criteria:** {criteria}`) | `skills/async-orchestration/SKILL.md` Part 1 §Background Worker Dispatch, ~L181 | 0.5–2k | **CONVERTED** | Teaching template for background-dispatch mechanics, now showing the same pointer shape as the normative contracts: bounded ≤200-char criteria summary + pinned MAIN-CHECKOUT ABSOLUTE brief path + "read only your subtask's section" (worktree-resident consumer — the worktree-reality case). `provides:` / house-rules / the no-brief (`/supervisor task:`) fallback are deliberately deferred to Part 2 §Subagent Spawn Contracts + `agents/execute-manager.md` Step 3 (the authorities), stated in a note beneath the template. |
 
-Sites 1–5 and 18 were converted in this change; sites 6–9 are the justified exceptions;
-sites 10–17 were audited and found already compliant, below threshold, or out of scope.
+Sites 1–5 and 18 were converted in this change; sites 6, **6b**, 7–9 are the justified
+exceptions; sites 10–17 were audited and found already compliant, below threshold, or out of
+scope. (Row 6b — the worker `lanes:` paste — was added later, in v15.20.0/D6, and is folded into
+the exception count here so this sentence stays a complete index of the table above it.)
 
 ### Context digest
 

@@ -1622,7 +1622,7 @@ EXECUTE_CHECKPOINT:
 EOF
 run_v "$V_EXECUTE" "$F"
 assert_fail "execute: CROSS-FIELD adjudication_required=true with empty arrays [rule 6a, verbatim]" \
-  "adjudication_required: true requires non-empty missing_outputs and adjudication_options arrays"
+  "adjudication_required: true requires adjudication_options plus an evidence array"
 
 mk execute-adj-6a-half.md <<'EOF'
 EXECUTE_CHECKPOINT:
@@ -1642,7 +1642,7 @@ EXECUTE_CHECKPOINT:
 EOF
 run_v "$V_EXECUTE" "$F"
 assert_fail "execute: adjudication_required=true with adjudication_options absent [rule 6a]" \
-  "adjudication_required: true requires non-empty missing_outputs and adjudication_options arrays"
+  "adjudication_required: true requires adjudication_options plus an evidence array"
 
 mk execute-adj-6b.md <<'EOF'
 EXECUTE_CHECKPOINT:
@@ -1661,7 +1661,7 @@ EXECUTE_CHECKPOINT:
 EOF
 run_v "$V_EXECUTE" "$F"
 assert_fail "execute: CROSS-FIELD missing_outputs without adjudication_required [rule 6b, verbatim]" \
-  "the three fields are all-or-nothing"
+  "the fields are all-or-nothing"
 
 mk execute-adj-6b-false.md <<'EOF'
 EXECUTE_CHECKPOINT:
@@ -1678,7 +1678,94 @@ EXECUTE_CHECKPOINT:
 EOF
 run_v "$V_EXECUTE" "$F"
 assert_fail "execute: adjudication_options with adjudication_required=false [rule 6b]" \
-  "the three fields are all-or-nothing"
+  "the fields are all-or-nothing"
+
+# ── rule 6, D6 widening (v15.20.0) — the lane-collision adjudication raiser ──────────────
+# A lane collision has no producer/consumer `requires` edge, so no missing_outputs[]. Before
+# the widening, rule 6a rejected this shape outright ("requires non-empty missing_outputs"),
+# which made agents/execute-manager.md's lane-collision gate UNEMITTABLE — its own SubagentStop
+# hook failed the Execute Manager every time the gate fired. Reproduced against the exact
+# checkpoint the prompt emits before fixing. All four corners are pinned below so the widening
+# cannot silently become a weakening.
+mk execute-adj-lane-ok.md <<'EOF'
+EXECUTE_CHECKPOINT:
+  schema_version: 1
+  completed_so_far: []
+  remaining:
+    - task_id: b
+      status: pending
+  resume_context:
+    feature_branch: feature/x
+  reason: "Lane collision: 2 wrote shared/types.ts inside sibling 4's declared lane."
+  adjudication_required: true
+  adjudication_kind: lane_collision
+  colliding_lanes:
+    - path: shared/types.ts
+      owning_subtask: "4"
+      this_subtask: "2"
+  adjudication_options: ["A: Re-queue writer with the sibling lane excluded", "B: Serialize the pair (add a requires edge)", "C: Exit to Launch Pad", "D: Widen the writer's declared lane"]
+EOF
+run_v "$V_EXECUTE" "$F"
+assert_pass "execute: rule 6a — colliding_lanes satisfies the evidence requirement with NO missing_outputs (lane-collision gate is emittable)"
+
+mk execute-adj-neither.md <<'EOF'
+EXECUTE_CHECKPOINT:
+  schema_version: 1
+  completed_so_far: []
+  remaining:
+    - task_id: b
+      status: pending
+  resume_context:
+    feature_branch: feature/x
+  reason: "Lane collision with no evidence recorded."
+  adjudication_required: true
+  adjudication_kind: lane_collision
+  adjudication_options: ["A: Re-queue writer with the sibling lane excluded"]
+EOF
+run_v "$V_EXECUTE" "$F"
+assert_fail "execute: rule 6a — adjudication with NEITHER evidence array is still rejected (widened, not weakened)" \
+  "adjudication_required: true requires adjudication_options plus an evidence array"
+
+mk execute-adj-badkind.md <<'EOF'
+EXECUTE_CHECKPOINT:
+  schema_version: 1
+  completed_so_far: []
+  remaining:
+    - task_id: b
+      status: pending
+  resume_context:
+    feature_branch: feature/x
+  reason: "Lane collision."
+  adjudication_required: true
+  adjudication_kind: not_a_real_kind
+  colliding_lanes:
+    - path: shared/types.ts
+      owning_subtask: "4"
+      this_subtask: "2"
+  adjudication_options: ["A: Re-queue writer with the sibling lane excluded"]
+EOF
+run_v "$V_EXECUTE" "$F"
+assert_fail "execute: rule 6 — adjudication_kind is a CLOSED enum (an unknown kind would fall through to the wrong option set and the wrong Option-C failure reason)" \
+  "adjudication_kind, when present, must be one of"
+
+mk execute-adj-lane-orphan.md <<'EOF'
+EXECUTE_CHECKPOINT:
+  schema_version: 1
+  completed_so_far: []
+  remaining:
+    - task_id: b
+      status: pending
+  resume_context:
+    feature_branch: feature/x
+  reason: "Budget exceeded."
+  colliding_lanes:
+    - path: shared/types.ts
+      owning_subtask: "4"
+      this_subtask: "2"
+EOF
+run_v "$V_EXECUTE" "$F"
+assert_fail "execute: rule 6b — orphan colliding_lanes without adjudication_required is rejected (same all-or-nothing rule as missing_outputs)" \
+  "the fields are all-or-nothing"
 
 mk execute-adj-none.md <<'EOF'
 EXECUTE_CHECKPOINT:

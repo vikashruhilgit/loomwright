@@ -82,7 +82,13 @@ BIG_BRIEF="$ROOT/big-brief.md"
   done
 } > "$BIG_BRIEF"
 
-CAP=500
+# CAP was 500 until v15.20.0's derived content floor landed. A cap that low can no longer
+# produce an honest digest — overhead plus a one-line floor for all five sections needs ~1100 —
+# so the builder now (correctly) REFUSES at 500, and this test's premise ("a digest is written
+# and is clipped") became unsatisfiable. Raised to the smallest cap that still forces heavy
+# clipping on this deliberately oversized brief while remaining fundable. The tier-3 refusal
+# itself is asserted separately, in the fail-safe branch cases near the end of this file.
+CAP=1200
 BIG_OUT="$ROOT/out/big.md"
 bash "$BUILDER" --brief "$BIG_BRIEF" --out "$BIG_OUT" --max-chars "$CAP" >/dev/null 2>&1
 RC=$?
@@ -644,6 +650,94 @@ for _form in "" "-"; do
   fi
   rm -f "$PIPEOUT"
 done
+
+# ---------------------------------------------------------------------------
+# FAIL-SAFE ARGUMENT BRANCHES. Each of these looked correct on read but had no case, and the
+# whole contract of this builder is that a bad argument degrades to "nothing written, message on
+# stderr, exit 0" rather than a crash, a hang, or a junk digest. An always-exit-0 script is
+# exactly the shape where an untested error branch fails SILENTLY, so assert all three signals
+# together: exit status, no output file, and a non-empty stderr explanation.
+# ---------------------------------------------------------------------------
+_failsafe() {   # <label> <expect: none|written> <args...>
+  _fs_label="$1"; _fs_expect="$2"; shift 2
+  _fs_out="$(mktemp -u -t fsout.XXXXXX)"
+  _fs_err="$(mktemp -t fserr.XXXXXX)"
+  bash "$REPO_ROOT/loomwright/scripts/build-context-digest.sh" "$@" --out "$_fs_out" \
+    >/dev/null 2>"$_fs_err" </dev/null
+  _fs_rc=$?
+  TOTAL=$((TOTAL+1))
+  if [ "$_fs_rc" -ne 0 ]; then
+    no "$_fs_label: exited $_fs_rc — the builder must ALWAYS exit 0 (fail-safe contract)"
+  elif [ "$_fs_expect" = "none" ] && [ -e "$_fs_out" ]; then
+    no "$_fs_label: wrote a digest when it should have written nothing"
+  elif [ "$_fs_expect" = "none" ] && [ ! -s "$_fs_err" ]; then
+    no "$_fs_label: wrote nothing but explained nothing on stderr — a silent no-op is indistinguishable from success"
+  elif [ "$_fs_expect" = "written" ] && [ ! -s "$_fs_out" ]; then
+    no "$_fs_label: expected a digest (the bad value should fall back to the default), got none"
+  else
+    ok "$_fs_label"
+  fi
+  rm -f "$_fs_out" "$_fs_err"
+}
+
+_failsafe "--brief with a nonexistent path: nothing written, reason on stderr, exit 0" none \
+  --brief "$REPO_ROOT/definitely/not/a/real/brief-$$.md"
+_failsafe "--max-chars non-numeric ('abc'): falls back to the 6000 default and still builds" written \
+  --brief "$REPO_ROOT/loomwright/sdk-spike/test/fixtures/brief-digest-sections.md" --max-chars abc
+_failsafe "--max-chars 0: falls back to the default rather than producing an empty digest" written \
+  --brief "$REPO_ROOT/loomwright/sdk-spike/test/fixtures/brief-digest-sections.md" --max-chars 0
+_failsafe "--max-chars negative (-5): falls back to the default" written \
+  --brief "$REPO_ROOT/loomwright/sdk-spike/test/fixtures/brief-digest-sections.md" --max-chars -5
+_failsafe "--max-chars 30 (below the _min_cap floor of 60): falls back to the default" written \
+  --brief "$REPO_ROOT/loomwright/sdk-spike/test/fixtures/brief-digest-sections.md" --max-chars 30
+# Distinct from the floor above: 700 CLEARS _min_cap (60) but cannot fund the real fixed
+# overhead plus a content floor for all five sections. Tier 3 refuses rather than shipping a
+# digest of headings and empty markers.
+_failsafe "--max-chars 700 (clears _min_cap, below overhead + content floor): tier 3 refuses, nothing written" none \
+  --brief "$REPO_ROOT/loomwright/sdk-spike/test/fixtures/brief-digest-sections.md" --max-chars 700
+
+# ---------------------------------------------------------------------------
+# TIGHT-CAP BOUNDARY SWEEP — the invariant is "written implies honest", at EVERY cap.
+#
+# The corpus gate above only ever exercises the 6000-byte default, so the whole tight-cap
+# region went unswept. It was not clean: at 700/800/900 tier 2's overhead shrink pushed POOL
+# just above zero, tier 3 (then checking only `POOL < 1`) let it through, and the result was a
+# digest with 4 of 5 sections a bare marker — precisely what tier 3 exists to refuse. A second
+# round then showed one section still starving wherever its first LINE exceeded the granted
+# floor, because `clip` cuts on line boundaries.
+#
+# So assert the property directly, at every cap in the region: a digest that gets WRITTEN must
+# have zero contentless sections, sit within its own cap, never need the whole-file backstop,
+# and decode as UTF-8. Refusing is always an acceptable answer — an absent digest is honest.
+# ---------------------------------------------------------------------------
+SWEEP_BAD=""; SWEEP_WROTE=0; SWEEP_REFUSED=0
+_sc=650
+while [ "$_sc" -le 2600 ]; do
+  SWOUT="$(mktemp -t swout.XXXXXX)"
+  LC_ALL="$CORPUS_LOCALE" bash "$REPO_ROOT/loomwright/scripts/build-context-digest.sh" \
+    --brief "$REPO_ROOT/loomwright/sdk-spike/test/fixtures/brief-digest-sections.md" \
+    --out "$SWOUT" --max-chars "$_sc" >/dev/null 2>&1 </dev/null
+  if [ -s "$SWOUT" ]; then
+    SWEEP_WROTE=$((SWEEP_WROTE+1))
+    _ssz="$(wc -c < "$SWOUT" | tr -d '[:space:]')"
+    _sn="$(awk '/^## /{getline; getline; if ($0 ~ /^_\(truncated/) c++} END{print c+0}' "$SWOUT")"
+    [ "$_sn" -gt 0 ]        && SWEEP_BAD="$SWEEP_BAD cap$_sc:contentless($_sn)"
+    [ "$_ssz" -gt "$_sc" ]  && SWEEP_BAD="$SWEEP_BAD cap$_sc:over($_ssz)"
+    grep -q 'context-digest truncated at' "$SWOUT" && SWEEP_BAD="$SWEEP_BAD cap$_sc:backstop"
+    python3 -c 'import sys; open(sys.argv[1], encoding="utf-8").read()' "$SWOUT" 2>/dev/null \
+      || SWEEP_BAD="$SWEEP_BAD cap$_sc:badutf8"
+  else
+    SWEEP_REFUSED=$((SWEEP_REFUSED+1))
+  fi
+  rm -f "$SWOUT"
+  _sc=$(( _sc + 50 ))
+done
+TOTAL=$((TOTAL+1))
+if [ -z "$SWEEP_BAD" ]; then
+  ok "tight-cap sweep (650..2600, $SWEEP_WROTE written / $SWEEP_REFUSED refused): every WRITTEN digest is contentless-free, within cap, backstop-free and valid UTF-8"
+else
+  no "tight-cap sweep failures:$SWEEP_BAD — a written digest must be honest at every cap (refusing is fine; shipping headings with no data behind them is not)"
+fi
 
 if [ "$FAIL" -eq 0 ]; then
   echo "ALL TESTS PASSED ($PASS/$TOTAL)"

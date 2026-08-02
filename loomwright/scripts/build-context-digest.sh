@@ -439,7 +439,19 @@ clip() {
     return 0
   fi
   if [ "$_c_budget" -ge 1 ]; then
-    printf '%s' "$_c_body" | head -c "$_c_budget" | sed '$d' 2>/dev/null || true
+    _c_kept="$(printf '%s' "$_c_body" | head -c "$_c_budget" | sed '$d' 2>/dev/null || true)"
+    # WORD-BOUNDARY FALLBACK. The line-boundary clip above yields NOTHING when the section's
+    # very first line is itself longer than the budget -- common for a markdown table row or a
+    # long prose bullet at a tight cap -- leaving a heading above a bare marker, the
+    # "heading with no data behind it" outcome this builder exists to avoid. Fall back to
+    # clipping mid-line at the last SPACE within the budget. That is still UTF-8 safe by
+    # construction: the cut lands on an ASCII space, never inside a multi-byte sequence.
+    if [ -z "$_c_kept" ]; then
+      _c_kept="$(printf '%s' "$_c_body" | head -c "$_c_budget" | sed 's/[^ ]*$//' 2>/dev/null || true)"
+      # Strip the trailing space run so the marker does not read as part of the clipped text.
+      _c_kept="${_c_kept% }"
+    fi
+    [ -n "$_c_kept" ] && printf '%s\n' "$_c_kept"
   fi
   printf '%s\n' "$TRUNC_NOTE"
 }
@@ -475,13 +487,20 @@ compute_pool
 # undefined; the spawn contracts all say "proceed without it") -- a contentless one
 # claims to carry analysis it does not have.
 # ---------------------------------------------------------------------------
-_CONTENT_FLOOR=300
+# The floor is DERIVED, not guessed: five sections each need at least one useful line, so the
+# minimum fundable pool is `5 * _FLOOR_MIN_USEFUL`. The old pair (`_CONTENT_FLOOR=300` shrink
+# trigger + a bare `POOL < 1` refusal) let tier 2's overhead shrink push POOL just above zero,
+# after which tier 3 happily wrote a digest whose sections were ALL bare markers — measured at
+# --max-chars 700/800/900: 4 of 5 sections contentless, the exact output tier 3 exists to refuse.
+# Tying both thresholds to the same constant closes that window by construction.
+_FLOOR_MIN_USEFUL=80
+_CONTENT_FLOOR=$(( 5 * _FLOOR_MIN_USEFUL ))
 if [ "$POOL" -lt "$_CONTENT_FLOOR" ]; then
   TRUNC_NOTE="$TRUNC_NOTE_SHORT"
   CROSS_LANE_EXPLAINER=""
   compute_pool
 fi
-if [ "$POOL" -lt 1 ]; then
+if [ "$POOL" -lt "$_CONTENT_FLOOR" ]; then
   err "--max-chars ${MAX} is below the digest's own fixed overhead (${OVERHEAD}) — every section would be an empty truncation marker; nothing written (fail-safe). Use --max-chars >= $(( OVERHEAD + _CONTENT_FLOOR ))."
   exit 0
 fi
@@ -536,15 +555,15 @@ L_SUBTASKS="$(blen "$SUBTASK_SUMMARY")"
 L_CONVENTIONS="$(blen "$CONVENTIONS")"
 L_IMPACT="$(blen "$FILE_IMPACT")"
 
-# Each of the five sections may reserve up to 10% of the pool, so floors claim at most
-# half of it and the priority sweep still controls the other half. `clip` cuts on a LINE
-# boundary, so a floor too small to hold one whole line yields nothing but the marker --
-# strictly worse than concentrating the budget. Below that threshold, skip the floor pass
-# entirely and fall back to pure priority order (the pre-fix behavior, correct at a cap
-# that tight).
+# Each of the five sections may reserve up to 10% of the pool, so floors claim at most half of
+# it and the priority sweep still controls the other half. `clip` cuts on a LINE boundary, so a
+# floor too small to hold one whole line would yield nothing but a marker -- hence the clamp UP
+# to `_FLOOR_MIN_USEFUL`. The clamp is always affordable: the tier-3 refusal above guarantees
+# `POOL >= 5 * _FLOOR_MIN_USEFUL`, so five floors always fit. (The earlier form zeroed the floor
+# below that threshold and fell back to pure priority order -- which reintroduced the very
+# starvation the floor exists to prevent, at exactly the tight caps where it bites hardest.)
 _FLOOR=$(( POOL / 10 ))
-_FLOOR_MIN_USEFUL=80
-[ "$_FLOOR" -lt "$_FLOOR_MIN_USEFUL" ] && _FLOOR=0
+[ "$_FLOOR" -lt "$_FLOOR_MIN_USEFUL" ] && _FLOOR="$_FLOOR_MIN_USEFUL"
 
 grant B_CONTRACTS   "$L_CONTRACTS"   "$_FLOOR"
 grant B_INTERFACES  "$L_INTERFACES"  "$_FLOOR"

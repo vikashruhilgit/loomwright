@@ -296,12 +296,38 @@ for iteration in 1..max_iterations:
                   active_worktrees: [{paths}]
                   feature_branch: {branch}
                 adjudication_required: true
+                # Discriminator — REQUIRED here. Supervisor branches on this, never
+                # on the free-text `reason` (agents/supervisor.md §"Adjudication
+                # Handling"). Absent means `requires_gap` for pre-v15.20.0
+                # checkpoints, so a lane collision MUST say so explicitly or it is
+                # adjudicated with the wrong option set and the wrong Option-C
+                # failure reason.
+                adjudication_kind: lane_collision
+                # Evidence array — the lane analogue of the requires-gap gate's
+                # `missing_outputs[]`. REQUIRED whenever adjudication_required is
+                # true: scripts/validate-execute-result.py rule 6a accepts EITHER
+                # missing_outputs OR colliding_lanes, and rejects a checkpoint
+                # carrying neither. (A lane collision has no producer/consumer
+                # `requires` edge, so it has no missing_outputs to report — emitting
+                # this shape without colliding_lanes made the checkpoint fail its own
+                # SubagentStop hook.)
+                colliding_lanes: [
+                  {path: "{path}", owning_subtask: "{matching_sibling}",
+                   this_subtask: "{subtask_id}"}, ...
+                ]
                 reason: "Lane collision: {subtask_id} wrote {path}, inside sibling
                   {matching_sibling}'s declared lane, and neither subtask is
                   reachable from the other in the requires DAG (divergent-interface
                   hazard)"
-                adjudication_options: ["A: Re-queue producer", "B: Insert remediation subtask",
-                                       "C: Exit to Launch Pad", "D: Update consumer brief"]
+                # Lane-specific options. Deliberately NOT the requires-gap gate's four
+                # verbatim strings: "producer", "remediation subtask whose provides
+                # covers the missing items", and "remove the failing requires entry"
+                # are all defined over a producer/consumer edge that does not exist
+                # here. Same A-B-C-D shape, lane semantics.
+                adjudication_options: ["A: Re-queue writer with the sibling lane excluded",
+                                       "B: Serialize the pair (add a requires edge)",
+                                       "C: Exit to Launch Pad",
+                                       "D: Widen the writer's declared lane"]
               # Do NOT mark this subtask complete. Supervisor resolves adjudication.
               skip_to_next_iteration
         # No colliding sibling found for any out_of_lane path: fall through.
