@@ -583,6 +583,62 @@ _shape_case "block-form lanes" \
   lanes:
     - "b.ts"' nothrow
 
+# ---------------------------------------------------------------------------
+# PINNED LIMITATION: the `# Subtask N` id-anchor is FENCE-ONLY.
+#
+# The generic un-fenced heading-terminator in parseBrief (`!inYaml && /^#{1,4}\s+/`)
+# matches a single `#` too, so an un-fenced `# Subtask N` line always hits that
+# terminator and `continue`s before reaching the id-anchor match below it. That is
+# BY CONSTRUCTION, not by intent, and it is harmless today: Launch Pad only ever
+# writes this form inside a ```yaml fence, and a brief authored the un-fenced way
+# fails CLOSED on the contractless guard (throws) rather than silently scheduling
+# every subtask into wave 1.
+#
+# Pinned rather than left implied because reordering those two checks would silently
+# change the behavior in EITHER direction, and neither direction is self-announcing:
+# a future editor who makes the un-fenced form parse should see this assertion flip
+# and update the parser comment deliberately, not discover it by accident.
+# ---------------------------------------------------------------------------
+_unfenced_anchor_brief() {
+  cat <<'EOF'
+## Subtask Structure
+
+| # | Title | Est. Files | Skills | Status |
+|---|-------|-----------|--------|--------|
+| 1 | A | 1 | x | LAUNCHABLE |
+| 2 | B | 1 | x | LAUNCHABLE |
+
+### Subtask contracts
+
+# Subtask 1
+provides:
+  - {kind: file, path: a.ts}
+lanes:
+  - "a.ts"
+
+# Subtask 2
+provides:
+  - {kind: file, path: b.ts}
+requires:
+  - {from: "1", kind: file, path: a.ts}
+lanes:
+  - "b.ts"
+EOF
+}
+
+_ufa_out=0
+printf '%s' "$(_unfenced_anchor_brief)" | node -e "
+  const { parseBrief } = require(process.argv[1]);
+  let t=''; process.stdin.on('data',d=>t+=d).on('end',()=>{
+    try { parseBrief(t); process.exit(0); } catch (e) { process.exit(3); }
+  });
+" "$SPIKE_DIR/dist/runner.js" 2>/dev/null || _ufa_out=$?
+if [ "$_ufa_out" -eq 3 ]; then
+  pass "un-fenced \`# Subtask N\` is fence-only — fails CLOSED (throws), never a silent all-wave-1 schedule"
+else
+  fail "un-fenced \`# Subtask N\` no longer fails closed (rc=$_ufa_out) — parseBrief's id-anchor comment says this form is fence-only; if that changed deliberately, update the comment AND this assertion together"
+fi
+
 printf '\n%s\n' "digest-lanes.test.sh: $FAILURES failure(s)"
 [ "$FAILURES" = 0 ] || exit 1
 exit 0

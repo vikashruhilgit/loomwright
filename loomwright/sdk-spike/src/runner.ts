@@ -541,9 +541,22 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
       continue;
     }
 
-    // Id-anchor forms recognized INSIDE contracts content (fenced or not):
+    // Id-anchor forms recognized INSIDE contracts content. All are reachable fenced or
+    // un-fenced EXCEPT the `# Subtask N` comment form, which is FENCE-ONLY — see its own
+    // note below; do not generalize this header to "fenced or not" for all four.
     //   subtask_1:            — the runner's original contract
-    //   # Subtask 1a — ...    — a YAML comment Launch Pad actually writes inside a fence
+    //   # Subtask 1a — ...    — a YAML comment Launch Pad writes inside a fence. FENCE-ONLY
+    //                           BY CONSTRUCTION, not by intent: the generic un-fenced
+    //                           heading-terminator a few lines above (`!inYaml &&
+    //                           /^#{1,4}\s+/`) matches a single `#` too, so an un-fenced
+    //                           `# Subtask N` line always hits that terminator and
+    //                           `continue`s before ever reaching this match. Harmless today
+    //                           (Launch Pad only ever writes this form inside a fence, and an
+    //                           un-fenced brief authored this way fails CLOSED on the
+    //                           contractless guard rather than mis-scheduling) — but a future
+    //                           editor reordering these checks would silently change it, so
+    //                           the limitation is PINNED by a test in test/digest-lanes.test.sh
+    //                           ("un-fenced `# Subtask N` is fence-only") rather than left implied.
     //   S1: / ST1:            — a bare map-key id form (measured `script-test-gaps-and-
     //                           roadmap-remainders.md`: "S1:"/"S2:"/... keyed directly off the
     //                           Subtask Structure table's plain numeric ids)
