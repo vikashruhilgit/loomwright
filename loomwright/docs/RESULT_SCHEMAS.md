@@ -2006,12 +2006,17 @@ budget derived from it are measured in **bytes**), mirroring `build-repo-map.sh`
 > (<80 bytes, i.e. only at a very tight cap) is skipped in favour of pure priority order, since
 > `clip` cuts on line boundaries and a sub-line floor would yield nothing but the marker.
 >
-> **Budgets are measured in BYTES**, matching the unit the cap is enforced in (`wc -c`). Shell
-> `${#var}` is a *character* count under a UTF-8 locale; on this repo's em-dash-dense briefs the
-> two diverged enough to overshoot the cap (5973 chars = 6004 bytes on one archived brief) and
-> fire the whole-file backstop, which clips the tail — deleting the very Cross-lane contracts
-> section the priority ordering protects. The backstop remains as a last-resort invariant guard
-> and is asserted **not to fire** across the archived corpus by `scripts/test-context-digest.sh`.
+> **Budgets are measured in BYTES**, matching the unit the cap is enforced in (`wc -c`), via
+> `blen()` rather than `${#var}` — the latter is a *character* count under a UTF-8 locale and a
+> byte count under `C`/`POSIX`, so identical input produced different budgets depending on the
+> caller's environment (measured: `a — b` is 5 under `en_US.UTF-8`, 7 under `C`). That is a
+> latent, locale-dependent defect, **not** the cause of the one observed cap overshoot: that
+> overshoot reproduced *identically* under both locales and was the fixed-overhead constant
+> (`260`) underestimating the real header/heading overhead. Both are addressed — budgets are now
+> locale-invariant, and the per-section floor leaves enough slack that the constant no longer
+> binds. The whole-file backstop remains a last-resort invariant guard, and
+> `scripts/test-context-digest.sh` asserts across the archived corpus, **under a pinned UTF-8
+> locale**, that it never fires.
 >
 > **Cap floor.** The digest has a fixed overhead of its own (~900 bytes: title, headings, the
 > cross-lane explainer, and the per-section marker reserve), so a cap must fund that *plus* a

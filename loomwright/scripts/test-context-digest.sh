@@ -470,11 +470,17 @@ rm -f "$IFBRIEF" "$OUT_G"
 #
 # Skips silently when no corpus is present (a fresh clone / a consumer's repo).
 # ---------------------------------------------------------------------------
-CORPUS_N=0; CORPUS_STARVED=""; CORPUS_OVER=""; CORPUS_BACKSTOP=""
+# The corpus sweep runs under a PINNED UTF-8 locale. `${#var}` is a byte count under C/POSIX
+# and a CHARACTER count under UTF-8, so a suite inheriting the C locale (which is what a bare
+# CI shell often has) would pass even if the byte-safe `blen()` regressed back to `${#var}` —
+# the exact defect class the gate is here to pin. Falls back to whatever locale is available:
+# an unsupported LC_ALL is ignored by libc, which degrades to today's behavior, never an error.
+CORPUS_LOCALE="en_US.UTF-8"
+CORPUS_N=0; CORPUS_STARVED=""; CORPUS_OVER=""; CORPUS_BACKSTOP=""; CORPUS_BADUTF8=""
 for _cb in "$REPO_ROOT"/.supervisor/jobs/done/*.md "$REPO_ROOT"/.supervisor/jobs/pending/*.md "$REPO_ROOT"/.supervisor/jobs/failed/*.md; do
   [ -f "$_cb" ] || continue
   _co="$(mktemp -t corpusdg.XXXXXX)"
-  bash "$REPO_ROOT/loomwright/scripts/build-context-digest.sh" --brief "$_cb" --out "$_co" >/dev/null 2>&1
+  LC_ALL="$CORPUS_LOCALE" bash "$REPO_ROOT/loomwright/scripts/build-context-digest.sh" --brief "$_cb" --out "$_co" >/dev/null 2>&1
   [ -s "$_co" ] || { rm -f "$_co"; continue; }
   CORPUS_N=$((CORPUS_N+1))
   _csz="$(wc -c < "$_co" | tr -d '[:space:]')"
@@ -483,6 +489,14 @@ for _cb in "$REPO_ROOT"/.supervisor/jobs/done/*.md "$REPO_ROOT"/.supervisor/jobs
   # A section is contentless when the line two below its `## ` heading is the marker itself.
   _cn="$(awk '/^## /{getline; getline; if ($0 ~ /^_\(truncated/) c++} END{print c+0}' "$_co")"
   [ "$_cn" -gt 0 ] && CORPUS_STARVED="$CORPUS_STARVED $(basename "$_cb")($_cn)"
+  # `clip`/backstop cut with `head -c`, a RAW BYTE offset with no character-boundary awareness,
+  # so a cut can land mid-sequence in a multi-byte character. Today the trailing `sed '$d'`
+  # removes the partial line that byte necessarily sits on, so no malformed byte reaches the
+  # digest — but that is an emergent property of the pipeline, not something either half
+  # promises. Assert the OUTCOME (every digest decodes as UTF-8) rather than the mechanism, so
+  # a future change to either the cut or the `sed` is caught here instead of shipping mojibake.
+  python3 -c 'import sys; open(sys.argv[1], encoding="utf-8").read()' "$_co" 2>/dev/null \
+    || CORPUS_BADUTF8="$CORPUS_BADUTF8 $(basename "$_cb")"
   rm -f "$_co"
 done
 
@@ -509,7 +523,127 @@ else
   else
     no "corpus: whole-file backstop fired on —$CORPUS_BACKSTOP (it clips the TAIL, deleting the cross-lane contracts section the priority order protects; per-section budgeting should make it unreachable)"
   fi
+
+  TOTAL=$((TOTAL+1))
+  if [ -z "$CORPUS_BADUTF8" ]; then
+    ok "corpus ($CORPUS_N briefs, LC_ALL=$CORPUS_LOCALE): every digest is valid UTF-8 (no head -c cut leaks a split multi-byte character)"
+  else
+    no "corpus: digest contains invalid UTF-8 —$CORPUS_BADUTF8 (head -c cuts at a raw byte offset; the trailing sed '\$d' is what removes the split character's partial line — if either changed, clip on a character boundary instead)"
+  fi
 fi
+
+# Multi-byte content clipped at many boundaries: brute-force every cap in a window so a cut
+# lands mid-character repeatedly. The corpus gate above is data-dependent; this one is not.
+MBBRIEF="$(mktemp -t mbbrief.XXXXXX)"
+{
+  printf '# Multi-byte Truncation — Fixture\n\n## Environment\n\n'
+  i=0
+  while [ "$i" -lt 60 ]; do
+    printf -- '- Convention %s — uses “smart quotes”, ≤ and ≥ bounds, § refs, and an em-dash — here.\n' "$i"
+    i=$(( i + 1 ))
+  done
+  printf '\n## Subtask Structure\n\n| # | Title | Est. Files | Skills | Status |\n|---|---|---|---|---|\n| 1 | Ä — ü | 1 | x | LAUNCHABLE |\n'
+} > "$MBBRIEF"
+MB_BAD=""
+_cap=1400
+while [ "$_cap" -le 2400 ]; do
+  MBOUT="$(mktemp -t mbout.XXXXXX)"
+  LC_ALL="$CORPUS_LOCALE" bash "$REPO_ROOT/loomwright/scripts/build-context-digest.sh" \
+    --brief "$MBBRIEF" --out "$MBOUT" --max-chars "$_cap" >/dev/null 2>&1
+  if [ -s "$MBOUT" ]; then
+    _sz="$(wc -c < "$MBOUT" | tr -d '[:space:]')"
+    [ "$_sz" -gt "$_cap" ] && MB_BAD="$MB_BAD cap$_cap:over($_sz)"
+    python3 -c 'import sys; open(sys.argv[1], encoding="utf-8").read()' "$MBOUT" 2>/dev/null \
+      || MB_BAD="$MB_BAD cap$_cap:badutf8"
+  fi
+  rm -f "$MBOUT"
+  _cap=$(( _cap + 37 ))   # prime-ish stride so cuts land on many different byte offsets
+done
+TOTAL=$((TOTAL+1))
+if [ -z "$MB_BAD" ]; then
+  ok "multi-byte fixture: 28 caps swept (1400..2400) — every digest is valid UTF-8 and within its cap"
+else
+  no "multi-byte fixture failures:$MB_BAD (a truncation boundary landed inside a multi-byte character, or the byte cap was exceeded)"
+fi
+rm -f "$MBBRIEF"
+
+# Decoy heading must not steal a section from the real one (word-boundary guard in
+# extract_section). Without it, `## File Impact Mapping (draft)` appearing BEFORE the real
+# `## File Impact Map` starts extraction on the decoy, and the `if (on) exit` at the next
+# heading — which IS the real target — ships the decoy's body instead.
+DECOYBRIEF="$(mktemp -t decoybrief.XXXXXX)"
+cat > "$DECOYBRIEF" <<'EOF'
+# Decoy Heading Fixture
+
+## File Impact Mapping (draft, ignore)
+
+DECOY_BODY_MUST_NOT_APPEAR
+
+## File Impact Map
+
+| File | Change |
+|---|---|
+| REAL_TARGET_BODY.ts | modify |
+
+## Subtask Structure
+
+| # | Title | Est. Files | Skills | Status |
+|---|---|---|---|---|
+| 1 | A | 1 | x | LAUNCHABLE |
+EOF
+DECOYOUT="$(mktemp -t decoyout.XXXXXX)"
+bash "$REPO_ROOT/loomwright/scripts/build-context-digest.sh" --brief "$DECOYBRIEF" --out "$DECOYOUT" >/dev/null 2>&1
+DECOYSEC="$(sed -n '/^## File Impact Map$/,/^## Interfaces/p' "$DECOYOUT")"
+TOTAL=$((TOTAL+1))
+if printf '%s' "$DECOYSEC" | grep -q 'REAL_TARGET_BODY' \
+   && ! printf '%s' "$DECOYSEC" | grep -q 'DECOY_BODY_MUST_NOT_APPEAR'; then
+  ok "prefix-decoy heading does not steal the section — 'File Impact Mapping' is not 'File Impact Map'"
+else
+  no "prefix-decoy heading stole the section: extract_section's index()==1 prefix test needs a word-boundary guard (matched body: $(printf '%s' "$DECOYSEC" | tr '\n' ' ' | cut -c1-160))"
+fi
+rm -f "$DECOYBRIEF" "$DECOYOUT"
+
+# `--brief -` must never block on a terminal. The original stdin branch read
+# `elif [ -n "$BRIEF_ARG" ] || [ ! -t 0 ]`, whose FIRST disjunct short-circuits: an explicit `-`
+# entered the branch regardless of whether stdin was a pipe, so `cat` blocked forever on a tty.
+# A hang is not a permitted outcome under this script's fail-safe contract ("any internal error
+# => write nothing, message to stderr, exit 0").
+#
+# THIS ASSERTION IS STRUCTURAL, NOT BEHAVIORAL — stated plainly rather than implied. Reproducing
+# the hang needs a real controlling terminal; `pty.fork()` proved unreliable in sandboxed/CI
+# runners (it hung the harness rather than the subject), and a test that can hang the suite is
+# worse than the bug it guards. So this greps the guard's SHAPE instead: the tty test must not
+# sit behind a `[ -n "$BRIEF_ARG" ] ||` short-circuit. It would NOT catch a different rewrite
+# that reintroduces the hang by another route — the two behavioral halves below (a real pipe
+# still works, and `-` on a non-tty still works) are what cover the paths that ARE testable here.
+TOTAL=$((TOTAL+1))
+_STDIN_BRANCH="$(grep -n 'elif \[ ! -t 0 \]' "$REPO_ROOT/loomwright/scripts/build-context-digest.sh" || true)"
+_STDIN_SHORTCIRCUIT="$(grep -n 'elif \[ -n "\$BRIEF_ARG" \] || \[ ! -t 0 \]' "$REPO_ROOT/loomwright/scripts/build-context-digest.sh" || true)"
+if [ -n "$_STDIN_BRANCH" ] && [ -z "$_STDIN_SHORTCIRCUIT" ]; then
+  ok "stdin branch gates on \`[ ! -t 0 ]\` unconditionally (structural check — \`--brief -\` cannot short-circuit past the tty test and hang)"
+else
+  no "stdin branch reintroduced the \`[ -n \"\$BRIEF_ARG\" ] ||\` short-circuit — \`--brief -\` with no piped input will \`cat\` a terminal and hang, violating the always-exit-0 fail-safe contract"
+fi
+
+# Behavioral half 1: a real pipe still feeds the builder (the path Launch Pad never uses but the
+# docstring documents). Behavioral half 2: `--brief -` on a non-tty stdin behaves identically.
+for _form in "" "-"; do
+  TOTAL=$((TOTAL+1))
+  PIPEOUT="$(mktemp -t pipeout.XXXXXX)"
+  if [ -z "$_form" ]; then
+    printf '# Piped Brief\n\n## Environment\n\nPIPED_MARKER_OK\n' | bash "$REPO_ROOT/loomwright/scripts/build-context-digest.sh" --out "$PIPEOUT" >/dev/null 2>&1
+    _label="STDIN with no --brief"
+  else
+    printf '# Piped Brief\n\n## Environment\n\nPIPED_MARKER_OK\n' | bash "$REPO_ROOT/loomwright/scripts/build-context-digest.sh" --brief - --out "$PIPEOUT" >/dev/null 2>&1
+    _label="--brief - with a pipe"
+  fi
+  if [ -s "$PIPEOUT" ] && grep -q 'PIPED_MARKER_OK' "$PIPEOUT"; then
+    ok "$_label still reads the piped brief (the tty guard did not break the legitimate pipe path)"
+  else
+    no "$_label produced no digest — the unconditional \`[ ! -t 0 ]\` guard broke the legitimate piped-input path it was meant to leave alone"
+  fi
+  rm -f "$PIPEOUT"
+done
 
 if [ "$FAIL" -eq 0 ]; then
   echo "ALL TESTS PASSED ($PASS/$TOTAL)"

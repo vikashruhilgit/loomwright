@@ -2725,6 +2725,52 @@ EOF
 run_v "$V_WORKER" "$F"
 assert_fail "worker: rule 9 — out_of_lane with an empty-string entry is rejected" "rule 9"
 
+# Explicit NULL. Distinct from ABSENT above and covered by its own branch in rule 9:
+# `present()` is a key-PRESENCE test (`key in fields`), so `out_of_lane: null` is PRESENT with a
+# None value and must be rejected, while omitting the key entirely stays accepted. This is the
+# nullable-but-required trap that shipped past review once already in this repo (PR #84's
+# read-rules.sh `check`): a type guard that only rejects the WRONG type silently accepts null
+# when null is also a legal YAML scalar. Both halves are asserted so the pair cannot drift apart.
+mk worker-r9-null.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- out_of_lane: null
+- summary: explicit null is PRESENT with a None value — rejected, unlike an omitted key
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: rule 9 — explicit out_of_lane: null is rejected (present-with-None, not absent)" "rule 9"
+
+# Non-string-LOOKING element. Rule 9 also carries an `isinstance(item, str)` guard, and this
+# pins what actually happens to it: NOTHING on this carrier. `load_block` sources `fields`
+# exclusively from the markdown block text via `parse_block`, and that parser normalizes every
+# scalar to a Python str -- verified: `[123, "shared/types.ts"]` parses to `['123',
+# 'shared/types.ts']`. So `123` arrives as the string "123", which IS a valid non-empty path
+# string, and the block is correctly ACCEPTED. The isinstance half is defensive-only: unreachable
+# unless a future carrier (e.g. a JSON hook payload preserving native types) feeds these
+# validators. Asserted as a PASS deliberately -- writing this as an expected failure would encode
+# a promise the contract does not make, and would fail the moment someone read the parser. If a
+# typed carrier is ever added, THIS assertion flips and points straight at the reason.
+mk worker-r9-nonstring-item.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- out_of_lane: [123, "shared/types.ts"]
+- summary: 123 normalizes to the string "123" on this carrier — a valid non-empty path string
+EOF
+run_v "$V_WORKER" "$F"
+assert_pass "worker: rule 9 — a bare 123 in out_of_lane is ACCEPTED (the markdown carrier stringifies every scalar; the isinstance guard is unreachable here by construction)"
+
 echo "RESULT  pass=$PASS_COUNT  fail=$FAIL_COUNT"
 if [ "$FAIL_COUNT" -eq 0 ]; then
   exit 0

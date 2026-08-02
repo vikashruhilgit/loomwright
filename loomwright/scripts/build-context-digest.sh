@@ -156,9 +156,17 @@ if [ -n "$BRIEF_ARG" ] && [ "$BRIEF_ARG" != "-" ]; then
     err "brief path not found: '$BRIEF_ARG' — nothing written (fail-safe)"
     exit 0
   fi
-elif [ -n "$BRIEF_ARG" ] || [ ! -t 0 ]; then
-  # --brief - (explicit stdin) OR no --brief given and stdin is a pipe (not a terminal).
+elif [ ! -t 0 ]; then
+  # --brief - (explicit stdin) OR no --brief given — either way stdin must be a pipe.
+  # The tty check is UNCONDITIONAL, deliberately: gating it on `[ -n "$BRIEF_ARG" ] ||` let the
+  # first disjunct short-circuit, so `--brief -` with no piped input ran `cat` against the
+  # terminal and blocked forever — a hang, which this script's fail-safe contract ("any internal
+  # error => write nothing, message to stderr, exit 0") does not permit. An explicit `-` still
+  # differs from omitting `--brief`: it produces the clearer message below.
   cat > "$BRIEF_FILE" 2>/dev/null || true
+elif [ -n "$BRIEF_ARG" ]; then
+  err "--brief - given but stdin is a terminal, not a pipe — nothing to read (fail-safe)"
+  exit 0
 else
   err "no --brief path given and stdin is a terminal — nothing to read (fail-safe)"
   exit 0
@@ -200,7 +208,22 @@ extract_section() {
         sub(/^[0-9]+\.[ \t]*/, "", heading)
         htl = tolower(heading)
         if (on) { exit }
-        if (index(htl, want) == 1) { on = 1; next }
+        # WORD-BOUNDARY GUARD on the prefix test. A bare `index()==1` also matches a heading
+        # that merely STARTS with the target text, so a decoy such as
+        # `## File Impact Mapping (draft, ignore)` appearing BEFORE the real
+        # `## File Impact Map` steals the section outright: extraction starts on the decoy, and
+        # the `if (on) exit` above then terminates at the very next heading -- which IS the real
+        # target -- so the section ships the body of the decoy and the real one is never reached.
+        # (No apostrophes in this comment: the whole awk program is a single-quoted shell string,
+        # so one would terminate it and produce a syntax error at the next paren.)
+        # Require the character following the matched prefix to be a non-alphanumeric (or end of
+        # heading), so `File Impact Map`, `File Impact Map:` and `File Impact Map (v2)` still
+        # match while `File Impact Mapping` does not. Prefix tolerance is deliberately kept --
+        # it is what absorbs the trailing-qualifier drift this builder exists to tolerate.
+        if (index(htl, want) == 1) {
+          rest = substr(htl, length(want) + 1)
+          if (rest == "" || rest !~ /^[a-z0-9]/) { on = 1; next }
+        }
         next
       }
       if (on) { print }

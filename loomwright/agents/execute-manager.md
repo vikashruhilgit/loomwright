@@ -269,31 +269,41 @@ for iteration in 1..max_iterations:
       # inventing no new escalation path. ---
       if worker_result.out_of_lane is non-empty:
         for each path in worker_result.out_of_lane:
-          # matching_sibling: the OTHER subtask (from the brief's Subtask
-          # Contracts already read at Inputs) whose declared `lanes:` contains a
-          # glob matching `path`. None if no sibling owns it (an unowned path is
+          # matching_siblings: ALL other subtasks (from the brief's Subtask
+          # Contracts already read at Inputs) whose declared `lanes:` contain a
+          # glob matching `path`. Empty if no sibling owns it (an unowned path is
           # not a collision — just an out-of-lane write with no colliding owner).
-          matching_sibling = sibling subtask whose lanes: glob-matches path
-          if matching_sibling exists AND matching_sibling is NOT reachable from
-             {subtask_id} in EITHER direction over the requires DAG (transitive
-             closure — same-wave test):
-            emit EXECUTE_CHECKPOINT:
-              schema_version: 1
-              completed_so_far: [...]
-              remaining: [...]
-              resume_context:
-                tool_calls_used: {N}
-                active_worktrees: [{paths}]
-                feature_branch: {branch}
-              adjudication_required: true
-              reason: "Lane collision: {subtask_id} wrote {path}, inside sibling
-                {matching_sibling}'s declared lane, and neither subtask is
-                reachable from the other in the requires DAG (divergent-interface
-                hazard)"
-              adjudication_options: ["A: Re-queue producer", "B: Insert remediation subtask",
-                                     "C: Exit to Launch Pad", "D: Update consumer brief"]
-            # Do NOT mark this subtask complete. Supervisor resolves adjudication.
-            skip_to_next_iteration
+          # PLURAL, deliberately: Criterion 16 forbids lane overlap only between
+          # MUTUALLY-UNREACHABLE pairs, so two sequentially-ordered siblings may
+          # legally declare overlapping lanes over the same path. A third subtask
+          # writing that path can therefore match several owners at once, and be
+          # ordered against some of them but not others. Checking only the first
+          # match found would make escalation depend on brief/iteration order —
+          # implementation-defined per run. Escalate if ANY matching sibling is
+          # unordered relative to {subtask_id}; a single ordered owner does not
+          # clear the path.
+          matching_siblings = ALL sibling subtasks whose lanes: glob-match path
+          for each matching_sibling in matching_siblings:
+            if matching_sibling is NOT reachable from {subtask_id} in EITHER
+               direction over the requires DAG (transitive closure — the
+               reachability/"same-wave" test):
+              emit EXECUTE_CHECKPOINT:
+                schema_version: 1
+                completed_so_far: [...]
+                remaining: [...]
+                resume_context:
+                  tool_calls_used: {N}
+                  active_worktrees: [{paths}]
+                  feature_branch: {branch}
+                adjudication_required: true
+                reason: "Lane collision: {subtask_id} wrote {path}, inside sibling
+                  {matching_sibling}'s declared lane, and neither subtask is
+                  reachable from the other in the requires DAG (divergent-interface
+                  hazard)"
+                adjudication_options: ["A: Re-queue producer", "B: Insert remediation subtask",
+                                       "C: Exit to Launch Pad", "D: Update consumer brief"]
+              # Do NOT mark this subtask complete. Supervisor resolves adjudication.
+              skip_to_next_iteration
         # No colliding sibling found for any out_of_lane path: fall through.
         # out_of_lane -> record_worker_result -> `## Worker Results`.
         # NOT an EXECUTE_RESULT field (docs/RESULT_SCHEMAS.md §EXECUTE_RESULT)
