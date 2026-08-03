@@ -28,6 +28,26 @@ string verbatim, that exact string is used.
   (8) v12 outputs_gap/status invariant — outputs_gap non-empty with
       status: completed is rejected
 
+ADDITIONAL RULE (9), added post-hoc for D6 (v15.20.0 — worker shared-context
+digest + explicit file lanes) — NOT part of the original eight rules
+transcribed from the historical hooks.json prompt above, and NOT sourced from
+any prompt string (hooks.json carries no prompt for this matcher any more —
+see the RULE SOURCE note above):
+
+  (9) out_of_lane shape — OPTIONAL and ADDITIVE at schema_version 2. Omitting
+      the field is accepted at ANY schema_version (unlike outputs_verified /
+      outputs_gap, which are REQUIRED at v2 by rule 6). WHEN PRESENT, it must
+      be a list of non-empty path strings. This diverges deliberately from the
+      unvalidated memory_candidates precedent (docs/RESULT_SCHEMAS.md):
+      memory_candidates is never validated, whereas out_of_lane IS — leaving
+      it unvalidated would let a malformed value slip past
+      scripts/check-contract-parity.sh's pin while the WORKER_RESULT block
+      still "looked" valid, which is the silent-under-enforcement failure that
+      gate exists to prevent. out_of_lane is REPORT-ONLY: its presence,
+      absence, or contents NEVER affect any other rule in this file, and it
+      never substitutes for or is derived from outputs_gap (rule 8's
+      cross-field invariant is unaffected).
+
 DELIBERATE NON-ADDITIONS / NARROWINGS (recorded, not accidental):
   * The prompt does NOT constrain WORKER_RESULT.status to an enum, so neither
     does this script (R4: transcribe, do not silently strengthen).
@@ -118,6 +138,10 @@ REASON_V2_NULL = (
 REASON_GAP_STATUS = (
     "outputs_gap non-empty must map to status: partial — a worker that did not "
     "deliver all promised outputs has not completed"
+)
+REASON_OUT_OF_LANE_SHAPE = (
+    "out_of_lane, when present, must be an array of non-empty path strings "
+    "(optional additive field, D6, rule 9)"
 )
 
 MISSING_BLOCK = (
@@ -283,6 +307,23 @@ def main():
                     emit(False, REASON_ENTRY_SHAPE)
                 if as_text(entry.get("status")).strip() not in VALID_ENTRY_STATUS:
                     emit(False, REASON_ENTRY_SHAPE)
+
+    # ── (9) out_of_lane shape — OPTIONAL, ADDITIVE, schema_version stays 2 ────
+    # PRESENCE-GATED, not required: absence is always accepted, at any
+    # schema_version — the divergence from rules 6/8 (which REQUIRE
+    # outputs_verified/outputs_gap at v2) is the point of this field being
+    # "validated-but-optional" (docs/RESULT_SCHEMAS.md, D6). When present, every
+    # entry must be a non-empty string; `out_of_lane: []` (nothing out of lane)
+    # is explicitly legal and the loop below simply does not iterate.
+    if present(fields, "out_of_lane"):
+        out_of_lane = fields.get("out_of_lane")
+        if out_of_lane is None:
+            emit(False, REASON_OUT_OF_LANE_SHAPE)
+        if not isinstance(out_of_lane, list):
+            emit(False, REASON_OUT_OF_LANE_SHAPE)
+        for item in out_of_lane:
+            if not isinstance(item, str) or is_empty_scalar(item):
+                emit(False, REASON_OUT_OF_LANE_SHAPE)
 
     emit(True)
 

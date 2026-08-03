@@ -41,7 +41,7 @@ Manage the Supervisor's externalized state file. Writer of `## Decisions Log`, `
 | Operation | Description | Key Input Fields | Response Template |
 |-----------|-------------|------------------|-------------------|
 | `initialize` | Create fresh state file; seeds `## Session` once (see note below the table) | config {max_workers, mode}, session {session_id, task_id, branch} | `"State initialized: session {id}, task {id}, status running"` |
-| `record_worker_result` | Record worker output | worker_id, subtask_id, result {files_modified, lines_added, lines_removed, tests_run, tests_passed, status, error} | `"Worker {id} result: {subtask_id} {status}, +{added} -{removed}"` |
+| `record_worker_result` | Record worker output | worker_id, subtask_id, result {files_modified, lines_added, lines_removed, tests_run, tests_passed, status, error, out_of_lane} | `"Worker {id} result: {subtask_id} {status}, +{added} -{removed}"` |
 | `record_review` | Record review decision — **retained, no current caller** (the Phase 3 per-subtask reviewer this served was retired; superseded by the deterministic `outputs_verified` gate plus tests/lint) | subtask_id, decision (PASS\|FAIL\|NEEDS_HUMAN), issues_count, attempt {N}/3 | `"Review: {subtask_id} {decision}, attempt {N}/3"` |
 | `record_decision` | Append to Decisions Log | phase, decision, rationale | `"Decision logged: {phase} — {decision}"` |
 | `record_error` | Append to Error Log | phase, error, retry {N}/{max}, resolution | `"Error logged: {phase} — {error}"` |

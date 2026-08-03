@@ -283,8 +283,15 @@ The default path below `skills/supervisor-readiness/SKILL.md` §"Decomposition T
 
 1. Spawn ONE implementation worker (blocking, in project root) — the prompt passes ALL acceptance criteria, not one subtask's row (spawn shape: `skills/async-orchestration/SKILL.md` §"Subagent Spawn Contracts" → Single-Agent Worker)
    - When `cost_profile=cheap`: include `model: "sonnet"` in the Task call
-2. Record result via Context-Keeper
-3. **Deterministic gate (zero-token, no reviewer spawn):** check the worker's own `outputs_verified`/`outputs_gap` fields — the same check the Execute Manager runs pre-spawn (`agents/execute-manager.md:222`) — plus tests/lint on the branch (run by the Supervisor via Bash). **LSP diagnostics are the worker's own** — `agents/worker.md` declares the `LSP` tool and runs them during implementation; the Supervisor has no LSP tool, so nothing re-runs them here. Deeper semantic review is Phase 4.5's. `outputs_gap` non-empty or `status != completed` → retry (bounded) or pause, per existing WORKER_RESULT handling.
+2. Record result via Context-Keeper — **including the worker's `out_of_lane` field**, so the
+   lane report reaches `state.md`'s `## Worker Results` instead of being silently dropped.
+   The Single-Agent worker inherits the Sequential-path spawn template, which DOES paste
+   `lanes:`, so it emits the field. **Recording only — escalation is vacuous here**: with
+   exactly one subtask there is no sibling lane to collide with, so there is nothing the
+   collision rule could fire on (same reasoning as the Sequential Path below, which is
+   ordered rather than singular). This path is the DEFAULT post-Fix-1, so omitting the
+   record would no-op the lane gate on the path most runs actually take.
+3. **Deterministic gate (zero-token, no reviewer spawn):** check the worker's own `outputs_verified`/`outputs_gap` fields — the same check the Execute Manager runs pre-spawn (`agents/execute-manager.md` §"v12 outputs_verified gate" — cited by anchor, not line number: this file's own edits have drifted that reference twice) — plus tests/lint on the branch (run by the Supervisor via Bash). **LSP diagnostics are the worker's own** — `agents/worker.md` declares the `LSP` tool and runs them during implementation; the Supervisor has no LSP tool, so nothing re-runs them here. Deeper semantic review is Phase 4.5's. `outputs_gap` non-empty or `status != completed` → retry (bounded) or pause, per existing WORKER_RESULT handling.
 4. Skip all worktree logic and Execute Manager delegation. Proceed directly to Phase 4 FINALIZE.
 
 > **⚠️ `--skip-self-heal` leaves NO semantic review — true at EVERY threshold, not just this path.** Phase 4.5's Code Reviewer is the SOLE LLM review lens across all three Phase 3 paths (Single-Agent, Sequential, Parallel) — no path spawns a per-subtask reviewer any more (see `agents/orchestrator.md` §"Review Gate Policy" and `AGENT_GUIDELINES.md` §"Review Counter-Pressure Rule"), so combining the flag with ANY job shape leaves only the deterministic gate — `outputs_verified` + tests/lint (plus the worker's own LSP diagnostics) — and nothing reads the code for intent. This is a **behavior change from the pre-v15.15.0 fast path** (which spawned a per-subtask reviewer on Single-Agent-shaped jobs regardless of the flag) and from the pre-Fix-7 Sequential/Parallel paths (which spawned a per-subtask reviewer unconditionally). `--skip-self-heal` is an emergency bypass; do not pair it with any default job shape unless you are reviewing by hand.
@@ -297,7 +304,19 @@ The default path below `skills/supervisor-readiness/SKILL.md` §"Decomposition T
 1. For each subtask (in order):
    - Spawn implementation worker (blocking, in project root)
      - When `cost_profile=cheap`: include `model: "sonnet"` in the Task call
-   - Record result via Context-Keeper
+   - Record result via Context-Keeper — **including the worker's `out_of_lane` field**, so the
+     lane report reaches `state.md`'s `## Worker Results` instead of being silently dropped
+     (the Sequential spawn template DOES paste `lanes:`, so these workers do emit it).
+   - **Lane reports on this path are RECORD-ONLY — no collision escalation, by construction.**
+     The divergent-interface hazard the lane gate exists to catch is two subtasks writing the
+     same file *without being able to see each other*. This path executes subtasks strictly
+     serially in one working tree, so a later subtask always observes everything an earlier one
+     already wrote — the concurrent-sibling condition can never hold, and Execute Manager's
+     reachability-based escalation (`agents/execute-manager.md`) has nothing to fire on. What
+     remains is the visibility-vs-PRESERVATION case (a later subtask clobbering an earlier
+     one's `provides` symbol), which is a manual authoring/review discipline documented in
+     `skills/supervisor-readiness/SKILL.md` §"Lane Declaration Schema" — deliberately NOT an
+     automated gate here.
    - **Deterministic gate (zero-token, no reviewer spawn):** check the worker's own `outputs_verified`/`outputs_gap` fields plus tests/lint on the branch — same check as the Single-Agent Path step 3 above. `outputs_gap` non-empty or `status != completed` → retry (bounded) or pause, per existing WORKER_RESULT handling.
 2. Skip all worktree logic and Execute Manager delegation
 
@@ -309,7 +328,8 @@ The default path below `skills/supervisor-readiness/SKILL.md` §"Decomposition T
 result = Task(
   description: "Execute Phase 3: implement subtasks (deterministic outputs_verified gate; no LLM review subtask)",
   prompt: "Execute Manager prompt with:
-    - Brief: {brief_path} — read only the sections you need (## Subtask Structure, ## Subtask Contracts, per-subtask criteria). Gitignored main-checkout path: resolves for the Execute Manager (project root), NOT inside worker worktrees. When no brief file exists (`/supervisor task:` no-brief mode), point at `.supervisor/requirements/{slug}-plan.md` (Beads-absent) or `bd show {id}` (Beads) instead, or pass the criteria inline — a documented exception, see docs/POINTER_AUDIT.md.
+    - Brief: {brief_path} — read only the sections you need (## Subtask Structure, ## Subtask Contracts, per-subtask criteria, per-subtask `lanes:`). Gitignored main-checkout path: resolves for the Execute Manager (project root), NOT inside worker worktrees. When no brief file exists (`/supervisor task:` no-brief mode), point at `.supervisor/requirements/{slug}-plan.md` (Beads-absent) or `bd show {id}` (Beads) instead, or pass the criteria inline — a documented exception, see docs/POINTER_AUDIT.md.
+    - Context digest: {context_digest_path} — MAIN-CHECKOUT ABSOLUTE path (`.supervisor/jobs/context-digests/{basename(brief_path)}`) + ≤200-char summary + "Read only the sections you need" (`skills/async-orchestration/SKILL.md` §"Context digest pointer"). Advisory only — proceed without it if the file does not exist.
     - Subtask index (compact — ids/titles/deps only, no pasted criteria/file lists): [{ids, titles, deps}]
     - Parallelism graph: [{launchable, blocked}]
     - Config: max_workers={N}, project={name}, feature_branch={branch}
@@ -343,22 +363,48 @@ EXECUTE_RESULT has no top-level `status:` field — the discriminator is
 
 #### Adjudication Handling (CHECKPOINT with adjudication_required)
 
-When the Execute Manager surfaces an `EXECUTE_CHECKPOINT` with `adjudication_required: true` (raised by the Execute Manager's Step 2b pre-spawn verification gate when a consumer subtask's `requires:` items are not present in the materialized worktree), the Supervisor MUST:
+**TWO raisers, two option sets — branch on `adjudication_kind`, never on the `reason` prose.** An `EXECUTE_CHECKPOINT` with `adjudication_required: true` comes from one of two structurally different gates:
 
-1. **Pause the EXECUTE phase** — do not spawn further workers, do not advance the consumer subtask, do not return to the Execute Manager until a choice is made.
-2. **Read `missing_outputs[]` and `adjudication_options[]`** from the CHECKPOINT block. `missing_outputs[]` items have shape `{item, producing_subtask, check_run}`.
-3. **Present all four options to the user via `AskUserQuestion`** (preferred). Only fall back to inline prompting if user-input is unavailable in the current session. The four options (wording stays aligned with the `async-orchestration` skill and the Execute Manager's Step 2b CHECKPOINT format — do not paraphrase):
+| `adjudication_kind` | Raiser | Evidence array | Option semantics | Option-C failure reason |
+|---|---|---|---|---|
+| `requires_gap` (default when the field is ABSENT — every pre-v15.20.0 checkpoint) | Execute Manager Step 2b pre-spawn verification: a consumer subtask's `requires:` items are not present in the materialized worktree | `missing_outputs[]` — `{item, producing_subtask, check_run}` | producer / consumer / `requires` edge | `inter_subtask_gap` |
+| `lane_collision` (v15.20.0, D6) | Execute Manager lane-collision gate: a worker's `out_of_lane` path landed inside a sibling's declared `lanes:`, and neither subtask is reachable from the other | `colliding_lanes[]` — `{path, owning_subtask, this_subtask}` | writer / lane owner / lane declaration | `lane_collision` |
+
+**Do not adjudicate a lane collision with the `requires_gap` options.** They are defined over a producer/consumer `requires` edge that does not exist for a lane collision (there is no "producing subtask", no "missing item", no "failing `requires` entry" to remove), and Option C's `inter_subtask_gap` is a **load-bearing control signal**, not a label: `/autonomous` EVALUATE Signal 2 keys re-planning on that exact string (`skills/autonomous-loop/SKILL.md`; `commands/autonomous.md`). Emitting it for a lane collision would make another agent re-plan for a contract gap that never happened. `lane_collision` is deliberately NOT an `/autonomous` re-iteration signal — a lane collision resolved via Option C terminates the loop as a plain `failed`, because the brief's lane declarations are an authoring defect that Plan Reviewer Criterion 16 should have caught, and silently re-planning around it would hide that.
+
+For **either** kind, the Supervisor MUST:
+
+1. **Pause the EXECUTE phase** — do not spawn further workers, do not advance the affected subtask, do not return to the Execute Manager until a choice is made.
+2. **Read `adjudication_kind`, the matching evidence array, and `adjudication_options[]`** from the CHECKPOINT block, per the table above. When `adjudication_kind` is absent, treat it as `requires_gap` (backward compatibility with pre-v15.20.0 checkpoints). Present the options **verbatim as the CHECKPOINT emitted them** — the Execute Manager already selected the correct set for its kind; never substitute the other gate's wording.
+3. **Present all four options to the user via `AskUserQuestion`** (preferred). Only fall back to inline prompting if user-input is unavailable in the current session. Use the option set matching `adjudication_kind` — wording stays aligned with the `async-orchestration` skill and the Execute Manager's CHECKPOINT format; do not paraphrase either set.
+
+   **`requires_gap`** (Step 2b pre-spawn verification gate):
 
    - **A: Re-queue producer** — Execute Manager re-spawns the producing subtask with the missing outputs explicitly added to its acceptance criteria.
    - **B: Insert remediation subtask** — Supervisor inserts a new ad-hoc subtask whose `provides:` covers the missing items, then resumes execution with the original consumer blocked on it.
    - **C: Exit to Launch Pad** — Supervisor checkpoints state, marks the job `failed` with reason `inter_subtask_gap`, and exits cleanly. User must rerun `/launch-pad` to fix the brief.
    - **D: Update consumer brief** — Supervisor edits the in-progress brief to remove the failing `requires` entry from the consumer subtask, then re-emits the consumer to the Execute Manager (consumer may proceed without the missing item).
 
+   **`lane_collision`** (lane-collision gate — `colliding_lanes[]` names the path, its declared owner, and the writer):
+
+   - **A: Re-queue writer with the sibling lane excluded** — Execute Manager re-spawns `this_subtask` with `path` explicitly named as off-limits in its acceptance criteria; the lane owner keeps the file.
+   - **B: Serialize the pair (add a requires edge)** — Supervisor adds a `requires` edge in the in-progress brief so the two subtasks are no longer mutually unreachable, making the shared path legal sequential sharing. **Re-verify the graph stays acyclic before applying** — a cycle here is worse than the collision. Note this grants *visibility*, not *preservation* (`skills/supervisor-readiness/SKILL.md` §"Lane Declaration Schema").
+   - **C: Exit to Launch Pad** — Supervisor checkpoints state, marks the job `failed` with reason **`lane_collision`** (NOT `inter_subtask_gap` — see the table above), and exits cleanly. User must rerun `/launch-pad` to fix the brief's lane declarations.
+   - **D: Widen the writer's declared lane** — Supervisor edits the in-progress brief to add `path` to `this_subtask`'s `lanes:`, accepting the overlap as intentional. **Only sound when the two subtasks do not in fact race** — this suppresses the signal without removing the concurrency, so prefer B when in doubt.
+
 4. **Apply the chosen option**, then resume EXECUTE:
+
+   **`requires_gap`:**
    - **A:** spawn a fresh Execute Manager invocation with the producer re-queued (acceptance criteria amended to call out the missing outputs).
    - **B:** insert the remediation subtask into the plan (update parallelism graph: consumer now `requires` the remediation), then resume Execute Manager with the new subtask launchable and the consumer blocked.
    - **C:** mark the job `failed` with `reason: inter_subtask_gap`, move the brief to `.supervisor/jobs/failed/`, exit cleanly.
    - **D:** edit the in-progress brief in `.supervisor/jobs/in-progress/` to drop the failing `requires` entry from the consumer, record a `record_decision` entry noting the brief edit, then resume Execute Manager with the amended consumer.
+
+   **`lane_collision`:**
+   - **A:** spawn a fresh Execute Manager invocation with `this_subtask` re-queued and `path` named as off-limits in its acceptance criteria.
+   - **B:** add the `requires` edge to the in-progress brief, re-check the graph for cycles, record a `record_decision` entry, then resume Execute Manager with the now-ordered pair.
+   - **C:** mark the job `failed` with `reason: lane_collision`, move the brief to `.supervisor/jobs/failed/`, exit cleanly. This is a terminal `failed` for `/autonomous` — it is deliberately NOT the `inter_subtask_gap` re-plan signal.
+   - **D:** edit the in-progress brief to add `path` to `this_subtask`'s `lanes:`, record a `record_decision` entry noting the deliberate overlap, then resume Execute Manager.
 
 **Hard rule:** the Supervisor never picks an option silently — it always asks the user. Auto-selection (e.g., "C is safest, pick C") is forbidden because each option has different irreversible consequences (job failure, brief mutation, plan mutation).
 

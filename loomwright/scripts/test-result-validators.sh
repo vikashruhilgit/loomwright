@@ -1622,7 +1622,7 @@ EXECUTE_CHECKPOINT:
 EOF
 run_v "$V_EXECUTE" "$F"
 assert_fail "execute: CROSS-FIELD adjudication_required=true with empty arrays [rule 6a, verbatim]" \
-  "adjudication_required: true requires non-empty missing_outputs and adjudication_options arrays"
+  "adjudication_required: true requires adjudication_options plus an evidence array"
 
 mk execute-adj-6a-half.md <<'EOF'
 EXECUTE_CHECKPOINT:
@@ -1642,7 +1642,7 @@ EXECUTE_CHECKPOINT:
 EOF
 run_v "$V_EXECUTE" "$F"
 assert_fail "execute: adjudication_required=true with adjudication_options absent [rule 6a]" \
-  "adjudication_required: true requires non-empty missing_outputs and adjudication_options arrays"
+  "adjudication_required: true requires adjudication_options plus an evidence array"
 
 mk execute-adj-6b.md <<'EOF'
 EXECUTE_CHECKPOINT:
@@ -1661,7 +1661,7 @@ EXECUTE_CHECKPOINT:
 EOF
 run_v "$V_EXECUTE" "$F"
 assert_fail "execute: CROSS-FIELD missing_outputs without adjudication_required [rule 6b, verbatim]" \
-  "the three fields are all-or-nothing"
+  "the fields are all-or-nothing"
 
 mk execute-adj-6b-false.md <<'EOF'
 EXECUTE_CHECKPOINT:
@@ -1678,7 +1678,94 @@ EXECUTE_CHECKPOINT:
 EOF
 run_v "$V_EXECUTE" "$F"
 assert_fail "execute: adjudication_options with adjudication_required=false [rule 6b]" \
-  "the three fields are all-or-nothing"
+  "the fields are all-or-nothing"
+
+# ── rule 6, D6 widening (v15.20.0) — the lane-collision adjudication raiser ──────────────
+# A lane collision has no producer/consumer `requires` edge, so no missing_outputs[]. Before
+# the widening, rule 6a rejected this shape outright ("requires non-empty missing_outputs"),
+# which made agents/execute-manager.md's lane-collision gate UNEMITTABLE — its own SubagentStop
+# hook failed the Execute Manager every time the gate fired. Reproduced against the exact
+# checkpoint the prompt emits before fixing. All four corners are pinned below so the widening
+# cannot silently become a weakening.
+mk execute-adj-lane-ok.md <<'EOF'
+EXECUTE_CHECKPOINT:
+  schema_version: 1
+  completed_so_far: []
+  remaining:
+    - task_id: b
+      status: pending
+  resume_context:
+    feature_branch: feature/x
+  reason: "Lane collision: 2 wrote shared/types.ts inside sibling 4's declared lane."
+  adjudication_required: true
+  adjudication_kind: lane_collision
+  colliding_lanes:
+    - path: shared/types.ts
+      owning_subtask: "4"
+      this_subtask: "2"
+  adjudication_options: ["A: Re-queue writer with the sibling lane excluded", "B: Serialize the pair (add a requires edge)", "C: Exit to Launch Pad", "D: Widen the writer's declared lane"]
+EOF
+run_v "$V_EXECUTE" "$F"
+assert_pass "execute: rule 6a — colliding_lanes satisfies the evidence requirement with NO missing_outputs (lane-collision gate is emittable)"
+
+mk execute-adj-neither.md <<'EOF'
+EXECUTE_CHECKPOINT:
+  schema_version: 1
+  completed_so_far: []
+  remaining:
+    - task_id: b
+      status: pending
+  resume_context:
+    feature_branch: feature/x
+  reason: "Lane collision with no evidence recorded."
+  adjudication_required: true
+  adjudication_kind: lane_collision
+  adjudication_options: ["A: Re-queue writer with the sibling lane excluded"]
+EOF
+run_v "$V_EXECUTE" "$F"
+assert_fail "execute: rule 6a — adjudication with NEITHER evidence array is still rejected (widened, not weakened)" \
+  "adjudication_required: true requires adjudication_options plus an evidence array"
+
+mk execute-adj-badkind.md <<'EOF'
+EXECUTE_CHECKPOINT:
+  schema_version: 1
+  completed_so_far: []
+  remaining:
+    - task_id: b
+      status: pending
+  resume_context:
+    feature_branch: feature/x
+  reason: "Lane collision."
+  adjudication_required: true
+  adjudication_kind: not_a_real_kind
+  colliding_lanes:
+    - path: shared/types.ts
+      owning_subtask: "4"
+      this_subtask: "2"
+  adjudication_options: ["A: Re-queue writer with the sibling lane excluded"]
+EOF
+run_v "$V_EXECUTE" "$F"
+assert_fail "execute: rule 6 — adjudication_kind is a CLOSED enum (an unknown kind would fall through to the wrong option set and the wrong Option-C failure reason)" \
+  "adjudication_kind, when present, must be one of"
+
+mk execute-adj-lane-orphan.md <<'EOF'
+EXECUTE_CHECKPOINT:
+  schema_version: 1
+  completed_so_far: []
+  remaining:
+    - task_id: b
+      status: pending
+  resume_context:
+    feature_branch: feature/x
+  reason: "Budget exceeded."
+  colliding_lanes:
+    - path: shared/types.ts
+      owning_subtask: "4"
+      this_subtask: "2"
+EOF
+run_v "$V_EXECUTE" "$F"
+assert_fail "execute: rule 6b — orphan colliding_lanes without adjudication_required is rejected (same all-or-nothing rule as missing_outputs)" \
+  "the fields are all-or-nothing"
 
 mk execute-adj-none.md <<'EOF'
 EXECUTE_CHECKPOINT:
@@ -2644,6 +2731,133 @@ for v in $V_WORKER $V_EXECUTE $V_SUPERVISOR $V_QA $V_PLAN; do
 done
 
 echo ""
+# ---------------------------------------------------------------------------
+# rule 9 — out_of_lane (v15.20.0, D6). Optional + additive at schema_version 2, so
+# ABSENCE must pass; when PRESENT it must be an array of non-empty strings. The rule
+# must never touch status/outputs_gap (the `completed` iff `outputs_gap == ""`
+# biconditional is independent of it). These branches had zero coverage here --
+# only the MANIFEST name-pin was checked, which cannot see behavior.
+# ---------------------------------------------------------------------------
+mk worker-r9-absent.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- summary: out_of_lane absent entirely — optional/additive, must still validate
+EOF
+run_v "$V_WORKER" "$F"
+assert_pass "worker: rule 9 — out_of_lane ABSENT is accepted (optional/additive, no schema bump)"
+
+mk worker-r9-empty.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- out_of_lane: []
+- summary: explicit empty list — the in-lane case
+EOF
+run_v "$V_WORKER" "$F"
+assert_pass "worker: rule 9 — out_of_lane [] is accepted (in-lane, presence-gated not truthiness-gated)"
+
+mk worker-r9-populated.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py, shared/types.ts]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- out_of_lane: [shared/types.ts]
+- summary: REPORT-ONLY — a populated out_of_lane must NOT flip status away from completed
+EOF
+run_v "$V_WORKER" "$F"
+assert_pass "worker: rule 9 — populated out_of_lane coexists with status:completed + empty outputs_gap (report-only, invariant untouched)"
+
+mk worker-r9-nonlist.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- out_of_lane: "shared/types.ts"
+- summary: present but a bare string, not an array
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: rule 9 — out_of_lane present-but-NOT-a-list is rejected" "rule 9"
+
+mk worker-r9-emptystring.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- out_of_lane: ["", "shared/types.ts"]
+- summary: present list containing an empty-string entry
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: rule 9 — out_of_lane with an empty-string entry is rejected" "rule 9"
+
+# Explicit NULL. Distinct from ABSENT above and covered by its own branch in rule 9:
+# `present()` is a key-PRESENCE test (`key in fields`), so `out_of_lane: null` is PRESENT with a
+# None value and must be rejected, while omitting the key entirely stays accepted. This is the
+# nullable-but-required trap that shipped past review once already in this repo (PR #84's
+# read-rules.sh `check`): a type guard that only rejects the WRONG type silently accepts null
+# when null is also a legal YAML scalar. Both halves are asserted so the pair cannot drift apart.
+mk worker-r9-null.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- out_of_lane: null
+- summary: explicit null is PRESENT with a None value — rejected, unlike an omitted key
+EOF
+run_v "$V_WORKER" "$F"
+assert_fail "worker: rule 9 — explicit out_of_lane: null is rejected (present-with-None, not absent)" "rule 9"
+
+# Non-string-LOOKING element. Rule 9 also carries an `isinstance(item, str)` guard, and this
+# pins what actually happens to it: NOTHING on this carrier. `load_block` sources `fields`
+# exclusively from the markdown block text via `parse_block`, and that parser normalizes every
+# scalar to a Python str -- verified: `[123, "shared/types.ts"]` parses to `['123',
+# 'shared/types.ts']`. So `123` arrives as the string "123", which IS a valid non-empty path
+# string, and the block is correctly ACCEPTED. The isinstance half is defensive-only: unreachable
+# unless a future carrier (e.g. a JSON hook payload preserving native types) feeds these
+# validators. Asserted as a PASS deliberately -- writing this as an expected failure would encode
+# a promise the contract does not make, and would fail the moment someone read the parser. If a
+# typed carrier is ever added, THIS assertion flips and points straight at the reason.
+mk worker-r9-nonstring-item.md <<'EOF'
+## WORKER_RESULT
+- schema_version: 2
+- task_id: st1
+- status: completed
+- files_modified: [a.py]
+- files_created: []
+- outputs_verified: []
+- outputs_gap: ""
+- out_of_lane: [123, "shared/types.ts"]
+- summary: 123 normalizes to the string "123" on this carrier — a valid non-empty path string
+EOF
+run_v "$V_WORKER" "$F"
+assert_pass "worker: rule 9 — a bare 123 in out_of_lane is ACCEPTED (the markdown carrier stringifies every scalar; the isinstance guard is unreachable here by construction)"
+
 echo "RESULT  pass=$PASS_COUNT  fail=$FAIL_COUNT"
 if [ "$FAIL_COUNT" -eq 0 ]; then
   exit 0

@@ -2,7 +2,7 @@
 name: async-orchestration
 description: Background dispatch patterns, non-blocking polling, parallelism decisions, and git worktree lifecycle. Use when running parallel workers in Supervisor workflows. Part 2 — the Supervisor Phase 4 FINALIZE protocol (pre-merge safety gate, sequential merge, worktree cleanup, commit/push/PR creation, PR-base self-verify), the verbatim Subagent Spawn Contracts, and the worktree-lifecycle phase sequence, moved from agents/supervisor.md.
 allowed-tools: [Read, Bash]
-version: "1.5.1"
+version: "1.6.0"
 lastUpdated: "2026-07-31"
 ---
 
@@ -657,6 +657,8 @@ Exact Task tool call shapes for each subagent.
 
 **Pointers, not payloads (transport discipline):** when a spawn input is file-backed (the job brief, a plan file, a corpus), pass its PATH plus a bounded ≤200-char summary plus the instruction "Read only the sections you need" — do not paste the body into the prompt. Worktree reality: gitignored `.supervisor/` artifacts do NOT exist inside linked worktrees, so a pointer handed to a worktree-resident consumer must pin the MAIN-CHECKOUT absolute path and say so in the prompt text; consumers running at the project root (Orchestrator, Execute Manager, Single-Agent Worker, Sequential-path Worker) can use the repo-relative path directly. Deliberate paste exceptions (e.g. the worker `provides:` YAML below) are enumerated with justifications in `docs/POINTER_AUDIT.md`. This is a transport-only rule: it changes how content travels, never which gates, schemas, decisions, or spawn cardinality apply.
 
+**Context digest pointer (D6, v15.20.0):** every worker spawn — Single-Agent Worker, Sequential-path Worker, and the parallel-path worker spawned by `agents/execute-manager.md` Step 3 — additionally carries the per-job `CONTEXT_DIGEST` artifact (`docs/RESULT_SCHEMAS.md` §"CONTEXT_DIGEST") as a pointer: **path + ≤200-char summary + "Read only the sections you need"** — never pasted, following exactly the "Pointers, not payloads" rule above. Project-root-resident workers (Single-Agent-/Sequential-path) use the repo-relative path `.supervisor/jobs/context-digests/{basename(brief_path)}` directly. **Parallel-path (worktree-resident) workers MUST receive the MAIN-CHECKOUT ABSOLUTE path instead, and the prompt text must say so explicitly** — gitignored `.supervisor/` artifacts do not exist inside linked git worktrees (`docs/POINTER_AUDIT.md` §"Worktree reality"), the exact same rule already governing the brief pointer at row 5 of that audit table. The Supervisor hands Execute Manager the main-checkout absolute digest path (Execute Manager itself runs at the project root, so the absolute path resolves for it too); Execute Manager forwards that same absolute path unchanged to each worker it spawns into a worktree. When the digest file is absent (a pre-v15.20.0 brief, or a job whose Launch Pad Phase 5 has not run yet), the worker is told to proceed without it — the digest is advisory context, never a hard gate, and its absence must never block a spawn.
+
 **Context-Keeper:**
 ```
 Task(
@@ -688,14 +690,15 @@ Task(
   prompt: "cost_profile: {default|cheap}
     Config: max_workers={N}, project={name}, feature_branch={branch}
     State file: {path}
-    Brief: {brief_path} — read only the sections you need (## Subtask Structure, ## Subtask Contracts, per-subtask criteria). Gitignored main-checkout path: it resolves for YOU (you run at the project root) but NOT inside worker worktrees. When no brief file exists (`/supervisor task:` no-brief mode), point at `.supervisor/requirements/{slug}-plan.md` (Beads-absent) or `bd show {id}` (Beads) instead, or pass the criteria inline — a documented exception, see docs/POINTER_AUDIT.md.
+    Brief: {brief_path} — read only the sections you need (## Subtask Structure, ## Subtask Contracts, per-subtask criteria, per-subtask `lanes:`). Gitignored main-checkout path: it resolves for YOU (you run at the project root) but NOT inside worker worktrees. When no brief file exists (`/supervisor task:` no-brief mode), point at `.supervisor/requirements/{slug}-plan.md` (Beads-absent) or `bd show {id}` (Beads) instead, or pass the criteria inline — a documented exception, see docs/POINTER_AUDIT.md.
+    Context digest: {context_digest_path} — MAIN-CHECKOUT ABSOLUTE path (resolves for you at the project root; forward it UNCHANGED, still as the main-checkout absolute path, to each worker you spawn into a worktree — see §"Context digest pointer" above) + ≤200-char summary + "Read only the sections you need". Advisory only — proceed without it if the file does not exist.
     Subtask index (compact — ids/titles/deps only, no pasted criteria/file lists): [{ids, titles, deps}]
     Parallelism graph: [{launchable, blocked}]
     Resume context: {optional, from previous EXECUTE_CHECKPOINT}",
   # Pointer, not payload: the Execute Manager reads each subtask's criteria, files, skills, and
-  # `provides:`/`requires:` contracts from the brief itself, then injects the small per-subtask
-  # slice into worker prompts (workers sit in worktrees where the gitignored brief is absent —
-  # see agents/execute-manager.md Step 3 for the worker-prompt shape).
+  # `provides:`/`requires:`/`lanes:` contracts from the brief itself, then injects the small
+  # per-subtask slice into worker prompts (workers sit in worktrees where the gitignored brief is
+  # absent — see agents/execute-manager.md Step 3 for the worker-prompt shape).
   subagent_type: "loomwright:execute-manager",
   model: "sonnet"   # ONLY when cost_profile=cheap; omit entirely when cost_profile=default
 )
@@ -712,10 +715,12 @@ Task(
     Applicable house rules (ADVISORY — from `read-rules.sh`, include this line ONLY when its output is NON-EMPTY; omit entirely when empty): {house_rules summary}. These are committed team conventions to bias your implementation while writing code — subordinate to CLAUDE.md (on conflict, CLAUDE.md wins). This is advisory only: you are NEVER failed for a house rule. A `must` rule is surfaced flagged, but its `check` value is DATA only — do NOT execute, eval, source, or `bash -c` any `check`.
     Subtask ID: {id}
     Title: {title}
-    Brief: {brief_path} — read only your subtask's sections (## Task, ## Acceptance Criteria, your row of ## Subtask Structure). Gitignored `.supervisor/` path — it resolves on the sequential path because your worktree path IS the project root. When no brief file exists (`/supervisor task:` no-brief mode), point at `.supervisor/requirements/{slug}-plan.md` (Beads-absent) or `bd show {id}` (Beads) instead, or pass the criteria inline — a documented exception, see docs/POINTER_AUDIT.md.
+    Brief: {brief_path} — read only your subtask's sections (## Task, ## Acceptance Criteria, your row of ## Subtask Structure, your subtask's `lanes:`). Gitignored `.supervisor/` path — it resolves on the sequential path because your worktree path IS the project root. When no brief file exists (`/supervisor task:` no-brief mode), point at `.supervisor/requirements/{slug}-plan.md` (Beads-absent) or `bd show {id}` (Beads) instead, or pass the criteria inline — a documented exception, see docs/POINTER_AUDIT.md.
+    Context digest: {context_digest_path} — repo-relative (`.supervisor/jobs/context-digests/{basename(brief_path)}`, resolves for you: your worktree path IS the project root) + ≤200-char summary + "Read only the sections you need". Advisory only — proceed without it if the file does not exist.
     Acceptance-criteria summary (≤200 chars): {bounded summary}
     Worktree path: {project_root}
     Provides (verbatim from the brief's Subtask Contracts): {provides YAML}
+    Lanes (verbatim from the brief's Subtask Contracts): {lanes YAML}
     Retry context: {optional, from a previous outputs_verified gate gap or worker crash/timeout — no per-subtask review retry path exists}",
   # Applicable house rules: compute by running `bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-rules.sh" <touched paths...>`
   # (args, never stdin — no-hang). Inject the output into this worker prompt ONLY when it is NON-EMPTY; empty
@@ -725,6 +730,13 @@ Task(
   # the reader output; a rule's `check` is surfaced to the worker as DATA, never executed.
   # `provides:` is REQUIRED input — the worker's Step 5.5 outputs-verification
   # re-reads it from the spawn brief; omitting it silently no-ops the v12 outputs gate
+  # `lanes:` is REQUIRED input for the SAME reason — the worker's lane-check step
+  # re-reads `lanes:` from the spawn brief to populate `out_of_lane`; omitting it
+  # silently no-ops the lane gate. This paste MUST match the parallel path
+  # (`agents/execute-manager.md` §Task template), which already marks it REQUIRED —
+  # and it matters MOST here, because the Single-Agent path below is the DEFAULT
+  # shape post-Fix-1, so a gap on this template no-ops the lane gate on the path
+  # most runs actually take. Both are deliberate paste exceptions (docs/POINTER_AUDIT.md).
   # Pointer-audit note: the `provides:` YAML is a DELIBERATE paste exception (small, and required
   # verbatim in the spawn prompt by the outputs gate above — a pointer would make the gate depend on
   # a file read the worker may skip). The acceptance criteria travel as pointer + bounded summary

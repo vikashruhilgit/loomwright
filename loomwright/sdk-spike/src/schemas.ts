@@ -51,6 +51,7 @@ export const WORKER_RESULT_SCHEMA = {
     "tests_passed",
     "outputs_verified",
     "outputs_gap",
+    "out_of_lane",
     "memory_candidates",
     "summary",
     "error",
@@ -78,6 +79,14 @@ export const WORKER_RESULT_SCHEMA = {
       },
     },
     outputs_gap: { type: "string" },
+    // Optional/additive at schema_version 2 (no bump) -- mirrors the Task-spawn
+    // contract in docs/RESULT_SCHEMAS.md. Declared here because this schema is
+    // `additionalProperties: false` and is used to FORCE structured output: a
+    // worker cannot emit a property the schema omits, so without this the
+    // prompt's "reportable via out_of_lane" instruction is unfulfillable on
+    // this carrier. Per the file's own convention (all declared props are in
+    // `required`), it is required-but-defaultable to [] rather than absent.
+    out_of_lane: { type: "array", items: { type: "string" } },
     memory_candidates: { type: "array", items: { type: "string" } },
     summary: { type: "string" },
     error: { type: ["string", "null"] },
@@ -217,6 +226,9 @@ export interface WorkerResult {
     status: "present" | "missing";
   }>;
   outputs_gap: string;
+  /** Paths modified outside the subtask's declared `lanes:`. Report-only --
+   *  never flips `status`, never merged into `outputs_gap`. */
+  out_of_lane: string[];
   memory_candidates?: string[] | null;
   summary: string;
   error?: string | null;
@@ -293,6 +305,24 @@ export interface ExecuteResultEquivalent {
     review_decision: string;
     /** ADDITIVE per-subtask token accounting (worker + reviewer queries) */
     token_usage: SubtaskTokenUsage;
+    /**
+     * ADDITIVE lane report, forwarded verbatim from `WORKER_RESULT.out_of_lane`.
+     *
+     * REPORT-ONLY, exactly as on the Task-spawn path: it never affects `status` and is never
+     * derived from `outputs_gap`. Surfaced here because the field was previously *required* of
+     * the worker by the forced-output schema and then never read again anywhere in `runner.ts`
+     * — collected and silently dropped, which is strictly worse than not collecting it.
+     *
+     * KNOWN PARITY GAP (not closed here): the Task-spawn path additionally runs a
+     * cross-subtask LANE-COLLISION gate (`agents/execute-manager.md`) that raises an
+     * `adjudication_kind: lane_collision` checkpoint when an out-of-lane path lands in a
+     * mutually-unreachable sibling's declared lane. The SDK runner has no equivalent, so two
+     * concurrent SDK workers can both write the same out-of-lane path, both self-report it,
+     * and still merge with no adjudication raised. Reporting the data is the precondition for
+     * that gate, not the gate itself. Tracked against D6; `sdk-spike` remains experimental and
+     * opt-in (`--sdk-runner`, fail-closed when unavailable).
+     */
+    out_of_lane: string[];
   }>;
   subtasks_failed: Array<{
     task_id: string;

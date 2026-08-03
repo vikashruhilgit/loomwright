@@ -48,15 +48,15 @@ Validate a Supervisor-Ready Brief for quality, completeness, and correctness bef
 
 - **Always verify file paths** — Glob/Read every path in the File Impact Map
 - **Always check CLAUDE.md patterns** — Read CLAUDE.md and compare against brief's approach
-- **Never skip criteria** — All 15 review criteria must be checked (Criteria 11, 13, 14, and 15 are conditional: skip silently when their gating section/field/claim is absent; Criterion 12 is conditional only on an explicit `legacy_brief: true` marker)
+- **Never skip criteria** — All 16 review criteria must be checked (Criteria 11, 13, 14, 15, and 16 are conditional: skip silently when their gating section/field/claim is absent; Criterion 12 is conditional only on an explicit `legacy_brief: true` marker, and Criterion 16 shares that same gate)
 - **FAIL requires evidence** — Every BLOCKING/HIGH issue must cite what was checked and what was wrong
 - **NEEDS_HUMAN is for ambiguity** — Use only when the brief's approach could be valid but you can't confirm
 
 ---
 
-## 15 Review Criteria
+## 16 Review Criteria
 
-Check ALL criteria in order. For each, note whether it passes or has issues. Criterion 11 is conditional: skip silently if the optional `## Feasibility` section is absent. Criterion 13 is conditional: skip silently if no `Base Branch:` line appears in the `## Configuration` block (defaults to `main`). Criterion 14 is conditional: skip silently if the optional `## Executable Acceptance` section is absent. Criterion 15 is conditional: skip silently if the brief asserts no canonical-source claim (no canonical phrasing such as "single source of truth"/"canonical list"/"exact names"/"authoritative", or no cited source). Criterion 12: briefs MUST contain `provides:` / `requires:` contract YAML blocks per subtask — absence is a BLOCKING violation. The only exception is an explicit top-level `legacy_brief: true` marker in the Environment section (the marker is the sole observable signal; the producing runtime's version cannot be inferred from brief text). Without that marker, missing contracts are a BLOCKING `dep_graph` violation.
+Check ALL criteria in order. For each, note whether it passes or has issues. Criterion 11 is conditional: skip silently if the optional `## Feasibility` section is absent. Criterion 13 is conditional: skip silently if no `Base Branch:` line appears in the `## Configuration` block (defaults to `main`). Criterion 14 is conditional: skip silently if the optional `## Executable Acceptance` section is absent. Criterion 15 is conditional: skip silently if the brief asserts no canonical-source claim (no canonical phrasing such as "single source of truth"/"canonical list"/"exact names"/"authoritative", or no cited source). Criterion 12: briefs MUST contain `provides:` / `requires:` contract YAML blocks per subtask — absence is a BLOCKING violation. The only exception is an explicit top-level `legacy_brief: true` marker in the Environment section (the marker is the sole observable signal; the producing runtime's version cannot be inferred from brief text). Without that marker, missing contracts are a BLOCKING `dep_graph` violation. Criterion 16 is conditional: skip silently under the same `legacy_brief: true` / no-contract-blocks gate as Criterion 12 (it validates the `lanes:` declarations inside those same contract blocks, so it has nothing to check when they are absent).
 
 ### 1. File Path Verification
 
@@ -306,13 +306,36 @@ Check ALL criteria in order. For each, note whether it passes or has issues. Cri
 
 **Scope boundary (not full drift coverage):** Criterion 15 catches *claims of canonicity* — it fires only when a brief both uses canonical phrasing **and** cites a source. It is **not** a general count/version/restated-list drift detector: a brief that plainly restates a canonical value without asserting canonicity (e.g. "updates the 14-agent / 18-command counts in `plugin.json`") does **not** trigger it. That broader restated-value-drift class — including the kind that causes post-merge review churn — is caught by the **Code Reviewer `consistency_audit`**, `scripts/check-doc-currency.sh`, and human review, **not** by this criterion. The narrow trigger is intentional (it keeps false positives near zero); do not mistake a PASS here for "no restated-value drift anywhere."
 
+### 16. Lane Declaration Validation (v15.20.0+, conditional)
+
+**Check:** Does every subtask contract block declare a `lanes:` list, does every lane path resolve to something real (an existing file, or an existing parent directory as a legitimate create target), and — the divergent-interface hazard this criterion exists to catch — is there any **same-wave lane overlap** between two subtasks?
+
+**How:** the authoritative rule this criterion validates against is `skills/supervisor-readiness/SKILL.md` §"Lane Declaration Schema" — read it, do not re-derive it here.
+
+- **Conditional gate (mirrors Criterion 12):** if the brief's Environment section declares `legacy_brief: true`, or the brief contains no subtask contract YAML blocks at all, skip this criterion silently — no issue emitted. Otherwise, run the three checks below against every subtask contract block Criterion 12 already validated.
+- **1. `lanes:` presence.** Every subtask with a contract block MUST declare a non-empty `lanes:` list (mirrors the `provides` mandate — a subtask that genuinely touches nothing addressable may use `lanes: []` with an inline comment justifying it, same precedent as `provides: []`).
+- **2. Path resolution.** For every lane path glob, verify it resolves: `Glob` the literal path; if no match, `Glob`/`Read` its parent directory to confirm the directory exists (a legitimate create target). A lane path with neither an existing match nor an existing parent is a likely typo.
+- **3. Same-wave overlap (the reachability test — NOT "no direct `requires` edge").** Build the `requires` DAG's transitive closure (reuse Criterion 12's already-validated dependency graph; never re-trust an unvalidated edge set). For every pair of subtasks (A, B): if their `lanes` glob sets share any path, and **neither A is reachable from B nor B is reachable from A** in that closure (i.e. unordered relative to each other — NOT "the same wave number": the poll loop is event-driven, so unordered subtasks at different chain depths can still overlap in wall-clock time), that pair is a flaggable collision. Two subtasks where one IS reachable from the other — directly OR transitively, e.g. A → B → C where A and C share no direct edge but C is still reachable from A — are sequentially ordered; a shared lane path between them is **legal** and must NOT be flagged. Getting this backwards (flagging every pair with no *direct* edge) produces false positives on every transitively-ordered chain longer than one hop.
+
+**Issue category:** `lane_overlap` — use this category in the issues array of PLAN_REVIEW_RESULT for any Criterion 16 violation.
+
+**Severity if failed:**
+
+- BLOCKING: a same-wave lane overlap is detected (check 3) — this is the actual divergent-interface hazard the Lane Declaration Schema exists to prevent (the ST-1/ST-2 conflicting-flag-shapes incident that motivated this brief).
+- HIGH: a subtask with a contract block declares no `lanes:` list at all (not even `lanes: []` with justification) — check 1.
+- MEDIUM: a lane path resolves to neither an existing file nor an existing parent directory — check 2 (likely typo).
+
+**Conditional:** `legacy_brief: true`, or no contract blocks present → skip silently (mirrors Criterion 12). Present, all three checks pass → PASS. Present with a violation → issue at the severity above.
+
+**Note (visibility vs. preservation — do not over-scope this criterion):** the Lane Declaration Schema draws a hard line between sequential lane sharing granting *visibility* (a downstream subtask can see an upstream subtask's committed file) versus *preservation* (nothing re-verifies the upstream subtask's `provides` symbol still resolves after the downstream edit). Criterion 16 checks lane declarations and same-wave collisions only — it does NOT check preservation; that remains a manual authoring/review discipline per the schema's own explicit statement, and Plan Reviewer must not silently expand this criterion's scope to cover it.
+
 ---
 
 ## Decision Matrix
 
 | Condition | Decision |
 |-----------|----------|
-| All criteria satisfied (15 total, Criteria 11, 12, 13, 14, and 15 conditional), no BLOCKING/HIGH issues | **PASS** |
+| All criteria satisfied (16 total, Criteria 11, 12, 13, 14, 15, and 16 conditional), no BLOCKING/HIGH issues | **PASS** |
 | Only MEDIUM/LOW issues, design approach unambiguous | **PASS** (all issues recorded for visibility — e.g. a Criterion 14 `executable_acceptance` finding — but the save is not blocked) |
 | Any BLOCKING or HIGH severity issue found | **FAIL** |
 | Only MEDIUM/LOW issues, but design approach is ambiguous | **NEEDS_HUMAN** |
@@ -328,7 +351,7 @@ PLAN_REVIEW_RESULT:
   issues:
     - severity: {BLOCKING | HIGH | MEDIUM | LOW}
       section: "{brief section name}"
-      category: "{dep_graph | missing_field | executable_acceptance | canonical_source | ...}"  # optional — emit when a criterion mandates it (12, 13, 14, 15)
+      category: "{dep_graph | missing_field | executable_acceptance | canonical_source | lane_overlap | ...}"  # optional — emit when a criterion mandates it (12, 13, 14, 15, 16)
       description: "{what's wrong}"
       suggestion: "{how to fix}"
   summary: "{concise review summary}"
@@ -382,7 +405,7 @@ PLAN_REVIEW_RESULT:
 ## Quality Checklist
 
 Before producing PLAN_REVIEW_RESULT:
-- [ ] All 15 criteria checked (Criterion 11 conditional on `## Feasibility` section presence; Criterion 12 skipped only when the brief's Environment section declares `legacy_brief: true` — otherwise missing `provides:` / `requires:` blocks are a BLOCKING `dep_graph` violation; Criterion 13 skipped silently when `Base Branch:` is absent from `## Configuration`; Criterion 14 skipped silently when `## Executable Acceptance` is absent — when present with `cmd:`/bare bullets, emit a LOW `executable_acceptance` issue listing them; Criterion 15 skipped silently when the brief asserts no canonical-source claim — when present, verify the brief's restated values against the cited source and emit a `canonical_source` finding on mismatch)
+- [ ] All 16 criteria checked (Criterion 11 conditional on `## Feasibility` section presence; Criterion 12 skipped only when the brief's Environment section declares `legacy_brief: true` — otherwise missing `provides:` / `requires:` blocks are a BLOCKING `dep_graph` violation; Criterion 13 skipped silently when `Base Branch:` is absent from `## Configuration`; Criterion 14 skipped silently when `## Executable Acceptance` is absent — when present with `cmd:`/bare bullets, emit a LOW `executable_acceptance` issue listing them; Criterion 15 skipped silently when the brief asserts no canonical-source claim — when present, verify the brief's restated values against the cited source and emit a `canonical_source` finding on mismatch; Criterion 16 skipped under the same `legacy_brief: true` / no-contract-blocks gate as Criterion 12 — when present, verify every subtask declares `lanes:`, every lane path resolves, and no same-wave lane overlap exists, emitting a `lane_overlap` finding on violation)
 - [ ] Every file path in File Impact Map verified via Read or Glob
 - [ ] CLAUDE.md patterns compared against brief approach
 - [ ] Dependency graph traced for cycles

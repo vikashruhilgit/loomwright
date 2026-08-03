@@ -45,3 +45,9 @@ build/
 publish/*
 PRs and commits.json
 temp/
+
+# Junk artifact from a mis-invoked `learning-emit` (ledger path is POSITIONAL — omitting it
+# writes the record to a file literally named after the flag). Third sighting; the durable fix
+# is loomwright/scripts/test-no-junk-tracked-files.sh, this is the belt-and-braces backstop.
+/--run-id
+/--*

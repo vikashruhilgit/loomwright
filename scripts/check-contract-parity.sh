@@ -335,11 +335,24 @@ PY
 }
 
 # ── MANIFEST ─────────────────────────────────────────────────────────────────
-# matcher | agent file | block name | comma-separated hook-required fields
+# matcher | agent file | block name | comma-separated hook-ENFORCED fields
+#   "enforced" = required OR validated-when-present. `out_of_lane` is the latter:
+#   validate-worker-result.py rule 9 accepts its ABSENCE at any schema_version but rejects a
+#   present-but-malformed value. Both of this gate's real checks (pin-drift against the
+#   validator source, field-presence in the agent prompt) are satisfied either way.
+#
+#   That definition is applied CONSISTENTLY, which it was not before v15.20.0: the
+#   EXECUTE_CHECKPOINT row pinned only the four unconditional base fields while
+#   `adjudication_required` / `missing_outputs` / `adjudication_options` — all validated by
+#   rule 6/6a for as long as they have existed — went unpinned, so the comment read as a
+#   membership rule the row itself violated. Review flagged the new `adjudication_kind` /
+#   `colliding_lanes` as the asymmetry; the asymmetry was in fact older and wider. All five
+#   conditional adjudication fields are now pinned together. Verified to have teeth: renaming
+#   `adjudication_kind` in execute-manager.md fails this gate with a field-presence error.
 MANIFEST="
-worker|worker.md|WORKER_RESULT|schema_version,task_id,status,files_modified,summary,outputs_verified,outputs_gap
+worker|worker.md|WORKER_RESULT|schema_version,task_id,status,files_modified,summary,outputs_verified,outputs_gap,out_of_lane
 execute-manager|execute-manager.md|EXECUTE_RESULT|schema_version,subtasks_completed,worktrees,merge_order,summary
-execute-manager|execute-manager.md|EXECUTE_CHECKPOINT|completed_so_far,remaining,resume_context,reason
+execute-manager|execute-manager.md|EXECUTE_CHECKPOINT|completed_so_far,remaining,resume_context,reason,adjudication_required,missing_outputs,adjudication_options,adjudication_kind,colliding_lanes
 qa-executor|qa-executor.md|QA_RESULT|schema_version,tests_generated,tests_passed,summary,coverage_estimate
 supervisor-runner|supervisor.md|SUPERVISOR_RESULT|schema_version,status,pr_url,heal_loop_ran,heal_iterations,heal_decision,heal_fixable_issues_fixed,heal_remaining_issues,error,summary
 plan-reviewer|plan-reviewer.md|PLAN_REVIEW_RESULT|schema_version,decision,issues,severity,section,description,summary
@@ -371,7 +384,7 @@ while IFS='|' read -r matcher agent block fields; do
     #     catches a field deleted entirely (the v14.22.x trap class) but not
     #     one mentioned in prose yet dropped from the emit format.
     if ! grep -qw -- "$f" "$agent_path"; then
-      err field-presence "$agent: hook-required $block field '$f' not found anywhere in the agent prompt"
+      err field-presence "$agent: hook-enforced $block field '$f' (required, or validated-when-present) not found anywhere in the agent prompt"
     fi
   done
 done <<<"$MANIFEST"
@@ -418,4 +431,4 @@ if [ "$fail" -ne 0 ]; then
   echo "✗ contract-parity: drift detected — fix the agent prompt, the hook, or the pinned MANIFEST/ENUMS (keep all three in sync)." >&2
   exit 1
 fi
-echo "✓ contract-parity: all hook-required fields present and all status/decision literals in-enum."
+echo "✓ contract-parity: all hook-enforced fields present and all status/decision literals in-enum."

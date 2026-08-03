@@ -26,6 +26,7 @@ WORKER_RESULT:
       name: string                     # optional — symbol/type name (required when kind in {symbol, type})
       status: enum [present, missing]  # required — outcome of the check
   outputs_gap: string                  # required (v2) — empty string when nothing missing; non-empty implies status MUST be partial
+  out_of_lane: string[]                # optional — additive, does NOT bump schema_version (stays 2; D6, v15.20.0); absent by default or "[]" when nothing to report. Paths the worker touched that matched no glob in its OWN subtask's declared `lanes:` (skills/supervisor-readiness/SKILL.md §"Lane Declaration Schema"). REPORT-ONLY — never influences `status` or `outputs_gap`; see the dedicated invariant note below. Validated when present (unlike memory_candidates, which is never validated) — see check-contract-parity.sh's WORKER_RESULT MANIFEST row.
   memory_candidates: string[]          # optional — additive, does NOT bump schema_version (stays 2; an optional, backwards-compatible field needs no bump); absent by default. Durable, reusable structural facts about the codebase proposed for project memory; NEVER secrets/PII/tokens. Workers PROPOSE only — they never write memory (worktree-write ban / red-team F1); promotion is human-gated.
   summary: string                      # required — max 200 tokens, what was done
   error: string                        # conditional — required when status=failed, describes what went wrong
@@ -43,6 +44,7 @@ WORKER_RESULT:
 - **Cross-field invariant (hook-enforced):** if `outputs_gap` is non-empty AND `status=completed`, the SubagentStop hook rejects with `outputs_gap non-empty must map to status: partial`. A worker that did not deliver all promised outputs has not completed.
 - **Runtime checks performed by the SubagentStop hook (not part of the schema, listed for transparency):** the hook also verifies that a `.worker-summary.md` file was written (or that the output records the literal `summary_file_write_failed` degradation marker — the worker prompt's best-effort path) and that no destructive commands (`rm -rf`, `git push`, `git reset --hard`, `DROP`, `TRUNCATE`) appear in the run output.
 - `memory_candidates` is **optional and additive** — it does NOT bump `schema_version` (stays `2` — an optional, backwards-compatible field addition does not require a version bump; `schema_version` bumps only for breaking or required-field changes). When present it is an array of short strings; absent by default. Each candidate must be a **durable, reusable structural fact about the codebase** (not transient run notes) that is not already captured in `CLAUDE.md`. Candidates **MUST NEVER contain secrets, credentials, tokens, or PII**. Workers **PROPOSE only** and never write project memory — a worktree write would be lost on worktree removal (red-team F1), so workers never call `write-project-memory.sh`; promotion of any candidate into project memory is **human-gated** and happens at the repo root.
+- `out_of_lane` is **optional, additive, and validated-but-OPTIONAL** — it does NOT bump `schema_version` (stays `2`, same precedent as `memory_candidates`: an optional, backwards-compatible field addition needs no version bump). Omitting it is accepted at any `schema_version`; **when present**, it must be an array of non-empty path strings (`scripts/validate-worker-result.py` rule 9 rejects a present-but-malformed value — null, non-array, or non-string/empty entries — while still accepting absence). **`out_of_lane` deliberately diverges from the unvalidated `memory_candidates` precedent**: `memory_candidates` is never validated at all, whereas `out_of_lane` IS validated when present — leaving it unvalidated would let the field silently accept malformed data while `scripts/check-contract-parity.sh`'s WORKER_RESULT MANIFEST pin stayed green, which is exactly the silent-under-enforcement failure that gate exists to prevent. **`out_of_lane` is REPORT-ONLY and independent of the `outputs_gap`/`status` invariant above** — a worker records here any path it touched (`files_modified`/`files_created`) that matched no glob in its OWN subtask's declared `lanes:` (`skills/supervisor-readiness/SKILL.md` §"Lane Declaration Schema"); it never substitutes for, derives from, or influences `outputs_gap` or `status`. Lane-collision escalation (an out-of-lane path landing inside a sibling subtask's declared lane, where the two subtasks are not sequentially ordered in the `requires` DAG) is decided and surfaced by the CONSUMER of this result — **Execute Manager's poll loop on the PARALLEL path** — through the existing adjudication (`EXECUTE_CHECKPOINT` / `adjudication_required`) surface, never by the worker itself. **On the SEQUENTIAL path the Supervisor records `out_of_lane` (into `state.md`'s `## Worker Results`) but never escalates it**: subtasks run strictly serially in one working tree, so the concurrent-sibling condition the collision rule tests can never hold (`agents/supervisor.md` §"Sequential Path").
 
 **Validation rules (schema_version: 1, legacy):**
 - `schema_version` must equal `1`
@@ -71,6 +73,7 @@ WORKER_RESULT:
       path: src/auth/jwt.guard.spec.ts
       status: present
   outputs_gap: ""
+  out_of_lane: []
   summary: Implemented JWT guard with passport strategy. Added unit tests with 92% coverage.
 ```
 
@@ -98,6 +101,13 @@ WORKER_RESULT:
 ## EXECUTE_RESULT
 
 Produced by Execute Manager when all subtasks are completed.
+
+> **`out_of_lane` is NOT an `EXECUTE_RESULT` field.** A worker's lane report reaches
+> durable state through Context-Keeper's `record_worker_result` (whose parameter
+> contract in `agents/context-keeper.md` declares it), landing in `state.md`'s
+> `## Worker Results`. `EXECUTE_RESULT` stays at `schema_version: 1`, unchanged.
+> This is deliberate: lane reporting is report-only and per-worker, so it belongs
+> in the per-worker record, not in the aggregate execute summary.
 
 ```yaml
 EXECUTE_RESULT:
@@ -187,15 +197,37 @@ EXECUTE_CHECKPOINT:
     active_worktrees: string[]         # paths that still exist
     feature_branch: string
   reason: string                       # required — why checkpointing (budget, error, etc.)
-  adjudication_required: boolean       # optional (v12) — true when the Execute Manager has detected an outputs gap that requires Supervisor/operator decision
-  missing_outputs: object[]            # conditional (v12) — required and non-empty when adjudication_required=true
+  adjudication_required: boolean       # optional (v12) — true when the Execute Manager needs a Supervisor/operator decision
+  adjudication_kind: string            # optional (v15.20.0) — closed enum: requires_gap | lane_collision.
+                                       # ABSENT means requires_gap (every pre-v15.20.0 checkpoint), so this
+                                       # stays additive with NO schema_version bump. Supervisor branches on
+                                       # THIS, never on the free-text `reason` prose.
+  missing_outputs: object[]            # conditional (v12) — the requires_gap evidence array (see rule 6a below)
     - item: string                     # what is missing (file path, symbol, contract field)
       producing_subtask: string        # which subtask was supposed to produce it
       check_run: string                # what verification was performed (e.g., "ls", "ts-symbol-search", "schema-grep")
-  adjudication_options: string[]       # conditional (v12) — required and non-empty when adjudication_required=true
-                                       # typically ["A: re-queue producer", "B: insert remediation subtask",
-                                       # "C: exit to Launch Pad", "D: update consumer brief"]
+  colliding_lanes: object[]            # conditional (v15.20.0) — the lane_collision evidence array (rule 6a)
+    - path: string                     # the out-of-lane path that landed in a sibling's declared lane
+      owning_subtask: string           # the sibling whose `lanes:` declares that path
+      this_subtask: string             # the subtask that wrote it
+  adjudication_options: string[]       # conditional (v12) — required and non-empty when adjudication_required=true.
+                                       # requires_gap:   ["A: Re-queue producer", "B: Insert remediation subtask",
+                                       #                  "C: Exit to Launch Pad", "D: Update consumer brief"]
+                                       # lane_collision: ["A: Re-queue writer with the sibling lane excluded",
+                                       #                  "B: Serialize the pair (add a requires edge)",
+                                       #                  "C: Exit to Launch Pad", "D: Widen the writer's declared lane"]
 ```
+
+**Two adjudication raisers, one surface (v15.20.0).** `adjudication_required: true` is raised by two structurally different gates, and they are NOT interchangeable — see `agents/supervisor.md` §"Adjudication Handling" for the authoritative dispatch table.
+
+| `adjudication_kind` | Raiser | Evidence array | Option-C failure reason |
+|---|---|---|---|
+| `requires_gap` (default when absent) | Step 2b pre-spawn verification — a consumer's `requires:` items are missing from the materialized worktree | `missing_outputs[]` | `inter_subtask_gap` |
+| `lane_collision` | Lane-collision gate — an `out_of_lane` path landed in a mutually-unreachable sibling's declared `lanes:` | `colliding_lanes[]` | `lane_collision` |
+
+**The Option-C reason strings are load-bearing control signals, not labels.** `/autonomous` EVALUATE Signal 2 keys re-planning on the literal string `inter_subtask_gap` (`skills/autonomous-loop/SKILL.md`), so emitting it for a lane collision would make another agent re-plan for a contract gap that never occurred. `lane_collision` is deliberately NOT an `/autonomous` re-iteration signal: a lane collision is a brief-authoring defect Plan Reviewer Criterion 16 should have caught, so Option C terminates the loop as a plain `failed` rather than silently re-planning around it.
+
+**Why `colliding_lanes` exists rather than reusing `missing_outputs`.** A lane collision has no producer/consumer `requires` edge, hence no "missing item" and no "producing subtask" — `missing_outputs`'s documented shape does not fit. It is not merely a naming preference: rule 6a below **rejects** an `adjudication_required: true` checkpoint whose evidence array is empty, so the lane-collision gate as first written was unemittable (its own `SubagentStop` hook failed the Execute Manager whenever it fired). Rule 6a was widened to accept EITHER array — a widening, never a weakening: a checkpoint carrying neither is still rejected.
 
 **Validation rules:**
 - `schema_version` must equal `1`
@@ -204,7 +236,7 @@ EXECUTE_CHECKPOINT:
 - `resume_context` must be present with at least `feature_branch`
 - `reason` must be non-empty string
 - **toolset_gap rejection (hook-enforced, v12):** if `reason` cites `toolset_gap`, "Task tool unavailable", "Agent tool unavailable", or any variant claiming the spawning toolset is missing, the SubagentStop hook rejects the checkpoint. The Execute Manager spawns workers via Task and that capability is guaranteed by the harness; the actual blocker must be restated without referencing toolset availability.
-- **Adjudication tri-field invariant (hook-enforced, v12):** the three fields `adjudication_required`, `missing_outputs`, and `adjudication_options` appear together (all-or-nothing). When `adjudication_required: true`, both `missing_outputs` and `adjudication_options` MUST be non-empty arrays. The SubagentStop hook (see `hooks.json` Execute Manager entry) rejects checkpoints that set the flag without populating both arrays.
+- **Adjudication evidence invariant (hook-enforced; v12, widened v15.20.0):** `adjudication_required`, its evidence array, and `adjudication_options` appear together (all-or-nothing). When `adjudication_required: true`, `adjudication_options` MUST be non-empty AND at least one evidence array MUST be non-empty — `missing_outputs` (requires-gap adjudication) **or** `colliding_lanes` (lane-collision adjudication). A checkpoint carrying NEITHER is still rejected: v15.20.0 widened which array satisfies the invariant, it did not weaken the invariant. Conversely, any of the three present without `adjudication_required: true` is an orphan and is rejected. `adjudication_kind`, when present, must be one of `requires_gap` / `lane_collision`; absent means `requires_gap`. The SubagentStop hook (`scripts/validate-execute-result.py` rule 6, see `hooks.json` Execute Manager entry) enforces all of this.
 
 ---
 
@@ -1960,6 +1992,76 @@ LAUNCH_PAD_RESULT:
 ```
 
 **Consumer pattern (`/autonomous` PLAN phase):** when `status: saved`, read `LAUNCH_PAD_RESULT.saved_brief_path` directly as the iteration's `current_brief_path`. When `status ∈ {discarded, blocked, aborted}`, exit the loop with the corresponding terminal status. The `ls`-diff fallback (Launch Pad pre-v14.2.0) remains supported during the transition window but is no longer primary.
+
+---
+
+## CONTEXT_DIGEST
+
+A per-job **file artifact** — not an agent result block — built by `${CLAUDE_PLUGIN_ROOT}/scripts/build-context-digest.sh` from the assembled Supervisor-Ready Brief text and pointer-handed to every worker spawned on the job, on both the Task-spawn carrier and the SDK-runner carrier (`skills/async-orchestration/SKILL.md` §"Context digest pointer"; `sdk-spike/src/runner.ts`'s `contextDigestPointer`). It carries **no `schema_version` field** and is **not validated by any `SubagentStop` hook** — correctness enforcement lives in `scripts/test-context-digest.sh` instead (see below). Introduced in v15.20.0 (D6 — worker shared-context digest + explicit file lanes): spawned workers cold-start with an empty context and each re-derives the same codebase understanding Launch Pad already computed at Phase 3 (the File Impact Map) and Phase 4 (subtask contracts); the digest hands that analysis over once per job instead of once per worker.
+
+**Producer:** Launch Pad, Phase 5 PACKAGE, immediately after the brief is assembled (`agents/launch-pad.md` §"Phase 5: PACKAGE" step 9 — "MATERIALIZE — scratch file + context digest"). The write is **NOT gated on Phase 5.5 Plan Review** — the digest is a derived analysis artifact (File Impact Map, subtask contracts, lanes), not the brief itself, so it exists as soon as Phase 5 PACKAGE completes even if the brief later fails review or is discarded. This is a deliberate divergence from the brief's own gated save (`docs/POINTER_AUDIT.md` row 7, "the brief is not file-backed at review time") — a stray digest file left behind by a discarded/failed-review brief is harmless: it is bounded, gitignored, and has no downstream consumer without a matching saved brief to point at it.
+
+**Path convention:** `.supervisor/jobs/context-digests/{basename(brief_path)}` — the same basename as the brief file, in a sibling directory under `.supervisor/jobs/`, mirroring the existing `{pending,in-progress,done,failed}/{basename}` lifecycle-directory convention (the `{basename(current_brief_path)}` anchor pattern already used by `skills/autonomous-loop/SKILL.md`). Callers pass this path explicitly via `build-context-digest.sh --out`; the script's own built-in default (`.supervisor/jobs/context-digests/context-digest.md`) is a single-file fallback for ad-hoc/manual invocations only, not the documented per-job path.
+
+**Lifecycle — write-once, never pruned (deliberate, bounded):** unlike the brief itself, a digest does NOT move as its job flows `pending → in-progress → done/failed`; it is written once at Launch Pad Phase 5 MATERIALIZE and left in place. Nothing garbage-collects `context-digests/`, so it accumulates one file per job. That is accepted rather than overlooked: each entry is capped at 6000 bytes (so 1000 jobs ≈ 6 MB worst case), the whole tree is gitignored, and a digest deliberately outlives its job — it stays readable for post-hoc inspection of what a worker was actually handed, which a prune-on-completion rule would destroy exactly when a postmortem needs it. Operators wanting the space back can delete the directory at any time: every consumer treats a missing digest as advisory-absent (`contextDigestPointer` returns `undefined`; every spawn contract says "proceed without it").
+
+**Bound + truncation marker (AC2 — the digest is NEVER unbounded):** hard cap of 6000 bytes by default (`CONTEXT_DIGEST_MAX_CHARS` env override; `--max-chars` flag; the flag keeps `build-repo-map.sh`'s `chars` spelling but the cap and every
+budget derived from it are measured in **bytes**), mirroring `build-repo-map.sh`'s `--max-chars` cap contract exactly. When the assembled digest exceeds the cap, it is truncated so the TOTAL file (content + marker) fits within the cap, with a final line:
+
+```
+[context-digest truncated at N chars]
+```
+
+> **Sizing contract (v15.20.0).** The digest is bounded (default 6000 bytes) and the bound is
+> honored by **per-section budgeting**, not by truncating the tail. Every heading is emitted
+> UNCONDITIONALLY, and a section that was clipped says so with its own marker — so a consumer can
+> always distinguish "the brief declared none" (`_(none found)_`) from "the cap clipped it"
+> (`_(truncated …)_`). Budget is granted in priority order — contracts, interfaces, sibling
+> summary, conventions, then File Impact Map last — because tail-first truncation previously
+> deleted the Cross-lane contracts section outright on 8 of 72 archived briefs, i.e. on the
+> largest and most parallel jobs, which is exactly where lane ownership matters most.
+>
+> **Per-section floor.** Priority order governs the *surplus*, not the whole pool: each of the
+> five sections may first reserve up to 10% of the pool (capped at what it actually needs, so an
+> absent or short section returns the remainder immediately), and only then is the rest granted
+> in priority order. Without that floor the highest-priority section can consume the entire pool
+> and every later section renders as a bare `_(truncated)_` with ZERO content — measured on 15 of
+> 72 archived briefs, worst case 4 of 5 sections. A floor too small to hold one whole line
+> (<80 bytes, i.e. only at a very tight cap) is skipped in favour of pure priority order, since
+> `clip` cuts on line boundaries and a sub-line floor would yield nothing but the marker.
+>
+> **Budgets are measured in BYTES**, matching the unit the cap is enforced in (`wc -c`), via
+> `blen()` rather than `${#var}` — the latter is a *character* count under a UTF-8 locale and a
+> byte count under `C`/`POSIX`, so identical input produced different budgets depending on the
+> caller's environment (measured: `a — b` is 5 under `en_US.UTF-8`, 7 under `C`). That is a
+> latent, locale-dependent defect, **not** the cause of the one observed cap overshoot: that
+> overshoot reproduced *identically* under both locales and was the fixed-overhead constant
+> (`260`) underestimating the real header/heading overhead. Both are addressed — budgets are now
+> locale-invariant, and the per-section floor leaves enough slack that the constant no longer
+> binds. The whole-file backstop remains a last-resort invariant guard, and
+> `scripts/test-context-digest.sh` asserts across the archived corpus, **under a pinned UTF-8
+> locale**, that it never fires.
+>
+> **Cap floor.** The digest has a fixed overhead of its own (~900 bytes: title, headings, the
+> cross-lane explainer, and the per-section marker reserve), so a cap must fund that *plus* a
+> content floor. A cap below the full-fidelity overhead first triggers a **shrink** — short
+> truncation markers, explainer dropped — spending the budget on the brief's data rather than
+> the builder's prose. A cap that cannot fund even the shrunk form writes **nothing**, reports
+> why on stderr, and still exits 0: an absent digest is honest and every consumer already
+> handles absence, whereas a digest of headings and empty markers claims to carry analysis it
+> does not have. (Before v15.20.0's cap-floor fix, any `--max-chars` below ~1200 produced
+> exactly that contentless output and reported success.)
+
+**Sections (in order):**
+1. `## File Impact Map` — the brief's `## File Impact Map` table verbatim **when present**, which is the RARE case: measured 2026-07-31, only 10 of 73 archived briefs carry that heading. Otherwise derived from `## Subtask Structure` + `### File Overlap Matrix` (72/73 and 28/73) — the common path — with a note recording which source was used. This section is allocated budget LAST (see the size note below), so it is the one that absorbs a cap squeeze.
+2. `## Interfaces touched` — deduplicated bullet list of every `{kind: symbol|type, path, name}` entry across all subtasks' `provides`/`requires` YAML, rendered `path :: name (kind)`.
+3. `## Conventions` — the brief's `## Environment` block plus `## Skill References` (71/73 and 54/73). **Not** `**Tech Stack:**` / `**Architecture:**` bold lines: that was the original implementation and it was measured (2026-07-31) to match **0 of 73** real briefs — dead code, removed in v15.20.0.
+4. `## Sibling-subtask summary` — verbatim copy of the brief's Subtask Structure table (title / criteria subset / files / skills / status per subtask).
+5. `## Cross-lane producer/consumer contracts` — the brief's contract YAML block(s) verbatim, resolved through a layout ladder because real briefs use at least six shapes: the umbrella headings `Subtask contracts` / `Provides / Requires Contracts` / `Provides / Requires Schema` / `Subtask Detail`, then per-subtask `### Subtask N` / `### ST N` headings with no umbrella, then a STRUCTURAL fallback collecting any fenced block carrying a contract key. Measured after v15.20.0: 54/54 contract-bearing briefs populate this section (a single-heading lookup left 54 of 72 empty), i.e. every subtask's `provides` / `requires` / `lanes` / `external_requires` together — this IS the producer/consumer + lane-ownership data; the digest does not re-derive lane-collision logic (that rule lives in `skills/supervisor-readiness/SKILL.md` §"Lane Declaration Schema" and the worker-side `out_of_lane` gate — see the `WORKER_RESULT` schema above).
+
+A section with no matching content in the source brief is rendered `_(none found)_` rather than a hard failure — the builder is **fail-safe** (always exits 0, mirroring the sibling `build-*.sh` advisory-artifact convention: `build-repo-map.sh`, `build-handoff.sh`). Correctness enforcement (bound honored, truncation marker present, worktree-absolute pointer form, same-wave lane overlap flagged vs sequentially-ordered sharing not flagged) is `scripts/test-context-digest.sh`'s job, which — per that same sibling convention — is allowed to fail loudly on a genuine assertion failure; the builder itself never is.
+
+**Consumption:** pointer-handed as `path + ≤200-char summary + "Read only the sections you need"` (`docs/POINTER_AUDIT.md` §"The rule" and §"Context digest"). Parallel-path (worktree-resident) workers receive the **main-checkout absolute path** — gitignored `.supervisor/` artifacts do not exist inside linked git worktrees (`docs/POINTER_AUDIT.md` §"Worktree reality") — while Single-Agent-/Sequential-path workers and Execute Manager (all project-root-resident) may use the repo-relative path directly. The exact spawn-prompt wording lives in `skills/async-orchestration/SKILL.md` §"Context digest pointer" (Task-spawn carrier) and `sdk-spike/src/runner.ts`'s `contextDigestPointer` (SDK-runner carrier) — this section documents the artifact contract only, not the spawn-prompt text.
 
 ---
 

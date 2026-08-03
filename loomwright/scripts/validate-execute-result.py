@@ -83,14 +83,35 @@ REASON_TOOLSET_GAP = (
     "restate the actual blocker without referencing toolset availability"
 )
 
-# (6a) / (6b) — verbatim reason strings from the hooks.json prompt.
+# (6a) / (6b) — reason strings from the hooks.json prompt, WIDENED for D6.
+#
+# The original prompt named `missing_outputs` because the Step 2b requires-gap gate was the
+# ONLY raiser of `adjudication_required`. v15.20.0 added a second raiser — the lane-collision
+# gate (agents/execute-manager.md) — which has no producer/consumer `requires` edge and so no
+# `missing_outputs[]` to report. Verified before this change: a lane-collision checkpoint was
+# REJECTED outright by rule 6a ("requires non-empty missing_outputs"), i.e. the new gate was
+# unemittable — its own SubagentStop hook failed the Execute Manager whenever it fired.
+#
+# The invariant itself is preserved and is the point: `adjudication_required: true` must always
+# carry EVIDENCE plus options. What widened is which evidence field satisfies it — now
+# `missing_outputs` (requires gap) OR `colliding_lanes` (lane collision). This is a widening,
+# never a weakening: an adjudication with NEITHER evidence array is still rejected.
 REASON_ADJUDICATION_INCOMPLETE = (
-    "adjudication_required: true requires non-empty missing_outputs and "
-    "adjudication_options arrays"
+    "adjudication_required: true requires adjudication_options plus an evidence array — "
+    "missing_outputs (requires-gap adjudication) or colliding_lanes (lane-collision "
+    "adjudication); both empty is never valid"
 )
 REASON_ADJUDICATION_ORPHAN = (
-    "missing_outputs/adjudication_options present without adjudication_required: "
-    "true — the three fields are all-or-nothing"
+    "missing_outputs/colliding_lanes/adjudication_options present without "
+    "adjudication_required: true — the fields are all-or-nothing"
+)
+# Closed enum for the optional discriminator. ABSENT is legal and means `requires_gap` (every
+# pre-v15.20.0 checkpoint predates the field), so consumers branch deterministically instead of
+# pattern-matching the free-text `reason` prose.
+VALID_ADJUDICATION_KIND = ("requires_gap", "lane_collision")
+REASON_ADJUDICATION_KIND = (
+    "adjudication_kind, when present, must be one of: %s (rule 6)"
+    % ", ".join(VALID_ADJUDICATION_KIND)
 )
 
 # (5) — the prompt names three literals plus "any variant claiming the spawning
@@ -265,8 +286,17 @@ def _validate_checkpoint(fields, payload):
     # ABSENT adjudication_required are both "not true" for 6b, but only the
     # present-and-true case triggers 6a.
     missing_outputs = _as_list(fields.get("missing_outputs")) or []
+    colliding_lanes = _as_list(fields.get("colliding_lanes")) or []
     adjudication_options = _as_list(fields.get("adjudication_options")) or []
     required_flag = None
+
+    # Discriminator is OPTIONAL (absent == requires_gap, the pre-D6 shape) but CLOSED when
+    # present — an unrecognized kind would silently fall through Supervisor's reason-keyed
+    # branch to the requires-gap default, which is the wrong option set and the wrong Option-C
+    # failure reason.
+    if present(fields, "adjudication_kind"):
+        if as_text(fields.get("adjudication_kind")).strip() not in VALID_ADJUDICATION_KIND:
+            emit(False, REASON_ADJUDICATION_KIND)
     if present(fields, "adjudication_required"):
         required_flag, bad = as_bool(fields.get("adjudication_required"))
         if required_flag is None and fields.get("adjudication_required") is not None:
@@ -277,12 +307,18 @@ def _validate_checkpoint(fields, payload):
             )
 
     if required_flag is True:
-        # (6a)
-        if not _non_empty(missing_outputs) or not _non_empty(adjudication_options):
+        # (6a) — options ALWAYS required; evidence satisfied by EITHER array (see the
+        # REASON_ADJUDICATION_INCOMPLETE note). Neither present is still a hard reject.
+        has_evidence = _non_empty(missing_outputs) or _non_empty(colliding_lanes)
+        if not has_evidence or not _non_empty(adjudication_options):
             emit(False, REASON_ADJUDICATION_INCOMPLETE)
     else:
         # (6b) — present (non-empty) without adjudication_required: true
-        if _non_empty(missing_outputs) or _non_empty(adjudication_options):
+        if (
+            _non_empty(missing_outputs)
+            or _non_empty(colliding_lanes)
+            or _non_empty(adjudication_options)
+        ):
             emit(False, REASON_ADJUDICATION_ORPHAN)
 
 

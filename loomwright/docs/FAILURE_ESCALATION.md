@@ -157,6 +157,10 @@ Exits with error description and resume command
 
 ## Inter-Subtask Gap / Scope Expansion
 
+> **TWO raisers share this surface (v15.20.0).** `adjudication_required: true` is emitted by the requires-gap gate documented below AND by the lane-collision gate documented immediately after it. They are NOT interchangeable: different evidence array, different A–D option semantics, and — load-bearing — a **different Option-C failure reason**. Branch on `adjudication_kind`, never on the free-text `reason`. Authoritative dispatch table: `agents/supervisor.md` §"Adjudication Handling".
+
+### Raiser 1 — requires gap (`adjudication_kind: requires_gap`, or the field ABSENT on pre-v15.20.0 checkpoints)
+
 ```
 Pre-spawn verification gate FAILs (Execute Manager Step 2b)
     OR Worker emits WORKER_RESULT with non-empty outputs_gap
@@ -179,11 +183,45 @@ Supervisor presents 4 options to user via AskUserQuestion (NEVER auto-picks)
 User selects option → Supervisor applies it and resumes EXECUTE
 ```
 
-> When option C is selected, the job is marked `failed` with `reason: inter_subtask_gap` (this string is grep-stable and is what telemetry / `state.md` will record).
+> When option C is selected, the job is marked `failed` with `reason: inter_subtask_gap` (this string is grep-stable and is what telemetry / `state.md` will record). **This string is a control signal, not a label:** `/autonomous` EVALUATE Signal 2 keys re-planning on it (`skills/autonomous-loop/SKILL.md`), so it must be emitted ONLY for a genuine requires gap — never for the lane-collision raiser below.
+
+### Raiser 2 — lane collision (`adjudication_kind: lane_collision`, v15.20.0)
+
+```
+Worker emits WORKER_RESULT with a non-empty out_of_lane (report-only on its own)
+    AND one of those paths matches a SIBLING subtask's declared `lanes:`
+    AND neither subtask is reachable from the other in the requires DAG
+        (transitive closure — "same-wave" is shorthand for mutual UNREACHABILITY,
+         never a comparison of wave numbers; see skills/supervisor-readiness/SKILL.md
+         §"Lane Declaration Schema")
+    ↓
+Execute Manager emits EXECUTE_CHECKPOINT with:
+    - adjudication_required: true
+    - adjudication_kind: lane_collision
+    - colliding_lanes: [{path, owning_subtask, this_subtask}, ...]   # NOT missing_outputs —
+      a lane collision has no producer/consumer `requires` edge, so there is no missing item
+      and no producing subtask. scripts/validate-execute-result.py rule 6a accepts EITHER
+      evidence array and REJECTS a checkpoint carrying neither.
+    - adjudication_options:
+        A: Re-queue writer with the sibling lane excluded
+        B: Serialize the pair (add a requires edge; re-check the graph stays acyclic)
+        C: Exit to Launch Pad
+        D: Widen the writer's declared lane
+    (plus the same EXECUTE_CHECKPOINT base fields)
+    ↓
+Supervisor pauses EXECUTE, presents THESE four options (never the requires-gap wording)
+    ↓
+User selects option → Supervisor applies it and resumes EXECUTE
+```
+
+> When option C is selected here, the job is marked `failed` with **`reason: lane_collision`** — deliberately NOT `inter_subtask_gap`. A lane collision is a brief-authoring defect Plan Reviewer **Criterion 16** should have caught, so it is **not** an `/autonomous` re-iteration signal: the loop terminates as a plain `failed` rather than silently re-planning around it. Emitting `inter_subtask_gap` here would make `/autonomous` re-plan for a contract gap that never happened.
+
+> **`out_of_lane` alone never escalates.** It is a REPORT-ONLY `WORKER_RESULT` field (`docs/RESULT_SCHEMAS.md`); only the three-way condition above is a collision. On the **Sequential** and **Single-Agent** paths the Supervisor RECORDS the report but never escalates — serial execution in one working tree means there is no concurrent sibling, so the condition cannot hold.
 
 **Detection:**
 - Execute Manager Step 2b runs `test -f` / `grep` against each `requires` entry in the dependent subtask's brief; missing entries fail the gate
 - SubagentStop hook on `worker` flags any WORKER_RESULT with non-empty `outputs_gap` (drift detection)
+- Execute Manager's poll loop cross-references each `out_of_lane` path against **every** matching sibling's declared `lanes:` (plural — sequentially-ordered siblings may legally share a lane, so one path can have several owners; escalate if ANY matching owner is unordered relative to the writer)
 
 **Rules:**
 - **NEVER retry silently** — gaps and scope expansions are real specification disagreements, not transient flakes

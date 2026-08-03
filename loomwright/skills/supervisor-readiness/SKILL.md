@@ -2,8 +2,8 @@
 name: supervisor-readiness
 description: Pre-flight checklist, Supervisor-Ready Brief format, jobs folder convention, and failure prevention. Use before launching autonomous workflows or when diagnosing Supervisor failures.
 allowed-tools: [Read, Bash]
-version: "1.2.0"
-lastUpdated: "2026-07-28"
+version: "1.3.0"
+lastUpdated: "2026-07-31"
 ---
 
 # Supervisor Readiness Skill
@@ -227,7 +227,7 @@ so Supervisor Phase 4.5 `ground_truth` executes the doc-currency and version-con
 
 ### Provides / Requires Schema (v12.0.0+)
 
-Each subtask MUST declare a structured contract with three top-level YAML lists: `provides`, `requires`, `external_requires` — Plan Reviewer Criterion 12 FAILs the brief with a BLOCKING `dep_graph` issue when contract blocks are missing (only an explicit `legacy_brief: true` in the Environment section opts out). These are consumed by Plan Reviewer (Criterion 12) and Execute Manager's pre-spawn verification gate.
+Each subtask MUST declare a structured contract with four top-level YAML lists: `provides`, `requires`, `external_requires`, `lanes` — Plan Reviewer Criterion 12 FAILs the brief with a BLOCKING `dep_graph` issue when contract blocks are missing (only an explicit `legacy_brief: true` in the Environment section opts out). These are consumed by Plan Reviewer (Criterion 12) and Execute Manager's pre-spawn verification gate. `lanes` is documented separately below (§"Lane Declaration Schema", v15.20.0+) — it is validated by a dedicated Plan Reviewer criterion (Criterion 16), not Criterion 12.
 
 **`provides` items** — addressable outputs the subtask must produce:
 
@@ -253,6 +253,9 @@ provides:
   - {kind: "file", path: "src/auth/types.ts"}
   - {kind: "type", path: "src/auth/types.ts", name: "AuthContext"}
 requires: []
+lanes:
+  - "src/auth/jwt.guard.ts"
+  - "src/auth/types.ts"
 external_requires:
   - "@nestjs/passport >= 10.0"
 
@@ -263,6 +266,8 @@ provides:
 requires:
   - {from: "1", kind: "symbol", path: "src/auth/jwt.guard.ts", name: "JwtAuthGuard"}
   - {from: "1", kind: "type",   path: "src/auth/types.ts",     name: "AuthContext"}
+lanes:
+  - "src/auth/auth.controller.ts"
 external_requires: []
 ```
 
@@ -272,6 +277,32 @@ external_requires: []
 - Reject vague provides like `"adds feature"` / `"updates code"` — every entry MUST be `{kind, path, name?}` addressable on disk
 - `external_requires` is for things outside the brief; do NOT use it as the `from` target of any `requires` entry
 - Non-empty `requires` → BLOCKED (status in Subtask Structure table MUST reflect this)
+
+### Lane Declaration Schema (v15.20.0+)
+
+Alongside `provides` / `requires` / `external_requires`, every subtask contract also declares a `lanes:` top-level YAML list — a flat list of repo-relative path globs the subtask **owns**:
+
+```yaml
+lanes:
+  - "src/auth/jwt.guard.ts"
+  - "src/auth/types.ts"
+```
+
+A subtask's declared `lanes` is the set of paths it is expected to modify/create. When a worker writes to a path matching no glob in its OWN subtask's `lanes`, that path is recorded in a new `out_of_lane` field on `WORKER_RESULT` (see `docs/RESULT_SCHEMAS.md` §"WORKER_RESULT"). The `out_of_lane` field itself, and the worker/async-orchestration seam that populates it, belong to that schema and to `agents/worker.md` — this section defines the CONTRACT the gate consumes (what a lane IS, and when a violation is a real cross-subtask collision), not the gate's own mechanics.
+
+**The lane-collision test — reachability, not edges.** Two subtasks A and B may legally **collide** (i.e. an out-of-lane write into a sibling's lane is a flaggable divergent-interface hazard) **iff neither is reachable from the other in the `requires` DAG (transitive closure)** — i.e. the two are unordered relative to each other, so nothing guarantees one finishes before the other starts. (Do NOT restate this as "the scheduler puts them in the same wave" — see the terminology paragraph directly below for why wave membership is not a valid proxy.) **This is NOT "no direct `requires` edge between A and B."** That phrasing reads as *direct adjacency* and would falsely flag every transitively-ordered pair: two subtasks two or more waves apart via an intermediate dependency (e.g. A → B → C, so A and C share no direct edge) are still correctly ordered — C is reachable from A — and MUST NOT be flagged, even though no `requires` entry names them directly. If either subtask **is** reachable from the other, they are sequentially ordered: a shared file between them is **legal** and must not be flagged as a collision.
+
+**Terminology — "same-wave" is a SHORTHAND for exactly this reachability condition, nothing more.** The phrase appears in Plan Reviewer Criterion 16, the seam tests, and the CHANGELOG; everywhere it appears it MEANS "mutually unreachable in the `requires` DAG." It is NOT a claim that the runtime assigns wave numbers you could compute and compare: Execute Manager's poll loop is event-driven, launching each subtask as its dependencies clear and a slot frees, so two mutually-unreachable subtasks at different chain depths can overlap in wall-clock time without ever sharing a wave index. Read "same-wave" as "unordered relative to each other"; never implement it by comparing wave numbers.
+
+**The edge set is an assertion, not trusted input.** The `requires` graph this reachability test runs over is exactly the graph Plan Reviewer **Criterion 5** ("Dependency Correctness") validates — cycle detection, and that blocked subtasks genuinely depend on their blockers. The lane-collision check consumes that already-validated graph; it is never a guarantee independent of it. A spurious `requires` edge silences the collision check for that pair by construction — authoring a `requires` entry that isn't real is a way to defeat the check, not just a correctness bug.
+
+**Sequential sharing grants VISIBILITY, not PRESERVATION.** A downstream subtask that legally shares (edits) a file carrying an upstream subtask's `provides` symbol is only guaranteed to be able to SEE that symbol when it starts — sequential ordering makes the file exist by the time it runs. Nothing in the existing gate re-verifies the symbol still resolves after the downstream subtask's own edit: the deterministic `outputs_verified` gate (`agents/worker.md`, `scripts/validate-worker-result.py`) checks a producer's OWN `provides` at producer time only, never that a later consumer preserved them. A subtask editing a file that carries a sibling's `provides` symbol MUST re-verify that symbol still resolves after its own edit — this is a manual authoring/review discipline, not something any existing gate automates.
+
+**Authoring rules:**
+- Every subtask with a contract block MUST declare `lanes:` (mirrors the `provides` mandate above — non-empty except for a subtask that genuinely touches nothing addressable, same `provides: []`-with-justification precedent)
+- Every lane path SHOULD resolve to an existing file, OR have an existing parent directory (a legitimate create target) — validated by Plan Reviewer's dedicated lane criterion (Criterion 16)
+- `lanes` entries share the SAME path space as `provides`/`requires` `path` fields — repo-relative, no leading `./`
+- A same-wave lane overlap (per the reachability test above) between two MUTUALLY-UNREACHABLE subtasks is a genuine authoring defect at brief time, distinct from a worker later writing out of its own lane at runtime. (Phrased as reachability, not as "LAUNCHABLE in the same batch" — the terminology note above is explicit that batch/wave membership is not a valid proxy for this test, and this bullet must not reintroduce the framing it warns against.)
 
 ## Parallelism Analysis
 

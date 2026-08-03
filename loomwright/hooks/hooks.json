@@ -60,7 +60,7 @@
           },
           {
             "type": "command",
-            "command": "payload=$(cat); printf '%s' \"$payload\" | bash \"${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry.sh\" || true; printf '%s' \"$payload\" | bash \"${CLAUDE_PLUGIN_ROOT}/scripts/emit-token-ledger.sh\" || true"
+            "command": "payload=$(cat); printf '%s' \"$payload\" | bash \"${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry.sh\" || true; printf '%s' \"$payload\" | bash \"${CLAUDE_PLUGIN_ROOT}/scripts/emit-token-ledger.sh\" || true; bash \"${CLAUDE_PLUGIN_ROOT}/scripts/stamp-requirement-status.sh\" >/dev/null 2>&1 || true"
           },
           {
             "type": "command",
@@ -185,7 +185,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/session-resume.sh\" || true"
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/session-resume.sh\" || true; bash \"${CLAUDE_PLUGIN_ROOT}/scripts/stamp-requirement-status.sh\" >/dev/null 2>&1 || true"
           }
         ]
       },
