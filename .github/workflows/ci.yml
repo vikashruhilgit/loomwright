@@ -66,6 +66,49 @@ jobs:
             bash "$t"
           done
 
+      # The sdk-spike suite is NOT matched by the `loomwright/scripts/test-*.sh` glob above
+      # (it lives under `loomwright/sdk-spike/test/`), so until v15.20.0 it never ran in CI at
+      # all — while `src/runner.ts` absorbed 13 fix commits on this feature's branch alone.
+      # Its two suites additionally self-SKIP unless `dist/runner.js` exists, and `dist/` is
+      # gitignored, so merely invoking them without a build would reproduce the same
+      # silently-green non-gate. Build first, then assert the suites actually RAN.
+      - name: Set up Node (for the quarantined sdk-spike suite)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: loomwright/sdk-spike/package-lock.json
+
+      - name: Build + run sdk-spike suites (hard gate — fails closed on skip)
+        working-directory: loomwright/sdk-spike
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          # `dist/runner.js` is the exact artifact both suites gate their own execution on.
+          # Assert it BEFORE running them: without it they exit 0 having tested nothing, which
+          # is the failure mode this whole step exists to close.
+          [ -f dist/runner.js ] || { echo "sdk-spike: build produced no dist/runner.js — suites would silently skip" >&2; exit 1; }
+          for t in test/self-test.sh test/digest-lanes.test.sh; do
+            echo "== $t =="
+            # errexit is deliberately lifted across the capture: under `set -e` an assignment
+            # from a failing command substitution aborts the step BEFORE `status=$?` is read,
+            # which would swallow the suite's own output — the thing a CI reader needs most.
+            set +e
+            out="$(bash "$t" 2>&1)"; status=$?
+            set -e
+            echo "$out"
+            [ "$status" -eq 0 ] || exit "$status"
+            # Fail CLOSED on the all-checks-skipped sentinel. A suite that skipped itself is
+            # UNVERIFIED, not clean — the same bimodal invariant the plugin applies to its own
+            # correctness gates (CLAUDE.md §"Failure-Mode Invariants").
+            case "$out" in
+              *"all checks skipped"*)
+                echo "sdk-spike: $t reported all checks skipped — treating as FAILURE (gate must not pass unverified)" >&2
+                exit 1 ;;
+            esac
+          done
+
       - name: Advisory fitness report (non-gating)
         continue-on-error: true
         run: bash loomwright/scripts/ci-fitness-report.sh >> "$GITHUB_STEP_SUMMARY" || true
