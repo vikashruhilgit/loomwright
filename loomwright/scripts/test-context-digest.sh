@@ -696,6 +696,29 @@ _failsafe "--max-chars 30 (below the _min_cap floor of 60): falls back to the de
 _failsafe "--max-chars 700 (clears _min_cap, below overhead + content floor): tier 3 refuses, nothing written" none \
   --brief "$REPO_ROOT/loomwright/sdk-spike/test/fixtures/brief-digest-sections.md" --max-chars 700
 
+# FRAME-HEADING SYNC (bot review, v15.20.0). `build-context-digest.sh`'s overhead is DERIVED from
+# `_FRAME_HEADINGS` rather than a magic constant, and its comment claimed this file asserted the
+# constant against the emit block's printf literals — "so a reworded heading cannot silently
+# desynchronize the two." That assertion did not exist; the claim was false, which is worse than
+# no claim, because it tells a maintainer they are covered when they are not. This IS that
+# assertion. If they desync, OVERHEAD mis-sizes the pool, the whole-file backstop fires, and it
+# clips the TAIL — deleting the Cross-lane contracts section the priority ordering exists to
+# protect. Structural extraction on both sides, so a reworded heading fails here rather than
+# silently shipping a mis-sized budget.
+TOTAL=$((TOTAL+1))
+_fh_script="$REPO_ROOT/loomwright/scripts/build-context-digest.sh"
+_fh_declared="$(sed -n "/^_FRAME_HEADINGS='/,/'\$/p" "$_fh_script" 2>/dev/null \
+                 | sed "s/^_FRAME_HEADINGS='//; s/'$//")"
+_fh_emitted="$(grep -E "^[[:space:]]*printf '## " "$_fh_script" 2>/dev/null \
+                 | sed -E "s/^[[:space:]]*printf '//; s/\\\\n.*//")"
+if [ -z "$_fh_declared" ] || [ -z "$_fh_emitted" ]; then
+  no "frame-heading sync: could not extract one side (declared='$_fh_declared' emitted='$_fh_emitted') — the extractor itself drifted"
+elif [ "$_fh_declared" = "$_fh_emitted" ]; then
+  ok "frame-heading sync: _FRAME_HEADINGS matches the emit block's printf literals exactly ($(printf '%s\n' "$_fh_emitted" | grep -c '^## ') headings)"
+else
+  no "frame-heading sync: _FRAME_HEADINGS and the emit block DESYNCED — OVERHEAD will mis-size the pool. declared=[$_fh_declared] emitted=[$_fh_emitted]"
+fi
+
 # UNCLOSED-FENCE REGRESSION (bot review, v15.20.0) — asserted in BOTH directions, because the
 # first attempted fix ("a column-0 ATX heading proves the fence never closed") passed the
 # unclosed case while REGRESSING the primary one: real briefs carry `# Subtask 1 — ...` at

@@ -42,8 +42,12 @@
 # PATH CONTAINMENT (the security-relevant part). The requirement path is read out of a brief —
 # generated text, therefore UNTRUSTED input, not a constant. A brief that named
 # `../../../../etc/passwd` or an absolute path would otherwise make this script append markdown to
-# an arbitrary file. Every candidate must therefore: be relative, contain no `..` segment, and sit
-# under `.supervisor/requirements/`. Anything else is skipped with a message, never written.
+# an arbitrary file. Every candidate must therefore: be relative, contain no `..` segment, sit
+# under `.supervisor/requirements/`, NOT be a symlink, and — after physically resolving its parent
+# directory — still land under `.supervisor/requirements/`. Anything else is skipped with a
+# message, never written. The last two checks are not redundant with the first three: those are
+# purely LEXICAL, and `-f` follows symlinks, so a link inside the prefix satisfied all of them
+# while writing to its target outside the root (reproduced; see the SYMLINK GUARD below).
 #
 # USAGE
 #   stamp-requirement-status.sh [--project-root <dir>] [--dry-run]
@@ -136,6 +140,42 @@ for brief in "$DONE_DIR"/*.md; do
     *..*)    err "skip: '..' segment in requirement path from $(basename "$brief") — '$req'"; SKIPPED=$((SKIPPED+1)); continue ;;
     "$REQ_PREFIX"*) : ;;
     *)       err "skip: requirement path outside $REQ_PREFIX in $(basename "$brief") — '$req'"; SKIPPED=$((SKIPPED+1)); continue ;;
+  esac
+
+  # SYMLINK GUARD — the lexical checks above are NOT sufficient on their own.
+  #
+  # All four are string tests, and `-f` FOLLOWS symlinks, so a symlink sitting inside
+  # `.supervisor/requirements/` passes every one of them and the append lands on the link's
+  # target anywhere on the filesystem. Reproduced before this guard: a sandbox link
+  # `.supervisor/requirements/link.md -> <root>/outside/victim.md` was reported "stamped" and
+  # `victim.md` — outside the containment root — was modified. The original test group covered
+  # traversal (`..`) and absolute paths but not symlinks, which is why it was 17/17 green: it
+  # tested the attacks that were thought of, not the class.
+  #
+  # Two layers, because they catch different things:
+  #   (a) `-L` rejects a symlinked FINAL component.
+  #   (b) physical resolution of the PARENT catches a symlinked DIRECTORY component, which (a)
+  #       cannot see (e.g. `.supervisor/requirements/sub -> /etc`, then `sub/passwd`).
+  # Both sides of the comparison are resolved with `pwd -P` so a symlinked project root (on
+  # macOS `/tmp` -> `/private/tmp`, routinely) does not produce a spurious mismatch.
+  if [ -L "$req" ]; then
+    err "skip: requirement path is a symlink — '$req' (a requirement file is never legitimately one)"
+    SKIPPED=$((SKIPPED + 1))
+    continue
+  fi
+  _req_dir="$(cd "$(dirname "$req")" 2>/dev/null && pwd -P)"
+  _root_p="$(cd "$ROOT" 2>/dev/null && pwd -P)"
+  if [ -z "$_req_dir" ] || [ -z "$_root_p" ]; then
+    err "skip: cannot resolve requirement path physically — '$req'"
+    SKIPPED=$((SKIPPED + 1))
+    continue
+  fi
+  case "$_req_dir/" in
+    "$_root_p/.supervisor/requirements/"*) : ;;
+    *)
+      err "skip: '$req' physically resolves outside ${REQ_PREFIX} (${_req_dir}) — refusing to write"
+      SKIPPED=$((SKIPPED + 1))
+      continue ;;
   esac
 
   if [ ! -f "$req" ]; then

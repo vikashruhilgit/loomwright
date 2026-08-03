@@ -100,6 +100,48 @@ for evil in "../../../../tmp/pwned.md" \
   rm -rf "$SB"
 done
 
+# ── 5b. CONTAINMENT: symlinks (the lexical checks above cannot see these) ────
+# The four lexical checks all pass for a symlink sitting inside .supervisor/requirements/, and
+# `-f` follows symlinks — so before the physical-resolution guard this wrote to the link target
+# OUTSIDE the containment root (reproduced). Two shapes, because they fail differently:
+#   (a) symlinked FINAL component  -> caught by `-L`
+#   (b) symlinked PARENT directory -> invisible to `-L`, caught only by physical resolution
+SB="$(sandbox)"
+mkdir -p "$SB/outside"
+printf 'ORIGINAL\n' > "$SB/outside/victim.md"
+ln -s "$SB/outside/victim.md" "$SB/.supervisor/requirements/link.md"
+mkbrief "$SB" "sym-final.md" ".supervisor/requirements/link.md"
+bash "$TARGET" --project-root "$SB" >/dev/null 2>&1
+if [ "$(cat "$SB/outside/victim.md")" = "ORIGINAL" ]; then
+  ok "containment — symlinked FINAL component does not write to its target outside the root"
+else
+  no "containment — symlink escape: wrote into $SB/outside/victim.md"
+fi
+rm -rf "$SB"
+
+SB="$(sandbox)"
+mkdir -p "$SB/outside/reqdir"
+printf 'ORIGINAL\n' > "$SB/outside/reqdir/x.md"
+ln -s "$SB/outside/reqdir" "$SB/.supervisor/requirements/sub"
+mkbrief "$SB" "sym-parent.md" ".supervisor/requirements/sub/x.md"
+bash "$TARGET" --project-root "$SB" >/dev/null 2>&1
+if [ "$(cat "$SB/outside/reqdir/x.md")" = "ORIGINAL" ]; then
+  ok "containment — symlinked PARENT directory does not write outside the root"
+else
+  no "containment — symlinked-parent escape: wrote into $SB/outside/reqdir/x.md"
+fi
+rm -rf "$SB"
+
+# The guard must not over-reach: a REAL file at a real path under the prefix still stamps.
+SB="$(sandbox)"
+mkreq "$SB" ".supervisor/requirements/final-state/13-real.md"
+mkbrief "$SB" "real.md" ".supervisor/requirements/final-state/13-real.md"
+bash "$TARGET" --project-root "$SB" >/dev/null 2>&1
+grep -qE '^## Status: brief-shipped' "$SB/.supervisor/requirements/final-state/13-real.md" \
+  && ok "symlink guard does not over-reach — a genuine nested requirement still stamps" \
+  || no "symlink guard over-reached — a legitimate nested requirement was refused"
+rm -rf "$SB"
+
 # ── 6. missing requirement file is skipped, not fatal ────────────────────────
 SB="$(sandbox)"
 mkbrief "$SB" "ghost.md" ".supervisor/requirements/final-state/does-not-exist.md"

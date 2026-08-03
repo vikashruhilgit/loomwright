@@ -50,7 +50,7 @@ def prompt(fields): return "Verify block contains " + ", ".join(fields) + " fiel
 mk=lambda m,f:{"matcher":f"loomwright:{m}","hooks":[{"type":"prompt","prompt":prompt(f),"timeout":30}]}
 h={"hooks":{"SubagentStop":[
   mk("worker",["schema_version","task_id","status","files_modified","summary","outputs_verified","outputs_gap","out_of_lane"]),
-  mk("execute-manager",["schema_version","subtasks_completed","worktrees","merge_order","summary","completed_so_far","remaining","resume_context","reason"]),
+  mk("execute-manager",["schema_version","subtasks_completed","worktrees","merge_order","summary","completed_so_far","remaining","resume_context","reason","adjudication_required","missing_outputs","adjudication_options","adjudication_kind","colliding_lanes"]),
   mk("qa-executor",["schema_version","tests_generated","tests_passed","summary","coverage_estimate"]),
   mk("supervisor-runner",["schema_version","status","pr_url","heal_loop_ran","heal_iterations","heal_decision","heal_fixable_issues_fixed","heal_remaining_issues","error","summary"]),
   mk("plan-reviewer",["schema_version","decision","issues","severity","section","description","summary"]),
@@ -69,6 +69,8 @@ EOF
 EXECUTE_RESULT: schema_version, subtasks_completed (status: completed), worktrees,
 merge_order, summary. EXECUTE_CHECKPOINT: completed_so_far, remaining (status: pending),
 in_progress entries (status: in_progress), resume_context, reason. status: failed too.
+Adjudication fields (conditional, validated by rule 6/6a): adjudication_required,
+missing_outputs, adjudication_options, adjudication_kind, colliding_lanes.
 EOF
   cat >"$d/loomwright/agents/qa-executor.md" <<'EOF'
 QA_RESULT fields: schema_version, tests_generated, tests_passed, coverage_estimate, summary.
