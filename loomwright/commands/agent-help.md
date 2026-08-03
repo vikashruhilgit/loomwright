@@ -952,7 +952,7 @@ Use `/supervisor --cheap` to override the execution-shaped roles (orchestrator, 
 
 ### Plugin Hooks (Quality Gates)
 
-The plugin centralizes **24 hooks** in `hooks/hooks.json` that automatically enforce quality and surface notifications (the authoritative table lives in the root `CLAUDE.md`):
+The plugin centralizes its hooks in `hooks/hooks.json`, which automatically enforce quality and surface notifications (`hooks.json` is authoritative for the wiring and the count; the authoritative table lives in `loomwright/docs/HOOKS.md` §"Hook Table"):
 
 | Hook | When It Fires | What It Checks / Does |
 |------|---------------|----------------|
