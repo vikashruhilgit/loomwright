@@ -2,9 +2,11 @@
 
 > Relocated from `CLAUDE.md` §"Common Pitfalls" in the v15.21.0 CLAUDE.md diet (content moved, never
 > deleted — see `.supervisor/requirements/final-state/09-claude-md-diet-dreaming.md`). This is now
-> the authoritative home for the pitfalls below; `CLAUDE.md` keeps only the 3 that bite every
-> session (the stale-branch trap, the project-structure reminder, and the Beads-list reminder) plus
-> a pointer here for everything else.
+> the authoritative home for the pitfalls below; `CLAUDE.md` keeps only the every-session ones
+> (the stale-branch trap, the project-structure reminder, and the Beads-list reminder) plus
+> a pointer here for everything else. The enumeration above is the claim — no count is restated,
+> per `AGENT_GUIDELINES.md` §"Claim Duplication Rule", so promoting a fourth back into `CLAUDE.md`
+> cannot silently falsify this note.
 
 ## Common Pitfalls
 
