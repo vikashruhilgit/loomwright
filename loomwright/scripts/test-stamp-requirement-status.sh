@@ -130,6 +130,38 @@ else
   case "$OUT" in *"WOULD stamp"*) ok "--dry-run reports without writing" ;;
                  *) no "--dry-run did not report the pending stamp" ;; esac
 fi
+# The summary verb must match what actually happened — "N stamped" for a run that wrote
+# nothing misreports the outcome.
+case "$OUT" in
+  *"would-be-stamped"*) ok "--dry-run summary says 'would-be-stamped', not 'stamped'" ;;
+  *) no "--dry-run summary still claims 'stamped' for a run that wrote nothing" ;;
+esac
+rm -rf "$SB"
+
+# ── 8b. concurrency: a held lock makes a second run a quiet no-op ────────────
+# The idempotency guard is check-then-append; with a SessionStart seam AND a SubagentStop seam
+# the two can genuinely overlap, so the mkdir lock is what actually prevents a double-append.
+SB="$(sandbox)"
+mkreq "$SB" ".supervisor/requirements/final-state/12-lock.md"
+mkbrief "$SB" "l.md" ".supervisor/requirements/final-state/12-lock.md"
+mkdir -p "$SB/.supervisor/.stamp-requirement-status.lock"     # simulate a live holder
+OUT="$(bash "$TARGET" --project-root "$SB" 2>&1)"
+if grep -qE '^## Status' "$SB/.supervisor/requirements/final-state/12-lock.md"; then
+  no "held lock — second run must not write"
+else
+  case "$OUT" in *"another reconciler holds the lock"*) ok "held lock — second run is a quiet no-op" ;;
+                 *) no "held lock — expected the lock-held message, got: $OUT" ;; esac
+fi
+# Releasing the lock lets the next run proceed (proves the lock is not a permanent wedge).
+rmdir "$SB/.supervisor/.stamp-requirement-status.lock"
+bash "$TARGET" --project-root "$SB" >/dev/null 2>&1
+grep -qE '^## Status: brief-shipped' "$SB/.supervisor/requirements/final-state/12-lock.md" \
+  && ok "lock released — the next run stamps normally" \
+  || no "lock released — run still did not stamp"
+# And the lock must not survive a normal exit (EXIT trap released it).
+[ -d "$SB/.supervisor/.stamp-requirement-status.lock" ] \
+  && no "lock leaked after a normal run" \
+  || ok "lock is released on exit (no leak)"
 rm -rf "$SB"
 
 # ── 9. fail-safe: absent .supervisor exits 0 ─────────────────────────────────

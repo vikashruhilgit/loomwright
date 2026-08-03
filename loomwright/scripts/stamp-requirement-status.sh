@@ -13,6 +13,19 @@
 # a BYPRODUCT of the work (a brief landing in `.supervisor/jobs/done/`), never on something an
 # agent must remember to write. This script is that reconciler for requirement close-out.
 #
+# INVOCATION SEAMS — TWO, deliberately, because ONE was inert on the default path.
+#   1. `SessionStart` (via the `session-resume.sh` entry) — THE LOAD-BEARING ONE. `/supervisor`,
+#      `/autonomous` and `/automate` are INLINE main-thread workflows (CLAUDE.md §"Common
+#      Pitfalls"), so they never spawn a `loomwright:supervisor-runner` subagent and never emit a
+#      `SubagentStop` for that matcher. The first cut of this wiring used ONLY seam 2 below and was
+#      therefore inert on exactly the runs whose 8 unstamped requirements motivated it — caught in
+#      review, not in testing. SessionStart fires on every session regardless of how Supervisor
+#      ran, which is the correct cadence for a reconciler: it catches up on what earlier sessions
+#      left behind. Cost is ~0.9s over a 72-brief corpus, once per session.
+#   2. `SubagentStop[loomwright:supervisor-runner]` — retained, not redundant: it closes the loop
+#      immediately for agent-owned sessions (`claude --agent loomwright:supervisor-runner`) instead
+#      of deferring to the next session start. Idempotency (below) makes the overlap harmless.
+#
 # CONTRACT
 #   - SUCCESS-ONLY: reads `.supervisor/jobs/done/` exclusively. A brief in `failed/` or
 #     `in-progress/` never stamps anything (matches the completion-tail's own success-only rule).
@@ -20,6 +33,8 @@
 #     proves the work ran, not that every acceptance criterion was met (see the append site).
 #   - IDEMPOTENT: a requirement already carrying a `## Status` heading is left untouched, so
 #     re-running (or running alongside a completion tail that DID fire) never double-stamps.
+#     Because that guard is check-then-append, concurrent runs are additionally serialized by an
+#     `mkdir` lock (see MUTUAL EXCLUSION below) — the two seams above can genuinely overlap.
 #   - FAIL-SAFE: ALWAYS exits 0. This is a runtime side-effect emitter, not a correctness gate —
 #     inverting that would violate the bimodal invariant (CLAUDE.md §"Failure-Mode Invariants").
 #   - bash-3.2 safe: no mapfile, no associative arrays, no GNU-only sed/stat/date flags.
@@ -65,6 +80,34 @@ REQ_PREFIX=".supervisor/requirements/"
 if [ ! -d "$DONE_DIR" ]; then
   say "no $DONE_DIR — nothing to reconcile"
   exit 0
+fi
+
+# MUTUAL EXCLUSION. The idempotency guard below is check-then-append, and with TWO invocation
+# seams the overlap is no longer theoretical: a SessionStart in one terminal can race a
+# supervisor-runner SubagentStop in another, both pass the `grep`, and both append. `mkdir` is the
+# portable atomic test-and-set (bash-3.2 / BSD safe — `flock` is Linux-only and absent on macOS).
+# Losing the race is NOT an error: the winner does the identical work, so we exit 0 quietly, in
+# keeping with the fail-safe contract. The lock is released by the EXIT trap on every path.
+LOCK=".supervisor/.stamp-requirement-status.lock"
+if mkdir "$LOCK" 2>/dev/null; then
+  trap 'rmdir "$LOCK" 2>/dev/null' EXIT INT TERM
+else
+  # A stale lock (hard kill between mkdir and the trap) would otherwise wedge this forever. It is
+  # only ever held for ~1s, so anything older than 5 minutes is definitionally abandoned; reclaim
+  # it rather than skipping every run from here on.
+  if [ -d "$LOCK" ] && [ -z "$(find "$LOCK" -maxdepth 0 -mmin -5 2>/dev/null)" ]; then
+    err "reclaiming stale lock '$LOCK' (older than 5 min)"
+    rmdir "$LOCK" 2>/dev/null
+    if mkdir "$LOCK" 2>/dev/null; then
+      trap 'rmdir "$LOCK" 2>/dev/null' EXIT INT TERM
+    else
+      say "another reconciler holds the lock — nothing to do"
+      exit 0
+    fi
+  else
+    say "another reconciler holds the lock — nothing to do"
+    exit 0
+  fi
 fi
 
 STAMPED=0
@@ -140,5 +183,10 @@ for brief in "$DONE_DIR"/*.md; do
   STAMPED=$((STAMPED + 1))
 done
 
-say "scanned $SCANNED done-brief(s): $STAMPED stamped, $SKIPPED skipped"
+if [ "$DRY_RUN" -eq 1 ]; then
+  # Do not report "stamped" for a run that wrote nothing — the tally and the verb must agree.
+  say "scanned $SCANNED done-brief(s): $STAMPED would-be-stamped, $SKIPPED skipped (dry run — nothing written)"
+else
+  say "scanned $SCANNED done-brief(s): $STAMPED stamped, $SKIPPED skipped"
+fi
 exit 0

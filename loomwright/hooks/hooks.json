@@ -185,7 +185,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/session-resume.sh\" || true"
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/session-resume.sh\" || true; bash \"${CLAUDE_PLUGIN_ROOT}/scripts/stamp-requirement-status.sh\" >/dev/null 2>&1 || true"
           }
         ]
       },
