@@ -696,6 +696,69 @@ _failsafe "--max-chars 30 (below the _min_cap floor of 60): falls back to the de
 _failsafe "--max-chars 700 (clears _min_cap, below overhead + content floor): tier 3 refuses, nothing written" none \
   --brief "$REPO_ROOT/loomwright/sdk-spike/test/fixtures/brief-digest-sections.md" --max-chars 700
 
+# UNCLOSED-FENCE REGRESSION (bot review, v15.20.0) — asserted in BOTH directions, because the
+# first attempted fix ("a column-0 ATX heading proves the fence never closed") passed the
+# unclosed case while REGRESSING the primary one: real briefs carry `# Subtask 1 — ...` at
+# column 0 inside the contract YAML fence, and treating that as a heading truncated the whole
+# Cross-lane contracts section. A one-directional test would have shipped that.
+TOTAL=$((TOTAL+1))
+_uf_brief="$(mktemp -t ufbrief.XXXXXX)"; _uf_out="$(mktemp -t ufout.XXXXXX)"
+printf '# T\n## Environment\n- **P:** x\n## Subtask Structure\n| # | T |\n|---|---|\n| 1 | a |\n```\nunterminated\n## File Impact Map\n- SENTINEL-AFTER-FENCE\n' > "$_uf_brief"
+bash "$REPO_ROOT/loomwright/scripts/build-context-digest.sh" --brief "$_uf_brief" --out "$_uf_out" >/dev/null 2>&1 </dev/null
+if grep -q 'SENTINEL-AFTER-FENCE' "$_uf_out" 2>/dev/null; then
+  ok "unclosed fence: headings AFTER the stray fence stay visible (parity pre-pass neutralizes it)"
+else
+  no "unclosed fence: a heading after the stray fence was swallowed — later sections silently blank"
+fi
+rm -f "$_uf_brief" "$_uf_out"
+
+# The other direction: a WELL-FORMED brief whose contract fence contains a column-0 `# Subtask N`
+# YAML comment must still extract the whole contracts block.
+TOTAL=$((TOTAL+1))
+_wf_brief="$(mktemp -t wfbrief.XXXXXX)"; _wf_out="$(mktemp -t wfout.XXXXXX)"
+printf '# T\n## Subtask Contracts\n```yaml\n# Subtask 1 — a real YAML comment at column 0\nprovides:\n  - {kind: "file", path: "IN-FENCE-SENTINEL.ts"}\nrequires: []\n```\n## Environment\n- **P:** x\n' > "$_wf_brief"
+bash "$REPO_ROOT/loomwright/scripts/build-context-digest.sh" --brief "$_wf_brief" --out "$_wf_out" >/dev/null 2>&1 </dev/null
+if grep -q 'IN-FENCE-SENTINEL.ts' "$_wf_out" 2>/dev/null; then
+  ok "well-formed fence: a column-0 '# Subtask N' YAML comment does NOT terminate extraction"
+else
+  no "well-formed fence: extraction stopped at the in-fence '# Subtask N' comment — fence-awareness regressed"
+fi
+rm -f "$_wf_brief" "$_wf_out"
+
+# LEADING-ZERO / OCTAL REGRESSION (bot review, v15.20.0). The digits-only validation accepts a
+# leading zero, and bash reads such a numeral inside `$(( ))` as OCTAL. Before the `10#` fix this
+# produced a HARD exit 1 ("value too great for base", then `POOL: unbound variable` under set -u)
+# — a fatal arithmetic parse error that omitting `set -e` cannot suppress, breaking the builder's
+# "ALWAYS exits 0" contract. `_failsafe` asserts rc==0 first, so both cases below fail loudly on
+# any regression. Reachable through the documented env override, not just an in-repo caller.
+# 0089 -> 89: clears the _min_cap floor (60) but not the overhead+content floor, so tier 3
+# correctly REFUSES. The point of the case is rc==0 (it used to be 1), not which branch it lands in.
+_failsafe "--max-chars 0089 (invalid octal digits): base-10 normalized to 89, tier 3 refuses, no crash" none \
+  --brief "$REPO_ROOT/loomwright/sdk-spike/test/fixtures/brief-digest-sections.md" --max-chars 0089
+_failsafe "--max-chars 007 (valid octal, tiny): base-10 normalized, falls back to the default" written \
+  --brief "$REPO_ROOT/loomwright/sdk-spike/test/fixtures/brief-digest-sections.md" --max-chars 007
+
+# The SILENT variant: `020000` is a well-formed octal numeral (8192), so it never crashed — it
+# just enforced a bound 11808 bytes tighter than the caller asked for, with no error. Assert the
+# VALUE is honored, which the rc==0 checks above cannot see.
+TOTAL=$((TOTAL+1))
+_oz_out="$(mktemp -t ozout.XXXXXX)"
+CONTEXT_DIGEST_MAX_CHARS=020000 bash "$REPO_ROOT/loomwright/scripts/build-context-digest.sh" \
+  --brief "$REPO_ROOT/.supervisor/jobs/done/2026-07-23-curation-anti-rot.md" \
+  --out "$_oz_out" >/dev/null 2>&1 </dev/null
+_oz_sz="$(wc -c < "$_oz_out" 2>/dev/null | tr -d '[:space:]')"
+case "$_oz_sz" in ''|*[!0-9]*) _oz_sz=0 ;; esac
+if [ ! -s "$_oz_out" ]; then
+  # The corpus brief is gitignored; skip rather than fail on a fresh clone.
+  TOTAL=$((TOTAL-1))
+  echo "SKIP: octal-value check needs the gitignored corpus brief — not run"
+elif [ "$_oz_sz" -gt 8192 ]; then
+  ok "CONTEXT_DIGEST_MAX_CHARS=020000 is read as 20000, not octal 8192 (${_oz_sz} bytes written)"
+else
+  no "CONTEXT_DIGEST_MAX_CHARS=020000 silently capped at octal 8192 (${_oz_sz} bytes) — base-10 normalization regressed"
+fi
+rm -f "$_oz_out"
+
 # ---------------------------------------------------------------------------
 # TIGHT-CAP BOUNDARY SWEEP — the invariant is "written implies honest", at EVERY cap.
 #

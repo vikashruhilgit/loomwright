@@ -1503,6 +1503,12 @@ async function main(): Promise<number> {
       // it (both queries ran); the fallback is defensive-only and honestly
       // proxy-labeled zeros (never invent token counts).
       token_usage: o.tokenUsage ?? aggregateTokenUsage(null, null),
+      // Forward the worker's lane report instead of discarding it. The forced-output schema
+      // REQUIRES the worker to emit `out_of_lane`, so dropping it here meant paying for the
+      // field and then throwing the answer away. Report-only — never gates, never merges into
+      // any status decision (see schemas.ts for the collision-gate parity gap this does NOT
+      // close).
+      out_of_lane: o.workerResult?.out_of_lane ?? [],
     })),
     subtasks_failed: Array.from(failed.values()).map((o) => ({
       task_id: `subtask-${o.subtask.id}`,

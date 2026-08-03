@@ -268,6 +268,7 @@ for iteration in 1..max_iterations:
       # through the SAME adjudication surface as the outputs_gap gate above,
       # inventing no new escalation path. ---
       if worker_result.out_of_lane is non-empty:
+        collisions = []          # accumulate across BOTH loops; emit once, after them
         for each path in worker_result.out_of_lane:
           # matching_siblings: ALL other subtasks (from the brief's Subtask
           # Contracts already read at Inputs) whose declared `lanes:` contain a
@@ -287,6 +288,20 @@ for iteration in 1..max_iterations:
             if matching_sibling is NOT reachable from {subtask_id} in EITHER
                direction over the requires DAG (transitive closure — the
                reachability/"same-wave" test):
+              # COLLECT, do not emit yet. Emitting here would end the round on the
+              # FIRST collision found, so any remaining out_of_lane paths — and any
+              # second unordered owner of this same path — would be silently dropped
+              # from the checkpoint and only resurface on a later re-run. That also
+              # made WHICH collision got reported depend on iteration order, the exact
+              # order-dependence the plural `matching_siblings` above was introduced to
+              # remove. `colliding_lanes` is documented as a batchable evidence array
+              # (the lane analogue of `missing_outputs[]`); the control flow must
+              # actually fill it.
+              append {path, owning_subtask: matching_sibling, this_subtask: {subtask_id}}
+                to collisions
+
+        # AFTER both loops complete — one checkpoint carrying EVERY collision found.
+        if collisions is non-empty:
               emit EXECUTE_CHECKPOINT:
                 schema_version: 1
                 completed_so_far: [...]
@@ -311,14 +326,19 @@ for iteration in 1..max_iterations:
                 # `requires` edge, so it has no missing_outputs to report — emitting
                 # this shape without colliding_lanes made the checkpoint fail its own
                 # SubagentStop hook.)
+                # EVERY entry in `collisions`, not just the first — one checkpoint per
+                # pause, carrying the complete evidence set.
                 colliding_lanes: [
-                  {path: "{path}", owning_subtask: "{matching_sibling}",
-                   this_subtask: "{subtask_id}"}, ...
+                  {path: "...", owning_subtask: "...", this_subtask: "{subtask_id}"},
+                  ... one entry per collected collision ...
                 ]
-                reason: "Lane collision: {subtask_id} wrote {path}, inside sibling
-                  {matching_sibling}'s declared lane, and neither subtask is
-                  reachable from the other in the requires DAG (divergent-interface
-                  hazard)"
+                # Summarize the SET. Naming a single path/sibling here would contradict
+                # a multi-entry colliding_lanes above; Supervisor reads the array for
+                # specifics and this string only for the human-facing headline.
+                reason: "Lane collision: {subtask_id} wrote {N} path(s) inside the
+                  declared lane(s) of sibling(s) {owning_subtasks}, none of which is
+                  reachable from {subtask_id} in either direction over the requires DAG
+                  (divergent-interface hazard). See colliding_lanes[] for the full set."
                 # Lane-specific options. Deliberately NOT the requires-gap gate's four
                 # verbatim strings: "producer", "remediation subtask whose provides
                 # covers the missing items", and "remove the failing requires entry"

@@ -115,6 +115,21 @@ case "$MAX" in
     [ -n "$MAX" ] && err "non-numeric --max-chars '$MAX' — using default 6000"
     MAX=6000 ;;
 esac
+# BASE-10 NORMALIZATION — load-bearing, not cosmetic. The digits-only test above ACCEPTS a
+# leading zero, and bash reads a leading-zero numeral inside `$(( ))` as OCTAL. Two distinct
+# failures followed, both reproduced against this script before the fix:
+#   1. HARD CRASH, breaking the "ALWAYS exits 0" contract in this file's own header.
+#      `--max-chars 0089` -> `$(( MAX - OVERHEAD ))` dies with "value too great for base
+#      (error token is 0089)" because 8 and 9 are not octal digits, and the failed assignment
+#      then cascades into `POOL: unbound variable` under `set -u`. Observed exit status: 1.
+#      A fatal arithmetic parse error is NOT suppressible by omitting `set -e`.
+#   2. SILENT MISCALCULATION on a well-formed octal numeral. `--max-chars 020000` is read as
+#      8192, not 20000 — measured: a 7943-byte digest written under a cap the caller believed
+#      was 20000. No error, no warning, wrong bound.
+# Both are reachable through the DOCUMENTED public interface, not just a hypothetical future
+# caller: `CONTEXT_DIGEST_MAX_CHARS=0089` reproduces the crash exactly. `10#` forces base 10,
+# so `0089` -> 89 and falls through to the floor checks below like any other too-small cap.
+MAX=$(( 10#$MAX ))
 if [ "$MAX" -le 0 ] 2>/dev/null; then
   err "--max-chars must be > 0 — using default 6000"
   MAX=6000
@@ -188,12 +203,39 @@ fi
 # the Subtask Contracts YAML block legitimately contains lines like `# Subtask 1 — ...` (a YAML
 # comment) that would otherwise be misread as a markdown heading and prematurely end extraction.
 # ---------------------------------------------------------------------------
+# UNCLOSED-FENCE RECOVERY (bot review, v15.20.0). `infence` is a raw toggle, so a brief with an
+# ODD number of fence markers — an example block someone forgot to close, entirely possible in
+# generated markdown — leaves it stuck open for the rest of the file. Every heading after that
+# point becomes invisible and extraction silently blanks or misattributes each later section, with
+# no error. Reproduced: a brief whose `## File Impact Map` sat after an unclosed fence produced the
+# "no File Impact Map section" fallback while `## Subtask Structure` swallowed the file to EOF.
+#
+# The fix is a WHOLE-FILE parity pre-pass, deliberately NOT a per-line heuristic. The obvious
+# heuristic — "an ATX heading at column 0 proves the fence was never closed" — was tried and
+# REGRESSED the primary case: real briefs carry `# Subtask 1 — ...` at column 0 INSIDE the
+# contract YAML fence (measured in 2026-06-17-review-pr-until-mergeable.md:74), which is exactly
+# the line fence-awareness exists to protect, and treating it as a heading truncated the whole
+# Cross-lane contracts section. Counting instead lets us neutralize ONLY the final unmatched
+# opener, leaving every well-formed brief byte-identical.
+_fence_parity_line() {
+  # Echoes the line number of the LAST fence marker when the count is odd, else 0.
+  awk '/^(```|~~~)/ { n++; last = NR } END { print (n % 2) ? last : 0 }' "$1" 2>/dev/null
+}
+UNMATCHED_FENCE_LINE="$(_fence_parity_line "$BRIEF_FILE")"
+case "$UNMATCHED_FENCE_LINE" in ''|*[!0-9]*) UNMATCHED_FENCE_LINE=0 ;; esac
+[ "$UNMATCHED_FENCE_LINE" -gt 0 ] && \
+  err "brief has an unclosed code fence at line ${UNMATCHED_FENCE_LINE} — ignoring it so later headings stay visible"
+
 extract_section() {
-  awk -v want="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" '
+  awk -v want="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" \
+      -v badfence="$UNMATCHED_FENCE_LINE" '
     BEGIN { on = 0; infence = 0 }
     {
       line = $0
       if (line ~ /^(```|~~~)/) {
+        # Skip the toggle for the single unmatched opener identified by the parity pre-pass;
+        # it is content, not a fence. Every other fence behaves exactly as before.
+        if (badfence > 0 && NR == badfence) { if (on) { print } ; next }
         infence = !infence
         if (on) { print }
         next
