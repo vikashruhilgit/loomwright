@@ -626,13 +626,13 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
   - Recurring Patterns
   - Distilled Insights
   - Proposed Memory Updates
-  - Proposed CLAUDE.md Updates
+  - Proposed CLAUDE.md Updates (may also be prune / merge / supersede curation candidates — see `dreaming.md` §4)
 - Presents each proposed update for **per-item user approval** (Accept / Reject / Edit)
 
 **Read-only contract:**
 - `/dreaming` does not modify code, agent memory, or `CLAUDE.md`
 - Every proposed update is labeled **PENDING USER APPROVAL**
-- Persistence happens **only after** the user explicitly approves each item: on per-item Accept, `/dreaming` writes project-memory facts + LESSONS via the repo-root sole writers and promotes orientation proposals via `add-orientation.sh --confirm` (literal argv); CLAUDE.md and legacy agent-memory proposals stay paste-to-apply
+- Persistence happens **only after** the user explicitly approves each item: on per-item Accept, `/dreaming` writes project-memory facts + LESSONS via the repo-root sole writers and promotes orientation proposals via `add-orientation.sh --confirm` (literal argv); CLAUDE.md and legacy agent-memory proposals — including curation (prune/merge/supersede) candidates — stay paste-to-apply; there is no CLAUDE.md writer
 
 **When to Use:**
 - After a streak of completed `/supervisor` sessions, to surface recurring issues
@@ -1079,7 +1079,7 @@ bd close BD-XX
 
 loomwright/              # Nested plugin root
 ├── .claude-plugin/
-│   └── plugin.json                   # Plugin metadata (v15.20.0)
+│   └── plugin.json                   # Plugin metadata
 ├── commands/                         # Slash commands (21)
 │   ├── launch-pad.md                 # Supervisor readiness
 │   ├── supervisor.md                 # Parallel orchestrator (v4)

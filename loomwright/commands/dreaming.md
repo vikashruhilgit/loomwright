@@ -155,7 +155,11 @@ OUTPUT (mandatory six-section report, in this order):
   - Target section (existing heading or proposed new heading)
   - Proposed text (verbatim, in the same prose style as the surrounding doc)
   - Linked Insight number
-  Do NOT edit CLAUDE.md. Propose only.
+  A proposal MAY instead be a CURATION candidate — prune (a section no longer earns
+  its context cost), merge (two sections restate each other), or supersede (a claim's
+  authoritative home moved elsewhere) — labeled the same way, naming the target
+  section(s) and, for merge/supersede, the replacement text. Do NOT edit CLAUDE.md.
+  Propose only.
 
   ## 5. Collected Memory Candidates
   Scan the gathered sources for worker WORKER_RESULT.memory_candidates[] strings
@@ -205,6 +209,13 @@ Proposed additions or revisions to project `CLAUDE.md` (or a sub-file it referen
 - Proposed text (verbatim, in the same prose style as the surrounding doc)
 - Justification linked to a Distilled Insight
 - Approval status: **PENDING USER APPROVAL** (always — `/dreaming` does not auto-apply)
+
+**Curation candidates (prune / merge / supersede) — same section, same gate, no new writer.** Alongside additive proposals, `/dreaming` may also surface a **curation** candidate when reflection determines that CLAUDE.md (or a sub-file it references, e.g. a relocated section in `loomwright/docs/`) has drifted from what a fresh session actually needs. A curation candidate is still just a §4 proposal — labeled **PENDING USER APPROVAL**, applied by the user (or a follow-up turn) via the existing paste-to-apply mechanism, never written by `/dreaming` itself. Three shapes:
+- **Prune** — an existing section (or sub-file section) no longer earns its context cost (e.g. it describes a retired behavior, or duplicates something now authoritative elsewhere). The proposal names the section to remove and the justification (linked Insight).
+- **Merge** — two sections restate the same fact and should collapse into one. The proposal names both sections, which one survives, and the merged text (verbatim, ready to paste).
+- **Supersede** — a claim's authoritative home has moved (e.g. a count or version claim that should now read "see `plugin.json`" instead of restating a number — see `AGENT_GUIDELINES.md` §"Claim Duplication Rule"). The proposal names the stale claim, its new authoritative source, and the replacement text.
+
+Each curation proposal carries the same **Accept / Reject / Edit** gate as every other §4 item (there is no CLAUDE.md writer, so `Supersede`/`Retract` as *actions* — the composed store-verb calls used elsewhere in this command for LESSONS/orientation memos — do not apply here; a curation candidate that *recommends* a prune/merge/supersede is still just accepted, rejected, or edited as **prose to paste**). This is UX parity with the v15.14.0 store-curation shape (per-item gating, never bulk) — not a claim that CLAUDE.md gained a mechanized sole writer; it explicitly did not (see the Read-Only Contract below).
 
 ### 5. Collected Memory Candidates
 

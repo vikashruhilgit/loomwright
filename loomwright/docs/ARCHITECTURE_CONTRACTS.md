@@ -40,6 +40,66 @@ These are **defense-in-depth** restrictions for accidental misuse, NOT security 
 
 ---
 
+## Agent Invariants
+
+> Relocated from `CLAUDE.md` §"The 14 Agent Roles" in the v15.21.0 CLAUDE.md diet (content moved,
+> never deleted — see `.supervisor/requirements/final-state/09-claude-md-diet-dreaming.md`). This is
+> now the authoritative home for the full per-agent invariants, the `/autonomous` orchestration
+> shell, the Shared Agent Contract, and the Parallel Execution Model; `CLAUDE.md` keeps only a
+> compact 14-row name/type/one-line-purpose list plus a pointer here.
+
+| Agent | Type | Spawned by | Codebase-relevant invariants |
+|---|---|---|---|
+| Launch Pad | user-facing | user | Phase 2.5 feasibility (GO/CAUTION/NO-GO); Phase 5.5 mandatory Plan Review (max 3 spawns per session); writes briefs to `.supervisor/jobs/pending/`. **Requirement-file input:** Phase 2 step 0 — when the `goal:`/`feature:`/`problem:` value is a path **under `.supervisor/requirements/`** to an existing `.md` (resolves via `test -f` against the project root, the Beads-absent Product Owner story target), Launch Pad reads it as the requirement source; any other value (including a bare repo file like `README.md`) stays a literal-string goal. Closes the PO→Launch Pad handoff gap in Beads-optional mode. Also stamps `source_requirement` provenance (`- **Source requirement:** {path}` under the brief `## Environment`) for requirement-file inputs |
+| Supervisor | user-facing | user | v4 + **Phase 1.5 PRE-FLIGHT SYNC** (remote-state reconciliation between ACQUIRE and PLAN — classifies the requested work CLEAR/OVERLAP/SUPERSEDED, silent on CLEAR, soft-gate `AskUserQuestion` interactively, fails closed under `--non-interactive` with `error: "preflight_overlap_detected"`; bounded ≤6 calls; `--skip-preflight-sync` escape hatch) + Phase 4.5 self-heal — self-heal phase **always** runs; `--skip-self-heal` only short-circuits the loop; completion-tail relocates job-move + state-completed from FINALIZE; completion-tail also stamps an idempotent `## Status: done` close-out on the originating requirement file in **Beads-absent** mode (success-only, fail-safe). **Phase 4.5 also offers an opt-in, default-OFF, NON-gating advisory red-team lens** (`--red-team` / `--no-red-team`, `.red_team_high_risk` config) that runs only on high-risk integrated diffs and records findings in `SUPERVISOR_RESULT.summary` + the job Outcome block — never blocks the PR or changes the `heal_decision`. **v15.8.0 opt-ins (both default OFF):** `--sdk-runner` (EXPERIMENTAL — Phase 3 shells out to the quarantined `sdk-spike/` runner; fail-closed `sdk_runner_unavailable` if node/built runner absent) and `--multi-voter-heal` (`.multi_voter_heal` config; Phase 4.5 spawns an independent red-team-reviewer verification vote + refute check — refuted findings logged, not fixed; gate shape unchanged; authority: `skills/self-heal-advisory/SKILL.md` Part 2). **Phase protocol bodies live in skills (v15.4.0):** `preflight-sync` (Phase 1.5) / `supervisor-config` (Phase 0) / `self-heal-advisory` Part 2 (Phase 4.5) / `async-orchestration` Part 2 (Phase 4 FINALIZE + spawn contracts + worktree lifecycle) — Read at phase entry; gates and the completion-tail guard stay in `agents/supervisor.md`. **Never assert git merge/PR state ("on main", "in the PR", "already merged") without verifying via `git log` / `git branch --contains`.** |
+| Product Owner | user-facing | user | Assumption Check (standard) + Reality Check (`--brainstorm`) cap Feasibility for NEEDS_FOUNDATION/BLOCKED ideas. **Beads-optional** (see Orchestrator row): when `beads_active` is false, stories persist as `.supervisor/requirements/*.md` and handoff is by file path, not `BD-XX` |
+| Orchestrator | user-facing | user | Reads CLAUDE.md (+ Beads when active) → EPIC / TASK with skill references. Defaults to one task per `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold" (split only for a named reason); **no paired review subtask is generated at any threshold (Fix 7, v15.18.0)** — the deterministic `outputs_verified` gate plus tests/lint is the per-task gate throughout, and Phase 4.5's integrated review is the sole LLM gate — see `agents/orchestrator.md` §"Review Gate Policy". **Beads-optional:** a `## Persistence Mode` block branches on `beads_active` (probe `test -d .beads && bd --version`); when absent, skips all `bd` and writes the task tree to `.supervisor/requirements/{slug}-plan.md` — the no-per-subtask-review policy applies in both modes. Detection logic already lived in the shared `context-setup` skill; this wires output to it (matching Code Reviewer's long-standing Beads-optional pattern) |
+| Code Reviewer | user-facing | user | LSP, read-only mode, schema_v3 (adds `drift` category, severity caps via hook). **Auto-expands to consistency audit** when diff touches `agents/`, `commands/`, `skills/`, `docs/`, or plugin metadata |
+| Red Team Reviewer | user-facing | user | 6 attack vectors; persistent memory of past audits |
+| QA Strategist | user-facing | user | Three modes (Strategy / Gate Audit / Post-Execution Audit); spawned twice (gate audit Phase 11, results audit Phase 13) |
+| QA Executor | user-facing | user | Multi-phase Level 1 protocol (phases 1–13, non-monotonic order), `--depth smoke|functional`, `--plan/--scope/--continue`, infrastructure-aware (Mailpit/MailHog), 80/110/60 budget (default/scoped/plan) with 60/80/92% zones |
+| Review-PR (`review-pr-runner`) | user-facing | user / Supervisor completion-tail / autonomous EVALUATE | `/review-pr <pr-url>` standalone review→fix→re-review loop against an existing PR; resolves PR-URL → head branch, spawns `code-reviewer` + `general-purpose` fix worker; **never auto-merges**; emits `REVIEW_HEAL_RESULT`. NEVER Task-spawned (subagents-cannot-spawn-subagents) — run inline via `/review-pr` or as `claude --agent …:review-pr-runner`. Authority is the `review-heal` skill. |
+| Execute Manager | internal | Supervisor (Phase 3) | Owns poll loop in isolated context, 60 tool-call budget |
+| Context-Keeper | internal | Supervisor / Execute Manager | **Sole writer** of state file on the parallel path (the inline main-thread Supervisor may do an equivalent best-effort direct write of the `## Session` block); haiku model, batch updates, atomic writes |
+| Worker | internal | Execute Manager / Supervisor | Above threshold: one subtask per worktree. Single-Agent Path (below threshold, the default): one worker executes ALL acceptance criteria in the project root, no worktree. No git ops either way, emits WORKER_RESULT + `.worker-summary.md` |
+| Plan Reviewer | internal | Launch Pad | PLAN_REVIEW_RESULT decision gates the brief save — PASS saves; NEEDS_HUMAN saves only on explicit user override; FAIL never saves |
+| Rubric Grader | internal | Supervisor (Phase 4.5, only when brief has `## Outcomes Rubric` and `heal_decision == PASS`) | Read-only Haiku scorer; runtime read-only enforcement comes from `disallowedTools: Write, Edit, Task, NotebookEdit` (the frontmatter-level enforcement that survives plugin distribution — `permissionMode: plan` is preserved for `~/.claude/agents/` compatibility but is silently ignored by Claude Code for plugin agents); emits per-item `ITEM N: PASS\|FAIL` lines + `rubric_score: N/M`; advisory only — never changes `heal_decision` or blocks the PR |
+
+### `/autonomous` orchestration shell (v14.0.0)
+
+`/autonomous` is **not a new agent.** It is an inline main-thread slash command (`loomwright/commands/autonomous.md`) governed by `loomwright/skills/autonomous-loop/SKILL.md`. The same execution model as `/launch-pad` and `/supervisor`: the slash command body is workflow instructions executed inline on the main thread. The main thread reads `commands/launch-pad.md` and `commands/supervisor.md` at Step 0 (to avoid prompt drift), then runs Launch Pad inline (which still Task-spawns `plan-reviewer`), then runs Supervisor inline (which still Task-spawns `orchestrator` / `execute-manager` / `code-reviewer` / `rubric-grader`).
+
+**Default mode is now multi-iteration** (cap 10, default `--max-iterations 3`) with **stacked PRs**: iteration N+1 branches from `iterations[N].branch` so the chain is reviewable bottom-up. Reviewers MUST merge the bottom of the stack first; out-of-order merges leave higher iterations rebased against the wrong base. `--no-stacked-branches` opts out and restores v13's branch-from-integration-base cadence. `--max-iterations 1` reproduces v13's single-iteration default. `--notify` opts in to gate-event webhooks (rubric / adjudication / NO-GO / Plan Review FAIL × 3) — payloads built with **jq only** for injection safety, fire-and-forget POST, gated on `LOOMWRIGHT_WEBHOOK_URL`. `--non-interactive-fallback` enables a per-gate fail-closed policy for CI / stdin-not-tty: rubric gate aborts (`rubric_gate_closed_non_interactive`); no-rubric `completed` returns `done` with `no_rubric_in_non_interactive`; adjudication gate inherits Supervisor's `--non-interactive` policy if forwarded.
+
+Re-iteration signals are the same as v13 (rubric_score N<M with user-merge confirmation; `failed + inter_subtask_gap` from Option C adjudication, anchored by `.supervisor/jobs/failed/{basename(current_brief_path)}` existence + `inter_subtask_gap` found in any of the failed brief / `SUPERVISOR_RESULT.error` / `SUPERVISOR_RESULT.summary`; `.supervisor/state.md` intentionally NOT consulted to avoid pre-rewrite stale-content false positives). The loop never auto-picks on adjudication — Supervisor's existing 4-option `AskUserQuestion` surfaces in-session as it does today; foreground-assisted automation, not fire-and-forget.
+
+State writes are confined to `.supervisor/autonomous/{session_id}/` (the loop's own state), `.supervisor/requirements/` (the requirement files), and one append-only JSONL session log at `.supervisor/logs/{session_id}.jsonl` (matches the existing per-session log convention shared with `/supervisor`). Supervisor remains the sole writer of `.supervisor/jobs/` and `.supervisor/state.md` per existing contracts — autonomous-loop reads but never directly writes them. Context-Keeper gains atomic `set_flag` / `get_flag` / `clear_flag` operations writing under a new `## Phase Flags` section in `state.md` (consumed by autonomous-loop for stacked-branch handoff). `AUTONOMOUS_RUN` is at **schema_version 2** with nine new closed `status_reason` values; the autonomous-layer status enum (`done | paused_max_iterations | aborted | failed`) remains distinct from `SUPERVISOR_RESULT.status` to avoid schema collision; the summary is plain markdown plus a JSON sidecar (no hook validation, no resume contract in v1 of this loop — those remain future work).
+
+### Shared Agent Contract
+
+Every agent (full standard in `AGENT_GUIDELINES.md`):
+
+- **Mission:** smallest correct thing that advances the objective
+- **Output:** Context Read → Plan → Work → Results → Risks
+- **Frontmatter:** `tools`, `model`, `maxTurns`, `color`, `disallowedTools`, `skills`, `memory`, per-agent `hooks`, `effort`, `permissionMode`
+- **Safety:** no destructive actions without explicit approval; never invent files/APIs/paths; merge conflicts always escalate
+- Language-agnostic; per-language standards in `AGENT_GUIDELINES.md`
+
+**Self-heal pattern (v11.0.0):** Phase 4.5 SELF_HEAL runs Code Reviewer on the integrated feature-branch diff after FINALIZE creates the PR, then auto-fixes bounded BLOCKING/HIGH `new` issues (up to `--heal-iterations`, default 3). Job-file move and `state.md` "completed" marker live in SELF_HEAL's completion tail — not FINALIZE — so the record captures heal outcome. `SUPERVISOR_RESULT` is validated by SubagentStop hook.
+
+### Parallel Execution Model
+
+- Supervisor v4 delegates Phase 3 to Execute Manager for multi-subtask workflows
+- Execute Manager owns the poll loop and worker lifecycle, Context-Keeper coordination
+- Each worker runs in its own git worktree (no file conflicts)
+- Workers write `.worker-summary.md` for lightweight result extraction
+- Context-Keeper externalizes state; Supervisor uses tool-call budgets (50, including Phase 4.5) instead of percentage thresholds; Execute Manager has its own 60-call budget in isolated context
+- Subtask branches merge sequentially into the feature branch with pre-merge validation
+- **No per-subtask LLM reviewer is spawned at any threshold (Fix 7, v15.18.0)** — each worker's own deterministic `outputs_verified` gate plus tests/lint is the per-subtask gate; Supervisor's Phase 4.5 integrated review, run once holistically after FINALIZE, is the sole LLM gate. See `agents/orchestrator.md` §"Review Gate Policy".
+- Single-Agent Path (exactly 1 subtask, the default below `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold"): skips worktrees and Execute Manager entirely, one worker executes all acceptance criteria in one context — Phase 4.5's holistic review is the single review, same as above
+
+---
+
 ## Context Budget Guidelines
 
 | Agent | Max Context | Rationale |
