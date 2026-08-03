@@ -622,11 +622,13 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 **What it does:**
 - Reads the N most recent `.supervisor/logs/{session_id}.jsonl` files (read-only)
 - Spawns target agent(s) in reflection mode with read-only access to their own `.claude/agent-memory/{agent-id}/`
-- Aggregates per-agent output into a single reflection report with four mandatory sections:
+- Aggregates per-agent output into a single reflection report with six mandatory sections, in this order:
   - Recurring Patterns
   - Distilled Insights
   - Proposed Memory Updates
   - Proposed CLAUDE.md Updates (may also be prune / merge / supersede curation candidates — see `dreaming.md` §4)
+  - Collected Memory Candidates
+  - Proposed LESSONS
 - Presents each proposed update for **per-item user approval** (Accept / Reject / Edit)
 
 **Read-only contract:**
