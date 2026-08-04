@@ -858,9 +858,9 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
     return a.id.localeCompare(b.id);
   });
   // Pin the producer→consumer id contract HERE, once, after the natural sort — see
-  // normalizeSubtaskIds' own doc comment and the brief's "Design note" for why this must not
-  // move earlier (it would reintroduce the 10-before-2 bug) or be duplicated per-anchor (the two
-  // sides of an edge would diverge).
+  // normalizeSubtaskIds' own doc comment for why this must not move earlier (it would
+  // reintroduce the 10-before-2 bug) or be duplicated per-anchor (the two sides of an edge
+  // would diverge).
   normalizeSubtaskIds(sorted);
   return {
     subtasks: sorted,

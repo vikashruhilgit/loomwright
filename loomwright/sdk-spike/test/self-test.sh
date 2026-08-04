@@ -666,6 +666,14 @@ if [ "$HAVE_NODE" = 1 ] && [ -f dist/runner.js ] && [ -f "$LEGACY_BRIEF" ]; then
     process.exit(ids.length === 2 && ids[0] === '1' && ids[1] === '2' ? 0 : 1);
   " 2>/dev/null; then
     pass "normalizeSubtaskIds: identity on an already-numeric brief (mini-brief.md unchanged)"
+  else
+    fail "normalizeSubtaskIds: already-numeric mini-brief.md ids were altered"
+  fi
+
+  # SIBLING, not nested: the gapped-id case is logically independent of the identity case
+  # above. Nesting it inside that check's success branch meant an identity regression would
+  # silently SKIP this assertion instead of failing it on its own terms.
+  if true; then
     # GAPPED numeric ids (1, 2, 4) — the case position-mapping does NOT round-trip.
     # Renumbering to 1,2,3 is intended, but it is only SAFE because both sides of every
     # edge are rewritten from the one shared map: a `from: "4"` must follow its subtask to
@@ -719,8 +727,31 @@ GAPEOF
     else
       fail "normalizeSubtaskIds: gapped numeric brief renumbered inconsistently (edge dangled or ids wrong)"
     fi
+  fi
+
+  # The implicit `else` inside normalizeSubtaskIds: a `from:` that resolves to NO id in this
+  # brief is left as-is rather than remapped. Asserted rather than inferred, because the
+  # branch is only safe by virtue of a property in a DIFFERENT function — the wave scheduler
+  # gates on `completed.has(r.from)`, so an unmatched `from` blocks its subtask forever
+  # (fail-safe) instead of resolving to the wrong node (fail-dangerous). If that scheduler
+  # check ever changes, this test is what catches the silent flip.
+  if node -e "
+    const {normalizeSubtaskIds} = require('$SPIKE_DIR/dist/runner.js');
+    const subtasks = [
+      {id: '1a', requires: []},
+      {id: '2',  requires: [{from: '1a'}, {from: '99z'}]},
+    ];
+    normalizeSubtaskIds(subtasks);
+    if (subtasks.map(s => s.id).join(',') !== '1,2') process.exit(1);
+    // Resolvable ref followed its subtask...
+    if (subtasks[1].requires[0].from !== '1') process.exit(1);
+    // ...unresolvable ref left VERBATIM (not remapped, not deleted, not undefined).
+    if (subtasks[1].requires[1].from !== '99z') process.exit(1);
+    process.exit(0);
+  " 2>/dev/null; then
+    pass "normalizeSubtaskIds: an unresolvable from: is left verbatim (never remapped onto a wrong node)"
   else
-    fail "normalizeSubtaskIds: already-numeric mini-brief.md ids were altered"
+    fail "normalizeSubtaskIds: unresolvable from: was altered — it must stay verbatim so the scheduler blocks rather than mis-resolves"
   fi
 else
   skip "normalizeSubtaskIds regression (needs node + built dist/ + legacy-alpha-ids-brief.md fixture)"
