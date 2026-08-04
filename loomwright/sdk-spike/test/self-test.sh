@@ -666,6 +666,59 @@ if [ "$HAVE_NODE" = 1 ] && [ -f dist/runner.js ] && [ -f "$LEGACY_BRIEF" ]; then
     process.exit(ids.length === 2 && ids[0] === '1' && ids[1] === '2' ? 0 : 1);
   " 2>/dev/null; then
     pass "normalizeSubtaskIds: identity on an already-numeric brief (mini-brief.md unchanged)"
+    # GAPPED numeric ids (1, 2, 4) — the case position-mapping does NOT round-trip.
+    # Renumbering to 1,2,3 is intended, but it is only SAFE because both sides of every
+    # edge are rewritten from the one shared map: a `from: "4"` must follow its subtask to
+    # "3", never dangle. Asserted, because a one-sided rewrite here is exactly the original
+    # arm-3 failure and no other test in this file exercises a gap.
+    MW_TMP_GAP=$(mktemp -d 2>/dev/null || mktemp -d -t gapbrief)
+    GAP_BRIEF="$MW_TMP_GAP/gapped-brief.md"
+    cat > "$GAP_BRIEF" <<'GAPEOF'
+## Subtask Structure
+
+| # | Title | Est. Files | Status |
+|---|-------|-----------|--------|
+| 1 | first | 1 | LAUNCHABLE |
+| 2 | second | 1 | LAUNCHABLE |
+| 4 | fourth (id gap — 3 was dropped) | 1 | BLOCKED (by #2) |
+
+## Subtask Contracts
+
+```yaml
+subtask_1:
+  provides:
+    - {kind: file, path: a.ts}
+  requires: []
+  lanes: ["a.ts"]
+subtask_2:
+  provides:
+    - {kind: file, path: b.ts}
+  requires: []
+  lanes: ["b.ts"]
+subtask_4:
+  provides:
+    - {kind: file, path: d.ts}
+  requires:
+    - {from: "2", kind: file, path: b.ts}
+  lanes: ["d.ts"]
+```
+GAPEOF
+    if node -e "
+      const {parseBrief} = require('$SPIKE_DIR/dist/runner.js');
+      const r = parseBrief(require('fs').readFileSync('$GAP_BRIEF','utf8'));
+      const ids = r.subtasks.map(s => s.id);
+      // Gap is closed by position-mapping: 1,2,4 -> 1,2,3.
+      if (ids.join(',') !== '1,2,3') { console.error('ids: ' + ids.join(',')); process.exit(1); }
+      // The surviving edge must still resolve to a REAL id, not the stale '2'-that-moved.
+      const idSet = new Set(ids);
+      const dangling = r.subtasks.flatMap(s => s.requires).filter(q => q.from !== undefined && !idSet.has(q.from));
+      if (dangling.length !== 0) { console.error('dangling: ' + JSON.stringify(dangling)); process.exit(1); }
+      process.exit(0);
+    " 2>/dev/null; then
+      pass "normalizeSubtaskIds: gapped numeric ids (1,2,4) renumber to 1,2,3 with no dangling edge"
+    else
+      fail "normalizeSubtaskIds: gapped numeric brief renumbered inconsistently (edge dangled or ids wrong)"
+    fi
   else
     fail "normalizeSubtaskIds: already-numeric mini-brief.md ids were altered"
   fi
