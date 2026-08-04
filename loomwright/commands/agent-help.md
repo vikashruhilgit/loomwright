@@ -622,17 +622,19 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 **What it does:**
 - Reads the N most recent `.supervisor/logs/{session_id}.jsonl` files (read-only)
 - Spawns target agent(s) in reflection mode with read-only access to their own `.claude/agent-memory/{agent-id}/`
-- Aggregates per-agent output into a single reflection report with four mandatory sections:
+- Aggregates per-agent output into a single reflection report with six mandatory sections, in this order:
   - Recurring Patterns
   - Distilled Insights
   - Proposed Memory Updates
-  - Proposed CLAUDE.md Updates
+  - Proposed CLAUDE.md Updates (may also be prune / merge / supersede curation candidates — see `dreaming.md` §4)
+  - Collected Memory Candidates
+  - Proposed LESSONS
 - Presents each proposed update for **per-item user approval** (Accept / Reject / Edit)
 
 **Read-only contract:**
 - `/dreaming` does not modify code, agent memory, or `CLAUDE.md`
 - Every proposed update is labeled **PENDING USER APPROVAL**
-- Persistence happens **only after** the user explicitly approves each item: on per-item Accept, `/dreaming` writes project-memory facts + LESSONS via the repo-root sole writers and promotes orientation proposals via `add-orientation.sh --confirm` (literal argv); CLAUDE.md and legacy agent-memory proposals stay paste-to-apply
+- Persistence happens **only after** the user explicitly approves each item: on per-item Accept, `/dreaming` writes project-memory facts + LESSONS via the repo-root sole writers and promotes orientation proposals via `add-orientation.sh --confirm` (literal argv); CLAUDE.md and legacy agent-memory proposals — including curation (prune/merge/supersede) candidates — stay paste-to-apply; there is no CLAUDE.md writer
 
 **When to Use:**
 - After a streak of completed `/supervisor` sessions, to surface recurring issues
@@ -952,7 +954,7 @@ Use `/supervisor --cheap` to override the execution-shaped roles (orchestrator, 
 
 ### Plugin Hooks (Quality Gates)
 
-The plugin centralizes **24 hooks** in `hooks/hooks.json` that automatically enforce quality and surface notifications (the authoritative table lives in the root `CLAUDE.md`):
+The plugin centralizes its hooks in `hooks/hooks.json`, which automatically enforce quality and surface notifications (`hooks.json` is authoritative for the wiring and the count; the authoritative table lives in `loomwright/docs/HOOKS.md` §"Hook Table"):
 
 | Hook | When It Fires | What It Checks / Does |
 |------|---------------|----------------|
@@ -1079,7 +1081,7 @@ bd close BD-XX
 
 loomwright/              # Nested plugin root
 ├── .claude-plugin/
-│   └── plugin.json                   # Plugin metadata (v15.20.0)
+│   └── plugin.json                   # Plugin metadata
 ├── commands/                         # Slash commands (21)
 │   ├── launch-pad.md                 # Supervisor readiness
 │   ├── supervisor.md                 # Parallel orchestrator (v4)

@@ -1,0 +1,42 @@
+# Pitfalls
+
+> Relocated from `CLAUDE.md` §"Common Pitfalls" in the v15.21.0 CLAUDE.md diet (content moved, never
+> deleted — see `.supervisor/requirements/final-state/09-claude-md-diet-dreaming.md`). This is now
+> the authoritative home for the pitfalls below; `CLAUDE.md` keeps only the every-session ones
+> (the stale-branch trap, the project-structure reminder, and the Beads-list reminder) plus
+> a pointer here for everything else. The enumeration above is the claim — no count is restated,
+> per `AGENT_GUIDELINES.md` §"Claim Duplication Rule", so promoting a fourth back into `CLAUDE.md`
+> cannot silently falsify this note.
+
+## Common Pitfalls
+
+### `/supervisor` or `/launch-pad` aborted with "Task/Agent tool unavailable"?
+- Pre-11.1.1 name-collision trap: the slash command silently auto-delegated to a same-named registered subagent, which couldn't spawn its own children ([docs](https://code.claude.com/docs/en/sub-agents): *"Subagents cannot spawn other subagents"*).
+- Fix in 11.1.1: registered agents are now `loomwright:supervisor-runner` and `loomwright:launch-pad-runner`. The slash commands are inline main-thread workflows; the `-runner` suffix lets `claude --agent loomwright:supervisor-runner` own a session without re-introducing auto-delegation.
+- For an agent-owned session: `claude --agent …-runner`. Otherwise stay on the main thread via the slash command.
+
+### `/supervisor` completed but skipped Phase 4.5 (or Phase 3 child agents)?
+- **What this is:** inline main-thread execution misread as permission to stop orchestrating. "Don't delegate to `supervisor-runner`" does NOT mean "do everything yourself." Still spawn first-level children via Task — `orchestrator` (Phase 2), `execute-manager` or Single-Agent/Sequential-path worker (Phase 3), `code-reviewer` + fix loop (Phase 4.5).
+- **Fix in 11.1.2:** Phase 4.5 completion-tail guard (`loomwright/agents/supervisor.md`) refuses a successful `SUPERVISOR_RESULT` when `skip_self_heal_requested=false` AND `phase45_review_invoked=false`. Run self-reports `status: failed`; job stays in `in-progress/`.
+- **Recovery for pre-11.1.2 runs (operator workaround — unsupported, manual):**
+  1. `/code-reviewer` has no first-class branch-vs-branch diff mode. Compute scope via `git diff --name-only origin/main...HEAD` and pass that file list to `/code-reviewer`, OR pipe `git diff origin/main...HEAD` into a manual review.
+  2. Fix any new BLOCKING/HIGH issues; push to feature branch.
+  3. Update `.supervisor/` state and the job file by hand. NOT supported — will become `/supervisor --recover-self-heal` in a follow-up PR.
+- **Intentional skip:** re-run with `--skip-self-heal` (the guard accepts it as a recorded deliberate choice).
+
+### Supervisor workflow interrupted?
+State auto-saves to `.supervisor/state.md`. Resume with `/supervisor --continue task: BD-XX`. Check `.supervisor/history/` for completed sessions.
+Resume is fail-closed (v15.3.0): `--continue` schema-validates the loaded state BEFORE consuming it (closed `phase`/`status` enums + branch-must-verify, per `skills/state-management/SKILL.md` §"Resume validation gate") and refuses with `error: "resume_state_invalid"` on any violation — inspect or delete the state file; there is no override flag.
+**Schema-valid is NOT the same as true.** A state file can pass every schema check and still under-report reality: on 2026-07-27 all 5 subtasks were merged while `state.md` read `phase: ACQUIRE` / all `PENDING`, and `--continue` would have silently re-executed the whole job. Resume therefore also runs `scripts/reconcile-resume-state.sh`, which reconciles the `## Subtasks` rows against subtask + merge commits on the asserted branch and refuses with a **distinct** `error: "resume_state_stale"` (`UNKNOWN` fails closed too). Different error because the operator response differs — an *invalid* file is corrupt (delete it), a *stale* file is intact but behind, and the work it claims is pending already exists on the branch. **Root cause worth remembering: prompt-instructed bookkeeping is unreliable** (measured in this repo: 560 hook-written `token_ledger` events vs 6 agent-written `phase_transition` events across 11+ sessions), so the reconciler keys on commits — a byproduct of the work — never on anything an agent must remember to write. Do not patch a future gap here by adding another "write your state" instruction.
+
+### Orphaned worktrees after crash?
+`git worktree list`; `git worktree remove ../project-BD-XXa`; `git branch -d feature/BD-XXa`. The detached until-mergeable review drain also creates a sibling worktree (`../{project}-review-{pr_hash}`, detached-HEAD at the PR head SHA) owned by `dispatch-pr-review.sh`'s `trap cleanup EXIT` wrapper, which removes it on the wrapper's normal/error exit. A **hard** kill (SIGKILL / power-loss) skips the trap, so that worktree can linger on disk — `git worktree prune` only reclaims an entry once its directory is *already gone*, and the durable per-PR marker blocks the same-PR re-dispatch whose pre-add cleanup would otherwise force-remove it. Remove a stray one manually: `git worktree remove --force ../{project}-review-{pr_hash}` (the leak is cosmetic — the marker preserves idempotency).
+
+### Detached review drain colliding with inline self-heal? (fixed in v14.42.0 — drain is now worktree-isolated)
+**Do NOT write `.supervisor/config.json {"auto_review": false}` to suppress the until-mergeable drain for the self-heal race** — that practice is **retired** as of v14.42.0. The detached dispatched drain (`review-pr-runner`, launched by `dispatch-pr-review.sh`) now runs in its OWN sibling git worktree (detached-HEAD at the PR head SHA), so it no longer shares a working tree/index with the inline Phase 4.5 self-heal and cannot sweep its uncommitted edits — the collision the suppress kill-switch existed to dodge is gone. The `auto_review` flag **remains** as a legitimate general opt-out (turn the drain off entirely), but it is no longer the recommended fix for the concurrency hazard, and suppressing it for the race risks the exact silent-drop it used to cause (a suppressed drain with no safe restore = no dispatch; cf. PR #74). A markerless heal-outcome PR now surfaces in `/insights` under `## Missing-drain reconciliation` as the signal to investigate.
+
+### `/autonomous` brief-save detection (fixed in v14.2.0 — `ls`-diff is now fallback-only)
+**Fixed in v14.2.0.** The PLAN phase now reads `LAUNCH_PAD_RESULT.saved_brief_path` (emitted by Launch Pad Phase 7, validated by `scripts/validate-launch-pad-result.py`) as the **primary** brief-save signal — each Launch Pad invocation emits exactly one result block and the loop consults only the block from its own inlined call, so a concurrent `/launch-pad` can no longer be mistaken for this loop's save. The legacy `ls`-diff of `.supervisor/jobs/pending/` remains a **pre-v14.2.0 fallback** (used only when the result block is absent or fails validation); it keeps the original single-session-only constraint and still aborts the multi-file case with `status_reason="concurrent_session_detected"`. For pre-v14.2.0 plugins the safe operating rule remains: one autonomous / launch-pad invocation at a time per repo.
+
+### `/autonomous --cheap` (supported since v15.2.0 — forwarded to the inlined `/supervisor`)
+Since v15.2.0, `--cheap` **is forwarded**: `/autonomous` parses it at INIT and appends it to every inlined `/supervisor job:` invocation (EXECUTE step 1 §"Auto-forwarded flags"), and `/automate` passes it through to its inner `/autonomous` call — the full `/automate → /autonomous → /supervisor` chain carries the Sonnet cost profile. Note the `/automate` passthrough is NOT persisted in the run file's `## Run Config`, so re-pass it on each `--resume` / `/loop` tick. `--skip-preflight-sync` remains unforwarded. On pre-v15.2.0 plugins the flag was an inert no-op — there, run `/launch-pad` and `/supervisor --cheap` manually. See `commands/autonomous.md` "Parameters" → `--cheap interaction note` for details.

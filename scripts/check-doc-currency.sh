@@ -16,6 +16,28 @@
 # scans bare numbers, so dated changelog entries like "v12.2.0 took the count
 # 13 -> 14" do NOT trigger it.
 #
+# SURFACES THIS GATE DOES NOT SCAN (recurring drift, integration-review-only —
+# relocated here from CLAUDE.md in the v15.21.0 diet, content moved never deleted):
+# Supervisor phase enumerations (agent-help.md, command docs), per-run YAML
+# frontmatter field lists in build-insights.sh, budget/zone numbers, and /insights
+# dashboard section enumerations. Per-row skill `version:` cells in SKILLS_INDEX.md
+# are instead mechanically enforced by scripts/check-skills-index-sync.sh, and the
+# ARCHITECTURE_CONTRACTS.md §"Prompt Token Budgets" per-agent mirror table's budget
+# cells are mechanically synced to prompt-token-budgets.json by
+# scripts/check-token-budget.sh (drifted/missing/ghost rows fail CI closed there) —
+# neither needs this gate's coverage.
+#
+# FROZEN, VERSION-AGNOSTIC EXAMPLE VALUES ARE INTENTIONALLY LEFT ALONE: sample
+# `session_end` / `POSTMORTEM_RESULT` JSONL records and `e.g. "X.Y.Z"`
+# `plugin_version` placeholders (in docs/RESULT_SCHEMAS.md, agents/supervisor.md,
+# and similar) illustrate *format* only — the real value is read at runtime from
+# plugin.json via jq, so they are NOT current-claims and carry no currency
+# requirement. Do not "fix" them to the current version on a bump; bumping them
+# every release is a drift-treadmill this gate cannot enforce (they re-stale at the
+# next version) — a stale-looking version inside an example block is intended, not
+# drift. On any phase/version/budget/section change, grep the OLD value repo-wide —
+# a green run of this gate is necessary but NOT sufficient.
+#
 # Exit 0 = clean, 1 = drift detected (prints every offending file:line).
 
 set -uo pipefail

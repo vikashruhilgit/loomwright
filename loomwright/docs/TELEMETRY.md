@@ -204,7 +204,7 @@ MUST NOT write this key today.
 **Hook coverage:** the emitter is chained on the **same** `type: command`
 hook lines that already run `send-telemetry.sh` (stdin fan-out — both scripts
 see the payload; chaining onto an existing hook line adds no new hook
-entry — see CLAUDE.md §"Plugin Hooks (Quality Gates)" for the authoritative,
+entry — see `loomwright/docs/HOOKS.md` §"Hook Table" for the authoritative,
 current count):
 
 | Matcher | Emits `token_ledger`? |

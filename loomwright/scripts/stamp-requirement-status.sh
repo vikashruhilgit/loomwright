@@ -15,8 +15,9 @@
 #
 # INVOCATION SEAMS — TWO, deliberately, because ONE was inert on the default path.
 #   1. `SessionStart` (via the `session-resume.sh` entry) — THE LOAD-BEARING ONE. `/supervisor`,
-#      `/autonomous` and `/automate` are INLINE main-thread workflows (CLAUDE.md §"Common
-#      Pitfalls"), so they never spawn a `loomwright:supervisor-runner` subagent and never emit a
+#      `/autonomous` and `/automate` are INLINE main-thread workflows (loomwright/docs/PITFALLS.md
+#      §"Common Pitfalls", relocated from CLAUDE.md in the v15.21.0 diet), so they never spawn a
+#      `loomwright:supervisor-runner` subagent and never emit a
 #      `SubagentStop` for that matcher. The first cut of this wiring used ONLY seam 2 below and was
 #      therefore inert on exactly the runs whose 8 unstamped requirements motivated it — caught in
 #      review, not in testing. SessionStart fires on every session regardless of how Supervisor
