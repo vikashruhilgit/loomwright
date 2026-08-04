@@ -2,8 +2,8 @@
 name: automate-loop
 description: Protocol authority for `/automate` — the generic automation engine that converts ANY source (a prompt via /product-owner, a requirements folder, or a backlog-doc) into a FULL Queue with a per-run processing cap inside ONE markdown run file (`.supervisor/automate/<run_id>.md` — the contract, dashboard, and resume state), then drives each Queue item through the per-item loop (`/autonomous --single-iteration` → owned inline `/review-pr --until-mergeable` → trusted-merge-or-park → pull main → check off + append `## Progress`). Smart resume = glob `*.md` for not-done + reconcile-vs-ground-truth. Use when implementing or invoking `/automate`.
 allowed-tools: [Read, Write, Edit, Bash, Task, AskUserQuestion]
-version: "1.2.0"
-lastUpdated: "2026-07-06"
+version: "1.3.0"
+lastUpdated: "2026-08-04"
 ---
 
 # Automate Loop Skill
@@ -120,7 +120,7 @@ Exactly **one** source is resolved per run. Resolution produces the **FULL** ord
 ## Current
 - item: <path> | status: running|awaiting_merge|escalated|failed|done | pr: <url> | branch: <name>
 - pause_reason: awaiting_merge|escalated|limit_reached|resume_ambiguous|null
-- owned_drain_started: <ts> | owned_drain_result: READY|ESCALATED | suppressed_default_dispatch: true
+- owned_drain_started: <ts> | owned_drain_result: READY|ESCALATED | suppressed_default_dispatch: true (`READY`'s `termination_reason` — `converged` or `sub_floor_converged`, mechanized bound via `scripts/drain-rounds.sh` — is read straight through from `REVIEW_HEAL_RESULT`; `sub_floor_converged` is NOT merge-eligible, §10 cond 1)
 ## Progress                 # APPEND-ONLY (never rewritten)
 - <ts> picked <item>
 - <ts> ran /autonomous → PR <url>
@@ -246,7 +246,7 @@ At the END of §6 step 3 (DRAIN), AFTER reading the terminal `REVIEW_HEAL_RESULT
 After suppression, DRAIN owns **exactly ONE** inline `/review-pr --until-mergeable --no-auto-postmortem` (the standalone review-and-heal drain — authority is `skills/review-heal/SKILL.md` §"Until-Mergeable Mode"). The **`--no-auto-postmortem`** flag suppresses the owned drain's churn-gated Postmortem Dispatch Tail: inside `/automate` the engine emits its OWN honest engine-native learning line (§6 step 3 "Learning-emit at end-of-DRAIN"), so the owned drain must NOT also append a GitHub-blind false-0 postmortem line for the same PR — one honest line, not honest + false-0. (Outside `/automate`, a standalone `/review-pr --until-mergeable` keeps its Postmortem Dispatch Tail unchanged.) Its **terminal `REVIEW_HEAL_RESULT` is read synchronously** and written to `## Current`:
 
 - `owned_drain_started: <ts>`
-- `owned_drain_result: READY | ESCALATED`  (the `--until-mergeable` terminal decision — `READY` is "ready, left open for a human"; it **never merges**)
+- `owned_drain_result: READY | ESCALATED`  (the `--until-mergeable` terminal decision — `READY` is "ready, left open for a human"; it **never merges**. `READY`'s bound is now **mechanized** via `scripts/drain-rounds.sh`, the same shared ledger both `/review-pr` entry paths call — `review-heal/SKILL.md` §U4 — and `READY` carries a `termination_reason` of `converged` or `sub_floor_converged`; ONLY `sub_floor_converged` is excluded from the §10 trusted-merge gate, condition 1, below)
 - `suppressed_default_dispatch: true`
 
 **Verifiable** via those `## Current` fields **plus the absence of any detached `dispatch-pr-review.sh` artifact for the PR** (no `.supervisor/review-dispatch/` marker for the PR URL, no `pgrep -lf review-pr-runner` for it).
@@ -286,7 +286,8 @@ then `--resume`.
 
 `gh pr merge --squash` fires **ONLY** when **ALL 5** conditions hold. If any fails or is **unreadable** ⇒ fail **CLOSED** → park (`pause_reason: awaiting_merge`/`escalated`) + notify. (Two values are NOT automatic parks — they have explicit per-condition semantics below: a **reviews-not-required `reviewDecision`** is deferred to cond 4, and an **absent rubric** is N/A — see cond 3 and cond 5.) This gate — implemented in `automate-helpers.sh gate-eval` — is the **only** sanctioned, EXECUTED `gh pr merge --squash` in the plugin (§11).
 
-1. **Owned drain == `READY`.** The engine's own inline `/review-pr --until-mergeable` (§7) returned `READY` (not `ESCALATED`).
+1. **Owned drain == `READY`, AND its `termination_reason` is NOT `sub_floor_converged`.** The engine's own inline `/review-pr --until-mergeable` (§7) returned `READY` (not `ESCALATED`). **A `sub_floor_converged` READY is NOT auto-merge-eligible** (AC9, drain-bounding-earned-checks): its final round skipped the all-channel bot-finding re-scan (`review-heal/SKILL.md` §"Termination-only severity floor"), so it must PARK exactly like a non-`READY` drain result. `automate-helpers.sh gate-eval` reads `termination_reason` with the same explicit `has()`/`!= null` fail-CLOSED form as cond 3's `unresolved_human_thread` — missing/unreadable ⇒ PARK, never a silent merge.
+   - **Loop contract (load-bearing — mirrors cond 3's `unresolved_human_thread` rule):** the loop MUST pass the `REVIEW_HEAL_RESULT.termination_reason` string straight through into the gate `ctx.json`'s `termination_reason` field whenever the owned drain returned `READY` (`converged` or `sub_floor_converged`) — never omit it, never coerce it to `null`. A v1/legacy `REVIEW_HEAL_RESULT` that predates this field has no `termination_reason` to forward, so the loop omits the key entirely — `gate-eval` fails **CLOSED** (PARK) on that omission by design (a drain result this engine cannot classify is never assumed merge-eligible).
 
 2. **Head SHA still == the `READY` SHA AND base == `main`.** Re-read `gh pr view <url> --json headRefOid,baseRefName`; if the head moved since the drain declared `READY` (a new commit landed), or the base is not `main`, **do not merge** (the approved state is stale).
 

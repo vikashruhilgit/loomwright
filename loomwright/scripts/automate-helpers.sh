@@ -333,6 +333,9 @@ reconcile_item() {
 # fails closed):
 #   {
 #     "drain_result": "READY|ESCALATED",          # cond 1
+#     "termination_reason": "converged|bound_hit|sub_floor_converged",  # cond 1b
+#        # A "sub_floor_converged" drain skipped its final all-channel re-scan, so it is NOT
+#        # merge-eligible. Read with an explicit has()/!= null check: missing/null ⇒ PARK.
 #     "ready_sha": "<sha>", "head_sha": "<sha>",   # cond 2
 #     "base": "main",                               # cond 2
 #     "review_decision": "APPROVED|CHANGES_REQUESTED|REVIEW_REQUIRED|none|unreadable",  # cond 3
@@ -366,6 +369,21 @@ gate_eval() {
   # Condition 1 — owned drain == READY.
   if [ "$(J '.drain_result')" != "READY" ]; then
     echo "PARK: drain_not_ready"; return 0
+  fi
+
+  # Condition 1b — a `sub_floor_converged` READY is NOT auto-merge-eligible (AC9,
+  # drain-bounding-earned-checks): its final round skipped the all-channel bot-finding
+  # re-scan (skills/review-heal/SKILL.md §"Termination-only severity floor"), so it must
+  # PARK like any other non-fully-scanned READY. Read WITHOUT the falsy-coercing `//`
+  # (same trap as config_orig / the cond-3 unresolved_human_thread read below) —
+  # an explicit has()/!=null check so a legitimate string value is never coerced away.
+  # Missing / null / unreadable ⇒ PARK (fail CLOSED) — mirrors the unresolved_human_thread
+  # precedent exactly: a past-due REVIEW_HEAL_RESULT that never learned this field must
+  # never silently merge just because the key is absent.
+  local tr
+  tr="$("$JQ" -r 'if has("termination_reason") and (.termination_reason != null) then .termination_reason else "__MISSING__" end' "$ctx")"
+  if [ "$tr" = "__MISSING__" ] || [ "$tr" = "sub_floor_converged" ]; then
+    echo "PARK: sub_floor_not_merge_eligible"; return 0
   fi
 
   # Condition 2 — head SHA unchanged AND base == main.
