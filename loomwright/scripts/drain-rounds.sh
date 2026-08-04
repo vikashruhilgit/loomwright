@@ -7,7 +7,8 @@
 #
 # The hard ceiling value is NEVER hardcoded here — callers pass it explicitly
 # to `init`. The authoritative default (5) lives at ONE place,
-# skills/review-heal/SKILL.md:365 (`--max-rounds N` overrides it); this script
+# the `max_rounds` default in skills/review-heal/SKILL.md §"Step U4 — The bounded
+# drain loop" (`--max-rounds N` overrides it); this script
 # only stores and checks whatever integer it is given (Claim Duplication Rule).
 #
 # Subcommands:

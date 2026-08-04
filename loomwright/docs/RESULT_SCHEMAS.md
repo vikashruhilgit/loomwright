@@ -2107,7 +2107,7 @@ REVIEW_HEAL_RESULT:
   notified: bool                       # required — true if a notification was attempted (escalation OR "ready to merge")
   # --- drain fields (v2; present only under --until-mergeable) ---
   rounds: int                          # drain rounds actually run (the --max-rounds-bounded outer loop; mechanized via scripts/drain-rounds.sh, read from its ledger at emit time — same ledger on both entry paths)
-  max_rounds: int                      # the drain hard ceiling (default 5, the ONE authoritative home for this value at skills/review-heal/SKILL.md:365; --max-rounds N overrides)
+  max_rounds: int                      # the drain hard ceiling (default 5, the ONE authoritative home for this value is the `max_rounds` default in skills/review-heal/SKILL.md §"Step U4 — The bounded drain loop"; --max-rounds N overrides)
   fix_cycles: int                      # fix→push cycles run during the drain (postmortem-gate input)
   churn_rounds: int                    # consecutive rounds whose anti-churn fingerprint set did not shrink
   repeat_check_failure: bool           # a required check that was fixed re-failed in a later round (postmortem input)

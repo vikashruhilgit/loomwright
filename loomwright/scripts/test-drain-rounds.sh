@@ -21,7 +21,7 @@
 #       max_rounds) exit non-zero and never write a ledger.
 #   (G) no hardcoded ceiling: init accepts ANY caller-supplied integer (3, 5,
 #       8, 1) — the script itself asserts nothing about which value is "the"
-#       default (that lives at review-heal/SKILL.md:365 only).
+#       default (that lives ONLY in review-heal/SKILL.md §"Step U4 — The bounded drain loop").
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
