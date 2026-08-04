@@ -534,7 +534,9 @@ loop:
 
 # Emit REVIEW_HEAL_RESULT (v2). rounds is READ from the ledger (drain-rounds.sh read <pr_url>) at emit
 # time — the ledger is the single source of truth for the count on BOTH entry paths.
-rounds = drain-rounds.sh read <pr_url> .rounds
+rounds = $(drain-rounds.sh read <pr_url> | jq -r '.rounds // 0')   # `read` prints the WHOLE ledger
+#          JSON ({"rounds":N,"max_rounds":M}) and takes NO field argument — extract with jq, never by
+#          passing a second positional arg (it is silently ignored).
 iterations = rounds        # the back-compat v1 analogue — same value as `rounds`. fix_cycles is the
                             # distinct fix→push count (≤ rounds).
 ```
