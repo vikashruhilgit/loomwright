@@ -369,6 +369,15 @@ function parseArgs(argv: string[]): CliArgs {
  *   - order-preserving — the output is exactly the input's post-sort order, by construction.
  * `1a, 1b, 2, 10 → 1, 2, 3, 4` (fixture: legacy-alpha-ids-brief.md / launchpad-brief.md).
  *
+ * TRACEABILITY CAVEAT (non-identity mappings only): the normalized id flows downstream into the
+ * `sdk-spike/subtask-N` branch name, the worktree dir, the commit message, the worker prompt, and
+ * `task_id` in results. So on a brief this does NOT map to itself — a legacy alpha-suffixed brief,
+ * or a hand-edited/gapped numeric one — the `#` a human reads in the Subtask Structure table will
+ * NOT equal the generated `subtask-N` suffix. Correctness is unaffected (both sides of every edge
+ * come from the one map), but when debugging such a run, match on the Subtask Contracts block
+ * rather than the table row number. Briefs authored under the current producer rule (plain
+ * numeric, 1-based, sequential) map to themselves, so this never fires on them.
+ *
  * Mutates `subtasks` in place (both `id` and every `requires[].from`) and builds the map exactly
  * once per call — never called per-anchor, which is what would let the table/heading/contract-key
  * forms and the `from:` forms disagree with each other.
