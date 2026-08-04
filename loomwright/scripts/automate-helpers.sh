@@ -375,7 +375,7 @@ gate_eval() {
   # drain-bounding-earned-checks): its final round skipped the all-channel bot-finding
   # re-scan (skills/review-heal/SKILL.md §"Termination-only severity floor"), so it must
   # PARK like any other non-fully-scanned READY. Read WITHOUT the falsy-coercing `//`
-  # (same trap as config_orig / the cond-3 unresolved_human_thread read at :413 below) —
+  # (same trap as config_orig / the cond-3 unresolved_human_thread read below) —
   # an explicit has()/!=null check so a legitimate string value is never coerced away.
   # Missing / null / unreadable ⇒ PARK (fail CLOSED) — mirrors the unresolved_human_thread
   # precedent exactly: a past-due REVIEW_HEAL_RESULT that never learned this field must
