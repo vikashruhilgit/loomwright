@@ -366,7 +366,7 @@ printf '{"state":"OPEN"}\n' > "$GH_STUB_DIR/pr-view.json"   # not used by gate, 
 pass_ctx() {
   cat <<EOF
 {
-  "drain_result": "READY",
+  "drain_result": "READY", "termination_reason": "converged",
   "ready_sha": "abc123", "head_sha": "abc123", "base": "main",
   "review_decision": "APPROVED", "unresolved_human_thread": false,
   "protection_enforceable": true, "trust_unprotected": false,
@@ -499,6 +499,39 @@ if [ "$RUN_OUT" = "PARK: drain_not_ready" ] && [ "$(merges)" -eq 0 ]; then
   ok "gate fail-closed: drain ESCALATED ⇒ PARK, no merge"
 else
   no "gate drain wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+
+# AC9 (drain-bounding-earned-checks) — sub_floor_converged is NOT auto-merge-eligible even
+# though drain_result == READY: its final round skipped the all-channel re-scan.
+gate "$(pass_ctx | jq '.termination_reason="sub_floor_converged"')"
+if [ "$RUN_OUT" = "PARK: sub_floor_not_merge_eligible" ] && [ "$(merges)" -eq 0 ]; then
+  ok "AC9 fail-closed: sub_floor_converged READY ⇒ PARK, no merge"
+else
+  no "AC9 sub_floor_converged wrong (out='$RUN_OUT' merges=$(merges))"
+fi
+
+# AC9 — MISSING/null termination_reason must fail CLOSED (PARK), never fail-open merge.
+# (Mirrors the unresolved_human_thread fail-open regression guard above.)
+gate "$(pass_ctx | jq 'del(.termination_reason)')"
+if [ "$RUN_OUT" = "PARK: sub_floor_not_merge_eligible" ] && [ "$(merges)" -eq 0 ]; then
+  ok "AC9 fail-closed: MISSING termination_reason ⇒ PARK (no fail-open)"
+else
+  no "AC9 missing-termination_reason FAILED OPEN (out='$RUN_OUT' merges=$(merges))"
+fi
+gate "$(pass_ctx | jq '.termination_reason=null')"
+if [ "$RUN_OUT" = "PARK: sub_floor_not_merge_eligible" ] && [ "$(merges)" -eq 0 ]; then
+  ok "AC9 fail-closed: null termination_reason ⇒ PARK (no fail-open)"
+else
+  no "AC9 null-termination_reason FAILED OPEN (out='$RUN_OUT' merges=$(merges))"
+fi
+
+# AC9 regression guard — a plain "converged" READY (the normal, fully-scanned case) is
+# STILL merge-eligible; this field must not park the common path.
+gate "$(pass_ctx | jq '.termination_reason="converged"')"
+if [ "$RUN_OUT" = "MERGE" ] && [ "$(merges)" -eq 1 ]; then
+  ok "AC9 no-regression: termination_reason=converged ⇒ still MERGE-eligible"
+else
+  no "AC9 converged-regression wrong (out='$RUN_OUT' merges=$(merges))"
 fi
 
 # Blocker 5 — required checks not green (the non-rubric half of condition 5).

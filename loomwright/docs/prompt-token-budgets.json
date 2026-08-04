@@ -55,9 +55,9 @@
       "note": "authoring baseline v15.10.0; 1 preloaded skill"
     },
     "review-pr": {
-      "budget": 27955,
-      "measured": 25413,
-      "note": "authoring baseline v15.10.0; 2 preloaded skills (name: loomwright:review-pr-runner). Raised 24230 -> 27955 (v15.18.0, Fix 7 item 2/Subtask 2): the new \"Earned Fallback Review\" subsection (no_review_lens_posted trigger, the fail-CLOSED-to-running-the-review contract, and the reachability argument for why the drain's Task(loomwright:code-reviewer) spawn is legal) is a real new contract, not bloat -- measured moved 22027 -> 25413 (+3386), breaching by 1183. Restored the same ~10% margin this row has held since authoring (never previously raised) rather than resetting to a fresh measured+10%, which coincides with the same formula here since the prior margin already was 10%."
+      "budget": 31453,
+      "measured": 28875,
+      "note": "authoring baseline v15.10.0; 2 preloaded skills (name: loomwright:review-pr-runner). Raised 24230 -> 27955 (v15.18.0, Fix 7 item 2/Subtask 2): the new \"Earned Fallback Review\" subsection (no_review_lens_posted trigger, the fail-CLOSED-to-running-the-review contract, and the reachability argument for why the drain's Task(loomwright:code-reviewer) spawn is legal) is a real new contract, not bloat -- measured moved 22027 -> 25413 (+3386), breaching by 1183. Restored the same ~10% margin this row has held since authoring (never previously raised) rather than resetting to a fresh measured+10%, which coincides with the same formula here since the prior margin already was 10%. Raised 27955 -> 31453 (drain-bounding-earned-checks, v15.22.0): the mechanized shared drain bound (scripts/drain-rounds.sh) + the termination-only severity floor (`--severity-floor`, `sub_floor_converged`, the SHA-bound confirming required-check pass, AC11/AC12/AC13) is a real new contract in the preloaded review-heal skill, not bloat -- measured moved 25413 -> 28593 mid-PR, then 28875 end-of-PR after syncing agents/review-pr.md's outcome-model restatements (+3462 total), breaching by 638 at the mid-PR figure. Restored the same ~10% margin per the raise rule; the measured cell/field reflects the end-of-PR live re-measure (28875, 2578 headroom) per the same live-remeasure convention this row has held since Fix 7."
     },
     "rubric-grader": {
       "budget": 2330,
