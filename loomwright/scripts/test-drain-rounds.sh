@@ -160,6 +160,23 @@ for m in 1 3 5 8; do
 done
 
 echo ""
+echo "== H. leading-zero octal rejection (regression: same class as build-context-digest.sh --max-chars 0089) =="
+for badmax in 08 09 010 007; do
+  if bash "$DR" init "$ROOT/oct-$badmax" "$badmax" >/dev/null 2>&1; then
+    no "H max=$badmax: leading zero ACCEPTED (bash arithmetic would read it as octal)"
+  else
+    ok "H max=$badmax: leading zero rejected"
+  fi
+done
+# plain 0 and normal integers must STILL be accepted -- the guard must not over-reject
+for okmax in 0 5 10 100; do
+  if bash "$DR" init "$ROOT/ok-$okmax" "$okmax" >/dev/null 2>&1; then
+    ok "H max=$okmax: accepted"
+  else
+    no "H max=$okmax: wrongly rejected"
+  fi
+done
+
 echo "== SUMMARY: $pass passed, $fail failed =="
 [ "$fail" -eq 0 ] || exit 1
 exit 0

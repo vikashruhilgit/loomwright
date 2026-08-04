@@ -510,8 +510,17 @@ loop:
           notify "ready to merge" (best-effort)
           drain-rounds.sh bump <pr_url>                # this round still counts against the ceiling
           break
-        # else: fallback found something — skip straight to the anti-churn/bump tail, do NOT re-derive
-        # a second time; next loop iteration's normal §U1 read picks up fallback_findings via bot_findings.
+        # else: the fallback found something, so this round was NOT empty-yield. Its findings live ONLY
+        # in the returned CODE_REVIEW_RESULT — §U1's read_all_channels() reads EXTERNAL GitHub state
+        # (reviews, threads, issue comments, check output) and can NEVER observe an in-memory Task result,
+        # and code-reviewer does not self-post. So they MUST be re-derived and fixed HERE, exactly like the
+        # non-sub-floor earned-fallback branch above does; relying on "the next round's §U1 read will pick
+        # them up" would lose them permanently (fallback_review_ran is run-scoped, so the fallback cannot
+        # fire again this drain), violating reading B's "no finding is ever declined a fix".
+        validated     += [f for f in fallback_findings if validate(f) == CONFIRMED]
+        auto_fixable   = [f for f in validated if is_auto_fixable(f)]
+        needs_human    = [f for f in validated if not is_auto_fixable(f)]
+        # fall through to this SAME round's fix-worker dispatch + push, then the anti-churn/bump tail.
       else:
         decision = READY
         termination_reason = "sub_floor_converged"

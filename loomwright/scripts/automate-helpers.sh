@@ -333,6 +333,9 @@ reconcile_item() {
 # fails closed):
 #   {
 #     "drain_result": "READY|ESCALATED",          # cond 1
+#     "termination_reason": "converged|bound_hit|sub_floor_converged",  # cond 1b
+#        # A "sub_floor_converged" drain skipped its final all-channel re-scan, so it is NOT
+#        # merge-eligible. Read with an explicit has()/!= null check: missing/null ⇒ PARK.
 #     "ready_sha": "<sha>", "head_sha": "<sha>",   # cond 2
 #     "base": "main",                               # cond 2
 #     "review_decision": "APPROVED|CHANGES_REQUESTED|REVIEW_REQUIRED|none|unreadable",  # cond 3

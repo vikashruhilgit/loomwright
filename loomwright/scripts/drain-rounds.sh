@@ -90,6 +90,7 @@ cmd_init() {
   [ -n "$pr" ] && [ -n "$max" ] || usage
   case "$max" in
     ''|*[!0-9]*) echo "drain-rounds: init requires a non-negative integer max_rounds, got: '$max'" >&2; exit 2 ;;
+    0[0-9]*) echo "drain-rounds: init rejects leading zeros in max_rounds, got: '$max' (bash arithmetic would read it as OCTAL -- '010' would silently mean 8, and '08'/'09' would abort with 'value too great for base', breaking this script's fail-closed contract)" >&2; exit 2 ;;
   esac
   mkdir -p "$DIR" 2>/dev/null || { echo "ESCALATED: ledger_dir_uncreatable"; exit 2; }
   local f; f="$(ledger_path "$pr")"
@@ -110,7 +111,7 @@ cmd_bump() {
   if [ -z "$rounds" ] || [ -z "$max" ]; then
     echo "ESCALATED: unreadable_round_ledger"; exit 2
   fi
-  rounds=$((rounds + 1))
+  rounds=$((10#$rounds + 1))
   if ! printf '{"rounds":%s,"max_rounds":%s}\n' "$rounds" "$max" > "$f" 2>/dev/null; then
     echo "ESCALATED: ledger_write_failed"; exit 2
   fi
