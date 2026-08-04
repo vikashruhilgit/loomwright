@@ -359,6 +359,8 @@ Take any raw user goal and prepare it for autonomous Supervisor execution. Run d
 
 **Actions:**
 
+> **Subtask id scheme (RULE):** number subtasks **plain numeric, 1-based, sequential** (`1, 2, 3, …`) — never alpha-suffixed (`1a`/`1b`) and never any other prefixed form. Use this scheme in the Subtask Structure table's `#` column AND in every `from:` reference in the Subtask Contracts YAML. Full rule + rationale: `skills/supervisor-readiness/SKILL.md` §"Subtask Structure" (do not restate it here).
+
 1. Default to a single subtask whose acceptance criteria are the **checklist for one worker** — not a template for generating subtasks. Split a Phase 3 file group off into its own subtask only when one of the threshold's three named reasons fires; when it does, record the triggering reason verbatim as `- **Split reason:** <reason>` in the brief's `## Configuration` (omit the line entirely for a single-subtask brief — see the threshold section for the exact recording rule)
 2. For each subtask: title, acceptance criteria subset, estimated files, skill references, **structured `provides` / `requires` / `external_requires` / `lanes` lists**
 3. Analyze dependencies (which subtasks depend on which) — derive these from `requires` entries, not free-form prose
@@ -392,7 +394,7 @@ provides:
   - {kind: "file", path: "src/auth/jwt.guard.ts"}
   - {kind: "symbol", path: "src/auth/jwt.guard.ts", name: "JwtAuthGuard"}
 requires:
-  - {from: "S1", kind: "type", path: "src/auth/types.ts", name: "AuthContext"}
+  - {from: "1", kind: "type", path: "src/auth/types.ts", name: "AuthContext"}
 lanes:
   - "src/auth/jwt.guard.ts"
 external_requires:

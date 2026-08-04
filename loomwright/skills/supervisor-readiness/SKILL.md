@@ -219,6 +219,8 @@ so Supervisor Phase 4.5 `ground_truth` executes the doc-currency and version-con
 
 ## Subtask Structure
 
+**Subtask id scheme (RULE, not merely illustration):** subtask ids are **plain numeric, 1-based, sequential** (`1, 2, 3, …`) — never alpha-suffixed (`1a`/`1b`) and never any other prefixed form. Every id used in the `#` column of the table below, and every `from:` reference in the Subtask Contracts YAML, MUST use this scheme. Downstream, `loomwright/sdk-spike/src/runner.ts`'s parser tolerates legacy alpha-suffixed ids from older briefs (`normalizeSubtaskIds` maps them onto this same scheme so no `from:` edge dangles) — that tolerance is a compatibility shim for *archived* briefs, not license to author new ones with alpha suffixes.
+
 | # | Title | Acceptance Criteria Subset | Est. Files (modify/create) | Skills | Status |
 |---|-------|---------------------------|---------------------------|--------|--------|
 | 1 | {title} | {criteria IDs} | {M} modify, {C} create | {skill refs} | LAUNCHABLE |
