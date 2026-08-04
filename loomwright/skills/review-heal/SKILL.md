@@ -492,42 +492,23 @@ loop:
   if sub_floor_eligible:
     outcome = confirming_required_check_pass(pushed_sha, required)   # SHA-BOUND — full contract below (AC11, R1)
     if outcome.result == "GREEN":
-      # AC12 — evaluate the earned-fallback gate FOR THE SKIPPED ROUND: auto_fixable/needs_human are
-      # RE-DERIVED as empty (this round already fixed every bot finding it found), reusing THIS round's
-      # scan/bot_findings — exactly where round N+1's own §U1 read + gate would have run it, without paying
-      # for a fresh all-channel scan.
-      if not fallback_review_ran and compute_no_review_lens_posted(bot_findings, scan):
-        fallback_review_ran = true
-        fallback_review = Task(subagent_type: "loomwright:code-reviewer", prompt: "…diff_review…")   # identical spawn to the branch above
-        fallback_findings = [i for i in fallback_review.issues if i.category == "new"]
-        # A FAIL result here means the skipped round would NOT have been empty-yield after all — do
-        # NOT terminate; fall through to the normal fingerprint/bump/loop tail below so the fallback
-        # finding gets a real fix round like any other validated finding.
-        if fallback_findings == []:
-          decision = READY
-          termination_reason = "sub_floor_converged"   # NOT auto-merge-eligible (AC9) — see automate-loop §10 cond 1
-          sub_floor_fixed += auto_fixable
-          notify "ready to merge" (best-effort)
-          drain-rounds.sh bump <pr_url>                # this round still counts against the ceiling
-          break
-        # else: the fallback found something, so this round was NOT empty-yield. Its findings live ONLY
-        # in the returned CODE_REVIEW_RESULT — §U1's read_all_channels() reads EXTERNAL GitHub state
-        # (reviews, threads, issue comments, check output) and can NEVER observe an in-memory Task result,
-        # and code-reviewer does not self-post. So they MUST be re-derived and fixed HERE, exactly like the
-        # non-sub-floor earned-fallback branch above does; relying on "the next round's §U1 read will pick
-        # them up" would lose them permanently (fallback_review_ran is run-scoped, so the fallback cannot
-        # fire again this drain), violating reading B's "no finding is ever declined a fix".
-        validated     += [f for f in fallback_findings if validate(f) == CONFIRMED]
-        auto_fixable   = [f for f in validated if is_auto_fixable(f)]
-        needs_human    = [f for f in validated if not is_auto_fixable(f)]
-        # fall through to this SAME round's fix-worker dispatch + push, then the anti-churn/bump tail.
-      else:
-        decision = READY
-        termination_reason = "sub_floor_converged"
-        sub_floor_fixed += auto_fixable
-        notify "ready to merge" (best-effort)
-        drain-rounds.sh bump <pr_url>
-        break
+      # AC12 — the earned-fallback gate is NOT re-run here, and that is CORRECT rather than an omission.
+      # PROOF it cannot be earned on this path: sub_floor_eligible requires `auto_fixable != []`, and
+      # auto_fixable ⊆ validated ⊆ bot_findings, so reaching this branch GUARANTEES bot_findings != [].
+      # But `no_review_lens_posted`'s condition 1 (§"Earned Fallback Review") requires bot_findings to be
+      # EMPTY. The two are mutually exclusive by construction — so on a sub-floor termination a review lens
+      # demonstrably DID post (that non-empty union IS the evidence), and the fallback is by definition
+      # unearned. Plan Review's "Hole 3" is therefore VACUOUS on this path, not unhandled.
+      # Do NOT "fix" this by calling compute_no_review_lens_posted() here: it can only ever return false,
+      # which is unreachable dead code that falsely advertises a guard (a drain review round caught exactly
+      # that shipped in an earlier cut of this change). If a future edit ever lets sub_floor_eligible hold
+      # with bot_findings == [], this proof breaks and the gate must be reinstated.
+      decision = READY
+      termination_reason = "sub_floor_converged"   # NOT auto-merge-eligible (AC9) — see automate-loop §10 cond 1
+      sub_floor_fixed += auto_fixable
+      notify "ready to merge" (best-effort)
+      drain-rounds.sh bump <pr_url>                # this round still counts against the ceiling
+      break
     else:   # RED, UNREADABLE, or the bounded SHA-settle wait itself elapsed (still-not-settled) — Hole 1
       decision = ESCALATED                              # NEVER READY on a red/unknown/unbound-checked SHA
       if outcome.result == "RED" and (outcome.failing_names & checks_ever_fixed) != {}:
