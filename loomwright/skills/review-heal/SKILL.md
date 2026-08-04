@@ -557,7 +557,13 @@ while now < deadline:
   if view.headRefOid != pushed_sha:
     sleep(poll_interval); continue         # rollup describes a DIFFERENT commit — not settled for OUR SHA yet
   scoped_required = [c in view.statusCheckRollup if is_required(c)]
-  materialized = [c in scoped_required if c exists in the rollup for headRefOid == pushed_sha]
+  # NOTE: this is a COUNT check, not an identity filter. `gh`'s statusCheckRollup has NO per-check
+  # SHA field — the whole rollup already corresponds to pushed_sha, because the headRefOid guard
+  # above returned/looped otherwise. So `materialized` is just "how many of the required contexts
+  # have appeared in this SHA's rollup yet", distinguishing NOT-YET-CREATED (GitHub has not
+  # materialised the check run) from CREATED-BUT-PENDING (which the in_flight test below catches).
+  # Do not go looking for a per-check SHA field to filter on; there isn't one.
+  materialized = [c in rollup_for_pushed_sha if is_required(c)]   # count vs len(required), see note
   if len(materialized) < len(required):
     sleep(poll_interval); continue         # a required check has NOT YET been re-created for pushed_sha —
                                             # NOT-settled, NEVER treated as green (this is the race R1 names:
