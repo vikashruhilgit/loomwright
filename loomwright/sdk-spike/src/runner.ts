@@ -349,6 +349,59 @@ function parseArgs(argv: string[]): CliArgs {
   return args;
 }
 
+/**
+ * Pin the subtask-id scheme to plain numeric (skills/supervisor-readiness/SKILL.md
+ * §"Subtask Structure") by rewriting every parsed id — and every `requires[].from` that
+ * references one — through ONE shared id→id map. Launch Pad emits `1, 2, 3` for some briefs and
+ * `1a, 1b, 2` for others from byte-identical input (see the `\d+[a-z]?` comment on the table-row
+ * regex above); the accepted-input regexes stay tolerant of both, and this is where the two
+ * shapes converge to a single scheme so nothing downstream (wave scheduling, worktree/branch
+ * naming, WORKER_RESULT `task_id`) has to know the difference.
+ *
+ * Mapping: each subtask's id becomes its 1-based POSITION in `subtasks`, which callers MUST pass
+ * already naturally sorted (parseBrief calls this immediately after its natural sort, never
+ * before — normalizing first would reintroduce the "10 sorts before 2" bug the natural sort
+ * exists to prevent). Position-based assignment is:
+ *   - injective       — two distinct source ids (e.g. "1a" and "1b") can never collide on the
+ *                        same output id, unlike naive truncation (`1a`, `1b` → `1`, `1`).
+ *   - identity         — an already-sequential 1..N numeric brief maps to itself unchanged
+ *                        (position === value), so this is a no-op on the common case.
+ *   - order-preserving — the output is exactly the input's post-sort order, by construction.
+ * `1a, 1b, 2, 10 → 1, 2, 3, 4` (fixture: legacy-alpha-ids-brief.md / launchpad-brief.md).
+ *
+ * TRACEABILITY CAVEAT (non-identity mappings only): the normalized id flows downstream into the
+ * `sdk-spike/subtask-N` branch name, the worktree dir, the commit message, the worker prompt, and
+ * `task_id` in results. So on a brief this does NOT map to itself — a legacy alpha-suffixed brief,
+ * or a hand-edited/gapped numeric one — the `#` a human reads in the Subtask Structure table will
+ * NOT equal the generated `subtask-N` suffix. Correctness is unaffected (both sides of every edge
+ * come from the one map), but when debugging such a run, match on the Subtask Contracts block
+ * rather than the table row number. Briefs authored under the current producer rule (plain
+ * numeric, 1-based, sequential) map to themselves, so this never fires on them.
+ *
+ * Mutates `subtasks` in place (both `id` and every `requires[].from`) and builds the map exactly
+ * once per call — never called per-anchor, which is what would let the table/heading/contract-key
+ * forms and the `from:` forms disagree with each other.
+ */
+export function normalizeSubtaskIds(subtasks: Subtask[]): void {
+  const idMap = new Map<string, string>();
+  subtasks.forEach((s, idx) => {
+    idMap.set(s.id, String(idx + 1));
+  });
+  for (const s of subtasks) {
+    s.id = idMap.get(s.id)!;
+    for (const r of s.requires) {
+      // An unresolvable `from` (no source id in this same subtasks list) is left as-is rather
+      // than silently dropped — parseBrief's own fail-closed `from:` guard (above) already
+      // refuses to let an unparseable reference through unnoticed; this is not a new failure
+      // mode, just not this function's job to invent a resolution for.
+      if (r.from !== undefined) {
+        const mapped = idMap.get(r.from);
+        if (mapped !== undefined) r.from = mapped;
+      }
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Step 1: Parse the brief (Subtask Structure table + Subtask contracts YAML)
 // Tolerant regex/line parser — NOT a full markdown/YAML implementation.
@@ -796,15 +849,21 @@ export function parseBrief(text: string): { subtasks: Subtask[]; suggestedBranch
   }
 
   const branchMatch = text.match(/Suggested branch:\s*([^\s|`]+)/);
+  // Natural order: numeric prefix first, then any alpha suffix, so "1" < "1a" < "1b" < "2" < "10".
+  // A plain string sort would put "10" before "2" and break wave ordering on 10+ subtasks.
+  const sorted = subtasksList.sort((a, b) => {
+    const na = parseInt(a.id, 10);
+    const nb = parseInt(b.id, 10);
+    if (na !== nb) return na - nb;
+    return a.id.localeCompare(b.id);
+  });
+  // Pin the producer→consumer id contract HERE, once, after the natural sort — see
+  // normalizeSubtaskIds' own doc comment for why this must not move earlier (it would
+  // reintroduce the 10-before-2 bug) or be duplicated per-anchor (the two sides of an edge
+  // would diverge).
+  normalizeSubtaskIds(sorted);
   return {
-    // Natural order: numeric prefix first, then any alpha suffix, so "1" < "1a" < "1b" < "2" < "10".
-    // A plain string sort would put "10" before "2" and break wave ordering on 10+ subtasks.
-    subtasks: subtasksList.sort((a, b) => {
-      const na = parseInt(a.id, 10);
-      const nb = parseInt(b.id, 10);
-      if (na !== nb) return na - nb;
-      return a.id.localeCompare(b.id);
-    }),
+    subtasks: sorted,
     suggestedBranch: branchMatch ? branchMatch[1] : undefined,
   };
 }

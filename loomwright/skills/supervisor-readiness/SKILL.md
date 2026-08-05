@@ -2,8 +2,8 @@
 name: supervisor-readiness
 description: Pre-flight checklist, Supervisor-Ready Brief format, jobs folder convention, and failure prevention. Use before launching autonomous workflows or when diagnosing Supervisor failures.
 allowed-tools: [Read, Bash]
-version: "1.3.0"
-lastUpdated: "2026-07-31"
+version: "1.4.0"
+lastUpdated: "2026-08-04"
 ---
 
 # Supervisor Readiness Skill
@@ -218,6 +218,8 @@ A list of project-declared **executable acceptance checks** the run must satisfy
 so Supervisor Phase 4.5 `ground_truth` executes the doc-currency and version-consistency invariants (advisory) instead of `skipped`. Both ids are plugin-bundled under `scripts/eval-corpus/`; outside this repo they do not resolve, so non-plugin briefs omit them. See `agents/launch-pad.md` Phase 5.
 
 ## Subtask Structure
+
+**Subtask id scheme (RULE, not merely illustration):** subtask ids are **plain numeric, 1-based, sequential** (`1, 2, 3, …`) — never alpha-suffixed (`1a`/`1b`) and never any other prefixed form. Every id used in the `#` column of the table below, and every `from:` reference in the Subtask Contracts YAML, MUST use this scheme. Downstream, `loomwright/sdk-spike/src/runner.ts`'s parser tolerates legacy alpha-suffixed ids from older briefs (`normalizeSubtaskIds` maps them onto this same scheme so no `from:` edge dangles) — that tolerance is a compatibility shim for *archived* briefs, not license to author new ones with alpha suffixes.
 
 | # | Title | Acceptance Criteria Subset | Est. Files (modify/create) | Skills | Status |
 |---|-------|---------------------------|---------------------------|--------|--------|

@@ -550,17 +550,31 @@ if [ "$HAVE_NODE" = 1 ] && [ -f dist/runner.js ] && [ -f "$LP_BRIEF" ]; then
     const {parseBrief} = require('$SPIKE_DIR/dist/runner.js');
     const r = parseBrief(require('fs').readFileSync('$SPIKE_DIR/$LP_BRIEF','utf8'));
     const ids = r.subtasks.map(s => s.id).join(',');
+    const titles = r.subtasks.map(s => s.title).join('|');
     const edges = r.subtasks.reduce((n,s) => n + s.requires.length, 0);
-    console.log(ids + '|' + edges);
+    console.log(ids + '~' + titles + '~' + edges);
   " 2>/dev/null)
-  LP_IDS="${LP_OUT%%|*}"
-  LP_EDGES="${LP_OUT##*|}"
+  LP_IDS="${LP_OUT%%~*}"
+  LP_REST="${LP_OUT#*~}"
+  LP_TITLES="${LP_REST%%~*}"
+  LP_EDGES="${LP_REST##*~}"
 
-  # Natural order matters: a plain string sort yields 1a,1b,10,2 and breaks wave scheduling.
-  if [ "$LP_IDS" = "1a,1b,2,10" ]; then
-    pass "parseBrief: alpha-suffixed ids parsed in natural order (1a,1b,2,10)"
+  # normalizeSubtaskIds pins the scheme to plain numeric, position-based after the natural sort
+  # (see the "Design note" in the job brief): 1a,1b,2,10 -> 1,2,3,4.
+  if [ "$LP_IDS" = "1,2,3,4" ]; then
+    pass "parseBrief: alpha-suffixed ids normalized to plain numeric, order-preserving (1,2,3,4)"
   else
-    fail "parseBrief: expected ids 1a,1b,2,10 — got '$LP_IDS'"
+    fail "parseBrief: expected normalized ids 1,2,3,4 — got '$LP_IDS'"
+  fi
+
+  # Natural order itself (independent of renumbering, which always yields a sequential 1..N run
+  # regardless of the underlying sort — checking TITLE order is what actually re-proves a plain
+  # string sort would put 10 before 2 and break wave scheduling on 10+ subtasks).
+  LP_WANT_TITLES="shared walker|adversarial fixtures|tree subcommand|late subtask (natural-sort guard)"
+  if [ "$LP_TITLES" = "$LP_WANT_TITLES" ]; then
+    pass "parseBrief: natural sort orders 1a,1b,2,10 correctly before normalization renumbers them"
+  else
+    fail "parseBrief: expected title order '$LP_WANT_TITLES' — got '$LP_TITLES'"
   fi
 
   # THE regression: 0 here is the arm-3 failure — every edge silently discarded.
@@ -570,11 +584,26 @@ if [ "$HAVE_NODE" = 1 ] && [ -f dist/runner.js ] && [ -f "$LP_BRIEF" ]; then
     fail "parseBrief: expected 3 requires edges — got '$LP_EDGES' (0 = the arm-3 silent-drop bug)"
   fi
 
+  # Zero dangling `from:` edges after normalization — every requires[].from must resolve to a
+  # real (post-normalization) subtask id, asserted rather than eyeballed.
+  if node -e "
+    const {parseBrief} = require('$SPIKE_DIR/dist/runner.js');
+    const r = parseBrief(require('fs').readFileSync('$SPIKE_DIR/$LP_BRIEF','utf8'));
+    const ids = new Set(r.subtasks.map(s => s.id));
+    const dangling = r.subtasks.flatMap(s => s.requires)
+      .filter(req => req.from !== undefined && !ids.has(req.from));
+    process.exit(dangling.length === 0 ? 0 : 1);
+  " 2>/dev/null; then
+    pass "parseBrief: normalization leaves zero dangling from: edges (launchpad-brief.md)"
+  else
+    fail "parseBrief: at least one from: edge dangles after normalization (launchpad-brief.md)"
+  fi
+
   # external_requires must NOT be swallowed by the requires: pattern.
   if node -e "
     const {parseBrief} = require('$SPIKE_DIR/dist/runner.js');
     const r = parseBrief(require('fs').readFileSync('$SPIKE_DIR/$LP_BRIEF','utf8'));
-    const one_a = r.subtasks.find(s => s.id === '1a');
+    const one_a = r.subtasks.find(s => s.title === 'shared walker');
     process.exit(one_a && one_a.requires.length === 0 && one_a.provides.length === 2 ? 0 : 1);
   " 2>/dev/null; then
     pass "parseBrief: 'requires: []' stays empty and external_requires is not absorbed"
@@ -583,6 +612,163 @@ if [ "$HAVE_NODE" = 1 ] && [ -f dist/runner.js ] && [ -f "$LP_BRIEF" ]; then
   fi
 else
   skip "parseBrief Launch Pad shape regression (needs node + built dist/ + fixture)"
+fi
+
+# ---------------------------------------------------------------------------
+# normalizeSubtaskIds regression (this brief's own subject): legacy 1a/1b ids +
+# a 10+-subtask brief, asserting injectivity, identity-on-numeric, natural
+# ordering, and zero dangling from: edges — not by inspection.
+# ---------------------------------------------------------------------------
+LEGACY_BRIEF="test/fixtures/legacy-alpha-ids-brief.md"
+if [ "$HAVE_NODE" = 1 ] && [ -f dist/runner.js ] && [ -f "$LEGACY_BRIEF" ]; then
+  if node -e "
+    const {parseBrief} = require('$SPIKE_DIR/dist/runner.js');
+    const r = parseBrief(require('fs').readFileSync('$SPIKE_DIR/$LEGACY_BRIEF','utf8'));
+    const ids = r.subtasks.map(s => s.id);
+    // Injective: every subtask gets a DISTINCT id (the naive-truncation collision the job
+    // brief's Design note warns about — 1a,1b both -> 1 — must not happen).
+    if (new Set(ids).size !== ids.length) { console.error('collision: ' + ids.join(',')); process.exit(1); }
+    // Plain numeric scheme, in the pinned string form (no alpha suffix survives).
+    if (!ids.every((id) => /^\d+\$/.test(id))) { console.error('non-numeric id survived: ' + ids.join(',')); process.exit(1); }
+    // Genuine (non-tautological) ordering check: renumbering ALWAYS produces a sequential
+    // 1..N run by construction, so checking id values alone cannot re-prove the natural sort
+    // itself ran correctly — a lexicographic-sort regression would still pass that check. Titles
+    // encode the intended semantic order independently of any id, so comparing title order is
+    // what actually catches '10' sorting before '2' again.
+    const gotTitles = r.subtasks.map((s) => s.title).join('|');
+    const wantTitles = ['shared base','base variant','step two','step three','step four','step five','step six','step seven','step eight','step nine','step ten (natural-sort guard)'].join('|');
+    if (gotTitles !== wantTitles) { console.error('title order: ' + gotTitles); process.exit(1); }
+    // Chain-linkage check: each subtask (after the first) requires from its immediate
+    // predecessor by POSITION, and the fixture's from: references are authored against the
+    // ORIGINAL alpha/numeric ids (1a, S1b, 2, 3, ...) — so this only holds if the SAME shared
+    // map correctly rewrote both the id field and every requires[].from in step, per subtask.
+    for (let i = 1; i < r.subtasks.length; i++) {
+      const got = r.subtasks[i].requires[0] && r.subtasks[i].requires[0].from;
+      const want = r.subtasks[i - 1].id;
+      if (got !== want) { console.error('chain break at index ' + i + ': from=' + got + ' want=' + want); process.exit(1); }
+    }
+    // Zero dangling from: edges anywhere in the brief.
+    const idSet = new Set(ids);
+    const dangling = r.subtasks.flatMap(s => s.requires).filter((req) => req.from !== undefined && !idSet.has(req.from));
+    if (dangling.length !== 0) { console.error('dangling edges: ' + JSON.stringify(dangling)); process.exit(1); }
+    process.exit(0);
+  " 2>/dev/null; then
+    pass "normalizeSubtaskIds: injective, plain-numeric, order-preserving, zero dangling edges (legacy-alpha-ids-brief.md)"
+  else
+    fail "normalizeSubtaskIds: legacy-alpha-ids-brief.md regressed (collision, non-numeric id, order, or dangling edge)"
+  fi
+
+  # Identity on already-numeric input: a plain 1..N brief must round-trip unchanged.
+  if node -e "
+    const {parseBrief} = require('$SPIKE_DIR/dist/runner.js');
+    const r = parseBrief(require('fs').readFileSync('$SPIKE_DIR/$MINI_BRIEF','utf8'));
+    const ids = r.subtasks.map(s => s.id);
+    process.exit(ids.length === 2 && ids[0] === '1' && ids[1] === '2' ? 0 : 1);
+  " 2>/dev/null; then
+    pass "normalizeSubtaskIds: identity on an already-numeric brief (mini-brief.md unchanged)"
+  else
+    fail "normalizeSubtaskIds: already-numeric mini-brief.md ids were altered"
+  fi
+
+  # SIBLING, not nested: the gapped-id case is logically independent of the identity case
+  # above. Nesting it inside that check's success branch meant an identity regression would
+  # silently SKIP this assertion instead of failing it on its own terms.
+  if true; then
+    # GAPPED numeric ids (1, 2, 4, 5) — the case position-mapping does NOT round-trip.
+    # Renumbering to 1,2,3 is intended, but it is only SAFE because both sides of every
+    # edge are rewritten from the one shared map. The fixture deliberately contains a
+    # reference to a SHIFTED id — subtask 5 requires `from: "4"`, and 4 renumbers to 3 — so
+    # this actually exercises the rewrite. (`from: "2"` alone would not: 2 maps to itself
+    # here, so an entirely broken rewrite would still pass.) Asserted, because a one-sided
+    # rewrite is exactly the original
+    # arm-3 failure and no other test in this file exercises a gap.
+    MW_TMP_GAP=$(mktemp -d 2>/dev/null || mktemp -d -t gapbrief)
+    GAP_BRIEF="$MW_TMP_GAP/gapped-brief.md"
+    cat > "$GAP_BRIEF" <<'GAPEOF'
+## Subtask Structure
+
+| # | Title | Est. Files | Status |
+|---|-------|-----------|--------|
+| 1 | first | 1 | LAUNCHABLE |
+| 2 | second | 1 | LAUNCHABLE |
+| 4 | fourth (id gap — 3 was dropped) | 1 | BLOCKED (by #2) |
+| 5 | fifth (references the SHIFTED id 4) | 1 | BLOCKED (by #4) |
+
+## Subtask Contracts
+
+```yaml
+subtask_1:
+  provides:
+    - {kind: file, path: a.ts}
+  requires: []
+  lanes: ["a.ts"]
+subtask_2:
+  provides:
+    - {kind: file, path: b.ts}
+  requires: []
+  lanes: ["b.ts"]
+subtask_4:
+  provides:
+    - {kind: file, path: d.ts}
+  requires:
+    - {from: "2", kind: file, path: b.ts}
+  lanes: ["d.ts"]
+subtask_5:
+  provides:
+    - {kind: file, path: e.ts}
+  requires:
+    - {from: "4", kind: file, path: d.ts}
+  lanes: ["e.ts"]
+```
+GAPEOF
+    if node -e "
+      const {parseBrief} = require('$SPIKE_DIR/dist/runner.js');
+      const r = parseBrief(require('fs').readFileSync('$GAP_BRIEF','utf8'));
+      const ids = r.subtasks.map(s => s.id);
+      // Gap is closed by position-mapping: 1,2,4 -> 1,2,3.
+      if (ids.join(',') !== '1,2,3,4') { console.error('ids: ' + ids.join(',')); process.exit(1); }
+      // The SHIFTED reference is the point of this fixture: source id 4 -> 3, so the
+      // subtask that required '4' must now require '3'. A no-op rewrite fails here.
+      const shifted = r.subtasks[3].requires[0].from;
+      if (shifted !== '3') { console.error('shifted from: ' + shifted + ' want 3'); process.exit(1); }
+      // The surviving edge must still resolve to a REAL id, not the stale '2'-that-moved.
+      const idSet = new Set(ids);
+      const dangling = r.subtasks.flatMap(s => s.requires).filter(q => q.from !== undefined && !idSet.has(q.from));
+      if (dangling.length !== 0) { console.error('dangling: ' + JSON.stringify(dangling)); process.exit(1); }
+      process.exit(0);
+    " 2>/dev/null; then
+      pass "normalizeSubtaskIds: gapped ids (1,2,4,5) renumber to 1,2,3,4 and a SHIFTED from: (4->3) is rewritten"
+    else
+      fail "normalizeSubtaskIds: gapped brief renumbered inconsistently (ids wrong, edge dangled, or shifted from: not rewritten)"
+    fi
+  fi
+
+  # The implicit `else` inside normalizeSubtaskIds: a `from:` that resolves to NO id in this
+  # brief is left as-is rather than remapped. Asserted rather than inferred, because the
+  # branch is only safe by virtue of a property in a DIFFERENT function — the wave scheduler
+  # gates on `completed.has(r.from)`, so an unmatched `from` blocks its subtask forever
+  # (fail-safe) instead of resolving to the wrong node (fail-dangerous). If that scheduler
+  # check ever changes, this test is what catches the silent flip.
+  if node -e "
+    const {normalizeSubtaskIds} = require('$SPIKE_DIR/dist/runner.js');
+    const subtasks = [
+      {id: '1a', requires: []},
+      {id: '2',  requires: [{from: '1a'}, {from: '99z'}]},
+    ];
+    normalizeSubtaskIds(subtasks);
+    if (subtasks.map(s => s.id).join(',') !== '1,2') process.exit(1);
+    // Resolvable ref followed its subtask...
+    if (subtasks[1].requires[0].from !== '1') process.exit(1);
+    // ...unresolvable ref left VERBATIM (not remapped, not deleted, not undefined).
+    if (subtasks[1].requires[1].from !== '99z') process.exit(1);
+    process.exit(0);
+  " 2>/dev/null; then
+    pass "normalizeSubtaskIds: an unresolvable from: is left verbatim (never remapped onto a wrong node)"
+  else
+    fail "normalizeSubtaskIds: unresolvable from: was altered — it must stay verbatim so the scheduler blocks rather than mis-resolves"
+  fi
+else
+  skip "normalizeSubtaskIds regression (needs node + built dist/ + legacy-alpha-ids-brief.md fixture)"
 fi
 
 # ---------------------------------------------------------------------------

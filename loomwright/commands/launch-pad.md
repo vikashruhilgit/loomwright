@@ -375,6 +375,8 @@ Run 5 grounded checks (CLAUDE.md + grep/glob/read), output GO/CAUTION/NO-GO:
 
 ### Phase 4: DECOMPOSE (Subtask Structure)
 
+> **Subtask id scheme (RULE):** plain numeric, 1-based, sequential (`1, 2, 3, …`) — never alpha-suffixed (`1a`/`1b`). Applies to the Subtask Structure table's `#` column and every `from:` reference. Full rule: `skills/supervisor-readiness/SKILL.md` §"Subtask Structure".
+
 1. Default to a single subtask whose acceptance criteria are the checklist for one worker — not a template for generating subtasks. Split a file group off into its own subtask only when one of `skills/supervisor-readiness/SKILL.md` §"Decomposition Threshold"'s three named reasons fires; record the triggering reason as `- **Split reason:** <reason>` in `## Configuration`
 2. For each subtask: title, criteria subset, estimated files, skill references
 3. Analyze dependencies between subtasks
