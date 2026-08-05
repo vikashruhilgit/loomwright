@@ -64,8 +64,13 @@ be the real restriction. Unifying `tools:` to one superset across all 14 agents 
 half of enforcement to uniform-by-construction and leaves the denylist carrying the *entire*
 restriction for every agent, not just the six that already relied on it. The honest scope split:
 
-- **No change in enforcement strength:** `code-reviewer`, `plan-reviewer`, `rubric-grader` — the
-  denylist was already their surviving mechanism before this change (each already carried one).
+- **No change in enforcement strength:** `plan-reviewer`, `rubric-grader` — the denylist was already
+  their surviving mechanism before this change (each already carried one, and each already denied
+  `Task`). `code-reviewer` belongs here for `Write`/`Edit` (its pre-existing denylist covered them)
+  but **not** for `Task`: its old denylist was `Write, Edit, NotebookEdit` only, so its
+  subagent-spawn block was 100% allowlist-enforced before this change and is denylist-only after.
+  Functionally a no-op — it could not spawn either way — but it is a real transition, and this
+  paragraph exists to not understate scope.
 - **A genuine reduction:** `orchestrator` and `execute-manager` had **no denylist at all** before this
   change and were 100% allowlist-enforced (both `Write: no` in the Capability Matrix above) — this is
   their first reliance on the denylist. `orchestrator` is the case where the tempting
@@ -77,9 +82,15 @@ restriction for every agent, not just the six that already relied on it. The hon
   covers tools that were allowlist-excluded on *most*, not all, agents — `TaskOutput` moves from
   allowlist-exclusion to denylist on 12 agents (`supervisor` and `execute-manager` already declared
   it); `LSP` on 10 (`launch-pad`, `code-reviewer`, `qa-executor`, `worker` already declared it);
-  `WebSearch`/`WebFetch` on 12 (`product-owner` and `red-team-reviewer` already declared them). The
-  per-agent table above is the check: a row omits one of these four exactly when that agent already
-  declared it before this change.
+  `WebSearch`/`WebFetch` on 12 (`product-owner` and `red-team-reviewer` already declared them); and
+  **`Task` on 9** — the five agents that already declared it (`supervisor`, `execute-manager`,
+  `launch-pad`, `qa-executor`, `review-pr`) are unaffected. `Task` is the most consequential of the
+  five, since it governs subagent-spawn capability: of those 9, four (`code-reviewer`, `orchestrator`,
+  `product-owner`, `red-team-reviewer`) carried **no prior `Task` denylist**, so their spawn block
+  moves from allowlist to denylist here; the other five (`context-keeper`, `plan-reviewer`,
+  `qa-strategist`, `rubric-grader`, `worker`) already denied it explicitly. The per-agent table above
+  is the check: a row omits one of these five exactly when that agent already declared it before this
+  change.
 
 ---
 
