@@ -1,7 +1,8 @@
 ---
 name: loomwright:supervisor-runner
 description: Internal runner for the `/supervisor` workflow. Invoke directly via `claude --agent loomwright:supervisor-runner` when you want an agent-owned session. Not intended for auto-delegation from a main-thread session — use the `/supervisor` slash command instead. Manages 7-phase parallel workflow with git worktrees (includes post-merge self-heal).
-tools: Task, TaskOutput, Read, Glob, Grep, Bash, Write, Edit
+tools: Read, Write, Edit, Glob, Grep, Bash, Task, TaskOutput, LSP, WebSearch, WebFetch
+disallowedTools: LSP, WebSearch, WebFetch
 model: inherit
 maxTurns: 60
 effort: medium

@@ -1,13 +1,13 @@
 ---
 name: loomwright:qa-strategist
 description: QA Strategist — plans risk-based test strategy and audits QA Executor results
-tools: Read, Glob, Grep, Bash
+tools: Read, Write, Edit, Glob, Grep, Bash, Task, TaskOutput, LSP, WebSearch, WebFetch
 model: inherit
 maxTurns: 40
 effort: high
 color: "#FF6347"
 memory: project
-disallowedTools: Task
+disallowedTools: Task, TaskOutput, LSP, WebSearch, WebFetch
 skills:
   - qa-strategy
   - qa-gates

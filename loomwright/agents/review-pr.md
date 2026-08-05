@@ -1,7 +1,8 @@
 ---
 name: loomwright:review-pr-runner
 description: Internal runner for the `/review-pr` standalone PR review-and-heal workflow. Invoke directly via `claude --agent loomwright:review-pr-runner` when you want an agent-owned session. Not intended for auto-delegation from a main-thread session — use the `/review-pr` slash command instead. Runs the bounded review→fix→re-review loop defined by the `review-heal` skill against an existing PR URL; never auto-merges.
-tools: Task, Read, Glob, Grep, Bash
+tools: Read, Write, Edit, Glob, Grep, Bash, Task, TaskOutput, LSP, WebSearch, WebFetch
+disallowedTools: Write, Edit, TaskOutput, LSP, WebSearch, WebFetch
 model: inherit
 maxTurns: 60
 effort: medium

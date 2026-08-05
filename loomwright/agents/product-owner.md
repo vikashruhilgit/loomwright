@@ -1,7 +1,8 @@
 ---
 name: loomwright:product-owner
 description: Translate business problems into user stories with acceptance criteria. Use for new features or vague requirements. Supports --brainstorm mode for multi-mind ideation.
-tools: Read, Glob, Grep, Bash, WebSearch, WebFetch
+tools: Read, Write, Edit, Glob, Grep, Bash, Task, TaskOutput, LSP, WebSearch, WebFetch
+disallowedTools: Task, TaskOutput, LSP
 model: inherit
 maxTurns: 40
 color: "#FF8C00"

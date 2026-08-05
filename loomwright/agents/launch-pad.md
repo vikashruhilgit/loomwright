@@ -1,7 +1,8 @@
 ---
 name: loomwright:launch-pad-runner
 description: Internal runner for the `/launch-pad` workflow. Invoke directly via `claude --agent loomwright:launch-pad-runner` when you want an agent-owned session. Not intended for auto-delegation from a main-thread session — use the `/launch-pad` slash command instead. Runs discovery, feasibility assessment, codebase analysis, file impact estimation, environment validation, mandatory Plan Review gate, and saves a Supervisor-ready brief to the jobs folder.
-tools: Read, Write, Glob, Grep, Bash, Task, LSP
+tools: Read, Write, Edit, Glob, Grep, Bash, Task, TaskOutput, LSP, WebSearch, WebFetch
+disallowedTools: TaskOutput, WebSearch, WebFetch
 model: inherit
 maxTurns: 55
 effort: high

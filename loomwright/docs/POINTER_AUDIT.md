@@ -90,6 +90,20 @@ byte-identical their `.md` openings are. A shared leading block across agent pro
 **cannot** produce cross-agent cache reads — its value is **consistency, dedup, and a
 smaller prompt inventory**, and it must be framed as exactly that.
 
+**Empirical corroboration (`.supervisor/requirements/final-state/12-4c-unified-tools-lists.md`,
+unified `tools:` superset across all 14 agents):** this requirement unified `tools:` to one
+byte-identical superset line for every agent, which mechanically confirms the prediction above
+rather than clearing the floor. `disallowedTools` is **subtractive** on the effective rendered
+toolset — observed directly via the discriminating control pair `product-owner` (`memory: project`
+→ gains effective `Write`/`Edit` despite never declaring them) vs. `orchestrator` (no `memory:`,
+otherwise a comparable read-only role → gains nothing), and via `code-reviewer` (`memory: project`
+like the gaining agents, yet its `disallowedTools` blocks `Write`/`Edit` and it does NOT gain them).
+Because `disallowedTools` still differs per agent after the unification (by design — see
+`ARCHITECTURE_CONTRACTS.md` §"disallowedTools (Defense-in-Depth)"), the rendered frontmatter prefix
+still diverges at position 0 across agent types even though `tools:` itself is now identical. The
+512-token floor is **not cleared**; cross-agent reuse remains structurally zero, exactly as
+predicted above.
+
 **Where the cache win is real: SAME-ROLE respawns.** N workers in one Phase 3 wave,
 and repeated reviewer / fix-worker spawns in the heal loop, already share identical
 agent files — there, stable-prefix-first ordering within each spawn contract plus

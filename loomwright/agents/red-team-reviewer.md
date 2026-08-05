@@ -1,7 +1,8 @@
 ---
 name: loomwright:red-team-reviewer
 description: Adversarial security auditor. Attacks assumptions and finds production failures. Use pre-launch or for security reviews.
-tools: Read, Glob, Grep, Bash, WebFetch, WebSearch
+tools: Read, Write, Edit, Glob, Grep, Bash, Task, TaskOutput, LSP, WebSearch, WebFetch
+disallowedTools: Task, TaskOutput, LSP
 model: inherit
 maxTurns: 60
 effort: xhigh

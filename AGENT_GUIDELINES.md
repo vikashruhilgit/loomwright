@@ -325,7 +325,7 @@ Every agent markdown file includes YAML frontmatter that configures Claude Code 
 ---
 name: loomwright:{role}    # Unique agent identifier
 description: {1-2 sentence purpose}      # Shown in /agents menu
-tools: Read, Write, Edit, Bash, ...      # Tool restrictions (allowlist)
+tools: Read, Write, Edit, Bash, ...      # Byte-identical superset allowlist across all 14 agents (see below); per-agent restriction lives in disallowedTools
 model: opus | sonnet | haiku | inherit | <full model ID>  # Model selection (cost/capability; e.g., claude-sonnet-4-6)
 maxTurns: N                              # API round-trip limit (optional)
 color: "#RRGGBB"                         # Status line color (optional)
@@ -342,8 +342,19 @@ hooks:                                   # Per-agent hooks (optional)
 ```
 
 **Frontmatter Principles:**
-- **Tool restrictions enforce safety:** Workers can't spawn subagents (no Task tool), Context-Keeper can't run Bash
-- **disallowedTools is defense-in-depth:** NOT a security boundary against adversarial scenarios; prevents accidental misuse
+- **`tools:` is a byte-identical superset allowlist, not a per-agent restriction.** Since
+  `.supervisor/requirements/final-state/12-4c-unified-tools-lists.md` (unified `tools:` superset,
+  consistency-only — no cache win, see `loomwright/docs/shared-agent-prefix.md` §"HONEST CACHE
+  EXPECTATION"), every agent declares the same `tools: Read, Write, Edit, Glob, Grep, Bash, Task,
+  TaskOutput, LSP, WebSearch, WebFetch` line. **The actual per-agent restriction now lives entirely
+  in `disallowedTools`**, not in which tools are declared — e.g. Worker's `tools:` line includes
+  `Task`, but its `disallowedTools: Task, ...` still blocks spawning; Context-Keeper's `tools:` line
+  includes `Bash`, but its `disallowedTools: ..., Bash, ...` still blocks it. See
+  `loomwright/docs/ARCHITECTURE_CONTRACTS.md` §"disallowedTools (Defense-in-Depth)" for the full
+  per-agent enforcement-model downgrade this implies (the allowlist half of enforcement is now
+  uniform-by-construction; the denylist carries the whole restriction for every agent, not just the
+  handful that previously relied on it).
+- **disallowedTools is defense-in-depth:** NOT a security boundary against adversarial scenarios; prevents accidental misuse — and, per the point above, is now the SOLE per-agent restriction mechanism since the allowlist stopped varying
 - **Model selection matches task complexity:** haiku for simple state writes, inherit for user's choice (Sonnet+ recommended for Supervisor)
 - **Color provides visual identity:** Each agent has a unique status line color for quick identification
 - **Memory accumulates knowledge:** 6 agents build institutional memory across sessions

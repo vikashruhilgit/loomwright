@@ -15,10 +15,10 @@
 | Code Reviewer | no | no | yes (+ LSP) | yes | no | no | inherit (effort: high, permissionMode: plan) |
 | Context-Keeper | no | yes | no | no | no | sole writer (parallel path) | haiku |
 | Launch Pad | yes (plan-reviewer only) | yes | yes (+ LSP) | no | no | jobs/pending/ | inherit |
-| Product Owner | no | no | yes | no | no | no | inherit |
-| Orchestrator | no | no | yes | no | no | no | inherit |
-| Red Team Reviewer | no | no | yes | no | no | no | inherit |
-| QA Strategist | no | no | yes | no | no | no | inherit |
+| Product Owner | no | yes (observed effective — `memory: project` grant, not blocked) | yes | no | no | no | inherit |
+| Orchestrator | no | no (control case — no `memory:`, so no grant; see `disallowedTools` section) | yes | no | no | no | inherit |
+| Red Team Reviewer | no | yes (observed effective — `memory: project` grant, not blocked) | yes | no | no | no | inherit |
+| QA Strategist | no | yes (observed effective — `memory: project` grant, not blocked) | yes | no | no | no | inherit |
 | Plan Reviewer | no | no | no | yes | no | no | inherit (effort: high) |
 | Rubric Grader | no | no | yes (read-only git only) | yes (rubric scoring) | no | no | haiku |
 | QA Executor | yes | yes | yes (+ LSP) | no | yes | no | inherit |
@@ -30,13 +30,56 @@
 
 These are **defense-in-depth** restrictions for accidental misuse, NOT security boundaries against adversarial scenarios.
 
+**Since `.supervisor/requirements/final-state/12-4c-unified-tools-lists.md` (unified `tools:` superset across
+all 14 agents), every agent below carries a `tools:` allowlist that is byte-identical across the
+plugin (`Read, Write, Edit, Glob, Grep, Bash, Task, TaskOutput, LSP, WebSearch, WebFetch`). Each
+agent's per-row `disallowedTools` below is derived as `superset − observed effective toolset`, NOT
+`superset − previously-declared tools` — four agents (Launch Pad, Product Owner, QA Strategist, Red
+Team Reviewer) deliberately omit `Write`/`Edit` from their denylist because the harness's
+`memory: project` grant gave them that capability effectively even though their prior declared
+`tools:` never listed it; blocking it there would have removed a capability they actually have
+today, not merely tidied a list.
+
 | Agent | disallowedTools | Rationale |
 |-------|----------------|-----------|
-| Context-Keeper | Task, Bash, Glob, Grep | Sole state writer on the parallel path (inline main-thread Supervisor writes the `## Session` block directly); must never spawn agents or explore |
-| Worker | Task | Must never spawn subagents |
-| Plan Reviewer | Write, Edit, NotebookEdit, Task, Bash | Read-only; no mutation via any path |
-| Rubric Grader | Write, Edit, Task, NotebookEdit | Read-only Phase 4.5 grader; advisory only — must never mutate the diff it scores or spawn sub-agents |
-| QA Strategist | Task | Read-only analyzer |
+| Code Reviewer | Write, Edit, NotebookEdit, Task, TaskOutput, WebSearch, WebFetch | Read-only diagnostic reviewer; keeps its pre-existing 3-item denylist, adds the newly-allowlisted spawn/network tools it never used |
+| Context-Keeper | Task, TaskOutput, Bash, Glob, Grep, LSP, WebSearch, WebFetch | Sole state writer on the parallel path (inline main-thread Supervisor writes the `## Session` block directly); must never spawn agents or explore |
+| Execute Manager | Write, Edit, LSP, WebSearch, WebFetch | First denylist for this agent; non-memory agent, no observed Write/Edit grant |
+| Launch Pad | TaskOutput, WebSearch, WebFetch | **`Write`/`Edit` deliberately NOT blocked** — observed effective (see box above) |
+| Orchestrator | Write, Edit, Task, TaskOutput, LSP, WebSearch, WebFetch | Read-only planner; no `memory:` declared, so no Write/Edit grant — the control case that shows the grant is tied to `memory: project`, not to plugin agents generally |
+| Plan Reviewer | Write, Edit, NotebookEdit, Task, Bash, TaskOutput, LSP, WebSearch, WebFetch | Read-only; no mutation via any path; keeps its pre-existing 5-item denylist |
+| Product Owner | Task, TaskOutput, LSP | **`Write`/`Edit` deliberately NOT blocked** — observed effective (see box above) |
+| QA Executor | TaskOutput, WebSearch, WebFetch | Already declared `Write`/`Edit`/`Task`/`LSP` directly; only the newly-allowlisted items need blocking |
+| QA Strategist | Task, TaskOutput, LSP, WebSearch, WebFetch | Keeps its pre-existing `Task` block; **`Write`/`Edit` deliberately NOT blocked** — observed effective (see box above) |
+| Red Team Reviewer | Task, TaskOutput, LSP | **`Write`/`Edit` deliberately NOT blocked** — observed effective (see box above) |
+| review-pr-runner | Write, Edit, TaskOutput, LSP, WebSearch, WebFetch | Non-memory; delegates edits to its `Task`-spawned `general-purpose` fix worker rather than writing itself |
+| Rubric Grader | Write, Edit, NotebookEdit, Task, TaskOutput, LSP, WebSearch, WebFetch | Read-only Phase 4.5 grader; advisory only — must never mutate the diff it scores or spawn sub-agents; keeps its pre-existing 4-item denylist |
+| Supervisor | LSP, WebSearch, WebFetch | Already declares `Write`/`Edit`/`Task`/`TaskOutput` directly; only the newly-allowlisted items need blocking |
+| Worker | Task, TaskOutput, WebSearch, WebFetch | Keeps its pre-existing `Task` block — must never spawn subagents |
+
+**Enforcement-model downgrade — recorded, not shipped silently (accepted for consistency and
+canonical ordering, cost stated below).** Both this doc and `AGENT_GUIDELINES.md` describe
+`disallowedTools` as defense-in-depth, NOT a security boundary — the `tools:` allowlist was meant to
+be the real restriction. Unifying `tools:` to one superset across all 14 agents moves the allowlist
+half of enforcement to uniform-by-construction and leaves the denylist carrying the *entire*
+restriction for every agent, not just the six that already relied on it. The honest scope split:
+
+- **No change in enforcement strength:** `code-reviewer`, `plan-reviewer`, `rubric-grader` — the
+  denylist was already their surviving mechanism before this change (each already carried one).
+- **A genuine reduction:** `orchestrator` and `execute-manager` had **no denylist at all** before this
+  change and were 100% allowlist-enforced (both `Write: no` in the Capability Matrix above) — this is
+  their first reliance on the denylist. `orchestrator` is the case where the tempting
+  "`permissionMode` was already ignored for plugin agents, so the denylist was already the surviving
+  mechanism" rationale does **not** even apply: it declares no `permissionMode` at all, so there was
+  no dead mechanism to point to — the allowlist itself was live and is what changes here. `review-pr`
+  is the same shape but a weaker case (effective `Write: yes` only via its delegated fix worker).
+- **Wider than the three read-only roles above, but not uniformly 14-wide:** the downgrade also
+  covers tools that were allowlist-excluded on *most*, not all, agents — `TaskOutput` moves from
+  allowlist-exclusion to denylist on 12 agents (`supervisor` and `execute-manager` already declared
+  it); `LSP` on 10 (`launch-pad`, `code-reviewer`, `qa-executor`, `worker` already declared it);
+  `WebSearch`/`WebFetch` on 12 (`product-owner` and `red-team-reviewer` already declared them). The
+  per-agent table above is the check: a row omits one of these four exactly when that agent already
+  declared it before this change.
 
 ---
 
