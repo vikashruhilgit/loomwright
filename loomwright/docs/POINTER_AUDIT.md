@@ -139,9 +139,21 @@ a CI check, which is exactly why it is written down here with its method rather 
 `disallowedTools` at all** pre-unification and still did **not** have `Write`/`Edit` — so `tools:`
 genuinely gates, and "the denylist is the only real gate" is false. `code-reviewer` had
 `memory: project` and still did **not** have them — so the denylist genuinely subtracts. Both hold
-at once; there is no contradiction. Corroborating: `product-owner`'s §"Persistence Mode" writes
-`.supervisor/requirements/*.md` in Beads-absent mode and demonstrably works, which a strict
-declared-`tools:`-only reading cannot explain.
+at once; there is no contradiction.
+
+**A corroboration that was offered and then withdrawn — it does not hold.** An earlier version of
+this section cited `product-owner`'s §"Persistence Mode" writing `.supervisor/requirements/*.md` as
+proof of an implicit `Write` grant. **That argument is invalid and is retracted here rather than
+quietly deleted:** `product-owner`'s pre-unification `tools:` line already included `Bash`, which can
+write a markdown file by redirection or heredoc without any `Write`/`Edit` tool. The behaviour is
+fully explained without the grant, so it discriminates nothing. The table above rests **only** on the
+registered effective toolset, not on this.
+
+**What the evidence does and does not cover.** It covers *which tool names the harness registers* per
+agent. It does **not** establish the harness's internal mechanism, and in particular does not show
+whether a `memory: project` grant is a scoped memory-directory capability or the general-purpose
+`Write`/`Edit` tools. Those are different things with different blast radii, and the distinction is
+unresolved here.
 
 **Consequence for the unification:** preserving `Write`/`Edit` for the four `memory: project` agents
 is *status-quo preservation*, not a capability expansion — they have those tools today. Denying them

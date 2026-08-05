@@ -40,6 +40,21 @@ Team Reviewer) deliberately omit `Write`/`Edit` from their denylist because the 
 `tools:` never listed it; blocking it there would have removed a capability they actually have
 today, not merely tidied a list.
 
+> ⚠️ **PROVISIONAL — this row-set carries the weakest evidence in the table, and the hedge belongs
+> here too.** The four `memory: project` rows below that leave `Write`/`Edit` **unblocked**
+> (`launch-pad`, `product-owner`, `qa-strategist`, `red-team-reviewer`) rest on an **environment
+> observation, not a CI-verifiable fact** — see `POINTER_AUDIT.md` §"The effective-toolset model, and
+> the evidence for it" for the 14-row table and its method. `shared-agent-prefix.md` and
+> `POINTER_AUDIT.md` both hedge this; **this table previously did not, and that inconsistency was the
+> finding** — the unhedged version is what actually drives three agents' shipped `disallowedTools`.
+> Two things remain genuinely open: (a) whether the grant is a *scoped memory-directory* capability
+> rather than the general-purpose `Write`/`Edit` tools — different blast radii, and the observation
+> of registered tool *names* does not settle it; and (b) whether the repo's fail-closed posture
+> argues for blocking these three regardless, accepting a memory-write break as an observable
+> regression to fix explicitly. **Treat the permissive choice as provisional pending real
+> verification**, not as settled. `red-team-reviewer` audits untrusted input, which is what makes
+> (a) worth resolving rather than assuming.
+
 | Agent | disallowedTools | Rationale |
 |-------|----------------|-----------|
 | Code Reviewer | Write, Edit, NotebookEdit, Task, TaskOutput, WebSearch, WebFetch | Read-only diagnostic reviewer; keeps its pre-existing 3-item denylist, adds the newly-allowlisted spawn/network tools it never used |
