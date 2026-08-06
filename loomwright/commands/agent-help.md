@@ -784,13 +784,14 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 
 ### 🧩 /setup — Optional-Capability Dashboard & Guided Configuration
 
-**Purpose:** Single entry point for checking and configuring every optional plugin capability across 7 modules — **observability** (local Langfuse v3 + bundled OTel collector; `init | status | remove`), **telemetry** (delegates to `/telemetry`), **notifications**, **webhook**, **Beads**, **MySQL MCP**, and **twin** (cold-start bootstrap: Twin-readiness status + guided graph / bridge / starter CLAUDE.md build). No-arg invocation prints a status dashboard (one real check per module) then offers configuration via multi-select. Every module follows the same contract: check → report → offer → apply → verify — idempotent, never blind-overwrite (settings.json changes are jq-deep-merged with a timestamped backup, aborting on parse failure).
+**Purpose:** Single entry point for checking and configuring every optional plugin capability across 8 modules — **observability** (local Langfuse v3 + bundled OTel collector; `init | status | remove`), **telemetry** (delegates to `/telemetry`), **notifications**, **webhook**, **Beads**, **MySQL MCP**, **twin** (cold-start bootstrap: Twin-readiness status + guided graph / bridge / starter CLAUDE.md build), and **memory** (`status | apply | remove` — puts `.claude/agent-memory/` + `.supervisor/memory/` under version control IN PLACE via gitignore negation, plus the repo allowlist; consent-bearing, and `remove` states plainly that git history retains anything already pushed). No-arg invocation prints a status dashboard (one real check per module) then offers configuration via multi-select. Every module follows the same contract: check → report → offer → apply → verify — idempotent, never blind-overwrite (settings.json changes are jq-deep-merged with a timestamped backup, aborting on parse failure; the memory module's `.gitignore` block is backup-first, atomic, and ABORTS without writing on an unparseable file).
 
 **Usage:**
 ```
 /setup                      # status dashboard + multi-select configuration
 /setup observability        # observability module directly: init | status | remove
 /setup twin                 # Twin cold-start bootstrap: graph + bridge + starter CLAUDE.md
+/setup memory               # memory stores in version control: status | apply | remove
 /setup telemetry            # delegates to /telemetry
 ```
 

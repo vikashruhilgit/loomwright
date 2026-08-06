@@ -27,7 +27,7 @@ Comprehensive index of all skills available in the Loomwright plugin.
 | Preflight Sync | `preflight-sync/` | Supervisor (on-demand Read at Phase 1.5 entry — deliberately NOT preloaded) | ~1,600 | 1.1.0 | 2026-07-31 |
 | Supervisor Config | `supervisor-config/` | Supervisor (on-demand Read at Phase 0 entry — deliberately NOT preloaded) | ~2,400 | 1.2.0 | 2026-07-28 |
 | PR Postmortem | `pr-postmortem/` | `/pr-postmortem` (slash command, reference) | ~1,400 | 1.3.0 | 2026-06-13 |
-| Setup | `setup/` | `/setup` (slash command, read at Step 0) | ~1,200 | 1.0.0 | 2026-06-13 |
+| Setup | `setup/` | `/setup` (slash command, read at Step 0) | ~1,600 | 1.1.0 | 2026-08-06 |
 | Brain Context | `brain-context/` | Launch Pad / Orchestrator / Code Reviewer / Supervisor (on-demand Read — deliberately NOT preloaded) | ~2,000–2,500 | 1.1.0 | 2026-07-20 |
 | Rules | `rules/` | `/rules` (slash command, reference) | ~1,900 | 1.2.0 | 2026-07-23 |
 

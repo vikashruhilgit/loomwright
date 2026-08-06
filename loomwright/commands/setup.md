@@ -1,5 +1,5 @@
 ---
-description: Umbrella setup command — status dashboard plus guided configuration for every optional plugin capability — observability (local Langfuse + OTel collector), Twin cold-start bootstrap, telemetry, notifications, webhook, Beads, MySQL MCP
+description: Umbrella setup command — status dashboard plus guided configuration for every optional plugin capability — observability (local Langfuse + OTel collector), Twin cold-start bootstrap, memory in version control, telemetry, notifications, webhook, Beads, MySQL MCP
 ---
 
 # Command: /setup
@@ -10,6 +10,7 @@ description: Umbrella setup command — status dashboard plus guided configurati
 /setup                      # Status dashboard (one row per module) + multi-select "what do you want to configure?"
 /setup observability        # Observability module directly: init | status | remove
 /setup twin                 # Twin readiness status + guided cold-start bootstrap (graph + bridge + CLAUDE.md): status | (no-arg → bootstrap)
+/setup memory               # Put the Twin memory stores under version control IN PLACE (gitignore negation + repo allowlist): status | apply | remove
 /setup telemetry            # DELEGATES to /telemetry (no consent logic duplicated here)
 /setup notifications        # Status + guidance (notification hooks are always-on)
 /setup webhook              # Status + guidance (LOOMWRIGHT_WEBHOOK_URL)
@@ -19,11 +20,12 @@ description: Umbrella setup command — status dashboard plus guided configurati
 
 ## Parameters
 
-- **module** (optional): one of `observability`, `telemetry`, `notifications`, `webhook`, `beads`, `mysql-mcp`, `twin`.
+- **module** (optional): one of `observability`, `telemetry`, `notifications`, `webhook`, `beads`, `mysql-mcp`, `twin`, `memory`.
   - If omitted: run the full status dashboard, then offer configuration via `AskUserQuestion` (multi-select).
   - If unrecognised: print this usage block and stop.
 - **observability subcommand** (optional, second positional arg): `init` | `status` | `remove`. If omitted, the module's check step decides — unconfigured → offer `init`; configured → offer `status` / `remove` / reconfigure.
 - **twin subcommand** (optional, second positional arg): `status` = read-only readiness report (no writes). If omitted, the module's check step decides — un-bootstrapped → offer to bootstrap; bootstrapped → offer `status` / re-bootstrap. **`remove` is explicitly N/A for v1** — Twin artifacts are per-repo, not per-user config (the graph + bridge are gitignored and regenerable from `graphify` / `build-bridge.sh`; `CLAUDE.md` is committed, human-authored), so there is no per-user state to tear down — teardown is out of scope (a deliberate omission, not an oversight).
+- **memory subcommand** (optional, second positional arg): `status` = read-only report (no writes) | `apply` | `remove`. If omitted, the module's check step decides — not configured → offer to apply (behind the consent gate); configured → offer `status` / `remove`. **Unlike `twin`, `remove` is REQUIRED here** — un-committing is a real operation a user will want, most likely on realising something proprietary was published, so it is implemented rather than documented N/A.
 
 ## What This Does
 
@@ -43,7 +45,7 @@ Settled design facts (do not re-litigate at runtime):
 
 # Agent Prompt
 
-You are handling the `/setup` slash command inline on the main thread. Parse the FIRST positional argument as the module and the SECOND as the subcommand — `observability` takes `init` | `status` | `remove`; `twin` takes `status` (read-only). For `twin status`, run the Check + Report steps ONLY and STOP — it is read-only, so never fall through to the twin Offer/Apply (bootstrap) flow.
+You are handling the `/setup` slash command inline on the main thread. Parse the FIRST positional argument as the module and the SECOND as the subcommand — `observability` takes `init` | `status` | `remove`; `twin` takes `status` (read-only); `memory` takes `status` (read-only) | `apply` | `remove`. For `twin status` and `memory status`, run the Check + Report steps ONLY and STOP — they are read-only, so never fall through to that module's Offer/Apply flow.
 
 ## Step 0 — Load the protocol authority (every invocation)
 
@@ -77,6 +79,7 @@ Run ONE real check per module (never guess; every cell of the dashboard is deriv
 5. **beads** — `command -v bd >/dev/null 2>&1` and `[ -d .beads ]`. Status: `ready` / `bd installed, repo not initialised` / `not installed`. Note: only Orchestrator/Product Owner use Beads — optional.
 6. **mysql-mcp** — check `DB_HOST`, `DB_USER`, `DB_PASS`, `DB_NAME` env vars are non-empty (`DB_PORT` optional). Status: `configured` / `missing: <names of unset vars>`. NEVER print values — names only.
 7. **twin** — run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-twin.sh" check` and read its output (the `Twin readiness:` verdict plus the per-cell `graph:` / `bridge:` / `CLAUDE.md:` lines). Never guess — every cell is derived from this real probe (the helper is fail-safe and always exits 0). Derive a compact status cell: verdict `bootstrapped` → `bootstrapped`; verdict `needs bootstrap` → name the gap from the cells, e.g. `needs bootstrap (graph absent)` when `graph: absent`, `needs bootstrap (stale graph)` when `graph: present (stale …)`, or `needs bootstrap (CLAUDE.md absent)` / `needs bootstrap (bridge absent)` as applicable.
+8. **memory** — run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-memory.sh" check` and read the `Memory readiness:` verdict plus the per-path `intended` / `unintended` ignore-status cells and the `allowlist:` line. The helper is fail-safe (always exits 0) and READ-ONLY on this path — it writes nothing. Derive a compact status cell: `configured` → `stores committable`; `not configured` → `stores ignored (not in version control)`; `partial (...)` → surface the helper's own parenthetical verbatim; if the `.gitignore:` cell reads `absent` or `unparseable: …`, say so instead (e.g. `.gitignore unparseable — apply would abort`). Never guess — every cell comes from that one probe.
 
 Print the dashboard:
 
@@ -92,19 +95,31 @@ Print the dashboard:
 | beads         | <derived>                               | /setup beads          |
 | mysql-mcp     | <derived>                               | /setup mysql-mcp      |
 | twin          | <derived>                               | /setup twin           |
+| memory        | <derived>                               | /setup memory         |
 ```
 
-Then use `AskUserQuestion`. **`AskUserQuestion` accepts at most 4 options**, so do NOT emit one option per unconfigured module (a fresh machine has many unconfigured modules → an invalid call). Use this fixed ≤4-option set — the two modules with real apply flows (observability + twin) individually, the four status/guidance-or-delegation-only modules (telemetry · webhook · Beads · MySQL MCP) folded into one, plus an opt-out:
+Then use `AskUserQuestion`. **`AskUserQuestion` accepts at most 4 options**, so do NOT emit one option per unconfigured module (8 modules > 4 → an invalid call). The set below is FIXED at four and must NOT be grown when a module is added — a ninth module folds into an existing bucket or gets its own nested question, exactly as `twin` + `memory` do here:
 - `question`: "Which would you like to configure now?"
 - `header`: "Configure"
 - `multiSelect`: true
 - `options` (exactly these, in order; append each module's current status to its description):
   1. **observability** — full local-Langfuse / existing-endpoint / console init flow.
-  2. **twin** — Twin cold-start bootstrap: detect/refresh the code graph (guide if `graphify` absent), rebuild the bridge, validate/scaffold CLAUDE.md.
+  2. **Repo knowledge stores (Twin bootstrap · memory in version control)** — the two per-repo apply flows; selecting it asks ONE nested question (below) to pick which.
   3. **Other integrations (telemetry · webhook · Beads · MySQL MCP)** — print status + setup guidance / delegation for these (telemetry delegates to `/telemetry`; webhook · Beads · MySQL MCP are guidance-only; `notifications` is always-on and needs no action).
   4. **Nothing — just checking** — stop with the summary line.
 
+**Nested question — only when option 2 was selected** (also ≤4 options; never inline these into the set above):
+- `question`: "Which repo knowledge store?"
+- `header`: "Stores"
+- `multiSelect`: true
+- `options` (exactly these, in order; append each module's current status to its description):
+  1. **twin** — Twin cold-start bootstrap: detect/refresh the code graph (guide if `graphify` absent), rebuild the bridge, validate/scaffold CLAUDE.md.
+  2. **memory** — put `.claude/agent-memory/` + `.supervisor/memory/` under version control IN PLACE (gitignore negation + repo allowlist). Consent-bearing — the memory module's own Offer step states what becomes version-controlled before anything is written.
+  3. **Neither — go back** — skip both and continue with the remaining selections.
+
 Run the corresponding module flow (below) for each selection, in the order listed. For option 3, run the `telemetry` delegation block plus the `webhook`, `beads`, and `mysql-mcp` status/guidance blocks in turn. If "Nothing", stop with the summary line.
+
+**Every module stays reachable as a direct jump regardless of this set** — `/setup twin` and `/setup memory` (and every other module name) go straight to that module's flow without touching the dashboard question. The ≤4-option set is a convenience for the no-arg dashboard, never the only route to a module.
 
 ## `/setup <module>` — jump straight to that module's flow.
 
@@ -277,6 +292,75 @@ A second `/setup twin` on an already-bootstrapped repo reports "already bootstra
 
 ---
 
+## Module: memory
+
+Puts this repo's Twin memory stores — `.claude/agent-memory/` and `.supervisor/memory/` — under version control **IN PLACE**, by un-ignoring them where they already sit. **No move, no symlink, no generated copy, no bridge of any kind.** Nothing moves, so the harness keeps injecting agent memory from its own fixed path and every `memory: project` agent still receives its store from the unchanged path.
+
+The deterministic engine is `${CLAUDE_PLUGIN_ROOT}/scripts/setup-memory.sh` (subcommands `check` / `apply` / `remove`, plus `allowlist` and `filter-ledger` for the repo allowlist). It is fail-safe (always exits 0), write-contained to `<project>/.gitignore` (+ one timestamped backup) and `<project>/.supervisor/config.json`, and it NEVER runs `git add` / `git rm` / `git commit`. This command owns the INTERACTIVE half — the consent-bearing offer.
+
+**Why this exists:** those stores are gitignored in every repo, so a fresh clone, a second machine, CI and every `git worktree` checkout start COLD, and a bad curation pass is irreversible (there is no `git checkout` to undo it). Committing them also closes a real gap — committed files exist inside `git worktree` checkouts; gitignored ones do not, so workers in worktrees currently cannot see lessons or agent memory.
+
+**The naive negation silently fails.** `.claude/` + `!.claude/agent-memory/` looks correct and does nothing: git cannot re-include a file whose parent DIRECTORY is excluded. The working form excludes the directory's CONTENTS (`.claude/*` + `!.claude/agent-memory/`), which leaves the directory traversable. Both forms are asserted in `test-setup-memory.sh` — the failure is proven by test, not by comment. Any pre-existing bare `.claude/` / `.supervisor/` line is therefore COMMENTED OUT by apply (neutralised, not merely out-ordered) and restored verbatim by `remove`.
+
+> **Tracked-write risk — stated here, mitigated elsewhere (deliberate).** Once `.claude/agent-memory/` is tracked, every memory write becomes a working-tree modification: it shows in `git status`, can be swept into an unrelated commit by a `git add -A` (the exact failure already recorded in project memory about concurrent heal loops), and `MEMORY.md` becomes a merge-conflict surface under parallel workers. Today that is near-theoretical (hand-written, rare). The mitigation belongs to the **memory-writer item (item 04)** — agent writes land in a gitignored proposal queue and only `/dreaming`-promoted entries touch the tracked store. **Building a proposal queue is OUT OF SCOPE for this module by design; do not add one here.**
+
+### Check
+
+Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-memory.sh" check` and report its cells: the `.gitignore:` gate (`ok` / `absent` / `unparseable: <reason>`), whether the managed block is present, the per-path ignore status for the intended stores and the must-stay-ignored set, how many files are tracked under each store today, the resolved `allowlist:` and its source, and the `Memory readiness:` verdict. Read-only — `check` writes nothing.
+
+### Report
+
+Print what check found. For the `status` subcommand, STOP after the report — read-only, no writes, no offer.
+
+### Offer — CONSENT-BEARING (never a silent default)
+
+`check`'s output ends with the disclosure block the user must see BEFORE anything is written. **Show it verbatim** — do not paraphrase, summarise or shorten it — then ask. It names, in plain language: exactly which paths become version-controlled; that committing PUBLISHES (agent memory can hold proprietary architecture, internal service names or client detail, and it travels wherever the repo travels — a public repo publishes it to everyone, as does any fork or clone); that removal does NOT unpublish; and that writes become working-tree changes.
+
+**If not configured** — use `AskUserQuestion` (cap 4 options):
+- `question`: "Commit this repo's Twin memory stores to version control?"
+- `header`: "Memory"
+- `multiSelect`: false
+- `options`:
+  1. `Apply — commit the memory stores` — "Un-ignore .claude/agent-memory/ and .supervisor/memory/ in place, and seed the repo allowlist. Nothing is moved, and nothing is committed by this step."
+  2. `Status only` — "Re-print the report and stop (no writes)."
+  3. `Cancel` — "Do nothing."
+
+Default to NOT applying. If the user's answer is ambiguous, treat it as Cancel.
+
+**If already configured** — do NOT re-apply silently. Offer `Status` / `Remove (stop future tracking)` / `Cancel`.
+
+### Apply
+
+1. Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-memory.sh" apply` ONLY after an explicit confirm.
+2. Read its status line and report it verbatim:
+   - `apply: applied` — the managed block was written; a timestamped `.gitignore.backup.<ts>` sits beside it, and the allowlist was seeded into `.supervisor/config.json` as a JSON ARRAY.
+   - `apply: no-op — already configured` — nothing was written (idempotent second run).
+   - `apply: ABORTED — <reason>` — nothing was written, no partial write, no backup. Surface the reason (absent `.gitignore`, unresolved conflict markers, unbalanced managed-block sentinels, NUL bytes, non-regular file) and STOP. Never "repair" the file to get past an abort.
+3. **The stores are only UN-IGNORED — nothing is committed.** Tell the user to review `git status --short .claude/agent-memory .supervisor/memory` and commit deliberately. This command never stages or commits on their behalf.
+
+**The repo allowlist** (`.setup_memory.repo_allowlist` in `<project>/.supervisor/config.json`) is a **JSON ARRAY, never a string**, and is never derived from the live remote at read time. A repo RENAME is the documented reason: records written before a rename carry the old slug, so a live-remote-keyed filter would silently drop the older half of a ledger. It defaults to the CURRENT remote's `owner/repo` on a fresh install (never a hardcoded owner — the plugin ships to other users) and is extended by hand afterwards:
+```bash
+jq '.setup_memory.repo_allowlist += ["owner/old-name"]' .supervisor/config.json
+```
+`setup-memory.sh filter-ledger --ledger <path>` applies it to a JSONL ledger and is the reusable predicate for any later item that decides which records belong to this repo. An EMPTY allowlist retains NOTHING (fail-closed), and a record with no `repo` field is excluded as unattributable.
+
+### Verify
+
+Re-run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-memory.sh" check` and show the before/after: each intended path flipped to `committable`, each unintended path (`.claude/worktrees/`, `.claude/settings.local.json`, `.supervisor/logs/`) still `ignored`, and the verdict now `configured`. Success is claimed ONLY after that re-check.
+
+### Subflow: `/setup memory remove`
+
+1. Confirm via `AskUserQuestion` first.
+2. Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-memory.sh" remove` — it deletes the managed block, restores the original bare excludes verbatim, and re-reports readiness.
+3. **Relay the helper's history warning verbatim — do not soften it.** Removal stops FUTURE tracking; it does NOT unpublish. Git history retains everything already committed, on this clone and on every remote, fork and clone that has it; if it was pushed, it is published. Purging genuinely published content requires a history rewrite (e.g. `git filter-repo`) plus a force-push of every affected ref, and anything secret that was exposed must be assumed compromised and rotated.
+4. Already-TRACKED files stay tracked — `.gitignore` only affects untracked files. The helper prints the current tracked counts and the exact `git rm -r --cached .claude/agent-memory .supervisor/memory` the user can run themselves. **Never run it for them.**
+
+### Idempotency note
+
+A second `/setup memory` on an already-applied repo reports "already configured" and writes nothing — apply compares the file it WOULD write against the file on disk byte-for-byte before touching anything, and an existing non-empty allowlist is never overwritten (a hand-added pre-rename slug must survive re-apply).
+
+---
+
 ## Module: telemetry
 
 DELEGATES — print `Telemetry is managed by /telemetry (consent logic lives there and is not duplicated).`, show the consent state from the dashboard check, and tell the user to run `/telemetry enable | disable | status | test`.
@@ -310,6 +394,7 @@ Status + guidance only. Report which of `DB_HOST`, `DB_USER`, `DB_PASS`, `DB_NAM
   - `$HOME/.claude/settings.json` — user-scope env, via the merge recipe, backup-first,
   - `<project>/.claude/settings.local.json` — project-scope, gitignored-by-convention; sanctioned for the `remove` subflow's `jq 'del(.env.OTEL_RESOURCE_ATTRIBUTES)'` (backup-first, like the user-scope merge) and — via the invoked `set-otel-resource-attrs.sh` script — the init-tail per-project label. The script write uses parse-gate (`jq empty`, no clobber on unparseable) + atomic tmp-file-`mv` + idempotent skip-if-unchanged; it does NOT back up (the merge is single-key and idempotent, so there is nothing destructive to roll back), and
   - **twin** (`/setup twin`): (a) `<project>/.supervisor/bridge/` — written ONLY via `setup-twin.sh`'s `build-bridge.sh --out "$repo/.supervisor/bridge"` call (the explicit `--out` means a repo-local `.supervisor/config.json .build_bridge.out` can NOT redirect it); and (b) the command-layer **confirmed** `<project>/CLAUDE.md` create-when-absent — written ONLY on explicit user confirm AND only while the file is still absent (NEVER overwrite an existing CLAUDE.md). The twin module touches NO `~/.claude/settings.json` and nothing under `~/.claude/` — Twin artifacts are per-repo (gitignored/regenerable graph + bridge; committed `CLAUDE.md`), not per-user config.
+  - **memory** (`/setup memory`) — **a `.gitignore` write class no other module has, so it gets its own line:** (a) `<project>/.gitignore`, rewritten ONLY via `setup-memory.sh apply` / `remove`, and ONLY after an explicit consent-bearing confirm. The write is backup-first (a timestamped `<project>/.gitignore.backup.<ts>` sibling), atomic (tmp-file + `mv`), confined to a sentinel-delimited managed block plus the commenting-out of pre-existing bare `.claude/` / `.supervisor/` excludes, and **idempotent by byte-comparison** — apply computes the file it would write and does nothing when it already matches. It **ABORTS without any write and without a backup** on an absent, non-regular, symlinked, NUL-containing, conflict-marked, or sentinel-unbalanced `.gitignore` — never a partial write, never a blind repair; and (b) `<project>/.supervisor/config.json` key `.setup_memory.repo_allowlist` — a jq merge that is parse-gated (`jq empty`), backup-first, atomic, preserves every unrelated key, stores a JSON **array**, and never overwrites an existing non-empty one. The memory module touches NO `~/.claude/settings.json` and nothing under `~/.claude/`, and it **NEVER runs `git add`, `git rm`, `git commit` or any other history-touching git command** — un-ignoring is not committing, and un-committing is the user's own `git rm --cached`.
 
   Everything else is read-only or delegated. One delegation carve-out: when the telemetry module executes telemetry.md's enable recipe (see "Module: telemetry"), that recipe writes `.supervisor/telemetry-consent.json` under telemetry.md's authority — setup.md's own logic still never touches that file.
 - Idempotent: re-running any flow against an already-configured module reports "already configured" and offers status/reconfigure/remove — it never blind-overwrites, and never regenerates an existing `.env`.
