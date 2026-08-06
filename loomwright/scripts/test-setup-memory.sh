@@ -30,19 +30,26 @@
 #        `.claude/*` form to succeed — the silent failure is asserted, never merely commented
 #   (b)  after apply: each intended path is committable and each unintended path stays ignored,
 #        asserted PER PATH via `git check-ignore` (never a bulk claim)
+#   (b2) the RECURSIVE `.claude/**` / `**/.claude/` family is neutralised like the bare form, and
+#        an exclude this rewriter does NOT recognise is reported (warning + the winning pattern
+#        from a real `git check-ignore -v`) instead of hiding under an `apply: applied` headline
 #   (c)  dotfile sidecars (.provenance.jsonl / .lessons-provenance.jsonl) commit — asserted
 #        explicitly and separately from the `**` globs
 #   (d)  allowlist: stored as a JSON ARRAY (never a string); a renamed repo retains records under
 #        BOTH slugs; a foreign-repo record is excluded; a fresh install defaults to the remote
 #   (e)  idempotency: a second apply is a no-op that writes nothing (.gitignore AND config
-#        byte-identical, no second backup)
-#   (f)  absent / unparseable .gitignore: change nothing, say why, no partial write, no backup
+#        byte-identical, no second backup); PLUS backup-before-write asserted positively — the
+#        backup exists and its CONTENT is the pristine pre-apply file — and two applies inside the
+#        same second (pinned clock) produce two backups rather than overwriting the original
+#   (f)  absent / unparseable .gitignore: change nothing, say why, no partial write, no backup;
+#        and an INDENTED sentinel is stripped, never duplicated into an unrepairable file
 #   (g)  remove: block gone, byte-exact round-trip, and the output states plainly that git history
 #        retains anything already pushed + that already-tracked files need `git rm --cached`
 #   (h)  the consent disclosure (what becomes version-controlled) is printed BEFORE applying
 #   (i)  write containment: only .gitignore(+backup) and .supervisor/config.json; `check` writes
 #        nothing; no commit/index/HEAD is ever touched; only read-only git subcommands are used
-#   (j)  fail-safe: every subcommand exits 0, including on a non-git root and a bad flag
+#   (j)  fail-safe: every subcommand exits 0, including on a non-git root and a bad flag — and a
+#        root where nothing could be probed reports the VERDICT as `unknown`, never `partial`
 #   (k)  the suite never touched the plugin repo's own .gitignore
 
 set -uo pipefail
@@ -176,6 +183,45 @@ chk_b="$(mem "$Ab" check 2>/dev/null)"
 has '^Memory readiness: configured' "$chk_b" && ok "(b) check verdict = configured after apply" || no "(b) check verdict not 'configured' after apply"
 
 # ============================================================================
+echo "== (b2) the RECURSIVE '.claude/**' family is neutralised too, and a survivor is not sold as success =="
+# `.claude/**` matches every path BELOW the directory and git applies the LAST matching rule, so
+# it still beats the block's `!.claude/agent-memory/` (which is directory-only and never matches
+# the files inside). A survivor left the negation silently dead under an `apply: applied` headline.
+Bx="$(newgit https://github.com/acme/widget.git)"
+seed_stores "$Bx"
+printf '# editor\n*.swp\n.claude/**\n.supervisor/**\n**/.claude/\n' > "$Bx/.gitignore"
+assert_ignored "$Bx" "$P_MEM" "(b2) precondition: '.claude/**' ignores $P_MEM before apply"
+out_bx="$(mem "$Bx" apply 2>&1)"; rc_bx=$?
+[ "$rc_bx" -eq 0 ] && ok "(b2) apply exits 0 on a '**'-family .gitignore" || no "(b2) apply non-zero ($rc_bx)"
+assert_committable "$Bx" "$P_MEM"     "(b2) a pre-existing '.claude/**' no longer defeats the negation"
+assert_committable "$Bx" "$P_LES"     "(b2) a pre-existing '.supervisor/**' no longer defeats the negation"
+assert_committable "$Bx" "$P_MEM_DOT" "(b2) the dotfile sidecar survives the '**' family too"
+assert_ignored "$Bx" "$P_WT"    "(b2) $P_WT still ignored"
+assert_ignored "$Bx" "$P_LOGS"  "(b2) $P_LOGS still ignored"
+gi_bx="$(cat "$Bx/.gitignore")"
+hasE '^[[:space:]]*\.claude/\*\*[[:space:]]*$'     "$gi_bx" && no "(b2) a live '.claude/**' survived apply"     || ok "(b2) '.claude/**' was neutralised"
+hasE '^[[:space:]]*\.supervisor/\*\*[[:space:]]*$' "$gi_bx" && no "(b2) a live '.supervisor/**' survived apply" || ok "(b2) '.supervisor/**' was neutralised"
+hasE '^[[:space:]]*\*\*/\.claude/[[:space:]]*$'    "$gi_bx" && no "(b2) a live '**/.claude/' survived apply"    || ok "(b2) '**/.claude/' was neutralised"
+hasE '^\*\.swp$' "$gi_bx" && ok "(b2) unrelated user rule '*.swp' preserved verbatim" || no "(b2) apply dropped an unrelated user rule"
+hasF 'apply: WARNING' "$out_bx" && no "(b2) apply warned even though the negation DID take effect" || ok "(b2) no spurious warning when readiness is 'configured'"
+# remove must still round-trip the newly-recognised forms
+orig_bx="$(mkfix)/orig.gitignore"; printf '# editor\n*.swp\n.claude/**\n.supervisor/**\n**/.claude/\n' > "$orig_bx"
+mem "$Bx" remove >/dev/null 2>&1
+if cmp -s "$orig_bx" "$Bx/.gitignore"; then ok "(b2) apply → remove restores the '**'-family .gitignore BYTE-EXACTLY"; else no "(b2) the '**' family did not round-trip through remove"; fi
+
+# A survivor this rewriter does NOT recognise (a deeper `.claude/agent-memory/**`) must be
+# reported, not papered over: the headline is qualified and the WINNING pattern is named from a
+# real `git check-ignore -v` probe, never guessed.
+By="$(newgit https://github.com/acme/widget.git)"
+seed_stores "$By"
+printf '.claude/\n.claude/agent-memory/**\n' > "$By/.gitignore"
+out_by="$(mem "$By" apply 2>&1)"; rc_by=$?
+[ "$rc_by" -eq 0 ] && ok "(b2) apply still exits 0 with an unrecognised surviving exclude" || no "(b2) non-zero ($rc_by)"
+hasF 'apply: WARNING' "$out_by" && ok "(b2) apply WARNS when the post-write verdict is not 'configured' (no unqualified success)" || no "(b2) apply reported plain success while an intended path stayed ignored"
+hasF 'STILL IGNORED' "$out_by" && ok "(b2) the warning says which intended paths are still ignored" || no "(b2) the warning does not flag the still-ignored intended paths"
+hasF '.claude/agent-memory/**' "$out_by" && ok "(b2) the warning NAMES the surviving pattern (from git check-ignore -v, not a guess)" || no "(b2) the warning does not name the surviving pattern"
+
+# ============================================================================
 echo "== (c) dotfile sidecars commit — asserted explicitly, separately from the ** globs =="
 # Their absence would silently strip provenance from a fresh clone (read-lessons.sh's read-side
 # provenance gate depends on them), and a dotfile inside a re-included directory is its own
@@ -254,25 +300,74 @@ LEDGER
   hasF '"number":99' "$robust" && ok "(d8) records AFTER the malformed line are still retained (per-line fallback works)" || no "(d8) the malformed line swallowed the rest of the ledger"
 fi
 
+# (d9) A FILESYSTEM-PATH REMOTE CARRIES NO OWNER. `origin = /Users/x/myrepo` has the same shape as
+# `host/owner/repo` once you only look at the last two segments, so a naive tail split returns
+# `x/myrepo` — an owner invented from a parent DIRECTORY name, which contradicts remote_slug's own
+# "NEVER guesses an owner" contract and would silently mis-scope the ledger filter.
+# (Outside the jq guard on purpose: `allowlist` resolution needs no jq.)
+D9="$(newgit /Users/someone/parent-dir/myrepo)"
+al_d9="$(mem "$D9" allowlist 2>/dev/null)"
+[ -z "$al_d9" ] && ok "(d9) a filesystem-path remote yields NO allowlist default (no owner fabricated from a parent dir)" || no "(d9) a filesystem-path remote fabricated the owner '$al_d9'"
+src_d9="$(mem "$D9" allowlist 2>&1 >/dev/null)"
+hasF 'unset (no git remote' "$src_d9" && ok "(d9) the path remote is reported as 'unset', not as a resolved default" || no "(d9) wrong source label for a path remote (got: $src_d9)"
+D9b="$(newgit ../sibling-repo)"
+[ -z "$(mem "$D9b" allowlist 2>/dev/null)" ] && ok "(d9) a RELATIVE path remote also yields no default" || no "(d9) a relative path remote fabricated an owner"
+D9c="$(newgit ssh://git@github.com/acme/widget.git)"
+[ "$(mem "$D9c" allowlist 2>/dev/null)" = "acme/widget" ] && ok "(d9) a real ssh:// URL still resolves (the path guard did not over-reject)" || no "(d9) the path guard broke ssh:// URL resolution"
+
 # ============================================================================
-echo "== (e) idempotency — a second apply is a no-op that writes NOTHING =="
+echo "== (e) idempotency + BACKUP-BEFORE-WRITE — a second apply is a no-op that writes NOTHING =="
 Ee="$(newgit https://github.com/acme/widget.git)"
 printf '# junk\n.claude/\n.supervisor/\n' > "$Ee/.gitignore"
+# Snapshot the PRISTINE user file BEFORE the first apply. Backup-first is the module's only
+# user-data safety net, so it is asserted POSITIVELY below (the backup EXISTS and its CONTENT is
+# this snapshot) — never as a count comparison across the no-op second apply, which passes as
+# "0 = 0" when no backup is ever written and left `cp "$GI" "$backup"` completely unasserted.
+gi_pristine="$(sum "$Ee/.gitignore")"
 mem "$Ee" apply >/dev/null 2>&1
 gi1="$(sum "$Ee/.gitignore")"
 cfg1="$(sum "$Ee/.supervisor/config.json" 2>/dev/null || echo none)"
 bk1="$(ls "$Ee"/.gitignore.backup.* 2>/dev/null | wc -l | tr -d ' ')"
+bk1_path="$(ls "$Ee"/.gitignore.backup.* 2>/dev/null | head -n1)"
+[ "$bk1" -eq 1 ] && ok "(e) the first apply wrote EXACTLY ONE .gitignore.backup.* (backup-before-write happened at all)" || no "(e) the first apply wrote $bk1 backup(s), expected exactly 1 — backup-before-write did NOT happen"
+if [ -n "$bk1_path" ] && [ "$(sum "$bk1_path")" = "$gi_pristine" ]; then
+  ok "(e) that backup holds the PRISTINE pre-apply .gitignore byte-for-byte (recoverable original)"
+else
+  no "(e) the backup does not match the pre-apply .gitignore — the user's original is NOT recoverable"
+fi
+[ "$gi1" != "$gi_pristine" ] && ok "(e) the first apply really did rewrite .gitignore (the backup is not a copy of the new file)" || no "(e) the first apply did not change .gitignore — the backup assertion above would be vacuous"
 out_e="$(mem "$Ee" apply 2>&1)"; rc_e=$?
 gi2="$(sum "$Ee/.gitignore")"
 cfg2="$(sum "$Ee/.supervisor/config.json" 2>/dev/null || echo none)"
 bk2="$(ls "$Ee"/.gitignore.backup.* 2>/dev/null | wc -l | tr -d ' ')"
 [ "$rc_e" -eq 0 ] && ok "(e) second apply exits 0" || no "(e) second apply non-zero ($rc_e)"
-hasi 'already configured' "$out_e" && ok "(e) second apply reports 'already configured'" || no "(e) second apply did not report 'already configured'"
+# Anchored to the apply STATUS LINE: `seed_allowlist` prints "already configured" on every second
+# apply regardless of what the .gitignore path did, so `hasi 'already configured'` was passing
+# without discriminating the no-op at all.
+has '^apply: no-op' "$out_e" && ok "(e) second apply reports the 'apply: no-op' status line" || no "(e) second apply did not report 'apply: no-op'"
 [ "$gi1" = "$gi2" ] && ok "(e) .gitignore byte-identical after the second apply (nothing written)" || no "(e) second apply MUTATED .gitignore"
 [ "$cfg1" = "$cfg2" ] && ok "(e) .supervisor/config.json byte-identical after the second apply" || no "(e) second apply MUTATED the config"
-[ "$bk1" = "$bk2" ] && ok "(e) no second backup file created by the no-op apply ($bk2 total)" || no "(e) the no-op apply still wrote a backup ($bk1 → $bk2)"
+[ "$bk2" -eq 1 ] && ok "(e) still EXACTLY ONE backup after the no-op apply (it wrote none)" || no "(e) the no-op apply changed the backup count ($bk1 → $bk2)"
 c1="$(mem "$Ee" check 2>/dev/null)"; c2="$(mem "$Ee" check 2>/dev/null)"
 [ "$c1" = "$c2" ] && ok "(e) check stdout byte-identical across two runs" || no "(e) check stdout differed between runs"
+
+# --- SAME-SECOND BACKUP COLLISION -------------------------------------------------------------
+# The backup name is second-granular, so two applies inside one second resolve to the same path
+# and the second `cp` would OVERWRITE the first backup — losing the user's pristine original and
+# leaving only a copy of the tool's own output. Driven with a PINNED clock (a fake `date` first on
+# PATH) so the collision is deterministic instead of a race the suite would only sometimes hit.
+Ec="$(newgit https://github.com/acme/widget.git)"
+printf '# junk\n.claude/\n' > "$Ec/.gitignore"
+ec_pristine="$(sum "$Ec/.gitignore")"
+mkdir -p "$Ec/fakebin"
+printf '#!/bin/sh\necho 20260101-000000\n' > "$Ec/fakebin/date"
+chmod +x "$Ec/fakebin/date"
+PATH="$Ec/fakebin:$PATH" bash "$MEM" --root "$Ec" apply >/dev/null 2>&1
+printf '*.log\n' >> "$Ec/.gitignore"   # forces the SECOND apply to be a real write, not a no-op
+PATH="$Ec/fakebin:$PATH" bash "$MEM" --root "$Ec" apply >/dev/null 2>&1
+n_bk_ec="$(ls "$Ec"/.gitignore.backup.* 2>/dev/null | wc -l | tr -d ' ')"
+[ "$n_bk_ec" -eq 2 ] && ok "(e) two applies in the SAME second produce TWO distinct backups (no collision)" || no "(e) same-second applies left $n_bk_ec backup(s) — one overwrote the other"
+[ "$(sum "$Ec/.gitignore.backup.20260101-000000")" = "$ec_pristine" ] && ok "(e) the FIRST backup still holds the pristine original after the same-second second apply" || no "(e) the same-second second apply OVERWROTE the user's pristine original backup"
 
 # ============================================================================
 echo "== (f) absent / unparseable .gitignore — change nothing, say why, no partial write =="
@@ -307,6 +402,37 @@ hasi 'sentinel' "$out_f3" && ok "(f3) the abort names the sentinel imbalance" ||
 out_f3r="$(mem "$F3" remove 2>&1)"
 has '^remove: ABORTED' "$out_f3r" && ok "(f3) remove ABORTS on the same unparseable file (never half-repairs)" || no "(f3) remove did not abort on an unparseable file"
 [ "$before_f3" = "$(sum "$F3/.gitignore")" ] && ok "(f3) .gitignore unchanged after the remove abort" || no "(f3) remove MUTATED an unparseable .gitignore"
+
+# (f4) AN INDENTED BEGIN SENTINEL MUST NEVER PRODUCE A DUPLICATED BLOCK.
+# The presence gate counts sentinels with `grep -F` (substring, anywhere on the line) while the
+# stripper used to anchor at column 1. An indented BEGIN therefore passed the gate as "one valid
+# block" but was NOT stripped, so apply APPENDED a second block — after which the file held
+# BEGIN x2 / END x2 and every later apply AND remove aborted with "duplicated managed-block
+# sentinels": a corrupt state the tool created itself and then refused to repair. One matcher now
+# serves both, so the file must stay repairable by BOTH subcommands.
+F4="$(newgit https://github.com/acme/widget.git)"
+seed_stores "$F4"
+{
+  printf '# editor\n*.swp\n.claude/\n'
+  printf '   # >>> loomwright /setup memory BEGIN — committable Twin stores (managed block) >>>\n'
+  printf '.claude/*\n!.claude/agent-memory/\n'
+  printf '   # <<< loomwright /setup memory END <<<\n'
+} > "$F4/.gitignore"
+out_f4="$(mem "$F4" apply 2>&1)"; rc_f4=$?
+[ "$rc_f4" -eq 0 ] && ok "(f4) apply on an INDENTED-sentinel .gitignore exits 0" || no "(f4) non-zero ($rc_f4)"
+nb_f4="$(grep -cF '>>> loomwright /setup memory BEGIN' "$F4/.gitignore" 2>/dev/null | tr -d ' ')"
+ne_f4="$(grep -cF '<<< loomwright /setup memory END'   "$F4/.gitignore" 2>/dev/null | tr -d ' ')"
+[ "${nb_f4:-0}" -eq 1 ] && [ "${ne_f4:-0}" -eq 1 ] && ok "(f4) apply left EXACTLY ONE managed block (indented sentinel stripped, never duplicated)" || no "(f4) apply left BEGIN x${nb_f4:-0} / END x${ne_f4:-0} — it duplicated the block and bricked the file"
+assert_committable "$F4" "$P_MEM" "(f4) the rewritten file still makes $P_MEM committable"
+# the brick state must be UNREACHABLE: both subcommands still work on the once-indented file
+out_f4b="$(mem "$F4" apply 2>&1)"
+hasi 'duplicated managed-block sentinels' "$out_f4b" && no "(f4) a follow-up apply is BRICKED with 'duplicated managed-block sentinels'" || ok "(f4) a follow-up apply is not bricked"
+has '^apply: no-op' "$out_f4b" && ok "(f4) the follow-up apply is a clean no-op (the first pass produced canonical content)" || no "(f4) the follow-up apply was not a no-op"
+out_f4r="$(mem "$F4" remove 2>&1)"; rc_f4r=$?
+[ "$rc_f4r" -eq 0 ] && ok "(f4) remove exits 0 on the once-indented file" || no "(f4) remove non-zero ($rc_f4r)"
+hasi 'duplicated managed-block sentinels' "$out_f4r" && no "(f4) remove is BRICKED on the same file" || ok "(f4) remove is not bricked either"
+nb_f4r="$(grep -cF 'loomwright /setup memory' "$F4/.gitignore" 2>/dev/null | tr -d ' ')"
+[ "${nb_f4r:-1}" -eq 0 ] && ok "(f4) remove leaves NO managed-block sentinel behind (fully repairable)" || no "(f4) remove left ${nb_f4r} managed-block line(s) behind"
 
 # ============================================================================
 echo "== (g) remove — reverts exactly, and says plainly that history retains what was pushed =="
@@ -411,6 +537,10 @@ bash "$MEM" --help >/dev/null 2>&1; rc=$?
 chk_j="$(mem "$Jj" check 2>/dev/null)"
 has 'unknown' "$chk_j" && ok "(j) a non-git root reports ignore status as 'unknown' (never an unprobed claim)" || no "(j) non-git root did not report 'unknown'"
 has '^  .gitignore:        absent' "$chk_j" && ok "(j) a missing .gitignore is reported as 'absent'" || no "(j) missing .gitignore not reported as absent"
+# The VERDICT must inherit that too. With every cell 'unknown' the old fall-through printed
+# "partial (an unintended path is committable …)" — asserting a state it never probed.
+has '^Memory readiness: unknown' "$chk_j" && ok "(j) the VERDICT is 'unknown' when nothing could be probed (never 'partial', which claims an unprobed state)" || no "(j) non-git verdict is not 'unknown' (got: $(grep '^Memory readiness:' <<< "$chk_j"))"
+hasF 'could not be probed' "$chk_j" && ok "(j) the unknown verdict says WHY (not a git repo)" || no "(j) the unknown verdict gives no reason"
 
 # ============================================================================
 echo "== (k) the suite never touched the plugin repo's own .gitignore =="

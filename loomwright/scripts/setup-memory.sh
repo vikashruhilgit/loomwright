@@ -44,7 +44,8 @@
 # outcome instead of an exit code.
 #
 # WRITE-CONTAINMENT INVARIANT: the ONLY things this helper writes are, under the resolved repo
-# root, (a) `.gitignore` plus one timestamped `.gitignore.backup.<ts>` sibling, and (b)
+# root, (a) `.gitignore` plus one timestamped `.gitignore.backup.<ts>` sibling (suffixed with the
+# pid, then a counter, when that name is already taken — a backup NEVER overwrites another), and (b)
 # `.supervisor/config.json` `.setup_memory.repo_allowlist` (backup-first jq merge that preserves
 # every unrelated key). It writes NOTHING under `~/.claude/`, and it NEVER runs `git add`,
 # `git rm`, `git commit` or any other history-touching command. `check`, `allowlist` and
@@ -212,6 +213,9 @@ gitignore_gate() {
   # NOTE: `grep -c` PRINTS 0 and EXITS 1 on no-match, so a `|| echo 0` fallback would append a
   # SECOND line ("0\n0") and break every numeric test below. Swallow the status with `|| true`
   # and only default when the output is genuinely empty.
+  # MATCHER INVARIANT: `grep -F` here is SUBSTRING-anywhere-on-the-line, and strip_managed_block()
+  # MUST use the same rule (see its header) — a gate that counts a sentinel the stripper cannot
+  # remove makes `apply` append a second block and brick the file.
   local nb ne lb le
   nb="$(grep -cF "$MB_BEGIN" "$GI" 2>/dev/null || true)"; [ -n "$nb" ] || nb=0
   ne="$(grep -cF "$MB_END" "$GI" 2>/dev/null || true)"; [ -n "$ne" ] || ne=0
@@ -242,25 +246,55 @@ managed_block_present() {
 # ---- content transforms (pure: stdin → stdout, no writes) -------------------
 
 # Strip an existing managed block (BEGIN..END inclusive).
+#
+# ONE MATCHER, TWO CALLERS (invariant — do not split these again). The presence gate
+# (gitignore_gate / managed_block_present) counts sentinels with `grep -F`, i.e. the sentinel
+# ANYWHERE on the line, so this stripper must use the SAME rule — `index() > 0`, never a
+# column-1 anchor. When the two disagreed, a merely INDENTED BEGIN sentinel passed the gate as
+# "one valid block" but was NOT stripped, so `apply` appended a SECOND block. The file then held
+# BEGIN x2 / END x2 and every later `apply` AND `remove` aborted with `unparseable: duplicated
+# managed-block sentinels` — a corrupt state the tool created itself and then refused to repair.
+# Substring matching is safe here because the sentinels are full, highly distinctive lines: a
+# line that contains one verbatim IS that sentinel (indented, or otherwise re-wrapped by hand).
 strip_managed_block() {
   awk -v b="$MB_BEGIN" -v e="$MB_END" '
-    index($0, b) == 1 { skip = 1 }
-    skip == 1 { if (index($0, e) == 1) skip = 0; next }
+    index($0, b) > 0 { skip = 1 }
+    skip == 1 { if (index($0, e) > 0) skip = 0; next }
     { print }
   '
 }
 
-# Comment out bare-directory excludes that would defeat the negation. A bare `.claude/` excludes
+# Comment out directory-shaped excludes that would defeat the negation. A bare `.claude/` excludes
 # the DIRECTORY, so git never descends into it and no later `!` line can re-include anything
 # below it — the line must be neutralized, not merely out-ordered. Commenting (rather than
 # deleting) keeps the user's original text and makes `remove` exactly reversible.
+#
+# The `**` FAMILY COUNTS TOO. `.claude/**` matches every path below the directory, and since git
+# applies the LAST matching rule, it still wins over a later `!.claude/agent-memory/` (which is
+# directory-only and never matches the files inside). `**/.claude/` is just a bare directory
+# exclude spelled for any depth. Leaving any of these live produced a silently dead negation
+# under an unqualified `apply: applied` headline, so they are neutralized alongside the bare form.
+#
+# `X/*` is DELIBERATELY ABSENT from the set: that is the working form this module itself writes —
+# it excludes the contents while leaving the directory traversable, which is what makes the `!`
+# lines effective. Commenting it out would neutralize the fix rather than the obstacle.
 comment_bare_excludes() {
   awk -v mark="$DISABLED_MARK" '
+    BEGIN {
+      nn = split(".claude .supervisor", names, " ")
+      nf = split("@ @/ /@ /@/ @/** /@/** **/@ **/@/ **/@/**", forms, " ")
+      for (i = 1; i <= nn; i++) {
+        for (j = 1; j <= nf; j++) {
+          p = forms[j]
+          gsub(/@/, names[i], p)
+          blocking[p] = 1
+        }
+      }
+    }
     {
       t = $0
       sub(/[ \t\r]+$/, "", t)
-      if (t == ".claude/"     || t == ".claude"     || t == "/.claude/"     || t == "/.claude" ||
-          t == ".supervisor/" || t == ".supervisor" || t == "/.supervisor/" || t == "/.supervisor") {
+      if (t in blocking) {
         print "# " $0 "   " mark
       } else {
         print
@@ -320,11 +354,29 @@ proposed_removed_content() {
   strip_managed_block < "$GI" | uncomment_bare_excludes
 }
 
+# unique_backup_path <file> → a `<file>.backup.<ts>` sibling that does NOT already exist.
+#
+# The timestamp is second-granular, so two writes inside the SAME second resolve to the same name
+# and the second `cp` would OVERWRITE the first backup — destroying the user's PRISTINE original,
+# which is the single file the whole backup-first contract exists to protect (the later backup
+# only holds this tool's own output). The plain `<file>.backup.<ts>` form is kept for the common
+# case because it is the documented name; a collision falls back to a pid-qualified name, then to
+# a counter. Never returns a path that exists at call time.
+unique_backup_path() {
+  local f="$1" ts base n
+  ts="$(date +%Y%m%d-%H%M%S 2>/dev/null || echo unknown)"
+  base="$f.backup.$ts"
+  if [ ! -e "$base" ]; then printf '%s' "$base"; return 0; fi
+  if [ ! -e "$base.$$" ]; then printf '%s' "$base.$$"; return 0; fi
+  n=1
+  while [ -e "$base.$$.$n" ] && [ "$n" -lt 1000 ]; do n=$((n + 1)); done
+  printf '%s' "$base.$$.$n"
+}
+
 # Backup-first + atomic replace. Echoes the backup path on success.
 write_gitignore() {
-  local content="$1" ts backup tmp
-  ts="$(date +%Y%m%d-%H%M%S 2>/dev/null || echo unknown)"
-  backup="$GI.backup.$ts"
+  local content="$1" backup tmp
+  backup="$(unique_backup_path "$GI")"
   cp "$GI" "$backup" 2>/dev/null || { echo "setup-memory: could not write backup $backup — nothing changed." >&2; return 1; }
   tmp="$GI.tmp.$$"
   printf '%s\n' "$content" > "$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; echo "setup-memory: could not stage the rewrite — nothing changed." >&2; return 1; }
@@ -340,12 +392,32 @@ ALLOWLIST_SOURCE="none"
 # Parse `owner/repo` out of a git remote URL. Handles https, ssh scp-style, and ssh:// forms;
 # strips a trailing `.git`. Echoes nothing when it cannot decide — NEVER guesses an owner.
 remote_slug() {
-  local url slug
+  local url slug head
   url="$(git -C "$repo" remote get-url origin 2>/dev/null || true)"
   [ -n "$url" ] || return 0
+  # A FILESYSTEM-PATH remote carries no owner at all. `origin = /Users/x/myrepo` has the same
+  # shape as `host/owner/repo` once you only look at the last two segments, so the naive tail
+  # split would return `x/myrepo` — an owner invented from a parent directory name, which is
+  # exactly what this function promises never to do. Decide it is a path and return nothing.
+  case "$url" in
+    # NOTE the QUOTED tilde: bash tilde-expands `case` PATTERNS, so a bare `~*` would silently
+    # become the developer's own home path and stop matching a literal `~/...` remote.
+    /*|./*|../*|'~'*|file://*) return 0 ;;
+  esac
   slug="$url"
   slug="${slug%.git}"
   slug="${slug%/}"
+  case "$slug" in
+    *://*|*:*) : ;;                 # a scheme or an scp-style `host:` — a real remote URL
+    *)
+      # No scheme and no colon: only a HOST-LIKE leading segment can be followed by an owner.
+      # `subdir/myrepo` or a bare `myrepo` is a relative path, not `owner/repo`.
+      head="${slug%%/*}"
+      case "$head" in
+        *.*|localhost) : ;;
+        *) return 0 ;;
+      esac ;;
+  esac
   case "$slug" in
     *:*/*)  slug="${slug##*:}" ;;   # git@host:owner/repo  → owner/repo
   esac
@@ -451,7 +523,7 @@ seed_allowlist() {
   mkdir -p "$(dirname "$CFG")" 2>/dev/null
   local tmp="$CFG.tmp.$$"
   if [ -f "$CFG" ]; then
-    cp "$CFG" "$CFG.backup.$(date +%Y%m%d-%H%M%S 2>/dev/null || echo unknown)" 2>/dev/null
+    cp "$CFG" "$(unique_backup_path "$CFG")" 2>/dev/null
     jq --argjson a "$json" '.setup_memory = ((.setup_memory // {}) | .repo_allowlist = $a)' "$CFG" > "$tmp" 2>/dev/null \
       && mv "$tmp" "$CFG" 2>/dev/null \
       || { rm -f "$tmp" 2>/dev/null; echo "  allowlist: SKIPPED — could not merge into $CFG (unchanged)."; return 0; }
@@ -540,8 +612,19 @@ DISCLOSURE
 }
 
 # ---- report render (shared by check + apply/remove verify) ------------------
+#
+# render_report also PUBLISHES its conclusion into two globals so a caller can react to it without
+# re-deriving (or re-guessing) the verdict: $REPORT_VERDICT and $REPORT_BLOCKED_INTENDED (the
+# newline-separated intended paths that came back `ignored`). It must therefore run in the CURRENT
+# shell — every existing call site already does.
+REPORT_VERDICT=""
+REPORT_BLOCKED_INTENDED=""
+
 render_report() {
-  local gate mb p st intended_ok=yes unintended_ok=yes
+  local gate mb p st intended_ok=yes unintended_ok=yes probed=0 unknowns=0
+
+  REPORT_VERDICT=""
+  REPORT_BLOCKED_INTENDED=""
 
   gate="$(gitignore_gate)"
   mb="$(managed_block_present)"
@@ -555,7 +638,13 @@ render_report() {
     [ -n "$p" ] || continue
     st="$(ignore_status "$p")"
     printf '    %-56s %s\n' "$p" "$st"
+    probed=$((probed + 1))
+    [ "$st" = "unknown" ] && unknowns=$((unknowns + 1))
     [ "$st" = "committable" ] || intended_ok=no
+    if [ "$st" = "ignored" ]; then
+      REPORT_BLOCKED_INTENDED="${REPORT_BLOCKED_INTENDED}${p}
+"
+    fi
   done <<EOF
 $INTENDED_PATHS
 EOF
@@ -565,6 +654,8 @@ EOF
     [ -n "$p" ] || continue
     st="$(ignore_status "$p")"
     printf '    %-56s %s\n' "$p" "$st"
+    probed=$((probed + 1))
+    [ "$st" = "unknown" ] && unknowns=$((unknowns + 1))
     [ "$st" = "ignored" ] || unintended_ok=no
   done <<EOF
 $UNINTENDED_PATHS
@@ -579,15 +670,59 @@ EOF
     echo "  allowlist:         (empty) [source: $ALLOWLIST_SOURCE]"
   fi
 
+  # UNKNOWN DOMINATES. Off a git repo every `git check-ignore` returns 128 → every cell is
+  # `unknown`, which makes intended_ok=no AND unintended_ok=no and would fall through to
+  # `partial (an unintended path is committable …)` — a claim about a state that was never
+  # probed. Nothing here may assert an unprobed status, so say so instead.
   local verdict
-  if [ "$intended_ok" = "yes" ] && [ "$unintended_ok" = "yes" ]; then
+  if [ "$probed" -gt 0 ] && [ "$unknowns" -eq "$probed" ]; then
+    verdict="unknown (not a git repo — ignore status could not be probed)"
+    REPORT_BLOCKED_INTENDED=""
+  elif [ "$intended_ok" = "yes" ] && [ "$unintended_ok" = "yes" ]; then
     verdict="configured"
   elif [ "$intended_ok" = "no" ] && [ "$unintended_ok" = "yes" ]; then
     verdict="not configured"
   else
     verdict="partial (an unintended path is committable — review the ignore rules by hand)"
   fi
+  REPORT_VERDICT="$verdict"
   echo "Memory readiness: $verdict"
+}
+
+# After a write (or a no-op re-apply) the `apply: applied` headline on its own reads as
+# unqualified success — but a pre-existing pattern this rewriter does not neutralise (a
+# `.claude/agent-memory/**`, a rule in a PARENT .gitignore, or the global excludesfile) can still
+# win for the intended paths, leaving a silently dead negation. Qualify the headline, and name the
+# rule that actually wins from a REAL probe (`git check-ignore -v`) rather than guessing at it.
+warn_if_not_configured() {
+  local p src
+  case "$REPORT_VERDICT" in
+    configured) return 0 ;;
+    unknown*)
+      echo
+      echo "apply: WARNING — readiness is '$REPORT_VERDICT'."
+      echo "       The ignore status was never probed here, so nothing above confirms the negation took effect."
+      return 0 ;;
+  esac
+  echo
+  echo "apply: WARNING — readiness is '$REPORT_VERDICT', not 'configured'; the negation did NOT fully take effect."
+  if [ -n "$REPORT_BLOCKED_INTENDED" ]; then
+    echo "       These intended paths are STILL IGNORED, each with the rule that actually wins for it:"
+    while IFS= read -r p; do
+      [ -n "$p" ] || continue
+      src="$(git -C "$repo" check-ignore -v -- "$p" 2>/dev/null | head -n1)"
+      [ -n "$src" ] || src="(the winning pattern could not be resolved)"
+      echo "         $p"
+      echo "             <- $src"
+    done <<EOF
+$REPORT_BLOCKED_INTENDED
+EOF
+  fi
+  echo "       A surviving recursive or deeper exclude is the usual cause — this helper only"
+  echo "       neutralises the directory-shaped excludes it recognises (.claude, .supervisor and"
+  echo "       their /**, **/ and / forms). Comment out the rule named above, or move it ABOVE the"
+  echo "       managed block, then re-run. Nothing else about the write is in doubt: the managed"
+  echo "       block IS in place and a backup of the previous file sits beside it."
 }
 
 # ---- subcommand: check ------------------------------------------------------
@@ -625,6 +760,7 @@ do_apply() {
     echo
     echo "== verify =="
     render_report
+    warn_if_not_configured
     exit 0
   fi
 
@@ -640,6 +776,7 @@ do_apply() {
   echo
   echo "== verify =="
   render_report
+  warn_if_not_configured
   echo
   echo "Next: the stores are only UN-IGNORED — nothing is committed yet. Review with"
   echo "  git status --short .claude/agent-memory .supervisor/memory"
