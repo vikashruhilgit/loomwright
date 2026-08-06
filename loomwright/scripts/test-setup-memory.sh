@@ -408,6 +408,15 @@ n_bk_ec="$(ls "$Ec"/.gitignore.backup.* 2>/dev/null | wc -l | tr -d ' ')"
 # and the helper's pid is known IN ADVANCE because it is `exec`ed from a backgrounded `bash -c`
 # whose $$ (== $!) it inherits unchanged. One FIFO sequences seed-then-run without polling — there
 # is no portable `timeout` and `sleep`-based waits are races.
+#
+# THE HANDSHAKE MUST NOT BE ABLE TO HANG THIS SUITE. `echo go > fifo` blocks in open(2) until a
+# reader arrives, so a helper that died before reaching its `read` would wedge the writer FOREVER —
+# and this file is a HARD CI GATE, so a wedge burns the whole job timeout instead of reporting a
+# failure. The writer therefore opens the FIFO READ-WRITE (`exec 9<>`) and keeps that fd open
+# across the `wait`: O_RDWR on a FIFO never blocks (this shell is its own reader), the write lands
+# in the pipe buffer whether or not the helper ever shows up, and holding the fd past `wait` keeps
+# the buffer from being discarded before a slow helper opens its read end. A dead helper then makes
+# `wait` return its exit status immediately and the assertions below fail LOUDLY — never hang.
 Ex="$(newgit https://github.com/acme/widget.git)"
 printf '# junk\n.claude/\n' > "$Ex/.gitignore"
 ex_pristine="$(sum "$Ex/.gitignore")"
@@ -423,8 +432,10 @@ ex_base="$Ex/.gitignore.backup.20260101-000000"
 : > "$ex_base.$ex_pid"               # the pid-qualified fallback
 touch "$ex_base.$ex_pid."{1..1000}   # every counter slot, up to the helper's bound
 ex_seed_sum="$(sum "$ex_base")"
-echo go > "$Ex/gate"                 # release the helper; it calls the pinned `date` from here on
+exec 9<> "$Ex/gate"                  # read-write: opening never blocks, so a dead helper cannot wedge us
+printf 'go\n' >&9                    # release the helper; it calls the pinned `date` from here on
 wait "$ex_pid"; rc_ex=$?
+exec 9>&-                            # only now — an early close would discard the buffered token
 ex_out="$(cat "$Ex/out.txt" 2>/dev/null)"
 [ "$rc_ex" -eq 0 ] && ok "(e) apply still exits 0 when no backup name is free (fail-safe)" || no "(e) apply exited $rc_ex on backup exhaustion"
 has '^apply: ABORTED' "$ex_out" && ok "(e) apply ABORTS when no non-colliding backup name can be derived" || no "(e) apply did not abort on backup exhaustion (got: $(head -n3 <<< "$ex_out"))"
