@@ -405,37 +405,62 @@ n_bk_ec="$(ls "$Ec"/.gitignore.backup.* 2>/dev/null | wc -l | tr -d ' ')"
 # AT the bound and return `.<pid>.<bound>` with that file still present — a path it never verified,
 # which the caller's `cp` would then have OVERWRITTEN. It now returns EMPTY and write_gitignore
 # aborts. Driven deterministically, not as a race: the clock is pinned with a fake `date` on PATH,
-# and the helper's pid is known IN ADVANCE because it is `exec`ed from a backgrounded `bash -c`
-# whose $$ (== $!) it inherits unchanged. One FIFO sequences seed-then-run without polling — there
-# is no portable `timeout` and `sleep`-based waits are races.
+# and the seeding must happen while the helper is alive but has not yet run, because the candidate
+# names are qualified by the helper's OWN pid — which does not exist until it is running. That
+# chicken-and-egg is the only reason a handshake exists here at all.
 #
-# THE HANDSHAKE MUST NOT BE ABLE TO HANG THIS SUITE. `echo go > fifo` blocks in open(2) until a
-# reader arrives, so a helper that died before reaching its `read` would wedge the writer FOREVER —
-# and this file is a HARD CI GATE, so a wedge burns the whole job timeout instead of reporting a
-# failure. The writer therefore opens the FIFO READ-WRITE (`exec 9<>`) and keeps that fd open
-# across the `wait`: O_RDWR on a FIFO never blocks (this shell is its own reader), the write lands
-# in the pipe buffer whether or not the helper ever shows up, and holding the fd past `wait` keeps
-# the buffer from being discarded before a slow helper opens its read end. A dead helper then makes
-# `wait` return its exit status immediately and the assertions below fail LOUDLY — never hang.
+# THE HANDSHAKE MUST NOT BE ABLE TO HANG THIS SUITE, ON ANY PLATFORM. This file is a HARD CI GATE
+# inside a `for t in test-*.sh` loop that sets NO per-test timeout, so a wedged fixture does not
+# report a failure — it burns the entire job. An earlier revision sequenced this with a FIFO, which
+# put a blocking open(2) on the critical path (`echo go > fifo` blocks until a reader arrives) and
+# then tried to defuse it with `exec 9<>` — O_RDWR on a FIFO, which is formally UNDEFINED in POSIX
+# and therefore a portability bet, not a guarantee. Both are gone. The gate is now two plain files
+# and two BOUNDED polls, so no step can block on any platform:
+#   · the helper publishes its own `$$` (atomically: write-temp + rename) and then polls for `go`
+#   · the parent polls for `pid`, seeds every candidate name, then creates `go`
+#   · BOTH loops are capped at a fixed iteration count (~60s of budget either way). Exhaustion is
+#     never silent: the helper exits 97 with a distinct message, the parent records a FAILED
+#     assertion. The parent's `wait` is therefore bounded by the helper's own cap even if the
+#     helper is never released, and a helper that dies early just makes `wait` return immediately.
+# Fractional `sleep` is a GNU/BSD extension, not POSIX, so it is PROBED once rather than assumed —
+# a shell without it falls back to whole seconds with a proportionally smaller cap, never to a
+# spin that would exhaust the bound instantly and fail spuriously.
+if sleep 0.05 2>/dev/null; then gate_unit=0.05; gate_max=1200; else gate_unit=1; gate_max=60; fi
 Ex="$(newgit https://github.com/acme/widget.git)"
 printf '# junk\n.claude/\n' > "$Ex/.gitignore"
 ex_pristine="$(sum "$Ex/.gitignore")"
 mkdir -p "$Ex/fakebin"
 printf '#!/bin/sh\necho 20260101-000000\n' > "$Ex/fakebin/date"
 chmod +x "$Ex/fakebin/date"
-mkfifo "$Ex/gate"
-bash -c 'read -r _ < "$1/gate"; export PATH="$1/fakebin:$PATH"; exec bash "$2" --root "$1" apply' \
-  _ "$Ex" "$MEM" > "$Ex/out.txt" 2>&1 &
-ex_pid=$!
+# $1=fixture root, $2=setup-memory.sh, $3=poll unit, $4=poll cap. `$$` here is the helper's own pid
+# and survives the `exec`, so it is the pid `unique_backup_path` will use.
+bash -c '
+  printf "%s\n" "$$" > "$1/pid.tmp" && mv -f "$1/pid.tmp" "$1/pid"
+  n=0
+  while [ ! -e "$1/go" ]; do
+    n=$((n + 1))
+    [ "$n" -le "$4" ] || { echo "fixture: helper timed out waiting for the go flag" >&2; exit 97; }
+    sleep "$3"
+  done
+  export PATH="$1/fakebin:$PATH"
+  exec bash "$2" --root "$1" apply
+' _ "$Ex" "$MEM" "$gate_unit" "$gate_max" > "$Ex/out.txt" 2>&1 &
+ex_job=$!
+ex_pid=""; n=0
+while [ "$n" -le "$gate_max" ]; do
+  if [ -s "$Ex/pid" ]; then ex_pid="$(cat "$Ex/pid" 2>/dev/null)"; [ -n "$ex_pid" ] && break; fi
+  n=$((n + 1)); sleep "$gate_unit"
+done
+[ -n "$ex_pid" ] && ok "(e) the exhaustion helper published its pid before the seeding step" || no "(e) the exhaustion helper never published a pid within the poll bound — fixture did not run"
 ex_base="$Ex/.gitignore.backup.20260101-000000"
-: > "$ex_base"                       # the pristine-original slot — must NOT be clobbered
-: > "$ex_base.$ex_pid"               # the pid-qualified fallback
-touch "$ex_base.$ex_pid."{1..1000}   # every counter slot, up to the helper's bound
+: > "$ex_base"                         # the pristine-original slot — must NOT be clobbered
+if [ -n "$ex_pid" ]; then
+  : > "$ex_base.$ex_pid"               # the pid-qualified fallback
+  touch "$ex_base.$ex_pid."{1..1000}   # every counter slot, up to the helper's bound
+fi
 ex_seed_sum="$(sum "$ex_base")"
-exec 9<> "$Ex/gate"                  # read-write: opening never blocks, so a dead helper cannot wedge us
-printf 'go\n' >&9                    # release the helper; it calls the pinned `date` from here on
-wait "$ex_pid"; rc_ex=$?
-exec 9>&-                            # only now — an early close would discard the buffered token
+: > "$Ex/go"                           # release the helper; it calls the pinned `date` from here on
+wait "$ex_job"; rc_ex=$?
 ex_out="$(cat "$Ex/out.txt" 2>/dev/null)"
 [ "$rc_ex" -eq 0 ] && ok "(e) apply still exits 0 when no backup name is free (fail-safe)" || no "(e) apply exited $rc_ex on backup exhaustion"
 has '^apply: ABORTED' "$ex_out" && ok "(e) apply ABORTS when no non-colliding backup name can be derived" || no "(e) apply did not abort on backup exhaustion (got: $(head -n3 <<< "$ex_out"))"
