@@ -45,7 +45,8 @@
 #
 # WRITE-CONTAINMENT INVARIANT: the ONLY things this helper writes are, under the resolved repo
 # root, (a) `.gitignore` plus one timestamped `.gitignore.backup.<ts>` sibling (suffixed with the
-# pid, then a counter, when that name is already taken — a backup NEVER overwrites another), and (b)
+# pid, then a counter, when that name is already taken — a backup NEVER overwrites another, and if
+# every candidate name is taken the write is REFUSED outright rather than clobbering one), and (b)
 # `.supervisor/config.json` `.setup_memory.repo_allowlist` (backup-first jq merge that preserves
 # every unrelated key). It writes NOTHING under `~/.claude/`, and it NEVER runs `git add`,
 # `git rm`, `git commit` or any other history-touching command. `check`, `allowlist` and
@@ -275,9 +276,15 @@ strip_managed_block() {
 # exclude spelled for any depth. Leaving any of these live produced a silently dead negation
 # under an unqualified `apply: applied` headline, so they are neutralized alongside the bare form.
 #
-# `X/*` is DELIBERATELY ABSENT from the set: that is the working form this module itself writes —
-# it excludes the contents while leaving the directory traversable, which is what makes the `!`
-# lines effective. Commenting it out would neutralize the fix rather than the obstacle.
+# `X/*` is DELIBERATELY ABSENT from the set — but NOT because commenting it could neutralise this
+# module's own fix. It cannot: proposed_applied_content() pipes ONLY the stripped pre-existing file
+# through this filter and appends managed_block() AFTERWARDS, so the block's own `.claude/*` never
+# passes through here and self-neutralisation is structurally impossible. The real reason is that
+# `X/*` is not an obstacle at all: it excludes the directory's CONTENTS while leaving the directory
+# traversable, which is exactly the shape the `!` lines need, so a user who already wrote it is
+# already correct. Commenting it out would be pointless churn on a line doing no harm (and `remove`
+# would then have to restore it). Pinned by test — see test-setup-memory.sh group (b3), which seeds
+# a pre-existing `.claude/*` and asserts it SURVIVES apply UNCOMMENTED.
 comment_bare_excludes() {
   awk -v mark="$DISABLED_MARK" '
     BEGIN {
@@ -354,14 +361,24 @@ proposed_removed_content() {
   strip_managed_block < "$GI" | uncomment_bare_excludes
 }
 
-# unique_backup_path <file> → a `<file>.backup.<ts>` sibling that does NOT already exist.
+# unique_backup_path <file> → a `<file>.backup.<ts>` sibling that does NOT already exist, or
+# NOTHING (empty stdout, status 1) when every candidate name is taken.
 #
 # The timestamp is second-granular, so two writes inside the SAME second resolve to the same name
 # and the second `cp` would OVERWRITE the first backup — destroying the user's PRISTINE original,
 # which is the single file the whole backup-first contract exists to protect (the later backup
 # only holds this tool's own output). The plain `<file>.backup.<ts>` form is kept for the common
 # case because it is the documented name; a collision falls back to a pid-qualified name, then to
-# a counter. Never returns a path that exists at call time.
+# a counter bounded at $BACKUP_MAX_TRIES.
+#
+# EXHAUSTION FAILS CLOSED. The bounded counter cannot promise "a free name always exists", so when
+# it runs out this returns EMPTY rather than a path it never verified — an earlier version fell out
+# of the loop at the bound and returned `$base.$$.<bound>` WITH that file still present, which the
+# caller's `cp` would then have overwritten. Callers MUST treat empty as "no backup is possible"
+# and abort without writing (write_gitignore / seed_allowlist both do). Asserted in
+# test-setup-memory.sh group (e), which seeds every candidate name and asserts the write is refused
+# and the pre-existing backup is left byte-identical.
+BACKUP_MAX_TRIES=1000
 unique_backup_path() {
   local f="$1" ts base n
   ts="$(date +%Y%m%d-%H%M%S 2>/dev/null || echo unknown)"
@@ -369,14 +386,21 @@ unique_backup_path() {
   if [ ! -e "$base" ]; then printf '%s' "$base"; return 0; fi
   if [ ! -e "$base.$$" ]; then printf '%s' "$base.$$"; return 0; fi
   n=1
-  while [ -e "$base.$$.$n" ] && [ "$n" -lt 1000 ]; do n=$((n + 1)); done
-  printf '%s' "$base.$$.$n"
+  while [ "$n" -le "$BACKUP_MAX_TRIES" ]; do
+    if [ ! -e "$base.$$.$n" ]; then printf '%s' "$base.$$.$n"; return 0; fi
+    n=$((n + 1))
+  done
+  return 1
 }
 
 # Backup-first + atomic replace. Echoes the backup path on success.
 write_gitignore() {
   local content="$1" backup tmp
   backup="$(unique_backup_path "$GI")"
+  if [ -z "$backup" ]; then
+    echo "setup-memory: every backup name for $GI is already taken (${BACKUP_MAX_TRIES}+ collisions); refusing to overwrite an existing backup — nothing changed." >&2
+    return 1
+  fi
   cp "$GI" "$backup" 2>/dev/null || { echo "setup-memory: could not write backup $backup — nothing changed." >&2; return 1; }
   tmp="$GI.tmp.$$"
   printf '%s\n' "$content" > "$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; echo "setup-memory: could not stage the rewrite — nothing changed." >&2; return 1; }
@@ -523,7 +547,15 @@ seed_allowlist() {
   mkdir -p "$(dirname "$CFG")" 2>/dev/null
   local tmp="$CFG.tmp.$$"
   if [ -f "$CFG" ]; then
-    cp "$CFG" "$(unique_backup_path "$CFG")" 2>/dev/null
+    # Backup-first here too, and fail CLOSED when no free backup name exists — an unbacked-up
+    # rewrite of a user's config is exactly what the backup-first contract forbids.
+    local cfg_backup
+    cfg_backup="$(unique_backup_path "$CFG")"
+    if [ -z "$cfg_backup" ] || ! cp "$CFG" "$cfg_backup" 2>/dev/null; then
+      rm -f "$tmp" 2>/dev/null
+      echo "  allowlist: SKIPPED — could not write a backup of $CFG; refusing to rewrite it unbacked-up (unchanged)."
+      return 0
+    fi
     jq --argjson a "$json" '.setup_memory = ((.setup_memory // {}) | .repo_allowlist = $a)' "$CFG" > "$tmp" 2>/dev/null \
       && mv "$tmp" "$CFG" 2>/dev/null \
       || { rm -f "$tmp" 2>/dev/null; echo "  allowlist: SKIPPED — could not merge into $CFG (unchanged)."; return 0; }

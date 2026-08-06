@@ -33,6 +33,9 @@
 #   (b2) the RECURSIVE `.claude/**` / `**/.claude/` family is neutralised like the bare form, and
 #        an exclude this rewriter does NOT recognise is reported (warning + the winning pattern
 #        from a real `git check-ignore -v`) instead of hiding under an `apply: applied` headline
+#   (b3) the WORKING `X/*` form is the one directory-shaped exclude deliberately NOT neutralised:
+#        a user's pre-existing `.claude/*` SURVIVES apply uncommented (and round-trips through
+#        remove), while a bare `.supervisor/` in the same file is still neutralised
 #   (c)  dotfile sidecars (.provenance.jsonl / .lessons-provenance.jsonl) commit — asserted
 #        explicitly and separately from the `**` globs
 #   (d)  allowlist: stored as a JSON ARRAY (never a string); a renamed repo retains records under
@@ -40,7 +43,9 @@
 #   (e)  idempotency: a second apply is a no-op that writes nothing (.gitignore AND config
 #        byte-identical, no second backup); PLUS backup-before-write asserted positively — the
 #        backup exists and its CONTENT is the pristine pre-apply file — and two applies inside the
-#        same second (pinned clock) produce two backups rather than overwriting the original
+#        same second (pinned clock) produce two backups rather than overwriting the original; PLUS
+#        backup-name EXHAUSTION fails CLOSED — with every candidate name seeded, apply ABORTS,
+#        .gitignore is untouched and the pre-existing backup is not clobbered
 #   (f)  absent / unparseable .gitignore: change nothing, say why, no partial write, no backup;
 #        and an INDENTED sentinel is stripped, never duplicated into an unrepairable file
 #   (g)  remove: block gone, byte-exact round-trip, and the output states plainly that git history
@@ -222,6 +227,31 @@ hasF 'STILL IGNORED' "$out_by" && ok "(b2) the warning says which intended paths
 hasF '.claude/agent-memory/**' "$out_by" && ok "(b2) the warning NAMES the surviving pattern (from git check-ignore -v, not a guess)" || no "(b2) the warning does not name the surviving pattern"
 
 # ============================================================================
+echo "== (b3) a user's PRE-EXISTING working '.claude/*' form SURVIVES apply UNCOMMENTED =="
+# `X/*` is the one directory-shaped form deliberately absent from comment_bare_excludes' list. Not
+# because commenting it could neutralise the module's own fix — it cannot, since
+# proposed_applied_content pipes only the STRIPPED pre-existing file through the neutraliser and
+# appends the managed block AFTERWARDS — but because `X/*` is not an obstacle at all: it excludes
+# the CONTENTS and leaves the directory traversable, which is exactly what the `!` lines need. A
+# user who already wrote it is already correct, so neutralising it would be pointless churn (and
+# `remove` would then have to restore it). A comment is not a test; this fixture is the pin.
+Bz="$(newgit https://github.com/acme/widget.git)"
+seed_stores "$Bz"
+printf '# editor\n*.swp\n.claude/*\n!.claude/agent-memory/\n.supervisor/\n' > "$Bz/.gitignore"
+orig_bz="$(mkfix)/orig.gitignore"; cp "$Bz/.gitignore" "$orig_bz"
+out_bz="$(mem "$Bz" apply 2>&1)"; rc_bz=$?
+[ "$rc_bz" -eq 0 ] && ok "(b3) apply exits 0 on a .gitignore that already carries the working '.claude/*' form" || no "(b3) apply non-zero ($rc_bz)"
+gi_bz="$(cat "$Bz/.gitignore")"
+hasE '^# \.claude/\*[[:space:]]' "$gi_bz" && no "(b3) apply COMMENTED OUT the user's pre-existing '.claude/*' — the WORKING form must never be neutralised" || ok "(b3) the user's pre-existing '.claude/*' survives apply UNCOMMENTED"
+n_live_bz="$(grep -cE '^\.claude/\*$' <<< "$gi_bz" | tr -d ' ')"
+[ "${n_live_bz:-0}" -eq 2 ] && ok "(b3) BOTH live '.claude/*' lines remain (the user's own + the managed block's)" || no "(b3) expected 2 live '.claude/*' lines, found ${n_live_bz:-0} — the user's copy was neutralised"
+hasE '^# \.supervisor/[[:space:]]' "$gi_bz" && ok "(b3) the BARE '.supervisor/' in the same file is still neutralised (only the working form is exempt)" || no "(b3) the bare '.supervisor/' was not neutralised"
+assert_committable "$Bz" "$P_MEM" "(b3) $P_MEM is committable with a pre-existing working form in place"
+assert_ignored "$Bz" "$P_LOGS" "(b3) $P_LOGS still ignored"
+mem "$Bz" remove >/dev/null 2>&1
+if cmp -s "$orig_bz" "$Bz/.gitignore"; then ok "(b3) apply → remove round-trips a .gitignore carrying the working form BYTE-EXACTLY"; else no "(b3) the pre-existing working form did not round-trip through remove"; fi
+
+# ============================================================================
 echo "== (c) dotfile sidecars commit — asserted explicitly, separately from the ** globs =="
 # Their absence would silently strip provenance from a fresh clone (read-lessons.sh's read-side
 # provenance gate depends on them), and a dotfile inside a re-included directory is its own
@@ -368,6 +398,40 @@ PATH="$Ec/fakebin:$PATH" bash "$MEM" --root "$Ec" apply >/dev/null 2>&1
 n_bk_ec="$(ls "$Ec"/.gitignore.backup.* 2>/dev/null | wc -l | tr -d ' ')"
 [ "$n_bk_ec" -eq 2 ] && ok "(e) two applies in the SAME second produce TWO distinct backups (no collision)" || no "(e) same-second applies left $n_bk_ec backup(s) — one overwrote the other"
 [ "$(sum "$Ec/.gitignore.backup.20260101-000000")" = "$ec_pristine" ] && ok "(e) the FIRST backup still holds the pristine original after the same-second second apply" || no "(e) the same-second second apply OVERWROTE the user's pristine original backup"
+
+# --- BACKUP-NAME EXHAUSTION MUST FAIL CLOSED --------------------------------------------------
+# unique_backup_path escalates <file>.backup.<ts> → .<pid> → .<pid>.<n> with the counter BOUNDED,
+# so "a free name always exists" is not something it can promise. It used to fall out of the loop
+# AT the bound and return `.<pid>.<bound>` with that file still present — a path it never verified,
+# which the caller's `cp` would then have OVERWRITTEN. It now returns EMPTY and write_gitignore
+# aborts. Driven deterministically, not as a race: the clock is pinned with a fake `date` on PATH,
+# and the helper's pid is known IN ADVANCE because it is `exec`ed from a backgrounded `bash -c`
+# whose $$ (== $!) it inherits unchanged. One FIFO sequences seed-then-run without polling — there
+# is no portable `timeout` and `sleep`-based waits are races.
+Ex="$(newgit https://github.com/acme/widget.git)"
+printf '# junk\n.claude/\n' > "$Ex/.gitignore"
+ex_pristine="$(sum "$Ex/.gitignore")"
+mkdir -p "$Ex/fakebin"
+printf '#!/bin/sh\necho 20260101-000000\n' > "$Ex/fakebin/date"
+chmod +x "$Ex/fakebin/date"
+mkfifo "$Ex/gate"
+bash -c 'read -r _ < "$1/gate"; export PATH="$1/fakebin:$PATH"; exec bash "$2" --root "$1" apply' \
+  _ "$Ex" "$MEM" > "$Ex/out.txt" 2>&1 &
+ex_pid=$!
+ex_base="$Ex/.gitignore.backup.20260101-000000"
+: > "$ex_base"                       # the pristine-original slot — must NOT be clobbered
+: > "$ex_base.$ex_pid"               # the pid-qualified fallback
+touch "$ex_base.$ex_pid."{1..1000}   # every counter slot, up to the helper's bound
+ex_seed_sum="$(sum "$ex_base")"
+echo go > "$Ex/gate"                 # release the helper; it calls the pinned `date` from here on
+wait "$ex_pid"; rc_ex=$?
+ex_out="$(cat "$Ex/out.txt" 2>/dev/null)"
+[ "$rc_ex" -eq 0 ] && ok "(e) apply still exits 0 when no backup name is free (fail-safe)" || no "(e) apply exited $rc_ex on backup exhaustion"
+has '^apply: ABORTED' "$ex_out" && ok "(e) apply ABORTS when no non-colliding backup name can be derived" || no "(e) apply did not abort on backup exhaustion (got: $(head -n3 <<< "$ex_out"))"
+# Pin the EXHAUSTION branch specifically — a generic `cp`-failure abort would satisfy the line above.
+hasF 'refusing to overwrite an existing backup' "$ex_out" && ok "(e) the abort names backup-name EXHAUSTION as the reason (not a generic cp failure)" || no "(e) the abort did not come from the exhaustion branch"
+[ "$(sum "$Ex/.gitignore")" = "$ex_pristine" ] && ok "(e) .gitignore is byte-identical after the exhaustion abort (nothing written)" || no "(e) .gitignore was REWRITTEN despite having no backup"
+[ "$(sum "$ex_base")" = "$ex_seed_sum" ] && ok "(e) the pre-existing backup was NOT overwritten (the user's pristine original survives)" || no "(e) the exhausted path CLOBBERED an existing backup"
 
 # ============================================================================
 echo "== (f) absent / unparseable .gitignore — change nothing, say why, no partial write =="
