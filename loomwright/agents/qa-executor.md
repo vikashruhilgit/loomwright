@@ -1,7 +1,8 @@
 ---
 name: loomwright:qa-executor
 description: QA Executor — discovers app, generates and runs Playwright tests, orchestrates debate loop
-tools: Read, Write, Edit, Glob, Grep, Bash, Task, LSP
+tools: Read, Write, Edit, Glob, Grep, Bash, Task, TaskOutput, LSP, WebSearch, WebFetch
+disallowedTools: TaskOutput, WebSearch, WebFetch
 model: inherit
 maxTurns: 120
 effort: high

@@ -167,7 +167,7 @@ When multiple memory layers carry relevant knowledge, resolve precedence **most-
 
 The Anthropic **Advisor tool** is a beta capability on the Claude API as of 2026-05-10 that lets one inference call use an executor model (e.g., a Sonnet-class model) which can consult a higher-intelligence advisor model (e.g., an Opus-class model) for a sub-inference within the same `/v1/messages` request. It is enabled by sending the beta header `advisor-tool-2026-03-01` and attaching a tool of type `advisor_20260301` to the request's `tools` array.
 
-**Status in this plugin: SDK-only.** The Advisor tool is **not** wired through any plugin surface in v12.1.0 — there is no `--advisor` flag on `/supervisor`, no advisor-aware Worker / Code Reviewer / Execute Manager mode, and no entry in the cost profile. The reason is structural: Claude Code's documented subagent / plugin mechanisms (subagent frontmatter `tools:` / `model:` fields, `settings.json`, hook configuration, the Task tool) currently expose **no path to inject the `advisor-tool-2026-03-01` beta header** or attach an `advisor_20260301` server-tool onto the underlying `/v1/messages` call that a Task-spawned subagent makes. The frontmatter `tools:` field is an allowlist over Claude Code's internal tools (`Read`, `Grep`, `Bash`, `Task`, etc.), not over Anthropic API server-tool types.
+**Status in this plugin: SDK-only.** The Advisor tool is **not** wired through any plugin surface in v12.1.0 — there is no `--advisor` flag on `/supervisor`, no advisor-aware Worker / Code Reviewer / Execute Manager mode, and no entry in the cost profile. The reason is structural: Claude Code's documented subagent / plugin mechanisms (subagent frontmatter `tools:` / `model:` fields, `settings.json`, hook configuration, the Task tool) currently expose **no path to inject the `advisor-tool-2026-03-01` beta header** or attach an `advisor_20260301` server-tool onto the underlying `/v1/messages` call that a Task-spawned subagent makes. The frontmatter `tools:` field is an allowlist over Claude Code's internal tools (`Read`, `Grep`, `Bash`, `Task`, etc.), not over Anthropic API server-tool types. (Since the `tools:` superset unification, that allowlist is byte-identical across all 14 agents and the per-agent restriction lives in `disallowedTools` — see §"Agent Frontmatter Conventions". The point here is unchanged either way: neither field can reach an API server-tool type.)
 
 **When the pattern IS reachable today:** code that calls the Anthropic SDK directly — i.e. `client.beta.messages.create(...)` from TypeScript or Python — can attach the beta and the advisor tool without restriction. That code lives **outside** the Claude Code plugin runtime (custom orchestrators, CI workers, SDK-based pipelines), not inside a Task-spawned subagent.
 
@@ -325,7 +325,7 @@ Every agent markdown file includes YAML frontmatter that configures Claude Code 
 ---
 name: loomwright:{role}    # Unique agent identifier
 description: {1-2 sentence purpose}      # Shown in /agents menu
-tools: Read, Write, Edit, Bash, ...      # Tool restrictions (allowlist)
+tools: Read, Write, Edit, Bash, ...      # Byte-identical superset allowlist across all 14 agents (see below); per-agent restriction lives in disallowedTools
 model: opus | sonnet | haiku | inherit | <full model ID>  # Model selection (cost/capability; e.g., claude-sonnet-4-6)
 maxTurns: N                              # API round-trip limit (optional)
 color: "#RRGGBB"                         # Status line color (optional)
@@ -342,8 +342,19 @@ hooks:                                   # Per-agent hooks (optional)
 ```
 
 **Frontmatter Principles:**
-- **Tool restrictions enforce safety:** Workers can't spawn subagents (no Task tool), Context-Keeper can't run Bash
-- **disallowedTools is defense-in-depth:** NOT a security boundary against adversarial scenarios; prevents accidental misuse
+- **`tools:` is a byte-identical superset allowlist, not a per-agent restriction.** Since
+  `.supervisor/requirements/final-state/12-4c-unified-tools-lists.md` (unified `tools:` superset,
+  consistency-only — no cache win, see `loomwright/docs/shared-agent-prefix.md` §"HONEST CACHE
+  EXPECTATION"), every agent declares the same `tools: Read, Write, Edit, Glob, Grep, Bash, Task,
+  TaskOutput, LSP, WebSearch, WebFetch` line. **The actual per-agent restriction now lives entirely
+  in `disallowedTools`**, not in which tools are declared — e.g. Worker's `tools:` line includes
+  `Task`, but its `disallowedTools: Task, ...` still blocks spawning; Context-Keeper's `tools:` line
+  includes `Bash`, but its `disallowedTools: ..., Bash, ...` still blocks it. See
+  `loomwright/docs/ARCHITECTURE_CONTRACTS.md` §"disallowedTools (Defense-in-Depth)" for the full
+  per-agent enforcement-model downgrade this implies (the allowlist half of enforcement is now
+  uniform-by-construction; the denylist carries the whole restriction for every agent, not just the
+  handful that previously relied on it).
+- **disallowedTools is defense-in-depth:** NOT a security boundary against adversarial scenarios; prevents accidental misuse — and, per the point above, is now the SOLE per-agent restriction mechanism since the allowlist stopped varying
 - **Model selection matches task complexity:** haiku for simple state writes, inherit for user's choice (Sonnet+ recommended for Supervisor)
 - **Color provides visual identity:** Each agent has a unique status line color for quick identification
 - **Memory accumulates knowledge:** 6 agents build institutional memory across sessions

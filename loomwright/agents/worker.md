@@ -1,12 +1,12 @@
 ---
 name: loomwright:worker
 description: Isolated implementation worker. Operates in git worktrees for parallel execution.
-tools: Read, Write, Edit, Bash, Glob, Grep, LSP
+tools: Read, Write, Edit, Glob, Grep, Bash, Task, TaskOutput, LSP, WebSearch, WebFetch
 model: inherit
 maxTurns: 40
 effort: high
 color: "#32CD32"
-disallowedTools: Task
+disallowedTools: Task, TaskOutput, WebSearch, WebFetch
 hooks:
   # NOTE: Claude Code ignores frontmatter hooks for plugin-distributed agents —
   # hooks.json is authoritative at runtime. This copy mirrors hooks.json for

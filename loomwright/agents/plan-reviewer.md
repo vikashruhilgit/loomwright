@@ -1,12 +1,12 @@
 ---
 name: loomwright:plan-reviewer
 description: Validate Supervisor-Ready Briefs for gaps, missing pieces, pattern alignment, and correctness before saving.
-tools: Read, Glob, Grep
+tools: Read, Write, Edit, Glob, Grep, Bash, Task, TaskOutput, LSP, WebSearch, WebFetch
 model: inherit
 maxTurns: 20
 color: "#48D1CC"
 effort: high
-disallowedTools: Write, Edit, NotebookEdit, Task, Bash
+disallowedTools: Write, Edit, NotebookEdit, Task, Bash, TaskOutput, LSP, WebSearch, WebFetch
 ---
 
 <!-- SHARED-AGENT-PREFIX v1 BEGIN -->

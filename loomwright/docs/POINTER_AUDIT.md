@@ -90,6 +90,81 @@ byte-identical their `.md` openings are. A shared leading block across agent pro
 **cannot** produce cross-agent cache reads — its value is **consistency, dedup, and a
 smaller prompt inventory**, and it must be framed as exactly that.
 
+**Empirical corroboration (`.supervisor/requirements/final-state/12-4c-unified-tools-lists.md`,
+unified `tools:` superset across all 14 agents):** this requirement unified `tools:` to one
+byte-identical superset line for every agent, which mechanically confirms the prediction above
+rather than clearing the floor. `disallowedTools` is **subtractive** on the effective rendered
+toolset — observed directly via the discriminating control pair `product-owner` (`memory: project`
+→ gains effective `Write`/`Edit` despite never declaring them) vs. `orchestrator` (no `memory:`,
+otherwise a comparable read-only role → gains nothing), and via `code-reviewer` (`memory: project`
+like the gaining agents, yet its `disallowedTools` blocks `Write`/`Edit` and it does NOT gain them).
+Because `disallowedTools` still differs per agent after the unification (by design — see
+`ARCHITECTURE_CONTRACTS.md` §"disallowedTools (Defense-in-Depth)"), the rendered frontmatter prefix
+still diverges at position 0 across agent types even though `tools:` itself is now identical. The
+512-token floor is **not cleared**; cross-agent reuse remains structurally zero, exactly as
+predicted above.
+
+### The effective-toolset model, and the evidence for it
+
+Review of the unification PR challenged the `memory: project` grant as asserted-not-demonstrated,
+and argued no single enforcement model could make both halves of the control-pair argument true.
+One model does, and it fits **all 14** pre-unification agents:
+
+```
+effective = declared tools:  ∪  (memory: project ? {Write, Edit} : ∅)  −  disallowedTools
+```
+
+**How it was observed (state the method, since this is not CI-verifiable):** the Claude Code harness
+registers each plugin agent with its *effective* toolset, which is visible to a main-thread session
+in the available-agent list. Comparing that list against the pre-unification frontmatter on disk
+gives the table below. This is an **environment observation, not a gate** — it cannot be asserted by
+a CI check, which is exactly why it is written down here with its method rather than left implicit.
+
+| Agent | `memory:` | Declared `Write`/`Edit` | Denies `W`/`E` | Effective `W`/`E` | Explained by |
+|---|---|---|---|---|---|
+| product-owner | project | no | no | **yes** | grant |
+| qa-strategist | project | no | no | **yes** | grant |
+| red-team-reviewer | project | no | no | **yes** | grant |
+| launch-pad | project | Write only | no | **Write + Edit** | grant adds `Edit` |
+| qa-executor | project | yes | no | yes | already declared |
+| code-reviewer | project | no | **yes** | **no** | grant − denylist |
+| orchestrator | none | no | no | **no** | no grant (control) |
+| plan-reviewer | none | no | yes | no | no grant |
+| rubric-grader | none | no | yes | no | no grant |
+| execute-manager | none | no | no | **no** | no grant (control) |
+| review-pr | none | no | no | **no** | no grant (control) |
+| supervisor / worker / context-keeper | none | yes | no | yes | already declared |
+
+**The two rows that carry the argument.** `orchestrator` and `execute-manager` had **no
+`disallowedTools` at all** pre-unification and still did **not** have `Write`/`Edit` — so `tools:`
+genuinely gates, and "the denylist is the only real gate" is false. `code-reviewer` had
+`memory: project` and still did **not** have them — so the denylist genuinely subtracts. Both hold
+at once; there is no contradiction.
+
+**A corroboration that was offered and then withdrawn — it does not hold.** An earlier version of
+this section cited `product-owner`'s §"Persistence Mode" writing `.supervisor/requirements/*.md` as
+proof of an implicit `Write` grant. **That argument is invalid and is retracted here rather than
+quietly deleted:** `product-owner`'s pre-unification `tools:` line already included `Bash`, which can
+write a markdown file by redirection or heredoc without any `Write`/`Edit` tool. The behaviour is
+fully explained without the grant, so it discriminates nothing. The table above rests **only** on the
+registered effective toolset, not on this.
+
+**What the evidence does and does not cover.** It covers *which tool names the harness registers* per
+agent. It does **not** establish the harness's internal mechanism, and in particular does not show
+whether a `memory: project` grant is a scoped memory-directory capability or the general-purpose
+`Write`/`Edit` tools. Those are different things with different blast radii, and the distinction is
+unresolved here.
+
+**Consequence for the unification:** preserving `Write`/`Edit` for the four `memory: project` agents
+is *status-quo preservation*, not a capability expansion — they have those tools today. Denying them
+would have removed a live capability.
+
+**One unresolved tension, recorded not smoothed over:** `qa-strategist` was documented as a
+"read-only analyzer" while effectively holding `Write`/`Edit`. That contradiction is **pre-existing**
+— true before the unification and untouched by it — and the Capability Matrix now reflects the
+observed reality rather than the aspiration. Whether it *should* hold them is a real question, and a
+separate one from this change.
+
 **Where the cache win is real: SAME-ROLE respawns.** N workers in one Phase 3 wave,
 and repeated reviewer / fix-worker spawns in the heal loop, already share identical
 agent files — there, stable-prefix-first ordering within each spawn contract plus

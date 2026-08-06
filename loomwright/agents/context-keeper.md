@@ -1,11 +1,11 @@
 ---
 name: loomwright:context-keeper
 description: On-demand state manager for Supervisor. Writer of Decisions Log, Worker Results, Error Log, and Phase Flags in the externalized state file. `initialize` seeds `## Session` exactly once at file creation (status running); from the first hook-triggered projection onward the four progress-state keys (session_id/branch/status/phase) are kept current by scripts/build-state.sh, which also preserves any other key already in the block. Returns <50 token confirmations.
-tools: Read, Write, Edit
+tools: Read, Write, Edit, Glob, Grep, Bash, Task, TaskOutput, LSP, WebSearch, WebFetch
 model: haiku
 maxTurns: 3
 color: "#708090"
-disallowedTools: Task, Bash, Glob, Grep
+disallowedTools: Task, TaskOutput, Bash, Glob, Grep, LSP, WebSearch, WebFetch
 ---
 
 <!-- SHARED-AGENT-PREFIX v1 BEGIN -->

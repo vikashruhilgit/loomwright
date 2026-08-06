@@ -1,11 +1,11 @@
 ---
 name: loomwright:rubric-grader
 description: Read-only Haiku grader for the Outcomes Rubric in Phase 4.5. Evaluates the integrated PR diff against each rubric bullet and returns a `rubric_score: N/M` line plus per-item PASS/FAIL. Never writes files, never modifies state, never spawns sub-agents.
-tools: Read, Bash, Glob, Grep
+tools: Read, Write, Edit, Glob, Grep, Bash, Task, TaskOutput, LSP, WebSearch, WebFetch
 model: haiku
 maxTurns: 12
 color: "#9ACD32"
-disallowedTools: Write, Edit, Task, NotebookEdit
+disallowedTools: Write, Edit, NotebookEdit, Task, TaskOutput, LSP, WebSearch, WebFetch
 permissionMode: plan
 ---
 

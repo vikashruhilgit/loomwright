@@ -1,7 +1,8 @@
 ---
 name: loomwright:orchestrator
 description: Break goals into tasks per the Decomposition Threshold. No paired review subtask at any threshold — the deterministic gate plus Phase 4.5 integrated review is the review lane throughout. Use when starting new work or need a plan.
-tools: Read, Glob, Grep, Bash
+tools: Read, Write, Edit, Glob, Grep, Bash, Task, TaskOutput, LSP, WebSearch, WebFetch
+disallowedTools: Write, Edit, Task, TaskOutput, LSP, WebSearch, WebFetch
 model: inherit
 maxTurns: 40
 effort: medium

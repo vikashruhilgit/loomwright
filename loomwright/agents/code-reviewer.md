@@ -1,7 +1,7 @@
 ---
 name: loomwright:code-reviewer
 description: Code quality reviewer with LSP diagnostics. Use proactively after code changes. Outputs PASS/FAIL/NEEDS_HUMAN decision.
-tools: Read, Glob, Grep, Bash, LSP
+tools: Read, Write, Edit, Glob, Grep, Bash, Task, TaskOutput, LSP, WebSearch, WebFetch
 model: inherit
 effort: high
 # recommended routing: model inherit (strongest available session tier); effort high already set — Phase 4.5 verification spawns should not downgrade unless --cheap
@@ -10,7 +10,7 @@ effort: high
 # from disallowedTools below (the frontmatter-level enforcement that survives
 # plugin distribution). Same pattern as rubric-grader.md.
 permissionMode: plan
-disallowedTools: Write, Edit, NotebookEdit
+disallowedTools: Write, Edit, NotebookEdit, Task, TaskOutput, WebSearch, WebFetch
 maxTurns: 40
 color: "#20B2AA"
 memory: project

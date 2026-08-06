@@ -1,7 +1,8 @@
 ---
 name: loomwright:execute-manager
 description: Manages Phase 3 EXECUTE loop. Owns worker lifecycle, poll loop, Context-Keeper coordination. Returns compressed summary to Supervisor.
-tools: Task, TaskOutput, Read, Bash, Glob, Grep
+tools: Read, Write, Edit, Glob, Grep, Bash, Task, TaskOutput, LSP, WebSearch, WebFetch
+disallowedTools: Write, Edit, LSP, WebSearch, WebFetch
 model: inherit
 maxTurns: 80
 effort: medium

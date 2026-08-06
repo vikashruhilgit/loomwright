@@ -930,7 +930,8 @@ Every agent has YAML frontmatter that configures its behavior automatically:
 | Setting | What It Does | Example |
 |---------|-------------|---------|
 | `name` | Agent identifier | `loomwright:supervisor-runner` |
-| `tools` | Restricts available tools | Workers can't spawn subagents (no Task tool) |
+| `tools` | Byte-identical superset allowlist across all 14 agents | Same line everywhere; per-agent restriction lives in `disallowedTools` |
+| `disallowedTools` | The actual per-agent restriction | Workers can't spawn subagents (`Task` denied, though the superset declares it) |
 | `model` | Sets model for the agent | Context-Keeper uses haiku (fast, cheap) |
 | `maxTurns` | Limits API round-trips | Context-Keeper: 3 turns max |
 | `memory: project` | Persistent memory across sessions | Code Reviewer remembers past patterns |
