@@ -26,7 +26,12 @@
 #      (fix_cycles==0 non-escalated → categories:[] + review_rounds:0), zero-cycle
 #      ESCALATED (→ review_rounds:1 + one drain_escalation entry), idempotency skip,
 #      missing-field degrade, jq-absent no-write, fetch-fail integer-0 degrade,
-#      injection-safe jq args, self_heal_misses derivation, read-postmortem visibility.
+#      injection-safe jq args, self_heal_misses derivation, read-postmortem visibility,
+#      and the degraded-then-corrective emit (a degraded first emit must NOT block a
+#      later complete one) with a legacy-key mutation control + skip-arm no-regression,
+#      the REALISTIC degraded shape (--number passed, so both lines share repo#number)
+#      + the floor-raising downstream join, degraded-after-degraded in isolation, and
+#      empty-string-only changed_paths classified DEGRADED.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -833,6 +838,192 @@ else
   no "empty-repo visibility wrong (emitted_repo='$EMITTED_REPO' dropped='$DROPPED' kept_when_undet='$KEPT_WHEN_UNDET')"
 fi
 rm -rf "$WD"
+
+# F12. DEGRADED-then-CORRECTIVE emit (the PR #126 defect). A first emit that degraded
+#      (the single `gh pr view` fetch failed, or the caller omitted the fetch args)
+#      writes changed_paths:[] — a line PERMANENTLY INVISIBLE to read-postmortem.sh.
+#      Before the degradation-aware key, that line poisoned the automate_key and every
+#      later complete emit was silently skipped. Asserted against the REAL
+#      read-postmortem.sh (NOT the reader_select jq mirror, which could drift from the
+#      reader it models) inside a throwaway git repo whose origin remote makes the
+#      reader's CUR_REPO resolve, so repo scoping is exercised too.
+WD="$(mktemp -d)"
+( cd "$WD" && git init -q && git config user.email t@t && git config user.name t \
+    && git remote add origin https://github.com/acme/widgets.git \
+    && echo i > f && git add f && git commit -qm i ) >/dev/null 2>&1
+LED="$WD/.supervisor/postmortem/results.jsonl"
+READ_PM="$HERE/read-postmortem.sh"
+
+# 1st emit: DEGRADED — no --changed-paths-json / --number / size args (fetch failed).
+bash "$H" learning-emit "$LED" \
+  --repo "acme/widgets" --pr-url "$PR" --run-id "run12" --item "item-l" \
+  --fix-cycles 4 --drain-result READY \
+  --repeat-check-failure true --unresolved-bot-feedback false \
+  --summary "degraded: gh pr view failed"
+# 2nd emit: CORRECTIVE — same run_id+item+pr_url+source, now WITH the real data.
+bash "$H" learning-emit "$LED" \
+  --repo "acme/widgets" --number 126 --pr-url "$PR" --run-id "run12" --item "item-l" \
+  --fix-cycles 4 --drain-result READY \
+  --repeat-check-failure true --unresolved-bot-feedback false \
+  --changed-paths-json '["src/corrected.ts"]' --additions 9 --deletions 3 --changed-files 1 \
+  --summary "corrective: full data"
+
+# The load-bearing assertion: the REAL reader now returns a prior-churn hit for the path,
+# and the ledger carries exactly ONE complete (visible) line — no duplicate good lines.
+READER_OUT="$( cd "$WD" && bash "$READ_PM" "src/corrected.ts" 2>/dev/null )"
+N_COMPLETE="$(jq -R 'fromjson? // empty' "$LED" 2>/dev/null \
+  | jq -s '[ .[] | select(((.changed_paths // []) | length) > 0) ] | length' 2>/dev/null)"
+if printf '%s' "$READER_OUT" | grep -q "src/corrected.ts" && [ "$N_COMPLETE" = "1" ]; then
+  ok "degraded-then-corrective: corrective emit NOT skipped and read-postmortem.sh returns it (exactly ONE complete line)"
+else
+  no "degraded-then-corrective wrong (reader_out='$READER_OUT' n_complete='$N_COMPLETE' ledger='$(cat "$LED" 2>/dev/null)')"
+fi
+
+# F12b. MUTATION CONTROL — proves F12 is load-bearing, not vacuously green. Pre-seed a
+#       ledger with the OLD (pre-discriminator) degraded key shape, i.e. byte-for-byte
+#       what the buggy version wrote for PR #126. Under the old "any key match ⇒ skip"
+#       rule the corrective emit is suppressed and the reader stays silent forever;
+#       under the fix the legacy degraded line is a match that does NOT block a complete
+#       emit. BEFORE must be empty and AFTER must hit — if the skip rule ever regresses,
+#       this case flips to FAIL.
+WD2="$(mktemp -d)"
+( cd "$WD2" && git init -q && git config user.email t@t && git config user.name t \
+    && git remote add origin https://github.com/acme/widgets.git \
+    && echo i > f && git add f && git commit -qm i ) >/dev/null 2>&1
+LED2="$WD2/.supervisor/postmortem/results.jsonl"; mkdir -p "$(dirname "$LED2")"
+LEGACY_KEY="$(jq -rn --arg a run13 --arg b item-m --arg c "$PR" --arg d automate_drain \
+  '[$a,$b,$c,$d] | join("\u001f")')"
+NOW_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+jq -cn --arg k "$LEGACY_KEY" --arg u "$PR" --arg ts "$NOW_TS" \
+  '{schema_version:1, ts:$ts, repo:"acme/widgets", number:0, review_rounds:4,
+    categories:[{round:4,class:"drain_churn",self_heal_miss:true,flow_stage:"self_heal",evidence:"legacy"}],
+    self_heal_misses:1, changed_paths:[], pr_url:$u,
+    source:"automate_drain", automate_key:$k}' > "$LED2"
+BEFORE="$( cd "$WD2" && bash "$READ_PM" "src/corrected.ts" 2>/dev/null )"
+bash "$H" learning-emit "$LED2" \
+  --repo "acme/widgets" --number 126 --pr-url "$PR" --run-id "run13" --item "item-m" \
+  --fix-cycles 4 --drain-result READY \
+  --repeat-check-failure true --unresolved-bot-feedback false \
+  --changed-paths-json '["src/corrected.ts"]' --additions 9 --deletions 3 --changed-files 1 \
+  --summary "corrective over a LEGACY degraded key"
+AFTER="$( cd "$WD2" && bash "$READ_PM" "src/corrected.ts" 2>/dev/null )"
+if [ -z "$BEFORE" ] && printf '%s' "$AFTER" | grep -q "src/corrected.ts"; then
+  ok "mutation control: a LEGACY (pre-discriminator) degraded key is invisible BEFORE and correctable AFTER (skip rule is load-bearing)"
+else
+  no "legacy-degraded correction wrong (before='$BEFORE' after='$AFTER' ledger='$(cat "$LED2" 2>/dev/null)')"
+fi
+
+# F12c. No-regression on the two skip arms the fix must NOT loosen: a DEGRADED emit
+#       AFTER a complete one must be skipped (never regress a good line to an invisible
+#       one), and a second COMPLETE emit must be skipped (at most one good line).
+bash "$H" learning-emit "$LED2" \
+  --repo "acme/widgets" --pr-url "$PR" --run-id "run13" --item "item-m" \
+  --fix-cycles 4 --drain-result READY --summary "late degraded retry"
+bash "$H" learning-emit "$LED2" \
+  --repo "acme/widgets" --number 126 --pr-url "$PR" --run-id "run13" --item "item-m" \
+  --fix-cycles 4 --drain-result READY \
+  --changed-paths-json '["src/corrected.ts"]' --additions 9 --deletions 3 --changed-files 1 \
+  --summary "duplicate complete"
+if [ "$(wc -l < "$LED2" | tr -d ' ')" = "2" ]; then
+  ok "no-regression: degraded-after-complete AND complete-after-complete are both skipped (ledger stays at 2 lines)"
+else
+  no "skip-arm regression (lines=$(wc -l < "$LED2" 2>/dev/null | tr -d ' ') ledger='$(cat "$LED2" 2>/dev/null)')"
+fi
+rm -rf "$WD" "$WD2"
+
+# F13. The REALISTIC degraded shape: --number IS passed. F12/F12b/F12c all degrade by
+#      omitting --number, which matches the helper's internal default but NOT the real
+#      /automate invocation: skills/automate-loop/SKILL.md 6 derives `repo` AND `number`
+#      from pr_url in the "inputs the engine already holds" bullet, BEFORE and independent
+#      of "the ONE added fetch" that is the thing that actually degrades. So a
+#      contract-compliant degraded emit carries the REAL number, and the degraded and
+#      corrective lines SHARE the repo#number key that build-loop-evidence.sh and
+#      measure-heal-signal.py join on. Pins that the correction still lands in that shape
+#      (the earlier "number:0 quarantines the degraded line" rationale was wrong).
+WD3="$(mktemp -d)"
+( cd "$WD3" && git init -q && git config user.email t@t && git config user.name t \
+    && git remote add origin https://github.com/acme/widgets.git \
+    && echo i > f && git add f && git commit -qm i ) >/dev/null 2>&1
+LED3="$WD3/.supervisor/postmortem/results.jsonl"
+# Degraded, but WITH the pr_url-derived --number (only the fetch-dependent args degrade).
+bash "$H" learning-emit "$LED3" \
+  --repo "acme/widgets" --number 77 --pr-url "$PR" --run-id "run14" --item "item-n" \
+  --fix-cycles 2 --drain-result READY \
+  --changed-paths-json '[]' --additions 0 --deletions 0 --changed-files 0 \
+  --summary "degraded WITH real number"
+# Corrective, after a resume that added fix cycles (2 -> 5): the floor RISES.
+bash "$H" learning-emit "$LED3" \
+  --repo "acme/widgets" --number 77 --pr-url "$PR" --run-id "run14" --item "item-n" \
+  --fix-cycles 5 --drain-result READY \
+  --changed-paths-json '["src/shared.ts"]' --additions 7 --deletions 2 --changed-files 1 \
+  --summary "corrective WITH real number"
+N3="$(wc -l < "$LED3" | tr -d ' ')"
+SAME_KEY="$(jq -R 'fromjson? // empty' "$LED3" 2>/dev/null \
+  | jq -s '[ .[] | ((.repo|ascii_downcase) + "#" + (.number|tostring)) ] | unique | length' 2>/dev/null)"
+VIS3="$( cd "$WD3" && bash "$READ_PM" "src/shared.ts" 2>/dev/null )"
+if [ "$N3" = "2" ] && [ "$SAME_KEY" = "1" ] && printf '%s' "$VIS3" | grep -q "src/shared.ts"; then
+  ok "realistic degraded shape (--number passed): correction still appends, both lines SHARE repo#number, reader returns the complete one"
+else
+  no "realistic-degraded wrong (lines='$N3' distinct_repo_number_keys='$SAME_KEY' reader='$VIS3')"
+fi
+
+# F13b. The downstream consequence of F13, shown at the EMIT site: with both lines under ONE
+#       repo#number key, a first-wins join reports the STALE lower review_rounds. Append order
+#       is degraded(2) then complete(5), so `head -1` yields 2 and floor-raising yields 5.
+#       SCOPE — read this before trusting it: the jq below is a hand-copied MIRROR of
+#       build-loop-evidence.sh's projection + representative pick, and a mirror can silently
+#       drift from the script it models (the exact objection F12 raises against reader_select).
+#       It is kept only to make the trap legible next to the emit it originates from. The
+#       AUTHORITATIVE regression net for that join is test-build-loop-evidence.sh case (13),
+#       which drives the REAL builder over a two-line fixture; if this mirror and case (13)
+#       ever disagree, case (13) is right.
+PMPROJ="$(jq -R 'fromjson? // empty' "$LED3" 2>/dev/null | jq -c '
+  { key: (((.repo // "") | tostring | ascii_downcase) + "#" + ((.number // "") | tostring)),
+    review_rounds: (.review_rounds // null), ts: ((.ts // "") | tostring) }')"
+FIRST_WINS="$(printf '%s\n' "$PMPROJ" | head -1 | jq -r '.review_rounds')"
+FLOOR_WINS="$(printf '%s\n' "$PMPROJ" | jq -s -r 'max_by([(.review_rounds // -1), (.ts // "")]) | .review_rounds')"
+if [ "$FIRST_WINS" = "2" ] && [ "$FLOOR_WINS" = "5" ]; then
+  ok "floor-raising join is load-bearing: first-wins would report the STALE 2, max-review_rounds reports the true 5"
+else
+  no "floor-raising join wrong (first_wins='$FIRST_WINS' floor_wins='$FLOOR_WINS')"
+fi
+rm -rf "$WD3"
+
+# F13c. A second DEGRADED emit when ONLY a degraded line exists (no complete line yet).
+#       F12c exercises the degraded skip arm only in a ledger that ALSO holds a complete
+#       line, so this pins the arm in isolation: still exactly one line, still no duplicate
+#       invisible entry.
+WD4="$(mktemp -d)"; LED4="$WD4/results.jsonl"
+for i in 1 2; do
+  bash "$H" learning-emit "$LED4" \
+    --repo "acme/widgets" --number 78 --pr-url "$PR" --run-id "run15" --item "item-o" \
+    --fix-cycles 1 --drain-result READY --summary "degraded twice"
+done
+if [ "$(wc -l < "$LED4" | tr -d ' ')" = "1" ]; then
+  ok "degraded-after-degraded (no complete line present): skipped ⇒ exactly ONE line"
+else
+  no "degraded-twice wrong (lines=$(wc -l < "$LED4" 2>/dev/null | tr -d ' '))"
+fi
+rm -rf "$WD4"
+
+# F13d. changed_paths of only EMPTY strings is DEGRADED, not complete. An empty string is
+#       not a usable path — read-postmortem.sh drops empty query paths before matching, so
+#       `[""]` is exactly as invisible as `[]`. Classing it complete would re-open this very
+#       defect: an unusable line permanently blocking its own correction.
+WD5="$(mktemp -d)"; LED5="$WD5/results.jsonl"
+bash "$H" learning-emit "$LED5" \
+  --repo "acme/widgets" --number 79 --pr-url "$PR" --run-id "run16" --item "item-p" \
+  --fix-cycles 1 --drain-result READY --changed-paths-json '[""]' --summary "empty-string path"
+bash "$H" learning-emit "$LED5" \
+  --repo "acme/widgets" --number 79 --pr-url "$PR" --run-id "run16" --item "item-p" \
+  --fix-cycles 1 --drain-result READY --changed-paths-json '["src/real.ts"]' --summary "corrective"
+if [ "$(wc -l < "$LED5" | tr -d ' ')" = "2" ] \
+   && [ "$(tail -1 "$LED5" | jq -r '.changed_paths[0]')" = "src/real.ts" ]; then
+  ok "empty-string-only changed_paths is DEGRADED (not complete) — it cannot block its own correction"
+else
+  no "empty-string-path classification wrong (lines=$(wc -l < "$LED5" 2>/dev/null | tr -d ' ') ledger='$(cat "$LED5" 2>/dev/null)')"
+fi
+rm -rf "$WD5"
 
 echo
 echo "RESULT: $pass passed, $fail failed"

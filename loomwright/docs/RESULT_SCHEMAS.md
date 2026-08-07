@@ -1199,11 +1199,28 @@ harness** (the deferred M2b part-2b headless-`claude` evaluator).
   data the engine already holds — see the variant note below). Absent in older trend lines, which remain
   valid — `schema_version` stays `1`.
 - `automate_key` — string, **additive & optional** — a deterministic idempotency key
-  (`run_id` + item + `pr_url` + `source`) present **only on `source: "automate_drain"` lines**. The
-  `/automate` `learning-emit` helper scans the ledger for an existing line with the same `automate_key`
-  and skips the append if found, so a crash/`--resume` re-entry yields exactly one line per processed PR.
-  Absent on `github_postmortem` lines and older trend lines, which remain valid — `schema_version`
-  stays `1`.
+  (`run_id` + item + `pr_url` + `source` + completeness, joined on U+001F) present **only on
+  `source: "automate_drain"` lines**. The `/automate` `learning-emit` helper scans the ledger for a
+  line with the same key and skips the append if found, so a crash/`--resume` re-entry yields exactly
+  one line per processed PR. The trailing **completeness** component is `"complete"` when
+  `changed_paths` is a non-empty array and `"degraded"` otherwise, because a `changed_paths: []` line
+  is permanently invisible to `read-postmortem.sh` (its overlap filter can never match an empty
+  array); without the discriminator a degraded first emit poisoned the key and blocked every later
+  emit that DID carry the fetch data. `complete` requires at least one **non-empty** path: an empty
+  string is not a usable path (`read-postmortem.sh` drops empty query paths before matching), so a
+  `changed_paths: [""]` line is exactly as invisible as `[]` and must stay correctable. Consequently
+  at most TWO lines can share a run/item/pr/source prefix — one `degraded` and one `complete`. The
+  `degraded` line is invisible to `read-postmortem.sh` but is **NOT** quarantined downstream: `repo`
+  and `number` are derived from `pr_url` independently of the fetch that degrades, so a
+  contract-compliant caller emits it with the REAL `number` (a `number: 0` means `--number` was
+  omitted entirely, not that the fetch failed). Both lines therefore share the `repo`#`number` key
+  that `build-loop-evidence.sh` and `measure-heal-signal.py` join on — **both pick floor-raising**
+  (max `review_rounds`, tie-break latest `ts`), so the richer line wins and the pair cannot report a
+  stale low count. **Legacy keys** written before the discriminator carry only the four components;
+  the helper recognises them by prefix, so a legacy *complete* line stays idempotent and a legacy
+  *degraded* line is correctable. Treat `automate_key` as an opaque string — match it by EXACT
+  equality (as `curate-postmortem.sh`'s `target_key` does), never by parsing its components. Absent on
+  `github_postmortem` lines and older trend lines, which remain valid — `schema_version` stays `1`.
 
 **`source: "automate_drain"` variant (engine-native ground-truth line).** When `/automate` processes a
 PR-producing item (merged OR parked), it emits ONE full valid `schema_version: 1` POSTMORTEM_RESULT at
@@ -1235,7 +1252,10 @@ variant:
   filtered out whenever the reader's repo resolves. The `/automate` wiring therefore derives `repo`
   (`owner/repo`) from `pr_url` and always passes `--repo`. On a failed `gh pr view` fetch `changed_paths`
   degrades to `[]` and the integer size fields to `0` (NEVER `null`) — the line is still written
-  (fail-safe), just invisible to the reader.
+  (fail-safe), just invisible to the reader. That invisibility is **recoverable, not permanent**: the
+  `automate_key` completeness discriminator (above) lets a later `learning-emit` for the same
+  run/item/PR append the corrective `complete` line once the fetch data is in hand, leaving the inert
+  degraded line untouched (append-only; `curate-postmortem.sh` stays the sole curator writer).
 
 **`source: "curation"` variant (curation record — retract / supersede).** The ledger may also contain
 **curation records** — jq-built JSONL lines appended ONLY by `scripts/curate-postmortem.sh` (the

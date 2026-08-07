@@ -214,6 +214,7 @@ if [ -s "$PM" ]; then
     | select((.source // "") != "curation")
     | { key: (((.repo // "") | tostring | ascii_downcase) + "#" + ((.number // "") | tostring)),
         review_rounds: (.review_rounds // null),
+        ts: ((.ts // "") | tostring),
         classes: ([ (.categories // [])[] | (.class // empty) ]) }
   ' >> "$PM_JSON" 2>/dev/null || true
   [ -s "$PM_JSON" ] || dq "postmortem/results.jsonl present but yielded no parseable data lines — review-round cells insufficient_data"
@@ -424,10 +425,27 @@ while IFS=$'\t' read -r label purl prnum ver ts hi rubric fc pmkey logfile pbyte
   [ -n "${label:-}" ] || continue
   era_of "$ver" "$ts"
 
-  # postmortem join (exact repo#number key)
+  # postmortem join (exact repo#number key).
+  # FLOOR-RAISING pick, NOT first-wins. The ledger can legitimately hold MORE THAN ONE
+  # data line for the same repo#number: a re-gather by /pr-postmortem, or an /automate
+  # `learning-emit` DEGRADED line (the one `gh pr view` fetch failed, so changed_paths is
+  # empty) followed by its later corrective COMPLETE line. `repo`/`number` are derived
+  # from pr_url independently of that fetch (skills/automate-loop/SKILL.md §6), so both
+  # lines really do share this key — a degraded line is NOT quarantined under `#0`.
+  # PM_JSON is streamed in ledger append order, so the old `head -1` picked the OLDEST
+  # match and would silently report a STALE, lower review-round count once a resume added
+  # fix cycles between the degraded attempt and the corrective one. review_rounds is a
+  # documented FLOOR, so the representative entry is max review_rounds (tie-break latest
+  # ts) — the same discipline measure-heal-signal.py already applies (its `rep = max(...)`
+  # / floor-raising dedup). A null/absent review_rounds sorts lowest via `// -1`, so a
+  # real count always beats "unknown".
   rr="-"; classes="-"
   if [ -s "$PM_JSON" ] && [ "$prnum" != "-" ] && [ "${pmkey%#*}" != "" ]; then
-    pmline="$(jq -c --arg k "$pmkey" 'select(.key == $k)' "$PM_JSON" 2>/dev/null | head -1 || true)"
+    # Single jq pass (select + pick), not select-piped-into-slurp: one process per row.
+    pmline="$(jq -s -c --arg k "$pmkey" '
+      [ .[] | select(.key == $k) ]
+      | if length == 0 then empty
+        else max_by([ (.review_rounds // -1), (.ts // "") ]) end' "$PM_JSON" 2>/dev/null || true)"
     if [ -n "$pmline" ]; then
       rr="$(printf '%s' "$pmline" | jq -r '.review_rounds // "-"' 2>/dev/null || printf -- -)"
       classes="$(printf '%s' "$pmline" | jq -r '.classes | if length==0 then "-" else join(",") end' 2>/dev/null || printf -- -)"

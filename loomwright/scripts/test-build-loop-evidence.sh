@@ -27,6 +27,11 @@
 #       branch history" Data-quality note (clean falls back to fix_cycles/heal_iterations).
 #  (11) landed edge paths: a pr_url with NO matching commit in history => no(not_in_history)
 #       (durable "-"); a run with NO pr_url at all => insufficient_data(no_pr_url).
+#  (13) postmortem join is FLOOR-RAISING (max review_rounds, tie-break latest ts), not
+#       first-wins: two ledger lines sharing one repo#number (a degraded /automate
+#       learning-emit line followed by its corrective complete line) must report the
+#       TRUE higher round count, not the stale older one; plus the tie-break and
+#       null-review_rounds arms of the max_by key. Asserted against the real builder.
 #  (12) era_of branches (via --jsonl): plugin_version 15.12.0 => post_orientation_memos;
 #       version-less run with a parseable ts in a fallback window => date_fallback:-labeled
 #       era bucket; no version AND no parseable ts => unknown bucket — each with its
@@ -380,6 +385,70 @@ if [ "$(printf '%s\n' "$OUT" | jq -r 'select(.type=="run" and .run=="era-post-me
   ok "run with NO pr_url => landed=insufficient_data(no_pr_url)"
 else
   no "no-pr_url landed label wrong"
+fi
+
+# ============================================================================
+echo "== (13) postmortem join is FLOOR-RAISING, not first-wins =="
+# The ledger can legitimately hold MORE THAN ONE data line under the same repo#number:
+# a /pr-postmortem re-gather, or an /automate `learning-emit` DEGRADED line (its one
+# `gh pr view` fetch failed, so changed_paths is empty) followed by its corrective
+# COMPLETE line. `repo`/`number` are derived from pr_url INDEPENDENTLY of that fetch
+# (skills/automate-loop/SKILL.md 6), so a degraded line is NOT quarantined under `#0` --
+# both lines really do share this join key. PM_JSON is streamed in ledger APPEND order,
+# so a first-wins join (`| head -1`, what this script used to do) returns the OLDER
+# degraded line and silently reports a STALE, lower review-round count once a resume adds
+# fix cycles between the two emits. review_rounds is a documented FLOOR, so the
+# representative entry must be max review_rounds (tie-break latest ts).
+#
+# Asserted against the REAL builder via --jsonl -- deliberately NOT a hand-copied jq
+# mirror of the join expression, which could drift from the script it models (the same
+# reasoning test-automate-helpers.sh F12 applies to read-postmortem.sh).
+SD_PM="$ROOT/state-pm"; mkdir -p "$SD_PM/logs" "$SD_PM/postmortem"
+cat > "$SD_PM/logs/pm-session.jsonl" <<'EOF'
+{"ts":"2026-07-06T10:00:00Z","event":"session_start","session_id":"pm-session"}
+{"ts":"2026-07-06T11:00:00Z","event":"session_end","task_id":"pm-run","status":"completed","branch":"feature/pm","pr_url":"https://github.com/acme/widgets/pull/9","heal_decision":"PASS","heal_iterations":1,"rubric_score":"5/5","plugin_version":"15.4.0"}
+EOF
+# APPEND ORDER IS LOAD-BEARING: the degraded line (review_rounds 2) is written FIRST, so a
+# first-wins join necessarily returns 2. The corrective complete line (review_rounds 5,
+# later ts) is second. Both carry repo acme/widgets + number 9 -- one join key.
+cat > "$SD_PM/postmortem/results.jsonl" <<'EOF'
+{"schema_version":1,"ts":"2026-07-06T12:00:00Z","repo":"acme/widgets","number":9,"review_rounds":2,"categories":[{"round":2,"class":"drain_churn","flow_stage":"self_heal"}],"self_heal_misses":1,"changed_paths":[],"summary":"degraded emit","source":"automate_drain"}
+{"schema_version":1,"ts":"2026-07-06T12:30:00Z","repo":"acme/widgets","number":9,"review_rounds":5,"categories":[{"round":5,"class":"drain_churn","flow_stage":"self_heal"}],"self_heal_misses":1,"changed_paths":["src/x.ts"],"summary":"corrective emit","source":"automate_drain"}
+EOF
+
+# Control: the fixture really does model the trap -- two lines, ONE join key, and the
+# FIRST in append order carries the stale 2. Without this, (13) could pass vacuously.
+PM_N="$(wc -l < "$SD_PM/postmortem/results.jsonl" | tr -d ' ')"
+PM_KEYS="$(jq -s '[ .[] | ((.repo|ascii_downcase) + "#" + (.number|tostring)) ] | unique | length' < "$SD_PM/postmortem/results.jsonl" 2>/dev/null)"
+PM_FIRST_RR="$(head -1 "$SD_PM/postmortem/results.jsonl" | jq -r '.review_rounds')"
+
+run_builder --state-dir "$SD_PM" --jsonl
+PM_RR="$(printf '%s\n' "$OUT" | jq -r 'select(.type=="run" and .run=="pm-run") | .review_rounds' 2>/dev/null | head -1)"
+if [ "$RC" -eq 0 ] && [ "$PM_N" = "2" ] && [ "$PM_KEYS" = "1" ] && [ "$PM_FIRST_RR" = "2" ] \
+   && [ "$PM_RR" = "5" ]; then
+  ok "floor-raising join: two lines share repo#number, first-in-file carries the stale 2, builder reports the true 5"
+else
+  no "floor-raising join wrong (rc=$RC lines='$PM_N' join_keys='$PM_KEYS' first_rr='$PM_FIRST_RR' builder_rr='$PM_RR')"
+fi
+
+# (13b) Tie-break + null-handling, still against the real builder: equal review_rounds must
+# fall back to the LATEST ts, and a null/absent review_rounds must never outrank a real
+# count (`// -1` sorts it lowest) -- the two arms of the max_by key that (13) alone can't
+# distinguish. The richer classes value proves WHICH line was picked.
+SD_PM2="$ROOT/state-pm2"; mkdir -p "$SD_PM2/logs" "$SD_PM2/postmortem"
+cp "$SD_PM/logs/pm-session.jsonl" "$SD_PM2/logs/pm-session.jsonl"
+cat > "$SD_PM2/postmortem/results.jsonl" <<'EOF'
+{"schema_version":1,"ts":"2026-07-06T12:00:00Z","repo":"acme/widgets","number":9,"review_rounds":null,"categories":[{"round":1,"class":"nullrounds","flow_stage":"self_heal"}],"self_heal_misses":0,"changed_paths":[],"summary":"null rounds"}
+{"schema_version":1,"ts":"2026-07-06T12:10:00Z","repo":"acme/widgets","number":9,"review_rounds":3,"categories":[{"round":3,"class":"older_tie","flow_stage":"self_heal"}],"self_heal_misses":0,"changed_paths":["src/a.ts"],"summary":"tie, older"}
+{"schema_version":1,"ts":"2026-07-06T12:20:00Z","repo":"acme/widgets","number":9,"review_rounds":3,"categories":[{"round":3,"class":"newer_tie","flow_stage":"self_heal"}],"self_heal_misses":0,"changed_paths":["src/b.ts"],"summary":"tie, newer"}
+EOF
+run_builder --state-dir "$SD_PM2" --jsonl
+PM2_RR="$(printf '%s\n' "$OUT" | jq -r 'select(.type=="run" and .run=="pm-run") | .review_rounds' 2>/dev/null | head -1)"
+PM2_CLS="$(printf '%s\n' "$OUT" | jq -r 'select(.type=="run" and .run=="pm-run") | .classes' 2>/dev/null | head -1)"
+if [ "$RC" -eq 0 ] && [ "$PM2_RR" = "3" ] && [ "$PM2_CLS" = "newer_tie" ]; then
+  ok "floor-raising join: null review_rounds never outranks a real count, and an exact tie breaks to the LATEST ts"
+else
+  no "tie-break/null-handling wrong (rc=$RC rr='$PM2_RR' classes='$PM2_CLS')"
 fi
 
 # ============================================================================
