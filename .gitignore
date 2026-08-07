@@ -31,9 +31,15 @@ __pycache__/
 *.pyc
 
 # Supervisor/Worker runtime artifacts
-.claude/
-.supervisor/
+# .claude/   # [loomwright/setup-memory] disabled: a bare directory exclude defeats the negation below
+# .supervisor/   # [loomwright/setup-memory] disabled: a bare directory exclude defeats the negation below
 .worker-summary*.md
+
+# `setup-memory.sh apply` ALWAYS writes a timestamped `.gitignore.backup.<ts>` sibling here
+# (backup-first contract, setup-memory.sh:411-424) and a matching `.supervisor/config.json.backup.<ts>`.
+# No pre-existing pattern matched them, so a routine `git add -A` would have staged them. The
+# `.supervisor/` one is already covered by the managed block below; this line covers the root one.
+.gitignore.backup.*
 
 # Graphify local knowledge graph (large runtime state — Local Twin Step 3; never commit)
 graphify-out/
@@ -51,3 +57,22 @@ temp/
 # is loomwright/scripts/test-no-junk-tracked-files.sh, this is the belt-and-braces backstop.
 /--run-id
 /--*
+# >>> loomwright /setup memory BEGIN — committable Twin stores (managed block) >>>
+# Negate CONTENTS, not the directory. Git cannot re-include a file whose parent directory is
+# excluded, so the naive form
+#     .claude/
+#     !.claude/agent-memory/
+# looks correct and silently does NOTHING. The `/*` form below excludes the directory's contents
+# and leaves the directory itself traversable, so the `!` lines can re-include.
+#
+# Committed on purpose: the Twin's accumulated judgment (agent memory + distilled lessons),
+# including their dot-prefixed provenance sidecars. Everything else under these two directories
+# stays ignored — worktree checkouts, machine-local settings, session logs.
+#
+# Managed by `/setup memory`. Edit via that command (`/setup memory remove` reverts it);
+# hand-edits inside these sentinels are overwritten on the next apply.
+.claude/*
+!.claude/agent-memory/
+.supervisor/*
+!.supervisor/memory/
+# <<< loomwright /setup memory END <<<

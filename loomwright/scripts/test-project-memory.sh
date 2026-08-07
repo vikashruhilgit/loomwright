@@ -86,7 +86,18 @@ fi
 rm -rf "$EVDIR" "$EV2DIR"
 
 echo "== 6. .gitignore coverage (real repo) =="
-if git -C "$REAL_REPO" check-ignore -q .supervisor/memory/PROJECT_MEMORY.md 2>/dev/null; then ok ".supervisor/memory/ is gitignored in the real repo"; else no ".supervisor/memory/ NOT gitignored"; fi
+# INVERTED ON PURPOSE (2026-08-07) — same reversal as test-lessons.sh, and for the same reason.
+# `/setup memory` exists to make `.supervisor/memory/` COMMITTABLE; this repo applied the managed
+# negation block, so "is gitignored" is now the failure mode, not the invariant. Ownership of the
+# store's ignore status sits in test-committed-twin-scrub.sh; this is a cheap cross-check.
+#
+# `-q` is used ALONE — never with `--verbose`, which git rejects with exit 128, a status a bare
+# `if` would silently read as "not ignored".
+if git -C "$REAL_REPO" check-ignore -q .supervisor/memory/PROJECT_MEMORY.md 2>/dev/null; then
+  no ".supervisor/memory/PROJECT_MEMORY.md is IGNORED in the real repo, but the applied /setup memory managed block must make it committable — the negation is not in effect (see test-committed-twin-scrub.sh)"
+else
+  ok ".supervisor/memory/PROJECT_MEMORY.md is committable in the real repo (managed negation block in effect)"
+fi
 
 echo "== 7. dedup guard =="
 DDIR="$(mktemp -d)"; ( cd "$DDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
