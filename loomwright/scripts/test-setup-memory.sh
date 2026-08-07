@@ -52,7 +52,12 @@
 #        backup-name EXHAUSTION fails CLOSED — with every candidate name seeded, apply ABORTS,
 #        .gitignore is untouched and the pre-existing backup is not clobbered
 #   (f)  absent / unparseable .gitignore: change nothing, say why, no partial write, no backup;
-#        and an INDENTED sentinel is stripped, never duplicated into an unrepairable file
+#        and an INDENTED sentinel is stripped, never duplicated into an unrepairable file.
+#        Every abort branch of gitignore_gate() has a fixture: conflict markers, sentinel
+#        imbalance, SYMLINK (link and target both untouched), NON-REGULAR file, chmod-000
+#        (skipped under root, which bypasses mode bits), and NUL/binary content — the last with
+#        a two-sided assertion (a text .gitignore must NOT be called binary) so it cannot pass
+#        under the `grep -q $'\0'` empty-pattern regression it exists to prevent
 #   (g)  remove: block gone, byte-exact round-trip, and the output states plainly that git history
 #        retains anything already pushed + that already-tracked files need `git rm --cached`
 #   (h)  the consent disclosure (what becomes version-controlled) is printed BEFORE applying
@@ -604,6 +609,75 @@ out_f4r="$(mem "$F4" remove 2>&1)"; rc_f4r=$?
 hasi 'duplicated managed-block sentinels' "$out_f4r" && no "(f4) remove is BRICKED on the same file" || ok "(f4) remove is not bricked either"
 nb_f4r="$(grep -cF 'loomwright /setup memory' "$F4/.gitignore" 2>/dev/null | tr -d ' ')"
 [ "${nb_f4r:-1}" -eq 0 ] && ok "(f4) remove leaves NO managed-block sentinel behind (fully repairable)" || no "(f4) remove left ${nb_f4r} managed-block line(s) behind"
+
+# (f5) SYMLINK — the gate refuses to FOLLOW it. The point is not merely "abort": it is that
+# someone else's file (the link TARGET) is never rewritten, and the link itself is left intact.
+F5="$(newgit)"
+printf '# someone else owns this\n.claude/\n.supervisor/\n' > "$F5/real-gitignore.txt"
+target_f5="$(sum "$F5/real-gitignore.txt")"
+ln -s real-gitignore.txt "$F5/.gitignore"
+out_f5="$(mem "$F5" apply 2>&1)"; rc_f5=$?
+[ "$rc_f5" -eq 0 ] && ok "(f5) apply on a SYMLINK .gitignore exits 0 (fail-safe)" || no "(f5) non-zero ($rc_f5)"
+has '^apply: ABORTED' "$out_f5" && ok "(f5) apply ABORTS on a symlinked .gitignore" || no "(f5) apply did not abort on a symlink"
+hasi 'symlink' "$out_f5" && ok "(f5) the abort names the reason (symlink)" || no "(f5) abort did not name the symlink"
+[ -L "$F5/.gitignore" ] && ok "(f5) .gitignore is STILL a symlink (the link was not replaced by a regular file)" || no "(f5) the symlink was clobbered"
+[ "$target_f5" = "$(sum "$F5/real-gitignore.txt")" ] && ok "(f5) the symlink TARGET is byte-identical (someone else's file was not rewritten)" || no "(f5) the rewriter FOLLOWED the symlink and mutated the target"
+[ -z "$(ls "$F5"/.gitignore.backup.* 2>/dev/null)" ] && ok "(f5) no backup written on the symlink abort path" || no "(f5) a backup was written despite aborting"
+
+# (f6) NON-REGULAR FILE — a directory named .gitignore exists (`-e` true, `-f` false), so the
+# absent branch must NOT swallow it and the rewriter must not try to write through it.
+F6="$(newgit)"
+mkdir "$F6/.gitignore"
+out_f6="$(mem "$F6" apply 2>&1)"; rc_f6=$?
+[ "$rc_f6" -eq 0 ] && ok "(f6) apply on a DIRECTORY named .gitignore exits 0 (fail-safe)" || no "(f6) non-zero ($rc_f6)"
+has '^apply: ABORTED' "$out_f6" && ok "(f6) apply ABORTS on a non-regular .gitignore" || no "(f6) apply did not abort on a non-regular file"
+hasi 'not a regular file' "$out_f6" && ok "(f6) the abort names the reason (not a regular file)" || no "(f6) abort did not name the non-regular file"
+[ -d "$F6/.gitignore" ] && ok "(f6) .gitignore is STILL a directory (nothing was written through it)" || no "(f6) the .gitignore directory was replaced"
+[ -z "$(ls "$F6"/.gitignore.backup.* 2>/dev/null)" ] && ok "(f6) no backup written on the non-regular abort path" || no "(f6) a backup was written despite aborting"
+
+# (f7) NOT READABLE/WRITABLE — `chmod 000`. SKIPPED UNDER ROOT: root bypasses the permission
+# bits entirely, so `[ -r ]`/`[ -w ]` are both true there and the guard legitimately does not
+# fire; asserting it would fail spuriously in a root CI container.
+if [ "$(id -u)" = 0 ]; then
+  ok "(f7) running as root — the chmod-000 permission fixture is skipped (root bypasses mode bits)"
+else
+  F7="$(newgit)"
+  printf '# editor\n*.swp\n.claude/\n' > "$F7/.gitignore"
+  before_f7="$(sum "$F7/.gitignore")"
+  chmod 000 "$F7/.gitignore"
+  out_f7="$(mem "$F7" apply 2>&1)"; rc_f7=$?
+  chmod 644 "$F7/.gitignore"   # restore BEFORE any assertion so the trap can always clean up
+  [ "$rc_f7" -eq 0 ] && ok "(f7) apply on an unreadable/unwritable .gitignore exits 0 (fail-safe)" || no "(f7) non-zero ($rc_f7)"
+  has '^apply: ABORTED' "$out_f7" && ok "(f7) apply ABORTS on a chmod-000 .gitignore" || no "(f7) apply did not abort on chmod 000"
+  hasi 'readable and writable' "$out_f7" && ok "(f7) the abort names the reason (not both readable and writable)" || no "(f7) abort did not name the permission problem"
+  [ "$before_f7" = "$(sum "$F7/.gitignore")" ] && ok "(f7) .gitignore byte-identical after the permission abort" || no "(f7) .gitignore MUTATED despite the abort"
+  [ -z "$(ls "$F7"/.gitignore.backup.* 2>/dev/null)" ] && ok "(f7) no backup written on the permission abort path" || no "(f7) a backup was written despite aborting"
+fi
+
+# (f8) NUL BYTES — binary content is not a line-oriented ignore file.
+# THIS FIXTURE IS DELIBERATELY TWO-SIDED. The guard was once written `grep -q $'\0' "$GI"`,
+# which CANNOT work: bash cannot hold a NUL in a variable, so `$'\0'` collapses to the EMPTY
+# pattern, which matches every line of every file — every .gitignore was reported as binary.
+# A one-sided "a NUL file aborts" assertion would pass under that broken form too (it aborts on
+# everything), so it would be vacuous. The negative control below — a plain TEXT .gitignore must
+# NOT be reported as binary — is what actually pins the `tr | cmp` fix.
+F8="$(newgit)"
+printf '.claude/\nbin\000ary\n' > "$F8/.gitignore"
+before_f8="$(sum "$F8/.gitignore")"
+out_f8="$(mem "$F8" apply 2>&1)"; rc_f8=$?
+[ "$rc_f8" -eq 0 ] && ok "(f8) apply on a NUL-containing .gitignore exits 0 (fail-safe)" || no "(f8) non-zero ($rc_f8)"
+has '^apply: ABORTED' "$out_f8" && ok "(f8) apply ABORTS on a .gitignore containing NUL bytes" || no "(f8) apply did not abort on NUL bytes"
+hasi 'NUL bytes' "$out_f8" && ok "(f8) the abort names the reason (NUL bytes / binary)" || no "(f8) abort did not name the NUL bytes"
+[ "$before_f8" = "$(sum "$F8/.gitignore")" ] && ok "(f8) .gitignore byte-identical after the binary abort" || no "(f8) .gitignore MUTATED despite the abort"
+[ -z "$(ls "$F8"/.gitignore.backup.* 2>/dev/null)" ] && ok "(f8) no backup written on the binary abort path" || no "(f8) a backup was written despite aborting"
+# NEGATIVE CONTROL — the same content with the NUL removed is ordinary text and must be handled
+# normally. This is the assertion that goes RED if the guard regresses to an empty-pattern grep.
+F8b="$(newgit)"
+seed_stores "$F8b"
+printf '.claude/\nbinary\n' > "$F8b/.gitignore"
+out_f8b="$(mem "$F8b" apply 2>&1)"
+hasi 'NUL bytes' "$out_f8b" && no "(f8) a plain TEXT .gitignore was misreported as binary (empty-pattern regression)" || ok "(f8) a plain TEXT .gitignore is NOT misreported as binary (guard is not an empty pattern)"
+has '^apply: applied' "$out_f8b" && ok "(f8) the text control applies normally (the binary guard did not swallow it)" || no "(f8) the text control did not apply"
 
 # ============================================================================
 echo "== (g) remove — reverts exactly, and says plainly that history retains what was pushed =="
