@@ -32,7 +32,7 @@
 #   resume-glob      <automate_dir>                     # §4 list *.md not "## Status: done"
 #   reconcile-item   <pr_url> <belief>                  # §4 belief vs gh/git truth -> corrected state
 #   gate-eval        <pr_url> <ctx.json>                # §10 MERGE|PARK 5-condition fail-closed gate
-#   learning-emit    <ledger_path> <flags...>           # §6 step 3 fail-safe (always exit 0) engine-native ground-truth POSTMORTEM_RESULT line; idempotent on run_id+item+pr_url+source
+#   learning-emit    <ledger_path> <flags...>           # §6 step 3 fail-safe (always exit 0) engine-native ground-truth POSTMORTEM_RESULT line; idempotent on run_id+item+pr_url+source+completeness (a degraded emit never blocks a later complete one)
 #
 # Exit codes: 0 success; 1 generic failure; 2 abort (malformed pre-existing config, §7).
 # (learning-emit is the fail-SAFE exception: it ALWAYS exits 0 — never die/abort.)
@@ -525,23 +525,81 @@ learning_emit() {
   [ -n "$ts" ] || ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)"
   [ -n "$changed_paths_json" ] || changed_paths_json="[]"
 
-  # Deterministic idempotency key: run_id|item|pr_url|source joined on the ASCII
-  # Unit Separator (U+001F, written as the \u001f jq escape — NOT an empty join;
-  # a raw 0x1F byte renders invisibly in diffs/cat and reads as join("")). The
+  # Normalize changed_paths ONCE (the same shape the record below embeds) so the
+  # completeness discriminator and the emitted field can never disagree.
+  local cp_clean
+  cp_clean="$( printf '%s' "$changed_paths_json" \
+    | "$JQ" -c 'if type=="array" then map(select(type=="string")) else [] end' 2>/dev/null )"
+  [ -n "$cp_clean" ] || cp_clean="[]"
+
+  # DEGRADED-EMIT DESIGN — option (b): the idempotency key is degradation-aware.
+  #
+  # A line with `changed_paths: []` is PERMANENTLY INVISIBLE to read-postmortem.sh
+  # (its overlap filter can never match an empty array). Before this, a FIRST emit
+  # that degraded — the single `gh pr view --json files,...` fetch failed, or the
+  # caller omitted the fetch args — poisoned the key and silently skipped every
+  # later emit that DID carry the data. Silent invisibility is the exact failure
+  # this feature exists to prevent.
+  #
+  # Fix: the key carries a `complete`|`degraded` discriminator, so a degraded line
+  # does not block a later complete one. Exactly-once still holds per (key, state),
+  # and at most ONE complete line is ever written per run/item/pr/source.
+  #
+  # Why not the alternatives:
+  #   (a) supersede the degraded line via curate-postmortem.sh — unusable here. Its
+  #       `target_key` matches a data line's `automate_key` OR `pr_url`, so a record
+  #       aimed at the degraded line would ALSO hide the corrective line (same
+  #       pr_url); and it is human-gated on --confirm, so it can never run inside
+  #       the per-item loop. It stays the manual, human-driven curation path.
+  #   (c) refuse to emit a degraded line at all — throws away the honest
+  #       `review_rounds` / `self_heal_misses` churn signal on every fetch failure
+  #       and breaks the documented always-emit fail-safe contract.
+  #
+  # The degraded line is left in place and is inert: read-postmortem.sh already
+  # cannot return it (empty changed_paths), and build-loop-evidence.sh keys on
+  # repo#number, where a degraded line's `number: 0` never collides with the real
+  # PR — so the pair cannot double-count. Ledger stays append-only; no new writer.
+  local completeness="degraded"
+  [ "$cp_clean" = "[]" ] || completeness="complete"
+
+  # Deterministic idempotency key: run_id|item|pr_url|source|completeness joined on
+  # the ASCII Unit Separator (U+001F, written as the \u001f jq escape — NOT an empty
+  # join; a raw 0x1F byte renders invisibly in diffs/cat and reads as join("")). The
   # separator closes the boundary-ambiguity collision class (e.g. run_id="a",
   # item="bc" vs "ab","c" would collide under an empty join). Built jq-only so a
   # field containing spaces/quotes can't break the scan; U+001F never appears in a
   # repo slug / URL / run-id, so the join is exact.
-  local key
-  key="$("$JQ" -rn --arg a "$run_id" --arg b "$item" --arg c "$pr_url" --arg d "$source" \
+  local base key
+  base="$("$JQ" -rn --arg a "$run_id" --arg b "$item" --arg c "$pr_url" --arg d "$source" \
     '[$a,$b,$c,$d] | join("\u001f")' 2>/dev/null)"
+  [ -n "$base" ] || return 0
+  key="$("$JQ" -rn --arg b "$base" --arg s "$completeness" '[$b,$s] | join("\u001f")' 2>/dev/null)"
   [ -n "$key" ] || return 0
 
-  # Idempotency skip: if any existing ledger line already carries this key, no-op.
+  # Idempotency skip. A "match" is an existing line whose automate_key is this base
+  # (a LEGACY pre-discriminator line) or this base plus a discriminator suffix. Skip when:
+  #   - an exact-key line already exists                       (plain re-entry), OR
+  #   - this emit is DEGRADED and any match exists  (never regress an existing good
+  #     line, and never write a second invisible line), OR
+  #   - this emit is COMPLETE and a complete match exists      (at most one good line;
+  #     this arm also keeps a LEGACY complete line idempotent under the new key shape).
+  # The one newly-permitted append is COMPLETE-after-DEGRADED — the correction.
   if [ -f "$ledger" ]; then
     if "$JQ" -R 'fromjson? // empty' "$ledger" 2>/dev/null \
-         | "$JQ" -e -s --arg k "$key" 'any(.[]; .automate_key == $k)' >/dev/null 2>&1; then
-      return 0   # already recorded for this run/item/pr/source — exactly-once.
+         | "$JQ" -e -s --arg k "$key" --arg base "$base" --arg state "$completeness" '
+             [ .[]
+               | select(type == "object")
+               | ((.automate_key // "") | if type == "string" then . else "" end) as $ak
+               | select($ak == $base or ($ak | startswith($base + "\u001f")))
+               | { ak: $ak,
+                   complete: ((((.changed_paths // []) | type) == "array")
+                              and (((.changed_paths // []) | length) > 0)) }
+             ] as $m
+             | ($m | any(.ak == $k))
+               or (($state == "degraded") and (($m | length) > 0))
+               or (($state == "complete") and ($m | any(.complete)))
+           ' >/dev/null 2>&1; then
+      return 0   # already recorded for this run/item/pr/source/state — exactly-once.
     fi
   fi
 
@@ -568,7 +626,7 @@ learning_emit() {
     --arg branch "$branch" \
     --arg source "$source" \
     --arg automate_key "$key" \
-    --argjson cp_raw "$( printf '%s' "$changed_paths_json" | "$JQ" -c 'if type=="array" then . else [] end' 2>/dev/null || echo '[]' )" \
+    --argjson cp_raw "$cp_clean" \
     '
     # changed_paths: keep only an array of strings, else [].
     ( if ($cp_raw | type) == "array" then ($cp_raw | map(select(type=="string"))) else [] end ) as $changed_paths

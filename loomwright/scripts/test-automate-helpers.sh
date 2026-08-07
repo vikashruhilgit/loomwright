@@ -26,7 +26,9 @@
 #      (fix_cycles==0 non-escalated → categories:[] + review_rounds:0), zero-cycle
 #      ESCALATED (→ review_rounds:1 + one drain_escalation entry), idempotency skip,
 #      missing-field degrade, jq-absent no-write, fetch-fail integer-0 degrade,
-#      injection-safe jq args, self_heal_misses derivation, read-postmortem visibility.
+#      injection-safe jq args, self_heal_misses derivation, read-postmortem visibility,
+#      and the degraded-then-corrective emit (a degraded first emit must NOT block a
+#      later complete one) with a legacy-key mutation control + skip-arm no-regression.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -833,6 +835,98 @@ else
   no "empty-repo visibility wrong (emitted_repo='$EMITTED_REPO' dropped='$DROPPED' kept_when_undet='$KEPT_WHEN_UNDET')"
 fi
 rm -rf "$WD"
+
+# F12. DEGRADED-then-CORRECTIVE emit (the PR #126 defect). A first emit that degraded
+#      (the single `gh pr view` fetch failed, or the caller omitted the fetch args)
+#      writes changed_paths:[] — a line PERMANENTLY INVISIBLE to read-postmortem.sh.
+#      Before the degradation-aware key, that line poisoned the automate_key and every
+#      later complete emit was silently skipped. Asserted against the REAL
+#      read-postmortem.sh (NOT the reader_select jq mirror, which could drift from the
+#      reader it models) inside a throwaway git repo whose origin remote makes the
+#      reader's CUR_REPO resolve, so repo scoping is exercised too.
+WD="$(mktemp -d)"
+( cd "$WD" && git init -q && git config user.email t@t && git config user.name t \
+    && git remote add origin https://github.com/acme/widgets.git \
+    && echo i > f && git add f && git commit -qm i ) >/dev/null 2>&1
+LED="$WD/.supervisor/postmortem/results.jsonl"
+READ_PM="$HERE/read-postmortem.sh"
+
+# 1st emit: DEGRADED — no --changed-paths-json / --number / size args (fetch failed).
+bash "$H" learning-emit "$LED" \
+  --repo "acme/widgets" --pr-url "$PR" --run-id "run12" --item "item-l" \
+  --fix-cycles 4 --drain-result READY \
+  --repeat-check-failure true --unresolved-bot-feedback false \
+  --summary "degraded: gh pr view failed"
+# 2nd emit: CORRECTIVE — same run_id+item+pr_url+source, now WITH the real data.
+bash "$H" learning-emit "$LED" \
+  --repo "acme/widgets" --number 126 --pr-url "$PR" --run-id "run12" --item "item-l" \
+  --fix-cycles 4 --drain-result READY \
+  --repeat-check-failure true --unresolved-bot-feedback false \
+  --changed-paths-json '["src/corrected.ts"]' --additions 9 --deletions 3 --changed-files 1 \
+  --summary "corrective: full data"
+
+# The load-bearing assertion: the REAL reader now returns a prior-churn hit for the path,
+# and the ledger carries exactly ONE complete (visible) line — no duplicate good lines.
+READER_OUT="$( cd "$WD" && bash "$READ_PM" "src/corrected.ts" 2>/dev/null )"
+N_COMPLETE="$(jq -R 'fromjson? // empty' "$LED" 2>/dev/null \
+  | jq -s '[ .[] | select(((.changed_paths // []) | length) > 0) ] | length' 2>/dev/null)"
+if printf '%s' "$READER_OUT" | grep -q "src/corrected.ts" && [ "$N_COMPLETE" = "1" ]; then
+  ok "degraded-then-corrective: corrective emit NOT skipped and read-postmortem.sh returns it (exactly ONE complete line)"
+else
+  no "degraded-then-corrective wrong (reader_out='$READER_OUT' n_complete='$N_COMPLETE' ledger='$(cat "$LED" 2>/dev/null)')"
+fi
+
+# F12b. MUTATION CONTROL — proves F12 is load-bearing, not vacuously green. Pre-seed a
+#       ledger with the OLD (pre-discriminator) degraded key shape, i.e. byte-for-byte
+#       what the buggy version wrote for PR #126. Under the old "any key match ⇒ skip"
+#       rule the corrective emit is suppressed and the reader stays silent forever;
+#       under the fix the legacy degraded line is a match that does NOT block a complete
+#       emit. BEFORE must be empty and AFTER must hit — if the skip rule ever regresses,
+#       this case flips to FAIL.
+WD2="$(mktemp -d)"
+( cd "$WD2" && git init -q && git config user.email t@t && git config user.name t \
+    && git remote add origin https://github.com/acme/widgets.git \
+    && echo i > f && git add f && git commit -qm i ) >/dev/null 2>&1
+LED2="$WD2/.supervisor/postmortem/results.jsonl"; mkdir -p "$(dirname "$LED2")"
+LEGACY_KEY="$(jq -rn --arg a run13 --arg b item-m --arg c "$PR" --arg d automate_drain \
+  '[$a,$b,$c,$d] | join("\u001f")')"
+NOW_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+jq -cn --arg k "$LEGACY_KEY" --arg u "$PR" --arg ts "$NOW_TS" \
+  '{schema_version:1, ts:$ts, repo:"acme/widgets", number:0, review_rounds:4,
+    categories:[{round:4,class:"drain_churn",self_heal_miss:true,flow_stage:"self_heal",evidence:"legacy"}],
+    self_heal_misses:1, changed_paths:[], pr_url:$u,
+    source:"automate_drain", automate_key:$k}' > "$LED2"
+BEFORE="$( cd "$WD2" && bash "$READ_PM" "src/corrected.ts" 2>/dev/null )"
+bash "$H" learning-emit "$LED2" \
+  --repo "acme/widgets" --number 126 --pr-url "$PR" --run-id "run13" --item "item-m" \
+  --fix-cycles 4 --drain-result READY \
+  --repeat-check-failure true --unresolved-bot-feedback false \
+  --changed-paths-json '["src/corrected.ts"]' --additions 9 --deletions 3 --changed-files 1 \
+  --summary "corrective over a LEGACY degraded key"
+AFTER="$( cd "$WD2" && bash "$READ_PM" "src/corrected.ts" 2>/dev/null )"
+if [ -z "$BEFORE" ] && printf '%s' "$AFTER" | grep -q "src/corrected.ts"; then
+  ok "mutation control: a LEGACY (pre-discriminator) degraded key is invisible BEFORE and correctable AFTER (skip rule is load-bearing)"
+else
+  no "legacy-degraded correction wrong (before='$BEFORE' after='$AFTER' ledger='$(cat "$LED2" 2>/dev/null)')"
+fi
+
+# F12c. No-regression on the two skip arms the fix must NOT loosen: a DEGRADED emit
+#       AFTER a complete one must be skipped (never regress a good line to an invisible
+#       one), and a second COMPLETE emit must be skipped (at most one good line).
+bash "$H" learning-emit "$LED2" \
+  --repo "acme/widgets" --pr-url "$PR" --run-id "run13" --item "item-m" \
+  --fix-cycles 4 --drain-result READY --summary "late degraded retry"
+bash "$H" learning-emit "$LED2" \
+  --repo "acme/widgets" --number 126 --pr-url "$PR" --run-id "run13" --item "item-m" \
+  --fix-cycles 4 --drain-result READY \
+  --changed-paths-json '["src/corrected.ts"]' --additions 9 --deletions 3 --changed-files 1 \
+  --summary "duplicate complete"
+if [ "$(wc -l < "$LED2" | tr -d ' ')" = "2" ]; then
+  ok "no-regression: degraded-after-complete AND complete-after-complete are both skipped (ledger stays at 2 lines)"
+else
+  no "skip-arm regression (lines=$(wc -l < "$LED2" 2>/dev/null | tr -d ' ') ledger='$(cat "$LED2" 2>/dev/null)')"
+fi
+rm -rf "$WD" "$WD2"
 
 echo
 echo "RESULT: $pass passed, $fail failed"
