@@ -285,6 +285,21 @@ strip_managed_block() {
 # already correct. Commenting it out would be pointless churn on a line doing no harm (and `remove`
 # would then have to restore it). Pinned by test — see test-setup-memory.sh group (b3), which seeds
 # a pre-existing `.claude/*` and asserts it SURVIVES apply UNCOMMENTED.
+#
+# THE MATCH IS TRAILING-WHITESPACE-TOLERANT AND NOTHING MORE, ON PURPOSE — it mirrors GIT'S OWN
+# lexer, which is the only correct reference. Git strips TRAILING whitespace from a pattern (so
+# `.claude/   ` really does exclude `.claude/` — hence the `sub(/[ \t\r]+$/,"")` below), but it does
+# NOT strip leading whitespace and it has NO inline-comment syntax: only a line whose FIRST
+# character is `#` is a comment. Therefore:
+#   `   .claude/`          → git treats it as a pattern for a directory literally named `   .claude`
+#   `.claude/   # my note` → git treats it as a pattern containing ` # my note`
+# NEITHER ignores anything under `.claude/` (verified with `git check-ignore` on git 2.50 — both
+# forms leave `.claude/agent-memory/**` AND `.claude/settings.local.json` committable). So these are
+# NOT obstacles to the negation, and commenting them out would be a behaviour change that alters a
+# user's file for no benefit. Leaving them live is the CORRECT outcome, not an escape hatch — and it
+# is asserted, not assumed, by test-setup-memory.sh group (b5).
+# Corollary: if a user MEANT `.claude/` and typed one of these, their exclude was already dead before
+# this module ran; the post-write verdict still reports the real, probed status either way.
 comment_bare_excludes() {
   awk -v mark="$DISABLED_MARK" '
     BEGIN {
@@ -645,18 +660,28 @@ DISCLOSURE
 
 # ---- report render (shared by check + apply/remove verify) ------------------
 #
-# render_report also PUBLISHES its conclusion into two globals so a caller can react to it without
-# re-deriving (or re-guessing) the verdict: $REPORT_VERDICT and $REPORT_BLOCKED_INTENDED (the
-# newline-separated intended paths that came back `ignored`). It must therefore run in the CURRENT
-# shell — every existing call site already does.
+# render_report also PUBLISHES its conclusion into three globals so a caller can react to it without
+# re-deriving (or re-guessing) the verdict:
+#   $REPORT_VERDICT             — the readiness verdict string
+#   $REPORT_BLOCKED_INTENDED    — newline-separated INTENDED paths that came back `ignored`
+#                                 (UNDER-inclusion: a surviving exclude beats the negation)
+#   $REPORT_LEAKED_UNINTENDED   — newline-separated UNINTENDED paths that came back `committable`
+#                                 (OVER-inclusion: an over-broad `!` re-include; the `partial` case)
+# The two lists are DISJOINT failure modes with opposite remedies, which is exactly why they are
+# published separately — warn_if_not_configured() must never hand out under-inclusion guidance
+# ("comment out the surviving exclude") for an over-inclusion failure, where there is no surviving
+# exclude to name and commenting one out would make it worse.
+# This must run in the CURRENT shell — every existing call site already does.
 REPORT_VERDICT=""
 REPORT_BLOCKED_INTENDED=""
+REPORT_LEAKED_UNINTENDED=""
 
 render_report() {
   local gate mb p st intended_ok=yes unintended_ok=yes probed=0 unknowns=0
 
   REPORT_VERDICT=""
   REPORT_BLOCKED_INTENDED=""
+  REPORT_LEAKED_UNINTENDED=""
 
   gate="$(gitignore_gate)"
   mb="$(managed_block_present)"
@@ -689,6 +714,10 @@ EOF
     probed=$((probed + 1))
     [ "$st" = "unknown" ] && unknowns=$((unknowns + 1))
     [ "$st" = "ignored" ] || unintended_ok=no
+    if [ "$st" = "committable" ]; then
+      REPORT_LEAKED_UNINTENDED="${REPORT_LEAKED_UNINTENDED}${p}
+"
+    fi
   done <<EOF
 $UNINTENDED_PATHS
 EOF
@@ -710,6 +739,7 @@ EOF
   if [ "$probed" -gt 0 ] && [ "$unknowns" -eq "$probed" ]; then
     verdict="unknown (not a git repo — ignore status could not be probed)"
     REPORT_BLOCKED_INTENDED=""
+    REPORT_LEAKED_UNINTENDED=""
   elif [ "$intended_ok" = "yes" ] && [ "$unintended_ok" = "yes" ]; then
     verdict="configured"
   elif [ "$intended_ok" = "no" ] && [ "$unintended_ok" = "yes" ]; then
@@ -726,8 +756,35 @@ EOF
 # `.claude/agent-memory/**`, a rule in a PARENT .gitignore, or the global excludesfile) can still
 # win for the intended paths, leaving a silently dead negation. Qualify the headline, and name the
 # rule that actually wins from a REAL probe (`git check-ignore -v`) rather than guessing at it.
+#
+# THE TWO FAILURE MODES ARE OPPOSITES AND MUST NOT SHARE COPY. `not configured` is UNDER-inclusion
+# (an intended path is still ignored → a surviving exclude wins) and its remedy is to comment out or
+# re-order that exclude. `partial` is OVER-inclusion (an UNINTENDED path became committable → an
+# over-broad `!` re-include wins) and its remedy is to NARROW the re-include; there is no surviving
+# exclude to name, so the under-inclusion copy would print a bullet list of nothing and then tell the
+# user to comment out a rule that does not exist and whose removal would leak MORE. Hence the
+# dedicated branch below, pinned by test-setup-memory.sh group (b4).
+#
+# print_path_rules <newline-separated paths> — one path per bullet with the pattern that ACTUALLY
+# wins for it, from a REAL `git check-ignore -v -n` probe, never a guess. `-n` is required for the
+# over-inclusion list: without it check-ignore prints nothing for a path it does not ignore. A path
+# that matches NO pattern at all comes back as a bare `::` record, which is reported as such.
+print_path_rules() {
+  local paths="$1" p src
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    src="$(git -C "$repo" check-ignore -v -n -- "$p" 2>/dev/null | head -n1)"
+    case "$src" in
+      ''|'::'*) src="(no pattern matches it at all — nothing is ignoring it)" ;;
+    esac
+    echo "         $p"
+    echo "             <- $src"
+  done <<EOF
+$paths
+EOF
+}
+
 warn_if_not_configured() {
-  local p src
   case "$REPORT_VERDICT" in
     configured) return 0 ;;
     unknown*)
@@ -735,20 +792,30 @@ warn_if_not_configured() {
       echo "apply: WARNING — readiness is '$REPORT_VERDICT'."
       echo "       The ignore status was never probed here, so nothing above confirms the negation took effect."
       return 0 ;;
+    partial*)
+      echo
+      echo "apply: WARNING — readiness is '$REPORT_VERDICT', not 'configured'; a path that must stay"
+      echo "       IGNORED is now COMMITTABLE. This is OVER-inclusion — the opposite of a surviving"
+      echo "       exclude — so something is re-including MORE than the managed block asks for."
+      echo "       These unintended paths are now COMMITTABLE, each with the rule that actually wins for it:"
+      print_path_rules "$REPORT_LEAKED_UNINTENDED"
+      if [ -n "$REPORT_BLOCKED_INTENDED" ]; then
+        echo "       (Separately, these intended paths are STILL IGNORED — an under-inclusion failure on top:)"
+        print_path_rules "$REPORT_BLOCKED_INTENDED"
+      fi
+      echo "       An over-broad '!' re-include is the cause: a '!.claude/**'-shaped line, or a '!' rule"
+      echo "       in a NESTED .gitignore (e.g. .claude/.gitignore), which takes PRECEDENCE over the root"
+      echo "       file and so survives this block. NARROW or delete the re-include named above — do NOT"
+      echo "       comment out an exclude here; an exclude is not what is failing, and removing one would"
+      echo "       leak more. Nothing else about the write is in doubt: the managed block IS in place and"
+      echo "       a backup of the previous file sits beside it."
+      return 0 ;;
   esac
   echo
   echo "apply: WARNING — readiness is '$REPORT_VERDICT', not 'configured'; the negation did NOT fully take effect."
   if [ -n "$REPORT_BLOCKED_INTENDED" ]; then
     echo "       These intended paths are STILL IGNORED, each with the rule that actually wins for it:"
-    while IFS= read -r p; do
-      [ -n "$p" ] || continue
-      src="$(git -C "$repo" check-ignore -v -- "$p" 2>/dev/null | head -n1)"
-      [ -n "$src" ] || src="(the winning pattern could not be resolved)"
-      echo "         $p"
-      echo "             <- $src"
-    done <<EOF
-$REPORT_BLOCKED_INTENDED
-EOF
+    print_path_rules "$REPORT_BLOCKED_INTENDED"
   fi
   echo "       A surviving recursive or deeper exclude is the usual cause — this helper only"
   echo "       neutralises the directory-shaped excludes it recognises (.claude, .supervisor and"

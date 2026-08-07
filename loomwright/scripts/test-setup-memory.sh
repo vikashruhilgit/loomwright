@@ -36,6 +36,11 @@
 #   (b3) the WORKING `X/*` form is the one directory-shaped exclude deliberately NOT neutralised:
 #        a user's pre-existing `.claude/*` SURVIVES apply uncommented (and round-trips through
 #        remove), while a bare `.supervisor/` in the same file is still neutralised
+#   (b4) the `partial` verdict (OVER-inclusion: an unintended path became committable) is driven by
+#        a real fixture and gets its OWN remediation copy — it points at the over-broad `!`
+#        re-include, and must NOT print the under-inclusion "comment out the rule named above" text
+#   (b5) git's own lexer decides what is an obstacle: a LEADING-whitespace or INLINE-`#` "bare
+#        exclude" ignores nothing in git, so leaving it live is correct — asserted, not assumed
 #   (c)  dotfile sidecars (.provenance.jsonl / .lessons-provenance.jsonl) commit — asserted
 #        explicitly and separately from the `**` globs
 #   (d)  allowlist: stored as a JSON ARRAY (never a string); a renamed repo retains records under
@@ -250,6 +255,72 @@ assert_committable "$Bz" "$P_MEM" "(b3) $P_MEM is committable with a pre-existin
 assert_ignored "$Bz" "$P_LOGS" "(b3) $P_LOGS still ignored"
 mem "$Bz" remove >/dev/null 2>&1
 if cmp -s "$orig_bz" "$Bz/.gitignore"; then ok "(b3) apply → remove round-trips a .gitignore carrying the working form BYTE-EXACTLY"; else no "(b3) the pre-existing working form did not round-trip through remove"; fi
+
+# ============================================================================
+echo "== (b4) the 'partial' verdict (OVER-inclusion) gets its OWN remediation copy =="
+# `partial` fires when an UNINTENDED path becomes COMMITTABLE — the OPPOSITE of (b2)'s surviving
+# exclude. Until this fixture existed the branch was entirely undriven, and warn_if_not_configured()
+# fell through to the UNDER-inclusion copy: with REPORT_BLOCKED_INTENDED empty it named NOTHING and
+# then told the user to "comment out the rule named above" — backwards advice whose remedy (deleting
+# an exclude) would leak MORE.
+#
+# The driver is a NESTED .gitignore, which is the realistic shape: patterns in `.claude/.gitignore`
+# take PRECEDENCE over the root file, so an over-broad `!` there survives the appended managed block
+# (whose own `.claude/*` would otherwise re-ignore anything a root-level `!` re-included).
+B4="$(newgit https://github.com/acme/widget.git)"
+seed_stores "$B4"
+printf '.claude/\n.supervisor/\n' > "$B4/.gitignore"
+printf '!settings.local.json\n!worktrees/\n' > "$B4/.claude/.gitignore"
+out_b4="$(mem "$B4" apply 2>&1)"; rc_b4=$?
+[ "$rc_b4" -eq 0 ] && ok "(b4) apply exits 0 on an over-including .gitignore (fail-safe)" || no "(b4) apply non-zero ($rc_b4)"
+# The verdict really is `partial` — the branch is genuinely driven, not assumed.
+has '^Memory readiness: partial' "$out_b4" && ok "(b4) the verdict really IS 'partial' (the branch is driven by a real fixture)" || no "(b4) fixture did not produce a 'partial' verdict (got: $(grep '^Memory readiness:' <<< "$out_b4" | head -n1))"
+# ...for the right reason: intended paths fine, unintended leaking.
+assert_committable "$B4" "$P_MEM"   "(b4) precondition: the intended $P_MEM is committable (so this is NOT under-inclusion)"
+assert_committable "$B4" "$P_LOCAL" "(b4) precondition: the unintended $P_LOCAL LEAKED (committable) — the over-inclusion this branch is about"
+hasF 'apply: WARNING' "$out_b4" && ok "(b4) apply WARNS on a 'partial' verdict (no unqualified success headline)" || no "(b4) apply reported plain success while an unintended path was committable"
+hasF 'OVER-inclusion' "$out_b4" && ok "(b4) the warning names the failure mode as OVER-inclusion" || no "(b4) the warning does not name over-inclusion"
+hasF "$P_LOCAL" "$out_b4" && ok "(b4) the warning NAMES the specific unintended path that became committable" || no "(b4) the warning names no leaked path"
+hasF "$P_WT" "$out_b4" && ok "(b4) the warning names the second leaked unintended path too (per path, never a bulk claim)" || no "(b4) the warning omitted a leaked path"
+hasF '!settings.local.json' "$out_b4" && ok "(b4) the warning names the winning '!' rule from a real check-ignore -v probe, not a guess" || no "(b4) the warning does not name the winning re-include"
+hasi 're-include' "$out_b4" && ok "(b4) the remediation points at the over-broad '!' re-include as the cause" || no "(b4) the remediation does not point at the re-include"
+# THE BACKWARDS COPY MUST BE ABSENT. This is the actual regression the branch exists to prevent.
+hasi 'comment out the rule named above' "$out_b4" && no "(b4) the MISLEADING under-inclusion copy ('comment out the rule named above') was printed for an over-inclusion failure" || ok "(b4) the misleading under-inclusion copy is NOT printed"
+hasF 'STILL IGNORED' "$out_b4" && no "(b4) the warning claimed intended paths are STILL IGNORED when none are" || ok "(b4) the warning does not claim a non-existent under-inclusion"
+# and the UNDER-inclusion branch must keep its own copy (no cross-contamination from the new branch)
+hasi 'comment out the rule named above' "$out_by" && ok "(b4) the under-inclusion branch (b2) still carries its own 'comment out the rule' remedy" || no "(b4) the under-inclusion remedy was lost from the (b2) path"
+hasF 'OVER-inclusion' "$out_by" && no "(b4) the under-inclusion branch wrongly printed the over-inclusion copy" || ok "(b4) the under-inclusion branch does not print over-inclusion copy"
+
+# ============================================================================
+echo "== (b5) git's own lexer decides what is an obstacle — leading-space / inline-# forms ignore NOTHING =="
+# A reviewer flagged `.claude/   # my note` as escaping comment_bare_excludes' trimmed match. It
+# does escape it — and that is CORRECT, because git has NO inline-comment syntax and does not strip
+# LEADING whitespace: neither form excludes anything under `.claude/`, so neither is an obstacle to
+# the negation and neutralising it would rewrite a user's file for no benefit. Asserted against real
+# `git check-ignore`, because "git treats it as X" is exactly the kind of claim that must be probed.
+B5="$(newgit https://github.com/acme/widget.git)"
+seed_stores "$B5"
+printf '.claude/   # my note\n   .supervisor/\n' > "$B5/.gitignore"
+assert_committable "$B5" "$P_MEM" "(b5) an INLINE-# '.claude/   # my note' line does not ignore $P_MEM (git has no inline comments)"
+assert_committable "$B5" "$P_LOCAL" "(b5) it does not ignore $P_LOCAL either — it is not a directory exclude at all"
+assert_committable "$B5" "$P_LES" "(b5) a LEADING-whitespace '   .supervisor/' line does not ignore $P_LES (git keeps leading whitespace)"
+# TRAILING whitespace IS stripped by git, so that form IS a real obstacle — and IS neutralised.
+B5b="$(newgit https://github.com/acme/widget.git)"
+seed_stores "$B5b"
+printf '.claude/   \n' > "$B5b/.gitignore"
+assert_ignored "$B5b" "$P_MEM" "(b5) by contrast a TRAILING-whitespace '.claude/   ' IS a real exclude in git (trailing space is stripped)"
+out_b5b="$(mem "$B5b" apply 2>&1)"
+has '^Memory readiness: configured' "$out_b5b" && ok "(b5) apply neutralises the trailing-whitespace form (verdict configured)" || no "(b5) the trailing-whitespace exclude was not neutralised"
+assert_committable "$B5b" "$P_MEM" "(b5) $P_MEM is committable after neutralising the trailing-whitespace exclude"
+# The non-obstacle forms survive apply UNTOUCHED and still round-trip byte-exactly through remove.
+orig_b5="$(mkfix)/orig.gitignore"; cp "$B5/.gitignore" "$orig_b5"
+out_b5="$(mem "$B5" apply 2>&1)"
+gi_b5="$(cat "$B5/.gitignore")"
+hasF '.claude/   # my note' "$gi_b5" && ok "(b5) the inline-# line survives apply verbatim (not commented, not dropped)" || no "(b5) apply mangled the inline-# line"
+hasF '   .supervisor/' "$gi_b5" && ok "(b5) the leading-whitespace line survives apply verbatim" || no "(b5) apply mangled the leading-whitespace line"
+has '^Memory readiness: configured' "$out_b5" && ok "(b5) the verdict is 'configured' — leaving the non-obstacles live costs nothing" || no "(b5) leaving the non-obstacle forms live broke the negation"
+mem "$B5" remove >/dev/null 2>&1
+if cmp -s "$orig_b5" "$B5/.gitignore"; then ok "(b5) apply → remove round-trips the non-obstacle forms BYTE-EXACTLY"; else no "(b5) the non-obstacle forms did not round-trip through remove"; fi
 
 # ============================================================================
 echo "== (c) dotfile sidecars commit — asserted explicitly, separately from the ** globs =="
@@ -631,6 +702,14 @@ bash "$MEM" --root "$Jj" check --bogus-flag >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 0 ] && ok "(j) an unknown flag is warned about and exits 0" || no "(j) unknown flag exited $rc"
 bash "$MEM" --root >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 0 ] && ok "(j) a valueless trailing --root exits 0 (no arg-shift underflow / spin)" || no "(j) valueless --root exited $rc"
+# `--ledger` and `--allow` carry the SAME shift-underflow hazard as `--root` above (a bare trailing
+# flag must not `shift 2`), and both early-exit 0 with a stderr reason. Untested until now.
+err_lg="$(bash "$MEM" --root "$Jj" filter-ledger --ledger 2>&1 >/dev/null)"; rc=$?
+[ "$rc" -eq 0 ] && ok "(j) a valueless trailing --ledger exits 0 (no arg-shift underflow / spin)" || no "(j) valueless --ledger exited $rc"
+hasF '--ledger requires a path argument' "$err_lg" && ok "(j) valueless --ledger says WHY on stderr (never a silent fall-back)" || no "(j) valueless --ledger gave no reason (got: $err_lg)"
+err_al="$(bash "$MEM" --root "$Jj" allowlist --allow 2>&1 >/dev/null)"; rc=$?
+[ "$rc" -eq 0 ] && ok "(j) a valueless trailing --allow exits 0 (no arg-shift underflow / spin)" || no "(j) valueless --allow exited $rc"
+hasF '--allow requires an owner/repo argument' "$err_al" && ok "(j) valueless --allow says WHY on stderr" || no "(j) valueless --allow gave no reason (got: $err_al)"
 bash "$MEM" --help >/dev/null 2>&1; rc=$?
 [ "$rc" -eq 0 ] && ok "(j) --help exits 0" || no "(j) --help exits $rc"
 # check on a non-git root must degrade to 'unknown', never crash or claim a status it did not probe

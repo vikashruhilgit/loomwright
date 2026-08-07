@@ -108,6 +108,8 @@ Then use `AskUserQuestion`. **`AskUserQuestion` accepts at most 4 options**, so 
   3. **Other integrations (telemetry · webhook · Beads · MySQL MCP)** — print status + setup guidance / delegation for these (telemetry delegates to `/telemetry`; webhook · Beads · MySQL MCP are guidance-only; `notifications` is always-on and needs no action).
   4. **Nothing — just checking** — stop with the summary line.
 
+**How to render the status on a BUNDLED option** (options 2 and 3 fold several modules behind one label, so "the module's status" is ambiguous): append the per-module statuses joined by ` · `, each prefixed with its module name — `twin: <status> · memory: <status>` for option 2, and `telemetry: <status> · webhook: <status> · beads: <status> · mysql-mcp: <status>` for option 3. Never collapse them into one aggregate word, and never pick one module's status to stand for the bundle. Options 1 and 4 are single/no-module and take the plain status (option 4 takes none). Truncate from the right if the description exceeds the option-description limit — drop whole `name: status` pairs, never a status string mid-word.
+
 **Nested question — only when option 2 was selected** (also ≤4 options; never inline these into the set above):
 - `question`: "Which repo knowledge store?"
 - `header`: "Stores"
