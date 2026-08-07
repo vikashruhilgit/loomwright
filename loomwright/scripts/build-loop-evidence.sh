@@ -441,9 +441,11 @@ while IFS=$'\t' read -r label purl prnum ver ts hi rubric fc pmkey logfile pbyte
   # real count always beats "unknown".
   rr="-"; classes="-"
   if [ -s "$PM_JSON" ] && [ "$prnum" != "-" ] && [ "${pmkey%#*}" != "" ]; then
-    pmline="$(jq -c --arg k "$pmkey" 'select(.key == $k)' "$PM_JSON" 2>/dev/null \
-      | jq -s -c 'if length == 0 then empty
-                  else max_by([ (.review_rounds // -1), (.ts // "") ]) end' 2>/dev/null || true)"
+    # Single jq pass (select + pick), not select-piped-into-slurp: one process per row.
+    pmline="$(jq -s -c --arg k "$pmkey" '
+      [ .[] | select(.key == $k) ]
+      | if length == 0 then empty
+        else max_by([ (.review_rounds // -1), (.ts // "") ]) end' "$PM_JSON" 2>/dev/null || true)"
     if [ -n "$pmline" ]; then
       rr="$(printf '%s' "$pmline" | jq -r '.review_rounds // "-"' 2>/dev/null || printf -- -)"
       classes="$(printf '%s' "$pmline" | jq -r '.classes | if length==0 then "-" else join(",") end' 2>/dev/null || printf -- -)"

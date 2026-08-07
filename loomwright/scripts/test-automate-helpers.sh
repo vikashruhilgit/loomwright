@@ -967,10 +967,16 @@ else
   no "realistic-degraded wrong (lines='$N3' distinct_repo_number_keys='$SAME_KEY' reader='$VIS3')"
 fi
 
-# F13b. The downstream consequence of F13, pinned where it actually bites: with both lines
-#       under ONE repo#number key, a first-wins join reports the STALE lower review_rounds.
-#       Mirrors build-loop-evidence.sh's projection + representative pick. Append order is
-#       degraded(2) then complete(5), so `head -1` yields 2 and the floor-raising pick yields 5.
+# F13b. The downstream consequence of F13, shown at the EMIT site: with both lines under ONE
+#       repo#number key, a first-wins join reports the STALE lower review_rounds. Append order
+#       is degraded(2) then complete(5), so `head -1` yields 2 and floor-raising yields 5.
+#       SCOPE — read this before trusting it: the jq below is a hand-copied MIRROR of
+#       build-loop-evidence.sh's projection + representative pick, and a mirror can silently
+#       drift from the script it models (the exact objection F12 raises against reader_select).
+#       It is kept only to make the trap legible next to the emit it originates from. The
+#       AUTHORITATIVE regression net for that join is test-build-loop-evidence.sh case (13),
+#       which drives the REAL builder over a two-line fixture; if this mirror and case (13)
+#       ever disagree, case (13) is right.
 PMPROJ="$(jq -R 'fromjson? // empty' "$LED3" 2>/dev/null | jq -c '
   { key: (((.repo // "") | tostring | ascii_downcase) + "#" + ((.number // "") | tostring)),
     review_rounds: (.review_rounds // null), ts: ((.ts // "") | tostring) }')"
