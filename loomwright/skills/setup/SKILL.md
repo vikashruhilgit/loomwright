@@ -54,6 +54,8 @@ New modules append a row here AND a flow section in `commands/setup.md` in the s
 
 ### Pattern 8 — `.gitignore` managed block (the `memory` module's write class)
 
+> Placed here, out of numeric order, on purpose: it reads as the write-class footnote to the `memory` row in Pattern 2 directly above. Numbers are stable identifiers for cross-references (Patterns 3–7 are cited from `commands/setup.md` and from the checklist below) — they are not a reading order, so a new pattern appends its number and sits where it belongs.
+
 The `memory` module is the only one that rewrites a **committed, user-authored** file, so it carries its own rules — the settings-merge rules in Pattern 3 do not transfer (there is no JSON to parse-gate, and the file is tracked):
 
 - **Negate CONTENTS, never the directory.** `.claude/` + `!.claude/agent-memory/` silently does NOTHING — git cannot re-include a file whose parent directory is excluded. The working form is `.claude/*` + `!.claude/agent-memory/`. Any pre-existing **directory-shaped** `.claude/` / `.supervisor/` exclude must be **neutralised** (commented out, restorable verbatim), not merely out-ordered — one survivor kills the whole block. That includes the recursive family (`.claude/**`, `**/.claude/`, `**/.claude/**`, and the leading-slash forms), because git applies the LAST matching rule and `.claude/**` still beats a later directory-only `!.claude/agent-memory/`. `X/*` is deliberately NOT neutralised — that is the working form itself. Both the failing and the working form are fixture-asserted in `test-setup-memory.sh`; a comment is not a test.
