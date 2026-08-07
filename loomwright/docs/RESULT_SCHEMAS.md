@@ -1206,10 +1206,17 @@ harness** (the deferred M2b part-2b headless-`claude` evaluator).
   `changed_paths` is a non-empty array and `"degraded"` otherwise, because a `changed_paths: []` line
   is permanently invisible to `read-postmortem.sh` (its overlap filter can never match an empty
   array); without the discriminator a degraded first emit poisoned the key and blocked every later
-  emit that DID carry the fetch data. Consequently at most TWO lines can share a run/item/pr/source
-  prefix — one `degraded` (inert: no `changed_paths`, `number: 0`, so it can neither be returned by
-  `read-postmortem.sh` nor collide with the real PR in `build-loop-evidence.sh`'s `repo#number` key)
-  and one `complete`. **Legacy keys** written before the discriminator carry only the four components;
+  emit that DID carry the fetch data. `complete` requires at least one **non-empty** path: an empty
+  string is not a usable path (`read-postmortem.sh` drops empty query paths before matching), so a
+  `changed_paths: [""]` line is exactly as invisible as `[]` and must stay correctable. Consequently
+  at most TWO lines can share a run/item/pr/source prefix — one `degraded` and one `complete`. The
+  `degraded` line is invisible to `read-postmortem.sh` but is **NOT** quarantined downstream: `repo`
+  and `number` are derived from `pr_url` independently of the fetch that degrades, so a
+  contract-compliant caller emits it with the REAL `number` (a `number: 0` means `--number` was
+  omitted entirely, not that the fetch failed). Both lines therefore share the `repo`#`number` key
+  that `build-loop-evidence.sh` and `measure-heal-signal.py` join on — **both pick floor-raising**
+  (max `review_rounds`, tie-break latest `ts`), so the richer line wins and the pair cannot report a
+  stale low count. **Legacy keys** written before the discriminator carry only the four components;
   the helper recognises them by prefix, so a legacy *complete* line stays idempotent and a legacy
   *degraded* line is correctable. Treat `automate_key` as an opaque string — match it by EXACT
   equality (as `curate-postmortem.sh`'s `target_key` does), never by parsing its components. Absent on

@@ -555,12 +555,24 @@ learning_emit() {
   #       `review_rounds` / `self_heal_misses` churn signal on every fetch failure
   #       and breaks the documented always-emit fail-safe contract.
   #
-  # The degraded line is left in place and is inert: read-postmortem.sh already
-  # cannot return it (empty changed_paths), and build-loop-evidence.sh keys on
-  # repo#number, where a degraded line's `number: 0` never collides with the real
-  # PR — so the pair cannot double-count. Ledger stays append-only; no new writer.
+  # The degraded line is left in place. It stays invisible to read-postmortem.sh
+  # (empty changed_paths), but do NOT assume it is quarantined downstream: `repo` and
+  # `number` are derived from pr_url INDEPENDENTLY of the fetch that degrades
+  # (skills/automate-loop/SKILL.md §6), so a contract-compliant caller emits the
+  # degraded line with the REAL number — `number: 0` only happens when --number is
+  # omitted altogether. The degraded and corrective lines therefore SHARE the
+  # repo#number key that build-loop-evidence.sh and measure-heal-signal.py join on.
+  # Both pick floor-raising (max review_rounds, tie-break latest ts), so the richer
+  # line wins and the pair cannot report a stale low count. Ledger stays append-only;
+  # no new writer.
+  # COMPLETE requires at least one NON-EMPTY path. An empty string is not a usable
+  # path — read-postmortem.sh drops empty query paths before matching, so a
+  # `changed_paths: [""]` line is just as invisible as `[]`. Classing it complete
+  # would re-open this very defect: an unusable line blocking its own correction.
   local completeness="degraded"
-  [ "$cp_clean" = "[]" ] || completeness="complete"
+  if printf '%s' "$cp_clean" | "$JQ" -e 'any(.[]; . != "")' >/dev/null 2>&1; then
+    completeness="complete"
+  fi
 
   # Deterministic idempotency key: run_id|item|pr_url|source|completeness joined on
   # the ASCII Unit Separator (U+001F, written as the \u001f jq escape — NOT an empty
@@ -578,7 +590,10 @@ learning_emit() {
 
   # Idempotency skip. A "match" is an existing line whose automate_key is this base
   # (a LEGACY pre-discriminator line) or this base plus a discriminator suffix. Skip when:
-  #   - an exact-key line already exists                       (plain re-entry), OR
+  #   - an exact-key line already exists (plain re-entry). NOT redundant with the two
+  #     arms below: they judge completeness from the line's OWN changed_paths, so a line
+  #     whose key suffix and payload disagree (hand-edited, or a truncated write) would
+  #     otherwise slip past and be appended twice. This arm keys on identity alone, OR
   #   - this emit is DEGRADED and any match exists  (never regress an existing good
   #     line, and never write a second invisible line), OR
   #   - this emit is COMPLETE and a complete match exists      (at most one good line;
@@ -591,9 +606,13 @@ learning_emit() {
                | select(type == "object")
                | ((.automate_key // "") | if type == "string" then . else "" end) as $ak
                | select($ak == $base or ($ak | startswith($base + "\u001f")))
+               # `complete` MUST use the same rule as the discriminator above (at least
+               # one NON-EMPTY path), not merely `length > 0`. A `[""]` line is degraded
+               # by the discriminator, so if this arm judged it complete it would block
+               # the very correction the discriminator just permitted.
                | { ak: $ak,
                    complete: ((((.changed_paths // []) | type) == "array")
-                              and (((.changed_paths // []) | length) > 0)) }
+                              and ((.changed_paths // []) | any(.[]?; . != ""))) }
              ] as $m
              | ($m | any(.ak == $k))
                or (($state == "degraded") and (($m | length) > 0))
