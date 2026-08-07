@@ -119,7 +119,7 @@ your-project/
 /orchestrator goal: "add dark mode to UI"
 ```
 
-Optional next: run `/setup` for a status dashboard and guided configuration of optional capabilities (observability, telemetry, notifications, Twin bootstrap).
+Optional next: run `/setup` for a status dashboard and guided configuration of optional capabilities (observability, telemetry, notifications, Twin bootstrap, memory in version control).
 
 ---
 

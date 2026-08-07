@@ -1,8 +1,8 @@
 ---
 name: setup
-description: Module protocol authority for the /setup umbrella command — the check/report/offer/apply/verify contract, the module registry, the jq deep-merge rules for ~/.claude/settings.json (backup-first, abort-on-parse-failure, idempotent), and the OTLP smoke-test recipe. Use when running /setup or modifying any setup module.
-version: "1.0.0"
-lastUpdated: "2026-06-13"
+description: Module protocol authority for the /setup umbrella command — the check/report/offer/apply/verify contract, the module registry, the jq deep-merge rules for ~/.claude/settings.json (backup-first, abort-on-parse-failure, idempotent), the .gitignore managed-block rules for the memory module, and the OTLP smoke-test recipe. Use when running /setup or modifying any setup module.
+version: "1.1.0"
+lastUpdated: "2026-08-06"
 ---
 
 # Setup Skill
@@ -31,7 +31,7 @@ Every module implements five phases, in order, every invocation:
 |---|---|
 | **check** | Derive state from REAL commands (file tests, `jq -e`, `docker inspect`, `command -v`). Never assert state you didn't probe. |
 | **report** | Print what check found. `status` subcommands stop here. |
-| **offer** | `AskUserQuestion` with the applicable actions. Already-configured modules offer status/reconfigure/remove — never silently re-apply. **`AskUserQuestion` caps at 4 options** — the no-arg dashboard must NOT emit one option per module (7 modules > 4); it uses the fixed ≤4-option set in `commands/setup.md`: observability · twin · "Other integrations" (telemetry · webhook · Beads · MySQL MCP) · "Nothing". observability and twin are the two real-apply slots; telemetry (delegates to `/telemetry`) + webhook + Beads + MySQL MCP fold into "Other integrations". |
+| **offer** | `AskUserQuestion` with the applicable actions. Already-configured modules offer status/reconfigure/remove — never silently re-apply. **`AskUserQuestion` caps at 4 options** — the no-arg dashboard must NOT emit one option per module (8 modules > 4); it uses the fixed ≤4-option set in `commands/setup.md`: observability · "Repo knowledge stores" (twin · memory, via ONE nested ≤4-option question) · "Other integrations" (telemetry · webhook · Beads · MySQL MCP) · "Nothing". **The set is FIXED at four and is never grown when a module is added** — a new module folds into an existing bucket or into a nested question, as `memory` did. Every module stays reachable as a direct `/setup <module>` jump regardless of the dashboard set. Where an apply PUBLISHES user content (the `memory` module), the offer is consent-bearing: state exactly what becomes version-controlled BEFORE applying, and default to not applying. |
 | **apply** | Make the change. Backup before any mutation of a pre-existing file. Stop at the first failed step — never continue past a failure to "finish" the flow. |
 | **verify** | Re-run check (+ smoke test where defined) and show before/after. Success is claimed ONLY after verify passes. |
 
@@ -48,8 +48,25 @@ Every module implements five phases, in order, every invocation:
 | `beads` | status + guidance | `command -v bd`; `.beads/` dir | nothing (guidance only) |
 | `mysql-mcp` | status + guidance | `DB_HOST`/`DB_USER`/`DB_PASS`/`DB_NAME` set? | nothing (guidance only) |
 | `twin` | status / bootstrap (no remove — per-repo artifacts, not per-user config) | `graphify-out/graph.json` present + prefix-tolerant staleness; `.supervisor/bridge/bridge.json`; `CLAUDE.md`; `LOOMWRIGHT_BRAIN_ROOT` | `.supervisor/bridge/` via `build-bridge.sh --out` (helper); command-layer confirmed `CLAUDE.md` create-when-absent; `graphify-out/` via external `graphify` only on confirm |
+| `memory` | FULL status / apply / **remove** (remove is REQUIRED here, unlike `twin` — un-committing is a real user need) | `setup-memory.sh check`: per-path `git check-ignore` for the intended stores + the must-stay-ignored set; `.gitignore` parse gate; managed-block presence; `git ls-files` tracked counts; resolved repo allowlist + its source | `<project>/.gitignore` sentinel-managed block (backup-first, atomic, byte-compare idempotent, ABORTS on an unparseable file) + `<project>/.supervisor/config.json .setup_memory.repo_allowlist` (jq merge, array-shaped). NEVER `git add`/`rm`/`commit`; nothing under `~/.claude/` |
 
 New modules append a row here AND a flow section in `commands/setup.md` in the same change.
+
+### Pattern 8 — `.gitignore` managed block (the `memory` module's write class)
+
+> Placed here, out of numeric order, on purpose: it reads as the write-class footnote to the `memory` row in Pattern 2 directly above. Numbers are stable identifiers for cross-references (Patterns 3–7 are cited from `commands/setup.md` and from the checklist below) — they are not a reading order, so a new pattern appends its number and sits where it belongs.
+
+The `memory` module is the only one that rewrites a **committed, user-authored** file, so it carries its own rules — the settings-merge rules in Pattern 3 do not transfer (there is no JSON to parse-gate, and the file is tracked):
+
+- **Negate CONTENTS, never the directory.** `.claude/` + `!.claude/agent-memory/` silently does NOTHING — git cannot re-include a file whose parent directory is excluded. The working form is `.claude/*` + `!.claude/agent-memory/`. Any pre-existing **directory-shaped** `.claude/` / `.supervisor/` exclude must be **neutralised** (commented out, restorable verbatim), not merely out-ordered — one survivor kills the whole block. That includes the recursive family (`.claude/**`, `**/.claude/`, `**/.claude/**`, and the leading-slash forms), because git applies the LAST matching rule and `.claude/**` still beats a later directory-only `!.claude/agent-memory/`. `X/*` is deliberately NOT neutralised — that is the working form itself. Both the failing and the working form are fixture-asserted in `test-setup-memory.sh`; a comment is not a test.
+- **Sentinel-delimited, timestamp-free block.** The block content must be byte-stable across runs so idempotency can be decided by comparing the file that WOULD be written against the file on disk. Equal ⇒ report "already configured" and write nothing.
+- **ONE sentinel matcher for the gate AND the stripper.** The presence gate and the block stripper must agree on what counts as a sentinel line (both substring, or both column-1-anchored). When they disagreed, an INDENTED `BEGIN` passed the gate as one valid block but was not stripped, so apply appended a second one — and every later apply *and* remove then aborted on "duplicated managed-block sentinels", a corrupt state the tool created itself and refused to repair.
+- **Abort, never half-write, never blind-repair.** Absent / non-regular / symlinked / NUL-containing / conflict-marked / sentinel-unbalanced `.gitignore` ⇒ report the reason, write nothing, and do NOT create a backup (nothing was staged). A hand-edited file is the user's; refuse it rather than rewriting underneath them.
+- **Backup-first + atomic**: timestamped `.gitignore.backup.<ts>` sibling, then tmp-file + `mv`. The name must be **collision-proof** — a second-granular timestamp alone means two writes in the same second resolve to one path and the second `cp` destroys the user's pristine original, which is the only thing the backup exists to protect. Assert the backup **positively** (it exists, and its content equals the pre-write file); a count comparison across an idempotent no-op passes as `0 = 0` while no backup is written at all.
+- **Never report unqualified success on an unverified negation.** After the write, re-probe and qualify the headline: if readiness is not `configured`, name the intended paths still ignored and the rule that actually wins for each, taken from a real `git check-ignore -v` probe. A deeper exclude the rewriter does not recognise otherwise leaves a silently dead block under `apply: applied`.
+- **Consent before publishing.** Applying makes user content version-controlled and it travels wherever the repo travels. State exactly what becomes committed BEFORE applying, and make `remove` state plainly that git history retains anything already pushed — removal stops future tracking, it does not unpublish.
+- **Un-ignoring is not committing, and un-ignoring is not un-tracking.** The helper never runs `git add` / `git rm` / `git commit`; already-tracked files stay tracked until the user runs `git rm --cached` themselves.
+- **Repo allowlist is a LIST, never a string, and never the live remote at read time.** A repo RENAME is the reason: pre-rename records carry the old slug, so a live-remote-keyed filter silently drops the older half of a ledger. Default to the current remote on fresh install (never a hardcoded owner), store as a JSON array, and treat an empty allowlist as retaining NOTHING (fail-closed).
 
 ### Pattern 3 — Settings merge (jq deep-merge into `~/.claude/settings.json`)
 
@@ -241,6 +258,7 @@ The `remove` subflow best-effort strips the CURRENT repo's label (`jq 'del(.env.
 
 - [ ] Sanctioned write domain (setup's OWN logic): `~/.claude/loomwright/observability/*`, user-scope `~/.claude/settings.json`, and project-scope `<project>/.claude/settings.local.json` (the per-project label — written via the init-tail `set-otel-resource-attrs.sh` invocation and stripped by the `remove` `del`). setup's OWN settings(.local).json writes (the user-scope merge and the `remove` `del`) are backup-first + `jq empty` parse gate + tmp+`mv` atomic replace; the delegated init-tail `set-otel-resource-attrs.sh` write is parse-gate + atomic + idempotent-skip but NOT backup-first (single-key idempotent merge — nothing destructive to roll back).
 - [ ] Sanctioned write domain (`twin` module): the helper (`setup-twin.sh`) writes `<project>/.supervisor/bridge/` ONLY, via the explicit `build-bridge.sh --out "$repo/.supervisor/bridge"` (the `--out` short-circuits any config-redirect); the command layer may create `<project>/CLAUDE.md` ONLY when absent AND user-confirmed (never overwrite an existing one). NO `~/.claude/settings.json` (or anything under `~/.claude/`) write for `twin` — Twin artifacts are per-repo (gitignored/regenerable graph + bridge; committed `CLAUDE.md`), not per-user config.
+- [ ] Sanctioned write domain (`memory` module): the helper (`setup-memory.sh`) writes `<project>/.gitignore` (+ one timestamped backup) and `<project>/.supervisor/config.json .setup_memory.repo_allowlist` ONLY — see Pattern 8. NO `~/.claude/` write of any kind, and NO history-touching git command (`git add`/`rm`/`commit`) on any path. `check` / `allowlist` / `filter-ledger` write nothing at all.
 - [ ] Env block is exactly the 8 settled keys (or the documented console variant) — no extras, no renames.
 - [ ] `.env` variable names match what `${CLAUDE_PLUGIN_ROOT}/scripts/otel/docker-compose.yml` consumes (sole exception: `COMPOSE_PROJECT_NAME`, consumed by the compose CLI) — verify against the compose file on any change to either.
 - [ ] Every compose command (recipe or printed) carries `-p loomwright-observability` — the project-name convention in Pattern 4.
@@ -251,6 +269,6 @@ The `remove` subflow best-effort strips the CURRENT repo's label (`jq 'del(.env.
 
 ## Token Cost
 
-- Invocation: ~1,200 tokens (skill body)
+- Invocation: ~1,600 tokens (skill body)
 - Storage: inline (markdown only)
 - Context7: not required
