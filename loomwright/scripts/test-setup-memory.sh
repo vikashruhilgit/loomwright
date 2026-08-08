@@ -986,12 +986,44 @@ else
   hasF 'no .repo field' "$out_l6" && ok "(l6) the refusal says WHICH problem it found (a record with no .repo field)" || no "(l6) the refusal does not identify the unattributable record"
 
   # (l8) A MALFORMED ledger line cannot be parsed, so it cannot be shown to be allowlisted ⇒ REFUSE.
+  #
+  # THE FIXTURE DELIBERATELY OMITS THE TRAILING NEWLINE. A malformed record is, in practice, a
+  # TRUNCATED one — an interrupted `/pr-postmortem` append leaves exactly this shape — and a bare
+  # `while IFS= read -r line; do … done < "$ledger"` NEVER RUNS ITS BODY for an unterminated final
+  # line (`read` returns non-zero at EOF even though it filled $line). The per-line fallback then
+  # examined nothing, produced no output, and the gate read "no output" as "clean" ⇒ FAIL-OPEN, with
+  # the negation emitted over a ledger holding an unexaminable record. Writing this fixture WITH a
+  # trailing newline is what hid that bug, so the newline must stay off.
   L8="$(mkgate)"
-  printf 'NOT JSON AT ALL\n' >> "$L8/$P_LEDGER"
+  printf 'NOT JSON AT ALL' >> "$L8/$P_LEDGER"
   out_l8="$(mem "$L8" apply 2>&1)"; rc_l8=$?
   [ "$rc_l8" -eq 0 ] && ok "(l8) apply exits 0 on a ledger holding a malformed line" || no "(l8) apply non-zero ($rc_l8) on a malformed ledger"
   assert_ignored "$L8" "$P_LEDGER" "(l8) an UNPARSEABLE record REFUSES the negation (fail-closed per-line fallback, never a silent skip)"
   hasF 'unparseable record' "$out_l8" && ok "(l8) the refusal names the unparseable record" || no "(l8) the refusal does not name the unparseable record"
+
+  # (l9) AN UNREADABLE LEDGER (`chmod 000`) must REFUSE, never pass.
+  #
+  # `[ -f "$ledger" ]` is TRUE for a chmod-000 regular file, so the gate does not take its
+  # ledger-absent PASS shortcut; the whole-file jq then cannot open it (rc≠0) and the per-line
+  # fallback's `done < "$ledger"` redirect fails outright, so the loop body never runs. "Examined
+  # nothing" and "examined everything and found nothing foreign" both produced EMPTY output, and the
+  # gate could not tell them apart ⇒ FAIL-OPEN. A record that cannot be READ cannot be shown to
+  # belong to this repo, so the only sound verdict is refuse.
+  #
+  # SKIPPED UNDER ROOT, mirroring (f7): root bypasses the mode bits entirely, so the ledger stays
+  # readable there and this case would pass VACUOUSLY rather than driving the branch.
+  if [ "$(id -u)" = 0 ]; then
+    ok "(l9) running as root — the chmod-000 unreadable-ledger fixture is skipped (root bypasses mode bits)"
+  else
+    L9="$(mkgate)"
+    chmod 000 "$L9/$P_LEDGER"
+    out_l9="$(mem "$L9" apply 2>&1)"; rc_l9=$?
+    chmod 644 "$L9/$P_LEDGER"   # restore BEFORE any assertion so the trap can always clean up
+    [ "$rc_l9" -eq 0 ] && ok "(l9) apply exits 0 on an UNREADABLE ledger (fail-safe in the exit status)" || no "(l9) apply non-zero ($rc_l9) on an unreadable ledger"
+    assert_ignored "$L9" "$P_LEDGER" "(l9) an UNREADABLE ledger REFUSES the negation — 'could not examine' is never 'examined and clean'"
+    hasF 'could not be read' "$out_l9" && ok "(l9) the refusal says the ledger could not be read at all" || no "(l9) the refusal does not name the unreadable ledger"
+    assert_committable "$L9" "$P_MEM" "(l9) the two memory stores are still applied while only the unreadable ledger is withheld"
+  fi
 
   test_negation_wrong_position_still_ignored
 fi

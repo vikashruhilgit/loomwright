@@ -690,7 +690,12 @@ filter_ledger_by_allowlist() {
     return 0
   fi
   local line n=0
-  while IFS= read -r line; do
+  # `|| [ -n "$line" ]` — see _evaluate_ledger_gate: a bare `while read` never runs its body for an
+  # unterminated final line. Here the direction was already fail-SAFE (the dropped record simply
+  # never reaches the filtered output, and this filter's whole job is to DROP what cannot be shown
+  # to be allowlisted), so this is a correctness fix, not a posture change: a truncated record is
+  # still never RETAINED — it is now merely counted and reported as unparseable like any other.
+  while IFS= read -r line || [ -n "$line" ]; do
     n=$((n + 1))
     [ -n "$line" ] || continue
     printf '%s' "$line" | jq -c --argjson allow "$allow_json" \
@@ -756,7 +761,11 @@ _evaluate_ledger_gate() {
     # record as FOREIGN: a record that cannot be parsed cannot be SHOWN to belong to this repo, and
     # the cost of publishing another repo's record is higher than the cost of withholding one.
     out=""
-    while IFS= read -r line; do
+    # `|| [ -n "$line" ]` — a TRUNCATED final line (no trailing newline) is exactly the malformed
+    # record that lands us in this fallback, and a bare `while read` DROPS it: `read` returns
+    # non-zero at EOF even though it filled $line, so the body never runs for it and the record is
+    # silently never examined. One interrupted `/pr-postmortem` append is enough.
+    while IFS= read -r line || [ -n "$line" ]; do
       n=$((n + 1))
       [ -n "$line" ] || continue
       one="$(printf '%s' "$line" | jq -r --argjson allow "$allow_json" "$LEDGER_GATE_JQ" 2>/dev/null)"
@@ -769,6 +778,16 @@ _evaluate_ledger_gate() {
 "
       fi
     done < "$ledger"
+    # NOTHING WAS EXAMINED. The whole-file pass failed AND the fallback never iterated — an
+    # UNREADABLE ledger (`chmod 000`: `[ -f ]` is true, jq cannot open it, and the `done < "$ledger"`
+    # redirect itself fails) leaves $n at 0 with $out empty. Empty output would otherwise read as
+    # "examined every record and found none foreign", which is the fail-OPEN this marker closes: a
+    # record that cannot be SHOWN to belong to this repo must not be published, and one that could
+    # not be read at all is the strongest case of that.
+    if [ "$n" -eq 0 ]; then
+      out="(ledger could not be read at all — nothing was examined)
+"
+    fi
   fi
 
   LEDGER_FOREIGN_SLUGS="$(printf '%s\n' "$out" | awk 'NF && !seen[$0]++')"
@@ -835,7 +854,8 @@ Read this before saying yes:
     only at each record's `.repo` field.
 What stays IGNORED (unchanged): .claude/worktrees/, .claude/settings.local.json,
 .supervisor/logs/, every file under .supervisor/postmortem/ OTHER than results.jsonl, and
-everything else under those three directories.
+everything else under .claude/ and .supervisor/ — the third store is that ONE FILE, not a
+directory, so nothing else in .supervisor/postmortem/ is included by it.
 DISCLOSURE
 }
 
@@ -1173,7 +1193,7 @@ do_apply() {
   warn_if_not_configured
   echo
   echo "Next: the stores are only UN-IGNORED — nothing is committed yet. Review with"
-  echo "  git status --short .claude/agent-memory .supervisor/memory"
+  echo "  git status --short .claude/agent-memory .supervisor/memory $LEDGER_INTENDED_PATH"
   echo "and commit deliberately. This helper never runs git add / git rm / git commit."
   exit 0
 }
