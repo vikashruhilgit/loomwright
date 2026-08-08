@@ -106,6 +106,55 @@ dcnt="$(grep -cE '^- \[' "$DDIR/.supervisor/memory/PROJECT_MEMORY.md" 2>/dev/nul
 if [ "$dcnt" -eq 1 ]; then ok "duplicate fact written once (dedup guard)"; else no "duplicate not deduped (have $dcnt)"; fi
 rm -rf "$DDIR"
 
+echo "== 8. retract / supersede correction path =="
+RDIR="$(mktemp -d)"; ( cd "$RDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
+( cd "$RDIR" && bash "$WRITE" --fact "the sky is green" --source r >/dev/null 2>&1 \
+               && bash "$WRITE" --fact "keep me" --source r >/dev/null 2>&1 )
+wid="$(sed -nE 's/^- \[([^]]+)\] the sky is green$/\1/p' "$RDIR/.supervisor/memory/PROJECT_MEMORY.md")"
+[ -n "$wid" ] && ok "wrong fact stored as [$wid]" || no "could not resolve id of the wrong fact"
+
+# 8a. unknown id aborts with state untouched (fail closed, never half-write)
+before="$(cat "$RDIR/.supervisor/memory/.provenance.jsonl")"
+( cd "$RDIR" && bash "$WRITE" --retract deadbeef --source r ) >/dev/null 2>&1
+rc=$?
+if [ "$rc" -ne 0 ] && [ "$before" = "$(cat "$RDIR/.supervisor/memory/.provenance.jsonl")" ]; then
+  ok "retract of an unknown id aborts (exit $rc) leaving provenance untouched"
+else
+  no "retract of an unknown id did not fail closed (exit $rc)"
+fi
+# 8b. non-hex id is rejected before it reaches a grep/sed pattern
+( cd "$RDIR" && bash "$WRITE" --retract '.*' --source r ) >/dev/null 2>&1
+[ $? -eq 2 ] && ok "non-hex retract id rejected" || no "non-hex retract id accepted"
+
+# 8c. supersede: corrected fact in, wrong fact out, unrelated fact untouched — one atomic call
+( cd "$RDIR" && bash "$WRITE" --fact "the sky is blue" --supersedes "$wid" --source r ) >/dev/null 2>&1
+rout="$( cd "$RDIR" && bash "$READ" 2>/dev/null )"
+echo "$rout" | grep -q "the sky is blue" && ok "superseding fact emitted" || no "superseding fact missing"
+echo "$rout" | grep -q "the sky is green" && no "retracted fact still emitted" || ok "retracted fact gone"
+echo "$rout" | grep -q "keep me"          && ok "unrelated fact survives supersede" || no "unrelated fact lost"
+rcnt="$(echo "$rout" | grep -cE '^- \[')"; rcnt="${rcnt:-0}"
+[ "$rcnt" -eq 2 ] && ok "count correct after supersede (2 verified)" || no "wrong count after supersede (have $rcnt, want 2)"
+
+# 8d. THE READ-SIDE POINT: the original `add` lives forever in the append-only provenance log,
+# so a writer-only retraction (line deletion) would leave the wrong fact's content_hash trusted
+# and an out-of-band re-append would read back as VERIFIED. Only the reader's retract branch
+# closes this. Without it, this assertion fails.
+printf -- '- [%s] the sky is green\n' "$wid" >> "$RDIR/.supervisor/memory/PROJECT_MEMORY.md"
+rout2="$( cd "$RDIR" && bash "$READ" 2>/dev/null )"
+if echo "$rout2" | grep -q "the sky is green"; then
+  no "re-appended RETRACTED fact was emitted as verified (read-side retract not honored)"
+else
+  ok "re-appended retracted fact still dropped (retract revokes trust on the read side)"
+fi
+
+# 8e. chronological semantics: a later `add` of the same text re-trusts it (retract is not a
+# permanent blocklist — it revokes the trust that existed at that point in the chain).
+sed -i.bak "/the sky is green/d" "$RDIR/.supervisor/memory/PROJECT_MEMORY.md" && rm -f "$RDIR/.supervisor/memory/PROJECT_MEMORY.md.bak"
+( cd "$RDIR" && bash "$WRITE" --fact "the sky is green" --source r ) >/dev/null 2>&1
+rout3="$( cd "$RDIR" && bash "$READ" 2>/dev/null )"
+echo "$rout3" | grep -q "the sky is green" && ok "re-adding a retracted fact re-trusts it" || no "re-add after retract did not re-trust"
+rm -rf "$RDIR"
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

@@ -14,22 +14,46 @@
 # thread) may write. The worktree check is the real enforcement, regardless of caller.
 #
 # Usage:  write-project-memory.sh --fact "<durable fact>" --source "<session_id|agent|user>"
+#         write-project-memory.sh --retract <id> --source "<...>"
+#         write-project-memory.sh --fact "<corrected fact>" --supersedes <id> --source "<...>"
+#
+# CORRECTION PATH (--retract / --supersedes): a stored fact can turn out to be WRONG. A raw text
+# edit is not an option — the read gate hashes the fact text, so an edited line silently stops
+# matching its `add` and is DROPPED without a trace at the call site. `--retract` deletes the
+# line AND appends a chain-valid `retract` provenance entry, which read-project-memory.sh honors
+# by revoking that content_hash from the trusted set. `--supersedes` is the atomic pair: the
+# corrected fact and the retraction of the wrong one commit together or not at all.
+#
 # Exit:   0 on success or safe no-op (e.g. no sha tool); non-zero only on a disallowed /
 #         would-corrupt condition (so a bad call can never half-write state).
 
 set -uo pipefail
 
-FACT=""; SOURCE="unknown"
+FACT=""; SOURCE="unknown"; RETRACT_ID=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --fact)     FACT="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
     --fact=*)   FACT="${1#--fact=}"; shift ;;
     --source)   SOURCE="${2:-unknown}"; shift; [ $# -gt 0 ] && shift ;;
     --source=*) SOURCE="${1#--source=}"; shift ;;
+    # --retract and --supersedes are the same mechanism; the second name documents intent
+    # when it is paired with a replacement --fact.
+    --retract|--supersedes)     RETRACT_ID="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
+    --retract=*)                RETRACT_ID="${1#--retract=}"; shift ;;
+    --supersedes=*)             RETRACT_ID="${1#--supersedes=}"; shift ;;
     *) shift ;;
   esac
 done
-[ -n "$FACT" ] || { echo "write-project-memory: --fact is required" >&2; exit 2; }
+if [ -z "$FACT" ] && [ -z "$RETRACT_ID" ]; then
+  echo "write-project-memory: --fact or --retract <id> is required" >&2; exit 2
+fi
+# Ids are the first 8 hex chars of the content hash. Validate strictly: the id is interpolated
+# into a grep pattern and a sed address below, so a loose value could match unintended lines.
+if [ -n "$RETRACT_ID" ]; then
+  case "$RETRACT_ID" in
+    *[!0-9a-f]*|"") echo "write-project-memory: --retract id must be lowercase hex (got '$RETRACT_ID')" >&2; exit 2 ;;
+  esac
+fi
 # Sanitize the source label of quotes/backslashes so the no-jq provenance fallback
 # (printf-built JSON) can never emit malformed JSONL even if a caller widens --source.
 SOURCE="$(printf '%s' "$SOURCE" | tr -d '"\\[:cntrl:]')"
@@ -64,17 +88,32 @@ mkdir -p "$MEM_DIR" 2>/dev/null || { echo "write-project-memory: cannot create $
 [ -f "$PROV" ] || : > "$PROV"
 
 ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
-fact_oneline="$(printf '%s' "$FACT" | tr '\n' ' ')"
-content_hash="$(printf '%s' "$fact_oneline" | sha)"
-id="$(printf '%s' "$content_hash" | cut -c1-8)"
-# Dedup guard: the id is content-derived, so an identical fact yields an identical entry.
-# If it's already present in the live index, skip (avoids silent duplicate-fact accumulation).
-if grep -qF -- "- [$id] $fact_oneline" "$MEM" 2>/dev/null; then
-  echo "write-project-memory: fact already present ([$id]) — skipping"
-  exit 0
+fact_oneline=""; content_hash=""; id=""
+if [ -n "$FACT" ]; then
+  fact_oneline="$(printf '%s' "$FACT" | tr '\n' ' ')"
+  content_hash="$(printf '%s' "$fact_oneline" | sha)"
+  id="$(printf '%s' "$content_hash" | cut -c1-8)"
+  # Dedup guard: the id is content-derived, so an identical fact yields an identical entry.
+  # If it's already present in the live index, skip (avoids silent duplicate-fact accumulation).
+  # A --supersedes call still has work to do (the retraction), so only a bare --fact short-circuits.
+  if grep -qF -- "- [$id] $fact_oneline" "$MEM" 2>/dev/null && [ -z "$RETRACT_ID" ]; then
+    echo "write-project-memory: fact already present ([$id]) — skipping"
+    exit 0
+  fi
 fi
-last_line="$(tail -n1 "$PROV" 2>/dev/null || true)"
-if [ -n "$last_line" ]; then prev_hash="$(printf '%s' "$last_line" | sha)"; else prev_hash="$GENESIS"; fi
+
+# Resolve the retraction target BEFORE building any temp state, so an unknown id aborts with
+# state untouched rather than half-written.
+retract_fact=""; retract_hash=""
+if [ -n "$RETRACT_ID" ]; then
+  retract_line="$(grep -m1 -F -- "- [$RETRACT_ID] " "$MEM" 2>/dev/null || true)"
+  if [ -z "$retract_line" ]; then
+    echo "write-project-memory: no memory entry with id [$RETRACT_ID] — nothing to retract, aborting" >&2
+    exit 2
+  fi
+  retract_fact="$(printf '%s' "$retract_line" | sed -E 's/^- \[[^]]*\] //')"
+  retract_hash="$(printf '%s' "$retract_fact" | sha)"
+fi
 
 # prov_line <id> <prev_hash> <content_hash> <source> <action>
 # Emits the JSON with NO trailing newline; callers add exactly one via printf '%s\n'.
@@ -92,11 +131,30 @@ prov_line() {
 # truly-atomic rename — a tmpfs /tmp (Linux/CI) would otherwise make `mv` a non-atomic
 # cross-device copy+unlink, risking a truncated .provenance.jsonl on interruption.
 mem_tmp="$(mktemp "$MEM_DIR/.mtmp.XXXXXX")"; prov_tmp="$(mktemp "$MEM_DIR/.ptmp.XXXXXX")"
-trap 'rm -f "$mem_tmp" "$prov_tmp" "$mem_tmp.e" 2>/dev/null' EXIT
+trap 'rm -f "$mem_tmp" "$prov_tmp" "$mem_tmp.e" "$mem_tmp.r" 2>/dev/null' EXIT
 cat "$MEM" > "$mem_tmp"
-printf -- '- [%s] %s\n' "$id" "$fact_oneline" >> "$mem_tmp"
 cat "$PROV" > "$prov_tmp"
-printf '%s\n' "$(prov_line "$id" "$prev_hash" "$content_hash" "$SOURCE" "add")" >> "$prov_tmp"
+
+# append_prov <id> <content_hash> <action> — chains off the CURRENT tail of prov_tmp, so
+# multiple entries in one commit (supersede = add + retract) each link to their predecessor.
+append_prov() {
+  _last="$(tail -n1 "$prov_tmp" 2>/dev/null || true)"
+  if [ -n "$_last" ]; then _ph="$(printf '%s' "$_last" | sha)"; else _ph="$GENESIS"; fi
+  printf '%s\n' "$(prov_line "$1" "$_ph" "$2" "$SOURCE" "$3")" >> "$prov_tmp"
+}
+
+if [ -n "$FACT" ]; then
+  printf -- '- [%s] %s\n' "$id" "$fact_oneline" >> "$mem_tmp"
+  append_prov "$id" "$content_hash" "add"
+fi
+
+if [ -n "$RETRACT_ID" ]; then
+  # Delete by exact literal line, not by a sed address — the fact text is arbitrary and would
+  # otherwise be interpreted as a regex.
+  grep -vxF -- "$retract_line" "$mem_tmp" > "$mem_tmp.r" 2>/dev/null
+  mv "$mem_tmp.r" "$mem_tmp" || { echo "write-project-memory: could not remove retracted line" >&2; exit 2; }
+  append_prov "$RETRACT_ID" "$retract_hash" "retract"
+fi
 
 # ---- Write-time eviction (cap; never silent) ------------------------------
 # NOTE: .provenance.jsonl is append-only (one line per add AND per evict), so each read
@@ -119,5 +177,6 @@ mv "$prov_tmp" "$PROV" && mv "$mem_tmp" "$MEM" || {
   echo "write-project-memory: atomic rename failed — write aborted; read gate ignores any unmatched provenance" >&2
   exit 2
 }
-echo "write-project-memory: stored [$id] (source=$SOURCE)"
+[ -n "$FACT" ]       && echo "write-project-memory: stored [$id] (source=$SOURCE)"
+[ -n "$RETRACT_ID" ] && echo "write-project-memory: retracted [$RETRACT_ID] (source=$SOURCE)"
 exit 0
