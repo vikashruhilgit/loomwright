@@ -24,6 +24,12 @@
 # by revoking that content_hash from the trusted set. `--supersedes` is the atomic pair: the
 # corrected fact and the retraction of the wrong one commit together or not at all.
 #
+# Two --supersedes edge semantics (both would otherwise corrupt the index — see the inline notes):
+#   * replacement text collides with a DIFFERENT existing entry -> legitimate correction: the
+#     retraction runs, the duplicate append + its `add` provenance entry are skipped (dedup).
+#   * replacement text is BYTE-IDENTICAL to the target's -> not a correction at all: abort with
+#     exit 2, state untouched, so the fact survives (executing it would delete the fact outright).
+#
 # Exit:   0 on success or safe no-op (e.g. no sha tool); non-zero only on a disallowed /
 #         would-corrupt condition (so a bad call can never half-write state).
 
@@ -88,15 +94,19 @@ mkdir -p "$MEM_DIR" 2>/dev/null || { echo "write-project-memory: cannot create $
 [ -f "$PROV" ] || : > "$PROV"
 
 ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
-fact_oneline=""; content_hash=""; id=""
+fact_oneline=""; content_hash=""; id=""; fact_present=0
 if [ -n "$FACT" ]; then
   fact_oneline="$(printf '%s' "$FACT" | tr '\n' ' ')"
   content_hash="$(printf '%s' "$fact_oneline" | sha)"
   id="$(printf '%s' "$content_hash" | cut -c1-8)"
   # Dedup guard: the id is content-derived, so an identical fact yields an identical entry.
-  # If it's already present in the live index, skip (avoids silent duplicate-fact accumulation).
+  # Presence is evaluated ONCE and UNCONDITIONALLY here; the boolean then gates only the ADD half
+  # below. (It used to be `grep -q ... && [ -z "$RETRACT_ID" ]`, which disabled the CHECK ITSELF on
+  # a --supersedes call rather than only its early exit — so the append below wrote a duplicate
+  # line whenever the corrected fact already existed elsewhere in the index.)
+  if grep -qF -- "- [$id] $fact_oneline" "$MEM" 2>/dev/null; then fact_present=1; fi
   # A --supersedes call still has work to do (the retraction), so only a bare --fact short-circuits.
-  if grep -qF -- "- [$id] $fact_oneline" "$MEM" 2>/dev/null && [ -z "$RETRACT_ID" ]; then
+  if [ "$fact_present" -eq 1 ] && [ -z "$RETRACT_ID" ]; then
     echo "write-project-memory: fact already present ([$id]) — skipping"
     exit 0
   fi
@@ -113,6 +123,24 @@ if [ -n "$RETRACT_ID" ]; then
   fi
   retract_fact="$(printf '%s' "$retract_line" | sed -E 's/^- \[[^]]*\] //')"
   retract_hash="$(printf '%s' "$retract_fact" | sha)"
+fi
+
+# NO-OP SUPERSEDE (semantic: fail CLOSED, state untouched) -------------------
+# A --supersedes whose replacement text is byte-identical to the target's is not a correction —
+# there is nothing to correct — and executing it DESTROYS the fact two ways over:
+#   1. the appended line and the pre-existing one are identical, and the `grep -vxF` below deletes
+#      EVERY matching line, so the fact disappears from PROJECT_MEMORY.md entirely; and
+#   2. identical text means one shared content_hash, so the `retract` provenance entry revokes the
+#      very hash the `add` just trusted and the reader drops the line even if it survived.
+# Before this guard the call printed "stored [id]" AND "retracted [id]" and exited 0 — silent data
+# loss with a success status. Chosen semantic: abort with exit 2 (same fail-closed convention as the
+# unknown-id abort above) BEFORE any temp state exists, so the fact stays in PROJECT_MEMORY.md, the
+# reader still returns it, and the caller gets a real error instead of a false "retracted".
+# Distinct from the dedup path above: there the replacement collides with a DIFFERENT entry, which
+# is a legitimate correction (the retraction runs; only the duplicate append is skipped).
+if [ -n "$RETRACT_ID" ] && [ -n "$FACT" ] && [ "$fact_oneline" = "$retract_fact" ]; then
+  echo "write-project-memory: --supersedes [$RETRACT_ID] replacement is byte-identical to the target fact — a no-op correction, not a change; aborting with state untouched (the fact is kept)" >&2
+  exit 2
 fi
 
 # prov_line <id> <prev_hash> <content_hash> <source> <action>
@@ -143,7 +171,12 @@ append_prov() {
   printf '%s\n' "$(prov_line "$1" "$_ph" "$2" "$SOURCE" "$3")" >> "$prov_tmp"
 }
 
-if [ -n "$FACT" ]; then
+# ADD half — skipped when the fact is already in the live index. On a --supersedes that reaches
+# here, the RETRACT half below still runs: the correction lands, only the duplicate line (and its
+# spurious `add` provenance entry) is suppressed. Skipping the `add` cannot orphan the hash chain —
+# append_prov always chains off the CURRENT tail of prov_tmp, so the retract simply links to
+# whatever preceded it.
+if [ -n "$FACT" ] && [ "$fact_present" -eq 0 ]; then
   printf -- '- [%s] %s\n' "$id" "$fact_oneline" >> "$mem_tmp"
   append_prov "$id" "$content_hash" "add"
 fi
@@ -177,6 +210,13 @@ mv "$prov_tmp" "$PROV" && mv "$mem_tmp" "$MEM" || {
   echo "write-project-memory: atomic rename failed — write aborted; read gate ignores any unmatched provenance" >&2
   exit 2
 }
-[ -n "$FACT" ]       && echo "write-project-memory: stored [$id] (source=$SOURCE)"
+# Report what actually happened — never "stored" for a line that was deduped away.
+if [ -n "$FACT" ]; then
+  if [ "$fact_present" -eq 1 ]; then
+    echo "write-project-memory: fact already present ([$id]) — add skipped (dedup), retraction still applied"
+  else
+    echo "write-project-memory: stored [$id] (source=$SOURCE)"
+  fi
+fi
 [ -n "$RETRACT_ID" ] && echo "write-project-memory: retracted [$RETRACT_ID] (source=$SOURCE)"
 exit 0

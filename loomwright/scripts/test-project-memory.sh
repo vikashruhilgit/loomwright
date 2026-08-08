@@ -155,6 +155,57 @@ rout3="$( cd "$RDIR" && bash "$READ" 2>/dev/null )"
 echo "$rout3" | grep -q "the sky is green" && ok "re-adding a retracted fact re-trusts it" || no "re-add after retract did not re-trust"
 rm -rf "$RDIR"
 
+echo "== 9. supersede x dedup edge cases (regression) =="
+# Both branches below were live defects: the dedup guard used to be written as
+# `grep -q ... && [ -z "$RETRACT_ID" ]`, which disabled the CHECK ITSELF (not just its early exit)
+# on a --supersedes call, so the add half appended unconditionally. 9a caught a duplicate line;
+# 9b caught outright data loss (identical text ⇒ `grep -vxF` deletes BOTH copies, and the shared
+# content_hash means the retract revokes the hash the add just trusted).
+SDIR="$(mktemp -d)"; ( cd "$SDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
+
+# 9a. supersede whose corrected text collides with a DIFFERENT existing entry: a legitimate
+#     correction — the retraction must land, but no duplicate line (and no spurious `add`).
+( cd "$SDIR" && bash "$WRITE" --fact "sky is blue"  --source s >/dev/null 2>&1 \
+               && bash "$WRITE" --fact "sky is green" --source s >/dev/null 2>&1 )
+gid="$(sed -nE 's/^- \[([^]]+)\] sky is green$/\1/p' "$SDIR/.supervisor/memory/PROJECT_MEMORY.md")"
+[ -n "$gid" ] && ok "collision fixture stored 'sky is green' as [$gid]" || no "could not resolve id of the collision fixture"
+( cd "$SDIR" && bash "$WRITE" --fact "sky is blue" --supersedes "$gid" --source s ) >/dev/null 2>&1
+bcnt="$(grep -cF -- "sky is blue" "$SDIR/.supervisor/memory/PROJECT_MEMORY.md" 2>/dev/null)"; bcnt="${bcnt:-0}"
+[ "$bcnt" -eq 1 ] && ok "supersede colliding with an existing entry writes no duplicate (1 line)" || no "supersede duplicated the colliding fact (have $bcnt, want 1)"
+acnt="$(grep -c '"action":"add"' "$SDIR/.supervisor/memory/.provenance.jsonl" 2>/dev/null)"; acnt="${acnt:-0}"
+[ "$acnt" -eq 2 ] && ok "no spurious 'add' provenance entry for the deduped half (2 adds)" || no "spurious/missing add provenance (have $acnt, want 2)"
+sout="$( cd "$SDIR" && bash "$READ" 2>/dev/null )"
+echo "$sout" | grep -q "sky is green" && no "retraction did not land on the colliding supersede" || ok "retraction still landed despite the skipped add"
+# Chain must survive the skipped `add` — append_prov links off the CURRENT tail, so the retract
+# entry chains to whatever preceded it. A reader that emits the survivor proves the chain is valid.
+echo "$sout" | grep -q "sky is blue" && ok "survivor reads back verified (hash chain intact across a skipped add)" || no "survivor dropped by reader (skipped add broke the chain)"
+
+# 9b. no-op supersede (replacement byte-identical to the target): must FAIL CLOSED with state
+#     untouched — the fact survives in the file AND in the reader, and no false "retracted".
+( cd "$SDIR" && bash "$WRITE" --fact "alpha fact" --source s >/dev/null 2>&1 )
+aid="$(sed -nE 's/^- \[([^]]+)\] alpha fact$/\1/p' "$SDIR/.supervisor/memory/PROJECT_MEMORY.md")"
+prov_before="$(cat "$SDIR/.supervisor/memory/.provenance.jsonl")"
+noop="$( cd "$SDIR" && bash "$WRITE" --fact "alpha fact" --supersedes "$aid" --source s 2>&1 )"
+rc=$?
+[ "$rc" -ne 0 ] && ok "no-op supersede fails closed (exit $rc)" || no "no-op supersede exited 0 (silent mutation)"
+echo "$noop" | grep -q "retracted \[" && no "no-op supersede printed a false 'retracted' message" || ok "no misleading success message on the no-op supersede"
+[ "$prov_before" = "$(cat "$SDIR/.supervisor/memory/.provenance.jsonl")" ] && ok "no-op supersede left provenance untouched" || no "no-op supersede mutated provenance"
+grep -qF -- "- [$aid] alpha fact" "$SDIR/.supervisor/memory/PROJECT_MEMORY.md" && ok "fact survives the no-op supersede in PROJECT_MEMORY.md" || no "no-op supersede DELETED the fact (silent data loss)"
+nout="$( cd "$SDIR" && bash "$READ" 2>/dev/null )"
+echo "$nout" | grep -q "alpha fact" && ok "reader still returns the fact after the no-op supersede" || no "reader no longer returns the fact after the no-op supersede"
+
+# 9c. the bare --fact dedup short-circuit is unchanged by the above (message + exit 0 preserved).
+dup="$( cd "$SDIR" && bash "$WRITE" --fact "alpha fact" --source s 2>&1 )"
+rc=$?
+if [ "$rc" -eq 0 ] && echo "$dup" | grep -qF "write-project-memory: fact already present ([$aid]) — skipping"; then
+  ok "bare --fact dedup short-circuit intact (exit 0 + unchanged message)"
+else
+  no "bare --fact dedup short-circuit regressed (exit $rc): $dup"
+fi
+dupcnt="$(grep -cF -- "alpha fact" "$SDIR/.supervisor/memory/PROJECT_MEMORY.md" 2>/dev/null)"; dupcnt="${dupcnt:-0}"
+[ "$dupcnt" -eq 1 ] && ok "bare --fact dedup still writes the fact once" || no "bare --fact dedup wrote $dupcnt copies (want 1)"
+rm -rf "$SDIR"
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
