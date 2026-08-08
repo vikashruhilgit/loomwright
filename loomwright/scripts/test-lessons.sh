@@ -96,7 +96,23 @@ fi
 rm -rf "$CDIR"
 
 echo "== 5. .gitignore coverage (real repo) =="
-if git -C "$REAL_REPO" check-ignore -q .supervisor/memory/LESSONS.md 2>/dev/null; then ok ".supervisor/memory/ is gitignored in the real repo"; else no ".supervisor/memory/ NOT gitignored"; fi
+# INVERTED ON PURPOSE (2026-08-07). This asserted `.supervisor/memory/` was IGNORED. The
+# `/setup memory` capability exists to make exactly that store COMMITTABLE — the Twin's distilled
+# lessons otherwise live on one machine with no recovery path, and every fresh clone, CI run and
+# `git worktree` checkout starts cold. This repo applied the managed negation block, so the old
+# expectation is now the failure mode, not the invariant.
+#
+# The store's ignore status is owned by test-committed-twin-scrub.sh (which asserts the intended
+# paths ARE committable, the unintended ones are NOT, and that the committed content carries no
+# foreign-repo data). Kept here as a cheap consistency cross-check, stated in the new direction.
+#
+# `-q` is used ALONE — never with `--verbose`, which git rejects with exit 128, a status a bare
+# `if` would silently read as "not ignored".
+if git -C "$REAL_REPO" check-ignore -q .supervisor/memory/LESSONS.md 2>/dev/null; then
+  no ".supervisor/memory/LESSONS.md is IGNORED in the real repo, but the applied /setup memory managed block must make it committable — the negation is not in effect (see test-committed-twin-scrub.sh)"
+else
+  ok ".supervisor/memory/LESSONS.md is committable in the real repo (managed negation block in effect)"
+fi
 
 echo "== 6. backslash integrity (awk ENVIRON, not -v) =="
 WDIR="$(mktemp -d)"; ( cd "$WDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
