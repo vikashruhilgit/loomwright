@@ -22,9 +22,13 @@
 # lookup and reported as the misleading "no memory entry with id".
 #
 # `--supersedes` is an alias of `--retract` that documents intent WHEN PAIRED with a replacement
-# `--fact`. Used without one it is a caller mistake, so it is loud rather than silent: the plain
-# retraction still runs and still exits 0, but a WARNING naming the missing replacement goes to
-# stderr. `--retract` (the honest spelling for that operation) is unaffected and stays silent.
+# `--fact`. Used WITHOUT one it is a caller mistake — an indistinguishable synonym for a plain
+# retraction — and it FAILS CLOSED: exit 2 at validation time, state untouched, with a message
+# naming the missing replacement and pointing at `--retract`. That mirrors the sibling store
+# (`write-lessons.sh`'s `supersede requires --replacement "<new lesson text>"`, same rationale) so
+# the two stores agree deliberately rather than by accident, and it matches the repo-wide
+# "correctness gates fail CLOSED" invariant. `--retract` (the honest spelling for a bare retraction)
+# is unaffected: still silent, still exit 0.
 #
 # CORRECTION PATH (--retract / --supersedes): a stored fact can turn out to be WRONG. A raw text
 # edit is not an option — the read gate hashes the fact text, so an edited line silently stops
@@ -40,7 +44,9 @@
 #     exit 2, state untouched, so the fact survives (executing it would delete the fact outright).
 #
 # Exit:   0 on success or safe no-op (e.g. no sha tool); non-zero only on a disallowed /
-#         would-corrupt condition (so a bad call can never half-write state).
+#         would-corrupt condition (so a bad call can never half-write state). Exit 2 also covers
+#         the malformed-call cases rejected at validation time — including a `--supersedes` with no
+#         replacement `--fact` — which abort before any temp state exists.
 
 set -uo pipefail
 
@@ -53,12 +59,13 @@ while [ $# -gt 0 ]; do
     --source=*) SOURCE="${1#--source=}"; shift ;;
     # --retract and --supersedes are the same mechanism; the second name documents intent
     # when it is paired with a replacement --fact. Both keep writing the SAME variable — only the
-    # SPELLING the caller used is tracked separately, so the missing-replacement warning below can
+    # SPELLING the caller used is tracked separately, so the missing-replacement ABORT below can
     # fire for --supersedes without changing anything about --retract.
     # LAST FLAG WINS FOR THE SPELLING TOO: every --retract arm CLEARS the flag, exactly as it
     # overwrites RETRACT_ID. Without that, `--supersedes aaaaaaaa --retract bbbbbbbb` kept a stale
-    # SUPERSEDES_USED=1 and the warning below misattributed the caller's spelling, naming an id
-    # ([bbbbbbbb]) that was never passed as --supersedes.
+    # SUPERSEDES_USED=1 and the abort below misattributed the caller's spelling — now worse than
+    # cosmetic, since it would REJECT (exit 2) an honest bare retraction naming an id ([bbbbbbbb])
+    # that was never passed as --supersedes.
     --retract|--supersedes)     if [ "$1" = "--supersedes" ]; then SUPERSEDES_USED=1; else SUPERSEDES_USED=0; fi
                                 RETRACT_ID="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
     --retract=*)                SUPERSEDES_USED=0; RETRACT_ID="${1#--retract=}"; shift ;;
@@ -90,12 +97,29 @@ if [ -n "$RETRACT_ID" ]; then
     *) echo "write-project-memory: --retract id must be exactly 8 lowercase hex chars (got '$RETRACT_ID')" >&2; exit 2 ;;
   esac
 fi
-# --supersedes without a replacement --fact is a caller mistake (it degrades to a plain retraction),
-# and this repo's philosophy is "never silent". Warn — never fail: turning it into an error would be
-# a breaking change, and the alias behaviour must stay identical. --retract is deliberately exempt:
-# a bare retraction IS the honest meaning of that spelling.
+# --supersedes without a replacement --fact is a caller mistake: with nothing to supersede it is an
+# INDISTINGUISHABLE SYNONYM for a plain retraction. FAIL CLOSED (exit 2), state untouched.
+#
+# Why not the earlier "warn, never fail": that rationale ("turning it into an error would be a
+# breaking change") was false — `--supersedes` ships in this same release and has NO existing
+# callers, so no caller can break. Meanwhile the sibling curated store this path mirrors already
+# fails closed for the identical operator mistake (write-lessons.sh: `supersede requires
+# --replacement "<new lesson text>" (a supersede without a replacement is an indistinguishable
+# synonym for retract)`). Two "mirrored" stores disagreeing about the same mistake is the defect;
+# the fail-closed precedent wins, matching the repo-wide "correctness gates fail CLOSED" invariant.
+# --retract is deliberately exempt: a bare retraction IS the honest meaning of that spelling, so it
+# stays silent and exits 0.
+#
+# ORDERING IS DELIBERATE — argument-shape errors fire BEFORE any state lookup. This abort sits
+# above the retract-target resolution, so `--supersedes <unknown-id>` with no --fact reports the
+# MISSING REPLACEMENT (the caller's actual mistake) rather than "no memory entry with id". The old
+# warning sat at this same point but was non-fatal, so that call first printed "this is a plain
+# retraction" and THEN aborted exit 2 at the lookup below — a claim false on its own path (nothing
+# was retracted). Being fatal here also means the abort precedes every mktemp, so on this path no
+# temp file is ever created and the store is byte-identical.
 if [ "$SUPERSEDES_USED" -eq 1 ] && [ -z "$FACT" ]; then
-  echo "write-project-memory: WARNING --supersedes [$RETRACT_ID] was given with no replacement --fact — this is a plain retraction, nothing supersedes the retracted entry; pass --fact \"<corrected fact>\" to supersede, or use --retract if a bare retraction was the intent" >&2
+  echo "write-project-memory: --supersedes [$RETRACT_ID] requires a replacement --fact \"<corrected fact>\" (a supersede without a replacement is an indistinguishable synonym for retract) — use --retract if a bare retraction was the intent" >&2
+  exit 2
 fi
 # Sanitize the source label of quotes/backslashes so the no-jq provenance fallback
 # (printf-built JSON) can never emit malformed JSONL even if a caller widens --source.

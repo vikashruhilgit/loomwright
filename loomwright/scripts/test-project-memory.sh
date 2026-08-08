@@ -202,33 +202,101 @@ rout3="$( cd "$RDIR" && bash "$READ" 2>/dev/null )"
 echo "$rout3" | grep -q "the sky is green" && ok "re-adding a retracted fact re-trusts it" || no "re-add after retract did not re-trust"
 rm -rf "$RDIR"
 
-# 8h. --supersedes with NO replacement --fact degrades to a plain retraction. That is a caller
-#     mistake and must be LOUD (warning on stderr) but never fatal — the retraction still runs and
-#     still exits 0. --retract, the honest spelling for that same operation, must stay silent.
+# 8h. --supersedes with NO replacement --fact is an INDISTINGUISHABLE SYNONYM for a plain retraction,
+#     so it FAILS CLOSED: exit 2 at validation time with state untouched. This replaced an earlier
+#     warn-and-succeed path whose stated rationale ("erroring would be a breaking change") was false
+#     — --supersedes ships in this same release and has no callers — and which left this store
+#     disagreeing with the sibling it mirrors: write-lessons.sh:125 already rejects the identical
+#     mistake ("a supersede without a replacement is an indistinguishable synonym for retract").
+#     The two stores now agree deliberately, and the abort matches the repo-wide "correctness gates
+#     fail CLOSED" invariant. --retract, the honest spelling for that same operation, is deliberately
+#     unaffected: silent, exit 0, still retracts.
 WDIR="$(mktemp -d)"; ( cd "$WDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
+WMEM="$WDIR/.supervisor/memory/PROJECT_MEMORY.md"; WPROV="$WDIR/.supervisor/memory/.provenance.jsonl"
 ( cd "$WDIR" && bash "$WRITE" --fact "supersede me bare" --source w >/dev/null 2>&1 \
+               && bash "$WRITE" --fact "supersede me bare equals form" --source w >/dev/null 2>&1 \
                && bash "$WRITE" --fact "retract me bare"  --source w >/dev/null 2>&1 )
-sid="$(sed -nE 's/^- \[([^]]+)\] supersede me bare$/\1/p' "$WDIR/.supervisor/memory/PROJECT_MEMORY.md")"
-tid="$(sed -nE 's/^- \[([^]]+)\] retract me bare$/\1/p' "$WDIR/.supervisor/memory/PROJECT_MEMORY.md")"
+sid="$(sed -nE 's/^- \[([^]]+)\] supersede me bare$/\1/p' "$WMEM")"
+eid="$(sed -nE 's/^- \[([^]]+)\] supersede me bare equals form$/\1/p' "$WMEM")"
+tid="$(sed -nE 's/^- \[([^]]+)\] retract me bare$/\1/p' "$WMEM")"
+{ [ -n "$sid" ] && [ -n "$eid" ] && [ -n "$tid" ]; } && ok "bare-flag fixture stored three entries ([$sid], [$eid], [$tid])" || no "bare-flag fixture ids unresolved"
+
+# (a) space-separated --supersedes <id>, no --fact → exit 2, message names the missing replacement,
+#     and state is COMPLETELY untouched.
+w_mem_b="$(cat "$WMEM")"; w_prov_b="$(cat "$WPROV")"
 werr="$( cd "$WDIR" && bash "$WRITE" --supersedes "$sid" --source w 2>&1 >/dev/null )"
 rc=$?
-[ "$rc" -eq 0 ] && ok "--supersedes without --fact still succeeds (exit 0 — warn, never fail)" || no "--supersedes without --fact changed the exit code (exit $rc)"
-echo "$werr" | grep -q "WARNING --supersedes \[$sid\] was given with no replacement --fact" \
-  && ok "--supersedes without --fact warns on stderr (no longer silent)" \
-  || no "--supersedes without --fact was silent: '$werr'"
-grep -qF -- "- [$sid] supersede me bare" "$WDIR/.supervisor/memory/PROJECT_MEMORY.md" \
-  && no "--supersedes without --fact warned but did not retract" \
-  || ok "--supersedes without --fact still performs the retraction (alias behaviour unchanged)"
+[ "$rc" -eq 2 ] && ok "--supersedes without --fact fails closed (exit 2)" || no "--supersedes without --fact did not fail closed (exit $rc)"
+echo "$werr" | grep -qF -- "--supersedes [$sid] requires a replacement --fact" \
+  && ok "--supersedes without --fact names the missing replacement (and the id it carried)" \
+  || no "--supersedes without --fact gave the wrong error: '$werr'"
+echo "$werr" | grep -qF -- "indistinguishable synonym for retract" && echo "$werr" | grep -qF -- "use --retract" \
+  && ok "--supersedes abort explains the synonymy and points at --retract" \
+  || no "--supersedes abort message missing the rationale/--retract pointer: '$werr'"
+[ "$w_mem_b" = "$(cat "$WMEM")" ] && ok "aborted bare --supersedes left PROJECT_MEMORY.md byte-identical" || no "aborted bare --supersedes mutated PROJECT_MEMORY.md"
+[ "$w_prov_b" = "$(cat "$WPROV")" ] && ok "aborted bare --supersedes left provenance byte-identical" || no "aborted bare --supersedes mutated provenance"
+grep -qxF -- "- [$sid] supersede me bare" "$WMEM" \
+  && ok "aborted bare --supersedes did NOT retract its target (no degraded retraction)" \
+  || no "aborted bare --supersedes still retracted the target"
+# The abort precedes every mktemp, so no temp may exist. `ls -1a`, NOT `ls -1` — the temps are
+# DOTFILES (.mtmp.XXXXXX/.ptmp.XXXXXX), which a bare `ls -1` hides, making this unfailable.
+stray="$(ls -1a "$WDIR/.supervisor/memory/" 2>/dev/null | grep -c -e '^\.mtmp\.' -e '^\.ptmp\.')"; stray="${stray:-0}"
+[ "$stray" -eq 0 ] && ok "aborted bare --supersedes left no .mtmp/.ptmp temp files" || no "aborted bare --supersedes left $stray temp file(s) behind"
+
+# (b) the --supersedes=<id> equals-form arm must follow the identical rule.
+weq="$( cd "$WDIR" && bash "$WRITE" --supersedes="$eid" --source w 2>&1 >/dev/null )"
+rc=$?
+if [ "$rc" -eq 2 ] && echo "$weq" | grep -qF -- "--supersedes [$eid] requires a replacement --fact"; then
+  ok "--supersedes=<id> equals-form without --fact fails closed the same way (exit 2)"
+else
+  no "--supersedes=<id> equals-form did not fail closed (exit $rc): '$weq'"
+fi
+grep -qxF -- "- [$eid] supersede me bare equals form" "$WMEM" \
+  && ok "aborted equals-form --supersedes left its target in place" \
+  || no "aborted equals-form --supersedes retracted its target"
+
+# (e) ORDERING PIN: argument-shape errors fire BEFORE state lookups. `--supersedes <unknown-id>`
+#     with no --fact must report the MISSING REPLACEMENT, never "no memory entry with id". The old
+#     non-fatal warning sat at this same point, so that call printed "the retraction still runs and
+#     still exits 0" and THEN aborted exit 2 at the lookup — a message false on its own path.
+wunk="$( cd "$WDIR" && bash "$WRITE" --supersedes deadbeef --source w 2>&1 >/dev/null )"
+rc=$?
+if [ "$rc" -eq 2 ] && echo "$wunk" | grep -qF -- "--supersedes [deadbeef] requires a replacement --fact" \
+   && ! echo "$wunk" | grep -qF -- "no memory entry with id"; then
+  ok "--supersedes <unknown-id> without --fact reports the missing replacement, not the unknown id"
+else
+  no "--supersedes <unknown-id> without --fact reported the wrong error (exit $rc): '$wunk'"
+fi
+#     The precise contradiction: the old warning asserted "this is a plain retraction" on a call
+#     that then exited 2 having retracted nothing. No surviving message on this path may claim it.
+echo "$wunk" | grep -qiF -- "is a plain retraction" \
+  && no "abort message still claims a plain retraction happened on a call that exits 2 having retracted nothing" \
+  || ok "no message on the exit-2 path claims a retraction took place (self-contradiction gone)"
+
+# (c) --retract with no --fact is untouched: silent on stderr, exit 0, and it still retracts.
 terr="$( cd "$WDIR" && bash "$WRITE" --retract "$tid" --source w 2>&1 >/dev/null )"
 rc=$?
 if [ "$rc" -eq 0 ] && [ -z "$terr" ]; then
-  ok "--retract stays silent on stderr and exits 0 (unaffected by the --supersedes warning)"
+  ok "--retract stays silent on stderr and exits 0 (unaffected by the --supersedes abort)"
 else
   no "--retract regressed (exit $rc, stderr '$terr')"
 fi
-grep -qF -- "- [$tid] retract me bare" "$WDIR/.supervisor/memory/PROJECT_MEMORY.md" \
+grep -qF -- "- [$tid] retract me bare" "$WMEM" \
   && no "--retract no longer retracts" \
   || ok "--retract still performs the retraction"
+
+# (f) the SUPPORTED correction shape is unaffected end-to-end: a replacement --fact paired with
+#     --supersedes still stores the correction and retracts the target in one call. (8e pins the
+#     read-side half; this pins that the new validation gate does not intercept the happy path.)
+( cd "$WDIR" && bash "$WRITE" --fact "supersede me bare, corrected" --supersedes "$sid" --source w ) >/dev/null 2>&1
+rc=$?
+[ "$rc" -eq 0 ] && ok "--fact <corrected> --supersedes <id> still exits 0 (happy path not intercepted)" || no "the supported supersede shape regressed (exit $rc)"
+wout="$( cd "$WDIR" && bash "$READ" 2>/dev/null )"
+if echo "$wout" | grep -qF "supersede me bare, corrected" && ! echo "$wout" | grep -qxF -- "- [$sid] supersede me bare"; then
+  ok "--fact <corrected> --supersedes <id> still corrects end-to-end (replacement in, target out)"
+else
+  no "the supported supersede shape no longer corrects end-to-end"
+fi
 rm -rf "$WDIR"
 
 echo "== 9. supersede x dedup edge cases (regression) =="
@@ -351,6 +419,8 @@ rm -rf "$CDIR"
 #      last-wins rules: the value was overwritten by every arm, the SPELLING flag was only ever set.
 #      So `--supersedes <a> --retract <b>` warned "--supersedes [<b>]" — naming an id that was never
 #      passed as --supersedes. Both orders are pinned so the two rules can't drift apart again.
+#      Now HIGHER-STAKES than when the spelling only selected a warning: the spelling selects a
+#      FAIL-CLOSED ABORT, so a stale flag would REJECT (exit 2) an honest bare `--retract`.
 MDIR="$(mktemp -d)"; ( cd "$MDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
 ( cd "$MDIR" && bash "$WRITE" --fact "mixed flag alpha" --source m >/dev/null 2>&1 \
                && bash "$WRITE" --fact "mixed flag beta"  --source m >/dev/null 2>&1 )
@@ -369,25 +439,44 @@ fi
 grep -qF -- "- [$mid_b] mixed flag beta" "$MDIR/.supervisor/memory/PROJECT_MEMORY.md" \
   && no "--supersedes <a> --retract <b> retracted the wrong id" \
   || ok "--supersedes <a> --retract <b> retracted [$mid_b] (last VALUE wins, unchanged)"
-# order 2: --retract then --supersedes → LAST spelling is --supersedes → warn, naming the id the
-# --supersedes spelling actually carried.
+# order 2: --retract then --supersedes → LAST spelling is --supersedes → FAIL CLOSED (exit 2),
+# naming the id the --supersedes spelling actually carried, with [$mid_a] left in place.
 merr2="$( cd "$MDIR" && bash "$WRITE" --retract "$mid_b" --supersedes "$mid_a" --source m 2>&1 >/dev/null )"
 rc=$?
-if [ "$rc" -eq 0 ] && echo "$merr2" | grep -q "WARNING --supersedes \[$mid_a\] was given with no replacement --fact"; then
-  ok "--retract <b> --supersedes <a> warns naming [$mid_a] (the id the last spelling carried)"
+if [ "$rc" -eq 2 ] && echo "$merr2" | grep -qF -- "--supersedes [$mid_a] requires a replacement --fact"; then
+  ok "--retract <b> --supersedes <a> aborts exit 2 naming [$mid_a] (the id the last spelling carried)"
 else
-  no "--retract <b> --supersedes <a> did not warn correctly (exit $rc): '$merr2'"
+  no "--retract <b> --supersedes <a> did not abort correctly (exit $rc): '$merr2'"
 fi
-# equals-form arms must follow the same rule as their space-separated twins.
-( cd "$MDIR" && bash "$WRITE" --fact "mixed flag gamma" --source m >/dev/null 2>&1 )
+grep -qF -- "- [$mid_a] mixed flag alpha" "$MDIR/.supervisor/memory/PROJECT_MEMORY.md" \
+  && ok "--retract <b> --supersedes <a> retracted nothing (state untouched by the abort)" \
+  || no "the aborted mixed-flag call still retracted [$mid_a]"
+# equals-form arms must follow the same rule as their space-separated twins — the --retract= arm
+# CLEARS the spelling (silent success), the --supersedes= arm SETS it (abort).
+( cd "$MDIR" && bash "$WRITE" --fact "mixed flag gamma" --source m >/dev/null 2>&1 \
+               && bash "$WRITE" --fact "mixed flag delta" --source m >/dev/null 2>&1 )
 mid_c="$(sed -nE 's/^- \[([^]]+)\] mixed flag gamma$/\1/p' "$MDIR/.supervisor/memory/PROJECT_MEMORY.md")"
+mid_d="$(sed -nE 's/^- \[([^]]+)\] mixed flag delta$/\1/p' "$MDIR/.supervisor/memory/PROJECT_MEMORY.md")"
 merr3="$( cd "$MDIR" && bash "$WRITE" --supersedes=deadbeef --retract="$mid_c" --source m 2>&1 >/dev/null )"
 rc=$?
 if [ "$rc" -eq 0 ] && [ -z "$merr3" ]; then
-  ok "--supersedes=<a> --retract=<c> equals-form is silent too (both arms clear the spelling)"
+  ok "--supersedes=<a> --retract=<c> equals-form succeeds silently (the --retract= arm clears the spelling)"
 else
   no "equals-form --retract= did not clear the --supersedes spelling (exit $rc, stderr '$merr3')"
 fi
+grep -qF -- "- [$mid_c] mixed flag gamma" "$MDIR/.supervisor/memory/PROJECT_MEMORY.md" \
+  && no "--supersedes=<a> --retract=<c> retracted the wrong id" \
+  || ok "--supersedes=<a> --retract=<c> retracted [$mid_c] (last VALUE wins, unchanged)"
+merr4="$( cd "$MDIR" && bash "$WRITE" --retract="$mid_d" --supersedes=deadbeef --source m 2>&1 >/dev/null )"
+rc=$?
+if [ "$rc" -eq 2 ] && echo "$merr4" | grep -qF -- "--supersedes [deadbeef] requires a replacement --fact"; then
+  ok "--retract=<d> --supersedes=<unknown> equals-form aborts exit 2 (the --supersedes= arm sets the spelling; shape before state)"
+else
+  no "equals-form --supersedes= did not set the spelling / abort (exit $rc): '$merr4'"
+fi
+grep -qF -- "- [$mid_d] mixed flag delta" "$MDIR/.supervisor/memory/PROJECT_MEMORY.md" \
+  && ok "the aborted equals-form mixed call retracted nothing" \
+  || no "the aborted equals-form mixed call still retracted [$mid_d]"
 rm -rf "$MDIR"
 
 # 10d. NO-REGRESSION PIN for the anchoring change: an ACTUALLY-identical fact must still be deduped
