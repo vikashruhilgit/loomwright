@@ -79,6 +79,10 @@
 #        under-inclusion "comment out the rule named above" copy; a second apply on a gated repo does
 #        NOT print the `apply: no-op — already configured` headline; and a clean→contaminated
 #        re-apply ANNOUNCES the withdrawal
+#   (n)  the EMIT/WITHDRAW ASYMMETRY on an ALREADY-APPLIED repo: a could-not-examine gate (jq
+#        ABSENT, and jq PRESENT-BUT-BROKEN — `command -v` tests presence, not function) PRESERVES the
+#        existing negation and claims no contamination, while a REAL foreign record still WITHDRAWS
+#        it and names the real slug
 #   (k)  the suite never touched the plugin repo's own .gitignore
 #
 # EVERY LEDGER ASSERTION IN THIS FILE USES jq, NEVER grep. A findings ledger mixes compact
@@ -1134,6 +1138,72 @@ else
   hasE '^apply: applied — managed block written' "$out_w" && no "(m) the withdrawal was reported under a BARE 'apply: applied' headline" || ok "(m) the headline itself is qualified — never a bare 'apply: applied'"
   hasi 'does not un-track' "$out_w" && ok "(m) the withdrawal states that it does NOT un-track an already-committed ledger" || no "(m) the withdrawal implies the ledger is unpublished — it is not"
   assert_ignored "$Wd" "$P_LEDGER" "(m) after the withdrawal the ledger is IGNORED again"
+fi
+
+# ============================================================================
+echo "== (n) EMIT vs WITHDRAW are ASYMMETRIC — 'could not examine' must never withdraw a good negation =="
+# THE ROOT CAUSE THIS GROUP PINS. The emission decision (`pass`) also governed whether an EXISTING
+# negation survived the regenerated block, so "we could not determine the ledger's state" was treated
+# identically to "we determined the ledger is contaminated". On a FRESH repo that is correct
+# fail-closed behaviour (groups l4/l8/l9 pin it). On an ALREADY-APPLIED repo it silently WITHDREW a
+# good negation and blamed foreign slugs that do not exist.
+#
+# Emitting a NEW negation still requires an affirmative examined `pass`. WITHDRAWING an existing one
+# now requires an affirmative `refuse` backed by REAL, EXAMINED foreign slugs.
+if [ -z "$JQ" ]; then
+  ok "(n) jq unavailable — the emit/withdraw asymmetry group is skipped (pass)"
+else
+  # (n1) ALREADY APPLIED + jq ABSENT ⇒ the negation is PRESERVED. Same PATH-with-no-jq fixture shape
+  # as (l4), but against a repo that ALREADY carries the negation — that is the whole difference.
+  N1="$(mkgate)"
+  mem "$N1" apply >/dev/null 2>&1
+  assert_committable "$N1" "$P_LEDGER" "(n1) precondition: the clean apply un-ignored the ledger"
+  out_n1="$(PATH="$L4BIN" bash "$MEM" --root "$N1" apply 2>&1)"; rc_n1=$?
+  [ "$rc_n1" -eq 0 ] && ok "(n1) the jq-absent re-apply exits 0" || no "(n1) the jq-absent re-apply exited $rc_n1"
+  assert_committable "$N1" "$P_LEDGER" "(n1) THE FIX: with jq ABSENT on an ALREADY-APPLIED repo the negation is PRESERVED — the ledger stays committable"
+  hasF 'WITHDRAWN' "$out_n1" && no "(n1) a missing jq WITHDREW the negation — an unrequested state change on a diagnosis never made" || ok "(n1) the jq-absent re-apply does not announce a withdrawal"
+  hasF 'records outside the allowlist' "$out_n1" && no "(n1) the jq-absent re-apply claimed FOREIGN RECORDS it never observed" || ok "(n1) no false contamination message when jq is absent"
+  has '^Memory readiness: gated' "$out_n1" && no "(n1) a missing jq failed toward 'gated' on an applied repo" || ok "(n1) the verdict is not 'gated' when jq is merely absent"
+  hasF 'PRESERVED' "$out_n1" && ok "(n1) the output says HONESTLY that the negation was PRESERVED, not re-verified" || no "(n1) the preservation is silent — the user cannot tell the gate did not run"
+
+  # (n2) ALREADY APPLIED + jq PRESENT BUT BROKEN. `command -v jq` tests PRESENCE, NOT FUNCTION: a jq
+  # that exits non-zero makes the whole-file pass AND every per-line probe fail, so a perfectly CLEAN
+  # ledger was counted entirely unparseable and the gate REFUSED. Strictly worse than (n1) — it did
+  # not merely withdraw, it printed "(unparseable record at ledger line 1)" as if it were a slug.
+  N2="$(mkgate)"
+  mem "$N2" apply >/dev/null 2>&1
+  assert_committable "$N2" "$P_LEDGER" "(n2) precondition: the clean apply un-ignored the ledger"
+  N2BIN="$N2/brokenbin"; mkdir -p "$N2BIN"
+  for _c in bash sh git awk grep sed cut head tail tr cmp date cp mv rm mkdir rmdir dirname basename wc cat ls sort uniq find id chmod touch expr sleep env; do
+    _p="$(command -v "$_c" 2>/dev/null)" && ln -sf "$_p" "$N2BIN/$_c"
+  done
+  printf '#!/bin/sh\nexit 127\n' > "$N2BIN/jq"; chmod +x "$N2BIN/jq"
+  # META-CHECK, in a FRESH bash (this shell has jq hashed): the stub must be FOUND and must FAIL —
+  # otherwise the branch below is not the one being driven.
+  if PATH="$N2BIN" bash -c 'command -v jq' >/dev/null 2>&1 && ! PATH="$N2BIN" bash -c 'printf "{}" | jq -e . >/dev/null 2>&1'; then
+    ok "(n2) the broken-jq fixture is genuinely PRESENT on PATH and genuinely NON-FUNCTIONAL (the branch is really driven)"
+  else
+    no "(n2) the broken-jq fixture is not present-and-broken — the assertions below would be vacuous"
+  fi
+  out_n2="$(PATH="$N2BIN" bash "$MEM" --root "$N2" apply 2>&1)"; rc_n2=$?
+  [ "$rc_n2" -eq 0 ] && ok "(n2) the broken-jq re-apply exits 0" || no "(n2) the broken-jq re-apply exited $rc_n2"
+  assert_committable "$N2" "$P_LEDGER" "(n2) THE FIX: a BROKEN jq on an ALREADY-APPLIED repo PRESERVES the negation — the ledger stays committable"
+  hasF 'WITHDRAWN' "$out_n2" && no "(n2) a broken jq WITHDREW the negation on a perfectly CLEAN ledger" || ok "(n2) the broken-jq re-apply does not announce a withdrawal"
+  hasF 'unparseable record' "$out_n2" && no "(n2) a broken jq reported '(unparseable record ...)' against a CLEAN ledger — contamination it never observed" || ok "(n2) no false 'unparseable record' claim when jq itself is what is broken"
+  hasF 'records outside the allowlist' "$out_n2" && no "(n2) the broken-jq re-apply claimed FOREIGN RECORDS it never observed" || ok "(n2) no false contamination message when jq is broken"
+  has '^Memory readiness: gated' "$out_n2" && no "(n2) a broken jq failed toward 'gated' on an applied repo with a clean ledger" || ok "(n2) the verdict is not 'gated' when jq itself is broken"
+
+  # (n3) REGRESSION CONTROL — the asymmetry must not disarm the gate. A REAL foreign record on an
+  # already-applied repo must STILL withdraw the negation and name the real slug.
+  N3="$(mkgate)"
+  mem "$N3" apply >/dev/null 2>&1
+  assert_committable "$N3" "$P_LEDGER" "(n3) precondition: the clean apply un-ignored the ledger"
+  printf '{"repo": "stranger/elsewhere", "number": 9}\n' >> "$N3/$P_LEDGER"
+  out_n3="$(mem "$N3" apply 2>&1)"; rc_n3=$?
+  [ "$rc_n3" -eq 0 ] && ok "(n3) the contaminated re-apply exits 0" || no "(n3) the contaminated re-apply exited $rc_n3"
+  assert_ignored "$N3" "$P_LEDGER" "(n3) REGRESSION CONTROL: a REAL foreign record STILL WITHDRAWS the negation — the ledger is ignored again"
+  hasF 'WITHDRAWN' "$out_n3" && ok "(n3) the real-contamination path still ANNOUNCES the withdrawal" || no "(n3) the real withdrawal went silent — the asymmetry disarmed the gate"
+  hasF 'stranger/elsewhere' "$out_n3" && ok "(n3) the withdrawal names the REAL observed slug" || no "(n3) the withdrawal does not name the real slug"
 fi
 
 # ============================================================================
