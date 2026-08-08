@@ -67,8 +67,28 @@
 #   replacement text — the retract half is already recorded in the provenance chain and will not be
 #   redone.
 #
+# ATTEST NOTE (`--attest-existing`, add only): heals the ONE state the writer previously could not
+# reach — a lesson line that is PRESENT in LESSONS.md but has NO chain-valid `add` backing it, so
+# read-lessons.sh drops it and the lesson is silently invisible to every consumer. A plain `add`
+# cannot fix this: the dedup guard below sees the line, short-circuits BEFORE any provenance work,
+# and exits 0 — the line stays unreadable forever. (Observed 2026-08-08: 6 of 11 entries in this
+# repo's own store had been invisible since at least 2026-07-07.) With `--attest-existing` the
+# dedup guard instead falls through to an ATTEST path that appends a chain-valid `add` entry for
+# the existing line and leaves LESSONS.md BYTE-IDENTICAL (no trailer is added — read-lessons.sh
+# treats a missing last_verified as fresh, so the line becomes readable without rewriting it).
+#
+#   NOT A LAUNDERING HOLE — the flag grants no capability a plain `add` does not already grant.
+#   The caller must pass the EXACT --category and --lesson text (they feed the same
+#   sha("<cat> <text>") content_hash), so attesting a line requires having its content in hand,
+#   which is precisely the evidence a fresh `add` requires. The flag is REQUIRED and never
+#   implicit, so a routine `add` can never silently launder an out-of-band poisoned line into the
+#   trusted set; the provenance entry records `source`, so who vouched stays auditable.
+#   Fails loud (exit 4) if the line is NOT present — a caller asserting "this exists" must not
+#   silently fall back to creating it. If the hash is ALREADY chain-trusted it is a no-op (exit 0).
+#
 # Usage:  write-lessons.sh --category "<cat>" --lesson "<text>" \
 #                          [--source "<id>"] [--last-verified "<iso8601Z>"] [--confidence "<value>"]
+#         write-lessons.sh --category "<cat>" --lesson "<text>" --attest-existing [--source "<id>"]
 #         write-lessons.sh retract <category> <lesson-text> [--source "<id>"]
 #         write-lessons.sh retract --hash <content_hash>    [--source "<id>"]
 #         write-lessons.sh supersede <category> <lesson-text> --replacement "<new text>" [--source "<id>"]
@@ -78,10 +98,13 @@
 #         disallowed / would-corrupt condition (so a bad call can never half-write state).
 #         retract/supersede exit 4 when the target is absent from LESSONS.md or not chain-trusted
 #         (fail loud, never tombstone a nonexistent lesson silently; store left byte-identical).
+#         --attest-existing exits 4 when the target line is absent from LESSONS.md, and 2 when
+#         combined with retract/supersede (add-only flag).
 
 set -uo pipefail
 
 CATEGORY=""; LESSON=""; SOURCE="unknown"; LAST_VERIFIED=""; CONFIDENCE="medium"; REPLACEMENT=""
+ATTEST=0
 # Subcommand detection: a leading `retract`/`supersede` selects that flow (default action is add).
 ACTION="add"; HASH=""
 if [ "${1:-}" = "retract" ]; then ACTION="retract"; shift
@@ -103,6 +126,7 @@ while [ $# -gt 0 ]; do
     --hash=*)          HASH="${1#--hash=}"; shift ;;
     --replacement)     REPLACEMENT="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
     --replacement=*)   REPLACEMENT="${1#--replacement=}"; shift ;;
+    --attest-existing) ATTEST=1; shift ;;
     *) # retract/supersede accept positional <category> <lesson-text> (in that order); add ignores strays.
        if { [ "$ACTION" = "retract" ] || [ "$ACTION" = "supersede" ]; } && [ -z "$CATEGORY" ]; then CATEGORY="$1"
        elif { [ "$ACTION" = "retract" ] || [ "$ACTION" = "supersede" ]; } && [ -z "$LESSON" ]; then LESSON="$1"
@@ -110,6 +134,13 @@ while [ $# -gt 0 ]; do
        shift ;;
   esac
 done
+# --attest-existing is an ADD-only healing path (see ATTEST NOTE above). Rejecting it on the
+# curation verbs is deliberate: retract/supersede already REQUIRE a chain-trusted target, so
+# pairing them with a flag whose whole purpose is to trust an untrusted line is contradictory,
+# and silently ignoring it would let a caller believe an attestation happened when it did not.
+if [ "$ATTEST" -eq 1 ] && [ "$ACTION" != "add" ]; then
+  echo "write-lessons: --attest-existing is add-only (not valid with $ACTION)" >&2; exit 2
+fi
 if [ "$ACTION" = "retract" ] || [ "$ACTION" = "supersede" ]; then
   if [ -n "$HASH" ]; then
     # --hash identifies the target directly; must be a full lowercase sha256 (it feeds the
@@ -235,12 +266,55 @@ content_hash="$(printf '%s' "$CATSLUG $lesson_oneline" | sha)"
 fi
 id="$(printf '%s' "$content_hash" | cut -c1-8)"
 
+field() { printf '%s' "$1" | sed -E "s/.*\"$2\":\"([^\"]*)\".*/\1/"; }
+
+# chain_trusted <content_hash> -> 0 if the LAST chain-valid action for that hash is `add`.
+# Walks the chain exactly like read-lessons.sh, with last-action-wins (add → trusted, later
+# retract → untrusted, re-add → re-trusted). A broken link distrusts everything after it, so a
+# poisoned / out-of-band line can never be laundered into a legitimate-looking tombstone — nor
+# be mistaken for already-attested by the ATTEST path below. Single implementation, shared by
+# the attest pre-check and the retract/supersede pre-check.
+chain_trusted() {
+  local target="$1" trusted=0 prev="$GENESIS" p ch
+  [ -f "$PROV" ] || return 1
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    [ "$(field "$p" prev_hash)" = "$prev" ] || break   # chain broken → distrust the rest
+    # Key-presence check first (nullable-required discipline): `field` echoes the WHOLE entry when
+    # the key is absent, so gate on the literal key before extracting the value.
+    ch=""
+    case "$p" in *'"content_hash":"'*) ch="$(field "$p" content_hash)" ;; esac
+    if [ -n "$ch" ] && [ "$ch" = "$target" ]; then
+      case "$(field "$p" action)" in
+        add)     trusted=1 ;;
+        retract) trusted=0 ;;
+      esac
+    fi
+    prev="$(printf '%s' "$p" | sha)"
+  done < "$PROV"
+  [ "$trusted" -eq 1 ]
+}
+
 # Dedup guard (add only): id is content-derived (category + lesson), so an identical lesson in the
 # same category yields an identical entry. The appended trailer is OUTSIDE this substring, so the
 # match still works. Skip (touching nothing — no provenance work) if already present.
+#
+# `--attest-existing` inverts exactly this branch: "already present" is the PRECONDITION of the
+# heal, not a reason to skip. See the ATTEST NOTE at the top of the file for why this grants no
+# capability a plain `add` does not.
 if [ "$ACTION" = "add" ] && grep -qF -- "- [$id] $lesson_oneline" "$LESSONS" 2>/dev/null; then
-  echo "write-lessons: lesson already present ([$id] in $CATSLUG) — skipping"
-  exit 0
+  if [ "$ATTEST" -ne 1 ]; then
+    echo "write-lessons: lesson already present ([$id] in $CATSLUG) — skipping"
+    exit 0
+  fi
+  ATTEST_PRESENT=1
+elif [ "$ATTEST" -eq 1 ]; then
+  # Fail loud rather than falling back to a normal add: the caller asserted this line already
+  # exists, and silently creating it instead would hide a category/text mismatch (the commonest
+  # way to "attest" the wrong thing — the hash is over category + text, so a wrong --category
+  # yields a different id that matches nothing).
+  echo "write-lessons: --attest-existing target [$id] not found in $LESSONS — refusing (attest never creates)" >&2
+  exit 4
 fi
 
 # prov_line <id> <prev_hash> <content_hash> <source> <action>
@@ -254,6 +328,32 @@ prov_line() {
     printf '{"id":"%s","prev_hash":"%s","content_hash":"%s","source":"%s","action":"%s","written_at":"%s"}' "$1" "$2" "$3" "$4" "$5" "$ts"
   fi
 }
+
+# ---- ATTEST flow (add-only heal for a present-but-unbacked line) ------------------------
+# Appends a chain-valid `add` entry for a line that already exists in LESSONS.md, and leaves
+# LESSONS.md BYTE-IDENTICAL. No trailer is written: adding one would rewrite the line (and the
+# whole point is that the stored text is what is being vouched for, unchanged), and
+# read-lessons.sh treats a missing/unparseable last_verified as FRESH — so the attested line
+# becomes readable immediately. Category bounds are NOT re-evaluated: no entry is being added to
+# the category, so eviction must not fire (an attest that evicted a sibling would destroy data
+# while claiming to repair it).
+if [ "${ATTEST_PRESENT:-0}" -eq 1 ]; then
+  if chain_trusted "$content_hash"; then
+    echo "write-lessons: [$id] in $CATSLUG is already chain-trusted — nothing to attest (no-op)"
+    exit 0
+  fi
+  prov_tmp="$(mktemp "$MEM_DIR/.lptmp.XXXXXX")"
+  trap 'rm -f "$prov_tmp" 2>/dev/null' EXIT
+  cat "$PROV" > "$prov_tmp"
+  prev_hash="$(printf '%s' "$(tail -n1 "$prov_tmp")" | sha)"
+  printf '%s\n' "$(prov_line "$id" "$prev_hash" "$content_hash" "$SOURCE" "add")" >> "$prov_tmp"
+  mv "$prov_tmp" "$PROV" || {
+    echo "write-lessons: atomic rename failed — attest aborted; LESSONS.md untouched" >&2
+    exit 2
+  }
+  echo "write-lessons: attested existing [$id] in $CATSLUG (source=$SOURCE) — provenance appended, LESSONS.md unchanged"
+  exit 0
+fi
 
 # ---- RETRACT flow (tombstone verb; also the first two-thirds of SUPERSEDE) -------------
 # Gate-side curation: FAILS LOUD (exit 4) rather than silently tombstoning a nonexistent lesson.
@@ -282,28 +382,8 @@ if [ "$ACTION" = "retract" ] || [ "$ACTION" = "supersede" ]; then
   # is rewritten, so supersede can place the replacement in the same category when the caller
   # targeted by --hash alone (no --category given). Harmless no-op for a plain retract.
   target_catslug="$(awk -v pfx="- [$id] " 'BEGIN{cat=""} /^## /{cat=substr($0,4)} index($0,pfx)==1{print cat; exit}' "$LESSONS" 2>/dev/null)"
-  # (2) ...and its hash must be chain-trusted: walk the chain exactly like read-lessons.sh, with
-  #     last-action-wins (add → trusted, later retract → untrusted, re-add → re-trusted). A broken
-  #     link distrusts everything after it, so a poisoned/out-of-band line can never be laundered
-  #     into a legitimate-looking tombstone.
-  field() { printf '%s' "$1" | sed -E "s/.*\"$2\":\"([^\"]*)\".*/\1/"; }
-  target_trusted=0; prev="$GENESIS"
-  while IFS= read -r p; do
-    [ -n "$p" ] || continue
-    [ "$(field "$p" prev_hash)" = "$prev" ] || break   # chain broken → distrust the rest
-    # Key-presence check first (nullable-required discipline): `field` echoes the WHOLE entry when
-    # the key is absent, so gate on the literal key before extracting the value.
-    ch=""
-    case "$p" in *'"content_hash":"'*) ch="$(field "$p" content_hash)" ;; esac
-    if [ -n "$ch" ] && [ "$ch" = "$content_hash" ]; then
-      case "$(field "$p" action)" in
-        add)     target_trusted=1 ;;
-        retract) target_trusted=0 ;;
-      esac
-    fi
-    prev="$(printf '%s' "$p" | sha)"
-  done < "$PROV"
-  if [ "$target_trusted" -ne 1 ]; then
+  # (2) ...and its hash must be chain-trusted (shared walk — see chain_trusted() above).
+  if ! chain_trusted "$content_hash"; then
     echo "write-lessons: $ACTION target [$id] is not chain-trusted (never added, already retracted, or beyond a chain break) — refusing" >&2
     exit 4
   fi

@@ -31,6 +31,14 @@
 #          stays FIRST (read-lessons.sh's greedy strip still matches); reader emits the
 #          replacement (hashed text unaffected by the trailer) and never emits the superseded text
 #      (e) --hash form with auto-detected category (no explicit --category given)
+#  12. --attest-existing (add-only heal for a line PRESENT in LESSONS.md but with no chain-valid
+#      `add` backing it — the invisible-entry defect): reproduces the defect, proves a plain add
+#      CANNOT fix it (dedup guard short-circuits before any provenance work), then asserts the
+#      heal leaves LESSONS.md BYTE-IDENTICAL, makes the line readable, never evicts a sibling,
+#      records the vouching `source`, is idempotent, refuses an absent target (exit 4, store
+#      byte-identical), is rejected on retract/supersede (exit 2), and keeps the chain valid
+#  13. REGRESSION (real store): count of `^- \[` lines in the repo's own LESSONS.md MUST equal the
+#      count read-lessons.sh emits — i.e. no committed lesson is silently invisible to consumers
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -356,6 +364,112 @@ grep -qF -- "hash form replacement lesson" "$hf" 2>/dev/null && grep -q '^## has
   || no "--hash supersede did not place the replacement under the auto-detected category"
 grep -qF -- "hash form target lesson" "$hf" 2>/dev/null && no "superseded (--hash targeted) entry still present" || ok "superseded (--hash targeted) entry removed"
 rm -rf "$HDIR"
+
+echo "== 12. --attest-existing (heal a present-but-unbacked line) =="
+ADIR="$(mktemp -d)"; ( cd "$ADIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
+af="$ADIR/$LFILE"; aj="$ADIR/$PJFILE"
+# Seed one legitimately-written lesson so the store + chain exist, then append a SECOND line
+# out-of-band (exactly the defect shape: present in LESSONS.md, no provenance backing it).
+( cd "$ADIR" && bash "$WRITE" --category att --lesson "legit attested lesson" --source s ) >/dev/null 2>&1
+orphan_hash="$(printf '%s' "att orphan unbacked lesson" | sha)"; orphan_id="$(printf '%s' "$orphan_hash" | cut -c1-8)"
+printf -- '- [%s] orphan unbacked lesson\n' "$orphan_id" >> "$af"
+
+# Reader output is captured into a variable and matched with a case/glob rather than piped into
+# `grep -q`. Under `set -o pipefail` a `producer | grep -q` pipeline can exit 141 (SIGPIPE) EVEN
+# ON A MATCH, because -q closes the pipe as soon as it matches — a racy false FAIL that bit this
+# very suite while it was being written.
+emits() { case "$1" in *"$2"*) return 0 ;; *) return 1 ;; esac; }
+aread() { ( cd "$ADIR" && bash "$READ" ) 2>/dev/null; }
+
+echo "-- 12a. baseline: the unbacked line is invisible to the reader --"
+out="$(aread)"
+emits "$out" "orphan unbacked lesson" \
+  && no "reader emitted an unbacked line (provenance gate not enforcing)" \
+  || ok "unbacked line is dropped by the reader (defect reproduced)"
+
+echo "-- 12b. a plain add CANNOT heal it (dedup guard short-circuits) --"
+cp "$aj" "$aj.snap"
+( cd "$ADIR" && bash "$WRITE" --category att --lesson "orphan unbacked lesson" --source s ) >/dev/null 2>&1
+cmp -s "$aj" "$aj.snap" && ok "plain add wrote NO provenance for the present-but-unbacked line" || no "plain add unexpectedly wrote provenance"
+out="$(aread)"
+emits "$out" "orphan unbacked lesson" \
+  && no "plain add somehow made the line readable" || ok "line still invisible after a plain add (the gap this flag closes)"
+
+echo "-- 12c. --attest-existing heals it, leaving LESSONS.md BYTE-IDENTICAL --"
+cp "$af" "$af.snap"
+( cd "$ADIR" && bash "$WRITE" --category att --lesson "orphan unbacked lesson" --attest-existing --source attest-test ) >/dev/null 2>&1
+rc=$?
+[ "$rc" -eq 0 ] && ok "attest exited 0" || no "attest failed (exit $rc)"
+cmp -s "$af" "$af.snap" && ok "LESSONS.md byte-identical after attest (no rewrite, no trailer)" || no "attest rewrote LESSONS.md"
+out="$(aread)"
+emits "$out" "orphan unbacked lesson" \
+  && ok "reader now emits the attested line" || no "attested line still not emitted"
+# The sibling lesson must be untouched — an attest adds nothing to the category, so eviction
+# must never fire (an attest that evicted a sibling would destroy data while claiming repair).
+emits "$out" "legit attested lesson" \
+  && ok "pre-existing sibling lesson still emitted (attest did not trigger eviction)" || no "attest evicted a sibling"
+# `source` is recorded, so who vouched stays auditable.
+grep -qF -- '"source":"attest-test"' "$aj" && ok "attest provenance records the vouching source" || no "attest provenance lost the source"
+grep -qF -- "\"content_hash\":\"$orphan_hash\"" "$aj" && ok "attest provenance carries the line's content_hash" || no "attest provenance has the wrong content_hash"
+
+echo "-- 12d. attest is idempotent: a second attest is a no-op --"
+cp "$aj" "$aj.snap2"
+( cd "$ADIR" && bash "$WRITE" --category att --lesson "orphan unbacked lesson" --attest-existing --source attest-test ) >/dev/null 2>&1
+rc=$?
+[ "$rc" -eq 0 ] && ok "re-attest of an already-trusted line exits 0" || no "re-attest exited $rc"
+cmp -s "$aj" "$aj.snap2" && ok "re-attest appended NO duplicate provenance entry" || no "re-attest duplicated a provenance entry"
+
+echo "-- 12e. attest NEVER creates: absent target fails loud (exit 4), store byte-identical --"
+cp "$af" "$af.snap3"; cp "$aj" "$aj.snap3"
+( cd "$ADIR" && bash "$WRITE" --category att --lesson "this line does not exist anywhere" --attest-existing --source s ) >/dev/null 2>&1
+rc=$?
+[ "$rc" -eq 4 ] && ok "attest of an absent line refused (exit 4)" || no "attest of an absent line exited $rc (expected 4)"
+cmp -s "$af" "$af.snap3" && ok "LESSONS.md byte-identical after absent-target attest" || no "LESSONS.md changed after absent-target attest"
+cmp -s "$aj" "$aj.snap3" && ok "provenance byte-identical after absent-target attest" || no "provenance changed after absent-target attest"
+
+echo "-- 12f. --attest-existing is add-only (rejected on retract/supersede, exit 2) --"
+for verb in retract supersede; do
+  ( cd "$ADIR" && bash "$WRITE" "$verb" att "legit attested lesson" --attest-existing --replacement x --source s ) >/dev/null 2>&1
+  rc=$?
+  [ "$rc" -eq 2 ] && ok "--attest-existing rejected on $verb (exit 2)" || no "--attest-existing on $verb exited $rc (expected 2)"
+done
+cmp -s "$aj" "$aj.snap3" && ok "provenance byte-identical after add-only rejections" || no "provenance changed after add-only rejections"
+
+echo "-- 12g. chain stays valid end-to-end after the attest appends --"
+prev="GENESIS"; chain_ok=1; n=0
+while IFS= read -r p; do
+  [ -n "$p" ] || continue
+  n=$((n+1))
+  got="$(printf '%s' "$p" | sed -E 's/.*"prev_hash":"([^"]*)".*/\1/')"
+  [ "$got" = "$prev" ] || { chain_ok=0; break; }
+  prev="$(printf '%s' "$p" | sha)"
+done < "$aj"
+[ "$chain_ok" -eq 1 ] && [ "$n" -gt 0 ] && ok "provenance chain valid across all $n entries after attest" || no "chain broken at entry $n after attest"
+rm -rf "$ADIR"
+
+echo "== 13. REGRESSION: real store has no invisible entries (LESSONS.md count == reader count) =="
+# Guards the invisible-entry class found 2026-08-08: 11 entries in LESSONS.md but only 5 emitted,
+# because 6 lines had no chain-valid `add` backing them. A committed lesson the reader silently
+# drops is worse than no lesson — every consumer believes it is active guidance when nothing reads
+# it, and nothing else in CI compares the two counts. Compare by PREFIX-free counts: provenance
+# stores the full 64-char sha256 while LESSONS.md shows the 8-char id, so a naive join on the two
+# files reports either zero overlap or nothing missing depending on direction.
+real_lessons="$REAL_REPO/$LFILE"
+if [ -f "$real_lessons" ]; then
+  # `|| true`, NOT `|| echo 0`: grep -c already PRINTS "0" before exiting 1 on no-match, so the
+  # echo would append a SECOND line and make the -eq comparison below throw. (Same for the piped
+  # form, which additionally needs the `|| true` because `set -o pipefail` is on.)
+  file_n="$(grep -c '^- \[' "$real_lessons" 2>/dev/null || true)"
+  read_n="$(cd "$REAL_REPO" && bash "$READ" 2>/dev/null | grep -c '^- \[' || true)"
+  file_n="${file_n:-0}"; read_n="${read_n:-0}"
+  if [ "$file_n" -eq "$read_n" ]; then
+    ok "real LESSONS.md: all $file_n entries are readable (no unbacked/retracted-but-lingering lines)"
+  else
+    no "real LESSONS.md has $file_n entries but read-lessons.sh emits $read_n — $((file_n - read_n)) invisible; see .supervisor/logs/memory.log for the DROPPED/RETRACTED/STALE reason per line, then heal with: write-lessons.sh --category <cat> --lesson \"<text>\" --attest-existing"
+  fi
+else
+  ok "real LESSONS.md absent — count-parity assertion vacuously satisfied"
+fi
 
 echo
 echo "RESULT: $pass passed, $fail failed"
