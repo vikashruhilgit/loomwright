@@ -16,9 +16,9 @@ Classes where a sweep fixed one occurrence but the class spans many surfaces (no
 
 **How to apply:** when a diff touches any one occurrence of these classes, grep the exact old string repo-wide before passing the review.
 
-6. **Fictional token-savings numbers** — RESOLVED in PR #51 (fix/v14.23.1-combined, June 2026): grep for `~500 tokens|~200 tokens instead|tokens freed` now returns zero hits across agents/, commands/, skills/, CLAUDE.md, README.md.
-
 5. **Kept-current count surfaces NOT scanned by doc-currency CI** (confirmed v14.23.0 review: skills 52→53 bump updated 5 surfaces, missed all 4 of these; re-checked June 2026 — `52 skill` greps clean, class 5 currently resolved): README.md ~21 (the "NEW in v14.0.0" block's trailing "14 agent roles, 17 slash commands, N skills, 19 quality gate hooks" — maintained as CURRENT despite the historical framing), README.md ~568 ("N skill files for guidance"), .claude-plugin/README.md ~9 (autonomous-mode bullet's trailing "Counts: 17 slash commands, N skills, 19 hooks"), commands/agent-help.md ~1045 (directory-tree "Skill files (N skills)"). On any count bump, grep the OLD number repo-wide (`grep -rn "52 skill"` style) — check-doc-currency.sh passes with these stale.
+
+6. **Fictional token-savings numbers** — RESOLVED in PR #51 (fix/v14.23.1-combined, June 2026): grep for `~500 tokens|~200 tokens instead|tokens freed` now returns zero hits across agents/, commands/, skills/, CLAUDE.md, README.md.
 
 7. **Bot-author doc simplification (PR #51, v14.23.1)** — pr-postmortem docs say a bot round needs an author that "ends with `[bot]`", but the combined gather script's `bot_author_re` is `^claude(\[bot\])?$|\[bot\]$|^github-actions` (bare `claude` / `github-actions*` logins also count). The #50-variant description survived the #49-wins conflict resolution in 5 surfaces: skills/pr-postmortem/SKILL.md:71 + :94 (the :94 evidence-filter rule is the behavioral one), docs/RESULT_SCHEMAS.md:1010, CLAUDE.md:15 banner, CHANGELOG.md:7. Flagged MEDIUM drift/workflow in iteration 1 of the review-heal loop — iteration 2 must verify all FIVE surfaces were updated, plus FAILURE_ESCALATION.md:164-171 (adjudication EXECUTE_CHECKPOINT flow diagram still lacking the hook-required base-fields note that agents/execute-manager.md and skills/async-orchestration/SKILL.md:466 got — LOW).
 
