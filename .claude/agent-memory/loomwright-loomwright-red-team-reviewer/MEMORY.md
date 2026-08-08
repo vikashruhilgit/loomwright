@@ -1,4 +1,4 @@
-# Red Team Reviewer Memory — ai-agent-manager-plugin
+# Red Team Reviewer Memory — loomwright
 
 - [Fail-closed vs fail-safe split](attack_failclosed_vs_failsafe_split.md) — correctness gates fail CLOSED under CI; runtime emitters fail SAFE (exit 0); inverting either is a regression
 - [jq-only JSON injection](attack_jq_only_json_injection.md) — user/PR-text → JSON must be jq --arg built, gated by a quote/backslash/newline round-trip test

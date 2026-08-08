@@ -1,4 +1,4 @@
-# QA Executor Memory — ai-agent-manager-plugin
+# QA Executor Memory — loomwright
 
 - [Infra self-test contract](infra_self_test_contract.md) — QA surface = shell self-tests + gates, not Playwright; static-only tests required
 - [Golden fixture regen](golden_fixture_regen.md) — WRITE_GOLDENS=1 + normalise rule per release-varying value

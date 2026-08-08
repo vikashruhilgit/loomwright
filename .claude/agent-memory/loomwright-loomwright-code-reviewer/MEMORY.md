@@ -1,4 +1,4 @@
-# Code Reviewer Memory — ai-agent-manager-plugin
+# Code Reviewer Memory — loomwright
 
 - [agent-help phase-list drift](project_agent_help_phase_drift.md) — agent-help.md Supervisor phase enumerations are NOT covered by the doc-currency CI gate; check them in any phase-adding consistency audit
 - [entry-points gate RESOLVED](project_entry_points_gate_blindspot.md) — doc-currency now scans "(N entry points)"/"N slash commands" incl. historical README banners (gate-forced updates)
