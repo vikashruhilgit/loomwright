@@ -122,11 +122,58 @@ if [ "$rc" -ne 0 ] && [ "$before" = "$(cat "$RDIR/.supervisor/memory/.provenance
 else
   no "retract of an unknown id did not fail closed (exit $rc)"
 fi
-# 8b. non-hex id is rejected before it reaches a grep/sed pattern
+# 8b. the ADD-half sibling of 8a: `--fact <new> --supersedes <unknown-id>`. The add half and the
+#     target resolution share one path, so an unknown target must leave state COMPLETELY untouched —
+#     in particular the NEW fact must NOT be written (a half-applied supersede would store the
+#     replacement while the wrong fact it was meant to correct stays live).
+prov_b="$(cat "$RDIR/.supervisor/memory/.provenance.jsonl")"
+mem_b="$(cat "$RDIR/.supervisor/memory/PROJECT_MEMORY.md")"
+( cd "$RDIR" && bash "$WRITE" --fact "orphan replacement fact" --supersedes deadbeef --source r ) >/dev/null 2>&1
+rc=$?
+[ "$rc" -eq 2 ] && ok "supersede with an unknown target aborts (exit 2)" || no "supersede with an unknown target did not fail closed (exit $rc)"
+grep -qF -- "orphan replacement fact" "$RDIR/.supervisor/memory/PROJECT_MEMORY.md" \
+  && no "aborted supersede WROTE the replacement fact (half-applied correction)" \
+  || ok "aborted supersede did not write the replacement fact"
+[ "$prov_b" = "$(cat "$RDIR/.supervisor/memory/.provenance.jsonl")" ] && ok "aborted supersede left provenance byte-identical" || no "aborted supersede mutated provenance"
+[ "$mem_b" = "$(cat "$RDIR/.supervisor/memory/PROJECT_MEMORY.md")" ] && ok "aborted supersede left PROJECT_MEMORY.md byte-identical" || no "aborted supersede mutated PROJECT_MEMORY.md"
+# The abort happens before any temp exists, so no .mtmp/.ptmp may be left behind (a stray temp would
+# also mean the trap-based cleanup is the only thing standing between an abort and a partial write).
+# `ls -1a`, NOT `ls -1` — the temps are DOTFILES (`.mtmp.XXXXXX`/`.ptmp.XXXXXX`), which a bare
+# `ls -1` hides, making this assertion unfailable.
+stray="$(ls -1a "$RDIR/.supervisor/memory/" 2>/dev/null | grep -c -e '^\.mtmp\.' -e '^\.ptmp\.')"; stray="${stray:-0}"
+[ "$stray" -eq 0 ] && ok "aborted supersede left no .mtmp/.ptmp temp files" || no "aborted supersede left $stray temp file(s) behind"
+aout="$( cd "$RDIR" && bash "$READ" 2>/dev/null )"
+acnt2="$(echo "$aout" | grep -cE '^- \[')"; acnt2="${acnt2:-0}"
+if [ "$acnt2" -eq 2 ] && echo "$aout" | grep -q "the sky is green" && echo "$aout" | grep -q "keep me" \
+   && ! echo "$aout" | grep -q "orphan replacement fact"; then
+  ok "reader still returns exactly the pre-existing entries after the aborted supersede"
+else
+  no "reader state changed by the aborted supersede (have $acnt2 verified, want the original 2)"
+fi
+
+# 8c. non-hex id is rejected before it reaches a grep/sed pattern
 ( cd "$RDIR" && bash "$WRITE" --retract '.*' --source r ) >/dev/null 2>&1
 [ $? -eq 2 ] && ok "non-hex retract id rejected" || no "non-hex retract id accepted"
 
-# 8c. supersede: corrected fact in, wrong fact out, unrelated fact untouched — one atomic call
+# 8d. ids are EXACTLY 8 hex chars by construction (`cut -c1-8`), so a hex-but-wrong-length id is a
+#     malformed id — it must be rejected here with a precise message, not carried into the lookup
+#     and reported as the misleading "no memory entry with id".
+short="$( cd "$RDIR" && bash "$WRITE" --retract a --source r 2>&1 )"
+rc=$?
+if [ "$rc" -eq 2 ] && echo "$short" | grep -q "exactly 8 lowercase hex chars"; then
+  ok "too-short retract id rejected with a length-specific message"
+else
+  no "too-short retract id not rejected at validation (exit $rc): $short"
+fi
+long="$( cd "$RDIR" && bash "$WRITE" --retract deadbeef0 --source r 2>&1 )"
+rc=$?
+if [ "$rc" -eq 2 ] && echo "$long" | grep -q "exactly 8 lowercase hex chars"; then
+  ok "too-long retract id rejected with a length-specific message"
+else
+  no "too-long retract id not rejected at validation (exit $rc): $long"
+fi
+
+# 8e. supersede: corrected fact in, wrong fact out, unrelated fact untouched — one atomic call
 ( cd "$RDIR" && bash "$WRITE" --fact "the sky is blue" --supersedes "$wid" --source r ) >/dev/null 2>&1
 rout="$( cd "$RDIR" && bash "$READ" 2>/dev/null )"
 echo "$rout" | grep -q "the sky is blue" && ok "superseding fact emitted" || no "superseding fact missing"
@@ -135,7 +182,7 @@ echo "$rout" | grep -q "keep me"          && ok "unrelated fact survives superse
 rcnt="$(echo "$rout" | grep -cE '^- \[')"; rcnt="${rcnt:-0}"
 [ "$rcnt" -eq 2 ] && ok "count correct after supersede (2 verified)" || no "wrong count after supersede (have $rcnt, want 2)"
 
-# 8d. THE READ-SIDE POINT: the original `add` lives forever in the append-only provenance log,
+# 8f. THE READ-SIDE POINT: the original `add` lives forever in the append-only provenance log,
 # so a writer-only retraction (line deletion) would leave the wrong fact's content_hash trusted
 # and an out-of-band re-append would read back as VERIFIED. Only the reader's retract branch
 # closes this. Without it, this assertion fails.
@@ -147,13 +194,42 @@ else
   ok "re-appended retracted fact still dropped (retract revokes trust on the read side)"
 fi
 
-# 8e. chronological semantics: a later `add` of the same text re-trusts it (retract is not a
+# 8g. chronological semantics: a later `add` of the same text re-trusts it (retract is not a
 # permanent blocklist — it revokes the trust that existed at that point in the chain).
 sed -i.bak "/the sky is green/d" "$RDIR/.supervisor/memory/PROJECT_MEMORY.md" && rm -f "$RDIR/.supervisor/memory/PROJECT_MEMORY.md.bak"
 ( cd "$RDIR" && bash "$WRITE" --fact "the sky is green" --source r ) >/dev/null 2>&1
 rout3="$( cd "$RDIR" && bash "$READ" 2>/dev/null )"
 echo "$rout3" | grep -q "the sky is green" && ok "re-adding a retracted fact re-trusts it" || no "re-add after retract did not re-trust"
 rm -rf "$RDIR"
+
+# 8h. --supersedes with NO replacement --fact degrades to a plain retraction. That is a caller
+#     mistake and must be LOUD (warning on stderr) but never fatal — the retraction still runs and
+#     still exits 0. --retract, the honest spelling for that same operation, must stay silent.
+WDIR="$(mktemp -d)"; ( cd "$WDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
+( cd "$WDIR" && bash "$WRITE" --fact "supersede me bare" --source w >/dev/null 2>&1 \
+               && bash "$WRITE" --fact "retract me bare"  --source w >/dev/null 2>&1 )
+sid="$(sed -nE 's/^- \[([^]]+)\] supersede me bare$/\1/p' "$WDIR/.supervisor/memory/PROJECT_MEMORY.md")"
+tid="$(sed -nE 's/^- \[([^]]+)\] retract me bare$/\1/p' "$WDIR/.supervisor/memory/PROJECT_MEMORY.md")"
+werr="$( cd "$WDIR" && bash "$WRITE" --supersedes "$sid" --source w 2>&1 >/dev/null )"
+rc=$?
+[ "$rc" -eq 0 ] && ok "--supersedes without --fact still succeeds (exit 0 — warn, never fail)" || no "--supersedes without --fact changed the exit code (exit $rc)"
+echo "$werr" | grep -q "WARNING --supersedes \[$sid\] was given with no replacement --fact" \
+  && ok "--supersedes without --fact warns on stderr (no longer silent)" \
+  || no "--supersedes without --fact was silent: '$werr'"
+grep -qF -- "- [$sid] supersede me bare" "$WDIR/.supervisor/memory/PROJECT_MEMORY.md" \
+  && no "--supersedes without --fact warned but did not retract" \
+  || ok "--supersedes without --fact still performs the retraction (alias behaviour unchanged)"
+terr="$( cd "$WDIR" && bash "$WRITE" --retract "$tid" --source w 2>&1 >/dev/null )"
+rc=$?
+if [ "$rc" -eq 0 ] && [ -z "$terr" ]; then
+  ok "--retract stays silent on stderr and exits 0 (unaffected by the --supersedes warning)"
+else
+  no "--retract regressed (exit $rc, stderr '$terr')"
+fi
+grep -qF -- "- [$tid] retract me bare" "$WDIR/.supervisor/memory/PROJECT_MEMORY.md" \
+  && no "--retract no longer retracts" \
+  || ok "--retract still performs the retraction"
+rm -rf "$WDIR"
 
 echo "== 9. supersede x dedup edge cases (regression) =="
 # Both branches below were live defects: the dedup guard used to be written as

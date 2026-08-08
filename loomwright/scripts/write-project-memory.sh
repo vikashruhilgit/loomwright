@@ -17,6 +17,15 @@
 #         write-project-memory.sh --retract <id> --source "<...>"
 #         write-project-memory.sh --fact "<corrected fact>" --supersedes <id> --source "<...>"
 #
+# <id> is EXACTLY 8 lowercase hex chars — the shape this script itself mints (`cut -c1-8` of the
+# fact's sha256). Anything else is rejected up front with exit 2 rather than being carried into the
+# lookup and reported as the misleading "no memory entry with id".
+#
+# `--supersedes` is an alias of `--retract` that documents intent WHEN PAIRED with a replacement
+# `--fact`. Used without one it is a caller mistake, so it is loud rather than silent: the plain
+# retraction still runs and still exits 0, but a WARNING naming the missing replacement goes to
+# stderr. `--retract` (the honest spelling for that operation) is unaffected and stays silent.
+#
 # CORRECTION PATH (--retract / --supersedes): a stored fact can turn out to be WRONG. A raw text
 # edit is not an option — the read gate hashes the fact text, so an edited line silently stops
 # matching its `add` and is DROPPED without a trace at the call site. `--retract` deletes the
@@ -35,7 +44,7 @@
 
 set -uo pipefail
 
-FACT=""; SOURCE="unknown"; RETRACT_ID=""
+FACT=""; SOURCE="unknown"; RETRACT_ID=""; SUPERSEDES_USED=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --fact)     FACT="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
@@ -43,22 +52,36 @@ while [ $# -gt 0 ]; do
     --source)   SOURCE="${2:-unknown}"; shift; [ $# -gt 0 ] && shift ;;
     --source=*) SOURCE="${1#--source=}"; shift ;;
     # --retract and --supersedes are the same mechanism; the second name documents intent
-    # when it is paired with a replacement --fact.
-    --retract|--supersedes)     RETRACT_ID="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
+    # when it is paired with a replacement --fact. Both keep writing the SAME variable — only the
+    # SPELLING the caller used is tracked separately, so the missing-replacement warning below can
+    # fire for --supersedes without changing anything about --retract.
+    --retract|--supersedes)     if [ "$1" = "--supersedes" ]; then SUPERSEDES_USED=1; fi
+                                RETRACT_ID="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
     --retract=*)                RETRACT_ID="${1#--retract=}"; shift ;;
-    --supersedes=*)             RETRACT_ID="${1#--supersedes=}"; shift ;;
+    --supersedes=*)             SUPERSEDES_USED=1; RETRACT_ID="${1#--supersedes=}"; shift ;;
     *) shift ;;
   esac
 done
 if [ -z "$FACT" ] && [ -z "$RETRACT_ID" ]; then
   echo "write-project-memory: --fact or --retract <id> is required" >&2; exit 2
 fi
-# Ids are the first 8 hex chars of the content hash. Validate strictly: the id is interpolated
-# into a grep pattern and a sed address below, so a loose value could match unintended lines.
+# Ids are the first 8 hex chars of the content hash (`cut -c1-8` below), so validate against that
+# EXACT shape — positively, not by exclusion. The id is interpolated into a grep pattern and a sed
+# address below, so a loose value could match unintended lines; and a length-agnostic check let a
+# malformed id (e.g. a truncated `--retract a`) sail through to the lookup and come back as the
+# misleading "no memory entry with id" instead of "your id is malformed".
 if [ -n "$RETRACT_ID" ]; then
   case "$RETRACT_ID" in
-    *[!0-9a-f]*|"") echo "write-project-memory: --retract id must be lowercase hex (got '$RETRACT_ID')" >&2; exit 2 ;;
+    [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) : ;;
+    *) echo "write-project-memory: --retract id must be exactly 8 lowercase hex chars (got '$RETRACT_ID')" >&2; exit 2 ;;
   esac
+fi
+# --supersedes without a replacement --fact is a caller mistake (it degrades to a plain retraction),
+# and this repo's philosophy is "never silent". Warn — never fail: turning it into an error would be
+# a breaking change, and the alias behaviour must stay identical. --retract is deliberately exempt:
+# a bare retraction IS the honest meaning of that spelling.
+if [ "$SUPERSEDES_USED" -eq 1 ] && [ -z "$FACT" ]; then
+  echo "write-project-memory: WARNING --supersedes [$RETRACT_ID] was given with no replacement --fact — this is a plain retraction, nothing supersedes the retracted entry; pass --fact \"<corrected fact>\" to supersede, or use --retract if a bare retraction was the intent" >&2
 fi
 # Sanitize the source label of quotes/backslashes so the no-jq provenance fallback
 # (printf-built JSON) can never emit malformed JSONL even if a caller widens --source.
