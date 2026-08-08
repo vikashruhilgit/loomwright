@@ -445,6 +445,37 @@ LEDGER
   robust="$(mem "$D3" filter-ledger --ledger "$D3/ledger.jsonl" --allow acme/widget 2>/dev/null)"; rc_r=$?
   [ "$rc_r" -eq 0 ] && ok "(d8) filter-ledger exits 0 on a ledger containing a malformed line" || no "(d8) filter-ledger non-zero on malformed line ($rc_r)"
   ledger_has_field "$robust" number 99 && ok "(d8) records AFTER the malformed line are still retained (per-line fallback works)" || no "(d8) the malformed line swallowed the rest of the ledger"
+
+  # (d10) AN UNTERMINATED FINAL LINE IS STILL FILTERED — the `|| [ -n "$line" ]` guard on
+  # filter_ledger_by_allowlist's per-line fallback, pinned.
+  #
+  # THE FIXTURE DELIBERATELY OMITS THE TRAILING NEWLINE — same reason as group (l8), and it must not
+  # be "tidied" into one. A bare `while IFS= read -r line; do … done < "$ledger"` NEVER RUNS ITS BODY
+  # for an unterminated final line (`read` returns non-zero at EOF even though it filled $line), and
+  # every OTHER filter-ledger fixture above ends with a newline, so nothing else here can catch it.
+  # Here the loss is in the OPPOSITE direction from (l8): the dropped final line is a VALID,
+  # ALLOWLISTED record, so it is silently absent from `filter-ledger > tmp && mv tmp ledger` — the
+  # documented remedy — i.e. real data loss in the exact path users are told to run.
+  D10="$(newgit https://github.com/acme/widget.git)"
+  # The malformed middle line is what forces the per-line FALLBACK (the whole-file jq pass aborts);
+  # without it the guard is never reached and this case would assert nothing.
+  printf '%s\n%s\n%s' \
+    '{"repo":"acme/widget","number":1}' \
+    'NOT JSON AT ALL' \
+    '{"repo":"acme/widget","number":3}' > "$D10/ledger.jsonl"
+  tail_out="$(mem "$D10" filter-ledger --ledger "$D10/ledger.jsonl" --allow acme/widget 2>/dev/null)"
+  ledger_has_field "$tail_out" number 1 && ok "(d10) the record BEFORE the malformed line is retained" || no "(d10) the leading record was dropped"
+  # THE assertion — this is the one that goes red when `|| [ -n "$line" ]` is reverted.
+  ledger_has_field "$tail_out" number 3 && ok "(d10) a VALID allowlisted FINAL record with NO trailing newline is RETAINED (unterminated-line guard)" || no "(d10) the unterminated final record was SILENTLY DROPPED — data loss in the filter-ledger remedy path"
+  # NEGATIVE CONTROL — the guard recovers the line, it does not defeat jq's `select`. Same shape,
+  # same missing trailing newline, but the final record is FOREIGN and must still be excluded.
+  D10b="$(newgit https://github.com/acme/widget.git)"
+  printf '%s\n%s\n%s' \
+    '{"repo":"acme/widget","number":1}' \
+    'NOT JSON AT ALL' \
+    '{"repo":"stranger/elsewhere","number":3}' > "$D10b/ledger.jsonl"
+  tail_foreign="$(mem "$D10b" filter-ledger --ledger "$D10b/ledger.jsonl" --allow acme/widget 2>/dev/null)"
+  ledger_has_repo "$tail_foreign" "stranger/elsewhere" && no "(d10) a FOREIGN unterminated final record leaked through — the guard defeated the allowlist filter" || ok "(d10) a FOREIGN final record with NO trailing newline is still EXCLUDED (guard recovers the line, jq still filters it)"
 fi
 
 # (d9) A FILESYSTEM-PATH REMOTE CARRIES NO OWNER. `origin = /Users/x/myrepo` has the same shape as

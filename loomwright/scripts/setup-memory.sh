@@ -695,6 +695,10 @@ filter_ledger_by_allowlist() {
   # never reaches the filtered output, and this filter's whole job is to DROP what cannot be shown
   # to be allowlisted), so this is a correctness fix, not a posture change: a truncated record is
   # still never RETAINED — it is now merely counted and reported as unparseable like any other.
+  # The reachable case runs the OTHER way, and is the real cost: when the unterminated final line is
+  # a VALID, ALLOWLISTED record, the guard RETAINS a record the pre-fix loop silently DROPPED from
+  # `filter-ledger > tmp && mv tmp ledger` — the documented remedy — i.e. real data loss.
+  # Pinned by test-setup-memory.sh group (d10).
   while IFS= read -r line || [ -n "$line" ]; do
     n=$((n + 1))
     [ -n "$line" ] || continue
