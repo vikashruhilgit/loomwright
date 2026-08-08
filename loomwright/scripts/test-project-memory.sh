@@ -282,6 +282,139 @@ dupcnt="$(grep -cF -- "alpha fact" "$SDIR/.supervisor/memory/PROJECT_MEMORY.md" 
 [ "$dupcnt" -eq 1 ] && ok "bare --fact dedup still writes the fact once" || no "bare --fact dedup wrote $dupcnt copies (want 1)"
 rm -rf "$SDIR"
 
+echo "== 10. line-shape anchoring (substring-collision class) =="
+# ONE root cause, two sites: both matched the structured entry shape `- [<id>] <text>` with an
+# UNANCHORED `grep -F`, so a match could land in the MIDDLE of another entry's free text. Fact text
+# is arbitrary human prose and this repo's own PROJECT_MEMORY.md already stores entries that quote
+# bracketed ids inline, so this was reachable, not theoretical. Fixes: `-x` (whole line) on the
+# dedup guard, `^`-anchored ERE on the retract lookup.
+#
+# The decoy has to embed the victim's EXACT rendered line, so resolve the victim's real id the same
+# way the writer mints it — in a throwaway repo — rather than hard-coding a hash that would rot the
+# moment the id derivation changes.
+IDDIR="$(mktemp -d)"; ( cd "$IDDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
+( cd "$IDDIR" && bash "$WRITE" --fact "victim entry" --source x >/dev/null 2>&1 )
+vid="$(sed -nE 's/^- \[([^]]+)\] victim entry$/\1/p' "$IDDIR/.supervisor/memory/PROJECT_MEMORY.md")"
+rm -rf "$IDDIR"
+[ -n "$vid" ] && ok "resolved the victim fact's minted id [$vid] for the collision fixtures" || no "could not mint the victim id for the collision fixtures"
+
+# 10a. DEDUP SITE. A brand-new fact whose rendered line is a SUBSTRING of an existing entry must
+#      still be written. Unanchored, the writer reported "fact already present ([id]) — skipping"
+#      and exited 0 for a fact it had never stored: silent data loss on a success status.
+ADIR="$(mktemp -d)"; ( cd "$ADIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
+( cd "$ADIR" && bash "$WRITE" --fact "docs say the format is - [$vid] victim entry and that matters" --source x >/dev/null 2>&1 )
+aout="$( cd "$ADIR" && bash "$WRITE" --fact "victim entry" --source x 2>&1 )"
+rc=$?
+if [ "$rc" -eq 0 ] && echo "$aout" | grep -qF "stored [$vid]"; then
+  ok "new fact whose line is a substring of an existing entry is stored, not deduped away"
+else
+  no "substring-collision fact was silently skipped (exit $rc): $aout"
+fi
+vcnt="$(grep -cxF -- "- [$vid] victim entry" "$ADIR/.supervisor/memory/PROJECT_MEMORY.md" 2>/dev/null)"; vcnt="${vcnt:-0}"
+[ "$vcnt" -eq 1 ] && ok "substring-collision fact written exactly once" || no "substring-collision fact written $vcnt times (want 1)"
+aread="$( cd "$ADIR" && bash "$READ" 2>/dev/null )"
+if echo "$aread" | grep -qxF -- "- [$vid] victim entry" && echo "$aread" | grep -qF "docs say the format is"; then
+  ok "reader returns BOTH the decoy and the substring-collision fact (provenance written for each)"
+else
+  no "reader does not return both collision entries"
+fi
+rm -rf "$ADIR"
+
+# 10b. RETRACT SITE. With a decoy ordered BEFORE the real target, `grep -m1 -F` captured the DECOY
+#      line, and the `grep -vxF "$retract_line"` deletion then removed the decoy while the real
+#      target survived — with provenance recording the real id as retracted. State and provenance
+#      disagreed, and the reader kept serving the fact the caller had just "retracted".
+CDIR="$(mktemp -d)"; ( cd "$CDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
+( cd "$CDIR" && bash "$WRITE" --fact "see - [$vid] for details" --source x >/dev/null 2>&1 \
+               && bash "$WRITE" --fact "victim entry" --source x >/dev/null 2>&1 )
+decoy_first=0
+head -n2 "$CDIR/.supervisor/memory/PROJECT_MEMORY.md" | tail -n1 | grep -qF "see - [$vid] for details" && decoy_first=1
+[ "$decoy_first" -eq 1 ] && ok "collision fixture ordered decoy BEFORE the real target (the -m1 hazard)" || no "collision fixture ordering wrong — 10b would not exercise the -m1 path"
+( cd "$CDIR" && bash "$WRITE" --retract "$vid" --source x ) >/dev/null 2>&1
+rc=$?
+[ "$rc" -eq 0 ] && ok "retract of the real id succeeds (exit 0)" || no "retract of the real id failed (exit $rc)"
+grep -qxF -- "- [$vid] victim entry" "$CDIR/.supervisor/memory/PROJECT_MEMORY.md" \
+  && no "retract deleted the wrong line — the REAL target survived in PROJECT_MEMORY.md" \
+  || ok "retract deleted the REAL target line"
+grep -qF -- "see - [$vid] for details" "$CDIR/.supervisor/memory/PROJECT_MEMORY.md" \
+  && ok "the decoy entry is left intact by the retract" \
+  || no "retract deleted the DECOY instead of the target (wrong line removed)"
+cread="$( cd "$CDIR" && bash "$READ" 2>/dev/null )"
+if echo "$cread" | grep -qF "see - [$vid] for details" && ! echo "$cread" | grep -qxF -- "- [$vid] victim entry"; then
+  ok "reader agrees with the file: decoy verified, retracted target gone (state and provenance match)"
+else
+  no "reader disagrees with the file after the collision retract"
+fi
+rm -rf "$CDIR"
+
+# 10c. --supersedes / --retract share a variable but were tracked by two variables with DIFFERENT
+#      last-wins rules: the value was overwritten by every arm, the SPELLING flag was only ever set.
+#      So `--supersedes <a> --retract <b>` warned "--supersedes [<b>]" — naming an id that was never
+#      passed as --supersedes. Both orders are pinned so the two rules can't drift apart again.
+MDIR="$(mktemp -d)"; ( cd "$MDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
+( cd "$MDIR" && bash "$WRITE" --fact "mixed flag alpha" --source m >/dev/null 2>&1 \
+               && bash "$WRITE" --fact "mixed flag beta"  --source m >/dev/null 2>&1 )
+mid_a="$(sed -nE 's/^- \[([^]]+)\] mixed flag alpha$/\1/p' "$MDIR/.supervisor/memory/PROJECT_MEMORY.md")"
+mid_b="$(sed -nE 's/^- \[([^]]+)\] mixed flag beta$/\1/p'  "$MDIR/.supervisor/memory/PROJECT_MEMORY.md")"
+[ -n "$mid_a" ] && [ -n "$mid_b" ] && ok "mixed-flag fixture stored two entries ([$mid_a], [$mid_b])" || no "mixed-flag fixture ids unresolved"
+# order 1: --supersedes then --retract → LAST spelling is --retract → silent (a bare retraction is
+# the honest meaning of that spelling), and it is [$mid_b] that gets retracted.
+merr="$( cd "$MDIR" && bash "$WRITE" --supersedes "$mid_a" --retract "$mid_b" --source m 2>&1 >/dev/null )"
+rc=$?
+if [ "$rc" -eq 0 ] && [ -z "$merr" ]; then
+  ok "--supersedes <a> --retract <b> is silent (last spelling wins, as the last value already did)"
+else
+  no "--supersedes <a> --retract <b> warned with a stale spelling (exit $rc, stderr '$merr')"
+fi
+grep -qF -- "- [$mid_b] mixed flag beta" "$MDIR/.supervisor/memory/PROJECT_MEMORY.md" \
+  && no "--supersedes <a> --retract <b> retracted the wrong id" \
+  || ok "--supersedes <a> --retract <b> retracted [$mid_b] (last VALUE wins, unchanged)"
+# order 2: --retract then --supersedes → LAST spelling is --supersedes → warn, naming the id the
+# --supersedes spelling actually carried.
+merr2="$( cd "$MDIR" && bash "$WRITE" --retract "$mid_b" --supersedes "$mid_a" --source m 2>&1 >/dev/null )"
+rc=$?
+if [ "$rc" -eq 0 ] && echo "$merr2" | grep -q "WARNING --supersedes \[$mid_a\] was given with no replacement --fact"; then
+  ok "--retract <b> --supersedes <a> warns naming [$mid_a] (the id the last spelling carried)"
+else
+  no "--retract <b> --supersedes <a> did not warn correctly (exit $rc): '$merr2'"
+fi
+# equals-form arms must follow the same rule as their space-separated twins.
+( cd "$MDIR" && bash "$WRITE" --fact "mixed flag gamma" --source m >/dev/null 2>&1 )
+mid_c="$(sed -nE 's/^- \[([^]]+)\] mixed flag gamma$/\1/p' "$MDIR/.supervisor/memory/PROJECT_MEMORY.md")"
+merr3="$( cd "$MDIR" && bash "$WRITE" --supersedes=deadbeef --retract="$mid_c" --source m 2>&1 >/dev/null )"
+rc=$?
+if [ "$rc" -eq 0 ] && [ -z "$merr3" ]; then
+  ok "--supersedes=<a> --retract=<c> equals-form is silent too (both arms clear the spelling)"
+else
+  no "equals-form --retract= did not clear the --supersedes spelling (exit $rc, stderr '$merr3')"
+fi
+rm -rf "$MDIR"
+
+# 10d. NO-REGRESSION PIN for the anchoring change: an ACTUALLY-identical fact must still be deduped
+#      (anchoring must narrow the match, never disable it), and an existing entry must stay findable
+#      by the retract lookup — entries are written with no leading whitespace and no CR, so a
+#      line-start anchor cannot make a legitimate line un-findable.
+PDIR="$(mktemp -d)"; ( cd "$PDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
+( cd "$PDIR" && bash "$WRITE" --fact "exactly identical fact" --source p >/dev/null 2>&1 )
+pid="$(sed -nE 's/^- \[([^]]+)\] exactly identical fact$/\1/p' "$PDIR/.supervisor/memory/PROJECT_MEMORY.md")"
+pdup="$( cd "$PDIR" && bash "$WRITE" --fact "exactly identical fact" --source p 2>&1 )"
+rc=$?
+if [ "$rc" -eq 0 ] && echo "$pdup" | grep -qF "write-project-memory: fact already present ([$pid]) — skipping"; then
+  ok "an actually-identical fact is still deduped with the unchanged message + exit 0"
+else
+  no "anchoring broke ordinary dedup (exit $rc): $pdup"
+fi
+pcnt="$(grep -cxF -- "- [$pid] exactly identical fact" "$PDIR/.supervisor/memory/PROJECT_MEMORY.md" 2>/dev/null)"; pcnt="${pcnt:-0}"
+[ "$pcnt" -eq 1 ] && ok "identical fact still stored exactly once" || no "identical fact stored $pcnt times (want 1)"
+( cd "$PDIR" && bash "$WRITE" --retract "$pid" --source p ) >/dev/null 2>&1
+rc=$?
+if [ "$rc" -eq 0 ] && ! grep -qF -- "- [$pid] " "$PDIR/.supervisor/memory/PROJECT_MEMORY.md"; then
+  ok "an ordinary (non-colliding) entry is still findable and retractable under the anchored lookup"
+else
+  no "anchoring made an ordinary entry un-findable by --retract (exit $rc)"
+fi
+rm -rf "$PDIR"
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

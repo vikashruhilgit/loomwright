@@ -55,9 +55,13 @@ while [ $# -gt 0 ]; do
     # when it is paired with a replacement --fact. Both keep writing the SAME variable — only the
     # SPELLING the caller used is tracked separately, so the missing-replacement warning below can
     # fire for --supersedes without changing anything about --retract.
-    --retract|--supersedes)     if [ "$1" = "--supersedes" ]; then SUPERSEDES_USED=1; fi
+    # LAST FLAG WINS FOR THE SPELLING TOO: every --retract arm CLEARS the flag, exactly as it
+    # overwrites RETRACT_ID. Without that, `--supersedes aaaaaaaa --retract bbbbbbbb` kept a stale
+    # SUPERSEDES_USED=1 and the warning below misattributed the caller's spelling, naming an id
+    # ([bbbbbbbb]) that was never passed as --supersedes.
+    --retract|--supersedes)     if [ "$1" = "--supersedes" ]; then SUPERSEDES_USED=1; else SUPERSEDES_USED=0; fi
                                 RETRACT_ID="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
-    --retract=*)                RETRACT_ID="${1#--retract=}"; shift ;;
+    --retract=*)                SUPERSEDES_USED=0; RETRACT_ID="${1#--retract=}"; shift ;;
     --supersedes=*)             SUPERSEDES_USED=1; RETRACT_ID="${1#--supersedes=}"; shift ;;
     *) shift ;;
   esac
@@ -66,10 +70,20 @@ if [ -z "$FACT" ] && [ -z "$RETRACT_ID" ]; then
   echo "write-project-memory: --fact or --retract <id> is required" >&2; exit 2
 fi
 # Ids are the first 8 hex chars of the content hash (`cut -c1-8` below), so validate against that
-# EXACT shape — positively, not by exclusion. The id is interpolated into a grep pattern and a sed
-# address below, so a loose value could match unintended lines; and a length-agnostic check let a
-# malformed id (e.g. a truncated `--retract a`) sail through to the lookup and come back as the
-# misleading "no memory entry with id" instead of "your id is malformed".
+# EXACT shape — positively, not by exclusion.
+#
+# THIS GATE IS LOAD-BEARING, NOT COSMETIC: the retract-target lookup below interpolates $RETRACT_ID
+# into an ANCHORED ERE (`grep -m1 -E -- "^- \[$RETRACT_ID\] "`). That is safe ONLY because the value
+# is guaranteed here to be exactly 8 characters drawn from [0-9a-f] — a set that contains no regex
+# metacharacter. If this check is ever loosened (longer ids, uppercase, a non-hex alphabet), the
+# lookup becomes regex-injectable and must be converted to a literal prefix test (e.g. awk
+# `index($0, pfx) == 1`) in the same change. No sed address interpolates the id: the only sed on
+# this path is a generic `^- \[[^]]*\] ` bracket-strip, and the deletion below is a literal
+# whole-line `grep -vxF` precisely so arbitrary fact text is never read as a pattern.
+#
+# A length-agnostic check also let a malformed id (e.g. a truncated `--retract a`) sail through to
+# the lookup and come back as the misleading "no memory entry with id" instead of "your id is
+# malformed".
 if [ -n "$RETRACT_ID" ]; then
   case "$RETRACT_ID" in
     [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) : ;;
@@ -127,7 +141,14 @@ if [ -n "$FACT" ]; then
   # below. (It used to be `grep -q ... && [ -z "$RETRACT_ID" ]`, which disabled the CHECK ITSELF on
   # a --supersedes call rather than only its early exit — so the append below wrote a duplicate
   # line whenever the corrected fact already existed elsewhere in the index.)
-  if grep -qF -- "- [$id] $fact_oneline" "$MEM" 2>/dev/null; then fact_present=1; fi
+  # `-x` (WHOLE-LINE) is load-bearing, not tidiness. The stored line is EXACTLY `- [id] <fact>`, so
+  # this is an exact comparison by construction — but a bare `grep -F` matches a SUBSTRING, and fact
+  # text is arbitrary human prose that can quote the entry shape inline (this repo's own
+  # PROJECT_MEMORY.md has entries containing brackets and `- [` sequences). Without `-x`, a fact
+  # stored as e.g. "docs say the format is - [7f2a740c] victim entry and that matters" made a
+  # genuinely NEW fact "victim entry" look already-present, and the writer discarded it with
+  # "fact already present" and exit 0 — silent data loss on a success status.
+  if grep -qxF -- "- [$id] $fact_oneline" "$MEM" 2>/dev/null; then fact_present=1; fi
   # A --supersedes call still has work to do (the retraction), so only a bare --fact short-circuits.
   if [ "$fact_present" -eq 1 ] && [ -z "$RETRACT_ID" ]; then
     echo "write-project-memory: fact already present ([$id]) — skipping"
@@ -139,7 +160,17 @@ fi
 # state untouched rather than half-written.
 retract_fact=""; retract_hash=""
 if [ -n "$RETRACT_ID" ]; then
-  retract_line="$(grep -m1 -F -- "- [$RETRACT_ID] " "$MEM" 2>/dev/null || true)"
+  # ANCHORED to line start. This is a PREFIX match with an arbitrary suffix (the fact text), so `-x`
+  # cannot apply — the anchor has to come from the pattern, which means an ERE rather than -F.
+  # Interpolating $RETRACT_ID into a regex is safe ONLY because the validation above guarantees
+  # exactly 8 chars from [0-9a-f], which contains no regex metacharacter; loosening that gate makes
+  # this line injectable (see the note at the validation block).
+  # Why it must be anchored: unanchored, `grep -m1 -F -- "- [$RETRACT_ID] "` matched the MIDDLE of a
+  # different entry whose free text quoted that id (e.g. "see - [7f2a740c] for details"). Ordered
+  # before the real target, that decoy won `-m1`, and the `grep -vxF "$retract_line"` below then
+  # deleted the DECOY while the real entry survived — with provenance recording the real id as
+  # retracted. State and provenance disagreed, and the reader still served the "retracted" fact.
+  retract_line="$(grep -m1 -E -- "^- \[$RETRACT_ID\] " "$MEM" 2>/dev/null || true)"
   if [ -z "$retract_line" ]; then
     echo "write-project-memory: no memory entry with id [$RETRACT_ID] — nothing to retract, aborting" >&2
     exit 2
