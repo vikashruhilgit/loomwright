@@ -7,7 +7,7 @@ metadata:
 
 When `hook-dispatch-on-pr-create.sh`'s session-scope authorization logic changes, TWO current-state prose summaries restate the gate and drift to under-describe it:
 1. `CLAUDE.md` Plugin Hooks table — the `PostToolUse (Bash)` row ("Session-scope gated (in-progress job + state.md Status≠... + head-branch match)").
-2. `ai-agent-manager-plugin/agents/supervisor.md` ~line 1038 "Hook backstop" paragraph ("session-scope gated (in-progress job exists AND state.md Status is not ... AND PR head branch matches ...)").
+2. `loomwright/agents/supervisor.md` ~line 1038 "Hook backstop" paragraph ("session-scope gated (in-progress job exists AND state.md Status is not ... AND PR head branch matches ...)").
 
 **Why:** v14.38.0 added a Source-2 autonomous `state.json` fallback + removed the stale-terminal-state.md short-circuit, but both summaries still described the pre-PR single-source (state.md-only) gate. Neither is doc-currency-CI-scanned (phase/gate enumerations are on the explicit "gate does NOT scan" list in CLAUDE.md §Doc currency). They are not FALSE (they state a correct authorized subset = Source 1) so they read as MEDIUM under-description, not a contradiction — the authoritative truth lives in the hook header + the release banner.
 
