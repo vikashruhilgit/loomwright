@@ -896,15 +896,13 @@ negation_line_in_block() {
 }
 
 existing_ledger_negation_present() {
+  # Delegates to negation_line_in_block — ONE implementation of "the negation is present as a whole
+  # line inside the managed block". Two copies of this predicate is the exact inconsistency the
+  # anchoring change existed to remove; keeping a second awk here (differing only in that it re-read
+  # $GI itself) would have re-created it one level down, where a later edit could drift them apart
+  # silently. This wrapper is just "the same question, asked of the file on disk".
   [ -f "$GI" ] || return 1
-  awk -v b="$MB_BEGIN" -v e="$MB_END" -v neg="!$LEDGER_INTENDED_PATH" '
-    index($0, b) > 0 { inblk = 1; next }
-    inblk == 1 {
-      if (index($0, e) > 0) { inblk = 0; next }
-      if ($0 == neg) { found = 1 }
-    }
-    END { exit(found ? 0 : 1) }
-  ' "$GI" 2>/dev/null
+  negation_line_in_block "$(cat "$GI" 2>/dev/null)"
 }
 
 # ledger_negation_in_block → status 0 when the REGENERATED managed block will carry the negation.
