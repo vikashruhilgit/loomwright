@@ -354,12 +354,41 @@ if ! command -v jq >/dev/null 2>&1; then
 elif [ ! -f "$REPO_ROOT/$LEDGER_PATH" ]; then
   ok "no findings ledger present — nothing to census"
 else
-  ALLOW_JSON="$(bash "$SETUP_MEMORY" --root "$REPO_ROOT" allowlist 2>/dev/null | jq -R . | jq -s .)"
+  # THE EXPECTED SLUGS ARE DECLARED HERE, IN COMMITTED CODE — deliberately NOT read from
+  # `setup-memory.sh allowlist`. That resolver reads `.supervisor/config.json`, which is GITIGNORED
+  # (`.gitignore` excludes `.supervisor/*`; the managed block re-includes the memory stores and the
+  # ledger, never the config). So the allowlist DOES NOT TRAVEL with the repo: on any fresh clone —
+  # and in CI — it falls back to the live git remote ALONE, one entry, and every pre-rename
+  # `vikashruhilgit/ai-agent-manager` record in the committed ledger is then judged FOREIGN.
+  #
+  # That is not hypothetical: this exact census passed on the author's machine (2-entry config) and
+  # failed in CI (1-entry remote default) on the very commit that introduced it. A gate asserting a
+  # property of COMMITTED data must take its expectation from COMMITTED source, or it asserts a
+  # property of whoever happens to run it.
+  #
+  # Both slugs are legitimate and BOTH must stay: the repo was renamed ai-agent-manager -> loomwright,
+  # and records written before the rename carry the old slug. Dropping it would not "clean" the
+  # ledger, it would discard the larger, older half of this repo's own history — which is precisely
+  # why setup-memory.sh stores the allowlist as a LIST and warns that a rename needs the old slug
+  # added by hand.
+  OWNED_SLUGS='vikashruhilgit/loomwright
+vikashruhilgit/ai-agent-manager'
+  ALLOW_JSON="$(printf '%s\n' "$OWNED_SLUGS" | jq -R . | jq -s .)"
   N_ALLOW="$(printf '%s' "$ALLOW_JSON" | jq 'length' 2>/dev/null || echo 0)"
   if [ "${N_ALLOW:-0}" -gt 0 ]; then
-    ok "the repo allowlist resolves to $N_ALLOW entr$([ "$N_ALLOW" = 1 ] && echo y || echo ies) (asserted, not assumed — an empty list would make the census below vacuous)"
+    ok "the committed owned-slug list resolves to $N_ALLOW entries (declared in this file, NOT read from the gitignored config — an empty list would make the census below vacuous)"
   else
-    no "the repo allowlist resolved to NOTHING — the foreign-record census below would be meaningless"
+    no "the committed owned-slug list resolved to NOTHING — the foreign-record census below would be meaningless"
+  fi
+  # Cross-check, advisory: report when the machine-local allowlist disagrees with the committed
+  # expectation. NOT a failure — a contributor's config is theirs — but a silent divergence here is
+  # what made the CI break confusing, so name it.
+  LOCAL_ALLOW="$(bash "$SETUP_MEMORY" --root "$REPO_ROOT" allowlist 2>/dev/null | sort | tr '\n' ' ')"
+  EXPECT_ALLOW="$(printf '%s\n' "$OWNED_SLUGS" | sort | tr '\n' ' ')"
+  if [ "$LOCAL_ALLOW" = "$EXPECT_ALLOW" ]; then
+    ok "the machine-local allowlist matches the committed owned-slug list"
+  else
+    ok "note (not a failure): the machine-local allowlist [$LOCAL_ALLOW] differs from the committed owned-slug list [$EXPECT_ALLOW]; the census uses the committed list"
   fi
   FOREIGN="$(jq -r --argjson allow "$ALLOW_JSON" \
     '((.repo // "") | tostring) as $r | select(($allow | index($r)) == null) | (if $r == "" then "(no .repo field)" else $r end)' \
