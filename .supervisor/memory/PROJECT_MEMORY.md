@@ -1,5 +1,4 @@
 # Project Memory (advisory — subordinate to CLAUDE.md; written only via write-project-memory.sh)
-- [e85ae956] When spawning this plugin's agents via the Agent tool, subagent_type is double-prefixed: ai-agent-manager-plugin:ai-agent-manager-plugin:<role> (e.g. ...:plan-reviewer, ...:worker, ...:supervisor-runner).
 - [2d32221d] The otel-collector contrib image is distroless (no shell/wget), so compose healthchecks for it must use a binary CMD like ["/otelcol-contrib", "--version"]; HTTP probes only work externally via the health_check extension on :13133.
 - [cea220a5] Compose-consumed env vars can be mechanically diffed against a documented .env recipe: grep -oE '\$\{[A-Z0-9_]+' on docker-compose.yml vs ^[A-Z0-9_]+= on the recipe — the regex must include digits or LANGFUSE_S3_BUCKET truncates to a false mismatch.
 - [83b693d0] test-telemetry.sh golden fixtures must be regenerated with WRITE_GOLDENS=1 whenever the redacted Raw Data JSON gains a key, and any release-varying value needs a normalise rule in normalise_for_golden (plugin_version is normalised to "<NORMALISED>") so goldens survive version bumps.
@@ -9,3 +8,4 @@
 - [6ae712d5] sdk-spike dry-run fixtures are WORKER_RESULT/CODE_REVIEW_RESULT payloads only — token usage lives on the SDK result MESSAGE, so synthetic accounting must be injected at the query seam (makeDryRunQuery), never into the fixtures.
 - [4916add2] README.md keeps a growing stack of dated 'NEW in vX.Y.Z' blockquote banners at the top — a release ADDS one, never rewrites old ones (dated lines, exempt from doc-currency).
 - [c61a7518] CHANGELOG.md entries are single '**vX.Y.Z — title:** ...' paragraphs (no ## headings); a new entry goes directly after the historical-entries blockquote near the top.
+- [a178a7b5] When spawning this plugin's agents via the Agent tool, subagent_type is double-prefixed: loomwright:loomwright:<role> (e.g. ...:plan-reviewer, ...:worker, ...:supervisor-runner). The single-prefix form loomwright:<role> ERRORS — verified empirically 2026-08-08; do not "correct" this to a single prefix based on strings inside agent prompt .md files.

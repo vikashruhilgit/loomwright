@@ -32,7 +32,7 @@ else echo "read-project-memory: no sha256 tool — memory unverifiable, emitting
 field() { printf '%s' "$1" | sed -E "s/.*\"$2\":\"([^\"]*)\".*/\1/"; }
 
 # 1. Walk the provenance chain; collect content_hashes of chain-valid `add` entries.
-trusted="$(mktemp)"; trap 'rm -f "$trusted" 2>/dev/null' EXIT
+trusted="$(mktemp)"; trap 'rm -f "$trusted" "$trusted.x" 2>/dev/null' EXIT
 prev="GENESIS"; n=0
 if [ -f "$PROV" ]; then
   while IFS= read -r p; do
@@ -42,8 +42,20 @@ if [ -f "$PROV" ]; then
       echo "read-project-memory: provenance chain broken at entry $n (prev_hash mismatch — tampering, or a value that defeated field extraction) — distrusting it and everything after" >&2
       break
     fi
-    if [ "$(field "$p" action)" = "add" ]; then
+    act="$(field "$p" action)"
+    if [ "$act" = "add" ]; then
       ch="$(field "$p" content_hash)"; [ -n "$ch" ] && printf '%s\n' "$ch" >> "$trusted"
+    elif [ "$act" = "retract" ]; then
+      # A retract REVOKES trust in that exact fact text. This must live on the READ side, not
+      # only as a line deletion by the writer: the original `add` stays in the append-only
+      # provenance log forever, so without this branch an out-of-band re-append of a retracted
+      # (i.e. known-WRONG) fact would still hash-match a trusted `add` and be emitted as
+      # verified. Chronological semantics: a later `add` of the same text re-trusts it.
+      ch="$(field "$p" content_hash)"
+      if [ -n "$ch" ]; then
+        grep -vxF "$ch" "$trusted" > "$trusted.x" 2>/dev/null
+        mv "$trusted.x" "$trusted" 2>/dev/null || true
+      fi
     fi
     prev="$(printf '%s' "$p" | sha)"
   done < "$PROV"
