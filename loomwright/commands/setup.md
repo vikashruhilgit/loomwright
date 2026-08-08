@@ -79,7 +79,7 @@ Run ONE real check per module (never guess; every cell of the dashboard is deriv
 5. **beads** — `command -v bd >/dev/null 2>&1` and `[ -d .beads ]`. Status: `ready` / `bd installed, repo not initialised` / `not installed`. Note: only Orchestrator/Product Owner use Beads — optional.
 6. **mysql-mcp** — check `DB_HOST`, `DB_USER`, `DB_PASS`, `DB_NAME` env vars are non-empty (`DB_PORT` optional). Status: `configured` / `missing: <names of unset vars>`. NEVER print values — names only.
 7. **twin** — run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-twin.sh" check` and read its output (the `Twin readiness:` verdict plus the per-cell `graph:` / `bridge:` / `CLAUDE.md:` lines). Never guess — every cell is derived from this real probe (the helper is fail-safe and always exits 0). Derive a compact status cell: verdict `bootstrapped` → `bootstrapped`; verdict `needs bootstrap` → name the gap from the cells, e.g. `needs bootstrap (graph absent)` when `graph: absent`, `needs bootstrap (stale graph)` when `graph: present (stale …)`, or `needs bootstrap (CLAUDE.md absent)` / `needs bootstrap (bridge absent)` as applicable.
-8. **memory** — run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-memory.sh" check` and read the `Memory readiness:` verdict plus the per-path `intended` / `unintended` ignore-status cells and the `allowlist:` line. The helper is fail-safe (always exits 0) and READ-ONLY on this path — it writes nothing. Derive a compact status cell: `configured` → `stores committable`; `not configured` → `stores ignored (not in version control)`; `partial (...)` and `unknown (...)` → surface the helper's own parenthetical verbatim (`unknown` means the ignore status could not be probed at all — never restate it as a configured/partial claim); if the `.gitignore:` cell reads `absent` or `unparseable: …`, say so instead (e.g. `.gitignore unparseable — apply would abort`). Never guess — every cell comes from that one probe.
+8. **memory** — run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-memory.sh" check` and read the `Memory readiness:` verdict plus the per-path `intended` / `unintended` ignore-status cells and the `allowlist:` line. The helper is fail-safe (always exits 0) and READ-ONLY on this path — it writes nothing. Derive a compact status cell: `configured` → `stores committable`; `gated (...)` → `memory stores committable, findings ledger WITHHELD` plus the offending slugs from the helper's own parenthetical (a **third** outcome — never collapse it into `configured` or `not configured`); `not configured` → `stores ignored (not in version control)`; `partial (...)` and `unknown (...)` → surface the helper's own parenthetical verbatim (`unknown` means the ignore status could not be probed at all — never restate it as a configured/partial claim); if the `.gitignore:` cell reads `absent` or `unparseable: …`, say so instead (e.g. `.gitignore unparseable — apply would abort`). Never guess — every cell comes from that one probe.
 
 Print the dashboard:
 
@@ -116,7 +116,7 @@ Then use `AskUserQuestion`. **`AskUserQuestion` accepts at most 4 options**, so 
 - `multiSelect`: true
 - `options` (exactly these, in order; append each module's current status to its description):
   1. **twin** — Twin cold-start bootstrap: detect/refresh the code graph (guide if `graphify` absent), rebuild the bridge, validate/scaffold CLAUDE.md.
-  2. **memory** — put `.claude/agent-memory/` + `.supervisor/memory/` under version control IN PLACE (gitignore negation + repo allowlist). Consent-bearing — the memory module's own Offer step states what becomes version-controlled before anything is written.
+  2. **memory** — put `.claude/agent-memory/` + `.supervisor/memory/` + the findings ledger `.supervisor/postmortem/results.jsonl` under version control IN PLACE (gitignore negation + repo allowlist). The ledger is GATED: it is un-ignored only while every record's `.repo` is inside the repo allowlist. Consent-bearing — the memory module's own Offer step states what becomes version-controlled before anything is written.
   3. **Neither — go back** — skip both and continue with the remaining selections.
 
 Run the corresponding module flow (below) for each selection, in the order listed. For option 3, run the `telemetry` delegation block plus the `webhook`, `beads`, and `mysql-mcp` status/guidance blocks in turn. If "Nothing", stop with the summary line.
@@ -296,7 +296,11 @@ A second `/setup twin` on an already-bootstrapped repo reports "already bootstra
 
 ## Module: memory
 
-Puts this repo's Twin memory stores — `.claude/agent-memory/` and `.supervisor/memory/` — under version control **IN PLACE**, by un-ignoring them where they already sit. **No move, no symlink, no generated copy, no bridge of any kind.** Nothing moves, so the harness keeps injecting agent memory from its own fixed path and every `memory: project` agent still receives its store from the unchanged path.
+Puts this repo's Twin memory stores — `.claude/agent-memory/`, `.supervisor/memory/`, and (behind a fail-closed gate) the findings ledger `.supervisor/postmortem/results.jsonl` — under version control **IN PLACE**, by un-ignoring them where they already sit. **No move, no symlink, no generated copy, no bridge of any kind.** Nothing moves, so the harness keeps injecting agent memory from its own fixed path and every `memory: project` agent still receives its store from the unchanged path.
+
+> **The findings ledger is the THIRD store, and it is GATED.** It is structurally CROSS-REPO: a `/pr-postmortem` append lands in the CURRENT working `.supervisor/`, never in the analysed repo's, so a ledger accumulates records belonging to OTHER repos. `apply` therefore **fails closed** on it — the negation is emitted only while every record's `.repo` sits inside the resolved allowlist. Otherwise the negation is WITHHELD, the offending slugs are NAMED, readiness reports the third verdict `gated`, and **the exit code is still 0** (fail-closed in the WRITE dimension, never in the exit status). Only `results.jsonl` is re-included — every other file under `.supervisor/postmortem/` stays ignored.
+>
+> **Honest limits — relay these, do not soften them.** (a) The gate is evaluated **at apply time only**: a ledger that gains a foreign record after a clean apply stays un-ignored until the next apply, and a routine `git add -A` can commit it in between — tell the user to run `filter-ledger` before committing. (b) Withdrawal does **NOT** un-track an already-committed ledger; `.gitignore` only governs UNTRACKED files, so an already-published ledger needs `git rm -r --cached` plus a re-commit. (c) The gate keys on each record's `.repo` field ONLY — it does not read finding TEXT.
 
 The deterministic engine is `${CLAUDE_PLUGIN_ROOT}/scripts/setup-memory.sh` (subcommands `check` / `apply` / `remove`, plus `allowlist` and `filter-ledger` for the repo allowlist). It is fail-safe (always exits 0), write-contained to `<project>/.gitignore` (+ one timestamped backup) and `<project>/.supervisor/config.json`, and it NEVER runs `git add` / `git rm` / `git commit`. This command owns the INTERACTIVE half — the consent-bearing offer.
 
@@ -308,7 +312,7 @@ The deterministic engine is `${CLAUDE_PLUGIN_ROOT}/scripts/setup-memory.sh` (sub
 
 ### Check
 
-Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-memory.sh" check` and report its cells: the `.gitignore:` gate (`ok` / `absent` / `unparseable: <reason>`), whether the managed block is present, the per-path ignore status for the intended stores and the must-stay-ignored set, how many files are tracked under each store today, the resolved `allowlist:` and its source, and the `Memory readiness:` verdict (`configured` / `not configured` / `partial (…)` / `unknown (…)` — the last means nothing could be probed, e.g. off a git repo). Read-only — `check` writes nothing.
+Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-memory.sh" check` and report its cells: the `.gitignore:` gate (`ok` / `absent` / `unparseable: <reason>`), whether the managed block is present, the per-path ignore status for the intended stores and the must-stay-ignored set, how many files are tracked under each store today, the resolved `allowlist:` and its source, and the `Memory readiness:` verdict (`configured` / `gated (…)` / `not configured` / `partial (…)` / `unknown (…)` — `gated` means the two memory stores are fine and the findings ledger is deliberately WITHHELD because it holds records outside the allowlist, and the last means nothing could be probed, e.g. off a git repo). Read-only — `check` writes nothing. When `jq` is unavailable the ledger row reads `not probed (jq unavailable — gate not evaluated)`: report that as UNVERIFIED, never as clean.
 
 ### Report
 
@@ -323,7 +327,7 @@ Print what check found. For the `status` subcommand, STOP after the report — r
 - `header`: "Memory"
 - `multiSelect`: false
 - `options`:
-  1. `Apply — commit the memory stores` — "Un-ignore .claude/agent-memory/ and .supervisor/memory/ in place, and seed the repo allowlist. Nothing is moved, and nothing is committed by this step."
+  1. `Apply — commit the memory stores` — "Un-ignore .claude/agent-memory/, .supervisor/memory/ and — only if it holds no records from other repos — .supervisor/postmortem/results.jsonl, in place, and seed the repo allowlist. Nothing is moved, and nothing is committed by this step."
   2. `Status only` — "Re-print the report and stop (no writes)."
   3. `Cancel` — "Do nothing."
 
@@ -331,14 +335,19 @@ Default to NOT applying. If the user's answer is ambiguous, treat it as Cancel.
 
 **If already configured** — do NOT re-apply silently. Offer `Status` / `Remove (stop future tracking)` / `Cancel`.
 
+**If `gated`** — the two memory stores ARE applied and only the ledger is withheld, so this is neither "not configured" nor a failure. Relay the helper's `apply: WITHHELD` block verbatim (offending slugs + the `filter-ledger` / extend-the-allowlist remedy + the does-NOT-un-track note) and offer `Filter the ledger and re-apply` / `Leave it withheld` / `Status only`. **Never** tell the user to comment out an exclude on this path — the only surviving exclude is this module's own `.supervisor/*` line, and removing it publishes the contaminated ledger.
+
 ### Apply
 
 1. Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-memory.sh" apply` ONLY after an explicit confirm.
-2. Read its **headline status line** and report it verbatim. Exactly ONE of these three is printed:
+2. Read its **headline status line** and report it verbatim. Exactly ONE of these is printed:
    - `apply: applied` — the managed block was written; a timestamped `.gitignore.backup.<ts>` sits beside it (pid-suffixed, then counter-suffixed, if that name was already taken, so a backup never overwrites another — and if every candidate name is taken the apply ABORTS rather than clobber an existing backup), and the allowlist was seeded into `.supervisor/config.json` as a JSON ARRAY **unless an `allowlist: SKIPPED` line says otherwise** (see step 3).
+   - `apply: applied (ledger negation WITHDRAWN)` — the block was written AND the findings-ledger negation was removed because foreign records appeared since the last apply. A dedicated `apply: ledger negation WITHDRAWN — <slugs>` block follows it. Relay both; never present this as a plain `applied`.
    - `apply: no-op — already configured` — nothing was written (idempotent second run).
+   - `apply: no-op — the two memory stores are already configured, but the findings ledger is GATED …` — the gated form of the no-op. It is a DISTINCT headline: do not report it as `already configured`.
    - `apply: ABORTED — <reason>` — nothing was written, no partial write, no backup. Surface the reason (absent `.gitignore`, unresolved conflict markers, unbalanced managed-block sentinels, NUL bytes, non-regular file, no free backup name) and STOP. Never "repair" the file to get past an abort.
 3. **Then check for the ADDITIONAL lines — they are extra output, not one of the three headlines above.** Two can appear, each CO-OCCURRING with the `applied` or `no-op` headline rather than replacing it. **Report the headline AND every additional line** — reporting only the headline would silently drop them and present a half-done apply as a success.
+   - `apply: WITHHELD — …` is printed AFTER the headline when readiness is `gated`. It does NOT mean the apply failed: the two memory stores ARE applied and the findings ledger is deliberately withheld. It names the offending repo slugs, the `filter-ledger` / extend-the-allowlist remedy, and the fact that withholding does not un-track an already-committed ledger. Relay it verbatim, present the memory half as a success and the ledger half as withheld, and do NOT hand the user any "comment out the surviving exclude" advice — that advice belongs to the under-inclusion case below and would publish the contaminated ledger here.
    - `apply: WARNING — readiness is '<verdict>', not 'configured'` is printed AFTER the headline (both paths run the same post-write verify). It means the block WAS written but the negation did not take effect; the helper names each intended path still ignored and the rule that wins for it (from `git check-ignore -v`). Relay that verbatim too and do NOT present the apply as a success; the usual cause is a deeper or parent-`.gitignore` exclude the rewriter does not neutralise.
    - `allowlist: SKIPPED — <reason>` means the `.gitignore` half succeeded but `.supervisor/config.json` was left UNCHANGED, so the allowlist was NOT seeded (the helper still exits 0 — the skip is fail-safe, never fatal). Seeding runs on both the applied and the no-op path, so this line can accompany either headline. Surface the reason and tell the user the allowlist still needs seeding by hand. Reasons: `jq` not available; the config exists but is not valid JSON; no git remote to default from and nothing configured; the merge/create could not be written; and — the backup-first contract holding here exactly as it does for `.gitignore` — `could not write a backup of <cfg>; refusing to rewrite it unbacked-up (unchanged)`.
 4. **The stores are only UN-IGNORED — nothing is committed.** Tell the user to review `git status --short .claude/agent-memory .supervisor/memory` and commit deliberately. This command never stages or commits on their behalf.
@@ -351,18 +360,20 @@ jq '.setup_memory.repo_allowlist += ["owner/old-name"]' .supervisor/config.json
 
 ### Verify
 
-Re-run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-memory.sh" check` and show the before/after: each intended path flipped to `committable`, each unintended path (`.claude/worktrees/`, `.claude/settings.local.json`, `.supervisor/logs/`) still `ignored`, and the verdict now `configured`. Success is claimed ONLY after that re-check.
+Re-run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-memory.sh" check` and show the before/after: each intended path flipped to `committable`, each unintended path (`.claude/worktrees/`, `.claude/settings.local.json`, `.supervisor/logs/`, and every file under `.supervisor/postmortem/` other than `results.jsonl`) still `ignored`, and the verdict now `configured` **or** `gated`. **`gated` is a SUCCESS outcome, not a failure** — the two memory stores are committable and the ledger is correctly withheld; say exactly that rather than claiming the apply did not work. Success is claimed ONLY after that re-check.
 
 ### Subflow: `/setup memory remove`
 
 1. Confirm via `AskUserQuestion` first.
 2. Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-memory.sh" remove` — it deletes the managed block, restores the original bare excludes verbatim, and re-reports readiness.
 3. **Relay the helper's history warning verbatim — do not soften it.** Removal stops FUTURE tracking; it does NOT unpublish. Git history retains everything already committed, on this clone and on every remote, fork and clone that has it; if it was pushed, it is published. Purging genuinely published content requires a history rewrite (e.g. `git filter-repo`) plus a force-push of every affected ref, and anything secret that was exposed must be assumed compromised and rotated.
-4. Already-TRACKED files stay tracked — `.gitignore` only affects untracked files. The helper prints the current tracked counts and the exact `git rm -r --cached .claude/agent-memory .supervisor/memory` the user can run themselves. **Never run it for them.**
+4. Already-TRACKED files stay tracked — `.gitignore` only affects untracked files. The helper prints the current tracked counts for **all three** stores and the exact `git rm -r --cached .claude/agent-memory .supervisor/memory .supervisor/postmortem/results.jsonl` the user can run themselves. **Never run it for them.**
 
 ### Idempotency note
 
 A second `/setup memory` on an already-applied repo reports "already configured" and writes nothing — apply compares the file it WOULD write against the file on disk byte-for-byte before touching anything, and an existing non-empty allowlist is never overwritten (a hand-added pre-rename slug must survive re-apply).
+
+**Restated precisely, now that the ledger gate exists:** the managed block is a pure function of (the pre-existing `.gitignore` contents, **the ledger gate outcome**). For a FIXED gate outcome it is byte-stable across runs, which is what idempotency requires — but the gate outcome is an INPUT. A repo that applied cleanly and LATER gains a foreign-slug record WILL legitimately rewrite `.gitignore` on the next apply to withdraw the ledger negation. That is correct fail-closed behaviour, it is ANNOUNCED (never a bare `apply: applied`), and it does not un-track an already-committed ledger.
 
 ---
 

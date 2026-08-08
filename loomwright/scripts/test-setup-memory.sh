@@ -65,7 +65,27 @@
 #        nothing; no commit/index/HEAD is ever touched; only read-only git subcommands are used
 #   (j)  fail-safe: every subcommand exits 0, including on a non-git root and a bad flag — and a
 #        root where nothing could be probed reports the VERDICT as `unknown`, never `partial`
+#   (l)  the FINDINGS-LEDGER GATE: a clean ledger is un-ignored (and ONLY the ledger, not its
+#        siblings); a foreign `.repo` record REFUSES the negation, names the slug and still exits 0;
+#        the refusal is driven by a record appended in the SPACED JSON form, because that is the
+#        shape a compact-form grep cannot see; absent ledger PASSES; absent `jq` leaves the gate
+#        UNEVALUATED (verdict unchanged, negation NOT emitted); an empty allowlist and an
+#        unattributable record both REFUSE (fail-closed); and BOTH wrong emission forms — the naive
+#        one-liner and the correct three lines placed BEFORE `.supervisor/*` — are pinned as
+#        negative controls that leave the ledger IGNORED
+#   (m)  the `gated` VERDICT CLASS: a refusal reports `gated`, never `not configured`; its warning
+#        names the offending slugs and the filter-ledger/extend-allowlist remedy, states that
+#        withholding does NOT un-track an already-committed ledger, and NEVER emits the
+#        under-inclusion "comment out the rule named above" copy; a second apply on a gated repo does
+#        NOT print the `apply: no-op — already configured` headline; and a clean→contaminated
+#        re-apply ANNOUNCES the withdrawal
 #   (k)  the suite never touched the plugin repo's own .gitignore
+#
+# EVERY LEDGER ASSERTION IN THIS FILE USES jq, NEVER grep. A findings ledger mixes compact
+# (`"repo":"x"`) and spaced (`"repo": "x"`) JSON — this plugin's own ledger carries one spaced
+# record among 88 — so `grep -c '"repo":"owner/name"'` silently under-counts AND a foreign record
+# appended in the spaced form evades a compact grep entirely. The ledger_count / ledger_has_repo
+# helpers below are the only sanctioned way to assert on ledger content here.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -115,6 +135,25 @@ assert_ignored()     { if ignored "$1" "$2"; then ok "$3"; else no "$3 (got: com
 assert_committable() { if ignored "$1" "$2"; then no "$3 (got: ignored)"; else ok "$3"; fi; }
 
 sum() { cksum < "$1" 2>/dev/null; }
+
+# ---- ledger assertion helpers — jq ONLY (see the header note) ----------------
+# ledger_count <jsonl-text> → number of RECORDS (not lines). An empty string counts as 0.
+ledger_count() { printf '%s\n' "$1" | jq -s 'length' 2>/dev/null || echo "?"; }
+# ledger_has_repo <jsonl-text> <slug> → status 0 when at least one record carries that `.repo`.
+ledger_has_repo() {
+  local n
+  n="$(printf '%s\n' "$1" | jq -s --arg r "$2" 'map(select(((.repo // "") | tostring) == $r)) | length' 2>/dev/null || echo 0)"
+  [ "${n:-0}" -gt 0 ]
+}
+# ledger_has_field <jsonl-text> <key> <numeric value> → status 0 when a record matches.
+ledger_has_field() {
+  local n
+  n="$(printf '%s\n' "$1" | jq -s --arg k "$2" --argjson v "$3" 'map(select(.[$k] == $v)) | length' 2>/dev/null || echo 0)"
+  [ "${n:-0}" -gt 0 ]
+}
+
+P_LEDGER=".supervisor/postmortem/results.jsonl"
+P_LEDGER_SIBLING=".supervisor/postmortem/some-other-artifact.json"
 
 # make a populated store tree inside a fixture (real files, so tracking assertions are real)
 seed_stores() {
@@ -376,17 +415,19 @@ else
 {"number":4,"review_rounds":0}
 LEDGER
   both="$(mem "$D3" filter-ledger --ledger "$D3/ledger.jsonl" --allow acme/widget --allow acme/old-name 2>/dev/null)"
-  n_both="$(grep -c '"repo"' <<< "$both")"
-  [ "$n_both" -eq 2 ] && ok "(d3) rename case: records under BOTH slugs retained (2 of 4)" || no "(d3) rename case retained $n_both records, expected 2"
-  hasF '"acme/old-name"' "$both" && ok "(d3) the PRE-RENAME slug's record is retained (a live-remote filter would have dropped it)" || no "(d3) pre-rename record dropped"
-  hasF '"acme/widget"'   "$both" && ok "(d3) the current slug's record is retained" || no "(d3) current-slug record dropped"
+  # jq, never grep — `grep -c '"repo"'` cannot see a SPACED-form record and would under-count here
+  # exactly as it does against this plugin's own ledger. See the header note and group (l2).
+  n_both="$(ledger_count "$both")"
+  [ "$n_both" = "2" ] && ok "(d3) rename case: records under BOTH slugs retained (2 of 4, counted with jq)" || no "(d3) rename case retained $n_both records, expected 2"
+  ledger_has_repo "$both" "acme/old-name" && ok "(d3) the PRE-RENAME slug's record is retained (a live-remote filter would have dropped it)" || no "(d3) pre-rename record dropped"
+  ledger_has_repo "$both" "acme/widget"   && ok "(d3) the current slug's record is retained" || no "(d3) current-slug record dropped"
   # (d4) a record OUTSIDE the allowlist is excluded.
-  hasF 'stranger/elsewhere' "$both" && no "(d4) a foreign-repo record leaked through the filter" || ok "(d4) foreign-repo record 'stranger/elsewhere' excluded"
-  hasF '"number":4' "$both" && no "(d4) a record with NO .repo leaked through (unattributable must be excluded)" || ok "(d4) record with no .repo excluded (unattributable → not retained)"
+  ledger_has_repo "$both" "stranger/elsewhere" && no "(d4) a foreign-repo record leaked through the filter" || ok "(d4) foreign-repo record 'stranger/elsewhere' excluded"
+  ledger_has_field "$both" number 4 && no "(d4) a record with NO .repo leaked through (unattributable must be excluded)" || ok "(d4) record with no .repo excluded (unattributable → not retained)"
   # (d5) the live-remote default alone drops the pre-rename half — the documented hazard, asserted.
   only_remote="$(mem "$D3" filter-ledger --ledger "$D3/ledger.jsonl" 2>/dev/null)"
-  hasF '"acme/old-name"' "$only_remote" && no "(d5) remote-only allowlist unexpectedly retained the pre-rename record" || ok "(d5) remote-only allowlist DROPS the pre-rename record — this is exactly why the allowlist is a list"
-  hasF '"acme/widget"' "$only_remote" && ok "(d5) remote-only allowlist still retains the current slug" || no "(d5) remote-only allowlist retained nothing at all"
+  ledger_has_repo "$only_remote" "acme/old-name" && no "(d5) remote-only allowlist unexpectedly retained the pre-rename record" || ok "(d5) remote-only allowlist DROPS the pre-rename record — this is exactly why the allowlist is a list"
+  ledger_has_repo "$only_remote" "acme/widget" && ok "(d5) remote-only allowlist still retains the current slug" || no "(d5) remote-only allowlist retained nothing at all"
   # (d6) an empty allowlist retains NOTHING (fail-closed), never everything.
   D6="$(newgit)"   # no remote at all
   cp "$D3/ledger.jsonl" "$D6/ledger.jsonl"
@@ -403,7 +444,7 @@ LEDGER
   printf 'NOT JSON AT ALL\n{"repo":"acme/widget","number":99}\n' >> "$D3/ledger.jsonl"
   robust="$(mem "$D3" filter-ledger --ledger "$D3/ledger.jsonl" --allow acme/widget 2>/dev/null)"; rc_r=$?
   [ "$rc_r" -eq 0 ] && ok "(d8) filter-ledger exits 0 on a ledger containing a malformed line" || no "(d8) filter-ledger non-zero on malformed line ($rc_r)"
-  hasF '"number":99' "$robust" && ok "(d8) records AFTER the malformed line are still retained (per-line fallback works)" || no "(d8) the malformed line swallowed the rest of the ledger"
+  ledger_has_field "$robust" number 99 && ok "(d8) records AFTER the malformed line are still retained (per-line fallback works)" || no "(d8) the malformed line swallowed the rest of the ledger"
 fi
 
 # (d9) A FILESYSTEM-PATH REMOTE CARRIES NO OWNER. `origin = /Users/x/myrepo` has the same shape as
@@ -794,6 +835,243 @@ has '^  .gitignore:        absent' "$chk_j" && ok "(j) a missing .gitignore is r
 # "partial (an unintended path is committable …)" — asserting a state it never probed.
 has '^Memory readiness: unknown' "$chk_j" && ok "(j) the VERDICT is 'unknown' when nothing could be probed (never 'partial', which claims an unprobed state)" || no "(j) non-git verdict is not 'unknown' (got: $(grep '^Memory readiness:' <<< "$chk_j"))"
 hasF 'could not be probed' "$chk_j" && ok "(j) the unknown verdict says WHY (not a git repo)" || no "(j) the unknown verdict gives no reason"
+
+# ============================================================================
+# mkgate — a fixture carrying BOTH memory stores, a `.supervisor/postmortem/` directory, a CLEAN
+# single-record ledger attributed to the fixture's own remote slug, one SIBLING artifact in the same
+# directory (which must stay ignored), and the historical bare directory excludes. Echoes the dir.
+mkgate() {
+  local d
+  d="$(newgit https://github.com/acme/widget.git)"
+  seed_stores "$d"
+  mkdir -p "$d/.supervisor/postmortem"
+  printf '{"repo":"acme/widget","number":1,"review_rounds":2}\n' > "$d/$P_LEDGER"
+  printf '{"stray":true}\n' > "$d/$P_LEDGER_SIBLING"
+  printf '.claude/\n.supervisor/\n' > "$d/.gitignore"
+  printf '%s' "$d"
+}
+
+echo "== (l) the findings-ledger gate — a THIRD managed store, un-ignored ONLY when it is clean =="
+# The ledger is structurally CROSS-REPO (a /pr-postmortem append lands in the CURRENT working
+# .supervisor/, never the analysed repo's), so un-ignoring an unfiltered one PUBLISHES another repo's
+# churn analysis. Everything below drives that gate against real `git check-ignore` probes.
+
+# -----------------------------------------------------------------------------------------------
+# test_negation_wrong_position_still_ignored — TWO NEGATIVE CONTROLS THAT BOTH LOOK CORRECT.
+#
+# Git applies the LAST matching rule, so a `!` line placed BEFORE the exclude that beats it is dead;
+# and git cannot re-include a file whose PARENT DIRECTORY is excluded, so the naive one-liner is dead
+# too. Both were live design mistakes in this change, and neither is visible by reading — only a real
+# probe distinguishes them. Deliberately driven WITHOUT the helper: these fixtures assert what GIT
+# does, which is the reference the emitted block has to satisfy.
+# -----------------------------------------------------------------------------------------------
+test_negation_wrong_position_still_ignored() {
+  local d1 d2 d3 gi ln_sup ln_neg
+  # (i) the CORRECT three lines in the WRONG POSITION — emitted BEFORE `.supervisor/*`.
+  d1="$(newgit https://github.com/acme/widget.git)"
+  mkdir -p "$d1/.supervisor/postmortem"; printf '{"repo":"acme/widget"}\n' > "$d1/$P_LEDGER"
+  printf '.claude/*\n!.claude/agent-memory/\n!.supervisor/postmortem/\n.supervisor/postmortem/*\n!.supervisor/postmortem/results.jsonl\n.supervisor/*\n!.supervisor/memory/\n' > "$d1/.gitignore"
+  assert_ignored "$d1" "$P_LEDGER" "(l7) NEGATIVE CONTROL: the correct three lines placed BEFORE '.supervisor/*' leave the ledger IGNORED — position is load-bearing, git applies the LAST matching rule"
+
+  # (ii) the NAIVE ONE-LINER, correctly positioned but structurally dead.
+  d2="$(newgit https://github.com/acme/widget.git)"
+  mkdir -p "$d2/.supervisor/postmortem"; printf '{"repo":"acme/widget"}\n' > "$d2/$P_LEDGER"
+  printf '.supervisor/*\n!.supervisor/memory/\n!.supervisor/postmortem/results.jsonl\n' > "$d2/.gitignore"
+  assert_ignored "$d2" "$P_LEDGER" "(l7) NEGATIVE CONTROL: the NAIVE one-line '!.supervisor/postmortem/results.jsonl' does NOTHING — its parent directory is excluded"
+
+  # (iii) POSITIVE CONTROL on the same fixture — the shipped shape DOES work, so (i) and (ii) prove
+  # a real ordering/shape failure rather than a broken probe.
+  printf '.supervisor/*\n!.supervisor/memory/\n!.supervisor/postmortem/\n.supervisor/postmortem/*\n!.supervisor/postmortem/results.jsonl\n' > "$d2/.gitignore"
+  assert_committable "$d2" "$P_LEDGER" "(l7) POSITIVE CONTROL: the shipped three-line form AFTER '.supervisor/*' DOES re-include the ledger"
+
+  # (iv) STRUCTURAL: what the helper ACTUALLY emits must sit INSIDE the managed block and AFTER the
+  # block's own `.supervisor/*`. A hand-added copy OUTSIDE the block (the pre-fix shape) is defeated
+  # by the block that apply appends afterwards, so "it worked once by hand" is not the contract.
+  d3="$(mkgate)"
+  printf '!.supervisor/postmortem/\n.supervisor/postmortem/*\n!.supervisor/postmortem/results.jsonl\n' >> "$d3/.gitignore"
+  mem "$d3" apply >/dev/null 2>&1
+  gi="$(cat "$d3/.gitignore")"
+  ln_sup="$(grep -n '^\.supervisor/\*$' <<< "$gi" | tail -n1 | cut -d: -f1)"
+  ln_neg="$(grep -n '^!\.supervisor/postmortem/results\.jsonl$' <<< "$gi" | tail -n1 | cut -d: -f1)"
+  if [ -n "$ln_sup" ] && [ -n "$ln_neg" ] && [ "$ln_neg" -gt "$ln_sup" ]; then
+    ok "(l7) the EMITTED ledger negation sits AFTER the managed block's own '.supervisor/*' (line $ln_neg > $ln_sup)"
+  else
+    no "(l7) the emitted ledger negation is mis-positioned (.supervisor/* at line ${ln_sup:-none}, negation at line ${ln_neg:-none})"
+  fi
+  assert_committable "$d3" "$P_LEDGER" "(l7) and the ledger really is committable after apply, hand-added stray lines notwithstanding"
+}
+
+if [ -z "$JQ" ]; then
+  ok "(l) jq unavailable — the ledger-gate group is skipped (pass)"
+else
+  # (l1) CLEAN LEDGER ⇒ the gate PASSES, and the negation re-includes the LEDGER ONLY.
+  L1="$(mkgate)"
+  assert_ignored "$L1" "$P_LEDGER" "(l1) precondition: the ledger is ignored before apply"
+  out_l1="$(mem "$L1" apply 2>&1)"; rc_l1=$?
+  [ "$rc_l1" -eq 0 ] && ok "(l1) apply exits 0 with a clean ledger" || no "(l1) apply non-zero ($rc_l1)"
+  assert_committable "$L1" "$P_LEDGER"         "(l1) a CLEAN ledger is COMMITTABLE after apply (the gate passed)"
+  assert_ignored     "$L1" "$P_LEDGER_SIBLING" "(l1) a SIBLING file under .supervisor/postmortem/ stays IGNORED — the negation is ONE FILE wide, not a directory"
+  assert_committable "$L1" "$P_MEM"            "(l1) the two memory stores are unaffected by the third store"
+  assert_ignored     "$L1" "$P_LOGS"           "(l1) .supervisor/logs/ still ignored alongside the new negation"
+  has '^Memory readiness: configured' "$out_l1" && ok "(l1) the verdict is 'configured' with a clean ledger" || no "(l1) verdict not configured (got: $(grep '^Memory readiness:' <<< "$out_l1" | head -n1))"
+  hasE "^ +${P_LEDGER//./\\.} +committable$" "$out_l1" && ok "(l1) the ledger is PROBED and reported under 'intended (must be committable)'" || no "(l1) the ledger is not probed in the intended set"
+  # (l1b) IDEMPOTENCY — the negation lives INSIDE the managed block, so re-emission cannot lose it.
+  out_l1b="$(mem "$L1" apply 2>&1)"
+  has '^apply: no-op' "$out_l1b" && ok "(l1) the second apply is a byte-compare no-op" || no "(l1) the second apply was not a no-op"
+  assert_committable "$L1" "$P_LEDGER" "(l1) the ledger is STILL committable after a SECOND apply (a hand-added line outside the block would have been re-ignored here)"
+
+  # ---------------------------------------------------------------------------------------------
+  # test_gate_blocks_foreign_spaced_form — THE NAMED SPACED-FORM FIXTURE CASE.
+  #
+  # This plugin's own ledger carries ONE spaced-form record (`"repo": "…"`) among 88 compact ones, so
+  # `grep -c '"repo":"vikashruhilgit/loomwright"'` returns 38 where jq returns 39. The consequence is
+  # not a cosmetic under-count: a FOREIGN record appended in the spaced form is INVISIBLE to a compact
+  # grep, which would make a grep-based gate a guard that cannot fire. The evasion is proven inside the
+  # fixture (grep=0, jq=1) before the gate is exercised, so this can never decay into a jq-vs-jq
+  # tautology.
+  # ---------------------------------------------------------------------------------------------
+  test_gate_blocks_foreign_spaced_form() {
+    local d out rc n_jq n_grep out2
+    d="$(mkgate)"
+    mem "$d" apply >/dev/null 2>&1
+    assert_committable "$d" "$P_LEDGER" "(l2) precondition: the ledger is committable while clean"
+    printf '{"schema_version": 1, "ts": "2026-08-04T14:06:03Z", "repo": "vendsy/hub", "number": 124}\n' >> "$d/$P_LEDGER"
+    n_grep="$(grep -cF '"repo":"vendsy/hub"' "$d/$P_LEDGER" 2>/dev/null || true)"; [ -n "$n_grep" ] || n_grep=0
+    n_jq="$(jq -s 'map(select(.repo == "vendsy/hub")) | length' "$d/$P_LEDGER" 2>/dev/null)"
+    if [ "${n_grep:-0}" -eq 0 ] && [ "$n_jq" = "1" ]; then
+      ok "(l2) THE EVASION IS REAL: a compact-form grep sees 0 spaced-form foreign records where jq sees 1 — this is why every ledger assertion here is jq"
+    else
+      no "(l2) the spaced-form evasion fixture did not behave as claimed (grep=$n_grep, jq=$n_jq) — the gate assertion below would be vacuous"
+    fi
+    out="$(mem "$d" apply 2>&1)"; rc=$?
+    [ "$rc" -eq 0 ] && ok "(l2) apply STILL EXITS 0 on the refusal path (fail-closed in the WRITE dimension, never in the exit status)" || no "(l2) apply exited $rc on the refusal path — the FAIL-SAFE CONTRACT is broken"
+    assert_ignored     "$d" "$P_LEDGER" "(l2) the gate REFUSED: the ledger is IGNORED again, so the spaced-form foreign record cannot be published"
+    assert_committable "$d" "$P_MEM"    "(l2) the two memory stores stay APPLIED while only the ledger is withheld"
+    hasF 'vendsy/hub' "$out" && ok "(l2) the refusal NAMES the offending slug" || no "(l2) the refusal does not name the offending slug"
+    # ...and removing the record makes the gate PASS again — red↔green both proven, so the gate keys
+    # on the record and not on some incidental property of the fixture.
+    jq -c 'select(.repo != "vendsy/hub")' "$d/$P_LEDGER" > "$d/ledger.clean" 2>/dev/null && mv "$d/ledger.clean" "$d/$P_LEDGER"
+    out2="$(mem "$d" apply 2>&1)"
+    assert_committable "$d" "$P_LEDGER" "(l2) removing the foreign record makes the gate PASS again and re-emits the negation"
+    has '^Memory readiness: configured' "$out2" && ok "(l2) the verdict returns to 'configured' once the ledger is clean" || no "(l2) the verdict did not return to 'configured'"
+  }
+  test_gate_blocks_foreign_spaced_form
+
+  # (l3) LEDGER ABSENT ⇒ the gate PASSES. This is every fresh user repo, and it is load-bearing for
+  # test-committed-twin-scrub.sh's group (F) fixture, which asserts `configured` with no ledger.
+  L3="$(newgit https://github.com/acme/widget.git)"
+  seed_stores "$L3"
+  printf '.claude/\n.supervisor/\n' > "$L3/.gitignore"
+  out_l3="$(mem "$L3" apply 2>&1)"; rc_l3=$?
+  [ "$rc_l3" -eq 0 ] && ok "(l3) apply exits 0 with NO ledger present" || no "(l3) apply non-zero ($rc_l3) with no ledger"
+  has '^Memory readiness: configured' "$out_l3" && ok "(l3) an ABSENT ledger PASSES the gate and the verdict still reaches 'configured' (no records ⇒ no foreign records)" || no "(l3) an absent ledger did not reach 'configured' (got: $(grep '^Memory readiness:' <<< "$out_l3" | head -n1))"
+  has '^Memory readiness: gated' "$out_l3" && no "(l3) an absent ledger was treated as CONTAMINATED — that would redden every fresh repo" || ok "(l3) an absent ledger is not treated as contaminated"
+
+  # (l5) EMPTY ALLOWLIST ⇒ REFUSE. filter_ledger_by_allowlist retains NOTHING under an empty list, so
+  # every record is outside it. Fail-closed: "nothing configured" must never read as "all fine".
+  L5="$(newgit)"   # no remote at all → nothing to default from
+  seed_stores "$L5"
+  mkdir -p "$L5/.supervisor/postmortem"
+  printf '{"repo":"acme/widget","number":1}\n' > "$L5/$P_LEDGER"
+  printf '.claude/\n.supervisor/\n' > "$L5/.gitignore"
+  out_l5="$(mem "$L5" apply 2>&1)"; rc_l5=$?
+  [ "$rc_l5" -eq 0 ] && ok "(l5) apply exits 0 with an empty allowlist" || no "(l5) apply non-zero ($rc_l5)"
+  assert_ignored "$L5" "$P_LEDGER" "(l5) an EMPTY allowlist REFUSES the negation (fail-closed — never 'nothing configured ⇒ retain everything')"
+
+  # (l6) A RECORD WITH NO `.repo` is unattributable and must REFUSE — it cannot be SHOWN to belong here.
+  L6="$(mkgate)"
+  printf '{"number":42,"review_rounds":1}\n' >> "$L6/$P_LEDGER"
+  out_l6="$(mem "$L6" apply 2>&1)"
+  assert_ignored "$L6" "$P_LEDGER" "(l6) an UNATTRIBUTABLE record (no .repo) REFUSES the negation"
+  hasF 'no .repo field' "$out_l6" && ok "(l6) the refusal says WHICH problem it found (a record with no .repo field)" || no "(l6) the refusal does not identify the unattributable record"
+
+  # (l8) A MALFORMED ledger line cannot be parsed, so it cannot be shown to be allowlisted ⇒ REFUSE.
+  L8="$(mkgate)"
+  printf 'NOT JSON AT ALL\n' >> "$L8/$P_LEDGER"
+  out_l8="$(mem "$L8" apply 2>&1)"; rc_l8=$?
+  [ "$rc_l8" -eq 0 ] && ok "(l8) apply exits 0 on a ledger holding a malformed line" || no "(l8) apply non-zero ($rc_l8) on a malformed ledger"
+  assert_ignored "$L8" "$P_LEDGER" "(l8) an UNPARSEABLE record REFUSES the negation (fail-closed per-line fallback, never a silent skip)"
+  hasF 'unparseable record' "$out_l8" && ok "(l8) the refusal names the unparseable record" || no "(l8) the refusal does not name the unparseable record"
+
+  test_negation_wrong_position_still_ignored
+fi
+
+# (l4) jq ABSENT ⇒ the gate is NOT EVALUATED: nothing is probed, the negation is NOT emitted, the
+# pre-existing verdict is unchanged and the exit code is still 0. Failing toward `gated` would
+# permanently mis-report for every jq-less user; failing toward emitting would publish an unchecked
+# ledger. Driven by a PATH containing symlinks to the helper's own dependencies and nothing else —
+# not by deleting jq, and not by a shim named `jq` (which `command -v` would still find).
+# Outside the JQ guard on purpose: this branch is about jq's ABSENCE.
+L4="$(mkgate)"
+L4BIN="$L4/onlybin"; mkdir -p "$L4BIN"
+for _c in bash sh git awk grep sed cut head tail tr cmp date cp mv rm mkdir rmdir dirname basename wc cat ls sort uniq find id chmod touch expr sleep env; do
+  _p="$(command -v "$_c" 2>/dev/null)" && ln -sf "$_p" "$L4BIN/$_c"
+done
+# Probed in a FRESH bash, not with `PATH=… command -v jq` in this shell: bash caches command
+# locations in its own hash table, so the builtin resolves a previously-hashed jq even under a PATH
+# that does not contain it — and this meta-check would then fail while the branch below is in fact
+# genuinely driven. A fresh interpreter starts with an empty hash table.
+if PATH="$L4BIN" bash -c 'command -v jq' >/dev/null 2>&1; then
+  no "(l4) the jq-absent fixture still resolves jq on its pinned PATH — the branch below would be untested"
+else
+  ok "(l4) the jq-absent fixture really has no jq on PATH (the branch is genuinely driven)"
+fi
+out_l4="$(PATH="$L4BIN" bash "$MEM" --root "$L4" apply 2>&1)"; rc_l4=$?
+[ "$rc_l4" -eq 0 ] && ok "(l4) apply exits 0 with jq unavailable (fail-safe)" || no "(l4) apply exited $rc_l4 without jq"
+has '^Memory readiness: configured' "$out_l4" && ok "(l4) without jq the pre-existing verdict is PRESERVED ('configured' for the two memory stores)" || no "(l4) the verdict changed when jq went missing (got: $(grep '^Memory readiness:' <<< "$out_l4" | head -n1))"
+has '^Memory readiness: gated' "$out_l4" && no "(l4) a missing jq failed toward 'gated' — that would permanently mis-report for every jq-less user" || ok "(l4) a missing jq does NOT fail toward 'gated'"
+hasF 'gate not evaluated' "$out_l4" && ok "(l4) the report says plainly that the gate was NOT evaluated (never an unprobed claim)" || no "(l4) the report makes no statement about the unevaluated gate"
+assert_ignored "$L4" "$P_LEDGER" "(l4) with the gate unevaluated the negation is NOT emitted — the ledger stays ignored (never publish what was not checked)"
+out_l4c="$(PATH="$L4BIN" bash "$MEM" --root "$L4" check 2>&1)"; rc_l4c=$?
+[ "$rc_l4c" -eq 0 ] && ok "(l4) check also exits 0 with jq unavailable" || no "(l4) check exited $rc_l4c without jq"
+
+# ============================================================================
+echo "== (m) the 'gated' verdict class — a CORRECT refusal must NOT report as 'not configured' =="
+# render_report sets intended_ok=no for any INTENDED path probing `ignored`, which yields
+# `not configured`, whose remediation copy tells the user to comment out "the surviving exclude" —
+# which for a withheld ledger is this module's OWN `.supervisor/*` line. Following that advice
+# un-ignores the contaminated ledger, and commands/setup.md mandates relaying the copy VERBATIM. So a
+# gated repo needs its own verdict AND its own copy; this group pins both.
+if [ -z "$JQ" ]; then
+  ok "(m) jq unavailable — the gated-verdict group is skipped (pass)"
+else
+  Mg="$(mkgate)"
+  printf '{"repo":"vendsy/hub","number":7}\n' >> "$Mg/$P_LEDGER"
+  out_m="$(mem "$Mg" apply 2>&1)"; rc_m=$?
+  [ "$rc_m" -eq 0 ] && ok "(m) apply exits 0 on the gated path" || no "(m) apply exited $rc_m on the gated path"
+  has '^Memory readiness: gated' "$out_m" && ok "(m) the verdict is the THIRD class 'gated'" || no "(m) the verdict is not 'gated' (got: $(grep '^Memory readiness:' <<< "$out_m" | head -n1))"
+  has '^Memory readiness: not configured' "$out_m" && no "(m) a CORRECT refusal reported as 'not configured' — the destructive mis-classification this class exists to prevent" || ok "(m) the refusal is NOT reported as 'not configured'"
+  hasi 'comment out the rule named above' "$out_m" && no "(m) THE DESTRUCTIVE UNDER-INCLUSION COPY was printed for a gated repo — it points at this module's own '.supervisor/*' line" || ok "(m) the misleading under-inclusion copy is NOT printed on the gated path"
+  hasF 'vendsy/hub' "$out_m" && ok "(m) the gated warning NAMES the offending slug" || no "(m) the gated warning names no slug"
+  hasF 'filter-ledger' "$out_m" && ok "(m) the gated warning gives the filter-ledger remedy" || no "(m) the gated warning omits the filter-ledger remedy"
+  hasF 'repo_allowlist' "$out_m" && ok "(m) the gated warning also offers the extend-the-allowlist remedy" || no "(m) the gated warning omits the allowlist remedy"
+  hasi 'does NOT un-track' "$out_m" && ok "(m) the gated warning states the honest limit: withholding does NOT un-track an already-committed ledger" || no "(m) the gated warning omits the already-committed honest limit"
+  assert_committable "$Mg" "$P_MEM"    "(m) the two memory stores ARE applied on the gated path (gated is not 'nothing happened')"
+  assert_ignored     "$Mg" "$P_LEDGER" "(m) the ledger stays ignored while gated"
+  chk_m="$(mem "$Mg" check 2>&1)"
+  has '^Memory readiness: gated' "$chk_m" && ok "(m) 'check' reports the gated verdict too (not just apply)" || no "(m) check did not report the gated verdict"
+  # THE NO-OP HEADLINE. proposed_applied_content omits the ledger lines while gated, so current ==
+  # proposed and do_apply reaches its no-op branch — which used to print the exact 'already
+  # configured' copy the gated class exists to prevent, and setup.md mandates relaying it verbatim.
+  out_m2="$(mem "$Mg" apply 2>&1)"
+  has '^apply: no-op' "$out_m2" && ok "(m) the second apply on a gated repo is still a byte-compare no-op" || no "(m) the second apply on a gated repo was not a no-op"
+  hasF 'apply: no-op — already configured' "$out_m2" && no "(m) the gated repo printed 'apply: no-op — already configured' — setup.md relays that headline VERBATIM, so it would state the opposite of the truth" || ok "(m) the gated no-op headline names the gated state instead of 'already configured'"
+  hasF 'GATED' "$out_m2" && ok "(m) the gated no-op headline says the ledger is GATED and stays ignored" || no "(m) the gated no-op headline does not name the gated state"
+
+  # THE WITHDRAWAL TRANSITION: applied cleanly, THEN contaminated. Correct fail-closed behaviour, but
+  # it rewrites .gitignore and must be ANNOUNCED — never a bare `apply: applied`.
+  Wd="$(mkgate)"
+  mem "$Wd" apply >/dev/null 2>&1
+  assert_committable "$Wd" "$P_LEDGER" "(m) precondition: the clean apply un-ignored the ledger"
+  printf '{"schema_version": 1, "repo": "stranger/elsewhere", "number": 3}\n' >> "$Wd/$P_LEDGER"
+  out_w="$(mem "$Wd" apply 2>&1)"; rc_w=$?
+  [ "$rc_w" -eq 0 ] && ok "(m) the withdrawal re-apply exits 0" || no "(m) the withdrawal re-apply exited $rc_w"
+  hasF 'WITHDRAWN' "$out_w" && ok "(m) the clean→contaminated re-apply ANNOUNCES the withdrawal" || no "(m) the withdrawal was silent"
+  hasF 'stranger/elsewhere' "$out_w" && ok "(m) the withdrawal names WHICH slugs appeared since the last apply" || no "(m) the withdrawal does not name the new slugs"
+  hasE '^apply: applied — managed block written' "$out_w" && no "(m) the withdrawal was reported under a BARE 'apply: applied' headline" || ok "(m) the headline itself is qualified — never a bare 'apply: applied'"
+  hasi 'does not un-track' "$out_w" && ok "(m) the withdrawal states that it does NOT un-track an already-committed ledger" || no "(m) the withdrawal implies the ledger is unpublished — it is not"
+  assert_ignored "$Wd" "$P_LEDGER" "(m) after the withdrawal the ledger is IGNORED again"
+fi
 
 # ============================================================================
 echo "== (k) the suite never touched the plugin repo's own .gitignore =="
