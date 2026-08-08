@@ -883,6 +883,18 @@ ledger_gate_warrants_withdrawal() {
 # existing_ledger_negation_present → status 0 when the .gitignore ON DISK already carries the ledger
 # negation INSIDE the managed block. Whole-line compare (never a substring), and scoped to the block
 # so a stray hand-added copy outside it is not mistaken for this module's own emission.
+# negation_line_in_block <content> — true when the ledger negation appears as a WHOLE LINE inside the
+# managed block of the given content. Anchored on purpose: the block's own comment quotes the rule
+# verbatim, so a substring test cannot tell the explanation from the rule.
+negation_line_in_block() {
+  printf '%s\n' "$1" | awk -v b="$MB_BEGIN" -v e="$MB_END" -v n="!$LEDGER_INTENDED_PATH" '
+    index($0, b) > 0 { inblk = 1; next }
+    inblk && index($0, e) > 0 { inblk = 0; next }
+    inblk && $0 == n { found = 1 }
+    END { exit(found ? 0 : 1) }
+  '
+}
+
 existing_ledger_negation_present() {
   [ -f "$GI" ] || return 1
   awk -v b="$MB_BEGIN" -v e="$MB_END" -v neg="!$LEDGER_INTENDED_PATH" '
@@ -1283,18 +1295,25 @@ do_apply() {
   local current proposed neg_line ledger_withdrawn=no
   current="$(cat "$GI")"
   proposed="$(proposed_applied_content)"
-  neg_line="!$LEDGER_INTENDED_PATH"
-
   # WITHDRAWAL: the file on disk carries the ledger negation and the file we are about to write does
   # NOT. That is the gate-passed → contaminated → re-apply transition. It is correct behaviour, but it
   # must be ANNOUNCED — never a bare `apply: applied`.
-  case "$current" in
-    *"$neg_line"*)
-      case "$proposed" in
-        *"$neg_line"*) : ;;
-        *) ledger_withdrawn=yes ;;
-      esac ;;
-  esac
+  #
+  # ANCHORED, WHOLE-LINE, IN-BLOCK on BOTH sides — deliberately not a `case *"!$LEDGER_INTENDED_PATH"*`
+  # substring test. This repo has already paid for the unanchored-entry-shape class once (the memory
+  # writer matched an entry shape with an unanchored `grep -F` and hit the MIDDLE of another entry's
+  # free text), and the shape recurs here for a specific reason: the managed block's OWN explanatory
+  # comment quotes `!.supervisor/postmortem/results.jsonl` verbatim to explain why the naive one-line
+  # form does nothing. A substring test therefore matches the COMMENT as readily as the RULE.
+  #
+  # No reachable false positive was demonstrated — user-authored lines are carried through into
+  # `proposed`, so a decoy appears on both sides and cancels out — so this is defence-in-depth against
+  # a documented recurring class, not a fix for an observed defect. It also makes this site agree with
+  # `existing_ledger_negation_present()`, which was already anchored; having two different notions of
+  # "the negation is present" in one file is the inconsistency worth removing.
+  if negation_line_in_block "$current" && ! negation_line_in_block "$proposed"; then
+    ledger_withdrawn=yes
+  fi
 
   if [ "$current" = "$proposed" ]; then
     if ledger_negation_in_block && [ "$LEDGER_GATE_STATE" != "pass" ]; then
