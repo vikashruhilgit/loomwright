@@ -3,12 +3,41 @@
 # stores under version control IN PLACE via gitignore negation, plus the repo allowlist that
 # decides which ledger records belong to this repo.
 #
-# WHAT: the Twin's accumulated judgment (`.claude/agent-memory/`, `.supervisor/memory/`) is
-# gitignored in every repo the plugin runs in, so a fresh clone, a second machine, CI and every
-# `git worktree` checkout start COLD, and a bad curation pass is irreversible (there is no
-# `git checkout` to undo it). This helper un-ignores exactly those two stores WHERE THEY ALREADY
-# SIT — no move, no symlink, no generated copy, no bridge. Nothing moves, so the harness keeps
-# injecting agent memory from its own fixed path and there is nothing to prove about injection.
+# WHAT: the Twin's accumulated judgment (`.claude/agent-memory/`, `.supervisor/memory/`) plus the
+# findings ledger (`.supervisor/postmortem/results.jsonl`) is gitignored in every repo the plugin
+# runs in, so a fresh clone, a second machine, CI and every `git worktree` checkout start COLD, and
+# a bad curation pass is irreversible (there is no `git checkout` to undo it). This helper
+# un-ignores exactly those THREE stores WHERE THEY ALREADY SIT — no move, no symlink, no generated
+# copy, no bridge. Nothing moves, so the harness keeps injecting agent memory from its own fixed
+# path and there is nothing to prove about injection.
+#
+# THE THIRD STORE IS GATED, THE FIRST TWO ARE NOT. The findings ledger is structurally CROSS-REPO:
+# a `/pr-postmortem` append lands in the CURRENT working `.supervisor/`, never in the analysed
+# repo's, so a ledger accumulates records belonging to OTHER repos (this plugin's own ledger held 7
+# `vendsy/hub` records before it was filtered). Un-ignoring an unfiltered ledger therefore
+# PUBLISHES another repo's churn analysis. So `apply` FAILS CLOSED on it: the ledger negation is
+# emitted only while every record's `.repo` sits inside the resolved allowlist. Otherwise the
+# negation is WITHHELD, the offending slugs are NAMED, the readiness verdict is the dedicated
+# `gated` class — and the exit code is still 0 (see FAIL-SAFE CONTRACT below: the gate fails closed
+# in the WRITE dimension, never in the exit-status dimension).
+#
+# EMITTING AND WITHDRAWING ARE ASYMMETRIC (see _evaluate_ledger_gate / ledger_negation_in_block).
+# Emitting a NEW negation needs an affirmative EXAMINED-AND-CLEAN verdict. WITHDRAWING one that is
+# already in the block needs an affirmative EXAMINED-AND-CONTAMINATED verdict naming REAL slugs.
+# Every "could not examine" outcome — jq absent OR BROKEN, ledger unreadable, every record
+# unparseable — blocks EMISSION but PRESERVES an existing negation, because a withdrawal is an
+# unrequested state change justified by a diagnosis that was never made.
+#
+# HONEST LIMIT — the gate is evaluated AT APPLY TIME ONLY. A repo whose ledger gains a foreign
+# record AFTER a clean apply stays un-ignored until the next `apply` runs, and a routine
+# `git add -A` can commit it in between. Run `setup-memory.sh filter-ledger` before committing;
+# do not read the gate as complete coverage. A withdrawal also does NOT un-track an ALREADY
+# COMMITTED ledger — `.gitignore` only governs UNTRACKED files.
+#
+# NON-GOAL (a decision, not an oversight): the gate keys on `.repo` ONLY. A record whose `.repo` is
+# allowlisted but whose finding TEXT cites a foreign org is NOT caught here; content-level sweeping
+# of the ledger is a separate item (test-committed-twin-scrub.sh's EXPLICIT_STORE_ROOTS is
+# deliberately NOT widened to `.supervisor/postmortem`).
 #
 # THE NAIVE NEGATION SILENTLY FAILS. Git cannot re-include a file whose parent directory is
 # excluded, so this looks right and does NOTHING:
@@ -22,8 +51,11 @@
 # WHY the allowlist is a LIST (and never the live remote): the findings ledger
 # (`.supervisor/postmortem/results.jsonl`) carries a `repo` field per record, and a repo RENAME
 # leaves older records under the old slug. In this plugin's own ledger, 42 records sit under
-# `<owner>/ai-agent-manager` (pre-rename) against 35 under the current slug — a filter keyed on
-# the live remote would silently drop the larger, older half. So the allowlist is stored as a
+# `<owner>/ai-agent-manager` (pre-rename) against 39 under the current slug — a filter keyed on
+# the live remote would silently drop the larger, older half. (Those two figures are ILLUSTRATIVE
+# and drift as the ledger grows; re-derive with jq, never grep — the ledger mixes compact and
+# spaced JSON, so `grep -c '"repo":"…"'` under-counts the spaced records silently.) So the
+# allowlist is stored as a
 # JSON ARRAY, defaults to the CURRENT remote's owner/repo on a fresh install (never a hardcoded
 # owner — the plugin ships to other users), and is extended by hand when a repo is renamed.
 #
@@ -42,6 +74,11 @@
 # NEVER blocks a session, NEVER gates, NEVER changes a heal_decision or a review decision.
 # Machine-readable status lines (`apply: …` / `remove: …` / `Memory readiness: …`) carry the
 # outcome instead of an exit code.
+#
+# THE LEDGER GATE DOES NOT BREAK THAT CONTRACT. "Fails closed" here means REFUSE-TO-WRITE plus a
+# named-slug status line plus `exit 0` — never a non-zero exit. The gate withholds a write; it
+# never blocks a caller. Implementing it as a non-zero exit would regress every non-blocking
+# caller that treats this helper as advisory.
 #
 # WRITE-CONTAINMENT INVARIANT: the ONLY things this helper writes are, under the resolved repo
 # root, (a) `.gitignore` plus one timestamped `.gitignore.backup.<ts>` sibling (suffixed with the
@@ -146,6 +183,14 @@ INTENDED_PATHS='.claude/agent-memory/loomwright:supervisor/MEMORY.md
 .claude/agent-memory/loomwright:supervisor/.provenance.jsonl
 .supervisor/memory/LESSONS.md
 .supervisor/memory/.lessons-provenance.jsonl'
+
+# The THIRD store, held separately from INTENDED_PATHS on purpose: its membership in the probed
+# intended set is CONDITIONAL on the ledger gate passing. Folding it into INTENDED_PATHS would make
+# a CORRECT refusal report as `not configured`, whose remediation copy tells the user to comment out
+# "the surviving exclude" — which for a withheld ledger is this module's OWN `.supervisor/*` line.
+# That is exactly the wrong remedy, and commands/setup.md mandates relaying it verbatim. See the
+# `gated` verdict class in render_report() / warn_if_not_configured().
+LEDGER_INTENDED_PATH='.supervisor/postmortem/results.jsonl'
 
 # UNINTENDED: must stay ignored (worktree checkouts, machine-local settings, session logs).
 UNINTENDED_PATHS='.claude/worktrees/busy-darwin/README.md
@@ -340,7 +385,26 @@ uncomment_bare_excludes() {
   '
 }
 
-# The canonical managed block, byte-stable across runs.
+# The canonical managed block.
+#
+# THE LEDGER LINES ARE EMITTED ASYMMETRICALLY — see ledger_negation_in_block(). An affirmative
+# `pass` EMITS them; an affirmative `refuse` BACKED BY REAL EXAMINED SLUGS withdraws them; a
+# could-not-examine outcome (jq absent or broken, ledger unreadable, every record unparseable)
+# PRESERVES whatever the file already carries. Withdrawing on a diagnosis we never made would
+# silently re-ignore a ledger the user deliberately un-ignored and print a contamination message
+# naming slugs that do not exist.
+#
+# BYTE-STABILITY, RESTATED HONESTLY (it is NOT broken — it is a function of one more input). The
+# block is a PURE FUNCTION OF (the pre-existing .gitignore contents, the ledger gate outcome). For a
+# FIXED gate outcome it is byte-identical across runs, which is exactly what the byte-compare
+# idempotency contract requires. But the gate outcome IS an input now, so a repo that applied
+# cleanly and LATER gains a foreign record will legitimately rewrite .gitignore on the next apply,
+# WITHDRAWING the ledger negation. That transition is correct fail-closed behaviour and do_apply
+# ANNOUNCES it — it is never a silent `apply: applied`.
+#
+# The alternative (emit the ledger lines unconditionally and gate only the verdict) was considered
+# and REJECTED: it would have `apply` un-ignore an unfiltered cross-repo ledger, which is precisely
+# the failure this gate exists to prevent.
 managed_block() {
   printf '%s\n' "$MB_BEGIN"
   cat <<'BLOCK'
@@ -352,8 +416,10 @@ managed_block() {
 # and leaves the directory itself traversable, so the `!` lines can re-include.
 #
 # Committed on purpose: the Twin's accumulated judgment (agent memory + distilled lessons),
-# including their dot-prefixed provenance sidecars. Everything else under these two directories
-# stays ignored — worktree checkouts, machine-local settings, session logs.
+# including their dot-prefixed provenance sidecars, and — when the repo-allowlist gate passes — the
+# findings ledger `.supervisor/postmortem/results.jsonl`. Everything else under these three
+# directories stays ignored: worktree checkouts, machine-local settings, session logs, job briefs,
+# automate run-files, and every other file under `.supervisor/postmortem/`.
 #
 # Managed by `/setup memory`. Edit via that command (`/setup memory remove` reverts it);
 # hand-edits inside these sentinels are overwritten on the next apply.
@@ -362,6 +428,20 @@ managed_block() {
 .supervisor/*
 !.supervisor/memory/
 BLOCK
+  if ledger_negation_in_block; then
+    cat <<'LEDGERBLOCK'
+# The findings ledger, un-ignored only because every record's `.repo` is inside this repo's
+# allowlist (`setup-memory.sh allowlist`). THREE lines, in THIS ORDER, and AFTER `.supervisor/*`:
+# the first re-includes the DIRECTORY so git will descend into it, the second re-excludes its
+# CONTENTS so nothing else there leaks, the third re-includes the one file. A single naive
+# `!.supervisor/postmortem/results.jsonl` does NOTHING (its parent directory is excluded), and the
+# same three lines placed BEFORE `.supervisor/*` do nothing either — both are pinned as negative
+# controls in test-setup-memory.sh.
+!.supervisor/postmortem/
+.supervisor/postmortem/*
+!.supervisor/postmortem/results.jsonl
+LEDGERBLOCK
+  fi
   printf '%s\n' "$MB_END"
 }
 
@@ -624,13 +704,217 @@ filter_ledger_by_allowlist() {
     return 0
   fi
   local line n=0
-  while IFS= read -r line; do
+  # `|| [ -n "$line" ]` — see _evaluate_ledger_gate: a bare `while read` never runs its body for an
+  # unterminated final line. Here the direction was already fail-SAFE (the dropped record simply
+  # never reaches the filtered output, and this filter's whole job is to DROP what cannot be shown
+  # to be allowlisted), so this is a correctness fix, not a posture change: a truncated record is
+  # still never RETAINED — it is now merely counted and reported as unparseable like any other.
+  # The reachable case runs the OTHER way, and is the real cost: when the unterminated final line is
+  # a VALID, ALLOWLISTED record, the guard RETAINS a record the pre-fix loop silently DROPPED from
+  # `filter-ledger > tmp && mv tmp ledger` — the documented remedy — i.e. real data loss.
+  # Pinned by test-setup-memory.sh group (d10).
+  while IFS= read -r line || [ -n "$line" ]; do
     n=$((n + 1))
     [ -n "$line" ] || continue
     printf '%s' "$line" | jq -c --argjson allow "$allow_json" \
       'select(((.repo // "") | tostring) as $r | ($allow | index($r)) != null)' 2>/dev/null \
       || echo "setup-memory: skipping unparseable ledger line $n" >&2
   done < "$ledger"
+}
+
+# ---- the findings-ledger gate (fails closed in the WRITE dimension, never in the exit status) --
+#
+# LEDGER_GATE_STATE ∈ { "" (unevaluated), pass, refuse, not-evaluated }
+#   pass          — every record's `.repo` is inside the resolved allowlist (or there is no ledger)
+#   refuse        — the negation may NOT be EMITTED. Two DISJOINT causes, carried in two SEPARATE
+#                   channels because they justify OPPOSITE things (see the asymmetry below):
+#                     $LEDGER_FOREIGN_SLUGS      — REAL, EXAMINED foreign `.repo` values
+#                     $LEDGER_UNEXAMINED_REASON  — could-not-examine reasons (unreadable ledger,
+#                                                  unparseable records). NOT slugs, NEVER printed
+#                                                  as if they were, and NEVER remedied by
+#                                                  `filter-ledger` (which on an unreadable ledger
+#                                                  would truncate it to zero bytes).
+#   not-evaluated — jq is absent OR non-functional, so NOTHING was probed at all
+#
+# THE EMIT/WITHDRAW ASYMMETRY (the whole point of the two channels).
+#   EMITTING a NEW negation requires an affirmative `pass` — examined AND clean. Never publish
+#   something unverified.
+#   WITHDRAWING an EXISTING negation requires an affirmative `refuse` backed by REAL, EXAMINED
+#   foreign slugs. A could-not-examine state PRESERVES whatever is already in the block.
+# Why they differ: a withdrawal is an UNREQUESTED STATE CHANGE justified by a diagnosis we did not
+# actually make. Preserving publishes nothing new — the ledger is already un-ignored and possibly
+# already committed, and `.gitignore` does not untrack tracked files — whereas withdrawing emits a
+# FALSE contamination message naming slugs that do not exist, and silently re-ignores a ledger the
+# user deliberately un-ignored, merely because `jq` broke.
+LEDGER_GATE_STATE=""
+LEDGER_FOREIGN_SLUGS=""
+LEDGER_UNEXAMINED_REASON=""
+
+# ONE jq PROGRAM, TWO CALLERS (the whole-file pass and the per-line fallback) so they cannot drift.
+# It prints ONE LINE PER OFFENDING RECORD — the record's `.repo`, or a placeholder for an
+# unattributable one. A record whose `.repo` IS allowlisted prints nothing.
+#
+# jq, NEVER grep. This ledger mixes compact (`"repo":"x"`) and spaced (`"repo": "x"`) JSON, so a
+# compact-form grep under-counts silently AND a foreign record appended in the spaced form evades
+# it entirely — which would make this gate a guard that cannot fire. Pinned by
+# test-setup-memory.sh's test_gate_blocks_foreign_spaced_form.
+LEDGER_GATE_JQ='((.repo // "") | tostring) as $r
+  | select(($allow | index($r)) == null)
+  | (if $r == "" then "(record with no .repo field)" else $r end)'
+
+_evaluate_ledger_gate() {
+  local ledger="$repo/$LEDGER_INTENDED_PATH"
+  LEDGER_FOREIGN_SLUGS=""
+  LEDGER_UNEXAMINED_REASON=""
+
+  # jq ABSENT **OR BROKEN** ⇒ the gate is NOT EVALUATED. It must NOT fail toward `refuse` (that
+  # would permanently mis-report for every jq-less user) and must NOT fail toward emitting the
+  # negation (that would publish an unchecked ledger). Nothing is probed and the pre-existing
+  # verdict — and the pre-existing negation — are preserved, mirroring the seed_allowlist /
+  # filter_ledger_by_allowlist skip-with-message guards.
+  #
+  # `command -v jq` tests PRESENCE, NOT FUNCTION, and that gap was reachable and destructive: a jq
+  # on PATH that exits non-zero (wrong arch, broken install, a shim) makes the whole-file pass fail
+  # AND every per-line probe fail, so a perfectly CLEAN ledger was counted entirely unparseable and
+  # the gate REFUSED — reporting contamination it never observed and withdrawing a good negation.
+  # So probe that jq actually WORKS, and treat a broken jq exactly like an absent one.
+  if ! command -v jq >/dev/null 2>&1 || ! printf '{}' | jq -e . >/dev/null 2>&1; then
+    LEDGER_GATE_STATE="not-evaluated"
+    LEDGER_UNEXAMINED_REASON="jq is unavailable (absent or non-functional) — nothing was examined"
+    return 0
+  fi
+  # Ledger ABSENT ⇒ PASS. No records ⇒ no foreign records ⇒ nothing to withhold. This is the state
+  # of every fresh user repo and of every fixture in the test suites.
+  if [ ! -f "$ledger" ]; then
+    LEDGER_GATE_STATE="pass"
+    return 0
+  fi
+
+  local entries allow_json out rc line one orc n=0 unexamined=""
+  entries="$(resolve_allowlist)"
+  if [ -n "$entries" ]; then
+    allow_json="$(printf '%s\n' "$entries" | jq -R . | jq -s .)" || allow_json='[]'
+  else
+    # An EMPTY allowlist retains NOTHING (filter_ledger_by_allowlist's rule), so EVERY record is
+    # outside it and the gate refuses. Fail-closed, never "nothing configured ⇒ everything is fine".
+    allow_json='[]'
+  fi
+
+  out="$(jq -r --argjson allow "$allow_json" "$LEDGER_GATE_JQ" "$ledger" 2>/dev/null)"
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    # A malformed line aborts the whole-file pass. Fall back per line and count an UNPARSEABLE
+    # record as FOREIGN: a record that cannot be parsed cannot be SHOWN to belong to this repo, and
+    # the cost of publishing another repo's record is higher than the cost of withholding one.
+    out=""
+    # `|| [ -n "$line" ]` — a TRUNCATED final line (no trailing newline) is exactly the malformed
+    # record that lands us in this fallback, and a bare `while read` DROPS it: `read` returns
+    # non-zero at EOF even though it filled $line, so the body never runs for it and the record is
+    # silently never examined. One interrupted `/pr-postmortem` append is enough.
+    while IFS= read -r line || [ -n "$line" ]; do
+      n=$((n + 1))
+      [ -n "$line" ] || continue
+      one="$(printf '%s' "$line" | jq -r --argjson allow "$allow_json" "$LEDGER_GATE_JQ" 2>/dev/null)"
+      orc=$?
+      if [ "$orc" -ne 0 ]; then
+        # COULD-NOT-EXAMINE, not a slug. It blocks EMISSION (below) exactly as before, but it must
+        # never masquerade as an observed foreign `.repo`: naming it as one would make the warning
+        # claim contamination we never saw, and would hand the user the `filter-ledger` remedy for
+        # a record that cannot be parsed.
+        unexamined="${unexamined}(unparseable record at ledger line $n)
+"
+      elif [ -n "$one" ]; then
+        out="${out}${one}
+"
+      fi
+    done < "$ledger"
+    # NOTHING WAS EXAMINED. The whole-file pass failed AND the fallback never iterated — an
+    # UNREADABLE ledger (`chmod 000`: `[ -f ]` is true, jq cannot open it, and the `done < "$ledger"`
+    # redirect itself fails) leaves $n at 0 with $out empty. Empty output would otherwise read as
+    # "examined every record and found none foreign", which is the fail-OPEN this marker closes: a
+    # record that cannot be SHOWN to belong to this repo must not be published, and one that could
+    # not be read at all is the strongest case of that.
+    if [ "$n" -eq 0 ]; then
+      unexamined="(ledger could not be read at all — nothing was examined)
+"
+    fi
+  fi
+
+  LEDGER_FOREIGN_SLUGS="$(printf '%s\n' "$out" | awk 'NF && !seen[$0]++')"
+  LEDGER_UNEXAMINED_REASON="$(printf '%s\n' "$unexamined" | awk 'NF && !seen[$0]++')"
+  # EITHER channel blocks EMISSION — that is the fail-closed rule this gate exists for, and it is
+  # unchanged. Only the FOREIGN-SLUG channel additionally licenses a WITHDRAWAL.
+  if [ -n "$LEDGER_FOREIGN_SLUGS" ] || [ -n "$LEDGER_UNEXAMINED_REASON" ]; then
+    LEDGER_GATE_STATE="refuse"
+  else
+    LEDGER_GATE_STATE="pass"
+  fi
+}
+
+# ledger_gate_blocks_foreign_records → status 0 when the gate REFUSES (the ledger holds at least one
+# record outside the allowlist, so the negation must be WITHHELD), 1 otherwise.
+#
+# Memoized per process. `managed_block()` is reached through TWO nested command substitutions on the
+# apply path, so globals set inside them are discarded and the evaluation simply repeats there. That
+# is safe ONLY because the evaluation is deterministic and side-effect-free — the result may never
+# depend on call ORDER, and this function must never write anything.
+ledger_gate_blocks_foreign_records() {
+  [ -n "$LEDGER_GATE_STATE" ] || _evaluate_ledger_gate
+  [ "$LEDGER_GATE_STATE" = "refuse" ]
+}
+
+# ledger_gate_permits_negation → status 0 when the ledger negation may be EMITTED and PROBED.
+# ONLY `pass` permits it: `refuse` withholds it, and `not-evaluated` withholds it too (nothing was
+# checked, so emitting would publish an unverified ledger).
+ledger_gate_permits_negation() {
+  [ -n "$LEDGER_GATE_STATE" ] || _evaluate_ledger_gate
+  [ "$LEDGER_GATE_STATE" = "pass" ]
+}
+
+# ledger_gate_warrants_withdrawal → status 0 ONLY when the gate EXAMINED the ledger and found REAL
+# foreign `.repo` values. This — not `refuse` — is what licenses REMOVING a negation that is already
+# in the file, and what licenses the "these repo slugs appeared" copy. A could-not-examine refusal
+# returns 1: it still blocks EMISSION, it just may not withdraw or accuse.
+ledger_gate_warrants_withdrawal() {
+  [ -n "$LEDGER_GATE_STATE" ] || _evaluate_ledger_gate
+  [ "$LEDGER_GATE_STATE" = "refuse" ] && [ -n "$LEDGER_FOREIGN_SLUGS" ]
+}
+
+# existing_ledger_negation_present → status 0 when the .gitignore ON DISK already carries the ledger
+# negation INSIDE the managed block. Whole-line compare (never a substring), and scoped to the block
+# so a stray hand-added copy outside it is not mistaken for this module's own emission.
+# negation_line_in_block <content> — true when the ledger negation appears as a WHOLE LINE inside the
+# managed block of the given content. Anchored on purpose: the block's own comment quotes the rule
+# verbatim, so a substring test cannot tell the explanation from the rule.
+negation_line_in_block() {
+  printf '%s\n' "$1" | awk -v b="$MB_BEGIN" -v e="$MB_END" -v n="!$LEDGER_INTENDED_PATH" '
+    index($0, b) > 0 { inblk = 1; next }
+    inblk && index($0, e) > 0 { inblk = 0; next }
+    inblk && $0 == n { found = 1 }
+    END { exit(found ? 0 : 1) }
+  '
+}
+
+existing_ledger_negation_present() {
+  # Delegates to negation_line_in_block — ONE implementation of "the negation is present as a whole
+  # line inside the managed block". Two copies of this predicate is the exact inconsistency the
+  # anchoring change existed to remove; keeping a second awk here (differing only in that it re-read
+  # $GI itself) would have re-created it one level down, where a later edit could drift them apart
+  # silently. This wrapper is just "the same question, asked of the file on disk".
+  [ -f "$GI" ] || return 1
+  negation_line_in_block "$(cat "$GI" 2>/dev/null)"
+}
+
+# ledger_negation_in_block → status 0 when the REGENERATED managed block will carry the negation.
+# THE ASYMMETRY, in one place, consumed by managed_block() and by every report/headline branch so
+# they cannot disagree about what was written:
+#   pass                         → EMIT (examined and clean)
+#   refuse WITH real slugs       → WITHDRAW (examined; we saw the contamination)
+#   anything else                → PRESERVE whatever is already there (could not examine)
+ledger_negation_in_block() {
+  ledger_gate_permits_negation && return 0
+  ledger_gate_warrants_withdrawal && return 1
+  existing_ledger_negation_present
 }
 
 # ---- consent disclosure (the exact copy the command layer must show BEFORE applying) --------
@@ -641,6 +925,12 @@ What becomes VERSION-CONTROLLED if you apply this:
                                  .provenance.jsonl sidecars)
   · .supervisor/memory/**     — distilled LESSONS.md / PROJECT_MEMORY.md + their
                                  .lessons-provenance.jsonl sidecars
+  · .supervisor/postmortem/results.jsonl — the findings ledger (PR-churn analysis), and ONLY this
+                                 one file; everything else under .supervisor/postmortem/ stays
+                                 ignored. GATED: it is un-ignored only while every record's
+                                 `.repo` is inside this repo's allowlist. If any record is not,
+                                 the negation is WITHHELD, the offending slugs are named, and
+                                 readiness reports `gated`.
 These are COMMITTED IN PLACE — nothing is moved, symlinked or copied, so every agent keeps
 reading its store from the same path it uses today.
 
@@ -653,8 +943,18 @@ Read this before saying yes:
   · Writes become working-tree changes. Once tracked, memory writes show in `git status` and can
     be swept into an unrelated commit by `git add -A`; MEMORY.md becomes a merge-conflict surface
     when parallel workers write it.
+  · THE LEDGER IS CROSS-REPO BY CONSTRUCTION. A `/pr-postmortem` append lands in the CURRENT
+    working `.supervisor/`, never in the analysed repo's, so a ledger accumulates records
+    belonging to OTHER repos. The allowlist gate refuses to un-ignore a ledger holding any such
+    record — but it is evaluated AT APPLY TIME ONLY. A ledger that gains a foreign record AFTER a
+    clean apply stays un-ignored until the next apply, and a routine `git add -A` can commit it in
+    between. Run `setup-memory.sh filter-ledger --ledger .supervisor/postmortem/results.jsonl`
+    before you commit. The gate is not complete coverage, and it does not look at finding TEXT —
+    only at each record's `.repo` field.
 What stays IGNORED (unchanged): .claude/worktrees/, .claude/settings.local.json,
-.supervisor/logs/, and everything else under those two directories.
+.supervisor/logs/, every file under .supervisor/postmortem/ OTHER than results.jsonl, and
+everything else under .claude/ and .supervisor/ — the third store is that ONE FILE, not a
+directory, so nothing else in .supervisor/postmortem/ is included by it.
 DISCLOSURE
 }
 
@@ -667,6 +967,15 @@ DISCLOSURE
 #                                 (UNDER-inclusion: a surviving exclude beats the negation)
 #   $REPORT_LEAKED_UNINTENDED   — newline-separated UNINTENDED paths that came back `committable`
 #                                 (OVER-inclusion: an over-broad `!` re-include; the `partial` case)
+#   $REPORT_GATED / $REPORT_GATED_SLUGS
+#                               — yes/no plus the offending repo slugs when the findings-ledger gate
+#                                 REFUSED (the `gated` case: deliberately withheld, repo contaminated)
+#
+# THREE FAILURE MODES NOW, AND NONE OF THEM MAY SHARE COPY. `not configured` is UNDER-inclusion,
+# `partial` is OVER-inclusion, and `gated` is a DELIBERATE withholding — a correct outcome, not a
+# defect in the ignore rules. Handing a gated repo the under-inclusion remedy ("comment out the
+# surviving exclude") would tell the user to delete this module's OWN `.supervisor/*` line, which is
+# precisely the wrong fix. Hence the dedicated verdict class and the dedicated warning branch.
 # The two lists are DISJOINT failure modes with opposite remedies, which is exactly why they are
 # published separately — warn_if_not_configured() must never hand out under-inclusion guidance
 # ("comment out the surviving exclude") for an over-inclusion failure, where there is no surviving
@@ -675,13 +984,26 @@ DISCLOSURE
 REPORT_VERDICT=""
 REPORT_BLOCKED_INTENDED=""
 REPORT_LEAKED_UNINTENDED=""
+REPORT_GATED=""
+REPORT_GATED_SLUGS=""
+# $REPORT_UNEXAMINED / $REPORT_UNEXAMINED_REASON — yes/no plus the could-not-examine reasons. HELD
+# SEPARATELY FROM $REPORT_GATED_SLUGS ON PURPOSE: those are observed foreign repo slugs and these are
+# "we could not look". They take DIFFERENT remedies — `filter-ledger` is right for a foreign record
+# and actively destructive for an unreadable ledger (`filter-ledger > tmp && mv tmp ledger` on a file
+# jq cannot open truncates it to zero bytes).
+REPORT_UNEXAMINED=""
+REPORT_UNEXAMINED_REASON=""
 
 render_report() {
-  local gate mb p st intended_ok=yes unintended_ok=yes probed=0 unknowns=0
+  local gate mb p st _r intended_ok=yes unintended_ok=yes probed=0 unknowns=0
 
   REPORT_VERDICT=""
   REPORT_BLOCKED_INTENDED=""
   REPORT_LEAKED_UNINTENDED=""
+  REPORT_GATED="no"
+  REPORT_GATED_SLUGS=""
+  REPORT_UNEXAMINED="no"
+  REPORT_UNEXAMINED_REASON=""
 
   gate="$(gitignore_gate)"
   mb="$(managed_block_present)"
@@ -706,6 +1028,51 @@ render_report() {
 $INTENDED_PATHS
 EOF
 
+  # THE THIRD STORE — probed ONLY when the ledger gate PASSES. When it refuses, the ledger is
+  # deliberately withheld and must NOT be counted as a blocked intended path (that would make a
+  # CORRECT refusal report as `not configured` and emit the destructive under-inclusion remedy).
+  # When jq is absent nothing was evaluated, so nothing is claimed either way. And when the negation
+  # is PRESERVED (already in the block, gate could not examine the ledger) it IS probed — the line is
+  # really there and really governs git — but the report says plainly that it was not re-verified.
+  if ledger_negation_in_block; then
+    st="$(ignore_status "$LEDGER_INTENDED_PATH")"
+    printf '    %-56s %s\n' "$LEDGER_INTENDED_PATH" "$st"
+    probed=$((probed + 1))
+    [ "$st" = "unknown" ] && unknowns=$((unknowns + 1))
+    [ "$st" = "committable" ] || intended_ok=no
+    if [ "$st" = "ignored" ]; then
+      REPORT_BLOCKED_INTENDED="${REPORT_BLOCKED_INTENDED}${LEDGER_INTENDED_PATH}
+"
+    fi
+    if ! ledger_gate_permits_negation; then
+      REPORT_UNEXAMINED="yes"
+      REPORT_UNEXAMINED_REASON="$LEDGER_UNEXAMINED_REASON"
+      echo "      ^ PRESERVED, not re-verified — the gate could not examine the ledger this run:"
+      while IFS= read -r _r; do
+        [ -n "$_r" ] || continue
+        echo "        · $_r"
+      done <<EOF
+$LEDGER_UNEXAMINED_REASON
+EOF
+      echo "        Nothing new is published (this negation was already in place); re-run once the"
+      echo "        ledger is readable and jq works to re-verify it."
+    fi
+  elif ledger_gate_warrants_withdrawal; then
+    REPORT_GATED="yes"
+    REPORT_GATED_SLUGS="$LEDGER_FOREIGN_SLUGS"
+    printf '    %-56s %s\n' "$LEDGER_INTENDED_PATH" "GATED — withheld (records outside the allowlist)"
+  elif ledger_gate_blocks_foreign_records; then
+    # REFUSED, but on a could-not-examine basis. Withheld all the same (never publish what was not
+    # checked) — the copy just may not name slugs it never saw.
+    REPORT_GATED="yes"
+    REPORT_GATED_SLUGS=""
+    REPORT_UNEXAMINED="yes"
+    REPORT_UNEXAMINED_REASON="$LEDGER_UNEXAMINED_REASON"
+    printf '    %-56s %s\n' "$LEDGER_INTENDED_PATH" "GATED — withheld (the gate could not examine the ledger)"
+  else
+    printf '    %-56s %s\n' "$LEDGER_INTENDED_PATH" "not probed (jq unavailable — gate not evaluated)"
+  fi
+
   echo "  unintended (must stay ignored):"
   while IFS= read -r p; do
     [ -n "$p" ] || continue
@@ -722,7 +1089,7 @@ EOF
 $UNINTENDED_PATHS
 EOF
 
-  echo "  tracked today:     .claude/agent-memory/ → $(tracked_count '.claude/agent-memory') file(s), .supervisor/memory/ → $(tracked_count '.supervisor/memory') file(s)"
+  echo "  tracked today:     .claude/agent-memory/ → $(tracked_count '.claude/agent-memory') file(s), .supervisor/memory/ → $(tracked_count '.supervisor/memory') file(s), $LEDGER_INTENDED_PATH → $(tracked_count "$LEDGER_INTENDED_PATH") file(s)"
 
   load_allowlist   # in-shell (not a subshell) so $ALLOWLIST_SOURCE is real, not stale
   if [ -n "$ALLOWLIST" ]; then
@@ -740,6 +1107,16 @@ EOF
     verdict="unknown (not a git repo — ignore status could not be probed)"
     REPORT_BLOCKED_INTENDED=""
     REPORT_LEAKED_UNINTENDED=""
+  elif [ "$REPORT_GATED" = "yes" ]; then
+    # THE THIRD CLASS. NOT `configured` (the ledger is deliberately withheld) and NOT
+    # `not configured` (nothing about the ignore rules is wrong — the repo's LEDGER is contaminated).
+    if [ -n "$REPORT_GATED_SLUGS" ]; then
+      verdict="gated (the findings ledger is WITHHELD — records outside the allowlist: $(printf '%s' "$REPORT_GATED_SLUGS" | tr '\n' ' '))"
+    else
+      # NO SLUGS TO NAME — the gate could not examine the ledger. Withheld all the same, but the
+      # verdict must not invent contamination it never observed.
+      verdict="gated (the findings ledger is WITHHELD — the gate could not examine it: $(printf '%s' "$REPORT_UNEXAMINED_REASON" | tr '\n' ' '))"
+    fi
   elif [ "$intended_ok" = "yes" ] && [ "$unintended_ok" = "yes" ]; then
     verdict="configured"
   elif [ "$intended_ok" = "no" ] && [ "$unintended_ok" = "yes" ]; then
@@ -785,6 +1162,7 @@ EOF
 }
 
 warn_if_not_configured() {
+  local _slug=""
   case "$REPORT_VERDICT" in
     configured) return 0 ;;
     unknown*)
@@ -809,6 +1187,62 @@ warn_if_not_configured() {
       echo "       comment out an exclude here; an exclude is not what is failing, and removing one would"
       echo "       leak more. Nothing else about the write is in doubt: the managed block IS in place and"
       echo "       a backup of the previous file sits beside it."
+      return 0 ;;
+    gated*)
+      # MUST sit AHEAD of the fall-through below, which is the UNDER-inclusion copy. A gated repo is
+      # not under-including anything: the two memory stores ARE applied and the ledger is withheld
+      # ON PURPOSE. Telling the user to "comment out the surviving exclude" would point them at this
+      # module's own `.supervisor/*` line and un-ignore the contaminated ledger — the exact outcome
+      # the gate exists to prevent. Pinned by test-setup-memory.sh group (m).
+      echo
+      echo "apply: WITHHELD — the two memory stores are applied, but the findings ledger"
+      echo "       ($LEDGER_INTENDED_PATH) is NOT un-ignored. This is the gate"
+      echo "       working, not a failure of the ignore rules — do NOT comment out any exclude."
+      if [ -n "$REPORT_GATED_SLUGS" ]; then
+        echo "       These repo slugs appear in the ledger but are NOT in this repo's allowlist:"
+        while IFS= read -r _slug; do
+          [ -n "$_slug" ] || continue
+          echo "         · $_slug"
+        done <<EOF
+$REPORT_GATED_SLUGS
+EOF
+        echo "       Remedy — either drop the foreign records, or widen the allowlist if they really"
+        echo "       are this repo's:"
+        echo "         bash setup-memory.sh filter-ledger --ledger $LEDGER_INTENDED_PATH > /tmp/ledger.filtered"
+        echo "         mv /tmp/ledger.filtered $LEDGER_INTENDED_PATH   # review it first"
+        echo "         # …or: jq '.setup_memory.repo_allowlist += [\"owner/repo\"]' .supervisor/config.json"
+        echo "       then re-run apply. The two memory stores stay applied throughout."
+      else
+        # COULD-NOT-EXAMINE. NO slug is named (none was observed), and the filter-ledger remedy is
+        # deliberately NOT offered: `filter-ledger > tmp && mv tmp ledger` against a ledger jq cannot
+        # read prints nothing and would TRUNCATE it to zero bytes. Fix the readability instead.
+        echo "       No foreign repo slug was observed — the gate could not EXAMINE the ledger:"
+        while IFS= read -r _slug; do
+          [ -n "$_slug" ] || continue
+          echo "         · $_slug"
+        done <<EOF
+$REPORT_UNEXAMINED_REASON
+EOF
+        echo "       Remedy — make the ledger examinable, then re-run apply. Do NOT pipe it through"
+        echo "       filter-ledger while it is unreadable: that prints nothing and would truncate it."
+        echo "         · install/repair jq if it is missing or broken ('printf {} | jq -e .' must succeed)"
+        echo "         · make the file readable (e.g. chmod u+r $LEDGER_INTENDED_PATH)"
+        echo "         · repair the malformed record(s) named above (one interrupted append is enough)"
+        echo "       The two memory stores stay applied throughout."
+      fi
+      echo "       NOTE: withholding does NOT un-track a ledger that is ALREADY COMMITTED —"
+      echo "       .gitignore only governs UNTRACKED files. If it is already tracked, filter it and"
+      echo "       run 'git rm -r --cached $LEDGER_INTENDED_PATH' yourself, then re-commit."
+      if [ -n "$REPORT_LEAKED_UNINTENDED" ]; then
+        echo "       Separately — and independently of the gate — these paths that must stay IGNORED"
+        echo "       are COMMITTABLE (OVER-inclusion; NARROW the '!' rule named for each):"
+        print_path_rules "$REPORT_LEAKED_UNINTENDED"
+      fi
+      if [ -n "$REPORT_BLOCKED_INTENDED" ]; then
+        echo "       Separately — and independently of the gate — these MEMORY-STORE paths are still"
+        echo "       IGNORED (UNDER-inclusion; neutralise or re-order the rule named for each):"
+        print_path_rules "$REPORT_BLOCKED_INTENDED"
+      fi
       return 0 ;;
   esac
   echo
@@ -849,12 +1283,49 @@ do_apply() {
       exit 0 ;;
   esac
 
-  local current proposed
+  # Evaluate the ledger gate ONCE, in THIS shell, BEFORE the headline is chosen. proposed_applied_content
+  # runs managed_block inside a command substitution, so the gate it evaluates there cannot reach us —
+  # and the no-op headline must NOT read "already configured" for a repo whose ledger is withheld
+  # (commands/setup.md mandates relaying that headline verbatim, which would state the opposite of the
+  # truth the `gated` class exists to tell).
+  ledger_gate_blocks_foreign_records || true
+
+  local current proposed neg_line ledger_withdrawn=no
   current="$(cat "$GI")"
   proposed="$(proposed_applied_content)"
+  # WITHDRAWAL: the file on disk carries the ledger negation and the file we are about to write does
+  # NOT. That is the gate-passed → contaminated → re-apply transition. It is correct behaviour, but it
+  # must be ANNOUNCED — never a bare `apply: applied`.
+  #
+  # ANCHORED, WHOLE-LINE, IN-BLOCK on BOTH sides — deliberately not a `case *"!$LEDGER_INTENDED_PATH"*`
+  # substring test. This repo has already paid for the unanchored-entry-shape class once (the memory
+  # writer matched an entry shape with an unanchored `grep -F` and hit the MIDDLE of another entry's
+  # free text), and the shape recurs here for a specific reason: the managed block's OWN explanatory
+  # comment quotes `!.supervisor/postmortem/results.jsonl` verbatim to explain why the naive one-line
+  # form does nothing. A substring test therefore matches the COMMENT as readily as the RULE.
+  #
+  # No reachable false positive was demonstrated — user-authored lines are carried through into
+  # `proposed`, so a decoy appears on both sides and cancels out — so this is defence-in-depth against
+  # a documented recurring class, not a fix for an observed defect. It also makes this site agree with
+  # `existing_ledger_negation_present()`, which was already anchored; having two different notions of
+  # "the negation is present" in one file is the inconsistency worth removing.
+  if negation_line_in_block "$current" && ! negation_line_in_block "$proposed"; then
+    ledger_withdrawn=yes
+  fi
 
   if [ "$current" = "$proposed" ]; then
-    echo "apply: no-op — already configured (the managed block and the disabled bare excludes are exactly as apply would write them). Nothing was written."
+    if ledger_negation_in_block && [ "$LEDGER_GATE_STATE" != "pass" ]; then
+      # PRESERVED: the negation stays because it was already there, not because we re-verified it.
+      # Saying "already configured" would over-claim; saying "GATED" would be false (it is not
+      # withheld). Say exactly what happened.
+      echo "apply: no-op — already configured; the findings ledger negation is PRESERVED as-is because the gate could not examine the ledger this run ($(printf '%s' "$LEDGER_UNEXAMINED_REASON" | tr '\n' ' ')). Nothing was written and nothing new is published."
+    elif [ "$LEDGER_GATE_STATE" = "refuse" ] && [ -n "$LEDGER_FOREIGN_SLUGS" ]; then
+      echo "apply: no-op — the two memory stores are already configured, but the findings ledger is GATED and stays IGNORED (records outside the allowlist: $(printf '%s' "$LEDGER_FOREIGN_SLUGS" | tr '\n' ' ')). Nothing was written."
+    elif [ "$LEDGER_GATE_STATE" = "refuse" ]; then
+      echo "apply: no-op — the two memory stores are already configured, but the findings ledger is GATED and stays IGNORED (the gate could not examine it: $(printf '%s' "$LEDGER_UNEXAMINED_REASON" | tr '\n' ' ')). Nothing was written."
+    else
+      echo "apply: no-op — already configured (the managed block and the disabled bare excludes are exactly as apply would write them). Nothing was written."
+    fi
     seed_allowlist
     echo
     echo "== verify =="
@@ -869,8 +1340,22 @@ do_apply() {
 
   local backup
   backup="$(write_gitignore "$proposed")" || { echo "apply: ABORTED — the rewrite could not be staged; .gitignore is unchanged."; exit 0; }
-  echo "apply: applied — managed block written to $GI"
+  if [ "$ledger_withdrawn" = "yes" ]; then
+    echo "apply: applied (ledger negation WITHDRAWN) — managed block written to $GI"
+  else
+    echo "apply: applied — managed block written to $GI"
+  fi
   echo "  backup:  $backup   (delete it once you are happy; it is untracked)"
+  if [ "$ledger_withdrawn" = "yes" ]; then
+    echo "apply: ledger negation WITHDRAWN — these repo slugs appeared in $LEDGER_INTENDED_PATH"
+    echo "       since the last apply and are NOT in this repo's allowlist: $(printf '%s' "$LEDGER_FOREIGN_SLUGS" | tr '\n' ' ')"
+    echo "       The ledger is IGNORED again from now on. THIS DOES NOT UN-TRACK AN ALREADY-COMMITTED"
+    echo "       LEDGER — .gitignore only governs UNTRACKED files, so if you already committed it the"
+    echo "       foreign records are still published. Filter it and stop tracking it yourself:"
+    echo "         bash setup-memory.sh filter-ledger --ledger $LEDGER_INTENDED_PATH > /tmp/ledger.filtered"
+    echo "         mv /tmp/ledger.filtered $LEDGER_INTENDED_PATH && git rm -r --cached $LEDGER_INTENDED_PATH"
+    echo "       then commit. The withdrawal alone unpublishes nothing."
+  fi
   seed_allowlist
   echo
   echo "== verify =="
@@ -878,7 +1363,7 @@ do_apply() {
   warn_if_not_configured
   echo
   echo "Next: the stores are only UN-IGNORED — nothing is committed yet. Review with"
-  echo "  git status --short .claude/agent-memory .supervisor/memory"
+  echo "  git status --short .claude/agent-memory .supervisor/memory $LEDGER_INTENDED_PATH"
   echo "and commit deliberately. This helper never runs git add / git rm / git commit."
   exit 0
 }
@@ -912,9 +1397,10 @@ do_remove() {
     echo "  backup:  $backup"
   fi
 
-  local tam tsm
+  local tam tsm tlg
   tam="$(tracked_count '.claude/agent-memory')"
   tsm="$(tracked_count '.supervisor/memory')"
+  tlg="$(tracked_count "$LEDGER_INTENDED_PATH")"
   cat <<EOF
 
 READ THIS — removal stops FUTURE tracking. It does NOT unpublish anything:
@@ -925,9 +1411,13 @@ READ THIS — removal stops FUTURE tracking. It does NOT unpublish anything:
     force-push every affected ref, then ask collaborators to re-clone — and rotate anything
     secret that was exposed, because it must be assumed compromised.
   · Files that are ALREADY TRACKED stay tracked. .gitignore only affects UNTRACKED files.
-    Currently tracked: .claude/agent-memory/ → $tam file(s), .supervisor/memory/ → $tsm file(s).
+    Currently tracked: .claude/agent-memory/ → $tam file(s), .supervisor/memory/ → $tsm file(s),
+    $LEDGER_INTENDED_PATH → $tlg file(s).
+    All THREE stores are covered — the findings ledger is un-ignored by the same managed block
+    (behind the repo-allowlist gate), so removing the block re-ignores it too, and that likewise
+    unpublishes nothing that was already committed.
     To stop tracking them going forward (keeping the working copies), run yourself:
-      git rm -r --cached .claude/agent-memory .supervisor/memory
+      git rm -r --cached .claude/agent-memory .supervisor/memory $LEDGER_INTENDED_PATH
     then commit. This helper NEVER runs git rm / git add / git commit.
 EOF
   echo
