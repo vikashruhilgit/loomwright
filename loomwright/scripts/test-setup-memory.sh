@@ -83,6 +83,10 @@
 #        ABSENT, and jq PRESENT-BUT-BROKEN — `command -v` tests presence, not function) PRESERVES the
 #        existing negation and claims no contamination, while a REAL foreign record still WITHDRAWS
 #        it and names the real slug
+#   (o)  `remove` is LEDGER-AWARE: on a repo whose ledger was un-ignored by a clean apply AND really
+#        `git add`ed, remove reports the THIRD tracked count for the ledger path (non-zero, so it
+#        cannot pass trivially), re-ignores the ledger (probed with git, not a .gitignore grep) and
+#        names all three stores in its `git rm -r --cached` remediation
 #   (k)  the suite never touched the plugin repo's own .gitignore
 #
 # EVERY LEDGER ASSERTION IN THIS FILE USES jq, NEVER grep. A findings ledger mixes compact
@@ -1204,6 +1208,51 @@ else
   assert_ignored "$N3" "$P_LEDGER" "(n3) REGRESSION CONTROL: a REAL foreign record STILL WITHDRAWS the negation — the ledger is ignored again"
   hasF 'WITHDRAWN' "$out_n3" && ok "(n3) the real-contamination path still ANNOUNCES the withdrawal" || no "(n3) the real withdrawal went silent — the asymmetry disarmed the gate"
   hasF 'stranger/elsewhere' "$out_n3" && ok "(n3) the withdrawal names the REAL observed slug" || no "(n3) the withdrawal does not name the real slug"
+fi
+
+# ============================================================================
+echo "== (o) remove is LEDGER-AWARE — the third store is counted, re-ignored and named =="
+# `remove` gained a THIRD tracked-count and a three-path `git rm -r --cached` hint when the ledger
+# became a managed store. Groups (l)/(m)/(n) only ever drive `apply`/`check`, and group (g) predates
+# the ledger — so without this group the ledger half of do_remove() is unpinned: dropping
+# $LEDGER_INTENDED_PATH from either the count or the hint would leave every other assertion green.
+# The count is asserted against a ledger that is REALLY `git add`ed, because a count of 0 passes
+# whether or not the code looks at the ledger at all.
+if [ -z "$JQ" ]; then
+  ok "(o) jq unavailable — the ledger-aware remove group is skipped (pass)"
+else
+  Oo="$(mkgate)"
+  mem "$Oo" apply >/dev/null 2>&1
+  assert_committable "$Oo" "$P_LEDGER" "(o) precondition: the clean apply un-ignored the ledger"
+  # REALLY track it — this is what makes the count assertion non-vacuous.
+  git -C "$Oo" add -- "$P_LEDGER" >/dev/null 2>&1
+  n_tracked_o="$(git -C "$Oo" ls-files -- "$P_LEDGER" | wc -l | tr -d ' ')"
+  [ "${n_tracked_o:-0}" -eq 1 ] && ok "(o) fixture precondition: the ledger is genuinely TRACKED (git ls-files = 1), so a 0 count cannot pass trivially" || no "(o) the ledger is not tracked in the fixture (got $n_tracked_o) — the count assertion below would be vacuous"
+  out_o="$(mem "$Oo" remove 2>&1)"; rc_o=$?
+  [ "$rc_o" -eq 0 ] && ok "(o) remove exits 0 on a ledger-applied repo" || no "(o) remove exited $rc_o on a ledger-applied repo"
+  # EVERY TEXT ASSERTION BELOW IS SCOPED TO THE PRE-`== verify ==` HALF. do_remove() ends by calling
+  # render_report, which prints its OWN "tracked today:" line naming all three stores — matching the
+  # whole output would therefore stay green even with the ledger deleted from remove's own warning.
+  # (Proven: mutating out only remove's ledger count left the unscoped form 294/0.)
+  pre_o="${out_o%%== verify ==*}"
+  [ "$pre_o" != "$out_o" ] && ok "(o) the remove-specific half of the output was isolated from the trailing verify report" || no "(o) could not split remove's own output from its '== verify ==' report — the text assertions below would not be remove-specific"
+  # (o1) the THIRD tracked count is reported by REMOVE ITSELF, for the ledger path, non-zero.
+  hasF "$P_LEDGER → 1 file(s)" "$pre_o" && ok "(o1) remove's own already-tracked warning reports the ledger count ($P_LEDGER → 1 file(s))" || no "(o1) remove's own warning does not report a tracked count for $P_LEDGER — the third store is invisible to the already-tracked warning"
+  # (o2) the bare exclude is restored — asserted with a REAL git probe, never a .gitignore grep.
+  # `--no-index` is REQUIRED here and is not a weakening: plain `git check-ignore` consults the index
+  # and reports a TRACKED path as not-ignored regardless of the rules, which is exactly the
+  # "already-tracked files stay tracked" fact this very output warns about. Without it the probe would
+  # measure the fixture's `git add`, not the restored exclude. The untracked control below is probed
+  # with the ordinary helper, so both forms are exercised.
+  if git -C "$Oo" check-ignore -q --no-index -- "$P_LEDGER" >/dev/null 2>&1; then
+    ok "(o2) after remove the ledger is IGNORED again by the rules (the negation is gone, future tracking stopped)"
+  else
+    no "(o2) after remove the ledger is still committable by the rules — the bare exclude was not restored"
+  fi
+  assert_ignored "$Oo" "$P_MEM"    "(o2) after remove the memory store is ignored again too"
+  # (o3) the remediation copy names ALL THREE stores, not just the two memory ones.
+  hasF "git rm -r --cached .claude/agent-memory .supervisor/memory $P_LEDGER" "$pre_o" && ok "(o3) the 'git rm -r --cached' hint names all THREE stores including the ledger" || no "(o3) the git rm hint omits the ledger — the user would leave the third store tracked"
+  hasi 'All THREE stores are covered' "$pre_o" && ok "(o3) remove states that all THREE stores are covered by the managed block" || no "(o3) remove does not state that the third store is covered"
 fi
 
 # ============================================================================
