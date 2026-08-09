@@ -359,7 +359,10 @@ fi
 #                              cell's own JOIN delimiter — so an accepted 0x1F would both mutate the
 #                              stored pattern AND collide with the cell framing it was chosen for.
 #       contains `..`        → traversal-style; the store is repo-relative and a rule scope has no
-#                              business walking upward. Same raw-string reject as `category` (:245+).
+#                              business walking upward. Same raw-string reject as the `category`
+#                              containment guard in §1 above. That anchor is DESCRIPTIVE on purpose:
+#                              a bare line number in a comment is a live claim that nothing checks,
+#                              and this one was already wrong twice. Cite the construct, not the line.
 #       leading `/`          → absolute path; the reader matches repo-relative touched paths, so an
 #                              absolute pattern can only ever match nothing.
 #       leading `~`          → home-relative; same reasoning as absolute, plus shell-expansion optics.

@@ -62,6 +62,11 @@
 #     - ANY other shape (non-array; array holding a non-string; empty array; array whose entries are
 #       all empty after tab/newline/US neutralization)     ⇒ MALFORMED ⇒ fail OPEN (emitted repo-wide)
 #                                                            + a one-line diagnostic to stderr + memory.log.
+#     - array with SOME-but-not-all empty entries (e.g. `["", "docs/*"]`) ⇒ DELIBERATELY NOT the above:
+#       the empty entries are dropped and the rule routes on the survivors, SILENTLY (no diagnostic —
+#       the fail-OPEN WARN only trips when the whole cell neutralizes to ""). Reachable only by hand-
+#       editing a rule file (add-rule.sh rejects empty/whitespace-only patterns outright), and "reader
+#       fail-safe-skips the unusable part" is this reader's documented posture — so it is a decision.
 #     - ZERO NON-EMPTY positional args (the no-arg call shape, and equally the one-empty-string shape
 #       `"$(git diff --name-only ...)"` produces on an empty diff)
 #                                                          ⇒ fail OPEN for EVERY rule (see below).
