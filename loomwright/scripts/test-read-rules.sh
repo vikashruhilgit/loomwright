@@ -24,6 +24,37 @@
 #                                                VISIBLE, (i9) cycle-plus-tail (external D supersedes a
 #                                                cycle member) ⇒ D hides that member normally, the
 #                                                cycle's OWN 3 members otherwise stay visible
+#   (j) PATH ROUTING (`applies_to`) → (j1) match EMITS / non-match ABSENT-from-stdout, (j2) null and
+#                                                absent-key are repo-wide, (j3) fail OPEN on every
+#                                                malformed shape (non-array / non-string element /
+#                                                empty array) with the rule emitted anyway + exit 0 +
+#                                                nothing extra on stdout, (j4) THE NO-ARG CALL
+#                                                (session-resume.sh rules_nudge()'s shape) stays
+#                                                repo-wide,
+#                                                (j5) all-routed-out ⇒ EMPTY stdout (no banner),
+#                                                (j6) `case`-glob semantics: `*`/`**` both CROSS `/`
+#                                                (the documented .gitignore contrast), (j7) ONE
+#                                                EMPTY-STRING arg (the degenerate shape a future
+#                                                caller quoting a possibly-empty command substitution
+#                                                could produce) is repo-wide too, exactly like (j4),
+#                                                (j8) a PARTIALLY-empty array (`["", "docs/*"]`) drops
+#                                                the empties and routes on the survivors — EMITTED for
+#                                                a docs path, ABSENT for a non-docs path, and SILENT
+#                                                (no WARN; the fail-open WARN only trips when the WHOLE
+#                                                cell neutralizes to "") — the reader's one documented
+#                                                routing DECISION, previously claimed but unchecked,
+#                                                (j9) an EMPTY-STRING arg MIXED with a REAL path
+#                                                behaves exactly like the real path alone (the empty
+#                                                is filtered, routing still happens) — the one
+#                                                combination of the filter-then-count logic that
+#                                                (j4)/(j7)/(j1) leave unasserted
+#   (k) ROUTING x SUPERSESSION ORDER → a rule ROUTED OUT of this call must NOT resurrect the rule it
+#                                                supersedes (supersession is resolved BEFORE routing)
+#   (l) MUTATION CONTROL for (j1) → the SAME non-match fixture is re-run against a copy of the reader
+#                                                whose routing predicate is BYPASSED; the absence
+#                                                assertion MUST fail there. Without this, a test that
+#                                                only asserts emission would pass identically against
+#                                                the pre-routing no-op reader (job Risk R3).
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -57,6 +88,10 @@ seed_rules_file() {
 
 # Run the reader inside a temp repo; capture stdout only (cd so --show-toplevel = the temp repo).
 run_reader() { ( cd "$1" && bash "$READER" ); }
+
+# Run the reader inside a temp repo WITH touched paths as positional args — the routing call shape.
+# $1 repo, $2.. touched paths. Zero extra args reproduces the SessionStart no-arg shape exactly.
+run_reader_args() { local repo="$1"; shift; ( cd "$repo" && bash "$READER" "$@" ); }
 
 if ! command -v jq >/dev/null 2>&1; then
   echo "test-read-rules: jq absent on this host — read-rules.sh no-ops (exit 0). Skipping data assertions."
@@ -540,6 +575,310 @@ if ! echo "$outI9" | grep -qF "Cycle-plus-tail member A hidden by external D" \
   ok "(i9) cycle-plus-tail: A hidden by external D (ordinary single-hop); B, C, D all visible"
 else
   no "(i9) cycle-plus-tail behaved insanely: $outI9"
+fi
+
+# ============================================================================
+echo "== (j) PATH ROUTING (applies_to) — the positional args are a REAL filter =="
+
+# One fixture store exercising every routing shape at once. Categories are prefixed a-/b-/... only to
+# make the sort_by([category,id]) order predictable while reading failures.
+seed_routing_store() {
+  seed_rules_file "$1" "routing.json" '[
+    {"id":"j-scoped","category":"a-scoped","statement":"Scoped to the scripts dir","enforcement":"must","check":"echo s","provenance":{"source":"test"},"applies_to":["loomwright/scripts/*"]},
+    {"id":"j-null","category":"b-null","statement":"Explicit null applies_to is repo-wide","enforcement":"advisory","check":null,"provenance":{"source":"test"},"applies_to":null},
+    {"id":"j-absent","category":"c-absent","statement":"Absent applies_to key is repo-wide","enforcement":"advisory","check":null,"provenance":{"source":"test"}},
+    {"id":"j-nonarray","category":"d-nonarray","statement":"Non-array applies_to fails open","enforcement":"advisory","check":null,"provenance":{"source":"test"},"applies_to":"loomwright/scripts/*"},
+    {"id":"j-emptyarr","category":"e-emptyarr","statement":"Empty-array applies_to fails open","enforcement":"advisory","check":null,"provenance":{"source":"test"},"applies_to":[]},
+    {"id":"j-nonstr","category":"f-nonstr","statement":"Non-string element fails open","enforcement":"advisory","check":null,"provenance":{"source":"test"},"applies_to":["loomwright/scripts/*",42]},
+    {"id":"j-docs","category":"g-docs","statement":"Scoped to docs and markdown","enforcement":"advisory","check":null,"provenance":{"source":"test"},"applies_to":["docs/**","*.md"]}
+  ]'
+}
+RJ="$(new_repo)"; seed_routing_store "$RJ"
+
+# (j1) MATCH emits; NON-MATCH is ABSENT from stdout. The absence half is the load-bearing assertion —
+# it is the ONLY one that can distinguish real routing from the pre-routing "emit everything" reader.
+# (Case (l) below proves that empirically by mutation.)
+outJ1a="$(run_reader_args "$RJ" loomwright/scripts/read-rules.sh)"; rcJ1a=$?
+[ "$rcJ1a" -eq 0 ] && ok "(j1 match) exits 0" || no "(j1) expected exit 0, got $rcJ1a"
+echo "$outJ1a" | grep -qF -- "- [MUST] Scoped to the scripts dir" \
+  && ok "(j1) MATCH: a rule scoped to loomwright/scripts/* IS emitted for a script path" \
+  || no "(j1) matching rule was not emitted: $outJ1a"
+if echo "$outJ1a" | grep -qF "Scoped to docs and markdown"; then
+  no "(j1) NON-MATCH: a docs-scoped rule leaked into a scripts-only call"
+else
+  ok "(j1) NON-MATCH: the docs-scoped rule is ABSENT from stdout (asserted by absence)"
+fi
+# ...and the mirror direction, so neither result is an artifact of one particular path set.
+outJ1b="$(run_reader_args "$RJ" docs/architecture.md)"
+if echo "$outJ1b" | grep -qF -- "- Scoped to docs and markdown" \
+   && ! echo "$outJ1b" | grep -qF "Scoped to the scripts dir"; then
+  ok "(j1 mirror) docs path emits the docs-scoped rule and the scripts-scoped rule is ABSENT"
+else
+  no "(j1 mirror) routing is not symmetric: $outJ1b"
+fi
+
+# (j2) `applies_to: null` AND an absent key are BOTH repo-wide — emitted for any path set. This is the
+# no-regression guard for the one rule the plugin's own store ships (.agent/rules/process.json).
+for want in "Explicit null applies_to is repo-wide" "Absent applies_to key is repo-wide"; do
+  if echo "$outJ1a" | grep -qF -- "- $want" && echo "$outJ1b" | grep -qF -- "- $want"; then
+    ok "(j2) repo-wide rule emitted for BOTH unrelated path sets: $want"
+  else
+    no "(j2) repo-wide rule was wrongly filtered: $want"
+  fi
+done
+
+# (j3) FAIL OPEN on every malformed shape — the rule is emitted ANYWAY for a path set it could never
+# have matched, exit stays 0, and the diagnostics do NOT reach stdout (they go to stderr + memory.log).
+outJ3="$(run_reader_args "$RJ" totally/unrelated/path.txt)"; rcJ3=$?
+[ "$rcJ3" -eq 0 ] && ok "(j3 fail-open) exits 0" || no "(j3) expected exit 0, got $rcJ3"
+for want in "Non-array applies_to fails open" "Empty-array applies_to fails open" "Non-string element fails open"; do
+  echo "$outJ3" | grep -qF -- "- $want" \
+    && ok "(j3) malformed applies_to fails OPEN (rule still emitted): $want" \
+    || no "(j3) malformed applies_to failed CLOSED (rule suppressed): $want"
+done
+# Both well-formed scoped rules must be gone for this unrelated path — proving (j3) is not just
+# "everything is emitted".
+if echo "$outJ3" | grep -qF "Scoped to the scripts dir" || echo "$outJ3" | grep -qF "Scoped to docs and markdown"; then
+  no "(j3) a well-formed scoped rule leaked into an unrelated-path call"
+else
+  ok "(j3) both well-formed scoped rules ABSENT for an unrelated path (fail-open is not blanket-emit)"
+fi
+# The fail-open diagnostic must NOT be on stdout. stdout carries only the banner + rule bullets.
+if echo "$outJ3" | grep -qiE 'fail-OPEN|malformed or empty applies_to'; then
+  no "(j3) a fail-open diagnostic leaked onto STDOUT"
+else
+  ok "(j3) no fail-open diagnostic on stdout (diagnostics are stderr + memory.log only)"
+fi
+# ...and it IS present on stderr (so the fail-open is observable, not silent).
+errJ3="$( ( cd "$RJ" && bash "$READER" totally/unrelated/path.txt ) 2>&1 >/dev/null )"
+echo "$errJ3" | grep -qF "malformed or empty applies_to on id=j-nonarray" \
+  && ok "(j3) fail-open diagnostic IS emitted on stderr (observable, not silent)" \
+  || no "(j3) fail-open diagnostic missing from stderr: $errJ3"
+
+# (j4) THE NO-ARG CALL — the exact shape rules_nudge() uses at scripts/session-resume.sh:319
+# (pinned by (j4b) below, which re-derives the number from the file; `bash "$reader"`, zero
+# positional args). Zero touched paths is an ABSENCE OF SCOPE, not a negative match, so EVERY valid
+# rule must still be emitted. If this ever regressed, rules_nudge() would start telling repos that HAVE
+# house rules that they have none — a CLAUDE.md-pinned firing surface (job Risk R1 / AC4).
+outJ4="$(run_reader "$RJ")"; rcJ4=$?
+[ "$rcJ4" -eq 0 ] && ok "(j4 no-arg) exits 0" || no "(j4) expected exit 0, got $rcJ4"
+nJ4="$(printf '%s\n' "$outJ4" | grep -cE '^- ')"
+[ "$nJ4" -eq 7 ] \
+  && ok "(j4) NO-ARG call stays REPO-WIDE: all 7 valid rules emitted (session-resume nudge stays quiet)" \
+  || no "(j4) no-arg call emitted $nJ4 rules, expected all 7 — session-resume.sh's nudge would misfire"
+[ -n "$outJ4" ] \
+  && ok "(j4) NO-ARG stdout is NON-EMPTY for a store that has rules (the nudge gates on emptiness)" \
+  || no "(j4) NO-ARG stdout was EMPTY — rules_nudge would fire on a repo that HAS rules"
+
+# (j4b) CITATION-DRIFT GUARD — a recorded defect class in this repo: a worker inserts lines ABOVE an
+# absolute line reference and silently falsifies its own pointers. That is exactly what happened here
+# once (an 8-line comment block pushed the no-arg call from :311 to :319 while five surfaces still
+# said :311). Prose surfaces now use a descriptive anchor instead of a number; the in-code citations
+# that DO carry a number are pinned mechanically below: every `session-resume.sh:<N>` citation under
+# loomwright/scripts that says "no-arg" ON THE SAME LINE must point at a line that actually holds the
+# no-arg `bash "$reader"` call. (Scoped that way on purpose — CHANGELOG.md carries frozen historical
+# citations of OTHER session-resume.sh lines, which are correct as history and must not be rewritten.)
+SR_FILE="$SCRIPT_DIR/session-resume.sh"
+CITE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+if [ -r "$SR_FILE" ] && [ -d "$CITE_ROOT/.git" ]; then
+  j4b_bad=0; j4b_seen=0
+  # Only citations that are ABOUT the no-arg call are policed: the CHANGELOG deliberately carries
+  # frozen historical references to other session-resume.sh lines, and those must not be "corrected".
+  # Convention: a live citation of this call says "no-arg" on the same line.
+  for n in $(git -C "$CITE_ROOT" grep -hiE 'no-arg' -- 'loomwright/scripts' 2>/dev/null \
+               | grep -oE 'session-resume\.sh:[0-9]+' | sed 's/.*://' | sort -un); do
+    j4b_seen=$((j4b_seen + 1))
+    cited="$(sed -n "${n}p" "$SR_FILE")"
+    case "$cited" in
+      *'bash "$reader"'*) : ;;
+      *) j4b_bad=$((j4b_bad + 1))
+         echo "    cited session-resume.sh:$n holds: $cited" ;;
+    esac
+  done
+  if [ "$j4b_seen" -eq 0 ]; then
+    ok "(j4b) no numeric session-resume.sh:<N> citations in the repo — nothing to rot"
+  elif [ "$j4b_bad" -eq 0 ]; then
+    ok "(j4b) all $j4b_seen numeric session-resume.sh:<N> citation(s) still point at the no-arg \`bash \"\$reader\"\` call"
+  else
+    no "(j4b) $j4b_bad of $j4b_seen session-resume.sh:<N> citation(s) have DRIFTED off the no-arg call"
+  fi
+else
+  ok "(j4b) skipped — session-resume.sh unreadable or not a git checkout (citation guard is repo-local)"
+fi
+
+# (j7) THE ONE-EMPTY-STRING CALL — not a shape any current seam produces (the live callers pass paths
+# as SEPARATE positional arguments, or make the no-arg call), but the degenerate shape a future caller
+# quoting a possibly-empty command substitution could easily produce: e.g.
+# `bash read-rules.sh "$(git diff --name-only "$BASE"...HEAD)"` yields exactly ONE EMPTY
+# argument on an empty (or failed) diff. `$# = 1`, but the scope is still ABSENT, so this must behave
+# IDENTICALLY to (j4): every valid rule emitted. Guarding on `$#` instead of the non-empty count
+# routed every scoped rule out and falsified skills/self-heal-advisory/SKILL.md's promise that "an
+# EMPTY path set ... emits repo-wide — so a degraded/empty diff can never silently suppress the house
+# rules."
+outJ7="$(run_reader_args "$RJ" "")"; rcJ7=$?
+[ "$rcJ7" -eq 0 ] && ok "(j7 empty-string arg) exits 0" || no "(j7) expected exit 0, got $rcJ7"
+nJ7="$(printf '%s\n' "$outJ7" | grep -cE '^- ')"
+[ "$nJ7" -eq 7 ] \
+  && ok "(j7) ONE EMPTY-STRING arg stays REPO-WIDE: all 7 valid rules emitted (same as the no-arg call)" \
+  || no "(j7) empty-string arg emitted $nJ7 rules, expected all 7 — a degraded diff silently suppressed the scoped rules"
+[ -n "$outJ7" ] \
+  && ok "(j7) EMPTY-STRING-arg stdout is NON-EMPTY for a store that has rules" \
+  || no "(j7) EMPTY-STRING-arg stdout was EMPTY — rules_nudge would fire on a repo that HAS rules"
+
+# (j5) EVERY rule routed out ⇒ EMPTY stdout: no banner, no sentinel, exit 0 — identical to the
+# "no valid rules" shape, so machine consumers can keep gating on non-empty stdout (AC6).
+RJ5="$(new_repo)"
+seed_rules_file "$RJ5" "only-scoped.json" '[
+  {"id":"j5-only","category":"z","statement":"The only rule, scoped to src","enforcement":"advisory","check":null,"provenance":{"source":"test"},"applies_to":["src/*"]}
+]'
+outJ5="$(run_reader_args "$RJ5" docs/readme.md)"; rcJ5=$?
+[ "$rcJ5" -eq 0 ] && ok "(j5 all-routed-out) exits 0" || no "(j5) expected exit 0, got $rcJ5"
+[ -z "$outJ5" ] \
+  && ok "(j5) all-routed-out ⇒ EMPTY stdout (no banner, no sentinel)" \
+  || no "(j5) expected empty stdout when nothing routes in; got: $outJ5"
+# ...and the SAME store with no args still emits it (the two halves of the same contract).
+outJ5b="$(run_reader "$RJ5")"
+echo "$outJ5b" | grep -qF -- "- The only rule, scoped to src" \
+  && ok "(j5) the same scoped-only store is NON-EMPTY on the no-arg call" \
+  || no "(j5) scoped-only store went empty on the no-arg call — nudge regression"
+
+# (j6) `case`-glob semantics, pinned because they are NOT .gitignore semantics (job Risk R2 / AC8):
+# `*` and `**` are EQUIVALENT in a bash `case` and BOTH cross `/`.
+outJ6a="$(run_reader_args "$RJ" loomwright/scripts/nested/deep/file.sh)"
+echo "$outJ6a" | grep -qF -- "- [MUST] Scoped to the scripts dir" \
+  && ok "(j6) a single \`*\` CROSSES \`/\` (loomwright/scripts/* matched a nested path — NOT gitignore semantics)" \
+  || no "(j6) case-glob \`*\` failed to cross \`/\`; the documented semantics drifted"
+outJ6b="$(run_reader_args "$RJ" docs/a/b/c.md)"
+echo "$outJ6b" | grep -qF -- "- Scoped to docs and markdown" \
+  && ok "(j6) \`**\` behaves as \`*\` and crosses \`/\` too (docs/** matched docs/a/b/c.md)" \
+  || no "(j6) \`**\` did not match a nested docs path"
+
+# (j8) PARTIALLY-EMPTY array (`["", "docs/*"]`) — the one routing branch the reader documents as an
+# explicit DECISION rather than a fail-open: the empty entries are DROPPED, the rule routes on the
+# SURVIVORS, and NO WARN fires (the fail-open WARN only trips when the WHOLE cell neutralizes to "").
+# Pinned here because a doc-only claim is exactly the defect class this file exists to catch: without
+# these three assertions, a future `route_spec` that fails the whole array OPEN on any empty entry
+# (i.e. treats `["", "docs/*"]` like `[]`) would still pass every other (j) case. The no-WARN half is
+# asserted explicitly — that is the half the docstring calls a decision, and silence is the claim.
+# Reachable only by hand-editing a rule file: add-rule.sh rejects empty/whitespace-only patterns.
+RJ8="$(new_repo)"
+seed_rules_file "$RJ8" "mixed.json" '[
+  {"id":"j8-mixed","category":"a","statement":"Mixed array routes on the surviving pattern","enforcement":"advisory","check":null,"provenance":{"source":"test"},"applies_to":["","docs/*"]},
+  {"id":"j8-wide","category":"b","statement":"Mixed-case repo-wide control","enforcement":"advisory","check":null,"provenance":{"source":"test"}}
+]'
+# (j8a) EMITTED for a path matching the surviving pattern.
+outJ8a="$(run_reader_args "$RJ8" docs/guide.md)"; rcJ8a=$?
+[ "$rcJ8a" -eq 0 ] && ok "(j8 mixed-array) exits 0" || no "(j8) expected exit 0, got $rcJ8a"
+echo "$outJ8a" | grep -qF -- "- Mixed array routes on the surviving pattern" \
+  && ok "(j8) MIXED \`[\"\", \"docs/*\"]\`: EMITTED for a docs path (empties dropped, routes on survivors)" \
+  || no "(j8) mixed-array rule was not emitted for a matching docs path: $outJ8a"
+# (j8b) ABSENT for a non-matching path — i.e. the empty entry did NOT collapse the cell to fail-open.
+outJ8b="$(run_reader_args "$RJ8" src/app.ts)"
+echo "$outJ8b" | grep -qF -- "- Mixed-case repo-wide control" \
+  && ok "(j8) the repo-wide control IS emitted for the non-docs path (reader is alive)" \
+  || no "(j8) repo-wide control missing — the non-match assertion below would be vacuous: $outJ8b"
+if echo "$outJ8b" | grep -qF "Mixed array routes on the surviving pattern"; then
+  no "(j8) FAIL-OPEN REGRESSION: a partially-empty applies_to leaked repo-wide (should route like [\"docs/*\"])"
+else
+  ok "(j8) MIXED array: ABSENT for a non-docs path (partial emptiness does NOT fail the cell OPEN)"
+fi
+# (j8c) NO WARN — the documented-silence half. Checked on BOTH calls, since the WARN channel runs
+# before routing and would fire regardless of which path set was passed.
+errJ8a="$( ( cd "$RJ8" && bash "$READER" docs/guide.md ) 2>&1 >/dev/null )"
+errJ8b="$( ( cd "$RJ8" && bash "$READER" src/app.ts   ) 2>&1 >/dev/null )"
+if printf '%s\n%s\n' "$errJ8a" "$errJ8b" | grep -qF "applies_to on id=j8-mixed"; then
+  no "(j8) a WARN diagnostic fired for the partially-empty array — the docstring calls this SILENT"
+else
+  ok "(j8) NO WARN diagnostic for the partially-empty array (silence is the documented decision)"
+fi
+
+# (j9) EMPTY-STRING arg MIXED WITH A REAL PATH — the one combination of the reader's filter-then-count
+# logic that nothing else asserts: (j4) is zero args, (j7) is one empty arg, (j1) is real paths only.
+# The contract is that the empty is FILTERED and the surviving real path still ROUTES — i.e. `'' +
+# docs/architecture.md` must be indistinguishable from `docs/architecture.md` alone. A guard that
+# bailed to fail-OPEN whenever ANY arg was empty (instead of filtering then counting) would leak every
+# scoped rule here while still passing (j1), (j4) and (j7).
+outJ9="$(run_reader_args "$RJ" "" docs/architecture.md)"; rcJ9=$?
+[ "$rcJ9" -eq 0 ] && ok "(j9 mixed empty+real arg) exits 0" || no "(j9) expected exit 0, got $rcJ9"
+# LIVENESS CONTROL — the docs-scoped rule must be PRESENT, so the absence assertion below cannot pass
+# vacuously on an empty/broken stdout.
+echo "$outJ9" | grep -qF -- "- Scoped to docs and markdown" \
+  && ok "(j9) LIVENESS: the docs-scoped rule IS emitted (the empty arg was filtered, routing still ran)" \
+  || no "(j9) docs-scoped rule missing — the absence assertion below would be vacuous: $outJ9"
+if echo "$outJ9" | grep -qF "Scoped to the scripts dir"; then
+  no "(j9) FAIL-OPEN REGRESSION: a scripts-scoped rule leaked when '' was mixed with a docs path"
+else
+  ok "(j9) a rule scoped ELSEWHERE stays ABSENT (mixing '' in does not degrade to a repo-wide call)"
+fi
+# ...and byte-identical to the same call WITHOUT the empty arg — the strongest form of the claim.
+outJ9b="$(run_reader_args "$RJ" docs/architecture.md)"
+[ "$outJ9" = "$outJ9b" ] \
+  && ok "(j9) output is IDENTICAL to passing the real path alone (empty args are inert)" \
+  || no "(j9) '' + docs/architecture.md differed from docs/architecture.md alone"
+
+# ============================================================================
+echo "== (k) ROUTING x SUPERSESSION ORDER — a routed-out rule must not resurrect its predecessor =="
+# k-new supersedes k-old, but k-new is scoped to src/ while k-old is repo-wide. Calling with a DOCS
+# path routes k-new out. The pinned order is validate/dedup -> SUPERSESSION -> ROUTING, so k-old stays
+# retired: supersession is a property of the STORE, not of the caller's diff. Reversing the order
+# would make a retired rule reappear on exactly the calls its replacement does not cover.
+RK="$(new_repo)"
+seed_rules_file "$RK" "order.json" '[
+  {"id":"k-new","category":"k","statement":"NEW rule, scoped to src","enforcement":"advisory","check":null,"provenance":{"source":"test"},"applies_to":["src/*"],"supersedes":"k-old"},
+  {"id":"k-old","category":"k","statement":"OLD retired rule must stay retired","enforcement":"advisory","check":null,"provenance":{"source":"test"}}
+]'
+outK1="$(run_reader_args "$RK" docs/guide.md)"; rcK1=$?
+[ "$rcK1" -eq 0 ] && ok "(k) exits 0" || no "(k) expected exit 0, got $rcK1"
+if echo "$outK1" | grep -qF "OLD retired rule must stay retired"; then
+  no "(k) ORDER REGRESSION: routing ran before supersession — the retired rule RESURRECTED"
+else
+  ok "(k) a rule routed out of this call does NOT resurrect the rule it supersedes"
+fi
+[ -z "$outK1" ] && ok "(k) both rules absent for the docs path (new routed out, old still superseded)" \
+                || no "(k) unexpected output for the docs path: $outK1"
+# Sanity in the other two directions: the replacement IS emitted for an in-scope path and for no-args,
+# and in BOTH cases the superseded rule stays hidden.
+outK2="$(run_reader_args "$RK" src/main.ts)"
+if echo "$outK2" | grep -qF -- "- NEW rule, scoped to src" && ! echo "$outK2" | grep -qF "OLD retired"; then
+  ok "(k) in-scope path: replacement emitted, superseded rule still hidden"
+else
+  no "(k) in-scope path behaved unexpectedly: $outK2"
+fi
+outK3="$(run_reader "$RK")"
+if echo "$outK3" | grep -qF -- "- NEW rule, scoped to src" && ! echo "$outK3" | grep -qF "OLD retired"; then
+  ok "(k) no-arg call: replacement emitted repo-wide, superseded rule still hidden"
+else
+  no "(k) no-arg call behaved unexpectedly: $outK3"
+fi
+
+# ============================================================================
+echo "== (l) MUTATION CONTROL — (j1)'s absence assertion must FAIL against a bypassed filter =="
+# Job Risk R3: "a test asserting only 'rule is emitted' passes identically against today's no-op
+# reader." Emission assertions are therefore not evidence; only the ABSENCE assertion in (j1) is. This
+# case proves that absence assertion is load-bearing by MUTATING the reader — replacing the routing
+# predicate call with `true` (which ignores its args and always succeeds) — and showing that (j1)'s
+# assertion then fails. No `sed -i` (BSD needs `-i ''`, GNU does not); we sed to a NEW file.
+MUTANT="$ROOT/read-rules.mutant.sh"
+sed 's/rule_applies "$route_spec_cell"/true "$route_spec_cell"/' "$READER" > "$MUTANT" 2>/dev/null
+# Guard against a VACUOUS mutation control: if the sed matched nothing (the call site was renamed),
+# the mutant would be byte-identical to the reader and the "control" would prove nothing.
+if [ -s "$MUTANT" ] && ! cmp -s "$MUTANT" "$READER"; then
+  ok "(l) mutation applied — the mutant differs from the reader (control is not vacuous)"
+  mut_out="$( cd "$RJ" && bash "$MUTANT" loomwright/scripts/read-rules.sh 2>/dev/null )"
+  # THE CONTROL: under the bypassed filter the docs-scoped rule leaks in, so (j1)'s absence assertion
+  # ("Scoped to docs and markdown" NOT in stdout) is FALSE here. If it were still true, (j1) would be
+  # passing for some reason other than the routing filter.
+  if echo "$mut_out" | grep -qF "Scoped to docs and markdown"; then
+    ok "(l) CONTROL HELD: with routing bypassed the non-match rule LEAKS IN ⇒ (j1)'s absence assertion FAILS as required"
+  else
+    no "(l) CONTROL BROKEN: (j1)'s absence assertion still passes with routing bypassed — (j1) is VACUOUS"
+  fi
+  # And the mutant must still emit the matching rule, i.e. the mutation disabled ONLY the filter.
+  echo "$mut_out" | grep -qF -- "- [MUST] Scoped to the scripts dir" \
+    && ok "(l) the mutation disabled only the routing filter (the reader otherwise still works)" \
+    || no "(l) the mutant is broken beyond the filter — the control would be meaningless"
+else
+  no "(l) mutation control could not be applied (sed matched nothing?) — routing tests are UNPROVEN"
 fi
 
 echo

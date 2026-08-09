@@ -17,6 +17,13 @@
 #   (F) atomic write + read-back verify (written file parses + contains the new id).
 #   (G) value validation: bad --enforcement (blocking), empty --statement, non-string non-null check.
 #   (H) confirm-only: no --confirm + non-TTY ⇒ DRY-RUN (plan printed, NO file written).
+#   (M) --applies-to (PATH ROUTING): REPEATABLE (N flags ⇒ N-element array, order preserved), a single
+#       flag still authors an ARRAY, OMITTED ⇒ present-and-null (repo-wide, historical default),
+#       traversal/hostile patterns (`../`, `a/../b`, absolute `/…`, `~/…`, empty, whitespace-only,
+#       embedded newline, embedded 0x1F unit separator) REJECTED non-zero
+#       with NO file written, one bad pattern among repeated flags aborts the WHOLE write, the flag is
+#       rejected alongside --retract, and a writer→reader ROUND TRIP proves what is authored is what
+#       read-rules.sh actually routes on.
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -396,6 +403,165 @@ if [ "$RC" -ne 0 ] && [ "$(count_rule_files "$RL2")" = "0" ]; then
   ok "(L2) hostile category alongside --retract still rejected, no traversal write"
 else
   no "(L2) hostile category + --retract NOT rejected (rc=$RC files=$(count_rule_files "$RL2"))"
+fi
+
+# ============================================================================
+echo "== (M) --applies-to (PATH ROUTING): repeatable, defaults to null, rejects traversal =="
+
+# (M1) REPEATABLE — N flags author an N-element array, in the order supplied.
+RM1="$(new_repo)"
+run_writer "$RM1" --category "Routing" --statement "Scoped rule one" \
+  --applies-to "loomwright/scripts/*" --applies-to "*.sh" --confirm
+if [ "$RC" -eq 0 ]; then
+  got="$(jq -c '.[0].applies_to' "$RM1/.agent/rules/routing.json" 2>/dev/null)"
+  [ "$got" = '["loomwright/scripts/*","*.sh"]' ] \
+    && ok "(M1) two --applies-to flags author a 2-element array in order" \
+    || no "(M1) expected [\"loomwright/scripts/*\",\"*.sh\"], got: $got"
+else
+  no "(M1) write with two --applies-to flags failed (rc=$RC): $OUT"
+fi
+
+# (M1b) a SINGLE flag authors a 1-element array (not a bare string).
+RM1B="$(new_repo)"
+run_writer "$RM1B" --category "Routing" --statement "Single scope" --applies-to "src/**" --confirm
+got="$(jq -c '.[0].applies_to' "$RM1B/.agent/rules/routing.json" 2>/dev/null)"
+[ "$RC" -eq 0 ] && [ "$got" = '["src/**"]' ] \
+  && ok "(M1b) one --applies-to flag authors a 1-element ARRAY (never a bare string)" \
+  || no "(M1b) expected [\"src/**\"], got: $got (rc=$RC)"
+
+# (M2) OMITTED ⇒ applies_to is explicitly null (repo-wide) — the historical default, unchanged.
+RM2="$(new_repo)"
+run_writer "$RM2" --category "Routing" --statement "Repo wide rule" --confirm
+if [ "$RC" -eq 0 ]; then
+  got="$(jq -c '.[0].applies_to' "$RM2/.agent/rules/routing.json" 2>/dev/null)"
+  [ "$got" = "null" ] \
+    && ok "(M2) --applies-to omitted ⇒ applies_to: null (repo-wide default preserved)" \
+    || no "(M2) expected null applies_to when the flag is omitted, got: $got"
+  # ...and the key is PRESENT (null is a meaningful value here, not an omitted member like supersedes).
+  jq -e '.[0] | has("applies_to")' "$RM2/.agent/rules/routing.json" >/dev/null 2>&1 \
+    && ok "(M2) the applies_to key is present-and-null (not omitted)" \
+    || no "(M2) applies_to key missing entirely"
+else
+  no "(M2) plain write failed (rc=$RC): $OUT"
+fi
+
+# (M3) TRAVERSAL / hostile patterns REJECTED with a non-zero exit and NO file written — mirroring the
+# hostile-category rejection in section (A). A rejected pattern is never silently sanitized.
+for badpat in "../escape/*" "a/../b" "/etc/passwd" "~/secrets/*" ""; do
+  RM3="$(new_repo)"
+  run_writer "$RM3" --category "Routing" --statement "Hostile pattern rule" --applies-to "$badpat" --confirm
+  if [ "$RC" -ne 0 ] && [ "$(count_rule_files "$RM3")" = "0" ]; then
+    ok "(M3) --applies-to '$badpat' REJECTED (rc=$RC) with no file written"
+  else
+    no "(M3) --applies-to '$badpat' NOT rejected (rc=$RC files=$(count_rule_files "$RM3"))"
+  fi
+done
+# (M3b) a rejection among REPEATED flags aborts the whole write — one bad pattern poisons the add,
+# it is never partially applied.
+RM3B="$(new_repo)"
+run_writer "$RM3B" --category "Routing" --statement "Mixed patterns" \
+  --applies-to "src/*" --applies-to "../escape" --confirm
+if [ "$RC" -ne 0 ] && [ "$(count_rule_files "$RM3B")" = "0" ]; then
+  ok "(M3b) one hostile pattern among repeated flags aborts the entire write (no partial apply)"
+else
+  no "(M3b) mixed good/hostile --applies-to was not rejected (rc=$RC files=$(count_rule_files "$RM3B"))"
+fi
+
+# (M3c) EMBEDDED NEWLINE REJECTED — the accumulator is newline-TERMINATED, so an embedded newline
+# would be swallowed as its own delimiter and ONE flag would silently become TWO patterns (the A2
+# validation loop runs after that split and can never see it). Three doc surfaces assert newline is
+# rejected (add-rule.sh's A2 table, skills/rules/SKILL.md §1, commands/rules.md); this pins that the
+# reject actually fires, in the parsing arm, before the split.
+RM3C="$(new_repo)"
+run_writer "$RM3C" --category "Routing" --statement "Newline pattern rule" \
+  --applies-to "$(printf 'src/*\ndocs/*')" --confirm
+if [ "$RC" -ne 0 ] && [ "$(count_rule_files "$RM3C")" = "0" ]; then
+  ok "(M3c) a newline-bearing --applies-to is REJECTED (rc=$RC) with no file written"
+else
+  no "(M3c) newline in --applies-to NOT rejected (rc=$RC files=$(count_rule_files "$RM3C")) — one flag silently became two patterns"
+fi
+
+# (M3d) 0x1F (UNIT SEPARATOR) REJECTED — read-rules.sh's `route_spec` strips 0x1F with the same gsub
+# as tab/newline, AND 0x1F is the route cell's own join delimiter. Accepting one would store a pattern
+# the reader then silently alters — the exact "sanitized into a safe-looking form instead of rejected"
+# outcome A1 exists to prevent.
+RM3D="$(new_repo)"
+run_writer "$RM3D" --category "Routing" --statement "Unit separator pattern rule" \
+  --applies-to "$(printf 'src/\037x')" --confirm
+if [ "$RC" -ne 0 ] && [ "$(count_rule_files "$RM3D")" = "0" ]; then
+  ok "(M3d) a 0x1F-bearing --applies-to is REJECTED (rc=$RC) with no file written"
+else
+  no "(M3d) 0x1F in --applies-to NOT rejected (rc=$RC files=$(count_rule_files "$RM3D")) — the reader would silently strip it"
+fi
+
+# (M3e) WHITESPACE-ONLY REJECTED — passes the non-empty check but matches nothing (no touched path is
+# a bare space), so it is a silent dead rule for the same reason the empty pattern is. Mirrors the
+# `--target` whitespace-only guard in the retract path. A lone TAB is deliberately NOT in this list:
+# it is whitespace, but the guard order puts the tab-specific reject FIRST, so it belongs to (M3f).
+for wspat in " " "   "; do
+  RM3E="$(new_repo)"
+  run_writer "$RM3E" --category "Routing" --statement "Whitespace pattern rule" \
+    --applies-to "$wspat" --confirm
+  if [ "$RC" -ne 0 ] && [ "$(count_rule_files "$RM3E")" = "0" ]; then
+    ok "(M3e) a whitespace-only --applies-to is REJECTED (rc=$RC) with no file written"
+  else
+    no "(M3e) whitespace-only --applies-to NOT rejected (rc=$RC files=$(count_rule_files "$RM3E")) — a silent dead rule"
+  fi
+done
+
+# (M3f) CR and TAB REJECTED BY THEIR OWN SPECIFIC ARMS — both as a lone character and embedded in an
+# otherwise non-whitespace pattern. CR rejection is documented in three places (this writer's A2 table,
+# skills/rules/SKILL.md §7, and the PR narrative) and had no check at all; and because a lone CR / lone
+# TAB is entirely whitespace under `[:space:]`, those arms are only reachable while the specific
+# control-character `case` runs BEFORE the whitespace-only catch-all. Asserting the SPECIFIC message
+# (not merely rc!=0) is what makes a future re-reorder fail here instead of passing silently.
+for cpat_label in \
+  "lone-CR|$(printf '\r')|carriage-return" \
+  "embedded-CR|src/$(printf '\r')foo|carriage-return" \
+  "lone-TAB|$(printf '\t')|tab" \
+  "embedded-TAB|src/$(printf '\t')foo|tab"; do
+  cf_name="${cpat_label%%|*}"
+  cf_rest="${cpat_label#*|}"
+  cf_pat="${cf_rest%|*}"
+  cf_msg="${cf_rest##*|}"
+  RM3F="$(new_repo)"
+  run_writer "$RM3F" --category "Routing" --statement "Control character pattern rule" \
+    --applies-to "$cf_pat" --confirm
+  if [ "$RC" -ne 0 ] && [ "$(count_rule_files "$RM3F")" = "0" ] \
+     && printf '%s' "$OUT" | grep -qF -- "may not contain $cf_msg characters"; then
+    ok "(M3f) $cf_name --applies-to REJECTED (rc=$RC) with no file written and the $cf_msg-specific diagnostic"
+  else
+    no "(M3f) $cf_name --applies-to did not hit the $cf_msg-specific reject (rc=$RC files=$(count_rule_files "$RM3F")): $OUT"
+  fi
+done
+
+# (M4) --applies-to is an ADD-only flag: combining it with --retract is rejected outright (R1).
+RM4="$(new_repo)"
+run_writer "$RM4" --retract --target "x" --reason "y" --applies-to "src/*" --confirm
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -qF -- "--applies-to"; then
+  ok "(M4) --retract + --applies-to REJECTED, and the diagnostic names the offending flag"
+else
+  no "(M4) --retract + --applies-to not rejected with a naming diagnostic (rc=$RC): $OUT"
+fi
+
+# (M5) ROUND-TRIP: what this writer authors is exactly what read-rules.sh routes on. Guards the
+# writer/reader contract seam — a pattern that writes fine but never matches would be a dead rule.
+RM5="$(new_repo)"
+run_writer "$RM5" --category "Routing" --statement "Round trip scoped rule" \
+  --applies-to "loomwright/scripts/*" --confirm
+if [ "$RC" -eq 0 ]; then
+  rt_in="$( cd "$RM5" && bash "$SCRIPT_DIR/read-rules.sh" loomwright/scripts/x.sh 2>/dev/null )"
+  rt_out="$( cd "$RM5" && bash "$SCRIPT_DIR/read-rules.sh" docs/x.md 2>/dev/null )"
+  rt_noarg="$( cd "$RM5" && bash "$SCRIPT_DIR/read-rules.sh" 2>/dev/null )"
+  if echo "$rt_in" | grep -qF -- "- Round trip scoped rule" \
+     && ! echo "$rt_out" | grep -qF "Round trip scoped rule" \
+     && echo "$rt_noarg" | grep -qF -- "- Round trip scoped rule"; then
+    ok "(M5) writer→reader round trip: in-scope emits, out-of-scope ABSENT, no-arg repo-wide"
+  else
+    no "(M5) round trip failed — in:[$rt_in] out:[$rt_out] noarg:[$rt_noarg]"
+  fi
+else
+  no "(M5) round-trip write failed (rc=$RC): $OUT"
 fi
 
 echo

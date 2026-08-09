@@ -21,6 +21,11 @@
 #   (d) PARSER PARITY with read-rules.sh — duplicate-id (first-seen wins, later dup's check NOT run),
 #         malformed / non-array JSON files, and invalid objects (missing field / bad enforcement) are
 #         SKIPPED — their checks NEVER execute, even under --confirm.
+#   (f) REPO-WIDE AUDIT vs the reader's PATH ROUTING — a rule whose `applies_to` routes it OUT of the
+#         reader's advisory emission for a given path set is STILL selected and executed here (the
+#         premise is proven first, so the assertion cannot be vacuous), and a stray path argument is
+#         warned-and-ignored rather than narrowing the audit. Routing is an emission filter; /rules
+#         check is a repo-wide audit — see rules-check.sh's header near the parity comment.
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -240,6 +245,51 @@ rm -f "$MARKER_E" 2>/dev/null
 run_checker "$RE" --frobnicate --no-cmd >/dev/null 2>&1
 [ ! -e "$MARKER_E" ] && ok "(e2) unknown arg alongside --no-cmd preserves the --no-cmd skip" \
   || no "(e2) REGRESSION: unknown arg defeated --no-cmd"
+
+# ============================================================================
+echo "== (f) REPO-WIDE AUDIT — a rule ROUTED OUT of the reader is STILL selected by the checker =="
+# `applies_to` path routing is an EMISSION FILTER for advisory injection; `/rules check` is a
+# repo-wide AUDIT. Different axes: a rule the reader routes out of some worker's advisory block has
+# not stopped being true. This checker takes NO path scope at all, so routing has no input here — and
+# that is a DECISION, documented in rules-check.sh's header near the parity comment. This case pins it
+# both ways so a future "make the checker follow routing" change cannot land silently.
+RF="$(new_repo)"
+MARKER_F="$ROOT/f_routed_out_marker_$$"
+rm -f "$MARKER_F" 2>/dev/null
+seed_rules_file "$RF" "f.json" "[
+  {\"id\":\"f-scoped\",\"category\":\"safety\",\"statement\":\"Scoped to src, still audited repo-wide\",\"enforcement\":\"must\",\"check\":\"touch $MARKER_F\",\"provenance\":{\"source\":\"test\"},\"applies_to\":[\"src/*\"]}
+]"
+# (f1) PREMISE — prove the rule really IS routed out by the reader for an unrelated path set. Without
+#      this the (f2) assertion could pass simply because routing does nothing (a vacuous test).
+READER_F="$SCRIPT_DIR/read-rules.sh"
+if [ -r "$READER_F" ]; then
+  routed_out="$( cd "$RF" && bash "$READER_F" docs/readme.md 2>/dev/null )"
+  routed_in="$( cd "$RF" && bash "$READER_F" src/main.ts 2>/dev/null )"
+  if ! printf '%s\n' "$routed_out" | grep -qF "Scoped to src, still audited repo-wide" \
+     && printf '%s\n' "$routed_in" | grep -qF -- "- [MUST] Scoped to src, still audited repo-wide"; then
+    ok "(f1 premise) the reader DOES route this rule out for an unrelated path set (premise is real)"
+  else
+    no "(f1 premise) the reader did not route the rule out — (f2) would be vacuous. out:[$routed_out]"
+  fi
+else
+  no "(f1 premise) read-rules.sh not readable at $READER_F — cannot establish the premise"
+fi
+# (f2) THE ASSERTION — the checker still SELECTS and RUNS it under --confirm (marker-proven).
+run_checker "$RF" --confirm >/dev/null 2>&1
+[ -e "$MARKER_F" ] \
+  && ok "(f2) a routed-out rule is STILL selected + executed by the repo-wide checker (marker created)" \
+  || no "(f2) REGRESSION: the checker skipped a rule merely because applies_to would route it out"
+# (f3) ...and the checker still takes NO path scope: passing one is warned-and-ignored, never a filter.
+rm -f "$MARKER_F" 2>/dev/null
+err_f3="$( cd "$RF" && bash "$CHECKER" docs/readme.md --confirm </dev/null 2>&1 >/dev/null )"; rc_f3=$?
+[ "$rc_f3" -eq 0 ] && ok "(f3) a stray path argument still exits 0 (fail-safe)" \
+                   || no "(f3) expected exit 0 with a stray path arg, got $rc_f3"
+printf '%s\n' "$err_f3" | grep -qF -- "docs/readme.md" \
+  && ok "(f3) a path argument is WARNED-and-ignored (the checker accepts no path scope)" \
+  || no "(f3) expected a stderr warning naming the ignored path arg, got: $err_f3"
+[ -e "$MARKER_F" ] \
+  && ok "(f3) the stray path arg did NOT narrow the audit — the check still ran" \
+  || no "(f3) a stray path arg silently narrowed the audit"
 
 echo
 echo "RESULT: $pass passed, $fail failed"

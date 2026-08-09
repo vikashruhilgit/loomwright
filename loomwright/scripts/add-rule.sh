@@ -25,6 +25,15 @@
 #     violate the freeze), so the writer PRINTS a one-line provenance reason to stdout and the commit
 #     that lands the removal is the durable record.
 #
+# PATH ROUTING added ONE more optional flag on the (default) ADD action:
+#   - `--applies-to <glob>` — REPEATABLE. N flags author an N-element `applies_to` array of `case`-glob
+#     patterns; the flag OMITTED leaves `applies_to: null`, which means REPO-WIDE (the historical
+#     default, unchanged). `read-rules.sh` is what acts on it at read time: a rule with a non-empty
+#     pattern array is emitted only when a touched path matches one of its patterns, and EVERY
+#     ambiguous shape fails OPEN there (see read-rules.sh's "PATH ROUTING" docstring). Patterns are
+#     validated here (non-empty, no newline/CR/tab, no `..`, not absolute, not `~`-relative) so this
+#     writer can never author a scope that is silently dead or that walks out of the repo.
+#
 # WRITE DISCIPLINE — ADD action (per skills/rules/SKILL.md §7 — ALL enforced here in code, never prose):
 #   1. Category containment. Slug a LEGITIMATE category to a SINGLE `[a-z0-9-]` path segment via BENIGN
 #      normalization only (lowercase, spaces→'-', collapse repeats, strip leading/trailing '-'). REJECT
@@ -34,7 +43,8 @@
 #      SKIP): statement non-empty; the derived statement-slug non-empty; enforcement EXACTLY
 #      `advisory`|`must`; check is a string OR null; `--supersedes` (when given) non-empty, newline-free,
 #      and not equal to the about-to-be-created id (self-reference rejected at write time even though
-#      the reader would separately fail-safe-ignore it).
+#      the reader would separately fail-safe-ignore it); each `--applies-to` (when given) non-empty,
+#      newline/CR/tab-free, `..`-free, and neither absolute (`/…`) nor home-relative (`~…`).
 #   3. Array-only parse-gate the target `.agent/rules/<category-slug>.json` with `jq -e 'type=="array"'`
 #      — ABORT (never clobber) on a malformed OR valid-but-non-array pre-existing file; create as a
 #      single-element array if absent.
@@ -55,7 +65,7 @@
 #
 # WRITE DISCIPLINE — RETRACT action (curate-postmortem.sh shape, validate-before-write, fail loud):
 #   R1. `--retract` is mutually exclusive with every add-only flag (`--category`/`--statement`/
-#       `--check`/`--supersedes`) — combining them is rejected outright (exit 2), never silently
+#       `--check`/`--supersedes`/`--applies-to`) — combining them is rejected outright (exit 2), never silently
 #       ignored, so a caller can't accidentally mix modes.
 #   R2. `--target <rule-id>` is REQUIRED (non-empty, no embedded newline/CR — mirrors
 #       curate-postmortem.sh's own target guard so a target could never accidentally match nothing).
@@ -77,7 +87,7 @@
 #
 # Usage:
 #   add-rule.sh --category <str> --statement <str> [--enforcement advisory|must] [--check <str>]
-#               [--source <str>] [--supersedes <rule-id>] [--confirm]
+#               [--source <str>] [--supersedes <rule-id>] [--applies-to <glob> ...] [--confirm]
 #   add-rule.sh --retract --target <rule-id> --reason <str> [--confirm]
 # Exit:  0 = wrote/retracted OR planned-ok (dry-run) ; non-zero = rejected / error (no partial write).
 
@@ -101,6 +111,12 @@ source_val="/rules add"
 confirm=0
 supersedes_set=0     # whether --supersedes was supplied at all (ADD action only)
 supersedes_val=""
+applies_to_set=0     # whether --applies-to was supplied at all (ADD action only; REPEATABLE)
+applies_to_raw=""    # newline-terminated accumulator of the raw --applies-to values (see A1 below).
+                     # A newline-delimited string rather than a bash array on purpose: `"${arr[@]}"`
+                     # on an EMPTY array is an unbound-variable error under `set -u` in bash 3.2 (the
+                     # macOS dev shell), and embedded newlines are rejected outright (A2), so the
+                     # delimiter is unambiguous by construction.
 retract=0            # whether --retract mode was selected
 target_id_set=0      # whether --target was supplied at all (RETRACT action only)
 target_id=""
@@ -117,6 +133,16 @@ while [ "$#" -gt 0 ]; do
     --check)       [ "$#" -ge 2 ] || die "--check requires a value"; check_set=1; check_val="$2"; shift 2 ;;
     --source)      [ "$#" -ge 2 ] || die "--source requires a value"; source_val="$2"; shift 2 ;;
     --supersedes)  [ "$#" -ge 2 ] || die "--supersedes requires a value"; supersedes_set=1; supersedes_val="$2"; shift 2 ;;
+    --applies-to)  [ "$#" -ge 2 ] || die "--applies-to requires a value"; applies_to_set=1
+                   # A2-newline, checked HERE and nowhere else: the accumulator below is newline-
+                   # TERMINATED, so an embedded newline would be consumed as the accumulator's OWN
+                   # delimiter and one flag would silently become two patterns. The validation loop at
+                   # A2 runs AFTER that split and therefore can never see it — the reject must happen
+                   # before the value is appended.
+                   case "$2" in
+                     *$'\n'*) die "rejected: --applies-to may not contain newline characters" ;;
+                   esac
+                   applies_to_raw="${applies_to_raw}${2}"$'\n'; shift 2 ;;
     --retract)     retract=1; shift ;;
     --target)      [ "$#" -ge 2 ] || die "--target requires a value"; target_id_set=1; target_id="$2"; shift 2 ;;
     --reason)      [ "$#" -ge 2 ] || die "--reason requires a value"; reason_set=1; reason="$2"; shift 2 ;;
@@ -142,8 +168,9 @@ RULES_DIR="$GITROOT/.agent/rules"
 # =============================================================================
 if [ "$retract" -eq 1 ]; then
   # R1. Mutually exclusive with every add-only flag.
-  if [ -n "$category" ] || [ -n "$statement" ] || [ "$check_set" -eq 1 ] || [ "$supersedes_set" -eq 1 ]; then
-    die "rejected: --retract cannot be combined with add-only flags (--category/--statement/--check/--supersedes)" 2
+  if [ -n "$category" ] || [ -n "$statement" ] || [ "$check_set" -eq 1 ] || [ "$supersedes_set" -eq 1 ] \
+     || [ "$applies_to_set" -eq 1 ]; then
+    die "rejected: --retract cannot be combined with add-only flags (--category/--statement/--check/--supersedes/--applies-to)" 2
   fi
 
   # R2. --target required, non-empty, newline/CR-free (mirrors curate-postmortem.sh's target guard).
@@ -302,6 +329,91 @@ if [ "$supersedes_set" -eq 1 ]; then
   esac
 fi
 
+# --applies-to (PATH ROUTING): REPEATABLE — N flags produce an N-element `applies_to` array; OMITTED
+# ⇒ `applies_to: null` (repo-wide), the historical default, unchanged. Each pattern is a `case` glob
+# matched by read-rules.sh against a touched path (`*`/`**` are equivalent and BOTH cross `/` — this
+# is NOT .gitignore syntax; see read-rules.sh's "PATH ROUTING" docstring and skills/rules/SKILL.md §1).
+#
+# A1. Validate BEFORE writing, mirroring the category-containment discipline: a pattern is REJECTED
+#     (abort, non-zero, never silently rewritten), never sanitized into a safe-looking form.
+# A2. Rejected shapes, and why each one:
+#       empty                → matches nothing; a silent dead rule.
+#       whitespace-only      → same defect as empty, one step further in: no touched path is literally
+#                              a bare space, so the pattern is stored, survives every other guard, and
+#                              routes the rule to nothing. Mirrors the `--target` whitespace-only guard
+#                              in the retract path above (same `*[![:space:]]*` idiom — bash 3.2 here,
+#                              so NOT `${var//[[:space:]]/}`, which is O(n²) on this host).
+#       newline / CR         → newline is this accumulator's own delimiter (see the declaration above)
+#                              AND the reader strips it, so accepting one would author a pattern that
+#                              means something other than what was typed. CR is rejected for the
+#                              writer's own reason — a line-ending hazard in a line-framed store; the
+#                              reader does NOT strip CR (its gsub set is tab/newline/0x1F). NOTE the NEWLINE arm
+#                              lives in the `--applies-to)` PARSING case, not in the loop below: by the
+#                              time we get here the newline would already have been consumed as the
+#                              delimiter, splitting one flag into two patterns. CR/tab/`..`/`/`/`~`
+#                              survive the split intact and are rejected below.
+#       tab                  → the reader neutralizes tab inside a pattern (line-framing safety), so
+#                              the stored pattern would silently differ from the authored one.
+#       0x1F (unit sep)      → the reader's `route_spec` strips it with the same `gsub` as tab/newline
+#                              (its `gsub("[\t\n\u001f]"; "")`) because 0x1F is the route
+#                              cell's own JOIN delimiter — so an accepted 0x1F would both mutate the
+#                              stored pattern AND collide with the cell framing it was chosen for.
+#       contains `..`        → traversal-style; the store is repo-relative and a rule scope has no
+#                              business walking upward. Same raw-string reject as the `category`
+#                              containment guard — item 1 of this file's own "WRITE DISCIPLINE — ADD
+#                              action" list above (NOT a `skills/rules/SKILL.md §N` reference; the
+#                              `§N` citations elsewhere in this file all point at that external doc).
+#                              That anchor is DESCRIPTIVE on purpose: a bare line number in a comment
+#                              is a live claim that nothing checks, and this one was already wrong
+#                              twice. Cite the construct, not the line.
+#       leading `/`          → absolute path; the reader matches repo-relative touched paths, so an
+#                              absolute pattern can only ever match nothing.
+#       leading `~`          → home-relative; same reasoning as absolute, plus shell-expansion optics.
+if [ "$applies_to_set" -eq 1 ]; then
+  nl_a=$'\n'; cr_a=$'\r'; tab_a=$'\t'; us_a=$'\037'
+  # Iterate the accumulator without a bash array (see the declaration comment). The accumulator is
+  # newline-TERMINATED, so a trailing empty segment is expected and is simply the loop's exit.
+  at_rest="$applies_to_raw"
+  at_count=0
+  while [ -n "$at_rest" ]; do
+    at_pat="${at_rest%%"$nl_a"*}"
+    at_rest="${at_rest#*"$nl_a"}"
+    [ -n "$at_pat" ] || die "rejected: --applies-to must be non-empty when supplied"
+    # ORDER MATTERS: the SPECIFIC control-character/shape rejects run FIRST, the whitespace-only
+    # catch-all LAST — mirroring the `--target` guard in the retract path, which likewise checks
+    # newline/CR before its whitespace-only arm. A lone CR or lone TAB is entirely whitespace under
+    # `[:space:]`, so with the catch-all first those two specific arms were unreachable for the
+    # lone-control-character shape and the caller got the generic message instead. An unreachable
+    # branch is a guarantee that exists only on paper. Every input rejected before is still rejected;
+    # only WHICH diagnostic fires changed. (bash 3.2: `case`, never `${var//[[:space:]]/}`.)
+    case "$at_pat" in
+      *"$cr_a"*)  die "rejected: --applies-to may not contain carriage-return characters: $at_pat" ;;
+      *"$tab_a"*) die "rejected: --applies-to may not contain tab characters: $at_pat" ;;
+      *"$us_a"*)  die "rejected: --applies-to may not contain 0x1F unit-separator characters: $at_pat" ;;
+      *..*)       die "rejected: --applies-to may not contain '..' (traversal): $at_pat" ;;
+      /*)         die "rejected: --applies-to must be a repo-relative pattern, not absolute: $at_pat" ;;
+      '~'*)       die "rejected: --applies-to must be a repo-relative pattern, not home-relative: $at_pat" ;;
+    esac
+    # Whitespace-only is the empty case one step further in — see the A2 table.
+    case "$at_pat" in
+      *[![:space:]]*) : ;;
+      *) die "rejected: --applies-to must contain at least one non-whitespace character (whitespace-only pattern matches nothing): $at_pat" ;;
+    esac
+    at_count=$((at_count + 1))
+  done
+  [ "$at_count" -gt 0 ] || die "rejected: --applies-to must be non-empty when supplied"
+fi
+
+# Build the JSON array injection-safely: the raw text crosses into jq via `-R -s` (read as a raw
+# string on STDIN) and is split INSIDE jq's data model — never interpolated into the program text.
+# The trailing empty segment from the newline terminator is dropped by the length filter.
+applies_to_json="null"
+if [ "$applies_to_set" -eq 1 ]; then
+  applies_to_json="$(printf '%s' "$applies_to_raw" \
+    | jq -R -s -c 'split("\n") | map(select(length > 0))')" \
+    || die "internal error: could not encode --applies-to values as a JSON array"
+fi
+
 # ---------------------------------------------------------------------------
 # Resolve the target file (repo-root anchored, matching the reader).
 # ---------------------------------------------------------------------------
@@ -368,12 +480,16 @@ new_obj="$(jq -n \
   --arg check_val "$check_val" \
   --argjson supersedes_set "$supersedes_set" \
   --arg supersedes_val "$supersedes_val" \
+  --argjson applies_to "$applies_to_json" \
   '
   {
     id: $id, category: $category, statement: $statement, enforcement: $enforcement,
     check: (if $check_set == 1 then $check_val else null end),
     provenance: {source: $source, added: $added},
-    applies_to: null
+    # PATH ROUTING: an ARRAY of `case`-glob patterns when --applies-to was supplied (repeatable),
+    # otherwise `null` — the historical default, meaning REPO-WIDE. `null` is a MEANINGFUL value
+    # here (not a placeholder), so unlike `supersedes` it is always stamped explicitly.
+    applies_to: $applies_to
   }
   | if $supersedes_set == 1 then . + {supersedes: $supersedes_val} else . end
   ')"
