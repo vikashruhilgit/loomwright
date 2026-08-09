@@ -104,6 +104,31 @@ ALLOW
 # resolve against this repo's own CLAUDE.md by coincidence of the name, and pinning it would
 # assert a fact about line 42 that the example never meant to claim.
 
+# Exact whole-line membership tests. Both deliberately avoid `case "$blob" in *"$needle"*)`,
+# which is a SUBSTRING test: with a multi-entry allowlist, `a.md|b.sh:1` is a substring of
+# `xa.md|b.sh:12`, so one entry could silently exempt a different, unlisted citation. Harmless at
+# one entry, wrong the moment the list grows — and a ratchet that quietly widens is worse than no
+# ratchet. Plain shell loops, so there is no regex-metacharacter escaping to get wrong in a path.
+allowlist_has() {
+  local needle="$1" line
+  while IFS= read -r line; do
+    [ "$line" = "$needle" ] && return 0
+  done <<EOF
+$BARE_ALLOWLIST
+EOF
+  return 1
+}
+
+bares_has() {
+  local e_src="$1" e_tgt="$2" line
+  while IFS= read -r line; do
+    [ "$line" = "$(printf 'BARE\t%s\t%s' "$e_src" "$e_tgt")" ] && return 0
+  done <<EOF
+$BARES
+EOF
+  return 1
+}
+
 # ---------------------------------------------------------------------------------------------
 # CORE SCANNER — shared by the real run and by the mutation controls.
 #
@@ -275,8 +300,16 @@ else
 
   # Anti-vacuity: the scan must actually find citations. If a regex or glob change silences it,
   # every check below would pass over an empty set — exactly the (j4b) failure mode.
-  if [ "$n_total" -lt 10 ]; then
-    no "citation scan found only $n_total citations across the live surfaces — expected >=10; the scanner has gone vacuous"
+  #
+  # The floor is set from a MEASURED baseline (~30 citations at the time of writing), not from a
+  # round number: the `set -u` truncation bug this check exists to catch dropped the scanned set
+  # to 14, which a loose floor of 10 would have waved straight through. It is set below the real
+  # count so that ordinary curation — converting a citation to a descriptive anchor, which this
+  # gate actively encourages — does not trip it, and it should be lowered deliberately (with the
+  # new baseline stated) rather than raised to chase the corpus.
+  CITE_FLOOR=20
+  if [ "$n_total" -lt "$CITE_FLOOR" ]; then
+    no "citation scan found only $n_total citations across the live surfaces — expected >=$CITE_FLOOR; the scanner has gone vacuous"
   else
     ok "citation scan is non-vacuous: $n_total citations found ($n_ok pinned-and-verified, $n_skip unresolvable/skipped)"
   fi
@@ -312,11 +345,13 @@ else
   if [ -n "$BARES" ]; then
     while IFS="$(printf '\t')" read -r _ src tgt; do
       [ -z "$src" ] && continue
-      case "$BARE_ALLOWLIST" in
-        *"$src|$tgt"*) ;;
-        *) echo "    $src cites $tgt with no [pins: ...] anchor and no allowlist entry" >&2
-           unratcheted=$((unratcheted + 1)) ;;
-      esac
+      # EXACT per-line comparison, not a substring test against the whole blob: `a.md|b.sh:1` is
+      # a substring of `xa.md|b.sh:12`, so a substring match would let one allowlist entry
+      # silently exempt a DIFFERENT, unlisted citation as the list grows.
+      if allowlist_has "$src|$tgt"; then :; else
+        echo "    $src cites $tgt with no [pins: ...] anchor and no allowlist entry" >&2
+        unratcheted=$((unratcheted + 1))
+      fi
     done <<EOF
 $BARES
 EOF
@@ -332,11 +367,10 @@ EOF
   while IFS= read -r entry; do
     [ -z "$entry" ] && continue
     e_src="${entry%%|*}"; e_tgt="${entry#*|}"
-    case "$BARES" in
-      *"$e_src	$e_tgt"*) ;;
-      *) echo "    allowlist entry no longer present as a bare citation: $entry" >&2
-         stale=$((stale + 1)) ;;
-    esac
+    if bares_has "$e_src" "$e_tgt"; then :; else
+      echo "    allowlist entry no longer present as a bare citation: $entry" >&2
+      stale=$((stale + 1))
+    fi
   done <<EOF
 $BARE_ALLOWLIST
 EOF
@@ -476,6 +510,21 @@ TGT
   case "$M_BRACK" in
     OK*) ok "(M11) a pin literal containing \`]\` survives parsing (JSON / character-class pins)" ;;
     *)   no "(M11) a pin containing \`]\` was truncated at the bracket — verdict was '$M_BRACK'" ;;
+  esac
+
+  # (M12) The ratchet's membership test must be EXACT. Run against a two-entry allowlist in which
+  # one entry is a strict substring of the other — the shape that makes a substring test silently
+  # exempt an unlisted citation. Asserted in a subshell so the real BARE_ALLOWLIST is untouched.
+  m12="$(
+    BARE_ALLOWLIST="$(printf 'xa.md|b.sh:12\nother.md|c.sh:3')"
+    allowlist_has "a.md|b.sh:1"    && echo "SUBSTRING-MATCHED"
+    allowlist_has "xa.md|b.sh:12"  && echo "EXACT-MATCHED"
+    :
+  )"
+  case "$m12" in
+    "EXACT-MATCHED") ok "(M12) the ratchet allowlist matches whole entries only — no substring exemptions" ;;
+    *SUBSTRING-MATCHED*) no "(M12) allowlist matched a SUBSTRING — one entry silently exempts a different citation" ;;
+    *) no "(M12) allowlist failed to match its own exact entry — the ratchet would fire on listed citations: '$m12'" ;;
   esac
 fi
 
