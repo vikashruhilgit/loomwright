@@ -52,6 +52,10 @@
 # zero would SUPPRESS the nudge, i.e. fail silent on exactly the input we could
 # not read. `unknown` means "do not suppress, but do not claim a number".
 # An input that is genuinely ABSENT is a different answer: `never` / 0.
+# `--json` holds the same line: EVERY degraded path (jq absent, or jq present but
+# the render threw) emits the FULL `commands` tree with `"unknown"` values —
+# never a stub document that would hand a consumer `null` instead. Both paths
+# share one constant, CURATION_JSON_UNKNOWN_BODY, so they cannot drift apart.
 #
 # LOCAL-ONLY NUDGE. `nudge` makes NO network call (no gh, no curl) — it runs
 # inside a SessionStart hook and a network round-trip there is a latency hazard
@@ -408,6 +412,20 @@ decline_message() {
 
 # ---- Subcommand: status -----------------------------------------------------
 
+# The all-unknown `--json` document body — every key after the preamble
+# (`schema_version` / `jq` / optional `error`).
+#
+# BOTH degraded `--json` paths emit this VERBATIM: jq absent, and jq present but
+# the render itself threw. It is a single constant rather than two literals
+# because the two paths previously disagreed — the jq-absent path emitted the
+# full `commands` tree while the render-failure path emitted a bare
+# `{"error":"render_failed"}` stub, so a consumer reading
+# `.commands.dreaming.pending` got the documented `"unknown"` sentinel down one
+# route and a silent `null` down the other. Both are the same answer ("we could
+# not compute these values"), so both must speak the same sentinel; sharing the
+# constant is what keeps that true as the schema grows.
+CURATION_JSON_UNKNOWN_BODY='"thresholds_unvalidated":true,"commands":{"dreaming":{"last_run":"unknown","age_days":"unknown","pending":"unknown","threshold":"unknown","ready":"unknown","decline_message":""},"insights":{"last_run":"unknown","age_days":"unknown","pending":"unknown","threshold":"unknown","ready":"unknown","decline_message":""},"pr_postmortem":{"last_run":"unknown","age_days":"unknown","pending":"unknown","threshold":"none","ready":"always","decline_message":""}}'
+
 cmd_status() {
   local as_json="no"
   case "${1:-}" in
@@ -445,7 +463,7 @@ cmd_status() {
     if ! have_jq; then
       # jq absent ⇒ emit a literal all-unknown document rather than fabricating
       # values or crashing. Still valid JSON, still exit 0.
-      printf '%s\n' '{"schema_version":1,"jq":false,"thresholds_unvalidated":true,"commands":{"dreaming":{"last_run":"unknown","age_days":"unknown","pending":"unknown","threshold":"unknown","ready":"unknown","decline_message":""},"insights":{"last_run":"unknown","age_days":"unknown","pending":"unknown","threshold":"unknown","ready":"unknown","decline_message":""},"pr_postmortem":{"last_run":"unknown","age_days":"unknown","pending":"unknown","threshold":"none","ready":"always","decline_message":""}}}'
+      printf '{"schema_version":1,"jq":false,%s}\n' "$CURATION_JSON_UNKNOWN_BODY"
       return 0
     fi
     jq -n \
@@ -463,7 +481,7 @@ cmd_status() {
           insights:      {last_run: $il, age_days: ($ia|num_or_str), pending: ($ip|num_or_str), threshold: ($it|num_or_str), ready: $ir, decline_message: $im},
           pr_postmortem: {last_run: $pl, age_days: ($pa|num_or_str), pending: ($pp|num_or_str), threshold: "none", ready: "always", decline_message: ""}
         }
-      }' 2>/dev/null || printf '%s\n' '{"schema_version":1,"jq":true,"error":"render_failed"}'
+      }' 2>/dev/null || printf '{"schema_version":1,"jq":true,"error":"render_failed",%s}\n' "$CURATION_JSON_UNKNOWN_BODY"
     return 0
   fi
 

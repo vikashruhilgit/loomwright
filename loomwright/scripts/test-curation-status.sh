@@ -20,12 +20,17 @@
 #       a non-numeric result yields `unknown` — never a crash, never `0`
 #   (d) degradation matrix: absent ledger · unreadable ledger · absent jq ·
 #       absent dashboard, across status / nudge / record — all exit 0, all report
-#       `unknown`/`never`, none fabricates a count
+#       `unknown`/`never`, none fabricates a count. Plus the OTHER degraded
+#       `--json` route (jq present but the render throws): it must emit the same
+#       all-unknown body as the jq-absent route, so `.commands.*.pending` is the
+#       `"unknown"` sentinel down both and never a `null` down one
 #   (e) pending counts match hand-counted values against a fixed last_run
 #   (f) thresholds are genuinely configurable via .supervisor/config.json
 #   (g) decline message names the count, the threshold, and "unvalidated";
 #       at/above threshold there is NO decline (the proceed path)
-#   (h) `record` wiring: `record dreaming` is the only legal target
+#   (h) `record` wiring: `record dreaming` is the only legal target; plus the
+#       remaining `main()` dispatch arms — the unknown-subcommand fallthrough and
+#       all three help spellings (`-h` / `--help` / `help`)
 #   (i) nudge: silent when nothing is pending, ONE counted line when pending,
 #       env opt-out, and NO network call (no gh, no curl)
 #   (j) every `exit` in the script is `exit 0` (runtime advisory emitter, not a gate)
@@ -320,6 +325,45 @@ for sub in "status" "status --json" "nudge" "record dreaming"; do
   esac
 done
 
+# jq PRESENT but the render itself throws — the other degraded --json route.
+# `have_jq` is `command -v jq`, so a stub that EXISTS and always exits non-zero
+# passes the presence check and then fails the `jq -n` render, which is exactly
+# the narrow path the `render_failed` fallback exists for. It must emit the SAME
+# all-unknown document as the jq-absent path: a consumer reading
+# `.commands.dreaming.pending` has to see the documented `"unknown"` sentinel,
+# never a `null` that would read as "no such key".
+BADJQ="$ROOT/badjq-bin"
+mk_bin "$BADJQ" $BASE_TOOLS
+rm -f "$BADJQ/jq"
+printf '#!/bin/sh\nexit 1\n' > "$BADJQ/jq"; chmod +x "$BADJQ/jq"
+RDR="$(new_repo)"
+mkdir -p "$RDR/.supervisor/insights"; echo d > "$RDR/.supervisor/insights/dashboard.md"
+outRF="$( cd "$RDR" && PATH="$BADJQ" LOOMWRIGHT_CURATION_REMOTE=0 "$(command -v bash)" "$PROBE" status --json 2>&1 )"; rcRF=$?
+[ "$rcRF" -eq 0 ] && ok "(d) status --json exits 0 when the jq render throws" \
+  || no "(d) render-failure rc=$rcRF: $outRF"
+# Control: without this the test could pass against the HAPPY path and prove nothing.
+printf '%s' "$outRF" | grep -qF '"error":"render_failed"' \
+  && ok "(d) render-failure control — the fixture really took the render_failed arm" \
+  || no "(d) fixture did NOT reach the render_failed arm: $outRF"
+printf '%s' "$outRF" | jq -e . >/dev/null 2>&1 \
+  && ok "(d) the render_failed document is still valid JSON" \
+  || no "(d) render_failed emitted invalid JSON: $outRF"
+[ "$(jget "$outRF" '.commands.dreaming.pending')" = "unknown" ] \
+  && ok "(d) render_failed ⇒ .commands.dreaming.pending is \"unknown\", NOT null" \
+  || no "(d) render_failed .commands.dreaming.pending='$(jget "$outRF" '.commands.dreaming.pending')' (expected unknown)"
+# Shape parity with the jq-absent path: identical once the preamble keys that
+# legitimately differ (`jq`, `error`) are removed. This is the assertion that
+# actually pins "the two degraded routes speak one sentinel" — it fails the
+# moment either literal drifts from the other.
+outNJ="$( cd "$RDJ" && PATH="$NOJQ" LOOMWRIGHT_CURATION_REMOTE=0 "$(command -v bash)" "$PROBE" status --json 2>&1 )"
+bodyRF="$(printf '%s' "$outRF" | jq -S 'del(.jq, .error)' 2>/dev/null || true)"
+bodyNJ="$(printf '%s' "$outNJ" | jq -S 'del(.jq, .error)' 2>/dev/null || true)"
+if [ -n "$bodyRF" ] && [ "$bodyRF" = "$bodyNJ" ]; then
+  ok "(d) render_failed and jq-absent emit the SAME all-unknown body"
+else
+  no "(d) degraded --json bodies diverge — render_failed='$bodyRF' vs jq-absent='$bodyNJ'"
+fi
+
 # ============================================================================
 echo "== (e) pending counts equal the hand-counted values against a fixed last_run =="
 RE="$(new_repo)"
@@ -472,6 +516,33 @@ after_h2="$(run "$RH" status --json)"
 outH3="$(run "$RH" wibble)"
 [ "$(lastrc)" -eq 0 ] && printf '%s' "$outH3" | grep -qF 'unknown subcommand' \
   && ok "(h) unknown subcommand reported, exit 0" || no "(h) unknown subcommand: rc=$(lastrc) / $outH3"
+
+# The help branch: all three spellings print usage and exit 0. Asserting the
+# ABSENCE of the unknown-subcommand text is what proves each spelling took the
+# help arm rather than falling through to `*)` — the arm every other spelling in
+# this dispatch is already pinned against.
+for helpform in -h --help help; do
+  outH4="$(run "$RH" "$helpform")"
+  if [ "$(lastrc)" -eq 0 ] \
+    && printf '%s' "$outH4" | grep -qF 'usage: curation-status.sh' \
+    && ! printf '%s' "$outH4" | grep -qF 'unknown subcommand'; then
+    ok "(h) '$helpform' prints usage (not the unknown-subcommand fallthrough), exit 0"
+  else
+    no "(h) '$helpform' expected the usage line and exit 0 (rc=$(lastrc)): $outH4"
+  fi
+done
+# Usage must name every subcommand the dispatch actually accepts, or it drifts
+# into advertising a command set the script no longer has.
+outH5="$(run "$RH" --help)"
+for advertised in status record nudge; do
+  printf '%s' "$outH5" | grep -qF "$advertised" \
+    && ok "(h) usage names the '$advertised' subcommand" \
+    || no "(h) usage omits '$advertised': $outH5"
+done
+# Help is read-only: it must not create or touch the state file.
+[ "$(jget "$(run "$RH" status --json)" '.commands.dreaming.last_run')" = "$lrH" ] \
+  && ok "(h) the help branch left the stored value untouched" \
+  || no "(h) the help branch mutated the stored value"
 
 # ============================================================================
 echo "== (i) nudge: silent when idle, ONE counted line when pending, opt-out, NO network =="
