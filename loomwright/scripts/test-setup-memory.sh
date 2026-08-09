@@ -3,7 +3,14 @@
 # module engine: gitignore negation `check` / `apply` / `remove` + the repo allowlist and its
 # ledger filter). STATIC ONLY: no network, no Docker, no GitHub — so it runs on the plugin's
 # Ubuntu CI like every other test-*.sh (auto-registered by ci.yml's test-*.sh glob).
-# Exit 0 = all pass, 1 = any failure.
+# Exit 0 = all pass, 1 = any assertion failed, 2 = FIXTURE SETUP is broken.
+#
+# 1 and 2 are deliberately distinct and must stay that way. 1 means the assertions ran and
+# setup-memory.sh genuinely misbehaved. 2 means a fixture could not be BUILT as specified, so the
+# assertions after it would be testing something other than what they name — a defect in this
+# harness, not in the script under test. Conflating the two is the exact bug this distinction
+# exists to prevent: see the (f5) flake described at `mkfix` below, where a silently-failed
+# `ln -s` reported itself as "the symlink was clobbered" and read as a rewriter bug.
 #
 # Mirrors test-setup-twin.sh convention: pass/fail counters, ok()/no() helpers, a
 # "RESULT: N passed, M failed" tail, exit 1 on any failure.
@@ -18,6 +25,30 @@
 #
 # Every fixture repo pins `core.excludesFile=/dev/null` so a developer's global gitignore can
 # never leak into a `git check-ignore` assertion.
+#
+# FIXTURE NAMES ARE UNIQUE BY CONSTRUCTION (`mktemp -d`), NEVER BY `$RANDOM`. See mkfix's comment
+# for the flake this closed. Corollary, and the reason `setup_fail` exists: fixture SETUP is not
+# under test. A mis-built fixture reports itself as a behavioural defect in setup-memory.sh and
+# sends the reader hunting a bug that is not there, so a setup step must never fall through into
+# an `ok`/`no` assertion.
+#
+# One MECHANICALLY AUDITABLE class, stated exactly so this note cannot rot into a claim the code
+# does not back: the setup calls that FAIL on a pre-existing path or a refused mode change —
+# bare `mkdir`, bare `ln -s`, and `chmod 000`. To audit, run
+# `grep -n 'mkdir "\|ln -s \|chmod 000' "$0"` and confirm every CALL SITE it lists is followed by
+# a `|| setup_fail …` — on the same line, or on the next one where the call is line-continued.
+# It resolves to exactly four call sites (f5, f6, f7, l9). Its other hits are PROSE, not calls:
+# this comment's own self-match, the (f7)/(l9) group headers explaining chmod-000, and assertion
+# and setup_fail message strings that mention it. Read the hits, do not just count the lines.
+#
+# Two further setup guards exist that this grep deliberately does NOT match, because they are not
+# in that class and finding only four hits should not read as a gap: `newgit` asserts a fresh
+# fixture has no pre-existing `.gitignore`, and (f8) asserts the NUL byte survived its `printf`.
+# Each is explained at its own call site; neither is a mkdir/ln -s/chmod failure.
+#
+# The suite's OTHER setup calls are deliberately unguarded and must not be "fixed" by copying the
+# pattern around: `mkdir -p`, `ln -sf` and `chmod +x` cannot fail on a pre-existing path — that is
+# precisely what the `-p`/`-f` flags buy — so a guard there would be noise asserting a tautology.
 #
 # NO `producer | grep -q` PIPELINES. Under `set -o pipefail`, `grep -q` exits at the first match
 # and SIGPIPEs the producer, so the PIPELINE status becomes 141 even though grep matched — an
@@ -111,13 +142,53 @@ hasi() { grep -qi -e "$1" <<< "$2"; }
 hasF() { grep -qF -e "$1" <<< "$2"; }
 
 # ---- fixture lifecycle ------------------------------------------------------
-FIXTURE_ROOT="$(mktemp -d)"
+# A SETUP failure is NOT a behavioural failure. If a fixture cannot be built as specified, the
+# assertions that follow it would test something other than what they claim — so abort the whole
+# suite loudly and immediately rather than letting the mis-built fixture masquerade as a defect
+# in setup-memory.sh. (This is exactly how the (f5) symlink flake presented: a fixture whose
+# `ln -s` had silently failed reported "abort did not name the symlink" / "symlink was clobbered",
+# which reads as a rewriter bug and is not one.)
+#
+# `kill -s TERM $$` is load-bearing, not decoration: mkfix/newgit are ALWAYS invoked in a command
+# substitution, where a bare `exit 2` would kill only the subshell and let the suite sail on with
+# an empty fixture path. `$$` stays the top-level shell's pid inside a subshell, so the signal
+# reaches the real suite; the TERM trap turns it into exit 2, and the EXIT trap still cleans up.
+setup_fail() {
+  echo "  SETUP FAILURE: $1" >&2
+  echo "ABORTED: fixture setup is broken — the assertions below would be meaningless." >&2
+  kill -s TERM $$ 2>/dev/null
+  exit 2
+}
+trap 'exit 2' TERM
+
+# The scratch root is itself an unguarded setup step — an unwritable or full $TMPDIR leaves it
+# EMPTY, after which every fixture path is a bare "/fix-…" and the whole suite reports nonsense
+# (and `rm -rf "$FIXTURE_ROOT"` in cleanup would be aimed at nothing useful). Checked, not assumed.
+FIXTURE_ROOT="$(mktemp -d 2>/dev/null)"
+[ -n "$FIXTURE_ROOT" ] && [ -d "$FIXTURE_ROOT" ] \
+  || setup_fail "mktemp -d failed — no writable scratch root (TMPDIR=${TMPDIR:-/tmp})"
 cleanup() { [ -n "${FIXTURE_ROOT:-}" ] && rm -rf "$FIXTURE_ROOT" 2>/dev/null; }
 trap cleanup EXIT
-FIXN=0
+
 # All fixtures live UNDER one scratch root, so the trap cleans them even though mkfix runs in a
 # command substitution (a `FIXTURES+=(...)` array there would be lost with the subshell).
-mkfix() { FIXN=$((FIXN+1)); local d="$FIXTURE_ROOT/fix-$FIXN-$RANDOM"; mkdir -p "$d"; printf '%s' "$d"; }
+#
+# UNIQUENESS IS LOAD-BEARING AND MUST NOT DEPEND ON $RANDOM. This was once
+# `FIXN=$((FIXN+1)); d="$FIXTURE_ROOT/fix-$FIXN-$RANDOM"; mkdir -p "$d"`, which has two compounding
+# defects: mkfix ALWAYS runs in a command substitution, so the `FIXN` increment happens in the
+# subshell and the parent's FIXN stays 0 forever (every dir was `fix-1-*`); uniqueness therefore
+# rested entirely on a 15-bit `$RANDOM` drawn ~46 times — a ~3% birthday collision per run. On a
+# collision `mkdir -p` SILENTLY succeeds on the existing directory and the new fixture inherits
+# the previous one's `.gitignore`, after which a `printf >` overwrites it (invisible) but an
+# `ln -s`/`mkdir` fails (visible only as a bogus behavioural failure downstream — this is the
+# (f5) "abort did not name the symlink" / "the symlink was clobbered" CI flake). `mktemp -d`
+# makes the name unique by construction (O_EXCL in the kernel), so the class is closed at the
+# root rather than made rarer.
+mkfix() {
+  local d
+  d="$(mktemp -d "$FIXTURE_ROOT/fix-XXXXXXXX")" || setup_fail "mktemp -d under $FIXTURE_ROOT failed"
+  printf '%s' "$d"
+}
 
 # new git repo with an identity, one commit, a pinned empty global-excludes, and an optional
 # origin remote. Echoes the dir.
@@ -130,6 +201,13 @@ newgit() {
       && { [ -z "$remote" ] || git remote add origin "$remote"; } \
       && echo seed > seed.txt && git add seed.txt && git commit -qm seed
   ) >/dev/null 2>&1
+  # A fresh fixture repo must start with NO .gitignore of any kind. Everything downstream assumes
+  # it — a `printf >` would silently overwrite a stray one, an `ln -s`/`mkdir` would fail and only
+  # surface as a bogus behavioural failure. A stray one here means either a colliding fixture dir
+  # or a `git init` template (init.templateDir / ~/.config/git/template) shipping one, and both
+  # invalidate the group that follows.
+  [ -e "$d/.gitignore" ] || [ -L "$d/.gitignore" ] \
+    && setup_fail "newgit produced a fixture that ALREADY has a .gitignore ($d) — colliding fixture dir, or a git init template is supplying one"
   printf '%s' "$d"
 }
 
@@ -695,7 +773,11 @@ nb_f4r="$(grep -cF 'loomwright /setup memory' "$F4/.gitignore" 2>/dev/null | tr 
 F5="$(newgit)"
 printf '# someone else owns this\n.claude/\n.supervisor/\n' > "$F5/real-gitignore.txt"
 target_f5="$(sum "$F5/real-gitignore.txt")"
-ln -s real-gitignore.txt "$F5/.gitignore"
+ln -s real-gitignore.txt "$F5/.gitignore" \
+  || setup_fail "(f5) ln -s failed — $F5/.gitignore could not be made a symlink"
+# Assert the SHAPE, not just ln's exit status: this whole group is meaningless unless .gitignore
+# really is a symlink at the moment apply runs.
+[ -L "$F5/.gitignore" ] || setup_fail "(f5) $F5/.gitignore is not a symlink after ln -s"
 out_f5="$(mem "$F5" apply 2>&1)"; rc_f5=$?
 [ "$rc_f5" -eq 0 ] && ok "(f5) apply on a SYMLINK .gitignore exits 0 (fail-safe)" || no "(f5) non-zero ($rc_f5)"
 has '^apply: ABORTED' "$out_f5" && ok "(f5) apply ABORTS on a symlinked .gitignore" || no "(f5) apply did not abort on a symlink"
@@ -707,7 +789,9 @@ hasi 'symlink' "$out_f5" && ok "(f5) the abort names the reason (symlink)" || no
 # (f6) NON-REGULAR FILE — a directory named .gitignore exists (`-e` true, `-f` false), so the
 # absent branch must NOT swallow it and the rewriter must not try to write through it.
 F6="$(newgit)"
-mkdir "$F6/.gitignore"
+mkdir "$F6/.gitignore" || setup_fail "(f6) mkdir failed — $F6/.gitignore could not be made a directory"
+[ -d "$F6/.gitignore" ] && [ ! -L "$F6/.gitignore" ] \
+  || setup_fail "(f6) $F6/.gitignore is not a plain directory after mkdir"
 out_f6="$(mem "$F6" apply 2>&1)"; rc_f6=$?
 [ "$rc_f6" -eq 0 ] && ok "(f6) apply on a DIRECTORY named .gitignore exits 0 (fail-safe)" || no "(f6) non-zero ($rc_f6)"
 has '^apply: ABORTED' "$out_f6" && ok "(f6) apply ABORTS on a non-regular .gitignore" || no "(f6) apply did not abort on a non-regular file"
@@ -722,9 +806,14 @@ if [ "$(id -u)" = 0 ]; then
   ok "(f7) running as root — the chmod-000 permission fixture is skipped (root bypasses mode bits)"
 else
   F7="$(newgit)"
-  printf '# editor\n*.swp\n.claude/\n' > "$F7/.gitignore"
+  printf '# editor\n*.swp\n.claude/\n' > "$F7/.gitignore" \
+    || setup_fail "(f7) could not write $F7/.gitignore"
   before_f7="$(sum "$F7/.gitignore")"
-  chmod 000 "$F7/.gitignore"
+  chmod 000 "$F7/.gitignore" || setup_fail "(f7) chmod 000 failed on $F7/.gitignore"
+  # The guard under test is the permission bits, so assert they really did take — a fixture that
+  # is still readable would make the "did not abort" assertion below a false accusation.
+  { [ ! -r "$F7/.gitignore" ] || [ ! -w "$F7/.gitignore" ]; } \
+    || setup_fail "(f7) $F7/.gitignore is still readable AND writable after chmod 000"
   out_f7="$(mem "$F7" apply 2>&1)"; rc_f7=$?
   chmod 644 "$F7/.gitignore"   # restore BEFORE any assertion so the trap can always clean up
   [ "$rc_f7" -eq 0 ] && ok "(f7) apply on an unreadable/unwritable .gitignore exits 0 (fail-safe)" || no "(f7) non-zero ($rc_f7)"
@@ -742,7 +831,13 @@ fi
 # everything), so it would be vacuous. The negative control below — a plain TEXT .gitignore must
 # NOT be reported as binary — is what actually pins the `tr | cmp` fix.
 F8="$(newgit)"
-printf '.claude/\nbin\000ary\n' > "$F8/.gitignore"
+printf '.claude/\nbin\000ary\n' > "$F8/.gitignore" || setup_fail "(f8) could not write $F8/.gitignore"
+# The NUL is the entire point of this fixture; a printf that dropped it would silently turn the
+# group into a duplicate of the text control below. Counted with `tr -d`, deliberately NOT with a
+# grep for `$'\0'` — bash cannot hold a NUL in a variable, so that pattern collapses to the EMPTY
+# pattern and matches every file (the very regression the (f8) negative control exists to pin).
+[ "$(LC_ALL=C tr -d '\000' < "$F8/.gitignore" | wc -c)" -lt "$(wc -c < "$F8/.gitignore")" ] \
+  || setup_fail "(f8) $F8/.gitignore contains no NUL byte — printf dropped it"
 before_f8="$(sum "$F8/.gitignore")"
 out_f8="$(mem "$F8" apply 2>&1)"; rc_f8=$?
 [ "$rc_f8" -eq 0 ] && ok "(f8) apply on a NUL-containing .gitignore exits 0 (fail-safe)" || no "(f8) non-zero ($rc_f8)"
@@ -1055,7 +1150,10 @@ else
     ok "(l9) running as root — the chmod-000 unreadable-ledger fixture is skipped (root bypasses mode bits)"
   else
     L9="$(mkgate)"
-    chmod 000 "$L9/$P_LEDGER"
+    chmod 000 "$L9/$P_LEDGER" || setup_fail "(l9) chmod 000 failed on $L9/$P_LEDGER"
+    # Same reasoning as (f7): the unreadable bit IS the fixture, so prove it took rather than
+    # letting a still-readable ledger turn a vacuous pass into an apparent fail-open.
+    [ ! -r "$L9/$P_LEDGER" ] || setup_fail "(l9) $L9/$P_LEDGER is still readable after chmod 000"
     out_l9="$(mem "$L9" apply 2>&1)"; rc_l9=$?
     chmod 644 "$L9/$P_LEDGER"   # restore BEFORE any assertion so the trap can always clean up
     [ "$rc_l9" -eq 0 ] && ok "(l9) apply exits 0 on an UNREADABLE ledger (fail-safe in the exit status)" || no "(l9) apply non-zero ($rc_l9) on an unreadable ledger"
