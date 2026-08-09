@@ -34,8 +34,10 @@
 #   (l) the /pr-postmortem remote count: gh's EXIT STATUS, not the emptiness of
 #       its output, decides examined-vs-could-not-examine (rc 0 + empty ⇒ an
 #       honest 0; rc non-zero ⇒ unknown, even when it printed something), plus
-#       the pure set-diff against the ledger — all driven by a gh STUB, never a
-#       real network call
+#       the pure set-diff against the ledger, plus the same distinction one guard
+#       clause later on the LEDGER side (absent ledger ⇒ a real count, since
+#       "never run" is examined; present-but-unreadable ⇒ unknown) — all driven
+#       by a gh STUB, never a real network call
 #   (m) an unreadable .supervisor/logs/ ⇒ pending `unknown` (never a fabricated
 #       0 that would silently make /dreaming and /insights never-decline)
 
@@ -153,7 +155,7 @@ outA4="$(run "$RA" status --json)"
   && ok "(a) parseable object with no .dreaming.last_run ⇒ never (read it; no record)" \
   || no "(a) expected never for a parseable recordless state, got '$(jget "$outA4" '.commands.dreaming.last_run')'"
 [ "$(jget "$outA4" '.commands.dreaming.pending')" = "3" ] \
-  && ok "(a) …and `never` still counts the whole corpus (unknown did not swallow this case)" \
+  && ok "(a) …and 'never' still counts the whole corpus (unknown did not swallow this case)" \
   || no "(a) expected pending=3 for a recordless state, got '$(jget "$outA4" '.commands.dreaming.pending')'"
 rm -f "$RA/.supervisor/curation-state.json"
 rm -rf "$RA/.supervisor/logs"
@@ -680,6 +682,50 @@ outL7="$(run "$RL" status --json)"   # run() sets LOOMWRIGHT_CURATION_REMOTE=0
   && ok "(l) LOOMWRIGHT_CURATION_REMOTE=0 ⇒ pending=unknown, gh never consulted" \
   || no "(l) expected unknown with the remote valve off, got '$(jget "$outL7" '.commands.pr_postmortem.pending')'"
 
+# THE SAME CONFLATION, ONE GUARD CLAUSE LATER: an ABSENT ledger is not an
+# unreadable one. A repo that has simply never run /pr-postmortem has an honest,
+# computable answer — every merged PR is missing from a ledger that does not
+# exist — and `derive_postmortem_last_run` already draws exactly this line
+# (`[ -e ] || never` THEN `[ -r ] || unknown`). A single `[ -r ]` guard here
+# collapses both into `unknown` and fabricates a could-not-examine on first run.
+# This needs BOTH a working gh stub AND a missing ledger: the (d) absent-ledger
+# fixture runs under LOOMWRIGHT_CURATION_REMOTE=0 and never reaches this guard,
+# and the RL fixture above always pre-creates the ledger.
+RLA="$(new_repo)"
+( cd "$RLA" && git remote add origin https://example.invalid/o/r.git ) >/dev/null 2>&1
+[ -e "$RLA/.supervisor/postmortem/results.jsonl" ] \
+  && no "(l) absent-ledger fixture is not actually ledger-less" \
+  || ok "(l) absent-ledger fixture control: no results.jsonl on disk"
+outL8="$(run_gh "$RLA" '301
+302
+303' 0)"
+[ "$(lastrc)" -eq 0 ] && ok "(l) exits 0 with an absent ledger and a working gh" || no "(l) rc=$(lastrc)"
+[ "$(jget "$outL8" '.commands.pr_postmortem.pending')" = "3" ] \
+  && ok "(l) ABSENT ledger + 3 merged PRs ⇒ pending=3 (never run ≠ could not examine)" \
+  || no "(l) expected pending=3 for an absent ledger, got '$(jget "$outL8" '.commands.pr_postmortem.pending')'"
+
+# …and the other half of the distinction: a ledger that EXISTS but cannot be read
+# IS a genuine could-not-examine. Same uid-0 guard as (d)/(m) — chmod 000 does not
+# block reads for root, so assert nothing rather than pass for the wrong reason.
+RLU="$(new_repo)"
+( cd "$RLU" && git remote add origin https://example.invalid/o/r.git ) >/dev/null 2>&1
+mkdir -p "$RLU/.supervisor/postmortem"
+echo '{"ts":"2026-01-01T00:00:00Z","source":"manual_postmortem","number":301}' \
+  > "$RLU/.supervisor/postmortem/results.jsonl"
+if [ "${EUID:-$(id -u)}" -eq 0 ]; then
+  skp "(l) unreadable-ledger-with-gh fixture SKIPPED — running as uid 0, where chmod 000 does not block reads"
+else
+  chmod 000 "$RLU/.supervisor/postmortem/results.jsonl" 2>/dev/null || true
+  outL9="$(run_gh "$RLU" '301
+302
+303' 0)"
+  [ "$(lastrc)" -eq 0 ] && ok "(l) exits 0 with an unreadable ledger and a working gh" || no "(l) rc=$(lastrc)"
+  [ "$(jget "$outL9" '.commands.pr_postmortem.pending')" = "unknown" ] \
+    && ok "(l) PRESENT-but-unreadable ledger + working gh ⇒ pending=unknown (a real could-not-examine)" \
+    || no "(l) expected pending=unknown for an unreadable ledger, got '$(jget "$outL9" '.commands.pr_postmortem.pending')'"
+  chmod 644 "$RLU/.supervisor/postmortem/results.jsonl" 2>/dev/null || true
+fi
+
 # ============================================================================
 echo "== (m) unreadable .supervisor/logs/ ⇒ pending unknown, never a fabricated 0 =="
 # This branch drives whether /dreaming and /insights report a real count or
@@ -713,7 +759,7 @@ else
   # …and the nudge does NOT go silent on it — `unknown` means do not suppress.
   outM2="$(run "$RM" nudge)"
   printf '%s' "$outM2" | grep -qF '/dreaming unknown new session log' \
-    && ok "(m) unreadable logs dir ⇒ the nudge still fires, carrying `unknown`" \
+    && ok "(m) unreadable logs dir ⇒ the nudge still fires, carrying 'unknown'" \
     || no "(m) expected the nudge to fire with an unknown count, got: $outM2"
   chmod 755 "$RM/.supervisor/logs" 2>/dev/null || true
 fi

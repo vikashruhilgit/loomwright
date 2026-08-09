@@ -367,7 +367,15 @@ derive_postmortem_pending() {
   command -v gh >/dev/null 2>&1 || { printf 'unknown'; return 0; }
   git remote get-url origin >/dev/null 2>&1 || { printf 'unknown'; return 0; }
   have_jq || { printf 'unknown'; return 0; }
-  [ -r "$LEDGER_FILE" ] || { printf 'unknown'; return 0; }
+  # ABSENT vs UNREADABLE, same distinction derive_postmortem_last_run makes above.
+  # A ledger that does not exist yet is EXAMINED, not unexaminable: the repo has
+  # simply never run /pr-postmortem, and "every merged PR is missing from it" is
+  # the honest, computable answer — pending_from_merged already produces it (jq
+  # fails on the absent path, `|| true` swallows it, `have` is empty, and every
+  # merged number then counts as missing). Short-circuiting to `unknown` here
+  # would report a fabricated could-not-examine on a first run. Only a file that
+  # EXISTS and cannot be read is a genuine could-not-examine.
+  if [ -e "$LEDGER_FILE" ] && [ ! -r "$LEDGER_FILE" ]; then printf 'unknown'; return 0; fi
   # Declared first, assigned second: `local merged="$(...)"` would make $? the
   # status of `local`, not of gh, silently restoring the bug this guards against.
   local merged gh_rc
