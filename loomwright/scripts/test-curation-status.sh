@@ -45,6 +45,11 @@
 #       by a gh STUB, never a real network call
 #   (m) an unreadable .supervisor/logs/ ⇒ pending `unknown` (never a fabricated
 #       0 that would silently make /dreaming and /insights never-decline)
+#   (q) `record` hygiene: ids are pruned to what is on disk, survive whitespace,
+#       and reach jq as DATA not filter text; plus the WRITE-path ladder — a
+#       state file that exists but cannot be READ is refused outright (no write,
+#       no mkdir), because `mv` would land regardless of the old file's
+#       permissions and take the whole consumed set with it
 #   (r) `unconsumed` — the selection that makes the backlog DRAIN: successive
 #       default runs go 8 → 3 → 0 (a plain newest-by-mtime selection stalls at 3
 #       forever), newest-first ordering, the N limit, noise-only exclusion,
@@ -1067,6 +1072,48 @@ else
   skp "(q) unreadable-state fixture SKIPPED — running as uid 0, where chmod 000 does not block reads"
 fi
 chmod 644 "$RQU/.supervisor/curation-state.json" 2>/dev/null || true
+
+# THE WRITE PATH OWES THE SAME LADDER THE READ PATHS WALK — and this is where it
+# costs history rather than a number. `record` used to fold "unreadable" into
+# "absent": the existing-state read fell back to `{}`, and the write then landed
+# anyway, because `mv` renames into a WRITABLE DIRECTORY and never consults the
+# old file's permission bits. The whole consumed set was replaced by the ids of
+# the current run, every previously consumed log silently returned to `pending`
+# forever, and the command printed a confident "newly consumed: 1" computed
+# against a baseline of zero it had never actually seen. Reading it wrong is a
+# bad answer; writing over it is unrecoverable, so the guard must refuse to write
+# at all. Same uid-0 caveat as the fixture above: chmod 000 does not block root.
+RQW="$(new_repo)"; mkdir -p "$RQW/.supervisor/logs"
+for s in s1 s2 s3 s4 s5 s6; do printf '{"event":"session_end"}\n' > "$RQW/.supervisor/logs/$s.jsonl"; done
+run "$RQW" record dreaming s1 s2 s3 s4 >/dev/null
+[ "$(jq -r '.dreaming.consumed.logs | length' "$RQW/.supervisor/curation-state.json" 2>/dev/null)" = "4" ] \
+  && ok "(q) baseline: four ids are consumed before the state file is made unreadable" \
+  || no "(q) baseline consumed set is not 4: $(jq -c '.dreaming.consumed.logs' "$RQW/.supervisor/curation-state.json" 2>/dev/null)"
+chmod 000 "$RQW/.supervisor/curation-state.json" 2>/dev/null || true
+if [ ! -r "$RQW/.supervisor/curation-state.json" ]; then
+  outQW="$(run "$RQW" record dreaming s5)"
+  [ "$(lastrc)" -eq 0 ] \
+    && ok "(q) record exits 0 on an unreadable state file (always-exit-0 invariant holds on the refusal path)" \
+    || no "(q) record rc=$(lastrc) on an unreadable state file"
+  printf '%s' "$outQW" | grep -qF 'NOT recorded' \
+    && ok "(q) record SAYS it did not record, rather than reporting a write it refused to make" \
+    || no "(q) record did not report the refusal: $outQW"
+  printf '%s' "$outQW" | grep -qF 'destroy the consumed history' \
+    && ok "(q) …and names the stake — overwriting would destroy the consumed history" \
+    || no "(q) refusal does not explain the stake: $outQW"
+  chmod 644 "$RQW/.supervisor/curation-state.json" 2>/dev/null || true
+  jq -e '(.dreaming.consumed.logs | sort) == ["s1","s2","s3","s4"]' \
+     "$RQW/.supervisor/curation-state.json" >/dev/null 2>&1 \
+    && ok "(q) the four consumed ids SURVIVED — an unexaminable record is not licence to overwrite it" \
+    || no "(q) consumed history was destroyed: $(jq -c '.dreaming.consumed.logs' "$RQW/.supervisor/curation-state.json" 2>/dev/null)"
+  jq -e '.dreaming.consumed.logs | index("s5") | not' \
+     "$RQW/.supervisor/curation-state.json" >/dev/null 2>&1 \
+    && ok "(q) …and s5 was NOT added, so the refusal was total rather than a partial write" \
+    || no "(q) s5 was recorded despite the refusal message"
+else
+  skp "(q) unreadable-state WRITE fixture SKIPPED — running as uid 0, where chmod 000 does not block reads"
+fi
+chmod 644 "$RQW/.supervisor/curation-state.json" 2>/dev/null || true
 
 # ============================================================================
 echo "== (r) unconsumed: the selection that actually DRAINS the backlog (8 → 3 → 0) =="

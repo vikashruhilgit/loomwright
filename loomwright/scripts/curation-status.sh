@@ -591,7 +591,7 @@ decline_message() {
 
 # The two nouns, named once so the decline line and the nudge cannot drift.
 DREAMING_PENDING_NOUN='unreflected session log(s) carrying reflection signal'
-INSIGHTS_PENDING_NOUN='new session log(s) since its last run'
+INSIGHTS_PENDING_NOUN='new session log(s) carrying a session_end event, since its last run'
 
 # ---- Subcommand: status -----------------------------------------------------
 
@@ -739,6 +739,34 @@ cmd_record() {
       return 0
       ;;
   esac
+
+  # THE SAME ABSENT-vs-UNEXAMINABLE LADDER the read paths walk, applied to the
+  # WRITE path — and it must be walked BEFORE anything is created or written.
+  #
+  # WHY UNREADABLE BAILS WHERE ABSENT PROCEEDS: an absent state file is an
+  # EXAMINED answer ("this repo has never recorded a /dreaming run"), so a first
+  # run legitimately creates it. A file that EXISTS but cannot be read is a
+  # could-not-examine — derive_dreaming_last_run and consumed_log_ids both stop
+  # and report `unknown` there rather than claim a value. The write path has to
+  # honour the same distinction: an unexaminable record is not licence to
+  # overwrite it. Without this guard the read below silently degrades to `{}`
+  # and the write then lands anyway, because `mv` renames into a writable
+  # DIRECTORY and never consults the old file's permission bits — so the
+  # unreadable record is replaced by a fresh one, and the command prints a
+  # confident "newly consumed: N" computed against a baseline it never saw.
+  #
+  # The fall-through predates this PR, but it used to cost a single timestamp
+  # that the next run would rewrite anyway. Now that the record stores a consumed
+  # SET, the same fall-through destroys durable history: every previously
+  # consumed id is gone, and every one of those logs silently returns to
+  # `pending` forever. That is what makes the guard load-bearing rather than
+  # tidy. A READABLE but malformed record is NOT this case — it was examined,
+  # and resetting it to `{}` (below) stays the correct behaviour.
+  if [ -e "$STATE_FILE" ] && [ ! -r "$STATE_FILE" ]; then
+    printf 'curation-status: %s EXISTS but cannot be read — /dreaming last_run NOT recorded and no logs were marked consumed.\n' "$STATE_FILE"
+    printf 'curation-status: writing over an unreadable record would destroy the consumed history it holds (every consumed log would silently return to `pending`). Fix the file permissions, then re-run the same `record dreaming <session_id>...` command.\n'
+    return 0
+  fi
 
   if ! have_jq; then
     printf 'curation-status: jq is absent — cannot record /dreaming last_run (no value written).\n'
