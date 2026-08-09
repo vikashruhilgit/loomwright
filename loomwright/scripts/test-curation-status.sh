@@ -45,6 +45,11 @@
 #       by a gh STUB, never a real network call
 #   (m) an unreadable .supervisor/logs/ ⇒ pending `unknown` (never a fabricated
 #       0 that would silently make /dreaming and /insights never-decline)
+#   (r) `unconsumed` — the selection that makes the backlog DRAIN: successive
+#       default runs go 8 → 3 → 0 (a plain newest-by-mtime selection stalls at 3
+#       forever), newest-first ordering, the N limit, noise-only exclusion,
+#       silence-when-drained, fail-open on an unreadable consumed record; plus
+#       `record`'s "newly consumed" delta being a real delta, not the named count
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -925,7 +930,7 @@ outO2="$(run "$RO" status)"
 printf '%s' "$outO2" | grep -qF 'note(/dreaming)' \
   && ok "(o) pending(9) > window ⇒ the note says the rest stay pending" \
   || no "(o) expected a window note at pending 9 > window $script_window: $outO2"
-printf '%s' "$outO2" | grep -qE 'reads the [0-9]+ most recent of those 9 logs' \
+printf '%s' "$outO2" | grep -qE 'reads the [0-9]+ most recent UNCONSUMED of those 9 logs' \
   && ok "(o) the note names BOTH numbers (window and backlog), not just the backlog" \
   || no "(o) the note does not name both numbers: $outO2"
 [ "$(jget "$(run "$RO" status --json)" '.commands.dreaming.window')" = "$script_window" ] \
@@ -1062,6 +1067,163 @@ else
   skp "(q) unreadable-state fixture SKIPPED — running as uid 0, where chmod 000 does not block reads"
 fi
 chmod 644 "$RQU/.supervisor/curation-state.json" 2>/dev/null || true
+
+# ============================================================================
+echo "== (r) unconsumed: the selection that actually DRAINS the backlog (8 → 3 → 0) =="
+# THE DEFECT THIS PINS. GATHER used to select the `--sessions N` most recent logs
+# BY MTIME, unconditionally. New sessions are always newer, so a log that fell out
+# of the newest-N window could NEVER re-enter it and the unconsumed backlog was
+# monotonically non-decreasing: measured on 8 signal-carrying logs with a window
+# of 5, successive default runs gave pending 8 → 3 → 3 → 3 … forever, and s1/s2/s3
+# were never read. Selecting the most recent UNCONSUMED logs keeps the recency
+# bias AND lets repeated runs walk backwards through the tail: 8 → 3 → 0.
+#
+# stdout is the machine-readable id list, so these helpers keep stdout and stderr
+# apart — run() folds them together, which would make the fail-open assertion
+# below pass on a prose line printed into the id list.
+run_out() {   # stdout only; rc stashed in RCFILE like run()
+  local repo="$1"; shift
+  ( cd "$repo" && LOOMWRIGHT_CURATION_REMOTE=0 bash "$PROBE" "$@" 2>/dev/null; printf '%s' "$?" > "$RCFILE" )
+}
+run_err() {   # stderr only
+  local repo="$1"; shift
+  ( cd "$repo" && LOOMWRIGHT_CURATION_REMOTE=0 bash "$PROBE" "$@" 2>&1 >/dev/null; printf '%s' "$?" > "$RCFILE" )
+}
+# consume_round <repo> <N> — one simulated default /dreaming run: take exactly
+# what `unconsumed N` reports and record precisely those ids. Echoes how many ids
+# the round consumed. Ids arrive newline-separated, so IFS is set to a newline
+# (with globbing off) rather than relying on default word-splitting.
+consume_round() {
+  local repo="$1" n="$2" ids oldIFS
+  ids="$(run_out "$repo" unconsumed "$n")"
+  if [ -z "$ids" ]; then printf '0'; return 0; fi
+  oldIFS="$IFS"; set -f; IFS='
+'
+  set -- $ids
+  IFS="$oldIFS"; set +f
+  ( cd "$repo" && LOOMWRIGHT_CURATION_REMOTE=0 bash "$PROBE" record dreaming "$@" >/dev/null 2>&1 )
+  printf '%s' "$#"
+}
+dpending() { jget "$(run "$1" status --json)" '.commands.dreaming.pending'; }
+
+RR="$(new_repo)"; mkdir -p "$RR/.supervisor/logs"
+i=0
+for stamp in 202601010000 202601020000 202601030000 202601040000 \
+             202601050000 202601060000 202601070000 202601080000; do
+  i=$((i+1))
+  printf '{"event":"session_end","n":%s}\n' "$i" > "$RR/.supervisor/logs/s$i.jsonl"
+  touch -t "$stamp" "$RR/.supervisor/logs/s$i.jsonl"
+done   # s8 is the NEWEST, s1 the oldest
+
+[ "$(dpending "$RR")" = "8" ] \
+  && ok "(r) control — 8 signal-carrying logs, none consumed ⇒ pending 8" \
+  || no "(r) control: expected pending=8, got '$(dpending "$RR")'"
+
+# Ordering: newest mtime FIRST. Assert the exact ends of the list.
+listR="$(run_out "$RR" unconsumed)"
+[ "$(lastrc)" -eq 0 ] && ok "(r) unconsumed exits 0" || no "(r) unconsumed rc=$(lastrc)"
+[ "$(printf '%s\n' "$listR" | head -1)" = "s8" ] \
+  && ok "(r) unconsumed is NEWEST-first (first id is s8)" \
+  || no "(r) expected s8 first, got '$(printf '%s\n' "$listR" | head -1)'"
+[ "$(printf '%s\n' "$listR" | tail -1)" = "s1" ] \
+  && ok "(r) …and oldest-last (last id is s1)" \
+  || no "(r) expected s1 last, got '$(printf '%s\n' "$listR" | tail -1)'"
+[ "$(printf '%s\n' "$listR" | grep -c .)" = "8" ] \
+  && ok "(r) unconsumed with NO N returns all 8 unconsumed ids" \
+  || no "(r) expected 8 ids with no limit, got $(printf '%s\n' "$listR" | grep -c .)"
+[ "$(run_out "$RR" unconsumed 5 | grep -c .)" = "5" ] \
+  && ok "(r) unconsumed N respects the limit (5 of 8)" \
+  || no "(r) expected 5 ids for 'unconsumed 5', got $(run_out "$RR" unconsumed 5 | grep -c .)"
+
+# THE CORE ASSERTION — two successive default runs must drain 8 → 3 → 0.
+# Under the OLD newest-by-mtime selection round 2 re-reads s8..s4 and pending
+# stalls at 3 forever, so this fails RED the moment `unconsumed` regresses to
+# plain recency.
+r1="$(consume_round "$RR" 5)"
+[ "$r1" = "5" ] && ok "(r) run 1 consumed 5 ids" || no "(r) run 1 consumed '$r1', expected 5"
+[ "$(dpending "$RR")" = "3" ] \
+  && ok "(r) after run 1 pending falls 8 → 3" \
+  || no "(r) after run 1 expected pending=3, got '$(dpending "$RR")'"
+# Round 2 must return the OLD tail, not the newest again.
+tail2="$(run_out "$RR" unconsumed 5)"
+[ "$(printf '%s\n' "$tail2" | head -1)" = "s3" ] \
+  && ok "(r) run 2 selects the next-newest UNCONSUMED (s3), not s8 again" \
+  || no "(r) run 2 head expected s3, got '$(printf '%s\n' "$tail2" | head -1)'"
+r2="$(consume_round "$RR" 5)"
+[ "$r2" = "3" ] && ok "(r) run 2 consumed the remaining 3" || no "(r) run 2 consumed '$r2', expected 3"
+[ "$(dpending "$RR")" = "0" ] \
+  && ok "(r) THE BACKLOG DRAINS: 8 → 3 → 0 (plain newest-by-mtime stalls at 3 forever)" \
+  || no "(r) backlog did NOT drain — pending='$(dpending "$RR")' (the 8→3→3→3 stall)"
+
+# Fully drained ⇒ NOTHING on stdout, still exit 0.
+outR0="$(run_out "$RR" unconsumed)"
+[ -z "$outR0" ] && ok "(r) everything consumed ⇒ unconsumed prints NOTHING on stdout" \
+  || no "(r) expected empty stdout when drained, got: $outR0"
+[ "$(lastrc)" -eq 0 ] && ok "(r) …and still exits 0" || no "(r) drained unconsumed rc=$(lastrc)"
+
+# Noise-only logs are excluded — same predicate `pending` uses, not a second one.
+RRN="$(new_repo)"; mkdir -p "$RRN/.supervisor/logs"
+: > "$RRN/.supervisor/logs/noise.jsonl"
+k=0; while [ "$k" -lt 5 ]; do
+  k=$((k+1))
+  printf '{"event":"token_ledger","k":%s}\n' "$k" >> "$RRN/.supervisor/logs/noise.jsonl"
+  printf '{"event":"subtask_complete","k":%s}\n' "$k" >> "$RRN/.supervisor/logs/noise.jsonl"
+done
+printf '{"event":"session_end"}\n' > "$RRN/.supervisor/logs/real.jsonl"
+outRN="$(run_out "$RRN" unconsumed)"
+[ "$outRN" = "real" ] \
+  && ok "(r) unconsumed excludes noise-only logs (only 'real' returned)" \
+  || no "(r) expected just 'real', got: $outRN"
+
+# An absent logs dir / absent .supervisor is silent and exit 0, never an error.
+RRE="$(new_repo)"
+outRE="$(run_out "$RRE" unconsumed)"
+[ "$(lastrc)" -eq 0 ] && [ -z "$outRE" ] \
+  && ok "(r) absent logs dir ⇒ silent, exit 0" \
+  || no "(r) absent logs dir: rc=$(lastrc), out='$outRE'"
+
+# FAIL OPEN on an unexaminable consumed record: list ALL signal logs rather than
+# nothing. Re-reading a log is harmless; silently reading nothing is not — that
+# would be the fail-CLOSED shape that hides the entire backlog. Same uid-0 guard
+# as (d)/(m)/(q): chmod 000 does not block reads for root.
+RRU="$(new_repo)"; mkdir -p "$RRU/.supervisor/logs"
+for n in 1 2 3; do printf '{"event":"session_end"}\n' > "$RRU/.supervisor/logs/u$n.jsonl"; done
+printf '{"dreaming":{"last_run":"2026-01-01T00:00:00Z","consumed":{"logs":["u1","u2","u3"]}}}' \
+  > "$RRU/.supervisor/curation-state.json"
+chmod 000 "$RRU/.supervisor/curation-state.json" 2>/dev/null || true
+if [ ! -r "$RRU/.supervisor/curation-state.json" ]; then
+  outRU="$(run_out "$RRU" unconsumed)"
+  [ "$(lastrc)" -eq 0 ] && ok "(r) unreadable consumed record ⇒ exit 0" || no "(r) unreadable state rc=$(lastrc)"
+  [ "$(printf '%s\n' "$outRU" | grep -c .)" = "3" ] \
+    && ok "(r) unreadable consumed record ⇒ ALL 3 signal logs listed (fail OPEN, not silence)" \
+    || no "(r) fail-open regression — expected 3 ids, got: $outRU"
+  errRU="$(run_err "$RRU" unconsumed)"
+  printf '%s' "$errRU" | grep -qF 'could not be read' \
+    && ok "(r) …and the explanatory note goes to STDERR" \
+    || no "(r) no stderr note for the unreadable consumed record: $errRU"
+  printf '%s' "$outRU" | grep -qF 'could not be read' \
+    && no "(r) the note leaked onto STDOUT — it would be consumed as a session id" \
+    || ok "(r) …and NEVER onto stdout (stdout stays a pure id list)"
+else
+  skp "(r) unreadable-consumed-record fixture SKIPPED — running as uid 0, where chmod 000 does not block reads"
+fi
+chmod 644 "$RRU/.supervisor/curation-state.json" 2>/dev/null || true
+
+# FIX 2: "newly consumed" is a REAL delta, not the count of ids forwarded to jq.
+# `record dreaming s1 s1 s2` over an already-full set names 3 ids and adds none.
+outR2="$(run "$RR" record dreaming s1 s1 s2)"
+printf '%s' "$outR2" | grep -qF 'logs named: 3' \
+  && ok "(r) record still reports the validated/named count (3)" \
+  || no "(r) named count missing from: $outR2"
+printf '%s' "$outR2" | grep -qF 'newly consumed: 0' \
+  && ok "(r) re-recording already-consumed ids reports newly consumed: 0 (a real delta)" \
+  || no "(r) expected 'newly consumed: 0', got: $outR2"
+# …and a genuinely new id reports a delta of 1.
+printf '{"event":"session_end"}\n' > "$RR/.supervisor/logs/s9.jsonl"
+outR3="$(run "$RR" record dreaming s9 s1)"
+printf '%s' "$outR3" | grep -qF 'newly consumed: 1' \
+  && ok "(r) one new id among two named ⇒ newly consumed: 1" \
+  || no "(r) expected 'newly consumed: 1', got: $outR3"
 
 echo
 if [ "$skip" -gt 0 ]; then

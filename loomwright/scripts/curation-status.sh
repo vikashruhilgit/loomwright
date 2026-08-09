@@ -17,6 +17,7 @@
 #   status [--json]   per-command last_run / age_days / pending / threshold / ready
 #   record dreaming   stamp /dreaming's last run (the ONLY legal record target)
 #   nudge             print the ONE advisory cadence line, or NOTHING at all
+#   unconsumed [N]    the session ids /dreaming should read NEXT, newest-first
 #
 # ONE STORED VALUE, TWO DERIVED (deliberate — a derived value cannot go stale):
 #   /dreaming       ⇐ .dreaming.last_run in .supervisor/curation-state.json  (STORED)
@@ -688,8 +689,8 @@ cmd_status() {
   # read. Reporting the backlog alone is what let v15.29.0 say "ready=yes,
   # pending=61" about a run that would consume 5 and silently retire the rest.
   if is_uint "$d_pending" && [ "$d_pending" -gt "$DREAMING_DEFAULT_WINDOW" ]; then
-    printf -- '  note(/dreaming): a default run reads the %s most recent of those %s logs; the rest stay pending and are read by later runs (pass --sessions N to widen).\n' \
-      "$DREAMING_DEFAULT_WINDOW" "$d_pending"
+    printf -- '  note(/dreaming): a default run reads the %s most recent UNCONSUMED of those %s logs; repeated default runs walk backwards through the backlog %s at a time, because each run takes the newest logs it has not already read (pass --sessions N to take a bigger bite in one run).\n' \
+      "$DREAMING_DEFAULT_WINDOW" "$d_pending" "$DREAMING_DEFAULT_WINDOW"
   fi
   printf -- '- /insights       last_run=%s age_days=%s pending=%s threshold=%s ready=%s\n' \
     "$i_last" "$i_age" "$i_pending" "$i_thr" "$i_ready"
@@ -787,6 +788,18 @@ cmd_record() {
     fi
   done
 
+  # THE DELTA IS READ, NOT INFERRED FROM kept_n. `kept_n` counts ids that named a
+  # file on disk and were forwarded to jq — NOT ids that were new to the set.
+  # jq unions-then-uniques, so re-recording an already-consumed id is correctly
+  # idempotent, but reporting it as "added" told the caller a count that never
+  # happened (`record dreaming s1 s1 s2` over an already-full set said "3").
+  # `before_n` comes from the $existing JSON already parsed above (no re-read);
+  # `after_n` from the file just written. BOTH reads are fail-safe: if either is
+  # unavailable the message falls back to the named count alone rather than
+  # printing a wrong or empty number.
+  local before_n
+  before_n="$(printf '%s' "$existing" | jq -r '(.dreaming.consumed.logs // []) | length' 2>/dev/null || true)"
+
   tmp="$STATE_FILE.tmp.$$"
   if printf '%s' "$existing" \
      | jq --arg ts "$now_iso" '
@@ -798,8 +811,18 @@ cmd_record() {
               | unique)
        ' --args "$@" > "$tmp" 2>/dev/null \
      && mv "$tmp" "$STATE_FILE" 2>/dev/null; then
-    printf 'curation-status: recorded /dreaming last_run=%s (consumed logs added: %s)\n' \
-      "$now_iso" "$kept_n"
+    local after_n delta=""
+    after_n="$(jq -r '(.dreaming.consumed.logs // []) | length' "$STATE_FILE" 2>/dev/null || true)"
+    if is_uint "$before_n" && is_uint "$after_n" && [ "$after_n" -ge "$before_n" ]; then
+      delta=$((after_n - before_n))
+    fi
+    if [ -n "$delta" ]; then
+      printf 'curation-status: recorded /dreaming last_run=%s (logs named: %s, newly consumed: %s)\n' \
+        "$now_iso" "$kept_n" "$delta"
+    else
+      printf 'curation-status: recorded /dreaming last_run=%s (logs named: %s)\n' \
+        "$now_iso" "$kept_n"
+    fi
     [ "$dropped_n" -gt 0 ] && printf 'curation-status: %s named log(s) are not on disk and were not recorded.\n' "$dropped_n"
     if [ "$kept_n" -eq 0 ]; then
       printf 'curation-status: NO logs were named, so `pending` will NOT fall — only last_run moved. If this run did read logs, re-run as `record dreaming <session_id>...` naming them; otherwise this is the correct record of a run that consumed nothing.\n'
@@ -859,6 +882,81 @@ cmd_nudge() {
   return 0
 }
 
+# ---- Subcommand: unconsumed -------------------------------------------------
+
+# unconsumed [N] — the session ids /dreaming should read NEXT: signal-carrying
+# logs NOT in the consumed set, NEWEST MTIME FIRST, capped at N when N is a
+# positive integer. One id per line on STDOUT; nothing at all when the backlog is
+# genuinely empty. ALWAYS exits 0.
+#
+# WHY THIS EXISTS — "most recent" made the backlog UNREACHABLE FOREVER.
+# commands/dreaming.md's GATHER step selected the `--sessions N` most recent logs
+# BY MTIME, unconditionally. New sessions are always newer, so once a log fell out
+# of the newest-N window it could never re-enter it: the unconsumed backlog was
+# monotonically non-decreasing under default usage, and the shipped claim that
+# "the remainder is simply read by later runs" was FALSE. Measured on 8
+# signal-carrying logs with a window of 5, successive default runs gave
+# pending 8 → 3 → 3 → 3 … forever; the three oldest logs were never read once.
+#
+# Selecting the most recent UNCONSUMED logs keeps the recency bias that makes
+# reflection useful (a run still reads the newest thing it has not seen) AND
+# makes repeated runs walk backwards through the tail five at a time, so the
+# backlog actually drains: 8 → 3 → 0.
+#
+# FAIL OPEN, and stdout stays machine-readable. If the consumed record is
+# UNEXAMINABLE (consumed_log_ids returns non-zero — present but unreadable, or
+# not JSON) this lists ALL signal-carrying logs unfiltered rather than printing
+# nothing: re-reading a log is harmless, silently reading nothing is not. The
+# explanatory note goes to STDERR, never stdout — stdout is a list of ids and a
+# prose line in it would be consumed as one.
+#
+# Sorting is done on "<mtime>\t<id>" through `sort -rn`, NEVER by parsing `ls -t`:
+# ls output is not a parseable record and breaks on ids containing whitespace.
+# A log whose mtime is not a uint is skipped, consistent with
+# count_logs_newer_than — an unorderable entry cannot be placed in a "newest
+# first" list at all.
+cmd_unconsumed() {
+  local limit="${1:-}" consumed consumed_rc=0 sorted f id m
+  [ -d "$LOGS_DIR" ] || return 0
+  { [ -r "$LOGS_DIR" ] && [ -x "$LOGS_DIR" ]; } || return 0
+
+  # Declared first, assigned second, status tested on its own line — a
+  # `local consumed="$(...)"` would make $? the status of `local` and silently
+  # swallow the unexaminable signal (the same trap count_unconsumed_dreaming
+  # documents).
+  consumed="$(consumed_log_ids)" || consumed_rc=1
+  if [ "$consumed_rc" -ne 0 ]; then
+    consumed=""
+    printf 'curation-status: the consumed record exists but could not be read — listing ALL signal-carrying logs UNFILTERED (re-reading a log is harmless; silently reading nothing is not).\n' >&2
+  fi
+
+  sorted="$(
+    for f in "$LOGS_DIR"/*.jsonl; do
+      [ -f "$f" ] || continue
+      log_has_signal "$f" dreaming || continue
+      id="$(basename "$f" .jsonl)"
+      if [ "$consumed_rc" -eq 0 ]; then
+        # Exact whole-line match, so one session id can never be a prefix of
+        # any other id — the same predicate count_unconsumed_dreaming uses.
+        # (No apostrophes in comments inside this command substitution: bash
+        # 3.2 treats an unpaired quote here as an unterminated string.)
+        printf '%s\n' "$consumed" | grep -qxF -- "$id" && continue
+      fi
+      m="$(file_mtime "$f")"
+      is_uint "$m" || continue
+      printf '%s\t%s\n' "$m" "$id"
+    done | sort -rn
+  )"
+
+  [ -n "$sorted" ] || return 0
+  if is_uint "$limit" && [ "$limit" -gt 0 ]; then
+    printf '%s\n' "$sorted" | cut -f2- | head -n "$limit"
+  else
+    printf '%s\n' "$sorted" | cut -f2-
+  fi
+  return 0
+}
+
 # ---- Dispatch ---------------------------------------------------------------
 
 main() {
@@ -871,11 +969,12 @@ main() {
     # restore the exact fail-silent shape this change exists to remove.
     record) cmd_record "$@" ;;
     nudge)  cmd_nudge ;;
+    unconsumed) cmd_unconsumed "${1:-}" ;;
     -h|--help|help)
-      printf 'usage: curation-status.sh [status [--json] | record dreaming [<session_id>...] | nudge]\n'
+      printf 'usage: curation-status.sh [status [--json] | record dreaming [<session_id>...] | nudge | unconsumed [N]]\n'
       ;;
     *)
-      printf 'curation-status: unknown subcommand `%s` (expected status | record | nudge).\n' "$sub"
+      printf 'curation-status: unknown subcommand `%s` (expected status | record | nudge | unconsumed).\n' "$sub"
       ;;
   esac
   return 0
