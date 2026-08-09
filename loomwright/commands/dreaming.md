@@ -23,6 +23,7 @@ This makes `/dreaming` the safe, auditable counterpart to live execution: read p
 /dreaming --agent code-reviewer --sessions 20      # Single agent, deeper history
 /dreaming --agent all --sessions 3                 # Explicit all (default), last 3 sessions
 /dreaming --full-model                             # Reflection spawns inherit the session model (skip the sonnet default)
+/dreaming --force                                  # Skip the curation-readiness check and reflect anyway
 ```
 
 ## Parameters
@@ -31,7 +32,47 @@ This makes `/dreaming` the safe, auditable counterpart to live execution: read p
 |-----------|----------|---------|-------------|
 | `--agent` | No | `all` | Which agent(s) run reflection. Accepts `all`, `code-reviewer`, `red-team`, or `qa-executor`. `all` runs each supported agent in turn and aggregates their reports. Six agents have `memory: project` (Launch Pad, Code Reviewer, Red Team Reviewer, Product Owner, QA Strategist, QA Executor); v12.2.0 supports the three review-shaped agents listed above because their session logs carry the structured findings reflection needs (CODE_REVIEW_RESULT issues, red-team attack outcomes, QA_RESULT gates). Launch Pad, Product Owner, and QA Strategist are intentionally out of scope for v12.2.0 and may be added in a follow-up. |
 | `--sessions N` | No | `5` | How many of the most recent `.supervisor/logs/{session_id}.jsonl` files to feed into reflection. Values are clamped to the number of available log files. Higher values surface more durable patterns at higher token cost. |
+| `--force` | No | off | Skips the **curation-readiness check** (see "Curation cadence" below) and reflects regardless of how little has accumulated since the last run. Without it, `/dreaming` declines — advisory, exit 0, never an error — when fewer than `threshold` new session logs have appeared since its last recorded run. **The threshold is an UNVALIDATED starting guess** (in-script default `15`, override at `.curation.thresholds.dreaming` in `.supervisor/config.json`), so `--force` is the expected escape hatch, not an emergency one. |
 | `--full-model` | No | off | Skips the default spawn-time model routing. By default (flag absent), each reflection spawn passes `model: "sonnet"` on its Task call — reflection is read-only, backward-looking analysis where the cheaper tier is adequate (authority: `docs/ARCHITECTURE_CONTRACTS.md` §Cost Profiles → "Async analysis surfaces"). With `--full-model`, the `model` param is omitted so reflection spawns `inherit` the session model. This routing applies ONLY to `/dreaming` reflection spawns; the same agents' forward roles (diff review, adversarial audit, voter, test execution) are never downgraded by it. |
+
+## Curation cadence (readiness check + the one stored last-run record)
+
+`/dreaming` is the **only** one of the three curation commands whose last run is *stored* rather than derived — `/insights` is derived from `.supervisor/insights/dashboard.md`'s mtime and `/pr-postmortem` from the findings ledger, but `/dreaming` writes only through the memory writers, so `.supervisor/memory/` mtime reports the last run *that accepted something* and is structurally blind to the ran-but-accepted-nothing case. That case is exactly what this record exists to capture.
+
+### Step 0 — readiness (runs BEFORE Phase 1 GATHER)
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/curation-status.sh" status
+```
+
+Read the `/dreaming` row. If `ready=no` **and `--force` was not passed**, print the probe's `decline(/dreaming)` message **verbatim** and stop — writing nothing, spawning nothing, and **exiting 0**. The decline is advisory: it is never an error, never a hook failure, and never blocks a session. With `--force`, ignore `ready` entirely and proceed.
+
+**The threshold is an UNVALIDATED starting guess.** The in-script default is `15` new session logs; it is a guess, not a measured value. Override it at `.curation.thresholds.dreaming` in `.supervisor/config.json` (the probe READS that file and never rewrites it). An absent or malformed config falls back to the default and still exits 0.
+
+If the probe reports `pending=unknown` (an input it could not read), **do not decline** — `unknown` means "do not suppress, but do not claim a number", never a fabricated zero.
+
+### Final step — record this run (mandatory, even when nothing was accepted)
+
+After Phase 4 APPROVE completes — **including a run where every item was Rejected, or where there was nothing to propose at all** — `/dreaming` stamps its own last-run value:
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/curation-status.sh" record dreaming
+```
+
+`dreaming` is the **only** legal `record` target; any other argument is rejected with a message and still exits 0. Skipping this call leaves the stored value at `never` forever, which silently keeps the SessionStart curation nudge firing and makes every readiness answer wrong — it is not an optional flourish.
+
+### Run report (four mandatory lines)
+
+Every `/dreaming` run — declined or completed — ends with these four lines, so the run explains itself rather than leaving the user to infer value:
+
+- **When it last ran** — the `last_run` / `age_days` the probe reported (`never` when there is no record yet).
+- **What changed since** — the pending count the probe reported (new session logs since that last run).
+- **What it produced this time** — accepted memory facts / LESSONS / orientation promotions, and explicitly "nothing accepted" when that is the truth.
+- **What that will improve** — the concrete downstream effect (e.g. "Supervisor Phase 1 ACQUIRE now reads this lesson before task selection").
+
+### Where the cadence surfaces
+
+The same probe backs the **SessionStart curation nudge** in `scripts/session-resume.sh`: ONE advisory line carrying a real count, debounced by a 24h marker (`.supervisor/.curation-nudge-shown`) and silenced permanently by `LOOMWRIGHT_CURATION_NUDGE=0|off|false|no`. The nudge is **local-only** (no `gh`, no `curl` — it runs inside a hook) and reaches the session as `hookSpecificOutput.additionalContext`, i.e. **model-context injection that the agent then surfaces** — not a directly-rendered desktop notification. That is a deliberate choice: `notify-desktop.sh` is reserved for exceptional faults, and a recurring cadence reminder is not a fault.
 
 ## What This Does / Workflow
 

@@ -37,6 +37,27 @@ Read ${CLAUDE_PLUGIN_ROOT}/skills/pr-postmortem/SKILL.md
 
 See `skills/pr-postmortem/SKILL.md` for the full class definitions, the categorization heuristics, the jq-built append snippet, and the trend-line schema. **That skill is the authority** — this command is just the entry point.
 
+## Curation cadence (reporting only — this command NEVER declines)
+
+`/pr-postmortem` reports its curation cadence and contributes to the SessionStart nudge, but — unlike `/dreaming` and `/insights` — **it never declines and has no `--force` flag.** Both of its invocation forms above are targeted at ONE named PR, so a gate answering "only 3 PRs since your last run, come back later" would refuse to answer a direct question the user just asked. The declining gate applies only to the corpus-wide passes.
+
+Before the report, print the readiness lines from the probe (this command shell prints them; `skills/pr-postmortem/SKILL.md` stays the single source of truth for the report itself and is untouched):
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/curation-status.sh" status
+```
+
+`/pr-postmortem`'s last run is **derived, never stored**: it is the max `.ts` over `.supervisor/postmortem/results.jsonl` records with **`.source != "automate_drain"`**. That filter is load-bearing — since v15.28.0 the ledger is a unified corpus with two producers, and the engine-native `automate_drain` lines appended by `automate-helpers.sh learning-emit` were never *run* by a human. Drain and command records interleave chronologically, so a bare `map(.ts)|max` would report an engine append as "you ran /pr-postmortem". The probe's `pending` count for this command ("merged PRs absent from the ledger") is computed only on an explicit `status` invocation and is reported as `unknown` to the SessionStart nudge, which is strictly local-only.
+
+### Run report (four mandatory lines)
+
+Every `/pr-postmortem` run ends with these four lines, in addition to the categorized root-cause report:
+
+- **When it last ran** — the `last_run` / `age_days` the probe reported (`never` when the ledger holds no command-authored record).
+- **What changed since** — the delta the probe reported (`unknown` is a legitimate answer here; never substitute a fabricated `0`).
+- **What it produced this time** — the categorized rounds and the one appended trend line.
+- **What that will improve** — the concrete downstream effect (e.g. "this PR's churn class now feeds the heal-signal catch-rate section of `/insights`").
+
 ## Guarantees
 
 - **Read-only on the analyzed repo.** Only `gh pr view` (read-only, via the gather script) touches the PR. Nothing is written, branched, committed, or commented on the analyzed PR or its repo.

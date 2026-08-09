@@ -33,7 +33,31 @@
 # gate mirroring the observability probe's opt-out — the 24h marker only
 # re-suppresses per-window). Fail-safe: never fires on an error, never on a repo with
 # ≥1 valid rule, and never in a truly fresh repo (that's `/setup twin`'s job, so
-# it sits after the .supervisor/ bail). Adds NO new hook — hooks stay 21.
+# it sits after the .supervisor/ bail). Adds NO new hook entry (the authoritative
+# hook count is computed from hooks.json — it is deliberately NOT restated here).
+#
+# Also folds in a CURATION CADENCE nudge (curation-status.sh): ONE advisory line
+# carrying a real count of session logs accumulated since /dreaming and /insights
+# last ran, so "is what we wrote down still true?" stops depending on the user
+# remembering. Debounced via a 24h mtime-windowed marker
+# (.supervisor/.curation-nudge-shown) and silenced permanently by
+# LOOMWRIGHT_CURATION_NUDGE=0|off|false|no — both mirroring the rules nudge.
+#
+#   SEAM NOTE (load-bearing, do not "simplify"): unlike the rules nudge, the
+#   curation nudge ALSO fires on `source=startup` — a fresh session is exactly
+#   when a cadence reminder matters most. It gets a DEDICATED `startup)` arm in
+#   the `case "$SOURCE"` below rather than a widened shared gate, because
+#   widening that gate would expose EVERY fresh session to the observability
+#   probe's `curl` and desktop notification, the prior-session header, Sections
+#   1–5, and the unconditional recovery hints. Because that arm `exit`s from
+#   inside the case — ABOVE the shared `[ ! -d ".supervisor" ]` bail and ABOVE
+#   the emit at the bottom — `curation_nudge_startup_only` must do three things
+#   for itself: its OWN `.supervisor/` presence check (or it would nudge in every
+#   repo the user opens), its OWN `hookSpecificOutput` envelope (a bare printf is
+#   dropped or shown as raw JSON), and it must be DEFINED ABOVE the case (every
+#   other helper here is defined below it, which would make the call rc=127).
+#   The rules nudge's firing surface is UNCHANGED by this: it stays below the
+#   gate and still does NOT fire on startup.
 #
 # INVARIANT: ALWAYS exits 0. Hook output is JSON via stdout. Silent-pass
 # on any failure (no .supervisor/, no state, missing tools) so the session
@@ -54,10 +78,71 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 SOURCE="$(printf '%s' "$INPUT" | jq -r '.source // empty' 2>/dev/null || true)"
 
-# Only fire on resume / clear / compact. Startup is a fresh session — no
-# need to inject prior-state context.
+# ---- Curation cadence nudge (DEFINED ABOVE THE CASE ON PURPOSE) -------------
+# These two functions must be defined here, above the `case "$SOURCE"` below,
+# because the `startup)` arm calls one of them and then exits from inside the
+# case. Every other helper in this file is defined *after* the case; a helper
+# defined there would be `command not found` (rc 127) at startup — swallowed by
+# the following `exit 0` and hidden by the `|| true` on the hook command.
+#
+# curation_nudge_line: returns the ONE advisory line on stdout, or nothing.
+# Fail-safe on every path — a missing/erroring probe means NO nudge (never fire
+# on an error). Order of the gates mirrors rules_nudge(): permanent env opt-out,
+# then the plugin-active check, then the 24h mtime-windowed debounce marker, then
+# the probe. The marker is stamped ONLY when a line is actually emitted, so a
+# suppressed run does not burn the window.
+curation_nudge_line() {
+  case "${LOOMWRIGHT_CURATION_NUDGE:-}" in 0|off|false|no) return 0 ;; esac
+
+  # OWN plugin-active check. The shared `[ ! -d ".supervisor" ]` bail sits BELOW
+  # the case, so the startup arm never reaches it; without this the nudge would
+  # fire in every repo the user opens.
+  [ -d ".supervisor" ] || return 0
+
+  local marker=".supervisor/.curation-nudge-shown"
+  if [ -f "$marker" ] && [ -n "$(find "$marker" -mmin -1440 2>/dev/null)" ]; then
+    return 0
+  fi
+
+  local script_dir probe line
+  script_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo .)"
+  probe="$script_dir/curation-status.sh"
+  [ -r "$probe" ] || return 0
+
+  # The probe is LOCAL-ONLY by construction: `nudge` never calls gh or curl, so
+  # this adds no network latency to session start.
+  line="$(bash "$probe" nudge 2>/dev/null || true)"
+  [ -n "$line" ] || return 0
+
+  : > "$marker" 2>/dev/null || true
+  printf '%s' "$line"
+  return 0
+}
+
+# curation_nudge_startup_only: the `startup)` arm's whole body. Emits its OWN
+# SessionStart envelope because it exits above the shared emit at the bottom of
+# this file — a bare `printf` of the line is NOT recognized by Claude Code (it is
+# dropped, or shown as raw JSON), so the `iconv -c` + `jq -Rs` chain is
+# duplicated here deliberately rather than shared.
+curation_nudge_startup_only() {
+  [ -d ".supervisor" ] || return 0
+  local line
+  line="$(curation_nudge_line)"
+  [ -n "$line" ] || return 0
+  printf '%s' "$line" \
+    | { iconv -c -f UTF-8 -t UTF-8 2>/dev/null || cat; } \
+    | jq -Rs '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: .}}' 2>/dev/null \
+    || true
+  return 0
+}
+
+# Only fire the prior-state summary on resume / clear / compact. Startup is a
+# fresh session — it gets the curation nudge and NOTHING else (see the SEAM NOTE
+# in the header): no observability probe, no prior-session header, no sections,
+# no recovery hints, no house-rules nudge.
 case "$SOURCE" in
   resume|clear|compact) ;;
+  startup) curation_nudge_startup_only; exit 0 ;;
   *) exit 0 ;;
 esac
 
@@ -227,6 +312,14 @@ observability_probe
 
 # Section 0.5: no-house-rules nudge (advisory, debounced, fail-safe) ----
 rules_nudge
+
+# Section 0.6: curation cadence nudge (advisory, debounced, fail-safe) ----
+# Same line the startup arm emits; here it is appended to SUMMARY so it inherits
+# the MAX_CHARS cap. Emits NOTHING when nothing is pending (no empty header).
+CURATION_LINE="$(curation_nudge_line)"
+if [ -n "$CURATION_LINE" ]; then
+  append "$CURATION_LINE"$'\n\n'
+fi
 
 # Section 1: in-progress Supervisor jobs ----
 if compgen -G ".supervisor/jobs/in-progress/*.md" > /dev/null 2>&1; then

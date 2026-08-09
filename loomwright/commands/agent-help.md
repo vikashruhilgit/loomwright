@@ -612,12 +612,14 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 /dreaming --agent qa-executor --sessions 3     # QA Executor, last 3 sessions
 /dreaming --agent all --sessions 20            # All agents, deeper history
 /dreaming --full-model                         # Reflection spawns inherit the session model (skip sonnet default)
+/dreaming --force                              # Skip the curation-readiness check and reflect anyway
 ```
 
 **Parameters:**
 - `--agent all|code-reviewer|red-team|qa-executor` (default `all`)
 - `--sessions N` (default `5`)
 - `--full-model` (default off — reflection spawns default to `model: "sonnet"` per `docs/ARCHITECTURE_CONTRACTS.md` §Cost Profiles → "Async analysis surfaces"; flag restores `inherit`)
+- `--force` (default off — skips the curation-readiness check from `scripts/curation-status.sh`; without it `/dreaming` declines, advisory and exit 0, below an **unvalidated** threshold guess of `15` new session logs, overridable at `.curation.thresholds.dreaming` in `.supervisor/config.json`). `/insights` has the same flag; `/pr-postmortem` deliberately has none — it targets one named PR and never declines.
 
 **What it does:**
 - Reads the N most recent `.supervisor/logs/{session_id}.jsonl` files (read-only)
