@@ -227,9 +227,16 @@ test_curation_nudge_fires_on_startup() {
   else
     no "(h) curation nudge did NOT fire on startup — the feature never reaches a fresh session"
   fi
-  printf '%s\n' "$ctx" | grep -qE '[0-9]+ new session log' \
-    && ok "(h) the startup line carries a real COUNT, not merely a date" \
-    || no "(h) the startup line carries no count: $ctx"
+  # ONE assertion per command, each pinning THAT command's own noun next to its
+  # own count. A single shared pattern silently degrades into testing whichever
+  # half still matches: the fixture makes BOTH halves ready, so a regression that
+  # dropped the count from one line would sail through on the other's text.
+  printf '%s\n' "$ctx" | grep -qE '/dreaming [0-9]+ unreflected session log' \
+    && ok "(h) the /dreaming half of the startup line carries a real COUNT, not merely a date" \
+    || no "(h) the /dreaming half of the startup line carries no count: $ctx"
+  printf '%s\n' "$ctx" | grep -qE '/insights [0-9]+ new session log' \
+    && ok "(h) the /insights half of the startup line carries a real COUNT, not merely a date" \
+    || no "(h) the /insights half of the startup line carries no count: $ctx"
   # ...and the same line still fires on a resume source (a DIFFERENT repo, so the
   # 24h marker from the startup run above cannot mask it).
   local r2 ctx2 rc2

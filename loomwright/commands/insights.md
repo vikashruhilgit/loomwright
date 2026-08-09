@@ -23,7 +23,7 @@ The plugin already records rich **work**, **quality**, and **session-performance
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
-| `--force` | No | off | Skips the **curation-readiness check** (see "Curation cadence" below) and rebuilds the dashboard regardless of how few session logs have accumulated since the last build. Without it, `/insights` declines — advisory, exit 0, never an error — when fewer than `threshold` new session logs postdate `.supervisor/insights/dashboard.md`. **The threshold is an UNVALIDATED starting guess** (in-script default `10`, override at `.curation.thresholds.insights` in `.supervisor/config.json`), so `--force` is the expected escape hatch, not an emergency one. |
+| `--force` | No | off | Skips the **curation-readiness check** (see "Curation cadence" below) and rebuilds the dashboard regardless of how few session logs have accumulated since the last build. Without it, `/insights` declines — advisory, exit 0, never an error — when fewer than `threshold` new session logs postdate `.supervisor/insights/dashboard.md`. **Only logs carrying a `session_end` event are counted**, because that is the sole event `build-insights.sh` consumes — a log without one contributes nothing to a rebuild (measured on this repo 2026-08-09: 27 of 62 logs qualify). Unlike `/dreaming`, this count is a genuine watermark rather than a consumed set: `/insights` re-reads the *whole* corpus on every run, so "newer than the last build" is an exact statement of what it has yet to see. **The threshold is an UNVALIDATED starting guess** (in-script default `10`, override at `.curation.thresholds.insights` in `.supervisor/config.json`), so `--force` is the expected escape hatch, not an emergency one. |
 
 ## Curation cadence (readiness check — no new state file)
 
@@ -50,7 +50,7 @@ These readiness lines are printed by this command shell. `build-insights.sh` is 
 Every `/insights` run — declined or completed — ends with these four lines:
 
 - **When it last ran** — the `last_run` / `age_days` the probe reported (the dashboard's mtime, or `never`).
-- **What changed since** — the pending count the probe reported (new session logs postdating the dashboard).
+- **What changed since** — the pending count the probe reported (session logs carrying `session_end` that postdate the dashboard).
 - **What it produced this time** — the dashboard path plus the per-run note count actually written.
 - **What that will improve** — the concrete downstream effect (e.g. "the heal-PASS rate is now visible release-over-release").
 
