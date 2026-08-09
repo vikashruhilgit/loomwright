@@ -119,6 +119,12 @@ EOF
   return 1
 }
 
+# The anti-vacuity floor, factored out purely so it can be mutation-tested. On the real repo it
+# only ever takes the "pass" branch (the corpus is well above the floor), so without a control
+# nothing proves the comparison would actually trip if the scanned set collapsed — and this is
+# THE check that exists to catch the failure mode that killed the old (j4b) guard.
+floor_breached() { [ "$1" -lt "$2" ]; }
+
 bares_has() {
   local e_src="$1" e_tgt="$2" line
   while IFS= read -r line; do
@@ -230,12 +236,25 @@ scan_surface() {
         elif [ -f "$root/loomwright/$cpath" ]; then
           resolved="loomwright/$cpath"
         else
-          hits="$(cd "$root" && find . -name "$base" -type f 2>/dev/null \
-                    | sed 's|^\./||' | grep -v '^\.git/' | grep -e "/$cpath\$" -e "^$cpath\$")"
-          nhits="$(printf '%s' "$hits" | grep -c . )"
-          if [ "$nhits" -eq 1 ]; then
-            resolved="$hits"
-          fi
+          # Suffix-match with a `case` glob, NOT `grep -e "/$cpath\$"`. The cited path is DATA and
+          # must not be interpreted: interpolated into a regex, its `.` matches any character, so
+          # `foo.md` would also match a same-length sibling `fooXmd`. `grep -F` cannot express the
+          # suffix anchor, but a quoted `case` pattern is both literal and anchored at both ends —
+          # `*/"$cpath"` expands the leading `*` and takes the rest verbatim.
+          hits=""; nhits=0
+          while IFS= read -r cand; do
+            [ -z "$cand" ] && continue
+            case "$cand" in
+              */"$cpath"|"$cpath")
+                hits="$cand"
+                nhits=$((nhits + 1))
+                ;;
+            esac
+          done <<EOF
+$(cd "$root" && find . -name "$base" -type f 2>/dev/null | sed 's|^\./||' | grep -v '^\.git/')
+EOF
+          [ "$nhits" -eq 1 ] || hits=""
+          resolved="$hits"
         fi
 
         if [ -z "$resolved" ]; then
@@ -321,7 +340,7 @@ else
   # gate actively encourages — does not trip it, and it should be lowered deliberately (with the
   # new baseline stated) rather than raised to chase the corpus.
   CITE_FLOOR=20
-  if [ "$n_total" -lt "$CITE_FLOOR" ]; then
+  if floor_breached "$n_total" "$CITE_FLOOR"; then
     no "citation scan found only $n_total citations across the live surfaces — expected >=$CITE_FLOOR; the scanner has gone vacuous"
   else
     ok "citation scan is non-vacuous: $n_total citations found ($n_ok pinned-and-verified, $n_skip unresolvable/skipped)"
@@ -560,6 +579,49 @@ TGT
   case "$M_NOEOL" in
     OK*) ok "(M14) the final line of a file with NO trailing newline counts (wc -l would under-count)" ;;
     *)   no "(M14) an unterminated final line was miscounted — verdict was '$M_NOEOL'" ;;
+  esac
+
+  # (M15) The anti-vacuity floor itself. On the real repo only its pass branch ever runs, so
+  # without this nothing proves it would fire on a collapsed scan — and a silently-collapsed scan
+  # is exactly how the guard this file replaces died. 14 is the count the `set -u` truncation bug
+  # actually produced, and it must be caught by the floor of 20 that replaced the original 10.
+  if floor_breached 14 20 && ! floor_breached 30 20 && ! floor_breached 20 20; then
+    ok "(M15) the anti-vacuity floor fires on a collapsed scan (14<20) and not on a healthy one"
+  else
+    no "(M15) the anti-vacuity floor does not discriminate — a silently truncated scan would pass"
+  fi
+
+  # (M16) bares_has() is structurally identical to allowlist_has() but was untested. If it ever
+  # regressed to a substring match, a genuinely stale allowlist entry would keep passing (C2)
+  # forever — the ratchet quietly widening, which is the failure (C2) exists to prevent.
+  m16="$(
+    BARES="$(printf 'BARE\txsrc.md\ttgt.sh:12')"
+    bares_has "src.md" "tgt.sh:1"   && echo "SUBSTRING-MATCHED"
+    bares_has "xsrc.md" "tgt.sh:12" && echo "EXACT-MATCHED"
+    :
+  )"
+  case "$m16" in
+    "EXACT-MATCHED") ok "(M16) (C2)'s stale-entry detector matches whole entries only, like its sibling" ;;
+    *SUBSTRING-MATCHED*) no "(M16) bares_has matched a SUBSTRING — a stale allowlist entry would never be reported" ;;
+    *) no "(M16) bares_has failed to match its own exact entry — (C2) would report false staleness: '$m16'" ;;
+  esac
+
+  # (M17) The cited path is DATA and must not be interpreted. The decoy has to differ in the
+  # DIRECTORY portion, not the basename: candidates come from `find -name "$base"`, which already
+  # matches the basename exactly (a `.` in a `-name` glob is literal), so a `sigXmd` sibling never
+  # reaches the suffix filter at all — an earlier version of this control used one and was
+  # therefore vacuous, passing against the very implementation it was meant to condemn. The live
+  # risk is the directory: under `grep -e "/$cpath\$"` the `.` in `regex.probe/` matches any
+  # character, so `regexXprobe/sig.md` is an equally good hit, and with both present resolution
+  # goes ambiguous and SKIPs a citation it should have checked.
+  mkdir -p "$FIX/loomwright/skills/regex.probe" "$FIX/loomwright/skills/regexXprobe"
+  printf 'l1\nl2\nSUFFIX SIGNAL\n' > "$FIX/loomwright/skills/regex.probe/sig.md"
+  printf 'l1\nl2\nDECOY CONTENT\n' > "$FIX/loomwright/skills/regexXprobe/sig.md"
+  printf '# see regex.probe/sig.md:3 [pins: `SUFFIX SIGNAL`]\n' > "$FIX/loomwright/scripts/regexcite.sh"
+  M_REGEX="$(scan_surface "$FIX" "$FIX/loomwright/scripts/regexcite.sh")"
+  case "$M_REGEX" in
+    OK*) ok "(M17) suffix resolution treats the cited path literally — \`.\` is not a regex wildcard" ;;
+    *)   no "(M17) the cited path was interpreted as a regex, matching a decoy sibling: '$M_REGEX'" ;;
   esac
 fi
 
