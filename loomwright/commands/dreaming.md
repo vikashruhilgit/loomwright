@@ -172,7 +172,7 @@ You are running in REFLECTION MODE for the /dreaming command, not your normal fo
 DO NOT review code, attack systems, generate tests, or take any action against the current working tree. Your job for this turn is to look BACKWARD at the supplied session logs and propose durable lessons.
 
 INPUTS (read-only):
-- Session logs (the N most recent /supervisor sessions for this project):
+- Session logs (the N most recent **unconsumed** /supervisor sessions for this project — NOT necessarily the newest N in absolute terms: sessions already reflected on are excluded, so this list can contain an older log while a more recent, already-reflected one is absent):
 {numbered list of absolute paths to .supervisor/logs/<session_id>.jsonl files}
 - Worker summaries and completed/failed briefs for the same window:
 {numbered list of absolute paths to .supervisor/worker-summaries/*.md and .supervisor/jobs/done/*, .supervisor/jobs/failed/* briefs}

@@ -244,14 +244,20 @@ read_threshold() {
 #   parses, but no .dreaming.last_run ⇒ never (read it, and it holds no record)
 #   parses, .dreaming.last_run unparseable as a timestamp ⇒ unknown
 #
-# WHY THE UNPARSEABLE CASES ARE `unknown`, NOT `never`: `never` is a CLAIM — it
-# flows into pending_for() as "every log counts", which makes /dreaming's
-# readiness `yes`/`no` on a real number and lets the decline message assert
-# "N new session log(s) since its last run" about a file the script never
-# managed to parse. `unknown` refuses to claim: readiness() maps it to `unknown`,
-# which by decision (f) never declines and never suppresses the nudge. Only the
-# genuinely-absent file, and a state file we DID parse that simply carries no
-# record, are honest `never`s.
+# WHY THE UNEXAMINABLE CASES ARE `unknown`, NOT `never`: `never` is a CLAIM, and
+# this value is SHOWN TO THE USER — it is the `last_run=` field of the status row
+# and the --json document, it feeds `age_days`, and it is the "last run …" phrase
+# in the nudge. Printing "never" about a state file we could not read or parse
+# asserts "you have never run /dreaming" on the strength of an input we failed to
+# examine — the same fabrication this script forbids everywhere else. `unknown`
+# refuses to claim. Only the genuinely-absent file, and a state file we DID parse
+# that simply carries no record, are honest `never`s.
+#
+# THIS VALUE NO LONGER FEEDS /dreaming's PENDING COUNT OR READINESS. pending_for()
+# is called for /insights ONLY; /dreaming's backlog is the complement of the
+# consumed SET, computed by count_unconsumed_dreaming() from consumed_log_ids()
+# without ever consulting `last_run`. A reader debugging the readiness math should
+# go there, not here — what this function decides is display and `age_days`.
 derive_dreaming_last_run() {
   [ -e "$STATE_FILE" ] || { printf 'never'; return 0; }
   [ -r "$STATE_FILE" ] || { printf 'unknown'; return 0; }
