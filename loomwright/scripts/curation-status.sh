@@ -575,8 +575,15 @@ readiness() {
 # fed to reflection (a set, because it consumes a window). Saying "since its
 # last run" for /dreaming would be false: an unreflected log is usually OLDER
 # than the last run, which is precisely how the v15.29.0 shape hid the backlog.
+# Both call sites ALWAYS pass $4 explicitly (DREAMING_PENDING_NOUN /
+# INSIGHTS_PENDING_NOUN), so the fallback is unreachable in practice and is
+# deliberately EMPTY rather than a plausible-looking default: a default worded
+# for one of the two consumers would be silently wrong for the other. Keeping
+# the `:-` at all is what stops a hypothetical caller with a missing argument
+# from tripping `set -u` — this is an always-exit-0 advisory emitter, so a
+# missing noun must degrade to a malformed-but-harmless sentence, never abort.
 decline_message() {
-  local label="${1:-}" pending="${2:-}" threshold="${3:-}" noun="${4:-new session log(s) since its last run}"
+  local label="${1:-}" pending="${2:-}" threshold="${3:-}" noun="${4:-}"
   printf '/%s declined: %s %s, below the threshold of %s. That threshold is an UNVALIDATED starting guess, not a measured value — re-run with --force to proceed anyway, or set .curation.thresholds.%s in .supervisor/config.json.' \
     "$label" "$pending" "$noun" "$threshold" "$label"
 }

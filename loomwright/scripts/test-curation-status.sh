@@ -1037,6 +1037,32 @@ printf '{"dreaming":{"last_run":"2026-01-01T00:00:00Z"}}' > "$RQ/.supervisor/cur
   && ok "(q) parseable state with no consumed key ⇒ a real count (absent ≠ unexaminable)" \
   || no "(q) a readable recordless state was reported as unexaminable"
 
+# A state file that EXISTS and is perfectly well-formed but cannot be READ is
+# the third rung of the ladder, and it is distinct from both neighbours: the
+# `[ -e ]` guard above it says "something is recorded", so we may not answer
+# with the absent-record count, and we never got far enough to parse it, so we
+# may not answer with a parsed one either. A mutation relaxing the `[ -r ]`
+# guard to `return 0` would silently treat the unreadable record as an EMPTY
+# consumed set and report every log on disk as unreflected — a confident backlog
+# manufactured out of an input we failed to read. chmod 000 does not block reads
+# for uid 0, so skip visibly under a root executor rather than pass for the
+# wrong reason.
+RQU="$(new_repo)"; mkdir -p "$RQU/.supervisor/logs"
+printf '{"event":"session_end"}\n' > "$RQU/.supervisor/logs/s1.jsonl"
+printf '{"dreaming":{"last_run":"2026-01-01T00:00:00Z","consumed":{"logs":["s1"]}}}' \
+  > "$RQU/.supervisor/curation-state.json"
+chmod 000 "$RQU/.supervisor/curation-state.json" 2>/dev/null || true
+if [ ! -r "$RQU/.supervisor/curation-state.json" ]; then
+  outQU="$(run "$RQU" status --json)"
+  [ "$(lastrc)" -eq 0 ] && ok "(q) status exits 0 on an unreadable state file" || no "(q) unreadable state rc=$(lastrc)"
+  [ "$(jget "$outQU" '.commands.dreaming.pending')" = "unknown" ] \
+    && ok "(q) unreadable state ⇒ pending 'unknown' (an unexaminable record never yields a number)" \
+    || no "(q) unreadable state fabricated a count: '$(jget "$outQU" '.commands.dreaming.pending')'"
+else
+  skp "(q) unreadable-state fixture SKIPPED — running as uid 0, where chmod 000 does not block reads"
+fi
+chmod 644 "$RQU/.supervisor/curation-state.json" 2>/dev/null || true
+
 echo
 if [ "$skip" -gt 0 ]; then
   echo "RESULT: $pass passed, $fail failed, $skip skipped"
