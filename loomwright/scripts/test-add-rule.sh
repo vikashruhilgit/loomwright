@@ -19,7 +19,8 @@
 #   (H) confirm-only: no --confirm + non-TTY ⇒ DRY-RUN (plan printed, NO file written).
 #   (M) --applies-to (PATH ROUTING): REPEATABLE (N flags ⇒ N-element array, order preserved), a single
 #       flag still authors an ARRAY, OMITTED ⇒ present-and-null (repo-wide, historical default),
-#       traversal/hostile patterns (`../`, `a/../b`, absolute `/…`, `~/…`, empty) REJECTED non-zero
+#       traversal/hostile patterns (`../`, `a/../b`, absolute `/…`, `~/…`, empty, whitespace-only,
+#       embedded newline, embedded 0x1F unit separator) REJECTED non-zero
 #       with NO file written, one bad pattern among repeated flags aborts the WHOLE write, the flag is
 #       rejected alongside --retract, and a writer→reader ROUND TRIP proves what is authored is what
 #       read-rules.sh actually routes on.
@@ -479,6 +480,33 @@ if [ "$RC" -ne 0 ] && [ "$(count_rule_files "$RM3C")" = "0" ]; then
 else
   no "(M3c) newline in --applies-to NOT rejected (rc=$RC files=$(count_rule_files "$RM3C")) — one flag silently became two patterns"
 fi
+
+# (M3d) 0x1F (UNIT SEPARATOR) REJECTED — read-rules.sh's `route_spec` strips 0x1F with the same gsub
+# as tab/newline, AND 0x1F is the route cell's own join delimiter. Accepting one would store a pattern
+# the reader then silently alters — the exact "sanitized into a safe-looking form instead of rejected"
+# outcome A1 exists to prevent.
+RM3D="$(new_repo)"
+run_writer "$RM3D" --category "Routing" --statement "Unit separator pattern rule" \
+  --applies-to "$(printf 'src/\037x')" --confirm
+if [ "$RC" -ne 0 ] && [ "$(count_rule_files "$RM3D")" = "0" ]; then
+  ok "(M3d) a 0x1F-bearing --applies-to is REJECTED (rc=$RC) with no file written"
+else
+  no "(M3d) 0x1F in --applies-to NOT rejected (rc=$RC files=$(count_rule_files "$RM3D")) — the reader would silently strip it"
+fi
+
+# (M3e) WHITESPACE-ONLY REJECTED — passes the non-empty check but matches nothing (no touched path is
+# a bare space), so it is a silent dead rule for the same reason the empty pattern is. Mirrors the
+# `--target` whitespace-only guard in the retract path.
+for wspat in " " "   " "$(printf '\t')"; do
+  RM3E="$(new_repo)"
+  run_writer "$RM3E" --category "Routing" --statement "Whitespace pattern rule" \
+    --applies-to "$wspat" --confirm
+  if [ "$RC" -ne 0 ] && [ "$(count_rule_files "$RM3E")" = "0" ]; then
+    ok "(M3e) a whitespace-only --applies-to is REJECTED (rc=$RC) with no file written"
+  else
+    no "(M3e) whitespace-only --applies-to NOT rejected (rc=$RC files=$(count_rule_files "$RM3E")) — a silent dead rule"
+  fi
+done
 
 # (M4) --applies-to is an ADD-only flag: combining it with --retract is rejected outright (R1).
 RM4="$(new_repo)"

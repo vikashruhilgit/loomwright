@@ -338,22 +338,33 @@ fi
 #     (abort, non-zero, never silently rewritten), never sanitized into a safe-looking form.
 # A2. Rejected shapes, and why each one:
 #       empty                → matches nothing; a silent dead rule.
+#       whitespace-only      → same defect as empty, one step further in: no touched path is literally
+#                              a bare space, so the pattern is stored, survives every other guard, and
+#                              routes the rule to nothing. Mirrors the `--target` whitespace-only guard
+#                              in the retract path above (same `*[![:space:]]*` idiom — bash 3.2 here,
+#                              so NOT `${var//[[:space:]]/}`, which is O(n²) on this host).
 #       newline / CR         → newline is this accumulator's own delimiter (see the declaration above)
-#                              and the reader strips both, so accepting one would author a pattern
-#                              that means something other than what was typed. NOTE the NEWLINE arm
+#                              AND the reader strips it, so accepting one would author a pattern that
+#                              means something other than what was typed. CR is rejected for the
+#                              writer's own reason — a line-ending hazard in a line-framed store; the
+#                              reader does NOT strip CR (its gsub set is tab/newline/0x1F). NOTE the NEWLINE arm
 #                              lives in the `--applies-to)` PARSING case, not in the loop below: by the
 #                              time we get here the newline would already have been consumed as the
 #                              delimiter, splitting one flag into two patterns. CR/tab/`..`/`/`/`~`
 #                              survive the split intact and are rejected below.
 #       tab                  → the reader neutralizes tab inside a pattern (line-framing safety), so
 #                              the stored pattern would silently differ from the authored one.
+#       0x1F (unit sep)      → the reader's `route_spec` strips it with the same `gsub` as tab/newline
+#                              (its `gsub("[\t\n\u001f]"; "")`) because 0x1F is the route
+#                              cell's own JOIN delimiter — so an accepted 0x1F would both mutate the
+#                              stored pattern AND collide with the cell framing it was chosen for.
 #       contains `..`        → traversal-style; the store is repo-relative and a rule scope has no
 #                              business walking upward. Same raw-string reject as `category` (:245+).
 #       leading `/`          → absolute path; the reader matches repo-relative touched paths, so an
 #                              absolute pattern can only ever match nothing.
 #       leading `~`          → home-relative; same reasoning as absolute, plus shell-expansion optics.
 if [ "$applies_to_set" -eq 1 ]; then
-  nl_a=$'\n'; cr_a=$'\r'; tab_a=$'\t'
+  nl_a=$'\n'; cr_a=$'\r'; tab_a=$'\t'; us_a=$'\037'
   # Iterate the accumulator without a bash array (see the declaration comment). The accumulator is
   # newline-TERMINATED, so a trailing empty segment is expected and is simply the loop's exit.
   at_rest="$applies_to_raw"
@@ -362,9 +373,16 @@ if [ "$applies_to_set" -eq 1 ]; then
     at_pat="${at_rest%%"$nl_a"*}"
     at_rest="${at_rest#*"$nl_a"}"
     [ -n "$at_pat" ] || die "rejected: --applies-to must be non-empty when supplied"
+    # Whitespace-only is the empty case one step further in — see the A2 table. Same idiom as the
+    # `--target` guard in the retract path (bash 3.2: `case`, never `${var//[[:space:]]/}`).
+    case "$at_pat" in
+      *[![:space:]]*) : ;;
+      *) die "rejected: --applies-to must contain at least one non-whitespace character (whitespace-only pattern matches nothing): $at_pat" ;;
+    esac
     case "$at_pat" in
       *"$cr_a"*)  die "rejected: --applies-to may not contain carriage-return characters: $at_pat" ;;
       *"$tab_a"*) die "rejected: --applies-to may not contain tab characters: $at_pat" ;;
+      *"$us_a"*)  die "rejected: --applies-to may not contain 0x1F unit-separator characters: $at_pat" ;;
       *..*)       die "rejected: --applies-to may not contain '..' (traversal): $at_pat" ;;
       /*)         die "rejected: --applies-to must be a repo-relative pattern, not absolute: $at_pat" ;;
       '~'*)       die "rejected: --applies-to must be a repo-relative pattern, not home-relative: $at_pat" ;;
