@@ -45,6 +45,18 @@
 #       by a gh STUB, never a real network call
 #   (m) an unreadable .supervisor/logs/ ⇒ pending `unknown` (never a fabricated
 #       0 that would silently make /dreaming and /insights never-decline)
+#   (n) /dreaming's pending is an unconsumed SET, not a watermark comparison: a
+#       run drains the count by exactly the logs it named, a later run that
+#       consumed nothing leaves the backlog intact (a wall-clock stamp would
+#       report 0), and ids UNION across calls so re-recording is idempotent
+#   (o) the count names the WINDOW that will drain it, and the probe's
+#       DREAMING_DEFAULT_WINDOW is pinned against commands/dreaming.md's
+#       Parameters table — the cross-file assertion whose absence let the
+#       readiness gate and the consumption window ship as unrelated numbers
+#   (p) pending counts logs carrying reflection SIGNAL, not raw files, with
+#       DIFFERENT predicates for /dreaming (broad denylist) and /insights
+#       (session_end only, its sole input) — both failing OPEN, so an
+#       unrecognisable or unreadable log is counted rather than silently dropped
 #   (q) `record` hygiene: ids are pruned to what is on disk, survive whitespace,
 #       and reach jq as DATA not filter text; plus the WRITE-path ladder — a
 #       state file that exists but cannot be READ is refused outright (no write,
