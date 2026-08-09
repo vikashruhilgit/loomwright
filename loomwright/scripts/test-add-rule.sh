@@ -466,6 +466,20 @@ else
   no "(M3b) mixed good/hostile --applies-to was not rejected (rc=$RC files=$(count_rule_files "$RM3B"))"
 fi
 
+# (M3c) EMBEDDED NEWLINE REJECTED — the accumulator is newline-TERMINATED, so an embedded newline
+# would be swallowed as its own delimiter and ONE flag would silently become TWO patterns (the A2
+# validation loop runs after that split and can never see it). Three doc surfaces assert newline is
+# rejected (add-rule.sh's A2 table, skills/rules/SKILL.md §1, commands/rules.md); this pins that the
+# reject actually fires, in the parsing arm, before the split.
+RM3C="$(new_repo)"
+run_writer "$RM3C" --category "Routing" --statement "Newline pattern rule" \
+  --applies-to "$(printf 'src/*\ndocs/*')" --confirm
+if [ "$RC" -ne 0 ] && [ "$(count_rule_files "$RM3C")" = "0" ]; then
+  ok "(M3c) a newline-bearing --applies-to is REJECTED (rc=$RC) with no file written"
+else
+  no "(M3c) newline in --applies-to NOT rejected (rc=$RC files=$(count_rule_files "$RM3C")) — one flag silently became two patterns"
+fi
+
 # (M4) --applies-to is an ADD-only flag: combining it with --retract is rejected outright (R1).
 RM4="$(new_repo)"
 run_writer "$RM4" --retract --target "x" --reason "y" --applies-to "src/*" --confirm

@@ -62,7 +62,9 @@
 #     - ANY other shape (non-array; array holding a non-string; empty array; array whose entries are
 #       all empty after tab/newline/US neutralization)     ⇒ MALFORMED ⇒ fail OPEN (emitted repo-wide)
 #                                                            + a one-line diagnostic to stderr + memory.log.
-#     - ZERO positional args (the no-arg call shape)       ⇒ fail OPEN for EVERY rule (see below).
+#     - ZERO NON-EMPTY positional args (the no-arg call shape, and equally the one-empty-string shape
+#       `"$(git diff --name-only ...)"` produces on an empty diff)
+#                                                          ⇒ fail OPEN for EVERY rule (see below).
 #
 #   MATCHING IS A NATIVE bash `case` GLOB — deliberately, and it is NOT `.gitignore` syntax:
 #     `*` and `**` are EQUIVALENT and BOTH cross `/`. `"loomwright/scripts/*"` matches
@@ -77,6 +79,9 @@
 #   SessionStart nudge when stdout is EMPTY. An empty touched-path set therefore cannot mean "nothing
 #   matches" — that would make every repo that HAS rules start nudging as if it had none. Zero args
 #   means "no scope was supplied", which is an absence of information, not a negative match: fail OPEN.
+#   The SAME reasoning covers a single EMPTY-STRING arg — the documented idiom
+#   `bash read-rules.sh "$(git diff --name-only "$BASE"...HEAD)"` degenerates to exactly that on an
+#   empty/failed diff — so the guard counts NON-EMPTY args, never `$#`.
 #
 # ROUTING x SUPERSESSION — ORDER OF OPERATIONS (deliberate; pinned by test-read-rules.sh case (k)):
 #       validate/dedup  ->  SUPERSESSION (in jq)  ->  ROUTING (in shell).
@@ -174,8 +179,21 @@ rule_applies() {
   local spec="$1"; shift
   # (1) fail OPEN: no route cell ⇒ repo-wide rule.
   [ -n "$spec" ] || return 0
-  # (2) fail OPEN: no touched paths supplied ⇒ repo-wide call (the no-arg shape).
-  [ "$#" -gt 0 ] || return 0
+  # (2) fail OPEN: no touched paths supplied ⇒ repo-wide call. Counting `$#` is NOT enough: the
+  #     documented caller idiom is `bash read-rules.sh "$(git diff --name-only ...)"`, which on an
+  #     EMPTY diff passes ONE EMPTY-STRING argument. `$# = 1` with nothing to match would route every
+  #     scoped rule OUT — a degraded diff silently suppressing the house rules, exactly what
+  #     skills/self-heal-advisory/SKILL.md promises can never happen. So filter the empties FIRST and
+  #     gate on the NON-EMPTY count.
+  #     bash 3.2 note: `"${paths[@]}"` on an EMPTY array is an unbound-variable error under `set -u`
+  #     (this script runs `set -uo pipefail`), so the array is expanded ONLY after the count guard
+  #     below has proven it non-empty.
+  local -a paths=()
+  local a
+  for a in "$@"; do
+    [ -n "$a" ] && paths[${#paths[@]}]="$a"
+  done
+  [ "${#paths[@]}" -gt 0 ] || return 0
 
   local rest pat p
   rest="$spec"
@@ -187,7 +205,7 @@ rule_applies() {
     # An empty pattern is skipped rather than used: `case x in )` is a syntax error, and an empty
     # glob would match nothing anyway. jq already drops empties, so this is belt-and-braces.
     [ -n "$pat" ] || continue
-    for p in "$@"; do
+    for p in "${paths[@]}"; do
       # shellcheck disable=SC2254 — $pat is UNQUOTED on purpose: this IS the glob match.
       case "$p" in
         $pat) return 0 ;;

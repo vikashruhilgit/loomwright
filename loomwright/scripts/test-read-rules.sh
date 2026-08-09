@@ -32,7 +32,10 @@
 #                                                (session-resume.sh:311's shape) stays repo-wide,
 #                                                (j5) all-routed-out ⇒ EMPTY stdout (no banner),
 #                                                (j6) `case`-glob semantics: `*`/`**` both CROSS `/`
-#                                                (the documented .gitignore contrast)
+#                                                (the documented .gitignore contrast), (j7) ONE
+#                                                EMPTY-STRING arg (what the documented
+#                                                `"$(git diff --name-only ...)"` idiom degenerates to
+#                                                on an empty diff) is repo-wide too, exactly like (j4)
 #   (k) ROUTING x SUPERSESSION ORDER → a rule ROUTED OUT of this call must NOT resurrect the rule it
 #                                                supersedes (supersession is resolved BEFORE routing)
 #   (l) MUTATION CONTROL for (j1) → the SAME non-match fixture is re-run against a copy of the reader
@@ -653,6 +656,23 @@ nJ4="$(printf '%s\n' "$outJ4" | grep -cE '^- ')"
 [ -n "$outJ4" ] \
   && ok "(j4) NO-ARG stdout is NON-EMPTY for a store that has rules (the nudge gates on emptiness)" \
   || no "(j4) NO-ARG stdout was EMPTY — rules_nudge would fire on a repo that HAS rules"
+
+# (j7) THE ONE-EMPTY-STRING CALL — the documented agent idiom
+# `bash read-rules.sh "$(git diff --name-only "$BASE"...HEAD)"` degenerates to exactly ONE EMPTY
+# argument on an empty (or failed) diff. `$# = 1`, but the scope is still ABSENT, so this must behave
+# IDENTICALLY to (j4): every valid rule emitted. Guarding on `$#` instead of the non-empty count
+# routed every scoped rule out and falsified skills/self-heal-advisory/SKILL.md's promise that "an
+# EMPTY path set ... emits repo-wide — so a degraded/empty diff can never silently suppress the house
+# rules."
+outJ7="$(run_reader_args "$RJ" "")"; rcJ7=$?
+[ "$rcJ7" -eq 0 ] && ok "(j7 empty-string arg) exits 0" || no "(j7) expected exit 0, got $rcJ7"
+nJ7="$(printf '%s\n' "$outJ7" | grep -cE '^- ')"
+[ "$nJ7" -eq 7 ] \
+  && ok "(j7) ONE EMPTY-STRING arg stays REPO-WIDE: all 7 valid rules emitted (same as the no-arg call)" \
+  || no "(j7) empty-string arg emitted $nJ7 rules, expected all 7 — a degraded diff silently suppressed the scoped rules"
+[ -n "$outJ7" ] \
+  && ok "(j7) EMPTY-STRING-arg stdout is NON-EMPTY for a store that has rules" \
+  || no "(j7) EMPTY-STRING-arg stdout was EMPTY — rules_nudge would fire on a repo that HAS rules"
 
 # (j5) EVERY rule routed out ⇒ EMPTY stdout: no banner, no sentinel, exit 0 — identical to the
 # "no valid rules" shape, so machine consumers can keep gating on non-empty stdout (AC6).

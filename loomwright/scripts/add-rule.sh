@@ -134,6 +134,14 @@ while [ "$#" -gt 0 ]; do
     --source)      [ "$#" -ge 2 ] || die "--source requires a value"; source_val="$2"; shift 2 ;;
     --supersedes)  [ "$#" -ge 2 ] || die "--supersedes requires a value"; supersedes_set=1; supersedes_val="$2"; shift 2 ;;
     --applies-to)  [ "$#" -ge 2 ] || die "--applies-to requires a value"; applies_to_set=1
+                   # A2-newline, checked HERE and nowhere else: the accumulator below is newline-
+                   # TERMINATED, so an embedded newline would be consumed as the accumulator's OWN
+                   # delimiter and one flag would silently become two patterns. The validation loop at
+                   # A2 runs AFTER that split and therefore can never see it — the reject must happen
+                   # before the value is appended.
+                   case "$2" in
+                     *$'\n'*) die "rejected: --applies-to may not contain newline characters" ;;
+                   esac
                    applies_to_raw="${applies_to_raw}${2}"$'\n'; shift 2 ;;
     --retract)     retract=1; shift ;;
     --target)      [ "$#" -ge 2 ] || die "--target requires a value"; target_id_set=1; target_id="$2"; shift 2 ;;
@@ -332,7 +340,11 @@ fi
 #       empty                → matches nothing; a silent dead rule.
 #       newline / CR         → newline is this accumulator's own delimiter (see the declaration above)
 #                              and the reader strips both, so accepting one would author a pattern
-#                              that means something other than what was typed.
+#                              that means something other than what was typed. NOTE the NEWLINE arm
+#                              lives in the `--applies-to)` PARSING case, not in the loop below: by the
+#                              time we get here the newline would already have been consumed as the
+#                              delimiter, splitting one flag into two patterns. CR/tab/`..`/`/`/`~`
+#                              survive the split intact and are rejected below.
 #       tab                  → the reader neutralizes tab inside a pattern (line-framing safety), so
 #                              the stored pattern would silently differ from the authored one.
 #       contains `..`        → traversal-style; the store is repo-relative and a rule scope has no
