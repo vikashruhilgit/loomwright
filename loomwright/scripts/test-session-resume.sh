@@ -303,21 +303,73 @@ EOF
 test_startup_emits_nothing_else
 
 # ---------------------------------------------------------------------------
-echo "== (j) startup is SILENT outside a plugin repo (own .supervisor/ check) =="
+echo "== (j) the startup arm's CWD-RELATIVE .supervisor/ gate (scope + discrimination) =="
 # The shared `[ ! -d ".supervisor" ]` bail sits BELOW the case the startup arm
-# exits from, so without its own check the nudge would fire in every repo the
-# user opens.
-test_startup_silent_without_supervisor() {
+# exits from, so without its own check the nudge would fire in every directory
+# the user opens.
+#
+# SCOPE HONESTY — what the first case does and does NOT prove. In a repo with no
+# .supervisor/ ANYWHERE up to the git root, the assertion is also satisfied by
+# curation-status.sh's own `[ -d "$SUP_DIR" ] || return 0` in cmd_nudge — a THIRD
+# copy of the predicate, in a separate process. So this case pins the OUTCOME
+# ("silent in a directory with no .supervisor/ anywhere up to the git root"), not
+# the hook-side guard. It is kept because that outcome is the user-visible
+# contract; the case below is what actually discriminates the guard.
+test_startup_silent_without_supervisor_anywhere() {
   local r out rc
   r="$(new_repo)"   # deliberately NO make_plugin_active
   out="$(run_hook_raw "$r" startup)"; rc="$(lastrc)"
   [ "$rc" -eq 0 ] && ok "(j) exits 0 with no .supervisor/" || no "(j) expected exit 0, got $rc"
-  [ -z "$out" ] && ok "(j) emits NOTHING in a directory with no .supervisor/" \
-    || no "(j) startup must be silent outside a plugin repo, got: $out"
+  [ -z "$out" ] && ok "(j) silent in a directory with no .supervisor/ anywhere up to the git root" \
+    || no "(j) startup must be silent with no .supervisor/ up to the git root, got: $out"
   [ ! -e "$r/.supervisor" ] && ok "(j) the startup arm created no .supervisor/ of its own" \
     || no "(j) startup created a .supervisor/ directory"
 }
-test_startup_silent_without_supervisor
+test_startup_silent_without_supervisor_anywhere
+
+# THE DISCRIMINATING CASE. The two guards resolve `.supervisor/` by DIFFERENT
+# rules, and a subdirectory of a plugin-active repo is exactly where they
+# disagree:
+#   - session-resume.sh's gate is CWD-RELATIVE: `[ -d ".supervisor" ]`, false here.
+#   - curation-status.sh walks up via `git rev-parse --show-toplevel`, so its own
+#     `[ -d "$SUP_DIR" ]` finds the repo-root .supervisor/ and is TRUE — it would
+#     happily produce a full nudge line.
+# So with the hook-side guard removed, this fixture EMITS; with it present, it is
+# silent. That is the semantic being pinned: the startup nudge is scoped to the
+# directory Claude Code was actually opened in, not to the enclosing repo.
+# Sub-fixture is deliberately given enough pending work to produce a line, so a
+# silent result cannot be explained away as "nothing to say".
+test_startup_silent_in_subdir_of_plugin_repo() {
+  local r sub out rc ctl
+  r="$(new_repo)"; make_plugin_active "$r"; make_curation_pending "$r"
+  sub="$r/src/deep"
+  mkdir -p "$sub"
+
+  # Control: from the repo ROOT the same fixture DOES nudge — so the silence
+  # below is attributable to the cwd, not to an empty corpus.
+  ctl="$(run_hook_raw "$r" startup)"
+  printf '%s\n' "$ctl" | grep -qF -- "$CURATION_MARK" \
+    && ok "(j) control: the same fixture DOES nudge from the repo root" \
+    || no "(j) control failed: fixture produced no nudge at the root, so the subdir case proves nothing"
+  # Clear the debounce marker the control just stamped, or the subdir run would
+  # be silent for the WRONG reason.
+  rm -f "$r/.supervisor/.curation-nudge-shown"
+
+  out="$(run_hook_raw "$sub" startup)"; rc="$(lastrc)"
+  [ "$rc" -eq 0 ] && ok "(j) exits 0 from a subdirectory of a plugin-active repo" \
+    || no "(j) expected exit 0 from a subdir, got $rc"
+  if printf '%s\n' "$out" | grep -qF -- "$CURATION_MARK"; then
+    no "(j) startup nudged from a SUBDIRECTORY — the cwd-relative .supervisor/ gate is gone (the probe's git-root fallback found the repo root)"
+  else
+    ok "(j) silent from a subdirectory of a plugin-active repo (cwd-relative gate holds)"
+  fi
+  [ ! -e "$sub/.supervisor" ] && ok "(j) no stray .supervisor/ created in the subdirectory" \
+    || no "(j) startup created a .supervisor/ in the subdirectory"
+  [ ! -e "$r/.supervisor/.curation-nudge-shown" ] \
+    && ok "(j) the suppressed subdir run did NOT burn the repo's 24h debounce window" \
+    || no "(j) the subdir run stamped the debounce marker despite emitting nothing"
+}
+test_startup_silent_in_subdir_of_plugin_repo
 
 # ---------------------------------------------------------------------------
 echo "== (k) the emitted line actually REACHES the model (real envelope, not a bare printf) =="

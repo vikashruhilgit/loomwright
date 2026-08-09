@@ -32,8 +32,10 @@ The plugin already records rich **work**, **quality**, and **session-performance
 ### Step 0 — readiness (runs BEFORE the aggregator)
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/curation-status.sh" status
+LOOMWRIGHT_CURATION_REMOTE=0 bash "${CLAUDE_PLUGIN_ROOT}/scripts/curation-status.sh" status
 ```
+
+`LOOMWRIGHT_CURATION_REMOTE=0` is **load-bearing, not decoration**: without it, `status` makes ONE `gh pr list` round-trip to compute `/pr-postmortem`'s `pending` — a value *this* command never reads (only the `/insights` row feeds the decision below). Measured, that call is the difference between ~0.3 s and ~1.1 s on every `/insights` invocation. Only `/pr-postmortem`, which actually consumes the count, leaves the valve unset.
 
 Read the `/insights` row. If `ready=no` **and `--force` was not passed**, print the probe's `decline(/insights)` message **verbatim** and stop without running the aggregator — **exiting 0**. The decline is advisory: never an error, never a hook failure, never a block. With `--force`, ignore `ready` entirely and proceed. If the probe reports `pending=unknown`, **do not decline** — `unknown` means "do not suppress, but do not claim a number", never a fabricated zero.
 

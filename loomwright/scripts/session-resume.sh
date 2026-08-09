@@ -51,11 +51,14 @@
 #   probe's `curl` and desktop notification, the prior-session header, Sections
 #   1–5, and the unconditional recovery hints. Because that arm `exit`s from
 #   inside the case — ABOVE the shared `[ ! -d ".supervisor" ]` bail and ABOVE
-#   the emit at the bottom — `curation_nudge_startup_only` must do three things
-#   for itself: its OWN `.supervisor/` presence check (or it would nudge in every
-#   repo the user opens), its OWN `hookSpecificOutput` envelope (a bare printf is
-#   dropped or shown as raw JSON), and it must be DEFINED ABOVE the case (every
-#   other helper here is defined below it, which would make the call rc=127).
+#   the emit at the bottom — the startup arm must cover three things for itself:
+#   a `.supervisor/` presence check (or it would nudge in every repo the user
+#   opens — that check lives in `curation_nudge_line`, which BOTH call sites go
+#   through, so it is deliberately not repeated in
+#   `curation_nudge_startup_only`), its OWN `hookSpecificOutput` envelope (a bare
+#   printf is dropped or shown as raw JSON), and it must be DEFINED ABOVE the
+#   case (every other helper here is defined below it, which would make the call
+#   rc=127).
 #   The rules nudge's firing surface is UNCHANGED by this: it stays below the
 #   gate and still does NOT fire on startup.
 #
@@ -99,6 +102,15 @@ curation_nudge_line() {
   # fire in every repo the user opens.
   [ -d ".supervisor" ] || return 0
 
+  # TWO RESOLUTION RULES THAT MUST STAY RECONCILED: this marker path is
+  # CWD-RELATIVE, exactly like the `[ -d ".supervisor" ]` gate directly above it,
+  # so the two always agree — we only ever stamp a directory we just confirmed
+  # exists here. The sibling probe (curation-status.sh) resolves ITS .supervisor/
+  # differently: cwd first, then a `git rev-parse --show-toplevel` fallback. If
+  # the cwd-relative gate above is ever relaxed to match the probe's git-root
+  # rule, THIS path must be relaxed in the same edit — otherwise the debounce
+  # marker lands in a `./.supervisor` the probe never reads, and the nudge fires
+  # on every single session start with the window silently never taken.
   local marker=".supervisor/.curation-nudge-shown"
   if [ -f "$marker" ] && [ -n "$(find "$marker" -mmin -1440 2>/dev/null)" ]; then
     return 0
@@ -114,7 +126,13 @@ curation_nudge_line() {
   line="$(bash "$probe" nudge 2>/dev/null || true)"
   [ -n "$line" ] || return 0
 
-  : > "$marker" 2>/dev/null || true
+  # BRACES ARE LOAD-BEARING: on a bare `: > "$marker" 2>/dev/null`, the shell
+  # reports a failed redirection (e.g. a read-only .supervisor/) BEFORE the
+  # `2>/dev/null` on that same simple command takes effect, so "Permission
+  # denied" still reaches stderr — violating this file's silent-pass invariant.
+  # Wrapping in `{ ...; }` puts the redirection on the group, which does capture
+  # it. Same shape at rules_nudge's marker write.
+  { : > "$marker"; } 2>/dev/null || true
   printf '%s' "$line"
   return 0
 }
@@ -124,8 +142,13 @@ curation_nudge_line() {
 # this file — a bare `printf` of the line is NOT recognized by Claude Code (it is
 # dropped, or shown as raw JSON), so the `iconv -c` + `jq -Rs` chain is
 # duplicated here deliberately rather than shared.
+#
+# It deliberately does NOT repeat the `[ -d ".supervisor" ]` check: curation_nudge_line
+# opens with that identical predicate, in this same process, at this same cwd,
+# with no intervening state change — a second copy could only ever agree with the
+# first. (curation-status.sh's own `[ -d "$SUP_DIR" ]` is a THIRD copy and is
+# legitimate: different process, and it resolves the root via the git toplevel.)
 curation_nudge_startup_only() {
-  [ -d ".supervisor" ] || return 0
   local line
   line="$(curation_nudge_line)"
   [ -n "$line" ] || return 0
@@ -299,7 +322,9 @@ rules_nudge() {
   # Fire: append exactly ONE advisory line, then stamp the debounce marker.
   append "### House rules"$'\n'
   append "No committed house rules found — run \`/rules suggest\` to propose some, or \`/rules add\` to author."$'\n\n'
-  : > "$marker" 2>/dev/null || true
+  # Braces load-bearing — see curation_nudge_line's marker write: a bare
+  # `: > "$m" 2>/dev/null` still prints the redirection error to stderr.
+  { : > "$marker"; } 2>/dev/null || true
   return 0
 }
 

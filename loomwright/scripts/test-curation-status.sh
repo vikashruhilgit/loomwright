@@ -10,7 +10,9 @@
 # `loomwright/scripts/test-*.sh` glob. Exit 0 = all pass, 1 = any failure.
 #
 # Groups:
-#   (a) absent / malformed curation-state.json ⇒ last_run `never`, exit 0
+#   (a) absent curation-state.json ⇒ last_run `never`; present-but-unparseable
+#       ⇒ `unknown` (and therefore no decline); parseable-but-recordless ⇒
+#       `never`. Exit 0 throughout.
 #   (b) the ledger derivation EXCLUDES `automate_drain` records
 #       (fixture's NEWEST line is an automate_drain record ⇒ a bare
 #        `map(.ts)|max` implementation fails this red)
@@ -90,7 +92,12 @@ mk_bin() {
 BASE_TOOLS="sh bash env date stat find git mkdir mv rm cat ls chmod grep sed head tail sort tr wc dirname basename cut uname mktemp touch"
 
 # ============================================================================
-echo "== (a) absent / malformed curation-state.json ⇒ /dreaming last_run=never, exit 0 =="
+echo "== (a) absent state ⇒ never; present-but-unparseable ⇒ unknown (never a claimed 0) =="
+# ABSENCE and UNREADABILITY are different answers. `never` is a CLAIM that feeds
+# the decline gate ("N new session log(s) since its last run"); emitting it for a
+# file the script could not parse would let /dreaming decline on input it never
+# read. Only a genuinely absent file — or a file that PARSED and simply carries
+# no record — is an honest `never`.
 RA="$(new_repo)"
 outA="$(run "$RA" status --json)"
 [ "$(lastrc)" -eq 0 ] && ok "(a) exits 0 with no curation-state.json" || no "(a) expected exit 0, got $(lastrc)"
@@ -98,17 +105,51 @@ outA="$(run "$RA" status --json)"
   && ok "(a) absent state file ⇒ last_run=never" \
   || no "(a) expected never, got '$(jget "$outA" '.commands.dreaming.last_run')'"
 
-for bad in '' '{"dreaming":' 'not json at all' '[]'; do
+# Present but unparseable (truncated / not JSON / not an object) OR holding an
+# unparseable timestamp ⇒ `unknown`.
+for bad in '' '{"dreaming":' 'not json at all' '[]' '{"dreaming":{"last_run":"yesterday-ish"}}'; do
   printf '%s' "$bad" > "$RA/.supervisor/curation-state.json"
   outA2="$(run "$RA" status --json)"
   lr="$(jget "$outA2" '.commands.dreaming.last_run')"
-  if [ "$(lastrc)" -eq 0 ] && [ "$lr" = "never" ]; then
-    ok "(a) malformed state (\"${bad:0:14}\") ⇒ last_run=never, exit 0"
+  if [ "$(lastrc)" -eq 0 ] && [ "$lr" = "unknown" ]; then
+    ok "(a) unparseable state (\"${bad:0:14}\") ⇒ last_run=unknown, exit 0"
   else
-    no "(a) malformed state (\"${bad:0:14}\") ⇒ expected never/exit 0, got '$lr'/rc=$(lastrc)"
+    no "(a) unparseable state (\"${bad:0:14}\") ⇒ expected unknown/exit 0, got '$lr'/rc=$(lastrc)"
   fi
 done
+
+# The consequence that makes it matter: an unparseable state file must NOT
+# produce a decline citing a count derived from input the script could not read.
+# A CORPUS IS REQUIRED for this to be the real test — with no .supervisor/logs/
+# at all the count is an honest 0 ("no logs postdate ANY boundary"), and
+# declining on it is correct no matter what last_run says. The fabrication risk
+# only exists once there ARE logs to mis-attribute to "since its last run".
+mkdir -p "$RA/.supervisor/logs"
+for n in 1 2 3; do echo '{}' > "$RA/.supervisor/logs/a$n.jsonl"; done
+printf '%s' '{"dreaming":' > "$RA/.supervisor/curation-state.json"
+outA3="$(run "$RA" status --json)"
+[ "$(jget "$outA3" '.commands.dreaming.pending')" = "unknown" ] \
+  && ok "(a) unparseable state ⇒ pending=unknown (no count claimed against a boundary we lack)" \
+  || no "(a) expected pending=unknown, got '$(jget "$outA3" '.commands.dreaming.pending')'"
+[ "$(jget "$outA3" '.commands.dreaming.ready')" = "unknown" ] \
+  && ok "(a) unparseable state ⇒ ready=unknown (the gate cannot decline on it)" \
+  || no "(a) expected ready=unknown, got '$(jget "$outA3" '.commands.dreaming.ready')'"
+[ -z "$(jget "$outA3" '.commands.dreaming.decline_message')" ] \
+  && ok "(a) unparseable state ⇒ EMPTY decline_message (no fabricated 'N logs since its last run')" \
+  || no "(a) unparseable state produced a decline message: $(jget "$outA3" '.commands.dreaming.decline_message')"
+
+# A well-formed object with NO .dreaming.last_run is the honest `never`: we read
+# it, and it holds no record. This is the case `unknown` must NOT swallow.
+printf '%s' '{"other":{"k":1}}' > "$RA/.supervisor/curation-state.json"
+outA4="$(run "$RA" status --json)"
+[ "$(jget "$outA4" '.commands.dreaming.last_run')" = "never" ] \
+  && ok "(a) parseable object with no .dreaming.last_run ⇒ never (read it; no record)" \
+  || no "(a) expected never for a parseable recordless state, got '$(jget "$outA4" '.commands.dreaming.last_run')'"
+[ "$(jget "$outA4" '.commands.dreaming.pending')" = "3" ] \
+  && ok "(a) …and `never` still counts the whole corpus (unknown did not swallow this case)" \
+  || no "(a) expected pending=3 for a recordless state, got '$(jget "$outA4" '.commands.dreaming.pending')'"
 rm -f "$RA/.supervisor/curation-state.json"
+rm -rf "$RA/.supervisor/logs"
 
 # ============================================================================
 echo "== (b) /pr-postmortem derivation EXCLUDES automate_drain records =="
@@ -454,7 +495,13 @@ outI3="$( cd "$RI" && PATH="$NETBIN:$PATH" bash "$PROBE" nudge 2>&1 )"; rcI3=$?
 
 # ============================================================================
 echo "== (j) every exit in curation-status.sh is 'exit 0' =="
-badexits="$(grep -nE '(^|[^[:alnum:]_])exit[[:space:]]+' "$PROBE" | grep -vE '^[0-9]+:[[:space:]]*#' | grep -vE 'exit[[:space:]]+0([^0-9]|$)' || true)"
+# The operand is OPTIONAL in the match pattern (`exit([[:space:]]|$)`), not
+# required (`exit[[:space:]]+`): a BARE `exit` returns the PREVIOUS command's
+# status — the exact non-zero path this invariant exists to forbid — and an
+# operand-requiring pattern cannot match it, so the mutant would pass silently.
+# The exclusion still requires an operand, so `exit 0` and only `exit 0` is
+# subtracted from the matches.
+badexits="$(grep -nE '(^|[^[:alnum:]_])exit([[:space:]]|$)' "$PROBE" | grep -vE '^[0-9]+:[[:space:]]*#' | grep -vE 'exit[[:space:]]+0([^0-9]|$)' || true)"
 if [ -z "$badexits" ]; then
   ok "(j) every exit is 'exit 0' (runtime advisory emitter, never a gate)"
 else

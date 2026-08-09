@@ -59,6 +59,14 @@
 # computed ONLY on an explicit `status` invocation (and only when `gh` is present
 # and the repo has an `origin` remote); the nudge always reports it as `unknown`.
 #
+#   THEREFORE `status` MAY MAKE ONE `gh pr list` CALL — documented, not a
+#   surprise. That single round-trip feeds ONLY the /pr-postmortem `pending`
+#   column, so a caller that reads just the /dreaming or /insights row should set
+#   LOOMWRIGHT_CURATION_REMOTE=0 and skip it (measured: ~0.3 s vs ~1.1 s). Both
+#   /dreaming's and /insights' Step 0 snippets do exactly that; /pr-postmortem
+#   leaves the valve unset because it is the one caller that consumes the count.
+#   `nudge` and `record` NEVER touch the network on any path.
+#
 # .supervisor/curation-state.json is OPERATIONAL CADENCE, not curated judgment:
 # it stays gitignored (covered by the existing `.supervisor/*` rule) and is NOT
 # part of the committed-twin surface /setup memory manages.
@@ -185,21 +193,34 @@ read_threshold() {
 # ---- Last-run derivations ---------------------------------------------------
 
 # /dreaming — the ONE STORED value.
-#   absent state file      ⇒ never
-#   unreadable state file  ⇒ unknown   (decision (f): never a fabricated answer)
-#   truncated/empty/not-JSON, or no usable .dreaming.last_run ⇒ never
+#   absent state file            ⇒ never    (a real answer: there is no record)
+#   unreadable state file        ⇒ unknown  (decision (f): never a fabricated answer)
+#   truncated/empty/not-JSON     ⇒ unknown  (present, but we could not read it)
+#   parses, but no .dreaming.last_run ⇒ never (read it, and it holds no record)
+#   parses, .dreaming.last_run unparseable as a timestamp ⇒ unknown
+#
+# WHY THE UNPARSEABLE CASES ARE `unknown`, NOT `never`: `never` is a CLAIM — it
+# flows into pending_for() as "every log counts", which makes /dreaming's
+# readiness `yes`/`no` on a real number and lets the decline message assert
+# "N new session log(s) since its last run" about a file the script never
+# managed to parse. `unknown` refuses to claim: readiness() maps it to `unknown`,
+# which by decision (f) never declines and never suppresses the nudge. Only the
+# genuinely-absent file, and a state file we DID parse that simply carries no
+# record, are honest `never`s.
 derive_dreaming_last_run() {
   [ -e "$STATE_FILE" ] || { printf 'never'; return 0; }
   [ -r "$STATE_FILE" ] || { printf 'unknown'; return 0; }
   have_jq || { printf 'unknown'; return 0; }
+  # Parse-check FIRST, so a corrupt/truncated/non-JSON file is distinguishable
+  # from a well-formed one that simply has no .dreaming.last_run. Extracting the
+  # field alone cannot tell those apart — both yield an empty string.
+  jq -e 'type == "object"' "$STATE_FILE" >/dev/null 2>&1 || { printf 'unknown'; return 0; }
   local v
   v="$(jq -r '.dreaming.last_run // empty' "$STATE_FILE" 2>/dev/null || true)"
   [ -n "$v" ] || { printf 'never'; return 0; }
-  # A present-but-unparseable timestamp is content we could read and reject ⇒
-  # `never` (there is no usable record), not `unknown` (could not read).
   local e
   e="$(iso_to_epoch "$v")"
-  is_uint "$e" || { printf 'never'; return 0; }
+  is_uint "$e" || { printf 'unknown'; return 0; }
   printf '%s' "$v"
 }
 

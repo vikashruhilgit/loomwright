@@ -42,8 +42,10 @@ This makes `/dreaming` the safe, auditable counterpart to live execution: read p
 ### Step 0 — readiness (runs BEFORE Phase 1 GATHER)
 
 ```bash
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/curation-status.sh" status
+LOOMWRIGHT_CURATION_REMOTE=0 bash "${CLAUDE_PLUGIN_ROOT}/scripts/curation-status.sh" status
 ```
+
+`LOOMWRIGHT_CURATION_REMOTE=0` is **load-bearing, not decoration**: without it, `status` makes ONE `gh pr list` round-trip to compute `/pr-postmortem`'s `pending` — a value *this* command never reads (only the `/dreaming` row feeds the decision below). Measured, that call is the difference between ~0.3 s and ~1.1 s on every `/dreaming` invocation. Only `/pr-postmortem`, which actually consumes the count, leaves the valve unset.
 
 Read the `/dreaming` row. If `ready=no` **and `--force` was not passed**, print the probe's `decline(/dreaming)` message **verbatim** and stop — writing nothing, spawning nothing, and **exiting 0**. The decline is advisory: it is never an error, never a hook failure, and never blocks a session. With `--force`, ignore `ready` entirely and proceed.
 
