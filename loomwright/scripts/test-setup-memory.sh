@@ -32,14 +32,19 @@
 # sends the reader hunting a bug that is not there, so a setup step must never fall through into
 # an `ok`/`no` assertion.
 #
-# The class that needs a guard is narrow and worth stating exactly, so this note cannot rot into
-# a claim the code does not back: it is the setup calls that FAIL on a pre-existing path or a
-# refused mode change — bare `mkdir`, bare `ln -s`, and `chmod 000`. Every one of those is
-# checked at its call site (`newgit`, f5, f6, f7, f8, l9). To audit: run
+# One MECHANICALLY AUDITABLE class, stated exactly so this note cannot rot into a claim the code
+# does not back: the setup calls that FAIL on a pre-existing path or a refused mode change —
+# bare `mkdir`, bare `ln -s`, and `chmod 000`. To audit, run
 # `grep -n 'mkdir "\|ln -s \|chmod 000' "$0"` and confirm every CALL SITE it lists is followed by
 # a `|| setup_fail …` — on the same line, or on the next one where the call is line-continued.
-# (The grep also matches assertion message TEXT mentioning chmod-000; those are strings, not
-# calls. Read the hit, do not just count the lines.)
+# It resolves to exactly four call sites (f5, f6, f7, l9). Its other hits are PROSE, not calls:
+# this comment's own self-match, the (f7)/(l9) group headers explaining chmod-000, and assertion
+# and setup_fail message strings that mention it. Read the hits, do not just count the lines.
+#
+# Two further setup guards exist that this grep deliberately does NOT match, because they are not
+# in that class and finding only four hits should not read as a gap: `newgit` asserts a fresh
+# fixture has no pre-existing `.gitignore`, and (f8) asserts the NUL byte survived its `printf`.
+# Each is explained at its own call site; neither is a mkdir/ln -s/chmod failure.
 #
 # The suite's OTHER setup calls are deliberately unguarded and must not be "fixed" by copying the
 # pattern around: `mkdir -p`, `ln -sf` and `chmod +x` cannot fail on a pre-existing path — that is
