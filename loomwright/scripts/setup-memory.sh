@@ -663,6 +663,14 @@ seed_allowlist() {
   echo "             (a repo RENAME needs the OLD slug added by hand — the list shape exists for exactly that.)"
 }
 
+# LEDGER_RETAIN_JQ — the RETAIN half of the allowlist predicate, hoisted so it exists ONCE.
+# filter_ledger_by_allowlist runs two passes (whole-file, then per-line on a malformed file) and
+# both need the same program; written inline twice they can drift apart under a later edit while
+# still looking right at each site. Mirrors LEDGER_GATE_JQ below, which is the SELECT-FOREIGN half
+# (the logical inverse) and was already hoisted for exactly this reason — the file had learned the
+# lesson for the gate but not for the filter.
+LEDGER_RETAIN_JQ='select(((.repo // "") | tostring) as $r | ($allow | index($r)) != null)'
+
 # filter_ledger_by_allowlist <ledger-path> [allow-entry ...]
 #
 # Prints, one per line, the JSONL records whose `.repo` is in the allowlist. Records with a
@@ -696,7 +704,7 @@ filter_ledger_by_allowlist() {
   # No `-e`: without it jq exits 0 on a clean run that simply retained nothing.
   local out rc
   out="$(jq -c --argjson allow "$allow_json" \
-          'select(((.repo // "") | tostring) as $r | ($allow | index($r)) != null)' \
+          "$LEDGER_RETAIN_JQ" \
           "$ledger" 2>/dev/null)"
   rc=$?
   if [ "$rc" -eq 0 ]; then
@@ -717,7 +725,7 @@ filter_ledger_by_allowlist() {
     n=$((n + 1))
     [ -n "$line" ] || continue
     printf '%s' "$line" | jq -c --argjson allow "$allow_json" \
-      'select(((.repo // "") | tostring) as $r | ($allow | index($r)) != null)' 2>/dev/null \
+      "$LEDGER_RETAIN_JQ" 2>/dev/null \
       || echo "setup-memory: skipping unparseable ledger line $n" >&2
   done < "$ledger"
 }
