@@ -173,7 +173,8 @@ scan_surface() {
       i=$((i + 1))
       case "$text" in *.sh:[0-9]*|*.md:[0-9]*|*.py:[0-9]*|*.json:[0-9]*|*.ts:[0-9]*|*.yml:[0-9]*|*.yaml:[0-9]*) ;; *) continue ;; esac
 
-      # A pin applies to every citation on its line. It may be written on the citation's own
+      # A pin applies to the ONE citation on its line — enforced below, not merely asserted here.
+      # It may be written on the citation's own
       # line, OR on the immediately following line — comments wrap at ~100 columns and forcing
       # them onto one line is precisely how the original narrow guard became vacuous (its
       # citation and its keyword ended up on two different lines, so its grep matched nothing
@@ -205,6 +206,17 @@ scan_surface() {
           '`'*) pin="${pin#\`}"; pin="${pin%%\`*}" ;;
           *)    pin="${pin%%\]*}" ;;
         esac
+      fi
+
+      # One pin, one citation. A pinned line carrying TWO citations would silently check both
+      # against the same literal — a false OK if it happens to sit near both targets, a false
+      # PINMISS if it was only ever meant for one. Rather than document that as a constraint and
+      # hope future authors read it, make it an error telling them to split the line. No current
+      # surface hits this; the point is that it cannot start silently passing later.
+      n_cites="$(printf '%s\n' "$text" | grep -oE "$CITE_RE" | grep -c .)"
+      if [ -n "$pin" ] && [ "$n_cites" -gt 1 ]; then
+        printf 'PINSHARED\t%s\t%s\t%s\n' "$src" "$n_cites" "$pin"
+        continue
       fi
 
       for cite in $(printf '%s\n' "$text" | grep -oE "$CITE_RE"); do
@@ -369,6 +381,17 @@ else
       echo "    $src cites $tgt but '$lit' is not within +/-$WINDOW lines of it" >&2
     done
     no "(B) $(printf '%s\n' "$PINMISS" | grep -c .) pinned citation(s) have DRIFTED off their anchor"
+  fi
+
+  # ---- (B2) one pin, one citation --------------------------------------------------------------
+  PINSHARED="$(printf '%s\n' "$RESULTS" | grep '^PINSHARED	' || true)"
+  if [ -z "$PINSHARED" ]; then
+    ok "(B2) no pinned line carries more than one citation — every pin vouches for exactly one target"
+  else
+    printf '%s\n' "$PINSHARED" | while IFS="$(printf '\t')" read -r _ src cnt lit; do
+      echo "    $src has a line with $cnt citations sharing one pin ('$lit') — split it so each pin has one target" >&2
+    done
+    no "(B2) $(printf '%s\n' "$PINSHARED" | grep -c .) pinned line(s) carry multiple citations"
   fi
 
   # ---- (C) bare-citation ratchet --------------------------------------------------------------
@@ -618,6 +641,16 @@ TGT
   printf 'l1\nl2\nSUFFIX SIGNAL\n' > "$FIX/loomwright/skills/regex.probe/sig.md"
   printf 'l1\nl2\nDECOY CONTENT\n' > "$FIX/loomwright/skills/regexXprobe/sig.md"
   printf '# see regex.probe/sig.md:3 [pins: `SUFFIX SIGNAL`]\n' > "$FIX/loomwright/scripts/regexcite.sh"
+  # (M18) Two citations sharing one pin must be REJECTED, not silently checked against the same
+  # literal. `target.sh:5` would match the pin and `target.sh:1` would not, so without this the
+  # pair yields one OK and one bogus PINMISS — a pin vouching for a target it never named.
+  printf '# see target.sh:5 and target.sh:1 [pins: `running|checkpoint)`]\n' > "$FIX/loomwright/scripts/twocite.sh"
+  M_TWO="$(scan_surface "$FIX" "$FIX/loomwright/scripts/twocite.sh")"
+  case "$M_TWO" in
+    PINSHARED*) ok "(M18) a pinned line with two citations is rejected — one pin cannot vouch for two targets" ;;
+    *)          no "(M18) two citations silently shared one pin — verdict was '$M_TWO'" ;;
+  esac
+
   M_REGEX="$(scan_surface "$FIX" "$FIX/loomwright/scripts/regexcite.sh")"
   case "$M_REGEX" in
     OK*) ok "(M17) suffix resolution treats the cited path literally — \`.\` is not a regex wildcard" ;;
