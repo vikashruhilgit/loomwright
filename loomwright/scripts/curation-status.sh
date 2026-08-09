@@ -67,6 +67,15 @@
 #   leaves the valve unset because it is the one caller that consumes the count.
 #   `nudge` and `record` NEVER touch the network on any path.
 #
+#   THAT CALL IS WINDOWED AT THE 50 MOST RECENT MERGED PRs (`--limit 50`), and
+#   the window is a documented cap, not a total. On a repo with more than 50
+#   merged PRs the /pr-postmortem `pending` count ("merged PRs absent from the
+#   ledger") is therefore a LOWER BOUND on the real backlog — an older merged PR
+#   that was never postmortem'd falls outside the window and is not counted. The
+#   cap is deliberate (one bounded round-trip, no pagination on an advisory
+#   probe); widening it trades latency for completeness. This repo is already
+#   past PR #134, so the undercount is a live condition here, not a hypothetical.
+#
 # .supervisor/curation-state.json is OPERATIONAL CADENCE, not curated judgment:
 # it stays gitignored (covered by the existing `.supervisor/*` rule) and is NOT
 # part of the committed-twin surface /setup memory manages.
@@ -177,13 +186,25 @@ age_days() {
 
 # read_threshold <dreaming|insights> <default> — from .supervisor/config.json,
 # falling back to the in-script default when the file is absent, unreadable,
-# malformed, or the value is not a positive integer. NEVER writes config.json.
+# malformed, or the value is not a non-negative integer. NEVER writes config.json.
+#
+# A CONFIGURED `0` IS MEANINGFUL AND HONOURED — it is not rejected. Decision, of
+# the two options a review raised: `0` means "always ready, never decline"
+# (readiness() compares `pending >= threshold`, and every real count is >= 0), so
+# it is the documented way to keep the readiness REPORTING while switching the
+# declining gate off for a command — the standing counterpart to the per-run
+# `--force` flag. Silently substituting the in-script default for an explicitly
+# configured `0` would be the same class of dishonesty this script forbids
+# everywhere else: overriding a value the user actually wrote, without saying so.
+# NEGATIVE and non-integer values are still rejected (is_uint fails on both) —
+# they express no coherent threshold, so the labelled default is the honest
+# answer there.
 read_threshold() {
   local key="${1:-}" fallback="${2:-0}" v
   [ -r "$CONFIG_FILE" ] || { printf '%s' "$fallback"; return 0; }
   have_jq || { printf '%s' "$fallback"; return 0; }
   v="$(jq -r --arg k "$key" '.curation.thresholds[$k] // empty' "$CONFIG_FILE" 2>/dev/null || true)"
-  if is_uint "$v" && [ "$v" -gt 0 ]; then
+  if is_uint "$v"; then
     printf '%s' "$v"
   else
     printf '%s' "$fallback"
@@ -306,21 +327,17 @@ pending_for() {
   count_logs_newer_than "$e"
 }
 
-# derive_postmortem_pending — "merged PRs absent from the ledger".
+# pending_from_merged <merged-pr-numbers> — the PURE half of the count below:
+# how many of the given merged PR numbers have no matching `.number` record in
+# the ledger. Takes the merged list as an ARGUMENT and makes no network call, so
+# the set-diff is exercisable independently of `gh`.
 #
-# STATUS-ONLY (decision (e)): this is the ONE place in this script allowed to
-# touch the network, and `nudge` never calls it. Degrades to `unknown` whenever
-# gh is absent, there is no `origin` remote, the probe fails, or the caller sets
-# LOOMWRIGHT_CURATION_REMOTE=0.
-derive_postmortem_pending() {
-  case "${LOOMWRIGHT_CURATION_REMOTE:-}" in 0|off|false|no) printf 'unknown'; return 0 ;; esac
-  command -v gh >/dev/null 2>&1 || { printf 'unknown'; return 0; }
-  git remote get-url origin >/dev/null 2>&1 || { printf 'unknown'; return 0; }
-  have_jq || { printf 'unknown'; return 0; }
-  [ -r "$LEDGER_FILE" ] || { printf 'unknown'; return 0; }
-  local merged have missing=0 n
-  merged="$(gh pr list --state merged --limit 50 --json number -q '.[].number' 2>/dev/null || true)"
-  [ -n "$merged" ] || { printf 'unknown'; return 0; }
+# An EMPTY list is an honest `0`, not `unknown`: "no merged PRs" and "we could
+# not ask" are different answers, and only the caller — which alone sees gh's
+# exit status — can tell them apart. This function is reached only after that
+# distinction has already been made.
+pending_from_merged() {
+  local merged="${1:-}" have missing=0 n
   have="$(jq -rRn '[inputs | fromjson? | select(type == "object") | .number // empty] | .[]' \
             "$LEDGER_FILE" 2>/dev/null || true)"
   for n in $merged; do
@@ -328,6 +345,36 @@ derive_postmortem_pending() {
     printf '%s\n' "$have" | grep -qx -- "$n" || missing=$((missing + 1))
   done
   printf '%s' "$missing"
+}
+
+# derive_postmortem_pending — "merged PRs absent from the ledger".
+#
+# STATUS-ONLY (decision (e)): this is the ONE place in this script allowed to
+# touch the network, and `nudge` never calls it. Degrades to `unknown` whenever
+# gh is absent, there is no `origin` remote, the probe fails, or the caller sets
+# LOOMWRIGHT_CURATION_REMOTE=0.
+#
+# GH'S EXIT STATUS IS CAPTURED SEPARATELY FROM ITS OUTPUT, and that separation is
+# the whole point. Keying on emptiness alone (`[ -n "$merged" ] || unknown`)
+# conflates the two answers this script's header forbids conflating: a SUCCESSFUL
+# call on a repo with genuinely zero merged PRs also prints nothing, and reporting
+# that as `unknown` is a fabricated could-not-examine for an input we examined
+# perfectly well. Non-zero exit ⇒ `unknown`; zero exit with empty output ⇒ the
+# honest `0`. `|| true` must NOT be used on the gh line — it is precisely what
+# destroys the status. Windowed at 50 (see the header's cap note).
+derive_postmortem_pending() {
+  case "${LOOMWRIGHT_CURATION_REMOTE:-}" in 0|off|false|no) printf 'unknown'; return 0 ;; esac
+  command -v gh >/dev/null 2>&1 || { printf 'unknown'; return 0; }
+  git remote get-url origin >/dev/null 2>&1 || { printf 'unknown'; return 0; }
+  have_jq || { printf 'unknown'; return 0; }
+  [ -r "$LEDGER_FILE" ] || { printf 'unknown'; return 0; }
+  # Declared first, assigned second: `local merged="$(...)"` would make $? the
+  # status of `local`, not of gh, silently restoring the bug this guards against.
+  local merged gh_rc
+  merged="$(gh pr list --state merged --limit 50 --json number -q '.[].number' 2>/dev/null)"
+  gh_rc=$?
+  [ "$gh_rc" -eq 0 ] || { printf 'unknown'; return 0; }
+  pending_from_merged "$merged"
 }
 
 # ---- Readiness --------------------------------------------------------------

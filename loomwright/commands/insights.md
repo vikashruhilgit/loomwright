@@ -37,6 +37,8 @@ LOOMWRIGHT_CURATION_REMOTE=0 bash "${CLAUDE_PLUGIN_ROOT}/scripts/curation-status
 
 `LOOMWRIGHT_CURATION_REMOTE=0` is **load-bearing, not decoration**: without it, `status` makes ONE `gh pr list` round-trip to compute `/pr-postmortem`'s `pending` — a value *this* command never reads (only the `/insights` row feeds the decision below). Measured, that call is the difference between ~0.3 s and ~1.1 s on every `/insights` invocation. Only `/pr-postmortem`, which actually consumes the count, leaves the valve unset.
 
+**A configured threshold of `0` is honoured, not rejected.** `readiness` compares `pending >= threshold`, so `0` means "always ready — report the cadence, never decline"; it is the standing counterpart to the per-run `--force` flag. Negative and non-integer values express no coherent threshold and fall back to the labelled default.
+
 Read the `/insights` row. If `ready=no` **and `--force` was not passed**, print the probe's `decline(/insights)` message **verbatim** and stop without running the aggregator — **exiting 0**. The decline is advisory: never an error, never a hook failure, never a block. With `--force`, ignore `ready` entirely and proceed. If the probe reports `pending=unknown`, **do not decline** — `unknown` means "do not suppress, but do not claim a number", never a fabricated zero.
 
 Why a gate at all: `build-insights.sh` was re-measured at **6.3 s on this repo (2026-08-09)**. That is fine for an explicit run and far too slow to be worth spending on a corpus that has barely moved.

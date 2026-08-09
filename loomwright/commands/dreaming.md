@@ -49,7 +49,7 @@ LOOMWRIGHT_CURATION_REMOTE=0 bash "${CLAUDE_PLUGIN_ROOT}/scripts/curation-status
 
 Read the `/dreaming` row. If `ready=no` **and `--force` was not passed**, print the probe's `decline(/dreaming)` message **verbatim** and stop — writing nothing, spawning nothing, and **exiting 0**. The decline is advisory: it is never an error, never a hook failure, and never blocks a session. With `--force`, ignore `ready` entirely and proceed.
 
-**The threshold is an UNVALIDATED starting guess.** The in-script default is `15` new session logs; it is a guess, not a measured value. Override it at `.curation.thresholds.dreaming` in `.supervisor/config.json` (the probe READS that file and never rewrites it). An absent or malformed config falls back to the default and still exits 0.
+**The threshold is an UNVALIDATED starting guess.** The in-script default is `15` new session logs; it is a guess, not a measured value. Override it at `.curation.thresholds.dreaming` in `.supervisor/config.json` (the probe READS that file and never rewrites it). An absent or malformed config falls back to the default and still exits 0. A configured `0` is **honoured, not rejected** — `readiness` compares `pending >= threshold`, so `0` means "always ready: report the cadence, never decline", the standing counterpart to the per-run `--force`. Negative and non-integer values express no coherent threshold and fall back to the default.
 
 If the probe reports `pending=unknown` (an input it could not read), **do not decline** — `unknown` means "do not suppress, but do not claim a number", never a fabricated zero.
 

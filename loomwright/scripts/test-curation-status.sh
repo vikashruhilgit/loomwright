@@ -31,6 +31,13 @@
 #   (j) every `exit` in the script is `exit 0` (runtime advisory emitter, not a gate)
 #   (k) doc surfaces: the `record dreaming` wiring, `--force` Parameters rows,
 #       /pr-postmortem's no-decline statement, and the "unvalidated" labelling
+#   (l) the /pr-postmortem remote count: gh's EXIT STATUS, not the emptiness of
+#       its output, decides examined-vs-could-not-examine (rc 0 + empty ⇒ an
+#       honest 0; rc non-zero ⇒ unknown, even when it printed something), plus
+#       the pure set-diff against the ledger — all driven by a gh STUB, never a
+#       real network call
+#   (m) an unreadable .supervisor/logs/ ⇒ pending `unknown` (never a fabricated
+#       0 that would silently make /dreaming and /insights never-decline)
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -376,6 +383,21 @@ outF1="$(run "$RF" status --json)"
 [ -z "$(jget "$outF1" '.commands.dreaming.decline_message')" ] \
   && ok "(f) no decline message on the proceed path" \
   || no "(f) unexpected decline message on the proceed path"
+# A configured 0 is HONOURED, not rejected: `readiness` compares pending >= threshold,
+# so 0 means "always ready — report the cadence, never decline". Silently substituting
+# the in-script default for an explicitly configured 0 would override a value the user
+# actually wrote, which is the class of dishonesty this script forbids elsewhere.
+printf '{"curation":{"thresholds":{"dreaming":0}}}' > "$RF/.supervisor/config.json"
+outF0z="$(run "$RF" status --json)"
+[ "$(jget "$outF0z" '.commands.dreaming.threshold')" = "0" ] \
+  && ok "(f) a configured threshold of 0 is honoured, not silently replaced by the default" \
+  || no "(f) expected threshold 0, got '$(jget "$outF0z" '.commands.dreaming.threshold')'"
+[ "$(jget "$outF0z" '.commands.dreaming.ready')" = "yes" ] \
+  && ok "(f) threshold 0 ⇒ ready=yes always (reporting kept, declining switched off)" \
+  || no "(f) expected ready=yes with threshold 0, got '$(jget "$outF0z" '.commands.dreaming.ready')'"
+[ -z "$(jget "$outF0z" '.commands.dreaming.decline_message')" ] \
+  && ok "(f) threshold 0 ⇒ no decline message" \
+  || no "(f) threshold 0 produced a decline message"
 # Malformed / hostile config values fall back to the default and still exit 0.
 for badcfg in '{"curation":{"thresholds":{"dreaming":"lots"}}}' '{"curation":{"thresholds":{"dreaming":-4}}}' 'not json'; do
   printf '%s' "$badcfg" > "$RF/.supervisor/config.json"
@@ -543,6 +565,158 @@ grep -qi 'unvalidated' "$PROBE" && ok "(k) curation-status.sh header labels the 
 grep -qF -- '/dreaming --force' "$HELP" \
   && ok "(k) agent-help.md mirrors /dreaming's --force flag (no mirror drift)" \
   || no "(k) agent-help.md does not mirror /dreaming's --force flag"
+# agent-help.md's /insights ENTRY must carry the flag too. A reader scanning the
+# /insights section never sees the trailing clause in the /dreaming section, so
+# mirroring it only there leaves that entry describing a command that cannot
+# decline. Scoped to the /insights section, not the whole file, or the /dreaming
+# entry's own mention would satisfy this vacuously.
+help_insights_section() {
+  sed -n '/^### .* \/insights /,/^### .* \/obsidian /p' "$HELP"
+}
+help_insights_section | grep -qF -- '/insights --force' \
+  && ok "(k) agent-help.md's /insights ENTRY names --force (not only the /dreaming entry)" \
+  || no "(k) agent-help.md's /insights entry does not name --force"
+help_insights_section | grep -qi 'decline' \
+  && ok "(k) agent-help.md's /insights entry says it can decline" \
+  || no "(k) agent-help.md's /insights entry does not mention declining"
+help_insights_section | grep -qF 'curation.thresholds.insights' \
+  && ok "(k) agent-help.md's /insights entry names the threshold override key" \
+  || no "(k) agent-help.md's /insights entry omits .curation.thresholds.insights"
+# The window on the remote count is documented where the count is consumed.
+grep -qF -- '--limit 50' "$PROBE" \
+  && ok "(k) curation-status.sh header documents the gh --limit 50 window" \
+  || no "(k) curation-status.sh does not document the --limit 50 window"
+grep -qF -- 'limit 50' "$PM" \
+  && ok "(k) pr-postmortem.md documents the 50-most-recent-merged window (lower bound)" \
+  || no "(k) pr-postmortem.md does not document the gh --limit 50 window"
+
+# ============================================================================
+echo "== (l) /pr-postmortem remote count: gh's EXIT STATUS decides, not empty output =="
+# THE CONFLATION THIS PINS: `merged=$(gh ... || true); [ -n "$merged" ] || unknown`
+# reports `unknown` for a SUCCESSFUL call on a repo with zero merged PRs — an
+# examined input reported as could-not-examine, exactly what the script header
+# forbids. Non-zero exit ⇒ unknown; zero exit with empty output ⇒ an honest 0.
+# Everything here runs against a gh STUB on PATH: no network, and the pure
+# set-diff (pending_from_merged) is exercised through it without a real gh.
+GHBIN="$ROOT/gh-bin"
+mk_bin "$GHBIN" $BASE_TOOLS jq
+# run_gh <repo> <stub-body-file-content...> — install a gh stub emitting $1 with
+# exit status $2, then run `status --json` with the remote valve LEFT ON.
+GHOUT="$ROOT/gh-stub-out"; GHRC="$ROOT/gh-stub-rc"; GHLOG="$ROOT/gh-stub-args.log"
+rm -f "$GHBIN/gh"
+cat > "$GHBIN/gh" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "$GHLOG"
+cat "$GHOUT" 2>/dev/null
+exit "\$(cat "$GHRC" 2>/dev/null || echo 0)"
+EOF
+chmod +x "$GHBIN/gh"
+run_gh() {
+  local repo="$1" out="$2" rc="$3"
+  printf '%s' "$out" > "$GHOUT"
+  printf '%s' "$rc" > "$GHRC"
+  ( cd "$repo" && PATH="$GHBIN:$PATH" bash "$PROBE" status --json 2>&1; printf '%s' "$?" > "$RCFILE" )
+}
+
+RL="$(new_repo)"
+( cd "$RL" && git remote add origin https://example.invalid/o/r.git ) >/dev/null 2>&1
+mkdir -p "$RL/.supervisor/postmortem"
+cat > "$RL/.supervisor/postmortem/results.jsonl" <<'EOF'
+{"ts":"2026-01-01T00:00:00Z","source":"manual_postmortem","number":101}
+{"ts":"2026-01-02T00:00:00Z","source":"automate_drain","automate_key":"k","number":102}
+{ not json
+EOF
+
+# rc 0, EMPTY output — a repo with genuinely zero merged PRs. The honest answer
+# is 0, and it must be distinguishable from the failure below.
+outL="$(run_gh "$RL" '' 0)"
+pL="$(jget "$outL" '.commands.pr_postmortem.pending')"
+[ "$(lastrc)" -eq 0 ] && ok "(l) exits 0 with the gh stub on PATH" || no "(l) rc=$(lastrc)"
+[ "$pL" = "0" ] \
+  && ok "(l) gh exits 0 with NO merged PRs ⇒ pending=0 (examined, and there is nothing)" \
+  || no "(l) expected pending=0 for a successful empty gh call, got '$pL'"
+
+# rc non-zero — gh missing auth / no network / API error. Could-not-examine.
+outL2="$(run_gh "$RL" '' 1)"
+[ "$(jget "$outL2" '.commands.pr_postmortem.pending')" = "unknown" ] \
+  && ok "(l) gh exits NON-ZERO ⇒ pending=unknown (could not examine)" \
+  || no "(l) expected unknown for a failing gh call, got '$(jget "$outL2" '.commands.pr_postmortem.pending')'"
+
+# rc non-zero WITH partial output — the status must still win over the bytes.
+outL3="$(run_gh "$RL" '101
+999' 1)"
+[ "$(jget "$outL3" '.commands.pr_postmortem.pending')" = "unknown" ] \
+  && ok "(l) gh exits NON-ZERO but PRINTED rows ⇒ still unknown (status wins over bytes)" \
+  || no "(l) expected unknown for a failing-but-noisy gh call, got '$(jget "$outL3" '.commands.pr_postmortem.pending')'"
+
+# The pure set-diff, driven through the stub: 101 is in the ledger, 998/999 are not.
+outL4="$(run_gh "$RL" '101
+998
+999' 0)"
+[ "$(jget "$outL4" '.commands.pr_postmortem.pending')" = "2" ] \
+  && ok "(l) set-diff: 3 merged, 1 in the ledger ⇒ pending=2" \
+  || no "(l) expected pending=2, got '$(jget "$outL4" '.commands.pr_postmortem.pending')'"
+# A drain-authored record still COUNTS as ledger presence here: this column asks
+# "is this PR in the corpus at all", not "did a human run /pr-postmortem on it".
+outL5="$(run_gh "$RL" '101
+102' 0)"
+[ "$(jget "$outL5" '.commands.pr_postmortem.pending')" = "0" ] \
+  && ok "(l) set-diff: every merged PR present in the ledger ⇒ pending=0" \
+  || no "(l) expected pending=0, got '$(jget "$outL5" '.commands.pr_postmortem.pending')'"
+# Non-numeric rows in gh's output are skipped, never counted as a missing PR.
+outL6="$(run_gh "$RL" 'not-a-number
+101' 0)"
+[ "$(jget "$outL6" '.commands.pr_postmortem.pending')" = "0" ] \
+  && ok "(l) non-numeric gh rows are skipped, not counted as missing" \
+  || no "(l) expected pending=0 with a non-numeric row, got '$(jget "$outL6" '.commands.pr_postmortem.pending')'"
+# The window is the one documented in the header — asserted on the real argv.
+grep -qF -- '--limit 50' "$GHLOG" \
+  && ok "(l) gh is invoked with the documented --limit 50 window" \
+  || no "(l) expected '--limit 50' in the gh stub's arg log: $(cat "$GHLOG" 2>/dev/null)"
+# …and the valve still wins over everything: REMOTE=0 makes no gh call at all.
+rm -f "$GHLOG"
+outL7="$(run "$RL" status --json)"   # run() sets LOOMWRIGHT_CURATION_REMOTE=0
+[ "$(jget "$outL7" '.commands.pr_postmortem.pending')" = "unknown" ] \
+  && ok "(l) LOOMWRIGHT_CURATION_REMOTE=0 ⇒ pending=unknown, gh never consulted" \
+  || no "(l) expected unknown with the remote valve off, got '$(jget "$outL7" '.commands.pr_postmortem.pending')'"
+
+# ============================================================================
+echo "== (m) unreadable .supervisor/logs/ ⇒ pending unknown, never a fabricated 0 =="
+# This branch drives whether /dreaming and /insights report a real count or
+# never decline. A fabricated 0 here would be the silent failure: the glob
+# simply fails to expand on an unsearchable directory, so the count would come
+# back 0 and the commands would decline on a corpus they never read.
+# chmod 000 does NOT block reads for uid 0, so skip visibly under a root CI
+# executor rather than asserting something untrue (same guard as (d)).
+RM="$(new_repo)"
+mkdir -p "$RM/.supervisor/logs"
+for n in 1 2 3; do echo '{}' > "$RM/.supervisor/logs/s$n.jsonl"; done
+outM0="$(run "$RM" status --json)"
+[ "$(jget "$outM0" '.commands.dreaming.pending')" = "3" ] \
+  && ok "(m) control — the readable fixture counts its 3 logs" \
+  || no "(m) control: expected pending=3, got '$(jget "$outM0" '.commands.dreaming.pending')'"
+if [ "${EUID:-$(id -u)}" -eq 0 ]; then
+  skp "(m) unreadable-logs-dir fixture SKIPPED — running as uid 0, where chmod 000 does not block reads"
+else
+  chmod 000 "$RM/.supervisor/logs" 2>/dev/null || true
+  outM="$(run "$RM" status --json)"
+  [ "$(lastrc)" -eq 0 ] && ok "(m) status exits 0 on an unreadable logs dir" || no "(m) rc=$(lastrc)"
+  [ "$(jget "$outM" '.commands.dreaming.pending')" = "unknown" ] \
+    && ok "(m) unreadable logs dir ⇒ /dreaming pending=unknown (NOT a fabricated 0)" \
+    || no "(m) expected pending=unknown, got '$(jget "$outM" '.commands.dreaming.pending')'"
+  [ "$(jget "$outM" '.commands.dreaming.ready')" = "unknown" ] \
+    && ok "(m) unreadable logs dir ⇒ ready=unknown (the gate cannot decline on it)" \
+    || no "(m) expected ready=unknown, got '$(jget "$outM" '.commands.dreaming.ready')'"
+  [ -z "$(jget "$outM" '.commands.dreaming.decline_message')" ] \
+    && ok "(m) unreadable logs dir ⇒ EMPTY decline_message" \
+    || no "(m) unreadable logs dir produced a decline: $(jget "$outM" '.commands.dreaming.decline_message')"
+  # …and the nudge does NOT go silent on it — `unknown` means do not suppress.
+  outM2="$(run "$RM" nudge)"
+  printf '%s' "$outM2" | grep -qF '/dreaming unknown new session log' \
+    && ok "(m) unreadable logs dir ⇒ the nudge still fires, carrying `unknown`" \
+    || no "(m) expected the nudge to fire with an unknown count, got: $outM2"
+  chmod 755 "$RM/.supervisor/logs" 2>/dev/null || true
+fi
 
 echo
 if [ "$skip" -gt 0 ]; then
