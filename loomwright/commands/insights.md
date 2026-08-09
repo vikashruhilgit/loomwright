@@ -15,8 +15,44 @@ The plugin already records rich **work**, **quality**, and **session-performance
 ## Usage
 
 ```bash
-/insights
+/insights                                          # Rebuild the dashboard (subject to the curation-readiness check)
+/insights --force                                  # Rebuild regardless of how little has accumulated since the last run
 ```
+
+## Parameters
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `--force` | No | off | Skips the **curation-readiness check** (see "Curation cadence" below) and rebuilds the dashboard regardless of how few session logs have accumulated since the last build. Without it, `/insights` declines — advisory, exit 0, never an error — when fewer than `threshold` new session logs postdate `.supervisor/insights/dashboard.md`. **The threshold is an UNVALIDATED starting guess** (in-script default `10`, override at `.curation.thresholds.insights` in `.supervisor/config.json`), so `--force` is the expected escape hatch, not an emergency one. |
+
+## Curation cadence (readiness check — no new state file)
+
+`/insights`' last run is **derived, never stored**: it is the mtime of `.supervisor/insights/dashboard.md`, the artifact `build-insights.sh` already writes. A derived value cannot go stale, so `/insights` deliberately does **not** write a last-run record of its own (`.supervisor/curation-state.json` holds `/dreaming` only).
+
+### Step 0 — readiness (runs BEFORE the aggregator)
+
+```bash
+LOOMWRIGHT_CURATION_REMOTE=0 bash "${CLAUDE_PLUGIN_ROOT}/scripts/curation-status.sh" status
+```
+
+`LOOMWRIGHT_CURATION_REMOTE=0` is **load-bearing, not decoration**: without it, `status` makes ONE `gh pr list` round-trip to compute `/pr-postmortem`'s `pending` — a value *this* command never reads (only the `/insights` row feeds the decision below). Measured, that call is the difference between ~0.3 s and ~1.1 s on every `/insights` invocation. Only `/pr-postmortem`, which actually consumes the count, leaves the valve unset.
+
+**A configured threshold of `0` is honoured, not rejected.** `readiness` compares `pending >= threshold`, so `0` means "always ready — report the cadence, never decline"; it is the standing counterpart to the per-run `--force` flag. Negative and non-integer values express no coherent threshold and fall back to the labelled default.
+
+Read the `/insights` row. If `ready=no` **and `--force` was not passed**, print the probe's `decline(/insights)` message **verbatim** and stop without running the aggregator — **exiting 0**. The decline is advisory: never an error, never a hook failure, never a block. With `--force`, ignore `ready` entirely and proceed. If the probe reports `pending=unknown`, **do not decline** — `unknown` means "do not suppress, but do not claim a number", never a fabricated zero.
+
+Why a gate at all: `build-insights.sh` was re-measured at **6.3 s on this repo (2026-08-09)**. That is fine for an explicit run and far too slow to be worth spending on a corpus that has barely moved.
+
+These readiness lines are printed by this command shell. `build-insights.sh` is **untouched** by the cadence work — it remains the single source of truth for the dashboard itself.
+
+### Run report (four mandatory lines)
+
+Every `/insights` run — declined or completed — ends with these four lines:
+
+- **When it last ran** — the `last_run` / `age_days` the probe reported (the dashboard's mtime, or `never`).
+- **What changed since** — the pending count the probe reported (new session logs postdating the dashboard).
+- **What it produced this time** — the dashboard path plus the per-run note count actually written.
+- **What that will improve** — the concrete downstream effect (e.g. "the heal-PASS rate is now visible release-over-release").
 
 ## What it does
 
