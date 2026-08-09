@@ -163,9 +163,17 @@ scan_surface() {
       pin=""
       if [ -n "$pinsrc" ]; then
         pin="${pinsrc#*\[pins: }"
-        pin="${pin%%\]*}"
-        # Strip the optional backticks authors use for readability: [pins: `foo`]
-        case "$pin" in '`'*'`') pin="${pin#\`}"; pin="${pin%\`}" ;; esac
+        # Backtick-delimited form `[pins: \`foo\`]` is the convention, and it is parsed FIRST and
+        # on its own terms: the literal ends at the closing BACKTICK, not at the first `]`. That
+        # matters because a pin into JSON or a character class legitimately contains `]`
+        # (`[0-9]`, `"tools": [...]`), and ending the literal at the first `]` would silently
+        # truncate it — producing a spurious PINMISS, or worse a false OK if the truncated
+        # fragment happens to occur inside the +/-3 window. Only the undelimited form falls back
+        # to `]`, where there is nothing better to key on.
+        case "$pin" in
+          '`'*) pin="${pin#\`}"; pin="${pin%%\`*}" ;;
+          *)    pin="${pin%%\]*}" ;;
+        esac
       fi
 
       for cite in $(printf '%s\n' "$text" | grep -oE "$CITE_RE"); do
@@ -380,6 +388,19 @@ TGT
   mkdir -p "$FIX/loomwright/skills/demo-skill"
   printf 'a\nb\nc\nd\nSIGNAL LINE HERE\n' > "$FIX/loomwright/skills/demo-skill/SKILL.md"
   printf '# see demo-skill/SKILL.md:5 [pins: `SIGNAL LINE HERE`]\n' > "$FIX/loomwright/scripts/suffix.sh"
+  # 8. SKIP must fire ONLY for genuinely unresolvable citations. Untested, a regression in the
+  #    resolution chain (path -> loomwright/path -> unique suffix) would route a REAL, DRIFTED
+  #    citation into SKIP and silently exempt it from (A), (B) and (C) — a vacuous guard by the
+  #    back door, which is exactly the failure this file exists to prevent. Two fixtures: a file
+  #    that does not exist at all, and an AMBIGUOUS basename (2 candidates, no unique suffix).
+  printf '# see nonexistent-file.sh:5\n' > "$FIX/loomwright/scripts/unresolvable.sh"
+  mkdir -p "$FIX/loomwright/skills/dup-a" "$FIX/loomwright/skills/dup-b"
+  printf 'x\ny\nz\n' > "$FIX/loomwright/skills/dup-a/DUP.md"
+  printf 'x\ny\nz\n' > "$FIX/loomwright/skills/dup-b/DUP.md"
+  printf '# see DUP.md:2\n' > "$FIX/loomwright/scripts/ambiguous.sh"
+  # 9. A pin literal containing `]` must survive parsing intact (JSON / character-class pins).
+  printf 'p\nq\nmatch [0-9] here\nr\n' > "$FIX/loomwright/scripts/brackety.sh"
+  printf '# see brackety.sh:3 [pins: `match [0-9] here`]\n' > "$FIX/loomwright/scripts/bracketcite.sh"
 
   M_GOOD="$(scan_surface "$FIX" "$FIX/loomwright/scripts/good.sh")"
   M_DRIFT="$(scan_surface "$FIX" "$FIX/loomwright/scripts/drifted.sh")"
@@ -434,6 +455,27 @@ TGT
   case "$M_SUFFIX" in
     OK*) ok "(M8) a partial-path citation resolves by unique suffix (41 files share the name SKILL.md)" ;;
     *)   no "(M8) suffix resolution failed — every partial-path citation would silently SKIP: '$M_SUFFIX'" ;;
+  esac
+
+  M_UNRES="$(scan_surface "$FIX" "$FIX/loomwright/scripts/unresolvable.sh")"
+  M_AMBIG="$(scan_surface "$FIX" "$FIX/loomwright/scripts/ambiguous.sh")"
+  M_BRACK="$(scan_surface "$FIX" "$FIX/loomwright/scripts/bracketcite.sh")"
+
+  case "$M_UNRES" in
+    SKIP*) ok "(M9) a citation to a nonexistent file SKIPs (illustrative prompts / gitignored targets)" ;;
+    *)     no "(M9) an unresolvable citation did not SKIP — verdict was '$M_UNRES'" ;;
+  esac
+
+  # The SKIP verdicts above are only meaningful alongside M1/M8, which prove that a RESOLVABLE
+  # citation does not skip. Together they pin the resolution chain from both sides.
+  case "$M_AMBIG" in
+    SKIP*) ok "(M10) an AMBIGUOUS basename SKIPs rather than guessing a target" ;;
+    *)     no "(M10) an ambiguous citation was resolved to a guess — verdict was '$M_AMBIG'" ;;
+  esac
+
+  case "$M_BRACK" in
+    OK*) ok "(M11) a pin literal containing \`]\` survives parsing (JSON / character-class pins)" ;;
+    *)   no "(M11) a pin containing \`]\` was truncated at the bracket — verdict was '$M_BRACK'" ;;
   esac
 fi
 
