@@ -430,8 +430,9 @@ pending_for() {
 }
 
 # consumed_log_ids — the session ids /dreaming has already fed to reflection, one
-# per line. Prints the literal `unknown` when the record EXISTS but could not be
-# read, and nothing at all when it legitimately holds no ids.
+# per line. A record that could not be examined is signalled by a NON-ZERO RETURN
+# with NO output; a record that legitimately holds no ids returns 0, also with no
+# output — so callers MUST branch on the return code, never on emptiness.
 #
 # THIS IS THE SAME ABSENT-vs-UNEXAMINABLE LADDER derive_dreaming_last_run walks,
 # and for the same reason. Collapsing "we could not parse the record" into "the

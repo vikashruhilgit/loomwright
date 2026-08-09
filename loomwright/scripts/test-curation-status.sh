@@ -571,7 +571,10 @@ for n in 1 2 3; do echo '{}' > "$RI/.supervisor/logs/s$n.jsonl"; done
 outI1="$(run "$RI" nudge)"
 linesI="$(printf '%s\n' "$outI1" | grep -c . || true)"
 [ "$linesI" -eq 1 ] && ok "(i) pending ⇒ exactly ONE advisory line" || no "(i) expected 1 line, got $linesI"
-printf '%s' "$outI1" | grep -qE '[0-9]+ (unreflected|new) session log' \
+# Only /dreaming is pending on this fixture (the logs carry no session_end, so
+# /insights counts 0) — so pin /dreaming's OWN noun rather than an alternation
+# that would also accept /insights' text and quietly test the other half.
+printf '%s' "$outI1" | grep -qE '/dreaming [0-9]+ unreflected session log' \
   && ok "(i) the line carries a real COUNT, not merely a date" \
   || no "(i) the nudge line carries no count: $outI1"
 printf '%s' "$outI1" | grep -qi 'unvalidated' \
