@@ -392,9 +392,13 @@ cat > "$RE/.supervisor/postmortem/results.jsonl" <<'EOF'
 EOF
 outE="$(run "$RE" status --json)"
 [ "$(lastrc)" -eq 0 ] && ok "(e) exits 0" || no "(e) rc=$(lastrc)"
-[ "$(jget "$outE" '.commands.dreaming.pending')" = "3" ] \
-  && ok "(e) /dreaming pending = 3 (hand-counted: 3 logs postdate 2026-03-01)" \
-  || no "(e) /dreaming pending: expected 3, got '$(jget "$outE" '.commands.dreaming.pending')'"
+# /dreaming's pending is a SET complement, not a watermark comparison: none of
+# the 5 logs has been recorded as consumed, so all 5 are pending even though only
+# 3 postdate the stored last_run. That is the fix for the v15.29.0 shape, where a
+# run stamped `now` and the 2 older unread logs stopped being counted forever.
+[ "$(jget "$outE" '.commands.dreaming.pending')" = "5" ] \
+  && ok "(e) /dreaming pending = 5 (hand-counted: 5 logs, NONE recorded consumed — last_run does not gate this count)" \
+  || no "(e) /dreaming pending: expected 5, got '$(jget "$outE" '.commands.dreaming.pending')'"
 [ "$(jget "$outE" '.commands.insights.pending')" = "0" ] \
   && ok "(e) /insights pending = 0 (hand-counted: no log postdates the dashboard mtime)" \
   || no "(e) /insights pending: expected 0, got '$(jget "$outE" '.commands.insights.pending')'"
@@ -470,7 +474,7 @@ for n in 1 2; do echo '{}' > "$RG/.supervisor/logs/s$n.jsonl"; done       # 2 pe
 outG="$(run "$RG" status --json)"
 msgG="$(jget "$outG" '.commands.dreaming.decline_message')"
 [ -n "$msgG" ] && ok "(g) below threshold ⇒ a decline message is produced" || no "(g) expected a decline message"
-printf '%s' "$msgG" | grep -qF ' 2 new session log' && ok "(g) decline names the observed count (2)" \
+printf '%s' "$msgG" | grep -qF ' 2 unreflected session log' && ok "(g) decline names the observed count (2)" \
   || no "(g) decline does not name the observed count: $msgG"
 printf '%s' "$msgG" | grep -qF 'threshold of 15' && ok "(g) decline names the threshold (15)" \
   || no "(g) decline does not name the threshold: $msgG"
@@ -557,7 +561,7 @@ for n in 1 2 3; do echo '{}' > "$RI/.supervisor/logs/s$n.jsonl"; done
 outI1="$(run "$RI" nudge)"
 linesI="$(printf '%s\n' "$outI1" | grep -c . || true)"
 [ "$linesI" -eq 1 ] && ok "(i) pending ⇒ exactly ONE advisory line" || no "(i) expected 1 line, got $linesI"
-printf '%s' "$outI1" | grep -qE '[0-9]+ new session log' \
+printf '%s' "$outI1" | grep -qE '[0-9]+ (unreflected|new) session log' \
   && ok "(i) the line carries a real COUNT, not merely a date" \
   || no "(i) the nudge line carries no count: $outI1"
 printf '%s' "$outI1" | grep -qi 'unvalidated' \
@@ -829,11 +833,209 @@ else
     || no "(m) unreadable logs dir produced a decline: $(jget "$outM" '.commands.dreaming.decline_message')"
   # …and the nudge does NOT go silent on it — `unknown` means do not suppress.
   outM2="$(run "$RM" nudge)"
-  printf '%s' "$outM2" | grep -qF '/dreaming unknown new session log' \
+  printf '%s' "$outM2" | grep -qF '/dreaming unknown unreflected session log' \
     && ok "(m) unreadable logs dir ⇒ the nudge still fires, carrying 'unknown'" \
     || no "(m) expected the nudge to fire with an unknown count, got: $outM2"
   chmod 755 "$RM/.supervisor/logs" 2>/dev/null || true
 fi
+
+# ============================================================================
+echo "== (n) /dreaming pending is an unconsumed SET, and a run drains exactly what it read =="
+# THE REGRESSION THIS PINS (v15.29.0): `record` stamped wall-clock `now`, and
+# pending was "logs newer than that stamp". Because /dreaming consumes the
+# --sessions N MOST RECENT logs, everything it did NOT read was OLDER than the
+# stamp — so one run silently retired the entire unread backlog. Here: 6 logs,
+# a run reads the 2 newest, and the 4 older ones must SURVIVE as pending.
+RN="$(new_repo)"
+mkdir -p "$RN/.supervisor/logs"
+i=0
+for stamp in 202601010000 202601020000 202601030000 202601040000 202601050000 202601060000; do
+  i=$((i+1)); printf '{"event":"session_end","n":%s}\n' "$i" > "$RN/.supervisor/logs/s$i.jsonl"
+  touch -t "$stamp" "$RN/.supervisor/logs/s$i.jsonl"
+done
+outN0="$(run "$RN" status --json)"
+[ "$(jget "$outN0" '.commands.dreaming.pending')" = "6" ] \
+  && ok "(n) 6 logs, none consumed ⇒ pending = 6" \
+  || no "(n) expected pending=6, got '$(jget "$outN0" '.commands.dreaming.pending')'"
+
+# A run that read the 2 NEWEST logs names them.
+outNrec="$(run "$RN" record dreaming s6 s5)"
+[ "$(lastrc)" -eq 0 ] && ok "(n) record with ids exits 0" || no "(n) record rc=$(lastrc)"
+outN1="$(run "$RN" status --json)"
+[ "$(jget "$outN1" '.commands.dreaming.pending')" = "4" ] \
+  && ok "(n) after reading the 2 NEWEST, pending falls to exactly 4 — by what was read, not to zero" \
+  || no "(n) expected pending=4, got '$(jget "$outN1" '.commands.dreaming.pending')'"
+# The four survivors are the OLDER ones — the set a watermark could never count.
+[ "$(run "$RN" status --json | jq -r '.commands.dreaming.last_run')" != "never" ] \
+  && ok "(n) last_run was stamped by the same call" \
+  || no "(n) last_run not stamped"
+
+# The v15.29.0 shape, stated as a red: a SECOND run that reads nothing must NOT
+# retire the 4 survivors. Under a wall-clock watermark this collapses to 0.
+outN2="$(run "$RN" record dreaming)"
+outN3="$(run "$RN" status --json)"
+[ "$(jget "$outN3" '.commands.dreaming.pending')" = "4" ] \
+  && ok "(n) a later run that consumed NOTHING leaves pending at 4 (a wall-clock watermark would report 0)" \
+  || no "(n) the unread backlog was silently retired: pending='$(jget "$outN3" '.commands.dreaming.pending')'"
+printf '%s' "$outN2" | grep -qF 'NO logs were named' \
+  && ok "(n) recording zero ids WARNS that pending will not fall" \
+  || no "(n) zero-id record did not warn: $outN2"
+
+# Draining the remaining 4 reaches a real zero — the set is genuinely additive.
+run "$RN" record dreaming s1 s2 s3 s4 >/dev/null
+[ "$(run "$RN" status --json | jq -r '.commands.dreaming.pending')" = "0" ] \
+  && ok "(n) naming the remaining 4 drains pending to 0 (ids UNION across calls)" \
+  || no "(n) expected pending=0 after draining all 6"
+# …and re-recording an already-consumed id is idempotent, never negative.
+run "$RN" record dreaming s1 s1 s2 >/dev/null
+[ "$(run "$RN" status --json | jq -r '.commands.dreaming.pending')" = "0" ] \
+  && ok "(n) re-recording consumed ids is idempotent (unique), never double-counts" \
+  || no "(n) duplicate ids perturbed the count"
+
+# ============================================================================
+echo "== (o) the count names the WINDOW that will drain it, pinned to dreaming.md =="
+# GAP 1: v15.29.0 reported `pending=61 ready=yes` for a run whose --sessions
+# default consumes 5. The readiness gate and the consumption window lived in two
+# files with NOTHING asserting a relationship — this is that assertion.
+doc_window="$(grep -E '^\| `--sessions N` \|' "$PLUGIN_ROOT/commands/dreaming.md" 2>/dev/null \
+              | sed -E 's/^\|[^|]*\|[^|]*\| *`?([0-9]+)`? *\|.*/\1/' | head -1)"
+script_window="$(grep -E '^DREAMING_DEFAULT_WINDOW=[0-9]+' "$PROBE" 2>/dev/null \
+                 | sed -E 's/^DREAMING_DEFAULT_WINDOW=([0-9]+).*/\1/' | head -1)"
+[ -n "$doc_window" ] \
+  && ok "(o) commands/dreaming.md declares a numeric --sessions default ($doc_window)" \
+  || no "(o) could not extract the --sessions default from commands/dreaming.md"
+[ -n "$script_window" ] \
+  && ok "(o) curation-status.sh declares DREAMING_DEFAULT_WINDOW ($script_window)" \
+  || no "(o) could not extract DREAMING_DEFAULT_WINDOW from the probe"
+[ -n "$doc_window" ] && [ "$doc_window" = "$script_window" ] \
+  && ok "(o) the probe's window MIRRORS dreaming.md's Parameters table — the cross-file pin" \
+  || no "(o) window drift: dreaming.md says '$doc_window', probe says '$script_window'"
+
+outO="$(run "$RN" status)"   # RN now has 6 logs, all consumed ⇒ pending 0
+printf '%s' "$outO" | grep -qF "window=$script_window" \
+  && ok "(o) the /dreaming status row states the window alongside the count" \
+  || no "(o) status row omits window=: $outO"
+printf '%s' "$outO" | grep -qF 'note(/dreaming)' \
+  && no "(o) window note fired with pending(0) <= window — it should be silent" \
+  || ok "(o) pending <= window ⇒ no window note (nothing is being left behind)"
+# …and it DOES fire when the backlog exceeds one run's reach.
+RO="$(new_repo)"; mkdir -p "$RO/.supervisor/logs"
+n=0; while [ "$n" -lt 9 ]; do n=$((n+1)); printf '{"event":"session_end"}\n' > "$RO/.supervisor/logs/w$n.jsonl"; done
+outO2="$(run "$RO" status)"
+printf '%s' "$outO2" | grep -qF 'note(/dreaming)' \
+  && ok "(o) pending(9) > window ⇒ the note says the rest stay pending" \
+  || no "(o) expected a window note at pending 9 > window $script_window: $outO2"
+printf '%s' "$outO2" | grep -qE 'reads the [0-9]+ most recent of those 9 logs' \
+  && ok "(o) the note names BOTH numbers (window and backlog), not just the backlog" \
+  || no "(o) the note does not name both numbers: $outO2"
+[ "$(jget "$(run "$RO" status --json)" '.commands.dreaming.window')" = "$script_window" ] \
+  && ok "(o) --json carries .commands.dreaming.window too" \
+  || no "(o) --json window missing/wrong"
+
+# ============================================================================
+echo "== (p) pending counts logs carrying reflection SIGNAL, not raw files =="
+# Measured on the real repo 2026-08-09: 29 of 62 logs held ONLY token_ledger and
+# subtask_complete events — ~96% of corpus bytes carrying 0% of the signal. A raw
+# file count overstated the backlog by 1.9x. Both predicates FAIL OPEN.
+RP="$(new_repo)"; mkdir -p "$RP/.supervisor/logs"
+# 3 noise-only logs (many lines each, so this is not passing by being empty)
+for n in 1 2 3; do
+  : > "$RP/.supervisor/logs/noise$n.jsonl"
+  k=0; while [ "$k" -lt 5 ]; do
+    k=$((k+1))
+    printf '{"event":"token_ledger","k":%s}\n' "$k" >> "$RP/.supervisor/logs/noise$n.jsonl"
+    printf '{"event":"subtask_complete","k":%s}\n' "$k" >> "$RP/.supervisor/logs/noise$n.jsonl"
+  done
+done
+# 1 log that is mostly noise but carries ONE real event — it must count
+printf '{"event":"token_ledger"}\n{"event":"session_end","status":"ok"}\n{"event":"token_ledger"}\n' \
+  > "$RP/.supervisor/logs/mixed.jsonl"
+outP="$(run "$RP" status --json)"
+[ "$(jget "$outP" '.commands.dreaming.pending')" = "1" ] \
+  && ok "(p) 4 files, 3 noise-only ⇒ /dreaming pending = 1, not 4" \
+  || no "(p) expected /dreaming pending=1, got '$(jget "$outP" '.commands.dreaming.pending')'"
+[ "$(jget "$outP" '.commands.insights.pending')" = "1" ] \
+  && ok "(p) /insights counts only logs carrying session_end (its sole input) ⇒ 1" \
+  || no "(p) expected /insights pending=1, got '$(jget "$outP" '.commands.insights.pending')'"
+# The two predicates are genuinely DIFFERENT, not one shared filter: a log with a
+# non-noise event that is NOT session_end counts for /dreaming and not /insights.
+printf '{"event":"pr_created","url":"x"}\n' > "$RP/.supervisor/logs/pronly.jsonl"
+outP2="$(run "$RP" status --json)"
+[ "$(jget "$outP2" '.commands.dreaming.pending')" = "2" ] \
+  && ok "(p) a pr_created-only log counts for /dreaming (broad reader)" \
+  || no "(p) expected /dreaming pending=2, got '$(jget "$outP2" '.commands.dreaming.pending')'"
+[ "$(jget "$outP2" '.commands.insights.pending')" = "1" ] \
+  && ok "(p) …and NOT for /insights, which consumes session_end alone" \
+  || no "(p) expected /insights pending=1, got '$(jget "$outP2" '.commands.insights.pending')'"
+# FAIL OPEN: a log whose shape the predicate cannot recognise counts as signal.
+printf 'not json at all\n' > "$RP/.supervisor/logs/weird.jsonl"
+[ "$(jget "$(run "$RP" status --json)" '.commands.dreaming.pending')" = "3" ] \
+  && ok "(p) an unrecognisable log counts as SIGNAL (fail open — never silently suppressed)" \
+  || no "(p) unrecognisable log was dropped from the count (fail-closed regression)"
+# …and so does a log we cannot READ. This is the arm grep answers with exit 2;
+# it is only reachable because log_has_signal has no `[ -r ]` pre-guard, and a
+# mutation flipping it to fail-closed must be caught here.
+printf '{"event":"token_ledger"}\n' > "$RP/.supervisor/logs/locked.jsonl"
+chmod 000 "$RP/.supervisor/logs/locked.jsonl" 2>/dev/null || true
+if [ ! -r "$RP/.supervisor/logs/locked.jsonl" ]; then
+  [ "$(jget "$(run "$RP" status --json)" '.commands.dreaming.pending')" = "4" ] \
+    && ok "(p) an UNREADABLE log counts as signal (grep rc>1 ⇒ fail open, never suppressed)" \
+    || no "(p) unreadable log was dropped from the count (fail-closed regression)"
+else
+  skp "(p) cannot create an unreadable file here (running as root?) — fail-open arm not exercisable"
+fi
+chmod 644 "$RP/.supervisor/logs/locked.jsonl" 2>/dev/null || true
+
+# ============================================================================
+echo "== (q) record hygiene: prune to disk, ids are data, malformed state ⇒ unknown =="
+RQ="$(new_repo)"; mkdir -p "$RQ/.supervisor/logs"
+printf '{"event":"session_end"}\n' > "$RQ/.supervisor/logs/real1.jsonl"
+outQ="$(run "$RQ" record dreaming real1 ghost-that-does-not-exist)"
+printf '%s' "$outQ" | grep -qF 'not on disk' \
+  && ok "(q) an id with no log on disk is reported, not silently stored" \
+  || no "(q) no report for the off-disk id: $outQ"
+[ "$(jq -r '[.dreaming.consumed.logs[]] | length' "$RQ/.supervisor/curation-state.json")" = "1" ] \
+  && ok "(q) only the on-disk id is persisted (an unmatchable id would subtract forever)" \
+  || no "(q) consumed set holds $(jq -c '.dreaming.consumed.logs' "$RQ/.supervisor/curation-state.json")"
+# An id containing WHITESPACE must survive whole. A `for id in $*` implementation
+# splits it into fragments, none of which names a file, so the id is silently
+# dropped and the run is recorded as having consumed nothing — its logs then stay
+# pending forever. The id must be STORED, not merely "not crash".
+printf '{"event":"session_end"}\n' > "$RQ/.supervisor/logs/has space.jsonl"
+run "$RQ" record dreaming "has space" >/dev/null
+jq -e '.dreaming.consumed.logs | index("has space")' "$RQ/.supervisor/curation-state.json" >/dev/null 2>&1 \
+  && ok "(q) an id containing whitespace is recorded WHOLE (never word-split into fragments)" \
+  || no "(q) whitespace id lost: $(jq -c '.dreaming.consumed.logs' "$RQ/.supervisor/curation-state.json" 2>/dev/null)"
+
+# Ids reach jq via --args, so a hostile filename is DATA, never filter text.
+# NOTE the id carries no spaces: a spaced one would be dropped before reaching jq
+# and the arm would pass without ever exercising the injection it claims to test.
+hostile='a")|.dreaming="pwned"|("'
+if printf '{"event":"session_end"}\n' > "$RQ/.supervisor/logs/$hostile.jsonl" 2>/dev/null \
+   && [ -f "$RQ/.supervisor/logs/$hostile.jsonl" ]; then
+  run "$RQ" record dreaming "$hostile" >/dev/null
+  jq -e --arg h "$hostile" '.dreaming.consumed.logs | index($h)' "$RQ/.supervisor/curation-state.json" >/dev/null 2>&1 \
+    && ok "(q) the hostile id was actually STORED — the injection arm is genuinely exercised" \
+    || no "(q) hostile id never reached the store; this arm proves nothing"
+  [ "$(jq -r '.dreaming.last_run | type' "$RQ/.supervisor/curation-state.json" 2>/dev/null)" = "string" ] \
+    && ok "(q) …and a filename full of jq metacharacters stayed DATA — state file intact" \
+    || no "(q) hostile id corrupted the state file"
+  [ "$(jq -r '.dreaming' "$RQ/.supervisor/curation-state.json" 2>/dev/null)" != "pwned" ] \
+    && ok "(q) …and the injected filter body did not execute" \
+    || no "(q) jq filter injection SUCCEEDED"
+else
+  skp "(q) filesystem rejected the hostile filename — injection arm not exercisable here"
+fi
+# A state file we cannot PARSE must not yield a confident backlog number.
+printf 'not json' > "$RQ/.supervisor/curation-state.json"
+[ "$(jget "$(run "$RQ" status --json)" '.commands.dreaming.pending')" = "unknown" ] \
+  && ok "(q) unparseable state ⇒ pending 'unknown', never every-log-is-pending" \
+  || no "(q) unparseable state fabricated a count: '$(jget "$(run "$RQ" status --json)" '.commands.dreaming.pending')'"
+# …but a state file that PARSES and simply has no consumed key is a real answer.
+printf '{"dreaming":{"last_run":"2026-01-01T00:00:00Z"}}' > "$RQ/.supervisor/curation-state.json"
+[ "$(jget "$(run "$RQ" status --json)" '.commands.dreaming.pending')" != "unknown" ] \
+  && ok "(q) parseable state with no consumed key ⇒ a real count (absent ≠ unexaminable)" \
+  || no "(q) a readable recordless state was reported as unexaminable"
 
 echo
 if [ "$skip" -gt 0 ]; then

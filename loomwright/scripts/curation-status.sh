@@ -24,6 +24,17 @@
 #   /pr-postmortem  ⇐ max .ts over .supervisor/postmortem/results.jsonl
 #                     records with .source != "automate_drain"              (derived)
 #
+# THE PENDING COUNT AND THE CONSUMPTION WINDOW MUST SPEAK THE SAME UNIT. v15.29.0
+# shipped three different units for one quantity — readiness counted "log FILES
+# newer than a wall-clock stamp", consumption took "the N most-recent files"
+# (`--sessions`, default 5), and `record` stored "wall-clock now" — and nothing
+# asserted a relationship between them, so every conversion lost information.
+# The three fixes below are one fix; see `count_unconsumed_dreaming` (set, not
+# watermark), the reflection-signal predicates (signal, not file count), and
+# `cmd_status`'s window line (the count now names the window that will drain it).
+# `test-curation-status.sh` pins the window against commands/dreaming.md's
+# Parameters table mechanically — that cross-file assertion is what was missing.
+#
 #   Why /dreaming is the exception: it writes only through the memory writers, so
 #   .supervisor/memory/ mtime reports the last run *that accepted something* and
 #   is structurally blind to the ran-but-accepted-nothing case — which is exactly
@@ -110,6 +121,14 @@ LOGS_DIR="$SUP_DIR/logs"
 
 DEFAULT_THRESHOLD_DREAMING=15
 DEFAULT_THRESHOLD_INSIGHTS=10
+
+# /dreaming's DEFAULT consumption window — the `--sessions N` default.
+# NOT AUTHORITATIVE HERE: commands/dreaming.md's Parameters table owns this
+# number; this is a mirror so `status` can name the window its count will be
+# drained by. test-curation-status.sh greps that table and fails if the two
+# drift, which is the assertion whose absence let the gate and the window ship
+# as unrelated numbers in the first place.
+DREAMING_DEFAULT_WINDOW=5
 
 have_jq() { command -v jq >/dev/null 2>&1; }
 
@@ -289,16 +308,87 @@ derive_postmortem_last_run() {
   printf '%s' "$out"
 }
 
+# ---- Reflection-signal predicates -------------------------------------------
+#
+# WHY A COUNT OF FILES IS THE WRONG NUMBER. Measured on this repo 2026-08-09
+# (62 logs): 29 carried ONLY `token_ledger` and `subtask_complete` events —
+# 1.64 MB of a 1.70 MB corpus, i.e. ~96% of the bytes carrying 0% of the
+# reflection signal, with one log alone holding 5108 events, all of them noise.
+# A raw file count therefore overstated /dreaming's real backlog by 1.9x (62/33).
+#
+# MEASURE THIS UNDER bash, NOT THE ZSH THE AGENT SHELL RUNS. The first census of
+# these figures came out exactly inverted (29 signal / 33 noise) because it used
+# `jq ... | grep -qv`, and under zsh that pipeline reports the producer's SIGPIPE
+# rather than grep's verdict. Any recount here must avoid `producer | grep -q`
+# entirely, or run under `bash file.sh`.
+#
+# THE TWO PREDICATES DIFFER BECAUSE THE TWO CONSUMERS DIFFER — read out of the
+# consumers, not assumed:
+#   /dreaming  reflects BROADLY over log content (commands/dreaming.md step 1),
+#              so its predicate is a DENYLIST: a log counts unless every line is
+#              one of the two known noise events.
+#   /insights  build-insights.sh consumes EXACTLY ONE event type — one
+#              `session_end` record per log (its step-1 collection loop) — so a
+#              log with no session_end contributes literally nothing to a run.
+#              Measured: 27 of 62 logs qualify.
+#
+# BOTH FAIL OPEN, AND THE ANCHOR IS CHOSEN SO THAT THEY MUST. The denylist is
+# anchored at `^{"event":"`, so if the writer ever stops emitting `event` as the
+# first key a noise line STOPS matching the noise pattern and the log counts as
+# signal. Over-counting is the safe direction — it can only make the nudge fire
+# when it needn't, never suppress it on a log we misread. Same rule as
+# `unknown`-never-a-fabricated-`0` above, applied to content instead of to
+# readability. An unreadable file, and any grep failure that is not a clean
+# "no match" (exit 1), likewise count as signal.
+DREAMING_NOISE_RE='^\{"event":"(token_ledger|subtask_complete)"'
+INSIGHTS_SIGNAL_FIXED='"event":"session_end"'
+
+# log_has_signal <file> <dreaming|insights> — 0 (true) when the log could matter
+# to that consumer. grep is used rather than jq deliberately: this runs over the
+# whole corpus inside a SessionStart hook, and the anchored pattern measures
+# 0.07 s across 62 logs / 3.8 MB versus 0.41 s for an unanchored one.
+# ONE mechanism decides readability, not two. An earlier draft also carried a
+# `[ -r "$f" ] || return 0` pre-guard, which made the rc>1 arm below dead code:
+# grep exits 2 on precisely the unreadable file the guard had already caught, so
+# the fail-open branch could never run and no test could reach it (a mutation
+# flipping it to fail-closed survived the whole suite). Letting grep's own exit
+# status answer keeps the two cases in one place and makes the behaviour
+# testable. The `[ -n "$f" ]` guard stays and is NOT redundant — grep with no
+# file operand reads stdin, which inside a SessionStart hook would hang.
+log_has_signal() {
+  local f="${1:-}" kind="${2:-dreaming}" rc=0
+  [ -n "$f" ] || return 0
+  case "$kind" in
+    insights) grep -qF "$INSIGHTS_SIGNAL_FIXED" "$f" 2>/dev/null ;;
+    *)        grep -qvE "$DREAMING_NOISE_RE" "$f" 2>/dev/null ;;
+  esac
+  rc=$?
+  # Exactly 1 is grep's "no match" — a real, examined answer, the only one that
+  # may drop a log from the count. 0 is a match; anything >1 (unreadable file,
+  # I/O error) is a failure to examine. Both count as signal: over-counting can
+  # only make the nudge fire when it needn't, while under-counting would silently
+  # suppress it on a log we never managed to read.
+  [ "$rc" -eq 1 ] && return 1
+  return 0
+}
+
 # ---- Pending counts ---------------------------------------------------------
 
-# count_logs_newer_than <epoch|never|unknown> — how many .supervisor/logs/*.jsonl
-# files postdate the given last-run epoch.
+# count_logs_newer_than <epoch|never|unknown> <dreaming|insights> — how many
+# .supervisor/logs/*.jsonl files postdate the given last-run epoch AND carry
+# reflection signal for that consumer.
 #   absent logs dir    ⇒ 0        (a real, readable answer: there is no corpus)
 #   unreadable logs dir⇒ unknown
-#   since == never     ⇒ every log counts
+#   since == never     ⇒ every signal-carrying log counts
 #   since == unknown   ⇒ unknown  (cannot compare against a boundary we lack)
+#
+# A WATERMARK IS CORRECT HERE, and only here. /insights consumes ALL logs on
+# every run (build-insights.sh iterates the full list, no window), so "logs newer
+# than the last run" is an EXACT statement of what it has yet to see. /dreaming's
+# consumption is windowed, which is why it does not use this function — see
+# count_unconsumed_dreaming.
 count_logs_newer_than() {
-  local since="${1:-unknown}" n=0 f m
+  local since="${1:-unknown}" kind="${2:-insights}" n=0 f m
   [ -d "$LOGS_DIR" ] || { printf '0'; return 0; }
   { [ -r "$LOGS_DIR" ] && [ -x "$LOGS_DIR" ]; } || { printf 'unknown'; return 0; }
   case "$since" in
@@ -306,6 +396,7 @@ count_logs_newer_than() {
   esac
   for f in "$LOGS_DIR"/*.jsonl; do
     [ -f "$f" ] || continue
+    log_has_signal "$f" "$kind" || continue
     if [ "$since" = "never" ]; then
       n=$((n + 1))
       continue
@@ -319,16 +410,89 @@ count_logs_newer_than() {
   printf '%s' "$n"
 }
 
-# pending_for <last_run-iso|never|unknown> — resolve the last-run value to a
-# comparison boundary, then count.
+# pending_for <last_run-iso|never|unknown> <dreaming|insights> — resolve the
+# last-run value to a comparison boundary, then count.
 pending_for() {
-  local last="${1:-unknown}" e
+  local last="${1:-unknown}" kind="${2:-insights}" e
   case "$last" in
     never)   e="never" ;;
     unknown) e="unknown" ;;
     *)       e="$(iso_to_epoch "$last")" ;;
   esac
-  count_logs_newer_than "$e"
+  count_logs_newer_than "$e" "$kind"
+}
+
+# consumed_log_ids — the session ids /dreaming has already fed to reflection, one
+# per line. Prints the literal `unknown` when the record EXISTS but could not be
+# read, and nothing at all when it legitimately holds no ids.
+#
+# THIS IS THE SAME ABSENT-vs-UNEXAMINABLE LADDER derive_dreaming_last_run walks,
+# and for the same reason. Collapsing "we could not parse the record" into "the
+# record is empty" would report every log as unreflected — a confident number
+# manufactured out of an input we failed to read, which is exactly the fabricated
+# answer this script's header forbids. `unknown` refuses to claim instead.
+# "Unexaminable" is signalled by a NON-ZERO RETURN, not by a sentinel line: a
+# session id is a filename, and a file legitimately named `unknown.jsonl` would
+# otherwise be indistinguishable from the could-not-read answer.
+#   absent state file         ⇒ rc 0, no output   a real answer: nothing recorded
+#   unreadable / not JSON     ⇒ rc 1              could not examine
+#   parses, no consumed.logs  ⇒ rc 0, no output   read it, and it holds no ids
+consumed_log_ids() {
+  [ -e "$STATE_FILE" ] || return 0
+  [ -r "$STATE_FILE" ] || return 1
+  have_jq || return 1
+  jq -e 'type == "object"' "$STATE_FILE" >/dev/null 2>&1 || return 1
+  jq -r '(.dreaming.consumed.logs // []) | .[] | select(type == "string" and length > 0)' \
+     "$STATE_FILE" 2>/dev/null || true
+  return 0
+}
+
+# count_unconsumed_dreaming — /dreaming's pending count: session logs that carry
+# reflection signal and have NOT already been fed to reflection.
+#
+# WHY A SET, NOT A WATERMARK. /dreaming consumes the `--sessions N` MOST RECENT
+# logs, so what a run leaves behind is the OLDER tail. A watermark answers "how
+# many are newer than T", which cannot count an older tail at ANY value of T:
+#   T = now              ⇒ pending collapses to ~0 and every older unread log is
+#                          retired without ever having been read (v15.29.0 bug)
+#   T = newest consumed  ⇒ identical, the newest consumed is ~now
+#   T = oldest consumed  ⇒ pending = the batch just read, and the older tail
+#                          STILL never counts
+# Consumption is a set selection from the top of a sort and pending is its
+# complement, so the record has to be set membership. It is also the only shape
+# under which a later run can deliberately target the older remainder.
+#
+# CONSEQUENCE FOR /dreaming: `last_run` no longer feeds this count at all. It
+# stays stored, and still drives `age_days` and the "since" phrasing, but the
+# backlog is now answered by the set. That is the point — a run's effect on the
+# count is now exactly the logs it actually read.
+#
+# ON UPGRADE from a v15.29.0 state file (a `last_run`, no `consumed` key) the
+# count jumps to the full signal-carrying corpus. That is the honest answer:
+# nothing has been recorded as consumed, and over-counting is the safe direction.
+#
+#   absent logs dir          ⇒ 0
+#   unreadable logs dir      ⇒ unknown
+#   unexaminable consumed set⇒ unknown
+count_unconsumed_dreaming() {
+  local n=0 f id consumed
+  [ -d "$LOGS_DIR" ] || { printf '0'; return 0; }
+  { [ -r "$LOGS_DIR" ] && [ -x "$LOGS_DIR" ]; } || { printf 'unknown'; return 0; }
+  # Declared first, assigned second, status tested on its own line: a
+  # `local consumed="$(...)"` would make $? the status of `local` and silently
+  # swallow the unexaminable signal — the same trap derive_postmortem_pending
+  # documents on its gh call.
+  consumed="$(consumed_log_ids)" || { printf 'unknown'; return 0; }
+  for f in "$LOGS_DIR"/*.jsonl; do
+    [ -f "$f" ] || continue
+    log_has_signal "$f" dreaming || continue
+    id="$(basename "$f" .jsonl)"
+    # grep -qx against the newline-separated id list: an exact whole-line match,
+    # so one session id can never be a prefix of another's.
+    printf '%s\n' "$consumed" | grep -qxF -- "$id" && continue
+    n=$((n + 1))
+  done
+  printf '%s' "$n"
 }
 
 # pending_from_merged <merged-pr-numbers> — the PURE half of the count below:
@@ -401,14 +565,25 @@ readiness() {
   if [ "$pending" -ge "$threshold" ]; then printf 'yes'; else printf 'no'; fi
 }
 
-# decline_message <command-label> <pending> <threshold> — the verbatim decline
-# text, or the empty string when the command should proceed. Names the observed
-# count, the threshold, AND that the threshold is an unvalidated guess.
+# decline_message <command-label> <pending> <threshold> <noun> — the verbatim
+# decline text, or the empty string when the command should proceed. Names the
+# observed count, the threshold, AND that the threshold is an unvalidated guess.
+#
+# THE NOUN IS PARAMETERISED BECAUSE THE TWO COUNTS NOW MEAN DIFFERENT THINGS.
+# /insights counts logs NEWER THAN its last run (a watermark, exact for it —
+# it consumes the whole corpus every run). /dreaming counts logs it has never
+# fed to reflection (a set, because it consumes a window). Saying "since its
+# last run" for /dreaming would be false: an unreflected log is usually OLDER
+# than the last run, which is precisely how the v15.29.0 shape hid the backlog.
 decline_message() {
-  local label="${1:-}" pending="${2:-}" threshold="${3:-}"
-  printf '/%s declined: %s new session log(s) since its last run, below the threshold of %s. That threshold is an UNVALIDATED starting guess, not a measured value — re-run with --force to proceed anyway, or set .curation.thresholds.%s in .supervisor/config.json.' \
-    "$label" "$pending" "$threshold" "$label"
+  local label="${1:-}" pending="${2:-}" threshold="${3:-}" noun="${4:-new session log(s) since its last run}"
+  printf '/%s declined: %s %s, below the threshold of %s. That threshold is an UNVALIDATED starting guess, not a measured value — re-run with --force to proceed anyway, or set .curation.thresholds.%s in .supervisor/config.json.' \
+    "$label" "$pending" "$noun" "$threshold" "$label"
 }
+
+# The two nouns, named once so the decline line and the nudge cannot drift.
+DREAMING_PENDING_NOUN='unreflected session log(s) carrying reflection signal'
+INSIGHTS_PENDING_NOUN='new session log(s) since its last run'
 
 # ---- Subcommand: status -----------------------------------------------------
 
@@ -424,7 +599,16 @@ decline_message() {
 # route and a silent `null` down the other. Both are the same answer ("we could
 # not compute these values"), so both must speak the same sentinel; sharing the
 # constant is what keeps that true as the schema grows.
-CURATION_JSON_UNKNOWN_BODY='"thresholds_unvalidated":true,"commands":{"dreaming":{"last_run":"unknown","age_days":"unknown","pending":"unknown","threshold":"unknown","ready":"unknown","decline_message":""},"insights":{"last_run":"unknown","age_days":"unknown","pending":"unknown","threshold":"unknown","ready":"unknown","decline_message":""},"pr_postmortem":{"last_run":"unknown","age_days":"unknown","pending":"unknown","threshold":"none","ready":"always","decline_message":""}}'
+#
+# `window` rides in this body too, and as a REAL value rather than "unknown":
+# it is a static mirror of commands/dreaming.md's `--sessions` default, not
+# something computed from the inputs that just failed to read. Emitting
+# "unknown" for it would fabricate a could-not-examine for a constant.
+# INTERPOLATED, never a literal: writing `"window":5` here would make this the
+# THIRD copy of the `--sessions` default (dreaming.md's table, the constant
+# above, and this string), which is the same drift class the window line exists
+# to close. It is built from $DREAMING_DEFAULT_WINDOW so there is one source.
+CURATION_JSON_UNKNOWN_BODY="$(printf '"thresholds_unvalidated":true,"commands":{"dreaming":{"last_run":"unknown","age_days":"unknown","pending":"unknown","threshold":"unknown","ready":"unknown","window":%s,"decline_message":""},"insights":{"last_run":"unknown","age_days":"unknown","pending":"unknown","threshold":"unknown","ready":"unknown","window":"all","decline_message":""},"pr_postmortem":{"last_run":"unknown","age_days":"unknown","pending":"unknown","threshold":"none","ready":"always","window":"one_pr","decline_message":""}}' "$DREAMING_DEFAULT_WINDOW")"
 
 cmd_status() {
   local as_json="no"
@@ -442,8 +626,10 @@ cmd_status() {
   i_last="$(derive_insights_last_run)"
   p_last="$(derive_postmortem_last_run)"
 
-  d_pending="$(pending_for "$d_last")"
-  i_pending="$(pending_for "$i_last")"
+  # /dreaming counts an unconsumed SET; /insights counts newer-than-watermark.
+  # The asymmetry is deliberate and load-bearing — see each function's header.
+  d_pending="$(count_unconsumed_dreaming)"
+  i_pending="$(pending_for "$i_last" insights)"
   p_pending="$(derive_postmortem_pending)"
 
   d_thr="$(read_threshold dreaming "$DEFAULT_THRESHOLD_DREAMING")"
@@ -456,39 +642,48 @@ cmd_status() {
   i_age="$(age_days "$(iso_to_epoch "$i_last")")"
   p_age="$(age_days "$(iso_to_epoch "$p_last")")"
 
-  [ "$d_ready" = "no" ] && d_decline="$(decline_message dreaming "$d_pending" "$d_thr")"
-  [ "$i_ready" = "no" ] && i_decline="$(decline_message insights "$i_pending" "$i_thr")"
+  [ "$d_ready" = "no" ] && d_decline="$(decline_message dreaming "$d_pending" "$d_thr" "$DREAMING_PENDING_NOUN")"
+  [ "$i_ready" = "no" ] && i_decline="$(decline_message insights "$i_pending" "$i_thr" "$INSIGHTS_PENDING_NOUN")"
 
   if [ "$as_json" = "yes" ]; then
     if ! have_jq; then
       # jq absent ⇒ emit a literal all-unknown document rather than fabricating
       # values or crashing. Still valid JSON, still exit 0.
-      printf '{"schema_version":1,"jq":false,%s}\n' "$CURATION_JSON_UNKNOWN_BODY"
+      printf '{"schema_version":2,"jq":false,%s}\n' "$CURATION_JSON_UNKNOWN_BODY"
       return 0
     fi
     jq -n \
       --arg dl "$d_last" --arg da "$d_age" --arg dp "$d_pending" --arg dt "$d_thr" --arg dr "$d_ready" --arg dm "$d_decline" \
       --arg il "$i_last" --arg ia "$i_age" --arg ip "$i_pending" --arg it "$i_thr" --arg ir "$i_ready" --arg im "$i_decline" \
       --arg pl "$p_last" --arg pa "$p_age" --arg pp "$p_pending" \
+      --arg dw "$DREAMING_DEFAULT_WINDOW" \
       '
       def num_or_str: if test("^[0-9]+$") then tonumber else . end;
       {
-        schema_version: 1,
+        schema_version: 2,
         jq: true,
         thresholds_unvalidated: true,
         commands: {
-          dreaming:      {last_run: $dl, age_days: ($da|num_or_str), pending: ($dp|num_or_str), threshold: ($dt|num_or_str), ready: $dr, decline_message: $dm},
-          insights:      {last_run: $il, age_days: ($ia|num_or_str), pending: ($ip|num_or_str), threshold: ($it|num_or_str), ready: $ir, decline_message: $im},
-          pr_postmortem: {last_run: $pl, age_days: ($pa|num_or_str), pending: ($pp|num_or_str), threshold: "none", ready: "always", decline_message: ""}
+          dreaming:      {last_run: $dl, age_days: ($da|num_or_str), pending: ($dp|num_or_str), threshold: ($dt|num_or_str), ready: $dr, window: ($dw|num_or_str), decline_message: $dm},
+          insights:      {last_run: $il, age_days: ($ia|num_or_str), pending: ($ip|num_or_str), threshold: ($it|num_or_str), ready: $ir, window: "all", decline_message: $im},
+          pr_postmortem: {last_run: $pl, age_days: ($pa|num_or_str), pending: ($pp|num_or_str), threshold: "none", ready: "always", window: "one_pr", decline_message: ""}
         }
-      }' 2>/dev/null || printf '{"schema_version":1,"jq":true,"error":"render_failed",%s}\n' "$CURATION_JSON_UNKNOWN_BODY"
+      }' 2>/dev/null || printf '{"schema_version":2,"jq":true,"error":"render_failed",%s}\n' "$CURATION_JSON_UNKNOWN_BODY"
     return 0
   fi
 
   printf '## Curation readiness\n'
   printf 'Thresholds are UNVALIDATED starting guesses (not measured) — tune .curation.thresholds.{dreaming,insights} in .supervisor/config.json.\n'
-  printf -- '- /dreaming       last_run=%s age_days=%s pending=%s threshold=%s ready=%s\n' \
-    "$d_last" "$d_age" "$d_pending" "$d_thr" "$d_ready"
+  printf -- '- /dreaming       last_run=%s age_days=%s pending=%s threshold=%s ready=%s window=%s\n' \
+    "$d_last" "$d_age" "$d_pending" "$d_thr" "$d_ready" "$DREAMING_DEFAULT_WINDOW"
+  # THE WINDOW IS PART OF THE ANSWER, not a footnote. `pending` is a backlog of
+  # unconsumed logs; `window` is how many of them one default run will actually
+  # read. Reporting the backlog alone is what let v15.29.0 say "ready=yes,
+  # pending=61" about a run that would consume 5 and silently retire the rest.
+  if is_uint "$d_pending" && [ "$d_pending" -gt "$DREAMING_DEFAULT_WINDOW" ]; then
+    printf -- '  note(/dreaming): a default run reads the %s most recent of those %s logs; the rest stay pending and are read by later runs (pass --sessions N to widen).\n' \
+      "$DREAMING_DEFAULT_WINDOW" "$d_pending"
+  fi
   printf -- '- /insights       last_run=%s age_days=%s pending=%s threshold=%s ready=%s\n' \
     "$i_last" "$i_age" "$i_pending" "$i_thr" "$i_ready"
   printf -- '- /pr-postmortem  last_run=%s age_days=%s pending=%s threshold=none ready=always (targeted at one named PR — it never declines)\n' \
@@ -503,8 +698,31 @@ cmd_status() {
 # `dreaming` is the ONLY legal record target — /insights and /pr-postmortem are
 # DERIVED (see the header). Any other argument is rejected with a message and
 # still exits 0.
+#
+#   record dreaming [<session_id> ...]
+#
+# THE SESSION IDS ARE THE POINT, not an optional extra. They are the logs the run
+# actually fed to reflection (basename minus `.jsonl`), and they are what makes
+# the pending count fall by exactly what was read instead of collapsing to zero.
+# See count_unconsumed_dreaming for why a wall-clock stamp cannot do this.
+#
+# ZERO IDS IS STILL LEGAL AND STILL STAMPS `last_run` — a run that read nothing
+# (everything rejected, or an empty corpus) is a real run and the cadence record
+# exists precisely to capture it. But it WARNS, because a caller that read logs
+# and forgot to name them gets a `last_run` that moves while `pending` does not,
+# which looks like the probe is stuck. The warning names that explicitly.
+#
+# The stored set is UNIONED with what is already there. INCOMING ids are checked
+# against disk and an unmatchable one is reported rather than stored (it could
+# only subtract from a count it can never correspond to); ids ALREADY in the set
+# are retained even if their log has since been rotated away — "this log was
+# consumed" stays true and costs nothing, while re-deriving it would be wrong.
+# The set is therefore bounded by the number of logs ever consumed, not by the
+# number of calls. Ids are passed through jq `--args` (never interpolated into
+# the filter), so a hostile filename is data, not program text.
 cmd_record() {
   local target="${1:-}"
+  [ "$#" -gt 0 ] && shift   # leaves "$@" = the session ids
   case "$target" in
     dreaming) ;;
     *)
@@ -540,11 +758,45 @@ cmd_record() {
     esac
   fi
 
+  # Keep only ids whose log is actually on disk. An id naming a log that does not
+  # exist is reported rather than stored: storing it would permanently subtract
+  # from a count it can never correspond to.
+  #
+  # ROTATE "$@" IN PLACE — never `for id in $consumed_in`. Word-splitting a
+  # flattened "$*" breaks any id containing whitespace into fragments, and since
+  # no fragment names a file on disk the whole id is then silently dropped: the
+  # run is recorded as having consumed nothing and its logs stay pending forever.
+  # Popping from the front and pushing survivors to the back preserves each
+  # argument whole, whatever it contains.
+  local kept_n=0 dropped_n=0 id remaining="$#"
+  while [ "$remaining" -gt 0 ]; do
+    id="$1"; shift
+    remaining=$((remaining - 1))
+    if [ -n "$id" ] && [ -f "$LOGS_DIR/$id.jsonl" ]; then
+      set -- "$@" "$id"
+      kept_n=$((kept_n + 1))
+    else
+      dropped_n=$((dropped_n + 1))
+    fi
+  done
+
   tmp="$STATE_FILE.tmp.$$"
   if printf '%s' "$existing" \
-     | jq --arg ts "$now_iso" '.dreaming = ((.dreaming // {}) + {last_run: $ts})' > "$tmp" 2>/dev/null \
+     | jq --arg ts "$now_iso" '
+         .dreaming = ((.dreaming // {}) + {last_run: $ts})
+         | .dreaming.consumed = (.dreaming.consumed // {})
+         | .dreaming.consumed.logs =
+             (((.dreaming.consumed.logs // []) + $ARGS.positional)
+              | map(select(type == "string" and length > 0))
+              | unique)
+       ' --args "$@" > "$tmp" 2>/dev/null \
      && mv "$tmp" "$STATE_FILE" 2>/dev/null; then
-    printf 'curation-status: recorded /dreaming last_run=%s\n' "$now_iso"
+    printf 'curation-status: recorded /dreaming last_run=%s (consumed logs added: %s)\n' \
+      "$now_iso" "$kept_n"
+    [ "$dropped_n" -gt 0 ] && printf 'curation-status: %s named log(s) are not on disk and were not recorded.\n' "$dropped_n"
+    if [ "$kept_n" -eq 0 ]; then
+      printf 'curation-status: NO logs were named, so `pending` will NOT fall — only last_run moved. If this run did read logs, re-run as `record dreaming <session_id>...` naming them; otherwise this is the correct record of a run that consumed nothing.\n'
+    fi
   else
     rm -f "$tmp" 2>/dev/null || true
     printf 'curation-status: could not write %s — /dreaming last_run not recorded.\n' "$STATE_FILE"
@@ -575,20 +827,22 @@ cmd_nudge() {
 
   d_last="$(derive_dreaming_last_run)"
   i_last="$(derive_insights_last_run)"
-  d_pending="$(pending_for "$d_last")"
-  i_pending="$(pending_for "$i_last")"
+  d_pending="$(count_unconsumed_dreaming)"
+  i_pending="$(pending_for "$i_last" insights)"
   d_thr="$(read_threshold dreaming "$DEFAULT_THRESHOLD_DREAMING")"
   i_thr="$(read_threshold insights "$DEFAULT_THRESHOLD_INSIGHTS")"
   d_ready="$(readiness "$d_pending" "$d_thr")"
   i_ready="$(readiness "$i_pending" "$i_thr")"
 
+  # /dreaming's line names the WINDOW alongside the backlog: the count alone
+  # invites "ready=yes, 61 pending" to be read as "one run clears 61".
   case "$d_ready" in
-    yes|unknown) parts="/dreaming $d_pending new session log(s) since $d_last (threshold $d_thr)" ;;
+    yes|unknown) parts="/dreaming $d_pending $DREAMING_PENDING_NOUN (threshold $d_thr; a default run reads $DREAMING_DEFAULT_WINDOW, last run $d_last)" ;;
   esac
   case "$i_ready" in
     yes|unknown)
       if [ -n "$parts" ]; then parts="$parts; "; fi
-      parts="$parts/insights $i_pending new session log(s) since $i_last (threshold $i_thr)"
+      parts="$parts/insights $i_pending $INSIGHTS_PENDING_NOUN ($i_last, threshold $i_thr)"
       ;;
   esac
 
@@ -605,10 +859,13 @@ main() {
   [ "$#" -gt 0 ] && shift
   case "$sub" in
     status) cmd_status "${1:-}" ;;
-    record) cmd_record "${1:-}" ;;
+    # ALL remaining args are forwarded — `record dreaming <id> <id> ...` needs
+    # them. Passing only "${1:-}" here would silently drop every session id and
+    # restore the exact fail-silent shape this change exists to remove.
+    record) cmd_record "$@" ;;
     nudge)  cmd_nudge ;;
     -h|--help|help)
-      printf 'usage: curation-status.sh [status [--json] | record dreaming | nudge]\n'
+      printf 'usage: curation-status.sh [status [--json] | record dreaming [<session_id>...] | nudge]\n'
       ;;
     *)
       printf 'curation-status: unknown subcommand `%s` (expected status | record | nudge).\n' "$sub"

@@ -619,7 +619,7 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 - `--agent all|code-reviewer|red-team|qa-executor` (default `all`)
 - `--sessions N` (default `5`)
 - `--full-model` (default off — reflection spawns default to `model: "sonnet"` per `docs/ARCHITECTURE_CONTRACTS.md` §Cost Profiles → "Async analysis surfaces"; flag restores `inherit`)
-- `--force` (default off — skips the curation-readiness check from `scripts/curation-status.sh`; without it `/dreaming` declines, advisory and exit 0, below an **unvalidated** threshold guess of `15` new session logs, overridable at `.curation.thresholds.dreaming` in `.supervisor/config.json`). `/insights` has the same flag; `/pr-postmortem` deliberately has none — it targets one named PR and never declines.
+- `--force` (default off — skips the curation-readiness check from `scripts/curation-status.sh`; without it `/dreaming` declines, advisory and exit 0, below an **unvalidated** threshold guess of `15` **unreflected** session logs — logs never fed to reflection that carry reflection signal, tracked as a consumed set rather than a timestamp so a windowed run never retires the backlog it did not read — overridable at `.curation.thresholds.dreaming` in `.supervisor/config.json`). `/insights` has the same flag; `/pr-postmortem` deliberately has none — it targets one named PR and never declines.
 
 **What it does:**
 - Reads the N most recent `.supervisor/logs/{session_id}.jsonl` files (read-only)
@@ -665,7 +665,7 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 **Purpose:** Generate a local markdown insights dashboard (`.supervisor/insights/dashboard.md` + per-run notes with Dataview-compatible frontmatter) from `.supervisor/logs/*.jsonl`, covering work / quality / session-performance (completion rate, self-heal outcomes, rubric scores, subtask counts, files touched). Deterministic `jq` aggregation via `scripts/build-insights.sh`. **Cost (tokens/$) is intentionally NOT captured** — it lives in Claude Code's own transcripts; the dashboard points to `npx ccusage`.
 
 **Parameters:**
-- `--force` (default off — skips the curation-readiness check from `scripts/curation-status.sh`; without it `/insights --force` is what you need when it declines, advisory and exit 0, below an **unvalidated** threshold guess of `10` new session logs since the dashboard's mtime, overridable at `.curation.thresholds.insights` in `.supervisor/config.json`; set that key to `0` to keep the reporting but never decline). `/dreaming` has the same flag; `/pr-postmortem` deliberately has none — it targets one named PR and never declines.
+- `--force` (default off — skips the curation-readiness check from `scripts/curation-status.sh`; without it `/insights --force` is what you need when it declines, advisory and exit 0, below an **unvalidated** threshold guess of `10` new session logs — counting only those carrying a `session_end`, the sole event a rebuild consumes — since the dashboard's mtime, overridable at `.curation.thresholds.insights` in `.supervisor/config.json`; set that key to `0` to keep the reporting but never decline). `/dreaming` has the same flag; `/pr-postmortem` deliberately has none — it targets one named PR and never declines.
 
 ```
 /insights                                      # Build the dashboard (declines below the readiness threshold)
