@@ -83,7 +83,7 @@ is_unset() {
 # as defense-in-depth, so a slip-through could never emit a stderr diagnostic.
 #
 # INTEGER-VALUED METRICS ONLY (by design). The schema permits `benchmark_value` /
-# `benchmark_delta` to be any `number | null` (RESULT_SCHEMAS.md:249,251), but the
+# `benchmark_delta` to be any `number | null` (RESULT_SCHEMAS.md:789 [pins: `"benchmark_delta": <number|null>`]), but the
 # only benchmark today (run-benchmark.sh → selftest_pass_count) is an integer count,
 # so this guard accepts integers only. A non-integer (float) value/delta is treated
 # as "not a number" and its segment is simply OMITTED — it fails safe (no error, no

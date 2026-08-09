@@ -120,7 +120,8 @@ if [ "$_rc" = "4" ]; then ok "no argument => UNKNOWN (fail closed)"; else bad "n
 printf '\n=== MERGE-ONLY REACHABILITY (regression: the merge arm was dead code) ===\n'
 # A squash merge or a rebased history leaves ONLY the merge subject. The original single-pattern
 # extraction required a literal `subtask:` token after `merge: `, which the MANDATED merge format
-# (async-orchestration/SKILL.md:120-122 `merge: {subtask_id} {title}`) does not contain — so these
+# (async-orchestration/SKILL.md:564-566 `merge: {subtask_id} {title}`)
+# [pins: `merge: {subtask_a} {title}`] does not contain — so these
 # branches returned CLEAN and the resume re-executed merged work. Fixtures hid it by always
 # including a plain `subtask:` commit too; these cases deliberately do not.
 MREPO="$TMPROOT/mergeonly"

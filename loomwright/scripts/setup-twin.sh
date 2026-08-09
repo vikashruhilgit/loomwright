@@ -170,7 +170,8 @@ probe_claude_md() {
   echo "present (age: ${age}d)"
 }
 
-# brain wiki: matches brain-context's Signal 2 EXACTLY (skills/brain-context/SKILL.md:42) —
+# brain wiki: matches brain-context's Signal 2 EXACTLY (skills/brain-context/SKILL.md:100
+# [pins: `Signal 2 — configured brain root with a wiki`]) —
 # LOOMWRIGHT_BRAIN_ROOT set AND it contains a `wiki/` dir. Checking only the root dir
 # would report a false-ready wiki signal that brain-context's read path would then skip.
 probe_brain() {

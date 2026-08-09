@@ -598,7 +598,7 @@ Loop back to PLAN with this new requirement file. Record `policy_decisions` entr
 
 The autonomous loop already knows `current_brief_path` (set during PLAN). When Supervisor picks Option C, it moves the brief from `.supervisor/jobs/in-progress/` to `.supervisor/jobs/failed/` (per `agents/supervisor.md` Phase 3 adjudication-Option-C handler and `FAILURE_ESCALATION.md` §"Inter-Subtask Gap / Scope Expansion" Option C flow). So **the unambiguous current-iteration anchor is `.supervisor/jobs/failed/{basename(current_brief_path)}` existence**. Prior runs have different brief filenames (different date / session_id / slug), so this filename uniquely identifies this iteration's failed brief.
 
-**Why not `grep "inter_subtask_gap" .supervisor/state.md` directly:** state.md is per-Supervisor-session and Context-Keeper rewrites it atomically (`agents/context-keeper.md:15`). A global grep MIGHT be naturally scoped, but the filename anchor is more robust against pathological cases (state.md not yet updated, concurrent inconsistency, etc.).
+**Why not `grep "inter_subtask_gap" .supervisor/state.md` directly:** state.md is per-Supervisor-session and Context-Keeper rewrites it atomically (`agents/context-keeper.md:26` [pins: `atomic read-validate-mutate-write`]). A global grep MIGHT be naturally scoped, but the filename anchor is more robust against pathological cases (state.md not yet updated, concurrent inconsistency, etc.).
 
 **Detection algorithm (after Supervisor returns `status: failed`):**
 

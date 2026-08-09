@@ -75,7 +75,7 @@
 # unresolvable, unwritable log dir, malformed payload, unresolvable session
 # id, not-a-git-repo.
 #
-# `checkpoint` note: emit-token-ledger.sh:94 also accepts `checkpoint` in its
+# `checkpoint` note: emit-token-ledger.sh:128 [pins: `running|checkpoint)`] also accepts it in its
 # status test for the identical backward-compat reason described above.
 #
 # Authoritative spec: this repo's 2026-07-28 brief

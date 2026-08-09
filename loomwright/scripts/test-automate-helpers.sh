@@ -780,7 +780,8 @@ fi
 rm -rf "$WD"
 
 # F10. read-postmortem.sh visibility (reasoned via the reader's OWN selection jq):
-#      read-postmortem.sh:124-126 keeps a corpus line iff (a) repo matches the reader's
+#      read-postmortem.sh:159 [pins: `changed_paths overlap the query set`] keeps a corpus
+#      line iff (a) repo matches the reader's
 #      current repo case-insensitively WHEN the reader's repo is determinable, AND (b) its
 #      changed_paths overlaps the query path set; then it counts each categories[] element as
 #      one prior-churn round. We replicate BOTH predicates faithfully (an earlier version of

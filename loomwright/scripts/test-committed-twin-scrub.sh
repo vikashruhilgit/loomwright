@@ -4,7 +4,8 @@
 #
 # WHY THIS EXISTS: `vikashruhilgit/loomwright` is a PUBLIC repo. Committing `.claude/agent-memory/`
 # and `.supervisor/memory/` publishes the Twin's accumulated judgment irreversibly — a push cannot
-# be taken back, and `/setup memory remove` explicitly does NOT unpublish (setup-memory.sh:920-926).
+# be taken back, and `/setup memory remove` explicitly does NOT unpublish
+# (setup-memory.sh:949 [pins: `Removal does NOT unpublish`]).
 # One memory entry cited a private work repo before this migration. This is the regression net that
 # stops it coming back.
 #
@@ -63,8 +64,9 @@
 #
 # WRITE CONTAINMENT: this test makes ZERO writes under the real repo root. Every `apply`/`remove`
 # exercise runs against a `mktemp -d` + `git init` fixture through `setup-memory.sh --root`, with
-# `trap … EXIT` cleanup (pattern from test-no-junk-tracked-files.sh:62-71). This matters because
-# CI hard-globs `loomwright/scripts/test-*.sh` (.github/workflows/ci.yml:62), so an unisolated
+# `trap … EXIT` cleanup (pattern from test-no-junk-tracked-files.sh:62-71 [pins: `TMPD="$(mktemp -d)"`]).
+# This matters because
+# CI hard-globs it (.github/workflows/ci.yml:62 [pins: `tests=(loomwright/scripts/test-*.sh)`]), so an unisolated
 # test would rewrite the real `.gitignore` and litter a backup on every CI run. The containment is
 # asserted, not assumed — see group (F).
 #

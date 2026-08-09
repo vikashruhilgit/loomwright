@@ -15,7 +15,8 @@
 #     never appears AND that live-path invocations always short-circuit (exit 2/3/4/5)
 #     before the gh step. Would-send paths use --dry-run + WOULD_EXIT assertions only.
 #   - Sandbox isolation: the core resolves .supervisor/telemetry-consent.json and
-#     .supervisor/logs/ from $PWD (send-telemetry-core.sh:42-44), so every invocation
+#     .supervisor/logs/ from $PWD (send-telemetry-core.sh:42-44
+#     [pins: `LOG_DIR="${PWD}/.supervisor/logs"`]), so every invocation
 #     runs with CWD inside a mktemp sandbox. The real repo .supervisor/ is snapshotted
 #     before and asserted byte-identical after.
 #   - Fixtures are generated at runtime (python3, into the sandbox) following the
@@ -340,7 +341,7 @@ assert_match "consent_no_denied_marker" "denied — skipped" "$out"
 assert_not_match "consent_no_not_uninitialised" "consent_uninitialised" "$out"
 
 # (c) malformed JSON -> FAIL-CLOSED. Verified against the code first
-#     (send-telemetry-core.sh:841-843 emits CONSENT=parse_error on any parse
+#     (send-telemetry-core.sh:841-843 [pins: `CONSENT=parse_error`] emits it on any parse
 #     exception; :873-884 routes parse_error into the uninitialised exit-3 arm).
 consent_write '{not valid json'
 out="$(run_core "$FIXDIR/consent-escalated.json")"
@@ -356,7 +357,8 @@ assert_eq "consent_allow_no_repo_exit=4" "4" "$rc"
 assert_match "consent_allow_no_repo_marker" "no_repo_configured" "$out"
 
 # (d2) always_allow + malformed repo (non-empty, no slash) -> exit 1.
-#      Verified against the code first (send-telemetry-core.sh:903-906: repo
+#      Verified against the code first (send-telemetry-core.sh:903-906
+#      [pins: `Validate repo format owner/repo`]: repo
 #      failing the ^owner/repo$ grep emits 'invalid_repo_format repo=<value>'
 #      to stderr and exits 1 — even under --dry-run; no gh reach).
 consent_write '{"telemetry": "always_allow", "telemetry_repo": "invalidformat"}'
@@ -421,7 +423,8 @@ assert_eq "repo_explicit_null_exit=4" "4" "$rc"
 assert_match "repo_explicit_null_marker" "no_repo_configured" "$out"
 
 # ---- Group 6: dedup determinism -------------------------------------------------
-# Hash contract pin (send-telemetry-core.sh:735): sha256("task_id::bucket::primary_error").
+# Hash contract pin (send-telemetry-core.sh:735 [pins: `hash_input = "%s::%s::%s"`]):
+# sha256("task_id::bucket::primary_error").
 # dedup-a.json: task_id=dedup-task-A, status=failed (base 2.0) minus 0.5 for one
 # failed subtask => score 1.5 => bucket "low"; primary_error=BD-9x (subtasks_failed[0]).
 # telemetry-sent.log is appended ONLY on the live send path, so we SEED it here.
