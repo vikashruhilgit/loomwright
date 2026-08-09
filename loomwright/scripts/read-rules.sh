@@ -68,7 +68,7 @@
 #       editing a rule file (add-rule.sh rejects empty/whitespace-only patterns outright), and "reader
 #       fail-safe-skips the unusable part" is this reader's documented posture — so it is a decision.
 #     - ZERO NON-EMPTY positional args (the no-arg call shape, and equally the one-empty-string shape
-#       `"$(git diff --name-only ...)"` produces on an empty diff)
+#       a future caller quoting a possibly-empty command substitution could produce)
 #                                                          ⇒ fail OPEN for EVERY rule (see below).
 #
 #   MATCHING IS A NATIVE bash `case` GLOB — deliberately, and it is NOT `.gitignore` syntax:
@@ -84,9 +84,16 @@
 #   SessionStart nudge when stdout is EMPTY. An empty touched-path set therefore cannot mean "nothing
 #   matches" — that would make every repo that HAS rules start nudging as if it had none. Zero args
 #   means "no scope was supplied", which is an absence of information, not a negative match: fail OPEN.
-#   The SAME reasoning covers a single EMPTY-STRING arg — the documented idiom
-#   `bash read-rules.sh "$(git diff --name-only "$BASE"...HEAD)"` degenerates to exactly that on an
-#   empty/failed diff — so the guard counts NON-EMPTY args, never `$#`.
+#   The SAME reasoning covers a single EMPTY-STRING arg. No current seam produces that shape (the three
+#   live callers pass paths as SEPARATE positional arguments, or make the no-arg call), but it is the
+#   degenerate shape a future caller could easily produce — e.g. quoting a possibly-empty command
+#   substitution, `bash read-rules.sh "$(git diff --name-only "$BASE"...HEAD)"`, which on an empty or
+#   failed diff yields exactly one empty argument — so the guard counts NON-EMPTY args, never `$#`.
+#   CALLER WARNING, same example, non-empty case: that quoting collapses an N-file diff into ONE
+#   newline-joined argument, and the `case` glob is anchored against the WHOLE arg (above), so a scoped
+#   rule would match only if the FIRST line happened to start with its prefix — a SILENT UNDER-MATCH.
+#   Callers must pass touched paths as SEPARATE arguments; this reader deliberately does NOT split an
+#   argument on newlines (that would invent a second calling convention).
 #
 # ROUTING x SUPERSESSION — ORDER OF OPERATIONS (deliberate; pinned by test-read-rules.sh case (k)):
 #       validate/dedup  ->  SUPERSESSION (in jq)  ->  ROUTING (in shell).
@@ -189,9 +196,10 @@ rule_applies() {
   local spec="$1"; shift
   # (1) fail OPEN: no route cell ⇒ repo-wide rule.
   [ -n "$spec" ] || return 0
-  # (2) fail OPEN: no touched paths supplied ⇒ repo-wide call. Counting `$#` is NOT enough: the
-  #     documented caller idiom is `bash read-rules.sh "$(git diff --name-only ...)"`, which on an
-  #     EMPTY diff passes ONE EMPTY-STRING argument. `$# = 1` with nothing to match would route every
+  # (2) fail OPEN: no touched paths supplied ⇒ repo-wide call. Counting `$#` is NOT enough: a caller
+  #     quoting a possibly-empty command substitution — `bash read-rules.sh "$(git diff --name-only
+  #     ...)"`, a shape no current seam uses but a future one could easily write — passes ONE
+  #     EMPTY-STRING argument on an EMPTY diff. `$# = 1` with nothing to match would route every
   #     scoped rule OUT — a degraded diff silently suppressing the house rules, exactly what
   #     skills/self-heal-advisory/SKILL.md promises can never happen. So filter the empties FIRST and
   #     gate on the NON-EMPTY count.

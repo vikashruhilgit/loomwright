@@ -34,15 +34,20 @@
 #                                                (j5) all-routed-out ⇒ EMPTY stdout (no banner),
 #                                                (j6) `case`-glob semantics: `*`/`**` both CROSS `/`
 #                                                (the documented .gitignore contrast), (j7) ONE
-#                                                EMPTY-STRING arg (what the documented
-#                                                `"$(git diff --name-only ...)"` idiom degenerates to
-#                                                on an empty diff) is repo-wide too, exactly like (j4),
+#                                                EMPTY-STRING arg (the degenerate shape a future
+#                                                caller quoting a possibly-empty command substitution
+#                                                could produce) is repo-wide too, exactly like (j4),
 #                                                (j8) a PARTIALLY-empty array (`["", "docs/*"]`) drops
 #                                                the empties and routes on the survivors — EMITTED for
 #                                                a docs path, ABSENT for a non-docs path, and SILENT
 #                                                (no WARN; the fail-open WARN only trips when the WHOLE
 #                                                cell neutralizes to "") — the reader's one documented
-#                                                routing DECISION, previously claimed but unchecked
+#                                                routing DECISION, previously claimed but unchecked,
+#                                                (j9) an EMPTY-STRING arg MIXED with a REAL path
+#                                                behaves exactly like the real path alone (the empty
+#                                                is filtered, routing still happens) — the one
+#                                                combination of the filter-then-count logic that
+#                                                (j4)/(j7)/(j1) leave unasserted
 #   (k) ROUTING x SUPERSESSION ORDER → a rule ROUTED OUT of this call must NOT resurrect the rule it
 #                                                supersedes (supersession is resolved BEFORE routing)
 #   (l) MUTATION CONTROL for (j1) → the SAME non-match fixture is re-run against a copy of the reader
@@ -701,8 +706,10 @@ else
   ok "(j4b) skipped — session-resume.sh unreadable or not a git checkout (citation guard is repo-local)"
 fi
 
-# (j7) THE ONE-EMPTY-STRING CALL — the documented agent idiom
-# `bash read-rules.sh "$(git diff --name-only "$BASE"...HEAD)"` degenerates to exactly ONE EMPTY
+# (j7) THE ONE-EMPTY-STRING CALL — not a shape any current seam produces (the live callers pass paths
+# as SEPARATE positional arguments, or make the no-arg call), but the degenerate shape a future caller
+# quoting a possibly-empty command substitution could easily produce: e.g.
+# `bash read-rules.sh "$(git diff --name-only "$BASE"...HEAD)"` yields exactly ONE EMPTY
 # argument on an empty (or failed) diff. `$# = 1`, but the scope is still ABSENT, so this must behave
 # IDENTICALLY to (j4): every valid rule emitted. Guarding on `$#` instead of the non-empty count
 # routed every scoped rule out and falsified skills/self-heal-advisory/SKILL.md's promise that "an
@@ -784,6 +791,30 @@ if printf '%s\n%s\n' "$errJ8a" "$errJ8b" | grep -qF "applies_to on id=j8-mixed";
 else
   ok "(j8) NO WARN diagnostic for the partially-empty array (silence is the documented decision)"
 fi
+
+# (j9) EMPTY-STRING arg MIXED WITH A REAL PATH — the one combination of the reader's filter-then-count
+# logic that nothing else asserts: (j4) is zero args, (j7) is one empty arg, (j1) is real paths only.
+# The contract is that the empty is FILTERED and the surviving real path still ROUTES — i.e. `'' +
+# docs/architecture.md` must be indistinguishable from `docs/architecture.md` alone. A guard that
+# bailed to fail-OPEN whenever ANY arg was empty (instead of filtering then counting) would leak every
+# scoped rule here while still passing (j1), (j4) and (j7).
+outJ9="$(run_reader_args "$RJ" "" docs/architecture.md)"; rcJ9=$?
+[ "$rcJ9" -eq 0 ] && ok "(j9 mixed empty+real arg) exits 0" || no "(j9) expected exit 0, got $rcJ9"
+# LIVENESS CONTROL — the docs-scoped rule must be PRESENT, so the absence assertion below cannot pass
+# vacuously on an empty/broken stdout.
+echo "$outJ9" | grep -qF -- "- Scoped to docs and markdown" \
+  && ok "(j9) LIVENESS: the docs-scoped rule IS emitted (the empty arg was filtered, routing still ran)" \
+  || no "(j9) docs-scoped rule missing — the absence assertion below would be vacuous: $outJ9"
+if echo "$outJ9" | grep -qF "Scoped to the scripts dir"; then
+  no "(j9) FAIL-OPEN REGRESSION: a scripts-scoped rule leaked when '' was mixed with a docs path"
+else
+  ok "(j9) a rule scoped ELSEWHERE stays ABSENT (mixing '' in does not degrade to a repo-wide call)"
+fi
+# ...and byte-identical to the same call WITHOUT the empty arg — the strongest form of the claim.
+outJ9b="$(run_reader_args "$RJ" docs/architecture.md)"
+[ "$outJ9" = "$outJ9b" ] \
+  && ok "(j9) output is IDENTICAL to passing the real path alone (empty args are inert)" \
+  || no "(j9) '' + docs/architecture.md differed from docs/architecture.md alone"
 
 # ============================================================================
 echo "== (k) ROUTING x SUPERSESSION ORDER — a routed-out rule must not resurrect its predecessor =="
