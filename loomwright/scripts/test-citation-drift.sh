@@ -244,7 +244,19 @@ scan_surface() {
         fi
 
         # (A) line-count floor.
-        total="$(grep -c '' "$root/$resolved" 2>/dev/null || echo 0)"
+        #
+        # `awk END{print NR}`, deliberately, and neither of the two obvious alternatives:
+        #   - `grep -c '' f || echo 0` is BROKEN on a zero-byte file. grep prints `0` and exits
+        #     1 (nothing selected), so the `||` fires and appends a SECOND `0` — `$total` becomes
+        #     the two-line string "0\n0", `[ "$maxn" -gt "$total" ]` errors with "integer
+        #     expression expected", and with no `set -e` that error is swallowed and the `if` is
+        #     simply false. A citation into an empty file would silently bypass this check.
+        #   - `wc -l` counts NEWLINES, so it under-reports by one on a file with no trailing
+        #     newline (measured: 1 for a 2-line unterminated file, where awk and grep both say 2).
+        # awk is correct on both: 0 for an empty file, exit 0, and it counts a final unterminated
+        # line. Verified on this repo's macOS/BSD dev host and GNU/Linux CI.
+        total="$(awk 'END{print NR}' "$root/$resolved" 2>/dev/null)"
+        case "$total" in ''|*[!0-9]*) total=0 ;; esac
         if [ "$maxn" -gt "$total" ]; then
           printf 'OVERRUN\t%s\t%s:%s\t%s\n' "$src" "$resolved" "$maxn" "$total"
           continue
@@ -283,7 +295,8 @@ fi
 SURFACES="$(git ls-files -- \
     'loomwright/scripts/*.sh' 'loomwright/scripts/*.py' \
     'loomwright/skills/*.md' 'loomwright/commands/*.md' 'loomwright/agents/*.md' \
-    'loomwright/docs/*.md' 'scripts/*.sh' 'CLAUDE.md' 'AGENT_GUIDELINES.md' 'README.md' 2>/dev/null \
+    'loomwright/docs/*.md' 'scripts/*.sh' 'CLAUDE.md' 'AGENT_GUIDELINES.md' 'README.md' \
+    '.claude-plugin/README.md' 2>/dev/null \
   | grep -v '^loomwright/docs/SPIKES/' \
   | grep -v '^CHANGELOG.md$' \
   | grep -v '^loomwright/scripts/test-citation-drift.sh$')"
@@ -432,6 +445,15 @@ TGT
   printf 'x\ny\nz\n' > "$FIX/loomwright/skills/dup-a/DUP.md"
   printf 'x\ny\nz\n' > "$FIX/loomwright/skills/dup-b/DUP.md"
   printf '# see DUP.md:2\n' > "$FIX/loomwright/scripts/ambiguous.sh"
+  # 10. A citation into a ZERO-BYTE file must still trip the (A) floor. No real citation points
+  #     into an empty file, but the previous `grep -c '' || echo 0` idiom produced "0\n0" here and
+  #     silently bypassed the check — and every other fixture target has content, so nothing
+  #     would have caught it. Also covers the unterminated-final-line case, which `wc -l`
+  #     under-counts by one.
+  : > "$FIX/loomwright/scripts/emptytarget.sh"
+  printf '# see emptytarget.sh:1\n' > "$FIX/loomwright/scripts/emptycite.sh"
+  printf 'one\ntwo' > "$FIX/loomwright/scripts/noeol.sh"          # no trailing newline
+  printf '# see noeol.sh:2 [pins: `two`]\n' > "$FIX/loomwright/scripts/noeolcite.sh"
   # 9. A pin literal containing `]` must survive parsing intact (JSON / character-class pins).
   printf 'p\nq\nmatch [0-9] here\nr\n' > "$FIX/loomwright/scripts/brackety.sh"
   printf '# see brackety.sh:3 [pins: `match [0-9] here`]\n' > "$FIX/loomwright/scripts/bracketcite.sh"
@@ -525,6 +547,19 @@ TGT
     "EXACT-MATCHED") ok "(M12) the ratchet allowlist matches whole entries only — no substring exemptions" ;;
     *SUBSTRING-MATCHED*) no "(M12) allowlist matched a SUBSTRING — one entry silently exempts a different citation" ;;
     *) no "(M12) allowlist failed to match its own exact entry — the ratchet would fire on listed citations: '$m12'" ;;
+  esac
+
+  M_EMPTY="$(scan_surface "$FIX" "$FIX/loomwright/scripts/emptycite.sh")"
+  M_NOEOL="$(scan_surface "$FIX" "$FIX/loomwright/scripts/noeolcite.sh")"
+
+  case "$M_EMPTY" in
+    OVERRUN*) ok "(M13) a citation into a ZERO-BYTE file trips the (A) floor (no '0\\n0' bypass)" ;;
+    *)        no "(M13) an empty-file citation bypassed check (A) — verdict was '$M_EMPTY'" ;;
+  esac
+
+  case "$M_NOEOL" in
+    OK*) ok "(M14) the final line of a file with NO trailing newline counts (wc -l would under-count)" ;;
+    *)   no "(M14) an unterminated final line was miscounted — verdict was '$M_NOEOL'" ;;
   esac
 fi
 
