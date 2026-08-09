@@ -15,7 +15,11 @@
 #   enforcement (enum)                EXACTLY "advisory" | "must"; any other value ⇒ SKIP.
 #   check       (string | null)       A runnable shell string OR null. EMITTED AS DATA ONLY — NEVER RUN.
 #   provenance  (object)
-#   applies_to  (optional)            RESERVED for slice 3b-ii enforcement filtering — INERT in v1.
+#   applies_to  (optional)            ACTIVE path routing: null / absent ⇒ the rule is REPO-WIDE; a
+#                                     non-empty ARRAY OF STRINGS ⇒ the rule is emitted only when at
+#                                     least one touched path (a positional arg) matches at least one
+#                                     of its `case`-globs. See "PATH ROUTING" below. Every ambiguous
+#                                     shape fails OPEN (rule emitted repo-wide).
 #   supersedes  (optional string)     Curation/anti-rot (ST-1). Names the `id` of ANOTHER rule this one
 #                                     replaces. See "SUPERSESSION" below.
 #
@@ -49,8 +53,40 @@
 #   node — never an open-ended/recursive graph traversal), so an arbitrarily malformed / cyclic
 #   `supersedes` graph can never loop or hang the reader (rule 3: "Cycles cannot loop by construction").
 #
-# v1 "applicable = ALL valid rules" (§3): no path/scope filtering. Positional args are accepted but
-# are informational / forward-compat ONLY — they do NOT change v1 output. `applies_to` is inert in v1.
+# PATH ROUTING (`applies_to`, §3 — ACTIVE; the positional args are a REAL filter, not informational):
+#   Each positional arg is a TOUCHED PATH (repo-relative, as the seams pass them). A surviving rule is
+#   emitted when `rule_applies` says so:
+#     - `applies_to` null / key absent                     ⇒ REPO-WIDE, always emitted.
+#     - `applies_to` a non-empty ARRAY OF STRINGS          ⇒ emitted iff SOME touched path matches SOME
+#                                                            pattern, via a native bash `case` glob.
+#     - ANY other shape (non-array; array holding a non-string; empty array; array whose entries are
+#       all empty after tab/newline/US neutralization)     ⇒ MALFORMED ⇒ fail OPEN (emitted repo-wide)
+#                                                            + a one-line diagnostic to stderr + memory.log.
+#     - ZERO positional args (the no-arg call shape)       ⇒ fail OPEN for EVERY rule (see below).
+#
+#   MATCHING IS A NATIVE bash `case` GLOB — deliberately, and it is NOT `.gitignore` syntax:
+#     `*` and `**` are EQUIVALENT and BOTH cross `/`. `"loomwright/scripts/*"` matches
+#     `loomwright/scripts/a/b/c.sh`, unlike `.gitignore` where `*` stops at a path separator. There is
+#     no `!` negation and no leading-`/` anchoring; a pattern is matched against the WHOLE arg string,
+#     so it is effectively anchored at both ends (use a trailing `*` to match a subtree). `case` is
+#     used precisely because it is portable by construction (no `shopt -s globstar`, no `extglob`, no
+#     GNU/BSD tool-flavour divergence) — and matching is done in SHELL, never in `jq`.
+#
+#   THE NO-ARG CALL IS REPO-WIDE, AND THAT IS LOAD-BEARING (do not "tighten" it): `scripts/session-
+#   resume.sh`'s `rules_nudge()` calls this reader with NO arguments and fires a "no house rules found"
+#   SessionStart nudge when stdout is EMPTY. An empty touched-path set therefore cannot mean "nothing
+#   matches" — that would make every repo that HAS rules start nudging as if it had none. Zero args
+#   means "no scope was supplied", which is an absence of information, not a negative match: fail OPEN.
+#
+# ROUTING x SUPERSESSION — ORDER OF OPERATIONS (deliberate; pinned by test-read-rules.sh case (k)):
+#       validate/dedup  ->  SUPERSESSION (in jq)  ->  ROUTING (in shell).
+#   Supersession is resolved FIRST, over the FULL valid set, BEFORE any path routing. Rationale:
+#   supersession answers "which rule is CURRENT?" — a property of the STORE, identical on every call —
+#   whereas routing answers "which current rules are RELEVANT to the paths this caller touched?" — a
+#   property of the CALL. Running routing first would let a RETIRED rule RESURRECT on any call whose
+#   path set happened to route its replacement away, making the store's own curation decision depend on
+#   the caller's diff. So: retired stays retired (a superseded rule is never emitted, whatever the path
+#   set), and a rule routed out of THIS call still hides exactly what it would otherwise have hidden.
 #
 # DETERMINISTIC MERGE ORDER (§2): glob .agent/rules/*.json, process files in LC_ALL=C
 # repo-relative-path-sorted order; within a file, array elements by index. The FIRST valid occurrence
@@ -85,7 +121,8 @@
 #   - malformed JSON                            → fail-safe skip, exit 0
 #   - zero valid rules survive                  → EMPTY (no banner), exit 0
 #
-# Usage:  read-rules.sh [path ...]   (args informational in v1; prints valid rules to stdout)
+# Usage:  read-rules.sh [touched-path ...]   (args are the ROUTING scope — see "PATH ROUTING" above;
+#                                             NO args = repo-wide. Prints applicable rules to stdout.)
 # Exit:   always 0; diagnostics go to stderr + .supervisor/logs/memory.log.
 
 set -uo pipefail   # `set -e` intentionally omitted — a read must NEVER fail its caller.
@@ -103,9 +140,66 @@ log_skip() {
   printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" "$1" >> "$LOG" 2>/dev/null || true
 }
 
-# 1. Input contract (no-hang). The reader NEVER reads its OWN stdin (fd 0) in v1: positional args (if
-#    any) are purely informational/forward-compat (§4) and v1 output is always "all valid rules"
-#    regardless. The `while read` loops further below all consume REDIRECTED temp files
+log_note() {
+  # $1 = message; memory.log ONLY (never stdout, and deliberately NOT stderr). Used for the ROUTINE
+  # "this rule was routed out for this path set" trace: it happens on every ordinary scoped call, so
+  # putting it on stderr would spam an interactive caller's terminal for normal, correct behaviour.
+  # The ambiguous / fail-OPEN paths still use log_skip (stderr + log) — those a caller should see.
+  printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" "$1" >> "$LOG" 2>/dev/null || true
+}
+
+# US (unit separator, 0x1F) is the intra-cell delimiter for the ROUTE cell that jq emits: a rule's
+# `applies_to` patterns arrive as ONE tab-delimited field with the patterns US-joined. jq neutralizes
+# tab/newline/US inside every pattern first (same technique the rendered cells already use), so the
+# split below is unambiguous by construction. 0x1F is chosen because it is the byte literally reserved
+# for this and can never be a meaningful character in a path glob.
+US=$'\037'
+
+# rule_applies <route-cell> [touched-path ...] — the PATH ROUTING predicate (§3; see "PATH ROUTING" in
+# the header docstring). Exit 0 = the rule applies and is emitted; exit 1 = routed out for this call.
+#
+# FAILS OPEN on every ambiguity, in two distinct ways, both load-bearing:
+#   1. An EMPTY route cell means "repo-wide" — it is what jq emits for `applies_to: null`, for an
+#      absent key, AND for every MALFORMED shape (non-array / non-string element / empty array). The
+#      malformed shapes additionally get a stderr+log diagnostic from the WARN channel; the predicate
+#      itself just says "applies".
+#   2. A ZERO-LENGTH touched-path set means "no scope supplied" — an absence of information, NOT a
+#      negative match. This is the `session-resume.sh:311` no-arg call shape; see the header docstring.
+#
+# Matching is a native bash `case` glob against the WHOLE arg (`*`/`**` are equivalent and BOTH cross
+# `/`). The pattern is expanded UNQUOTED into the case label — that is what makes it a glob rather than
+# a literal. A `|` inside an expanded pattern is a LITERAL character, not `case` alternation (the case
+# statement is parsed before the expansion happens), so a pattern can never smuggle in extra branches.
+rule_applies() {
+  local spec="$1"; shift
+  # (1) fail OPEN: no route cell ⇒ repo-wide rule.
+  [ -n "$spec" ] || return 0
+  # (2) fail OPEN: no touched paths supplied ⇒ repo-wide call (the no-arg shape).
+  [ "$#" -gt 0 ] || return 0
+
+  local rest pat p
+  rest="$spec"
+  while [ -n "$rest" ]; do
+    case "$rest" in
+      *"$US"*) pat="${rest%%"$US"*}"; rest="${rest#*"$US"}" ;;
+      *)       pat="$rest";           rest="" ;;
+    esac
+    # An empty pattern is skipped rather than used: `case x in )` is a syntax error, and an empty
+    # glob would match nothing anyway. jq already drops empties, so this is belt-and-braces.
+    [ -n "$pat" ] || continue
+    for p in "$@"; do
+      # shellcheck disable=SC2254 — $pat is UNQUOTED on purpose: this IS the glob match.
+      case "$p" in
+        $pat) return 0 ;;
+      esac
+    done
+  done
+  return 1
+}
+
+# 1. Input contract (no-hang). The reader NEVER reads its OWN stdin (fd 0): positional args (if any)
+#    are the ROUTING scope (§4 — see "PATH ROUTING" above), and stdin is never consulted for them or
+#    for anything else. The `while read` loops further below all consume REDIRECTED temp files
 #    (`done < "$files_list"`, `< "$valid_lines"`, `< "$skip_lines"`, `< "$render"`) — never the inherited
 #    fd 0 — so a caller's open-but-idle stdin pipe (a hook/agent in a non-TTY context) can never hang
 #    this reader. (No guard branch is needed to enforce this; the absence of any read FROM fd 0 IS the
@@ -179,6 +273,24 @@ valid_lines="$(mktemp)"; skip_lines="$(mktemp)"
 trap 'rm -f "$files_list" "$combined" "$valid_lines" "$skip_lines" 2>/dev/null' EXIT
 
 jq -rs '
+  # route_spec($at) — normalize a rule s `applies_to` into the ROUTE CELL the shell s rule_applies()
+  # consumes: either "" (repo-wide / fail-OPEN) or the US-joined (0x1F) list of glob patterns.
+  # Matching itself is NEVER done here — jq only NORMALIZES; the `case`-glob match lives in the shell
+  # (see "PATH ROUTING" in the header docstring). Fail-OPEN shapes that all collapse to "":
+  #   null / absent key (the ordinary repo-wide rule), non-array, array holding a non-string element,
+  #   empty array, and an array whose entries are all empty after tab/newline/US neutralization.
+  # Tab/newline/US are stripped from each pattern so they can never break the line or cell framing.
+  def route_spec($at):
+    ( if ($at | type) == "array"
+        then ( $at | map( if type == "string" then gsub("[\t\n\u001f]"; "") else null end ) )
+        else null
+      end ) as $p0
+    | ( if $p0 == null then null
+        elif ($p0 | any(.[]; . == null)) then null
+        else ($p0 | map(select(length > 0)))
+        end ) as $p1
+    | ( if ($p1 == null) or (($p1 | length) == 0) then "" else ($p1 | join("\u001f")) end );
+
   # Input: a stream of {fi, ei, obj} rows, already in file-sorted, then array-index order.
   sort_by([.fi, .ei])
   | reduce .[] as $row ( {seen: {}, out: []};
@@ -278,11 +390,24 @@ jq -rs '
           | map(select( (.id) as $rid | ($hidden_ids | index($rid)) != null ))
           | map("SKIP\tsuperseded id=" + .id)
         )
+      # WARN channel — one line per NON-HIDDEN rule whose `applies_to` is present but malformed
+      # (non-array / non-string element / empty array / all-empty-after-neutralization). The rule is
+      # still emitted repo-wide (fail OPEN, per the PATH ROUTING contract); this only tells the caller
+      # via stderr + memory.log that its routing intent was unusable. NEVER reaches stdout.
+      + ( $ok_objs
+          | map(select( (.id) as $rid | ($hidden_ids | index($rid)) == null ))
+          | map(select( (.applies_to != null) and (route_spec(.applies_to) == "") ))
+          | map("WARN\tread-rules: malformed or empty applies_to on id=" + (.id | gsub("[\t\n]"; " "))
+                + " — fail-OPEN: rule emitted repo-wide")
+        )
       + ( $ok_objs
           | map(select( (.id) as $rid | ($hidden_ids | index($rid)) == null ))
           | sort_by([.category, .id])
           | map(
               "RULE\t"
+              # ROUTE cell (field 1) — the US-joined `applies_to` globs, or "" for repo-wide. The
+              # shell s rule_applies() consumes exactly this; jq never matches, it only normalizes.
+              + route_spec(.applies_to)                    + "\t"
               + (.id          | gsub("[\t\n]"; " "))      + "\t"
               + (.category    | gsub("[\t\n]"; " "))      + "\t"
               + (.enforcement | gsub("[\t\n]"; " "))      + "\t"
@@ -294,7 +419,11 @@ jq -rs '
   | .[]
 ' "$combined" 2>/dev/null > "$valid_lines" || true
 
-# Partition jq output into SKIP diagnostics (→ log only) and RULE lines (→ render).
+# Partition jq output into SKIP diagnostics (→ log only), WARN diagnostics (→ stderr + log), and RULE
+# lines. THIS is where PATH ROUTING is applied — the second and last filter, running AFTER jq has
+# already resolved supersession over the full valid set (see "ROUTING x SUPERSESSION" in the header
+# docstring). `rule_count` counts only rules that SURVIVE routing, so a call whose path set matches
+# nothing correctly emits NOTHING — no banner, no sentinel — exactly like a store with no valid rules.
 : > "$skip_lines"
 rule_count=0
 render="$(mktemp)"; : > "$render"
@@ -302,7 +431,23 @@ trap 'rm -f "$files_list" "$combined" "$valid_lines" "$skip_lines" "$render" 2>/
 while IFS= read -r line; do
   case "$line" in
     SKIP$'\t'*) printf '%s\n' "${line#SKIP$'\t'}" >> "$skip_lines" ;;
-    RULE$'\t'*) printf '%s\n' "$line" >> "$render"; rule_count=$((rule_count + 1)) ;;
+    WARN$'\t'*) log_skip "${line#WARN$'\t'}" ;;
+    RULE$'\t'*)
+      # Field 1 of the body is the ROUTE cell; the remaining 5 fields are the render payload.
+      route_body="${line#RULE$'\t'}"
+      route_spec_cell="${route_body%%$'\t'*}"
+      route_rest="${route_body#*$'\t'}"           # id \t category \t enforcement \t statement \t check
+      if rule_applies "$route_spec_cell" "$@"; then
+        # STRIP the ROUTE cell before rendering. Load-bearing, not cosmetic: TAB is an IFS *whitespace*
+        # character, so `IFS=$'\t' read` FOLDS a run of tabs into one delimiter — an empty ROUTE cell
+        # (the ordinary repo-wide case) would silently shift every later field left by one and render
+        # the id as the category. Routing has already been decided here, so the cell has no further
+        # consumer; the render loop below keeps its original 6-field shape with no empty cell.
+        printf 'RULE\t%s\n' "$route_rest" >> "$render"; rule_count=$((rule_count + 1))
+      else
+        log_note "read-rules: routed out for this path set (id=${route_rest%%$'\t'*})"
+      fi
+      ;;
   esac
 done < "$valid_lines"
 
@@ -313,8 +458,11 @@ if [ -s "$skip_lines" ]; then
   done < "$skip_lines"
 fi
 
-# 6. EMPTY on no-valid-rule — zero valid rules survive ⇒ emit NOTHING (no banner), exit 0, so
-#    machine consumers can gate enrichment on NON-EMPTY stdout (mirrors read-bridge.sh).
+# 6. EMPTY on nothing-applicable — zero rules survive validation + supersession + ROUTING ⇒ emit
+#    NOTHING (no banner), exit 0, so machine consumers can gate enrichment on NON-EMPTY stdout
+#    (mirrors read-bridge.sh). Note the no-arg call can never reach here via routing: routing fails
+#    OPEN on an empty path set, so a store with >=1 applicable rule always emits for `read-rules.sh`
+#    with no args — which is what keeps session-resume.sh's nudge from firing on a repo that HAS rules.
 [ "$rule_count" -gt 0 ] || exit 0
 
 # 7. Emit the advisory block. Header is EXACTLY the subordinate-to-CLAUDE.md banner from §5. Each

@@ -17,6 +17,12 @@
 #   (F) atomic write + read-back verify (written file parses + contains the new id).
 #   (G) value validation: bad --enforcement (blocking), empty --statement, non-string non-null check.
 #   (H) confirm-only: no --confirm + non-TTY ⇒ DRY-RUN (plan printed, NO file written).
+#   (M) --applies-to (PATH ROUTING): REPEATABLE (N flags ⇒ N-element array, order preserved), a single
+#       flag still authors an ARRAY, OMITTED ⇒ present-and-null (repo-wide, historical default),
+#       traversal/hostile patterns (`../`, `a/../b`, absolute `/…`, `~/…`, empty) REJECTED non-zero
+#       with NO file written, one bad pattern among repeated flags aborts the WHOLE write, the flag is
+#       rejected alongside --retract, and a writer→reader ROUND TRIP proves what is authored is what
+#       read-rules.sh actually routes on.
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -396,6 +402,97 @@ if [ "$RC" -ne 0 ] && [ "$(count_rule_files "$RL2")" = "0" ]; then
   ok "(L2) hostile category alongside --retract still rejected, no traversal write"
 else
   no "(L2) hostile category + --retract NOT rejected (rc=$RC files=$(count_rule_files "$RL2"))"
+fi
+
+# ============================================================================
+echo "== (M) --applies-to (PATH ROUTING): repeatable, defaults to null, rejects traversal =="
+
+# (M1) REPEATABLE — N flags author an N-element array, in the order supplied.
+RM1="$(new_repo)"
+run_writer "$RM1" --category "Routing" --statement "Scoped rule one" \
+  --applies-to "loomwright/scripts/*" --applies-to "*.sh" --confirm
+if [ "$RC" -eq 0 ]; then
+  got="$(jq -c '.[0].applies_to' "$RM1/.agent/rules/routing.json" 2>/dev/null)"
+  [ "$got" = '["loomwright/scripts/*","*.sh"]' ] \
+    && ok "(M1) two --applies-to flags author a 2-element array in order" \
+    || no "(M1) expected [\"loomwright/scripts/*\",\"*.sh\"], got: $got"
+else
+  no "(M1) write with two --applies-to flags failed (rc=$RC): $OUT"
+fi
+
+# (M1b) a SINGLE flag authors a 1-element array (not a bare string).
+RM1B="$(new_repo)"
+run_writer "$RM1B" --category "Routing" --statement "Single scope" --applies-to "src/**" --confirm
+got="$(jq -c '.[0].applies_to' "$RM1B/.agent/rules/routing.json" 2>/dev/null)"
+[ "$RC" -eq 0 ] && [ "$got" = '["src/**"]' ] \
+  && ok "(M1b) one --applies-to flag authors a 1-element ARRAY (never a bare string)" \
+  || no "(M1b) expected [\"src/**\"], got: $got (rc=$RC)"
+
+# (M2) OMITTED ⇒ applies_to is explicitly null (repo-wide) — the historical default, unchanged.
+RM2="$(new_repo)"
+run_writer "$RM2" --category "Routing" --statement "Repo wide rule" --confirm
+if [ "$RC" -eq 0 ]; then
+  got="$(jq -c '.[0].applies_to' "$RM2/.agent/rules/routing.json" 2>/dev/null)"
+  [ "$got" = "null" ] \
+    && ok "(M2) --applies-to omitted ⇒ applies_to: null (repo-wide default preserved)" \
+    || no "(M2) expected null applies_to when the flag is omitted, got: $got"
+  # ...and the key is PRESENT (null is a meaningful value here, not an omitted member like supersedes).
+  jq -e '.[0] | has("applies_to")' "$RM2/.agent/rules/routing.json" >/dev/null 2>&1 \
+    && ok "(M2) the applies_to key is present-and-null (not omitted)" \
+    || no "(M2) applies_to key missing entirely"
+else
+  no "(M2) plain write failed (rc=$RC): $OUT"
+fi
+
+# (M3) TRAVERSAL / hostile patterns REJECTED with a non-zero exit and NO file written — mirroring the
+# hostile-category rejection in section (A). A rejected pattern is never silently sanitized.
+for badpat in "../escape/*" "a/../b" "/etc/passwd" "~/secrets/*" ""; do
+  RM3="$(new_repo)"
+  run_writer "$RM3" --category "Routing" --statement "Hostile pattern rule" --applies-to "$badpat" --confirm
+  if [ "$RC" -ne 0 ] && [ "$(count_rule_files "$RM3")" = "0" ]; then
+    ok "(M3) --applies-to '$badpat' REJECTED (rc=$RC) with no file written"
+  else
+    no "(M3) --applies-to '$badpat' NOT rejected (rc=$RC files=$(count_rule_files "$RM3"))"
+  fi
+done
+# (M3b) a rejection among REPEATED flags aborts the whole write — one bad pattern poisons the add,
+# it is never partially applied.
+RM3B="$(new_repo)"
+run_writer "$RM3B" --category "Routing" --statement "Mixed patterns" \
+  --applies-to "src/*" --applies-to "../escape" --confirm
+if [ "$RC" -ne 0 ] && [ "$(count_rule_files "$RM3B")" = "0" ]; then
+  ok "(M3b) one hostile pattern among repeated flags aborts the entire write (no partial apply)"
+else
+  no "(M3b) mixed good/hostile --applies-to was not rejected (rc=$RC files=$(count_rule_files "$RM3B"))"
+fi
+
+# (M4) --applies-to is an ADD-only flag: combining it with --retract is rejected outright (R1).
+RM4="$(new_repo)"
+run_writer "$RM4" --retract --target "x" --reason "y" --applies-to "src/*" --confirm
+if [ "$RC" -ne 0 ] && printf '%s' "$OUT" | grep -qF -- "--applies-to"; then
+  ok "(M4) --retract + --applies-to REJECTED, and the diagnostic names the offending flag"
+else
+  no "(M4) --retract + --applies-to not rejected with a naming diagnostic (rc=$RC): $OUT"
+fi
+
+# (M5) ROUND-TRIP: what this writer authors is exactly what read-rules.sh routes on. Guards the
+# writer/reader contract seam — a pattern that writes fine but never matches would be a dead rule.
+RM5="$(new_repo)"
+run_writer "$RM5" --category "Routing" --statement "Round trip scoped rule" \
+  --applies-to "loomwright/scripts/*" --confirm
+if [ "$RC" -eq 0 ]; then
+  rt_in="$( cd "$RM5" && bash "$SCRIPT_DIR/read-rules.sh" loomwright/scripts/x.sh 2>/dev/null )"
+  rt_out="$( cd "$RM5" && bash "$SCRIPT_DIR/read-rules.sh" docs/x.md 2>/dev/null )"
+  rt_noarg="$( cd "$RM5" && bash "$SCRIPT_DIR/read-rules.sh" 2>/dev/null )"
+  if echo "$rt_in" | grep -qF -- "- Round trip scoped rule" \
+     && ! echo "$rt_out" | grep -qF "Round trip scoped rule" \
+     && echo "$rt_noarg" | grep -qF -- "- Round trip scoped rule"; then
+    ok "(M5) writer→reader round trip: in-scope emits, out-of-scope ABSENT, no-arg repo-wide"
+  else
+    no "(M5) round trip failed — in:[$rt_in] out:[$rt_out] noarg:[$rt_noarg]"
+  fi
+else
+  no "(M5) round-trip write failed (rc=$RC): $OUT"
 fi
 
 echo

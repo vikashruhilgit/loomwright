@@ -1,6 +1,6 @@
 ---
 name: rules
-description: Protocol authority for the /rules command and the committed .agent/rules/ house-rules substrate — the rule JSON schema + per-object fail-safe-skip validation, the v1 "applicable = all valid rules" read contract, the scan-to-suggest spec, the advisory/must/no-op-when-absent reader contract (read-rules.sh), the /rules add path-contained atomic-append write discipline (mechanized in add-rule.sh, with an optional `--supersedes` flag), the /rules retract remove-only write discipline (also mechanized in add-rule.sh), the /rules check human-invoked+confirmed execution semantics (mechanized in rules-check.sh), the single-hop supersession read contract, and the check-is-arbitrary-shell trust boundary (unattended `check` execution is now GATED via rules-check.sh --no-cmd). Use when running /rules or modifying any part of the rules substrate.
+description: Protocol authority for the /rules command and the committed .agent/rules/ house-rules substrate — the rule JSON schema + per-object fail-safe-skip validation, the `applies_to` path-routing read contract (bash `case` globs, fail-OPEN on every ambiguity and on a zero-arg call, resolved AFTER supersession), the scan-to-suggest spec, the advisory/must/no-op-when-absent reader contract (read-rules.sh), the /rules add path-contained atomic-append write discipline (mechanized in add-rule.sh, with an optional `--supersedes` flag), the /rules retract remove-only write discipline (also mechanized in add-rule.sh), the /rules check human-invoked+confirmed execution semantics (mechanized in rules-check.sh), the single-hop supersession read contract, and the check-is-arbitrary-shell trust boundary (unattended `check` execution is now GATED via rules-check.sh --no-cmd). Use when running /rules or modifying any part of the rules substrate.
 version: "1.2.0"
 lastUpdated: "2026-07-23"
 ---
@@ -53,10 +53,29 @@ Protocol authority for `/rules` (see `${CLAUDE_PLUGIN_ROOT}/commands/rules.md` f
 | `enforcement` | enum | **yes** | EXACTLY one of `advisory` \| `must`. Any other value ⇒ the object is SKIPPED (§2). |
 | `check` | string \| null | **yes** | A runnable shell string OR `null`. **Emitted as DATA only by the reader — NEVER executed by it** (§5, §9). |
 | `provenance` | object | **yes** | e.g. `{source, added, ...}`. `source` records who/what added the rule; `added` is a UTC ISO-8601 timestamp. |
-| `applies_to` | path-glob / language / category | **no (optional)** | **RESERVED for a later slice's path/scope filtering. STILL inert — NOT consulted by the v1 reader (even after 3b-ii wired advisory enforcement, `applies_to` remains unactivated).** Forward-compat only — present in the schema so a later slice needs no schema change. |
+| `applies_to` | `null` \| array of path globs | **no (optional)** | **ACTIVE path routing (§3).** `null` or absent ⇒ the rule is **repo-wide**. A **non-empty array of strings** ⇒ the rule is emitted only when a touched path matches one of its globs. Every other shape (non-array, non-string element, empty array) **fails OPEN** — the rule is emitted repo-wide plus a diagnostic. Authored via `/rules add --applies-to <glob>` (repeatable — §7). **Read the glob-syntax note below before writing one.** |
 | `supersedes` | string (rule `id`) | **no (optional)** | **Curation/anti-rot.** Names the `id` of an OLDER rule this one replaces. A LIVE rule's `supersedes` HIDES the named rule from `read-rules.sh` output (single-hop, non-transitive — see §5). Stamped only via `/rules add --supersedes <rule-id>`; OMITTED entirely (never an explicit `null`) when not supplied. A malformed / self-referential / dangling value is fail-safe-ignored by the reader (demote-never-crash, §5) — never a crash, never a suppression of the entry that carries it. |
 
 The `check` value is **arbitrary shell** authored by anyone who clones or PRs the repo. Treat it as untrusted data everywhere except the one human-invoked + confirmed path (§8, §9).
+
+### `applies_to` glob syntax — bash `case` globs, **NOT** `.gitignore` syntax
+
+Matching is a **native bash `case` glob**, chosen because it is portable by construction (no `shopt -s globstar`, no `extglob`, no GNU/BSD tool-flavour divergence) and because matching must never happen inside `jq`. Read this before authoring a pattern — the semantics differ from the syntax most people have in their fingers:
+
+| | `case`-glob (what `applies_to` uses) | `.gitignore` (what you may be expecting) |
+|---|---|---|
+| `*` | Matches **any** characters **including `/`** | Stops at `/` |
+| `**` | **Identical to `*`** — no special meaning | "any number of directories" |
+| Anchoring | Matched against the **whole** path string, so effectively anchored at **both** ends | Leading `/` anchors to the repo root |
+| Negation (`!pattern`) | **Not supported** — a `!` is just a literal character | Re-includes a previously excluded path |
+| Directory suffix (`dir/`) | Not special; matches a path literally ending in `/`, which no touched path does | Matches the directory's contents |
+
+Consequences worth internalizing:
+
+- `"loomwright/scripts/*"` matches `loomwright/scripts/a/b/c.sh` — the `*` **crosses `/`**. If you want a single directory level, there is no way to express it here; scope by prefix instead.
+- Because a pattern is matched against the whole path, `"*.md"` matches `docs/a/b/c.md` **and** `README.md`, while `"docs"` matches **only** the literal path `docs` — for a subtree you want `"docs/*"` (or, equivalently, `"docs/**"`).
+- Touched paths arrive **repo-relative**, exactly as the seams pass them. An absolute or `../`-bearing pattern could therefore only ever match nothing, which is why `/rules add --applies-to` rejects both at write time (§7).
+- A `|` inside a pattern is a **literal** character, never `case` alternation — the `case` statement is parsed before the pattern is expanded, so a pattern can never smuggle in extra branches. Use one `--applies-to` flag per alternative.
 
 ---
 
@@ -82,11 +101,23 @@ This makes the merged set a pure function of the committed files — identical a
 
 ---
 
-## §3 — v1 "applicable = ALL valid rules" (no guessing)
+## §3 — "applicable" = valid, non-superseded, **and routed in** (`applies_to`)
 
-In v1 there is **NO path/scope filtering**. The reader emits **ALL valid rules** in the merged set — full stop. There is no heuristic that tries to guess which rules apply to a given file or change; doing so without an explicit, tested contract would be guessing, so v1 doesn't.
+`applies_to` is **ACTIVE**: it is an explicit, tested path filter, not a heuristic. Nothing here guesses which rules apply to a change — a rule is scoped only by patterns its author wrote down.
 
-`applies_to` exists in the schema (§1) but is **still inert** — reserved for a later slice, which will define and test path/scope/language filtering (3b-ii wired advisory enforcement WITHOUT activating `applies_to`). Until then, "applicable" means "valid".
+A rule is emitted when **all three** hold:
+
+1. it survives per-object validation (§2), **and**
+2. it is not hidden by a live `supersedes` edge (§5), **and**
+3. `rule_applies` says it is in scope for this call:
+   - `applies_to` **`null` or absent** ⇒ **repo-wide**, always emitted (the default, and what every rule authored before routing carries);
+   - a **non-empty array of strings** ⇒ emitted iff **some** touched path matches **some** pattern (bash `case` glob — see the syntax table in §1);
+   - **any other shape** — non-array, array containing a non-string, empty array — ⇒ **MALFORMED ⇒ fail OPEN**: the rule is emitted repo-wide and a one-line diagnostic goes to stderr + `.supervisor/logs/memory.log` (never stdout);
+   - **zero positional args** ⇒ **fail OPEN for every rule** — see the next paragraph.
+
+**The no-arg call is repo-wide, and that is load-bearing.** `scripts/session-resume.sh`'s `rules_nudge()` calls the reader with **no arguments** and fires a "no house rules found" SessionStart nudge when stdout is **empty**. An empty touched-path set therefore cannot mean "nothing matches" — that would make every repo that *has* rules start nudging as if it had none, in a firing surface CLAUDE.md calls pinned. Zero args means "no scope was supplied": an absence of information, not a negative match.
+
+**Order of operations is `validate/dedup → supersession → routing`, deliberately.** Supersession answers *"which rule is current?"* — a property of the **store**, identical on every call. Routing answers *"which current rules are relevant to the paths this caller touched?"* — a property of the **call**. If routing ran first, a **retired** rule would **resurrect** on any call whose path set happened to route its replacement away, making the store's own curation decision depend on the caller's diff. So a rule routed out of one call still hides exactly what it would otherwise have hidden. (Pinned by `test-read-rules.sh` case (k); rationale restated in `read-rules.sh`'s header docstring.)
 
 ---
 
@@ -94,7 +125,7 @@ In v1 there is **NO path/scope filtering**. The reader emits **ALL valid rules**
 
 `read-rules.sh` mirrors `read-postmortem.sh` / `read-bridge.sh`:
 
-- It accepts **OPTIONAL positional args**. In v1 these are **informational / forward-compat only — they do NOT change the v1 output** (which is always "all valid rules"). They reserve the calling shape a later `applies_to` slice will use for scope filtering.
+- It accepts **OPTIONAL positional args**, and they are the **routing scope**: each arg is a repo-relative touched path, filtered against `applies_to` per §3. **They change the output** — a rule scoped away from every supplied path is absent from stdout. Passing **no** args is the repo-wide call (§3).
 - It **NEVER blocks on stdin in a non-TTY context.** Args take precedence; **if no args are given AND stdin is not a TTY, the reader does NOT read stdin.** So a future hook / agent caller (whose stdin is an open-but-idle pipe) can never hang it.
 
 ---
@@ -141,6 +172,8 @@ Append-only authoring. The discipline mirrors the setup settings-merge (parse-ga
 4. **Stamp provenance.** Set `provenance.source = "/rules add"` (or the user-provided source) and `provenance.added = <UTC ISO-8601>`.
 5. **Append via jq, atomically.** Build the new object with `jq -n --arg …` (never string-interpolate untrusted input), append to the array, write to a **temp file**, then **atomic `mv`** over the target.
 6. **Verify.** Read the appended rule back (e.g. via `read-rules.sh` or a `jq` re-parse) to confirm it landed and parses.
+
+**`--applies-to <glob>` (path routing, optional, REPEATABLE).** An optional flag on the ADD action. N flags author an N-element `applies_to` array, in the order supplied; **omitted ⇒ `applies_to: null`** (repo-wide — the historical default, and the value every pre-routing rule carries). Patterns are bash `case` globs, **not** `.gitignore` patterns — read the syntax table in §1 before writing one. Validated at write time so this writer can never author a scope that is silently dead or that walks out of the repo: each pattern must be non-empty, free of newline/CR/tab (the reader neutralizes all three, so accepting one would store a pattern that means something other than what was typed), free of `..`, and neither absolute (`/…`) nor home-relative (`~…`) — touched paths arrive repo-relative, so such a pattern could only ever match nothing. A rejection **aborts the whole add** (non-zero, nothing written), never a partial apply — the same reject-never-sanitize discipline as the `category` guard.
 
 **`--supersedes <rule-id>` (curation/anti-rot, optional).** An optional flag on the ADD action — NOT a separate verb. Stamps a `supersedes` member on the newly-authored object naming the id of an OLDER rule it replaces; OMITTED entirely (never an explicit `null`) when not supplied. Purely declarative: the named older rule is left untouched in its file — `read-rules.sh` is what hides it at read time (§5). Validated non-empty and newline-free at write time; a self-reference against the about-to-be-created id is rejected (exit non-zero); a dangling/unresolvable target is **not** rejected at write time (rejecting it would be a stricter, divergent policy from the reader's own fail-safe tolerance of a dangling `supersedes`). No `--replacement` flag exists here — the newly-added rule itself *is* the replacement content, unlike `retract` (§7.5) where a bare removal has no replacement to name.
 
@@ -202,7 +235,10 @@ A layered model — a company-base rule set composed with per-project overrides 
 - **Letting `/rules add` write outside `.agent/rules/`.** The category is slugged to a single `[a-z0-9-]` segment and traversal/metachars/empty are rejected.
 - **Clobbering an existing rule file on malformed/non-array JSON.** Parse-gate with `jq -e 'type=="array"'` and abort — never overwrite.
 - **Blind-writing on `add` or `suggest`.** Both write ONLY on explicit user confirmation.
-- **Guessing which rules "apply" in v1.** Applicable = all valid rules; `applies_to` is still inert (a later slice will define path/scope filtering — 3b-ii wired advisory enforcement without activating it).
+- **Guessing which rules "apply".** Scope comes from patterns a rule's author wrote in `applies_to` and from nothing else — never from a heuristic over the statement text, the category, or the diff. Every ambiguous `applies_to` shape, and every call with no touched paths, **fails OPEN** to repo-wide (§3): under-scoping shows a rule that did not need to be shown, while over-scoping silently hides a convention, and only one of those is recoverable.
+- **Filtering by routing BEFORE resolving supersession.** The order is fixed at `validate/dedup → supersession → routing` (§3) precisely so a routed-out rule can never resurrect the rule it supersedes.
+- **Writing `applies_to` patterns as `.gitignore` patterns.** They are bash `case` globs: `*` and `**` are equivalent and both cross `/`, there is no `!` negation, and there is no leading-`/` anchoring. See the syntax table in §1.
+- **Implementing the match in `jq`, or emulating `.gitignore` semantics.** `jq` only NORMALIZES `applies_to` into the route cell; the match itself is a native `case` glob in the shell (`rule_applies` in `read-rules.sh`) — portable by construction, no `shopt`, no tool-flavour divergence.
 - **Adding `.agent/` to `.gitignore`.** Rules are committed and must travel with the repo.
 - **Chasing a `supersedes` chain transitively, or looping on a cycle.** Supersession is single-hop only (§5) — a mutual or n-hop cycle is fail-safe-ignored on every side, never chased and never a hang.
 - **Adding a `--replacement` flag to `retract`, or a `--replacement`-less `supersede` verb.** `retract` has no replacement (§7.5); `--supersedes` (§7) is a flag on `add`, not a separate verb — this file has no `supersede` action.
@@ -222,7 +258,7 @@ A layered model — a company-base rule set composed with per-project overrides 
 - [ ] The reader NEVER executes a `check` value (emits as data only); `/rules check` runs checks ONLY human-invoked + confirmed (via `rules-check.sh`); unattended execution is GATED via `rules-check.sh --no-cmd` (default-off valve, `--no-cmd` wins over `--confirm`) and no advisory seam enables it.
 - [ ] Reader is `set -uo pipefail` (no `-e`), ALWAYS exits 0, READ-ONLY, emits the subordinate-to-CLAUDE.md banner only when a rule applies (EMPTY otherwise).
 - [ ] Per-object validation is fail-safe-skip (missing field / unknown `enforcement` / duplicate `id` → skip + diagnostic to `.supervisor/logs/`, never crash); merge order is `LC_ALL=C` path-sorted, first-seen-id-wins.
-- [ ] `applies_to` is documented as reserved for a later slice (still inert) and NOT consulted by the v1 reader.
+- [ ] `applies_to` is an ACTIVE path filter in `read-rules.sh` (a `case`-glob match in the shell function `rule_applies`, never in `jq`): `null`/absent ⇒ repo-wide; a non-empty string array ⇒ emitted only on a touched-path match; and EVERY ambiguous shape (non-array / non-string element / empty array) **plus a zero-arg call** fails **OPEN**. Order is `validate/dedup → supersession → routing`, so a routed-out rule never resurrects the rule it supersedes. The non-match case is asserted **by absence from stdout** and backed by a mutation control (`test-read-rules.sh` (j)/(k)/(l)).
 - [ ] `/rules add` slugs the category to a single `[a-z0-9-]` segment (rejects `/`, `..`, leading dot, metachars, empty), parse-gates with `jq -e 'type=="array"'`, assigns a deterministic unique id, stamps `provenance.source`/`provenance.added`, writes via temp-file + atomic `mv`, verifies read-back, and writes ONLY on confirmation (append-only).
 - [ ] `/rules add --supersedes <id>` is an optional flag (not a separate verb), OMITS the member entirely when unsupplied, and rejects only a self-reference at write time (a dangling target is the reader's fail-safe-ignore concern, not the writer's).
 - [ ] `/rules retract` is mutually exclusive with add-only flags, requires `--target`+`--reason`, ALWAYS rejects `--replacement`, removes via temp-file + atomic `mv`, read-back verifies the id is gone, and PRINTS (never stores) the provenance reason.

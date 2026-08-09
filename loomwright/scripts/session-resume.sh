@@ -280,6 +280,14 @@ observability_probe() {
 #     AND a store that holds ONLY invalid rules (all-skipped ⇒ zero valid ⇒
 #     empty). So gating on empty output correctly fires the nudge for an
 #     all-invalid store, and NEVER fires when ≥1 valid rule is present.
+#   - THE NO-ARG CALL BELOW IS LOAD-BEARING — DO NOT "SCOPE" IT. read-rules.sh
+#     routes on each rule's `applies_to` when it is given touched paths, but a
+#     ZERO-ARG call fails OPEN and stays REPO-WIDE by contract, precisely so
+#     this gate keeps seeing every valid rule. Passing a path set here would
+#     make the nudge fire on any repo whose rules all happened to be scoped
+#     elsewhere — i.e. tell a repo that HAS house rules that it has none. See
+#     "PATH ROUTING" in read-rules.sh's header and skills/rules/SKILL.md §3;
+#     pinned by test-read-rules.sh (j4) and test-rules-seams.sh [shape ii].
 #   - read-rules.sh always exits 0 and is fail-safe (absent reader / jq missing /
 #     malformed store ⇒ treated as "no nudge or safe skip", never an error). A
 #     failure to even run the reader ⇒ skip the nudge (do NOT fire on an error).

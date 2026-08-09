@@ -22,6 +22,19 @@
 # `check` this helper would run is exactly one the reader would emit — no parser drift can let us run a
 # check the reader would have dropped.)
 #
+# THE PARITY IS OVER VALIDITY, NOT APPLICABILITY — THIS CHECKER IS DELIBERATELY REPO-WIDE:
+# `read-rules.sh` routes on `applies_to`: given a set of touched paths it emits only the rules scoped
+# to them. This checker does NOT follow that routing and takes NO path arguments (see the Usage line
+# below; the arg loop warns-and-ignores anything unrecognized). That is a decision, not an oversight.
+# The two are on different axes. Routing is an EMISSION FILTER for advisory injection — "which of our
+# conventions are worth putting in front of an agent editing THESE files right now?" — and its input is
+# a diff. `/rules check` is an AUDIT — "are all our conventions upheld?" — and its input is the repo.
+# A rule routed out of some worker's advisory block has not stopped being true, so a routed-out rule is
+# STILL selected here and its `check` still runs under confirmation (pinned by test-rules-check.sh case
+# (f)). The parity this file promises with the reader is over PER-OBJECT VALIDATION + `LC_ALL=C`
+# first-seen-id dedup — *which objects are well-formed* — and routing touches neither. Giving the
+# checker a path scope would also be new surface the source requirement's Non-goals foreclose.
+#
 # INJECTION SAFETY (jq-only, mirrors read-rules.sh): untrusted rule text enters jq ONLY by jq reading
 # each rule file as a POSITIONAL FILE-PATH argument (the path itself comes from `find`, never from rule
 # content); the jq program text is fixed and the only flag-passed value is `--argjson fi`, the trusted

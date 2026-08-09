@@ -1,5 +1,5 @@
 ---
-description: Maintain the committed .agent/rules/ house-rules substrate — list / suggest / add / retract / check project conventions an implementer can read on the DO side, not only get caught on the REVIEW side. Advisory enforcement is wired (never-gating) at the worker / Phase 4.5 / SessionStart-nudge seams; `add` (with optional `--supersedes`) and `retract` are both mechanized in add-rule.sh, `check` in rules-check.sh (unattended `check` execution gated via --no-cmd).
+description: Maintain the committed .agent/rules/ house-rules substrate — list / suggest / add / retract / check project conventions an implementer can read on the DO side, not only get caught on the REVIEW side. Advisory enforcement is wired (never-gating) at the worker / Phase 4.5 / SessionStart-nudge seams; `add` (with optional `--supersedes` and repeatable `--applies-to` path routing) and `retract` are both mechanized in add-rule.sh, `check` in rules-check.sh (unattended `check` execution gated via --no-cmd).
 ---
 
 > **Reads code read-only on `list` / `suggest` / `check`; the write paths are `add` (append-only) and `retract` (curation/anti-rot, remove-only) — both write a single path-contained `*.json` under `.agent/rules/` on explicit confirmation, and both go through the sole-writer `add-rule.sh`.** `.agent/rules/` is the plugin's first **committed-convention** surface — version-controlled, travels with the repo (unlike the gitignored `.supervisor/` / `.claude/agent-memory/`). The protocol authority for every flow is `${CLAUDE_PLUGIN_ROOT}/skills/rules/SKILL.md` — read it at Step 0; when this command and that skill disagree, **the skill wins**.
@@ -10,15 +10,16 @@ description: Maintain the committed .agent/rules/ house-rules substrate — list
 
 ## Purpose
 
-Conventions a team agrees on tend to live in heads, in CLAUDE.md prose, or get re-discovered every review round. `.agent/rules/` makes them **first-class, committed data**: zero-or-more `*.json` files, each a JSON array of rule objects (`id` · `category` · `statement` · `enforcement` (`advisory` | `must`) · `check` · `provenance` · optional `applies_to` · optional `supersedes`). `/rules` is how you read, propose, author, retract, and (human-invoked) verify them. The rules are **subordinate to CLAUDE.md** — on conflict, CLAUDE.md wins.
+Conventions a team agrees on tend to live in heads, in CLAUDE.md prose, or get re-discovered every review round. `.agent/rules/` makes them **first-class, committed data**: zero-or-more `*.json` files, each a JSON array of rule objects (`id` · `category` · `statement` · `enforcement` (`advisory` | `must`) · `check` · `provenance` · optional `applies_to` path routing · optional `supersedes`). `/rules` is how you read, propose, author, retract, and (human-invoked) verify them. The rules are **subordinate to CLAUDE.md** — on conflict, CLAUDE.md wins.
 
 ## Usage
 
 ```bash
-/rules list                 # show all valid rules (advisory reader output)
+/rules list                 # show all valid rules (advisory reader output; repo-wide — no path args)
 /rules suggest              # scan the repo → PROPOSE rules for human review (never auto-writes)
 /rules add                  # append one rule to .agent/rules/<category>.json (confirm-only)
 /rules add --supersedes X   # append a rule that supersedes (hides) an OLDER rule id X
+/rules add --applies-to G   # append a rule scoped to path-glob G (repeatable; omit ⇒ repo-wide)
 /rules retract              # remove an existing rule object by id (confirm-only)
 /rules check                # human-invoked: run `must` rules' checks after explicit confirmation
 ```
@@ -35,7 +36,15 @@ Invoke the fail-safe reader and show its advisory output verbatim:
 bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-rules.sh"
 ```
 
-The reader merges `.agent/rules/*.json` in `LC_ALL=C` path-sorted, first-seen-`id`-wins order, fail-safe-skips any invalid object (missing field / unknown `enforcement` / duplicate `id`), and emits an advisory markdown block headed `## Advisory house rules — subordinate to CLAUDE.md (on conflict, CLAUDE.md wins)` listing each rule's `statement`, `category`, a `must` flag for `must` rules, and its `check` **shown as DATA only — text, never executed by the reader.** It emits NOTHING and exits 0 when no valid rule exists (so machine consumers can gate on non-empty stdout). v1 emits **all valid rules** — there is no path/scope guessing; `applies_to` is still inert (reserved for a later slice — 3b-ii wired advisory enforcement without activating it).
+The reader merges `.agent/rules/*.json` in `LC_ALL=C` path-sorted, first-seen-`id`-wins order, fail-safe-skips any invalid object (missing field / unknown `enforcement` / duplicate `id`), and emits an advisory markdown block headed `## Advisory house rules — subordinate to CLAUDE.md (on conflict, CLAUDE.md wins)` listing each rule's `statement`, `category`, a `must` flag for `must` rules, and its `check` **shown as DATA only — text, never executed by the reader.** It emits NOTHING and exits 0 when no valid rule exists (so machine consumers can gate on non-empty stdout).
+
+**Path routing (`applies_to`) — the positional args are a real filter.** Pass touched paths as positional args to scope the output:
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-rules.sh" loomwright/scripts/read-rules.sh docs/x.md
+```
+
+A rule with `applies_to: null` (or no such key) is **repo-wide** and always emitted. A rule with a non-empty array of globs is emitted only when one of the supplied paths matches one of its patterns. **Everything ambiguous fails OPEN** — a malformed `applies_to` (non-array, non-string element, empty array) emits the rule repo-wide with a diagnostic to stderr + `.supervisor/logs/memory.log`, and so does a call with **no args at all** (`/rules list`'s own shape, and the SessionStart nudge's). Supersession is resolved **before** routing, so a rule routed out of one call never resurrects the rule it supersedes. The patterns are bash `case` globs, **not** `.gitignore` patterns (`*` and `**` are equivalent and both cross `/`) — see `skills/rules/SKILL.md` §1 for the full syntax table and §3 for the routing contract.
 
 ### `suggest` (§6 — scan-to-suggest, propose-only)
 
@@ -58,6 +67,7 @@ bash "${CLAUDE_PLUGIN_ROOT}/scripts/add-rule.sh" \
   --check "<shell string>" \          # optional, default null (omit for a null check)
   --source "<who/what added it>" \    # optional, default "/rules add"
   --supersedes "<older-rule-id>" \    # optional (curation/anti-rot) — see below
+  --applies-to "<path-glob>" \        # optional, REPEATABLE — path routing scope; omit for repo-wide
   --confirm                           # write only when passed (see confirm-only)
 ```
 
@@ -71,6 +81,8 @@ The helper, per `add-rule.sh` (mechanizing SKILL.md §7):
 6. **Confirm-only:** writes ONLY when `--confirm` is passed (or an interactive TTY confirms). With no `--confirm` and non-interactive, it **prints the planned write and writes nothing**. Append-only — never edits or removes an existing rule via the ADD action (`--retract`, below, is the one sanctioned exception).
 
 The path-containment and validation guarantees are proven by `scripts/test-add-rule.sh` (rejects `../escape`, `a/b`, `.hidden`, `foo;rm -rf`, backtick, and empty categories; asserts no traversal write).
+
+**`--applies-to <path-glob>` (path routing, optional flag on `add`, REPEATABLE).** N flags author an N-element `applies_to` array on the new rule; **omit it for `applies_to: null`, i.e. repo-wide** — the default every pre-routing rule carries. `read-rules.sh` acts on it at read time (see `list` above). Patterns are bash `case` globs, **not** `.gitignore` patterns (`*` and `**` are equivalent and both cross `/`; no `!` negation) — the full syntax table is in `skills/rules/SKILL.md` §1. Validated before writing: each pattern must be non-empty, newline/CR/tab-free, `..`-free, and neither absolute (`/…`) nor home-relative (`~…`); one bad pattern **aborts the whole add** (non-zero, nothing written), mirroring the reject-never-sanitize discipline of the category guard. Rejected alongside `--retract` like every other add-only flag.
 
 **`--supersedes <rule-id>` (curation/anti-rot, optional flag on `add`).** Stamps a `supersedes` member — naming the id of an OLDER rule this one replaces — onto the *newly-authored* rule object. Purely declarative: the older rule object is left untouched in its file; it is `read-rules.sh` (the reader) that hides it from output at read time (single-hop, non-transitive — "A supersedes B hides B; it does not chase B's own supersedes"). A malformed / self-referential / dangling `supersedes` is fail-safe-ignored by the reader (demote-never-crash) — self-reference against the about-to-be-created id is additionally rejected at write time. There is no separate `supersede` **action** in this file (unlike `write-lessons.sh`'s `supersede` verb, or `add-orientation.sh`'s `--supersedes` action) — here it is only ever an optional flag on the default ADD action, because the newly-added rule itself *is* the replacement content; no `--replacement` flag exists or is needed.
 
@@ -121,5 +133,5 @@ A `check` value is **arbitrary shell authored by anyone who cloned or PR'd the r
 
 ## See Also
 - `skills/rules/SKILL.md` — the protocol authority (schema, validation, merge order, read/write/check contracts, trust boundary).
-- `scripts/read-rules.sh` — the fail-safe advisory reader (`set -uo pipefail`, always exits 0, READ-ONLY, never executes a `check`).
+- `scripts/read-rules.sh` — the fail-safe advisory reader (`set -uo pipefail`, always exits 0, READ-ONLY, never executes a `check`); its header docstring is the authority on `applies_to` path routing and the `case`-glob semantics.
 - `commands/setup.md` (`/setup twin`) — bootstraps a repo into Twin-readiness; `/rules` maintains the committed conventions. Shares the check/report/offer/apply/verify confirmed-write discipline.

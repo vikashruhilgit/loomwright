@@ -1,8 +1,26 @@
 #!/usr/bin/env bash
-# test-rules-seams.sh — STATIC trust-boundary self-test for the FOUR advisory house-rules
-# enforcement seams wired in slice #3b-ii. STATIC ONLY: greps the committed seam surfaces, no
-# network, no jq, no shell execution — so it runs on the plugin's Ubuntu CI like every other
-# test-*.sh (auto-registered by ci.yml's test-*.sh glob). Exit 0 = all pass, 1 = any fail.
+# test-rules-seams.sh — trust-boundary + invocation-shape self-test for the FOUR advisory house-rules
+# enforcement seams wired in slice #3b-ii. Two parts, deliberately different in kind:
+#
+#   PART 1 (STATIC, always runs) — greps the committed seam surfaces; no network, no jq, no shell
+#     execution of anything. This is what holds the WIRING: two of the four seams are agent/skill
+#     MARKDOWN, so there is nothing there to execute and only a grep can assert that the prose still
+#     hands the reader the right thing.
+#   PART 2 (DYNAMIC, jq-gated, added with `applies_to` PATH ROUTING) — actually EXECUTES the reader
+#     against a throwaway fixture rules store and asserts on real stdout. The three prose seams reduce
+#     to exactly TWO distinct executable invocation shapes, and routing made the difference between
+#     them behavioural rather than cosmetic, so both are now traced:
+#       (i)  `bash read-rules.sh <paths…>`  — worker DO-side (agents/execute-manager.md,
+#            agents/supervisor.md) AND Phase 4.5 (skills/self-heal-advisory/SKILL.md). They differ
+#            only in WHICH path set they pass, not in the shape.
+#       (ii) `bash read-rules.sh`  (no args) — the SessionStart nudge (scripts/session-resume.sh).
+#     EXPLICIT LIMIT, stated so nobody reads more into these than they carry: a dynamic trace CANNOT
+#     prove the two prose seams still pass the reader the right paths — they are markdown, not code.
+#     That wiring stays covered by PART 1's greps. This is a shape-and-behaviour trace, not end-to-end
+#     proof. Part 2 degrades to a clean skip when jq is unavailable (the reader no-ops without it).
+#
+# Runs on the plugin's Ubuntu CI like every other test-*.sh (auto-registered by ci.yml's test-*.sh
+# glob). Exit 0 = all pass, 1 = any fail.
 #
 # Mirrors test-rules-docs.sh convention: pass/fail counters, ok()/no() helpers, a
 # "RESULT: N passed, M failed" tail, exit 1 on any failure. Paths resolve from $BASH_SOURCE's
@@ -102,6 +120,77 @@ for f in "${SEAMS[@]}"; do
     no "[$base] read-rules.sh OUTPUT executed in a shell sink: ${exec_leak}"
   fi
 done
+
+# ============================================================================
+# PART 2 — DYNAMIC trace of the TWO distinct executable invocation shapes (see the header).
+# ============================================================================
+echo
+echo "== DYNAMIC: the two executable seam shapes, run against a fixture rules store =="
+
+READER="$PLUGIN_ROOT/scripts/read-rules.sh"
+
+if ! command -v jq >/dev/null 2>&1; then
+  echo "  skip: jq unavailable — read-rules.sh no-ops by contract, so a dynamic trace is vacuous here."
+elif [ ! -r "$READER" ]; then
+  no "[scripts/read-rules.sh] MISSING — cannot trace the executable seam shapes"
+else
+  DROOT="$(mktemp -d)"
+  trap 'rm -rf "$DROOT" 2>/dev/null' EXIT
+  FIXREPO="$DROOT/repo"
+  mkdir -p "$FIXREPO/.agent/rules"
+  ( cd "$FIXREPO" && git init -q && git config user.email t@t && git config user.name t \
+      && echo init > f && git add f && git commit -qm init ) >/dev/null 2>&1
+  # One scoped rule + one repo-wide rule: the minimum fixture that can tell routing apart from
+  # emit-everything on BOTH shapes.
+  cat > "$FIXREPO/.agent/rules/seam-fixture.json" <<'FIXTURE'
+[
+  {"id":"seam-scoped","category":"a","statement":"SEAM scoped to loomwright scripts","enforcement":"advisory","check":null,"provenance":{"source":"seam-test"},"applies_to":["loomwright/scripts/*"]},
+  {"id":"seam-wide","category":"b","statement":"SEAM repo wide rule","enforcement":"advisory","check":null,"provenance":{"source":"seam-test"}}
+]
+FIXTURE
+
+  # ---- SHAPE (i): `bash read-rules.sh <paths…>` — worker DO-side AND Phase 4.5 -------------------
+  # Trace it TWICE with different path sets, because that is the only way the two prose seams differ.
+  # (i-a) a worker-style path set that INCLUDES a scripts path ⇒ both rules.
+  s1a="$( cd "$FIXREPO" && bash "$READER" loomwright/scripts/read-rules.sh CHANGELOG.md 2>/dev/null )"
+  if printf '%s\n' "$s1a" | grep -qF -- "- SEAM scoped to loomwright scripts" \
+     && printf '%s\n' "$s1a" | grep -qF -- "- SEAM repo wide rule"; then
+    ok "[shape i] \`read-rules.sh <paths…>\` with an in-scope path emits the scoped AND the repo-wide rule"
+  else
+    no "[shape i] in-scope path set did not emit both rules: $s1a"
+  fi
+  # (i-b) a Phase-4.5-style integrated-diff path set that EXCLUDES scripts ⇒ scoped rule ABSENT.
+  # This is the assertion that makes the trace non-vacuous: it fails against an emit-everything reader.
+  s1b="$( cd "$FIXREPO" && bash "$READER" docs/ARCHITECTURE.md README.md 2>/dev/null )"
+  if printf '%s\n' "$s1b" | grep -qF -- "- SEAM repo wide rule" \
+     && ! printf '%s\n' "$s1b" | grep -qF "SEAM scoped to loomwright scripts"; then
+    ok "[shape i] an out-of-scope path set emits ONLY the repo-wide rule (scoped rule ABSENT from stdout)"
+  else
+    no "[shape i] out-of-scope path set did not route the scoped rule out: $s1b"
+  fi
+  # The shape's own no-hang contract: args take precedence and stdin is NEVER read, so an
+  # open-but-idle pipe on stdin cannot block an agent caller.
+  s1c="$( cd "$FIXREPO" && bash "$READER" loomwright/scripts/x.sh < /dev/zero 2>/dev/null )"
+  printf '%s\n' "$s1c" | grep -qF -- "- SEAM scoped to loomwright scripts" \
+    && ok "[shape i] args take precedence and stdin is never read (no hang on an idle//dev/zero stdin)" \
+    || no "[shape i] the args-not-stdin no-hang contract regressed"
+
+  # ---- SHAPE (ii): `bash read-rules.sh` (no args) — the SessionStart nudge -----------------------
+  # session-resume.sh's rules_nudge() runs EXACTLY this and fires its "no house rules found" advisory
+  # when stdout is EMPTY. So the load-bearing assertion here is NON-EMPTINESS plus completeness: a
+  # repo that HAS rules must never look ruleless, even though one of its rules is path-scoped.
+  s2="$( cd "$FIXREPO" && bash "$READER" 2>/dev/null )"; rc2=$?
+  [ "$rc2" -eq 0 ] && ok "[shape ii] \`read-rules.sh\` with NO args exits 0" \
+                   || no "[shape ii] expected exit 0 from the no-arg shape, got $rc2"
+  [ -n "$s2" ] && ok "[shape ii] no-arg stdout is NON-EMPTY (rules_nudge stays quiet on a repo with rules)" \
+               || no "[shape ii] no-arg stdout EMPTY — the SessionStart nudge would misfire"
+  if printf '%s\n' "$s2" | grep -qF -- "- SEAM scoped to loomwright scripts" \
+     && printf '%s\n' "$s2" | grep -qF -- "- SEAM repo wide rule"; then
+    ok "[shape ii] the no-arg shape stays REPO-WIDE — a path-scoped rule is emitted too"
+  else
+    no "[shape ii] the no-arg shape dropped a scoped rule (empty path set must fail OPEN): $s2"
+  fi
+fi
 
 echo
 echo "RESULT: $pass passed, $fail failed"

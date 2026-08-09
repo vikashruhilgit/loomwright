@@ -25,6 +25,15 @@
 #     violate the freeze), so the writer PRINTS a one-line provenance reason to stdout and the commit
 #     that lands the removal is the durable record.
 #
+# PATH ROUTING added ONE more optional flag on the (default) ADD action:
+#   - `--applies-to <glob>` — REPEATABLE. N flags author an N-element `applies_to` array of `case`-glob
+#     patterns; the flag OMITTED leaves `applies_to: null`, which means REPO-WIDE (the historical
+#     default, unchanged). `read-rules.sh` is what acts on it at read time: a rule with a non-empty
+#     pattern array is emitted only when a touched path matches one of its patterns, and EVERY
+#     ambiguous shape fails OPEN there (see read-rules.sh's "PATH ROUTING" docstring). Patterns are
+#     validated here (non-empty, no newline/CR/tab, no `..`, not absolute, not `~`-relative) so this
+#     writer can never author a scope that is silently dead or that walks out of the repo.
+#
 # WRITE DISCIPLINE — ADD action (per skills/rules/SKILL.md §7 — ALL enforced here in code, never prose):
 #   1. Category containment. Slug a LEGITIMATE category to a SINGLE `[a-z0-9-]` path segment via BENIGN
 #      normalization only (lowercase, spaces→'-', collapse repeats, strip leading/trailing '-'). REJECT
@@ -34,7 +43,8 @@
 #      SKIP): statement non-empty; the derived statement-slug non-empty; enforcement EXACTLY
 #      `advisory`|`must`; check is a string OR null; `--supersedes` (when given) non-empty, newline-free,
 #      and not equal to the about-to-be-created id (self-reference rejected at write time even though
-#      the reader would separately fail-safe-ignore it).
+#      the reader would separately fail-safe-ignore it); each `--applies-to` (when given) non-empty,
+#      newline/CR/tab-free, `..`-free, and neither absolute (`/…`) nor home-relative (`~…`).
 #   3. Array-only parse-gate the target `.agent/rules/<category-slug>.json` with `jq -e 'type=="array"'`
 #      — ABORT (never clobber) on a malformed OR valid-but-non-array pre-existing file; create as a
 #      single-element array if absent.
@@ -55,7 +65,7 @@
 #
 # WRITE DISCIPLINE — RETRACT action (curate-postmortem.sh shape, validate-before-write, fail loud):
 #   R1. `--retract` is mutually exclusive with every add-only flag (`--category`/`--statement`/
-#       `--check`/`--supersedes`) — combining them is rejected outright (exit 2), never silently
+#       `--check`/`--supersedes`/`--applies-to`) — combining them is rejected outright (exit 2), never silently
 #       ignored, so a caller can't accidentally mix modes.
 #   R2. `--target <rule-id>` is REQUIRED (non-empty, no embedded newline/CR — mirrors
 #       curate-postmortem.sh's own target guard so a target could never accidentally match nothing).
@@ -77,7 +87,7 @@
 #
 # Usage:
 #   add-rule.sh --category <str> --statement <str> [--enforcement advisory|must] [--check <str>]
-#               [--source <str>] [--supersedes <rule-id>] [--confirm]
+#               [--source <str>] [--supersedes <rule-id>] [--applies-to <glob> ...] [--confirm]
 #   add-rule.sh --retract --target <rule-id> --reason <str> [--confirm]
 # Exit:  0 = wrote/retracted OR planned-ok (dry-run) ; non-zero = rejected / error (no partial write).
 
@@ -101,6 +111,12 @@ source_val="/rules add"
 confirm=0
 supersedes_set=0     # whether --supersedes was supplied at all (ADD action only)
 supersedes_val=""
+applies_to_set=0     # whether --applies-to was supplied at all (ADD action only; REPEATABLE)
+applies_to_raw=""    # newline-terminated accumulator of the raw --applies-to values (see A1 below).
+                     # A newline-delimited string rather than a bash array on purpose: `"${arr[@]}"`
+                     # on an EMPTY array is an unbound-variable error under `set -u` in bash 3.2 (the
+                     # macOS dev shell), and embedded newlines are rejected outright (A2), so the
+                     # delimiter is unambiguous by construction.
 retract=0            # whether --retract mode was selected
 target_id_set=0      # whether --target was supplied at all (RETRACT action only)
 target_id=""
@@ -117,6 +133,8 @@ while [ "$#" -gt 0 ]; do
     --check)       [ "$#" -ge 2 ] || die "--check requires a value"; check_set=1; check_val="$2"; shift 2 ;;
     --source)      [ "$#" -ge 2 ] || die "--source requires a value"; source_val="$2"; shift 2 ;;
     --supersedes)  [ "$#" -ge 2 ] || die "--supersedes requires a value"; supersedes_set=1; supersedes_val="$2"; shift 2 ;;
+    --applies-to)  [ "$#" -ge 2 ] || die "--applies-to requires a value"; applies_to_set=1
+                   applies_to_raw="${applies_to_raw}${2}"$'\n'; shift 2 ;;
     --retract)     retract=1; shift ;;
     --target)      [ "$#" -ge 2 ] || die "--target requires a value"; target_id_set=1; target_id="$2"; shift 2 ;;
     --reason)      [ "$#" -ge 2 ] || die "--reason requires a value"; reason_set=1; reason="$2"; shift 2 ;;
@@ -142,8 +160,9 @@ RULES_DIR="$GITROOT/.agent/rules"
 # =============================================================================
 if [ "$retract" -eq 1 ]; then
   # R1. Mutually exclusive with every add-only flag.
-  if [ -n "$category" ] || [ -n "$statement" ] || [ "$check_set" -eq 1 ] || [ "$supersedes_set" -eq 1 ]; then
-    die "rejected: --retract cannot be combined with add-only flags (--category/--statement/--check/--supersedes)" 2
+  if [ -n "$category" ] || [ -n "$statement" ] || [ "$check_set" -eq 1 ] || [ "$supersedes_set" -eq 1 ] \
+     || [ "$applies_to_set" -eq 1 ]; then
+    die "rejected: --retract cannot be combined with add-only flags (--category/--statement/--check/--supersedes/--applies-to)" 2
   fi
 
   # R2. --target required, non-empty, newline/CR-free (mirrors curate-postmortem.sh's target guard).
@@ -302,6 +321,57 @@ if [ "$supersedes_set" -eq 1 ]; then
   esac
 fi
 
+# --applies-to (PATH ROUTING): REPEATABLE — N flags produce an N-element `applies_to` array; OMITTED
+# ⇒ `applies_to: null` (repo-wide), the historical default, unchanged. Each pattern is a `case` glob
+# matched by read-rules.sh against a touched path (`*`/`**` are equivalent and BOTH cross `/` — this
+# is NOT .gitignore syntax; see read-rules.sh's "PATH ROUTING" docstring and skills/rules/SKILL.md §1).
+#
+# A1. Validate BEFORE writing, mirroring the category-containment discipline: a pattern is REJECTED
+#     (abort, non-zero, never silently rewritten), never sanitized into a safe-looking form.
+# A2. Rejected shapes, and why each one:
+#       empty                → matches nothing; a silent dead rule.
+#       newline / CR         → newline is this accumulator's own delimiter (see the declaration above)
+#                              and the reader strips both, so accepting one would author a pattern
+#                              that means something other than what was typed.
+#       tab                  → the reader neutralizes tab inside a pattern (line-framing safety), so
+#                              the stored pattern would silently differ from the authored one.
+#       contains `..`        → traversal-style; the store is repo-relative and a rule scope has no
+#                              business walking upward. Same raw-string reject as `category` (:245+).
+#       leading `/`          → absolute path; the reader matches repo-relative touched paths, so an
+#                              absolute pattern can only ever match nothing.
+#       leading `~`          → home-relative; same reasoning as absolute, plus shell-expansion optics.
+if [ "$applies_to_set" -eq 1 ]; then
+  nl_a=$'\n'; cr_a=$'\r'; tab_a=$'\t'
+  # Iterate the accumulator without a bash array (see the declaration comment). The accumulator is
+  # newline-TERMINATED, so a trailing empty segment is expected and is simply the loop's exit.
+  at_rest="$applies_to_raw"
+  at_count=0
+  while [ -n "$at_rest" ]; do
+    at_pat="${at_rest%%"$nl_a"*}"
+    at_rest="${at_rest#*"$nl_a"}"
+    [ -n "$at_pat" ] || die "rejected: --applies-to must be non-empty when supplied"
+    case "$at_pat" in
+      *"$cr_a"*)  die "rejected: --applies-to may not contain carriage-return characters: $at_pat" ;;
+      *"$tab_a"*) die "rejected: --applies-to may not contain tab characters: $at_pat" ;;
+      *..*)       die "rejected: --applies-to may not contain '..' (traversal): $at_pat" ;;
+      /*)         die "rejected: --applies-to must be a repo-relative pattern, not absolute: $at_pat" ;;
+      '~'*)       die "rejected: --applies-to must be a repo-relative pattern, not home-relative: $at_pat" ;;
+    esac
+    at_count=$((at_count + 1))
+  done
+  [ "$at_count" -gt 0 ] || die "rejected: --applies-to must be non-empty when supplied"
+fi
+
+# Build the JSON array injection-safely: the raw text crosses into jq via `-R -s` (read as a raw
+# string on STDIN) and is split INSIDE jq's data model — never interpolated into the program text.
+# The trailing empty segment from the newline terminator is dropped by the length filter.
+applies_to_json="null"
+if [ "$applies_to_set" -eq 1 ]; then
+  applies_to_json="$(printf '%s' "$applies_to_raw" \
+    | jq -R -s -c 'split("\n") | map(select(length > 0))')" \
+    || die "internal error: could not encode --applies-to values as a JSON array"
+fi
+
 # ---------------------------------------------------------------------------
 # Resolve the target file (repo-root anchored, matching the reader).
 # ---------------------------------------------------------------------------
@@ -368,12 +438,16 @@ new_obj="$(jq -n \
   --arg check_val "$check_val" \
   --argjson supersedes_set "$supersedes_set" \
   --arg supersedes_val "$supersedes_val" \
+  --argjson applies_to "$applies_to_json" \
   '
   {
     id: $id, category: $category, statement: $statement, enforcement: $enforcement,
     check: (if $check_set == 1 then $check_val else null end),
     provenance: {source: $source, added: $added},
-    applies_to: null
+    # PATH ROUTING: an ARRAY of `case`-glob patterns when --applies-to was supplied (repeatable),
+    # otherwise `null` — the historical default, meaning REPO-WIDE. `null` is a MEANINGFUL value
+    # here (not a placeholder), so unlike `supersedes` it is always stamped explicitly.
+    applies_to: $applies_to
   }
   | if $supersedes_set == 1 then . + {supersedes: $supersedes_val} else . end
   ')"
