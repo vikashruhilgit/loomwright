@@ -32,10 +32,15 @@
 #     37  vikashruhilgit/loomwright
 #      7  vendsy/hub                        (foreign — the reason this test exists)
 #
-# WHY THE METHOD IS THE DELIVERABLE, NOT JUST ITS RESULT: the ledger is gitignored, and a later
+# WHY THE METHOD IS THE DELIVERABLE, NOT JUST ITS RESULT: the ledger was gitignored, and a later
 # item filters the foreign records out of it. Re-running the command above against the committed
 # tree can therefore NEVER re-derive these terms — the evidence is post-filter. So the method is
 # recorded here, in the committed tree, or it is lost.
+#
+# THAT LATER ITEM HAS NOW LANDED. The ledger is a committed, GATED third store (see group (D)); the
+# 7 `vendsy/hub` records were filtered out before it was committed. The census above is therefore
+# FROZEN HISTORY — do not "refresh" it from the committed tree, which is post-filter by construction
+# and would silently narrow DENY_TERMS to nothing.
 #
 # WHY WHOLE-WORD, CASE-INSENSITIVE: two independent audits previously returned a FALSE CLEAN on
 # `project_self_heal_rubber_stamp.md`. Both grepped `/hub` (slash-prefixed) while the real string
@@ -121,10 +126,21 @@ assert_no_foreign_terms() {
   return 0
 }
 
-# ignore_is_in <repo-dir> <path> → ignored | committable | unknown  (via `git check-ignore --verbose`)
+# ignore_is_in <repo-dir> <path> → ignored | committable | unknown
 #
-# `-n` is required so check-ignore also emits a record for a path it does NOT ignore; without it
-# a committable path prints nothing and "no output" would be indistinguishable from an error.
+# `--verbose -n` IS NOT AN IGNORE PROBE — IT IS A "DID ANY PATTERN MATCH" PROBE. This function used
+# to be `git check-ignore --verbose -n`, whose exit status is 0 whenever a pattern matched the path
+# **including a NEGATED `!` pattern**, i.e. precisely when the path IS committable. Verified on
+# git 2.50 against this repo:
+#     check-ignore --verbose -n  .supervisor/postmortem/results.jsonl → rc 0, rule `!…results.jsonl`
+#     check-ignore -q            .supervisor/postmortem/results.jsonl → rc 1  (correct: committable)
+# The bug was INVISIBLE for the two memory stores because they are re-included by DIRECTORY patterns
+# (`!.claude/agent-memory/`), which never match the FILE itself — the file's winning record is the
+# bare `::` "no pattern" case, rc 1, right answer for the wrong reason. It surfaced the moment a
+# store was re-included by a FILE pattern (the findings ledger's `!…/results.jsonl`), which reported
+# a correctly-committable file as `ignored`. So the ignore verdict now comes from `-q`, which is the
+# authoritative form and is what `setup-memory.sh`'s own `ignore_status()` uses; `--verbose -n` is
+# used ONLY to print the winning rule in a failure message, never to decide anything.
 #
 # NEVER PASS `-q` ALONGSIDE `--verbose`. Git rejects the combination outright —
 # `fatal: cannot have both --quiet and --verbose`, exit 128 — and 128 is neither 0 nor 1, so a
@@ -134,7 +150,7 @@ assert_no_foreign_terms() {
 # mapped explicitly below precisely so an error can never masquerade as a verdict.
 ignore_is_in() {
   local r="$1" p="$2" rc
-  git -C "$r" check-ignore --verbose -n -- "$p" >/dev/null 2>&1
+  git -C "$r" check-ignore -q -- "$p" >/dev/null 2>&1
   rc=$?
   case "$rc" in
     0) echo "ignored" ;;
@@ -305,6 +321,16 @@ fi
 # =============================================================================
 # INTENDED. The two dot-prefixed sidecars are asserted INDIVIDUALLY, not as part of a `**` case:
 # a dotfile inside a re-included directory is its own silent-failure class.
+#
+# `.supervisor/postmortem/results.jsonl` MOVED HERE from the `assert_ignored` list below. The
+# deferral comment that used to sit above it said the ledger "must STAY ignored until a later item
+# filters it behind an explicit consent surface" — THIS IS THAT LATER ITEM. The ledger is now the
+# THIRD managed store: `setup-memory.sh apply` un-ignores it, but only behind a fail-closed gate that
+# refuses while any record's `.repo` sits outside the repo allowlist (`gated` verdict, offending
+# slugs named, exit still 0). The 7 `vendsy/hub` records that made the deferral necessary were
+# filtered out of the committed ledger in the same change, and `test-setup-memory.sh` groups (l)/(m)
+# pin the gate itself. The consent surface is `print_consent_disclosure()`, relayed verbatim by
+# `commands/setup.md`.
 while IFS= read -r p; do
   [ -n "$p" ] || continue
   assert_committable "$p"
@@ -316,13 +342,82 @@ done <<'EOF'
 .supervisor/memory/PROJECT_MEMORY.md
 .supervisor/memory/.provenance.jsonl
 .supervisor/memory/.lessons-provenance.jsonl
+.supervisor/postmortem/results.jsonl
 EOF
 
-# UNINTENDED. `.supervisor/postmortem/` is asserted DELIBERATELY, not omitted: the findings ledger
-# is explicitly OUT OF SCOPE for this migration and is structurally cross-repo (postmortem appends
-# land in the CURRENT working `.supervisor/`, never the analyzed repo's — which is exactly how this
-# repo accumulated its 7 foreign records). It must STAY ignored until a later item filters it
-# behind an explicit consent surface. An unfiltered committed ledger would publish foreign records.
+# THE COMMITTED LEDGER CARRIES ZERO FOREIGN RECORDS — asserted with jq, NEVER grep. This ledger
+# mixes compact (`"repo":"x"`) and spaced (`"repo": "x"`) JSON, so a compact-form grep silently
+# under-counts and a foreign record appended in the spaced form would evade it entirely.
+LEDGER_PATH=".supervisor/postmortem/results.jsonl"
+if ! command -v jq >/dev/null 2>&1; then
+  ok "jq unavailable — the committed-ledger census is skipped (this is a static gate, not a fail)"
+elif [ ! -f "$REPO_ROOT/$LEDGER_PATH" ]; then
+  ok "no findings ledger present — nothing to census"
+else
+  # THE EXPECTED SLUGS ARE DECLARED HERE, IN COMMITTED CODE — deliberately NOT read from
+  # `setup-memory.sh allowlist`. That resolver reads `.supervisor/config.json`, which is GITIGNORED
+  # (`.gitignore` excludes `.supervisor/*`; the managed block re-includes the memory stores and the
+  # ledger, never the config). So the allowlist DOES NOT TRAVEL with the repo: on any fresh clone —
+  # and in CI — it falls back to the live git remote ALONE, one entry, and every pre-rename
+  # `vikashruhilgit/ai-agent-manager` record in the committed ledger is then judged FOREIGN.
+  #
+  # That is not hypothetical: this exact census passed on the author's machine (2-entry config) and
+  # failed in CI (1-entry remote default) on the very commit that introduced it. A gate asserting a
+  # property of COMMITTED data must take its expectation from COMMITTED source, or it asserts a
+  # property of whoever happens to run it.
+  #
+  # Both slugs are legitimate and BOTH must stay: the repo was renamed ai-agent-manager -> loomwright,
+  # and records written before the rename carry the old slug. Dropping it would not "clean" the
+  # ledger, it would discard the larger, older half of this repo's own history — which is precisely
+  # why setup-memory.sh stores the allowlist as a LIST and warns that a rename needs the old slug
+  # added by hand.
+  OWNED_SLUGS='vikashruhilgit/loomwright
+vikashruhilgit/ai-agent-manager'
+  ALLOW_JSON="$(printf '%s\n' "$OWNED_SLUGS" | jq -R . | jq -s .)"
+  N_ALLOW="$(printf '%s' "$ALLOW_JSON" | jq 'length' 2>/dev/null || echo 0)"
+  if [ "${N_ALLOW:-0}" -gt 0 ]; then
+    ok "the committed owned-slug list resolves to $N_ALLOW entries (declared in this file, NOT read from the gitignored config — an empty list would make the census below vacuous)"
+  else
+    no "the committed owned-slug list resolved to NOTHING — the foreign-record census below would be meaningless"
+  fi
+  # Cross-check, advisory: report when the machine-local allowlist disagrees with the committed
+  # expectation. NOT a failure — a contributor's config is theirs — but a silent divergence here is
+  # what made the CI break confusing, so name it.
+  LOCAL_ALLOW="$(bash "$SETUP_MEMORY" --root "$REPO_ROOT" allowlist 2>/dev/null | sort | tr '\n' ' ')"
+  EXPECT_ALLOW="$(printf '%s\n' "$OWNED_SLUGS" | sort | tr '\n' ' ')"
+  if [ "$LOCAL_ALLOW" = "$EXPECT_ALLOW" ]; then
+    ok "the machine-local allowlist matches the committed owned-slug list"
+  else
+    ok "note (not a failure): the machine-local allowlist [$LOCAL_ALLOW] differs from the committed owned-slug list [$EXPECT_ALLOW]; the census uses the committed list"
+  fi
+  FOREIGN="$(jq -r --argjson allow "$ALLOW_JSON" \
+    '((.repo // "") | tostring) as $r | select(($allow | index($r)) == null) | (if $r == "" then "(no .repo field)" else $r end)' \
+    "$REPO_ROOT/$LEDGER_PATH" 2>/dev/null | sort -u | tr '\n' ' ')"
+  if [ -z "${FOREIGN// /}" ]; then
+    ok "the COMMITTED findings ledger holds ZERO records outside the allowlist ($(jq -s 'length' "$REPO_ROOT/$LEDGER_PATH" 2>/dev/null) records, counted with jq)"
+  else
+    no "the COMMITTED findings ledger holds FOREIGN records — this repo is PUBLIC; do NOT push. Offending slugs: $FOREIGN. Filter with: bash loomwright/scripts/setup-memory.sh filter-ledger --ledger $LEDGER_PATH"
+  fi
+  # NEGATIVE CONTROL — a SPACED-FORM foreign record must make that census FAIL. Injected into a COPY
+  # (never the real ledger), because a census that can only ever pass is not a census.
+  LEDGER_FIXTURE="$TMPD/ledger-contaminated.jsonl"
+  cp "$REPO_ROOT/$LEDGER_PATH" "$LEDGER_FIXTURE"
+  printf '{"schema_version": 1, "repo": "vendsy/hub", "number": 999}\n' >> "$LEDGER_FIXTURE"
+  INJ="$(jq -r --argjson allow "$ALLOW_JSON" \
+    '((.repo // "") | tostring) as $r | select(($allow | index($r)) == null) | $r' \
+    "$LEDGER_FIXTURE" 2>/dev/null | sort -u | tr '\n' ' ')"
+  case "$INJ" in
+    *vendsy/hub*) ok "negative control: a SPACED-FORM 'vendsy/hub' record injected into a copy makes the census FAIL (red↔green both proven)" ;;
+    *)            no "negative control DID NOT FIRE: an injected spaced-form foreign record swept clean. This census cannot fail and is therefore not a census." ;;
+  esac
+fi
+
+# UNINTENDED. `.supervisor/postmortem/` keeps entries here for its NON-ledger contents: the managed
+# block re-includes exactly ONE file in that directory, so a sibling artifact must still be ignored.
+# (Non-goal, stated so the omission is a decision: the gate keys on each record's `.repo` ONLY.
+# EXPLICIT_STORE_ROOTS is deliberately NOT widened to `.supervisor/postmortem`, so a record whose
+# `.repo` is allowlisted but whose finding TEXT cites a foreign org is NOT caught here. Widening the
+# content sweep to the ledger is its own item.)
 while IFS= read -r p; do
   [ -n "$p" ] || continue
   assert_ignored "$p"
@@ -333,7 +428,7 @@ done <<'EOF'
 .supervisor/jobs/pending/some-brief.md
 .supervisor/automate/some-run.json
 .supervisor/requirements/twin-loop/some-item.md
-.supervisor/postmortem/results.jsonl
+.supervisor/postmortem/some-other-artifact.json
 EOF
 
 # The predictable `apply` artifacts must be ignored too — `apply` ALWAYS writes them, no
