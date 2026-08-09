@@ -36,7 +36,13 @@
 #                                                (the documented .gitignore contrast), (j7) ONE
 #                                                EMPTY-STRING arg (what the documented
 #                                                `"$(git diff --name-only ...)"` idiom degenerates to
-#                                                on an empty diff) is repo-wide too, exactly like (j4)
+#                                                on an empty diff) is repo-wide too, exactly like (j4),
+#                                                (j8) a PARTIALLY-empty array (`["", "docs/*"]`) drops
+#                                                the empties and routes on the survivors — EMITTED for
+#                                                a docs path, ABSENT for a non-docs path, and SILENT
+#                                                (no WARN; the fail-open WARN only trips when the WHOLE
+#                                                cell neutralizes to "") — the reader's one documented
+#                                                routing DECISION, previously claimed but unchecked
 #   (k) ROUTING x SUPERSESSION ORDER → a rule ROUTED OUT of this call must NOT resurrect the rule it
 #                                                supersedes (supersession is resolved BEFORE routing)
 #   (l) MUTATION CONTROL for (j1) → the SAME non-match fixture is re-run against a copy of the reader
@@ -739,6 +745,45 @@ outJ6b="$(run_reader_args "$RJ" docs/a/b/c.md)"
 echo "$outJ6b" | grep -qF -- "- Scoped to docs and markdown" \
   && ok "(j6) \`**\` behaves as \`*\` and crosses \`/\` too (docs/** matched docs/a/b/c.md)" \
   || no "(j6) \`**\` did not match a nested docs path"
+
+# (j8) PARTIALLY-EMPTY array (`["", "docs/*"]`) — the one routing branch the reader documents as an
+# explicit DECISION rather than a fail-open: the empty entries are DROPPED, the rule routes on the
+# SURVIVORS, and NO WARN fires (the fail-open WARN only trips when the WHOLE cell neutralizes to "").
+# Pinned here because a doc-only claim is exactly the defect class this file exists to catch: without
+# these three assertions, a future `route_spec` that fails the whole array OPEN on any empty entry
+# (i.e. treats `["", "docs/*"]` like `[]`) would still pass every other (j) case. The no-WARN half is
+# asserted explicitly — that is the half the docstring calls a decision, and silence is the claim.
+# Reachable only by hand-editing a rule file: add-rule.sh rejects empty/whitespace-only patterns.
+RJ8="$(new_repo)"
+seed_rules_file "$RJ8" "mixed.json" '[
+  {"id":"j8-mixed","category":"a","statement":"Mixed array routes on the surviving pattern","enforcement":"advisory","check":null,"provenance":{"source":"test"},"applies_to":["","docs/*"]},
+  {"id":"j8-wide","category":"b","statement":"Mixed-case repo-wide control","enforcement":"advisory","check":null,"provenance":{"source":"test"}}
+]'
+# (j8a) EMITTED for a path matching the surviving pattern.
+outJ8a="$(run_reader_args "$RJ8" docs/guide.md)"; rcJ8a=$?
+[ "$rcJ8a" -eq 0 ] && ok "(j8 mixed-array) exits 0" || no "(j8) expected exit 0, got $rcJ8a"
+echo "$outJ8a" | grep -qF -- "- Mixed array routes on the surviving pattern" \
+  && ok "(j8) MIXED \`[\"\", \"docs/*\"]\`: EMITTED for a docs path (empties dropped, routes on survivors)" \
+  || no "(j8) mixed-array rule was not emitted for a matching docs path: $outJ8a"
+# (j8b) ABSENT for a non-matching path — i.e. the empty entry did NOT collapse the cell to fail-open.
+outJ8b="$(run_reader_args "$RJ8" src/app.ts)"
+echo "$outJ8b" | grep -qF -- "- Mixed-case repo-wide control" \
+  && ok "(j8) the repo-wide control IS emitted for the non-docs path (reader is alive)" \
+  || no "(j8) repo-wide control missing — the non-match assertion below would be vacuous: $outJ8b"
+if echo "$outJ8b" | grep -qF "Mixed array routes on the surviving pattern"; then
+  no "(j8) FAIL-OPEN REGRESSION: a partially-empty applies_to leaked repo-wide (should route like [\"docs/*\"])"
+else
+  ok "(j8) MIXED array: ABSENT for a non-docs path (partial emptiness does NOT fail the cell OPEN)"
+fi
+# (j8c) NO WARN — the documented-silence half. Checked on BOTH calls, since the WARN channel runs
+# before routing and would fire regardless of which path set was passed.
+errJ8a="$( ( cd "$RJ8" && bash "$READER" docs/guide.md ) 2>&1 >/dev/null )"
+errJ8b="$( ( cd "$RJ8" && bash "$READER" src/app.ts   ) 2>&1 >/dev/null )"
+if printf '%s\n%s\n' "$errJ8a" "$errJ8b" | grep -qF "applies_to on id=j8-mixed"; then
+  no "(j8) a WARN diagnostic fired for the partially-empty array — the docstring calls this SILENT"
+else
+  ok "(j8) NO WARN diagnostic for the partially-empty array (silence is the documented decision)"
+fi
 
 # ============================================================================
 echo "== (k) ROUTING x SUPERSESSION ORDER — a routed-out rule must not resurrect its predecessor =="

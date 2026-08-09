@@ -15,9 +15,12 @@
 #            only in WHICH path set they pass, not in the shape.
 #       (ii) `bash read-rules.sh`  (no args) — the SessionStart nudge (scripts/session-resume.sh).
 #     EXPLICIT LIMIT, stated so nobody reads more into these than they carry: a dynamic trace CANNOT
-#     prove the two prose seams still pass the reader the right paths — they are markdown, not code.
-#     That wiring stays covered by PART 1's greps. This is a shape-and-behaviour trace, not end-to-end
-#     proof. Part 2 degrades to a clean skip when jq is unavailable (the reader no-ops without it).
+#     prove the prose seams still pass the reader the right paths — they are markdown, not code. That
+#     wiring is covered by PART 1's assertion (D) below, which pins the ARGS-BEARING shape of each
+#     prose invocation (a path-argument placeholder must follow the reader path) — it pins the SHAPE,
+#     not the specific path set, which no static check can verify. This is a shape-and-behaviour
+#     trace, not end-to-end proof. Part 2 degrades to a clean skip when jq is unavailable (the reader
+#     no-ops without it).
 #
 # Runs on the plugin's Ubuntu CI like every other test-*.sh (auto-registered by ci.yml's test-*.sh
 # glob). Exit 0 = all pass, 1 = any fail.
@@ -39,6 +42,27 @@
 #   (C) it NEVER pipes / substitutes / execs read-rules.sh OUTPUT into a shell executor
 #       (`| bash`, `| sh`, `eval`, exec'd `$(...)`, `source`) — the reader emits `check` as DATA
 #       and no seam runs it.
+#
+# Plus (D) INVOCATION SHAPE, asserted per surface CLASS rather than uniformly, because the four seams
+# genuinely differ in kind — a uniform grep here would be either vacuous or wrong:
+#   - ARGS-BEARING surfaces (the prose invocations that MUST scope on the diff): the reader path must
+#     be followed by a path-argument PLACEHOLDER (`<touched paths…>` / `<touched files…>`). A bare
+#     `bash …/read-rules.sh` in any of these silently degrades that seam to ALWAYS-REPO-WIDE, which is
+#     precisely the failure `applies_to` routing exists to prevent, and nothing else in this file or
+#     in PART 2 would catch it. Three surfaces carry such an invocation:
+#       skills/self-heal-advisory/SKILL.md    (Phase 4.5)
+#       agents/execute-manager.md             (parallel-path worker spawn)
+#       skills/async-orchestration/SKILL.md   (Part 2 §"Subagent Spawn Contracts" — the VERBATIM
+#                                              Worker spawn shape that agents/supervisor.md delegates
+#                                              to; it is not itself a seam, but it is where the
+#                                              Supervisor-path invocation physically lives, so this is
+#                                              the only place that shape can be pinned)
+#   - POINTER surface — agents/supervisor.md holds NO literal invocation: it states the non-negotiable
+#     ("args, never stdin") and delegates the verbatim shape to async-orchestration. So it is asserted
+#     on the non-negotiable phrase, not on a placeholder it does not and should not contain.
+#   - DELIBERATELY NO-ARG — scripts/session-resume.sh's rules_nudge() calls the reader with ZERO args
+#     ON PURPOSE (repo-wide by design). Exempt from (D); pinned instead by PART 2 [shape ii] and by
+#     test-read-rules.sh (j4)/(j4b).
 #
 # SCOPE NOTE: the negative assertion is scoped to (1) rules-check.sh and (2) executing
 # read-rules.sh OUTPUT. It does NOT blanket-ban `bash -c`, because self-heal-advisory/SKILL.md
@@ -120,6 +144,40 @@ for f in "${SEAMS[@]}"; do
     no "[$base] read-rules.sh OUTPUT executed in a shell sink: ${exec_leak}"
   fi
 done
+
+# ---- (D) INVOCATION SHAPE: an args-bearing call must stay args-bearing (see the header) -----------
+# The placeholder pattern is deliberately loose about what sits between the reader path and the `<`
+# (a closing quote, possibly BACKSLASH-escaped inside execute-manager.md's JSON-ish prompt string,
+# plus whitespace) and about the placeholder wording (`paths`/`files`, singular or plural) — it is the
+# SHAPE that is load-bearing, not the prose. What it cannot tolerate is the args disappearing.
+ARGS_BEARING=(
+  "$PLUGIN_ROOT/skills/self-heal-advisory/SKILL.md"
+  "$PLUGIN_ROOT/agents/execute-manager.md"
+  "$PLUGIN_ROOT/skills/async-orchestration/SKILL.md"
+)
+ARGS_SHAPE_RE='read-rules\.sh[^<>]{0,12}<[^<>]{0,40}(path|file)'
+
+for f in "${ARGS_BEARING[@]}"; do
+  base="$(basename "$(dirname "$f")")/$(basename "$f")"
+  if [ ! -f "$f" ]; then
+    no "[$base] MISSING args-bearing invocation surface ($f)"
+  elif grep -qE "$ARGS_SHAPE_RE" "$f"; then
+    ok "[$base] (D) the read-rules.sh invocation still carries a touched-path ARGUMENT placeholder"
+  else
+    no "[$base] (D) read-rules.sh invoked with NO path-argument placeholder — this seam would degrade to ALWAYS-REPO-WIDE"
+  fi
+done
+
+# The POINTER surface: no literal invocation, so assert the non-negotiable it delegates instead.
+SUP="$PLUGIN_ROOT/agents/supervisor.md"
+sup_base="agents/supervisor.md"
+if [ ! -f "$SUP" ]; then
+  no "[$sup_base] (D) MISSING pointer surface"
+elif grep -n 'read-rules\.sh' "$SUP" | grep -qE 'args, never stdin'; then
+  ok "[$sup_base] (D) the read-rules.sh pointer still states the args-shape non-negotiable (\"args, never stdin\")"
+else
+  no "[$sup_base] (D) the read-rules.sh pointer lost its args-shape non-negotiable — the delegated Worker spawn could go bare"
+fi
 
 # ============================================================================
 # PART 2 — DYNAMIC trace of the TWO distinct executable invocation shapes (see the header).

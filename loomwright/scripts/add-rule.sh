@@ -360,9 +360,12 @@ fi
 #                              stored pattern AND collide with the cell framing it was chosen for.
 #       contains `..`        → traversal-style; the store is repo-relative and a rule scope has no
 #                              business walking upward. Same raw-string reject as the `category`
-#                              containment guard in §1 above. That anchor is DESCRIPTIVE on purpose:
-#                              a bare line number in a comment is a live claim that nothing checks,
-#                              and this one was already wrong twice. Cite the construct, not the line.
+#                              containment guard — item 1 of this file's own "WRITE DISCIPLINE — ADD
+#                              action" list above (NOT a `skills/rules/SKILL.md §N` reference; the
+#                              `§N` citations elsewhere in this file all point at that external doc).
+#                              That anchor is DESCRIPTIVE on purpose: a bare line number in a comment
+#                              is a live claim that nothing checks, and this one was already wrong
+#                              twice. Cite the construct, not the line.
 #       leading `/`          → absolute path; the reader matches repo-relative touched paths, so an
 #                              absolute pattern can only ever match nothing.
 #       leading `~`          → home-relative; same reasoning as absolute, plus shell-expansion optics.
