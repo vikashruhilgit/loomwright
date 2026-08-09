@@ -3,7 +3,14 @@
 # module engine: gitignore negation `check` / `apply` / `remove` + the repo allowlist and its
 # ledger filter). STATIC ONLY: no network, no Docker, no GitHub — so it runs on the plugin's
 # Ubuntu CI like every other test-*.sh (auto-registered by ci.yml's test-*.sh glob).
-# Exit 0 = all pass, 1 = any failure.
+# Exit 0 = all pass, 1 = any assertion failed, 2 = FIXTURE SETUP is broken.
+#
+# 1 and 2 are deliberately distinct and must stay that way. 1 means the assertions ran and
+# setup-memory.sh genuinely misbehaved. 2 means a fixture could not be BUILT as specified, so the
+# assertions after it would be testing something other than what they name — a defect in this
+# harness, not in the script under test. Conflating the two is the exact bug this distinction
+# exists to prevent: see the (f5) flake described at `mkfix` below, where a silently-failed
+# `ln -s` reported itself as "the symlink was clobbered" and read as a rewriter bug.
 #
 # Mirrors test-setup-twin.sh convention: pass/fail counters, ok()/no() helpers, a
 # "RESULT: N passed, M failed" tail, exit 1 on any failure.
@@ -21,10 +28,22 @@
 #
 # FIXTURE NAMES ARE UNIQUE BY CONSTRUCTION (`mktemp -d`), NEVER BY `$RANDOM`. See mkfix's comment
 # for the flake this closed. Corollary, and the reason `setup_fail` exists: fixture SETUP is not
-# under test. Any setup step that can fail on a pre-existing path — `ln -s`, `mkdir`, `chmod` —
-# is checked immediately and aborts the suite with exit 2, because a mis-built fixture reports
-# itself as a behavioural defect in setup-memory.sh and sends the reader hunting a bug that is
-# not there. Never let a setup failure fall through into an `ok`/`no` assertion.
+# under test. A mis-built fixture reports itself as a behavioural defect in setup-memory.sh and
+# sends the reader hunting a bug that is not there, so a setup step must never fall through into
+# an `ok`/`no` assertion.
+#
+# The class that needs a guard is narrow and worth stating exactly, so this note cannot rot into
+# a claim the code does not back: it is the setup calls that FAIL on a pre-existing path or a
+# refused mode change — bare `mkdir`, bare `ln -s`, and `chmod 000`. Every one of those is
+# checked at its call site (`newgit`, f5, f6, f7, f8, l9). To audit: run
+# `grep -n 'mkdir "\|ln -s \|chmod 000' "$0"` and confirm every CALL SITE it lists is followed by
+# a `|| setup_fail …` — on the same line, or on the next one where the call is line-continued.
+# (The grep also matches assertion message TEXT mentioning chmod-000; those are strings, not
+# calls. Read the hit, do not just count the lines.)
+#
+# The suite's OTHER setup calls are deliberately unguarded and must not be "fixed" by copying the
+# pattern around: `mkdir -p`, `ln -sf` and `chmod +x` cannot fail on a pre-existing path — that is
+# precisely what the `-p`/`-f` flags buy — so a guard there would be noise asserting a tautology.
 #
 # NO `producer | grep -q` PIPELINES. Under `set -o pipefail`, `grep -q` exits at the first match
 # and SIGPIPEs the producer, so the PIPELINE status becomes 141 even though grep matched — an
