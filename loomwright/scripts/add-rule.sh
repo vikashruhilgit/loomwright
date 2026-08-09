@@ -379,12 +379,13 @@ if [ "$applies_to_set" -eq 1 ]; then
     at_pat="${at_rest%%"$nl_a"*}"
     at_rest="${at_rest#*"$nl_a"}"
     [ -n "$at_pat" ] || die "rejected: --applies-to must be non-empty when supplied"
-    # Whitespace-only is the empty case one step further in — see the A2 table. Same idiom as the
-    # `--target` guard in the retract path (bash 3.2: `case`, never `${var//[[:space:]]/}`).
-    case "$at_pat" in
-      *[![:space:]]*) : ;;
-      *) die "rejected: --applies-to must contain at least one non-whitespace character (whitespace-only pattern matches nothing): $at_pat" ;;
-    esac
+    # ORDER MATTERS: the SPECIFIC control-character/shape rejects run FIRST, the whitespace-only
+    # catch-all LAST — mirroring the `--target` guard in the retract path, which likewise checks
+    # newline/CR before its whitespace-only arm. A lone CR or lone TAB is entirely whitespace under
+    # `[:space:]`, so with the catch-all first those two specific arms were unreachable for the
+    # lone-control-character shape and the caller got the generic message instead. An unreachable
+    # branch is a guarantee that exists only on paper. Every input rejected before is still rejected;
+    # only WHICH diagnostic fires changed. (bash 3.2: `case`, never `${var//[[:space:]]/}`.)
     case "$at_pat" in
       *"$cr_a"*)  die "rejected: --applies-to may not contain carriage-return characters: $at_pat" ;;
       *"$tab_a"*) die "rejected: --applies-to may not contain tab characters: $at_pat" ;;
@@ -392,6 +393,11 @@ if [ "$applies_to_set" -eq 1 ]; then
       *..*)       die "rejected: --applies-to may not contain '..' (traversal): $at_pat" ;;
       /*)         die "rejected: --applies-to must be a repo-relative pattern, not absolute: $at_pat" ;;
       '~'*)       die "rejected: --applies-to must be a repo-relative pattern, not home-relative: $at_pat" ;;
+    esac
+    # Whitespace-only is the empty case one step further in — see the A2 table.
+    case "$at_pat" in
+      *[![:space:]]*) : ;;
+      *) die "rejected: --applies-to must contain at least one non-whitespace character (whitespace-only pattern matches nothing): $at_pat" ;;
     esac
     at_count=$((at_count + 1))
   done

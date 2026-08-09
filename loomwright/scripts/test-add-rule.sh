@@ -496,8 +496,9 @@ fi
 
 # (M3e) WHITESPACE-ONLY REJECTED — passes the non-empty check but matches nothing (no touched path is
 # a bare space), so it is a silent dead rule for the same reason the empty pattern is. Mirrors the
-# `--target` whitespace-only guard in the retract path.
-for wspat in " " "   " "$(printf '\t')"; do
+# `--target` whitespace-only guard in the retract path. A lone TAB is deliberately NOT in this list:
+# it is whitespace, but the guard order puts the tab-specific reject FIRST, so it belongs to (M3f).
+for wspat in " " "   "; do
   RM3E="$(new_repo)"
   run_writer "$RM3E" --category "Routing" --statement "Whitespace pattern rule" \
     --applies-to "$wspat" --confirm
@@ -505,6 +506,32 @@ for wspat in " " "   " "$(printf '\t')"; do
     ok "(M3e) a whitespace-only --applies-to is REJECTED (rc=$RC) with no file written"
   else
     no "(M3e) whitespace-only --applies-to NOT rejected (rc=$RC files=$(count_rule_files "$RM3E")) — a silent dead rule"
+  fi
+done
+
+# (M3f) CR and TAB REJECTED BY THEIR OWN SPECIFIC ARMS — both as a lone character and embedded in an
+# otherwise non-whitespace pattern. CR rejection is documented in three places (this writer's A2 table,
+# skills/rules/SKILL.md §7, and the PR narrative) and had no check at all; and because a lone CR / lone
+# TAB is entirely whitespace under `[:space:]`, those arms are only reachable while the specific
+# control-character `case` runs BEFORE the whitespace-only catch-all. Asserting the SPECIFIC message
+# (not merely rc!=0) is what makes a future re-reorder fail here instead of passing silently.
+for cpat_label in \
+  "lone-CR|$(printf '\r')|carriage-return" \
+  "embedded-CR|src/$(printf '\r')foo|carriage-return" \
+  "lone-TAB|$(printf '\t')|tab" \
+  "embedded-TAB|src/$(printf '\t')foo|tab"; do
+  cf_name="${cpat_label%%|*}"
+  cf_rest="${cpat_label#*|}"
+  cf_pat="${cf_rest%|*}"
+  cf_msg="${cf_rest##*|}"
+  RM3F="$(new_repo)"
+  run_writer "$RM3F" --category "Routing" --statement "Control character pattern rule" \
+    --applies-to "$cf_pat" --confirm
+  if [ "$RC" -ne 0 ] && [ "$(count_rule_files "$RM3F")" = "0" ] \
+     && printf '%s' "$OUT" | grep -qF -- "may not contain $cf_msg characters"; then
+    ok "(M3f) $cf_name --applies-to REJECTED (rc=$RC) with no file written and the $cf_msg-specific diagnostic"
+  else
+    no "(M3f) $cf_name --applies-to did not hit the $cf_msg-specific reject (rc=$RC files=$(count_rule_files "$RM3F")): $OUT"
   fi
 done
 
