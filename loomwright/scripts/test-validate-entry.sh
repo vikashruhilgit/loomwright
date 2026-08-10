@@ -221,8 +221,14 @@ verdict 0 "AC17: a bare command-name source still passes when the ENTRY itself c
 echo "== 5. dead reference =="
 verdict 0 "an entry citing a path that still resolves passes" \
   "$VE" dead-reference --entry "the sole writer is loomwright/scripts/write-lessons.sh" --root "$REPO_ROOT"
+# The `file:N` in the next fixture is FIXTURE INPUT, not a prose citation — it exists to prove
+# that a real path carrying a line suffix still resolves. The citation-drift ratchet cannot tell
+# the two apart, so it is pinned like any live citation. If the anchor moves, update the fixture
+# rather than dropping the pin. NOTE: the pin must sit on the citation's own line (or the one
+# after it) — a pin placed ABOVE is not seen, and a comment inside a `\`-continuation silently
+# breaks the argument list, which is how this fixture was broken once already.
 verdict 0 "a bare CLAUDE.md and a :N line citation both resolve" \
-  "$VE" dead-reference --entry "see CLAUDE.md and loomwright/scripts/setup-memory.sh:128" --root "$REPO_ROOT"
+  "$VE" dead-reference --entry "see CLAUDE.md and loomwright/scripts/setup-memory.sh:128" --root "$REPO_ROOT"  # [pins: `robust to header edits`]
 verdict 1 "an entry citing a path that no longer resolves is REFUSED" \
   "$VE" dead-reference --entry "the guard lives in loomwright/scripts/long-gone.sh" --root "$REPO_ROOT"
 reason "REFUSE_DEAD_REFERENCE" "the dead-reference refusal names its check"
