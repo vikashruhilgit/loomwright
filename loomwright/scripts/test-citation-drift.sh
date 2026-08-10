@@ -357,7 +357,8 @@ SURFACES="$(git ls-files -- \
     'loomwright/scripts/*.sh' 'loomwright/scripts/*.py' \
     'loomwright/skills/*.md' 'loomwright/commands/*.md' 'loomwright/agents/*.md' \
     'loomwright/docs/*.md' 'scripts/*.sh' 'CLAUDE.md' 'AGENT_GUIDELINES.md' 'README.md' \
-    '.claude-plugin/README.md' '.claude/agent-memory/*.md' '.supervisor/memory/*.md' 2>/dev/null \
+    '.claude-plugin/README.md' '.claude/agent-memory/*.md' '.supervisor/memory/*.md' \
+    '.github/workflows/*.yml' 2>/dev/null \
   | grep -v '^loomwright/docs/SPIKES/' \
   | grep -v '^CHANGELOG.md$' \
   | grep -v '^loomwright/scripts/test-citation-drift.sh$')"
