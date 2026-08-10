@@ -61,8 +61,8 @@
 #     ("args, never stdin") and delegates the verbatim shape to async-orchestration. So it is asserted
 #     on the non-negotiable phrase, not on a placeholder it does not and should not contain.
 #   - DELIBERATELY NO-ARG — scripts/session-resume.sh's rules_nudge() calls the reader with ZERO args
-#     ON PURPOSE (repo-wide by design). Exempt from (D); pinned instead by PART 2 [shape ii] and by
-#     test-read-rules.sh (j4)/(j4b).
+#     ON PURPOSE (repo-wide by design). Exempt from (D); pinned instead by PART 2 [shape ii], by
+#     test-read-rules.sh (j4), and — for the cited line number itself — by test-citation-drift.sh.
 #
 # SCOPE NOTE: the negative assertion is scoped to (1) rules-check.sh and (2) executing
 # read-rules.sh OUTPUT. It does NOT blanket-ban `bash -c`, because self-heal-advisory/SKILL.md

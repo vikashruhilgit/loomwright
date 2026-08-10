@@ -126,6 +126,25 @@ EOF
   return 1
 }
 
+# Candidate files for suffix resolution, keyed on basename.
+#
+# TRACKED files when $root is a git checkout, falling back to a filesystem walk otherwise (the
+# mutation fixtures are plain temp dirs). This is a DETERMINISM fix, not a speed one: resolving
+# against the working tree means a stray untracked file sharing a cited basename — a scratch
+# SKILL.md under a WIP skills dir, a leftover .supervisor/ artifact — can flip a previously-unique
+# suffix match to ambiguous, and an ambiguous citation SKIPs. The gate would then quietly stop
+# checking a citation on one machine while still checking it in CI's clean checkout. A gate whose
+# verdict depends on untracked local junk is not a gate. (Not hypothetical: an untracked scratch
+# file in this very worktree was accidentally swept into a commit while this PR was being written.)
+candidate_paths() {
+  local root="$1" base="$2"
+  if git -C "$root" rev-parse --git-dir >/dev/null 2>&1; then
+    git -C "$root" ls-files -- "*/$base" "$base" 2>/dev/null
+  else
+    (cd "$root" && find . -name "$base" -type f 2>/dev/null | sed 's|^\./||' | grep -v '^\.git/')
+  fi
+}
+
 # The anti-vacuity floor, factored out purely so it can be mutation-tested. On the real repo it
 # only ever takes the "pass" branch (the corpus is well above the floor), so without a control
 # nothing proves the comparison would actually trip if the scanned set collapsed — and this is
@@ -274,7 +293,7 @@ scan_surface() {
                 ;;
             esac
           done <<EOF
-$(cd "$root" && find . -name "$base" -type f 2>/dev/null | sed 's|^\./||' | grep -v '^\.git/')
+$(candidate_paths "$root" "$base")
 EOF
           [ "$nhits" -eq 1 ] || hits=""
           resolved="$hits"
@@ -671,6 +690,36 @@ TGT
     OVERRUN*) ok "(M19) a 3+ element line list normalises to its true maximum (:1,2,99 trips the floor)" ;;
     *)        no "(M19) a multi-element list stopped short of its maximum — verdict was '$M_LIST'" ;;
   esac
+
+  # (M20) The git-tracked resolution path, in a REAL git fixture — the branch the live scan
+  # actually takes, which the plain temp-dir fixtures above never exercise. An UNTRACKED decoy
+  # sharing the cited basename must not flip resolution to ambiguous: under a working-tree walk it
+  # would, and the citation would silently SKIP on a dev machine while still being checked in CI.
+  GFIX="$FIX/gitrepo"
+  mkdir -p "$GFIX/loomwright/scripts" "$GFIX/loomwright/skills/real" "$GFIX/wip/real"
+  printf 'a\nb\nTRACKED SIGNAL\n' > "$GFIX/loomwright/skills/real/SKILL.md"
+  printf '# see real/SKILL.md:3 [pins: `TRACKED SIGNAL`]\n' > "$GFIX/loomwright/scripts/gitcite.sh"
+  (
+    cd "$GFIX" || exit 0
+    git init -q . 2>/dev/null
+    git config user.email t@example.com 2>/dev/null
+    git config user.name t 2>/dev/null
+    git add loomwright/skills/real/SKILL.md loomwright/scripts/gitcite.sh 2>/dev/null
+    git -c commit.gpgsign=false commit -qm fixture 2>/dev/null
+  ) >/dev/null 2>&1
+  # Created AFTER the commit and never added. Its path must end with the SAME SUFFIX the citation
+  # names (`real/SKILL.md`), or it never collides and the control proves nothing — an earlier
+  # version put it under `scratch/` and passed against the very walk it was meant to condemn.
+  printf 'x\ny\nDECOY\n' > "$GFIX/wip/real/SKILL.md"
+  if [ -d "$GFIX/.git" ]; then
+    M_GIT="$(scan_surface "$GFIX" "$GFIX/loomwright/scripts/gitcite.sh")"
+    case "$M_GIT" in
+      OK*) ok "(M20) an UNTRACKED decoy sharing a cited basename does not flip resolution (git path)" ;;
+      *)   no "(M20) an untracked file changed the verdict — local runs would diverge from CI: '$M_GIT'" ;;
+    esac
+  else
+    no "(M20) could not build a git fixture — the tracked-resolution path is UNPROVEN"
+  fi
 
   M_REGEX="$(scan_surface "$FIX" "$FIX/loomwright/scripts/regexcite.sh")"
   case "$M_REGEX" in
