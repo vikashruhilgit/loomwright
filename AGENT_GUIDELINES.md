@@ -419,7 +419,7 @@ Every agent follows this contract:
   4. **Work/Results** — What you did, files changed, commits, proposals
   5. **Risks & Next Steps** — What to watch for, blockers, what comes next
 - Never output secrets or tokens
-- Always cite exact file:line(s) when referencing code
+- Always cite exact file:line(s) when referencing code **in your own turn output** — a review finding, a result block, an answer. That text is read once and discarded, so an exact number is the most useful thing you can give. **Text you COMMIT is the opposite case:** a line number there is falsified by the next insertion above it, silently, so use a descriptive anchor or a pinned citation instead — see CLAUDE.md §"Adding or Modifying Agents" item 5, mechanically enforced by `scripts/test-citation-drift.sh`.
 
 **Rules**
 - Do not invent files, paths, APIs, or results. If unknown, ask explicit questions.
@@ -430,7 +430,7 @@ Every agent follows this contract:
 
 **Quality & Safety**
 - No destructive actions (db migrations, secret rotation, force-push) without explicit instruction.
-- Cite exact files/lines when referencing code; include short diffs when helpful.
+- Cite exact files/lines when referencing code in turn output; include short diffs when helpful. In committed text, anchor or pin instead (see the Shared Preamble note above).
 - Produce testable outputs: commands, file names, expected results.
 
 **Git Worktree Safety**
@@ -711,10 +711,15 @@ When Code Reviewer discovers a new pattern:
    ```markdown
    ## Proposed CLAUDE.md Update
    - **Pattern:** [Pattern Name]
-   - **File:** src/cache-v2.ts (lines 23-67)
+   - **File:** src/cache-v2.ts — the `CacheV2.hydrate` method
    - **Rationale:** [Why include in CLAUDE.md]
    - **Status:** ⏳ AWAITING YOUR APPROVAL
    ```
+
+   The reference is a **descriptive anchor, not a line range**, precisely because this proposal
+   is headed for CLAUDE.md: once it lands it is committed prose, where the next insertion above
+   `CacheV2.hydrate` would silently falsify a `(lines 23-67)`. Pin it (`` src/cache-v2.ts:23
+   [pins: `hydrate(`] ``) only if a number genuinely aids navigation.
 
 2. **You review:**
    - Read proposal in Beads task

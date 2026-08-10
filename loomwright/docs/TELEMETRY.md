@@ -825,7 +825,7 @@ No issue is created, no network call is made, the wrapper exits 0.
 
 The wrapper extracts `session_id` from the hook's stdin JSON payload
 (Claude Code provides this on every hook payload — see the existing
-`WorktreeCreate` block in `hooks.json:88-107` for the stdin parsing
+`WorktreeCreate` block in `hooks.json:112` [pins: `"WorktreeCreate"`] for the stdin parsing
 pattern). The pending-notice marker is then a **per-session** flag file:
 
 ```

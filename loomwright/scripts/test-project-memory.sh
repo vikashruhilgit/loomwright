@@ -206,7 +206,8 @@ rm -rf "$RDIR"
 #     so it FAILS CLOSED: exit 2 at validation time with state untouched. This replaced an earlier
 #     warn-and-succeed path whose stated rationale ("erroring would be a breaking change") was false
 #     — --supersedes ships in this same release and has no callers — and which left this store
-#     disagreeing with the sibling it mirrors: write-lessons.sh:125 already rejects the identical
+#     disagreeing with the sibling it mirrors: write-lessons.sh:46
+#     [pins: `indistinguishable synonym for retract`] already rejects the identical
 #     mistake ("a supersede without a replacement is an indistinguishable synonym for retract").
 #     The two stores now agree deliberately, and the abort matches the repo-wide "correctness gates
 #     fail CLOSED" invariant. --retract, the honest spelling for that same operation, is deliberately

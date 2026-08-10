@@ -1247,7 +1247,7 @@ variant:
 - `changed_paths` **and** `repo` are **both required for `read-postmortem.sh` visibility** — the advisory
   reader keeps a corpus line only when its `changed_paths` overlaps the query paths **AND** (when the
   current repo is determinable) its `repo` matches the reader's repo case-insensitively
-  (`read-postmortem.sh:124-126`). So `repo` is co-load-bearing with `changed_paths`: an `automate_drain`
+  (`read-postmortem.sh:159` [pins: `changed_paths overlap the query set`]). So `repo` is co-load-bearing with `changed_paths`: an `automate_drain`
   line with `repo: ""` (the helper's default when `--repo` is omitted — emitted as `""`, NOT `null`) is
   filtered out whenever the reader's repo resolves. The `/automate` wiring therefore derives `repo`
   (`owner/repo`) from `pr_url` and always passes `--repo`. On a failed `gh pr view` fetch `changed_paths`

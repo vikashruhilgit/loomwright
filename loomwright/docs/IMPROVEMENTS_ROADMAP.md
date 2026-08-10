@@ -112,7 +112,7 @@ Spawns a subagent with tool access (Read, Bash, Glob, etc.). It can actually ver
 
 ### 4. Add `effort` to Agent Frontmatter
 
-**[VERDICT: RESOLVED — `agents/red-team-reviewer.md:7` carries `effort: xhigh` (exceeding the proposed `high`), and effort tiering is now the canonical cost/quality knob across 11 of 14 agents (`loomwright/docs/ARCHITECTURE_CONTRACTS.md` §"Effort Tier", v12.0.0). Context-Keeper carries no `effort` field but runs `model: haiku` + `maxTurns: 3` (`agents/context-keeper.md`), which delivers this item's cheap-fast intent]**
+**[VERDICT: RESOLVED — `agents/red-team-reviewer.md` frontmatter carries `effort: xhigh` (exceeding the proposed `high`), and effort tiering is now the canonical cost/quality knob across 11 of 14 agents (`loomwright/docs/ARCHITECTURE_CONTRACTS.md` §"Effort Tier", v12.0.0). Context-Keeper carries no `effort` field but runs `model: haiku` + `maxTurns: 3` (`agents/context-keeper.md`), which delivers this item's cheap-fast intent]**
 
 **What's happening now:**
 Only Code Reviewer has `effort: high` (line 6). All other agents use the default effort level (medium).
@@ -389,7 +389,7 @@ Update `README.md` to position Supervisor as "what you need when `/batch` isn't 
 
 ### 16. Add Supervisor `maxTurns`
 
-**[VERDICT: RESOLVED — `agents/supervisor.md:6` carries `maxTurns: 60`; the item body below already records the resolution]**
+**[VERDICT: RESOLVED — `agents/supervisor.md` frontmatter carries `maxTurns: 60`; the item body below already records the resolution]**
 
 **What's happening now:**
 **Resolved — `supervisor.md` frontmatter now carries `maxTurns: 60`** (historically it had none and relied solely on its internal tool-call budget). But `maxTurns` is enforced by Claude Code infrastructure — without it, the Supervisor could theoretically run indefinitely if its self-tracking fails.

@@ -451,7 +451,8 @@ trap 'rm -f "$mem_tmp" "$prov_tmp" "$evict_file" 2>/dev/null' EXIT
 # so they stay on `-v`.
 # `sup` (the 8-char id of the entry this one supersedes) is empty for a plain `add` and for a
 # `retract`-only call never reaches this point at all; only `supersede`'s fall-through sets it.
-# It is appended AFTER confidence, never before last_verified (read-lessons.sh:118 strips
+# It is appended AFTER confidence, never before last_verified (read-lessons.sh:118
+# [pins: `last_verified=`] strips
 # `<!-- last_verified=.*-->` greedily — last_verified must stay first or the strip still works
 # fine either way, but the contract pins it first for clarity/stability across future trailer
 # fields).

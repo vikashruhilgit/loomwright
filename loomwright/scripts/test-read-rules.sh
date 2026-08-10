@@ -656,8 +656,9 @@ echo "$errJ3" | grep -qF "malformed or empty applies_to on id=j-nonarray" \
   || no "(j3) fail-open diagnostic missing from stderr: $errJ3"
 
 # (j4) THE NO-ARG CALL — the exact shape rules_nudge() uses at scripts/session-resume.sh:319
-# (pinned by (j4b) below, which re-derives the number from the file; `bash "$reader"`, zero
-# positional args). Zero touched paths is an ABSENCE OF SCOPE, not a negative match, so EVERY valid
+# [pins: `bash "$reader"`] (zero positional args; the pin is verified by
+# test-citation-drift.sh, which re-derives the line from the file rather than trusting the
+# number). Zero touched paths is an ABSENCE OF SCOPE, not a negative match, so EVERY valid
 # rule must still be emitted. If this ever regressed, rules_nudge() would start telling repos that HAVE
 # house rules that they have none — a CLAUDE.md-pinned firing surface (job Risk R1 / AC4).
 outJ4="$(run_reader "$RJ")"; rcJ4=$?
@@ -670,41 +671,20 @@ nJ4="$(printf '%s\n' "$outJ4" | grep -cE '^- ')"
   && ok "(j4) NO-ARG stdout is NON-EMPTY for a store that has rules (the nudge gates on emptiness)" \
   || no "(j4) NO-ARG stdout was EMPTY — rules_nudge would fire on a repo that HAS rules"
 
-# (j4b) CITATION-DRIFT GUARD — a recorded defect class in this repo: a worker inserts lines ABOVE an
-# absolute line reference and silently falsifies its own pointers. That is exactly what happened here
-# once (an 8-line comment block pushed the no-arg call from :311 to :319 while five surfaces still
-# said :311). Prose surfaces now use a descriptive anchor instead of a number; the in-code citations
-# that DO carry a number are pinned mechanically below: every `session-resume.sh:<N>` citation under
-# loomwright/scripts that says "no-arg" ON THE SAME LINE must point at a line that actually holds the
-# no-arg `bash "$reader"` call. (Scoped that way on purpose — CHANGELOG.md carries frozen historical
-# citations of OTHER session-resume.sh lines, which are correct as history and must not be rewritten.)
-SR_FILE="$SCRIPT_DIR/session-resume.sh"
-CITE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-if [ -r "$SR_FILE" ] && [ -d "$CITE_ROOT/.git" ]; then
-  j4b_bad=0; j4b_seen=0
-  # Only citations that are ABOUT the no-arg call are policed: the CHANGELOG deliberately carries
-  # frozen historical references to other session-resume.sh lines, and those must not be "corrected".
-  # Convention: a live citation of this call says "no-arg" on the same line.
-  for n in $(git -C "$CITE_ROOT" grep -hiE 'no-arg' -- 'loomwright/scripts' 2>/dev/null \
-               | grep -oE 'session-resume\.sh:[0-9]+' | sed 's/.*://' | sort -un); do
-    j4b_seen=$((j4b_seen + 1))
-    cited="$(sed -n "${n}p" "$SR_FILE")"
-    case "$cited" in
-      *'bash "$reader"'*) : ;;
-      *) j4b_bad=$((j4b_bad + 1))
-         echo "    cited session-resume.sh:$n holds: $cited" ;;
-    esac
-  done
-  if [ "$j4b_seen" -eq 0 ]; then
-    ok "(j4b) no numeric session-resume.sh:<N> citations in the repo — nothing to rot"
-  elif [ "$j4b_bad" -eq 0 ]; then
-    ok "(j4b) all $j4b_seen numeric session-resume.sh:<N> citation(s) still point at the no-arg \`bash \"\$reader\"\` call"
-  else
-    no "(j4b) $j4b_bad of $j4b_seen session-resume.sh:<N> citation(s) have DRIFTED off the no-arg call"
-  fi
-else
-  ok "(j4b) skipped — session-resume.sh unreadable or not a git checkout (citation guard is repo-local)"
-fi
+# (j4b) CITATION-DRIFT GUARD — RETIRED HERE, GENERALISED into scripts/test-citation-drift.sh.
+#
+# The narrow version policed exactly one shape: `session-resume.sh:<N>` citations under
+# loomwright/scripts that also said "no-arg" on the same line. That scoping is why it MISSED the
+# sibling instance in the same PR — add-rule.sh's `--applies-to` comment cited the `category`
+# traversal reject as `(:245+)` when the guard was at :274 — and it could say nothing at all
+# about the ~35 other numeric citations elsewhere in the repo. Twelve of those turned out to
+# have already rotted; the generalised guard found them on its first run and they were all
+# corrected in the same change (the CHANGELOG entry lists them, with their old and new lines).
+#
+# Coverage is not lost by deleting it: the citation this file and read-rules.sh make of the
+# no-arg call now carries an explicit `[pins: \`bash "$reader"\`]` anchor, which
+# test-citation-drift.sh check (B) verifies by re-deriving the line from session-resume.sh —
+# the same mechanism, applied to every live surface instead of one file and one keyword.
 
 # (j7) THE ONE-EMPTY-STRING CALL — not a shape any current seam produces (the live callers pass paths
 # as SEPARATE positional arguments, or make the no-arg call), but the degenerate shape a future caller

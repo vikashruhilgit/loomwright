@@ -181,11 +181,13 @@ US=$'\037'
 #      malformed shapes additionally get a stderr+log diagnostic from the WARN channel; the predicate
 #      itself just says "applies".
 #   2. A ZERO-LENGTH touched-path set means "no scope supplied" — an absence of information, NOT a
-#      negative match. This is the no-arg call shape `rules_nudge()` uses at session-resume.sh:319.
-#      See the header docstring. That number is PINNED by test-read-rules.sh (j4b), which re-derives
-#      the real call site and re-checks every citation carrying "no-arg" on the same line — so keep
-#      the word and the `session-resume.sh:<N>` token together on ONE line or the guard stops seeing
-#      it. (An 8-line comment insertion above the call once moved it :311 → :319 and silently
+#      negative match. This is the no-arg call shape `rules_nudge()` uses at session-resume.sh:319
+#      [pins: `bash "$reader"`].
+#      See the header docstring. That number is PINNED by test-citation-drift.sh, which re-derives
+#      the real call site from the `[pins: ...]` anchor above rather than trusting the number. The
+#      keyword-adjacency rule that used to apply here is gone: the anchor may sit on the citation's
+#      own line or the next one, and no particular word has to appear alongside it.
+#      (An 8-line comment insertion above the call once moved it :311 → :319 and silently
 #      falsified five surfaces; that is the defect this guard exists to catch.)
 #
 # Matching is a native bash `case` glob against the WHOLE arg (`*`/`**` are equivalent and BOTH cross
