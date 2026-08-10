@@ -520,8 +520,6 @@ case "$_ve_rc" in
 esac
 # ---- VALIDATOR CALL END -----------------------------------------------------
 
-proceed=0write_target="$STORE_DIR/$slug.md"
-
 proceed=0
 if [ "$confirm" -eq 1 ]; then
   proceed=1

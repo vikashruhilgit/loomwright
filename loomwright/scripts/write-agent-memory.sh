@@ -432,6 +432,13 @@ compose="$work/compose"
 rebuild_memory_index() {
   local dir="$1" idx="$1/MEMORY.md" header="" f base t d
   [ -d "$dir" ] || return 2
+  # Absent and unreadable are DELIBERATELY conflated here, and only here — this is
+  # the one place in this writer where could-not-examine does not refuse. It is safe
+  # because this is a pure REBUILD path: the index is regenerated from the directory
+  # listing regardless, so nothing is inferred from the old file's contents. The only
+  # loss is a human-authored H1 title, which falls back to a generated one. Everywhere
+  # a verdict depends on what a file SAYS, unreadable refuses (rc 2) — see the
+  # PROPOSAL_ABSENT / PROPOSAL_UNREADABLE split above.
   if [ -f "$idx" ] && [ -r "$idx" ]; then
     header="$(head -n 1 "$idx" 2>/dev/null)"
     case "$header" in "# "*) : ;; *) header="" ;; esac
