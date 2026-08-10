@@ -52,7 +52,7 @@ export CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT"
 OURS="vikashruhilgit/loomwright"
 # A deliberately FOREIGN slug, used only inside this suite's own environment. Never written to any
 # config, never added to the live allowlist.
-FOREIGN="vendsy/hub"
+FOREIGN="otherco/othersvc"
 
 pass=0; fail=0
 ok() { echo "  ok: $1"; pass=$((pass+1)); }
@@ -291,8 +291,8 @@ fi
 
 echo "== 6. cross-repo: AC3 refuses foreign, AC4 passes own =="
 export LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS"
-verdict 1 "AC3: 'HUB #146' is REFUSED — a repo-shaped token NOT in the allowlist" \
-  "$VE" cross-repo --entry "the same defect was fixed in HUB #146 last week"
+verdict 1 "AC3: 'OTHERSVC #146' is REFUSED — a repo-shaped token NOT in the allowlist" \
+  "$VE" cross-repo --entry "the same defect was fixed in OTHERSVC #146 last week"
 reason "REFUSE_CROSS_REPO" "the cross-repo refusal names its check"
 verdict 1 "a foreign owner/repo slug is REFUSED" \
   "$VE" cross-repo --entry "context lives in $FOREIGN"
@@ -329,12 +329,12 @@ done
 # A bare `owner/repo` is THE canonical foreign-repo citation, so the four markers below are what
 # stop the false-positive fix from opening a bigger hole than it closed. Each marker gets its own
 # assertion AND its own mutation control in section 11.
-verdict 1 "a foreign slug after a cue word ('landed in vendsy/hub') is still REFUSED" \
+verdict 1 "a foreign slug after a cue word ('landed in otherco/othersvc') is still REFUSED" \
   "$VE" cross-repo --entry "the same defect landed in $FOREIGN last week"
-verdict 1 "marker (2), trailing: 'the vendsy/hub repo' is REFUSED — the cue can follow the slug" \
+verdict 1 "marker (2), trailing: 'the otherco/othersvc repo' is REFUSED — the cue can follow the slug" \
   "$VE" cross-repo --entry "the $FOREIGN repo has the same bug"
-verdict 1 "marker (3): a KNOWN owner is recognised — 'vikashruhilgit/hub' is not in the allowlist and is REFUSED" \
-  "$VE" cross-repo --entry "vikashruhilgit/hub has the same bug"
+verdict 1 "marker (3): a KNOWN owner is recognised — 'vikashruhilgit/othersvc' is not in the allowlist and is REFUSED" \
+  "$VE" cross-repo --entry "vikashruhilgit/othersvc has the same bug"
 verdict 1 "marker (4): a hyphenated owner is slug-only structure — 'acme-corp/widget-svc' is REFUSED" \
   "$VE" cross-repo --entry "acme-corp/widget-svc has the same bug"
 verdict 1 "marker (4): CamelCase is slug-only structure — 'octocat/Hello-World' is REFUSED" \
@@ -349,21 +349,21 @@ verdict 0 "AC16: the OWNER half must be a legal GitHub login — an underscore o
   "$VE" cross-repo --entry "the payloads live in worker_result/code_review_result"
 
 echo "== 7. cross-repo blind spot (AC4) — stated, not hidden =="
-verdict 0 "prose naming a repo in an unrecognised shape passes UNDETECTED ('the hub repository')" \
-  "$VE" cross-repo --entry "the hub repository has the same bug"
-verdict 0 "a plain lowercase 'hub #146' is also unrecognised (the deliberate under-recognition)" \
-  "$VE" cross-repo --entry "landed in hub #146"
+verdict 0 "prose naming a repo in an unrecognised shape passes UNDETECTED ('the othersvc repository')" \
+  "$VE" cross-repo --entry "the othersvc repository has the same bug"
+verdict 0 "a plain lowercase 'othersvc #146' is also unrecognised (the deliberate under-recognition)" \
+  "$VE" cross-repo --entry "landed in othersvc #146"
 # THE RESIDUAL BOUND, pinned so it is a stated limitation rather than an unnoticed hole: an
 # all-lowercase `word/word` with no cue beside it, no known owner and no slug structure cannot be
-# told apart FROM THE TEXT ALONE from an English pair — `vendsy/hub` and `budget/zone` are the same
+# told apart FROM THE TEXT ALONE from an English pair — `otherco/othersvc` and `budget/zone` are the same
 # shape. Refusing that shape would refuse six live curated entries, so it is a deliberate miss.
-verdict 0 "RESIDUAL BOUND: a bare all-lowercase 'vendsy/hub' with no marker passes undetected — the same shape as 'budget/zone'" \
+verdict 0 "RESIDUAL BOUND: a bare all-lowercase 'otherco/othersvc' with no marker passes undetected — the same shape as 'budget/zone'" \
   "$VE" cross-repo --entry "$FOREIGN has the same bug"
 verdict 0 "RESIDUAL BOUND control: the English pair it cannot be distinguished from passes for the SAME reason" \
   "$VE" cross-repo --entry "budget/zone has the same bug"
 grep -qF "RESIDUAL BOUND" "$VE" && ok "validate-entry.sh states the residual bound in its header, not just in this test" \
   || no "validate-entry.sh header does not state the residual bound"
-vrc "$VE" cross-repo --entry "the same defect was fixed in HUB #146"
+vrc "$VE" cross-repo --entry "the same defect was fixed in OTHERSVC #146"
 if grep -qF "invisible to it" "$TMP/err.txt" && grep -qF "not proof" "$TMP/err.txt"; then
   ok "the refusal message states the coverage bound instead of claiming complete coverage"
 else
@@ -468,7 +468,7 @@ else
       --entry "the guard landed in LOOMWRIGHT #146" >/dev/null 2>&1
     r2=$?
     LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-membership.sh" cross-repo \
-      --entry "the same defect was fixed in HUB #146" >/dev/null 2>&1
+      --entry "the same defect was fixed in OTHERSVC #146" >/dev/null 2>&1
     r3=$?
     [ "$r1" -eq 1 ] && [ "$r2" -eq 1 ] \
       && ok "AC4b(i): inverting the membership test turns AC4 RED (own slug and own short name both refused)" \
@@ -478,13 +478,13 @@ else
   fi
 fi
 
-# (ii) AC4b: a FIXTURE allowlist that ADDS vendsy/hub must make AC3's entry PASS — proving the
+# (ii) AC4b: a FIXTURE allowlist that ADDS otherco/othersvc must make AC3's entry PASS — proving the
 # check reads the list rather than pattern-matching a hardcoded token. Supplied via the env var in
 # this test's own environment; the live config is never touched.
 LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS,$FOREIGN" bash "$VE" cross-repo \
-  --entry "the same defect was fixed in HUB #146" >/dev/null 2>&1
-[ $? -eq 0 ] && ok "AC4b(ii): adding vendsy/hub to a FIXTURE allowlist makes 'HUB #146' pass — the check reads the list" \
-  || no "AC4b(ii): 'HUB #146' was refused even with vendsy/hub allowlisted — the token is hardcoded"
+  --entry "the same defect was fixed in OTHERSVC #146" >/dev/null 2>&1
+[ $? -eq 0 ] && ok "AC4b(ii): adding otherco/othersvc to a FIXTURE allowlist makes 'OTHERSVC #146' pass — the check reads the list" \
+  || no "AC4b(ii): 'OTHERSVC #146' was refused even with otherco/othersvc allowlisted — the token is hardcoded"
 
 # (iii) R3: remove the could-not-examine refusal on an unresolvable allowlist => it reports CLEAN.
 UL="$(grep -nF 'resolved to nothing' "$VE" | head -1 | cut -d: -f1)"
@@ -560,10 +560,10 @@ fi
 sed '/^  validate_cross_repo_reference "\$@";/d' "$VE" > "$TMP/mut-all.sh"
 if mutated_differs mut-all.sh "aggregate call site"; then
   LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-all.sh" all \
-    --entry "the same defect was fixed in HUB #146, source pr-138" --store "$STORE" --source "pr-138" --root "$REPO_ROOT" >/dev/null 2>&1
+    --entry "the same defect was fixed in OTHERSVC #146, source pr-138" --store "$STORE" --source "pr-138" --root "$REPO_ROOT" >/dev/null 2>&1
   m=$?
   LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$VE" all \
-    --entry "the same defect was fixed in HUB #146, source pr-138" --store "$STORE" --source "pr-138" --root "$REPO_ROOT" >/dev/null 2>&1
+    --entry "the same defect was fixed in OTHERSVC #146, source pr-138" --store "$STORE" --source "pr-138" --root "$REPO_ROOT" >/dev/null 2>&1
   b=$?
   { [ "$b" -eq 1 ] && [ "$m" -eq 0 ]; } \
     && ok "deleting the cross-repo call from validate_entry_all turns the aggregate green — the call site is tested, not just the source line" \
@@ -625,8 +625,8 @@ awk '{ if (index($0, "a KNOWN repo owner")) { print "                *\") never-
   "$VE" > "$TMP/mut-owner.sh"
 if mutated_differs mut-owner.sh "known-owner marker"; then
   LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-owner.sh" cross-repo \
-    --entry "vikashruhilgit/hub has the same bug" >/dev/null 2>&1
-  [ $? -eq 0 ] && ok "marker (3): disabling the known-owner test stops 'vikashruhilgit/hub' being recognised — the owner set is what marks it" \
+    --entry "vikashruhilgit/othersvc has the same bug" >/dev/null 2>&1
+  [ $? -eq 0 ] && ok "marker (3): disabling the known-owner test stops 'vikashruhilgit/othersvc' being recognised — the owner set is what marks it" \
     || no "marker (3): the known-owner mutant still refused — recognition is coming from somewhere else"
 fi
 
@@ -645,13 +645,13 @@ if mutated_differs mut-struct.sh "slug-only structure marker"; then
     || no "marker (4): the structure mutant did not discriminate (hyphen rc=$r1, CamelCase rc=$r2)"
 fi
 
-# (xvii) Marker (2), TRAILING CUE: remove it => 'the vendsy/hub repo' stops being recognised.
+# (xvii) Marker (2), TRAILING CUE: remove it => 'the otherco/othersvc repo' stops being recognised.
 awk '{ if (index($0, "_VE_SLUG_TRAILING_CUE_WORDS=")) { print "_VE_SLUG_TRAILING_CUE_WORDS=\" \""; next } print }' \
   "$VE" > "$TMP/mut-trail.sh"
 if mutated_differs mut-trail.sh "trailing cue marker"; then
   LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-trail.sh" cross-repo \
     --entry "the $FOREIGN repo has the same bug" >/dev/null 2>&1
-  [ $? -eq 0 ] && ok "marker (2): emptying the trailing cue list stops 'the vendsy/hub repo' being recognised" \
+  [ $? -eq 0 ] && ok "marker (2): emptying the trailing cue list stops 'the otherco/othersvc repo' being recognised" \
     || no "marker (2): the trailing-cue mutant still refused"
   LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-trail.sh" cross-repo \
     --entry "the same defect landed in $FOREIGN last week" >/dev/null 2>&1
@@ -734,7 +734,7 @@ if [ -f "$LIVE_CFG" ]; then LIVE_CFG_AFTER="$(cksum < "$LIVE_CFG")"; else LIVE_C
   && ok "the live .supervisor/config.json is byte-unchanged by this suite" \
   || no "this suite MODIFIED the live .supervisor/config.json"
 if [ -f "$LIVE_CFG" ] && command -v jq >/dev/null 2>&1; then
-  if jq -e '((.setup_memory.repo_allowlist // [])[] | select(test("^vendsy/"; "i")))' "$LIVE_CFG" >/dev/null 2>&1; then
+  if jq -e '((.setup_memory.repo_allowlist // [])[] | select(test("^otherco/"; "i")))' "$LIVE_CFG" >/dev/null 2>&1; then
     no "a FOREIGN slug is present in the live allowlist — the publication gate is compromised"
   else
     ok "no foreign slug is present in the live allowlist"

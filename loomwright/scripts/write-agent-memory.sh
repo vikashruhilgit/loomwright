@@ -47,6 +47,24 @@
 # written. A refusal is already this design's documented failure mode, so a broken helper degrades
 # into sanctioned behaviour rather than into a crash or an unvalidated append.
 #
+# WHAT THE VALIDATOR IS COMPARED AGAINST — the corpus, NOT the index. This writer is the only one
+# of the six whose store is a DIRECTORY of entry files rather than one file whose lines are entries.
+# The other five hand `--store` the file that holds full entry text, so their comparison is
+# apples-to-apples. Handing this writer's MEMORY.md over is not: an index line is
+# `- [title](slug.md) — description` with the description TRUNCATED to 200 chars, while --entry is
+# the full summary+body up to the 4000-char cap. validate_duplicate / validate_contradiction score
+# overlap as shared / max(|new|, |stored|), so once an entry has real body content the denominator
+# is dominated by the new entry and the numerator is bounded by the truncated index line: the ratio
+# collapses toward the length ratio and never reaches the 90 / 60 thresholds. MEASURED, not
+# reasoned: with MEMORY.md as --store, a byte-for-byte repost of an existing entry's body under a
+# new slug was written with no refusal at all — both checks had silently stopped discriminating.
+# So build_compare_corpus() below re-derives a corpus from the store's own entry files, ONE LINE
+# PER ENTRY (its `description:` plus its body, flattened), and THAT is what --store points at. One
+# line per entry is the shape the validator's `_ve_store_lines` reader expects and the shape the
+# other five stores already have — the fix is to give this store the same shape, not to loosen a
+# threshold. The corpus is built under the $work sandbox (never inside the store), so a refusal
+# still leaves the store byte-identical and the EXIT trap removes it on every path.
+#
 # WORKTREE GUARD (red-team F1, from birth). Refuses to write when the RESOLVED repo root is a
 # linked git worktree — a linked worktree's top-level carries a `.git` FILE where the main checkout
 # carries a directory. Workers run in worktrees; a store write there diverges and is lost on
@@ -92,6 +110,12 @@ HERE="$(cd "$(dirname "$0")" 2>/dev/null && pwd || printf '%s' ".")"
 # greppable on disk (the self-reported outputs_verified gate keys on it) and so no call site can
 # spell it differently.
 REFUSE_VALIDATOR_UNAVAILABLE="REFUSE_VALIDATOR_UNAVAILABLE"
+
+# The refusal token for a store whose entry files cannot all be read. Same greppable-on-disk reason
+# as above: a store member that could not be read is a HOLE in the comparison corpus, so the
+# duplicate/contradiction verdict would be "clean" over material nobody examined — the exact
+# could-not-examine trap, one layer below the validator.
+REFUSE_STORE_ENTRY_UNREADABLE="REFUSE_STORE_ENTRY_UNREADABLE"
 
 # Clause (iii) of the LOAD GUARD CONTRACT. HARDCODED — see the header note on why comparing against
 # anything the helper exports would be circular.
@@ -222,6 +246,87 @@ first_body_line() { # <file> — the first non-blank, non-heading body line
 }
 
 one_line() { printf '%s' "${1:-}" | tr '\r\n\t' '   ' | tr -s ' ' | sed -e 's/^ //' -e 's/ $//'; }
+
+# entry_compare_line <file> — the stored entry as ONE comparable line: its frontmatter
+# `description:` followed by its whole body, flattened. This is deliberately the SAME text the
+# validator is handed for a NEW entry (`$entry_text` = summary + body), which is what makes the
+# comparison apples-to-apples; see the corpus note in the header.
+#
+# ONE awk pass per file, not one per field: the corpus is rebuilt on every write, and this runs
+# once per stored entry, so halving the process count here is the difference between a validator
+# and a pause on an 18-entry store.
+#
+# Frontmatter keys OTHER than `description:` are deliberately EXCLUDED. `name:`, `written_at:`,
+# `head_sha:` and friends are bookkeeping the new entry's text does not contain, so including them
+# would pad the stored token set and depress every score — the same arithmetic that made the index
+# comparison useless, reintroduced by the back door.
+#
+# The leading `#`, `>` and `-` run is stripped because the validator's own store reader skips
+# comment/heading lines and strips a list bullet: a body that happens to start with a markdown
+# heading would otherwise contribute NO corpus line at all, silently shrinking the corpus.
+entry_compare_line() {
+  awk '
+    NR == 1 && $0 == "---" { inf = 1; next }
+    inf && $0 == "---"     { inf = 0; next }
+    inf {
+      i = index($0, ":")
+      if (i > 0) {
+        key = substr($0, 1, i - 1); val = substr($0, i + 1)
+        gsub(/^[ \t]+|[ \t]+$/, "", key); gsub(/^[ \t]+|[ \t]+$/, "", val)
+        if (key == "description" && d == "") d = val
+      }
+      next
+    }
+    { b = b " " $0 }
+    END {
+      s = d " " b
+      gsub(/[\r\t]/, " ", s)
+      gsub(/  +/, " ", s)
+      sub(/^[ ]+/, "", s); sub(/[ ]+$/, "", s)
+      sub(/^[#>-]+[ ]*/, "", s)
+      if (s ~ /[^ ]/) print s
+    }
+  ' "$1"
+}
+
+# build_compare_corpus <agent-dir> <out-file> <self-basename> — one line per stored entry, with
+# MEMORY.md and the entry being written both excluded.
+#
+# MEMORY.md is excluded because it is not an entry: it is this writer's own rebuilt pointer index,
+# and comparing an entry against the truncated summary of itself is precisely the defect this
+# corpus replaces. Excluding it also means an unreadable MEMORY.md no longer blocks a write — the
+# rebuild path already treats it as regenerable (see rebuild_memory_index's note), and it now
+# contributes nothing to any verdict.
+#
+# THE ENTRY BEING WRITTEN IS EXCLUDED TOO, and that exclusion is not a loophole — it is the
+# difference between "duplicate" and "update". This writer supports updating an entry in place (it
+# stashes the prior file so a failed read-back can restore it), and an update necessarily re-posts
+# most of the entry's own text. MEASURED once the corpus landed: a one-word typo fix on an existing
+# entry scored ~98% against ITSELF and was refused as a duplicate — a regression the corpus
+# introduced, caught by trying the operation rather than by reasoning about it. Every OTHER entry
+# stays in the corpus, so this excludes exactly one thing: an entry being its own duplicate. The
+# defect this corpus exists for is a body reposted under a DIFFERENT slug, which is unaffected —
+# the original is still in the corpus and still refuses it.
+#
+# Return codes are the writer's could-not-examine discipline, not a convenience:
+#   0  usable corpus (possibly EMPTY — an empty store means no prior entries, a real clean verdict)
+#   2  the corpus file could not be staged
+#   3  the store dir exists but cannot be listed
+#   4  an entry file exists but cannot be read — a hole in the corpus, never reported as clean
+build_compare_corpus() {
+  local dir="$1" out="$2" self="${3:-}" f
+  : > "$out" || return 2
+  [ -d "$dir" ] || return 0                     # no store dir yet: there are no prior entries
+  [ -r "$dir" ] && [ -x "$dir" ] || return 3
+  for f in "$dir"/*.md; do
+    [ -f "$f" ] || continue                     # unmatched glob stays literal under bash 3.2
+    [ "${f##*/}" = "MEMORY.md" ] && continue
+    [ -n "$self" ] && [ "${f##*/}" = "$self" ] && continue
+    [ -r "$f" ] || { CORPUS_BAD_PATH="$f"; return 4; }
+    entry_compare_line "$f" >> "$out" || return 2
+  done
+  return 0
+}
 
 # ---------------------------------------------------------------------------
 # Intake — either a proposal file (routing in its frontmatter) or four positionals.
@@ -370,24 +475,52 @@ done
 
 # ---------------------------------------------------------------------------
 # THE VALIDATOR CALL SITE. One call to validate_entry_all so a check cannot be silently omitted;
-# --store is REQUIRED and is the store's own index (omitting it returns 2, not 0). The 1-vs-2
-# distinction is carried straight into this writer's exit status: 1 = examined and violating,
-# 2 = could not examine. Neither is ever reported as clean.
+# --store is REQUIRED and is the DERIVED ENTRY CORPUS, one line per stored entry (omitting it
+# returns 2, not 0). It is NOT MEMORY.md — see the corpus note in the header for the measurement
+# that ruled the index out. The 1-vs-2 distinction is carried straight into this writer's exit
+# status: 1 = examined and violating, 2 = could not examine. Neither is ever reported as clean.
 # ---------------------------------------------------------------------------
 entry_text="$summary
 $(cat "$body_tmp")"
+
+# The corpus is staged under $work — NEVER inside the store — so a refusal below leaves the store
+# byte-identical, and the EXIT trap that already owns $work removes it on every path (success,
+# refusal, die, or an interrupted run) without a second cleanup to keep in sync.
+COMPARE_STORE="$work/store-entries.corpus"
+CORPUS_BAD_PATH=""
+set +e
+build_compare_corpus "$AGENT_DIR" "$COMPARE_STORE" "$entry_slug.md"
+corpus_rc=$?
+set -e
+case "$corpus_rc" in
+  0) : ;;
+  3) refuse "$REFUSE_STORE_ENTRY_UNREADABLE" \
+       "the store dir '$AGENT_DIR' exists but could not be listed, so the entries this write would be compared against could not be examined — refusing rather than reporting it clean. Nothing was written." 2 ;;
+  4) refuse "$REFUSE_STORE_ENTRY_UNREADABLE" \
+       "the stored entry '$CORPUS_BAD_PATH' exists but could not be read, so it could not be compared against — a hole in the corpus would make a duplicate or contradiction verdict of 'clean' meaningless. Nothing was written." 2 ;;
+  *) refuse "$REFUSE_STORE_ENTRY_UNREADABLE" \
+       "the comparison corpus derived from '$AGENT_DIR' could not be staged (status $corpus_rc), so this entry could not be compared against the store. Nothing was written." 2 ;;
+esac
 
 # ---- VALIDATOR CALL BEGIN ---------------------------------------------------
 # Delimited as one unit for the same reason as the load guard: the mandated per-writer mutation
 # control DELETES the CALL (not the `source`) and proves this writer's fixtures go RED while the
 # others stay green. A writer that sources the helper but never invokes it is otherwise invisible.
+# A SECOND control (M4) rewrites `--store "$COMPARE_STORE"` back to `--store "$INDEX"` and proves
+# the corpus itself is load-bearing — without it, "we compare against the store" is a claim no
+# check backs, which is the failure class this whole change exists to close.
 set +e
-validate_entry_all --entry "$entry_text" --store "$INDEX" --source "$source_arg" --root "$REPO_DIR"
+validate_entry_all --entry "$entry_text" --store "$COMPARE_STORE" --source "$source_arg" --root "$REPO_DIR"
 validation_rc=$?
 set -e
 case "$validation_rc" in
   0) : ;;
-  1) printf '%s: refusing to write %s — the entry was examined and violates a write-time check (see the reason above). Nothing was written.\n' "$PROG" "$write_target" >&2; exit 1 ;;
+  1) printf '%s: refusing to write %s — the entry was examined and violates a write-time check (see the reason above). Nothing was written.\n' "$PROG" "$write_target" >&2
+     # A duplicate/contradiction reason quotes the store it compared against, and that is now a
+     # temp corpus path. Naming the real store dir here keeps the message actionable — a human
+     # told only "already stored in /var/folders/.../store-entries.corpus" cannot go and look.
+     printf '%s: (the store quoted above is the entry corpus derived from %s — one line per stored entry.)\n' "$PROG" "$AGENT_DIR" >&2
+     exit 1 ;;
   *) printf '%s: refusing to write %s — the entry COULD NOT BE EXAMINED (see the reason above); refusing rather than reporting it clean. Nothing was written.\n' "$PROG" "$write_target" >&2; exit 2 ;;
 esac
 # ---- VALIDATOR CALL END -----------------------------------------------------

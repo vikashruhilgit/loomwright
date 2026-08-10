@@ -21,6 +21,8 @@
 #   · (M2) the VALIDATOR CALL removed            ⇒ a seeded duplicate is written    (AC1 goes RED)
 #   · (M3) the LOAD GUARD replaced with `|| true`⇒ no named refusal; a sentinel-less
 #          validator is used unchecked and the write lands                          (AC2 goes RED)
+#   · (M4) `--store` pointed back at MEMORY.md   ⇒ a byte-for-byte repost of a stored
+#          entry's body under a new slug is WRITTEN                                 ((i) goes RED)
 # Each mutant is `bash -n`-checked before use: a mutant that does not parse would "fail" for the
 # wrong reason and read as proof when it is noise.
 #
@@ -37,6 +39,10 @@
 #   (e)  AC2 — absent / unparseable / truncated-at-a-function-boundary / sentinel-stripped validator:
 #        all four refuse with exit 2, a NAMED greppable reason, and a byte-identical store
 #   (e2) AC2 mutation control M3 — the guard replaced with `|| true`
+#   (i)  the comparison corpus is the store's ENTRY FILES, not MEMORY.md: a realistically-sized
+#        entry whose BODY duplicates a stored entry under a DIFFERENT slug is REFUSED, while a
+#        genuinely different entry of the same size is still ACCEPTED (the false-refusal control)
+#   (i2) (i)'s mutation control M4 — `--store` pointed back at the index; the repost is written
 #   (f)  AC10c — a git WORKTREE cwd is refused with exit 3, an explicit --repo worktree too, and the
 #        NON-GIT-REPO fallback stays PERMISSIVE (pwd), never write-lessons.sh's hard exit 2
 #   (g)  the confirm-only gate: non-TTY without --confirm is a dry-run that writes NOTHING
@@ -265,11 +271,23 @@ grep -qF 'REFUSE_PROPOSAL_ABSENT' <<< "$OUT" && ok "(c2) the absent-proposal ref
 # ---------------------------------------------------------------------------
 echo "== (d) AC1: each of the five checks refuses, names its reason, store byte-unchanged =="
 RD="$(new_repo)"; SD="$RD/.claude/agent-memory"; DD="$SD/$AGENT"
-# One clean write establishes the corpus the duplicate/contradiction checks compare against. The
-# slug's own words appear in the summary on purpose: the index line the validator reads is
-# `- [title](slug.md) — description`, so a slug contributing tokens the entry does not have would
-# depress the similarity score and make the duplicate case pass for the wrong reason.
-DUP_TEXT="the ledger gate withholds the negation whenever a foreign record is present in the ledger file"
+# One clean write establishes the corpus the duplicate/contradiction checks compare against — and
+# that corpus is now built from the store's ENTRY FILES (one line per entry: its `description:`
+# plus its body), not from MEMORY.md. So the slug and title contribute NOTHING to the comparison,
+# and this fixture deliberately shares no word with either: `ledger_gate` / "ledger gate" against a
+# summary that never says "ledger" or "gate".
+#
+# That is not decoration, it is the assertion. Against the old MEMORY.md comparison the stored line
+# was `- [ledger gate](ledger_gate.md) — <summary>`, whose extra `ledger`/`gate`/`md` tokens padded
+# the stored token set and dropped this pair below the 90 threshold — so (d1) below would NOT have
+# refused. (i2)'s M4 mutant pins exactly that, rather than leaving it as prose.
+#
+# The earlier version of this comment said the opposite and was honest about why: the summary was
+# shaped to BORROW the slug's words so the weak comparison would still clear the threshold. Tuning
+# a fixture to make a check pass is how a check goes green while not working, which is the class
+# this suite exists to catch — so the fixture no longer compensates for the writer, and the writer
+# no longer needs it to.
+DUP_TEXT="a foreign postmortem record makes the write path withhold its negation until the allowlist resolves"
 BD="$(mkbody "$RD/body-d.md" "")"
 run "$RD" "$SD" "$AGENT" ledger_gate "$DUP_TEXT" "$BD" --source "PR #144" --title "ledger gate" --confirm
 [ "$RC" -eq 0 ] && ok "(d) the seed write for the duplicate/contradiction corpus succeeded" || no "(d) the seed write exited $RC — the checks below would have no corpus: $OUT"
@@ -291,7 +309,7 @@ BD1="$(mkbody "$RD/body-d1.md" "")"
 assert_refusal "(d1) duplicate" 1 "REFUSE_DUPLICATE" \
   "$AGENT" ledger_gate_two "$DUP_TEXT" "$BD1" --source "PR #144" --confirm
 assert_refusal "(d2) contradiction" 1 "REFUSE_CONTRADICTION" \
-  "$AGENT" ledger_gate_three "the ledger gate never withholds the negation whenever a foreign record is present in the ledger file" "$BD1" --source "PR #144" --confirm
+  "$AGENT" ledger_gate_three "a foreign postmortem record never makes the write path withhold its negation until the allowlist resolves" "$BD1" --source "PR #144" --confirm
 assert_refusal "(d3) provenance" 1 "REFUSE_PROVENANCE" \
   "$AGENT" bare_claim "a plain unattributed observation about how the gate behaves under load" "$BD1" --confirm
 assert_refusal "(d4) dead reference" 1 "REFUSE_DEAD_REFERENCE" \
@@ -302,15 +320,15 @@ assert_refusal "(d4) dead reference" 1 "REFUSE_DEAD_REFERENCE" \
 # setup-memory.sh's precedence is exactly that hook.
 sum_d5="$(store_sum "$SD")"
 OUT="$(LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="acme/widget" bash "$WRITER" "$AGENT" cross_repo \
-        "the rollout in vendsy/hub repo is described in PR #146" "$BD1" --repo "$RD" --store "$SD" --confirm < /dev/null 2>&1)"; RC=$?
+        "the rollout in otherco/othersvc repo is described in PR #146" "$BD1" --repo "$RD" --store "$SD" --confirm < /dev/null 2>&1)"; RC=$?
 [ "$RC" -eq 1 ] && ok "(d5) cross-repo exits 1" || no "(d5) cross-repo exited $RC, expected 1 — $OUT"
 grep -qF "REFUSE_CROSS_REPO" <<< "$OUT" && ok "(d5) cross-repo names its reason (REFUSE_CROSS_REPO)" || no "(d5) cross-repo did not name its reason — $OUT"
 [ "$(store_sum "$SD")" = "$sum_d5" ] && ok "(d5) cross-repo left the store BYTE-IDENTICAL" || no "(d5) cross-repo MUTATED the store"
 # ...and the same token PASSES once the allowlist contains it — so (d5) reads the list rather than
 # pattern-matching a hardcoded slug.
-OUT="$(LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="acme/widget:vendsy/hub" bash "$WRITER" "$AGENT" cross_repo \
-        "the rollout in vendsy/hub repo is described in PR #146" "$BD1" --repo "$RD" --store "$SD" --confirm < /dev/null 2>&1)"; RC=$?
-[ "$RC" -eq 0 ] && ok "(d5) the SAME entry is ACCEPTED once 'vendsy/hub' is in the allowlist — the check reads the list, it does not match a hardcoded token" || no "(d5) the entry was still refused with the slug allowlisted ($RC) — $OUT"
+OUT="$(LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="acme/widget:otherco/othersvc" bash "$WRITER" "$AGENT" cross_repo \
+        "the rollout in otherco/othersvc repo is described in PR #146" "$BD1" --repo "$RD" --store "$SD" --confirm < /dev/null 2>&1)"; RC=$?
+[ "$RC" -eq 0 ] && ok "(d5) the SAME entry is ACCEPTED once 'otherco/othersvc' is in the allowlist — the check reads the list, it does not match a hardcoded token" || no "(d5) the entry was still refused with the slug allowlisted ($RC) — $OUT"
 
 echo "== (d2) AC1 MUTATION CONTROL M2: with the validator CALL removed, a seeded duplicate is written =="
 M2="$MUT_DIR/mutant-no-call.sh"
@@ -333,6 +351,149 @@ if [ "$RC" -eq 0 ] && [ -f "$SD2/$AGENT/ledger_gate_two.md" ]; then
   ok "(d2) M2 CONFIRMED: without the call site the duplicate IS written — AC1's fixtures go RED, so they pin the invocation and not merely the source line"
 else
   no "(d2) the mutant still refused the duplicate (rc=$RC) — AC1's fixtures are passing for some reason other than the validator call"
+fi
+
+# ---------------------------------------------------------------------------
+# (i) THE COMPARISON CORPUS IS THE ENTRY FILES, NOT MEMORY.md.
+#
+# Every duplicate/contradiction fixture above is SHORT — a one-line summary with an empty body —
+# and short is precisely the size at which the old MEMORY.md comparison still worked. So none of
+# them can see the defect this group exists for: an index line is `- [title](slug.md) —
+# description` with the description truncated to 200 chars, while --entry is the whole summary+body
+# up to the 4000-char cap. Overlap is scored shared / max(|new|, |stored|), so once an entry has
+# real body content the denominator is the new entry and the numerator is capped by the truncated
+# line; the ratio tracks the length ratio and never reaches 90 or 60. Both checks stop
+# discriminating, silently, and a byte-for-byte repost of a stored body under a new slug is written
+# with no refusal at all.
+#
+# The fixture here is therefore the REALISTIC size a curated entry actually is — a few hundred
+# words — and not one crafted to be small enough for a weak comparison to survive. (i2) below
+# points --store back at the index and proves this case goes RED, which is what makes it evidence
+# rather than an assertion that the new code does something.
+# ---------------------------------------------------------------------------
+echo "== (i) a realistically-sized entry duplicating a stored BODY under a different slug is REFUSED =="
+RI="$(new_repo)"; SI="$RI/.claude/agent-memory"; DI="$SI/$AGENT"
+
+# Neither body cites a path, a repo slug or a `NAME #123` token: the dead-reference and cross-repo
+# checks must have nothing to say here, so that a refusal below can only be the duplicate check.
+BIG_A="$RI/big-a.md"
+cat > "$BIG_A" <<'BIGA'
+The comparison a write time check performs is only as good as the material it is handed. When the
+corpus is a pointer index, every stored line is a truncated one sentence summary while the incoming
+text is a full paragraph of several hundred words. Similarity is scored as the shared significant
+tokens over the larger of the two token sets, so the denominator is dominated by the incoming
+paragraph and the numerator is bounded by the truncated summary. The ratio collapses toward the
+ratio of the two lengths and never approaches the threshold, however identical the underlying
+material happens to be. Nothing about that failure is visible from outside the process. No error is
+printed, no refusal is emitted, and the write lands looking exactly like a legitimate one. The store
+grows a second copy of a lesson it already held, under a different name, and the next reader has no
+way to tell which of the two was the one that was reviewed. The only tell was a fixture kept
+deliberately short so that its own score would clear the bar, carrying a comment that explained the
+arithmetic making the shortening necessary. That comment was the evidence: the author understood the
+mechanism and tuned the example around it instead of stating the bound or repairing the comparison.
+A check tuned into passing is worse than an absent one, because an absent check is visibly absent
+while a tuned one reports a clean verdict every time it runs and accumulates trust it has not
+earned. The repair is to compare the same kind of material on both sides, one line for each stored
+entry, holding the summary and the body exactly as the incoming entry holds them.
+BIGA
+BIG_B="$RI/big-b.md"
+cat > "$BIG_B" <<'BIGB'
+A linked worktree carries a file where the main checkout carries a directory, and that single
+difference is the whole basis of the guard. A worker running inside a linked tree has a complete
+looking checkout and every command it runs succeeds, so nothing in the session suggests the work is
+about to evaporate. It does evaporate: removing the tree removes everything written under it that
+was never committed, and a curated store written there is exactly that kind of casualty. The guard
+therefore resolves the root first and evaluates the resolved root rather than the current directory,
+because an explicit override pointing at a linked tree is the same hazard wearing different clothes,
+and a guard reading only the current directory would wave it straight through. The refusal is loud
+and names itself, so a human reading the transcript learns why the write did not land and where to
+run it instead. The permissive half is equally deliberate. Outside any repository the writer falls
+back to the current directory and writes, because temporary sandboxes and fixture stores are
+legitimate places to exercise the machinery and refusing them buys nothing at all. Two sibling
+writers disagree on that point, and the disagreement is recorded rather than smoothed over, since a
+reader assuming all six behave identically will be surprised in exactly one direction. The lesson
+generalises past this one guard. Any property inferred from an environment rather than declared by
+the caller needs a stated resolution order and a test for each layer of it, or the layer nobody
+exercised becomes the one that fails in front of a user.
+BIGB
+
+run "$RI" "$SI" "$AGENT" corpus_seed "the similarity score collapses once the two sides are different sizes" "$BIG_A" --source "PR #155" --title "corpus seed" --confirm
+[ "$RC" -eq 0 ] && ok "(i) the realistically-sized seed entry is ACCEPTED" || no "(i) the seed entry was refused ($RC) — the case below could not discriminate: $OUT"
+sum_i="$(store_sum "$SI")"
+# THE CASE: the SAME body, a DIFFERENT slug, a reworded summary. Under the old index comparison
+# this is written; see (i2).
+run "$RI" "$SI" "$AGENT" corpus_repost "the similarity score breaks down once the two sides differ in size" "$BIG_A" --source "PR #155" --confirm
+[ "$RC" -eq 1 ] && ok "(i) a repost of the stored BODY under a different slug is REFUSED (exit 1, examined and violating)" || no "(i) the repost exited $RC, expected 1 — the duplicate check is not comparing against the stored entry: $OUT"
+grep -qF 'REFUSE_DUPLICATE' <<< "$OUT" && ok "(i) the refusal names REFUSE_DUPLICATE" || no "(i) the refusal did not name REFUSE_DUPLICATE — $OUT"
+[ -f "$DI/corpus_repost.md" ] && no "(i) the repost was WRITTEN" || ok "(i) the repost wrote no entry file"
+[ "$(store_sum "$SI")" = "$sum_i" ] && ok "(i) the store is BYTE-IDENTICAL after the refusal (the derived corpus is staged outside the store, so it leaves no residue)" || no "(i) the store changed on the refusal path"
+# THE FALSE-REFUSAL CONTROL, and it is not optional. Widening what the checks can see moves the
+# risk to the opposite failure: a corpus that refuses everything long would pass the assertion above
+# while blocking every legitimate write, and nothing else in this suite would notice.
+run "$RI" "$SI" "$AGENT" corpus_distinct "a linked worktree is refused because an uncommitted store written there is lost" "$BIG_B" --source "PR #156" --confirm
+[ "$RC" -eq 0 ] && ok "(i) a DIFFERENT entry of the same size is still ACCEPTED — the corpus discriminates, it does not merely refuse long entries" || no "(i) a genuinely different entry was refused ($RC) — the widened comparison is producing false refusals: $OUT"
+[ -f "$DI/corpus_distinct.md" ] && ok "(i) and it landed in the store" || no "(i) the accepted entry is not in the store"
+
+# (i3) UPDATE IN PLACE vs DUPLICATE — the distinction the corpus would otherwise erase, and the
+# reason the entry being written is excluded from its own comparison. This writer supports updating
+# an entry (it stashes the prior file so a failed read-back can restore it), and an update re-posts
+# most of the entry's own text: with the entry left in the corpus, a ONE-WORD typo fix scored ~98%
+# against itself and was REFUSED as a duplicate. That was a regression the corpus fix introduced,
+# found by performing the operation rather than reasoning about it, so both directions are pinned
+# here — a check that only proved the refusal would have shipped it.
+echo "== (i3) an UPDATE in place is accepted; the same body under a DIFFERENT slug is still refused =="
+RI4="$(new_repo)"; SI4="$RI4/.claude/agent-memory"
+UPD_A="$RI4/upd-a.md"; UPD_B="$RI4/upd-b.md"
+cat > "$UPD_A" <<'UPDA'
+The guard resolves the repository root before evaluating it, so an explicit override pointing at a
+linked tree is refused exactly as a bare current directory would be. The refusal names itself and
+the store is left byte identical, because nothing is written until every check has returned.
+UPDA
+# the SAME entry with a one-word amendment — the smallest edit a curator actually makes
+sed -e 's/byte identical/byte-identical/' "$UPD_A" > "$UPD_B"
+UPD_SUM="the worktree guard evaluates the resolved root rather than the current directory"
+run "$RI4" "$SI4" "$AGENT" guard_note "$UPD_SUM" "$UPD_A" --source "PR #161" --confirm
+[ "$RC" -eq 0 ] && ok "(i3) the original entry is written" || no "(i3) the original entry was refused ($RC) — $OUT"
+run "$RI4" "$SI4" "$AGENT" guard_note "$UPD_SUM" "$UPD_B" --source "PR #161" --confirm
+[ "$RC" -eq 0 ] && ok "(i3) a one-word UPDATE under the SAME slug is ACCEPTED — an entry is not a duplicate of itself, so updating stays possible" || no "(i3) the update was refused ($RC) — the corpus is comparing the entry against itself and has broken update-in-place: $OUT"
+grep -qF 'byte-identical' "$SI4/$AGENT/guard_note.md" 2>/dev/null && ok "(i3) and the update actually replaced the stored body" || no "(i3) the update reported success but the stored body is unchanged"
+# ...and excluding SELF must not open a hole: the same body under a DIFFERENT slug is still a
+# duplicate, because every OTHER entry stays in the corpus.
+run "$RI4" "$SI4" "$AGENT" guard_note_copy "$UPD_SUM" "$UPD_B" --source "PR #161" --confirm
+[ "$RC" -eq 1 ] && ok "(i3) the SAME body under a DIFFERENT slug is still REFUSED — excluding self excludes exactly one entry, not the check" || no "(i3) the copy under a new slug exited $RC, expected 1 — excluding self opened a hole: $OUT"
+grep -qF 'REFUSE_DUPLICATE' <<< "$OUT" && ok "(i3) and it names REFUSE_DUPLICATE" || no "(i3) the refusal did not name REFUSE_DUPLICATE — $OUT"
+
+echo "== (i2) MUTATION CONTROL M4: --store pointed back at MEMORY.md ⇒ the repost IS written =="
+M4="$MUT_DIR/mutant-store-index.sh"
+sed -e 's/--store "\$COMPARE_STORE"/--store "$INDEX"/' "$WRITER" > "$M4" || setup_fail "could not build mutant M4"
+n_corp_orig="$(grep -cF -- '--store "$COMPARE_STORE"' "$WRITER" 2>/dev/null || true)"; [ -n "$n_corp_orig" ] || n_corp_orig=0
+n_corp_mut="$(grep -cF -- '--store "$COMPARE_STORE"' "$M4" 2>/dev/null || true)"; [ -n "$n_corp_mut" ] || n_corp_mut=0
+n_idx_mut="$(grep -cF -- '--store "$INDEX"' "$M4" 2>/dev/null || true)"; [ -n "$n_idx_mut" ] || n_idx_mut=0
+if [ "$n_corp_orig" -ge 1 ] && [ "$n_corp_mut" -eq 0 ] && [ "$n_idx_mut" -ge 1 ]; then
+  ok "(i2) the mutation is NON-VACUOUS: the real writer compares against the derived corpus at $n_corp_orig call site(s), the mutant against the index"
+else
+  no "(i2) the mutation did not take (corpus sites $n_corp_orig → $n_corp_mut, index sites $n_idx_mut) — the control below would prove nothing"
+fi
+bash -n "$M4" 2>/dev/null && ok "(i2) the mutant still parses (so a difference below is behavioural, not a syntax error)" || no "(i2) mutant M4 does not parse"
+RI2="$(new_repo)"; SI2="$RI2/.claude/agent-memory"
+run_with "$M4" "$RI2" "$SI2" "$AGENT" corpus_seed "the similarity score collapses once the two sides are different sizes" "$BIG_A" --source "PR #155" --title "corpus seed" --confirm
+[ "$RC" -eq 0 ] && ok "(i2) the mutant accepts the seed entry (the fixture reaches the case under test)" || no "(i2) the mutant refused the seed ($RC) — the control below would prove nothing: $OUT"
+run_with "$M4" "$RI2" "$SI2" "$AGENT" corpus_repost "the similarity score breaks down once the two sides differ in size" "$BIG_A" --source "PR #155" --confirm
+if [ "$RC" -eq 0 ] && [ -f "$SI2/$AGENT/corpus_repost.md" ]; then
+  ok "(i2) M4 CONFIRMED: comparing against MEMORY.md, the byte-for-byte repost IS written — (i) goes RED, so it pins the corpus and not merely the presence of a duplicate check"
+else
+  no "(i2) the mutant also refused the repost (rc=$RC) — (i) is passing for some reason other than the derived corpus, and proves nothing about it"
+fi
+# ...and the SHORT (d1) fixture goes RED under the same mutant, which is the claim the rewritten
+# (d) comment makes: with the slug's own tokens padding the stored side, a summary sharing none of
+# them falls under the 90 threshold. Asserted here rather than left as prose in a comment.
+RI3="$(new_repo)"; SI3="$RI3/.claude/agent-memory"; BI3="$(mkbody "$RI3/body.md" "")"
+run_with "$M4" "$RI3" "$SI3" "$AGENT" ledger_gate "$DUP_TEXT" "$BI3" --source "PR #144" --title "ledger gate" --confirm
+run_with "$M4" "$RI3" "$SI3" "$AGENT" ledger_gate_two "$DUP_TEXT" "$BI3" --source "PR #144" --confirm
+if [ "$RC" -eq 0 ] && [ -f "$SI3/$AGENT/ledger_gate_two.md" ]; then
+  ok "(i2) and (d1)'s SHORT duplicate is written by the mutant too — the old comparison failed even on a one-line entry once the summary stopped borrowing the slug's words"
+else
+  no "(i2) the mutant refused the short duplicate (rc=$RC) — the rewritten (d) comment claims more than this suite checks"
 fi
 
 # ---------------------------------------------------------------------------
@@ -395,29 +556,53 @@ assert_guard_refusal "(e4) a SENTINEL-STRIPPED validator, all five checks presen
 # "byte-unchanged" alone is ALSO true of a plain crash and does not discriminate a refusal from one.
 grep -qF 'REFUSE_VALIDATOR_UNAVAILABLE' "$WRITER" && ok "(e) the REFUSE_VALIDATOR_UNAVAILABLE token is present ON DISK in the writer, so the deterministic outputs gate can see the guard exists" || no "(e) the writer carries no REFUSE_VALIDATOR_UNAVAILABLE token"
 
-# (e5) DECISION (b) AT THE WRITER LEVEL — an UNREADABLE index is could-not-examine, never clean.
-# The validator distinguishes absent (no prior entries: a real, clean verdict) from present-but-
-# unreadable, and this asserts the WRITER carries that distinction through to its exit status rather
-# than flattening both into "nothing to compare against, proceed". Absent-vs-unreadable collapsing
-# into one `[ -r ]` test is the exact fail-open class this item exists to close, and every other case
-# in this suite exercises the ABSENT half only — so without this the unreadable half is untested.
-echo "== (e5) an UNREADABLE index refuses as could-not-examine, not as clean =="
+# (e5) DECISION (b) AT THE WRITER LEVEL — an UNREADABLE STORED ENTRY is could-not-examine, never
+# clean. The writer distinguishes absent (no prior entries: a real, clean verdict) from present-but-
+# unreadable, and this asserts it carries that distinction through to its exit status rather than
+# flattening both into "nothing to compare against, proceed". Absent-vs-unreadable collapsing into
+# one `[ -r ]` test is the exact fail-open class this item exists to close, and every other case in
+# this suite exercises the ABSENT half only — so without this the unreadable half is untested.
+#
+# RE-AIMED, deliberately: this case used to chmod 000 the store's MEMORY.md and assert the
+# validator's own REFUSE_DUPLICATE_STORE_UNREADABLE. MEMORY.md is no longer what the entry is
+# compared against — the corpus is built from the entry FILES — so an unreadable index is no longer
+# a hole in anything, and asserting on it would be asserting on a path that carries no verdict. The
+# property being pinned is unchanged ("a store member I could not read is not a clean comparison");
+# it is now aimed at the file that actually IS the corpus, and the refusal fires one layer earlier,
+# in the writer's corpus builder, with its own named token. The second half below pins the flip
+# side, so the behaviour change is recorded by a check rather than only by this comment.
+echo "== (e5) an UNREADABLE STORED ENTRY refuses as could-not-examine, not as clean =="
 RE5="$(new_repo)"; SE5="$RE5/.claude/agent-memory"; BE5="$(mkbody "$RE5/body.md")"
 run "$RE5" "$SE5" "$AGENT" seed_entry "a seeded entry recorded during the review in PR #152" "$BE5" --source "PR #152" --confirm
-[ "$RC" -eq 0 ] && ok "(e5) the seed write succeeded, so there is a real MEMORY.md to make unreadable" || no "(e5) the seed write exited $RC — $OUT"
-chmod 000 "$SE5/$AGENT/MEMORY.md" 2>/dev/null
-if [ -r "$SE5/$AGENT/MEMORY.md" ]; then
+[ "$RC" -eq 0 ] && ok "(e5) the seed write succeeded, so there is a real stored ENTRY to make unreadable" || no "(e5) the seed write exited $RC — $OUT"
+chmod 000 "$SE5/$AGENT/seed_entry.md" 2>/dev/null
+if [ -r "$SE5/$AGENT/seed_entry.md" ]; then
   # Running as root (or on a filesystem ignoring the mode) — chmod 000 does not make a file
   # unreadable, so the assertion below would test nothing. Say so rather than passing silently.
   ok "(e5) SKIPPED: chmod 000 left the file readable (root, or a mode-ignoring filesystem) — not asserted rather than asserted vacuously"
 else
-  ok "(e5) fixture check: the index is genuinely unreadable"
+  ok "(e5) fixture check: the stored entry is genuinely unreadable"
   sum_e5="$(store_sum "$SE5")"
   run "$RE5" "$SE5" "$AGENT" later_entry "a later entry recorded during the review in PR #153" "$BE5" --source "PR #153" --confirm
-  [ "$RC" -eq 2 ] && ok "(e5) an unreadable index exits 2 (could not examine) — NOT 0, and not the 1 of a real violation" || no "(e5) an unreadable index exited $RC, expected 2 — $OUT"
-  grep -qF 'REFUSE_DUPLICATE_STORE_UNREADABLE' <<< "$OUT" && ok "(e5) the refusal names the unreadable store, distinguishing it from an ABSENT one (which is a clean verdict)" || no "(e5) the refusal did not name the unreadable store — $OUT"
-  [ -f "$SE5/$AGENT/later_entry.md" ] && no "(e5) the entry was written over an index that could not be examined" || ok "(e5) nothing was written"
+  [ "$RC" -eq 2 ] && ok "(e5) an unreadable stored entry exits 2 (could not examine) — NOT 0, and not the 1 of a real violation" || no "(e5) an unreadable stored entry exited $RC, expected 2 — $OUT"
+  grep -qF 'REFUSE_STORE_ENTRY_UNREADABLE' <<< "$OUT" && ok "(e5) the refusal names the unreadable store member, distinguishing it from an ABSENT store (which is a clean verdict)" || no "(e5) the refusal did not name the unreadable store member — $OUT"
+  grep -qF "$SE5/$AGENT/seed_entry.md" <<< "$OUT" && ok "(e5) the refusal names WHICH entry could not be read, so the hole is actionable rather than merely reported" || no "(e5) the refusal does not say which file — $OUT"
+  [ -f "$SE5/$AGENT/later_entry.md" ] && no "(e5) the entry was written over a store that could not be examined" || ok "(e5) nothing was written"
   [ "$(store_sum "$SE5")" = "$sum_e5" ] && ok "(e5) the store is BYTE-IDENTICAL after the refusal" || no "(e5) the store changed on the could-not-examine path"
+fi
+chmod 644 "$SE5/$AGENT/seed_entry.md" 2>/dev/null || true
+# ...and the FLIP SIDE, recorded rather than assumed: an unreadable MEMORY.md does NOT block a
+# write any more. It is this writer's own regenerated output, excluded from the corpus, and the
+# rebuild path already treats it as regenerable (it re-derives the whole index and only loses the
+# human H1 title). Pinning it means the behaviour change is a checked fact, not a claim in a
+# comment — and if some later change makes the index load-bearing again, this goes RED and says so.
+chmod 000 "$SE5/$AGENT/MEMORY.md" 2>/dev/null
+if [ -r "$SE5/$AGENT/MEMORY.md" ]; then
+  ok "(e5b) SKIPPED: chmod 000 left MEMORY.md readable (root, or a mode-ignoring filesystem)"
+else
+  run "$RE5" "$SE5" "$AGENT" third_entry "a third entry recorded during the review in PR #154" "$BE5" --source "PR #154" --confirm
+  [ "$RC" -eq 0 ] && ok "(e5b) an UNREADABLE MEMORY.md does not block the write: the index is this writer's own output, excluded from the corpus and rebuilt from the files on disk" || no "(e5b) an unreadable MEMORY.md exited $RC — the index is still being treated as the comparison corpus: $OUT"
+  grep -qF '(third_entry.md)' "$SE5/$AGENT/MEMORY.md" 2>/dev/null && ok "(e5b) and the index was rebuilt over the unreadable one, naming the new entry" || no "(e5b) the index was not rebuilt"
 fi
 chmod 644 "$SE5/$AGENT/MEMORY.md" 2>/dev/null || true
 

@@ -510,7 +510,7 @@ VE_CON="never $(ve_body $VE_N)"        # same subject, opposite polarity
 VE_SHORTDUP="across every regional cluster release candidates promote through staging validation"
 VE_PROV="the shared cache layer warms lazily on its very first read"
 VE_DEAD="the retry helper now lives at loomwright/scripts/no-such-helper-xyz.sh"
-VE_XREPO="the same defect was fixed in HUB #146"
+VE_XREPO="the same defect was fixed in OTHERSVC #146"
 VE_CLEAN="observability dashboards refresh their panels whenever a new deployment finishes rolling out"
 VE_OURS="vikashruhilgit/loomwright"
 

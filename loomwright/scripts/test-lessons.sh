@@ -565,7 +565,7 @@ ve_refused() {
 #   VE_PROV   cites nothing (no PR/issue/session/commit token, no digit) AND is passed the bare
 #             command name `dreaming` as --source, which decision (f) makes insufficient.
 #   VE_DEAD   cites a path that does not resolve under the repo root.
-#   VE_XREPO  cites `HUB #146` — repo-shaped and NOT in the allowlist. The allowlist is supplied
+#   VE_XREPO  cites `OTHERSVC #146` — repo-shaped and NOT in the allowlist. The allowlist is supplied
 #             through this test's OWN environment; the live .supervisor/config.json is never
 #             touched, and no foreign slug is ever added to it (R0/R8).
 # ---------------------------------------------------------------------------
@@ -574,7 +574,7 @@ VE_DUP="across every regional cluster release candidates promote through staging
 VE_CON="release candidates never promote through staging validation before production rollout begins across every regional cluster"
 VE_PROV="the shared cache layer warms lazily on its very first read"
 VE_DEAD="the retry helper now lives at loomwright/scripts/no-such-helper-xyz.sh"
-VE_XREPO="the same defect was fixed in HUB #146"
+VE_XREPO="the same defect was fixed in OTHERSVC #146"
 VE_CLEAN="observability dashboards refresh their panels whenever a new deployment finishes rolling out"
 VE_SRC="session:ve-0001"
 VE_OURS="vikashruhilgit/loomwright"

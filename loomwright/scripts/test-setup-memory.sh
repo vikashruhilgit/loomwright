@@ -1506,10 +1506,10 @@ LEDGER
   g="$(mkgate)"
   mem "$g" apply >/dev/null 2>&1
   assert_committable "$g" "$P_LEDGER" "(p/neg) precondition: the fixture's ledger is committable while clean, so the withholding below is a real state change"
-  printf '{"schema_version": 1, "repo": "vendsy/hub", "number": 124}\n' >> "$g/$P_LEDGER"
+  printf '{"schema_version": 1, "repo": "otherco/othersvc", "number": 124}\n' >> "$g/$P_LEDGER"
   out_g="$(mem "$g" apply 2>&1)"
   assert_ignored "$g" "$P_LEDGER" "(p/neg) with a FOREIGN record present, apply still WITHHOLDS the ledger negation — the publication gate is intact"
-  hasF 'vendsy/hub' "$out_g" && ok "(p/neg) the withholding NAMES the offending slug" || no "(p/neg) the refusal does not name the offending slug"
+  hasF 'otherco/othersvc' "$out_g" && ok "(p/neg) the withholding NAMES the offending slug" || no "(p/neg) the refusal does not name the offending slug"
   assert_committable "$g" "$P_MEM" "(p/neg) and only the ledger is withheld — the memory stores stay applied"
 }
 one_allowlist_two_consumers
@@ -1520,10 +1520,10 @@ if [ "$CFG_LIVE_EXISTED" -eq 1 ]; then
 else
   [ ! -f "$CFG_LIVE" ] && ok "(p) R0: the plugin repo had no .supervisor/config.json before the group and still has none" || no "(p) R0 VIOLATED: the suite CREATED a live .supervisor/config.json"
 fi
-if [ -f "$CFG_LIVE" ] && grep -qE 'vendsy|fixture-org' "$CFG_LIVE" 2>/dev/null; then
+if [ -f "$CFG_LIVE" ] && grep -qE 'otherco|fixture-org' "$CFG_LIVE" 2>/dev/null; then
   no "(p) R0 VIOLATED: a FOREIGN fixture slug reached the live allowlist — apply would now publish another repo's churn analysis"
 else
-  ok "(p) R0: no foreign fixture slug (vendsy / fixture-org) is present in the live allowlist"
+  ok "(p) R0: no foreign fixture slug (otherco / fixture-org) is present in the live allowlist"
 fi
 
 # ============================================================================
