@@ -47,6 +47,13 @@
 #   cite lines as they were at the time (`session-resume.sh:197`, `:311 -> :319` narratives, eval
 #   records pinning agent prompts at a past revision). "Correcting" them would destroy accurate
 #   history, and a repo-wide sweep without this exclusion fails immediately on correct text.
+#   `.claude/agent-memory/` IS scanned, and deliberately so — `.gitignore` un-ignores it precisely
+#   so agent memory persists in git, which makes it committed, long-lived prose of exactly the
+#   class this gate exists for. A rotted pointer there is arguably worse than in a skill doc: it
+#   silently misdirects the reviewing agent's own institutional memory on a later session, with no
+#   human in the loop to notice. (It was unscanned in this gate's first version, and three memory
+#   notes were carrying bare citations — one of them into CHANGELOG.md:7, which every release
+#   shifts by construction.)
 #   Unresolvable citations are SKIPPED, not failed: agent prompts carry illustrative output
 #   (`path/to/file.ts:67`, `src/auth/token.ts:45`) and some real citations point into gitignored
 #   `.supervisor/` artifacts. Neither is drift.
@@ -226,15 +233,19 @@ scan_surface() {
 
         # Normalise a range/list (`:124-126`, `:249,251`) to its maximum. The scanner only sees
         # the first number via CITE_RE, so re-read the tail of the citation from the raw line.
+        # The suffix is matched as a REPEATING group, so a 3+ element list is fully consumed.
+        # An earlier version anchored a single `^[-,][ ]*:?[0-9]+`, which can only ever produce
+        # one match — so the `for` loop read as if it walked the whole list but never iterated
+        # more than once, and `:249,251,260` normalised to 251 rather than 260. That is a hole in
+        # a floor check whose entire value is catching citations past EOF.
         maxn="$cn"
         part="${text#*$cite}"
-        case "$part" in
-          -[0-9]*|,[0-9]*|,\ :[0-9]*)
-            for n in $(printf '%s' "$part" | grep -oE '^[-,][ ]*:?[0-9]+' | grep -oE '[0-9]+'); do
-              [ "$n" -gt "$maxn" ] && maxn="$n"
-            done
-            ;;
-        esac
+        suffix="$(printf '%s' "$part" | grep -oE '^([-,][ ]*:?[0-9]+)+' || true)"
+        if [ -n "$suffix" ]; then
+          for n in $(printf '%s' "$suffix" | grep -oE '[0-9]+'); do
+            [ "$n" -gt "$maxn" ] && maxn="$n"
+          done
+        fi
 
         # Resolve, in order: the path as written, the path under the plugin dir, then a UNIQUE
         # SUFFIX match. The suffix step matters because citations are routinely written as a
@@ -327,7 +338,7 @@ SURFACES="$(git ls-files -- \
     'loomwright/scripts/*.sh' 'loomwright/scripts/*.py' \
     'loomwright/skills/*.md' 'loomwright/commands/*.md' 'loomwright/agents/*.md' \
     'loomwright/docs/*.md' 'scripts/*.sh' 'CLAUDE.md' 'AGENT_GUIDELINES.md' 'README.md' \
-    '.claude-plugin/README.md' 2>/dev/null \
+    '.claude-plugin/README.md' '.claude/agent-memory/*.md' '.supervisor/memory/*.md' 2>/dev/null \
   | grep -v '^loomwright/docs/SPIKES/' \
   | grep -v '^CHANGELOG.md$' \
   | grep -v '^loomwright/scripts/test-citation-drift.sh$')"
@@ -645,10 +656,20 @@ TGT
   # literal. `target.sh:5` would match the pin and `target.sh:1` would not, so without this the
   # pair yields one OK and one bogus PINMISS — a pin vouching for a target it never named.
   printf '# see target.sh:5 and target.sh:1 [pins: `running|checkpoint)`]\n' > "$FIX/loomwright/scripts/twocite.sh"
+  # (M19) A 3+ element list must normalise to its true MAXIMUM. target.sh has 7 lines, so
+  # `:1,2,99` is only caught by (A) if the walk reaches 99 — with a singly-anchored match it
+  # would stop at 2 and wave a past-EOF citation through.
+  printf '# see target.sh:1,2,99\n' > "$FIX/loomwright/scripts/listcite.sh"
   M_TWO="$(scan_surface "$FIX" "$FIX/loomwright/scripts/twocite.sh")"
   case "$M_TWO" in
     PINSHARED*) ok "(M18) a pinned line with two citations is rejected — one pin cannot vouch for two targets" ;;
     *)          no "(M18) two citations silently shared one pin — verdict was '$M_TWO'" ;;
+  esac
+
+  M_LIST="$(scan_surface "$FIX" "$FIX/loomwright/scripts/listcite.sh")"
+  case "$M_LIST" in
+    OVERRUN*) ok "(M19) a 3+ element line list normalises to its true maximum (:1,2,99 trips the floor)" ;;
+    *)        no "(M19) a multi-element list stopped short of its maximum — verdict was '$M_LIST'" ;;
   esac
 
   M_REGEX="$(scan_surface "$FIX" "$FIX/loomwright/scripts/regexcite.sh")"
