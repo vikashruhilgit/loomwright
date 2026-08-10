@@ -83,6 +83,84 @@ PROG="add-orientation.sh"
 die() { printf '%s: %s\n' "$PROG" "$1" >&2; exit "${2:-1}"; }
 
 # ---------------------------------------------------------------------------
+# WRITE-TIME VALIDATION — LOAD GUARD (decision (a) of the write-time-validation brief).
+# See validate-entry.sh's LOAD GUARD CONTRACT. Three clauses, ALL required:
+#   (i)   `. validate-entry.sh` must exit 0. `|| true` is FORBIDDEN on that line — discarding the
+#         status IS the silent unvalidated append this design does not sanction. The status is
+#         CAPTURED instead, and the caller's own errexit state is saved and restored around the
+#         source so this block cannot change the shell options the rest of the script runs under.
+#   (ii)  all five validator functions must be present. Bash defines every function ABOVE a syntax
+#         error before aborting the parse, so a truncated helper leaves SOME validators defined —
+#         a one-function probe would report "examined and clean" over half a validator.
+#   (iii) $VALIDATE_ENTRY_CONTRACT must equal the HARDCODED literal below. Comparing against a
+#         variable the helper exports (VALIDATE_ENTRY_CONTRACT_EXPECTED), or iterating the list it
+#         exports ($VALIDATE_ENTRY_FUNCTIONS), would be CIRCULAR: both are assigned ABOVE the
+#         sentinel, so a truncated copy could define them and pass its own test.
+# Any shortfall is REFUSE_VALIDATOR_UNAVAILABLE, exit 2 (could-not-examine), nothing written.
+# ---------------------------------------------------------------------------
+REFUSE_VALIDATOR_UNAVAILABLE="REFUSE_VALIDATOR_UNAVAILABLE"
+VALIDATE_ENTRY_CONTRACT_REQUIRED="validate-entry/1"
+VALIDATOR_REQUIRED_FUNCS="validate_duplicate validate_contradiction validate_provenance validate_dead_reference validate_cross_repo_reference"
+
+# Resolved BEFORE any `cd`: $0 may be relative, and three of these writers cd to the repo root.
+VE_HERE="$(cd "$(dirname "$0")" 2>/dev/null && pwd || printf '%s' ".")"
+
+# _ve_load_validator — runs the three-clause guard. Called on the write path, never at parse time.
+_ve_load_validator() {
+  VALIDATOR="${ADD_ORIENTATION_VALIDATOR:-}"
+  if [ -z "$VALIDATOR" ]; then
+    if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "${CLAUDE_PLUGIN_ROOT}/scripts/validate-entry.sh" ]; then
+      VALIDATOR="${CLAUDE_PLUGIN_ROOT}/scripts/validate-entry.sh"
+    else
+      VALIDATOR="$VE_HERE/validate-entry.sh"
+    fi
+  fi
+
+  # ---- LOAD GUARD BEGIN -----------------------------------------------------
+  # BEGIN/END delimit the guard as ONE replaceable unit so this suite's mandated mutation control
+  # can replace it with `|| true` in a single edit and prove AC2 goes RED. Structural, not decor.
+  if [ ! -f "$VALIDATOR" ] || [ ! -r "$VALIDATOR" ]; then
+    printf '%s: %s — the shared write-time validator is missing or unreadable at "%s", so this entry could not be examined; refusing rather than appending it unvalidated. Nothing was written.
+'       "add-orientation.sh" "$REFUSE_VALIDATOR_UNAVAILABLE" "$VALIDATOR" >&2
+    exit 2
+  fi
+
+  # Clause (i). errexit is saved/restored rather than assumed: these five writers do not all run
+  # under `set -e` (write-system-contract.sh is `set -uo pipefail`), so an unconditional `set -e`
+  # here would silently change the failure semantics of everything downstream.
+  case "$-" in *e*) _ve_had_e=1 ;; *) _ve_had_e=0 ;; esac
+  set +e
+  # shellcheck source=/dev/null
+  . "$VALIDATOR"
+  _ve_src_rc=$?
+  if [ "$_ve_had_e" -eq 1 ]; then set -e; fi
+  if [ "$_ve_src_rc" -ne 0 ]; then
+    printf '%s: %s — sourcing the shared write-time validator "%s" failed (status %s: unparseable or truncated), so this entry could not be examined. Nothing was written.
+'       "add-orientation.sh" "$REFUSE_VALIDATOR_UNAVAILABLE" "$VALIDATOR" "$_ve_src_rc" >&2
+    exit 2
+  fi
+
+  # Clause (ii). All five are probed, plus the aggregate the call site actually uses — never one
+  # name as a proxy for the rest.
+  for _vef in $VALIDATOR_REQUIRED_FUNCS validate_entry_all; do
+    if ! command -v "$_vef" >/dev/null 2>&1; then
+      printf '%s: %s — the shared write-time validator loaded but "%s" is not defined (a partially-loaded validator would report "examined and clean" over half a check), so this entry could not be examined. Nothing was written.
+'         "add-orientation.sh" "$REFUSE_VALIDATOR_UNAVAILABLE" "$_vef" >&2
+      exit 2
+    fi
+  done
+
+  # Clause (iii). Compared against the HARDCODED literal — see the circularity note above.
+  if [ "${VALIDATE_ENTRY_CONTRACT:-}" != "$VALIDATE_ENTRY_CONTRACT_REQUIRED" ]; then
+    printf '%s: %s — the shared write-time validator contract sentinel is "%s", not the expected "%s" (the file is truncated, or its contract changed), so this entry could not be examined. Nothing was written.
+'       "add-orientation.sh" "$REFUSE_VALIDATOR_UNAVAILABLE" "${VALIDATE_ENTRY_CONTRACT:-<unset>}" "$VALIDATE_ENTRY_CONTRACT_REQUIRED" >&2
+    exit 2
+  fi
+  # ---- LOAD GUARD END -------------------------------------------------------
+}
+
+
+# ---------------------------------------------------------------------------
 # Parse args (three positionals + optional flags for the create/update path; --target/
 # --reason/--replacement/--confirm for the --retract / --supersedes curation actions).
 # ---------------------------------------------------------------------------
@@ -160,6 +238,20 @@ if [ -z "$REPO_DIR" ]; then
 fi
 STORE_DIR="${store_arg:-${ORIENTATION_STORE_DIR:-}}"
 [ -n "$STORE_DIR" ] || STORE_DIR="$REPO_DIR/.agent/orientation"
+
+# ---- Worktree guard (red-team F1) — AC10b ---------------------------------
+# This writer shipped with NO worktree guard: `git rev-parse --show-toplevel` in a LINKED worktree
+# returns the WORKTREE's own toplevel, so a worker in a worktree wrote to the worktree's committed
+# store and lost it on `git worktree remove`. A linked worktree's top-level carries a `.git` FILE;
+# the main checkout carries a directory.
+# The guard evaluates the RESOLVED $REPO_DIR, NOT $PWD. That is load-bearing here and has no
+# write-lessons.sh analogue: this writer accepts `--repo` / $ORIENTATION_REPO_DIR, so a cwd-only
+# guard would pass an explicit --repo pointing straight at a worktree.
+# DELIBERATELY NOT COPIED from write-lessons.sh: its hard `exit 2` outside a git repo. This
+# writer's documented non-repo fallback stays `pwd`, UNCHANGED — only the worktree case is refused.
+if [ -f "$REPO_DIR/.git" ]; then
+  die "refusing to write from a git worktree ($REPO_DIR) — orientation memos are written only from the repo root (red-team F1): a write here would diverge and be lost on \`git worktree remove\`." 3
+fi
 
 # ---------------------------------------------------------------------------
 # Curation actions: --retract and --supersedes. Both take NO positional area-slug/summary/
@@ -408,6 +500,27 @@ fi
 #    never mutate the committed store.
 # ---------------------------------------------------------------------------
 write_target="$STORE_DIR/$slug.md"
+
+# ---------------------------------------------------------------------------
+# THE VALIDATOR CALL SITE (see the LOAD GUARD block above). Before the confirm gate, for the same
+# reason as add-rule.sh's. This writer has no --source flag at all, so provenance rests entirely on
+# the memo text — the summary line or body must name the finding / PR / session that motivated it.
+# ---------------------------------------------------------------------------
+_ve_load_validator
+# ---- VALIDATOR CALL BEGIN ---------------------------------------------------
+set +e
+validate_entry_all --entry "$(cat "$compose")" --store "$write_target" \
+  --source "" --root "$REPO_DIR"
+_ve_rc=$?
+set -e
+case "$_ve_rc" in
+  0) : ;;
+  1) die "refusing to write — the memo was examined and violates a write-time check (see the reason above). Nothing was written." 1 ;;
+  *) die "refusing to write — the memo COULD NOT BE EXAMINED (see the reason above); refusing rather than reporting it clean. Nothing was written." 2 ;;
+esac
+# ---- VALIDATOR CALL END -----------------------------------------------------
+
+proceed=0write_target="$STORE_DIR/$slug.md"
 
 proceed=0
 if [ "$confirm" -eq 1 ]; then

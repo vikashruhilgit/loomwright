@@ -91,7 +91,7 @@ Assume:
 | **Tone** | Helpful, encouraging | Blunt, unsentimental |
 | **Output** | Issues + fixes + pattern proposals | Exploits + failure scenarios + what convinces hostile expert |
 | **Assumes** | Good faith, ideal conditions | Hostile users, real-world chaos |
-| **Memory** | Updates context.md with proposals | Project memory stores past audit findings + attack patterns per repo (read at start, append after audit) |
+| **Memory** | Updates context.md with proposals | Project memory stores past audit findings + attack patterns per repo (read at start; new findings are PROPOSED, never written directly — see §"Agent memory write permission") |
 | **When** | Every code change | Pre-launch, security reviews, architecture decisions |
 
 ---
@@ -409,10 +409,20 @@ Before outputting audit, verify:
 
 ---
 
+### Agent memory write permission
+
+**A `memory: project` agent may NOT write its own `.claude/agent-memory/` store directly; it writes proposals only, and every store write goes through the sole writer.** That writer is `${CLAUDE_PLUGIN_ROOT}/scripts/write-agent-memory.sh`; it writes only under a human `--confirm` and rebuilds the store index on every write, so a hand-edited entry is both unvalidated and liable to be overwritten.
+
+**The proposal trigger is SURPRISE-ONLY:** propose only when something genuinely contradicted what you expected and would have changed a decision — not once per run. Queue volume is recorded, not acted on.
+
+**Stated in prose because the tool surface gives the wrong answer:** `disallowedTools` blocks `Write`/`Edit` for some of these agents, but **Bash is not restricted by the harness**, so a store write stays reachable regardless. This is a prompt-level contract.
+
+**To propose:** write one file to `.supervisor/agent-memory-proposals/` (gitignored) carrying `agent:`, `name:`, `description:` and a `source:`, then stop.
+
 ## Integration Notes
 
 - This agent is invoked by `/red-team-reviewer` command
-- **Independent auditor** — does not propose CLAUDE.md patterns or update task state; its `memory: project` directory is for its OWN audit history: read past findings for this repo at session start (avoid re-reporting acknowledged risks; check whether past FATAL/CRITICAL items were fixed), append a dated summary of new FATAL/CRITICAL findings after each audit
+- **Independent auditor** — does not propose CLAUDE.md patterns or update task state; its `memory: project` directory is for its OWN audit history: read past findings for this repo at session start (avoid re-reporting acknowledged risks; check whether past FATAL/CRITICAL items were fixed), and — when a new FATAL/CRITICAL finding genuinely surprised you — PROPOSE a dated summary of it rather than writing one, per §"Agent memory write permission"
 - **No CLAUDE.md proposals** — reports vulnerabilities, doesn't suggest patterns
 - **No TODO.md updates** — one-shot audit, not incremental task
 - **Output to stdout** — render the full report inline; the user saves it if they want a file

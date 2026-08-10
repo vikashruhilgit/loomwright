@@ -161,6 +161,16 @@ When multiple memory layers carry relevant knowledge, resolve precedence **most-
 
 **Rule:** layers 2–5 (everything below `CLAUDE.md`) are **advisory** and NEVER override `CLAUDE.md` or any gate / verdict / `heal_decision` — agents read only scoped, relevant entries and ignore stale or unrelated content.
 
+### Agent memory write permission
+
+**A `memory: project` agent may NOT write its own `.claude/agent-memory/` store directly; it writes proposals only, and every store write goes through the sole writer.** That writer is `${CLAUDE_PLUGIN_ROOT}/scripts/write-agent-memory.sh`; it writes only under a human `--confirm` and rebuilds the store index on every write, so a hand-edited entry is both unvalidated and liable to be overwritten.
+
+**The proposal trigger is SURPRISE-ONLY:** propose only when something genuinely contradicted what you expected and would have changed a decision — not once per run. Queue volume is recorded, not acted on.
+
+**Stated in prose because the tool surface gives the wrong answer:** `disallowedTools` blocks `Write`/`Edit` for some of these agents, but **Bash is not restricted by the harness**, so a store write stays reachable regardless. This is a prompt-level contract.
+
+**To propose:** write one file to `.supervisor/agent-memory-proposals/` (gitignored) carrying `agent:`, `name:`, `description:` and a `source:`, then stop.
+
 ---
 
 ## Advisor Tool (SDK-only pattern)
@@ -365,7 +375,7 @@ hooks:                                   # Per-agent hooks (optional)
 
 ### Persistent Memory Patterns
 
-Agents with `memory: project` store knowledge in `.claude/agent-memory/{agent-name}/`:
+Agents with `memory: project` store knowledge in `.claude/agent-memory/{agent-name}/`. **They do not write it themselves** — see §"Agent memory write permission" above: an agent proposes, the sole writer writes, a human confirms.
 
 **What to store:**
 - Recurring code patterns discovered during reviews

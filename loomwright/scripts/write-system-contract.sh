@@ -27,6 +27,84 @@
 
 set -uo pipefail
 
+# ---------------------------------------------------------------------------
+# WRITE-TIME VALIDATION — LOAD GUARD (decision (a) of the write-time-validation brief).
+# See validate-entry.sh's LOAD GUARD CONTRACT. Three clauses, ALL required:
+#   (i)   `. validate-entry.sh` must exit 0. `|| true` is FORBIDDEN on that line — discarding the
+#         status IS the silent unvalidated append this design does not sanction. The status is
+#         CAPTURED instead, and the caller's own errexit state is saved and restored around the
+#         source so this block cannot change the shell options the rest of the script runs under.
+#   (ii)  all five validator functions must be present. Bash defines every function ABOVE a syntax
+#         error before aborting the parse, so a truncated helper leaves SOME validators defined —
+#         a one-function probe would report "examined and clean" over half a validator.
+#   (iii) $VALIDATE_ENTRY_CONTRACT must equal the HARDCODED literal below. Comparing against a
+#         variable the helper exports (VALIDATE_ENTRY_CONTRACT_EXPECTED), or iterating the list it
+#         exports ($VALIDATE_ENTRY_FUNCTIONS), would be CIRCULAR: both are assigned ABOVE the
+#         sentinel, so a truncated copy could define them and pass its own test.
+# Any shortfall is REFUSE_VALIDATOR_UNAVAILABLE, exit 2 (could-not-examine), nothing written.
+# ---------------------------------------------------------------------------
+REFUSE_VALIDATOR_UNAVAILABLE="REFUSE_VALIDATOR_UNAVAILABLE"
+VALIDATE_ENTRY_CONTRACT_REQUIRED="validate-entry/1"
+VALIDATOR_REQUIRED_FUNCS="validate_duplicate validate_contradiction validate_provenance validate_dead_reference validate_cross_repo_reference"
+
+# Resolved BEFORE any `cd`: $0 may be relative, and three of these writers cd to the repo root.
+VE_HERE="$(cd "$(dirname "$0")" 2>/dev/null && pwd || printf '%s' ".")"
+
+# _ve_load_validator — runs the three-clause guard. Called on the write path, never at parse time.
+_ve_load_validator() {
+  VALIDATOR="${WRITE_SYSTEM_CONTRACT_VALIDATOR:-}"
+  if [ -z "$VALIDATOR" ]; then
+    if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "${CLAUDE_PLUGIN_ROOT}/scripts/validate-entry.sh" ]; then
+      VALIDATOR="${CLAUDE_PLUGIN_ROOT}/scripts/validate-entry.sh"
+    else
+      VALIDATOR="$VE_HERE/validate-entry.sh"
+    fi
+  fi
+
+  # ---- LOAD GUARD BEGIN -----------------------------------------------------
+  # BEGIN/END delimit the guard as ONE replaceable unit so this suite's mandated mutation control
+  # can replace it with `|| true` in a single edit and prove AC2 goes RED. Structural, not decor.
+  if [ ! -f "$VALIDATOR" ] || [ ! -r "$VALIDATOR" ]; then
+    printf '%s: %s — the shared write-time validator is missing or unreadable at "%s", so this entry could not be examined; refusing rather than appending it unvalidated. Nothing was written.
+'       "write-system-contract" "$REFUSE_VALIDATOR_UNAVAILABLE" "$VALIDATOR" >&2
+    exit 2
+  fi
+
+  # Clause (i). errexit is saved/restored rather than assumed: these five writers do not all run
+  # under `set -e` (write-system-contract.sh is `set -uo pipefail`), so an unconditional `set -e`
+  # here would silently change the failure semantics of everything downstream.
+  case "$-" in *e*) _ve_had_e=1 ;; *) _ve_had_e=0 ;; esac
+  set +e
+  # shellcheck source=/dev/null
+  . "$VALIDATOR"
+  _ve_src_rc=$?
+  if [ "$_ve_had_e" -eq 1 ]; then set -e; fi
+  if [ "$_ve_src_rc" -ne 0 ]; then
+    printf '%s: %s — sourcing the shared write-time validator "%s" failed (status %s: unparseable or truncated), so this entry could not be examined. Nothing was written.
+'       "write-system-contract" "$REFUSE_VALIDATOR_UNAVAILABLE" "$VALIDATOR" "$_ve_src_rc" >&2
+    exit 2
+  fi
+
+  # Clause (ii). All five are probed, plus the aggregate the call site actually uses — never one
+  # name as a proxy for the rest.
+  for _vef in $VALIDATOR_REQUIRED_FUNCS validate_entry_all; do
+    if ! command -v "$_vef" >/dev/null 2>&1; then
+      printf '%s: %s — the shared write-time validator loaded but "%s" is not defined (a partially-loaded validator would report "examined and clean" over half a check), so this entry could not be examined. Nothing was written.
+'         "write-system-contract" "$REFUSE_VALIDATOR_UNAVAILABLE" "$_vef" >&2
+      exit 2
+    fi
+  done
+
+  # Clause (iii). Compared against the HARDCODED literal — see the circularity note above.
+  if [ "${VALIDATE_ENTRY_CONTRACT:-}" != "$VALIDATE_ENTRY_CONTRACT_REQUIRED" ]; then
+    printf '%s: %s — the shared write-time validator contract sentinel is "%s", not the expected "%s" (the file is truncated, or its contract changed), so this entry could not be examined. Nothing was written.
+'       "write-system-contract" "$REFUSE_VALIDATOR_UNAVAILABLE" "${VALIDATE_ENTRY_CONTRACT:-<unset>}" "$VALIDATE_ENTRY_CONTRACT_REQUIRED" >&2
+    exit 2
+  fi
+  # ---- LOAD GUARD END -------------------------------------------------------
+}
+
+
 SUBSYSTEM=""; CONTRACT_FILE=""; SOURCE="unknown"
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -93,6 +171,13 @@ CONTRACT="$CONTRACT_DIR/$SAFE_ID.md"
 mkdir -p "$CONTRACT_DIR" 2>/dev/null || { echo "write-system-contract: cannot create $CONTRACT_DIR" >&2; exit 2; }
 [ -f "$PROV" ] || : > "$PROV"
 
+# ---------------------------------------------------------------------------
+# THE VALIDATOR CALL SITE (see write-lessons.sh's for the shared rationale). --store is the
+# contract file this write targets: on a first write it is absent, which the validator reports as
+# a clean "no prior entries" verdict, NOT as could-not-examine.
+# ---------------------------------------------------------------------------
+_ve_load_validator
+
 ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
 
 # Temps live IN the twin dir (not $TMPDIR) so the commit `mv` is a same-filesystem, truly-atomic
@@ -116,6 +201,28 @@ if [ -f "$CONTRACT" ]; then
     exit 0
   fi
 fi
+
+# ---------------------------------------------------------------------------
+# AC18 — ORDERING. This call sits AFTER the writer's own idempotent dedup short-circuit, and that
+# order is the whole point. The dedup guard above is a BENIGN NO-OP: re-writing an entry that is
+# already stored is idempotence, not an error, and it has always exited 0. Running the validator
+# first turned that into a hard REFUSE_DUPLICATE exit 1, so every idempotent caller (a re-run, a
+# retry, a replayed queue item) started failing. The validator examines entries about to be
+# WRITTEN; an entry that will not be written has nothing to validate. Moving this block back above
+# the dedup guard reintroduces the regression — pinned by test.
+# ---- VALIDATOR CALL BEGIN ---------------------------------------------------
+case "$-" in *e*) _ve_had_e=1 ;; *) _ve_had_e=0 ;; esac
+set +e
+validate_entry_all --entry "$BODY" --store "$CONTRACT" \
+  --source "$SOURCE" --root "$GITROOT"
+_ve_rc=$?
+if [ "$_ve_had_e" -eq 1 ]; then set -e; fi
+case "$_ve_rc" in
+  0) : ;;
+  1) echo "write-system-contract: refusing to write — the contract was examined and violates a write-time check (see the reason above). Nothing was written." >&2; exit 1 ;;
+  *) echo "write-system-contract: refusing to write — the contract COULD NOT BE EXAMINED (see the reason above); refusing rather than reporting it clean. Nothing was written." >&2; exit 2 ;;
+esac
+# ---- VALIDATOR CALL END -----------------------------------------------------
 
 last_line="$(tail -n1 "$PROV" 2>/dev/null || true)"
 if [ -n "$last_line" ]; then prev_hash="$(printf '%s' "$last_line" | sha)"; else prev_hash="$GENESIS"; fi

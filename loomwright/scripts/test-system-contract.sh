@@ -15,6 +15,15 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 WRITE="$HERE/write-system-contract.sh"
+
+# ---------------------------------------------------------------------------
+# PROVENANCE IN FIXTURES (decision (f) / AC15 — provenance is STRICT and centralised in
+# validate_provenance). An entry must cite what motivated it: a bare token like `s`, `test` or `ev`
+# names nothing and is now REFUSED. These fixtures therefore pass a REAL reference. An earlier
+# revision of this suite wrapped $WRITE in a shim that appended a provenanced --source to every
+# call; that was deleted on review because it masked genuine refusals — a fixture whose entry was
+# refused for an unrelated reason still went green. Sources are explicit and per-call now.
+# ---------------------------------------------------------------------------
 READ="$HERE/read-system-contract.sh"
 REAL_REPO="$(cd "$HERE/../.." && pwd)"
 
@@ -29,15 +38,18 @@ trap 'rm -rf "$TMP" "$TMP-wt" 2>/dev/null' EXIT
 
 echo "== 1. worktree-guard (MERGE BLOCKER) =="
 git -C "$TMP" worktree add -q "$TMP-wt" -b wt >/dev/null 2>&1
-( cd "$TMP-wt" && echo '{"subsystem":"x"}' | bash "$WRITE" --subsystem "x" --source test ) >/dev/null 2>&1
+( cd "$TMP-wt" && echo '{"subsystem":"x"}' | bash "$WRITE" --subsystem "x" --source "session:fixture-0001" ) >/dev/null 2>&1
 rc=$?
 if [ "$rc" -eq 3 ]; then ok "writer refuses from a worktree (exit 3)"; else no "writer did NOT refuse worktree (exit $rc)"; fi
 if [ ! -e "$TMP-wt/.supervisor/twin/contracts/x.md" ]; then ok "no contract written under the worktree"; else no "contract leaked into the worktree"; fi
 git -C "$TMP" worktree remove --force "$TMP-wt" >/dev/null 2>&1
 
 echo "== 2. valid write + read round-trip =="
-( cd "$TMP" && printf 'SYSTEM_CONTRACT: scripts/build-insights.sh\ninvariants: [reads session_end]\n' | bash "$WRITE" --subsystem "scripts/build-insights.sh" --source s1 \
-    && printf 'SYSTEM_CONTRACT: supervisor-phase45\ninvariants: [advisory only]\n' | bash "$WRITE" --subsystem "supervisor-phase45" --source s1 ) >/dev/null 2>&1
+# The contract body cites a real path; the dead-reference check resolves cited paths against
+# the repo root, so the fixture repo must actually contain it (a correct refusal otherwise).
+mkdir -p "$TMP/scripts" && : > "$TMP/scripts/build-insights.sh"
+( cd "$TMP" && printf 'SYSTEM_CONTRACT: scripts/build-insights.sh\ninvariants: [reads session_end]\n' | bash "$WRITE" --subsystem "scripts/build-insights.sh" --source "session:fixture-0001" \
+    && printf 'SYSTEM_CONTRACT: supervisor-phase45\ninvariants: [advisory only]\n' | bash "$WRITE" --subsystem "supervisor-phase45" --source "session:fixture-0001" ) >/dev/null 2>&1
 # filename sanitization: "scripts/build-insights.sh" -> "scripts-build-insights.sh"
 [ -f "$TMP/.supervisor/twin/contracts/scripts-build-insights.sh.md" ] && ok "subsystem id sanitized into a safe filename" || no "filename not sanitized as expected"
 out="$( cd "$TMP" && bash "$READ" )"
@@ -72,7 +84,7 @@ echo "== 5. write-time eviction (contract-file cap honored) =="
 # chain breaks at the first evict and EVERY add after it is distrusted (the cap-crossing-drops-all
 # bug). Writing 7 at cap 3 means adds 4..7 all follow broken evict links in the buggy version.
 EVDIR="$(mktemp -d)"; ( cd "$EVDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
-( cd "$EVDIR" && for i in 1 2 3 4 5 6 7; do printf 'contract %s\n' "$i" | SYSTEM_TWIN_MAX_CONTRACTS=3 bash "$WRITE" --subsystem "sub$i" --source ev >/dev/null 2>&1; done )
+( cd "$EVDIR" && for i in 1 2 3 4 5 6 7; do printf 'contract %s\n' "$i" | SYSTEM_TWIN_MAX_CONTRACTS=3 bash "$WRITE" --subsystem "sub$i" --source "session:fixture-0001" >/dev/null 2>&1; done )
 cnt="$(find "$EVDIR/.supervisor/twin/contracts" -maxdepth 1 -type f -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
 if [ "${cnt:-0}" -eq 3 ]; then ok "capped at 3 contracts (wrote 7, evicted 4)"; else no "cap not enforced (have $cnt, want 3)"; fi
 grep -q '"action":"evict"' "$EVDIR/.supervisor/twin/.provenance.jsonl" 2>/dev/null && ok "eviction recorded in provenance" || no "eviction not recorded"
@@ -99,10 +111,210 @@ if git -C "$REAL_REPO" check-ignore -q .supervisor/twin/contracts/x.md 2>/dev/nu
 
 echo "== 7. dedup guard (unchanged contract body) =="
 DDIR="$(mktemp -d)"; ( cd "$DDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
-( cd "$DDIR" && printf 'same body\n' | bash "$WRITE" --subsystem "dup" --source d >/dev/null 2>&1; printf 'same body\n' | bash "$WRITE" --subsystem "dup" --source d >/dev/null 2>&1 )
+( cd "$DDIR" && printf 'same body\n' | bash "$WRITE" --subsystem "dup" --source "session:fixture-0001" >/dev/null 2>&1; printf 'same body\n' | bash "$WRITE" --subsystem "dup" --source "session:fixture-0001" >/dev/null 2>&1 )
 adds="$(grep -c '"action":"add"' "$DDIR/.supervisor/twin/.provenance.jsonl" 2>/dev/null)"; adds="${adds:-0}"
 if [ "$adds" -eq 1 ]; then ok "identical contract body written once (dedup guard)"; else no "duplicate not deduped (have $adds add entries)"; fi
 rm -rf "$DDIR"
+
+# =============================================================================
+# 8. AC1 / AC2 / AC10a — WRITE-TIME VALIDATION AT THIS WRITER'S CALL SITE.
+#
+# This is the smallest suite in the set, and that is exactly why the coverage here is the SAME depth
+# as the other four rather than a thinner sample: a writer that `source`s validate-entry.sh and never
+# invokes it passes both test-validate-entry.sh and every case above. Only per-writer seeded
+# violations plus the call-site mutation control pin the CALL, and "the suite was short" is not a
+# reason for this writer's call site to be the unproven one.
+#
+# THREE SEPARATE ASSERTIONS PER CASE (AC2), and the separation is the point: this writer commits via
+# temp file + atomic `mv`, so "byte-unchanged" is ALSO true of a crash, an arg-parse rejection and a
+# `command not found`. Each case asserts (i) the refusal EXIT STATUS, (ii) a NAMED, GREPPABLE reason
+# on stderr, and (iii) the store byte-unchanged — via `cmp` against a saved copy, not a digest
+# (`md5 -q` is BSD-only and this suite runs on Linux CI too).
+# Long-form rationale for the shared fixture design lives in test-lessons.sh's equivalent section.
+# =============================================================================
+echo "== 8. AC1/AC2/AC10a: write-time validation at the write-system-contract call site =="
+VETMP="$(mktemp -d)"
+VEFILE="$HERE/validate-entry.sh"
+VE_ERR="$VETMP/stderr"
+VE_ALLOW=""
+VESTORE=".supervisor/twin/contracts/ve.md"
+
+ve_repo() {
+  local r; r="$(mktemp -d "$VETMP/r.XXXXXX")"
+  ( cd "$r" && git init -q && git config user.email t@t && git config user.name t \
+      && echo init > f && git add f && git commit -qm init ) >/dev/null 2>&1
+  printf '%s' "$r"
+}
+
+# ve_write <repo> <body> <source> [validator-override] [writer-path] -> sets VE_RC, writes VE_ERR.
+# The contract BODY is the validated entry and arrives on stdin, which is this writer's documented
+# shape. An EMPTY validator-override leaves $WRITE_SYSTEM_CONTRACT_VALIDATOR empty, which is what
+# makes the writer fall back to its own resolution — the real path, not a test-only one.
+ve_write() {
+  local repo="$1" txt="$2" src="$3" val="${4:-}" prog="${5:-$WRITE}"
+  ( cd "$repo" \
+      && if [ -n "$VE_ALLOW" ]; then export LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$VE_ALLOW"; fi \
+      && printf '%s\n' "$txt" \
+         | WRITE_SYSTEM_CONTRACT_VALIDATOR="$val" bash "$prog" --subsystem ve --source "$src" \
+  ) >/dev/null 2>"$VE_ERR"
+  VE_RC=$?
+}
+
+ve_refused() { # <label> <want-rc> <want-token> <store> <saved-copy>
+  local label="$1" wrc="$2" tok="$3" st="$4" b4="$5"
+  if [ "$VE_RC" -eq "$wrc" ]; then ok "$label (i) refused with exit $wrc"
+  else no "$label (i) exit $VE_RC, want $wrc"; fi
+  if grep -q "$tok" "$VE_ERR" 2>/dev/null; then ok "$label (ii) stderr names $tok"
+  else no "$label (ii) stderr does NOT name $tok — got: $(tr '\n' ' ' < "$VE_ERR" | cut -c1-160)"; fi
+  if cmp -s "$st" "$b4"; then ok "$label (iii) store byte-unchanged"
+  else no "$label (iii) the refusal MUTATED the store"; fi
+}
+
+# Each seed violates EXACTLY ONE check, because validate_entry_all returns the FIRST non-zero verdict
+# in a fixed order — a seed that tripped an earlier check would assert nothing about the later one.
+# VE_DUP is a REORDERING of VE_BASE, not a repeat: this writer's own dedup guard (section 7 above)
+# short-circuits an identical subsystem+body at exit 0 before the validator runs, so a byte-identical
+# seed would test that short-circuit instead of the duplicate check.
+VE_BASE="release candidates promote through staging validation before production rollout begins across every regional cluster"
+VE_DUP="across every regional cluster release candidates promote through staging validation before production rollout begins"
+VE_CON="release candidates never promote through staging validation before production rollout begins across every regional cluster"
+VE_PROV="the shared cache layer warms lazily on its very first read"
+VE_DEAD="the retry helper now lives at loomwright/scripts/no-such-helper-xyz.sh"
+VE_XREPO="the same defect was fixed in HUB #146"
+VE_CLEAN="observability dashboards refresh their panels whenever a new deployment finishes rolling out"
+VE_SRC="session:ve-0001"
+VE_OURS="vikashruhilgit/loomwright"
+
+# The cross-repo allowlist is supplied through this test's OWN environment; the live
+# .supervisor/config.json is never touched and no foreign slug is ever added to it (R0/R8).
+ve_case() { # <label> <text> <source> <want-token> [allowlist]
+  local label="$1" txt="$2" src="$3" tok="$4" allow="${5:-}"
+  local r st; r="$(ve_repo)"; st="$r/$VESTORE"
+  ve_write "$r" "$VE_BASE" "$VE_SRC"
+  if [ ! -f "$st" ]; then no "$label — SEED FAILED (no contract artifact; the fixture asserts nothing)"; return; fi
+  cp "$st" "$VETMP/before"
+  VE_ALLOW="$allow"; ve_write "$r" "$txt" "$src"; VE_ALLOW=""
+  ve_refused "AC1 $label:" 1 "$tok" "$st" "$VETMP/before"
+}
+
+ve_case "duplicate"      "$VE_DUP"   "$VE_SRC"   "REFUSE_DUPLICATE"
+ve_case "contradiction"  "$VE_CON"   "$VE_SRC"   "REFUSE_CONTRADICTION"
+ve_case "provenance"     "$VE_PROV"  "dreaming"  "REFUSE_PROVENANCE"
+ve_case "dead-reference" "$VE_DEAD"  "$VE_SRC"   "REFUSE_DEAD_REFERENCE"
+ve_case "cross-repo"     "$VE_XREPO" "$VE_SRC"   "REFUSE_CROSS_REPO" "$VE_OURS"
+
+# AC2 — the degraded-helper shapes, each built from the REAL helper (so they cannot drift from it)
+# and each aimed at a DIFFERENT clause of the three-clause load guard:
+#   absent     -> the `[ -f ] || [ -r ]` pre-check
+#   unparse    -> clause (i): a trailing syntax error makes `source` exit non-zero. Bash still
+#                 defines every function above the error, so this shape has ALL five validators AND
+#                 the sentinel — only the source status distinguishes it.
+#   partial    -> clause (ii): cut above validate_dead_reference, so three validators are defined and
+#                 validate_entry_all is not. This is the shape a one-function `command -v` probe
+#                 would wave through as "examined and clean".
+#   nosentinel -> clause (iii): everything defined and working, only the contract sentinel missing.
+#                 Nothing but clause (iii) can catch it, which is why it is also the vehicle for the
+#                 `|| true` mutation control below.
+cp "$VEFILE" "$VETMP/unparse.sh"; printf '\nif [ ; then\n' >> "$VETMP/unparse.sh"
+awk '/^validate_dead_reference\(\)/{exit} {print}'  "$VEFILE" > "$VETMP/partial.sh"
+awk '/^VALIDATE_ENTRY_CONTRACT="/{exit} {print}'    "$VEFILE" > "$VETMP/nosentinel.sh"
+
+if bash -n "$VETMP/partial.sh" 2>/dev/null && bash -n "$VETMP/nosentinel.sh" 2>/dev/null \
+   && ! bash -n "$VETMP/unparse.sh" 2>/dev/null; then
+  ok "AC2 fixtures: partial+nosentinel parse cleanly, unparse does not (each aimed at its own clause)"
+else
+  no "AC2 fixtures: a degraded-helper variant is not the shape it claims — the clause labels below are unreliable"
+fi
+
+ve_degraded() { # <label> <validator-path>; attempted with a CLEAN entry, so the ONLY reason to
+                # refuse is the broken helper.
+  local label="$1" val="$2" r st; r="$(ve_repo)"; st="$r/$VESTORE"
+  ve_write "$r" "$VE_BASE" "$VE_SRC"
+  if [ ! -f "$st" ]; then no "AC2 $label — SEED FAILED"; return; fi
+  cp "$st" "$VETMP/before"
+  ve_write "$r" "$VE_CLEAN" "$VE_SRC" "$val"
+  ve_refused "AC2 $label:" 2 "REFUSE_VALIDATOR_UNAVAILABLE" "$st" "$VETMP/before"
+}
+ve_degraded "helper absent"        "$VETMP/no-such-validator.sh"
+ve_degraded "helper unparseable"   "$VETMP/unparse.sh"
+ve_degraded "helper truncated"     "$VETMP/partial.sh"
+ve_degraded "helper sentinel-less" "$VETMP/nosentinel.sh"
+
+# MUTATION CONTROLS. Both mutants are COPIES in $VETMP: the writer on disk is never edited, which
+# makes "this writer goes RED while the other four stay green" true by construction rather than by a
+# sibling run — a temp-file copy provably cannot reach the other four writers. Each mutant is gated
+# on being non-empty, actually different, and still parseable before anything is credited to it.
+ve_mutant_ok() { # <file> <desc>
+  if [ ! -s "$1" ];              then no "$2 — mutant is EMPTY (vacuous control)"; return 1; fi
+  if cmp -s "$WRITE" "$1";       then no "$2 — mutation changed NOTHING (vacuous control)"; return 1; fi
+  if ! bash -n "$1" 2>/dev/null; then no "$2 — mutant does not parse (vacuous control)"; return 1; fi
+  return 0
+}
+
+# (a) AC1's mandated per-writer control: script the VALIDATOR CALL block out. REPLACED with `:`
+# rather than deleted, so no enclosing block is left with an empty body (a bash syntax error, and a
+# mutant that cannot run proves nothing).
+awk '/---- VALIDATOR CALL BEGIN/{s=1; print "  :"; next} /---- VALIDATOR CALL END/{s=0; next} !s' \
+  "$WRITE" > "$VETMP/mut-call.sh"
+if ve_mutant_ok "$VETMP/mut-call.sh" "AC1 call-site mutant"; then
+  r="$(ve_repo)"; st="$r/$VESTORE"
+  ve_write "$r" "$VE_BASE" "$VE_SRC"
+  cp "$st" "$VETMP/before"
+  ve_write "$r" "$VE_CON" "$VE_SRC" "$VEFILE" "$VETMP/mut-call.sh"
+  if [ "$VE_RC" -eq 0 ] && ! cmp -s "$st" "$VETMP/before"; then
+    ok "AC1 mutation control: deleting the VALIDATOR CALL lets the contradiction seed through (exit 0, store rewritten) — the fixtures above are RED because of the call site, not the source line"
+  else
+    no "AC1 mutation control: the call-site mutant STILL refused (exit $VE_RC) — the AC1 fixtures may be passing for some other reason"
+  fi
+fi
+
+# (b) AC2's mandated control: replace the whole load guard with the repo's pervasive `|| true`
+# convention — the one line decision (a) forbids on the source. Paired with the sentinel-less helper
+# because that is the shape where the mutation is OBSERVABLE: with an absent or truncated helper the
+# writer still fails closed by accident (validate_entry_all is undefined, the call returns 127, the
+# writer exits 2 with no named reason), but with a sentinel-less helper every validator works, so
+# dropping the guard lets an UNVERIFIED-CONTRACT write go all the way through. All three AC2
+# assertions go RED at once: exit 0, no named reason, store MUTATED.
+awk '/---- LOAD GUARD BEGIN/{s=1; print "  . \"$VALIDATOR\" || true"; next} /---- LOAD GUARD END/{s=0; next} !s' \
+  "$WRITE" > "$VETMP/mut-guard.sh"
+if ve_mutant_ok "$VETMP/mut-guard.sh" "AC2 load-guard mutant"; then
+  if grep -q '|| true' "$VETMP/mut-guard.sh"; then
+    r="$(ve_repo)"; st="$r/$VESTORE"
+    ve_write "$r" "$VE_BASE" "$VE_SRC"
+    cp "$st" "$VETMP/before"
+    ve_write "$r" "$VE_CLEAN" "$VE_SRC" "$VETMP/nosentinel.sh" "$VETMP/mut-guard.sh"
+    if [ "$VE_RC" -eq 0 ] && ! grep -q REFUSE_VALIDATOR_UNAVAILABLE "$VE_ERR" 2>/dev/null \
+       && ! cmp -s "$st" "$VETMP/before"; then
+      ok "AC2 mutation control: replacing the load guard with '|| true' turns all three assertions RED (exit 0, no named reason, store mutated)"
+    else
+      no "AC2 mutation control: the '|| true' mutant did not go RED (exit $VE_RC) — AC2 may be passing for some other reason"
+    fi
+  else
+    no "AC2 mutation control: the '|| true' replacement did not land in the mutant"
+  fi
+fi
+
+# AC10a — RE-VERIFICATION, with one assertion section 1 does not make. Section 1 proves a worktree
+# CWD is refused with exit 3; this proves the worktree guard still runs BEFORE the validator load
+# guard, i.e. wiring the validator in did not reorder them. With a deliberately absent validator the
+# refusal must STILL be the worktree's exit 3, never the load guard's exit 2 — otherwise the
+# sole-writer/pinned-CWD refusal would be masked by AC2's.
+VEWT="$(ve_repo)"
+git -C "$VEWT" worktree add -q "$VEWT-wt" -b vewt >/dev/null 2>&1
+if [ -d "$VEWT-wt" ]; then
+  ve_write "$VEWT-wt" "$VE_CLEAN" "$VE_SRC" "$VETMP/no-such-validator.sh"
+  if [ "$VE_RC" -eq 3 ] && grep -q worktree "$VE_ERR" 2>/dev/null; then
+    ok "AC10a: a worktree CWD still refuses with exit 3, ahead of the validator load guard (absent helper does not mask it)"
+  else
+    no "AC10a: worktree refusal is exit $VE_RC (want 3) — the validator guard now precedes the worktree guard"
+  fi
+  [ -e "$VEWT-wt/$VESTORE" ] && no "AC10a: a contract leaked into the worktree" \
+    || ok "AC10a: nothing written under the worktree"
+  git -C "$VEWT" worktree remove --force "$VEWT-wt" >/dev/null 2>&1
+else
+  no "AC10a: could not create the fixture worktree — the assertion would be vacuous"
+fi
+rm -rf "$VETMP" "$VEWT-wt" 2>/dev/null
 
 echo
 echo "RESULT: $pass passed, $fail failed"

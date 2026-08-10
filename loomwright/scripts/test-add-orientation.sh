@@ -429,6 +429,337 @@ else
 fi
 
 # ============================================================================
+# AC1 / AC2 / AC10b — WRITE-TIME VALIDATION AND THE NEW WORKTREE GUARD.
+#
+# Wiring add-orientation.sh to validate-entry.sh makes test-validate-entry.sh green and this suite
+# green, and NEITHER proves this writer ever CALLS the validator — a writer that `source`s the helper
+# and never invokes it passes both. The per-writer coverage below is what pins the call site.
+#
+# THREE SEPARATE ASSERTIONS PER CASE (AC2): this writer commits via temp file + atomic `mv`, so
+# "byte-unchanged" is ALSO true of a crash, an arg-parse rejection and a `command not found`. Each
+# case asserts (i) the refusal EXIT STATUS, (ii) a NAMED, GREPPABLE reason on stderr, and (iii) the
+# store byte-unchanged — via `cmp` against a saved copy, not a digest (`md5 -q` is BSD-only and this
+# suite runs on Linux CI too).
+#
+# WHAT IS DIFFERENT ABOUT THIS WRITER, and it changes two of the five AC1 cells. The validated entry
+# is the COMPOSED memo — the `<!-- written_at: ... | head_sha: ... | areas: ... -->` header PLUS the
+# summary and body — while `_ve_store_lines` SKIPS `<!--` lines when reading the stored memo back.
+# So the entry always carries ~9 significant header tokens that the stored side never carries, and:
+#   · duplicate/contradiction are DILUTED by those tokens (measured and worked around below);
+#   · provenance is UNFALSIFIABLE through this writer, because the header's 7-hex short sha is itself
+#     a commit reference that validate_provenance accepts. That is pinned as a known limitation
+#     rather than papered over — see the block below.
+# Long-form rationale for the shared fixture design lives in test-lessons.sh's equivalent section.
+# ============================================================================
+echo "== AC1/AC2/AC10b: write-time validation + the new worktree guard =="
+VETMP="$(mktemp -d)"
+VEFILE="$SCRIPT_DIR/validate-entry.sh"
+VE_ERR="$VETMP/stderr"
+VE_ALLOW=""
+VESTORE=".agent/orientation/ve.md"
+
+ve_repo() {
+  local r; r="$(mktemp -d "$VETMP/r.XXXXXX")"
+  ( cd "$r" && git init -q && git config user.email t@t && git config user.name t \
+      && echo init > f && git add f && git commit -qm init ) >/dev/null 2>&1
+  printf '%s' "$r"
+}
+
+# ve_write <cwd> <summary> <body-text> [validator-override] [writer-path] -> sets VE_RC, VE_ERR.
+# Deliberately invoked WITHOUT --repo/--store so the repo and store resolve from the CWD — that is
+# the path AC10b(i) is about. --confirm is passed because the validator call site sits BEFORE the
+# confirm gate and the write must actually be attempted; a dry-run exits 0 without touching a store.
+# An EMPTY validator-override leaves $ADD_ORIENTATION_VALIDATOR empty, which is what makes the writer
+# fall back to its own resolution — the real path, not a test-only one.
+ve_write() {
+  local dir="$1" summ="$2" body="$3" val="${4:-}" prog="${5:-$WRITER}"
+  printf '%s\n' "$body" > "$dir/ve-body.txt"
+  ( cd "$dir" \
+      && if [ -n "$VE_ALLOW" ]; then export LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$VE_ALLOW"; fi \
+      && ADD_ORIENTATION_VALIDATOR="$val" bash "$prog" ve "$summ" ve-body.txt --confirm \
+  ) >/dev/null 2>"$VE_ERR"
+  VE_RC=$?
+}
+
+ve_refused() { # <label> <want-rc> <want-token> <store> <saved-copy>
+  local label="$1" wrc="$2" tok="$3" st="$4" b4="$5"
+  if [ "$VE_RC" -eq "$wrc" ]; then ok "$label (i) refused with exit $wrc"
+  else no "$label (i) exit $VE_RC, want $wrc"; fi
+  if grep -q "$tok" "$VE_ERR" 2>/dev/null; then ok "$label (ii) stderr names $tok"
+  else no "$label (ii) stderr does NOT name $tok — got: $(tr '\n' ' ' < "$VE_ERR" | cut -c1-160)"; fi
+  if cmp -s "$st" "$b4"; then ok "$label (iii) store byte-unchanged"
+  else no "$label (iii) the refusal MUTATED the store"; fi
+}
+
+# ---------------------------------------------------------------------------
+# THE LONG BODY, and why it is long. Overlap is scored over the LARGER significant-token set, so for
+# a memo of N body tokens the duplicate check sees N/(N+H) where H is the header-and-summary tokens
+# the entry carries and the stored memo does not (H = 9 header + 1 summary here: `written`, the year,
+# `DDtHH`, `SSz`, `head`, `sha`, the 7-hex sha, `areas`, the slug, and the summary word). Reaching the
+# 90% duplicate threshold therefore needs N >= 90; the 14-token body used for the other four writers
+# scored ~58 and was correctly NOT refused. N=120 is used here for margin (92%), and the composed
+# memo stays well inside this writer's 1000-char cap. The bound itself is pinned as an assertion
+# below rather than left as a silent property of the fixture.
+# ---------------------------------------------------------------------------
+ve_body()     { awk -v n="$1" 'BEGIN{for(i=1;i<=n;i++) printf "w%03d%s", i, (i<n?" ":"")}'; }
+ve_body_rev() { awk -v n="$1" 'BEGIN{for(i=n;i>=1;i--) printf "w%03d%s", i, (i>1?" ":"")}'; }
+VE_N=120
+VE_BASE="$(ve_body $VE_N)"
+VE_DUP="$(ve_body_rev $VE_N)"          # same token set, reordered — a near-duplicate, not a repeat
+VE_CON="never $(ve_body $VE_N)"        # same subject, opposite polarity
+VE_SHORTDUP="across every regional cluster release candidates promote through staging validation"
+VE_PROV="the shared cache layer warms lazily on its very first read"
+VE_DEAD="the retry helper now lives at loomwright/scripts/no-such-helper-xyz.sh"
+VE_XREPO="the same defect was fixed in HUB #146"
+VE_CLEAN="observability dashboards refresh their panels whenever a new deployment finishes rolling out"
+VE_OURS="vikashruhilgit/loomwright"
+
+# The generated bodies must actually be the shape the arithmetic above assumes, or every duplicate
+# and contradiction assertion below is measuring something else. (An earlier revision built the
+# reversed body with `tr ' ' '\n' | tail -r`, which on BSD userland MERGES the last two tokens when
+# the input has no trailing newline — the token set silently changed and the fixture went green by
+# not being a duplicate at all. Hence a direct awk generator, and this check.)
+if [ "$(printf '%s' "$VE_BASE" | wc -w | tr -d ' ')" -eq "$VE_N" ] \
+   && [ "$(printf '%s' "$VE_DUP" | wc -w | tr -d ' ')" -eq "$VE_N" ] \
+   && [ "$VE_BASE" != "$VE_DUP" ] \
+   && [ "$(printf '%s\n' "$VE_BASE" | tr ' ' '\n' | sort | md5 2>/dev/null || printf '%s\n' "$VE_BASE" | tr ' ' '\n' | sort | cksum)" \
+      = "$(printf '%s\n' "$VE_DUP"  | tr ' ' '\n' | sort | md5 2>/dev/null || printf '%s\n' "$VE_DUP"  | tr ' ' '\n' | sort | cksum)" ]; then
+  ok "AC1 fixture shape: base and near-duplicate bodies are $VE_N tokens, same token SET, different order"
+else
+  no "AC1 fixture shape: the generated bodies are not a same-set reordering — the duplicate assertions below would measure something else"
+fi
+
+# ve_case <label> <summary> <body> <want-token> [allowlist] — seed the store with the long base memo,
+# snapshot it, attempt the violating memo, assert the three things.
+# The cross-repo allowlist is supplied through this test's OWN environment; the live
+# .supervisor/config.json is never touched and no foreign slug is ever added to it (R0/R8).
+ve_case() {
+  local label="$1" summ="$2" body="$3" tok="$4" allow="${5:-}"
+  local r st; r="$(ve_repo)"; st="$r/$VESTORE"
+  ve_write "$r" "memo" "$VE_BASE"
+  if [ ! -f "$st" ]; then no "$label — SEED FAILED (no memo; the fixture asserts nothing)"; return; fi
+  cp "$st" "$VETMP/before"
+  VE_ALLOW="$allow"; ve_write "$r" "$summ" "$body"; VE_ALLOW=""
+  ve_refused "AC1 $label:" 1 "$tok" "$st" "$VETMP/before"
+}
+
+ve_case "duplicate"      "memo" "$VE_DUP"   "REFUSE_DUPLICATE"
+ve_case "contradiction"  "memo" "$VE_CON"   "REFUSE_CONTRADICTION"
+ve_case "dead-reference" "memo" "$VE_DEAD"  "REFUSE_DEAD_REFERENCE"
+ve_case "cross-repo"     "memo" "$VE_XREPO" "REFUSE_CROSS_REPO" "$VE_OURS"
+
+# --- AC1 duplicate: the measured BOUND, pinned so it cannot rot silently -----------------------
+# A SHORT near-identical memo is NOT refused, because the header tokens dilute the overlap below the
+# threshold. This is a real, currently-unclosed gap in this writer's duplicate coverage, and pinning
+# it is what keeps the long-body fixture above honest: without this the suite would read as "the
+# duplicate check works here", which is only true above ~90 body tokens.
+VER="$(ve_repo)"; VEST="$VER/$VESTORE"
+ve_write "$VER" "memo" "$VE_SHORTDUP"
+if [ -f "$VEST" ]; then
+  cp "$VEST" "$VETMP/before"
+  ve_write "$VER" "memo" "$VE_SHORTDUP xyz"
+  if [ "$VE_RC" -eq 0 ] && ! cmp -s "$VEST" "$VETMP/before"; then
+    ok "AC1 duplicate BOUND (known limitation): a SHORT near-identical memo is still accepted — the composed entry's header tokens dilute the overlap below 90%, so this writer's duplicate check only bites above ~90 body tokens"
+  else
+    no "AC1 duplicate BOUND: the short near-duplicate was refused (exit $VE_RC) — the documented bound has CHANGED; re-derive it and update the long-body arithmetic above"
+  fi
+else
+  no "AC1 duplicate BOUND — SEED FAILED"
+fi
+
+# --- AC1 provenance: KNOWN LIMITATION, pinned by mechanism ------------------------------------
+# validate_provenance cannot refuse anything through this writer, and the reason is mechanical: the
+# writer stamps `head_sha: <7-hex>` into every memo header, the header is part of the validated
+# entry, and a 7-hex token IS one of the commit references validate_provenance accepts. So the memo
+# vouches for itself. Asserted as three facts rather than a passing refusal, so the limitation is
+# falsifiable: if the writer is ever changed to validate the memo BODY only, (c) flips and this goes
+# RED naming the limitation as closed. (This writer has no --source flag at all, so there is no
+# caller-side way to reach the refusal either.)
+VEP="$(ve_repo)"
+ve_write "$VEP" "$VE_PROV" "$VE_PROV"
+VEMEMO="$VEP/$VESTORE"
+if [ -f "$VEMEMO" ]; then
+  bash "$VEFILE" provenance --entry "$(sed 1d "$VEMEMO")" --source "" >/dev/null 2>&1; ve_p_body=$?
+  bash "$VEFILE" provenance --entry "$(cat "$VEMEMO")"   --source "" >/dev/null 2>&1; ve_p_full=$?
+  if [ "$ve_p_body" -eq 1 ]; then
+    ok "AC1 provenance (a): the memo PROSE alone cites nothing and is refused by validate_provenance"
+  else
+    no "AC1 provenance (a): the memo prose was NOT refused (rc=$ve_p_body) — the seed cites something after all"
+  fi
+  if [ "$ve_p_full" -eq 0 ] && head -n1 "$VEMEMO" | grep -qE 'head_sha: [0-9a-f]{7,40}'; then
+    ok "AC1 provenance (b): the SAME memo passes once the writer's own 'head_sha' header is prepended — the header is the only difference"
+  else
+    no "AC1 provenance (b): composed-memo provenance rc=$ve_p_full / header shape unexpected — the stated mechanism no longer holds"
+  fi
+  if [ "$VE_RC" -eq 0 ]; then
+    ok "AC1 provenance (c) KNOWN LIMITATION: this writer therefore ACCEPTS an un-provenanced memo; validate_provenance is unfalsifiable through add-orientation.sh until the header stops being part of the validated entry"
+  else
+    no "AC1 provenance (c): the un-provenanced memo was refused (exit $VE_RC) — the limitation is CLOSED; replace this block with a real refusal assertion"
+  fi
+else
+  no "AC1 provenance — SEED FAILED (no memo written)"
+fi
+
+# AC2 — the degraded-helper shapes, each built from the REAL helper (so they cannot drift from it)
+# and each aimed at a DIFFERENT clause of the three-clause load guard:
+#   absent     -> the `[ -f ] || [ -r ]` pre-check
+#   unparse    -> clause (i): a trailing syntax error makes `source` exit non-zero. Bash still
+#                 defines every function above the error, so this shape has ALL five validators AND
+#                 the sentinel — only the source status distinguishes it.
+#   partial    -> clause (ii): cut above validate_dead_reference, so three validators are defined and
+#                 validate_entry_all is not. This is the shape a one-function `command -v` probe
+#                 would wave through as "examined and clean".
+#   nosentinel -> clause (iii): everything defined and working, only the contract sentinel missing.
+#                 Nothing but clause (iii) can catch it, which is why it is also the vehicle for the
+#                 `|| true` mutation control below.
+cp "$VEFILE" "$VETMP/unparse.sh"; printf '\nif [ ; then\n' >> "$VETMP/unparse.sh"
+awk '/^validate_dead_reference\(\)/{exit} {print}'  "$VEFILE" > "$VETMP/partial.sh"
+awk '/^VALIDATE_ENTRY_CONTRACT="/{exit} {print}'    "$VEFILE" > "$VETMP/nosentinel.sh"
+
+if bash -n "$VETMP/partial.sh" 2>/dev/null && bash -n "$VETMP/nosentinel.sh" 2>/dev/null \
+   && ! bash -n "$VETMP/unparse.sh" 2>/dev/null; then
+  ok "AC2 fixtures: partial+nosentinel parse cleanly, unparse does not (each aimed at its own clause)"
+else
+  no "AC2 fixtures: a degraded-helper variant is not the shape it claims — the clause labels below are unreliable"
+fi
+
+ve_degraded() { # <label> <validator-path>; attempted with a CLEAN memo, so the ONLY reason to
+                # refuse is the broken helper.
+  local label="$1" val="$2" r st; r="$(ve_repo)"; st="$r/$VESTORE"
+  ve_write "$r" "memo" "$VE_BASE"
+  if [ ! -f "$st" ]; then no "AC2 $label — SEED FAILED"; return; fi
+  cp "$st" "$VETMP/before"
+  ve_write "$r" "$VE_CLEAN" "$VE_CLEAN" "$val"
+  ve_refused "AC2 $label:" 2 "REFUSE_VALIDATOR_UNAVAILABLE" "$st" "$VETMP/before"
+}
+ve_degraded "helper absent"        "$VETMP/no-such-validator.sh"
+ve_degraded "helper unparseable"   "$VETMP/unparse.sh"
+ve_degraded "helper truncated"     "$VETMP/partial.sh"
+ve_degraded "helper sentinel-less" "$VETMP/nosentinel.sh"
+
+# MUTATION CONTROLS. Both mutants are COPIES in $VETMP: the writer on disk is never edited, which
+# makes "this writer goes RED while the other four stay green" true by construction rather than by a
+# sibling run — a temp-file copy provably cannot reach the other four writers. Each mutant is gated
+# on being non-empty, actually different, and still parseable before anything is credited to it.
+ve_mutant_ok() { # <file> <desc>
+  if [ ! -s "$1" ];              then no "$2 — mutant is EMPTY (vacuous control)"; return 1; fi
+  if cmp -s "$WRITER" "$1";      then no "$2 — mutation changed NOTHING (vacuous control)"; return 1; fi
+  if ! bash -n "$1" 2>/dev/null; then no "$2 — mutant does not parse (vacuous control)"; return 1; fi
+  return 0
+}
+
+# (a) AC1's mandated per-writer control: script the VALIDATOR CALL block out. REPLACED with `:`
+# rather than deleted, so no enclosing block is left with an empty body (a bash syntax error, and a
+# mutant that cannot run proves nothing).
+awk '/---- VALIDATOR CALL BEGIN/{s=1; print "  :"; next} /---- VALIDATOR CALL END/{s=0; next} !s' \
+  "$WRITER" > "$VETMP/mut-call.sh"
+if ve_mutant_ok "$VETMP/mut-call.sh" "AC1 call-site mutant"; then
+  r="$(ve_repo)"; st="$r/$VESTORE"
+  ve_write "$r" "memo" "$VE_BASE"
+  cp "$st" "$VETMP/before"
+  ve_write "$r" "memo" "$VE_CON" "$VEFILE" "$VETMP/mut-call.sh"
+  if [ "$VE_RC" -eq 0 ] && ! cmp -s "$st" "$VETMP/before"; then
+    ok "AC1 mutation control: deleting the VALIDATOR CALL lets the contradiction seed through (exit 0, memo replaced) — the fixtures above are RED because of the call site, not the source line"
+  else
+    no "AC1 mutation control: the call-site mutant STILL refused (exit $VE_RC) — the AC1 fixtures may be passing for some other reason"
+  fi
+fi
+
+# (b) AC2's mandated control: replace the whole load guard with the repo's pervasive `|| true`
+# convention — the one line decision (a) forbids on the source. Paired with the sentinel-less helper
+# because that is the shape where the mutation is OBSERVABLE: with an absent or truncated helper the
+# writer still fails closed by accident (validate_entry_all is undefined, the call returns 127, the
+# writer exits non-zero with no named reason), but with a sentinel-less helper every validator works,
+# so dropping the guard lets an UNVERIFIED-CONTRACT write go all the way through. All three AC2
+# assertions go RED at once: exit 0, no named reason, store MUTATED.
+awk '/---- LOAD GUARD BEGIN/{s=1; print "  . \"$VALIDATOR\" || true"; next} /---- LOAD GUARD END/{s=0; next} !s' \
+  "$WRITER" > "$VETMP/mut-guard.sh"
+if ve_mutant_ok "$VETMP/mut-guard.sh" "AC2 load-guard mutant"; then
+  if grep -q '|| true' "$VETMP/mut-guard.sh"; then
+    r="$(ve_repo)"; st="$r/$VESTORE"
+    ve_write "$r" "memo" "$VE_BASE"
+    cp "$st" "$VETMP/before"
+    ve_write "$r" "$VE_CLEAN" "$VE_CLEAN" "$VETMP/nosentinel.sh" "$VETMP/mut-guard.sh"
+    if [ "$VE_RC" -eq 0 ] && ! grep -q REFUSE_VALIDATOR_UNAVAILABLE "$VE_ERR" 2>/dev/null \
+       && ! cmp -s "$st" "$VETMP/before"; then
+      ok "AC2 mutation control: replacing the load guard with '|| true' turns all three assertions RED (exit 0, no named reason, store mutated)"
+    else
+      no "AC2 mutation control: the '|| true' mutant did not go RED (exit $VE_RC) — AC2 may be passing for some other reason"
+    fi
+  else
+    no "AC2 mutation control: the '|| true' replacement did not land in the mutant"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# AC10b — THE NEW WORKTREE GUARD. This writer shipped with NONE, and it is the writer where a
+# CWD-only guard would be wrong: it accepts `--repo` / $ORIENTATION_REPO_DIR, so the guard has to
+# evaluate the RESOLVED store root. Three separate assertions, because the guard is three claims:
+#   (i)   a worktree CWD refuses with exit 3;
+#   (ii)  the non-git-repo fallback is UNCHANGED — this writer's documented fallback is `pwd`, and
+#         write-lessons.sh's hard `exit 2` must NOT have come across. The write still fails here, but
+#         for this writer's OWN pre-existing reason (it cannot stamp a HEAD sha outside a repo) —
+#         asserted by message, not merely by a non-zero status, so a new refusal cannot hide behind
+#         the old one;
+#   (iii) an explicit --repo (and $ORIENTATION_REPO_DIR) pointing at a worktree is refused TOO, from
+#         a CWD that is not itself a worktree. A cwd-only guard passes (i) and (ii) and fails only
+#         this, which is exactly why it is asserted separately.
+# (i) additionally runs with a deliberately ABSENT validator, proving the worktree guard sits AHEAD
+# of the validator load guard: otherwise a worktree write would report "could not examine" (exit 2)
+# and the F1 refusal would be masked by AC2's.
+# ---------------------------------------------------------------------------
+VEWT="$(ve_repo)"
+git -C "$VEWT" worktree add -q "$VEWT-wt" -b vewt >/dev/null 2>&1
+if [ -d "$VEWT-wt" ]; then
+  ve_write "$VEWT-wt" "$VE_CLEAN" "$VE_CLEAN" "$VETMP/no-such-validator.sh"
+  if [ "$VE_RC" -eq 3 ] && grep -q worktree "$VE_ERR" 2>/dev/null; then
+    ok "AC10b(i): a worktree CWD refuses with exit 3, ahead of the validator load guard (absent helper does not mask it)"
+  else
+    no "AC10b(i): worktree refusal is exit $VE_RC (want 3): $(tr '\n' ' ' < "$VE_ERR" | cut -c1-160)"
+  fi
+  [ -e "$VEWT-wt/.agent/orientation" ] && no "AC10b(i): a memo leaked into the worktree" \
+    || ok "AC10b(i): nothing written under the worktree"
+
+  # (iii) explicit override at a worktree, issued from a NON-worktree CWD (the main checkout), so
+  # only the resolved-root evaluation can be what refuses.
+  # The body file is REAL and the memo is otherwise VALID on purpose: if the guard fails to fire,
+  # this call must SUCCEED and leave a memo inside the worktree. A deliberately broken call (an
+  # unreadable body, say) would also be non-zero without the guard, so the assertion would pass
+  # against a cwd-only guard and prove nothing. `.agent/orientation` under the worktree is checked
+  # afterwards for the same reason — the refusal has to be the guard's, not some other failure's.
+  printf '%s\n' "$VE_CLEAN" > "$VEWT/ve-body.txt"
+  ( cd "$VEWT" && bash "$WRITER" ve "$VE_CLEAN" ve-body.txt --confirm --repo "$VEWT-wt" ) >/dev/null 2>"$VE_ERR"
+  if [ $? -eq 3 ] && grep -q worktree "$VE_ERR" 2>/dev/null && [ ! -e "$VEWT-wt/.agent/orientation" ]; then
+    ok "AC10b(iii): an explicit --repo pointing at a worktree is refused with exit 3 from a non-worktree CWD, and nothing is written there (the guard reads the RESOLVED root, not \$PWD)"
+  else
+    no "AC10b(iii): --repo at a worktree was NOT refused — a cwd-only guard would pass (i) and (ii) and miss exactly this (memo present: $([ -e "$VEWT-wt/.agent/orientation" ] && echo yes || echo no)): $(tr '\n' ' ' < "$VE_ERR" | cut -c1-160)"
+  fi
+  ( cd "$VEWT" && ORIENTATION_REPO_DIR="$VEWT-wt" bash "$WRITER" ve "$VE_CLEAN" ve-body.txt --confirm ) >/dev/null 2>"$VE_ERR"
+  if [ $? -eq 3 ] && grep -q worktree "$VE_ERR" 2>/dev/null && [ ! -e "$VEWT-wt/.agent/orientation" ]; then
+    ok "AC10b(iii): \$ORIENTATION_REPO_DIR pointing at a worktree is refused with exit 3 too, and nothing is written there (both override layers, not just the flag)"
+  else
+    no "AC10b(iii): \$ORIENTATION_REPO_DIR at a worktree was NOT refused (memo present: $([ -e "$VEWT-wt/.agent/orientation" ] && echo yes || echo no)): $(tr '\n' ' ' < "$VE_ERR" | cut -c1-160)"
+  fi
+  git -C "$VEWT" worktree remove --force "$VEWT-wt" >/dev/null 2>&1
+else
+  no "AC10b: could not create the fixture worktree — assertions (i) and (iii) would be vacuous"
+fi
+
+VENOGIT="$(mktemp -d "$VETMP/nogit.XXXXXX")"
+if git -C "$VENOGIT" rev-parse --show-toplevel >/dev/null 2>&1; then
+  no "AC10b(ii): the fixture dir is inside a git repo — the non-repo assertion would be vacuous"
+else
+  ve_write "$VENOGIT" "$VE_CLEAN" "$VE_CLEAN"
+  if [ "$VE_RC" -ne 3 ] && ! grep -q worktree "$VE_ERR" 2>/dev/null \
+     && grep -q 'cannot resolve HEAD sha' "$VE_ERR" 2>/dev/null; then
+    ok "AC10b(ii): outside a git repo the guard does NOT fire — the run still ends at this writer's own pre-existing 'cannot resolve HEAD sha', unchanged, and write-lessons.sh's hard exit 2 was not copied across"
+  else
+    no "AC10b(ii): the non-git-repo path CHANGED (exit $VE_RC): $(tr '\n' ' ' < "$VE_ERR" | cut -c1-160)"
+  fi
+fi
+rm -rf "$VETMP" "$VEWT-wt" 2>/dev/null
+
+# ============================================================================
 echo
 if [ "$fail" -eq 0 ]; then
   echo "ALL TESTS PASSED ($pass/$pass)"

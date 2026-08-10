@@ -1354,6 +1354,179 @@ else
 fi
 
 # ============================================================================
+# (p) ONE ALLOWLIST, TWO CONSUMERS.
+#
+# `setup-memory.sh`'s allowlist now has a SECOND consumer: validate-entry.sh's cross-repo write-time
+# check, which asks this script for the list rather than parsing any layer itself. This group is the
+# drift alarm for that arrangement — it moves the list ONCE and asserts BOTH behaviours move.
+#
+# WHY TWO PRECEDENCE LAYERS AND NOT ONE. Moving the list via $LOOMWRIGHT_MEMORY_REPO_ALLOWLIST alone
+# is satisfiable by a DUPLICATE PARSER inside validate-entry.sh: that env var is layer 2 of four, and
+# a second parser reading it would agree here and diverge everywhere else. The live value in this
+# repo comes from layer 3 (`.supervisor/config.json`), the layer a duplicate env parser cannot see at
+# all — so the group asserts both, and layer 3 is asserted through a `--root` FIXTURE REPO whose
+# config disagrees with its own git remote, which additionally proves the `--root` really reaches the
+# resolver instead of the checked-out repo's own state.
+#
+# R0 — THE LIVE ALLOWLIST IS NEVER TOUCHED, AND NO FOREIGN SLUG EVER ENTERS IT. Adding a foreign slug
+# to this repo's own allowlist would make `apply` judge foreign ledger records clean and EMIT the
+# negation that un-ignores .supervisor/postmortem/results.jsonl — publishing another repo's churn
+# analysis from this PUBLIC repo. Every fixture below is either a per-invocation env var or a
+# `--root` temp repo, and the tail of the group re-checks the live config byte-for-byte.
+# ============================================================================
+echo "== (p) AC5 — ONE allowlist, TWO consumers: the cross-repo check and the ledger filter =="
+# $TEST_SETUP_MEMORY_VALIDATE_ENTRY exists so this group's MUTATION CONTROL is reproducible by hand
+# rather than asserted in prose. Point it at a mutated copy of validate-entry.sh and re-run:
+#   · a copy whose allowlist loader DROPS the `--root` forwarding, or
+#   · a copy that parses $LOOMWRIGHT_MEMORY_REPO_ALLOWLIST itself instead of delegating
+# both leave every (p/L2) assertion GREEN and turn the (p/L3) ones RED — which is the entire reason
+# this group asserts two precedence layers instead of the one the env var reaches.
+VE="${TEST_SETUP_MEMORY_VALIDATE_ENTRY:-$HERE/validate-entry.sh}"
+CFG_LIVE="$PLUGIN_REPO/.supervisor/config.json"
+CFG_LIVE_SUM_BEFORE="$(sum "$CFG_LIVE")"
+CFG_LIVE_EXISTED=0; [ -f "$CFG_LIVE" ] && CFG_LIVE_EXISTED=1
+
+# consumer A — the cross-repo write-time check. Echoes its verdict (0 pass / 1 refuse / 2 could not
+# examine). VALIDATE_ENTRY_SETUP_MEMORY pins the ONE resolver to the script under test, so a stray
+# CLAUDE_PLUGIN_ROOT in the developer's environment cannot point this at a different setup-memory.sh.
+xrepo() {   # <entry-text> [--root <dir>]
+  local e="$1"; shift
+  VALIDATE_ENTRY_SETUP_MEMORY="$MEM" bash "$VE" cross-repo --entry "$e" "$@" >/dev/null 2>&1
+  echo $?
+}
+
+# xrepo_noenv — the same, with $LOOMWRIGHT_MEMORY_REPO_ALLOWLIST SCRUBBED from the child environment
+# so precedence layer 3 is genuinely reached. The scrub lives INSIDE the helper on purpose: `env` can
+# only exec an external command, so an `env -u … xrepo …` call site would fail to find the shell
+# FUNCTION, yield an EMPTY verdict, and every `[ "$v" = "0" ]` written against it would compare
+# against "" — a whole group of assertions that can never pass and never say why.
+xrepo_noenv() {   # <entry-text> [--root <dir>]
+  local e="$1"; shift
+  env -u LOOMWRIGHT_MEMORY_REPO_ALLOWLIST VALIDATE_ENTRY_SETUP_MEMORY="$MEM" \
+    bash "$VE" cross-repo --entry "$e" "$@" >/dev/null 2>&1
+  echo $?
+}
+
+one_allowlist_two_consumers() {
+  if [ -z "$JQ" ]; then
+    ok "(p) jq unavailable — the one-allowlist/two-consumers group is skipped (pass)"
+    return 0
+  fi
+  if [ ! -f "$VE" ]; then
+    no "(p) validate-entry.sh is missing at $VE — the second consumer does not exist, so AC5 cannot be discharged"
+    return 0
+  fi
+
+  local d led v_alpha v_beta v_remote out n
+  local E_ALPHA="the fixture-org/alpha rollout is recorded in this entry"
+  local E_BETA="the fixture-org/beta rollout is recorded in this entry"
+  local E_REMOTE="the acme/widget repo rollout is recorded in this entry"
+
+  d="$(newgit https://github.com/acme/widget.git)"
+  led="$d/ledger.jsonl"
+  cat > "$led" <<'LEDGER'
+{"repo":"fixture-org/alpha","number":1,"review_rounds":2}
+{"repo":"fixture-org/beta","number":2,"review_rounds":5}
+LEDGER
+
+  # ---------------------------------------------------------------------------
+  # LAYER 2 — the process-global env var. It reaches both consumers with NO root override, and
+  # touches no file, so both calls below are deliberately made WITHOUT --root.
+  # ---------------------------------------------------------------------------
+  v_alpha="$(LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="fixture-org/alpha" xrepo "$E_ALPHA")"
+  v_beta="$(LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="fixture-org/alpha" xrepo "$E_BETA")"
+  [ "$v_alpha" = "0" ] && ok "(p/L2) consumer A: an entry citing the ALLOWLISTED slug PASSES (verdict 0)" || no "(p/L2) consumer A refused an allowlisted slug (verdict $v_alpha)"
+  [ "$v_beta" = "1" ] && ok "(p/L2) consumer A: an entry citing a slug OUTSIDE the list is REFUSED (verdict 1 — examined and violating, never 2)" || no "(p/L2) consumer A verdict on a foreign slug was $v_beta, expected 1"
+  out="$(LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="fixture-org/alpha" bash "$MEM" filter-ledger --ledger "$led" 2>/dev/null)"
+  n="$(ledger_count "$out")"
+  [ "$n" = "1" ] && ok "(p/L2) consumer B: the ledger filter retains 1 of 2 records under the same list" || no "(p/L2) consumer B retained $n records, expected 1"
+  ledger_has_repo "$out" "fixture-org/alpha" && ok "(p/L2) consumer B kept the allowlisted record" || no "(p/L2) consumer B dropped the allowlisted record"
+  ledger_has_repo "$out" "fixture-org/beta" && no "(p/L2) consumer B leaked the non-allowlisted record" || ok "(p/L2) consumer B excluded the non-allowlisted record"
+
+  # MOVE THE LIST ONCE — both behaviours must move together.
+  v_alpha="$(LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="fixture-org/beta" xrepo "$E_ALPHA")"
+  v_beta="$(LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="fixture-org/beta" xrepo "$E_BETA")"
+  [ "$v_beta" = "0" ] && ok "(p/L2) THE LIST MOVED: consumer A now PASSES the slug it refused a moment ago" || no "(p/L2) consumer A did not follow the moved list (verdict $v_beta on the newly-allowed slug)"
+  [ "$v_alpha" = "1" ] && ok "(p/L2) THE LIST MOVED: consumer A now REFUSES the slug it passed a moment ago" || no "(p/L2) consumer A still passed the now-foreign slug (verdict $v_alpha)"
+  out="$(LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="fixture-org/beta" bash "$MEM" filter-ledger --ledger "$led" 2>/dev/null)"
+  ledger_has_repo "$out" "fixture-org/beta" && ok "(p/L2) THE LIST MOVED: consumer B now retains the record it dropped a moment ago" || no "(p/L2) consumer B did not follow the moved list"
+  ledger_has_repo "$out" "fixture-org/alpha" && no "(p/L2) consumer B still retains the now-foreign record — the two consumers have diverged" || ok "(p/L2) THE LIST MOVED: consumer B now drops the record it kept a moment ago — ONE list, BOTH consumers"
+
+  # ---------------------------------------------------------------------------
+  # LAYER 3 — .supervisor/config.json inside a --root FIXTURE REPO. This is the layer the live value
+  # actually comes from, and the one an env-var-only parser is blind to. `env -u` is load-bearing:
+  # layer 2 outranks layer 3, so a developer with the variable exported would otherwise never reach
+  # the config at all and this half would silently re-test layer 2.
+  # ---------------------------------------------------------------------------
+  mkdir -p "$d/.supervisor" || setup_fail "(p) could not create the fixture .supervisor dir"
+  printf '{"setup_memory":{"repo_allowlist":["fixture-org/alpha"]}}\n' > "$d/.supervisor/config.json"
+  # PRECONDITION: the config must genuinely BEAT the fixture's own git remote, or the assertions
+  # below would be satisfied by layer 4 and would prove nothing about layer 3.
+  out="$(env -u LOOMWRIGHT_MEMORY_REPO_ALLOWLIST bash "$MEM" --root "$d" allowlist 2>/dev/null)"
+  if [ "$out" = "fixture-org/alpha" ]; then
+    ok "(p/L3) PRECONDITION: the fixture's config allowlist BEATS its own git remote (acme/widget) — layer 3 is genuinely what resolves"
+  else
+    no "(p/L3) the fixture did not resolve to its config value (got: $out) — the layer-3 assertions below would be testing layer 4"
+  fi
+  v_alpha="$(xrepo_noenv "$E_ALPHA" --root "$d")"
+  v_beta="$(xrepo_noenv "$E_BETA" --root "$d")"
+  v_remote="$(xrepo_noenv "$E_REMOTE" --root "$d")"
+  [ "$v_alpha" = "0" ] && ok "(p/L3) consumer A reads the FIXTURE REPO's config through --root: the config-listed slug PASSES" || no "(p/L3) consumer A did not see the fixture config (verdict $v_alpha on the config-listed slug) — --root is not reaching the resolver"
+  [ "$v_beta" = "1" ] && ok "(p/L3) consumer A REFUSES a slug absent from the fixture config" || no "(p/L3) consumer A verdict $v_beta on a slug outside the fixture config, expected 1"
+  # The sharpest --root assertion: the fixture's OWN REMOTE is refused, so consumer A is reading the
+  # config layer and not falling back to a remote (its own, or this checkout's).
+  [ "$v_remote" = "1" ] && ok "(p/L3) consumer A REFUSES the fixture's own git-remote slug — proof it read the config layer, not the remote default" || no "(p/L3) consumer A passed the fixture's remote slug (verdict $v_remote) — it is resolving layer 4, not the config"
+  out="$(env -u LOOMWRIGHT_MEMORY_REPO_ALLOWLIST bash "$MEM" --root "$d" filter-ledger --ledger "$led" 2>/dev/null)"
+  ledger_has_repo "$out" "fixture-org/alpha" && ok "(p/L3) consumer B reads the same config layer and keeps the config-listed record" || no "(p/L3) consumer B did not follow the config layer"
+  ledger_has_repo "$out" "fixture-org/beta" && no "(p/L3) consumer B leaked a record outside the config allowlist" || ok "(p/L3) consumer B excludes the record outside the config allowlist"
+
+  # MOVE THE CONFIG LIST ONCE — both behaviours must move together at layer 3 too.
+  printf '{"setup_memory":{"repo_allowlist":["fixture-org/beta"]}}\n' > "$d/.supervisor/config.json"
+  v_alpha="$(xrepo_noenv "$E_ALPHA" --root "$d")"
+  v_beta="$(xrepo_noenv "$E_BETA" --root "$d")"
+  [ "$v_beta" = "0" ] && ok "(p/L3) THE CONFIG LIST MOVED: consumer A now PASSES the slug it refused" || no "(p/L3) consumer A did not follow the moved config list (verdict $v_beta)"
+  [ "$v_alpha" = "1" ] && ok "(p/L3) THE CONFIG LIST MOVED: consumer A now REFUSES the slug it passed" || no "(p/L3) consumer A still passed the now-foreign slug (verdict $v_alpha)"
+  out="$(env -u LOOMWRIGHT_MEMORY_REPO_ALLOWLIST bash "$MEM" --root "$d" filter-ledger --ledger "$led" 2>/dev/null)"
+  ledger_has_repo "$out" "fixture-org/beta" && ok "(p/L3) THE CONFIG LIST MOVED: consumer B now retains the record it dropped" || no "(p/L3) consumer B did not follow the moved config list"
+  ledger_has_repo "$out" "fixture-org/alpha" && no "(p/L3) consumer B still retains the now-foreign record at layer 3 — the two consumers have diverged on the layer an env-var parser cannot see" || ok "(p/L3) THE CONFIG LIST MOVED: consumer B drops it too — ONE list, BOTH consumers, on the layer a duplicate env parser is blind to"
+
+  # THE SCRUB ITSELF, PINNED. Every layer-3 assertion above is only about layer 3 if the env var
+  # really was removed from the child. Prove it directly: EXPORT a contradicting layer-2 value and
+  # show the fixture's config (now `fixture-org/beta`) still decides the verdict.
+  local v_scrub
+  v_scrub="$(LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="fixture-org/alpha" xrepo_noenv "$E_ALPHA" --root "$d")"
+  [ "$v_scrub" = "1" ] && ok "(p/L3) the env-var scrub is real: an EXPORTED layer-2 value does not reach the child, so the fixture's config still decides — the layer-3 assertions above are about layer 3" || no "(p/L3) an exported layer-2 value leaked into the child (verdict $v_scrub) — the layer-3 assertions above were silently re-testing layer 2"
+
+  # ---------------------------------------------------------------------------
+  # NEGATIVE CONTROL — the shipped PUBLICATION GATE is not weakened by any of the above. With a
+  # FOREIGN record in the ledger, `apply` in a --root fixture repo must still WITHHOLD the ledger
+  # negation and NAME the offending slug. This is the property R0 exists to protect.
+  # ---------------------------------------------------------------------------
+  local g out_g
+  g="$(mkgate)"
+  mem "$g" apply >/dev/null 2>&1
+  assert_committable "$g" "$P_LEDGER" "(p/neg) precondition: the fixture's ledger is committable while clean, so the withholding below is a real state change"
+  printf '{"schema_version": 1, "repo": "vendsy/hub", "number": 124}\n' >> "$g/$P_LEDGER"
+  out_g="$(mem "$g" apply 2>&1)"
+  assert_ignored "$g" "$P_LEDGER" "(p/neg) with a FOREIGN record present, apply still WITHHOLDS the ledger negation — the publication gate is intact"
+  hasF 'vendsy/hub' "$out_g" && ok "(p/neg) the withholding NAMES the offending slug" || no "(p/neg) the refusal does not name the offending slug"
+  assert_committable "$g" "$P_MEM" "(p/neg) and only the ledger is withheld — the memory stores stay applied"
+}
+one_allowlist_two_consumers
+
+# R0, re-checked mechanically rather than asserted in prose.
+if [ "$CFG_LIVE_EXISTED" -eq 1 ]; then
+  [ "$(sum "$CFG_LIVE")" = "$CFG_LIVE_SUM_BEFORE" ] && ok "(p) R0: the plugin repo's own .supervisor/config.json is BYTE-IDENTICAL after the group" || no "(p) R0 VIOLATED: THE SUITE MUTATED THE LIVE .supervisor/config.json"
+else
+  [ ! -f "$CFG_LIVE" ] && ok "(p) R0: the plugin repo had no .supervisor/config.json before the group and still has none" || no "(p) R0 VIOLATED: the suite CREATED a live .supervisor/config.json"
+fi
+if [ -f "$CFG_LIVE" ] && grep -qE 'vendsy|fixture-org' "$CFG_LIVE" 2>/dev/null; then
+  no "(p) R0 VIOLATED: a FOREIGN fixture slug reached the live allowlist — apply would now publish another repo's churn analysis"
+else
+  ok "(p) R0: no foreign fixture slug (vendsy / fixture-org) is present in the live allowlist"
+fi
+
+# ============================================================================
 echo "== (k) the suite never touched the plugin repo's own .gitignore =="
 PLUGIN_GI_SUM_AFTER="$(sum "$PLUGIN_GI")"
 [ "$PLUGIN_GI_SUM_BEFORE" = "$PLUGIN_GI_SUM_AFTER" ] && ok "(k) $PLUGIN_GI is byte-identical before and after the whole suite" || no "(k) THE SUITE MUTATED THE PLUGIN REPO'S OWN .gitignore"
