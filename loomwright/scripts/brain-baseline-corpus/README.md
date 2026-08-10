@@ -34,7 +34,7 @@ Each fixture file should document, for a human running the spike:
 1. **Question / task** — the structural question, implementation task, or review/QA task.
 2. **Expected answer or rubric** — what a correct answer looks like (used for manual scoring).
 3. **Target repo / graph** — which codebase + Graphify graph the question is asked against
-   (e.g. `sports-management`).
+   (e.g. this plugin repo, or whichever application repo you are evaluating).
 4. **Mode** — `baseline` (grep-first) or `graph-first`. The harness stamps the run mode via
    `BRAIN_BASELINE_MODE`; the fixture just records which mode the question is intended to compare.
 
@@ -49,17 +49,17 @@ via environment variables, keyed by the **sanitized** item id (every non-alphanu
 
 | Field | Env var | Default | Values |
 |---|---|---|---|
-| `correct` | `BRAIN_BASELINE_CORRECT_q1_what_calls_reservationCreate` | `false` | `1`/`true`/`yes`/`y` (any case: `True`/`YES`/`Y`) ⇒ true |
-| `tool_calls` | `BRAIN_BASELINE_TOOLCALLS_q1_what_calls_reservationCreate` | `0` | integer |
-| `missed_context` | `BRAIN_BASELINE_MISSED_q1_what_calls_reservationCreate` | `false` | `1`/`true`/`yes`/`y` (any case: `True`/`YES`/`Y`) ⇒ true |
-| `note` | `BRAIN_BASELINE_NOTE_q1_what_calls_reservationCreate` | `""` | free-text one-liner |
+| `correct` | `BRAIN_BASELINE_CORRECT_q1_what_calls_read_lessons` | `false` | `1`/`true`/`yes`/`y` (any case: `True`/`YES`/`Y`) ⇒ true |
+| `tool_calls` | `BRAIN_BASELINE_TOOLCALLS_q1_what_calls_read_lessons` | `0` | integer |
+| `missed_context` | `BRAIN_BASELINE_MISSED_q1_what_calls_read_lessons` | `false` | `1`/`true`/`yes`/`y` (any case: `True`/`YES`/`Y`) ⇒ true |
+| `note` | `BRAIN_BASELINE_NOTE_q1_what_calls_read_lessons` | `""` | free-text one-liner |
 
 Example:
 
 ```sh
 BRAIN_BASELINE_MODE=baseline \
-BRAIN_BASELINE_CORRECT_q1_what_calls_reservationCreate=true \
-BRAIN_BASELINE_TOOLCALLS_q1_what_calls_reservationCreate=7 \
+BRAIN_BASELINE_CORRECT_q1_what_calls_read_lessons=true \
+BRAIN_BASELINE_TOOLCALLS_q1_what_calls_read_lessons=7 \
 loomwright/scripts/brain-baseline-eval.sh
 ```
 
@@ -76,5 +76,5 @@ The harness always exits 0; un-scored items still produce well-formed records (n
 One JSON object per corpus item, appended to `.supervisor/eval/brain-baseline.jsonl`:
 
 ```json
-{"id":"q1-what-calls-reservationCreate","mode":"baseline","correct":false,"tool_calls":0,"missed_context":false,"note":"","recorded_at":"2026-06-16T00:00:00Z"}
+{"id":"q1-what-calls-read-lessons","mode":"baseline","correct":false,"tool_calls":0,"missed_context":false,"note":"","recorded_at":"2026-06-16T00:00:00Z"}
 ```

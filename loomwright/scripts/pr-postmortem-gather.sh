@@ -53,7 +53,7 @@
 #   commits[].is_review_fix — true if the commit subject matches (case-insensitively)
 #     any of: "address(es) review" with an OPTIONAL intervening "code" ("address
 #     code review findings …" headlines broke the old adjacency requirement —
-#     vendsy/hub#139, verified 2026-06-12: 2 explicit review-fix commits uncounted),
+#     verified live on a private downstream repo, 2026-06-12: 2 explicit review-fix commits uncounted),
 #     "review feedback", "fix review", "self-heal", "review comment", or the two
 #     EXPLICIT anchored forms "pr #N review" / "review #N" (word-bounded —
 #     "preview #2" can never match).
@@ -65,7 +65,7 @@
 #     carries that undercount fix instead. The two explicit forms are NOT a
 #     re-broadening to that rejected class: each requires the literal word "review"
 #     adjacent to a PR/round number, covering headlines like "PR #146 review — …" /
-#     "review #2 — …" (the HUB shape, vendsy/hub#146, verified 2026-06-10). The
+#     "review #2 — …" (the bot-comment review shape, verified live on a private downstream repo, 2026-06-10). The
 #     optional "code" is the same spirit — the literal word "review" stays
 #     mandatory, so "findings" ALONE still never matches (test-pinned).
 #   review_rounds — derived as MAX(count of is_review_fix commits, count of distinct
@@ -76,7 +76,7 @@
 #     COMMENT counts as a round only when ALL of: (a) the author looks like a review
 #     bot (login "claude", "github-actions", or any "*[bot]"); (b) its RAW body
 #     carries a review MARKER — a word-bounded "review" ANYWHERE in the body
-#     (originally a heading-anchored marker; widened because HUB-shape bot review
+#     (originally a heading-anchored marker; widened because bot review
 #     comments open with "## Overview" and mention review only in running text),
 #     still word-bounded so "Deploy Preview" can never match; (c) at least one commit lands
 #     AFTER the comment — comment `created_at` (REST, snake_case) vs commit
@@ -243,11 +243,11 @@ OUTPUT="$(printf '%s' "$PR_JSON" | jq -c \
   # The two EXPLICIT anchored forms ("pr #N review" / "review #N") are not in that
   # rejected class: each carries the literal word "review" adjacent to a PR/round
   # number, word-bounded (\b) so "preview #2" can never match (no boundary inside
-  # "preview"). They cover the HUB-shape headlines ("PR #146 review — …",
-  # "review #2 — …") the narrow set missed (vendsy/hub#146, verified 2026-06-10).
+  # "preview"). They cover the bot-comment-review-shape headlines ("PR #146 review — …",
+  # "review #2 — …") the narrow set missed (verified live on a private downstream repo, 2026-06-10).
   # The first alternative accepts an OPTIONAL intervening "code " — the old
   # adjacency requirement left "address code review findings …" headlines
-  # uncounted (vendsy/hub#139, verified 2026-06-12); the literal word "review"
+  # uncounted (verified live on a private downstream repo, 2026-06-12); the literal word "review"
   # stays mandatory, so "findings" alone still never matches (test-pinned).
   def review_fix_re: "address(es)? (code )?review|review feedback|fix review|self-heal|review comment|\\bpr #[0-9]+ review\\b|\\breview #[0-9]+\\b";
   # NOTE: bot-review issue comments (CI review workflows like claude-code-review.yml

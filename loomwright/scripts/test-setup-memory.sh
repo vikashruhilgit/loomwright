@@ -1069,9 +1069,9 @@ else
     d="$(mkgate)"
     mem "$d" apply >/dev/null 2>&1
     assert_committable "$d" "$P_LEDGER" "(l2) precondition: the ledger is committable while clean"
-    printf '{"schema_version": 1, "ts": "2026-08-04T14:06:03Z", "repo": "vendsy/hub", "number": 124}\n' >> "$d/$P_LEDGER"
-    n_grep="$(grep -cF '"repo":"vendsy/hub"' "$d/$P_LEDGER" 2>/dev/null || true)"; [ -n "$n_grep" ] || n_grep=0
-    n_jq="$(jq -s 'map(select(.repo == "vendsy/hub")) | length' "$d/$P_LEDGER" 2>/dev/null)"
+    printf '{"schema_version": 1, "ts": "2026-08-04T14:06:03Z", "repo": "otherco/othersvc", "number": 124}\n' >> "$d/$P_LEDGER"
+    n_grep="$(grep -cF '"repo":"otherco/othersvc"' "$d/$P_LEDGER" 2>/dev/null || true)"; [ -n "$n_grep" ] || n_grep=0
+    n_jq="$(jq -s 'map(select(.repo == "otherco/othersvc")) | length' "$d/$P_LEDGER" 2>/dev/null)"
     if [ "${n_grep:-0}" -eq 0 ] && [ "$n_jq" = "1" ]; then
       ok "(l2) THE EVASION IS REAL: a compact-form grep sees 0 spaced-form foreign records where jq sees 1 — this is why every ledger assertion here is jq"
     else
@@ -1081,10 +1081,10 @@ else
     [ "$rc" -eq 0 ] && ok "(l2) apply STILL EXITS 0 on the refusal path (fail-closed in the WRITE dimension, never in the exit status)" || no "(l2) apply exited $rc on the refusal path — the FAIL-SAFE CONTRACT is broken"
     assert_ignored     "$d" "$P_LEDGER" "(l2) the gate REFUSED: the ledger is IGNORED again, so the spaced-form foreign record cannot be published"
     assert_committable "$d" "$P_MEM"    "(l2) the two memory stores stay APPLIED while only the ledger is withheld"
-    hasF 'vendsy/hub' "$out" && ok "(l2) the refusal NAMES the offending slug" || no "(l2) the refusal does not name the offending slug"
+    hasF 'otherco/othersvc' "$out" && ok "(l2) the refusal NAMES the offending slug" || no "(l2) the refusal does not name the offending slug"
     # ...and removing the record makes the gate PASS again — red↔green both proven, so the gate keys
     # on the record and not on some incidental property of the fixture.
-    jq -c 'select(.repo != "vendsy/hub")' "$d/$P_LEDGER" > "$d/ledger.clean" 2>/dev/null && mv "$d/ledger.clean" "$d/$P_LEDGER"
+    jq -c 'select(.repo != "otherco/othersvc")' "$d/$P_LEDGER" > "$d/ledger.clean" 2>/dev/null && mv "$d/ledger.clean" "$d/$P_LEDGER"
     out2="$(mem "$d" apply 2>&1)"
     assert_committable "$d" "$P_LEDGER" "(l2) removing the foreign record makes the gate PASS again and re-emits the negation"
     has '^Memory readiness: configured' "$out2" && ok "(l2) the verdict returns to 'configured' once the ledger is clean" || no "(l2) the verdict did not return to 'configured'"
@@ -1205,13 +1205,13 @@ if [ -z "$JQ" ]; then
   ok "(m) jq unavailable — the gated-verdict group is skipped (pass)"
 else
   Mg="$(mkgate)"
-  printf '{"repo":"vendsy/hub","number":7}\n' >> "$Mg/$P_LEDGER"
+  printf '{"repo":"otherco/othersvc","number":7}\n' >> "$Mg/$P_LEDGER"
   out_m="$(mem "$Mg" apply 2>&1)"; rc_m=$?
   [ "$rc_m" -eq 0 ] && ok "(m) apply exits 0 on the gated path" || no "(m) apply exited $rc_m on the gated path"
   has '^Memory readiness: gated' "$out_m" && ok "(m) the verdict is the THIRD class 'gated'" || no "(m) the verdict is not 'gated' (got: $(grep '^Memory readiness:' <<< "$out_m" | head -n1))"
   has '^Memory readiness: not configured' "$out_m" && no "(m) a CORRECT refusal reported as 'not configured' — the destructive mis-classification this class exists to prevent" || ok "(m) the refusal is NOT reported as 'not configured'"
   hasi 'comment out the rule named above' "$out_m" && no "(m) THE DESTRUCTIVE UNDER-INCLUSION COPY was printed for a gated repo — it points at this module's own '.supervisor/*' line" || ok "(m) the misleading under-inclusion copy is NOT printed on the gated path"
-  hasF 'vendsy/hub' "$out_m" && ok "(m) the gated warning NAMES the offending slug" || no "(m) the gated warning names no slug"
+  hasF 'otherco/othersvc' "$out_m" && ok "(m) the gated warning NAMES the offending slug" || no "(m) the gated warning names no slug"
   hasF 'filter-ledger' "$out_m" && ok "(m) the gated warning gives the filter-ledger remedy" || no "(m) the gated warning omits the filter-ledger remedy"
   hasF 'repo_allowlist' "$out_m" && ok "(m) the gated warning also offers the extend-the-allowlist remedy" || no "(m) the gated warning omits the allowlist remedy"
   hasi 'does NOT un-track' "$out_m" && ok "(m) the gated warning states the honest limit: withholding does NOT un-track an already-committed ledger" || no "(m) the gated warning omits the already-committed honest limit"

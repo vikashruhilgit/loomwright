@@ -2,8 +2,8 @@
 
 > **Status:** design doc / proposal (authored 2026-06-16). Not yet a brief. The arc for fusing
 > `personal-brain` (knowledge substrate) and `loomwright` (execution layer) into one
-> closed-loop product. Owner controls all three repos (`personal-brain`, `sports-management`,
-> `loomwright`), so boundaries can be redrawn, not just bridged.
+> closed-loop product. Owner controls all three repos (`personal-brain`, the application repo used
+> as a test bed, and `loomwright`), so boundaries can be redrawn, not just bridged.
 >
 > **Relationship to other docs:**
 > - `SYSTEM_TWIN_ROADMAP.md` — the Twin is the plugin's *internal* answer to "a structured model
@@ -20,7 +20,7 @@ A design review refined this plan. The **endgame is unchanged** (Twin = brain, o
 
 1. **Substrate is LOCAL-FIRST, not personal-brain-first.** §0's "adopt `personal-brain` *as* the substrate" is reframed: adopt the *Graphify-graph + wiki/community/freshness **pattern***, but the **substrate is built locally, per repo**. Each repo's Twin = its own `graphify-out/graph.json` (structure) **+ the plugin's own `.supervisor/` findings as the rationale layer** (LESSONS, the postmortem churn ledger, Twin contracts, done-brief `## Outcome` blocks). A single repo needs **no external brain**. `personal-brain` is **demoted to an optional cross-repo *federation* tier** (named global brains, cross-repo notes, draft write-back) — an extension layered on top, never a dependency. The plugin's own findings *are* the local wiki.
 
-2. **Measurement is SELF-HOSTED and artifact-derived, not a hand-authored `sports-management` corpus.** The §"Phase 0" / §6-Q4 ten-item hand-authored corpus (stalled at 2/10, external repo) is superseded by **measuring on the plugin's own run history**: harvest the heal signal from the ~120 done-brief `## Outcome` blocks across all repos, backfill outcome labels from the live PRs via `/pr-postmortem`, and **join on PR URL → a confusion matrix** (catch-rate / false-positive per signal). No external repo, no hand-authoring. This same artifact is the **M3 trust-threshold instrument** (see `SYSTEM_TWIN_ROADMAP.md` §7).
+2. **Measurement is SELF-HOSTED and artifact-derived, not a hand-authored external-repo corpus.** The §"Phase 0" / §6-Q4 ten-item hand-authored corpus (stalled at 2/10, external repo) is superseded by **measuring on the plugin's own run history**: harvest the heal signal from the ~120 done-brief `## Outcome` blocks across all repos, backfill outcome labels from the live PRs via `/pr-postmortem`, and **join on PR URL → a confusion matrix** (catch-rate / false-positive per signal). No external repo, no hand-authoring. This same artifact is the **M3 trust-threshold instrument** (see `SYSTEM_TWIN_ROADMAP.md` §7).
 
 3. **`/setup brain` (Phase 2 below) is resequenced to LAST** — gated behind the local loop being *measured* and the advisory→gating flip. It is the federation tier, built on proof; not the early/next step. (The original `/autonomous` "Phase 5 = `/setup brain`" ask is correspondingly deferred.)
 
@@ -44,7 +44,7 @@ The plugin already declares this north star (`SYSTEM_TWIN_ROADMAP.md`):
 
 | System Twin pillar (planned) | personal-brain (shipping) |
 |---|---|
-| architecture graph | Graphify `graph.json` (sports-management graph is ~8k nodes / ~17k edges — counts illustrative, read live from the graph, never hard-coded) |
+| architecture graph | Graphify `graph.json` (the test-bed application graph is ~8k nodes / ~17k edges — counts illustrative, read live from the graph, never hard-coded) |
 | contracts / decision history | `wiki/` atomic notes with `source`/`confidence`/`last_verified` provenance |
 | "planning reads it" | the 3-step query rule (graph → wiki → raw) |
 | "the flywheel writes to it" | `/wiki-ingest` + `harvest-chats.mjs` (raw transcripts today) |
@@ -150,10 +150,10 @@ helps" is provable, not asserted. ("Measure before expanding" can't sit at the e
 
 ### Phase 0 — Baseline eval harness (do first)
 
-Build the eval corpus and capture current (grep-first) numbers against the sports-management graph:
+Build the eval corpus and capture current (grep-first) numbers against the test-bed application graph:
 
-- **5 structural questions** (e.g. "what calls `reservationCreate`?", "blast radius of changing
-  `lib/session.ts`?") — score correctness + count Grep/Read calls to answer.
+- **5 structural questions** (e.g. "what calls `read-lessons.sh`?", "blast radius of changing
+  `read-bridge.sh`?") — score correctness + count Grep/Read calls to answer.
 - **3 implementation tasks** + **2 review/QA tasks** — score correctness, missed-context incidents,
   tool-call count.
 - Measurement is **self-contained** — `/insights` does NOT capture time/tokens (that's `ccusage`),
@@ -209,7 +209,7 @@ prompt; `/setup brain` may *optionally* install the hook for users who want the 
 
 ### Phase 2 — `/setup brain` module
 
-Productize the bespoke sports-management wiring. Implement the `/setup` module contract (five phases:
+Productize the bespoke test-bed wiring. Implement the `/setup` module contract (five phases:
 check / report / offer / apply / verify; idempotent; registry row + `commands/setup.md` flow section
 in the same change).
 
@@ -236,7 +236,7 @@ Module capabilities:
      server entry). The brief must name the concrete target file and the merge owner; this is *not* a
      guidance-only step.
   3. **Symlink** (simplest local default): `graphify-out -> <brain>/graphify/<repo>` — the
-     sports-management pattern, but offered knowingly as the fragile/local option.
+     test-bed pattern, but offered knowingly as the fragile/local option.
 - **verify:** run one canned graph query end-to-end; print graph-first status in the `/setup`
   dashboard.
 
@@ -280,7 +280,7 @@ artifacts directly instead of scraping raw transcripts:
   `QA_RESULT`, self-heal outcome, Twin conformance/benchmark deltas).
 - Stages into a new `runs/<repo>/` folder for `/wiki-ingest` to distill.
 - **Caveat (verified, corrected from an earlier overstatement):** `.supervisor/` is gitignored in the
-  *plugin* repo. In sports-management it's only **partially committed** — ~8 historical files
+  *plugin* repo. In the test-bed repo it is only **partially committed** — ~8 historical files
   (`state.md`, old `jobs/*.md`, `user-journeys.md`) are tracked, but `logs/` and current run artifacts
   are **untracked/local-only**. So: same-machine harvest works from the filesystem regardless;
   **cross-machine harvest sees only whatever is explicitly tracked** (which today excludes the run

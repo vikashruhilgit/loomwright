@@ -52,8 +52,8 @@ from datetime import datetime, timezone
 PR_URL_RE = re.compile(r"github\.com/([^/\s]+)/([^/\s)]+?)(?:\.git)?/pull/(\d+)", re.I)
 # Outcome bullets: tolerate BOTH bold-key (`- **heal_decision:** PASS`, the inline-Supervisor
 # format) AND plain-key (`- heal_decision: PASS`, the /automate brief format). The Step-1 spike's
-# bold-only form silently dropped every plain-bullet brief — e.g. all /automate runs (BetterBlocks:
-# 16 of 21 briefs invisible). Key class `[\w .\-]` accepts real Outcome keys (heal_decision /
+# bold-only form silently dropped every plain-bullet brief — e.g. all /automate runs (one private
+# downstream repo: 16 of 21 briefs invisible). Key class `[\w .\-]` accepts real Outcome keys (heal_decision /
 # Heal decision / PR) while rejecting punctuation-heavy prose; bounded to the first colon.
 BULLET_RE = re.compile(r"^\s*-\s*\*{0,2}\s*([\w .\-]+?)\s*:\s*\*{0,2}\s*(.*)$")
 INT_RE = re.compile(r"-?\d+")
