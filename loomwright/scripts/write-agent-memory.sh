@@ -28,6 +28,13 @@
 # or an interactive TTY `y`. Any other invocation is a DRY-RUN that prints the plan and writes
 # nothing, so an automated non-TTY run can never mutate a store.
 #
+# THE QUEUE HAS NO AUTOMATIC CONSUMER YET — STATED, NOT SILENTLY ABSENT. Six agent prompts and
+# AGENT_GUIDELINES instruct WRITING proposals here, and this writer PROMOTES one, but nothing yet
+# SURFACES pending proposals to a human the way commands/dreaming.md surfaces the orientation
+# queue. That half is item 05's scope. Until it lands, a human finds pending proposals by listing
+# `.supervisor/agent-memory-proposals/` (gitignored). Do not read the absence of a consumer as
+# evidence the queue is unused.
+#
 # WRITE-TIME VALIDATION (decision (a) of the write-time-validation brief). Every write is handed to
 # the shared validator first — see validate-entry.sh's LOAD GUARD CONTRACT. The guard here is three
 # clauses, all required:
@@ -651,13 +658,23 @@ cat "$compose" > "$tmp_in_store" || die "could not stage entry in store dir" 2
 mv -f "$tmp_in_store" "$write_target" || die "atomic move failed (target left untouched): $write_target" 2
 tmp_in_store=""   # consumed by mv; nothing for the trap to clean
 
+# REBUILD ON THE UNDO PATH TOO, or the undo re-creates the rot this writer exists to prevent.
+# The index rebuild below runs BEFORE the read-back checks, so by the time undo_write fires,
+# MEMORY.md already names the entry we are about to restore-or-remove. Removing the file without
+# rebuilding would leave a pointer to a file that is gone — the exact index/directory disagreement
+# `rebuild_memory_index` makes structurally impossible on the success path. The rebuild is
+# best-effort here (`|| true`): this path is already dying with a named diagnostic, and a failed
+# rebuild must not mask the original read-back reason with a second, less useful one. `|| true` is
+# correct HERE for that reason and remains FORBIDDEN on the validator's source line.
 undo_write() {
   if [ "$had_prior" -eq 1 ]; then
     cat "$prior" > "$write_target" 2>/dev/null \
       || die "read-back verify failed ($1) AND prior-entry restore failed: $write_target" 2
+    rebuild_memory_index "$AGENT_DIR" || true
     die "read-back verify failed: $1 — restored prior entry at $write_target" 2
   fi
   rm -f "$write_target"
+  rebuild_memory_index "$AGENT_DIR" || true
   die "read-back verify failed: $1 — removed $write_target" 2
 }
 

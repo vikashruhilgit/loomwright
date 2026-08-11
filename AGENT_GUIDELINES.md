@@ -163,6 +163,8 @@ When multiple memory layers carry relevant knowledge, resolve precedence **most-
 
 ### Agent memory write permission
 
+> **Surfacing of the proposal queue is deferred (item 05).** Writing a proposal is wired; an automatic promotion queue that shows a human what is pending is not. Until it lands, pending proposals are found by listing the gitignored `.supervisor/agent-memory-proposals/`. Propose anyway — the gap is in surfacing, not in the write path.
+
 **A `memory: project` agent may NOT write its own `.claude/agent-memory/` store directly; it writes proposals only, and every store write goes through the sole writer.** That writer is `${CLAUDE_PLUGIN_ROOT}/scripts/write-agent-memory.sh`; it writes only under a human `--confirm` and rebuilds the store index on every write, so a hand-edited entry is both unvalidated and liable to be overwritten.
 
 **The proposal trigger is SURPRISE-ONLY:** propose only when something genuinely contradicted what you expected and would have changed a decision — not once per run. Queue volume is recorded, not acted on.

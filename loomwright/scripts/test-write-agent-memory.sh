@@ -197,12 +197,16 @@ done
 echo "== (b2) AC7 MUTATION CONTROL M1: with the index rebuild removed, the rot SURVIVES =="
 MUT_DIR="$(mktmp)"
 M1="$MUT_DIR/mutant-no-rebuild.sh"
-# The call site is the only line at column 0 beginning `rebuild_memory_index ` (the DEFINITION line
-# is `rebuild_memory_index() {`, with no space), so this edit removes the call and keeps the
-# function — precisely the "sources it but never invokes it" shape the control has to model.
-n_call_orig="$(grep -c '^rebuild_memory_index ' "$WRITER" 2>/dev/null || true)"; [ -n "$n_call_orig" ] || n_call_orig=0
-sed -e '/^rebuild_memory_index /s/.*/:/' "$WRITER" > "$M1" || setup_fail "could not build mutant M1"
-n_call_mut="$(grep -c '^rebuild_memory_index ' "$M1" 2>/dev/null || true)"; [ -n "$n_call_mut" ] || n_call_mut=0
+# Strip EVERY call site — any line whose first non-space token is `rebuild_memory_index ` — while
+# keeping the function (its DEFINITION line is `rebuild_memory_index() {`, with `(` and no space,
+# so it survives). That is the "sources it but never invokes it" shape the control must model.
+# ANCHORING AT COLUMN 0 IS NOT ENOUGH, and this is not hypothetical: when undo_write gained its own
+# rebuild calls (indented, inside the function), a column-0-only mutant left them live, the failed
+# read-back drove undo_write, and the mutant REBUILT THE INDEX ANYWAY — self-healing into a green
+# control that proved nothing. A mutation control has to track every path that can do the work.
+n_call_orig="$(grep -c '^[[:space:]]*rebuild_memory_index ' "$WRITER" 2>/dev/null || true)"; [ -n "$n_call_orig" ] || n_call_orig=0
+sed -e '/^[[:space:]]*rebuild_memory_index /s/.*/:/' "$WRITER" > "$M1" || setup_fail "could not build mutant M1"
+n_call_mut="$(grep -c '^[[:space:]]*rebuild_memory_index ' "$M1" 2>/dev/null || true)"; [ -n "$n_call_mut" ] || n_call_mut=0
 if [ "$n_call_orig" -ge 1 ] && [ "$n_call_mut" -eq 0 ]; then
   ok "(b2) the mutation is NON-VACUOUS: $n_call_orig rebuild call site(s) in the real writer, 0 in the mutant"
 else
