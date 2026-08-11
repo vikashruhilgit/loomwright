@@ -21,17 +21,19 @@
 # which returned, at migration time:
 #
 #     ai-agent-manager
-#     hub
 #     loomwright
-#     vendsy
 #     vikashruhilgit
+#     <org half of a private downstream repo's slug — REDACTED>
+#     <repo half of a private downstream repo's slug — REDACTED>
 #
 # Own-repo terms (`vikashruhilgit`, `loomwright`, and the pre-rename `ai-agent-manager`) are
-# dropped. The remainder — `vendsy` and `hub`, contributed by the 7 `vendsy/hub` records — is the
-# deny-list in DENY_TERMS below. Record of the ledger census at that moment:
+# dropped. The remainder — the org and repo halves of one private downstream repo's slug,
+# contributed by its 7 records — was the original deny-list. Those two real terms have since been
+# redacted from this PUBLIC repo; DENY_TERMS below now carries the neutral placeholder pair (see
+# the note there). Record of the ledger census at that moment:
 #     42  vikashruhilgit/ai-agent-manager   (pre-rename)
 #     37  vikashruhilgit/loomwright
-#      7  vendsy/hub                        (foreign — the reason this test exists)
+#      7  <a private downstream repo>       (foreign — the reason this test exists)
 #
 # WHY THE METHOD IS THE DELIVERABLE, NOT JUST ITS RESULT: the ledger was gitignored, and a later
 # item filters the foreign records out of it. Re-running the command above against the committed
@@ -39,14 +41,14 @@
 # recorded here, in the committed tree, or it is lost.
 #
 # THAT LATER ITEM HAS NOW LANDED. The ledger is a committed, GATED third store (see group (D)); the
-# 7 `vendsy/hub` records were filtered out before it was committed. The census above is therefore
+# 7 foreign records were filtered out before it was committed. The census above is therefore
 # FROZEN HISTORY — do not "refresh" it from the committed tree, which is post-filter by construction
 # and would silently narrow DENY_TERMS to nothing.
 #
 # WHY WHOLE-WORD, CASE-INSENSITIVE: two independent audits previously returned a FALSE CLEAN on
-# `project_self_heal_rubber_stamp.md`. Both grepped `/hub` (slash-prefixed) while the real string
-# was `HUB #146` — no slash, a space before the `#`, uppercase. Derive from data that exists and
-# match on word boundaries; never grep a guessed string form.
+# `project_self_heal_rubber_stamp.md`. Both grepped the slash-prefixed `/<repo>` form while the real
+# string was the bare `<REPO> #146` form — no slash, a space before the `#`, uppercase. Derive from
+# data that exists and match on word boundaries; never grep a guessed string form.
 #
 # WHY AN EXPLICIT FILE LIST: a shell-glob sweep (`grep -riwE … .supervisor/memory/*`) SKIPS
 # dot-prefixed files, which would silently miss `.supervisor/memory/.provenance.jsonl` and
@@ -98,7 +100,12 @@ trap 'rm -rf "$TMPD"' EXIT
 # =============================================================================
 # The deny-list. Derived, not guessed — see ONE-TIME AUDIT PROVENANCE above.
 # =============================================================================
-DENY_TERMS='vendsy|hub'
+# NOTE ON REDACTION: the two REAL foreign terms this list was derived from (see provenance above)
+# were removed when this public repo was de-identified — leaving them here would have re-published
+# the very slug the sweep exists to keep out. The tracked list therefore carries the neutral
+# placeholder pair used by the fixtures below. A maintainer who needs the sweep to catch a specific
+# real foreign org should extend this list in their own checkout (and NOT commit it).
+DENY_TERMS='otherco|othersvc'
 
 # -----------------------------------------------------------------------------
 # assert_no_foreign_terms <label> <file> [file...]
@@ -106,11 +113,15 @@ DENY_TERMS='vendsy|hub'
 # Sweeps the given files for DENY_TERMS, WHOLE-WORD (-w) and CASE-INSENSITIVE (-i).
 # Returns 0 when clean, 1 when any file carries a foreign term (and prints the hits).
 #
-# `-w` IS LOAD-BEARING, NOT DECORATION. These files say "GitHub" constantly (GitHub Actions,
-# github.com, GitHub CLI). Without `-w`, `hub` matches inside "GitHub" and this sweep goes red on
-# every run — which, in practice, means someone deletes the check. Group (B) proves `-w` keeps
-# "GitHub" clean while group (C) proves it still catches a real `HUB #146`. Drop the `-w` and
-# group (B) goes red: that is the intended mutation test.
+# WHY `-w`. The original deny-list's repo half was a substring of "GitHub", which these files say
+# constantly (GitHub Actions, github.com, GitHub CLI). Without `-w` it matched inside "GitHub" and
+# the sweep went red on every run — which, in practice, means someone deletes the check.
+#
+# HONEST LIMIT OF GROUP (B) SINCE THE REDACTION: the neutral placeholder terms now in DENY_TERMS are
+# not substrings of any legitimate word in these files, so group (B) can no longer FAIL when `-w` is
+# dropped — it is a forward-looking regression guard for the next maintainer who adds a
+# substring-shaped real term, NOT a currently-firing mutation test. Do not read a green group (B) as
+# proof that whole-word matching is in effect. Group (C) still genuinely proves the sweep can fail.
 # -----------------------------------------------------------------------------
 assert_no_foreign_terms() {
   local label="$1"; shift
@@ -263,9 +274,9 @@ See https://github.com/owner/repo/pull/1 and the GitHub CLI (`gh`).
 Github, GITHUB, github — every casing of the legitimate word.
 GHEOF
 if assert_no_foreign_terms "github positive control" "$GH_FIXTURE"; then
-  ok "positive control: 'GitHub'/'github.com'/'GITHUB' do NOT match \\bhub\\b (whole-word matching works)"
+  ok "positive control: 'GitHub'/'github.com'/'GITHUB' do NOT trip the sweep (forward-looking — see the honest-limit note on assert_no_foreign_terms)"
 else
-  no "positive control BROKE: the sweep matches 'hub' inside 'GitHub'. Whole-word (-w) matching is not in effect; the sweep would be red on every run and would get deleted."
+  no "positive control BROKE: a legitimate 'GitHub' mention trips the sweep. Whole-word (-w) matching is not in effect; the sweep would be red on every run and would get deleted."
 fi
 
 # =============================================================================
@@ -289,20 +300,20 @@ else
 fi
 
 # Inject the EXACT historical shape: uppercase, no slash, a space before the '#'.
-printf 'Across 8 recent session_end records (HUB #146/#129/#133/#139 + this repo #24) …\n' >> "$CONTAM_FIXTURE"
+printf 'Across 8 recent session_end records (OTHERSVC #146/#129/#133/#139 + this repo #24) …\n' >> "$CONTAM_FIXTURE"
 if assert_no_foreign_terms "post-injection" "$CONTAM_FIXTURE" >/dev/null 2>&1; then
-  no "negative control DID NOT FIRE: a re-added 'HUB #146' citation swept clean. This guard cannot fail and is therefore not a guard."
+  no "negative control DID NOT FIRE: a re-added 'OTHERSVC #146' citation swept clean. This guard cannot fail and is therefore not a guard."
 else
-  ok "negative control: a re-added 'HUB #146' citation makes the sweep FAIL (red)"
+  ok "negative control: a re-added 'OTHERSVC #146' citation makes the sweep FAIL (red)"
 fi
 
 # And a second foreign shape — the org name, lowercase, slash-joined.
-VENDSY_FIXTURE="$TMPD/vendsy.md"
-printf 'a record attributed to vendsy/hub slipped in\n' > "$VENDSY_FIXTURE"
-if assert_no_foreign_terms "vendsy shape" "$VENDSY_FIXTURE" >/dev/null 2>&1; then
-  no "negative control DID NOT FIRE for the 'vendsy/hub' org shape."
+FOREIGN_FIXTURE="$TMPD/foreign-org.md"
+printf 'a record attributed to otherco/othersvc slipped in\n' > "$FOREIGN_FIXTURE"
+if assert_no_foreign_terms "foreign org shape" "$FOREIGN_FIXTURE" >/dev/null 2>&1; then
+  no "negative control DID NOT FIRE for the 'otherco/othersvc' org shape."
 else
-  ok "negative control: a 'vendsy/hub' org citation makes the sweep FAIL (red)"
+  ok "negative control: a 'otherco/othersvc' org citation makes the sweep FAIL (red)"
 fi
 
 # Remove the injected line — the sweep must go green again (proves it keys on the citation, not
@@ -329,7 +340,7 @@ fi
 # filters it behind an explicit consent surface" — THIS IS THAT LATER ITEM. The ledger is now the
 # THIRD managed store: `setup-memory.sh apply` un-ignores it, but only behind a fail-closed gate that
 # refuses while any record's `.repo` sits outside the repo allowlist (`gated` verdict, offending
-# slugs named, exit still 0). The 7 `vendsy/hub` records that made the deferral necessary were
+# slugs named, exit still 0). The 7 `otherco/othersvc` records that made the deferral necessary were
 # filtered out of the committed ledger in the same change, and `test-setup-memory.sh` groups (l)/(m)
 # pin the gate itself. The consent surface is `print_consent_disclosure()`, relayed verbatim by
 # `commands/setup.md`.
@@ -404,12 +415,12 @@ vikashruhilgit/ai-agent-manager'
   # (never the real ledger), because a census that can only ever pass is not a census.
   LEDGER_FIXTURE="$TMPD/ledger-contaminated.jsonl"
   cp "$REPO_ROOT/$LEDGER_PATH" "$LEDGER_FIXTURE"
-  printf '{"schema_version": 1, "repo": "vendsy/hub", "number": 999}\n' >> "$LEDGER_FIXTURE"
+  printf '{"schema_version": 1, "repo": "otherco/othersvc", "number": 999}\n' >> "$LEDGER_FIXTURE"
   INJ="$(jq -r --argjson allow "$ALLOW_JSON" \
     '((.repo // "") | tostring) as $r | select(($allow | index($r)) == null) | $r' \
     "$LEDGER_FIXTURE" 2>/dev/null | sort -u | tr '\n' ' ')"
   case "$INJ" in
-    *vendsy/hub*) ok "negative control: a SPACED-FORM 'vendsy/hub' record injected into a copy makes the census FAIL (red↔green both proven)" ;;
+    *otherco/othersvc*) ok "negative control: a SPACED-FORM 'otherco/othersvc' record injected into a copy makes the census FAIL (red↔green both proven)" ;;
     *)            no "negative control DID NOT FIRE: an injected spaced-form foreign record swept clean. This census cannot fail and is therefore not a census." ;;
   esac
 fi

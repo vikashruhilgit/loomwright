@@ -14,8 +14,8 @@
 # THE THIRD STORE IS GATED, THE FIRST TWO ARE NOT. The findings ledger is structurally CROSS-REPO:
 # a `/pr-postmortem` append lands in the CURRENT working `.supervisor/`, never in the analysed
 # repo's, so a ledger accumulates records belonging to OTHER repos (this plugin's own ledger held 7
-# `vendsy/hub` records before it was filtered). Un-ignoring an unfiltered ledger therefore
-# PUBLISHES another repo's churn analysis. So `apply` FAILS CLOSED on it: the ledger negation is
+# records belonging to a private downstream repo before it was filtered). Un-ignoring an unfiltered
+# ledger therefore PUBLISHES another repo's churn analysis. So `apply` FAILS CLOSED on it: the ledger negation is
 # emitted only while every record's `.repo` sits inside the resolved allowlist. Otherwise the
 # negation is WITHHELD, the offending slugs are NAMED, the readiness verdict is the dedicated
 # `gated` class — and the exit code is still 0 (see FAIL-SAFE CONTRACT below: the gate fails closed

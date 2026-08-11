@@ -6,7 +6,12 @@ as-is** (enough); keep the **validation harness**; resume reposcan only if neede
 **Updated:** 2026-06-27.
 **Date:** 2026-06-25
 **Scratch (gitignored):** `.supervisor/scratch/code-graph-spike/` (`reposcan.py` + run artifacts)
-**Test bed:** BetterBlocks — Unity/C#, 219 source files, ~43k LOC, ~550k source tokens.
+**Test bed:** Repo A — a private Unity/C# game codebase, 219 source files, ~43k LOC, ~550k source tokens.
+
+> **Repos are anonymised.** The measurements below were taken on four real, unrelated private codebases,
+> referred to throughout as **Repo A** (Unity / C#), **Repo B** (Next.js / TS), **Repo C** (NestJS+Next
+> monorepo / TS) and **Repo D** (Flutter / Dart). Numbers, ratios and findings are unmodified; only the
+> repository identities and their internal filenames are generalised to role descriptors.
 
 ---
 
@@ -55,7 +60,7 @@ This spike built **Tier-1** (the uncertain, high-value artifact) and validated t
 
 ---
 
-## Tier-1 results (measured on BetterBlocks)
+## Tier-1 results (measured on Repo A)
 
 `reposcan.py` — ~210 LOC, zero vendor deps (`tree-sitter` + `tree-sitter-c-sharp` via `uv run`).
 
@@ -68,16 +73,17 @@ This spike built **Tier-1** (the uncertain, high-value artifact) and validated t
 | **Compression** | **~289×** |
 | Incremental cache (warm re-run) | **219/219 unchanged detected** (SHA manifest) |
 
-**Ranking quality (after fixing challenge #2):** top-ranked files are the genuine architectural hubs —
-`GameConfig.cs`, `Theme.cs`, `ShopCatalog.cs`, `IInventory.cs`, `IWallet.cs`, `NavigationService.cs`,
-`IScreen.cs`. These are exactly the files an agent should see first, and the most expensive to discover cold.
+**Ranking quality (after fixing challenge #2):** top-ranked files are the genuine architectural hubs — the
+central game-config type, the theme/styling module, the catalog data class, the inventory and wallet
+interfaces, the navigation service, and the screen interface. These are exactly the files an agent should see
+first, and the most expensive to discover cold.
 
 ---
 
 ## Challenges found — and how we beat them (the spike's real payload)
 
 1. **No type resolution → noisy edges (challenge #2, observed empirically).**
-   *First run ranked test files (`ShopScreenTests`) above core classes.* Cause: common **method** names
+   *First run ranked test files (a screen-level test class) above core classes.* Cause: common **method** names
    (`Reset`/`Push`/`SetUp`) are defined in many files and referenced everywhere, injecting spurious edges.
    **Mitigation (worked):** build edges from **type** names only (classes/interfaces/enums) + IDF —
    split a name's weight across its definers and drop names defined in >8 files. Edges 10,550 → 1,085;
@@ -92,7 +98,7 @@ This spike built **Tier-1** (the uncertain, high-value artifact) and validated t
    mere *trigger*, never the correctness guarantee. This is the same file-incremental principle stack-graphs
    uses at GitHub scale.
 
-3. **Completeness is high but NOT exhaustive.** Probe: graph in-edges to `GameConfig` vs `grep` ground truth
+3. **Completeness is high but NOT exhaustive.** Probe: graph in-edges to the central config type vs `grep` ground truth
    → grep 101 / graph 94 (**8 missed, 1 spurious**). The lightweight approach is ~90%+ recall but imperfect
    precision *because* it lacks full type resolution. **Conclusion: Tier-1 is correct for ADVISORY ranking,
    wrong for ground-truth impact analysis** — for "trust this is ALL the callers" use Tier-0 LSP or Tier-2
@@ -111,10 +117,10 @@ type-only edges + IDF). Run on three real, unrelated codebases — **the ranking
 
 | Repo | Stack | Files | Parse | Full→map tokens | Compression | Top hubs surfaced |
 |---|---|---|---|---|---|---|
-| BetterBlocks | Unity / C# | 219 | 0.3 s | 550k → 1.9k | **289×** | `GameConfig`, `Theme`, `ShopCatalog`, `IInventory` |
-| sports-management | Next.js / TS | 1,126 | 1.3 s | 2.58M → 2.5k | **1042×** | `lib/api-types.ts`, `lib/templates/types.ts`, schema/reducer modules |
-| HUB (Tray) | NestJS+Next monorepo / TS | 2,358 | 1.5 s | 2.76M → 2.2k | **1273×** | `IPaginated`/`paginated.interface.ts`, `user.entity.ts`, `role.entity.ts`, correlation/DTO services |
-| tray-pos-flutter | Flutter / Dart | 1,460 | 2.4 s | 2.25M → 2.0k | **1099×** | `app_typography`, `failures`, domain models (`menu_item`, `modifier_group`, `order`, `order_item`), `payment_provider` |
+| Repo A | Unity / C# | 219 | 0.3 s | 550k → 1.9k | **289×** | central config type, theme module, catalog data class, inventory interface |
+| Repo B | Next.js / TS | 1,126 | 1.3 s | 2.58M → 2.5k | **1042×** | shared API-type modules, template type modules, schema/reducer modules |
+| Repo C | NestJS+Next monorepo / TS | 2,358 | 1.5 s | 2.76M → 2.2k | **1273×** | shared pagination interface, core entity modules, correlation/DTO services |
+| Repo D | Flutter / Dart | 1,460 | 2.4 s | 2.25M → 2.0k | **1099×** | shared typography tokens, failure types, core domain models, payment-provider abstraction |
 
 Four languages (C#, TS/TSX, Dart, Python) now share one extractor with no per-repo algorithm tuning.
 
@@ -128,11 +134,11 @@ Findings:
   cross-cutting hubs in every repo (shared type modules, entities, interfaces).
 - **Compression scales with repo size** (289× → 1273×) — confirming the payoff is on large codebases, exactly
   where cold-LLM exploration is most expensive.
-- **Monorepo ranks are flatter** (HUB max rank 0.012 vs sports 0.096) — correct: a monorepo has many
+- **Monorepo ranks are flatter** (Repo C max rank 0.012 vs Repo B 0.096) — correct: a monorepo has many
   independent subsystems, no single god-object, so importance is distributed.
-- **Vendored-dir exclusion works:** HUB's 499 "Python files" were 502 under `services/dw-service/.venv`
-  (a virtualenv) — correctly skipped; only 5 are first-party. The SKIP heuristic filtered third-party noise
-  as intended.
+- **Vendored-dir exclusion works:** Repo C's 499 "Python files" were 502 under one service's vendored
+  `.venv` (a virtualenv) — correctly skipped; only 5 are first-party. The SKIP heuristic filtered
+  third-party noise as intended.
 - Sub-3-second parse on 1,460–2,358-file repos (pure Python, single thread) — fast enough to run on a hook.
 
 **Real-world hygiene findings (surfaced by dogfooding the Flutter repo):** a naive walker over-counts badly.
@@ -141,8 +147,8 @@ The Flutter run first ranked junk until two exclusions were added — both gener
   appeared 2–3× with identical rank. *Insight:* the SHA cache already hashes every file — identical-content
   files across paths can be **auto-deduped** (collapse same-SHA files), turning this from a config problem into
   a structural one.
-- **Vendored multi-version SDKs:** `temp/Payments/` checked in `AlohaPaymentsCOM` at 4 versions
-  (951 C# files) — third-party, duplicated per version, dominated the ranks. Excluded like `.venv`/`node_modules`.
+- **Vendored multi-version SDKs:** a checked-in `temp/` vendor directory held a third-party payments SDK at
+  4 versions (951 C# files) — duplicated per version, dominated the ranks. Excluded like `.venv`/`node_modules`.
 - After exclusions the map is pure first-party code (1,460 Dart files) with architecturally correct hubs.
   Lesson: the exclusion list (`node_modules`, `.venv`, `.dart_tool`, `ios/Pods`, generated `*.g.dart`/`*.d.ts`,
   vendored/`temp`/worktree dirs) is load-bearing and must ship with the builder, not be discovered per repo.
@@ -176,7 +182,7 @@ Net: **no code graph needs to be built.** LSP + graphify cover the code half; th
 
 **Method.** Score the repo-map against an INDEPENDENT ground truth — the real TypeScript import graph
 (`import … from '…'`), extracted by a *different* method than reposcan's type-identifier matching, so agreement
-is real validation, not circular. Resolved **99%** of local imports on sports-management (`@/`→root + relative).
+is real validation, not circular. Resolved **99%** of local imports on Repo B (`@/`→root + relative).
 Two axes: **edge precision** (reposcan edges backed by a real import) and **ranking** (top files by PageRank vs
 the most-imported files). Harness: `.supervisor/scratch/code-graph-spike/validate.py` (+ `validate_gen.py`).
 
@@ -188,30 +194,32 @@ the most-imported files). Harness: `.supervisor/scratch/code-graph-spike/validat
 | Top-20 overlap | 2/20 | — | 16/20 |
 | Edge precision (backed by a real import) | **32%** | — | 100% (by construction) |
 
-reposcan ranked `api-types.ts` (45 imports) #1 — a real hub — but **missed the actual top hubs entirely**:
-`auth-helpers.ts` (imported **320×**), `supabase-server.ts` (198×), `utils.ts` (137×), the UI primitives.
+reposcan ranked the shared API-type module (45 imports) #1 — a real hub — but **missed the actual top hubs
+entirely**: the shared auth-helper module (imported **320×**), the server-side DB client (198×), the generic
+utils module (137×), the UI primitives.
 
 **Diagnosis — the deep lesson.** Type-only edges (and graphify's symbol-count) measure *"how much is DEFINED
-here"* (symbol richness). But **importance is "how much DEPENDS on you"** (import in-degree). `api-types.ts`
-defines 97 types so it *looks* central; `auth-helpers.ts` defines little but is imported everywhere — and is far
-more central. The build-phase "type-only edges" fix over-corrected: killing method-name collisions also blinded
-the graph to function/component/value modules, which are the most-imported files (especially in function-heavy
-TS). "It found api-types, looks right" was confirmation bias.
+here"* (symbol richness). But **importance is "how much DEPENDS on you"** (import in-degree). The API-type
+module defines 97 types so it *looks* central; the auth-helper module defines little but is imported
+everywhere — and is far more central. The build-phase "type-only edges" fix over-corrected: killing
+method-name collisions also blinded the graph to function/component/value modules, which are the most-imported
+files (especially in function-heavy TS). "It found the shared type module, looks right" was confirmation bias.
 
 **The validated fix — import-based edges.** Build edges from the real import graph (deterministic, 99%
 resolvable on clean TS, 100% precise) instead of identifier matching. Ranking jumped **0/10 → 7/10**; the fixed
-top-10 is the genuine spine (`utils`, `auth-helpers`, `supabase-server`, `session`, `rate-limit`, `button`).
+top-10 is the genuine spine (utils, auth helpers, the server-side DB client, session, rate-limiting, and the
+base button primitive).
 
 **Generalization (`validate_gen.py`) — the defect is systematic and language-dependent:**
 
 | Repo / lang | type-edge ranking | import resolution | note |
 |---|---|---|---|
-| sports-management / TS | **0/10** | 99% | function-heavy → type-edges fail hardest |
-| HUB / TS monorepo | **1/10** | 71% | cross-package imports drop resolution |
-| tray-pos-flutter / Dart | **5/10** | 73% | class-heavy → type-edges partially work |
+| Repo B / TS | **0/10** | 99% | function-heavy → type-edges fail hardest |
+| Repo C / TS monorepo | **1/10** | 71% | cross-package imports drop resolution |
+| Repo D / Dart | **5/10** | 73% | class-heavy → type-edges partially work |
 
-The defect is **not a sports-management fluke**, and severity is **language-dependent** — worst in function-heavy
-TS, milder in class-heavy Dart. **Corollary: the earlier C# (BetterBlocks) "looked right" result is now
+The defect is **not a Repo B fluke**, and severity is **language-dependent** — worst in function-heavy
+TS, milder in class-heavy Dart. **Corollary: the earlier C# (Repo A) "looked right" result is now
 suspect** — C# is class-heavy like Dart, so it was likely ~half-right and was never validated. The import-edge
 fix needs **per-language resolution**: TS/JS/Py/Dart resolve to files; C#/Java `using`/`import` target a
 *namespace*, needing symbol resolution (→ LSP) — exactly where Tier-0 LSP earns its place.
@@ -221,21 +229,21 @@ fix needs **per-language resolution**: TS/JS/Py/Dart resolve to files; C#/Java `
 The build phase framed this as "reposcan vs graphify, ours is cleaner." That was a **category error**, corrected
 through three layers:
 
-1. **Structural findings (real, but not the whole story):** the two graphify copies (personal-brain vs
-   sports-management) are byte-identical; the graph is **57 files / 36 commits STALE** vs HEAD; and its top
+1. **Structural findings (real, but not the whole story):** the two graphify copies (one per repo) are
+   byte-identical; the graph is **57 files / 36 commits STALE** vs HEAD; and its top
    "code files" were polluted — `package.json` ranked **#1**, plus `.md` docs, `.supervisor/` generated
-   artifacts, a duplicate `user-journeys copy.md`, and a **cross-machine path** (`C:/Users/mason/…`) leaked from
+   artifacts, a duplicate `… copy.md` file, and a **cross-machine path** (`C:/Users/<contributor>/…`) leaked from
    another contributor's checkout. As a *clean code ranking* it is noisy and stale.
 2. **But ranking is the WRONG test for graphify.** Per its own `SKILL.md`, graphify is a **GraphRAG
    question-answering / navigation tool** (`query` / `path` / `explain`, community detection, multi-modal:
    code+docs+papers+images+video) — NOT a file-importance ranker. Its edges are *semantic by design* (a superset
    of imports). So both "graphify 0/10 ranking" and "edge precision vs imports" tested it on tasks it does not
    perform — **both retracted.**
-3. **Fair eval — ran real `graphify query`:** **good at feature/concept navigation** — "how does coach booking
-   work?" returned the right neighborhood (`coach-booking-reducer`, `coaches-list`, `coach-card`, `lessons/page`,
-   `server-fetch`). **Weak at precise code-dependency** — "what calls supabase-server?" / "what does api-types
-   define?" keyword-matched and were fooled by token collisions (`types` in tsconfig, `supabase` in package.json),
-   blending in doc nodes as noise.
+3. **Fair eval — ran real `graphify query`:** **good at feature/concept navigation** — a feature-level question
+   ("how does the booking flow work?") returned the right neighborhood (the booking reducer, the listing view,
+   the card component, the feature page, the server-fetch helper). **Weak at precise code-dependency** —
+   "what calls the DB client?" / "what does the shared types module define?" keyword-matched and were fooled by
+   token collisions (`types` in tsconfig, the DB vendor's name in package.json), blending in doc nodes as noise.
 
 **Conclusion: graphify and LSP are COMPLEMENTARY, not competitors.**
 - **graphify** → "how does feature X work / cross-cutting concepts / what's the neighborhood" (semantic, multi-modal).
@@ -254,7 +262,7 @@ precise-code answers got noisy — and exactly why the layers stay separate.
   on-demand import scan; decisions by prose curation. A graph's *only* unique value is community/surprising-
   connections (graphify) — a bonus, not a requirement.
 - **Validate against an independent ground truth before trusting any graph.** "Looks right" is confirmation bias
-  (api-types fooled us). The harness is non-negotiable.
+  (the shared types module fooled us). The harness is non-negotiable.
 - **Benchmark a tool against its ACTUAL use, not an assumed one.** graphify got scored with ranking metrics
   twice before its docs were read. Check the real consumer/use model first.
 - **Fixes have side effects — re-validate every time.** The type-only-edge fix solved test-file noise and
@@ -264,7 +272,7 @@ precise-code answers got noisy — and exactly why the layers stay separate.
 
 `docscan.py` — the markdown counterpart: extracts H1/headings (doc skeleton), doc→doc links, and
 doc→code references, building a doc-hub ranking + a doc→code join (mirrors read-bridge). Run on
-sports-management (90 md, 4 ADRs, 58-file `agent-docs/`):
+Repo B (90 md, 4 ADRs, 58-file agent-docs directory):
 
 | Metric | Value |
 |---|---|
@@ -273,13 +281,13 @@ sports-management (90 md, 4 ADRs, 58-file `agent-docs/`):
 | Full md → TOC skeleton | 231k → 16k tokens = **14.4×** |
 | doc→code edges / distinct files | 563 / 327 |
 
-- **Works for RETRIEVAL:** top doc-hubs are exactly the ADRs (`0001-multi-tenant-rls`,
-  `0002-stripe-platform-account`, `0003-tournament-algorithms`) + security-audit + GUIDELINES — the real
+- **Works for RETRIEVAL:** top doc-hubs are exactly the ADRs (multi-tenant data isolation, the
+  payments-platform decision, the scheduling algorithms) + the security audit + GUIDELINES — the real
   "why" docs surfaced correctly.
 - **Doc skeletons compress ~14×, not ~1000×.** Prose isn't structure; headings are a large fraction. Docs are
   fundamentally less compressible than code — index them for *findability*, not token savings.
 - **Same collision challenge, worse:** doc→code join is precise for distinctly-named files
-  (`auth-helpers.ts`, `supabase-server.ts`, a migration `.sql`) but useless for convention names
+  (the auth-helper module, the server-side DB client, a migration `.sql`) but useless for convention names
   (`route.ts` "in 24 docs", `page.tsx`) — hundreds of those exist. Plus a false positive (`Next.js` matched the
   `.js` code-ref regex). **Verdict: doc-map is good for "which doc covers this area," NOT for precise code linkage.**
 
@@ -287,19 +295,19 @@ Cross-repo doc-map (scan times all <0.1 s; compression a flat ~13–26× regardl
 
 | Repo | Docs (human) | Top doc-hubs | doc→code agrees with code-graph? |
 |---|---|---|---|
-| sports-management | 90 | ADRs (RLS, Stripe, tournaments) + security-audit | partial (convention-name noise) |
-| HUB | 150 | infra/deploy/config docs (`environments`, `aws-setup`, `secrets-management`) | yes — `app.module.ts`, `*-orchestrator.provider.ts` |
-| BetterBlocks | **~30 human** (was 210) | design docs (`DESIGN_SYSTEM`, `UX_AUDIT`, `STRATEGY`) | **yes — `GameConfig`/`Theme`/`HudView` = same hubs the call-graph ranked top** |
+| Repo B | 90 | ADRs (data isolation, payments, scheduling) + security audit | partial (convention-name noise) |
+| Repo C | 150 | infra/deploy/config docs (environments, cloud setup, secrets management) | yes — the root app module and provider files |
+| Repo A | **~30 human** (was 210) | design docs (design system, UX audit, strategy) | **yes — the config/theme/HUD-view types = same hubs the call-graph ranked top** |
 
-**Live confirmation of the decision rule (BetterBlocks):** the first run swept in `.supervisor/jobs/`,
+**Live confirmation of the decision rule (Repo A):** the first run swept in `.supervisor/jobs/`,
 `requirements/`, and `worker-summaries/` — **the plugin's OWN generated artifacts were ~80% of the "doc"
-token mass**. Including them *inflated* the join (`GameConfig` "31 docs" → really 6) and *polluted* retrieval
-(a `Shop` probe returned only generated job-briefs, zero human docs). Excluding `.supervisor/`/`graphify-out/`
+token mass**. Including them *inflated* the join (the central config type showed "31 docs" → really 6) and
+*polluted* retrieval (a domain-noun probe returned only generated job-briefs, zero human docs). Excluding `.supervisor/`/`graphify-out/`
 restored a clean human-doc picture. This is the decision rule proven empirically: **indexing your own
 generated artifacts as docs swamps the real signal and distorts every join — don't do it.**
 
 Independent cross-validation bonus: where docs *are* human-authored, the most-doc-referenced code files match
-the call-graph's top-ranked hubs (`GameConfig`/`Theme`/`HudView`; `app.module.ts`/provider files) — two
+the call-graph's top-ranked hubs (the config/theme/HUD-view types; the root app module and provider files) — two
 independent methods agreeing the same files are central.
 
 ### Decision rule — what to index vs. what NOT to (incl. the plugin's own generated docs)
