@@ -21,7 +21,8 @@
 #   0  PASS           — examined, and clean
 #   1  REFUSE         — examined, and a violation was found
 #   2  REFUSE         — COULD NOT EXAMINE (unreadable store, absent jq, unparseable JSON,
-#                       unresolvable allowlist, missing argument). NEVER reported as clean.
+#                       unresolvable allowlist, missing argument, or a COMPARISON SHAPE that could
+#                       not discriminate — see below). NEVER reported as clean.
 # A caller that treats any non-zero as "do not write" is correct by default; a caller that wants to
 # distinguish the two refusal classes can, and no caller can accidentally read 2 as 0. Conflating
 # "could not examine" with "examined and clean" is the exact fail-open class this file exists to
@@ -30,6 +31,21 @@
 # REFUSAL REASONS are machine-greppable tokens on stderr (`REFUSE_DUPLICATE`,
 # `REFUSE_CROSS_REPO_ALLOWLIST_UNRESOLVED`, ...), never a bare non-zero status: a refusal that
 # does not name its reason is indistinguishable from a crash.
+#
+# COMPARISON SHAPE — the store must hold ONE ENTRY PER LINE, and checks 1 and 2 now say so instead
+# of pretending otherwise. Both score `shared / max(|entry|, |store_line|)`, and `shared` can never
+# exceed `min(|entry|, |store_line|)`, so the highest score a pair can reach is
+# `100 * min / max` — a CEILING fixed by the two sizes alone, before a single word is compared.
+# Hand `--store` a whole DOCUMENT split into lines while `--entry` is that document, and every
+# ceiling sits far under the 90 / 60 thresholds: the loop cannot fire, falls out the bottom, and
+# returns 0. That is "could not examine" wearing "examined and clean"'s clothes, and it is the exact
+# fail-open this file exists to close. MEASURED on the live stores before the guard landed: an
+# orientation memo scored 26% against ITSELF, a twin contract 17% against ITSELF. Three writers had
+# shipped that shape. So both checks now detect it and return 2 with a named reason
+# (REFUSE_DUPLICATE_UNCOMPARABLE_SHAPE / REFUSE_CONTRADICTION_UNCOMPARABLE_SHAPE); the four
+# conditions, the measurements that shaped them, and — importantly — what the guard does NOT cover
+# are documented at _ve_shape_incommensurable below. It reports an unusable comparison; it does not
+# repair one. The repair is one line per stored entry on the caller's side.
 #
 # ALLOWLIST RESOLUTION IS DELEGATED, NEVER RE-IMPLEMENTED. The cross-repo check obtains the
 # allowlist by invoking `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-memory.sh" allowlist`. It MUST
@@ -244,9 +260,16 @@ _ve_polarity() {
   }'
 }
 
-# _ve_overlap <normA> <normB> -> 0..100, the share of significant tokens common to both, over the
-# LARGER of the two token sets (so a short entry cannot score 100 against a long one merely by
-# being a subset of it). Stopwords, negations and tokens shorter than 3 chars are excluded.
+# _ve_overlap <normA> <normB> -> THREE space-separated numbers: the overlap SCORE (0..100), then
+# the significant-token COUNT of A and of B. The score is the share of significant tokens common to
+# both, over the LARGER of the two token sets (so a short entry cannot score 100 against a long one
+# merely by being a subset of it). Stopwords, negations and tokens shorter than 3 chars are excluded.
+#
+# The two counts are returned, not merely used, because the SHAPE GUARD below is built out of them:
+# `sh <= min(ca, cb)` is an identity, so `score <= 100 * min(ca,cb) / max(ca,cb)` is a CEILING on
+# what this pair could ever score, computable without looking at the content at all. A caller that
+# only sees the score cannot tell "these differ" from "these could not have matched". See the
+# COMPARISON SHAPE note in the header.
 _ve_overlap() {
   awk -v a="${1:-}" -v b="${2:-}" -v skip="$_VE_STOPWORDS$_VE_NEGATIONS" 'BEGIN{
     n = split(skip, s, " "); for (i = 1; i <= n; i++) if (s[i] != "") K[s[i]] = 1
@@ -259,11 +282,123 @@ _ve_overlap() {
     for (i = 1; i <= nb; i++) { t = tb[i]
       if (t == "" || length(t) < 3 || (t in K) || (t in B)) continue
       B[t] = 1; cb++ }
-    if (ca == 0 || cb == 0) { print 0; exit }
+    if (ca == 0 || cb == 0) { printf "0 %d %d\n", ca, cb; exit }
     sh = 0; for (t in A) if (t in B) sh++
     max = (ca > cb) ? ca : cb
-    printf "%d\n", int(sh * 100 / max)
+    printf "%d %d %d\n", int(sh * 100 / max), ca, cb
   }'
+}
+
+# _ve_score <normA> <normB> — one call to _ve_overlap, unpacked into $_VE_SCORE / $_VE_CA / $_VE_CB.
+# A function rather than three command substitutions so the awk runs ONCE per compared line.
+_ve_score() {
+  local out
+  out="$(_ve_overlap "${1:-}" "${2:-}")"
+  _VE_SCORE="${out%% *}"; out="${out#* }"
+  _VE_CA="${out%% *}"; _VE_CB="${out##* }"
+  case "$_VE_SCORE$_VE_CA$_VE_CB" in *[!0-9]*|"") _VE_SCORE=0; _VE_CA=0; _VE_CB=0 ;; esac
+  return 0
+}
+
+# _ve_comparable_entry <text> — the entry as the two COMPARISON checks see it: whole-line HTML
+# comments dropped. This is a SYMMETRY rule, not a new filter: _ve_store_lines already skips those
+# lines when reading the STORE side, so leaving them on the entry side compares a memo's machine
+# stamp (`<!-- written_at: ... | head_sha: ... -->`) against stored text that never contains one.
+# MEASURED on add-orientation.sh's composed memo: the ~9 header tokens (timestamp, sha, areas) pulled
+# a byte-identical repost from 100% down to 70%, i.e. under the 90% threshold — the header alone was
+# laundering duplicates. The three OTHER checks still see the entry verbatim (provenance,
+# dead-reference and cross-repo all have legitimate business with header metadata), so this changes
+# nothing outside the two comparisons.
+#
+# It can only ever REMOVE text, so it could turn a comparable entry into an empty one and manufacture
+# a could-not-examine refusal out of nothing. It therefore falls back to the raw entry whenever the
+# strip leaves no comparable text: a symmetry aid must never become a new refusal path.
+_ve_comparable_entry() {
+  local raw="${1:-}" stripped
+  stripped="$(printf '%s\n' "$raw" | awk '/^[[:space:]]*<!--/ { next } { print }')"
+  if [ -n "$(_ve_norm "$stripped")" ]; then printf '%s' "$stripped"; else printf '%s' "$raw"; fi
+}
+
+# ---- THE SHAPE GUARD (shared by checks 1 and 2) -----------------------------
+# Decision (b) says an input that cannot be EXAMINED is a refusal, never a clean verdict. Both
+# comparison checks were violating it silently: they scored entry-vs-STORE-LINE, and when the entry
+# is a whole multi-line DOCUMENT while the store's lines are that document's own fragments, the
+# denominator max(ca,cb) is always the entry's own size and the numerator can never approach it —
+# the loop then falls out the bottom and returns 0, "examined and clean", having been arithmetically
+# incapable of returning anything else. MEASURED before the fix: an orientation memo compared
+# against ITSELF scored 26%, a twin contract against ITSELF 17%. Not a threshold that was too tight;
+# a comparison that could not discriminate.
+#
+# Four conditions, ALL required, each earning its place against the real corpora (the numbers below
+# were measured on this repo's live stores, not reasoned):
+#   (1) at least one comparable store line was seen — an ABSENT or entry-less store is already a
+#       real verdict handled above, not this;
+#   (2) EVERY store line is strictly smaller than the entry, so the denominator is ALWAYS ca. The
+#       reverse case (a short entry against long stored ones) is the subset penalty _ve_overlap was
+#       designed to impose, not a blind spot: measured, a legitimate 20-token agent-memory entry
+#       against its 317-token corpus scores 34%, and refusing that would block a real write;
+#   (3) the ceiling 100*maxline/ca is below the check's threshold — not even a byte-identical copy
+#       of the largest stored line could reach it;
+#   (4) the entry DOES reach the threshold against the store's lines taken TOGETHER. That is the
+#       whole difference between "this store cannot express my entry" and "this store does not
+#       contain it": the entry's counterpart IS in there, spread across lines the check can only
+#       look at one at a time.
+#
+# (4) is the false-refusal firewall, and it replaced an earlier shape-only condition (entry is
+# multi-line AND no store line exceeds the entry's own longest line) that was MEASURED WRONG — not
+# reasoned wrong. Run against the existing suites, that version refused a legitimate 10-token
+# agent-memory write into a 4-entry store of ~6-token entries (ceiling 60%): tiny whole entries are
+# shape-indistinguishable from fragments, and the writer it broke is the WORKING precedent this
+# whole fix is modelled on. A false refusal blocks a real write, so the guard now demands positive
+# evidence that the store holds what the entry says, rather than inferring it from line lengths.
+# Conditions (1)-(3) are still what makes the verdict honest — with the ceiling reachable there is
+# no arithmetic impossibility to report.
+#
+# WHAT THIS DOES NOT COVER, stated rather than discovered later:
+#   · a document-shaped comparison whose entry is genuinely NEW — nothing like it in the store — is
+#     still reported clean. The shape was just as unable to discriminate; the guard is silent
+#     because it has no evidence, and inferring the shape from lengths alone is what produced the
+#     false refusal above. This is the guard's biggest gap and it is deliberate;
+#   · a fragment store large enough that the entry cannot reach the threshold against the WHOLE of
+#     it either (one file holding many documents) — condition (4) fails and it passes through;
+#   · content-level dilution, where the ceiling IS reachable but padding on one side keeps the score
+#     under the threshold. That is not a shape defect and this guard is silent about it.
+# The guard REPORTS an unusable comparison; it does not repair one. The repair is the caller's:
+# hand --store one line per stored entry (build_compare_corpus() in write-agent-memory.sh, and the
+# corpus builders in add-orientation.sh and write-system-contract.sh, are the three worked examples).
+_ve_shape_reset() {
+  _VE_SHAPE_LINES=0; _VE_SHAPE_MAXLINE=0; _VE_SHAPE_ALL_SMALLER=1; _VE_SHAPE_CA=0
+}
+# _ve_shape_observe — called once per compared store line, with $_VE_CA/$_VE_CB already set.
+_ve_shape_observe() {
+  _VE_SHAPE_LINES=$((_VE_SHAPE_LINES + 1))
+  _VE_SHAPE_CA="$_VE_CA"
+  [ "$_VE_CB" -gt "$_VE_SHAPE_MAXLINE" ] && _VE_SHAPE_MAXLINE="$_VE_CB"
+  [ "$_VE_CB" -ge "$_VE_CA" ] && _VE_SHAPE_ALL_SMALLER=0
+  return 0
+}
+# _ve_shape_incommensurable <normalised-entry> <threshold> <store> -> 0 when the comparison just run
+# could not have discriminated. Conditions (1)-(3) are pure arithmetic over what the loop already
+# measured; (4) costs one more pass over the store, so it is evaluated last and only when the cheap
+# ones already hold — on every ordinary write the function returns at (2) or (3) having read nothing.
+# $_VE_SHAPE_CEILING and $_VE_SHAPE_WHOLE are left set for the refusal message.
+_VE_SHAPE_CEILING=0
+_VE_SHAPE_WHOLE=0
+_ve_shape_incommensurable() {
+  local ne="${1:-}" thr="${2:-100}" store="${3:-}" flat
+  [ "${_VE_SHAPE_LINES:-0}" -gt 0 ] || return 1                   # (1)
+  [ "${_VE_SHAPE_ALL_SMALLER:-0}" -eq 1 ] || return 1             # (2)
+  [ "${_VE_SHAPE_CA:-0}" -gt 0 ] || return 1
+  _VE_SHAPE_CEILING=$(( _VE_SHAPE_MAXLINE * 100 / _VE_SHAPE_CA ))
+  [ "$_VE_SHAPE_CEILING" -lt "$thr" ] || return 1                 # (3)
+  # (4) the store's lines TAKEN TOGETHER do reach the threshold. `tr` (not an early-exit consumer)
+  # keeps this pipeline safe under a caller's `set -o pipefail`.
+  flat="$(_ve_norm "$(_ve_store_lines "$store" | tr '\n' ' ')")"
+  [ -n "$flat" ] || return 1
+  _ve_score "$ne" "$flat"
+  _VE_SHAPE_WHOLE="$_VE_SCORE"
+  [ "$_VE_SHAPE_WHOLE" -ge "$thr" ] || return 1
+  return 0
 }
 
 # _ve_store_lines <file> — the store's comparable entry lines, one per line, still raw.
@@ -323,23 +458,33 @@ validate_duplicate() {
     2) _ve_unexaminable "REFUSE_DUPLICATE_STORE_UNREADABLE" "store '$_VE_STORE' exists but could not be read"; return 2 ;;
   esac
 
-  local ne np line lo lp
-  ne="$(_ve_norm "$_VE_ENTRY")"
+  local ecmp ne np line lo lp
+  ecmp="$(_ve_comparable_entry "$_VE_ENTRY")"
+  ne="$(_ve_norm "$ecmp")"
   np="$(_ve_polarity "$ne")"
   [ -n "$ne" ] || { _ve_unexaminable "REFUSE_DUPLICATE_EMPTY_ENTRY" "the entry normalises to no comparable text"; return 2; }
+  _ve_shape_reset
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     lo="$(_ve_norm "$line")"
     [ -n "$lo" ] || continue
+    _ve_score "$ne" "$lo"
+    # Observed BEFORE the polarity filter: polarity decides which lines this check JUDGES, the shape
+    # question is whether any line in the store is commensurable with the entry at all.
+    _ve_shape_observe
     lp="$(_ve_polarity "$lo")"
     [ "$lp" = "$np" ] || continue
-    if [ "$(_ve_overlap "$ne" "$lo")" -ge "$VALIDATE_ENTRY_DUPLICATE_THRESHOLD" ]; then
+    if [ "$_VE_SCORE" -ge "$VALIDATE_ENTRY_DUPLICATE_THRESHOLD" ]; then
       _ve_refuse "REFUSE_DUPLICATE" "a near-identical entry is already stored in '$_VE_STORE': \"$line\" — nothing was written"
       return 1
     fi
   done <<EOF
 $(_ve_store_lines "$_VE_STORE")
 EOF
+  if _ve_shape_incommensurable "$ne" "$VALIDATE_ENTRY_DUPLICATE_THRESHOLD" "$_VE_STORE"; then
+    _ve_unexaminable "REFUSE_DUPLICATE_UNCOMPARABLE_SHAPE" "the entry is a ${_VE_SHAPE_CA}-significant-token document that matches store '$_VE_STORE' AS A WHOLE at ${_VE_SHAPE_WHOLE}%, but every one of its ${_VE_SHAPE_LINES} comparable lines is smaller than the entry (largest: ${_VE_SHAPE_MAXLINE}), so the best score any SINGLE line could reach is ${_VE_SHAPE_CEILING}% — below the ${VALIDATE_ENTRY_DUPLICATE_THRESHOLD}% threshold no matter what either side says. The store holds this entry spread across lines this check can only compare one at a time, so it could not discriminate and 'clean' would have meant nothing: give --store ONE LINE PER STORED ENTRY (see build_compare_corpus in write-agent-memory.sh), not a document split into lines"
+    return 2
+  fi
   return 0
 }
 
@@ -358,23 +503,31 @@ validate_contradiction() {
     2) _ve_unexaminable "REFUSE_CONTRADICTION_STORE_UNREADABLE" "store '$_VE_STORE' exists but could not be read"; return 2 ;;
   esac
 
-  local ne np line lo lp
-  ne="$(_ve_norm "$_VE_ENTRY")"
+  local ecmp ne np line lo lp
+  ecmp="$(_ve_comparable_entry "$_VE_ENTRY")"
+  ne="$(_ve_norm "$ecmp")"
   [ -n "$ne" ] || { _ve_unexaminable "REFUSE_CONTRADICTION_EMPTY_ENTRY" "the entry normalises to no comparable text"; return 2; }
   np="$(_ve_polarity "$ne")"
+  _ve_shape_reset
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     lo="$(_ve_norm "$line")"
     [ -n "$lo" ] || continue
+    _ve_score "$ne" "$lo"
+    _ve_shape_observe
     lp="$(_ve_polarity "$lo")"
     [ "$lp" != "$np" ] || continue
-    if [ "$(_ve_overlap "$ne" "$lo")" -ge "$VALIDATE_ENTRY_CONTRADICTION_THRESHOLD" ]; then
+    if [ "$_VE_SCORE" -ge "$VALIDATE_ENTRY_CONTRADICTION_THRESHOLD" ]; then
       _ve_refuse "REFUSE_CONTRADICTION" "the entry contradicts a stored one in '$_VE_STORE': \"$line\" — supersede it explicitly instead of appending a second, opposite entry (nothing was written, and nothing was removed)"
       return 1
     fi
   done <<EOF
 $(_ve_store_lines "$_VE_STORE")
 EOF
+  if _ve_shape_incommensurable "$ne" "$VALIDATE_ENTRY_CONTRADICTION_THRESHOLD" "$_VE_STORE"; then
+    _ve_unexaminable "REFUSE_CONTRADICTION_UNCOMPARABLE_SHAPE" "the entry is a ${_VE_SHAPE_CA}-significant-token document that matches store '$_VE_STORE' AS A WHOLE at ${_VE_SHAPE_WHOLE}%, but every one of its ${_VE_SHAPE_LINES} comparable lines is smaller than the entry (largest: ${_VE_SHAPE_MAXLINE}), so the best score any SINGLE line could reach is ${_VE_SHAPE_CEILING}% — below the ${VALIDATE_ENTRY_CONTRADICTION_THRESHOLD}% threshold no matter what either side says. The store holds this entry spread across lines this check can only compare one at a time, so it could not discriminate and 'clean' would have meant nothing: give --store ONE LINE PER STORED ENTRY (see build_compare_corpus in write-agent-memory.sh), not a document split into lines"
+    return 2
+  fi
   return 0
 }
 

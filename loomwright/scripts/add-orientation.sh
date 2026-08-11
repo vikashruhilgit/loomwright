@@ -505,17 +505,93 @@ write_target="$STORE_DIR/$slug.md"
 # THE VALIDATOR CALL SITE (see the LOAD GUARD block above). Before the confirm gate, for the same
 # reason as add-rule.sh's. This writer has no --source flag at all, so provenance rests entirely on
 # the memo text — the summary line or body must name the finding / PR / session that motivated it.
+#
+# WHAT --store POINTS AT, and why it is not the memo's own file. This store is a DIRECTORY of memo
+# documents, so it has the same shape problem write-agent-memory.sh had: `--store "$write_target"`
+# handed the validator ONE memo split into lines while --entry was a whole memo. Both comparison
+# checks score shared/max(|entry|,|line|), so every line's ceiling sat far under the 90/60
+# thresholds and the checks returned "examined and clean" having been arithmetically unable to
+# return anything else. MEASURED on the live writer before this fix: an identical body reposted
+# under a SECOND slug was written with no refusal (the second slug's target file does not exist
+# yet, so there was nothing to compare against at all), and a memo compared against ITSELF scored
+# 26%. The duplicate check did not "only bite above ~90 body tokens" as this writer's suite used to
+# assert — it never bit.
+#
+# So --store is now the DERIVED MEMO CORPUS: one flattened line per stored memo, built by
+# build_compare_corpus() below (the name and the return-code discipline are write-agent-memory.sh's,
+# deliberately — one precedent, three call sites). The corpus lives under $work, never in the store,
+# so a refusal leaves the store byte-identical and the existing EXIT trap removes it on every path.
 # ---------------------------------------------------------------------------
+
+# memo_compare_line <file> — a stored memo as ONE comparable line. The `<!-- ... -->` header is
+# DROPPED, matching both the validator's store-side reader (_ve_store_lines skips whole-line HTML
+# comments) and its entry side (_ve_comparable_entry does the same), so the two sides of the
+# comparison are the same kind of text. Keeping the header in would put this writer's own machine
+# stamp — timestamp, sha, areas — into one side only and depress every score; measured, that alone
+# pulled a byte-identical repost from 100% down to 70%, i.e. under the threshold.
+memo_compare_line() {
+  awk '
+    /^[[:space:]]*<!--/ { next }
+    { b = b " " $0 }
+    END {
+      gsub(/[\r\t]/, " ", b); gsub(/  +/, " ", b)
+      sub(/^[ ]+/, "", b); sub(/[ ]+$/, "", b); sub(/^[#>-]+[ ]*/, "", b)
+      if (b ~ /[^ ]/) print b
+    }
+  ' "$1"
+}
+
+# build_compare_corpus <store-dir> <out-file> <self-basename> — one line per stored memo.
+# README.md is excluded because it is the store's documentation, not a memo (the slug `readme` is
+# rejected outright above, so a memo can never occupy that name). The memo being written is excluded
+# too, and that is the difference between "duplicate" and "update": this writer REPLACES an existing
+# <area-slug>.md by design, and an update necessarily re-posts most of its own text — measured on
+# write-agent-memory.sh, a one-word typo fix scored ~98% against itself and was refused. Every OTHER
+# memo stays in, so a body reposted under a DIFFERENT slug — the actual defect — is still refused.
+# Return codes are the could-not-examine discipline, not a convenience:
+#   0 usable (possibly empty: no prior memos is a real clean verdict) · 2 corpus could not be staged
+#   3 the store dir exists but cannot be listed · 4 a memo exists but cannot be read (a hole in the
+#     corpus, never reported as clean)
+build_compare_corpus() {
+  local dir="$1" out="$2" self="${3:-}" f
+  : > "$out" || return 2
+  [ -d "$dir" ] || return 0
+  [ -r "$dir" ] && [ -x "$dir" ] || return 3
+  for f in "$dir"/*.md; do
+    [ -f "$f" ] || continue                     # unmatched glob stays literal under bash 3.2
+    [ "${f##*/}" = "README.md" ] && continue
+    [ -n "$self" ] && [ "${f##*/}" = "$self" ] && continue
+    [ -r "$f" ] || { CORPUS_BAD_PATH="$f"; return 4; }
+    memo_compare_line "$f" >> "$out" || return 2
+  done
+  return 0
+}
+
 _ve_load_validator
+
+COMPARE_STORE="$work/store-memos.corpus"
+CORPUS_BAD_PATH=""
+set +e
+build_compare_corpus "$STORE_DIR" "$COMPARE_STORE" "$slug.md"
+_corpus_rc=$?
+set -e
+case "$_corpus_rc" in
+  0) : ;;
+  3) die "refusing to write — the store dir '$STORE_DIR' exists but could not be listed, so the memos this write would be compared against could not be examined; refusing rather than reporting it clean. Nothing was written." 2 ;;
+  4) die "refusing to write — the stored memo '$CORPUS_BAD_PATH' exists but could not be read, so it could not be compared against — a hole in the corpus would make a duplicate or contradiction verdict of 'clean' meaningless. Nothing was written." 2 ;;
+  *) die "refusing to write — the comparison corpus derived from '$STORE_DIR' could not be staged (status $_corpus_rc), so this memo could not be compared against the store. Nothing was written." 2 ;;
+esac
+
 # ---- VALIDATOR CALL BEGIN ---------------------------------------------------
 set +e
-validate_entry_all --entry "$(cat "$compose")" --store "$write_target" \
+validate_entry_all --entry "$(cat "$compose")" --store "$COMPARE_STORE" \
   --source "" --root "$REPO_DIR"
 _ve_rc=$?
 set -e
 case "$_ve_rc" in
   0) : ;;
-  1) die "refusing to write — the memo was examined and violates a write-time check (see the reason above). Nothing was written." 1 ;;
+  1) printf '%s: (the store quoted below is the memo corpus derived from %s — one line per stored memo.)\n' "$PROG" "$STORE_DIR" >&2
+     die "refusing to write — the memo was examined and violates a write-time check (see the reason above). Nothing was written." 1 ;;
   *) die "refusing to write — the memo COULD NOT BE EXAMINED (see the reason above); refusing rather than reporting it clean. Nothing was written." 2 ;;
 esac
 # ---- VALIDATOR CALL END -----------------------------------------------------

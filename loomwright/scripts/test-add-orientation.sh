@@ -74,9 +74,27 @@ count_store_files() {
 }
 
 # A small valid body file. $1 repo dir → echoes path.
+#
+# EVERY CALL RETURNS A DISTINCT BODY, and that is load-bearing rather than tidy. This helper used to
+# emit one fixed two-line body, so any case that seeded TWO memos in one repo (14, 15, 19, 22) was
+# posting byte-identical content under a second slug — which the writer now correctly REFUSES as a
+# duplicate, since --store became the whole-store memo corpus. Those cases are about supersede and
+# retract, not about duplicates: they need two DIFFERENT memos. The distinguishing tokens are chosen
+# to keep any two bodies at ~55% overlap — comfortably under the 90% duplicate threshold and under
+# the 60% contradiction threshold, so a future case that seeds two memos does not silently re-create
+# the collision.
+#
+# Uniqueness comes from mktemp, NOT from a counter. Every caller invokes this as `b="$(mk_body "$R")"`
+# — a COMMAND SUBSTITUTION, i.e. a subshell — so a `MK_BODY_N=$((MK_BODY_N+1))` here increments a
+# copy the parent never sees: every call would emit the SAME body under a different-looking name.
+# (Tried first, and it failed exactly that way — the second memo in a two-memo case was still a
+# byte-identical repost.) mktemp's uniqueness lives in the filesystem, which the parent shares.
 mk_body() {
-  local p="$1/body.txt"
-  printf 'Line one of the body.\nLine two.\n' > "$p"
+  local p tag
+  p="$(mktemp "$1/body.XXXXXX")"
+  tag="$(basename "$p" | tr -cd 'A-Za-z0-9')"
+  printf 'Line one of the body.\nLine two.\nFixture cluster%s telemetry%s rollout%s cadence%s.\n' \
+    "$tag" "$tag" "$tag" "$tag" > "$p"
   printf '%s' "$p"
 }
 
@@ -471,12 +489,18 @@ ve_repo() {
 # confirm gate and the write must actually be attempted; a dry-run exits 0 without touching a store.
 # An EMPTY validator-override leaves $ADD_ORIENTATION_VALIDATOR empty, which is what makes the writer
 # fall back to its own resolution — the real path, not a test-only one.
+# $VE_SLUG is the area slug the memo is written under. It is a global rather than another positional
+# because the cases below need to vary ONE thing — the slug — while every other argument stays put:
+# --store is now the whole-store memo corpus with the memo being written EXCLUDED, so a seed and an
+# attempt sharing a slug is an UPDATE (nothing to compare against), and a repost under a SECOND slug
+# is the duplicate. Those are different operations and the suite has to be able to say which it means.
+VE_SLUG="ve"
 ve_write() {
   local dir="$1" summ="$2" body="$3" val="${4:-}" prog="${5:-$WRITER}"
   printf '%s\n' "$body" > "$dir/ve-body.txt"
   ( cd "$dir" \
       && if [ -n "$VE_ALLOW" ]; then export LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$VE_ALLOW"; fi \
-      && ADD_ORIENTATION_VALIDATOR="$val" bash "$prog" ve "$summ" ve-body.txt --confirm \
+      && ADD_ORIENTATION_VALIDATOR="$val" bash "$prog" "$VE_SLUG" "$summ" ve-body.txt --confirm \
   ) >/dev/null 2>"$VE_ERR"
   VE_RC=$?
 }
@@ -492,14 +516,15 @@ ve_refused() { # <label> <want-rc> <want-token> <store> <saved-copy>
 }
 
 # ---------------------------------------------------------------------------
-# THE LONG BODY, and why it is long. Overlap is scored over the LARGER significant-token set, so for
-# a memo of N body tokens the duplicate check sees N/(N+H) where H is the header-and-summary tokens
-# the entry carries and the stored memo does not (H = 9 header + 1 summary here: `written`, the year,
-# `DDtHH`, `SSz`, `head`, `sha`, the 7-hex sha, `areas`, the slug, and the summary word). Reaching the
-# 90% duplicate threshold therefore needs N >= 90; the 14-token body used for the other four writers
-# scored ~58 and was correctly NOT refused. N=120 is used here for margin (92%), and the composed
-# memo stays well inside this writer's 1000-char cap. The bound itself is pinned as an assertion
-# below rather than left as a silent property of the fixture.
+# THE LONG BODY. This comment used to derive an N >= 90 requirement from the entry carrying ~10
+# header-and-summary tokens the stored memo did not — an asymmetry that really did depress every
+# score, and really was why a short near-duplicate slipped through. It is GONE on both sides now:
+# the corpus line is built header-free (memo_compare_line) and the validator drops whole-line HTML
+# comments from the entry before comparing (_ve_comparable_entry), so an identical body scores 100%
+# at ANY size. The short-body case is asserted directly further down rather than left to arithmetic.
+# N=120 is kept because a long body is still the realistic shape for a memo and the composed file
+# stays well inside this writer's 1000-char cap — not because 90 is a threshold anything needs to
+# clear.
 # ---------------------------------------------------------------------------
 ve_body()     { awk -v n="$1" 'BEGIN{for(i=1;i<=n;i++) printf "w%03d%s", i, (i<n?" ":"")}'; }
 ve_body_rev() { awk -v n="$1" 'BEGIN{for(i=n;i>=1;i--) printf "w%03d%s", i, (i>1?" ":"")}'; }
@@ -533,38 +558,111 @@ fi
 # snapshot it, attempt the violating memo, assert the three things.
 # The cross-repo allowlist is supplied through this test's OWN environment; the live
 # .supervisor/config.json is never touched and no foreign slug is ever added to it (R0/R8).
+# $6 (optional) = the slug the ATTEMPT is written under, defaulting to the seed's. The two
+# store-comparing checks pass "ve2" so the attempt is a second memo rather than an update of the
+# seed; the other three do not care and keep the seed's slug.
 ve_case() {
-  local label="$1" summ="$2" body="$3" tok="$4" allow="${5:-}"
+  local label="$1" summ="$2" body="$3" tok="$4" allow="${5:-}" slug2="${6:-ve}"
   local r st; r="$(ve_repo)"; st="$r/$VESTORE"
   ve_write "$r" "memo" "$VE_BASE"
   if [ ! -f "$st" ]; then no "$label — SEED FAILED (no memo; the fixture asserts nothing)"; return; fi
   cp "$st" "$VETMP/before"
-  VE_ALLOW="$allow"; ve_write "$r" "$summ" "$body"; VE_ALLOW=""
+  VE_ALLOW="$allow"; VE_SLUG="$slug2"; ve_write "$r" "$summ" "$body"; VE_SLUG="ve"; VE_ALLOW=""
   ve_refused "AC1 $label:" 1 "$tok" "$st" "$VETMP/before"
+  # A refusal must also leave no SECOND memo behind when the attempt used a second slug.
+  if [ "$slug2" != "ve" ]; then
+    if [ ! -e "$r/.agent/orientation/$slug2.md" ]; then ok "AC1 $label: (iv) the refused memo was not created at $slug2.md"
+    else no "AC1 $label: (iv) the refusal still wrote $slug2.md"; fi
+  fi
 }
 
-ve_case "duplicate"      "memo" "$VE_DUP"   "REFUSE_DUPLICATE"
-ve_case "contradiction"  "memo" "$VE_CON"   "REFUSE_CONTRADICTION"
+ve_case "duplicate"      "memo" "$VE_DUP"   "REFUSE_DUPLICATE"      ""          "ve2"
+ve_case "contradiction"  "memo" "$VE_CON"   "REFUSE_CONTRADICTION"  ""          "ve2"
 ve_case "dead-reference" "memo" "$VE_DEAD"  "REFUSE_DEAD_REFERENCE"
 ve_case "cross-repo"     "memo" "$VE_XREPO" "REFUSE_CROSS_REPO" "$VE_OURS"
 
-# --- AC1 duplicate: the measured BOUND, pinned so it cannot rot silently -----------------------
-# A SHORT near-identical memo is NOT refused, because the header tokens dilute the overlap below the
-# threshold. This is a real, currently-unclosed gap in this writer's duplicate coverage, and pinning
-# it is what keeps the long-body fixture above honest: without this the suite would read as "the
-# duplicate check works here", which is only true above ~90 body tokens.
+# --- AC1 duplicate: the CONTROL that would have caught the inert call site --------------------
+# This block used to assert the opposite, and the assertion was false. It read: "a SHORT
+# near-identical memo is still accepted — the composed entry's header tokens dilute the overlap
+# below 90%, so this writer's duplicate check only bites above ~90 body tokens". MEASURED on the
+# writer, that bound never existed: --store was the memo's OWN target file, so an identical body
+# under a SECOND slug compared against an absent file (clean by definition), and a memo compared
+# against itself scored 26% — a whole document against its own lines can never reach 90%. The check
+# did not bite late; it never bit at all, and the suite's own long-body fixture passed only because
+# a 120-token body on ONE line happens to be commensurable with the entry.
+#
+# Two controls replace it, both aimed at the real thing:
+#   (a) IDENTICAL content reposted under a SECOND slug must REFUSE. This is the case the writer
+#       silently accepted, and no length arithmetic is involved — if --store ever stops being the
+#       whole-store corpus, this goes RED immediately.
+#   (b) A SHORT identical repost must refuse too, pinning that the retired bound is really gone:
+#       the corpus is header-free on both sides, so overlap is 100% regardless of memo size.
 VER="$(ve_repo)"; VEST="$VER/$VESTORE"
-ve_write "$VER" "memo" "$VE_SHORTDUP"
+ve_write "$VER" "memo" "$VE_BASE"
 if [ -f "$VEST" ]; then
   cp "$VEST" "$VETMP/before"
-  ve_write "$VER" "memo" "$VE_SHORTDUP xyz"
-  if [ "$VE_RC" -eq 0 ] && ! cmp -s "$VEST" "$VETMP/before"; then
-    ok "AC1 duplicate BOUND (known limitation): a SHORT near-identical memo is still accepted — the composed entry's header tokens dilute the overlap below 90%, so this writer's duplicate check only bites above ~90 body tokens"
+  VE_SLUG="ve2"; ve_write "$VER" "memo" "$VE_BASE"; VE_SLUG="ve"
+  if [ "$VE_RC" -eq 1 ] && grep -q REFUSE_DUPLICATE "$VE_ERR" 2>/dev/null \
+     && [ ! -e "$VER/.agent/orientation/ve2.md" ] && cmp -s "$VEST" "$VETMP/before"; then
+    ok "AC1 duplicate (a): a byte-identical memo reposted under a SECOND slug is REFUSED (exit 1, REFUSE_DUPLICATE, no ve2.md, seed untouched)"
   else
-    no "AC1 duplicate BOUND: the short near-duplicate was refused (exit $VE_RC) — the documented bound has CHANGED; re-derive it and update the long-body arithmetic above"
+    no "AC1 duplicate (a): the identical repost under a second slug was NOT refused (exit $VE_RC, ve2.md exists=$([ -e "$VER/.agent/orientation/ve2.md" ] && echo yes || echo no)) — --store is not comparing against the store"
   fi
 else
-  no "AC1 duplicate BOUND — SEED FAILED"
+  no "AC1 duplicate (a) — SEED FAILED"
+fi
+
+VERS="$(ve_repo)"; VESTS="$VERS/$VESTORE"
+ve_write "$VERS" "memo" "$VE_SHORTDUP"
+if [ -f "$VESTS" ]; then
+  cp "$VESTS" "$VETMP/before"
+  VE_SLUG="ve2"; ve_write "$VERS" "memo" "$VE_SHORTDUP"; VE_SLUG="ve"
+  if [ "$VE_RC" -eq 1 ] && grep -q REFUSE_DUPLICATE "$VE_ERR" 2>/dev/null \
+     && cmp -s "$VESTS" "$VETMP/before"; then
+    ok "AC1 duplicate (b): a SHORT identical memo is refused too — the retired '~90 body tokens' bound is gone, not merely moved"
+  else
+    no "AC1 duplicate (b): the short identical repost was not refused (exit $VE_RC) — a size-dependent bound is back; re-derive it before documenting one"
+  fi
+else
+  no "AC1 duplicate (b) — SEED FAILED"
+fi
+
+# --- AC1 no-false-refusal: a genuinely different memo under a SECOND slug must still WRITE ------
+# The other half of the control above, and it carries the same weight: closing a false negative by
+# manufacturing a false refusal would be the worse trade, because a refusal blocks a legitimate
+# write. The seed and the attempt share no significant tokens, so nothing about them is duplicate or
+# contradictory — if the corpus or the shape guard ever starts refusing this, the writer has become
+# unusable and this goes RED naming that, not the duplicate case.
+VERN="$(ve_repo)"
+ve_write "$VERN" "memo" "$VE_BASE"
+if [ -f "$VERN/$VESTORE" ]; then
+  VE_SLUG="ve2"; ve_write "$VERN" "memo" "$VE_CLEAN"; VE_SLUG="ve"
+  if [ "$VE_RC" -eq 0 ] && [ -f "$VERN/.agent/orientation/ve2.md" ]; then
+    ok "AC1 no-false-refusal: a genuinely different memo under a SECOND slug is still WRITTEN (the corpus refuses duplicates, not neighbours)"
+  else
+    no "AC1 no-false-refusal: an unrelated second memo was REFUSED (exit $VE_RC) — the corpus/guard is blocking legitimate writes, which is worse than the gap it closed: $(tr '\n' ' ' < "$VE_ERR" | cut -c1-200)"
+  fi
+else
+  no "AC1 no-false-refusal — SEED FAILED"
+fi
+
+# --- AC1 update-vs-duplicate: the self-exclusion, pinned so it cannot rot into an accident ------
+# The corpus EXCLUDES the memo being written, so re-writing the SAME slug is an UPDATE and is
+# allowed even when the text barely changes. That is deliberate (this writer replaces an existing
+# <area-slug>.md by design, and write-agent-memory.sh measured a ~98% self-score refusing a one-word
+# typo fix), and it is the one case where "identical content is written" is correct behaviour rather
+# than the defect above. Asserted so the exclusion is a decision on the record, not a side effect.
+VERU="$(ve_repo)"
+ve_write "$VERU" "memo" "$VE_BASE"
+if [ -f "$VERU/$VESTORE" ]; then
+  ve_write "$VERU" "memo" "$VE_BASE updated with one more clause"
+  if [ "$VE_RC" -eq 0 ] && grep -qF "one more clause" "$VERU/$VESTORE" 2>/dev/null; then
+    ok "AC1 update: re-writing the SAME slug with near-identical text is an UPDATE, not a duplicate (the corpus excludes the memo being written)"
+  else
+    no "AC1 update: updating a memo in place was refused (exit $VE_RC) — the corpus self-exclusion is broken and every memo edit is now blocked"
+  fi
+else
+  no "AC1 update — SEED FAILED"
 fi
 
 # --- AC1 provenance: KNOWN LIMITATION, pinned by mechanism ------------------------------------
@@ -688,6 +786,36 @@ if ve_mutant_ok "$VETMP/mut-guard.sh" "AC2 load-guard mutant"; then
     fi
   else
     no "AC2 mutation control: the '|| true' replacement did not land in the mutant"
+  fi
+fi
+
+# (c) THE CORPUS CONTROL: point --store back at the memo's own target file — the pre-fix call site —
+# and the identical-repost assertion above must go RED. Without this, "we compare against the store"
+# is a claim no check backs, which is the failure class this whole change exists to close.
+# The rewrite is asserted by COUNT on both sides: a mutation that missed an (indented) call site
+# would leave the mutant behaving like the writer and this control would prove nothing while looking
+# green. That exact self-healing mutant has already happened on this branch.
+n_corp_orig="$(grep -cF -- '--store "$COMPARE_STORE"' "$WRITER" 2>/dev/null || true)"; [ -n "$n_corp_orig" ] || n_corp_orig=0
+sed -e 's/--store "\$COMPARE_STORE"/--store "$write_target"/g' "$WRITER" > "$VETMP/mut-store.sh"
+n_corp_mut="$(grep -cF -- '--store "$COMPARE_STORE"' "$VETMP/mut-store.sh" 2>/dev/null || true)"; [ -n "$n_corp_mut" ] || n_corp_mut=0
+n_tgt_mut="$(grep -cF -- '--store "$write_target"' "$VETMP/mut-store.sh" 2>/dev/null || true)"; [ -n "$n_tgt_mut" ] || n_tgt_mut=0
+if [ "$n_corp_orig" -ge 1 ] && [ "$n_corp_mut" -eq 0 ] && [ "$n_tgt_mut" -ge 1 ]; then
+  ok "AC1 corpus control: the mutation is NON-VACUOUS ($n_corp_orig corpus call site(s) in the writer, 0 in the mutant, $n_tgt_mut pointing at the target file)"
+else
+  no "AC1 corpus control: the mutation did not take (corpus $n_corp_orig → $n_corp_mut, target $n_tgt_mut) — the control below would prove nothing"
+fi
+if ve_mutant_ok "$VETMP/mut-store.sh" "AC1 corpus mutant"; then
+  rM="$(ve_repo)"
+  ve_write "$rM" "memo" "$VE_BASE" "$VEFILE" "$VETMP/mut-store.sh"
+  if [ "$VE_RC" -eq 0 ]; then
+    VE_SLUG="ve2"; ve_write "$rM" "memo" "$VE_BASE" "$VEFILE" "$VETMP/mut-store.sh"; VE_SLUG="ve"
+    if [ "$VE_RC" -eq 0 ] && [ -f "$rM/.agent/orientation/ve2.md" ]; then
+      ok "AC1 corpus control CONFIRMED: with --store back on the memo's own target file, the byte-identical repost IS written — the duplicate assertions above pin the corpus, not merely the presence of a check"
+    else
+      no "AC1 corpus control: the mutant also refused the repost (exit $VE_RC) — the duplicate assertions may be passing for some other reason"
+    fi
+  else
+    no "AC1 corpus control: the mutant refused the SEED (exit $VE_RC) — the control never reached the case under test"
   fi
 fi
 

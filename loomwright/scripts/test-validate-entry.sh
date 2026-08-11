@@ -193,6 +193,88 @@ verdict 2 "contradiction with a MISSING --store is could-not-examine (2)" \
 # Flag, never delete: section 12 re-checks this against every refusal the suite has made.
 STORE_CK="$(cksum < "$STORE")"
 
+echo "== 3b. the INCOMMENSURABLE-SHAPE guard: a comparison that cannot discriminate is 2, never 0 =="
+# THE DEFECT THIS SECTION EXISTS FOR. Both comparison checks score shared/max(|entry|,|line|), and
+# shared can never exceed min(|entry|,|line|), so a pair's highest possible score is 100*min/max —
+# fixed by the two SIZES before a word is read. Hand --store a document split into lines while
+# --entry is that document and every ceiling sits far under 90/60: the loop cannot fire and returns
+# "examined and clean" having been arithmetically unable to return anything else. Three writers had
+# shipped exactly that. Measured on the live stores: an orientation memo scored 26% against ITSELF,
+# a twin contract 17% against ITSELF.
+#
+# The fixture is built as a real document and its own fragments, not as hand-tuned token counts, so
+# it cannot go green by drifting away from the shape it is supposed to represent.
+DOCSTORE="$TMP/doc-store.md"
+cat > "$DOCSTORE" <<'DOCEOF'
+The write-time validator is loaded by every sole writer through a three-clause load guard.
+Clause one requires the source itself to succeed, because a discarded status becomes a silent
+unvalidated append. Clause two probes every validator function by name, since bash defines each
+function above a syntax error before it aborts the parse. Clause three compares a sentinel that is
+assigned on the last line of the helper, so truncation anywhere above it cannot forge a match.
+A broken helper therefore degrades into a named refusal rather than into a crash.
+DOCEOF
+DOCENTRY="$(cat "$DOCSTORE")"
+
+verdict 2 "duplicate: a DOCUMENT compared against its own lines is could-not-examine (2), NOT clean" \
+  "$VE" duplicate --entry "$DOCENTRY" --store "$DOCSTORE"
+reason "REFUSE_DUPLICATE_UNCOMPARABLE_SHAPE" "the shape refusal names its own reason, not a generic 2"
+reason "ONE LINE PER STORED ENTRY" "the shape refusal says how to fix the comparison"
+verdict 2 "contradiction: the same shape is could-not-examine (2), NOT clean" \
+  "$VE" contradiction --entry "$DOCENTRY" --store "$DOCSTORE"
+reason "REFUSE_CONTRADICTION_UNCOMPARABLE_SHAPE" "the contradiction shape refusal names its own reason"
+
+# THE FIXED SHAPE MUST NOT BE INTERCEPTED. Same document, but --store is now what the corpus
+# builders produce: one flattened line per stored document. The guard must stand down and the real
+# verdict must come through — refusal when the document IS stored, clean when it is not.
+DOCCORPUS="$TMP/doc-corpus.md"
+tr '\n' ' ' < "$DOCSTORE" > "$DOCCORPUS"; printf '\n' >> "$DOCCORPUS"
+verdict 1 "duplicate: the SAME document against a one-line-per-entry corpus is a real REFUSAL (1), not a shape 2" \
+  "$VE" duplicate --entry "$DOCENTRY" --store "$DOCCORPUS"
+reason "REFUSE_DUPLICATE" "the corpus comparison refuses as a duplicate, i.e. it examined and decided"
+verdict 0 "duplicate: an unrelated document against the same corpus is CLEAN (0) — the corpus discriminates both ways" \
+  "$VE" duplicate --entry "Deployment cadence is measured per regional cluster and the rollout window closes automatically.
+Telemetry sampling stays at one in one hundred spans for every environment." --store "$DOCCORPUS"
+
+# NO FALSE REFUSAL on the legitimate shapes. Each of these satisfies the guard's arithmetic
+# conditions (every store line smaller than the entry, ceiling under the threshold) and must still
+# pass, because a store of WHOLE entries that merely differ in length is a store where "no
+# near-identical entry exists" is a correct and complete verdict. These are the measured cases that
+# forced condition (4) to be re-derived: an earlier shape-only version of this guard refused them.
+LINESTORE="$TMP/line-store.md"
+printf -- '- the token cache is refreshed on every request\n- workers run inside linked git worktrees\n- the plan reviewer gates the brief save\n' > "$LINESTORE"
+verdict 0 "no false refusal: a LONG single-line entry against a store of short whole entries is clean (0)" \
+  "$VE" duplicate --entry "Deployment cadence is measured per regional cluster while the rollout window closes automatically and telemetry sampling stays at one in one hundred spans across every environment including the ephemeral preview stacks that the release pipeline creates on demand" \
+  --store "$LINESTORE"
+verdict 0 "no false refusal: a SHORT entry against a store of longer whole entries is clean (0)" \
+  "$VE" duplicate --entry "sampling stays at one in one hundred spans" --store "$DOCCORPUS"
+verdict 0 "no false refusal: a MULTI-LINE entry unrelated to a store of short whole entries is clean (0)" \
+  "$VE" duplicate --entry "Deployment cadence is measured per regional cluster.
+The rollout window closes automatically once telemetry sampling settles." --store "$LINESTORE"
+
+# THE GUARD'S STATED GAP, pinned so it cannot rot into an unstated one. Condition (4) requires
+# positive evidence — the entry must reach the threshold against the store taken as a whole — so a
+# document-vs-fragments comparison whose entry is genuinely NEW is still reported clean. That is
+# under-coverage by choice: inferring the shape from line lengths alone is what produced a false
+# refusal against a real store. If this ever starts returning 2, the guard has been widened and the
+# false-refusal risk needs re-measuring, not celebrating.
+verdict 0 "STATED GAP: a document-vs-fragments comparison with a genuinely NEW entry is still reported clean (0)" \
+  "$VE" duplicate --entry "Deployment cadence is measured per regional cluster.
+The rollout window closes automatically once telemetry sampling settles." --store "$DOCSTORE"
+
+# ENTRY/STORE SYMMETRY. _ve_store_lines skips whole-line HTML comments on the store side, so the
+# entry side drops them too — otherwise a writer's own machine stamp (written_at / head_sha) counts
+# as entry-only tokens and depresses every score. Measured on add-orientation.sh's composed memo:
+# the header alone pulled a byte-identical repost from 100% down to 70%, i.e. under the threshold,
+# which is a duplicate laundered by metadata. Both halves are asserted: the stamped entry is still
+# refused, and an entry that is ONLY a comment does not become an unexaminable one.
+SYMSTORE="$TMP/sym-corpus.md"
+printf 'the retry helper backs off exponentially and gives up after five attempts\n' > "$SYMSTORE"
+verdict 1 "symmetry: an entry carrying a written_at/head_sha header line is still refused as a duplicate" \
+  "$VE" duplicate --entry "<!-- written_at: 2026-08-11T00:00:00Z | head_sha: abc1234 | areas: loomwright/scripts -->
+the retry helper backs off exponentially and gives up after five attempts" --store "$SYMSTORE"
+verdict 0 "symmetry: an entry that is ONLY an HTML comment falls back to the raw text, never a manufactured 2" \
+  "$VE" duplicate --entry "<!-- just a comment about caching and nothing else -->" --store "$SYMSTORE"
+
 echo "== 4. provenance =="
 verdict 1 "an entry citing nothing that motivated it is REFUSED" \
   "$VE" provenance --entry "the cache is refreshed eagerly"
@@ -788,6 +870,43 @@ if mutated_differs mut-allcaps.sh "all-caps repo half suppressor"; then
     --entry "octocat/Hello-World has the bug" --root "$INDEX_LESS" >/dev/null 2>&1
   [ $? -eq 1 ] && ok "narrowing (iii): the same mutant still refuses 'octocat/Hello-World' — a lowercase-bearing half was never suppressed" \
     || no "narrowing (iii): the all-caps mutant changed the CamelCase verdict too"
+fi
+
+# (v) THE SHAPE GUARD: strip EVERY call site => section 3b's could-not-examine verdicts go back to
+# reporting "examined and clean", which is the exact fail-open the guard was added to close.
+#
+# BOTH call sites are INDENTED, inside their functions. A mutation that only rewrote column-0
+# occurrences would leave them untouched, the mutant would behave like the original, and this
+# control would "prove" the guard is real while having changed nothing — that self-healing mutant
+# has already happened on this branch, which is why the counts below are asserted rather than the
+# sed being trusted.
+GUARD_SITES="$(grep -c 'if _ve_shape_incommensurable' "$VE" 2>/dev/null || true)"; [ -n "$GUARD_SITES" ] || GUARD_SITES=0
+if [ "$GUARD_SITES" -ne 2 ]; then
+  no "the shape guard has $GUARD_SITES call site(s), expected 2 (duplicate + contradiction) — the mutant below cannot be aimed at all of them"
+else
+  sed -e 's/if _ve_shape_incommensurable [^;]*;/if false;/' "$VE" > "$TMP/mut-shape.sh"
+  GUARD_LEFT="$(grep -c 'if _ve_shape_incommensurable' "$TMP/mut-shape.sh" 2>/dev/null || true)"; [ -n "$GUARD_LEFT" ] || GUARD_LEFT=0
+  if [ "$GUARD_LEFT" -ne 0 ]; then
+    no "the shape mutant still has $GUARD_LEFT live call site(s) — a partially-stripped mutant proves nothing (this is the column-0 trap)"
+  elif mutated_differs mut-shape.sh "shape-guard strip"; then
+    ok "(v) the mutation is NON-VACUOUS: 2 call sites in the real validator, 0 in the mutant"
+    bash "$TMP/mut-shape.sh" duplicate --entry "$DOCENTRY" --store "$DOCSTORE" >/dev/null 2>&1; g1=$?
+    bash "$TMP/mut-shape.sh" contradiction --entry "$DOCENTRY" --store "$DOCSTORE" >/dev/null 2>&1; g2=$?
+    if [ "$g1" -eq 0 ] && [ "$g2" -eq 0 ]; then
+      ok "(v) CONFIRMED: without the guard, a document compared against its own lines is reported CLEAN (0) by both checks — section 3b's 2s are the guard's doing, not a threshold accident"
+    else
+      no "(v) the guard-less mutant still refused the inert shape (duplicate rc=$g1, contradiction rc=$g2) — section 3b may be passing for some other reason"
+    fi
+    # The same mutant must leave every LEGITIMATE verdict alone: if stripping the guard also changed
+    # those, the control would be measuring the guard's blast radius rather than the guard.
+    bash "$TMP/mut-shape.sh" duplicate --entry "$DOCENTRY" --store "$DOCCORPUS" >/dev/null 2>&1; g3=$?
+    bash "$TMP/mut-shape.sh" duplicate --entry "sampling stays at one in one hundred spans" --store "$DOCCORPUS" >/dev/null 2>&1; g4=$?
+    if [ "$g3" -eq 1 ] && [ "$g4" -eq 0 ]; then
+      ok "(v) the same mutant leaves the corpus verdicts UNCHANGED (duplicate still 1, clean still 0) — the guard only ever converts a would-be 0 into a 2"
+    else
+      no "(v) stripping the guard also moved the corpus verdicts (dup rc=$g3 want 1, clean rc=$g4 want 0) — the guard is interfering with real comparisons"
+    fi
+  fi
 fi
 
 echo "== 11b. AC16 CORPUS REGRESSION: every live curated entry replays with ZERO refusals =="

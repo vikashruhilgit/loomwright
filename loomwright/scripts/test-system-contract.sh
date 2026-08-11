@@ -84,7 +84,12 @@ echo "== 5. write-time eviction (contract-file cap honored) =="
 # chain breaks at the first evict and EVERY add after it is distrusted (the cap-crossing-drops-all
 # bug). Writing 7 at cap 3 means adds 4..7 all follow broken evict links in the buggy version.
 EVDIR="$(mktemp -d)"; ( cd "$EVDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
-( cd "$EVDIR" && for i in 1 2 3 4 5 6 7; do printf 'contract %s\n' "$i" | SYSTEM_TWIN_MAX_CONTRACTS=3 bash "$WRITE" --subsystem "sub$i" --source "session:fixture-0001" >/dev/null 2>&1; done )
+# Each body must be DISTINCT: --store is now the contracts corpus (one line per stored contract,
+# this subsystem's own excluded), so seven contracts reading 'contract <n>' would be seven copies of
+# the single significant token 'contract' and every write after the first would be refused as a
+# duplicate — the cap would never be crossed and this section would assert nothing. The bodies below
+# share no significant tokens, so this stays a test of eviction.
+( cd "$EVDIR" && for i in 1 2 3 4 5 6 7; do printf 'subsystem alpha%s bravo%s charlie%s delta%s echo%s\n' "$i" "$i" "$i" "$i" "$i" | SYSTEM_TWIN_MAX_CONTRACTS=3 bash "$WRITE" --subsystem "sub$i" --source "session:fixture-0001" >/dev/null 2>&1; done )
 cnt="$(find "$EVDIR/.supervisor/twin/contracts" -maxdepth 1 -type f -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
 if [ "${cnt:-0}" -eq 3 ]; then ok "capped at 3 contracts (wrote 7, evicted 4)"; else no "cap not enforced (have $cnt, want 3)"; fi
 grep -q '"action":"evict"' "$EVDIR/.supervisor/twin/.provenance.jsonl" 2>/dev/null && ok "eviction recorded in provenance" || no "eviction not recorded"
@@ -150,12 +155,18 @@ ve_repo() {
 # The contract BODY is the validated entry and arrives on stdin, which is this writer's documented
 # shape. An EMPTY validator-override leaves $WRITE_SYSTEM_CONTRACT_VALIDATOR empty, which is what
 # makes the writer fall back to its own resolution — the real path, not a test-only one.
+# $VE_SUBSYS is the subsystem the contract is written under — a global rather than another
+# positional, so a case can vary ONE thing and leave everything else in place. It matters now that
+# --store is the contracts corpus with THIS subsystem's own contract excluded: a seed and an attempt
+# sharing a subsystem is an UPDATE (nothing to compare against), and a repost under a SECOND
+# subsystem is the duplicate. Different operations, and the suite has to say which it means.
+VE_SUBSYS="ve"
 ve_write() {
   local repo="$1" txt="$2" src="$3" val="${4:-}" prog="${5:-$WRITE}"
   ( cd "$repo" \
       && if [ -n "$VE_ALLOW" ]; then export LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$VE_ALLOW"; fi \
       && printf '%s\n' "$txt" \
-         | WRITE_SYSTEM_CONTRACT_VALIDATOR="$val" bash "$prog" --subsystem ve --source "$src" \
+         | WRITE_SYSTEM_CONTRACT_VALIDATOR="$val" bash "$prog" --subsystem "$VE_SUBSYS" --source "$src" \
   ) >/dev/null 2>"$VE_ERR"
   VE_RC=$?
 }
@@ -187,18 +198,78 @@ VE_OURS="vikashruhilgit/loomwright"
 
 # The cross-repo allowlist is supplied through this test's OWN environment; the live
 # .supervisor/config.json is never touched and no foreign slug is ever added to it (R0/R8).
-ve_case() { # <label> <text> <source> <want-token> [allowlist]
-  local label="$1" txt="$2" src="$3" tok="$4" allow="${5:-}"
+ve_case() { # <label> <text> <source> <want-token> [allowlist] [attempt-subsystem]
+  local label="$1" txt="$2" src="$3" tok="$4" allow="${5:-}" sub2="${6:-ve}"
   local r st; r="$(ve_repo)"; st="$r/$VESTORE"
   ve_write "$r" "$VE_BASE" "$VE_SRC"
   if [ ! -f "$st" ]; then no "$label — SEED FAILED (no contract artifact; the fixture asserts nothing)"; return; fi
   cp "$st" "$VETMP/before"
-  VE_ALLOW="$allow"; ve_write "$r" "$txt" "$src"; VE_ALLOW=""
+  VE_ALLOW="$allow"; VE_SUBSYS="$sub2"; ve_write "$r" "$txt" "$src"; VE_SUBSYS="ve"; VE_ALLOW=""
   ve_refused "AC1 $label:" 1 "$tok" "$st" "$VETMP/before"
+  if [ "$sub2" != "ve" ]; then
+    if [ ! -e "$r/.supervisor/twin/contracts/$sub2.md" ]; then ok "AC1 $label: (iv) the refused contract was not created at $sub2.md"
+    else no "AC1 $label: (iv) the refusal still wrote $sub2.md"; fi
+  fi
 }
 
-ve_case "duplicate"      "$VE_DUP"   "$VE_SRC"   "REFUSE_DUPLICATE"
-ve_case "contradiction"  "$VE_CON"   "$VE_SRC"   "REFUSE_CONTRADICTION"
+ve_case "duplicate"      "$VE_DUP"   "$VE_SRC"   "REFUSE_DUPLICATE"     ""  "ve2"
+ve_case "contradiction"  "$VE_CON"   "$VE_SRC"   "REFUSE_CONTRADICTION" ""  "ve2"
+# --- AC1: the two controls this writer shipped without ----------------------------------------
+# (a) A BYTE-IDENTICAL body reposted under a SECOND subsystem must REFUSE. This is the case the old
+#     call site could not see: --store was "$CONTRACT", the file this write targets, so for a new
+#     subsystem it pointed at an absent file and the comparison was vacuous. It is also the case the
+#     writer's own content_hash short-circuit does NOT cover — that guard is per-subsystem, so under
+#     a second subsystem it does not fire and only the validator can refuse. Asserted on rc=1 +
+#     REFUSE_DUPLICATE precisely so the short-circuit cannot be mistaken for the check: the
+#     short-circuit exits 0 and prints "unchanged ... skipping".
+VED="$(ve_repo)"
+ve_write "$VED" "$VE_BASE" "$VE_SRC"
+if [ -f "$VED/$VESTORE" ]; then
+  cp "$VED/$VESTORE" "$VETMP/before"
+  VE_SUBSYS="ve2"; ve_write "$VED" "$VE_BASE" "$VE_SRC"; VE_SUBSYS="ve"
+  if [ "$VE_RC" -eq 1 ] && grep -q REFUSE_DUPLICATE "$VE_ERR" 2>/dev/null \
+     && [ ! -e "$VED/.supervisor/twin/contracts/ve2.md" ] \
+     && cmp -s "$VED/$VESTORE" "$VETMP/before"; then
+    ok "AC1 duplicate (a): a byte-identical contract reposted under a SECOND subsystem is REFUSED by the VALIDATOR (exit 1, REFUSE_DUPLICATE) — not by the per-subsystem hash short-circuit, which exits 0"
+  else
+    no "AC1 duplicate (a): the identical repost under a second subsystem was NOT refused (exit $VE_RC) — --store is not comparing against the contracts store: $(tr '\n' ' ' < "$VE_ERR" | cut -c1-200)"
+  fi
+else
+  no "AC1 duplicate (a) — SEED FAILED"
+fi
+
+# (b) A genuinely DIFFERENT contract under a second subsystem must still WRITE. The half that keeps
+#     (a) honest: refusing everything would satisfy (a) and destroy the writer. A false refusal
+#     blocks a legitimate write, which is the worse failure of the two.
+VEN="$(ve_repo)"
+ve_write "$VEN" "$VE_BASE" "$VE_SRC"
+if [ -f "$VEN/$VESTORE" ]; then
+  VE_SUBSYS="ve2"; ve_write "$VEN" "$VE_CLEAN" "$VE_SRC"; VE_SUBSYS="ve"
+  if [ "$VE_RC" -eq 0 ] && [ -f "$VEN/.supervisor/twin/contracts/ve2.md" ]; then
+    ok "AC1 no-false-refusal: an unrelated contract under a SECOND subsystem is still WRITTEN (the corpus refuses duplicates, not siblings)"
+  else
+    no "AC1 no-false-refusal: an unrelated second-subsystem contract was REFUSED (exit $VE_RC) — the corpus is blocking legitimate per-subsystem writes: $(tr '\n' ' ' < "$VE_ERR" | cut -c1-200)"
+  fi
+else
+  no "AC1 no-false-refusal — SEED FAILED"
+fi
+
+# (c) An UPDATE of the same subsystem, with changed text, must still write: the corpus excludes this
+#     subsystem's own contract, which is what keeps a contract editable. Without the exclusion every
+#     re-generation of an evolving contract would be refused as its own duplicate.
+VEU="$(ve_repo)"
+ve_write "$VEU" "$VE_BASE" "$VE_SRC"
+if [ -f "$VEU/$VESTORE" ]; then
+  ve_write "$VEU" "$VE_BASE and one further clause about regional failover" "$VE_SRC"
+  if [ "$VE_RC" -eq 0 ] && grep -qF "regional failover" "$VEU/$VESTORE" 2>/dev/null; then
+    ok "AC1 update: re-writing the SAME subsystem with near-identical text is an UPDATE, not a duplicate (the corpus excludes this subsystem's own contract)"
+  else
+    no "AC1 update: updating a contract in place was refused (exit $VE_RC) — the corpus self-exclusion is broken and no contract can be revised"
+  fi
+else
+  no "AC1 update — SEED FAILED"
+fi
+
 ve_case "provenance"     "$VE_PROV"  "dreaming"  "REFUSE_PROVENANCE"
 ve_case "dead-reference" "$VE_DEAD"  "$VE_SRC"   "REFUSE_DEAD_REFERENCE"
 ve_case "cross-repo"     "$VE_XREPO" "$VE_SRC"   "REFUSE_CROSS_REPO" "$VE_OURS"
@@ -265,6 +336,37 @@ if ve_mutant_ok "$VETMP/mut-call.sh" "AC1 call-site mutant"; then
     ok "AC1 mutation control: deleting the VALIDATOR CALL lets the contradiction seed through (exit 0, store rewritten) — the fixtures above are RED because of the call site, not the source line"
   else
     no "AC1 mutation control: the call-site mutant STILL refused (exit $VE_RC) — the AC1 fixtures may be passing for some other reason"
+  fi
+fi
+
+# (a2) THE CORPUS CONTROL: point --store back at "$CONTRACT" — the pre-fix call site — and the
+# identical-repost assertion above must go RED. The rewrite is asserted by COUNT on both sides,
+# because a mutation that missed a call site would leave the mutant behaving like the writer and the
+# control would look green while proving nothing (the column-0 self-healing mutant this branch has
+# already hit once). This is also what separates the validator from this writer's own content_hash
+# short-circuit: the short-circuit is per-subsystem, so under a SECOND subsystem it never fires and
+# the mutant writes the identical body straight through.
+n_corp_orig="$(grep -cF -- '--store "$corpus_tmp"' "$WRITE" 2>/dev/null || true)"; [ -n "$n_corp_orig" ] || n_corp_orig=0
+sed -e 's/--store "\$corpus_tmp"/--store "$CONTRACT"/g' "$WRITE" > "$VETMP/mut-store.sh"
+n_corp_mut="$(grep -cF -- '--store "$corpus_tmp"' "$VETMP/mut-store.sh" 2>/dev/null || true)"; [ -n "$n_corp_mut" ] || n_corp_mut=0
+n_ctr_mut="$(grep -cF -- '--store "$CONTRACT"' "$VETMP/mut-store.sh" 2>/dev/null || true)"; [ -n "$n_ctr_mut" ] || n_ctr_mut=0
+if [ "$n_corp_orig" -ge 1 ] && [ "$n_corp_mut" -eq 0 ] && [ "$n_ctr_mut" -ge 1 ]; then
+  ok "AC1 corpus control: the mutation is NON-VACUOUS ($n_corp_orig corpus call site(s) in the writer, 0 in the mutant, $n_ctr_mut pointing at the target contract)"
+else
+  no "AC1 corpus control: the mutation did not take (corpus $n_corp_orig → $n_corp_mut, contract $n_ctr_mut) — the control below would prove nothing"
+fi
+if ve_mutant_ok "$VETMP/mut-store.sh" "AC1 corpus mutant"; then
+  rM="$(ve_repo)"
+  ve_write "$rM" "$VE_BASE" "$VE_SRC" "$VEFILE" "$VETMP/mut-store.sh"
+  if [ "$VE_RC" -eq 0 ]; then
+    VE_SUBSYS="ve2"; ve_write "$rM" "$VE_BASE" "$VE_SRC" "$VEFILE" "$VETMP/mut-store.sh"; VE_SUBSYS="ve"
+    if [ "$VE_RC" -eq 0 ] && [ -f "$rM/.supervisor/twin/contracts/ve2.md" ]; then
+      ok "AC1 corpus control CONFIRMED: with --store back on the target contract file, the byte-identical repost under a second subsystem IS written — the duplicate assertions above pin the corpus, and the hash short-circuit does not cover this case"
+    else
+      no "AC1 corpus control: the mutant also refused the repost (exit $VE_RC) — the duplicate assertions may be passing for some other reason"
+    fi
+  else
+    no "AC1 corpus control: the mutant refused the SEED (exit $VE_RC) — the control never reached the case under test"
   fi
 fi
 

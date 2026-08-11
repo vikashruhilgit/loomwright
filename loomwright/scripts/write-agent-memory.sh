@@ -54,10 +54,15 @@
 # written. A refusal is already this design's documented failure mode, so a broken helper degrades
 # into sanctioned behaviour rather than into a crash or an unvalidated append.
 #
-# WHAT THE VALIDATOR IS COMPARED AGAINST — the corpus, NOT the index. This writer is the only one
-# of the six whose store is a DIRECTORY of entry files rather than one file whose lines are entries.
-# The other five hand `--store` the file that holds full entry text, so their comparison is
-# apples-to-apples. Handing this writer's MEMORY.md over is not: an index line is
+# WHAT THE VALIDATOR IS COMPARED AGAINST — the corpus, NOT the index. This writer's store is a
+# DIRECTORY of entry files rather than one file whose lines are entries. (This comment used to say
+# it was the only one of the six, and that "the other five hand --store the file that holds full
+# entry text, so their comparison is apples-to-apples". BOTH halves were false: add-orientation.sh
+# stores a directory of memo documents and write-system-contract.sh a directory of per-subsystem
+# artifacts, and each handed --store the single DOCUMENT it was about to write — the same shape
+# defect described below, measured at 26% and 17% for a document compared against ITSELF. Both now
+# build their own corpus the same way, and validate-entry.sh refuses the shape outright rather than
+# reporting it clean.) Handing this writer's MEMORY.md over is not apples-to-apples: an index line is
 # `- [title](slug.md) — description` with the description TRUNCATED to 200 chars, while --entry is
 # the full summary+body up to the 4000-char cap. validate_duplicate / validate_contradiction score
 # overlap as shared / max(|new|, |stored|), so once an entry has real body content the denominator
@@ -68,8 +73,8 @@
 # So build_compare_corpus() below re-derives a corpus from the store's own entry files, ONE LINE
 # PER ENTRY (its `description:` plus its body, flattened), and THAT is what --store points at. One
 # line per entry is the shape the validator's `_ve_store_lines` reader expects and the shape the
-# other five stores already have — the fix is to give this store the same shape, not to loosen a
-# threshold. The corpus is built under the $work sandbox (never inside the store), so a refusal
+# three line-per-entry stores (lessons, project memory, rules) already have — the fix is to give
+# this store the same shape, not to loosen a threshold. The corpus is built under the $work sandbox (never inside the store), so a refusal
 # still leaves the store byte-identical and the EXIT trap removes it on every path.
 #
 # WORKTREE GUARD (red-team F1, from birth). Refuses to write when the RESOLVED repo root is a

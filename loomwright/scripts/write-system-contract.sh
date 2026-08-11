@@ -172,9 +172,30 @@ mkdir -p "$CONTRACT_DIR" 2>/dev/null || { echo "write-system-contract: cannot cr
 [ -f "$PROV" ] || : > "$PROV"
 
 # ---------------------------------------------------------------------------
-# THE VALIDATOR CALL SITE (see write-lessons.sh's for the shared rationale). --store is the
-# contract file this write targets: on a first write it is absent, which the validator reports as
-# a clean "no prior entries" verdict, NOT as could-not-examine.
+# THE VALIDATOR CALL SITE (see write-lessons.sh's for the shared rationale).
+#
+# WHAT --store POINTS AT, and why it is no longer the contract file this write targets. It used to
+# be `--store "$CONTRACT"`, and that is the same defect write-agent-memory.sh fixed: a contract
+# artifact is a DOCUMENT, so the validator was handed one document split into lines while --entry
+# was a whole document. Both comparison checks score shared/max(|entry|,|line|), so every line's
+# ceiling sat far under the 90/60 thresholds and the checks could only ever return "examined and
+# clean". MEASURED on a live artifact: a contract compared against ITSELF scores 17%. The
+# byte-identical repost that looked caught was caught by the content_hash short-circuit above, not
+# by the validator — a green result there was never evidence the validator worked.
+#
+# So --store is the CONTRACTS CORPUS: one flattened line per stored contract, one per subsystem,
+# with THIS subsystem's own contract excluded (an update re-posts most of its own text — the same
+# self-exclusion, for the same reason, as build_compare_corpus() in write-agent-memory.sh).
+#
+# A CORPUS IS THE RIGHT CALL FOR THIS STORE, and it was checked rather than assumed. The worry is
+# that per-subsystem artifacts might legitimately resemble each other, so a corpus would refuse
+# honest writes. MEASURED over all 21 live contracts, pairwise: the highest same-polarity overlap is
+# 56% (commands/setup.md vs skills/setup/SKILL.md — genuinely the same subsystem documented twice),
+# well under the 90% duplicate threshold, and the highest OPPOSITE-polarity overlap is 0%, so the
+# 60% contradiction threshold is unreachable across subsystems. There is real margin here, but it is
+# a measurement of today's store, not a proof: if a future subsystem's contract is a near-copy of a
+# sibling's, this writer will refuse it and name the sibling, and that refusal is the honest outcome
+# to reconsider — NOT something to fix by handing --store a file that cannot discriminate.
 # ---------------------------------------------------------------------------
 _ve_load_validator
 
@@ -184,7 +205,10 @@ ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
 # rename — a tmpfs /tmp (Linux/CI) would otherwise make `mv` a non-atomic cross-device copy+unlink,
 # risking a truncated .provenance.jsonl on interruption.
 c_tmp="$(mktemp "$CONTRACT_DIR/.ctmp.XXXXXX")"; prov_tmp="$(mktemp "$TWIN_DIR/.ptmp.XXXXXX")"
-trap 'rm -f "$c_tmp" "$prov_tmp" 2>/dev/null' EXIT
+# The comparison corpus is staged in $TWIN_DIR, never in $CONTRACT_DIR: a file there would be
+# counted by the eviction cap's `find ... -name '*.md'` and offered to `ls -1tr` as a victim.
+corpus_tmp=""
+trap 'rm -f "$c_tmp" "$prov_tmp" "$corpus_tmp" 2>/dev/null' EXIT
 
 # Materialize the exact bytes that will land on disk, THEN hash them. Hashing the file (not the
 # in-memory $BODY) keeps the writer's content_hash byte-identical to what the reader recomputes
@@ -210,16 +234,66 @@ fi
 # retry, a replayed queue item) started failing. The validator examines entries about to be
 # WRITTEN; an entry that will not be written has nothing to validate. Moving this block back above
 # the dedup guard reintroduces the regression — pinned by test.
+# contract_compare_line <file> — a stored contract as ONE comparable line (the whole artifact
+# flattened). Mirrors entry_compare_line() in write-agent-memory.sh; contracts carry no frontmatter,
+# so there is nothing to select — only the flattening, and the leading `#`/`>`/`-` strip that keeps
+# a body starting with a markdown heading from contributing NO line at all (the validator's store
+# reader skips heading lines, so a corpus line must not start with one).
+contract_compare_line() {
+  awk '
+    { b = b " " $0 }
+    END {
+      gsub(/[\r\t]/, " ", b); gsub(/  +/, " ", b)
+      sub(/^[ ]+/, "", b); sub(/[ ]+$/, "", b); sub(/^[#>-]+[ ]*/, "", b)
+      if (b ~ /[^ ]/) print b
+    }
+  ' "$1"
+}
+
+# build_compare_corpus <contracts-dir> <out-file> <self-path> — one line per stored contract, with
+# this subsystem's own contract excluded. Return codes are write-agent-memory.sh's could-not-examine
+# discipline: 0 usable (possibly empty) · 2 could not stage · 3 dir unlistable · 4 a contract exists
+# but cannot be read (a hole in the corpus is never reported as clean).
+build_compare_corpus() {
+  local dir="$1" out="$2" self="${3:-}" f
+  : > "$out" || return 2
+  [ -d "$dir" ] || return 0
+  [ -r "$dir" ] && [ -x "$dir" ] || return 3
+  for f in "$dir"/*.md; do
+    [ -f "$f" ] || continue                     # unmatched glob stays literal under bash 3.2
+    [ -n "$self" ] && [ "$f" = "$self" ] && continue
+    [ -r "$f" ] || { CORPUS_BAD_PATH="$f"; return 4; }
+    contract_compare_line "$f" >> "$out" || return 2
+  done
+  return 0
+}
+
+corpus_tmp="$(mktemp "$TWIN_DIR/.corpus.XXXXXX")" || {
+  echo "write-system-contract: refusing to write — the comparison corpus could not be staged in $TWIN_DIR, so this contract could not be compared against the store; refusing rather than reporting it clean. Nothing was written." >&2; exit 2; }
+CORPUS_BAD_PATH=""
+build_compare_corpus "$CONTRACT_DIR" "$corpus_tmp" "$CONTRACT"
+corpus_rc=$?
+case "$corpus_rc" in
+  0) : ;;
+  3) echo "write-system-contract: refusing to write — the contracts dir '$CONTRACT_DIR' exists but could not be listed, so the contracts this write would be compared against could not be examined; refusing rather than reporting it clean. Nothing was written." >&2; exit 2 ;;
+  4) echo "write-system-contract: refusing to write — the stored contract '$CORPUS_BAD_PATH' exists but could not be read, so it could not be compared against — a hole in the corpus would make a duplicate or contradiction verdict of 'clean' meaningless. Nothing was written." >&2; exit 2 ;;
+  *) echo "write-system-contract: refusing to write — the comparison corpus derived from '$CONTRACT_DIR' could not be staged (status $corpus_rc). Nothing was written." >&2; exit 2 ;;
+esac
+
 # ---- VALIDATOR CALL BEGIN ---------------------------------------------------
 case "$-" in *e*) _ve_had_e=1 ;; *) _ve_had_e=0 ;; esac
 set +e
-validate_entry_all --entry "$BODY" --store "$CONTRACT" \
+validate_entry_all --entry "$BODY" --store "$corpus_tmp" \
   --source "$SOURCE" --root "$GITROOT"
 _ve_rc=$?
 if [ "$_ve_had_e" -eq 1 ]; then set -e; fi
 case "$_ve_rc" in
   0) : ;;
-  1) echo "write-system-contract: refusing to write — the contract was examined and violates a write-time check (see the reason above). Nothing was written." >&2; exit 1 ;;
+  1) echo "write-system-contract: refusing to write — the contract was examined and violates a write-time check (see the reason above). Nothing was written." >&2
+     # A duplicate/contradiction reason quotes the store it compared against, and that is a temp
+     # corpus path. Naming the real dir keeps the message actionable.
+     echo "write-system-contract: (the store quoted above is the contracts corpus derived from $CONTRACT_DIR — one line per stored contract, this subsystem's own excluded.)" >&2
+     exit 1 ;;
   *) echo "write-system-contract: refusing to write — the contract COULD NOT BE EXAMINED (see the reason above); refusing rather than reporting it clean. Nothing was written." >&2; exit 2 ;;
 esac
 # ---- VALIDATOR CALL END -----------------------------------------------------
