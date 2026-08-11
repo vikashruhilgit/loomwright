@@ -218,6 +218,32 @@ verdict 0 "AC17: a commit sha as --source PASSES" \
 verdict 0 "AC17: a bare command-name source still passes when the ENTRY itself cites the finding" \
   "$VE" provenance --entry "the cache is refreshed eagerly, see #138" --source "dreaming"
 
+# ONE STANDARD ON BOTH HALVES. The text-scan fallback used to accept the bare WORDS `session`,
+# `finding`, `postmortem`, `review` ... anywhere in the entry — a topic, not a citation — which made
+# AC17's strict --source rule bypassable: `--source dreaming` was rejected and then fell through to a
+# scan that passed on any entry containing "review". Both halves now require a real reference.
+verdict 1 "the bare word 'review' is a topic, not a citation, and does NOT satisfy provenance" \
+  "$VE" provenance --entry "the code reviewer is advisory and never blocks a merge"
+verdict 1 "the bare word 'session' does NOT satisfy provenance either" \
+  "$VE" provenance --entry "state is rebuilt at session start from the ledger"
+verdict 1 "AC17 back door closed: --source dreaming + a bare keyword in the text is still REFUSED" \
+  "$VE" provenance --entry "the code reviewer is advisory" --source "dreaming"
+reason "REFUSE_PROVENANCE" "the bare-keyword refusal names the provenance check"
+# ... and the tightening did not blind the check: a keyword WITH its id still passes, by the id.
+verdict 0 "a keyword carrying its id still passes — 'session #42'" \
+  "$VE" provenance --entry "reproduced in session #42 on the same branch"
+verdict 0 "a commit sha in the entry text still passes" \
+  "$VE" provenance --entry "the guard landed in c6bfda6 last week"
+verdict 0 "a URL in the entry text still passes" \
+  "$VE" provenance --entry "context in https://example.com/x/y"
+# Static half: the pattern must not carry the bare-keyword alternation back. A behavioural assertion
+# alone would go green again the moment someone re-added a keyword this suite does not happen to test.
+if grep -nE '^_VE_PROVENANCE_RE=.*(\[Ss\]ession|\[Ff\]inding|\[Rr\]eview)' "$VE" >/dev/null 2>&1; then
+  no "_VE_PROVENANCE_RE carries a bare-keyword alternation again — the text scan accepts a topic as a citation"
+else
+  ok "_VE_PROVENANCE_RE carries no bare-keyword alternation — it matches references only"
+fi
+
 echo "== 5. dead reference =="
 verdict 0 "an entry citing a path that still resolves passes" \
   "$VE" dead-reference --entry "the sole writer is loomwright/scripts/write-lessons.sh" --root "$REPO_ROOT"
@@ -347,6 +373,55 @@ verdict 1 "a foreign 'owner/repo.git' clone target is still REFUSED (structural 
   "$VE" cross-repo --entry "cloned $FOREIGN.git yesterday"
 verdict 0 "AC16: the OWNER half must be a legal GitHub login — an underscore owner is never a slug" \
   "$VE" cross-repo --entry "the payloads live in worker_result/code_review_result"
+
+echo "== 6c. IN-REPO DIRECTORY PATHS are not owner/repo slugs =="
+# The second false-positive class, found by review after the marker fix shipped. An extensionless
+# two-segment path is character-for-character a slug, and each of these six tripped a marker: a
+# hyphen or digit in the owner half, a digit anywhere, CamelCase, or a neighbouring `in`/`from`.
+# Asserted individually, never as one blob, so a regression names WHICH shape came back.
+# --root is passed because the IN-REPO PATH VETO reads this repo's tree; the six sole writers all
+# pass one (`--root "$GITROOT"`).
+for shape in "the worktrees/subtask-1 checkout diverged from main" \
+             "phase-2/plan was superseded by the new brief" \
+             "the docs/Spikes folder holds frozen records" \
+             "review-heal/SKILL is the authority here" \
+             "the guard is in agents/code-reviewer today" \
+             "copied from scripts/gates last week"; do
+  verdict 0 "in-repo path passes — \"$shape\"" "$VE" cross-repo --entry "$shape" --root "$REPO_ROOT"
+done
+# The two shapes that were ALREADY green. Pinned so a future narrowing cannot "fix" the six above by
+# breaking what worked: a three-segment path, and a trailing-slash directory.
+verdict 0 "control: an extensioned three-segment path still passes" \
+  "$VE" cross-repo --entry "see loomwright/agents/product-owner.md for it" --root "$REPO_ROOT"
+verdict 0 "control: a trailing-slash directory still passes" \
+  "$VE" cross-repo --entry "the docs/ folder is frozen" --root "$REPO_ROOT"
+# ... and the narrowings did NOT blind the recogniser: every foreign form still refuses WITH the same
+# --root in hand, so the veto is not a blanket pass on any repo that happens to have directories.
+verdict 1 "the in-repo veto did not blind the recogniser: a cued foreign slug still REFUSES with --root" \
+  "$VE" cross-repo --entry "the same defect landed in $FOREIGN last week" --root "$REPO_ROOT"
+verdict 1 "the in-repo veto did not blind the recogniser: a structured foreign slug still REFUSES with --root" \
+  "$VE" cross-repo --entry "acme-corp/widget-svc has the same bug" --root "$REPO_ROOT"
+verdict 1 "narrowing (ii) is ORDINALS ONLY: 'octocat/repo2' (digits fused to letters) is still REFUSED" \
+  "$VE" cross-repo --entry "octocat/repo2 has the bug" --root "$REPO_ROOT"
+# The veto is DELIBERATELY not applied to the structural markers: an explicit repository citation
+# outranks any local directory naming. `docs` IS a directory in this tree, so this is the real test.
+verdict 1 "the veto does not suppress a STRUCTURAL marker — 'github.com/docs/spikes' is still REFUSED" \
+  "$VE" cross-repo --entry "cloned from https://github.com/docs/spikes last week" --root "$REPO_ROOT"
+
+# Narrowings (ii) and (iii) are index-INDEPENDENT and must hold with no repo to read; narrowing (i)
+# is not, and the header says so. INDEX_LESS is a real directory holding one file and none of the
+# directory names these tokens use, so the veto provably cannot fire inside it.
+INDEX_LESS="$TMP/index-less"
+mkdir -p "$INDEX_LESS/lib"; : > "$INDEX_LESS/lib/a.txt"
+verdict 0 "narrowing (ii) holds with NO in-repo index: 'worktrees/subtask-1' passes on an unrelated root" \
+  "$VE" cross-repo --entry "the worktrees/subtask-1 checkout diverged" --root "$INDEX_LESS"
+verdict 0 "narrowing (iii) holds with NO in-repo index: 'review-heal/SKILL' passes on an unrelated root" \
+  "$VE" cross-repo --entry "review-heal/SKILL is the authority here" --root "$INDEX_LESS"
+# THE STATED BOUND, pinned rather than left to be rediscovered: narrowing (i) needs a usable tree, so
+# on a root that holds no `docs` directory the CamelCase form is refused again. That is the documented
+# residual of this fix, not an accident — the header's "WHAT THIS DOES NOT COVER" paragraph.
+verdict 1 "STATED BOUND: 'docs/Spikes' IS refused on a root with no docs directory — the veto reads the world, and there is none here" \
+  "$VE" cross-repo --entry "the docs/Spikes folder holds frozen records" --root "$INDEX_LESS"
 
 echo "== 7. cross-repo blind spot (AC4) — stated, not hidden =="
 verdict 0 "prose naming a repo in an unrecognised shape passes UNDETECTED ('the othersvc repository')" \
@@ -659,6 +734,62 @@ if mutated_differs mut-trail.sh "trailing cue marker"; then
     || no "marker (2): emptying the trailing list also broke the leading cue"
 fi
 
+# (xviii) IN-REPO PATH VETO, narrowing (i): make it never fire => the shapes that depend on reading
+# the tree are refused again, and the foreign slugs must STILL refuse (the mutation removed only the
+# veto). `review-heal/SKILL` is deliberately NOT asserted here: narrowing (iii) also covers it, so it
+# would stay green and prove nothing about this mutant.
+awk '/^_ve_owner_is_repo_dir\(\) \{$/{print; print "  return 1"; next} {print}' "$VE" > "$TMP/mut-veto.sh"
+if mutated_differs mut-veto.sh "in-repo path veto"; then
+  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-veto.sh" cross-repo \
+    --entry "the docs/Spikes folder holds frozen records" --root "$REPO_ROOT" >/dev/null 2>&1
+  r1=$?
+  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-veto.sh" cross-repo \
+    --entry "the guard is in agents/code-reviewer today" --root "$REPO_ROOT" >/dev/null 2>&1
+  r2=$?
+  { [ "$r1" -eq 1 ] && [ "$r2" -eq 1 ]; } \
+    && ok "narrowing (i): disabling the in-repo veto refuses 'docs/Spikes' and 'agents/code-reviewer' again — the veto is what passes them" \
+    || no "narrowing (i): the veto mutant did not discriminate (CamelCase rc=$r1, cue-word rc=$r2)"
+  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-veto.sh" cross-repo \
+    --entry "the same defect landed in $FOREIGN last week" --root "$REPO_ROOT" >/dev/null 2>&1
+  [ $? -eq 1 ] && ok "narrowing (i): the same mutant still refuses a foreign slug — it removed only the veto" \
+    || no "narrowing (i): the veto mutant stopped refusing foreign slugs — it changed more than the veto"
+fi
+
+# (xix) ORDINAL SUFFIX, narrowing (ii): make the strip a no-op => the `-<digits>` shapes read as
+# "carries a digit" again, while `octocat/repo2` must keep refusing on the same digit rule. Run
+# against INDEX_LESS so this control measures the strip and not the veto.
+awk '/^_ve_strip_ordinal\(\) \{$/{print; print "  printf \x27%s\x27 \"${1:-}\"; return 0"; next} {print}' \
+  "$VE" > "$TMP/mut-ordinal.sh"
+if mutated_differs mut-ordinal.sh "ordinal suffix strip"; then
+  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-ordinal.sh" cross-repo \
+    --entry "the worktrees/subtask-1 checkout diverged" --root "$INDEX_LESS" >/dev/null 2>&1
+  r1=$?
+  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-ordinal.sh" cross-repo \
+    --entry "phase-2/plan was superseded by the new brief" --root "$INDEX_LESS" >/dev/null 2>&1
+  r2=$?
+  { [ "$r1" -eq 1 ] && [ "$r2" -eq 1 ]; } \
+    && ok "narrowing (ii): a no-op ordinal strip refuses 'worktrees/subtask-1' and 'phase-2/plan' again — the strip is what passes them" \
+    || no "narrowing (ii): the ordinal mutant did not discriminate (subtask rc=$r1, phase rc=$r2)"
+  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-ordinal.sh" cross-repo \
+    --entry "octocat/repo2 has the bug" --root "$INDEX_LESS" >/dev/null 2>&1
+  [ $? -eq 1 ] && ok "narrowing (ii): the same mutant still refuses 'octocat/repo2' — fused digits were never an ordinal" \
+    || no "narrowing (ii): the ordinal mutant changed the fused-digit verdict too"
+fi
+
+# (xx) ALL-CAPS REPO HALF, narrowing (iii): delete the suppressor => `review-heal/SKILL` is refused
+# again on a root where the veto cannot rescue it.
+awk '{ if (index($0, "ALL-CAPS repo half: a file stem")) next; print }' "$VE" > "$TMP/mut-allcaps.sh"
+if mutated_differs mut-allcaps.sh "all-caps repo half suppressor"; then
+  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-allcaps.sh" cross-repo \
+    --entry "review-heal/SKILL is the authority here" --root "$INDEX_LESS" >/dev/null 2>&1
+  [ $? -eq 1 ] && ok "narrowing (iii): deleting the all-caps suppressor refuses 'review-heal/SKILL' again — the suppressor is what passes it" \
+    || no "narrowing (iii): the all-caps mutant did not change the verdict"
+  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-allcaps.sh" cross-repo \
+    --entry "octocat/Hello-World has the bug" --root "$INDEX_LESS" >/dev/null 2>&1
+  [ $? -eq 1 ] && ok "narrowing (iii): the same mutant still refuses 'octocat/Hello-World' — a lowercase-bearing half was never suppressed" \
+    || no "narrowing (iii): the all-caps mutant changed the CamelCase verdict too"
+fi
+
 echo "== 11b. AC16 CORPUS REGRESSION: every live curated entry replays with ZERO refusals =="
 # THE regression guard whose absence let a 57% false-refusal rate reach a working tree. The five
 # checks looked correct in isolation and were green on 87 hand-written fixtures; replayed against
@@ -713,6 +844,28 @@ if [ -r "$CORPUS_L" ] || [ -r "$CORPUS_P" ]; then
   fi
 else
   ok "AC16 SKIPPED: no live curated store at .supervisor/memory/ (gitignored, so absent on a fresh clone and in CI) — not asserted rather than asserted vacuously"
+fi
+
+# THE COMMITTED SHAPE CORPUS. The live replay above can only exercise shapes the live corpus happens
+# to contain, and it contains none of the extensionless two-segment path shapes — every path it cites
+# carries an extension or a trailing slash. So the live replay stayed GREEN through six false
+# refusals found by review. This file is that shape's permanent replay case: same harness, same five
+# checks, same zero-refusals property, but COMMITTED, so unlike the live stores it is present on a
+# fresh clone and in CI and can never SKIP. A fix without a replay case is not a fix.
+SHAPE_CORPUS="$HERE/fixtures/curated-shape-corpus.md"
+if [ -r "$SHAPE_CORPUS" ]; then
+  replay_corpus "$SHAPE_CORPUS"
+  # An exact floor, not just ">0": a silently truncated corpus is the vacuous form of this assertion,
+  # and it is committed so its size is a fact this suite may depend on.
+  if [ "$REPLAY_N" -lt 7 ]; then
+    no "the committed shape corpus yielded only $REPLAY_N entries (expected at least 7) — it was truncated or its line format drifted"
+  else
+    [ "$REPLAY_BAD" -eq 0 ] \
+      && ok "SHAPE CORPUS: all $REPLAY_N committed extensionless-path entries replay with ZERO refusals" \
+      || no "SHAPE CORPUS: $REPLAY_BAD of $REPLAY_N committed entries were REFUSED (false positives) — first: $REPLAY_FIRST"
+  fi
+else
+  no "the committed shape corpus is missing at $SHAPE_CORPUS — this regression case cannot run"
 fi
 
 # Vacuity control for the harness itself: the same replay path, over a SYNTHETIC corpus seeded with

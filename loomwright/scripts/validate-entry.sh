@@ -62,9 +62,37 @@
 #       (3) a KNOWN owner — the owner half appears in the resolved allowlist or in the postmortem
 #           ledger's `.repo` values, i.e. it is an owner this system has actually seen
 #       (4) slug-only structure — a hyphen/digit in the owner half, a digit anywhere, or CamelCase
-#           in either half (`acme-corp/widget-svc`, `octocat/Hello-World`)
+#           in either half (`acme-corp/widget-svc`, `octocat/Hello-World`), NARROWED by the two
+#           suppressors below because bare structure is also the shape of an in-repo directory path
 #   · a `NAME #123` citation whose NAME is identifier-shaped (ALL-CAPS, or carrying a hyphen,
 #     underscore or digit) and is not a generic citation word
+#
+# IN-REPO DIRECTORY PATHS ARE NOT SLUGS — the second false-positive class, found by review after the
+# first one shipped. An extensionless two-segment path (`docs/Spikes`, `agents/code-reviewer`,
+# `scripts/gates`, `review-heal/SKILL`, `worktrees/subtask-1`, `phase-2/plan`) is character-for-
+# character an `owner/repo` slug, and every one of those six tripped a marker: a hyphen in the owner
+# half, a digit anywhere, CamelCase, or a neighbouring `in`/`from`. The live corpus could not catch
+# it — every path IT cites carries an extension or a trailing slash — so the shape is now pinned by
+# its own committed replay corpus (`fixtures/curated-shape-corpus.md`). Three narrowings, each aimed
+# at the SIGNAL that misfired rather than at the token that misfired (a stoplist of paths would be
+# unbounded by construction, the same argument as for prose pairs):
+#   (i)   THE IN-REPO PATH VETO — a token whose OWNER half names a directory that exists anywhere in
+#         this repo's tree is a path, not a foreign owner, and is SKIPPED. It reads the world (the
+#         same `_ve_repo_index` the dead-reference check builds), not the shape, which is the only
+#         thing that can separate `docs/Spikes` from `octocat/Hello-World`. It vetoes the three SOFT
+#         markers (cue word, known owner, slug-only structure) and deliberately NOT the structural
+#         ones: `github.com/docs/spikes` and `docs/spikes#12` say "repository" explicitly.
+#   (ii)  ORDINAL SUFFIXES ARE NOT STRUCTURE — a trailing `-<digits>` (`subtask-1`, `phase-2`) is how
+#         prose NUMBERS things, so it is stripped before marker (4) looks for a digit. `octocat/repo2`
+#         (digits fused to letters) and `hashicorp/terraform-aws-v2` (`v2` is not all-digits) keep it.
+#   (iii) AN ALL-CAPS REPO HALF IS A FILE STEM, not a repository name (`review-heal/SKILL`,
+#         `docs/README`), so it does not earn marker (4) on its own.
+# (ii) and (iii) are index-INDEPENDENT and hold with no repo to read; (i) needs a usable root, which
+# every one of the six sole writers passes (`--root "$GITROOT"`). WHAT THIS DOES NOT COVER: an
+# in-repo directory path whose owner half is NOT itself a directory in the tree AND whose structure
+# survives (ii)+(iii) — e.g. `phase-2b/plan` or `feature-x/Notes` in a repo holding neither — is
+# still refused. The three narrowings only ever REMOVE recognition; none of them can make the check
+# refuse something it previously passed.
 # The marker requirement is the SAME discipline on both shapes, and the reason is identical in both
 # cases: the shape alone is ambiguous prose. `fixed in #146` has the `NAME #123` shape and would be
 # read as a repository called `in`; `parse YAML/JSON`, `the dev/CI shell`, `no shell/wget` and
@@ -351,9 +379,24 @@ EOF
 }
 
 # ---- check 3: provenance ----------------------------------------------------
-# An entry must cite what motivated it. Satisfied by a REAL --source, or by a provenance-shaped
-# token in the entry itself (a PR/issue number, a URL, a commit sha, or a
-# `session|finding|postmortem|... <id>` phrase).
+# An entry must cite what motivated it. Satisfied by a REAL --source, or by a REFERENCE TOKEN in the
+# entry text itself: a `#123` issue/PR citation, a `PR 123`, a URL, or a 7-40 char commit sha.
+#
+# ONE STANDARD ON BOTH HALVES. This comment used to promise that the text scan required a
+# `session|finding|postmortem|... <id>` PHRASE; the pattern below required no id at all and matched
+# the bare WORDS `session`, `finding`, `postmortem`, `incident`, `commit`, `issue`, `ticket` and
+# `review` anywhere in the entry — a TOPIC, not a citation. Measured on the 21 live curated entries,
+# that let 5 of them satisfy provenance while citing nothing ("... in only 3/7 recent twin sessions"),
+# and it made the strict --source rule directly bypassable: `--source dreaming` was rejected above and
+# then fell through to a scan that passed on any entry containing the word "review". Both halves now
+# demand the same thing — an actual reference. The keyword alternation is DELETED rather than propped
+# up with a "keyword near a number" adjacency window, because an adjacency heuristic over free prose
+# is the same over-recognition machinery that produced this file's worst defect (see COVERAGE BOUND).
+# THE COST, stated rather than discovered later: an entry whose motivation is a session or a finding
+# with no id anywhere in its text is now refused unless the writer passes a real --source. All six
+# sole writers do pass one, and the refusal message names both ways out. The direction is deliberate —
+# provenance is one of the four fail-CLOSED checks; "a false refusal is worse than a miss" is the
+# cross-repo recogniser's LOCAL reversal of this file's bias, not this file's default.
 #
 # STRICT --source (decision (f)), and it lives HERE so all six writers inherit it. A source
 # qualifies only when it carries an actual REFERENCE: a digit (PR/issue number, commit sha, dated
@@ -364,7 +407,7 @@ EOF
 # string. A source that does not qualify is not itself the refusal — it falls through to the entry-
 # text scan below, so an entry that names its finding/PR/session in its own prose still passes.
 _VE_PLACEHOLDER_SOURCES=" unknown unspecified none n/a na tbd todo - _ null nil "
-_VE_PROVENANCE_RE='(^|[^A-Za-z0-9_])#[0-9]+|https?://|(^|[[:space:]])[Pp][Rr][[:space:]]*#?[0-9]+|(^|[[:space:]])[0-9a-f]{7,40}([[:space:]]|$)|[Ss]ession|[Ff]inding|[Pp]ostmortem|[Ii]ncident|[Cc]ommit|[Ii]ssue|[Tt]icket|[Rr]eview'
+_VE_PROVENANCE_RE='(^|[^A-Za-z0-9_])#[0-9]+|https?://|(^|[[:space:]])[Pp][Rr][[:space:]]*#?[0-9]+|(^|[[:space:]])[0-9a-f]{7,40}([[:space:]]|$)'
 validate_provenance() {
   _ve_parse_args "$@"
   [ -n "$_VE_ENTRY" ] || { _ve_unexaminable "REFUSE_PROVENANCE_NO_ENTRY" "no --entry text was supplied, so provenance could not be examined"; return 2; }
@@ -385,7 +428,7 @@ validate_provenance() {
   if grep -qE "$_VE_PROVENANCE_RE" <<<"$_VE_ENTRY"; then
     return 0
   fi
-  _ve_refuse "REFUSE_PROVENANCE" "the entry cites nothing that motivated it — pass a real --source, or name the finding / PR / session / commit in the entry text (nothing was written)"
+  _ve_refuse "REFUSE_PROVENANCE" "the entry cites nothing that motivated it — pass a real --source (one carrying an id, such as 'pr-138' or 'dreaming:<session_id>', not a bare command name), or name the reference itself in the entry text (a '#123', a URL or a commit sha). NOTE: the bare WORDS 'session', 'finding', 'postmortem' and 'review' are a topic, not a citation, and no longer satisfy this check on their own. Nothing was written."
   return 1
 }
 
@@ -566,8 +609,10 @@ _ve_load_allowlist() {
   fi
 }
 
-# _ve_extract_repo_tokens <text> — the recognised repo-reference shapes, one per line, as
-# `slug:<owner/repo>`, `strong:<name>` or `weak:<name>`. Everything else in the prose is invisible
+# _ve_extract_repo_tokens <text> <known-owners> <root> — the recognised repo-reference shapes, one
+# per line, as `slug:<owner/repo>` or `short:<name>`. Those are the only two kinds emitted and the
+# only two `validate_cross_repo_reference` dispatches on; an earlier draft of this comment advertised
+# `strong:` and `weak:` kinds that were never implemented. Everything else in the prose is invisible
 # to the check, by design; see the COVERAGE BOUND note in the header.
 #
 # Slugs are taken from WHITESPACE-DELIMITED tokens, never from a `grep -o` substring. A substring
@@ -619,30 +664,93 @@ EOF
 }
 
 # _ve_emit_slug_token <token> <preceding-word> <following-word> <structural-marker> <known-owners>
-# — prints `slug:<owner/repo>` when
+# <root> — prints `slug:<owner/repo>` when
 # the token is a MARKED repo citation, and prints nothing otherwise. Held apart from the scanning
 # loop so that "is this a slug" is one readable list of reject reasons, and so a mutation control
 # can aim at exactly one of them.
+
+# _ve_strip_ordinal <half> -> the half with a trailing `-<digits>` ORDINAL suffix removed
+# (`subtask-1` -> `subtask`, `phase-2` -> `phase`), unchanged otherwise. A `-<digits>` tail is how
+# prose NUMBERS things, and it is the commonest way an in-repo directory path picks up the digit that
+# marker (4) reads as repo structure. Digits fused to letters (`repo2`) and a non-numeric tail
+# (`terraform-aws-v2`) are not ordinals and keep their structure. See narrowing (ii) in the header.
+_ve_strip_ordinal() {
+  local v="${1:-}" tail
+  case "$v" in *-*) : ;; *) printf '%s' "$v"; return 0 ;; esac
+  tail="${v##*-}"
+  [ -n "$tail" ] || { printf '%s' "$v"; return 0; }
+  case "$tail" in *[!0-9]*) printf '%s' "$v"; return 0 ;; esac
+  printf '%s' "${v%-*}"
+}
+
+# _ve_repo_dirs <root> — caches, in $_VE_DIRS, the space-delimited lowercase set of every DIRECTORY
+# NAME appearing anywhere in <root>'s tree. Derived from the SAME index the dead-reference check
+# builds, so a process reads the tree once, not once per token. Returns non-zero when no index could
+# be built, which costs recognition (the veto cannot fire) and never invents one.
+_VE_DIRS_ROOT=""
+_VE_DIRS=""
+_ve_repo_dirs() {
+  local root="${1:-}"
+  [ -n "$root" ] && [ -d "$root" ] || return 1
+  [ "$_VE_DIRS_ROOT" = "$root" ] && return 0
+  _VE_DIRS_ROOT="$root"; _VE_DIRS=""
+  # Build the index in THIS shell and read $_VE_INDEX (the same reason _ve_path_resolves does): a
+  # command substitution would run in a subshell and throw the cache away.
+  _ve_repo_index "$root" >/dev/null || return 1
+  _VE_DIRS=" $(awk '{
+      n = split($0, p, "/")
+      for (i = 1; i < n; i++) if (p[i] != "" && !(p[i] in seen)) { seen[p[i]] = 1; printf "%s ", tolower(p[i]) }
+    }' <<EOF
+$_VE_INDEX
+EOF
+)"
+  return 0
+}
+
+# _ve_owner_is_repo_dir <lowercase-owner> <root> -> 0 when the owner half names a directory that
+# exists in this repo's tree, i.e. the token is an IN-REPO PATH and not a foreign `owner/repo`.
+# Narrowing (i) in the header — the one signal that reads the world rather than the shape, which is
+# the only thing that can tell `docs/Spikes` from `octocat/Hello-World`.
+_ve_owner_is_repo_dir() {
+  local owner="${1:-}" root="${2:-}"
+  [ -n "$owner" ] || return 1
+  _ve_repo_dirs "$root" || return 1
+  case "$_VE_DIRS" in *" $owner "*) return 0 ;; esac
+  return 1
+}
+
 # _ve_slug_structured <owner> <repo> -> 0 when the token carries structure an English word pair does
-# not. Three signals, each chosen against the real corpus rather than invented:
+# not. Three signals, each chosen against the real corpus rather than invented, and two suppressors
+# added after the same three signals were found to fire on ordinary in-repo directory paths:
 #   · a hyphen or digit in the OWNER half   — `acme-corp/widget-svc`, `hashicorp/terraform-aws`.
 #     Deliberately NOT the repo half: `user/PR-text` is a live curated entry and must stay writable.
 #   · a digit anywhere                       — `octocat/repo2`
 #   · CamelCase in either half               — `octocat/Hello-World`. A capital followed by a
 #     LOWERCASE letter, which is what separates a repo name from SHOUTED prose: `YAML/JSON` and
 #     `dev/CI` are all-caps and carry no such pair, so they stay ordinary prose.
+# SUPPRESSOR (iii): an ALL-CAPS repo half is a FILE STEM, not a repository name — `review-heal/SKILL`
+# and `docs/README` are citations of files in this tree, and neither is separable from a slug by any
+# other means. SUPPRESSOR (ii): ordinal `-<digits>` suffixes are stripped first, so `worktrees/
+# subtask-1` and `phase-2/plan` no longer read as "carries a digit". Both only ever REMOVE
+# recognition, so neither can make this function claim structure it did not claim before.
 _ve_slug_structured() {
-  local left="${1:-}" right="${2:-}" h
-  case "$left" in *[0-9-]*) return 0 ;; esac
-  case "$left$right" in *[0-9]*) return 0 ;; esac
-  for h in "$left" "$right"; do
+  local left="${1:-}" right="${2:-}" h l r
+  case "$right" in
+    *[[:lower:]]*) : ;;                       # has lowercase: an ordinary name, judge it below
+    *[[:upper:]]*) return 1 ;;                # ALL-CAPS repo half: a file stem, not a repo name
+  esac
+  l="$(_ve_strip_ordinal "$left")"; r="$(_ve_strip_ordinal "$right")"
+  case "$l" in *[0-9-]*) return 0 ;; esac
+  case "$l$r" in *[0-9]*) return 0 ;; esac
+  for h in "$l" "$r"; do
     case "$h" in *[[:upper:]][[:lower:]]*) return 0 ;; esac
   done
   return 1
 }
 
 _ve_emit_slug_token() {
-  local tok="${1:-}" prev="${2:-}" next="${3:-}" structural="${4:-0}" owners="${5:-}" left right lower
+  local tok="${1:-}" prev="${2:-}" next="${3:-}" structural="${4:-0}" owners="${5:-}" root="${6:-}"
+  local left right lower
   [ -n "$tok" ] || return 0
   case "$tok" in *"/"*) : ;; *) return 0 ;; esac
   left="${tok%%/*}"; right="${tok#*/}"
@@ -670,6 +778,10 @@ _ve_emit_slug_token() {
               esac ;;
          esac ;;
     esac
+    # THE IN-REPO PATH VETO, applied only after a SOFT marker has already fired and deliberately not
+    # to the structural ones: `github.com/docs/spikes` and `docs/spikes#12` name a repository
+    # explicitly, so no amount of local directory naming should suppress them. See narrowing (i).
+    _ve_owner_is_repo_dir "${lower%%/*}" "$root" && return 0
   fi
   printf 'slug:%s\n' "$lower"
 }
@@ -690,7 +802,7 @@ _ve_emit_slug_token() {
 # `WORKER_RESULT/CODE_REVIEW_RESULT` and `example.com/path` can never be slugs), and the repo half
 # must not end in a file extension (so `docs/PITFALLS.md` stays a path).
 _ve_extract_repo_tokens() {
-  local text="${1:-}" owners="${2:-}" raw tok prev next lower left right name structural
+  local text="${1:-}" owners="${2:-}" root="${3:-}" raw tok prev next lower left right name structural
   # (a) `owner/repo` slugs, from whitespace-delimited tokens, with the NEIGHBOURING tokens in hand.
   # awk emits each token as a THREE-LINE record (prev, token, next), one field per line, each field
   # prefixed with `>` — a deliberately separator-free encoding. A single-line record needs a
@@ -726,7 +838,7 @@ _ve_extract_repo_tokens() {
     _ve_emit_slug_token "$tok" \
       "$(printf '%s' "$prev" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9._/-')" \
       "$(printf '%s' "$next" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9._/-')" \
-      "$structural" "$owners"
+      "$structural" "$owners" "$root"
   done <<EOF
 $(printf '%s\n' "$text" | tr -s '[:space:]' '\n' \
   | awk '{ a[NR] = $0 }
@@ -770,9 +882,15 @@ validate_cross_repo_reference() {
   _ve_parse_args "$@"
   [ -n "$_VE_ENTRY" ] || { _ve_unexaminable "REFUSE_CROSS_REPO_NO_ENTRY" "no --entry text was supplied, so no repo reference could be examined"; return 2; }
 
-  local root tokens sm entries owners
+  local root idx_root tokens sm entries owners
   root=""
   [ "${_VE_ROOT_SET:-0}" -eq 1 ] && root="$_VE_ROOT"
+  # A SECOND root, for the IN-REPO PATH VETO only. It is resolved the way the dead-reference check
+  # resolves one (explicit --root, else the git toplevel, else $PWD) rather than reusing $root above,
+  # because $root is ALSO the allowlist resolver's `--root` and must keep meaning exactly "the caller
+  # named one": passing a defaulted root into `setup-memory.sh --root` would silently change which
+  # config layer the allowlist comes from. Two roots, two jobs, neither borrowed from the other.
+  idx_root="$(_ve_resolve_root)"
 
   # The allowlist is resolved BEFORE extraction because the owner half of each allowlisted slug is
   # one of the markers the recogniser reads. Resolution failures are deliberately NOT reported at
@@ -782,7 +900,7 @@ validate_cross_repo_reference() {
   entries=""
   if [ -f "$sm" ] && [ -r "$sm" ]; then entries="$(_ve_load_allowlist "$sm" "$root")"; fi
   owners="$(_ve_known_owners "$entries" "$root")"
-  tokens="$(_ve_extract_repo_tokens "$_VE_ENTRY" "$owners")"
+  tokens="$(_ve_extract_repo_tokens "$_VE_ENTRY" "$owners" "$idx_root")"
   # No repo reference of any recognised shape: the verdict does not depend on the allowlist at all,
   # so it is honest to pass without resolving one. This is also why a fresh clone with no remote
   # does not refuse every ordinary write — only entries that DO cite a repo need a resolvable list.
