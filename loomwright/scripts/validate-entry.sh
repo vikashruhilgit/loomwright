@@ -42,10 +42,12 @@
 # fail-open this file exists to close. MEASURED on the live stores before the guard landed: an
 # orientation memo scored 26% against ITSELF, a twin contract 17% against ITSELF. Three writers had
 # shipped that shape. So both checks now detect it and return 2 with a named reason
-# (REFUSE_DUPLICATE_UNCOMPARABLE_SHAPE / REFUSE_CONTRADICTION_UNCOMPARABLE_SHAPE); the four
+# (REFUSE_DUPLICATE_UNCOMPARABLE_SHAPE / REFUSE_CONTRADICTION_UNCOMPARABLE_SHAPE); the five
 # conditions, the measurements that shaped them, and — importantly — what the guard does NOT cover
 # are documented at _ve_shape_incommensurable below. It reports an unusable comparison; it does not
-# repair one. The repair is one line per stored entry on the caller's side.
+# repair one. Note that the two sharers correctly disagree on the SAME store: the guard fires only
+# when a REAL verdict is being hidden by the shape, never when the correctly-shaped answer would
+# have been clean anyway. That rule, not the arithmetic, is the thing to read first.
 #
 # ALLOWLIST RESOLUTION IS DELEGATED, NEVER RE-IMPLEMENTED. The cross-repo check obtains the
 # allowlist by invoking `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-memory.sh" allowlist`. It MUST
@@ -329,8 +331,30 @@ _ve_comparable_entry() {
 # against ITSELF scored 26%, a twin contract against ITSELF 17%. Not a threshold that was too tight;
 # a comparison that could not discriminate.
 #
-# Four conditions, ALL required, each earning its place against the real corpora (the numbers below
-# were measured on this repo's live stores, not reasoned):
+# WHAT A REFUSAL FROM THIS GUARD MEANS — read this before touching any condition below.
+# The guard does NOT ask "was this per-line comparison inert?". It asks the sharper question:
+#
+#     WOULD A REAL VERDICT HAVE EXISTED UNDER THE CORRECT SHAPE, AND IS THIS SHAPE HIDING IT?
+#
+# "The correct shape" is the one the corpus builders produce: ONE LINE PER STORED ENTRY. Feed the
+# same content that way and the check returns a real verdict. So the guard refuses exactly when that
+# verdict would have been a REFUSAL and this shape turned it into a silent "clean", and it stays
+# SILENT when that verdict would have been clean anyway — because then nothing is being hidden and
+# "could not examine" would simply be untrue.
+#
+# That is why the two sharers correctly disagree on the SAME store, and the disagreement is the
+# design, not a bug to be smoothed away. MEASURED on a document stored as its own fragments (a
+# 6-line store, --entry = the whole document), each against the same content shaped as one line:
+#   · duplicate      correctly-shaped verdict = REFUSE(1). A real verdict is being hidden, so the
+#                    guard REFUSES(2): the store does hold this entry, only the shape conceals it.
+#   · contradiction  correctly-shaped verdict = CLEAN(0). The store as a whole carries the SAME
+#                    polarity as the entry, so the contradiction check would have SKIPPED it under
+#                    ANY shape. No shape could produce a refusal here, the answer is already
+#                    determined, and the guard STANDS DOWN.
+# Both halves are pinned by test, each next to the correctly-shaped control that justifies it.
+#
+# Five conditions, ALL required, each earning its place against the real corpora (the numbers below
+# were measured on this repo's live stores and fixtures, not reasoned):
 #   (1) at least one comparable store line was seen — an ABSENT or entry-less store is already a
 #       real verdict handled above, not this;
 #   (2) EVERY store line is strictly smaller than the entry, so the denominator is ALWAYS ca. The
@@ -342,7 +366,30 @@ _ve_comparable_entry() {
 #   (4) the entry DOES reach the threshold against the store's lines taken TOGETHER. That is the
 #       whole difference between "this store cannot express my entry" and "this store does not
 #       contain it": the entry's counterpart IS in there, spread across lines the check can only
-#       look at one at a time.
+#       look at one at a time;
+#   (5) the store taken TOGETHER would still be JUDGED by THIS check — the polarity of the flattened
+#       whole, which is the single line the check would see under the correct shape, satisfies this
+#       check's own judging rule (duplicate judges SAME polarity, contradiction OPPOSITE). When it
+#       would not, the correctly-shaped verdict is a definite clean and there is nothing to hide.
+#
+# (5) IS THE FIX FOR THIS GUARD'S SECOND FALSE REFUSAL, and two earlier attempts are recorded here
+# because each looked right and was measured wrong — the failure mode of this guard is confident
+# reasoning, so nothing below is kept on argument alone:
+#   · SHAPE-ONLY (entry is multi-line AND no store line exceeds the entry's longest) — refused a
+#     legitimate 10-token agent-memory write into a 4-entry store of ~6-token entries (ceiling 60%).
+#     Tiny WHOLE entries are shape-indistinguishable from fragments, and the writer it broke is the
+#     working precedent this whole file is modelled on. Replaced by (4)'s positive evidence.
+#   · PER-FRAGMENT POLARITY (restrict (4) to just the lines this check's judging loop would look at)
+#     — the obvious reading of "mirror the judging loop", and it is wrong because POLARITY IS A
+#     PROPERTY OF A WHOLE STORED ENTRY, NOT OF A FRAGMENT. In a document split into lines the
+#     per-fragment polarities are noise: MEASURED, the 6-line fixture above splits 4 positive /
+#     2 negative while the document as a whole is negative. Restricting (4) to same-polarity
+#     fragments dropped duplicate's evidence from 100% to 29% — under its 90 threshold — and turned
+#     duplicate's refusal into the exact fail-open this guard exists to close. Contradiction survived
+#     that version at 72% ONLY because its threshold is 60: the same noise clearing a lower bar.
+#     A guard shared by two checks with DIFFERENT thresholds must be measured on BOTH; measuring the
+#     low-threshold sharer alone is precisely how that version was reported as having no trade-off.
+# (5) therefore asks the polarity of the store AS A WHOLE, and never a fragment's.
 #
 # (4) is the false-refusal firewall, and it replaced an earlier shape-only condition (entry is
 # multi-line AND no store line exceeds the entry's own longest line) that was MEASURED WRONG — not
@@ -354,18 +401,30 @@ _ve_comparable_entry() {
 # Conditions (1)-(3) are still what makes the verdict honest — with the ceiling reachable there is
 # no arithmetic impossibility to report.
 #
-# WHAT THIS DOES NOT COVER, stated rather than discovered later:
+# WHAT THIS DOES NOT COVER, stated rather than discovered later. Every gap below makes the guard
+# SILENT, never more eager: each one can only cost a catch, and none can manufacture a refusal.
+# That direction is chosen, and it is this guard's local restatement of the file-wide bias that a
+# false refusal (which blocks a legitimate write) is worse than a miss:
 #   · a document-shaped comparison whose entry is genuinely NEW — nothing like it in the store — is
 #     still reported clean. The shape was just as unable to discriminate; the guard is silent
 #     because it has no evidence, and inferring the shape from lengths alone is what produced the
-#     false refusal above. This is the guard's biggest gap and it is deliberate;
+#     first false refusal above. This is the guard's biggest gap and it is deliberate;
 #   · a fragment store large enough that the entry cannot reach the threshold against the WHOLE of
 #     it either (one file holding many documents) — condition (4) fails and it passes through;
 #   · content-level dilution, where the ceiling IS reachable but padding on one side keeps the score
-#     under the threshold. That is not a shape defect and this guard is silent about it.
-# The guard REPORTS an unusable comparison; it does not repair one. The repair is the caller's:
-# hand --store one line per stored entry (build_compare_corpus() in write-agent-memory.sh, and the
-# corpus builders in add-orientation.sh and write-system-contract.sh, are the three worked examples).
+#     under the threshold. That is not a shape defect and this guard is silent about it;
+#   · (5) reads ONE polarity for the flattened store, so a store legitimately holding MANY entries of
+#     MIXED polarity is summarised by whichever polarity its combined text carries. A hidden verdict
+#     against one individual stored entry inside such a store can therefore be missed. Reading each
+#     fragment's polarity instead is exactly the attempt measured wrong above, so this is a miss the
+#     guard accepts rather than a bound it can tighten cheaply;
+#   · conditions (1)-(3) still measure over ALL comparable lines, including ones this check would
+#     never judge. That can only make (2) and (3) HARDER to satisfy — a line the check ignores can
+#     raise the ceiling and stand the guard down — so it costs catches and cannot cause a refusal.
+# The guard REPORTS an unusable comparison; it does not repair one, and the repair is not always the
+# store's shape: see the refusal messages, which name the caller's move in BOTH situations (reshape
+# the store when it is one document split into lines; split the ENTRY when the store already is one
+# line per stored entry and the entry spans several of them).
 _ve_shape_reset() {
   _VE_SHAPE_LINES=0; _VE_SHAPE_MAXLINE=0; _VE_SHAPE_ALL_SMALLER=1; _VE_SHAPE_CA=0
 }
@@ -377,15 +436,21 @@ _ve_shape_observe() {
   [ "$_VE_CB" -ge "$_VE_CA" ] && _VE_SHAPE_ALL_SMALLER=0
   return 0
 }
-# _ve_shape_incommensurable <normalised-entry> <threshold> <store> -> 0 when the comparison just run
-# could not have discriminated. Conditions (1)-(3) are pure arithmetic over what the loop already
-# measured; (4) costs one more pass over the store, so it is evaluated last and only when the cheap
-# ones already hold — on every ordinary write the function returns at (2) or (3) having read nothing.
+# _ve_shape_incommensurable <normalised-entry> <threshold> <store> <judges> <entry-polarity>
+#   -> 0 when this shape is HIDING a verdict the correct shape would have produced (see the header
+#   above for what that means and why the two sharers disagree on the same store).
+# <judges> is the calling check's own judging rule, `same` or `opposite`, and it is REQUIRED: an
+# absent or unrecognised rule means this function cannot know what the caller would have judged, so
+# it stands the guard DOWN rather than guessing — a wrongly-wired future sharer loses a catch, it
+# never gains a false refusal. The suite's static assertion is what stops such a sharer shipping.
+# Conditions (1)-(3) are pure arithmetic over what the loop already measured; (4) and (5) cost one
+# more pass over the store, so they are evaluated last and only when the cheap ones already hold —
+# on every ordinary write the function returns at (2) or (3) having read nothing.
 # $_VE_SHAPE_CEILING and $_VE_SHAPE_WHOLE are left set for the refusal message.
 _VE_SHAPE_CEILING=0
 _VE_SHAPE_WHOLE=0
 _ve_shape_incommensurable() {
-  local ne="${1:-}" thr="${2:-100}" store="${3:-}" flat
+  local ne="${1:-}" thr="${2:-100}" store="${3:-}" judges="${4:-}" np="${5:-}" flat
   [ "${_VE_SHAPE_LINES:-0}" -gt 0 ] || return 1                   # (1)
   [ "${_VE_SHAPE_ALL_SMALLER:-0}" -eq 1 ] || return 1             # (2)
   [ "${_VE_SHAPE_CA:-0}" -gt 0 ] || return 1
@@ -398,6 +463,16 @@ _ve_shape_incommensurable() {
   _ve_score "$ne" "$flat"
   _VE_SHAPE_WHOLE="$_VE_SCORE"
   [ "$_VE_SHAPE_WHOLE" -ge "$thr" ] || return 1
+  # (5) ...and that flattened whole — the ONE line this check would see under the correct shape — is
+  # a line this check would actually JUDGE. If the calling check would skip it on polarity, then the
+  # correctly-shaped verdict is a definite CLEAN, no shape could have produced a refusal, and there
+  # is nothing for this guard to report. The polarity is taken from the WHOLE, never from a fragment:
+  # see the PER-FRAGMENT POLARITY note above for the measurement that settled that.
+  case "$judges" in                                                          # POLARITY_OF_THE_WHOLE
+    same)     [ "$(_ve_polarity "$flat")" =  "$np" ] || return 1 ;;          # POLARITY_OF_THE_WHOLE
+    opposite) [ "$(_ve_polarity "$flat")" != "$np" ] || return 1 ;;          # POLARITY_OF_THE_WHOLE
+    *)        return 1 ;;                                                    # POLARITY_OF_THE_WHOLE
+  esac                                                                       # POLARITY_OF_THE_WHOLE
   return 0
 }
 
@@ -481,8 +556,8 @@ validate_duplicate() {
   done <<EOF
 $(_ve_store_lines "$_VE_STORE")
 EOF
-  if _ve_shape_incommensurable "$ne" "$VALIDATE_ENTRY_DUPLICATE_THRESHOLD" "$_VE_STORE"; then
-    _ve_unexaminable "REFUSE_DUPLICATE_UNCOMPARABLE_SHAPE" "the entry is a ${_VE_SHAPE_CA}-significant-token document that matches store '$_VE_STORE' AS A WHOLE at ${_VE_SHAPE_WHOLE}%, but every one of its ${_VE_SHAPE_LINES} comparable lines is smaller than the entry (largest: ${_VE_SHAPE_MAXLINE}), so the best score any SINGLE line could reach is ${_VE_SHAPE_CEILING}% — below the ${VALIDATE_ENTRY_DUPLICATE_THRESHOLD}% threshold no matter what either side says. The store holds this entry spread across lines this check can only compare one at a time, so it could not discriminate and 'clean' would have meant nothing: give --store ONE LINE PER STORED ENTRY (see build_compare_corpus in write-agent-memory.sh), not a document split into lines"
+  if _ve_shape_incommensurable "$ne" "$VALIDATE_ENTRY_DUPLICATE_THRESHOLD" "$_VE_STORE" same "$np"; then
+    _ve_unexaminable "REFUSE_DUPLICATE_UNCOMPARABLE_SHAPE" "the entry is a ${_VE_SHAPE_CA}-significant-token document that matches store '$_VE_STORE' AS A WHOLE at ${_VE_SHAPE_WHOLE}%, but every one of its ${_VE_SHAPE_LINES} comparable lines is smaller than the entry (largest: ${_VE_SHAPE_MAXLINE}), so the best score any SINGLE line could reach is ${_VE_SHAPE_CEILING}% — below the ${VALIDATE_ENTRY_DUPLICATE_THRESHOLD}% threshold no matter what either side says. The same content shaped as one line per stored entry WOULD have produced a real verdict, and this shape turned it into a silent 'clean', so THIS CHECK COULD NOT DECIDE: the verdict is unknown, not clean. Two ways out, and which one applies depends on the store you passed: (a) if --store is one document split into lines, hand it ONE LINE PER STORED ENTRY instead (build_compare_corpus in write-agent-memory.sh is the worked example); (b) if --store ALREADY is one line per stored entry, then reshaping it cannot help and it is the ENTRY that spans several of them — validate it in stored-entry-sized pieces, which is the only granularity this check can judge"
     return 2
   fi
   return 0
@@ -524,8 +599,8 @@ validate_contradiction() {
   done <<EOF
 $(_ve_store_lines "$_VE_STORE")
 EOF
-  if _ve_shape_incommensurable "$ne" "$VALIDATE_ENTRY_CONTRADICTION_THRESHOLD" "$_VE_STORE"; then
-    _ve_unexaminable "REFUSE_CONTRADICTION_UNCOMPARABLE_SHAPE" "the entry is a ${_VE_SHAPE_CA}-significant-token document that matches store '$_VE_STORE' AS A WHOLE at ${_VE_SHAPE_WHOLE}%, but every one of its ${_VE_SHAPE_LINES} comparable lines is smaller than the entry (largest: ${_VE_SHAPE_MAXLINE}), so the best score any SINGLE line could reach is ${_VE_SHAPE_CEILING}% — below the ${VALIDATE_ENTRY_CONTRADICTION_THRESHOLD}% threshold no matter what either side says. The store holds this entry spread across lines this check can only compare one at a time, so it could not discriminate and 'clean' would have meant nothing: give --store ONE LINE PER STORED ENTRY (see build_compare_corpus in write-agent-memory.sh), not a document split into lines"
+  if _ve_shape_incommensurable "$ne" "$VALIDATE_ENTRY_CONTRADICTION_THRESHOLD" "$_VE_STORE" opposite "$np"; then
+    _ve_unexaminable "REFUSE_CONTRADICTION_UNCOMPARABLE_SHAPE" "the entry is a ${_VE_SHAPE_CA}-significant-token document that is contradicted by store '$_VE_STORE' TAKEN AS A WHOLE at ${_VE_SHAPE_WHOLE}%, but every one of its ${_VE_SHAPE_LINES} comparable lines is smaller than the entry (largest: ${_VE_SHAPE_MAXLINE}), so the best score any SINGLE line could reach is ${_VE_SHAPE_CEILING}% — below the ${VALIDATE_ENTRY_CONTRADICTION_THRESHOLD}% threshold no matter what either side says. The same content shaped as one line per stored entry WOULD have produced a real verdict, and this shape turned it into a silent 'clean', so THIS CHECK COULD NOT DECIDE: the verdict is unknown, not clean. Two ways out, and which one applies depends on the store you passed: (a) if --store is one document split into lines, hand it ONE LINE PER STORED ENTRY instead (build_compare_corpus in write-agent-memory.sh is the worked example); (b) if --store ALREADY is one line per stored entry, then reshaping it cannot help and it is the ENTRY that spans several of them — validate it in stored-entry-sized pieces, which is the only granularity this check can judge"
     return 2
   fi
   return 0

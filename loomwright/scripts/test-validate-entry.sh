@@ -215,41 +215,151 @@ A broken helper therefore degrades into a named refusal rather than into a crash
 DOCEOF
 DOCENTRY="$(cat "$DOCSTORE")"
 
+# WHAT THE GUARD MEANS, and why the two sharers DISAGREE on this very store. The guard does not ask
+# "was the per-line comparison inert?" — it asks whether a REAL verdict would have existed under the
+# correct shape and this shape is HIDING it. So every guard verdict below is asserted NEXT TO the
+# correctly-shaped control that justifies it: feed the same content one-line-per-stored-entry and
+# read what the check actually decides. A 2 is right only when that control is a refusal; when the
+# control is a definite clean, nothing is hidden and the guard must stand down.
+DOCCORPUS="$TMP/doc-corpus.md"
+tr '\n' ' ' < "$DOCSTORE" > "$DOCCORPUS"; printf '\n' >> "$DOCCORPUS"
+
+# --- DUPLICATE: the control REFUSES, so the fragment shape is hiding a verdict => 2 ---------------
+verdict 1 "CONTROL [duplicate]: correctly shaped (one line per stored entry), the SAME document is a real REFUSAL (1)" \
+  "$VE" duplicate --entry "$DOCENTRY" --store "$DOCCORPUS"
+reason "REFUSE_DUPLICATE" "the corpus comparison refuses as a duplicate, i.e. it examined and decided"
 verdict 2 "duplicate: a DOCUMENT compared against its own lines is could-not-examine (2), NOT clean" \
   "$VE" duplicate --entry "$DOCENTRY" --store "$DOCSTORE"
 reason "REFUSE_DUPLICATE_UNCOMPARABLE_SHAPE" "the shape refusal names its own reason, not a generic 2"
 reason "ONE LINE PER STORED ENTRY" "the shape refusal says how to fix the comparison"
-verdict 2 "contradiction: the same shape is could-not-examine (2), NOT clean" \
-  "$VE" contradiction --entry "$DOCENTRY" --store "$DOCSTORE"
-reason "REFUSE_CONTRADICTION_UNCOMPARABLE_SHAPE" "the contradiction shape refusal names its own reason"
+reason "COULD NOT DECIDE" "the shape refusal says plainly that the verdict is unknown, not clean"
+reason "it is the ENTRY that spans several of them" "the shape refusal also names the move for a store that ALREADY is one line per entry"
 
-# THE FIXED SHAPE MUST NOT BE INTERCEPTED. Same document, but --store is now what the corpus
-# builders produce: one flattened line per stored document. The guard must stand down and the real
-# verdict must come through — refusal when the document IS stored, clean when it is not.
-DOCCORPUS="$TMP/doc-corpus.md"
-tr '\n' ' ' < "$DOCSTORE" > "$DOCCORPUS"; printf '\n' >> "$DOCCORPUS"
-verdict 1 "duplicate: the SAME document against a one-line-per-entry corpus is a real REFUSAL (1), not a shape 2" \
-  "$VE" duplicate --entry "$DOCENTRY" --store "$DOCCORPUS"
-reason "REFUSE_DUPLICATE" "the corpus comparison refuses as a duplicate, i.e. it examined and decided"
+# --- CONTRADICTION on the SAME store: the control is CLEAN, so nothing is hidden => 0 -------------
+# THIS ASSERTION WAS FLIPPED (it demanded 2, and that 2 was the guard's THIRD false refusal).
+# It was rewritten rather than deleted, and the reason is recorded here so the change cannot be
+# mistaken for an inconvenient assertion quietly dropped: the control on the line below returns a
+# definite CLEAN(0). The store as a whole carries the SAME polarity as the entry, so the
+# contradiction check would have SKIPPED it under ANY shape — no shape could produce a refusal here,
+# the verdict is already determined, and "could not examine" was simply untrue. The catch that the
+# old assertion was reaching for is real, but it belongs on an OPPOSITE-polarity store; it is
+# asserted a few lines below on exactly that, where the control does refuse.
+verdict 0 "CONTROL [contradiction]: correctly shaped, the same document is a definite CLEAN (0) — same polarity, never judged" \
+  "$VE" contradiction --entry "$DOCENTRY" --store "$DOCCORPUS"
+verdict 0 "contradiction: the same fragment store is CLEAN (0) — its control is clean, so the shape hides nothing" \
+  "$VE" contradiction --entry "$DOCENTRY" --store "$DOCSTORE"
+
+# --- CONTRADICTION's REAL intended catch: an OPPOSITE-polarity document split into lines ----------
+# The store negates the entry point for point. Negation tokens are excluded from scoring, so the two
+# sides still share nearly every significant token: correctly shaped this is a real REFUSAL, and
+# split into fragments no single line can reach 60% — the fail-open the guard exists to close.
+NEGENTRY="The write time validator is loaded by every sole writer through a three clause load guard.
+Clause one requires the source itself to succeed, because a discarded status becomes a silent append.
+Clause two probes every validator function by name, since bash defines each function above a syntax error."
+NEGSTORE="$TMP/neg-store.md"
+cat > "$NEGSTORE" <<'NEGEOF'
+The write time validator is not loaded by any sole writer through a three clause load guard.
+Clause one never requires the source itself to succeed, and a discarded status is not a silent append.
+Clause two does not probe every validator function by name, and bash never defines each function above a syntax error.
+NEGEOF
+NEGCORPUS="$TMP/neg-corpus.md"
+tr '\n' ' ' < "$NEGSTORE" > "$NEGCORPUS"; printf '\n' >> "$NEGCORPUS"
+verdict 1 "CONTROL [contradiction]: correctly shaped, an opposite-polarity document is a real REFUSAL (1)" \
+  "$VE" contradiction --entry "$NEGENTRY" --store "$NEGCORPUS"
+verdict 2 "contradiction: that SAME opposite-polarity document split into lines is could-not-examine (2), NOT clean" \
+  "$VE" contradiction --entry "$NEGENTRY" --store "$NEGSTORE"
+reason "REFUSE_CONTRADICTION_UNCOMPARABLE_SHAPE" "the contradiction shape refusal names its own reason"
+# ...and duplicate must stand DOWN on that same store, for the mirror reason: its control is clean.
+verdict 0 "CONTROL [duplicate]: correctly shaped, an opposite-polarity document is a definite CLEAN (0)" \
+  "$VE" duplicate --entry "$NEGENTRY" --store "$NEGCORPUS"
+verdict 0 "duplicate: the same opposite-polarity fragment store is CLEAN (0) — its control is clean, so nothing is hidden" \
+  "$VE" duplicate --entry "$NEGENTRY" --store "$NEGSTORE"
+
 verdict 0 "duplicate: an unrelated document against the same corpus is CLEAN (0) — the corpus discriminates both ways" \
   "$VE" duplicate --entry "Deployment cadence is measured per regional cluster and the rollout window closes automatically.
 Telemetry sampling stays at one in one hundred spans for every environment." --store "$DOCCORPUS"
 
-# NO FALSE REFUSAL on the legitimate shapes. Each of these satisfies the guard's arithmetic
-# conditions (every store line smaller than the entry, ceiling under the threshold) and must still
-# pass, because a store of WHOLE entries that merely differ in length is a store where "no
-# near-identical entry exists" is a correct and complete verdict. These are the measured cases that
-# forced condition (4) to be re-derived: an earlier shape-only version of this guard refused them.
+# NO FALSE REFUSAL on the legitimate shapes — ASSERTED FOR EVERY CHECK THAT SHARES THE GUARD.
+#
+# THIS BATTERY USED TO CALL `duplicate` ONLY, and that is the root cause of the guard's second false
+# refusal, not the arithmetic that produced it: `_ve_shape_incommensurable` is shared by two checks
+# with DIFFERENT thresholds (90 and 60), so contradiction trips it roughly three times more easily,
+# and it had no false-refusal assertion anywhere. Shared code with unshared tests. The list below is
+# therefore the ONE place the sharers are named, every case runs against ALL of them, and the static
+# assertion underneath fails the suite if validate-entry.sh grows a THIRD sharer that is not in it —
+# a future check cannot inherit this guard without inheriting this battery.
+SHAPE_SHARERS="duplicate contradiction"
+
+# The shared property, and it is deliberately NOT "rc is 0": the two sharers legitimately reach
+# DIFFERENT verdicts on the same input (one may refuse a real duplicate or contradiction where the
+# other is clean). What every sharer must satisfy is that the SHAPE GUARD did not produce the
+# verdict — 0 and 1 are both real answers, 2 or an *_UNCOMPARABLE_SHAPE reason is the false refusal.
+# Pinning rc=0 for both would have to be relaxed the first time a case legitimately refuses, and a
+# battery that gets relaxed per-case is how the coverage gap above reopens.
+no_shape_refusal() {
+  local desc="$1"; shift
+  vrc "$VE" "$@"
+  if [ "$VRC" -eq 2 ] || grep -qF "UNCOMPARABLE_SHAPE" "$TMP/err.txt" 2>/dev/null; then
+    no "$desc — the shape guard FIRED (rc=$VRC), which is a false refusal on a legitimate shape"
+  else
+    ok "$desc (rc=$VRC — a real verdict, not a shape refusal)"
+  fi
+}
+
+# The static half. Derived from the SOURCE, so it tracks the code rather than this file's memory of it.
+SHARERS_FOUND="$(awk '
+  /^validate_[a-z_]+\(\)[[:space:]]*\{/ { fn=$0; sub(/\(\).*/,"",fn); sub(/^validate_/,"",fn); gsub(/_/,"-",fn) }
+  /^[[:space:]]*if _ve_shape_incommensurable/ && fn != "" { print fn }
+' "$VE" | sort -u | tr '\n' ' ')"
+SHARERS_WANT="$(printf '%s\n' $SHAPE_SHARERS | sort -u | tr '\n' ' ')"
+if [ -z "$SHARERS_FOUND" ]; then
+  no "no check in validate-entry.sh calls _ve_shape_incommensurable — this battery would run vacuously"
+elif [ "$SHARERS_FOUND" = "$SHARERS_WANT" ]; then
+  ok "SHAPE_SHARERS matches the checks that actually call the guard in source ($SHARERS_WANT) — no sharer is untested"
+else
+  no "the guard's sharers in source are [$SHARERS_FOUND] but this suite only covers [$SHARERS_WANT] — add the new sharer to SHAPE_SHARERS so the whole battery runs against it"
+fi
+
+# Each of these satisfies the guard's arithmetic conditions (every store line smaller than the entry,
+# ceiling under the threshold) and must still pass, because a store of WHOLE entries that merely
+# differ in length is a store where the check's verdict is correct and complete. These are the
+# measured cases that forced condition (4) to be re-derived: an earlier shape-only version refused them.
 LINESTORE="$TMP/line-store.md"
 printf -- '- the token cache is refreshed on every request\n- workers run inside linked git worktrees\n- the plan reviewer gates the brief save\n' > "$LINESTORE"
-verdict 0 "no false refusal: a LONG single-line entry against a store of short whole entries is clean (0)" \
-  "$VE" duplicate --entry "Deployment cadence is measured per regional cluster while the rollout window closes automatically and telemetry sampling stays at one in one hundred spans across every environment including the ephemeral preview stacks that the release pipeline creates on demand" \
-  --store "$LINESTORE"
-verdict 0 "no false refusal: a SHORT entry against a store of longer whole entries is clean (0)" \
-  "$VE" duplicate --entry "sampling stays at one in one hundred spans" --store "$DOCCORPUS"
-verdict 0 "no false refusal: a MULTI-LINE entry unrelated to a store of short whole entries is clean (0)" \
-  "$VE" duplicate --entry "Deployment cadence is measured per regional cluster.
+for chk in $SHAPE_SHARERS; do
+  no_shape_refusal "no false refusal [$chk]: a LONG single-line entry against a store of short whole entries" \
+    "$chk" --entry "Deployment cadence is measured per regional cluster while the rollout window closes automatically and telemetry sampling stays at one in one hundred spans across every environment including the ephemeral preview stacks that the release pipeline creates on demand" \
+    --store "$LINESTORE"
+  no_shape_refusal "no false refusal [$chk]: a SHORT entry against a store of longer whole entries" \
+    "$chk" --entry "sampling stays at one in one hundred spans" --store "$DOCCORPUS"
+  no_shape_refusal "no false refusal [$chk]: a MULTI-LINE entry unrelated to a store of short whole entries" \
+    "$chk" --entry "Deployment cadence is measured per regional cluster.
 The rollout window closes automatically once telemetry sampling settles." --store "$LINESTORE"
+done
+
+# THE REPRODUCED FALSE REFUSAL, as its own case. A store whose every line carries the SAME polarity
+# as the entry: contradiction's judging loop skips same-polarity lines, so it judged NOTHING and a
+# contradiction was arithmetically impossible — yet the guard refused, because its condition (4)
+# flattened EVERY line and scored it polarity-blind, i.e. it fired on evidence of DUPLICATION to
+# refuse a comparison that could only ever have been clean. Both directions are pinned: contradiction
+# must stand down, and duplicate must still fire on the very same store (its control refuses).
+REPROSTORE="$TMP/repro-same-polarity.md"
+cat > "$REPROSTORE" <<'REPROEOF'
+The write time validator is loaded by every sole writer through a three clause load guard.
+Clause one requires the source itself to succeed, because a discarded status becomes a silent append.
+Clause two probes every validator function by name, since bash defines each function above a syntax error.
+REPROEOF
+REPROENTRY="$(cat "$REPROSTORE")"
+REPROCORPUS="$TMP/repro-corpus.md"
+tr '\n' ' ' < "$REPROSTORE" > "$REPROCORPUS"; printf '\n' >> "$REPROCORPUS"
+verdict 0 "REPRO: contradiction against an all-same-polarity fragment store is CLEAN (0), not a false shape 2" \
+  "$VE" contradiction --entry "$REPROENTRY" --store "$REPROSTORE"
+verdict 0 "CONTROL [contradiction]: correctly shaped, that store is a definite CLEAN (0) — so the 0 above hides nothing" \
+  "$VE" contradiction --entry "$REPROENTRY" --store "$REPROCORPUS"
+verdict 1 "CONTROL [duplicate]: correctly shaped, that same store is a real REFUSAL (1)" \
+  "$VE" duplicate --entry "$REPROENTRY" --store "$REPROCORPUS"
+verdict 2 "REPRO, other direction: duplicate DOES still fire on that store (2) — the fix stood down one sharer, not the guard" \
+  "$VE" duplicate --entry "$REPROENTRY" --store "$REPROSTORE"
 
 # THE GUARD'S STATED GAP, pinned so it cannot rot into an unstated one. Condition (4) requires
 # positive evidence — the entry must reach the threshold against the store taken as a whole — so a
@@ -880,9 +990,14 @@ fi
 # control would "prove" the guard is real while having changed nothing — that self-healing mutant
 # has already happened on this branch, which is why the counts below are asserted rather than the
 # sed being trusted.
+#
+# The expected count is DERIVED from SHAPE_SHARERS, not hardcoded: registering a new sharer there
+# (which is what makes the whole no-false-refusal battery run against it) is then the single edit
+# that keeps this control aimed too.
 GUARD_SITES="$(grep -c 'if _ve_shape_incommensurable' "$VE" 2>/dev/null || true)"; [ -n "$GUARD_SITES" ] || GUARD_SITES=0
-if [ "$GUARD_SITES" -ne 2 ]; then
-  no "the shape guard has $GUARD_SITES call site(s), expected 2 (duplicate + contradiction) — the mutant below cannot be aimed at all of them"
+GUARD_WANT="$(printf '%s\n' $SHAPE_SHARERS | grep -c .)"
+if [ "$GUARD_SITES" -ne "$GUARD_WANT" ]; then
+  no "the shape guard has $GUARD_SITES call site(s) but SHAPE_SHARERS names $GUARD_WANT ($SHAPE_SHARERS) — the mutant below cannot be aimed at all of them"
 else
   sed -e 's/if _ve_shape_incommensurable [^;]*;/if false;/' "$VE" > "$TMP/mut-shape.sh"
   GUARD_LEFT="$(grep -c 'if _ve_shape_incommensurable' "$TMP/mut-shape.sh" 2>/dev/null || true)"; [ -n "$GUARD_LEFT" ] || GUARD_LEFT=0
@@ -890,10 +1005,14 @@ else
     no "the shape mutant still has $GUARD_LEFT live call site(s) — a partially-stripped mutant proves nothing (this is the column-0 trap)"
   elif mutated_differs mut-shape.sh "shape-guard strip"; then
     ok "(v) the mutation is NON-VACUOUS: 2 call sites in the real validator, 0 in the mutant"
+    # EACH SHARER IS AIMED AT THE STORE WHERE ITS OWN GUARD FIRES. Both used to be aimed at DOCSTORE,
+    # which is now the store where CONTRADICTION correctly stands down — a mutant that strips the
+    # guard cannot change a verdict the guard never produced, so that half would have gone green
+    # while proving nothing about the contradiction call site.
     bash "$TMP/mut-shape.sh" duplicate --entry "$DOCENTRY" --store "$DOCSTORE" >/dev/null 2>&1; g1=$?
-    bash "$TMP/mut-shape.sh" contradiction --entry "$DOCENTRY" --store "$DOCSTORE" >/dev/null 2>&1; g2=$?
+    bash "$TMP/mut-shape.sh" contradiction --entry "$NEGENTRY" --store "$NEGSTORE" >/dev/null 2>&1; g2=$?
     if [ "$g1" -eq 0 ] && [ "$g2" -eq 0 ]; then
-      ok "(v) CONFIRMED: without the guard, a document compared against its own lines is reported CLEAN (0) by both checks — section 3b's 2s are the guard's doing, not a threshold accident"
+      ok "(v) CONFIRMED: without the guard, both sharers report a document-vs-its-own-fragments comparison CLEAN (0) — section 3b's 2s are the guard's doing, not a threshold accident"
     else
       no "(v) the guard-less mutant still refused the inert shape (duplicate rc=$g1, contradiction rc=$g2) — section 3b may be passing for some other reason"
     fi
@@ -906,6 +1025,50 @@ else
     else
       no "(v) stripping the guard also moved the corpus verdicts (dup rc=$g3 want 1, clean rc=$g4 want 0) — the guard is interfering with real comparisons"
     fi
+  fi
+fi
+
+# (va) CONDITION (5), THE POLARITY OF THE WHOLE — the fix for the guard's second false refusal, so
+# it gets its own control rather than riding on (v)'s. Strip every line of the condition (all five
+# are marked, and the count is asserted, because a partially-stripped `case` would not even parse):
+# the guard reverts to polarity-blind and the reproduced FALSE REFUSAL comes straight back.
+POL_LINES="$(grep -c 'POLARITY_OF_THE_WHOLE' "$VE" 2>/dev/null || true)"; [ -n "$POL_LINES" ] || POL_LINES=0
+if [ "$POL_LINES" -ne 5 ]; then
+  no "(va) condition (5) has $POL_LINES marked lines, expected 5 — the mutant cannot be aimed at all of it"
+else
+  awk '!/POLARITY_OF_THE_WHOLE/' "$VE" > "$TMP/mut-polarity.sh"
+  POL_LEFT="$(grep -c 'POLARITY_OF_THE_WHOLE' "$TMP/mut-polarity.sh" 2>/dev/null || true)"; [ -n "$POL_LEFT" ] || POL_LEFT=0
+  if [ "$POL_LEFT" -ne 0 ]; then
+    no "(va) the polarity mutant still has $POL_LEFT marked line(s) — a partially-stripped condition proves nothing"
+  elif mutated_differs mut-polarity.sh "condition (5) strip"; then
+    ok "(va) the mutation is NON-VACUOUS: 5 marked lines in the real validator, 0 in the mutant"
+    bash "$TMP/mut-polarity.sh" contradiction --entry "$REPROENTRY" --store "$REPROSTORE" >/dev/null 2>&1; p1=$?
+    [ "$p1" -eq 2 ] \
+      && ok "(va) CONFIRMED: without condition (5) the reproduced FALSE REFUSAL returns (rc=2 on a store that cannot contradict) — (5) is what stands the guard down" \
+      || no "(va) the polarity-blind mutant did NOT reproduce the false refusal (rc=$p1) — the REPRO case may be passing for some other reason"
+    # ...and it must not have simply disabled the guard: duplicate's catch is untouched by (5).
+    bash "$TMP/mut-polarity.sh" duplicate --entry "$DOCENTRY" --store "$DOCSTORE" >/dev/null 2>&1; p2=$?
+    bash "$TMP/mut-polarity.sh" duplicate --entry "$DOCENTRY" --store "$DOCCORPUS" >/dev/null 2>&1; p3=$?
+    { [ "$p2" -eq 2 ] && [ "$p3" -eq 1 ]; } \
+      && ok "(va) the same mutant leaves duplicate's catch and its correctly-shaped control UNCHANGED (2 and 1) — (5) only ever stands the guard DOWN" \
+      || no "(va) stripping condition (5) also moved duplicate's verdicts (fragments rc=$p2 want 2, corpus rc=$p3 want 1)"
+  fi
+fi
+
+# (vb) THE JUDGING RULE IS REQUIRED, not defaulted. Blank out the rule both call sites pass: an
+# unrecognised rule must stand the guard DOWN (never guess a polarity), so duplicate's catch goes
+# quiet. This pins the `*)` arm as a real fail-toward-silence, not dead code.
+sed -e 's/"\$_VE_STORE" same "\$np"/"$_VE_STORE" "" "$np"/' \
+    -e 's/"\$_VE_STORE" opposite "\$np"/"$_VE_STORE" "" "$np"/' "$VE" > "$TMP/mut-rule.sh"
+if mutated_differs mut-rule.sh "judging-rule blanking"; then
+  RULE_LEFT="$(grep -cE 'if _ve_shape_incommensurable .*(same|opposite) ' "$TMP/mut-rule.sh" 2>/dev/null || true)"; [ -n "$RULE_LEFT" ] || RULE_LEFT=0
+  if [ "$RULE_LEFT" -ne 0 ]; then
+    no "(vb) $RULE_LEFT call site(s) still pass a judging rule — the mutant is partially applied"
+  else
+    bash "$TMP/mut-rule.sh" duplicate --entry "$DOCENTRY" --store "$DOCSTORE" >/dev/null 2>&1; q1=$?
+    [ "$q1" -eq 0 ] \
+      && ok "(vb) an unrecognised judging rule stands the guard DOWN (rc=0, catch lost) rather than guessing — a mis-wired future sharer cannot manufacture a false refusal" \
+      || no "(vb) an unrecognised judging rule produced rc=$q1, wanted 0 — the guard is guessing a polarity it was not given"
   fi
 fi
 
