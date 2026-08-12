@@ -553,8 +553,23 @@ verdict 1 "marker (2), trailing: 'the otherco/othersvc repo' is REFUSED — the 
   "$VE" cross-repo --entry "the $FOREIGN repo has the same bug"
 verdict 1 "marker (3): a KNOWN owner is recognised — 'vikashruhilgit/othersvc' is not in the allowlist and is REFUSED" \
   "$VE" cross-repo --entry "vikashruhilgit/othersvc has the same bug"
-verdict 1 "marker (4): a hyphenated owner is slug-only structure — 'acme-corp/widget-svc' is REFUSED" \
+# STATED LOST CATCH, narrowing (vi): a hyphenated owner is NO LONGER slug-only structure. Traded for
+# the live entry `ground-truth/conformance`; see the COVERAGE BOUND note in validate-entry.sh. Pinned
+# as an assertion so the loss is visible in the suite rather than inferred from an absent test.
+verdict 0 "narrowing (vi) LOST CATCH: a bare hyphenated owner is no longer recognised — 'acme-corp/widget-svc' PASSES" \
   "$VE" cross-repo --entry "acme-corp/widget-svc has the same bug"
+verdict 1 "narrowing (vi) is BARE-ONLY: the same slug after a cue word is still REFUSED" \
+  "$VE" cross-repo --entry "the same defect landed in acme-corp/widget-svc last week"
+verdict 0 "narrowing (v) LOST CATCH: a version-tagged repo half is no longer recognised — 'hashicorp/terraform-aws-v2' PASSES" \
+  "$VE" cross-repo --entry "hashicorp/terraform-aws-v2 has the same bug"
+verdict 0 "narrowing (vii) LOST CATCH: a leading-only capital is no longer CamelCase — 'Microsoft/vscode' PASSES" \
+  "$VE" cross-repo --entry "Microsoft/vscode has the same bug"
+verdict 0 "narrowing (v): the git branch name that motivated it PASSES — 'fix/v14.23.1-combined'" \
+  "$VE" cross-repo --entry "RESOLVED in PR #51 (fix/v14.23.1-combined, June 2026)"
+verdict 0 "narrowing (vi): the prose pair that motivated it PASSES — 'ground-truth/conformance'" \
+  "$VE" cross-repo --entry "Probe whether ground-truth/conformance actually ran before crediting a PASS"
+verdict 0 "narrowing (vii): the sentence-opening pair that motivated it PASSES — 'Count/version'" \
+  "$VE" cross-repo --entry "Count/version drift is the top late-stage failure, see #146"
 verdict 1 "marker (4): CamelCase is slug-only structure — 'octocat/Hello-World' is REFUSED" \
   "$VE" cross-repo --entry "octocat/Hello-World has the bug"
 verdict 1 "marker (4): a digit is slug-only structure — 'octocat/repo2' is REFUSED" \
@@ -592,7 +607,9 @@ verdict 0 "control: a trailing-slash directory still passes" \
 verdict 1 "the in-repo veto did not blind the recogniser: a cued foreign slug still REFUSES with --root" \
   "$VE" cross-repo --entry "the same defect landed in $FOREIGN last week" --root "$REPO_ROOT"
 verdict 1 "the in-repo veto did not blind the recogniser: a structured foreign slug still REFUSES with --root" \
-  "$VE" cross-repo --entry "acme-corp/widget-svc has the same bug" --root "$REPO_ROOT"
+  "$VE" cross-repo --entry "octocat/Hello-World has the bug" --root "$REPO_ROOT"
+verdict 0 "narrowing (iii): 'phase2/SKILL' passes — an ALL-CAPS repo half is a file stem even with a structured owner" \
+  "$VE" cross-repo --entry "phase2/SKILL is the authority here" --root "$REPO_ROOT"
 verdict 1 "narrowing (ii) is ORDINALS ONLY: 'octocat/repo2' (digits fused to letters) is still REFUSED" \
   "$VE" cross-repo --entry "octocat/repo2 has the bug" --root "$REPO_ROOT"
 # The veto is DELIBERATELY not applied to the structural markers: an explicit repository citation
@@ -605,15 +622,28 @@ verdict 1 "the veto does not suppress a STRUCTURAL marker — 'github.com/docs/s
 # directory names these tokens use, so the veto provably cannot fire inside it.
 INDEX_LESS="$TMP/index-less"
 mkdir -p "$INDEX_LESS/lib"; : > "$INDEX_LESS/lib/a.txt"
+# The mirror-image root for the STATED BOUND below: identical except that it DOES hold the directory
+# the probe token names, so the same token is vetoed here and refused there. Two roots, one token —
+# which is the only way to show the veto reads the world rather than the shape.
+mkdir -p "$TMP/phase2root/phase2"; : > "$TMP/phase2root/phase2/a.txt"
 verdict 0 "narrowing (ii) holds with NO in-repo index: 'worktrees/subtask-1' passes on an unrelated root" \
   "$VE" cross-repo --entry "the worktrees/subtask-1 checkout diverged" --root "$INDEX_LESS"
 verdict 0 "narrowing (iii) holds with NO in-repo index: 'review-heal/SKILL' passes on an unrelated root" \
   "$VE" cross-repo --entry "review-heal/SKILL is the authority here" --root "$INDEX_LESS"
 # THE STATED BOUND, pinned rather than left to be rediscovered: narrowing (i) needs a usable tree, so
-# on a root that holds no `docs` directory the CamelCase form is refused again. That is the documented
-# residual of this fix, not an accident — the header's "WHAT THIS DOES NOT COVER" paragraph.
-verdict 1 "STATED BOUND: 'docs/Spikes' IS refused on a root with no docs directory — the veto reads the world, and there is none here" \
+# on a root holding no matching directory an in-repo path whose structure SURVIVES the other
+# narrowings is refused again. That is the documented residual of this fix, not an accident — the
+# header's "WHAT THIS DOES NOT COVER" paragraph.
+# The probe is `phase2/Notes`, NOT `docs/Spikes`: after narrowing (vii) a leading-only capital is no
+# longer CamelCase, so `docs/Spikes` carries no marker at all and now passes on ANY root — it stopped
+# being able to demonstrate this bound. A digit-bearing owner still does. Re-aimed rather than
+# deleted, because the bound itself is unchanged; only the shape that exhibits it moved.
+verdict 0 "narrowing (vii) side-effect: 'docs/Spikes' now passes even with NO tree — it lost its last marker, so the veto is no longer what saves it" \
   "$VE" cross-repo --entry "the docs/Spikes folder holds frozen records" --root "$INDEX_LESS"
+verdict 1 "STATED BOUND: 'phase2/Notes' IS refused on a root with no such directory — the veto reads the world, and there is none here" \
+  "$VE" cross-repo --entry "the phase2/Notes folder holds frozen records" --root "$INDEX_LESS"
+verdict 0 "STATED BOUND, other side: the same 'phase2/Notes' still needs a real tree to be vetoed — it passes where one exists" \
+  "$VE" cross-repo --entry "the phase2/Notes folder holds frozen records" --root "$TMP/phase2root"
 
 echo "== 7. cross-repo blind spot (AC4) — stated, not hidden =="
 verdict 0 "prose naming a repo in an unrecognised shape passes UNDETECTED ('the othersvc repository')" \
@@ -902,14 +932,14 @@ fi
 awk '/^_ve_slug_structured\(\) \{$/{print; print "  return 1"; next} {print}' "$VE" > "$TMP/mut-struct.sh"
 if mutated_differs mut-struct.sh "slug-only structure marker"; then
   LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-struct.sh" cross-repo \
-    --entry "acme-corp/widget-svc has the same bug" >/dev/null 2>&1
+    --entry "octocat/repo2 has the bug" >/dev/null 2>&1
   r1=$?
   LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-struct.sh" cross-repo \
     --entry "octocat/Hello-World has the bug" >/dev/null 2>&1
   r2=$?
   { [ "$r1" -eq 0 ] && [ "$r2" -eq 0 ]; } \
-    && ok "marker (4): disabling slug-only structure stops the hyphen and CamelCase forms being recognised — structure is what marks them" \
-    || no "marker (4): the structure mutant did not discriminate (hyphen rc=$r1, CamelCase rc=$r2)"
+    && ok "marker (4): disabling slug-only structure stops the digit and CamelCase forms being recognised — structure is what marks them" \
+    || no "marker (4): the structure mutant did not discriminate (digit rc=$r1, CamelCase rc=$r2)"
 fi
 
 # (xvii) Marker (2), TRAILING CUE: remove it => 'the otherco/othersvc repo' stops being recognised.
@@ -933,14 +963,14 @@ fi
 awk '/^_ve_owner_is_repo_dir\(\) \{$/{print; print "  return 1"; next} {print}' "$VE" > "$TMP/mut-veto.sh"
 if mutated_differs mut-veto.sh "in-repo path veto"; then
   LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-veto.sh" cross-repo \
-    --entry "the docs/Spikes folder holds frozen records" --root "$REPO_ROOT" >/dev/null 2>&1
+    --entry "copied from scripts/gates last week" --root "$REPO_ROOT" >/dev/null 2>&1
   r1=$?
   LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-veto.sh" cross-repo \
     --entry "the guard is in agents/code-reviewer today" --root "$REPO_ROOT" >/dev/null 2>&1
   r2=$?
   { [ "$r1" -eq 1 ] && [ "$r2" -eq 1 ]; } \
-    && ok "narrowing (i): disabling the in-repo veto refuses 'docs/Spikes' and 'agents/code-reviewer' again — the veto is what passes them" \
-    || no "narrowing (i): the veto mutant did not discriminate (CamelCase rc=$r1, cue-word rc=$r2)"
+    && ok "narrowing (i): disabling the in-repo veto refuses 'scripts/gates' and 'agents/code-reviewer' again — the veto is what passes them" \
+    || no "narrowing (i): the veto mutant did not discriminate (from-cue rc=$r1, in-cue rc=$r2)"
   LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-veto.sh" cross-repo \
     --entry "the same defect landed in $FOREIGN last week" --root "$REPO_ROOT" >/dev/null 2>&1
   [ $? -eq 1 ] && ok "narrowing (i): the same mutant still refuses a foreign slug — it removed only the veto" \
@@ -968,13 +998,18 @@ if mutated_differs mut-ordinal.sh "ordinal suffix strip"; then
     || no "narrowing (ii): the ordinal mutant changed the fused-digit verdict too"
 fi
 
-# (xx) ALL-CAPS REPO HALF, narrowing (iii): delete the suppressor => `review-heal/SKILL` is refused
-# again on a root where the veto cannot rescue it.
+# (xx) ALL-CAPS REPO HALF, narrowing (iii): delete the suppressor => an all-caps repo half whose
+# OWNER still carries structure is refused again, on a root where the veto cannot rescue it.
+# The probe is `phase2/SKILL`, NOT `review-heal/SKILL`: narrowing (vi) retired the owner-half hyphen,
+# so `review-heal` no longer supplies any structure for the suppressor to suppress and that probe
+# went vacuous — it passed with the mutant AND without it. A digit-bearing owner still supplies some.
+# This is the standing hazard with a suppressor control: it can only be proven by a case where the
+# thing it suppresses would otherwise fire.
 awk '{ if (index($0, "ALL-CAPS repo half: a file stem")) next; print }' "$VE" > "$TMP/mut-allcaps.sh"
 if mutated_differs mut-allcaps.sh "all-caps repo half suppressor"; then
   LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-allcaps.sh" cross-repo \
-    --entry "review-heal/SKILL is the authority here" --root "$INDEX_LESS" >/dev/null 2>&1
-  [ $? -eq 1 ] && ok "narrowing (iii): deleting the all-caps suppressor refuses 'review-heal/SKILL' again — the suppressor is what passes it" \
+    --entry "phase2/SKILL is the authority here" --root "$INDEX_LESS" >/dev/null 2>&1
+  [ $? -eq 1 ] && ok "narrowing (iii): deleting the all-caps suppressor refuses 'phase2/SKILL' again — the suppressor is what passes it" \
     || no "narrowing (iii): the all-caps mutant did not change the verdict"
   LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-allcaps.sh" cross-repo \
     --entry "octocat/Hello-World has the bug" --root "$INDEX_LESS" >/dev/null 2>&1
@@ -1072,61 +1107,459 @@ if mutated_differs mut-rule.sh "judging-rule blanking"; then
   fi
 fi
 
-echo "== 11b. AC16 CORPUS REGRESSION: every live curated entry replays with ZERO refusals =="
+# (xxii) NUMERIC RATIO, narrowing (iv): delete the all-digits suppressor => a counting ratio reads
+# as a slug again. Every one of these was a live false refusal.
+verdict 0 "narrowing (iv): a numeric ratio is not a slug — '117/117', '59/59', '85/100' pass" \
+  "$VE" cross-repo --entry "the suite went 117/117 green, 59/59 suites passed, coverage 85/100 lines" --root "$REPO_ROOT"
+verdict 1 "narrowing (iv) is BOTH-halves-only: a STRUCTURALLY marked numeric slug is still REFUSED" \
+  "$VE" cross-repo --entry "cloned from github.com/117/117 yesterday" --root "$REPO_ROOT"
+sed -e 's/^    \*\[!0-9\]\*) : ;;.*$/    *) : ;;/' -e 's/^    \*) return 1 ;;.*ratio.*$/    *) : ;;/' "$VE" > "$TMP/mut-ratio.sh"
+if mutated_differs mut-ratio.sh "numeric-ratio suppressor"; then
+  RATIO_LEFT="$(grep -c 'a ratio, never a slug' "$TMP/mut-ratio.sh" 2>/dev/null)"; [ -n "$RATIO_LEFT" ] || RATIO_LEFT=0
+  if [ "$RATIO_LEFT" -ne 0 ]; then
+    no "(xxii) $RATIO_LEFT suppressor arm(s) survive in the mutant — it is partially applied"
+  else
+    LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-ratio.sh" cross-repo \
+      --entry "the suite went 117/117 green" --root "$REPO_ROOT" >/dev/null 2>&1
+    r1=$?
+    LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-ratio.sh" cross-repo \
+      --entry "octocat/repo2 has the bug" --root "$REPO_ROOT" >/dev/null 2>&1
+    r2=$?
+    [ "$r1" -eq 1 ] \
+      && ok "narrowing (iv): deleting the all-digits suppressor refuses '117/117' again — the suppressor is what passes it" \
+      || no "narrowing (iv): the ratio mutant did not discriminate (rc=$r1, wanted 1)"
+    [ "$r2" -eq 1 ] \
+      && ok "narrowing (iv): the same mutant still refuses 'octocat/repo2' — it removed only the all-digits arm" \
+      || no "narrowing (iv): the ratio mutant changed the fused-digit verdict too (rc=$r2)"
+  fi
+fi
+
+# (xxiii) PROSE `A/B.ext` SHORTHAND: the dead-reference check's two-segment veto. Mutant = let every
+# two-segment token through, i.e. the pre-fix behaviour.
+verdict 0 "prose A/B shorthand ending in an extension is SKIPPED, not refused — 'CHANGELOG/CLAUDE.md'" \
+  "$VE" dead-reference --entry "CHANGELOG/CLAUDE.md both drifted; see README/AGENT_GUIDELINES.md" --root "$REPO_ROOT"
+verdict 0 "CONTROL: a two-segment path whose owner IS a repo directory is still examined and resolves" \
+  "$VE" dead-reference --entry "the docs/PITFALLS.md file" --root "$REPO_ROOT"
+verdict 1 "CONTROL: a DEAD two-segment path under a real directory is still REFUSED" \
+  "$VE" dead-reference --entry "see docs/NO-SUCH-FILE-HERE.md" --root "$REPO_ROOT"
+sed -e 's/^    _ve_owner_is_repo_dir "\$owner" "\$root" || continue$/    :/' "$VE" > "$TMP/mut-2seg.sh"
+if mutated_differs mut-2seg.sh "two-segment prose veto"; then
+  SEG_LEFT="$(grep -c '_ve_owner_is_repo_dir "\$owner"' "$TMP/mut-2seg.sh" 2>/dev/null)"; [ -n "$SEG_LEFT" ] || SEG_LEFT=0
+  if [ "$SEG_LEFT" -ne 0 ]; then
+    no "(xxiii) $SEG_LEFT veto call site(s) survive in the mutant — it is partially applied"
+  else
+    bash "$TMP/mut-2seg.sh" dead-reference --entry "CHANGELOG/CLAUDE.md both drifted" --root "$REPO_ROOT" >/dev/null 2>&1
+    r1=$?
+    bash "$TMP/mut-2seg.sh" dead-reference --entry "the docs/PITFALLS.md file" --root "$REPO_ROOT" >/dev/null 2>&1
+    r2=$?
+    [ "$r1" -eq 1 ] \
+      && ok "two-segment veto: without it 'CHANGELOG/CLAUDE.md' is refused again — the veto is what passes it" \
+      || no "two-segment veto: the mutant did not discriminate (rc=$r1, wanted 1)"
+    [ "$r2" -eq 0 ] \
+      && ok "two-segment veto: the same mutant still RESOLVES 'docs/PITFALLS.md' — it removed only the skip, not the resolution" \
+      || no "two-segment veto: the mutant broke the real-path control too (rc=$r2)"
+  fi
+fi
+
+# (xxiv) THE INDEX UNION: a gitignored-but-real file must resolve. This needs its OWN fixture repo —
+# the shape cannot be pinned in the committed corpus, because a file that is gitignored here is
+# simply ABSENT on a fresh clone and the corpus entry would refuse in CI for a different reason.
+# The fixture is a real git work tree with a TRACKED file and an UNTRACKED one: that is the only
+# arrangement that discriminates, since in a NON-git root `git ls-files` is empty and the old
+# fallback fired correctly. That is exactly why the bug was invisible — the fallback was dead code
+# only in the case nobody built a fixture for.
+# Both files sit in SUBDIRECTORIES and are cited by their BARE names, which is what the live defect
+# looked like (`.supervisor/state.md` cited as `state.md`). That placement is load-bearing for the
+# control, not decoration: `_ve_path_resolves` tries `[ -e "$root/$p" ]` BEFORE it consults the
+# index, so a file sitting directly at the root resolves without the index being read at all and the
+# mutant below cannot discriminate. Measured — the first version of this fixture put both files at
+# the root and the mutant stayed green while the union was genuinely neutered.
+UNIONREPO="$TMP/unionrepo"
+mkdir -p "$UNIONREPO/tracked-sub" "$UNIONREPO/scratch-sub"
+( cd "$UNIONREPO" && git init -q . \
+    && printf 'tracked\n' > tracked-sub/tracked-note.md \
+    && git add tracked-sub/tracked-note.md ) >/dev/null 2>&1
+printf 'scratch\n' > "$UNIONREPO/scratch-sub/untracked-scratch.md"
+UNION_TRACKED="$(git -C "$UNIONREPO" ls-files 2>/dev/null | tr '\n' ' ')"
+if [ "$UNION_TRACKED" != "tracked-sub/tracked-note.md " ]; then
+  no "(xxiv) the union fixture repo did not build (ls-files='$UNION_TRACKED') — this control cannot run"
+else
+  ok "(xxiv) the union fixture is a REAL work tree with a non-empty git index — the old find-only-when-empty fallback could never fire here"
+  verdict 0 "index union: a gitignored-but-real file resolves ('untracked-scratch.md')" \
+    "$VE" dead-reference --entry "the projector writes untracked-scratch.md each phase" --root "$UNIONREPO"
+  verdict 0 "index union: the TRACKED file still resolves — the union added a source, it replaced nothing" \
+    "$VE" dead-reference --entry "see tracked-note.md for the map" --root "$UNIONREPO"
+  verdict 1 "index union CONTROL: a file in NEITHER source is still REFUSED" \
+    "$VE" dead-reference --entry "see never-existed-anywhere.md" --root "$UNIONREPO"
+  sed -e 's/-maxdepth 8/-maxdepth 0 -name __ve_no_such_name__/' "$VE" > "$TMP/mut-union.sh"
+  if mutated_differs mut-union.sh "repo-index union"; then
+    UNION_LEFT="$(grep -c 'maxdepth 8' "$TMP/mut-union.sh" 2>/dev/null)"; [ -n "$UNION_LEFT" ] || UNION_LEFT=0
+    if [ "$UNION_LEFT" -ne 0 ]; then
+      no "(xxiv) $UNION_LEFT find call site(s) survive in the mutant — it is partially applied"
+    else
+      bash "$TMP/mut-union.sh" dead-reference --entry "the projector writes untracked-scratch.md each phase" --root "$UNIONREPO" >/dev/null 2>&1
+      r1=$?
+      bash "$TMP/mut-union.sh" dead-reference --entry "see tracked-note.md for the map" --root "$UNIONREPO" >/dev/null 2>&1
+      r2=$?
+      [ "$r1" -eq 1 ] \
+        && ok "index union: with the on-disk half neutered the untracked file is refused again — the union is what resolves it" \
+        || no "index union: the mutant did not discriminate (rc=$r1, wanted 1)"
+      [ "$r2" -eq 0 ] \
+        && ok "index union: the same mutant still resolves the TRACKED file — it removed only the on-disk half" \
+        || no "index union: the mutant broke the tracked-file control too (rc=$r2)"
+    fi
+  fi
+fi
+
+echo "== 11b. AC16 CORPUS REGRESSION: EVERY STORE A SOLE WRITER OWNS replays with ZERO refusals =="
 # THE regression guard whose absence let a 57% false-refusal rate reach a working tree. The five
 # checks looked correct in isolation and were green on 87 hand-written fixtures; replayed against
 # the real corpus they refused 12 of 21 legitimate entries. Hand-written fixtures are written by the
 # same mind that wrote the check and inherit its blind spots — only real prose does not.
 #
-# Two design notes, both load-bearing:
-#  · The store is deliberately ABSENT. Replaying a stored entry against the store that already holds
-#    it is a duplicate BY CONSTRUCTION, so an absent store is what makes duplicate/contradiction
-#    examined-and-clean and puts the prose-scanning checks (provenance, dead-reference, cross-repo)
-#    under test — which is where every false refusal came from.
-#  · The corpus is read READ-ONLY and may legitimately change over time, so this asserts a PROPERTY
-#    of it (zero refusals), never a count. If the stores are absent it SKIPS LOUDLY rather than
-#    passing vacuously — the (e5) precedent — and if they are present but yield no entries that is a
-#    FAILURE, not a pass, because a silently empty corpus is the vacuous form of this whole section.
-CORPUS_L="$REPO_ROOT/.supervisor/memory/LESSONS.md"
-CORPUS_P="$REPO_ROOT/.supervisor/memory/PROJECT_MEMORY.md"
+# THIS SECTION USED TO REPLAY TWO HAND-LISTED FILES — .supervisor/memory/{LESSONS,PROJECT_MEMORY}.md
+# — and that hand-listing, not any one recogniser, is the root cause of the fifth round of false
+# refusals on this branch. `grep -c 'agent-memory'` over this whole suite returned ZERO: the store
+# owned by the sixth writer was the one store the replay never read, and all three of that round's
+# defects lived in it and shipped green. Rounds 1-4 each closed the instances review found and the
+# next review found the same CLASS somewhere the tests did not reach. A replay that covers a
+# hand-picked subset of the stores measures the subset, not the validator.
+#
+# So the corpus is now DERIVED FROM THE WRITERS. CURATED_STORES below is the ONE place a store is
+# named, every registered store runs the same zero-refusals property, and the static assertion
+# underneath fails this suite BY NAME if validate-entry.sh gains a SEVENTH sole writer that is not
+# in it — a new writer cannot inherit the validator without inheriting this replay.
+#
+# Design notes, all load-bearing:
+#  · The store is deliberately ABSENT (--store points at a nonexistent file). Replaying a stored
+#    entry against the store that already holds it is a duplicate BY CONSTRUCTION, so an absent
+#    store is what makes duplicate/contradiction examined-and-clean and puts the prose-scanning
+#    checks (provenance, dead-reference, cross-repo) under test — which is where every false
+#    refusal came from.
+#  · Each store is replayed in the SHAPE ITS WRITER VALIDATES, not in some uniform shape of this
+#    suite's invention: write-agent-memory.sh examines `description + body`, add-orientation.sh and
+#    write-system-contract.sh examine the whole composed file, add-rule.sh examines
+#    `statement + reason`, and the two markdown stores examine one `- [id] text` line per entry.
+#    Replaying a shape the writer never passes would test this harness, not the writer's real path.
+#  · The corpora are read READ-ONLY and may legitimately change over time, so this asserts a
+#    PROPERTY of them (zero refusals), never a count.
+#  · ABSENT vs EMPTY vs DRIFTED are three different facts and get three different verdicts. An
+#    absent store SKIPS LOUDLY (the gitignored stores are absent on a fresh clone and in CI — the
+#    (e5) precedent); a present-but-entryless store SKIPS LOUDLY (a store nobody has written to yet
+#    is a legitimate state); a store holding candidate files that yield NO replayable text FAILS,
+#    because that is format drift and is the vacuous form of this whole section. An UNREADABLE
+#    entry inside a present store is counted as a refusal, never skipped past.
 
-# replay_corpus <file>... -> REPLAY_N entries replayed, REPLAY_BAD refused, REPLAY_FIRST names one.
-replay_corpus() {
-  REPLAY_N=0; REPLAY_BAD=0; REPLAY_FIRST=""
-  local f line id text out rc
-  for f in "$@"; do
-    [ -f "$f" ] && [ -r "$f" ] || continue
-    while IFS= read -r line; do
-      case "$line" in "- ["*) : ;; *) continue ;; esac
-      id="$(printf '%s' "$line" | sed -e 's/^- \[\([0-9a-fA-F]*\)\].*$/\1/')"
-      text="$(printf '%s' "$line" | sed -e 's/^- \[[0-9a-fA-F]*\][[:space:]]*//' -e 's/<!--.*-->[[:space:]]*$//')"
-      [ -n "$text" ] || continue
-      REPLAY_N=$((REPLAY_N + 1))
-      out="$(LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$VE" all \
-        --entry "$text" --source "corpus-replay:$id" \
-        --store "$TMP/no-such-corpus-store.md" --root "$REPO_ROOT" 2>&1)"
-      rc=$?
-      if [ "$rc" -ne 0 ]; then
-        REPLAY_BAD=$((REPLAY_BAD + 1))
-        [ -n "$REPLAY_FIRST" ] || REPLAY_FIRST="[$id] rc=$rc $(printf '%s' "$out" | sed -n '1p')"
-      fi
-    done < "$f"
+# ---- THE REGISTRY -----------------------------------------------------------
+# One line per SOLE WRITER: <writer-script>|<store path, relative to the repo root>|<mode>|<excluded
+# basename>. The path may be a GLOB (write-agent-memory.sh owns one store DIRECTORY PER AGENT).
+# Modes mirror the shape each writer hands to --entry; see the design note above.
+#   bullets   one `- [id] text` line per entry in a single markdown file
+#   fmentry   a directory of frontmatter entry files; entry = `description` + body
+#   wholefile a directory of files that ARE the composed entry verbatim
+#   rules     a directory of JSON arrays; entry = `statement` + `reason`
+#
+# PER-STORE, PER-CHECK SCOPING — columns 5 and 6. Column 5 is EMPTY for every store that is judged by
+# all five checks, which is the DEFAULT: scoping is opt-in, so narrowing a store's checks is always a
+# deliberate, visible edit to this table rather than something that can drift in. When column 5 IS
+# set, column 6 must give the REASON, and it lives ON THE REGISTRY LINE rather than in a comment
+# further down, because a scope whose justification sits somewhere else is a scope nobody re-reads.
+#
+# WHY THE CONTRACTS STORE IS SCOPED — measured, not assumed. The five checks were written for CURATED
+# HUMAN ENTRIES; `.supervisor/twin/contracts/` has a different author and a different contract, and
+# applying all five wholesale is a category error. Replaying the migrated store measured it exactly:
+# contradiction 0/21 refused, dead-reference 8/21, provenance 20/21. The 8 all cite OPTIONAL RUNTIME
+# artifacts (`.supervisor/obsidian-config.json` from `/setup obsidian`, `.supervisor/telemetry-consent.json`
+# from `/telemetry enable`, `/etc/otelcol-contrib/config.yaml`, `.supervisor/twin/ground-truth.json`) —
+# a contract saying "this script reads X if present" is CORRECT prose when X is absent. And provenance
+# refuses 20/21 because a machine-GENERATED interface artifact cites no PR or session, nor should it.
+# The two comparison checks DO fit — a duplicated or self-contradicting contract is a real defect.
+CURATED_STORES="\
+add-orientation.sh|.agent/orientation|wholefile|README.md||
+add-rule.sh|.agent/rules|rules|||
+write-agent-memory.sh|.claude/agent-memory/*|fmentry|MEMORY.md||
+write-lessons.sh|.supervisor/memory/LESSONS.md|bullets|||
+write-project-memory.sh|.supervisor/memory/PROJECT_MEMORY.md|bullets|||
+write-system-contract.sh|.supervisor/twin/contracts|wholefile||duplicate,contradiction|a generated interface artifact cites no PR, and documents runtime inputs that may legitimately be absent"
+
+# The check names column 5 may name — the validator's own subcommands, so a typo cannot silently
+# scope a store down to a check that does not exist.
+REPLAY_KNOWN_CHECKS=" duplicate contradiction provenance dead-reference cross-repo "
+
+# ---- the replay primitives --------------------------------------------------
+replay_reset() { REPLAY_N=0; REPLAY_BAD=0; REPLAY_FIRST=""; REPLAY_CAND=0; REPLAY_CHECKS=""; REPLAY_MISMODE=""; }
+
+# replay_one <label> <entry-text> — the five checks over ONE entry, tallied.
+# `out` and `rc` are declared bare and assigned on their OWN lines: `local out="$(...)"` returns the
+# status of `local`, not of the command substitution, which is how this repo has silently lost an
+# exit status before. Nothing here is chained with `||` before $? is read, for the same reason.
+replay_one() {
+  local label="$1" text="$2" out rc
+  case "$text" in *[![:space:]]*) : ;; *) return 0 ;; esac
+  REPLAY_N=$((REPLAY_N + 1))
+  # An UNSCOPED store runs `all`; a scoped one runs its named checks one at a time and reports the
+  # first non-zero. Running `all` and ignoring the checks a store is scoped out of would still let
+  # those checks decide the exit status, which is the whole thing the scoping exists to prevent.
+  local chk
+  for chk in ${REPLAY_CHECKS:-all}; do
+    out="$(LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$VE" "$chk" \
+      --entry "$text" --source "corpus-replay:$label" \
+      --store "$TMP/no-such-corpus-store.md" --root "$REPO_ROOT" 2>&1)"
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+      REPLAY_BAD=$((REPLAY_BAD + 1))
+      [ -n "$REPLAY_FIRST" ] || REPLAY_FIRST="[$label] $chk rc=$rc $(printf '%s' "$out" | sed -n '1p')"
+      return 0
+    fi
   done
   return 0
 }
 
-if [ -r "$CORPUS_L" ] || [ -r "$CORPUS_P" ]; then
-  replay_corpus "$CORPUS_L" "$CORPUS_P"
-  if [ "$REPLAY_N" -eq 0 ]; then
-    no "AC16: the live curated stores are present but yielded NO entries — this replay would pass vacuously"
-  else
-    [ "$REPLAY_BAD" -eq 0 ] \
-      && ok "AC16: all $REPLAY_N live curated entries replay with ZERO refusals" \
-      || no "AC16: $REPLAY_BAD of $REPLAY_N live curated entries were REFUSED (false positives) — first: $REPLAY_FIRST"
+# An entry file this suite could not READ is a hole in the replay; counting it as a refusal is the
+# validator's own could-not-examine discipline applied to the harness.
+replay_unreadable() {
+  REPLAY_BAD=$((REPLAY_BAD + 1))
+  [ -n "$REPLAY_FIRST" ] || REPLAY_FIRST="[$1] the entry file exists but could not be read"
+  return 0
+}
+
+# The two frontmatter readers are write-agent-memory.sh's fm_field/fm_body, deliberately: the entry
+# this replays must be the entry that writer examines.
+replay_fm_description() {
+  awk '
+    NR == 1 && $0 == "---" { inf = 1; next }
+    inf && $0 == "---"     { exit }
+    inf {
+      i = index($0, ":")
+      if (i > 0) {
+        key = substr($0, 1, i - 1); val = substr($0, i + 1)
+        gsub(/^[ \t]+|[ \t]+$/, "", key); gsub(/^[ \t]+|[ \t]+$/, "", val)
+        if (key == "description") { print val; exit }
+      }
+    }
+  ' "$1" 2>/dev/null
+}
+replay_fm_body() {
+  awk '
+    NR == 1 && $0 == "---" { inf = 1; next }
+    inf && $0 == "---"     { inf = 0; next }
+    inf                    { next }
+    { print }
+  ' "$1" 2>/dev/null
+}
+
+replay_mode_bullets() {
+  local f="$1" line id text
+  [ -f "$f" ] || return 0
+  [ -r "$f" ] || { REPLAY_CAND=$((REPLAY_CAND + 1)); replay_unreadable "${f##*/}"; return 0; }
+  [ -s "$f" ] && REPLAY_CAND=$((REPLAY_CAND + 1))
+  while IFS= read -r line; do
+    case "$line" in "- ["*) : ;; *) continue ;; esac
+    id="$(printf '%s' "$line" | sed -e 's/^- \[\([0-9a-fA-F]*\)\].*$/\1/')"
+    text="$(printf '%s' "$line" | sed -e 's/^- \[[0-9a-fA-F]*\][[:space:]]*//' -e 's/<!--.*-->[[:space:]]*$//')"
+    replay_one "${f##*/}:$id" "$text"
+  done < "$f"
+  return 0
+}
+
+replay_mode_fmentry() {
+  local d="$1" excl="${2:-}" f
+  for f in "$d"/*.md; do
+    [ -f "$f" ] || continue                     # unmatched glob stays literal under bash 3.2
+    [ -n "$excl" ] && [ "${f##*/}" = "$excl" ] && continue
+    REPLAY_CAND=$((REPLAY_CAND + 1))
+    [ -r "$f" ] || { replay_unreadable "${d##*/}/${f##*/}"; continue; }
+    replay_one "${d##*/}/${f##*/}" "$(replay_fm_description "$f")
+$(replay_fm_body "$f")"
+  done
+  return 0
+}
+
+replay_mode_wholefile() {
+  local d="$1" excl="${2:-}" f
+  for f in "$d"/*.md; do
+    [ -f "$f" ] || continue
+    [ -n "$excl" ] && [ "${f##*/}" = "$excl" ] && continue
+    REPLAY_CAND=$((REPLAY_CAND + 1))
+    [ -r "$f" ] || { replay_unreadable "${f##*/}"; continue; }
+    replay_one "${f##*/}" "$(cat "$f")"
+  done
+  return 0
+}
+
+replay_mode_rules() {
+  local d="$1" f n i st rs
+  command -v jq >/dev/null 2>&1 || return 0     # no jq: nothing extracted, so the store SKIPS loudly
+  for f in "$d"/*.json; do
+    [ -f "$f" ] || continue
+    [ -r "$f" ] || { REPLAY_CAND=$((REPLAY_CAND + 1)); replay_unreadable "${f##*/}"; continue; }
+    n="$(jq 'if type == "array" then length else 0 end' "$f" 2>/dev/null)"
+    case "$n" in ''|*[!0-9]*) continue ;; esac
+    i=0
+    while [ "$i" -lt "$n" ]; do
+      REPLAY_CAND=$((REPLAY_CAND + 1))
+      st="$(jq -r --argjson i "$i" '.[$i].statement // ""' "$f" 2>/dev/null)"
+      rs="$(jq -r --argjson i "$i" '.[$i].reason // ""' "$f" 2>/dev/null)"
+      if [ -n "$rs" ]; then
+        replay_one "${f##*/}[$i]" "$st
+$rs"
+      else
+        replay_one "${f##*/}[$i]" "$st"
+      fi
+      i=$((i + 1))
+    done
+  done
+  return 0
+}
+
+# replay_store <mode> <pathspec> <excl> — $pathspec is deliberately UNQUOTED so a registry glob
+# (`.claude/agent-memory/*`) expands to one store per agent. Sets REPLAY_FOUND=1 when at least one
+# real store was located, which is what separates "absent" from "empty".
+replay_store() {
+  local mode="$1" pathspec="$2" excl="${3:-}" p
+  REPLAY_FOUND=0; REPLAY_MISMODE=""
+  case " bullets fmentry wholefile rules " in
+    *" $mode "*) : ;;
+    *) REPLAY_MISMODE="unknown mode '$mode'"; return 0 ;;
+  esac
+  for p in $pathspec; do
+    # A registration whose MODE does not match the KIND of thing on disk used to degrade into the
+    # "absent" skip and mask the store entirely — `bullets` pointed at a directory simply found no
+    # file and reported the store missing. A wrong mode is a registry BUG, so it fails and names
+    # itself; only a path that is genuinely not there is allowed to skip.
+    if [ "$mode" = bullets ]; then
+      if [ -d "$p" ]; then REPLAY_MISMODE="mode 'bullets' expects a FILE but $p is a directory"; continue; fi
+      [ -f "$p" ] || continue
+      REPLAY_FOUND=1; replay_mode_bullets "$p"
+    else
+      if [ -f "$p" ]; then REPLAY_MISMODE="mode '$mode' expects a DIRECTORY but $p is a file"; continue; fi
+      [ -d "$p" ] || continue
+      REPLAY_FOUND=1
+      case "$mode" in
+        fmentry)   replay_mode_fmentry "$p" "$excl" ;;
+        wholefile) replay_mode_wholefile "$p" "$excl" ;;
+        rules)     replay_mode_rules "$p" ;;
+      esac
+    fi
+  done
+  return 0
+}
+
+# replay_corpus <file>... — the bullets-mode entry point the committed shape corpus and the
+# vacuity control below still use, now expressed in the primitives above so there is one replay.
+replay_corpus() {
+  local f
+  replay_reset
+  for f in "$@"; do replay_mode_bullets "$f"; done
+  return 0
+}
+
+# ---- THE STATIC HALF: no writer may go unreplayed ---------------------------
+# Derived from the SOURCE, so it tracks the code rather than this file's memory of it. A sole writer
+# is any non-test script here that invokes the shared validator; validate-entry.sh is itself excluded
+# (it DEFINES validate_entry_all, it does not own a store).
+# Built in a plain loop, NOT inside a `$( ... )`: bash 3.2 (the macOS shell this repo targets)
+# mis-parses a `case` pattern's `)` as the end of a command substitution.
+WRITERS_FOUND=""
+for f in "$HERE"/*.sh; do
+  b="${f##*/}"
+  case "$b" in test-*|validate-entry.sh) continue ;; esac
+  if grep -q 'validate_entry_all' "$f" 2>/dev/null; then
+    WRITERS_FOUND="$WRITERS_FOUND$b
+"
   fi
+done
+WRITERS_FOUND="$(printf '%s' "$WRITERS_FOUND" | sort -u | tr '\n' ' ')"
+WRITERS_WANT="$(printf '%s\n' "$CURATED_STORES" | awk -F'|' 'NF { print $1 }' | sort -u | tr '\n' ' ')"
+if [ -z "$WRITERS_FOUND" ]; then
+  no "AC16: no script in $HERE calls validate_entry_all — the whole store replay would run vacuously"
+elif [ "$WRITERS_FOUND" = "$WRITERS_WANT" ]; then
+  ok "AC16: CURATED_STORES registers exactly the sole writers that call validate_entry_all in source ($WRITERS_WANT) — no writer's store is unreplayed"
 else
-  ok "AC16 SKIPPED: no live curated store at .supervisor/memory/ (gitignored, so absent on a fresh clone and in CI) — not asserted rather than asserted vacuously"
+  no "AC16: the sole writers in source are [$WRITERS_FOUND] but CURATED_STORES registers [$WRITERS_WANT] — add the new writer's store to CURATED_STORES so the corpus replay covers it"
 fi
+
+# A registration is only worth having if it points at the store the writer actually owns. Without
+# this, a seventh writer could be silenced by registering a path nothing writes to: the static check
+# above would pass, the store would SKIP as absent, and the coverage hole would be back with a
+# registry entry vouching for it. Each writer's own source must name its registered store path.
+REG_BAD=""
+while IFS='|' read -r w spath smode sexcl schecks sreason; do
+  [ -n "$w" ] || continue
+  case "$spath" in *"*"*) spath="${spath%/\*}" ;; esac      # compare the glob's stable prefix
+  grep -qF "$spath" "$HERE/$w" 2>/dev/null || REG_BAD="$REG_BAD $w->$spath"
+done <<EOF
+$CURATED_STORES
+EOF
+[ -z "$REG_BAD" ] \
+  && ok "AC16: every registered store path is named in its own writer's source — no registration points at a store nothing writes to" \
+  || no "AC16: registered store path(s) never mentioned by the owning writer:$REG_BAD — the registry vouches for a store that writer does not own"
+
+# ---- THE SCOPING GATES ------------------------------------------------------
+# Three, and each closes a way a store could be quietly stopped from being judged. Scoping is the one
+# mechanism here that can REMOVE coverage, so it is the one that needs the most saying-no.
+SCOPE_BAD=""; SCOPE_NOREASON=""; SCOPE_EMPTY=""; SCOPE_COUNT=0
+while IFS='|' read -r w spath smode sexcl schecks sreason; do
+  [ -n "$w" ] || continue
+  case "$schecks" in *[!\ ]*) : ;; *) continue ;; esac      # unscoped: the default, nothing to check
+  SCOPE_COUNT=$((SCOPE_COUNT + 1))
+  n_ok=0
+  for c in $(printf '%s' "$schecks" | tr ',' ' '); do
+    case "$REPLAY_KNOWN_CHECKS" in
+      *" $c "*) n_ok=$((n_ok + 1)) ;;
+      *) SCOPE_BAD="$SCOPE_BAD $w->$c" ;;
+    esac
+  done
+  [ "$n_ok" -gt 0 ] || SCOPE_EMPTY="$SCOPE_EMPTY $w"
+  case "$sreason" in *[!\ ]*) : ;; *) SCOPE_NOREASON="$SCOPE_NOREASON $w" ;; esac
+done <<EOF
+$CURATED_STORES
+EOF
+[ -z "$SCOPE_BAD" ] \
+  && ok "AC16 scoping: every scoped check names a real validate-entry subcommand — a typo cannot scope a store down to a check that does not exist" \
+  || no "AC16 scoping: unknown check name(s) in CURATED_STORES:$SCOPE_BAD — that store is scoped to a check the validator does not have"
+[ -z "$SCOPE_EMPTY" ] \
+  && ok "AC16 scoping: no store is scoped down to ZERO checks — a registered store is always judged by something" \
+  || no "AC16 scoping: store(s) scoped to no runnable check at all:$SCOPE_EMPTY — the store is registered but judged by nothing, which is coverage removed in silence"
+[ -z "$SCOPE_NOREASON" ] \
+  && ok "AC16 scoping: every scoped store records WHY on its own registry line — a scope whose justification lives elsewhere is one nobody re-reads" \
+  || no "AC16 scoping: scoped store(s) with no reason in column 6:$SCOPE_NOREASON"
+[ "$SCOPE_COUNT" -gt 0 ] \
+  && ok "AC16 scoping: $SCOPE_COUNT store(s) are scoped, so these three gates are not running vacuously" \
+  || no "AC16 scoping: NO store is scoped, so the three gates above asserted nothing — remove them or the scoping mechanism is dead code"
+
+# ---- THE REPLAY -------------------------------------------------------------
+REPLAY_TOTAL=0
+while IFS='|' read -r w spath smode sexcl schecks sreason; do
+  [ -n "$w" ] || continue
+  replay_reset
+  REPLAY_CHECKS="$(printf '%s' "$schecks" | tr ',' ' ')"
+  replay_store "$smode" "$REPO_ROOT/$spath" "$sexcl"
+  SCOPE_NOTE=""
+  [ -n "$REPLAY_CHECKS" ] && SCOPE_NOTE=" [scoped to:$REPLAY_CHECKS— $sreason]"
+  if [ -n "$REPLAY_MISMODE" ]; then
+    no "AC16 [$w]: MIS-REGISTERED MODE — $REPLAY_MISMODE. A wrong mode used to degrade into the 'absent' skip and mask the store entirely; it fails instead."
+  elif [ "$REPLAY_FOUND" -ne 1 ]; then
+    ok "AC16 SKIPPED [$w]: no store at $spath (gitignored, so absent on a fresh clone and in CI) — not asserted rather than asserted vacuously"
+  elif [ "$REPLAY_CAND" -eq 0 ]; then
+    ok "AC16 SKIPPED [$w]: the store at $spath exists but holds no entries yet — nothing to replay"
+  elif [ "$REPLAY_N" -eq 0 ]; then
+    no "AC16 [$w]: the store at $spath holds $REPLAY_CAND candidate entr(ies) but yielded NO replayable text — its format drifted, and this replay would pass vacuously"
+  elif [ "$REPLAY_BAD" -ne 0 ]; then
+    no "AC16 [$w]: $REPLAY_BAD of $REPLAY_N live entries in $spath were REFUSED$SCOPE_NOTE — first: $REPLAY_FIRST"
+  else
+    ok "AC16 [$w]: all $REPLAY_N live entries in $spath replay with ZERO refusals$SCOPE_NOTE"
+  fi
+  REPLAY_TOTAL=$((REPLAY_TOTAL + REPLAY_N))
+done <<EOF
+$CURATED_STORES
+EOF
+
+# The whole-section vacuity control: if EVERY registered store skipped, this section asserted
+# nothing at all and must say so rather than reporting a row of green skips as coverage.
+[ "$REPLAY_TOTAL" -gt 0 ] \
+  && ok "AC16: the writer-driven replay examined $REPLAY_TOTAL live curated entries across the registered stores — the section is not vacuous" \
+  || no "AC16: NOT ONE registered store yielded an entry, so this whole section asserted nothing"
 
 # THE COMMITTED SHAPE CORPUS. The live replay above can only exercise shapes the live corpus happens
 # to contain, and it contains none of the extensionless two-segment path shapes — every path it cites
@@ -1139,8 +1572,8 @@ if [ -r "$SHAPE_CORPUS" ]; then
   replay_corpus "$SHAPE_CORPUS"
   # An exact floor, not just ">0": a silently truncated corpus is the vacuous form of this assertion,
   # and it is committed so its size is a fact this suite may depend on.
-  if [ "$REPLAY_N" -lt 7 ]; then
-    no "the committed shape corpus yielded only $REPLAY_N entries (expected at least 7) — it was truncated or its line format drifted"
+  if [ "$REPLAY_N" -lt 10 ]; then
+    no "the committed shape corpus yielded only $REPLAY_N entries (expected at least 10) — it was truncated or its line format drifted"
   else
     [ "$REPLAY_BAD" -eq 0 ] \
       && ok "SHAPE CORPUS: all $REPLAY_N committed extensionless-path entries replay with ZERO refusals" \

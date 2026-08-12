@@ -91,7 +91,7 @@
 # character an `owner/repo` slug, and every one of those six tripped a marker: a hyphen in the owner
 # half, a digit anywhere, CamelCase, or a neighbouring `in`/`from`. The live corpus could not catch
 # it — every path IT cites carries an extension or a trailing slash — so the shape is now pinned by
-# its own committed replay corpus (`fixtures/curated-shape-corpus.md`). Three narrowings, each aimed
+# its own committed replay corpus (`fixtures/curated-shape-corpus.md`). Four narrowings, each aimed
 # at the SIGNAL that misfired rather than at the token that misfired (a stoplist of paths would be
 # unbounded by construction, the same argument as for prose pairs):
 #   (i)   THE IN-REPO PATH VETO — a token whose OWNER half names a directory that exists anywhere in
@@ -105,11 +105,44 @@
 #         (digits fused to letters) and `hashicorp/terraform-aws-v2` (`v2` is not all-digits) keep it.
 #   (iii) AN ALL-CAPS REPO HALF IS A FILE STEM, not a repository name (`review-heal/SKILL`,
 #         `docs/README`), so it does not earn marker (4) on its own.
-# (ii) and (iii) are index-INDEPENDENT and hold with no repo to read; (i) needs a usable root, which
-# every one of the six sole writers passes (`--root "$GITROOT"`). WHAT THIS DOES NOT COVER: an
+#   (iv)  A NUMERIC RATIO IS NOT A SLUG — BOTH halves all digits (`117/117`, `11/11`, `85/100`) is
+#         how prose writes a count, a score or a test tally, and it satisfies "a digit anywhere"
+#         unconditionally, so no other narrowing can reach it: (ii) strips only a `-<digits>` TAIL
+#         and (iii) touches only an all-caps repo half. Found by replaying the AGENT-MEMORY store,
+#         which the corpus replay did not read until this round; `117/117` refused a live entry.
+# (ii), (iii) and (iv) are index-INDEPENDENT and hold with no repo to read; (i) needs a usable root,
+# which every one of the six sole writers passes (`--root "$GITROOT"`). WHAT THIS DOES NOT COVER: an
 # in-repo directory path whose owner half is NOT itself a directory in the tree AND whose structure
-# survives (ii)+(iii) — e.g. `phase-2b/plan` or `feature-x/Notes` in a repo holding neither — is
-# still refused. The three narrowings only ever REMOVE recognition; none of them can make the check
+# survives (ii)+(iii)+(iv) — e.g. `phase-2b/plan` or `feature-x/Notes` in a repo holding neither — is
+# still refused.
+#
+# THE THREE CATCHES TRADED AWAY BY (v), (vi) AND (vii), stated with the measurement rather than left
+# for a later reader to discover as a silently weakened check. Each was decided the same way, and the
+# rule is worth naming because it is this branch's standing bias applied consistently: THE FALSE
+# REFUSALS ARE MEASURED ON THIS REPO'S REAL CURATED PROSE, WHILE THE CATCHES THEY COST ARE AUTHORED
+# FIXTURES NOBODY HAS EVER WRITTEN IN A LIVE ENTRY. Live data beats a hypothetical catch — that is
+# the same reasoning the corpus replay itself rests on.
+#   · (v) VERSION TAG — `hashicorp/terraform-aws-v2` no longer earns marker (4). A release-tagged
+#     repo name carrying NO other structure is now invisible unless it is cued, structurally marked
+#     or owned by a known owner. Bought: `fix/v14.23.1-combined`, a git branch name, in a live entry.
+#   · (vi) OWNER-HALF HYPHEN — `acme-corp/widget-svc` no longer earns marker (4); a hyphenated
+#     foreign owner standing bare in prose is now a miss. Bought: `ground-truth/conformance`, an
+#     English alternative pair, in a live entry.
+#   · (vii) LEADING CAPITAL — `Microsoft/vscode` (a capital only in position 1) no longer earns
+#     marker (4). Bought: `Count/version`, a live entry's opening words.
+# All three losses collapse into the residual bound already documented below: a bare `word/word` with
+# no cue, no known owner and no remaining structure is a deliberate miss. They make that bound WIDER,
+# not different in kind, and every refusal message already says a clean verdict is not proof of
+# absence.
+#
+# ONE FALSE REFUSAL IS UNFIXABLE AND IS STATED, NOT HIDDEN — it belongs to the dead-reference check,
+# not this one. An entry that RECORDS A DELETION necessarily cites a path that no longer resolves
+# ("v14.38.0 removed the stale-terminal-state.md short-circuit"). The check sees a citation; nothing
+# in the text distinguishes "this file should exist" from "this file was removed", and no narrowing
+# of a path recogniser can recover an author's intent. The live agent-memory replay pins it as a
+# known refusal rather than pretending it is clean.
+#
+# The seven narrowings only ever REMOVE recognition; none of them can make the check
 # refuse something it previously passed.
 # The marker requirement is the SAME discipline on both shapes, and the reason is identical in both
 # cases: the shape alone is ambiguous prose. `fixed in #146` has the `NAME #123` shape and would be
@@ -676,8 +709,48 @@ validate_provenance() {
 # absent jq, an unparseable record), which still REFUSES with rc 2. The rule: "I examined this and
 # it is a real violation" is a refusal; "this token is not the kind of thing I recognise at all" is
 # a skip. Conflating the two is what made a live corpus replay refuse 12 of 21 legitimate entries.
+#
+# PROSE `A/B` SHORTHAND IS NOT A PATH — the skip class added after review found this check refusing
+# it, and the asymmetry it closes is the point. English writes alternatives with a slash, and when
+# the second alternative happens to be a filename the result is character-for-character a
+# two-segment path: `CHANGELOG/CLAUDE.md both drifted`, `see README/AGENT_GUIDELINES.md`. MEASURED,
+# both were REFUSED, and the first is a live curated entry. The CROSS-REPO check was given a
+# stoplist and a four-marker discipline for exactly this prose shape; this check was given none, so
+# the same prose that cross-repo carefully skips, dead-reference refused.
+#
+# THE NARROWING, aimed at the signal rather than at the tokens (a stoplist of prose pairs is
+# unbounded by construction — the same argument the cross-repo check records): a token with EXACTLY
+# TWO segments is a path candidate only when its OWNER half NAMES A DIRECTORY IN THIS REPO'S TREE,
+# reusing `_ve_owner_is_repo_dir` — the one signal that reads the world rather than the shape, which
+# is the only thing that can separate `docs/PITFALLS.md` (a real citation, still refused when dead)
+# from `CHANGELOG/CLAUDE.md` (prose). Failing that, the token is SKIPPED — never examined, never a
+# verdict — which is this check's own SKIP-vs-REFUSE rule applied to a shape it cannot have an
+# opinion about, not a relaxation of decision (b).
+# Deliberately scoped to TWO segments: `loomwright/scripts/foo.sh` has three and is unambiguous, so
+# it stays a candidate unconditionally, as do absolute paths and `./`-rooted ones. A bare `NAME.md`
+# has no owner half and is untouched.
+# WHAT THIS COSTS: a dead two-segment path whose owner half is not itself a directory in the tree —
+# a citation of `oldrenameddir/file.md` after the directory was removed entirely — is now missed.
+# That is a real catch lost, and it is the file-wide bias applied on purpose: the same citation with
+# the directory still present is still checked, and a false refusal blocks a legitimate write.
+# An UNBUILDABLE index makes the veto skip every two-segment token, which costs catches and can
+# never manufacture a refusal.
 _ve_extract_paths() {
-  printf '%s\n' "${1:-}" \
+  local root="${2:-}" cand owner
+  while IFS= read -r cand; do
+    [ -n "$cand" ] || continue
+    case "$cand" in
+      /*)      printf '%s\n' "$cand"; continue ;;   # absolute: unambiguous, judged as before
+      */*/*)   printf '%s\n' "$cand"; continue ;;   # three or more segments: unambiguous
+      ./*|../*) printf '%s\n' "$cand"; continue ;;  # explicitly cwd-relative: unambiguous
+      */*)     : ;;                                 # exactly two segments: the prose-shorthand shape
+      *)       printf '%s\n' "$cand"; continue ;;   # bare NAME.md / NAME.sh: no owner half
+    esac
+    owner="$(printf '%s' "${cand%%/*}" | tr '[:upper:]' '[:lower:]')"
+    _ve_owner_is_repo_dir "$owner" "$root" || continue
+    printf '%s\n' "$cand"
+  done <<EOF
+$(printf '%s\n' "${1:-}" \
     | sed -e 's#https\{0,1\}://[^[:space:]]*# #g' \
     | tr -s '[:space:]' '\n' \
     | sed -e 's/^[][(){}<>"'"'"'`*,;]*//' -e 's/[][(){}<>"'"'"'`*,;.!?]*$//' \
@@ -688,27 +761,47 @@ _ve_extract_paths() {
         /^~/          { next }        # a home-relative path is outside any repo root: SKIP
         /\// && /\.[A-Za-z][A-Za-z0-9]*$/ { print; next }
         /^[^.\/]+\.(md|sh)$/ { print }
-      '
+      ')
+EOF
 }
 
 # _ve_repo_index <root> — every file path in the repo, one per line, relative to <root>. Built ONCE
 # per root per process (curated entries cite several paths each, and re-listing the tree per token
-# is the difference between a validator and a pause). `git ls-files` when <root> is a work tree;
-# otherwise a pruned `find`, so a fixture dir that is not a repo still resolves.
-# Documented bound: the find fallback prunes `.git` and `node_modules` and stops at depth 8, so a
-# file buried deeper than that in a NON-git root is not indexed.
+# is the difference between a validator and a pause). The index is the UNION of two sources:
+# `git ls-files` (the tracked set) and a pruned `find` (everything actually on disk).
+#
+# THE UNION REPLACED A FALLBACK, and the fallback was DEAD CODE — the third false-refusal class
+# found by review. The `find` used to run only when `git ls-files` came back EMPTY, which in a real
+# work tree never happens, so the index was the TRACKED set and nothing else. Every GITIGNORED BUT
+# REAL file was therefore unresolvable and refused: MEASURED on this repo, `.supervisor/state.md`
+# exists on disk, `git ls-files` does not list it, and an entry saying "the projector writes
+# state.md each phase" was refused as a dead reference — as was `graphify-out/graph.json`. Both are
+# files a curated entry has every reason to cite: the gitignored scratch dirs are precisely where
+# this system's own runtime state lives. Unioning can only ever make MORE paths resolve, so it can
+# only ever remove refusals; it can never manufacture one.
+#
+# THE COST, stated rather than discovered later: the `find` now runs on every root instead of
+# almost never, so it is memoised exactly as the git listing was (one build per root per process,
+# read out of $_VE_INDEX by the callers that need it in THIS shell). MEASURED on this repo: ~3,750
+# files in ~30ms against ~400 tracked, which is noise next to the awk scans it feeds.
+# THE OTHER COST, and it is a real one: a path that is dead in git but still present in some
+# untracked leftover under the root (a stale worktree, a build artifact) now RESOLVES, so a
+# genuinely dead reference to it is missed. That is the file-wide bias applied deliberately — a
+# missed dead reference is a documented gap, a false refusal blocks a legitimate write.
+# Documented bound: the `find` half prunes `.git` and `node_modules` and stops at depth 8, so a
+# file buried deeper than that is indexed only if git tracks it.
 _VE_INDEX_ROOT=""
 _VE_INDEX=""
 _ve_repo_index() {
   local root="${1:-}"
   [ -n "$root" ] && [ -d "$root" ] || return 1
   if [ "$_VE_INDEX_ROOT" = "$root" ]; then printf '%s' "$_VE_INDEX"; return 0; fi
-  local out
-  out="$(git -C "$root" ls-files 2>/dev/null)"
-  if [ -z "$out" ]; then
-    out="$(find "$root" -maxdepth 8 \( -name .git -o -name node_modules \) -prune -o -type f -print 2>/dev/null \
-      | awk -v r="$root/" '{ if (index($0, r) == 1) $0 = substr($0, length(r) + 1); print }')"
-  fi
+  local tracked ondisk out
+  tracked="$(git -C "$root" ls-files 2>/dev/null)"
+  ondisk="$(find "$root" -maxdepth 8 \( -name .git -o -name node_modules \) -prune -o -type f -print 2>/dev/null \
+    | awk -v r="$root/" '{ if (index($0, r) == 1) $0 = substr($0, length(r) + 1); print }')"
+  # `printf | awk` (never an early-exit consumer) keeps this safe under a caller's `set -o pipefail`.
+  out="$(printf '%s\n%s\n' "$tracked" "$ondisk" | awk 'NF && !seen[$0]++')"
   _VE_INDEX_ROOT="$root"; _VE_INDEX="$out"
   printf '%s' "$out"
 }
@@ -796,6 +889,12 @@ validate_dead_reference() {
     _ve_unexaminable "REFUSE_DEAD_REFERENCE_NO_ENTRY" "no --entry text was supplied, so no cited path could be examined"; return 2
   }
   local p
+  # Build the directory set in THIS shell BEFORE the command substitution below. `_ve_extract_paths`
+  # needs it for the two-segment prose veto, and a `$(...)` subshell INHERITS these caches but cannot
+  # export one back — building it there would re-list the whole tree on every call and throw the
+  # result away. Failure is not fatal: an unbuildable index leaves the veto unable to fire, which
+  # costs catches and never manufactures a refusal.
+  _ve_repo_dirs "$root" >/dev/null 2>&1 || true
   while IFS= read -r p; do
     [ -n "$p" ] || continue
     if ! _ve_path_resolves "$p" "$root"; then
@@ -803,7 +902,7 @@ validate_dead_reference() {
       return 1
     fi
   done <<EOF
-$(_ve_extract_paths "$_VE_ENTRY")
+$(_ve_extract_paths "$_VE_ENTRY" "$root")
 EOF
   return 0
 }
@@ -963,15 +1062,49 @@ _ve_owner_is_repo_dir() {
 # recognition, so neither can make this function claim structure it did not claim before.
 _ve_slug_structured() {
   local left="${1:-}" right="${2:-}" h l r
+  # SUPPRESSOR (iv): BOTH HALVES ALL DIGITS IS A RATIO, NOT A REPOSITORY. Checked FIRST, before any
+  # signal below is consulted, because the "a digit anywhere" signal is unconditionally satisfied by
+  # a numeric pair and no other narrowing can reach it: ordinal stripping (ii) only touches a
+  # `-<digits>` TAIL, and the ALL-CAPS suppressor (iii) only touches a repo half with no lowercase.
+  # MEASURED on the live corpus, every one a false refusal of a legitimate entry: `117/117`,
+  # `11/11`, `21/21`, `59/59`, `85/100` — counting prose ("a repo-root re-run (117/117 pass)") is how
+  # this codebase writes down test results, so this shape is not rare in curated memory, it is
+  # characteristic of it. Index-INDEPENDENT: it holds with no repo to read, which is why it is here
+  # and not in the IN-REPO PATH VETO that needs a usable root.
+  # It can only ever REMOVE recognition. The residual, deliberate: a genuinely numeric GitHub owner
+  # (logins may be all digits) carrying ONLY this marker is now invisible — but a real citation of
+  # one still carries a STRUCTURAL marker (`github.com/117/117`, `117/117#12`, `117/117.git`), and
+  # those bypass this function entirely, so the recognised shapes are unaffected.
+  case "$left$right" in
+    *[!0-9]*) : ;;                            # some non-digit somewhere: judge it below
+    *) return 1 ;;                            # all digits (or empty): a ratio, never a slug
+  esac
   case "$right" in
     *[[:lower:]]*) : ;;                       # has lowercase: an ordinary name, judge it below
     *[[:upper:]]*) return 1 ;;                # ALL-CAPS repo half: a file stem, not a repo name
   esac
   l="$(_ve_strip_ordinal "$left")"; r="$(_ve_strip_ordinal "$right")"
-  case "$l" in *[0-9-]*) return 0 ;; esac
+  # NARROWING (v): a VERSION TAG is not repo structure. A `v<digits>(.<digits>)*` run, at the start
+  # of a half or as a hyphen-delimited segment, is how this project names releases and branches, and
+  # it is the digit that made `fix/v14.23.1-combined` — an ordinary GIT BRANCH NAME — read as a
+  # foreign repository, refusing a live curated entry. Same family as (ii): strip the numbering
+  # prose adds, then ask whether any structure remains. `octocat/repo2` keeps its digit (fused to
+  # letters, not a `v`-prefixed tag) and is still recognised, which is the line this narrowing walks.
+  l="$(printf '%s' "$l" | sed -E 's/(^|-)v[0-9]+(\.[0-9]+)*/\1/g')"
+  r="$(printf '%s' "$r" | sed -E 's/(^|-)v[0-9]+(\.[0-9]+)*/\1/g')"
+  # NARROWING (vi): the OWNER-HALF HYPHEN is no longer structure on its own. `ground-truth/conformance`
+  # is an English alternative pair and was refused as a repository; a hyphen is simply how prose
+  # compounds words, so it cannot carry the reading "repository" by itself. A DIGIT in the owner half
+  # still does.
+  case "$l" in *[0-9]*) return 0 ;; esac
   case "$l$r" in *[0-9]*) return 0 ;; esac
+  # NARROWING (vii): CamelCase means an INTERNAL capital, not a leading one. A capital in position 1
+  # is how every English sentence begins, and `Count/version drift is the top late-stage failure`
+  # opened a live curated entry that this check then refused. The first character of each half is
+  # therefore dropped before the capital-followed-by-lowercase test; `octocat/Hello-World` still
+  # qualifies on the `W` of `World`.
   for h in "$l" "$r"; do
-    case "$h" in *[[:upper:]][[:lower:]]*) return 0 ;; esac
+    case "${h#?}" in *[[:upper:]][[:lower:]]*) return 0 ;; esac
   done
   return 1
 }

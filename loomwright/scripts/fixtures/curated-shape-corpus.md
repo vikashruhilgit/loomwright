@@ -33,3 +33,14 @@
 - [c0de0005] The guard is in agents/code-reviewer today, not in the command file where it used to live.
 - [c0de0006] Copied from scripts/gates last week, which is why the two copies drift apart unless they are edited in the same commit.
 - [c0de0007] See loomwright/agents/product-owner.md for the requirement shape, and note that the docs/ folder is frozen.
+#
+# ROUND FIVE. The three below are the shapes the AGENT-MEMORY store contained and this corpus did
+# not — that store was the one store §11b never replayed, which is why all three shipped green.
+# They are pinned here as well as in the live replay because a live store may legitimately drop the
+# entry that happened to carry the shape, and a corpus that only holds shapes still in use cannot
+# stop a regression. Only shapes that resolve ON A FRESH CLONE belong here: the third defect of that
+# round (a gitignored-but-real path) cannot be pinned in this file for exactly that reason and is
+# asserted against a purpose-built fixture repo in the suite instead.
+- [c0de0008] The suite went 117/117 green after the sweep, 59/59 suites passed, and coverage held at 85/100 lines with 21/21 live entries clean.
+- [c0de0009] CHANGELOG/CLAUDE.md both drifted in the same release, so see README/AGENT_GUIDELINES.md before restating any count.
+- [c0de0010] The control for the line above: docs/PITFALLS.md is a real two-segment path whose owner half IS a directory here, so it must still be examined and still resolve.
