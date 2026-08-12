@@ -65,8 +65,12 @@ jobs:
             This is your own independent checklist as a reviewer — apply your own judgment; do not try to match or converge with any other reviewer's findings.
 
             On a large PR, `gh pr diff` alone will not fit and is not enough to judge
-            anything. Read the changed files directly, and use `git show <base>:<path>`
-            to compare against the base — you have the full history and the working tree.
+            anything. Read the changed files directly, and compare a file against its
+            base version with `git show HEAD^1:<path>` — on a pull_request event CI
+            checks out the PR's merge commit, whose FIRST parent is the base branch tip.
+            (`git show "$(git merge-base HEAD origin/main)":<path>` also works when an
+            `origin/main` remote-tracking ref is present, but `HEAD^1` needs no remote
+            ref.) You have the full history and the working tree.
 
             Use `gh pr comment` with your Bash tool to leave your review as a comment on
             the PR. Posting is not optional and it is the LAST thing you do: if you run
@@ -81,15 +85,36 @@ jobs:
           # 2026-08-12 this list held only the seven `gh` entries, which left the
           # reviewer with no Read, no Grep, no Glob and no git — its only window into
           # the code was `gh pr diff`. That silently starved it on any PR big enough to
-          # need file-level verification: on PR #140 (35 files, +7,387) five successive
-          # runs finished `subtype: success` / `is_error: false` with 7→58 permission
-          # denials each and posted NOTHING, while the check showed green. Note that
+          # need file-level verification: on PR #140 (35 files, +7,387) nine runs of
+          # this workflow all concluded `success` and eight of them posted NOTHING —
+          # the PR carries exactly one claude-authored comment and zero reviews — while
+          # the check showed green throughout. Note that
           # `fetch-depth: 0` above was added so the reviewer could run `git cat-file` /
           # `git show <base>:<path>` — commands the allowlist never actually permitted,
           # so that intent had never once worked. Read/Grep/Glob and read-only git are
-          # therefore explicit here. Everything listed is read-only by construction:
-          # no Write, no Edit, and no bare `Bash(...)` wildcard.
+          # therefore explicit here.
+          #
+          # What this list guarantees is narrow, and it is NOT "read-only": there is no
+          # Write tool, no Edit tool, and no bare `Bash(...)` wildcard — that is all.
+          # Two known write/mutate paths survive inside it: `--output=<file>` is a
+          # standard diff option accepted by `git diff`, `git log` AND `git show` (all
+          # three prefix-globbed here) and overwrites an arbitrary file with no shell
+          # chaining, verified rc=0 on git 2.50.1; and `gh pr comment --delete-last`
+          # removes a comment. The blast radius is bounded by the environment rather
+          # than by the allowlist: the runner is ephemeral, and the job token is
+          # `contents: read`, so nothing written to the checkout can be pushed.
+          # `Bash(git branch:*)` was deliberately dropped — its prefix glob admitted
+          # `-d/-D`, `-m/-M`, `-c/-C`, `-f`, `--set-upstream-to` and
+          # `--edit-description` (which spawns core.editor), and nothing in the prompt
+          # needs it; file-level verification is covered by show/cat-file/log/diff/
+          # blame/ls-files/rev-parse/merge-base.
+          #
+          # Self-test caveat: claude-code-action SKIPS any PR that modifies a workflow
+          # file (it exits 0 with a "workflow validation failed" annotation and posts
+          # nothing), so a change to this file can never be validated by its own PR.
+          # Validate it on the next NON-workflow PR, and assert on a posted comment —
+          # a green check is exactly the signal this change exists to stop trusting.
           # Kept on ONE line on purpose: a YAML folded scalar (`>-`) joins its lines
           # with a space, which would inject a leading space into every wrapped tool
           # name (`" Bash(git blame:*)"`) and is not worth betting the allowlist on.
-          claude_args: '--allowed-tools "Read,Grep,Glob,Bash(git log:*),Bash(git show:*),Bash(git diff:*),Bash(git cat-file:*),Bash(git blame:*),Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git merge-base:*),Bash(git branch:*),Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
+          claude_args: '--allowed-tools "Read,Grep,Glob,Bash(git log:*),Bash(git show:*),Bash(git diff:*),Bash(git cat-file:*),Bash(git blame:*),Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git merge-base:*),Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
