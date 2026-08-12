@@ -64,7 +64,32 @@ jobs:
 
             This is your own independent checklist as a reviewer — apply your own judgment; do not try to match or converge with any other reviewer's findings.
 
-            Use `gh pr comment` with your Bash tool to leave your review as a comment on the PR.
+            On a large PR, `gh pr diff` alone will not fit and is not enough to judge
+            anything. Read the changed files directly, and use `git show <base>:<path>`
+            to compare against the base — you have the full history and the working tree.
+
+            Use `gh pr comment` with your Bash tool to leave your review as a comment on
+            the PR. Posting is not optional and it is the LAST thing you do: if you run
+            low on turns, or could not examine everything you wanted to, post what you
+            DO have plus an explicit note about what you could not cover. A run that
+            ends without a posted comment is indistinguishable from no review at all —
+            the workflow still goes green, so silence reads as "clean" to everyone.
 
           # No --model or --effort pin: inherit the action's defaults.
-          claude_args: '--allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
+          #
+          # --allowed-tools REPLACES the defaults, it does not extend them. Until
+          # 2026-08-12 this list held only the seven `gh` entries, which left the
+          # reviewer with no Read, no Grep, no Glob and no git — its only window into
+          # the code was `gh pr diff`. That silently starved it on any PR big enough to
+          # need file-level verification: on PR #140 (35 files, +7,387) five successive
+          # runs finished `subtype: success` / `is_error: false` with 7→58 permission
+          # denials each and posted NOTHING, while the check showed green. Note that
+          # `fetch-depth: 0` above was added so the reviewer could run `git cat-file` /
+          # `git show <base>:<path>` — commands the allowlist never actually permitted,
+          # so that intent had never once worked. Read/Grep/Glob and read-only git are
+          # therefore explicit here. Everything listed is read-only by construction:
+          # no Write, no Edit, and no bare `Bash(...)` wildcard.
+          # Kept on ONE line on purpose: a YAML folded scalar (`>-`) joins its lines
+          # with a space, which would inject a leading space into every wrapped tool
+          # name (`" Bash(git blame:*)"`) and is not worth betting the allowlist on.
+          claude_args: '--allowed-tools "Read,Grep,Glob,Bash(git log:*),Bash(git show:*),Bash(git diff:*),Bash(git cat-file:*),Bash(git blame:*),Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git merge-base:*),Bash(git branch:*),Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
