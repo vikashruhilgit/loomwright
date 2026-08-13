@@ -434,7 +434,10 @@ STORE_ROOT="${store_arg:-${AGENT_MEMORY_STORE_DIR:-}}"
 
 # A linked worktree's top-level has a `.git` FILE ("gitdir: ..."); the main checkout has a dir.
 if [ -f "$REPO_DIR/.git" ]; then
-  refuse "REFUSE_WORKTREE" "refusing to write from a git worktree ($REPO_DIR) — agent memory is written only from the repo root, because a worktree write diverges and is lost on 'git worktree remove' (red-team F1). Nothing was written." 3
+  # A `.git` FILE means a linked WORKTREE **or** a git SUBMODULE top-level. Both are refused; the
+  # message names both, because naming only 'git worktree remove' sends a submodule caller hunting a
+  # worktree that does not exist. (Same wording as add-rule.sh / add-orientation.sh.)
+  refuse "REFUSE_WORKTREE" "refusing to write from a non-primary checkout ($REPO_DIR) — its top-level '.git' is a FILE, which means either a linked git worktree or a git submodule. Agent memory is written only from the primary repo root (red-team F1): from a worktree the write would diverge and be lost on 'git worktree remove'; from a submodule it would land in the wrong repository. Nothing was written." 3
 fi
 
 AGENT_DIR="$STORE_ROOT/$agent_slug"
@@ -870,14 +873,14 @@ tmp_in_store=""   # consumed by mv; nothing for the trap to clean
 # REBUILD ON THE UNDO PATH TOO, or the undo re-creates the rot this writer exists to prevent.
 # The index rebuild below runs BEFORE the read-back checks, so by the time undo_write fires,
 # MEMORY.md already names the entry we are about to restore-or-remove. Removing the file without
-# NO-WAIT ON THIS PATH (the `0` argument): the failure that brought us here may itself have been a
-# contended lock, and paying the full INDEX_LOCK_WAIT_SECS a second time would double the delay in
-# front of a refusal that is already decided. One attempt, then move on.
 # rebuilding would leave a pointer to a file that is gone — the exact index/directory disagreement
 # `rebuild_memory_index` makes structurally impossible on the success path. The rebuild is
 # best-effort here (`|| true`): this path is already dying with a named diagnostic, and a failed
 # rebuild must not mask the original read-back reason with a second, less useful one. `|| true` is
 # correct HERE for that reason and remains FORBIDDEN on the validator's source line.
+# NO-WAIT ON THIS PATH (the `0` argument): the failure that brought us here may itself have been a
+# contended lock, and paying the full INDEX_LOCK_WAIT_SECS a second time would double the delay in
+# front of a refusal that is already decided. One attempt, then move on.
 undo_write() {
   if [ "$had_prior" -eq 1 ]; then
     cat "$prior" > "$write_target" 2>/dev/null \

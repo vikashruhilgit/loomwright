@@ -139,7 +139,8 @@ GITROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 [ -n "$GITROOT" ] || { echo "write-system-contract: not inside a git repo — refusing" >&2; exit 2; }
 # A linked worktree's top-level has a `.git` FILE ("gitdir: ..."); the main checkout has a dir.
 if [ -f "$GITROOT/.git" ]; then
-  echo "write-system-contract: refusing to write from a git worktree ($GITROOT) — the twin store is written only from the pinned repo root (sole-writer/pinned-CWD contract)." >&2
+  # `.git` as a FILE = a linked WORKTREE or a git SUBMODULE top-level; both refused, both named.
+  echo "write-system-contract: refusing to write from a non-primary checkout ($GITROOT) — its top-level '.git' is a FILE, which means either a linked git worktree or a git submodule. The twin store is written only from the pinned primary repo root (sole-writer/pinned-CWD contract)." >&2
   exit 3
 fi
 cd "$GITROOT" || { echo "write-system-contract: cannot cd to repo root" >&2; exit 2; }

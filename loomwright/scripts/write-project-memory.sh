@@ -209,7 +209,8 @@ GITROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 [ -n "$GITROOT" ] || { echo "write-project-memory: not inside a git repo — refusing" >&2; exit 2; }
 # A linked worktree's top-level has a `.git` FILE ("gitdir: ..."); the main checkout has a dir.
 if [ -f "$GITROOT/.git" ]; then
-  echo "write-project-memory: refusing to write from a git worktree ($GITROOT) — memory is written only from the repo root (red-team F1)." >&2
+  # `.git` as a FILE = a linked WORKTREE or a git SUBMODULE top-level; both refused, both named.
+  echo "write-project-memory: refusing to write from a non-primary checkout ($GITROOT) — its top-level '.git' is a FILE, which means either a linked git worktree or a git submodule. Memory is written only from the primary repo root (red-team F1)." >&2
   exit 3
 fi
 cd "$GITROOT" || { echo "write-project-memory: cannot cd to repo root" >&2; exit 2; }

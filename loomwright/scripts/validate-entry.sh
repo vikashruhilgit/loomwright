@@ -769,7 +769,8 @@ EOF
 #
 # STRICT --source (decision (f)), and it lives HERE so all six writers inherit it. A source
 # qualifies only when it carries an actual REFERENCE: a digit (PR/issue number, commit sha, dated
-# session id) or a `:` / `/` / `#` / `@` separator binding a label to an id — `dreaming:<session_id>`,
+# session id) or a `:` / `/` / `#` / `@` separator binding a label to an ACTUAL id — the separator
+# alone is not enough; see _ve_source_cites_something — `dreaming:2026-08-13-a1b2c3`,
 # `pr-138`, `PR #146`. A bare command name (`dreaming`) names the mechanism that ran, not what
 # motivated the entry, so it cites nothing and does NOT qualify. Accepting any non-placeholder
 # string was offered and rejected: it would make the check assert only that a caller passed SOME
@@ -795,16 +796,130 @@ _VE_PROVENANCE_RE='(^|[^A-Za-z0-9_])#[0-9]+|https?://|(^|[[:space:]])[Pp][Rr][[:
 # hex-letter requirement added. No pipeline and no `grep`, so there is no status to lose to SIGPIPE
 # under a caller's `set -o pipefail` and no locale-dependent character class; the `case` ranges are
 # spelled out literally rather than as `a-f` so a collation order cannot widen them.
+#
+# ...AND THE HEX-LETTER REQUIREMENT IS NOT SUFFICIENT ON ITS OWN, because it makes the verdict
+# depend on the INCIDENTAL ALPHABET of an abbreviated sha. add-orientation.sh stamps
+# `head_sha: $(git rev-parse --short HEAD)` into every memo header and passes `--source ""`, so
+# that 7-hex token is the memo's ONLY reference. When those 7 digits happen to contain no `a`-`f`
+# the memo was REFUSED with "the entry cites nothing that motivated it" — MEASURED: head_sha
+# `4f114bc` rc 0, head_sha `1234567` rc 1, on the same memo. 13 of this repo's last 500 commits
+# (2.6%) abbreviate all-digit; theory says (10/16)^7 = 3.7%, i.e. roughly one commit in thirty. It
+# was a regression, and it made the orientation-promotion path unusable for the duration of
+# whatever commit the user happened to be sitting on.
+#
+# THE LESSON, and it is the whole design here: THIS INFERENCE CANNOT BE WON FROM A BARE HEX STRING
+# IN EITHER DIRECTION. Requiring a letter refuses real all-digit shas; not requiring one accepts
+# bare magnitudes. `1234567` is character-for-character both. So the fix is to stop inferring where
+# the citation is LABELLED, and keep inferring (conservatively, letter-required) where it is not:
+#
+#   · LABELLED  — a hex token introduced by an explicit sha label, either detached
+#                 (`head_sha: 1234567`, the label is the previous whitespace-separated token) or
+#                 attached (`head_sha:1234567`, one token). Accepted at 7-40 hex chars WHATEVER
+#                 its alphabet: the label is the writer saying "this is a sha", so there is nothing
+#                 left to guess. A prose sentence does not accidentally put `sha:`/`commit:`
+#                 immediately before a 7+-digit magnitude.
+#   · UNLABELLED — unchanged from the commit that introduced it: 7-40 chars from [0-9a-f] AND at
+#                 least one [a-f]. Deliberately NOT removed in favour of labels only. An ordinary
+#                 prose citation ("fixed in a1b2c3d") carries no label, it is how the live curated
+#                 corpus cites commits, and provenance is fail-CLOSED — dropping the unlabelled
+#                 path would have converted every such entry into a refusal. This change is
+#                 therefore PURELY ADDITIVE: nothing that passed before can fail now.
+# WHAT BACKS THAT "additive" CLAIM, stated precisely because the obvious answer is wrong. It is NOT
+# the AC16 corpus replay: that replay passes its own qualifying `--source corpus-replay:<label>`, so
+# provenance short-circuits on every entry it replays and it is STRUCTURALLY BLIND to this check.
+# It is backed instead by the paired assertions that exercise provenance directly — the unlabelled
+# path's behavioural cases and its static hex-letter guard in test-validate-entry.sh §4, and
+# test-add-orientation.sh's AC1 provenance (d1)-(d4), whose mutation control reverts exactly this
+# labelled path and requires the all-digit case to go RED while the letter-bearing one stays green.
+# The --source rule, which is NOT additive, gets its own live-corpus replay in test-validate-entry.sh.
+#
+# The label set is closed and spelled out case-insensitively below rather than pattern-matched, for
+# the same reason the hex ranges are spelled out: a recogniser for "words that look like a sha
+# label" is the over-recognition machinery this file records as its worst defect.
+# BOUND, stated rather than discovered later: the label must be a bare token. A backticked or
+# parenthesised `` `head_sha: 1234567` `` is NOT recognised as labelled (no punctuation stripping
+# is done here — adding it would change the unlabelled path's tokenisation too, which is the one
+# thing this edit must not do). That is a MISS, not a false refusal, and the writer that motivated
+# this stamps the bare form.
+# THE SEPARATOR HALF OF STRICT --source, AND THE FAIL-OPEN IT CLOSES. The rule used to be the
+# single glob `*[0-9]*|*:*|*/*|*"#"*|*@*`, i.e. "contains a digit OR contains a separator". The
+# separator half asserted only that a separator was PRESENT, so a CONTENT-FREE separator satisfied
+# a fail-CLOSED check — MEASURED, all rc 0: `--source 'dreaming:'`, `--source ':'`, `--source '@'`.
+# That is reachable from shipped prose, not hypothetical: `commands/dreaming.md` instructs agents to
+# invoke the writers with the literal template `--source "dreaming:<session_id>"`, and an agent that
+# forwards it UNSUBSTITUTED passed provenance while citing nothing.
+#
+# The rule now: a separator qualifies only when at least one ALPHANUMERIC follows it. Every
+# separator in the token is tried (not just the first), because `owner/repo:` cites `repo` after
+# the `/` even though nothing follows the `:` — checking only the first separator would have
+# converted that into a fall-through.
+#
+# ANGLE-BRACKET PLACEHOLDERS ARE REJECTED EXPLICITLY, and the "why" is that the alphanumeric rule
+# alone does not catch them: `<session_id>` is full of alphanumerics, so `dreaming:<session_id>`
+# passes the rule above on its own. A `<...>` in a source id is a template that was never
+# substituted — no writer has a legitimate reason to emit one — so it disqualifies the whole source.
+# THE ONE STOPLIST ENTRY, and its bound. write-lessons.sh sanitizes its --source with
+# `tr -d '"\\<>[:cntrl:]'` BEFORE the validator sees it, so through that writer the same forwarded
+# template arrives as `dreaming:session_id` with the brackets already gone and the bracket rule
+# cannot fire. The bare token `session_id` is therefore named here as well. This is a stoplist of
+# exactly ONE literal, derived from the ONE template the plugin actually ships, and it is
+# deliberately NOT generalised into a "looks like a placeholder word" recogniser: guessing at
+# placeholder-ness inside free-form ids is the over-recognition machinery this file records as its
+# worst defect (see COVERAGE BOUND). A different unsubstituted placeholder is a MISS, on purpose.
+_ve_source_cites_something() {   # <lowercased, trimmed source>
+  local s="$1" sep rest
+  case "$s" in
+    *"<"*|*">"*) return 1 ;;                 # an unsubstituted template, whatever it contains
+  esac
+  for sep in ':' '/' '#' '@'; do
+    case "$s" in
+      *"$sep"*)
+        rest="${s##*"$sep"}"
+        case "$rest" in
+          session_id) : ;;                   # the shipped `<session_id>` template, de-bracketed
+          *[0-9abcdefghijklmnopqrstuvwxyz]*) return 0 ;;
+        esac ;;
+    esac
+  done
+  case "$s" in
+    *[0-9]*) return 0 ;;                     # a bare id (`pr-138`, a dated session id)
+  esac
+  return 1
+}
+_ve_is_sha_label() {   # <token-with-any-trailing-colon-already-removed>
+  case "$1" in
+    [Ss][Hh][Aa]) return 0 ;;
+    [Hh][Ee][Aa][Dd]_[Ss][Hh][Aa]|[Hh][Ee][Aa][Dd]-[Ss][Hh][Aa]) return 0 ;;
+    [Cc][Oo][Mm][Mm][Ii][Tt]) return 0 ;;
+    [Cc][Oo][Mm][Mm][Ii][Tt]_[Ss][Hh][Aa]|[Cc][Oo][Mm][Mm][Ii][Tt]-[Ss][Hh][Aa]) return 0 ;;
+  esac
+  return 1
+}
 _ve_entry_has_sha() {
-  local tok len
+  local tok len labelled prev="" this_label
   while IFS= read -r tok; do
+    # An EMPTY field (runs of whitespace become adjacent newlines) is not a token: skipped without
+    # touching $prev, so `head_sha:  1234567` (two spaces) does not lose its label to the gap.
+    [ -n "$tok" ] || continue
+    # What THIS token would be as a label for the NEXT one. Computed and latched BEFORE the
+    # attached-label split below rewrites $tok, and before any `continue`, so a label token can
+    # never lose its role by being skipped as a non-hex token (it always is one).
+    this_label="${tok%:}"
+    labelled=0
+    case "$tok" in
+      *:*) if _ve_is_sha_label "${tok%%:*}"; then labelled=1; tok="${tok##*:}"; fi ;;
+    esac
+    if [ "$labelled" -eq 0 ] && _ve_is_sha_label "$prev"; then labelled=1; fi
+    prev="$this_label"
     case "$tok" in
       *[!0-9abcdef]*) continue ;;   # not drawn purely from the hex alphabet
     esac
-    case "$tok" in
-      *[abcdef]*) : ;;
-      *) continue ;;                # all digits — a magnitude, not a sha
-    esac
+    if [ "$labelled" -eq 0 ]; then
+      case "$tok" in
+        *[abcdef]*) : ;;
+        *) continue ;;              # UNLABELLED all digits — a magnitude, not a sha
+      esac
+    fi
     len=${#tok}
     if [ "$len" -ge 7 ] && [ "$len" -le 40 ]; then
       return 0
@@ -825,16 +940,16 @@ validate_provenance() {
       *" $src "*) : ;;      # a placeholder source cites nothing — fall through to the text scan
       *)
         # STRICT: the source must carry a real reference, not merely be non-placeholder.
-        case "$src" in
-          *[0-9]*|*:*|*/*|*"#"*|*@*) return 0 ;;
-          *) : ;;           # a bare command name cites nothing — fall through to the text scan
-        esac ;;
+        # The separator branch is NOT "contains a separator" — see _ve_source_cites_something.
+        # A source that cites nothing falls through to the entry-text scan below — it is not
+        # itself the refusal.
+        if _ve_source_cites_something "$src"; then return 0; fi ;;
     esac
   fi
   if grep -qE "$_VE_PROVENANCE_RE" <<<"$_VE_ENTRY" || _ve_entry_has_sha "$_VE_ENTRY"; then
     return 0
   fi
-  _ve_refuse "REFUSE_PROVENANCE" "the entry cites nothing that motivated it — pass a real --source (one carrying an id, such as 'pr-138' or 'dreaming:<session_id>', not a bare command name), or name the reference itself in the entry text (a '#123', a URL or a commit sha). NOTE: the bare WORDS 'session', 'finding', 'postmortem' and 'review' are a topic, not a citation, and no longer satisfy this check on their own. Nothing was written."
+  _ve_refuse "REFUSE_PROVENANCE" "the entry cites nothing that motivated it — pass a real --source (one carrying an id, such as 'pr-138' or 'dreaming:2026-08-13-a1b2c3' — a bare command name does not qualify, and neither does a label with nothing after the separator or an unsubstituted '<session_id>' template), or name the reference itself in the entry text (a '#123', a URL or a commit sha). NOTE: the bare WORDS 'session', 'finding', 'postmortem' and 'review' are a topic, not a citation, and no longer satisfy this check on their own. Nothing was written."
   return 1
 }
 

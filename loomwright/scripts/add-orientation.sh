@@ -244,13 +244,17 @@ STORE_DIR="${store_arg:-${ORIENTATION_STORE_DIR:-}}"
 # returns the WORKTREE's own toplevel, so a worker in a worktree wrote to the worktree's committed
 # store and lost it on `git worktree remove`. A linked worktree's top-level carries a `.git` FILE;
 # the main checkout carries a directory.
+# A `.git` FILE IS NOT UNIQUE TO A WORKTREE — a git SUBMODULE's top-level has one too. Refusing
+# there is right (the memo belongs in the superproject), but naming `git worktree remove` as the
+# consequence sends the reader hunting a worktree that does not exist, so the message names both.
+# Same reasoning as add-rule.sh's guard, kept in lockstep with it.
 # The guard evaluates the RESOLVED $REPO_DIR, NOT $PWD. That is load-bearing here and has no
 # write-lessons.sh analogue: this writer accepts `--repo` / $ORIENTATION_REPO_DIR, so a cwd-only
 # guard would pass an explicit --repo pointing straight at a worktree.
 # DELIBERATELY NOT COPIED from write-lessons.sh: its hard `exit 2` outside a git repo. This
 # writer's documented non-repo fallback stays `pwd`, UNCHANGED — only the worktree case is refused.
 if [ -f "$REPO_DIR/.git" ]; then
-  die "refusing to write from a git worktree ($REPO_DIR) — orientation memos are written only from the repo root (red-team F1): a write here would diverge and be lost on \`git worktree remove\`." 3
+  die "refusing to write from a non-primary checkout ($REPO_DIR) — its top-level \`.git\` is a FILE, which means either a linked git worktree or a git submodule. Orientation memos are written only from the primary repo root (red-team F1): from a worktree the write would diverge and be lost on \`git worktree remove\`; from a submodule it would land in the wrong repository. Run this from the primary checkout (or the superproject root)." 3
 fi
 
 # ---------------------------------------------------------------------------

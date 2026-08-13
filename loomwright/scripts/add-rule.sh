@@ -246,11 +246,17 @@ GITROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 # wrote to the worktree's .agent/rules/ and the write was lost on `git worktree remove`.
 # A linked worktree's top-level carries a `.git` FILE ("gitdir: ..."); the main checkout carries a
 # directory — that is the whole discriminator.
+# A `.git` FILE IS NOT UNIQUE TO A WORKTREE: a git SUBMODULE's top-level carries one too. Refusing
+# there is correct (a curated store belongs in the superproject, not the submodule), but the message
+# must not name `git worktree remove` as the consequence — that sends the reader hunting a worktree
+# that does not exist. The discriminator is kept as-is rather than replaced with
+# `git rev-parse --git-common-dir`: both cases are refused either way, so the extra subprocess would
+# buy only a finer message. The message names BOTH instead.
 # DELIBERATELY NOT COPIED from write-lessons.sh: its hard `exit 2` when there is no git repo at all.
 # This writer's documented fallback outside a repo is `pwd` (fixtures and temp stores are legitimate
 # callers), and that behaviour is UNCHANGED here — only the worktree case is newly refused.
 if [ -f "$GITROOT/.git" ]; then
-  die "refusing to write from a git worktree ($GITROOT) — rules are written only from the repo root (red-team F1): a write here would diverge and be lost on \`git worktree remove\`." 3
+  die "refusing to write from a non-primary checkout ($GITROOT) — its top-level \`.git\` is a FILE, which means either a linked git worktree or a git submodule. Rules are written only from the primary repo root (red-team F1): from a worktree the write would diverge and be lost on \`git worktree remove\`; from a submodule it would land in the wrong repository. Run this from the primary checkout (or the superproject root)." 3
 fi
 
 RULES_DIR="$GITROOT/.agent/rules"

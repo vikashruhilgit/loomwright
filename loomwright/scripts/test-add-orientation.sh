@@ -750,6 +750,104 @@ else
   no "AC1 provenance — SEED FAILED (no memo written)"
 fi
 
+# --- AC1 provenance (d): THE ALL-DIGIT SHA BOUNDARY, ASSERTED RATHER THAN SAMPLED -------------
+# WHY THIS BLOCK EXISTS AT ALL, and it is the more important half of the fix it guards. The commit
+# that added a hex-letter requirement to _ve_entry_has_sha made this writer's provenance verdict
+# depend on the INCIDENTAL ALPHABET of `git rev-parse --short HEAD`: a memo stamped
+# `head_sha: 1234567` was refused, a memo stamped `head_sha: 4f114bc` was not. Every fixture repo
+# above draws a FRESH sha, so this suite SAMPLED that defect instead of asserting it — measured
+# across five runs of the shipped suite: 74/0, 73/1, 64/4, 62/12, 61/11 pass/fail. A commit message
+# claiming "74/74", a PR body claiming "66 passed, 0 failed" and two clean re-runs were all true and
+# all green ON A LIVE DEFECT. (2.6% of this repo's last 500 commits abbreviate all-digit; theory
+# says (10/16)^7 = 3.7%.) A boundary that a fixture happens to land on some of the time is not
+# tested. So it is pinned here THREE ways, none of which draws a random sha:
+#   (d1) a FIXED all-digit labelled token, straight at validate_provenance — deterministic, no git;
+#   (d2) the paired opposite: the SAME token UNLABELLED must still be refused, so (d1) cannot be
+#        satisfied by simply deleting the magnitude guard and re-opening the fail-open;
+#   (d3) end-to-end through the writer, against a fixture repo FORCED onto an all-digit
+#        abbreviated HEAD by amending until one falls out.
+VE_DIGIT_SHA="1234567"
+VE_DIGIT_HDR="<!-- written_at: 2026-01-01T00:00:00Z | head_sha: $VE_DIGIT_SHA | areas: api -->"
+# The prose deliberately cites NOTHING, so the header token is the only thing that can pass it.
+VE_DIGIT_PROSE="$VE_PROV"
+
+bash "$VEFILE" provenance --entry "$VE_DIGIT_HDR
+$VE_DIGIT_PROSE" --source "" >/dev/null 2>&1; ve_d1=$?
+if [ "$ve_d1" -eq 0 ]; then
+  ok "AC1 provenance (d1): a LABELLED all-digit sha ('head_sha: $VE_DIGIT_SHA') satisfies provenance — the verdict no longer depends on whether the abbreviation happens to contain an a-f"
+else
+  no "AC1 provenance (d1): a labelled all-digit head_sha was REFUSED (rc=$ve_d1) — a memo citing a real commit is rejected for ~1 commit in 30"
+fi
+
+bash "$VEFILE" provenance --entry "the retry budget was raised to $VE_DIGIT_SHA milliseconds" \
+  --source "" >/dev/null 2>&1; ve_d2=$?
+if [ "$ve_d2" -eq 1 ]; then
+  ok "AC1 provenance (d2): the SAME digits UNLABELLED are still refused — a bare magnitude does not masquerade as a sha, so (d1) was not bought by re-opening the fail-open"
+else
+  no "AC1 provenance (d2): a bare 7-digit magnitude PASSED provenance (rc=$ve_d2) — the fail-open the labelled path was supposed to preserve a fix for is back"
+fi
+
+# (d3) end-to-end. force_alldigit_sha amends until the abbreviated HEAD is all digits; ~27 tries
+# expected, bounded hard. If it cannot find one the block says so rather than passing silently —
+# a skipped boundary must be visible, which is exactly what the sampling failure above was not.
+force_alldigit_sha() { # <repo> -> 0 when HEAD's abbreviated sha is all digits
+  local r="$1" i=0 s
+  while [ "$i" -lt 600 ]; do
+    s="$(git -C "$r" rev-parse --short HEAD 2>/dev/null)" || return 1
+    [ -n "$s" ] || return 1
+    case "$s" in
+      *[!0-9]*) : ;;
+      *) VE_FORCED_SHA="$s"; return 0 ;;
+    esac
+    git -C "$r" commit -q --amend --allow-empty -m "spin $i" >/dev/null 2>&1 || return 1
+    i=$((i + 1))
+  done
+  return 1
+}
+VE_FORCED_SHA=""
+VED3="$(ve_repo)"
+if force_alldigit_sha "$VED3"; then
+  ok "AC1 provenance (d3) fixture: the repo really is on an all-digit abbreviated sha ($VE_FORCED_SHA) — the case below is asserted, not sampled"
+  ve_write "$VED3" "$VE_PROV" "$VE_PROV"
+  if [ "$VE_RC" -eq 0 ] && [ -f "$VED3/$VESTORE" ] \
+     && head -n1 "$VED3/$VESTORE" | grep -qF "head_sha: $VE_FORCED_SHA"; then
+    ok "AC1 provenance (d3): the writer WRITES on an all-digit HEAD — /dreaming's orientation-promotion path is not disabled for the duration of whatever commit the user is sitting on"
+  else
+    no "AC1 provenance (d3): the writer refused on an all-digit HEAD (exit $VE_RC): $(tr '\n' ' ' < "$VE_ERR" | cut -c1-200)"
+  fi
+else
+  no "AC1 provenance (d3): could not force an all-digit abbreviated sha in 600 amends — the boundary is UNASSERTED (do not read the rest of this suite as covering it)"
+fi
+
+# (d4) MUTATION CONTROL: revert the labelled-sha path in a COPY of the validator (the file on disk
+# is never edited) and (d1) must go RED. Non-vacuity is asserted on BOTH sides by count before the
+# mutant is trusted — a sed that failed to land would leave a mutant that behaves like the original
+# and this control would look green while proving nothing. That exact self-healing mutant has
+# already happened on this branch, which is why the count check is here and not assumed.
+VE_MUTSHA="$VETMP/mutant-no-sha-label.sh"
+# The pattern is anchored on the function header but NOT on end-of-line: that line carries a
+# trailing comment, and an `$`-anchored pattern silently matched nothing (caught by the count check
+# below on its first run — which is the whole reason the count check exists).
+sed -e 's/^_ve_is_sha_label() {/_ve_is_sha_label() { return 1;/' "$VEFILE" > "$VE_MUTSHA"
+n_lbl_orig="$(grep -c '^_ve_is_sha_label() { return 1;' "$VEFILE" 2>/dev/null || true)"; [ -n "$n_lbl_orig" ] || n_lbl_orig=0
+n_lbl_mut="$(grep -c '^_ve_is_sha_label() { return 1;' "$VE_MUTSHA" 2>/dev/null || true)"; [ -n "$n_lbl_mut" ] || n_lbl_mut=0
+if [ "$n_lbl_orig" -eq 0 ] && [ "$n_lbl_mut" -eq 1 ] && ! cmp -s "$VEFILE" "$VE_MUTSHA" \
+   && bash -n "$VE_MUTSHA" 2>/dev/null; then
+  ok "AC1 provenance (d4) control is NON-VACUOUS: the sed landed (0 occurrences in the validator, 1 in the mutant), the mutant differs and still parses"
+  bash "$VE_MUTSHA" provenance --entry "$VE_DIGIT_HDR
+$VE_DIGIT_PROSE" --source "" >/dev/null 2>&1; ve_d4=$?
+  bash "$VE_MUTSHA" provenance --entry "<!-- written_at: 2026-01-01T00:00:00Z | head_sha: 4f114bc | areas: api -->
+$VE_DIGIT_PROSE" --source "" >/dev/null 2>&1; ve_d4b=$?
+  if [ "$ve_d4" -eq 1 ] && [ "$ve_d4b" -eq 0 ]; then
+    ok "AC1 provenance (d4) CONFIRMED: with the label path reverted, (d1) goes RED (all-digit rc=1) while the letter-bearing sha still passes (rc=0) — (d1) is load-bearing, and the mutation reproduces the reported defect exactly rather than breaking the check outright"
+  else
+    no "AC1 provenance (d4) REFUTED: the reverted mutant gave all-digit rc=$ve_d4 (want 1) / letter-bearing rc=$ve_d4b (want 0) — (d1) may be passing for some other reason"
+  fi
+else
+  no "AC1 provenance (d4): the mutation did not take (orig=$n_lbl_orig mut=$n_lbl_mut) — the control below would prove nothing"
+fi
+rm -f "$VE_MUTSHA"
+
 # AC2 — the degraded-helper shapes, each built from the REAL helper (so they cannot drift from it)
 # and each aimed at a DIFFERENT clause of the three-clause load guard:
 #   absent     -> the `[ -f ] || [ -r ]` pre-check

@@ -461,7 +461,7 @@ verdict 2 "provenance with no --entry at all is could-not-examine (2)" \
 verdict 1 "AC17: a bare command name (--source dreaming) does NOT satisfy provenance" \
   "$VE" provenance --entry "the cache is refreshed eagerly" --source "dreaming"
 reason "REFUSE_PROVENANCE" "AC17: the bare-command-name refusal names the provenance check"
-verdict 0 "AC17: --source 'dreaming:<session_id>' carries a real reference and PASSES" \
+verdict 0 "AC17: a label bound to a REAL id (--source dreaming:20260810T1200) PASSES" \
   "$VE" provenance --entry "the cache is refreshed eagerly" --source "dreaming:20260810T1200"
 verdict 0 "AC17: a commit sha as --source PASSES" \
   "$VE" provenance --entry "the cache is refreshed eagerly" --source "c6bfda6"
@@ -539,6 +539,116 @@ elif grep -qE '^[^#]*-ge 7 \]' "$VE" && grep -qE '^[^#]*-le 40 \]' "$VE"; then
   ok "the sha shape keeps its 7-40 length bound in code — it was not relaxed to an unbounded hex-letter pattern"
 else
   no "the sha shape's 7-40 length bound is no longer present in code"
+fi
+
+# THE LABELLED SHA PATH — and the reason the hex-letter rule above is not the whole answer.
+# Requiring a hex letter made the verdict depend on the INCIDENTAL ALPHABET of an abbreviated sha.
+# add-orientation.sh stamps `head_sha: $(git rev-parse --short HEAD)` and passes `--source ""`, so
+# that token is the memo's only reference; MEASURED on the shipped writer, `head_sha: 4f114bc` rc 0
+# and `head_sha: 1234567` rc 1 for the same memo, i.e. a memo citing a real commit was refused for
+# roughly one commit in thirty. The inference is unwinnable from a BARE hex string in EITHER
+# direction — `1234567` is character-for-character both a magnitude and a sha — so the answer is to
+# stop inferring where the citation is LABELLED, and keep inferring where it is not. Both halves are
+# pinned here; the unlabelled half above is unchanged and must STAY unchanged.
+verdict 0 "labelled sha: 'head_sha: 1234567' (detached label) satisfies provenance whatever its alphabet" \
+  "$VE" provenance --entry "<!-- written_at: 2026-01-01T00:00:00Z | head_sha: 1234567 | areas: api -->
+the shared cache layer warms lazily on its very first read"
+verdict 0 "labelled sha: the ATTACHED form 'commit:1234567' is recognised too" \
+  "$VE" provenance --entry "the shared cache layer warms lazily, commit:1234567"
+verdict 0 "labelled sha: 'sha: 0000000' — the all-zero abbreviation is still a citation" \
+  "$VE" provenance --entry "the shared cache layer warms lazily, sha: 0000000"
+verdict 0 "labelled sha: a letter-bearing sha behind a label still passes (the label did not replace the old path)" \
+  "$VE" provenance --entry "the shared cache layer warms lazily, head_sha: 4f114bc"
+# The label must not become a free pass for anything that follows it.
+verdict 1 "labelled sha: a label followed by a NON-hex token cites nothing" \
+  "$VE" provenance --entry "the shared cache layer warms lazily, head_sha: notahexstring"
+verdict 1 "labelled sha: a label followed by a TOO-SHORT hex token cites nothing (the 7-40 bound still applies)" \
+  "$VE" provenance --entry "the shared cache layer warms lazily, head_sha: abc12"
+verdict 1 "labelled sha: an UNRELATED label ('budget: 1234567') does not license a magnitude" \
+  "$VE" provenance --entry "the retry budget: 1234567 milliseconds after the outage"
+verdict 1 "labelled sha: the label alone, with no token after it, cites nothing" \
+  "$VE" provenance --entry "the shared cache layer warms lazily, head_sha:"
+# Static half: the unlabelled path must keep BOTH of its guards. A behavioural assertion alone goes
+# green the moment someone deletes the magnitude guard and calls the labelled path the fix.
+if grep -qE '^[^#]*\*\[abcdef\]\*\)' "$VE"; then
+  ok "the UNLABELLED path still requires a hex letter in code — the labelled path was added alongside it, not in place of it"
+else
+  no "the unlabelled hex-letter requirement is gone from code — a bare 7-digit magnitude satisfies a fail-CLOSED check again"
+fi
+
+# STRICT --source, SEPARATOR HALF. The rule used to be "contains a separator", so a CONTENT-FREE
+# separator satisfied a fail-CLOSED check. Reachable from shipped prose, not hypothetical:
+# commands/dreaming.md instructs agents to pass the literal template `--source "dreaming:<session_id>"`.
+verdict 1 "strict source: a bare separator with nothing after it (--source 'dreaming:') cites nothing" \
+  "$VE" provenance --entry "the cache is refreshed eagerly" --source "dreaming:"
+reason "REFUSE_PROVENANCE" "the content-free-separator refusal names the provenance check"
+verdict 1 "strict source: a separator ALONE (--source ':') cites nothing" \
+  "$VE" provenance --entry "the cache is refreshed eagerly" --source ":"
+verdict 1 "strict source: --source '@' cites nothing" \
+  "$VE" provenance --entry "the cache is refreshed eagerly" --source "@"
+verdict 1 "strict source: the UNSUBSTITUTED template --source 'dreaming:<session_id>' cites nothing" \
+  "$VE" provenance --entry "the cache is refreshed eagerly" --source "dreaming:<session_id>"
+# ...and the same template as write-lessons.sh delivers it, with `<>` already stripped by that
+# writer's own sanitizer, so the angle-bracket rule cannot be what catches it.
+verdict 1 "strict source: the de-bracketed template --source 'dreaming:session_id' cites nothing either" \
+  "$VE" provenance --entry "the cache is refreshed eagerly" --source "dreaming:session_id"
+# The tightening must not start refusing real sources. All of these passed before it and must still.
+verdict 0 "strict source no-false-refusal: 'corpus-replay:memo.md' still passes" \
+  "$VE" provenance --entry "the cache is refreshed eagerly" --source "corpus-replay:memo.md"
+verdict 0 "strict source no-false-refusal: 'owner/repo:' passes on the id before the OTHER separator" \
+  "$VE" provenance --entry "the cache is refreshed eagerly" --source "owner/repo:"
+verdict 0 "strict source no-false-refusal: 'pr-138' (a bare id, no separator) still passes" \
+  "$VE" provenance --entry "the cache is refreshed eagerly" --source "pr-138"
+verdict 0 "strict source no-false-refusal: 'PR #146' still passes" \
+  "$VE" provenance --entry "the cache is refreshed eagerly" --source "PR #146"
+verdict 0 "strict source no-false-refusal: a commit sha as --source still passes" \
+  "$VE" provenance --entry "the cache is refreshed eagerly" --source "c6bfda6"
+# A non-qualifying source is NOT itself the refusal — it falls through to the entry-text scan.
+verdict 0 "strict source: a content-free source still passes when the ENTRY cites the finding itself" \
+  "$VE" provenance --entry "the cache is refreshed eagerly, see #138" --source "dreaming:"
+
+# THE LIVE-SOURCE CORPUS REPLAY, and it exists because the AC16 corpus replay in §11b STRUCTURALLY
+# CANNOT cover this rule: that replay passes its OWN `--source corpus-replay:<label>`, which
+# qualifies, so provenance short-circuits on every entry it replays and a false refusal introduced
+# in the --source rule would go green there. This branch has already burned six review rounds on
+# false refusals found only by replaying real data, so the real data is replayed here too — the
+# `source` values the live curated stores actually RECORDED.
+#
+# The property asserted is NOT "every live source qualifies": `dreaming` is genuinely recorded in a
+# live store and is genuinely refused, deliberately, and was already refused before this rule was
+# tightened. The property is the REGRESSION one — NO source that qualified under the shipped rule
+# may stop qualifying under the tightened one — so the shipped rule is re-implemented inline as the
+# comparison baseline rather than assumed.
+SRC_CORPUS="$TMP/live-sources.txt"
+: > "$SRC_CORPUS"
+for d in .agent/rules .supervisor/memory .supervisor/twin .claude/agent-memory; do
+  [ -e "$REPO_ROOT/$d" ] || continue
+  grep -rhoE '"source" *: *"[^"]*"' "$REPO_ROOT/$d" 2>/dev/null \
+    | sed -e 's/^"source" *: *"//' -e 's/"$//' >> "$SRC_CORPUS"
+done
+sort -u "$SRC_CORPUS" -o "$SRC_CORPUS" 2>/dev/null || true
+src_n=0; src_reg=0; src_first=""
+while IFS= read -r s; do
+  [ -n "$s" ] || continue
+  src_n=$((src_n + 1))
+  # The SHIPPED rule, verbatim: a digit anywhere, or any separator present at all.
+  s_lower="$(printf '%s' "$s" | tr '[:upper:]' '[:lower:]')"
+  old_ok=1
+  case "$s_lower" in
+    *[0-9]*|*:*|*/*|*"#"*|*@*) old_ok=0 ;;
+  esac
+  bash "$VE" provenance --entry "prose that cites nothing at all here" --source "$s" >/dev/null 2>&1
+  new_rc=$?
+  if [ "$old_ok" -eq 0 ] && [ "$new_rc" -ne 0 ]; then
+    src_reg=$((src_reg + 1)); [ -n "$src_first" ] || src_first="$s"
+  fi
+done < "$SRC_CORPUS"
+if [ "$src_n" -lt 5 ]; then
+  no "LIVE SOURCE CORPUS: only $src_n recorded source(s) were found — the replay is vacuous; check the store paths"
+elif [ "$src_reg" -eq 0 ]; then
+  ok "LIVE SOURCE CORPUS: all $src_n distinct \`source\` values recorded in the live curated stores that qualified under the SHIPPED rule still qualify — the tightening created no false-refusal wave (the one check §11b's replay cannot see)"
+else
+  no "LIVE SOURCE CORPUS: $src_reg of $src_n recorded live sources REGRESSED (first: '$src_first') — the tightening refuses a source that shipped working"
 fi
 
 echo "== 5. dead reference (ADVISORY — reports, never refuses) =="
@@ -1118,11 +1228,30 @@ fi
 
 # (xiv) AC17: drop the strict-source test => a bare command name satisfies provenance again, which
 # is exactly the "any non-placeholder string" option decision (f) rejected.
-awk '{ if (index($0, "*[0-9]*|*:*|*/*")) { print "          *) return 0 ;;"; next } print }' "$VE" > "$TMP/mut-strict.sh"
+# KEYED ON THE FUNCTION NAME, not on the old inline glob. The previous form of this control matched
+# the literal `*[0-9]*|*:*|*/*` with awk index(); when that glob moved into _ve_source_cites_something
+# the matcher latched onto the COMMENT that quotes the retired glob and produced a mutant that did
+# not parse. A control that can be re-aimed by a comment is not a control.
+awk '/^_ve_source_cites_something\(\) \{/{print; print "  return 0"; next} {print}' "$VE" > "$TMP/mut-strict.sh"
 if mutated_differs mut-strict.sh "strict --source test"; then
   bash "$TMP/mut-strict.sh" provenance --entry "the cache is refreshed eagerly" --source "dreaming" >/dev/null 2>&1
   [ $? -eq 0 ] && ok "AC17: dropping the strict-source test lets a bare command name pass — the strictness is real" \
     || no "AC17: the strict-source mutant did not change the verdict"
+fi
+
+# (xiv-b) AC17, SEPARATOR HALF: revert the rule from "an alphanumeric follows the separator" to the
+# shipped "a separator is present" and the content-free sources must pass again. Without this, the
+# behavioural assertions for `dreaming:` / `:` / `@` above could be green for some unrelated reason.
+awk '{ if (index($0, "*[0-9abcdefghijklmnopqrstuvwxyz]*) return 0 ;;")) { print "          *) return 0 ;;"; next } print }' \
+  "$VE" > "$TMP/mut-sep.sh"
+if mutated_differs mut-sep.sh "separator-content test"; then
+  bash "$TMP/mut-sep.sh" provenance --entry "the cache is refreshed eagerly" --source "dreaming:" >/dev/null 2>&1
+  ms1=$?
+  bash "$TMP/mut-sep.sh" provenance --entry "the cache is refreshed eagerly" --source "dreaming" >/dev/null 2>&1
+  ms2=$?
+  { [ "$ms1" -eq 0 ] && [ "$ms2" -eq 1 ]; } \
+    && ok "AC17: reverting to 'a separator is present' lets '--source dreaming:' through again (rc=0) while a bare command name still fails (rc=1) — the mutation reproduces the reported fail-open exactly, rather than disabling the check outright" \
+    || no "AC17: the separator-content mutant did not discriminate (bare-separator rc=$ms1 want 0, bare-name rc=$ms2 want 1)"
 fi
 
 # (xv) Marker (3), KNOWN OWNER: disable the owner test => a foreign repo under a known owner stops
