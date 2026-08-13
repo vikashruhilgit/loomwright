@@ -23,6 +23,8 @@
 #          validator is used unchecked and the write lands                          (AC2 goes RED)
 #   · (M4) `--store` pointed back at MEMORY.md   ⇒ a byte-for-byte repost of a stored
 #          entry's body under a new slug is WRITTEN                                 ((i) goes RED)
+#   · (M5) the index lock ACQUISITION stripped   ⇒ the writer rebuilds MEMORY.md straight
+#          through a lock another writer holds                                      ((j2) goes RED)
 # Each mutant is `bash -n`-checked before use: a mutant that does not parse would "fail" for the
 # wrong reason and read as proof when it is noise.
 #
@@ -45,6 +47,10 @@
 #   (i2) (i)'s mutation control M4 — `--store` pointed back at the index; the repost is written
 #   (f)  AC10c — a git WORKTREE cwd is refused with exit 3, an explicit --repo worktree too, and the
 #        NON-GIT-REPO fallback stays PERMISSIVE (pwd), never write-lessons.sh's hard exit 2
+#   (j)  CONCURRENCY — the MEMORY.md rebuild is serialized by a lock directory:
+#        (j1) N overlapping writers all end up named in the index (no lost pointer, no deadlock,
+#             no leaked lock); (j2) a lock the writer cannot acquire is a NAMED refusal with the
+#             entry rolled back, never a silently skipped rebuild; (j3) mutation control M5
 #   (g)  the confirm-only gate: non-TTY without --confirm is a dry-run that writes NOTHING
 #   (h)  no `.write-agent-memory.*` temp residue after a successful write (atomicity)
 
@@ -706,6 +712,128 @@ grep -qF '(nongit_entry.md)' "$RF3/.claude/agent-memory/$AGENT/MEMORY.md" 2>/dev
 # ---------------------------------------------------------------------------
 # (g) the confirm-only gate, and (h) atomicity.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# (j) CONCURRENCY — the index rebuild is serialized, so overlapping writers cannot drop each other.
+#
+# DETERMINISTIC BY CONSTRUCTION, NOT BY TIMING LUCK. Two halves, and neither one waits on a race
+# happening to happen:
+#   (j1) N writers are launched at once and ALL N entries must appear in MEMORY.md. The assertion is
+#        an invariant over the FINISHED STATE ("N files / N-1 pointers"), not an observation of an
+#        interleaving, so it holds however the N processes happened to schedule — and it also pins
+#        the two ways the new lock could break a previously-working writer: a deadlock (some writer
+#        never returns) and a leaked lock directory. STATED HONESTLY: as a detector of the lost
+#        UPDATE itself this half is probabilistic, not deterministic — measured against a
+#        lock-stripped mutant it did not lose a pointer in 11 runs, because six writers started
+#        together tend to finish in start order. It is the end-to-end sanity half. (j2)+(j3) are
+#        where the mutual exclusion is actually proven.
+#   (j2) the lock is DRIVEN, not raced: the lock directory is created by the test itself, so the
+#        writer provably cannot acquire it, and the wait bound is turned down to 1s. The writer must
+#        then REFUSE (exit 2) with a named reason and must NOT leave the entry file behind — the
+#        "a failed rebuild is serious, not a skip" contract. Fully deterministic: no second process
+#        is racing anything, the contended state is constructed.
+#   (j3) MUTATION CONTROL M5 — the same held lock, against a writer with the lock ACQUISITION
+#        stripped out. It writes straight through and rebuilds the index, proving (j2) discriminates
+#        the lock rather than something else about the fixture.
+# ---------------------------------------------------------------------------
+echo "== (j) concurrency: overlapping writers cannot drop each other's index pointers =="
+RJ="$(new_repo)"; SJ="$RJ/.claude/agent-memory"; DJ="$SJ/$AGENT"
+mkdir -p "$DJ" || setup_fail "could not create the concurrency store dir $DJ"
+NJ=6
+# SIX SUBSTANTIVELY DIFFERENT ENTRIES, not six copies with a counter. Near-identical text would be
+# refused by the duplicate/contradiction checks and the case would "pass" having written nothing —
+# a vacuous concurrency test. Each summary and body below shares almost no vocabulary with the
+# others, so every one of the six is a legitimate write and the index assertion is about the index.
+j_text_1="a lock directory beats flock on macOS because flock is simply absent there"
+j_text_2="removing a git worktree discards any scratch file that was never committed"
+j_text_3="pattern substitution over a large string wedges quadratically under bash three two"
+j_text_4="an emitter must always exit zero while a correctness gate must fail closed"
+j_text_5="reading a detached process output immediately is a race against its own startup"
+j_text_6="the doc currency gate verifies numbers claimed and cannot notice a claim omitted"
+j_pids=""
+for i in 1 2 3 4 5 6; do
+  eval "j_t=\$j_text_$i"
+  printf '%s\n' "$j_t" > "$RJ/body-j-$i.md" || setup_fail "could not stage concurrency body $i"
+  bash "$WRITER" "$AGENT" "concurrent_$i" "$j_t" "$RJ/body-j-$i.md" \
+    --repo "$RJ" --store "$SJ" --source "PR #152" --confirm < /dev/null > "$ROOT/j-$i.out" 2>&1 &
+  j_pids="$j_pids $!"
+done
+j_rc_bad=0
+for p in $j_pids; do wait "$p" || j_rc_bad=$((j_rc_bad+1)); done
+[ "$j_rc_bad" -eq 0 ] && ok "(j1) all $NJ concurrent writes exited 0" || no "(j1) $j_rc_bad of $NJ concurrent writes failed — $(cat "$ROOT"/j-*.out 2>/dev/null)"
+j_files=0; j_ptrs=0
+for i in 1 2 3 4 5 6; do
+  [ -f "$DJ/concurrent_$i.md" ] && j_files=$((j_files+1))
+  grep -qF "(concurrent_$i.md)" "$DJ/MEMORY.md" 2>/dev/null && j_ptrs=$((j_ptrs+1))
+done
+[ "$j_files" -eq "$NJ" ] && ok "(j1) all $NJ entry files are on disk" || no "(j1) only $j_files of $NJ entry files landed"
+if [ "$j_ptrs" -eq "$NJ" ]; then
+  ok "(j1) the rebuilt MEMORY.md names ALL $NJ entries — no writer's index overwrote a newer one"
+else
+  no "(j1) MEMORY.md names only $j_ptrs of $NJ entries — a concurrent rebuild dropped $((NJ - j_ptrs)) pointer(s) while their files are still on disk (the exact invariant this writer exists to hold)"
+fi
+[ "$(index_pointers "$DJ/MEMORY.md")" = "$NJ" ] && ok "(j1) and it carries EXACTLY $NJ pointers (N files / N-1 pointers, MEMORY.md not indexing itself)" || no "(j1) the index carries $(index_pointers "$DJ/MEMORY.md") pointers, expected $NJ"
+resid_j="$(find "$DJ" -name '.write-agent-memory.*' 2>/dev/null | wc -l | tr -d '[:space:]')"
+[ "$resid_j" = "0" ] && ok "(j1) no lock dir or temp file survived the concurrent writes (the lock is released on every path)" || no "(j1) $resid_j .write-agent-memory.* artifact(s) left behind after the concurrent writes"
+
+echo "== (j2) a lock it cannot acquire is a REFUSAL, never a silently skipped rebuild =="
+RJ2="$(new_repo)"; SJ2="$RJ2/.claude/agent-memory"; DJ2="$SJ2/$AGENT"
+BJ2="$(mkbody "$RJ2/body-j2.md")"
+run "$RJ2" "$SJ2" "$AGENT" j2_seed "a seed entry written before the lock was held, per PR #153" "$BJ2" --source "PR #153" --confirm
+[ "$RC" -eq 0 ] && ok "(j2) the seed write (lock free) succeeds" || no "(j2) the seed write failed with $RC — $OUT"
+J2_LOCK="$DJ2/.write-agent-memory.lock"
+if mkdir "$J2_LOCK" 2>/dev/null; then
+  ok "(j2) the test holds the lock directory itself — the writer below provably cannot acquire it (driven, not raced)"
+  OUT="$(AGENT_MEMORY_INDEX_LOCK_WAIT_SECS=1 bash "$WRITER" "$AGENT" j2_blocked \
+          "an entry attempted while another writer held the index lock, per PR #153" "$BJ2" \
+          --repo "$RJ2" --store "$SJ2" --source "PR #153" --confirm < /dev/null 2>&1)"; RC=$?
+  [ "$RC" -eq 2 ] && ok "(j2) a lock it cannot acquire REFUSES with exit 2" || no "(j2) exited $RC, expected 2 — a failed rebuild must keep the severity the undo path already had: $OUT"
+  grep -qF 'could not acquire the store lock' <<< "$OUT" && ok "(j2) the refusal NAMES the lock as the reason (not a generic rebuild failure)" || no "(j2) the refusal does not name the lock — $OUT"
+  [ -f "$DJ2/j2_blocked.md" ] && no "(j2) the blocked entry file was LEFT BEHIND — the rebuild was skipped and the index/directory now disagree" || ok "(j2) the blocked entry file was removed by the undo path — the store never holds a file the index cannot name"
+  [ -f "$DJ2/j2_seed.md" ] && ok "(j2) the pre-existing seed entry is untouched" || no "(j2) the refusal collaterally removed an unrelated entry"
+  rmdir "$J2_LOCK" 2>/dev/null
+  # And once the lock is free again the very same write succeeds — proving (j2) failed on the lock
+  # and not on something else about the entry.
+  run "$RJ2" "$SJ2" "$AGENT" j2_blocked "an entry attempted while another writer held the index lock, per PR #153" "$BJ2" --source "PR #153" --confirm
+  [ "$RC" -eq 0 ] && grep -qF '(j2_blocked.md)' "$DJ2/MEMORY.md" 2>/dev/null \
+    && ok "(j2) with the lock released the IDENTICAL write succeeds and is indexed — the refusal was the lock, nothing else" \
+    || no "(j2) the same write still failed (rc=$RC) after the lock was released — (j2) was not discriminating the lock: $OUT"
+else
+  no "(j2) could not create the lock directory fixture at $J2_LOCK — the lock-contention assertions did not run (a fixture gap, not a pass)"
+fi
+
+echo "== (j3) MUTATION CONTROL M5: with the lock acquisition stripped, a held lock is ignored =="
+M5="$MUT_DIR/mutant-no-lock.sh"
+# Strip ONLY the acquisition inside the rebuild wrapper; the lock helpers, the release and the EXIT
+# trap all stay, so the mutant differs from the real writer in exactly one behaviour: it does not
+# wait for, or respect, a lock another writer holds.
+n_acq_orig="$(grep -c '^[[:space:]]*acquire_index_lock "\$dir"' "$WRITER" 2>/dev/null || true)"; [ -n "$n_acq_orig" ] || n_acq_orig=0
+sed -e '/^[[:space:]]*acquire_index_lock "\$dir"/s/.*/  :/' "$WRITER" > "$M5" || setup_fail "could not build mutant M5"
+n_acq_mut="$(grep -c '^[[:space:]]*acquire_index_lock "\$dir"' "$M5" 2>/dev/null || true)"; [ -n "$n_acq_mut" ] || n_acq_mut=0
+if [ "$n_acq_orig" -gt 0 ] && [ "$n_acq_mut" -eq 0 ]; then
+  ok "(j3) the mutation is NON-VACUOUS: the rebuild wrapper's lock acquisition is gone ($n_acq_orig → $n_acq_mut sites)"
+else
+  no "(j3) the mutation did not take (acquisition sites $n_acq_orig → $n_acq_mut) — the control below would prove nothing"
+fi
+bash -n "$M5" 2>/dev/null && ok "(j3) the mutant still parses" || no "(j3) mutant M5 does not parse"
+RJ3="$(new_repo)"; SJ3="$RJ3/.claude/agent-memory"; DJ3="$SJ3/$AGENT"
+BJ3="$(mkbody "$RJ3/body-j3.md")"
+mkdir -p "$DJ3" || setup_fail "could not create the M5 store dir $DJ3"
+J3_LOCK="$DJ3/.write-agent-memory.lock"
+if mkdir "$J3_LOCK" 2>/dev/null; then
+  OUT="$(WRITE_AGENT_MEMORY_VALIDATOR="$VALIDATOR" AGENT_MEMORY_INDEX_LOCK_WAIT_SECS=1 \
+          bash "$M5" "$AGENT" j3_entry \
+          "an entry written by a writer that ignores the store lock entirely, per PR #154" "$BJ3" \
+          --repo "$RJ3" --store "$SJ3" --source "PR #154" --confirm < /dev/null 2>&1)"; RC=$?
+  if [ "$RC" -eq 0 ] && grep -qF '(j3_entry.md)' "$DJ3/MEMORY.md" 2>/dev/null; then
+    ok "(j3) M5 CONFIRMED: without the acquisition the mutant rebuilds MEMORY.md while another writer holds the lock — (j2)'s refusal is caused by the lock and nothing else"
+  else
+    no "(j3) the mutant did NOT write through the held lock (rc=$RC) — (j2) is passing for some other reason and is vacuous: $OUT"
+  fi
+  rmdir "$J3_LOCK" 2>/dev/null
+else
+  no "(j3) could not create the M5 lock fixture at $J3_LOCK — the mutation control did not run (a fixture gap, not a pass)"
+fi
+
 echo "== (g) the confirm-only gate: a non-TTY run WITHOUT --confirm writes nothing =="
 RG="$(new_repo)"; SG="$RG/.claude/agent-memory"
 BG="$(mkbody "$RG/body-g.md")"

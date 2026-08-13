@@ -659,6 +659,41 @@ advisory "ADVISORY_CROSS_REPO" "a foreign 'owner/repo.git' clone target is still
 quiet "AC16: the OWNER half must be a legal GitHub login — an underscore owner is never a slug" \
   "$VE" cross-repo --entry "the payloads live in worker_result/code_review_result"
 
+# --- marker (2): a SENTENCE-FINAL PERIOD is punctuation, not part of the cue word ---------------
+# The neighbour words are normalized with `tr -cd 'a-z0-9._/-'`, which strips a comma but KEEPS a
+# period, so `... the acme-corp/widget-svc repo.` produced the token `repo.` and matched nothing
+# while the far rarer comma form matched. Both forms are pinned, in both directions, plus a control
+# proving the fix did not simply blunt the token.
+advisory "ADVISORY_CROSS_REPO" "marker (2): a trailing cue ending the SENTENCE ('... repo.') is REPORTED — a final period is punctuation, not part of the cue" \
+  "$VE" cross-repo --entry "The same bug is open in the acme-corp/widget-svc repo."
+advisory "ADVISORY_CROSS_REPO" "marker (2): the COMMA form ('... repo,') is REPORTED, as it always was" \
+  "$VE" cross-repo --entry "The same bug is open in the acme-corp/widget-svc repo, filed last week"
+advisory "ADVISORY_CROSS_REPO" "marker (2): the BARE form ('... repo has') is REPORTED — the unpunctuated control" \
+  "$VE" cross-repo --entry "The acme-corp/widget-svc repo has the same bug"
+advisory "ADVISORY_CROSS_REPO" "marker (2): repeated trailing punctuation ('... repo...') is REPORTED too" \
+  "$VE" cross-repo --entry "The same bug is open in the acme-corp/widget-svc repo..."
+# CONTROL — the stripping is trailing-dots ONLY and applies ONLY to the cue comparison. A neighbour
+# whose dot is INTERNAL is untouched, so it still fails to be a cue word and the bare slug is still
+# a deliberate miss; and a token that was never a cue does not become one.
+quiet "marker (2) control: an INTERNAL dot is not stripped — 'acme-corp/widget-svc v1.2' is still a deliberate miss" \
+  "$VE" cross-repo --entry "we pinned acme-corp/widget-svc v1.2 for the fixture"
+quiet "marker (2) control: stripping a trailing dot does not turn a NON-cue word into a cue — '... widget-svc branch.' still passes" \
+  "$VE" cross-repo --entry "The same bug is open on the acme-corp/widget-svc branch."
+
+# --- the FILE-EXTENSION guard covers 1-5 letters, so a `.jsonl` citation is a path, not a slug ---
+quiet "the extension guard reaches 5 letters: 'postmortem/results.jsonl' is a PATH, not an owner/repo slug" \
+  "$VE" cross-repo --entry "the trend line is appended to postmortem/results.jsonl"
+quiet "the extension guard reaches 5 letters even with a cue word beside it — '... in postmortem/results.jsonl'" \
+  "$VE" cross-repo --entry "the ledger lives in postmortem/results.jsonl today"
+quiet "the extension guard covers the NAME half of a 'NAME #123' citation too — 'results.jsonl #12'" \
+  "$VE" cross-repo --entry "see results.jsonl #12 for the record"
+# CONTROL — it was NOT widened so far that a legitimate repo name stops being recognised. A 6-letter
+# suffix is past the bound, and a cued slug with no dot at all is unaffected either way.
+advisory "ADVISORY_CROSS_REPO" "extension-guard control: a cued foreign slug with NO extension is still REPORTED" \
+  "$VE" cross-repo --entry "the same defect landed in $FOREIGN last week"
+advisory "ADVISORY_CROSS_REPO" "extension-guard control: the bound stops at 5 — a cued 'otherco/othersvc.github' is still REPORTED" \
+  "$VE" cross-repo --entry "the same defect landed in otherco/othersvc.github last week"
+
 echo "== 6c. IN-REPO DIRECTORY PATHS are not owner/repo slugs =="
 # The second false-positive class, found by review after the marker fix shipped. An extensionless
 # two-segment path is character-for-character a slug, and each of these six tripped a marker: a

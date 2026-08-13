@@ -346,13 +346,26 @@ build_compare_corpus() {
 work="$(mktemp -d)" || die "mktemp failed" 2
 tmp_in_store=""
 tmp_index=""
+index_lock=""
 cleanup() {
   rm -rf "$work" 2>/dev/null || true
   [ -n "$tmp_in_store" ] && rm -f "$tmp_in_store" 2>/dev/null || true
   [ -n "$tmp_index" ] && rm -f "$tmp_index" 2>/dev/null || true
+  # THE LOCK IS RELEASED HERE TOO, not only by release_index_lock's normal path. `die` and every
+  # `exit` route through this trap, so a refusal taken while the lock is held cannot strand it.
+  # Idempotent: release_index_lock blanks $index_lock, so a normal release makes this a no-op.
+  [ -n "$index_lock" ] && rmdir "$index_lock" 2>/dev/null || true
   return 0
 }
 trap cleanup EXIT
+# EXIT alone is NOT enough for a signal. bash runs the EXIT trap when the SHELL exits, and a
+# default-disposition SIGINT/SIGTERM/SIGHUP kills it without one — which would strand the lock dir
+# for the stale-breaker to clear instead of releasing it immediately. Trapping the three signals
+# explicitly and exiting from the handler makes the EXIT trap run on those paths too; cleanup then
+# runs twice (once here, once via EXIT) and is idempotent by construction.
+trap 'cleanup; exit 130' INT
+trap 'cleanup; exit 143' TERM
+trap 'cleanup; exit 129' HUP
 
 body_tmp="$work/body"
 
@@ -526,12 +539,14 @@ validate_entry_all --entry "$entry_text" --store "$COMPARE_STORE" --source "$sou
 validation_rc=$?
 set -e
 # rc 0 IS NOT NECESSARILY SILENT. Two of the five checks (dead-reference, cross-repo) are ADVISORY:
-# they report on stderr and never refuse, so a clean exit can still carry findings. The notice below
-# repeats them in this writer's own voice, next to the fact that the write went ahead — a warning
-# printed only inside the helper scrolls past, and an advisory nobody reads is worse than no check.
-# It prints nothing when there is nothing to report.
+# they report on stderr and never refuse, so a clean exit can still carry findings. The call-site
+# notice that repeats them in this writer's own voice is deliberately NOT emitted here: its text
+# ends "...and THE WRITE PROCEEDED", which is a lie on the dry-run path below (the confirm gate has
+# not been evaluated yet). It fires AFTER `proceed` is decided instead — see "THE ADVISORY NOTICE"
+# past the gate. The per-finding `ADVISORY:` lines from the checks themselves still print on both
+# paths, so a dry-run still shows what a real write would report.
 case "$validation_rc" in
-  0) validate_entry_advisory_notice "$PROG" ;;
+  0) : ;;
   1) printf '%s: refusing to write %s — the entry was examined and violates a write-time check (see the reason above). Nothing was written.\n' "$PROG" "$write_target" >&2
      # A duplicate/contradiction reason quotes the store it compared against, and that is now a
      # temp corpus path. Naming the real store dir here keeps the message actionable — a human
@@ -578,8 +593,83 @@ compose="$work/compose"
 # loomwright") survives a rebuild. Everything below it is regenerated; see the OWNERSHIP note in
 # this file's header. Written via a temp file inside the store dir + atomic `mv`, so a MEMORY.md is
 # never observed half-rebuilt.
+#
+# CONCURRENCY: THE WHOLE SCAN→COMPUTE→MOVE IS SERIALIZED, not just the `mv`. The `mv` was always
+# atomic, but atomicity of the last step is not mutual exclusion of the sequence: two writers could
+# interleave as scan(A) · land(B's entry) · scan(B) · mv(B) · mv(A), and A's older index — computed
+# before B's file existed — would win. That silently drops B's entry from MEMORY.md while B's entry
+# file is still on disk, which is precisely the invariant this writer exists to make impossible
+# ("an entry can only be missing from the index if it is also missing from the directory").
+#
+# The primitive is a LOCK DIRECTORY, because `mkdir` is a single atomic create-or-fail syscall on
+# every POSIX filesystem and needs no tooling. `flock(1)` is deliberately NOT used: it does not
+# exist on stock macOS, which is the dev platform (and neither does `timeout(1)`, so the bounded
+# wait is counted here rather than delegated). The lock lives INSIDE the store dir so it is on the
+# same filesystem as the thing it guards, and its name shares the `.write-agent-memory.` prefix the
+# atomicity test already sweeps for, so a leaked lock reads as temp residue rather than as nothing.
 # ---------------------------------------------------------------------------
+INDEX_LOCK_WAIT_SECS="${AGENT_MEMORY_INDEX_LOCK_WAIT_SECS:-30}"
+case "$INDEX_LOCK_WAIT_SECS" in ''|*[!0-9]*) INDEX_LOCK_WAIT_SECS=30 ;; esac
+[ "$INDEX_LOCK_WAIT_SECS" -ge 1 ] 2>/dev/null || INDEX_LOCK_WAIT_SECS=30
+
+# acquire_index_lock <agent-dir> -> 0 held, 1 could not acquire within the bound.
+acquire_index_lock() {
+  local dir="$1" lock="$1/.write-agent-memory.lock" tries=0 max
+  max=$(( INDEX_LOCK_WAIT_SECS * 10 ))          # 100ms per attempt
+  while [ "$tries" -lt "$max" ]; do
+    if mkdir "$lock" 2>/dev/null; then
+      index_lock="$lock"
+      return 0
+    fi
+    tries=$(( tries + 1 ))
+    sleep 0.1 2>/dev/null || sleep 1
+  done
+  # STALE-LOCK BREAKER — a `kill -9`, a power loss or a full disk can strand the directory with no
+  # process behind it, and a lock that can wedge the writer forever is worse than the race it
+  # prevents. Age is read with `find -mmin`, which behaves identically on BSD and GNU find; `stat`
+  # is avoided on purpose (`-f %m` succeeds with GARBAGE on GNU systems, so a portability slip there
+  # is silent rather than loud). A lock older than 10 minutes cannot belong to a live write: the
+  # bounded wait above caps a legitimate holder at INDEX_LOCK_WAIT_SECS.
+  if [ -n "$(find "$lock" -maxdepth 0 -mmin +10 2>/dev/null)" ]; then
+    printf '%s: breaking a STALE index lock (older than 10 minutes, no live writer can hold it): %s\n' \
+      "$PROG" "$lock" >&2
+    rmdir "$lock" 2>/dev/null || true
+  fi
+  # ONE FINAL ATTEMPT, on both routes into here. It covers the stale-break above, and also the
+  # holder that released during the last 100ms of the wait: without it that run refuses over a
+  # lock that is already free, and a refusal costs a legitimate write.
+  if mkdir "$lock" 2>/dev/null; then
+    index_lock="$lock"
+    return 0
+  fi
+  return 1
+}
+
+# release_index_lock — always returns 0; blanks $index_lock so the EXIT trap's release is a no-op.
+release_index_lock() {
+  # `if`, not `[ … ] && …`: under `set -e` a failing AND-list in statement position aborts the
+  # script, which would turn "the lock was already gone" into a crash on the success path.
+  if [ -n "$index_lock" ]; then rmdir "$index_lock" 2>/dev/null || true; fi
+  index_lock=""
+  return 0
+}
+
+# rebuild_memory_index <agent-dir> — the LOCKED wrapper. Every call site goes through this, so the
+# undo path is serialized against a concurrent writer too.
+#   0 = rebuilt   2 = could not rebuild   3 = could not acquire the lock within the bound
+# rc 3 is kept DISTINCT so the call site can name the real reason; it is never a silent skip.
 rebuild_memory_index() {
+  local dir="$1" rc=0
+  [ -d "$dir" ] || return 2
+  acquire_index_lock "$dir" || return 3
+  # Not a subshell and not a pipeline: the lock is released by the next statement regardless of rc,
+  # and by the EXIT trap if anything below dies outright.
+  rebuild_memory_index_locked "$dir"; rc=$?
+  release_index_lock
+  return "$rc"
+}
+
+rebuild_memory_index_locked() {
   local dir="$1" idx="$1/MEMORY.md" header="" f base t d
   [ -d "$dir" ] || return 2
   # Absent and unreadable are DELIBERATELY conflated here, and only here — this is
@@ -689,7 +779,19 @@ undo_write() {
 }
 
 # THE INDEX REBUILD. Every write, unconditionally.
-rebuild_memory_index "$AGENT_DIR" || undo_write "the MEMORY.md index could not be rebuilt"
+# A LOCK TIMEOUT IS NOT A SKIP. rc 3 (the bounded wait expired with another writer holding the
+# store lock) is routed into the SAME undo_write severity as any other failed rebuild, because the
+# consequence is identical: the entry file is on disk and MEMORY.md does not name it. Reporting the
+# distinct reason only changes the diagnostic, never the outcome.
+set +e
+rebuild_memory_index "$AGENT_DIR"
+rebuild_rc=$?
+set -e
+case "$rebuild_rc" in
+  0) : ;;
+  3) undo_write "the MEMORY.md index rebuild could not acquire the store lock within ${INDEX_LOCK_WAIT_SECS}s — another writer is holding $AGENT_DIR/.write-agent-memory.lock" ;;
+  *) undo_write "the MEMORY.md index could not be rebuilt" ;;
+esac
 
 # ---------------------------------------------------------------------------
 # Read-back verify: the entry file parses, and the rebuilt index actually names it. The second half
@@ -711,6 +813,16 @@ n_files="$(ls "$AGENT_DIR"/*.md 2>/dev/null | wc -l | tr -d '[:space:]' || true)
 [ -n "$n_files" ] || n_files="?"
 n_ptrs="$(grep -cE '^- \[[^]]*\]\([^)]*\.md\)' "$INDEX" 2>/dev/null || true)"
 [ -n "$n_ptrs" ] || n_ptrs=0
+
+# THE ADVISORY NOTICE — the LAST thing before the success line, and that position is deliberate on
+# both sides. It sits past the confirm gate, so a dry-run can never print its "...and THE WRITE
+# PROCEEDED" sentence alongside "PLANNED WRITE (not written)". And it sits past the index rebuild
+# and the read-back verify, so the sentence is not merely on the write PATH but after the write has
+# actually landed and been verified — every failure between the gate and here exits through
+# `undo_write`, which removes or restores the entry, and none of those runs should claim the write
+# proceeded either. Reached ONLY when the validator returned 0 (rc 1 and rc 2 exit at the call
+# site), so it cannot be suppressed on a genuine write.
+validate_entry_advisory_notice "$PROG"
 
 printf '%s: wrote agent-memory entry %s to %s and rebuilt %s (%s files / %s index pointers)\n' \
   "$PROG" "$entry_slug" "$write_target" "$INDEX" "$n_files" "$n_ptrs"

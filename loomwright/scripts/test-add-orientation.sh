@@ -602,6 +602,37 @@ ve_case "contradiction"  "memo" "$VE_CON"   "REFUSE_CONTRADICTION"  ""          
 ve_case "dead-reference" "memo" "$VE_DEAD"  "ADVISORY_DEAD_REFERENCE"
 ve_case "cross-repo"     "memo" "$VE_XREPO" "ADVISORY_CROSS_REPO" "$VE_OURS"
 
+# ---------------------------------------------------------------------------
+# AC1b — THE ADVISORY NOTICE SITS ON THE WRITE SIDE OF THE CONFIRM GATE.
+# The call-site notice ends "...and THE WRITE PROCEEDED". Emitted before the gate, a non-TTY run
+# with no --confirm printed that sentence and then "PLANNED WRITE (not written — pass --confirm to
+# apply)" a few lines later: two contradictory claims about the same invocation. Both directions are
+# asserted, because moving the call is equally capable of the opposite bug — suppressing the notice
+# on a run that really does write, which would silently delete the reporting half of an ADVISORY
+# check. The per-finding `ADVISORY:` line from the check itself is expected on BOTH paths: a dry-run
+# should still show what a real write would report; it is only the "THE WRITE PROCEEDED" claim that
+# is path-specific.
+# ---------------------------------------------------------------------------
+echo "== AC1b: the advisory notice fires only on the path that actually writes =="
+VE_NOTICE_R="$(ve_repo)"
+printf '%s\n' "$VE_DEAD" > "$VE_NOTICE_R/ve-body.txt"
+# (a) DRY-RUN (no --confirm) with an advisory finding.
+VE_NOTICE_OUT="$( cd "$VE_NOTICE_R" \
+  && ADD_ORIENTATION_VALIDATOR="" bash "$WRITER" notice "a memo whose cited helper path does not resolve" ve-body.txt \
+  < /dev/null 2>&1 )"; VE_NOTICE_RC=$?
+[ "$VE_NOTICE_RC" -eq 0 ] && ok "AC1b (a) the dry-run with an advisory finding still exits 0" || no "AC1b (a) the dry-run exited $VE_NOTICE_RC — $VE_NOTICE_OUT"
+grep -qF 'PLANNED WRITE' <<< "$VE_NOTICE_OUT" && ok "AC1b (a) the dry-run reports PLANNED WRITE (fixture check: this really is the not-written path)" || no "AC1b (a) the dry-run printed no PLANNED WRITE — the fixture is not on the path under test: $VE_NOTICE_OUT"
+grep -qF 'ADVISORY_DEAD_REFERENCE' <<< "$VE_NOTICE_OUT" && ok "AC1b (a) the check's own ADVISORY finding is still reported on the dry-run — a dry-run shows what a real write would report" || no "AC1b (a) the dry-run lost the advisory finding entirely: $VE_NOTICE_OUT"
+grep -qF 'THE WRITE PROCEEDED' <<< "$VE_NOTICE_OUT" && no "AC1b (a) the dry-run claims 'THE WRITE PROCEEDED' and then says PLANNED WRITE — two contradictory statements in one invocation" || ok "AC1b (a) the dry-run does NOT claim 'THE WRITE PROCEEDED'"
+# (b) --confirm with the SAME advisory finding: the notice must still be there.
+VE_NOTICE_OUT="$( cd "$VE_NOTICE_R" \
+  && ADD_ORIENTATION_VALIDATOR="" bash "$WRITER" notice "a memo whose cited helper path does not resolve" ve-body.txt --confirm \
+  < /dev/null 2>&1 )"; VE_NOTICE_RC=$?
+[ "$VE_NOTICE_RC" -eq 0 ] && ok "AC1b (b) the confirmed write with an advisory finding exits 0" || no "AC1b (b) the confirmed write exited $VE_NOTICE_RC — $VE_NOTICE_OUT"
+grep -qF 'THE WRITE PROCEEDED' <<< "$VE_NOTICE_OUT" && ok "AC1b (b) the confirmed write DOES print the call-site advisory notice — moving it past the gate did not suppress it on a genuine write" || no "AC1b (b) the advisory notice vanished from a real write — the reporting half of the ADVISORY design was silently deleted: $VE_NOTICE_OUT"
+grep -qE '^add-orientation\.sh: ADVISORY:' <<< "$VE_NOTICE_OUT" && ok "AC1b (b) and it is spoken in the writer's own name" || no "AC1b (b) the notice does not name the writer: $VE_NOTICE_OUT"
+[ -f "$VE_NOTICE_R/.agent/orientation/notice.md" ] && ok "AC1b (b) and the memo really was written (the notice's claim is true on this path)" || no "AC1b (b) the notice claimed the write proceeded but no memo landed"
+
 # --- AC1 duplicate: the CONTROL that would have caught the inert call site --------------------
 # This block used to assert the opposite, and the assertion was false. It read: "a SHORT
 # near-identical memo is still accepted — the composed entry's header tokens dilute the overlap

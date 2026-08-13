@@ -92,7 +92,7 @@ The same probe backs the **SessionStart curation nudge** in `scripts/session-res
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│              /dreaming — REFLECTION WORKFLOW                     │
+│              /dreaming — REFLECTION WORKFLOW                    │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │  Phase 1: GATHER (Read-only source discovery)                   │
@@ -122,12 +122,13 @@ The same probe backs the **SessionStart curation nudge** in `scripts/session-res
 │         Accept / Reject / Edit / Supersede / Retract.           │
 │         On Accept, /dreaming writes project-memory facts +      │
 │         LESSONS via the repo-root sole writers; CLAUDE.md +     │
-│         agent-memory goes through write-agent-memory.sh. Pending │
-│         orientation proposals promote via add-orientation.sh    │
-│         (Reject deletes, never writes). Supersede/Retract       │
-│         curate an EXISTING corpus entry (composing the store's  │
-│         own supersede/retract verb) instead of adding a new      │
-│         one. No auto-write, no bulk-accept.                     │
+│         agent-memory goes through write-agent-memory.sh.        │
+│         Pending orientation proposals promote via               │
+│         add-orientation.sh (Reject deletes, never writes).      │
+│         Supersede/Retract curate an EXISTING corpus entry       │
+│         (composing the store's own supersede/retract verb)      │
+│         instead of adding a new one. No auto-write, no          │
+│         bulk-accept.                                            │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```

@@ -589,12 +589,14 @@ validate_entry_all --entry "$(cat "$compose")" --store "$COMPARE_STORE" \
 _ve_rc=$?
 set -e
 # rc 0 IS NOT NECESSARILY SILENT. Two of the five checks (dead-reference, cross-repo) are ADVISORY:
-# they report on stderr and never refuse, so a clean exit can still carry findings. The notice below
-# repeats them in this writer's own voice, next to the fact that the write went ahead — a warning
-# printed only inside the helper scrolls past, and an advisory nobody reads is worse than no check.
-# It prints nothing when there is nothing to report.
+# they report on stderr and never refuse, so a clean exit can still carry findings. The call-site
+# notice that repeats them in this writer's own voice is deliberately NOT emitted here: its text
+# ends "...and THE WRITE PROCEEDED", which is a lie on the dry-run path a few lines below (the
+# confirm gate has not been evaluated yet). It fires AFTER `proceed` is decided instead — see
+# "THE ADVISORY NOTICE" past the gate. The per-finding `ADVISORY:` lines from the checks themselves
+# still print on both paths, so a dry-run still shows what a real write would report.
 case "$_ve_rc" in
-  0) validate_entry_advisory_notice "$PROG" ;;
+  0) : ;;
   1) printf '%s: (the store quoted below is the memo corpus derived from %s — one line per stored memo.)\n' "$PROG" "$STORE_DIR" >&2
      die "refusing to write — the memo was examined and violates a write-time check (see the reason above). Nothing was written." 1 ;;
   *) die "refusing to write — the memo COULD NOT BE EXAMINED (see the reason above); refusing rather than reporting it clean. Nothing was written." 2 ;;
@@ -663,6 +665,15 @@ verify_total="$(wc -c < "$write_target" | tr -d '[:space:]')"
 if [ "$verify_total" -gt 1000 ]; then
   undo_write "written file $verify_total chars exceeds cap"
 fi
+
+# THE ADVISORY NOTICE — the LAST thing before the success line, and that position is deliberate on
+# both sides. It sits past the confirm gate, so a dry-run can never print its "...and THE WRITE
+# PROCEEDED" sentence alongside "PLANNED WRITE (not written)". And it sits past the read-back
+# verify, so the sentence is not merely on the write PATH but after the write has actually landed
+# and been verified — every failure between the gate and here `die`s or undoes the write, and none
+# of those runs should claim the write proceeded either. Reached ONLY when the validator returned 0
+# (rc 1 and rc 2 `die` at the call site), so it cannot be suppressed on a genuine write.
+validate_entry_advisory_notice "$PROG"
 
 printf 'wrote orientation memo %s (%s chars) to %s\n' "$slug" "$verify_total" "$write_target"
 exit 0

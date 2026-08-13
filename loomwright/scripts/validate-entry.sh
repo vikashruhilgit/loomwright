@@ -126,9 +126,14 @@
 #       (2) a neighbouring repo cue word — `landed in otherco/othersvc`, `the otherco/othersvc repo`
 #       (3) a KNOWN owner — the owner half appears in the resolved allowlist or in the postmortem
 #           ledger's `.repo` values, i.e. it is an owner this system has actually seen
-#       (4) slug-only structure — a hyphen/digit in the owner half, a digit anywhere, or CamelCase
-#           in either half (`acme-corp/widget-svc`, `octocat/Hello-World`), NARROWED by the two
-#           suppressors below because bare structure is also the shape of an in-repo directory path
+#       (4) slug-only structure — a DIGIT anywhere, or an INTERNAL capital (CamelCase) in either
+#           half (`octocat/repo2`, `octocat/Hello-World`), NARROWED by the suppressors below
+#           because bare structure is also the shape of an in-repo directory path.
+#           NOTE, because it is easy to read this bullet as wider than it is: an owner-half HYPHEN
+#           is NOT structure (narrowing (vi) retracted it), a version tag is NOT structure
+#           (narrowing (v)), and a LEADING capital is NOT CamelCase (narrowing (vii)) — so
+#           `acme-corp/widget-svc` and `Microsoft/vscode` earn NOTHING here and are recognised only
+#           if cued, structurally marked, or owned by a known owner
 #   · a `NAME #123` citation whose NAME is identifier-shaped (ALL-CAPS, or carrying a hyphen,
 #     underscore or digit) and is not a generic citation word
 #
@@ -1104,6 +1109,21 @@ EOF
 # prose NUMBERS things, and it is the commonest way an in-repo directory path picks up the digit that
 # marker (4) reads as repo structure. Digits fused to letters (`repo2`) and a non-numeric tail
 # (`terraform-aws-v2`) are not ordinals and keep their structure. See narrowing (ii) in the header.
+# _ve_strip_trailing_dots <word> -> the word with any trailing `.` characters removed.
+# NARROWLY SCOPED, and that scoping is the point: it is applied ONLY to the two NEIGHBOUR words
+# before they are matched against the cue-word lists, never to the candidate token itself. The
+# neighbour words reach here normalized by `tr -cd 'a-z0-9._/-'`, which strips a comma but KEEPS a
+# period — so `landed in the acme-corp/widget-svc repo,` matched the trailing cue `repo` while the
+# far commoner sentence-final `... repo.` yielded `repo.` and matched nothing. That asymmetry was
+# unintentional; a sentence-final period is punctuation, not part of the cue word. Trailing dots
+# only: an INTERNAL dot is meaningful in a neighbour (`example.com`, `v1.2`) and is untouched, and
+# the token's own extension/host recognition happens elsewhere and is not affected by this at all.
+_ve_strip_trailing_dots() {
+  local v="${1:-}"
+  while [ -n "$v" ] && [ "${v%.}" != "$v" ]; do v="${v%.}"; done
+  printf '%s' "$v"
+}
+
 _ve_strip_ordinal() {
   local v="${1:-}" tail
   case "$v" in *-*) : ;; *) printf '%s' "$v"; return 0 ;; esac
@@ -1150,14 +1170,19 @@ _ve_owner_is_repo_dir() {
 }
 
 # _ve_slug_structured <owner> <repo> -> 0 when the token carries structure an English word pair does
-# not. Three signals, each chosen against the real corpus rather than invented, and two suppressors
-# added after the same three signals were found to fire on ordinary in-repo directory paths:
-#   · a hyphen or digit in the OWNER half   — `acme-corp/widget-svc`, `hashicorp/terraform-aws`.
-#     Deliberately NOT the repo half: `user/PR-text` is a live curated entry and must stay writable.
-#   · a digit anywhere                       — `octocat/repo2`
-#   · CamelCase in either half               — `octocat/Hello-World`. A capital followed by a
-#     LOWERCASE letter, which is what separates a repo name from SHOUTED prose: `YAML/JSON` and
-#     `dev/CI` are all-caps and carry no such pair, so they stay ordinary prose.
+# not. THIS LIST IS THE SIGNALS AS THEY STAND AFTER narrowings (v)-(vii), not as they were
+# authored — the narrowings are implemented inline in the body below and each one only ever REMOVES
+# recognition:
+#   · a digit ANYWHERE                       — `octocat/repo2`. The owner half is tested first and
+#     separately (and the "anywhere" test then subsumes it); both are kept because narrowing (vi)
+#     retracted the owner-half HYPHEN and only the hyphen — a digit in the owner half is still
+#     structure. An owner-half hyphen alone is NOT: `acme-corp/widget-svc` and
+#     `hashicorp/terraform-aws` earn nothing here.
+#   · an INTERNAL capital in either half     — `octocat/Hello-World`, on the `W` of `World`. A
+#     capital followed by a LOWERCASE letter, which is what separates a repo name from SHOUTED
+#     prose: `YAML/JSON` and `dev/CI` are all-caps and carry no such pair, so they stay ordinary
+#     prose. Narrowing (vii) drops the FIRST character of each half first, so a leading capital
+#     (`Microsoft/vscode`, `Count/version`) is not CamelCase.
 # SUPPRESSOR (iii): an ALL-CAPS repo half is a FILE STEM, not a repository name — `review-heal/SKILL`
 # and `docs/README` are citations of files in this tree, and neither is separable from a slug by any
 # other means. SUPPRESSOR (ii): ordinal `-<digits>` suffixes are stripped first, so `worktrees/
@@ -1214,12 +1239,25 @@ _ve_slug_structured() {
 
 _ve_emit_slug_token() {
   local tok="${1:-}" prev="${2:-}" next="${3:-}" structural="${4:-0}" owners="${5:-}" root="${6:-}"
-  local left right lower
+  local left right lower prev_cue next_cue
+  # Cue-word forms ONLY. $prev/$next themselves are left untouched so nothing else in this function
+  # can be affected by the stripping; the two `_cue` copies are used by the marker (2) tests below
+  # and nowhere else.
+  prev_cue="$(_ve_strip_trailing_dots "$prev")"
+  next_cue="$(_ve_strip_trailing_dots "$next")"
   [ -n "$tok" ] || return 0
   case "$tok" in *"/"*) : ;; *) return 0 ;; esac
   left="${tok%%/*}"; right="${tok#*/}"
   case "$right" in */*) return 0 ;; esac                        # more than one `/` is a path
-  case "$right" in *.[A-Za-z]|*.[A-Za-z][A-Za-z]|*.[A-Za-z][A-Za-z][A-Za-z]|*.[A-Za-z][A-Za-z][A-Za-z][A-Za-z]) return 0 ;; esac
+  # THE FILE-EXTENSION GUARD — a repo half ending in a dot plus 1-5 letters is a FILENAME, so the
+  # token is a path (`docs/PITFALLS.md`, `postmortem/results.jsonl`) and never an `owner/repo` slug.
+  # WIDENED FROM 4 TO 5: this repo's own curated prose cites `.jsonl` constantly (the postmortem
+  # ledger) and a 4-letter bound left it outside the guard, falling short of the blanket claim this
+  # function's header makes. 5 is the stopping point on purpose — it covers the real extensions in
+  # play (`.json`, `.jsonl`, `.patch`, `.yaml`) while `.github`-length and beyond starts eating
+  # legitimate dotted repo names, and the guard can only ever REMOVE recognition, so over-widening
+  # is a silent loss of coverage rather than a loud one.
+  case "$right" in *.[A-Za-z]|*.[A-Za-z][A-Za-z]|*.[A-Za-z][A-Za-z][A-Za-z]|*.[A-Za-z][A-Za-z][A-Za-z][A-Za-z]|*.[A-Za-z][A-Za-z][A-Za-z][A-Za-z][A-Za-z]) return 0 ;; esac
   [ "${#left}" -ge 2 ] && [ "${#right}" -ge 2 ] || return 0
   # Both halves must be plain slug characters; anything else (an apostrophe, a colon, a brace that
   # survived stripping) means this was never an `owner/repo` citation.
@@ -1233,9 +1271,9 @@ _ve_emit_slug_token() {
   # residual miss is deliberate and what it costs.
   if [ "$structural" != "1" ]; then
     case "$_VE_SLUG_CUE_WORDS" in
-      *" $prev "*) : ;;
+      *" $prev_cue "*) : ;;
       *) case "$_VE_SLUG_TRAILING_CUE_WORDS" in
-           *" $next "*) : ;;
+           *" $next_cue "*) : ;;
            *) case " $owners " in
                 *" ${lower%%/*} "*) : ;;                     # a KNOWN repo owner
                 *) _ve_slug_structured "$left" "$right" || return 0 ;;
@@ -1314,7 +1352,9 @@ EOF
     [ -n "$tok" ] || continue
     name="$(printf '%s' "$tok" | sed -e 's/[[:space:]]*#.*$//')"
     [ -n "$name" ] || continue
-    case "$name" in *.[A-Za-z]|*.[A-Za-z][A-Za-z]|*.[A-Za-z][A-Za-z][A-Za-z]|*.[A-Za-z][A-Za-z][A-Za-z][A-Za-z]) continue ;; esac
+    # Same 1-5 letter file-extension bound as the slug guard above, kept in lockstep on purpose:
+    # `results.jsonl #12` is a file citation, not a repository called `results.jsonl`.
+    case "$name" in *.[A-Za-z]|*.[A-Za-z][A-Za-z]|*.[A-Za-z][A-Za-z][A-Za-z]|*.[A-Za-z][A-Za-z][A-Za-z][A-Za-z]|*.[A-Za-z][A-Za-z][A-Za-z][A-Za-z][A-Za-z]) continue ;; esac
     lower="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')"
     case "$_VE_NOT_REPO_WORDS" in *" $lower "*) continue ;; esac
     if [ "${#name}" -ge 2 ] && [ "$name" = "$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]')" ]; then
