@@ -347,14 +347,23 @@ work="$(mktemp -d)" || die "mktemp failed" 2
 tmp_in_store=""
 tmp_index=""
 index_lock=""
+index_lock_token=""
+index_breaker=""
+index_lock_seq=0
 cleanup() {
   rm -rf "$work" 2>/dev/null || true
   [ -n "$tmp_in_store" ] && rm -f "$tmp_in_store" 2>/dev/null || true
   [ -n "$tmp_index" ] && rm -f "$tmp_index" 2>/dev/null || true
   # THE LOCK IS RELEASED HERE TOO, not only by release_index_lock's normal path. `die` and every
   # `exit` route through this trap, so a refusal taken while the lock is held cannot strand it.
-  # Idempotent: release_index_lock blanks $index_lock, so a normal release makes this a no-op.
-  [ -n "$index_lock" ] && rmdir "$index_lock" 2>/dev/null || true
+  # Idempotent: release_index_lock blanks $index_lock, so a normal release makes this a no-op — and
+  # it goes through release_index_lock rather than a bare `rmdir` so the trap is OWNERSHIP-VERIFIED
+  # too: a lock already broken as stale and re-taken by another writer must survive our cleanup.
+  # (Guarded on emptiness, so a death before the primitive is defined cannot call it.)
+  if [ -n "$index_lock" ]; then release_index_lock; fi
+  # The stale-break arbitration directory is held for microseconds, but a signal inside that window
+  # would strand it and make the break permanently unavailable — so it is released here as well.
+  if [ -n "$index_breaker" ]; then rmdir "$index_breaker" 2>/dev/null || true; index_breaker=""; fi
   return 0
 }
 trap cleanup EXIT
@@ -612,56 +621,151 @@ INDEX_LOCK_WAIT_SECS="${AGENT_MEMORY_INDEX_LOCK_WAIT_SECS:-30}"
 case "$INDEX_LOCK_WAIT_SECS" in ''|*[!0-9]*) INDEX_LOCK_WAIT_SECS=30 ;; esac
 [ "$INDEX_LOCK_WAIT_SECS" -ge 1 ] 2>/dev/null || INDEX_LOCK_WAIT_SECS=30
 
-# acquire_index_lock <agent-dir> -> 0 held, 1 could not acquire within the bound.
+# >>> INDEX LOCK PRIMITIVE — extracted VERBATIM by the concurrency harness in
+# `test-write-agent-memory.sh` (case (j4)/(j5)) between this marker and the closing one. Keep the
+# three functions between the markers self-contained: they may read only $PROG,
+# $INDEX_LOCK_WAIT_SECS and the four `index_lock*` globals, all of which the harness defines.
+
+# _take_index_lock <lock-dir> -> 0 taken (and STAMPED with this process's ownership token), 1 not.
+#
+# THE OWNERSHIP STAMP IS WHAT MAKES RELEASE SAFE. `rmdir`-by-path releases whatever currently sits
+# at the path, which after a stale break may be a lock some OTHER process legitimately holds. The
+# token is written INSIDE the lock dir at acquire time and re-read at release time, so a release
+# can only remove a lock this acquisition created. The token is `<pid>-<per-process sequence>-
+# <$RANDOM>`: the sequence keeps it distinct across the repeated acquire/release cycles one run
+# makes (undo path, retries), and pid REUSE cannot forge it because a recycled pid would also have
+# to reproduce this process's sequence counter and its random draw — and, more fundamentally,
+# because the value compared against is one THIS process wrote into the variable, never one read
+# back from the filesystem and trusted.
+#
+# Stamping failure (a full or read-only disk) FAILS CLOSED: the just-created lock is removed and
+# the take reports failure, rather than holding a lock whose ownership cannot later be proven.
+_take_index_lock() {
+  local lock="$1" token
+  mkdir "$lock" 2>/dev/null || return 1
+  index_lock_seq=$(( index_lock_seq + 1 ))
+  token="$$-$index_lock_seq-${RANDOM:-0}"
+  if printf '%s\n' "$token" > "$lock/owner" 2>/dev/null; then
+    index_lock="$lock"
+    index_lock_token="$token"
+    return 0
+  fi
+  rm -f "$lock/owner" 2>/dev/null || true
+  rmdir "$lock" 2>/dev/null || true
+  return 1
+}
+
+# acquire_index_lock <agent-dir> [wait-secs] -> 0 held · 1 another writer holds it · 4 the lock dir
+# could not be created for some OTHER reason (ENOSPC, EPERM, EROFS, a vanished store dir…).
+# The two failure codes are kept apart because rc 1's refusal text names contention, and naming
+# contention for a full disk sends the reader hunting a writer that does not exist.
+# `wait-secs` defaults to $INDEX_LOCK_WAIT_SECS; `0` means ONE attempt with no wait at all (used by
+# the undo path, which must not pay the bound a second time on the way to a refusal).
 acquire_index_lock() {
-  local dir="$1" lock="$1/.write-agent-memory.lock" tries=0 max
-  max=$(( INDEX_LOCK_WAIT_SECS * 10 ))          # 100ms per attempt
+  local dir="$1" lock="$1/.write-agent-memory.lock" breaker="$1/.write-agent-memory.lock.breaker"
+  local wait_secs="${2-$INDEX_LOCK_WAIT_SECS}" tries=0 max=0 sleep_arg=0.1 per_sec=10
+  case "$wait_secs" in ''|*[!0-9]*) wait_secs="$INDEX_LOCK_WAIT_SECS" ;; esac
+  # UNCONTENDED FAST PATH, taken BEFORE anything sleeps. The overwhelmingly common case is a free
+  # lock, and probing the sleep first would tax every ordinary write 100ms for a wait it never does.
+  if _take_index_lock "$lock"; then return 0; fi
+  if [ "$wait_secs" -gt 0 ]; then
+    # THE RETRY BUDGET IS DERIVED FROM THE SLEEP THAT ACTUALLY WORKS, not assumed. A fixed count of
+    # 10 attempts per second combined with a `sleep 1` fallback made the real wait 10× the
+    # configured one wherever `sleep` rejects a fractional argument. Probing once and scaling the
+    # count keeps the effective bound equal to $wait_secs on both kinds of platform.
+    if ! sleep 0.1 2>/dev/null; then sleep_arg=1; per_sec=1; fi
+    max=$(( wait_secs * per_sec ))
+  fi
   while [ "$tries" -lt "$max" ]; do
-    if mkdir "$lock" 2>/dev/null; then
-      index_lock="$lock"
-      return 0
-    fi
     tries=$(( tries + 1 ))
-    sleep 0.1 2>/dev/null || sleep 1
+    sleep "$sleep_arg" 2>/dev/null || true
+    if _take_index_lock "$lock"; then return 0; fi
   done
   # STALE-LOCK BREAKER — a `kill -9`, a power loss or a full disk can strand the directory with no
   # process behind it, and a lock that can wedge the writer forever is worse than the race it
   # prevents. Age is read with `find -mmin`, which behaves identically on BSD and GNU find; `stat`
   # is avoided on purpose (`-f %m` succeeds with GARBAGE on GNU systems, so a portability slip there
-  # is silent rather than loud). A lock older than 10 minutes cannot belong to a live write: the
-  # bounded wait above caps a legitimate holder at INDEX_LOCK_WAIT_SECS.
+  # is silent rather than loud).
+  #
+  # TEN MINUTES IS A HEURISTIC, AND ONLY A HEURISTIC. It is NOT derived from the bounded wait above:
+  # that bound caps how long a WAITER waits, not how long a HOLDER holds, and nothing bounds a
+  # holder — its hold time is however long `rebuild_memory_index_locked` takes. The threshold is
+  # chosen as multiple orders of magnitude above any plausible rebuild of a store (a directory scan
+  # and one `mv`), so a lock that old is overwhelmingly likely to be abandoned. It is a wager, and
+  # the arbitration below is what keeps a losing wager from corrupting anything.
   if [ -n "$(find "$lock" -maxdepth 0 -mmin +10 2>/dev/null)" ]; then
-    printf '%s: breaking a STALE index lock (older than 10 minutes, no live writer can hold it): %s\n' \
-      "$PROG" "$lock" >&2
-    rmdir "$lock" 2>/dev/null || true
+    # SINGLE-WINNER ARBITRATION, and it needs BOTH halves below.
+    #   · `mkdir "$breaker"` is one atomic create-or-fail syscall, so of N racers that all observed
+    #     the same stale lock exactly ONE enters this block; the losers never `rmdir` at all. That
+    #     closes the SIMULTANEOUS interleaving (two racers acting on their observation at once).
+    #   · Re-running the staleness test WHILE HOLDING the breaker closes the SEQUENTIAL one: a racer
+    #     that observed the stale lock, then queued behind the breaker while the winner broke it and
+    #     re-acquired, now sees a FRESH lock and leaves it alone. Without this, the loser would
+    #     delete the winner's LIVE lock and both would end up inside the critical section.
+    # A breaker stranded by a `kill -9` makes the break unavailable and the run REFUSES (fail
+    # closed, named) — it never degrades into an unarbitrated break; clear it with `rmdir` by hand.
+    if mkdir "$breaker" 2>/dev/null; then
+      index_breaker="$breaker"
+      if [ -n "$(find "$lock" -maxdepth 0 -mmin +10 2>/dev/null)" ]; then
+        printf '%s: breaking a STALE index lock (older than 10 minutes — assumed abandoned): %s\n' \
+          "$PROG" "$lock" >&2
+        rm -f "$lock/owner" 2>/dev/null || true
+        rmdir "$lock" 2>/dev/null || true
+      fi
+      rmdir "$breaker" 2>/dev/null || true
+      index_breaker=""
+    fi
   fi
   # ONE FINAL ATTEMPT, on both routes into here. It covers the stale-break above, and also the
-  # holder that released during the last 100ms of the wait: without it that run refuses over a
+  # holder that released during the last retry interval: without it that run refuses over a
   # lock that is already free, and a refusal costs a legitimate write.
-  if mkdir "$lock" 2>/dev/null; then
-    index_lock="$lock"
-    return 0
-  fi
-  return 1
+  if _take_index_lock "$lock"; then return 0; fi
+  # WHY the lock is unavailable, read from the filesystem rather than assumed: present ⇒ someone
+  # holds it; absent ⇒ `mkdir` failed for some environmental reason (ENOSPC, EPERM, EROFS…). This
+  # is a DIAGNOSTIC distinction, and it is sampled after the fact: a holder that released between
+  # the failed `mkdir` and this test reads as rc 4. Both codes refuse identically, so the narrow
+  # mis-labelling costs a less apt message and never a different outcome.
+  if [ -d "$lock" ]; then return 1; fi
+  return 4
 }
 
 # release_index_lock — always returns 0; blanks $index_lock so the EXIT trap's release is a no-op.
+# OWNERSHIP-VERIFIED: it removes the lock only when the on-disk stamp is still this acquisition's
+# token, so a lock that was broken as stale and re-taken by another writer survives our release.
 release_index_lock() {
   # `if`, not `[ … ] && …`: under `set -e` a failing AND-list in statement position aborts the
   # script, which would turn "the lock was already gone" into a crash on the success path.
-  if [ -n "$index_lock" ]; then rmdir "$index_lock" 2>/dev/null || true; fi
+  if [ -n "$index_lock" ] && [ -n "$index_lock_token" ]; then
+    if [ "$(cat "$index_lock/owner" 2>/dev/null)" = "$index_lock_token" ]; then
+      rm -f "$index_lock/owner" 2>/dev/null || true
+      rmdir "$index_lock" 2>/dev/null || true
+    fi
+  fi
   index_lock=""
+  index_lock_token=""
   return 0
 }
+# <<< INDEX LOCK PRIMITIVE
 
-# rebuild_memory_index <agent-dir> — the LOCKED wrapper. Every call site goes through this, so the
-# undo path is serialized against a concurrent writer too.
-#   0 = rebuilt   2 = could not rebuild   3 = could not acquire the lock within the bound
-# rc 3 is kept DISTINCT so the call site can name the real reason; it is never a silent skip.
+# rebuild_memory_index <agent-dir> [wait-secs] — the LOCKED wrapper. Every call site goes through
+# this, so the undo path is serialized against a concurrent writer too.
+#   0 = rebuilt   2 = could not rebuild   3 = another writer holds the lock   4 = the lock dir could
+#   not be created at all (not contention)
+# rc 3 and rc 4 are kept DISTINCT so the call site can name the real reason; neither is a silent
+# skip. `wait-secs` is passed through to acquire_index_lock (0 = one attempt, no wait).
 rebuild_memory_index() {
-  local dir="$1" rc=0
+  local dir="$1" wait_secs="${2-}" rc=0 arc=0
   [ -d "$dir" ] || return 2
-  acquire_index_lock "$dir" || return 3
+  if [ -n "$wait_secs" ]; then
+    acquire_index_lock "$dir" "$wait_secs" || arc=$?
+  else
+    acquire_index_lock "$dir" || arc=$?
+  fi
+  case "$arc" in
+    0) : ;;
+    4) return 4 ;;
+    *) return 3 ;;
+  esac
   # Not a subshell and not a pipeline: the lock is released by the next statement regardless of rc,
   # and by the EXIT trap if anything below dies outright.
   rebuild_memory_index_locked "$dir"; rc=$?
@@ -761,6 +865,9 @@ tmp_in_store=""   # consumed by mv; nothing for the trap to clean
 # REBUILD ON THE UNDO PATH TOO, or the undo re-creates the rot this writer exists to prevent.
 # The index rebuild below runs BEFORE the read-back checks, so by the time undo_write fires,
 # MEMORY.md already names the entry we are about to restore-or-remove. Removing the file without
+# NO-WAIT ON THIS PATH (the `0` argument): the failure that brought us here may itself have been a
+# contended lock, and paying the full INDEX_LOCK_WAIT_SECS a second time would double the delay in
+# front of a refusal that is already decided. One attempt, then move on.
 # rebuilding would leave a pointer to a file that is gone — the exact index/directory disagreement
 # `rebuild_memory_index` makes structurally impossible on the success path. The rebuild is
 # best-effort here (`|| true`): this path is already dying with a named diagnostic, and a failed
@@ -770,7 +877,7 @@ undo_write() {
   if [ "$had_prior" -eq 1 ]; then
     cat "$prior" > "$write_target" 2>/dev/null \
       || die "read-back verify failed ($1) AND prior-entry restore failed: $write_target" 2
-    rebuild_memory_index "$AGENT_DIR" || true
+    rebuild_memory_index "$AGENT_DIR" 0 || true
     die "read-back verify failed: $1 — restored prior entry at $write_target" 2
   fi
   rm -f "$write_target"
@@ -790,6 +897,10 @@ set -e
 case "$rebuild_rc" in
   0) : ;;
   3) undo_write "the MEMORY.md index rebuild could not acquire the store lock within ${INDEX_LOCK_WAIT_SECS}s — another writer is holding $AGENT_DIR/.write-agent-memory.lock" ;;
+  # rc 4 is NOT contention, and saying "another writer is holding it" for a full or read-only disk
+  # sends the reader hunting a process that does not exist. The lock dir is absent after the last
+  # attempt, so `mkdir` failed for an environmental reason instead.
+  4) undo_write "the MEMORY.md index rebuild could not CREATE the store lock $AGENT_DIR/.write-agent-memory.lock — this is not contention (no lock is present): check permissions, free space, and that the store is not on a read-only filesystem" ;;
   *) undo_write "the MEMORY.md index could not be rebuilt" ;;
 esac
 

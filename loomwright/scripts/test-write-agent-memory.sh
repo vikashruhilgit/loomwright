@@ -834,6 +834,170 @@ else
   no "(j3) could not create the M5 lock fixture at $J3_LOCK — the mutation control did not run (a fixture gap, not a pass)"
 fi
 
+# ---------------------------------------------------------------------------
+# (j4) THE STALE-BREAK PATH — the branch that (j1)-(j3) never executed.
+#
+# (j1)/(j2)/(j3) all exercise a FRESH lock, so the `-mmin +10` predicate and the break-and-re-acquire
+# sequence below them never ran: a green suite said nothing about them, which is how the
+# check-then-act break shipped. The lock age is CONSTRUCTED with `touch -t`, so this is deterministic
+# — nothing waits ten minutes and nothing depends on scheduling.
+# ---------------------------------------------------------------------------
+echo "== (j4) a lock older than the stale threshold is BROKEN and the write proceeds =="
+RJ4="$(new_repo)"; SJ4="$RJ4/.claude/agent-memory"; DJ4="$SJ4/$AGENT"
+BJ4="$(mkbody "$RJ4/body-j4.md")"
+mkdir -p "$DJ4" || setup_fail "could not create the stale-lock store dir $DJ4"
+J4_LOCK="$DJ4/.write-agent-memory.lock"
+if mkdir "$J4_LOCK" 2>/dev/null && printf 'a-dead-writers-token\n' > "$J4_LOCK/owner" 2>/dev/null \
+   && touch -t 200001010000 "$J4_LOCK" 2>/dev/null; then
+  # A NON-EMPTY stale lock on purpose: a crashed holder leaves its ownership stamp behind, and a
+  # break that only `rmdir`s would fail on the non-empty directory and wedge the writer forever.
+  ok "(j4) the fixture is a 10-minutes-plus-old lock left by a dead holder (age set with touch -t, not waited for)"
+  OUT="$(AGENT_MEMORY_INDEX_LOCK_WAIT_SECS=1 bash "$WRITER" "$AGENT" j4_stale \
+          "an entry written after breaking a lock abandoned by a crashed writer, per PR #155" "$BJ4" \
+          --repo "$RJ4" --store "$SJ4" --source "PR #155" --confirm < /dev/null 2>&1)"; RC=$?
+  [ "$RC" -eq 0 ] && ok "(j4) the stale lock is broken and the write SUCCEEDS (a stranded lock does not wedge the writer forever)" || no "(j4) exited $RC — the stale-lock breaker did not clear an abandoned lock: $OUT"
+  grep -qF 'breaking a STALE index lock' <<< "$OUT" && ok "(j4) and it says so on stderr, naming the lock it broke" || no "(j4) the break was silent — an operator cannot tell an abandoned lock was cleared: $OUT"
+  grep -qF '(j4_stale.md)' "$DJ4/MEMORY.md" 2>/dev/null && ok "(j4) the index was rebuilt and names the entry" || no "(j4) MEMORY.md does not name j4_stale.md after the stale break"
+  resid_j4="$(find "$DJ4" -name '.write-agent-memory.*' 2>/dev/null | wc -l | tr -d '[:space:]')"
+  [ "$resid_j4" = "0" ] && ok "(j4) neither the broken lock, the arbitration directory nor a temp file survived" || no "(j4) $resid_j4 .write-agent-memory.* artifact(s) left behind after the stale break"
+else
+  no "(j4) could not build the stale-lock fixture at $J4_LOCK — the stale-break assertions did not run (a fixture gap, not a pass)"
+fi
+# ...and the EMPTY stale lock, which is the shape the PREVIOUS release stranded (it never stamped
+# ownership). Both shapes exist in real stores on disk, so both must break.
+RJ4B="$(new_repo)"; SJ4B="$RJ4B/.claude/agent-memory"; DJ4B="$SJ4B/$AGENT"
+BJ4B="$(mkbody "$RJ4B/body-j4b.md")"
+mkdir -p "$DJ4B" || setup_fail "could not create the empty-stale-lock store dir $DJ4B"
+if mkdir "$DJ4B/.write-agent-memory.lock" 2>/dev/null && touch -t 200001010000 "$DJ4B/.write-agent-memory.lock" 2>/dev/null; then
+  OUT="$(AGENT_MEMORY_INDEX_LOCK_WAIT_SECS=1 bash "$WRITER" "$AGENT" j4b_stale \
+          "an entry written after breaking an unstamped lock left by an older release, per PR #155" "$BJ4B" \
+          --repo "$RJ4B" --store "$SJ4B" --source "PR #155" --confirm < /dev/null 2>&1)"; RC=$?
+  [ "$RC" -eq 0 ] && grep -qF '(j4b_stale.md)' "$DJ4B/MEMORY.md" 2>/dev/null \
+    && ok "(j4) an EMPTY stale lock (the shape the previous release stranded) is broken too" \
+    || no "(j4) an empty stale lock was not broken (rc=$RC) — a lock left by the previous release would wedge this writer: $OUT"
+else
+  no "(j4) could not build the empty-stale-lock fixture — that assertion did not run (a fixture gap, not a pass)"
+fi
+
+# ---------------------------------------------------------------------------
+# (j5) TWO BREAKERS MUST NOT BOTH END UP HOLDING THE LOCK.
+#
+# The break is check-then-act by nature (test the age, then remove), so it needs arbitration. Two
+# interleavings can put two processes inside the critical section, and each is driven here
+# DETERMINISTICALLY rather than raced:
+#   · SEQUENTIAL (fixture X): the loser observed the stale lock, then acted on that observation
+#     after the winner had already broken it and re-acquired.
+#   · SIMULTANEOUS (fixture Y): both racers act on their observation at the same moment.
+#
+# The interleaving is controlled by a `find` SHIM on PATH: it runs the real `find`, captures the
+# answer, and only then sleeps for a per-waiter interval. That reproduces exactly the hazard — an
+# observation taken early and acted on late — without a single timing assumption, and it lets the
+# real `acquire_index_lock`/`release_index_lock` run VERBATIM (extracted between the INDEX LOCK
+# PRIMITIVE markers in the writer) rather than a paraphrase of them.
+#
+# Each fixture is run twice: against the real primitive (exactly ONE acquisition) and against a
+# mutant with one half of the arbitration stripped (TWO acquisitions). The mutants are what make
+# the assertion non-vacuous — without them a test that passes before and after a fix proves nothing.
+# ---------------------------------------------------------------------------
+echo "== (j5) two simultaneous stale-lock breakers cannot both acquire the lock =="
+LOCKH="$(mktmp)"
+REAL_FIND="$(command -v find 2>/dev/null || true)"
+[ -x "$REAL_FIND" ] || setup_fail "could not locate the real find(1) for the (j5) shim"
+SHIMDIR="$LOCKH/bin"; mkdir -p "$SHIMDIR" || setup_fail "could not create the (j5) shim dir"
+cat > "$SHIMDIR/find" <<'SHIM_EOS'
+#!/bin/bash
+# find(1) shim — answers from the REAL find, then delays the ANSWER's delivery on a chosen call.
+cf="$FIND_CALL_DIR/count.$WAITER_ID"
+n=1
+[ -f "$cf" ] && n=$(( $(cat "$cf") + 1 ))
+printf '%s' "$n" > "$cf"
+out="$("$REAL_FIND" "$@" 2>/dev/null)"
+[ "$n" = "${FIND_DELAY_ON_CALL:-0}" ] && sleep "${FIND_DELAY_SECS:-0}"
+[ -n "$out" ] && printf '%s\n' "$out"
+exit 0
+SHIM_EOS
+chmod +x "$SHIMDIR/find" || setup_fail "could not make the (j5) find shim executable"
+
+# build_lock_harness <source-script> <out> — the primitive VERBATIM plus a main that records every
+# successful acquisition. Extraction is by marker, not line number, so an edit above it cannot
+# silently shift what gets tested.
+build_lock_harness() {
+  {
+    printf '#!/bin/bash\nset -u\nPROG=lock-harness\n'
+    printf 'index_lock=""\nindex_lock_token=""\nindex_breaker=""\nindex_lock_seq=0\n'
+    printf 'INDEX_LOCK_WAIT_SECS="${AGENT_MEMORY_INDEX_LOCK_WAIT_SECS:-30}"\n'
+    sed -n '/^# >>> INDEX LOCK PRIMITIVE/,/^# <<< INDEX LOCK PRIMITIVE/p' "$1"
+    printf 'if acquire_index_lock "$1"; then\n'
+    printf '  printf "%%s\\n" "${WAITER_ID:-?}" >> "$2"\n'
+    printf '  sleep "${HOLD_SECS:-3}"\n'
+    printf '  release_index_lock\n  exit 0\nfi\nexit 1\n'
+  } > "$2"
+}
+
+# run_breaker_race <harness> <label> <A-delay-call> <A-secs> <B-delay-call> <B-secs> -> prints the
+# number of waiters that acquired. A stale lock is constructed first, so both waiters reach the
+# breaker; neither waiter can "win" by luck because the shim pins the ordering.
+run_breaker_race() {
+  local h="$1" label="$2" ac="$3" as="$4" bc="$5" bs="$6"
+  local d="$LOCKH/race-$label" holders="$LOCKH/holders-$label" cd="$LOCKH/calls-$label"
+  rm -rf "$d" "$cd" 2>/dev/null
+  mkdir -p "$d" "$cd" || return 1
+  : > "$holders"
+  mkdir "$d/.write-agent-memory.lock" 2>/dev/null || return 1
+  printf 'dead-holder\n' > "$d/.write-agent-memory.lock/owner" 2>/dev/null
+  touch -t 200001010000 "$d/.write-agent-memory.lock" 2>/dev/null || return 1
+  PATH="$SHIMDIR:$PATH" REAL_FIND="$REAL_FIND" FIND_CALL_DIR="$cd" WAITER_ID=A \
+    FIND_DELAY_ON_CALL="$ac" FIND_DELAY_SECS="$as" AGENT_MEMORY_INDEX_LOCK_WAIT_SECS=1 HOLD_SECS=3 \
+    bash "$h" "$d" "$holders" >/dev/null 2>&1 &
+  local pa=$!
+  PATH="$SHIMDIR:$PATH" REAL_FIND="$REAL_FIND" FIND_CALL_DIR="$cd" WAITER_ID=B \
+    FIND_DELAY_ON_CALL="$bc" FIND_DELAY_SECS="$bs" AGENT_MEMORY_INDEX_LOCK_WAIT_SECS=1 HOLD_SECS=3 \
+    bash "$h" "$d" "$holders" >/dev/null 2>&1 &
+  local pb=$!
+  wait "$pa" 2>/dev/null || true
+  wait "$pb" 2>/dev/null || true
+  wc -l < "$holders" | tr -d '[:space:]'
+}
+
+H_REAL="$MUT_DIR/lock-harness-real.sh"
+build_lock_harness "$WRITER" "$H_REAL"
+h_lines="$(sed -n '/^# >>> INDEX LOCK PRIMITIVE/,/^# <<< INDEX LOCK PRIMITIVE/p' "$WRITER" | wc -l | tr -d '[:space:]')"
+if [ "${h_lines:-0}" -gt 40 ] && bash -n "$H_REAL" 2>/dev/null; then
+  ok "(j5) the harness carries the writer's OWN lock primitive verbatim ($h_lines lines between the markers) and parses"
+else
+  no "(j5) the primitive could not be extracted from $WRITER (got ${h_lines:-0} lines) — the race assertions below would test nothing"
+fi
+
+# MUTATION CONTROL M6 — the staleness RE-CHECK under arbitration stripped (the sequential half).
+M6="$MUT_DIR/mutant-no-recheck.sh"
+n_rc_orig="$(grep -c '^      if \[ -n "\$(find "\$lock" -maxdepth 0 -mmin' "$WRITER" 2>/dev/null || true)"; [ -n "$n_rc_orig" ] || n_rc_orig=0
+sed -e '/^      if \[ -n "\$(find "\$lock" -maxdepth 0 -mmin/s/.*/      if :; then/' "$WRITER" > "$M6" || setup_fail "could not build mutant M6"
+n_rc_mut="$(grep -c '^      if \[ -n "\$(find "\$lock" -maxdepth 0 -mmin' "$M6" 2>/dev/null || true)"; [ -n "$n_rc_mut" ] || n_rc_mut=0
+[ "$n_rc_orig" -eq 1 ] && [ "$n_rc_mut" -eq 0 ] && ok "(j5) M6 is NON-VACUOUS: the staleness re-check under arbitration is gone ($n_rc_orig → $n_rc_mut sites)" || no "(j5) M6 did not take (re-check sites $n_rc_orig → $n_rc_mut) — the control proves nothing"
+H_M6="$MUT_DIR/lock-harness-m6.sh"; build_lock_harness "$M6" "$H_M6"
+
+# MUTATION CONTROL M7 — the single-winner arbitration directory stripped (the simultaneous half).
+M7="$MUT_DIR/mutant-no-breaker.sh"
+n_bk_orig="$(grep -c '^    if mkdir "\$breaker" 2>/dev/null; then' "$WRITER" 2>/dev/null || true)"; [ -n "$n_bk_orig" ] || n_bk_orig=0
+sed -e '/^    if mkdir "\$breaker" 2>\/dev\/null; then/s/.*/    if :; then/' "$WRITER" > "$M7" || setup_fail "could not build mutant M7"
+n_bk_mut="$(grep -c '^    if mkdir "\$breaker" 2>/dev/null; then' "$M7" 2>/dev/null || true)"; [ -n "$n_bk_mut" ] || n_bk_mut=0
+[ "$n_bk_orig" -eq 1 ] && [ "$n_bk_mut" -eq 0 ] && ok "(j5) M7 is NON-VACUOUS: the single-winner arbitration directory is gone ($n_bk_orig → $n_bk_mut sites)" || no "(j5) M7 did not take (arbitration sites $n_bk_orig → $n_bk_mut) — the control proves nothing"
+H_M7="$MUT_DIR/lock-harness-m7.sh"; build_lock_harness "$M7" "$H_M7"
+
+# FIXTURE X — the SEQUENTIAL hazard. B's first staleness answer is delivered 2s late, so B observes
+# the STALE lock but acts on that observation after A has already broken it and re-acquired.
+x_real="$(run_breaker_race "$H_REAL" real-x 0 0 1 2)"
+[ "$x_real" = "1" ] && ok "(j5/X) sequential: exactly ONE waiter acquired — the late breaker re-checked, saw a FRESH lock and left it alone" || no "(j5/X) $x_real waiters acquired the lock (expected 1) — a breaker acting on a stale observation deleted a LIVE lock and both entered the critical section"
+x_m6="$(run_breaker_race "$H_M6" m6-x 0 0 1 2)"
+[ "$x_m6" = "2" ] && ok "(j5/X) M6 CONFIRMED: without the re-check the same fixture puts TWO waiters in the lock — the assertion above is caused by the re-check and nothing else" || no "(j5/X) the re-check-stripped mutant did NOT double-acquire ($x_m6 acquisitions) — (j5/X) is passing for some other reason and is vacuous"
+
+# FIXTURE Y — the SIMULTANEOUS hazard. Both waiters observe the stale lock at the same moment and
+# both have their answer delivered late (A later than B), so both would act on it unarbitrated.
+y_real="$(run_breaker_race "$H_REAL" real-y 2 3 2 1)"
+[ "$y_real" = "1" ] && ok "(j5/Y) simultaneous: exactly ONE waiter acquired — only the holder of the arbitration directory may break, the other refuses" || no "(j5/Y) $y_real waiters acquired the lock (expected 1) — two racers broke the same lock and both entered the critical section"
+y_m7="$(run_breaker_race "$H_M7" m7-y 2 3 2 1)"
+[ "$y_m7" = "2" ] && ok "(j5/Y) M7 CONFIRMED: without the arbitration directory the same fixture puts TWO waiters in the lock" || no "(j5/Y) the arbitration-stripped mutant did NOT double-acquire ($y_m7 acquisitions) — (j5/Y) is passing for some other reason and is vacuous"
+
 echo "== (g) the confirm-only gate: a non-TTY run WITHOUT --confirm writes nothing =="
 RG="$(new_repo)"; SG="$RG/.claude/agent-memory"
 BG="$(mkbody "$RG/body-g.md")"
