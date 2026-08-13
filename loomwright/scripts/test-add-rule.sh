@@ -845,6 +845,93 @@ else
 fi
 rm -rf "$VETMP" "$VEWT-wt" 2>/dev/null
 
+# ---------------------------------------------------------------------------
+# (uf) UNRECOGNISED ARGUMENTS ARE REFUSED. Unlike write-lessons.sh / write-project-memory.sh /
+# write-system-contract.sh — which silently dropped unmatched arguments until PR #144 — add-rule.sh
+# has ALWAYS refused them. This block is therefore a REGRESSION PIN, not a fix: measured before it
+# was written, no case in this suite asserted the refusal at all, so the `*) die "unknown argument"`
+# arm could have been deleted or softened to `*) shift ;;` and every test would have stayed green.
+#
+# WHY IT MATTERS HERE. add-rule.sh derives its store from the CURRENT DIRECTORY, never from anything
+# the caller passes, and has no `--repo`/`--store` — but write-agent-memory.sh and add-orientation.sh
+# both DO, so a caller reaching for one here is muscle memory from a sibling writer. A PR #144 review
+# run did exactly that on the lessons writer and landed a junk entry in this repo's real store.
+#
+# DO NOT HARMONISE the writers' parsers with validate-entry.sh's `_ve_parse_args`, which ignores
+# unknown flags ON PURPOSE: right for a VALIDATOR on a fail-safe path, wrong for a WRITER, where the
+# cost of silence is the store rather than a diagnostic.
+# ---------------------------------------------------------------------------
+echo "== 15. unrecognised arguments are refused, named, and write nothing =="
+UFTMP="$(mktemp -d)"
+UF_STMT="deployment rollbacks must drain their connection pools before the health check flips"
+UF_SRC="PR #144"
+
+# (uf1) THE PIN: a well-formed add PLUS two arguments this writer does not implement.
+UFR1="$(new_repo)"
+run_writer "$UFR1" --category ufcat --statement "$UF_STMT" --source "$UF_SRC" --confirm \
+           --repo /nonexistent/path --totally-made-up xyz
+if [ "$RC" -ne 0 ]; then
+  ok "(uf1) an unrecognised argument is REFUSED (exit $RC) rather than dropped"
+else
+  no "(uf1) exit 0 — the writer accepted an argument it does not implement: $OUT"
+fi
+grep -qF -- '--repo' <<< "$OUT" \
+  && ok "(uf1) and the refusal NAMES the offending argument, so the caller learns which one was not honoured" \
+  || no "(uf1) the refusal does not name '--repo': $OUT"
+grep -q '^add-rule\.sh: ' <<< "$OUT" \
+  && ok "(uf1) and it is spoken in add-rule's own name" \
+  || no "(uf1) the refusal does not name this writer: $OUT"
+if [ "$(count_rule_files "$UFR1")" = "0" ]; then
+  ok "(uf1) and NOTHING was written — no rule file anywhere under .agent/"
+else
+  no "(uf1) the refusal still wrote $(count_rule_files "$UFR1") rule file(s)"
+fi
+
+# (uf2) CONTROL: the SAME invocation without the bogus arguments must still write. Without this, a
+# writer that refused every invocation would pass (uf1).
+UFR2="$(new_repo)"
+run_writer "$UFR2" --category ufcat --statement "$UF_STMT" --source "$UF_SRC" --confirm
+if [ "$RC" -eq 0 ] && [ "$(count_rule_files "$UFR2")" != "0" ]; then
+  ok "(uf2) CONTROL: the identical call WITHOUT the unrecognised arguments still writes (exit 0) — the guard refuses the unknown, not the known"
+else
+  no "(uf2) CONTROL FAILED: the real flags no longer write (exit $RC) — the guard over-refuses: $OUT"
+fi
+
+# (uf3) MUTATION CONTROL: soften the guard to the silent-drop arm the other three writers used to
+# have, and (uf1) must go RED. REPLACED rather than deleted — a `case` pattern with no body is a
+# syntax error, and a mutant that cannot parse proves a broken mutant rather than a missing guard.
+# The control asserts the mutant WRITES, not merely that it exits differently, so a refusal for some
+# unrelated reason cannot be mistaken for the guard still working.
+echo "== 15. MUTATION CONTROL: softened to silent-drop, (uf1) goes RED =="
+UFMUT="$UFTMP/mut-noguard.sh"
+uf_orig="$(grep -c 'unknown argument' "$WRITER" 2>/dev/null || true)"; [ -n "$uf_orig" ] || uf_orig=0
+sed -e "/unknown argument/s|.*|    *) shift ;;|" "$WRITER" > "$UFMUT"
+uf_mut="$(grep -c 'unknown argument' "$UFMUT" 2>/dev/null || true)"; [ -n "$uf_mut" ] || uf_mut=0
+uf_drop="$(grep -c '^    \*) shift ;;$' "$UFMUT" 2>/dev/null || true)"; [ -n "$uf_drop" ] || uf_drop=0
+if [ "$uf_orig" -eq 1 ] && [ "$uf_mut" -eq 0 ] && [ "$uf_drop" -eq 1 ]; then
+  ok "(uf3) the mutation is NON-VACUOUS: 1 guard line in the real writer, 0 in the mutant, and a silent-drop arm in its place"
+else
+  no "(uf3) the mutation did not land as intended (guard $uf_orig → $uf_mut, silent-drop arm $uf_drop) — the control below would prove nothing"
+fi
+if bash -n "$UFMUT" 2>/dev/null; then
+  ok "(uf3) the mutant still parses, so a difference below is behavioural rather than a syntax error"
+  UFR3="$(new_repo)"
+  # The mutant is a temp copy, so its sibling-relative resolution of validate-entry.sh would fail
+  # and it would refuse with REFUSE_VALIDATOR_UNAVAILABLE — a refusal for the wrong reason, which
+  # would make this control look green by accident. Point it at the real validator.
+  OUT="$( ( cd "$UFR3" && ADD_RULE_VALIDATOR="$VEFILE" bash "$UFMUT" \
+            --category ufcat --statement "$UF_STMT" --source "$UF_SRC" --confirm \
+            --repo /nonexistent/path --totally-made-up xyz ) 2>&1 )"; RC=$?
+  if [ "$RC" -eq 0 ] && [ "$(count_rule_files "$UFR3")" != "0" ]; then
+    ok "(uf3) CONFIRMED: without the guard the SAME call exits 0 and writes the rule anyway — (uf1) goes RED without it and is load-bearing"
+  else
+    no "(uf3) REFUTED: the mutant refused too (exit $RC) — (uf1) is passing for some other reason and is vacuous: $OUT"
+  fi
+else
+  no "(uf3) the mutant does not parse — it could not discriminate anything"
+fi
+rm -rf "$UFTMP" 2>/dev/null   # a mutated writer must never outlive its own control
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

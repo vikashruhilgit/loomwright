@@ -205,7 +205,38 @@ while [ $# -gt 0 ]; do
     --replacement)     REPLACEMENT="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
     --replacement=*)   REPLACEMENT="${1#--replacement=}"; shift ;;
     --attest-existing) ATTEST=1; shift ;;
+    # UNKNOWN-ARGUMENT REJECTION — exit 2, this writer's could-not-examine convention (the same one
+    # every other argument check above uses), nothing written. The old catch-all took the two
+    # positionals below and SILENTLY DROPPED everything else, so `add` accepted any flag at all and
+    # wrote anyway. That silence is not cosmetic: the store is derived from the CURRENT DIRECTORY
+    # (`git rev-parse --show-toplevel` below), so a caller who passes a store-redirecting flag this
+    # writer has never had gets a successful-looking write into whatever repo they were standing in.
+    # `--repo` and `--store` are REAL flags on write-agent-memory.sh and add-orientation.sh — which
+    # is exactly how a caller reaches for one here — and a PR #144 review run did precisely that,
+    # passing `--repo <temp repo>` believing it isolated the store; the junk entry landed in this
+    # repo's real LESSONS.md and its provenance chain, and was caught only by a later `git status`.
+    #
+    # DO NOT HARMONISE THIS WITH validate-entry.sh's `_ve_parse_args`, which ignores unknown flags
+    # ON PURPOSE so that a stray argument can never crash a fail-safe validation path. That is right
+    # for a VALIDATOR and wrong for a WRITER, and the asymmetry is the whole point: a validator that
+    # refuses costs a diagnostic, a writer that silently retargets costs the store. Same vocabulary,
+    # opposite default — unifying the two parsers reopens this.
+    #
+    # Ordering matters: this arm sits AFTER every real `--flag` arm, so it catches only unmatched
+    # ones. A consequence worth knowing: a lesson text that itself begins with `--` must now be
+    # passed as `--lesson=<text>` rather than positionally. That is the same trade write-agent-memory.sh
+    # and add-orientation.sh already make, and it is the price of the refusal being unambiguous.
+    --*) echo "write-lessons: unrecognised flag '$1' — refusing rather than writing to a curated store with a flag this writer does not implement (accepted: --category, --lesson, --source, --last-verified, --confidence, --hash, --replacement, --attest-existing; see the usage header). Nothing was written." >&2; exit 2 ;;
     *) # retract/supersede accept positional <category> <lesson-text> (in that order); add ignores strays.
+       #
+       # SCOPE, DELIBERATE: this arm is UNCHANGED, and a stray bare word is still silently dropped
+       # here. The guard above covers unrecognised FLAGS only. An earlier revision refused stray
+       # positionals too — same defect class, and tempting for that reason — but it was narrowed on
+       # the owner's call: a bare word is the shape most likely to appear in a caller's own script
+       # OUTSIDE this repo, where no call-site audit can see it, so tightening it silently converts
+       # someone's working command into an exit 2. Flags carry no such risk: an unimplemented flag
+       # never did anything, so refusing it cannot break a caller who was relying on its effect.
+       # If this is ever revisited, the two `elif` refusal branches are what to restore.
        if { [ "$ACTION" = "retract" ] || [ "$ACTION" = "supersede" ]; } && [ -z "$CATEGORY" ]; then CATEGORY="$1"
        elif { [ "$ACTION" = "retract" ] || [ "$ACTION" = "supersede" ]; } && [ -z "$LESSON" ]; then LESSON="$1"
        fi

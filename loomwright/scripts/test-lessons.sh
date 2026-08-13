@@ -863,6 +863,151 @@ else
 fi
 rm -rf "$VETMP" "$VEWT-wt" 2>/dev/null
 
+# ---------------------------------------------------------------------------
+# (uf) UNRECOGNISED ARGUMENTS ARE REFUSED. A writer must be able to tell a caller it asked for
+# something the writer does not implement, instead of dropping the argument and reporting success.
+#
+# WHY THIS EXISTS. write-lessons.sh derives its store from the CURRENT DIRECTORY
+# (`git rev-parse --show-toplevel`), never from anything the caller passes. Before the guard, the
+# catch-all arm silently dropped every unmatched flag, so `--repo <elsewhere>` parsed, was discarded,
+# and the write landed in whatever repo the caller happened to be standing in — reported as a clean
+# success at exit 0. Not hypothetical: a PR #144 review run did exactly that, believing `--repo`
+# isolated the store, and a junk entry landed in this repo's real LESSONS.md and its provenance
+# chain, caught only because someone ran `git status` afterwards. `--repo` and `--store` are REAL
+# flags on write-agent-memory.sh and add-orientation.sh, so reaching for one here is muscle memory
+# from a sibling writer, not a typo.
+#
+# WHICH HALF HAS TEETH. (uf1) is the pin; (uf2)/(uf3) are controls proving the guard did not simply
+# make the writer refuse everything — a refusal that also breaks the real flags and the positional
+# curation verbs would satisfy (uf1) and be useless. (uf4) is the mutation control: it restores the
+# old silent-drop arm and asserts (uf1) goes RED, with a non-vacuity check that the sed landed.
+# ---------------------------------------------------------------------------
+echo "== 15. unrecognised arguments are refused, named, and write nothing =="
+UFTMP="$(mktemp -d)"
+UF_ERR="$UFTMP/stderr"
+UF_SRC="PR #144"
+UF_LESSON="deployment rollbacks drain their connection pools before the health check flips"
+uf_repo() {
+  local r; r="$(mktemp -d "$UFTMP/r.XXXXXX")"
+  ( cd "$r" && git init -q && git config user.email t@t && git config user.name t \
+      && echo init > f && git add f && git commit -qm init ) >/dev/null 2>&1
+  printf '%s' "$r"
+}
+# uf_run <repo> <writer-path> [args...] -> sets UF_RC, writes UF_ERR.
+# $UF_VALIDATOR mirrors ve_write's validator-override: a MUTANT copy lives in a temp dir, so its
+# sibling-relative resolution of validate-entry.sh would fail and the writer would refuse with
+# REFUSE_VALIDATOR_UNAVAILABLE — a refusal for the wrong reason, which would silently make (uf4)
+# look CONFIRMED-by-accident in the other direction. Left empty for the real writer, which must
+# resolve the validator on its own real path.
+UF_VALIDATOR=""
+uf_run() {
+  local repo="$1" prog="$2"; shift 2
+  ( cd "$repo" && WRITE_LESSONS_VALIDATOR="$UF_VALIDATOR" bash "$prog" "$@" ) >/dev/null 2>"$UF_ERR"
+  UF_RC=$?
+}
+uf_err() { tr '\n' ' ' < "$UF_ERR" 2>/dev/null | cut -c1-200; }
+
+# (uf1) THE DEFECT: a well-formed add PLUS two flags this writer does not implement.
+UFR1="$(uf_repo)"
+uf_run "$UFR1" "$WRITE" --category ufcat --lesson "$UF_LESSON" --source "$UF_SRC" \
+       --repo /nonexistent/path --totally-made-up xyz
+if [ "$UF_RC" -eq 2 ]; then
+  ok "(uf1) an unrecognised flag is REFUSED with exit 2 — the could-not-examine convention this writer already uses for every other argument check"
+else
+  no "(uf1) exit $UF_RC, want 2 — the writer accepted a flag it does not implement: $(uf_err)"
+fi
+if grep -qF -- '--repo' "$UF_ERR" 2>/dev/null; then
+  ok "(uf1) and the refusal NAMES the offending flag, so the caller learns which argument was not honoured"
+else
+  no "(uf1) the refusal does not name '--repo' — an unnamed refusal cannot tell the caller what to fix: $(uf_err)"
+fi
+if grep -q '^write-lessons: ' "$UF_ERR" 2>/dev/null; then
+  ok "(uf1) and it is spoken in write-lessons' own name"
+else
+  no "(uf1) the refusal does not name this writer: $(uf_err)"
+fi
+if [ -e "$UFR1/.supervisor" ]; then
+  no "(uf1) the refusal still touched the store — a .supervisor/ tree exists after a refused write"
+else
+  ok "(uf1) and NOTHING was written — no .supervisor/ tree at all, so neither the store nor its provenance chain moved"
+fi
+
+# (uf2) CONTROL: the SAME invocation without the bogus flags must still write. Without this, a
+# writer that refused every invocation would pass (uf1).
+UFR2="$(uf_repo)"
+uf_run "$UFR2" "$WRITE" --category ufcat --lesson "$UF_LESSON" --source "$UF_SRC"
+if [ "$UF_RC" -eq 0 ] && [ -f "$UFR2/$LFILE" ]; then
+  ok "(uf2) CONTROL: the identical call WITHOUT the unrecognised flags still writes (exit 0) — the guard refuses the unknown, not the known"
+else
+  no "(uf2) CONTROL FAILED: the real flags no longer write (exit $UF_RC) — the guard over-refuses: $(uf_err)"
+fi
+
+# (uf3) CONTROL: the POSITIONAL curation verbs. `retract`/`supersede` take <category> <lesson-text>
+# positionally (not --retract/--supersede), and the guard sits in the same catch-all arm that
+# implements them — so this is exactly the form most likely to be broken by the fix.
+uf_run "$UFR2" "$WRITE" retract ufcat "$UF_LESSON" --source "$UF_SRC"
+if [ "$UF_RC" -eq 0 ] && ! grep -qF "$UF_LESSON" "$UFR2/$LFILE" 2>/dev/null; then
+  ok "(uf3) CONTROL: the POSITIONAL 'retract <category> <lesson-text>' form still works — positionals survived the guard"
+else
+  no "(uf3) CONTROL FAILED: positional retract broke (exit $UF_RC) — the guard ate a documented positional form: $(uf_err)"
+fi
+
+# (uf3b) THE SCOPE BOUND, asserted rather than only commented. The guard covers unrecognised FLAGS
+# ONLY: a stray bare word on `add` is still silently dropped and the write still succeeds. That is a
+# deliberate narrowing, not an oversight — a bare word is the shape most likely to appear in a
+# caller's own script OUTSIDE this repo, where no call-site audit can see it, so refusing it would
+# silently convert someone's working command into an exit 2. An unimplemented FLAG carries no such
+# risk: it never did anything, so refusing it cannot break a caller relying on its effect.
+# This case exists so that re-tightening the scope is a decision someone has to make on purpose
+# (this test goes red) rather than something that drifts in unnoticed.
+UFR3B="$(uf_repo)"
+uf_run "$UFR3B" "$WRITE" --category ufcat --lesson "$UF_LESSON" --source "$UF_SRC" stray-bare-word
+if [ "$UF_RC" -eq 0 ] && [ -f "$UFR3B/$LFILE" ]; then
+  ok "(uf3b) SCOPE: a stray POSITIONAL is still ignored and the write succeeds — the guard is scoped to flags, deliberately"
+else
+  no "(uf3b) SCOPE CHANGED: a stray positional now refuses (exit $UF_RC). That may be right, but it is a behaviour change for callers outside this repo — make it deliberately, and update this case: $(uf_err)"
+fi
+
+# (uf4) MUTATION CONTROL: restore the pre-fix silent-drop arm and (uf1) must go RED. The line is
+# REPLACED with `--*) shift ;;` rather than deleted, because a `case` pattern with no body is a
+# syntax error and a mutant that cannot parse proves a broken mutant rather than a missing guard.
+#
+# The control asserts the mutant WRITES, not merely that it exits differently — a refusal for some
+# unrelated reason must not be mistaken for the guard still working. That is not a hypothetical
+# precaution: an earlier revision of this writer ALSO refused stray positionals, and with only the
+# `--*)` arm mutated the flag's VALUE (`/nonexistent/path`) fell through to the positional arm and
+# was rejected THERE, so (uf1)'s assertions stayed green against a writer with no flag guard at all.
+# That refusal was since narrowed away (see the writer's `*)` arm), which is what makes a
+# single-line mutation sufficient again — so this assertion is the thing standing between that
+# history and a silently vacuous control.
+echo "== 15. MUTATION CONTROL: with the guard restored to silent-drop, (uf1) goes RED =="
+UFMUT="$UFTMP/mut-noguard.sh"
+uf_orig="$(grep -c "unrecognised flag" "$WRITE" 2>/dev/null || true)"; [ -n "$uf_orig" ] || uf_orig=0
+sed -e "/unrecognised flag/s|.*|    --*) shift ;;|" "$WRITE" > "$UFMUT"
+uf_mut="$(grep -c "unrecognised flag" "$UFMUT" 2>/dev/null || true)"; [ -n "$uf_mut" ] || uf_mut=0
+uf_drop="$(grep -c '^    --\*) shift ;;$' "$UFMUT" 2>/dev/null || true)"; [ -n "$uf_drop" ] || uf_drop=0
+if [ "$uf_orig" -eq 1 ] && [ "$uf_mut" -eq 0 ] && [ "$uf_drop" -eq 1 ]; then
+  ok "(uf4) the mutation is NON-VACUOUS: 1 guard line in the real writer, 0 in the mutant, and the silent-drop arm is back in its place"
+else
+  no "(uf4) the mutation did not land as intended (guard $uf_orig → $uf_mut, silent-drop arm $uf_drop) — the control below would prove nothing"
+fi
+if bash -n "$UFMUT" 2>/dev/null; then
+  ok "(uf4) the mutant still parses, so a difference below is behavioural rather than a syntax error"
+  UFR4="$(uf_repo)"
+  UF_VALIDATOR="$VEFILE"   # the mutant is a temp copy; point it at the real validator (see uf_run)
+  uf_run "$UFR4" "$UFMUT" --category ufcat --lesson "$UF_LESSON" --source "$UF_SRC" \
+         --repo /nonexistent/path --totally-made-up xyz
+  UF_VALIDATOR=""
+  if [ "$UF_RC" -eq 0 ] && [ -f "$UFR4/$LFILE" ]; then
+    ok "(uf4) CONFIRMED: without the guard the SAME call exits 0 and writes the lesson anyway — (uf1) goes RED without it and is load-bearing"
+  else
+    no "(uf4) REFUTED: the mutant refused too (exit $UF_RC) — (uf1) is passing for some other reason and is vacuous: $(uf_err)"
+  fi
+else
+  no "(uf4) the mutant does not parse — it could not discriminate anything"
+fi
+rm -rf "$UFTMP" 2>/dev/null   # a mutated writer must never outlive its own control
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

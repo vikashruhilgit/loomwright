@@ -1100,6 +1100,88 @@ echo "== (h) atomicity: no temp residue after a successful write =="
 resid="$(find "$SA" -name '.write-agent-memory.*' 2>/dev/null | wc -l | tr -d '[:space:]')"
 [ "$resid" = "0" ] && ok "(h) no .write-agent-memory.* temp residue in the store after successful writes" || no "(h) $resid temp file(s) left behind in the store"
 
+# ---------------------------------------------------------------------------
+# (uf) UNRECOGNISED FLAGS ARE REFUSED. Unlike write-lessons.sh / write-project-memory.sh /
+# write-system-contract.sh — which silently dropped unmatched arguments until PR #144 —
+# write-agent-memory.sh has ALWAYS refused them. This block is therefore a REGRESSION PIN, not a
+# fix: measured before it was written, no case in this suite asserted the refusal at all, so the
+# `--*) die "unknown flag"` arm could have been deleted and every test would have stayed green.
+#
+# WHY IT MATTERS HERE. This writer is one of the two that DO implement `--repo`/`--store`, which is
+# precisely why a caller reaches for those names on the siblings that do not. A PR #144 review run
+# did exactly that on the lessons writer, believing `--repo` isolated the store, and a junk entry
+# landed in this repo's real store and its provenance chain.
+#
+# DO NOT HARMONISE the writers' parsers with validate-entry.sh's `_ve_parse_args`, which ignores
+# unknown flags ON PURPOSE: right for a VALIDATOR on a fail-safe path, wrong for a WRITER, where the
+# cost of silence is the store rather than a diagnostic.
+#
+# SHAPE NOTE, measured rather than assumed. The stray flag is passed AFTER a COMPLETE set of
+# positionals. With the guard softened to `--*) shift ;;` the flag is DROPPED, not promoted to a
+# positional — so an invocation short of a full positional set makes the mutant die on the usage
+# check instead of writing, and the control would prove nothing. A full set makes the mutant write.
+# ---------------------------------------------------------------------------
+echo "== (uf) unrecognised flags are refused, named, and write nothing =="
+UF_SUM="an agent-memory entry about telemetry rollout cadence recorded for PR #144"
+
+# (uf1) THE PIN: a complete, well-formed entry PLUS a flag this writer does not implement.
+RUF1="$(new_repo)"; SUF1="$RUF1/.claude/agent-memory"
+BUF1="$(mkbody "$RUF1/body-uf1.md")"
+run "$RUF1" "$SUF1" "$AGENT" uf_entry "$UF_SUM" "$BUF1" --confirm --totally-made-up
+[ "$RC" -ne 0 ] \
+  && ok "(uf1) an unrecognised flag is REFUSED (exit $RC) rather than dropped" \
+  || no "(uf1) exit 0 — the writer accepted a flag it does not implement: $OUT"
+grep -qF -- '--totally-made-up' <<< "$OUT" \
+  && ok "(uf1) and the refusal NAMES the offending flag, so the caller learns which argument was not honoured" \
+  || no "(uf1) the refusal does not name '--totally-made-up': $OUT"
+grep -q '^write-agent-memory\.sh: ' <<< "$OUT" \
+  && ok "(uf1) and it is spoken in the writer's own name" \
+  || no "(uf1) the refusal does not name this writer: $OUT"
+[ -e "$SUF1" ] \
+  && no "(uf1) the refusal still created the store dir — something was written on a refused path" \
+  || ok "(uf1) and NOTHING was written — no store tree at all"
+
+# (uf2) CONTROL: the SAME invocation without the bogus flag must still write. Without this, a
+# writer that refused every invocation would pass (uf1).
+RUF2="$(new_repo)"; SUF2="$RUF2/.claude/agent-memory"
+BUF2="$(mkbody "$RUF2/body-uf2.md")"
+run "$RUF2" "$SUF2" "$AGENT" uf_entry "$UF_SUM" "$BUF2" --confirm
+{ [ "$RC" -eq 0 ] && [ -f "$SUF2/$AGENT/uf_entry.md" ]; } \
+  && ok "(uf2) CONTROL: the identical call WITHOUT the unrecognised flag still writes (exit 0) — the guard refuses the unknown, not the known, and the four positional args survive" \
+  || no "(uf2) CONTROL FAILED: the real invocation no longer writes (rc=$RC) — the guard over-refuses: $OUT"
+
+# (uf3) MUTATION CONTROL: soften the guard to the silent-drop arm the other three writers used to
+# have, and (uf1) must go RED. REPLACED rather than deleted — a `case` pattern with no body is a
+# syntax error, and a mutant that cannot parse proves a broken mutant rather than a missing guard.
+echo "== (uf3) MUTATION CONTROL: softened to silent-drop, (uf1) goes RED =="
+UFMUT="$MUT_DIR/mutant-no-unknown-flag-guard.sh"
+uf_orig="$(grep -c 'unknown flag' "$WRITER" 2>/dev/null || true)"; [ -n "$uf_orig" ] || uf_orig=0
+sed -e "/unknown flag/s|.*|    --*) shift ;;|" "$WRITER" > "$UFMUT" || setup_fail "could not build the unknown-flag mutant"
+uf_mut="$(grep -c 'unknown flag' "$UFMUT" 2>/dev/null || true)"; [ -n "$uf_mut" ] || uf_mut=0
+uf_drop="$(grep -c '^    --\*) shift ;;$' "$UFMUT" 2>/dev/null || true)"; [ -n "$uf_drop" ] || uf_drop=0
+if [ "$uf_orig" -eq 1 ] && [ "$uf_mut" -eq 0 ] && [ "$uf_drop" -eq 1 ]; then
+  ok "(uf3) the mutation is NON-VACUOUS: 1 guard line in the real writer, 0 in the mutant, and a silent-drop arm in its place"
+else
+  no "(uf3) the mutation did not land as intended (guard $uf_orig → $uf_mut, silent-drop arm $uf_drop) — the control below would prove nothing"
+fi
+if bash -n "$UFMUT" 2>/dev/null; then
+  ok "(uf3) the mutant still parses, so a difference below is behavioural rather than a syntax error"
+  RUF3="$(new_repo)"; SUF3="$RUF3/.claude/agent-memory"
+  BUF3="$(mkbody "$RUF3/body-uf3.md")"
+  # run_with points the mutant at the real validator — a temp copy cannot resolve its sibling
+  # validate-entry.sh, and REFUSE_VALIDATOR_UNAVAILABLE would be a refusal for the wrong reason.
+  run_with "$UFMUT" "$RUF3" "$SUF3" "$AGENT" uf_entry "$UF_SUM" "$BUF3" --confirm --totally-made-up
+  { [ "$RC" -eq 0 ] && [ -f "$SUF3/$AGENT/uf_entry.md" ]; } \
+    && ok "(uf3) CONFIRMED: without the guard the SAME call exits 0 and writes the entry anyway — (uf1) goes RED without it and is load-bearing" \
+    || no "(uf3) REFUTED: the mutant refused too (rc=$RC) — (uf1) is passing for some other reason and is vacuous: $OUT"
+  grep -qF 'unknown flag' <<< "$OUT" \
+    && no "(uf3) REFUTED: the mutant still printed 'unknown flag' — the mutation did not remove the behaviour under test" \
+    || ok "(uf3) and the 'unknown flag' refusal VANISHES from the mutant — the naming assertion in (uf1) is the one that goes red"
+else
+  no "(uf3) the mutant does not parse — it could not discriminate anything"
+fi
+rm -f "$UFMUT"   # a mutated writer must never outlive its own control
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

@@ -114,7 +114,21 @@ while [ $# -gt 0 ]; do
     --contract-file=*) CONTRACT_FILE="${1#--contract-file=}"; shift ;;
     --source)         SOURCE="${2:-unknown}"; shift; [ $# -gt 0 ] && shift ;;
     --source=*)       SOURCE="${1#--source=}"; shift ;;
-    *) shift ;;
+    # UNKNOWN-ARGUMENT REJECTION — exit 2, this writer's could-not-examine convention, nothing
+    # written. This writer takes NO positional arguments, so anything unmatched above is something
+    # the caller asked for that this writer does not implement, and the old `*) shift ;;` accepted
+    # it and wrote anyway. That silence is not cosmetic here: the store is derived from the CURRENT
+    # DIRECTORY (`git rev-parse --show-toplevel` below), so a caller who passes a store-redirecting
+    # flag this writer has never had gets a successful-looking write into whatever repo they were
+    # standing in. `--repo` and `--store` are REAL flags on write-agent-memory.sh and
+    # add-orientation.sh — which is exactly how a caller reaches for one here — and a PR #144
+    # review run did precisely that, landing a junk entry in this repo's real store.
+    #
+    # DO NOT HARMONISE THIS WITH validate-entry.sh's `_ve_parse_args`, which ignores unknown flags
+    # ON PURPOSE. That is right for a VALIDATOR and wrong for a WRITER: a validator that refuses
+    # costs a diagnostic on a fail-safe path, a writer that silently retargets costs the store.
+    # Same vocabulary, opposite default — unifying the two parsers reopens this.
+    *) echo "write-system-contract: unrecognised argument '$1' — refusing rather than writing to a curated store with an argument this writer does not implement (accepted: --subsystem, --contract-file, --source; see the usage header). Nothing was written." >&2; exit 2 ;;
   esac
 done
 [ -n "$SUBSYSTEM" ] || { echo "write-system-contract: --subsystem is required" >&2; exit 2; }
