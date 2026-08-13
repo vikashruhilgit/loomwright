@@ -952,31 +952,44 @@ else
   no "(uf3) CONTROL FAILED: positional retract broke (exit $UF_RC) — the guard ate a documented positional form: $(uf_err)"
 fi
 
-# (uf4) MUTATION CONTROL: restore the pre-fix arm and (uf1) must go RED.
+# (uf3b) THE SCOPE BOUND, asserted rather than only commented. The guard covers unrecognised FLAGS
+# ONLY: a stray bare word on `add` is still silently dropped and the write still succeeds. That is a
+# deliberate narrowing, not an oversight — a bare word is the shape most likely to appear in a
+# caller's own script OUTSIDE this repo, where no call-site audit can see it, so refusing it would
+# silently convert someone's working command into an exit 2. An unimplemented FLAG carries no such
+# risk: it never did anything, so refusing it cannot break a caller relying on its effect.
+# This case exists so that re-tightening the scope is a decision someone has to make on purpose
+# (this test goes red) rather than something that drifts in unnoticed.
+UFR3B="$(uf_repo)"
+uf_run "$UFR3B" "$WRITE" --category ufcat --lesson "$UF_LESSON" --source "$UF_SRC" stray-bare-word
+if [ "$UF_RC" -eq 0 ] && [ -f "$UFR3B/$LFILE" ]; then
+  ok "(uf3b) SCOPE: a stray POSITIONAL is still ignored and the write succeeds — the guard is scoped to flags, deliberately"
+else
+  no "(uf3b) SCOPE CHANGED: a stray positional now refuses (exit $UF_RC). That may be right, but it is a behaviour change for callers outside this repo — make it deliberately, and update this case: $(uf_err)"
+fi
+
+# (uf4) MUTATION CONTROL: restore the pre-fix silent-drop arm and (uf1) must go RED. The line is
+# REPLACED with `--*) shift ;;` rather than deleted, because a `case` pattern with no body is a
+# syntax error and a mutant that cannot parse proves a broken mutant rather than a missing guard.
 #
-# The mutation removes BOTH halves of the guard, because the guard is one idea expressed in two
-# places and a half-mutation proves the wrong thing. Measured, not assumed: stripping only the
-# `--*)` flag arm left the mutant still refusing — with the flag silently dropped, its VALUE
-# (`/nonexistent/path`) fell through to the positional arm and was rejected THERE, so (uf1)'s
-# assertions stayed green against a writer with no flag guard at all. That near-miss is the reason
-# this control asserts the mutant WRITES rather than merely that it exits differently.
-#
-# Lines are REPLACED (with the pre-fix `--*) shift ;;` and with `:`) rather than deleted: a `case`
-# arm or an `elif` branch with no body is a syntax error, and a mutant that cannot parse proves a
-# broken mutant rather than a missing guard.
+# The control asserts the mutant WRITES, not merely that it exits differently — a refusal for some
+# unrelated reason must not be mistaken for the guard still working. That is not a hypothetical
+# precaution: an earlier revision of this writer ALSO refused stray positionals, and with only the
+# `--*)` arm mutated the flag's VALUE (`/nonexistent/path`) fell through to the positional arm and
+# was rejected THERE, so (uf1)'s assertions stayed green against a writer with no flag guard at all.
+# That refusal was since narrowed away (see the writer's `*)` arm), which is what makes a
+# single-line mutation sufficient again — so this assertion is the thing standing between that
+# history and a silently vacuous control.
 echo "== 15. MUTATION CONTROL: with the guard restored to silent-drop, (uf1) goes RED =="
 UFMUT="$UFTMP/mut-noguard.sh"
 uf_orig="$(grep -c "unrecognised flag" "$WRITE" 2>/dev/null || true)"; [ -n "$uf_orig" ] || uf_orig=0
-uf_porig="$(grep -c "unexpected .*positional argument" "$WRITE" 2>/dev/null || true)"; [ -n "$uf_porig" ] || uf_porig=0
-sed -e "/unrecognised flag/s|.*|    --*) shift ;;|" \
-    -e "/unexpected .*positional argument/s|.*|         :|" "$WRITE" > "$UFMUT"
+sed -e "/unrecognised flag/s|.*|    --*) shift ;;|" "$WRITE" > "$UFMUT"
 uf_mut="$(grep -c "unrecognised flag" "$UFMUT" 2>/dev/null || true)"; [ -n "$uf_mut" ] || uf_mut=0
-uf_pmut="$(grep -c "unexpected .*positional argument" "$UFMUT" 2>/dev/null || true)"; [ -n "$uf_pmut" ] || uf_pmut=0
 uf_drop="$(grep -c '^    --\*) shift ;;$' "$UFMUT" 2>/dev/null || true)"; [ -n "$uf_drop" ] || uf_drop=0
-if [ "$uf_orig" -eq 1 ] && [ "$uf_mut" -eq 0 ] && [ "$uf_porig" -eq 2 ] && [ "$uf_pmut" -eq 0 ] && [ "$uf_drop" -eq 1 ]; then
-  ok "(uf4) the mutation is NON-VACUOUS: both halves of the guard are gone (flag arm $uf_orig→$uf_mut, positional rejects $uf_porig→$uf_pmut) and the silent-drop arm is back in its place"
+if [ "$uf_orig" -eq 1 ] && [ "$uf_mut" -eq 0 ] && [ "$uf_drop" -eq 1 ]; then
+  ok "(uf4) the mutation is NON-VACUOUS: 1 guard line in the real writer, 0 in the mutant, and the silent-drop arm is back in its place"
 else
-  no "(uf4) the mutation did not land as intended (flag arm $uf_orig→$uf_mut, positional rejects $uf_porig→$uf_pmut, silent-drop arm $uf_drop) — the control below would prove nothing"
+  no "(uf4) the mutation did not land as intended (guard $uf_orig → $uf_mut, silent-drop arm $uf_drop) — the control below would prove nothing"
 fi
 if bash -n "$UFMUT" 2>/dev/null; then
   ok "(uf4) the mutant still parses, so a difference below is behavioural rather than a syntax error"

@@ -227,16 +227,18 @@ while [ $# -gt 0 ]; do
     # passed as `--lesson=<text>` rather than positionally. That is the same trade write-agent-memory.sh
     # and add-orientation.sh already make, and it is the price of the refusal being unambiguous.
     --*) echo "write-lessons: unrecognised flag '$1' — refusing rather than writing to a curated store with a flag this writer does not implement (accepted: --category, --lesson, --source, --last-verified, --confidence, --hash, --replacement, --attest-existing; see the usage header). Nothing was written." >&2; exit 2 ;;
-    *) # retract/supersede accept positional <category> <lesson-text>, in that order. `add` takes no
-       # positionals at all, and a THIRD positional on a curation verb is equally unimplemented — in
-       # both cases the caller asked for something this writer cannot honour, so it refuses instead
-       # of dropping the argument and reporting success.
+    *) # retract/supersede accept positional <category> <lesson-text> (in that order); add ignores strays.
+       #
+       # SCOPE, DELIBERATE: this arm is UNCHANGED, and a stray bare word is still silently dropped
+       # here. The guard above covers unrecognised FLAGS only. An earlier revision refused stray
+       # positionals too — same defect class, and tempting for that reason — but it was narrowed on
+       # the owner's call: a bare word is the shape most likely to appear in a caller's own script
+       # OUTSIDE this repo, where no call-site audit can see it, so tightening it silently converts
+       # someone's working command into an exit 2. Flags carry no such risk: an unimplemented flag
+       # never did anything, so refusing it cannot break a caller who was relying on its effect.
+       # If this is ever revisited, the two `elif` refusal branches are what to restore.
        if { [ "$ACTION" = "retract" ] || [ "$ACTION" = "supersede" ]; } && [ -z "$CATEGORY" ]; then CATEGORY="$1"
        elif { [ "$ACTION" = "retract" ] || [ "$ACTION" = "supersede" ]; } && [ -z "$LESSON" ]; then LESSON="$1"
-       elif [ "$ACTION" = "add" ]; then
-         echo "write-lessons: unexpected positional argument '$1' — add takes only flags (did you mean --lesson \"$1\"?). Nothing was written." >&2; exit 2
-       else
-         echo "write-lessons: unexpected extra positional argument '$1' — $ACTION takes exactly <category> <lesson-text>. Nothing was written." >&2; exit 2
        fi
        shift ;;
   esac
