@@ -403,6 +403,11 @@ else
     cat > "$body_tmp"
   else
     [ -f "$body_src" ] || refuse "REJECTED" "body file not found: $body_src" 2
+    # Readability is checked SEPARATELY from existence, the same pair the --proposal path uses
+    # above: without it an existing-but-unreadable body surfaces as a raw `cat` failure under
+    # `set -e` — safe (the EXIT trap, installed well before this point, still removes $work) but
+    # UNNAMED, and every other failure path in this file names itself.
+    [ -r "$body_src" ] || refuse "REJECTED" "body file exists but could not be read: $body_src" 2
     cat "$body_src" > "$body_tmp"
   fi
 fi

@@ -154,7 +154,10 @@
 #         ones: `github.com/docs/spikes` and `docs/spikes#12` say "repository" explicitly.
 #   (ii)  ORDINAL SUFFIXES ARE NOT STRUCTURE — a trailing `-<digits>` (`subtask-1`, `phase-2`) is how
 #         prose NUMBERS things, so it is stripped before marker (4) looks for a digit. `octocat/repo2`
-#         (digits fused to letters) and `hashicorp/terraform-aws-v2` (`v2` is not all-digits) keep it.
+#         (digits fused to letters) keeps it, and is still recognised in the shipped pipeline.
+#         `hashicorp/terraform-aws-v2` survives THIS narrowing too (`v2` is not an all-digits tail),
+#         but do not read that as shipped behaviour: narrowing (v) below strips the `v<digits>`
+#         version tag afterwards, so it does NOT earn marker (4) end-to-end — a stated LOST CATCH.
 #   (iii) AN ALL-CAPS REPO HALF IS A FILE STEM, not a repository name (`review-heal/SKILL`,
 #         `docs/README`), so it does not earn marker (4) on its own.
 #   (iv)  A NUMERIC RATIO IS NOT A SLUG — BOTH halves all digits (`117/117`, `11/11`, `85/100`) is
@@ -1108,7 +1111,9 @@ EOF
 # (`subtask-1` -> `subtask`, `phase-2` -> `phase`), unchanged otherwise. A `-<digits>` tail is how
 # prose NUMBERS things, and it is the commonest way an in-repo directory path picks up the digit that
 # marker (4) reads as repo structure. Digits fused to letters (`repo2`) and a non-numeric tail
-# (`terraform-aws-v2`) are not ordinals and keep their structure. See narrowing (ii) in the header.
+# (`terraform-aws-v2`) are not ordinals, so THIS function leaves both intact — but only `repo2` still
+# earns marker (4) downstream: narrowing (v) strips `terraform-aws-v2`'s version tag after this runs.
+# See narrowings (ii) and (v) in the header.
 # _ve_strip_trailing_dots <word> -> the word with any trailing `.` characters removed.
 # NARROWLY SCOPED, and that scoping is the point: it is applied ONLY to the two NEIGHBOUR words
 # before they are matched against the cue-word lists, never to the candidate token itself. The

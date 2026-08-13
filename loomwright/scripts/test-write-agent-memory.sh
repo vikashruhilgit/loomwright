@@ -25,6 +25,8 @@
 #          entry's body under a new slug is WRITTEN                                 ((i) goes RED)
 #   · (M5) the index lock ACQUISITION stripped   ⇒ the writer rebuilds MEMORY.md straight
 #          through a lock another writer holds                                      ((j2) goes RED)
+#   · (M8) the CALL-SITE ADVISORY NOTICE removed ⇒ a real write with an advisory finding no longer
+#          says so at the call site, while the check's own token still prints       ((d6b) goes RED)
 # Each mutant is `bash -n`-checked before use: a mutant that does not parse would "fail" for the
 # wrong reason and read as proof when it is noise.
 #
@@ -38,6 +40,10 @@
 #   (c2) an incomplete proposal is REFUSED (could-not-examine class), nothing written
 #   (d)  AC1 — each of the five checks refuses, names its reason, and leaves the store BYTE-IDENTICAL
 #   (d2) AC1 mutation control M2 — with the validator call removed, a seeded duplicate is written
+#   (d6) the writer's OWN call-site advisory notice: absent on a dry-run, present on a real write.
+#        (d4)/(d5) assert only the token printed INSIDE validate_entry_all, so they cannot see this
+#        call site at all; (d6c) is mutation control M8, which proves (d6b) is load-bearing
+#   (d7) an existing-but-UNREADABLE body file is a NAMED refusal, not a raw `cat` failure
 #   (e)  AC2 — absent / unparseable / truncated-at-a-function-boundary / sentinel-stripped validator:
 #        all four refuse with exit 2, a NAMED greppable reason, and a byte-identical store
 #   (e2) AC2 mutation control M3 — the guard replaced with `|| true`
@@ -362,6 +368,86 @@ OUT="$(LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="acme/widget:otherco/othersvc" bash "$WR
 { [ "$RC" -eq 0 ] && ! grep -qF "ADVISORY_CROSS_REPO" <<< "$OUT"; } \
   && ok "(d5) the SAME entry draws NO cross-repo finding once 'otherco/othersvc' is in the allowlist — the check reads the list, it does not match a hardcoded token" \
   || no "(d5) the entry was still reported with the slug allowlisted (rc=$RC) — $OUT"
+
+# ---------------------------------------------------------------------------
+# (d6) THE WRITER'S OWN CALL-SITE ADVISORY NOTICE — asserted on BOTH sides of the confirm gate.
+# (d4)/(d5) above assert only that an `ADVISORY_*` token appears, and those tokens are printed by
+# the check functions INSIDE validate_entry_all — so deleting this writer's own
+# `validate_entry_advisory_notice` call left every one of them green. The notice is the half that
+# re-surfaces the finding at the CALL SITE, which is where a human reads it; with the two checks
+# demoted to advisory, the reporting IS the feature. Both directions matter, exactly as
+# test-add-orientation.sh and test-add-rule.sh assert them: the notice's sentence ends "...and THE
+# WRITE PROCEEDED", which is a lie on a dry-run that wrote nothing, and its absence on a real write
+# would silently delete the reporting half. Mutation control M8 below proves this pair is
+# load-bearing rather than incidentally green.
+# ---------------------------------------------------------------------------
+echo "== (d6) the call-site advisory notice fires only on the path that actually writes =="
+notice_entry="the guard at loomwright/scripts/no-such-notice-file.sh fires, per PR #148"
+RD6="$(new_repo)"; SD6="$RD6/.claude/agent-memory"
+BD6="$(mkbody "$RD6/body-d6.md" "")"
+# (a) DRY-RUN (no --confirm) with an advisory finding.
+run "$RD6" "$SD6" "$AGENT" notice_dry "$notice_entry" "$BD6"
+[ "$RC" -eq 0 ] && ok "(d6a) the dry-run with an advisory finding exits 0" || no "(d6a) the dry-run exited $RC — $OUT"
+grep -qF 'PLANNED WRITE' <<< "$OUT" && ok "(d6a) the dry-run reports PLANNED WRITE (fixture check: this really is the not-written path)" || no "(d6a) the dry-run printed no PLANNED WRITE — the fixture is not on the path under test: $OUT"
+grep -qF 'ADVISORY_DEAD_REFERENCE' <<< "$OUT" && ok "(d6a) the check's own ADVISORY finding is still reported on the dry-run — a dry-run shows what a real write would report" || no "(d6a) the dry-run lost the advisory finding entirely: $OUT"
+grep -qF 'THE WRITE PROCEEDED' <<< "$OUT" && no "(d6a) the dry-run claims 'THE WRITE PROCEEDED' and then says PLANNED WRITE — two contradictory statements in one invocation" || ok "(d6a) the dry-run does NOT claim 'THE WRITE PROCEEDED'"
+# (b) --confirm with the SAME advisory finding: the notice must be there.
+RD6B="$(new_repo)"; SD6B="$RD6B/.claude/agent-memory"
+BD6B="$(mkbody "$RD6B/body-d6b.md" "")"
+run "$RD6B" "$SD6B" "$AGENT" notice_written "$notice_entry" "$BD6B" --confirm
+[ "$RC" -eq 0 ] && ok "(d6b) the confirmed write with an advisory finding exits 0" || no "(d6b) the confirmed write exited $RC — $OUT"
+grep -qF 'THE WRITE PROCEEDED' <<< "$OUT" && ok "(d6b) the confirmed write DOES print the call-site advisory notice — the reporting half of the ADVISORY design is present on a genuine write" || no "(d6b) the advisory notice is absent from a real write — the reporting half was silently deleted: $OUT"
+grep -qE '^write-agent-memory\.sh: ADVISORY:' <<< "$OUT" && ok "(d6b) and it is spoken in the writer's own name" || no "(d6b) the notice does not name the writer: $OUT"
+[ -f "$SD6B/$AGENT/notice_written.md" ] && ok "(d6b) and the entry really was written (the notice's claim is true on this path)" || no "(d6b) the notice claimed the write proceeded but no entry landed"
+
+echo "== (d6c) MUTATION CONTROL M8: with the call-site notice REMOVED, (d6b) goes RED =="
+M8="$MUT_DIR/mutant-no-advisory-notice.sh"
+n_note_orig="$(grep -c '^[[:space:]]*validate_entry_advisory_notice ' "$WRITER" 2>/dev/null || true)"; [ -n "$n_note_orig" ] || n_note_orig=0
+# `:` rather than deletion — the call may sit inside a compound statement, and a removed line could
+# leave an empty block that fails to parse, which would make the control prove a syntax error
+# instead of the missing notice.
+sed -e '/^[[:space:]]*validate_entry_advisory_notice /s/.*/:/' "$WRITER" > "$M8" || setup_fail "could not build mutant M8"
+n_note_mut="$(grep -c '^[[:space:]]*validate_entry_advisory_notice ' "$M8" 2>/dev/null || true)"; [ -n "$n_note_mut" ] || n_note_mut=0
+if [ "$n_note_orig" -ge 1 ] && [ "$n_note_mut" -eq 0 ]; then
+  ok "(d6c) the mutation is NON-VACUOUS: $n_note_orig call-site notice site(s) in the real writer, 0 in the mutant"
+else
+  no "(d6c) the mutation changed nothing (orig=$n_note_orig, mutant=$n_note_mut) — the control below would prove nothing"
+fi
+bash -n "$M8" 2>/dev/null && ok "(d6c) the mutant still parses (so a failure below is behavioural, not a syntax error)" || no "(d6c) mutant M8 does not parse — it could not discriminate anything"
+RD6C="$(new_repo)"; SD6C="$RD6C/.claude/agent-memory"
+BD6C="$(mkbody "$RD6C/body-d6c.md" "")"
+run_with "$M8" "$RD6C" "$SD6C" "$AGENT" notice_written "$notice_entry" "$BD6C" --confirm
+if [ "$RC" -eq 0 ] && [ -f "$SD6C/$AGENT/notice_written.md" ]; then
+  ok "(d6c) the mutant still WRITES the entry — the only behavioural difference under test is the notice"
+else
+  no "(d6c) the mutant failed to write (rc=$RC) — the comparison below would not be like-for-like: $OUT"
+fi
+grep -qF 'ADVISORY_DEAD_REFERENCE' <<< "$OUT" && ok "(d6c) and the check's OWN token is still printed by the mutant — which is exactly why (d4)/(d5) could not detect this deletion" || no "(d6c) the mutant lost the check's own token too, so it is not the isolated mutation intended: $OUT"
+grep -qF 'THE WRITE PROCEEDED' <<< "$OUT" \
+  && no "(d6c) M8 REFUTED: the notice appeared with the call site removed — (d6b) is passing for some other reason and is vacuous" \
+  || ok "(d6c) M8 CONFIRMED: without the call site the notice VANISHES from a real write — (d6b) goes RED without it and is load-bearing"
+rm -f "$M8"   # a mutated writer must never outlive its own control
+
+# ---------------------------------------------------------------------------
+# (d7) AN EXISTING-BUT-UNREADABLE BODY FILE IS A NAMED REFUSAL. Existence and readability are two
+# different questions: without the `-r` pair the `cat` fails under `set -e`, which is SAFE (the EXIT
+# trap still removes the work dir and nothing lands) but UNNAMED, and every other failure path in
+# this writer names itself. SKIPPED as root, where `-r` is true regardless of mode and the fixture
+# cannot express the condition under test — reported as a skip, never as a silent pass.
+# ---------------------------------------------------------------------------
+echo "== (d7) an existing-but-unreadable body file is a NAMED refusal =="
+RD7="$(new_repo)"; SD7="$RD7/.claude/agent-memory"
+BD7="$(mkbody "$RD7/body-d7.md" "")"
+chmod 000 "$BD7" 2>/dev/null || true
+if [ -r "$BD7" ]; then
+  echo "SKIP: (d7) the fixture is still readable after chmod 000 (running as root?) — the condition under test cannot be built here"
+else
+  run "$RD7" "$SD7" "$AGENT" unreadable_body "an entry whose body file cannot be read, per PR #148" "$BD7" --confirm
+  [ "$RC" -eq 2 ] && ok "(d7) an unreadable body file exits 2 (the could-not-be-examined class)" || no "(d7) exited $RC, expected 2 — $OUT"
+  grep -qF 'body file exists but could not be read' <<< "$OUT" && ok "(d7) and it NAMES the reason rather than surfacing a raw cat failure" || no "(d7) the refusal is unnamed — $OUT"
+  [ -f "$SD7/$AGENT/unreadable_body.md" ] && no "(d7) the entry was written despite the unreadable body" || ok "(d7) nothing was written"
+fi
+chmod 644 "$BD7" 2>/dev/null || true   # restore, so the suite's own cleanup can remove it
 
 echo "== (d2) AC1 MUTATION CONTROL M2: with the validator CALL removed, a seeded duplicate is written =="
 M2="$MUT_DIR/mutant-no-call.sh"
