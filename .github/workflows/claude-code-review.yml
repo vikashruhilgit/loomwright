@@ -82,7 +82,11 @@ jobs:
             So if you run low on turns, or could not examine everything you wanted to,
             put what you DO have in that final message plus an explicit note about what
             you could not cover. Ending with a bare status line ("Review complete",
-            "Posted my findings") publishes exactly that line and nothing else.
+            "Posted my findings") publishes exactly that line and nothing else. In fact
+            the posting step rejects any final message shorter than ~200 bytes and posts
+            NOTHING at all, so a terse sign-off is not a quiet pass — it is silence. If
+            you genuinely found nothing worth raising, say so and spell out what you
+            checked and how, so the PR author can judge the coverage.
 
           # No --model or --effort pin: inherit the action's defaults.
           #
@@ -128,14 +132,18 @@ jobs:
           # name (`" Bash(git blame:*)"`) and is not worth betting the allowlist on.
           claude_args: '--allowed-tools "Read,Grep,Glob,Bash(git log:*),Bash(git show:*),Bash(git diff:*),Bash(git cat-file:*),Bash(git blame:*),Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git merge-base:*),Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
 
-      # The execution trace, kept unconditionally and BEFORE the posting step, so a run
-      # that fails to produce a review can still be diagnosed. The 2026-08-12 silent run
+      # The execution trace, kept regardless of the review step's outcome (when there is
+      # a file to keep) and BEFORE the posting step, so a run that fails to produce a
+      # review can still be diagnosed. The 2026-08-12 silent run
       # (31621575301) could not be explained from the job log at all: it reported
       # `num_turns: 13` and `permission_denials_count: 4` and nothing about WHICH tool
       # calls were denied, because the job log carries only the init and result records.
       # This artifact carries the whole conversation, tool calls included.
+      # `!cancelled()`, not `always()`: `always()` also runs a step while the job is being
+      # CANCELLED, which is exactly the state `cancel-in-progress: true` above puts a
+      # superseded run into. See the posting step below for why that matters there.
       - name: Upload the reviewer's execution trace
-        if: always() && steps.claude-review.outputs.execution_file != ''
+        if: ${{ !cancelled() && steps.claude-review.outputs.execution_file != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: claude-review-trace-${{ github.event.pull_request.number }}-${{ github.run_attempt }}
@@ -158,8 +166,14 @@ jobs:
       # is not in main's required contexts, so a red run here blocks nobody; it just
       # stops silence from rendering as a green tick. Note the inverse is NOT claimed:
       # a green tick means a comment was posted, not that the review was any good.
+      #
+      # `!cancelled()` rather than `always()` so this runs whether the review step passed
+      # or failed, but NOT while the job is being cancelled. Under `always()` a run that
+      # `cancel-in-progress: true` superseded would still post its review of now-stale
+      # code, alongside the review the newer run posts — two comments for one PR state,
+      # which is the duplication the concurrency block exists to prevent.
       - name: Post the review, and fail if there is nothing to post
-        if: always()
+        if: ${{ !cancelled() }}
         env:
           EXEC_FILE: ${{ steps.claude-review.outputs.execution_file }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -185,17 +199,40 @@ jobs:
           # Prefer the result record's own `result` string; fall back to the last
           # assistant text block. `// empty` rather than `// ""` so null and missing both
           # collapse to no output, and `-r` so markdown is emitted raw, not JSON-quoted.
+          #
+          # `is_error != true` on the result record is deliberate: an errored run still
+          # carries a `result` string, and it holds an error message rather than a review
+          # — easily long enough to clear the 200-byte floor below and be posted verbatim
+          # as though it were one, footer and all, while the job concludes success.
+          # Excluding it makes an errored run fall through to the assistant-text fallback
+          # and, failing that, to the loud empty-body path, so "errored" cannot render as
+          # "reviewed". `!= true` not `== false` so a missing key still counts as fine.
+          #
+          # jq's own status and stderr are captured rather than discarded: swallowing them
+          # would turn a parse or shape failure into an empty body, which the emptiness
+          # branch below would then misreport as the reviewer saying nothing.
           BODY_FILE="$RUNNER_TEMP/claude-review-body.md"
+          JQ_ERR_FILE="$RUNNER_TEMP/claude-review-jq.err"
           jq -s -r '
             flatten(1)
-            | (map(select(.type == "result") | .result // empty) | last)
+            | (map(select(.type == "result" and .is_error != true) | .result // empty) | last)
               // (map(select(.type == "assistant")
                      | .message.content // []
                      | map(select(.type == "text") | .text)
                      | join("\n"))
                   | map(select(length > 0)) | last)
               // empty
-          ' "$EXEC_FILE" > "$BODY_FILE" 2>/dev/null
+          ' "$EXEC_FILE" > "$BODY_FILE" 2>"$JQ_ERR_FILE"
+          JQ_RC=$?
+
+          # A non-zero jq is a shape/parse failure, not silence — report it as its own
+          # thing, BEFORE the emptiness test that would otherwise absorb it.
+          if [ "$JQ_RC" -ne 0 ]; then
+            echo "::error title=Trace shape changed::jq exited ${JQ_RC} reading the execution trace, so no review could be extracted. This is a parse or shape failure, not a quiet reviewer. Download the 'claude-review-trace-*' artifact from this run to see the trace."
+            echo "--- jq stderr ---"
+            cat "$JQ_ERR_FILE"
+            exit 1
+          fi
 
           # Guard the shape too, not just the emptiness: if the trace stops matching what
           # this jq expects, say so with the keys actually present rather than reporting
@@ -203,14 +240,18 @@ jobs:
           if [ ! -s "$BODY_FILE" ]; then
             echo "::error title=Review produced no text::The reviewer ran but its final message was empty, so there is nothing to post. Download the 'claude-review-trace-*' artifact from this run to see what it did."
             echo "--- record types present in the trace ---"
-            jq -r 'if type == "array" then . else [.] end | map(.type // "?") | unique | join(", ")' "$EXEC_FILE" 2>/dev/null \
+            # Same `-s` + flatten(1) slurp as the extraction above, for the same reason:
+            # without it, a JSONL trace runs this filter once per record and prints one
+            # line per record instead of the run's unique type set.
+            jq -s -r 'flatten(1) | map(.type // "?") | unique | join(", ")' "$EXEC_FILE" 2>/dev/null \
               || echo "(the trace is not parseable as JSON — its shape has changed)"
             exit 1
           fi
 
           # A bare status line is the failure mode the prompt warns about ("Review
-          # complete"), and publishing it would look like a clean review. 200 chars is
-          # comfortably below any real review and comfortably above any such line.
+          # complete"), and publishing it would look like a clean review. 200 bytes (what
+          # `wc -c` counts, not characters) is comfortably below any real review and
+          # comfortably above any such line.
           BYTES=$(wc -c < "$BODY_FILE")
           if [ "$BYTES" -lt 200 ]; then
             echo "::error title=Review too short to be a review::The reviewer's final message was only ${BYTES} bytes — that is a status line, not a review, and posting it would read as a clean bill of health. Nothing was posted."
