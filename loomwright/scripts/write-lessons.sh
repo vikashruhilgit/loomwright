@@ -103,6 +103,84 @@
 
 set -uo pipefail
 
+# ---------------------------------------------------------------------------
+# WRITE-TIME VALIDATION — LOAD GUARD (decision (a) of the write-time-validation brief).
+# See validate-entry.sh's LOAD GUARD CONTRACT. Three clauses, ALL required:
+#   (i)   `. validate-entry.sh` must exit 0. `|| true` is FORBIDDEN on that line — discarding the
+#         status IS the silent unvalidated append this design does not sanction. The status is
+#         CAPTURED instead, and the caller's own errexit state is saved and restored around the
+#         source so this block cannot change the shell options the rest of the script runs under.
+#   (ii)  all five validator functions must be present. Bash defines every function ABOVE a syntax
+#         error before aborting the parse, so a truncated helper leaves SOME validators defined —
+#         a one-function probe would report "examined and clean" over half a validator.
+#   (iii) $VALIDATE_ENTRY_CONTRACT must equal the HARDCODED literal below. Comparing against a
+#         variable the helper exports (VALIDATE_ENTRY_CONTRACT_EXPECTED), or iterating the list it
+#         exports ($VALIDATE_ENTRY_FUNCTIONS), would be CIRCULAR: both are assigned ABOVE the
+#         sentinel, so a truncated copy could define them and pass its own test.
+# Any shortfall is REFUSE_VALIDATOR_UNAVAILABLE, exit 2 (could-not-examine), nothing written.
+# ---------------------------------------------------------------------------
+REFUSE_VALIDATOR_UNAVAILABLE="REFUSE_VALIDATOR_UNAVAILABLE"
+VALIDATE_ENTRY_CONTRACT_REQUIRED="validate-entry/2"
+VALIDATOR_REQUIRED_FUNCS="validate_duplicate validate_contradiction validate_provenance validate_dead_reference validate_cross_repo_reference validate_entry_advisory_notice"
+
+# Resolved BEFORE any `cd`: $0 may be relative, and three of these writers cd to the repo root.
+VE_HERE="$(cd "$(dirname "$0")" 2>/dev/null && pwd || printf '%s' ".")"
+
+# _ve_load_validator — runs the three-clause guard. Called on the write path, never at parse time.
+_ve_load_validator() {
+  VALIDATOR="${WRITE_LESSONS_VALIDATOR:-}"
+  if [ -z "$VALIDATOR" ]; then
+    if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "${CLAUDE_PLUGIN_ROOT}/scripts/validate-entry.sh" ]; then
+      VALIDATOR="${CLAUDE_PLUGIN_ROOT}/scripts/validate-entry.sh"
+    else
+      VALIDATOR="$VE_HERE/validate-entry.sh"
+    fi
+  fi
+
+  # ---- LOAD GUARD BEGIN -----------------------------------------------------
+  # BEGIN/END delimit the guard as ONE replaceable unit so this suite's mandated mutation control
+  # can replace it with `|| true` in a single edit and prove AC2 goes RED. Structural, not decor.
+  if [ ! -f "$VALIDATOR" ] || [ ! -r "$VALIDATOR" ]; then
+    printf '%s: %s — the shared write-time validator is missing or unreadable at "%s", so this entry could not be examined; refusing rather than appending it unvalidated. Nothing was written.
+'       "write-lessons" "$REFUSE_VALIDATOR_UNAVAILABLE" "$VALIDATOR" >&2
+    exit 2
+  fi
+
+  # Clause (i). errexit is saved/restored rather than assumed: these five writers do not all run
+  # under `set -e` (write-system-contract.sh is `set -uo pipefail`), so an unconditional `set -e`
+  # here would silently change the failure semantics of everything downstream.
+  case "$-" in *e*) _ve_had_e=1 ;; *) _ve_had_e=0 ;; esac
+  set +e
+  # shellcheck source=/dev/null
+  . "$VALIDATOR"
+  _ve_src_rc=$?
+  if [ "$_ve_had_e" -eq 1 ]; then set -e; fi
+  if [ "$_ve_src_rc" -ne 0 ]; then
+    printf '%s: %s — sourcing the shared write-time validator "%s" failed (status %s: unparseable or truncated), so this entry could not be examined. Nothing was written.
+'       "write-lessons" "$REFUSE_VALIDATOR_UNAVAILABLE" "$VALIDATOR" "$_ve_src_rc" >&2
+    exit 2
+  fi
+
+  # Clause (ii). All five are probed, plus the aggregate the call site actually uses — never one
+  # name as a proxy for the rest.
+  for _vef in $VALIDATOR_REQUIRED_FUNCS validate_entry_all; do
+    if ! command -v "$_vef" >/dev/null 2>&1; then
+      printf '%s: %s — the shared write-time validator loaded but "%s" is not defined (a partially-loaded validator would report "examined and clean" over half a check), so this entry could not be examined. Nothing was written.
+'         "write-lessons" "$REFUSE_VALIDATOR_UNAVAILABLE" "$_vef" >&2
+      exit 2
+    fi
+  done
+
+  # Clause (iii). Compared against the HARDCODED literal — see the circularity note above.
+  if [ "${VALIDATE_ENTRY_CONTRACT:-}" != "$VALIDATE_ENTRY_CONTRACT_REQUIRED" ]; then
+    printf '%s: %s — the shared write-time validator contract sentinel is "%s", not the expected "%s" (the file is truncated, or its contract changed), so this entry could not be examined. Nothing was written.
+'       "write-lessons" "$REFUSE_VALIDATOR_UNAVAILABLE" "${VALIDATE_ENTRY_CONTRACT:-<unset>}" "$VALIDATE_ENTRY_CONTRACT_REQUIRED" >&2
+    exit 2
+  fi
+  # ---- LOAD GUARD END -------------------------------------------------------
+}
+
+
 CATEGORY=""; LESSON=""; SOURCE="unknown"; LAST_VERIFIED=""; CONFIDENCE="medium"; REPLACEMENT=""
 ATTEST=0
 # Subcommand detection: a leading `retract`/`supersede` selects that flow (default action is add).
@@ -191,7 +269,8 @@ GITROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 [ -n "$GITROOT" ] || { echo "write-lessons: not inside a git repo — refusing" >&2; exit 2; }
 # A linked worktree's top-level has a `.git` FILE ("gitdir: ..."); the main checkout has a dir.
 if [ -f "$GITROOT/.git" ]; then
-  echo "write-lessons: refusing to write from a git worktree ($GITROOT) — lessons are written only from the repo root (red-team F1)." >&2
+  # `.git` as a FILE = a linked WORKTREE or a git SUBMODULE top-level; both refused, both named.
+  echo "write-lessons: refusing to write from a non-primary checkout ($GITROOT) — its top-level '.git' is a FILE, which means either a linked git worktree or a git submodule. Lessons are written only from the primary repo root (red-team F1)." >&2
   exit 3
 fi
 cd "$GITROOT" || { echo "write-lessons: cannot cd to repo root" >&2; exit 2; }
@@ -225,6 +304,22 @@ if [ "$ACTION" = "add" ]; then
   [ -f "$LESSONS" ] || printf '# Project Lessons (advisory — bounded <=3 active per category; written only via write-lessons.sh)\n' > "$LESSONS"
   [ -f "$PROV" ] || : > "$PROV"
 fi
+
+# ---------------------------------------------------------------------------
+# THE VALIDATOR CALL SITE. One call to validate_entry_all so a check cannot be silently omitted.
+# --store is REQUIRED (omitting it returns 2, not 0), so it is always passed. The 1-vs-2 verdict is
+# carried straight into this writer's exit status: 1 = examined and violating, 2 = could not
+# examine. Neither is ever reported as clean, and neither leaves a partial write.
+# The guard runs on EVERY action (a broken validator must not silently permit a retract either);
+# the CALL runs whenever there is new entry text to examine — `add`'s lesson, `supersede`'s
+# replacement. A plain `retract` introduces no entry, so there is nothing to validate.
+# ---------------------------------------------------------------------------
+_ve_load_validator
+case "$ACTION" in
+  add)       _ve_entry="$LESSON" ;;
+  supersede) _ve_entry="$REPLACEMENT" ;;
+  *)         _ve_entry="" ;;
+esac
 
 # Freshness metadata: default last_verified to write time (same expression used elsewhere).
 ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
@@ -317,6 +412,49 @@ elif [ "$ATTEST" -eq 1 ]; then
   exit 4
 fi
 
+# ---------------------------------------------------------------------------
+# AC18 — ORDERING. This call sits AFTER the writer's own idempotent dedup short-circuit, and that
+# order is the whole point. The dedup guard above is a BENIGN NO-OP: re-writing an entry that is
+# already stored is idempotence, not an error, and it has always exited 0. Running the validator
+# first turned that into a hard REFUSE_DUPLICATE exit 1, so every idempotent caller (a re-run, a
+# retry, a replayed queue item) started failing. The validator examines entries about to be
+# WRITTEN; an entry that will not be written has nothing to validate. Moving this block back above
+# the dedup guard reintroduces the regression — pinned by test.
+# ATTEST is excluded on purpose: --attest-existing REQUIRES the lesson to be present already
+# (it appends provenance for a line that exists and leaves LESSONS.md byte-identical), so the
+# duplicate check would refuse the one flow whose precondition IS a duplicate.
+if [ -n "$_ve_entry" ] && [ "${ATTEST:-0}" -ne 1 ]; then
+  # ---- VALIDATOR CALL BEGIN -------------------------------------------------
+  # Delimited for the same reason as the load guard: the mandated per-writer mutation control
+  # DELETES the CALL (not the `source`) and proves THIS writer's fixtures go RED while the other
+  # writers stay green. A writer that sources the helper but never invokes it is otherwise invisible.
+  case "$-" in *e*) _ve_had_e=1 ;; *) _ve_had_e=0 ;; esac
+  set +e
+  validate_entry_all --entry "$_ve_entry" --store "$LESSONS" \
+    --source "$SOURCE" --root "$GITROOT"
+  _ve_rc=$?
+  if [ "$_ve_had_e" -eq 1 ]; then set -e; fi
+  # rc 0 IS NOT NECESSARILY SILENT. Two of the five checks (dead-reference, cross-repo) are ADVISORY:
+  # they report on stderr and never refuse, so a clean exit can still carry findings. A notice at the
+  # SUCCESS LINE repeats them in this writer's own voice, next to the fact that the write went ahead —
+  # a warning printed only inside the helper scrolls past, and an advisory nobody reads is worse than
+  # no check. It prints nothing when there is nothing to report.
+  # THE NOTICE IS NOT EMITTED HERE. Its sentence ends "...and THE WRITE PROCEEDED", and this point
+  # is only on the write PATH — every success exit below is preceded by REACHABLE REFUSALS (the
+  # supersede/retract pre-checks: no store yet, target not found, target not chain-trusted, and the
+  # atomic-rename failure). Emitting here printed "THE WRITE PROCEEDED" and then refused, writing
+  # nothing. It is emitted immediately before each success line instead — same rule the three
+  # confirm-gated writers already follow. It is a no-op when nothing was reported (and when the
+  # validator did not run at all, as on the ATTEST and plain-retract paths), so a call on a path
+  # the validator skipped is silent rather than wrong.
+  case "$_ve_rc" in
+    0) : ;;
+    1) echo "write-lessons: refusing to write — the entry was examined and violates a write-time check (see the reason above). Nothing was written." >&2; exit 1 ;;
+    *) echo "write-lessons: refusing to write — the entry COULD NOT BE EXAMINED (see the reason above); refusing rather than reporting it clean. Nothing was written." >&2; exit 2 ;;
+  esac
+  # ---- VALIDATOR CALL END ---------------------------------------------------
+fi
+
 # prov_line <id> <prev_hash> <content_hash> <source> <action>
 # Emits the JSON with NO trailing newline; callers add exactly one via printf '%s\n'.
 # (jq -nc would otherwise append its own newline → blank lines that break the hash chain.)
@@ -339,6 +477,7 @@ prov_line() {
 # while claiming to repair it).
 if [ "${ATTEST_PRESENT:-0}" -eq 1 ]; then
   if chain_trusted "$content_hash"; then
+    validate_entry_advisory_notice "write-lessons"
     echo "write-lessons: [$id] in $CATSLUG is already chain-trusted — nothing to attest (no-op)"
     exit 0
   fi
@@ -351,6 +490,7 @@ if [ "${ATTEST_PRESENT:-0}" -eq 1 ]; then
     echo "write-lessons: atomic rename failed — attest aborted; LESSONS.md untouched" >&2
     exit 2
   }
+  validate_entry_advisory_notice "write-lessons"
   echo "write-lessons: attested existing [$id] in $CATSLUG (source=$SOURCE) — provenance appended, LESSONS.md unchanged"
   exit 0
 fi
@@ -402,6 +542,7 @@ if [ "$ACTION" = "retract" ] || [ "$ACTION" = "supersede" ]; then
     exit 2
   }
   if [ "$ACTION" = "retract" ]; then
+    validate_entry_advisory_notice "write-lessons"
     echo "write-lessons: retracted [$id] (source=$SOURCE) — provenance tombstone appended, entry line removed"
     exit 0
   fi
@@ -425,6 +566,7 @@ if [ "$ACTION" = "retract" ] || [ "$ACTION" = "supersede" ]; then
   # replacement content already lives elsewhere in this category, the retract half is already
   # durable (committed above) — skip appending a duplicate and touch nothing further.
   if grep -qF -- "- [$id] $lesson_oneline" "$LESSONS" 2>/dev/null; then
+    validate_entry_advisory_notice "write-lessons"
     echo "write-lessons: replacement already present ([$id] in $CATSLUG) — retract done, add skipped (dedup)"
     exit 0
   fi
@@ -533,6 +675,7 @@ mv "$prov_tmp" "$PROV" && mv "$mem_tmp" "$LESSONS" || {
   echo "write-lessons: atomic rename failed — write aborted; read gate ignores any unmatched provenance" >&2
   exit 2
 }
+validate_entry_advisory_notice "write-lessons"
 if [ -n "${SUPERSEDES_ID:-}" ]; then
   echo "write-lessons: superseded [$SUPERSEDES_ID] -> stored [$id] in $CATSLUG (source=$SOURCE, last_verified=$LAST_VERIFIED, confidence=$CONFIDENCE, supersedes=$SUPERSEDES_ID)"
 else

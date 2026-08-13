@@ -98,6 +98,84 @@ PROG="add-rule.sh"
 die() { printf '%s: %s\n' "$PROG" "$1" >&2; exit "${2:-1}"; }
 
 # ---------------------------------------------------------------------------
+# WRITE-TIME VALIDATION — LOAD GUARD (decision (a) of the write-time-validation brief).
+# See validate-entry.sh's LOAD GUARD CONTRACT. Three clauses, ALL required:
+#   (i)   `. validate-entry.sh` must exit 0. `|| true` is FORBIDDEN on that line — discarding the
+#         status IS the silent unvalidated append this design does not sanction. The status is
+#         CAPTURED instead, and the caller's own errexit state is saved and restored around the
+#         source so this block cannot change the shell options the rest of the script runs under.
+#   (ii)  all five validator functions must be present. Bash defines every function ABOVE a syntax
+#         error before aborting the parse, so a truncated helper leaves SOME validators defined —
+#         a one-function probe would report "examined and clean" over half a validator.
+#   (iii) $VALIDATE_ENTRY_CONTRACT must equal the HARDCODED literal below. Comparing against a
+#         variable the helper exports (VALIDATE_ENTRY_CONTRACT_EXPECTED), or iterating the list it
+#         exports ($VALIDATE_ENTRY_FUNCTIONS), would be CIRCULAR: both are assigned ABOVE the
+#         sentinel, so a truncated copy could define them and pass its own test.
+# Any shortfall is REFUSE_VALIDATOR_UNAVAILABLE, exit 2 (could-not-examine), nothing written.
+# ---------------------------------------------------------------------------
+REFUSE_VALIDATOR_UNAVAILABLE="REFUSE_VALIDATOR_UNAVAILABLE"
+VALIDATE_ENTRY_CONTRACT_REQUIRED="validate-entry/2"
+VALIDATOR_REQUIRED_FUNCS="validate_duplicate validate_contradiction validate_provenance validate_dead_reference validate_cross_repo_reference validate_entry_advisory_notice"
+
+# Resolved BEFORE any `cd`: $0 may be relative, and three of these writers cd to the repo root.
+VE_HERE="$(cd "$(dirname "$0")" 2>/dev/null && pwd || printf '%s' ".")"
+
+# _ve_load_validator — runs the three-clause guard. Called on the write path, never at parse time.
+_ve_load_validator() {
+  VALIDATOR="${ADD_RULE_VALIDATOR:-}"
+  if [ -z "$VALIDATOR" ]; then
+    if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "${CLAUDE_PLUGIN_ROOT}/scripts/validate-entry.sh" ]; then
+      VALIDATOR="${CLAUDE_PLUGIN_ROOT}/scripts/validate-entry.sh"
+    else
+      VALIDATOR="$VE_HERE/validate-entry.sh"
+    fi
+  fi
+
+  # ---- LOAD GUARD BEGIN -----------------------------------------------------
+  # BEGIN/END delimit the guard as ONE replaceable unit so this suite's mandated mutation control
+  # can replace it with `|| true` in a single edit and prove AC2 goes RED. Structural, not decor.
+  if [ ! -f "$VALIDATOR" ] || [ ! -r "$VALIDATOR" ]; then
+    printf '%s: %s — the shared write-time validator is missing or unreadable at "%s", so this entry could not be examined; refusing rather than appending it unvalidated. Nothing was written.
+'       "add-rule.sh" "$REFUSE_VALIDATOR_UNAVAILABLE" "$VALIDATOR" >&2
+    exit 2
+  fi
+
+  # Clause (i). errexit is saved/restored rather than assumed: these five writers do not all run
+  # under `set -e` (write-system-contract.sh is `set -uo pipefail`), so an unconditional `set -e`
+  # here would silently change the failure semantics of everything downstream.
+  case "$-" in *e*) _ve_had_e=1 ;; *) _ve_had_e=0 ;; esac
+  set +e
+  # shellcheck source=/dev/null
+  . "$VALIDATOR"
+  _ve_src_rc=$?
+  if [ "$_ve_had_e" -eq 1 ]; then set -e; fi
+  if [ "$_ve_src_rc" -ne 0 ]; then
+    printf '%s: %s — sourcing the shared write-time validator "%s" failed (status %s: unparseable or truncated), so this entry could not be examined. Nothing was written.
+'       "add-rule.sh" "$REFUSE_VALIDATOR_UNAVAILABLE" "$VALIDATOR" "$_ve_src_rc" >&2
+    exit 2
+  fi
+
+  # Clause (ii). All five are probed, plus the aggregate the call site actually uses — never one
+  # name as a proxy for the rest.
+  for _vef in $VALIDATOR_REQUIRED_FUNCS validate_entry_all; do
+    if ! command -v "$_vef" >/dev/null 2>&1; then
+      printf '%s: %s — the shared write-time validator loaded but "%s" is not defined (a partially-loaded validator would report "examined and clean" over half a check), so this entry could not be examined. Nothing was written.
+'         "add-rule.sh" "$REFUSE_VALIDATOR_UNAVAILABLE" "$_vef" >&2
+      exit 2
+    fi
+  done
+
+  # Clause (iii). Compared against the HARDCODED literal — see the circularity note above.
+  if [ "${VALIDATE_ENTRY_CONTRACT:-}" != "$VALIDATE_ENTRY_CONTRACT_REQUIRED" ]; then
+    printf '%s: %s — the shared write-time validator contract sentinel is "%s", not the expected "%s" (the file is truncated, or its contract changed), so this entry could not be examined. Nothing was written.
+'       "add-rule.sh" "$REFUSE_VALIDATOR_UNAVAILABLE" "${VALIDATE_ENTRY_CONTRACT:-<unset>}" "$VALIDATE_ENTRY_CONTRACT_REQUIRED" >&2
+    exit 2
+  fi
+  # ---- LOAD GUARD END -------------------------------------------------------
+}
+
+
+# ---------------------------------------------------------------------------
 # Parse args. Every action shares one flat flag namespace (add-rule.sh has always been all-flags, no
 # positional actions) — `--retract` is itself the mode-selector flag, matching the ST-1 contract's
 # `kind: flag, name: --retract` (a grep-verifiable literal, not a positional verb).
@@ -161,6 +239,26 @@ command -v jq >/dev/null 2>&1 || die "jq is required but not available"
 # Resolve the store dir (repo-root anchored, matching the reader) — needed by both actions.
 # ---------------------------------------------------------------------------
 GITROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+# ---- Worktree guard (red-team F1) — AC10b ---------------------------------
+# This writer shipped with NO worktree guard: `git rev-parse --show-toplevel` in a LINKED worktree
+# returns the WORKTREE's own toplevel, not the main checkout, so a worker running in a worktree
+# wrote to the worktree's .agent/rules/ and the write was lost on `git worktree remove`.
+# A linked worktree's top-level carries a `.git` FILE ("gitdir: ..."); the main checkout carries a
+# directory — that is the whole discriminator.
+# A `.git` FILE IS NOT UNIQUE TO A WORKTREE: a git SUBMODULE's top-level carries one too. Refusing
+# there is correct (a curated store belongs in the superproject, not the submodule), but the message
+# must not name `git worktree remove` as the consequence — that sends the reader hunting a worktree
+# that does not exist. The discriminator is kept as-is rather than replaced with
+# `git rev-parse --git-common-dir`: both cases are refused either way, so the extra subprocess would
+# buy only a finer message. The message names BOTH instead.
+# DELIBERATELY NOT COPIED from write-lessons.sh: its hard `exit 2` when there is no git repo at all.
+# This writer's documented fallback outside a repo is `pwd` (fixtures and temp stores are legitimate
+# callers), and that behaviour is UNCHANGED here — only the worktree case is newly refused.
+if [ -f "$GITROOT/.git" ]; then
+  die "refusing to write from a non-primary checkout ($GITROOT) — its top-level \`.git\` is a FILE, which means either a linked git worktree or a git submodule. Rules are written only from the primary repo root (red-team F1): from a worktree the write would diverge and be lost on \`git worktree remove\`; from a submodule it would land in the wrong repository. Run this from the primary checkout (or the superproject root)." 3
+fi
+
 RULES_DIR="$GITROOT/.agent/rules"
 
 # =============================================================================
@@ -495,6 +593,37 @@ new_obj="$(jq -n \
   ')"
 
 # ---------------------------------------------------------------------------
+# THE VALIDATOR CALL SITE (see the LOAD GUARD block above). Placed BEFORE the confirm gate on
+# purpose: a dry-run that prints a plan the real write would refuse is a misleading plan, so the
+# entry is examined first and a violation is refused whether or not --confirm was passed.
+# The examined text is the rule statement plus its --reason, which is where a rule's cited paths
+# and repo references live.
+# ---------------------------------------------------------------------------
+_ve_load_validator
+_ve_entry="$statement"
+[ -n "$reason" ] && _ve_entry="$statement
+$reason"
+# ---- VALIDATOR CALL BEGIN ---------------------------------------------------
+set +e
+validate_entry_all --entry "$_ve_entry" --store "$target" \
+  --source "$source_val" --root "$GITROOT"
+_ve_rc=$?
+set -e
+# rc 0 IS NOT NECESSARILY SILENT. Two of the five checks (dead-reference, cross-repo) are ADVISORY:
+# they report on stderr and never refuse, so a clean exit can still carry findings. The call-site
+# notice that repeats them in this writer's own voice is deliberately NOT emitted here: its text
+# ends "...and THE WRITE PROCEEDED", which is a lie on the dry-run path a few lines below (the
+# confirm gate has not been evaluated yet). It fires AFTER `proceed` is decided instead — see
+# "THE ADVISORY NOTICE" past the gate. The per-finding `ADVISORY:` lines from the checks themselves
+# still print on both paths, so a dry-run still shows what a real write would report.
+case "$_ve_rc" in
+  0) : ;;
+  1) die "refusing to write — the rule was examined and violates a write-time check (see the reason above). Nothing was written." 1 ;;
+  *) die "refusing to write — the rule COULD NOT BE EXAMINED (see the reason above); refusing rather than reporting it clean. Nothing was written." 2 ;;
+esac
+# ---- VALIDATOR CALL END -----------------------------------------------------
+
+# ---------------------------------------------------------------------------
 # 9. Confirm-only gate. Write only when --confirm OR an interactive TTY confirms. Otherwise DRY-RUN:
 #    print the planned object + target path and DO NOT write.
 # ---------------------------------------------------------------------------
@@ -546,6 +675,16 @@ fi
 if ! jq -e --arg id "$new_id" 'any(.[]; (type=="object") and (.id == $id))' "$target" >/dev/null 2>&1; then
   die "read-back verify failed: new id '$new_id' not found in written file: $target"
 fi
+
+# THE ADVISORY NOTICE — the LAST thing before the success line, and that position is deliberate on
+# both sides. It sits past the confirm gate, so a dry-run can never print its "...and THE WRITE
+# PROCEEDED" sentence alongside "PLANNED WRITE (not written)". And it sits past the read-back
+# verify, so the sentence is not merely on the write PATH but after the write has actually landed
+# and been verified — every failure between the gate and here `die`s, and none of those runs should
+# claim the write proceeded either. Reached ONLY when the validator returned 0 (rc 1 and rc 2 `die`
+# at the call site), so it cannot be suppressed on a genuine write: every successful write ends
+# here. The RETRACT action returns long before the validator is called and is unaffected either way.
+validate_entry_advisory_notice "$PROG"
 
 printf 'wrote rule id=%s to %s\n' "$new_id" "$target"
 exit 0

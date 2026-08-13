@@ -13,7 +13,35 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 WRITE="$HERE/write-project-memory.sh"
+
+# ---------------------------------------------------------------------------
+# PROVENANCE IN FIXTURES (decision (f) / AC15 — provenance is STRICT and centralised in
+# validate_provenance). An entry must cite what motivated it: a bare token like `s`, `test` or `ev`
+# names nothing and is now REFUSED. These fixtures therefore pass a REAL reference. An earlier
+# revision of this suite wrapped $WRITE in a shim that appended a provenanced --source to every
+# call; that was deleted on review because it masked genuine refusals — a fixture whose entry was
+# refused for an unrelated reason still went green. Sources are explicit and per-call now.
+# ---------------------------------------------------------------------------
 READ="$HERE/read-project-memory.sh"
+# ---------------------------------------------------------------------------
+# seed_text — DISTINCT bodies for the cap/eviction seeding loops. The write-time duplicate check
+# compares SIGNIFICANT tokens and drops tokens shorter than 3 chars, so bodies shaped
+# "<word> number $i" differ only in a token it discards: to the checker they were 100% identical
+# and every seed after the first was CORRECTLY refused. That is the check working, not a bug — so
+# these seed semantically distinct entries. Order is stable, so "oldest evicted" stays assertable.
+# ---------------------------------------------------------------------------
+seed_text() {
+  case "$1" in
+    1) echo "caching layer invalidates whenever a deploy finishes" ;;
+    2) echo "database migrations always run before the app boots" ;;
+    3) echo "static assets are delivered through the edge network" ;;
+    4) echo "queue workers retry failures with exponential backoff" ;;
+    5) echo "session cookies rotate once every single hour" ;;
+    6) echo "metrics are flushed on a ten second timer" ;;
+    7) echo "feature flags default to disabled until enabled" ;;
+  esac
+}
+
 REAL_REPO="$(cd "$HERE/../.." && pwd)"
 
 pass=0; fail=0
@@ -27,17 +55,17 @@ trap 'rm -rf "$TMP" "$TMP-wt" 2>/dev/null' EXIT
 
 echo "== 1. worktree-guard (MERGE BLOCKER) =="
 git -C "$TMP" worktree add -q "$TMP-wt" -b wt >/dev/null 2>&1
-( cd "$TMP-wt" && bash "$WRITE" --fact "should be refused" --source test ) >/dev/null 2>&1
+( cd "$TMP-wt" && bash "$WRITE" --fact "should be refused" --source "session:fixture-0001" ) >/dev/null 2>&1
 rc=$?
 if [ "$rc" -eq 3 ]; then ok "writer refuses from a worktree (exit 3)"; else no "writer did NOT refuse worktree (exit $rc)"; fi
 if [ ! -e "$TMP-wt/.supervisor/memory/PROJECT_MEMORY.md" ]; then ok "no memory written under the worktree"; else no "memory leaked into the worktree"; fi
 git -C "$TMP" worktree remove --force "$TMP-wt" >/dev/null 2>&1
 
 echo "== 2. valid write + read round-trip =="
-( cd "$TMP" && bash "$WRITE" --fact "auth is JWT in src/auth/guard.ts" --source s1 \
-    && bash "$WRITE" --fact "db is postgres via drizzle" --source s1 ) >/dev/null 2>&1
+( cd "$TMP" && bash "$WRITE" --fact "auth is handled by signed JWT bearer tokens" --source "session:fixture-0001" \
+    && bash "$WRITE" --fact "db is postgres via drizzle" --source "session:fixture-0001" ) >/dev/null 2>&1
 out="$( cd "$TMP" && bash "$READ" )"
-echo "$out" | grep -q "auth is JWT" && echo "$out" | grep -q "db is postgres" && ok "both verified facts emitted" || no "verified facts missing from read"
+echo "$out" | grep -q "auth is handled by signed JWT bearer tokens" && echo "$out" | grep -q "db is postgres" && ok "both verified facts emitted" || no "verified facts missing from read"
 echo "$out" | grep -q "subordinate to CLAUDE.md" && ok "advisory banner present" || no "advisory banner missing"
 
 echo "== 3. poison drop (un-provenanced line) =="
@@ -55,7 +83,7 @@ out="$( cd "$TMP" && bash "$READ" 2>/dev/null )"
 # *tampered* content_hash ("0000tampered0000") is what enters the trusted set — and
 # sha(fact-1 text) != that, so fact 1 is never emitted. Entry 2 then breaks because
 # sha(corrupted entry-1 line) != entry 2's stored prev_hash → chain break → fact 2 distrusted.
-if echo "$out" | grep -q "auth is JWT" || echo "$out" | grep -q "db is postgres"; then
+if echo "$out" | grep -q "auth is handled by signed JWT bearer tokens" || echo "$out" | grep -q "db is postgres"; then
   no "tampered/after-break entries still emitted"
 else
   ok "tamper broke the chain — affected entries distrusted"
@@ -63,11 +91,11 @@ fi
 
 echo "== 5. write-time eviction (cap honored) =="
 EVDIR="$(mktemp -d)"; ( cd "$EVDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
-( cd "$EVDIR" && for i in 1 2 3 4 5 6; do PROJECT_MEMORY_MAX_LINES=5 bash "$WRITE" --fact "fact number $i" --source ev >/dev/null 2>&1; done )
+( cd "$EVDIR" && for i in 1 2 3 4 5 6; do PROJECT_MEMORY_MAX_LINES=5 bash "$WRITE" --fact "$(seed_text $i)" --source "session:fixture-0001" >/dev/null 2>&1; done )
 cnt="$(grep -cE '^- \[' "$EVDIR/.supervisor/memory/PROJECT_MEMORY.md" 2>/dev/null || echo 0)"
 if [ "$cnt" -eq 5 ]; then ok "capped at 5 entries (wrote 6, evicted 1)"; else no "cap not enforced (have $cnt, want 5)"; fi
 grep -q '"action":"evict"' "$EVDIR/.supervisor/memory/.provenance.jsonl" 2>/dev/null && ok "eviction recorded in provenance" || no "eviction not recorded"
-grep -q "fact number 1" "$EVDIR/.supervisor/memory/PROJECT_MEMORY.md" 2>/dev/null && no "oldest entry not evicted" || ok "oldest entry (fact number 1) evicted"
+grep -q "$(seed_text 1)" "$EVDIR/.supervisor/memory/PROJECT_MEMORY.md" 2>/dev/null && no "oldest entry not evicted" || ok "oldest entry (fact number 1) evicted"
 # Post-eviction read-back: the eviction entry's prev_hash MUST be computed the same way the
 # reader walks the chain (sha of the line WITHOUT its trailing newline). If it isn't, the chain
 # breaks at the first evict entry and the reader distrusts every later `add` — silently dropping
@@ -75,10 +103,10 @@ grep -q "fact number 1" "$EVDIR/.supervisor/memory/PROJECT_MEMORY.md" 2>/dev/nul
 # guarantees every survivor (facts 5,6,7) was added AFTER the first eviction entry, so a broken
 # chain emits 0 survivors. The file-count check above can't catch this — only a read-back can.
 EV2DIR="$(mktemp -d)"; ( cd "$EV2DIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
-( cd "$EV2DIR" && for i in 1 2 3 4 5 6 7; do PROJECT_MEMORY_MAX_LINES=3 bash "$WRITE" --fact "fact number $i" --source ev >/dev/null 2>&1; done )
+( cd "$EV2DIR" && for i in 1 2 3 4 5 6 7; do PROJECT_MEMORY_MAX_LINES=3 bash "$WRITE" --fact "$(seed_text $i)" --source "session:fixture-0001" >/dev/null 2>&1; done )
 evout="$( cd "$EV2DIR" && bash "$READ" 2>/dev/null )"
 evsurv="$(echo "$evout" | grep -cE '^- \[')"; evsurv="${evsurv:-0}"
-if [ "$evsurv" -eq 3 ] && echo "$evout" | grep -q "fact number 5" && echo "$evout" | grep -q "fact number 7"; then
+if [ "$evsurv" -eq 3 ] && echo "$evout" | grep -q "$(seed_text 5)" && echo "$evout" | grep -q "$(seed_text 7)"; then
   ok "post-eviction survivors verify and read back (chain intact across evictions)"
 else
   no "post-eviction survivors dropped by reader (have $evsurv verified, want 3 — eviction broke the hash chain)"
@@ -101,21 +129,21 @@ fi
 
 echo "== 7. dedup guard =="
 DDIR="$(mktemp -d)"; ( cd "$DDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
-( cd "$DDIR" && bash "$WRITE" --fact "same fact twice" --source d >/dev/null 2>&1; bash "$WRITE" --fact "same fact twice" --source d >/dev/null 2>&1 )
+( cd "$DDIR" && bash "$WRITE" --fact "same fact twice" --source "session:fixture-0001" >/dev/null 2>&1; bash "$WRITE" --fact "same fact twice" --source "session:fixture-0001" >/dev/null 2>&1 )
 dcnt="$(grep -cE '^- \[' "$DDIR/.supervisor/memory/PROJECT_MEMORY.md" 2>/dev/null)"; dcnt="${dcnt:-0}"
 if [ "$dcnt" -eq 1 ]; then ok "duplicate fact written once (dedup guard)"; else no "duplicate not deduped (have $dcnt)"; fi
 rm -rf "$DDIR"
 
 echo "== 8. retract / supersede correction path =="
 RDIR="$(mktemp -d)"; ( cd "$RDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
-( cd "$RDIR" && bash "$WRITE" --fact "the sky is green" --source r >/dev/null 2>&1 \
-               && bash "$WRITE" --fact "keep me" --source r >/dev/null 2>&1 )
+( cd "$RDIR" && bash "$WRITE" --fact "the sky is green" --source "session:fixture-0001" >/dev/null 2>&1 \
+               && bash "$WRITE" --fact "keep me" --source "session:fixture-0001" >/dev/null 2>&1 )
 wid="$(sed -nE 's/^- \[([^]]+)\] the sky is green$/\1/p' "$RDIR/.supervisor/memory/PROJECT_MEMORY.md")"
 [ -n "$wid" ] && ok "wrong fact stored as [$wid]" || no "could not resolve id of the wrong fact"
 
 # 8a. unknown id aborts with state untouched (fail closed, never half-write)
 before="$(cat "$RDIR/.supervisor/memory/.provenance.jsonl")"
-( cd "$RDIR" && bash "$WRITE" --retract deadbeef --source r ) >/dev/null 2>&1
+( cd "$RDIR" && bash "$WRITE" --retract deadbeef --source "session:fixture-0001" ) >/dev/null 2>&1
 rc=$?
 if [ "$rc" -ne 0 ] && [ "$before" = "$(cat "$RDIR/.supervisor/memory/.provenance.jsonl")" ]; then
   ok "retract of an unknown id aborts (exit $rc) leaving provenance untouched"
@@ -128,7 +156,7 @@ fi
 #     replacement while the wrong fact it was meant to correct stays live).
 prov_b="$(cat "$RDIR/.supervisor/memory/.provenance.jsonl")"
 mem_b="$(cat "$RDIR/.supervisor/memory/PROJECT_MEMORY.md")"
-( cd "$RDIR" && bash "$WRITE" --fact "orphan replacement fact" --supersedes deadbeef --source r ) >/dev/null 2>&1
+( cd "$RDIR" && bash "$WRITE" --fact "orphan replacement fact" --supersedes deadbeef --source "session:fixture-0001" ) >/dev/null 2>&1
 rc=$?
 [ "$rc" -eq 2 ] && ok "supersede with an unknown target aborts (exit 2)" || no "supersede with an unknown target did not fail closed (exit $rc)"
 grep -qF -- "orphan replacement fact" "$RDIR/.supervisor/memory/PROJECT_MEMORY.md" \
@@ -152,20 +180,20 @@ else
 fi
 
 # 8c. non-hex id is rejected before it reaches a grep/sed pattern
-( cd "$RDIR" && bash "$WRITE" --retract '.*' --source r ) >/dev/null 2>&1
+( cd "$RDIR" && bash "$WRITE" --retract '.*' --source "session:fixture-0001" ) >/dev/null 2>&1
 [ $? -eq 2 ] && ok "non-hex retract id rejected" || no "non-hex retract id accepted"
 
 # 8d. ids are EXACTLY 8 hex chars by construction (`cut -c1-8`), so a hex-but-wrong-length id is a
 #     malformed id — it must be rejected here with a precise message, not carried into the lookup
 #     and reported as the misleading "no memory entry with id".
-short="$( cd "$RDIR" && bash "$WRITE" --retract a --source r 2>&1 )"
+short="$( cd "$RDIR" && bash "$WRITE" --retract a --source "session:fixture-0001" 2>&1 )"
 rc=$?
 if [ "$rc" -eq 2 ] && echo "$short" | grep -q "exactly 8 lowercase hex chars"; then
   ok "too-short retract id rejected with a length-specific message"
 else
   no "too-short retract id not rejected at validation (exit $rc): $short"
 fi
-long="$( cd "$RDIR" && bash "$WRITE" --retract deadbeef0 --source r 2>&1 )"
+long="$( cd "$RDIR" && bash "$WRITE" --retract deadbeef0 --source "session:fixture-0001" 2>&1 )"
 rc=$?
 if [ "$rc" -eq 2 ] && echo "$long" | grep -q "exactly 8 lowercase hex chars"; then
   ok "too-long retract id rejected with a length-specific message"
@@ -174,7 +202,7 @@ else
 fi
 
 # 8e. supersede: corrected fact in, wrong fact out, unrelated fact untouched — one atomic call
-( cd "$RDIR" && bash "$WRITE" --fact "the sky is blue" --supersedes "$wid" --source r ) >/dev/null 2>&1
+( cd "$RDIR" && bash "$WRITE" --fact "the sky is blue" --supersedes "$wid" --source "session:fixture-0001" ) >/dev/null 2>&1
 rout="$( cd "$RDIR" && bash "$READ" 2>/dev/null )"
 echo "$rout" | grep -q "the sky is blue" && ok "superseding fact emitted" || no "superseding fact missing"
 echo "$rout" | grep -q "the sky is green" && no "retracted fact still emitted" || ok "retracted fact gone"
@@ -197,7 +225,7 @@ fi
 # 8g. chronological semantics: a later `add` of the same text re-trusts it (retract is not a
 # permanent blocklist — it revokes the trust that existed at that point in the chain).
 sed -i.bak "/the sky is green/d" "$RDIR/.supervisor/memory/PROJECT_MEMORY.md" && rm -f "$RDIR/.supervisor/memory/PROJECT_MEMORY.md.bak"
-( cd "$RDIR" && bash "$WRITE" --fact "the sky is green" --source r ) >/dev/null 2>&1
+( cd "$RDIR" && bash "$WRITE" --fact "the sky is green" --source "session:fixture-0001" ) >/dev/null 2>&1
 rout3="$( cd "$RDIR" && bash "$READ" 2>/dev/null )"
 echo "$rout3" | grep -q "the sky is green" && ok "re-adding a retracted fact re-trusts it" || no "re-add after retract did not re-trust"
 rm -rf "$RDIR"
@@ -214,9 +242,9 @@ rm -rf "$RDIR"
 #     unaffected: silent, exit 0, still retracts.
 WDIR="$(mktemp -d)"; ( cd "$WDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
 WMEM="$WDIR/.supervisor/memory/PROJECT_MEMORY.md"; WPROV="$WDIR/.supervisor/memory/.provenance.jsonl"
-( cd "$WDIR" && bash "$WRITE" --fact "supersede me bare" --source w >/dev/null 2>&1 \
-               && bash "$WRITE" --fact "supersede me bare equals form" --source w >/dev/null 2>&1 \
-               && bash "$WRITE" --fact "retract me bare"  --source w >/dev/null 2>&1 )
+( cd "$WDIR" && bash "$WRITE" --fact "supersede me bare" --source "session:fixture-0001" >/dev/null 2>&1 \
+               && bash "$WRITE" --fact "supersede me bare equals form" --source "session:fixture-0001" >/dev/null 2>&1 \
+               && bash "$WRITE" --fact "retract me bare"  --source "session:fixture-0001" >/dev/null 2>&1 )
 sid="$(sed -nE 's/^- \[([^]]+)\] supersede me bare$/\1/p' "$WMEM")"
 eid="$(sed -nE 's/^- \[([^]]+)\] supersede me bare equals form$/\1/p' "$WMEM")"
 tid="$(sed -nE 's/^- \[([^]]+)\] retract me bare$/\1/p' "$WMEM")"
@@ -225,7 +253,7 @@ tid="$(sed -nE 's/^- \[([^]]+)\] retract me bare$/\1/p' "$WMEM")"
 # (a) space-separated --supersedes <id>, no --fact → exit 2, message names the missing replacement,
 #     and state is COMPLETELY untouched.
 w_mem_b="$(cat "$WMEM")"; w_prov_b="$(cat "$WPROV")"
-werr="$( cd "$WDIR" && bash "$WRITE" --supersedes "$sid" --source w 2>&1 >/dev/null )"
+werr="$( cd "$WDIR" && bash "$WRITE" --supersedes "$sid" --source "session:fixture-0001" 2>&1 >/dev/null )"
 rc=$?
 [ "$rc" -eq 2 ] && ok "--supersedes without --fact fails closed (exit 2)" || no "--supersedes without --fact did not fail closed (exit $rc)"
 echo "$werr" | grep -qF -- "--supersedes [$sid] requires a replacement --fact" \
@@ -245,7 +273,7 @@ stray="$(ls -1a "$WDIR/.supervisor/memory/" 2>/dev/null | grep -c -e '^\.mtmp\.'
 [ "$stray" -eq 0 ] && ok "aborted bare --supersedes left no .mtmp/.ptmp temp files" || no "aborted bare --supersedes left $stray temp file(s) behind"
 
 # (b) the --supersedes=<id> equals-form arm must follow the identical rule.
-weq="$( cd "$WDIR" && bash "$WRITE" --supersedes="$eid" --source w 2>&1 >/dev/null )"
+weq="$( cd "$WDIR" && bash "$WRITE" --supersedes="$eid" --source "session:fixture-0001" 2>&1 >/dev/null )"
 rc=$?
 if [ "$rc" -eq 2 ] && echo "$weq" | grep -qF -- "--supersedes [$eid] requires a replacement --fact"; then
   ok "--supersedes=<id> equals-form without --fact fails closed the same way (exit 2)"
@@ -260,7 +288,7 @@ grep -qxF -- "- [$eid] supersede me bare equals form" "$WMEM" \
 #     with no --fact must report the MISSING REPLACEMENT, never "no memory entry with id". The old
 #     non-fatal warning sat at this same point, so that call printed "the retraction still runs and
 #     still exits 0" and THEN aborted exit 2 at the lookup — a message false on its own path.
-wunk="$( cd "$WDIR" && bash "$WRITE" --supersedes deadbeef --source w 2>&1 >/dev/null )"
+wunk="$( cd "$WDIR" && bash "$WRITE" --supersedes deadbeef --source "session:fixture-0001" 2>&1 >/dev/null )"
 rc=$?
 if [ "$rc" -eq 2 ] && echo "$wunk" | grep -qF -- "--supersedes [deadbeef] requires a replacement --fact" \
    && ! echo "$wunk" | grep -qF -- "no memory entry with id"; then
@@ -275,7 +303,7 @@ echo "$wunk" | grep -qiF -- "is a plain retraction" \
   || ok "no message on the exit-2 path claims a retraction took place (self-contradiction gone)"
 
 # (c) --retract with no --fact is untouched: silent on stderr, exit 0, and it still retracts.
-terr="$( cd "$WDIR" && bash "$WRITE" --retract "$tid" --source w 2>&1 >/dev/null )"
+terr="$( cd "$WDIR" && bash "$WRITE" --retract "$tid" --source "session:fixture-0001" 2>&1 >/dev/null )"
 rc=$?
 if [ "$rc" -eq 0 ] && [ -z "$terr" ]; then
   ok "--retract stays silent on stderr and exits 0 (unaffected by the --supersedes abort)"
@@ -289,7 +317,7 @@ grep -qF -- "- [$tid] retract me bare" "$WMEM" \
 # (f) the SUPPORTED correction shape is unaffected end-to-end: a replacement --fact paired with
 #     --supersedes still stores the correction and retracts the target in one call. (8e pins the
 #     read-side half; this pins that the new validation gate does not intercept the happy path.)
-( cd "$WDIR" && bash "$WRITE" --fact "supersede me bare, corrected" --supersedes "$sid" --source w ) >/dev/null 2>&1
+( cd "$WDIR" && bash "$WRITE" --fact "supersede me bare, corrected" --supersedes "$sid" --source "session:fixture-0001" ) >/dev/null 2>&1
 rc=$?
 [ "$rc" -eq 0 ] && ok "--fact <corrected> --supersedes <id> still exits 0 (happy path not intercepted)" || no "the supported supersede shape regressed (exit $rc)"
 wout="$( cd "$WDIR" && bash "$READ" 2>/dev/null )"
@@ -310,11 +338,11 @@ SDIR="$(mktemp -d)"; ( cd "$SDIR" && git init -q && git config user.email t@t &&
 
 # 9a. supersede whose corrected text collides with a DIFFERENT existing entry: a legitimate
 #     correction — the retraction must land, but no duplicate line (and no spurious `add`).
-( cd "$SDIR" && bash "$WRITE" --fact "sky is blue"  --source s >/dev/null 2>&1 \
-               && bash "$WRITE" --fact "sky is green" --source s >/dev/null 2>&1 )
+( cd "$SDIR" && bash "$WRITE" --fact "sky is blue"  --source "session:fixture-0001" >/dev/null 2>&1 \
+               && bash "$WRITE" --fact "sky is green" --source "session:fixture-0001" >/dev/null 2>&1 )
 gid="$(sed -nE 's/^- \[([^]]+)\] sky is green$/\1/p' "$SDIR/.supervisor/memory/PROJECT_MEMORY.md")"
 [ -n "$gid" ] && ok "collision fixture stored 'sky is green' as [$gid]" || no "could not resolve id of the collision fixture"
-( cd "$SDIR" && bash "$WRITE" --fact "sky is blue" --supersedes "$gid" --source s ) >/dev/null 2>&1
+( cd "$SDIR" && bash "$WRITE" --fact "sky is blue" --supersedes "$gid" --source "session:fixture-0001" ) >/dev/null 2>&1
 bcnt="$(grep -cF -- "sky is blue" "$SDIR/.supervisor/memory/PROJECT_MEMORY.md" 2>/dev/null)"; bcnt="${bcnt:-0}"
 [ "$bcnt" -eq 1 ] && ok "supersede colliding with an existing entry writes no duplicate (1 line)" || no "supersede duplicated the colliding fact (have $bcnt, want 1)"
 acnt="$(grep -c '"action":"add"' "$SDIR/.supervisor/memory/.provenance.jsonl" 2>/dev/null)"; acnt="${acnt:-0}"
@@ -327,10 +355,10 @@ echo "$sout" | grep -q "sky is blue" && ok "survivor reads back verified (hash c
 
 # 9b. no-op supersede (replacement byte-identical to the target): must FAIL CLOSED with state
 #     untouched — the fact survives in the file AND in the reader, and no false "retracted".
-( cd "$SDIR" && bash "$WRITE" --fact "alpha fact" --source s >/dev/null 2>&1 )
+( cd "$SDIR" && bash "$WRITE" --fact "alpha fact" --source "session:fixture-0001" >/dev/null 2>&1 )
 aid="$(sed -nE 's/^- \[([^]]+)\] alpha fact$/\1/p' "$SDIR/.supervisor/memory/PROJECT_MEMORY.md")"
 prov_before="$(cat "$SDIR/.supervisor/memory/.provenance.jsonl")"
-noop="$( cd "$SDIR" && bash "$WRITE" --fact "alpha fact" --supersedes "$aid" --source s 2>&1 )"
+noop="$( cd "$SDIR" && bash "$WRITE" --fact "alpha fact" --supersedes "$aid" --source "session:fixture-0001" 2>&1 )"
 rc=$?
 [ "$rc" -ne 0 ] && ok "no-op supersede fails closed (exit $rc)" || no "no-op supersede exited 0 (silent mutation)"
 echo "$noop" | grep -q "retracted \[" && no "no-op supersede printed a false 'retracted' message" || ok "no misleading success message on the no-op supersede"
@@ -340,7 +368,7 @@ nout="$( cd "$SDIR" && bash "$READ" 2>/dev/null )"
 echo "$nout" | grep -q "alpha fact" && ok "reader still returns the fact after the no-op supersede" || no "reader no longer returns the fact after the no-op supersede"
 
 # 9c. the bare --fact dedup short-circuit is unchanged by the above (message + exit 0 preserved).
-dup="$( cd "$SDIR" && bash "$WRITE" --fact "alpha fact" --source s 2>&1 )"
+dup="$( cd "$SDIR" && bash "$WRITE" --fact "alpha fact" --source "session:fixture-0001" 2>&1 )"
 rc=$?
 if [ "$rc" -eq 0 ] && echo "$dup" | grep -qF "write-project-memory: fact already present ([$aid]) — skipping"; then
   ok "bare --fact dedup short-circuit intact (exit 0 + unchanged message)"
@@ -362,7 +390,7 @@ echo "== 10. line-shape anchoring (substring-collision class) =="
 # way the writer mints it — in a throwaway repo — rather than hard-coding a hash that would rot the
 # moment the id derivation changes.
 IDDIR="$(mktemp -d)"; ( cd "$IDDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
-( cd "$IDDIR" && bash "$WRITE" --fact "victim entry" --source x >/dev/null 2>&1 )
+( cd "$IDDIR" && bash "$WRITE" --fact "victim entry" --source "session:fixture-0001" >/dev/null 2>&1 )
 vid="$(sed -nE 's/^- \[([^]]+)\] victim entry$/\1/p' "$IDDIR/.supervisor/memory/PROJECT_MEMORY.md")"
 rm -rf "$IDDIR"
 [ -n "$vid" ] && ok "resolved the victim fact's minted id [$vid] for the collision fixtures" || no "could not mint the victim id for the collision fixtures"
@@ -371,8 +399,8 @@ rm -rf "$IDDIR"
 #      still be written. Unanchored, the writer reported "fact already present ([id]) — skipping"
 #      and exited 0 for a fact it had never stored: silent data loss on a success status.
 ADIR="$(mktemp -d)"; ( cd "$ADIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
-( cd "$ADIR" && bash "$WRITE" --fact "docs say the format is - [$vid] victim entry and that matters" --source x >/dev/null 2>&1 )
-aout="$( cd "$ADIR" && bash "$WRITE" --fact "victim entry" --source x 2>&1 )"
+( cd "$ADIR" && bash "$WRITE" --fact "docs say the format is - [$vid] victim entry and that matters" --source "session:fixture-0001" >/dev/null 2>&1 )
+aout="$( cd "$ADIR" && bash "$WRITE" --fact "victim entry" --source "session:fixture-0001" 2>&1 )"
 rc=$?
 if [ "$rc" -eq 0 ] && echo "$aout" | grep -qF "stored [$vid]"; then
   ok "new fact whose line is a substring of an existing entry is stored, not deduped away"
@@ -394,12 +422,12 @@ rm -rf "$ADIR"
 #      target survived — with provenance recording the real id as retracted. State and provenance
 #      disagreed, and the reader kept serving the fact the caller had just "retracted".
 CDIR="$(mktemp -d)"; ( cd "$CDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
-( cd "$CDIR" && bash "$WRITE" --fact "see - [$vid] for details" --source x >/dev/null 2>&1 \
-               && bash "$WRITE" --fact "victim entry" --source x >/dev/null 2>&1 )
+( cd "$CDIR" && bash "$WRITE" --fact "see - [$vid] for details" --source "session:fixture-0001" >/dev/null 2>&1 \
+               && bash "$WRITE" --fact "victim entry" --source "session:fixture-0001" >/dev/null 2>&1 )
 decoy_first=0
 head -n2 "$CDIR/.supervisor/memory/PROJECT_MEMORY.md" | tail -n1 | grep -qF "see - [$vid] for details" && decoy_first=1
 [ "$decoy_first" -eq 1 ] && ok "collision fixture ordered decoy BEFORE the real target (the -m1 hazard)" || no "collision fixture ordering wrong — 10b would not exercise the -m1 path"
-( cd "$CDIR" && bash "$WRITE" --retract "$vid" --source x ) >/dev/null 2>&1
+( cd "$CDIR" && bash "$WRITE" --retract "$vid" --source "session:fixture-0001" ) >/dev/null 2>&1
 rc=$?
 [ "$rc" -eq 0 ] && ok "retract of the real id succeeds (exit 0)" || no "retract of the real id failed (exit $rc)"
 grep -qxF -- "- [$vid] victim entry" "$CDIR/.supervisor/memory/PROJECT_MEMORY.md" \
@@ -423,14 +451,14 @@ rm -rf "$CDIR"
 #      Now HIGHER-STAKES than when the spelling only selected a warning: the spelling selects a
 #      FAIL-CLOSED ABORT, so a stale flag would REJECT (exit 2) an honest bare `--retract`.
 MDIR="$(mktemp -d)"; ( cd "$MDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
-( cd "$MDIR" && bash "$WRITE" --fact "mixed flag alpha" --source m >/dev/null 2>&1 \
-               && bash "$WRITE" --fact "mixed flag beta"  --source m >/dev/null 2>&1 )
+( cd "$MDIR" && bash "$WRITE" --fact "mixed flag alpha" --source "session:fixture-0001" >/dev/null 2>&1 \
+               && bash "$WRITE" --fact "mixed flag beta"  --source "session:fixture-0001" >/dev/null 2>&1 )
 mid_a="$(sed -nE 's/^- \[([^]]+)\] mixed flag alpha$/\1/p' "$MDIR/.supervisor/memory/PROJECT_MEMORY.md")"
 mid_b="$(sed -nE 's/^- \[([^]]+)\] mixed flag beta$/\1/p'  "$MDIR/.supervisor/memory/PROJECT_MEMORY.md")"
 [ -n "$mid_a" ] && [ -n "$mid_b" ] && ok "mixed-flag fixture stored two entries ([$mid_a], [$mid_b])" || no "mixed-flag fixture ids unresolved"
 # order 1: --supersedes then --retract → LAST spelling is --retract → silent (a bare retraction is
 # the honest meaning of that spelling), and it is [$mid_b] that gets retracted.
-merr="$( cd "$MDIR" && bash "$WRITE" --supersedes "$mid_a" --retract "$mid_b" --source m 2>&1 >/dev/null )"
+merr="$( cd "$MDIR" && bash "$WRITE" --supersedes "$mid_a" --retract "$mid_b" --source "session:fixture-0001" 2>&1 >/dev/null )"
 rc=$?
 if [ "$rc" -eq 0 ] && [ -z "$merr" ]; then
   ok "--supersedes <a> --retract <b> is silent (last spelling wins, as the last value already did)"
@@ -442,7 +470,7 @@ grep -qF -- "- [$mid_b] mixed flag beta" "$MDIR/.supervisor/memory/PROJECT_MEMOR
   || ok "--supersedes <a> --retract <b> retracted [$mid_b] (last VALUE wins, unchanged)"
 # order 2: --retract then --supersedes → LAST spelling is --supersedes → FAIL CLOSED (exit 2),
 # naming the id the --supersedes spelling actually carried, with [$mid_a] left in place.
-merr2="$( cd "$MDIR" && bash "$WRITE" --retract "$mid_b" --supersedes "$mid_a" --source m 2>&1 >/dev/null )"
+merr2="$( cd "$MDIR" && bash "$WRITE" --retract "$mid_b" --supersedes "$mid_a" --source "session:fixture-0001" 2>&1 >/dev/null )"
 rc=$?
 if [ "$rc" -eq 2 ] && echo "$merr2" | grep -qF -- "--supersedes [$mid_a] requires a replacement --fact"; then
   ok "--retract <b> --supersedes <a> aborts exit 2 naming [$mid_a] (the id the last spelling carried)"
@@ -454,11 +482,11 @@ grep -qF -- "- [$mid_a] mixed flag alpha" "$MDIR/.supervisor/memory/PROJECT_MEMO
   || no "the aborted mixed-flag call still retracted [$mid_a]"
 # equals-form arms must follow the same rule as their space-separated twins — the --retract= arm
 # CLEARS the spelling (silent success), the --supersedes= arm SETS it (abort).
-( cd "$MDIR" && bash "$WRITE" --fact "mixed flag gamma" --source m >/dev/null 2>&1 \
-               && bash "$WRITE" --fact "mixed flag delta" --source m >/dev/null 2>&1 )
+( cd "$MDIR" && bash "$WRITE" --fact "mixed flag gamma" --source "session:fixture-0001" >/dev/null 2>&1 \
+               && bash "$WRITE" --fact "mixed flag delta" --source "session:fixture-0001" >/dev/null 2>&1 )
 mid_c="$(sed -nE 's/^- \[([^]]+)\] mixed flag gamma$/\1/p' "$MDIR/.supervisor/memory/PROJECT_MEMORY.md")"
 mid_d="$(sed -nE 's/^- \[([^]]+)\] mixed flag delta$/\1/p' "$MDIR/.supervisor/memory/PROJECT_MEMORY.md")"
-merr3="$( cd "$MDIR" && bash "$WRITE" --supersedes=deadbeef --retract="$mid_c" --source m 2>&1 >/dev/null )"
+merr3="$( cd "$MDIR" && bash "$WRITE" --supersedes=deadbeef --retract="$mid_c" --source "session:fixture-0001" 2>&1 >/dev/null )"
 rc=$?
 if [ "$rc" -eq 0 ] && [ -z "$merr3" ]; then
   ok "--supersedes=<a> --retract=<c> equals-form succeeds silently (the --retract= arm clears the spelling)"
@@ -468,7 +496,7 @@ fi
 grep -qF -- "- [$mid_c] mixed flag gamma" "$MDIR/.supervisor/memory/PROJECT_MEMORY.md" \
   && no "--supersedes=<a> --retract=<c> retracted the wrong id" \
   || ok "--supersedes=<a> --retract=<c> retracted [$mid_c] (last VALUE wins, unchanged)"
-merr4="$( cd "$MDIR" && bash "$WRITE" --retract="$mid_d" --supersedes=deadbeef --source m 2>&1 >/dev/null )"
+merr4="$( cd "$MDIR" && bash "$WRITE" --retract="$mid_d" --supersedes=deadbeef --source "session:fixture-0001" 2>&1 >/dev/null )"
 rc=$?
 if [ "$rc" -eq 2 ] && echo "$merr4" | grep -qF -- "--supersedes [deadbeef] requires a replacement --fact"; then
   ok "--retract=<d> --supersedes=<unknown> equals-form aborts exit 2 (the --supersedes= arm sets the spelling; shape before state)"
@@ -485,9 +513,9 @@ rm -rf "$MDIR"
 #      by the retract lookup — entries are written with no leading whitespace and no CR, so a
 #      line-start anchor cannot make a legitimate line un-findable.
 PDIR="$(mktemp -d)"; ( cd "$PDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
-( cd "$PDIR" && bash "$WRITE" --fact "exactly identical fact" --source p >/dev/null 2>&1 )
+( cd "$PDIR" && bash "$WRITE" --fact "exactly identical fact" --source "session:fixture-0001" >/dev/null 2>&1 )
 pid="$(sed -nE 's/^- \[([^]]+)\] exactly identical fact$/\1/p' "$PDIR/.supervisor/memory/PROJECT_MEMORY.md")"
-pdup="$( cd "$PDIR" && bash "$WRITE" --fact "exactly identical fact" --source p 2>&1 )"
+pdup="$( cd "$PDIR" && bash "$WRITE" --fact "exactly identical fact" --source "session:fixture-0001" 2>&1 )"
 rc=$?
 if [ "$rc" -eq 0 ] && echo "$pdup" | grep -qF "write-project-memory: fact already present ([$pid]) — skipping"; then
   ok "an actually-identical fact is still deduped with the unchanged message + exit 0"
@@ -496,7 +524,7 @@ else
 fi
 pcnt="$(grep -cxF -- "- [$pid] exactly identical fact" "$PDIR/.supervisor/memory/PROJECT_MEMORY.md" 2>/dev/null)"; pcnt="${pcnt:-0}"
 [ "$pcnt" -eq 1 ] && ok "identical fact still stored exactly once" || no "identical fact stored $pcnt times (want 1)"
-( cd "$PDIR" && bash "$WRITE" --retract "$pid" --source p ) >/dev/null 2>&1
+( cd "$PDIR" && bash "$WRITE" --retract "$pid" --source "session:fixture-0001" ) >/dev/null 2>&1
 rc=$?
 if [ "$rc" -eq 0 ] && ! grep -qF -- "- [$pid] " "$PDIR/.supervisor/memory/PROJECT_MEMORY.md"; then
   ok "an ordinary (non-colliding) entry is still findable and retractable under the anchored lookup"
@@ -504,6 +532,343 @@ else
   no "anchoring made an ordinary entry un-findable by --retract (exit $rc)"
 fi
 rm -rf "$PDIR"
+
+# =============================================================================
+# AC1 / AC2 / AC10a — WRITE-TIME VALIDATION AT THIS WRITER'S CALL SITE.
+#
+# Wiring write-project-memory.sh to validate-entry.sh makes test-validate-entry.sh green and this
+# suite green, and NEITHER proves this writer ever CALLS the validator — a writer that `source`s the
+# helper and never invokes it passes both. The per-writer coverage below is what pins the call site.
+#
+# THREE SEPARATE ASSERTIONS PER CASE (AC2), and the separation is the point: this writer commits via
+# temp file + atomic `mv`, so "byte-unchanged" is ALSO true of a crash, an arg-parse rejection and a
+# `command not found`. Each case asserts (i) the refusal EXIT STATUS, (ii) a NAMED, GREPPABLE reason
+# on stderr, and (iii) the store byte-unchanged — via `cmp` against a saved copy, not a digest
+# (`md5 -q` is BSD-only and this suite runs on Linux CI too).
+# Long-form rationale for the shared fixture design lives in test-lessons.sh's equivalent section.
+# =============================================================================
+echo "== AC1/AC2/AC10a: write-time validation at the write-project-memory call site =="
+VETMP="$(mktemp -d)"
+VEFILE="$HERE/validate-entry.sh"
+VE_ERR="$VETMP/stderr"
+VE_ALLOW=""
+VESTORE=".supervisor/memory/PROJECT_MEMORY.md"
+
+ve_repo() {
+  local r; r="$(mktemp -d "$VETMP/r.XXXXXX")"
+  ( cd "$r" && git init -q && git config user.email t@t && git config user.name t \
+      && echo init > f && git add f && git commit -qm init ) >/dev/null 2>&1
+  printf '%s' "$r"
+}
+
+# ve_write <repo> <fact> <source> [validator-override] [writer-path] -> sets VE_RC, writes VE_ERR.
+# An EMPTY validator-override leaves $WRITE_PROJECT_MEMORY_VALIDATOR empty, which is what makes the
+# writer fall back to its own resolution — the real path, not a test-only one.
+ve_write() {
+  local repo="$1" txt="$2" src="$3" val="${4:-}" prog="${5:-$WRITE}"
+  ( cd "$repo" \
+      && if [ -n "$VE_ALLOW" ]; then export LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$VE_ALLOW"; fi \
+      && WRITE_PROJECT_MEMORY_VALIDATOR="$val" bash "$prog" --fact "$txt" --source "$src" \
+  ) >/dev/null 2>"$VE_ERR"
+  VE_RC=$?
+}
+
+ve_refused() { # <label> <want-rc> <want-token> <store> <saved-copy>
+  local label="$1" wrc="$2" tok="$3" st="$4" b4="$5"
+  if [ "$VE_RC" -eq "$wrc" ]; then ok "$label (i) refused with exit $wrc"
+  else no "$label (i) exit $VE_RC, want $wrc"; fi
+  if grep -q "$tok" "$VE_ERR" 2>/dev/null; then ok "$label (ii) stderr names $tok"
+  else no "$label (ii) stderr does NOT name $tok — got: $(tr '\n' ' ' < "$VE_ERR" | cut -c1-160)"; fi
+  if cmp -s "$st" "$b4"; then ok "$label (iii) store byte-unchanged"
+  else no "$label (iii) the refusal MUTATED the store"; fi
+}
+
+# ve_advised — the SAME three assertions for an ADVISORY check, each inverted exactly where the
+# design inverted it. dead-reference and cross-repo REPORT and never refuse (validate-entry.sh's
+# header records the six measured rounds of false refusals that bought that), so the three facts to
+# assert about one become: the writer exits 0, it PRINTS the finding, and the entry IS written.
+# (iii) is the load-bearing one: "the store changed" is what separates a demoted check from a check
+# that still blocks, and a test asserting only rc 0 would stay green if the warning were deleted.
+ve_advised() { # <label> <want-token> <store> <saved-copy>
+  local label="$1" tok="$2" st="$3" b4="$4"
+  if [ "$VE_RC" -eq 0 ]; then ok "$label (i) exited 0 — an ADVISORY check does not block the write"
+  else no "$label (i) exit $VE_RC, want 0 — an advisory check must not refuse"; fi
+  if grep -q "$tok" "$VE_ERR" 2>/dev/null; then ok "$label (ii) stderr REPORTS $tok"
+  else no "$label (ii) stderr does NOT report $tok — got: $(tr '\n' ' ' < "$VE_ERR" | cut -c1-160)"; fi
+  if cmp -s "$st" "$b4"; then no "$label (iii) the store is UNCHANGED, so the advisory blocked the write after all"
+  else ok "$label (iii) the entry WAS written — the finding is a warning, not a refusal"; fi
+}
+
+# Each seed violates EXACTLY ONE check, because validate_entry_all returns the FIRST non-zero verdict
+# in a fixed order — a seed that tripped an earlier check would assert nothing about the later one.
+# VE_DUP is a REORDERING of VE_BASE, not a repeat: this writer's own idempotent dedup short-circuits
+# an exact repeat at exit 0 before the validator runs (AC18), so a byte-identical seed would test
+# that short-circuit instead of the duplicate check.
+VE_BASE="release candidates promote through staging validation before production rollout begins across every regional cluster"
+VE_DUP="across every regional cluster release candidates promote through staging validation before production rollout begins"
+VE_CON="release candidates never promote through staging validation before production rollout begins across every regional cluster"
+VE_PROV="the shared cache layer warms lazily on its very first read"
+VE_DEAD="the retry helper now lives at loomwright/scripts/no-such-helper-xyz.sh"
+VE_XREPO="the same defect was fixed in OTHERSVC #146"
+VE_CLEAN="observability dashboards refresh their panels whenever a new deployment finishes rolling out"
+VE_SRC="session:ve-0001"
+VE_OURS="vikashruhilgit/loomwright"
+
+# The cross-repo allowlist is supplied through this test's OWN environment; the live
+# .supervisor/config.json is never touched and no foreign slug is ever added to it (R0/R8).
+ve_case() { # <label> <text> <source> <want-token> [allowlist]
+  local label="$1" txt="$2" src="$3" tok="$4" allow="${5:-}"
+  local r st; r="$(ve_repo)"; st="$r/$VESTORE"
+  ve_write "$r" "$VE_BASE" "$VE_SRC"
+  if [ ! -f "$st" ]; then no "$label — SEED FAILED (no PROJECT_MEMORY.md; the fixture asserts nothing)"; return; fi
+  cp "$st" "$VETMP/before"
+  VE_ALLOW="$allow"; ve_write "$r" "$txt" "$src"; VE_ALLOW=""
+  # An ADVISORY_* token routes to ve_advised; everything else is still a refusal. One dispatch
+  # point, so a case cannot be silently asserted against the wrong contract.
+  case "$tok" in
+    ADVISORY_*) ve_advised "AC1 $label:" "$tok" "$st" "$VETMP/before" ;;
+    *)          ve_refused "AC1 $label:" 1 "$tok" "$st" "$VETMP/before" ;;
+  esac
+}
+
+ve_case "duplicate"      "$VE_DUP"   "$VE_SRC"   "REFUSE_DUPLICATE"
+ve_case "contradiction"  "$VE_CON"   "$VE_SRC"   "REFUSE_CONTRADICTION"
+ve_case "provenance"     "$VE_PROV"  "dreaming"  "REFUSE_PROVENANCE"
+ve_case "dead-reference" "$VE_DEAD"  "$VE_SRC"   "ADVISORY_DEAD_REFERENCE"
+ve_case "cross-repo"     "$VE_XREPO" "$VE_SRC"   "ADVISORY_CROSS_REPO" "$VE_OURS"
+
+# AC2 — the degraded-helper shapes, each built from the REAL helper (so they cannot drift from it)
+# and each aimed at a DIFFERENT clause of the three-clause load guard:
+#   absent     -> the `[ -f ] || [ -r ]` pre-check
+#   unparse    -> clause (i): a trailing syntax error makes `source` exit non-zero. Bash still
+#                 defines every function above the error, so this shape has ALL five validators AND
+#                 the sentinel — only the source status distinguishes it.
+#   partial    -> clause (ii): cut above validate_dead_reference, so three validators are defined and
+#                 validate_entry_all is not. This is the shape a one-function `command -v` probe
+#                 would wave through as "examined and clean".
+#   nosentinel -> clause (iii): everything defined and working, only the contract sentinel missing.
+#                 Nothing but clause (iii) can catch it, which is why it is also the vehicle for the
+#                 `|| true` mutation control below.
+cp "$VEFILE" "$VETMP/unparse.sh"; printf '\nif [ ; then\n' >> "$VETMP/unparse.sh"
+awk '/^validate_dead_reference\(\)/{exit} {print}'  "$VEFILE" > "$VETMP/partial.sh"
+awk '/^VALIDATE_ENTRY_CONTRACT="/{exit} {print}'    "$VEFILE" > "$VETMP/nosentinel.sh"
+
+if bash -n "$VETMP/partial.sh" 2>/dev/null && bash -n "$VETMP/nosentinel.sh" 2>/dev/null \
+   && ! bash -n "$VETMP/unparse.sh" 2>/dev/null; then
+  ok "AC2 fixtures: partial+nosentinel parse cleanly, unparse does not (each aimed at its own clause)"
+else
+  no "AC2 fixtures: a degraded-helper variant is not the shape it claims — the clause labels below are unreliable"
+fi
+
+ve_degraded() { # <label> <validator-path>; attempted with a CLEAN entry, so the ONLY reason to
+                # refuse is the broken helper.
+  local label="$1" val="$2" r st; r="$(ve_repo)"; st="$r/$VESTORE"
+  ve_write "$r" "$VE_BASE" "$VE_SRC"
+  if [ ! -f "$st" ]; then no "AC2 $label — SEED FAILED"; return; fi
+  cp "$st" "$VETMP/before"
+  ve_write "$r" "$VE_CLEAN" "$VE_SRC" "$val"
+  ve_refused "AC2 $label:" 2 "REFUSE_VALIDATOR_UNAVAILABLE" "$st" "$VETMP/before"
+}
+ve_degraded "helper absent"        "$VETMP/no-such-validator.sh"
+ve_degraded "helper unparseable"   "$VETMP/unparse.sh"
+ve_degraded "helper truncated"     "$VETMP/partial.sh"
+ve_degraded "helper sentinel-less" "$VETMP/nosentinel.sh"
+
+# MUTATION CONTROLS. Both mutants are COPIES in $VETMP: the writer on disk is never edited, which
+# makes "this writer goes RED while the other four stay green" true by construction rather than by a
+# sibling run — a temp-file copy provably cannot reach the other four writers. Each mutant is gated
+# on being non-empty, actually different, and still parseable before anything is credited to it.
+ve_mutant_ok() { # <file> <desc>
+  if [ ! -s "$1" ];              then no "$2 — mutant is EMPTY (vacuous control)"; return 1; fi
+  if cmp -s "$WRITE" "$1";       then no "$2 — mutation changed NOTHING (vacuous control)"; return 1; fi
+  if ! bash -n "$1" 2>/dev/null; then no "$2 — mutant does not parse (vacuous control)"; return 1; fi
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# (n) THIS WRITER'S OWN CALL-SITE ADVISORY NOTICE — asserted on BOTH the path that writes and the
+# path that does not, plus the mutation control that proves the pair is load-bearing.
+#
+# WHY THIS EXISTS AT ALL. The dead-reference and cross-repo cases above assert only that an
+# `ADVISORY_*` token reaches stderr, and those tokens are printed by the check functions INSIDE
+# validate_entry_all — so deleting this writer's own `validate_entry_advisory_notice` call left
+# every one of them green. Measured before this block was written: the literal `THE WRITE PROCEEDED`
+# appeared nowhere in this suite, so the call site had no test at all. With the two checks demoted
+# to advisory, the REPORTING is the whole feature, and the notice is the half that re-states the
+# finding where a human actually reads it — next to the fact that the write went ahead.
+#
+# HOW THE PAIR IS SHAPED FOR *THIS* WRITER, which is not the shape test-write-agent-memory.sh uses.
+# That writer has a confirm gate, so its (d6a)/(d6b) pair is dry-run-vs-confirmed. This writer has
+# NO dry-run: it emits the notice at its ONE terminal SUCCESS exit, after the commit has actually
+# happened — so there is no not-yet-written path to compare against. So the two no-write halves
+# here are the ones this writer really has —
+# (n1) an ordinary CLEAN write, where the notice must stay silent because nothing was reported, and
+# (n3) the idempotent dedup short-circuit, which returns before the validator runs at all and must
+# never claim a write proceeded. Both are honest properties of the notice, and both are stated in
+# this writer's own control flow rather than borrowed from a sibling's.
+#
+# WHICH HALF HAS TEETH, stated plainly rather than implied: (n1) and (n3) also pass against the
+# mutant — an absent notice is absent on every path — so they pin the notice's SILENCE, not its
+# existence. (n2) is the half that goes RED when the call is removed, and (n4) is what proves it.
+# It is placed after ve_mutant_ok() rather than beside the advisory cases because it needs it.
+# ---------------------------------------------------------------------------
+echo "== the call-site advisory notice fires on the write path, and only there =="
+# (n1) an ordinary CLEAN write draws no finding, so the notice must print NOTHING.
+vnR1="$(ve_repo)"; vnS1="$vnR1/$VESTORE"
+ve_write "$vnR1" "$VE_CLEAN" "$VE_SRC"
+if [ "$VE_RC" -eq 0 ] && [ -f "$vnS1" ]; then
+  ok "(n1) fixture: a clean fact is written (exit 0) — this really is the wrote-and-nothing-to-report path"
+else
+  no "(n1) fixture: the clean write did not land (exit $VE_RC) — the silence below would prove nothing: $(tr '\n' ' ' < "$VE_ERR" | cut -c1-160)"
+fi
+if grep -qF 'THE WRITE PROCEEDED' "$VE_ERR" 2>/dev/null; then
+  no "(n1) an ordinary clean write printed the advisory notice — it must be silent when no check reported anything"
+else
+  ok "(n1) an ordinary clean write is SILENT — the notice prints nothing when there is nothing to report"
+fi
+
+# (n2) a write carrying an ADVISORY finding: the notice MUST fire, in this writer's own name, and
+# its sentence must be true — the fact really is on disk.
+vnR2="$(ve_repo)"; vnS2="$vnR2/$VESTORE"
+ve_write "$vnR2" "$VE_DEAD" "$VE_SRC"
+if [ "$VE_RC" -eq 0 ]; then ok "(n2) the advisory-carrying write exits 0"
+else no "(n2) the advisory-carrying write exited $VE_RC, want 0 — $(tr '\n' ' ' < "$VE_ERR" | cut -c1-160)"; fi
+if grep -qF 'ADVISORY_DEAD_REFERENCE' "$VE_ERR" 2>/dev/null; then
+  ok "(n2) fixture: the check's own ADVISORY token is present, so an advisory really did fire"
+else
+  no "(n2) fixture: no ADVISORY_DEAD_REFERENCE — the notice assertion below would be vacuous: $(tr '\n' ' ' < "$VE_ERR" | cut -c1-160)"
+fi
+if grep -qF 'THE WRITE PROCEEDED' "$VE_ERR" 2>/dev/null; then
+  ok "(n2) the write DOES print the call-site advisory notice — the reporting half of the ADVISORY design is present on a genuine write"
+else
+  no "(n2) the advisory notice is absent from a real write — the reporting half was silently deleted: $(tr '\n' ' ' < "$VE_ERR" | cut -c1-160)"
+fi
+if grep -qE '^write-project-memory: ADVISORY:' "$VE_ERR" 2>/dev/null; then
+  ok "(n2) and it is spoken in write-project-memory's own name, not the helper's"
+else
+  no "(n2) the notice does not name this writer: $(tr '\n' ' ' < "$VE_ERR" | cut -c1-160)"
+fi
+if grep -qF 'no-such-helper-xyz' "$vnS2" 2>/dev/null; then
+  ok "(n2) and the fact really was stored — the notice's claim is true on this path"
+else
+  no "(n2) the notice claimed the write proceeded but no fact landed in $VESTORE"
+fi
+
+# (n3) the SAME entry again: this writer's idempotent dedup short-circuit returns BEFORE the
+# validator runs, so nothing is written — and a notice ending "THE WRITE PROCEEDED" would be a lie.
+cp "$vnS2" "$VETMP/before-n3"
+ve_write "$vnR2" "$VE_DEAD" "$VE_SRC"
+if [ "$VE_RC" -eq 0 ] && cmp -s "$vnS2" "$VETMP/before-n3"; then
+  ok "(n3) fixture: the repeat is the dedup short-circuit (exit 0, store byte-identical) — this really is the wrote-nothing path"
+else
+  no "(n3) fixture: the repeat was not a silent no-op (exit $VE_RC, store changed) — the assertion below is about a different path"
+fi
+if grep -qF 'THE WRITE PROCEEDED' "$VE_ERR" 2>/dev/null; then
+  no "(n3) a call that wrote NOTHING still claimed 'THE WRITE PROCEEDED'"
+else
+  ok "(n3) the no-op repeat does NOT claim 'THE WRITE PROCEEDED' — the notice never speaks for a write that did not happen"
+fi
+
+# (n4) MUTATION CONTROL: strip the call-site notice from a COPY and (n2) must go RED. `:` replaces
+# the call rather than deleting the line, so that no enclosing block is left with an empty body — a
+# bash syntax error would make the control prove a parse failure instead of a missing notice. The literal is the full call INCLUDING its argument, so the mutation cannot also hit the
+# VALIDATOR_REQUIRED_FUNCS list — which names the same function and must survive, or the load guard
+# would refuse and the mutant would fail for the wrong reason.
+echo "== MUTATION CONTROL: with the call-site notice removed, (n2) goes RED =="
+VN_CALL='validate_entry_advisory_notice "write-project-memory"'
+vn_orig="$(grep -cF -- "$VN_CALL" "$WRITE" 2>/dev/null || true)"; [ -n "$vn_orig" ] || vn_orig=0
+sed -e "s/$VN_CALL/:/" "$WRITE" > "$VETMP/mut-notice.sh"
+vn_mut="$(grep -cF -- "$VN_CALL" "$VETMP/mut-notice.sh" 2>/dev/null || true)"; [ -n "$vn_mut" ] || vn_mut=0
+vn_funcs="$(grep -c 'VALIDATOR_REQUIRED_FUNCS=' "$VETMP/mut-notice.sh" 2>/dev/null || true)"; [ -n "$vn_funcs" ] || vn_funcs=0
+if [ "$vn_orig" -ge 1 ] && [ "$vn_mut" -eq 0 ] && [ "$vn_funcs" -ge 1 ]; then
+  ok "(n4) the mutation is NON-VACUOUS: $vn_orig call site(s) in the writer, 0 in the mutant, and the required-funcs list survived"
+else
+  no "(n4) the mutation did not take as intended (call sites $vn_orig → $vn_mut, funcs list $vn_funcs) — the control below would prove nothing"
+fi
+if ve_mutant_ok "$VETMP/mut-notice.sh" "(n4) notice mutant"; then
+  vnR4="$(ve_repo)"; vnS4="$vnR4/$VESTORE"
+  ve_write "$vnR4" "$VE_DEAD" "$VE_SRC" "$VEFILE" "$VETMP/mut-notice.sh"
+  if [ "$VE_RC" -eq 0 ] && grep -qF 'no-such-helper-xyz' "$vnS4" 2>/dev/null; then
+    ok "(n4) the mutant still WRITES the entry — the only behavioural difference under test is the notice"
+  else
+    no "(n4) the mutant failed to write (exit $VE_RC) — the comparison would not be like-for-like: $(tr '\n' ' ' < "$VE_ERR" | cut -c1-160)"
+  fi
+  if grep -qF 'ADVISORY_DEAD_REFERENCE' "$VE_ERR" 2>/dev/null; then
+    ok "(n4) and the check's OWN token is still printed by the mutant — which is exactly why the advisory cases above could not detect this deletion"
+  else
+    no "(n4) the mutant lost the check's own token too, so it is not the isolated mutation intended"
+  fi
+  if grep -qF 'THE WRITE PROCEEDED' "$VE_ERR" 2>/dev/null; then
+    no "(n4) REFUTED: the notice appeared with its call site removed — (n2) is passing for some other reason and is vacuous"
+  else
+    ok "(n4) CONFIRMED: without the call site the notice VANISHES from a real write — (n2) goes RED without it and is load-bearing"
+  fi
+fi
+rm -f "$VETMP/mut-notice.sh"   # a mutated writer must never outlive its own control
+
+# (a) AC1's mandated per-writer control: script the VALIDATOR CALL block out. REPLACED with `:`
+# rather than deleted because it sits inside an `if ... fi` whose body must not become empty.
+awk '/---- VALIDATOR CALL BEGIN/{s=1; print "  :"; next} /---- VALIDATOR CALL END/{s=0; next} !s' \
+  "$WRITE" > "$VETMP/mut-call.sh"
+if ve_mutant_ok "$VETMP/mut-call.sh" "AC1 call-site mutant"; then
+  r="$(ve_repo)"; st="$r/$VESTORE"
+  ve_write "$r" "$VE_BASE" "$VE_SRC"
+  cp "$st" "$VETMP/before"
+  ve_write "$r" "$VE_CON" "$VE_SRC" "$VEFILE" "$VETMP/mut-call.sh"
+  if [ "$VE_RC" -eq 0 ] && ! cmp -s "$st" "$VETMP/before"; then
+    ok "AC1 mutation control: deleting the VALIDATOR CALL lets the contradiction seed through (exit 0, store grew) — the fixtures above are RED because of the call site, not the source line"
+  else
+    no "AC1 mutation control: the call-site mutant STILL refused (exit $VE_RC) — the AC1 fixtures may be passing for some other reason"
+  fi
+fi
+
+# (b) AC2's mandated control: replace the whole load guard with the repo's pervasive `|| true`
+# convention — the one line decision (a) forbids on the source. Paired with the sentinel-less helper
+# because that is the shape where the mutation is OBSERVABLE: with an absent or truncated helper the
+# writer still fails closed by accident (validate_entry_all is undefined, the call returns 127, the
+# writer exits 2 with no named reason), but with a sentinel-less helper every validator works, so
+# dropping the guard lets an UNVERIFIED-CONTRACT write go all the way through. All three AC2
+# assertions go RED at once: exit 0, no named reason, store MUTATED.
+awk '/---- LOAD GUARD BEGIN/{s=1; print "  . \"$VALIDATOR\" || true"; next} /---- LOAD GUARD END/{s=0; next} !s' \
+  "$WRITE" > "$VETMP/mut-guard.sh"
+if ve_mutant_ok "$VETMP/mut-guard.sh" "AC2 load-guard mutant"; then
+  if grep -q '|| true' "$VETMP/mut-guard.sh"; then
+    r="$(ve_repo)"; st="$r/$VESTORE"
+    ve_write "$r" "$VE_BASE" "$VE_SRC"
+    cp "$st" "$VETMP/before"
+    ve_write "$r" "$VE_CLEAN" "$VE_SRC" "$VETMP/nosentinel.sh" "$VETMP/mut-guard.sh"
+    if [ "$VE_RC" -eq 0 ] && ! grep -q REFUSE_VALIDATOR_UNAVAILABLE "$VE_ERR" 2>/dev/null \
+       && ! cmp -s "$st" "$VETMP/before"; then
+      ok "AC2 mutation control: replacing the load guard with '|| true' turns all three assertions RED (exit 0, no named reason, store mutated)"
+    else
+      no "AC2 mutation control: the '|| true' mutant did not go RED (exit $VE_RC) — AC2 may be passing for some other reason"
+    fi
+  else
+    no "AC2 mutation control: the '|| true' replacement did not land in the mutant"
+  fi
+fi
+
+# AC10a — RE-VERIFICATION, with one assertion section 1 does not make. Section 1 proves a worktree
+# CWD is refused with exit 3; this proves the worktree guard still runs BEFORE the validator load
+# guard, i.e. wiring the validator in did not reorder them. With a deliberately absent validator the
+# refusal must STILL be the worktree's exit 3, never the load guard's exit 2 — otherwise the F1
+# refusal would be masked by AC2's.
+VEWT="$(ve_repo)"
+git -C "$VEWT" worktree add -q "$VEWT-wt" -b vewt >/dev/null 2>&1
+if [ -d "$VEWT-wt" ]; then
+  ve_write "$VEWT-wt" "$VE_CLEAN" "$VE_SRC" "$VETMP/no-such-validator.sh"
+  if [ "$VE_RC" -eq 3 ] && grep -q worktree "$VE_ERR" 2>/dev/null; then
+    ok "AC10a: a worktree CWD still refuses with exit 3, ahead of the validator load guard (absent helper does not mask it)"
+  else
+    no "AC10a: worktree refusal is exit $VE_RC (want 3) — the validator guard now precedes the worktree guard"
+  fi
+  [ -e "$VEWT-wt/$VESTORE" ] && no "AC10a: memory leaked into the worktree" \
+    || ok "AC10a: nothing written under the worktree"
+  git -C "$VEWT" worktree remove --force "$VEWT-wt" >/dev/null 2>&1
+else
+  no "AC10a: could not create the fixture worktree — the assertion would be vacuous"
+fi
+rm -rf "$VETMP" "$VEWT-wt" 2>/dev/null
 
 echo
 echo "RESULT: $pass passed, $fail failed"

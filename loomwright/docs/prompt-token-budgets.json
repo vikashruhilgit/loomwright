@@ -5,9 +5,9 @@
   "raise_rule": "To raise a budget, edit its .agents[<stem>].budget here in the SAME PR that breaches it and add a one-line justification to that agent's `note`, AND update the mirrored row in ARCHITECTURE_CONTRACTS.md §'Prompt Token Budgets' in the same edit (machine-enforced: the gate asserts each table budget cell equals this JSON; drifted/missing/ghost rows fail CI closed). The gate reads this JSON, so every raise is visible in the PR diff and reviewable. Budgets are a ratchet against unmeasured growth, not a hard diet — shrinking prompts is separate follow-up work. Initial budgets = measured proxy value at authoring time (v15.10.0) + ~10% headroom, so no agent fails at introduction.",
   "agents": {
     "code-reviewer": {
-      "budget": 24330,
-      "measured": 22118,
-      "note": "authoring baseline v15.10.0 (measured 22118 + ~10%); 5 preloaded skills"
+      "budget": 25131,
+      "measured": 22846,
+      "note": "re-measured v15.33.0 (measured 22846 + ~10%); 5 preloaded skills — grew when the shared `### Agent memory write permission` block landed in all six memory: project prompts. This row was previously the v15.10.0 authoring baseline (22118 / budget 24330); it is now a LIVE re-measure row, taken the same way and in the same PR as red-team-reviewer, because leaving five of the six grown prompts on a pre-block figure made the column read as a baseline it no longer was."
     },
     "context-keeper": {
       "budget": 3818,
@@ -20,9 +20,9 @@
       "note": "authoring baseline v15.10.0; 3 preloaded skills. Raised 25941 -> 28550 (v15.15.0): the Single-Agent Path carve-out grew the preloaded async-orchestration/SKILL.md, leaving only 22 proxy tokens of headroom; restored to measured + ~10% per the initial-budget convention. Re-measured for the one-writer-derived-state change (v15.16.0 in progress): deleting queue_ck_update/flush_ck_batch/record_batch (Subtask 2) removed prose, but the SAME commit bundled a bug fix (record_review now recorded on the FAIL==3 and NEEDS_HUMAN terminal branches, previously unrecorded) that added more than the deletion removed — measured moved 25934 -> 26357 (delta +423, an INCREASE; pre/post at git 36c39de/e644d9f). Budget left UNCHANGED at 28550 (2193 headroom, no breach) AT THAT TIME; deliberately NOT lowered, contrary to the source brief's Subtask 3 framing — the measured data does not support a decrease here. Raised 28550 -> 31400 (D6, v15.20.0): the new §\"Context digest pointer\" in the preloaded async-orchestration/SKILL.md plus this agent's own Context-digest Input, the `lanes:` worker-prompt paste, and the lane-collision gate in the poll loop left 0 proxy tokens of headroom (measured landed exactly at budget), so any further byte in the agent or any of its 3 preloaded skills would have breached CI; raised in the same PR that grew them, per the raise_rule. **Re-measured again at the END of the same PR (bot-review round 3):** the lane-collision gate gained its `adjudication_kind` / `colliding_lanes[]` evidence fields and the plural matching-siblings loop, moving measured 28550 -> 29197. The `measured` FIELD had been left at the v15.16.0 value 26357 while the note prose asserted 28550 and the live gate computed 29197 — three different numbers for one row. This row is a LIVE re-measure row (ARCHITECTURE_CONTRACTS.md footnote 1), not a frozen-baseline row, so the field is now set to the live end-of-PR figure 29197. Budget stays 31400 (2203 headroom, no breach); NOT re-raised to chase in-PR drift, per the same anti-treadmill rule applied to `supervisor` in v15.19.0. Mirrored in ARCHITECTURE_CONTRACTS.md's Raise log, which also records that the pre-raise state was NOT breaching — the gate takes floor(bytes/4) PER FILE then sums (28550); summing bytes first and dividing gives 28551 and falsely reads as a 1-token breach."
     },
     "launch-pad": {
-      "budget": 38673,
-      "measured": 31343,
-      "note": "authoring baseline v15.10.0; 7 preloaded skills (name: loomwright:launch-pad-runner). Raised 34478 -> 38673 (D6, v15.20.0): Phase 5 PACKAGE gained the unconditional 'Context digest emission' step (docs/RESULT_SCHEMAS.md CONTEXT_DIGEST + the Lane Declaration Schema's lanes: authoring rule cross-reference); current re-measure 35157 + ~10% per the initial-budget convention. Per the frozen-metadata convention, the `measured` field/column here stays the v15.10.0 authoring baseline (31343) — the live re-measure figure (35157) lives in this note and in ARCHITECTURE_CONTRACTS.md's Raise log paragraph, not in this field."
+      "budget": 40254,
+      "measured": 36594,
+      "note": "7 preloaded skills (name: loomwright:launch-pad-runner). Raised 34478 -> 38673 (D6, v15.20.0): Phase 5 PACKAGE gained the unconditional 'Context digest emission' step (docs/RESULT_SCHEMAS.md CONTEXT_DIGEST + the Lane Declaration Schema's lanes: authoring rule cross-reference); current re-measure at that time 35157 + ~10% per the initial-budget convention. Raised again 38673 -> 40254 (re-measured v15.33.0): the shared `### Agent memory write permission` block landed in all six memory: project prompts, moving measured to 36594; taken the same way and in the same PR as red-team-reviewer. THIS ROW IS NOW A LIVE RE-MEASURE ROW — the `measured` field/column carried the v15.10.0 authoring baseline (31343) under the frozen-metadata convention until this change; it now carries the live figure, because five of the six grown prompts sitting on pre-block numbers made the column read as a baseline it no longer was."
     },
     "orchestrator": {
       "budget": 9558,
@@ -35,24 +35,24 @@
       "note": "authoring baseline v15.10.0; 0 preloaded skills. Raised 7032 -> 7750 (v15.15.0): the inverted Criterion 4 plus its split-reason predicate cross-check left only 42 proxy tokens; restored to measured + ~10% per the initial-budget convention (current re-measure at that time was 6990, per ARCHITECTURE_CONTRACTS.md's Raise log). Raised again 7750 -> 9180 (D6, v15.20.0): NEW Criterion 16 (Lane Declaration Validation) plus its criteria-count updates across the file (16 total, Decision Matrix, Output Format category enum, Quality Checklist); current re-measure 8345 + ~10% per the initial-budget convention. Per the frozen-metadata convention this row has held since v15.10.0, the `measured` field/column stays the authoring baseline (6392) — live re-measure figures live in this note and in ARCHITECTURE_CONTRACTS.md's Raise log paragraph, not in this field."
     },
     "product-owner": {
-      "budget": 13807,
-      "measured": 12551,
-      "note": "authoring baseline v15.10.0; 3 preloaded skills"
+      "budget": 14405,
+      "measured": 13095,
+      "note": "re-measured v15.33.0 (measured 13095 + ~10%); 3 preloaded skills — grew when the shared `### Agent memory write permission` block landed in all six memory: project prompts. Previously the v15.10.0 authoring baseline (12551 / budget 13807); now a LIVE re-measure row, taken the same way and in the same PR as red-team-reviewer."
     },
     "qa-executor": {
-      "budget": 47559,
-      "measured": 43235,
-      "note": "authoring baseline v15.10.0; 5 preloaded skills"
+      "budget": 48165,
+      "measured": 43786,
+      "note": "re-measured v15.33.0 (measured 43786 + ~10%); 5 preloaded skills — grew when the shared `### Agent memory write permission` block landed in all six memory: project prompts. Previously the v15.10.0 authoring baseline (43235 / budget 47559); now a LIVE re-measure row, taken the same way and in the same PR as red-team-reviewer."
     },
     "qa-strategist": {
-      "budget": 22877,
-      "measured": 20797,
-      "note": "authoring baseline v15.10.0; 3 preloaded skills"
+      "budget": 23488,
+      "measured": 21352,
+      "note": "re-measured v15.33.0 (measured 21352 + ~10%); 3 preloaded skills — grew when the shared `### Agent memory write permission` block landed in all six memory: project prompts. Previously the v15.10.0 authoring baseline (20797 / budget 22877); now a LIVE re-measure row, taken the same way and in the same PR as red-team-reviewer."
     },
     "red-team-reviewer": {
-      "budget": 6065,
-      "measured": 5513,
-      "note": "authoring baseline v15.10.0; 1 preloaded skill"
+      "budget": 6666,
+      "measured": 6060,
+      "note": "re-measured v15.33.0 (measured 6060 + ~10%); 1 preloaded skill — grew when the shared `### Agent memory write permission` block landed in all six memory: project prompts"
     },
     "review-pr": {
       "budget": 31453,

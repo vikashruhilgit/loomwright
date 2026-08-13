@@ -117,6 +117,9 @@ out="$( cd "$TMP" && bash "$GRAPH" )"
 if printf '%s\n' "$out" | grep -qE '^EDGE: subA -> subB$' && printf '%s\n' "$out" | grep -qx 'DONE'; then ok "no-arg mode lists EDGE lines and ends with DONE sentinel"; else no "no-arg listing wrong (got: $out)"; fi
 
 echo "== 9. path/slash-based subsystem id round-trip =="
+# The contract body cites a real path; the dead-reference check resolves cited paths against
+# the repo root, so the fixture repo must actually contain it (a correct refusal otherwise).
+mkdir -p "$TMP/scripts" && : > "$TMP/scripts/foo.sh"
 # The canonical id form per RESULT_SCHEMAS.md is a logical name or path, e.g. "scripts/foo.sh".
 # The on-disk filename is sanitized (scripts-foo.sh) but the body preserves the slash form, which is
 # what the graph keys off — so querying with the slash id must return its edges.

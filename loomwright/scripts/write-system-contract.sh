@@ -27,6 +27,84 @@
 
 set -uo pipefail
 
+# ---------------------------------------------------------------------------
+# WRITE-TIME VALIDATION — LOAD GUARD (decision (a) of the write-time-validation brief).
+# See validate-entry.sh's LOAD GUARD CONTRACT. Three clauses, ALL required:
+#   (i)   `. validate-entry.sh` must exit 0. `|| true` is FORBIDDEN on that line — discarding the
+#         status IS the silent unvalidated append this design does not sanction. The status is
+#         CAPTURED instead, and the caller's own errexit state is saved and restored around the
+#         source so this block cannot change the shell options the rest of the script runs under.
+#   (ii)  all five validator functions must be present. Bash defines every function ABOVE a syntax
+#         error before aborting the parse, so a truncated helper leaves SOME validators defined —
+#         a one-function probe would report "examined and clean" over half a validator.
+#   (iii) $VALIDATE_ENTRY_CONTRACT must equal the HARDCODED literal below. Comparing against a
+#         variable the helper exports (VALIDATE_ENTRY_CONTRACT_EXPECTED), or iterating the list it
+#         exports ($VALIDATE_ENTRY_FUNCTIONS), would be CIRCULAR: both are assigned ABOVE the
+#         sentinel, so a truncated copy could define them and pass its own test.
+# Any shortfall is REFUSE_VALIDATOR_UNAVAILABLE, exit 2 (could-not-examine), nothing written.
+# ---------------------------------------------------------------------------
+REFUSE_VALIDATOR_UNAVAILABLE="REFUSE_VALIDATOR_UNAVAILABLE"
+VALIDATE_ENTRY_CONTRACT_REQUIRED="validate-entry/2"
+VALIDATOR_REQUIRED_FUNCS="validate_duplicate validate_contradiction validate_provenance validate_dead_reference validate_cross_repo_reference validate_entry_advisory_notice"
+
+# Resolved BEFORE any `cd`: $0 may be relative, and three of these writers cd to the repo root.
+VE_HERE="$(cd "$(dirname "$0")" 2>/dev/null && pwd || printf '%s' ".")"
+
+# _ve_load_validator — runs the three-clause guard. Called on the write path, never at parse time.
+_ve_load_validator() {
+  VALIDATOR="${WRITE_SYSTEM_CONTRACT_VALIDATOR:-}"
+  if [ -z "$VALIDATOR" ]; then
+    if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "${CLAUDE_PLUGIN_ROOT}/scripts/validate-entry.sh" ]; then
+      VALIDATOR="${CLAUDE_PLUGIN_ROOT}/scripts/validate-entry.sh"
+    else
+      VALIDATOR="$VE_HERE/validate-entry.sh"
+    fi
+  fi
+
+  # ---- LOAD GUARD BEGIN -----------------------------------------------------
+  # BEGIN/END delimit the guard as ONE replaceable unit so this suite's mandated mutation control
+  # can replace it with `|| true` in a single edit and prove AC2 goes RED. Structural, not decor.
+  if [ ! -f "$VALIDATOR" ] || [ ! -r "$VALIDATOR" ]; then
+    printf '%s: %s — the shared write-time validator is missing or unreadable at "%s", so this entry could not be examined; refusing rather than appending it unvalidated. Nothing was written.
+'       "write-system-contract" "$REFUSE_VALIDATOR_UNAVAILABLE" "$VALIDATOR" >&2
+    exit 2
+  fi
+
+  # Clause (i). errexit is saved/restored rather than assumed: these five writers do not all run
+  # under `set -e` (write-system-contract.sh is `set -uo pipefail`), so an unconditional `set -e`
+  # here would silently change the failure semantics of everything downstream.
+  case "$-" in *e*) _ve_had_e=1 ;; *) _ve_had_e=0 ;; esac
+  set +e
+  # shellcheck source=/dev/null
+  . "$VALIDATOR"
+  _ve_src_rc=$?
+  if [ "$_ve_had_e" -eq 1 ]; then set -e; fi
+  if [ "$_ve_src_rc" -ne 0 ]; then
+    printf '%s: %s — sourcing the shared write-time validator "%s" failed (status %s: unparseable or truncated), so this entry could not be examined. Nothing was written.
+'       "write-system-contract" "$REFUSE_VALIDATOR_UNAVAILABLE" "$VALIDATOR" "$_ve_src_rc" >&2
+    exit 2
+  fi
+
+  # Clause (ii). All five are probed, plus the aggregate the call site actually uses — never one
+  # name as a proxy for the rest.
+  for _vef in $VALIDATOR_REQUIRED_FUNCS validate_entry_all; do
+    if ! command -v "$_vef" >/dev/null 2>&1; then
+      printf '%s: %s — the shared write-time validator loaded but "%s" is not defined (a partially-loaded validator would report "examined and clean" over half a check), so this entry could not be examined. Nothing was written.
+'         "write-system-contract" "$REFUSE_VALIDATOR_UNAVAILABLE" "$_vef" >&2
+      exit 2
+    fi
+  done
+
+  # Clause (iii). Compared against the HARDCODED literal — see the circularity note above.
+  if [ "${VALIDATE_ENTRY_CONTRACT:-}" != "$VALIDATE_ENTRY_CONTRACT_REQUIRED" ]; then
+    printf '%s: %s — the shared write-time validator contract sentinel is "%s", not the expected "%s" (the file is truncated, or its contract changed), so this entry could not be examined. Nothing was written.
+'       "write-system-contract" "$REFUSE_VALIDATOR_UNAVAILABLE" "${VALIDATE_ENTRY_CONTRACT:-<unset>}" "$VALIDATE_ENTRY_CONTRACT_REQUIRED" >&2
+    exit 2
+  fi
+  # ---- LOAD GUARD END -------------------------------------------------------
+}
+
+
 SUBSYSTEM=""; CONTRACT_FILE=""; SOURCE="unknown"
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -61,7 +139,8 @@ GITROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 [ -n "$GITROOT" ] || { echo "write-system-contract: not inside a git repo — refusing" >&2; exit 2; }
 # A linked worktree's top-level has a `.git` FILE ("gitdir: ..."); the main checkout has a dir.
 if [ -f "$GITROOT/.git" ]; then
-  echo "write-system-contract: refusing to write from a git worktree ($GITROOT) — the twin store is written only from the pinned repo root (sole-writer/pinned-CWD contract)." >&2
+  # `.git` as a FILE = a linked WORKTREE or a git SUBMODULE top-level; both refused, both named.
+  echo "write-system-contract: refusing to write from a non-primary checkout ($GITROOT) — its top-level '.git' is a FILE, which means either a linked git worktree or a git submodule. The twin store is written only from the pinned primary repo root (sole-writer/pinned-CWD contract)." >&2
   exit 3
 fi
 cd "$GITROOT" || { echo "write-system-contract: cannot cd to repo root" >&2; exit 2; }
@@ -93,13 +172,44 @@ CONTRACT="$CONTRACT_DIR/$SAFE_ID.md"
 mkdir -p "$CONTRACT_DIR" 2>/dev/null || { echo "write-system-contract: cannot create $CONTRACT_DIR" >&2; exit 2; }
 [ -f "$PROV" ] || : > "$PROV"
 
+# ---------------------------------------------------------------------------
+# THE VALIDATOR CALL SITE (see write-lessons.sh's for the shared rationale).
+#
+# WHAT --store POINTS AT, and why it is no longer the contract file this write targets. It used to
+# be `--store "$CONTRACT"`, and that is the same defect write-agent-memory.sh fixed: a contract
+# artifact is a DOCUMENT, so the validator was handed one document split into lines while --entry
+# was a whole document. Both comparison checks score shared/max(|entry|,|line|), so every line's
+# ceiling sat far under the 90/60 thresholds and the checks could only ever return "examined and
+# clean". MEASURED on a live artifact: a contract compared against ITSELF scores 17%. The
+# byte-identical repost that looked caught was caught by the content_hash short-circuit above, not
+# by the validator — a green result there was never evidence the validator worked.
+#
+# So --store is the CONTRACTS CORPUS: one flattened line per stored contract, one per subsystem,
+# with THIS subsystem's own contract excluded (an update re-posts most of its own text — the same
+# self-exclusion, for the same reason, as build_compare_corpus() in write-agent-memory.sh).
+#
+# A CORPUS IS THE RIGHT CALL FOR THIS STORE, and it was checked rather than assumed. The worry is
+# that per-subsystem artifacts might legitimately resemble each other, so a corpus would refuse
+# honest writes. MEASURED over all 21 live contracts, pairwise: the highest same-polarity overlap is
+# 56% (commands/setup.md vs skills/setup/SKILL.md — genuinely the same subsystem documented twice),
+# well under the 90% duplicate threshold, and the highest OPPOSITE-polarity overlap is 0%, so the
+# 60% contradiction threshold is unreachable across subsystems. There is real margin here, but it is
+# a measurement of today's store, not a proof: if a future subsystem's contract is a near-copy of a
+# sibling's, this writer will refuse it and name the sibling, and that refusal is the honest outcome
+# to reconsider — NOT something to fix by handing --store a file that cannot discriminate.
+# ---------------------------------------------------------------------------
+_ve_load_validator
+
 ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
 
 # Temps live IN the twin dir (not $TMPDIR) so the commit `mv` is a same-filesystem, truly-atomic
 # rename — a tmpfs /tmp (Linux/CI) would otherwise make `mv` a non-atomic cross-device copy+unlink,
 # risking a truncated .provenance.jsonl on interruption.
 c_tmp="$(mktemp "$CONTRACT_DIR/.ctmp.XXXXXX")"; prov_tmp="$(mktemp "$TWIN_DIR/.ptmp.XXXXXX")"
-trap 'rm -f "$c_tmp" "$prov_tmp" 2>/dev/null' EXIT
+# The comparison corpus is staged in $TWIN_DIR, never in $CONTRACT_DIR: a file there would be
+# counted by the eviction cap's `find ... -name '*.md'` and offered to `ls -1tr` as a victim.
+corpus_tmp=""
+trap 'rm -f "$c_tmp" "$prov_tmp" "$corpus_tmp" 2>/dev/null' EXIT
 
 # Materialize the exact bytes that will land on disk, THEN hash them. Hashing the file (not the
 # in-memory $BODY) keeps the writer's content_hash byte-identical to what the reader recomputes
@@ -116,6 +226,84 @@ if [ -f "$CONTRACT" ]; then
     exit 0
   fi
 fi
+
+# ---------------------------------------------------------------------------
+# AC18 — ORDERING. This call sits AFTER the writer's own idempotent dedup short-circuit, and that
+# order is the whole point. The dedup guard above is a BENIGN NO-OP: re-writing an entry that is
+# already stored is idempotence, not an error, and it has always exited 0. Running the validator
+# first turned that into a hard REFUSE_DUPLICATE exit 1, so every idempotent caller (a re-run, a
+# retry, a replayed queue item) started failing. The validator examines entries about to be
+# WRITTEN; an entry that will not be written has nothing to validate. Moving this block back above
+# the dedup guard reintroduces the regression — pinned by test.
+# contract_compare_line <file> — a stored contract as ONE comparable line (the whole artifact
+# flattened). Mirrors entry_compare_line() in write-agent-memory.sh; contracts carry no frontmatter,
+# so there is nothing to select — only the flattening, and the leading `#`/`>`/`-` strip that keeps
+# a body starting with a markdown heading from contributing NO line at all (the validator's store
+# reader skips heading lines, so a corpus line must not start with one).
+contract_compare_line() {
+  awk '
+    { b = b " " $0 }
+    END {
+      gsub(/[\r\t]/, " ", b); gsub(/  +/, " ", b)
+      sub(/^[ ]+/, "", b); sub(/[ ]+$/, "", b); sub(/^[#>-]+[ ]*/, "", b)
+      if (b ~ /[^ ]/) print b
+    }
+  ' "$1"
+}
+
+# build_compare_corpus <contracts-dir> <out-file> <self-path> — one line per stored contract, with
+# this subsystem's own contract excluded. Return codes are write-agent-memory.sh's could-not-examine
+# discipline: 0 usable (possibly empty) · 2 could not stage · 3 dir unlistable · 4 a contract exists
+# but cannot be read (a hole in the corpus is never reported as clean).
+build_compare_corpus() {
+  local dir="$1" out="$2" self="${3:-}" f
+  : > "$out" || return 2
+  [ -d "$dir" ] || return 0
+  [ -r "$dir" ] && [ -x "$dir" ] || return 3
+  for f in "$dir"/*.md; do
+    [ -f "$f" ] || continue                     # unmatched glob stays literal under bash 3.2
+    [ -n "$self" ] && [ "$f" = "$self" ] && continue
+    [ -r "$f" ] || { CORPUS_BAD_PATH="$f"; return 4; }
+    contract_compare_line "$f" >> "$out" || return 2
+  done
+  return 0
+}
+
+corpus_tmp="$(mktemp "$TWIN_DIR/.corpus.XXXXXX")" || {
+  echo "write-system-contract: refusing to write — the comparison corpus could not be staged in $TWIN_DIR, so this contract could not be compared against the store; refusing rather than reporting it clean. Nothing was written." >&2; exit 2; }
+CORPUS_BAD_PATH=""
+build_compare_corpus "$CONTRACT_DIR" "$corpus_tmp" "$CONTRACT"
+corpus_rc=$?
+case "$corpus_rc" in
+  0) : ;;
+  3) echo "write-system-contract: refusing to write — the contracts dir '$CONTRACT_DIR' exists but could not be listed, so the contracts this write would be compared against could not be examined; refusing rather than reporting it clean. Nothing was written." >&2; exit 2 ;;
+  4) echo "write-system-contract: refusing to write — the stored contract '$CORPUS_BAD_PATH' exists but could not be read, so it could not be compared against — a hole in the corpus would make a duplicate or contradiction verdict of 'clean' meaningless. Nothing was written." >&2; exit 2 ;;
+  *) echo "write-system-contract: refusing to write — the comparison corpus derived from '$CONTRACT_DIR' could not be staged (status $corpus_rc). Nothing was written." >&2; exit 2 ;;
+esac
+
+# ---- VALIDATOR CALL BEGIN ---------------------------------------------------
+case "$-" in *e*) _ve_had_e=1 ;; *) _ve_had_e=0 ;; esac
+set +e
+validate_entry_all --entry "$BODY" --store "$corpus_tmp" \
+  --source "$SOURCE" --root "$GITROOT"
+_ve_rc=$?
+if [ "$_ve_had_e" -eq 1 ]; then set -e; fi
+# rc 0 IS NOT NECESSARILY SILENT. Two of the five checks (dead-reference, cross-repo) are ADVISORY:
+# they report on stderr and never refuse, so a clean exit can still carry findings. A notice at the
+# SUCCESS LINE repeats them in this writer's own voice, next to the fact that the write went ahead —
+# a warning printed only inside the helper scrolls past, and an advisory nobody reads is worse than
+# no check. It prints nothing when there is nothing to report.
+# THE NOTICE IS NOT EMITTED HERE — see the note at the emission site below.
+case "$_ve_rc" in
+  0) : ;;
+  1) echo "write-system-contract: refusing to write — the contract was examined and violates a write-time check (see the reason above). Nothing was written." >&2
+     # A duplicate/contradiction reason quotes the store it compared against, and that is a temp
+     # corpus path. Naming the real dir keeps the message actionable.
+     echo "write-system-contract: (the store quoted above is the contracts corpus derived from $CONTRACT_DIR — one line per stored contract, this subsystem's own excluded.)" >&2
+     exit 1 ;;
+  *) echo "write-system-contract: refusing to write — the contract COULD NOT BE EXAMINED (see the reason above); refusing rather than reporting it clean. Nothing was written." >&2; exit 2 ;;
+esac
+# ---- VALIDATOR CALL END -----------------------------------------------------
 
 last_line="$(tail -n1 "$PROV" 2>/dev/null || true)"
 if [ -n "$last_line" ]; then prev_hash="$(printf '%s' "$last_line" | sha)"; else prev_hash="$GENESIS"; fi
@@ -165,5 +353,12 @@ while [ "${count:-0}" -gt "$MAX_CONTRACTS" ]; do
   count="$(find "$CONTRACT_DIR" -maxdepth 1 -type f -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
 done
 
+# THE ADVISORY NOTICE — emitted HERE, past the last reachable refusal and past the atomic commit,
+# immediately before the success line. Its sentence ends "...and THE WRITE PROCEEDED", and the
+# validator call site above is only on the write PATH: the atomic-rename failure still exits 2
+# AFTER it, so emitting there printed "THE WRITE PROCEEDED" and then wrote nothing. This is the
+# writer's ONLY success exit, so no genuine write can lose its warning; it is a no-op when nothing
+# was reported, so it stays silent rather than wrong.
+validate_entry_advisory_notice "write-system-contract"
 echo "write-system-contract: stored contract for '$SUBSYSTEM' ($CONTRACT, hash $content_hash, source=$SOURCE)"
 exit 0

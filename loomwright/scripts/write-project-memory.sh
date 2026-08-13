@@ -50,6 +50,84 @@
 
 set -uo pipefail
 
+# ---------------------------------------------------------------------------
+# WRITE-TIME VALIDATION — LOAD GUARD (decision (a) of the write-time-validation brief).
+# See validate-entry.sh's LOAD GUARD CONTRACT. Three clauses, ALL required:
+#   (i)   `. validate-entry.sh` must exit 0. `|| true` is FORBIDDEN on that line — discarding the
+#         status IS the silent unvalidated append this design does not sanction. The status is
+#         CAPTURED instead, and the caller's own errexit state is saved and restored around the
+#         source so this block cannot change the shell options the rest of the script runs under.
+#   (ii)  all five validator functions must be present. Bash defines every function ABOVE a syntax
+#         error before aborting the parse, so a truncated helper leaves SOME validators defined —
+#         a one-function probe would report "examined and clean" over half a validator.
+#   (iii) $VALIDATE_ENTRY_CONTRACT must equal the HARDCODED literal below. Comparing against a
+#         variable the helper exports (VALIDATE_ENTRY_CONTRACT_EXPECTED), or iterating the list it
+#         exports ($VALIDATE_ENTRY_FUNCTIONS), would be CIRCULAR: both are assigned ABOVE the
+#         sentinel, so a truncated copy could define them and pass its own test.
+# Any shortfall is REFUSE_VALIDATOR_UNAVAILABLE, exit 2 (could-not-examine), nothing written.
+# ---------------------------------------------------------------------------
+REFUSE_VALIDATOR_UNAVAILABLE="REFUSE_VALIDATOR_UNAVAILABLE"
+VALIDATE_ENTRY_CONTRACT_REQUIRED="validate-entry/2"
+VALIDATOR_REQUIRED_FUNCS="validate_duplicate validate_contradiction validate_provenance validate_dead_reference validate_cross_repo_reference validate_entry_advisory_notice"
+
+# Resolved BEFORE any `cd`: $0 may be relative, and three of these writers cd to the repo root.
+VE_HERE="$(cd "$(dirname "$0")" 2>/dev/null && pwd || printf '%s' ".")"
+
+# _ve_load_validator — runs the three-clause guard. Called on the write path, never at parse time.
+_ve_load_validator() {
+  VALIDATOR="${WRITE_PROJECT_MEMORY_VALIDATOR:-}"
+  if [ -z "$VALIDATOR" ]; then
+    if [ -n "${CLAUDE_PLUGIN_ROOT:-}" ] && [ -f "${CLAUDE_PLUGIN_ROOT}/scripts/validate-entry.sh" ]; then
+      VALIDATOR="${CLAUDE_PLUGIN_ROOT}/scripts/validate-entry.sh"
+    else
+      VALIDATOR="$VE_HERE/validate-entry.sh"
+    fi
+  fi
+
+  # ---- LOAD GUARD BEGIN -----------------------------------------------------
+  # BEGIN/END delimit the guard as ONE replaceable unit so this suite's mandated mutation control
+  # can replace it with `|| true` in a single edit and prove AC2 goes RED. Structural, not decor.
+  if [ ! -f "$VALIDATOR" ] || [ ! -r "$VALIDATOR" ]; then
+    printf '%s: %s — the shared write-time validator is missing or unreadable at "%s", so this entry could not be examined; refusing rather than appending it unvalidated. Nothing was written.
+'       "write-project-memory" "$REFUSE_VALIDATOR_UNAVAILABLE" "$VALIDATOR" >&2
+    exit 2
+  fi
+
+  # Clause (i). errexit is saved/restored rather than assumed: these five writers do not all run
+  # under `set -e` (write-system-contract.sh is `set -uo pipefail`), so an unconditional `set -e`
+  # here would silently change the failure semantics of everything downstream.
+  case "$-" in *e*) _ve_had_e=1 ;; *) _ve_had_e=0 ;; esac
+  set +e
+  # shellcheck source=/dev/null
+  . "$VALIDATOR"
+  _ve_src_rc=$?
+  if [ "$_ve_had_e" -eq 1 ]; then set -e; fi
+  if [ "$_ve_src_rc" -ne 0 ]; then
+    printf '%s: %s — sourcing the shared write-time validator "%s" failed (status %s: unparseable or truncated), so this entry could not be examined. Nothing was written.
+'       "write-project-memory" "$REFUSE_VALIDATOR_UNAVAILABLE" "$VALIDATOR" "$_ve_src_rc" >&2
+    exit 2
+  fi
+
+  # Clause (ii). All five are probed, plus the aggregate the call site actually uses — never one
+  # name as a proxy for the rest.
+  for _vef in $VALIDATOR_REQUIRED_FUNCS validate_entry_all; do
+    if ! command -v "$_vef" >/dev/null 2>&1; then
+      printf '%s: %s — the shared write-time validator loaded but "%s" is not defined (a partially-loaded validator would report "examined and clean" over half a check), so this entry could not be examined. Nothing was written.
+'         "write-project-memory" "$REFUSE_VALIDATOR_UNAVAILABLE" "$_vef" >&2
+      exit 2
+    fi
+  done
+
+  # Clause (iii). Compared against the HARDCODED literal — see the circularity note above.
+  if [ "${VALIDATE_ENTRY_CONTRACT:-}" != "$VALIDATE_ENTRY_CONTRACT_REQUIRED" ]; then
+    printf '%s: %s — the shared write-time validator contract sentinel is "%s", not the expected "%s" (the file is truncated, or its contract changed), so this entry could not be examined. Nothing was written.
+'       "write-project-memory" "$REFUSE_VALIDATOR_UNAVAILABLE" "${VALIDATE_ENTRY_CONTRACT:-<unset>}" "$VALIDATE_ENTRY_CONTRACT_REQUIRED" >&2
+    exit 2
+  fi
+  # ---- LOAD GUARD END -------------------------------------------------------
+}
+
+
 FACT=""; SOURCE="unknown"; RETRACT_ID=""; SUPERSEDES_USED=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -131,7 +209,8 @@ GITROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 [ -n "$GITROOT" ] || { echo "write-project-memory: not inside a git repo — refusing" >&2; exit 2; }
 # A linked worktree's top-level has a `.git` FILE ("gitdir: ..."); the main checkout has a dir.
 if [ -f "$GITROOT/.git" ]; then
-  echo "write-project-memory: refusing to write from a git worktree ($GITROOT) — memory is written only from the repo root (red-team F1)." >&2
+  # `.git` as a FILE = a linked WORKTREE or a git SUBMODULE top-level; both refused, both named.
+  echo "write-project-memory: refusing to write from a non-primary checkout ($GITROOT) — its top-level '.git' is a FILE, which means either a linked git worktree or a git submodule. Memory is written only from the primary repo root (red-team F1)." >&2
   exit 3
 fi
 cd "$GITROOT" || { echo "write-project-memory: cannot cd to repo root" >&2; exit 2; }
@@ -153,6 +232,13 @@ GENESIS="GENESIS"
 mkdir -p "$MEM_DIR" 2>/dev/null || { echo "write-project-memory: cannot create $MEM_DIR" >&2; exit 2; }
 [ -f "$MEM" ]  || printf '# Project Memory (advisory — subordinate to CLAUDE.md; written only via write-project-memory.sh)\n' > "$MEM"
 [ -f "$PROV" ] || : > "$PROV"
+
+# ---------------------------------------------------------------------------
+# THE VALIDATOR CALL SITE (see write-lessons.sh's for the shared rationale). The guard runs on
+# every action; the CALL runs only when there is new fact text — a bare `--retract <id>` introduces
+# no entry, so there is nothing to examine.
+# ---------------------------------------------------------------------------
+_ve_load_validator
 
 ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
 fact_oneline=""; content_hash=""; id=""; fact_present=0
@@ -178,6 +264,49 @@ if [ -n "$FACT" ]; then
     echo "write-project-memory: fact already present ([$id]) — skipping"
     exit 0
   fi
+fi
+
+# ---------------------------------------------------------------------------
+# AC18 — ORDERING. This call sits AFTER the writer's own idempotent dedup short-circuit, and that
+# order is the whole point. The dedup guard above is a BENIGN NO-OP: re-writing a fact/lesson/
+# contract that is already stored is not an error, it is idempotence, and it has always exited 0.
+# Running the validator first turned that into a hard REFUSE_DUPLICATE exit 1, so every idempotent
+# caller (a re-run, a retry, a replayed queue item) started failing. The validator's job is to
+# examine entries that are about to be WRITTEN; an entry that will not be written has nothing to
+# validate. Moving this block above the dedup guard reintroduces the regression.
+
+# ---------------------------------------------------------------------------
+# AC18 — ORDERING. This call sits AFTER the writer's own idempotent dedup short-circuit, and that
+# order is the whole point. The dedup guard above is a BENIGN NO-OP: re-writing an entry that is
+# already stored is idempotence, not an error, and it has always exited 0. Running the validator
+# first turned that into a hard REFUSE_DUPLICATE exit 1, so every idempotent caller (a re-run, a
+# retry, a replayed queue item) started failing. The validator examines entries about to be
+# WRITTEN; an entry that will not be written has nothing to validate. Moving this block back above
+# the dedup guard reintroduces the regression — pinned by test.
+# AC18, second half: `fact_present` means the ADD half will write nothing (the line is already
+# stored). A --supersedes call still has real work to do — the RETRACTION — so it must not be
+# refused as a duplicate of the entry it is superseding. Validate only what will actually be
+# written; an entry that is already stored is not a new entry.
+if [ -n "$FACT" ] && [ "${fact_present:-0}" -eq 0 ]; then
+  # ---- VALIDATOR CALL BEGIN -------------------------------------------------
+  case "$-" in *e*) _ve_had_e=1 ;; *) _ve_had_e=0 ;; esac
+  set +e
+  validate_entry_all --entry "$FACT" --store "$MEM" \
+    --source "$SOURCE" --root "$GITROOT"
+  _ve_rc=$?
+  if [ "$_ve_had_e" -eq 1 ]; then set -e; fi
+  # rc 0 IS NOT NECESSARILY SILENT. Two of the five checks (dead-reference, cross-repo) are ADVISORY:
+  # they report on stderr and never refuse, so a clean exit can still carry findings. A notice at the
+  # SUCCESS LINE repeats them in this writer's own voice, next to the fact that the write went ahead —
+  # a warning printed only inside the helper scrolls past, and an advisory nobody reads is worse than
+  # no check. It prints nothing when there is nothing to report.
+  # THE NOTICE IS NOT EMITTED HERE — see the note at the emission site below.
+  case "$_ve_rc" in
+    0) : ;;
+    1) echo "write-project-memory: refusing to write — the entry was examined and violates a write-time check (see the reason above). Nothing was written." >&2; exit 1 ;;
+    *) echo "write-project-memory: refusing to write — the entry COULD NOT BE EXAMINED (see the reason above); refusing rather than reporting it clean. Nothing was written." >&2; exit 2 ;;
+  esac
+  # ---- VALIDATOR CALL END ---------------------------------------------------
 fi
 
 # Resolve the retraction target BEFORE building any temp state, so an unknown id aborts with
@@ -288,6 +417,15 @@ mv "$prov_tmp" "$PROV" && mv "$mem_tmp" "$MEM" || {
   echo "write-project-memory: atomic rename failed — write aborted; read gate ignores any unmatched provenance" >&2
   exit 2
 }
+# THE ADVISORY NOTICE — emitted HERE, past the last reachable refusal and past the atomic commit,
+# immediately before the success line. Its sentence ends "...and THE WRITE PROCEEDED", and the
+# validator call site above is only on the write PATH: the unknown-retraction-id abort, the
+# byte-identical no-op-supersede abort, the retracted-line removal failure and the atomic-rename
+# failure all still exit non-zero AFTER it, so emitting there printed "THE WRITE PROCEEDED" and
+# then wrote nothing. This is the writer's ONLY success exit, so no genuine write can lose its
+# warning; it is a no-op when nothing was reported (or when the validator did not run at all, as on
+# a bare `--retract`), so it stays silent rather than wrong on those paths.
+validate_entry_advisory_notice "write-project-memory"
 # Report what actually happened — never "stored" for a line that was deduped away.
 if [ -n "$FACT" ]; then
   if [ "$fact_present" -eq 1 ]; then
