@@ -560,6 +560,118 @@ else
 fi
 rm -rf "$VETMP" "$VEWT-wt" 2>/dev/null
 
+# ---------------------------------------------------------------------------
+# (uf) UNRECOGNISED ARGUMENTS ARE REFUSED. A writer must be able to tell a caller it asked for
+# something the writer does not implement, instead of dropping the argument and reporting success.
+#
+# WHY THIS EXISTS. write-system-contract.sh derives its store from the CURRENT DIRECTORY
+# (`git rev-parse --show-toplevel`), never from anything the caller passes, and it takes NO
+# positional arguments at all. Before the guard, `*) shift ;;` silently dropped every unmatched
+# argument, so `--repo <elsewhere>` parsed, was discarded, and the contract landed in whatever repo
+# the caller happened to be standing in — reported as a clean success at exit 0. Not hypothetical:
+# a PR #144 review run did exactly that on the sibling lessons writer, believing `--repo` isolated
+# the store, and a junk entry landed in this repo's real store and its provenance chain. `--repo`
+# and `--store` are REAL flags on write-agent-memory.sh and add-orientation.sh, so reaching for one
+# here is muscle memory from a sibling writer, not a typo.
+#
+# WHICH HALF HAS TEETH. (uf1) is the pin; (uf2) is the control proving the guard did not simply make
+# the writer refuse everything. (uf3) is the mutation control: it restores the old `*) shift ;;` arm
+# and asserts (uf1) goes RED, with a non-vacuity check that the sed landed.
+# ---------------------------------------------------------------------------
+echo "== 15. unrecognised arguments are refused, named, and write nothing =="
+UFTMP="$(mktemp -d)"
+UF_ERR="$UFTMP/stderr"
+UF_SRC="PR #144"
+UF_BODY="deployment rollbacks drain their connection pools before the health check flips"
+uf_repo() {
+  local r; r="$(mktemp -d "$UFTMP/r.XXXXXX")"
+  ( cd "$r" && git init -q && git config user.email t@t && git config user.name t \
+      && echo init > f && git add f && git commit -qm init ) >/dev/null 2>&1
+  printf '%s' "$r"
+}
+# uf_run <repo> <writer-path> [args...] -> sets UF_RC, writes UF_ERR. The contract BODY arrives on
+# stdin, which is this writer's documented shape.
+# $UF_VALIDATOR mirrors ve_write's validator-override: a MUTANT copy lives in a temp dir, so its
+# sibling-relative resolution of validate-entry.sh would fail and the writer would refuse with
+# REFUSE_VALIDATOR_UNAVAILABLE — a refusal for the wrong reason, which would make the mutation
+# control look green by accident. Left empty for the real writer, which must resolve it for itself.
+UF_VALIDATOR=""
+uf_run() {
+  local repo="$1" prog="$2"; shift 2
+  ( cd "$repo" && printf '%s\n' "$UF_BODY" \
+      | WRITE_SYSTEM_CONTRACT_VALIDATOR="$UF_VALIDATOR" bash "$prog" "$@" ) >/dev/null 2>"$UF_ERR"
+  UF_RC=$?
+}
+uf_err() { tr '\n' ' ' < "$UF_ERR" 2>/dev/null | cut -c1-200; }
+
+# (uf1) THE DEFECT: a well-formed write PLUS two arguments this writer does not implement.
+UFR1="$(uf_repo)"
+uf_run "$UFR1" "$WRITE" --subsystem "$VE_SUBSYS" --source "$UF_SRC" \
+       --repo /nonexistent/path --totally-made-up xyz
+if [ "$UF_RC" -eq 2 ]; then
+  ok "(uf1) an unrecognised argument is REFUSED with exit 2 — the could-not-examine convention this writer already uses for every other argument check"
+else
+  no "(uf1) exit $UF_RC, want 2 — the writer accepted an argument it does not implement: $(uf_err)"
+fi
+if grep -qF -- '--repo' "$UF_ERR" 2>/dev/null; then
+  ok "(uf1) and the refusal NAMES the offending argument, so the caller learns which one was not honoured"
+else
+  no "(uf1) the refusal does not name '--repo' — an unnamed refusal cannot tell the caller what to fix: $(uf_err)"
+fi
+if grep -q '^write-system-contract: ' "$UF_ERR" 2>/dev/null; then
+  ok "(uf1) and it is spoken in write-system-contract's own name"
+else
+  no "(uf1) the refusal does not name this writer: $(uf_err)"
+fi
+if [ -e "$UFR1/.supervisor" ]; then
+  no "(uf1) the refusal still touched the store — a .supervisor/ tree exists after a refused write"
+else
+  ok "(uf1) and NOTHING was written — no .supervisor/ tree at all, so neither the store nor its provenance chain moved"
+fi
+
+# (uf2) CONTROL: the SAME invocation without the bogus arguments must still write. Without this, a
+# writer that refused every invocation would pass (uf1).
+UFR2="$(uf_repo)"
+uf_run "$UFR2" "$WRITE" --subsystem "$VE_SUBSYS" --source "$UF_SRC"
+if [ "$UF_RC" -eq 0 ] && [ -f "$UFR2/$VESTORE" ]; then
+  ok "(uf2) CONTROL: the identical call WITHOUT the unrecognised arguments still writes (exit 0) — the guard refuses the unknown, not the known"
+else
+  no "(uf2) CONTROL FAILED: the real flags no longer write (exit $UF_RC) — the guard over-refuses: $(uf_err)"
+fi
+
+# (uf3) MUTATION CONTROL: restore the pre-fix `*) shift ;;` arm and (uf1) must go RED. The line is
+# REPLACED rather than deleted, because a `case` pattern with no body is a syntax error and a mutant
+# that cannot parse proves a broken mutant rather than a missing guard. The control asserts the
+# mutant WRITES — not merely that it exits differently — so a refusal for some unrelated reason
+# cannot be mistaken for the guard still working.
+echo "== 15. MUTATION CONTROL: with the guard restored to silent-drop, (uf1) goes RED =="
+UFMUT="$UFTMP/mut-noguard.sh"
+uf_orig="$(grep -c "unrecognised argument" "$WRITE" 2>/dev/null || true)"; [ -n "$uf_orig" ] || uf_orig=0
+sed -e "/unrecognised argument/s|.*|    *) shift ;;|" "$WRITE" > "$UFMUT"
+uf_mut="$(grep -c "unrecognised argument" "$UFMUT" 2>/dev/null || true)"; [ -n "$uf_mut" ] || uf_mut=0
+uf_drop="$(grep -c '^    \*) shift ;;$' "$UFMUT" 2>/dev/null || true)"; [ -n "$uf_drop" ] || uf_drop=0
+if [ "$uf_orig" -eq 1 ] && [ "$uf_mut" -eq 0 ] && [ "$uf_drop" -eq 1 ]; then
+  ok "(uf3) the mutation is NON-VACUOUS: 1 guard line in the real writer, 0 in the mutant, and the silent-drop arm is back in its place"
+else
+  no "(uf3) the mutation did not land as intended (guard $uf_orig → $uf_mut, silent-drop arm $uf_drop) — the control below would prove nothing"
+fi
+if bash -n "$UFMUT" 2>/dev/null; then
+  ok "(uf3) the mutant still parses, so a difference below is behavioural rather than a syntax error"
+  UFR3="$(uf_repo)"
+  UF_VALIDATOR="$VEFILE"   # the mutant is a temp copy; point it at the real validator (see uf_run)
+  uf_run "$UFR3" "$UFMUT" --subsystem "$VE_SUBSYS" --source "$UF_SRC" \
+         --repo /nonexistent/path --totally-made-up xyz
+  UF_VALIDATOR=""
+  if [ "$UF_RC" -eq 0 ] && [ -f "$UFR3/$VESTORE" ]; then
+    ok "(uf3) CONFIRMED: without the guard the SAME call exits 0 and writes the contract anyway — (uf1) goes RED without it and is load-bearing"
+  else
+    no "(uf3) REFUTED: the mutant refused too (exit $UF_RC) — (uf1) is passing for some other reason and is vacuous: $(uf_err)"
+  fi
+else
+  no "(uf3) the mutant does not parse — it could not discriminate anything"
+fi
+rm -rf "$UFTMP" 2>/dev/null   # a mutated writer must never outlive its own control
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

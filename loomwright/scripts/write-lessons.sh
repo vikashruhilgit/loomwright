@@ -205,9 +205,38 @@ while [ $# -gt 0 ]; do
     --replacement)     REPLACEMENT="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
     --replacement=*)   REPLACEMENT="${1#--replacement=}"; shift ;;
     --attest-existing) ATTEST=1; shift ;;
-    *) # retract/supersede accept positional <category> <lesson-text> (in that order); add ignores strays.
+    # UNKNOWN-ARGUMENT REJECTION — exit 2, this writer's could-not-examine convention (the same one
+    # every other argument check above uses), nothing written. The old catch-all took the two
+    # positionals below and SILENTLY DROPPED everything else, so `add` accepted any flag at all and
+    # wrote anyway. That silence is not cosmetic: the store is derived from the CURRENT DIRECTORY
+    # (`git rev-parse --show-toplevel` below), so a caller who passes a store-redirecting flag this
+    # writer has never had gets a successful-looking write into whatever repo they were standing in.
+    # `--repo` and `--store` are REAL flags on write-agent-memory.sh and add-orientation.sh — which
+    # is exactly how a caller reaches for one here — and a PR #144 review run did precisely that,
+    # passing `--repo <temp repo>` believing it isolated the store; the junk entry landed in this
+    # repo's real LESSONS.md and its provenance chain, and was caught only by a later `git status`.
+    #
+    # DO NOT HARMONISE THIS WITH validate-entry.sh's `_ve_parse_args`, which ignores unknown flags
+    # ON PURPOSE so that a stray argument can never crash a fail-safe validation path. That is right
+    # for a VALIDATOR and wrong for a WRITER, and the asymmetry is the whole point: a validator that
+    # refuses costs a diagnostic, a writer that silently retargets costs the store. Same vocabulary,
+    # opposite default — unifying the two parsers reopens this.
+    #
+    # Ordering matters: this arm sits AFTER every real `--flag` arm, so it catches only unmatched
+    # ones. A consequence worth knowing: a lesson text that itself begins with `--` must now be
+    # passed as `--lesson=<text>` rather than positionally. That is the same trade write-agent-memory.sh
+    # and add-orientation.sh already make, and it is the price of the refusal being unambiguous.
+    --*) echo "write-lessons: unrecognised flag '$1' — refusing rather than writing to a curated store with a flag this writer does not implement (accepted: --category, --lesson, --source, --last-verified, --confidence, --hash, --replacement, --attest-existing; see the usage header). Nothing was written." >&2; exit 2 ;;
+    *) # retract/supersede accept positional <category> <lesson-text>, in that order. `add` takes no
+       # positionals at all, and a THIRD positional on a curation verb is equally unimplemented — in
+       # both cases the caller asked for something this writer cannot honour, so it refuses instead
+       # of dropping the argument and reporting success.
        if { [ "$ACTION" = "retract" ] || [ "$ACTION" = "supersede" ]; } && [ -z "$CATEGORY" ]; then CATEGORY="$1"
        elif { [ "$ACTION" = "retract" ] || [ "$ACTION" = "supersede" ]; } && [ -z "$LESSON" ]; then LESSON="$1"
+       elif [ "$ACTION" = "add" ]; then
+         echo "write-lessons: unexpected positional argument '$1' — add takes only flags (did you mean --lesson \"$1\"?). Nothing was written." >&2; exit 2
+       else
+         echo "write-lessons: unexpected extra positional argument '$1' — $ACTION takes exactly <category> <lesson-text>. Nothing was written." >&2; exit 2
        fi
        shift ;;
   esac
