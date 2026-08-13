@@ -343,6 +343,127 @@ ve_mutant_ok() { # <file> <desc>
   return 0
 }
 
+# ---------------------------------------------------------------------------
+# (n) THIS WRITER'S OWN CALL-SITE ADVISORY NOTICE — asserted on BOTH the path that writes and the
+# path that does not, plus the mutation control that proves the pair is load-bearing.
+#
+# WHY THIS EXISTS AT ALL. The dead-reference and cross-repo cases above assert only that an
+# `ADVISORY_*` token reaches stderr, and those tokens are printed by the check functions INSIDE
+# validate_entry_all — so deleting this writer's own `validate_entry_advisory_notice` call left
+# every one of them green. Measured before this block was written: the literal `THE WRITE PROCEEDED`
+# appeared nowhere in this suite, so the call site had no test at all. With the two checks demoted
+# to advisory, the REPORTING is the whole feature, and the notice is the half that re-states the
+# finding where a human actually reads it — next to the fact that the write went ahead.
+#
+# HOW THE PAIR IS SHAPED FOR *THIS* WRITER, which is not the shape test-write-agent-memory.sh uses.
+# That writer has a confirm gate, so its (d6a)/(d6b) pair is dry-run-vs-confirmed. This writer has
+# NO dry-run: it emits the notice at its ONE terminal SUCCESS exit, after the commit has actually
+# happened — so there is no not-yet-written path to compare against. So the two no-write halves
+# here are the ones this writer really has —
+# (n1) an ordinary CLEAN write, where the notice must stay silent because nothing was reported, and
+# (n3) the content_hash dedup short-circuit, which returns before the validator runs at all and must
+# never claim a write proceeded. Both are honest properties of the notice, and both are stated in
+# this writer's own control flow rather than borrowed from a sibling's.
+#
+# WHICH HALF HAS TEETH, stated plainly rather than implied: (n1) and (n3) also pass against the
+# mutant — an absent notice is absent on every path — so they pin the notice's SILENCE, not its
+# existence. (n2) is the half that goes RED when the call is removed, and (n4) is what proves it.
+# It is placed after ve_mutant_ok() rather than beside the advisory cases because it needs it.
+# ---------------------------------------------------------------------------
+echo "== the call-site advisory notice fires on the write path, and only there =="
+# (n1) an ordinary CLEAN write draws no finding, so the notice must print NOTHING.
+vnR1="$(ve_repo)"; vnS1="$vnR1/$VESTORE"
+ve_write "$vnR1" "$VE_CLEAN" "$VE_SRC"
+if [ "$VE_RC" -eq 0 ] && [ -f "$vnS1" ]; then
+  ok "(n1) fixture: a clean contract is written (exit 0) — this really is the wrote-and-nothing-to-report path"
+else
+  no "(n1) fixture: the clean write did not land (exit $VE_RC) — the silence below would prove nothing: $(tr '\n' ' ' < "$VE_ERR" | cut -c1-160)"
+fi
+if grep -qF 'THE WRITE PROCEEDED' "$VE_ERR" 2>/dev/null; then
+  no "(n1) an ordinary clean write printed the advisory notice — it must be silent when no check reported anything"
+else
+  ok "(n1) an ordinary clean write is SILENT — the notice prints nothing when there is nothing to report"
+fi
+
+# (n2) a write carrying an ADVISORY finding: the notice MUST fire, in this writer's own name, and
+# its sentence must be true — the contract really is on disk.
+vnR2="$(ve_repo)"; vnS2="$vnR2/$VESTORE"
+ve_write "$vnR2" "$VE_DEAD" "$VE_SRC"
+if [ "$VE_RC" -eq 0 ]; then ok "(n2) the advisory-carrying write exits 0"
+else no "(n2) the advisory-carrying write exited $VE_RC, want 0 — $(tr '\n' ' ' < "$VE_ERR" | cut -c1-160)"; fi
+if grep -qF 'ADVISORY_DEAD_REFERENCE' "$VE_ERR" 2>/dev/null; then
+  ok "(n2) fixture: the check's own ADVISORY token is present, so an advisory really did fire"
+else
+  no "(n2) fixture: no ADVISORY_DEAD_REFERENCE — the notice assertion below would be vacuous: $(tr '\n' ' ' < "$VE_ERR" | cut -c1-160)"
+fi
+if grep -qF 'THE WRITE PROCEEDED' "$VE_ERR" 2>/dev/null; then
+  ok "(n2) the write DOES print the call-site advisory notice — the reporting half of the ADVISORY design is present on a genuine write"
+else
+  no "(n2) the advisory notice is absent from a real write — the reporting half was silently deleted: $(tr '\n' ' ' < "$VE_ERR" | cut -c1-160)"
+fi
+if grep -qE '^write-system-contract: ADVISORY:' "$VE_ERR" 2>/dev/null; then
+  ok "(n2) and it is spoken in write-system-contract's own name, not the helper's"
+else
+  no "(n2) the notice does not name this writer: $(tr '\n' ' ' < "$VE_ERR" | cut -c1-160)"
+fi
+if grep -qF 'no-such-helper-xyz' "$vnS2" 2>/dev/null; then
+  ok "(n2) and the contract really was stored — the notice's claim is true on this path"
+else
+  no "(n2) the notice claimed the write proceeded but no contract landed at $VESTORE"
+fi
+
+# (n3) the SAME body under the SAME subsystem: the content_hash short-circuit returns BEFORE the
+# validator runs, so nothing is written — and a notice ending "THE WRITE PROCEEDED" would be a lie.
+cp "$vnS2" "$VETMP/before-n3"
+ve_write "$vnR2" "$VE_DEAD" "$VE_SRC"
+if [ "$VE_RC" -eq 0 ] && cmp -s "$vnS2" "$VETMP/before-n3"; then
+  ok "(n3) fixture: the repeat is the dedup short-circuit (exit 0, contract byte-identical) — this really is the wrote-nothing path"
+else
+  no "(n3) fixture: the repeat was not a silent no-op (exit $VE_RC, contract changed) — the assertion below is about a different path"
+fi
+if grep -qF 'THE WRITE PROCEEDED' "$VE_ERR" 2>/dev/null; then
+  no "(n3) a call that wrote NOTHING still claimed 'THE WRITE PROCEEDED'"
+else
+  ok "(n3) the no-op repeat does NOT claim 'THE WRITE PROCEEDED' — the notice never speaks for a write that did not happen"
+fi
+
+# (n4) MUTATION CONTROL: strip the call-site notice from a COPY and (n2) must go RED. `:` replaces
+# the call rather than deleting the line, so that no enclosing block is left with an empty body — a
+# bash syntax error would make the control prove a parse failure instead of a missing notice. The literal is the full call INCLUDING its argument, so the mutation cannot also hit the
+# VALIDATOR_REQUIRED_FUNCS list — which names the same function and must survive, or the load guard
+# would refuse and the mutant would fail for the wrong reason.
+echo "== MUTATION CONTROL: with the call-site notice removed, (n2) goes RED =="
+VN_CALL='validate_entry_advisory_notice "write-system-contract"'
+vn_orig="$(grep -cF -- "$VN_CALL" "$WRITE" 2>/dev/null || true)"; [ -n "$vn_orig" ] || vn_orig=0
+sed -e "s/$VN_CALL/:/" "$WRITE" > "$VETMP/mut-notice.sh"
+vn_mut="$(grep -cF -- "$VN_CALL" "$VETMP/mut-notice.sh" 2>/dev/null || true)"; [ -n "$vn_mut" ] || vn_mut=0
+vn_funcs="$(grep -c 'VALIDATOR_REQUIRED_FUNCS=' "$VETMP/mut-notice.sh" 2>/dev/null || true)"; [ -n "$vn_funcs" ] || vn_funcs=0
+if [ "$vn_orig" -ge 1 ] && [ "$vn_mut" -eq 0 ] && [ "$vn_funcs" -ge 1 ]; then
+  ok "(n4) the mutation is NON-VACUOUS: $vn_orig call site(s) in the writer, 0 in the mutant, and the required-funcs list survived"
+else
+  no "(n4) the mutation did not take as intended (call sites $vn_orig → $vn_mut, funcs list $vn_funcs) — the control below would prove nothing"
+fi
+if ve_mutant_ok "$VETMP/mut-notice.sh" "(n4) notice mutant"; then
+  vnR4="$(ve_repo)"; vnS4="$vnR4/$VESTORE"
+  ve_write "$vnR4" "$VE_DEAD" "$VE_SRC" "$VEFILE" "$VETMP/mut-notice.sh"
+  if [ "$VE_RC" -eq 0 ] && grep -qF 'no-such-helper-xyz' "$vnS4" 2>/dev/null; then
+    ok "(n4) the mutant still WRITES the entry — the only behavioural difference under test is the notice"
+  else
+    no "(n4) the mutant failed to write (exit $VE_RC) — the comparison would not be like-for-like: $(tr '\n' ' ' < "$VE_ERR" | cut -c1-160)"
+  fi
+  if grep -qF 'ADVISORY_DEAD_REFERENCE' "$VE_ERR" 2>/dev/null; then
+    ok "(n4) and the check's OWN token is still printed by the mutant — which is exactly why the advisory cases above could not detect this deletion"
+  else
+    no "(n4) the mutant lost the check's own token too, so it is not the isolated mutation intended"
+  fi
+  if grep -qF 'THE WRITE PROCEEDED' "$VE_ERR" 2>/dev/null; then
+    no "(n4) REFUTED: the notice appeared with its call site removed — (n2) is passing for some other reason and is vacuous"
+  else
+    ok "(n4) CONFIRMED: without the call site the notice VANISHES from a real write — (n2) goes RED without it and is load-bearing"
+  fi
+fi
+rm -f "$VETMP/mut-notice.sh"   # a mutated writer must never outlive its own control
+
 # (a) AC1's mandated per-writer control: script the VALIDATOR CALL block out. REPLACED with `:`
 # rather than deleted, so no enclosing block is left with an empty body (a bash syntax error, and a
 # mutant that cannot run proves nothing).
