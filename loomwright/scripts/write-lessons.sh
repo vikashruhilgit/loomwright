@@ -434,12 +434,20 @@ if [ -n "$_ve_entry" ] && [ "${ATTEST:-0}" -ne 1 ]; then
   _ve_rc=$?
   if [ "$_ve_had_e" -eq 1 ]; then set -e; fi
   # rc 0 IS NOT NECESSARILY SILENT. Two of the five checks (dead-reference, cross-repo) are ADVISORY:
-  # they report on stderr and never refuse, so a clean exit can still carry findings. The notice below
-  # repeats them in this writer's own voice, next to the fact that the write went ahead — a warning
-  # printed only inside the helper scrolls past, and an advisory nobody reads is worse than no check.
-  # It prints nothing when there is nothing to report.
+  # they report on stderr and never refuse, so a clean exit can still carry findings. A notice at the
+  # SUCCESS LINE repeats them in this writer's own voice, next to the fact that the write went ahead —
+  # a warning printed only inside the helper scrolls past, and an advisory nobody reads is worse than
+  # no check. It prints nothing when there is nothing to report.
+  # THE NOTICE IS NOT EMITTED HERE. Its sentence ends "...and THE WRITE PROCEEDED", and this point
+  # is only on the write PATH — every success exit below is preceded by REACHABLE REFUSALS (the
+  # supersede/retract pre-checks: no store yet, target not found, target not chain-trusted, and the
+  # atomic-rename failure). Emitting here printed "THE WRITE PROCEEDED" and then refused, writing
+  # nothing. It is emitted immediately before each success line instead — same rule the three
+  # confirm-gated writers already follow. It is a no-op when nothing was reported (and when the
+  # validator did not run at all, as on the ATTEST and plain-retract paths), so a call on a path
+  # the validator skipped is silent rather than wrong.
   case "$_ve_rc" in
-    0) validate_entry_advisory_notice "write-lessons" ;;
+    0) : ;;
     1) echo "write-lessons: refusing to write — the entry was examined and violates a write-time check (see the reason above). Nothing was written." >&2; exit 1 ;;
     *) echo "write-lessons: refusing to write — the entry COULD NOT BE EXAMINED (see the reason above); refusing rather than reporting it clean. Nothing was written." >&2; exit 2 ;;
   esac
@@ -468,6 +476,7 @@ prov_line() {
 # while claiming to repair it).
 if [ "${ATTEST_PRESENT:-0}" -eq 1 ]; then
   if chain_trusted "$content_hash"; then
+    validate_entry_advisory_notice "write-lessons"
     echo "write-lessons: [$id] in $CATSLUG is already chain-trusted — nothing to attest (no-op)"
     exit 0
   fi
@@ -480,6 +489,7 @@ if [ "${ATTEST_PRESENT:-0}" -eq 1 ]; then
     echo "write-lessons: atomic rename failed — attest aborted; LESSONS.md untouched" >&2
     exit 2
   }
+  validate_entry_advisory_notice "write-lessons"
   echo "write-lessons: attested existing [$id] in $CATSLUG (source=$SOURCE) — provenance appended, LESSONS.md unchanged"
   exit 0
 fi
@@ -531,6 +541,7 @@ if [ "$ACTION" = "retract" ] || [ "$ACTION" = "supersede" ]; then
     exit 2
   }
   if [ "$ACTION" = "retract" ]; then
+    validate_entry_advisory_notice "write-lessons"
     echo "write-lessons: retracted [$id] (source=$SOURCE) — provenance tombstone appended, entry line removed"
     exit 0
   fi
@@ -554,6 +565,7 @@ if [ "$ACTION" = "retract" ] || [ "$ACTION" = "supersede" ]; then
   # replacement content already lives elsewhere in this category, the retract half is already
   # durable (committed above) — skip appending a duplicate and touch nothing further.
   if grep -qF -- "- [$id] $lesson_oneline" "$LESSONS" 2>/dev/null; then
+    validate_entry_advisory_notice "write-lessons"
     echo "write-lessons: replacement already present ([$id] in $CATSLUG) — retract done, add skipped (dedup)"
     exit 0
   fi
@@ -662,6 +674,7 @@ mv "$prov_tmp" "$PROV" && mv "$mem_tmp" "$LESSONS" || {
   echo "write-lessons: atomic rename failed — write aborted; read gate ignores any unmatched provenance" >&2
   exit 2
 }
+validate_entry_advisory_notice "write-lessons"
 if [ -n "${SUPERSEDES_ID:-}" ]; then
   echo "write-lessons: superseded [$SUPERSEDES_ID] -> stored [$id] in $CATSLUG (source=$SOURCE, last_verified=$LAST_VERIFIED, confidence=$CONFIDENCE, supersedes=$SUPERSEDES_ID)"
 else

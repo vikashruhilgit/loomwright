@@ -748,7 +748,8 @@ EOF
 
 # ---- check 3: provenance ----------------------------------------------------
 # An entry must cite what motivated it. Satisfied by a REAL --source, or by a REFERENCE TOKEN in the
-# entry text itself: a `#123` issue/PR citation, a `PR 123`, a URL, or a 7-40 char commit sha.
+# entry text itself: a `#123` issue/PR citation, a `PR 123`, a URL, or a 7-40 char commit sha
+# (which must carry at least one `a`-`f` — a run of 7+ bare DIGITS is a magnitude, not a sha).
 #
 # ONE STANDARD ON BOTH HALVES. This comment used to promise that the text scan required a
 # `session|finding|postmortem|... <id>` PHRASE; the pattern below required no id at all and matched
@@ -775,7 +776,44 @@ EOF
 # string. A source that does not qualify is not itself the refusal — it falls through to the entry-
 # text scan below, so an entry that names its finding/PR/session in its own prose still passes.
 _VE_PLACEHOLDER_SOURCES=" unknown unspecified none n/a na tbd todo - _ null nil "
-_VE_PROVENANCE_RE='(^|[^A-Za-z0-9_])#[0-9]+|https?://|(^|[[:space:]])[Pp][Rr][[:space:]]*#?[0-9]+|(^|[[:space:]])[0-9a-f]{7,40}([[:space:]]|$)'
+_VE_PROVENANCE_RE='(^|[^A-Za-z0-9_])#[0-9]+|https?://|(^|[[:space:]])[Pp][Rr][[:space:]]*#?[0-9]+'
+#
+# THE SHA BRANCH LIVES OUTSIDE THE COMBINED PATTERN, AND WHY. It used to be a fourth alternation
+# `(^|[[:space:]])[0-9a-f]{7,40}([[:space:]]|$)`, which was FAIL-OPEN on a bare decimal: `[0-9a-f]`
+# matches pure digits, so `... raised to 1234567 milliseconds` satisfied provenance while citing
+# nothing (measured: 7+ digits passed, 4 digits refused — the only thing separating them was
+# length). A bare magnitude is a TOPIC exactly as much as the bare keywords deleted above, and this
+# is one of the three fail-CLOSED checks, so the miss is not covered by the "a false refusal is
+# worse than a miss" bias — that bias is the cross-repo recogniser's LOCAL reversal (see above).
+# The fix requires AT LEAST ONE `[a-f]` in the token. ERE cannot say "7-40 chars drawn from
+# [0-9a-f] AND at least one of them is [a-f]" in one expression, and the tempting relaxation
+# `[0-9a-f]*[a-f][0-9a-f]*` DROPS THE LENGTH BOUND, which would match ordinary English words built
+# from hex letters (`faced`, `decade`, `cabbage`, `added`) — a far worse false-refusal regression
+# than the miss being closed. So the shape is tested token-by-token instead, in pure shell:
+# whitespace-split + `case` globs, which is EXACTLY equivalent to the old whitespace-anchored regex
+# (a match required whitespace/BOL before and whitespace/EOL after, i.e. the whole field), with the
+# hex-letter requirement added. No pipeline and no `grep`, so there is no status to lose to SIGPIPE
+# under a caller's `set -o pipefail` and no locale-dependent character class; the `case` ranges are
+# spelled out literally rather than as `a-f` so a collation order cannot widen them.
+_ve_entry_has_sha() {
+  local tok len
+  while IFS= read -r tok; do
+    case "$tok" in
+      *[!0-9abcdef]*) continue ;;   # not drawn purely from the hex alphabet
+    esac
+    case "$tok" in
+      *[abcdef]*) : ;;
+      *) continue ;;                # all digits — a magnitude, not a sha
+    esac
+    len=${#tok}
+    if [ "$len" -ge 7 ] && [ "$len" -le 40 ]; then
+      return 0
+    fi
+  done <<EOF
+$(printf '%s' "$1" | tr '[:space:]' '\n')
+EOF
+  return 1
+}
 validate_provenance() {
   _ve_parse_args "$@"
   [ -n "$_VE_ENTRY" ] || { _ve_unexaminable "REFUSE_PROVENANCE_NO_ENTRY" "no --entry text was supplied, so provenance could not be examined"; return 2; }
@@ -793,7 +831,7 @@ validate_provenance() {
         esac ;;
     esac
   fi
-  if grep -qE "$_VE_PROVENANCE_RE" <<<"$_VE_ENTRY"; then
+  if grep -qE "$_VE_PROVENANCE_RE" <<<"$_VE_ENTRY" || _ve_entry_has_sha "$_VE_ENTRY"; then
     return 0
   fi
   _ve_refuse "REFUSE_PROVENANCE" "the entry cites nothing that motivated it — pass a real --source (one carrying an id, such as 'pr-138' or 'dreaming:<session_id>', not a bare command name), or name the reference itself in the entry text (a '#123', a URL or a commit sha). NOTE: the bare WORDS 'session', 'finding', 'postmortem' and 'review' are a topic, not a citation, and no longer satisfy this check on their own. Nothing was written."

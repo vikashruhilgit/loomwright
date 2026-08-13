@@ -494,6 +494,53 @@ else
   ok "_VE_PROVENANCE_RE carries no bare-keyword alternation — it matches references only"
 fi
 
+# A BARE MAGNITUDE IS A TOPIC, EXACTLY AS MUCH AS A BARE KEYWORD. The sha branch used to be
+# `[0-9a-f]{7,40}`, and `[0-9a-f]` matches pure digits, so ANY 7+ digit number satisfied a
+# fail-CLOSED check while citing nothing — the only thing separating `1234567 milliseconds` (passed)
+# from `1234 milliseconds` (refused) was length. Both directions are pinned, because the fix's own
+# failure mode is a guard that stops recognising real shas.
+verdict 1 "a bare 7-digit decimal is a magnitude, not a sha, and does NOT satisfy provenance" \
+  "$VE" provenance --entry "the retry budget was raised to 1234567 milliseconds after the outage"
+reason "REFUSE_PROVENANCE" "the bare-decimal refusal names the provenance check"
+verdict 1 "a bare 40-digit decimal does not satisfy provenance either — length is not a citation" \
+  "$VE" provenance --entry "the counter reached 1234567890123456789012345678901234567890 before the reset"
+verdict 1 "AC17 back door closed: --source dreaming + a bare 7-digit number in the text is still REFUSED" \
+  "$VE" provenance --entry "the retry budget was raised to 1234567 milliseconds" --source "dreaming"
+# ... and the tightening did not blind the sha branch. Short, long, and both boundary positions.
+verdict 0 "a 7-char sha still passes (shortest accepted shape)" \
+  "$VE" provenance --entry "the guard landed in a1b2c3d last week"
+verdict 0 "a 40-char sha still passes (longest accepted shape)" \
+  "$VE" provenance --entry "the guard landed in deadbeefdeadbeefdeadbeefdeadbeefdeadbeef last week"
+verdict 0 "a sha at the very start of the entry still passes" \
+  "$VE" provenance --entry "c6bfda6 introduced the guard"
+verdict 0 "a sha at the very end of the entry still passes" \
+  "$VE" provenance --entry "the guard was introduced in c6bfda6"
+# THE TRAP THE FIX MUST NOT FALL INTO. Requiring a hex letter by relaxing to `[0-9a-f]*[a-f][0-9a-f]*`
+# would DROP the 7-40 length bound, and ordinary English words are built from `a`-`f`. A false
+# refusal blocks a legitimate write, so these must all stay REFUSED for want of a citation — not
+# accepted as shas.
+verdict 1 "an 8-letter hex-ish English word ('cabbaged') does NOT satisfy provenance on its own" \
+  "$VE" provenance --entry "the interface was cabbaged by the refactor"
+verdict 1 "hex-ish English words below the length bound ('added', 'facade', 'decade') do not satisfy it either" \
+  "$VE" provenance --entry "a decade of facade was added to the cabbage"
+# STATED BOUND, not an oversight: a 7-char all-hex English word ('defaced', 'deadbeef') is
+# character-for-character a valid short sha, so NO rule can refuse it without refusing real shas of
+# the same shape. It passes, it passed before this fix, and it is pinned so the bound is visible
+# rather than discovered.
+verdict 0 "documented bound: a 7-char all-hex English word is shape-identical to a sha and still passes" \
+  "$VE" provenance --entry "the guard was defaced"
+# Static half: the length bound must stay on the sha shape. A behavioural assertion alone goes green
+# again the moment someone relaxes it in a way this suite does not happen to sample.
+# `^[^#]*` so the file's own COMMENT naming the rejected relaxation does not trip its own check —
+# the comment is the reason the trap is documented, and a check that fires on prose is noise.
+if grep -qE '^[^#]*\[0-9a-f\]\*\[a-f\]\[0-9a-f\]\*' "$VE"; then
+  no "the sha shape was relaxed to an unbounded [0-9a-f]*[a-f][0-9a-f]* in CODE — English hex words now satisfy provenance"
+elif grep -qE '^[^#]*-ge 7 \]' "$VE" && grep -qE '^[^#]*-le 40 \]' "$VE"; then
+  ok "the sha shape keeps its 7-40 length bound in code — it was not relaxed to an unbounded hex-letter pattern"
+else
+  no "the sha shape's 7-40 length bound is no longer present in code"
+fi
+
 echo "== 5. dead reference (ADVISORY — reports, never refuses) =="
 quiet "an entry citing a path that still resolves passes and advises nothing" \
   "$VE" dead-reference --entry "the sole writer is loomwright/scripts/write-lessons.sh" --root "$REPO_ROOT"
@@ -970,6 +1017,23 @@ if mutated_differs mut-prov.sh "provenance pattern"; then
   bash "$TMP/mut-prov.sh" provenance --entry "the cache is refreshed eagerly" >/dev/null 2>&1
   [ $? -eq 0 ] && ok "R3: a match-anything provenance pattern clears the refusal — the pattern is what refuses" \
     || no "R3: the provenance mutant still refused"
+fi
+
+# (vii-b) R3: drop the hex-LETTER requirement from the sha shape => a bare decimal satisfies
+# provenance again, which is the fail-OPEN this guard closes. Without this control the guard could
+# be vacuous (always-false) and every assertion above would still be green, because a bare decimal
+# is also refused by an sha check that never matches anything.
+# awk + index(), not sed: the target line contains `*)` and `;;`, which collide with BRE metachars.
+awk '{ if (index($0, "all digits")) sub(/\*\) continue ;;/, "*) : ;;"); print }' "$VE" > "$TMP/mut-sha.sh"
+if mutated_differs mut-sha.sh "sha hex-letter requirement"; then
+  bash "$TMP/mut-sha.sh" provenance --entry "the retry budget was raised to 1234567 milliseconds" >/dev/null 2>&1
+  [ $? -eq 0 ] && ok "R3: dropping the hex-letter requirement lets a bare 7-digit decimal satisfy provenance — the requirement is what refuses" \
+    || no "R3: the sha hex-letter mutant still refused — the sha branch may be vacuous"
+  # ... and the same mutant must still ACCEPT a real sha, or the control proved nothing about which
+  # half of the guard moved.
+  bash "$TMP/mut-sha.sh" provenance --entry "the guard landed in c6bfda6 last week" >/dev/null 2>&1
+  [ $? -eq 0 ] && ok "R3: the sha mutant still accepts a real sha — only the hex-letter half moved" \
+    || no "R3: the sha mutant stopped accepting a real sha — the mutation was not surgical"
 fi
 
 # (viii) R3: make every path resolve => the dead-reference refusal disappears.

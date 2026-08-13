@@ -295,12 +295,13 @@ if [ -n "$FACT" ] && [ "${fact_present:-0}" -eq 0 ]; then
   _ve_rc=$?
   if [ "$_ve_had_e" -eq 1 ]; then set -e; fi
   # rc 0 IS NOT NECESSARILY SILENT. Two of the five checks (dead-reference, cross-repo) are ADVISORY:
-  # they report on stderr and never refuse, so a clean exit can still carry findings. The notice below
-  # repeats them in this writer's own voice, next to the fact that the write went ahead — a warning
-  # printed only inside the helper scrolls past, and an advisory nobody reads is worse than no check.
-  # It prints nothing when there is nothing to report.
+  # they report on stderr and never refuse, so a clean exit can still carry findings. A notice at the
+  # SUCCESS LINE repeats them in this writer's own voice, next to the fact that the write went ahead —
+  # a warning printed only inside the helper scrolls past, and an advisory nobody reads is worse than
+  # no check. It prints nothing when there is nothing to report.
+  # THE NOTICE IS NOT EMITTED HERE — see the note at the emission site below.
   case "$_ve_rc" in
-    0) validate_entry_advisory_notice "write-project-memory" ;;
+    0) : ;;
     1) echo "write-project-memory: refusing to write — the entry was examined and violates a write-time check (see the reason above). Nothing was written." >&2; exit 1 ;;
     *) echo "write-project-memory: refusing to write — the entry COULD NOT BE EXAMINED (see the reason above); refusing rather than reporting it clean. Nothing was written." >&2; exit 2 ;;
   esac
@@ -415,6 +416,15 @@ mv "$prov_tmp" "$PROV" && mv "$mem_tmp" "$MEM" || {
   echo "write-project-memory: atomic rename failed — write aborted; read gate ignores any unmatched provenance" >&2
   exit 2
 }
+# THE ADVISORY NOTICE — emitted HERE, past the last reachable refusal and past the atomic commit,
+# immediately before the success line. Its sentence ends "...and THE WRITE PROCEEDED", and the
+# validator call site above is only on the write PATH: the unknown-retraction-id abort, the
+# byte-identical no-op-supersede abort, the retracted-line removal failure and the atomic-rename
+# failure all still exit non-zero AFTER it, so emitting there printed "THE WRITE PROCEEDED" and
+# then wrote nothing. This is the writer's ONLY success exit, so no genuine write can lose its
+# warning; it is a no-op when nothing was reported (or when the validator did not run at all, as on
+# a bare `--retract`), so it stays silent rather than wrong on those paths.
+validate_entry_advisory_notice "write-project-memory"
 # Report what actually happened — never "stored" for a line that was deduped away.
 if [ -n "$FACT" ]; then
   if [ "$fact_present" -eq 1 ]; then

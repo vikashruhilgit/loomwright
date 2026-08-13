@@ -288,12 +288,13 @@ validate_entry_all --entry "$BODY" --store "$corpus_tmp" \
 _ve_rc=$?
 if [ "$_ve_had_e" -eq 1 ]; then set -e; fi
 # rc 0 IS NOT NECESSARILY SILENT. Two of the five checks (dead-reference, cross-repo) are ADVISORY:
-# they report on stderr and never refuse, so a clean exit can still carry findings. The notice below
-# repeats them in this writer's own voice, next to the fact that the write went ahead — a warning
-# printed only inside the helper scrolls past, and an advisory nobody reads is worse than no check.
-# It prints nothing when there is nothing to report.
+# they report on stderr and never refuse, so a clean exit can still carry findings. A notice at the
+# SUCCESS LINE repeats them in this writer's own voice, next to the fact that the write went ahead —
+# a warning printed only inside the helper scrolls past, and an advisory nobody reads is worse than
+# no check. It prints nothing when there is nothing to report.
+# THE NOTICE IS NOT EMITTED HERE — see the note at the emission site below.
 case "$_ve_rc" in
-  0) validate_entry_advisory_notice "write-system-contract" ;;
+  0) : ;;
   1) echo "write-system-contract: refusing to write — the contract was examined and violates a write-time check (see the reason above). Nothing was written." >&2
      # A duplicate/contradiction reason quotes the store it compared against, and that is a temp
      # corpus path. Naming the real dir keeps the message actionable.
@@ -351,5 +352,12 @@ while [ "${count:-0}" -gt "$MAX_CONTRACTS" ]; do
   count="$(find "$CONTRACT_DIR" -maxdepth 1 -type f -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
 done
 
+# THE ADVISORY NOTICE — emitted HERE, past the last reachable refusal and past the atomic commit,
+# immediately before the success line. Its sentence ends "...and THE WRITE PROCEEDED", and the
+# validator call site above is only on the write PATH: the atomic-rename failure still exits 2
+# AFTER it, so emitting there printed "THE WRITE PROCEEDED" and then wrote nothing. This is the
+# writer's ONLY success exit, so no genuine write can lose its warning; it is a no-op when nothing
+# was reported, so it stays silent rather than wrong.
+validate_entry_advisory_notice "write-system-contract"
 echo "write-system-contract: stored contract for '$SUBSYSTEM' ($CONTRACT, hash $content_hash, source=$SOURCE)"
 exit 0
