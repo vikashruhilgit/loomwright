@@ -14,7 +14,7 @@
 # 1 pointer) and are proven to go RED when the rebuild is removed.
 #
 # MUTATION CONTROLS ARE PART OF THE SUITE, NOT A ONE-OFF MANUAL STEP.
-# Three assertions here are only meaningful if the thing they name is load-bearing, so the suite
+# Assertions here are only meaningful if the thing they name is load-bearing, so the suite
 # BUILDS the mutant itself, proves the mutation was non-vacuous (the file really changed), and
 # asserts the mutant misbehaves where the real writer does not:
 #   · (M1) the INDEX REBUILD call removed        ⇒ the seeded rot survives          (AC7 goes RED)
@@ -25,6 +25,10 @@
 #          entry's body under a new slug is WRITTEN                                 ((i) goes RED)
 #   · (M5) the index lock ACQUISITION stripped   ⇒ the writer rebuilds MEMORY.md straight
 #          through a lock another writer holds                                      ((j2) goes RED)
+#   · (M6) the STALENESS RE-CHECK under arbitration stripped ⇒ a breaker that observed a stale
+#          lock acts on that stale observation and deletes a LIVE lock            ((j5/X) goes RED)
+#   · (M7) the SINGLE-WINNER arbitration directory stripped  ⇒ two simultaneous breakers both
+#          break the same stale lock and both acquire                             ((j5/Y) goes RED)
 #   · (M8) the CALL-SITE ADVISORY NOTICE removed ⇒ a real write with an advisory finding no longer
 #          says so at the call site, while the check's own token still prints       ((d6b) goes RED)
 # Each mutant is `bash -n`-checked before use: a mutant that does not parse would "fail" for the
@@ -426,7 +430,7 @@ grep -qF 'ADVISORY_DEAD_REFERENCE' <<< "$OUT" && ok "(d6c) and the check's OWN t
 grep -qF 'THE WRITE PROCEEDED' <<< "$OUT" \
   && no "(d6c) M8 REFUTED: the notice appeared with the call site removed — (d6b) is passing for some other reason and is vacuous" \
   || ok "(d6c) M8 CONFIRMED: without the call site the notice VANISHES from a real write — (d6b) goes RED without it and is load-bearing"
-rm -f "$M8"   # a mutated writer must never outlive its own control
+rm -f "$M8"   # removed eagerly; the $ROOT EXIT trap covers this and every other mutant anyway
 
 # ---------------------------------------------------------------------------
 # (d7) AN EXISTING-BUT-UNREADABLE BODY FILE IS A NAMED REFUSAL. Existence and readability are two
