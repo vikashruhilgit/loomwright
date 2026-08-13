@@ -1386,13 +1386,24 @@ CFG_LIVE="$PLUGIN_REPO/.supervisor/config.json"
 CFG_LIVE_SUM_BEFORE="$(sum "$CFG_LIVE")"
 CFG_LIVE_EXISTED=0; [ -f "$CFG_LIVE" ] && CFG_LIVE_EXISTED=1
 
-# consumer A — the cross-repo write-time check. Echoes its verdict (0 pass / 1 refuse / 2 could not
-# examine). VALIDATE_ENTRY_SETUP_MEMORY pins the ONE resolver to the script under test, so a stray
+# consumer A — the cross-repo write-time check. Echoes its VERDICT ON THE SLUG: 1 = this entry cites
+# a repository outside the resolved allowlist, 0 = it does not.
+#
+# THAT VERDICT IS READ OFF THE REPORT, NOT OFF THE EXIT STATUS, and the difference is the point of
+# this helper rather than an implementation detail. cross-repo is now an ADVISORY check: it reports
+# on stderr and returns 0 on every path (validate-entry.sh's header records the six measured rounds
+# of false refusals that bought that). Its exit status therefore no longer distinguishes anything,
+# and a status-based helper here would have returned 0 for every entry and silently turned this
+# whole group — the AC5 "one list, two consumers" parity proof — into assertions that can only pass.
+# What the group actually needs is unchanged and still observable: whether the ONE resolved list
+# moved BOTH consumers. So consumer A's answer is now "did it name this slug as foreign", which is
+# the same question the exit status used to answer, asked of the surface that still answers it.
+# VALIDATE_ENTRY_SETUP_MEMORY pins the ONE resolver to the script under test, so a stray
 # CLAUDE_PLUGIN_ROOT in the developer's environment cannot point this at a different setup-memory.sh.
 xrepo() {   # <entry-text> [--root <dir>]
   local e="$1"; shift
-  VALIDATE_ENTRY_SETUP_MEMORY="$MEM" bash "$VE" cross-repo --entry "$e" "$@" >/dev/null 2>&1
-  echo $?
+  local err; err="$(VALIDATE_ENTRY_SETUP_MEMORY="$MEM" bash "$VE" cross-repo --entry "$e" "$@" 2>&1 >/dev/null)"
+  case "$err" in *"ADVISORY_CROSS_REPO"*) echo 1 ;; *) echo 0 ;; esac
 }
 
 # xrepo_noenv — the same, with $LOOMWRIGHT_MEMORY_REPO_ALLOWLIST SCRUBBED from the child environment
@@ -1402,9 +1413,9 @@ xrepo() {   # <entry-text> [--root <dir>]
 # against "" — a whole group of assertions that can never pass and never say why.
 xrepo_noenv() {   # <entry-text> [--root <dir>]
   local e="$1"; shift
-  env -u LOOMWRIGHT_MEMORY_REPO_ALLOWLIST VALIDATE_ENTRY_SETUP_MEMORY="$MEM" \
-    bash "$VE" cross-repo --entry "$e" "$@" >/dev/null 2>&1
-  echo $?
+  local err; err="$(env -u LOOMWRIGHT_MEMORY_REPO_ALLOWLIST VALIDATE_ENTRY_SETUP_MEMORY="$MEM" \
+    bash "$VE" cross-repo --entry "$e" "$@" 2>&1 >/dev/null)"
+  case "$err" in *"ADVISORY_CROSS_REPO"*) echo 1 ;; *) echo 0 ;; esac
 }
 
 one_allowlist_two_consumers() {
@@ -1435,8 +1446,8 @@ LEDGER
   # ---------------------------------------------------------------------------
   v_alpha="$(LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="fixture-org/alpha" xrepo "$E_ALPHA")"
   v_beta="$(LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="fixture-org/alpha" xrepo "$E_BETA")"
-  [ "$v_alpha" = "0" ] && ok "(p/L2) consumer A: an entry citing the ALLOWLISTED slug PASSES (verdict 0)" || no "(p/L2) consumer A refused an allowlisted slug (verdict $v_alpha)"
-  [ "$v_beta" = "1" ] && ok "(p/L2) consumer A: an entry citing a slug OUTSIDE the list is REFUSED (verdict 1 — examined and violating, never 2)" || no "(p/L2) consumer A verdict on a foreign slug was $v_beta, expected 1"
+  [ "$v_alpha" = "0" ] && ok "(p/L2) consumer A: an entry citing the ALLOWLISTED slug PASSES (verdict 0)" || no "(p/L2) consumer A reported an allowlisted slug as foreign (verdict $v_alpha)"
+  [ "$v_beta" = "1" ] && ok "(p/L2) consumer A: an entry citing a slug OUTSIDE the list is REPORTED as foreign (verdict 1)" || no "(p/L2) consumer A verdict on a foreign slug was $v_beta, expected 1"
   out="$(LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="fixture-org/alpha" bash "$MEM" filter-ledger --ledger "$led" 2>/dev/null)"
   n="$(ledger_count "$out")"
   [ "$n" = "1" ] && ok "(p/L2) consumer B: the ledger filter retains 1 of 2 records under the same list" || no "(p/L2) consumer B retained $n records, expected 1"
@@ -1446,8 +1457,8 @@ LEDGER
   # MOVE THE LIST ONCE — both behaviours must move together.
   v_alpha="$(LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="fixture-org/beta" xrepo "$E_ALPHA")"
   v_beta="$(LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="fixture-org/beta" xrepo "$E_BETA")"
-  [ "$v_beta" = "0" ] && ok "(p/L2) THE LIST MOVED: consumer A now PASSES the slug it refused a moment ago" || no "(p/L2) consumer A did not follow the moved list (verdict $v_beta on the newly-allowed slug)"
-  [ "$v_alpha" = "1" ] && ok "(p/L2) THE LIST MOVED: consumer A now REFUSES the slug it passed a moment ago" || no "(p/L2) consumer A still passed the now-foreign slug (verdict $v_alpha)"
+  [ "$v_beta" = "0" ] && ok "(p/L2) THE LIST MOVED: consumer A now passes the slug it reported a moment ago" || no "(p/L2) consumer A did not follow the moved list (verdict $v_beta on the newly-allowed slug)"
+  [ "$v_alpha" = "1" ] && ok "(p/L2) THE LIST MOVED: consumer A now REPORTS the slug it passed a moment ago" || no "(p/L2) consumer A still passed the now-foreign slug (verdict $v_alpha)"
   out="$(LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="fixture-org/beta" bash "$MEM" filter-ledger --ledger "$led" 2>/dev/null)"
   ledger_has_repo "$out" "fixture-org/beta" && ok "(p/L2) THE LIST MOVED: consumer B now retains the record it dropped a moment ago" || no "(p/L2) consumer B did not follow the moved list"
   ledger_has_repo "$out" "fixture-org/alpha" && no "(p/L2) consumer B still retains the now-foreign record — the two consumers have diverged" || ok "(p/L2) THE LIST MOVED: consumer B now drops the record it kept a moment ago — ONE list, BOTH consumers"
@@ -1472,10 +1483,10 @@ LEDGER
   v_beta="$(xrepo_noenv "$E_BETA" --root "$d")"
   v_remote="$(xrepo_noenv "$E_REMOTE" --root "$d")"
   [ "$v_alpha" = "0" ] && ok "(p/L3) consumer A reads the FIXTURE REPO's config through --root: the config-listed slug PASSES" || no "(p/L3) consumer A did not see the fixture config (verdict $v_alpha on the config-listed slug) — --root is not reaching the resolver"
-  [ "$v_beta" = "1" ] && ok "(p/L3) consumer A REFUSES a slug absent from the fixture config" || no "(p/L3) consumer A verdict $v_beta on a slug outside the fixture config, expected 1"
+  [ "$v_beta" = "1" ] && ok "(p/L3) consumer A REPORTS a slug absent from the fixture config" || no "(p/L3) consumer A verdict $v_beta on a slug outside the fixture config, expected 1"
   # The sharpest --root assertion: the fixture's OWN REMOTE is refused, so consumer A is reading the
   # config layer and not falling back to a remote (its own, or this checkout's).
-  [ "$v_remote" = "1" ] && ok "(p/L3) consumer A REFUSES the fixture's own git-remote slug — proof it read the config layer, not the remote default" || no "(p/L3) consumer A passed the fixture's remote slug (verdict $v_remote) — it is resolving layer 4, not the config"
+  [ "$v_remote" = "1" ] && ok "(p/L3) consumer A REPORTS the fixture's own git-remote slug — proof it read the config layer, not the remote default" || no "(p/L3) consumer A passed the fixture's remote slug (verdict $v_remote) — it is resolving layer 4, not the config"
   out="$(env -u LOOMWRIGHT_MEMORY_REPO_ALLOWLIST bash "$MEM" --root "$d" filter-ledger --ledger "$led" 2>/dev/null)"
   ledger_has_repo "$out" "fixture-org/alpha" && ok "(p/L3) consumer B reads the same config layer and keeps the config-listed record" || no "(p/L3) consumer B did not follow the config layer"
   ledger_has_repo "$out" "fixture-org/beta" && no "(p/L3) consumer B leaked a record outside the config allowlist" || ok "(p/L3) consumer B excludes the record outside the config allowlist"
@@ -1484,8 +1495,8 @@ LEDGER
   printf '{"setup_memory":{"repo_allowlist":["fixture-org/beta"]}}\n' > "$d/.supervisor/config.json"
   v_alpha="$(xrepo_noenv "$E_ALPHA" --root "$d")"
   v_beta="$(xrepo_noenv "$E_BETA" --root "$d")"
-  [ "$v_beta" = "0" ] && ok "(p/L3) THE CONFIG LIST MOVED: consumer A now PASSES the slug it refused" || no "(p/L3) consumer A did not follow the moved config list (verdict $v_beta)"
-  [ "$v_alpha" = "1" ] && ok "(p/L3) THE CONFIG LIST MOVED: consumer A now REFUSES the slug it passed" || no "(p/L3) consumer A still passed the now-foreign slug (verdict $v_alpha)"
+  [ "$v_beta" = "0" ] && ok "(p/L3) THE CONFIG LIST MOVED: consumer A now passes the slug it reported" || no "(p/L3) consumer A did not follow the moved config list (verdict $v_beta)"
+  [ "$v_alpha" = "1" ] && ok "(p/L3) THE CONFIG LIST MOVED: consumer A now REPORTS the slug it passed" || no "(p/L3) consumer A still passed the now-foreign slug (verdict $v_alpha)"
   out="$(env -u LOOMWRIGHT_MEMORY_REPO_ALLOWLIST bash "$MEM" --root "$d" filter-ledger --ledger "$led" 2>/dev/null)"
   ledger_has_repo "$out" "fixture-org/beta" && ok "(p/L3) THE CONFIG LIST MOVED: consumer B now retains the record it dropped" || no "(p/L3) consumer B did not follow the moved config list"
   ledger_has_repo "$out" "fixture-org/alpha" && no "(p/L3) consumer B still retains the now-foreign record at layer 3 — the two consumers have diverged on the layer an env-var parser cannot see" || ok "(p/L3) THE CONFIG LIST MOVED: consumer B drops it too — ONE list, BOTH consumers, on the layer a duplicate env parser is blind to"

@@ -309,6 +309,22 @@ assert_refusal() {
   [ "$(store_sum "$SD")" = "$before" ] && ok "$label left the store BYTE-IDENTICAL" || no "$label MUTATED the store"
 }
 
+# assert_advisory <label> <token> <args...> — the same three assertions for the two ADVISORY checks,
+# inverted where the design inverted them. dead-reference and cross-repo REPORT and never refuse (see
+# validate-entry.sh's header for the six measured rounds of false refusals that bought that), so what
+# this writer must do with one is: exit 0, PRINT the finding, and WRITE. The third assertion is the
+# mirror image of assert_refusal's and is the one that matters most — "the store CHANGED" is what
+# distinguishes a demoted check from a check that still blocks, and asserting only rc 0 would stay
+# green if the advisory were deleted outright.
+assert_advisory() {
+  local label="$1" token="$2" before; shift 2
+  before="$(store_sum "$SD")"
+  run "$RD" "$SD" "$@"
+  [ "$RC" -eq 0 ] && ok "$label exits 0 — an advisory check does not block the write" || no "$label exited $RC, expected 0 — $OUT"
+  grep -qF "$token" <<< "$OUT" && ok "$label REPORTS its finding ($token)" || no "$label did not report $token — $OUT"
+  [ "$(store_sum "$SD")" != "$before" ] && ok "$label WROTE the entry — the finding is a warning, not a refusal" || no "$label left the store unchanged, so it blocked after all"
+}
+
 BD1="$(mkbody "$RD/body-d1.md" "")"
 assert_refusal "(d1) duplicate" 1 "REFUSE_DUPLICATE" \
   "$AGENT" ledger_gate_two "$DUP_TEXT" "$BD1" --source "PR #144" --confirm
@@ -316,7 +332,7 @@ assert_refusal "(d2) contradiction" 1 "REFUSE_CONTRADICTION" \
   "$AGENT" ledger_gate_three "a foreign postmortem record never makes the write path withhold its negation until the allowlist resolves" "$BD1" --source "PR #144" --confirm
 assert_refusal "(d3) provenance" 1 "REFUSE_PROVENANCE" \
   "$AGENT" bare_claim "a plain unattributed observation about how the gate behaves under load" "$BD1" --confirm
-assert_refusal "(d4) dead reference" 1 "REFUSE_DEAD_REFERENCE" \
+assert_advisory "(d4) dead reference [ADVISORY]" "ADVISORY_DEAD_REFERENCE" \
   "$AGENT" dead_ref "the guard at loomwright/scripts/no-such-file-here.sh fires, per PR #145" "$BD1" --confirm
 
 # The cross-repo check needs a RESOLVED allowlist, and it must come from the process environment —
@@ -325,14 +341,21 @@ assert_refusal "(d4) dead reference" 1 "REFUSE_DEAD_REFERENCE" \
 sum_d5="$(store_sum "$SD")"
 OUT="$(LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="acme/widget" bash "$WRITER" "$AGENT" cross_repo \
         "the rollout in otherco/othersvc repo is described in PR #146" "$BD1" --repo "$RD" --store "$SD" --confirm < /dev/null 2>&1)"; RC=$?
-[ "$RC" -eq 1 ] && ok "(d5) cross-repo exits 1" || no "(d5) cross-repo exited $RC, expected 1 — $OUT"
-grep -qF "REFUSE_CROSS_REPO" <<< "$OUT" && ok "(d5) cross-repo names its reason (REFUSE_CROSS_REPO)" || no "(d5) cross-repo did not name its reason — $OUT"
-[ "$(store_sum "$SD")" = "$sum_d5" ] && ok "(d5) cross-repo left the store BYTE-IDENTICAL" || no "(d5) cross-repo MUTATED the store"
-# ...and the same token PASSES once the allowlist contains it — so (d5) reads the list rather than
-# pattern-matching a hardcoded slug.
-OUT="$(LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="acme/widget:otherco/othersvc" bash "$WRITER" "$AGENT" cross_repo \
-        "the rollout in otherco/othersvc repo is described in PR #146" "$BD1" --repo "$RD" --store "$SD" --confirm < /dev/null 2>&1)"; RC=$?
-[ "$RC" -eq 0 ] && ok "(d5) the SAME entry is ACCEPTED once 'otherco/othersvc' is in the allowlist — the check reads the list, it does not match a hardcoded token" || no "(d5) the entry was still refused with the slug allowlisted ($RC) — $OUT"
+[ "$RC" -eq 0 ] && ok "(d5) cross-repo [ADVISORY] exits 0 — it does not block the write" || no "(d5) cross-repo exited $RC, expected 0 — $OUT"
+grep -qF "ADVISORY_CROSS_REPO" <<< "$OUT" && ok "(d5) cross-repo REPORTS its finding (ADVISORY_CROSS_REPO)" || no "(d5) cross-repo did not report its finding — $OUT"
+[ "$(store_sum "$SD")" != "$sum_d5" ] && ok "(d5) cross-repo WROTE the entry — the foreign citation is warned about, not refused" || no "(d5) cross-repo left the store unchanged, so it blocked after all"
+# ...and the same token is SILENT once the allowlist contains it — so (d5) reads the list rather than
+# warning about a hardcoded slug. With the check demoted, the exit status can no longer show this
+# (both cases exit 0); the presence or absence of the REPORT is the only thing left that can, which
+# is why this half now asserts on the output.
+# The TEXT differs from the case above, deliberately: that case now WRITES (an advisory does not
+# block), so re-submitting the same words would be refused by the DUPLICATE check and this half
+# would be measuring duplicate instead of cross-repo. Same foreign slug, different sentence.
+OUT="$(LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="acme/widget:otherco/othersvc" bash "$WRITER" "$AGENT" cross_repo_allowed \
+        "deployment cadence for the otherco/othersvc repo appears in issue #147 alongside its owners" "$BD1" --repo "$RD" --store "$SD" --confirm < /dev/null 2>&1)"; RC=$?
+{ [ "$RC" -eq 0 ] && ! grep -qF "ADVISORY_CROSS_REPO" <<< "$OUT"; } \
+  && ok "(d5) the SAME entry draws NO cross-repo finding once 'otherco/othersvc' is in the allowlist — the check reads the list, it does not match a hardcoded token" \
+  || no "(d5) the entry was still reported with the slug allowlisted (rc=$RC) — $OUT"
 
 echo "== (d2) AC1 MUTATION CONTROL M2: with the validator CALL removed, a seeded duplicate is written =="
 M2="$MUT_DIR/mutant-no-call.sh"

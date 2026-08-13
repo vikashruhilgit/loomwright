@@ -131,11 +131,11 @@ REFUSE_STORE_ENTRY_UNREADABLE="REFUSE_STORE_ENTRY_UNREADABLE"
 
 # Clause (iii) of the LOAD GUARD CONTRACT. HARDCODED — see the header note on why comparing against
 # anything the helper exports would be circular.
-VALIDATE_ENTRY_CONTRACT_REQUIRED="validate-entry/1"
+VALIDATE_ENTRY_CONTRACT_REQUIRED="validate-entry/2"
 
 # The five names clause (ii) requires. Written out here rather than read from the helper's own
 # $VALIDATE_ENTRY_FUNCTIONS for the same anti-circularity reason.
-VALIDATOR_REQUIRED_FUNCS="validate_duplicate validate_contradiction validate_provenance validate_dead_reference validate_cross_repo_reference"
+VALIDATOR_REQUIRED_FUNCS="validate_duplicate validate_contradiction validate_provenance validate_dead_reference validate_cross_repo_reference validate_entry_advisory_notice"
 
 ENTRY_MAX_CHARS=4000
 
@@ -525,8 +525,13 @@ set +e
 validate_entry_all --entry "$entry_text" --store "$COMPARE_STORE" --source "$source_arg" --root "$REPO_DIR"
 validation_rc=$?
 set -e
+# rc 0 IS NOT NECESSARILY SILENT. Two of the five checks (dead-reference, cross-repo) are ADVISORY:
+# they report on stderr and never refuse, so a clean exit can still carry findings. The notice below
+# repeats them in this writer's own voice, next to the fact that the write went ahead — a warning
+# printed only inside the helper scrolls past, and an advisory nobody reads is worse than no check.
+# It prints nothing when there is nothing to report.
 case "$validation_rc" in
-  0) : ;;
+  0) validate_entry_advisory_notice "$PROG" ;;
   1) printf '%s: refusing to write %s — the entry was examined and violates a write-time check (see the reason above). Nothing was written.\n' "$PROG" "$write_target" >&2
      # A duplicate/contradiction reason quotes the store it compared against, and that is now a
      # temp corpus path. Naming the real store dir here keeps the message actionable — a human

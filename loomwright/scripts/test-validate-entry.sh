@@ -82,15 +82,73 @@ reason() {
   if grep -qF "$1" "$TMP/err.txt" 2>/dev/null; then ok "$2"; else no "$2 — '$1' not on stderr"; fi
 }
 
+# ---- the ADVISORY contract --------------------------------------------------
+# dead-reference and cross-repo REPORT and never refuse (see validate-entry.sh's header for the six
+# measured rounds of false refusals that bought this). That makes the exit status useless as a
+# signal for those two — every run of theirs exits 0 — so this suite reads their EMISSION instead.
+#
+# BOTH HALVES ARE ASSERTED, ALWAYS, and that is the point rather than a nicety: a check whose body
+# were deleted outright would also exit 0, so an assertion that only checks `rc == 0` stays green
+# while the check it names no longer exists. That is the vacuous-guard class this branch has hit
+# repeatedly; `advisory` below therefore fails when the finding is not PRINTED, and every mutation
+# control in section 11 discriminates on ADV (did it report?) rather than on rc.
+#
+# ve_run <script> <args...> -> VRC = exit status, ADV = 1 when an `ADVISORY:` line was printed.
+ve_run() {
+  local s="$1"; shift
+  bash "$s" "$@" >"$TMP/out.txt" 2>"$TMP/err.txt"
+  VRC=$?
+  if grep -qF 'ADVISORY:' "$TMP/err.txt" 2>/dev/null; then ADV=1; else ADV=0; fi
+  return 0
+}
+# advisory <want-token> <desc> <script> <check> <args...> — exits 0 AND names <want-token> in an
+# `ADVISORY:` line. Pass an empty token to assert only that something was advised.
+advisory() {
+  local tok="$1" desc="$2"; shift 2
+  ve_run "$@"
+  if [ "$VRC" -ne 0 ]; then
+    no "$desc — got rc=$VRC, wanted 0: an ADVISORY check must never block a write"
+  elif [ "$ADV" -ne 1 ]; then
+    no "$desc — exited 0 but printed no 'ADVISORY:' line at all; a silent advisory is a deleted check"
+  elif [ -n "$tok" ] && ! grep -qF "$tok" "$TMP/err.txt" 2>/dev/null; then
+    no "$desc — advised, but did not name '$tok': $(tr '\n' ' ' < "$TMP/err.txt" | cut -c1-160)"
+  else
+    ok "$desc (rc=0 + ADVISORY $tok)"
+  fi
+}
+# mut_run <script> <check> <args...> -> MADV = 1 when the run ADVISED, 0 when it was silent.
+# The mutation controls in section 11 discriminate on THIS and not on the exit status. They have to:
+# after the demotion every run of the two advisory checks exits 0, so an rc-based control would see
+# "no change" for every mutant and report a row of green while testing nothing — the vacuous-control
+# class this suite has already been bitten by twice. MADV maps onto the old rc exactly (a mutant
+# that used to refuse now advises, 1 for 1; one that used to pass is silent, 0 for 0), so the
+# expected values in those controls are unchanged and only the SOURCE of the signal moved.
+mut_run() {
+  local f="$1"; shift
+  bash "$f" "$@" >/dev/null 2>"$TMP/err.txt"
+  MRC=$?
+  if grep -qF 'ADVISORY:' "$TMP/err.txt" 2>/dev/null; then MADV=1; else MADV=0; fi
+  return 0
+}
+# quiet <desc> <script> <check> <args...> — exits 0 and advises NOTHING. The negative control that
+# keeps `advisory` from passing for a check that warns about everything.
+quiet() {
+  local desc="$1"; shift
+  ve_run "$@"
+  if [ "$VRC" -ne 0 ]; then no "$desc — got rc=$VRC, wanted 0"
+  elif [ "$ADV" -ne 0 ]; then no "$desc — a clean entry still produced an ADVISORY: $(tr '\n' ' ' < "$TMP/err.txt" | cut -c1-160)"
+  else ok "$desc (rc=0, nothing advised)"; fi
+}
+
 echo "== 1. contract + load guard =="
 verdict 0 "contract subcommand prints the sentinel value" "$VE" contract
-grep -qx 'validate-entry/1' "$TMP/out.txt" && ok "contract value is validate-entry/1" \
-  || no "contract value is not validate-entry/1"
+grep -qx 'validate-entry/2' "$TMP/out.txt" && ok "contract value is validate-entry/2" \
+  || no "contract value is not validate-entry/2"
 
 # The sentinel MUST be the last line: that is the whole reason clause (iii) of the load guard can
 # detect a truncated helper.
 LAST="$(awk 'NF{l=$0} END{print l}' "$VE")"
-[ "$LAST" = 'VALIDATE_ENTRY_CONTRACT="validate-entry/1"' ] \
+[ "$LAST" = 'VALIDATE_ENTRY_CONTRACT="validate-entry/2"' ] \
   && ok "sentinel assignment is the last non-empty line of validate-entry.sh" \
   || no "sentinel is NOT the last line (found: $LAST) — a truncated helper could still match it"
 
@@ -99,7 +157,7 @@ bash -c '
   set -uo pipefail
   before="$-"
   . "$1" || exit 9
-  [ "${VALIDATE_ENTRY_CONTRACT:-}" = "validate-entry/1" ] || exit 10
+  [ "${VALIDATE_ENTRY_CONTRACT:-}" = "validate-entry/2" ] || exit 10
   for f in $VALIDATE_ENTRY_FUNCTIONS; do command -v "$f" >/dev/null 2>&1 || exit 11; done
   [ "$before" = "$-" ] || exit 12
   exit 0
@@ -436,8 +494,8 @@ else
   ok "_VE_PROVENANCE_RE carries no bare-keyword alternation — it matches references only"
 fi
 
-echo "== 5. dead reference =="
-verdict 0 "an entry citing a path that still resolves passes" \
+echo "== 5. dead reference (ADVISORY — reports, never refuses) =="
+quiet "an entry citing a path that still resolves passes and advises nothing" \
   "$VE" dead-reference --entry "the sole writer is loomwright/scripts/write-lessons.sh" --root "$REPO_ROOT"
 # The `file:N` in the next fixture is FIXTURE INPUT, not a prose citation — it exists to prove
 # that a real path carrying a line suffix still resolves. The citation-drift ratchet cannot tell
@@ -445,52 +503,63 @@ verdict 0 "an entry citing a path that still resolves passes" \
 # rather than dropping the pin. NOTE: the pin must sit on the citation's own line (or the one
 # after it) — a pin placed ABOVE is not seen, and a comment inside a `\`-continuation silently
 # breaks the argument list, which is how this fixture was broken once already.
-verdict 0 "a bare CLAUDE.md and a :N line citation both resolve" \
+quiet "a bare CLAUDE.md and a :N line citation both resolve" \
   "$VE" dead-reference --entry "see CLAUDE.md and loomwright/scripts/setup-memory.sh:128" --root "$REPO_ROOT"  # [pins: `robust to header edits`]
-verdict 1 "an entry citing a path that no longer resolves is REFUSED" \
+advisory "ADVISORY_DEAD_REFERENCE" "an entry citing a path that no longer resolves is ADVISED, not refused" \
   "$VE" dead-reference --entry "the guard lives in loomwright/scripts/long-gone.sh" --root "$REPO_ROOT"
-reason "REFUSE_DEAD_REFERENCE" "the dead-reference refusal names its check"
-verdict 0 "a URL is not treated as a repo path" \
+# The advisory must carry the SAME detail the refusal carried — the cited path — or "advisory" has
+# quietly become "we noticed something".
+reason "long-gone.sh" "the dead-reference advisory still names the path it could not resolve"
+if grep -qF "REFUSE_DEAD_REFERENCE" "$TMP/err.txt" 2>/dev/null; then
+  no "the dead-reference advisory still carries a REFUSE_ token — a warning and a refusal must not be greppable as the same thing"
+else
+  ok "the dead-reference advisory carries NO REFUSE_ token — the two shapes are distinguishable by grep"
+fi
+quiet "a URL is not treated as a repo path" \
   "$VE" dead-reference --entry "see https://example.com/nope/missing.md" --root "$REPO_ROOT"
-verdict 0 "backticks and trailing punctuation are stripped before resolution" \
+quiet "backticks and trailing punctuation are stripped before resolution" \
   "$VE" dead-reference --entry "read \`loomwright/scripts/read-lessons.sh\`, then stop." --root "$REPO_ROOT"
-verdict 2 "an unusable --root is could-not-examine (2), never clean" \
+# COULD-NOT-EXAMINE IS ALSO ADVISORY NOW, and this is the assertion that says so on purpose: an
+# advisory check has nothing to fail closed FOR. Decision (b) still governs the three blocking
+# checks — section 2's unreadable-store case still returns 2 — and section 14 pins that contrast.
+advisory "ADVISORY_DEAD_REFERENCE_ROOT_MISSING" "an unusable --root is ADVISED (rc 0), not a refusal — an advisory check has no refusal to fall back to" \
   "$VE" dead-reference --entry "loomwright/scripts/write-lessons.sh" --root "$TMP/no-such-root"
-reason "REFUSE_DEAD_REFERENCE_ROOT_MISSING" "the unusable-root refusal names the reason"
 
 echo "== 5a. AC16: resolve against the REPO, and SKIP what is unresolvable BY SHAPE =="
 # A bare filename that lives in a subdirectory is a REAL file; resolving only against the repo root
 # refused nine live curated entries for citing files that exist.
-verdict 0 "AC16: a bare filename that lives under loomwright/scripts/ resolves (not just repo-root)" \
+quiet "AC16: a bare filename that lives under loomwright/scripts/ resolves (not just repo-root)" \
   "$VE" dead-reference --entry "a green check-doc-currency.sh is necessary but not sufficient" --root "$REPO_ROOT"
-verdict 0 "AC16: two more real-but-not-at-root filenames resolve (send-webhook.sh, test-telemetry.sh)" \
+quiet "AC16: two more real-but-not-at-root filenames resolve (send-webhook.sh, test-telemetry.sh)" \
   "$VE" dead-reference --entry "the send-webhook.sh emitter and test-telemetry.sh goldens" --root "$REPO_ROOT"
-verdict 1 "a bare filename that exists NOWHERE in the repo is still REFUSED — the suffix match did not blanket-pass" \
+advisory "ADVISORY_DEAD_REFERENCE" "a bare filename that exists NOWHERE in the repo is still REPORTED — the suffix match did not blanket-pass" \
   "$VE" dead-reference --entry "the guard lives in long-gone-nowhere.sh" --root "$REPO_ROOT"
 # SKIP vs REFUSE. These name no single file, so "does it still resolve" is not a question about
 # them: not examined, not a verdict. This is NOT decision (b) relaxed — an unusable --root above
 # still refuses with 2.
-verdict 0 "AC16: a GLOB ('test-*.sh') is unresolvable BY SHAPE and is SKIPPED, not refused" \
+quiet "AC16: a GLOB ('test-*.sh') is unresolvable BY SHAPE and is SKIPPED, not refused" \
   "$VE" dead-reference --entry "eleven test-*.sh suites run in CI" --root "$REPO_ROOT"
-verdict 0 "AC16: a tilde path ('~/.claude/settings.json') is unresolvable BY SHAPE and is SKIPPED" \
+quiet "AC16: a tilde path ('~/.claude/settings.json') is unresolvable BY SHAPE and is SKIPPED" \
   "$VE" dead-reference --entry "it is set =1 in this repo's ~/.claude/settings.json" --root "$REPO_ROOT"
-verdict 0 "AC16: a <placeholder> and a \$VAR-bearing path are SKIPPED for the same reason" \
+quiet "AC16: a <placeholder> and a \$VAR-bearing path are SKIPPED for the same reason" \
   "$VE" dead-reference --entry "see <agent-name>.md and \$HOME/never-there.sh" --root "$REPO_ROOT"
 
 echo "== 5b. AC6: nullable-but-required field asserts key PRESENCE via jq has() =="
 if command -v jq >/dev/null 2>&1; then
-  verdict 1 "a present string field citing a dead path is REFUSED" \
+  advisory "ADVISORY_DEAD_REFERENCE" "a present string field citing a dead path is ADVISED" \
     "$VE" dead-reference --json '{"path":"loomwright/scripts/long-gone.sh"}' --field path --root "$REPO_ROOT"
-  verdict 0 "a present string field citing a live path passes" \
+  quiet "a present string field citing a live path passes and advises nothing" \
     "$VE" dead-reference --json '{"path":"loomwright/scripts/write-lessons.sh"}' --field path --root "$REPO_ROOT"
-  verdict 0 "an EXPLICIT null is valid — the field is nullable, so nothing is cited" \
+  quiet "an EXPLICIT null is valid — the field is nullable, so nothing is cited" \
     "$VE" dead-reference --json '{"path":null}' --field path --root "$REPO_ROOT"
-  verdict 2 "a MISSING key does NOT pass as valid — it is could-not-examine (2), distinct from null" \
+  # AC6's discipline SURVIVES the demotion, and this is the pair that proves it: a missing key and
+  # an explicit null still reach DIFFERENT outcomes. What changed is the consequence (a warning, not
+  # a refusal); what did not change is that a malformed record is never reported as clean.
+  advisory "ADVISORY_DEAD_REFERENCE_FIELD_ABSENT" "a MISSING key still does NOT pass as clean — it is advised as could-not-examine, distinct from null" \
     "$VE" dead-reference --json '{"other":"x"}' --field path --root "$REPO_ROOT"
-  reason "REFUSE_DEAD_REFERENCE_FIELD_ABSENT" "the missing-key refusal names the absent key"
-  verdict 2 "unparseable JSON is could-not-examine (2)" \
+  advisory "ADVISORY_DEAD_REFERENCE_JSON_UNPARSEABLE" "unparseable JSON is advised as could-not-examine" \
     "$VE" dead-reference --json '{oops' --field path --root "$REPO_ROOT"
-  verdict 2 "a non-object JSON record is could-not-examine (2)" \
+  advisory "ADVISORY_DEAD_REFERENCE_JSON_NOT_OBJECT" "a non-object JSON record is advised as could-not-examine" \
     "$VE" dead-reference --json '[1,2]' --field path --root "$REPO_ROOT"
   # jq ABSENT is could-not-examine, never clean (decision (b)).
   mkdir -p "$TMP/nojq"
@@ -500,36 +569,45 @@ if command -v jq >/dev/null 2>&1; then
   ( PATH="$TMP/nojq" bash "$VE" dead-reference --json '{"path":null}' --field path --root "$REPO_ROOT" ) \
     >/dev/null 2>"$TMP/err.txt"
   rc=$?
-  [ "$rc" -eq 2 ] && ok "an ABSENT jq is could-not-examine (2), never clean (rc=$rc)" \
-    || no "an absent jq gave rc=$rc, wanted 2"
-  reason "REFUSE_DEAD_REFERENCE_NO_JQ" "the absent-jq refusal names the reason"
+  if [ "$rc" -ne 0 ]; then
+    no "an absent jq gave rc=$rc, wanted 0 — an advisory check must not block"
+  elif grep -qF "ADVISORY_DEAD_REFERENCE_NO_JQ" "$TMP/err.txt" 2>/dev/null; then
+    ok "an ABSENT jq is ADVISED by name, never silently reported clean (rc=$rc)"
+  else
+    no "an absent jq exited 0 and said nothing — the could-not-examine fact was lost, not demoted"
+  fi
 else
   ok "SKIPPED AC6 jq cases (jq not installed on this host)"
 fi
 
-echo "== 6. cross-repo: AC3 refuses foreign, AC4 passes own =="
+echo "== 6. cross-repo (ADVISORY): AC3 reports foreign, AC4 stays silent on our own =="
 export LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS"
-verdict 1 "AC3: 'OTHERSVC #146' is REFUSED — a repo-shaped token NOT in the allowlist" \
+advisory "ADVISORY_CROSS_REPO" "AC3: 'OTHERSVC #146' is REPORTED — a repo-shaped token NOT in the allowlist" \
   "$VE" cross-repo --entry "the same defect was fixed in OTHERSVC #146 last week"
-reason "REFUSE_CROSS_REPO" "the cross-repo refusal names its check"
-verdict 1 "a foreign owner/repo slug is REFUSED" \
+reason "othersvc" "the cross-repo advisory still names the repository it found"
+if grep -qF "REFUSE_CROSS_REPO" "$TMP/err.txt" 2>/dev/null; then
+  no "the cross-repo advisory still carries a REFUSE_ token — a warning and a refusal must not be greppable as the same thing"
+else
+  ok "the cross-repo advisory carries NO REFUSE_ token — the two shapes are distinguishable by grep"
+fi
+advisory "ADVISORY_CROSS_REPO" "a foreign owner/repo slug is REPORTED" \
   "$VE" cross-repo --entry "context lives in $FOREIGN"
-verdict 1 "a github.com URL naming a foreign repo is REFUSED" \
+advisory "ADVISORY_CROSS_REPO" "a github.com URL naming a foreign repo is REPORTED" \
   "$VE" cross-repo --entry "context lives in https://github.com/$FOREIGN for now"
-verdict 0 "AC4: this repo's own slug PASSES — an entry may freely reference its own repo" \
+quiet "AC4: this repo's own slug PASSES SILENTLY — an entry may freely reference its own repo" \
   "$VE" cross-repo --entry "the guard landed in $OURS"
-verdict 0 "AC4: the short name 'LOOMWRIGHT #146' PASSES (whole word, case-insensitive)" \
+quiet "AC4: the short name 'LOOMWRIGHT #146' PASSES SILENTLY (whole word, case-insensitive)" \
   "$VE" cross-repo --entry "the guard landed in LOOMWRIGHT #146"
 # False-positive guards. A wrong refusal blocks a legitimate write, which is worse than a miss.
-verdict 0 "'PR #146' is not read as a repository called pr" \
+quiet "'PR #146' is not read as a repository called pr" \
   "$VE" cross-repo --entry "fixed in PR #146"
-verdict 0 "'fixed in #146' is not read as a repository called in" \
+quiet "'fixed in #146' is not read as a repository called in" \
   "$VE" cross-repo --entry "fixed in #146"
-verdict 0 "'and/or' is not read as an owner/repo slug" \
+quiet "'and/or' is not read as an owner/repo slug" \
   "$VE" cross-repo --entry "the gate is advisory and/or read-only"
-verdict 0 "a three-segment path is not read as an owner/repo slug" \
+quiet "a three-segment path is not read as an owner/repo slug" \
   "$VE" cross-repo --entry "the guard is in loomwright/scripts/read-rules.sh"
-verdict 0 "a docs path with one slash is not read as an owner/repo slug" \
+quiet "a docs path with one slash is not read as an owner/repo slug" \
   "$VE" cross-repo --entry "recorded in docs/PITFALLS.md"
 
 echo "== 6b. AC16: English prose pairs are not owner/repo slugs; a MARKED slug still is =="
@@ -541,44 +619,44 @@ for pair in "tests must parse YAML/JSON rather than hit live dependencies" \
             "any user/PR-text -> JSON in a firing path must use jq --arg" \
             "the contrib image is distroless (no shell/wget)" \
             "fixtures are WORKER_RESULT/CODE_REVIEW_RESULT payloads only"; do
-  verdict 0 "AC16: prose pair passes — \"$pair\"" "$VE" cross-repo --entry "$pair"
+  quiet "AC16: prose pair passes — \"$pair\"" "$VE" cross-repo --entry "$pair"
 done
 # ... and the recogniser did NOT go blind: every MARKED form of a foreign slug still refuses.
 # A bare `owner/repo` is THE canonical foreign-repo citation, so the four markers below are what
 # stop the false-positive fix from opening a bigger hole than it closed. Each marker gets its own
 # assertion AND its own mutation control in section 11.
-verdict 1 "a foreign slug after a cue word ('landed in otherco/othersvc') is still REFUSED" \
+advisory "ADVISORY_CROSS_REPO" "a foreign slug after a cue word ('landed in otherco/othersvc') is still REPORTED" \
   "$VE" cross-repo --entry "the same defect landed in $FOREIGN last week"
-verdict 1 "marker (2), trailing: 'the otherco/othersvc repo' is REFUSED — the cue can follow the slug" \
+advisory "ADVISORY_CROSS_REPO" "marker (2), trailing: 'the otherco/othersvc repo' is REPORTED — the cue can follow the slug" \
   "$VE" cross-repo --entry "the $FOREIGN repo has the same bug"
-verdict 1 "marker (3): a KNOWN owner is recognised — 'vikashruhilgit/othersvc' is not in the allowlist and is REFUSED" \
+advisory "ADVISORY_CROSS_REPO" "marker (3): a KNOWN owner is recognised — 'vikashruhilgit/othersvc' is not in the allowlist and is REPORTED" \
   "$VE" cross-repo --entry "vikashruhilgit/othersvc has the same bug"
 # STATED LOST CATCH, narrowing (vi): a hyphenated owner is NO LONGER slug-only structure. Traded for
 # the live entry `ground-truth/conformance`; see the COVERAGE BOUND note in validate-entry.sh. Pinned
 # as an assertion so the loss is visible in the suite rather than inferred from an absent test.
-verdict 0 "narrowing (vi) LOST CATCH: a bare hyphenated owner is no longer recognised — 'acme-corp/widget-svc' PASSES" \
+quiet "narrowing (vi) LOST CATCH: a bare hyphenated owner is no longer recognised — 'acme-corp/widget-svc' PASSES" \
   "$VE" cross-repo --entry "acme-corp/widget-svc has the same bug"
-verdict 1 "narrowing (vi) is BARE-ONLY: the same slug after a cue word is still REFUSED" \
+advisory "ADVISORY_CROSS_REPO" "narrowing (vi) is BARE-ONLY: the same slug after a cue word is still REPORTED" \
   "$VE" cross-repo --entry "the same defect landed in acme-corp/widget-svc last week"
-verdict 0 "narrowing (v) LOST CATCH: a version-tagged repo half is no longer recognised — 'hashicorp/terraform-aws-v2' PASSES" \
+quiet "narrowing (v) LOST CATCH: a version-tagged repo half is no longer recognised — 'hashicorp/terraform-aws-v2' PASSES" \
   "$VE" cross-repo --entry "hashicorp/terraform-aws-v2 has the same bug"
-verdict 0 "narrowing (vii) LOST CATCH: a leading-only capital is no longer CamelCase — 'Microsoft/vscode' PASSES" \
+quiet "narrowing (vii) LOST CATCH: a leading-only capital is no longer CamelCase — 'Microsoft/vscode' PASSES" \
   "$VE" cross-repo --entry "Microsoft/vscode has the same bug"
-verdict 0 "narrowing (v): the git branch name that motivated it PASSES — 'fix/v14.23.1-combined'" \
+quiet "narrowing (v): the git branch name that motivated it PASSES — 'fix/v14.23.1-combined'" \
   "$VE" cross-repo --entry "RESOLVED in PR #51 (fix/v14.23.1-combined, June 2026)"
-verdict 0 "narrowing (vi): the prose pair that motivated it PASSES — 'ground-truth/conformance'" \
+quiet "narrowing (vi): the prose pair that motivated it PASSES — 'ground-truth/conformance'" \
   "$VE" cross-repo --entry "Probe whether ground-truth/conformance actually ran before crediting a PASS"
-verdict 0 "narrowing (vii): the sentence-opening pair that motivated it PASSES — 'Count/version'" \
+quiet "narrowing (vii): the sentence-opening pair that motivated it PASSES — 'Count/version'" \
   "$VE" cross-repo --entry "Count/version drift is the top late-stage failure, see #146"
-verdict 1 "marker (4): CamelCase is slug-only structure — 'octocat/Hello-World' is REFUSED" \
+advisory "ADVISORY_CROSS_REPO" "marker (4): CamelCase is slug-only structure — 'octocat/Hello-World' is REPORTED" \
   "$VE" cross-repo --entry "octocat/Hello-World has the bug"
-verdict 1 "marker (4): a digit is slug-only structure — 'octocat/repo2' is REFUSED" \
+advisory "ADVISORY_CROSS_REPO" "marker (4): a digit is slug-only structure — 'octocat/repo2' is REPORTED" \
   "$VE" cross-repo --entry "octocat/repo2 has the bug"
-verdict 1 "a foreign 'owner/repo#123' citation is still REFUSED (structural marker, no cue needed)" \
+advisory "ADVISORY_CROSS_REPO" "a foreign 'owner/repo#123' citation is still REPORTED (structural marker, no cue needed)" \
   "$VE" cross-repo --entry "fixed by $FOREIGN#12 yesterday"
-verdict 1 "a foreign 'owner/repo.git' clone target is still REFUSED (structural marker)" \
+advisory "ADVISORY_CROSS_REPO" "a foreign 'owner/repo.git' clone target is still REPORTED (structural marker)" \
   "$VE" cross-repo --entry "cloned $FOREIGN.git yesterday"
-verdict 0 "AC16: the OWNER half must be a legal GitHub login — an underscore owner is never a slug" \
+quiet "AC16: the OWNER half must be a legal GitHub login — an underscore owner is never a slug" \
   "$VE" cross-repo --entry "the payloads live in worker_result/code_review_result"
 
 echo "== 6c. IN-REPO DIRECTORY PATHS are not owner/repo slugs =="
@@ -594,27 +672,27 @@ for shape in "the worktrees/subtask-1 checkout diverged from main" \
              "review-heal/SKILL is the authority here" \
              "the guard is in agents/code-reviewer today" \
              "copied from scripts/gates last week"; do
-  verdict 0 "in-repo path passes — \"$shape\"" "$VE" cross-repo --entry "$shape" --root "$REPO_ROOT"
+  quiet "in-repo path passes — \"$shape\"" "$VE" cross-repo --entry "$shape" --root "$REPO_ROOT"
 done
 # The two shapes that were ALREADY green. Pinned so a future narrowing cannot "fix" the six above by
 # breaking what worked: a three-segment path, and a trailing-slash directory.
-verdict 0 "control: an extensioned three-segment path still passes" \
+quiet "control: an extensioned three-segment path still passes" \
   "$VE" cross-repo --entry "see loomwright/agents/product-owner.md for it" --root "$REPO_ROOT"
-verdict 0 "control: a trailing-slash directory still passes" \
+quiet "control: a trailing-slash directory still passes" \
   "$VE" cross-repo --entry "the docs/ folder is frozen" --root "$REPO_ROOT"
 # ... and the narrowings did NOT blind the recogniser: every foreign form still refuses WITH the same
 # --root in hand, so the veto is not a blanket pass on any repo that happens to have directories.
-verdict 1 "the in-repo veto did not blind the recogniser: a cued foreign slug still REFUSES with --root" \
+advisory "ADVISORY_CROSS_REPO" "the in-repo veto did not blind the recogniser: a cued foreign slug still REPORTS with --root" \
   "$VE" cross-repo --entry "the same defect landed in $FOREIGN last week" --root "$REPO_ROOT"
-verdict 1 "the in-repo veto did not blind the recogniser: a structured foreign slug still REFUSES with --root" \
+advisory "ADVISORY_CROSS_REPO" "the in-repo veto did not blind the recogniser: a structured foreign slug still REPORTS with --root" \
   "$VE" cross-repo --entry "octocat/Hello-World has the bug" --root "$REPO_ROOT"
-verdict 0 "narrowing (iii): 'phase2/SKILL' passes — an ALL-CAPS repo half is a file stem even with a structured owner" \
+quiet "narrowing (iii): 'phase2/SKILL' passes — an ALL-CAPS repo half is a file stem even with a structured owner" \
   "$VE" cross-repo --entry "phase2/SKILL is the authority here" --root "$REPO_ROOT"
-verdict 1 "narrowing (ii) is ORDINALS ONLY: 'octocat/repo2' (digits fused to letters) is still REFUSED" \
+advisory "ADVISORY_CROSS_REPO" "narrowing (ii) is ORDINALS ONLY: 'octocat/repo2' (digits fused to letters) is still REPORTED" \
   "$VE" cross-repo --entry "octocat/repo2 has the bug" --root "$REPO_ROOT"
 # The veto is DELIBERATELY not applied to the structural markers: an explicit repository citation
 # outranks any local directory naming. `docs` IS a directory in this tree, so this is the real test.
-verdict 1 "the veto does not suppress a STRUCTURAL marker — 'github.com/docs/spikes' is still REFUSED" \
+advisory "ADVISORY_CROSS_REPO" "the veto does not suppress a STRUCTURAL marker — 'github.com/docs/spikes' is still REPORTED" \
   "$VE" cross-repo --entry "cloned from https://github.com/docs/spikes last week" --root "$REPO_ROOT"
 
 # Narrowings (ii) and (iii) are index-INDEPENDENT and must hold with no repo to read; narrowing (i)
@@ -626,9 +704,9 @@ mkdir -p "$INDEX_LESS/lib"; : > "$INDEX_LESS/lib/a.txt"
 # the probe token names, so the same token is vetoed here and refused there. Two roots, one token —
 # which is the only way to show the veto reads the world rather than the shape.
 mkdir -p "$TMP/phase2root/phase2"; : > "$TMP/phase2root/phase2/a.txt"
-verdict 0 "narrowing (ii) holds with NO in-repo index: 'worktrees/subtask-1' passes on an unrelated root" \
+quiet "narrowing (ii) holds with NO in-repo index: 'worktrees/subtask-1' passes on an unrelated root" \
   "$VE" cross-repo --entry "the worktrees/subtask-1 checkout diverged" --root "$INDEX_LESS"
-verdict 0 "narrowing (iii) holds with NO in-repo index: 'review-heal/SKILL' passes on an unrelated root" \
+quiet "narrowing (iii) holds with NO in-repo index: 'review-heal/SKILL' passes on an unrelated root" \
   "$VE" cross-repo --entry "review-heal/SKILL is the authority here" --root "$INDEX_LESS"
 # THE STATED BOUND, pinned rather than left to be rediscovered: narrowing (i) needs a usable tree, so
 # on a root holding no matching directory an in-repo path whose structure SURVIVES the other
@@ -638,25 +716,25 @@ verdict 0 "narrowing (iii) holds with NO in-repo index: 'review-heal/SKILL' pass
 # longer CamelCase, so `docs/Spikes` carries no marker at all and now passes on ANY root — it stopped
 # being able to demonstrate this bound. A digit-bearing owner still does. Re-aimed rather than
 # deleted, because the bound itself is unchanged; only the shape that exhibits it moved.
-verdict 0 "narrowing (vii) side-effect: 'docs/Spikes' now passes even with NO tree — it lost its last marker, so the veto is no longer what saves it" \
+quiet "narrowing (vii) side-effect: 'docs/Spikes' now passes even with NO tree — it lost its last marker, so the veto is no longer what saves it" \
   "$VE" cross-repo --entry "the docs/Spikes folder holds frozen records" --root "$INDEX_LESS"
-verdict 1 "STATED BOUND: 'phase2/Notes' IS refused on a root with no such directory — the veto reads the world, and there is none here" \
+advisory "ADVISORY_CROSS_REPO" "STATED BOUND: 'phase2/Notes' IS reported on a root with no such directory — the veto reads the world, and there is none here" \
   "$VE" cross-repo --entry "the phase2/Notes folder holds frozen records" --root "$INDEX_LESS"
-verdict 0 "STATED BOUND, other side: the same 'phase2/Notes' still needs a real tree to be vetoed — it passes where one exists" \
+quiet "STATED BOUND, other side: the same 'phase2/Notes' still needs a real tree to be vetoed — it passes where one exists" \
   "$VE" cross-repo --entry "the phase2/Notes folder holds frozen records" --root "$TMP/phase2root"
 
 echo "== 7. cross-repo blind spot (AC4) — stated, not hidden =="
-verdict 0 "prose naming a repo in an unrecognised shape passes UNDETECTED ('the othersvc repository')" \
+quiet "prose naming a repo in an unrecognised shape passes UNDETECTED ('the othersvc repository')" \
   "$VE" cross-repo --entry "the othersvc repository has the same bug"
-verdict 0 "a plain lowercase 'othersvc #146' is also unrecognised (the deliberate under-recognition)" \
+quiet "a plain lowercase 'othersvc #146' is also unrecognised (the deliberate under-recognition)" \
   "$VE" cross-repo --entry "landed in othersvc #146"
 # THE RESIDUAL BOUND, pinned so it is a stated limitation rather than an unnoticed hole: an
 # all-lowercase `word/word` with no cue beside it, no known owner and no slug structure cannot be
 # told apart FROM THE TEXT ALONE from an English pair — `otherco/othersvc` and `budget/zone` are the same
 # shape. Refusing that shape would refuse six live curated entries, so it is a deliberate miss.
-verdict 0 "RESIDUAL BOUND: a bare all-lowercase 'otherco/othersvc' with no marker passes undetected — the same shape as 'budget/zone'" \
+quiet "RESIDUAL BOUND: a bare all-lowercase 'otherco/othersvc' with no marker passes undetected — the same shape as 'budget/zone'" \
   "$VE" cross-repo --entry "$FOREIGN has the same bug"
-verdict 0 "RESIDUAL BOUND control: the English pair it cannot be distinguished from passes for the SAME reason" \
+quiet "RESIDUAL BOUND control: the English pair it cannot be distinguished from passes for the SAME reason" \
   "$VE" cross-repo --entry "budget/zone has the same bug"
 grep -qF "RESIDUAL BOUND" "$VE" && ok "validate-entry.sh states the residual bound in its header, not just in this test" \
   || no "validate-entry.sh header does not state the residual bound"
@@ -669,25 +747,37 @@ fi
 grep -qF "COVERAGE BOUND" "$VE" && ok "validate-entry.sh documents the coverage bound in its header" \
   || no "validate-entry.sh header does not document the coverage bound"
 
-echo "== 8. AC4c: an allowlist that cannot be resolved =="
+echo "== 8. AC4c: an allowlist that cannot be resolved — now ADVISED, never silent =="
 FIXTURE_ROOT="$TMP/fixture-repo"        # a bare dir: no config, no git remote => empty allowlist
 mkdir -p "$FIXTURE_ROOT"
+# AC4c's SUBSTANCE survives the demotion; only its CONSEQUENCE changes. "Membership could not be
+# examined" is still neither a silent pass nor a claim of cleanliness — it is still named on stderr,
+# and it is still distinguishable from a run that found nothing. What it no longer does is stop the
+# write, because an advisory check has no refusal to fall back to. Each case below therefore asserts
+# rc 0 AND the named token: rc alone would now pass even if the whole branch were deleted.
 ( unset LOOMWRIGHT_MEMORY_REPO_ALLOWLIST
   bash "$VE" cross-repo --entry "context lives in $FOREIGN" --root "$FIXTURE_ROOT" ) >/dev/null 2>"$TMP/err.txt"
 rc=$?
-[ "$rc" -eq 2 ] && ok "an unresolvable allowlist is could-not-examine (2) — not a silent pass, not a bare refusal (rc=$rc)" \
-  || no "unresolvable allowlist gave rc=$rc, wanted 2"
-reason "REFUSE_CROSS_REPO_ALLOWLIST_UNRESOLVED" "the refusal names the UNRESOLVED ALLOWLIST as the reason"
+if [ "$rc" -ne 0 ]; then
+  no "an unresolvable allowlist gave rc=$rc, wanted 0 — an advisory check must not block a write"
+elif grep -qF "ADVISORY_CROSS_REPO_ALLOWLIST_UNRESOLVED" "$TMP/err.txt" 2>/dev/null; then
+  ok "an unresolvable allowlist is ADVISED BY NAME — not a silent pass, and not a refusal (rc=$rc)"
+else
+  no "an unresolvable allowlist exited 0 and named nothing — the could-not-examine fact was LOST, not demoted"
+fi
 ( unset LOOMWRIGHT_MEMORY_REPO_ALLOWLIST
-  bash "$VE" cross-repo --entry "no repository is named anywhere in this entry" --root "$FIXTURE_ROOT" ) >/dev/null 2>&1
-[ $? -eq 0 ] && ok "an unresolvable allowlist does NOT refuse an entry that cites no repo at all" \
-  || no "an unresolvable allowlist refused an entry with no repo reference (refuse-everything)"
+  bash "$VE" cross-repo --entry "no repository is named anywhere in this entry" --root "$FIXTURE_ROOT" ) >/dev/null 2>"$TMP/err.txt"
+rc=$?
+{ [ "$rc" -eq 0 ] && ! grep -qF 'ADVISORY:' "$TMP/err.txt" 2>/dev/null; } \
+  && ok "an unresolvable allowlist says NOTHING about an entry citing no repo — it warns about repos, not about every write" \
+  || no "an unresolvable allowlist warned on an entry with no repo reference at all (warn-everything is the advisory form of refuse-everything)"
 ( unset LOOMWRIGHT_MEMORY_REPO_ALLOWLIST
   VALIDATE_ENTRY_SETUP_MEMORY="$TMP/absent-resolver.sh" CLAUDE_PLUGIN_ROOT="$TMP" \
   bash "$VE" cross-repo --entry "context lives in $FOREIGN" ) >/dev/null 2>"$TMP/err.txt"
-[ $? -eq 2 ] && ok "an ABSENT allowlist resolver is could-not-examine (2)" \
-  || no "an absent allowlist resolver did not give rc=2"
-reason "REFUSE_CROSS_REPO_ALLOWLIST_UNRESOLVED" "the absent-resolver refusal names the reason"
+rc=$?
+{ [ "$rc" -eq 0 ] && grep -qF "ADVISORY_CROSS_REPO_ALLOWLIST_UNRESOLVED" "$TMP/err.txt" 2>/dev/null; } \
+  && ok "an ABSENT allowlist resolver is ADVISED by name (rc=0)" \
+  || no "an absent allowlist resolver did not advise by name (rc=$rc)"
 
 echo "== 9. delegation: one resolver, never a second parser =="
 cat > "$TMP/stub-resolver.sh" <<'STUB'
@@ -700,13 +790,13 @@ echo "# source: stub" >&2
 exit 0
 STUB
 LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$FOREIGN" VALIDATE_ENTRY_SETUP_MEMORY="$TMP/stub-resolver.sh" \
-  bash "$VE" cross-repo --entry "context lives in $FOREIGN" >/dev/null 2>&1
-[ $? -eq 1 ] && ok "the stub resolver's list wins over the env var — the allowlist is DELEGATED, not re-parsed" \
+  mut_run "$VE" cross-repo --entry "context lives in $FOREIGN"
+[ "$MADV" -eq 1 ] && ok "the stub resolver's list wins over the env var — the allowlist is DELEGATED, not re-parsed (the foreign slug IS advised)" \
   || no "the env var beat the resolver — validate-entry.sh is parsing the allowlist itself"
 LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$FOREIGN" VALIDATE_ENTRY_SETUP_MEMORY="$TMP/stub-resolver.sh" \
-  bash "$VE" cross-repo --entry "context lives in stuborg/stubrepo" >/dev/null 2>&1
-[ $? -eq 0 ] && ok "a slug in the resolver's list passes (the delegation is read, not merely invoked)" \
-  || no "a slug in the resolver's list was refused"
+  mut_run "$VE" cross-repo --entry "context lives in stuborg/stubrepo"
+[ "$MADV" -eq 0 ] && ok "a slug in the resolver's list is NOT advised (the delegation is read, not merely invoked)" \
+  || no "a slug in the resolver's list was advised as foreign"
 # Static half: no code position in validate-entry.sh may EXPAND the env var. (It appears in prose
 # and in a refusal message; those carry no `$`.)
 if grep -nE '\$\{?LOOMWRIGHT_MEMORY_REPO_ALLOWLIST' "$VE" >/dev/null 2>&1; then
@@ -721,13 +811,13 @@ grep -qF 'allowlist' "$VE" && grep -qE 'bash "\$sm"' "$VE" \
 echo "== 10. one list, two consumers (AC5's shared-list half) =="
 SM="$PLUGIN_ROOT/scripts/setup-memory.sh"
 L1="$(LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$SM" allowlist 2>/dev/null)"
-LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$VE" cross-repo --entry "context lives in $FOREIGN" >/dev/null 2>&1
-V1=$?
+LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" mut_run "$VE" cross-repo --entry "context lives in $FOREIGN"
+V1=$MADV
 L2="$(LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS,$FOREIGN" bash "$SM" allowlist 2>/dev/null)"
-LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS,$FOREIGN" bash "$VE" cross-repo --entry "context lives in $FOREIGN" >/dev/null 2>&1
-V2=$?
+LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS,$FOREIGN" mut_run "$VE" cross-repo --entry "context lives in $FOREIGN"
+V2=$MADV
 if [ "$L1" != "$L2" ] && [ "$V1" -eq 1 ] && [ "$V2" -eq 0 ]; then
-  ok "moving the list ONCE moves both the resolver's output and the cross-repo verdict (1 -> 0)"
+  ok "moving the list ONCE moves both the resolver's output and the cross-repo finding (advised -> silent)"
 else
   no "shared-list move did not move both consumers (L1='$L1' L2='$L2' V1=$V1 V2=$V2)"
 fi
@@ -758,39 +848,52 @@ else
   awk -v a="$L" -v b="$((L+2))" 'NR==a{sub(/return 0/,"return 1")} NR==b{sub(/return 1/,"return 0")} {print}' \
     "$VE" > "$TMP/mut-membership.sh"
   if mutated_differs mut-membership.sh "membership inversion"; then
-    LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-membership.sh" cross-repo \
-      --entry "the guard landed in $OURS" >/dev/null 2>&1
-    r1=$?
-    LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-membership.sh" cross-repo \
-      --entry "the guard landed in LOOMWRIGHT #146" >/dev/null 2>&1
-    r2=$?
-    LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-membership.sh" cross-repo \
-      --entry "the same defect was fixed in OTHERSVC #146" >/dev/null 2>&1
-    r3=$?
+    LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" mut_run "$TMP/mut-membership.sh" cross-repo \
+      --entry "the guard landed in $OURS"
+    r1=$MADV
+    LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" mut_run "$TMP/mut-membership.sh" cross-repo \
+      --entry "the guard landed in LOOMWRIGHT #146"
+    r2=$MADV
+    LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" mut_run "$TMP/mut-membership.sh" cross-repo \
+      --entry "the same defect was fixed in OTHERSVC #146"
+    r3=$MADV
     [ "$r1" -eq 1 ] && [ "$r2" -eq 1 ] \
-      && ok "AC4b(i): inverting the membership test turns AC4 RED (own slug and own short name both refused)" \
-      || no "AC4b(i): inverting membership left AC4 GREEN (slug rc=$r1, short rc=$r2) — AC4 is not discriminating"
-    [ "$r3" -eq 0 ] && ok "AC4b(i): the same inversion also makes the foreign token PASS — the direction is what is tested" \
-      || no "AC4b(i): the inverted build still refused the foreign token (rc=$r3)"
+      && ok "AC4b(i): inverting the membership test turns AC4 RED (our OWN slug and short name are both advised as foreign)" \
+      || no "AC4b(i): inverting membership left AC4 GREEN (slug advised=$r1, short advised=$r2) — AC4 is not discriminating"
+    [ "$r3" -eq 0 ] && ok "AC4b(i): the same inversion also silences the FOREIGN token — the direction is what is tested" \
+      || no "AC4b(i): the inverted build still advised on the foreign token (advised=$r3)"
   fi
 fi
 
 # (ii) AC4b: a FIXTURE allowlist that ADDS otherco/othersvc must make AC3's entry PASS — proving the
 # check reads the list rather than pattern-matching a hardcoded token. Supplied via the env var in
 # this test's own environment; the live config is never touched.
-LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS,$FOREIGN" bash "$VE" cross-repo \
-  --entry "the same defect was fixed in OTHERSVC #146" >/dev/null 2>&1
-[ $? -eq 0 ] && ok "AC4b(ii): adding otherco/othersvc to a FIXTURE allowlist makes 'OTHERSVC #146' pass — the check reads the list" \
-  || no "AC4b(ii): 'OTHERSVC #146' was refused even with otherco/othersvc allowlisted — the token is hardcoded"
+LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS,$FOREIGN" mut_run "$VE" cross-repo \
+  --entry "the same defect was fixed in OTHERSVC #146"
+[ "$MADV" -eq 0 ] && ok "AC4b(ii): adding otherco/othersvc to a FIXTURE allowlist silences 'OTHERSVC #146' — the check reads the list" \
+  || no "AC4b(ii): 'OTHERSVC #146' was still advised even with otherco/othersvc allowlisted — the token is hardcoded"
 
-# (iii) R3: remove the could-not-examine refusal on an unresolvable allowlist => it reports CLEAN.
-UL="$(grep -nF 'resolved to nothing' "$VE" | head -1 | cut -d: -f1)"
-awk -v b="$((UL+1))" 'NR==b{sub(/return 2/,"return 0")} {print}' "$VE" > "$TMP/mut-unresolved.sh"
+# (iii) R3: delete the unresolvable-allowlist REPORT => the condition becomes a silent pass, which
+# is the advisory form of the fail-open this control has always been aimed at. The mutation target
+# moved with the design: it used to flip `return 2` to `return 0`, but that branch now returns 0 by
+# construction, so a status-flipping mutant would change nothing and `mutated_differs` would (
+# correctly) reject it as vacuous. What is still falsifiable — and what actually matters once a
+# check cannot refuse — is whether the finding is EMITTED at all.
+UL="$(grep -cF 'the allowlist resolved to nothing' "$VE" 2>/dev/null)"; [ -n "$UL" ] || UL=0
+if [ "$UL" -ne 1 ]; then
+  no "(iii) the unresolvable-allowlist report has $UL call site(s), expected exactly 1 — the mutant cannot be aimed"
+else
+awk '!/the allowlist resolved to nothing/' "$VE" > "$TMP/mut-unresolved.sh"
 if mutated_differs mut-unresolved.sh "unresolvable-allowlist fail-open"; then
   ( unset LOOMWRIGHT_MEMORY_REPO_ALLOWLIST
-    bash "$TMP/mut-unresolved.sh" cross-repo --entry "context lives in $FOREIGN" --root "$FIXTURE_ROOT" ) >/dev/null 2>&1
-  [ $? -eq 0 ] && ok "R3: dropping the unresolved-allowlist refusal makes it report CLEAN — AC4c's assertion is real" \
-    || no "R3: the unresolved-allowlist mutant did not change the verdict — AC4c may be passing for another reason"
+    bash "$TMP/mut-unresolved.sh" cross-repo --entry "context lives in $FOREIGN" --root "$FIXTURE_ROOT" ) \
+    >/dev/null 2>"$TMP/err.txt"
+  if grep -qF 'ADVISORY:' "$TMP/err.txt" 2>/dev/null; then
+    no "R3: the unresolved-allowlist mutant still reported — AC4c may be passing for another reason"
+  else
+    ok "R3: deleting the unresolved-allowlist report makes it a SILENT pass — AC4c's assertion is real"
+  fi
+fi
 fi
 
 # (iv) R3: conflate UNREADABLE with ABSENT in the store guard => could-not-examine becomes clean.
@@ -837,18 +940,18 @@ fi
 # (viii) R3: make every path resolve => the dead-reference refusal disappears.
 awk '/^_ve_path_resolves\(\) \{$/{print; print "  return 0"; next} {print}' "$VE" > "$TMP/mut-dead.sh"
 if mutated_differs mut-dead.sh "path resolution"; then
-  bash "$TMP/mut-dead.sh" dead-reference --entry "the guard lives in loomwright/scripts/long-gone.sh" --root "$REPO_ROOT" >/dev/null 2>&1
-  [ $? -eq 0 ] && ok "R3: making every path resolve clears the refusal — resolution is what refuses" \
-    || no "R3: the dead-reference mutant still refused"
+  mut_run "$TMP/mut-dead.sh" dead-reference --entry "the guard lives in loomwright/scripts/long-gone.sh" --root "$REPO_ROOT"
+  [ "$MADV" -eq 0 ] && ok "R3: making every path resolve clears the report — resolution is what the check reports on" \
+    || no "R3: the dead-reference mutant still reported a dead path"
 fi
 
 # (ix) AC6: drop the jq has() key-presence assertion => a MISSING key passes as valid.
 if command -v jq >/dev/null 2>&1; then
   sed 's/(has(\$f) | tostring)/("true")/' "$VE" > "$TMP/mut-has.sh"
   if mutated_differs mut-has.sh "jq has() presence assertion"; then
-    bash "$TMP/mut-has.sh" dead-reference --json '{"other":"x"}' --field path --root "$REPO_ROOT" >/dev/null 2>&1
-    [ $? -eq 0 ] && ok "AC6: dropping the has() presence assertion lets a MISSING key pass — the assertion is real" \
-      || no "AC6: the has() mutant did not change the verdict"
+    mut_run "$TMP/mut-has.sh" dead-reference --json '{"other":"x"}' --field path --root "$REPO_ROOT"
+    [ "$MADV" -eq 0 ] && ok "AC6: dropping the has() presence assertion lets a MISSING key pass SILENTLY — the assertion is real" \
+      || no "AC6: the has() mutant did not change the outcome"
   fi
 fi
 
@@ -856,15 +959,22 @@ fi
 # must go green. Without this, `validate_entry_all` could source five checks and invoke four.
 sed '/^  validate_cross_repo_reference "\$@";/d' "$VE" > "$TMP/mut-all.sh"
 if mutated_differs mut-all.sh "aggregate call site"; then
-  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-all.sh" all \
-    --entry "the same defect was fixed in OTHERSVC #146, source pr-138" --store "$STORE" --source "pr-138" --root "$REPO_ROOT" >/dev/null 2>&1
-  m=$?
-  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$VE" all \
-    --entry "the same defect was fixed in OTHERSVC #146, source pr-138" --store "$STORE" --source "pr-138" --root "$REPO_ROOT" >/dev/null 2>&1
-  b=$?
+  # The signal moved from the aggregate's EXIT STATUS to its OUTPUT, because an advisory check can
+  # no longer change the former. What is still exactly as testable: whether the aggregate INVOKES
+  # the check at all. A validate_entry_all that sourced five checks and ran four would now be
+  # completely silent about it, which is a stronger reason to keep this control than before.
+  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" mut_run "$TMP/mut-all.sh" all \
+    --entry "the same defect was fixed in OTHERSVC #146, source pr-138" --store "$STORE" --source "pr-138" --root "$REPO_ROOT"
+  m=$MADV; mrc=$MRC
+  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" mut_run "$VE" all \
+    --entry "the same defect was fixed in OTHERSVC #146, source pr-138" --store "$STORE" --source "pr-138" --root "$REPO_ROOT"
+  b=$MADV
   { [ "$b" -eq 1 ] && [ "$m" -eq 0 ]; } \
-    && ok "deleting the cross-repo call from validate_entry_all turns the aggregate green — the call site is tested, not just the source line" \
-    || no "aggregate call-site mutant did not discriminate (baseline rc=$b, mutant rc=$m)"
+    && ok "deleting the cross-repo call from validate_entry_all silences its advisory — the call site is tested, not just the source line" \
+    || no "aggregate call-site mutant did not discriminate (baseline advised=$b, mutant advised=$m)"
+  [ "$mrc" -eq 0 ] \
+    && ok "...and the aggregate exits 0 either way — an advisory check's presence or absence never moves the exit status" \
+    || no "the aggregate exit status moved with the advisory call site (mutant rc=$mrc)"
 fi
 
 # (xi) AC16: drop the MARKER requirement on `owner/repo` => ordinary prose pairs are refused again.
@@ -872,13 +982,13 @@ fi
 awk '{ if (index($0, "if [ \"$structural\" != \"1\" ]; then")) { print "  if false; then"; next } print }' \
   "$VE" > "$TMP/mut-cue.sh"
 if mutated_differs mut-cue.sh "cross-repo marker requirement"; then
-  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-cue.sh" cross-repo \
-    --entry "tests must parse YAML/JSON rather than hit live dependencies" >/dev/null 2>&1
-  [ $? -eq 1 ] && ok "AC16: dropping the marker requirement refuses 'YAML/JSON' again — the marker is what keeps prose writable" \
+  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" mut_run "$TMP/mut-cue.sh" cross-repo \
+    --entry "tests must parse YAML/JSON rather than hit live dependencies"
+  [ "$MADV" -eq 1 ] && ok "AC16: dropping the marker requirement refuses 'YAML/JSON' again — the marker is what keeps prose writable" \
     || no "AC16: the marker mutant still passed the prose pair — the pair is passing for some other reason"
-  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-cue.sh" cross-repo \
-    --entry "context lives in $FOREIGN" >/dev/null 2>&1
-  [ $? -eq 1 ] && ok "AC16: the same mutant still refuses a genuinely foreign slug — the mutation removed only the marker rule" \
+  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" mut_run "$TMP/mut-cue.sh" cross-repo \
+    --entry "context lives in $FOREIGN"
+  [ "$MADV" -eq 1 ] && ok "AC16: the same mutant still refuses a genuinely foreign slug — the mutation removed only the marker rule" \
     || no "AC16: the marker mutant stopped refusing foreign slugs — it changed more than the marker rule"
 fi
 
@@ -886,10 +996,10 @@ fi
 awk '{ if (index($0, "resolves to no single file: SKIP") || index($0, "outside any repo root: SKIP")) next; print }' \
   "$VE" > "$TMP/mut-shape.sh"
 if mutated_differs mut-shape.sh "unresolvable-by-shape skip"; then
-  bash "$TMP/mut-shape.sh" dead-reference --entry "eleven test-*.sh suites run in CI" --root "$REPO_ROOT" >/dev/null 2>&1
-  r1=$?
-  bash "$TMP/mut-shape.sh" dead-reference --entry "set =1 in ~/.claude/settings.json" --root "$REPO_ROOT" >/dev/null 2>&1
-  r2=$?
+  mut_run "$TMP/mut-shape.sh" dead-reference --entry "eleven test-*.sh suites run in CI" --root "$REPO_ROOT"
+  r1=$MADV
+  mut_run "$TMP/mut-shape.sh" dead-reference --entry "set =1 in ~/.claude/settings.json" --root "$REPO_ROOT"
+  r2=$MADV
   { [ "$r1" -eq 1 ] && [ "$r2" -eq 1 ]; } \
     && ok "AC16: dropping the by-shape skips refuses the glob and the tilde path again — the skips are what pass them" \
     || no "AC16: the by-shape mutant did not discriminate (glob rc=$r1, tilde rc=$r2)"
@@ -899,11 +1009,11 @@ fi
 # is refused again. This is the other half of the 12-of-21 defect.
 awk '/^_ve_index_has\(\) \{$/{print; print "  return 1"; next} {print}' "$VE" > "$TMP/mut-index.sh"
 if mutated_differs mut-index.sh "repo-wide path resolution"; then
-  bash "$TMP/mut-index.sh" dead-reference --entry "a green check-doc-currency.sh is necessary" --root "$REPO_ROOT" >/dev/null 2>&1
-  [ $? -eq 1 ] && ok "AC16: disabling the repo-wide suffix match refuses 'check-doc-currency.sh' again — the match is what resolves it" \
+  mut_run "$TMP/mut-index.sh" dead-reference --entry "a green check-doc-currency.sh is necessary" --root "$REPO_ROOT"
+  [ "$MADV" -eq 1 ] && ok "AC16: disabling the repo-wide suffix match refuses 'check-doc-currency.sh' again — the match is what resolves it" \
     || no "AC16: the index mutant did not change the verdict — the bare filename resolves some other way"
-  bash "$TMP/mut-index.sh" dead-reference --entry "the sole writer is loomwright/scripts/write-lessons.sh" --root "$REPO_ROOT" >/dev/null 2>&1
-  [ $? -eq 0 ] && ok "AC16: the same mutant still resolves a root-relative path — the mutation removed only the suffix match" \
+  mut_run "$TMP/mut-index.sh" dead-reference --entry "the sole writer is loomwright/scripts/write-lessons.sh" --root "$REPO_ROOT"
+  [ "$MADV" -eq 0 ] && ok "AC16: the same mutant still resolves a root-relative path — the mutation removed only the suffix match" \
     || no "AC16: the index mutant broke ordinary root-relative resolution — it changed more than the suffix match"
 fi
 
@@ -921,9 +1031,9 @@ fi
 awk '{ if (index($0, "a KNOWN repo owner")) { print "                *\") never-a-real-owner \"*) : ;;"; next } print }' \
   "$VE" > "$TMP/mut-owner.sh"
 if mutated_differs mut-owner.sh "known-owner marker"; then
-  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-owner.sh" cross-repo \
-    --entry "vikashruhilgit/othersvc has the same bug" >/dev/null 2>&1
-  [ $? -eq 0 ] && ok "marker (3): disabling the known-owner test stops 'vikashruhilgit/othersvc' being recognised — the owner set is what marks it" \
+  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" mut_run "$TMP/mut-owner.sh" cross-repo \
+    --entry "vikashruhilgit/othersvc has the same bug"
+  [ "$MADV" -eq 0 ] && ok "marker (3): disabling the known-owner test stops 'vikashruhilgit/othersvc' being recognised — the owner set is what marks it" \
     || no "marker (3): the known-owner mutant still refused — recognition is coming from somewhere else"
 fi
 
@@ -931,12 +1041,12 @@ fi
 # being recognised, and the corpus prose pairs must STILL pass (the mutation removed only structure).
 awk '/^_ve_slug_structured\(\) \{$/{print; print "  return 1"; next} {print}' "$VE" > "$TMP/mut-struct.sh"
 if mutated_differs mut-struct.sh "slug-only structure marker"; then
-  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-struct.sh" cross-repo \
-    --entry "octocat/repo2 has the bug" >/dev/null 2>&1
-  r1=$?
-  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-struct.sh" cross-repo \
-    --entry "octocat/Hello-World has the bug" >/dev/null 2>&1
-  r2=$?
+  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" mut_run "$TMP/mut-struct.sh" cross-repo \
+    --entry "octocat/repo2 has the bug"
+  r1=$MADV
+  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" mut_run "$TMP/mut-struct.sh" cross-repo \
+    --entry "octocat/Hello-World has the bug"
+  r2=$MADV
   { [ "$r1" -eq 0 ] && [ "$r2" -eq 0 ]; } \
     && ok "marker (4): disabling slug-only structure stops the digit and CamelCase forms being recognised — structure is what marks them" \
     || no "marker (4): the structure mutant did not discriminate (digit rc=$r1, CamelCase rc=$r2)"
@@ -946,13 +1056,13 @@ fi
 awk '{ if (index($0, "_VE_SLUG_TRAILING_CUE_WORDS=")) { print "_VE_SLUG_TRAILING_CUE_WORDS=\" \""; next } print }' \
   "$VE" > "$TMP/mut-trail.sh"
 if mutated_differs mut-trail.sh "trailing cue marker"; then
-  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-trail.sh" cross-repo \
-    --entry "the $FOREIGN repo has the same bug" >/dev/null 2>&1
-  [ $? -eq 0 ] && ok "marker (2): emptying the trailing cue list stops 'the otherco/othersvc repo' being recognised" \
+  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" mut_run "$TMP/mut-trail.sh" cross-repo \
+    --entry "the $FOREIGN repo has the same bug"
+  [ "$MADV" -eq 0 ] && ok "marker (2): emptying the trailing cue list stops 'the otherco/othersvc repo' being recognised" \
     || no "marker (2): the trailing-cue mutant still refused"
-  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-trail.sh" cross-repo \
-    --entry "the same defect landed in $FOREIGN last week" >/dev/null 2>&1
-  [ $? -eq 1 ] && ok "marker (2): the same mutant still refuses the LEADING-cue form — the two cue lists are independent" \
+  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" mut_run "$TMP/mut-trail.sh" cross-repo \
+    --entry "the same defect landed in $FOREIGN last week"
+  [ "$MADV" -eq 1 ] && ok "marker (2): the same mutant still refuses the LEADING-cue form — the two cue lists are independent" \
     || no "marker (2): emptying the trailing list also broke the leading cue"
 fi
 
@@ -962,18 +1072,18 @@ fi
 # would stay green and prove nothing about this mutant.
 awk '/^_ve_owner_is_repo_dir\(\) \{$/{print; print "  return 1"; next} {print}' "$VE" > "$TMP/mut-veto.sh"
 if mutated_differs mut-veto.sh "in-repo path veto"; then
-  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-veto.sh" cross-repo \
-    --entry "copied from scripts/gates last week" --root "$REPO_ROOT" >/dev/null 2>&1
-  r1=$?
-  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-veto.sh" cross-repo \
-    --entry "the guard is in agents/code-reviewer today" --root "$REPO_ROOT" >/dev/null 2>&1
-  r2=$?
+  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" mut_run "$TMP/mut-veto.sh" cross-repo \
+    --entry "copied from scripts/gates last week" --root "$REPO_ROOT"
+  r1=$MADV
+  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" mut_run "$TMP/mut-veto.sh" cross-repo \
+    --entry "the guard is in agents/code-reviewer today" --root "$REPO_ROOT"
+  r2=$MADV
   { [ "$r1" -eq 1 ] && [ "$r2" -eq 1 ]; } \
     && ok "narrowing (i): disabling the in-repo veto refuses 'scripts/gates' and 'agents/code-reviewer' again — the veto is what passes them" \
     || no "narrowing (i): the veto mutant did not discriminate (from-cue rc=$r1, in-cue rc=$r2)"
-  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-veto.sh" cross-repo \
-    --entry "the same defect landed in $FOREIGN last week" --root "$REPO_ROOT" >/dev/null 2>&1
-  [ $? -eq 1 ] && ok "narrowing (i): the same mutant still refuses a foreign slug — it removed only the veto" \
+  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" mut_run "$TMP/mut-veto.sh" cross-repo \
+    --entry "the same defect landed in $FOREIGN last week" --root "$REPO_ROOT"
+  [ "$MADV" -eq 1 ] && ok "narrowing (i): the same mutant still refuses a foreign slug — it removed only the veto" \
     || no "narrowing (i): the veto mutant stopped refusing foreign slugs — it changed more than the veto"
 fi
 
@@ -983,18 +1093,18 @@ fi
 awk '/^_ve_strip_ordinal\(\) \{$/{print; print "  printf \x27%s\x27 \"${1:-}\"; return 0"; next} {print}' \
   "$VE" > "$TMP/mut-ordinal.sh"
 if mutated_differs mut-ordinal.sh "ordinal suffix strip"; then
-  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-ordinal.sh" cross-repo \
-    --entry "the worktrees/subtask-1 checkout diverged" --root "$INDEX_LESS" >/dev/null 2>&1
-  r1=$?
-  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-ordinal.sh" cross-repo \
-    --entry "phase-2/plan was superseded by the new brief" --root "$INDEX_LESS" >/dev/null 2>&1
-  r2=$?
+  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" mut_run "$TMP/mut-ordinal.sh" cross-repo \
+    --entry "the worktrees/subtask-1 checkout diverged" --root "$INDEX_LESS"
+  r1=$MADV
+  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" mut_run "$TMP/mut-ordinal.sh" cross-repo \
+    --entry "phase-2/plan was superseded by the new brief" --root "$INDEX_LESS"
+  r2=$MADV
   { [ "$r1" -eq 1 ] && [ "$r2" -eq 1 ]; } \
     && ok "narrowing (ii): a no-op ordinal strip refuses 'worktrees/subtask-1' and 'phase-2/plan' again — the strip is what passes them" \
     || no "narrowing (ii): the ordinal mutant did not discriminate (subtask rc=$r1, phase rc=$r2)"
-  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-ordinal.sh" cross-repo \
-    --entry "octocat/repo2 has the bug" --root "$INDEX_LESS" >/dev/null 2>&1
-  [ $? -eq 1 ] && ok "narrowing (ii): the same mutant still refuses 'octocat/repo2' — fused digits were never an ordinal" \
+  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" mut_run "$TMP/mut-ordinal.sh" cross-repo \
+    --entry "octocat/repo2 has the bug" --root "$INDEX_LESS"
+  [ "$MADV" -eq 1 ] && ok "narrowing (ii): the same mutant still refuses 'octocat/repo2' — fused digits were never an ordinal" \
     || no "narrowing (ii): the ordinal mutant changed the fused-digit verdict too"
 fi
 
@@ -1007,13 +1117,13 @@ fi
 # thing it suppresses would otherwise fire.
 awk '{ if (index($0, "ALL-CAPS repo half: a file stem")) next; print }' "$VE" > "$TMP/mut-allcaps.sh"
 if mutated_differs mut-allcaps.sh "all-caps repo half suppressor"; then
-  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-allcaps.sh" cross-repo \
-    --entry "phase2/SKILL is the authority here" --root "$INDEX_LESS" >/dev/null 2>&1
-  [ $? -eq 1 ] && ok "narrowing (iii): deleting the all-caps suppressor refuses 'phase2/SKILL' again — the suppressor is what passes it" \
+  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" mut_run "$TMP/mut-allcaps.sh" cross-repo \
+    --entry "phase2/SKILL is the authority here" --root "$INDEX_LESS"
+  [ "$MADV" -eq 1 ] && ok "narrowing (iii): deleting the all-caps suppressor refuses 'phase2/SKILL' again — the suppressor is what passes it" \
     || no "narrowing (iii): the all-caps mutant did not change the verdict"
-  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-allcaps.sh" cross-repo \
-    --entry "octocat/Hello-World has the bug" --root "$INDEX_LESS" >/dev/null 2>&1
-  [ $? -eq 1 ] && ok "narrowing (iii): the same mutant still refuses 'octocat/Hello-World' — a lowercase-bearing half was never suppressed" \
+  LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" mut_run "$TMP/mut-allcaps.sh" cross-repo \
+    --entry "octocat/Hello-World has the bug" --root "$INDEX_LESS"
+  [ "$MADV" -eq 1 ] && ok "narrowing (iii): the same mutant still refuses 'octocat/Hello-World' — a lowercase-bearing half was never suppressed" \
     || no "narrowing (iii): the all-caps mutant changed the CamelCase verdict too"
 fi
 
@@ -1109,9 +1219,9 @@ fi
 
 # (xxii) NUMERIC RATIO, narrowing (iv): delete the all-digits suppressor => a counting ratio reads
 # as a slug again. Every one of these was a live false refusal.
-verdict 0 "narrowing (iv): a numeric ratio is not a slug — '117/117', '59/59', '85/100' pass" \
+quiet "narrowing (iv): a numeric ratio is not a slug — '117/117', '59/59', '85/100' pass" \
   "$VE" cross-repo --entry "the suite went 117/117 green, 59/59 suites passed, coverage 85/100 lines" --root "$REPO_ROOT"
-verdict 1 "narrowing (iv) is BOTH-halves-only: a STRUCTURALLY marked numeric slug is still REFUSED" \
+advisory "ADVISORY_CROSS_REPO" "narrowing (iv) is BOTH-halves-only: a STRUCTURALLY marked numeric slug is still REPORTED" \
   "$VE" cross-repo --entry "cloned from github.com/117/117 yesterday" --root "$REPO_ROOT"
 sed -e 's/^    \*\[!0-9\]\*) : ;;.*$/    *) : ;;/' -e 's/^    \*) return 1 ;;.*ratio.*$/    *) : ;;/' "$VE" > "$TMP/mut-ratio.sh"
 if mutated_differs mut-ratio.sh "numeric-ratio suppressor"; then
@@ -1119,12 +1229,12 @@ if mutated_differs mut-ratio.sh "numeric-ratio suppressor"; then
   if [ "$RATIO_LEFT" -ne 0 ]; then
     no "(xxii) $RATIO_LEFT suppressor arm(s) survive in the mutant — it is partially applied"
   else
-    LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-ratio.sh" cross-repo \
-      --entry "the suite went 117/117 green" --root "$REPO_ROOT" >/dev/null 2>&1
-    r1=$?
-    LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$TMP/mut-ratio.sh" cross-repo \
-      --entry "octocat/repo2 has the bug" --root "$REPO_ROOT" >/dev/null 2>&1
-    r2=$?
+    LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" mut_run "$TMP/mut-ratio.sh" cross-repo \
+      --entry "the suite went 117/117 green" --root "$REPO_ROOT"
+    r1=$MADV
+    LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" mut_run "$TMP/mut-ratio.sh" cross-repo \
+      --entry "octocat/repo2 has the bug" --root "$REPO_ROOT"
+    r2=$MADV
     [ "$r1" -eq 1 ] \
       && ok "narrowing (iv): deleting the all-digits suppressor refuses '117/117' again — the suppressor is what passes it" \
       || no "narrowing (iv): the ratio mutant did not discriminate (rc=$r1, wanted 1)"
@@ -1136,11 +1246,11 @@ fi
 
 # (xxiii) PROSE `A/B.ext` SHORTHAND: the dead-reference check's two-segment veto. Mutant = let every
 # two-segment token through, i.e. the pre-fix behaviour.
-verdict 0 "prose A/B shorthand ending in an extension is SKIPPED, not refused — 'CHANGELOG/CLAUDE.md'" \
+quiet "prose A/B shorthand ending in an extension is SKIPPED, not refused — 'CHANGELOG/CLAUDE.md'" \
   "$VE" dead-reference --entry "CHANGELOG/CLAUDE.md both drifted; see README/AGENT_GUIDELINES.md" --root "$REPO_ROOT"
-verdict 0 "CONTROL: a two-segment path whose owner IS a repo directory is still examined and resolves" \
+quiet "CONTROL: a two-segment path whose owner IS a repo directory is still examined and resolves" \
   "$VE" dead-reference --entry "the docs/PITFALLS.md file" --root "$REPO_ROOT"
-verdict 1 "CONTROL: a DEAD two-segment path under a real directory is still REFUSED" \
+advisory "ADVISORY_DEAD_REFERENCE" "CONTROL: a DEAD two-segment path under a real directory is still REPORTED" \
   "$VE" dead-reference --entry "see docs/NO-SUCH-FILE-HERE.md" --root "$REPO_ROOT"
 sed -e 's/^    _ve_owner_is_repo_dir "\$owner" "\$root" || continue$/    :/' "$VE" > "$TMP/mut-2seg.sh"
 if mutated_differs mut-2seg.sh "two-segment prose veto"; then
@@ -1148,10 +1258,10 @@ if mutated_differs mut-2seg.sh "two-segment prose veto"; then
   if [ "$SEG_LEFT" -ne 0 ]; then
     no "(xxiii) $SEG_LEFT veto call site(s) survive in the mutant — it is partially applied"
   else
-    bash "$TMP/mut-2seg.sh" dead-reference --entry "CHANGELOG/CLAUDE.md both drifted" --root "$REPO_ROOT" >/dev/null 2>&1
-    r1=$?
-    bash "$TMP/mut-2seg.sh" dead-reference --entry "the docs/PITFALLS.md file" --root "$REPO_ROOT" >/dev/null 2>&1
-    r2=$?
+    mut_run "$TMP/mut-2seg.sh" dead-reference --entry "CHANGELOG/CLAUDE.md both drifted" --root "$REPO_ROOT"
+    r1=$MADV
+    mut_run "$TMP/mut-2seg.sh" dead-reference --entry "the docs/PITFALLS.md file" --root "$REPO_ROOT"
+    r2=$MADV
     [ "$r1" -eq 1 ] \
       && ok "two-segment veto: without it 'CHANGELOG/CLAUDE.md' is refused again — the veto is what passes it" \
       || no "two-segment veto: the mutant did not discriminate (rc=$r1, wanted 1)"
@@ -1185,11 +1295,11 @@ if [ "$UNION_TRACKED" != "tracked-sub/tracked-note.md " ]; then
   no "(xxiv) the union fixture repo did not build (ls-files='$UNION_TRACKED') — this control cannot run"
 else
   ok "(xxiv) the union fixture is a REAL work tree with a non-empty git index — the old find-only-when-empty fallback could never fire here"
-  verdict 0 "index union: a gitignored-but-real file resolves ('untracked-scratch.md')" \
+  quiet "index union: a gitignored-but-real file resolves ('untracked-scratch.md')" \
     "$VE" dead-reference --entry "the projector writes untracked-scratch.md each phase" --root "$UNIONREPO"
-  verdict 0 "index union: the TRACKED file still resolves — the union added a source, it replaced nothing" \
+  quiet "index union: the TRACKED file still resolves — the union added a source, it replaced nothing" \
     "$VE" dead-reference --entry "see tracked-note.md for the map" --root "$UNIONREPO"
-  verdict 1 "index union CONTROL: a file in NEITHER source is still REFUSED" \
+  advisory "ADVISORY_DEAD_REFERENCE" "index union CONTROL: a file in NEITHER source is still REPORTED" \
     "$VE" dead-reference --entry "see never-existed-anywhere.md" --root "$UNIONREPO"
   sed -e 's/-maxdepth 8/-maxdepth 0 -name __ve_no_such_name__/' "$VE" > "$TMP/mut-union.sh"
   if mutated_differs mut-union.sh "repo-index union"; then
@@ -1197,10 +1307,10 @@ else
     if [ "$UNION_LEFT" -ne 0 ]; then
       no "(xxiv) $UNION_LEFT find call site(s) survive in the mutant — it is partially applied"
     else
-      bash "$TMP/mut-union.sh" dead-reference --entry "the projector writes untracked-scratch.md each phase" --root "$UNIONREPO" >/dev/null 2>&1
-      r1=$?
-      bash "$TMP/mut-union.sh" dead-reference --entry "see tracked-note.md for the map" --root "$UNIONREPO" >/dev/null 2>&1
-      r2=$?
+      mut_run "$TMP/mut-union.sh" dead-reference --entry "the projector writes untracked-scratch.md each phase" --root "$UNIONREPO"
+      r1=$MADV
+      mut_run "$TMP/mut-union.sh" dead-reference --entry "see tracked-note.md for the map" --root "$UNIONREPO"
+      r2=$MADV
       [ "$r1" -eq 1 ] \
         && ok "index union: with the on-disk half neutered the untracked file is refused again — the union is what resolves it" \
         || no "index union: the mutant did not discriminate (rc=$r1, wanted 1)"
@@ -1287,7 +1397,14 @@ write-system-contract.sh|.supervisor/twin/contracts|wholefile||duplicate,contrad
 REPLAY_KNOWN_CHECKS=" duplicate contradiction provenance dead-reference cross-repo "
 
 # ---- the replay primitives --------------------------------------------------
-replay_reset() { REPLAY_N=0; REPLAY_BAD=0; REPLAY_FIRST=""; REPLAY_CAND=0; REPLAY_CHECKS=""; REPLAY_MISMODE=""; }
+replay_reset() { REPLAY_N=0; REPLAY_BAD=0; REPLAY_FIRST=""; REPLAY_CAND=0; REPLAY_CHECKS=""; REPLAY_MISMODE=""; REPLAY_ADV=0; }
+REPLAY_ADV=0
+# The store the replay compares against. ABSENT by default and deliberately so — replaying a stored
+# entry against the store that already holds it is a duplicate BY CONSTRUCTION. The seeded vacuity
+# control below is the one caller that points it at a real file, because with an absent store the
+# two comparison checks return "no prior entries" before they examine anything, and NO blocking
+# check could then be provoked at all.
+REPLAY_STORE=""
 
 # replay_one <label> <entry-text> — the five checks over ONE entry, tallied.
 # `out` and `rc` are declared bare and assigned on their OWN lines: `local out="$(...)"` returns the
@@ -1300,12 +1417,18 @@ replay_one() {
   # An UNSCOPED store runs `all`; a scoped one runs its named checks one at a time and reports the
   # first non-zero. Running `all` and ignoring the checks a store is scoped out of would still let
   # those checks decide the exit status, which is the whole thing the scoping exists to prevent.
+  # --root is $REPLAY_ROOT, which is the CLEAN-TREE EXTRACTION and deliberately not $REPO_ROOT —
+  # see THE CLEAN-TREE ROOT above for the incident that moved it.
+  # Advisory findings are TALLIED, never counted as refusals: the replay's property is "no live
+  # entry is BLOCKED", and folding warnings into that would restore, inside the test, exactly the
+  # false-refusal pressure the design change removed.
   local chk
   for chk in ${REPLAY_CHECKS:-all}; do
     out="$(LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" bash "$VE" "$chk" \
       --entry "$text" --source "corpus-replay:$label" \
-      --store "$TMP/no-such-corpus-store.md" --root "$REPO_ROOT" 2>&1)"
+      --store "${REPLAY_STORE:-$TMP/no-such-corpus-store.md}" --root "$REPLAY_ROOT" 2>&1)"
     rc=$?
+    case "$out" in *"ADVISORY:"*) REPLAY_ADV=$((REPLAY_ADV + 1)) ;; esac
     if [ "$rc" -ne 0 ]; then
       REPLAY_BAD=$((REPLAY_BAD + 1))
       [ -n "$REPLAY_FIRST" ] || REPLAY_FIRST="[$label] $chk rc=$rc $(printf '%s' "$out" | sed -n '1p')"
@@ -1528,8 +1651,132 @@ EOF
   && ok "AC16 scoping: $SCOPE_COUNT store(s) are scoped, so these three gates are not running vacuously" \
   || no "AC16 scoping: NO store is scoped, so the three gates above asserted nothing — remove them or the scoping mechanism is dead code"
 
+# ---- THE CLEAN-TREE ROOT ----------------------------------------------------
+# THE REPLAY RESOLVES AGAINST A `git archive HEAD` EXTRACTION, NOT AGAINST $REPO_ROOT, and this is
+# the single most important line in this section. $REPO_ROOT is THE AUTHOR'S WORKING TREE — the one
+# environment where every gitignored runtime artifact this system produces happens to exist. A
+# replay that resolves cited paths against it is measuring the machine, not the validator.
+#
+# MEASURED, and this is the incident that produced the whole advisory design change: a fix that
+# unioned an on-disk `find` into the path index made gitignored-but-real files resolve, which was
+# correct on the machine that shipped it and wrong everywhere else. This suite reported 231 passed /
+# 0 failed; the same commit extracted with `git archive HEAD` reported 229 / 1, with 3 of 28 live
+# curated entries falsely refused. The flagship regression guard could not see it because it replayed
+# $REPO_ROOT. CI was red while the author's tree was green.
+#
+# The guard is kept — and re-aimed — rather than dropped now that its two prose-scanning subjects no
+# longer block. It still protects the THREE CHECKS THAT DO: duplicate, contradiction and provenance
+# are what can still refuse a live curated entry, and they are exactly what this replay now gates.
+# The clean-tree extraction is what keeps that gate from being an assertion about one laptop.
+#
+# The ENTRIES still come from the working tree (the curated stores are gitignored, so they exist
+# nowhere else); only the ROOT paths resolve against is clean. Two different jobs, two different
+# directories, neither borrowed from the other.
+CLEAN_ROOT="$TMP/clean-tree"
+mkdir -p "$CLEAN_ROOT"
+CLEAN_OK=0
+if git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+  if git -C "$REPO_ROOT" archive HEAD 2>/dev/null | tar -x -C "$CLEAN_ROOT" 2>/dev/null; then
+    CLEAN_OK=1
+  fi
+fi
+# FAILING TO BUILD IT IS A FAILURE, not a silent fall back to $REPO_ROOT. Falling back would restore
+# the exact blind spot this exists to close, and it would do it invisibly.
+if [ "$CLEAN_OK" -ne 1 ] || [ ! -f "$CLEAN_ROOT/loomwright/scripts/validate-entry.sh" ]; then
+  no "the clean-tree extraction could not be built at $CLEAN_ROOT (git archive HEAD | tar) — the corpus replay must NOT silently fall back to the working tree, so this fails instead"
+  REPLAY_ROOT="$CLEAN_ROOT"
+else
+  ok "the clean-tree extraction built from git archive HEAD — the replay resolves paths against a fresh checkout, not the author's working tree"
+  REPLAY_ROOT="$CLEAN_ROOT"
+fi
+
+# THE EXTRACTION IS ONLY WORTH HAVING IF IT DIFFERS FROM THE WORKING TREE IN THE WAY THAT MATTERS,
+# and the probe that shows it is CONSTRUCTED here rather than derived from whatever gitignored files
+# happen to be lying around. That derivation was tried first and was itself machine-dependent — the
+# first ignored file on one machine was `.claude/settings.local.json`, whose OWNER HALF `.claude` is
+# a directory in the working tree and not in the archive, so the token was SKIPPED (never judged)
+# on one root and resolved on the other, and the pair measured 0 vs 0 while claiming to measure the
+# divergence. Deriving a probe from the environment, inside the guard whose entire purpose is to
+# stop the environment deciding the verdict, is the same defect one level up.
+#
+# So the artifact is created, measured, and removed. It reproduces the LIVE defect's exact shape: a
+# gitignored runtime artifact under `.supervisor/`, cited BY BARE NAME, which is how the entry that
+# turned CI red cited `state.md`. A bare `NAME.md` is a path candidate unconditionally, so nothing
+# in this probe depends on which directories either tree happens to contain.
+PROBE_NAME="ve-probe-runtime-state.md"
+PROBE_ENTRY="the projector writes $PROBE_NAME each phase, see #146"
+PROBE_FILE="$CLEAN_ROOT/.supervisor/$PROBE_NAME"
+PROBE_COLL="$(cd "$REPO_ROOT" && git ls-files 2>/dev/null | grep -c "/$PROBE_NAME$")"; [ -n "$PROBE_COLL" ] || PROBE_COLL=0
+if [ "$PROBE_COLL" -ne 0 ]; then
+  no "the probe name $PROBE_NAME collides with $PROBE_COLL tracked file(s) — it would resolve on both roots and prove nothing; rename it"
+else
+  mkdir -p "$CLEAN_ROOT/.supervisor"
+  # (a) the artifact is ABSENT — the state of every clean checkout, and of CI
+  ve_run "$VE" all --entry "$PROBE_ENTRY" --store "$TMP/no-such-corpus-store.md" --source "pr-138" --root "$CLEAN_ROOT"
+  ABSENT_RC="$VRC"; ABSENT_ADV="$ADV"
+  # (b) the same entry, the same validator, the same root — with the artifact present, which is the
+  #     state of the machine that shipped the change that turned CI red
+  printf 'runtime state\n' > "$PROBE_FILE"
+  ve_run "$VE" all --entry "$PROBE_ENTRY" --store "$TMP/no-such-corpus-store.md" --source "pr-138" --root "$CLEAN_ROOT"
+  PRESENT_RC="$VRC"; PRESENT_ADV="$ADV"
+  { [ "$ABSENT_RC" -eq 0 ] && [ "$PRESENT_RC" -eq 0 ]; } \
+    && ok "MACHINE-INDEPENDENCE: an entry citing a gitignored runtime artifact gets the SAME verdict (0) whether or not the artifact exists — this is the pair that was 1 vs 0 and turned CI red" \
+    || no "MACHINE-INDEPENDENCE BROKEN: the verdict moved with a file's presence (absent rc=$ABSENT_RC, present rc=$PRESENT_RC) — a write-time gate whose answer depends on which files are lying around is not a gate"
+  { [ "$ABSENT_ADV" -eq 1 ] && [ "$PRESENT_ADV" -eq 0 ]; } \
+    && ok "...and the ADVISORY still moves with the tree (reported when the artifact is absent, silent when it is present) — the check reads the world, so the pair above is not vacuous" \
+    || no "the advisory did NOT move between the two tree states (absent advised=$ABSENT_ADV, present advised=$PRESENT_ADV) — the machine-independence assertion above is passing for some other reason"
+
+  # THE MUTATION CONTROL FOR THE WHOLE DESIGN CHANGE: restore blocking in the dead-reference prose
+  # loop and the divergence comes straight back — rc 1 on the clean tree, rc 0 where the artifact
+  # exists. That is the 229/1-vs-231/0 incident, reproduced on demand in one pair, and it is what
+  # makes the two assertions above evidence rather than a description of the current build.
+  #
+  # MEASURED AT THE CHECK, NOT AT THE AGGREGATE, and the reason is worth recording because the first
+  # version of this control was aimed at `all` and came back 0-vs-0: validate_entry_all ABSORBS a
+  # non-zero status from an advisory check, so the aggregate refuses to reproduce the divergence
+  # even when the check itself is re-blocked. That is the absorber working (it has its own control
+  # in section 12b), and it means the check is the only place the old behaviour can still be
+  # exhibited — two independent guards, each measured where it acts.
+  PROBE_SITES="$(grep -c '_ve_advise "ADVISORY_DEAD_REFERENCE" "the entry cites' "$VE" 2>/dev/null)"; [ -n "$PROBE_SITES" ] || PROBE_SITES=0
+  if [ "$PROBE_SITES" -ne 1 ]; then
+    no "the dead-reference prose report has $PROBE_SITES call site(s), expected exactly 1 — the re-blocking mutant cannot be aimed at all of it"
+  else
+    awk '{ if (index($0, "_ve_advise \"ADVISORY_DEAD_REFERENCE\" \"the entry cites")) { print "      _ve_refuse \"REFUSE_DEAD_REFERENCE\" \"re-blocked by mutation\"; return 1"; next } print }' \
+      "$VE" > "$TMP/mut-reblock.sh"
+    REBLOCK_LEFT="$(grep -c '_ve_advise "ADVISORY_DEAD_REFERENCE" "the entry cites' "$TMP/mut-reblock.sh" 2>/dev/null)"; [ -n "$REBLOCK_LEFT" ] || REBLOCK_LEFT=0
+    if [ "$REBLOCK_LEFT" -ne 0 ]; then
+      no "the re-blocking mutant still has $REBLOCK_LEFT advisory call site(s) — a partially-applied mutant proves nothing"
+    elif mutated_differs mut-reblock.sh "dead-reference re-blocking"; then
+      rm -f "$PROBE_FILE"
+      bash "$TMP/mut-reblock.sh" dead-reference --entry "$PROBE_ENTRY" --root "$CLEAN_ROOT" >/dev/null 2>&1
+      MB_ABSENT=$?
+      printf 'runtime state\n' > "$PROBE_FILE"
+      bash "$TMP/mut-reblock.sh" dead-reference --entry "$PROBE_ENTRY" --root "$CLEAN_ROOT" >/dev/null 2>&1
+      MB_PRESENT=$?
+      # ...and the UNMUTATED check on the same two states, so the control shows the contrast rather
+      # than only the mutant's behaviour.
+      rm -f "$PROBE_FILE"
+      bash "$VE" dead-reference --entry "$PROBE_ENTRY" --root "$CLEAN_ROOT" >/dev/null 2>&1
+      RB_REAL_ABSENT=$?
+      printf 'runtime state\n' > "$PROBE_FILE"
+      { [ "$MB_ABSENT" -eq 1 ] && [ "$MB_PRESENT" -eq 0 ]; } \
+        && ok "RE-BLOCKING CONTROL: with dead-reference refusing again, the SAME entry is refused on a clean tree (1) and accepted where the artifact exists (0) — the demotion is what removed the machine dependence, not some other change" \
+        || no "RE-BLOCKING CONTROL: the re-blocked mutant did not reproduce the divergence (absent rc=$MB_ABSENT want 1, present rc=$MB_PRESENT want 0) — the pair above may be green for another reason"
+      [ "$RB_REAL_ABSENT" -eq 0 ] \
+        && ok "RE-BLOCKING CONTROL, other side: the REAL check returns 0 on the very input its re-blocked twin refuses — the difference is the demotion and nothing else" \
+        || no "RE-BLOCKING CONTROL: the real check returned rc=$RB_REAL_ABSENT on the clean tree, so it is still blocking"
+    fi
+  fi
+  # The probe must not survive into the replay below, which resolves against this same root.
+  rm -f "$PROBE_FILE"
+  [ ! -e "$PROBE_FILE" ] \
+    && ok "the probe artifact was removed from the clean-tree root — the corpus replay below sees a genuinely clean checkout" \
+    || no "the probe artifact survived into the corpus replay — the replay root is no longer clean"
+fi
+
 # ---- THE REPLAY -------------------------------------------------------------
 REPLAY_TOTAL=0
+REPLAY_ADV_TOTAL=0
 while IFS='|' read -r w spath smode sexcl schecks sreason; do
   [ -n "$w" ] || continue
   replay_reset
@@ -1546,11 +1793,12 @@ while IFS='|' read -r w spath smode sexcl schecks sreason; do
   elif [ "$REPLAY_N" -eq 0 ]; then
     no "AC16 [$w]: the store at $spath holds $REPLAY_CAND candidate entr(ies) but yielded NO replayable text — its format drifted, and this replay would pass vacuously"
   elif [ "$REPLAY_BAD" -ne 0 ]; then
-    no "AC16 [$w]: $REPLAY_BAD of $REPLAY_N live entries in $spath were REFUSED$SCOPE_NOTE — first: $REPLAY_FIRST"
+    no "AC16 [$w]: $REPLAY_BAD of $REPLAY_N live entries in $spath were REFUSED$SCOPE_NOTE (resolved against the CLEAN-TREE root) — first: $REPLAY_FIRST"
   else
-    ok "AC16 [$w]: all $REPLAY_N live entries in $spath replay with ZERO refusals$SCOPE_NOTE"
+    ok "AC16 [$w]: all $REPLAY_N live entries in $spath replay against the clean tree with ZERO refusals$SCOPE_NOTE${REPLAY_ADV:+ [$REPLAY_ADV advisory finding(s), reported and not counted]}"
   fi
   REPLAY_TOTAL=$((REPLAY_TOTAL + REPLAY_N))
+  REPLAY_ADV_TOTAL=$((REPLAY_ADV_TOTAL + REPLAY_ADV))
 done <<EOF
 $CURATED_STORES
 EOF
@@ -1558,7 +1806,7 @@ EOF
 # The whole-section vacuity control: if EVERY registered store skipped, this section asserted
 # nothing at all and must say so rather than reporting a row of green skips as coverage.
 [ "$REPLAY_TOTAL" -gt 0 ] \
-  && ok "AC16: the writer-driven replay examined $REPLAY_TOTAL live curated entries across the registered stores — the section is not vacuous" \
+  && ok "AC16: the writer-driven replay examined $REPLAY_TOTAL live curated entries against the clean-tree root — the section is not vacuous ($REPLAY_ADV_TOTAL advisory finding(s) reported across them, which block nothing)" \
   || no "AC16: NOT ONE registered store yielded an entry, so this whole section asserted nothing"
 
 # THE COMMITTED SHAPE CORPUS. The live replay above can only exercise shapes the live corpus happens
@@ -1587,14 +1835,31 @@ fi
 # one entry that must refuse, has to report that refusal. Without this, a replay loop that silently
 # ran zero validators — or swallowed the status — would report "zero refusals" forever.
 mkdir -p "$TMP/corpus"
+# THE SEED NOW CARRIES BOTH KINDS, and that is the point of the rewrite rather than an addition.
+# It used to seed ONE entry, a dead reference, and assert one refusal — a control that the design
+# change would have silently emptied, because a dead reference no longer refuses anything. Seeding
+# both kinds makes this one control assert the separation in both directions AND keep its original
+# job (a harness that ran zero validators, or swallowed a status, still reports "zero refusals"):
+#   aaaa0001  dead reference        -> ADVISORY only: reported, NOT counted as a refusal
+#   aaaa0002  ordinary entry        -> neither
+#   aaaa0003  a DUPLICATE of the seeded store line -> BLOCKING -> counted
+{ printf '# Synthetic store\n'
+  printf -- '- [cccc0001] the projector rewrites the phase banner on every terminal transition\n'
+} > "$TMP/corpus/SEEDSTORE.md"
 { printf '# Synthetic\n'
   printf -- '- [aaaa0001] the guard lives in loomwright/scripts/long-gone-nowhere.sh\n'
   printf -- '- [aaaa0002] a perfectly ordinary entry naming no path and no repo\n'
+  printf -- '- [aaaa0003] the projector rewrites the phase banner on every terminal transition\n'
 } > "$TMP/corpus/SEEDED.md"
+REPLAY_STORE="$TMP/corpus/SEEDSTORE.md"
 replay_corpus "$TMP/corpus/SEEDED.md"
-{ [ "$REPLAY_N" -eq 2 ] && [ "$REPLAY_BAD" -eq 1 ]; } \
-  && ok "AC16 control: the replay harness DOES report a refusal when one is seeded (2 replayed, 1 refused)" \
-  || no "AC16 control: the seeded corpus gave N=$REPLAY_N bad=$REPLAY_BAD, wanted 2/1 — the replay harness is not discriminating"
+REPLAY_STORE=""
+{ [ "$REPLAY_N" -eq 3 ] && [ "$REPLAY_BAD" -eq 1 ]; } \
+  && ok "AC16 control: the replay harness reports the BLOCKING seed and only it (3 replayed, 1 refused) — it still discriminates, and the advisory seed did not inflate the count" \
+  || no "AC16 control: the seeded corpus gave N=$REPLAY_N bad=$REPLAY_BAD, wanted 3/1 — the replay harness is not discriminating"
+[ "${REPLAY_ADV:-0}" -ge 1 ] \
+  && ok "AC16 control: the seeded DEAD REFERENCE was reported as an advisory ($REPLAY_ADV) while refusing nothing — the harness sees warnings it does not count" \
+  || no "AC16 control: the seeded dead reference produced NO advisory at all — the replay would go green over a check that had been deleted"
 
 echo "== 12. no live state is touched =="
 if [ -f "$LIVE_CFG" ]; then LIVE_CFG_AFTER="$(cksum < "$LIVE_CFG")"; else LIVE_CFG_AFTER="ABSENT"; fi
@@ -1615,6 +1880,92 @@ LIVE_STORES_AFTER="$(cksum < "$REPO_ROOT/.supervisor/memory/LESSONS.md" 2>/dev/n
 [ "$LIVE_STORES_BEFORE" = "$LIVE_STORES_AFTER" ] \
   && ok "the live curated stores are byte-unchanged — the corpus replay reads them, never writes" \
   || no "the corpus replay MODIFIED a live curated store"
+
+echo "== 12b. THE SEPARATION: three checks block, two report, and validate_entry_all keeps them apart =="
+# The whole design change, asserted at the aggregate — the only place a writer actually reads. Each
+# case violates EXACTLY ONE check, so nothing here can pass because some earlier check fired first.
+SEPSTORE="$TMP/sep-store.md"
+{ printf '# store\n'
+  printf -- '- [bbbb0001] release candidates promote through staging validation before production rollout begins across every regional cluster\n'
+} > "$SEPSTORE"
+SEP_OK="pr-138"
+
+# --- the two ADVISORY violations: exit 0, AND the finding is printed -----------
+# Both halves are asserted deliberately. `rc == 0` alone would still pass if the two checks were
+# deleted from the aggregate outright, and "advisory" would then be indistinguishable from "gone".
+advisory "ADVISORY_DEAD_REFERENCE" "AGGREGATE: an entry violating ONLY dead-reference exits 0 AND prints the advisory" \
+  "$VE" all --entry "the retry helper now lives at loomwright/scripts/no-such-helper-xyz.sh, see #146" \
+  --store "$SEPSTORE" --source "$SEP_OK" --root "$REPO_ROOT"
+LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$OURS" advisory "ADVISORY_CROSS_REPO" "AGGREGATE: an entry violating ONLY cross-repo exits 0 AND prints the advisory" \
+  "$VE" all --entry "the same defect was fixed in OTHERSVC #146" \
+  --store "$SEPSTORE" --source "$SEP_OK" --root "$REPO_ROOT"
+# ...and BOTH at once still exit 0, with both findings named. A writer must not learn about one
+# advisory and lose the other because the first one returned.
+ve_run "$VE" all --entry "the retry helper now lives at loomwright/scripts/no-such-helper-xyz.sh and landed in octocat/Hello-World, see #146" \
+  --store "$SEPSTORE" --source "$SEP_OK" --root "$REPO_ROOT"
+{ [ "$VRC" -eq 0 ] \
+  && grep -qF "ADVISORY_DEAD_REFERENCE" "$TMP/err.txt" \
+  && grep -qF "ADVISORY_CROSS_REPO" "$TMP/err.txt"; } \
+  && ok "AGGREGATE: an entry violating BOTH advisory checks exits 0 and reports BOTH — neither finding is swallowed by the other" \
+  || no "AGGREGATE: the both-advisories entry gave rc=$VRC and did not report both findings"
+
+# --- the three BLOCKING violations: unchanged, still non-zero -----------------
+verdict 1 "AGGREGATE: a DUPLICATE still refuses (1) — the structured checks are untouched" \
+  "$VE" all --entry "across every regional cluster release candidates promote through staging validation before production rollout begins" \
+  --store "$SEPSTORE" --source "$SEP_OK" --root "$REPO_ROOT"
+reason "REFUSE_DUPLICATE" "the duplicate refusal still names itself as a REFUSE_"
+verdict 1 "AGGREGATE: a CONTRADICTION still refuses (1)" \
+  "$VE" all --entry "release candidates never promote through staging validation before production rollout begins across every regional cluster" \
+  --store "$SEPSTORE" --source "$SEP_OK" --root "$REPO_ROOT"
+verdict 1 "AGGREGATE: missing PROVENANCE still refuses (1)" \
+  "$VE" all --entry "the shared cache layer warms lazily on its very first read" \
+  --store "$SEPSTORE" --source "dreaming" --root "$REPO_ROOT"
+# Decision (b) survives for the blocking checks: could-not-examine is still 2, still never clean.
+: > "$TMP/sep-unreadable.md"; chmod 000 "$TMP/sep-unreadable.md"
+if [ -r "$TMP/sep-unreadable.md" ]; then
+  ok "SKIPPED the blocking could-not-examine case (running as a user that can read mode-000 files)"
+else
+  verdict 2 "AGGREGATE: an UNREADABLE store is still could-not-examine (2) — decision (b) is intact where it still applies" \
+    "$VE" all --entry "a brand new fact about nothing in particular, see #146" \
+    --store "$TMP/sep-unreadable.md" --source "$SEP_OK" --root "$REPO_ROOT"
+fi
+chmod 644 "$TMP/sep-unreadable.md" 2>/dev/null
+
+# --- the STATIC half: the two advisory functions contain no blocking path ------
+# Behavioural assertions cover the inputs this suite thought of. This covers the ones it did not:
+# a future edit that adds a `return 1`, or calls a refusal emitter, inside either function.
+for fn in validate_dead_reference validate_cross_repo_reference; do
+  BODY="$(awk -v f="^$fn\\\\(\\\\) \\\\{$" '$0 ~ f {inf=1} inf {print} inf && /^}$/ {exit}' "$VE")"
+  if [ -z "$BODY" ]; then
+    no "STATIC: could not extract the body of $fn — this assertion cannot run"
+  elif printf '%s\n' "$BODY" | grep -qE '(_ve_refuse|_ve_unexaminable|return [12])'; then
+    no "STATIC: $fn contains a blocking path (_ve_refuse / _ve_unexaminable / return 1 / return 2) — it is an ADVISORY check and must return 0 on every path"
+  else
+    ok "STATIC: $fn contains no refusal emitter and no non-zero return — every path in it reports and returns 0"
+  fi
+done
+# ...and the mirror image: the three blocking checks must NOT have been demoted by accident.
+for fn in validate_duplicate validate_contradiction validate_provenance; do
+  BODY="$(awk -v f="^$fn\\\\(\\\\) \\\\{$" '$0 ~ f {inf=1} inf {print} inf && /^}$/ {exit}' "$VE")"
+  if [ -z "$BODY" ]; then
+    no "STATIC: could not extract the body of $fn — this assertion cannot run"
+  elif printf '%s\n' "$BODY" | grep -qE '(_ve_refuse|_ve_unexaminable)'; then
+    ok "STATIC: $fn still calls a refusal emitter — it is a BLOCKING check and was not demoted with the other two"
+  else
+    no "STATIC: $fn no longer refuses anything — a blocking check was demoted, which is not what this change did"
+  fi
+done
+# The absorber is not decoration: prove it. Make an advisory check return non-zero and the aggregate
+# must STILL exit 0 and say why. Without this, "validate_entry_all does not propagate advisory
+# findings" rests entirely on the two functions never regressing.
+awk '/^validate_dead_reference\(\) \{$/{print; print "  return 1"; next} {print}' "$VE" > "$TMP/mut-absorb.sh"
+if mutated_differs mut-absorb.sh "advisory status absorber"; then
+  ve_run "$TMP/mut-absorb.sh" all --entry "a brand new fact about nothing in particular, see #146" \
+    --store "$SEPSTORE" --source "$SEP_OK" --root "$REPO_ROOT"
+  { [ "$VRC" -eq 0 ] && grep -qF "ADVISORY_INTERNAL_NONZERO" "$TMP/err.txt"; } \
+    && ok "ABSORBER: an advisory check returning 1 still leaves the aggregate at 0, and the anomaly is REPORTED by name — the separation does not rest on those two functions staying correct" \
+    || no "ABSORBER: a non-zero advisory check moved the aggregate to rc=$VRC (or was absorbed silently) — an advisory finding can block a write again"
+fi
 
 echo "== 13. executable dispatch + verdict-code convention =="
 verdict 0 "--help prints usage and exits 0" "$VE" --help

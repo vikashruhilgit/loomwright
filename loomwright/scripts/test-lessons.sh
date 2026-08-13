@@ -553,6 +553,22 @@ ve_refused() {
   else no "$label (iii) the refusal MUTATED the store"; fi
 }
 
+# ve_advised — the SAME three assertions for an ADVISORY check, each inverted exactly where the
+# design inverted it. dead-reference and cross-repo REPORT and never refuse (validate-entry.sh's
+# header records the six measured rounds of false refusals that bought that), so the three facts to
+# assert about one become: the writer exits 0, it PRINTS the finding, and the entry IS written.
+# (iii) is the load-bearing one: "the store changed" is what separates a demoted check from a check
+# that still blocks, and a test asserting only rc 0 would stay green if the warning were deleted.
+ve_advised() { # <label> <want-token> <store> <saved-copy>
+  local label="$1" tok="$2" st="$3" b4="$4"
+  if [ "$VE_RC" -eq 0 ]; then ok "$label (i) exited 0 — an ADVISORY check does not block the write"
+  else no "$label (i) exit $VE_RC, want 0 — an advisory check must not refuse"; fi
+  if grep -q "$tok" "$VE_ERR" 2>/dev/null; then ok "$label (ii) stderr REPORTS $tok"
+  else no "$label (ii) stderr does NOT report $tok — got: $(tr '\n' ' ' < "$VE_ERR" | cut -c1-160)"; fi
+  if cmp -s "$st" "$b4"; then no "$label (iii) the store is UNCHANGED, so the advisory blocked the write after all"
+  else ok "$label (iii) the entry WAS written — the finding is a warning, not a refusal"; fi
+}
+
 # ---------------------------------------------------------------------------
 # The seeds. Each one violates EXACTLY ONE check, because validate_entry_all returns the FIRST
 # non-zero verdict in a fixed order (duplicate, contradiction, provenance, dead-reference,
@@ -588,14 +604,19 @@ ve_case() {
   if [ ! -f "$st" ]; then no "$label — SEED FAILED (no LESSONS.md; the fixture asserts nothing)"; return; fi
   cp "$st" "$VETMP/before"
   VE_ALLOW="$allow"; ve_write "$r" "$txt" "$src"; VE_ALLOW=""
-  ve_refused "AC1 $label:" 1 "$tok" "$st" "$VETMP/before"
+  # An ADVISORY_* token routes to ve_advised; everything else is still a refusal. One dispatch
+  # point, so a case cannot be silently asserted against the wrong contract.
+  case "$tok" in
+    ADVISORY_*) ve_advised "AC1 $label:" "$tok" "$st" "$VETMP/before" ;;
+    *)          ve_refused "AC1 $label:" 1 "$tok" "$st" "$VETMP/before" ;;
+  esac
 }
 
 ve_case "duplicate"      "$VE_DUP"   "$VE_SRC"   "REFUSE_DUPLICATE"
 ve_case "contradiction"  "$VE_CON"   "$VE_SRC"   "REFUSE_CONTRADICTION"
 ve_case "provenance"     "$VE_PROV"  "dreaming"  "REFUSE_PROVENANCE"
-ve_case "dead-reference" "$VE_DEAD"  "$VE_SRC"   "REFUSE_DEAD_REFERENCE"
-ve_case "cross-repo"     "$VE_XREPO" "$VE_SRC"   "REFUSE_CROSS_REPO" "$VE_OURS"
+ve_case "dead-reference" "$VE_DEAD"  "$VE_SRC"   "ADVISORY_DEAD_REFERENCE"
+ve_case "cross-repo"     "$VE_XREPO" "$VE_SRC"   "ADVISORY_CROSS_REPO" "$VE_OURS"
 
 # ---------------------------------------------------------------------------
 # AC2 — the degraded-helper shapes. All four are built from the REAL helper so they cannot drift

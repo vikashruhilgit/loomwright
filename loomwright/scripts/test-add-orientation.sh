@@ -515,6 +515,22 @@ ve_refused() { # <label> <want-rc> <want-token> <store> <saved-copy>
   else no "$label (iii) the refusal MUTATED the store"; fi
 }
 
+# ve_advised — the SAME three assertions for an ADVISORY check, each inverted exactly where the
+# design inverted it. dead-reference and cross-repo REPORT and never refuse (validate-entry.sh's
+# header records the six measured rounds of false refusals that bought that), so the three facts to
+# assert about one become: the writer exits 0, it PRINTS the finding, and the entry IS written.
+# (iii) is the load-bearing one: "the store changed" is what separates a demoted check from a check
+# that still blocks, and a test asserting only rc 0 would stay green if the warning were deleted.
+ve_advised() { # <label> <want-token> <store> <saved-copy>
+  local label="$1" tok="$2" st="$3" b4="$4"
+  if [ "$VE_RC" -eq 0 ]; then ok "$label (i) exited 0 — an ADVISORY check does not block the write"
+  else no "$label (i) exit $VE_RC, want 0 — an advisory check must not refuse"; fi
+  if grep -q "$tok" "$VE_ERR" 2>/dev/null; then ok "$label (ii) stderr REPORTS $tok"
+  else no "$label (ii) stderr does NOT report $tok — got: $(tr '\n' ' ' < "$VE_ERR" | cut -c1-160)"; fi
+  if cmp -s "$st" "$b4"; then no "$label (iii) the store is UNCHANGED, so the advisory blocked the write after all"
+  else ok "$label (iii) the entry WAS written — the finding is a warning, not a refusal"; fi
+}
+
 # ---------------------------------------------------------------------------
 # THE LONG BODY. This comment used to derive an N >= 90 requirement from the entry carrying ~10
 # header-and-summary tokens the stored memo did not — an asymmetry that really did depress every
@@ -568,7 +584,12 @@ ve_case() {
   if [ ! -f "$st" ]; then no "$label — SEED FAILED (no memo; the fixture asserts nothing)"; return; fi
   cp "$st" "$VETMP/before"
   VE_ALLOW="$allow"; VE_SLUG="$slug2"; ve_write "$r" "$summ" "$body"; VE_SLUG="ve"; VE_ALLOW=""
-  ve_refused "AC1 $label:" 1 "$tok" "$st" "$VETMP/before"
+  # An ADVISORY_* token routes to ve_advised; everything else is still a refusal. One dispatch
+  # point, so a case cannot be silently asserted against the wrong contract.
+  case "$tok" in
+    ADVISORY_*) ve_advised "AC1 $label:" "$tok" "$st" "$VETMP/before" ;;
+    *)          ve_refused "AC1 $label:" 1 "$tok" "$st" "$VETMP/before" ;;
+  esac
   # A refusal must also leave no SECOND memo behind when the attempt used a second slug.
   if [ "$slug2" != "ve" ]; then
     if [ ! -e "$r/.agent/orientation/$slug2.md" ]; then ok "AC1 $label: (iv) the refused memo was not created at $slug2.md"
@@ -578,8 +599,8 @@ ve_case() {
 
 ve_case "duplicate"      "memo" "$VE_DUP"   "REFUSE_DUPLICATE"      ""          "ve2"
 ve_case "contradiction"  "memo" "$VE_CON"   "REFUSE_CONTRADICTION"  ""          "ve2"
-ve_case "dead-reference" "memo" "$VE_DEAD"  "REFUSE_DEAD_REFERENCE"
-ve_case "cross-repo"     "memo" "$VE_XREPO" "REFUSE_CROSS_REPO" "$VE_OURS"
+ve_case "dead-reference" "memo" "$VE_DEAD"  "ADVISORY_DEAD_REFERENCE"
+ve_case "cross-repo"     "memo" "$VE_XREPO" "ADVISORY_CROSS_REPO" "$VE_OURS"
 
 # --- AC1 duplicate: the CONTROL that would have caught the inert call site --------------------
 # This block used to assert the opposite, and the assertion was false. It read: "a SHORT

@@ -1,12 +1,55 @@
 #!/usr/bin/env bash
 # validate-entry.sh — the SHARED write-time validator for every curated store.
 #
-# Five deterministic checks, held ONCE instead of copied into each sole writer:
+# Five deterministic checks, held ONCE instead of copied into each sole writer. THREE BLOCK A WRITE
+# AND TWO DO NOT, and which is which is the first thing to know about this file:
+#   BLOCKING — structured input, a refusal is a refusal to write:
 #   1. contradiction   — an existing entry says the opposite about the same subject
 #   2. duplicate       — a near-identical entry is already stored
 #   3. provenance      — the entry cites what motivated it (a finding, a PR, a session)
-#   4. dead-reference  — every file path the entry cites still resolves
+#   ADVISORY — free-prose scanning, REPORTED on stderr and NEVER a refusal:
+#   4. dead-reference  — a file path the entry cites does not resolve
 #   5. cross-repo      — a repo-shaped token the entry cites is OUTSIDE this repo's allowlist
+#
+# WHY TWO CHECKS ARE ADVISORY — this contradicts the source requirement's scope 2 ("a validation
+# failure is a refusal to write"), it is an OWNER DECISION, and it is written here in full rather
+# than softened, because a reader who does not know the measurement will read it as a weakening.
+# SIX CONSECUTIVE REVIEW ROUNDS FOUND FALSE REFUSALS, AND EVERY ONE OF THEM WAS IN THESE TWO CHECKS.
+# The other three have never produced one. The reason is structural, not a run of bad luck: checks
+# 1-3 key on input whose SHAPE the writer controls (a store of stored entries, a --source), while
+# 4 and 5 scan FREE ENGLISH PROSE for file paths and repository names, where a citation and an
+# ordinary sentence are frequently the same characters. The measured cost of pretending otherwise:
+#   · round 1 — 12 of 21 live curated entries refused (57%), every one a false positive;
+#   · rounds 2-5 — prose pairs (`YAML/JSON`, `ground-truth/conformance`, `Count/version`), numeric
+#     ratios (`117/117`), branch names (`fix/v14.23.1-combined`), in-repo directory paths
+#     (`docs/Spikes`) and prose shorthand (`CHANGELOG/CLAUDE.md`) each refused a legitimate write;
+#   · round 6 — the fix for "gitignored but real files are unresolvable" (union the on-disk `find`
+#     with the git index) made the VERDICT MACHINE-DEPENDENT: green on the author's working tree
+#     because `.supervisor/state.md` exists there, red on every clean checkout. MEASURED with a
+#     `git archive HEAD` extraction: 231/0 in the working tree, 229/1 clean, 3 of 28 live entries
+#     falsely refused. A write-time gate whose answer depends on which files happen to be lying
+#     around is not a gate.
+# Each round's narrowing was correct and none of them ended the class, because the class is the
+# ambiguity of prose itself. So the trade is made explicitly instead of being re-litigated a
+# seventh time: THESE TWO CHECKS NOW REPORT AND NEVER REFUSE. What is bought is that a false
+# positive can no longer block a legitimate write, and the verdict of a write no longer depends on
+# the machine it runs on. WHAT IS SOLD, stated plainly: a genuinely dead reference and a genuinely
+# foreign repository citation are now WRITTEN, with a warning, and only a human reading that
+# warning will act on it. Nothing here treats an advisory finding as clean — see below.
+#
+# AN ADVISORY CHECK HAS NOTHING TO FAIL CLOSED FOR. Their could-not-examine paths (an unusable
+# --root, absent jq, an unparseable record, an unresolvable allowlist) are advisories too. Decision
+# (b) — "could not examine is never reported as clean" — still governs checks 1-3 exactly as
+# before, and it is why those three keep the 0/1/2 verdict codes; for 4 and 5 there is no refusal
+# left for a fail-closed path to fall back to, so the honest report is a warning that says the
+# check could not run, not a refusal issued on behalf of a check that would not have refused anyway.
+#
+# A WARNING NOBODY SEES IS WORTHLESS, which is the way "advisory" usually decays into "deleted".
+# Three things keep that from happening here: every advisory prints a stable, greppable `ADVISORY:`
+# marker on stderr carrying the SAME detail the refusal used to carry; the count and the tokens are
+# left in $VALIDATE_ENTRY_ADVISORY_COUNT / $VALIDATE_ENTRY_ADVISORY_TOKENS for the caller; and all
+# six sole writers call validate_entry_advisory_notice on the write path, so the finding is repeated
+# at the call site in the writer's own voice rather than scrolling past inside a helper's output.
 #
 # SHAPE — this file is a LIBRARY, sourced by the sole writers, and is ALSO directly executable
 # (`validate-entry.sh <check> --entry ...`) so its own suite and a human can exercise one check.
@@ -17,20 +60,24 @@
 # producer takes SIGPIPE and the pipeline reports 141 EVEN ON A MATCH. `grep -q` is fed by a
 # here-string throughout, and files are handed to awk directly rather than `cat`-piped.
 #
-# VERDICTS — three, never two. This is decision (b) of the brief, and the whole point of the file:
+# VERDICTS — three, never two, FOR THE THREE BLOCKING CHECKS. This is decision (b) of the brief:
 #   0  PASS           — examined, and clean
 #   1  REFUSE         — examined, and a violation was found
-#   2  REFUSE         — COULD NOT EXAMINE (unreadable store, absent jq, unparseable JSON,
-#                       unresolvable allowlist, missing argument, or a COMPARISON SHAPE that could
-#                       not discriminate — see below). NEVER reported as clean.
+#   2  REFUSE         — COULD NOT EXAMINE (unreadable store, missing argument, or a COMPARISON
+#                       SHAPE that could not discriminate — see below). NEVER reported as clean.
 # A caller that treats any non-zero as "do not write" is correct by default; a caller that wants to
 # distinguish the two refusal classes can, and no caller can accidentally read 2 as 0. Conflating
 # "could not examine" with "examined and clean" is the exact fail-open class this file exists to
 # close — it has bitten this repo repeatedly, so it is encoded in the return values, not in prose.
+# THE TWO ADVISORY CHECKS RETURN 0 ALWAYS, on every path, including their own could-not-examine
+# paths. Their findings live on stderr and in the two counters, never in a status.
 #
 # REFUSAL REASONS are machine-greppable tokens on stderr (`REFUSE_DUPLICATE`,
-# `REFUSE_CROSS_REPO_ALLOWLIST_UNRESOLVED`, ...), never a bare non-zero status: a refusal that
-# does not name its reason is indistinguishable from a crash.
+# `REFUSE_CONTRADICTION_UNCOMPARABLE_SHAPE`, ...), never a bare non-zero status: a refusal that
+# does not name its reason is indistinguishable from a crash. ADVISORY findings carry the same
+# discipline in a DELIBERATELY DIFFERENT SHAPE — `validate-entry: ADVISORY: ADVISORY_DEAD_REFERENCE
+# — ...` — so that no reader, and no grep, can mistake one for the other: the `ADVISORY:` marker is
+# the stable thing to match on, and no advisory token begins with `REFUSE_`.
 #
 # COMPARISON SHAPE — the store must hold ONE ENTRY PER LINE, and checks 1 and 2 now say so instead
 # of pretending otherwise. Both score `shared / max(|entry|, |store_line|)`, and `shared` can never
@@ -170,11 +217,13 @@
 # Usage (library):
 #   . "${CLAUDE_PLUGIN_ROOT}/scripts/validate-entry.sh"     # then check VALIDATE_ENTRY_CONTRACT
 #   validate_entry_all --entry "<text>" --store <file> --source <id> [--root <dir>]
-#   validate_duplicate            --entry "<text>" --store <file>
-#   validate_contradiction        --entry "<text>" --store <file>
-#   validate_provenance           --entry "<text>" [--source <id>]
+#   validate_entry_advisory_notice "<writer-name>"          # on the WRITE path, after rc 0
+#   validate_duplicate            --entry "<text>" --store <file>          # blocking
+#   validate_contradiction        --entry "<text>" --store <file>          # blocking
+#   validate_provenance           --entry "<text>" [--source <id>]         # blocking
 #   validate_dead_reference       --entry "<text>" [--root <dir>] [--json '<json>' --field <name>]
-#   validate_cross_repo_reference --entry "<text>" [--root <dir>]
+#                                                                          # ADVISORY: always rc 0
+#   validate_cross_repo_reference --entry "<text>" [--root <dir>]          # ADVISORY: always rc 0
 #
 # Usage (executable):
 #   validate-entry.sh contract
@@ -185,10 +234,19 @@
 # leaves the writer with SOME validators — "examined and clean" over a half-loaded validator is the
 # could-not-examine trap applied to the LOADER. The writer's guard is therefore three clauses:
 #   (i)   the `source` itself must exit 0  — and `|| true` is FORBIDDEN on that line,
-#   (ii)  all five validator functions must be present (`command -v` each),
+#   (ii)  all five validator functions must be present (`command -v` each), plus
+#         validate_entry_all and validate_entry_advisory_notice,
 #   (iii) $VALIDATE_ENTRY_CONTRACT must equal the value the writer expects.
 # $VALIDATE_ENTRY_CONTRACT is assigned on the LAST line of this file, deliberately: truncation
 # anywhere above it cannot produce a matching sentinel.
+#
+# THE CONTRACT SENTINEL IS `validate-entry/2`, and the bump from /1 is not cosmetic. A writer built
+# against /1 was entitled to read "validate_entry_all returned 0" as "all five checks passed"; under
+# /2 it means "the three blocking checks passed, and any advisory finding is on stderr and in
+# $VALIDATE_ENTRY_ADVISORY_COUNT". That is a different promise, so a /1-era writer paired with this
+# file — a stale copy under ~/.claude/, a partial upgrade — must refuse rather than silently write
+# under a contract it does not implement. Truncation detection is unchanged; this adds SKEW
+# detection, which is the same failure class one layer up.
 
 # ---- verdict codes ----------------------------------------------------------
 VALIDATE_ENTRY_RC_PASS=0
@@ -232,7 +290,8 @@ _VE_NOT_REPO_WORDS=" pr prs issue issues ticket tickets bug bugs item items run 
 
 # ---- refusal emitters -------------------------------------------------------
 # Both print a machine-greppable token. _ve_unexaminable exists as a SEPARATE emitter so that
-# "could not examine" can never be typed as a plain refusal by accident.
+# "could not examine" can never be typed as a plain refusal by accident. Both belong to the THREE
+# BLOCKING CHECKS; the two advisory checks call _ve_advise below and nothing else.
 _ve_refuse() {
   printf 'validate-entry: %s — %s\n' "${1:-REFUSE}" "${2:-}" >&2
   return 1
@@ -241,6 +300,46 @@ _ve_unexaminable() {
   printf 'validate-entry: %s — %s [could not examine; refusing rather than reporting clean]\n' \
     "${1:-REFUSE_UNEXAMINABLE}" "${2:-}" >&2
   return 2
+}
+
+# ---- the ADVISORY emitter ---------------------------------------------------
+# The two prose-scanning checks report through THIS and never through the two above. It is a third
+# emitter rather than a flag on _ve_refuse for the same reason _ve_unexaminable is separate: a
+# refusal and a warning must not be one keystroke apart, and `return 0` must be visible in the
+# emitter itself so no advisory path can leak a blocking status by inheriting one.
+#
+# Three obligations, all met here, because the whole risk of "advisory" is that it quietly becomes
+# "deleted":
+#   · the line carries the marker `ADVISORY:` — stable, greppable, and shaped so that a grep for
+#     `REFUSE_` can never match it and a grep for `ADVISORY:` can never match a refusal;
+#   · it carries the SAME detail the refusal used to carry, so a human learns exactly what the
+#     check found and nothing is lost but the enforcement;
+#   · it leaves the count and the tokens in shell variables, which is what lets the caller repeat
+#     the finding in its own voice at the write site (validate_entry_advisory_notice below).
+# The two variables are assigned at file scope so a caller running `set -u` can read them even when
+# nothing was advised.
+VALIDATE_ENTRY_ADVISORY_COUNT=0
+VALIDATE_ENTRY_ADVISORY_TOKENS=""
+_ve_advisory_reset() { VALIDATE_ENTRY_ADVISORY_COUNT=0; VALIDATE_ENTRY_ADVISORY_TOKENS=""; return 0; }
+_ve_advise() {
+  VALIDATE_ENTRY_ADVISORY_COUNT=$(( ${VALIDATE_ENTRY_ADVISORY_COUNT:-0} + 1 ))
+  VALIDATE_ENTRY_ADVISORY_TOKENS="${VALIDATE_ENTRY_ADVISORY_TOKENS:-}${1:-ADVISORY} "
+  printf 'validate-entry: ADVISORY: %s — %s [ADVISORY: this check REPORTS, it does not block; the write was NOT refused for this]\n' \
+    "${1:-ADVISORY}" "${2:-}" >&2
+  return 0
+}
+
+# validate_entry_advisory_notice <caller-name> — the CALL-SITE half of "a warning nobody sees is
+# worthless". Every sole writer calls this on the write path after validate_entry_all returns 0, so
+# an advisory finding is stated once by the check and once by the writer, in the writer's own name,
+# next to the fact that the write went ahead. Prints NOTHING when there is nothing to report, so an
+# ordinary clean write is as quiet as it was before. Always returns 0: a notice that could fail a
+# write would reintroduce, at the call site, exactly the blocking this change removed.
+validate_entry_advisory_notice() {
+  [ "${VALIDATE_ENTRY_ADVISORY_COUNT:-0}" -gt 0 ] || return 0
+  printf '%s: ADVISORY: %d advisory finding(s) reported above (%s) — dead-reference and cross-repo are ADVISORY checks: they report, they do not block, and THE WRITE PROCEEDED. Read the detail above and fix the entry if the finding is real; nothing else will.\n' \
+    "${1:-validate-entry}" "${VALIDATE_ENTRY_ADVISORY_COUNT:-0}" "${VALIDATE_ENTRY_ADVISORY_TOKENS:-}" >&2
+  return 0
 }
 
 # ---- shared argument parsing -----------------------------------------------
@@ -842,13 +941,16 @@ _ve_path_resolves() {
   return 1
 }
 
+# ADVISORY (see the header): every path below reports and returns 0. There is no `return 1` and no
+# `return 2` anywhere in this function, deliberately — the absence is the contract, and a static
+# assertion in the suite pins it so a future edit cannot quietly reintroduce a blocking path.
 validate_dead_reference() {
   _ve_parse_args "$@"
   local root
   root="$(_ve_resolve_root)"
   if [ -n "$root" ]; then
-    [ -d "$root" ] || { _ve_unexaminable "REFUSE_DEAD_REFERENCE_ROOT_MISSING" "root '$root' is not a directory, so no cited path could be resolved"; return 2; }
-    [ -r "$root" ] || { _ve_unexaminable "REFUSE_DEAD_REFERENCE_ROOT_UNREADABLE" "root '$root' could not be read, so no cited path could be resolved"; return 2; }
+    [ -d "$root" ] || { _ve_advise "ADVISORY_DEAD_REFERENCE_ROOT_MISSING" "root '$root' is not a directory, so no cited path could be resolved — this check could not run at all, which is reported and is not a refusal"; return 0; }
+    [ -r "$root" ] || { _ve_advise "ADVISORY_DEAD_REFERENCE_ROOT_UNREADABLE" "root '$root' could not be read, so no cited path could be resolved — this check could not run at all, which is reported and is not a refusal"; return 0; }
   fi
 
   # --- JSON record mode: a nullable-but-REQUIRED field carrying a cited path ---
@@ -858,15 +960,15 @@ validate_dead_reference() {
   # clean. Reading the value alone cannot tell them apart, which is how a nullable-required field
   # silently accepts a malformed record.
   if [ "$_VE_JSON_SET" -eq 1 ]; then
-    command -v jq >/dev/null 2>&1 || { _ve_unexaminable "REFUSE_DEAD_REFERENCE_NO_JQ" "jq is not available, so the JSON record could not be examined"; return 2; }
-    printf '%s' "$_VE_JSON" | jq -e . >/dev/null 2>&1 || { _ve_unexaminable "REFUSE_DEAD_REFERENCE_JSON_UNPARSEABLE" "the --json record is not valid JSON"; return 2; }
+    command -v jq >/dev/null 2>&1 || { _ve_advise "ADVISORY_DEAD_REFERENCE_NO_JQ" "jq is not available, so the JSON record could not be examined"; return 0; }
+    printf '%s' "$_VE_JSON" | jq -e . >/dev/null 2>&1 || { _ve_advise "ADVISORY_DEAD_REFERENCE_JSON_UNPARSEABLE" "the --json record is not valid JSON, so it could not be examined"; return 0; }
     if [ -n "$_VE_FIELD" ]; then
       local has ftype fval
       has="$(printf '%s' "$_VE_JSON" | jq -r --arg f "$_VE_FIELD" 'if type == "object" then (has($f) | tostring) else "not-an-object" end' 2>/dev/null)"
       case "$has" in
         true)  : ;;
-        false) _ve_unexaminable "REFUSE_DEAD_REFERENCE_FIELD_ABSENT" "the --json record has no '$_VE_FIELD' key at all (an explicit null would be valid; a missing key is not)"; return 2 ;;
-        *)     _ve_unexaminable "REFUSE_DEAD_REFERENCE_JSON_NOT_OBJECT" "the --json record is not an object, so '$_VE_FIELD' could not be examined"; return 2 ;;
+        false) _ve_advise "ADVISORY_DEAD_REFERENCE_FIELD_ABSENT" "the --json record has no '$_VE_FIELD' key at all (an explicit null would be valid; a missing key is not), so it could not be examined"; return 0 ;;
+        *)     _ve_advise "ADVISORY_DEAD_REFERENCE_JSON_NOT_OBJECT" "the --json record is not an object, so '$_VE_FIELD' could not be examined"; return 0 ;;
       esac
       ftype="$(printf '%s' "$_VE_JSON" | jq -r --arg f "$_VE_FIELD" '.[$f] | type' 2>/dev/null)"
       case "$ftype" in
@@ -874,10 +976,9 @@ validate_dead_reference() {
         string)
           fval="$(printf '%s' "$_VE_JSON" | jq -r --arg f "$_VE_FIELD" '.[$f]' 2>/dev/null)"
           if [ -n "$fval" ] && ! _ve_path_resolves "$fval" "$root"; then
-            _ve_refuse "REFUSE_DEAD_REFERENCE" "the '$_VE_FIELD' field cites '$fval', which no longer resolves under '$root' (nothing was written)"
-            return 1
+            _ve_advise "ADVISORY_DEAD_REFERENCE" "the '$_VE_FIELD' field cites '$fval', which does not resolve under '$root'"
           fi ;;
-        *) _ve_unexaminable "REFUSE_DEAD_REFERENCE_FIELD_TYPE" "'$_VE_FIELD' is a $ftype, not a string or null, so it could not be examined as a path"; return 2 ;;
+        *) _ve_advise "ADVISORY_DEAD_REFERENCE_FIELD_TYPE" "'$_VE_FIELD' is a $ftype, not a string or null, so it could not be examined as a path"; return 0 ;;
       esac
     fi
   fi
@@ -886,7 +987,7 @@ validate_dead_reference() {
   [ -n "$_VE_ENTRY" ] || {
     # With a JSON record already examined above, an absent --entry is simply nothing more to do.
     [ "$_VE_JSON_SET" -eq 1 ] && return 0
-    _ve_unexaminable "REFUSE_DEAD_REFERENCE_NO_ENTRY" "no --entry text was supplied, so no cited path could be examined"; return 2
+    _ve_advise "ADVISORY_DEAD_REFERENCE_NO_ENTRY" "no --entry text was supplied, so no cited path could be examined"; return 0
   }
   local p
   # Build the directory set in THIS shell BEFORE the command substitution below. `_ve_extract_paths`
@@ -895,11 +996,13 @@ validate_dead_reference() {
   # result away. Failure is not fatal: an unbuildable index leaves the veto unable to fire, which
   # costs catches and never manufactures a refusal.
   _ve_repo_dirs "$root" >/dev/null 2>&1 || true
+  # EVERY unresolved path is reported, not just the first. The old code returned on the first one
+  # because it was refusing and the rest could not change that verdict; an advisory that stops at
+  # the first finding hands the reader one item of a list and hides the others.
   while IFS= read -r p; do
     [ -n "$p" ] || continue
     if ! _ve_path_resolves "$p" "$root"; then
-      _ve_refuse "REFUSE_DEAD_REFERENCE" "the entry cites '$p', which does not resolve under '$root' (nothing was written)"
-      return 1
+      _ve_advise "ADVISORY_DEAD_REFERENCE" "the entry cites '$p', which does not resolve under '$root'. NOTE: whether a path resolves depends on what is present in THIS tree — a gitignored runtime artifact resolves on the machine that produced it and not on a clean checkout — which is one of the reasons this check reports instead of refusing"
     fi
   done <<EOF
 $(_ve_extract_paths "$_VE_ENTRY" "$root")
@@ -1239,9 +1342,12 @@ _ve_in_list() {
   return 1
 }
 
+# ADVISORY (see the header): every path below reports and returns 0. As in validate_dead_reference,
+# the ABSENCE of any `return 1` / `return 2` in this function is the contract, and the suite asserts
+# it statically as well as behaviourally.
 validate_cross_repo_reference() {
   _ve_parse_args "$@"
-  [ -n "$_VE_ENTRY" ] || { _ve_unexaminable "REFUSE_CROSS_REPO_NO_ENTRY" "no --entry text was supplied, so no repo reference could be examined"; return 2; }
+  [ -n "$_VE_ENTRY" ] || { _ve_advise "ADVISORY_CROSS_REPO_NO_ENTRY" "no --entry text was supplied, so no repo reference could be examined"; return 0; }
 
   local root idx_root tokens sm entries owners
   root=""
@@ -1268,12 +1374,12 @@ validate_cross_repo_reference() {
   [ -n "$tokens" ] || return 0
 
   if [ ! -f "$sm" ] || [ ! -r "$sm" ]; then
-    _ve_unexaminable "REFUSE_CROSS_REPO_ALLOWLIST_UNRESOLVED" "the entry cites a repo reference but the allowlist resolver '$sm' is missing or unreadable, so membership could not be examined"
-    return 2
+    _ve_advise "ADVISORY_CROSS_REPO_ALLOWLIST_UNRESOLVED" "the entry cites a repo reference but the allowlist resolver '$sm' is missing or unreadable, so membership could not be examined — reported as unknown, not as clean, and not as a refusal"
+    return 0
   fi
   if [ -z "$entries" ]; then
-    _ve_unexaminable "REFUSE_CROSS_REPO_ALLOWLIST_UNRESOLVED" "the entry cites a repo reference but the allowlist resolved to nothing (no --allow, no LOOMWRIGHT_MEMORY_REPO_ALLOWLIST, no .supervisor/config.json entry, no git remote) — membership could not be examined, so this is neither a pass nor a real refusal"
-    return 2
+    _ve_advise "ADVISORY_CROSS_REPO_ALLOWLIST_UNRESOLVED" "the entry cites a repo reference but the allowlist resolved to nothing (no --allow, no LOOMWRIGHT_MEMORY_REPO_ALLOWLIST, no .supervisor/config.json entry, no git remote) — membership could not be examined, so this is neither a pass nor a refusal but an unknown, reported as one"
+    return 0
   fi
 
   # Membership sets, lowercased: full slugs, and each slug's short (repo) name.
@@ -1289,6 +1395,7 @@ $entries
 EOF
   shown="$(printf '%s' "$entries" | tr '\n' ' ')"
 
+  # EVERY foreign token is reported, not just the first — same reason as the dead-reference loop.
   local t kind name
   while IFS= read -r t; do
     [ -n "$t" ] || continue
@@ -1296,12 +1403,10 @@ EOF
     case "$kind" in
       slug)
         _ve_in_list "$name" "$allow_slugs" && continue
-        _ve_refuse "REFUSE_CROSS_REPO" "the entry cites '$name', a repository outside this repo's allowlist ($shown) — nothing was written. NOTE: this check recognises only a MARKED 'owner/repo' slug (marked by a github.com URL or a '#123'/'@sha'/'.git' citation, by a neighbouring cue word such as 'in' or a trailing 'repo', by a known owner, or by slug-only structure such as a hyphen, digit or CamelCase) and an identifier-shaped 'NAME #123' citation; a repo named in any other shape — including a bare all-lowercase 'owner/repo' standing alone in prose, which is not separable from an English word pair such as 'budget/zone' — is invisible to it, so a clean verdict is not proof that no cross-repo reference is present."
-        return 1 ;;
+        _ve_advise "ADVISORY_CROSS_REPO" "the entry cites '$name', a repository outside this repo's allowlist ($shown). NOTE: this check recognises only a MARKED 'owner/repo' slug (marked by a github.com URL or a '#123'/'@sha'/'.git' citation, by a neighbouring cue word such as 'in' or a trailing 'repo', by a known owner, or by slug-only structure such as a hyphen, digit or CamelCase) and an identifier-shaped 'NAME #123' citation; a repo named in any other shape — including a bare all-lowercase 'owner/repo' standing alone in prose, which is not separable from an English word pair such as 'budget/zone' — is invisible to it, so a clean verdict is not proof that no cross-repo reference is present." ;;
       short)
         _ve_in_list "$name" "$allow_shorts" && continue
-        _ve_refuse "REFUSE_CROSS_REPO" "the entry cites '$name #...', a repository outside this repo's allowlist ($shown) — nothing was written. NOTE: this check recognises only a MARKED 'owner/repo' slug (marked by a github.com URL or a '#123'/'@sha'/'.git' citation, by a neighbouring cue word such as 'in' or a trailing 'repo', by a known owner, or by slug-only structure such as a hyphen, digit or CamelCase) and an identifier-shaped 'NAME #123' citation; a repo named in any other shape — including a bare all-lowercase 'owner/repo' standing alone in prose, which is not separable from an English word pair such as 'budget/zone' — is invisible to it, so a clean verdict is not proof that no cross-repo reference is present."
-        return 1 ;;
+        _ve_advise "ADVISORY_CROSS_REPO" "the entry cites '$name #...', a repository outside this repo's allowlist ($shown). NOTE: this check recognises only a MARKED 'owner/repo' slug (marked by a github.com URL or a '#123'/'@sha'/'.git' citation, by a neighbouring cue word such as 'in' or a trailing 'repo', by a known owner, or by slug-only structure such as a hyphen, digit or CamelCase) and an identifier-shaped 'NAME #123' citation; a repo named in any other shape — including a bare all-lowercase 'owner/repo' standing alone in prose, which is not separable from an English word pair such as 'budget/zone' — is invisible to it, so a clean verdict is not proof that no cross-repo reference is present." ;;
     esac
   done <<EOF
 $tokens
@@ -1310,16 +1415,37 @@ EOF
 }
 
 # ---- aggregate --------------------------------------------------------------
-# Runs all five in a fixed order and returns the FIRST non-zero verdict, preserving the 1-vs-2
-# distinction. Sole writers call this rather than five checks each, so a writer cannot silently
-# omit one — the per-writer mutation control then only has to prove the single call site exists.
+# Runs all five in a fixed order. The THREE BLOCKING checks run first and the FIRST non-zero verdict
+# among them is returned, preserving the 1-vs-2 distinction. The TWO ADVISORY checks run after them
+# and CANNOT reach the exit status. Sole writers call this rather than five checks each, so a writer
+# cannot silently omit one — the per-writer mutation control then only has to prove the single call
+# site exists.
+#
+# THE SEPARATION IS ENFORCED HERE, IN ONE PLACE, and not merely trusted to the two functions. Both
+# of them already return 0 on every path, and the suite asserts that both statically and
+# behaviourally — but "this long function contains no `return 1`" is a property a future edit can
+# break silently, and if it broke, the failure would be an advisory finding blocking a write again:
+# precisely the defect this change exists to remove. So the aggregate ABSORBS their status and, when
+# it is non-zero, says so as an advisory naming validate-entry.sh as the defect. It never converts
+# it back into a refusal.
+#
+# The advisory counters are reset at entry, so $VALIDATE_ENTRY_ADVISORY_COUNT read by the caller
+# after this returns describes THIS entry and not the accumulated history of the process.
+_ve_absorb_advisory_status() {
+  [ "${2:-0}" -eq 0 ] && return 0
+  _ve_advise "ADVISORY_INTERNAL_NONZERO" "the advisory check '${1:-?}' returned status ${2:-?}. Advisory checks never block a write, so the status was absorbed and the write was NOT refused — but a non-zero status from one of them is a DEFECT IN validate-entry.sh, not a finding about this entry, and should be reported as such"
+  return 0
+}
 validate_entry_all() {
   local rc
+  _ve_advisory_reset
+  # --- the three BLOCKING checks: a non-zero verdict here is a refusal to write ---
   validate_duplicate "$@";            rc=$?; [ "$rc" -eq 0 ] || return "$rc"
   validate_contradiction "$@";        rc=$?; [ "$rc" -eq 0 ] || return "$rc"
   validate_provenance "$@";           rc=$?; [ "$rc" -eq 0 ] || return "$rc"
-  validate_dead_reference "$@";       rc=$?; [ "$rc" -eq 0 ] || return "$rc"
-  validate_cross_repo_reference "$@"; rc=$?; [ "$rc" -eq 0 ] || return "$rc"
+  # --- the two ADVISORY checks: reported, absorbed, never propagated ---
+  validate_dead_reference "$@";       rc=$?; _ve_absorb_advisory_status dead-reference "$rc"
+  validate_cross_repo_reference "$@"; rc=$?; _ve_absorb_advisory_status cross-repo "$rc"
   return 0
 }
 
@@ -1329,7 +1455,8 @@ VALIDATE_ENTRY_FUNCTIONS="validate_contradiction validate_duplicate validate_pro
 # The value each writer's load guard compares against $VALIDATE_ENTRY_CONTRACT. It is assigned HERE
 # rather than beside the sentinel because the executable block below reads it, and that block runs
 # while the file is being executed top-to-bottom — an assignment after it would be unset at use.
-VALIDATE_ENTRY_CONTRACT_EXPECTED="validate-entry/1"
+# `/2` because two of the five checks stopped blocking; see THE CONTRACT SENTINEL in the header.
+VALIDATE_ENTRY_CONTRACT_EXPECTED="validate-entry/2"
 
 # ---- executable entry point -------------------------------------------------
 # Only when run directly, never when sourced. `set -u` is scoped here so sourcing cannot change the
@@ -1359,4 +1486,4 @@ fi
 # it aborts the parse, so a truncated helper leaves a writer holding SOME validators. Because this
 # assignment is last, a truncated file can never produce a matching sentinel and the writer's guard
 # refuses instead of validating with half a validator. Do not move it, and do not add lines below it.
-VALIDATE_ENTRY_CONTRACT="validate-entry/1"
+VALIDATE_ENTRY_CONTRACT="validate-entry/2"

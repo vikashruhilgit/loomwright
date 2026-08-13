@@ -44,8 +44,8 @@ set -uo pipefail
 # Any shortfall is REFUSE_VALIDATOR_UNAVAILABLE, exit 2 (could-not-examine), nothing written.
 # ---------------------------------------------------------------------------
 REFUSE_VALIDATOR_UNAVAILABLE="REFUSE_VALIDATOR_UNAVAILABLE"
-VALIDATE_ENTRY_CONTRACT_REQUIRED="validate-entry/1"
-VALIDATOR_REQUIRED_FUNCS="validate_duplicate validate_contradiction validate_provenance validate_dead_reference validate_cross_repo_reference"
+VALIDATE_ENTRY_CONTRACT_REQUIRED="validate-entry/2"
+VALIDATOR_REQUIRED_FUNCS="validate_duplicate validate_contradiction validate_provenance validate_dead_reference validate_cross_repo_reference validate_entry_advisory_notice"
 
 # Resolved BEFORE any `cd`: $0 may be relative, and three of these writers cd to the repo root.
 VE_HERE="$(cd "$(dirname "$0")" 2>/dev/null && pwd || printf '%s' ".")"
@@ -287,8 +287,13 @@ validate_entry_all --entry "$BODY" --store "$corpus_tmp" \
   --source "$SOURCE" --root "$GITROOT"
 _ve_rc=$?
 if [ "$_ve_had_e" -eq 1 ]; then set -e; fi
+# rc 0 IS NOT NECESSARILY SILENT. Two of the five checks (dead-reference, cross-repo) are ADVISORY:
+# they report on stderr and never refuse, so a clean exit can still carry findings. The notice below
+# repeats them in this writer's own voice, next to the fact that the write went ahead — a warning
+# printed only inside the helper scrolls past, and an advisory nobody reads is worse than no check.
+# It prints nothing when there is nothing to report.
 case "$_ve_rc" in
-  0) : ;;
+  0) validate_entry_advisory_notice "write-system-contract" ;;
   1) echo "write-system-contract: refusing to write — the contract was examined and violates a write-time check (see the reason above). Nothing was written." >&2
      # A duplicate/contradiction reason quotes the store it compared against, and that is a temp
      # corpus path. Naming the real dir keeps the message actionable.

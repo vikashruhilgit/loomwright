@@ -99,8 +99,8 @@ die() { printf '%s: %s\n' "$PROG" "$1" >&2; exit "${2:-1}"; }
 # Any shortfall is REFUSE_VALIDATOR_UNAVAILABLE, exit 2 (could-not-examine), nothing written.
 # ---------------------------------------------------------------------------
 REFUSE_VALIDATOR_UNAVAILABLE="REFUSE_VALIDATOR_UNAVAILABLE"
-VALIDATE_ENTRY_CONTRACT_REQUIRED="validate-entry/1"
-VALIDATOR_REQUIRED_FUNCS="validate_duplicate validate_contradiction validate_provenance validate_dead_reference validate_cross_repo_reference"
+VALIDATE_ENTRY_CONTRACT_REQUIRED="validate-entry/2"
+VALIDATOR_REQUIRED_FUNCS="validate_duplicate validate_contradiction validate_provenance validate_dead_reference validate_cross_repo_reference validate_entry_advisory_notice"
 
 # Resolved BEFORE any `cd`: $0 may be relative, and three of these writers cd to the repo root.
 VE_HERE="$(cd "$(dirname "$0")" 2>/dev/null && pwd || printf '%s' ".")"
@@ -588,8 +588,13 @@ validate_entry_all --entry "$(cat "$compose")" --store "$COMPARE_STORE" \
   --source "" --root "$REPO_DIR"
 _ve_rc=$?
 set -e
+# rc 0 IS NOT NECESSARILY SILENT. Two of the five checks (dead-reference, cross-repo) are ADVISORY:
+# they report on stderr and never refuse, so a clean exit can still carry findings. The notice below
+# repeats them in this writer's own voice, next to the fact that the write went ahead — a warning
+# printed only inside the helper scrolls past, and an advisory nobody reads is worse than no check.
+# It prints nothing when there is nothing to report.
 case "$_ve_rc" in
-  0) : ;;
+  0) validate_entry_advisory_notice "$PROG" ;;
   1) printf '%s: (the store quoted below is the memo corpus derived from %s — one line per stored memo.)\n' "$PROG" "$STORE_DIR" >&2
      die "refusing to write — the memo was examined and violates a write-time check (see the reason above). Nothing was written." 1 ;;
   *) die "refusing to write — the memo COULD NOT BE EXAMINED (see the reason above); refusing rather than reporting it clean. Nothing was written." 2 ;;
