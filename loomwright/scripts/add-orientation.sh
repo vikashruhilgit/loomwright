@@ -70,6 +70,29 @@
 # Usage:
 #   add-orientation.sh <area-slug> <summary-line> <body-file-or-'-'>
 #                      [--confirm] [--store <dir>] [--repo <dir>] [--areas "<paths>"]
+#                      [--source "<what motivated this memo>"]
+#
+# PROVENANCE (--source) — what the validated entry is, and why it is NOT the composed file.
+# This writer used to hand `validate_entry_all` the COMPOSED memo (header + summary + body) and
+# pass `--source ""`. The header it stamps itself carries `head_sha: <short HEAD sha>`, which
+# validate_provenance accepts as a commit reference — so EVERY memo vouched for itself and the
+# provenance check could not refuse anything through this writer. Measured, not inferred: a memo
+# whose summary and body cited nothing at all was written with rc 0.
+# The validated entry is now the memo BODY + SUMMARY only — the self-stamped header is never part
+# of it. That is a WRITER-side fix: validate-entry.sh's five checks are untouched (it is shared by
+# six writers and must not learn one writer's file format). The duplicate/contradiction checks are
+# UNAFFECTED because both sides of that comparison already drop whole-line HTML comments
+# (memo_compare_line here, _ve_comparable_entry in the validator), so the header was never part of
+# the score to begin with.
+# Consequence, deliberate: a memo citing nothing is now REFUSED. A legitimate memo supplies its
+# provenance through --source (e.g. `--source "dreaming:<session_id>"`, which is what /dreaming's
+# promotion path passes) or by naming the reference in its own summary/body text.
+# This KNOWINGLY reverses the reasoning of the commit that made a labelled `head_sha:` count as a
+# citation for this writer. That commit's own stated objection to `--source "head_sha:$sha"` was
+# that it would let the writer vouch for itself outside the artifact a reader can see; keeping the
+# header inside the validated entry is the same self-vouching one layer in. The labelled-sha
+# acceptance in validate-entry.sh is UNCHANGED and still serves every other writer and any memo
+# that genuinely cites a commit in its prose.
 #   defaults: repo = cwd git root; store = <repo>/.agent/orientation
 #   env overrides (for tests): ORIENTATION_STORE_DIR / ORIENTATION_REPO_DIR
 #   precedence: flags > env > defaults. Body '-' reads stdin.
@@ -170,6 +193,7 @@ body_src=""
 store_arg=""
 repo_arg=""
 areas_arg=""
+source_arg=""
 confirm=0
 pos=0
 curate_target=""
@@ -184,6 +208,16 @@ while [ "$#" -gt 0 ]; do
     --store) [ "$#" -ge 2 ] || die "--store requires a value"; store_arg="$2"; shift 2 ;;
     --repo)  [ "$#" -ge 2 ] || die "--repo requires a value";  repo_arg="$2";  shift 2 ;;
     --areas) [ "$#" -ge 2 ] || die "--areas requires a value"; areas_arg="$2"; shift 2 ;;
+    # NOT sanitized, unlike write-lessons.sh / write-project-memory.sh, which strip quote /
+    # backslash / angle-bracket / control characters from their SOURCE. The difference is
+    # deliberate and rests on ONE property: those two writers PERSIST their source into the store
+    # line, this one never does. Here source_arg reaches only validate_entry_all as a single argv
+    # value; what gets written is $compose, built from the summary and body alone (both of which
+    # ARE screened, by the hostile-marker scan above). IF A FUTURE CHANGE EVER PERSISTS THE SOURCE
+    # INTO THE MEMO — or into the header — this must gain the same sanitizer first; the property
+    # that makes it safe would be gone. Raised as a parity observation in PR #146's review and
+    # kept as-is with the reason recorded, rather than silently left to look like an oversight.
+    --source) [ "$#" -ge 2 ] || die "--source requires a value"; source_arg="$2"; shift 2 ;;
     --confirm) confirm=1; shift ;;
     --target)      [ "$#" -ge 2 ] || die "--target requires a value";      curate_target="$2"; shift 2 ;;
     --reason)      [ "$#" -ge 2 ] || die "--reason requires a value";      curate_reason="$2"; shift 2 ;;
@@ -507,8 +541,9 @@ write_target="$STORE_DIR/$slug.md"
 
 # ---------------------------------------------------------------------------
 # THE VALIDATOR CALL SITE (see the LOAD GUARD block above). Before the confirm gate, for the same
-# reason as add-rule.sh's. This writer has no --source flag at all, so provenance rests entirely on
-# the memo text — the summary line or body must name the finding / PR / session that motivated it.
+# reason as add-rule.sh's. Provenance rests on --source, or on the memo text naming the finding /
+# PR / session that motivated it — and NOT on the header this writer stamps itself. See the
+# PROVENANCE (--source) block in this file's header for what changed and why.
 #
 # WHAT --store POINTS AT, and why it is not the memo's own file. This store is a DIRECTORY of memo
 # documents, so it has the same shape problem write-agent-memory.sh had: `--store "$write_target"`
@@ -586,10 +621,21 @@ case "$_corpus_rc" in
   *) die "refusing to write — the comparison corpus derived from '$STORE_DIR' could not be staged (status $_corpus_rc), so this memo could not be compared against the store. Nothing was written." 2 ;;
 esac
 
+# THE VALIDATED ENTRY is the memo BODY + SUMMARY — never the composed file. Built here as a real
+# file rather than inline so the two consumers below (the validator, and nothing else) cannot drift
+# from each other, and so the header can never be reintroduced by an edit that only touches the
+# call. $compose keeps the header and is what actually gets WRITTEN; $validated is what gets
+# EXAMINED. Do not collapse them back together — that is the self-vouching defect.
+validated="$work/validated"
+{
+  printf '%s\n' "$summary"
+  cat "$body_tmp"
+} > "$validated"
+
 # ---- VALIDATOR CALL BEGIN ---------------------------------------------------
 set +e
-validate_entry_all --entry "$(cat "$compose")" --store "$COMPARE_STORE" \
-  --source "" --root "$REPO_DIR"
+validate_entry_all --entry "$(cat "$validated")" --store "$COMPARE_STORE" \
+  --source "$source_arg" --root "$REPO_DIR"
 _ve_rc=$?
 set -e
 # rc 0 IS NOT NECESSARILY SILENT. Two of the five checks (dead-reference, cross-repo) are ADVISORY:

@@ -161,6 +161,25 @@ When multiple memory layers carry relevant knowledge, resolve precedence **most-
 
 **Rule:** layers 2–5 (everything below `CLAUDE.md`) are **advisory** and NEVER override `CLAUDE.md` or any gate / verdict / `heal_decision` — agents read only scoped, relevant entries and ignore stale or unrelated content.
 
+### Sole-writer confirm gates (committed-vs-gitignored rule)
+
+**A sole writer whose curated store is COMMITTED requires `--confirm`; a sole writer whose store is gitignored does not.** The test is mechanical and re-derivable, so nobody has to guess: run `git ls-files <store-path>` — a non-empty result means the store is tracked, and that writer must gate.
+
+Which side each of the six sole writers falls on:
+
+| Sole writer | Store | Tracked? | `--confirm` |
+|---|---|---|---|
+| `add-rule.sh` | `.agent/rules/` | yes | **required** |
+| `add-orientation.sh` | `.agent/orientation/` | yes | **required** |
+| `write-agent-memory.sh` | `.claude/agent-memory/` | yes | **required** |
+| `write-lessons.sh` | `.supervisor/memory/` | yes | **required** |
+| `write-project-memory.sh` | `.supervisor/memory/` | yes | **required** |
+| `write-system-contract.sh` | `.supervisor/twin/` | no | **none, deliberately** |
+
+`.supervisor/memory/` is committed despite living under `.supervisor/` — `.gitignore` carries a `!.supervisor/memory/` negation after the `.supervisor/*` ignore, so `LESSONS.md` and `PROJECT_MEMORY.md` are tracked files. `.supervisor/twin/` has no such negation and is genuinely gitignored; `write-system-contract.sh` having no gate is the deliberate other half of this rule, not an omission to be "fixed" for symmetry.
+
+**Validation is not a substitute for a confirm gate.** All six writers share `validate-entry.sh`, and it is easy to read "validated" as "gated" — for three of them that was false: one non-interactive invocation from the repo root appended a *validated* entry to a committed store with no human in the loop. Validation decides whether an entry is well-formed; the confirm gate decides whether a human asked for it to land in the repo's history. They answer different questions, so a store that is committed needs both.
+
 ### Agent memory write permission
 
 > **Surfacing of the proposal queue is deferred (item 05).** Writing a proposal is wired; an automatic promotion queue that shows a human what is pending is not. Until it lands, pending proposals are found by listing the gitignored `.supervisor/agent-memory-proposals/`. Propose anyway — the gap is in surfacing, not in the write path.
