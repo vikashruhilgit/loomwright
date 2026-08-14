@@ -44,6 +44,11 @@
 #      leaves BOTH LESSONS.md and the provenance chain byte-identical — including creating neither
 #      file on a virgin repo. Plus the two controls without which the section proves nothing: a
 #      refusal still outranks the gate, and the same call WITH --confirm still writes.
+#      AND (cg7)-(cg10): a refusal *WITH* --confirm on a VIRGIN repo — an unknown-target attest,
+#      and a validator-refused entry — must ALSO leave `.supervisor/memory/` absent-or-empty,
+#      because the store bootstrap is LAZY (deferred past every refusal) rather than gated only on
+#      the confirm verdict; with the positive control that a legitimate --confirm add on a virgin
+#      store still creates both files, without which a bootstrap that never fires would pass.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -1131,6 +1136,89 @@ if [ "$cg_rc" -eq 0 ] && [ ! -e "$CGV/$LFILE" ] && [ ! -e "$CGV/.supervisor/memo
 else
   no "(cg6) the dry-run bootstrapped the store anyway (exit $cg_rc) — an empty committed file is still a mutation"
 fi
+
+# ---------------------------------------------------------------------------
+# (cg7)-(cg10) A REFUSAL *WITH* --confirm MUST ALSO LEAVE NOTHING BEHIND.
+#
+# (cg6) above covers the DRY-RUN half only, and that is exactly the gap this section closes: the
+# store bootstrap used to be an EAGER block gated only on the confirm verdict, so passing --confirm
+# minted LESSONS.md + the chain BEFORE the action was known to be valid and BEFORE the validator
+# ran. Every refusal downstream then printed "Nothing was written" while leaving two files in a
+# TRACKED directory. (cg6) could not see it — it never passes --confirm.
+#
+# WHY BOTH FILES (indeed, the whole directory): the chain is written FIRST, so a check that looked
+# only at LESSONS.md would miss the half that actually leaked first. The assertion is therefore on
+# the DIRECTORY: `.supervisor/memory/` must be absent, or contain zero entries.
+#
+# VIRGIN repo per case, deliberately: on a seeded store "no new files" is unfalsifiable, because
+# the files are already there. Only a store that does not exist yet can prove the writer did not
+# create one.
+# ---------------------------------------------------------------------------
+# cg_store_empty <repo> -> 0 if <repo>/.supervisor/memory/ is absent or contains no entries.
+cg_store_empty() {
+  [ -d "$1/.supervisor/memory" ] || return 0
+  [ -z "$(ls -A "$1/.supervisor/memory" 2>/dev/null)" ]
+}
+cg_store_dump() { ls -A "$1/.supervisor/memory" 2>/dev/null | tr '\n' ' '; }
+cg_virgin() {
+  mkdir -p "$1"
+  ( cd "$1" && git init -q && git config user.email t@t && git config user.name t \
+      && echo init > f && git add f && git commit -qm init ) >/dev/null 2>&1
+}
+
+# (cg7) An `--attest-existing` naming a line that is NOT in the store — a curation action with an
+# unknown target — WITH --confirm. Must fail loud (exit 4, "attest never creates") and create
+# nothing. Before the lazy bootstrap this refusal left LESSONS.md + the chain behind.
+CGV7="$CGTMP/virgin-attest"; cg_virgin "$CGV7"
+( cd "$CGV7" && bash "$WRITE" --attest-existing --category cg --lesson "this lesson was never stored anywhere" --source "session:fixture-0001" --confirm ) >"$CG_OUT" 2>&1
+cg_rc=$?
+[ "$cg_rc" -eq 4 ] && ok "(cg7) --attest-existing on an absent target still FAILS LOUD (exit 4) WITH --confirm" \
+                   || no "(cg7) exit $cg_rc, want 4: $(tr '\n' ' ' < "$CG_OUT" | cut -c1-200)"
+cg_store_empty "$CGV7" \
+  && ok "(cg7) and .supervisor/memory/ is absent-or-empty — the refused attest bootstrapped NEITHER LESSONS.md NOR the chain" \
+  || no "(cg7) the refused attest left files in a TRACKED directory: $(cg_store_dump "$CGV7")"
+
+# (cg8) THE MAINLINE REFUSAL: a validator-refused entry WITH --confirm. Exit 1 (examined and
+# violating) — a bare `--source ""` cites nothing, so REFUSE_PROVENANCE fires. This is the path
+# most callers hit, and it sits BELOW the old eager bootstrap just like (cg7).
+CGV8="$CGTMP/virgin-validator"; cg_virgin "$CGV8"
+( cd "$CGV8" && bash "$WRITE" --category cg --lesson "this lesson cites nothing at all whatsoever" --source "" --confirm ) >"$CG_OUT" 2>&1
+cg_rc=$?
+[ "$cg_rc" -eq 1 ] && ok "(cg8) a validator-refused add exits 1 WITH --confirm (examined and violating)" \
+                   || no "(cg8) exit $cg_rc, want 1: $(tr '\n' ' ' < "$CG_OUT" | cut -c1-200)"
+cg_store_empty "$CGV8" \
+  && ok "(cg8) and .supervisor/memory/ is absent-or-empty — 'Nothing was written' is now literally true on the mainline refusal path" \
+  || no "(cg8) the refused write left files in a TRACKED directory: $(cg_store_dump "$CGV8")"
+
+# (cg9) The retract-on-a-virgin-store control. This ALREADY behaved (its bootstrap was scoped to
+# `ACTION = add`), so it is pinned here as a REGRESSION guard on the lazy rewrite, not as a new fix.
+CGV9="$CGTMP/virgin-retract"; cg_virgin "$CGV9"
+( cd "$CGV9" && bash "$WRITE" retract cg "no such lesson was ever stored here" --confirm ) >"$CG_OUT" 2>&1
+cg_rc=$?
+[ "$cg_rc" -eq 4 ] && ok "(cg9) a retract against a store that does not exist still exits 4 WITH --confirm" \
+                   || no "(cg9) exit $cg_rc, want 4: $(tr '\n' ' ' < "$CG_OUT" | cut -c1-200)"
+cg_store_empty "$CGV9" \
+  && ok "(cg9) and it still creates nothing — the lazy bootstrap did not regress the one path that was already correct" \
+  || no "(cg9) the refused retract left files behind: $(cg_store_dump "$CGV9")"
+
+# (cg10) POSITIVE CONTROL, and it is load-bearing: without it a lazy bootstrap that NEVER fires
+# would pass (cg7)-(cg9) and every dry-run case, while silently breaking the first write into a
+# fresh repo. A legitimate --confirm add on a VIRGIN store must create BOTH files and store the
+# entry.
+CGV10="$CGTMP/virgin-write"; cg_virgin "$CGV10"
+( cd "$CGV10" && bash "$WRITE" --category cg --lesson "the first lesson in a fresh repo must land" --source "session:fixture-0001" --confirm ) >"$CG_OUT" 2>&1
+cg_rc=$?
+[ "$cg_rc" -eq 0 ] && ok "(cg10) CONTROL: a legitimate --confirm add on a VIRGIN store exits 0" \
+                   || no "(cg10) exit $cg_rc, want 0 — the lazy bootstrap broke the first write into a fresh repo: $(tr '\n' ' ' < "$CG_OUT" | cut -c1-200)"
+if [ -f "$CGV10/$LFILE" ] && [ -f "$CGV10/.supervisor/memory/.lessons-provenance.jsonl" ]; then
+  ok "(cg10) CONTROL: it created BOTH LESSONS.md and the provenance chain"
+else
+  no "(cg10) CONTROL FAILED: the store was not bootstrapped: $(cg_store_dump "$CGV10")"
+fi
+grep -qF -- "the first lesson in a fresh repo must land" "$CGV10/$LFILE" 2>/dev/null \
+  && ok "(cg10) CONTROL: and the entry is actually IN the store — the bootstrap fires, it is only deferred" \
+  || no "(cg10) CONTROL FAILED: the entry never landed in $LFILE"
+
 rm -rf "$CGTMP" 2>/dev/null
 
 echo

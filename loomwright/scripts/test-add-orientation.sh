@@ -848,12 +848,34 @@ VE_FORCED_SHA=""
 VED3="$(ve_repo)"
 if force_alldigit_sha "$VED3"; then
   ok "AC1 provenance (d3) fixture: the repo really is on an all-digit abbreviated sha ($VE_FORCED_SHA) — the case below is asserted, not sampled"
-  ve_write "$VED3" "$VE_PROV" "$VE_PROV"
-  if [ "$VE_RC" -eq 0 ] && [ -f "$VED3/$VESTORE" ] \
-     && head -n1 "$VED3/$VESTORE" | grep -qF "head_sha: $VE_FORCED_SHA"; then
-    ok "AC1 provenance (d3): the writer WRITES on an all-digit HEAD — /dreaming's orientation-promotion path is not disabled for the duration of whatever commit the user is sitting on"
+  # (d3) RE-AIMED. It used to assert "the writer WRITES on an all-digit HEAD", seeded through
+  # ve_write — which now injects a default --source, so the write was caused by the fixture flag and
+  # NOT by the header token it claimed to pin. It passed identically with the labelled-sha path
+  # deleted from the validator, i.e. it was vacuous. The property it guarded no longer exists on
+  # this path at all: the writer stopped consulting its own header, so HEAD's alphabet cannot reach
+  # the provenance verdict.
+  # What IS true now, and is what this asserts: the verdict is IDENTICAL on an all-digit and a
+  # letter-bearing HEAD — refused without provenance, written with it, in both repos. That is the
+  # real guarantee behind the original concern (the promotion path must not break for the duration
+  # of whatever commit the user happens to be sitting on), and it is falsifiable: if the header ever
+  # re-enters the validated entry, the all-digit repo and the letter-bearing repo stop agreeing.
+  # Seeded with ve_write_flags throughout — the defaulting helper is what made (d3) vacuous.
+  VED3_LETTER="$(ve_repo)"
+  ve_write_flags "$VED3" "$VE_PROV" "$VE_PROV";        ve_d3_digit_bare=$VE_RC
+  ve_write_flags "$VED3_LETTER" "$VE_PROV" "$VE_PROV"; ve_d3_letter_bare=$VE_RC
+  if [ "$ve_d3_digit_bare" -eq 1 ] && [ "$ve_d3_letter_bare" -eq 1 ]; then
+    ok "AC1 provenance (d3a): an un-provenanced memo is refused on an all-digit HEAD ($VE_FORCED_SHA) AND on a letter-bearing one — HEAD's alphabet no longer reaches the provenance verdict"
   else
-    no "AC1 provenance (d3): the writer refused on an all-digit HEAD (exit $VE_RC): $(tr '\n' ' ' < "$VE_ERR" | cut -c1-200)"
+    no "AC1 provenance (d3a): verdicts DIVERGED or did not refuse (all-digit rc=$ve_d3_digit_bare, letter-bearing rc=$ve_d3_letter_bare) — the writer is consulting its own head_sha header again"
+  fi
+  ve_write_flags "$VED3" "$VE_PROV" "$VE_PROV" --source "dreaming:2026-08-13-d3";        ve_d3_digit_src=$VE_RC
+  ve_write_flags "$VED3_LETTER" "$VE_PROV" "$VE_PROV" --source "dreaming:2026-08-13-d3"; ve_d3_letter_src=$VE_RC
+  if [ "$ve_d3_digit_src" -eq 0 ] && [ -f "$VED3/$VESTORE" ] \
+     && head -n1 "$VED3/$VESTORE" | grep -qF "head_sha: $VE_FORCED_SHA" \
+     && [ "$ve_d3_letter_src" -eq 0 ] && [ -f "$VED3_LETTER/$VESTORE" ]; then
+    ok "AC1 provenance (d3b): a --source-provenanced memo WRITES on an all-digit HEAD ($VE_FORCED_SHA) just as it does on a letter-bearing one — /dreaming's promotion path is not disabled by whichever commit the user is sitting on"
+  else
+    no "AC1 provenance (d3b): the provenanced write DIVERGED by HEAD alphabet (all-digit rc=$ve_d3_digit_src, letter-bearing rc=$ve_d3_letter_src): $(tr '\n' ' ' < "$VE_ERR" | cut -c1-200)"
   fi
 else
   no "AC1 provenance (d3): could not force an all-digit abbreviated sha in 600 amends — the boundary is UNASSERTED (do not read the rest of this suite as covering it)"

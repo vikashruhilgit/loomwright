@@ -346,22 +346,41 @@ PROV="$MEM_DIR/.lessons-provenance.jsonl"
 MAX_PER_CAT=3
 GENESIS="GENESIS"
 
-mkdir -p "$MEM_DIR" 2>/dev/null || { echo "write-lessons: cannot create $MEM_DIR" >&2; exit 2; }
-# Only `add` bootstraps the store — `retract` on an absent store has nothing to tombstone and
-# must fail loud below without creating files (a refused retract leaves state byte-identical).
+# ---------------------------------------------------------------------------
+# ensure_store — LAZY bootstrap of the committed store. Creates $MEM_DIR, LESSONS.md and the
+# provenance chain if absent; idempotent, so every mutating path may call it unconditionally.
 #
-# CONFIRM GATE INTERACTION: creating LESSONS.md / the provenance chain IS a mutation of the
-# committed store, so a guaranteed dry-run must not do it either. `CONFIRM=0` with no TTY is
-# exactly the case whose gate verdict is already decided here (the prompt branch is unreachable),
-# so the bootstrap is skipped and the dry-run leaves the working tree byte-identical — including
-# creating no files where there were none. The validator tolerates an absent --store (it is a
-# clean "no prior entries" verdict, not a refusal), and every read below is `2>/dev/null`-guarded.
-# An interactive run still bootstraps before prompting: the user is present, and the file created
-# is a header-only stub.
-if [ "$ACTION" = "add" ] && { [ "$CONFIRM" -eq 1 ] || { [ -t 0 ] && [ -t 1 ]; }; }; then
+# WHY LAZY, AND WHY THIS IS NOT A STYLE CHOICE: `.supervisor/memory/` is UN-IGNORED by
+# `.gitignore` (`!.supervisor/memory/`), so LESSONS.md and .lessons-provenance.jsonl are TRACKED,
+# COMMITTED files. Anything that is NOT a completed write must therefore leave the working tree
+# BYTE-IDENTICAL — including creating no files where there were none. Two empty tracked files in
+# `git status` are a mutation of the repo, not a harmless stub.
+#
+# This used to be an EAGER `if` block gated only on the confirm verdict, which ran BEFORE the
+# action was known to be valid and BEFORE the validator. Every refusal downstream of it therefore
+# left two files behind on a virgin store while printing "Nothing was written" — observed on the
+# `--attest-existing` target-not-found refusal (exit 4) and, worse, on the MAINLINE validator
+# refusal (exit 1), which is the path most callers hit. Tightening the eager condition to exclude
+# the curation verbs would have fixed only the first.
+#
+# THE RULE FOR CALL SITES: call this at the LAST possible moment — after EVERY refusal (argument
+# validation, target lookup, the attest checks, the validator call) AND after the confirm gate has
+# decided to proceed — immediately before the first real mutation on each path that genuinely
+# writes. EVERY mutating path must call it (add; supersede's two halves; attest's append): a path
+# that skips it writes into a file that does not exist.
+#
+# Safe because nothing upstream requires the store to exist: every read of it is
+# `2>/dev/null`-guarded or `|| true`-ed, `chain_trusted` returns 1 on an absent chain, and
+# validate-entry.sh treats an absent `--store` as a clean "no prior entries" verdict (its
+# `_ve_store_readable` returns 1, which both blocking store checks map to `return 0`) rather than
+# a refusal. mkdir is deliberately INSIDE this function too — an empty directory is not tracked by
+# git, but creating it eagerly is still a side effect a refused run has no business having.
+# ---------------------------------------------------------------------------
+ensure_store() {
+  mkdir -p "$MEM_DIR" 2>/dev/null || { echo "write-lessons: cannot create $MEM_DIR" >&2; exit 2; }
   [ -f "$LESSONS" ] || printf '# Project Lessons (advisory — bounded <=3 active per category; written only via write-lessons.sh)\n' > "$LESSONS"
   [ -f "$PROV" ] || : > "$PROV"
-fi
+}
 
 # ---------------------------------------------------------------------------
 # THE VALIDATOR CALL SITE. One call to validate_entry_all so a check cannot be silently omitted.
@@ -576,6 +595,10 @@ if [ "${ATTEST_PRESENT:-0}" -eq 1 ]; then
   # itself rather than printing a plan for work that would not happen) and before the provenance
   # append, which is this path's ONLY mutation.
   confirm_gate "ATTEST" "entry: [$id] in $CATSLUG" "effect: append a chain-valid 'add' for the existing line; LESSONS.md unchanged" "source: $SOURCE"
+  # Lazy bootstrap, call site 1/3 — past this path's refusals (target-not-found exit 4) and past
+  # the gate. This path is only reachable when LESSONS.md already holds the line, but the chain may
+  # still be absent, and `cat "$PROV"` below needs it to exist.
+  ensure_store
   prov_tmp="$(mktemp "$MEM_DIR/.lptmp.XXXXXX")"
   trap 'rm -f "$prov_tmp" 2>/dev/null' EXIT
   cat "$PROV" > "$prov_tmp"
@@ -636,6 +659,10 @@ if [ "$ACTION" = "retract" ] || [ "$ACTION" = "supersede" ]; then
 
   # (3) Append the chained retract tombstone + rewrite LESSONS.md without the entry line.
   #     Same atomic discipline and commit ORDER as add: temps IN the memory dir, provenance FIRST.
+  # Lazy bootstrap, call site 2/3 — past BOTH pre-checks (which already exit 4 on an absent store)
+  # and past the gate. A no-op here in practice; called anyway so no mutating path depends on
+  # another path having created the files.
+  ensure_store
   mem_tmp="$(mktemp "$MEM_DIR/.ltmp.XXXXXX")"
   prov_tmp="$(mktemp "$MEM_DIR/.lptmp.XXXXXX")"
   trap 'rm -f "$mem_tmp" "$prov_tmp" 2>/dev/null' EXIT
@@ -685,6 +712,12 @@ fi
 if [ "$ACTION" = "add" ]; then
   confirm_gate "WRITE" "entry: - [$id] $lesson_oneline" "category: $CATSLUG" "source: $SOURCE, last_verified: $LAST_VERIFIED, confidence: $CONFIDENCE"
 fi
+
+# Lazy bootstrap, call site 3/3 — the ADD flow (reached directly by `add`, or by `supersede`
+# falling through after its retract half). Sits past every refusal above (argument validation, the
+# validator call, the retract/supersede pre-checks) and past the gate, immediately before the first
+# mutation: the awk pass below READS $LESSONS, so the file must exist by this line.
+ensure_store
 
 # Temps live IN the memory dir (not $TMPDIR) so the commit `mv` is a same-filesystem, truly
 # atomic rename — a tmpfs /tmp would otherwise make `mv` a non-atomic cross-device copy+unlink.

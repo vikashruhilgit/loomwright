@@ -260,19 +260,39 @@ PROV="$MEM_DIR/.provenance.jsonl"
 MAX_LINES="${PROJECT_MEMORY_MAX_LINES:-200}"   # overridable for tests; default = Memory Core Principle cap
 GENESIS="GENESIS"
 
-mkdir -p "$MEM_DIR" 2>/dev/null || { echo "write-project-memory: cannot create $MEM_DIR" >&2; exit 2; }
-# CONFIRM GATE INTERACTION: creating PROJECT_MEMORY.md / the provenance chain IS a mutation of the
-# committed store, so a guaranteed dry-run must not do it either. `CONFIRM=0` with no TTY is
-# exactly the case whose gate verdict is already decided here (the prompt branch is unreachable),
-# so the bootstrap is skipped and the dry-run leaves the working tree byte-identical — including
-# creating no files where there were none. The validator tolerates an absent --store (a clean
-# "no prior entries" verdict, not a refusal) and every read below is `2>/dev/null`-guarded or
-# `|| true`-ed. An interactive run still bootstraps before prompting: the user is present, and the
-# file created is a header-only stub.
-if [ "$CONFIRM" -eq 1 ] || { [ -t 0 ] && [ -t 1 ]; }; then
+# ---------------------------------------------------------------------------
+# ensure_store — LAZY bootstrap of the committed store. Creates $MEM_DIR, PROJECT_MEMORY.md and the
+# provenance chain if absent; idempotent, so every mutating path may call it unconditionally.
+#
+# WHY LAZY, AND WHY THIS IS NOT A STYLE CHOICE: `.supervisor/memory/` is UN-IGNORED by
+# `.gitignore` (`!.supervisor/memory/`), so PROJECT_MEMORY.md and .provenance.jsonl are TRACKED,
+# COMMITTED files. Anything that is NOT a completed write must therefore leave the working tree
+# BYTE-IDENTICAL — including creating no files where there were none. Two empty tracked files in
+# `git status` are a mutation of the repo, not a harmless stub.
+#
+# This used to be an EAGER `if` block gated only on the confirm verdict, which ran BEFORE the
+# action was known to be valid and BEFORE the validator. Every refusal downstream of it therefore
+# left two files behind on a virgin store while printing "Nothing was written" — observed on the
+# unknown-`--retract`-id abort (exit 2) and, worse, on the MAINLINE validator refusal (exit 1),
+# which is the path most callers hit. Tightening the eager condition to exclude the curation verbs
+# would have fixed only the first.
+#
+# THE RULE FOR CALL SITES: call this at the LAST possible moment — after EVERY refusal (argument
+# validation, the retract-target lookup, the no-op-supersede abort, the validator call) AND after
+# the confirm gate has decided to proceed — immediately before the first real mutation.
+#
+# Safe because nothing upstream requires the store to exist: the dedup `grep -qxF` and the
+# retract-target `grep -m1 -E` are `2>/dev/null`-guarded (the latter `|| true`-ed as well), and
+# validate-entry.sh treats an absent `--store` as a clean "no prior entries" verdict (its
+# `_ve_store_readable` returns 1, which both blocking store checks map to `return 0`) rather than a
+# refusal. mkdir is deliberately INSIDE this function too — an empty directory is not tracked by
+# git, but creating it eagerly is still a side effect a refused run has no business having.
+# ---------------------------------------------------------------------------
+ensure_store() {
+  mkdir -p "$MEM_DIR" 2>/dev/null || { echo "write-project-memory: cannot create $MEM_DIR" >&2; exit 2; }
   [ -f "$MEM" ]  || printf '# Project Memory (advisory — subordinate to CLAUDE.md; written only via write-project-memory.sh)\n' > "$MEM"
   [ -f "$PROV" ] || : > "$PROV"
-fi
+}
 
 # ---------------------------------------------------------------------------
 # THE VALIDATOR CALL SITE (see write-lessons.sh's for the shared rationale). The guard runs on
@@ -439,6 +459,13 @@ if [ "$proceed" -ne 1 ]; then
   printf 'write-project-memory: dry-run, pass --confirm to apply (nothing written)\n' >&2
   exit 0
 fi
+
+# Lazy bootstrap — the ONLY call site, because this writer has ONE combined mutation path (add /
+# retract / supersede all commit through the same two renames below). It sits past every refusal
+# above (argument validation, the unknown-retract-id abort, the bare-`--supersedes` abort, the
+# byte-identical no-op-supersede abort, the validator call) and past the confirm gate, immediately
+# before the first mutation: the `cat "$MEM"` / `cat "$PROV"` seeds below need both files to exist.
+ensure_store
 
 # Temps live IN the memory dir (not $TMPDIR) so the commit `mv` is a same-filesystem,
 # truly-atomic rename — a tmpfs /tmp (Linux/CI) would otherwise make `mv` a non-atomic
