@@ -208,6 +208,15 @@ while [ "$#" -gt 0 ]; do
     --store) [ "$#" -ge 2 ] || die "--store requires a value"; store_arg="$2"; shift 2 ;;
     --repo)  [ "$#" -ge 2 ] || die "--repo requires a value";  repo_arg="$2";  shift 2 ;;
     --areas) [ "$#" -ge 2 ] || die "--areas requires a value"; areas_arg="$2"; shift 2 ;;
+    # NOT sanitized, unlike write-lessons.sh / write-project-memory.sh, which strip quote /
+    # backslash / angle-bracket / control characters from their SOURCE. The difference is
+    # deliberate and rests on ONE property: those two writers PERSIST their source into the store
+    # line, this one never does. Here source_arg reaches only validate_entry_all as a single argv
+    # value; what gets written is $compose, built from the summary and body alone (both of which
+    # ARE screened, by the hostile-marker scan above). IF A FUTURE CHANGE EVER PERSISTS THE SOURCE
+    # INTO THE MEMO — or into the header — this must gain the same sanitizer first; the property
+    # that makes it safe would be gone. Raised as a parity observation in PR #146's review and
+    # kept as-is with the reason recorded, rather than silently left to look like an oversight.
     --source) [ "$#" -ge 2 ] || die "--source requires a value"; source_arg="$2"; shift 2 ;;
     --confirm) confirm=1; shift ;;
     --target)      [ "$#" -ge 2 ] || die "--target requires a value";      curate_target="$2"; shift 2 ;;
