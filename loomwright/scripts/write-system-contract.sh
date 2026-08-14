@@ -18,6 +18,17 @@
 # path: it handles state.md (sole writer on the parallel path; the inline main-thread Supervisor
 # best-effort-writes state.md directly), never the twin store.
 #
+# NO --confirm GATE, DELIBERATELY. See AGENT_GUIDELINES.md §"Sole-writer confirm gates
+# (committed-vs-gitignored rule)": a sole writer whose store is COMMITTED requires --confirm; one
+# whose store is gitignored does not. `.supervisor/twin/` has no `!` negation in .gitignore and
+# `git ls-files .supervisor/twin` returns nothing, so this writer is on the ungated side of that
+# rule by design — it is not an asymmetry left over from the writers that DO gate
+# (add-rule.sh, add-orientation.sh, write-agent-memory.sh, write-lessons.sh,
+# write-project-memory.sh, all of whose stores are tracked). Do not "fix" it by adding a gate;
+# if `.supervisor/twin/` ever becomes committed, the rule flips and a gate becomes required.
+# Note also that sharing validate-entry.sh with the gated writers is NOT a gate — validation
+# says an entry is well-formed, a confirm gate says a human asked for it.
+#
 # Usage:  write-system-contract.sh --subsystem "<id>" --contract-file <path> [--source "<id>"]
 #         write-system-contract.sh --subsystem "<id>" --source "<id>"   # body on stdin
 #         (the contract body is read from --contract-file if given, otherwise from stdin; the

@@ -54,18 +54,27 @@ new_repo() {
   printf '%s' "$r"
 }
 
+# FIXTURE PROVENANCE. The writer validates the memo BODY + SUMMARY (never its own head_sha header),
+# so a fixture whose prose cites nothing is REFUSED for provenance. Every seeding helper therefore
+# supplies a default --source, which keeps each case testing the thing it was written to test
+# (slug containment, caps, the confirm gate, duplicate, ...) instead of all of them collapsing into
+# the same provenance refusal. It is passed BEFORE "$@" so a caller can override it — last --source
+# wins in the writer's parser. The provenance cases deliberately bypass these helpers and use
+# ve_write_flags, which applies NO default; that is what keeps them falsifiable.
+VE_FIXTURE_SOURCE="test:add-orientation-fixture"
+
 # Run the writer with an explicit --repo/--store (+ --confirm: these cases exercise the write
 # path past the human-approval gate). $1 repo, then writer args. Sets OUT and RC.
 run_writer() {
   local repo="$1"; shift
-  OUT="$(bash "$WRITER" "$@" --confirm --repo "$repo" --store "$repo/.agent/orientation" 2>&1)"; RC=$?
+  OUT="$(bash "$WRITER" --source "$VE_FIXTURE_SOURCE" "$@" --confirm --repo "$repo" --store "$repo/.agent/orientation" 2>&1)"; RC=$?
 }
 
 # Same, but WITHOUT --confirm and with stdin forced non-TTY (< /dev/null) — exercises the
 # confirm-only gate's automated-run dry-run path.
 run_writer_noconfirm() {
   local repo="$1"; shift
-  OUT="$(bash "$WRITER" "$@" --repo "$repo" --store "$repo/.agent/orientation" < /dev/null 2>&1)"; RC=$?
+  OUT="$(bash "$WRITER" --source "$VE_FIXTURE_SOURCE" "$@" --repo "$repo" --store "$repo/.agent/orientation" < /dev/null 2>&1)"; RC=$?
 }
 
 # Count memo/temp files under a repo's store (asserting nothing written on rejection).
@@ -114,7 +123,7 @@ printf '%s' "$hline1" | grep -qF "head_sha: $sha1" || case1_ok=0
 printf '%s' "$hline1" | grep -qF "areas: api" || case1_ok=0      # default areas = slug
 sed -n '2p' "$target1" | grep -qF "API area orientation summary." || case1_ok=0
 # stdin '-' body path also works (separate slug):
-OUT2="$(printf 'stdin body text\n' | bash "$WRITER" gateway "Gateway summary." - --confirm --repo "$R1" --store "$R1/.agent/orientation" 2>&1)"; RC2=$?
+OUT2="$(printf 'stdin body text\n' | bash "$WRITER" gateway "Gateway summary." - --confirm --source "$VE_FIXTURE_SOURCE" --repo "$R1" --store "$R1/.agent/orientation" 2>&1)"; RC2=$?
 [ "$RC2" -eq 0 ] && grep -qF "stdin body text" "$R1/.agent/orientation/gateway.md" 2>/dev/null || case1_ok=0
 if [ "$case1_ok" -eq 1 ]; then
   ok "valid add succeeds; header (written_at|head_sha|areas) read-back verified; stdin '-' body works"
@@ -250,7 +259,7 @@ case10_ok=1
 printf '%s' "$out_dry" | grep -qF "PLANNED WRITE" || case10_ok=0      # plan is printed
 printf '%s' "$out_dry" | grep -qF "gatearea.md" || case10_ok=0        # incl. the target path
 # now the same invocation WITH --confirm (still non-TTY) DOES write:
-OUT="$(bash "$WRITER" gatearea "Gate area summary." "$b10" --confirm --repo "$R10" --store "$R10/.agent/orientation" < /dev/null 2>&1)"; RC=$?
+OUT="$(bash "$WRITER" gatearea "Gate area summary." "$b10" --confirm --source "$VE_FIXTURE_SOURCE" --repo "$R10" --store "$R10/.agent/orientation" < /dev/null 2>&1)"; RC=$?
 [ "$RC" -eq 0 ] || case10_ok=0
 [ -f "$R10/.agent/orientation/gatearea.md" ] || case10_ok=0
 if [ "$case10_ok" -eq 1 ]; then
@@ -476,6 +485,21 @@ VE_ERR="$VETMP/stderr"
 VE_ALLOW=""
 VESTORE=".agent/orientation/ve.md"
 
+# ve_write_flags <dir> <summary> <body> [extra writer flags...] — ve_write's variadic sibling.
+# ve_write's 4th/5th positionals are the validator override and the program path, so it CANNOT
+# forward a writer flag: `ve_write "$d" s b --source x` sets val="--source" and prog="x", and the
+# writer is never even invoked. Kept as a separate helper rather than widening ve_write, whose
+# 3-to-5-positional signature ~28 call sites already depend on.
+ve_write_flags() {
+  local dir="$1" summ="$2" body="$3"; shift 3
+  printf '%s\n' "$body" > "$dir/ve-body.txt"
+  ( cd "$dir" \
+      && if [ -n "$VE_ALLOW" ]; then export LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$VE_ALLOW"; fi \
+      && bash "$WRITER" "$VE_SLUG" "$summ" ve-body.txt --confirm "$@" \
+  ) >/dev/null 2>"$VE_ERR"
+  VE_RC=$?
+}
+
 ve_repo() {
   local r; r="$(mktemp -d "$VETMP/r.XXXXXX")"
   ( cd "$r" && git init -q && git config user.email t@t && git config user.name t \
@@ -500,7 +524,7 @@ ve_write() {
   printf '%s\n' "$body" > "$dir/ve-body.txt"
   ( cd "$dir" \
       && if [ -n "$VE_ALLOW" ]; then export LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$VE_ALLOW"; fi \
-      && ADD_ORIENTATION_VALIDATOR="$val" bash "$prog" "$VE_SLUG" "$summ" ve-body.txt --confirm \
+      && ADD_ORIENTATION_VALIDATOR="$val" bash "$prog" "$VE_SLUG" "$summ" ve-body.txt --confirm --source "$VE_FIXTURE_SOURCE" \
   ) >/dev/null 2>"$VE_ERR"
   VE_RC=$?
 }
@@ -618,7 +642,7 @@ VE_NOTICE_R="$(ve_repo)"
 printf '%s\n' "$VE_DEAD" > "$VE_NOTICE_R/ve-body.txt"
 # (a) DRY-RUN (no --confirm) with an advisory finding.
 VE_NOTICE_OUT="$( cd "$VE_NOTICE_R" \
-  && ADD_ORIENTATION_VALIDATOR="" bash "$WRITER" notice "a memo whose cited helper path does not resolve" ve-body.txt \
+  && ADD_ORIENTATION_VALIDATOR="" bash "$WRITER" notice "a memo whose cited helper path does not resolve" ve-body.txt --source "$VE_FIXTURE_SOURCE" \
   < /dev/null 2>&1 )"; VE_NOTICE_RC=$?
 [ "$VE_NOTICE_RC" -eq 0 ] && ok "AC1b (a) the dry-run with an advisory finding still exits 0" || no "AC1b (a) the dry-run exited $VE_NOTICE_RC — $VE_NOTICE_OUT"
 grep -qF 'PLANNED WRITE' <<< "$VE_NOTICE_OUT" && ok "AC1b (a) the dry-run reports PLANNED WRITE (fixture check: this really is the not-written path)" || no "AC1b (a) the dry-run printed no PLANNED WRITE — the fixture is not on the path under test: $VE_NOTICE_OUT"
@@ -626,7 +650,7 @@ grep -qF 'ADVISORY_DEAD_REFERENCE' <<< "$VE_NOTICE_OUT" && ok "AC1b (a) the chec
 grep -qF 'THE WRITE PROCEEDED' <<< "$VE_NOTICE_OUT" && no "AC1b (a) the dry-run claims 'THE WRITE PROCEEDED' and then says PLANNED WRITE — two contradictory statements in one invocation" || ok "AC1b (a) the dry-run does NOT claim 'THE WRITE PROCEEDED'"
 # (b) --confirm with the SAME advisory finding: the notice must still be there.
 VE_NOTICE_OUT="$( cd "$VE_NOTICE_R" \
-  && ADD_ORIENTATION_VALIDATOR="" bash "$WRITER" notice "a memo whose cited helper path does not resolve" ve-body.txt --confirm \
+  && ADD_ORIENTATION_VALIDATOR="" bash "$WRITER" notice "a memo whose cited helper path does not resolve" ve-body.txt --confirm --source "$VE_FIXTURE_SOURCE" \
   < /dev/null 2>&1 )"; VE_NOTICE_RC=$?
 [ "$VE_NOTICE_RC" -eq 0 ] && ok "AC1b (b) the confirmed write with an advisory finding exits 0" || no "AC1b (b) the confirmed write exited $VE_NOTICE_RC — $VE_NOTICE_OUT"
 grep -qF 'THE WRITE PROCEEDED' <<< "$VE_NOTICE_OUT" && ok "AC1b (b) the confirmed write DOES print the call-site advisory notice — moving it past the gate did not suppress it on a genuine write" || no "AC1b (b) the advisory notice vanished from a real write — the reporting half of the ADVISORY design was silently deleted: $VE_NOTICE_OUT"
@@ -717,37 +741,53 @@ else
   no "AC1 update — SEED FAILED"
 fi
 
-# --- AC1 provenance: KNOWN LIMITATION, pinned by mechanism ------------------------------------
-# validate_provenance cannot refuse anything through this writer, and the reason is mechanical: the
-# writer stamps `head_sha: <7-hex>` into every memo header, the header is part of the validated
-# entry, and a 7-hex token IS one of the commit references validate_provenance accepts. So the memo
-# vouches for itself. Asserted as three facts rather than a passing refusal, so the limitation is
-# falsifiable: if the writer is ever changed to validate the memo BODY only, (c) flips and this goes
-# RED naming the limitation as closed. (This writer has no --source flag at all, so there is no
-# caller-side way to reach the refusal either.)
+# --- AC1 provenance: THE LIMITATION IS CLOSED — asserted as refusals, not as facts -------------
+# THIS BLOCK REPLACES A PINNED LIMITATION, and the replacement is the signal the old block was
+# written to give. It used to assert three FACTS: (a) the memo prose alone cites nothing and is
+# refused, (b) the same memo PASSES once the writer's own `head_sha:` header is prepended, and
+# (c) therefore this writer ACCEPTS an un-provenanced memo — validate_provenance was unfalsifiable
+# through it. (c)'s else-branch said, in as many words: "the limitation is CLOSED; replace this
+# block with a real refusal assertion". The writer now validates the memo BODY + SUMMARY only, so
+# (c) went RED exactly as designed, and this is that replacement.
+#
+# The mechanism that made the old (b) true is UNCHANGED and deliberately not re-asserted here: a
+# labelled `head_sha: <hex>` is still a citation to validate_provenance, and still serves every
+# other writer and any memo that genuinely cites a commit in its prose. What changed is only WHICH
+# TEXT this writer hands the validator — the self-stamped header is no longer part of it. Testing
+# the validator's sha-labelling from this suite would be testing someone else's contract.
+#
+# Three assertions, covering both directions. A one-sided test here would be the same mistake the
+# old block made: a refusal that fires for everything is not a working check.
 VEP="$(ve_repo)"
-ve_write "$VEP" "$VE_PROV" "$VE_PROV"
+ve_write_flags "$VEP" "$VE_PROV" "$VE_PROV"
 VEMEMO="$VEP/$VESTORE"
-if [ -f "$VEMEMO" ]; then
-  bash "$VEFILE" provenance --entry "$(sed 1d "$VEMEMO")" --source "" >/dev/null 2>&1; ve_p_body=$?
-  bash "$VEFILE" provenance --entry "$(cat "$VEMEMO")"   --source "" >/dev/null 2>&1; ve_p_full=$?
-  if [ "$ve_p_body" -eq 1 ]; then
-    ok "AC1 provenance (a): the memo PROSE alone cites nothing and is refused by validate_provenance"
-  else
-    no "AC1 provenance (a): the memo prose was NOT refused (rc=$ve_p_body) — the seed cites something after all"
-  fi
-  if [ "$ve_p_full" -eq 0 ] && head -n1 "$VEMEMO" | grep -qE 'head_sha: [0-9a-f]{7,40}'; then
-    ok "AC1 provenance (b): the SAME memo passes once the writer's own 'head_sha' header is prepended — the header is the only difference"
-  else
-    no "AC1 provenance (b): composed-memo provenance rc=$ve_p_full / header shape unexpected — the stated mechanism no longer holds"
-  fi
-  if [ "$VE_RC" -eq 0 ]; then
-    ok "AC1 provenance (c) KNOWN LIMITATION: this writer therefore ACCEPTS an un-provenanced memo; validate_provenance is unfalsifiable through add-orientation.sh until the header stops being part of the validated entry"
-  else
-    no "AC1 provenance (c): the un-provenanced memo was refused (exit $VE_RC) — the limitation is CLOSED; replace this block with a real refusal assertion"
-  fi
+
+# (a) THE CLOSED LIMITATION. A memo whose summary and body cite nothing is REFUSED — the writer no
+#     longer vouches for itself through the header it stamps. $VE_RC is the seed write's status.
+if [ "$VE_RC" -eq 1 ]; then
+  ok "AC1 provenance (a): an un-provenanced memo is REFUSED (exit 1) — the writer no longer vouches for itself via its own head_sha header"
 else
-  no "AC1 provenance — SEED FAILED (no memo written)"
+  no "AC1 provenance (a): the un-provenanced memo was NOT refused (exit $VE_RC) — the header is back inside the validated entry, or --source is being defaulted"
+fi
+
+# (b) NOT A BLANKET REFUSAL — provenance supplied by the CALLER via --source must still write.
+#     This is the /dreaming promotion path (it passes --source "dreaming:<session_id>").
+VEP_OK="$(ve_repo)"
+ve_write_flags "$VEP_OK" "$VE_PROV" "$VE_PROV" --source "dreaming:2026-08-13-a1b2c3"
+if [ "$VE_RC" -eq 0 ] && [ -f "$VEP_OK/$VESTORE" ]; then
+  ok "AC1 provenance (b): the SAME memo WRITES when the caller supplies --source — the refusal is provenance-specific, not a blanket deny"
+else
+  no "AC1 provenance (b): a --source-provenanced memo failed to write (exit $VE_RC) — the /dreaming promotion path is broken by the new refusal"
+fi
+
+# (c) NOT A BLANKET REFUSAL, second route — provenance named in the memo's own PROSE, no --source.
+#     Keeps the text-scan route alive for a human writing a memo by hand.
+VEP_TXT="$(ve_repo)"
+ve_write_flags "$VEP_TXT" "cache warms lazily, per PR #144" "the shared cache layer warms lazily on its very first read, fixed in PR #144"
+if [ "$VE_RC" -eq 0 ] && [ -f "$VEP_TXT/$VESTORE" ]; then
+  ok "AC1 provenance (c): a memo citing its reference in its own PROSE writes with no --source — the entry-text route survives"
+else
+  no "AC1 provenance (c): a prose-provenanced memo failed to write (exit $VE_RC) — the entry-text route was lost with the header"
 fi
 
 # --- AC1 provenance (d): THE ALL-DIGIT SHA BOUNDARY, ASSERTED RATHER THAN SAMPLED -------------
@@ -1006,13 +1046,13 @@ if [ -d "$VEWT-wt" ]; then
   # against a cwd-only guard and prove nothing. `.agent/orientation` under the worktree is checked
   # afterwards for the same reason — the refusal has to be the guard's, not some other failure's.
   printf '%s\n' "$VE_CLEAN" > "$VEWT/ve-body.txt"
-  ( cd "$VEWT" && bash "$WRITER" ve "$VE_CLEAN" ve-body.txt --confirm --repo "$VEWT-wt" ) >/dev/null 2>"$VE_ERR"
+  ( cd "$VEWT" && bash "$WRITER" ve "$VE_CLEAN" ve-body.txt --confirm --source "$VE_FIXTURE_SOURCE" --repo "$VEWT-wt" ) >/dev/null 2>"$VE_ERR"
   if [ $? -eq 3 ] && grep -q worktree "$VE_ERR" 2>/dev/null && [ ! -e "$VEWT-wt/.agent/orientation" ]; then
     ok "AC10b(iii): an explicit --repo pointing at a worktree is refused with exit 3 from a non-worktree CWD, and nothing is written there (the guard reads the RESOLVED root, not \$PWD)"
   else
     no "AC10b(iii): --repo at a worktree was NOT refused — a cwd-only guard would pass (i) and (ii) and miss exactly this (memo present: $([ -e "$VEWT-wt/.agent/orientation" ] && echo yes || echo no)): $(tr '\n' ' ' < "$VE_ERR" | cut -c1-160)"
   fi
-  ( cd "$VEWT" && ORIENTATION_REPO_DIR="$VEWT-wt" bash "$WRITER" ve "$VE_CLEAN" ve-body.txt --confirm ) >/dev/null 2>"$VE_ERR"
+  ( cd "$VEWT" && ORIENTATION_REPO_DIR="$VEWT-wt" bash "$WRITER" ve "$VE_CLEAN" ve-body.txt --confirm --source "$VE_FIXTURE_SOURCE" ) >/dev/null 2>"$VE_ERR"
   if [ $? -eq 3 ] && grep -q worktree "$VE_ERR" 2>/dev/null && [ ! -e "$VEWT-wt/.agent/orientation" ]; then
     ok "AC10b(iii): \$ORIENTATION_REPO_DIR pointing at a worktree is refused with exit 3 too, and nothing is written there (both override layers, not just the flag)"
   else

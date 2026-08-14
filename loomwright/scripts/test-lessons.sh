@@ -39,6 +39,11 @@
 #      byte-identical), is rejected on retract/supersede (exit 2), and keeps the chain valid
 #  13. REGRESSION (real store): count of `^- \[` lines in the repo's own LESSONS.md MUST equal the
 #      count read-lessons.sh emits — i.e. no committed lesson is silently invisible to consumers
+#  16. THE --confirm GATE (the store is COMMITTED, so a write needs an explicit yes): a
+#      non-interactive add / retract / supersede WITHOUT --confirm prints its plan, exits 0, and
+#      leaves BOTH LESSONS.md and the provenance chain byte-identical — including creating neither
+#      file on a virgin repo. Plus the two controls without which the section proves nothing: a
+#      refusal still outranks the gate, and the same call WITH --confirm still writes.
 
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -99,7 +104,7 @@ if [ ! -e "$TMP-wt/$LFILE" ]; then ok "no LESSONS written under the worktree"; e
 git -C "$TMP" worktree remove --force "$TMP-wt" >/dev/null 2>&1
 
 echo "== 2. round-trip =="
-( cd "$TMP" && bash "$WRITE" --category auth --lesson "auth is handled by signed JWT bearer tokens" --source "session:fixture-0001" ) >/dev/null 2>&1
+( cd "$TMP" && bash "$WRITE" --confirm --category auth --lesson "auth is handled by signed JWT bearer tokens" --source "session:fixture-0001" ) >/dev/null 2>&1
 f="$TMP/$LFILE"
 if grep -q '^## auth$' "$f" 2>/dev/null && grep -q "auth is handled by signed JWT bearer tokens" "$f" 2>/dev/null; then
   ok "lesson appears under ## auth"
@@ -110,7 +115,7 @@ grep -q "bounded <=3 active per category" "$f" 2>/dev/null && ok "advisory banne
 
 echo "== 3. <=3/category eviction =="
 BDIR="$(mktemp -d)"; ( cd "$BDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
-( cd "$BDIR" && for i in 1 2 3 4; do bash "$WRITE" --category build --lesson "$(seed_text $i)" --source "session:fixture-0001" >/dev/null 2>&1; done )
+( cd "$BDIR" && for i in 1 2 3 4; do bash "$WRITE" --confirm --category build --lesson "$(seed_text $i)" --source "session:fixture-0001" >/dev/null 2>&1; done )
 bf="$BDIR/$LFILE"
 # Count `- [` entries under the ## build section only.
 cnt="$(awk '/^## build$/{f=1;next} /^## /{f=0} f && /^- \[/{c++} END{print c+0}' "$bf" 2>/dev/null)"
@@ -120,8 +125,8 @@ rm -rf "$BDIR"
 
 echo "== 4. two categories independent =="
 CDIR="$(mktemp -d)"; ( cd "$CDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
-( cd "$CDIR" && bash "$WRITE" --category auth --lesson "auth uses sessions" --source "session:fixture-0001" \
-    && bash "$WRITE" --category db --lesson "db is postgres via drizzle" --source "session:fixture-0001" ) >/dev/null 2>&1
+( cd "$CDIR" && bash "$WRITE" --confirm --category auth --lesson "auth uses sessions" --source "session:fixture-0001" \
+    && bash "$WRITE" --confirm --category db --lesson "db is postgres via drizzle" --source "session:fixture-0001" ) >/dev/null 2>&1
 cf="$CDIR/$LFILE"
 ac="$(awk '/^## auth$/{f=1;next} /^## /{f=0} f && /^- \[/{c++} END{print c+0}' "$cf" 2>/dev/null)"
 dc="$(awk '/^## db$/{f=1;next} /^## /{f=0} f && /^- \[/{c++} END{print c+0}' "$cf" 2>/dev/null)"
@@ -153,7 +158,7 @@ fi
 
 echo "== 6. backslash integrity (awk ENVIRON, not -v) =="
 WDIR="$(mktemp -d)"; ( cd "$WDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
-( cd "$WDIR" && bash "$WRITE" --category paths --lesson 'windows path C:\Users\x and a \n literal' --source "session:fixture-0001" ) >/dev/null 2>&1
+( cd "$WDIR" && bash "$WRITE" --confirm --category paths --lesson 'windows path C:\Users\x and a \n literal' --source "session:fixture-0001" ) >/dev/null 2>&1
 wf="$WDIR/$LFILE"
 # A lesson containing backslashes must be stored verbatim on ONE line. The old `awk -v lesson=`
 # would interpret \n -> newline (splitting the entry) and mangle \U/\x — this guards the ENVIRON fix.
@@ -165,7 +170,7 @@ rm -rf "$WDIR"
 echo "== 7. freshness trailer (last_verified + confidence) =="
 FDIR="$(mktemp -d)"; ( cd "$FDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
 # (a) default trailer present with a plausible ISO timestamp + default confidence=medium
-( cd "$FDIR" && bash "$WRITE" --category fresh --lesson "default freshness lesson" --source "session:fixture-0001" ) >/dev/null 2>&1
+( cd "$FDIR" && bash "$WRITE" --confirm --category fresh --lesson "default freshness lesson" --source "session:fixture-0001" ) >/dev/null 2>&1
 ff="$FDIR/$LFILE"
 if grep -qE 'default freshness lesson  <!-- last_verified=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+Z confidence=medium -->' "$ff" 2>/dev/null; then
   ok "default last_verified+confidence trailer appended"
@@ -175,7 +180,7 @@ fi
 # Substring grep still matches despite the trailer (dedup-guard invariant)
 grep -qF -- "default freshness lesson" "$ff" 2>/dev/null && ok "substring grep still matches with trailer" || no "trailer broke substring grep"
 # (b) explicit --last-verified + --confidence flags honored
-( cd "$FDIR" && bash "$WRITE" --category fresh2 --lesson "explicit freshness lesson" --last-verified 2020-01-01T00:00:00Z --confidence high --source "session:fixture-0001" ) >/dev/null 2>&1
+( cd "$FDIR" && bash "$WRITE" --confirm --category fresh2 --lesson "explicit freshness lesson" --last-verified 2020-01-01T00:00:00Z --confidence high --source "session:fixture-0001" ) >/dev/null 2>&1
 if grep -qF -- "explicit freshness lesson  <!-- last_verified=2020-01-01T00:00:00Z confidence=high -->" "$ff" 2>/dev/null; then
   ok "explicit --last-verified/--confidence honored"
 else
@@ -183,14 +188,14 @@ else
 fi
 # (c) content_hash MUST NOT depend on the trailer: same cat+text written twice with DIFFERENT
 #     freshness must produce the SAME [id] and dedup to a single entry.
-( cd "$FDIR" && bash "$WRITE" --category hashstable --lesson "hash stable lesson" --last-verified 2021-01-01T00:00:00Z --confidence low --source "session:fixture-0001" ) >/dev/null 2>&1
-( cd "$FDIR" && bash "$WRITE" --category hashstable --lesson "hash stable lesson" --last-verified 2099-01-01T00:00:00Z --confidence high --source "session:fixture-0001" ) >/dev/null 2>&1
+( cd "$FDIR" && bash "$WRITE" --confirm --category hashstable --lesson "hash stable lesson" --last-verified 2021-01-01T00:00:00Z --confidence low --source "session:fixture-0001" ) >/dev/null 2>&1
+( cd "$FDIR" && bash "$WRITE" --confirm --category hashstable --lesson "hash stable lesson" --last-verified 2099-01-01T00:00:00Z --confidence high --source "session:fixture-0001" ) >/dev/null 2>&1
 hc="$(awk '/^## hashstable$/{f=1;next} /^## /{f=0} f && /^- \[/{c++} END{print c+0}' "$ff" 2>/dev/null)"
 [ "$hc" -eq 1 ] && ok "trailer excluded from content_hash (re-verify deduped to one entry)" || no "trailer leaked into hash (have $hc entries, want 1)"
 # (d) a MALFORMED --last-verified must fall back to the write-time default (cannot distort the
 #     trailer the reader anchors on, and keeps lv backslash-safe under awk -v). A value containing
 #     a `-->` and a space would, if accepted verbatim, corrupt the `<!-- ... -->` trailer shape.
-( cd "$FDIR" && bash "$WRITE" --category badlv --lesson "bad lv lesson" --last-verified 'x --> y' --source "session:fixture-0001" ) >/dev/null 2>&1
+( cd "$FDIR" && bash "$WRITE" --confirm --category badlv --lesson "bad lv lesson" --last-verified 'x --> y' --source "session:fixture-0001" ) >/dev/null 2>&1
 if grep -qE 'bad lv lesson  <!-- last_verified=[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:]+Z confidence=medium -->' "$ff" 2>/dev/null; then
   ok "malformed --last-verified rejected → write-time default stamped (trailer shape intact)"
 else
@@ -200,7 +205,7 @@ rm -rf "$FDIR"
 
 echo "== 8. provenance write-side (.lessons-provenance.jsonl) =="
 PDIR="$(mktemp -d)"; ( cd "$PDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
-( cd "$PDIR" && bash "$WRITE" --category prov --lesson "prov lesson one" --source "session:fixture-0001" ) >/dev/null 2>&1
+( cd "$PDIR" && bash "$WRITE" --confirm --category prov --lesson "prov lesson one" --source "session:fixture-0001" ) >/dev/null 2>&1
 pj="$PDIR/.supervisor/memory/.lessons-provenance.jsonl"
 # Separate chain file exists and is distinct from PROJECT_MEMORY's .provenance.jsonl
 if [ -f "$pj" ]; then ok "lessons provenance chain file created"; else no "lessons provenance chain file missing"; fi
@@ -208,11 +213,11 @@ if [ -f "$pj" ]; then ok "lessons provenance chain file created"; else no "lesso
 # First entry is GENESIS-rooted add
 grep -q '"prev_hash":"GENESIS"' "$pj" 2>/dev/null && grep -q '"action":"add"' "$pj" 2>/dev/null && ok "genesis-rooted add provenance line present" || no "genesis add line missing"
 # Eviction emits per-evicted `evict` provenance lines
-( cd "$PDIR" && for i in 1 2 3 4; do bash "$WRITE" --category evcat --lesson "$(seed_text $i)" --source "session:fixture-0001" >/dev/null 2>&1; done )
+( cd "$PDIR" && for i in 1 2 3 4; do bash "$WRITE" --confirm --category evcat --lesson "$(seed_text $i)" --source "session:fixture-0001" >/dev/null 2>&1; done )
 grep -q '"action":"evict"' "$pj" 2>/dev/null && ok "eviction recorded an evict provenance line" || no "evict provenance line missing"
 # Dedup skip writes NO new provenance line (skip ⇒ touch nothing)
 before="$(wc -l < "$pj" | tr -d ' ')"
-( cd "$PDIR" && bash "$WRITE" --category prov --lesson "prov lesson one" --source "session:fixture-0001" ) >/dev/null 2>&1
+( cd "$PDIR" && bash "$WRITE" --confirm --category prov --lesson "prov lesson one" --source "session:fixture-0001" ) >/dev/null 2>&1
 after="$(wc -l < "$pj" | tr -d ' ')"
 [ "$before" = "$after" ] && ok "dedup skip added no provenance line" || no "dedup skip wrote provenance ($before -> $after)"
 rm -rf "$PDIR"
@@ -222,12 +227,12 @@ RDIR="$(mktemp -d)"; ( cd "$RDIR" && git init -q && git config user.email t@t &&
 rf="$RDIR/$LFILE"
 rj="$RDIR/$PJFILE"
 rlog="$RDIR/.supervisor/logs/memory.log"
-( cd "$RDIR" && bash "$WRITE" --category ret --lesson "retract me lesson" --source "session:fixture-0001" \
-    && bash "$WRITE" --category ret --lesson "keep me lesson" --source "session:fixture-0001" ) >/dev/null 2>&1
+( cd "$RDIR" && bash "$WRITE" --confirm --category ret --lesson "retract me lesson" --source "session:fixture-0001" \
+    && bash "$WRITE" --confirm --category ret --lesson "keep me lesson" --source "session:fixture-0001" ) >/dev/null 2>&1
 target_line="$(grep -F -- "retract me lesson" "$rf")"
 
 # (a) retract removes the line, appends a chain-valid retract provenance entry, reader stops emitting
-( cd "$RDIR" && bash "$WRITE" retract ret "retract me lesson" --source "session:fixture-0001" ) >/dev/null 2>&1
+( cd "$RDIR" && bash "$WRITE" retract --confirm ret "retract me lesson" --source "session:fixture-0001" ) >/dev/null 2>&1
 rc=$?
 [ "$rc" -eq 0 ] && ok "retract exits 0 on an existing chain-trusted lesson" || no "retract failed (exit $rc)"
 if grep -qF -- "retract me lesson" "$rf" 2>/dev/null; then no "retracted line still in LESSONS.md"; else ok "retracted line removed from LESSONS.md"; fi
@@ -269,7 +274,7 @@ out="$( cd "$RDIR" && bash "$READ" 2>/dev/null )"; rrc=$?
 echo "$out" | grep -qF "keep me lesson" && ok "untargeted lesson survives malformed retract entries (missing-key + empty-value)" || no "a malformed retract entry untrusted an unrelated lesson"
 
 # (e) re-add after retract → emitted again (last action wins); chain stays valid end-to-end
-( cd "$RDIR" && bash "$WRITE" --category ret --lesson "retract me lesson" --source "session:fixture-0001" ) >/dev/null 2>&1
+( cd "$RDIR" && bash "$WRITE" --confirm --category ret --lesson "retract me lesson" --source "session:fixture-0001" ) >/dev/null 2>&1
 out="$( cd "$RDIR" && bash "$READ" 2>/dev/null )"
 echo "$out" | grep -qF "retract me lesson" && ok "re-added lesson emitted again (last action wins)" || no "re-add after retract not re-trusted"
 err="$( cd "$RDIR" && bash "$READ" 2>&1 >/dev/null )"
@@ -277,7 +282,7 @@ if echo "$err" | grep -q "chain broken"; then no "chain reported broken after re
 
 # (f) --hash form: retract by full content_hash (no text) removes the re-added lesson again
 h="$(printf '%s' "ret retract me lesson" | sha)"
-( cd "$RDIR" && bash "$WRITE" retract --hash "$h" --source "session:fixture-0001" ) >/dev/null 2>&1
+( cd "$RDIR" && bash "$WRITE" retract --confirm --hash "$h" --source "session:fixture-0001" ) >/dev/null 2>&1
 rc=$?
 [ "$rc" -eq 0 ] && ok "retract --hash <content_hash> accepted" || no "retract --hash failed (exit $rc)"
 out="$( cd "$RDIR" && bash "$READ" 2>/dev/null )"
@@ -306,13 +311,13 @@ echo "== 11. supersede verb (PRE-CHECK -> RETRACT -> ADD) =="
 
 echo "-- 11a. MANDATORY: full 3-entry category, supersede the MIDDLE entry, other two survive --"
 SDIR2="$(mktemp -d)"; ( cd "$SDIR2" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
-( cd "$SDIR2" && bash "$WRITE" --category cap --lesson "cap lesson one" --source "session:fixture-0001" \
-    && bash "$WRITE" --category cap --lesson "cap lesson two" --source "session:fixture-0001" \
-    && bash "$WRITE" --category cap --lesson "cap lesson three" --source "session:fixture-0001" ) >/dev/null 2>&1
+( cd "$SDIR2" && bash "$WRITE" --confirm --category cap --lesson "cap lesson one" --source "session:fixture-0001" \
+    && bash "$WRITE" --confirm --category cap --lesson "cap lesson two" --source "session:fixture-0001" \
+    && bash "$WRITE" --confirm --category cap --lesson "cap lesson three" --source "session:fixture-0001" ) >/dev/null 2>&1
 s2f="$SDIR2/$LFILE"
 cnt="$(awk '/^## cap$/{f=1;next} /^## /{f=0} f && /^- \[/{c++} END{print c+0}' "$s2f" 2>/dev/null)"
 [ "$cnt" -eq 3 ] && ok "category full at 3 before supersede" || no "setup: category not full (have $cnt)"
-( cd "$SDIR2" && bash "$WRITE" supersede cap "cap lesson two" --replacement "cap replacement two" --source "session:fixture-0001" ) >/dev/null 2>&1
+( cd "$SDIR2" && bash "$WRITE" supersede --confirm cap "cap lesson two" --replacement "cap replacement two" --source "session:fixture-0001" ) >/dev/null 2>&1
 rc=$?
 [ "$rc" -eq 0 ] && ok "supersede of middle entry exits 0" || no "supersede of middle entry failed (exit $rc)"
 cnt2="$(awk '/^## cap$/{f=1;next} /^## /{f=0} f && /^- \[/{c++} END{print c+0}' "$s2f" 2>/dev/null)"
@@ -339,7 +344,7 @@ rm -rf "$SDIR2"
 
 echo "-- 11b. MANDATORY: --replacement required for supersede; rejected on retract --"
 RDIR2="$(mktemp -d)"; ( cd "$RDIR2" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
-( cd "$RDIR2" && bash "$WRITE" --category repl --lesson "needs replacement lesson" --source "session:fixture-0001" ) >/dev/null 2>&1
+( cd "$RDIR2" && bash "$WRITE" --confirm --category repl --lesson "needs replacement lesson" --source "session:fixture-0001" ) >/dev/null 2>&1
 r2f="$RDIR2/$LFILE"; r2j="$RDIR2/$PJFILE"
 cp "$r2f" "$r2f.snap"; cp "$r2j" "$r2j.snap"
 ( cd "$RDIR2" && bash "$WRITE" supersede repl "needs replacement lesson" --source "session:fixture-0001" ) >/dev/null 2>&1
@@ -356,7 +361,7 @@ rm -rf "$RDIR2"
 
 echo "-- 11c. MANDATORY: byte-identical refusal (absent target; present-but-not-chain-trusted target) --"
 TDIR="$(mktemp -d)"; ( cd "$TDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
-( cd "$TDIR" && bash "$WRITE" --category trust --lesson "trust me lesson" --source "session:fixture-0001" ) >/dev/null 2>&1
+( cd "$TDIR" && bash "$WRITE" --confirm --category trust --lesson "trust me lesson" --source "session:fixture-0001" ) >/dev/null 2>&1
 tf="$TDIR/$LFILE"; tj="$TDIR/$PJFILE"
 # (i) absent target: never written at all.
 cp "$tf" "$tf.snap1"; cp "$tj" "$tj.snap1"
@@ -369,7 +374,7 @@ rm -f "$tf.snap1" "$tj.snap1"
 # (ii) present-but-not-chain-trusted: retract the lesson (untrusts + removes the line), then
 # re-append the original line out-of-band so it is PRESENT again but its hash is still untrusted.
 target_line="$(grep -F -- "trust me lesson" "$tf")"
-( cd "$TDIR" && bash "$WRITE" retract trust "trust me lesson" --source "session:fixture-0001" ) >/dev/null 2>&1
+( cd "$TDIR" && bash "$WRITE" retract --confirm trust "trust me lesson" --source "session:fixture-0001" ) >/dev/null 2>&1
 printf '%s\n' "$target_line" >> "$tf"
 cp "$tf" "$tf.snap2"; cp "$tj" "$tj.snap2"
 ( cd "$TDIR" && bash "$WRITE" supersede trust "trust me lesson" --replacement "y" --source "session:fixture-0001" ) >/dev/null 2>&1
@@ -382,9 +387,9 @@ rm -rf "$TDIR"
 
 echo "-- 11e. --hash form with auto-detected category (no explicit --category given) --"
 HDIR="$(mktemp -d)"; ( cd "$HDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i )
-( cd "$HDIR" && bash "$WRITE" --category hashcat --lesson "hash form target lesson" --source "session:fixture-0001" ) >/dev/null 2>&1
+( cd "$HDIR" && bash "$WRITE" --confirm --category hashcat --lesson "hash form target lesson" --source "session:fixture-0001" ) >/dev/null 2>&1
 htarget_hash="$(printf '%s' "hashcat hash form target lesson" | sha)"
-( cd "$HDIR" && bash "$WRITE" supersede --hash "$htarget_hash" --replacement "hash form replacement lesson" --source "session:fixture-0001" ) >/dev/null 2>&1
+( cd "$HDIR" && bash "$WRITE" supersede --confirm --hash "$htarget_hash" --replacement "hash form replacement lesson" --source "session:fixture-0001" ) >/dev/null 2>&1
 rc=$?
 [ "$rc" -eq 0 ] && ok "supersede --hash accepted" || no "supersede --hash failed (exit $rc)"
 hf="$HDIR/$LFILE"
@@ -399,7 +404,7 @@ ADIR="$(mktemp -d)"; ( cd "$ADIR" && git init -q && git config user.email t@t &&
 af="$ADIR/$LFILE"; aj="$ADIR/$PJFILE"
 # Seed one legitimately-written lesson so the store + chain exist, then append a SECOND line
 # out-of-band (exactly the defect shape: present in LESSONS.md, no provenance backing it).
-( cd "$ADIR" && bash "$WRITE" --category att --lesson "legit attested lesson" --source "session:fixture-0001" ) >/dev/null 2>&1
+( cd "$ADIR" && bash "$WRITE" --confirm --category att --lesson "legit attested lesson" --source "session:fixture-0001" ) >/dev/null 2>&1
 orphan_hash="$(printf '%s' "att orphan unbacked lesson" | sha)"; orphan_id="$(printf '%s' "$orphan_hash" | cut -c1-8)"
 printf -- '- [%s] orphan unbacked lesson\n' "$orphan_id" >> "$af"
 
@@ -418,7 +423,7 @@ emits "$out" "orphan unbacked lesson" \
 
 echo "-- 12b. a plain add CANNOT heal it (dedup guard short-circuits) --"
 cp "$aj" "$aj.snap"
-( cd "$ADIR" && bash "$WRITE" --category att --lesson "orphan unbacked lesson" --source "session:fixture-0001" ) >/dev/null 2>&1
+( cd "$ADIR" && bash "$WRITE" --confirm --category att --lesson "orphan unbacked lesson" --source "session:fixture-0001" ) >/dev/null 2>&1
 cmp -s "$aj" "$aj.snap" && ok "plain add wrote NO provenance for the present-but-unbacked line" || no "plain add unexpectedly wrote provenance"
 out="$(aread)"
 emits "$out" "orphan unbacked lesson" \
@@ -426,7 +431,7 @@ emits "$out" "orphan unbacked lesson" \
 
 echo "-- 12c. --attest-existing heals it, leaving LESSONS.md BYTE-IDENTICAL --"
 cp "$af" "$af.snap"
-( cd "$ADIR" && bash "$WRITE" --category att --lesson "orphan unbacked lesson" --attest-existing --source "attest-test:pr-1" ) >/dev/null 2>&1
+( cd "$ADIR" && bash "$WRITE" --confirm --category att --lesson "orphan unbacked lesson" --attest-existing --source "attest-test:pr-1" ) >/dev/null 2>&1
 rc=$?
 [ "$rc" -eq 0 ] && ok "attest exited 0" || no "attest failed (exit $rc)"
 cmp -s "$af" "$af.snap" && ok "LESSONS.md byte-identical after attest (no rewrite, no trailer)" || no "attest rewrote LESSONS.md"
@@ -443,7 +448,7 @@ grep -qF -- "\"content_hash\":\"$orphan_hash\"" "$aj" && ok "attest provenance c
 
 echo "-- 12d. attest is idempotent: a second attest is a no-op --"
 cp "$aj" "$aj.snap2"
-( cd "$ADIR" && bash "$WRITE" --category att --lesson "orphan unbacked lesson" --attest-existing --source "attest-test:pr-1" ) >/dev/null 2>&1
+( cd "$ADIR" && bash "$WRITE" --confirm --category att --lesson "orphan unbacked lesson" --attest-existing --source "attest-test:pr-1" ) >/dev/null 2>&1
 rc=$?
 [ "$rc" -eq 0 ] && ok "re-attest of an already-trusted line exits 0" || no "re-attest exited $rc"
 cmp -s "$aj" "$aj.snap2" && ok "re-attest appended NO duplicate provenance entry" || no "re-attest duplicated a provenance entry"
@@ -537,7 +542,7 @@ ve_write() {
   local repo="$1" txt="$2" src="$3" val="${4:-}" prog="${5:-$WRITE}"
   ( cd "$repo" \
       && if [ -n "$VE_ALLOW" ]; then export LOOMWRIGHT_MEMORY_REPO_ALLOWLIST="$VE_ALLOW"; fi \
-      && WRITE_LESSONS_VALIDATOR="$val" bash "$prog" --category ve --lesson "$txt" --source "$src" \
+      && WRITE_LESSONS_VALIDATOR="$val" bash "$prog" --confirm --category ve --lesson "$txt" --source "$src" \
   ) >/dev/null 2>"$VE_ERR"
   VE_RC=$?
 }
@@ -687,11 +692,12 @@ ve_mutant_ok() { # <file> <desc>
 # finding where a human actually reads it — next to the fact that the write went ahead.
 #
 # HOW THE PAIR IS SHAPED FOR *THIS* WRITER, which is not the shape test-write-agent-memory.sh uses.
-# That writer has a confirm gate, so its (d6a)/(d6b) pair is dry-run-vs-confirmed. write-lessons.sh
-# has NO dry-run: it emits the notice at each of its TERMINAL SUCCESS exits (the attest no-op, the
-# completed attest, the completed retract, the supersede dedup-skip, and the shared add commit),
-# after the operation has actually happened — so there is no not-yet-written path to compare
-# against. So the two no-write halves here are the ones this writer really has —
+# That writer's (d6a)/(d6b) pair is dry-run-vs-confirmed. This writer now HAS a confirm gate too
+# (section 16 below), but its dry-run is not the contrast used here: every ve_write call in this
+# section passes --confirm, and the notice is emitted at each TERMINAL SUCCESS exit (the attest
+# no-op, the completed attest, the completed retract, the supersede dedup-skip, and the shared add
+# commit) — i.e. after the operation has actually happened, past the gate. So the two no-write
+# halves here are the ones specific to the notice's own contract —
 # (n1) an ordinary CLEAN write, where the notice must stay silent because nothing was reported, and
 # (n3) the idempotent dedup short-circuit, which returns before the validator runs at all and must
 # never claim a write proceeded. Both are honest properties of the notice, and both are stated in
@@ -935,7 +941,7 @@ fi
 # (uf2) CONTROL: the SAME invocation without the bogus flags must still write. Without this, a
 # writer that refused every invocation would pass (uf1).
 UFR2="$(uf_repo)"
-uf_run "$UFR2" "$WRITE" --category ufcat --lesson "$UF_LESSON" --source "$UF_SRC"
+uf_run "$UFR2" "$WRITE" --confirm --category ufcat --lesson "$UF_LESSON" --source "$UF_SRC"
 if [ "$UF_RC" -eq 0 ] && [ -f "$UFR2/$LFILE" ]; then
   ok "(uf2) CONTROL: the identical call WITHOUT the unrecognised flags still writes (exit 0) — the guard refuses the unknown, not the known"
 else
@@ -945,7 +951,7 @@ fi
 # (uf3) CONTROL: the POSITIONAL curation verbs. `retract`/`supersede` take <category> <lesson-text>
 # positionally (not --retract/--supersede), and the guard sits in the same catch-all arm that
 # implements them — so this is exactly the form most likely to be broken by the fix.
-uf_run "$UFR2" "$WRITE" retract ufcat "$UF_LESSON" --source "$UF_SRC"
+uf_run "$UFR2" "$WRITE" retract --confirm ufcat "$UF_LESSON" --source "$UF_SRC"
 if [ "$UF_RC" -eq 0 ] && ! grep -qF "$UF_LESSON" "$UFR2/$LFILE" 2>/dev/null; then
   ok "(uf3) CONTROL: the POSITIONAL 'retract <category> <lesson-text>' form still works — positionals survived the guard"
 else
@@ -961,7 +967,7 @@ fi
 # This case exists so that re-tightening the scope is a decision someone has to make on purpose
 # (this test goes red) rather than something that drifts in unnoticed.
 UFR3B="$(uf_repo)"
-uf_run "$UFR3B" "$WRITE" --category ufcat --lesson "$UF_LESSON" --source "$UF_SRC" stray-bare-word
+uf_run "$UFR3B" "$WRITE" --confirm --category ufcat --lesson "$UF_LESSON" --source "$UF_SRC" stray-bare-word
 if [ "$UF_RC" -eq 0 ] && [ -f "$UFR3B/$LFILE" ]; then
   ok "(uf3b) SCOPE: a stray POSITIONAL is still ignored and the write succeeds — the guard is scoped to flags, deliberately"
 else
@@ -995,7 +1001,7 @@ if bash -n "$UFMUT" 2>/dev/null; then
   ok "(uf4) the mutant still parses, so a difference below is behavioural rather than a syntax error"
   UFR4="$(uf_repo)"
   UF_VALIDATOR="$VEFILE"   # the mutant is a temp copy; point it at the real validator (see uf_run)
-  uf_run "$UFR4" "$UFMUT" --category ufcat --lesson "$UF_LESSON" --source "$UF_SRC" \
+  uf_run "$UFR4" "$UFMUT" --confirm --category ufcat --lesson "$UF_LESSON" --source "$UF_SRC" \
          --repo /nonexistent/path --totally-made-up xyz
   UF_VALIDATOR=""
   if [ "$UF_RC" -eq 0 ] && [ -f "$UFR4/$LFILE" ]; then
@@ -1007,6 +1013,125 @@ else
   no "(uf4) the mutant does not parse — it could not discriminate anything"
 fi
 rm -rf "$UFTMP" 2>/dev/null   # a mutated writer must never outlive its own control
+
+# ---------------------------------------------------------------------------
+# (cg) THE CONFIRM GATE. `.supervisor/memory/` is un-ignored by `.gitignore` (`!.supervisor/memory/`),
+# so LESSONS.md and .lessons-provenance.jsonl are TRACKED, COMMITTED files — and until the gate
+# landed, ONE non-interactive invocation from the repo root appended to the committed store. That
+# happened during a review. The repo-wide rule: a sole writer whose store is COMMITTED requires
+# --confirm.
+#
+# WHAT THIS SECTION PINS, and why it is the whole point of the change: a non-interactive run WITHOUT
+# --confirm must write NOTHING and exit 0. Every other case in this suite now passes --confirm, so
+# without these cases the gate could be deleted outright and the suite would stay green — the
+# suite would be proving only that --confirm is ACCEPTED, not that its absence WITHHOLDS the write.
+#
+# BYTE-IDENTICAL, not "the text is absent": this writer commits via temp + atomic mv of TWO files,
+# and the provenance chain is renamed FIRST. A gate placed between the two renames would leave
+# LESSONS.md clean while the chain had already moved, so BOTH files are compared with `cmp` — and
+# the redirection makes stdout a pipe, so `[ -t 1 ]` is false and the prompt branch is unreachable
+# even when a human runs this suite from a real terminal.
+# ---------------------------------------------------------------------------
+echo "== 16. the --confirm gate: no --confirm + no TTY = dry-run, nothing written =="
+CGTMP="$(mktemp -d)"
+CGDIR="$CGTMP/repo"; mkdir -p "$CGDIR"
+( cd "$CGDIR" && git init -q && git config user.email t@t && git config user.name t \
+    && echo init > f && git add f && git commit -qm init ) >/dev/null 2>&1
+CG_L="$CGDIR/$LFILE"
+CG_P="$CGDIR/.supervisor/memory/.lessons-provenance.jsonl"
+CG_OUT="$CGTMP/out"
+( cd "$CGDIR" && bash "$WRITE" --confirm --category cg --lesson "gate seed lesson stays put" --source "session:fixture-0001" ) >/dev/null 2>&1
+if [ -f "$CG_L" ] && [ -f "$CG_P" ]; then
+  ok "(cg) fixture: the seeded store exists, so the byte-comparisons below have something to compare"
+else
+  no "(cg) fixture: the --confirm seed did not create the store — every assertion below would be vacuous"
+fi
+cp "$CG_L" "$CGTMP/L.before"; cp "$CG_P" "$CGTMP/P.before"
+
+# (cg1) ADD without --confirm, non-interactive.
+( cd "$CGDIR" && bash "$WRITE" --category cg --lesson "gate must withhold this new lesson entirely" --source "session:fixture-0001" ) >"$CG_OUT" 2>&1
+cg_rc=$?
+[ "$cg_rc" -eq 0 ] && ok "(cg1) a non-interactive add without --confirm exits 0 (a dry-run is not an error)" \
+                   || no "(cg1) exit $cg_rc, want 0 — the dry-run must not look like a failure"
+grep -qF 'PLANNED WRITE (not written — pass --confirm to apply):' "$CG_OUT" \
+  && ok "(cg1) and it PRINTS THE PLAN, naming --confirm as the way to apply it" \
+  || no "(cg1) no PLANNED WRITE line — a silent no-op tells the caller nothing: $(tr '\n' ' ' < "$CG_OUT" | cut -c1-200)"
+grep -qF -- "gate must withhold this new lesson entirely" "$CG_OUT" \
+  && ok "(cg1) and the plan shows the entry that WOULD have been written" \
+  || no "(cg1) the plan does not show the entry content"
+cmp -s "$CG_L" "$CGTMP/L.before" \
+  && ok "(cg1) LESSONS.md is BYTE-IDENTICAL — the committed store did not move" \
+  || no "(cg1) the dry-run MUTATED LESSONS.md — the gate does not withhold the write"
+cmp -s "$CG_P" "$CGTMP/P.before" \
+  && ok "(cg1) and the provenance chain is BYTE-IDENTICAL too (it is renamed FIRST, so it is the half a mis-placed gate would leak)" \
+  || no "(cg1) the dry-run MUTATED the provenance chain — the gate sits after the first rename"
+
+# (cg2) RETRACT without --confirm: same rule for the curation verb, and the target survives.
+( cd "$CGDIR" && bash "$WRITE" retract cg "gate seed lesson stays put" --source "session:fixture-0001" ) >"$CG_OUT" 2>&1
+cg_rc=$?
+[ "$cg_rc" -eq 0 ] && ok "(cg2) a non-interactive retract without --confirm exits 0" \
+                   || no "(cg2) exit $cg_rc, want 0"
+grep -qF 'PLANNED RETRACT (not written — pass --confirm to apply):' "$CG_OUT" \
+  && ok "(cg2) and it prints PLANNED RETRACT rather than tombstoning" \
+  || no "(cg2) no PLANNED RETRACT line: $(tr '\n' ' ' < "$CG_OUT" | cut -c1-200)"
+if cmp -s "$CG_L" "$CGTMP/L.before" && cmp -s "$CG_P" "$CGTMP/P.before"; then
+  ok "(cg2) both files are byte-identical — no tombstone was appended and no entry line was removed"
+else
+  no "(cg2) the dry-run retract mutated the store or the chain"
+fi
+
+# (cg3) SUPERSEDE without --confirm. This is the case a per-half gate would get wrong: supersede
+# is retract-then-add, and the retract half commits FIRST. A gate placed only on the add half would
+# leave the target already tombstoned by a "dry" run.
+( cd "$CGDIR" && bash "$WRITE" supersede cg "gate seed lesson stays put" --replacement "gate replacement never lands" --source "session:fixture-0001" ) >"$CG_OUT" 2>&1
+cg_rc=$?
+[ "$cg_rc" -eq 0 ] && ok "(cg3) a non-interactive supersede without --confirm exits 0" \
+                   || no "(cg3) exit $cg_rc, want 0"
+grep -qF 'PLANNED SUPERSEDE (not written — pass --confirm to apply):' "$CG_OUT" \
+  && ok "(cg3) and it prints PLANNED SUPERSEDE" \
+  || no "(cg3) no PLANNED SUPERSEDE line: $(tr '\n' ' ' < "$CG_OUT" | cut -c1-200)"
+if cmp -s "$CG_L" "$CGTMP/L.before" && cmp -s "$CG_P" "$CGTMP/P.before"; then
+  ok "(cg3) both files byte-identical — the RETRACT half did not slip through ahead of the gate"
+else
+  no "(cg3) the dry-run supersede half-committed: the target was retracted without --confirm"
+fi
+
+# (cg4) A REFUSAL STILL OUTRANKS THE GATE. Without this, "the gate withholds everything" would be
+# indistinguishable from "validation still fails loud", and a regression that turned every bad call
+# into a friendly exit-0 dry-run would pass (cg1)-(cg3).
+( cd "$CGDIR" && bash "$WRITE" retract cg "no such lesson was ever stored here" --source "session:fixture-0001" ) >"$CG_OUT" 2>&1
+cg_rc=$?
+[ "$cg_rc" -eq 4 ] && ok "(cg4) an absent retract target still FAILS LOUD (exit 4) without --confirm — a refusal outranks the gate" \
+                   || no "(cg4) exit $cg_rc, want 4 — the gate swallowed a refusal into a dry-run"
+( cd "$CGDIR" && bash "$WRITE" --category cg --lesson "x" --totally-made-up y --source "session:fixture-0001" ) >"$CG_OUT" 2>&1
+cg_rc=$?
+[ "$cg_rc" -eq 2 ] && ok "(cg4) and an unrecognised flag still refuses with exit 2, gate or no gate" \
+                   || no "(cg4) exit $cg_rc, want 2 — the unknown-flag refusal was demoted to a dry-run"
+
+# (cg5) CONTROL: the SAME add WITH --confirm does write. Without this the gate could be a writer
+# that refuses everything, and (cg1)-(cg3) would still be green.
+( cd "$CGDIR" && bash "$WRITE" --confirm --category cg --lesson "gate must withhold this new lesson entirely" --source "session:fixture-0001" ) >"$CG_OUT" 2>&1
+cg_rc=$?
+if [ "$cg_rc" -eq 0 ] && grep -qF -- "gate must withhold this new lesson entirely" "$CG_L"; then
+  ok "(cg5) CONTROL: the identical call WITH --confirm writes the lesson — the gate withholds, it does not break the writer"
+else
+  no "(cg5) CONTROL FAILED: --confirm no longer writes (exit $cg_rc): $(tr '\n' ' ' < "$CG_OUT" | cut -c1-200)"
+fi
+
+# (cg6) DRY-RUN ON A VIRGIN REPO: the gate must not even CREATE the store. The bootstrap that mints
+# LESSONS.md + the chain runs before the write, so a gate that only guards the append would still
+# leave two new files (and, in the real repo, two new entries in `git status`) behind.
+CGV="$CGTMP/virgin"; mkdir -p "$CGV"
+( cd "$CGV" && git init -q && git config user.email t@t && git config user.name t \
+    && echo init > f && git add f && git commit -qm init ) >/dev/null 2>&1
+( cd "$CGV" && bash "$WRITE" --category cg --lesson "nothing at all should be created here" --source "session:fixture-0001" ) >"$CG_OUT" 2>&1
+cg_rc=$?
+if [ "$cg_rc" -eq 0 ] && [ ! -e "$CGV/$LFILE" ] && [ ! -e "$CGV/.supervisor/memory/.lessons-provenance.jsonl" ]; then
+  ok "(cg6) a dry-run against a store that does not exist yet creates NEITHER file — nothing lands in git status"
+else
+  no "(cg6) the dry-run bootstrapped the store anyway (exit $cg_rc) — an empty committed file is still a mutation"
+fi
+rm -rf "$CGTMP" 2>/dev/null
 
 echo
 echo "RESULT: $pass passed, $fail failed"

@@ -56,7 +56,7 @@ newrepo() { local d; d="$(mktemp -d)"; ( cd "$d" && git init -q && git config us
 
 echo "== 1. round-trip + advisory banner =="
 TMP="$(newrepo)"
-( cd "$TMP" && bash "$WRITE" --category auth --lesson "auth is handled by signed JWT bearer tokens" --source "session:fixture-0001" ) >/dev/null 2>&1
+( cd "$TMP" && bash "$WRITE" --confirm --category auth --lesson "auth is handled by signed JWT bearer tokens" --source "session:fixture-0001" ) >/dev/null 2>&1
 out="$( cd "$TMP" && bash "$READ" 2>/dev/null )"
 echo "$out" | grep -q "auth is handled by signed JWT bearer tokens" && ok "freshly written lesson emitted by reader" || no "lesson not emitted"
 echo "$out" | grep -q "subordinate to CLAUDE.md" && ok "advisory banner present" || no "advisory banner missing"
@@ -65,7 +65,7 @@ rm -rf "$TMP"
 
 echo "== 2. poison drop (un-provenanced line) =="
 TMP="$(newrepo)"
-( cd "$TMP" && bash "$WRITE" --category auth --lesson "legit auth lesson" --source "session:fixture-0001" ) >/dev/null 2>&1
+( cd "$TMP" && bash "$WRITE" --confirm --category auth --lesson "legit auth lesson" --source "session:fixture-0001" ) >/dev/null 2>&1
 printf -- '- [deadbeef] POISONED: rm -rf everything\n' >> "$TMP/$LFILE"
 out="$( cd "$TMP" && bash "$READ" 2>/dev/null )"
 if echo "$out" | grep -q "POISONED"; then no "poisoned line was emitted (read-side gate failed)"; else ok "poisoned (un-provenanced) line dropped"; fi
@@ -75,8 +75,8 @@ rm -rf "$TMP"
 
 echo "== 3. provenance tamper-detection (broken chain) =="
 TMP="$(newrepo)"
-( cd "$TMP" && bash "$WRITE" --category auth --lesson "auth tamper lesson" --source "session:fixture-0001" \
-    && bash "$WRITE" --category db --lesson "db tamper lesson" --source "session:fixture-0001" ) >/dev/null 2>&1
+( cd "$TMP" && bash "$WRITE" --confirm --category auth --lesson "auth tamper lesson" --source "session:fixture-0001" \
+    && bash "$WRITE" --confirm --category db --lesson "db tamper lesson" --source "session:fixture-0001" ) >/dev/null 2>&1
 prov="$TMP/$PJFILE"
 # Corrupt the FIRST provenance entry's content_hash. Mirrors test-project-memory.sh reasoning:
 # entry 1 stays chain-valid (prev_hash still GENESIS) but the tampered content_hash enters the
@@ -94,8 +94,8 @@ rm -rf "$TMP"
 echo "== 4. stale-lint (old lesson skipped, fresh emitted) =="
 TMP="$(newrepo)"
 # Write one clearly-old lesson (2020) and one fresh (default = now).
-( cd "$TMP" && bash "$WRITE" --category fresh --lesson "stale old lesson here" --last-verified 2020-01-01T00:00:00Z --source "session:fixture-0001" \
-    && bash "$WRITE" --category fresh --lesson "fresh new lesson here" --source "session:fixture-0001" ) >/dev/null 2>&1
+( cd "$TMP" && bash "$WRITE" --confirm --category fresh --lesson "stale old lesson here" --last-verified 2020-01-01T00:00:00Z --source "session:fixture-0001" \
+    && bash "$WRITE" --confirm --category fresh --lesson "fresh new lesson here" --source "session:fixture-0001" ) >/dev/null 2>&1
 out="$( cd "$TMP" && bash "$READ" 2>/dev/null )"
 if echo "$out" | grep -q "stale old lesson here"; then no "stale (>90d) lesson was emitted"; else ok "stale lesson skipped under default threshold"; fi
 echo "$out" | grep -q "fresh new lesson here" && ok "fresh lesson emitted" || no "fresh lesson not emitted"
@@ -111,9 +111,9 @@ echo "== 5. trailer-collision (inner <!-- --> and trailing-space lessons round-t
 # whose text had trailing spaces must hash-match after the writer's trailing-space trim.
 TMP="$(newrepo)"
 ( cd "$TMP" \
-    && bash "$WRITE" --category tcol --lesson "use <!-- html comment --> sparingly in templates" --source "session:fixture-0001" \
-    && bash "$WRITE" --category tcol --lesson "arrow operator a --> b means transition" --source "session:fixture-0001" \
-    && bash "$WRITE" --category tcol --lesson "trailing space lesson here   " --source "session:fixture-0001" ) >/dev/null 2>&1
+    && bash "$WRITE" --confirm --category tcol --lesson "use <!-- html comment --> sparingly in templates" --source "session:fixture-0001" \
+    && bash "$WRITE" --confirm --category tcol --lesson "arrow operator a --> b means transition" --source "session:fixture-0001" \
+    && bash "$WRITE" --confirm --category tcol --lesson "trailing space lesson here   " --source "session:fixture-0001" ) >/dev/null 2>&1
 out="$( cd "$TMP" && bash "$READ" 2>/dev/null )"
 echo "$out" | grep -qF "use <!-- html comment --> sparingly in templates" && ok "inner-comment lesson round-trips (trailer strip anchored, not greedy)" || no "inner-comment lesson dropped (greedy trailer strip)"
 echo "$out" | grep -qF "arrow operator a --> b means transition" && ok "arrow-operator (-->) lesson round-trips" || no "arrow-operator lesson dropped"
@@ -132,7 +132,7 @@ echo "== 6. post-eviction read-back (survivors emitted, evicted not, none DROPPE
 # logged DROPPED — this pins the chain walk past the `evict` provenance entries (the most fragile
 # path: a mis-hashed evict entry breaks the chain and silently drops every later survivor).
 TMP="$(newrepo)"
-( cd "$TMP" && for i in 1 2 3 4 5; do bash "$WRITE" --category evic --lesson "$(seed_text $i)" --source "session:fixture-0001" >/dev/null 2>&1; done )
+( cd "$TMP" && for i in 1 2 3 4 5; do bash "$WRITE" --confirm --category evic --lesson "$(seed_text $i)" --source "session:fixture-0001" >/dev/null 2>&1; done )
 out="$( cd "$TMP" && bash "$READ" 2>/dev/null )"
 surv="$(echo "$out" | grep -cE '^- \[')"; surv="${surv:-0}"
 if [ "$surv" -eq 3 ] \
@@ -157,8 +157,8 @@ rm -rf "$TMP"
 
 echo "== 7. supersede: replacement round-trips (trailer strip unaffected by supersedes=), superseded text gone, no reader-side skip logic needed =="
 TMP="$(newrepo)"
-( cd "$TMP" && bash "$WRITE" --category sup --lesson "old superseded lesson text" --source "session:fixture-0001" ) >/dev/null 2>&1
-( cd "$TMP" && bash "$WRITE" supersede sup "old superseded lesson text" --replacement "new replacement lesson text" --source "session:fixture-0001" ) >/dev/null 2>&1
+( cd "$TMP" && bash "$WRITE" --confirm --category sup --lesson "old superseded lesson text" --source "session:fixture-0001" ) >/dev/null 2>&1
+( cd "$TMP" && bash "$WRITE" supersede --confirm sup "old superseded lesson text" --replacement "new replacement lesson text" --source "session:fixture-0001" ) >/dev/null 2>&1
 out="$( cd "$TMP" && bash "$READ" 2>/dev/null )"
 echo "$out" | grep -qF "new replacement lesson text" && ok "replacement lesson emitted (supersedes= trailer stripped from hashed text)" || no "replacement lesson not emitted"
 if echo "$out" | grep -qF "old superseded lesson text"; then no "superseded lesson text still emitted"; else ok "superseded lesson text absent from reader output"; fi

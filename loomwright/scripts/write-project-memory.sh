@@ -13,9 +13,25 @@
 # `git worktree remove`. Only callers at the repo root (Launch Pad, Context-Keeper, main
 # thread) may write. The worktree check is the real enforcement, regardless of caller.
 #
-# Usage:  write-project-memory.sh --fact "<durable fact>" --source "<session_id|agent|user>"
-#         write-project-memory.sh --retract <id> --source "<...>"
-#         write-project-memory.sh --fact "<corrected fact>" --supersedes <id> --source "<...>"
+# CONFIRM NOTE (`--confirm`, REQUIRED for every mutating action): `.supervisor/memory/` is
+# UN-IGNORED by `.gitignore` (`!.supervisor/memory/`), so PROJECT_MEMORY.md and .provenance.jsonl
+# are TRACKED, COMMITTED files. Until this gate existed, a single non-interactive invocation from
+# the repo root appended to the committed store — which is what happened during a review. The
+# repo-wide rule this closes: a sole writer whose store is COMMITTED requires --confirm; a writer
+# whose store is gitignored does not. The gate is the one already shipped in add-rule.sh and
+# add-orientation.sh, cloned verbatim in shape:
+#   * `--confirm` passed                         -> proceed;
+#   * else an interactive TTY (`-t 0` && `-t 1`)  -> prompt on stderr, accept y/Y/yes/YES;
+#   * otherwise                                  -> DRY-RUN: print `PLANNED <ACTION> (not written —
+#     pass --confirm to apply):` with the target path and the content, and exit 0 having written
+#     NOTHING (store and provenance chain byte-identical).
+# It sits AFTER every validation and pre-check — malformed id, unknown retract target, bare
+# --supersedes, byte-identical no-op supersede all still FAIL LOUD, because a refusal outranks the
+# gate — and BEFORE the first mktemp, so a dry-run creates no temp state either.
+#
+# Usage:  write-project-memory.sh --fact "<durable fact>" --source "<session_id|agent|user>" --confirm
+#         write-project-memory.sh --retract <id> --source "<...>" --confirm
+#         write-project-memory.sh --fact "<corrected fact>" --supersedes <id> --source "<...>" --confirm
 #
 # <id> is EXACTLY 8 lowercase hex chars — the shape this script itself mints (`cut -c1-8` of the
 # fact's sha256). Anything else is rejected up front with exit 2 rather than being carried into the
@@ -128,7 +144,7 @@ _ve_load_validator() {
 }
 
 
-FACT=""; SOURCE="unknown"; RETRACT_ID=""; SUPERSEDES_USED=0
+FACT=""; SOURCE="unknown"; RETRACT_ID=""; SUPERSEDES_USED=0; CONFIRM=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --fact)     FACT="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
@@ -148,6 +164,7 @@ while [ $# -gt 0 ]; do
                                 RETRACT_ID="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
     --retract=*)                SUPERSEDES_USED=0; RETRACT_ID="${1#--retract=}"; shift ;;
     --supersedes=*)             SUPERSEDES_USED=1; RETRACT_ID="${1#--supersedes=}"; shift ;;
+    --confirm)                  CONFIRM=1; shift ;;
     # UNKNOWN-ARGUMENT REJECTION — exit 2, this writer's could-not-examine convention, nothing
     # written. This writer takes NO positional arguments, so anything unmatched above is something
     # the caller asked for that this writer does not implement, and the old `*) shift ;;` accepted
@@ -162,7 +179,7 @@ while [ $# -gt 0 ]; do
     # ON PURPOSE. That is right for a VALIDATOR and wrong for a WRITER: a validator that refuses
     # costs a diagnostic on a fail-safe path, a writer that silently retargets costs the store.
     # Same vocabulary, opposite default — unifying the two parsers reopens this.
-    *) echo "write-project-memory: unrecognised argument '$1' — refusing rather than writing to a curated store with an argument this writer does not implement (accepted: --fact, --source, --retract, --supersedes; see the usage header). Nothing was written." >&2; exit 2 ;;
+    *) echo "write-project-memory: unrecognised argument '$1' — refusing rather than writing to a curated store with an argument this writer does not implement (accepted: --fact, --source, --retract, --supersedes, --confirm; see the usage header). Nothing was written." >&2; exit 2 ;;
   esac
 done
 if [ -z "$FACT" ] && [ -z "$RETRACT_ID" ]; then
@@ -244,8 +261,18 @@ MAX_LINES="${PROJECT_MEMORY_MAX_LINES:-200}"   # overridable for tests; default 
 GENESIS="GENESIS"
 
 mkdir -p "$MEM_DIR" 2>/dev/null || { echo "write-project-memory: cannot create $MEM_DIR" >&2; exit 2; }
-[ -f "$MEM" ]  || printf '# Project Memory (advisory — subordinate to CLAUDE.md; written only via write-project-memory.sh)\n' > "$MEM"
-[ -f "$PROV" ] || : > "$PROV"
+# CONFIRM GATE INTERACTION: creating PROJECT_MEMORY.md / the provenance chain IS a mutation of the
+# committed store, so a guaranteed dry-run must not do it either. `CONFIRM=0` with no TTY is
+# exactly the case whose gate verdict is already decided here (the prompt branch is unreachable),
+# so the bootstrap is skipped and the dry-run leaves the working tree byte-identical — including
+# creating no files where there were none. The validator tolerates an absent --store (a clean
+# "no prior entries" verdict, not a refusal) and every read below is `2>/dev/null`-guarded or
+# `|| true`-ed. An interactive run still bootstraps before prompting: the user is present, and the
+# file created is a header-only stub.
+if [ "$CONFIRM" -eq 1 ] || { [ -t 0 ] && [ -t 1 ]; }; then
+  [ -f "$MEM" ]  || printf '# Project Memory (advisory — subordinate to CLAUDE.md; written only via write-project-memory.sh)\n' > "$MEM"
+  [ -f "$PROV" ] || : > "$PROV"
+fi
 
 # ---------------------------------------------------------------------------
 # THE VALIDATOR CALL SITE (see write-lessons.sh's for the shared rationale). The guard runs on
@@ -375,6 +402,43 @@ prov_line() {
     printf '{"id":"%s","prev_hash":"%s","content_hash":"%s","source":"%s","action":"%s","written_at":"%s"}' "$1" "$2" "$3" "$4" "$5" "$ts"
   fi
 }
+
+# ---------------------------------------------------------------------------
+# CONFIRM-ONLY GATE — shape cloned from add-rule.sh (its two `proceed=0` blocks) and
+# add-orientation.sh; see the CONFIRM NOTE at the top of the file for WHY this store needs one.
+# ONE gate covers this writer's single combined mutation path (add / retract / supersede all commit
+# through the same two renames below), so unlike write-lessons.sh there is nothing to factor out.
+# Placement: past EVERY refusal — unknown --retract id, bare --supersedes, byte-identical no-op
+# supersede, and the validator call — and before the first mktemp, so a dry-run creates no temp
+# state and leaves both PROJECT_MEMORY.md and .provenance.jsonl byte-identical.
+# ---------------------------------------------------------------------------
+if [ -n "$RETRACT_ID" ] && [ -n "$FACT" ]; then _cg_action="SUPERSEDE"
+elif [ -n "$RETRACT_ID" ];                then _cg_action="RETRACT"
+else                                           _cg_action="WRITE"
+fi
+proceed=0
+if [ "$CONFIRM" -eq 1 ]; then
+  proceed=1
+elif [ -t 0 ] && [ -t 1 ]; then
+  printf 'write-project-memory: %s in %s\n' "$_cg_action" "$MEM" >&2
+  [ -n "$RETRACT_ID" ] && printf '  retract: [%s] %s\n' "$RETRACT_ID" "$retract_fact" >&2
+  [ -n "$FACT" ]       && printf '  entry: - [%s] %s\n' "$id" "$fact_oneline" >&2
+  printf '  source: %s\n' "$SOURCE" >&2
+  printf 'Confirm %s? [y/N] ' "$_cg_action" >&2
+  read -r reply || reply=""
+  case "$reply" in y|Y|yes|YES) proceed=1 ;; *) proceed=0 ;; esac
+fi
+
+if [ "$proceed" -ne 1 ]; then
+  printf 'PLANNED %s (not written — pass --confirm to apply):\n' "$_cg_action"
+  printf '  target: %s\n' "$MEM"
+  printf '  provenance: %s\n' "$PROV"
+  [ -n "$RETRACT_ID" ] && printf '  retract: [%s] %s\n' "$RETRACT_ID" "$retract_fact"
+  [ -n "$FACT" ]       && printf '  entry: - [%s] %s\n' "$id" "$fact_oneline"
+  printf '  source: %s\n' "$SOURCE"
+  printf 'write-project-memory: dry-run, pass --confirm to apply (nothing written)\n' >&2
+  exit 0
+fi
 
 # Temps live IN the memory dir (not $TMPDIR) so the commit `mv` is a same-filesystem,
 # truly-atomic rename — a tmpfs /tmp (Linux/CI) would otherwise make `mv` a non-atomic

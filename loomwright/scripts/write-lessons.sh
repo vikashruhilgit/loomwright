@@ -86,13 +86,30 @@
 #   Fails loud (exit 4) if the line is NOT present — a caller asserting "this exists" must not
 #   silently fall back to creating it. If the hash is ALREADY chain-trusted it is a no-op (exit 0).
 #
-# Usage:  write-lessons.sh --category "<cat>" --lesson "<text>" \
+# CONFIRM NOTE (`--confirm`, REQUIRED for every mutating action): `.supervisor/memory/` is
+# UN-IGNORED by `.gitignore` (`!.supervisor/memory/`), so LESSONS.md and .lessons-provenance.jsonl
+# are TRACKED, COMMITTED files. Until this gate existed, a single non-interactive invocation from
+# the repo root appended to the committed store — which is exactly what happened during a review.
+# The repo-wide rule this closes: a sole writer whose store is COMMITTED requires --confirm; a
+# writer whose store is gitignored does not. The gate is the one already shipped in add-rule.sh and
+# add-orientation.sh, cloned verbatim in shape:
+#   * `--confirm` passed                       -> proceed;
+#   * else an interactive TTY (`-t 0` && `-t 1`) -> prompt on stderr, accept y/Y/yes/YES;
+#   * otherwise                                -> DRY-RUN: print `PLANNED <ACTION> (not written —
+#     pass --confirm to apply):` with the target path and the content, and exit 0 having written
+#     NOTHING (store and provenance chain byte-identical).
+# It sits AFTER every validation and pre-check (a bad entry, an absent retract target, an untrusted
+# chain still FAIL LOUD — a refusal outranks the gate) and BEFORE any mutation. In particular it
+# precedes the PROVENANCE write, which commits FIRST of the two files, so a dry-run leaves the
+# chain untouched as well as LESSONS.md.
+#
+# Usage:  write-lessons.sh --category "<cat>" --lesson "<text>" --confirm \
 #                          [--source "<id>"] [--last-verified "<iso8601Z>"] [--confidence "<value>"]
-#         write-lessons.sh --category "<cat>" --lesson "<text>" --attest-existing [--source "<id>"]
-#         write-lessons.sh retract <category> <lesson-text> [--source "<id>"]
-#         write-lessons.sh retract --hash <content_hash>    [--source "<id>"]
-#         write-lessons.sh supersede <category> <lesson-text> --replacement "<new text>" [--source "<id>"]
-#         write-lessons.sh supersede --hash <content_hash>    --replacement "<new text>" [--source "<id>"] [--category "<cat>"]
+#         write-lessons.sh --category "<cat>" --lesson "<text>" --attest-existing --confirm [--source "<id>"]
+#         write-lessons.sh retract <category> <lesson-text> --confirm [--source "<id>"]
+#         write-lessons.sh retract --hash <content_hash>    --confirm [--source "<id>"]
+#         write-lessons.sh supersede <category> <lesson-text> --replacement "<new text>" --confirm [--source "<id>"]
+#         write-lessons.sh supersede --hash <content_hash>    --replacement "<new text>" --confirm [--source "<id>"] [--category "<cat>"]
 # Exit:   0 on success or safe no-op (e.g. `add` with no sha tool; a sha-less `retract`/`supersede`
 #         FAILS LOUD with exit 2 — a curation verb must never silently no-op); non-zero only on a
 #         disallowed / would-corrupt condition (so a bad call can never half-write state).
@@ -182,7 +199,7 @@ _ve_load_validator() {
 
 
 CATEGORY=""; LESSON=""; SOURCE="unknown"; LAST_VERIFIED=""; CONFIDENCE="medium"; REPLACEMENT=""
-ATTEST=0
+ATTEST=0; CONFIRM=0
 # Subcommand detection: a leading `retract`/`supersede` selects that flow (default action is add).
 ACTION="add"; HASH=""
 if [ "${1:-}" = "retract" ]; then ACTION="retract"; shift
@@ -205,6 +222,7 @@ while [ $# -gt 0 ]; do
     --replacement)     REPLACEMENT="${2:-}"; shift; [ $# -gt 0 ] && shift ;;
     --replacement=*)   REPLACEMENT="${1#--replacement=}"; shift ;;
     --attest-existing) ATTEST=1; shift ;;
+    --confirm)         CONFIRM=1; shift ;;
     # UNKNOWN-ARGUMENT REJECTION — exit 2, this writer's could-not-examine convention (the same one
     # every other argument check above uses), nothing written. The old catch-all took the two
     # positionals below and SILENTLY DROPPED everything else, so `add` accepted any flag at all and
@@ -226,7 +244,7 @@ while [ $# -gt 0 ]; do
     # ones. A consequence worth knowing: a lesson text that itself begins with `--` must now be
     # passed as `--lesson=<text>` rather than positionally. That is the same trade write-agent-memory.sh
     # and add-orientation.sh already make, and it is the price of the refusal being unambiguous.
-    --*) echo "write-lessons: unrecognised flag '$1' — refusing rather than writing to a curated store with a flag this writer does not implement (accepted: --category, --lesson, --source, --last-verified, --confidence, --hash, --replacement, --attest-existing; see the usage header). Nothing was written." >&2; exit 2 ;;
+    --*) echo "write-lessons: unrecognised flag '$1' — refusing rather than writing to a curated store with a flag this writer does not implement (accepted: --category, --lesson, --source, --last-verified, --confidence, --hash, --replacement, --attest-existing, --confirm; see the usage header). Nothing was written." >&2; exit 2 ;;
     *) # retract/supersede accept positional <category> <lesson-text> (in that order); add ignores strays.
        #
        # SCOPE, DELIBERATE: this arm is UNCHANGED, and a stray bare word is still silently dropped
@@ -331,7 +349,16 @@ GENESIS="GENESIS"
 mkdir -p "$MEM_DIR" 2>/dev/null || { echo "write-lessons: cannot create $MEM_DIR" >&2; exit 2; }
 # Only `add` bootstraps the store — `retract` on an absent store has nothing to tombstone and
 # must fail loud below without creating files (a refused retract leaves state byte-identical).
-if [ "$ACTION" = "add" ]; then
+#
+# CONFIRM GATE INTERACTION: creating LESSONS.md / the provenance chain IS a mutation of the
+# committed store, so a guaranteed dry-run must not do it either. `CONFIRM=0` with no TTY is
+# exactly the case whose gate verdict is already decided here (the prompt branch is unreachable),
+# so the bootstrap is skipped and the dry-run leaves the working tree byte-identical — including
+# creating no files where there were none. The validator tolerates an absent --store (it is a
+# clean "no prior entries" verdict, not a refusal), and every read below is `2>/dev/null`-guarded.
+# An interactive run still bootstraps before prompting: the user is present, and the file created
+# is a header-only stub.
+if [ "$ACTION" = "add" ] && { [ "$CONFIRM" -eq 1 ] || { [ -t 0 ] && [ -t 1 ]; }; }; then
   [ -f "$LESSONS" ] || printf '# Project Lessons (advisory — bounded <=3 active per category; written only via write-lessons.sh)\n' > "$LESSONS"
   [ -f "$PROV" ] || : > "$PROV"
 fi
@@ -498,6 +525,39 @@ prov_line() {
   fi
 }
 
+# ---------------------------------------------------------------------------
+# CONFIRM-ONLY GATE — shape cloned from add-rule.sh (its two `proceed=0` blocks) and
+# add-orientation.sh; see the CONFIRM NOTE at the top of the file for WHY this store needs one.
+# Factored into one function because this writer has THREE mutation sites (attest, retract/
+# supersede, add) that must all be gated identically — a second hand-rolled copy is how one of
+# them ends up subtly different. The semantics are the precedent's, unchanged:
+#   --confirm -> proceed; interactive TTY -> prompt y/Y/yes/YES; otherwise dry-run + exit 0.
+# Callers MUST pass at least one detail line (bash 3.2 + `set -u` treats an empty "$@" badly).
+# `exit 0` here exits the SCRIPT, which is the point: nothing after the gate may run on a dry-run.
+# ---------------------------------------------------------------------------
+confirm_gate() {
+  _cg_action="$1"; shift
+  proceed=0
+  if [ "$CONFIRM" -eq 1 ]; then
+    proceed=1
+  elif [ -t 0 ] && [ -t 1 ]; then
+    printf 'write-lessons: %s in %s\n' "$_cg_action" "$LESSONS" >&2
+    for _cg_d in "$@"; do printf '  %s\n' "$_cg_d" >&2; done
+    printf 'Confirm %s? [y/N] ' "$_cg_action" >&2
+    read -r reply || reply=""
+    case "$reply" in y|Y|yes|YES) proceed=1 ;; *) proceed=0 ;; esac
+  fi
+
+  if [ "$proceed" -ne 1 ]; then
+    printf 'PLANNED %s (not written — pass --confirm to apply):\n' "$_cg_action"
+    printf '  target: %s\n' "$LESSONS"
+    printf '  provenance: %s\n' "$PROV"
+    for _cg_d in "$@"; do printf '  %s\n' "$_cg_d"; done
+    printf 'write-lessons: dry-run, pass --confirm to apply (nothing written)\n' >&2
+    exit 0
+  fi
+}
+
 # ---- ATTEST flow (add-only heal for a present-but-unbacked line) ------------------------
 # Appends a chain-valid `add` entry for a line that already exists in LESSONS.md, and leaves
 # LESSONS.md BYTE-IDENTICAL. No trailer is written: adding one would rewrite the line (and the
@@ -512,6 +572,10 @@ if [ "${ATTEST_PRESENT:-0}" -eq 1 ]; then
     echo "write-lessons: [$id] in $CATSLUG is already chain-trusted — nothing to attest (no-op)"
     exit 0
   fi
+  # Gate site 1/3 — after the "already chain-trusted" no-op check above (so a no-op still reports
+  # itself rather than printing a plan for work that would not happen) and before the provenance
+  # append, which is this path's ONLY mutation.
+  confirm_gate "ATTEST" "entry: [$id] in $CATSLUG" "effect: append a chain-valid 'add' for the existing line; LESSONS.md unchanged" "source: $SOURCE"
   prov_tmp="$(mktemp "$MEM_DIR/.lptmp.XXXXXX")"
   trap 'rm -f "$prov_tmp" 2>/dev/null' EXIT
   cat "$PROV" > "$prov_tmp"
@@ -559,6 +623,17 @@ if [ "$ACTION" = "retract" ] || [ "$ACTION" = "supersede" ]; then
     exit 4
   fi
 
+  # Gate site 2/3 — after BOTH pre-checks above (target present, target chain-trusted), so a bad
+  # target still exits 4 rather than printing a plan for a retraction that could never happen; and
+  # before the first mktemp, so a dry-run creates no temp state. For `supersede` this ONE gate
+  # covers both halves (the retract below and the fall-through add), which is why the add-flow gate
+  # is `ACTION = add` only — supersede must never be prompted twice for one logical operation.
+  if [ "$ACTION" = "supersede" ]; then
+    confirm_gate "SUPERSEDE" "target: [$id] in ${target_catslug:-$CATSLUG}" "replacement: $REPLACEMENT" "source: $SOURCE"
+  else
+    confirm_gate "RETRACT" "target: [$id] in ${target_catslug:-$CATSLUG}" "source: $SOURCE"
+  fi
+
   # (3) Append the chained retract tombstone + rewrite LESSONS.md without the entry line.
   #     Same atomic discipline and commit ORDER as add: temps IN the memory dir, provenance FIRST.
   mem_tmp="$(mktemp "$MEM_DIR/.ltmp.XXXXXX")"
@@ -601,6 +676,14 @@ if [ "$ACTION" = "retract" ] || [ "$ACTION" = "supersede" ]; then
     echo "write-lessons: replacement already present ([$id] in $CATSLUG) — retract done, add skipped (dedup)"
     exit 0
   fi
+fi
+
+# Gate site 3/3 — the plain `add` path. Guarded on `ACTION = add` because a `supersede` reaches
+# here by FALL-THROUGH, already gated (and already half-committed) at site 2/3; re-prompting there
+# would ask a second time for one operation, and worse, a "no" would exit 0 having already
+# retracted the target.
+if [ "$ACTION" = "add" ]; then
+  confirm_gate "WRITE" "entry: - [$id] $lesson_oneline" "category: $CATSLUG" "source: $SOURCE, last_verified: $LAST_VERIFIED, confidence: $CONFIDENCE"
 fi
 
 # Temps live IN the memory dir (not $TMPDIR) so the commit `mv` is a same-filesystem, truly
