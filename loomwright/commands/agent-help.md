@@ -600,9 +600,9 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 
 ---
 
-### 💤 /dreaming — Reflect on Past Sessions (Read-Only)
+### 💤 /dreaming — Reflect on Past Sessions (Read-Only Until You Accept)
 
-**Purpose:** Run target agents in reflection mode over recent session logs to **propose** memory and `CLAUDE.md` updates. Strictly read-only on code AND agent memory until per-item user approval.
+**Purpose:** Run target agents in reflection mode over recent session logs to **propose** memory and `CLAUDE.md` updates, and to **harvest recorded `convention_mismatch` findings into proposed `.agent/rules/` entries**. Read-only on code, agent memory and `CLAUDE.md` while it gathers and proposes; every write is per-item human-gated. **It is not read-only on the *remote*:** an accepted rule proposal can reach a branch, a push and a `gh pr create` — but only through a **second, separate** per-item **Pre-push confirmation**. `/dreaming` never merges.
 
 **Usage:**
 ```
@@ -632,11 +632,13 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
   - Collected Memory Candidates
   - Proposed LESSONS
 - Presents each proposed update for **per-item user approval** (Accept / Reject / Edit)
+- Appends up to three **promotion queues** after the six sections, shown only when non-empty: pending **orientation** memos, pending **agent-memory** proposals (labeled **PROMOTE PENDING PROPOSAL** — surfaced automatically; you no longer list `.supervisor/agent-memory-proposals/` by hand), and the harvested **`.agent/rules/` PR delivery queue** (each rule with its `applies_to`, the finding ids that motivated it, and the batch's coverage / dedupe-rate / scope-fidelity numbers)
 
-**Read-only contract:**
-- `/dreaming` does not modify code, agent memory, or `CLAUDE.md`
+**Read-only-until-Accept contract:**
+- `/dreaming` modifies nothing — not code, agent memory, `CLAUDE.md`, or any store — while it gathers and proposes; the convention harvest is a **dry run with no write mode at all**
 - Every proposed update is labeled **PENDING USER APPROVAL**
-- Persistence happens **only after** the user explicitly approves each item: on per-item Accept, `/dreaming` writes project-memory facts + LESSONS via the repo-root sole writers and promotes orientation proposals via `add-orientation.sh --confirm` (literal argv); CLAUDE.md and legacy agent-memory proposals — including curation (prune/merge/supersede) candidates — stay paste-to-apply; there is no CLAUDE.md writer
+- Persistence happens **only after** the user explicitly approves each item: on per-item Accept, `/dreaming` writes project-memory facts + LESSONS via the repo-root sole writers, promotes orientation proposals via `add-orientation.sh --confirm` and agent-memory proposals via `write-agent-memory.sh --proposal <file> --confirm` (each that store's sole writer, literal argv); **CLAUDE.md proposals stay paste-to-apply** — including curation (prune/merge/supersede) candidates — because there is no CLAUDE.md writer
+- **One remote-affecting action, behind two gates.** A harvested rule needs the per-item **Accept** (authorising its *content*) **and** a separate per-item **Pre-push confirmation** (authorising the *push*); neither implies the other. Only rules clearing both are authored through `add-rule.sh --confirm`, committed to a `dreaming/rules-<session_id>` branch (staged by path — never `git add -A`) and delivered by `gh pr create`. Nothing confirmed ⇒ no branch, no commit, no PR. **`/dreaming` never merges the PR it opens.**
 
 **When to Use:**
 - After a streak of completed `/supervisor` sessions, to surface recurring issues
@@ -645,10 +647,10 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 
 **When NOT to Use:**
 - During active execution → `/dreaming` reflects on *past* sessions
-- When you need code changes → `/dreaming` is read-only; use `/supervisor` or `/code-reviewer`
+- When you need code changes → `/dreaming` never touches code (its one PR carries `.agent/rules/*.json` and nothing else); use `/supervisor` or `/code-reviewer`
 - For agents without persistent memory → only Code Reviewer, Red Team Reviewer, and QA Executor are valid targets
 
-**Learn More:** see `loomwright/commands/dreaming.md` for full parameter table, reflection-mode task prompt template, the read-only contract, and example output
+**Learn More:** see `loomwright/commands/dreaming.md` for the full parameter table, the reflection-mode task prompt template, the read-only-until-Accept contract (incl. the one remote-affecting action and its two gates), the rules PR delivery queue, and example output
 
 ---
 
@@ -794,13 +796,14 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 
 ### 🧩 /setup — Optional-Capability Dashboard & Guided Configuration
 
-**Purpose:** Single entry point for checking and configuring every optional plugin capability across 8 modules — **observability** (local Langfuse v3 + bundled OTel collector; `init | status | remove`), **telemetry** (delegates to `/telemetry`), **notifications**, **webhook**, **Beads**, **MySQL MCP**, **twin** (cold-start bootstrap: Twin-readiness status + guided graph / bridge / starter CLAUDE.md build), and **memory** (`status | apply | remove` — puts `.claude/agent-memory/` + `.supervisor/memory/` + the findings ledger `.supervisor/postmortem/results.jsonl` under version control IN PLACE via gitignore negation, plus the repo allowlist; consent-bearing, and `remove` states plainly that git history retains anything already pushed). **The ledger is the third store and it is GATED**: it is structurally cross-repo (a postmortem append lands in the CURRENT working `.supervisor/`, not the analysed repo's), so `apply` fails CLOSED — it withholds the ledger negation, names the offending repo slugs and reports the third verdict `gated` whenever any record's `.repo` is outside the repo allowlist, while still exiting 0. No-arg invocation prints a status dashboard (one real check per module) then offers configuration via multi-select. Every module follows the same contract: check → report → offer → apply → verify — idempotent, never blind-overwrite (settings.json changes are jq-deep-merged with a timestamped backup, aborting on parse failure; the memory module's `.gitignore` block is backup-first, atomic, and ABORTS without writing on an unparseable file).
+**Purpose:** Single entry point for checking and configuring every optional plugin capability across 9 modules — **observability** (local Langfuse v3 + bundled OTel collector; `init | status | remove`), **telemetry** (delegates to `/telemetry`), **notifications**, **webhook**, **Beads**, **MySQL MCP**, **twin** (cold-start bootstrap: Twin-readiness status + guided graph / bridge / starter CLAUDE.md build), **rules** (`check | seed | status` — seeds a cold-start repo's `.agent/rules/` store with a small set of **portable** conventions, stamped `provenance.source=setup:rules-seed` so a shipped default is never mistaken for something the tool learned here; every seed is repo-wide with `check: null`, rules stay DATA and advisory, and the module adds **no gate**), and **memory** (`status | apply | remove` — puts `.claude/agent-memory/` + `.supervisor/memory/` + the findings ledger `.supervisor/postmortem/results.jsonl` under version control IN PLACE via gitignore negation, plus the repo allowlist; consent-bearing, and `remove` states plainly that git history retains anything already pushed). **The ledger is the third store and it is GATED**: it is structurally cross-repo (a postmortem append lands in the CURRENT working `.supervisor/`, not the analysed repo's), so `apply` fails CLOSED — it withholds the ledger negation, names the offending repo slugs and reports the third verdict `gated` whenever any record's `.repo` is outside the repo allowlist, while still exiting 0. No-arg invocation prints a status dashboard (one real check per module) then offers configuration via multi-select. Every module follows the same contract: check → report → offer → apply → verify — idempotent, never blind-overwrite (settings.json changes are jq-deep-merged with a timestamped backup, aborting on parse failure; the memory module's `.gitignore` block is backup-first, atomic, and ABORTS without writing on an unparseable file).
 
 **Usage:**
 ```
 /setup                      # status dashboard + multi-select configuration
 /setup observability        # observability module directly: init | status | remove
 /setup twin                 # Twin cold-start bootstrap: graph + bridge + starter CLAUDE.md
+/setup rules                # seed a cold-start .agent/rules/ store: check | seed | status
 /setup memory               # memory stores in version control: status | apply | remove
 /setup telemetry            # delegates to /telemetry
 ```

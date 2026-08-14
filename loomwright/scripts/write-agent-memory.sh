@@ -28,12 +28,14 @@
 # or an interactive TTY `y`. Any other invocation is a DRY-RUN that prints the plan and writes
 # nothing, so an automated non-TTY run can never mutate a store.
 #
-# THE QUEUE HAS NO AUTOMATIC CONSUMER YET — STATED, NOT SILENTLY ABSENT. Six agent prompts and
-# AGENT_GUIDELINES instruct WRITING proposals here, and this writer PROMOTES one, but nothing yet
-# SURFACES pending proposals to a human the way commands/dreaming.md surfaces the orientation
-# queue. That half is item 05's scope. Until it lands, a human finds pending proposals by listing
-# `.supervisor/agent-memory-proposals/` (gitignored). Do not read the absence of a consumer as
-# evidence the queue is unused.
+# THE QUEUE NOW HAS AN AUTOMATIC CONSUMER. Six agent prompts and AGENT_GUIDELINES instruct
+# WRITING proposals here; this writer PROMOTES one; and `/dreaming` SURFACES the pending ones the
+# same way it surfaces the orientation queue — its GATHER step lists the `*.md` files under the
+# gitignored `.supervisor/agent-memory-proposals/` and offers each for per-item promotion labeled
+# `PROMOTE PENDING PROPOSAL`, invoking this writer as `--proposal <file> --confirm` on Accept and
+# deleting the proposal file (without writing) on Reject. See commands/dreaming.md §"Pending
+# agent-memory proposals (promotion queue)". Listing that directory by hand is now a fallback,
+# not the only path — and an ABSENT directory remains the normal empty case, never an error.
 #
 # WRITE-TIME VALIDATION (decision (a) of the write-time-validation brief). Every write is handed to
 # the shared validator first — see validate-entry.sh's LOAD GUARD CONTRACT. The guard here is three

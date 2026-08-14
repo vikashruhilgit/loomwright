@@ -25,7 +25,14 @@
 #   measure-heal-signal.sh                       # measure the current repo
 #   measure-heal-signal.sh --repo A --repo B     # measure a custom set
 #   measure-heal-signal.sh --backfill 10         # + print a bounded backfill PLAN (no dispatch)
+#   measure-heal-signal.sh --distribution        # per-class findings/misses counts + shares, STOP
 #   measure-heal-signal.sh --out /tmp/hs --no-ledger
+#
+# --distribution is a SECOND, different measurement on the same ledger: not the heal catch-rate
+# (the confusion matrix above), but which CLASS of problem the corpus keeps producing — per-class
+# findings and misses with their shares, counted over raw records rather than deduped PRs. It
+# prints and stops: no artifacts, no trend line, no --out dir. It is the instrument of record
+# behind docs/RULES_BASELINE.md, so that baseline stays re-derivable by one command.
 #
 # Exit: 0 in every normal path (a measurement tool must never break its caller). A missing
 # python3 prints a skip line and exits 0; the engine's own exit code is otherwise propagated.
@@ -43,11 +50,13 @@ BACKFILL=""
 GATHER_SECS=""
 LOW_ROUNDS=""
 NO_LEDGER=""
+DISTRIBUTION=""
 QUIET=""
 RECORDED_AT=""
 
 usage() {
-  sed -n '2,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  # range = the header comment block only; it ends at the `propagated.` line above `set -uo`.
+  sed -n '2,38p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   exit 0
 }
 
@@ -62,6 +71,7 @@ while [ $# -gt 0 ]; do
     --gather-secs) GATHER_SECS="$2"; shift 2 ;;
     --low-rounds)  LOW_ROUNDS="$2"; shift 2 ;;
     --no-ledger)   NO_LEDGER=1; shift ;;
+    --distribution) DISTRIBUTION=1; shift ;;
     --quiet)       QUIET=1; shift ;;
     --recorded-at) RECORDED_AT="$2"; shift 2 ;;
     -h|--help)     usage ;;
@@ -106,6 +116,7 @@ for r in "${REPOS[@]}"; do ARGS+=("$r"); done
 [ -n "$GATHER_SECS" ] && ARGS+=(--gather-secs "$GATHER_SECS")
 [ -n "$LOW_ROUNDS" ]  && ARGS+=(--low-rounds "$LOW_ROUNDS")
 [ -n "$NO_LEDGER" ]   && ARGS+=(--no-ledger)
+[ -n "$DISTRIBUTION" ] && ARGS+=(--distribution)
 [ -n "$QUIET" ]       && ARGS+=(--quiet)
 [ -n "$RECORDED_AT" ] && ARGS+=(--recorded-at "$RECORDED_AT")
 
