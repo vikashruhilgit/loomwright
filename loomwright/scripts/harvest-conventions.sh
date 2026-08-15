@@ -760,6 +760,12 @@ BATCH="$WORK/batch.txt"; : > "$BATCH"
 EMITTED=0
 MAPPED=0
 DEFERRED=0
+# CAP_DEFERRED is the CAP arm of $DEFERRED alone, kept separate because $DEFERRED mixes two causes
+# (cap bound + corroborating corpus entries) and the empty-batch diagnostic must name the real one.
+# Without it the empty batch asserted "no theme reached the support floor" UNCONDITIONALLY, which is
+# false whenever themes DID reach the floor and were deferred — `--cap 0` printed that sentence one
+# line under a header stating "10 deferred by cap", i.e. the output contradicted itself.
+CAP_DEFERRED=0
 FIDELITY_TOTAL=0; FIDELITY_MATCHED=0
 # FIDELITY_ALL_TOTAL is the HONEST denominator: every motivating finding of every EMITTED rule —
 # scoped or repo-wide — including the ones the fidelity check cannot see. FIDELITY_TOTAL counts only the CHECKABLE ones (a finding
@@ -778,7 +784,7 @@ emit_rule() {   # emit_rule <theme> <category> <statement> <origin-label>
   local k="$1" category="$2" statement="$3" origin="$4"
   local globs just="" fid_list fid_n sf_m sf_t sf_p sf_all ex_nopath ex_dead
 
-  if [ "$EMITTED" -ge "$CAP" ]; then DEFERRED=$((DEFERRED + 1)); return 0; fi
+  if [ "$EMITTED" -ge "$CAP" ]; then DEFERRED=$((DEFERRED + 1)); CAP_DEFERRED=$((CAP_DEFERRED + 1)); return 0; fi
   EMITTED_THEMES="$EMITTED_THEMES $k"
 
   mkdir -p "$WORK/derive.$k"
@@ -913,7 +919,12 @@ for b in rules agent-memory project-memory; do
 done
 echo
 echo "--- proposed rule batch (cap $CAP; $EMITTED emitted, $DEFERRED deferred by cap or already-covered evidence) ---"
-if [ "$EMITTED" -eq 0 ]; then
+if [ "$EMITTED" -eq 0 ] && [ "$CAP_DEFERRED" -gt 0 ]; then
+  # The cause is MEASURED, not assumed: $CAP_DEFERRED themes cleared the support floor and were
+  # turned away by the batch bound, so the floor is NOT what emptied this batch. Printing the
+  # support-floor sentence here contradicted the header line directly above it.
+  echo "  (empty batch — but NOT for want of evidence: $CAP_DEFERRED theme(s) reached the $MIN_SUPPORT-finding support floor and were deferred by the cap=$CAP batch bound. Raise --cap to emit them; the support floor is not the cause here)"
+elif [ "$EMITTED" -eq 0 ]; then
   echo "  (empty batch — no theme reached the support floor; a corpus entry corroborates a theme and never emits a rule on its own, so there is nothing else that could have been emitted)"
 else
   cat "$BATCH"

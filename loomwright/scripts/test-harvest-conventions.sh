@@ -47,6 +47,9 @@
 #   (M8) re-introduce the unquoted word-split over a row's paths ⇒ (N)'s spaced path stops matching.
 #   (M9) key the unmapped-remainder breakdown on $RULE_THEMES again ⇒ (O)'s itemisation under-sums
 #        its own stated total.
+#  (M10) make the cap-deferred arm of the empty-batch diagnostic unreachable (i.e. restore the
+#        unconditional support-floor sentence) ⇒ (P)'s `--cap 0` run blames the support floor again,
+#        one line under a header stating the themes were deferred by the cap.
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -848,6 +851,48 @@ if ! cmp -s "$HARVEST" "$MUT9" && bash -n "$MUT9" 2>/dev/null; then
   fi
 else
   no "(M9) the remainder-key mutation did not land"
+fi
+
+# ---------------------------------------------------------------------------
+# (P) AN EMPTY BATCH NAMES THE CAUSE IT MEASURED, NOT ONE IT ASSUMED. The empty-batch line asserted
+# "no theme reached the support floor" UNCONDITIONALLY. With `--cap 0` (which passes `is_num`, so it
+# is reachable input) themes DO reach the floor and are turned away by the bound — the header line
+# printed one line above says so — and the diagnostic contradicted it. Both arms are asserted here:
+# the cap arm must name the cap, and the genuine thin-evidence arm must keep the floor sentence.
+# Reuses (O)'s fixture, whose themes sit above a support floor of 4.
+# ---------------------------------------------------------------------------
+echo "(P) the empty-batch diagnostic branches on the measured cause"
+run_harvest "$RO" --session-id "fx-p" --min-support 4 --cap 0 --no-writer
+printf '%s\n' "$OUT" > "$ROOT/p.txt"
+[ "$RC" -eq 0 ] && ok "(p1) --cap 0 is accepted input and exits 0" || no "(p1) --cap 0 exited $RC, expected 0"
+if grep -qE '\(empty batch — but NOT for want of evidence: [1-9][0-9]* theme\(s\) reached the 4-finding support floor and were deferred by the cap=0 batch bound' "$ROOT/p.txt"; then
+  ok "(p2) the --cap 0 empty batch names the CAP as the cause and counts the themes it deferred"
+else
+  no "(p2) the --cap 0 empty batch does not name the cap: $(grep -F '(empty batch' "$ROOT/p.txt" | head -1)"
+fi
+grep -qF 'no theme reached the support floor' "$ROOT/p.txt" \
+  && no "(p3) the --cap 0 run still asserts the support floor as the cause — it contradicts its own header line" \
+  || ok "(p3) the --cap 0 run does NOT blame the support floor (4 findings/theme cleared it)"
+# The other arm must survive the branch: a floor nothing can reach is still reported as the floor.
+run_harvest "$RO" --session-id "fx-p2" --min-support 9999 --cap 5 --no-writer
+if printf '%s\n' "$OUT" | grep -qF '(empty batch — no theme reached the support floor'; then
+  ok "(p4) a genuinely thin corpus still reports the support floor — the branch did not overwrite the true case"
+else
+  no "(p4) the support-floor arm was lost: $(printf '%s\n' "$OUT" | grep -F '(empty batch' | head -1)"
+fi
+
+# ---- MUTATION CONTROL M10: make the cap arm unreachable (the unconditional message restored) ----
+MUT10="$ROOT/mut-emptycause.sh"
+sed 's@\[ "$CAP_DEFERRED" -gt 0 \]@[ "$CAP_DEFERRED" -gt 999999 ]@' "$HARVEST" > "$MUT10"
+if ! cmp -s "$HARVEST" "$MUT10" && bash -n "$MUT10" 2>/dev/null; then
+  M10OUT="$( bash "$MUT10" --root "$RO" --session-id fx-m10 --min-support 4 --cap 0 --no-writer 2>&1 )" || true
+  if printf '%s\n' "$M10OUT" | grep -qF 'no theme reached the support floor'; then
+    ok "(M10) CONFIRMED: with the cap arm unreachable the --cap 0 run blames the support floor again — (p2)/(p3) are load-bearing"
+  else
+    no "(M10) REFUTED: the unconditional message did not reappear — (p2)/(p3) may be vacuous"
+  fi
+else
+  no "(M10) the empty-batch-cause mutation did not land"
 fi
 
 echo

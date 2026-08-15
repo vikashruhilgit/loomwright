@@ -111,7 +111,7 @@ your-project/
 └── src/ (your code)
 ```
 
-**Optional integrations in one place:** run `/setup` to configure optional integrations — observability (local Langfuse + OTel collector), telemetry, notifications, webhook, Beads, MySQL MCP, and Twin cold-start bootstrap (code graph + bridge + starter CLAUDE.md) — from a single status dashboard.
+**Optional integrations in one place:** run `/setup` to configure optional integrations — observability (local Langfuse + OTel collector), telemetry, notifications, webhook, Beads, MySQL MCP, Twin cold-start bootstrap (code graph + bridge + starter CLAUDE.md), memory in version control, and `rules` (seed `.agent/rules/` with portable conventions) — from a single status dashboard.
 
 ### 3. (Optional) Enable MySQL MCP
 
