@@ -55,8 +55,11 @@ QUIET=""
 RECORDED_AT=""
 
 usage() {
-  # range = the header comment block only; it ends at the `propagated.` line above `set -uo`.
-  sed -n '2,38p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  # Print the leading header comment block (line 2 through the last contiguous `#` line), robust to
+  # header edits — no hard-coded line range to drift when the header grows or shrinks. It carried
+  # one (`2,38p`, itself already bumped once from `2,40p` when the header moved) and this is the
+  # file that demonstrated the drift, so it stops carrying it. Same scan as seed-rules.sh's usage().
+  awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "${BASH_SOURCE[0]}"
   exit 0
 }
 

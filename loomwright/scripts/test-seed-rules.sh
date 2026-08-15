@@ -287,6 +287,97 @@ bash "$SEED" --root "$Gd" seed --confirm >/dev/null 2>&1; rc_d=$?
 [ "$(store_count "$Gd")" -ge 1 ] && ok "(g) default resolution actually wrote the seeds" || no "(g) default resolution wrote nothing"
 
 # ============================================================================
+echo "== (h) CURATION: an EDITED seed stays present — the module never re-enters a failure state =="
+# The regression this section exists for: the presence pre-check compared statements EXACTLY while
+# the writer's duplicate validator refuses on NEAR-identical text, so one word changed in a seeded
+# statement made `check` report ABSENT, `seed --confirm` call the writer, the writer REFUSE, and the
+# run exit 1 PERMANENTLY on a correctly-configured repo — while the module's own docs tell the user
+# to edit seeds they disagree with. Presence is now keyed on the seeded stamp + category.
+H="$(mkfix)"
+seedrun "$H" seed --confirm >/dev/null 2>&1; rc_h0=$?
+[ "$rc_h0" -eq 0 ] && ok "(h) fixture seeded cleanly" || no "(h) initial seed exited $rc_h0"
+h_file="$H/.agent/rules/security.json"
+if [ -f "$h_file" ]; then
+  # Edit the STATEMENT in place, leaving the seeded stamp and the frozen id untouched — exactly
+  # what a user curating a seed by hand does.
+  h_tmp="$H/edited.json"
+  jq '.[0].statement = (.[0].statement + " Also scrub them from CI logs before publishing.")' \
+    "$h_file" > "$h_tmp" && mv -f "$h_tmp" "$h_file"
+  h_before="$(cat "$h_file")"
+
+  out_h="$(seedrun "$H" check 2>&1)"; rc_h1=$?
+  [ "$rc_h1" -eq 0 ] && ok "(h) check exits 0 after a seed was edited" || no "(h) check exited $rc_h1 after an edit"
+  printf '%s\n' "$out_h" | grep -q 'seed: ALREADY SEEDED  \[security\]' \
+    && ok "(h) an edited seed is reported ALREADY SEEDED, not ABSENT" \
+    || no "(h) an edited seed was reported ABSENT (the exact-match regression is back)"
+  printf '%s\n' "$out_h" | grep -q 'curated' \
+    && ok "(h) the report names the match as CURATED (the stored wording is the user's, not the seed's)" \
+    || no "(h) a curated match was not disclosed as such"
+
+  out_h2="$(seedrun "$H" seed --confirm 2>&1)"; rc_h2=$?
+  [ "$rc_h2" -eq 0 ] && ok "(h) seed --confirm exits 0 on a repo with an edited seed" \
+    || no "(h) seed --confirm exited $rc_h2 on an edited seed (the permanent-failure regression is back)"
+  printf '%s\n' "$out_h2" | grep -q 'written: 0 · failed: 0' \
+    && ok "(h) an edited seed causes no write and no failure" || no "(h) an edited seed did not report written:0 failed:0"
+  [ "$(cat "$h_file")" = "$h_before" ] \
+    && ok "(h) the user's edit survives byte-for-byte (never overwritten)" || no "(h) the user's edited rule was modified"
+  # And it is not a one-run reprieve: the state is stable across repeated runs.
+  seedrun "$H" seed --confirm >/dev/null 2>&1; rc_h3=$?
+  [ "$rc_h3" -eq 0 ] && ok "(h) a further run on the edited store still exits 0 (stable, not one-shot)" \
+    || no "(h) a repeat run on an edited store exited $rc_h3"
+  [ "$(store_count "$H")" = "5" ] && ok "(h) no duplicate rule was ever created (5 rules)" \
+    || no "(h) store holds $(store_count "$H") rules (expected 5)"
+else
+  no "(h) the security seed file was not written — fixture precondition failed"
+fi
+
+# The id-prefix arm of the same key: a seeded rule whose CATEGORY member a user rewrote is still
+# recognised, because add-rule.sh freezes `<category>-<slug>` into the id at creation.
+Hc="$(mkfix)"
+seedrun "$Hc" seed --confirm >/dev/null 2>&1
+hc_file="$Hc/.agent/rules/security.json"
+if [ -f "$hc_file" ]; then
+  hc_tmp="$Hc/x.json"
+  jq '.[0].category = "secrets" | .[0].statement = "Keep secrets out of the repo."' "$hc_file" > "$hc_tmp" && mv -f "$hc_tmp" "$hc_file"
+  out_hc="$(seedrun "$Hc" seed --confirm 2>&1)"; rc_hc=$?
+  [ "$rc_hc" -eq 0 ] && ok "(h) a re-categorised seed still exits 0 (matched on the frozen id prefix)" \
+    || no "(h) a re-categorised seed exited $rc_hc"
+  printf '%s\n' "$out_hc" | grep -q 'written: 0 · failed: 0' \
+    && ok "(h) a re-categorised seed is not rewritten" || no "(h) a re-categorised seed was re-offered"
+fi
+
+# The ONE-ROW-PER-CATEGORY invariant that licenses the category key: a duplicate category in the
+# seed table is a LOUD startup failure (exit 2), never a silently-masked seed.
+Hi="$(mkfix)"; hi_copy="$Hi/dup-table-seed-rules.sh"
+sed 's|^process|process|' "$SEED" > "$hi_copy"
+# append a SECOND row in an existing category, immediately before the here-doc terminator
+awk '/^SEEDS$/ && !done { print "process|A second seed sharing an existing category, which the presence key cannot tell apart."; done=1 } { print }' "$hi_copy" > "$Hi/dup2.sh" && mv -f "$Hi/dup2.sh" "$hi_copy"
+out_hi="$(bash "$hi_copy" --root "$Hi" --add-rule "$ADDRULE" check 2>&1)"; rc_hi=$?
+[ "$rc_hi" -eq 2 ] && ok "(h) a duplicate seed-table category fails loudly (exit 2)" \
+  || no "(h) a duplicate seed-table category exited $rc_hi (expected 2 — the invariant is not asserted)"
+printf '%s\n' "$out_hi" | grep -q 'seed table invariant violated' \
+  && ok "(h) the duplicate-category failure names the invariant it broke" || no "(h) duplicate category produced no diagnostic"
+
+# RETRACTION IS NOT A PERMANENT OPT-OUT — asserted so the documented limit cannot drift silently.
+# A retracted seed leaves nothing carrying the stamp, so a later run re-offers and rewrites it.
+# This is the behaviour the module docs state under honest limits; if it ever changes, this
+# assertion goes red and the docs must change with it.
+Hr="$(mkfix)"
+seedrun "$Hr" seed --confirm >/dev/null 2>&1
+hr_id="$(jq -r '.[0].id' "$Hr/.agent/rules/security.json" 2>/dev/null || echo "")"
+if [ -n "$hr_id" ]; then
+  ( cd "$Hr" && bash "$ADDRULE" --retract --target "$hr_id" --reason "this project keeps its secrets policy elsewhere" --confirm ) >/dev/null 2>&1
+  [ "$(jq 'length' "$Hr/.agent/rules/security.json")" = "0" ] && ok "(h) the retract fixture actually removed the rule" || no "(h) retract fixture did not remove the rule"
+  out_hr="$(seedrun "$Hr" seed --confirm 2>&1)"; rc_hr=$?
+  [ "$rc_hr" -eq 0 ] && ok "(h) a run after a retraction exits 0 (no failure state)" || no "(h) post-retract run exited $rc_hr"
+  printf '%s\n' "$out_hr" | grep -q 'written: 1' \
+    && ok "(h) DOCUMENTED LIMIT holds: a retracted seed IS re-offered and rewritten (retract is not an opt-out)" \
+    || no "(h) post-retract behaviour changed — update the honest-limits docs in commands/setup.md and seed-rules.sh's header"
+  printf '%s\n' "$out_hr" | grep -qi 'RETRACT IS NOT A PERMANENT OPT-OUT' \
+    && ok "(h) the terminal output states the retraction limit before writing" || no "(h) the retraction limit is not disclosed in the output"
+fi
+
+# ============================================================================
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

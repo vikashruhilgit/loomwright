@@ -59,12 +59,42 @@
 # user-initiated command — but it takes an explicit `--confirm`, so a cron job, a hook or a
 # careless `bash seed-rules.sh seed` writes nothing.
 #
-# IDEMPOTENCE. A seed is SKIPPED when a rule carrying the identical `statement` already exists in
-# any well-formed `.agent/rules/*.json` array — checked BEFORE the writer is invoked, on both the
-# plan and the write path. So a second `/setup rules` reports "already seeded", writes nothing,
-# creates no duplicate and still exits 0. (Skipping is done here rather than left to the writer's
-# own duplicate check: that check REFUSES with a non-zero status, which would turn a correct,
-# already-configured second run into a reported failure.)
+# IDEMPOTENCE, AND WHY IT IS PROVENANCE-KEYED RATHER THAN TEXT-KEYED. A seed is SKIPPED when it is
+# already PRESENT in any well-formed `.agent/rules/*.json` array — checked BEFORE the writer is
+# invoked, on both the plan and the write path. So a second `/setup rules` reports "already seeded",
+# writes nothing, creates no duplicate and still exits 0. (Skipping is done here rather than left to
+# the writer's own duplicate check: that check REFUSES with a non-zero status, which would turn a
+# correct, already-configured second run into a reported failure.)
+#
+# PRESENT deliberately does NOT mean "a rule with this exact statement exists". It did once, and
+# that made the skip STRICTLY NARROWER than the refusal it exists to avoid: this pre-check compared
+# statements EXACTLY while the writer's duplicate validator refuses on NEAR-identical text. Every
+# curated seed fell in that gap. The store is committed and human-curated — the `/setup rules` docs
+# tell a user in as many words that a seed they disagree with is meant to be EDITED — and one word
+# changed in a seeded statement put the module into a PERMANENT failure state: `check` reported the
+# seed ABSENT, `seed --confirm` therefore called the writer, the writer REFUSED the near-duplicate,
+# and the run exited 1 for good, on a correctly-configured repo. `seed_present` is therefore keyed
+# on the SEEDED STAMP, which survives an edit to the prose:
+#   · `.statement == <the seed's statement>` — exact, any provenance. Keeps a hand-authored
+#     identical rule counting as present, exactly as before, and covers a seeded rule whose
+#     provenance a user has since rewritten.
+#   · OR `.provenance.source == setup:rules-seed` AND the rule belongs to this seed's CATEGORY —
+#     matched either on `.category` or on the `<category>-` prefix of the frozen `.id`, so a
+#     re-categorised seed is still recognised. Statement text is not consulted at all on this
+#     branch, which is the point: an edited seed is a CURATED seed, not a missing one.
+# CATEGORY IS THE PER-SEED KEY ONLY BECAUSE THE TABLE HAS ONE ROW PER CATEGORY, and that is not
+# left to a future editor's memory: a duplicate category in `seed_table` is a hard error at startup
+# (see the invariant directly below the table). Were two seeds to share a category, one curated
+# survivor would mask the other's absence and it would silently never be seeded.
+#
+# WHAT IS STILL NOT IDEMPOTENT — RETRACTION. Editing a seed is durable curation; RETRACTING one is
+# not. `add-rule.sh --retract` removes the object outright, so nothing remains to carry the stamp,
+# and a later `/setup rules` re-offers and rewrites that seed at exit 0 with no record that the user
+# rejected it. This is a KNOWN LIMIT, not an oversight: recording a retraction needs somewhere to
+# put it, and the rule schema is FROZEN (7 members) while a sidecar would be the same freeze
+# violation one layer out. So the honest statement — made here, in the module docs and in the
+# terminal output — is that RETRACT IS NOT A PERMANENT OPT-OUT. To keep a seed out today, edit it
+# (durable) or do not re-run the module.
 #
 # Usage:
 #   seed-rules.sh check                        # read-only: which seeds are present / absent
@@ -120,6 +150,17 @@ error-handling|Surface a failure instead of swallowing it. Never discard an erro
 SEEDS
 }
 
+# ---- THE ONE-ROW-PER-CATEGORY INVARIANT (asserted, never assumed) -----------
+# `seed_present` keys a seeded rule to its seed by CATEGORY (see the IDEMPOTENCE block above), which
+# is a faithful key only while every category appears at most once in the table. Adding a second row
+# to an existing category would make the first curated survivor answer for both, and the second seed
+# would then be silently skipped forever — a quiet mismatch, exactly the failure class this script
+# was fixed for. So the table is checked at startup and a duplicate category is a LOUD failure: a
+# future editor adding such a row cannot get a green run out of it.
+_dupe_cat="$(seed_table | cut -d'|' -f1 | LC_ALL=C sort | LC_ALL=C uniq -d | head -1 || true)"
+[ -z "$_dupe_cat" ] || die "seed table invariant violated: category '$_dupe_cat' appears in more than one row. seed_present() keys presence on (seeded stamp + category), so two seeds sharing a category would make one of them permanently unseedable — give the second seed its own category, or re-key seed_present per seed before adding the row"
+unset _dupe_cat
+
 # ---------------------------------------------------------------------------
 # Arg parsing. Same flat namespace as the sibling setup helpers; the subcommand is positional.
 # ---------------------------------------------------------------------------
@@ -165,23 +206,48 @@ fi
 RULES_DIR="$ROOT/.agent/rules"
 
 # ---------------------------------------------------------------------------
-# seed_present <statement> — 0 when a rule carrying this EXACT statement already exists in any
-# WELL-FORMED `.agent/rules/*.json` array. Only array files are searched, mirroring the writer's
-# and the reader's own fail-safe scope: a malformed sibling contributes nothing either way.
-# Sets SEED_PRESENT_FILE / SEED_PRESENT_ID for the report line.
+# seed_present <category> <statement> — 0 when this seed is already PRESENT in any WELL-FORMED
+# `.agent/rules/*.json` array. PRESENT is the two-branch, provenance-keyed test described in the
+# IDEMPOTENCE block at the top of this file: an EXACT statement match (any provenance), OR a rule
+# stamped `provenance.source = setup:rules-seed` belonging to this seed's category — the latter
+# recognises a seed whose statement a user has since EDITED, which is curation, not absence.
+# Only array files are searched, mirroring the writer's and the reader's own fail-safe scope: a
+# malformed sibling contributes nothing either way.
+# Sets SEED_PRESENT_FILE / SEED_PRESENT_ID / SEED_PRESENT_HOW (exact|curated) for the report line.
 # ---------------------------------------------------------------------------
 SEED_PRESENT_FILE=""
 SEED_PRESENT_ID=""
+SEED_PRESENT_HOW=""
 seed_present() {
-  local st="$1" rf id
-  SEED_PRESENT_FILE=""; SEED_PRESENT_ID=""
+  local cat="$1" st="$2" rf hit
+  SEED_PRESENT_FILE=""; SEED_PRESENT_ID=""; SEED_PRESENT_HOW=""
   [ -d "$RULES_DIR" ] || return 1
   while IFS= read -r rf; do
     [ -n "$rf" ] || continue
     jq -e 'type=="array"' "$rf" >/dev/null 2>&1 || continue
-    id="$(jq -r --arg s "$st" 'first(.[]? | select((type=="object") and (.statement == $s)) | .id) // empty' "$rf" 2>/dev/null || true)"
-    if [ -n "$id" ]; then
-      SEED_PRESENT_FILE="$rf"; SEED_PRESENT_ID="$id"
+    # Every member is read defensively (`| strings`, an explicit object test on `.provenance`): a
+    # stray non-object element or a hand-mangled member must not abort the scan of a whole file.
+    hit="$(jq -r --arg s "$st" --arg c "$cat" --arg src "$SEED_SOURCE" '
+        first(
+          .[]?
+          | select(type == "object")
+          | select(
+              ((.statement | strings) == $s)
+              or (
+                ((.provenance | if type == "object" then (.source | strings) else empty end) == $src)
+                and (
+                  ((.category | strings) == $c)
+                  or (((.id | strings) // "") | startswith($c + "-"))
+                )
+              )
+            )
+          | [ ((.id | strings) // ""), (if ((.statement | strings) == $s) then "exact" else "curated" end) ]
+          | @tsv
+        ) // empty' "$rf" 2>/dev/null || true)"
+    if [ -n "$hit" ]; then
+      SEED_PRESENT_FILE="$rf"
+      SEED_PRESENT_ID="${hit%%$'\t'*}"
+      SEED_PRESENT_HOW="${hit##*$'\t'}"
       return 0
     fi
   done < <(LC_ALL=C find "$RULES_DIR" -maxdepth 1 -type f -name '*.json' 2>/dev/null | LC_ALL=C sort)
@@ -210,6 +276,12 @@ print_disclosure() {
   echo "  · check is null on every seed — rules are DATA, never executed, advisory, and"
   echo "    subordinate to this project's own CLAUDE.md. This module adds NO gate;"
   echo "  · edit or retract any of them: they are a starting point, not a verdict on your repo."
+  echo "    EDIT is durable — a rule keeping the seeded stamp for its category counts as seeded"
+  echo "    whatever you rewrite it to say, so a later run reports it present and rewrites nothing."
+  echo "    RETRACT IS NOT A PERMANENT OPT-OUT: it removes the object, so nothing is left to carry"
+  echo "    the stamp and a later /setup rules will offer and write that seed again. Recording a"
+  echo "    refusal would need a store the frozen rule schema has no room for. To keep a seed out"
+  echo "    today, edit it down to what you do want, or do not re-run this module."
   echo
 }
 
@@ -236,9 +308,15 @@ while IFS='|' read -r category statement; do
   [ -n "$category" ] || continue
   [ -n "$statement" ] || continue
 
-  if seed_present "$statement"; then
+  if seed_present "$category" "$statement"; then
     PRESENT=$((PRESENT + 1))
     printf 'seed: ALREADY SEEDED  [%s]  id=%s  (in %s)\n' "$category" "$SEED_PRESENT_ID" "$SEED_PRESENT_FILE"
+    # A CURATED match is reported as such: the stored rule no longer carries the shipped wording, and
+    # the shipped wording below is the seed this repo started from, NOT what the store says today.
+    if [ "$SEED_PRESENT_HOW" = "curated" ]; then
+      printf '  (curated: the stored rule carries the seeded stamp for this category but its own\n'
+      printf '   wording — your edit stands and is never overwritten. Shipped seed text was:)\n'
+    fi
     printf '  %s\n\n' "$statement"
     continue
   fi
