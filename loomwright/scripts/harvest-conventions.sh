@@ -407,8 +407,14 @@ path_matches_globs() {
 # derive_applies_to <rowpaths-file> <scratch-dir> — AC2. Derives a bounded `applies_to` array from
 # the `changed_paths` of the motivating findings. The input is one `<finding-ordinal>\t<live path>`
 # pair per line, and the derivation is a GREEDY SET COVER OVER FINDINGS, not a frequency count over
-# paths: at each step it takes the two-segment prefix that covers the most still-uncovered FINDINGS,
+# paths: at each step it takes the DIRECTORY prefix that covers the most still-uncovered FINDINGS,
 # and stops once the chosen globs reach $APPLIES_TO_COVER% of findings or $MAX_GLOBS is reached.
+# "Directory prefix" is depth-dependent and that is the whole subtlety: `a/b/c.md` yields `a/b/*`,
+# but a TWO-segment path `a/b.json` yields `a/*`, because its second segment is the file itself —
+# `a/b.json/*` would match only paths nested under a directory named `b.json`, i.e. never the path
+# it came from. A derivation that cannot match its own motivating path is a structurally dead scope;
+# scope_fidelity below reports it as 0%, which is how this was caught, but the derivation is the
+# thing that has to be right.
 # Ranking by findings rather than by raw path count is deliberate and it changes the answer: the
 # ledger records `changed_paths` per PR, so one PR that touched 40 files under a single directory
 # would otherwise outrank a directory implicated by a dozen separate findings — the scope would
@@ -426,8 +432,14 @@ derive_applies_to() {
   [ "$rowtotal" -gt 0 ] || return 0
 
   # Reduce each (finding, path) pair to (finding, prefix), deduped.
+  # THREE cases, and the two-segment one is not the three-segment one with a shorter path (see the
+  # header note): `a/b/c.md` has a DIRECTORY at s[2] so `a/b/*` routes it, but `a/b` is a FILE at
+  # s[2], and `a/b/*` would then match only things nested under a directory named `b` — never the
+  # file it was derived from. Its directory prefix is `a/*`.
   awk -F'\t' '{ n=split($2, s, "/");
-                if (n >= 2) print $1 "\t" s[1] "/" s[2] "/*"; else print $1 "\t" $2 }' "$src" \
+                if (n >= 3)      print $1 "\t" s[1] "/" s[2] "/*";
+                else if (n == 2) print $1 "\t" s[1] "/*";
+                else             print $1 "\t" $2 }' "$src" \
     | LC_ALL=C sort -u > "$rem"
 
   while [ "$taken" -lt "$MAX_GLOBS" ]; do
@@ -460,15 +472,20 @@ derive_applies_to() {
 # disagree.
 # ---------------------------------------------------------------------------
 scope_fidelity() {
-  local src="$1" globs="$2" total=0 matched=0 row paths pct p ok
+  local src="$1" globs="$2" total=0 matched=0 row pct p ok
   while IFS= read -r row; do
     [ -n "$row" ] || continue
     total=$((total + 1))
     ok=0
-    paths="$(awk -F'\t' -v r="$row" '$1==r {print $2}' "$src")"
-    for p in $paths; do
+    # Read the row's paths LINE-wise, never by word-splitting: a changed_path containing a space
+    # would otherwise be shredded into tokens that are matched independently, which can report both
+    # a false match and a false miss for the same finding.
+    while IFS= read -r p; do
+      [ -n "$p" ] || continue
       path_matches_globs "$p" "$globs" && { ok=1; break; }
-    done
+    done <<EOP
+$(awk -F'\t' -v r="$row" '$1==r {print $2}' "$src")
+EOP
     matched=$((matched + ok))
   done <<EOF
 $(cut -f1 "$src" | LC_ALL=C sort -u)
@@ -744,19 +761,25 @@ EMITTED=0
 MAPPED=0
 DEFERRED=0
 FIDELITY_TOTAL=0; FIDELITY_MATCHED=0
-# FIDELITY_ALL_TOTAL is the HONEST denominator: every motivating finding of a scoped rule, including
-# the ones the fidelity check cannot see. FIDELITY_TOTAL counts only the CHECKABLE ones (a finding
+# FIDELITY_ALL_TOTAL is the HONEST denominator: every motivating finding of every EMITTED rule —
+# scoped or repo-wide — including the ones the fidelity check cannot see. FIDELITY_TOTAL counts only the CHECKABLE ones (a finding
 # with at least one still-tracked changed_path). Both are printed. Reporting only the first would be
 # a metric that flatters itself by silently dropping the evidence that could contradict it — the
 # exact failure AC4's "computed, not asserted" exists to prevent.
 FIDELITY_ALL_TOTAL=0
 NULL_SCOPE_N=0
+# Themes that actually got a rule. NOT the same set as $RULE_THEMES: a theme bucketed `rules` can
+# still be deferred by $CAP, in which case its findings are UNMAPPED and belong in the remainder
+# breakdown below. Keying that breakdown on $RULE_THEMES made the itemised list under-sum the very
+# total it was printed under, silently.
+EMITTED_THEMES=""
 
 emit_rule() {   # emit_rule <theme> <category> <statement> <origin-label>
   local k="$1" category="$2" statement="$3" origin="$4"
   local globs just="" fid_list fid_n sf_m sf_t sf_p sf_all ex_nopath ex_dead
 
   if [ "$EMITTED" -ge "$CAP" ]; then DEFERRED=$((DEFERRED + 1)); return 0; fi
+  EMITTED_THEMES="$EMITTED_THEMES $k"
 
   mkdir -p "$WORK/derive.$k"
   globs="$(derive_applies_to "$WORK/rowpaths.$k" "$WORK/derive.$k")"
@@ -766,6 +789,13 @@ emit_rule() {   # emit_rule <theme> <category> <statement> <origin-label>
   fi
 
   fid_n="$(grep -c . "$WORK/theme.$k.tsv" 2>/dev/null || true)"; is_num "$fid_n" || fid_n=0
+  # The HONEST denominator accumulates for EVERY emitted rule, scoped or repo-wide. Accumulating it
+  # only in the scoped branch would have dropped a null-scope rule's findings from BOTH sides of the
+  # ratio — and a rule goes null-scope precisely BECAUSE none of its changed_paths is still live,
+  # which is the very population the second figure exists to keep visible. Dropping them would make
+  # a batch of one 10/10 scoped rule plus a 5-finding repo-wide rule print "100% (10 of 10)", the
+  # self-flattering arithmetic this two-number design was built to prevent.
+  FIDELITY_ALL_TOTAL=$((FIDELITY_ALL_TOTAL + fid_n))
   fid_list="$(awk -F'\t' '{print $1}' "$WORK/theme.$k.tsv" | head -12 | tr '\n' ' ')"
   [ "$fid_n" -gt 12 ] && fid_list="$fid_list… (+$((fid_n - 12)) more)"
 
@@ -782,7 +812,6 @@ emit_rule() {   # emit_rule <theme> <category> <statement> <origin-label>
       set -- $(scope_fidelity "$WORK/rowpaths.$k" "$globs")
       sf_m="$1"; sf_t="$2"; sf_p="$3"
       FIDELITY_MATCHED=$((FIDELITY_MATCHED + sf_m)); FIDELITY_TOTAL=$((FIDELITY_TOTAL + sf_t))
-      FIDELITY_ALL_TOTAL=$((FIDELITY_ALL_TOTAL + fid_n))
       # The two excluded populations, NAMED rather than absorbed into a flattering percentage.
       ex_nopath="$(awk -F'\t' '$6==""' "$WORK/theme.$k.tsv" 2>/dev/null | grep -c . || true)"
       is_num "$ex_nopath" || ex_nopath=0
@@ -793,7 +822,7 @@ emit_rule() {   # emit_rule <theme> <category> <statement> <origin-label>
         "$fid_n" "$sf_all" "$sf_m" "$fid_n" "$ex_nopath" "$ex_dead"
     else
       printf '     applies_to: null\n'
-      printf '     scope fidelity: n/a (repo-wide)\n'
+      printf '     scope fidelity: n/a (repo-wide) — but all %s of its motivating findings DO count in the all-findings aggregate denominator below, none of them as matched. They are not quietly excluded: a repo-wide fallback happens exactly when no changed_path survives, so dropping them would remove the least flattering evidence in the batch from the honest figure.\n' "$fid_n"
       printf '     %s\n' "$just"
     fi
     printf '     motivating findings (%s): %s\n' "$fid_n" "$fid_list"
@@ -892,11 +921,22 @@ fi
 echo "--- metrics (AC4) — computed from the run above, not asserted ---"
 echo "  coverage:        $MAPPED/$CM_TOTAL convention_mismatch findings (${COV_PCT}%) map to >= 1 proposed rule"
 echo "                   UNMAPPED REMAINDER: $COV_UNMAPPED findings, of which $UNTHEMED_N matched no theme in the lexicon"
-echo "                   and the rest belong to themes below the $MIN_SUPPORT-finding support floor:"
+echo "                   and the rest belong to the themes itemised below, EACH WITH THE REASON it"
+echo "                   emitted no rule. The reason is printed rather than assumed: a theme can be"
+echo "                   unmapped for three different causes, and only one of them is the support"
+echo "                   floor. Every unmapped theme appears here, so this list sums to"
+echo "                   $COV_UNMAPPED minus the $UNTHEMED_N unthemed findings — it cannot under-state its own total:"
 for k in $THEME_KEYS; do
   n="$(cat "$WORK/support.$k" 2>/dev/null || echo 0)"
-  case " $RULE_THEMES " in *" $k "*) continue ;; esac
-  [ "$n" -gt 0 ] && printf '                     %-24s %s\n' "$k" "$n"
+  case " $EMITTED_THEMES " in *" $k "*) continue ;; esac
+  [ "$n" -gt 0 ] || continue
+  why="below the $MIN_SUPPORT-finding support floor"
+  case " $RULE_THEMES " in
+    *" $k "*) why="reached the support floor but was DEFERRED BY THE cap=$CAP batch bound — not a thin theme" ;;
+    *) [ "$(cat "$WORK/stages.$k" 2>/dev/null || echo mixed)" = "unknowable-only" ] \
+         && why="every finding is flow_stage=unknowable (support $n is NOT the reason)" ;;
+  esac
+  printf '                     %-24s %-4s %s\n' "$k" "$n" "($why)"
 done
 if [ "$EMITTED" -eq 0 ]; then
   echo "  dedupe rate:     n/a (0 rules emitted)"
@@ -904,7 +944,7 @@ else
   echo "  dedupe rate:     $((DEDUPE / 100)).$(printf '%02d' $((DEDUPE % 100))) findings distilled per rule emitted ($MAPPED in / $EMITTED out)"
 fi
 echo "  scope fidelity:  aggregate ${AGG_FID}% ($FIDELITY_MATCHED of $FIDELITY_TOTAL CHECKABLE motivating findings routed by their own rule's derived globs)"
-echo "                   over ALL motivating findings: ${AGG_FID_ALL}% ($FIDELITY_MATCHED of $FIDELITY_ALL_TOTAL) — the $((FIDELITY_ALL_TOTAL - FIDELITY_TOTAL)) difference is findings whose ledger record carries no changed_paths, or none still tracked by git; they cannot be matched against a glob either way. Both figures are printed because the first one alone would flatter the derivation by dropping its own unfalsifiable evidence; per-rule breakdowns are with each rule above"
+echo "                   over ALL motivating findings: ${AGG_FID_ALL}% ($FIDELITY_MATCHED of $FIDELITY_ALL_TOTAL) — the $((FIDELITY_ALL_TOTAL - FIDELITY_TOTAL)) difference is findings whose ledger record carries no changed_paths, or none still tracked by git; they cannot be matched against a glob either way. This denominator spans EVERY emitted rule, including the $NULL_SCOPE_N repo-wide one(s) whose findings are unmatchable by construction — excluding those would drop the batch's least flattering evidence from the very figure meant to expose it. Both figures are printed because the first one alone would flatter the derivation by dropping its own unfalsifiable evidence; per-rule breakdowns are with each rule above"
 echo "                   $NULL_SCOPE_N proposal(s) fell back to a repo-wide (null) scope, each with the stated justification shown above"
 if [ "$DEDUPE_VERDICT" = "FAILURE" ]; then
   echo "  DISTILLATION FAILURE (AC5): at $((DEDUPE / 100)).$(printf '%02d' $((DEDUPE % 100))) findings per rule this batch is approaching one rule per"

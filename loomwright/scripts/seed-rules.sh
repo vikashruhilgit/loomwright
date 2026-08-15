@@ -130,7 +130,12 @@ CONFIRM_FLAG=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    check|seed)  [ -z "$SUBCMD" ] && SUBCMD="$1"; shift ;;
+    # A SECOND subcommand is a hard error, never a silent drop. Guarding only the assignment while
+    # shifting unconditionally meant `seed check` kept `seed`, discarded `check` with no diagnostic,
+    # and went on to WRITE — the opposite of what the caller asked for. Every other malformed input
+    # in this family (category containment, --retract exclusivity) dies; so does this one.
+    check|seed)  [ -z "$SUBCMD" ] || die "only one subcommand may be given (already have '$SUBCMD', then got '$1')"
+                 SUBCMD="$1"; shift ;;
     --root)      [ "$#" -ge 2 ] || die "--root requires a path argument"; ROOT_OVERRIDE="$2"; shift 2 ;;
     --add-rule)  [ "$#" -ge 2 ] || die "--add-rule requires a path argument"; ADD_RULE="$2"; shift 2 ;;
     --confirm)   CONFIRM_FLAG="--confirm"; shift ;;

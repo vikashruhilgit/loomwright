@@ -22,6 +22,12 @@
 #   (J) column 6's US list separator is load-bearing (a multi-path fixture whose ONLY live path is the
 #       second array element), and the scope-fidelity denominator filter is DISCLOSED — both the
 #       checkable figure and the honest all-findings figure are printed, with the exclusions counted.
+#   (K) a derived glob MATCHES its own motivating path, asserted through the real bash `case` matcher
+#       rather than by glob shape — with the previously-unfixtured TWO-segment path.
+#   (L) a repo-wide (null-scope) rule's findings stay in the honest all-findings denominator.
+#   (N) a changed_path containing a space is matched WHOLE, never IFS-word-split.
+#   (O) the unmapped remainder itemises every unmapped theme — including one deferred by the cap —
+#       with its real reason, and the itemisation sums to its own stated headline.
 #
 # MUTATION CONTROLS. This repo has repeatedly shipped guards that were vacuous until mutated, so the
 # three load-bearing assertions here are each proved non-vacuous by breaking the mechanism they
@@ -34,6 +40,13 @@
 #   (M3) make compose_add_rule pass `--check`  ⇒ the "never synthesises a check" assertion fires.
 #   (M5) join column 6 with the empty string instead of $US ⇒ (J)'s counts collapse AND (B)'s
 #        applies_to derivation breaks. (M5b) is the proof that (B) is no longer self-masking.
+#   (M6) restore the old `s[1]"/"s[2]"/*"` reduction for two-segment paths ⇒ the derived glob stops
+#        matching its own source path and (K)'s fidelity falls to 0%.
+#   (M7) accumulate FIDELITY_ALL_TOTAL only in the scoped branch ⇒ (L)'s 9-finding batch reports as
+#        if it had 5, at a flattering 100%.
+#   (M8) re-introduce the unquoted word-split over a row's paths ⇒ (N)'s spaced path stops matching.
+#   (M9) key the unmapped-remainder breakdown on $RULE_THEMES again ⇒ (O)'s itemisation under-sums
+#        its own stated total.
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -636,6 +649,205 @@ if ! cmp -s "$HARVEST" "$MUT4" && grep -q 'reduce inputs as $r (0; . + 1)' "$MUT
   fi
 else
   no "(M4) the denominator mutation did not land"
+fi
+
+# ---------------------------------------------------------------------------
+# (K) A DERIVED GLOB MUST MATCH THE PATH IT WAS DERIVED FROM. Asserted as a MATCH under the same
+# bash `case` matcher read-rules.sh uses, never as the glob's textual shape — the bug this section
+# closes produced a perfectly plausible-LOOKING glob.
+# WHAT WAS WRONG: the reducer took `s[1]"/"s[2]"/*"` for every path with >= 2 segments. For a
+# TWO-segment path the second segment is the FILE, so `loomwright/plugin.json` became
+# `loomwright/plugin.json/*` — a pattern that matches only things nested under a directory named
+# `plugin.json`, i.e. never its own source path. Two-segment paths are common here
+# (`loomwright/plugin.json`, `.claude-plugin/marketplace.json`), and no fixture used one, which is
+# exactly why every existing assertion stayed green.
+# ---------------------------------------------------------------------------
+echo "(K) a derived glob matches its own motivating path — including the two-segment case"
+RK="$(new_repo)"
+mkdir -p "$RK/pkg"
+printf '{"v":"1"}\n' > "$RK/pkg/manifest.json"
+( cd "$RK" && git add -A && git commit -qm two-segment ) >/dev/null 2>&1
+{ rec 1 "count drift in the manifest" '["pkg/manifest.json"]' 5; } > "$RK/.supervisor/postmortem/results.jsonl"
+run_harvest "$RK" --session-id "fx-k" --min-support 4 --cap 3 --no-writer
+printf '%s\n' "$OUT" > "$ROOT/k.txt"
+k_globs="$(sed -n 's/^     applies_to: \[\(.*\)\]$/\1/p' "$ROOT/k.txt" | head -1)"
+# THE assertion: run the derived glob through the real matcher against the real source path.
+k_match=0
+oldIFS="$IFS"; IFS=','
+for g in $k_globs; do
+  g="${g# }"
+  case "pkg/manifest.json" in $g) k_match=1 ;; esac
+done
+IFS="$oldIFS"
+if [ "$k_match" -eq 1 ]; then
+  ok "(k1) the glob derived from a 2-segment path ([$k_globs]) actually MATCHES pkg/manifest.json under bash \`case\`"
+else
+  no "(k1) the derived scope [$k_globs] does not match its own motivating path pkg/manifest.json"
+fi
+grep -qF 'scope fidelity: 100% (5 of the 5 CHECKABLE' "$ROOT/k.txt" \
+  && ok "(k2) the harvester's own fidelity check agrees: 5 of 5 checkable findings routed" \
+  || no "(k2) fidelity is not 100% on a fixture where every path is live and in scope: $(grep -F 'scope fidelity:' "$ROOT/k.txt" | head -1)"
+# A >= 3-segment path is a SEPARATE case and must not regress: there s[2] IS a directory.
+grep -qE '^     applies_to: \[.*src/a/\*' "$ROOT/b.txt" \
+  && ok "(k3) the >=3-segment case still derives the directory prefix src/a/* (checked against (B), whose paths are 3-segment)" \
+  || no "(k3) the >=3-segment derivation regressed"
+
+# ---- MUTATION CONTROL M6: restore the old two-segment reduction ----
+MUT6="$ROOT/mut-2seg.sh"
+sed 's@s\[1\] "/\*"@s[1] "/" s[2] "/*"@' "$HARVEST" > "$MUT6"
+if ! cmp -s "$HARVEST" "$MUT6" && bash -n "$MUT6" 2>/dev/null; then
+  M6OUT="$( bash "$MUT6" --root "$RK" --session-id fx-m6 --min-support 4 --cap 3 --no-writer 2>&1 )" || true
+  m6_globs="$(printf '%s\n' "$M6OUT" | sed -n 's/^     applies_to: \[\(.*\)\]$/\1/p' | head -1)"
+  m6_match=0
+  oldIFS="$IFS"; IFS=','
+  for g in $m6_globs; do g="${g# }"; case "pkg/manifest.json" in $g) m6_match=1 ;; esac; done
+  IFS="$oldIFS"
+  if [ "$m6_match" -eq 1 ]; then
+    no "(M6) REFUTED: the old reduction still matches its own path — (k1) is vacuous"
+  else
+    ok "(M6) CONFIRMED: the old reduction yields [$m6_globs], which does NOT match pkg/manifest.json ($(printf '%s\n' "$M6OUT" | grep -F 'scope fidelity:' | head -1 | sed 's/^ *//')) — (k1)/(k2) are load-bearing"
+  fi
+else
+  no "(M6) the two-segment mutation did not land"
+fi
+
+# ---------------------------------------------------------------------------
+# (L) A NULL-SCOPE RULE'S FINDINGS STAY IN THE HONEST DENOMINATOR. The all-findings figure exists to
+# stop the checkable one flattering itself; accumulating it only in the scoped branch dropped the
+# repo-wide rules — the population that is unmatchable BY CONSTRUCTION — from both sides at once.
+# Fixture, by construction: 5 findings on a live path (scoped, all matched) + 4 findings whose only
+# path is dead (repo-wide fallback). Checkable 5 of 5 = 100%; honest 5 of 9 = 55%.
+# ---------------------------------------------------------------------------
+echo "(L) the all-findings fidelity denominator spans repo-wide rules too"
+RL="$(new_repo)"
+{ rec 1 "count drift in the banner"  '["src/a/x.md"]'      5
+  rec 2 "stale prose in a dead tree" '["gone/dead/a.md"]'  4
+} > "$RL/.supervisor/postmortem/results.jsonl"
+run_harvest "$RL" --session-id "fx-l" --min-support 4 --cap 3 --no-writer
+printf '%s\n' "$OUT" > "$ROOT/l.txt"
+grep -qF '1 proposal(s) fell back to a repo-wide (null) scope' "$ROOT/l.txt" \
+  && ok "(l1) the fixture does produce exactly one repo-wide proposal alongside one scoped proposal" \
+  || no "(l1) the fixture did not produce a null-scope proposal: $(grep -F 'repo-wide (null) scope' "$ROOT/l.txt" | head -1)"
+grep -qF 'aggregate 100% (5 of 5 CHECKABLE' "$ROOT/l.txt" \
+  && ok "(l2) the CHECKABLE aggregate is 5 of 5 — the repo-wide rule contributes nothing to it, correctly" \
+  || no "(l2) wrong checkable aggregate: $(grep -F 'scope fidelity:  aggregate' "$ROOT/l.txt" | head -1)"
+if grep -qF 'over ALL motivating findings: 55% (5 of 9)' "$ROOT/l.txt"; then
+  ok "(l3) the HONEST aggregate is 5 of 9 — the repo-wide rule's 4 findings are in the denominator, not dropped from it"
+else
+  no "(l3) the null-scope rule's findings are missing from the honest denominator: $(grep -F 'over ALL motivating findings' "$ROOT/l.txt" | head -1)"
+fi
+
+# ---- MUTATION CONTROL M7: accumulate the honest denominator only for SCOPED rules ----
+MUT7="$ROOT/mut-fidden.sh"
+sed 's@^  FIDELITY_ALL_TOTAL=$((FIDELITY_ALL_TOTAL + fid_n))$@  [ -n "$globs" ] \&\& FIDELITY_ALL_TOTAL=$((FIDELITY_ALL_TOTAL + fid_n))@' "$HARVEST" > "$MUT7"
+if ! cmp -s "$HARVEST" "$MUT7" && bash -n "$MUT7" 2>/dev/null; then
+  M7OUT="$( bash "$MUT7" --root "$RL" --session-id fx-m7 --min-support 4 --cap 3 --no-writer 2>&1 )" || true
+  if printf '%s\n' "$M7OUT" | grep -qF 'over ALL motivating findings: 55% (5 of 9)'; then
+    no "(M7) REFUTED: the mutant still reports 5 of 9 — (l3) is vacuous"
+  else
+    ok "(M7) CONFIRMED: excluding repo-wide rules turns the honest figure into '$(printf '%s\n' "$M7OUT" | sed -n 's/.*over ALL motivating findings: \([0-9]*% ([0-9]* of [0-9]*)\).*/\1/p' | head -1)' — a batch of 9 findings reported as if it had 5"
+  fi
+else
+  no "(M7) the fidelity-denominator mutation did not land"
+fi
+
+# ---------------------------------------------------------------------------
+# (N) A PATH CONTAINING A SPACE IS ONE PATH. scope_fidelity read its row's paths with an unquoted
+# `for p in $paths`, so a spaced path was IFS-shredded into tokens matched independently — which can
+# report a match the real matcher would not, and a miss where the whole path does match. This fixture
+# takes the second form: a tracked ROOT file `my notes.md` yields the literal glob `my notes.md`,
+# which the whole path matches and neither of its two tokens does.
+# ---------------------------------------------------------------------------
+echo "(N) a changed_path containing a space is matched whole, not word-split"
+RN="$(new_repo)"
+printf 'notes\n' > "$RN/my notes.md"
+( cd "$RN" && git add -A && git commit -qm spaced ) >/dev/null 2>&1
+{ rec 1 "count drift in the notes" '["my notes.md"]' 5; } > "$RN/.supervisor/postmortem/results.jsonl"
+run_harvest "$RN" --session-id "fx-n" --min-support 4 --cap 3 --no-writer
+printf '%s\n' "$OUT" > "$ROOT/n.txt"
+grep -qF 'applies_to: [my notes.md]' "$ROOT/n.txt" \
+  && ok "(n1) the spaced root path derives the literal glob 'my notes.md'" \
+  || no "(n1) unexpected scope: $(grep -F 'applies_to:' "$ROOT/n.txt" | head -1)"
+grep -qF 'scope fidelity: 100% (5 of the 5 CHECKABLE' "$ROOT/n.txt" \
+  && ok "(n2) all 5 findings on the spaced path are matched — the path is matched whole" \
+  || no "(n2) the spaced path was not matched against its own glob: $(grep -F 'scope fidelity:' "$ROOT/n.txt" | head -1)"
+
+# ---- MUTATION CONTROL M8: restore the unquoted word-split ----
+# The mutant reads the SAME here-doc, but unquoted-word-splits it exactly as the old
+# `for p in $paths` did — the redirection still applies to the whole compound command.
+MUT8="$ROOT/mut-split.sh"
+sed 's@^    while IFS= read -r p; do$@    for p in $(cat); do@' "$HARVEST" > "$MUT8"
+if ! cmp -s "$HARVEST" "$MUT8" && grep -qF 'for p in $(cat); do' "$MUT8" && bash -n "$MUT8" 2>/dev/null; then
+  M8OUT="$( bash "$MUT8" --root "$RN" --session-id fx-m8 --min-support 4 --cap 3 --no-writer 2>&1 )" || true
+  if printf '%s\n' "$M8OUT" | grep -qF '5 of the 5 CHECKABLE'; then
+    no "(M8) REFUTED: the word-splitting version still matches the spaced path — (n2) is vacuous"
+  else
+    ok "(M8) CONFIRMED: with the unquoted split restored the same fixture reports '$(printf '%s\n' "$M8OUT" | grep -F 'scope fidelity:' | head -1 | sed 's/^ *//')' — (n2) is load-bearing"
+  fi
+else
+  no "(M8) the word-split mutation did not land"
+fi
+
+# ---------------------------------------------------------------------------
+# (O) THE UNMAPPED REMAINDER ITEMISES EVERY UNMAPPED THEME, WITH ITS REAL REASON. The breakdown was
+# keyed on $RULE_THEMES (themes bucketed `rules`), so a theme that reached the support floor and was
+# then DEFERRED BY THE CAP was skipped from the list while still counting toward the stated total —
+# the itemisation under-summed its own headline. The blanket label "below the support floor" was
+# also wrong for a theme excluded as flow_stage=unknowable-only, which can sit far above the floor.
+# Fixture: cap=1, so of two rule-eligible themes only one is emitted; plus a third theme above the
+# floor whose findings are ALL unknowable. Unmapped = 4 (cap-deferred) + 5 (unknowable) = 9.
+# ---------------------------------------------------------------------------
+echo "(O) the unmapped remainder itemises cap-deferred and unknowable-only themes, with the right reason"
+rec_stage() {   # rec_stage <num> <evidence> <paths-json> <n-findings> <flow_stage>
+  jq -c -n --argjson num "$1" --arg ev "$2" --argjson paths "$3" --argjson n "$4" --arg st "$5" \
+    '{schema_version:1, ts:"2026-01-01T00:00:00Z", repo:"o/r", number:$num,
+      agent_generated_guess:true, review_rounds:1, additions:1, deletions:1, changed_files:1,
+      changed_paths:$paths, self_heal_misses:1,
+      categories: [range(0;$n) | {round:1, class:"convention_mismatch", self_heal_miss:true,
+                                 flow_stage:$st, evidence:$ev}],
+      flow_stages:{launch_pad:0,worker:1,self_heal:0,unknowable:0}, summary:"s"}'
+}
+RO="$(new_repo)"
+{ rec       1 "count drift in the banner" '["src/a/x.md"]' 6
+  rec       2 "stale prose in the guide"  '["src/b/z.sh"]' 4
+  rec_stage 3 "wording nit again"         '["src/a/y.md"]' 5 unknowable
+} > "$RO/.supervisor/postmortem/results.jsonl"
+run_harvest "$RO" --session-id "fx-o" --min-support 4 --cap 1 --no-writer
+printf '%s\n' "$OUT" > "$ROOT/o.txt"
+grep -qF 'UNMAPPED REMAINDER: 9 findings, of which 0 matched no theme' "$ROOT/o.txt" \
+  && ok "(o1) the stated unmapped remainder is 9 findings, none of them unthemed" \
+  || no "(o1) unexpected remainder: $(grep -F 'UNMAPPED REMAINDER' "$ROOT/o.txt" | head -1)"
+if grep -qE '^ +doc-currency-drift +4 +\(reached the support floor but was DEFERRED BY THE cap=1' "$ROOT/o.txt"; then
+  ok "(o2) the cap-deferred theme appears in the itemisation with its 4 findings and the CAP named as the reason"
+else
+  no "(o2) the cap-deferred theme is missing or mislabelled: $(grep -F 'doc-currency-drift' "$ROOT/o.txt" | tail -1)"
+fi
+if grep -qE '^ +naming-framing +5 +\(every finding is flow_stage=unknowable \(support 5 is NOT the reason\)\)' "$ROOT/o.txt"; then
+  ok "(o3) the unknowable-only theme is labelled by its real cause, not as 'below the support floor' (its support 5 is ABOVE the floor of 4)"
+else
+  no "(o3) the unknowable-only theme is mislabelled: $(grep -F 'naming-framing' "$ROOT/o.txt" | tail -1)"
+fi
+# The itemisation must SUM to the headline it is printed under: 4 + 5 = 9, with 0 unthemed.
+o_sum="$(awk '/UNMAPPED REMAINDER/,/dedupe rate|distillation:/' "$ROOT/o.txt" \
+          | awk '/^ +[a-z-]+ +[0-9]+ +\(/ { s += $2 } END { print s+0 }')"
+[ "$o_sum" = "9" ] \
+  && ok "(o4) the itemised lines sum to 9 — the breakdown accounts for its own stated total" \
+  || no "(o4) the itemisation sums to $o_sum but the stated remainder is 9 — it under-states its own total"
+
+# ---- MUTATION CONTROL M9: key the breakdown on RULE_THEMES again ----
+MUT9="$ROOT/mut-remainder.sh"
+sed 's@" $EMITTED_THEMES "@" $RULE_THEMES "@' "$HARVEST" > "$MUT9"
+if ! cmp -s "$HARVEST" "$MUT9" && bash -n "$MUT9" 2>/dev/null; then
+  M9OUT="$( bash "$MUT9" --root "$RO" --session-id fx-m9 --min-support 4 --cap 1 --no-writer 2>&1 )" || true
+  m9_sum="$(printf '%s\n' "$M9OUT" | awk '/UNMAPPED REMAINDER/,/dedupe rate|distillation:/' \
+             | awk '/^ +[a-z-]+ +[0-9]+ +\(/ { s += $2 } END { print s+0 }')"
+  if [ "$m9_sum" = "9" ]; then
+    no "(M9) REFUTED: keying on RULE_THEMES still itemises 9 findings — (o2)/(o4) are vacuous"
+  else
+    ok "(M9) CONFIRMED: keying on RULE_THEMES itemises only $m9_sum of the 9 unmapped findings — (o2)/(o4) are load-bearing"
+  fi
+else
+  no "(M9) the remainder-key mutation did not land"
 fi
 
 echo

@@ -10,10 +10,24 @@
 ## How to re-derive every number below
 
 ```
-git worktree add --detach /tmp/baseline-check 952ff91^{commit} 2>/dev/null \
-  || git worktree add --detach /tmp/baseline-check 5293d06
-cd /tmp/baseline-check && bash loomwright/scripts/measure-heal-signal.sh --distribution
+git worktree add --detach /tmp/baseline-check 5293d06
+cd /tmp/baseline-check
+git rev-parse --short HEAD:.supervisor/postmortem/results.jsonl   # must print 952ff91
+bash loomwright/scripts/measure-heal-signal.sh --distribution
 ```
+
+**Why the commit and not the blob.** `952ff91` is a **blob** sha — it names the exact ledger bytes,
+which is the right thing to pin and why it stays in this file, but it is not a commit-ish and can
+never be an argument to `git worktree add` or `git checkout`. This recipe previously led with
+`952ff91^{commit}`, which cannot resolve (*"expected commit type, but the object dereferences to
+blob type"*) and silently fell through a `2>/dev/null` to a fallback — a first line that never once
+ran, in the section whose whole point is that you should run it. The commit `5293d06` selects the
+tree; line 3 then verifies you got the pinned ledger bytes.
+
+**This recipe measures; it does not regenerate `HARVEST_DRYRUN_SAMPLE.md`.** A detached worktree has
+a `.git` **file** rather than a directory, and `add-rule.sh` refuses to write a store it cannot
+anchor there, so a harvest dry run in this worktree is not the run the sample records. Regenerate
+that sample from a clean `git clone` at the sha it pins, never by hand and never from a worktree.
 
 That is the whole instrument. It reads `.supervisor/postmortem/results.jsonl` and prints what
 follows; it writes **nothing** — no artifact, no trend line, not even its `--out` directory — so
