@@ -8,23 +8,37 @@ that has never produced a reviewable batch would pass every gate.
 
 ## How to falsify this file
 
-It is a transcript, not prose, and it is cheap to re-derive. Run **exactly** this from the repo root:
+It is a transcript, not prose, and it is cheap to re-derive. **Generate it from a CLEAN CLONE at the
+pinned sha, not from your working tree** — the ledger it reads is git-tracked and grows with every
+PR, so a dirty tree produces numbers no other reader can obtain (that mistake is recorded, and
+corrected, in `RULES_BASELINE.md`):
 
 ```
-bash loomwright/scripts/harvest-conventions.sh --session-id 2026-08-15-3afc27a
+git clone <this repo> /tmp/harvest-sample && cd /tmp/harvest-sample
+git checkout --detach f25717d
+bash loomwright/scripts/harvest-conventions.sh --session-id 2026-08-15-f25717d
 ```
+
+**Pinned input:** commit **`f25717d`**, at which `.supervisor/postmortem/results.jsonl` is blob
+**`952ff91`** and holds **84 records / 225 findings / 95 self-heal misses**. If `wc -l` on that file
+is not 84, you are not running what produced the transcript below and the counts will differ.
+
+**A CLONE, not a `git worktree`.** This is a real constraint, not a preference: `add-rule.sh` refuses
+to write from a linked worktree (its top-level `.git` is a file — the red-team F1 guard), so a
+worktree run reports `writer REFUSED this proposal (exit 3)` on every line instead of exercising the
+`PLANNED WRITE` branch this sample is partly here to show. A clone has a real `.git` directory and
+reproduces the transcript.
 
 The run is **read-only** — `harvest-conventions.sh` has no write mode at all, so re-running it cannot
 create a branch, a commit, a PR, or a rule. If the output below is not what you get, this file is
 stale or hand-written and should be rejected on that basis.
 
-Two things will legitimately differ on a later re-run, and neither invalidates the rest:
+Two things will legitimately differ on a re-run, and neither invalidates the rest:
 
 - **`--session-id`.** Omitted, it defaults to `dreaming:<UTC date>-<short HEAD sha>`, so it moves with
-  HEAD. It is pinned above to the sha this sample was taken at (`3afc27a`).
-- **The ledger.** `.supervisor/postmortem/results.jsonl` grows as PRs land, so the counts below are a
-  snapshot. **Input read for this sample: 85 ledger records.** The convention_mismatch class was
-  107/226 (47%) of all findings at that point.
+  HEAD. It is pinned above to the sha this sample was taken at.
+- **Absolute paths.** The `--- inputs read ---` block prints the clone's own absolute paths, so yours
+  will name your clone directory rather than the one below. Nothing downstream depends on them.
 
 ## What to look at first
 
@@ -32,7 +46,15 @@ Two things will legitimately differ on a later re-run, and neither invalidates t
   An id is `<repo>#<pr>:L<ledger line>.<index into that record's categories array>` and resolves with
   e.g. `sed -n '3p' .supervisor/postmortem/results.jsonl | jq '.categories[0]'`. Spot-check two or
   three: if a rule's cited findings do not support its statement, the number below is worthless.
-- **`scope fidelity`** is a check OF THE DERIVATION, not an independent oracle — the derivation and
+- **`scope fidelity` prints TWO figures, and the second one is the honest one.** The first is over
+  the CHECKABLE findings — those with at least one changed_path still tracked by git, the only ones a
+  glob can be matched against. The second is over ALL motivating findings, and it is lower: on this
+  corpus 98% (54 of 55) checkable against 72% (54 of 74) overall. The 19-finding difference is
+  disclosed by count on every rule, and 18 of the 19 are not deleted paths at all — they are ledger
+  records that carry no `changed_paths` whatsoever, so nothing about them can confirm or refute a
+  scope. Printing only the first figure would let the metric flatter itself by dropping its own
+  unfalsifiable evidence, which is the failure AC4 exists to prevent.
+- **`scope fidelity` is a check OF THE DERIVATION**, not an independent oracle — the derivation and
   the verification read the same evidence. It catches a derived glob that does not match what it was
   derived from; it cannot tell you the scope is the *right* one. That judgement is the reviewer's.
 - **The scope is an upper bound.** The ledger records `changed_paths` per PR record, not per finding,
@@ -45,18 +67,18 @@ Two things will legitimately differ on a later re-run, and neither invalidates t
 
 ```text
 === harvest-conventions.sh — DRY RUN (read-only: this tool has no write mode at all) ===
-invocation: 'loomwright/scripts/harvest-conventions.sh' '--session-id' '2026-08-15-3afc27a'
-session source (--source passed to add-rule.sh): dreaming:2026-08-15-3afc27a
+invocation: 'loomwright/scripts/harvest-conventions.sh' '--session-id' '2026-08-15-f25717d'
+session source (--source passed to add-rule.sh): dreaming:2026-08-15-f25717d
 thresholds: cap=5  min-support=8  project-wide=85%  distillation-floor=2.00  applies-to-cover=95%  max-globs=4
 
 --- inputs read ---
-  (i)  ledger:    /Users/vikashruhil/Documents/work/AI/ai-agent-manager/.supervisor/postmortem/results.jsonl
-       85 records read WHOLE (no repo filter — decision (a); nothing dropped), 226 findings, 95 self-heal misses
-  (ii) corpus:    /Users/vikashruhil/Documents/work/AI/ai-agent-manager/.claude/agent-memory
+  (i)  ledger:    /private/tmp/claude-501/-Users-vikashruhil-Documents-work-AI-ai-agent-manager/54b0ce93-5b49-4498-a1b4-ed52065bb450/scratchpad/clone/.supervisor/postmortem/results.jsonl
+       84 records read WHOLE (no repo filter — decision (a); nothing dropped), 225 findings, 95 self-heal misses
+  (ii) corpus:    /private/tmp/claude-501/-Users-vikashruhil-Documents-work-AI-ai-agent-manager/54b0ce93-5b49-4498-a1b4-ed52065bb450/scratchpad/clone/.claude/agent-memory
        28 entries (MEMORY.md indexes excluded)
-       proposals queue: /Users/vikashruhil/Documents/work/AI/ai-agent-manager/.supervisor/agent-memory-proposals — absent (normal empty case — the queue has never been populated in this repo)
+       proposals queue: /private/tmp/claude-501/-Users-vikashruhil-Documents-work-AI-ai-agent-manager/54b0ce93-5b49-4498-a1b4-ed52065bb450/scratchpad/clone/.supervisor/agent-memory-proposals — absent (normal empty case — the queue has never been populated in this repo)
   convention surfaces for the project-wide signal: 2 of 2 readable
-  rules store (read for context, NEVER written): /Users/vikashruhil/Documents/work/AI/ai-agent-manager/.agent/rules
+  rules store (read for context, NEVER written): /private/tmp/claude-501/-Users-vikashruhil-Documents-work-AI-ai-agent-manager/54b0ce93-5b49-4498-a1b4-ed52065bb450/scratchpad/clone/.agent/rules
 
 --- repo distribution (advisory cross-check, decision (a)) ---
       79  vikashruhilgit/ai-agent-manager
@@ -67,7 +89,7 @@ thresholds: cap=5  min-support=8  project-wide=85%  distillation-floor=2.00  app
 
 --- target class (AC14) ---
   this batch targets: convention_mismatch
-  share of all findings:      107/226 (47%)
+  share of all findings:      107/225 (47%)
   share of self-heal MISSES:  60/95 (63%) — the class this batch is aimed at
   by flow stage:
       60 self_heal
@@ -155,12 +177,13 @@ thresholds: cap=5  min-support=8  project-wide=85%  distillation-floor=2.00  app
      enforcement: advisory
      check: null  (AC9b — no obviously mechanical check; this harvester never synthesises shell into `check`)
      applies_to: [CLAUDE.md]
-     scope fidelity: 96% (26 of 27 motivating findings have a live changed_path matched by the derived globs, via the same bash `case` matcher read-rules.sh uses)
+     scope fidelity: 96% (26 of the 27 CHECKABLE motivating findings have a live changed_path matched by the derived globs, via the same bash `case` matcher read-rules.sh uses)
+                     over ALL 36 motivating findings: 72% (26 of 36). The denominator above is SMALLER on purpose and the filter is not silent: 9 finding(s) come from a ledger record with no changed_paths at all, and 0 have changed_paths of which none is still tracked by git. Neither can be matched against a glob, so neither is evidence for OR against the scope — but they are motivating findings all the same, and the honest figure is the second one.
      motivating findings (36): ai-agent-manager#43:L3.1 ai-agent-manager#43:L3.5 ai-agent-manager#60:L5.4 ai-agent-manager#62:L7.3 ai-agent-manager#67:L8.3 ai-agent-manager#67:L8.4 ai-agent-manager#67:L9.3 ai-agent-manager#67:L9.4 ai-agent-manager#67:L9.7 ai-agent-manager#70:L12.2 ai-agent-manager#37:L13.2 ai-agent-manager#45:L14.1 … (+24 more)
-     invocation: add-rule.sh --category 'process' --statement 'A count or version number is claimed in exactly one authoritative machine-readable place; every other surface derives it at read time or names the authority instead of restating the literal, because a restated number is a live claim that nothing keeps current.' --enforcement advisory --applies-to 'CLAUDE.md' --source 'dreaming:2026-08-15-3afc27a' < /dev/null
+     invocation: add-rule.sh --category 'process' --statement 'A count or version number is claimed in exactly one authoritative machine-readable place; every other surface derives it at read time or names the authority instead of restating the literal, because a restated number is a live claim that nothing keeps current.' --enforcement advisory --applies-to 'CLAUDE.md' --source 'dreaming:2026-08-15-f25717d' < /dev/null
      writer result: PLANNED WRITE (not written)
        | PLANNED WRITE (not written — pass --confirm to apply):
-       |   target: /Users/vikashruhil/Documents/work/AI/ai-agent-manager/.agent/rules/process.json
+       |   target: /private/tmp/claude-501/-Users-vikashruhil-Documents-work-AI-ai-agent-manager/54b0ce93-5b49-4498-a1b4-ed52065bb450/scratchpad/clone/.agent/rules/process.json
        |   object: {
        |   "id": "process-a-count-or-version-number-is-claimed-in-exactly-one-authoritative-machine-readable-place-every-other-surface-derives-it-at-read-time-or-names-the-authority-instead-of-restating-the-literal-because-a-restated-number-is-a-live-claim-that-nothing-keeps-current",
 
@@ -169,12 +192,13 @@ thresholds: cap=5  min-support=8  project-wide=85%  distillation-floor=2.00  app
      enforcement: advisory
      check: null  (AC9b — no obviously mechanical check; this harvester never synthesises shell into `check`)
      applies_to: [CLAUDE.md, loomwright/scripts/*]
-     scope fidelity: 100% (15 of 15 motivating findings have a live changed_path matched by the derived globs, via the same bash `case` matcher read-rules.sh uses)
+     scope fidelity: 100% (15 of the 15 CHECKABLE motivating findings have a live changed_path matched by the derived globs, via the same bash `case` matcher read-rules.sh uses)
+                     over ALL 20 motivating findings: 75% (15 of 20). The denominator above is SMALLER on purpose and the filter is not silent: 5 finding(s) come from a ledger record with no changed_paths at all, and 0 have changed_paths of which none is still tracked by git. Neither can be matched against a glob, so neither is evidence for OR against the scope — but they are motivating findings all the same, and the honest figure is the second one.
      motivating findings (20): ai-agent-manager#43:L3.2 ai-agent-manager#43:L3.7 ai-agent-manager#47:L4.4 ai-agent-manager#47:L4.6 ai-agent-manager#62:L7.5 ai-agent-manager#70:L12.1 ai-agent-manager#70:L12.3 ai-agent-manager#63:L18.3 ai-agent-manager#64:L19.2 ai-agent-manager#56:L27.2 ai-agent-manager#57:L28.2 ai-agent-manager#75:L33.4 … (+8 more)
-     invocation: add-rule.sh --category 'process' --statement 'When one surface restates a list, table or enumeration owned by another, the restating copy is updated in the SAME change as its authority, or it is replaced by a pointer to that authority — a second copy that drifts silently is the defect, not the drift.' --enforcement advisory --applies-to 'CLAUDE.md' --applies-to 'loomwright/scripts/*' --source 'dreaming:2026-08-15-3afc27a' < /dev/null
+     invocation: add-rule.sh --category 'process' --statement 'When one surface restates a list, table or enumeration owned by another, the restating copy is updated in the SAME change as its authority, or it is replaced by a pointer to that authority — a second copy that drifts silently is the defect, not the drift.' --enforcement advisory --applies-to 'CLAUDE.md' --applies-to 'loomwright/scripts/*' --source 'dreaming:2026-08-15-f25717d' < /dev/null
      writer result: PLANNED WRITE (not written)
        | PLANNED WRITE (not written — pass --confirm to apply):
-       |   target: /Users/vikashruhil/Documents/work/AI/ai-agent-manager/.agent/rules/process.json
+       |   target: /private/tmp/claude-501/-Users-vikashruhil-Documents-work-AI-ai-agent-manager/54b0ce93-5b49-4498-a1b4-ed52065bb450/scratchpad/clone/.agent/rules/process.json
        |   object: {
        |   "id": "process-when-one-surface-restates-a-list-table-or-enumeration-owned-by-another-the-restating-copy-is-updated-in-the-same-change-as-its-authority-or-it-is-replaced-by-a-pointer-to-that-authority-a-second-copy-that-drifts-silently-is-the-defect-not-the-drift",
 
@@ -183,12 +207,13 @@ thresholds: cap=5  min-support=8  project-wide=85%  distillation-floor=2.00  app
      enforcement: advisory
      check: null  (AC9b — no obviously mechanical check; this harvester never synthesises shell into `check`)
      applies_to: [CLAUDE.md, loomwright/scripts/*]
-     scope fidelity: 100% (5 of 5 motivating findings have a live changed_path matched by the derived globs, via the same bash `case` matcher read-rules.sh uses)
+     scope fidelity: 100% (5 of the 5 CHECKABLE motivating findings have a live changed_path matched by the derived globs, via the same bash `case` matcher read-rules.sh uses)
+                     over ALL 8 motivating findings: 62% (5 of 8). The denominator above is SMALLER on purpose and the filter is not silent: 2 finding(s) come from a ledger record with no changed_paths at all, and 1 have changed_paths of which none is still tracked by git. Neither can be matched against a glob, so neither is evidence for OR against the scope — but they are motivating findings all the same, and the honest figure is the second one.
      motivating findings (8): ai-agent-manager#61:L6.2 ai-agent-manager#68:L10.1 ai-agent-manager#59:L17.1 ai-agent-manager#78:L36.1 ai-agent-manager#83:L41.1 loomwright#97:L58.5 loomwright#95:L60.5 loomwright#129:L80.2 
-     invocation: add-rule.sh --category 'documentation' --statement 'Prose that describes current behaviour is corrected in the same change that alters the behaviour; a sweep for the OLD wording across every doc surface is part of the change, not a follow-up.' --enforcement advisory --applies-to 'CLAUDE.md' --applies-to 'loomwright/scripts/*' --source 'dreaming:2026-08-15-3afc27a' < /dev/null
+     invocation: add-rule.sh --category 'documentation' --statement 'Prose that describes current behaviour is corrected in the same change that alters the behaviour; a sweep for the OLD wording across every doc surface is part of the change, not a follow-up.' --enforcement advisory --applies-to 'CLAUDE.md' --applies-to 'loomwright/scripts/*' --source 'dreaming:2026-08-15-f25717d' < /dev/null
      writer result: PLANNED WRITE (not written)
        | PLANNED WRITE (not written — pass --confirm to apply):
-       |   target: /Users/vikashruhil/Documents/work/AI/ai-agent-manager/.agent/rules/documentation.json
+       |   target: /private/tmp/claude-501/-Users-vikashruhil-Documents-work-AI-ai-agent-manager/54b0ce93-5b49-4498-a1b4-ed52065bb450/scratchpad/clone/.agent/rules/documentation.json
        |   object: {
        |   "id": "documentation-prose-that-describes-current-behaviour-is-corrected-in-the-same-change-that-alters-the-behaviour-a-sweep-for-the-old-wording-across-every-doc-surface-is-part-of-the-change-not-a-follow-up",
 
@@ -197,12 +222,13 @@ thresholds: cap=5  min-support=8  project-wide=85%  distillation-floor=2.00  app
      enforcement: advisory
      check: null  (AC9b — no obviously mechanical check; this harvester never synthesises shell into `check`)
      applies_to: [CLAUDE.md, AGENT_GUIDELINES.md]
-     scope fidelity: 100% (8 of 8 motivating findings have a live changed_path matched by the derived globs, via the same bash `case` matcher read-rules.sh uses)
+     scope fidelity: 100% (8 of the 8 CHECKABLE motivating findings have a live changed_path matched by the derived globs, via the same bash `case` matcher read-rules.sh uses)
+                     over ALL 10 motivating findings: 80% (8 of 10). The denominator above is SMALLER on purpose and the filter is not silent: 2 finding(s) come from a ledger record with no changed_paths at all, and 0 have changed_paths of which none is still tracked by git. Neither can be matched against a glob, so neither is evidence for OR against the scope — but they are motivating findings all the same, and the honest figure is the second one.
      motivating findings (10): ai-agent-manager#48:L2.2 ai-agent-manager#43:L3.4 ai-agent-manager#70:L12.4 ai-agent-manager#37:L13.1 ai-agent-manager#37:L13.3 ai-agent-manager#45:L14.2 ai-agent-manager#55:L16.3 ai-agent-manager#57:L28.3 loomwright#99:L56.1 loomwright#99:L56.4 
-     invocation: add-rule.sh --category 'documentation' --statement 'Wording that carries a contract — a heading a gate greps for, a sentence that states a guarantee — is treated as an interface: renaming it is a change to that interface and its consumers move with it.' --enforcement advisory --applies-to 'CLAUDE.md' --applies-to 'AGENT_GUIDELINES.md' --source 'dreaming:2026-08-15-3afc27a' < /dev/null
+     invocation: add-rule.sh --category 'documentation' --statement 'Wording that carries a contract — a heading a gate greps for, a sentence that states a guarantee — is treated as an interface: renaming it is a change to that interface and its consumers move with it.' --enforcement advisory --applies-to 'CLAUDE.md' --applies-to 'AGENT_GUIDELINES.md' --source 'dreaming:2026-08-15-f25717d' < /dev/null
      writer result: PLANNED WRITE (not written)
        | PLANNED WRITE (not written — pass --confirm to apply):
-       |   target: /Users/vikashruhil/Documents/work/AI/ai-agent-manager/.agent/rules/documentation.json
+       |   target: /private/tmp/claude-501/-Users-vikashruhil-Documents-work-AI-ai-agent-manager/54b0ce93-5b49-4498-a1b4-ed52065bb450/scratchpad/clone/.agent/rules/documentation.json
        |   object: {
        |   "id": "documentation-wording-that-carries-a-contract-a-heading-a-gate-greps-for-a-sentence-that-states-a-guarantee-is-treated-as-an-interface-renaming-it-is-a-change-to-that-interface-and-its-consumers-move-with-it",
 
@@ -214,11 +240,12 @@ thresholds: cap=5  min-support=8  project-wide=85%  distillation-floor=2.00  app
                      test-vacuity             1
                      gate-exit-contract       4
   dedupe rate:     18.50 findings distilled per rule emitted (74 in / 4 out)
-  scope fidelity:  aggregate 98% (54 of 55 motivating findings routed by their own rule's derived globs); per-rule figures are printed with each rule above
+  scope fidelity:  aggregate 98% (54 of 55 CHECKABLE motivating findings routed by their own rule's derived globs)
+                   over ALL motivating findings: 72% (54 of 74) — the 19 difference is findings whose ledger record carries no changed_paths, or none still tracked by git; they cannot be matched against a glob either way. Both figures are printed because the first one alone would flatter the derivation by dropping its own unfalsifiable evidence; per-rule breakdowns are with each rule above
                    0 proposal(s) fell back to a repo-wide (null) scope, each with the stated justification shown above
   distillation:    OK — above the 2.00 findings-per-rule floor.
 
-=== END DRY RUN — no branch, no commit, no PR, nothing written to /Users/vikashruhil/Documents/work/AI/ai-agent-manager/.agent/rules ===
+=== END DRY RUN — no branch, no commit, no PR, nothing written to /private/tmp/claude-501/-Users-vikashruhil-Documents-work-AI-ai-agent-manager/54b0ce93-5b49-4498-a1b4-ed52065bb450/scratchpad/clone/.agent/rules ===
 ```
 
 ## Reviewer's note on the numbers
@@ -232,7 +259,7 @@ The three numbers supplement the batch above; they do not replace reading it.
 - **dedupe rate** — findings distilled per rule emitted. Its job is to make over-fitting
   self-reporting: a batch approaching one rule per finding has restated the ledger rather than
   distilled it, and the run says `DISTILLATION FAILURE` in its own output instead of offering it.
-- **scope fidelity** — see the caveat above.
+- **scope fidelity** — see the two-figure caveat above, and the per-rule breakdowns in the run.
 
 Known limits of this sample, stated so it is not read as more than it is: the ledger's records are
 overwhelmingly `agent_generated_guess: true`, the theme lexicon is a committed human-edited table
