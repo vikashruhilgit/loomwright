@@ -212,7 +212,7 @@ Optional next: run `/setup` for a status dashboard and guided configuration of o
 | **QA Strategist**     | `/qa-strategist src/`           | Risk-based test strategy → coverage targets → assertion quality audit | Before QA, strategy planning    |
 | **QA Executor**       | `/qa-executor`                  | Discover → generate strict tests → find missing functionality → QA_RESULT | Automated QA                    |
 | **Review-PR**         | `/review-pr <pr-url>`           | Standalone review→fix→re-review loop against an existing PR; auto-heals the diff, never auto-merges → REVIEW_HEAL_RESULT | Review/heal any open PR         |
-| **Setup** (command)   | `/setup [module]`               | Status dashboard + guided configuration for every optional capability — observability (local Langfuse + OTel collector), telemetry, notifications, webhook, Beads, MySQL MCP, Twin cold-start bootstrap, memory in version control | First install, enabling integrations |
+| **Setup** (command)   | `/setup [module]`               | Status dashboard + guided configuration for every optional capability — observability (local Langfuse + OTel collector), telemetry, notifications, webhook, Beads, MySQL MCP, Twin cold-start bootstrap, memory in version control, `rules` (seed `.agent/rules/` with portable conventions) | First install, enabling integrations |
 | **Rules** (command)   | `/rules [list\|suggest\|add\|check]` | House Rules substrate — committed `.agent/rules/` conventions store + fail-safe reader; list/suggest/add/check | Capturing durable team conventions |
 
 

@@ -418,7 +418,7 @@ Only after every item has passed through both gates does `/dreaming` look at the
 6. `git checkout -` to restore the branch you started on, so `/dreaming` leaves the tree where it found it.
 7. Report the PR URL in the run report. **`/dreaming` never merges the PR it opens** — it never runs `gh pr merge --squash` or any other merge verb, and the plugin's single sanctioned merge executor is unchanged by this command. Opening the PR is terminal for `/dreaming`; a human reviews and merges.
 
-**If a step fails, say what state it left behind rather than retrying.** A failed push leaves a *local* branch only — report its name so it can be inspected or deleted. A failed `gh pr create` after a successful push leaves a *pushed* branch with no PR — report the branch name so the PR can be opened by hand. `/dreaming` does not retry, does not force, and does not clean up a branch that already carries commits.
+**If a step fails, restore the original branch before reporting, then say what state it left behind rather than retrying.** Step 6's `git checkout -` is only reached on the success path, so a failure after step 2 would otherwise leave you standing on the delivery branch; run it on the failure path too. The commits stay on the delivery branch — that is what makes them inspectable — and only the checkout is undone. A failed push leaves a *local* branch only — report its name so it can be inspected or deleted. A failed `gh pr create` after a successful push leaves a *pushed* branch with no PR — report the branch name so the PR can be opened by hand. `/dreaming` does not retry, does not force, and does not clean up a branch that already carries commits.
 
 ### Harness-memory pointer (on LESSONS Accept)
 

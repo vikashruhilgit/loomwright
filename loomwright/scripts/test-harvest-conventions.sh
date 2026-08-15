@@ -92,7 +92,11 @@ echo "(A) three-bucket triage + the requirement's worked example"
 # ============================================================================
 if [ -d "$REPO_ROOT/.claude/agent-memory" ] && [ -f "$REPO_ROOT/.supervisor/postmortem/results.jsonl" ] \
    && command -v jq >/dev/null 2>&1; then
+  # (A) is the ONE run pointed at the REAL repo root, so it is the only run that could falsify this
+  # file's header claim that the fixture runs never touch the real repo's stores. Signature it.
+  REAL_SUM_BEFORE="$(store_sum "$REPO_ROOT")"
   OUT="$( bash "$HARVEST" --root "$REPO_ROOT" --session-id "test-a" --no-writer 2>&1 )"; RC=$?
+  REAL_SUM_AFTER="$(store_sum "$REPO_ROOT")"
   printf '%s\n' "$OUT" > "$ROOT/a.txt"
   [ "$RC" -eq 0 ] && ok "(a1) a real-corpus run exits 0" || no "(a1) real-corpus run exited $RC"
 
@@ -105,15 +109,35 @@ if [ -d "$REPO_ROOT/.claude/agent-memory" ] && [ -f "$REPO_ROOT/.supervisor/post
       $0 ~ ("^    - " want " ") { print b; exit }
     ' "$ROOT/a.txt"
   }
-  # §2's table: these two STAY in agent-memory, this one GRADUATES to rules.
-  for want in attack_jq_only_json_injection golden_fixture_regen; do
-    got="$(bucket_of "$want")"
-    [ "$got" = "agent-memory" ] && ok "(a2) $want stays in agent-memory" \
-      || no "(a2) $want landed in '${got:-<not found>}', expected agent-memory"
-  done
-  got="$(bucket_of attack_failclosed_vs_failsafe_split)"
-  [ "$got" = "rules" ] && ok "(a3) attack_failclosed_vs_failsafe_split GRADUATES to rules" \
-    || no "(a3) attack_failclosed_vs_failsafe_split landed in '${got:-<not found>}', expected rules"
+  # pw_of <candidate-name> — the project-wide term-overlap score the triage printed for it.
+  pw_of() { sed -n "s/^    - $1 (corpus: pw=\([0-9]*\)%.*/\1/p" "$ROOT/a.txt" | head -1; }
+
+  # §2's worked example, asserted as the SEPARATION it actually rests on rather than as absolute
+  # bucket membership. WHY, measured: pw is a % of term overlap with the live CLAUDE.md +
+  # AGENT_GUIDELINES.md, so prose that touches none of this code moves it — editing CLAUDE.md's
+  # banner alone moved one corpus entry 50%→62%, and the graduating example sits ~7 points over the
+  # 85% floor while another entry sits one point under it. An absolute-membership assertion against
+  # a live-prose input is a tripwire on the next unrelated doc edit, not a test of this engine. The
+  # ordering IS the requirement's claim (§2's table separates these three) and it is what justifies
+  # PROJECT_WIDE_PCT sitting between them.
+  pw_grad="$(pw_of attack_failclosed_vs_failsafe_split)"
+  pw_jq="$(pw_of attack_jq_only_json_injection)"
+  pw_gf="$(pw_of golden_fixture_regen)"
+  if [ -n "$pw_grad" ] && [ -n "$pw_jq" ] && [ -n "$pw_gf" ]; then
+    [ "$pw_grad" -gt "$pw_jq" ] && [ "$pw_grad" -gt "$pw_gf" ] \
+      && ok "(a2) the graduating example outscores both stay-put entries (${pw_grad}% > ${pw_jq}% / ${pw_gf}%) — the separation PROJECT_WIDE_PCT is set between" \
+      || no "(a2) separation lost: failclosed=${pw_grad}% jq_only=${pw_jq}% golden_fixture=${pw_gf}%"
+    # ...and the gap is WIDE, not a rounding artifact: a threshold can only sit between them if it is.
+    gap_jq=$((pw_grad - pw_jq)); gap_gf=$((pw_grad - pw_gf))
+    [ "$gap_jq" -ge 20 ] && [ "$gap_gf" -ge 20 ] \
+      && ok "(a3) that separation is wide (+${gap_jq} / +${gap_gf} points), so a threshold can sit between them" \
+      || no "(a3) separation too narrow to place a threshold: +${gap_jq} / +${gap_gf} points"
+    # Where they actually landed today, reported and NOT counted as a pass — the buckets are a
+    # function of live prose, so a green counter here would be measuring CLAUDE.md, not this engine.
+    echo "  note: today's buckets — failclosed=$(bucket_of attack_failclosed_vs_failsafe_split) jq_only=$(bucket_of attack_jq_only_json_injection) golden_fixture=$(bucket_of golden_fixture_regen)"
+  else
+    no "(a2/a3) the worked-example entries were not scored: failclosed='$pw_grad' jq_only='$pw_jq' golden_fixture='$pw_gf'"
+  fi
   # AC1 §1 names this one as a well-formed candidate — it must be triaged, wherever it lands.
   got="$(bucket_of project_self_heal_rubber_stamp)"
   [ -n "$got" ] && ok "(a4) project_self_heal_rubber_stamp is triaged (bucket: $got)" \
@@ -447,9 +471,81 @@ run_harvest "$R8" --ledger "$ROOT/bad.jsonl" --no-writer
 : > "$ROOT/empty.jsonl"
 run_harvest "$R8" --ledger "$ROOT/empty.jsonl" --no-writer
 [ "$RC" -eq 0 ] && ok "(h7) an empty (zero-record) ledger exits 0 with an empty batch" || no "(h7) exited $RC, expected 0"
-# The read-only promise, restated as an assertion: the real repo's store is untouched by (A).
-if [ -d "$REPO_ROOT/.agent/rules" ]; then
-  ok "(h8) note: the real store's integrity across the (A) run is asserted by (d3)/(M1) on fixtures"
+# The read-only promise, asserted rather than noted: (A) is the one run pointed at the REAL repo
+# root, so it is the only run that could falsify this file's header claim. Compare the store's byte
+# signature either side of it. (An earlier form here incremented the pass counter merely because
+# `.agent/rules/` EXISTED — it would have stayed green with the store rewritten.)
+if [ -n "${REAL_SUM_BEFORE+x}" ]; then
+  [ "$REAL_SUM_BEFORE" = "$REAL_SUM_AFTER" ] \
+    && ok "(h8) the REAL repo's .agent/rules/ is byte-unchanged across the (A) run against \$REPO_ROOT" \
+    || no "(h8) the (A) run MUTATED the real repo's store — the read-only promise is broken"
+else
+  echo "  skip: (h8) — the (A) real-corpus run did not run, so there is no before/after to compare"
+fi
+
+# ---------------------------------------------------------------------------
+# (I) AC14's two DENOMINATORS, by value. The miss-share is the single number this batch is
+# justified by (it is quoted into /dreaming's report and into HARVEST_DRYRUN_SAMPLE.md), and it was
+# previously computed by piping jq's per-record counts through `paste -sd+ - | bc` — making `bc` an
+# UNDECLARED dependency that failed OPEN: with `bc` absent the `|| true` + `is_num` fallback printed
+# `107/0 (0%)` and exited 0. Nothing asserted a bc-derived VALUE, so nothing caught it: (e1) reads
+# coverage (a grep-derived number) and (e7) only asserts the miss-share line is PRESENT.
+# The fixture below gives all four counts DISTINCT values, so no swap between them can pass.
+# ---------------------------------------------------------------------------
+echo "(I) AC14 denominators compute by value, over a fixture with four distinct counts"
+R9="$(new_repo)"
+# rec 1: 2 convention_mismatch (miss) + 1 other-class (miss)   rec 2: 1 cm (no miss) + 1 other (no miss)
+# ⇒ all findings 5, all misses 3, convention_mismatch 3, cm misses 2 ⇒ 3/5 (60%) and 2/3 (66%).
+mk_mixed() {
+  jq -c -n --argjson num "$1" --argjson cats "$2" \
+    '{schema_version:1, ts:"2026-01-01T00:00:00Z", repo:"o/r", number:$num,
+      agent_generated_guess:true, review_rounds:1, additions:1, deletions:1, changed_files:1,
+      changed_paths:["src/a/x.md"], self_heal_misses:1, categories:$cats,
+      flow_stages:{launch_pad:0,worker:1,self_heal:0,unknowable:0}, summary:"s"}'
+}
+cat_cm_miss='{"round":1,"class":"convention_mismatch","self_heal_miss":true,"flow_stage":"worker","evidence":"count drift"}'
+cat_cm_ok='{"round":1,"class":"convention_mismatch","self_heal_miss":false,"flow_stage":"worker","evidence":"count drift"}'
+cat_other_miss='{"round":1,"class":"missed_edge_case","self_heal_miss":true,"flow_stage":"worker","evidence":"count drift"}'
+cat_other_ok='{"round":1,"class":"missed_edge_case","self_heal_miss":false,"flow_stage":"worker","evidence":"count drift"}'
+{
+  mk_mixed 1 "[$cat_cm_miss,$cat_cm_miss,$cat_other_miss]"
+  mk_mixed 2 "[$cat_cm_ok,$cat_other_ok]"
+} > "$R9/.supervisor/postmortem/results.jsonl"
+run_harvest "$R9" --session-id "fx-i" --min-support 2 --cap 5 --no-writer
+printf '%s\n' "$OUT" > "$ROOT/i.txt"
+[ "$RC" -eq 0 ] && ok "(i1) the mixed-class fixture run exits 0" || no "(i1) exited $RC"
+grep -q '5 findings, 3 self-heal misses' "$ROOT/i.txt" \
+  && ok "(i2) the ledger denominators read 5 findings / 3 misses by VALUE (not 0, not the record count)" \
+  || no "(i2) wrong denominators: $(grep 'records read WHOLE' "$ROOT/i.txt" | head -1)"
+grep -q 'share of all findings:      3/5 (60%)' "$ROOT/i.txt" \
+  && ok "(i3) AC14 findings share computes to the constructed 3/5 (60%)" \
+  || no "(i3) wrong findings share: $(grep 'share of all findings' "$ROOT/i.txt" | head -1)"
+grep -q 'share of self-heal MISSES:  2/3 (66%)' "$ROOT/i.txt" \
+  && ok "(i4) AC14 miss share computes to the constructed 2/3 (66%)" \
+  || no "(i4) wrong miss share: $(grep 'share of self-heal MISSES' "$ROOT/i.txt" | head -1)"
+# `bc` must not be reachable as a dependency at all: run with it stubbed to 127 and require the
+# SAME values. Before the fix this printed `3/0 (0%)` and `2/0 (0%)` and still exited 0.
+BCSTUB="$ROOT/bcstub"; mkdir -p "$BCSTUB"; printf '#!/bin/sh\nexit 127\n' > "$BCSTUB/bc"; chmod +x "$BCSTUB/bc"
+I5OUT="$( PATH="$BCSTUB:$PATH" bash "$HARVEST" --root "$R9" --session-id fx-i5 --min-support 2 --cap 5 --no-writer 2>&1 )"; i5rc=$?
+if [ "$i5rc" -eq 0 ] && printf '%s\n' "$I5OUT" | grep -q 'share of self-heal MISSES:  2/3 (66%)'; then
+  ok "(i5) with \`bc\` stubbed to exit 127 the denominators are UNCHANGED — bc is no longer a dependency"
+else
+  no "(i5) a broken \`bc\` still changes the AC14 numbers (rc=$i5rc): $(printf '%s\n' "$I5OUT" | grep 'share of self-heal MISSES' | head -1)"
+fi
+
+# ---- MUTATION CONTROL M4: break the denominator counting ----
+# Count RECORDS instead of findings. If (i2)-(i4) were vacuous the mutant would still pass them.
+MUT4="$ROOT/mut-count.sh"
+sed 's@(\[$r\.categories\[\]?\] | length)@1@' "$HARVEST" > "$MUT4"
+if ! cmp -s "$HARVEST" "$MUT4" && grep -q 'reduce inputs as $r (0; . + 1)' "$MUT4" && bash -n "$MUT4" 2>/dev/null; then
+  M4OUT="$( bash "$MUT4" --root "$R9" --session-id fx-m4 --min-support 2 --cap 5 --no-writer 2>&1 )" || true
+  if printf '%s\n' "$M4OUT" | grep -q 'share of all findings:      3/5 (60%)'; then
+    no "(M4) REFUTED: the mutant still printed 3/5 — (i2)/(i3) are vacuous"
+  else
+    ok "(M4) CONFIRMED: counting records instead of findings turns 3/5 into $(printf '%s\n' "$M4OUT" | sed -n 's/.*share of all findings: *//p' | head -1) — (i2)/(i3) are load-bearing"
+  fi
+else
+  no "(M4) the denominator mutation did not land"
 fi
 
 echo

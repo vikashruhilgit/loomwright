@@ -17,7 +17,13 @@
 # THE DRY-RUN SUBSTRATE, and why the `< /dev/null` is load-bearing (NOT decorative).
 # Proposals are authored THROUGH the sole writer `add-rule.sh` — this script never hand-builds a rule
 # object, so the frozen 7-member schema, the category containment, the `--applies-to` validation and
-# the write-time validator all apply to a proposal exactly as they would to a real write. `add-rule.sh`
+# the write-time validator all apply to a proposal — THE SAME CHECKS RUN, against the store as it
+# stands at the time of the call. That is deliberately not "exactly as they would to a real write":
+# a dry run evaluates every proposal against the store BEFORE any rule in this batch has landed,
+# whereas delivery evaluates rule N against a store already holding rules 1..N-1, so
+# `validate_duplicate` / `validate_contradiction` can refuse at delivery something that planned
+# cleanly here. A clean plan is evidence about the store today, not a guarantee about the batch.
+# `add-rule.sh`
 # has THREE branches, and only the third is a dry run:
 #     --confirm                         → writes.
 #     no --confirm, but `[ -t 0 ] && [ -t 1 ]` → PROMPTS `Confirm write? [y/N]`, and WRITES on `y`.
@@ -48,10 +54,16 @@
 #   1. Ledger findings are assigned to THEMES by the committed lexicon in `theme_spec` below (first
 #      match in a fixed precedence order, so a finding lands in exactly ONE theme).
 #   2. A theme with at least $MIN_SUPPORT findings is a `rules` candidate; a thinner one is context.
-#   3. A corpus entry graduates to `rules` only when it is NORMATIVE and at least $PROJECT_WIDE_PCT%
+#   3. A corpus entry is bucketed to `rules` only when it is NORMATIVE and at least $PROJECT_WIDE_PCT%
 #      of its distinctive description terms already appear in this repo's committed convention
 #      surfaces (CLAUDE.md, AGENT_GUIDELINES.md) — i.e. the project already asserts it repo-wide —
-#      AND it corroborates a supported theme, which is what supplies its scope and its finding ids.
+#      AND it corroborates a supported theme. A CORPUS ENTRY'S ROLE IS TO CORROBORATE A THEME, NEVER
+#      TO EMIT A RULE OF ITS OWN. That corroboration requirement is not decoration: a corpus entry
+#      carries no measured violation, and a rule justified by prose alone is exactly what this
+#      harvester exists to avoid. So a bucketed entry contributes its independent agreement to a
+#      theme whose rule the ledger already earned — the theme supplies the scope, the finding ids and
+#      the support count — and is then counted as a deferral, never emitted as a second rule over the
+#      same evidence. There is no branch by which a corpus entry alone becomes a rule.
 #   4. `applies_to` is derived from the `changed_paths` of the motivating findings (`derive_applies_to`).
 #
 # WHAT THE THEME LEXICON IS, stated so it is not mistaken for machine-derived prose: the theme
@@ -115,10 +127,14 @@ CAP=5                    # hard bound on the emitted batch (AC4: an explicit, st
 MIN_SUPPORT=8            # findings a theme needs before it may become a rule
 PROJECT_WIDE_PCT=85      # % of a corpus entry's distinctive terms that must already appear in the
                          # committed convention surfaces before it counts as "already asserted
-                         # repo-wide". Measured separation on today's 28-entry corpus: the
-                         # requirement's graduating example (attack_failclosed_vs_failsafe_split)
-                         # scores 92%, while the two that must STAY in agent-memory score 55%
-                         # (golden_fixture_regen) and 33% (attack_jq_only_json_injection).
+                         # repo-wide". The measured separation that justifies this threshold is
+                         # NOT restated here — a measurement copied into a comment goes stale
+                         # silently against prose that changes every release (these figures are a
+                         # % of term overlap with CLAUDE.md + AGENT_GUIDELINES.md, so an unrelated
+                         # banner edit moves them). It is recorded, with its run, in
+                         # `docs/HARVEST_DRYRUN_SAMPLE.md`: the corroborating example clears the
+                         # threshold comfortably while the two that must STAY in agent-memory land
+                         # far below it, and that gap — not any single number — is the argument.
 DISTILLATION_FLOOR=200   # hundredths: 2.00 findings-in per rule-out. Below this the run reports a
                          # DISTILLATION FAILURE in its own output (AC5) instead of shipping the batch.
 APPLIES_TO_COVER=95      # % of a theme's motivating FINDINGS the derived globs must route before the
@@ -139,7 +155,14 @@ SURFACES=()
 EXPECT_REPOS=()
 RAW_ARGV=("$0" "$@")
 
-usage() { sed -n '2,140p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0; }
+usage() {
+  # Print the leading header comment block (line 2 through the last contiguous `#` line), robust to
+  # header edits — no hard-coded line range to drift. Same scan as seed-rules.sh's usage(), written
+  # in the same batch: a fixed `2,140p` here already over-ran the header and printed ~38 lines of
+  # live source with `# ` stripped.
+  awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "${BASH_SOURCE[0]}"
+  exit 0
+}
 
 is_num() { case "${1:-}" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }
 
@@ -344,7 +367,7 @@ triage_bucket() {
       local normative="$1" pw="$2" theme="$3" tsupport="${4:-0}"
       if [ "$normative" -eq 1 ] && [ "$pw" -ge "$PROJECT_WIDE_PCT" ] && [ -n "$theme" ] && [ "$tsupport" -ge "$MIN_SUPPORT" ]; then
         BUCKET="rules"
-        BUCKET_REASON="normative, and ${pw}% of its distinctive terms already appear in this repo's committed convention surfaces (>= ${PROJECT_WIDE_PCT}%), so the project already asserts it repo-wide; still corroborated by the '$theme' theme's $tsupport findings, so it is a convention being broken rather than one merely written down"
+        BUCKET_REASON="normative, and ${pw}% of its distinctive terms already appear in this repo's committed convention surfaces (>= ${PROJECT_WIDE_PCT}%), so the project already asserts it repo-wide; still corroborated by the '$theme' theme's $tsupport findings, so it is a convention being broken rather than one merely written down. It CORROBORATES that theme's rule and does not become a rule of its own — the batch counts it as a deferral, since the theme's rule already covers the same evidence"
       elif [ "$normative" -eq 1 ] && [ "$pw" -ge "$PROJECT_WIDE_PCT" ]; then
         BUCKET="project-memory"
         BUCKET_REASON="normative and repo-wide (${pw}% of its terms are in the committed convention surfaces) but no theme reaches the $MIN_SUPPORT-finding support floor, so there is no measured violation to justify a rule — durable project context"
@@ -538,10 +561,18 @@ harvest_convention_findings "$LEDGER" "$FINDINGS" \
   || die "could not extract findings from the ledger: $LEDGER" 3
 
 REC_TOTAL="$(grep -c . "$LEDGER" 2>/dev/null || true)"; is_num "$REC_TOTAL" || REC_TOTAL=0
-ALL_FINDINGS="$(jq -r '[.categories[]?] | length' "$LEDGER" 2>/dev/null | paste -sd+ - | bc 2>/dev/null || true)"
-is_num "$ALL_FINDINGS" || ALL_FINDINGS=0
-ALL_MISSES="$(jq -r '[.categories[]? | select(.self_heal_miss==true)] | length' "$LEDGER" 2>/dev/null | paste -sd+ - | bc 2>/dev/null || true)"
-is_num "$ALL_MISSES" || ALL_MISSES=0
+# AC14's two denominators. `jq` already parses the ledger, so it does the summing too: an earlier
+# form piped a per-record count through `paste -sd+ - | bc`, which made `bc` an UNDECLARED dependency
+# — unlike `jq` (checked above) nothing verified it, and with `bc` absent the `|| true` + `is_num`
+# fallback quietly produced 0, printing `107/0 (0%)` for the one share this whole batch is justified
+# by. `reduce inputs` streams (no slurp) and emits exactly one integer; an empty ledger yields 0.
+ALL_FINDINGS="$(jq -n 'reduce inputs as $r (0; . + ([$r.categories[]?] | length))' "$LEDGER" 2>/dev/null || true)"
+ALL_MISSES="$(jq -n 'reduce inputs as $r (0; . + ([$r.categories[]? | select(.self_heal_miss==true)] | length))' "$LEDGER" 2>/dev/null || true)"
+# Not a silent 0: `jq` is present (checked above) and the ledger already parsed (the exit-3 die
+# above), so a non-numeric result here means the numbers cannot be trusted — and the whole output of
+# this tool is numbers. Same rationale as the ledger die, same exit code.
+is_num "$ALL_FINDINGS" && is_num "$ALL_MISSES" \
+  || die "could not count findings/misses in the ledger — refusing to print a share over a denominator this run could not compute: $LEDGER" 3
 CM_TOTAL="$(grep -c . "$FINDINGS" 2>/dev/null || true)"; is_num "$CM_TOTAL" || CM_TOTAL=0
 CM_MISSES="$(awk -F'\t' '$4=="miss"' "$FINDINGS" 2>/dev/null | grep -c . || true)"; is_num "$CM_MISSES" || CM_MISSES=0
 
@@ -697,8 +728,9 @@ while IFS= read -r f; do
 done < "$CORPUS_LIST"
 
 # ===========================================================================
-# BATCH — bounded by $CAP. Theme rules first (they carry the measured support), then corpus
-# graduates. Every emitted rule names the finding ids that motivated it.
+# BATCH — bounded by $CAP. EVERY emitted rule comes from a ledger theme: themes carry the measured
+# support, and a corroborating corpus entry is a deferral rather than a rule of its own (header step
+# 3). Every emitted rule names the finding ids that motivated it.
 # ===========================================================================
 BATCH="$WORK/batch.txt"; : > "$BATCH"
 EMITTED=0
@@ -758,15 +790,15 @@ emit_rule() {   # emit_rule <theme> <category> <statement> <origin-label>
 for k in $RULE_THEMES; do
   emit_rule "$k" "$(theme_field "$k" category)" "$(theme_field "$k" statement)" "ledger theme"
 done
+# A corroborating corpus entry NEVER emits a rule of its own — see the header's step 3. Its theme is
+# chosen from $RULE_THEMES and `triage_bucket corpus` requires a non-empty theme, so every entry that
+# reaches this list carries a theme whose own rule was already emitted above, over the same evidence.
+# There is deliberately no second arm here: an `else` branch emitting a `corpus graduate: <name>` rule
+# would be unreachable by construction, and a documented branch that cannot fire is this repo's
+# most-repeated defect class. Each entry is counted as a deferral so the batch stays honest about it.
 while IFS=$'\t' read -r cname ctheme cstmt; do
   [ -n "$cname" ] || continue
-  case " $RULE_THEMES " in
-    *" $ctheme "*)
-      # The theme's own rule already covers these findings; the corpus entry contributes its wording,
-      # not a second rule over the same evidence. Counted as a deferral so the batch stays honest.
-      DEFERRED=$((DEFERRED + 1)) ;;
-    *) emit_rule "$ctheme" "$(theme_field "$ctheme" category)" "$cstmt" "corpus graduate: $cname" ;;
-  esac
+  DEFERRED=$((DEFERRED + 1))
 done < "$CORPUS_RULE_LIST"
 
 # ===========================================================================
@@ -831,7 +863,7 @@ done
 echo
 echo "--- proposed rule batch (cap $CAP; $EMITTED emitted, $DEFERRED deferred by cap or already-covered evidence) ---"
 if [ "$EMITTED" -eq 0 ]; then
-  echo "  (empty batch — no theme reached the support floor and no corpus entry graduated)"
+  echo "  (empty batch — no theme reached the support floor; a corpus entry corroborates a theme and never emits a rule on its own, so there is nothing else that could have been emitted)"
 else
   cat "$BATCH"
 fi
