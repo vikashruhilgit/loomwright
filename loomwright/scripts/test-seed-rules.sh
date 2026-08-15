@@ -135,7 +135,16 @@ W="$(mkfix)"
 out_w="$(seedrun "$W" seed --confirm 2>&1)"; rc_w=$?
 [ "$rc_w" -eq 0 ] && ok "(b) seed --confirm exits 0" || no "(b) seed --confirm exited $rc_w"
 cnt_w="$(store_count "$W")"
-[ "${cnt_w:-0}" -ge 1 ] && ok "(b) seed --confirm wrote $cnt_w rules" || no "(b) seed --confirm wrote no rules"
+# EXACT, not `-ge 1`. The seed table has five entries and writes all five or the run is broken; a
+# write loop that stopped after the first seed satisfied `-ge 1` here and only surfaced two sections
+# later as an idempotency mismatch — a confusing label on a defect that belongs to THIS assertion.
+# Derived from the writer's own seed table, never hardcoded here — a second copy of the count is
+# the exact drift this repo keeps paying for.
+seed_n="$(awk '/<<.SEEDS.$/,/^SEEDS$/' "$SEED" | grep -cE '^[a-z-]+\|' || true)"
+[ "${seed_n:-0}" -gt 0 ] || no "(b) could not read the seed table out of $SEED — the expected count is unknown"
+[ "${cnt_w:-0}" -eq "$seed_n" ] \
+  && ok "(b) seed --confirm wrote all $seed_n seeds (exact count, so a partial write cannot pass)" \
+  || no "(b) seed --confirm wrote $cnt_w rules, expected exactly $seed_n — a partial write, not an idempotency problem"
 
 # (b) EVERY written rule is stamped seeded, and it is readable back off the store.
 bad_src="$(store_json "$W" | jq '[.[] | select(.provenance.source != "setup:rules-seed")] | length')"
@@ -229,6 +238,28 @@ bash "$SEED" --root "$G" >/dev/null 2>&1; rc_n=$?
 [ "$rc_n" -eq 2 ] && ok "(g) a missing subcommand exits 2" || no "(g) missing subcommand exited $rc_n (expected 2)"
 bash "$SEED" --root >/dev/null 2>&1; rc_v=$?
 [ "$rc_v" -eq 2 ] && ok "(g) a valueless --root exits 2 (never a silent fall-back)" || no "(g) valueless --root exited $rc_v (expected 2)"
+
+# A SECOND subcommand must DIE, never be silently dropped. `shift` used to run unconditionally while
+# only the assignment was guarded, so `seed check --confirm` kept `seed`, discarded `check` with no
+# diagnostic, and went on to WRITE — the caller asked to read and got a write. The assertion is the
+# EXIT plus an EMPTY STORE: a rejection that still wrote would be no rejection at all.
+Gd2="$(mkfix)"
+out_d2="$(bash "$SEED" --root "$Gd2" --add-rule "$ADDRULE" seed check --confirm 2>&1)"; rc_d2=$?
+if [ "$rc_d2" -eq 2 ] && printf '%s\n' "$out_d2" | grep -q 'only one subcommand'; then
+  ok "(g) a duplicate subcommand ('seed check') exits 2 with a diagnostic naming both"
+else
+  no "(g) duplicate subcommand exited $rc_d2 (expected 2): $(printf '%s\n' "$out_d2" | head -1)"
+fi
+[ ! -e "$Gd2/.agent/rules" ] || [ "$(store_count "$Gd2")" = "0" ] \
+  && ok "(g) the refused duplicate-subcommand run wrote NOTHING — the silent-drop-then-write path is closed" \
+  || no "(g) the duplicate-subcommand run still wrote $(store_count "$Gd2") rules"
+# Control: the same invocation with ONE subcommand is accepted, so the assertion above is not
+# passing merely because this argv shape can never work.
+Gd3="$(mkfix)"
+bash "$SEED" --root "$Gd3" --add-rule "$ADDRULE" seed --confirm >/dev/null 2>&1; rc_d3=$?
+[ "$rc_d3" -eq 0 ] && ok "(g) control: the same argv with a single subcommand still exits 0 and writes" \
+  || no "(g) control failed — a single-subcommand seed --confirm exited $rc_d3, so the rejection above proves nothing"
+
 [ ! -e "$G/.agent" ] && ok "(g) no usage-error path created a store" || no "(g) a usage-error path created a store"
 
 # missing writer: `seed` REFUSES (2) rather than hand-building a rule object; `check` does not
