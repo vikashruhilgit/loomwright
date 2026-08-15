@@ -10,7 +10,9 @@
 ## How to re-derive every number below
 
 ```
-bash "${CLAUDE_PLUGIN_ROOT}/scripts/measure-heal-signal.sh" --distribution
+git worktree add --detach /tmp/baseline-check 952ff91^{commit} 2>/dev/null \
+  || git worktree add --detach /tmp/baseline-check 5293d06
+cd /tmp/baseline-check && bash loomwright/scripts/measure-heal-signal.sh --distribution
 ```
 
 That is the whole instrument. It reads `.supervisor/postmortem/results.jsonl` and prints what
@@ -19,32 +21,49 @@ re-running it can never change what it measures. Every figure in this file came 
 command, not out of a plan document; a reader who doubts a number should run it rather than
 trust this file.
 
+**Measure it from a CLEAN checkout at the pinned sha, not from your working tree.** This is not
+pedantry — it is the correction that produced this paragraph. The row below was first written
+from a working tree whose `.supervisor/postmortem/results.jsonl` carried uncommitted extra
+records, so it reported **85** records against a ledger state no other reader could obtain: the
+file is git-tracked and grows as PRs land, and every number here is a function of it. A row
+measured against an unshared input is unfalsifiable, which is exactly what §"How to re-derive"
+claims this file is not.
+
+**Ledger pinned for the row below:** commit **`5293d06`**, at which
+`.supervisor/postmortem/results.jsonl` is blob **`952ff91`** and holds **84 records**. Re-derive
+either sha with `git rev-parse --short HEAD` and
+`git rev-parse --short HEAD:.supervisor/postmortem/results.jsonl` from inside the worktree above;
+if `wc -l` on that file is not 84, you are not measuring what this row measured and the numbers
+are expected to differ.
+
 ## Baseline row — 2026-08-14 (pre-rules)
 
 Measured on `vikashruhilgit/loomwright` immediately **before** the first harvested `.agent/rules/`
 batch was proposed. At the time of measurement `.agent/rules/` held **one** rule, so this row is
 the "conventions store is effectively empty" state.
 
-- **Records:** 85 · **Findings:** 226 · **Self-heal misses:** 95
+- **Ledger state:** commit `5293d06`, blob `952ff91` (see the pin above — this row is not
+  re-derivable without it)
+- **Records:** 84 · **Findings:** 225 · **Self-heal misses:** 95
 - **Ledger `.repo` values present** (named rather than filtered — the corpus is already own-repo
-  only by a committed gate, so nothing is dropped here): `vikashruhilgit/loomwright` (43 records),
-  `vikashruhilgit/ai-agent-manager` (42 records). Both are this repo under its old and current
+  only by a committed gate, so nothing is dropped here): `vikashruhilgit/ai-agent-manager` (42
+  records), `vikashruhilgit/loomwright` (42 records). Both are this repo under its old and current
   slug; there are zero foreign records.
 
 | class | findings | share of findings | misses | share of misses | miss-rate |
 |---|--:|--:|--:|--:|--:|
-| `convention_mismatch` | 107 | 47% | 60 | 63% | 56% |
+| `convention_mismatch` | 107 | 48% | 60 | 63% | 56% |
 | `quality_gap` | 46 | 20% | 17 | 18% | 37% |
 | `execution_bug` | 36 | 16% | 11 | 12% | 31% |
-| `drain_churn` | 27 | 12% | 6 | 6% | 22% |
+| `drain_churn` | 26 | 12% | 6 | 6% | 23% |
 | `missing_context` | 5 | 2% | 1 | 1% | 20% |
 | `plan_gap` | 3 | 1% | 0 | 0% | 0% |
 | `scope_too_large` | 2 | 1% | 0 | 0% | 0% |
 
-**Label quality on this row:** **84 of 85** records (99%) carry `agent_generated_guess: true`.
+**Label quality on this row:** **83 of 84** records (99%) carry `agent_generated_guess: true`.
 
 **The one sentence this row is for:** `convention_mismatch` is the largest class in *both*
-columns — 47% of all findings and 63% of all self-heal misses — which is why a conventions store
+columns — 48% of all findings and 63% of all self-heal misses — which is why a conventions store
 is the thing being invested in. It is also the class with the highest miss-rate of any
 well-populated class (56% of its findings were missed by self-heal), i.e. the class review is
 worst at catching, not merely the most common.
@@ -57,7 +76,7 @@ worst at catching, not merely the most common.
   confusion matrix, which dedups per PR because it is answering a per-PR question.)
 - A **miss** is a finding whose `self_heal_miss` is exactly `true`. Absent and `null` are not
   misses, so records predating the field cannot inflate the miss column.
-- **share of findings** = the class's findings ÷ 226. **share of misses** = the class's misses ÷
+- **share of findings** = the class's findings ÷ 225. **share of misses** = the class's misses ÷
   95. **miss-rate** = the class's misses ÷ its own findings. The first two answer "how much of
   the corpus is this class?"; the third answers "how often does this class get past review?"
 - Percentages are rounded to whole numbers by the instrument, so a column may not sum to exactly
@@ -67,11 +86,11 @@ worst at catching, not merely the most common.
 
 Stated here, in the record itself, so no later reader can quote a row without the caveat:
 
-1. **The labels are mostly guesses.** 84 of the 85 records carry `agent_generated_guess: true`:
+1. **The labels are mostly guesses.** 83 of the 84 records carry `agent_generated_guess: true`:
    `self_heal_misses` and the class assignment are a model's post-hoc classification of review
    churn, not verified ground truth. A shift in a class's share may be a shift in how the
    classifier labels, not in what the repo produced.
-2. **N is small, and the unit is not independent.** 85 records over one repo's history, with
+2. **N is small, and the unit is not independent.** 84 records over one repo's history, with
    findings clustered inside PRs — a handful of unusually churny PRs move a class's share on
    their own. Treat differences of a few points as noise.
 3. **There is no control arm.** Nothing about this design isolates the effect of rules. The repo
@@ -103,6 +122,19 @@ baseline row above.
    the numbers.
 4. Do **not** rewrite the baseline row, and do not delete a row that came out unfavourably. The
    value of this file is entirely in it being append-only.
+
+**One exception, and it has already been used once — so it is written down rather than left to
+judgement.** A row may be corrected when it does not reproduce from its own instrument at its own
+pinned input; that is not a re-measurement, it is a repair of a transcription error, and refusing
+it would preserve a number that is simply wrong. The baseline row above was corrected on
+2026-08-15 for exactly that reason: it had been measured from a dirty working tree carrying
+uncommitted ledger records (85 records / 226 findings / 84-of-85 labelled) and did not reproduce
+from any committed state. The corrected row (84 / 225 / 83-of-84) is the same measurement taken
+against the pinned sha. **The headline claims were unaffected** — `convention_mismatch` was 107
+findings and 60 misses before and after; only denominators moved. The append-only rule stands for
+everything else: a row that reproduces and that you dislike is not a candidate for this exception.
+The structural fix is the pin itself, which makes the next such error detectable by a reader
+instead of by a reviewer.
 
 ## Subsequent rows
 
