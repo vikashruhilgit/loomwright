@@ -19,6 +19,9 @@
 #   (F) AC5 — a near-1:1 batch reports DISTILLATION FAILURE in its own output.
 #   (G) an ABSENT .supervisor/agent-memory-proposals/ is a normal empty case (exit 0), not an error.
 #   (H) exit contract: unknown arg / bad --session-id ⇒ 2; absent ledger / no jq ⇒ 3.
+#   (J) column 6's US list separator is load-bearing (a multi-path fixture whose ONLY live path is the
+#       second array element), and the scope-fidelity denominator filter is DISCLOSED — both the
+#       checkable figure and the honest all-findings figure are printed, with the exclusions counted.
 #
 # MUTATION CONTROLS. This repo has repeatedly shipped guards that were vacuous until mutated, so the
 # three load-bearing assertions here are each proved non-vacuous by breaking the mechanism they
@@ -29,6 +32,8 @@
 #        could not discriminate.
 #   (M2) neuter `matches_any` (the `|`-alternation split)  ⇒ 0 findings themed, empty batch.
 #   (M3) make compose_add_rule pass `--check`  ⇒ the "never synthesises a check" assertion fires.
+#   (M5) join column 6 with the empty string instead of $US ⇒ (J)'s counts collapse AND (B)'s
+#        applies_to derivation breaks. (M5b) is the proof that (B) is no longer self-masking.
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -164,9 +169,15 @@ fi
 echo "(B) applies_to derivation, and null scope only WITH a justification"
 # ============================================================================
 R="$(new_repo)"
+# NOTE ON THE THIRD RECORD. It used to be single-path (`["src/a/y.md"]`), and that MASKED this
+# fixture: its 3 findings alone cleared the 95% APPLIES_TO_COVER threshold, so (b1) still found a
+# `src/a/*` glob even if column 6's list separator was destroyed and every multi-path record was
+# dropped. It is multi-path now, with the live path SECOND, so no record in this fixture can
+# contribute its scope without the separator being intact. Section (J) below makes that a first-class
+# assertion with a mutation control; this change stops (B) from quietly passing over the same break.
 { rec 1 "count drift in the banner" '["src/a/x.md","src/a/y.md"]' 3
   rec 2 "version count drift again"  '["src/a/x.md","src/b/z.sh"]' 3
-  rec 3 "count bump drift once more" '["src/a/y.md"]'             3
+  rec 3 "count bump drift once more" '["gone/old/q.md","src/a/y.md"]' 3
 } > "$R/.supervisor/postmortem/results.jsonl"
 run_harvest "$R" --session-id "fx-b" --min-support 4 --cap 3 --no-writer
 printf '%s\n' "$OUT" > "$ROOT/b.txt"
@@ -190,6 +201,75 @@ if grep -qE '^     applies_to: null' "$ROOT/b2.txt" \
   ok "(b3) a repo-wide (null) scope is emitted ONLY alongside an explicit stated justification"
 else
   no "(b3) null scope without the justification string (or no null scope at all)"
+fi
+
+# ============================================================================
+echo "(J) column 6's list separator is load-bearing, and the fidelity denominator is disclosed"
+# ============================================================================
+# WHY THIS SECTION EXISTS. Column 6 of the findings TSV is a US-joined ($'\037') list of the record's
+# changed_paths, and BOTH consumers (derive_applies_to, scope_fidelity) split it on that byte. Two
+# review channels independently read the emitter's separator as empty (it was a raw 0x1F typed inline
+# into the jq program — correct, but invisible in every reader) and reported a critical bug. The
+# separator is a named `--arg us` now, and this fixture makes the CONSEQUENCE of losing it a red test
+# rather than something only careful reading catches: 74 of the 84 committed ledger records carry more
+# than one changed_path, so a destroyed separator silently drops ~26% of the scope evidence while
+# every printed number stays plausible.
+#
+# The fixture is built so that BOTH facts are asserted as COUNTS, not as glob presence:
+#   J1 (4 findings): the ONLY live path is the SECOND element of a two-element array — unreachable
+#                    unless the separator survives. No other record can supply the scope.
+#   J2 (2 findings): two paths, BOTH untracked — the "dead paths" exclusion.
+#   J3 (2 findings): no changed_paths at all         — the "no recorded path" exclusion.
+# Expected, by construction: applies_to src/a/*; checkable fidelity 4 of 4; over ALL 8 motivating
+# findings 50% (4 of 8), excluding 2 no-path and 2 dead-path findings.
+RJ="$(new_repo)"
+{ rec 1 "count drift in the banner"    '["gone/dead/a.md","src/a/x.md"]'   4
+  rec 2 "version count drift again"    '["gone/dead/b.md","gone/dead/c.md"]' 2
+  rec 3 "count bump drift once more"   '[]'                                 2
+} > "$RJ/.supervisor/postmortem/results.jsonl"
+run_harvest "$RJ" --session-id "fx-j" --min-support 4 --cap 3 --no-writer
+printf '%s\n' "$OUT" > "$ROOT/j.txt"
+
+# j1 — the CHECKABLE denominator is exactly the 4 findings with a live path, and all 4 are matched.
+if grep -qF 'scope fidelity: 100% (4 of the 4 CHECKABLE motivating findings' "$ROOT/j.txt"; then
+  ok "(j1) the checkable fidelity denominator is 4 — reachable only through the second element of a multi-path changed_paths array"
+else
+  no "(j1) expected '4 of the 4 CHECKABLE'; got: $(grep -F 'scope fidelity' "$ROOT/j.txt" | head -1)"
+fi
+# j2 — the honest figure over ALL motivating findings, and the two exclusions NAMED with their counts.
+if grep -qF 'over ALL 8 motivating findings: 50% (4 of 8)' "$ROOT/j.txt" \
+   && grep -qF '2 finding(s) come from a ledger record with no changed_paths at all, and 2 have changed_paths of which none is still tracked' "$ROOT/j.txt"; then
+  ok "(j2) the all-findings figure (4 of 8, 50%) is printed alongside it, with both exclusions named by count — the denominator filter is disclosed, not silent"
+else
+  no "(j2) the all-findings figure or the named exclusions are missing: $(grep -F 'over ALL' "$ROOT/j.txt" | head -1)"
+fi
+# j3 — the aggregate carries both figures too, so a reader of the summary alone is not flattered.
+grep -qF 'over ALL motivating findings: 50% (4 of 8)' "$ROOT/j.txt" \
+  && ok "(j3) the run summary prints the all-findings aggregate as well as the checkable one" \
+  || no "(j3) the summary printed only the checkable aggregate: $(grep -F 'scope fidelity:  aggregate' "$ROOT/j.txt" | head -1)"
+
+# ---- MUTATION CONTROL M5: destroy column 6's list separator ----
+# Restore the pre-fix hazard by joining with the empty string. If (j1)/(j2) were vacuous — as the
+# pre-existing (B) and (E) fixtures were, by coincidence of their single-path records — the mutant
+# would still print the same counts.
+MUT5="$ROOT/mut-join.sh"
+sed 's@| join($us)) as $cp@| join("")) as $cp@' "$HARVEST" > "$MUT5"
+if ! cmp -s "$HARVEST" "$MUT5" && grep -qF 'join("")) as $cp' "$MUT5" && bash -n "$MUT5" 2>/dev/null; then
+  M5OUT="$( bash "$MUT5" --root "$RJ" --session-id fx-m5 --min-support 4 --cap 3 --no-writer 2>&1 )" || true
+  if printf '%s\n' "$M5OUT" | grep -qF '4 of the 4 CHECKABLE motivating findings'; then
+    no "(M5) REFUTED: the mutant still reported 4 checkable findings — (j1)/(j2) are vacuous"
+  else
+    ok "(M5) CONFIRMED: with the separator destroyed the scope collapses to '$(printf '%s\n' "$M5OUT" | grep -F 'scope fidelity:' | head -1 | sed 's/^ *//')' — (j1)/(j2) are load-bearing"
+  fi
+else
+  no "(M5) the join mutation did not land"
+fi
+# ...and the same mutant must also break (B), which no longer has a single-path record to mask it.
+M5B="$( bash "$MUT5" --root "$R" --session-id fx-m5b --min-support 4 --cap 3 --no-writer 2>&1 )" || true
+if printf '%s\n' "$M5B" | grep -qE '^     applies_to: \[.*src/a/\*'; then
+  no "(M5b) REFUTED: (B) still derives src/a/* with the separator destroyed — it is masked again"
+else
+  ok "(M5b) CONFIRMED: the same mutant also breaks (B)'s applies_to derivation — its de-masked third record is load-bearing"
 fi
 
 # ============================================================================

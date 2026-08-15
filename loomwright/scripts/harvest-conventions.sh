@@ -319,12 +319,19 @@ matches_any() {
 # ---------------------------------------------------------------------------
 harvest_convention_findings() {
   local ledger="$1" out="$2"
-  jq -s -r '
+  # The column-6 separator is passed in as a NAMED argument on purpose. It used to be a raw 0x1F
+  # byte typed inline into the jq program below — which worked (jq accepts a literal control
+  # character inside a string literal), but rendered as `join("")` in every reader, grep, diff and
+  # review tool. Two independent review channels consequently reported it as a critical "paths are
+  # concatenated with the empty string" bug, and an editor or `sed` normalisation pass that ate the
+  # invisible byte would have introduced exactly that bug with no visible diff. Named, it is legible
+  # and it is the same $US the two `awk -F'\t' -v us="$US" … split($6, p, us)` consumers split on.
+  jq -s -r --arg us "$US" '
     to_entries[]
     | (.key + 1) as $line
     | .value as $r
     | (($r.repo // "unknown/unknown") | split("/") | last) as $rn
-    | (($r.changed_paths // []) | map(select(type=="string")) | join("")) as $cp
+    | (($r.changed_paths // []) | map(select(type=="string")) | join($us)) as $cp
     | ([$r.categories[]?] | to_entries[]?)
     | select((.value | type) == "object" and .value.class == "convention_mismatch")
     | [ ($rn + "#" + (($r.number // 0)|tostring) + ":L" + ($line|tostring) + "." + ((.key+1)|tostring)),
@@ -737,11 +744,17 @@ EMITTED=0
 MAPPED=0
 DEFERRED=0
 FIDELITY_TOTAL=0; FIDELITY_MATCHED=0
+# FIDELITY_ALL_TOTAL is the HONEST denominator: every motivating finding of a scoped rule, including
+# the ones the fidelity check cannot see. FIDELITY_TOTAL counts only the CHECKABLE ones (a finding
+# with at least one still-tracked changed_path). Both are printed. Reporting only the first would be
+# a metric that flatters itself by silently dropping the evidence that could contradict it — the
+# exact failure AC4's "computed, not asserted" exists to prevent.
+FIDELITY_ALL_TOTAL=0
 NULL_SCOPE_N=0
 
 emit_rule() {   # emit_rule <theme> <category> <statement> <origin-label>
   local k="$1" category="$2" statement="$3" origin="$4"
-  local globs just="" fid_list fid_n sf_m sf_t sf_p
+  local globs just="" fid_list fid_n sf_m sf_t sf_p sf_all ex_nopath ex_dead
 
   if [ "$EMITTED" -ge "$CAP" ]; then DEFERRED=$((DEFERRED + 1)); return 0; fi
 
@@ -769,7 +782,15 @@ emit_rule() {   # emit_rule <theme> <category> <statement> <origin-label>
       set -- $(scope_fidelity "$WORK/rowpaths.$k" "$globs")
       sf_m="$1"; sf_t="$2"; sf_p="$3"
       FIDELITY_MATCHED=$((FIDELITY_MATCHED + sf_m)); FIDELITY_TOTAL=$((FIDELITY_TOTAL + sf_t))
-      printf '     scope fidelity: %s%% (%s of %s motivating findings have a live changed_path matched by the derived globs, via the same bash `case` matcher read-rules.sh uses)\n' "$sf_p" "$sf_m" "$sf_t"
+      FIDELITY_ALL_TOTAL=$((FIDELITY_ALL_TOTAL + fid_n))
+      # The two excluded populations, NAMED rather than absorbed into a flattering percentage.
+      ex_nopath="$(awk -F'\t' '$6==""' "$WORK/theme.$k.tsv" 2>/dev/null | grep -c . || true)"
+      is_num "$ex_nopath" || ex_nopath=0
+      ex_dead=$((fid_n - ex_nopath - sf_t)); [ "$ex_dead" -lt 0 ] && ex_dead=0
+      sf_all=0; [ "$fid_n" -gt 0 ] && sf_all=$((sf_m * 100 / fid_n))
+      printf '     scope fidelity: %s%% (%s of the %s CHECKABLE motivating findings have a live changed_path matched by the derived globs, via the same bash `case` matcher read-rules.sh uses)\n' "$sf_p" "$sf_m" "$sf_t"
+      printf '                     over ALL %s motivating findings: %s%% (%s of %s). The denominator above is SMALLER on purpose and the filter is not silent: %s finding(s) come from a ledger record with no changed_paths at all, and %s have changed_paths of which none is still tracked by git. Neither can be matched against a glob, so neither is evidence for OR against the scope — but they are motivating findings all the same, and the honest figure is the second one.\n' \
+        "$fid_n" "$sf_all" "$sf_m" "$fid_n" "$ex_nopath" "$ex_dead"
     else
       printf '     applies_to: null\n'
       printf '     scope fidelity: n/a (repo-wide)\n'
@@ -807,6 +828,7 @@ done < "$CORPUS_RULE_LIST"
 set -- $(coverage_share "$MAPPED" "$CM_TOTAL"); COV_PCT="$1"; COV_UNMAPPED="$2"
 set -- $(dedupe_rate "$MAPPED" "$EMITTED"); DEDUPE="$1"; DEDUPE_VERDICT="$2"
 AGG_FID=0; [ "$FIDELITY_TOTAL" -gt 0 ] && AGG_FID=$((FIDELITY_MATCHED * 100 / FIDELITY_TOTAL))
+AGG_FID_ALL=0; [ "$FIDELITY_ALL_TOTAL" -gt 0 ] && AGG_FID_ALL=$((FIDELITY_MATCHED * 100 / FIDELITY_ALL_TOTAL))
 CM_SHARE=0;      [ "$ALL_FINDINGS" -gt 0 ] && CM_SHARE=$((CM_TOTAL * 100 / ALL_FINDINGS))
 CM_MISS_SHARE=0; [ "$ALL_MISSES" -gt 0 ]   && CM_MISS_SHARE=$((CM_MISSES * 100 / ALL_MISSES))
 
@@ -881,7 +903,8 @@ if [ "$EMITTED" -eq 0 ]; then
 else
   echo "  dedupe rate:     $((DEDUPE / 100)).$(printf '%02d' $((DEDUPE % 100))) findings distilled per rule emitted ($MAPPED in / $EMITTED out)"
 fi
-echo "  scope fidelity:  aggregate ${AGG_FID}% ($FIDELITY_MATCHED of $FIDELITY_TOTAL motivating findings routed by their own rule's derived globs); per-rule figures are printed with each rule above"
+echo "  scope fidelity:  aggregate ${AGG_FID}% ($FIDELITY_MATCHED of $FIDELITY_TOTAL CHECKABLE motivating findings routed by their own rule's derived globs)"
+echo "                   over ALL motivating findings: ${AGG_FID_ALL}% ($FIDELITY_MATCHED of $FIDELITY_ALL_TOTAL) — the $((FIDELITY_ALL_TOTAL - FIDELITY_TOTAL)) difference is findings whose ledger record carries no changed_paths, or none still tracked by git; they cannot be matched against a glob either way. Both figures are printed because the first one alone would flatter the derivation by dropping its own unfalsifiable evidence; per-rule breakdowns are with each rule above"
 echo "                   $NULL_SCOPE_N proposal(s) fell back to a repo-wide (null) scope, each with the stated justification shown above"
 if [ "$DEDUPE_VERDICT" = "FAILURE" ]; then
   echo "  DISTILLATION FAILURE (AC5): at $((DEDUPE / 100)).$(printf '%02d' $((DEDUPE % 100))) findings per rule this batch is approaching one rule per"
