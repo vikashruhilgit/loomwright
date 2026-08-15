@@ -240,10 +240,27 @@ case "$_ptyprobe" in
   *) _ptyprobe="$(script -qec "/bin/bash -c '[ -t 0 ] && echo __PTYOK__'" /dev/null </dev/null 2>/dev/null || true)"
      case "$_ptyprobe" in *__PTYOK__*) PTY_MODE=gnu ;; esac ;;
 esac
+# THE COMMAND IS PASSED AS A FILE, NEVER AS A RE-QUOTED STRING — and that is a CI-only bug this
+# suite already shipped once. The gnu branch used to read `script -qec "/bin/bash -c '$1'" /dev/null`,
+# which re-embeds $1 inside single quotes; but GNU `script -c STR` execs `$SHELL -c STR`, so STR is
+# re-parsed by a shell, and every caller's own single quotes (the `--statement 'A pty probe rule…'`
+# below) shatter that tokenisation. MEASURED: on Linux the writer actually received
+# `--statement A`, and the trailing `< /dev/null` was swallowed into a literal argument instead of
+# being a redirection — so add-rule.sh kept the pty on stdin, took its `[ -t 0 ] && [ -t 1 ]` branch,
+# and WROTE. (M1b)/(M1c) went red on ubuntu while macOS stayed 45/45, because BSD `script cmd args…`
+# passes $1 as its OWN argv element with no re-quoting at all. Writing $1 to a file removes the
+# quoting layer on BOTH platforms, so the two branches now differ only in `script`'s own argument
+# order. The gnu branch passes the path through the ENVIRONMENT rather than interpolating it into
+# STR, so a $TMPDIR containing spaces or quotes cannot reintroduce the same class of bug.
+# The file lives under "$ROOT" and is therefore covered by the existing EXIT trap; calls are strictly
+# sequential, so overwriting it per call is safe (and each call rewrites it before use, so no
+# invocation can ever read a stale one).
 pty_run() {
+  printf '%s\n' "$1" > "$ROOT/_ptycmd.sh"
   case "$PTY_MODE" in
-    bsd) { sleep 1; cat "$YFEED"; } | script -q /dev/null /bin/bash -c "$1" 2>&1 ;;
-    gnu) { sleep 1; cat "$YFEED"; } | script -qec "/bin/bash -c '$1'" /dev/null 2>&1 ;;
+    bsd) { sleep 1; cat "$YFEED"; } | script -q /dev/null /bin/bash "$ROOT/_ptycmd.sh" 2>&1 ;;
+    gnu) PTYCMD="$ROOT/_ptycmd.sh"; export PTYCMD
+         { sleep 1; cat "$YFEED"; } | script -qec '/bin/bash "$PTYCMD"' /dev/null 2>&1 ;;
     *)   return 127 ;;
   esac
   return 0
