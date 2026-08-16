@@ -150,6 +150,19 @@ jobs:
           SINCE: ${{ steps.stamp.outputs.since }}
         run: |
           set -uo pipefail
+          # claude-code-action SELF-SKIPS any PR that modifies a workflow file (it warns
+          # "Skipping action due to workflow validation", exits 0, and posts nothing) — the
+          # header above already documents this. That skip leaves steps.claude-review.outcome
+          # == 'success', so without this branch the assertion reports a false "not reviewed"
+          # on every workflow PR. Caught by this very step on its own first run (PR #148).
+          # No pipe into grep here: `producer | grep -q` returns 141 under `pipefail` EVEN ON
+          # A MATCH, which would silently turn this guard into a no-op.
+          changed="$(git diff --name-only HEAD^1 HEAD 2>/dev/null || true)"
+          case "$changed" in
+            *.github/workflows/*)
+              echo "::notice::PR modifies a workflow file — claude-code-action self-skips these, so there is no review to assert here. Validate this workflow on the next NON-workflow PR."
+              exit 0 ;;
+          esac
           # `--paginate` with `--jq` applies the filter to EACH page and concatenates the
           # outputs, so a `| length` filter emits one number PER PAGE ("0\n1") rather than a
           # total. Emit one id per line and count lines instead — correct at any comment count.
