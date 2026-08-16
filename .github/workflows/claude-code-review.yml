@@ -31,6 +31,12 @@ jobs:
           # word for it. Full history makes those claims checkable.
           fetch-depth: 0
 
+      # Stamped BEFORE the reviewer runs so the posted-comment assertion below can tell
+      # THIS run's comment from one left by an earlier run on the same PR.
+      - name: Stamp run start
+        id: stamp
+        run: echo "since=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - name: Run Claude Code Review
         id: claude-review
         uses: anthropics/claude-code-action@v1
@@ -117,4 +123,54 @@ jobs:
           # Kept on ONE line on purpose: a YAML folded scalar (`>-`) joins its lines
           # with a space, which would inject a leading space into every wrapped tool
           # name (`" Bash(git blame:*)"`) and is not worth betting the allowlist on.
-          claude_args: '--allowed-tools "Read,Grep,Glob,Bash(git log:*),Bash(git show:*),Bash(git diff:*),Bash(git cat-file:*),Bash(git blame:*),Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git merge-base:*),Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
+          claude_args: '--allowed-tools "Read,Grep,Glob,Task,TodoWrite,Bash(git log:*),Bash(git show:*),Bash(git diff:*),Bash(git cat-file:*),Bash(git blame:*),Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git merge-base:*),Bash(git status:*),Bash(jq:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(sort:*),Bash(uniq:*),Bash(cut:*),Bash(tr:*),Bash(diff:*),Bash(find:*),Bash(ls:*),Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
+
+      # ---------------------------------------------------------------------
+      # A run that ends without a posted comment is indistinguishable from no
+      # review at all — the prompt above says so, and until now nothing enforced
+      # it: the action exits `is_error: false` and the check goes green whether
+      # or not a review was delivered. Measured on PR #147, nine runs all
+      # concluded `success` and only THREE posted; the six silent ones cost
+      # ~$21 and produced nothing a human could read. Silence read as "clean".
+      #
+      # This step makes that visible. It is deliberately NOT a required check
+      # (branch protection on `main` requires `ci` only), so a red mark here
+      # reports "this PR was not actually reviewed" without blocking a merge —
+      # the human decides what to do about it.
+      #
+      # A comment counts only if it postdates this run's own start stamp (so an
+      # earlier run's review cannot satisfy a later run) and is longer than 200
+      # characters — PR #147 collected a literal 4-character "test" comment from
+      # a reviewer probing its tool permissions, which must not count as review.
+      - name: Assert a review was actually posted
+        if: always() && steps.claude-review.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          SINCE: ${{ steps.stamp.outputs.since }}
+        run: |
+          set -uo pipefail
+          # `--paginate` with `--jq` applies the filter to EACH page and concatenates the
+          # outputs, so a `| length` filter emits one number PER PAGE ("0\n1") rather than a
+          # total. Emit one id per line and count lines instead — correct at any comment count.
+          if ! ids="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+                        --paginate --jq \
+                        ".[] | select(.created_at >= \"${SINCE}\") | select(.body | length > 200) | .id" \
+                      2>/dev/null)"; then
+            echo "::warning::could not read PR comments to verify a review was posted — not failing on an unreadable check"
+            exit 0
+          fi
+          # An unreadable API is a WARNING (above); zero comments from a readable API is the
+          # finding. Keep those two apart, or an outage silently reads as "not reviewed".
+          posted="$(printf '%s' "$ids" | grep -c . || true)"
+          if [ "${posted:-0}" -gt 0 ]; then
+            echo "review posted: $posted substantive comment(s) since ${SINCE}"
+            exit 0
+          fi
+          echo "::error::claude-review ran to completion but posted NO comment on PR #${PR_NUMBER}."
+          echo "The most common cause is tool-permission starvation: --allowed-tools REPLACES the"
+          echo "action's defaults, so anything absent from that list is denied, each denial burns a"
+          echo "turn, and the reviewer can exhaust itself before reaching the mandated final post."
+          echo "Check permission_denials_count against num_turns in this job's result block above:"
+          echo "on PR #147 the runs that posted sat at 36-46% denials; the silent ones ran 53-93%."
+          exit 1
