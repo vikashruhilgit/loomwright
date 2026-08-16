@@ -576,7 +576,7 @@ For each item above, choose **Accept**, **Reject**, or **Edit** (per-item — th
 - **PROMOTE PENDING PROPOSAL** — `.supervisor/agent-memory-proposals/2026-05-09-jq-optional-chain.md`
   agent: `loomwright-loomwright-code-reviewer` · name: `jq-optional-chain-type-trap`
   Accept promotes via `write-agent-memory.sh --proposal … --confirm` and deletes the file; Reject deletes it without writing.
-- **Harvested `.agent/rules/` batch** — 4 proposed rules (coverage 74/107, dedupe 18.50 findings/rule, scope fidelity 98% of the 55 CHECKABLE findings / 72% over all 74 motivating findings — both figures, never the flattering one alone).
+- **Harvested `.agent/rules/` batch** — 4 proposed rules (coverage 74/107, dedupe 18.50 findings/rule, scope fidelity 98% of the 55 CHECKABLE findings / 73% over all 74 motivating findings — both figures, never the flattering one alone).
   Each rule takes **two** gates: **Accept** (content), then a separate **Pre-push confirmation** (push). Only rules clearing both are committed to `dreaming/rules-<session_id>` and delivered by `gh pr create`. Nothing confirmed ⇒ no branch, no PR. `/dreaming` never merges the PR it opens.
 ```
 
