@@ -161,6 +161,40 @@ _dupe_cat="$(seed_table | cut -d'|' -f1 | LC_ALL=C sort | LC_ALL=C uniq -d | hea
 [ -z "$_dupe_cat" ] || die "seed table invariant violated: category '$_dupe_cat' appears in more than one row. seed_present() keys presence on (seeded stamp + category), so two seeds sharing a category would make one of them permanently unseedable — give the second seed its own category, or re-key seed_present per seed before adding the row"
 unset _dupe_cat
 
+# ---- THE CATEGORY-IS-ALREADY-ITS-OWN-SLUG INVARIANT (asserted, never assumed) ----------
+# The SAME permanent-failure class as the guard directly above, reached through the category instead
+# of the statement text — and today it is INVISIBLE, because all five seed categories happen to be
+# valid slugs already, so raw == slug and nothing can go wrong yet.
+#
+# The mechanism: seed_present() matches the STORED rule's `.category` (and the `<category>-` prefix
+# of its frozen `.id`) against the RAW string from seed_table. But `add-rule.sh` SLUGS the category
+# before writing it. A future row reading `Error Handling` would be stored as
+# `.category: "error-handling"`; the raw-string match would never fire; the seed would report ABSENT
+# on every run FOREVER; the writer would be re-invoked every run and would very plausibly hit its own
+# near-duplicate refusal — exactly the loop the statement-keyed fix above was written for.
+#
+# MIRRORED, not invented: this is `add-rule.sh`'s own `slug()` (lowercase → non-[a-z0-9] runs to '-'
+# → collapse repeats → strip leading/trailing '-'), copied verbatim rather than approximated. A
+# looser property such as `^[a-z0-9-]+$` would NOT catch it: `--foo-` and `a--b` both satisfy that
+# and both are still rewritten by slug(). If add-rule.sh's slug() ever changes, this mirror must move
+# with it — that coupling is the cost of asserting the real invariant instead of a weaker proxy, and
+# it is stated here so the next editor knows the mirror exists.
+_slug_of() {
+  printf '%s' "$1" \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed -E 's/[^a-z0-9]+/-/g; s/-+/-/g; s/^-//; s/-$//'
+}
+# A HEREDOC, never `seed_table | while`: a piped loop body runs in a SUBSHELL, where this die()'s
+# `exit` would kill only that subshell and the run would sail on past a violated invariant.
+while IFS='|' read -r _cat _rest; do
+  [ -n "$_cat" ] || continue
+  _cat_slug="$(_slug_of "$_cat")"
+  [ "$_cat" = "$_cat_slug" ] || die "seed table invariant violated: category '$_cat' is not already its own slug (add-rule.sh would store it as '$_cat_slug'). seed_present() matches the STORED rule's .category against this RAW string, so this seed would report ABSENT forever, re-invoke the writer every run, and hit its near-duplicate refusal — use '$_cat_slug' as the category in seed_table"
+done <<SEEDCATS
+$(seed_table)
+SEEDCATS
+unset _cat _rest _cat_slug
+
 # ---------------------------------------------------------------------------
 # Arg parsing. Same flat namespace as the sibling setup helpers; the subcommand is positional.
 # ---------------------------------------------------------------------------

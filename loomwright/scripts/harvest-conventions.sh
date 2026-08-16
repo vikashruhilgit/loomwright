@@ -166,6 +166,47 @@ usage() {
 
 is_num() { case "${1:-}" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }
 
+# pct <numerator> <denominator> — a REPORTED share, ROUNDED HALF-UP, never truncated. Prints 0 for a
+# zero/absent denominator so no caller has to guard division separately.
+#
+# WHY ROUNDING AND NOT `a * 100 / b`: bash integer division TRUNCATES, and every other surface that
+# quotes these same ratios computes them with Python `round()` (`measure-heal-signal.py`). Measured
+# on this repo's headline ratio, that is a visible disagreement between two COMMITTED artifacts:
+# 107*100/225 = 47.55… → truncated 47, rounded 48, so `docs/HARVEST_DRYRUN_SAMPLE.md` printed
+# `107/225 (47%)` for the identical statistic `docs/RULES_BASELINE.md`, `CHANGELOG.md` and the
+# CLAUDE.md banner all state as 48%. A reader cross-referencing the two artifacts trips over the
+# number this change leads with. `(a*200 + b) / (2*b)` is half-up with integer arithmetic only.
+#
+# THE THRESHOLD COMPARISONS ARE DELIBERATELY LEFT TRUNCATING, and this is a judgement, not an
+# oversight — they are not reported shares, they are decisions, and rounding each one WEAKENS the
+# decision by up to half a point:
+#   - the `applies-to-cover` stop condition in derive_applies_to: rounding lets the greedy cover stop
+#     early (94.5% would satisfy a 95% floor), narrowing a derived scope for a display reason.
+#   - `dedupe_rate`'s hundredths against $DISTILLATION_FLOOR: rounding turns a true 1.995
+#     findings-per-rule into a passing 2.00, i.e. it would let a batch this script is supposed to
+#     self-report as a DISTILLATION FAILURE ship instead.
+#   - `pw` against $PROJECT_WIDE_PCT: pw is printed, but it is printed BECAUSE it is the decision
+#     variable, and rounding it would admit an 84.5% corpus entry to the `rules` bucket — a change to
+#     which candidates are proposed, made for a formatting reason. Displaying the exact value the
+#     decision used is the correct reporting, and no other artifact quotes a pw.
+# No other committed surface quotes any of those three, so leaving them truncated moves no
+# inconsistency anywhere; rounding them would trade a cosmetic fix for a behavioural one.
+#
+# HONEST LIMIT — half-up is NOT byte-identical to Python's `round()` AT EXACTLY .5. Python rounds
+# half-to-EVEN (banker's), so 5/8 = 62.5% prints 62 there and 63 here; the two agree everywhere else,
+# including on every ratio actually cross-quoted today (107/225 → 48 both ways, 60/95 → 63 both ways,
+# 54/74 → 73 both ways). Half-up is chosen anyway because it is the rule a reader hand-checking
+# "47.55 rounds to 48" will apply, and because matching banker's rounding would need an even/odd
+# branch that no cross-artifact disagreement currently justifies. If a .5 ratio ever IS quoted on
+# both sides, this is the line that explains the one-point gap.
+pct() {
+  local n="${1:-0}" d="${2:-0}"
+  is_num "$n" || n=0
+  is_num "$d" || d=0
+  if [ "$d" -le 0 ]; then printf '0'; return 0; fi
+  printf '%s' "$(( (n * 200 + d) / (2 * d) ))"
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --session-id)    [ "$#" -ge 2 ] || die "--session-id requires a value"; SESSION_ID="$2"; shift 2 ;;
@@ -455,6 +496,8 @@ derive_applies_to() {
     awk -F'\t' 'NR==FNR { d[$1]=1; next } !($1 in d)' "$hit" "$rem" > "$rem.next" \
       && mv -f "$rem.next" "$rem"
     [ -s "$rem" ] || break
+    # TRUNCATING ON PURPOSE — a stop DECISION, not a reported share (see pct()'s header): rounding
+    # would let 94.5% satisfy a 95% floor and stop the cover early, narrowing a real scope.
     [ $((covered * 100 / rowtotal)) -lt "$APPLIES_TO_COVER" ] || break
   done
   printf '%s' "$out"
@@ -472,7 +515,8 @@ derive_applies_to() {
 # disagree.
 # ---------------------------------------------------------------------------
 scope_fidelity() {
-  local src="$1" globs="$2" total=0 matched=0 row pct p ok
+  # `share`, not `pct`: a local named `pct` would read as shadowing the pct() helper called below.
+  local src="$1" globs="$2" total=0 matched=0 row share p ok
   while IFS= read -r row; do
     [ -n "$row" ] || continue
     total=$((total + 1))
@@ -490,8 +534,8 @@ EOP
   done <<EOF
 $(cut -f1 "$src" | LC_ALL=C sort -u)
 EOF
-  pct=0; [ "$total" -gt 0 ] && pct=$((matched * 100 / total))
-  printf '%s %s %s' "$matched" "$total" "$pct"
+  share="$(pct "$matched" "$total")"
+  printf '%s %s %s' "$matched" "$total" "$share"
 }
 
 # ---------------------------------------------------------------------------
@@ -500,11 +544,10 @@ EOF
 # rather than hidden.
 # ---------------------------------------------------------------------------
 coverage_share() {
-  local mapped="$1" total="$2" pct=0
+  local mapped="$1" total="$2"
   is_num "$mapped" || mapped=0
   is_num "$total"  || total=0
-  [ "$total" -gt 0 ] && pct=$((mapped * 100 / total))
-  printf '%s %s' "$pct" "$((total - mapped))"
+  printf '%s %s' "$(pct "$mapped" "$total")" "$((total - mapped))"
 }
 
 # ---------------------------------------------------------------------------
@@ -520,6 +563,9 @@ dedupe_rate() {
   if [ "$out" -le 0 ]; then
     printf '0 EMPTY'; return 0
   fi
+  # TRUNCATING ON PURPOSE (see pct()'s header): this hundredths value is compared to
+  # $DISTILLATION_FLOOR, and rounding would let a true 1.995 findings-per-rule pass as 2.00 — i.e.
+  # ship a batch this script exists to self-report as a DISTILLATION FAILURE.
   rate=$((inn * 100 / out))
   if [ "$rate" -lt "$DISTILLATION_FLOOR" ]; then verdict="FAILURE"; else verdict="OK"; fi
   printf '%s %s' "$rate" "$verdict"
@@ -591,7 +637,17 @@ REC_TOTAL="$(grep -c . "$LEDGER" 2>/dev/null || true)"; is_num "$REC_TOTAL" || R
 # fallback quietly produced 0, printing `107/0 (0%)` for the one share this whole batch is justified
 # by. `reduce inputs` streams (no slurp) and emits exactly one integer; an empty ledger yields 0.
 ALL_FINDINGS="$(jq -n 'reduce inputs as $r (0; . + ([$r.categories[]?] | length))' "$LEDGER" 2>/dev/null || true)"
-ALL_MISSES="$(jq -n 'reduce inputs as $r (0; . + ([$r.categories[]? | select(.self_heal_miss==true)] | length))' "$LEDGER" 2>/dev/null || true)"
+# The `select(type=="object")` is NOT decoration. `.self_heal_miss` INDEXES the element, and jq
+# throws `Cannot index string with string` on a bare string / number / null inside `categories[]` —
+# which `2>/dev/null || true` then swallows into an empty ALL_MISSES, failing the `is_num` gate below
+# and killing the run with exit 3 ("could not count …") on a ledger that is otherwise perfectly
+# readable. That turns a handleable element into a hard failure. `harvest_convention_findings` above
+# already guards exactly this shape (`select((.value | type) == "object" …)`) and the sibling
+# ALL_FINDINGS line never indexes an element so it is immune — this was the one aggregate that
+# skipped the guard. With 83 of 84 ledger records model-authored (`agent_generated_guess: true`), a
+# malformed element is not theoretical. Verified count-preserving on the real ledger: 95 before, 95
+# after.
+ALL_MISSES="$(jq -n 'reduce inputs as $r (0; . + ([$r.categories[]? | select(type=="object") | select(.self_heal_miss==true)] | length))' "$LEDGER" 2>/dev/null || true)"
 # Not a silent 0: `jq` is present (checked above) and the ledger already parsed (the exit-3 die
 # above), so a non-numeric result here means the numbers cannot be trusted — and the whole output of
 # this tool is numbers. Same rationale as the ledger die, same exit code.
@@ -724,6 +780,9 @@ while IFS= read -r f; do
     n=$((n + 1))
     case "$SURFACE_WORDS" in *" $t "*) hit=$((hit + 1)) ;; esac
   done
+  # TRUNCATING ON PURPOSE (see pct()'s header): pw is printed, but it is printed BECAUSE it is the
+  # variable compared to $PROJECT_WIDE_PCT below. Rounding it would admit an 84.5% entry to the
+  # `rules` bucket — a change to WHICH candidates get proposed, made for a display reason.
   pw=0; [ "$n" -gt 0 ] && pw=$((hit * 100 / n))
   [ "$SURFACES_FOUND" -gt 0 ] || pw=0
   normative=0
@@ -822,7 +881,7 @@ emit_rule() {   # emit_rule <theme> <category> <statement> <origin-label>
       ex_nopath="$(awk -F'\t' '$6==""' "$WORK/theme.$k.tsv" 2>/dev/null | grep -c . || true)"
       is_num "$ex_nopath" || ex_nopath=0
       ex_dead=$((fid_n - ex_nopath - sf_t)); [ "$ex_dead" -lt 0 ] && ex_dead=0
-      sf_all=0; [ "$fid_n" -gt 0 ] && sf_all=$((sf_m * 100 / fid_n))
+      sf_all="$(pct "$sf_m" "$fid_n")"
       printf '     scope fidelity: %s%% (%s of the %s CHECKABLE motivating findings have a live changed_path matched by the derived globs, via the same bash `case` matcher read-rules.sh uses)\n' "$sf_p" "$sf_m" "$sf_t"
       printf '                     over ALL %s motivating findings: %s%% (%s of %s). The denominator above is SMALLER on purpose and the filter is not silent: %s finding(s) come from a ledger record with no changed_paths at all, and %s have changed_paths of which none is still tracked by git. Neither can be matched against a glob, so neither is evidence for OR against the scope — but they are motivating findings all the same, and the honest figure is the second one.\n' \
         "$fid_n" "$sf_all" "$sf_m" "$fid_n" "$ex_nopath" "$ex_dead"
@@ -862,10 +921,10 @@ done < "$CORPUS_RULE_LIST"
 # ===========================================================================
 set -- $(coverage_share "$MAPPED" "$CM_TOTAL"); COV_PCT="$1"; COV_UNMAPPED="$2"
 set -- $(dedupe_rate "$MAPPED" "$EMITTED"); DEDUPE="$1"; DEDUPE_VERDICT="$2"
-AGG_FID=0; [ "$FIDELITY_TOTAL" -gt 0 ] && AGG_FID=$((FIDELITY_MATCHED * 100 / FIDELITY_TOTAL))
-AGG_FID_ALL=0; [ "$FIDELITY_ALL_TOTAL" -gt 0 ] && AGG_FID_ALL=$((FIDELITY_MATCHED * 100 / FIDELITY_ALL_TOTAL))
-CM_SHARE=0;      [ "$ALL_FINDINGS" -gt 0 ] && CM_SHARE=$((CM_TOTAL * 100 / ALL_FINDINGS))
-CM_MISS_SHARE=0; [ "$ALL_MISSES" -gt 0 ]   && CM_MISS_SHARE=$((CM_MISSES * 100 / ALL_MISSES))
+AGG_FID="$(pct "$FIDELITY_MATCHED" "$FIDELITY_TOTAL")"
+AGG_FID_ALL="$(pct "$FIDELITY_MATCHED" "$FIDELITY_ALL_TOTAL")"
+CM_SHARE="$(pct "$CM_TOTAL" "$ALL_FINDINGS")"
+CM_MISS_SHARE="$(pct "$CM_MISSES" "$ALL_MISSES")"
 
 INVOCATION=""
 for a in "${RAW_ARGV[@]}"; do INVOCATION="$INVOCATION $(shq "$a")"; done

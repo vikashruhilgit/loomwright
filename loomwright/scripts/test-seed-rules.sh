@@ -358,6 +358,36 @@ out_hi="$(bash "$hi_copy" --root "$Hi" --add-rule "$ADDRULE" check 2>&1)"; rc_hi
 printf '%s\n' "$out_hi" | grep -q 'seed table invariant violated' \
   && ok "(h) the duplicate-category failure names the invariant it broke" || no "(h) duplicate category produced no diagnostic"
 
+# THE CATEGORY-IS-ALREADY-ITS-OWN-SLUG INVARIANT — the same permanent-failure class as the duplicate
+# above, reached through the category instead of the statement text. seed_present() matches the
+# STORED rule's `.category` against the RAW seed_table string, but add-rule.sh SLUGS before writing,
+# so a row like `Error Handling` would be stored as `error-handling`, never match, report ABSENT
+# forever, and re-invoke the writer every run until it hit the writer's own near-duplicate refusal.
+# Today all five categories ARE valid slugs, so raw == slug and the hazard is invisible — which is
+# exactly why it needs an assertion rather than an editor's memory.
+Hs="$(mkfix)"; hs_copy="$Hs/nonslug-table-seed-rules.sh"
+awk '/^SEEDS$/ && !d { print "Error Handling|A seed whose category is not already its own slug, which add-rule.sh would rewrite."; d=1 } { print }' "$SEED" > "$hs_copy"
+out_hs="$(bash "$hs_copy" --root "$Hs" --add-rule "$ADDRULE" check 2>&1)"; rc_hs=$?
+[ "$rc_hs" -eq 2 ] && ok "(h) a seed-table category that is not already its own slug fails loudly at startup (exit 2)" \
+  || no "(h) a non-slug seed-table category exited $rc_hs (expected 2 — the invariant is not asserted)"
+printf '%s\n' "$out_hs" | grep -q 'seed table invariant violated' \
+  && ok "(h) the non-slug-category failure names the invariant it broke" || no "(h) non-slug category produced no diagnostic"
+printf '%s\n' "$out_hs" | grep -q "add-rule.sh would store it as 'error-handling'" \
+  && ok "(h) the diagnostic names the slug add-rule.sh would actually have written, so the fix is mechanical" \
+  || no "(h) the non-slug diagnostic does not name the corrected category: $(printf '%s\n' "$out_hs" | head -1)"
+# MUTATION CONTROL: with the invariant stripped, the SAME table must run through — proving the two
+# assertions above are caused by the guard and not by some unrelated refusal of the added row.
+hs_mut="$Hs/nonslug-unguarded.sh"
+sed 's@\[ "\$_cat" = "\$_cat_slug" \] ||@[ true ] ||@' "$hs_copy" > "$hs_mut"
+if ! cmp -s "$hs_copy" "$hs_mut" && bash -n "$hs_mut" 2>/dev/null; then
+  out_hsm="$(bash "$hs_mut" --root "$Hs" --add-rule "$ADDRULE" check 2>&1)"; rc_hsm=$?
+  [ "$rc_hsm" -ne 2 ] || ! printf '%s\n' "$out_hsm" | grep -q 'not already its own slug' \
+    && ok "(h) CONFIRMED: with the slug invariant stripped the same table no longer fails — the guard is what fires, not the fixture" \
+    || no "(h) REFUTED: the non-slug table still fails with the guard removed — the assertion above may be measuring something else"
+else
+  no "(h) the slug-invariant mutation did not land"
+fi
+
 # RETRACTION IS NOT A PERMANENT OPT-OUT — asserted so the documented limit cannot drift silently.
 # A retracted seed leaves nothing carrying the stamp, so a later run re-offers and rewrites it.
 # This is the behaviour the module docs state under honest limits; if it ever changes, this

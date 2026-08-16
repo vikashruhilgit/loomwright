@@ -18,7 +18,10 @@
 #       whose right answers are known by construction.
 #   (F) AC5 — a near-1:1 batch reports DISTILLATION FAILURE in its own output.
 #   (G) an ABSENT .supervisor/agent-memory-proposals/ is a normal empty case (exit 0), not an error.
-#   (H) exit contract: unknown arg / bad --session-id ⇒ 2; absent ledger / no jq ⇒ 3.
+#   (H) exit contract: unknown arg / bad --session-id ⇒ 2; absent ledger ⇒ 3. The `no jq ⇒ 3` half
+#       of that claim was documented here but never tested; it is now asserted by (q1), in (Q).
+#   (Q) the fail-closed jq gate (asserted, not just documented), and a `categories[]` array carrying
+#       non-object elements — handled, never a hard exit-3 failure on an otherwise readable ledger.
 #   (J) column 6's US list separator is load-bearing (a multi-path fixture whose ONLY live path is the
 #       second array element), and the scope-fidelity denominator filter is DISCLOSED — both the
 #       checkable figure and the honest all-findings figure are printed, with the exclusions counted.
@@ -47,6 +50,8 @@
 #   (M8) re-introduce the unquoted word-split over a row's paths ⇒ (N)'s spaced path stops matching.
 #   (M9) key the unmapped-remainder breakdown on $RULE_THEMES again ⇒ (O)'s itemisation under-sums
 #        its own stated total.
+#  (M11) strip the `select(type=="object")` type guard from ALL_MISSES ⇒ (Q)'s mixed-array fixture
+#        dies exit 3 "could not count findings/misses" again.
 #  (M10) make the cap-deferred arm of the empty-batch diagnostic unreachable (i.e. restore the
 #        unconditional support-floor sentence) ⇒ (P)'s `--cap 0` run blames the support floor again,
 #        one line under a header stating the themes were deferred by the cap.
@@ -601,7 +606,10 @@ R10="$(new_repo)"
 # rec 1: 3 convention_mismatch (miss) + 1 other-class (miss)
 # rec 2: 2 convention_mismatch (no miss) + 2 other-class (no miss)
 # ⇒ all findings 8, all misses 4, convention_mismatch 5, cm misses 3 — four distinct values
-#   ⇒ 5/8 (62%) and 3/4 (75%) — two distinct shares, neither reducible to the other.
+#   ⇒ 5/8 (63%) and 3/4 (75%) — two distinct shares, neither reducible to the other.
+# 5/8 is 62.5 EXACTLY, i.e. the one boundary where pct()'s half-up rule and Python's half-to-even
+# `round()` disagree (63 here, 62 there). That is stated as an honest limit at pct() itself; this
+# fixture is the case that exercises it, so the expectation is 63 on purpose, not a stale number.
 mk_mixed() {
   jq -c -n --argjson num "$1" --argjson cats "$2" \
     '{schema_version:1, ts:"2026-01-01T00:00:00Z", repo:"o/r", number:$num,
@@ -623,8 +631,8 @@ printf '%s\n' "$OUT" > "$ROOT/i.txt"
 grep -q '8 findings, 4 self-heal misses' "$ROOT/i.txt" \
   && ok "(i2) the ledger denominators read 8 findings / 4 misses by VALUE (not 0, not the record count)" \
   || no "(i2) wrong denominators: $(grep 'records read WHOLE' "$ROOT/i.txt" | head -1)"
-grep -q 'share of all findings:      5/8 (62%)' "$ROOT/i.txt" \
-  && ok "(i3) AC14 findings share computes to the constructed 5/8 (62%)" \
+grep -q 'share of all findings:      5/8 (63%)' "$ROOT/i.txt" \
+  && ok "(i3) AC14 findings share computes to the constructed 5/8 (63%)" \
   || no "(i3) wrong findings share: $(grep 'share of all findings' "$ROOT/i.txt" | head -1)"
 grep -q 'share of self-heal MISSES:  3/4 (75%)' "$ROOT/i.txt" \
   && ok "(i4) AC14 miss share computes to the constructed 3/4 (75%)" \
@@ -645,7 +653,7 @@ MUT4="$ROOT/mut-count.sh"
 sed 's@(\[$r\.categories\[\]?\] | length)@1@' "$HARVEST" > "$MUT4"
 if ! cmp -s "$HARVEST" "$MUT4" && grep -q 'reduce inputs as $r (0; . + 1)' "$MUT4" && bash -n "$MUT4" 2>/dev/null; then
   M4OUT="$( bash "$MUT4" --root "$R10" --session-id fx-m4 --min-support 2 --cap 5 --no-writer 2>&1 )" || true
-  if printf '%s\n' "$M4OUT" | grep -q 'share of all findings:      5/8 (62%)'; then
+  if printf '%s\n' "$M4OUT" | grep -q 'share of all findings:      5/8 (63%)'; then
     no "(M4) REFUTED: the mutant still printed 3/5 — (i2)/(i3) are vacuous"
   else
     ok "(M4) CONFIRMED: counting records instead of findings turns 5/8 into $(printf '%s\n' "$M4OUT" | sed -n 's/.*share of all findings: *//p' | head -1) — (i2)/(i3) are load-bearing"
@@ -719,7 +727,7 @@ fi
 # stop the checkable one flattering itself; accumulating it only in the scoped branch dropped the
 # repo-wide rules — the population that is unmatchable BY CONSTRUCTION — from both sides at once.
 # Fixture, by construction: 5 findings on a live path (scoped, all matched) + 4 findings whose only
-# path is dead (repo-wide fallback). Checkable 5 of 5 = 100%; honest 5 of 9 = 55%.
+# path is dead (repo-wide fallback). Checkable 5 of 5 = 100%; honest 5 of 9 = 56%.
 # ---------------------------------------------------------------------------
 echo "(L) the all-findings fidelity denominator spans repo-wide rules too"
 RL="$(new_repo)"
@@ -734,7 +742,7 @@ grep -qF '1 proposal(s) fell back to a repo-wide (null) scope' "$ROOT/l.txt" \
 grep -qF 'aggregate 100% (5 of 5 CHECKABLE' "$ROOT/l.txt" \
   && ok "(l2) the CHECKABLE aggregate is 5 of 5 — the repo-wide rule contributes nothing to it, correctly" \
   || no "(l2) wrong checkable aggregate: $(grep -F 'scope fidelity:  aggregate' "$ROOT/l.txt" | head -1)"
-if grep -qF 'over ALL motivating findings: 55% (5 of 9)' "$ROOT/l.txt"; then
+if grep -qF 'over ALL motivating findings: 56% (5 of 9)' "$ROOT/l.txt"; then
   ok "(l3) the HONEST aggregate is 5 of 9 — the repo-wide rule's 4 findings are in the denominator, not dropped from it"
 else
   no "(l3) the null-scope rule's findings are missing from the honest denominator: $(grep -F 'over ALL motivating findings' "$ROOT/l.txt" | head -1)"
@@ -745,7 +753,7 @@ MUT7="$ROOT/mut-fidden.sh"
 sed 's@^  FIDELITY_ALL_TOTAL=$((FIDELITY_ALL_TOTAL + fid_n))$@  [ -n "$globs" ] \&\& FIDELITY_ALL_TOTAL=$((FIDELITY_ALL_TOTAL + fid_n))@' "$HARVEST" > "$MUT7"
 if ! cmp -s "$HARVEST" "$MUT7" && bash -n "$MUT7" 2>/dev/null; then
   M7OUT="$( bash "$MUT7" --root "$RL" --session-id fx-m7 --min-support 4 --cap 3 --no-writer 2>&1 )" || true
-  if printf '%s\n' "$M7OUT" | grep -qF 'over ALL motivating findings: 55% (5 of 9)'; then
+  if printf '%s\n' "$M7OUT" | grep -qF 'over ALL motivating findings: 56% (5 of 9)'; then
     no "(M7) REFUTED: the mutant still reports 5 of 9 — (l3) is vacuous"
   else
     ok "(M7) CONFIRMED: excluding repo-wide rules turns the honest figure into '$(printf '%s\n' "$M7OUT" | sed -n 's/.*over ALL motivating findings: \([0-9]*% ([0-9]* of [0-9]*)\).*/\1/p' | head -1)' — a batch of 9 findings reported as if it had 5"
@@ -893,6 +901,75 @@ if ! cmp -s "$HARVEST" "$MUT10" && bash -n "$MUT10" 2>/dev/null; then
   fi
 else
   no "(M10) the empty-batch-cause mutation did not land"
+fi
+
+# ============================================================================
+echo "(Q) the jq fail-closed gate, and a categories[] array carrying non-object elements"
+# ============================================================================
+# (q1) THE `no jq ⇒ 3` HALF OF (H), WHICH WAS DOCUMENTED BUT NEVER TESTED. The section docstring
+# above has always claimed it; nothing asserted it. Only `bc` was ever stubbed, by (i5), for the
+# unrelated reason that bc had once been an undeclared dependency. So the fail-closed jq gate — the
+# one that stops this tool printing coverage over a ledger it could not read — was unguarded, and a
+# regression that made it fail OPEN (exit 0 with a confident 0%) would have gone undetected.
+#
+# THE TRAP, recorded because it produced a convincing false green while this was being written:
+# emptying or over-narrowing PATH makes `bash` ITSELF unfindable, and the run then dies 127 from the
+# SHELL, not from the gate — a non-zero status that looks like a pass if you only compare against 0.
+# So the interpreter is invoked by ABSOLUTE path, and the assertion is on the exact code 3.
+JQSTUB="$ROOT/jqstub"; mkdir -p "$JQSTUB"
+BASH_ABS="$(command -v bash)"
+# A PATH holding only a directory with no `jq` in it: `command -v jq` fails, while the absolute
+# interpreter still starts. Coreutils the script uses are resolved from this PATH too, so the gate
+# must fire before any of them matter — which it does, it is the first thing after arg parsing.
+Q1OUT="$( PATH="$JQSTUB" "$BASH_ABS" "$HARVEST" --root "$R8" --session-id fx-q1 --no-writer 2>&1 )"; q1rc=$?
+if [ "$q1rc" -eq 3 ]; then
+  ok "(q1) with jq unfindable on PATH the run exits 3 (could-not-examine), never a confident 0 — the documented fail-closed gate is now asserted"
+else
+  no "(q1) jq-absent run exited $q1rc, expected 3: $(printf '%s\n' "$Q1OUT" | head -2)"
+fi
+[ "$q1rc" -ne 127 ] || echo "  note: 127 means the interpreter itself was unfindable, not the gate firing"
+
+# (q2) A NON-OBJECT ELEMENT INSIDE categories[] MUST NOT KILL THE RUN. `ALL_MISSES` indexes every
+# element with `.self_heal_miss`, and jq THROWS `Cannot index string with string` on a bare string,
+# number or null. The throw was swallowed by `2>/dev/null || true`, ALL_MISSES came back empty, the
+# is_num gate failed, and the script died exit 3 — "could not count findings/misses" — on a ledger
+# that was perfectly readable. A handleable element turned into a hard failure, and every OTHER
+# reader of this ledger already guards the shape (harvest_convention_findings' `select((.value|type)
+# == "object" …)`), so this was the one aggregate that skipped it.
+RQ="$(new_repo)"
+{
+  printf '{"repo":"o/r","number":1,"changed_paths":["src/a/x.md"],"categories":[{"class":"convention_mismatch","evidence":"count drift in the banner","flow_stage":"do","self_heal_miss":true},"not-an-object",42,null,{"class":"quality_gap","self_heal_miss":true}]}\n'
+  printf '{"repo":"o/r","number":2,"changed_paths":["src/a/y.md"],"categories":[{"class":"convention_mismatch","evidence":"version count drift","flow_stage":"do","self_heal_miss":false},["nested","array"]]}\n'
+} > "$RQ/.supervisor/postmortem/results.jsonl"
+# Known by construction: 7 elements total across both records; misses = the 2 objects with
+# self_heal_miss:true. The non-objects must be counted by NEITHER denominator's numerator and must
+# not abort the run.
+run_harvest "$RQ" --session-id fx-q2 --min-support 1 --cap 5 --no-writer
+if [ "$RC" -eq 0 ]; then
+  ok "(q2) a categories[] array mixing objects with a string, a number, a null and a nested array exits 0 — a malformed element is handled, not fatal"
+else
+  no "(q2) mixed categories[] exited $RC (expected 0): $(printf '%s\n' "$OUT" | grep -i 'could not count' | head -1)"
+fi
+if printf '%s\n' "$OUT" | grep -qF 'share of self-heal MISSES:  1/2'; then
+  ok "(q3) only the OBJECT elements are counted: misses 1/2 (the string/number/null/array contribute to neither side)"
+else
+  no "(q3) miss denominators wrong: $(printf '%s\n' "$OUT" | grep -F 'share of self-heal MISSES' | head -1)"
+fi
+
+# ---- MUTATION CONTROL M11: remove the type guard from ALL_MISSES ⇒ (q2)/(q3) must go RED ----
+# Without this control (q2)/(q3) would pass against a script that never had the guard at all, since
+# a well-formed fixture exercises neither.
+MUT11="$ROOT/mut-allmisses.sh"
+sed 's@ | select(type=="object")@@' "$HARVEST" > "$MUT11"
+if ! cmp -s "$HARVEST" "$MUT11" && bash -n "$MUT11" 2>/dev/null; then
+  M11OUT="$( bash "$MUT11" --root "$RQ" --session-id fx-m11 --min-support 1 --cap 5 --no-writer 2>&1 )"; m11rc=$?
+  if [ "$m11rc" -eq 3 ] && printf '%s\n' "$M11OUT" | grep -qF 'could not count findings/misses'; then
+    ok "(M11) CONFIRMED: with the type guard removed the SAME fixture dies exit 3 'could not count findings/misses' — (q2)/(q3) are load-bearing, not vacuous"
+  else
+    no "(M11) REFUTED: the unguarded ALL_MISSES survived the mixed array (rc=$m11rc) — (q2)/(q3) may be vacuous"
+  fi
+else
+  no "(M11) the ALL_MISSES type-guard mutation did not land"
 fi
 
 echo
