@@ -1,8 +1,8 @@
 ---
 name: setup
 description: Module protocol authority for the /setup umbrella command — the check/report/offer/apply/verify contract, the module registry, the jq deep-merge rules for ~/.claude/settings.json (backup-first, abort-on-parse-failure, idempotent), the .gitignore managed-block rules for the memory module, the seeded-vs-learned provenance contract for the rules module, and the OTLP smoke-test recipe. Use when running /setup or modifying any setup module.
-version: "1.1.0"
-lastUpdated: "2026-08-06"
+version: "1.2.0"
+lastUpdated: "2026-08-17"
 ---
 
 # Setup Skill
