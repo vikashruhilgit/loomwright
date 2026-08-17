@@ -22,7 +22,7 @@
 #   (i) reader resolution — with CLAUDE_PLUGIN_ROOT set to the plugin ROOT, the read-* helpers
 #       resolve under $CLAUDE_PLUGIN_ROOT/scripts and their output is incorporated (finding #1)
 #   (j) abbreviated-SHA freshness — a recorded short SHA that prefixes HEAD renders `fresh`, not
-#       `hint` (prefix-tolerant compare, mirrors read-bridge.sh; finding #2)
+#       `hint` (prefix-tolerant compare; finding #2)
 #   (k) real automate run-file — a /automate run-file's Status / Source / PR facets render (finding #3)
 
 set -uo pipefail

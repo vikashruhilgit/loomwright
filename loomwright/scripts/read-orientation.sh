@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # read-orientation.sh — fail-safe ADVISORY reader for the committed .agent/orientation/ memo store.
-# (New file — orientation-memo substrate reader side; parity with read-rules.sh / read-bridge.sh
+# (New file — orientation-memo substrate reader side; parity with read-rules.sh / read-postmortem.sh
 #  advisory-reader convention. Pure-READ, NO side effects, NEVER executes memo content.)
 #
 # Reads .agent/orientation/*.md memos (one per area; README.md is documentation, not a memo),

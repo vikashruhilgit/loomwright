@@ -39,7 +39,7 @@
 #   If the assembled map exceeds max-chars it is truncated so the TOTAL file (marker included)
 #   fits the cap, with final line: [repo-map truncated at N chars]
 #
-# FAIL-SAFE CONTRACT (mirrors read-rules.sh / read-bridge.sh conventions)
+# FAIL-SAFE CONTRACT (mirrors read-rules.sh / read-postmortem.sh conventions)
 #   - ALWAYS exits 0: any internal error ⇒ write nothing (or leave the previous map untouched),
 #     message to stderr, exit 0. A map build must never break its caller.
 #   - No network. NEVER installs anything.

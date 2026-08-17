@@ -5,7 +5,7 @@
 # PR/run, the funnel  landed → clean → durable → cheap  from EXISTING .supervisor/ data
 # plus a read-only `git log` of the repo containing the state dir. It writes NOTHING
 # (except mktemp scratch), mutates NOTHING, and ALWAYS exits 0 — mirroring the
-# read-postmortem.sh / read-bridge.sh advisory-reader convention in this directory.
+# read-postmortem.sh / read-rules.sh advisory-reader convention in this directory.
 # Absent or malformed inputs degrade to labeled `insufficient_data` cells; numbers are
 # NEVER invented (proxy token counts are always labeled as proxy).
 #
