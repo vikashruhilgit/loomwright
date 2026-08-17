@@ -1,8 +1,8 @@
 ---
 name: brain-context
 description: Read-on-demand context enrichment ladder — orientation memos → owned repo-map → nothing (plain grep/read). Advisory only — a missing/broken/stale store or map silently falls back down the ladder; NEVER blocks a run and NEVER changes a decision. Deliberately NOT preloaded into any agent frontmatter; agents read it at context-setup / analysis points.
-version: 1.1.0
-lastUpdated: 2026-07-20
+version: 1.2.0
+lastUpdated: 2026-08-17
 allowed-tools: Read, Bash, Grep
 ---
 

@@ -1,8 +1,8 @@
 ---
 name: self-heal-advisory
 description: Supervisor Phase 4.5 protocol authority. Part 1 — advisory-only machinery (pre-review enrichments, System Twin conformance/benchmark/ground-truth, contract-builder WRITE path, delta line, hard-signal dual emission; never changes heal_decision or blocks the PR). Part 2 — the full Phase 4.5 SELF_HEAL loop protocol (on-entry actions, base-mismatch cleanup, bounded review-and-fix loop, rubric grading, red-team lens, completion-tail procedure), Read on demand at Phase 4.5 entry, deliberately not preloaded.
-version: "1.5.1"
-lastUpdated: "2026-07-30"
+version: "1.6.0"
+lastUpdated: "2026-08-17"
 ---
 
 # Self-Heal Protocol (Supervisor Phase 4.5)
