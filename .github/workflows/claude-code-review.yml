@@ -166,7 +166,10 @@ jobs:
       # this run's own start stamp (so an earlier run's review cannot satisfy a
       # later run), and is longer than 200 characters — PR #147 collected a
       # literal 4-character "test" comment from a reviewer probing its tool
-      # permissions, which must not count as review. The author clause is not
+      # permissions, which must not count as review. The 200-char floor is
+      # RESTATED in the review prompt above (its no-findings paragraph tells the
+      # reviewer a one-liner won't count) — change both together, or a compliant
+      # short comment under a raised floor re-creates the false red PR #150 fixed. The author clause is not
       # cosmetic: without it ANY actor satisfies the assertion. On PR #147 a
       # 5418-character human comment (`vikashruhilgit`, 2026-08-15T04:11:02Z)
       # sat between two `claude[bot]` comments and would have covered for a
