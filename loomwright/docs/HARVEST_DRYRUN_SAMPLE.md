@@ -15,13 +15,25 @@ corrected, in `RULES_BASELINE.md`):
 
 ```
 git clone <this repo> /tmp/harvest-sample && cd /tmp/harvest-sample
-git checkout --detach de8ba42
-bash loomwright/scripts/harvest-conventions.sh --session-id 2026-08-16-de8ba42
+git checkout --detach cc61ee6
+bash loomwright/scripts/harvest-conventions.sh --session-id 2026-08-17-cc61ee6
 ```
 
-**Pinned input:** commit **`de8ba42`**, at which `.supervisor/postmortem/results.jsonl` is blob
+**Pinned input:** commit **`cc61ee6`**, at which `.supervisor/postmortem/results.jsonl` is blob
 **`952ff91`** and holds **84 records / 225 findings / 95 self-heal misses**. If `wc -l` on that file
 is not 84, you are not running what produced the transcript below and the counts will differ.
+
+**The ledger is not the only pinned input, and the second one is easy to miss.** Each corpus
+candidate's `pw=` figure is the share of its distinctive terms that appear in this repository's
+committed convention surfaces — `CLAUDE.md` and `AGENT_GUIDELINES.md` — **as they stand at the pinned
+commit**. That prose is edited far more often than the ledger, so a re-run at a later HEAD will
+legitimately print different `pw=` percentages even when the ledger blob is byte-identical: this very
+sample moved four of them (66→73, 80→86, 45→54, 81→90) on one release's doc edits alone, with no
+bucket changing and no rule changing. That is a real property of the instrument — the project-wide
+signal is *measured against the project's own current prose*, which is the whole point of it — and it
+is stated here so it is read as a dependency rather than discovered as a discrepancy. **Reproduce at
+the pinned sha; expect drift at HEAD.** A re-run whose *buckets* or *rules* moved is a finding; one
+whose `pw=` figures moved after `CLAUDE.md` or `AGENT_GUIDELINES.md` changed is not.
 
 **A CLONE, not a `git worktree`.** This is a real constraint, not a preference: `add-rule.sh` refuses
 to write from a linked worktree (its top-level `.git` is a file — the red-team F1 guard), so a
@@ -67,18 +79,18 @@ Two things will legitimately differ on a re-run, and neither invalidates the res
 
 ```text
 === harvest-conventions.sh — DRY RUN (read-only: this tool has no write mode at all) ===
-invocation: 'loomwright/scripts/harvest-conventions.sh' '--session-id' '2026-08-16-de8ba42'
-session source (--source passed to add-rule.sh): dreaming:2026-08-16-de8ba42
+invocation: 'loomwright/scripts/harvest-conventions.sh' '--session-id' '2026-08-17-cc61ee6'
+session source (--source passed to add-rule.sh): dreaming:2026-08-17-cc61ee6
 thresholds: cap=5  min-support=8  project-wide=85%  distillation-floor=2.00  applies-to-cover=95%  max-globs=4
 
 --- inputs read ---
-  (i)  ledger:    /private/tmp/claude-501/-Users-vikashruhil-Documents-work-AI-ai-agent-manager/54b0ce93-5b49-4498-a1b4-ed52065bb450/scratchpad/clone3/.supervisor/postmortem/results.jsonl
+  (i)  ledger:    /private/tmp/claude-501/-Users-vikashruhil-Documents-work-AI-ai-agent-manager/f591a048-3b52-49b1-a9ac-1dbf743f351e/scratchpad/harvest-sample/.supervisor/postmortem/results.jsonl
        84 records read WHOLE (no repo filter — decision (a); nothing dropped), 225 findings, 95 self-heal misses
-  (ii) corpus:    /private/tmp/claude-501/-Users-vikashruhil-Documents-work-AI-ai-agent-manager/54b0ce93-5b49-4498-a1b4-ed52065bb450/scratchpad/clone3/.claude/agent-memory
+  (ii) corpus:    /private/tmp/claude-501/-Users-vikashruhil-Documents-work-AI-ai-agent-manager/f591a048-3b52-49b1-a9ac-1dbf743f351e/scratchpad/harvest-sample/.claude/agent-memory
        28 entries (MEMORY.md indexes excluded)
-       proposals queue: /private/tmp/claude-501/-Users-vikashruhil-Documents-work-AI-ai-agent-manager/54b0ce93-5b49-4498-a1b4-ed52065bb450/scratchpad/clone3/.supervisor/agent-memory-proposals — absent (normal empty case — the queue has never been populated in this repo)
+       proposals queue: /private/tmp/claude-501/-Users-vikashruhil-Documents-work-AI-ai-agent-manager/f591a048-3b52-49b1-a9ac-1dbf743f351e/scratchpad/harvest-sample/.supervisor/agent-memory-proposals — absent (normal empty case — the queue has never been populated in this repo)
   convention surfaces for the project-wide signal: 2 of 2 readable
-  rules store (read for context, NEVER written): /private/tmp/claude-501/-Users-vikashruhil-Documents-work-AI-ai-agent-manager/54b0ce93-5b49-4498-a1b4-ed52065bb450/scratchpad/clone3/.agent/rules
+  rules store (read for context, NEVER written): /private/tmp/claude-501/-Users-vikashruhil-Documents-work-AI-ai-agent-manager/f591a048-3b52-49b1-a9ac-1dbf743f351e/scratchpad/harvest-sample/.agent/rules
 
 --- repo distribution (advisory cross-check, decision (a)) ---
       79  vikashruhilgit/ai-agent-manager
@@ -120,49 +132,49 @@ thresholds: cap=5  min-support=8  project-wide=85%  distillation-floor=2.00  app
       reason: normative, and 92% of its distinctive terms already appear in this repo's committed convention surfaces (>= 85%), so the project already asserts it repo-wide; still corroborated by the 'restated-count-version' theme's 36 findings, so it is a convention being broken rather than one merely written down. It CORROBORATES that theme's rule and does not become a rule of its own — the batch counts it as a deferral, since the theme's rule already covers the same evidence
   [agent-memory] 22 candidate(s)
     - project_entry_points_gate_blindspot (corpus: pw=84%,normative=1)
-      reason: role-lens knowledge: normative=1 and only 84% of its distinctive terms appear in the committed convention surfaces (< 85%), so it binds one agent's review lens rather than the repository
+      reason: role-lens knowledge: normative, but only 84% of its distinctive terms appear in the committed convention surfaces (< 85%), so the project does not already assert it repo-wide — it binds one agent's review lens rather than the repository
     - project_half_fixed_example_classes (corpus: pw=66%,normative=0)
-      reason: role-lens knowledge: normative=0 and only 66% of its distinctive terms appear in the committed convention surfaces (< 85%), so it binds one agent's review lens rather than the repository
+      reason: role-lens knowledge: it states no repo-wide obligation (normative=0 — none of the MUST/NEVER/ALWAYS-class wording the normative test looks for), which is the test that excluded it; its distinctive-term overlap with the committed convention surfaces is 66%, recorded as an observation only, since the 85% floor is never reached for a non-normative entry. It binds one agent's review lens rather than the repository
     - project_hook_count_jq_two_levels (corpus: pw=62%,normative=0)
-      reason: role-lens knowledge: normative=0 and only 62% of its distinctive terms appear in the committed convention surfaces (< 85%), so it binds one agent's review lens rather than the repository
+      reason: role-lens knowledge: it states no repo-wide obligation (normative=0 — none of the MUST/NEVER/ALWAYS-class wording the normative test looks for), which is the test that excluded it; its distinctive-term overlap with the committed convention surfaces is 62%, recorded as an observation only, since the 85% floor is never reached for a non-normative entry. It binds one agent's review lens rather than the repository
     - project_hook_gate_summary_drift (corpus: pw=91%,normative=0)
-      reason: role-lens knowledge: normative=0 and only 91% of its distinctive terms appear in the committed convention surfaces (< 85%), so it binds one agent's review lens rather than the repository
+      reason: role-lens knowledge: it states no repo-wide obligation (normative=0 — none of the MUST/NEVER/ALWAYS-class wording the normative test looks for), which is the test that excluded it; its distinctive-term overlap with the committed convention surfaces is 91%, recorded as an observation only, since the 85% floor is never reached for a non-normative entry. It binds one agent's review lens rather than the repository
     - project_insights_per_run_frontmatter_gap (corpus: pw=50%,normative=1)
-      reason: role-lens knowledge: normative=1 and only 50% of its distinctive terms appear in the committed convention surfaces (< 85%), so it binds one agent's review lens rather than the repository
+      reason: role-lens knowledge: normative, but only 50% of its distinctive terms appear in the committed convention surfaces (< 85%), so the project does not already assert it repo-wide — it binds one agent's review lens rather than the repository
     - project_invisible_control_char_delimiter (corpus: pw=14%,normative=0)
-      reason: role-lens knowledge: normative=0 and only 14% of its distinctive terms appear in the committed convention surfaces (< 85%), so it binds one agent's review lens rather than the repository
+      reason: role-lens knowledge: it states no repo-wide obligation (normative=0 — none of the MUST/NEVER/ALWAYS-class wording the normative test looks for), which is the test that excluded it; its distinctive-term overlap with the committed convention surfaces is 14%, recorded as an observation only, since the 85% floor is never reached for a non-normative entry. It binds one agent's review lens rather than the repository
     - project_jq_optional_chain_type_trap (corpus: pw=63%,normative=1)
-      reason: role-lens knowledge: normative=1 and only 63% of its distinctive terms appear in the committed convention surfaces (< 85%), so it binds one agent's review lens rather than the repository
+      reason: role-lens knowledge: normative, but only 63% of its distinctive terms appear in the committed convention surfaces (< 85%), so the project does not already assert it repo-wide — it binds one agent's review lens rather than the repository
     - project_otel_labeler_session_lag (corpus: pw=69%,normative=0)
-      reason: role-lens knowledge: normative=0 and only 69% of its distinctive terms appear in the committed convention surfaces (< 85%), so it binds one agent's review lens rather than the repository
+      reason: role-lens knowledge: it states no repo-wide obligation (normative=0 — none of the MUST/NEVER/ALWAYS-class wording the normative test looks for), which is the test that excluded it; its distinctive-term overlap with the committed convention surfaces is 69%, recorded as an observation only, since the 85% floor is never reached for a non-normative entry. It binds one agent's review lens rather than the repository
     - project_pr_create_hook_false_positive (corpus: pw=100%,normative=0)
-      reason: role-lens knowledge: normative=0 and only 100% of its distinctive terms appear in the committed convention surfaces (< 85%), so it binds one agent's review lens rather than the repository
+      reason: role-lens knowledge: it states no repo-wide obligation (normative=0 — none of the MUST/NEVER/ALWAYS-class wording the normative test looks for), which is the test that excluded it; its distinctive-term overlap with the committed convention surfaces is 100%, recorded as an observation only, since the 85% floor is never reached for a non-normative entry. It binds one agent's review lens rather than the repository
     - project_roadmap_next_order_drift (corpus: pw=72%,normative=0)
-      reason: role-lens knowledge: normative=0 and only 72% of its distinctive terms appear in the committed convention surfaces (< 85%), so it binds one agent's review lens rather than the repository
+      reason: role-lens knowledge: it states no repo-wide obligation (normative=0 — none of the MUST/NEVER/ALWAYS-class wording the normative test looks for), which is the test that excluded it; its distinctive-term overlap with the committed convention surfaces is 72%, recorded as an observation only, since the 85% floor is never reached for a non-normative entry. It binds one agent's review lens rather than the repository
     - project_self_heal_rubber_stamp (corpus: pw=58%,normative=0)
-      reason: role-lens knowledge: normative=0 and only 58% of its distinctive terms appear in the committed convention surfaces (< 85%), so it binds one agent's review lens rather than the repository
+      reason: role-lens knowledge: it states no repo-wide obligation (normative=0 — none of the MUST/NEVER/ALWAYS-class wording the normative test looks for), which is the test that excluded it; its distinctive-term overlap with the committed convention surfaces is 58%, recorded as an observation only, since the 85% floor is never reached for a non-normative entry. It binds one agent's review lens rather than the repository
     - project_self_heal_three_fixer_sites (corpus: pw=77%,normative=1)
-      reason: role-lens knowledge: normative=1 and only 77% of its distinctive terms appear in the committed convention surfaces (< 85%), so it binds one agent's review lens rather than the repository
-    - project_substring_heuristic_traps (corpus: pw=66%,normative=0)
-      reason: role-lens knowledge: normative=0 and only 66% of its distinctive terms appear in the committed convention surfaces (< 85%), so it binds one agent's review lens rather than the repository
-    - project_supervisor_budget_surfaces (corpus: pw=80%,normative=0)
-      reason: role-lens knowledge: normative=0 and only 80% of its distinctive terms appear in the committed convention surfaces (< 85%), so it binds one agent's review lens rather than the repository
+      reason: role-lens knowledge: normative, but only 77% of its distinctive terms appear in the committed convention surfaces (< 85%), so the project does not already assert it repo-wide — it binds one agent's review lens rather than the repository
+    - project_substring_heuristic_traps (corpus: pw=73%,normative=0)
+      reason: role-lens knowledge: it states no repo-wide obligation (normative=0 — none of the MUST/NEVER/ALWAYS-class wording the normative test looks for), which is the test that excluded it; its distinctive-term overlap with the committed convention surfaces is 73%, recorded as an observation only, since the 85% floor is never reached for a non-normative entry. It binds one agent's review lens rather than the repository
+    - project_supervisor_budget_surfaces (corpus: pw=86%,normative=0)
+      reason: role-lens knowledge: it states no repo-wide obligation (normative=0 — none of the MUST/NEVER/ALWAYS-class wording the normative test looks for), which is the test that excluded it; its distinctive-term overlap with the committed convention surfaces is 86%, recorded as an observation only, since the 85% floor is never reached for a non-normative entry. It binds one agent's review lens rather than the repository
     - project_two_six_class_taxonomies (corpus: pw=62%,normative=1)
-      reason: role-lens knowledge: normative=1 and only 62% of its distinctive terms appear in the committed convention surfaces (< 85%), so it binds one agent's review lens rather than the repository
+      reason: role-lens knowledge: normative, but only 62% of its distinctive terms appear in the committed convention surfaces (< 85%), so the project does not already assert it repo-wide — it binds one agent's review lens rather than the repository
     - unscanned-drift-surfaces-on-version-bump (corpus: pw=80%,normative=1)
-      reason: role-lens knowledge: normative=1 and only 80% of its distinctive terms appear in the committed convention surfaces (< 85%), so it binds one agent's review lens rather than the repository
-    - count_version_gate_blindspots (corpus: pw=45%,normative=1)
-      reason: role-lens knowledge: normative=1 and only 45% of its distinctive terms appear in the committed convention surfaces (< 85%), so it binds one agent's review lens rather than the repository
+      reason: role-lens knowledge: normative, but only 80% of its distinctive terms appear in the committed convention surfaces (< 85%), so the project does not already assert it repo-wide — it binds one agent's review lens rather than the repository
+    - count_version_gate_blindspots (corpus: pw=54%,normative=1)
+      reason: role-lens knowledge: normative, but only 54% of its distinctive terms appear in the committed convention surfaces (< 85%), so the project does not already assert it repo-wide — it binds one agent's review lens rather than the repository
     - golden_fixture_regen (corpus: pw=50%,normative=1)
-      reason: role-lens knowledge: normative=1 and only 50% of its distinctive terms appear in the committed convention surfaces (< 85%), so it binds one agent's review lens rather than the repository
+      reason: role-lens knowledge: normative, but only 50% of its distinctive terms appear in the committed convention surfaces (< 85%), so the project does not already assert it repo-wide — it binds one agent's review lens rather than the repository
     - attack_jq_only_json_injection (corpus: pw=25%,normative=1)
-      reason: role-lens knowledge: normative=1 and only 25% of its distinctive terms appear in the committed convention surfaces (< 85%), so it binds one agent's review lens rather than the repository
-    - attack_self_heal_pass_not_review_clean (corpus: pw=81%,normative=0)
-      reason: role-lens knowledge: normative=0 and only 81% of its distinctive terms appear in the committed convention surfaces (< 85%), so it binds one agent's review lens rather than the repository
+      reason: role-lens knowledge: normative, but only 25% of its distinctive terms appear in the committed convention surfaces (< 85%), so the project does not already assert it repo-wide — it binds one agent's review lens rather than the repository
+    - attack_self_heal_pass_not_review_clean (corpus: pw=90%,normative=0)
+      reason: role-lens knowledge: it states no repo-wide obligation (normative=0 — none of the MUST/NEVER/ALWAYS-class wording the normative test looks for), which is the test that excluded it; its distinctive-term overlap with the committed convention surfaces is 90%, recorded as an observation only, since the 85% floor is never reached for a non-normative entry. It binds one agent's review lens rather than the repository
     - attack_sole_writer_worktree_ban (corpus: pw=100%,normative=0)
-      reason: role-lens knowledge: normative=0 and only 100% of its distinctive terms appear in the committed convention surfaces (< 85%), so it binds one agent's review lens rather than the repository
+      reason: role-lens knowledge: it states no repo-wide obligation (normative=0 — none of the MUST/NEVER/ALWAYS-class wording the normative test looks for), which is the test that excluded it; its distinctive-term overlap with the committed convention surfaces is 100%, recorded as an observation only, since the 85% floor is never reached for a non-normative entry. It binds one agent's review lens rather than the repository
     - attack_user_global_config_writes (corpus: pw=69%,normative=1)
-      reason: role-lens knowledge: normative=1 and only 69% of its distinctive terms appear in the committed convention surfaces (< 85%), so it binds one agent's review lens rather than the repository
+      reason: role-lens knowledge: normative, but only 69% of its distinctive terms appear in the committed convention surfaces (< 85%), so the project does not already assert it repo-wide — it binds one agent's review lens rather than the repository
   [project-memory] 3 candidate(s)
     - theme:citation-anchor (ledger: 2)
       reason: only 2 corroborating findings (< the 8 support floor) — too thin to generalise into a committed convention; recorded as durable project context instead
@@ -180,10 +192,10 @@ thresholds: cap=5  min-support=8  project-wide=85%  distillation-floor=2.00  app
      scope fidelity: 96% (26 of the 27 CHECKABLE motivating findings have a live changed_path matched by the derived globs, via the same bash `case` matcher read-rules.sh uses)
                      over ALL 36 motivating findings: 72% (26 of 36). The denominator above is SMALLER on purpose and the filter is not silent: 9 finding(s) come from a ledger record with no changed_paths at all, and 0 have changed_paths of which none is still tracked by git. Neither can be matched against a glob, so neither is evidence for OR against the scope — but they are motivating findings all the same, and the honest figure is the second one.
      motivating findings (36): ai-agent-manager#43:L3.1 ai-agent-manager#43:L3.5 ai-agent-manager#60:L5.4 ai-agent-manager#62:L7.3 ai-agent-manager#67:L8.3 ai-agent-manager#67:L8.4 ai-agent-manager#67:L9.3 ai-agent-manager#67:L9.4 ai-agent-manager#67:L9.7 ai-agent-manager#70:L12.2 ai-agent-manager#37:L13.2 ai-agent-manager#45:L14.1 … (+24 more)
-     invocation: add-rule.sh --category 'process' --statement 'A count or version number is claimed in exactly one authoritative machine-readable place; every other surface derives it at read time or names the authority instead of restating the literal, because a restated number is a live claim that nothing keeps current.' --enforcement advisory --applies-to 'CLAUDE.md' --source 'dreaming:2026-08-16-de8ba42' < /dev/null
+     invocation: add-rule.sh --category 'process' --statement 'A count or version number is claimed in exactly one authoritative machine-readable place; every other surface derives it at read time or names the authority instead of restating the literal, because a restated number is a live claim that nothing keeps current.' --enforcement advisory --applies-to 'CLAUDE.md' --source 'dreaming:2026-08-17-cc61ee6' < /dev/null
      writer result: PLANNED WRITE (not written)
        | PLANNED WRITE (not written — pass --confirm to apply):
-       |   target: /private/tmp/claude-501/-Users-vikashruhil-Documents-work-AI-ai-agent-manager/54b0ce93-5b49-4498-a1b4-ed52065bb450/scratchpad/clone3/.agent/rules/process.json
+       |   target: /private/tmp/claude-501/-Users-vikashruhil-Documents-work-AI-ai-agent-manager/f591a048-3b52-49b1-a9ac-1dbf743f351e/scratchpad/harvest-sample/.agent/rules/process.json
        |   object: {
        |   "id": "process-a-count-or-version-number-is-claimed-in-exactly-one-authoritative-machine-readable-place-every-other-surface-derives-it-at-read-time-or-names-the-authority-instead-of-restating-the-literal-because-a-restated-number-is-a-live-claim-that-nothing-keeps-current",
 
@@ -195,10 +207,10 @@ thresholds: cap=5  min-support=8  project-wide=85%  distillation-floor=2.00  app
      scope fidelity: 100% (15 of the 15 CHECKABLE motivating findings have a live changed_path matched by the derived globs, via the same bash `case` matcher read-rules.sh uses)
                      over ALL 20 motivating findings: 75% (15 of 20). The denominator above is SMALLER on purpose and the filter is not silent: 5 finding(s) come from a ledger record with no changed_paths at all, and 0 have changed_paths of which none is still tracked by git. Neither can be matched against a glob, so neither is evidence for OR against the scope — but they are motivating findings all the same, and the honest figure is the second one.
      motivating findings (20): ai-agent-manager#43:L3.2 ai-agent-manager#43:L3.7 ai-agent-manager#47:L4.4 ai-agent-manager#47:L4.6 ai-agent-manager#62:L7.5 ai-agent-manager#70:L12.1 ai-agent-manager#70:L12.3 ai-agent-manager#63:L18.3 ai-agent-manager#64:L19.2 ai-agent-manager#56:L27.2 ai-agent-manager#57:L28.2 ai-agent-manager#75:L33.4 … (+8 more)
-     invocation: add-rule.sh --category 'process' --statement 'When one surface restates a list, table or enumeration owned by another, the restating copy is updated in the SAME change as its authority, or it is replaced by a pointer to that authority — a second copy that drifts silently is the defect, not the drift.' --enforcement advisory --applies-to 'CLAUDE.md' --applies-to 'loomwright/scripts/*' --source 'dreaming:2026-08-16-de8ba42' < /dev/null
+     invocation: add-rule.sh --category 'process' --statement 'When one surface restates a list, table or enumeration owned by another, the restating copy is updated in the SAME change as its authority, or it is replaced by a pointer to that authority — a second copy that drifts silently is the defect, not the drift.' --enforcement advisory --applies-to 'CLAUDE.md' --applies-to 'loomwright/scripts/*' --source 'dreaming:2026-08-17-cc61ee6' < /dev/null
      writer result: PLANNED WRITE (not written)
        | PLANNED WRITE (not written — pass --confirm to apply):
-       |   target: /private/tmp/claude-501/-Users-vikashruhil-Documents-work-AI-ai-agent-manager/54b0ce93-5b49-4498-a1b4-ed52065bb450/scratchpad/clone3/.agent/rules/process.json
+       |   target: /private/tmp/claude-501/-Users-vikashruhil-Documents-work-AI-ai-agent-manager/f591a048-3b52-49b1-a9ac-1dbf743f351e/scratchpad/harvest-sample/.agent/rules/process.json
        |   object: {
        |   "id": "process-when-one-surface-restates-a-list-table-or-enumeration-owned-by-another-the-restating-copy-is-updated-in-the-same-change-as-its-authority-or-it-is-replaced-by-a-pointer-to-that-authority-a-second-copy-that-drifts-silently-is-the-defect-not-the-drift",
 
@@ -210,10 +222,10 @@ thresholds: cap=5  min-support=8  project-wide=85%  distillation-floor=2.00  app
      scope fidelity: 100% (5 of the 5 CHECKABLE motivating findings have a live changed_path matched by the derived globs, via the same bash `case` matcher read-rules.sh uses)
                      over ALL 8 motivating findings: 63% (5 of 8). The denominator above is SMALLER on purpose and the filter is not silent: 2 finding(s) come from a ledger record with no changed_paths at all, and 1 have changed_paths of which none is still tracked by git. Neither can be matched against a glob, so neither is evidence for OR against the scope — but they are motivating findings all the same, and the honest figure is the second one.
      motivating findings (8): ai-agent-manager#61:L6.2 ai-agent-manager#68:L10.1 ai-agent-manager#59:L17.1 ai-agent-manager#78:L36.1 ai-agent-manager#83:L41.1 loomwright#97:L58.5 loomwright#95:L60.5 loomwright#129:L80.2 
-     invocation: add-rule.sh --category 'documentation' --statement 'Prose that describes current behaviour is corrected in the same change that alters the behaviour; a sweep for the OLD wording across every doc surface is part of the change, not a follow-up.' --enforcement advisory --applies-to 'CLAUDE.md' --applies-to 'loomwright/scripts/*' --source 'dreaming:2026-08-16-de8ba42' < /dev/null
+     invocation: add-rule.sh --category 'documentation' --statement 'Prose that describes current behaviour is corrected in the same change that alters the behaviour; a sweep for the OLD wording across every doc surface is part of the change, not a follow-up.' --enforcement advisory --applies-to 'CLAUDE.md' --applies-to 'loomwright/scripts/*' --source 'dreaming:2026-08-17-cc61ee6' < /dev/null
      writer result: PLANNED WRITE (not written)
        | PLANNED WRITE (not written — pass --confirm to apply):
-       |   target: /private/tmp/claude-501/-Users-vikashruhil-Documents-work-AI-ai-agent-manager/54b0ce93-5b49-4498-a1b4-ed52065bb450/scratchpad/clone3/.agent/rules/documentation.json
+       |   target: /private/tmp/claude-501/-Users-vikashruhil-Documents-work-AI-ai-agent-manager/f591a048-3b52-49b1-a9ac-1dbf743f351e/scratchpad/harvest-sample/.agent/rules/documentation.json
        |   object: {
        |   "id": "documentation-prose-that-describes-current-behaviour-is-corrected-in-the-same-change-that-alters-the-behaviour-a-sweep-for-the-old-wording-across-every-doc-surface-is-part-of-the-change-not-a-follow-up",
 
@@ -225,10 +237,10 @@ thresholds: cap=5  min-support=8  project-wide=85%  distillation-floor=2.00  app
      scope fidelity: 100% (8 of the 8 CHECKABLE motivating findings have a live changed_path matched by the derived globs, via the same bash `case` matcher read-rules.sh uses)
                      over ALL 10 motivating findings: 80% (8 of 10). The denominator above is SMALLER on purpose and the filter is not silent: 2 finding(s) come from a ledger record with no changed_paths at all, and 0 have changed_paths of which none is still tracked by git. Neither can be matched against a glob, so neither is evidence for OR against the scope — but they are motivating findings all the same, and the honest figure is the second one.
      motivating findings (10): ai-agent-manager#48:L2.2 ai-agent-manager#43:L3.4 ai-agent-manager#70:L12.4 ai-agent-manager#37:L13.1 ai-agent-manager#37:L13.3 ai-agent-manager#45:L14.2 ai-agent-manager#55:L16.3 ai-agent-manager#57:L28.3 loomwright#99:L56.1 loomwright#99:L56.4 
-     invocation: add-rule.sh --category 'documentation' --statement 'Wording that carries a contract — a heading a gate greps for, a sentence that states a guarantee — is treated as an interface: renaming it is a change to that interface and its consumers move with it.' --enforcement advisory --applies-to 'CLAUDE.md' --applies-to 'AGENT_GUIDELINES.md' --source 'dreaming:2026-08-16-de8ba42' < /dev/null
+     invocation: add-rule.sh --category 'documentation' --statement 'Wording that carries a contract — a heading a gate greps for, a sentence that states a guarantee — is treated as an interface: renaming it is a change to that interface and its consumers move with it.' --enforcement advisory --applies-to 'CLAUDE.md' --applies-to 'AGENT_GUIDELINES.md' --source 'dreaming:2026-08-17-cc61ee6' < /dev/null
      writer result: PLANNED WRITE (not written)
        | PLANNED WRITE (not written — pass --confirm to apply):
-       |   target: /private/tmp/claude-501/-Users-vikashruhil-Documents-work-AI-ai-agent-manager/54b0ce93-5b49-4498-a1b4-ed52065bb450/scratchpad/clone3/.agent/rules/documentation.json
+       |   target: /private/tmp/claude-501/-Users-vikashruhil-Documents-work-AI-ai-agent-manager/f591a048-3b52-49b1-a9ac-1dbf743f351e/scratchpad/harvest-sample/.agent/rules/documentation.json
        |   object: {
        |   "id": "documentation-wording-that-carries-a-contract-a-heading-a-gate-greps-for-a-sentence-that-states-a-guarantee-is-treated-as-an-interface-renaming-it-is-a-change-to-that-interface-and-its-consumers-move-with-it",
 
@@ -249,7 +261,7 @@ thresholds: cap=5  min-support=8  project-wide=85%  distillation-floor=2.00  app
                    0 proposal(s) fell back to a repo-wide (null) scope, each with the stated justification shown above
   distillation:    OK — above the 2.00 findings-per-rule floor.
 
-=== END DRY RUN — no branch, no commit, no PR, nothing written to /private/tmp/claude-501/-Users-vikashruhil-Documents-work-AI-ai-agent-manager/54b0ce93-5b49-4498-a1b4-ed52065bb450/scratchpad/clone3/.agent/rules ===
+=== END DRY RUN — no branch, no commit, no PR, nothing written to /private/tmp/claude-501/-Users-vikashruhil-Documents-work-AI-ai-agent-manager/f591a048-3b52-49b1-a9ac-1dbf743f351e/scratchpad/harvest-sample/.agent/rules ===
 ```
 
 ## Reviewer's note on the numbers
