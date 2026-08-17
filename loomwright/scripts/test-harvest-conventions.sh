@@ -34,6 +34,10 @@
 #   (R) the repo-wide justification renders as ONE line with the right count (the `grep -c … ||
 #       echo 0` two-line trap), states the ZERO-path case in kind, and a non-object TOP-LEVEL
 #       record is skipped-and-counted rather than killing the whole harvest.
+#   (S) an agent-memory reason names the test that ACTUALLY excluded the candidate: a normative=0
+#       entry is excluded by the normative test at any pw, so its reason may not assert a
+#       "(< PROJECT_WIDE_PCT%)" comparison its own printed pw refutes. Asserted by shape over both
+#       the fixture transcript and the real-corpus one.
 #
 # MUTATION CONTROLS. This repo has repeatedly shipped guards that were vacuous until mutated, so the
 # three load-bearing assertions here are each proved non-vacuous by breaking the mechanism they
@@ -62,6 +66,8 @@
 #  (M14) strip the record-level guard from ALL_FINDINGS/ALL_MISSES ⇒ the same fixture still dies,
 #        one level down. The point of (d) in AGENT_GUIDELINES' verification gate, asserted: fixing
 #        only the first consumer of a malformed input moves the crash rather than removing it.
+#  (M15) collapse the corpus agent-memory reason back into ONE shared template (`elif false`) ⇒ the
+#        non-normative fixture asserts "only 100% … (< 85%)" again and (s1)/(s3) go RED.
 #  (M10) make the cap-deferred arm of the empty-batch diagnostic unreachable (i.e. restore the
 #        unconditional support-floor sentence) ⇒ (P)'s `--cap 0` run blames the support floor again,
 #        one line under a header stating the themes were deferred by the cap.
@@ -1097,6 +1103,96 @@ if ! cmp -s "$HARVEST" "$MUT14" && bash -n "$MUT14" 2>/dev/null; then
   fi
 else
   no "(M14) the aggregate-guard mutation did not land"
+fi
+
+# ============================================================================
+echo "(S) the agent-memory reason names the test that actually excluded the candidate"
+# ============================================================================
+# The corpus `rules` branch needs normative=1 AND pw >= PROJECT_WIDE_PCT. A normative=0 entry is
+# excluded by the FIRST conjunct at ANY pw — including pw >= the floor — but the single shared
+# else-branch template asserted "(< 85%)" unconditionally, so the real corpus printed reasons like
+# "normative=0 and only 91% … (< 85%)": a provably false comparison in the one sentence whose whole
+# job is to justify the triage. Bucketing was never wrong; the stated reason was.
+#
+# false_pct_claims <file> — every line that states "only N% … (< F%)" where N >= F, i.e. every
+# comparison the transcript asserts and its own numbers refute. Deliberately shape-based, not
+# wording-based, so it also guards any future reason string that renders a comparison.
+false_pct_claims() {
+  sed -n 's/.*only \([0-9][0-9]*\)% of its distinctive terms[^(]*(< \([0-9][0-9]*\)%).*/\1 \2/p' "$1" \
+    | awk '$1 >= $2 { print "claims " $1 "% is < " $2 "%" }'
+}
+reason_of() {   # reason_of <transcript> <candidate-name>
+  awk -v want="$2" '$0 ~ ("^    - " want " \\(corpus:") { getline; sub(/^      reason: /,""); print; exit }' "$1"
+}
+
+SS="$(new_repo)"
+{ rec 1 "count drift in the banner" '["src/a/x.md"]' 5
+} > "$SS/.supervisor/postmortem/results.jsonl"
+mkdir -p "$SS/.claude/agent-memory/loomwright:code-reviewer"
+# (i) NON-NORMATIVE, HIGH pw — the case that produced the false sentence. Every distinctive term is
+# lifted from new_repo's own CLAUDE.md/AGENT_GUIDELINES.md, so pw is 100%; the body carries none of
+# the MUST/NEVER/ALWAYS-class wording, so normative=0. This combination is NOT hypothetical: the
+# real corpus has entries at pw=91% and pw=100% with normative=0.
+cat > "$SS/.claude/agent-memory/loomwright:code-reviewer/nonnormative_high_overlap.md" <<'EOF'
+---
+description: guidance counts advisory guidelines closed emitters
+---
+An observation about how the gates read.
+EOF
+# (ii) NORMATIVE, LOW pw — the case whose "below the floor" wording was correct and must survive.
+cat > "$SS/.claude/agent-memory/loomwright:code-reviewer/normative_low_overlap.md" <<'EOF'
+---
+description: zygomorphic quixotry frobnicate widgetized snorklewhacker
+---
+Agents MUST frobnicate before widgetizing.
+EOF
+run_harvest "$SS" --session-id "fx-s" --min-support 4 --cap 3 --no-writer
+printf '%s\n' "$OUT" > "$ROOT/s.txt"
+
+s_pw="$(sed -n 's/^    - nonnormative_high_overlap (corpus: pw=\([0-9]*\)%,normative=\([01]\)).*/\1 \2/p' "$ROOT/s.txt" | head -1)"
+if [ "$s_pw" = "100 0" ]; then
+  ok "(s0) the fixture really is the hazardous combination (pw=100%, normative=0), not a restatement of the low-pw case"
+else
+  no "(s0) fixture did not score as intended (got '$s_pw', wanted '100 0'): $(grep -F 'nonnormative_high_overlap' "$ROOT/s.txt" | head -1)"
+fi
+s_reason="$(reason_of "$ROOT/s.txt" nonnormative_high_overlap)"
+if [ -n "$s_reason" ] && case "$s_reason" in *"(< 85%)"*) false ;; *) true ;; esac \
+   && case "$s_reason" in *"normative=0"*) true ;; *) false ;; esac; then
+  ok "(s1) the non-normative entry's reason names the normative test as the disqualifier and asserts NO threshold comparison"
+else
+  no "(s1) wrong reason for the non-normative high-overlap entry: $s_reason"
+fi
+n_reason="$(reason_of "$ROOT/s.txt" normative_low_overlap)"
+if case "$n_reason" in *"(< 85%)"*) true ;; *) false ;; esac; then
+  ok "(s2) the normative BELOW-the-floor entry keeps its (correct) below-the-floor wording — the fix branched, it did not delete"
+else
+  no "(s2) the normative low-pw entry lost its below-the-floor reason: $n_reason"
+fi
+s_false="$(false_pct_claims "$ROOT/s.txt")"
+[ -z "$s_false" ] && ok "(s3) the whole transcript states no comparison its own numbers refute" \
+  || no "(s3) false comparisons in the transcript: $s_false"
+# ...and the same shape invariant over the REAL corpus run, which is where the defect was found.
+if [ -f "$ROOT/a.txt" ]; then
+  a_false="$(false_pct_claims "$ROOT/a.txt")"
+  [ -z "$a_false" ] && ok "(s4) the REAL-corpus transcript states no comparison its own numbers refute" \
+    || no "(s4) false comparisons in the real-corpus transcript: $a_false"
+fi
+
+# ---- MUTATION CONTROL M15: collapse the two branches back into one ⇒ (s1)/(s3) must go RED ----
+# `elif false` makes the normative=0 arm unreachable, so every non-normative entry falls through to
+# the below-the-floor template again — exactly the shipped defect, reproduced on demand.
+MUT15="$ROOT/mut-onetemplate.sh"
+sed 's@^      elif \[ "$normative" -ne 1 \]; then$@      elif false; then@' "$HARVEST" > "$MUT15"
+if ! cmp -s "$HARVEST" "$MUT15" && bash -n "$MUT15" 2>/dev/null; then
+  M15OUT="$( bash "$MUT15" --root "$SS" --session-id fx-m15 --min-support 4 --cap 3 --no-writer 2>&1 )" || true
+  printf '%s\n' "$M15OUT" > "$ROOT/m15.txt"
+  if [ -n "$(false_pct_claims "$ROOT/m15.txt")" ]; then
+    ok "(M15) CONFIRMED: with the branches collapsed the SAME fixture asserts $(false_pct_claims "$ROOT/m15.txt") — (s1)/(s3) are load-bearing"
+  else
+    no "(M15) REFUTED: the single-template script printed no false comparison — (s1)/(s3) may be vacuous"
+  fi
+else
+  no "(M15) the single-template mutation did not land"
 fi
 
 echo

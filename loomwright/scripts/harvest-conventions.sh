@@ -428,9 +428,19 @@ triage_bucket() {
       elif [ "$normative" -eq 1 ] && [ "$pw" -ge "$PROJECT_WIDE_PCT" ]; then
         BUCKET="project-memory"
         BUCKET_REASON="normative and repo-wide (${pw}% of its terms are in the committed convention surfaces) but no theme reaches the $MIN_SUPPORT-finding support floor, so there is no measured violation to justify a rule — durable project context"
+      elif [ "$normative" -ne 1 ]; then
+        # THE REASON MUST NAME THE TEST THAT ACTUALLY EXCLUDED IT. The `rules` branch needs
+        # normative=1 AND pw >= $PROJECT_WIDE_PCT; a normative=0 entry is excluded by the FIRST
+        # conjunct at ANY pw, including pw >= the floor. The single template this branch used to
+        # share with the low-pw case asserted "(< ${PROJECT_WIDE_PCT}%)" unconditionally and so
+        # printed provably false comparisons on real corpus entries (a 91%/100% entry reported as
+        # "< 85%"). pw is therefore reported here as a bare OBSERVATION, with no comparison
+        # attached — the comparison was never reached.
+        BUCKET="agent-memory"
+        BUCKET_REASON="role-lens knowledge: it states no repo-wide obligation (normative=0 — none of the MUST/NEVER/ALWAYS-class wording the normative test looks for), which is the test that excluded it; its distinctive-term overlap with the committed convention surfaces is ${pw}%, recorded as an observation only, since the ${PROJECT_WIDE_PCT}% floor is never reached for a non-normative entry. It binds one agent's review lens rather than the repository"
       else
         BUCKET="agent-memory"
-        BUCKET_REASON="role-lens knowledge: normative=$normative and only ${pw}% of its distinctive terms appear in the committed convention surfaces (< ${PROJECT_WIDE_PCT}%), so it binds one agent's review lens rather than the repository"
+        BUCKET_REASON="role-lens knowledge: normative, but only ${pw}% of its distinctive terms appear in the committed convention surfaces (< ${PROJECT_WIDE_PCT}%), so the project does not already assert it repo-wide — it binds one agent's review lens rather than the repository"
       fi ;;
     *) BUCKET="project-memory"; BUCKET_REASON="unrecognised candidate kind '$kind' — defaulted to the non-committed destination" ;;
   esac
