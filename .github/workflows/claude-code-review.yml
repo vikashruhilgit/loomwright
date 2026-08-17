@@ -85,6 +85,18 @@ jobs:
             ends without a posted comment is indistinguishable from no review at all —
             the workflow still goes green, so silence reads as "clean" to everyone.
 
+            EVERY completed run posts exactly one comment — including when you find
+            nothing. "No new findings" is a review result, not an excuse to stay
+            silent; a re-review run whose commits merely address your own earlier
+            findings still posts. In that case post a short comment that starts with
+            `Reviewed <sha>: no new findings` (use `git rev-parse HEAD^2` for the PR
+            head sha — HEAD is the merge commit, its SECOND parent is the PR tip) and
+            then, in a sentence or two, say what you examined and, if this is a
+            re-review, confirm which earlier findings the new commits addressed. Do
+            not compress this to a bare one-liner: a completion check on this workflow
+            only counts comments longer than 200 characters as a posted review, so a
+            one-line "no new findings" still registers as silence.
+
           # No --model or --effort pin: inherit the action's defaults.
           #
           # --allowed-tools REPLACES the defaults, it does not extend them. Until
@@ -154,7 +166,10 @@ jobs:
       # this run's own start stamp (so an earlier run's review cannot satisfy a
       # later run), and is longer than 200 characters — PR #147 collected a
       # literal 4-character "test" comment from a reviewer probing its tool
-      # permissions, which must not count as review. The author clause is not
+      # permissions, which must not count as review. The 200-char floor is
+      # RESTATED in the review prompt above (its no-findings paragraph tells the
+      # reviewer a one-liner won't count) — change both together, or a compliant
+      # short comment under a raised floor re-creates the false red PR #150 fixed. The author clause is not
       # cosmetic: without it ANY actor satisfies the assertion. On PR #147 a
       # 5418-character human comment (`vikashruhilgit`, 2026-08-15T04:11:02Z)
       # sat between two `claude[bot]` comments and would have covered for a
