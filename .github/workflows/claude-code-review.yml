@@ -31,6 +31,12 @@ jobs:
           # word for it. Full history makes those claims checkable.
           fetch-depth: 0
 
+      # Stamped BEFORE the reviewer runs so the posted-comment assertion below can tell
+      # THIS run's comment from one left by an earlier run on the same PR.
+      - name: Stamp run start
+        id: stamp
+        run: echo "since=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       - name: Run Claude Code Review
         id: claude-review
         uses: anthropics/claude-code-action@v1
@@ -96,18 +102,29 @@ jobs:
           #
           # What this list guarantees is narrow, and it is NOT "read-only": there is no
           # Write tool, no Edit tool, and no bare `Bash(...)` wildcard — that is all.
-          # Two known write/mutate paths survive inside it: `--output=<file>` is a
-          # standard diff option accepted by `git diff`, `git log` AND `git show` (all
-          # three prefix-globbed here) and overwrites an arbitrary file with no shell
-          # chaining, verified rc=0 on git 2.50.1; and `gh pr comment --delete-last`
-          # removes a comment. The blast radius is bounded by the environment rather
-          # than by the allowlist: the runner is ephemeral, and the job token is
-          # `contents: read`, so nothing written to the checkout can be pushed.
-          # `Bash(git branch:*)` was deliberately dropped — its prefix glob admitted
-          # `-d/-D`, `-m/-M`, `-c/-C`, `-f`, `--set-upstream-to` and
-          # `--edit-description` (which spawns core.editor), and nothing in the prompt
-          # needs it; file-level verification is covered by show/cat-file/log/diff/
-          # blame/ls-files/rev-parse/merge-base.
+          # Every entry is a PREFIX glob, so each one admits whatever flags its command
+          # accepts, and several accept flags that write. Known paths that survive:
+          #   1. `--output=<file>` is a standard diff option accepted by `git diff`,
+          #      `git log` AND `git show` (all three prefix-globbed here) and overwrites
+          #      an arbitrary file with no shell chaining — verified rc=0 on git 2.50.1.
+          #   2. `sort -o <file>` writes its output to an arbitrary file, same shape.
+          #   3. `gh pr comment --delete-last` removes a comment.
+          #   4. `cat` and `jq` reach the environment (`jq -n 'env.FOO'`,
+          #      `cat /proc/self/environ`), and `gh pr comment` can publish whatever
+          #      they read — on a public repo that is an egress channel, not just a
+          #      local read. The OAuth token is the thing worth guarding there.
+          # The blast radius is bounded by the environment rather than by the allowlist:
+          # the runner is ephemeral, and the job token is `contents: read`, so nothing
+          # written to the checkout can be pushed.
+          # Two entries were deliberately dropped rather than left to that bound:
+          # `Bash(git branch:*)`, whose prefix glob admitted `-d/-D`, `-m/-M`, `-c/-C`,
+          # `-f`, `--set-upstream-to` and `--edit-description` (which spawns
+          # core.editor); and `Bash(find:*)`, which is strictly worse — `find . -name X
+          # -exec sh -c '<anything>' \;` runs an ARBITRARY command (verified) and
+          # `-delete` removes files, which would make every other entry on this list
+          # decorative. Neither is needed: file-level verification is covered by
+          # show/cat-file/log/diff/blame/ls-files/rev-parse/merge-base, and file
+          # discovery by `Glob` plus `Bash(git ls-files:*)`.
           #
           # Self-test caveat: claude-code-action SKIPS any PR that modifies a workflow
           # file (it exits 0 with a "workflow validation failed" annotation and posts
@@ -117,4 +134,109 @@ jobs:
           # Kept on ONE line on purpose: a YAML folded scalar (`>-`) joins its lines
           # with a space, which would inject a leading space into every wrapped tool
           # name (`" Bash(git blame:*)"`) and is not worth betting the allowlist on.
-          claude_args: '--allowed-tools "Read,Grep,Glob,Bash(git log:*),Bash(git show:*),Bash(git diff:*),Bash(git cat-file:*),Bash(git blame:*),Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git merge-base:*),Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
+          claude_args: '--allowed-tools "Read,Grep,Glob,Task,TodoWrite,Bash(git log:*),Bash(git show:*),Bash(git diff:*),Bash(git cat-file:*),Bash(git blame:*),Bash(git ls-files:*),Bash(git rev-parse:*),Bash(git merge-base:*),Bash(git status:*),Bash(jq:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(sort:*),Bash(uniq:*),Bash(cut:*),Bash(tr:*),Bash(diff:*),Bash(ls:*),Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
+
+      # ---------------------------------------------------------------------
+      # A run that ends without a posted comment is indistinguishable from no
+      # review at all — the prompt above says so, and until now nothing enforced
+      # it: the action exits `is_error: false` and the check goes green whether
+      # or not a review was delivered. Measured on PR #147, nine runs all
+      # concluded `success` and only THREE posted; the six silent ones cost
+      # ~$21 and produced nothing a human could read. Silence read as "clean".
+      #
+      # This step makes that visible. It is deliberately NOT a required check
+      # (branch protection on `main` requires `ci` only), so a red mark here
+      # reports "this PR was not actually reviewed" without blocking a merge —
+      # the human decides what to do about it.
+      #
+      # A comment counts only if it was authored by `claude[bot]` (the reviewer's
+      # own login, confirmed against the live comments API on PR #147), postdates
+      # this run's own start stamp (so an earlier run's review cannot satisfy a
+      # later run), and is longer than 200 characters — PR #147 collected a
+      # literal 4-character "test" comment from a reviewer probing its tool
+      # permissions, which must not count as review. The author clause is not
+      # cosmetic: without it ANY actor satisfies the assertion. On PR #147 a
+      # 5418-character human comment (`vikashruhilgit`, 2026-08-15T04:11:02Z)
+      # sat between two `claude[bot]` comments and would have covered for a
+      # silent run.
+      #
+      # No `always()` here. It was redundant on the failure path — the outcome
+      # test already excludes a failed reviewer — but it also made this step run
+      # during job CANCELLATION, which is routine on this workflow
+      # (`cancel-in-progress: true` + `synchronize`), turning a merely superseded
+      # run into a spurious "posted NO comment" error.
+      - name: Assert a review was actually posted
+        if: steps.claude-review.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          SINCE: ${{ steps.stamp.outputs.since }}
+        run: |
+          set -uo pipefail
+          # `set -u` does NOT catch set-but-EMPTY, and this step runs under `bash -e`, where
+          # a failing `date` in the stamp step still writes a literal `since=` to
+          # $GITHUB_OUTPUT with rc=0. An empty SINCE makes the anti-replay filter below
+          # vacuous — `select(.created_at >= "")` is true for a comment from 2020 — so a
+          # stale review from an earlier run would silently satisfy this run. Skip loudly
+          # instead. Not a failure: a broken stamp is not evidence the PR went unreviewed.
+          if [ -z "${SINCE}" ]; then
+            echo "::warning::run-start stamp is empty — the anti-replay filter would accept a comment of any age, so this assertion is skipped rather than run vacuously."
+            exit 0
+          fi
+          # claude-code-action SELF-SKIPS any PR that modifies a workflow file (it warns
+          # "Skipping action due to workflow validation", exits 0, and posts nothing) — the
+          # header above already documents this. That skip leaves steps.claude-review.outcome
+          # == 'success', so without this branch the assertion reports a false "not reviewed"
+          # on every workflow PR. Caught by this very step on its own first run (PR #148).
+          # No pipe into grep here: `producer | grep -q` returns 141 under `pipefail` EVEN ON
+          # A MATCH, which would silently turn this guard into a no-op.
+          # Match PER LINE against an ANCHORED pattern, not `case "$changed" in
+          # *.github/workflows/*)` over the whole blob: the unanchored form also matched
+          # `docs/examples/.github/workflows/sample.yml` and `weird.github/workflows/x`
+          # (both verified), neither of which triggers the action's self-skip — and this
+          # repo ships example trees, so that no-oped the assertion on ordinary PRs.
+          # A here-string, not a pipe: `... | while read` runs the loop in a subshell and
+          # the flag set inside it would not survive. `.github/dependabot.yml` still does
+          # not match, as before.
+          changed="$(git diff --name-only HEAD^1 HEAD 2>/dev/null || true)"
+          workflow_touched=0
+          while IFS= read -r f; do
+            case "$f" in
+              .github/workflows/*) workflow_touched=1 ;;
+            esac
+          done <<< "$changed"
+          if [ "$workflow_touched" -eq 1 ]; then
+            echo "::notice::PR modifies a workflow file — claude-code-action self-skips these, so there is no review to assert here. Validate this workflow on the next NON-workflow PR."
+            exit 0
+          fi
+          # `--paginate` with `--jq` applies the filter to EACH page and concatenates the
+          # outputs, so a `| length` filter emits one number PER PAGE ("0\n1") rather than a
+          # total. Emit one id per line and count lines instead — correct at any comment count.
+          # The author clause comes FIRST because it is the one that decides whose silence
+          # this step is measuring; see the header above for what it cost to omit it.
+          if ! ids="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+                        --paginate --jq \
+                        ".[] | select(.user.login == \"claude[bot]\") | select(.created_at >= \"${SINCE}\") | select(.body | length > 200) | .id" \
+                      2>/dev/null)"; then
+            echo "::warning::could not read PR comments to verify a review was posted — not failing on an unreadable check"
+            exit 0
+          fi
+          # An unreadable API is a WARNING (above); zero comments from a readable API is the
+          # finding. Keep those two apart, or an outage silently reads as "not reviewed".
+          posted="$(printf '%s' "$ids" | grep -c . || true)"
+          if [ "${posted:-0}" -gt 0 ]; then
+            echo "review posted: $posted substantive claude[bot] comment(s) since ${SINCE}"
+            exit 0
+          fi
+          echo "::error::claude-review ran to completion but posted NO comment on PR #${PR_NUMBER}."
+          echo "Only comments authored by claude[bot], newer than ${SINCE}, and longer than 200"
+          echo "characters count — a human comment on the PR does not satisfy this check. If the"
+          echo "action's posting identity ever changes, this reports a false negative (visible and"
+          echo "non-blocking) rather than a false green; confirm with:"
+          echo "  gh api repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments --jq '.[].user.login'"
+          echo "The most common cause is tool-permission starvation: --allowed-tools REPLACES the"
+          echo "action's defaults, so anything absent from that list is denied, each denial burns a"
+          echo "turn, and the reviewer can exhaust itself before reaching the mandated final post."
+          echo "Check permission_denials_count against num_turns in this job's result block above:"
+          echo "on PR #147 the runs that posted sat at 36-46% denials; the silent ones ran 53-93%."
+          exit 1
