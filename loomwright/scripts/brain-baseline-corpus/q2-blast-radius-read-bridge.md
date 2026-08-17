@@ -1,5 +1,7 @@
 # Corpus item: blast radius of changing `read-bridge.sh`
 
+> **Note (2026-08-17):** authored against the retired graphify tier (its whole subject, `read-bridge.sh`, was deleted with the tier); retained as evaluation-corpus evidence, content otherwise intact.
+
 - **Type:** structural question
 - **Mode:** baseline (grep-first) — compare against graph-first after Phase 1
 - **Target repo / graph:** this plugin repo (`graphify-out/graph.json`)

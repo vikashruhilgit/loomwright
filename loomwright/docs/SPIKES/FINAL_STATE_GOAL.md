@@ -37,9 +37,36 @@ that activates above a stated bound; default to the cheap path below it.
 | D6 | **Workers get shared context + explicit lanes.** Launch Pad's file-impact analysis is handed to workers as a per-job digest instead of thrown away; each worker gets explicit file-ownership boundaries so it cannot impact siblings' work. Cold-start re-acquisition is where the 6.4× goes. | New work; the SDK runner is the natural carrier (it composes each spawn's prompt). |
 | D7 | **Session-start token floor gets attacked via the SDK**, plus 4c (unify `tools:` lists — 13 distinct lists = zero shared cache prefix) and 4f (route skills instead of preloading; note the documented "refresh guarantee" rationale must be argued, not ignored). **4f SHIPPED 2026-07-31 in v15.19.0** (see execution-order item 07) — the refresh-guarantee rationale was argued rather than discarded: it is preserved at Phase 4 as a genuine second Read, with Phase 2 PLAN now the first load. **4c REMAINS OPEN** — deferred to its own PR; record at `.supervisor/requirements/final-state/12-4c-unified-tools-lists.md`. | Composed per-spawn prompts replace 14 static ones. |
 | D8 | **Everything generated must be verifiably current.** Brief staleness measured by **churn over the anticipated file set, never elapsed time** (4g: Launch Pad stamps base commit; preflight gains a **third** signal — SHIPPED v15.19.0. The original "4th" was inherited without checking the skill: `preflight-sync` §Protocol step 4 declared only TWO required signals (a)/(b), so the advisory churn signal is (c), the third). Derived-artifact freshness = twin-remediation item 06. | Data-freshness is a gate input, not a hope. |
-| D9 | **Memory/CLAUDE.md curation is `/dreaming`'s job.** Store curation shipped (v15.14.0: supersede/retract/decay flags). **CLAUDE.md diet** = twin-remediation item 04, extended so `/dreaming` proposes CLAUDE.md prunes as human-gated candidates. | Nothing auto-deletes; flag-only remains the rule. |
+| D9 | **Memory/CLAUDE.md curation is `/dreaming`'s job.** Store curation shipped (v15.14.0: supersede/retract/decay flags). **CLAUDE.md diet** = twin-remediation item 04, extended so `/dreaming` proposes CLAUDE.md prunes as human-gated candidates. | ~~Nothing auto-deletes; flag-only remains the rule.~~ **Amended 2026-08-17** — split by regenerability; see §"D9 amendment (2026-08-17)" directly below the table. |
 | D10 | **Centralized user identity: parked** ("maybe later"). Recorded so it isn't re-proposed as urgent. | No work now. |
 | D11 | **Eval honesty is non-negotiable.** Abort rows stay; re-runs are second rows; no metric added after first run without a loud amendment; cost (not `wall_tokens`) is the comparator for multi-agent arms; `exit 0` is not a completion signal — poll branch/PR. | Fix 5/6 rules. |
+
+### D9 amendment (2026-08-17) — split by regenerability
+
+Amended per this file's own rule (cite new evidence, amend, never silently rewrite), during the
+graphify-tier retirement (twin-loop requirement 06, `.supervisor/requirements/twin-loop/06-retire-graph-and-split-d9.md`).
+
+**Original consequence (struck, kept for the record):** ~~"Nothing auto-deletes; flag-only remains
+the rule."~~ — too broad. It was written to protect distilled judgment, but as a blanket it also
+protected orphaned *derived* artifacts: the bridge survived 255 commits stale precisely because
+nothing was allowed to delete it, while its gitignored source graph had already vanished. The
+replacement rule keys on **regenerability** — whether the artifact can actually be rebuilt:
+
+| Kind | Auto-delete? | Why |
+|---|---|---|
+| **Derived** — bridge, graph, insights dashboard, `state.md` | **Yes, freely** | genuinely rebuilt on demand |
+| **Distilled** — lessons, rules, agent-memory, project memory | **No, never** | not recoverable: the stores *and* their source logs were gitignored, and only ~3 months of logs survive an 84-PR history |
+
+Flag-only (supersede/retract/decay, human-gated `/dreaming` curation) remains the rule for the
+**Distilled** row — that half of the original decision stands unchanged.
+
+**Variant sweep (traced, not edited):** every other surface restating the old blanket form was
+checked before this amendment. The `flag-only, never auto-delete` lines in `build-insights.sh`
+and `test-insights.sh` are claims about the **distilled** stores (rules, orientation, lessons) —
+under the split they are the "Distilled → No, never" row and remain TRUE, so they were traced
+and deliberately left unedited. `README.md`'s one matching line is a frozen historical changelog
+quote (left per the frozen-example-value convention). The only surface that carried the blanket
+form as a *live rule* was this D9 row itself.
 
 ---
 
