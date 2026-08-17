@@ -1,5 +1,5 @@
 ---
-description: Umbrella setup command — status dashboard plus guided configuration for every optional plugin capability — observability (local Langfuse + OTel collector), Twin cold-start bootstrap, memory in version control, telemetry, notifications, webhook, Beads, MySQL MCP
+description: Umbrella setup command — status dashboard plus guided configuration for every optional plugin capability — observability (local Langfuse + OTel collector), Twin cold-start bootstrap, memory in version control, portable house-rule seeding, telemetry, notifications, webhook, Beads, MySQL MCP
 ---
 
 # Command: /setup
@@ -11,6 +11,7 @@ description: Umbrella setup command — status dashboard plus guided configurati
 /setup observability        # Observability module directly: init | status | remove
 /setup twin                 # Twin readiness status + guided cold-start bootstrap (graph + bridge + CLAUDE.md): status | (no-arg → bootstrap)
 /setup memory               # Put the Twin memory stores under version control IN PLACE (gitignore negation + repo allowlist): status | apply | remove
+/setup rules                # Seed .agent/rules/ with PORTABLE conventions on a cold-start repo (labelled seeded, not learned): status | (no-arg → seed)
 /setup telemetry            # DELEGATES to /telemetry (no consent logic duplicated here)
 /setup notifications        # Status + guidance (notification hooks are always-on)
 /setup webhook              # Status + guidance (LOOMWRIGHT_WEBHOOK_URL)
@@ -20,11 +21,12 @@ description: Umbrella setup command — status dashboard plus guided configurati
 
 ## Parameters
 
-- **module** (optional): one of `observability`, `telemetry`, `notifications`, `webhook`, `beads`, `mysql-mcp`, `twin`, `memory`.
+- **module** (optional): one of `observability`, `telemetry`, `notifications`, `webhook`, `beads`, `mysql-mcp`, `twin`, `memory`, `rules`.
   - If omitted: run the full status dashboard, then offer configuration via `AskUserQuestion` (multi-select).
   - If unrecognised: print this usage block and stop.
 - **observability subcommand** (optional, second positional arg): `init` | `status` | `remove`. If omitted, the module's check step decides — unconfigured → offer `init`; configured → offer `status` / `remove` / reconfigure.
 - **twin subcommand** (optional, second positional arg): `status` = read-only readiness report (no writes). If omitted, the module's check step decides — un-bootstrapped → offer to bootstrap; bootstrapped → offer `status` / re-bootstrap. **`remove` is explicitly N/A for v1** — Twin artifacts are per-repo, not per-user config (the graph + bridge are gitignored and regenerable from `graphify` / `build-bridge.sh`; `CLAUDE.md` is committed, human-authored), so there is no per-user state to tear down — teardown is out of scope (a deliberate omission, not an oversight).
+- **rules subcommand** (optional, second positional arg): `status` = read-only report of which portable seeds are present (no writes). If omitted, the module's check step decides — unseeded → offer to seed; already seeded → report and offer status only. **`remove` is N/A** — the store is committed and human-curated, so removing a rule is `/rules` territory (`add-rule.sh --retract`), never a module teardown; and re-seeding a still-seeded repo is a no-op by design rather than a reconfigure — including one whose seeds you have EDITED, since presence is keyed on the seeded stamp rather than the statement text. A seed you RETRACTED is the exception and is re-offered (see the module's honest limits — retract is not a permanent opt-out).
 - **memory subcommand** (optional, second positional arg): `status` = read-only report (no writes) | `apply` | `remove`. If omitted, the module's check step decides — not configured → offer to apply (behind the consent gate); configured → offer `status` / `remove`. **Unlike `twin`, `remove` is REQUIRED here** — un-committing is a real operation a user will want, most likely on realising something proprietary was published, so it is implemented rather than documented N/A.
 
 ## What This Does
@@ -45,7 +47,7 @@ Settled design facts (do not re-litigate at runtime):
 
 # Agent Prompt
 
-You are handling the `/setup` slash command inline on the main thread. Parse the FIRST positional argument as the module and the SECOND as the subcommand — `observability` takes `init` | `status` | `remove`; `twin` takes `status` (read-only); `memory` takes `status` (read-only) | `apply` | `remove`. For `twin status` and `memory status`, run the Check + Report steps ONLY and STOP — they are read-only, so never fall through to that module's Offer/Apply flow.
+You are handling the `/setup` slash command inline on the main thread. Parse the FIRST positional argument as the module and the SECOND as the subcommand — `observability` takes `init` | `status` | `remove`; `twin` takes `status` (read-only); `memory` takes `status` (read-only) | `apply` | `remove`; `rules` takes `status` (read-only). For `twin status`, `memory status` and `rules status`, run the Check + Report steps ONLY and STOP — they are read-only, so never fall through to that module's Offer/Apply flow.
 
 ## Step 0 — Load the protocol authority (every invocation)
 
@@ -81,6 +83,8 @@ Run ONE real check per module (never guess; every cell of the dashboard is deriv
 7. **twin** — run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-twin.sh" check` and read its output (the `Twin readiness:` verdict plus the per-cell `graph:` / `bridge:` / `CLAUDE.md:` lines). Never guess — every cell is derived from this real probe (the helper is fail-safe and always exits 0). Derive a compact status cell: verdict `bootstrapped` → `bootstrapped`; verdict `needs bootstrap` → name the gap from the cells, e.g. `needs bootstrap (graph absent)` when `graph: absent`, `needs bootstrap (stale graph)` when `graph: present (stale …)`, or `needs bootstrap (CLAUDE.md absent)` / `needs bootstrap (bridge absent)` as applicable.
 8. **memory** — run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-memory.sh" check` and read the `Memory readiness:` verdict plus the per-path `intended` / `unintended` ignore-status cells and the `allowlist:` line. The helper is fail-safe (always exits 0) and READ-ONLY on this path — it writes nothing. Derive a compact status cell: `configured` → `stores committable`; `gated (...)` → `memory stores committable, findings ledger WITHHELD` plus the offending slugs from the helper's own parenthetical (a **third** outcome — never collapse it into `configured` or `not configured`); `not configured` → `stores ignored (not in version control)`; `partial (...)` and `unknown (...)` → surface the helper's own parenthetical verbatim (`unknown` means the ignore status could not be probed at all — never restate it as a configured/partial claim); if the `.gitignore:` cell reads `absent` or `unparseable: …`, say so instead (e.g. `.gitignore unparseable — apply would abort`). Never guess — every cell comes from that one probe.
 
+9. **rules** — run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/seed-rules.sh" check` and read its per-seed `seed: ABSENT` / `seed: ALREADY SEEDED` lines plus the `seeds: N total · N already seeded · N absent` summary. `check` is READ-ONLY — it invokes no writer and creates nothing (not even the store directory). Derive a compact status cell from that summary alone: `0 absent` → `seeded (N/N portable rules)`; `N absent` with some present → `partially seeded (N of M)`; all absent → `not seeded (M portable rules available)`. If the helper exits non-zero it could not run (missing `jq` — exit 2); report `unknown (seed-rules.sh could not run)` and never a seeded/not-seeded claim. Never guess — every cell comes from that one probe.
+
 Print the dashboard:
 
 ```
@@ -96,19 +100,20 @@ Print the dashboard:
 | mysql-mcp     | <derived>                               | /setup mysql-mcp      |
 | twin          | <derived>                               | /setup twin           |
 | memory        | <derived>                               | /setup memory         |
+| rules         | <derived>                               | /setup rules          |
 ```
 
-Then use `AskUserQuestion`. **`AskUserQuestion` accepts at most 4 options**, so do NOT emit one option per unconfigured module (8 modules > 4 → an invalid call). The set below is FIXED at four and must NOT be grown when a module is added — a ninth module folds into an existing bucket or gets its own nested question, exactly as `twin` + `memory` do here:
+Then use `AskUserQuestion`. **`AskUserQuestion` accepts at most 4 options**, so do NOT emit one option per unconfigured module (9 modules > 4 → an invalid call). The set below is FIXED at four and must NOT be grown when a module is added — a tenth module folds into an existing bucket or gets its own nested question, exactly as `twin`, `memory` and `rules` do here:
 - `question`: "Which would you like to configure now?"
 - `header`: "Configure"
 - `multiSelect`: true
 - `options` (exactly these, in order; append each module's current status to its description):
   1. **observability** — full local-Langfuse / existing-endpoint / console init flow.
-  2. **Repo knowledge stores (Twin bootstrap · memory in version control)** — the two per-repo apply flows; selecting it asks ONE nested question (below) to pick which.
+  2. **Repo knowledge stores (Twin bootstrap · memory in version control · portable rule seeds)** — the three per-repo apply flows; selecting it asks ONE nested question (below) to pick which.
   3. **Other integrations (telemetry · webhook · Beads · MySQL MCP)** — print status + setup guidance / delegation for these (telemetry delegates to `/telemetry`; webhook · Beads · MySQL MCP are guidance-only; `notifications` is always-on and needs no action).
   4. **Nothing — just checking** — stop with the summary line.
 
-**How to render the status on a BUNDLED option** (options 2 and 3 fold several modules behind one label, so "the module's status" is ambiguous): append the per-module statuses joined by ` · `, each prefixed with its module name — `twin: <status> · memory: <status>` for option 2, and `telemetry: <status> · webhook: <status> · beads: <status> · mysql-mcp: <status>` for option 3. Never collapse them into one aggregate word, and never pick one module's status to stand for the bundle. Options 1 and 4 are single/no-module and take the plain status (option 4 takes none). Truncate from the right if the description exceeds the option-description limit — drop whole `name: status` pairs, never a status string mid-word.
+**How to render the status on a BUNDLED option** (options 2 and 3 fold several modules behind one label, so "the module's status" is ambiguous): append the per-module statuses joined by ` · `, each prefixed with its module name — `twin: <status> · memory: <status> · rules: <status>` for option 2, and `telemetry: <status> · webhook: <status> · beads: <status> · mysql-mcp: <status>` for option 3. Never collapse them into one aggregate word, and never pick one module's status to stand for the bundle. Options 1 and 4 are single/no-module and take the plain status (option 4 takes none). Truncate from the right if the description exceeds the option-description limit — drop whole `name: status` pairs, never a status string mid-word.
 
 **Nested question — only when option 2 was selected** (also ≤4 options; never inline these into the set above):
 - `question`: "Which repo knowledge store?"
@@ -117,7 +122,8 @@ Then use `AskUserQuestion`. **`AskUserQuestion` accepts at most 4 options**, so 
 - `options` (exactly these, in order; append each module's current status to its description):
   1. **twin** — Twin cold-start bootstrap: detect/refresh the code graph (guide if `graphify` absent), rebuild the bridge, validate/scaffold CLAUDE.md.
   2. **memory** — put `.claude/agent-memory/` + `.supervisor/memory/` + the findings ledger `.supervisor/postmortem/results.jsonl` under version control IN PLACE (gitignore negation + repo allowlist). The ledger is GATED: it is un-ignored only while every record's `.repo` is inside the repo allowlist. Consent-bearing — the memory module's own Offer step states what becomes version-controlled before anything is written.
-  3. **Neither — go back** — skip both and continue with the remaining selections.
+  3. **rules** — seed `.agent/rules/` with a small set of PORTABLE conventions (true of any repo) so a cold-start repo is not empty. They are labelled SEEDED, not learned: every one carries `provenance.source=setup:rules-seed`. Advisory only, no gate.
+  4. **None — go back** — skip all three and continue with the remaining selections.
 
 Run the corresponding module flow (below) for each selection, in the order listed. For option 3, run the `telemetry` delegation block plus the `webhook`, `beads`, and `mysql-mcp` status/guidance blocks in turn. If "Nothing", stop with the summary line.
 
@@ -377,6 +383,65 @@ A second `/setup memory` on an already-applied repo reports "already configured"
 
 ---
 
+## Module: rules
+
+Gives a **cold-start** repo a non-empty `.agent/rules/` house-rules store by seeding a small set of **portable** conventions — ones true of any repository, in any language, with any layout. `/dreaming` is the other half of this substrate and the opposite direction: it DISTILS rules from what a repo has actually accumulated (ledger findings, the agent-memory corpus). A fresh repo has accumulated nothing, so that path yields an empty batch and the store stays cold forever; this module closes that gap without pretending anything was measured.
+
+The deterministic engine is `${CLAUDE_PLUGIN_ROOT}/scripts/seed-rules.sh` (subcommands `check` / `seed`, plus `--confirm` to apply and `--root <dir>` to point at another repo). It authors every rule through the sole writer `add-rule.sh`, never by hand. This command owns the INTERACTIVE half — the offer and the one confirm.
+
+> **SEEDED IS NOT LEARNED, and the distinction is DATA.** Every seeded rule is stamped `provenance.source=setup:rules-seed`. That value IS the mechanism: a reader separates a shipped default from a rule `/dreaming` earned off this repo's own findings (which carries `dreaming:<session_id>`) by reading `provenance.source` and nothing else. **No new member is added to the rule object and no sidecar file is written** — the schema is frozen at 7 always-present members (`id`, `category`, `statement`, `enforcement`, `check`, `provenance`, `applies_to`) plus the optional `supersedes`, and `add-rule.sh` rejects any unknown argument outright. When you report the result, say plainly that these rules are **seeded defaults, not something the tool learned here** — the helper's own output says so on every path; relay it, do not paraphrase it into "rules configured for your repo".
+>
+> **Honest limits — relay these, do not soften them.** (a) Every seed is **repo-wide** (`applies_to: null`) and that is a stated justification, not a silent default: a path glob is a claim about a directory layout, and no layout is universal, so scoping a portable rule to a path would contradict the portability that qualifies it. A rule that genuinely needs a path scope is evidence-derived — that is `/dreaming`'s job, not this module's. (b) `check` is `null` on every seed and the helper never passes `--check`: **rules are DATA, never executed**, the `rules-check.sh --no-cmd` trust boundary is unchanged, and **this module adds NO gate** — seeds are advisory and subordinate to the project's own `CLAUDE.md`. (c) The store is committed and human-curated, so a seed you disagree with is meant to be edited or retracted (`/rules`), not tolerated. (d) **Those two curation actions are NOT equally durable, and the user must be told which is which.** An EDIT is durable: presence is keyed on the seeded stamp for the seed's category, not on the statement text, so a rewritten seed is reported `ALREADY SEEDED (curated)` and a later run never touches it. A RETRACT is **not** a permanent opt-out: it deletes the object, so nothing is left carrying the stamp and a later `/setup rules` re-offers and rewrites that seed at exit 0 with no record of the refusal. Recording a refusal would need a store the frozen schema has no room for (a sidecar would be the same freeze violation one layer out), so the honest advice is: to keep a seed out, edit it down to what you do want, or do not re-run the module.
+
+### Check
+
+Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/seed-rules.sh" check` and report its cells: the per-seed `seed: ABSENT` / `seed: ALREADY SEEDED` lines (each with its category and statement) and the `seeds: N total · N already seeded · N absent` summary. **Read-only — `check` invokes no writer and creates nothing, not even the store directory.** It exits 0; a non-zero exit means it could not run (exit 2 = missing `jq`, or a usage error), and that is `unknown`, never a not-seeded claim.
+
+### Report
+
+Print what check found, including the helper's seeded-not-learned disclosure block. For the `status` subcommand, STOP after the report — read-only, no writes, no offer.
+
+### Offer
+
+Branch on what Check found (never re-seed silently):
+
+**If any seed is ABSENT** — use `AskUserQuestion` (cap 4 options):
+- `question`: "Seed this repo's rules store with portable conventions?"
+- `header`: "Rules"
+- `multiSelect`: false
+- `options`:
+  1. `Seed them` — "Write the absent portable rules to .agent/rules/ via add-rule.sh, each stamped provenance.source=setup:rules-seed so they read as SEEDED, not learned from this repo. Advisory only — nothing is gated, nothing is executed, nothing is committed."
+  2. `Plan only (show me what would be written)` — "Print the exact rule object for each absent seed and write nothing."
+  3. `Cancel` — "Do nothing."
+
+Default to NOT seeding. If the answer is ambiguous, treat it as Cancel.
+
+**If 0 are absent** — do NOT re-run apply. Report "already seeded" and offer `Status` / `Cancel` only. There is no reconfigure (a second seed on a still-seeded repo is a no-op by design, edits included) and no `remove` (retracting a rule is `/rules` territory — `add-rule.sh --retract`, which is a per-rule human decision, not a module teardown).
+
+(A bare `/setup rules` with NO subcommand lands here and branches exactly as above. A `status` subcommand never reaches this phase — Report already stopped it.)
+
+### Apply
+
+1. On `Plan only`, run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/seed-rules.sh" seed` — it prints the full rule object each absent seed WOULD produce and writes nothing. Then return to the Offer.
+2. On `Seed them`, and ONLY after that explicit confirm, run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/seed-rules.sh" seed --confirm`.
+3. **Which invocation writes, stated so nothing is assumed.** `add-rule.sh` writes on `--confirm`, and otherwise **prompts `Confirm write? [y/N]` and writes on `y` whenever stdin and stdout are both a TTY** — which is exactly how `/setup` runs. A missing `--confirm` is therefore not by itself a dry run. The helper closes that by redirecting **every** writer invocation's stdin from `/dev/null` on **both** paths, which makes the prompting branch unreachable: so `seed-rules.sh` itself NEVER prompts, N seeds can never fire N prompts at the user's terminal, and the consent lives here, once, in the Offer above. Do not add a second prompt, and do not pass `--confirm` on the plan path.
+4. Read the helper's summary line and report it verbatim — `written: N · failed: M` (apply) or `planned: N · failed: M · NOTHING WAS WRITTEN` (plan). Its exit contract: **0** = every seed handled (reported / planned / written / already present); **1** = at least one seed the writer REFUSED (the per-seed `seed: FAILED` line names it) — surface those and do NOT report success; **2** = usage error or missing dependency (`jq`, or the writer itself) — nothing was attempted.
+5. **Seeding is not committing.** The store is a committed, version-controlled surface, but this command never stages anything. Tell the user to review `git status --short .agent/rules` and commit deliberately.
+
+### Verify
+
+Re-run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/seed-rules.sh" check` and show the before/after: each previously-absent seed now `ALREADY SEEDED`, and `0 absent` in the summary. Success is claimed ONLY after that re-check — and it is claimed as *"N portable rules seeded"*, never as *"N rules learned from your repo"*.
+
+### Idempotency note
+
+A second `/setup rules` on a **seeded and unretracted** repo reports "already seeded" and writes nothing: the helper skips a seed that is already PRESENT in a well-formed `.agent/rules/*.json` array, checked BEFORE the writer is invoked, so no duplicate is created and the run still exits 0. That skip is deliberate rather than left to the writer's own duplicate check — that check REFUSES with a non-zero status, which would turn a correct, already-configured second run into a reported failure.
+
+**PRESENT is keyed on the seeded stamp, not on the statement text**, and the difference is what makes editing safe. A rule counts as present when its statement matches the seed EXACTLY (any provenance) **or** when it carries `provenance.source=setup:rules-seed` for that seed's category — matched on `.category` or on the frozen `<category>-` id prefix. So **an edited seed is recognised as curated, not missing**: `check` reports it `ALREADY SEEDED` and marks the match `curated`, a re-run writes nothing, and your wording survives byte-for-byte. (Keying on the exact statement instead made the skip strictly narrower than the near-identical refusal it exists to avoid: one edited word made the seed look absent, the writer then refused it as a near-duplicate, and the module reported a hard failure on every subsequent run of a correctly-configured repo.)
+
+**RETRACT IS NOT A PERMANENT OPT-OUT — say so rather than implying idempotence covers it.** `add-rule.sh --retract` removes the rule object outright, so nothing is left carrying the stamp: a later `/setup rules` re-offers that seed and writes it back at exit 0, with no record that you rejected it. That asymmetry is real and worth stating to the user plainly — **editing a seed is durable curation; retracting one is not.** It is a known limit rather than an oversight: recording a refusal needs somewhere to store it, and the rule schema is frozen at 7 members while a sidecar would be the same freeze violation one layer out. To keep a seed out today, **edit it down to what you do want** (durable), or simply do not re-run the module.
+
+---
+
 ## Module: telemetry
 
 DELEGATES — print `Telemetry is managed by /telemetry (consent logic lives there and is not duplicated).`, show the consent state from the dashboard check, and tell the user to run `/telemetry enable | disable | status | test`.
@@ -411,6 +476,8 @@ Status + guidance only. Report which of `DB_HOST`, `DB_USER`, `DB_PASS`, `DB_NAM
   - `<project>/.claude/settings.local.json` — project-scope, gitignored-by-convention; sanctioned for the `remove` subflow's `jq 'del(.env.OTEL_RESOURCE_ATTRIBUTES)'` (backup-first, like the user-scope merge) and — via the invoked `set-otel-resource-attrs.sh` script — the init-tail per-project label. The script write uses parse-gate (`jq empty`, no clobber on unparseable) + atomic tmp-file-`mv` + idempotent skip-if-unchanged; it does NOT back up (the merge is single-key and idempotent, so there is nothing destructive to roll back), and
   - **twin** (`/setup twin`): (a) `<project>/.supervisor/bridge/` — written ONLY via `setup-twin.sh`'s `build-bridge.sh --out "$repo/.supervisor/bridge"` call (the explicit `--out` means a repo-local `.supervisor/config.json .build_bridge.out` can NOT redirect it); and (b) the command-layer **confirmed** `<project>/CLAUDE.md` create-when-absent — written ONLY on explicit user confirm AND only while the file is still absent (NEVER overwrite an existing CLAUDE.md). The twin module touches NO `~/.claude/settings.json` and nothing under `~/.claude/` — Twin artifacts are per-repo (gitignored/regenerable graph + bridge; committed `CLAUDE.md`), not per-user config.
   - **memory** (`/setup memory`) — **a `.gitignore` write class no other module has, so it gets its own line:** (a) `<project>/.gitignore`, rewritten ONLY via `setup-memory.sh apply` / `remove`, and ONLY after an explicit consent-bearing confirm. The write is backup-first (a timestamped `<project>/.gitignore.backup.<ts>` sibling, pid-suffixed on a same-second collision so one backup can never overwrite another), atomic (tmp-file + `mv`), confined to a sentinel-delimited managed block plus the commenting-out of pre-existing directory-shaped `.claude/` / `.supervisor/` excludes — including the recursive `**` family (`.claude/**`, `**/.claude/`, `**/.claude/**`), but never the `X/*` working form — and **idempotent by byte-comparison** — apply computes the file it would write and does nothing when it already matches. It **ABORTS without any write and without a backup** on an absent, non-regular, symlinked, NUL-containing, conflict-marked, or sentinel-unbalanced `.gitignore` — never a partial write, never a blind repair; and (b) `<project>/.supervisor/config.json` key `.setup_memory.repo_allowlist` — a jq merge that is parse-gated (`jq empty`), backup-first, atomic, preserves every unrelated key, stores a JSON **array**, and never overwrites an existing non-empty one. The memory module touches NO `~/.claude/settings.json` and nothing under `~/.claude/`, and it **NEVER runs `git add`, `git rm`, `git commit` or any other history-touching git command** — un-ignoring is not committing, and un-committing is the user's own `git rm --cached`.
+
+  - **rules** (`/setup rules`): `<project>/.agent/rules/<category>.json` ONLY, written ONLY via `seed-rules.sh seed --confirm` (which authors every rule through the sole writer `add-rule.sh`), and ONLY after an explicit confirm. `check` and a bare `seed` write NOTHING — every writer invocation is stdin-detached, so this module NEVER prompts and an unconfirmed run cannot write. No `~/.claude/` write of any kind, no `.gitignore` write, no `git add`/`rm`/`commit`, and no rule object built by hand.
 
   Everything else is read-only or delegated. One delegation carve-out: when the telemetry module executes telemetry.md's enable recipe (see "Module: telemetry"), that recipe writes `.supervisor/telemetry-consent.json` under telemetry.md's authority — setup.md's own logic still never touches that file.
 - Idempotent: re-running any flow against an already-configured module reports "already configured" and offers status/reconfigure/remove — it never blind-overwrites, and never regenerates an existing `.env`.

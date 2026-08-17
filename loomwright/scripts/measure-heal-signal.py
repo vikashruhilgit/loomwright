@@ -522,6 +522,92 @@ def write_report(out_dir, summary, joined, labels, signal):
     return report
 
 
+# ---- DISTRIBUTION (per-class findings/misses over the RAW ledger) -----------
+def class_distribution(label_entries):
+    """Per-class findings/misses counts + shares over RAW postmortem records.
+
+    A different quantity from the confusion matrix above, and deliberately computed off a
+    DIFFERENT view of the data. The matrix asks "was the heal signal right about this PR?" and
+    therefore works on the floor-raised, per-(repo, PR) DEDUPED labels joined to a done brief.
+    This asks "which class of problem does this repo keep producing?" and therefore counts
+    FINDINGS, not PRs: every `categories[]` entry of every raw ledger record, with no dedup and
+    no join. Deduping here would silently drop the second and later findings of a re-gathered PR
+    — the class distribution is a property of the findings corpus, not of the PR set.
+
+    A finding is a MISS when its `self_heal_miss` is exactly `true`; anything else (false, absent,
+    null) is not counted as a miss, so an older record that predates the field cannot inflate the
+    miss column. Records with no `categories` contribute nothing but are still counted as records.
+    """
+    findings = defaultdict(int)
+    misses = defaultdict(int)
+    repos = defaultdict(int)
+    n_records = 0
+    n_guess = 0
+    for obj in label_entries:
+        n_records += 1
+        if obj.get("agent_generated_guess") is True:
+            n_guess += 1
+        repos[obj.get("repo") or "(no repo field)"] += 1
+        for c in (obj.get("categories") or []):
+            if not isinstance(c, dict):
+                continue
+            cls = c.get("class") or "(unclassified)"
+            findings[cls] += 1
+            if c.get("self_heal_miss") is True:
+                misses[cls] += 1
+    total_f = sum(findings.values())
+    total_m = sum(misses.values())
+    rows = []
+    for cls in sorted(findings, key=lambda k: (-findings[k], k)):
+        f = findings[cls]
+        m = misses.get(cls, 0)
+        rows.append({
+            "class": cls,
+            "findings": f,
+            "findings_share": (f / total_f) if total_f else None,
+            "misses": m,
+            "misses_share": (m / total_m) if total_m else None,
+            "miss_rate": (m / f) if f else None,
+        })
+    return {
+        "n_records": n_records,
+        "n_agent_generated_guess": n_guess,
+        "repos": dict(repos),
+        "total_findings": total_f,
+        "total_misses": total_m,
+        "classes": rows,
+    }
+
+
+def print_distribution(dist, repos_measured, recorded_at):
+    """Print the per-class distribution. Pure stdout — writes no file, creates no directory."""
+    print("=== FINDINGS / MISSES DISTRIBUTION (per class) ===")
+    print(f"  recorded_at: {recorded_at}")
+    print(f"  repos measured: {', '.join(repo_label(r) for r in repos_measured) or '(none)'}")
+    print("  scope: RAW postmortem records (no per-PR dedup, no join) — a findings-level count, "
+          "not a PR-level one")
+    print(f"  records: {dist['n_records']}   "
+          f"findings: {dist['total_findings']}   misses: {dist['total_misses']}")
+    for repo, n in sorted(dist["repos"].items(), key=lambda kv: (-kv[1], kv[0])):
+        print(f"    ledger .repo: {repo}  ({n} record(s))")
+    if dist["total_findings"] == 0:
+        print("  no findings recorded — nothing to distribute (this is the normal empty case).")
+        return
+    print("")
+    print(f"  {'class':<24} {'findings':>8} {'share':>7} {'misses':>7} {'share':>7} "
+          f"{'miss-rate':>9}")
+    for r in dist["classes"]:
+        print(f"  {r['class']:<24} {r['findings']:>8} {pct(r['findings_share']):>7} "
+              f"{r['misses']:>7} {pct(r['misses_share']):>7} {pct(r['miss_rate']):>9}")
+    print("")
+    guess_share = (dist["n_agent_generated_guess"] / dist["n_records"]) if dist["n_records"] else None
+    print(f"  label quality: {dist['n_agent_generated_guess']} of {dist['n_records']} records "
+          f"({pct(guess_share)}) carry agent_generated_guess: true — these labels are a model's "
+          f"post-hoc guess, not ground truth.")
+    print("  DIRECTIONAL ONLY: small N, guessed labels, no control arm. A change in a class's "
+          "share is a prompt to investigate, never proof of cause.")
+
+
 # ---- backfill planner (bounded; PLAN only, never executes) ------------------
 def plan_backfill(sig_by_key, lab_by_key, n, gather_secs):
     """List up to N unlabeled heal-signal PRs + a cost estimate. Never dispatches anything."""
@@ -610,13 +696,27 @@ def main(argv=None):
     ap.add_argument("--recorded-at", default=None,
                     help="Override the timestamp stamp (UTC ISO-8601); default = now.")
     ap.add_argument("--quiet", action="store_true", help="Suppress the console summary.")
+    ap.add_argument("--distribution", action="store_true",
+                    help="Print the per-class findings/misses counts + shares over the RAW "
+                         "postmortem ledger and STOP. Writes nothing at all (no artifacts, no "
+                         "trend line, not even the --out dir).")
     args = ap.parse_args(argv)
 
     repos = [os.path.abspath(os.path.expanduser(r)) for r in args.repos]
     self_repo = os.path.abspath(os.path.expanduser(args.self_repo)) if args.self_repo else repos[0]
     out_dir = args.out or os.path.join(self_repo, ".supervisor/heal-signal")
-    os.makedirs(out_dir, exist_ok=True)
     recorded_at = args.recorded_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # ---- --distribution: pure read, returns BEFORE any directory is created --------------
+    # Deliberately ahead of the makedirs above-and-below boundary: a measurement asked for on
+    # stdout must not leave an empty .supervisor/heal-signal/ behind in whatever repo it was
+    # pointed at, and must not append a trend line describing a matrix it never computed.
+    if args.distribution:
+        label_entries, _ = load_labels(repos)
+        print_distribution(class_distribution(label_entries), repos, recorded_at)
+        return 0
+
+    os.makedirs(out_dir, exist_ok=True)
 
     # ---- pipeline ----
     sig_by_key, harvest_stats = harvest(repos)
