@@ -32,7 +32,7 @@
 # silence it permanently with LOOMWRIGHT_RULES_NUDGE=0|off|false|no (an env-block
 # gate mirroring the observability probe's opt-out — the 24h marker only
 # re-suppresses per-window). Fail-safe: never fires on an error, never on a repo with
-# ≥1 valid rule, and never in a truly fresh repo (that's `/setup twin`'s job, so
+# ≥1 valid rule, and never in a truly fresh repo (that's `/setup rules`' job, so
 # it sits after the .supervisor/ bail). Adds NO new hook entry (the authoritative
 # hook count is computed from hooks.json — it is deliberately NOT restated here).
 #
@@ -272,7 +272,7 @@ observability_probe() {
 # Advisory, fail-safe, debounced nudge that fires ONLY in a plugin-active repo
 # (`.supervisor/` present — guaranteed past the bail above) that has NO
 # applicable house rules, telling the user to author some. Cold-start onboarding
-# of a truly-fresh repo is `/setup twin`'s job, NOT this nudge — that is why the
+# of a truly-fresh repo is `/setup rules`' job, NOT this nudge — that is why the
 # nudge lives strictly AFTER the `[ ! -d ".supervisor" ]` bail. Design:
 #   - Gate on the READER'S OUTPUT being EMPTY (not on bare file existence): the
 #     sibling read-rules.sh emits ALL valid rules and EMPTY stdout when zero

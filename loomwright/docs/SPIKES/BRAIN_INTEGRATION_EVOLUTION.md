@@ -1,5 +1,18 @@
 # Brain Integration — Evolution Design Doc
 
+> ## 🪦 TIER RETIRED (2026-08-17)
+>
+> The graphify/bridge tier this doc's graph-first direction fed into was **retired at every
+> seam** (twin-loop requirement 06, decision (h)), and with it the `LOOMWRIGHT_BRAIN_ROOT`
+> external-brain federation path this doc proposes — the wiki rung rode the retired graphify
+> rung and had no separate consumer or measurement. The reason is the **maintenance model**,
+> not the idea: the graph was the only store requiring an expensive *deliberate* rebuild to
+> stay true, it was gitignored so it never survived a clone, and it degraded **silently**.
+> The governing record is the **D9 amendment** in `FINAL_STATE_GOAL.md`; the reversal
+> condition (cheap incremental refresh + independent-ground-truth validation) lives in
+> `docs/SPIKES/code-graph-harness/README.md`. Nothing below is deleted — the full design
+> arc is preserved as the historical record.
+
 > **Status:** design doc / proposal (authored 2026-06-16). Not yet a brief. The arc for fusing
 > `personal-brain` (knowledge substrate) and `loomwright` (execution layer) into one
 > closed-loop product. Owner controls all three repos (`personal-brain`, the application repo used

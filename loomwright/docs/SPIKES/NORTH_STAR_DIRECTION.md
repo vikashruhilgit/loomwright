@@ -193,7 +193,8 @@ provide real distinct value.)
   **Nudge:** a one-time advisory SessionStart hint when no twin/rules detected ("for best results, run
   `/setup twin`") — non-blocking, per the invariants.
   **Grounded finding:** brain integration today is half-built — `brain-context` is **read-path-only and
-  opportunistic** (detects an existing `graphify-out/graph.json` + wiki, else silently falls back to grep,
+  opportunistic** *(retired 2026-08-17 with the graphify tier — the opportunistic graph detection described
+  here no longer exists; historical text kept)* (detects an existing `graphify-out/graph.json` + wiki, else silently falls back to grep,
   forever). There is **no brain setup/bootstrap path**, so a fresh repo's Twin never populates unless the user
   manually runs `/graphify`. `/setup twin` closes exactly this gap.
 - **Auditability / trust surface.** For an advisory Twin the human must be able to SEE what context was injected

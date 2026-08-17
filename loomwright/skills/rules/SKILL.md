@@ -25,7 +25,7 @@ Protocol authority for `/rules` (see `${CLAUDE_PLUGIN_ROOT}/commands/rules.md` f
 
 - Project memory / lessons — those live in `.claude/agent-memory/` and `.supervisor/` (gitignored, per-user) and are read via `read-project-memory.sh` / `read-lessons.sh`. `.agent/rules/` is **committed** and travels with the repo.
 - Enforcement at the worker / Phase 4.5 / nudge seams is now WIRED (advisory, never-gating) in slice #3b-ii — the reader is consumed at those seams, but it is context enrichment, not a gate.
-- Bootstrapping a fresh repo into a Twin-ready state — `/setup twin` *bootstraps*; `/rules` *maintains*. (Division per `docs/SPIKES/NORTH_STAR_DIRECTION.md`.)
+- Cold-start seeding of a fresh repo — that is the `/setup rules` module's job (portable seeds, confirmed writes); `/rules` *maintains* the store. (The former `/setup twin` bootstrap was retired with the graphify tier.)
 
 ---
 
@@ -245,8 +245,8 @@ A layered model — a company-base rule set composed with per-project overrides 
 
 ## Related Skills
 
-- `setup/` — `/setup twin` bootstraps a repo into Twin-readiness; `/rules` maintains the committed conventions. Shares the check/report/offer/apply/verify confirmed-write discipline.
-- `brain-context/` — the graph-if-present scanner the `suggest` flow degrades from (staleness-aware, grep fallback).
+- `setup/` — the `/setup rules` module cold-start-seeds an unseeded repo; `/rules` maintains the committed conventions. Shares the check/report/offer/apply/verify confirmed-write discipline. (The former `/setup twin` bootstrap was retired with the graphify tier.)
+- `brain-context/` — the read-on-demand enrichment ladder (orientation memos → owned repo-map → nothing) available for orientation during a scan; advisory, silently degrades to plain grep/read.
 - `claude-md-validation/` — the convention patterns `suggest` mines.
 - `error-handling/` / `monitoring-observability/` — the fail-safe reader idiom (`set -uo pipefail`, always-exit-0, diagnostics to `.supervisor/logs/`).
 - `quality-checklist/` — gates for reviewing changes to this skill, the command, or the reader.
