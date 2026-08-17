@@ -4,7 +4,7 @@
 # plugin's Ubuntu CI like every other test-*.sh (auto-registered by ci.yml's test-*.sh glob).
 # Exit 0 = all pass, 1 = any failure.
 #
-# Mirrors test-setup-twin.sh / test-setup-memory.sh convention: pass/fail counters, ok()/no()
+# Mirrors test-setup-memory.sh convention: pass/fail counters, ok()/no()
 # helpers, a "RESULT: N passed, M failed" tail, exit 1 on any failure. Every fixture is a
 # `mktemp -d` dir passed via --root; a `trap ... EXIT` cleans them up. The harness NEVER touches
 # the real repo's `.agent/rules/` — every write in this file lands in a fixture.

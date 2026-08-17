@@ -3,7 +3,7 @@
 # the fail-safe, telemetry-gated SessionStart helper that labels a project's
 # OTEL_RESOURCE_ATTRIBUTES (service.name=<repo-basename>, service.version=<plugin version>).
 #
-# Mirrors test-build-bridge.sh's convention: runs in isolated mktemp temp dirs
+# Test-harness convention (shared with test-build-handoff.sh): runs in isolated mktemp temp dirs
 # (temp HOME + temp git repos + a fixture CLAUDE_PLUGIN_ROOT manifest), trap
 # cleanup, NEVER touches the real ~/.claude or any real repo. The harness itself
 # fails LOUD (exit 1 on any genuine assertion failure) — a CI gate, distinct from

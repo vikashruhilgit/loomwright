@@ -12,7 +12,7 @@
 # exists to prevent: see the (f5) flake described at `mkfix` below, where a silently-failed
 # `ln -s` reported itself as "the symlink was clobbered" and read as a rewriter bug.
 #
-# Mirrors test-setup-twin.sh convention: pass/fail counters, ok()/no() helpers, a
+# Mirrors test-build-handoff.sh convention: pass/fail counters, ok()/no() helpers, a
 # "RESULT: N passed, M failed" tail, exit 1 on any failure.
 #
 # FIXTURE ISOLATION IS LOAD-BEARING. This suite writes `.gitignore` files and `git init`s repos,

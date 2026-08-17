@@ -4,7 +4,7 @@
 # network, no jq, no shell execution of any rule — so it runs on the plugin's Ubuntu CI like
 # every other test-*.sh (auto-registered by ci.yml's test-*.sh glob). Exit 0 = all pass, 1 = any fail.
 #
-# Mirrors test-setup-twin.sh / test-build-handoff.sh convention: pass/fail counters, ok()/no()
+# Mirrors test-build-handoff.sh convention: pass/fail counters, ok()/no()
 # helpers, a "RESULT: N passed, M failed" tail, exit 1 on any failure. Paths resolve from
 # $BASH_SOURCE's dir so it runs from any CWD under the CI glob.
 #

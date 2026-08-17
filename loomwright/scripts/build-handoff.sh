@@ -21,7 +21,7 @@
 #       (`- **built_at_commit:** <sha>` / `- **basis_sha:** <sha>` / `- **commit_sha:** <sha>` /
 #       `- **head_sha:** <sha>`) is that SHA compared to current HEAD. Match ⇒ fresh; mismatch ⇒
 #       emit-WITH-a-hint showing BOTH SHAs (`hint — basis <sha>, HEAD <sha>`). Stale is never
-#       silently dropped (mirrors read-bridge.sh). A branch name or PR URL is NEVER a commit basis.
+#       silently dropped (emit-with-hint, not no-op). A branch name or PR URL is NEVER a commit basis.
 #   (b) OTHERWISE (the common case — jobs/logs/worker-summaries/state.md carry no structured SHA)
 #       basis = the artifact's mtime, freshness = unknown, rendered as a plain advisory WITHOUT
 #       any SHA comparison.
@@ -95,7 +95,7 @@ md_field() {
 freshness_line() {
   local file="$1" basis_sha="$2"
   if [ -n "$basis_sha" ] && [ -n "$head_sha" ]; then
-    # (a) ACTUAL SHA → compare to HEAD, PREFIX-TOLERANT (mirrors read-bridge.sh). A recorded
+    # (a) ACTUAL SHA → compare to HEAD, PREFIX-TOLERANT. A recorded
     # ABBREVIATED SHA (e.g. `git rev-parse --short HEAD`, 7+ chars) must still read as fresh
     # against the full 40-char HEAD — an exact `=` would mark every short-SHA artifact stale.
     # mtime is NEVER consulted in this branch.

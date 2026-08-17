@@ -69,7 +69,7 @@
 # proprietary architecture, internal service names, or client detail. `check` prints the exact
 # disclosure the command layer must show before offering to apply; `apply` reprints it.
 #
-# FAIL-SAFE CONTRACT (mirrors setup-twin.sh / build-bridge.sh / read-bridge.sh): every branch —
+# FAIL-SAFE CONTRACT (mirrors read-postmortem.sh / read-rules.sh): every branch —
 # no git repo, absent .gitignore, unparseable .gitignore, missing jq — STILL `exit 0`. The helper
 # NEVER blocks a session, NEVER gates, NEVER changes a heal_decision or a review decision.
 # Machine-readable status lines (`apply: …` / `remove: …` / `Memory readiness: …`) carry the
