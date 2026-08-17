@@ -369,6 +369,15 @@ harvest_convention_findings() {
   # and it is the same $US the two `awk -F'\t' -v us="$US" … split($6, p, us)` consumers split on.
   jq -s -r --arg us "$US" '
     to_entries[]
+    # RECORD-LEVEL type guard, and it is the load-bearing one. `.value as $r | ($r.repo // …)`
+    # INDEXES the record, so a top-level BARE SCALAR or ARRAY line ("a bare scalar", [1,2]) throws
+    # `Cannot index string with "repo"`, jq exits non-zero, and the caller dies exit 3 reporting
+    # "could not extract findings from the ledger" — a could-not-examine verdict for a file that
+    # parsed fine (`jq empty` returns 0 on every one of those shapes). The element-level sibling
+    # below and the ALL_MISSES aggregate were both hardened against this class deliberately; that
+    # hardening could never run, because this extractor died first. The skipped records are COUNTED
+    # (MALFORMED_RECORDS) and reported, so a dropped line is stated, never hidden.
+    | select((.value | type) == "object")
     | (.key + 1) as $line
     | .value as $r
     | (($r.repo // "unknown/unknown") | split("/") | last) as $rn
@@ -631,12 +640,23 @@ harvest_convention_findings "$LEDGER" "$FINDINGS" \
   || die "could not extract findings from the ledger: $LEDGER" 3
 
 REC_TOTAL="$(grep -c . "$LEDGER" 2>/dev/null || true)"; is_num "$REC_TOTAL" || REC_TOTAL=0
+# How many top-level records the three consumers above/below SKIP as non-objects. A skipped record is
+# reported (see "--- inputs read ---"), never silently dropped — but only when the count is > 0, so a
+# clean corpus prints exactly what it printed before this guard existed.
+MALFORMED_RECORDS="$(jq -s -r '[to_entries[] | select((.value | type) != "object")] | length' "$LEDGER" 2>/dev/null || true)"
+is_num "$MALFORMED_RECORDS" || MALFORMED_RECORDS=0
 # AC14's two denominators. `jq` already parses the ledger, so it does the summing too: an earlier
 # form piped a per-record count through `paste -sd+ - | bc`, which made `bc` an UNDECLARED dependency
 # — unlike `jq` (checked above) nothing verified it, and with `bc` absent the `|| true` + `is_num`
 # fallback quietly produced 0, printing `107/0 (0%)` for the one share this whole batch is justified
 # by. `reduce inputs` streams (no slurp) and emits exactly one integer; an empty ledger yields 0.
-ALL_FINDINGS="$(jq -n 'reduce inputs as $r (0; . + ([$r.categories[]?] | length))' "$LEDGER" 2>/dev/null || true)"
+# `[$r.categories[]?]` does NOT survive a top-level bare scalar/array: the `?` guards the ITERATION,
+# not the `.categories` INDEX, so `"a bare scalar" | .categories[]?` still throws. Measured: jq exits
+# 5. Hence the record-level `select((.|type)=="object")` on BOTH aggregates — same class, same input,
+# one level up from the element guard on the next line. Written as `(.|type)` rather than `(type)` so
+# the element-level guard below stays the first (and only) match for the mutation control that
+# deletes ` | select(type=="object")`.
+ALL_FINDINGS="$(jq -n 'reduce inputs as $r (0; . + ([$r | select((.|type)=="object") | .categories[]?] | length))' "$LEDGER" 2>/dev/null || true)"
 # The `select(type=="object")` is NOT decoration. `.self_heal_miss` INDEXES the element, and jq
 # throws `Cannot index string with string` on a bare string / number / null inside `categories[]` —
 # which `2>/dev/null || true` then swallows into an empty ALL_MISSES, failing the `is_num` gate below
@@ -647,7 +667,7 @@ ALL_FINDINGS="$(jq -n 'reduce inputs as $r (0; . + ([$r.categories[]?] | length)
 # skipped the guard. With 83 of 84 ledger records model-authored (`agent_generated_guess: true`), a
 # malformed element is not theoretical. Verified count-preserving on the real ledger: 95 before, 95
 # after.
-ALL_MISSES="$(jq -n 'reduce inputs as $r (0; . + ([$r.categories[]? | select(type=="object") | select(.self_heal_miss==true)] | length))' "$LEDGER" 2>/dev/null || true)"
+ALL_MISSES="$(jq -n 'reduce inputs as $r (0; . + ([$r | select((.|type)=="object") | .categories[]? | select(type=="object") | select(.self_heal_miss==true)] | length))' "$LEDGER" 2>/dev/null || true)"
 # Not a silent 0: `jq` is present (checked above) and the ledger already parsed (the exit-3 die
 # above), so a non-numeric result here means the numbers cannot be trusted — and the whole output of
 # this tool is numbers. Same rationale as the ledger die, same exit code.
@@ -841,7 +861,7 @@ EMITTED_THEMES=""
 
 emit_rule() {   # emit_rule <theme> <category> <statement> <origin-label>
   local k="$1" category="$2" statement="$3" origin="$4"
-  local globs just="" fid_list fid_n sf_m sf_t sf_p sf_all ex_nopath ex_dead
+  local globs just="" fid_list fid_n pn sf_m sf_t sf_p sf_all ex_nopath ex_dead
 
   if [ "$EMITTED" -ge "$CAP" ]; then DEFERRED=$((DEFERRED + 1)); CAP_DEFERRED=$((CAP_DEFERRED + 1)); return 0; fi
   EMITTED_THEMES="$EMITTED_THEMES $k"
@@ -850,7 +870,19 @@ emit_rule() {   # emit_rule <theme> <category> <statement> <origin-label>
   globs="$(derive_applies_to "$WORK/rowpaths.$k" "$WORK/derive.$k")"
   if [ -z "$globs" ]; then
     NULL_SCOPE_N=$((NULL_SCOPE_N + 1))
-    just="REPO-WIDE JUSTIFICATION (stated, never a silent default): none of the $(grep -c . "$WORK/paths.$k" 2>/dev/null || echo 0) changed_paths recorded against this theme's findings still exists in the repository index ($LIVE_INDEX_N tracked files), so any glob derived from them would route nothing at read time. A repo-wide scope is proposed instead, and this justification is what a reviewer is being asked to accept."
+    # `grep -c . file` prints 0 AND EXITS 1 on an empty file, so the tempting `|| echo 0` prints a
+    # SECOND 0 and the sentence a reviewer is being asked to accept breaks mid-line ("none of the
+    # 0\n0 changed_paths…"). This is the trap this repo has a recorded lesson about, and it is
+    # reachable here: findings with no changed_paths at all are ordinary in the ledger. Use the
+    # `|| true` + is_num idiom every other numeric capture in this file already uses.
+    pn="$(grep -c . "$WORK/paths.$k" 2>/dev/null || true)"; is_num "$pn" || pn=0
+    if [ "$pn" -eq 0 ]; then
+      # Wrong IN KIND, not just in count: with zero recorded paths nothing "no longer exists" — the
+      # scope was never observed. A reviewer asked to accept repo-wide deserves the real reason.
+      just="REPO-WIDE JUSTIFICATION (stated, never a silent default): NONE of this theme's findings recorded a changed_path at all (0 paths), so there is nothing to derive a glob from — the scope is UNRECORDED, not stale. A repo-wide scope is proposed instead, and this justification is what a reviewer is being asked to accept."
+    else
+      just="REPO-WIDE JUSTIFICATION (stated, never a silent default): none of the $pn changed_paths recorded against this theme's findings still exists in the repository index ($LIVE_INDEX_N tracked files), so any glob derived from them would route nothing at read time. A repo-wide scope is proposed instead, and this justification is what a reviewer is being asked to accept."
+    fi
   fi
 
   fid_n="$(grep -c . "$WORK/theme.$k.tsv" 2>/dev/null || true)"; is_num "$fid_n" || fid_n=0
@@ -938,6 +970,11 @@ echo
 echo "--- inputs read ---"
 echo "  (i)  ledger:    $LEDGER"
 echo "       $REC_TOTAL records read WHOLE (no repo filter — decision (a); nothing dropped), $ALL_FINDINGS findings, $ALL_MISSES self-heal misses"
+# Printed ONLY when non-zero: a clean corpus must render byte-identically to what it rendered before
+# the record-level type guard existed (the committed HARVEST_DRYRUN_SAMPLE.md transcript is the
+# check). When it IS non-zero the drop is stated here rather than absorbed into a smaller total.
+[ "$MALFORMED_RECORDS" -eq 0 ] || \
+  echo "       $MALFORMED_RECORDS record(s) SKIPPED as non-objects (a bare scalar/array/null line): counted here, not silently dropped — the run continues over the readable ones"
 echo "  (ii) corpus:    $CORPUS_DIR"
 if [ "$CORPUS_PRESENT" -eq 1 ]; then
   echo "       $((CORPUS_N - PROPOSALS_N)) entries (MEMORY.md indexes excluded)"

@@ -30,11 +30,13 @@ Comprehensive guidance for AI agents working on any project. Apply these standar
 
 A fabricated detail feels identical to a recalled fact — your own confidence cannot tell the two apart, so it cannot be self-detected. Treat "I'm pretty sure it's X" as a signal to verify, never as license to write. Open the authoritative source and confirm before you assert.
 
-This gate has three facets:
+This gate has four facets:
 
 - **(a) Exact-shape** — Never assert a command invocation, API signature, dispatch/spawn shape, flag surface, or `file:line` pointer from memory. Open and read the authoritative line first, then write exactly what you saw.
 - **(b) Consumer-contract** — Before claiming a producer feeds a consumer "for free" or is "Y-compatible," read the consumer's WHOLE match/filter predicate — the lines bracketing the one you cite, and copy the ENTIRE select/filter chain when replicating it — AND its required-field list. "Append-compatible" is not "consumed"; an advisory record that is written but never matched is worse than none.
 - **(c) Existence/absence** — Never claim a file, symbol, or reference is missing on the strength of a single Glob/Grep — tool results can fail silently. Confirm absence with a second, independent tool before using "missing" as part of an argument.
+
+- **(d) Guard-coverage** — When you add a guard for a malformed-input class, grep **every sibling consumer of the same input, at every level** (record, element, field) and state which are covered. A guard that a sibling's earlier failure preempts is not a guard, and a comment claiming defensive reads is not one either — verify the code one line away actually implements the claim.
 
 **Targeted-freshness directive:** Before writing anything that depends on another artifact, verify that *specific* dependency's current state — the targeted dependency, not the whole world (this generalizes the Supervisor's PRE-FLIGHT SYNC). If the basis is stale, refresh it or flag it before committing the change.
 
@@ -182,7 +184,7 @@ Which side each of the six sole writers falls on:
 
 ### Agent memory write permission
 
-> **Surfacing of the proposal queue is deferred (item 05).** Writing a proposal is wired; an automatic promotion queue that shows a human what is pending is not. Until it lands, pending proposals are found by listing the gitignored `.supervisor/agent-memory-proposals/`. Propose anyway — the gap is in surfacing, not in the write path.
+> **The proposal queue now has an automatic consumer.** `/dreaming` SURFACES pending proposals the same way it surfaces the orientation queue: its GATHER step lists the `*.md` files under the gitignored `.supervisor/agent-memory-proposals/` and offers each for **per-item promotion** labeled `PROMOTE PENDING PROPOSAL`, invoking `write-agent-memory.sh --proposal <file> --confirm` on Accept and deleting the proposal file (without writing) on Reject. See `commands/dreaming.md` §"Pending agent-memory proposals (promotion queue)". Listing that directory by hand is now a **fallback, not the only path** — and an absent directory remains the normal empty case, never an error.
 
 **A `memory: project` agent may NOT write its own `.claude/agent-memory/` store directly; it writes proposals only, and every store write goes through the sole writer.** That writer is `${CLAUDE_PLUGIN_ROOT}/scripts/write-agent-memory.sh`; it writes only under a human `--confirm` and rebuilds the store index on every write, so a hand-edited entry is both unvalidated and liable to be overwritten.
 

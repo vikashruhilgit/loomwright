@@ -346,6 +346,46 @@ if [ -f "$hc_file" ]; then
     && ok "(h) a re-categorised seed is not rewritten" || no "(h) a re-categorised seed was re-offered"
 fi
 
+# THE MISSING-MEMBER ARM. seed_present()'s own comment claims every member is read defensively so a
+# hand-mangled member cannot abort the scan — but `(.statement | strings)` is EMPTY when `.statement`
+# is absent, an empty operand makes the `==` empty, and jq DROPS the element before the provenance
+# branch of the `or` is ever evaluated. So a rule carrying the seeded stamp for this category, with
+# its `.statement` member deleted by hand, reported ABSENT: the exact defect the function was
+# rewritten to prevent, in the one store the module's docs invite users to edit.
+Hm="$(mkfix)"
+seedrun "$Hm" seed --confirm >/dev/null 2>&1
+hm_file="$Hm/.agent/rules/verification.json"
+if [ -f "$hm_file" ]; then
+  hm_tmp="$Hm/x.json"
+  jq 'del(.[0].statement)' "$hm_file" > "$hm_tmp" && mv -f "$hm_tmp" "$hm_file"
+  # Precondition, asserted rather than assumed: the stamp and the category are still there, so the
+  # curated arm SHOULD match on provenance alone.
+  hm_src="$(jq -r '.[0].provenance.source // ""' "$hm_file")"
+  [ "$hm_src" = "setup:rules-seed" ] \
+    && ok "(h) fixture precondition: the statement-less rule still carries the setup:rules-seed stamp" \
+    || no "(h) fixture precondition failed — stamp is '$hm_src'"
+  out_hm="$(seedrun "$Hm" check 2>&1)"; rc_hm=$?
+  [ "$rc_hm" -eq 0 ] && ok "(h) check exits 0 with a statement-less stamped rule in the store" \
+    || no "(h) check exited $rc_hm on a statement-less stamped rule"
+  printf '%s\n' "$out_hm" | grep -q 'seed: ALREADY SEEDED  \[verification\]' \
+    && ok "(h) a stamped rule whose .statement member was deleted is still reported PRESENT (curated), not ABSENT" \
+    || no "(h) a statement-less stamped rule reported ABSENT — jq empty-propagation drops it before the provenance arm: $(printf '%s\n' "$out_hm" | grep -F 'verification' | head -1)"
+
+  # ---- MUTATION CONTROL: drop the `// ""` hoist ⇒ the assertion above must go RED ----
+  # Without it this passes against the unfixed script, because a WELL-FORMED store never exercises
+  # the empty-propagation path at all.
+  hm_mut="$Hm/unhoisted-seed-rules.sh"
+  sed 's@(((\.statement | strings) // "") == $s)@((.statement | strings) == $s)@' "$SEED" > "$hm_mut"
+  if ! cmp -s "$SEED" "$hm_mut" && bash -n "$hm_mut" 2>/dev/null; then
+    out_hmm="$(bash "$hm_mut" --root "$Hm" --add-rule "$ADDRULE" check 2>&1)" || true
+    printf '%s\n' "$out_hmm" | grep -q 'seed: ABSENT  \[verification\]' \
+      && ok "(h) CONFIRMED: with the `// \"\"` hoist removed the SAME store reports 'seed: ABSENT [verification]' — the assertion above is load-bearing" \
+      || no "(h) REFUTED: the unhoisted comparison still found the statement-less rule — the assertion above may be vacuous"
+  else
+    no "(h) the statement-hoist mutation did not land"
+  fi
+fi
+
 # The ONE-ROW-PER-CATEGORY invariant that licenses the category key: a duplicate category in the
 # seed table is a LOUD startup failure (exit 2), never a silently-masked seed.
 Hi="$(mkfix)"; hi_copy="$Hi/dup-table-seed-rules.sh"

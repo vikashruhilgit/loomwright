@@ -261,12 +261,20 @@ seed_present() {
     jq -e 'type=="array"' "$rf" >/dev/null 2>&1 || continue
     # Every member is read defensively (`| strings`, an explicit object test on `.provenance`): a
     # stray non-object element or a hand-mangled member must not abort the scan of a whole file.
+    # `(.statement | strings)` is EMPTY when `.statement` is absent or non-string, and an empty
+    # operand makes the whole `==` empty, which jq propagates by DROPPING the element — before the
+    # provenance branch of the `or` is ever evaluated. That silently defeated the curated arm: a
+    # rule stamped `provenance.source = setup:rules-seed` for this category but missing `.statement`
+    # reported ABSENT, contradicting this comment in the one function written to survive hand
+    # editing. `// ""` collapses the empty to a value so the `or` can short-circuit properly. The
+    # same hoist is applied to the exact-vs-curated label below, which had the identical defect (an
+    # empty `if` condition emits nothing, yielding a one-column @tsv row).
     hit="$(jq -r --arg s "$st" --arg c "$cat" --arg src "$SEED_SOURCE" '
         first(
           .[]?
           | select(type == "object")
           | select(
-              ((.statement | strings) == $s)
+              (((.statement | strings) // "") == $s)
               or (
                 ((.provenance | if type == "object" then (.source | strings) else empty end) == $src)
                 and (
@@ -275,7 +283,7 @@ seed_present() {
                 )
               )
             )
-          | [ ((.id | strings) // ""), (if ((.statement | strings) == $s) then "exact" else "curated" end) ]
+          | [ ((.id | strings) // ""), (if (((.statement | strings) // "") == $s) then "exact" else "curated" end) ]
           | @tsv
         ) // empty' "$rf" 2>/dev/null || true)"
     if [ -n "$hit" ]; then

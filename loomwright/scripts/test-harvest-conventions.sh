@@ -31,6 +31,9 @@
 #   (N) a changed_path containing a space is matched WHOLE, never IFS-word-split.
 #   (O) the unmapped remainder itemises every unmapped theme — including one deferred by the cap —
 #       with its real reason, and the itemisation sums to its own stated headline.
+#   (R) the repo-wide justification renders as ONE line with the right count (the `grep -c … ||
+#       echo 0` two-line trap), states the ZERO-path case in kind, and a non-object TOP-LEVEL
+#       record is skipped-and-counted rather than killing the whole harvest.
 #
 # MUTATION CONTROLS. This repo has repeatedly shipped guards that were vacuous until mutated, so the
 # three load-bearing assertions here are each proved non-vacuous by breaking the mechanism they
@@ -52,6 +55,13 @@
 #        its own stated total.
 #  (M11) strip the `select(type=="object")` type guard from ALL_MISSES ⇒ (Q)'s mixed-array fixture
 #        dies exit 3 "could not count findings/misses" again.
+#  (M12) restore the `|| echo 0` capture behind the repo-wide justification ⇒ (R)'s zero-path
+#        fixture stops rendering a whole justification line.
+#  (M13) strip the record-level `select((.value|type)=="object")` from the extractor ⇒ (R)'s
+#        non-object records die exit 3 "could not extract findings from the ledger" again.
+#  (M14) strip the record-level guard from ALL_FINDINGS/ALL_MISSES ⇒ the same fixture still dies,
+#        one level down. The point of (d) in AGENT_GUIDELINES' verification gate, asserted: fixing
+#        only the first consumer of a malformed input moves the crash rather than removing it.
 #  (M10) make the cap-deferred arm of the empty-batch diagnostic unreachable (i.e. restore the
 #        unconditional support-floor sentence) ⇒ (P)'s `--cap 0` run blames the support floor again,
 #        one line under a header stating the themes were deferred by the cap.
@@ -650,7 +660,11 @@ fi
 # ---- MUTATION CONTROL M4: break the denominator counting ----
 # Count RECORDS instead of findings. If (i2)-(i4) were vacuous the mutant would still pass them.
 MUT4="$ROOT/mut-count.sh"
-sed 's@(\[$r\.categories\[\]?\] | length)@1@' "$HARVEST" > "$MUT4"
+# NOTE: this pattern must track ALL_FINDINGS' jq program verbatim — it grew a record-level
+# `select((.|type)=="object")` when a top-level bare scalar/array was found to kill the run, and a
+# stale pattern here does not fail loudly, it just stops landing (the `did not land` arm below is
+# what caught that). The `grep -q` guard on the mutant is the second half of the same check.
+sed 's@(\[$r | select((\.|type)=="object") | \.categories\[\]?\] | length)@1@' "$HARVEST" > "$MUT4"
 if ! cmp -s "$HARVEST" "$MUT4" && grep -q 'reduce inputs as $r (0; . + 1)' "$MUT4" && bash -n "$MUT4" 2>/dev/null; then
   M4OUT="$( bash "$MUT4" --root "$R10" --session-id fx-m4 --min-support 2 --cap 5 --no-writer 2>&1 )" || true
   if printf '%s\n' "$M4OUT" | grep -q 'share of all findings:      5/8 (63%)'; then
@@ -970,6 +984,119 @@ if ! cmp -s "$HARVEST" "$MUT11" && bash -n "$MUT11" 2>/dev/null; then
   fi
 else
   no "(M11) the ALL_MISSES type-guard mutation did not land"
+fi
+
+# ============================================================================
+echo "(R) the repo-wide justification renders as ONE line, and a non-object RECORD is skipped, not fatal"
+# ============================================================================
+# (r1) THE `grep -c … || echo 0` TWO-LINE TRAP, on the one sentence a reviewer is explicitly "being
+# asked to accept". `grep -c . file` prints 0 AND EXITS 1 on an empty file, so `|| echo 0` prints a
+# SECOND 0 and the justification breaks mid-sentence into two lines. Reachable on the real corpus:
+# findings whose ledger record carries no changed_paths at all are ordinary (the fidelity block above
+# counts them as `ex_nopath` precisely because they exist). This fixture makes the paths file empty
+# by construction — every finding has `changed_paths: []` — so the null-scope branch runs with a zero
+# count, which is the exact input that garbles.
+RR="$(new_repo)"
+{ rec 1 "count drift in the banner" '[]' 5
+} > "$RR/.supervisor/postmortem/results.jsonl"
+run_harvest "$RR" --session-id "fx-r1" --min-support 4 --cap 3 --no-writer
+printf '%s\n' "$OUT" > "$ROOT/r1.txt"
+r1n="$(grep -c 'REPO-WIDE JUSTIFICATION' "$ROOT/r1.txt" || true)"
+if [ "$r1n" -eq 1 ] && grep -q 'REPO-WIDE JUSTIFICATION.*asked to accept\.$' "$ROOT/r1.txt" \
+   && ! grep -qE '^0 changed_paths' "$ROOT/r1.txt"; then
+  ok "(r1) with zero recorded changed_paths the justification renders as ONE whole line — no stray second '0' line splitting the sentence"
+else
+  no "(r1) the justification is garbled or missing (matches=$r1n): $(grep -n -A1 'REPO-WIDE JUSTIFICATION' "$ROOT/r1.txt" | head -3)"
+fi
+# (r2) …and it is right IN KIND, not merely in count: with no path ever recorded, nothing "no longer
+# exists in the repository index" — the scope is unrecorded, not stale.
+if grep -q 'REPO-WIDE JUSTIFICATION.*NONE of this theme'"'"'s findings recorded a changed_path at all (0 paths)' "$ROOT/r1.txt" \
+   && ! grep -q 'REPO-WIDE JUSTIFICATION.*none of the 0 changed_paths' "$ROOT/r1.txt"; then
+  ok "(r2) the zero case states the real reason (UNRECORDED scope), not the false 'no longer exists in the index' claim"
+else
+  no "(r2) wrong justification wording for the zero-path case: $(grep -F 'REPO-WIDE JUSTIFICATION' "$ROOT/r1.txt" | head -1)"
+fi
+
+# ---- MUTATION CONTROL M12: restore the `|| echo 0` capture ⇒ (r1) must go RED ----
+# Without this control (r1) would pass against a script that still carried the trap, since the
+# single-branch string would still contain the phrase it greps for.
+MUT12="$ROOT/mut-twoline.sh"
+sed 's@^    pn="$(grep -c . "$WORK/paths.$k" 2>/dev/null || true)"; is_num "$pn" || pn=0$@    pn="$(grep -c . "$WORK/paths.$k" 2>/dev/null || echo 0)"@' "$HARVEST" > "$MUT12"
+if ! cmp -s "$HARVEST" "$MUT12" && bash -n "$MUT12" 2>/dev/null; then
+  M12OUT="$( bash "$MUT12" --root "$RR" --session-id fx-m12 --min-support 4 --cap 3 --no-writer 2>&1 )" || true
+  # With the trap restored `pn` is the two-line string "0\n0"; `[ "$pn" -eq 0 ]` then fails loudly on
+  # a non-numeric operand, so the tell is that the clean single-line zero-path justification is GONE.
+  if ! printf '%s\n' "$M12OUT" | grep -q 'REPO-WIDE JUSTIFICATION.*asked to accept\.$'; then
+    ok "(M12) CONFIRMED: with the two-line capture restored the SAME fixture no longer renders a whole justification line — (r1)/(r2) are load-bearing"
+  else
+    no "(M12) REFUTED: the two-line capture still produced an intact justification — (r1)/(r2) may be vacuous"
+  fi
+else
+  no "(M12) the two-line-capture mutation did not land"
+fi
+
+# (r3) A NON-OBJECT TOP-LEVEL RECORD MUST NOT KILL THE HARVEST. `jq empty` returns 0 on every shape
+# below, so the ledger is perfectly readable — but the extractor INDEXES the record (`.value as $r |
+# ($r.repo // …)`) and jq throws `Cannot index string with "repo"` on a bare scalar or array, which
+# the caller reported as "could not extract findings from the ledger": a could-not-examine verdict
+# for a file that parsed fine. The two record-level aggregates (ALL_FINDINGS/ALL_MISSES) throw on the
+# same input one line later — `.categories[]?` guards the ITERATION, not the INDEX — so all three
+# levels are asserted here, not just the one that failed first.
+for shape in '"a bare scalar"' '[1,2]' 'null' '{"categories":"not-an-array"}'; do
+  RS="$(new_repo)"
+  { rec 1 "count drift in the banner" '["src/a/x.md"]' 5; printf '%s\n' "$shape"
+  } > "$RS/.supervisor/postmortem/results.jsonl"
+  run_harvest "$RS" --session-id "fx-r3" --min-support 4 --cap 3 --no-writer
+  if [ "$RC" -eq 0 ]; then
+    ok "(r3) a top-level $shape record exits 0 — a malformed record is skipped, not a whole-harvest failure"
+  else
+    no "(r3) a top-level $shape record exited $RC: $(printf '%s\n' "$OUT" | grep -iE 'could not (extract|count)' | head -1)"
+  fi
+done
+
+# (r4) THE SKIP IS STATED, NOT HIDDEN — and only when there is something to state, so a clean corpus
+# renders byte-identically to what it rendered before the guard existed (the committed
+# HARVEST_DRYRUN_SAMPLE.md transcript is that check).
+RS2="$(new_repo)"
+{ rec 1 "count drift in the banner" '["src/a/x.md"]' 5; printf '"a bare scalar"\n[1,2]\n'
+} > "$RS2/.supervisor/postmortem/results.jsonl"
+run_harvest "$RS2" --session-id "fx-r4" --min-support 4 --cap 3 --no-writer
+printf '%s\n' "$OUT" > "$ROOT/r4.txt"
+grep -qF '2 record(s) SKIPPED as non-objects' "$ROOT/r4.txt" \
+  && ok "(r4) the two skipped records are COUNTED and reported in 'inputs read', not silently dropped" \
+  || no "(r4) the skipped-record count is missing: $(grep -F 'records read WHOLE' "$ROOT/r4.txt" | head -1)"
+grep -qF 'SKIPPED as non-objects' "$ROOT/r1.txt" \
+  && no "(r5) a clean corpus printed a skipped-records line — the committed sample transcript would move" \
+  || ok "(r5) a clean corpus prints NO skipped-records line, so the committed dry-run transcript is unchanged"
+
+# ---- MUTATION CONTROL M13: remove the record-level type guard from the extractor ⇒ (r3) must go RED ----
+MUT13="$ROOT/mut-recguard.sh"
+sed 's@^    | select((.value | type) == "object")$@@' "$HARVEST" > "$MUT13"
+if ! cmp -s "$HARVEST" "$MUT13" && bash -n "$MUT13" 2>/dev/null; then
+  M13OUT="$( bash "$MUT13" --root "$RS2" --session-id fx-m13 --min-support 4 --cap 3 --no-writer 2>&1 )"; m13rc=$?
+  if [ "$m13rc" -eq 3 ] && printf '%s\n' "$M13OUT" | grep -qF 'could not extract findings from the ledger'; then
+    ok "(M13) CONFIRMED: without the record-level guard the SAME fixture dies exit 3 'could not extract findings' — (r3)/(r4) are load-bearing"
+  else
+    no "(M13) REFUTED: the unguarded extractor survived the non-object records (rc=$m13rc) — (r3)/(r4) may be vacuous"
+  fi
+else
+  no "(M13) the record-level-guard mutation did not land"
+fi
+
+# ---- MUTATION CONTROL M14: remove the record-level guard from the two aggregates ⇒ (r3) must go RED ----
+# The sibling-coverage point in AGENT_GUIDELINES §"Read-Before-Write Verification Gate" (d), asserted:
+# fixing only the extractor would have moved the same crash one line down, into ALL_FINDINGS.
+MUT14="$ROOT/mut-aggguard.sh"
+sed 's@ | select((\.|type)=="object")@@g' "$HARVEST" > "$MUT14"
+if ! cmp -s "$HARVEST" "$MUT14" && bash -n "$MUT14" 2>/dev/null; then
+  M14OUT="$( bash "$MUT14" --root "$RS2" --session-id fx-m14 --min-support 4 --cap 3 --no-writer 2>&1 )"; m14rc=$?
+  if [ "$m14rc" -eq 3 ] && printf '%s\n' "$M14OUT" | grep -qF 'could not count findings/misses'; then
+    ok "(M14) CONFIRMED: with the extractor guarded but the aggregates not, the SAME fixture still dies exit 3 — the sibling-level guards are load-bearing too"
+  else
+    no "(M14) REFUTED: the unguarded aggregates survived the non-object records (rc=$m14rc)"
+  fi
+else
+  no "(M14) the aggregate-guard mutation did not land"
 fi
 
 echo
