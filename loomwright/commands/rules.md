@@ -48,9 +48,9 @@ A rule with `applies_to: null` (or no such key) is **repo-wide** and always emit
 
 ### `suggest` (§6 — scan-to-suggest, propose-only)
 
-Analyze the repo and **PROPOSE** rules — never blank-slate-ask, never auto-write (mirrors `/setup twin`'s offer model):
+Analyze the repo and **PROPOSE** rules — never blank-slate-ask, never auto-write:
 
-- **Scanner (degrades gracefully, never blocks):** always grep / glob / read of the repo; **graph-if-present** via `brain-context` (graphify graph when present, staleness-aware, grep fallback — never hard-depends on the external `graphify` CLI); plus `claude-md-validation` convention patterns.
+- **Scanner (degrades gracefully, never blocks):** always grep / glob / read of the repo, plus `claude-md-validation` convention patterns.
 - **Output:** a list of proposed rule objects (suggested `category` / `statement` / `enforcement` / `check`), surfaced for human review.
 - **Human-confirmed:** nothing is written without explicit user confirmation. On confirm, each accepted proposal is routed through the `add` write discipline below.
 - **Never blocks** and never auto-applies.
@@ -134,4 +134,4 @@ A `check` value is **arbitrary shell authored by anyone who cloned or PR'd the r
 ## See Also
 - `skills/rules/SKILL.md` — the protocol authority (schema, validation, merge order, read/write/check contracts, trust boundary).
 - `scripts/read-rules.sh` — the fail-safe advisory reader (`set -uo pipefail`, always exits 0, READ-ONLY, never executes a `check`); its header docstring is the authority on `applies_to` path routing and the `case`-glob semantics.
-- `commands/setup.md` (`/setup twin`) — bootstraps a repo into Twin-readiness; `/rules` maintains the committed conventions. Shares the check/report/offer/apply/verify confirmed-write discipline.
+- `commands/setup.md` — the `/setup twin` bootstrap module was retired with the graphify tier (a deliberate omission, not an oversight — see `commands/setup.md`'s own note and `CHANGELOG.md`); cold-start convention seeding is `/setup rules`, and `/rules` maintains the committed conventions. Shares the check/report/offer/apply/verify confirmed-write discipline.
