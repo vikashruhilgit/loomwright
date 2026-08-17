@@ -249,7 +249,7 @@ Plugin ships executables that agents can invoke as bare commands. Instead of 3 s
 
 ### 9. Add `userConfig` for Install-Time Configuration
 
-**[VERDICT: DEFERRED — no `userConfig` block exists in `loomwright/.claude-plugin/plugin.json`; guided configuration landed post-install instead, via the `/setup` status-dashboard command (`loomwright/commands/setup.md`: observability, telemetry, notifications, webhook, Beads, MySQL MCP, Twin modules)]**
+**[VERDICT: DEFERRED — no `userConfig` block exists in `loomwright/.claude-plugin/plugin.json`; guided configuration landed post-install instead, via the `/setup` status-dashboard command (`loomwright/commands/setup.md`: observability, telemetry, notifications, webhook, Beads, MySQL MCP modules)]**
 
 **What's happening now:**
 Users configure the plugin by editing CLAUDE.md, environment variables, and manually setting up `.supervisor/`. There's no standard way to set preferences like "max 2 workers" or "always use my-feature-branch naming".

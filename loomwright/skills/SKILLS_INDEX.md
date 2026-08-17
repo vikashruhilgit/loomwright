@@ -13,7 +13,7 @@ Comprehensive index of all skills available in the Loomwright plugin.
 | Async Orchestration | `async-orchestration/` | Supervisor (on-demand Read at Phase 2 PLAN entry, refreshed at Phase 4 FINALIZE entry — deliberately NOT preloaded) | ~1,600 | 1.6.0 | 2026-07-31 |
 | State Management | `state-management/` | Supervisor (on-demand Read at Phase 4.5 entry — deliberately NOT preloaded) | ~1,500 | 1.5.0 | 2026-08-02 |
 | Context Summarization | `context-summarization/` | — (removed outright, no replacement Read — see `agents/supervisor.md` §"Preloaded Skill Routing (4f)") | ~600 | 1.0.0 | 2026-03 |
-| Context Setup | `context-setup/` | Launch Pad (preload) | ~500 | 1.0.0 | 2026-03 |
+| Context Setup | `context-setup/` | Launch Pad (preload) | ~500 | 1.1.0 | 2026-08-17 |
 | Claude MD Validation | `claude-md-validation/` | Launch Pad (preload) | ~400 | 1.0.0 | 2026-03 |
 | Agent Teams | `agent-teams/` | — (reference) | ~800 | 1.1.0 | 2026-05-10 |
 | Agent Output | `agent-output/` | — (reference) | ~400 | 1.0.0 | 2026-03 |
@@ -23,13 +23,13 @@ Comprehensive index of all skills available in the Loomwright plugin.
 | Autonomous Loop | `autonomous-loop/` | `/autonomous` (slash command, reference) | ~2,800 [^al-tokens] | 1.4.0 | 2026-07-06 |
 | Automate Loop | `automate-loop/` | `/automate` (slash command, reference) | ~3,200 | 1.3.0 | 2026-08-04 |
 | Review Heal | `review-heal/` | `review-pr-runner` (preload), `/review-pr` + Supervisor + `/autonomous` (reference) | ~3,000 | 1.6.0 | 2026-08-04 |
-| Self-Heal Advisory | `self-heal-advisory/` | Supervisor (on-demand Read at Phase 4.5 entry — deliberately NOT preloaded; Part 1 advisory machinery + Part 2 full Phase 4.5 loop protocol) | ~7,000 | 1.5.1 | 2026-07-30 |
+| Self-Heal Advisory | `self-heal-advisory/` | Supervisor (on-demand Read at Phase 4.5 entry — deliberately NOT preloaded; Part 1 advisory machinery + Part 2 full Phase 4.5 loop protocol) | ~7,000 | 1.6.0 | 2026-08-17 |
 | Preflight Sync | `preflight-sync/` | Supervisor (on-demand Read at Phase 1.5 entry — deliberately NOT preloaded) | ~1,600 | 1.1.0 | 2026-07-31 |
 | Supervisor Config | `supervisor-config/` | Supervisor (on-demand Read at Phase 0 entry — deliberately NOT preloaded) | ~2,400 | 1.2.0 | 2026-07-28 |
 | PR Postmortem | `pr-postmortem/` | `/pr-postmortem` (slash command, reference) | ~1,400 | 1.3.0 | 2026-06-13 |
-| Setup | `setup/` | `/setup` (slash command, read at Step 0) | ~1,600 | 1.1.0 | 2026-08-06 |
-| Brain Context | `brain-context/` | Launch Pad / Orchestrator / Code Reviewer / Supervisor (on-demand Read — deliberately NOT preloaded) | ~2,000–2,500 | 1.1.0 | 2026-07-20 |
-| Rules | `rules/` | `/rules` (slash command, reference) | ~1,900 | 1.2.0 | 2026-07-23 |
+| Setup | `setup/` | `/setup` (slash command, read at Step 0) | ~1,600 | 1.2.0 | 2026-08-17 |
+| Brain Context | `brain-context/` | Launch Pad / Orchestrator (on-demand Read — deliberately NOT preloaded) | ~2,000–2,500 | 1.2.0 | 2026-08-17 |
+| Rules | `rules/` | `/rules` (slash command, reference) | ~1,900 | 1.3.0 | 2026-08-17 |
 
 [^al-tokens]: The `autonomous-loop` skill is intentionally larger than the other reference-category skills (~500–600 tokens). It encodes the full `/autonomous` orchestration protocol (loop phases, EVALUATE branching, signal-extraction algorithms, refined-requirement templates, `AUTONOMOUS_RUN` summary format, failure-modes table) — comprehensive by design because it is the single source of truth for the loop's behavior, read at runtime by the main thread via Step 0. Splitting it across smaller files would fragment the protocol and risk drift; the trade-off is the higher token cost on the one slash command that loads it.
 

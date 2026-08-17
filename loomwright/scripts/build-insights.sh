@@ -367,7 +367,7 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
       | "| \(.era // "-") | \(.runs // "-") | \(.landed // "-")/\(.runs // "-") | \(.clean // "-")/\(.runs // "-") | \(.durable // "-")/\(.runs // "-") | \(.avg_heal_iterations // "-") | \(.avg_review_rounds // "-") | \(.fix_cycles // "-") | \(.class_mix // "-") | \(.advisory_tokens // "-") |"
     ' "$le_jsonl" 2>/dev/null
     echo
-    echo "- **Advisory tokens (compute-spend)** here is a per-era proxy for the COST of running the loop (real usage tokens, else a transcript-byte stand-in — see build-loop-evidence.sh) — it is NOT a measure of how much advisory context was injected. For a per-run CONTEXT-SIZE measure across memos + rules + bridge + brain-context, see **Whole-stack advisory budget** under Token economics below — the two are DELIBERATELY DISTINCT and neither supersedes the other."
+    echo "- **Advisory tokens (compute-spend)** here is a per-era proxy for the COST of running the loop (real usage tokens, else a transcript-byte stand-in — see build-loop-evidence.sh) — it is NOT a measure of how much advisory context was injected. For a per-run CONTEXT-SIZE measure across memos + rules + brain-context, see **Whole-stack advisory budget** under Token economics below — the two are DELIBERATELY DISTINCT and neither supersedes the other."
     echo "- Full per-run funnel table (deliberately NOT inlined — the dashboard stays skimmable): run \`bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/build-loop-evidence.sh\"\` directly (add \`--jsonl\` for machine-readable records)."
   else
     echo "_No loop-evidence data yet (builder unavailable or no runs observable) — populate \`.supervisor/logs/*.jsonl\` via \`/supervisor\`, or run \`bash \"\${CLAUDE_PLUGIN_ROOT}/scripts/build-loop-evidence.sh\"\` directly for the full (labeled) funnel readout._"
@@ -673,11 +673,11 @@ pass_rate="$(printf '%s' "$agg" | jq -r 'if .total>0 then ((.completed*100/.tota
   # table above (build-loop-evidence.sh's `advisory_tokens` — a per-era COST proxy for running
   # the loop; it says nothing about how much advisory context was injected). This subsection
   # aggregates the additive `advisory_total` field emitted by emit-token-ledger.sh: a per-run
-  # TOTAL size (bytes) of the advisory context actually assembled from memos + rules + bridge +
+  # TOTAL size (bytes) of the advisory context actually assembled from memos + rules +
   # brain-context, reported against a documented soft target. Advisory only — never gates,
   # never invents a number; absent ⇒ degrade note (Corpus health / Token economics style).
   echo "### Whole-stack advisory budget (per-run TOTAL, bytes)"
-  echo "_DISTINCT from the **Advisory tokens (compute-spend)** column in the Loop-evidence era-bucket table above — that column is a per-era proxy for the COST of running the loop, not a context-size measure. This aggregates the additive \`advisory_total\` field on \`token_ledger\` events (emitted by \`emit-token-ledger.sh\` from \`LOOMWRIGHT_ADVISORY_TOTAL_BYTES\` when a read seam exports it) — a per-run TOTAL size (bytes) of the advisory context assembled from memos + rules + bridge + brain-context. Advisory only — never gates a PR or changes a heal decision; reported against a documented soft target (\`ADVISORY_BUDGET_TARGET_BYTES\`, default 20000, env-overridable). Computed with jq, never guessed._"
+  echo "_DISTINCT from the **Advisory tokens (compute-spend)** column in the Loop-evidence era-bucket table above — that column is a per-era proxy for the COST of running the loop, not a context-size measure. This aggregates the additive \`advisory_total\` field on \`token_ledger\` events (emitted by \`emit-token-ledger.sh\` from \`LOOMWRIGHT_ADVISORY_TOTAL_BYTES\` when a read seam exports it) — a per-run TOTAL size (bytes) of the advisory context assembled from memos + rules + brain-context. Advisory only — never gates a PR or changes a heal decision; reported against a documented soft target (\`ADVISORY_BUDGET_TARGET_BYTES\`, default 20000, env-overridable). Computed with jq, never guessed._"
   echo
   ADVISORY_BUDGET_TARGET_BYTES="${ADVISORY_BUDGET_TARGET_BYTES:-20000}"
   case "$ADVISORY_BUDGET_TARGET_BYTES" in ''|*[!0-9]*) ADVISORY_BUDGET_TARGET_BYTES=20000 ;; esac

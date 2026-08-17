@@ -30,7 +30,7 @@
 # the field entirely (fail-safe; same namespace discipline as orientation_source).
 #
 # Additive-if-present: `advisory_total` (+ `advisory_total_kind: "context_bytes"`) — a
-# per-run TOTAL advisory-context size (bytes) spanning memos + rules + bridge +
+# per-run TOTAL advisory-context size (bytes) spanning memos + rules +
 # brain-context, read from the LOOMWRIGHT_ADVISORY_TOTAL_BYTES env var. This is a
 # DIFFERENT measure from the pre-existing era-bucket `advisory_tokens` proxy emitted by
 # build-loop-evidence.sh (that field is a per-era COMPUTE-SPEND proxy — real usage
@@ -272,7 +272,7 @@ if os.environ.get("LOOMWRIGHT_SHARED_PREFIX", "") == "1":
 
 # Additive-if-present: advisory_total (+ advisory_total_kind) from the
 # LOOMWRIGHT_ADVISORY_TOTAL_BYTES env var — a per-run TOTAL advisory-context size
-# (bytes) across memos + rules + bridge + brain-context. Only a bare non-negative
+# (bytes) across memos + rules + brain-context. Only a bare non-negative
 # integer string is accepted (str.isdigit() rejects "", signs, floats, and any
 # non-digit character); anything else — including unset — omits BOTH fields
 # entirely (fail-safe: never a guess, never an error). This is DISTINCT from the

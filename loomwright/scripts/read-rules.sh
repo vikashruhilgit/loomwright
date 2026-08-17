@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # read-rules.sh — fail-safe ADVISORY reader for the committed .agent/rules/ house-rules substrate.
-# (New file — north-star slice #3b-i SUBSTRATE reader side; parity with read-bridge.sh /
+# (New file — north-star slice #3b-i SUBSTRATE reader side; parity with read-postmortem.sh /
 #  read-lessons.sh advisory-reader convention. Pure-READ, NO side effects, NEVER executes a check.)
 #
 # Reads .agent/rules/*.json — each a JSON ARRAY of rule objects — merges them in a deterministic
@@ -114,7 +114,7 @@
 # A skipped object is dropped from output + gets a ONE-LINE diagnostic to .supervisor/logs/ (never
 # stdout). The reader STILL exits 0 and STILL emits every remaining valid rule.
 #
-# INPUT CONTRACT (§4, no-hang — mirrors read-bridge.sh): accepts OPTIONAL positional args. ARGS TAKE
+# INPUT CONTRACT (§4, no-hang — mirrors read-postmortem.sh): accepts OPTIONAL positional args. ARGS TAKE
 # PRECEDENCE: when args are present, STDIN is NEVER read. If no args AND stdin is not a TTY, the reader
 # does NOT block on stdin (v1 ignores stdin content entirely). So a future hook / agent caller (whose
 # stdin is an open-but-idle pipe) can never hang it.
@@ -244,7 +244,7 @@ rule_applies() {
 #    contract.)
 
 # 2. Tooling presence (fail-safe, quiet). jq is REQUIRED by this reader (parsing + injection-safe
-#    boundary). Mirror read-bridge.sh: jq unavailable → diagnostic + emit nothing + exit 0.
+#    boundary). Mirror read-postmortem.sh: jq unavailable → diagnostic + emit nothing + exit 0.
 if ! command -v jq >/dev/null 2>&1; then
   log_skip "read-rules: jq unavailable — rules unreadable, emitting nothing (fail-safe)"
   exit 0
@@ -498,7 +498,7 @@ fi
 
 # 6. EMPTY on nothing-applicable — zero rules survive validation + supersession + ROUTING ⇒ emit
 #    NOTHING (no banner), exit 0, so machine consumers can gate enrichment on NON-EMPTY stdout
-#    (mirrors read-bridge.sh). Note the no-arg call can never reach here via routing: routing fails
+#    (mirrors read-postmortem.sh). Note the no-arg call can never reach here via routing: routing fails
 #    OPEN on an empty path set, so a store with >=1 applicable rule always emits for `read-rules.sh`
 #    with no args — which is what keeps session-resume.sh's nudge from firing on a repo that HAS rules.
 [ "$rule_count" -gt 0 ] || exit 0

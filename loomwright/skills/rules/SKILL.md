@@ -1,8 +1,8 @@
 ---
 name: rules
 description: Protocol authority for the /rules command and the committed .agent/rules/ house-rules substrate — the rule JSON schema + per-object fail-safe-skip validation, the `applies_to` path-routing read contract (bash `case` globs, fail-OPEN on every ambiguity and on a zero-arg call, resolved AFTER supersession), the scan-to-suggest spec, the advisory/must/no-op-when-absent reader contract (read-rules.sh), the /rules add path-contained atomic-append write discipline (mechanized in add-rule.sh, with an optional `--supersedes` flag), the /rules retract remove-only write discipline (also mechanized in add-rule.sh), the /rules check human-invoked+confirmed execution semantics (mechanized in rules-check.sh), the single-hop supersession read contract, and the check-is-arbitrary-shell trust boundary (unattended `check` execution is now GATED via rules-check.sh --no-cmd). Use when running /rules or modifying any part of the rules substrate.
-version: "1.2.0"
-lastUpdated: "2026-07-23"
+version: "1.3.0"
+lastUpdated: "2026-08-17"
 ---
 
 # Rules Skill
@@ -25,7 +25,7 @@ Protocol authority for `/rules` (see `${CLAUDE_PLUGIN_ROOT}/commands/rules.md` f
 
 - Project memory / lessons — those live in `.claude/agent-memory/` and `.supervisor/` (gitignored, per-user) and are read via `read-project-memory.sh` / `read-lessons.sh`. `.agent/rules/` is **committed** and travels with the repo.
 - Enforcement at the worker / Phase 4.5 / nudge seams is now WIRED (advisory, never-gating) in slice #3b-ii — the reader is consumed at those seams, but it is context enrichment, not a gate.
-- Bootstrapping a fresh repo into a Twin-ready state — `/setup twin` *bootstraps*; `/rules` *maintains*. (Division per `docs/SPIKES/NORTH_STAR_DIRECTION.md`.)
+- Cold-start seeding of a fresh repo — that is the `/setup rules` module's job (portable seeds, confirmed writes); `/rules` *maintains* the store. (The former `/setup twin` bootstrap was retired with the graphify tier.)
 
 ---
 
@@ -97,7 +97,7 @@ A skipped object is dropped from output and gets a **one-line diagnostic to `.su
 
 This makes the merged set a pure function of the committed files — identical across runs and across machines.
 
-**Injection safety (jq-only):** untrusted rule text (statements, checks, ids, paths) enters jq ONLY by jq reading the rule file as a **positional file-path argument** (`jq … "$file"`, the path sourced from `find`, never from rule content); the only flag-passed value is `--argjson fi`, the trusted integer file index. Rule text is NEVER string-interpolated into a shell command or into a jq program, and the jq program text is fixed. (Same injection-safety *property* as `read-bridge.sh`, but the *mechanism differs*: `read-bridge.sh` passes corpus text via `--rawfile`/`--slurpfile`/`--argjson`, whereas this reader reads each rule file positionally. The `/rules add` **write** path is the one place that uses `jq -n --arg` — see §7 — to build a new object from user input without interpolation.)
+**Injection safety (jq-only):** untrusted rule text (statements, checks, ids, paths) enters jq ONLY by jq reading the rule file as a **positional file-path argument** (`jq … "$file"`, the path sourced from `find`, never from rule content); the only flag-passed value is `--argjson fi`, the trusted integer file index. Rule text is NEVER string-interpolated into a shell command or into a jq program, and the jq program text is fixed. (The `/rules add` **write** path is the one place that uses `jq -n --arg` — see §7 — to build a new object from user input without interpolation.)
 
 ---
 
@@ -123,7 +123,7 @@ A rule is emitted when **all three** hold:
 
 ## §4 — Reader input contract (no-hang)
 
-`read-rules.sh` mirrors `read-postmortem.sh` / `read-bridge.sh`:
+`read-rules.sh` mirrors `read-postmortem.sh`:
 
 - It accepts **OPTIONAL positional args**, and they are the **routing scope**: each arg is a repo-relative touched path, filtered against `applies_to` per §3. **They change the output** — a rule scoped away from every supplied path is absent from stdout. Passing **no** args is the repo-wide call (§3).
 - It **NEVER blocks on stdin in a non-TTY context.** Args take precedence; **if no args are given AND stdin is not a TTY, the reader does NOT read stdin.** So a future hook / agent caller (whose stdin is an open-but-idle pipe) can never hang it.
@@ -132,7 +132,7 @@ A rule is emitted when **all three** hold:
 
 ## §5 — The READ contract (advisory / must / no-op-when-absent)
 
-`read-rules.sh` is the fail-safe reader — same idiom as `read-bridge.sh` / `read-lessons.sh`:
+`read-rules.sh` is the fail-safe reader — same idiom as `read-postmortem.sh` / `read-lessons.sh`:
 
 - **Shell discipline:** `set -uo pipefail` — **NO `set -e`** ("a read must never break its caller").
 - **ALWAYS exits 0.** Absent `.agent/rules/` dir, empty dir, malformed JSON, and `jq` unavailable ALL → emit nothing, exit 0.
@@ -150,11 +150,10 @@ A rule is emitted when **all three** hold:
 
 ## §6 — The scan-to-suggest spec (`/rules suggest`)
 
-`/rules suggest` analyzes the repo and **PROPOSES** rules; it **never blank-slate-asks, never auto-writes** (mirror `/setup twin`):
+`/rules suggest` analyzes the repo and **PROPOSES** rules; it **never blank-slate-asks, never auto-writes**:
 
 - **Scanner (degrades gracefully, never blocks):**
   - **Always:** grep / glob / read of the repo (conventions visible in code, config, existing docs).
-  - **Graph-if-present:** `brain-context` (graphify graph when present, **staleness-aware** — degrades to grep when the graph is absent or stale; never hard-depends on the external `graphify` CLI).
   - `claude-md-validation` patterns (the conventions a well-formed CLAUDE.md already encodes).
 - **Output:** a list of PROPOSED rule objects (with suggested `category` / `statement` / `enforcement` / `check`), surfaced for human review.
 - **Human-confirmed:** nothing is written without explicit user confirmation. On confirm, each accepted proposal goes through the `/rules add` write discipline (§7).
@@ -246,8 +245,8 @@ A layered model — a company-base rule set composed with per-project overrides 
 
 ## Related Skills
 
-- `setup/` — `/setup twin` bootstraps a repo into Twin-readiness; `/rules` maintains the committed conventions. Shares the check/report/offer/apply/verify confirmed-write discipline.
-- `brain-context/` — the graph-if-present scanner the `suggest` flow degrades from (staleness-aware, grep fallback).
+- `setup/` — the `/setup rules` module cold-start-seeds an unseeded repo; `/rules` maintains the committed conventions. Shares the check/report/offer/apply/verify confirmed-write discipline. (The former `/setup twin` bootstrap was retired with the graphify tier.)
+- `brain-context/` — the read-on-demand enrichment ladder (orientation memos → owned repo-map → nothing) available for orientation during a scan; advisory, silently degrades to plain grep/read.
 - `claude-md-validation/` — the convention patterns `suggest` mines.
 - `error-handling/` / `monitoring-observability/` — the fail-safe reader idiom (`set -uo pipefail`, always-exit-0, diagnostics to `.supervisor/logs/`).
 - `quality-checklist/` — gates for reviewing changes to this skill, the command, or the reader.

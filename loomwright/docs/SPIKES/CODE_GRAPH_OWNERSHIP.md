@@ -1,5 +1,20 @@
 # Spike: Owning code-structure intelligence (build vs. third-party graph product)
 
+> ## 🪦 TIER RETIRED (2026-08-17)
+>
+> The graphify/bridge tier this spike fed into was **retired at every seam** (twin-loop
+> requirement 06). The reason is the **maintenance model**, not the idea: the graph was the only
+> store in the system requiring an expensive *deliberate* rebuild to stay true, it was gitignored
+> so it never survived a clone, and it degraded **silently** — the exact staleness trap
+> `NORTH_STAR_DIRECTION.md` named ("vendors sell the all-in-one graph; it's the staleness trap"),
+> fallen into by the tier itself. A second, settling finding: the Step-4 bridge gate's **71% had
+> no control arm** — every strict hit it verified was anchored by a shared file that a plain
+> file-path join would also have found; no file-disjoint community hit was demonstrated anywhere
+> in the record. **The reversal condition** (cheap incremental refresh + independent-ground-truth
+> validation) lives in `code-graph-harness/README.md` alongside the committed harness this spike
+> produced. Nothing below is deleted — the full journey, including the ⚠️-corrected retracted
+> claims, stays as evidence.
+
 **Status:** Investigated → built → **VALIDATED → reposcan PARKED.** The Tier-1 repo-map was built and measured
 (4 repos / 4 languages), then its ranking **failed** independent validation. Decision: use **LSP + graphify
 as-is** (enough); keep the **validation harness**; resume reposcan only if needed. Full story in **Outcome** below.

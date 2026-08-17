@@ -1,5 +1,7 @@
 # Corpus item: what calls `read-lessons.sh`?
 
+> **Note (2026-08-17):** authored against the retired graphify tier (the `graphify-out/graph.json` target below no longer exists); retained as evaluation-corpus evidence, content otherwise intact.
+
 - **Type:** structural question
 - **Mode:** baseline (grep-first) — compare against graph-first after Phase 1
 - **Target repo / graph:** this plugin repo (`graphify-out/graph.json`)

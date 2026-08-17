@@ -1,5 +1,20 @@
 # Local Twin — Execution Path (the ordered "how")
 
+> ## 🪦 TIER RETIRED (2026-08-17)
+>
+> The graphify/bridge tier this path built (rungs ③GRAPH → ④BRIDGE → ⑤APPLY) was **retired at
+> every seam** (twin-loop requirement 06). The reason is the **maintenance model**: an expensive
+> *deliberate* rebuild to stay true, gitignored so it never survived a clone, and **silent**
+> degradation — the exact staleness trap `NORTH_STAR_DIRECTION.md` named, fallen into by the
+> tier itself (the graph was built once, never rebuilt, and the bridge survived as a
+> 255-commits-stale orphan). A second, settling finding: the Step-4 gate's **71% strict
+> specific-area score had no control arm** — every strict hit was anchored by a shared file that
+> a plain file-path join would also have found; no file-disjoint community hit was demonstrated
+> anywhere in the record. **The reversal condition** (cheap incremental refresh + independent-
+> ground-truth validation, governing external-brain revivals too) lives in
+> `code-graph-harness/README.md`. Nothing below is deleted — the ladder, gates, and measured
+> record stay as evidence.
+
 > **Status:** execution plan (authored 2026-06-19). This is the **single source of truth for the *ordered, gated* path** toward the Twin/brain endgame. It does not restate *why* or *what* — it sequences the *how*.
 >
 > **Relationship to the other SPIKES docs (no duplication):**
