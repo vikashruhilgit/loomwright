@@ -149,6 +149,129 @@ grep -vF '<!-- SHARED-AGENT-PREFIX v1 END -->' "$AGENTS/beta.md" > "$AGENTS/beta
 mv "$AGENTS/beta.md.new" "$AGENTS/beta.md"
 run_case "agent with BEGIN but no END fails as MALFORMED" nonzero "MALFORMED beta.md"
 
+# --- 9+: MULTI-PLUGIN DISCOVERY (v15.37.0) -----------------------------------
+#
+# These cases run with BOTH SHARED_PREFIX_* overrides UNSET — that is the whole
+# point. The per-gate overrides are layered ABOVE discovery and return first, so
+# a case that sets one proves nothing about the new loop (that is exactly how a
+# "negative" test ends up unable to fail). Only CHECK_MARKETPLACE_JSON is set,
+# pointing at a fixture manifest listing TWO plugin sources.
+#
+# MUTATION CONTROL: delete the discovery loop from the gate's run_gate() and
+# every case below fails. Performed and recorded in the PR.
+
+# mkroot <path> — create and echo the CANONICAL path. The gate resolves plugin
+# dirs with `cd ... && pwd`, so a $TMPDIR with a trailing slash (macOS default)
+# would make a literal "$tmp/..." assertion fail on a doubled slash while the
+# gate is behaving correctly.
+mkroot() { mkdir -p "$1" && ( cd "$1" && pwd ); }
+
+# mk_plugin <root> <name> <mode> — mode: full | no-agents | drifted | no-canonical
+# Only the plugin literally named "loomwright" gets the canonical prefix file:
+# there is exactly ONE canonical by design (see the gate's CROSS-PLUGIN DECISION).
+mk_plugin() {
+  local root="$1" name="$2" mode="$3" p="$1/$2"
+  mkdir -p "$p/docs"
+  if [ "$name" = "loomwright" ] && [ "$mode" != "no-canonical" ]; then
+    write_canonical "$p/docs/shared-agent-prefix.md"
+  fi
+  if [ "$mode" != "no-agents" ]; then
+    mkdir -p "$p/agents"
+    write_agent "$p/agents/$name-one.md"
+    write_agent "$p/agents/$name-two.md"
+    if [ "$mode" = "drifted" ]; then
+      sed 's/smallest/smaIlest/' "$p/agents/$name-two.md" > "$p/agents/$name-two.md.new"
+      mv "$p/agents/$name-two.md.new" "$p/agents/$name-two.md"
+    fi
+  fi
+}
+
+# mk_manifest <root> <name>...
+mk_manifest() {
+  local root="$1"; shift
+  mkdir -p "$root/.claude-plugin"
+  {
+    printf '{ "name": "fixture", "plugins": ['
+    local first=1 n
+    for n in "$@"; do
+      [ "$first" -eq 1 ] || printf ','
+      first=0
+      printf '{ "name": "%s", "source": "./%s", "version": "1.0.0" }' "$n" "$n"
+    done
+    printf '] }\n'
+  } > "$root/.claude-plugin/marketplace.json"
+}
+
+# run_disc NAME EXPECT MANIFEST [GREP_MUST_MATCH] — SHARED_PREFIX_* left unset.
+run_disc() {
+  name="$1"; expect="$2"; manifest="$3"; must_match="${4:-}"
+  out="$(CHECK_MARKETPLACE_JSON="$manifest" bash "$CHECK" 2>&1)"
+  status=$?
+  ok=1
+  if [ "$expect" = "zero" ] && [ "$status" -ne 0 ]; then ok=0; fi
+  if [ "$expect" = "nonzero" ] && [ "$status" -eq 0 ]; then ok=0; fi
+  if [ "$ok" -eq 1 ] && [ -n "$must_match" ]; then
+    if ! printf '%s\n' "$out" | grep -qF "$must_match"; then ok=0; fi
+  fi
+  if [ "$ok" -eq 1 ]; then
+    echo "PASS: $name"
+    pass=$((pass + 1))
+  else
+    echo "FAIL: $name (exit=$status, expected $expect${must_match:+, expected output to contain: $must_match})"
+    printf '%s\n' "$out" | sed 's/^/    | /'
+    fail=$((fail + 1))
+  fi
+}
+
+# 9. a SECOND plugin's agents are checked against loomwright's canonical
+R9="$(mkroot "$tmp/d9")"
+mk_plugin "$R9" loomwright full
+mk_plugin "$R9" sibling    full
+mk_manifest "$R9" loomwright sibling
+run_disc "discovery: second plugin's agents are checked (cross-plugin canonical)" \
+  zero "$R9/.claude-plugin/marketplace.json" "$R9/sibling/agents"
+
+# 10. drift in the SECOND plugin fails — the invariant really reaches it
+R10="$(mkroot "$tmp/d10")"
+mk_plugin "$R10" loomwright full
+mk_plugin "$R10" sibling    drifted
+mk_manifest "$R10" loomwright sibling
+run_disc "discovery: drift inside the second plugin is caught" \
+  nonzero "$R10/.claude-plugin/marketplace.json" "DRIFT     sibling-two.md"
+
+# 11. SKIP SILENTLY — a registered plugin with no agents/ tree
+R11="$(mkroot "$tmp/d11")"
+mk_plugin "$R11" loomwright full
+mk_plugin "$R11" sibling    no-agents
+mk_manifest "$R11" loomwright sibling
+run_disc "discovery: agent-less plugin is skipped silently" \
+  zero "$R11/.claude-plugin/marketplace.json" "$R11/loomwright/agents"
+
+# 12. the CROSS-PLUGIN DECISION's documented branch, in code: no loomwright entry
+R12="$(mkroot "$tmp/d12")"
+mk_plugin "$R12" sibling full
+mk_manifest "$R12" sibling
+run_disc "discovery: manifest without loomwright fails loudly (canonical unresolvable)" \
+  nonzero "$R12/.claude-plugin/marketplace.json" "canonical shared prefix is unresolvable"
+
+# 13. loomwright registered but its canonical file is gone
+R13="$(mkroot "$tmp/d13")"
+mk_plugin "$R13" loomwright no-canonical
+mk_manifest "$R13" loomwright
+run_disc "discovery: registered loomwright without the canonical file fails" \
+  nonzero "$R13/.claude-plugin/marketplace.json" "canonical file not found"
+
+# 14. ANTI-DRIFT TRIPWIRE — no agent-bearing plugin at all
+R14="$(mkroot "$tmp/d14")"
+mk_plugin "$R14" loomwright no-agents
+mk_manifest "$R14" loomwright
+run_disc "discovery: zero agent-bearing plugins trips the anti-drift tripwire" \
+  nonzero "$R14/.claude-plugin/marketplace.json" "gate matched nothing"
+
+# 15. missing manifest fails CLOSED
+run_disc "discovery: missing marketplace manifest fails closed" \
+  nonzero "$tmp/d15-does-not-exist/.claude-plugin/marketplace.json" "marketplace manifest not found"
+
 # --- Summary -----------------------------------------------------------------
 echo "----------------------------------------"
 echo "test-check-shared-prefix: $pass passed, $fail failed"

@@ -262,6 +262,127 @@ OUT="$(bash "$GATE" 2>&1)"; RC=$?
 check "case6 live repo passes" 0 "$RC"
 contains "case6 live output labels proxy" "$OUT" "proxy"
 
+# ---------------------------------------------------------------------------
+# Case 7 — MULTI-PLUGIN DISCOVERY (v15.37.0).
+#
+# These cases run with EVERY TOKEN_BUDGET_* override UNSET, which is the whole
+# point: the per-gate overrides are layered ABOVE discovery and return first, so
+# a case that sets one proves nothing about the new loop. Only CHECK_MARKETPLACE_JSON
+# is set, pointing at a fixture manifest listing TWO plugin sources.
+#
+# MUTATION CONTROL: delete the `while ... plugin_dirs ...` loop from the gate's
+# run_gate() and 7a/7b/7c/7d all fail — 7a because the beta plugin is never
+# named, 7b because a malformed second plugin is never seen, 7d because the
+# tripwire never fires. (Performed and recorded in the PR.)
+# ---------------------------------------------------------------------------
+
+# mk_plugin <root> <name> <mode> — mode: full | no-budget | no-agents | no-mirror
+mk_plugin() {
+  local root="$1" name="$2" mode="$3" p="$1/$2"
+  mkdir -p "$p/skills" "$p/docs"
+  if [ "$mode" != "no-agents" ]; then
+    mkdir -p "$p/agents"
+    mk_agent "$p/agents" "$name-agent" "" 400
+  fi
+  if [ "$mode" != "no-budget" ]; then
+    cat > "$p/docs/prompt-token-budgets.json" <<JSON
+{ "proxy_bytes_per_token": 4, "agents": { "$name-agent": { "budget": 9999, "measured": 0 } } }
+JSON
+  fi
+  if [ "$mode" != "no-mirror" ]; then
+    {
+      echo "## Prompt Token Budgets"
+      echo ""
+      echo "| Agent | Budget | Measured |"
+      echo "|---|---|---|"
+      echo "| \`$name-agent\` | 9999 | 0 |"
+    } > "$p/docs/ARCHITECTURE_CONTRACTS.md"
+  fi
+}
+
+# mk_manifest <root> <name>... — writes <root>/.claude-plugin/marketplace.json
+mk_manifest() {
+  local root="$1"; shift
+  mkdir -p "$root/.claude-plugin"
+  {
+    printf '{ "name": "fixture", "plugins": ['
+    local first=1 n
+    for n in "$@"; do
+      [ "$first" -eq 1 ] || printf ','
+      first=0
+      printf '{ "name": "%s", "source": "./%s", "version": "1.0.0" }' "$n" "$n"
+    done
+    printf '] }\n'
+  } > "$root/.claude-plugin/marketplace.json"
+}
+
+run_discovery() { # run_discovery <manifest-path> -> sets OUT, RC (all TOKEN_BUDGET_* unset)
+  OUT="$(CHECK_MARKETPLACE_JSON="$1" bash "$GATE" 2>&1)"
+  RC=$?
+}
+
+# mkroot <path> — create and echo the CANONICAL path. The gate resolves plugin
+# dirs with `cd ... && pwd`, so a $TMPDIR with a trailing slash (macOS default)
+# would make a literal "$TMP/..." substring assertion fail on a doubled slash
+# while the gate is behaving correctly. Canonicalize on our side, not theirs.
+mkroot() { mkdir -p "$1" && ( cd "$1" && pwd ); }
+
+# --- 7a: two agent-bearing plugins are BOTH budgeted -----------------------
+R7A="$(mkroot "$TMP/c7a")"
+mk_plugin "$R7A" "alphaplug" full
+mk_plugin "$R7A" "betaplug"  full
+mk_manifest "$R7A" alphaplug betaplug
+run_discovery "$R7A/.claude-plugin/marketplace.json"
+check "case7a two-plugin discovery exits 0" 0 "$RC"
+contains "case7a budgets plugin #1" "$OUT" "$R7A/alphaplug/agents"
+contains "case7a budgets plugin #2 (fails if the discovery loop is deleted)" "$OUT" "$R7A/betaplug/agents"
+contains "case7a names the second plugin" "$OUT" "plugin: betaplug"
+
+# --- 7b: FAIL LOUDLY — agents/ present but no prompt-token-budgets.json ----
+R7B="$(mkroot "$TMP/c7b")"
+mk_plugin "$R7B" "alphaplug" full
+mk_plugin "$R7B" "betaplug"  no-budget
+mk_manifest "$R7B" alphaplug betaplug
+run_discovery "$R7B/.claude-plugin/marketplace.json"
+check "case7b agents-without-budgets exits 1 (malformed != absent)" 1 "$RC"
+contains "case7b names the missing budget file" "$OUT" "MUST declare its own budgets"
+
+# --- 7c: SKIP SILENTLY — plugin ships no agents/ tree at all ---------------
+R7C="$(mkroot "$TMP/c7c")"
+mk_plugin "$R7C" "alphaplug" full
+mk_plugin "$R7C" "betaplug"  no-agents
+mk_manifest "$R7C" alphaplug betaplug
+run_discovery "$R7C/.claude-plugin/marketplace.json"
+check "case7c agent-less plugin is skipped silently (exit 0)" 0 "$RC"
+contains "case7c still budgets the agent-bearing plugin" "$OUT" "$R7C/alphaplug/agents"
+case "$OUT" in
+  *"plugin: betaplug"*) fail=$((fail+1)); echo "FAIL - case7c must not check the agent-less plugin";;
+  *) pass=$((pass+1)); echo "ok   - case7c does not check the agent-less plugin";;
+esac
+
+# --- 7d: ANTI-DRIFT TRIPWIRE — zero agent-bearing plugins matched ----------
+R7D="$(mkroot "$TMP/c7d")"
+mk_plugin "$R7D" "alphaplug" no-agents
+mk_plugin "$R7D" "betaplug"  no-agents
+mk_manifest "$R7D" alphaplug betaplug
+run_discovery "$R7D/.claude-plugin/marketplace.json"
+check "case7d zero agent-bearing plugins exits 1 (tripwire)" 1 "$RC"
+contains "case7d names the tripwire" "$OUT" "gate matched nothing"
+
+# --- 7e: missing manifest fails CLOSED ------------------------------------
+run_discovery "$TMP/c7e-does-not-exist/.claude-plugin/marketplace.json"
+check "case7e missing manifest exits 1" 1 "$RC"
+contains "case7e names the missing manifest" "$OUT" "marketplace manifest not found"
+
+# --- 7f: per-plugin MIRROR is that plugin's own ARCHITECTURE_CONTRACTS.md ---
+R7F="$(mkroot "$TMP/c7f")"
+mk_plugin "$R7F" "alphaplug" full
+mk_plugin "$R7F" "betaplug"  no-mirror
+mk_manifest "$R7F" alphaplug betaplug
+run_discovery "$R7F/.claude-plugin/marketplace.json"
+check "case7f plugin without its own contracts mirror exits 1" 1 "$RC"
+contains "case7f names the missing per-plugin mirror" "$OUT" "$R7F/betaplug/docs/ARCHITECTURE_CONTRACTS.md"
+
 echo "------------------------------------------------------------------------------"
 echo "check-token-budget self-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
