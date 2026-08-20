@@ -68,6 +68,6 @@ Comprehensive index of all skills available in the Loomwright plugin.
 
 > **Moved (v15.6.0):** the 18 tech-stack skills (Next.js ×5, NestJS ×5, API Gateway ×4, MySQL/PostgreSQL/Redis Caching, Docker) now live in the **stackpack@atelier** plugin — `/plugin install stackpack@atelier`.
 >
-> **Moved (v15.38.0):** the 5 QA skills (Playwright E2E, QA Strategy, QA Gates, QA Test Patterns, QA Orchestration) now live in the **selvedge@atelier** plugin — `/plugin install selvedge@atelier`.
+> **Moved to `selvedge@atelier`:** the 5 QA skills (Playwright E2E, QA Strategy, QA Gates, QA Test Patterns, QA Orchestration) now live in the **selvedge@atelier** plugin — `/plugin install selvedge@atelier`.
 
 _Last updated: 2026-08-20_

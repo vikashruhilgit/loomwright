@@ -10,7 +10,7 @@ Guidance for Claude Code when working in this repository.
 
 ## Project Overview
 
-**Loomwright** is a Claude Code plugin with 12 agent roles (9 user-facing + 5 internal) for plan-first readiness, parallel execution, requirements, planning, code review, commits, adversarial audits, standalone PR review-and-heal, and dual-agent QA. Supervisor and Launch Pad use `.supervisor/` exclusively for state; Orchestrator and Product Owner can optionally use Beads.
+**Loomwright** is a Claude Code plugin with 12 agent roles (9 user-facing + 5 internal) for plan-first readiness, parallel execution, requirements, planning, code review, commits, adversarial audits, and standalone PR review-and-heal (dual-agent QA moved to the selvedge@atelier companion plugin). Supervisor and Launch Pad use `.supervisor/` exclusively for state; Orchestrator and Product Owner can optionally use Beads.
 
 **Version + counts:** authoritative in `plugin.json` (see `Plugin Layout` below for the per-directory breakdown) — **never restated here, and that includes this banner.** Deliberately version-free: a number written here is a second copy that has to be bumped by hand every release, which is exactly the drift this file warns about elsewhere. Say "the previous release", not a version string; the changelog's top entry is always the current one.
 

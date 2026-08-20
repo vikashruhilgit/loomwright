@@ -65,7 +65,7 @@ The Loomwright plugin provides **12 agent roles** (9 user-facing + 5 internal) f
 **QA Pipeline (2 agents):**
 ```
 5. Strategy (QA Strategist)  →  Risk classification + coverage targets   [selvedge@atelier]
-6. Execute (QA Executor)     →  Discovery → Tests → Debate → QA_RESULT
+6. Execute (QA Executor)     →  Discovery → Tests → Debate → QA_RESULT  [selvedge@atelier]
 ```
 
 **Full Manual Workflow:**
@@ -759,7 +759,7 @@ under the re-pointed `selvedge:qa-executor` matcher.
 ```
 /qa-strategist src/ → Risk Classification + Coverage Targets   (selvedge@atelier)
     ↓
-/qa-executor → Discovery → Tests → Execute → Coverage → Bugs
+/qa-executor → Discovery → Tests → Execute → Coverage → Bugs   (selvedge@atelier)
     ↓
 /qa-strategist --audit .qa-summary.md → STRATEGIST_VERDICT
     ↓

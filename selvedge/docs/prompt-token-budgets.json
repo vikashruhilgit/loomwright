@@ -5,12 +5,12 @@
     "qa-executor": {
       "budget": 48222,
       "measured": 43838,
-      "note": "measured 43838 + ~10% at the selvedge relocation (v15.38.0). RE-MEASURED FROM THE POST-MOVE FILES, deliberately not carried over from loomwright's 43786: the same PR renames the frontmatter `name:`, both debate-loop spawn targets and the agent-memory writer sentence, so a weight taken before those edits is stale by construction. 5 preloaded skills — 4 selvedge-local plus `quality-checklist`, which stays LOOMWRIGHT-OWNED and resolves cross-plugin (the gate attributes it as `quality-checklist@loomwright` in the DETAIL column)."
+      "note": "measured 43838 + ~10% at the selvedge relocation. RE-MEASURED FROM THE POST-MOVE FILES, deliberately not carried over from loomwright's 43786: the same PR renames the frontmatter `name:`, both debate-loop spawn targets and the agent-memory writer sentence, so a weight taken before those edits is stale by construction. 5 preloaded skills — 4 selvedge-local plus `quality-checklist`, which stays LOOMWRIGHT-OWNED and resolves cross-plugin (the gate attributes it as `quality-checklist@loomwright` in the DETAIL column)."
     },
     "qa-strategist": {
       "budget": 23540,
       "measured": 21400,
-      "note": "measured 21400 + ~10% at the selvedge relocation (v15.38.0). Re-measured from the post-move file for the same reason as qa-executor (previously 21352 under loomwright). 3 preloaded skills — 2 selvedge-local plus the cross-plugin `quality-checklist@loomwright`."
+      "note": "measured 21400 + ~10% at the selvedge relocation. Re-measured from the post-move file for the same reason as qa-executor (previously 21352 under loomwright). 3 preloaded skills — 2 selvedge-local plus the cross-plugin `quality-checklist@loomwright`."
     }
   }
 }

@@ -18,6 +18,6 @@ Comprehensive index of all skills available in the Selvedge plugin (the QA compa
 
 **Total: 5 skills**
 
-> **Moved (v15.38.0):** these five skills were relocated here from **loomwright@atelier** alongside the two QA agents and their slash commands. Selvedge requires loomwright — the QA agents still preload loomwright's `quality-checklist` skill cross-plugin (one copy, no duplicate).
+> **Moved to `selvedge@atelier`:** these five skills were relocated here from **loomwright@atelier** alongside the two QA agents and their slash commands. Selvedge requires loomwright — the QA agents still preload loomwright's `quality-checklist` skill cross-plugin (one copy, no duplicate).
 
 _Last updated: 2026-08-20_
