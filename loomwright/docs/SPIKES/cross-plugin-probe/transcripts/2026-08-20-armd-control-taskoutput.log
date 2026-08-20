@@ -1,0 +1,40 @@
+
+==================== CONTROL ARM — TaskOutput AS THE ONLY RESIDUAL TOOL ====================
+
+Rung 2 of the tool ladder. The run that first hit this rung left no transcript, so
+the ladder's middle row was recollection. This arm re-measures it and commits the
+raw text, so the row can be cited from evidence instead of memory.
+
+$ cat probe-consumer/agents/probe-taskoutput-agent.md
+---
+name: probe-consumer:probe-taskoutput-agent
+description: Throwaway CONTROL agent. Residual tool is TaskOutput only, to record what happens at spawn time.
+tools: Read, Write, Edit, Glob, Grep, Bash, Task, TaskOutput, LSP, WebSearch, WebFetch
+disallowedTools: Read, Write, Edit, NotebookEdit, Glob, Grep, Bash, Task, LSP, WebSearch, WebFetch
+model: inherit
+maxTurns: 3
+skills:
+  - probe-host-skill
+---
+
+# Control agent (TaskOutput as the only residual tool)
+
+Output `SENTINEL: ` followed by the `XPLUGIN-NONCE-` token from your preloaded skills, or
+`SENTINEL: ABSENT` if there is none.
+
+$ claude -p --tools "Task,TaskOutput" < prompt-ctl.txt   (bounded 240s)
+  (parent tool set differs from the other arms ON PURPOSE — see the comment in source)
+--- prompt (verbatim) ---
+Run id XPLUGIN-NONCE-1787195091-3138718983-PARENT-CTL.
+Use the Task tool exactly once with subagent_type "probe-consumer:probe-consumer:probe-taskoutput-agent"
+and the prompt "Output your sentinel line as instructed."
+Then output ONLY these two lines and nothing else:
+OUTCOME: <resolved|error>
+DETAIL: <the subagent's final message verbatim if it resolved, otherwise the VERBATIM error text>
+Do not paraphrase the error. Do not retry with a different subagent_type.
+--- end prompt ---
+--- exit status: 0 ---
+--- captured stdout+stderr (verbatim) ---
+OUTCOME: error
+DETAIL: Agent 'probe-consumer:probe-consumer:probe-taskoutput-agent' would be spawned with zero tools — refusing. Its tools list resolved to nothing: not available to subagents [TaskOutput]; recognized but matched no tools in this session [Task]. Fix the agent's tools frontmatter or pass a different subagent_type.
+--- end capture ---

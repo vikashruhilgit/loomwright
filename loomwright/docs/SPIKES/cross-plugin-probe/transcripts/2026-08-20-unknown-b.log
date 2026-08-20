@@ -1,0 +1,67 @@
+
+==================== UNKNOWN B — ${CLAUDE_PLUGIN_ROOT} INSIDE A SECOND PLUGIN'S hooks.json ====================
+
+hook source     : /var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T//loomwright-xplugin-probe-97054/marketplace/probe-consumer/hooks/hooks.json   (SessionStart)
+hook output file: /var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T//loomwright-xplugin-probe-97054/out/unknown-b-plugin-root.txt
+
+$ cat probe-consumer/hooks/hooks.json
+{
+  "description": "Throwaway cross-plugin resolution probe — records the expanded CLAUDE_PLUGIN_ROOT of a SECOND plugin.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{ printf 'RAW=[%s]\\n' \"${CLAUDE_PLUGIN_ROOT}\"; printf 'BRACE_DEFAULT=[%s]\\n' \"${CLAUDE_PLUGIN_ROOT:-__UNSET_OR_EMPTY__}\"; printf 'ENV_PRESENT=[%s]\\n' \"$(env | grep -c '^CLAUDE_PLUGIN_ROOT=')\"; printf 'HOOK_CWD=[%s]\\n' \"$PWD\"; printf 'HOOK_FIRED_AT=[%s]\\n' \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"; } >> '/var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T//loomwright-xplugin-probe-97054/out/unknown-b-plugin-root.txt' 2>&1 || true"
+          }
+        ]
+      }
+    ]
+  }
+}
+
+pre-trigger state:
+$ ls -la $BFILE
+-rw-r--r--@ 1 vikashruhil  staff  1062 Aug 20 08:09 /var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T//loomwright-xplugin-probe-97054/out/unknown-b-plugin-root.txt
+
+trigger: a fresh `claude -p` session — SessionStart fires on session creation.
+$ claude -p --tools "" < prompt-b.txt            (bounded 240s)
+--- exit status: 0 ---
+--- captured stdout+stderr (verbatim) ---
+TRIGGERED
+--- end capture ---
+
+post-trigger state:
+$ ls -la $BFILE
+-rw-r--r--@ 1 vikashruhil  staff  1416 Aug 20 08:09 /var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T//loomwright-xplugin-probe-97054/out/unknown-b-plugin-root.txt
+
+$ cat $BFILE      # <== THE evidence for Unknown B. Exit status proves NOTHING here:
+                     #     the '|| true' convention makes an unset expansion exit 0.
+RAW=[/var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T/loomwright-xplugin-probe-97054/marketplace/probe-consumer]
+BRACE_DEFAULT=[/var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T/loomwright-xplugin-probe-97054/marketplace/probe-consumer]
+ENV_PRESENT=[1]
+HOOK_CWD=[/Users/vikashruhil/Documents/work/AI/ai-agent-manager]
+HOOK_FIRED_AT=[2026-08-20T02:38:39Z]
+RAW=[/var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T/loomwright-xplugin-probe-97054/marketplace/probe-consumer]
+BRACE_DEFAULT=[/var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T/loomwright-xplugin-probe-97054/marketplace/probe-consumer]
+ENV_PRESENT=[1]
+HOOK_CWD=[/Users/vikashruhil/Documents/work/AI/ai-agent-manager]
+HOOK_FIRED_AT=[2026-08-20T02:38:57Z]
+RAW=[/var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T/loomwright-xplugin-probe-97054/marketplace/probe-consumer]
+BRACE_DEFAULT=[/var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T/loomwright-xplugin-probe-97054/marketplace/probe-consumer]
+ENV_PRESENT=[1]
+HOOK_CWD=[/Users/vikashruhil/Documents/work/AI/ai-agent-manager]
+HOOK_FIRED_AT=[2026-08-20T02:39:29Z]
+RAW=[/var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T/loomwright-xplugin-probe-97054/marketplace/probe-consumer]
+BRACE_DEFAULT=[/var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T/loomwright-xplugin-probe-97054/marketplace/probe-consumer]
+ENV_PRESENT=[1]
+HOOK_CWD=[/Users/vikashruhil/Documents/work/AI/ai-agent-manager]
+HOOK_FIRED_AT=[2026-08-20T02:39:44Z]
+--- end file ---
+
+HOW TO READ THE DISCRIMINATOR:
+  RAW=[<path>]                   -> it expanded; the path IS the answer (per-plugin or not)
+  RAW=[]  with ENV_PRESENT=[1]   -> the variable EXISTS but is EMPTY  (silent no-op under '|| true')
+  RAW=[]  with ENV_PRESENT=[0]   -> the variable is UNSET             (silent no-op under '|| true')
+  RAW=[${CLAUDE_PLUGIN_ROOT}]    -> no substitution at all; the literal token reached the shell

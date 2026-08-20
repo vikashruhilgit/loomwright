@@ -1,0 +1,103 @@
+
+==================== TEARDOWN  (2026-08-20T02:40:31Z) ====================
+
+Runs from an EXIT/INT/TERM trap, so a crash or a Ctrl-C tears down too.
+Every command below is bounded (120s) — a teardown that hangs is a
+teardown that does not happen.
+
+$ claude plugin uninstall probe-consumer --scope local -y
+--- exit status: 0 ---
+--- captured stdout+stderr (verbatim) ---
+✔ Successfully uninstalled plugin: probe-consumer (scope: local)
+--- end capture ---
+$ claude plugin uninstall probe-host --scope local -y
+--- exit status: 0 ---
+--- captured stdout+stderr (verbatim) ---
+✔ Successfully uninstalled plugin: probe-host (scope: local)
+--- end capture ---
+$ claude plugin marketplace remove xplugin-probe
+--- exit status: 0 ---
+--- captured stdout+stderr (verbatim) ---
+✔ Successfully removed marketplace: xplugin-probe
+--- end capture ---
+
+==================== TEARDOWN ASSERTIONS (raw output) ====================
+
+$ claude plugin list
+--- exit status: 0 ---
+--- captured stdout+stderr (verbatim) ---
+Installed plugins:
+
+  ❯ atlassian@claude-plugins-official
+    Version: 94a30436435f
+    Scope: user
+    Status: ✘ disabled
+
+  ❯ context7@claude-plugins-official
+    Version: unknown
+    Scope: user
+    Status: ✘ disabled
+
+  ❯ frontend-design@claude-plugins-official
+    Version: unknown
+    Scope: user
+    Status: ✔ enabled
+
+  ❯ greptile@claude-plugins-official
+    Version: unknown
+    Scope: user
+    Status: ✘ disabled
+
+  ❯ loomwright@atelier
+    Version: 15.36.0
+    Scope: user
+    Status: ✔ enabled
+
+  ❯ swift-lsp@claude-plugins-official
+    Version: 1.0.0
+    Scope: user
+    Status: ✘ disabled
+
+--- end capture ---
+$ claude plugin marketplace list
+--- exit status: 0 ---
+--- captured stdout+stderr (verbatim) ---
+Configured marketplaces:
+
+  ❯ claude-plugins-official
+    Source: GitHub (anthropics/claude-plugins-official)
+
+  ❯ atelier
+    Source: Git (https://github.com/vikashruhilgit/loomwright.git)
+
+--- end capture ---
+
+ASSERT probe-host absent from plugin list ......... PASS
+ASSERT probe-consumer absent from plugin list ..... PASS
+ASSERT xplugin-probe absent from marketplace list .. PASS
+ASSERT loomwright registrations unchanged ......... baseline=1 final=1 PASS
+  baseline loomwright lines:
+      ❯ loomwright@atelier
+  final    loomwright lines:
+      ❯ loomwright@atelier
+
+==================== LOCAL SETTINGS RESTORE ====================
+
+target: /Users/vikashruhil/Documents/work/AI/ai-agent-manager/.claude/settings.local.json
+(gitignored via .gitignore '.claude/*' — verified before the run; this is why
+ --scope local cannot leak into a PR, and why --scope project was forbidden)
+state before the run: present
+restored byte-for-byte from backup
+ASSERT settings.local.json identical to pre-run backup ... PASS
+
+==================== REPO CLEANLINESS ====================
+
+$ git -C $REPO_ROOT status --porcelain -- .claude .claude-plugin loomwright/skills loomwright/agents loomwright/commands loomwright/hooks
+(empty output above == no probe write leaked into a tracked plugin surface)
+
+==================== SCRATCH REMOVAL ====================
+
+scratch: /var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T//loomwright-xplugin-probe-97054
+removed
+
+teardown complete: 2026-08-20T02:40:32Z

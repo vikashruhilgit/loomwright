@@ -1,0 +1,143 @@
+
+==================== UNKNOWN D — CROSS-PLUGIN SubagentStop MATCHER RESOLUTION ====================
+
+matchers declared in : /var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T//loomwright-xplugin-probe-35252/marketplace/probe-consumer/hooks/hooks.json  (plugin: probe-consumer)
+matcher output file  : /var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T//loomwright-xplugin-probe-35252/out/unknown-d-matcher.txt
+
+The five declared SubagentStop entries, and what each one isolates:
+  (no matcher)                                -> wildcard-any        : does SubagentStop fire at all here?
+  probe-consumer:probe-agent                  -> same-plugin-single  : control, own plugin, single prefix
+  probe-consumer:probe-consumer:probe-agent   -> same-plugin-doubled : control, own plugin, doubled prefix
+  probe-host:probe-host-agent                 -> cross-plugin-single : THE unknown, single prefix
+  probe-host:probe-host:probe-host-agent      -> cross-plugin-doubled: THE unknown, doubled prefix
+
+$ cat probe-consumer/hooks/hooks.json
+{
+  "description": "Throwaway cross-plugin resolution probe — records the expanded CLAUDE_PLUGIN_ROOT of a SECOND plugin, and which SubagentStop matcher forms fire.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{ printf 'RAW=[%s]\\n' \"${CLAUDE_PLUGIN_ROOT}\"; printf 'BRACE_DEFAULT=[%s]\\n' \"${CLAUDE_PLUGIN_ROOT:-__UNSET_OR_EMPTY__}\"; printf 'ENV_PRESENT=[%s]\\n' \"$(env | grep -c '^CLAUDE_PLUGIN_ROOT=')\"; printf 'HOOK_CWD=[%s]\\n' \"$PWD\"; printf 'HOOK_FIRED_AT=[%s]\\n' \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"; } >> '/var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T//loomwright-xplugin-probe-35252/out/unknown-b-plugin-root.txt' 2>&1 || true"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "p=$(cat); printf 'MATCH=[wildcard-any] AT=[%s] PAYLOAD=[%s]\\n' \"$(date -u +%H:%M:%SZ)\" \"$(printf '%s' \"$p\" | tr -d '\\n' | cut -c1-400)\" >> '/var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T//loomwright-xplugin-probe-35252/out/unknown-d-matcher.txt' 2>&1 || true"
+          }
+        ]
+      },
+      {
+        "matcher": "probe-consumer:probe-agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "p=$(cat); printf 'MATCH=[same-plugin-single] AT=[%s]\\n' \"$(date -u +%H:%M:%SZ)\" >> '/var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T//loomwright-xplugin-probe-35252/out/unknown-d-matcher.txt' 2>&1 || true"
+          }
+        ]
+      },
+      {
+        "matcher": "probe-consumer:probe-consumer:probe-agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "p=$(cat); printf 'MATCH=[same-plugin-doubled] AT=[%s]\\n' \"$(date -u +%H:%M:%SZ)\" >> '/var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T//loomwright-xplugin-probe-35252/out/unknown-d-matcher.txt' 2>&1 || true"
+          }
+        ]
+      },
+      {
+        "matcher": "probe-host:probe-host-agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "p=$(cat); printf 'MATCH=[cross-plugin-single] AT=[%s]\\n' \"$(date -u +%H:%M:%SZ)\" >> '/var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T//loomwright-xplugin-probe-35252/out/unknown-d-matcher.txt' 2>&1 || true"
+          }
+        ]
+      },
+      {
+        "matcher": "probe-host:probe-host:probe-host-agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "p=$(cat); printf 'MATCH=[cross-plugin-doubled] AT=[%s]\\n' \"$(date -u +%H:%M:%SZ)\" >> '/var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T//loomwright-xplugin-probe-35252/out/unknown-d-matcher.txt' 2>&1 || true"
+          }
+        ]
+      }
+    ]
+  }
+}
+
+pre-trigger state:
+$ ls -la $DFILE
+ls: /var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T//loomwright-xplugin-probe-35252/out/unknown-d-matcher.txt: No such file or directory
+
+-------- trigger 1: spawn probe-host's agent (cross-plugin) --------
+$ claude -p --tools "Task,WebSearch" < prompt-d1.txt   (bounded 240s)
+--- prompt (verbatim) ---
+Run id XPLUGIN-NONCE-1787195091-3138718983-PARENT-D1.
+Use the Task tool exactly once with subagent_type "probe-host:probe-host:probe-host-agent"
+and the prompt "Output your line as instructed."
+Then output ONLY these two lines and nothing else:
+OUTCOME: <resolved|error>
+DETAIL: <the subagent's final message verbatim if it resolved, otherwise the VERBATIM error text>
+Do not paraphrase the error. Do not retry with a different subagent_type.
+--- end prompt ---
+--- exit status: 0 ---
+--- captured stdout+stderr (verbatim) ---
+OUTCOME: resolved
+DETAIL: HOSTAGENT: ok
+--- end capture ---
+
+-------- trigger 2: spawn probe-consumer's own agent (same-plugin control) --------
+$ claude -p --tools "Task,WebSearch" < prompt-d2.txt   (bounded 240s)
+--- prompt (verbatim) ---
+Run id XPLUGIN-NONCE-1787195091-3138718983-PARENT-D2.
+Use the Task tool exactly once with subagent_type "probe-consumer:probe-consumer:probe-agent"
+and the prompt "Output your sentinel line as instructed."
+Then output ONLY these two lines and nothing else:
+OUTCOME: <resolved|error>
+DETAIL: <the subagent's final message verbatim if it resolved, otherwise the VERBATIM error text>
+Do not paraphrase the error. Do not retry with a different subagent_type.
+--- end prompt ---
+--- exit status: 0 ---
+--- captured stdout+stderr (verbatim) ---
+OUTCOME: resolved
+DETAIL: SENTINEL: XPLUGIN-NONCE-1787195091-3138718983
+--- end capture ---
+
+post-trigger state:
+$ ls -la $DFILE
+-rw-r--r--@ 1 vikashruhil  staff  1066 Aug 20 08:35 /var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T//loomwright-xplugin-probe-35252/out/unknown-d-matcher.txt
+
+$ cat $DFILE      # <== THE evidence for Unknown D. Exit status proves NOTHING here:
+                     #     '|| true' makes a hook that never fired indistinguishable
+                     #     from one that fired and succeeded, by status alone.
+MATCH=[cross-plugin-single] AT=[03:05:08Z]
+MATCH=[cross-plugin-doubled] AT=[03:05:08Z]
+MATCH=[wildcard-any] AT=[03:05:08Z] PAYLOAD=[{"session_id":"7bc99a54-6b8b-4e47-bd96-4f0e04059761","transcript_path":"/Users/vikashruhil/.claude/projects/-Users-vikashruhil-Documents-work-AI-ai-agent-manager/7bc99a54-6b8b-4e47-bd96-4f0e04059761.jsonl","cwd":"/Users/vikashruhil/Documents/work/AI/ai-agent-manager","prompt_id":"3632eb88-0fee-45a9-ba53-890cfc316bf8","permission_mode":"auto","agent_id":"a9a3918c34be882b2","agent_type":"probe-host:]
+MATCH=[same-plugin-single] AT=[03:05:31Z]
+MATCH=[same-plugin-doubled] AT=[03:05:31Z]
+MATCH=[wildcard-any] AT=[03:05:31Z] PAYLOAD=[{"session_id":"3e53cae7-ede0-4091-b3ba-eb38fc0c3aa3","transcript_path":"/Users/vikashruhil/.claude/projects/-Users-vikashruhil-Documents-work-AI-ai-agent-manager/3e53cae7-ede0-4091-b3ba-eb38fc0c3aa3.jsonl","cwd":"/Users/vikashruhil/Documents/work/AI/ai-agent-manager","prompt_id":"2ca26739-b4dc-4d97-a804-98845548683d","permission_mode":"auto","agent_id":"a3c47fcdbefd9a555","agent_type":"probe-consu]
+--- end file ---
+
+labels observed:
+  wildcard-any           2
+  same-plugin-single     1
+  same-plugin-doubled    1
+  cross-plugin-single    1
+  cross-plugin-doubled   1
+
+HOW TO READ IT:
+  wildcard-any absent            -> SubagentStop did not fire at all; EVERY other row
+                                    below is UNMEASURED, not a NO.
+  cross-plugin-* present         -> a matcher declared in one plugin DOES fire for an
+                                    agent owned by another; the fallback (d) is viable.
+  which of -single / -doubled    -> that is the namespace a matcher must be written in.
+                                    It is NOT necessarily the Task(subagent_type:) form.
