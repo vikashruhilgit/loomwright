@@ -199,7 +199,7 @@ Optional next: run `/setup` for a status dashboard and guided configuration of o
 
 ## The 12 Agents
 
-### User-Facing Agents (9 + commit skill)
+### User-Facing Agents (7 + commit skill)
 
 
 | Agent                 | Command                         | Purpose                                                            | When                            |
@@ -211,12 +211,12 @@ Optional next: run `/setup` for a status dashboard and guided configuration of o
 | **Code Reviewer**     | `/code-reviewer src/`           | Review code → output PASS/FAIL/NEEDS_HUMAN                         | After writing code              |
 | **Commit** (skill)    | `/commit`                       | Stage changes → create conventional commits                        | Ready to commit                 |
 | **Red Team Reviewer** | `/red-team-reviewer`            | Adversarial audit → find production failures                       | Pre-launch, security            |
-| **QA Strategist**     | `/qa-strategist src/`           | Risk-based test strategy → coverage targets → assertion quality audit | Before QA, strategy planning    |
-| **QA Executor**       | `/qa-executor`                  | Discover → generate strict tests → find missing functionality → QA_RESULT | Automated QA                    |
 | **Review-PR**         | `/review-pr <pr-url>`           | Standalone review→fix→re-review loop against an existing PR; auto-heals the diff, never auto-merges → REVIEW_HEAL_RESULT | Review/heal any open PR         |
 | **Setup** (command)   | `/setup [module]`               | Status dashboard + guided configuration for every optional capability — observability (local Langfuse + OTel collector), telemetry, notifications, webhook, Beads, MySQL MCP, memory in version control, `rules` (seed `.agent/rules/` with portable conventions) | First install, enabling integrations |
 | **Rules** (command)   | `/rules [list\|suggest\|add\|check]` | House Rules substrate — committed `.agent/rules/` conventions store + fail-safe reader; list/suggest/add/check | Capturing durable team conventions |
 
+
+> **Looking for `/qa-strategist` or `/qa-executor`?** They are no longer part of loomwright. The dual-agent QA subsystem — both agents, both slash commands, their five skills and the `QA_RESULT` validator hook — now ships in **selvedge**, loomwright's QA companion: `/plugin install selvedge@atelier`. Both commands work exactly as before once it is installed. Selvedge **requires** loomwright and is not a standalone install: its agents still preload loomwright's `quality-checklist` skill, and loomwright still emits the QA telemetry/token-ledger fan-out under the re-pointed `selvedge:qa-executor` matcher.
 
 ### Internal Agents (5)
 

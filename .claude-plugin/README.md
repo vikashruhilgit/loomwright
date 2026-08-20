@@ -1,6 +1,6 @@
 # Loomwright Plugin for Claude Code
 
-A Claude Code plugin with 12 agent roles (7 user-facing + 5 internal), 36 focused skills, and optional Beads issue tracker integration. Automates plan-first readiness, parallel workflow execution, requirements definition, code review, adversarial audits, standalone PR review-and-heal (`/review-pr`), and dual-agent QA testing. v14 adds continuous autonomous mode: `/autonomous` chains Launch Pad → Supervisor in a default multi-iteration loop with stacked PRs.
+A Claude Code plugin with 12 agent roles (7 user-facing + 5 internal), 36 focused skills, and optional Beads issue tracker integration. Automates plan-first readiness, parallel workflow execution, requirements definition, code review, adversarial audits, and standalone PR review-and-heal (`/review-pr`) — dual-agent QA moved to the `selvedge@atelier` companion plugin. v14 adds continuous autonomous mode: `/autonomous` chains Launch Pad → Supervisor in a default multi-iteration loop with stacked PRs.
 
 ## Overview
 
@@ -27,7 +27,7 @@ Plus all prior v11.0/v10.3/v10.2 capabilities:
 - **Phase 4.5 self-heal** — Supervisor runs a holistic Code Reviewer pass on the integrated feature branch and auto-fixes bounded BLOCKING/HIGH `new` issues (up to `--heal-iterations`, default 3), eliminating the manual review-and-fix cycle per feature
 - **Beads-optional Code Reviewer** — auto-detects `.beads/` + `bd` CLI; when absent, `CODE_REVIEW_RESULT` is the sole decision channel
 
-### User-Facing Agents (9)
+### User-Facing Agents (7)
 
 - **Launch Pad** (`/launch-pad`) — Prepare goals for autonomous Supervisor execution
 - **Supervisor** (`/supervisor`) — Autonomous parallel workflow orchestrator with git worktrees
@@ -36,8 +36,8 @@ Plus all prior v11.0/v10.3/v10.2 capabilities:
 - **Code Reviewer** (`/code-reviewer`) — Review code with PASS/FAIL/NEEDS_HUMAN decisions (LSP diagnostics, read-only)
 - **Red Team Reviewer** (`/red-team-reviewer`) — Adversarial audits to break assumptions
 - **Review-PR** (`/review-pr <pr-url>`) — Standalone bounded review→fix→re-review loop against an existing PR; never auto-merges
-- **QA Strategist** (`/qa-strategist`) — Risk-based test strategy and QA audit
-- **QA Executor** (`/qa-executor`) — Discover app, generate Playwright tests, find gaps
+
+> **Looking for `/qa-strategist` or `/qa-executor`?** The dual-agent QA subsystem — both agents, both commands, their five skills and the `QA_RESULT` validator hook — moved to **selvedge**, loomwright's QA companion: `/plugin install selvedge@atelier`. Selvedge requires loomwright and is not a standalone install.
 
 ### Orchestration Shells (slash commands, not agents)
 
@@ -429,13 +429,13 @@ loomwright/                            # Marketplace wrapper repo
 └── loomwright/                 # The nested plugin
     ├── .claude-plugin/
     │   └── plugin.json                      # Plugin manifest
-    ├── agents/                              # Agent prompts (14 roles)
+    ├── agents/                              # Agent prompts (12 roles)
     │   ├── launch-pad.md, supervisor.md, execute-manager.md, context-keeper.md
     │   ├── worker.md, plan-reviewer.md, rubric-grader.md, product-owner.md, orchestrator.md
-    │   └── code-reviewer.md, red-team-reviewer.md, review-pr.md, qa-strategist.md, qa-executor.md
+    │   └── code-reviewer.md, red-team-reviewer.md, review-pr.md
     ├── commands/                            # Slash commands (19)
     │   ├── launch-pad.md, supervisor.md, product-owner.md, orchestrator.md
-    │   ├── code-reviewer.md, red-team-reviewer.md, review-pr.md, qa-strategist.md, qa-executor.md
+    │   ├── code-reviewer.md, red-team-reviewer.md, review-pr.md
     │   ├── telemetry.md, dreaming.md, autonomous.md, automate.md, capability-check.md, insights.md, obsidian.md, pr-postmortem.md
     │   └── setup.md, agent-help.md
     ├── hooks/
@@ -502,7 +502,7 @@ Agents with `memory: project` build knowledge across sessions:
 ### Quality Gate Hooks
 
 23 hooks centralized in `hooks.json` validate agent output and surface notifications:
-- **SubagentStop:** Worker, Execute Manager, Code Reviewer, Supervisor, QA Executor, Plan Reviewer — **1 prompt validator (Code Reviewer) + 5 `type: command` validator scripts** (`validate-worker-result.py`, `validate-execute-result.py`, `validate-supervisor-result.py`, `validate-qa-result.py`, `validate-plan-review-result.py`, all sharing `result_block_parser.py` and exit-0-by-contract; converted from prompt hooks in v15.17.0, Code Reviewer deliberately retained as a prompt because its cross-field + severity-cap logic is richer than presence-checking) + 3 `type: command` telemetry hooks on Code Reviewer, QA Executor, Supervisor + 1 `type: command` opt-in webhook hook (v12.2.0) + `launch-pad-runner` `LAUNCH_PAD_RESULT` validator (v14.2.0) + 1 `type: command` progress-event hook (`emit-progress-event.sh`, v15.16.0) on the Worker matcher
+- **SubagentStop:** Worker, Execute Manager, Code Reviewer, Supervisor, Launch Pad, Plan Reviewer — plus a `selvedge:qa-executor` matcher that loomwright still carries, but which now holds **only** the telemetry/token-ledger fan-out, no validator (the `QA_RESULT` validator moved to selvedge with the agent) — **1 prompt validator (Code Reviewer) + 5 `type: command` validator scripts** (`validate-worker-result.py`, `validate-execute-result.py`, `validate-supervisor-result.py`, `validate-launch-pad-result.py`, `validate-plan-review-result.py`, all sharing `result_block_parser.py` and exit-0-by-contract; converted from prompt hooks in v15.17.0, Code Reviewer deliberately retained as a prompt because its cross-field + severity-cap logic is richer than presence-checking) + 3 `type: command` telemetry hooks on Code Reviewer, `selvedge:qa-executor`, Supervisor + 1 `type: command` opt-in webhook hook (v12.2.0) + the `launch-pad-runner` `LAUNCH_PAD_RESULT` validator listed above (added v14.2.0) + 1 `type: command` progress-event hook (`emit-progress-event.sh`, v15.16.0) on the Worker matcher
 - **PreToolUse (AskUserQuestion):** desktop banner + paused-event webhook (v14.1.0)
 - **Notification:** desktop banner on permission/idle/elicitation prompts, `auth_success` excluded (v14.1.0)
 - **SessionStart:** crash/compact recovery context via `session-resume.sh` (v14.2.0) + per-project OpenTelemetry resource-attribute labeling via `set-otel-resource-attrs.sh` — telemetry-gated, fail-safe (v14.47.0)

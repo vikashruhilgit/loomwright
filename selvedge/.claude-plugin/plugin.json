@@ -12,6 +12,10 @@
     "test-strategy",
     "test-generation",
     "playwright",
+    "e2e-testing",
+    "risk-based-testing",
+    "discovery",
+    "debate-loop",
     "companion"
   ]
 }
