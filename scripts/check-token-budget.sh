@@ -37,6 +37,20 @@
 # Exit 0 = every agent within budget. Exit 1 = at least one breach OR a broken
 # frontmatter skill reference OR an agent with no declared budget.
 #
+# MULTI-PLUGIN (v15.37.0): this repo is a marketplace wrapper with sibling
+# plugins, so the gate no longer hard-pins loomwright/agents. It DISCOVERS every
+# plugin registered in .claude-plugin/marketplace.json and budgets each one
+# against THAT PLUGIN'S OWN docs/prompt-token-budgets.json — budgets are per
+# plugin, never shared. Two branches, deliberately different:
+#   * SKIP SILENTLY — a plugin that ships no agents/ dir (stackpack, mysql-mcp,
+#     and selvedge until its agents land). Nothing to budget; not a defect.
+#   * FAIL LOUDLY  — a plugin whose agents/ dir EXISTS but whose
+#     prompt-token-budgets.json is missing. That is malformed, not absent: it
+#     would silently unmeasure real agents, which is exactly the ratchet hole
+#     this gate exists to close. It must NOT fall into the skip branch.
+# Plus the pre-existing anti-drift tripwire: zero agent-bearing plugins matched
+# is itself a failure (a gate that matched nothing is a false green).
+#
 # Portability: bash 3.2 safe (macOS). No `${var//...}` pattern-subst on large
 # strings (O(n^2) wedge on macOS bash 3.2). No GNU-only stat/sed/date flags —
 # byte sizes come from `wc -c`. Deterministic and fully offline.
@@ -45,21 +59,79 @@ set -uo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo_root"
+ROOT="$repo_root"
 
-# Overridable for the self-test (hermetic fixtures); default to the real repo.
-AGENTS_DIR="${TOKEN_BUDGET_AGENTS_DIR:-loomwright/agents}"
-SKILLS_DIR="${TOKEN_BUDGET_SKILLS_DIR:-loomwright/skills}"
-BUDGET_JSON="${TOKEN_BUDGET_JSON:-loomwright/docs/prompt-token-budgets.json}"
+# ── Plugin discovery: ONE idiom, ONE path-base rule ──────────────────────────
+# The idiom is check-skills-index-sync.sh's run_gate() (env escape hatch first,
+# then a marketplace loop, then a matched-nothing tripwire). Two refinements are
+# applied identically here and in check-shared-prefix.sh / check-contract-parity.sh:
+#
+#   1. CHECK_MARKETPLACE_JSON (the name validate-version.sh already uses — not a
+#      fourth convention) makes the manifest itself overridable. Without it the
+#      discovery branch is UNREACHABLE from a hermetic fixture, because every
+#      existing self-test case sets a per-gate TOKEN_BUDGET_* override that
+#      returns before discovery — so a "negative" test of the new loop could
+#      never fail. An untestable branch is the defect, not the feature.
+#
+#   2. Paths resolve relative to the MANIFEST'S OWN PLUGIN ROOT, never to CWD.
+#      check-skills-index-sync.sh resolves `.source` against CWD; copied
+#      verbatim that would ignore check-contract-parity.sh's --root and check the
+#      REAL loomwright tree from inside every fixture. MEASURED CORRECTION: the
+#      base is the manifest's GRANDPARENT, not `dirname "$MARKETPLACE_JSON"` —
+#      the manifest lives at <root>/.claude-plugin/marketplace.json while every
+#      `.source` ("./loomwright") is <root>-relative, so a single dirname yields
+#      <root>/.claude-plugin and <root>/.claude-plugin/loomwright does not exist.
+MARKETPLACE_JSON="${CHECK_MARKETPLACE_JSON:-$ROOT/.claude-plugin/marketplace.json}"
 
-command -v jq >/dev/null 2>&1 || { echo "check-token-budget: jq required" >&2; exit 1; }
-[ -d "$AGENTS_DIR" ] || { echo "check-token-budget: agents dir not found: $AGENTS_DIR" >&2; exit 1; }
-[ -f "$BUDGET_JSON" ] || { echo "check-token-budget: budget file not found: $BUDGET_JSON" >&2; exit 1; }
+# plugin_root_base MANIFEST -> the <plugin-root> that `.source` values are relative to.
+plugin_root_base() {
+  local d
+  d="$(dirname "$(dirname "$1")")"
+  ( cd "$d" 2>/dev/null && pwd )
+}
 
-# Proxy divisor (bytes per proxy-token). Sourced from the JSON so the label and
-# the math never drift; defaults to 4 if unset.
-DIVISOR="$(jq -r '.proxy_bytes_per_token // 4' "$BUDGET_JSON")"
-case "$DIVISOR" in ''|*[!0-9]*) DIVISOR=4 ;; esac
-[ "$DIVISOR" -ge 1 ] 2>/dev/null || DIVISOR=4
+# plugin_dirs MANIFEST -> one "<name>\t<dir>" line per registered plugin.
+GATE_NAME="check-token-budget"
+
+plugin_dirs() {
+  local manifest="$1" base name src raw want got
+  base="$(plugin_root_base "$manifest")" || return 1
+  [ -n "$base" ] || return 1
+
+  # Capture jq's OUTPUT AND STATUS before consuming it. The previous form piped
+  # jq straight into a heredoc with `2>/dev/null`, which threw the status away:
+  # jq that dies partway through `.plugins[]` still emits the entries it parsed
+  # BEFORE the error, so the caller silently discovered a TRUNCATED plugin list
+  # and every gate built on it reported OK on the plugins it never looked at.
+  # A fail-closed ratchet that silently stops covering a plugin is a false green
+  # — the exact failure this whole plugin-aware change exists to prevent.
+  # Found in review of PR #155; reproduced with jq exiting 5 after emitting 1 of
+  # 3 entries. Two guards, because either alone leaves a hole: the status check
+  # catches a parse error, and the count assertion catches any other way the
+  # emitted list could come up short.
+  raw="$(jq -r '.plugins[] | ((.name // "") + "\t" + (.source // ""))' "$manifest" 2>&1)" || {
+    echo "${GATE_NAME:-plugin-discovery}: cannot parse $manifest — $raw" >&2
+    return 1
+  }
+  want="$(jq -r '.plugins | length' "$manifest" 2>/dev/null)" || want=""
+  got="$(printf '%s\n' "$raw" | grep -c .)"
+  case "$want" in
+    ''|*[!0-9]*) echo "${GATE_NAME:-plugin-discovery}: cannot read plugin count from $manifest" >&2; return 1 ;;
+  esac
+  if [ "$got" -ne "$want" ]; then
+    echo "${GATE_NAME:-plugin-discovery}: discovered $got of $want plugin entries in $manifest — refusing to run against a truncated plugin list" >&2
+    return 1
+  fi
+
+  while IFS="$(printf '\t')" read -r name src; do
+    [ -n "$src" ] && [ "$src" != "null" ] || continue
+    src="${src#./}"; src="${src%/}"
+    [ -n "$name" ] && [ "$name" != "null" ] || name="$src"
+    printf '%s\t%s\n' "$name" "$base/$src"
+  done <<EOF
+$raw
+EOF
+}
 
 # proxy_tokens FILE -> echoes floor(bytes / DIVISOR). `wc -c` is portable.
 proxy_tokens() {
@@ -107,12 +179,38 @@ preloaded_skills() {
   ' "$1"
 }
 
+# run_check AGENTS_DIR SKILLS_DIR BUDGET_JSON CONTRACTS_MD — budget ONE plugin's
+# agents tree. Returns 0/1; never exits, so the discovery loop can aggregate.
+# CONTRACTS_MD empty => skip the mirror-table check (hermetic fixtures).
+#
+# The body below is deliberately left at column 0 (it was previously top-level
+# script text): re-indenting it would bury a mechanical extraction in a
+# whitespace-only diff. bash does not care; reviewability does.
+run_check() {
+local AGENTS_DIR="$1" SKILLS_DIR="$2" BUDGET_JSON="$3" CONTRACTS_MD="$4"
+local DIVISOR exit_code breaches errors agent_count
+local agent_file stem total nskills detail_missing skill skill_file budget key
+local jbudget row mbudget jmeasured mmeasured mirror_rows rstem
+
+command -v jq >/dev/null 2>&1 || { echo "check-token-budget: jq required" >&2; return 1; }
+[ -d "$AGENTS_DIR" ] || { echo "check-token-budget: agents dir not found: $AGENTS_DIR" >&2; return 1; }
+# Agents present but no budget file is MALFORMED, not absent — fail LOUDLY per
+# plugin. (The skip-silently branch lives in run_gate, on the agents dir.)
+[ -f "$BUDGET_JSON" ] || { echo "check-token-budget: budget file not found: $BUDGET_JSON (a plugin that ships agents/ MUST declare its own budgets)" >&2; return 1; }
+
+# Proxy divisor (bytes per proxy-token). Sourced from the JSON so the label and
+# the math never drift; defaults to 4 if unset.
+DIVISOR="$(jq -r '.proxy_bytes_per_token // 4' "$BUDGET_JSON")"
+case "$DIVISOR" in ''|*[!0-9]*) DIVISOR=4 ;; esac
+[ "$DIVISOR" -ge 1 ] 2>/dev/null || DIVISOR=4
+
 exit_code=0
 breaches=0
 errors=0
 agent_count=0
 
 echo "check-token-budget — proxy tokens = bytes / $DIVISOR (OFFLINE PROXY, not an Anthropic token count)"
+echo "agents dir: $AGENTS_DIR"
 echo "authoritative budgets: $BUDGET_JSON"
 echo "------------------------------------------------------------------------------"
 printf "%-22s %8s %8s  %-6s  %s\n" "AGENT" "PROXY" "BUDGET" "STATUS" "DETAIL"
@@ -186,7 +284,7 @@ done
 # self-test loop's `[ "${#tests[@]}" -gt 0 ] || exit 1` guard.
 if [ "$agent_count" -eq 0 ]; then
   echo "check-token-budget: no agent .md files found in $AGENTS_DIR — refusing to pass a 0-agent ratchet" >&2
-  exit 1
+  return 1
 fi
 
 # Orphaned-budget detection (symmetric with the per-agent no-budget ERROR): a
@@ -207,10 +305,10 @@ EOF
 # the one unguarded drift surface left; same move as check-skills-index-sync.sh
 # for SKILLS_INDEX version cells). Every JSON agent must have a table row whose
 # budget cell equals .agents[<stem>].budget, and every table row must have a
-# JSON entry (no ghost rows). TOKEN_BUDGET_CONTRACTS_MD set-but-EMPTY skips the
-# check (hermetic self-test fixtures only); unset uses the real file; a missing
-# file fails CLOSED.
-CONTRACTS_MD="${TOKEN_BUDGET_CONTRACTS_MD-loomwright/docs/ARCHITECTURE_CONTRACTS.md}"
+# JSON entry (no ghost rows). CONTRACTS_MD (arg 4) EMPTY skips the check
+# (hermetic self-test fixtures only, via TOKEN_BUDGET_CONTRACTS_MD set to "");
+# in discovery mode it is that plugin's OWN docs/ARCHITECTURE_CONTRACTS.md —
+# each plugin mirrors its own budgets. A missing file fails CLOSED.
 if [ -n "$CONTRACTS_MD" ]; then
   if [ ! -f "$CONTRACTS_MD" ]; then
     printf "%-22s %8s %8s  %-6s  %s\n" "(mirror)" "-" "-" "ERROR" "contracts mirror file not found: $CONTRACTS_MD"
@@ -283,4 +381,44 @@ if [ "$exit_code" -ne 0 ]; then
 else
   echo "check-token-budget: OK — all agents within their declared prompt-inventory budgets."
 fi
-exit "$exit_code"
+return "$exit_code"
+}
+
+# ── Gate mode ────────────────────────────────────────────────────────────────
+# Env override => ONE tree (hermetic fixtures / any single-plugin run), layered
+# ABOVE discovery so every pre-existing caller keeps working byte-identically.
+# Otherwise loop every marketplace plugin source that ships an agents/ dir.
+run_gate() {
+  if [ -n "${TOKEN_BUDGET_AGENTS_DIR:-}" ] || [ -n "${TOKEN_BUDGET_SKILLS_DIR:-}" ] \
+     || [ -n "${TOKEN_BUDGET_JSON:-}" ]; then
+    run_check "${TOKEN_BUDGET_AGENTS_DIR:-loomwright/agents}" \
+              "${TOKEN_BUDGET_SKILLS_DIR:-loomwright/skills}" \
+              "${TOKEN_BUDGET_JSON:-loomwright/docs/prompt-token-budgets.json}" \
+              "${TOKEN_BUDGET_CONTRACTS_MD-loomwright/docs/ARCHITECTURE_CONTRACTS.md}"
+    return $?
+  fi
+  command -v jq >/dev/null 2>&1 || { echo "check-token-budget: jq required for marketplace plugin discovery" >&2; return 1; }
+  [ -f "$MARKETPLACE_JSON" ] || { echo "check-token-budget: marketplace manifest not found: $MARKETPLACE_JSON" >&2; return 1; }
+  local rc=0 checked=0 name pdir
+  while IFS="$(printf '\t')" read -r name pdir; do
+    [ -n "$pdir" ] || continue
+    # SKIP SILENTLY: plugin ships no agents tree (stackpack, mysql-mcp, selvedge
+    # until 04). Nothing to budget — not a defect.
+    [ -d "$pdir/agents" ] || continue
+    checked=$((checked + 1))
+    echo "=============================================================================="
+    echo "plugin: $name"
+    run_check "$pdir/agents" "$pdir/skills" "$pdir/docs/prompt-token-budgets.json" \
+              "$pdir/docs/ARCHITECTURE_CONTRACTS.md" || rc=1
+  done <<EOF
+$(plugin_dirs "$MARKETPLACE_JSON")
+EOF
+  if [ "$checked" -eq 0 ]; then
+    echo "check-token-budget: no agent-bearing plugin sources found via $MARKETPLACE_JSON — gate matched nothing (anti-drift tripwire)" >&2
+    return 1
+  fi
+  return $rc
+}
+
+run_gate
+exit $?
