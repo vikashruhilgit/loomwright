@@ -223,11 +223,17 @@ else
   ok "case4 no proxy fields on usage-present path"
 fi
 
+# NOTE (selvedge split): the ledger `agent_type` is `selvedge:qa-executor`, not
+# `loomwright:qa-executor`. Loomwright KEPT the QA telemetry fan-out leaf and
+# re-pointed its matcher at the selvedge agent, so the emitter still runs from
+# loomwright while the agent it reports on is selvedge's. Updating the literal
+# rather than deleting the case is the honest fix: an assertion whose subject no
+# longer exists is vacuous, and this subject very much still exists.
 echo "== 5. unreadable proxy paths → no-op, exit 0 =="
 PAYLOAD5="$SANDBOX/unreadable.json"
 jq -n '{
   session_id: "fixture-token-ledger-unreadable-001",
-  agent_type: "loomwright:qa-executor",
+  agent_type: "selvedge:qa-executor",
   agent_transcript_path: "/nonexistent/agent.jsonl",
   transcript_path: "/nonexistent/session.jsonl"
 }' > "$PAYLOAD5"
@@ -317,7 +323,7 @@ printf 'DDDDDD' > "$TRANSCRIPT9"   # 6 bytes
 PAYLOAD9="$SANDBOX/stale.json"
 jq -n --arg tp "$TRANSCRIPT9" --arg cc "$STALE_CC" '{
   session_id: $cc,
-  agent_type: "loomwright:qa-executor",
+  agent_type: "selvedge:qa-executor",
   agent_transcript_path: $tp
 }' > "$PAYLOAD9"
 OUT9="$(run_sut "$PAYLOAD9")"
@@ -399,7 +405,7 @@ printf 'FFFFFFFFFFFF' > "$TRANSCRIPT12"   # 12 bytes
 PAYLOAD12="$SANDBOX/unrelated-usage-payload.json"
 jq -n --arg tp "$TRANSCRIPT12" '{
   session_id: "fixture-token-ledger-unrelated-001",
-  agent_type: "loomwright:qa-executor",
+  agent_type: "selvedge:qa-executor",
   agent_transcript_path: $tp,
   some_random_field: { usage: { widgets: 7 } }
 }' > "$PAYLOAD12"

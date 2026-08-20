@@ -48,13 +48,23 @@ write_manifest() {
   } > "$d/.claude-plugin/marketplace.json"
 }
 
+# QA_PLUGIN — the plugin that OWNS the qa-executor rows. Since the QA subsystem
+# was relocated, the MANIFEST/ENUMS rows read `selvedge:qa-executor`, so every
+# QA-scoped fixture artefact (the agent prompt, the hooks.json carrying that
+# matcher, and the validator/decoy the command-fallback resolves) must live in
+# the SELVEDGE tree. A fixture that kept them under loomwright would fail for
+# the uninteresting reason that the gate correctly looked where the row said.
+# Named rather than hard-coded a second time, so the next relocation is one edit.
+QA_PLUGIN="selvedge"
+
 make_fixture() { # $1 = fixture dir; writes a minimal valid tree
   local d="$1"
   mkdir -p "$d/loomwright/hooks" "$d/loomwright/agents" "$d/loomwright/scripts" \
            "$d/loomwright/skills/self-heal-advisory" \
            "$d/loomwright/skills/preflight-sync" \
-           "$d/loomwright/skills/supervisor-config"
-  write_manifest "$d"
+           "$d/loomwright/skills/supervisor-config" \
+           "$d/$QA_PLUGIN/hooks" "$d/$QA_PLUGIN/agents" "$d/$QA_PLUGIN/scripts"
+  write_manifest "$d" "loomwright:./loomwright" "$QA_PLUGIN:./$QA_PLUGIN"
   # the gate's ENUMS scope includes this skill (v14.23.0 supervisor diet) and
   # errs loudly when a scoped file is missing — fixtures must provide it
   cat >"$d/loomwright/skills/self-heal-advisory/SKILL.md" <<'EOF2'
@@ -70,19 +80,25 @@ EOF2
 Resume-gate refusal emit: status: failed with error resume_state_invalid.
 EOF2
   # hooks.json mentioning every manifest field for every matcher (pin guard satisfied)
-  python3 - "$d/loomwright/hooks/hooks.json" <<'PY'
+  python3 - "$d/loomwright/hooks/hooks.json" "$d/$QA_PLUGIN/hooks/hooks.json" "$QA_PLUGIN" <<'PY'
 import json,sys
 def prompt(fields): return "Verify block contains " + ", ".join(fields) + " fields."
-mk=lambda m,f:{"matcher":f"loomwright:{m}","hooks":[{"type":"prompt","prompt":prompt(f),"timeout":30}]}
+def mk(plugin,m,f): return {"matcher":f"{plugin}:{m}","hooks":[{"type":"prompt","prompt":prompt(f),"timeout":30}]}
+qa_plugin=sys.argv[3]
 h={"hooks":{"SubagentStop":[
-  mk("worker",["schema_version","task_id","status","files_modified","summary","outputs_verified","outputs_gap","out_of_lane"]),
-  mk("execute-manager",["schema_version","subtasks_completed","worktrees","merge_order","summary","completed_so_far","remaining","resume_context","reason","adjudication_required","missing_outputs","adjudication_options","adjudication_kind","colliding_lanes"]),
-  mk("qa-executor",["schema_version","tests_generated","tests_passed","summary","coverage_estimate"]),
-  mk("supervisor-runner",["schema_version","status","pr_url","heal_loop_ran","heal_iterations","heal_decision","heal_fixable_issues_fixed","heal_remaining_issues","error","summary"]),
-  mk("plan-reviewer",["schema_version","decision","issues","severity","section","description","summary"]),
-  mk("code-reviewer",["schema_version","decision","summary","severity","category","review_mode","audit_focus","trigger_paths_detected","scope_expanded","files_checked"]),
+  mk("loomwright","worker",["schema_version","task_id","status","files_modified","summary","outputs_verified","outputs_gap","out_of_lane"]),
+  mk("loomwright","execute-manager",["schema_version","subtasks_completed","worktrees","merge_order","summary","completed_so_far","remaining","resume_context","reason","adjudication_required","missing_outputs","adjudication_options","adjudication_kind","colliding_lanes"]),
+  mk("loomwright","supervisor-runner",["schema_version","status","pr_url","heal_loop_ran","heal_iterations","heal_decision","heal_fixable_issues_fixed","heal_remaining_issues","error","summary"]),
+  mk("loomwright","plan-reviewer",["schema_version","decision","issues","severity","section","description","summary"]),
+  mk("loomwright","code-reviewer",["schema_version","decision","summary","severity","category","review_mode","audit_focus","trigger_paths_detected","scope_expanded","files_checked"]),
 ]}}
 json.dump(h,open(sys.argv[1],"w"))
+# The QA matcher lives in the QA plugin's OWN hooks.json — mirroring the real
+# split, where the validator leaf moved with the agent.
+qa={"hooks":{"SubagentStop":[
+  mk(qa_plugin,"qa-executor",["schema_version","tests_generated","tests_passed","summary","coverage_estimate"]),
+]}}
+json.dump(qa,open(sys.argv[2],"w"))
 PY
   # agent prompts naming every required field, with in-enum literals only
   cat >"$d/loomwright/agents/worker.md" <<'EOF'
@@ -98,7 +114,7 @@ in_progress entries (status: in_progress), resume_context, reason. status: faile
 Adjudication fields (conditional, validated by rule 6/6a): adjudication_required,
 missing_outputs, adjudication_options, adjudication_kind, colliding_lanes.
 EOF
-  cat >"$d/loomwright/agents/qa-executor.md" <<'EOF'
+  cat >"$d/$QA_PLUGIN/agents/qa-executor.md" <<'EOF'
 QA_RESULT fields: schema_version, tests_generated, tests_passed, coverage_estimate, summary.
 EOF
   cat >"$d/loomwright/agents/supervisor.md" <<'EOF'
@@ -126,7 +142,7 @@ EOF
 
 set_command_hooks() { # $1 fixture dir, $2 matcher substring, $3.. command strings
   local d="$1" matcher="$2"; shift 2
-  python3 - "$d/loomwright/hooks/hooks.json" "$matcher" "$@" <<'PY'
+  python3 - "$d/$QA_PLUGIN/hooks/hooks.json" "$matcher" "$@" <<'PY'
 import json,sys
 p,matcher,cmds=sys.argv[1],sys.argv[2],sys.argv[3:]
 h=json.load(open(p))
@@ -139,7 +155,7 @@ PY
 
 write_validator() { # $1 fixture dir, $2 plugin-relative path, $3 comma-separated fields
   local d="$1" rel="$2" fields="$3" f
-  mkdir -p "$(dirname "$d/loomwright/$rel")"
+  mkdir -p "$(dirname "$d/$QA_PLUGIN/$rel")"
   {
     echo '#!/usr/bin/env python3'
     echo '"""Stand-in validator. Real validators name required fields as dict'
@@ -148,19 +164,19 @@ write_validator() { # $1 fixture dir, $2 plugin-relative path, $3 comma-separate
     IFS=',' read -ra _fl <<<"$fields"
     for f in "${_fl[@]}"; do echo "    \"$f\","; done
     echo ']'
-  } >"$d/loomwright/$rel"
+  } >"$d/$QA_PLUGIN/$rel"
 }
 
 write_decoy() { # $1 fixture dir, $2 plugin-relative path, $3 comma-separated fields
   local d="$1" rel="$2" fields="$3" f
-  mkdir -p "$(dirname "$d/loomwright/$rel")"
+  mkdir -p "$(dirname "$d/$QA_PLUGIN/$rel")"
   {
     echo '#!/usr/bin/env bash'
     echo '# Unrelated sibling command hook — models send-telemetry-core.sh,'
     echo '# which really does mention result-block field names in passing.'
     IFS=',' read -ra _fl <<<"$fields"
     for f in "${_fl[@]}"; do echo "echo \"reporting $f\""; done
-  } >"$d/loomwright/$rel"
+  } >"$d/$QA_PLUGIN/$rel"
 }
 
 write_prose_validator() { # $1 dir, $2 rel, $3 code fields, $4 prose-only field, $5 module|function|comment|bare
@@ -169,7 +185,7 @@ write_prose_validator() { # $1 dir, $2 rel, $3 code fields, $4 prose-only field,
   # but the surrounding commentary keeps transcribing the rule. $5 selects which
   # of the four separable prose placements carries it.
   local d="$1" rel="$2" fields="$3" prose="$4" where="$5" f
-  mkdir -p "$(dirname "$d/loomwright/$rel")"
+  mkdir -p "$(dirname "$d/$QA_PLUGIN/$rel")"
   {
     echo '#!/usr/bin/env python3'
     if [ "$where" = module ]; then
@@ -207,7 +223,7 @@ write_prose_validator() { # $1 dir, $2 rel, $3 code fields, $4 prose-only field,
       echo "    # PRESENCE, not truthiness: \`$prose: 0.0\` is a legitimate value."
     fi
     echo '    return [k for k in REQUIRED if k not in fields]'
-  } >"$d/loomwright/$rel"
+  } >"$d/$QA_PLUGIN/$rel"
 }
 
 write_hashstring_validator() { # $1 dir, $2 rel path, $3 comma-separated code fields, $4 field carried after a `#`-bearing string
@@ -222,7 +238,7 @@ write_hashstring_validator() { # $1 dir, $2 rel path, $3 comma-separated code fi
   # rest of that line along with the field name, and the guard then reports a
   # pin-drift that does not exist. Only a token-aware strip keeps it.
   local d="$1" rel="$2" fields="$3" after="$4" f
-  mkdir -p "$(dirname "$d/loomwright/$rel")"
+  mkdir -p "$(dirname "$d/$QA_PLUGIN/$rel")"
   {
     echo '#!/usr/bin/env python3'
     echo '"""Stand-in validator with a `#` inside a string literal."""'
@@ -237,7 +253,7 @@ write_hashstring_validator() { # $1 dir, $2 rel path, $3 comma-separated code fi
     echo ''
     echo 'def _missing(fields):'
     echo '    return [k for k in REQUIRED + [KEY] if k not in fields]'
-  } >"$d/loomwright/$rel"
+  } >"$d/$QA_PLUGIN/$rel"
 }
 
 QA_FIELDS='schema_version,tests_generated,tests_passed,summary,coverage_estimate'
@@ -255,8 +271,8 @@ check "clean fixture passes" 0 bash "$GUARD" --root "$TMP/clean"
 make_fixture "$TMP/missing-field"
 # BSD sed (macOS) needs -i '' (empty backup suffix); GNU sed rejects the empty
 # arg — try BSD form first, fall back to GNU on failure.
-sed -i '' -e 's/coverage_estimate, summary/summary/' "$TMP/missing-field/loomwright/agents/qa-executor.md" 2>/dev/null \
-  || sed -i -e 's/coverage_estimate, summary/summary/' "$TMP/missing-field/loomwright/agents/qa-executor.md"
+sed -i '' -e 's/coverage_estimate, summary/summary/' "$TMP/missing-field/$QA_PLUGIN/agents/qa-executor.md" 2>/dev/null \
+  || sed -i -e 's/coverage_estimate, summary/summary/' "$TMP/missing-field/$QA_PLUGIN/agents/qa-executor.md"
 check "missing hook-required field fails" 1 bash "$GUARD" --root "$TMP/missing-field"
 
 # 3. Out-of-enum status literal fails (the `status: paused` class)
@@ -266,7 +282,7 @@ check "out-of-enum status literal fails" 1 bash "$GUARD" --root "$TMP/bad-enum"
 
 # 4. Pin-drift: hooks.json drops a field the manifest still pins → fails
 make_fixture "$TMP/pin-drift"
-python3 - "$TMP/pin-drift/loomwright/hooks/hooks.json" <<'PY'
+python3 - "$TMP/pin-drift/$QA_PLUGIN/hooks/hooks.json" <<'PY'
 import json,sys
 p=sys.argv[1]; h=json.load(open(p))
 for e in h["hooks"]["SubagentStop"]:
@@ -450,7 +466,7 @@ check_msg() { # $1 desc, $2 expected exit, $3 grep -F needle, then the command
 #     tree is present and valid at ./loomwright — only its REGISTRATION is
 #     missing, so nothing but discovery can tell the difference.
 make_fixture "$TMP/unregistered"
-write_manifest "$TMP/unregistered" "other:./loomwright"
+write_manifest "$TMP/unregistered" "other:./loomwright" "$QA_PLUGIN:./$QA_PLUGIN"
 check_msg "MANIFEST row naming an unregistered plugin fails loudly" 1 \
   "is not registered in" bash "$GUARD" --root "$TMP/unregistered"
 
@@ -466,7 +482,7 @@ check_msg "fixture without a marketplace manifest fails closed" 1 \
 make_fixture "$TMP/relocated"
 mkdir -p "$TMP/relocated/plugins"
 mv "$TMP/relocated/loomwright" "$TMP/relocated/plugins/loomwright"
-write_manifest "$TMP/relocated" "loomwright:./plugins/loomwright"
+write_manifest "$TMP/relocated" "loomwright:./plugins/loomwright" "$QA_PLUGIN:./$QA_PLUGIN"
 check "relocated plugin dir resolves through the manifest" 0 \
   bash "$GUARD" --root "$TMP/relocated"
 
@@ -475,7 +491,7 @@ check "relocated plugin dir resolves through the manifest" 0 \
 make_fixture "$TMP/relocated-broken"
 mkdir -p "$TMP/relocated-broken/plugins"
 mv "$TMP/relocated-broken/loomwright" "$TMP/relocated-broken/plugins/loomwright"
-write_manifest "$TMP/relocated-broken" "loomwright:./plugins/loomwright"
+write_manifest "$TMP/relocated-broken" "loomwright:./plugins/loomwright" "$QA_PLUGIN:./$QA_PLUGIN"
 # drop a hook-required field from the relocated agent prompt
 grep -v 'out_of_lane' "$TMP/relocated-broken/plugins/loomwright/agents/worker.md" \
   > "$TMP/relocated-broken/plugins/loomwright/agents/worker.md.new"
@@ -489,7 +505,7 @@ check "relocated plugin tree is actually checked (drift there fails)" 1 \
 #     position in the manifest.
 make_fixture "$TMP/two-plugin"
 mkdir -p "$TMP/two-plugin/sibling"
-write_manifest "$TMP/two-plugin" "loomwright:./loomwright" "sibling:./sibling"
+write_manifest "$TMP/two-plugin" "loomwright:./loomwright" "$QA_PLUGIN:./$QA_PLUGIN" "sibling:./sibling"
 check "a registered sibling plugin does not disturb loomwright's rows" 0 \
   bash "$GUARD" --root "$TMP/two-plugin"
 
