@@ -7,7 +7,7 @@
     {
       "name": "loomwright",
       "source": "./loomwright",
-      "description": "Loomwright v15.37.0 — a plan-first, multi-agent development system for Claude Code. Launch Pad turns a raw goal into a reviewed, Supervisor-ready brief; Supervisor executes it autonomously across parallel git worktrees with sequential merges and a post-merge self-heal pass; dedicated agents handle code review, adversarial red-teaming, and dual-agent QA. Adds standalone PR review-and-heal via /review-pr (bounded review→fix→re-review loop against any open PR, never auto-merges), continuous autonomous mode with stacked PRs, advisory cross-session project memory (human-gated, provenance-verified, worktree-safe) with reflective distillation into bounded LESSONS and harvested `.agent/rules/` conventions delivered as a pull request via /dreaming, an advisory System Twin foundation (per-subsystem System Contracts with sole-writer/hash-chained provenance, blast-radius prediction (depends-on + derived dependents) with incident history, post-merge conformance + benchmark proof, and compounding trend insights — propose-only, subordinate to CLAUDE.md), on-demand capability scanning via /capability-check (adoption + product-direction modes), on-demand PR review-churn root-cause analysis via /pr-postmortem, a local Obsidian-friendly insights dashboard via /insights and a shareable linked Obsidian vault via /obsidian, clickable desktop and phone notifications at human-decision gates, a /setup memory module that puts a repo's Twin memory stores under version control in place (gitignore negation + repo allowlist, consent-bearing, reversible), and opt-in GitHub-issue telemetry. Project memory and lessons are always advisory and subordinate to CLAUDE.md, and every promotion is human-gated. 14 agent roles, 41 reusable skills, 24 quality gate hooks, 21 slash commands, and persistent agent memory. Full version history lives in CHANGELOG.md.",
+      "description": "Loomwright v15.37.0 — a plan-first, multi-agent development system for Claude Code. Launch Pad turns a raw goal into a reviewed, Supervisor-ready brief; Supervisor executes it autonomously across parallel git worktrees with sequential merges and a post-merge self-heal pass; dedicated agents handle code review and adversarial red-teaming (dual-agent QA moved to the selvedge@atelier companion plugin). Adds standalone PR review-and-heal via /review-pr (bounded review→fix→re-review loop against any open PR, never auto-merges), continuous autonomous mode with stacked PRs, advisory cross-session project memory (human-gated, provenance-verified, worktree-safe) with reflective distillation into bounded LESSONS and harvested `.agent/rules/` conventions delivered as a pull request via /dreaming, an advisory System Twin foundation (per-subsystem System Contracts with sole-writer/hash-chained provenance, blast-radius prediction (depends-on + derived dependents) with incident history, post-merge conformance + benchmark proof, and compounding trend insights — propose-only, subordinate to CLAUDE.md), on-demand capability scanning via /capability-check (adoption + product-direction modes), on-demand PR review-churn root-cause analysis via /pr-postmortem, a local Obsidian-friendly insights dashboard via /insights and a shareable linked Obsidian vault via /obsidian, clickable desktop and phone notifications at human-decision gates, a /setup memory module that puts a repo's Twin memory stores under version control in place (gitignore negation + repo allowlist, consent-bearing, reversible), and opt-in GitHub-issue telemetry. Project memory and lessons are always advisory and subordinate to CLAUDE.md, and every promotion is human-gated. 12 agent roles, 36 reusable skills, 23 quality gate hooks, 19 slash commands, and persistent agent memory. Full version history lives in CHANGELOG.md.",
       "version": "15.37.0",
       "author": {
         "name": "vikash ruhil"
@@ -35,9 +35,6 @@
         "brainstorming",
         "ideation",
         "multi-mind",
-        "qa-strategist",
-        "qa-executor",
-        "playwright",
         "skills",
         "persistent-memory",
         "hooks",
@@ -106,7 +103,7 @@
     {
       "name": "selvedge",
       "source": "./selvedge",
-      "description": "Selvedge v1.0.0 — the QA companion being spun out of Loomwright: risk-based test strategy, test generation, and execution. Scaffold only for now; it ships no agents, commands, skills, or hooks yet. Requires loomwright@atelier — not a standalone install.",
+      "description": "Selvedge v1.0.0 — the QA companion to loomwright@atelier: risk-based test strategy, test generation, and Playwright execution, with a two-agent debate loop (QA Strategist plans and audits, QA Executor discovers and runs) gated by a deterministic QA_RESULT validator hook. Ships 2 QA agent roles, 2 QA slash commands, 5 QA skills and 1 QA quality gate hook. Requires loomwright@atelier — not a standalone install: its agents preload loomwright's quality-checklist skill and loomwright emits the QA telemetry fan-out.",
       "version": "1.0.0",
       "author": {
         "name": "vikash ruhil"

@@ -22,7 +22,7 @@ GitHub Actions pipeline patterns for reliable builds, tests, and deployments.
 ## When NOT to Use
 
 - Docker image building only — use the `docker` skill (stackpack@atelier plugin)
-- Application-level testing patterns — use `unit-testing` or `playwright-e2e`
+- Application-level testing patterns — use `unit-testing`, or `playwright-e2e` from the **selvedge** plugin (`/plugin install selvedge@atelier`)
 - Infrastructure provisioning (Terraform, Pulumi) — separate concern
 
 ## Core Patterns
@@ -238,7 +238,7 @@ jobs:
 
 - `docker` (stackpack@atelier plugin) — Container image builds in CI
 - `unit-testing` — Test execution in pipelines
-- `playwright-e2e` — E2E tests in CI with browser setup
+- `playwright-e2e` — E2E tests in CI with browser setup. **Not a loomwright skill:** install `selvedge@atelier` to get it. Named as install guidance rather than a plugin-rooted path, which is per-plugin and would not resolve.
 - `monitoring-observability` — Post-deploy monitoring
 
 ## Quality Gates

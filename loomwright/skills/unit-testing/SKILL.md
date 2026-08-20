@@ -21,7 +21,7 @@ Patterns for writing reliable, maintainable unit tests with Jest and Vitest.
 
 ## When NOT to Use
 
-- E2E or integration tests spanning multiple services — use `playwright-e2e`
+- E2E or integration tests spanning multiple services — use `playwright-e2e`, which ships in the **selvedge** plugin (`/plugin install selvedge@atelier`), not in loomwright
 - Database query testing — use the `mysql` or `postgresql` skills (stackpack@atelier plugin)
 - Load/performance testing — use dedicated performance tools
 
@@ -195,7 +195,7 @@ npx vitest run src/services/user.service.spec.ts
 
 ## Related Skills
 
-- `playwright-e2e` — E2E and integration testing with Playwright
+- `playwright-e2e` — E2E and integration testing with Playwright. **Not a loomwright skill:** install `selvedge@atelier` to get it. Deliberately named as install guidance rather than a plugin-rooted path, because the plugin-root variable is per-plugin and would resolve inside loomwright, which no longer ships this skill.
 - `quality-checklist` — Coverage thresholds and review criteria
 - `nestjs-services` (stackpack@atelier plugin) — NestJS service patterns that need unit tests
 - `error-handling` — Testing error paths and exception scenarios

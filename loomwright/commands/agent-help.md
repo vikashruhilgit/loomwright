@@ -20,7 +20,7 @@ Shows all available agent commands and quick usage examples.
 
 ## Quick Start
 
-The Loomwright plugin provides **14 agent roles** (9 user-facing + 5 internal) for your development workflow:
+The Loomwright plugin provides **12 agent roles** (9 user-facing + 5 internal) for your development workflow:
 
 **Which command?** (condensed — full table in `README.md` / `.claude-plugin/README.md`)
 
@@ -64,7 +64,7 @@ The Loomwright plugin provides **14 agent roles** (9 user-facing + 5 internal) f
 
 **QA Pipeline (2 agents):**
 ```
-5. Strategy (QA Strategist)  →  Risk classification + coverage targets
+5. Strategy (QA Strategist)  →  Risk classification + coverage targets   [selvedge@atelier]
 6. Execute (QA Executor)     →  Discovery → Tests → Debate → QA_RESULT
 ```
 
@@ -508,95 +508,23 @@ security(hooks): validate localStorage input
 
 ---
 
-### 5️⃣ /qa-strategist — Risk-Based QA Strategy
+### 5️⃣ /qa-strategist and 6️⃣ /qa-executor — MOVED to `selvedge@atelier`
 
-**Purpose:** Plan risk-based test strategy and audit QA Executor results
+**These two commands are no longer part of loomwright.** The QA subsystem — both agents, both
+slash commands, their five skills and the `QA_RESULT` validator hook — now ships in the
+**selvedge** plugin, loomwright's QA companion.
 
-**Usage:**
 ```
-/qa-strategist src/                              # Analyze source for risk
-/qa-strategist --audit .qa-summary.md            # Audit Executor results
-/qa-strategist src/auth/ --focus auth             # Focus on auth flows
-```
-
-**What it does:**
-- **Strategy Mode:** Discovers routes/endpoints, classifies risk (HIGH/MEDIUM/LOW), sets coverage targets, produces test priority matrix
-- **Audit Mode:** Reviews QA Executor summary, evaluates coverage against targets, emits STRATEGIST_VERDICT (approved/rejected)
-
-**Risk Classification:**
-- **HIGH:** Auth flows, data mutation, payment/billing (target: 85%)
-- **MEDIUM:** CRUD operations, standard API endpoints (target: 70%)
-- **LOW:** Static pages, informational content (target: 50%)
-
-**Key Constraints:**
-- Read-only — never writes files, never runs tests
-- Verdict is final on conflict (defaults to deeper testing)
-- Level-aware — only demands current maturity level capabilities
-
-**When to Use:**
-- Before QA execution to define test priorities
-- After QA execution to audit coverage and quality
-- When you need risk-based testing decisions
-
-**Learn More:** `/qa-strategist --help`
-
----
-
-### 6️⃣ /qa-executor — Automated QA Testing
-
-**Purpose:** Discover app structure, generate and run Playwright tests, orchestrate debate loop
-
-**Usage:**
-```
-/qa-executor                                      # Auto-detect URL + topology, full run
-/qa-executor --url http://localhost:3000            # Explicit URL
-/qa-executor --auth-state ./auth.json              # Pre-authenticated (OAuth/SSO apps)
-/qa-executor --skip-strategy                       # Quick run, skip Strategist
-/qa-executor --coverage 90                         # Override coverage target (risk-based default)
-/qa-executor --strict-discovery                    # Require human approval of discovery
-# Note: --rounds only meaningful at L2+. L1 runs 1 round (hard cap).
+/plugin install selvedge@atelier
 ```
 
-**What it does:**
-1. Auto-detects app topology (UI, API style, platform) + probes test infrastructure
-2. Runs 4-phase discovery engine (static analysis → runtime crawl → selective vision → merge & gate)
-3. Gets risk strategy from QA Strategist (or uses defaults)
-4. Generates Playwright tests appropriate to detected topology (UI/API/GraphQL/WebSocket)
-5. Executes tests, tracks coverage, reports bugs
-6. Runs Strategist audit (debate loop)
-7. Emits QA_RESULT
+After installing, `/qa-strategist` and `/qa-executor` work exactly as before; run
+`/qa-strategist --help` or `/qa-executor --help` for their own usage. Selvedge **requires**
+loomwright and is not a standalone install: its agents still preload loomwright's
+`quality-checklist` skill, and loomwright still emits the QA telemetry/token-ledger fan-out
+under the re-pointed `selvedge:qa-executor` matcher.
 
-**Discovery Engine:**
-```
-Static Analysis → Routes from source code (Glob/Grep)
-Runtime Crawl   → Playwright DOM/network/a11y extraction (max 30 pages, depth 3)
-Selective Vision → Screenshots for complex pages only
-Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
-```
-
-**Level 1 Boundaries:**
-- Happy paths + basic errors + negative tests (no state modeling / fuzz → L2)
-- No performance tests (→ L3)
-- No adversarial/penetration security tests (→ L3)
-- L1 INCLUDES non-destructive security boundary probes: IDOR, role escalation,
-  session invalidation, XSS/SQLi input-rejection checks, cookie security flags
-- Single debate round
-- Inventory-level coverage tracking
-- Auto-detects: REST, GraphQL, mixed APIs, web UI, mobile backends
-- Generates tests appropriate to detected topology (skips UI tests for API-only apps)
-
-**Requirements:**
-- Application must be running at base URL
-- Playwright browsers installed
-- `playwright.config.ts`: required for UI apps; auto-generated for API-only apps if missing
-- For OAuth/SSO apps: `--auth-state ./auth.json` recommended
-
-**When to Use:**
-- Automated QA after feature implementation
-- Regression testing before release
-- Quick smoke tests (with --skip-strategy)
-
-**Learn More:** `/qa-executor --help`
+> The section numbers 5️⃣ and 6️⃣ are kept so the numbering below is stable across this move.
 
 ---
 
@@ -829,7 +757,7 @@ Merge & Gate    → Confidence scoring (HIGH/MEDIUM/LOW)
 ### QA Workflow Diagram
 
 ```
-/qa-strategist src/ → Risk Classification + Coverage Targets
+/qa-strategist src/ → Risk Classification + Coverage Targets   (selvedge@atelier)
     ↓
 /qa-executor → Discovery → Tests → Execute → Coverage → Bugs
     ↓
@@ -972,7 +900,7 @@ The plugin centralizes its hooks in `hooks/hooks.json`, which automatically enfo
 
 | Hook | When It Fires | What It Checks / Does |
 |------|---------------|----------------|
-| **SubagentStop** (worker, execute-manager, code-reviewer, supervisor-runner, qa-executor, plan-reviewer, launch-pad-runner) | The matching agent completes | Validates its result block (WORKER_RESULT, EXECUTE_*, CODE_REVIEW_RESULT v3, SUPERVISOR_RESULT, QA_RESULT, PLAN_REVIEW_RESULT, LAUNCH_PAD_RESULT). Since v15.17.0 all of these are `type: command` validator scripts **except `code-reviewer`**, which stays a prompt hook. Plus 3 telemetry + 1 webhook + 1 progress-event `type: command` hooks |
+| **SubagentStop** (worker, execute-manager, code-reviewer, supervisor-runner, `selvedge:qa-executor`, plan-reviewer, launch-pad-runner) | The matching agent completes | Validates its result block (WORKER_RESULT, EXECUTE_*, CODE_REVIEW_RESULT v3, SUPERVISOR_RESULT, QA_RESULT, PLAN_REVIEW_RESULT, LAUNCH_PAD_RESULT). Since v15.17.0 all of these are `type: command` validator scripts **except `code-reviewer`**, which stays a prompt hook. Plus 3 telemetry + 1 webhook + 1 progress-event `type: command` hooks |
 | **PreToolUse (AskUserQuestion)** | Plugin about to block on a user question | Desktop banner (`notify-desktop.sh`) + paused-event webhook (v14.1.0) |
 | **Notification** | Claude Code signals attention (permission / idle / elicitation) | Desktop banner (v14.1.0) |
 | **PostToolUse (Bash)** | A Bash tool call completes (e.g. `gh pr create`) | Backstops the until-mergeable review drain on PR creation (`hook-dispatch-on-pr-create.sh`); session-scope gated, fail-safe (v14.34.0). PLUS a second entry (`reproject-state-on-terminal.sh`, PR #116 review round) that mechanically re-invokes `build-state.sh` once `session_end` lands in the session log |
@@ -1096,7 +1024,7 @@ bd close BD-XX
 loomwright/              # Nested plugin root
 ├── .claude-plugin/
 │   └── plugin.json                   # Plugin metadata
-├── commands/                         # Slash commands (21)
+├── commands/                         # Slash commands (19)
 │   ├── launch-pad.md                 # Supervisor readiness
 │   ├── supervisor.md                 # Parallel orchestrator (v4)
 │   ├── autonomous.md                 # Continuous autonomous loop, stacked PRs (v14)
@@ -1106,8 +1034,6 @@ loomwright/              # Nested plugin root
 │   ├── code-reviewer.md
 │   ├── red-team-reviewer.md          # Adversarial auditor
 │   ├── review-pr.md                  # Standalone PR review-and-heal loop (never auto-merges)
-│   ├── qa-strategist.md              # Risk-based QA strategy
-│   ├── qa-executor.md                # Automated QA testing
 │   ├── dreaming.md                   # Read-only reflection over session logs (proposes memory + CLAUDE.md updates)
 │   ├── capability-check.md           # Read-only scan for new Claude Code capabilities vs tracked baseline
 │   ├── insights.md                   # Local Obsidian-friendly insights dashboard from session logs
@@ -1116,7 +1042,7 @@ loomwright/              # Nested plugin root
 │   ├── telemetry.md                  # Opt-in GitHub Issues telemetry (status/enable/disable/test)
 │   ├── setup.md                      # Optional-capability dashboard + guided configuration (incl. observability)
 │   └── agent-help.md
-├── agents/                           # Agent implementations (14 roles)
+├── agents/                           # Agent implementations (12 roles; the 2 QA roles moved to selvedge@atelier)
 │   ├── launch-pad.md                 # Supervisor readiness agent
 │   ├── supervisor.md                 # Parallel orchestrator (v4)
 │   ├── execute-manager.md            # Phase 3 execution manager
@@ -1128,9 +1054,7 @@ loomwright/              # Nested plugin root
 │   ├── orchestrator.md
 │   ├── code-reviewer.md
 │   ├── red-team-reviewer.md
-│   ├── review-pr.md                  # Standalone PR review-and-heal runner
-│   ├── qa-strategist.md
-│   └── qa-executor.md
+│   └── review-pr.md                  # Standalone PR review-and-heal runner
 ├── hooks/                            # Plugin quality gate hooks
 │   └── hooks.json                    # SubagentStop + TaskCompleted validation
 ├── docs/                             # Architecture + schemas
@@ -1247,8 +1171,8 @@ These are Claude Code slash commands, so you can type them directly:
 
 | Agent | Purpose | When | Input | Output |
 |-------|---------|------|-------|--------|
-| **QA Strategist** | Plan test strategy | Before QA, or audit after | Source code or .qa-summary.md | Risk classification + STRATEGIST_VERDICT |
-| **QA Executor** | Run automated QA | After implementation | Running app + Playwright config | QA_RESULT + test files |
+| **QA Strategist** (selvedge@atelier) | Plan test strategy | Before QA, or audit after | Source code or .qa-summary.md | Risk classification + STRATEGIST_VERDICT |
+| **QA Executor** (selvedge@atelier) | Run automated QA | After implementation | Running app + Playwright config | QA_RESULT + test files |
 
 ---
 

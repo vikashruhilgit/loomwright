@@ -1,7 +1,7 @@
 {
   "name": "selvedge",
   "version": "1.0.0",
-  "description": "Selvedge v1.0.0 — the QA companion being spun out of Loomwright: risk-based test strategy, test generation, and execution. Scaffold only for now; it ships no agents, commands, skills, or hooks yet. Requires loomwright@atelier — not a standalone install.",
+  "description": "Selvedge v1.0.0 — the QA companion to loomwright@atelier: risk-based test strategy, test generation, and Playwright execution, with a two-agent debate loop (QA Strategist plans and audits, QA Executor discovers and runs) gated by a deterministic QA_RESULT validator hook. Ships 2 QA agent roles, 2 QA slash commands, 5 QA skills and 1 QA quality gate hook. Requires loomwright@atelier — not a standalone install: its agents preload loomwright's quality-checklist skill and loomwright emits the QA telemetry fan-out.",
   "author": {
     "name": "vikash ruhil"
   },

@@ -836,7 +836,7 @@ subtask_4:
 - `skills/error-handling/SKILL.md` (Subtask 1)
 - `skills/unit-testing/SKILL.md` (Subtask 2)
 - `skills/{domain}/SKILL.md` (Subtask 3)
-- `skills/playwright-e2e/SKILL.md` (Subtask 4)
+- `playwright-e2e` (Subtask 4) — ships in the **selvedge** plugin (`/plugin install selvedge@atelier`); no loomwright-relative path resolves to it
 
 ## Risk Assessment
 | Risk | Impact | Mitigation |
