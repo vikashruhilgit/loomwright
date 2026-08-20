@@ -747,17 +747,24 @@ measured that the doubled form *also* fires as a matcher on the version tested, 
 tolerance is undocumented and may narrow, at which point the failure is the silent one described
 above. Do not write the doubled spawn string into the matcher slot.
 
-**Rejected alternatives (four).** The first three are the spike's Unknown-B options; the fourth is
-the source requirement's own recommendation, which the owner reversed.
+**Rejected alternatives (four).** The first three are the spike's Unknown-B options **and keep that
+doc's letters**; the fourth is the source requirement's own recommendation, which the owner reversed.
+**It is deliberately labelled `(req)`, not `(d)`** — the spike's `(d)` is the option this document
+*chose* (keep the fan-out), so reusing that letter for a rejected row would make the two labels name
+opposite decisions.
 
 | Rejected | Why |
 |---|---|
 | **(a)** Copy `send-telemetry.sh` + `emit-token-ledger.sh` into selvedge | These are exactly the scripts that must not fork. `loomwright:code-reviewer` and other matchers share them, so a divergence would silently change telemetry semantics for one agent only. |
 | **(b)** Hard-code an absolute path to the loomwright install | The install path is machine-specific and version-stamped, so it breaks on every loomwright version bump — and under `\|\| true`, breaks **silently**. |
 | **(c)** Derive loomwright's root at hook time (e.g. read the plugin manager's `installed_plugins.json`) | It demonstrably works, but it makes selvedge depend on the plugin manager's **private state file** — an unstable contract to build a shipped hook on. |
-| **(d)** Drop the QA fan-out entirely **and** retire Rubric C as dormant (the source requirement's recommendation) | Reversed by the owner on 2026-08-20. Dropping the fan-out silently deletes a live telemetry signal to save one matcher, and banner-marking Rubric C dormant would misreport a rubric that is still exercised. Both limbs are rejected: the fan-out is kept **and** Rubric C stays live. |
+| **(req)** Drop the QA fan-out entirely **and** retire Rubric C as dormant (the source requirement's recommendation — **not** a spike option, hence no letter) | Reversed by the owner on 2026-08-20. Dropping the fan-out silently deletes a live telemetry signal to save one matcher, and banner-marking Rubric C dormant would misreport a rubric that is still exercised. Both limbs are rejected: the fan-out is kept **and** Rubric C stays live. |
 
-**Chosen:** keep the fan-out in loomwright, matched on the selvedge agent — the spike's option (d).
+**Chosen:** keep the fan-out in loomwright, matched on the selvedge agent — **option (d) in the
+spike's Unknown-B table** (`docs/SPIKES/CROSS_PLUGIN_RESOLUTION.md` §"Unknown B", where (d) reads
+"Keep the shared-script fan-out hooks in LOOMWRIGHT, matched on the selvedge agent"). That is the
+same `(d)` as rows (a)–(c) above, which carry the spike's letters unchanged; the rejected
+source-requirement row is labelled `(req)` precisely so it cannot be mistaken for it.
 
 ---
 
