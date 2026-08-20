@@ -62,20 +62,12 @@ Comprehensive index of all skills available in the Loomwright plugin.
 |------------|-----------|-----------------|------------|---------|--------------|
 | Frontend UI | `frontend-ui/` | Worker (reference) | ~600 | 1.0.0 | 2026-03 |
 
-## Testing / QA
-
-| Skill Name | Directory | Agent Consumers | Token Est. | Version | Last Updated |
-|------------|-----------|-----------------|------------|---------|--------------|
-| Playwright E2E | `playwright-e2e/` | QA Executor (preload) | ~1,500 | 1.0.0 | 2026-03 |
-| QA Strategy | `qa-strategy/` | QA Strategist (preload), QA Executor (preload) | ~1,100 | 1.0.0 | 2026-03 |
-| QA Gates | `qa-gates/` | QA Executor (preload), QA Strategist (preload) | ~1,400 | 1.0.0 | 2026-06-10 |
-| QA Test Patterns | `qa-test-patterns/` | QA Executor (preload) | ~1,800 | 1.0.0 | 2026-06-10 |
-| QA Orchestration | `qa-orchestration/` | QA Executor (reference) | ~900 | 1.0.0 | 2026-03 |
-
 ---
 
-**Total: 41 skills**
+**Total: 36 skills**
 
 > **Moved (v15.6.0):** the 18 tech-stack skills (Next.js ×5, NestJS ×5, API Gateway ×4, MySQL/PostgreSQL/Redis Caching, Docker) now live in the **stackpack@atelier** plugin — `/plugin install stackpack@atelier`.
+>
+> **Moved (v15.38.0):** the 5 QA skills (Playwright E2E, QA Strategy, QA Gates, QA Test Patterns, QA Orchestration) now live in the **selvedge@atelier** plugin — `/plugin install selvedge@atelier`.
 
-_Last updated: 2026-07-07_
+_Last updated: 2026-08-20_

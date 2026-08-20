@@ -44,14 +44,13 @@ PARSER="$SCRIPT_DIR/result_block_parser.py"
 V_WORKER="$SCRIPT_DIR/validate-worker-result.py"
 V_EXECUTE="$SCRIPT_DIR/validate-execute-result.py"
 V_SUPERVISOR="$SCRIPT_DIR/validate-supervisor-result.py"
-V_QA="$SCRIPT_DIR/validate-qa-result.py"
 V_PLAN="$SCRIPT_DIR/validate-plan-review-result.py"
 
-ALL_PY="$PARSER $V_WORKER $V_EXECUTE $V_SUPERVISOR $V_QA $V_PLAN"
+ALL_PY="$PARSER $V_WORKER $V_EXECUTE $V_SUPERVISOR $V_PLAN"
 
 for f in $ALL_PY "$FIXDIR/worker-valid-bullet.md" "$FIXDIR/worker-valid-yaml.md" \
          "$FIXDIR/execute-result-valid.md" "$FIXDIR/execute-checkpoint-valid.md" \
-         "$FIXDIR/supervisor-valid.md" "$FIXDIR/qa-result-valid.md" \
+         "$FIXDIR/supervisor-valid.md" \
          "$FIXDIR/plan-review-valid.md" "$FIXDIR/subagentstop-payload.json"; do
   if [ ! -e "$f" ]; then
     echo "FATAL  required file not found: $f" >&2
@@ -2315,165 +2314,12 @@ run_v "$V_SUPERVISOR" "$F"
 assert_fail "supervisor: [FALSIFIES @4f63dea] markdown form, blank+comment was rejected on a bogus parse error so rule 13 never ran" \
   "rubric_score must be null or a string 'N/M' with N >= 0, M >= 1, M >= N"
 
-# ── E. qa-executor validator ─────────────────────────────────────────────────
-echo "== E. validate-qa-result.py — 5 rules =="
-
-run_v "$V_QA" "$FIXDIR/qa-result-valid.md"
-assert_pass "qa: valid block (committed fixture)"
-
-mk qa-no-block.md <<'EOF'
-Ran the tests, everything passed, but no result block was emitted.
-EOF
-run_v "$V_QA" "$F"
-assert_fail "qa: MISSING block" "missing QA_RESULT block"
-
-run_raw "$V_QA" "$GARBAGE"
-assert_pass "qa: malformed (non-JSON) payload -> ok:true"
-
-mk qa-malformed.md <<'EOF'
-QA_RESULT:
-  schema_version: 1
-  status: passed
-  files_created: [a.spec.ts
-  tests_generated: 1
-  tests_passed: 1
-  coverage_estimate: 0.5
-  summary: broken flow array
-EOF
-run_v "$V_QA" "$F"
-assert_fail "qa: malformed BLOCK body -> explicit parse failure" "could not be parsed"
-
-mk qa-missing-key.md <<'EOF'
-QA_RESULT:
-  schema_version: 1
-  status: passed
-  tests_generated: 5
-  coverage_estimate: 0.6
-  summary: tests_passed is absent
-EOF
-run_v "$V_QA" "$F"
-assert_fail "qa: MISSING required key (tests_passed) [rule 2]" "missing the tests_passed field"
-
-mk qa-null-key.md <<'EOF'
-QA_RESULT:
-  schema_version: 1
-  status: passed
-  tests_generated: 5
-  tests_passed:
-  coverage_estimate: 0.6
-  summary: tests_passed is EXPLICITLY null
-EOF
-run_v "$V_QA" "$F"
-assert_fail "qa: EXPLICIT-NULL required key (tests_passed:) [rule 2]" "must be an integer"
-
-mk qa-sv.md <<'EOF'
-QA_RESULT:
-  schema_version: 2
-  status: passed
-  tests_generated: 0
-  tests_passed: 0
-  summary: wrong schema version
-EOF
-run_v "$V_QA" "$F"
-assert_fail "qa: schema_version != 1 [rule 1]" "must be the integer 1"
-
-mk qa-no-summary.md <<'EOF'
-QA_RESULT:
-  schema_version: 1
-  status: skipped
-  tests_generated: 0
-  tests_passed: 0
-EOF
-run_v "$V_QA" "$F"
-assert_fail "qa: MISSING summary [rule 3]" "(rule 3)"
-
-mk qa-no-coverage.md <<'EOF'
-QA_RESULT:
-  schema_version: 1
-  status: passed
-  tests_generated: 12
-  tests_passed: 12
-  summary: 12 tests run but coverage_estimate is absent
-EOF
-run_v "$V_QA" "$F"
-assert_fail "qa: CROSS-FIELD tests_generated>0 without coverage_estimate [rule 4]" \
-  "coverage_estimate must be present"
-
-mk qa-null-coverage.md <<'EOF'
-QA_RESULT:
-  schema_version: 1
-  status: passed
-  tests_generated: 12
-  tests_passed: 12
-  coverage_estimate:
-  summary: coverage_estimate is present but EXPLICITLY null
-EOF
-run_v "$V_QA" "$F"
-assert_fail "qa: EXPLICIT-NULL coverage_estimate with tests run [rule 4]" "present but null"
-
-mk qa-zero-tests.md <<'EOF'
-QA_RESULT:
-  schema_version: 1
-  status: plan_created
-  tests_generated: 0
-  tests_passed: 0
-  summary: plan-only session, no tests run, so no coverage_estimate is required
-EOF
-run_v "$V_QA" "$F"
-assert_pass "qa: tests_generated=0 does not require coverage_estimate [rule 4]"
-
-mk qa-bad-status.md <<'EOF'
-QA_RESULT:
-  schema_version: 1
-  status: green
-  tests_generated: 0
-  tests_passed: 0
-  summary: out-of-enum status
-EOF
-run_v "$V_QA" "$F"
-assert_fail "qa: out-of-enum status [rule 5]" "(rule 5)"
-
-for st in passed failed partial skipped needs_human plan_created all_scopes_completed; do
-  mk qa-status.md <<EOF
-QA_RESULT:
-  schema_version: 1
-  status: $st
-  tests_generated: 0
-  tests_passed: 0
-  summary: enum probe for $st
-EOF
-  run_v "$V_QA" "$F"
-  assert_pass "qa: status '$st' accepted [rule 5]"
-done
-
-# --- FINDING 7 (second validator): the SPURIOUS-REJECT half of the defect ----
-# Worker showed the fail-OPEN half. Here is the other half on a different
-# schema: QA's status IS enum-checked, so a polluted `passed  # all green`
-# tripped rule 5 and REJECTED a conforming block. Both halves come from the one
-# parser defect, which is why the fix is in the parser and not in any validator.
-mk qa-c7-comment.md <<'EOF'
-QA_RESULT:
-  schema_version: 1  # v1
-  status: passed  # all green
-  tests_generated: 4  # four scenarios
-  tests_passed: 4
-  coverage_estimate: 0.82  # rough
-  summary: "a conforming block that annotates itself, including a # in quotes"
-EOF
-run_v "$V_QA" "$F"
-assert_pass "qa: [FALSIFIES] trailing comments no longer cause a spurious reject"
-
-mk qa-c7-control.md <<'EOF'
-QA_RESULT:
-  schema_version: 1
-  status: passed#green
-  tests_generated: 0
-  tests_passed: 0
-  summary: a '#' with no preceding whitespace is part of the value, so this is out-of-enum
-EOF
-run_v "$V_QA" "$F"
-assert_fail "qa: [CONTROL] a '#' with no preceding whitespace is NOT a comment [rule 5]" \
-  "(rule 5)"
+# ── E. (moved) qa-executor validator ─────────────────────────────────────────
+# validate-qa-result.py and its 5-rule arm now live in the SELVEDGE plugin, with
+# their fixture: selvedge/scripts/test-result-validators.sh. A plugin's tests
+# belong with the plugin; CI's hard-gate loop runs every plugin's test-*.sh, so
+# the coverage moved rather than being lost. Deliberately NOT pointed
+# cross-plugin from here — that would re-couple the two trees this split undoes.
 
 # ── F. plan-reviewer validator ───────────────────────────────────────────────
 echo "== F. validate-plan-review-result.py — 6 rules =="
@@ -2667,7 +2513,7 @@ for v in $ALL_PY; do
     no "exit $rc on empty stdin: $(basename "$v")"
   fi
 done
-for v in $V_WORKER $V_EXECUTE $V_SUPERVISOR $V_QA $V_PLAN; do
+for v in $V_WORKER $V_EXECUTE $V_SUPERVISOR $V_PLAN; do
   printf '{"last_assistant_message": 12345}' | ( cd "$SANDBOX" && python3 "$v" ) >/dev/null 2>&1
   rc=$?
   if [ "$rc" = "0" ]; then
@@ -2712,7 +2558,7 @@ mkdir -p "$NOMOD" "$BADMOD"
 # A module that exists but does not compile (SyntaxError at import time).
 printf 'def broken(:\n' > "$BADMOD/result_block_parser.py"
 
-for v in $V_WORKER $V_EXECUTE $V_SUPERVISOR $V_QA $V_PLAN; do
+for v in $V_WORKER $V_EXECUTE $V_SUPERVISOR $V_PLAN; do
   base="$(basename "$v")"
   cp "$v" "$NOMOD/$base"
   cp "$v" "$BADMOD/$base"

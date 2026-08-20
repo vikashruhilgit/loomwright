@@ -17,12 +17,8 @@
         ]
       },
       {
-        "matcher": "loomwright:qa-executor",
+        "matcher": "selvedge:qa-executor",
         "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/validate-qa-result.py\" || true"
-          },
           {
             "type": "command",
             "command": "payload=$(cat); printf '%s' \"$payload\" | bash \"${CLAUDE_PLUGIN_ROOT}/scripts/send-telemetry.sh\" || true; printf '%s' \"$payload\" | bash \"${CLAUDE_PLUGIN_ROOT}/scripts/emit-token-ledger.sh\" || true"

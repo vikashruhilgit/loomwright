@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SubagentStop": [
+      {
+        "matcher": "selvedge:qa-executor",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/validate-qa-result.py\" || true"
+          }
+        ]
+      }
+    ]
+  }
+}
