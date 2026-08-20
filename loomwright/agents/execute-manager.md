@@ -495,7 +495,62 @@ EXECUTE_CHECKPOINT:
     tool_calls_used: {N}
     active_worktrees: [{paths}]
     feature_branch: {branch}
-  reason: "{why checkpointing — budget, error, adjudication; never cite toolset availability}"
+  reason: "{why checkpointing — budget or error; for an adjudication pause use the shape below; never cite toolset availability}"
+```
+
+**If checkpointing for adjudication (a Supervisor/operator decision is required):**
+
+The five adjudication fields below are **conditional, not part of the base shape** —
+`scripts/validate-execute-result.py` rule 6b **rejects** any of them appearing without
+`adjudication_required: true`, so do NOT carry them into the budget/error template above.
+When `adjudication_required: true`, rule 6a requires a non-empty `adjudication_options`
+plus a non-empty evidence array — `missing_outputs` (requires gap) **or** `colliding_lanes`
+(lane collision). `adjudication_kind` discriminates the two; absent means `requires_gap`.
+
+```yaml
+EXECUTE_CHECKPOINT:
+  schema_version: 1
+  completed_so_far: [...]               # as above
+  remaining: [...]                      # as above — includes the blocked subtask
+  resume_context:
+    tool_calls_used: {N}
+    active_worktrees: [{paths}]
+    feature_branch: {branch}
+  adjudication_required: true
+  adjudication_kind: requires_gap       # requires_gap | lane_collision; omit ⇒ requires_gap
+  missing_outputs:                      # requires_gap evidence — non-empty for this kind
+    - item: {requires item}
+      producing_subtask: {from subtask_id}
+      check_run: "{command + exit code}"
+  adjudication_options: ["A: Re-queue producer", "B: Insert remediation subtask",
+                         "C: Exit to Launch Pad", "D: Update consumer brief"]
+  reason: "Pre-spawn verification failed for {subtask_id}: missing required outputs"
+```
+
+For the lane-collision kind, swap the discriminator, the evidence array, and the options
+(the option strings are lane-specific by design — do not reuse the requires-gap wording):
+
+```yaml
+EXECUTE_CHECKPOINT:
+  schema_version: 1
+  completed_so_far: [...]
+  remaining: [...]
+  resume_context:
+    tool_calls_used: {N}
+    active_worktrees: [{paths}]
+    feature_branch: {branch}
+  adjudication_required: true
+  adjudication_kind: lane_collision
+  colliding_lanes:                      # lane_collision evidence — EVERY collision found
+    - path: {out-of-lane path}
+      owning_subtask: {sibling whose lanes: declares it}
+      this_subtask: {subtask_id}
+  adjudication_options: ["A: Re-queue writer with the sibling lane excluded",
+                         "B: Serialize the pair (add a requires edge)",
+                         "C: Exit to Launch Pad", "D: Widen the writer's declared lane"]
+  reason: "Lane collision: {subtask_id} wrote {N} path(s) inside the declared lane(s) of
+    sibling(s) {owning_subtasks}, none reachable in either direction over the requires DAG.
+    See colliding_lanes[] for the full set."
 ```
 
 ---
