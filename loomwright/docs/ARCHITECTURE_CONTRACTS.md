@@ -464,8 +464,6 @@ A CI ratchet on **spawn-time prompt inventory**. Each agent's effective weight i
 | `orchestrator`      | 9558  | 8688¹ | 1 |
 | `plan-reviewer`     | 9180  | 6392  | 0 |
 | `product-owner`     | 14405 | 13095¹ | 3 |
-| `qa-executor`       | 48165 | 43786¹ | 5 |
-| `qa-strategist`     | 23488 | 21352¹ | 3 |
 | `red-team-reviewer` | 6666  | 6060¹ | 1 |
 | `review-pr`         | 31453 | 28875¹ | 2 |
 | `rubric-grader`     | 2330  | 1896  | 0 |

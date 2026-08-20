@@ -133,6 +133,64 @@ $raw
 EOF
 }
 
+# ── Cross-plugin preloaded-skill resolution ──────────────────────────────────
+# FALLBACK_SKILLS_DIRS: newline-separated "<plugin-name>\t<skills-dir>" rows,
+# consulted by run_check ONLY when a preloaded skill is absent from the
+# declaring agent's OWN plugin.
+#
+# WHY: the gate used to encode an assumption the cross-plugin-resolution spike
+# FALSIFIED — that a preloaded skill lives in the declaring agent's plugin.
+# selvedge's QA agents preload loomwright's `quality-checklist` (one copy, no
+# anti-drift machinery, chosen deliberately over dropping the preload), and
+# resolving that plugin-locally produced a hard ERROR. The gate must know the
+# same resolution order the runtime has.
+#
+# POPULATED IN A PRE-PASS, NOT INCREMENTALLY. run_gate calls run_check INSIDE
+# its own `while read` loop, so a list grown during iteration is complete only
+# for the LAST plugin. marketplace.json happens to list loomwright first and
+# selvedge fourth, so an incremental build would pass TODAY purely by manifest
+# ordering and break silently on a reorder. The pre-pass is mutation-controlled
+# by reordering the manifest.
+#
+# LAYERED UNDER THE ENV OVERRIDES. The override path in run_gate never sets
+# this, so it stays EMPTY there and every pre-existing caller (and every
+# hermetic self-test fixture) behaves byte-identically to before.
+#
+# THE TOOTH THIS LOSES, NAMED: a skill that exists in the WRONG plugin now
+# resolves instead of erroring, so a typo that happens to collide with a
+# sibling plugin's skill name is no longer caught by absence. The mitigation is
+# ATTRIBUTION, not silence — every cross-resolved skill is printed in the
+# DETAIL column as `<skill>@<plugin>`, so the resolution is visible in CI
+# output and asserted on by the self-test. A skill found in NO dir is still a
+# hard ERROR, exactly as before.
+FALLBACK_SKILLS_DIRS=""
+
+# find_skill_cross SKILL -> print "<plugin-name>\t<skill-file>" for the first
+# fallback dir that holds it; return 1 if none does.
+find_skill_cross() {
+  local want="$1" fbname fbdir
+  [ -n "$FALLBACK_SKILLS_DIRS" ] || return 1
+  while IFS="$(printf '\t')" read -r fbname fbdir; do
+    [ -n "$fbdir" ] || continue
+    if [ -f "$fbdir/$want/SKILL.md" ]; then
+      printf '%s\t%s\n' "$fbname" "$fbdir/$want/SKILL.md"
+      return 0
+    fi
+  done <<EOF
+$FALLBACK_SKILLS_DIRS
+EOF
+  return 1
+}
+
+# cross_note -> the DETAIL-column attribution suffix for the agent currently
+# being budgeted, or the empty string when every skill resolved plugin-locally.
+# Reads $ncross/$detail_cross from run_check's scope (bash dynamic scope), which
+# is why it is defined here and never called from anywhere else.
+cross_note() {
+  [ "${ncross:-0}" -gt 0 ] || return 0
+  printf ', %s cross-plugin:%s' "$ncross" "$detail_cross"
+}
+
 # proxy_tokens FILE -> echoes floor(bytes / DIVISOR). `wc -c` is portable.
 proxy_tokens() {
   local b
@@ -189,7 +247,8 @@ preloaded_skills() {
 run_check() {
 local AGENTS_DIR="$1" SKILLS_DIR="$2" BUDGET_JSON="$3" CONTRACTS_MD="$4"
 local DIVISOR exit_code breaches errors agent_count
-local agent_file stem total nskills detail_missing skill skill_file budget key
+local agent_file stem total nskills detail_missing detail_cross ncross skill skill_file budget key
+ local cross_hit cross_plugin cross_file
 local jbudget row mbudget jmeasured mmeasured mirror_rows rstem
 
 command -v jq >/dev/null 2>&1 || { echo "check-token-budget: jq required" >&2; return 1; }
@@ -231,13 +290,24 @@ for agent_file in "$AGENTS_DIR"/*.md; do
 
   total="$(proxy_tokens "$agent_file")"
   nskills=0
+  ncross=0
   detail_missing=""
+  detail_cross=""
   while IFS= read -r skill; do
     [ -n "$skill" ] || continue
     nskills=$((nskills + 1))
     skill_file="$SKILLS_DIR/$skill/SKILL.md"
     if [ -f "$skill_file" ]; then
       total=$((total + $(proxy_tokens "$skill_file")))
+    elif cross_hit="$(find_skill_cross "$skill")"; then
+      # Resolved from a SIBLING plugin. Counted (it is real spawn-time weight)
+      # and ATTRIBUTED (a silently cross-resolved skill is how a typo would
+      # start passing) — see FALLBACK_SKILLS_DIRS on the tooth this trades.
+      cross_plugin="${cross_hit%%	*}"
+      cross_file="${cross_hit#*	}"
+      total=$((total + $(proxy_tokens "$cross_file")))
+      ncross=$((ncross + 1))
+      detail_cross="$detail_cross $skill@$cross_plugin"
     else
       detail_missing="$detail_missing $skill"
     fi
@@ -246,7 +316,7 @@ $(preloaded_skills "$agent_file")
 EOF
 
   if [ -n "$detail_missing" ]; then
-    printf "%-22s %8s %8s  %-6s  %s\n" "$stem" "$total" "-" "ERROR" "missing preloaded SKILL.md for:$detail_missing"
+    printf "%-22s %8s %8s  %-6s  %s\n" "$stem" "$total" "-" "ERROR" "missing preloaded SKILL.md for:$detail_missing (searched $SKILLS_DIR and every sibling plugin's skills dir)"
     errors=$((errors + 1))
     exit_code=1
     continue
@@ -271,11 +341,11 @@ EOF
   esac
 
   if [ "$total" -gt "$budget" ]; then
-    printf "%-22s %8s %8s  %-6s  %s\n" "$stem" "$total" "$budget" "BREACH" "over by $((total - budget)) proxy tokens ($nskills preloaded skills) — raise the budget in the same PR (with a note) or trim the prompt"
+    printf "%-22s %8s %8s  %-6s  %s\n" "$stem" "$total" "$budget" "BREACH" "over by $((total - budget)) proxy tokens ($nskills preloaded skills$(cross_note)) — raise the budget in the same PR (with a note) or trim the prompt"
     breaches=$((breaches + 1))
     exit_code=1
   else
-    printf "%-22s %8s %8s  %-6s  %s\n" "$stem" "$total" "$budget" "OK" "$((budget - total)) headroom ($nskills preloaded skills)"
+    printf "%-22s %8s %8s  %-6s  %s\n" "$stem" "$total" "$budget" "OK" "$((budget - total)) headroom ($nskills preloaded skills$(cross_note))"
   fi
 done
 
@@ -399,7 +469,27 @@ run_gate() {
   fi
   command -v jq >/dev/null 2>&1 || { echo "check-token-budget: jq required for marketplace plugin discovery" >&2; return 1; }
   [ -f "$MARKETPLACE_JSON" ] || { echo "check-token-budget: marketplace manifest not found: $MARKETPLACE_JSON" >&2; return 1; }
-  local rc=0 checked=0 name pdir
+  local rc=0 checked=0 name pdir table
+
+  # Discover ONCE. Both loops below read this same snapshot, so the pre-pass and
+  # the budgeting pass can never disagree about which plugins exist.
+  table="$(plugin_dirs "$MARKETPLACE_JSON")" || return 1
+
+  # ── PRE-PASS: build the cross-plugin skills-dir list BEFORE budgeting ──────
+  # Deliberately a SEPARATE pass. Building it inside the budgeting loop would
+  # leave it incomplete for every plugin but the last, and would pass today only
+  # because marketplace.json happens to list loomwright before selvedge —
+  # a false green that a manifest reorder would silently turn into a hard ERROR.
+  FALLBACK_SKILLS_DIRS=""
+  while IFS="$(printf '\t')" read -r name pdir; do
+    [ -n "$pdir" ] || continue
+    [ -d "$pdir/skills" ] || continue
+    FALLBACK_SKILLS_DIRS="$FALLBACK_SKILLS_DIRS$name$(printf '\t')$pdir/skills
+"
+  done <<EOF
+$table
+EOF
+
   while IFS="$(printf '\t')" read -r name pdir; do
     [ -n "$pdir" ] || continue
     # SKIP SILENTLY: plugin ships no agents tree (stackpack, mysql-mcp, selvedge
@@ -411,7 +501,7 @@ run_gate() {
     run_check "$pdir/agents" "$pdir/skills" "$pdir/docs/prompt-token-budgets.json" \
               "$pdir/docs/ARCHITECTURE_CONTRACTS.md" || rc=1
   done <<EOF
-$(plugin_dirs "$MARKETPLACE_JSON")
+$table
 EOF
   if [ "$checked" -eq 0 ]; then
     echo "check-token-budget: no agent-bearing plugin sources found via $MARKETPLACE_JSON — gate matched nothing (anti-drift tripwire)" >&2

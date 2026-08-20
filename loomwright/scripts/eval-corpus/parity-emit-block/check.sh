@@ -20,8 +20,34 @@ else
   }
 fi
 parity="$repo_root/scripts/check-contract-parity.sh"
-agents="$repo_root/loomwright/agents"
 [ -f "$parity" ] || { echo "parity-emit-block: $parity missing" >&2; exit 1; }
+manifest_json="$repo_root/.claude-plugin/marketplace.json"
+
+# agents_dir_for PLUGIN -> the agents dir of the plugin named in MANIFEST column 1.
+#
+# THIS FILE IS A SECOND, DERIVED CONSUMER OF THAT MANIFEST, and it was the one
+# the plugin-aware sweep missed. check-contract-parity.sh itself was taught to
+# resolve AGENTS from the row's plugin; this task re-parses the same heredoc and
+# kept a hard-coded `loomwright/agents`, so the first row naming another plugin
+# resolved to a file that had moved away and the task failed. Note WHY a literal
+# grep for the agent name could never have found it: the name is derived from
+# the MANIFEST at runtime, so this file contains zero occurrences of it. A
+# DERIVED pin is invisible to a literal grep.
+#
+# Resolution mirrors the gates' idiom (manifest `.source`, resolved against the
+# manifest's GRANDPARENT dir), with a convention fallback to <root>/<plugin> so
+# the mutation self-test's hermetic fixture tree — which ships
+# scripts/check-contract-parity.sh + loomwright/agents/ and no manifest — keeps
+# working unchanged.
+agents_dir_for() {
+  local want="$1" src=""
+  if [ -f "$manifest_json" ] && command -v jq >/dev/null 2>&1; then
+    src="$(jq -r --arg n "$want" '.plugins[] | select(.name == $n) | .source // ""' "$manifest_json" 2>/dev/null | head -1)"
+    src="${src#./}"; src="${src%/}"
+  fi
+  [ -n "$src" ] || src="$want"
+  printf '%s\n' "$repo_root/$src/agents"
+}
 
 # Pull the MANIFEST heredoc body: lines between MANIFEST=" and the closing quote.
 # (Parse re-verified against the current check-contract-parity.sh — the MANIFEST
@@ -32,7 +58,10 @@ manifest="$(awk '/^MANIFEST="$/{f=1;next} f&&/^"$/{exit} f' "$parity")"
 fail=0
 while IFS='|' read -r matcher agent block fields; do
   [ -n "$matcher" ] || continue
-  agent_path="$agents/$agent"
+  # Column 1 carries the plugin dimension INSIDE the matcher ("<plugin>:<name>")
+  # — the row format is a four-column public contract and deliberately gains no
+  # fifth column for it.
+  agent_path="$(agents_dir_for "${matcher%%:*}")/$agent"
   [ -f "$agent_path" ] || { echo "FAIL: $agent missing at $agent_path" >&2; fail=1; continue; }
 
   # Extract every emit template for this block, in either authoring style:

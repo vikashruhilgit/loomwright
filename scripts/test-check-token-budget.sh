@@ -391,6 +391,89 @@ run_discovery "$R7F/.claude-plugin/marketplace.json"
 check "case7f plugin without its own contracts mirror exits 1" 1 "$RC"
 contains "case7f names the missing per-plugin mirror" "$OUT" "$R7F/betaplug/docs/ARCHITECTURE_CONTRACTS.md"
 
+# ---------------------------------------------------------------------------
+# 7g-7i: CROSS-PLUGIN preloaded-skill resolution (the selvedge split).
+#
+# The gate used to resolve every preloaded skill inside the DECLARING agent's
+# own plugin. selvedge's QA agents preload loomwright's `quality-checklist`,
+# which that rule turned into a hard ERROR. These cases pin the widened
+# behaviour AND the tooth it trades away — see the FALLBACK_SKILLS_DIRS comment
+# in the gate. Note what 7h protects: only ABSENCE-EVERYWHERE still errors, so
+# a typo colliding with a sibling's skill name now resolves silently. That is
+# why 7g asserts the ATTRIBUTION STRING and not merely exit 0 — a green rc
+# would pass identically if the skill had been silently dropped from the count.
+# ---------------------------------------------------------------------------
+
+# mk_plugin_xp <root> <name> <skill-to-preload> <own-skill|"">
+# A plugin whose single agent preloads <skill-to-preload>, shipping <own-skill>
+# locally (or nothing at all, forcing cross-plugin resolution).
+mk_plugin_xp() {
+  local root="$1" name="$2" want="$3" own="$4" p="$1/$2"
+  mkdir -p "$p/agents" "$p/skills" "$p/docs"
+  mk_agent "$p/agents" "$name-agent" "skills:
+  - $want" 400
+  [ -n "$own" ] && mk_skill "$p/skills" "$own" 200
+  cat > "$p/docs/prompt-token-budgets.json" <<JSON
+{ "proxy_bytes_per_token": 4, "agents": { "$name-agent": { "budget": 9999, "measured": 0 } } }
+JSON
+  {
+    echo "## Prompt Token Budgets"
+    echo ""
+    echo "| Agent | Budget | Measured |"
+    echo "|---|---|---|"
+    echo "| \`$name-agent\` | 9999 | 0 |"
+  } > "$p/docs/ARCHITECTURE_CONTRACTS.md"
+}
+
+# --- 7g: a skill owned by a SIBLING plugin resolves, and is ATTRIBUTED -----
+R7G="$(mkroot "$TMP/c7g")"
+mk_plugin_xp "$R7G" "ownerplug"    "shared-thing" "shared-thing"
+mk_plugin_xp "$R7G" "borrowerplug" "shared-thing" ""
+mk_manifest "$R7G" ownerplug borrowerplug
+run_discovery "$R7G/.claude-plugin/marketplace.json"
+check "case7g cross-plugin preloaded skill resolves (exit 0)" 0 "$RC"
+contains "case7g ATTRIBUTES the cross-resolved skill (not merely rc=0)" "$OUT" "cross-plugin: shared-thing@ownerplug"
+case "$OUT" in
+  *"missing preloaded SKILL.md"*) fail=$((fail+1)); echo "FAIL - case7g must not report the sibling-owned skill as missing";;
+  *) pass=$((pass+1)); echo "ok   - case7g does not report the sibling-owned skill as missing";;
+esac
+
+# --- 7h: a skill owned by NO plugin is STILL a hard error ------------------
+# The tooth that must survive: the fallback widens resolution, it does not
+# disable the check.
+R7H="$(mkroot "$TMP/c7h")"
+mk_plugin_xp "$R7H" "ownerplug"    "shared-thing"  "shared-thing"
+mk_plugin_xp "$R7H" "borrowerplug" "nowhere-thing" ""
+mk_manifest "$R7H" ownerplug borrowerplug
+run_discovery "$R7H/.claude-plugin/marketplace.json"
+check "case7h a skill present in NO plugin still exits 1" 1 "$RC"
+contains "case7h names the unresolvable skill" "$OUT" "missing preloaded SKILL.md for: nowhere-thing"
+contains "case7h says where it looked" "$OUT" "every sibling plugin's skills dir"
+
+# --- 7i: resolution is ORDER-INDEPENDENT (the pre-pass, mutation-controlled)
+# Identical to 7g with the manifest REVERSED, so the borrower is budgeted
+# BEFORE the owner is ever visited. An implementation that grew the fallback
+# list incrementally inside the budgeting loop passes 7g and fails here.
+R7I="$(mkroot "$TMP/c7i")"
+mk_plugin_xp "$R7I" "ownerplug"    "shared-thing" "shared-thing"
+mk_plugin_xp "$R7I" "borrowerplug" "shared-thing" ""
+mk_manifest "$R7I" borrowerplug ownerplug
+run_discovery "$R7I/.claude-plugin/marketplace.json"
+check "case7i borrower-listed-FIRST still resolves (exit 0 — pre-pass, not incremental)" 0 "$RC"
+contains "case7i still attributes the cross-resolved skill" "$OUT" "cross-plugin: shared-thing@ownerplug"
+
+# --- 7j: the ENV-OVERRIDE path is unchanged — no fallback list at all ------
+# Layered UNDER discovery: a single-tree override run must behave exactly as it
+# did before this change, i.e. an absent skill is an error with no sibling
+# search to save it.
+R7J="$(mkroot "$TMP/c7j")"
+mk_plugin_xp "$R7J" "ownerplug"    "shared-thing" "shared-thing"
+mk_plugin_xp "$R7J" "borrowerplug" "shared-thing" ""
+mk_manifest "$R7J" ownerplug borrowerplug
+run_gate "$R7J/borrowerplug/agents" "$R7J/borrowerplug/skills" "$R7J/borrowerplug/docs/prompt-token-budgets.json"
+check "case7j env-override path does NOT cross-resolve (byte-identical to pre-change)" 1 "$RC"
+contains "case7j env-override still reports the absent skill" "$OUT" "missing preloaded SKILL.md for: shared-thing"
+
 echo "------------------------------------------------------------------------------"
 echo "check-token-budget self-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

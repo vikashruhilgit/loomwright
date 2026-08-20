@@ -39,16 +39,6 @@
       "measured": 13095,
       "note": "re-measured v15.33.0 (measured 13095 + ~10%); 3 preloaded skills — grew when the shared `### Agent memory write permission` block landed in all six memory: project prompts. Previously the v15.10.0 authoring baseline (12551 / budget 13807); now a LIVE re-measure row, taken the same way and in the same PR as red-team-reviewer."
     },
-    "qa-executor": {
-      "budget": 48165,
-      "measured": 43786,
-      "note": "re-measured v15.33.0 (measured 43786 + ~10%); 5 preloaded skills — grew when the shared `### Agent memory write permission` block landed in all six memory: project prompts. Previously the v15.10.0 authoring baseline (43235 / budget 47559); now a LIVE re-measure row, taken the same way and in the same PR as red-team-reviewer."
-    },
-    "qa-strategist": {
-      "budget": 23488,
-      "measured": 21352,
-      "note": "re-measured v15.33.0 (measured 21352 + ~10%); 3 preloaded skills — grew when the shared `### Agent memory write permission` block landed in all six memory: project prompts. Previously the v15.10.0 authoring baseline (20797 / budget 22877); now a LIVE re-measure row, taken the same way and in the same PR as red-team-reviewer."
-    },
     "red-team-reviewer": {
       "budget": 6666,
       "measured": 6060,
