@@ -102,6 +102,24 @@
         "database",
         "read-only"
       ]
+    },
+    {
+      "name": "selvedge",
+      "source": "./selvedge",
+      "description": "Selvedge v1.0.0 — the QA companion being spun out of Loomwright: risk-based test strategy, test generation, and execution. Scaffold only for now; it ships no agents, commands, skills, or hooks yet. Requires loomwright@atelier — not a standalone install.",
+      "version": "1.0.0",
+      "author": {
+        "name": "vikash ruhil"
+      },
+      "license": "MIT",
+      "keywords": [
+        "qa",
+        "testing",
+        "test-strategy",
+        "test-generation",
+        "playwright",
+        "companion"
+      ]
     }
   ]
 }
