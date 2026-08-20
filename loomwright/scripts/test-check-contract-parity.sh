@@ -23,12 +23,38 @@ check() { # $1 desc, $2 expected exit (0|1), then the command
   fi
 }
 
+# write_manifest <fixture dir> [<name>:<source> ...] — writes the fixture's
+# .claude-plugin/marketplace.json. Defaults to a single loomwright plugin at
+# ./loomwright, which is what every pre-existing case expects.
+#
+# REQUIRED, not optional (v15.37.0): the gate now resolves each MANIFEST/ENUMS
+# row's owning plugin through this manifest, and --root is the base path for it.
+# A fixture without one fails closed on "marketplace manifest not found" — which
+# is the correct behaviour for the real repo and the reason this helper exists.
+write_manifest() {
+  local d="$1"; shift
+  [ "$#" -gt 0 ] || set -- "loomwright:./loomwright"
+  mkdir -p "$d/.claude-plugin"
+  {
+    printf '{ "name": "fixture", "plugins": ['
+    local first=1 spec name src
+    for spec in "$@"; do
+      name="${spec%%:*}"; src="${spec#*:}"
+      [ "$first" -eq 1 ] || printf ','
+      first=0
+      printf '{ "name": "%s", "source": "%s", "version": "1.0.0" }' "$name" "$src"
+    done
+    printf '] }\n'
+  } > "$d/.claude-plugin/marketplace.json"
+}
+
 make_fixture() { # $1 = fixture dir; writes a minimal valid tree
   local d="$1"
   mkdir -p "$d/loomwright/hooks" "$d/loomwright/agents" "$d/loomwright/scripts" \
            "$d/loomwright/skills/self-heal-advisory" \
            "$d/loomwright/skills/preflight-sync" \
            "$d/loomwright/skills/supervisor-config"
+  write_manifest "$d"
   # the gate's ENUMS scope includes this skill (v14.23.0 supervisor diet) and
   # errs loudly when a scoped file is missing — fixtures must provide it
   cat >"$d/loomwright/skills/self-heal-advisory/SKILL.md" <<'EOF2'
@@ -384,6 +410,79 @@ check "a \`#\` inside a string literal does not corrupt the source (tokenize, no
 #    committed tree), so an agent edit that trips the gate fails here too —
 #    a double signal with the CI step, by design.
 check "real repo tree passes" 0 bash "$GUARD" --root "$REPO_ROOT"
+
+# ── 15-19: MULTI-PLUGIN DISCOVERY (v15.37.0) ─────────────────────────────────
+#
+# These cases REACH the discovery branch, which is the whole point. Note the
+# shape here is deliberately DIFFERENT from the other two widened gates and must
+# not be copy-pasted from them: --root is NOT a discovery escape hatch, it is the
+# base path for HOOKS/AGENTS and now for the manifest too, so "run with --root
+# unset" would merely point the gate at the live repo and prove nothing. The
+# negative case is `--root <fixture whose manifest disagrees with the tree>`.
+#
+# MUTATION CONTROL: restore `PLUGIN="$ROOT/loomwright"` (delete the per-row
+# plugin resolution) and 15/17/18 all flip. Performed and recorded in the PR.
+
+check_msg() { # $1 desc, $2 expected exit, $3 grep -F needle, then the command
+  local desc="$1" want="$2" needle="$3"; shift 3
+  total=$((total+1))
+  local got=0 out
+  out="$("$@" 2>&1)" || got=$?
+  if { [ "$got" -eq "$want" ] || { [ "$want" -eq 1 ] && [ "$got" -ne 0 ]; }; } \
+     && printf '%s\n' "$out" | grep -qF "$needle"; then
+    echo "ok    $desc"; pass=$((pass+1))
+  else
+    echo "FAIL  $desc (exit $got, wanted $want; expected output to contain: $needle)"
+    printf '%s\n' "$out" | sed 's/^/      | /'
+  fi
+}
+
+# 15. A row naming a plugin the manifest does not register FAILS LOUDLY. The
+#     tree is present and valid at ./loomwright — only its REGISTRATION is
+#     missing, so nothing but discovery can tell the difference.
+make_fixture "$TMP/unregistered"
+write_manifest "$TMP/unregistered" "other:./loomwright"
+check_msg "MANIFEST row naming an unregistered plugin fails loudly" 1 \
+  "is not registered in" bash "$GUARD" --root "$TMP/unregistered"
+
+# 16. A fixture with NO manifest fails closed (this is why make_fixture writes one).
+make_fixture "$TMP/no-manifest"
+rm -f "$TMP/no-manifest/.claude-plugin/marketplace.json"
+check_msg "fixture without a marketplace manifest fails closed" 1 \
+  "marketplace manifest not found" bash "$GUARD" --root "$TMP/no-manifest"
+
+# 17. The plugin dir is RELOCATED and the manifest says so. Nothing exists at
+#     <root>/loomwright, so this can only pass if the row's plugin name is
+#     resolved through the manifest — the pre-change hard pin would fail.
+make_fixture "$TMP/relocated"
+mkdir -p "$TMP/relocated/plugins"
+mv "$TMP/relocated/loomwright" "$TMP/relocated/plugins/loomwright"
+write_manifest "$TMP/relocated" "loomwright:./plugins/loomwright"
+check "relocated plugin dir resolves through the manifest" 0 \
+  bash "$GUARD" --root "$TMP/relocated"
+
+# 18. ...and the relocated tree is really being CHECKED, not merely found: break
+#     it and the gate must fail. Without this, 17 alone could pass vacuously.
+make_fixture "$TMP/relocated-broken"
+mkdir -p "$TMP/relocated-broken/plugins"
+mv "$TMP/relocated-broken/loomwright" "$TMP/relocated-broken/plugins/loomwright"
+write_manifest "$TMP/relocated-broken" "loomwright:./plugins/loomwright"
+# drop a hook-required field from the relocated agent prompt
+grep -v 'out_of_lane' "$TMP/relocated-broken/plugins/loomwright/agents/worker.md" \
+  > "$TMP/relocated-broken/plugins/loomwright/agents/worker.md.new"
+mv "$TMP/relocated-broken/plugins/loomwright/agents/worker.md.new" \
+   "$TMP/relocated-broken/plugins/loomwright/agents/worker.md"
+check "relocated plugin tree is actually checked (drift there fails)" 1 \
+  bash "$GUARD" --root "$TMP/relocated-broken"
+
+# 19. A sibling plugin registered alongside loomwright changes nothing: every
+#     row still names loomwright, and rows are resolved per plugin, not by
+#     position in the manifest.
+make_fixture "$TMP/two-plugin"
+mkdir -p "$TMP/two-plugin/sibling"
+write_manifest "$TMP/two-plugin" "loomwright:./loomwright" "sibling:./sibling"
+check "a registered sibling plugin does not disturb loomwright's rows" 0 \
+  bash "$GUARD" --root "$TMP/two-plugin"
 
 echo "----"
 echo "test-check-contract-parity: $pass/$total passed"
