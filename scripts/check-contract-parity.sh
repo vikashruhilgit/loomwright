@@ -32,9 +32,42 @@
 # documented emit format drops a hook-required field, or instructs an
 # out-of-enum status literal, fails CI before it can fail at runtime.
 #
+# ── MULTI-PLUGIN (v15.37.0) ──────────────────────────────────────────────────
+# PLUGIN is no longer hard-pinned to "$ROOT/loomwright". Every MANIFEST and
+# ENUMS row now names the plugin that owns its hooks.json / agent file, and that
+# name is resolved to a directory through .claude-plugin/marketplace.json. A row
+# naming an unregistered plugin FAILS LOUDLY — it is never silently resolved
+# against a hard-coded path. Every row still points at loomwright after this
+# change; the QA rows flip when the QA assets actually move.
+#
+# ── ROW FORMAT IS A PUBLIC CONTRACT — DO NOT ADD A COLUMN ────────────────────
+# The MANIFEST heredoc has a SECOND, out-of-tree consumer:
+# loomwright/scripts/eval-corpus/parity-emit-block/check.sh re-parses this exact
+# heredoc with `awk '/^MANIFEST="$/{f=1;next} f&&/^"$/{exit} f'` and then
+# `IFS='|' read -r matcher agent block fields` — a FOUR-column read.
+#
+# `read` folds every surplus field into the LAST variable, so appending a 5th
+# `plugin` column would silently corrupt that consumer's `fields` into
+# "a,b,c|loomwright"; its last field name then becomes the ERE
+# "^[[:space:]]*(-[[:space:]])?c|loomwright:", whose `|` is an alternation — a
+# fail-OPEN mis-parse. Prepending shifts every column instead. Both break it
+# silently, and that file is deliberately out of this change's scope.
+#
+# So the plugin dimension is carried WITHOUT a new column: the hooks.json
+# matchers are ALREADY plugin-namespaced ("loomwright:worker"), and column 1 now
+# spells the matcher in that fully-qualified form instead of the bare tail. The
+# owning plugin is simply "${matcher%%:*}". The row stays four columns, columns
+# 2-4 are byte-identical, and the second consumer only tests column 1 for
+# non-emptiness — verified by running it before and after this change and
+# diffing its output. ENUMS carries the same "<plugin>:<path>" qualification in
+# its own column 1, also without changing its column count.
+#
 # Usage: bash scripts/check-contract-parity.sh [--root <dir>]
 #   --root defaults to the repo root (the directory containing
-#   loomwright/). The self-test points it at a fixture tree.
+#   loomwright/). The self-test points it at a fixture tree. --root is the base
+#   path for the marketplace manifest, NOT a discovery escape hatch: pointing it
+#   at a fixture must make discovery read THAT fixture's manifest, which is why
+#   every fixture tree carries a .claude-plugin/marketplace.json.
 
 set -euo pipefail
 
@@ -43,11 +76,108 @@ if [ "${1:-}" = "--root" ]; then
   ROOT="${2:?--root requires a directory}"
 fi
 
-PLUGIN="$ROOT/loomwright"
-HOOKS="$PLUGIN/hooks/hooks.json"
-AGENTS="$PLUGIN/agents"
+# ── Plugin discovery: ONE idiom, ONE path-base rule ──────────────────────────
+# Identical to check-token-budget.sh / check-shared-prefix.sh — see the long
+# note in check-token-budget.sh. Two points matter specifically here:
+#
+#   * The manifest is $ROOT-relative, never CWD-relative. check-skills-index-sync.sh
+#     resolves `.source` against CWD; copied verbatim that would ignore --root and
+#     check the REAL loomwright tree from inside every fixture, flipping the
+#     expect-failure cases to exit 0.
+#   * Discovery is NOT gated on "--root is the real repo". That would be the easy
+#     way to avoid updating the fixtures, and it is forbidden: it makes the new
+#     per-plugin branch unreachable from any fixture, so its negative test could
+#     never fail. An untestable branch is the defect, not the feature.
+#
+#   MEASURED: the base for `.source` is the manifest's GRANDPARENT dir, not
+#   `dirname "$MARKETPLACE_JSON"` — sources like "./loomwright" are <root>-relative
+#   while the manifest itself sits in <root>/.claude-plugin/.
+MARKETPLACE_JSON="${CHECK_MARKETPLACE_JSON:-$ROOT/.claude-plugin/marketplace.json}"
 
-[ -f "$HOOKS" ] || { echo "✗ contract-parity: hooks.json not found at $HOOKS" >&2; exit 1; }
+plugin_root_base() {
+  local d
+  d="$(dirname "$(dirname "$1")")"
+  ( cd "$d" 2>/dev/null && pwd )
+}
+
+GATE_NAME="check-contract-parity"
+
+plugin_dirs() {
+  local manifest="$1" base name src raw want got
+  base="$(plugin_root_base "$manifest")" || return 1
+  [ -n "$base" ] || return 1
+
+  # Capture jq's OUTPUT AND STATUS before consuming it. The previous form piped
+  # jq straight into a heredoc with `2>/dev/null`, which threw the status away:
+  # jq that dies partway through `.plugins[]` still emits the entries it parsed
+  # BEFORE the error, so the caller silently discovered a TRUNCATED plugin list
+  # and every gate built on it reported OK on the plugins it never looked at.
+  # A fail-closed ratchet that silently stops covering a plugin is a false green
+  # — the exact failure this whole plugin-aware change exists to prevent.
+  # Found in review of PR #155; reproduced with jq exiting 5 after emitting 1 of
+  # 3 entries. Two guards, because either alone leaves a hole: the status check
+  # catches a parse error, and the count assertion catches any other way the
+  # emitted list could come up short.
+  raw="$(jq -r '.plugins[] | ((.name // "") + "\t" + (.source // ""))' "$manifest" 2>&1)" || {
+    echo "${GATE_NAME:-plugin-discovery}: cannot parse $manifest — $raw" >&2
+    return 1
+  }
+  want="$(jq -r '.plugins | length' "$manifest" 2>/dev/null)" || want=""
+  got="$(printf '%s\n' "$raw" | grep -c .)"
+  case "$want" in
+    ''|*[!0-9]*) echo "${GATE_NAME:-plugin-discovery}: cannot read plugin count from $manifest" >&2; return 1 ;;
+  esac
+  if [ "$got" -ne "$want" ]; then
+    echo "${GATE_NAME:-plugin-discovery}: discovered $got of $want plugin entries in $manifest — refusing to run against a truncated plugin list" >&2
+    return 1
+  fi
+
+  while IFS="$(printf '\t')" read -r name src; do
+    [ -n "$src" ] && [ "$src" != "null" ] || continue
+    src="${src#./}"; src="${src%/}"
+    [ -n "$name" ] && [ "$name" != "null" ] || name="$src"
+    printf '%s\t%s\n' "$name" "$base/$src"
+  done <<EOF
+$raw
+EOF
+}
+
+command -v jq >/dev/null 2>&1 || { echo "✗ contract-parity: jq required for marketplace plugin discovery" >&2; exit 1; }
+[ -f "$MARKETPLACE_JSON" ] || { echo "✗ contract-parity: marketplace manifest not found: $MARKETPLACE_JSON" >&2; exit 1; }
+PLUGIN_TABLE="$(plugin_dirs "$MARKETPLACE_JSON")"
+# Anti-drift tripwire: a manifest that resolves to no plugin at all would make
+# every row below fail for one confusing reason; say the real one once.
+[ -n "$PLUGIN_TABLE" ] || { echo "✗ contract-parity: no plugin sources found via $MARKETPLACE_JSON — gate matched nothing (anti-drift tripwire)" >&2; exit 1; }
+
+# plugin_dir_for NAME — print the discovered dir for a registered plugin, else return 1.
+plugin_dir_for() {
+  local want="$1" name dir
+  while IFS="$(printf '\t')" read -r name dir; do
+    [ "$name" = "$want" ] || continue
+    printf '%s\n' "$dir"
+    return 0
+  done <<EOF
+$PLUGIN_TABLE
+EOF
+  return 1
+}
+
+# Set per row by resolve_row_plugin(); hook_prompt() reads $HOOKS/$PLUGIN at call time.
+PLUGIN=""
+HOOKS=""
+AGENTS=""
+
+# resolve_row_plugin NAME — point PLUGIN/HOOKS/AGENTS at a registered plugin.
+resolve_row_plugin() {
+  local want="$1" dir
+  if ! dir="$(plugin_dir_for "$want")"; then
+    return 1
+  fi
+  PLUGIN="$dir"
+  HOOKS="$PLUGIN/hooks/hooks.json"
+  AGENTS="$PLUGIN/agents"
+  return 0
+}
 
 fail=0
 err() { echo "  PARITY [$1] $2" >&2; fail=1; }
@@ -335,7 +465,12 @@ PY
 }
 
 # ── MANIFEST ─────────────────────────────────────────────────────────────────
-# matcher | agent file | block name | comma-separated hook-ENFORCED fields
+# <plugin>:<matcher> | agent file | block name | comma-separated hook-ENFORCED fields
+#
+#   FOUR columns, and it must STAY four — see "ROW FORMAT IS A PUBLIC CONTRACT"
+#   in the header. Column 1 is the hooks.json matcher spelled in full; the part
+#   before the first ":" names the plugin that owns both that hooks.json and the
+#   agent file in column 2, and is resolved through marketplace.json.
 #   "enforced" = required OR validated-when-present. `out_of_lane` is the latter:
 #   validate-worker-result.py rule 9 accepts its ABSENCE at any schema_version but rejects a
 #   present-but-malformed value. Both of this gate's real checks (pin-drift against the
@@ -350,18 +485,30 @@ PY
 #   conditional adjudication fields are now pinned together. Verified to have teeth: renaming
 #   `adjudication_kind` in execute-manager.md fails this gate with a field-presence error.
 MANIFEST="
-worker|worker.md|WORKER_RESULT|schema_version,task_id,status,files_modified,summary,outputs_verified,outputs_gap,out_of_lane
-execute-manager|execute-manager.md|EXECUTE_RESULT|schema_version,subtasks_completed,worktrees,merge_order,summary
-execute-manager|execute-manager.md|EXECUTE_CHECKPOINT|completed_so_far,remaining,resume_context,reason,adjudication_required,missing_outputs,adjudication_options,adjudication_kind,colliding_lanes
-qa-executor|qa-executor.md|QA_RESULT|schema_version,tests_generated,tests_passed,summary,coverage_estimate
-supervisor-runner|supervisor.md|SUPERVISOR_RESULT|schema_version,status,pr_url,heal_loop_ran,heal_iterations,heal_decision,heal_fixable_issues_fixed,heal_remaining_issues,error,summary
-plan-reviewer|plan-reviewer.md|PLAN_REVIEW_RESULT|schema_version,decision,issues,severity,section,description,summary
-code-reviewer|code-reviewer.md|CODE_REVIEW_RESULT|schema_version,decision,summary,severity,category,review_mode,audit_focus,trigger_paths_detected,scope_expanded,files_checked
+loomwright:worker|worker.md|WORKER_RESULT|schema_version,task_id,status,files_modified,summary,outputs_verified,outputs_gap,out_of_lane
+loomwright:execute-manager|execute-manager.md|EXECUTE_RESULT|schema_version,subtasks_completed,worktrees,merge_order,summary
+loomwright:execute-manager|execute-manager.md|EXECUTE_CHECKPOINT|completed_so_far,remaining,resume_context,reason,adjudication_required,missing_outputs,adjudication_options,adjudication_kind,colliding_lanes
+loomwright:qa-executor|qa-executor.md|QA_RESULT|schema_version,tests_generated,tests_passed,summary,coverage_estimate
+loomwright:supervisor-runner|supervisor.md|SUPERVISOR_RESULT|schema_version,status,pr_url,heal_loop_ran,heal_iterations,heal_decision,heal_fixable_issues_fixed,heal_remaining_issues,error,summary
+loomwright:plan-reviewer|plan-reviewer.md|PLAN_REVIEW_RESULT|schema_version,decision,issues,severity,section,description,summary
+loomwright:code-reviewer|code-reviewer.md|CODE_REVIEW_RESULT|schema_version,decision,summary,severity,category,review_mode,audit_focus,trigger_paths_detected,scope_expanded,files_checked
 "
 
 # ── Check 1: field presence ──────────────────────────────────────────────────
 while IFS='|' read -r matcher agent block fields; do
   [ -n "$matcher" ] || continue
+  # The plugin dimension, carried inside column 1 (see "ROW FORMAT IS A PUBLIC
+  # CONTRACT" in the header — the row must stay 4 columns).
+  case "$matcher" in
+    *:*) ;;
+    *) err manifest-row "MANIFEST matcher '$matcher' is not plugin-qualified — expected '<plugin>:<matcher>' (e.g. loomwright:worker)"; continue ;;
+  esac
+  row_plugin="${matcher%%:*}"
+  if ! resolve_row_plugin "$row_plugin"; then
+    err plugin-discovery "MANIFEST row '$matcher' names plugin '$row_plugin', which is not registered in $MARKETPLACE_JSON — register the plugin or fix the row"
+    continue
+  fi
+  [ -f "$HOOKS" ] || { err field-presence "plugin '$row_plugin' registers no hooks.json at $HOOKS"; continue; }
   agent_path="$AGENTS/$agent"
   [ -f "$agent_path" ] || { err field-presence "$agent missing at $agent_path"; continue; }
   prompt="$(hook_prompt "$matcher")"
@@ -399,21 +546,31 @@ done <<<"$MANIFEST"
 # when a refactor moves status-literal-bearing text into a new skill, add a
 # row here so the gate's coverage moves with it.
 ENUMS="
-agents/supervisor.md|status|completed,completed_with_escalation,failed,checkpoint,enum,pass,advisory_failures,unverified,skipped,running
-agents/supervisor.md|heal_decision|PASS,ESCALATED,null,enum
-agents/worker.md|status|completed,failed,partial,present,missing,pending,enum
-agents/qa-executor.md|status|passed,failed,partial,skipped,needs_human,plan_created,all_scopes_completed,enum
-agents/execute-manager.md|status|completed,failed,in_progress,pending,running,missing,checkpoint,enum
-agents/code-reviewer.md|decision|PASS,FAIL,NEEDS_HUMAN,enum
-agents/plan-reviewer.md|decision|PASS,FAIL,NEEDS_HUMAN,enum
-skills/self-heal-advisory/SKILL.md|status|pass,advisory_failures,advisory_violations,unverified,skipped,failed,checkpoint,enum
-skills/preflight-sync/SKILL.md|status|checkpoint,failed,enum
-skills/supervisor-config/SKILL.md|status|failed,enum
-skills/self-heal-advisory/SKILL.md|heal_decision|PASS,ESCALATED,null,enum
+loomwright:agents/supervisor.md|status|completed,completed_with_escalation,failed,checkpoint,enum,pass,advisory_failures,unverified,skipped,running
+loomwright:agents/supervisor.md|heal_decision|PASS,ESCALATED,null,enum
+loomwright:agents/worker.md|status|completed,failed,partial,present,missing,pending,enum
+loomwright:agents/qa-executor.md|status|passed,failed,partial,skipped,needs_human,plan_created,all_scopes_completed,enum
+loomwright:agents/execute-manager.md|status|completed,failed,in_progress,pending,running,missing,checkpoint,enum
+loomwright:agents/code-reviewer.md|decision|PASS,FAIL,NEEDS_HUMAN,enum
+loomwright:agents/plan-reviewer.md|decision|PASS,FAIL,NEEDS_HUMAN,enum
+loomwright:skills/self-heal-advisory/SKILL.md|status|pass,advisory_failures,advisory_violations,unverified,skipped,failed,checkpoint,enum
+loomwright:skills/preflight-sync/SKILL.md|status|checkpoint,failed,enum
+loomwright:skills/supervisor-config/SKILL.md|status|failed,enum
+loomwright:skills/self-heal-advisory/SKILL.md|heal_decision|PASS,ESCALATED,null,enum
 "
 
-while IFS='|' read -r agent key allowed; do
-  [ -n "$agent" ] || continue
+while IFS='|' read -r scoped key allowed; do
+  [ -n "$scoped" ] || continue
+  case "$scoped" in
+    *:*) ;;
+    *) err enum-literal "ENUMS path '$scoped' is not plugin-qualified — expected '<plugin>:<plugin-relative-path>'"; continue ;;
+  esac
+  row_plugin="${scoped%%:*}"
+  agent="${scoped#*:}"
+  if ! resolve_row_plugin "$row_plugin"; then
+    err plugin-discovery "ENUMS row '$scoped' names plugin '$row_plugin', which is not registered in $MARKETPLACE_JSON — register the plugin or fix the row"
+    continue
+  fi
   agent_path="$PLUGIN/$agent"
   [ -f "$agent_path" ] || { err enum-literal "scoped file $agent missing at $agent_path — update ENUMS"; continue; }
   # bare literals only: `key: token` (quoted strings, {placeholders}, and

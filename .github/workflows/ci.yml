@@ -43,6 +43,14 @@ jobs:
           bash scripts/test-check-shared-prefix.sh
           bash scripts/check-shared-prefix.sh
 
+      # Self-test for the plugin-aware hard-gate harness below. Kept as its own
+      # named step for the same reason as the two above: these root
+      # scripts/test-*.sh files are NOT matched by the harness (it globs each
+      # PLUGIN's scripts/, and the repo root is not a plugin), so an unnamed one
+      # would silently never run.
+      - name: Check plugin self-test harness (per-plugin loud-on-empty gate)
+        run: bash scripts/test-check-plugin-selftests.sh
+
       - name: Run full deterministic self-test suite (hard gate)
         env:
           # build-vault.sh's idempotency assertion (#3 in test-build-vault.sh) FAILS on
@@ -52,22 +60,28 @@ jobs:
           # hard-gating. Pre-existing build-vault bug, tracked in issue #40; drop this env
           # once #40 lands.
           BUILD_VAULT_SKIP_IDEMPOTENCY: "1"
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          # Loops over the WHOLE suite as a hard gate (every test-*.sh runs; future tests are
-          # auto-included — anti-drift), failing the job on the first non-zero exit. nullglob +
-          # the count check make a moved/renamed scripts dir fail LOUDLY ("no self-tests found")
-          # rather than passing the literal glob to bash as a confusing "No such file".
-          tests=(loomwright/scripts/test-*.sh)
-          [ "${#tests[@]}" -gt 0 ] || { echo "no self-tests found (loomwright/scripts/test-*.sh) — anti-drift loop matched nothing" >&2; exit 1; }
-          for t in "${tests[@]}"; do
-            echo "== $t =="
-            bash "$t"
-          done
+        # The loop this step used to inline globbed `loomwright/scripts/test-*.sh`
+        # only, so a `selvedge/scripts/test-*.sh` would never have run. It now
+        # lives in scripts/check-plugin-selftests.sh, which discovers every
+        # plugin in .claude-plugin/marketplace.json and keeps the loud-on-empty
+        # property PER PLUGIN (a scripts/ dir with no test-*.sh fails and names
+        # the plugin; a plugin with no scripts/ dir is skipped silently).
+        #
+        # Extracting it is the point, not incidental: loop logic inlined in a
+        # workflow file cannot be tested — it can only be pushed and watched.
+        # In a script it has a self-test (run in the step above) whose
+        # loud-on-empty branch is mutation-controlled against fixture trees.
+        # Verified equivalent at extraction: 60 suites enumerated, same as the
+        # inline glob. ONE deliberate behavioural difference, stated rather than
+        # left for a reader to discover: the inline loop ran under `set -e` and
+        # aborted on the FIRST failing suite; the harness runs every suite and
+        # fails at the end, so one CI run reports all failures instead of only
+        # the earliest.
+        run: bash scripts/check-plugin-selftests.sh
 
-      # The sdk-spike suite is NOT matched by the `loomwright/scripts/test-*.sh` glob above
-      # (it lives under `loomwright/sdk-spike/test/`), so until v15.20.0 it never ran in CI at
+      # The sdk-spike suite is NOT matched by the harness's per-plugin
+      # `<plugin>/scripts/test-*.sh` glob (it lives under
+      # `loomwright/sdk-spike/test/`), so until v15.20.0 it never ran in CI at
       # all — while `src/runner.ts` absorbed 13 fix commits on this feature's branch alone.
       # Its two suites additionally self-SKIP unless `dist/runner.js` exists, and `dist/` is
       # gitignored, so merely invoking them without a build would reproduce the same
