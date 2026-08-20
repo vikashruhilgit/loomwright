@@ -236,15 +236,21 @@ DETAIL: Agent 'probe-consumer:probe-consumer:probe-taskoutput-agent' would be sp
 Two details the raw text settles that the earlier one-line quote did not. The outcome is the **same
 refusal** as rung 1 — `TaskOutput` does not keep the list non-empty, it is *subtracted by the
 platform*; and the message distinguishes two independent disqualifiers, `not available to subagents`
-(`TaskOutput`) from `recognized but matched no tools in this session` (`Task`, which the observing
-session did not hold). This arm therefore had to be observed with `--tools "Task,TaskOutput"` rather
-than the standard `Task,WebSearch`: a session without `TaskOutput` would have emptied the list for
-the *session* reason and silently reproduced rung 1 instead.
+(`TaskOutput`) from `recognized but matched no tools in this session` (`Task`). Note what that
+second clause does **not** mean here: this arm was invoked `--tools "Task,TaskOutput"`, so the
+observing session *did* hold `Task` and the message still reported it as matching nothing — the same
+pattern as rung 1, where the parent held `Task,WebSearch`. So `this session` in the message refers to
+the subagent's own resolution context, not to the parent's tool set. *Why* `Task` is disqualified for
+a subagent was **not measured**. This arm still had to be observed with `--tools "Task,TaskOutput"`
+rather than the standard `Task,WebSearch`, so that `TaskOutput` was grantable at all and the arm
+tested the subagent-side disqualifier rather than silently reproducing rung 1.
 
 **Consequence for the extraction:** hardening a companion-plugin agent by subtracting tools has a
-floor. The resolved list must be non-empty *and* contain something both subagent-eligible and
-present in the spawning session. `TaskOutput` in particular is **not available to subagents** and
-cannot be the residual tool.
+floor: the resolved list must be non-empty and must contain something **subagent-eligible**.
+`TaskOutput` in particular is **not available to subagents** and cannot be the residual tool. (An
+earlier draft of this paragraph also required the residual tool to be *present in the spawning
+session*; that half is withdrawn — it was inferred from the `this session` wording, and the
+measurement above contradicts it.)
 
 ---
 
@@ -453,7 +459,14 @@ transcript in full.)
 - **Not measured: the exact `agent_type` string the payload carried.** The probe truncates the
   payload at 400 characters and the field was cut mid-value (`"agent_type":"probe-host:`). So *why*
   both forms match — normalisation, substring matching, or something else — is unexplained. The
-  behavioural fact (both fire, both discriminate) is what was measured.
+  behavioural fact (both fire, both discriminate) is what was measured. One candidate is checkable
+  and worth naming: the single form is a literal **substring** of the doubled form
+  (`probe-host:probe-host-agent` sits at offset 11 of `probe-host:probe-host:probe-host-agent`), so
+  if `agent_type` carries the doubled string and matching is substring/regex rather than exact, the
+  single-form matcher fires *incidentally* — one mechanism, not two independent tolerances. Widening
+  the payload cut in the probe's hook command (`cut -c1-400` → `-c1-800`) would settle it in a single
+  re-run. This does not affect the recommendation either way: the single form fired empirically, so
+  it is safe under every candidate mechanism.
 
 ---
 

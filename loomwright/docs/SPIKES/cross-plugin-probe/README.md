@@ -53,7 +53,7 @@ instruction was vacuous.
 Expect timestamps, the run-scoped nonce, and `$TMPDIR` paths to differ on every run — those are not
 findings. What matters is whether the **verdicts** still hold.
 
-**Cost note:** a full run starts **eight** fresh `claude -p` sessions — one per probe arm: Unknown A
+**Cost note:** a full run starts **nine** fresh `claude -p` sessions — one per probe arm: Unknown A
 arms 1, 2 and the zero-tools control; Unknown B's trigger; Unknown C's two `subagent_type` forms;
 Unknown D's two spawn triggers; plus the TaskOutput control arm. It is not free and it is not
 instant (the recorded A/B/C run took roughly 2–4 minutes end to end).
