@@ -20,7 +20,7 @@ This makes `/dreaming` the safe, auditable counterpart to live execution: read p
 /dreaming                                          # All agents, last 5 sessions
 /dreaming --agent code-reviewer                    # Reflect with Code Reviewer only
 /dreaming --agent red-team                         # Reflect with Red Team Reviewer only
-/dreaming --agent qa-executor                      # Reflect with QA Executor only
+/dreaming --agent qa-executor                      # Reflect with QA Executor only (moves to selvedge; see Cross-plugin spawn)
 /dreaming --sessions 10                            # All agents, last 10 sessions
 /dreaming --agent code-reviewer --sessions 20      # Single agent, deeper history
 /dreaming --agent all --sessions 3                 # Explicit all (default), last 3 sessions
@@ -32,10 +32,55 @@ This makes `/dreaming` the safe, auditable counterpart to live execution: read p
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
-| `--agent` | No | `all` | Which agent(s) run reflection. Accepts `all`, `code-reviewer`, `red-team`, or `qa-executor`. `all` runs each supported agent in turn and aggregates their reports. Six agents have `memory: project` (Launch Pad, Code Reviewer, Red Team Reviewer, Product Owner, QA Strategist, QA Executor); v12.2.0 supports the three review-shaped agents listed above because their session logs carry the structured findings reflection needs (CODE_REVIEW_RESULT issues, red-team attack outcomes, QA_RESULT gates). Launch Pad, Product Owner, and QA Strategist are intentionally out of scope for v12.2.0 and may be added in a follow-up. |
+| `--agent` | No | `all` | Which agent(s) run reflection. Accepts `all`, `code-reviewer`, `red-team`, or `qa-executor`. `all` runs each supported agent in turn and aggregates their reports. `qa-executor` **moves to the companion `selvedge` plugin**, after which it is spawned across the plugin boundary as `selvedge:selvedge:qa-executor` — see "Cross-plugin spawn" below. Six agents have `memory: project`: four owned by loomwright permanently (Launch Pad, Code Reviewer, Red Team Reviewer, Product Owner) and two (QA Strategist, QA Executor) that ship in loomwright today and move to `selvedge`; v12.2.0 supports the three review-shaped agents listed above because their session logs carry the structured findings reflection needs (CODE_REVIEW_RESULT issues, red-team attack outcomes, QA_RESULT gates). Launch Pad, Product Owner, and QA Strategist are intentionally out of scope for v12.2.0 and may be added in a follow-up. |
 | `--sessions N` | No | `5` | How many of the most recent **unconsumed** `.supervisor/logs/{session_id}.jsonl` files to feed into reflection (obtained from `curation-status.sh unconsumed N` — see GATHER step 1; a plain "N most recent" selection can never reach the tail). Values are clamped to the number of available unconsumed log files. Higher values surface more durable patterns at higher token cost. **This is the consumption window, and it is independent of the readiness `pending` count** — the readiness gate can report a backlog of 60 and a default run will still read 5 of them, leaving the rest for later runs, which then read the next-newest 5. The probe states both numbers (`pending=` and `window=`); raise this deliberately when you want a run to bite off more. The `5` here is the authoritative default — `curation-status.sh` mirrors it in `DREAMING_DEFAULT_WINDOW` and `test-curation-status.sh` group (o) fails if the two drift. |
 | `--force` | No | off | Skips the **curation-readiness check** (see "Curation cadence" below) and reflects regardless of how little has accumulated. Without it, `/dreaming` declines — advisory, exit 0, never an error — when fewer than `threshold` **unreflected** session logs remain (logs never fed to reflection that carry reflection signal — *not* "logs newer than the last run"; see the cadence section for why that distinction is load-bearing). **The threshold is an UNVALIDATED starting guess** (in-script default `15`, override at `.curation.thresholds.dreaming` in `.supervisor/config.json`), so `--force` is the expected escape hatch, not an emergency one. |
 | `--full-model` | No | off | Skips the default spawn-time model routing. By default (flag absent), each reflection spawn passes `model: "sonnet"` on its Task call — reflection is read-only, backward-looking analysis where the cheaper tier is adequate (authority: `docs/ARCHITECTURE_CONTRACTS.md` §Cost Profiles → "Async analysis surfaces"). With `--full-model`, the `model` param is omitted so reflection spawns `inherit` the session model. This routing applies ONLY to `/dreaming` reflection spawns; the same agents' forward roles (diff review, adversarial audit, voter, test execution) are never downgraded by it. |
+
+## Cross-plugin spawn — `--agent qa-executor` targets the **selvedge** plugin (decision, 2026-08-20)
+
+QA Executor is scheduled to move out of loomwright into the companion **`selvedge`** plugin. It still
+ships in loomwright today; everything below states the post-move contract. **`--agent qa-executor`
+is NOT retired** — the capability is preserved and `/dreaming` spawns the selvedge-owned agent
+across the plugin boundary. Cross-plugin `Task` spawns were measured to work
+(`docs/SPIKES/CROSS_PLUGIN_RESOLUTION.md` §"Unknown C"): agents from every installed plugin share one
+`subagent_type` namespace, with no per-plugin partition.
+
+**The spawn literal — pin it, do not derive it:**
+
+```
+selvedge:selvedge:qa-executor
+```
+
+**This string is NOT derivable from the agent file.** It is `<plugin-name>:<frontmatter-name>`, and
+selvedge's agent frontmatter already carries a plugin prefix (`name: selvedge:qa-executor`) — hence
+the doubling. The first segment is the **installed plugin name**, which lives in the marketplace
+manifest, not in the agent file: reading `selvedge/agents/qa-executor.md` alone can never tell you
+what to write here. That is why the literal is written down at the spawn site instead of being
+constructed at runtime. Once `selvedge` owns the agent, `/dreaming` MUST pass exactly this
+string as `subagent_type` when spawning QA Executor. Until then the spawn stays
+`loomwright:loomwright:qa-executor`; there is no dual-lookup and no probing — the move flips the
+literal in one edit.
+
+> **Do not reuse this string in a `hooks.json` matcher.** A matcher slot takes the **single**-prefix
+> frontmatter name (`selvedge:qa-executor`); only a `Task(subagent_type:)` **spawn** takes the doubled
+> form above. They are two different namespaces. See `docs/TELEMETRY.md`
+> §"QA telemetry after the selvedge split" for the rule and its silent-failure consequence.
+
+**Behaviour when the selvedge QA agent is not installed** (selvedge absent, or installed without its
+QA agents — the state of the scaffold today). The spawn **fails loudly** — the harness returns an
+explicit `not found` error naming every valid `subagent_type` — and `/dreaming` surfaces that failure
+for that agent rather than hiding it. This is the accepted failure mode, not an oversight: the owner
+chose the cross-plugin-spawn option, **not** the graceful-degrade option, so there is deliberately
+**no silent skip and no fallback agent**. A loud failure that names the missing plugin is more useful
+than a reflection report that quietly omits a third of its input. Under `--agent all`, the
+`code-reviewer` and `red-team` reflections still run and aggregate normally; only the QA Executor leg
+reports its spawn error.
+
+**Rejected alternative.** *Retire `--agent qa-executor` and drop QA from reflection* — the option the
+source requirement floated. Rejected: cross-plugin spawn was measured to work, so retiring a working
+capability to avoid a boundary buys nothing, and QA session logs carry `QA_RESULT` gates that are a
+distinct reflection signal the two review-shaped agents do not supply.
 
 ## Curation cadence (readiness check + the one stored last-run record)
 
@@ -188,7 +233,7 @@ The same probe backs the **SessionStart curation nudge** in `scripts/session-res
 
 ## Reflection-Mode Task Prompt
 
-The agents `/dreaming` spawns (Code Reviewer, Red Team Reviewer, QA Executor) all have system prompts tuned for **forward** work — reviewing diffs, attacking running systems, generating tests. To put them into reflection mode, `/dreaming` MUST pass a task prompt that overrides their default behavior. The prompt below is the canonical template — `/dreaming` constructs an instance of it for each spawned agent and substitutes the placeholders.
+The agents `/dreaming` spawns (Code Reviewer, Red Team Reviewer, and QA Executor — the last spawned as `selvedge:selvedge:qa-executor` once `selvedge` owns it) all have system prompts tuned for **forward** work — reviewing diffs, attacking running systems, generating tests. To put them into reflection mode, `/dreaming` MUST pass a task prompt that overrides their default behavior. The prompt below is the canonical template — `/dreaming` constructs an instance of it for each spawned agent and substitutes the placeholders.
 
 ```
 You are running in REFLECTION MODE for the /dreaming command, not your normal forward-execution mode.
@@ -491,7 +536,7 @@ This contract is non-negotiable: a `/dreaming` invocation that mutates code, age
 
 ### Enforcement boundary (honest disclosure)
 
-The agents `/dreaming` spawns in reflection mode — Code Reviewer, Red Team Reviewer, QA Executor — have **full write tools** in their normal forward-execution mode. When `/dreaming` spawns them via `Task(subagent_type: ...)`, they inherit the tool permissions declared in their registered frontmatter; the Task tool does NOT support overriding `disallowedTools` per-call. That means the read-only constraint for reflection-spawned agents is **prompt-level**, not tool-level: enforced by the HARD RULES block in the reflection-mode task prompt template above and by the agents' own training to follow explicit instructions, NOT by the harness blocking Write/Edit calls.
+The agents `/dreaming` spawns in reflection mode — Code Reviewer, Red Team Reviewer, QA Executor — have **full write tools** in their normal forward-execution mode. When `/dreaming` spawns them via `Task(subagent_type: ...)` — `loomwright:loomwright:<agent>` for the two loomwright agents, and `selvedge:selvedge:qa-executor` for QA Executor once `selvedge` owns it — they inherit the tool permissions declared in their registered frontmatter, **including across the plugin boundary**; the Task tool does NOT support overriding `disallowedTools` per-call. That means the read-only constraint for reflection-spawned agents is **prompt-level**, not tool-level: enforced by the HARD RULES block in the reflection-mode task prompt template above and by the agents' own training to follow explicit instructions, NOT by the harness blocking Write/Edit calls.
 
 In practice, a well-functioning agent honors the HARD RULES. The mitigation against drift is:
 
@@ -590,7 +635,7 @@ For each item above, choose **Accept**, **Reject**, or **Edit** (per-item — th
 | `/supervisor` | Forward (execute) | Autonomously execute tasks end-to-end |
 | `/code-reviewer` | Lateral (live audit) | Review the current diff or files |
 | `/red-team-reviewer` | Lateral (live audit) | Adversarially attack the current state |
-| `/qa-executor` | Forward (test) | Generate and run tests against the running app |
+| `/qa-executor` | Forward (test) | Generate and run tests against the running app (moves to the **selvedge** plugin) |
 | **`/dreaming`** | **Backward (reflect)** | **After several sessions, distill patterns into proposed memory + CLAUDE.md updates** |
 
 Use `/dreaming` periodically — for example, weekly or after every N completed `/supervisor` runs — to harvest durable lessons from session logs and keep agent memory and project documentation aligned with how the team actually works.
@@ -606,14 +651,14 @@ Use `/dreaming` periodically — for example, weekly or after every N completed 
 
 - During active execution — `/dreaming` reflects on past sessions, not the current one
 - When you need code changes — `/dreaming` never touches code (it persists approved memory/LESSONS/promotions, and its only branch-and-PR path carries `.agent/rules/*.json` alone); use `/supervisor` or `/code-reviewer` for code changes
-- For agents not currently supported — six agents have `memory: project` (Launch Pad, Code Reviewer, Red Team Reviewer, Product Owner, QA Strategist, QA Executor), but v12.2.0's `--agent` flag covers only Code Reviewer, Red Team Reviewer, and QA Executor; the other three are out of scope until a follow-up release
+- For agents not currently supported — six agents have `memory: project`: four owned by loomwright permanently (Launch Pad, Code Reviewer, Red Team Reviewer, Product Owner) and two (QA Strategist, QA Executor) that ship in loomwright today and move to the companion `selvedge` plugin. v12.2.0's `--agent` flag covers only Code Reviewer, Red Team Reviewer, and QA Executor (the last spawned cross-plugin — see "Cross-plugin spawn"); the other three are out of scope until a follow-up release
 
 ## See Also
 
 - `/supervisor` — Autonomous workflow whose logs are the input to `/dreaming`
 - `/code-reviewer` — Live (forward) review counterpart
 - `/red-team-reviewer` — Live (forward) adversarial counterpart
-- `/qa-executor` — Live (forward) QA counterpart
+- `/qa-executor` — Live (forward) QA counterpart (moves to the **selvedge** plugin)
 - `/agent-help` — Full command list
 - `loomwright/skills/memory-tool/SKILL.md` — Decision aid for what to write to agent memory directories (consulted on demand)
 - `.supervisor/logs/{session_id}.jsonl` — Source data consumed by `/dreaming`

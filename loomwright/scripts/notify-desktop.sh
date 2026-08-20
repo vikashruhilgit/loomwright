@@ -97,7 +97,35 @@ is_plugin_context() {
   #   - loomwright:<agent>  — Task-spawn references
   #   - /launch-pad, /supervisor, /autonomous, /code-reviewer, /qa-executor,
   #     /qa-strategist, /red-team-reviewer, /product-owner, /agent-help,
-  #     /telemetry, /dreaming — the 12 plugin slash commands
+  #     /telemetry, /dreaming — 11 slash commands (count them in the alternation
+  #     below: it holds 12 branches, of which the first is the `loomwright:`
+  #     agent-spawn prefix and the remaining 11 are these commands).
+  #
+  # OWNERSHIP (2026-08-20): two of those 11 — /qa-executor and /qa-strategist —
+  # move to the companion `selvedge` plugin. They are KEPT in the alternation on
+  # purpose: this marker answers "is a plugin-family session in progress", and a
+  # QA session still is one. The regex is deliberately NOT churned by that move
+  # (owner decision: fix the comment, leave the pattern alone), so this is a
+  # comment-only correction and matching behaviour is unchanged.
+  #
+  # ASYMMETRY, measured rather than assumed: send-webhook.sh runs a
+  # byte-identical alternation but carries NO enumerating comment of its own —
+  # its only nearby comment says it "mirrors notify-desktop.sh", which stays
+  # true after the split. So it needs NO comment change; that is a deliberate
+  # finding, not an oversight or a half-done sweep. To re-check, extract the
+  # single-quoted alternation argument from the grep -qE call in each of
+  # notify-desktop.sh and send-webhook.sh and compare the two: they must stay
+  # identical to each other, or the "mirrors" claim above has silently gone
+  # stale. (The extraction pattern is deliberately NOT written out here: a
+  # literal copy of it in this comment would itself be matched, so the check
+  # would report a phantom third occurrence and stop meaning anything.)
+  #
+  # Known gap, recorded rather than fixed here: the `loomwright:` branch matches
+  # Task-spawn references by that literal prefix only, so a selvedge-namespaced
+  # spawn (`selvedge:selvedge:qa-executor`) is NOT matched by it. Such a session
+  # is still detected via the /qa-executor and /qa-strategist command branches.
+  # Widening the prefix branch is a behavioural change and belongs with the move,
+  # not with this comment fix.
   if [ -n "$transcript_path" ] && [ -r "$transcript_path" ]; then
     if tail -200 "$transcript_path" 2>/dev/null | grep -qE 'loomwright:|/launch-pad|/supervisor|/autonomous|/code-reviewer|/qa-executor|/qa-strategist|/red-team-reviewer|/product-owner|/agent-help|/telemetry|/dreaming'; then
       return 0

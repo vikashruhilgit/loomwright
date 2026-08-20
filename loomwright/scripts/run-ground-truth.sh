@@ -55,6 +55,24 @@
 #                    per_check status "unverified", reason "qa_executor_dispatch_deferred_m2b_1b".
 #                    Counts toward checks_total but neither checks_passed nor a fail.
 #
+#                    DECISION ANCHOR (2026-08-20) — the eventual dispatch target. The QA agents move
+#                    out of loomwright into the companion `selvedge` plugin. The RESERVED KIND NAME
+#                    `qa-executor:` is KEPT as-is: briefs already author that token, and renaming it
+#                    would silently reclassify every existing bullet as a bare `cmd` (i.e. arbitrary
+#                    shell), which is a trust regression, not a rename. What changes is only the
+#                    TARGET this kind eventually dispatches to: when slice 1b lands AND selvedge is
+#                    installed, it spawns `selvedge:selvedge:qa-executor`.
+#
+#                    That literal is the DOUBLED `Task(subagent_type:)` form and is NOT derivable
+#                    from the agent file — the leading segment is the installed plugin name. Do NOT
+#                    reuse it in a `hooks.json` matcher slot, which takes the SINGLE-prefix
+#                    `selvedge:qa-executor`; see docs/TELEMETRY.md §"QA telemetry after the selvedge
+#                    split" for the two namespaces and why confusing them fails silently. The
+#                    `qa-executor:` token below is a loomwright-local KIND NAME, not a spawn string.
+#                    Rejected alternative: rename the kind to a selvedge-namespaced token — rejected
+#                    because it breaks authored briefs for no behavioural gain (see above).
+#                    Nothing dispatches today; this comment records the target, it does not enable it.
+#
 # TRUST BOUNDARY (not a sandbox): the runner ITSELF performs no repo writes and makes no network
 # calls — but it is NOT a security boundary. A `cmd:` (or bare) check runs an arbitrary
 # `bash -c '<shell>'` with full, unrestricted shell privileges (it CAN write files / hit the
@@ -271,6 +289,9 @@ for line in "${CHECK_LINES[@]}"; do
   case "$line" in
     cmd:*)          kind="cmd";          target="$(trim "${line#cmd:}")" ;;
     corpus-task:*)  kind="corpus-task";  target="$(trim "${line#corpus-task:}")" ;;
+    # `qa-executor:` is a loomwright-local KIND NAME and deliberately NOT the spawn string. The
+    # eventual dispatch target is `selvedge:selvedge:qa-executor` — see the DECISION ANCHOR in the
+    # header block above. Renaming this token would reclassify authored bullets as bare `cmd`.
     qa-executor:*)  kind="qa-executor";  target="$(trim "${line#qa-executor:}")" ;;
     *)              kind="cmd";          target="$line" ;;   # bare line -> treat as shell cmd
   esac
@@ -332,6 +353,8 @@ for line in "${CHECK_LINES[@]}"; do
       ;;
     qa-executor)
       # DEFERRED to slice 1b — recognized, recorded, never spawned. Neither pass nor fail.
+      # When slice 1b lands and selvedge is installed, this arm dispatches
+      # `selvedge:selvedge:qa-executor` (DOUBLED spawn form). See the DECISION ANCHOR in the header.
       deferred=$((deferred+1))
       echo "  [DEFERRED] qa-executor:$target (dispatch deferred to M2b slice 1b)"
       append_check "qa-executor" "$target" "unverified" "qa_executor_dispatch_deferred_m2b_1b"
