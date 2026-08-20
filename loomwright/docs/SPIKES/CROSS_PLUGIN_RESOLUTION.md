@@ -1,7 +1,9 @@
 # Spike: cross-plugin resolution — can a companion plugin depend on Loomwright-owned assets?
 
-**Status:** MEASURED. All three unknowns answered by executed probes.
-**Date measured:** 2026-08-20
+**Status:** MEASURED. All four unknowns answered by executed probes.
+**Date measured:** 2026-08-20 (Unknowns A/B/C; Unknown D and the TaskOutput control arm were
+measured the same day in a second run, labelled `2026-08-20-armd`, after review found the Unknown B
+fallback resting on an unmeasured premise)
 **Measured against:** Claude Code **2.1.228** (`claude --version`, captured in
 `cross-plugin-probe/transcripts/2026-08-20-unknown-a.log`)
 **Probe harness (committed):** [`cross-plugin-probe/`](cross-plugin-probe/)
@@ -14,8 +16,10 @@ bash loomwright/docs/SPIKES/cross-plugin-probe/run-probe.sh
 
 > **This answer has an expiry date.** Every verdict below is a statement about Claude Code 2.1.228
 > on 2026-08-20, not about Claude Code in general. Re-run the command above before relying on any
-> of it against a newer version. `cross-plugin-probe/README.md` explains how to re-run without
-> overwriting the recorded transcripts (`PROBE_DATE=$(date +%F)`).
+> of it against a newer version. A re-run cannot destroy the recorded transcripts: the run label
+> defaults to a to-the-second timestamp, and a run whose label *would* collide with an existing
+> transcript refuses to start (exit 2) unless `PROBE_OVERWRITE=1` is set. See
+> `cross-plugin-probe/README.md` §"Re-run".
 
 ---
 
@@ -39,7 +43,8 @@ exact frontmatter block. A dropped `skills:` preload fails no gate and logs noth
 | **A** — cross-plugin `skills:` preload | **RESOLVES** | A second plugin's agent preloads another plugin's skill body by bare name. |
 | **B** — `${CLAUDE_PLUGIN_ROOT}` in a second plugin's `hooks.json` | **RESOLVES, PER-PLUGIN** | It expands to the *declaring* plugin's own directory. Empty/unset is ruled OUT. Downstream this is a **NO**: a selvedge hook cannot invoke loomwright's scripts by that path. |
 | **C** — cross-plugin `Task(subagent_type:)` | **RESOLVES WITH CAVEAT** | Only the **doubled-prefix** form works. The single-prefix form errors with `not found`. |
-| *(incidental)* — tool-subtraction hardening | **CONSTRAINT FOUND** | An agent whose resolved tool list is empty is **refused at spawn**. |
+| **D** — cross-plugin `SubagentStop` **matcher** | **RESOLVES** | A matcher declared in one plugin fires for an agent owned by another. Both the single- and doubled-prefix matcher forms fired, and each still discriminated by agent. |
+| *(incidental)* — tool-subtraction hardening | **CONSTRAINT FOUND** | An agent whose resolved tool list is empty is **refused at spawn**, and `TaskOutput` cannot keep it non-empty. |
 
 ---
 
@@ -75,8 +80,10 @@ construction, and **no tracked file is written at all**.
 > store and it holds stale leftovers. That warning is about *guessing from a directory listing*.
 > Here the path was not guessed: it was read out of `installed_plugins.json` for the `loomwright@atelier`
 > entry and cross-checked against `claude plugin details`. Resolved that way, the cache path **is**
-> the real load path — the corroboration arm below confirms it end-to-end, because the agent
-> independently reported that same directory as its skill source.
+> the real load path — and the corroboration arm below is consistent with it, because the agent
+> named that same directory as its skill source. That naming is *corroboration, not an independent
+> channel*: the agent said so itself (quoted in full below), the path having arrived through the
+> preloaded skill preamble rather than from any disk read it performed.
 
 ### Sentinel isolation (why a hit is not confounded)
 
@@ -149,7 +156,15 @@ ITEM: Related CLAUDE.md patterns understood
 ITEM: Test strategy defined (unit/integration/e2e)
 ITEM: Framework-specific skills identified
 ITEM: Token budget estimated (Context7 needed?)
+
+Limits worth stating explicitly:
+[...]
+- Source of the text I copied: `/Users/vikashruhil/.claude/plugins/cache/atelier/loomwright/15.36.0/skills/quality-checklist/SKILL.md` (skill base directory as given in my context; I have no tools, so this path is as-declared, not independently read from disk).
 ```
+
+The `[...]` elides two of the agent's three limit bullets; the third is kept because it is the one
+that qualifies the path claim, and an excerpt that cut it would have made the corroboration look
+stronger than it is.
 
 ```
 $ grep -cF "$MARKER" <arm 2 captured output>   # <== THE assertion for Unknown A arm 2
@@ -164,10 +179,16 @@ rule. They agree.
 Two details make this arm stronger than the marker alone. The agent **corrected the prompt's own
 premise** — the prompt asked for a section called "Before Starting Any Task", which does not exist;
 the agent reported the real heading `## Pre-Task Checklist` rather than confabulating the requested
-one. And it independently named its skill source as
+one. And it named its skill source as
 `/Users/vikashruhil/.claude/plugins/cache/atelier/loomwright/15.36.0/skills/quality-checklist/SKILL.md`,
-which is the path Phase 0 had resolved from `installed_plugins.json` — a detail no prior-knowledge
-reconstruction would supply.
+matching the path Phase 0 had resolved from `installed_plugins.json`.
+
+That second detail is weaker than it looks, and the agent said so itself in the quoted block: the
+path was *"as given in my context; I have no tools, so this path is as-declared, not independently
+read from disk"*. The mechanism is the **preloaded skill preamble**, which carries the skill's base
+directory. So it corroborates the load path — a preamble naming that directory is what preload
+looks like — but it is not a second, independent channel, and it is not evidence the agent verified
+anything against the filesystem. Calling it "independent" would have overstated it.
 
 ### Control arm — the other way to get no sentinel
 
@@ -182,20 +203,48 @@ DETAIL: Agent 'probe-consumer:probe-consumer:probe-zero-tools-agent' would be sp
 --- end capture ---
 ```
 
-This is not a hypothetical. **The first two runs of this probe hit exactly this and produced a
+This is not a hypothetical. **The FIRST run of this probe hit exactly this and produced a
 nonce-absent result that was NOT a NO** — it was a refused spawn, recorded UNMEASURED per the
-UNMEASURED guard rather than written up as DOES NOT RESOLVE. The residual tool was then chosen by
-measurement:
+UNMEASURED guard rather than written up as DOES NOT RESOLVE. A second run, with `TaskOutput` as the
+sole residual tool, was rejected differently.
 
-| Agent's resolved tool list | Result at spawn |
-|---|---|
-| everything subtracted | `would be spawned with zero tools — refusing` |
-| `TaskOutput` only | `not available to subagents [TaskOutput]` |
-| `WebSearch` only | spawns; returns the sentinel |
+> **Neither of those two early runs has a committed transcript.** They predate the harness being
+> committed, so as evidence they are recollection, not record — and this document does not cite
+> them as measurement. Both rungs are instead reproduced as **control arms that run every time**:
+> `probe-zero-tools-agent` (rung 1, in the Unknown A transcript) and `probe-taskoutput-agent`
+> (rung 2, in `2026-08-20-armd-control-taskoutput.log`). Every row of the ladder below is quoted
+> from one of those committed transcripts.
+
+The residual tool was then chosen by measurement:
+
+| Agent's resolved tool list | Result at spawn | Committed transcript |
+|---|---|---|
+| everything subtracted | `would be spawned with zero tools — refusing` | `2026-08-20-unknown-a.log` (control arm) |
+| `TaskOutput` only | refused too, and the message names the reason: `not available to subagents [TaskOutput]` | `2026-08-20-armd-control-taskoutput.log` |
+| `WebSearch` only | spawns; returns the sentinel | `2026-08-20-unknown-a.log` (arms 1 and 2) |
+
+The middle row was quoted from an unrecorded run when this document was first written. It is now
+measured, by a control arm (`probe-taskoutput-agent`) that runs on every invocation:
+
+```
+--- captured stdout+stderr (verbatim) ---
+OUTCOME: error
+DETAIL: Agent 'probe-consumer:probe-consumer:probe-taskoutput-agent' would be spawned with zero tools — refusing. Its tools list resolved to nothing: not available to subagents [TaskOutput]; recognized but matched no tools in this session [Task]. Fix the agent's tools frontmatter or pass a different subagent_type.
+--- end capture ---
+```
+
+Two details the raw text settles that the earlier one-line quote did not. The outcome is the **same
+refusal** as rung 1 — `TaskOutput` does not keep the list non-empty, it is *subtracted by the
+platform*; and the message distinguishes two independent disqualifiers, `not available to subagents`
+(`TaskOutput`) from `recognized but matched no tools in this session` (`Task`, which the observing
+session did not hold). This arm therefore had to be observed with `--tools "Task,TaskOutput"` rather
+than the standard `Task,WebSearch`: a session without `TaskOutput` would have emptied the list for
+the *session* reason and silently reproduced rung 1 instead.
 
 **Consequence for the extraction:** hardening a companion-plugin agent by subtracting tools has a
 floor. The resolved list must be non-empty *and* contain something both subagent-eligible and
-present in the spawning session. `TaskOutput` in particular is **not available to subagents**.
+present in the spawning session. `TaskOutput` in particular is **not available to subagents** and
+cannot be the residual tool.
 
 ---
 
@@ -245,9 +294,11 @@ HOOK_FIRED_AT=[2026-08-20T02:38:39Z]
   was resolved by the shell against a set, non-empty variable.
 - **The empty/unset case is ruled OUT.** `RAW` is non-empty and `ENV_PRESENT` is 1, so neither
   silent-no-op branch is in play.
-- **A second plugin's `hooks.json` registers and fires at all.** The hook fired on every fresh
-  `claude -p` session in the run — the transcript shows repeated records with distinct
-  `HOOK_FIRED_AT` timestamps. That is itself a positive finding: hooks are not silently dropped for
+- **A second plugin's `hooks.json` registers and fires at all.** The hook fired on every session
+  observed **up to that point** — the Unknown B transcript shows 4 records with distinct
+  `HOOK_FIRED_AT` timestamps, one per session started so far, because that file is `cat`'d during
+  phase B and Unknown C's two sessions had not yet run. (The script now also dumps the file at
+  teardown, so a future run records the whole-run count rather than a prefix of it.) That is itself a positive finding: hooks are not silently dropped for
   a second plugin the way frontmatter `hooks:` are.
 - `HOOK_CWD` is the *session's* directory, so it is not a usable anchor for locating another
   plugin.
@@ -325,6 +376,87 @@ string. It is not derivable from the agent file alone; it depends on the install
 
 ---
 
+## Unknown D — cross-plugin SubagentStop matcher resolution
+
+**Question.** Does a `SubagentStop` **matcher declared in plugin X** fire for an agent **owned by
+plugin Y** — and in which namespace is the matcher written?
+
+**Why this is a separate unknown.** The Unknown B fallback chosen below (keep the shared-script
+fan-out in loomwright, matched on the companion plugin's agent) rests entirely on this, and
+**Unknown C does not establish it**. Unknown C measured the `Task(subagent_type:)` namespace, where
+the working form is doubled. A hook matcher is a different namespace: every matcher in
+`loomwright/hooks/hooks.json` is the agent's **single-prefix frontmatter `name:`** —
+`loomwright:code-reviewer`, `loomwright:qa-executor`, `loomwright:worker`. Conflating the two would
+produce a matcher that never fires, and under the `|| true` convention that failure is silent — the
+exact class of failure this spike exists to prevent. So it was measured rather than inferred.
+
+**Verdict: RESOLVES.** A matcher declared in one plugin fires for an agent owned by another, and
+both prefix forms fired while still discriminating by agent.
+
+### Probe design
+
+`probe-consumer`'s `hooks.json` declares five `SubagentStop` entries, each appending a distinct
+label to one scratch file, so that three questions that a single matcher would conflate stay
+separable:
+
+| Entry | Isolates |
+|---|---|
+| no `matcher` → `wildcard-any` | does `SubagentStop` fire at all in a headless session? If this is silent, every other row is UNMEASURED, not a NO |
+| `probe-consumer:probe-agent` → `same-plugin-single` | control: the declaring plugin's own agent, single prefix |
+| `probe-consumer:probe-consumer:probe-agent` → `same-plugin-doubled` | control: own agent, doubled prefix |
+| `probe-host:probe-host-agent` → `cross-plugin-single` | **the unknown**, single prefix |
+| `probe-host:probe-host:probe-host-agent` → `cross-plugin-doubled` | **the unknown**, doubled prefix |
+
+`probe-host` gained an agent of its own for this arm, so that a matcher in `probe-consumer` has a
+genuinely foreign agent to match. Two triggers then ran in two fresh sessions: one spawning
+`probe-host`'s agent, one spawning `probe-consumer`'s.
+
+### Raw observed output
+
+```
+MATCH=[cross-plugin-single] AT=[03:05:08Z]
+MATCH=[cross-plugin-doubled] AT=[03:05:08Z]
+```
+
+```
+MATCH=[same-plugin-single] AT=[03:05:31Z]
+MATCH=[same-plugin-doubled] AT=[03:05:31Z]
+```
+
+```
+labels observed:
+  wildcard-any           2
+  same-plugin-single     1
+  same-plugin-doubled    1
+  cross-plugin-single    1
+  cross-plugin-doubled   1
+```
+
+(The two `wildcard-any` records — one per trigger — also carry the raw hook payload; they are in the
+transcript in full.)
+
+### Reading it
+
+- **Cross-plugin matching works.** A matcher declared in `probe-consumer` fired for an agent owned
+  by `probe-host`, at `03:05:08Z`, in the session that spawned it. Hooks are matched by agent
+  identity, not by owning plugin. This is the fact fallback (d) needs.
+- **`SubagentStop` fires at all here.** The `wildcard-any` control fired twice, once per trigger —
+  so a silent row would have meant "did not match", not "the event never happened". Without it the
+  whole arm would be unreadable.
+- **Matching still discriminates by agent.** Trigger 1 produced only the `cross-plugin-*` rows and
+  trigger 2 only the `same-plugin-*` rows. Matchers are not being ignored wholesale.
+- **Both prefix forms fired.** Single and doubled each matched their own agent and neither matched
+  the other's. So the matcher namespace tolerates both spellings on this version — but that is a
+  tolerance, not a licence: **write matchers in the single-prefix frontmatter-name form**, because
+  that is what every existing matcher in `loomwright/hooks/hooks.json` uses, and a file with two
+  spellings of the same convention is the drift this repo keeps paying for.
+- **Not measured: the exact `agent_type` string the payload carried.** The probe truncates the
+  payload at 400 characters and the field was cut mid-value (`"agent_type":"probe-host:`). So *why*
+  both forms match — normalisation, substring matching, or something else — is unexplained. The
+  behavioural fact (both fire, both discriminate) is what was measured.
+
+---
+
 ## Chosen fallbacks and why
 
 Unknowns A and C resolved, so no fallback is needed for them; the reasoning for *not* taking the
@@ -368,12 +500,22 @@ chosen one wins:
 | **(c) Derive loomwright's root at hook time** (e.g. read `installed_plugins.json`, as `run-probe.sh` does) | **Rejected as a default.** It works, and this spike proves it works, but it makes selvedge depend on the plugin manager's private state file. That is an unstable contract to build a shipped hook on. |
 | **(d) Keep the shared-script fan-out hooks in LOOMWRIGHT, matched on the selvedge agent** | **CHOSEN.** |
 
-**Chosen: (d).** Hooks are matched by agent identity, not by owning plugin, and Unknown C proved the
-identities are visible across the plugin boundary in one shared namespace. So loomwright keeps a
-`SubagentStop` matcher for `selvedge:selvedge:qa-executor` carrying the telemetry + token-ledger
-fan-out, where `${CLAUDE_PLUGIN_ROOT}` correctly resolves to loomwright and the scripts stay
-single-copy. Selvedge's own `hooks.json` keeps only `validate-qa-result.py`, whose script moves with
-it and whose `${CLAUDE_PLUGIN_ROOT}` correctly resolves to selvedge.
+**Chosen: (d).** Hooks are matched by agent identity, not by owning plugin — measured in **Unknown D**
+above, not inferred from Unknown C. So loomwright keeps a `SubagentStop` matcher for the selvedge QA
+agent carrying the telemetry + token-ledger fan-out, where `${CLAUDE_PLUGIN_ROOT}` correctly resolves
+to loomwright and the scripts stay single-copy. Selvedge's own `hooks.json` keeps only
+`validate-qa-result.py`, whose script moves with it and whose `${CLAUDE_PLUGIN_ROOT}` correctly
+resolves to selvedge.
+
+**The matcher is written `selvedge:qa-executor` — the single-prefix frontmatter name, NOT the
+doubled `Task(subagent_type:)` string.** These are two different namespaces and the doubled form
+belongs to the other one. The convention is not a guess: every matcher in
+`loomwright/hooks/hooks.json` is a single-prefix frontmatter `name:` (`loomwright:code-reviewer`,
+`loomwright:qa-executor`, `loomwright:worker`), matching the `name:` field of the corresponding
+`loomwright/agents/*.md`. Unknown D found that the doubled form *also* fires on this version, so the
+distinction is not currently load-bearing — but writing the spawn string into a matcher slot would
+still be wrong by convention, and if that tolerance ever narrows the failure is a matcher that never
+fires, which under `|| true` loses the QA telemetry + token-ledger fan-out **silently**.
 
 This splits the two hooks by *which plugin owns the script*, which is the real coupling, rather than
 by which plugin owns the agent. It costs loomwright a small permanent awareness of selvedge's agent
@@ -403,16 +545,24 @@ Retiring `--agent qa-executor` — the alternative the source requirement floate
 | Loomwright version present | 15.36.0, source `loomwright@atelier` |
 | Installed loomwright body | `/Users/vikashruhil/.claude/plugins/cache/atelier/loomwright/15.36.0` |
 | Install scope used by the probe | `local` only — never `user`, never `project` |
-| Run-scoped nonce | `XPLUGIN-NONCE-1787193514-1432331022` |
-| Transcripts | `cross-plugin-probe/transcripts/2026-08-20-{unknown-a,unknown-b,unknown-c,teardown}.log` |
+| Run-scoped nonce (run 1) | `XPLUGIN-NONCE-1787193514-1432331022` |
+| Run-scoped nonce (run 2) | `XPLUGIN-NONCE-1787195091-3138718983` |
+| Transcripts, run 1 (A/B/C) | `cross-plugin-probe/transcripts/2026-08-20-{unknown-a,unknown-b,unknown-c,teardown}.log` |
+| Transcripts, run 2 (D + TaskOutput control) | `cross-plugin-probe/transcripts/2026-08-20-armd-{phase0,unknown-d,control-taskoutput,teardown}.log` |
 
-All four transcripts come from the **same** run (scratch `loomwright-xplugin-probe-97054`) and carry
-the same nonce, so they cross-check each other rather than describing four different states.
+**Two runs, not one — and the boundary matters.** Run 1 (scratch `loomwright-xplugin-probe-97054`)
+measured Unknowns A, B and C; all four of its transcripts carry the same nonce, so they cross-check
+each other rather than describing four different states. Run 2 (`loomwright-xplugin-probe-35252`,
+label `2026-08-20-armd`) was added after review, to measure Unknown D and rung 2 of the tool ladder;
+it ran `PROBE_ONLY="d control"`, so it re-did preflight and install (its own `-phase0.log`) and left
+run 1's A/B/C transcripts untouched. Its own nonce differs, by design — a nonce is run-scoped, and
+two runs sharing one would be the bug. Both runs tore down fully and asserted it.
 
 ### Teardown, asserted
 
-Teardown is a `trap`, so it runs on success, failure and interrupt alike, and every command in it is
-bounded. Raw assertion output:
+Teardown is a `trap`, so it runs on success, failure and interrupt alike, and every nested `claude`
+call in it is bounded — as, since this review, is the `git status` it runs, which can block on an
+index lock held by a concurrent process. Raw assertion output:
 
 ```
 ASSERT probe-host absent from plugin list ......... PASS
@@ -429,7 +579,19 @@ ASSERT loomwright registrations unchanged ......... baseline=1 final=1 PASS
 ASSERT settings.local.json identical to pre-run backup ... PASS
 ```
 
-The last one covers the only file `--scope local` writes. It is backed up byte-for-byte before the
+**Those PASS lines are only meaningful because the listing behind them succeeded.** Every one of the
+absence assertions is a "the probe name is not in this file" test, and such a test over a file that
+was never written — a `claude plugin list` that timed out, errored, or returned nothing — is
+vacuously true. As first written it would have printed four PASS lines for a teardown that fired
+before anything was installed, which inverts this project's fail-CLOSED rule for correctness gates.
+Each assertion is now gated on positive evidence that the listing happened (exit status 0, a
+non-empty capture, and the command's own `Installed plugins:` / `Configured marketplaces:` header),
+and prints **INCONCLUSIVE** — never PASS — otherwise, preserving the scratch directory for
+inspection. The gate line (`evidence gate: … usable=1 …`) is printed above the assertions in every
+teardown transcript from the `2026-08-20-armd` run onward; run 1's transcript predates it and shows
+the older, ungated wording.
+
+The settings assertion covers the only file `--scope local` writes. It is backed up byte-for-byte before the
 run and restored (or deleted, if it did not exist) afterwards. It is gitignored via `.gitignore`'s
 `.claude/*`, which is exactly why `--scope local` was chosen and `--scope project` forbidden.
 
@@ -468,4 +630,14 @@ files under `docs/`, which carry no counts.
 5. **Unknown B was measured on a `SessionStart` hook**, not on the `SubagentStop` matcher the QA
    fan-out actually uses. `${CLAUDE_PLUGIN_ROOT}` is an environment variable of the hook process, so
    the event type should not matter — but that reasoning is inference, and it is flagged here rather
-   than buried.
+   than buried. (Unknown D *did* exercise `SubagentStop` from a second plugin, and its hooks fired;
+   it did not re-print `${CLAUDE_PLUGIN_ROOT}` from that event, so the two facts remain separate.)
+6. **Unknown D explains a behaviour it did not measure.** Both matcher prefix forms fired. The probe
+   truncated the hook payload before the `agent_type` value, so the mechanism — normalisation,
+   substring match, or something else — is unknown. Slice 03 should not build on the doubled form
+   working; the recommendation is the single-prefix convention, which is what loomwright's own
+   matchers already use.
+7. **Everything here is one machine and one operator.** The teardown assertions now fail
+   **INCONCLUSIVE** rather than PASS when the listing they depend on is unusable (a timeout, an
+   error, an empty capture), which closes a vacuous-guard hole review found — but that hardening was
+   verified by fault injection against stub `claude` binaries, not by a real Claude Code failure.

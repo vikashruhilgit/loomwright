@@ -1,0 +1,437 @@
+
+==================== PHASE 0 — PREFLIGHT  (2026-08-20T03:04:51Z) ====================
+
+repo root      : /Users/vikashruhil/Documents/work/AI/ai-agent-manager
+scratch        : /var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T//loomwright-xplugin-probe-35252
+probe deadline : 240s per nested `claude -p`
+cli deadline   : 120s per `claude plugin ...` subcommand
+nonce          : XPLUGIN-NONCE-1787195091-3138718983
+
+$ claude --version
+--- exit status: 0 ---
+--- captured stdout+stderr (verbatim) ---
+2.1.228 (Claude Code)
+--- end capture ---
+$ claude plugin list
+--- exit status: 0 ---
+--- captured stdout+stderr (verbatim) ---
+Installed plugins:
+
+  ❯ atlassian@claude-plugins-official
+    Version: 94a30436435f
+    Scope: user
+    Status: ✘ disabled
+
+  ❯ context7@claude-plugins-official
+    Version: unknown
+    Scope: user
+    Status: ✘ disabled
+
+  ❯ frontend-design@claude-plugins-official
+    Version: unknown
+    Scope: user
+    Status: ✔ enabled
+
+  ❯ greptile@claude-plugins-official
+    Version: unknown
+    Scope: user
+    Status: ✘ disabled
+
+  ❯ loomwright@atelier
+    Version: 15.36.0
+    Scope: user
+    Status: ✔ enabled
+
+  ❯ swift-lsp@claude-plugins-official
+    Version: 1.0.0
+    Scope: user
+    Status: ✘ disabled
+
+--- end capture ---
+$ claude plugin marketplace list
+--- exit status: 0 ---
+--- captured stdout+stderr (verbatim) ---
+Configured marketplaces:
+
+  ❯ claude-plugins-official
+    Source: GitHub (anthropics/claude-plugins-official)
+
+  ❯ atelier
+    Source: Git (https://github.com/vikashruhilgit/loomwright.git)
+
+--- end capture ---
+
+==================== PHASE 0 — RESOLVE THE INSTALLED loomwright BODY (for Unknown A arm 2) ====================
+
+Authority is the plugin manager's own installed_plugins.json record, cross-checked
+against `claude plugin details`. This is NOT an `ls ~/.claude/plugins/cache/`
+guess — that directory holds stale leftovers and is a recorded trap in this project.
+
+$ claude plugin details loomwright
+--- exit status: 0 ---
+--- captured stdout+stderr (verbatim) ---
+loomwright 15.36.0
+  Loomwright v15.36.0 — a plan-first, multi-agent development system for Claude Code. Launch Pad turns a raw goal into a reviewed, Supervisor-ready brief; Supervisor executes it autonomously across parallel git worktrees with sequential merges and a post-merge self-heal pass; dedicated agents handle code review, adversarial red-teaming, and dual-agent QA. Adds standalone PR review-and-heal via /review-pr (bounded review→fix→re-review loop against any open PR, never auto-merges), continuous autonomous mode with stacked PRs, advisory cross-session project memory (human-gated, provenance-verified, worktree-safe) with reflective distillation into bounded LESSONS and harvested `.agent/rules/` conventions delivered as a pull request via /dreaming, an advisory System Twin foundation (per-subsystem System Contracts with sole-writer/hash-chained provenance, blast-radius prediction (depends-on + derived dependents) with incident history, post-merge conformance + benchmark proof, and compounding trend insights — propose-only, subordinate to CLAUDE.md), on-demand capability scanning via /capability-check (adoption + product-direction modes), on-demand PR review-churn root-cause analysis via /pr-postmortem, a local Obsidian-friendly insights dashboard via /insights and a shareable linked Obsidian vault via /obsidian, clickable desktop and phone notifications at human-decision gates, a /setup memory module that puts a repo's Twin memory stores under version control in place (gitignore negation + repo allowlist, consent-bearing, reversible), and opt-in GitHub-issue telemetry. Project memory and lessons are always advisory and subordinate to CLAUDE.md, and every promotion is human-gated. 14 agent roles, 41 reusable skills, 24 quality gate hooks, 21 slash commands, and persistent agent memory. Full version history lives in CHANGELOG.md.
+  Source: loomwright@atelier
+
+Component inventory
+  Skills (62)  agent-help, agent-output, agent-teams, async-orchestration, automate, automate-loop, autonomous, autonomous-loop, beads-workflow, brain-context, brainstorming, capability-check, ci-cd, claude-md-validation, code-reviewer, commit, context-setup, context-summarization, context7-lookup, domain-knowledge, dreaming, error-handling, frontend-ui, handoff, insights, launch-pad, memory-tool, monitoring-observability, mvp-scoping, obsidian, orchestrator, pattern-detector, playwright-e2e, pr-postmortem, pr-postmortem, preflight-sync, product-discovery, product-owner, qa-executor, qa-gates, qa-orchestration, qa-strategist, qa-strategy, qa-test-patterns, quality-checklist, red-team-reviewer, review-heal, review-pr, rules, rules, self-heal-advisory, setup, setup, state-management, supervisor, supervisor-config, supervisor-readiness, telemetry, telemetry, unit-testing, user-story-writing, workflow-management
+  Agents (14)  code-reviewer, orchestrator, rubric-grader, review-pr, qa-strategist, product-owner, execute-manager, worker, launch-pad, qa-executor, red-team-reviewer, context-keeper, plan-reviewer, supervisor
+  Hooks (10)  SubagentStop, Stop, TaskCompleted, WorktreeCreate, WorktreeRemove, StopFailure, PostToolUse, PreToolUse, Notification, SessionStart  (harness-only — no model context cost)
+  MCP servers (0)
+  LSP servers (0)
+
+Projected token cost
+  Always-on:   ~6,643 tok   added to every session
+
+Per-component (rounded)
+  component                 always-on  on-invoke
+  commit                          ~70      ~1.7k
+  quality-checklist               ~70        ~5k
+  self-heal-advisory             ~200     ~41.2k
+  error-handling                  ~90      ~3.2k
+  beads-workflow                  ~50      ~2.3k
+  async-orchestration            ~170     ~16.7k
+  pattern-detector                ~70      ~1.1k
+  qa-gates                        ~90     ~10.4k
+  memory-tool                     ~80      ~5.1k
+  context-summarization           ~50      ~2.8k
+  frontend-ui                     ~80        ~8k
+  qa-orchestration                ~60      ~2.9k
+  setup                          ~170     ~12.9k
+  brain-context                  ~140      ~2.4k
+  mvp-scoping                     ~50      ~2.6k
+  user-story-writing              ~50      ~2.3k
+  context7-lookup                 ~80      ~2.3k
+  automate-loop                  ~250     ~19.4k
+  preflight-sync                 ~120      ~5.3k
+  agent-teams                     ~80      ~4.5k
+  supervisor-config               ~90      ~5.7k
+  domain-knowledge                ~50        ~4k
+  state-management                ~60     ~10.9k
+  qa-strategy                     ~70      ~8.5k
+  context-setup                   ~60      ~1.7k
+  brainstorming                   ~80      ~4.5k
+  autonomous-loop                ~150     ~36.7k
+  playwright-e2e                  ~60     ~12.9k
+  unit-testing                    ~70      ~2.3k
+  rules                          ~350     ~12.5k
+  supervisor-readiness            ~80     ~13.2k
+  claude-md-validation            ~60      ~2.7k
+  review-heal                    ~170     ~33.8k
+  telemetry                      ~140        ~3k
+  monitoring-observability        ~90      ~2.9k
+  ci-cd                           ~70      ~2.5k
+  pr-postmortem                  ~180      ~7.4k
+  product-discovery               ~50      ~2.9k
+  qa-test-patterns                ~80     ~17.6k
+  agent-output                    ~50      ~2.1k
+  workflow-management             ~70      ~6.4k
+  code-reviewer                   ~50     ~18.5k
+  orchestrator                    ~90      ~8.5k
+  rubric-grader                  ~100      ~3.2k
+  review-pr                      ~160      ~6.6k
+  qa-strategist                   ~30      ~9.6k
+  product-owner                   ~70     ~10.4k
+  execute-manager                 ~60     ~15.8k
+  worker                          ~30      ~8.4k
+  launch-pad                     ~170     ~24.6k
+  qa-executor                     ~40     ~14.5k
+  red-team-reviewer               ~50        ~7k
+  context-keeper                 ~180      ~5.3k
+  plan-reviewer                   ~50     ~13.2k
+  supervisor                     ~130     ~35.3k
+  autonomous                      ~70     ~15.4k
+  capability-check                ~70      ~9.5k
+  code-reviewer                   ~40      ~3.7k
+  orchestrator                    ~40      ~5.6k
+  setup                          ~100     ~23.9k
+  review-pr                       ~40      ~6.7k
+  dreaming                       ~120     ~33.9k
+  obsidian                        ~80      ~2.1k
+  insights                        ~70      ~7.3k
+  qa-strategist                   ~30      ~6.4k
+  product-owner                   ~40     ~10.2k
+  automate                        ~80      ~4.9k
+  launch-pad                      ~60      ~9.3k
+  pr-postmortem                  ~100      ~2.9k
+  qa-executor                     ~40      ~1.4k
+  rules                          ~190      ~6.4k
+  telemetry                       ~30      ~4.3k
+  red-team-reviewer               ~40      ~2.9k
+  handoff                         ~70      ~1.8k
+  supervisor                      ~40     ~20.6k
+  agent-help                      ~30     ~25.8k
+
+  On-invoke cost is paid each time a skill or agent fires.
+  Token counts are estimates and may differ from actual usage.
+--- end capture ---
+LOOMWRIGHT_INSTALL_PATH=[/Users/vikashruhil/.claude/plugins/cache/atelier/loomwright/15.36.0]
+INSTALLED_SKILL=[/Users/vikashruhil/.claude/plugins/cache/atelier/loomwright/15.36.0/skills/quality-checklist/SKILL.md]
+$ ls -la $INSTALLED_SKILL
+-rw-r--r--  1 vikashruhil  staff  12839 Aug 17 16:36 /Users/vikashruhil/.claude/plugins/cache/atelier/loomwright/15.36.0/skills/quality-checklist/SKILL.md
+
+marker asserted by arm 2: [Token budget estimated (Context7 needed?)]
+$ grep -cF "$MARKER" $INSTALLED_SKILL     # presence IN THE INSTALLED BODY, not the repo copy
+1
+$ grep -rlF "$MARKER" $LOOMWRIGHT_INSTALL_PATH   # distinctiveness: which installed files carry it
+/Users/vikashruhil/.claude/plugins/cache/atelier/loomwright/15.36.0/skills/quality-checklist/SKILL.md
+(exactly one file above == the phrase is unique in the installed body, so a hit in
+ the agent's output cannot have come from some other preloaded skill)
+
+==================== PHASE 0 — GENERATE THE THROWAWAY FIXTURES ====================
+
+$ find $MARKET_DIR -type f
+marketplace/.claude-plugin/marketplace.json
+marketplace/probe-consumer/.claude-plugin/plugin.json
+marketplace/probe-consumer/agents/probe-agent.md
+marketplace/probe-consumer/agents/probe-checklist-agent.md
+marketplace/probe-consumer/agents/probe-taskoutput-agent.md
+marketplace/probe-consumer/agents/probe-zero-tools-agent.md
+marketplace/probe-consumer/hooks/hooks.json
+marketplace/probe-host/.claude-plugin/plugin.json
+marketplace/probe-host/agents/probe-host-agent.md
+marketplace/probe-host/skills/probe-host-skill/SKILL.md
+
+$ cat probe-consumer/agents/probe-agent.md      # the tool-isolation frontmatter
+---
+name: probe-consumer:probe-agent
+description: Throwaway probe agent. Preloads a skill owned by a DIFFERENT plugin (probe-host) and echoes its sentinel.
+tools: Read, Write, Edit, Glob, Grep, Bash, Task, TaskOutput, LSP, WebSearch, WebFetch
+disallowedTools: Read, Write, Edit, NotebookEdit, Glob, Grep, Bash, Task, TaskOutput, LSP, WebFetch
+model: inherit
+maxTurns: 3
+skills:
+  - probe-host-skill
+---
+
+# Probe agent (cross-plugin preload sentinel)
+
+You have NO tools. Answer from your context only.
+
+Your preloaded skills — if cross-plugin preload resolves — contain a token beginning
+`XPLUGIN-NONCE-`. Output that full token on one line prefixed with `SENTINEL: `.
+
+If no such token is present in your context, output exactly:
+
+    SENTINEL: ABSENT
+
+Never invent, guess, reconstruct, or partially complete a token. Output the one line and
+nothing else.
+
+$ cat probe-consumer/agents/probe-checklist-agent.md
+---
+name: probe-consumer:probe-checklist-agent
+description: Throwaway probe agent. Preloads the REAL loomwright-owned `quality-checklist` skill (read-only corroboration arm).
+tools: Read, Write, Edit, Glob, Grep, Bash, Task, TaskOutput, LSP, WebSearch, WebFetch
+disallowedTools: Read, Write, Edit, NotebookEdit, Glob, Grep, Bash, Task, TaskOutput, LSP, WebFetch
+model: inherit
+maxTurns: 3
+skills:
+  - quality-checklist
+---
+
+# Probe agent (read-only corroboration arm)
+
+You have NO tools. Answer from your context only.
+
+If a skill named `quality-checklist` is present in your context, reproduce its
+"Before Starting Any Task" checklist items VERBATIM, one per line, each prefixed with
+`ITEM: `. Copy the text exactly as it appears — do not paraphrase, normalise or improve it.
+
+If no skill named `quality-checklist` is present in your context, output exactly:
+
+    CHECKLIST: ABSENT
+
+Never reconstruct the checklist from memory or from general knowledge of what quality
+checklists usually contain. If it is not in your context, say ABSENT.
+
+$ cat probe-consumer/agents/probe-zero-tools-agent.md   # the control arm
+---
+name: probe-consumer:probe-zero-tools-agent
+description: Throwaway CONTROL agent. Subtracts every tool, to record what happens at spawn time.
+tools: Read, Write, Edit, Glob, Grep, Bash, Task, TaskOutput, LSP, WebSearch, WebFetch
+disallowedTools: Read, Write, Edit, NotebookEdit, Glob, Grep, Bash, Task, TaskOutput, LSP, WebSearch, WebFetch
+model: inherit
+maxTurns: 3
+skills:
+  - probe-host-skill
+---
+
+# Control agent (total tool subtraction)
+
+Output `SENTINEL: ` followed by the `XPLUGIN-NONCE-` token from your preloaded skills, or
+`SENTINEL: ABSENT` if there is none.
+
+$ cat probe-consumer/hooks/hooks.json          # the Unknown B hook, absolute path baked in
+{
+  "description": "Throwaway cross-plugin resolution probe — records the expanded CLAUDE_PLUGIN_ROOT of a SECOND plugin, and which SubagentStop matcher forms fire.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{ printf 'RAW=[%s]\\n' \"${CLAUDE_PLUGIN_ROOT}\"; printf 'BRACE_DEFAULT=[%s]\\n' \"${CLAUDE_PLUGIN_ROOT:-__UNSET_OR_EMPTY__}\"; printf 'ENV_PRESENT=[%s]\\n' \"$(env | grep -c '^CLAUDE_PLUGIN_ROOT=')\"; printf 'HOOK_CWD=[%s]\\n' \"$PWD\"; printf 'HOOK_FIRED_AT=[%s]\\n' \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"; } >> '/var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T//loomwright-xplugin-probe-35252/out/unknown-b-plugin-root.txt' 2>&1 || true"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "p=$(cat); printf 'MATCH=[wildcard-any] AT=[%s] PAYLOAD=[%s]\\n' \"$(date -u +%H:%M:%SZ)\" \"$(printf '%s' \"$p\" | tr -d '\\n' | cut -c1-400)\" >> '/var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T//loomwright-xplugin-probe-35252/out/unknown-d-matcher.txt' 2>&1 || true"
+          }
+        ]
+      },
+      {
+        "matcher": "probe-consumer:probe-agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "p=$(cat); printf 'MATCH=[same-plugin-single] AT=[%s]\\n' \"$(date -u +%H:%M:%SZ)\" >> '/var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T//loomwright-xplugin-probe-35252/out/unknown-d-matcher.txt' 2>&1 || true"
+          }
+        ]
+      },
+      {
+        "matcher": "probe-consumer:probe-consumer:probe-agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "p=$(cat); printf 'MATCH=[same-plugin-doubled] AT=[%s]\\n' \"$(date -u +%H:%M:%SZ)\" >> '/var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T//loomwright-xplugin-probe-35252/out/unknown-d-matcher.txt' 2>&1 || true"
+          }
+        ]
+      },
+      {
+        "matcher": "probe-host:probe-host-agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "p=$(cat); printf 'MATCH=[cross-plugin-single] AT=[%s]\\n' \"$(date -u +%H:%M:%SZ)\" >> '/var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T//loomwright-xplugin-probe-35252/out/unknown-d-matcher.txt' 2>&1 || true"
+          }
+        ]
+      },
+      {
+        "matcher": "probe-host:probe-host:probe-host-agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "p=$(cat); printf 'MATCH=[cross-plugin-doubled] AT=[%s]\\n' \"$(date -u +%H:%M:%SZ)\" >> '/var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T//loomwright-xplugin-probe-35252/out/unknown-d-matcher.txt' 2>&1 || true"
+          }
+        ]
+      }
+    ]
+  }
+}
+
+$ python3 -c 'json.load(...)'                  # the generated hooks.json is valid JSON
+hooks.json: valid JSON
+
+==================== PHASE 0 — VALIDATE + INSTALL (--scope local ONLY) ====================
+
+$ claude plugin validate /var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T//loomwright-xplugin-probe-35252/marketplace/probe-host
+--- exit status: 0 ---
+--- captured stdout+stderr (verbatim) ---
+Validating plugin manifest: /var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T/loomwright-xplugin-probe-35252/marketplace/probe-host/.claude-plugin/plugin.json
+
+✔ Validation passed
+--- end capture ---
+$ claude plugin validate /var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T//loomwright-xplugin-probe-35252/marketplace/probe-consumer
+--- exit status: 0 ---
+--- captured stdout+stderr (verbatim) ---
+Validating plugin manifest: /var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T/loomwright-xplugin-probe-35252/marketplace/probe-consumer/.claude-plugin/plugin.json
+
+✔ Validation passed
+--- end capture ---
+state of /Users/vikashruhil/Documents/work/AI/ai-agent-manager/.claude/settings.local.json before install: present
+
+$ claude plugin marketplace add /var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T//loomwright-xplugin-probe-35252/marketplace --scope local
+--- exit status: 0 ---
+--- captured stdout+stderr (verbatim) ---
+Adding marketplace…✔ Successfully added marketplace: xplugin-probe (declared in local settings)
+--- end capture ---
+$ claude plugin install probe-host@xplugin-probe --scope local
+--- exit status: 0 ---
+--- captured stdout+stderr (verbatim) ---
+Installing plugin "probe-host@xplugin-probe"...✔ Successfully installed plugin: probe-host@xplugin-probe (scope: local)
+--- end capture ---
+$ claude plugin install probe-consumer@xplugin-probe --scope local
+--- exit status: 0 ---
+--- captured stdout+stderr (verbatim) ---
+Installing plugin "probe-consumer@xplugin-probe"...✔ Successfully installed plugin: probe-consumer@xplugin-probe (scope: local)
+--- end capture ---
+$ claude plugin list
+--- exit status: 0 ---
+--- captured stdout+stderr (verbatim) ---
+Installed plugins:
+
+  ❯ atlassian@claude-plugins-official
+    Version: 94a30436435f
+    Scope: user
+    Status: ✘ disabled
+
+  ❯ context7@claude-plugins-official
+    Version: unknown
+    Scope: user
+    Status: ✘ disabled
+
+  ❯ frontend-design@claude-plugins-official
+    Version: unknown
+    Scope: user
+    Status: ✔ enabled
+
+  ❯ greptile@claude-plugins-official
+    Version: unknown
+    Scope: user
+    Status: ✘ disabled
+
+  ❯ loomwright@atelier
+    Version: 15.36.0
+    Scope: user
+    Status: ✔ enabled
+
+  ❯ probe-consumer@xplugin-probe
+    Version: 0.0.1
+    Scope: local
+    Status: ✔ enabled
+
+  ❯ probe-host@xplugin-probe
+    Version: 0.0.1
+    Scope: local
+    Status: ✔ enabled
+
+  ❯ swift-lsp@claude-plugins-official
+    Version: 1.0.0
+    Scope: user
+    Status: ✘ disabled
+
+--- end capture ---
+$ claude plugin details probe-consumer
+--- exit status: 0 ---
+--- captured stdout+stderr (verbatim) ---
+probe-consumer 0.0.1
+  Throwaway cross-plugin resolution probe — agents preload OTHER plugins' skills; hooks print CLAUDE_PLUGIN_ROOT.
+  Source: probe-consumer@xplugin-probe
+
+Component inventory
+  Skills (0)
+  Agents (4)  probe-agent, probe-zero-tools-agent, probe-taskoutput-agent, probe-checklist-agent
+  Hooks (2)  SessionStart, SubagentStop  (harness-only — no model context cost)
+  MCP servers (0)
+  LSP servers (0)
+
+Projected token cost
+  Always-on:   ~209 tok   added to every session
+
+Per-component (rounded)
+  component               always-on  on-invoke
+  probe-agent                   ~50       ~180
+  probe-zero-tools-agent        ~50        ~70
+  probe-taskoutput-agent        ~50        ~70
+  probe-checklist-agent         ~60       ~240
+
+  On-invoke cost is paid each time a skill or agent fires.
+  Token counts are estimates and may differ from actual usage.
+--- end capture ---
