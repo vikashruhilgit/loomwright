@@ -549,6 +549,17 @@ Retiring `--agent qa-executor` — the alternative the source requirement floate
 
 ## Measurement provenance and teardown
 
+> **Local paths in the transcripts — a deliberate call, not an oversight.** The committed captures
+> contain the absolute checkout path of the machine that ran them
+> (`/Users/vikashruhil/Documents/work/AI/ai-agent-manager`, appearing as `HOOK_CWD`, `repo root:`,
+> and inside the `git status` invocation). This was raised in review and kept **on purpose**: the
+> integrity of every verdict here rests on the rule that captured output is quoted verbatim and never
+> edited after the fact, and scrubbing raw captures would trade the one property that makes this
+> document checkable for the removal of a path that exposes no credential, no employer, no private
+> repository, and no account not already public. A reader re-running `run-probe.sh` will see their own
+> path in their own transcripts; the paths are environment, not findings.
+
+
 ### Provenance
 
 | Item | Value |
