@@ -1,6 +1,6 @@
 # Loomwright Plugin for Claude Code
 
-A Claude Code plugin with 12 agent roles (9 user-facing + 5 internal), 36 focused skills, and optional Beads issue tracker integration. Automates plan-first readiness, parallel workflow execution, requirements definition, code review, adversarial audits, standalone PR review-and-heal (`/review-pr`), and dual-agent QA testing. v14 adds continuous autonomous mode: `/autonomous` chains Launch Pad → Supervisor in a default multi-iteration loop with stacked PRs.
+A Claude Code plugin with 12 agent roles (7 user-facing + 5 internal), 36 focused skills, and optional Beads issue tracker integration. Automates plan-first readiness, parallel workflow execution, requirements definition, code review, adversarial audits, standalone PR review-and-heal (`/review-pr`), and dual-agent QA testing. v14 adds continuous autonomous mode: `/autonomous` chains Launch Pad → Supervisor in a default multi-iteration loop with stacked PRs.
 
 ## Overview
 
@@ -563,7 +563,7 @@ No. Agents suggest changes. You decide whether to apply them. Exception: Supervi
 
 Yes. The plugin works on any language (JavaScript, TypeScript, Python, Go, Rust, Java, etc). Customize patterns in CLAUDE.md.
 
-### Do I need all 8 user-facing agents?
+### Do I need all 7 user-facing agents?
 
 No. Use what helps:
 - **Just need to plan?** `/orchestrator`

@@ -20,7 +20,7 @@ Shows all available agent commands and quick usage examples.
 
 ## Quick Start
 
-The Loomwright plugin provides **12 agent roles** (9 user-facing + 5 internal) for your development workflow:
+The Loomwright plugin provides **12 agent roles** (7 user-facing + 5 internal) for your development workflow:
 
 **Which command?** (condensed — full table in `README.md` / `.claude-plugin/README.md`)
 
