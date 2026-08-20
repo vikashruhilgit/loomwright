@@ -128,5 +128,13 @@ if [ "$rc" -ne 0 ]; then
   echo "check-plugin-selftests: FAILED — see the offending plugin/suite above." >&2
   exit 1
 fi
-echo "check-plugin-selftests: OK — $ran suites across $checked plugin(s) passed."
+# A dry run EXECUTED NOTHING, so it must not claim anything passed. Saying
+# "N suites passed" after running zero of them is a false success claim — the
+# exact defect class this gate exists to catch, which is why the wording is
+# branched here rather than left to the reader to interpret.
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo "check-plugin-selftests: DRY RUN — enumerated $ran suites across $checked plugin(s); NOTHING was executed."
+else
+  echo "check-plugin-selftests: OK — $ran suites across $checked plugin(s) passed."
+fi
 exit 0

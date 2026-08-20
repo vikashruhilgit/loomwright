@@ -129,6 +129,60 @@ run_case "zero suite-bearing plugins trips the anti-drift tripwire" nonzero "$R6
 # --- missing manifest fails CLOSED ------------------------------------------
 run_case "missing marketplace manifest fails closed" nonzero "$tmp/g-does-not-exist" "marketplace manifest not found"
 
+# --- --dry-run ---------------------------------------------------------------
+# run_case() takes no extra flags, so these drive the gate directly.
+#
+# Why these exist: --dry-run shipped with ZERO coverage in the very self-test
+# whose purpose is to prove each branch of this gate is exercised — flagged in
+# review on PR #155. Two of its claims were unbacked, and one of them was FALSE:
+# the summary said "N suites ... passed" after executing none of them.
+# `dry_case NAME ROOT EXPECT(zero|nonzero) [MUST_MATCH] [MUST_NOT_MATCH]`
+dry_case() {
+  local name="$1" root="$2" expect="$3" must="${4:-}" mustnot="${5:-}" out status ok=1
+  out="$(bash "$GATE" --root "$root" --dry-run 2>&1)"; status=$?
+  [ "$expect" = "zero" ]    && [ "$status" -ne 0 ] && ok=0
+  [ "$expect" = "nonzero" ] && [ "$status" -eq 0 ] && ok=0
+  if [ "$ok" -eq 1 ] && [ -n "$must" ]; then
+    printf '%s\n' "$out" | grep -qF "$must" || ok=0
+  fi
+  if [ "$ok" -eq 1 ] && [ -n "$mustnot" ]; then
+    printf '%s\n' "$out" | grep -qF "$mustnot" && ok=0
+  fi
+  if [ "$ok" -eq 1 ]; then
+    echo "PASS: $name (exit $status)"; pass=$((pass+1))
+  else
+    echo "FAIL: $name (exit=$status, expected $expect${must:+, must contain: $must}${mustnot:+, must NOT contain: $mustnot})"
+    printf '%s\n' "$out" | sed 's/^/    | /'
+    fail=$((fail+1))
+  fi
+}
+
+R7="$(mkroot "$tmp/h")"
+mk_plugin "$R7" alphaplug suites
+mk_manifest "$R7" alphaplug
+
+dry_case "--dry-run enumerates the suites it would run" "$R7" zero "would run:"
+# The load-bearing one: enumerate must NOT execute. The fixture suite prints a
+# distinctive line when it actually runs, so its ABSENCE is the proof.
+dry_case "--dry-run executes nothing (fixture suite's own output absent)" \
+  "$R7" zero "would run:" "alphaplug suite one ok"
+# A dry run that reports "passed" is a false success claim about work it never did.
+dry_case "--dry-run does NOT claim anything passed" \
+  "$R7" zero "NOTHING was executed" "plugin(s) passed."
+# The usage comment claims --dry-run "applies exactly the same skip/fail
+# branches". That was a claim no check backed. These two back it.
+R8="$(mkroot "$tmp/i")"
+mk_plugin "$R8" alphaplug empty          # scripts/ dir present, no test-*.sh
+mk_manifest "$R8" alphaplug
+dry_case "--dry-run still fails LOUDLY on a scripts/ dir with no suites" \
+  "$R8" nonzero "alphaplug"
+
+R9="$(mkroot "$tmp/j")"
+mk_plugin "$R9" alphaplug no-scripts
+mk_manifest "$R9" alphaplug
+dry_case "--dry-run still trips the anti-drift tripwire" \
+  "$R9" nonzero "gate matched nothing"
+
 echo "----------------------------------------"
 echo "test-check-plugin-selftests: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || { echo "test-check-plugin-selftests: FAILED" >&2; exit 1; }
