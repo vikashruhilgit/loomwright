@@ -871,7 +871,7 @@ Every agent has YAML frontmatter that configures its behavior automatically:
 | Setting | What It Does | Example |
 |---------|-------------|---------|
 | `name` | Agent identifier | `loomwright:supervisor-runner` |
-| `tools` | Byte-identical superset allowlist across all 14 agents | Same line everywhere; per-agent restriction lives in `disallowedTools` |
+| `tools` | Byte-identical superset allowlist across all 14 prefix-bearing agent prompts (12 loomwright + 2 selvedge, since the QA pair moved) | Same line everywhere; per-agent restriction lives in `disallowedTools` |
 | `disallowedTools` | The actual per-agent restriction | Workers can't spawn subagents (`Task` denied, though the superset declares it) |
 | `model` | Sets model for the agent | Context-Keeper uses haiku (fast, cheap) |
 | `maxTurns` | Limits API round-trips | Context-Keeper: 3 turns max |
@@ -1064,7 +1064,7 @@ loomwright/              # Nested plugin root
 │   ├── ARCHITECTURE.md
 │   ├── QA_SYSTEM_BLUEPRINT.md
 │   └── SPIKES/                       # Capability spike investigations + deferral records
-└── skills/                           # Skill files (41 skills; 18 tech-stack skills moved to stackpack@atelier)
+└── skills/                           # Skill files (36 skills; 18 tech-stack skills moved to stackpack@atelier)
     ├── SKILLS_INDEX.md               # Skill catalog with agent mapping
     ├── supervisor-readiness/         # Pre-flight checklist & brief template
     ├── agent-teams/                  # Agent Teams patterns (experimental)

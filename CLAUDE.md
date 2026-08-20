@@ -28,7 +28,7 @@ The repo is a **marketplace wrapper** containing four sibling plugins (loomwrigh
 - Plugin manifest: `loomwright/.claude-plugin/plugin.json`
 - Agents: `loomwright/agents/` (12 markdown prompts)
 - Commands: `loomwright/commands/` (19 entry points)
-- Skills: `loomwright/skills/` (41 skills, see `SKILLS_INDEX.md`)
+- Skills: `loomwright/skills/` (36 skills, see `SKILLS_INDEX.md`)
 - Hooks: `loomwright/hooks/hooks.json`
 - Docs: `loomwright/docs/`
 - Sibling plugins: `stackpack/` (18 tech-stack reference skills, v1.0.0), `mysql-mcp/` (read-only MySQL MCP server `vikashruhil-mysql-mcp`, v1.0.0), and `selvedge/` (QA companion, v1.0.0 — registered scaffold, deliberately ships no agents/commands/skills/hooks yet)
@@ -37,9 +37,9 @@ The repo is a **marketplace wrapper** containing four sibling plugins (loomwrigh
 
 ---
 
-## The 14 Agent Roles
+## The 12 Agent Roles
 
-Full per-agent invariants, the `/autonomous` orchestration shell, the Shared Agent Contract, and the Parallel Execution Model relocated to `loomwright/docs/ARCHITECTURE_CONTRACTS.md` §"Agent Invariants" in the v15.21.0 diet (content moved, never deleted). Detailed per-agent purpose and workflow diagrams also live in `README.md` §"The 14 Agents" and the agent prompts (`loomwright/agents/*.md`). Quick name/type/purpose map:
+Full per-agent invariants, the `/autonomous` orchestration shell, the Shared Agent Contract, and the Parallel Execution Model relocated to `loomwright/docs/ARCHITECTURE_CONTRACTS.md` §"Agent Invariants" in the v15.21.0 diet (content moved, never deleted). Detailed per-agent purpose and workflow diagrams also live in `README.md` §"The 12 Agents" and the agent prompts (`loomwright/agents/*.md`). Quick name/type/purpose map:
 
 | Agent | Type | One-line purpose |
 |---|---|---|
@@ -49,8 +49,6 @@ Full per-agent invariants, the `/autonomous` orchestration shell, the Shared Age
 | Orchestrator | user-facing | Goal → EPIC/TASK decomposition |
 | Code Reviewer | user-facing | Read-only diff/consistency review |
 | Red Team Reviewer | user-facing | Adversarial audit, 6 attack vectors |
-| QA Strategist | user-facing | Risk-based test strategy + audit |
-| QA Executor | user-facing | Discovery, test generation, execution |
 | Review-PR (`review-pr-runner`) | user-facing | Standalone PR review→fix→re-review loop |
 | Execute Manager | internal | Phase 3 poll loop + worker lifecycle |
 | Context-Keeper | internal | Sole state-file writer (parallel path) |

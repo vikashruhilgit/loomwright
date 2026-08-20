@@ -31,7 +31,7 @@
 These are **defense-in-depth** restrictions for accidental misuse, NOT security boundaries against adversarial scenarios.
 
 **Since `.supervisor/requirements/final-state/12-4c-unified-tools-lists.md` (unified `tools:` superset across
-all 14 agents), every agent below carries a `tools:` allowlist that is byte-identical across the
+all 14 prefix-bearing agent prompts (12 loomwright + 2 selvedge, since the QA pair moved)), every agent below carries a `tools:` allowlist that is byte-identical across the
 plugin (`Read, Write, Edit, Glob, Grep, Bash, Task, TaskOutput, LSP, WebSearch, WebFetch`). Each
 agent's per-row `disallowedTools` below is derived as `superset − observed effective toolset`, NOT
 `superset − previously-declared tools` — four agents (Launch Pad, Product Owner, QA Strategist, Red
@@ -75,7 +75,7 @@ today, not merely tidied a list.
 **Enforcement-model downgrade — recorded, not shipped silently (accepted for consistency and
 canonical ordering, cost stated below).** Both this doc and `AGENT_GUIDELINES.md` describe
 `disallowedTools` as defense-in-depth, NOT a security boundary — the `tools:` allowlist was meant to
-be the real restriction. Unifying `tools:` to one superset across all 14 agents moves the allowlist
+be the real restriction. Unifying `tools:` to one superset across all 14 prefix-bearing agent prompts (12 loomwright + 2 selvedge, since the QA pair moved) moves the allowlist
 half of enforcement to uniform-by-construction and leaves the denylist carrying the *entire*
 restriction for every agent, not just the six that already relied on it. The honest scope split:
 
@@ -111,7 +111,7 @@ restriction for every agent, not just the six that already relied on it. The hon
 
 ## Agent Invariants
 
-> Relocated from `CLAUDE.md` §"The 14 Agent Roles" in the v15.21.0 CLAUDE.md diet (content moved,
+> Relocated from `CLAUDE.md` §"The 12 Agent Roles" (then "The 14 Agent Roles") in the v15.21.0 CLAUDE.md diet (content moved,
 > never deleted — see `.supervisor/requirements/final-state/09-claude-md-diet-dreaming.md`). This is
 > now the authoritative home for the full per-agent invariants, the `/autonomous` orchestration
 > shell, the Shared Agent Contract, and the Parallel Execution Model; `CLAUDE.md` keeps only a
