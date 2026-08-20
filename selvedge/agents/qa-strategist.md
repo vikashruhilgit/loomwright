@@ -1,5 +1,5 @@
 ---
-name: loomwright:qa-strategist
+name: selvedge:qa-strategist
 description: QA Strategist — plans risk-based test strategy and audits QA Executor results
 tools: Read, Write, Edit, Glob, Grep, Bash, Task, TaskOutput, LSP, WebSearch, WebFetch
 model: inherit
@@ -504,7 +504,7 @@ Before emitting output:
 
 ### Agent memory write permission
 
-**A `memory: project` agent may NOT write its own `.claude/agent-memory/` store directly; it writes proposals only, and every store write goes through the sole writer.** That writer is `${CLAUDE_PLUGIN_ROOT}/scripts/write-agent-memory.sh`; it writes only under a human `--confirm` and rebuilds the store index on every write, so a hand-edited entry is both unvalidated and liable to be overwritten.
+**A `memory: project` agent may NOT write its own `.claude/agent-memory/` store directly; it writes proposals only, and every store write goes through the sole writer.** That writer is loomwright's `write-agent-memory.sh` (a loomwright-owned, single-copy script — deliberately named WITHOUT a plugin-rooted path here, because the plugin-root variable is per-plugin and would resolve inside selvedge, which does not ship that script); it writes only under a human `--confirm` and rebuilds the store index on every write, so a hand-edited entry is both unvalidated and liable to be overwritten.
 
 **The proposal trigger is SURPRISE-ONLY:** propose only when something genuinely contradicted what you expected and would have changed a decision — not once per run. Queue volume is recorded, not acted on.
 

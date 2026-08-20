@@ -2,11 +2,12 @@
 """validate-qa-result.py — deterministic validator for QA_RESULT v1.
 
 Replaces the `type: prompt` (haiku, 30s timeout) SubagentStop hook on the
-`loomwright:qa-executor` matcher with a zero-token `type: command` script.
+`selvedge:qa-executor` matcher with a zero-token `type: command` script.
 
 RULE SOURCE: the FIVE numbered rules below are transcribed from the prompt
-string in `loomwright/hooks/hooks.json` under SubagentStop matcher
-`loomwright:qa-executor`. The prompt specifies no verbatim reason strings, so
+string that lived in `loomwright/hooks/hooks.json` under SubagentStop matcher
+`loomwright:qa-executor`, now carried by `selvedge/hooks/hooks.json` under
+`selvedge:qa-executor`. The prompt specifies no verbatim reason strings, so
 each reason names its rule number and the offending value.
 
   (1) a QA_RESULT block with a schema_version field equal to 1
@@ -39,7 +40,29 @@ module below cannot be imported (see the guard).
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _HERE)
+
+# CROSS-PLUGIN IMPORT (selvedge split). result_block_parser.py is a
+# LOOMWRIGHT-OWNED, SINGLE-COPY asset: five validators share it, and vendoring a
+# second copy here would fork a parser that must not diverge. selvedge declares
+# `Requires loomwright@atelier`, and a marketplace installs sibling plugins under
+# one root, so loomwright/scripts is <selvedge-root>/../loomwright/scripts.
+# Resolution is BEST-EFFORT and ORDERED (env override first, for a non-standard
+# layout); a candidate is only added when it actually holds the module, so a
+# wrong guess never shadows a right one.
+#
+# If every candidate misses, the import guard below fails SAFE (ok:true) — which
+# would make this hook a SILENTLY DEAD validator. That is why
+# selvedge/scripts/test-result-validators.sh §C asserts the negative directly:
+# a block-free probe must be REJECTED, which only a real import can do.
+for _cand in (
+    os.environ.get("LOOMWRIGHT_SCRIPTS_DIR", ""),
+    os.path.join(os.path.dirname(os.path.dirname(_HERE)), "loomwright", "scripts"),
+):
+    if _cand and os.path.isfile(os.path.join(_cand, "result_block_parser.py")):
+        sys.path.append(_cand)
+        break
 
 try:
     from result_block_parser import (  # noqa: E402

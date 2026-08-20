@@ -12,7 +12,7 @@ description: Discover app structure, generate and run Playwright tests with risk
 Task(
   description: "QA Executor: {flags and context}",
   prompt: "{user flags, project context, and any --scope/--continue/--plan details}",
-  subagent_type: "loomwright:qa-executor"
+  subagent_type: "selvedge:selvedge:qa-executor"
 )
 ```
 

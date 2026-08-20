@@ -66,12 +66,22 @@ LIT_BASH='Bash is not restricted by the harness'
 # The seven surfaces: the shared contract at the REPO ROOT (there is no loomwright/ copy, and
 # creating one would fork the contract into a file no gate scans), plus the six `memory: project`
 # prompts.
+#
+# CROSS-PLUGIN SINCE THE SELVEDGE SPLIT. Two of those six prompts (the QA pair) now live in the
+# SELVEDGE plugin. The contract itself stays SINGLE-COPY in loomwright — duplicating this suite
+# into selvedge would fork the rule into two files that can disagree — so the SURFACE LIST reaches
+# across the plugin boundary instead. The selvedge paths are spelled out rather than discovered:
+# this suite asserts a named contract over a NAMED set of prompts, so a list that silently shrank
+# when a plugin was renamed would be a false green, which is the opposite of what discovery buys a
+# gate that iterates over "whatever exists".
+SELVEDGE_ROOT="$REPO_ROOT/selvedge"
+
 SURFACES="$REPO_ROOT/AGENT_GUIDELINES.md
 $PLUGIN_ROOT/agents/code-reviewer.md
 $PLUGIN_ROOT/agents/launch-pad.md
 $PLUGIN_ROOT/agents/product-owner.md
-$PLUGIN_ROOT/agents/qa-executor.md
-$PLUGIN_ROOT/agents/qa-strategist.md
+$SELVEDGE_ROOT/agents/qa-executor.md
+$SELVEDGE_ROOT/agents/qa-strategist.md
 $PLUGIN_ROOT/agents/red-team-reviewer.md"
 
 # ---------------------------------------------------------------------------------------------
@@ -192,7 +202,10 @@ if [ -z "$FIX" ] || [ ! -d "$FIX" ]; then
 else
   trap 'rm -rf "$FIX"' EXIT
 
-  VICTIM="$PLUGIN_ROOT/agents/qa-strategist.md"
+  # The VICTIM is deliberately still a QA prompt — now the SELVEDGE copy. Re-pointing it at a
+  # loomwright prompt would have quietly removed the only mutation control that exercises a
+  # cross-plugin surface, i.e. exactly the path this split newly made breakable.
+  VICTIM="$SELVEDGE_ROOT/agents/qa-strategist.md"
   MUTANT="$FIX/qa-strategist.md"
 
   # (M0) Control for the control: an unmutated COPY must scan clean, so a red verdict below can
