@@ -72,7 +72,11 @@ jobs:
         # In a script it has a self-test (run in the step above) whose
         # loud-on-empty branch is mutation-controlled against fixture trees.
         # Verified equivalent at extraction: 60 suites enumerated, same as the
-        # inline glob.
+        # inline glob. ONE deliberate behavioural difference, stated rather than
+        # left for a reader to discover: the inline loop ran under `set -e` and
+        # aborted on the FIRST failing suite; the harness runs every suite and
+        # fails at the end, so one CI run reports all failures instead of only
+        # the earliest.
         run: bash scripts/check-plugin-selftests.sh
 
       # The sdk-spike suite is NOT matched by the harness's per-plugin

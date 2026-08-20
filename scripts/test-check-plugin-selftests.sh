@@ -174,14 +174,43 @@ dry_case "--dry-run does NOT claim anything passed" \
 R8="$(mkroot "$tmp/i")"
 mk_plugin "$R8" alphaplug empty          # scripts/ dir present, no test-*.sh
 mk_manifest "$R8" alphaplug
+# The needle is the loud-on-empty MESSAGE, not the bare plugin name. `alphaplug`
+# alone was VACUOUS (found in review of PR #155): it also matches the
+# unconditional `plugin: $name (N suites)` line, so with the branch DELETED this
+# case still passed — the gate crashed on `"${tests[@]}"` under `set -u` with an
+# empty array, exited 1 for that accidental reason, and the loose needle matched
+# the header line. It asserted a crash, not the branch it names.
 dry_case "--dry-run still fails LOUDLY on a scripts/ dir with no suites" \
-  "$R8" nonzero "alphaplug"
+  "$R8" nonzero "has a scripts/ dir but no test-*.sh"
 
 R9="$(mkroot "$tmp/j")"
 mk_plugin "$R9" alphaplug no-scripts
 mk_manifest "$R9" alphaplug
 dry_case "--dry-run still trips the anti-drift tripwire" \
   "$R9" nonzero "gate matched nothing"
+
+# --- TRUNCATED plugin list must fail CLOSED ---------------------------------
+# Regression guard for the review finding on PR #155: plugin_dirs() used to run
+# jq with `2>/dev/null` and feed it straight into a heredoc, discarding the exit
+# status. jq that dies partway through `.plugins[]` still emits the entries it
+# parsed BEFORE the error, so the gate discovered a SHORT list and reported OK on
+# the plugins it never looked at — a false green in a fail-closed ratchet.
+# Measured then: jq exit 5, 1 of 3 entries emitted, nothing detected it.
+R10="$(mkroot "$tmp/k")"
+mk_plugin "$R10" alphaplug suites
+mk_plugin "$R10" betaplug  suites
+# Middle entry is unparseable BY THE CONCATENATION (object where a string is
+# required), so jq emits alphaplug's line and then dies — betaplug is never seen.
+mkdir -p "$R10/.claude-plugin"
+cat > "$R10/.claude-plugin/marketplace.json" <<'JSON'
+{"name":"fixture","plugins":[
+  {"name":"alphaplug","source":"./alphaplug"},
+  {"name":"broken","source":{"not":"a string"}},
+  {"name":"betaplug","source":"./betaplug"}
+]}
+JSON
+run_case "a mid-stream-unparseable manifest fails CLOSED (no truncated run)" \
+  nonzero "$R10" "cannot parse"
 
 echo "----------------------------------------"
 echo "test-check-plugin-selftests: $pass passed, $fail failed"

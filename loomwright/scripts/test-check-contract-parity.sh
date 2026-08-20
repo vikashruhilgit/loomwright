@@ -420,8 +420,17 @@ check "real repo tree passes" 0 bash "$GUARD" --root "$REPO_ROOT"
 # unset" would merely point the gate at the live repo and prove nothing. The
 # negative case is `--root <fixture whose manifest disagrees with the tree>`.
 #
-# MUTATION CONTROL: restore `PLUGIN="$ROOT/loomwright"` (delete the per-row
-# plugin resolution) and 15/17/18 all flip. Performed and recorded in the PR.
+# MUTATION CONTROL — state the exact mutation and its MEASURED blast radius.
+# An earlier version of this comment claimed "15/17/18 all flip". Measured, case
+# 18 does NOT flip under that mutation: it is an expect-failure case that fails
+# for any reason, so it serves as a vacuity control for 17 rather than as a
+# discovery mutation control. Flagged in review of PR #155.
+#
+# Measured mutation: make plugin_dirs() emit nothing (`return 0` before its read
+# loop), i.e. discovery finds no plugins at all.
+# Measured result: 7 cases fail, including "MANIFEST row naming an unregistered
+# plugin fails loudly", "relocated plugin dir resolves through the manifest" and
+# "a registered sibling plugin does not disturb loomwright's rows". Restored: 19/19.
 
 check_msg() { # $1 desc, $2 expected exit, $3 grep -F needle, then the command
   local desc="$1" want="$2" needle="$3"; shift 3

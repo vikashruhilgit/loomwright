@@ -60,17 +60,45 @@ plugin_root_base() {
   ( cd "$d" 2>/dev/null && pwd )
 }
 
+GATE_NAME="check-plugin-selftests"
+
 plugin_dirs() {
-  local manifest="$1" base name src
+  local manifest="$1" base name src raw want got
   base="$(plugin_root_base "$manifest")" || return 1
   [ -n "$base" ] || return 1
+
+  # Capture jq's OUTPUT AND STATUS before consuming it. The previous form piped
+  # jq straight into a heredoc with `2>/dev/null`, which threw the status away:
+  # jq that dies partway through `.plugins[]` still emits the entries it parsed
+  # BEFORE the error, so the caller silently discovered a TRUNCATED plugin list
+  # and every gate built on it reported OK on the plugins it never looked at.
+  # A fail-closed ratchet that silently stops covering a plugin is a false green
+  # — the exact failure this whole plugin-aware change exists to prevent.
+  # Found in review of PR #155; reproduced with jq exiting 5 after emitting 1 of
+  # 3 entries. Two guards, because either alone leaves a hole: the status check
+  # catches a parse error, and the count assertion catches any other way the
+  # emitted list could come up short.
+  raw="$(jq -r '.plugins[] | ((.name // "") + "\t" + (.source // ""))' "$manifest" 2>&1)" || {
+    echo "${GATE_NAME:-plugin-discovery}: cannot parse $manifest — $raw" >&2
+    return 1
+  }
+  want="$(jq -r '.plugins | length' "$manifest" 2>/dev/null)" || want=""
+  got="$(printf '%s\n' "$raw" | grep -c .)"
+  case "$want" in
+    ''|*[!0-9]*) echo "${GATE_NAME:-plugin-discovery}: cannot read plugin count from $manifest" >&2; return 1 ;;
+  esac
+  if [ "$got" -ne "$want" ]; then
+    echo "${GATE_NAME:-plugin-discovery}: discovered $got of $want plugin entries in $manifest — refusing to run against a truncated plugin list" >&2
+    return 1
+  fi
+
   while IFS="$(printf '\t')" read -r name src; do
     [ -n "$src" ] && [ "$src" != "null" ] || continue
     src="${src#./}"; src="${src%/}"
     [ -n "$name" ] && [ "$name" != "null" ] || name="$src"
     printf '%s\t%s\n' "$name" "$base/$src"
   done <<EOF
-$(jq -r '.plugins[] | ((.name // "") + "\t" + (.source // ""))' "$manifest" 2>/dev/null)
+$raw
 EOF
 }
 

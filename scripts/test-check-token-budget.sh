@@ -270,10 +270,18 @@ contains "case6 live output labels proxy" "$OUT" "proxy"
 # a case that sets one proves nothing about the new loop. Only CHECK_MARKETPLACE_JSON
 # is set, pointing at a fixture manifest listing TWO plugin sources.
 #
-# MUTATION CONTROL: delete the `while ... plugin_dirs ...` loop from the gate's
-# run_gate() and 7a/7b/7c/7d all fail — 7a because the beta plugin is never
-# named, 7b because a malformed second plugin is never seen, 7d because the
-# tripwire never fires. (Performed and recorded in the PR.)
+# MUTATION CONTROL — state the exact mutation and its MEASURED blast radius.
+# An earlier version of this comment named a set of cases and a reason that did
+# not survive measurement (it claimed 7d fails "because the tripwire never
+# fires"; in fact deleting the loop leaves `checked` at 0 so the tripwire fires
+# UNCONDITIONALLY, which is exactly what 7d asserts — so 7d PASSES). Flagged in
+# review of PR #155. A mutation-control note that misdescribes its own result is
+# the same "claim no check backs" defect these gates exist to catch.
+#
+# Measured mutation: make plugin_dirs() emit nothing (`return 0` before its read
+# loop), i.e. discovery finds no plugins at all.
+# Measured result: 10 cases fail, including case6 (live repo), 7a's three
+# assertions, 7b's message assertion and 7c. Restored: 52/52.
 # ---------------------------------------------------------------------------
 
 # mk_plugin <root> <name> <mode> — mode: full | no-budget | no-agents | no-mirror

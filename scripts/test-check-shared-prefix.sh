@@ -157,8 +157,18 @@ run_case "agent with BEGIN but no END fails as MALFORMED" nonzero "MALFORMED bet
 # "negative" test ends up unable to fail). Only CHECK_MARKETPLACE_JSON is set,
 # pointing at a fixture manifest listing TWO plugin sources.
 #
-# MUTATION CONTROL: delete the discovery loop from the gate's run_gate() and
-# every case below fails. Performed and recorded in the PR.
+# MUTATION CONTROL — state the exact mutation and its MEASURED blast radius.
+# An earlier version of this comment said "every case below fails", which is an
+# overclaim: several cases here cover canonical resolution, the tripwire and the
+# missing-manifest guard, which a discovery mutation never reaches. Flagged in
+# review of PR #155.
+#
+# Measured mutation: make plugin_dirs() emit nothing (`return 0` before its read
+# loop), i.e. discovery finds no plugins at all.
+# Measured result: 5 cases fail — second plugin's agents checked, drift inside
+# the second plugin caught, agent-less plugin skipped silently, registered
+# loomwright without the canonical file, and the anti-drift tripwire.
+# Restored: 15/15.
 
 # mkroot <path> — create and echo the CANONICAL path. The gate resolves plugin
 # dirs with `cd ... && pwd`, so a $TMPDIR with a trailing slash (macOS default)
