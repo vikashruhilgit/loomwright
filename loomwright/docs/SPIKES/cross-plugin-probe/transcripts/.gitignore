@@ -1,0 +1,7 @@
+# The repo root .gitignore excludes `*.log` (line 25). These transcripts are the EVIDENCE
+# half of ../../CROSS_PLUGIN_RESOLUTION.md, not incidental run output: a finding that lives
+# in a gitignored path is void, and this repo has already been burned by exactly that.
+# Re-include them here rather than editing the root .gitignore (which is out of this
+# spike's lane) or committing with `git add -f` (which silently skips a regenerated
+# transcript on a later `git add .`).
+!*.log

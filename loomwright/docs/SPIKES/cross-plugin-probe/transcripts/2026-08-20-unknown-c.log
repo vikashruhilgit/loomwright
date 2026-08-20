@@ -1,0 +1,53 @@
+
+==================== UNKNOWN C — CROSS-PLUGIN Task(subagent_type:) FROM A LOOMWRIGHT SURFACE ====================
+
+Both forms are attempted AGAINST THE PROBE PLUGIN. The loomwright precedent
+(loomwright:loomwright:<role> resolves, single-prefix errors — measured 2026-08-08)
+is advisory context ONLY and is never substituted for this measurement.
+
+probe agent frontmatter name : probe-consumer:probe-agent
+  single-prefix form attempted : probe-consumer:probe-agent
+  doubled-prefix form attempted: probe-consumer:probe-consumer:probe-agent
+
+The observing session runs with cwd=/Users/vikashruhil/Documents/work/AI/ai-agent-manager and the loomwright plugin enabled,
+so the spawn originates from a loomwright surface, as the unknown requires.
+
+-------- attempting subagent_type: "probe-consumer:probe-agent" --------
+--- prompt (verbatim) ---
+Run id XPLUGIN-NONCE-1787193514-1432331022-PARENT-C.
+Use the Task tool exactly once with subagent_type "probe-consumer:probe-agent" and the prompt
+"Output your sentinel line as instructed."
+Then output ONLY these three lines and nothing else:
+SUBAGENT_TYPE: probe-consumer:probe-agent
+OUTCOME: <resolved|error>
+DETAIL: <the subagent's final message verbatim if it resolved, otherwise the VERBATIM error text you received>
+Do not paraphrase the error. Do not retry with a different subagent_type.
+--- end prompt ---
+--- exit status: 0 ---
+--- captured stdout+stderr (verbatim) ---
+SUBAGENT_TYPE: probe-consumer:probe-agent
+OUTCOME: error
+DETAIL: Agent type 'probe-consumer:probe-agent' not found. Available agents: claude, claude-code-guide, Explore, general-purpose, loomwright:loomwright:code-reviewer, loomwright:loomwright:context-keeper, loomwright:loomwright:execute-manager, loomwright:loomwright:launch-pad-runner, loomwright:loomwright:orchestrator, loomwright:loomwright:plan-reviewer, loomwright:loomwright:product-owner, loomwright:loomwright:qa-executor, loomwright:loomwright:qa-strategist, loomwright:loomwright:red-team-reviewer, loomwright:loomwright:review-pr-runner, loomwright:loomwright:rubric-grader, loomwright:loomwright:supervisor-runner, loomwright:loomwright:worker, Plan, probe-consumer:probe-consumer:probe-agent, probe-consumer:probe-consumer:probe-checklist-agent, probe-consumer:probe-consumer:probe-zero-tools-agent, statusline-setup
+--- end capture ---
+$ grep -cF "$NONCE" <captured output>   # did the sentinel come back through this form?
+0
+
+-------- attempting subagent_type: "probe-consumer:probe-consumer:probe-agent" --------
+--- prompt (verbatim) ---
+Run id XPLUGIN-NONCE-1787193514-1432331022-PARENT-C.
+Use the Task tool exactly once with subagent_type "probe-consumer:probe-consumer:probe-agent" and the prompt
+"Output your sentinel line as instructed."
+Then output ONLY these three lines and nothing else:
+SUBAGENT_TYPE: probe-consumer:probe-consumer:probe-agent
+OUTCOME: <resolved|error>
+DETAIL: <the subagent's final message verbatim if it resolved, otherwise the VERBATIM error text you received>
+Do not paraphrase the error. Do not retry with a different subagent_type.
+--- end prompt ---
+--- exit status: 0 ---
+--- captured stdout+stderr (verbatim) ---
+SUBAGENT_TYPE: probe-consumer:probe-consumer:probe-agent
+OUTCOME: resolved
+DETAIL: SENTINEL: XPLUGIN-NONCE-1787193514-1432331022
+--- end capture ---
+$ grep -cF "$NONCE" <captured output>   # did the sentinel come back through this form?
+1
