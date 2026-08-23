@@ -507,6 +507,14 @@ When `adjudication_required: true`, rule 6a requires a non-empty `adjudication_o
 plus a non-empty evidence array — `missing_outputs` (requires gap) **or** `colliding_lanes`
 (lane collision). `adjudication_kind` discriminates the two; absent means `requires_gap`.
 
+**Line-wrapping is not cosmetic here.** `scripts/result_block_parser.py` reads a strict
+YAML subset: it rejects a flow sequence (`[...]`) continued onto a second line, and it
+rejects block scalars (`>` / `|`) outright. So a list must be either a **single-line**
+flow sequence or a **block sequence** (`- "..."` on its own lines, used below), and every
+quoted scalar — `reason` in particular — must be emitted on **one line**, however long.
+A template wrapped for readability parses as malformed and is rejected before rule 6
+is ever reached. `emit-block-parses` in the eval corpus asserts this.
+
 ```yaml
 EXECUTE_CHECKPOINT:
   schema_version: 1
@@ -522,8 +530,11 @@ EXECUTE_CHECKPOINT:
     - item: {requires item}
       producing_subtask: {from subtask_id}
       check_run: "{command + exit code}"
-  adjudication_options: ["A: Re-queue producer", "B: Insert remediation subtask",
-                         "C: Exit to Launch Pad", "D: Update consumer brief"]
+  adjudication_options:                 # block sequence — see the wrapping note above
+    - "A: Re-queue producer"
+    - "B: Insert remediation subtask"
+    - "C: Exit to Launch Pad"
+    - "D: Update consumer brief"
   reason: "Pre-spawn verification failed for {subtask_id}: missing required outputs"
 ```
 
@@ -545,12 +556,12 @@ EXECUTE_CHECKPOINT:
     - path: {out-of-lane path}
       owning_subtask: {sibling whose lanes: declares it}
       this_subtask: {subtask_id}
-  adjudication_options: ["A: Re-queue writer with the sibling lane excluded",
-                         "B: Serialize the pair (add a requires edge)",
-                         "C: Exit to Launch Pad", "D: Widen the writer's declared lane"]
-  reason: "Lane collision: {subtask_id} wrote {N} path(s) inside the declared lane(s) of
-    sibling(s) {owning_subtasks}, none reachable in either direction over the requires DAG.
-    See colliding_lanes[] for the full set."
+  adjudication_options:
+    - "A: Re-queue writer with the sibling lane excluded"
+    - "B: Serialize the pair (add a requires edge)"
+    - "C: Exit to Launch Pad"
+    - "D: Widen the writer's declared lane"
+  reason: "Lane collision: {subtask_id} wrote {N} path(s) inside the declared lane(s) of sibling(s) {owning_subtasks}, none reachable in either direction over the requires DAG. See colliding_lanes[] for the full set."
 ```
 
 ---

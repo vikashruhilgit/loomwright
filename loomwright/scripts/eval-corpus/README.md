@@ -69,11 +69,14 @@ install under an arbitrary user project. `fixture-unit-test` is the only fully s
 location-independent task. Corpus *authors* are free to write either kind; the runner itself is
 location-independent (it scores whatever `check.sh` files it finds).
 
-Two regression tasks ported from the twin-remediation salvage extend the corpus:
+Three regression tasks extend the corpus:
 
 - `parity-emit-block` — **maintainer-side**: hook-required result fields must appear as key lines
   *inside* each agent's emit-block template (stronger oracle than `check-contract-parity.sh`
   Check 1's name-presence-anywhere; reuses that script's `MANIFEST` as the field-truth source).
+- `emit-block-parses` — **maintainer-side**: the layer below `parity-emit-block` — every emit
+  template must, copied verbatim, *parse* under `result_block_parser.py`'s strict YAML subset,
+  not merely contain the right field names. Requires `python3`. Reuses the same `MANIFEST`.
 - `review-churn-canary` — **self-contained in eval mode**: asserts the micro-review-drain streak
   detector (≥3 consecutive drain-subject commits of ≤6 changed lines) fires/stays-silent on
   hermetic throwaway git fixtures; a non-scored `--live` mode scans real history (see its spec.md
