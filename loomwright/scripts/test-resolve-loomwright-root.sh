@@ -15,6 +15,17 @@
 # honest way to record that is an allowance the ratchet holds flat — not an
 # adapter exemption, and not an obfuscated reference the counter cannot see.
 #
+# UNTESTED BY DESIGN — the exhausted-resolution failure path (exit 1, all three
+# arms failing) has NO case here, and that is stated rather than left for a
+# reader to discover: everything else in this file is proved by execution, so
+# silence would read as coverage. Triggering it needs `BASH_SOURCE[0]`/`$0`
+# unset or the script's own directory deleted mid-run, which bash effectively
+# never produces and which no deterministic, bash-3.2-safe fixture can
+# construct honestly. A contrived fixture that stubbed the resolver to force
+# the branch would assert on the stub, not on the resolver — a check that
+# backs nothing, which is the failure this whole surface exists to prevent.
+# If you find a real way to reach it, add the case and delete this note.
+#
 # Fully offline and deterministic. macOS bash 3.2 / BSD userland safe: no
 # GNU-only stat/sed/date flags, no `realpath`/`readlink -f`, no `timeout`.
 # Comparisons that involve a temp dir go through `cd && pwd` on BOTH sides, so a

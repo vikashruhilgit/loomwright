@@ -40,6 +40,10 @@
 #   1 = could not resolve (no harness variable, no pre-set value, and the
 #       script's own location could not be determined). Fails CLOSED — it never
 #       prints a guessed or empty root.
+#       NOTE: this branch is UNTESTED — see the header of
+#       test-resolve-loomwright-root.sh for why no honest fixture can reach
+#       it. Treat it as reasoned-correct, not as execution-verified like
+#       every other behaviour of this script.
 #
 # NOT IN SCOPE: migrating existing call sites onto LOOMWRIGHT_ROOT. This file
 # creates the seam; the migration is separate, tracked work.
