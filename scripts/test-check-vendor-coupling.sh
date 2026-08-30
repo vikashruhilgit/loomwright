@@ -424,6 +424,67 @@ check "case15 live repo passes its own ratchet" 0 "$RC"
 contains "case15 live run reports its scan" "$OUT" "files scanned:"
 
 # ---------------------------------------------------------------------------
+# Case 16 — `--print-allowances` is the regeneration mechanism, so it is proved
+# by EXECUTION, not by reading. This flag is what produces every number in the
+# committed manifest ("never hand-typed"), which makes it the highest-stakes
+# untested path in the gate: if it silently broke, CI would stay green and the
+# next regeneration would emit WRONG numbers that still LOOK measured. Verified
+# three ways — it emits valid JSON, the values equal what the gate enforces, and
+# (case 16d) it is not a constant echo of the manifest it was handed.
+# ---------------------------------------------------------------------------
+PA_OUT="$(VENDOR_COUPLING_ROOT="$BASE" VENDOR_COUPLING_MANIFEST="$TMP/base/manifest.json" \
+          bash "$GATE" --print-allowances 2>&1)"; PA_RC=$?
+check "case16a --print-allowances exits 0" 0 "$PA_RC"
+
+printf '%s' "$PA_OUT" | jq -e . >/dev/null 2>&1
+check "case16b --print-allowances emits parseable JSON" 0 $?
+
+# The values must equal what the gate ENFORCES, so a regenerated manifest is
+# green by construction. core/gate.sh carries 2 references in the baseline tree.
+PA_GATE="$(printf '%s' "$PA_OUT" | jq -r '(.allowances // .)["core/gate.sh"] // "ABSENT"' 2>/dev/null)"
+if [ "$PA_GATE" = "2" ]; then pass=$((pass+1)); echo "ok   - case16c printed allowance equals the enforced count"
+else fail=$((fail+1)); echo "FAIL - case16c printed allowance for core/gate.sh: expected 2, got '$PA_GATE'"; fi
+
+# The ADAPTER-exempt seam must NOT appear: an allowance for an adapter path is an
+# ERROR elsewhere in this gate (case9b), so emitting one would regenerate a
+# manifest that fails its own check.
+PA_SEAM="$(printf '%s' "$PA_OUT" | jq -r '((.allowances // .) | has("core/exempt-seam.sh"))' 2>/dev/null)"
+if [ "$PA_SEAM" = "false" ]; then pass=$((pass+1)); echo "ok   - case16c2 adapter-exempt seam is omitted from printed allowances"
+else fail=$((fail+1)); echo "FAIL - case16c2 adapter-exempt seam leaked into printed allowances ($PA_SEAM)"; fi
+
+# case16d — MUTATION CONTROL for the flag itself. Add a reference to a clean core
+# file; the printed value must MOVE. Without this, cases 16a-c would still pass if
+# --print-allowances simply echoed the manifest it was given, which is precisely
+# the "measured-looking but not measured" failure this flag must never have.
+PA_TREE="$TMP/printalw/tree"; clone_tree "$BASE" "$PA_TREE"
+put "$PA_TREE" "core/clean.sh" "#!/bin/sh" "echo portable" "now uses \$$FTOK"
+stage "$PA_TREE"
+PA_OUT2="$(VENDOR_COUPLING_ROOT="$PA_TREE" VENDOR_COUPLING_MANIFEST="$TMP/base/manifest.json" \
+           bash "$GATE" --print-allowances 2>&1)"
+PA_CLEAN="$(printf '%s' "$PA_OUT2" | jq -r '(.allowances // .)["core/clean.sh"] // "ABSENT"' 2>/dev/null)"
+if [ "$PA_CLEAN" = "1" ]; then pass=$((pass+1)); echo "ok   - case16d printed allowances track the tree, not the input manifest"
+else fail=$((fail+1)); echo "FAIL - case16d expected core/clean.sh -> 1 after injection, got '$PA_CLEAN'"; fi
+
+# ---------------------------------------------------------------------------
+# Case 17 — an unknown argument is rejected, not silently ignored. A gate that
+# ignored a typo'd flag would run in an unintended mode while looking fine.
+# ---------------------------------------------------------------------------
+UA_OUT="$(VENDOR_COUPLING_ROOT="$BASE" VENDOR_COUPLING_MANIFEST="$TMP/base/manifest.json" \
+          bash "$GATE" --not-a-real-flag 2>&1)"; UA_RC=$?
+check "case17 unknown argument exits non-zero" 1 "$UA_RC"
+contains "case17 names the offending argument" "$UA_OUT" "--not-a-real-flag"
+
+# ---------------------------------------------------------------------------
+# Case 18 — a scan root that does not exist AT ALL fails closed. Distinct from
+# case8f (exists but is not a git repo): this is the typo'd/moved-path case, and
+# it must not degrade to "scanned nothing, found nothing, exit 0".
+# ---------------------------------------------------------------------------
+NX_OUT="$(VENDOR_COUPLING_ROOT="$TMP/definitely/not/here" VENDOR_COUPLING_MANIFEST="$TMP/base/manifest.json" \
+          bash "$GATE" 2>&1)"; NX_RC=$?
+check "case18 nonexistent scan root exits non-zero" 1 "$NX_RC"
+lacks "case18 does not report a clean pass" "$NX_OUT" "breaches: 0 | errors: 0"
+
+# ---------------------------------------------------------------------------
 echo "---------------------------------------------------------------------------"
 echo "test-check-vendor-coupling: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
