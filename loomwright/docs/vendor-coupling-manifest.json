@@ -1,0 +1,118 @@
+{
+  "_comment": "Authoritative CORE/ADAPTER/COUPLED classification and per-path vendor-coupling allowances, enforced by scripts/check-vendor-coupling.sh. THIS JSON is the single source of truth the gate reads; the gate hard-codes no token, no glob and no allowance, so every policy change is a reviewable diff here. RATCHET SEMANTICS: breach = actual > allowance; actual < allowance PASSES (debt paid down is never a CI failure). To add a reference to a ratcheted path, raise its allowance in the SAME PR, which puts the raise in front of a reviewer — the same convention prompt-token-budgets.json uses for prompt budgets. COUNTING: the gate counts LITERAL fixed-string occurrences of `vendor_tokens` per tracked file (git ls-files + grep -oF), summing all tokens and counting every occurrence, not every matching line — a line-based count would let a second reference hide on an existing line. HONEST LIMIT: a reference ASSEMBLED AT RUNTIME (built by concatenation or indirection) contains no literal token and is invisible to this mechanism; a green run means 'no new LITERAL coupling', not 'no new coupling'. SCOPE LIMIT: only `scan_roots` is scanned. Root prose (README.md, CLAUDE.md, CHANGELOG.md), the sibling plugins (stackpack/, mysql-mcp/) and .github/ are deliberately UNSCANNED, not certified clean — release prose names the harness by necessity and would force an allowance bump every release, which is how a gate earns being switched off. REFUTED ASSUMPTION, recorded on purpose: the source requirement assumed these references 'are dominated by legitimately-adapter surfaces (commands/hooks/agent frontmatter)'. Measured on the base commit of this change, adapter-ish surfaces were 131/278 = 47% and core-ish surfaces 139/278 = 50% — the assumption is REFUTED; adapter surfaces are NOT dominant. The mitigating fact is that the CORE allowance table is nonetheless small, so ratcheting it down later is tractable. (Those 278/131/139 figures are MATCHING-LINE counts from the requirement's own measurement, kept verbatim as the historical record; this gate counts OCCURRENCES, which are >= line counts, so the numbers below are legitimately larger.) The allowance values below were produced by `bash scripts/check-vendor-coupling.sh --print-allowances` and committed as measured — never hand-typed.",
+  "schema_version": 1,
+  "count_mode": "occurrences",
+  "scan_roots": [
+    "loomwright",
+    "scripts",
+    ".claude-plugin"
+  ],
+  "vendor_tokens": [
+    "CLAUDE_PLUGIN_ROOT",
+    "CLAUDE_CODE_",
+    "claude -p",
+    ".claude/"
+  ],
+  "unclassified_default": "core",
+  "unclassified_default_note": "A path matched by no class glob is treated as CORE with an allowance of 0, so a brand-new directory cannot silently become a coupling haven: the first vendor reference added to it fails CI until someone classifies it here. The gate rejects `adapter` as a default outright — a blanket adapter default would exempt the entire tree and make the ratchet vacuous.",
+  "glob_syntax_note": "Globs are shell `case` patterns evaluated against the repo-relative path, where `*` DOES match `/`. So `loomwright/skills/*` covers the whole subtree, and no `**` form is needed. ADAPTER is matched first, then COUPLED, then CORE — which is what lets a single-file adapter exemption win over the broader CORE glob that contains it.",
+  "classes": {
+    "adapter": {
+      "note": "Adapter surfaces may name any harness freely and are NOT counted at all. loomwright/commands, loomwright/agents and loomwright/hooks are prompt/manifest surfaces the harness itself parses — they exist to speak Claude Code's language, and demanding neutrality from them would be demanding they stop working. The two .claude-plugin manifests are literally the vendor's packaging format. loomwright/scripts/resolve-loomwright-root.sh is exempt DELIBERATELY and load-bearingly: its entire job is to name the harness variable ONCE so that nothing else has to, and a gate that flagged it would be flagging the seam that exists to remove the coupling everywhere else.",
+      "globs": [
+        "loomwright/commands/*",
+        "loomwright/agents/*",
+        "loomwright/hooks/*",
+        ".claude-plugin/*",
+        "loomwright/.claude-plugin/*",
+        "loomwright/scripts/resolve-loomwright-root.sh"
+      ]
+    },
+    "coupled": {
+      "note": "Grandfathered debt. loomwright/skills and loomwright/docs carry real, already-paid-for coupling: skills document harness-specific workflows and docs describe the harness by name. They are ratcheted exactly like CORE — the allowance simply starts from a higher measured baseline. Classifying them COUPLED rather than ADAPTER is the point: an adapter exemption would never be paid down, whereas a COUPLED allowance can only fall.",
+      "globs": [
+        "loomwright/skills/*",
+        "loomwright/docs/*"
+      ]
+    },
+    "core": {
+      "note": "The portable core: the plugin's runtime shell/python scripts. These are the files a non-Claude adapter would have to run unmodified, so every literal harness reference in them is a porting cost. 16 files under loomwright/scripts currently carry references; every other file's allowance is 0, which is precisely what makes a NEW reference in a currently-clean script fail. The root `scripts/` directory (this repo's own CI gates) is not listed here — it falls through to `unclassified_default`, which is also core, so it is ratcheted identically without needing a glob.",
+      "globs": [
+        "loomwright/scripts/*"
+      ]
+    }
+  },
+  "allowances_note": "Per-path measured baselines. A value is the count the gate itself measured on the commit that introduced or last raised it — never a hand-typed number. An entry for a path that does not exist, or for an ADAPTER-classified path, is an ERROR (the manifest stays self-cleaning, and an allowance cannot be used to quietly reclassify a file). A path absent from this map has an allowance of 0. TWO ENTRIES ARE NEW COUPLING INTRODUCED BY THE CHANGE THAT CREATED THIS FILE, and are called out rather than buried in the table: (1) `loomwright/docs/vendor-coupling-manifest.json` = 4, which is this file's own `vendor_tokens` declaration — the manifest is NOT exempted from its own scan, so adding a fifth token requires bumping this number in the same edit, which is the intended visibility rather than an inconvenience; (2) `loomwright/scripts/test-resolve-loomwright-root.sh` = 10, the resolver's self-test, which must name the harness variable literally in order to test the harness arm at all. It is deliberately CORE-with-an-allowance rather than ADAPTER: the resolver's exemption is justified by it being the single seam, and that argument does not extend to its test. Obfuscating those references so the counter could not see them would have been the dishonest alternative — it would lower the number without lowering the coupling.",
+  "allowances": {
+    "loomwright/docs/ARCHITECTURE_CONTRACTS.md": 3,
+    "loomwright/docs/CAPABILITY_BASELINE.json": 2,
+    "loomwright/docs/HARVEST_DRYRUN_SAMPLE.md": 1,
+    "loomwright/docs/HOOKS.md": 1,
+    "loomwright/docs/IMPROVEMENTS_ROADMAP.md": 4,
+    "loomwright/docs/OBSERVABILITY.md": 24,
+    "loomwright/docs/RESULT_SCHEMAS.md": 3,
+    "loomwright/docs/SPIKES/BRAIN_INTEGRATION_EVOLUTION.md": 4,
+    "loomwright/docs/SPIKES/CODE_GRAPH_OWNERSHIP.md": 1,
+    "loomwright/docs/SPIKES/ENHANCEMENT_PLAN_v15_DRAFT.md": 5,
+    "loomwright/docs/SPIKES/EVAL_FINDINGS_AND_FIXES.md": 2,
+    "loomwright/docs/SPIKES/FABLE_PARITY_EVAL.md": 12,
+    "loomwright/docs/SPIKES/LEARNING_LOOP_ROADMAP.md": 3,
+    "loomwright/docs/SPIKES/NORTH_STAR_DIRECTION.md": 1,
+    "loomwright/docs/SPIKES/P2b_MEMORY_DESIGN.md": 2,
+    "loomwright/docs/SPIKES/SYSTEM_TWIN_ROADMAP.md": 1,
+    "loomwright/docs/SPIKES/code-graph-harness/reposcan_multi.py": 1,
+    "loomwright/docs/TELEMETRY.md": 9,
+    "loomwright/docs/vendor-coupling-manifest.json": 4,
+    "loomwright/scripts/add-orientation.sh": 3,
+    "loomwright/scripts/add-rule.sh": 3,
+    "loomwright/scripts/build-handoff.sh": 5,
+    "loomwright/scripts/build-insights.sh": 2,
+    "loomwright/scripts/dispatch-pr-postmortem.sh": 5,
+    "loomwright/scripts/dispatch-pr-review.sh": 2,
+    "loomwright/scripts/emit-progress-event.sh": 1,
+    "loomwright/scripts/fixtures/posttooluse-gh-pr-create.json": 1,
+    "loomwright/scripts/harvest-conventions.sh": 1,
+    "loomwright/scripts/notify-click-target.sh": 1,
+    "loomwright/scripts/notify-desktop.sh": 3,
+    "loomwright/scripts/session-resume.sh": 9,
+    "loomwright/scripts/set-otel-resource-attrs.sh": 13,
+    "loomwright/scripts/setup-memory.sh": 42,
+    "loomwright/scripts/test-agent-memory-permission.sh": 2,
+    "loomwright/scripts/test-build-handoff.sh": 11,
+    "loomwright/scripts/test-check-contract-parity.sh": 4,
+    "loomwright/scripts/test-citation-drift.sh": 2,
+    "loomwright/scripts/test-committed-twin-scrub.sh": 26,
+    "loomwright/scripts/test-dispatch-pr-postmortem.sh": 4,
+    "loomwright/scripts/test-dispatch-pr-review.sh": 2,
+    "loomwright/scripts/test-harvest-conventions.sh": 4,
+    "loomwright/scripts/test-notify-desktop.sh": 4,
+    "loomwright/scripts/test-resolve-loomwright-root.sh": 10,
+    "loomwright/scripts/test-session-probe.sh": 6,
+    "loomwright/scripts/test-session-resume.sh": 3,
+    "loomwright/scripts/test-set-otel-resource-attrs.sh": 34,
+    "loomwright/scripts/test-setup-memory.sh": 103,
+    "loomwright/scripts/test-validate-entry.sh": 12,
+    "loomwright/scripts/test-write-agent-memory.sh": 32,
+    "loomwright/scripts/validate-entry.sh": 8,
+    "loomwright/scripts/write-agent-memory.sh": 6,
+    "loomwright/scripts/write-lessons.sh": 3,
+    "loomwright/scripts/write-project-memory.sh": 3,
+    "loomwright/scripts/write-system-contract.sh": 3,
+    "loomwright/skills/agent-teams/SKILL.md": 3,
+    "loomwright/skills/async-orchestration/SKILL.md": 1,
+    "loomwright/skills/automate-loop/SKILL.md": 4,
+    "loomwright/skills/autonomous-loop/SKILL.md": 14,
+    "loomwright/skills/brain-context/SKILL.md": 2,
+    "loomwright/skills/memory-tool/SKILL.md": 8,
+    "loomwright/skills/pr-postmortem/SKILL.md": 5,
+    "loomwright/skills/review-heal/SKILL.md": 7,
+    "loomwright/skills/rules/SKILL.md": 4,
+    "loomwright/skills/self-heal-advisory/SKILL.md": 17,
+    "loomwright/skills/setup/SKILL.md": 38,
+    "loomwright/skills/state-management/SKILL.md": 2,
+    "loomwright/skills/supervisor-config/SKILL.md": 5,
+    "loomwright/skills/telemetry/SKILL.md": 2,
+    "loomwright/skills/workflow-management/SKILL.md": 1,
+    "scripts/check-contract-parity.sh": 2
+  }
+}

@@ -38,6 +38,16 @@ jobs:
           bash scripts/test-check-token-budget.sh
           bash scripts/check-token-budget.sh
 
+      # Named EXPLICITLY, both of them: the "full deterministic self-test suite" step
+      # below globs `loomwright/scripts/test-*.sh` only, so a test living in root
+      # `scripts/` is not auto-included. A mutation control CI never invokes is not a
+      # control — which is the exact failure this gate exists to end. No `|| true`:
+      # fail-CLOSED correctness gate (CLAUDE.md §"Failure-Mode Invariants").
+      - name: Check vendor-coupling ratchet (portability gate)
+        run: |
+          bash scripts/test-check-vendor-coupling.sh
+          bash scripts/check-vendor-coupling.sh
+
       - name: Check shared agent prefix (byte-identity gate)
         run: |
           bash scripts/test-check-shared-prefix.sh
