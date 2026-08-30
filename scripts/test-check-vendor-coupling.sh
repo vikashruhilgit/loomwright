@@ -511,6 +511,30 @@ run_gate "$BASE" "$TMP/base/negative.json"
 check    "case19c negative allowance on a zero-reference file exits non-zero" 1 "$RC"
 
 # ---------------------------------------------------------------------------
+# Case 20 — count_mode is a DECLARED field, so it must mean something. An unknown
+# value is rejected rather than silently ignored: a knob that accepts anything
+# implies an alternate mode that does not exist, so someone setting "lines" would
+# expect line-based counting and silently get occurrence counting instead. 20c is
+# the control — omitting the field entirely must still pass, so the validation
+# cannot be satisfied by simply rejecting every manifest.
+# ---------------------------------------------------------------------------
+mk_manifest "$TMP/base/cm-bad.json" "$BASE_ALLOW"
+jq '. + {count_mode: "lines"}' "$TMP/base/cm-bad.json" > "$TMP/base/cm-bad2.json"
+run_gate "$BASE" "$TMP/base/cm-bad2.json"
+check    "case20a unknown count_mode exits non-zero" 1 "$RC"
+contains "case20a names the field"        "$OUT" "count_mode"
+contains "case20a echoes the bad value"   "$OUT" "lines"
+
+jq '. + {count_mode: "occurrences"}' "$TMP/base/cm-bad.json" > "$TMP/base/cm-ok.json"
+run_gate "$BASE" "$TMP/base/cm-ok.json"
+check "case20b declared count_mode 'occurrences' passes" 0 "$RC"
+
+# Control: the field is OPTIONAL. Omitting it must default to occurrences and pass,
+# so case20a cannot be passing merely because the gate rejects unfamiliar manifests.
+run_gate "$BASE" "$TMP/base/cm-bad.json"
+check "case20c omitted count_mode defaults and passes" 0 "$RC"
+
+# ---------------------------------------------------------------------------
 echo "---------------------------------------------------------------------------"
 echo "test-check-vendor-coupling: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

@@ -124,6 +124,23 @@ case "$UNCLASSIFIED_DEFAULT" in
     exit 1 ;;
 esac
 
+# count_mode is declared in the manifest, so it must MEAN something. This gate
+# implements exactly one counting mode — occurrences (every match counted, so a
+# second reference cannot hide on a line that already has one). The field is
+# validated rather than merely read, because a knob that silently accepts any
+# value implies an alternate mode that does not exist: someone setting
+# "lines" would reasonably expect line-based counting and would instead get
+# occurrence counting with no warning. Rejecting the unknown value keeps the
+# manifest's declaration and the gate's behaviour in agreement — the same reason
+# unclassified_default is validated above rather than defaulted.
+COUNT_MODE="$(jq -r '.count_mode // "occurrences"' "$MANIFEST")"
+case "$COUNT_MODE" in
+  occurrences) : ;;
+  *)
+    echo "check-vendor-coupling: count_mode must be 'occurrences' (got '$COUNT_MODE'). This gate implements occurrence counting only — a second reference must not be able to hide on a line that already carries one. Remove the field to accept the default, or implement the mode you are asking for." >&2
+    exit 1 ;;
+esac
+
 ADAPTER_GLOBS="$(jq -r '.classes.adapter.globs[]? // empty' "$MANIFEST")"
 COUPLED_GLOBS="$(jq -r '.classes.coupled.globs[]? // empty' "$MANIFEST")"
 CORE_GLOBS="$(jq -r '.classes.core.globs[]? // empty'       "$MANIFEST")"
