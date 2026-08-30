@@ -485,6 +485,32 @@ check "case18 nonexistent scan root exits non-zero" 1 "$NX_RC"
 lacks "case18 does not report a clean pass" "$NX_OUT" "breaches: 0 | errors: 0"
 
 # ---------------------------------------------------------------------------
+# Case 19 — a malformed allowance is rejected even on a file with ZERO references.
+# The breach loop validates allowance values too, but it only ever iterates files
+# with actual > 0, so a garbage value on a currently-CLEAN path used to sit inert
+# and undetected until someone added a reference to that file — surfacing an ERROR
+# far later than a manifest sanity check should. 19b is the control that makes 19a
+# meaningful: the SAME garbage on a file that DOES carry references was already
+# caught, so without it this case could not distinguish the fix from the old
+# behaviour.
+# ---------------------------------------------------------------------------
+mk_manifest "$TMP/base/nonint-clean.json" '{"core/gate.sh": 2, "coupled/skill.md": 1, "core/clean.sh": "TBD"}'
+run_gate "$BASE" "$TMP/base/nonint-clean.json"
+check    "case19a non-integer allowance on a zero-reference file exits non-zero" 1 "$RC"
+contains "case19a names the offending path"  "$OUT" "core/clean.sh"
+contains "case19a says why"                  "$OUT" "non-integer allowance"
+
+mk_manifest "$TMP/base/nonint-hits.json" '{"core/gate.sh": "TBD", "coupled/skill.md": 1}'
+run_gate "$BASE" "$TMP/base/nonint-hits.json"
+check    "case19b control: same garbage on a referenced file also exits non-zero" 1 "$RC"
+contains "case19b names that path too"       "$OUT" "core/gate.sh"
+
+# 19c — a NEGATIVE allowance is not a valid count either, on a clean path.
+mk_manifest "$TMP/base/negative.json" '{"core/gate.sh": 2, "coupled/skill.md": 1, "core/clean.sh": -1}'
+run_gate "$BASE" "$TMP/base/negative.json"
+check    "case19c negative allowance on a zero-reference file exits non-zero" 1 "$RC"
+
+# ---------------------------------------------------------------------------
 echo "---------------------------------------------------------------------------"
 echo "test-check-vendor-coupling: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

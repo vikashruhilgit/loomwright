@@ -309,7 +309,21 @@ while IFS="$(printf '\t')" read -r p allow; do
     printf "%-62s %-8s %7s %7s  %s\n" "$p" "adapter" "-" "$allow" "ERROR   allowance declared for an ADAPTER-classified path — adapters are never counted, so the entry is meaningless (remove it)"
     errors=$((errors + 1))
     exit_code=1
+    continue
   fi
+  # Value sanity, for EVERY declared allowance — not only the ones that happen to
+  # have references today. The breach loop above also rejects a non-integer, but it
+  # only ever iterates files with actual > 0, so a garbage value on a currently-CLEAN
+  # path used to sit inert and undetected until the day someone added a reference to
+  # that file — surfacing an ERROR far later than a manifest sanity check should.
+  # Validating here makes "the manifest stays self-cleaning" true for the whole table
+  # rather than for its referenced subset.
+  case "$allow" in ''|*[!0-9]*)
+    printf "%-62s %-8s %7s %7s  %s\n" "$p" "$(classify "$p")" "-" "$allow" "ERROR   non-integer allowance in manifest (must be a non-negative integer)"
+    errors=$((errors + 1))
+    exit_code=1
+    continue ;;
+  esac
 done < "$ALLOW_TSV"
 
 echo "---------------------------------------------------------------------------------------------"
