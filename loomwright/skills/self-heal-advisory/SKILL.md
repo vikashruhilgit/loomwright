@@ -837,14 +837,13 @@ else:
    3. **Read the provenance pointer:** parse the brief (in `done/` when step 2 performed the move; otherwise wherever it remains) for a `- **Source requirement:** {path}` line under its `## Environment` section. If the line is **absent → no-op** (backward compatible with pre-feature briefs and direct `/supervisor task:` runs that never stamped a pointer). Record `record_decision(phase: SELF_HEAL, decision: "requirement_closeout: noop_no_pointer", rationale: "no Source requirement pointer on brief")` and continue.
    4. **Resolve + safety-check the path:** resolve `{path}` relative to the project root. **Require the resolved path to be UNDER `.supervisor/requirements/` AND to pass `test -f`** (guards against path traversal / injection via the brief field). If it does not resolve, is outside `.supervisor/requirements/`, or the file does not exist → **logged no-op** (NEVER an error that fails the run): record `record_decision(phase: SELF_HEAL, decision: "requirement_closeout: noop_unresolved", rationale: "Source requirement path missing or outside .supervisor/requirements/")` and continue.
    5. **Stamp, do not move:** append a `## Status` block to the requirement file **in place** (do NOT move the requirement file — only the brief moves). **Mirror the brief `## Outcome` granularity** so an escalated requirement is not indistinguishable on disk from a clean pass (the very "done and not-done look identical" problem this feature removes):
-      - On **PASS / loop-skipped** → `**Status:** done`.
-      - On **ESCALATED** → `**Status:** done_with_escalation`, plus a `- **Heal:** {needs_human|max_iterations_reached|self_heal_resume_thrash} — {heal_remaining_issues} remaining` line carrying the escalation nuance (mirrors the brief `## Outcome` `**Heal reason:**` / `**Heal remaining issues:**` fields).
+      - On **PASS / loop-skipped** → heading `## Status: done`.
+      - On **ESCALATED** → heading `## Status: done_with_escalation`, plus a `- **Heal:** {needs_human|max_iterations_reached|self_heal_resume_thrash} — {heal_remaining_issues} remaining` line carrying the escalation nuance (mirrors the brief `## Outcome` `**Heal reason:**` / `**Heal remaining issues:**` fields).
 
-      Stamp exactly one of these two literal blocks (no inline comments — stamp the block verbatim, substituting the `{...}` placeholders). Each block opens with the namespaced HTML-comment sentinel `<!-- loomwright:requirement-closeout -->` so the idempotent re-stamp keys off **our** marker, never a bare `## Status` heading some other tool may use. On **PASS / loop-skipped**:
+      Stamp exactly one of these two literal blocks (no inline comments — stamp the block verbatim, substituting the `{...}` placeholders). **The status value MUST live on the `## Status:` heading line, not in a `- **Status:**` bullet** — `automate-helpers.sh`'s `is_done()` matches `^## Status:[[:space:]]*done(_with_escalation)?\b` and reads nothing else, so a value demoted to a bullet leaves the requirement silently re-enqueueable by `resolve-folder` / `resume-glob` forever. That mismatch shipped undetected from this step's introduction until 2026-08-31 (it had never fired: zero requirements in the repo carried the sentinel). Each block opens with the namespaced HTML-comment sentinel `<!-- loomwright:requirement-closeout -->` so the idempotent re-stamp keys off **our** marker, never a bare `## Status` heading some other tool may use. On **PASS / loop-skipped**:
       ```markdown
       <!-- loomwright:requirement-closeout -->
-      ## Status
-      - **Status:** done
+      ## Status: done
       - **Completed:** {ISO 8601 timestamp}
       - **Brief:** {done/ brief path}
       - **PR:** {PR URL}
@@ -852,8 +851,7 @@ else:
       On **ESCALATED** (same fields, escalated status value, plus one `Heal` line):
       ```markdown
       <!-- loomwright:requirement-closeout -->
-      ## Status
-      - **Status:** done_with_escalation
+      ## Status: done_with_escalation
       - **Completed:** {ISO 8601 timestamp}
       - **Brief:** {done/ brief path}
       - **PR:** {PR URL}
