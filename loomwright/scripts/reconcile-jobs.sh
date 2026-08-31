@@ -236,13 +236,24 @@ repair() {
   # classified from a merged PR, which proves the work shipped and says nothing
   # about the heal decision — so it keeps `completed`, and the caveat line below
   # is what records that the heal outcome was not recoverable.
+  # Consult the requirement for BOTH repairable states, NOT just stranded_closed.
+  # classify() checks the automate run file BEFORE is_done(), so a brief can be
+  # stranded_merged while its source requirement is ALSO already stamped
+  # done_with_escalation — step 2.5 can stamp without step 2 having moved the
+  # brief (skills/self-heal-advisory/SKILL.md step 3 says so explicitly: "in
+  # done/ when step 2 performed the move; otherwise wherever it remains").
+  # Gating this on `state` therefore re-created the exact failure it was added to
+  # remove: asserting a cleaner result than a file we can already read supports.
+  # Only the MESSAGE differs between the arms.
   local status_line="completed" esc_note="" req_for_status req_status
-  if [ "$state" = "stranded_closed" ]; then
-    req_for_status="$(safe_requirement_path "$(brief_source_requirement "$brief")" || true)"
-    if [ -n "$req_for_status" ]; then
-      req_status="$(requirement_status "$req_for_status")"
-      if [ "$req_status" = "done_with_escalation" ]; then
-        status_line="completed_with_escalation"
+  req_for_status="$(safe_requirement_path "$(brief_source_requirement "$brief")" || true)"
+  if [ -n "$req_for_status" ]; then
+    req_status="$(requirement_status "$req_for_status")"
+    if [ "$req_status" = "done_with_escalation" ]; then
+      status_line="completed_with_escalation"
+      if [ "$state" = "stranded_merged" ]; then
+        esc_note="- **Heal:** escalated — the PR-merge evidence is heal-decision-agnostic, but the source requirement closed out as \`done_with_escalation\`. The specific heal reason and remaining-issue count are NOT recoverable here.\n"
+      else
         esc_note="- **Heal:** escalated — the source requirement closed out as \`done_with_escalation\`; the specific heal reason and remaining-issue count are NOT recoverable here.\n"
       fi
     fi
@@ -260,8 +271,18 @@ repair() {
     printf -- '- **Caveat:** fields the completion tail would have recorded (files changed, heal decision and iterations, red-team advisory) are NOT recoverable after the fact and are deliberately omitted rather than invented.\n'
   } >> "$tmp" || { rm -f "$tmp"; return 1; }
 
-  mv -f "$tmp" "$brief" || { rm -f "$tmp"; return 1; }
-  mv "$brief" "$dest" || return 1
+  # Move the STAGED copy into done/ first, and only then drop the original. The
+  # previous order rewrote the brief in place and then moved it, so a failure of
+  # the second step left the source carrying an ## Outcome block — which the
+  # "already carries an ## Outcome" guard above then refuses on every later run,
+  # wedging the brief permanently. With this order the worst case is a duplicate
+  # (dest written, source not removed), which the destination-exists guard
+  # reports rather than compounds.
+  mv "$tmp" "$dest" || { rm -f "$tmp"; return 1; }
+  rm -f "$brief" || {
+    echo "reconcile-jobs: repaired '$base' into done/ but could not remove the original" >&2
+    return 1
+  }
   return 0
 }
 

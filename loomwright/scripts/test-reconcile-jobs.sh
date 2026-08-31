@@ -65,6 +65,44 @@ case "$out" in
   *) no "1b evidence lost the PR URL: $out" ;;
 esac
 
+# --- 1c/1d. stranded_merged + an ESCALATED requirement stamp ----------------
+# (PR #161 review round 2, finding 1: classify() checks the automate run file
+# BEFORE is_done(), so this combination lands on stranded_merged — where the
+# first escalation fix never looked, because it gated on `state`.)
+r="$(new_repo ".supervisor/requirements/req.md")"
+printf '# req\n\n## Status: done_with_escalation\n' > "$r/.supervisor/requirements/req.md"
+cat > "$r/.supervisor/automate/run.md" <<'EOF'
+## Current
+- item: .supervisor/requirements/req.md | status: merged | pr: https://github.com/o/r/pull/7 | branch: b
+EOF
+out="$(cd "$r" && bash "$RECON" --porcelain 2>/dev/null)"
+case "$out" in stranded_merged*) ok "1c merged run file still wins the classification" ;; *) no "1c expected stranded_merged, got: $out" ;; esac
+(cd "$r" && bash "$RECON" --repair >/dev/null 2>&1)
+b="$r/.supervisor/jobs/done/brief.md"
+if grep -q '^- \*\*Status:\*\* completed_with_escalation$' "$b" 2>/dev/null; then
+  ok "1c2 stranded_merged also honours an escalated requirement stamp"
+else
+  no "1c2 escalation dropped on the stranded_merged arm"
+fi
+grep -q 'heal-decision-agnostic' "$b" 2>/dev/null \
+  && ok "1c3 note says the PR-merge evidence alone could not have told us" \
+  || no "1c3 stranded_merged escalation note missing its distinct wording"
+
+# (control) merged + a requirement with NO terminal stamp ⇒ plain completed.
+r="$(new_repo ".supervisor/requirements/req.md")"
+echo "# req" > "$r/.supervisor/requirements/req.md"
+cat > "$r/.supervisor/automate/run.md" <<'EOF'
+## Current
+- item: .supervisor/requirements/req.md | status: merged | pr: https://github.com/o/r/pull/8 | branch: b
+EOF
+(cd "$r" && bash "$RECON" --repair >/dev/null 2>&1)
+b="$r/.supervisor/jobs/done/brief.md"
+if grep -q '^- \*\*Status:\*\* completed$' "$b" 2>/dev/null && ! grep -q 'Heal:' "$b" 2>/dev/null; then
+  ok "1d (control) merged + unstamped requirement stays plain completed"
+else
+  no "1d merged + unstamped was wrongly escalated"
+fi
+
 # --- 2. an OPEN item must NOT be called stranded (control) -------------------
 r="$(new_repo ".supervisor/requirements/req.md")"
 echo "# req" > "$r/.supervisor/requirements/req.md"
@@ -183,6 +221,51 @@ if [ "$(cat "$r/.supervisor/jobs/done/brief.md")" = "PRE-EXISTING" ] \
 else
   no "8 --repair clobbered the destination"
 fi
+
+# --- 8b. --repair refuses a brief that already carries an ## Outcome -------
+# (PR #161 review round 2, finding 2.) The repair ORDER was also changed so this
+# guard can no longer be tripped by our own half-finished write: the staged copy
+# now lands in done/ before the original is removed, so a failed move can never
+# leave a poisoned brief in in-progress/.
+r="$(new_repo ".supervisor/requirements/req.md")"
+echo "# req" > "$r/.supervisor/requirements/req.md"
+printf '## Current\n- item: .supervisor/requirements/req.md | status: merged | pr: https://github.com/o/r/pull/2 | branch: b\n' \
+  > "$r/.supervisor/automate/run.md"
+printf '\n## Outcome\n- **Status:** completed\n' >> "$r/.supervisor/jobs/in-progress/brief.md"
+(cd "$r" && bash "$RECON" --repair >/dev/null 2>&1)
+if [ -f "$r/.supervisor/jobs/in-progress/brief.md" ] && [ ! -e "$r/.supervisor/jobs/done/brief.md" ]; then
+  ok "8b --repair refuses a brief already carrying an ## Outcome"
+else
+  no "8b re-stamped or moved a brief that already had an ## Outcome"
+fi
+
+# --- 8c. a FAILED move must not poison the source brief --------------------
+# The reordering in the round-2 fix is only observable when the move into done/
+# fails, which the happy path cannot reach — without this case the change would
+# be a claim no check backs. Force the failure by making done/ unwritable, then
+# assert the brief is still repairable rather than wedged: the old order wrote
+# the ## Outcome into the source FIRST, so a failure here left it carrying one,
+# and the "already carries an ## Outcome" guard then refused it on every later
+# run, forever.
+r="$(new_repo ".supervisor/requirements/req.md")"
+echo "# req" > "$r/.supervisor/requirements/req.md"
+printf '## Current\n- item: .supervisor/requirements/req.md | status: merged | pr: https://github.com/o/r/pull/3 | branch: b\n' \
+  > "$r/.supervisor/automate/run.md"
+chmod 555 "$r/.supervisor/jobs/done"
+(cd "$r" && bash "$RECON" --repair >/dev/null 2>&1)
+poisoned=0
+grep -qE '^## Outcome[[:space:]]*$' "$r/.supervisor/jobs/in-progress/brief.md" 2>/dev/null && poisoned=1
+chmod 755 "$r/.supervisor/jobs/done"
+if [ "$poisoned" -eq 0 ] && [ -f "$r/.supervisor/jobs/in-progress/brief.md" ]; then
+  ok "8c a failed move leaves the source clean (still repairable, not wedged)"
+else
+  no "8c failed move poisoned the source brief with an ## Outcome"
+fi
+# ...and prove it is genuinely still repairable once the obstruction clears.
+(cd "$r" && bash "$RECON" --repair >/dev/null 2>&1)
+[ -e "$r/.supervisor/jobs/done/brief.md" ] \
+  && ok "8c2 the same brief repairs cleanly on the next run" \
+  || no "8c2 brief was left permanently unrepairable"
 
 # --- 9. always exits 0, including on an unknown flag ------------------------
 r="$(new_repo "")"
