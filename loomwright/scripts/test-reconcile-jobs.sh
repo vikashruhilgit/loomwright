@@ -87,6 +87,39 @@ case "$out" in
   *) no "3 expected stranded_closed, got: $out" ;;
 esac
 
+# --- 3b/3c/3d. escalated close-out must NOT be flattened to a clean one -----
+# (PR #161 review finding 1: repair() stamped `completed` for BOTH terminal
+# values, discarding a nuance the file it had just read still carried.)
+r="$(new_repo ".supervisor/requirements/req.md")"
+printf '# req\n\n## Status: done_with_escalation\n' > "$r/.supervisor/requirements/req.md"
+out="$(cd "$r" && bash "$RECON" --porcelain 2>/dev/null)"
+case "$out" in
+  *"is stamped done_with_escalation"*) ok "3b evidence names the escalated terminal value" ;;
+  *) no "3b evidence lost the escalation value: $out" ;;
+esac
+(cd "$r" && bash "$RECON" --repair >/dev/null 2>&1)
+b="$r/.supervisor/jobs/done/brief.md"
+if grep -q '^- \*\*Status:\*\* completed_with_escalation$' "$b" 2>/dev/null; then
+  ok "3c repair mirrors the contract's completed_with_escalation vocabulary"
+else
+  no "3c escalated close-out was flattened to a clean completed"
+fi
+grep -q '^- \*\*Heal:\*\* escalated' "$b" 2>/dev/null \
+  && ok "3c2 escalation note states what is NOT recoverable" \
+  || no "3c2 escalation note missing"
+
+# (control) a PLAIN done must stay `completed` with no escalation note — stops
+# 3c passing under an implementation that simply escalates everything.
+r="$(new_repo ".supervisor/requirements/req.md")"
+printf '# req\n\n## Status: done\n' > "$r/.supervisor/requirements/req.md"
+(cd "$r" && bash "$RECON" --repair >/dev/null 2>&1)
+b="$r/.supervisor/jobs/done/brief.md"
+if grep -q '^- \*\*Status:\*\* completed$' "$b" 2>/dev/null && ! grep -q 'Heal:' "$b" 2>/dev/null; then
+  ok "3d (control) a plain done stays completed, with no escalation note"
+else
+  no "3d plain done was wrongly escalated"
+fi
+
 # --- 4. no pointer ⇒ unknown ------------------------------------------------
 r="$(new_repo "")"
 out="$(cd "$r" && bash "$RECON" --porcelain 2>/dev/null)"

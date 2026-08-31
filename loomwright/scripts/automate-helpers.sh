@@ -204,7 +204,6 @@ remaining() {
 # §2 — folder / backlog-doc resolvers
 # --------------------------------------------------------------------------- #
 
-# is_done <file> — true if the file is stamped "## Status: done".
 # is_done <file> — true when the file carries a terminal close-out stamp on its
 # `## Status:` HEADING line. Both terminal values count: `done_with_escalation`
 # work still SHIPPED, so re-picking it would redo merged work. (The `\b` after a

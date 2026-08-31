@@ -107,6 +107,25 @@ is_done() {
   grep -qE '^## Status:[[:space:]]*done(_with_escalation)?\b' "$1" 2>/dev/null
 }
 
+# requirement_status <requirement> — echo the terminal value on the `## Status:`
+# heading: `done` or `done_with_escalation`. Empty when neither is present.
+# is_done() deliberately matches BOTH (an escalated run still shipped), so the
+# classification cannot tell them apart on its own — but the file it just read
+# still holds the answer, and discarding it would make the emitted `## Outcome`
+# assert a cleaner result than the evidence supports.
+# NOTE: two greps, not one sed alternation. BSD sed (macOS) does not support
+# `\|` in a basic regex, so the sed form returned EMPTY here and silently
+# flattened every escalated close-out back to `completed` — caught by executing
+# it, not by reading it. Same family as the repo's recorded stat -f/-c flavour
+# trap: macOS-green is not the same as portable.
+requirement_status() {
+  if grep -qE '^## Status:[[:space:]]*done_with_escalation\b' "$1" 2>/dev/null; then
+    printf 'done_with_escalation'
+  elif grep -qE '^## Status:[[:space:]]*done\b' "$1" 2>/dev/null; then
+    printf 'done'
+  fi
+}
+
 # brief_source_requirement <brief> — the `- **Source requirement:** <path>`
 # pointer Launch Pad stamps under `## Environment`. Empty when absent (a direct
 # /supervisor run that never had one). Only the FIRST match is honoured.
@@ -170,7 +189,8 @@ classify() {
       return 0
     fi
     if is_done "$req"; then
-      printf 'stranded_closed\tsource requirement %s is stamped done\n' "$req"
+      printf 'stranded_closed\tsource requirement %s is stamped %s\n' \
+        "$req" "$(requirement_status "$req")"
       return 0
     fi
     printf 'unknown\tsource requirement %s carries no done stamp and no merged run file\n' "$req"
@@ -210,11 +230,30 @@ repair() {
   pr="$(printf '%s' "$evidence" | sed -n 's/.*(\(http[^)]*\)).*/\1/p')"
   [ -n "$pr" ] || pr="not determinable offline"
 
+  # Mirror the completion tail's own two-value vocabulary rather than flattening
+  # an escalated close-out into a clean one. Only the stranded_closed arm can
+  # know this: its evidence IS a requirement stamp. A stranded_merged brief was
+  # classified from a merged PR, which proves the work shipped and says nothing
+  # about the heal decision — so it keeps `completed`, and the caveat line below
+  # is what records that the heal outcome was not recoverable.
+  local status_line="completed" esc_note="" req_for_status req_status
+  if [ "$state" = "stranded_closed" ]; then
+    req_for_status="$(safe_requirement_path "$(brief_source_requirement "$brief")" || true)"
+    if [ -n "$req_for_status" ]; then
+      req_status="$(requirement_status "$req_for_status")"
+      if [ "$req_status" = "done_with_escalation" ]; then
+        status_line="completed_with_escalation"
+        esc_note="- **Heal:** escalated — the source requirement closed out as \`done_with_escalation\`; the specific heal reason and remaining-issue count are NOT recoverable here.\n"
+      fi
+    fi
+  fi
+
   tmp="$(mktemp "${brief}.XXXXXX")" || { echo "reconcile-jobs: mktemp failed" >&2; return 1; }
   cat "$brief" > "$tmp" || { rm -f "$tmp"; return 1; }
   {
     printf '\n---\n\n## Outcome\n'
-    printf -- '- **Status:** completed\n'
+    printf -- '- **Status:** %s\n' "$status_line"
+    [ -n "$esc_note" ] && printf -- "$esc_note"
     printf -- '- **PR:** %s\n' "$pr"
     printf -- '- **Reconciled:** lifecycle move completed by reconcile-jobs.sh, not by the completion tail\n'
     printf -- '- **Evidence:** %s\n' "$evidence"
