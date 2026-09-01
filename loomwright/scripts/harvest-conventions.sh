@@ -65,6 +65,58 @@
 #      the support count — and is then counted as a deferral, never emitted as a second rule over the
 #      same evidence. There is no branch by which a corpus entry alone becomes a rule.
 #   4. `applies_to` is derived from the `changed_paths` of the motivating findings (`derive_applies_to`).
+#   5. A theme whose canonical statement is ALREADY MADE by a live `.agent/rules/` rule is DEFERRED
+#      as already-covered and emits nothing — see the next block.
+#
+# THE STORE DEDUPE PASS, and why exact-string matching is not enough. This script reads
+# `.agent/rules/` for context and never writes it, but until this pass existed it did not compare
+# its PROPOSALS against what the store already holds — so a theme whose convention was written down
+# months ago was offered to a human for Accept again, in different words. That is not a cosmetic
+# duplicate: `/dreaming` is the only consumer of this batch, and accepting it puts two
+# differently-worded copies of ONE convention in ONE file, which is precisely what the store's own
+# `cross-surface-sync` rule prohibits. The observed instance is the reason the threshold is a
+# distinctive-term overlap rather than a string compare: the live rule says "A count or version
+# claim lives in exactly ONE authoritative machine-readable place …" and the proposal said "A count
+# or version number is claimed in exactly one authoritative machine-readable place …" — the same
+# claim, and not one shared byte-sequence long enough for any exact or substring match to see it.
+# So the pass reuses the SAME signal the pw= project-wide bucket test already uses (`term_overlap`,
+# shared by both call sites so the two can never diverge): the share of the PROPOSED statement's
+# distinctive terms (>=5 chars, de-stopworded) that already appear in a live rule's statement. The
+# direction is deliberate and asymmetric — "is this proposal's claim already made?", not "are these
+# two texts similar" — because a live rule may be far longer and carry terms the proposal never
+# needed. A match is reported as an ALREADY-COVERED DEFERRAL naming the covering rule's id, exactly
+# as a corroborating corpus entry is reported as a deferral rather than silently dropped, and it
+# does NOT consume a $CAP slot: the batch bound exists to bound what a human reads, and a proposal
+# that was never offered did not cost the human anything.
+#
+# THE STORE IS COMPARED WHOLE, ACROSS CATEGORIES. A `documentation` proposal is checked against the
+# `process` rules too, and that is deliberate: the question is whether the CLAIM is already made,
+# and a convention restated under a different category heading is still a second copy of one rule —
+# with the added defect that the two are now in different files. Every deferral names the file it
+# matched in, so a reviewer sees the category rather than having it decided for them. A SUPERSEDED
+# rule is compared like any other, because `add-rule.sh` never removes one (`--supersedes` stamps a
+# pointer on the replacement; only `--retract` removes, and a retracted rule is gone from the file
+# and therefore from this pass) — and since the highest-overlap rule wins, a replacement that is
+# closer in wording than the rule it superseded is the one named.
+#
+# WHAT THE DEDUPE PASS IS NOT. It is a LEXICAL check, not a semantic one, and it is advisory in the
+# same sense the rest of this script is: it can miss a duplicate written in wholly different
+# vocabulary (a false negative — the batch then carries a duplicate, exactly as it did before this
+# pass existed), and at a low enough `--dup-pct` it can defer a genuinely new rule (a false positive
+# — the theme is still fully itemised, with its rule id and percentage, so the deferral is
+# reviewable and reversible by re-running with a higher `--dup-pct`). It is NOT a gate: nothing
+# exits non-zero because of it. Every deferral names the rule, the percentage and the floor, and
+# every EMITTED proposal prints its nearest live rule and that rule's percentage too — so the pass
+# is falsifiable from the report alone, in both directions, without opening the store.
+#
+# THE FINDINGS BEHIND A DEFERRED THEME ARE NOT DROPPED FROM THE DENOMINATORS. `coverage` still
+# measures against every `convention_mismatch` finding, so deferring a theme LOWERS the proposed-rule
+# coverage rather than shrinking the denominator that would hide it. The deferred theme's findings
+# are then reported twice more: as their own line in the unmapped-remainder itemisation (with
+# "already covered by a live rule" as the stated reason, not the cap and not the support floor), and
+# as an explicit `already covered by the live store` figure plus a COMBINED coverage over rules that
+# are either proposed here or already live. Silently crediting them to the proposed batch, or
+# silently removing them from the denominator, would each make this batch look better than it is.
 #
 # WHAT THE THEME LEXICON IS, stated so it is not mistaken for machine-derived prose: the theme
 # patterns, the canonical statement wording and the category of each theme are a COMMITTED, reviewable
@@ -93,7 +145,7 @@
 #   harvest-conventions.sh [--session-id <id>] [--cap <N>] [--min-support <N>]
 #                          [--ledger <path>] [--corpus-dir <path>] [--proposals-dir <path>]
 #                          [--surface <path> ...] [--root <dir>] [--add-rule <path>]
-#                          [--expect-repo <owner/repo> ...] [--no-writer] [-h|--help]
+#                          [--expect-repo <owner/repo> ...] [--dup-pct <N>] [--no-writer] [-h|--help]
 #
 # Exit contract — explicit, and deliberately NOT uniformly fail-safe:
 #   0  the harvest ran and the report was printed. This INCLUDES every legitimately empty case: an
@@ -101,7 +153,7 @@
 #      is normal, never an error), an empty corpus, a ledger with zero `convention_mismatch`
 #      findings, and a batch of zero proposed rules. Each is reported as such and the numbers are
 #      printed with the real denominators.
-#   2  usage error — an unknown argument, a non-numeric `--cap`/`--min-support`, or a `--session-id`
+#   2  usage error — an unknown argument, a non-numeric `--cap`/`--min-support`/`--dup-pct`, or a `--session-id`
 #      that cites nothing (empty, an unsubstituted `<…>` template, or the bare word `session_id`;
 #      `add-rule.sh`'s write-time provenance check refuses all three, so accepting one here would
 #      only defer the failure to N writer invocations).
@@ -143,6 +195,20 @@ APPLIES_TO_COVER=95      # % of a theme's motivating FINDINGS the derived globs 
                          # touched by almost every PR and so covers the threshold on its own — a
                          # scope that describes the repo's busiest file rather than the convention.
 MAX_GLOBS=4              # cap on the derived applies_to array
+DUPLICATE_PCT=60         # % of a PROPOSED statement's distinctive terms that must already appear in
+                         # a LIVE `.agent/rules/` statement before the proposal is deferred as
+                         # already covered. Deliberately the SAME distinctive-term overlap the pw=
+                         # project-wide signal uses (shared `term_overlap`), for the same reason: the
+                         # two statements that motivated this pass make one claim in two wordings, so
+                         # exact-string matching cannot see them. MEASURED separation on this repo's
+                         # live store, and it is the gap rather than the number that justifies the
+                         # threshold: the true duplicate scored 63% while the four other emitted
+                         # statements scored 17/16/8/0% against the same rule. The figures are not
+                         # restated in any doc surface — re-derive them by running with
+                         # `--dup-pct 101`, a floor no overlap can reach, which defers nothing and
+                         # so prints every proposal's nearest live rule and its exact percentage.
+                         # (NOT `--dup-pct 0`: a floor of 0 is reached by every comparison, so it
+                         # defers the whole batch — the opposite of a measurement run.)
 
 SESSION_ID=""
 LEDGER=""
@@ -219,6 +285,7 @@ while [ "$#" -gt 0 ]; do
     --expect-repo)   [ "$#" -ge 2 ] || die "--expect-repo requires a value"; EXPECT_REPOS+=("$2"); shift 2 ;;
     --root)          [ "$#" -ge 2 ] || die "--root requires a value"; ROOT="$2"; shift 2 ;;
     --add-rule)      [ "$#" -ge 2 ] || die "--add-rule requires a value"; ADD_RULE="$2"; shift 2 ;;
+    --dup-pct)       [ "$#" -ge 2 ] || die "--dup-pct requires a value"; DUPLICATE_PCT="$2"; shift 2 ;;
     --no-writer)     NO_WRITER=1; shift ;;
     -h|--help)       usage ;;
     *) die "unknown argument: $1 (see --help)" 2 ;;
@@ -227,6 +294,7 @@ done
 
 is_num "$CAP"          || die "--cap must be a non-negative integer (got: $CAP)" 2
 is_num "$MIN_SUPPORT"  || die "--min-support must be a non-negative integer (got: $MIN_SUPPORT)" 2
+is_num "$DUPLICATE_PCT" || die "--dup-pct must be a non-negative integer (got: $DUPLICATE_PCT)" 2
 
 command -v jq >/dev/null 2>&1 || die "jq is required but not available — refusing to print numbers over a ledger this run could not read" 3
 
@@ -401,6 +469,7 @@ harvest_convention_findings() {
 # Deliberately a single function for BOTH intake sources so the three-bucket contract is stated once.
 #
 #   kind=theme   arg1=support(count)   arg2=stage-profile("unknowable-only"|"mixed")
+#                arg3=covering live rule id ("" = none)   arg4=that rule's overlap %
 #   kind=corpus  arg1=normative(0|1)   arg2=project-wide %   arg3=corroborating theme ("" = none)
 #                arg4=that theme's support
 # ---------------------------------------------------------------------------
@@ -409,10 +478,17 @@ triage_bucket() {
   BUCKET=""; BUCKET_REASON=""
   case "$kind" in
     theme)
-      local support="$1" stages="$2"
+      local support="$1" stages="$2" cover="${3:-}" coverpct="${4:-0}"
       if [ "$stages" = "unknowable-only" ]; then
         BUCKET="agent-memory"
         BUCKET_REASON="every one of its $support findings is labelled flow_stage=unknowable, so it is attributable to no DO-side stage — a labelling/lens artifact that belongs in the labelling agent's own memory, not in a repo-wide convention"
+      elif [ "$support" -ge "$MIN_SUPPORT" ] && [ -n "$cover" ]; then
+        # STILL `rules` — the theme's evidence earns a rule, and one already exists. Same shape as
+        # the corroborating-corpus arm below: the candidate keeps its bucket and is counted as a
+        # DEFERRAL, because the alternative (a second differently-worded copy of one convention in
+        # one file) is the defect the store's own cross-surface rule names.
+        BUCKET="rules"
+        BUCKET_REASON="$support convention_mismatch findings (>= the $MIN_SUPPORT support floor) recur across the ledger, so the evidence earns a rule — but the store ALREADY HAS ONE: ${coverpct}% of this theme's canonical statement's distinctive terms already appear in the live rule '$cover' (>= the ${DUPLICATE_PCT}% floor). It is DEFERRED as already-covered and emits nothing; proposing it would put a second, differently-worded copy of one convention in one file. Its $support findings stay in every denominator and are reported under 'already covered by the live store'"
       elif [ "$support" -ge "$MIN_SUPPORT" ]; then
         BUCKET="rules"
         BUCKET_REASON="$support convention_mismatch findings (>= the $MIN_SUPPORT support floor) recur across the ledger and reach the DO side, so the convention has to be readable before the code is written, not only after"
@@ -776,13 +852,108 @@ SURFACE_WORDS=" $(tr -s ' \n' '  ' < "$SURFACE_TXT") "
 
 STOPWORDS=" this that with from have been will must never always when then than each into only over your they them there their which while about after before shall would could should where whose those these using used uses value values thing things every other must-be "
 
-# entry_tokens <file> — the entry's distinctive terms (>=5 chars, de-stopworded), from its
-# frontmatter `description:` (the entry's own one-line thesis), falling back to its first body lines.
+# tokens_of_text <text> — the DISTINCTIVE TERMS of a piece of prose: lowercased, split on every
+# non-alphanumeric byte, >= 5 characters, deduped. Stopwords are dropped by the CALLERS (via
+# term_overlap), not here, so the token list itself stays a plain property of the text.
+tokens_of_text() {
+  printf '%s' "$1" | tr 'A-Z' 'a-z' | tr -cs 'a-z0-9' '\n' | awk 'length($0)>=5' | LC_ALL=C sort -u
+}
+
+# haystack_words <text> — the same normalisation, space-joined and sentinel-padded so a caller can
+# ask `case "$hay" in *" $t "*)` for whole-word containment (the SURFACE_WORDS shape).
+haystack_words() {
+  printf ' %s ' "$(printf '%s' "$1" | tr 'A-Z' 'a-z' | tr -cs 'a-z0-9' ' ' | tr -s ' ')"
+}
+
+# term_overlap <newline-separated tokens> <padded haystack> — prints "<hit> <n> <pct>": how many of
+# the token list's de-stopworded distinctive terms appear as whole words in the haystack.
+#
+# ONE implementation, TWO call sites on purpose — the pw= project-wide signal (does the project
+# already assert this corpus entry repo-wide?) and the store dedupe pass (does a live rule already
+# make this proposal's claim?). They are the same question asked of two different haystacks, and the
+# header's claim that the dedupe pass reuses the pw= approach is only true if there is nothing to
+# diverge. Two copies would drift on the first stopword edit, silently, in the direction that makes
+# a duplicate harder to see.
+# TRUNCATING ON PURPOSE (see pct()'s header): both call sites compare this value to a threshold that
+# decides something — which bucket a corpus entry lands in, and whether a proposal is deferred — and
+# rounding would move that decision by up to half a point for a display reason.
+term_overlap() {
+  local toks="$1" hay="$2" n=0 hit=0 t
+  for t in $toks; do
+    case "$STOPWORDS" in *" $t "*) continue ;; esac
+    n=$((n + 1))
+    case "$hay" in *" $t "*) hit=$((hit + 1)) ;; esac
+  done
+  if [ "$n" -gt 0 ]; then printf '%s %s %s' "$hit" "$n" "$((hit * 100 / n))"; else printf '0 0 0'; fi
+}
+
+# entry_tokens <file> — the entry's distinctive terms, from its frontmatter `description:` (the
+# entry's own one-line thesis), falling back to its first body lines.
 entry_tokens() {
   local f="$1" desc
   desc="$(sed -n 's/^description: //p' "$f" 2>/dev/null | head -1)"
   [ -n "$desc" ] || desc="$(grep -v '^---$' "$f" 2>/dev/null | grep -v '^[a-z_]*:' | grep -v '^$' | head -2 | tr '\n' ' ')"
-  printf '%s' "$desc" | tr 'A-Z' 'a-z' | tr -cs 'a-z0-9' '\n' | awk 'length($0)>=5' | LC_ALL=C sort -u
+  tokens_of_text "$desc"
+}
+
+# ---------------------------------------------------------------------------
+# THE LIVE `.agent/rules/` STORE — read for context, NEVER written (that contract is unchanged; this
+# is a read).
+#
+# FAIL-SAFE, AND SAID OUT LOUD RATHER THAN ASSUMED. An absent store, an empty one, or a `*.json`
+# that will not parse is NOT fatal: this pass makes the batch better when it can run and the rest of
+# the report does not depend on it. But a dedupe percentage computed over a file this run could not
+# read is a claim about a store it did not see, so every unreadable file is NAMED in the report and
+# the dedupe line says the pass is UNVERIFIED against it. Silence there would read as "checked, and
+# clean" — the failure mode this whole script is written against.
+# Only the store's own `*.json` files are read (`-maxdepth 1`); `README.md` is not a rule file.
+# ---------------------------------------------------------------------------
+RULES_TSV="$WORK/rules.tsv"; : > "$RULES_TSV"   # id \t file \t statement
+RULES_FILES_N=0
+RULES_UNREADABLE=""
+if [ -d "$RULES_DIR" ]; then
+  while IFS= read -r rf; do
+    [ -n "$rf" ] || continue
+    RULES_FILES_N=$((RULES_FILES_N + 1))
+    # The rule files are a top-level ARRAY of rule objects (add-rule.sh's shape). A file that is
+    # unreadable, unparseable, or not an array is named, not guessed at.
+    if ! jq -e 'type == "array"' "$rf" >/dev/null 2>&1; then
+      RULES_UNREADABLE="$RULES_UNREADABLE $(basename "$rf")"
+      continue
+    fi
+    jq -r --arg f "$(basename "$rf")" '
+      .[] | select(type == "object")
+      | [ (.id // "<no id>"), $f, ((.statement // "") | gsub("[\t\n\r]"; " ")) ] | @tsv
+    ' "$rf" >> "$RULES_TSV" 2>/dev/null || RULES_UNREADABLE="$RULES_UNREADABLE $(basename "$rf")"
+  done <<EOR
+$(find "$RULES_DIR" -maxdepth 1 -type f -name '*.json' 2>/dev/null | LC_ALL=C sort)
+EOR
+fi
+RULES_N="$(grep -c . "$RULES_TSV" 2>/dev/null || true)"; is_num "$RULES_N" || RULES_N=0
+
+# nearest_live_rule <statement> — the live rule whose statement already carries the LARGEST share of
+# this statement's distinctive terms. Always sets NEAREST_ID / NEAREST_FILE / NEAREST_STMT /
+# NEAREST_PCT / NEAREST_HIT / NEAREST_N (all empty/0 when the store holds no rule), and returns 0
+# ONLY when that share reaches $DUPLICATE_PCT — i.e. when the proposal's claim is already made.
+# The nearest match is reported EITHER WAY (see emit_rule): a deferral names what covered it, and an
+# emitted proposal names what did not, which is what makes the floor checkable from the report.
+nearest_live_rule() {
+  local stmt="$1" toks rid rfile rstmt hit n p
+  NEAREST_ID=""; NEAREST_FILE=""; NEAREST_STMT=""; NEAREST_PCT=0; NEAREST_HIT=0; NEAREST_N=0
+  [ -s "$RULES_TSV" ] || return 1
+  toks="$(tokens_of_text "$stmt")"
+  while IFS=$'\t' read -r rid rfile rstmt; do
+    [ -n "$rid" ] || continue
+    set -- $(term_overlap "$toks" "$(haystack_words "$rstmt")")
+    hit="$1"; n="$2"; p="$3"
+    # `-gt`, not `-ge`: on a tie the FIRST rule in store order wins, so the named rule is stable
+    # across runs rather than depending on which file `find` happened to sort last.
+    if [ -z "$NEAREST_ID" ] || [ "$p" -gt "$NEAREST_PCT" ]; then
+      NEAREST_ID="$rid"; NEAREST_FILE="$rfile"; NEAREST_STMT="$rstmt"
+      NEAREST_PCT="$p"; NEAREST_HIT="$hit"; NEAREST_N="$n"
+    fi
+  done < "$RULES_TSV"
+  [ -n "$NEAREST_ID" ] && [ "$NEAREST_PCT" -ge "$DUPLICATE_PCT" ]
 }
 
 # ===========================================================================
@@ -790,13 +961,30 @@ entry_tokens() {
 # ===========================================================================
 TRIAGE="$WORK/triage.tsv"; : > "$TRIAGE"     # bucket \t source \t key \t support \t reason
 RULE_THEMES=""                                # themes bucketed to `rules`, in precedence order
+DUP_THEMES=""                                 # of those, the ones a live rule already covers
 
+# The store dedupe pass runs HERE, before triage, for one reason: the reason a candidate is recorded
+# with has to be the reason that actually applied to it. A theme deferred as already-covered whose
+# triage line still read "the convention has to be readable before the code is written" would be a
+# recorded reason contradicted by the batch three sections down.
+# It depends on nothing but the theme's canonical statement and the live store — not on support, not
+# on the cap — so it is knowable at this point for every theme, emitted or not.
 for k in $THEME_KEYS; do
+  : > "$WORK/dup.$k"
   n="$(cat "$WORK/support.$k")"; stages="$(cat "$WORK/stages.$k")"
   [ "$n" -gt 0 ] || continue
-  triage_bucket theme "$n" "$stages"
+  dupid=""; duppct=0
+  if nearest_live_rule "$(theme_field "$k" statement)"; then
+    dupid="$NEAREST_ID"; duppct="$NEAREST_PCT"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$NEAREST_ID" "$NEAREST_FILE" "$NEAREST_PCT" \
+      "$NEAREST_HIT" "$NEAREST_N" "$NEAREST_STMT" > "$WORK/dup.$k"
+  fi
+  triage_bucket theme "$n" "$stages" "$dupid" "$duppct"
   printf '%s\tledger\ttheme:%s\t%s\t%s\n' "$BUCKET" "$k" "$n" "$BUCKET_REASON" >> "$TRIAGE"
-  [ "$BUCKET" = "rules" ] && RULE_THEMES="$RULE_THEMES $k"
+  if [ "$BUCKET" = "rules" ]; then
+    RULE_THEMES="$RULE_THEMES $k"
+    [ -z "$dupid" ] || DUP_THEMES="$DUP_THEMES $k"
+  fi
 done
 
 CORPUS_RULE_LIST="$WORK/corpus-rules.tsv"; : > "$CORPUS_RULE_LIST"   # name \t theme \t statement
@@ -804,16 +992,10 @@ while IFS= read -r f; do
   [ -n "$f" ] || continue
   name="$(basename "$f" .md)"
   toks="$(entry_tokens "$f")"
-  n=0; hit=0
-  for t in $toks; do
-    case "$STOPWORDS" in *" $t "*) continue ;; esac
-    n=$((n + 1))
-    case "$SURFACE_WORDS" in *" $t "*) hit=$((hit + 1)) ;; esac
-  done
-  # TRUNCATING ON PURPOSE (see pct()'s header): pw is printed, but it is printed BECAUSE it is the
-  # variable compared to $PROJECT_WIDE_PCT below. Rounding it would admit an 84.5% entry to the
-  # `rules` bucket — a change to WHICH candidates get proposed, made for a display reason.
-  pw=0; [ "$n" -gt 0 ] && pw=$((hit * 100 / n))
+  # pw — the project-wide signal, through the SHARED `term_overlap` the store dedupe pass also uses.
+  # (Its truncation rationale now lives with that function; it is a decision variable, not a
+  # reported share.)
+  set -- $(term_overlap "$toks" "$SURFACE_WORDS"); hit="$1"; n="$2"; pw="$3"
   [ "$SURFACES_FOUND" -gt 0 ] || pw=0
   normative=0
   grep -qE '(MUST|NEVER|ALWAYS|FORBIDDEN|REQUIRED|must be|may not|never |always )' "$f" 2>/dev/null && normative=1
@@ -855,6 +1037,12 @@ DEFERRED=0
 # false whenever themes DID reach the floor and were deferred — `--cap 0` printed that sentence one
 # line under a header stating "10 deferred by cap", i.e. the output contradicted itself.
 CAP_DEFERRED=0
+# The other two arms of $DEFERRED, each counted separately for the same reason CAP_DEFERRED is: a
+# single mixed total cannot tell a reader WHY the batch is smaller than the evidence, and the
+# empty-batch diagnostic has to name the cause it measured.
+DUP_DEFERRED=0        # themes a live `.agent/rules/` rule already covers
+CORPUS_DEFERRED=0     # corpus entries corroborating a theme rather than becoming a rule
+COVERED_EXISTING=0    # findings behind the already-covered themes — NOT dropped from any denominator
 FIDELITY_TOTAL=0; FIDELITY_MATCHED=0
 # FIDELITY_ALL_TOTAL is the HONEST denominator: every motivating finding of every EMITTED rule —
 # scoped or repo-wide — including the ones the fidelity check cannot see. FIDELITY_TOTAL counts only the CHECKABLE ones (a finding
@@ -872,6 +1060,34 @@ EMITTED_THEMES=""
 emit_rule() {   # emit_rule <theme> <category> <statement> <origin-label>
   local k="$1" category="$2" statement="$3" origin="$4"
   local globs just="" fid_list fid_n pn sf_m sf_t sf_p sf_all ex_nopath ex_dead
+  local d_id d_file d_pct d_hit d_n d_stmt
+
+  fid_n="$(grep -c . "$WORK/theme.$k.tsv" 2>/dev/null || true)"; is_num "$fid_n" || fid_n=0
+  fid_list="$(awk -F'\t' '{print $1}' "$WORK/theme.$k.tsv" | head -12 | tr '\n' ' ')"
+  [ "$fid_n" -gt 12 ] && fid_list="$fid_list… (+$((fid_n - 12)) more)"
+
+  # ALREADY-COVERED DEFERRAL — checked BEFORE the cap, and deliberately so: the cap bounds what a
+  # human is asked to read, and a proposal that is never offered costs the human nothing. Spending a
+  # cap slot on a rule that is already in the store would push a genuinely new one out of the batch.
+  if [ -s "$WORK/dup.$k" ]; then
+    IFS=$'\t' read -r d_id d_file d_pct d_hit d_n d_stmt < "$WORK/dup.$k"
+    DEFERRED=$((DEFERRED + 1)); DUP_DEFERRED=$((DUP_DEFERRED + 1))
+    COVERED_EXISTING=$((COVERED_EXISTING + fid_n))
+    {
+      printf '  --) [%s] theme=%s  origin=%s\n' "$category" "$k" "$origin"
+      printf '     DEFERRED — ALREADY COVERED by a live rule. Nothing is proposed for this theme, and no cap slot was spent on it.\n'
+      printf '     the statement it would have proposed: %s\n' "$statement"
+      printf '     covered by rule id: %s\n' "$d_id"
+      printf '                     in: %s/%s\n' "$RULES_DIR" "$d_file"
+      printf '         live statement: %s\n' "$d_stmt"
+      printf '     overlap: %s%% (%s of the %s distinctive terms in the proposed statement already appear in that rule, >= the %s%% floor). Same distinctive-term overlap the pw= project-wide signal uses, so it sees two wordings of one claim where an exact-string match sees nothing.\n' \
+        "$d_pct" "$d_hit" "$d_n" "$DUPLICATE_PCT"
+      printf '     motivating findings (%s): %s\n' "$fid_n" "$fid_list"
+      printf '     these %s findings are NOT dropped from the metrics: coverage still counts them in its denominator (so this deferral LOWERS proposed-rule coverage rather than hiding), they are itemised in the unmapped remainder with this as their reason, and they are counted under "already covered by the live store" below.\n' "$fid_n"
+      printf '\n'
+    } >> "$BATCH"
+    return 0
+  fi
 
   if [ "$EMITTED" -ge "$CAP" ]; then DEFERRED=$((DEFERRED + 1)); CAP_DEFERRED=$((CAP_DEFERRED + 1)); return 0; fi
   EMITTED_THEMES="$EMITTED_THEMES $k"
@@ -895,7 +1111,6 @@ emit_rule() {   # emit_rule <theme> <category> <statement> <origin-label>
     fi
   fi
 
-  fid_n="$(grep -c . "$WORK/theme.$k.tsv" 2>/dev/null || true)"; is_num "$fid_n" || fid_n=0
   # The HONEST denominator accumulates for EVERY emitted rule, scoped or repo-wide. Accumulating it
   # only in the scoped branch would have dropped a null-scope rule's findings from BOTH sides of the
   # ratio — and a rule goes null-scope precisely BECAUSE none of its changed_paths is still live,
@@ -903,8 +1118,6 @@ emit_rule() {   # emit_rule <theme> <category> <statement> <origin-label>
   # a batch of one 10/10 scoped rule plus a 5-finding repo-wide rule print "100% (10 of 10)", the
   # self-flattering arithmetic this two-number design was built to prevent.
   FIDELITY_ALL_TOTAL=$((FIDELITY_ALL_TOTAL + fid_n))
-  fid_list="$(awk -F'\t' '{print $1}' "$WORK/theme.$k.tsv" | head -12 | tr '\n' ' ')"
-  [ "$fid_n" -gt 12 ] && fid_list="$fid_list… (+$((fid_n - 12)) more)"
 
   compose_add_rule "$category" "$statement" "$globs"
   plan_rule
@@ -914,6 +1127,20 @@ emit_rule() {   # emit_rule <theme> <category> <statement> <origin-label>
     printf '     statement: %s\n' "$statement"
     printf '     enforcement: advisory\n'
     printf '     check: null  (AC9b — no obviously mechanical check; this harvester never synthesises shell into `check`)\n'
+    # The dedupe pass reports on the proposals it did NOT defer as well. A pass that is only visible
+    # when it fires is a pass a reader has to take on trust; printing the nearest live rule and its
+    # distance from the floor makes the threshold checkable from the report alone.
+    if [ "$RULES_N" -eq 0 ]; then
+      printf '     store dedupe: no live rule to compare against (%s holds 0 rules) — nothing could have been deduped\n' "$RULES_DIR"
+    else
+      nearest_live_rule "$statement" || true
+      # The id is elided here and ONLY here. A rule id is the full statement slugified, so printing
+      # one in full costs a screen-wide line — worth it for the rule that DID cover a proposal (the
+      # deferral block prints it whole, and a reader has to be able to go find it), not for the one
+      # that did not. The percentage, which is the checkable part, is exact.
+      printf '     store dedupe: NEW — nearest of the %s live rule(s) is %s… at %s%% (%s of %s distinctive terms), below the %s%% already-covered floor\n' \
+        "$RULES_N" "$(printf '%s' "$NEAREST_ID" | head -c 60)" "$NEAREST_PCT" "$NEAREST_HIT" "$NEAREST_N" "$DUPLICATE_PCT"
+    fi
     if [ -n "$globs" ]; then
       printf '     applies_to: [%s]\n' "$(printf '%s' "$globs" | tr "$US" ',' | sed 's/,/, /g')"
       set -- $(scope_fidelity "$WORK/rowpaths.$k" "$globs")
@@ -955,7 +1182,7 @@ done
 # most-repeated defect class. Each entry is counted as a deferral so the batch stays honest about it.
 while IFS=$'\t' read -r cname ctheme cstmt; do
   [ -n "$cname" ] || continue
-  DEFERRED=$((DEFERRED + 1))
+  DEFERRED=$((DEFERRED + 1)); CORPUS_DEFERRED=$((CORPUS_DEFERRED + 1))
 done < "$CORPUS_RULE_LIST"
 
 # ===========================================================================
@@ -975,7 +1202,7 @@ INVOCATION="${INVOCATION# }"
 echo "=== harvest-conventions.sh — DRY RUN (read-only: this tool has no write mode at all) ==="
 echo "invocation: $INVOCATION"
 echo "session source (--source passed to add-rule.sh): $SOURCE_VAL"
-echo "thresholds: cap=$CAP  min-support=$MIN_SUPPORT  project-wide=$PROJECT_WIDE_PCT%  distillation-floor=$((DISTILLATION_FLOOR / 100)).$(printf '%02d' $((DISTILLATION_FLOOR % 100)))  applies-to-cover=$APPLIES_TO_COVER%  max-globs=$MAX_GLOBS"
+echo "thresholds: cap=$CAP  min-support=$MIN_SUPPORT  project-wide=$PROJECT_WIDE_PCT%  distillation-floor=$((DISTILLATION_FLOOR / 100)).$(printf '%02d' $((DISTILLATION_FLOOR % 100)))  applies-to-cover=$APPLIES_TO_COVER%  max-globs=$MAX_GLOBS  dup-pct=$DUPLICATE_PCT%"
 echo
 echo "--- inputs read ---"
 echo "  (i)  ledger:    $LEDGER"
@@ -994,6 +1221,12 @@ fi
 echo "       proposals queue: $PROPOSALS_DIR — $PROPOSALS_STATE"
 echo "  convention surfaces for the project-wide signal: $SURFACES_FOUND of ${#SURFACES[@]} readable"
 echo "  rules store (read for context, NEVER written): $RULES_DIR"
+echo "       $RULES_N live rule(s) across $RULES_FILES_N file(s); every proposal is deduped against them at a ${DUPLICATE_PCT}% distinctive-term floor"
+if [ -n "$RULES_UNREADABLE" ]; then
+  echo "       NOT PARSEABLE as a rule array —$RULES_UNREADABLE. The dedupe pass is UNVERIFIED against"
+  echo "       those file(s): a proposal below could duplicate a rule they hold. Named rather than"
+  echo "       absorbed into a smaller total, because silence here would read as 'checked, and clean'."
+fi
 echo
 echo "--- repo distribution (advisory cross-check, decision (a)) ---"
 awk -F'\t' '{print $2}' "$FINDINGS" | LC_ALL=C sort | uniq -c | while read -r c r; do
@@ -1024,23 +1257,34 @@ for b in rules agent-memory project-memory; do
   awk -F'\t' -v b="$b" '$1==b {printf "    - %s (%s: %s)\n      reason: %s\n", $3, $2, $4, $5}' "$TRIAGE"
 done
 echo
-echo "--- proposed rule batch (cap $CAP; $EMITTED emitted, $DEFERRED deferred by cap or already-covered evidence) ---"
+echo "--- proposed rule batch (cap $CAP; $EMITTED emitted, $DEFERRED deferred: $CAP_DEFERRED by the cap, $DUP_DEFERRED already covered by a live rule, $CORPUS_DEFERRED corroborating corpus entries) ---"
+# The batch file is printed whenever it holds anything AT ALL — an already-covered deferral is a
+# batch entry, not an absence, and the empty-batch diagnostics below say "named above". They were
+# lying the moment `cat "$BATCH"` sat behind an `else` on $EMITTED: a run whose every theme was
+# already covered emitted 0 rules, so the deferral blocks it had just written were skipped.
+[ ! -s "$BATCH" ] || cat "$BATCH"
 if [ "$EMITTED" -eq 0 ] && [ "$CAP_DEFERRED" -gt 0 ]; then
   # The cause is MEASURED, not assumed: $CAP_DEFERRED themes cleared the support floor and were
   # turned away by the batch bound, so the floor is NOT what emptied this batch. Printing the
   # support-floor sentence here contradicted the header line directly above it.
   echo "  (empty batch — but NOT for want of evidence: $CAP_DEFERRED theme(s) reached the $MIN_SUPPORT-finding support floor and were deferred by the cap=$CAP batch bound. Raise --cap to emit them; the support floor is not the cause here)"
+  [ "$DUP_DEFERRED" -eq 0 ] || \
+    echo "  (and a further $DUP_DEFERRED theme(s) were deferred as ALREADY COVERED by a live rule — each named above with its rule id)"
+elif [ "$EMITTED" -eq 0 ] && [ "$DUP_DEFERRED" -gt 0 ]; then
+  # THE THIRD MEASURED CAUSE. With every rules-bucketed theme already covered by the store, both the
+  # cap arm and the support-floor arm are false: nothing was turned away by the bound, and the floor
+  # was reached. Falling through to the floor sentence would have blamed thin evidence for a batch
+  # emptied by the store already being right — and that is the healthy outcome, not a failure.
+  echo "  (empty batch — but NOT for want of evidence, and NOT the cap: all $DUP_DEFERRED theme(s) that reached the $MIN_SUPPORT-finding support floor are ALREADY COVERED by a live rule in $RULES_DIR, each named above with its rule id and overlap. Nothing is missing from the store; that is why nothing is proposed)"
 elif [ "$EMITTED" -eq 0 ]; then
   echo "  (empty batch — no theme reached the support floor; a corpus entry corroborates a theme and never emits a rule on its own, so there is nothing else that could have been emitted)"
-else
-  cat "$BATCH"
 fi
 echo "--- metrics (AC4) — computed from the run above, not asserted ---"
 echo "  coverage:        $MAPPED/$CM_TOTAL convention_mismatch findings (${COV_PCT}%) map to >= 1 proposed rule"
 echo "                   UNMAPPED REMAINDER: $COV_UNMAPPED findings, of which $UNTHEMED_N matched no theme in the lexicon"
 echo "                   and the rest belong to the themes itemised below, EACH WITH THE REASON it"
 echo "                   emitted no rule. The reason is printed rather than assumed: a theme can be"
-echo "                   unmapped for three different causes, and only one of them is the support"
+echo "                   unmapped for four different causes, and only one of them is the support"
 echo "                   floor. Every unmapped theme appears here, so this list sums to"
 echo "                   $COV_UNMAPPED minus the $UNTHEMED_N unthemed findings — it cannot under-state its own total:"
 for k in $THEME_KEYS; do
@@ -1048,13 +1292,35 @@ for k in $THEME_KEYS; do
   case " $EMITTED_THEMES " in *" $k "*) continue ;; esac
   [ "$n" -gt 0 ] || continue
   why="below the $MIN_SUPPORT-finding support floor"
-  case " $RULE_THEMES " in
-    *" $k "*) why="reached the support floor but was DEFERRED BY THE cap=$CAP batch bound — not a thin theme" ;;
-    *) [ "$(cat "$WORK/stages.$k" 2>/dev/null || echo mixed)" = "unknowable-only" ] \
-         && why="every finding is flow_stage=unknowable (support $n is NOT the reason)" ;;
+  case " $DUP_THEMES " in
+    # Checked FIRST, because an already-covered theme is also in $RULE_THEMES and would otherwise be
+    # reported as cap-deferred — a stated reason that is simply false, in a list whose whole purpose
+    # is that the reason is printed rather than assumed.
+    *" $k "*) why="reached the support floor but is ALREADY COVERED by the live rule $(cut -f1 "$WORK/dup.$k" 2>/dev/null | head -c 60)… — not a thin theme, and not the cap" ;;
+    *)
+      case " $RULE_THEMES " in
+        *" $k "*) why="reached the support floor but was DEFERRED BY THE cap=$CAP batch bound — not a thin theme" ;;
+        *) [ "$(cat "$WORK/stages.$k" 2>/dev/null || echo mixed)" = "unknowable-only" ] \
+             && why="every finding is flow_stage=unknowable (support $n is NOT the reason)" ;;
+      esac ;;
   esac
   printf '                     %-24s %-4s %s\n' "$k" "$n" "($why)"
 done
+DUPCOV_PCT="$(pct "$COVERED_EXISTING" "$CM_TOTAL")"
+COMBINED_PCT="$(pct "$((MAPPED + COVERED_EXISTING))" "$CM_TOTAL")"
+echo "  store dedupe:    $DUP_DEFERRED proposal(s) deferred as ALREADY COVERED by one of the $RULES_N live rule(s) in $RULES_DIR,"
+echo "                   at a ${DUPLICATE_PCT}% distinctive-term floor. Each names its covering rule id and its own"
+echo "                   overlap above, and each EMITTED proposal names the nearest live rule it did NOT match —"
+echo "                   so both directions of this threshold are checkable from this report alone."
+echo "                   already covered by the live store: $COVERED_EXISTING/$CM_TOTAL findings (${DUPCOV_PCT}%). These stay in the"
+echo "                   coverage denominator above, so a deferral LOWERS the proposed-rule coverage instead of"
+echo "                   quietly shrinking the number it would be measured against."
+echo "                   COMBINED convention coverage: $((MAPPED + COVERED_EXISTING))/$CM_TOTAL (${COMBINED_PCT}%) of convention_mismatch findings map to"
+echo "                   >= 1 rule that is either proposed in this batch or already live in the store."
+if [ -n "$RULES_UNREADABLE" ]; then
+  echo "                   UNVERIFIED against$RULES_UNREADABLE (unparseable — see 'inputs read'): a proposal above"
+  echo "                   could duplicate a rule those file(s) hold, and this run cannot say that it does not."
+fi
 if [ "$EMITTED" -eq 0 ]; then
   echo "  dedupe rate:     n/a (0 rules emitted)"
 else
