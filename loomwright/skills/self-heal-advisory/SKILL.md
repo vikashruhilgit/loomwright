@@ -196,13 +196,22 @@ touched = paths from the integrated diff (read-only):
 
 contract_conformance = { checked: false, status: "skipped", contracts_evaluated: 0, violations: 0, findings: [] }
 
+# STORE-HEALTH PROBE — ONE no-arg call, made ONCE, BEFORE the per-subsystem loop.
+# `twin_store_status` is a property of the STORE, not of a subsystem, and it must be sampled that
+# way. Two shapes were tried and are wrong: (a) taking it from the LAST `--subsystem` read in the
+# loop below — that makes the verdict depend on `touched` ordering, so a PR touching a dark
+# subsystem and then one with no stored contract ends on `empty` and records `skipped`; and
+# (b) taking the worst status across the loop — still blind, because a store can be dark for
+# subsystems this PR does not touch, and every `--subsystem` read for an unstored id reports
+# `empty`. Both reintroduce the exact silent loss this probe exists to end. The extra call is the
+# price of an answer that is about the store.
+twin_store_status = bash ${CLAUDE_PLUGIN_ROOT}/scripts/read-system-contract.sh | grep '^twin_store_status:'
+  # -> empty | healthy | degraded | dark. Always exits 0; an unreadable/absent reader leaves this
+  #    unset, which is treated as "not dark" below (fail-safe: never invent a dark verdict).
+
 for each subsystem id derivable from `touched` (a path or a logical subsystem name):
   # read-side provenance gate; NEVER `cat` the contract files directly.
   contract = bash ${CLAUDE_PLUGIN_ROOT}/scripts/read-system-contract.sh --subsystem "<id>"
-  # EVERY invocation of the reader — `--subsystem` included — prints one `twin_store_status:` line
-  # (empty | healthy | degraded | dark). Keep the last one seen; it is what separates "nothing is
-  # stored" from "everything stored was withheld", and reading it costs no extra call.
-  twin_store_status = the `twin_store_status:` value in that output
   if contract has a verified body (not "(no verified System Twin contracts)"):
     contract_conformance.checked = true
     contract_conformance.contracts_evaluated += 1

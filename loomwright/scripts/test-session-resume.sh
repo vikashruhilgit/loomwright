@@ -504,6 +504,29 @@ else
       && ok "(n2) and says explicitly that the gate is not the thing to change" || no "(n2) the do-not-weaken warning is missing"
   fi
 
+  # -- DEGRADED: one verified contract alongside one dropped. Its own branch in the hook's case
+  #    statement, so it needs its own fixture — (n2) proves nothing about it, and a text branch
+  #    with no test is how the repair path goes missing from the one message that needed it.
+  RN4="$(new_repo)"; make_plugin_active "$RN4"
+  ( cd "$RN4" \
+    && printf 'SYSTEM_CONTRACT india\nsubsystem: india\ninvariants: [india reads session logs]\n'      | bash "$SR_TWIN_WRITE" --subsystem "india" --source "session:fixture-000n" \
+    && printf 'SYSTEM_CONTRACT juliet\nsubsystem: juliet\ninvariants: [juliet renders dashboards]\n' | bash "$SR_TWIN_WRITE" --subsystem "juliet" --source "session:fixture-000n" ) >/dev/null 2>&1
+  if [ ! -f "$RN4/.supervisor/twin/contracts/india.md" ] || [ ! -f "$RN4/.supervisor/twin/contracts/juliet.md" ]; then
+    no "(n4) SEED FAILED — need two stored contracts to darken exactly one; this case would assert nothing"
+  else
+    ( cd "$RN4" && f=.supervisor/twin/contracts/juliet.md && sed 's/renders/draws/' "$f" > "$f.x" && mv "$f.x" "$f" )
+    ctxN4="$(run_hook_ctx "$RN4" resume)"; rcN4="$(lastrc)"
+    [ "$rcN4" -eq 0 ] && ok "(n4) exits 0 on a degraded twin store" || no "(n4) expected exit 0, got $rcN4"
+    grep -q 'System Twin contract store is DEGRADED' <<< "$ctxN4" \
+      && ok "(n4) a PARTIALLY dropped store renders the DEGRADED branch, not the DARK one" \
+      || no "(n4) degraded branch not rendered: $(tr '\n' ' ' <<< "$ctxN4" | cut -c1-200)"
+    grep -q 'DARK' <<< "$ctxN4" && no "(n4) a degraded store was reported as DARK — the two branches are not discriminating" || ok "(n4) and does NOT claim the store is dark"
+    grep -q 'twin_store_status: degraded (emitted 1, dropped 1, stored 2)' <<< "$ctxN4" \
+      && ok "(n4) and quotes the real counts (1 served, 1 withheld)" || no "(n4) degraded counts missing/wrong: $(grep -o 'twin_store_status[^\`]*' <<< "$ctxN4" | head -1)"
+    grep -q 'reprovenance-twin-contracts.sh' <<< "$ctxN4" \
+      && ok "(n4) and still names the repair path — the branch a reader is most likely to skim" || no "(n4) degraded branch omits the repair path"
+  fi
+
   # -- a repo with NO twin store at all must be byte-for-byte unaffected: this is the state the
   #    dark store was indistinguishable from, so it is the control that keeps (n2) honest.
   RN3="$(new_repo)"; make_plugin_active "$RN3"
