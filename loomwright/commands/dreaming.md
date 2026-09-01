@@ -241,6 +241,7 @@ OUTPUT (mandatory six-section report, in this order):
   - Target section (existing heading or proposed new heading)
   - Proposed text (verbatim, in the same prose style as the surrounding doc)
   - Linked Insight number
+  - Evidence: N distinct sessions (ids) — copied from that Insight's evidence count
   A proposal MAY instead be a CURATION candidate — prune (a section no longer earns
   its context cost), merge (two sections restate each other), or supersede (a claim's
   authoritative home moved elsewhere) — labeled the same way, naming the target
@@ -296,6 +297,7 @@ Proposed additions or revisions to project `CLAUDE.md` (or a sub-file it referen
 - Target section (existing heading or proposed new heading)
 - Proposed text (verbatim, in the same prose style as the surrounding doc)
 - Justification linked to a Distilled Insight
+- **Evidence: N distinct sessions (ids)** — carried down from that Insight, same role as in §3: it is what the §4-additive recommendation rule reads, and its absence means no recommendation. A **curation** candidate (below) carries it too, but is never recommended regardless
 - Approval status: **PENDING USER APPROVAL** (always — `/dreaming` does not auto-apply)
 
 **Curation candidates (prune / merge / supersede) — same section, same gate, no new writer.** Alongside additive proposals, `/dreaming` may also surface a **curation** candidate when reflection determines that CLAUDE.md (or a sub-file it references, e.g. a relocated section in `loomwright/docs/`) has drifted from what a fresh session actually needs. A curation candidate is still just a §4 proposal — labeled **PENDING USER APPROVAL**, applied by the user (or a follow-up turn) via the existing paste-to-apply mechanism, never written by `/dreaming` itself. Three shapes:
@@ -485,7 +487,7 @@ Every per-item gate in this command is asked with `AskUserQuestion`, and this se
 ### Payload shape (all gates)
 
 - `multiSelect: false` — every gate is per-item and single-choice. There is no bulk-accept anywhere in this command, and a multi-select gate would be one.
-- `header` — ≤12 chars naming the item class: `Memory`, `Lesson`, `Rule`, `Orientation`, `Push`.
+- `header` — ≤12 chars naming the item class: `Memory` (§3 / §5), `CLAUDE.md` (§4), `Lesson` (§6), `Orientation`, `Rule`, `Push`.
 - `question` — names the **target store** and the action, so the user can tell a paste-to-apply proposal from a sole-writer write without scrolling back to the report.
 - `options` — from the fixed per-class sets below. **`AskUserQuestion` accepts at most 4 options**; the harness appends its own `Other` beyond them, so a fifth explicit option is an invalid call. The five verbs are consequently **never offered together**: `Supersede` and `Retract` act on an *existing* corpus entry and are mutually exclusive with the new-proposal set. That has always been true in practice — this states it as a constraint instead of leaving it to luck.
 - Every option carries a one-line `description` saying what the choice does **mechanically** (which writer runs with which flags, or that nothing is written) — never a restatement of its label.
@@ -497,7 +499,8 @@ Every per-item gate in this command is asked with `AskUserQuestion`, and this se
 | §3 agent-memory proposal · §5 collected candidate · §4 additive CLAUDE.md proposal · orientation queue · agent-memory queue | `Accept` · `Reject` · `Edit` |
 | §4 curation candidate (prune / merge / supersede as prose) | `Accept` · `Reject` · `Edit` |
 | §6 new lesson (category not full) | `Accept` · `Reject` · `Edit` |
-| §6 proposal replacing a *specific* named lesson | `Supersede` · `Reject` · `Edit` |
+| §6 new lesson, category **full** — capacity eviction (plain `Accept`; `write-lessons.sh` enforces the ≤3 bound at write time and evicts the oldest). Distinct from the row below, per "Curating existing LESSONS" above | `Accept` · `Reject` · `Edit` |
+| §6 proposal replacing a *specific* named lesson (explicit `Supersede`) | `Supersede` · `Reject` · `Edit` |
 | existing corpus entry offered for curation (a live LESSON or committed memo) | `Retract` · `Keep as-is` · `Supersede instead` |
 | harvested rule — gate 1 (content) | `Accept` · `Reject` · `Edit` |
 | harvested rule — gate 2 (Pre-push confirmation) | `Do not push` · `Push and open a PR` |
@@ -510,13 +513,14 @@ When — and **only** when — one of the rules below fires, the recommended opt
 
 | Item class | Recommend `Accept` iff | Otherwise |
 |---|---|---|
-| §3 proposal · §5 collected candidate | the linked Distilled Insight's evidence spans **≥2 distinct sessions**, **and** the candidate survived the §5 dedupe against existing project memory | abstain |
-| §4 additive proposal | same ≥2-distinct-sessions rule | abstain |
+| §3 agent-memory proposal | the linked Distilled Insight's evidence spans **≥2 distinct sessions**. (No dedupe clause: §3 targets `.claude/agent-memory/`, which is never deduped against project memory — that step is §5's alone) | abstain |
+| §5 collected candidate | evidence spans **≥2 distinct sessions**, **and** it survived the §5 dedupe against existing project memory | abstain |
+| §4 additive proposal | the linked Distilled Insight's evidence spans **≥2 distinct sessions**, read from §4's own `Evidence:` field | abstain |
 | §4 curation candidate (prune / merge / supersede) | **never** — a curation candidate rewrites or removes prose the user wrote; the judgment is theirs | abstain |
 | §6 new lesson, category **not** full | evidence spans ≥2 distinct sessions/subtasks **and** it is the highest-scoring §6 proposal for its category in this batch | abstain |
 | §6 lesson displacing an existing entry (category full, or an explicit `Supersede`) | **never** — the displacement is a judgment about the *existing* corpus, which reflection saw less of than the user did | abstain |
 | existing entry offered for `Retract` | reflection found an observation that **contradicts** the entry (cite it). **Staleness or mere disuse is never a basis** | abstain |
-| orientation / agent-memory promotion queue | the proposal's area is corroborated by ≥2 sessions in this window | abstain |
+| orientation / agent-memory promotion queue | **never** — a queued proposal is a single-run artifact written by one session's completion tail, so no cross-session corroboration exists for it to cite, and this contract does not compute one. Abstaining is the honest reading, not a gap to be filled later | abstain |
 | harvested rule — **both** gates | **never** (see the exclusion below) | abstain |
 
 **Abstain is the default and it is not a failure.** When no rule fires, emit the class's option set in its neutral order above with **no** `(Recommended)` marker anywhere. A run in which nothing is recommended is the expected shape for a thin window; manufacturing a recommendation to fill the slot is the failure mode this table exists to prevent.
@@ -600,6 +604,7 @@ A future improvement is dedicated reflection-mode agent variants with `disallowe
 - **Target section:** "## Common Pitfalls"
   Proposed text: "TODO comments without an owning task ID are forbidden. Either link a Beads/issue ID or remove the TODO before merging — Code Reviewer will block PRs that accumulate ownerless TODOs."
   Linked insight: 3
+  Evidence: 2 distinct sessions (2026-05-03, 2026-05-09)
   Status: **PENDING USER APPROVAL**
 
 ### 5. Collected Memory Candidates
@@ -631,12 +636,13 @@ Worked recommendation pass over the items above (the rules are in that section's
 
 - §3 `[code-reviewer]` — evidence 3 distinct sessions ⇒ `Accept (Recommended)` first, description citing "3 sessions corroborate".
 - §3 `[qa-executor]` — evidence 1 session ⇒ **no recommendation**, neutral order.
+- §4 additive — evidence 2 distinct sessions ⇒ `Accept (Recommended)`, header `CLAUDE.md`. Recommended even though it is paste-to-apply: the marker is about the evidence, not about who performs the write.
 - §5 candidate — evidence 1 session ⇒ **no recommendation**, neutral order.
 - §6 `testing` — highest-scoring proposal in its category and evidence spans 3 subtasks ⇒ `Accept (Recommended)`.
 - §6 `contracts` — displaces the oldest lesson in a full category ⇒ **never recommended**, regardless of score.
 - Harvested rules — **never recommended** on either gate.
 
-Two of six recommended is a normal-looking pass; zero is also normal. Abstain is the default, not a degraded outcome.
+Three of seven recommended is a normal-looking pass; zero is also normal. Abstain is the default, not a degraded outcome.
 
 ### Promotion queues (shown only when they are non-empty)
 
