@@ -289,6 +289,32 @@ else
 fi
 rm -rf "$SEPDIR" 2>/dev/null   # a mutated writer must never outlive its own control
 
+# (sep8) — EVICTION *and* the separator, in COMBINATION. Case 3 covers the <=3 cap and case 4b
+# covers the separator, but each in isolation: case 3 seeds a single category, so the section it
+# evicts from is always the LAST one and has no following heading to lose. This is the only
+# fixture where the rebuild has to evict from the front AND carry a trailing separator in the
+# same pass — the two are independent in the code, and this is what makes that a checked claim
+# rather than a traced one.
+SEPXDIR="$(mktemp -d)"; ( cd "$SEPXDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i ) >/dev/null 2>&1
+xf="$SEPXDIR/$LFILE"
+( cd "$SEPXDIR" && bash "$WRITE" --confirm --category capcat --lesson "capacity alpha lesson" --source "session:fixture-0001" \
+    && bash "$WRITE" --confirm --category zlast --lesson "trailing category lesson" --source "session:fixture-0001" \
+    && bash "$WRITE" --confirm --category capcat --lesson "capacity bravo lesson" --source "session:fixture-0002" \
+    && bash "$WRITE" --confirm --category capcat --lesson "capacity charlie lesson" --source "session:fixture-0003" \
+    && bash "$WRITE" --confirm --category capcat --lesson "capacity delta lesson" --source "session:fixture-0004" ) >/dev/null 2>&1
+cap_n="$(awk '/^## capcat$/{f=1;next} /^## /{f=0} f && /^- \[/{c++} END{print c+0}' "$xf" 2>/dev/null)"
+if [ "$cap_n" -eq 3 ] && ! grep -qF "capacity alpha lesson" "$xf" 2>/dev/null && grep -qF "capacity delta lesson" "$xf" 2>/dev/null; then
+  ok "(sep8) a 4th entry into a NON-LAST category still evicts the OLDEST and caps at 3 — eviction is unaffected by section position"
+else
+  no "(sep8) eviction misbehaved in a non-last category (entries=$cap_n, oldest still present=$(grep -cF "capacity alpha lesson" "$xf" 2>/dev/null))"
+fi
+if blank_before "$xf" "## zlast"; then
+  ok "(sep8) and the blank line before '## zlast' survives the SAME evicting write — the two mechanisms compose"
+else
+  no "(sep8) the evicting write into a non-last category DROPPED the blank line before '## zlast'"
+fi
+rm -rf "$SEPXDIR" 2>/dev/null
+
 echo "== 5. .gitignore coverage (real repo) =="
 # INVERTED ON PURPOSE (2026-08-07). This asserted `.supervisor/memory/` was IGNORED. The
 # `/setup memory` capability exists to make exactly that store COMMITTABLE — the Twin's distilled
