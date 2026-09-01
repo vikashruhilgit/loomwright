@@ -850,6 +850,46 @@ else
 fi
 rm -rf "$DMUT" 2>/dev/null   # a mutated writer must never outlive its own control
 
+echo "== 17. the trust check's OWN fallback: read gate absent =="
+# The one branch of the trust check with no assertion until now, and it is the branch its own
+# comment calls out as dangerous — "a silent fall-back here is how the dark state stayed invisible
+# in the first place". It must (i) keep the historical idempotent no-op so a re-run never fails,
+# (ii) SAY it could not check, and (iii) write nothing. Deliberately mirrors how the VALIDATOR load
+# guard's absent-helper case is pinned two sections above. (PR #163 round-3 review.)
+AR="$(mktemp -d)"; mk_twin_repo "$AR"
+( cd "$AR" && printf 'SYSTEM_CONTRACT november\nsubsystem: november\ninvariants: [november reads session logs]\n' \
+    | bash "$WRITE" --subsystem "november" --source "session:fixture-0017r" ) >/dev/null 2>&1
+NFILE="$AR/.supervisor/twin/contracts/november.md"
+if [ ! -f "$NFILE" ]; then
+  no "(17d) SEED FAILED — no contract artifact; this case would assert nothing"
+else
+  # Darken it out of band, so WITH a reader present this call would re-provenance (that is 17b).
+  # The only variable under test here is whether the reader can be consulted at all.
+  ( cd "$AR" && sed 's/session logs/session logs and worker summaries/' "$NFILE" > "$NFILE.x" && mv "$NFILE.x" "$NFILE" )
+  ar_before="$(shasum -a 256 < "$AR/.supervisor/twin/.provenance.jsonl" | cut -d' ' -f1)"
+  ar_out="$( cd "$AR" && WRITE_SYSTEM_CONTRACT_READER="$AR/no-such-reader.sh" \
+      bash "$WRITE" --subsystem "november" --contract-file "$NFILE" --source "session:fixture-0017r" 2>&1 )"; ar_rc=$?
+  ar_after="$(shasum -a 256 < "$AR/.supervisor/twin/.provenance.jsonl" | cut -d' ' -f1)"
+  [ "$ar_rc" -eq 0 ] && ok "(17d) an unreadable read gate keeps the historical idempotent no-op (exit 0) — a re-run must not start failing because a helper is missing" || no "(17d) expected exit 0, got $ar_rc: $(tr '\n' ' ' <<< "$ar_out")"
+  grep -q 'COULD NOT BE CHECKED' <<< "$ar_out" \
+    && ok "(17d) and SAYS it could not be checked — the fallback is loud, not silent" \
+    || no "(17d) the fallback is silent about not having checked: $(tr '\n' ' ' <<< "$ar_out")"
+  grep -q 'no-such-reader.sh' <<< "$ar_out" \
+    && ok "(17d) and names the gate it could not reach" || no "(17d) the message does not name the missing reader"
+  [ "$ar_before" = "$ar_after" ] \
+    && ok "(17d) and the ledger is byte-unchanged — it does not append a speculative entry on a verdict it could not reach" \
+    || no "(17d) the could-not-check path mutated the provenance ledger"
+  # CONTROL: the SAME call with the real reader present DOES re-provenance. Without this, (17d)
+  # would pass equally well if the trust check had been deleted outright.
+  ctl_before="$(grep -c '"action":"add"' "$AR/.supervisor/twin/.provenance.jsonl" 2>/dev/null)"; ctl_before="${ctl_before:-0}"
+  ( cd "$AR" && bash "$WRITE" --subsystem "november" --contract-file "$NFILE" --source "session:fixture-0017r" ) >/dev/null 2>&1
+  ctl_after="$(grep -c '"action":"add"' "$AR/.supervisor/twin/.provenance.jsonl" 2>/dev/null)"; ctl_after="${ctl_after:-0}"
+  [ "$ctl_after" -eq "$((ctl_before + 1))" ] \
+    && ok "(17d) CONTROL: the identical call WITH the reader present DOES re-provenance — so (17d) pins the missing-gate branch, not a trust check that never fires" \
+    || no "(17d) CONTROL FAILED: adds $ctl_before -> $ctl_after with the real reader — (17d) may be vacuous"
+fi
+rm -rf "$AR" 2>/dev/null
+
 echo "== 18. reprovenance-twin-contracts.sh — the sanctioned recovery path =="
 REPRO="$HERE/reprovenance-twin-contracts.sh"
 if [ ! -r "$REPRO" ]; then
