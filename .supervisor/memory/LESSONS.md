@@ -16,6 +16,7 @@
 ## testing
 - [34e7c865] Every shell-script deliverable in this plugin ships a co-located static-only test-*.sh; CI runs all of them with no Docker daemon, no network, and no gh, so tests must stub external deps (PATH stubs for curl/docker/gh), parse YAML/JSON, and assert state machines rather than hit live dependencies.
 - [ef916b74] A self-test asserting the "feature OFF" path of an env-gated script must scrub the gating flag with `env -u <FLAG>` (or a clean env); the dev/CI shell may set it globally, and an inherited =1 silently turns OFF-path fixtures into false passes.  <!-- last_verified=2026-06-29T13:00:14Z confidence=medium -->
+
 ## verification
 - [be1ecb0a] A `heal_decision: PASS` with no `ground_truth_status` and no `contract_conformance_status: pass` is UNVERIFIED on two axes; do not credit it as reviewer-clean.  <!-- last_verified=2026-06-17T20:13:20Z confidence=medium -->
 
