@@ -242,13 +242,65 @@ trap 'rm -f "$c_tmp" "$prov_tmp" "$corpus_tmp" 2>/dev/null' EXIT
 printf '%s\n' "$BODY" > "$c_tmp"
 content_hash="$(cat "$c_tmp" | sha)"
 
-# Dedup guard: the content_hash is body-derived. If the current verified contract for this
-# subsystem already has the same content_hash, this is a no-op (avoids redundant chain growth).
+# ---------------------------------------------------------------------------
+# DEDUP GUARD — byte-identical is not sufficient; the stored body must also be PROVENANCE-BACKED.
+#
+# The guard used to short-circuit on hash equality alone: "the file on disk already has this
+# content, so there is nothing to write." That reasoning trusts the FILE, and the file is exactly
+# the thing an out-of-band edit mutates. Measured consequence (incident of 2026-09-01): a tree-wide
+# rebrand `sed` rewrote all 21 stored contracts on 2026-08-12 without going through this writer, so
+# their hashes vanished from the ledger and the read gate went 100% dark. Re-running the builder
+# could not repair it — every contract re-derived the SAME body that was already on disk, hit this
+# short-circuit, and exited 0 reporting success while appending no provenance. The sole writer had
+# become structurally incapable of restoring provenance for its own store; the only repair left was
+# to hand-edit the ledger, i.e. to forge exactly the evidence the gate exists to demand.
+#
+# So the condition is now "unchanged AND already trusted by the read gate". An unchanged-but-
+# UNTRUSTED body is not a no-op — it is the one write that matters — and it falls through to the
+# validator and the append below.
+#
+# WHY THE READ GATE IS CONSULTED RATHER THAN RE-IMPLEMENTED: trust here must mean EXACTLY what the
+# reader means by it (a chain-valid `add`, not merely a hash present somewhere in the ledger — a
+# post-chain-break entry is present and still untrusted). A second copy of the chain walk in this
+# file would be a drift surface between the two halves of the same gate. Coupling cost: this reads
+# the reader's `### contract: <id>` line. If that format ever changes, this check stops recognising
+# trust and the writer writes a redundant-but-valid provenance entry — chain growth, never a
+# weakened gate. That is the safe direction, deliberately.
+#
+# NOTHING HERE RELAXES THE READ GATE. This writer appends a REAL `add` entry over the CURRENT bytes,
+# which is what provenance is supposed to record. Blessing bodies nobody chose is still a human
+# decision — that is reprovenance-twin-contracts.sh, which is report-only until --confirm.
+# ---------------------------------------------------------------------------
 if [ -f "$CONTRACT" ]; then
   existing_hash="$(cat "$CONTRACT" | sha)"
   if [ "$existing_hash" = "$content_hash" ]; then
-    echo "write-system-contract: contract for '$SUBSYSTEM' unchanged (hash $content_hash) — skipping"
-    exit 0
+    # ---- TRUST CHECK BEGIN --------------------------------------------------
+    # BEGIN/END delimit the trust check as ONE replaceable unit (same convention as the LOAD GUARD
+    # above) so this suite's mutation control can restore the pre-fix hash-equality-only guard in a
+    # single edit and prove the re-provenance assertions go RED. Structural, not decor.
+    # Resolved as a SIBLING, deliberately — NOT through the plugin-root variable the validator
+    # lookup above uses. The two halves of this gate ship in the same directory and are versioned
+    # together, so the sibling is by construction the copy that matches this writer, and routing
+    # through the plugin root would buy no reach while adding two more vendor-coupled references
+    # to a core script the coupling ratchet is trying to keep flat. Tests override via
+    # WRITE_SYSTEM_CONTRACT_READER, mirroring WRITE_SYSTEM_CONTRACT_VALIDATOR.
+    READER="${WRITE_SYSTEM_CONTRACT_READER:-$VE_HERE/read-system-contract.sh}"
+    if [ ! -r "$READER" ]; then
+      # Could not ask. Keep the historical idempotent behaviour (a re-run must not fail), but say so
+      # — a silent fall-back here is how the dark state stayed invisible in the first place.
+      echo "write-system-contract: the read gate '$READER' is missing or unreadable, so whether the stored contract for '$SUBSYSTEM' is provenance-backed COULD NOT BE CHECKED; treating the unchanged body as a no-op (historical behaviour). If the read path is dark, re-run with the gate present." >&2
+      echo "write-system-contract: contract for '$SUBSYSTEM' unchanged (hash $content_hash) — skipping"
+      exit 0
+    fi
+    # Herestring, not a pipe: `producer | grep -q` can return 141 (SIGPIPE) EVEN ON A MATCH under
+    # `pipefail`, which would read as "not trusted" and defeat the short-circuit on every call.
+    _wsc_gate_out="$(bash "$READER" --subsystem "$SUBSYSTEM" 2>/dev/null || true)"
+    if grep -qxF "### contract: $SAFE_ID" <<< "$_wsc_gate_out"; then
+      echo "write-system-contract: contract for '$SUBSYSTEM' unchanged and provenance-backed (hash $content_hash) — skipping"
+      exit 0
+    fi
+    echo "write-system-contract: the stored contract for '$SUBSYSTEM' is byte-identical to this write, but the read gate DROPS it as unverified (its hash is not in $PROV — an out-of-band edit). Re-provenancing it rather than reporting a no-op." >&2
+    # ---- TRUST CHECK END ----------------------------------------------------
   fi
 fi
 
@@ -260,6 +312,13 @@ fi
 # retry, a replayed queue item) started failing. The validator examines entries about to be
 # WRITTEN; an entry that will not be written has nothing to validate. Moving this block back above
 # the dedup guard reintroduces the regression — pinned by test.
+#
+# READ THIS TOGETHER WITH THE TRUST CHECK inside that dedup guard. "An entry that will not be
+# written" is a judgement about WHICH writes are genuine no-ops, and the original guard got it
+# wrong for one case: a body already on disk but NOT provenance-backed. The reasoning above is
+# about ORDERING and is unchanged; it is not a licence to restore the hash-equality-only
+# CONDITION, which is what made the 2026-09-01 dark store unrecoverable by re-running the builder.
+#
 # contract_compare_line <file> — a stored contract as ONE comparable line (the whole artifact
 # flattened). Mirrors entry_compare_line() in write-agent-memory.sh; contracts carry no frontmatter,
 # so there is nothing to select — only the flattening, and the leading `#`/`>`/`-` strip that keeps
