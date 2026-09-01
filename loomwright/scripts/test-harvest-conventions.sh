@@ -45,7 +45,9 @@
 #       no literal with it, so an exact-string dedupe could not pass the section. Also: the
 #       all-covered empty batch still PRINTS its deferrals and names the right cause, `--dup-pct 101`
 #       is the non-deferring measurement run the header documents, and an unparseable/absent store is
-#       fail-safe but DISCLOSED rather than silently treated as clean.
+#       fail-safe but DISCLOSED rather than silently treated as clean. (t22)-(t26) cover the
+#       COMBINED empty batch — one theme turned away by the cap AND one already covered — the case
+#       in which the diagnostic must name both causes.
 #
 # MUTATION CONTROLS. This repo has repeatedly shipped guards that were vacuous until mutated, so the
 # three load-bearing assertions here are each proved non-vacuous by breaking the mechanism they
@@ -84,6 +86,10 @@
 #  (M17) credit a deferred theme's findings to the PROPOSED batch instead of to the already-covered
 #        figure ⇒ (T)'s coverage flatters itself to 10/10 (100%) for a batch that proposed one rule
 #        over four findings.
+#  (M18) make the already-covered CONTINUATION line under the cap sentence unreachable (its guard
+#        always-true) ⇒ (T)'s combined --cap 0 run reports only the cap and loses the second cause.
+#        That line was reachable, correct, and NEVER EXECUTED until (t24): every rule-seeding
+#        fixture ran at --cap 5 and the only --cap 0 fixture seeded no rule.
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -1388,6 +1394,53 @@ run_harvest "$TD" --session-id "fx-t6" --no-writer --dup-pct abc
 [ "$RC" -eq 2 ] \
   && ok "(t21) a non-numeric --dup-pct exits 2 (usage error) rather than silently comparing against a garbage floor" \
   || no "(t21) --dup-pct abc exited $RC, expected 2"
+
+# ---- BOTH deferral causes in ONE empty batch: the cap arm AND the already-covered arm ----
+# The `and a further N theme(s)` continuation line under the cap sentence was REACHABLE and CORRECT
+# and NEVER EXECUTED: every fixture that seeds a live rule ran with --cap 5 (never exhausted), and
+# the only --cap 0 fixture (section P) seeds no rule, so the two counters were never both non-zero
+# in the same run. Reasoned about, not run — which is this file's most-repeated defect class, and
+# the reason (T) reuses $TD here rather than trusting the trace. $TD has exactly the needed shape:
+# restated-count-version (6 findings) is already covered, doc-currency-drift (4) is not, so at
+# --cap 0 the first defers as already-covered (before the cap check, spending no slot) and the
+# second is turned away by the bound.
+run_harvest "$TD" --session-id "fx-t7" --min-support 4 --cap 0 --no-writer
+printf '%s\n' "$OUT" > "$ROOT/t7.txt"
+if grep -qF '0 emitted, 2 deferred: 1 by the cap, 1 already covered by a live rule' "$ROOT/t7.txt"; then
+  ok "(t22) with one theme cap-deferred and one already-covered, the header attributes each to its own cause"
+else
+  no "(t22) the two deferral causes are not both counted: $(grep -F 'proposed rule batch' "$ROOT/t7.txt" | head -1)"
+fi
+grep -qE '\(empty batch — but NOT for want of evidence: 1 theme\(s\) reached the 4-finding support floor and were deferred by the cap=0 batch bound' "$ROOT/t7.txt" \
+  && ok "(t23) the cap sentence counts ONLY the cap-deferred theme — the already-covered one is not folded into it" \
+  || no "(t23) the cap sentence is wrong or missing: $(grep -F '(empty batch' "$ROOT/t7.txt" | head -1)"
+grep -qF '(and a further 1 theme(s) were deferred as ALREADY COVERED by a live rule' "$ROOT/t7.txt" \
+  && ok "(t24) the continuation line fires, so the empty-batch diagnostic names BOTH measured causes rather than only the first" \
+  || no "(t24) the already-covered continuation line did not fire alongside the cap sentence"
+grep -qF 'DEFERRED — ALREADY COVERED by a live rule' "$ROOT/t7.txt" \
+  && ok "(t25) the deferral block is still printed in the combined case — 'named above' remains true" \
+  || no "(t25) the diagnostic says 'named above' but no deferral block was printed"
+grep -qF 'no theme reached the support floor' "$ROOT/t7.txt" \
+  && no "(t26) the combined run still blames the support floor — a cause its own numbers refute" \
+  || ok "(t26) the combined run does not blame the support floor"
+
+# ---- MUTATION CONTROL M18: make the continuation line unreachable ----
+# `-ge 0` is true for every count, so the `||` short-circuits and the line never runs — the state
+# the branch was in before (t24) existed, when it had only ever been reasoned about.
+MUT18="$ROOT/mut-nocontinuation.sh"
+sed 's@^  \[ "$DUP_DEFERRED" -eq 0 \] || \\$@  [ "$DUP_DEFERRED" -ge 0 ] || \\@' "$HARVEST" > "$MUT18"
+if ! cmp -s "$HARVEST" "$MUT18" && bash -n "$MUT18" 2>/dev/null; then
+  M18OUT="$( bash "$MUT18" --root "$TD" --session-id fx-m18 --min-support 4 --cap 0 --no-writer 2>&1 )" || true
+  if printf '%s\n' "$M18OUT" | grep -qF '(and a further 1 theme(s) were deferred as ALREADY COVERED'; then
+    no "(M18) REFUTED: the continuation line still printed with its guard always-true — (t24) is vacuous"
+  elif printf '%s\n' "$M18OUT" | grep -qF 'were deferred by the cap=0 batch bound'; then
+    ok "(M18) CONFIRMED: with the guard always-true the cap sentence still prints but the already-covered continuation is silently lost — (t24) is load-bearing"
+  else
+    no "(M18) the mutant printed neither sentence — the control proved nothing"
+  fi
+else
+  no "(M18) the continuation-line mutation did not land"
+fi
 
 # ---- MUTATION CONTROL M16: remove the dedupe pass ⇒ the duplicate is proposed again ----
 # `if false` at the decision point leaves every line of reporting in place and removes only the
