@@ -1176,7 +1176,14 @@ for k in $RULE_THEMES; do
 done
 # A corroborating corpus entry NEVER emits a rule of its own — see the header's step 3. Its theme is
 # chosen from $RULE_THEMES and `triage_bucket corpus` requires a non-empty theme, so every entry that
-# reaches this list carries a theme whose own rule was already emitted above, over the same evidence.
+# reaches this list carries a theme WHOSE EVIDENCE EARNED A RULE — which is not the same as a rule
+# having been emitted above, and the comment used to say the stronger thing. $RULE_THEMES holds every
+# theme bucketed `rules`, and TWO of them emit nothing: one turned away by $CAP, and (since the store
+# dedupe pass) one whose rule is already in `.agent/rules/`. The corroboration claim survives both —
+# in the cap case the rule is deferred, in the covered case it exists already, and either way the
+# entry is not a second rule over the same evidence — but "already emitted above" was false for the
+# cap case before this pass and is false for two cases now. Stated correctly rather than left as a
+# claim a reader can refute from the batch listing three sections down.
 # There is deliberately no second arm here: an `else` branch emitting a `corpus graduate: <name>` rule
 # would be unreachable by construction, and a documented branch that cannot fire is this repo's
 # most-repeated defect class. Each entry is counted as a deferral so the batch stays honest about it.
