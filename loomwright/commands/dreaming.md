@@ -164,7 +164,7 @@ The same probe backs the **SessionStart curation nudge** in `scripts/session-res
    - Distill those into candidate insights
    - **Propose** memory entries and `CLAUDE.md` paragraphs **without writing anything**
 3. **Output a structured reflection report** — `/dreaming` aggregates per-agent proposals, collected worker memory candidates, and distilled LESSONS into a single report with the six mandatory sections listed below.
-4. **Per-item user approval (write-on-Accept for memory/LESSONS)** — The user is presented with each proposal in turn. The approval mechanism is the harness `AskUserQuestion` tool (or, when unavailable, a numbered list with typed responses): each proposal is displayed with its target and verbatim text and the user picks `Accept`, `Reject`, `Edit`, `Supersede`, or `Retract`. There is no bulk-accept; each item is gated individually. `Accept` / `Reject` / `Edit` are as before (see below). **`Supersede` and `Retract` are curation actions that target an EXISTING corpus entry** (a live LESSONS entry, or — for the orientation promotion queue — a live committed memo) instead of writing a brand-new one; each composes the target store's own curation verb through its sole writer, per-item, human-gated exactly like `Accept`:
+4. **Per-item user approval (write-on-Accept for memory/LESSONS)** — The user is presented with each proposal in turn. The approval mechanism is the harness `AskUserQuestion` tool (or, when unavailable, a numbered list with typed responses): each proposal is displayed with its target and verbatim text and the user picks `Accept`, `Reject`, `Edit`, `Supersede`, or `Retract`. **The exact question payload — per-class option sets, the 4-option cap, option descriptions, and the narrow conditions under which one option may be marked `(Recommended)` — is specified in "Approval Option Contract" below; it is a contract, not a per-run improvisation.** There is no bulk-accept; each item is gated individually. `Accept` / `Reject` / `Edit` are as before (see below). **`Supersede` and `Retract` are curation actions that target an EXISTING corpus entry** (a live LESSONS entry, or — for the orientation promotion queue — a live committed memo) instead of writing a brand-new one; each composes the target store's own curation verb through its sole writer, per-item, human-gated exactly like `Accept`:
    - **`Supersede`** — offered when a proposed LESSON (§6) or promoted orientation memo would replace an existing corpus entry. Instead of a plain `Accept`, the user picks `Supersede` and confirms which existing entry it replaces; `/dreaming` then invokes the target store's `supersede`/`--supersedes` verb (see the §6 and promotion-queue subsections below) rather than a bare add.
    - **`Retract`** — offered on an EXISTING corpus entry that reflection determined is simply wrong, stale, or no longer applicable, with **no replacement**. The user picks `Retract`, confirms, and `/dreaming` invokes the target store's `retract` action through its sole writer. `Retract` never adds anything.
    - Both actions are **per-item and human-gated** exactly like `Accept` — no bulk-supersede, no bulk-retract, and both still route through the store's own sole writer (never a direct file edit by `/dreaming`).
@@ -233,6 +233,7 @@ OUTPUT (mandatory six-section report, in this order):
   - Change type (add / edit / delete)
   - Proposed text (verbatim, ready to paste)
   - Linked Insight number
+  - Evidence: N distinct sessions (ids) — copied from that Insight's evidence count
   Do NOT write to the memory directory. Propose only.
 
   ## 4. Proposed CLAUDE.md Updates
@@ -240,6 +241,7 @@ OUTPUT (mandatory six-section report, in this order):
   - Target section (existing heading or proposed new heading)
   - Proposed text (verbatim, in the same prose style as the surrounding doc)
   - Linked Insight number
+  - Evidence: N distinct sessions (ids) — copied from that Insight's evidence count
   A proposal MAY instead be a CURATION candidate — prune (a section no longer earns
   its context cost), merge (two sections restate each other), or supersede (a claim's
   authoritative home moved elsewhere) — labeled the same way, naming the target
@@ -251,8 +253,9 @@ OUTPUT (mandatory six-section report, in this order):
   (the optional field workers emit since v14.4.0; workers also echo them into their
   .worker-summary.md). Dedup the collected candidates against the existing project
   memory and against each other. List each UNIQUE candidate verbatim, labeled
-  "PENDING USER APPROVAL", with its source session ID / subtask. Do NOT write memory.
-  Propose only.
+  "PENDING USER APPROVAL", with its source session ID / subtask AND an
+  "Evidence: N distinct sessions (ids)" line counting how many analyzed sessions
+  independently produced it. Do NOT write memory. Propose only.
 
   ## 6. Proposed LESSONS
   Distilled, CATEGORY-TAGGED lessons, BOUNDED ≤3 active per category. List each as
@@ -285,6 +288,7 @@ Per-agent proposed additions, edits, or deletions for `.claude/agent-memory/{age
 - Target file or tag within the memory directory
 - Proposed text (verbatim)
 - Justification linked to a Distilled Insight
+- **Evidence: N distinct sessions (ids)** — carried down verbatim from that Insight's own evidence count. It is not decoration: it is the field the §3 recommendation rule is computed from (see "Approval Option Contract" below), and a proposal that omits it can never be recommended
 - Approval status: **PENDING USER APPROVAL** (always — `/dreaming` does not auto-apply)
 
 ### 4. Proposed CLAUDE.md Updates
@@ -293,6 +297,7 @@ Proposed additions or revisions to project `CLAUDE.md` (or a sub-file it referen
 - Target section (existing heading or proposed new heading)
 - Proposed text (verbatim, in the same prose style as the surrounding doc)
 - Justification linked to a Distilled Insight
+- **Evidence: N distinct sessions (ids)** — carried down from that Insight, same role as in §3: it is what the §4-additive recommendation rule reads, and its absence means no recommendation. A **curation** candidate (below) carries it too, but is never recommended regardless
 - Approval status: **PENDING USER APPROVAL** (always — `/dreaming` does not auto-apply)
 
 **Curation candidates (prune / merge / supersede) — same section, same gate, no new writer.** Alongside additive proposals, `/dreaming` may also surface a **curation** candidate when reflection determines that CLAUDE.md (or a sub-file it references, e.g. a relocated section in `loomwright/docs/`) has drifted from what a fresh session actually needs. A curation candidate is still just a §4 proposal — labeled **PENDING USER APPROVAL**, applied by the user (or a follow-up turn) via the existing paste-to-apply mechanism, never written by `/dreaming` itself. Three shapes:
@@ -307,6 +312,7 @@ Each curation proposal carries the same **Accept / Reject / Edit** gate as every
 The worker-proposed durable facts harvested from the gathered sources. `/dreaming` collects candidates from two concrete, unambiguous shapes: (a) the `memory_candidates:` array inside a `WORKER_RESULT` block in the session logs, and (b) a `## memory_candidates` section in a `.worker-summary.md` file — one `- ` bullet per candidate string (the format workers write into the summary). Workers have emitted the optional `WORKER_RESULT.memory_candidates[]` field since v14.4.0 and echo the same strings under the `## memory_candidates` summary heading, which is why both shapes are scanned. The collected strings are **deduped** against the existing project memory — `/dreaming` reads the verified facts via `bash "${CLAUDE_PLUGIN_ROOT}/scripts/read-project-memory.sh"` first and drops any candidate already present (and dedups duplicates among the candidates themselves). Each surviving unique candidate is listed:
 - Candidate text (verbatim, one line)
 - Source session ID / subtask it came from
+- **Evidence: N distinct sessions (ids)** — how many of the analyzed sessions independently produced this candidate (1 for a single-session candidate, which is the common case). Same role as in §3: it is what the recommendation rule reads, and its absence means no recommendation
 - Approval status: **PENDING USER APPROVAL** (always)
 
 On Accept, a candidate is written as a PROJECT_MEMORY fact via `write-project-memory.sh` (see Phase 4 / APPROVE).
@@ -399,7 +405,7 @@ When the GATHER-time `harvest-conventions.sh` run produced a non-empty rule batc
 **Two distinct gates, and the ordering is the safety property.** Collect *both* gates for *every* item before touching git:
 
 1. **Accept / Reject / Edit (per item)** — the ordinary content gate: "is this rule's statement and scope right?". Accepting **writes nothing** and creates nothing; it only marks the proposal as *content-approved*. `Reject` and `Edit` write nothing and never reach the branch, preserving the same per-item guarantee every other destination in this command already has.
-2. **Pre-push confirmation (per item, only for content-approved rules)** — a separate, explicit question: "**push this rule to the remote and open a PR?**". This is *not* implied by Accept, and Accept is not implied by it. Only rules that clear **both** enter the *confirmed set*. Answering no to the Pre-push confirmation leaves that rule unwritten and unpushed, with no other effect. **Default to NOT pushing. If the answer is ambiguous, treat it as no** — the item stays out of the confirmed set, exactly as `/setup rules` treats an ambiguous seed Offer as Cancel (`commands/setup.md`, the rules-module Offer). This gate is the safety property the whole feature is described by, and a gate that resolves an unclear answer *toward* the remote-affecting action is not a gate. Ambiguity is a reason to ask again or to skip the item, never a reason to push; only an unambiguous yes advances it.
+2. **Pre-push confirmation (per item, only for content-approved rules)** — a separate, explicit question: "**push this rule to the remote and open a PR?**". This is *not* implied by Accept, and Accept is not implied by it. Only rules that clear **both** enter the *confirmed set*. Answering no to the Pre-push confirmation leaves that rule unwritten and unpushed, with no other effect. **Default to NOT pushing. If the answer is ambiguous, treat it as no** — the item stays out of the confirmed set, exactly as `/setup rules` treats an ambiguous seed Offer as Cancel (`commands/setup.md`, the rules-module Offer). This gate is the safety property the whole feature is described by, and a gate that resolves an unclear answer *toward* the remote-affecting action is not a gate. Ambiguity is a reason to ask again or to skip the item, never a reason to push; only an unambiguous yes advances it. For the same reason **neither rules gate carries a `(Recommended)` marker at all** — not on the push-ward option, and not on `Do not push` either, which is a default rather than an observation and is expressed by option order instead — see "The one exclusion that is load-bearing" under "Approval Option Contract" below.
 
 Only after every item has passed through both gates does `/dreaming` look at the confirmed set:
 
@@ -474,6 +480,59 @@ If, after dedup against existing project memory and after bounding LESSONS per c
 
 `/dreaming` v14.5.0 closes the **collect → distill → persist** loop only. **Reading LESSONS back into planning/execution** — injecting accepted lessons at Launch Pad / Supervisor decision time so they actually steer future runs — is intentionally **deferred to a follow-up**. v14.5.0 makes lessons durable and human-approved; wiring them into the forward pipeline is out of scope here.
 
+## Approval Option Contract
+
+Every per-item gate in this command is asked with `AskUserQuestion`, and this section is the authoritative shape of that call. Before it existed the command named only the *verbs* a user picks (`Accept` / `Reject` / `Edit` / `Supersede` / `Retract`) and never the payload, so labels, descriptions, order, and whether anything was recommended were improvised per run — two runs over the same proposal could present it differently, and **nothing was ever recommended even for the classes whose report entries already carry the evidence to justify one**. Every other `AskUserQuestion` caller in this plugin specifies its payload (see `commands/setup.md`, the observability / memory / rules module questions); this brings `/dreaming` in line.
+
+### Payload shape (all gates)
+
+- `multiSelect: false` — every gate is per-item and single-choice. There is no bulk-accept anywhere in this command, and a multi-select gate would be one.
+- `header` — ≤12 chars naming the item class: `Memory` (§3 / §5 / agent-memory queue — same underlying store), `CLAUDE.md` (§4), `Lesson` (§6), `Orientation` (orientation queue), `Rule`, `Push`. Every row of the table below maps to one of these; a row with no header is the gap this list has already had twice.
+- `question` — names the **target store** and the action, so the user can tell a paste-to-apply proposal from a sole-writer write without scrolling back to the report.
+- `options` — from the fixed per-class sets below. **`AskUserQuestion` accepts at most 4 options**; the harness appends its own `Other` beyond them, so a fifth explicit option is an invalid call. The five verbs are consequently **never offered together**: `Supersede` and `Retract` act on an *existing* corpus entry and are mutually exclusive with the new-proposal set. That has always been true in practice — this states it as a constraint instead of leaving it to luck.
+- Every option carries a one-line `description` saying what the choice does **mechanically** (which writer runs with which flags, or that nothing is written) — never a restatement of its label.
+
+### Per-class option sets (fixed; in this order unless a recommendation reorders them)
+
+| Item class | Options |
+|---|---|
+| §3 agent-memory proposal · §5 collected candidate · §4 additive CLAUDE.md proposal · orientation queue · agent-memory queue | `Accept` · `Reject` · `Edit` |
+| §4 curation candidate (prune / merge / supersede as prose) | `Accept` · `Reject` · `Edit` |
+| §6 new lesson (category not full) | `Accept` · `Reject` · `Edit` |
+| §6 new lesson, category **full** — capacity eviction (plain `Accept`; `write-lessons.sh` enforces the ≤3 bound at write time and evicts the oldest). Distinct from the row below, per "Curating existing LESSONS" above | `Accept` · `Reject` · `Edit` |
+| §6 proposal replacing a *specific* named lesson (explicit `Supersede`) | `Supersede` · `Reject` · `Edit` |
+| existing corpus entry offered for curation (a live LESSON or committed memo) | `Retract` · `Keep as-is` · `Supersede instead` |
+| harvested rule — gate 1 (content) | `Accept` · `Reject` · `Edit` |
+| harvested rule — gate 2 (Pre-push confirmation) | `Do not push` · `Push and open a PR` |
+
+Do not grow a set. A new destination folds into an existing row or gets its own row here.
+
+**Having a row is not the same as being offered.** Two harvested-rule cases are never asked at all, and this table does not override either: a batch the harvester marked **DISTILLATION FAILURE** is not offered item-by-item (see that subsection above), and a proposal printed as a **`DEFERRED — ALREADY COVERED`** block is context for the reader, not a queue item — it carries no `invocation:` line and Accepting one would duplicate a convention the live `.agent/rules/` store already states. Gate 1's row applies to the **numbered** proposals only.
+
+### Recommendation
+
+When — and **only** when — one of the rules below fires, the recommended option is moved to **first position** and ` (Recommended)` is appended to its label (the harness convention). Its `description` MUST additionally state the **basis** in one clause — e.g. "3 sessions corroborate" — so the nudge is falsifiable against the report printed above it. **A recommendation with no citable basis in that report is a defect**, not a style lapse: an unfalsifiable nudge on a write gate is how a per-item gate degrades into a rubber stamp.
+
+| Item class | Recommend the named option iff | Otherwise |
+|---|---|---|
+| §3 agent-memory proposal | the linked Distilled Insight's evidence spans **≥2 distinct sessions**. (No dedupe clause: §3 targets `.claude/agent-memory/`, which is never deduped against project memory — that step is §5's alone) | abstain |
+| §5 collected candidate | evidence spans **≥2 distinct sessions**. (No dedupe clause: §5's own spec drops any candidate already present in project memory *before* listing it, so surviving the dedupe is a precondition of appearing at all — asserting it here would be a condition that can never be false) | abstain |
+| §4 additive proposal | the linked Distilled Insight's evidence spans **≥2 distinct sessions**, read from §4's own `Evidence:` field | abstain |
+| §4 curation candidate (prune / merge / supersede) | **never** — a curation candidate rewrites or removes prose the user wrote; the judgment is theirs | abstain |
+| §6 new lesson, category **not** full | evidence spans ≥2 distinct sessions/subtasks **and** it is the highest-scoring §6 proposal for its category in this batch | abstain |
+| §6 lesson displacing an existing entry (category full, or an explicit `Supersede`) | **never** — the displacement is a judgment about the *existing* corpus, which reflection saw less of than the user did | abstain |
+| existing entry offered for `Retract` | reflection found an observation that **contradicts** the entry (cite it). **Staleness or mere disuse is never a basis** | abstain |
+| orientation / agent-memory promotion queue | **never** — a queued proposal is a single-run artifact written by one session's completion tail, so no cross-session corroboration exists for it to cite, and this contract does not compute one. Abstaining is the honest reading, not a gap to be filled later | abstain |
+| harvested rule — **both** gates (gate 1 `Accept`; gate 2 `Do not push`) | **never** — including `Do not push`. There is no evidence axis to cite for it: not-pushing is a *default*, and this contract requires a **basis**, not a preference. The default is already expressed by `Do not push` holding first position in the option set (see the exclusion below) | abstain |
+
+**Abstain is the default and it is not a failure.** When no rule fires, emit the class's option set in its neutral order above with **no** `(Recommended)` marker anywhere. A run in which nothing is recommended is the expected shape for a thin window; manufacturing a recommendation to fill the slot is the failure mode this table exists to prevent.
+
+### The one exclusion that is load-bearing
+
+**Neither harvested-rule gate may ever carry a recommendation *toward* the remote-affecting action.** Gate 2's stated contract is *default to NOT pushing; an ambiguous answer is a no* (see "Two distinct gates, and the ordering is the safety property" above) — a `(Recommended)` on `Push and open a PR` would resolve a safety gate toward the action it exists to slow down. Gate 1 is excluded too, for a different reason: the whole point of the batch's two scope-fidelity figures is that the user reads **both**, and a recommendation substitutes for that reading.
+
+**`Do not push` gets no marker either**, and the reason is worth stating because the opposite reading is tempting: it is the *safe* direction, so a marker on it would do no harm. But this contract's own rule is that a marker must cite a **basis**, and not-pushing has none to cite — it is a default, not an observation. The safe direction is already carried by **option order**: `Do not push` holds first position in gate 2's set, which is how a default is expressed here without borrowing the vocabulary of evidence. A marker that means "this is the default" and a marker that means "the evidence supports this" must not look identical, or the second one stops meaning anything.
+
 ## Read-Only Contract
 
 `/dreaming` operates under a **read-only-until-Accept contract** that is enforced end-to-end:
@@ -535,11 +594,13 @@ A future improvement is dedicated reflection-mode agent variants with `disallowe
 - **[code-reviewer]** _add_ → `.claude/agent-memory/.../patterns.md`
   Text: "Always check whether subtask `provides:` symbols actually exist in the modified files; flag drift as BLOCKING."
   Linked insight: 2
+  Evidence: 3 distinct sessions (2026-05-03, 2026-05-06, 2026-05-09)
   Status: **PENDING USER APPROVAL**
 
 - **[qa-executor]** _add_ → `.claude/agent-memory/.../boundary-tests.md`
   Text: "If a subtask touches a CRUD endpoint and the brief has no boundary-test criterion, generate boundary tests anyway and report the gap."
   Linked insight: 1
+  Evidence: 1 session (2026-05-06)
   Status: **PENDING USER APPROVAL**
 
 ### 4. Proposed CLAUDE.md Updates
@@ -547,12 +608,14 @@ A future improvement is dedicated reflection-mode agent variants with `disallowe
 - **Target section:** "## Common Pitfalls"
   Proposed text: "TODO comments without an owning task ID are forbidden. Either link a Beads/issue ID or remove the TODO before merging — Code Reviewer will block PRs that accumulate ownerless TODOs."
   Linked insight: 3
+  Evidence: 2 distinct sessions (2026-05-03, 2026-05-09)
   Status: **PENDING USER APPROVAL**
 
 ### 5. Collected Memory Candidates
 
 - Candidate: "Worker summaries live in .supervisor/worker-summaries/ and are the cheap result-extraction path, not the full TaskOutput."
   Source: session 2026-05-06, subtask BD-22a
+  Evidence: 1 session (2026-05-06)
   Status: **PENDING USER APPROVAL**
   (deduped against existing project memory: not already present)
 
@@ -571,7 +634,19 @@ A future improvement is dedicated reflection-mode agent variants with `disallowe
 
 ### Approval
 
-For each item above, choose **Accept**, **Reject**, or **Edit** (per-item — there is no bulk-accept). On **Accept**: PROJECT_MEMORY facts (incl. accepted §5 candidates) are written by `/dreaming` via `write-project-memory.sh`, and §6 LESSONS via `write-lessons.sh` (both repo-root sole writers, run from the repo root, both invoked with `--confirm` — their store is committed). CLAUDE.md (§4) proposals are paste-to-apply by you; agent-memory (§3) proposals are promoted through the sole writer with `write-agent-memory.sh --proposal <file> --confirm` and are never hand-applied. **Reject**/**Edit** never writes. There is no auto-write.
+For each item above, choose **Accept**, **Reject**, or **Edit** (per-item — there is no bulk-accept). On **Accept**: PROJECT_MEMORY facts (incl. accepted §5 candidates) are written by `/dreaming` via `write-project-memory.sh`, and §6 LESSONS via `write-lessons.sh` (both repo-root sole writers, run from the repo root, both invoked with `--confirm` — their store is committed). CLAUDE.md (§4) proposals are paste-to-apply by you; agent-memory (§3) proposals are promoted through the sole writer with `write-agent-memory.sh --proposal <file> --confirm` and are never hand-applied. **Reject**/**Edit** never writes. There is no auto-write. Each item is asked with `AskUserQuestion` using the fixed option set for its class — see "Approval Option Contract" above.
+
+Worked recommendation pass over the items above (the rules are in that section's table; the point of printing it is that every marker is checkable against the report):
+
+- §3 `[code-reviewer]` — evidence 3 distinct sessions ⇒ `Accept (Recommended)` first, description citing "3 sessions corroborate".
+- §3 `[qa-executor]` — evidence 1 session ⇒ **no recommendation**, neutral order.
+- §4 additive — evidence 2 distinct sessions ⇒ `Accept (Recommended)`, header `CLAUDE.md`. Recommended even though it is paste-to-apply: the marker is about the evidence, not about who performs the write.
+- §5 candidate — evidence 1 session ⇒ **no recommendation**, neutral order.
+- §6 `testing` — highest-scoring proposal in its category and evidence spans 3 subtasks ⇒ `Accept (Recommended)`.
+- §6 `contracts` — displaces the oldest lesson in a full category ⇒ **never recommended**, regardless of score.
+- Harvested rules — **never recommended** on either gate.
+
+Three of seven recommended is a normal-looking pass; zero is also normal. Abstain is the default, not a degraded outcome.
 
 ### Promotion queues (shown only when they are non-empty)
 
