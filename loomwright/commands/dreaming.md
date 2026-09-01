@@ -507,6 +507,8 @@ Every per-item gate in this command is asked with `AskUserQuestion`, and this se
 
 Do not grow a set. A new destination folds into an existing row or gets its own row here.
 
+**Having a row is not the same as being offered.** Two harvested-rule cases are never asked at all, and this table does not override either: a batch the harvester marked **DISTILLATION FAILURE** is not offered item-by-item (see that subsection above), and a proposal printed as a **`DEFERRED — ALREADY COVERED`** block is context for the reader, not a queue item — it carries no `invocation:` line and Accepting one would duplicate a convention the live `.agent/rules/` store already states. Gate 1's row applies to the **numbered** proposals only.
+
 ### Recommendation
 
 When — and **only** when — one of the rules below fires, the recommended option is moved to **first position** and ` (Recommended)` is appended to its label (the harness convention). Its `description` MUST additionally state the **basis** in one clause — e.g. "3 sessions corroborate" — so the nudge is falsifiable against the report printed above it. **A recommendation with no citable basis in that report is a defect**, not a style lapse: an unfalsifiable nudge on a write gate is how a per-item gate degrades into a rubber stamp.
