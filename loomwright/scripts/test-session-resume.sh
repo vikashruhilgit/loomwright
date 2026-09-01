@@ -462,6 +462,59 @@ test_curation_nudge_debounce_and_optout() {
 test_curation_nudge_debounce_and_optout
 
 echo
+# ============================================================================
+echo "== (n) System Twin store health reaches the resume digest — dark only, never healthy =="
+# WHY THIS SECTION EXISTS: on 2026-09-01 the twin read path had been 100% dark since 2026-08-12 —
+# 21 stored contracts, every one dropped for want of provenance after a tree-wide `sed` rewrote
+# their bodies outside the sole writer. Every gate was green throughout, because a total drop was
+# recorded only in .supervisor/logs/twin.log and looked to consumers exactly like an empty store.
+# This hook is the surface a human actually passes, so the dark state has to show up here.
+SR_TWIN_WRITE="$(cd "$(dirname "$HOOK")" && pwd)/write-system-contract.sh"
+if [ ! -r "$SR_TWIN_WRITE" ]; then
+  no "(n) write-system-contract.sh not found next to the hook — this section would assert nothing"
+else
+  # -- healthy store: the section must NOT appear (a standing banner on a working store is noise,
+  #    and noise is how a real warning gets ignored).
+  RN1="$(new_repo)"; make_plugin_active "$RN1"
+  ( cd "$RN1" && printf 'SYSTEM_CONTRACT hotel\nsubsystem: hotel\ninvariants: [hotel reads session_end events]\n' \
+      | bash "$SR_TWIN_WRITE" --subsystem "hotel" --source "session:fixture-000n" ) >/dev/null 2>&1
+  if [ ! -f "$RN1/.supervisor/twin/contracts/hotel.md" ]; then
+    no "(n) SEED FAILED — no contract stored; the healthy/dark contrast below would be vacuous"
+  else
+    ctxN1="$(run_hook_ctx "$RN1" resume)"; rcN1="$(lastrc)"
+    [ "$rcN1" -eq 0 ] && ok "(n1) exits 0 on a healthy twin store" || no "(n1) expected exit 0, got $rcN1"
+    if grep -q 'System Twin contract store is' <<< "$ctxN1"; then
+      no "(n1) a HEALTHY store emitted a twin-health section — the warning would become background noise"
+    else
+      ok "(n1) a healthy store emits no twin-health section"
+    fi
+
+    # -- the incident, reproduced: rewrite the stored body in place, outside the sole writer.
+    ( cd "$RN1" && f=.supervisor/twin/contracts/hotel.md && sed 's/session_end/session_end_v2/' "$f" > "$f.x" && mv "$f.x" "$f" )
+    ctxN2="$(run_hook_ctx "$RN1" resume)"; rcN2="$(lastrc)"
+    [ "$rcN2" -eq 0 ] && ok "(n2) still exits 0 with a dark twin store — the probe cannot fail the hook" || no "(n2) expected exit 0, got $rcN2"
+    grep -q 'System Twin contract store is DARK' <<< "$ctxN2" \
+      && ok "(n2) a dark store DOES surface in the resume digest — the same input that produced (n1)'s silence" \
+      || no "(n2) the dark store produced no section: $(tr '\n' ' ' <<< "$ctxN2" | cut -c1-200)"
+    grep -q 'twin_store_status: dark' <<< "$ctxN2" \
+      && ok "(n2) and quotes the machine-readable status line with its counts" || no "(n2) status line not quoted"
+    grep -q 'reprovenance-twin-contracts.sh' <<< "$ctxN2" \
+      && ok "(n2) and names the sanctioned repair path rather than leaving the reader to find it" || no "(n2) repair path not named"
+    grep -q 'do NOT weaken it' <<< "$ctxN2" \
+      && ok "(n2) and says explicitly that the gate is not the thing to change" || no "(n2) the do-not-weaken warning is missing"
+  fi
+
+  # -- a repo with NO twin store at all must be byte-for-byte unaffected: this is the state the
+  #    dark store was indistinguishable from, so it is the control that keeps (n2) honest.
+  RN3="$(new_repo)"; make_plugin_active "$RN3"
+  ctxN3="$(run_hook_ctx "$RN3" resume)"
+  if grep -q 'System Twin contract store is' <<< "$ctxN3"; then
+    no "(n3) a repo with no twin store emitted a twin-health section"
+  else
+    ok "(n3) a repo with no twin store is untouched — the probe costs one glob and says nothing"
+  fi
+fi
+
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
 exit 0

@@ -199,6 +199,10 @@ contract_conformance = { checked: false, status: "skipped", contracts_evaluated:
 for each subsystem id derivable from `touched` (a path or a logical subsystem name):
   # read-side provenance gate; NEVER `cat` the contract files directly.
   contract = bash ${CLAUDE_PLUGIN_ROOT}/scripts/read-system-contract.sh --subsystem "<id>"
+  # EVERY invocation of the reader — `--subsystem` included — prints one `twin_store_status:` line
+  # (empty | healthy | degraded | dark). Keep the last one seen; it is what separates "nothing is
+  # stored" from "everything stored was withheld", and reading it costs no extra call.
+  twin_store_status = the `twin_store_status:` value in that output
   if contract has a verified body (not "(no verified System Twin contracts)"):
     contract_conformance.checked = true
     contract_conformance.contracts_evaluated += 1
@@ -211,7 +215,14 @@ contract_conformance.violations = len(contract_conformance.findings)
 if not contract_conformance.checked:
   # No verified contracts exist for any touched subsystem, OR read-system-contract.sh emitted nothing
   # (no sha tool / empty store). Graceful no-op.
-  contract_conformance.status = "skipped"        # (use "unverified" instead when the tooling itself was unavailable)
+  if twin_store_status == "dark":
+    # NOT the same thing. Contracts ARE stored; every one of them failed provenance and was
+    # withheld, so this run was not "checked and found nothing to check" — it could not check at
+    # all. Recording it as `skipped` is exactly what hid a two-week, 100% capability loss (all 21
+    # contracts dark from 2026-08-12, found 2026-09-01) behind a green advisory field.
+    contract_conformance.status = "unverified"
+  else:
+    contract_conformance.status = "skipped"      # (use "unverified" instead when the tooling itself was unavailable)
 elif contract_conformance.violations == 0:
   contract_conformance.status = "pass"
 else:
@@ -222,6 +233,7 @@ record_decision(phase: SELF_HEAL, decision: "contract_conformance: {status} ({vi
 
 **Contract-conformance rules:**
 - Absent contracts (empty `.supervisor/twin/`, or `read-system-contract.sh` emits nothing) → `checked: false`, `status: skipped` (or `unverified` if the tooling itself was unavailable), `contracts_evaluated: 0`, `violations: 0`. Graceful no-op — never an error, never a fix.
+- **A DARK store is not an absent one.** When the reader prints `twin_store_status: dark`, contracts are stored but every one failed provenance verification and was withheld, so record `status: unverified`, not `skipped`. Both keep `checked: false` and stay advisory — the difference is that `unverified` is honest about a capability that is *missing*, and `skipped` reads as *nothing to do*. The reader also prints a loud `!!` block naming the repair (`scripts/reprovenance-twin-contracts.sh`); surface it rather than swallowing it. Never work around a drop by `cat`-ing the contract files — the gate is deliberately strict and the drop is its verdict, not a malfunction.
 - `status: pass` requires `violations: 0`; `status: advisory_violations` requires `violations >= 1` and a non-empty `findings[]` (each `severity: info | advisory`).
 - This is a READ of the twin store via `read-system-contract.sh` only — it NEVER writes the twin store (the WRITE happens in the completion tail, below).
 - It runs on EVERY Phase 4.5 (PASS or ESCALATED); unlike the Rubric Grader it is not gated on PASS, because conformance reporting is informational and does not depend on trusting the code state.

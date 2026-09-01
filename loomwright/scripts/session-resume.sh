@@ -6,6 +6,7 @@
 # agent re-entering the session has immediate visibility into:
 #   - in-progress Supervisor jobs (.supervisor/jobs/in-progress/)
 #   - recent failed jobs (.supervisor/jobs/failed/)
+#   - System Twin contract-store health, but ONLY when it is dark/degraded (Section 2.5)
 #   - last 5 lines of .supervisor/state.md
 #   - last 3 entries from the most recent .supervisor/logs/*.jsonl
 # Stays under SessionStart's documented 10,000-char additionalContext cap.
@@ -425,6 +426,49 @@ if compgen -G ".supervisor/jobs/failed/*.md" > /dev/null 2>&1; then
     append "- $f"$'\n'
   done
   append $'\n'
+fi
+
+# Section 2.5: System Twin contract-store health ----
+#
+# WHY THIS IS A RESUME SECTION AND NOT JUST A LOG LINE (incident of 2026-09-01). The read gate
+# already dropped every unverified contract and already recorded each drop in
+# .supervisor/logs/twin.log. Both were correct and both were useless: the drops were only
+# discoverable by opening a log nobody opens, and the gate's OUTPUT for "all 21 dropped" was
+# indistinguishable from "nothing stored", so Phase 4.5 twin enrichment, the Phase 4.5 delta line
+# and /dreaming's contract-drift input all recorded `skipped` and carried on. The capability was
+# gone for two weeks with every gate green. A silent capability loss needs a surface a human
+# actually passes, and this hook is that surface.
+#
+# Cheap by construction: the reader is only invoked when the store has files at all (the compgen
+# below), so an empty store — the overwhelmingly common case in a user project — costs one glob.
+# Fail-safe like everything else here: an absent or silent reader appends nothing and the hook
+# still exits 0.
+if compgen -G ".supervisor/twin/contracts/*.md" > /dev/null 2>&1; then
+  TWIN_DIR_SR="$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo .)"
+  TWIN_READER="$TWIN_DIR_SR/read-system-contract.sh"
+  TWIN_REPAIR="$TWIN_DIR_SR/reprovenance-twin-contracts.sh"
+  if [ -r "$TWIN_READER" ]; then
+    # Captured into a variable, then matched with a herestring. `reader | grep -m1` would send
+    # SIGPIPE to the reader the moment the line matched, which is the shape that silently loses a
+    # status; and the reader's stdout is small enough that buffering it costs nothing.
+    TWIN_OUT="$(bash "$TWIN_READER" 2>/dev/null || true)"
+    TWIN_STATUS="$(grep -m1 '^twin_store_status:' <<< "$TWIN_OUT" || true)"
+    case "$TWIN_STATUS" in
+      "twin_store_status: dark"*)
+        append "### System Twin contract store is DARK — no consumer is receiving anything"$'\n'
+        append "\`$TWIN_STATUS\`"$'\n'
+        append "Every stored contract fails provenance verification, so the read gate withholds all of them. Downstream (Phase 4.5 twin enrichment, the Phase 4.5 delta line, /dreaming's contract-drift input) this looks EXACTLY like an empty store and is recorded as \`skipped\`."$'\n'
+        append "Cause: the bodies were changed outside \`write-system-contract.sh\` (a tree-wide edit, a rename or a scrub pass), so their hashes are absent from the ledger. The gate is working — do NOT weaken it."$'\n'
+        append "Inspect: \`bash $TWIN_REPAIR\` — then \`--confirm\` to bless the current bodies."$'\n\n'
+        ;;
+      "twin_store_status: degraded"*)
+        append "### System Twin contract store is DEGRADED"$'\n'
+        append "\`$TWIN_STATUS\`"$'\n'
+        append "Some stored contracts fail provenance and are withheld from every consumer; the rest are served normally."$'\n'
+        append "Inspect: \`bash $TWIN_REPAIR\`"$'\n\n'
+        ;;
+    esac
+  fi
 fi
 
 # Section 3: tail of state.md ----
