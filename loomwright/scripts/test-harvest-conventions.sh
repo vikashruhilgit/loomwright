@@ -38,6 +38,16 @@
 #       entry is excluded by the normative test at any pw, so its reason may not assert a
 #       "(< PROJECT_WIDE_PCT%)" comparison its own printed pw refutes. Asserted by shape over both
 #       the fixture transcript and the real-corpus one.
+#   (T) the store dedupe pass — a proposal whose claim a LIVE `.agent/rules/` rule already makes is
+#       reported as an already-covered DEFERRAL naming that rule's id, spends no cap slot, and keeps
+#       its findings in every denominator (coverage falls; it is not quietly shrunk). Over a fixture
+#       whose live rule is a PARAPHRASE of the harvester's own committed statement, proved to share
+#       no literal with it, so an exact-string dedupe could not pass the section. Also: the
+#       all-covered empty batch still PRINTS its deferrals and names the right cause, `--dup-pct 101`
+#       is the non-deferring measurement run the header documents, and an unparseable/absent store is
+#       fail-safe but DISCLOSED rather than silently treated as clean. (t22)-(t26) cover the
+#       COMBINED empty batch — one theme turned away by the cap AND one already covered — the case
+#       in which the diagnostic must name both causes.
 #
 # MUTATION CONTROLS. This repo has repeatedly shipped guards that were vacuous until mutated, so the
 # three load-bearing assertions here are each proved non-vacuous by breaking the mechanism they
@@ -71,6 +81,15 @@
 #  (M10) make the cap-deferred arm of the empty-batch diagnostic unreachable (i.e. restore the
 #        unconditional support-floor sentence) ⇒ (P)'s `--cap 0` run blames the support floor again,
 #        one line under a header stating the themes were deferred by the cap.
+#  (M16) remove the store dedupe decision (`if false` at the comparison) ⇒ (T)'s already-covered
+#        theme is proposed as a rule again, exactly as it was before the pass existed.
+#  (M17) credit a deferred theme's findings to the PROPOSED batch instead of to the already-covered
+#        figure ⇒ (T)'s coverage flatters itself to 10/10 (100%) for a batch that proposed one rule
+#        over four findings.
+#  (M18) make the already-covered CONTINUATION line under the cap sentence unreachable (its guard
+#        always-true) ⇒ (T)'s combined --cap 0 run reports only the cap and loses the second cause.
+#        That line was reachable, correct, and NEVER EXECUTED until (t24): every rule-seeding
+#        fixture ran at --cap 5 and the only --cap 0 fixture seeded no rule.
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -1193,6 +1212,273 @@ if ! cmp -s "$HARVEST" "$MUT15" && bash -n "$MUT15" 2>/dev/null; then
   fi
 else
   no "(M15) the single-template mutation did not land"
+fi
+
+# ============================================================================
+echo "(T) proposals are deduped against the LIVE .agent/rules/ store"
+# ============================================================================
+# THE DEFECT THIS SECTION PINS. The harvester read `.agent/rules/` for context and never compared
+# its own PROPOSALS against it, so a theme whose convention the store already carried was offered to
+# a human for Accept again in different words. Accepting it puts two differently-worded copies of
+# ONE convention in ONE file — the exact duplication the store's own cross-surface rule prohibits.
+#
+# THE FIXTURE IS BUILT SO AN EXACT-STRING DEDUPE CANNOT PASS IT. The seeded live rule is a
+# PARAPHRASE of the harvester's own committed `restated-count-version` statement: same claim, no
+# shared sentence. (t0b) proves that property of the fixture rather than assuming it — a fixture
+# that accidentally contained the canonical statement verbatim would let a `grep -F` dedupe pass and
+# every assertion below would be measuring nothing.
+# THE CANONICAL STATEMENT IS EXTRACTED FROM THE SCRIPT, NEVER HAND-TYPED. A hand-typed copy of the
+# committed lexicon is a second copy of the thing under test: it drifts on the first reword and the
+# test then quietly compares the paraphrase against a statement the harvester no longer proposes.
+# (t0a) is the control that the extractor found anything at all.
+canon_statement() {   # canon_statement <theme-key> — read the committed lexicon's statement
+  sed -n "/^    $1)\$/,/^      esac ;;\$/p" "$HARVEST" \
+    | sed -n "s/^ *statement) printf '\(.*\)' ;;\$/\1/p" | head -1
+}
+CANON_RCV="$(canon_statement restated-count-version)"
+case "$CANON_RCV" in
+  *authoritative*machine-readable*) ok "(t0a) the canonical restated-count-version statement was extracted from the script's lexicon (${#CANON_RCV} chars) — the fixture is not comparing against a hand-typed copy" ;;
+  *) no "(t0a) could not extract the canonical statement from $HARVEST (got: '$CANON_RCV') — every assertion below would be vacuous" ;;
+esac
+
+# The paraphrase that plays the part of the already-committed rule. Hand-authored on purpose: it is
+# the INPUT under test (what the store happens to hold), not a copy of the thing under test.
+LIVE_STMT='Every count and every version number has exactly one authoritative machine-readable home. Any other surface either derives that literal when it is read, or it names the authority in prose; restating it creates a second claim, and nothing keeps a restated number current.'
+LIVE_ID='process-every-count-and-every-version-number-has-exactly-one-authoritative-machine-readable-home'
+
+seed_rule() {   # seed_rule <repo> <id> <statement> [<file-stem>]
+  local r="$1" id="$2" st="$3" stem="${4:-process}"
+  mkdir -p "$r/.agent/rules"
+  jq -n --arg id "$id" --arg st "$st" --arg cat "$stem" \
+    '[{id:$id, category:$cat, statement:$st, enforcement:"advisory", check:null,
+       provenance:{source:"test-fixture", added:"2026-01-01T00:00:00Z"}, applies_to:null}]' \
+    > "$r/.agent/rules/$stem.json"
+}
+
+TD="$(new_repo)"
+{ rec 1 "count drift in the banner" '["src/a/x.md"]' 6
+  rec 2 "stale prose in the guide"  '["src/b/z.sh"]' 4
+} > "$TD/.supervisor/postmortem/results.jsonl"
+seed_rule "$TD" "$LIVE_ID" "$LIVE_STMT"
+
+# (t0b) THE FIXTURE HAZARD CONTROL. Neither statement contains the other, and the canonical
+# statement does not appear in the store file at all — so no exact or substring match could find
+# this duplicate. If this ever fails, the section below stops testing the distinctive-term signal.
+t0_ok=1
+[ "$CANON_RCV" != "$LIVE_STMT" ] || t0_ok=0
+case "$LIVE_STMT" in *"$CANON_RCV"*) t0_ok=0 ;; esac
+case "$CANON_RCV" in *"$LIVE_STMT"*) t0_ok=0 ;; esac
+grep -qF "$CANON_RCV" "$TD/.agent/rules/process.json" 2>/dev/null && t0_ok=0
+[ "$t0_ok" -eq 1 ] \
+  && ok "(t0b) the seeded live rule makes the same claim in different words: neither statement contains the other and the canonical statement appears nowhere in the store file — an exact-string dedupe finds nothing here" \
+  || no "(t0b) the fixture's live rule shares a literal with the canonical statement — an exact-string dedupe would pass this section, making every assertion below vacuous"
+
+run_harvest "$TD" --session-id "fx-t" --min-support 4 --cap 5 --no-writer
+printf '%s\n' "$OUT" > "$ROOT/t.txt"
+[ "$RC" -eq 0 ] && ok "(t1) the run exits 0 — the dedupe pass is advisory, never a gate" || no "(t1) exited $RC, expected 0"
+
+if grep -qF 'DEFERRED — ALREADY COVERED by a live rule' "$ROOT/t.txt" \
+   && grep -qE 'theme=restated-count-version' "$ROOT/t.txt"; then
+  ok "(t2) the theme whose claim the store already makes is reported as an ALREADY-COVERED DEFERRAL"
+else
+  no "(t2) the duplicate theme was not deferred: $(grep -E 'theme=restated-count-version' "$ROOT/t.txt" | head -1)"
+fi
+grep -qF "covered by rule id: $LIVE_ID" "$ROOT/t.txt" \
+  && ok "(t3) the deferral NAMES the covering rule's id, so a reader can go read the rule that already says it" \
+  || no "(t3) the deferral does not name the covering rule id: $(grep -F 'covered by rule id' "$ROOT/t.txt" | head -1)"
+if grep -qE '^     overlap: [6-9][0-9]%|^     overlap: 100%' "$ROOT/t.txt"; then
+  ok "(t4) the deferral prints its measured overlap ($(grep -E '^     overlap:' "$ROOT/t.txt" | head -1 | awk '{print $2}')) and the floor it cleared — the threshold is checkable from the report"
+else
+  no "(t4) the deferral prints no overlap >= the floor: $(grep -E '^     overlap:' "$ROOT/t.txt" | head -1)"
+fi
+# The pass must not defer everything: the unrelated theme is still proposed, and it says so.
+if grep -qE '^  1\) \[documentation\] theme=doc-currency-drift' "$ROOT/t.txt" \
+   && grep -qE '^     store dedupe: NEW — nearest of the 1 live rule\(s\)' "$ROOT/t.txt"; then
+  ok "(t5) the unrelated theme is still EMITTED, and names the nearest live rule it did not match — the pass reports in both directions"
+else
+  no "(t5) the unrelated theme was lost or reports no nearest-rule line: $(grep -E 'theme=doc-currency-drift' "$ROOT/t.txt" | head -1)"
+fi
+# The deferral must not spend a cap slot — the emitted rule is numbered 1), not 2).
+grep -qE '^  2\) ' "$ROOT/t.txt" \
+  && no "(t6) a second proposal was numbered — the deferral appears to have consumed a batch slot" \
+  || ok "(t6) the deferral consumed no cap slot: the one emitted proposal is numbered 1)"
+
+# ---- the metrics half: the deferred theme's findings stay in every denominator ----
+# 10 convention_mismatch findings in the fixture: 6 restated-count-version (deferred), 4 doc-drift
+# (emitted). Coverage is measured against all 10, so the deferral LOWERS it to 4/10 rather than
+# shrinking the denominator to 4/4.
+grep -qF 'coverage:        4/10 convention_mismatch findings (40%) map to >= 1 proposed rule' "$ROOT/t.txt" \
+  && ok "(t7) coverage is 4/10 (40%) — the 6 deferred findings stay in the denominator, so the deferral lowers coverage instead of hiding" \
+  || no "(t7) coverage did not keep the deferred findings in its denominator: $(grep -F 'coverage:' "$ROOT/t.txt" | head -1)"
+grep -qF 'already covered by the live store: 6/10 findings (60%)' "$ROOT/t.txt" \
+  && ok "(t8) the 6 deferred findings are counted and reported as already covered by the live store — not silently dropped" \
+  || no "(t8) the already-covered figure is wrong or missing: $(grep -F 'already covered by the live store' "$ROOT/t.txt" | head -1)"
+grep -qF 'COMBINED convention coverage: 10/10 (100%)' "$ROOT/t.txt" \
+  && ok "(t9) the COMBINED figure is 10/10 — every finding maps to a rule that is proposed here or already live" \
+  || no "(t9) the combined coverage is wrong or missing: $(grep -F 'COMBINED convention coverage' "$ROOT/t.txt" | head -1)"
+grep -qF '1 already covered by a live rule' "$ROOT/t.txt" \
+  && ok "(t10) the batch header's deferral breakdown counts the already-covered arm separately from the cap" \
+  || no "(t10) the batch header does not break out the already-covered deferral: $(grep -F 'proposed rule batch' "$ROOT/t.txt" | head -1)"
+# The unmapped-remainder itemisation must give the REAL reason (not the cap, not the support floor)
+# and must still sum to its own stated headline.
+if grep -qE '^ +restated-count-version +6 +\(reached the support floor but is ALREADY COVERED by the live rule' "$ROOT/t.txt"; then
+  ok "(t11) the unmapped remainder itemises the deferred theme with 'already covered' as the reason — not the cap, not the floor"
+else
+  no "(t11) the remainder gives the wrong reason: $(grep -E '^ +restated-count-version' "$ROOT/t.txt" | head -1)"
+fi
+t_sum="$(awk '/UNMAPPED REMAINDER/,/store dedupe:/' "$ROOT/t.txt" \
+          | awk '/^ +[a-z-]+ +[0-9]+ +\(/ { s += $2 } END { print s+0 }')"
+[ "$t_sum" = "6" ] \
+  && ok "(t12) the itemisation sums to 6 — the stated remainder still accounts for itself with a deferred theme in it" \
+  || no "(t12) the itemisation sums to $t_sum, not the 6 unmapped findings"
+
+# ---- the whole batch already covered: the report must say so, and still show the deferrals ----
+TD2="$(new_repo)"
+rec 1 "count drift in the banner" '["src/a/x.md"]' 6 > "$TD2/.supervisor/postmortem/results.jsonl"
+seed_rule "$TD2" "$LIVE_ID" "$LIVE_STMT"
+run_harvest "$TD2" --session-id "fx-t2" --min-support 4 --cap 5 --no-writer
+printf '%s\n' "$OUT" > "$ROOT/t2.txt"
+grep -qF 'DEFERRED — ALREADY COVERED by a live rule' "$ROOT/t2.txt" \
+  && ok "(t13) with EVERY theme already covered the deferral blocks are still PRINTED — an empty batch is not an empty report" \
+  || no "(t13) the deferral blocks vanished when 0 rules were emitted, yet the diagnostic says 'named above'"
+grep -qF 'are ALREADY COVERED by a live rule' "$ROOT/t2.txt" \
+  && ok "(t14) the empty-batch diagnostic names already-covered as the measured cause" \
+  || no "(t14) the empty batch does not name the already-covered cause: $(grep -F '(empty batch' "$ROOT/t2.txt" | head -1)"
+grep -qF 'no theme reached the support floor' "$ROOT/t2.txt" \
+  && no "(t15) the all-covered run blames the support floor — a cause its own numbers refute (support 6 >= floor 4)" \
+  || ok "(t15) the all-covered run does NOT blame the support floor"
+
+# ---- --dup-pct 101 is the documented measurement run: defers nothing, prints every percentage ----
+run_harvest "$TD" --session-id "fx-t3" --min-support 4 --cap 5 --no-writer --dup-pct 101
+printf '%s\n' "$OUT" > "$ROOT/t3.txt"
+if ! grep -qF 'DEFERRED — ALREADY COVERED' "$ROOT/t3.txt" \
+   && grep -qE '^     store dedupe: NEW — nearest of the 1 live rule\(s\) is .* at [0-9]+%' "$ROOT/t3.txt"; then
+  ok "(t16) --dup-pct 101 defers nothing and still prints each proposal's nearest live rule and exact percentage — the header's re-derivation recipe works"
+else
+  no "(t16) --dup-pct 101 did not behave as the header documents: $(grep -cF 'DEFERRED — ALREADY COVERED' "$ROOT/t3.txt") deferral(s)"
+fi
+
+# ---- an unparseable store file is NAMED, and the dedupe pass says it is UNVERIFIED ----
+TD4="$(new_repo)"
+rec 1 "count drift in the banner" '["src/a/x.md"]' 6 > "$TD4/.supervisor/postmortem/results.jsonl"
+seed_rule "$TD4" "$LIVE_ID" "$LIVE_STMT" other
+printf '{ not json at all\n' > "$TD4/.agent/rules/broken.json"
+run_harvest "$TD4" --session-id "fx-t4" --min-support 4 --cap 5 --no-writer
+printf '%s\n' "$OUT" > "$ROOT/t4.txt"
+[ "$RC" -eq 0 ] \
+  && ok "(t17) an unparseable rule file is not fatal — the harvest still runs and exits 0" \
+  || no "(t17) an unparseable rule file killed the run (exit $RC)"
+if grep -qF 'NOT PARSEABLE as a rule array — broken.json' "$ROOT/t4.txt" \
+   && grep -qF 'UNVERIFIED against broken.json' "$ROOT/t4.txt"; then
+  ok "(t18) the unreadable file is NAMED in both 'inputs read' and the dedupe metric, which states the pass is UNVERIFIED against it — silence there would read as 'checked, and clean'"
+else
+  no "(t18) the unparseable file is not named/disclosed: $(grep -F 'PARSEABLE' "$ROOT/t4.txt" | head -1)"
+fi
+grep -qF 'DEFERRED — ALREADY COVERED by a live rule' "$ROOT/t4.txt" \
+  && ok "(t19) the readable sibling file is still deduped against — one broken file does not disarm the whole pass" \
+  || no "(t19) the readable rule file was skipped along with the broken one"
+
+# ---- an ABSENT store is a normal empty case ----
+TD5="$(new_repo)"
+rec 1 "count drift in the banner" '["src/a/x.md"]' 6 > "$TD5/.supervisor/postmortem/results.jsonl"
+rm -rf "$TD5/.agent"
+run_harvest "$TD5" --session-id "fx-t5" --min-support 4 --cap 5 --no-writer
+if [ "$RC" -eq 0 ] && printf '%s\n' "$OUT" | grep -qF 'store dedupe: no live rule to compare against'; then
+  ok "(t20) an absent rules store exits 0 and says outright that nothing could have been deduped"
+else
+  no "(t20) an absent store misbehaved (exit $RC): $(printf '%s\n' "$OUT" | grep -F 'store dedupe' | head -1)"
+fi
+
+# ---- a non-numeric --dup-pct is a usage error, like every other numeric flag ----
+run_harvest "$TD" --session-id "fx-t6" --no-writer --dup-pct abc
+[ "$RC" -eq 2 ] \
+  && ok "(t21) a non-numeric --dup-pct exits 2 (usage error) rather than silently comparing against a garbage floor" \
+  || no "(t21) --dup-pct abc exited $RC, expected 2"
+
+# ---- BOTH deferral causes in ONE empty batch: the cap arm AND the already-covered arm ----
+# The `and a further N theme(s)` continuation line under the cap sentence was REACHABLE and CORRECT
+# and NEVER EXECUTED: every fixture that seeds a live rule ran with --cap 5 (never exhausted), and
+# the only --cap 0 fixture (section P) seeds no rule, so the two counters were never both non-zero
+# in the same run. Reasoned about, not run — which is this file's most-repeated defect class, and
+# the reason (T) reuses $TD here rather than trusting the trace. $TD has exactly the needed shape:
+# restated-count-version (6 findings) is already covered, doc-currency-drift (4) is not, so at
+# --cap 0 the first defers as already-covered (before the cap check, spending no slot) and the
+# second is turned away by the bound.
+run_harvest "$TD" --session-id "fx-t7" --min-support 4 --cap 0 --no-writer
+printf '%s\n' "$OUT" > "$ROOT/t7.txt"
+if grep -qF '0 emitted, 2 deferred: 1 by the cap, 1 already covered by a live rule' "$ROOT/t7.txt"; then
+  ok "(t22) with one theme cap-deferred and one already-covered, the header attributes each to its own cause"
+else
+  no "(t22) the two deferral causes are not both counted: $(grep -F 'proposed rule batch' "$ROOT/t7.txt" | head -1)"
+fi
+grep -qE '\(empty batch — but NOT for want of evidence: 1 theme\(s\) reached the 4-finding support floor and were deferred by the cap=0 batch bound' "$ROOT/t7.txt" \
+  && ok "(t23) the cap sentence counts ONLY the cap-deferred theme — the already-covered one is not folded into it" \
+  || no "(t23) the cap sentence is wrong or missing: $(grep -F '(empty batch' "$ROOT/t7.txt" | head -1)"
+grep -qF '(and a further 1 theme(s) were deferred as ALREADY COVERED by a live rule' "$ROOT/t7.txt" \
+  && ok "(t24) the continuation line fires, so the empty-batch diagnostic names BOTH measured causes rather than only the first" \
+  || no "(t24) the already-covered continuation line did not fire alongside the cap sentence"
+grep -qF 'DEFERRED — ALREADY COVERED by a live rule' "$ROOT/t7.txt" \
+  && ok "(t25) the deferral block is still printed in the combined case — 'named above' remains true" \
+  || no "(t25) the diagnostic says 'named above' but no deferral block was printed"
+grep -qF 'no theme reached the support floor' "$ROOT/t7.txt" \
+  && no "(t26) the combined run still blames the support floor — a cause its own numbers refute" \
+  || ok "(t26) the combined run does not blame the support floor"
+
+# ---- MUTATION CONTROL M18: make the continuation line unreachable ----
+# `-ge 0` is true for every count, so the `||` short-circuits and the line never runs — the state
+# the branch was in before (t24) existed, when it had only ever been reasoned about.
+MUT18="$ROOT/mut-nocontinuation.sh"
+sed 's@^  \[ "$DUP_DEFERRED" -eq 0 \] || \\$@  [ "$DUP_DEFERRED" -ge 0 ] || \\@' "$HARVEST" > "$MUT18"
+if ! cmp -s "$HARVEST" "$MUT18" && bash -n "$MUT18" 2>/dev/null; then
+  M18OUT="$( bash "$MUT18" --root "$TD" --session-id fx-m18 --min-support 4 --cap 0 --no-writer 2>&1 )" || true
+  if printf '%s\n' "$M18OUT" | grep -qF '(and a further 1 theme(s) were deferred as ALREADY COVERED'; then
+    no "(M18) REFUTED: the continuation line still printed with its guard always-true — (t24) is vacuous"
+  elif printf '%s\n' "$M18OUT" | grep -qF 'were deferred by the cap=0 batch bound'; then
+    ok "(M18) CONFIRMED: with the guard always-true the cap sentence still prints but the already-covered continuation is silently lost — (t24) is load-bearing"
+  else
+    no "(M18) the mutant printed neither sentence — the control proved nothing"
+  fi
+else
+  no "(M18) the continuation-line mutation did not land"
+fi
+
+# ---- MUTATION CONTROL M16: remove the dedupe pass ⇒ the duplicate is proposed again ----
+# `if false` at the decision point leaves every line of reporting in place and removes only the
+# comparison — the state the script was in before this pass existed.
+MUT16="$ROOT/mut-nodedupe.sh"
+sed 's@^  if nearest_live_rule "$(theme_field "$k" statement)"; then$@  if false; then@' "$HARVEST" > "$MUT16"
+if ! cmp -s "$HARVEST" "$MUT16" && bash -n "$MUT16" 2>/dev/null; then
+  M16OUT="$( bash "$MUT16" --root "$TD" --session-id fx-m16 --min-support 4 --cap 5 --no-writer 2>&1 )" || true
+  printf '%s\n' "$M16OUT" > "$ROOT/m16.txt"
+  if grep -qF 'DEFERRED — ALREADY COVERED' "$ROOT/m16.txt"; then
+    no "(M16) REFUTED: the duplicate is still deferred with the dedupe pass removed — (t2)/(t3) are vacuous"
+  elif grep -qE '^  [12]\) \[process\] theme=restated-count-version' "$ROOT/m16.txt"; then
+    ok "(M16) CONFIRMED: with the dedupe pass removed the already-covered theme is proposed as a rule again, exactly as it was before — (t2)/(t3)/(t7)/(t8) are load-bearing"
+  else
+    no "(M16) the mutant neither deferred nor emitted the duplicate theme — the control proved nothing"
+  fi
+else
+  no "(M16) the dedupe-removal mutation did not land"
+fi
+
+# ---- MUTATION CONTROL M17: credit the deferred findings to the PROPOSED batch ----
+# The denominator half of this section stands or falls on one line. Silently counting an
+# already-covered theme's findings as mapped would print a flattering `coverage: 10/10 (100%)` for a
+# batch that proposed one rule over four findings — the self-crediting arithmetic (t7)/(t8) exist to
+# prevent. Mutating it must break BOTH, or they are decoration.
+MUT17="$ROOT/mut-selfcredit.sh"
+sed 's@^    COVERED_EXISTING=$((COVERED_EXISTING + fid_n))$@    MAPPED=$((MAPPED + fid_n))@' "$HARVEST" > "$MUT17"
+if ! cmp -s "$HARVEST" "$MUT17" && bash -n "$MUT17" 2>/dev/null; then
+  M17OUT="$( bash "$MUT17" --root "$TD" --session-id fx-m17 --min-support 4 --cap 5 --no-writer 2>&1 )" || true
+  printf '%s\n' "$M17OUT" > "$ROOT/m17.txt"
+  if grep -qF 'coverage:        4/10 convention_mismatch findings (40%)' "$ROOT/m17.txt" \
+     || grep -qF 'already covered by the live store: 6/10 findings (60%)' "$ROOT/m17.txt"; then
+    no "(M17) REFUTED: crediting the deferred findings to the proposed batch changed neither figure — (t7)/(t8) are vacuous"
+  else
+    ok "(M17) CONFIRMED: crediting them to the batch reports '$(grep -F 'coverage:        ' "$ROOT/m17.txt" | head -1 | sed 's/^ *//')' — (t7)/(t8) are load-bearing"
+  fi
+else
+  no "(M17) the self-crediting mutation did not land"
 fi
 
 echo

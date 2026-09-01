@@ -28,6 +28,11 @@ READ="$HERE/read-system-contract.sh"
 REAL_REPO="$(cd "$HERE/../.." && pwd)"
 
 pass=0; fail=0
+# COUNTING NOTE (a PR #163 reviewer manually counted CALL SITES and got a materially higher number
+# than the RESULT line): `ok`/`no` call sites far outnumber executed assertions, because the
+# dominant idiom here is `<test> && ok "..." || no "..."` — two call sites, one execution — and
+# because SEED-FAILED guards add a `no` arm that a green run never reaches. Measured on this file:
+# 175 call sites, 118 executed. The RESULT line is the count to quote; a grep of call sites is not.
 ok() { echo "  ok: $1"; pass=$((pass+1)); }
 no() { echo "  FAIL: $1"; fail=$((fail+1)); }
 
@@ -671,6 +676,378 @@ else
   no "(uf3) the mutant does not parse — it could not discriminate anything"
 fi
 rm -rf "$UFTMP" 2>/dev/null   # a mutated writer must never outlive its own control
+
+# =============================================================================
+# 16-18. THE 2026-09-01 DARK-READ-PATH INCIDENT.
+#
+# Root cause, proven rather than guessed: on 2026-08-12 a tree-wide rebrand `sed`
+# (`ai-agent-manager-plugin` -> `loomwright`) rewrote all 21 bodies under
+# .supervisor/twin/contracts/ IN PLACE. `.supervisor/twin/` is gitignored, so the edit was invisible
+# to CI and to review; it never went through the sole writer, so no provenance was appended. Every
+# contract hash then lacked a chain-valid `add` and the read gate dropped 100% of the store on every
+# read for two weeks. (The mechanism was confirmed by reversing the substitution and re-hashing: all
+# 21 of 21 files reproduced a ledger content_hash.)
+#
+# Three mechanisms failed together, and each gets a section below:
+#   16. the READ RESULT could not SAY "everything was dropped" — it printed what an empty store
+#       prints, so every consumer recorded `skipped` and the loss was silent;
+#   17. the WRITER could not REPAIR it — the dedup guard short-circuited on hash equality alone, so
+#       re-running the builder over the same bodies exited 0 and appended nothing, forever;
+#   18. there was no sanctioned RECOVERY PATH, which left hand-editing the ledger — forging exactly
+#       the evidence the gate exists to demand — as the only way out.
+#
+# EVERY SECTION CARRIES A CONTROL. All three fixtures are trivially green against a merely EMPTY
+# store, which is the whole difficulty of this incident, so an uncontrolled assertion here would
+# pass with the mechanism deleted.
+# =============================================================================
+
+# mk_twin_repo <dir> — a primary-checkout fixture with a working twin store.
+mk_twin_repo() {
+  mkdir -p "$1" && ( cd "$1" && git init -q && git config user.email t@t && git config user.name t \
+    && echo init > f && git add f && git commit -qm init ) >/dev/null 2>&1
+}
+
+echo "== 16. the read gate distinguishes an EMPTY store from a 100%-DROPPED one =="
+DK="$(mktemp -d)"; mk_twin_repo "$DK"
+( cd "$DK" \
+  && printf 'SYSTEM_CONTRACT alpha\nsubsystem: alpha\ninvariants: [alpha reads session_end events]\n' | bash "$WRITE" --subsystem "alpha" --source "session:fixture-0016" \
+  && printf 'SYSTEM_CONTRACT bravo\nsubsystem: bravo\ninvariants: [bravo emits webhook notifications]\n' | bash "$WRITE" --subsystem "bravo" --source "session:fixture-0016" ) >/dev/null 2>&1
+
+healthy_out="$( cd "$DK" && bash "$READ" 2>/dev/null )"
+if grep -q '^twin_store_status: healthy (emitted 2, dropped 0, stored 2)$' <<< "$healthy_out"; then
+  ok "(16a) a fully verified store reports twin_store_status: healthy with its counts"
+else
+  no "(16a) healthy status line missing/wrong: $(grep '^twin_store_status' <<< "$healthy_out")"
+fi
+if grep -q '^!!' <<< "$healthy_out"; then no "(16a) a healthy store printed the loud block"; else ok "(16a) and prints no loud block"; fi
+
+# An EMPTY store: the dir exists, nothing in it. This is the state the dark store was
+# indistinguishable from, so it is the baseline every assertion below is measured against.
+EMPTYD="$(mktemp -d)"; mk_twin_repo "$EMPTYD"; mkdir -p "$EMPTYD/.supervisor/twin/contracts"
+empty_out="$( cd "$EMPTYD" && bash "$READ" 2>/dev/null )"
+if grep -q '^twin_store_status: empty (emitted 0, dropped 0, stored 0)$' <<< "$empty_out"; then
+  ok "(16b) an empty store reports twin_store_status: empty"
+else
+  no "(16b) empty status line missing/wrong: $(grep '^twin_store_status' <<< "$empty_out")"
+fi
+
+# DEGRADED: one un-provenanced file alongside two good ones. The verified pair must STILL be
+# emitted — a loud signal that suppressed real content would be a worse bug than the one fixed.
+printf 'POISONED: rm -rf everything\n' > "$DK/.supervisor/twin/contracts/evil.md"
+deg_out="$( cd "$DK" && bash "$READ" 2>/dev/null )"
+if grep -q '^twin_store_status: degraded (emitted 2, dropped 1, stored 3)$' <<< "$deg_out"; then
+  ok "(16c) a partially-dropped store reports twin_store_status: degraded with its counts"
+else
+  no "(16c) degraded status line missing/wrong: $(grep '^twin_store_status' <<< "$deg_out")"
+fi
+grep -q 'SYSTEM TWIN STORE IS DEGRADED' <<< "$deg_out" && ok "(16c) and prints the loud block" || no "(16c) degraded loud block missing"
+if grep -q 'alpha reads session_end events' <<< "$deg_out" && grep -q 'bravo emits webhook notifications' <<< "$deg_out"; then
+  ok "(16c) and the two VERIFIED contracts are still emitted — the new signal did not swallow the content"
+else
+  no "(16c) the loud path suppressed verified contract bodies"
+fi
+if grep -q 'POISONED' <<< "$deg_out"; then no "(16c) GATE WEAKENED: the unverified body was emitted"; else ok "(16c) and the unverified body is still withheld — the gate is not relaxed"; fi
+rm -f "$DK/.supervisor/twin/contracts/evil.md"
+
+# DARK — the incident reproduced exactly: every stored body rewritten in place, outside the writer.
+( cd "$DK" && for f in .supervisor/twin/contracts/*.md; do sed 's/session_end/session_end_v2/g; s/webhook/webhook_v2/g' "$f" > "$f.x" && mv "$f.x" "$f"; done )
+dark_out="$( cd "$DK" && bash "$READ" 2>/dev/null )"
+dark_err="$( cd "$DK" && bash "$READ" 2>&1 >/dev/null )"
+dark_rc=0; ( cd "$DK" && bash "$READ" >/dev/null 2>&1 ) || dark_rc=$?
+if grep -q '^twin_store_status: dark (emitted 0, dropped 2, stored 2)$' <<< "$dark_out"; then
+  ok "(16d) an out-of-band rewrite of every body reports twin_store_status: dark"
+else
+  no "(16d) dark status line missing/wrong: $(grep '^twin_store_status' <<< "$dark_out")"
+fi
+grep -q 'SYSTEM TWIN READ PATH IS DARK' <<< "$dark_out" && ok "(16d) and prints the loud DARK block on STDOUT, where the consumers already look" || no "(16d) dark loud block missing from stdout"
+grep -q 'reprovenance-twin-contracts.sh' <<< "$dark_out" && ok "(16d) and names the sanctioned repair path" || no "(16d) dark block does not name the repair path"
+grep -q 'READ PATH DARK' <<< "$dark_err" && ok "(16d) and escalates on stderr too" || no "(16d) stderr not escalated for the dark case"
+[ "$dark_rc" -eq 0 ] && ok "(16d) and STILL exits 0 — a read must never fail its caller" || no "(16d) dark read exited $dark_rc"
+if grep -q 'session_end' <<< "$dark_out"; then no "(16d) GATE WEAKENED: a dropped body was emitted anyway"; else ok "(16d) and emits no contract content — the gate itself is unchanged"; fi
+
+# THE CONTROL, stated as the defect rather than as a code edit: the only thing the pre-fix reader
+# printed for EITHER state was the legacy sentinel. Assert (i) both states still print it, so the
+# sentinel genuinely cannot discriminate and every consumer keying on it was right to be confused,
+# and (ii) the new status line DOES discriminate. Without (i) this section argues with a strawman.
+if grep -qF '(no verified System Twin contracts)' <<< "$dark_out" && grep -qF '(no verified System Twin contracts)' <<< "$empty_out"; then
+  ok "(16e) NON-VACUITY: the legacy sentinel is printed IDENTICALLY by the dark and the empty store — as blind as the incident showed, and kept verbatim because self-heal-advisory pins that exact string"
+else
+  no "(16e) the legacy sentinel is no longer printed by both states — the pinned-consumer-string regression net is gone"
+fi
+if [ "$(grep '^twin_store_status' <<< "$dark_out")" != "$(grep '^twin_store_status' <<< "$empty_out")" ]; then
+  ok "(16e) CONFIRMED: the status line is the ONLY thing separating dark from empty — delete it and this whole section goes RED"
+else
+  no "(16e) dark and empty still produce the same status line — they remain indistinguishable"
+fi
+rm -rf "$EMPTYD"
+
+echo "== 17. the sole writer can RE-PROVENANCE a body that was changed out of band =="
+# This is the half that made the incident permanent. The store was recoverable in principle the
+# whole time; the writer simply refused to believe there was anything to do.
+RP="$(mktemp -d)"; mk_twin_repo "$RP"
+( cd "$RP" && printf 'SYSTEM_CONTRACT charlie\nsubsystem: charlie\ninvariants: [charlie parses provenance ledgers]\n' | bash "$WRITE" --subsystem "charlie" --source "session:fixture-0017" ) >/dev/null 2>&1
+CFILE="$RP/.supervisor/twin/contracts/charlie.md"
+if [ ! -f "$CFILE" ]; then
+  no "(17) SEED FAILED — no contract artifact; this section would assert nothing"
+else
+  ( cd "$RP" && sed 's/provenance ledgers/provenance ledgers and hash chains/' "$CFILE" > "$CFILE.x" && mv "$CFILE.x" "$CFILE" )
+  pre="$( cd "$RP" && bash "$READ" 2>/dev/null )"
+  if grep -q '^twin_store_status: dark' <<< "$pre"; then
+    ok "(17a) fixture: the out-of-band edit really did darken the read path — the repair below has something to repair"
+    adds_before="$(grep -c '"action":"add"' "$RP/.supervisor/twin/.provenance.jsonl" 2>/dev/null)"; adds_before="${adds_before:-0}"
+    w_out="$( cd "$RP" && bash "$WRITE" --subsystem "charlie" --contract-file "$CFILE" --source "reprovenance:2026-09-01" 2>&1 )"; w_rc=$?
+    adds_after="$(grep -c '"action":"add"' "$RP/.supervisor/twin/.provenance.jsonl" 2>/dev/null)"; adds_after="${adds_after:-0}"
+    post="$( cd "$RP" && bash "$READ" 2>/dev/null )"
+    [ "$w_rc" -eq 0 ] && ok "(17b) re-writing the CURRENT body exits 0" || no "(17b) re-write exited $w_rc: $(tr '\n' ' ' <<< "$w_out")"
+    if [ "$adds_after" -eq "$((adds_before + 1))" ]; then
+      ok "(17b) and appends exactly one new 'add' entry — it did NOT short-circuit on hash equality"
+    else
+      no "(17b) provenance adds went $adds_before -> $adds_after (expected +1): $(tr '\n' ' ' <<< "$w_out")"
+    fi
+    if grep -q 'provenance ledgers and hash chains' <<< "$post"; then
+      ok "(17b) and the contract is emitted by the read gate again — the store self-heals through its own sole writer"
+    else
+      no "(17b) the contract still does not verify after re-provenancing"
+    fi
+  else
+    no "(17a) SEED FAILED — the out-of-band edit did not darken the read path; (17b) would assert nothing"
+  fi
+fi
+
+echo "== 17. MUTATION CONTROL: with the dedup guard back on hash-equality alone, (17b) goes RED =="
+# Restores the exact pre-fix condition — skip whenever the bytes match, never asking the read gate —
+# by replacing the delimited TRUST CHECK block with the old two-line short-circuit.
+DMUT="$(mktemp -d)"; DMW="$DMUT/write-system-contract.sh"
+cp "$WRITE" "$DMW"
+cp "$HERE/validate-entry.sh" "$DMUT/validate-entry.sh" 2>/dev/null
+cp "$READ" "$DMUT/read-system-contract.sh" 2>/dev/null
+awk '
+  /---- TRUST CHECK BEGIN ----/ { skip=1;
+    print "    echo \"write-system-contract: contract for '\''$SUBSYSTEM'\'' unchanged (hash $content_hash) — skipping\"";
+    print "    exit 0"; next }
+  /---- TRUST CHECK END ----/   { skip=0; next }
+  skip != 1 { print }
+' "$DMW" > "$DMW.mut" && mv "$DMW.mut" "$DMW"
+real_hits="$(grep -c 'WRITE_SYSTEM_CONTRACT_READER' "$WRITE" 2>/dev/null)"; real_hits="${real_hits:-0}"
+mut_hits="$(grep -c 'WRITE_SYSTEM_CONTRACT_READER' "$DMW" 2>/dev/null)"; mut_hits="${mut_hits:-0}"
+if bash -n "$DMW" 2>/dev/null && [ "$real_hits" -ge 1 ] && [ "$mut_hits" -eq 0 ]; then
+  ok "(17c) the mutation is NON-VACUOUS and parses: $real_hits trust-check reference(s) in the real writer, $mut_hits in the mutant"
+  DMR="$(mktemp -d)"; mk_twin_repo "$DMR"
+  ( cd "$DMR" && printf 'SYSTEM_CONTRACT delta\nsubsystem: delta\ninvariants: [delta parses provenance ledgers]\n' | bash "$DMW" --subsystem "delta" --source "session:fixture-0017" ) >/dev/null 2>&1
+  DFILE="$DMR/.supervisor/twin/contracts/delta.md"
+  if [ ! -f "$DFILE" ]; then
+    no "(17c) the mutant could not even seed a contract — it could not discriminate anything"
+  else
+    ( cd "$DMR" && sed 's/provenance ledgers/provenance ledgers and hash chains/' "$DFILE" > "$DFILE.x" && mv "$DFILE.x" "$DFILE" )
+    m_before="$(grep -c '"action":"add"' "$DMR/.supervisor/twin/.provenance.jsonl" 2>/dev/null)"; m_before="${m_before:-0}"
+    m_out="$( cd "$DMR" && bash "$DMW" --subsystem "delta" --contract-file "$DFILE" --source "reprovenance:2026-09-01" 2>&1 )"
+    m_after="$(grep -c '"action":"add"' "$DMR/.supervisor/twin/.provenance.jsonl" 2>/dev/null)"; m_after="${m_after:-0}"
+    m_post="$( cd "$DMR" && bash "$READ" 2>/dev/null )"
+    if [ "$m_after" -eq "$m_before" ] && grep -q 'unchanged' <<< "$m_out" && grep -q '^twin_store_status: dark' <<< "$m_post"; then
+      ok "(17c) CONFIRMED: the hash-equality-only guard reports 'unchanged — skipping', appends NOTHING, and leaves the store DARK — which is exactly why re-running the builder could not repair the real incident, and why (17b) is load-bearing"
+    else
+      no "(17c) REFUTED: the mutant also repaired the store (adds $m_before -> $m_after) — (17b) is passing for some other reason: $(tr '\n' ' ' <<< "$m_out")"
+    fi
+  fi
+  rm -rf "$DMR"
+else
+  no "(17c) the mutant does not parse, or the mutation did not land (real=$real_hits mutant=$mut_hits) — it could not discriminate anything"
+fi
+rm -rf "$DMUT" 2>/dev/null   # a mutated writer must never outlive its own control
+
+echo "== 17. the trust check's OWN fallback: read gate absent =="
+# The one branch of the trust check with no assertion until now, and it is the branch its own
+# comment calls out as dangerous — "a silent fall-back here is how the dark state stayed invisible
+# in the first place". It must (i) keep the historical idempotent no-op so a re-run never fails,
+# (ii) SAY it could not check, and (iii) write nothing. Deliberately mirrors how the VALIDATOR load
+# guard's absent-helper case is pinned two sections above. (PR #163 round-3 review.)
+AR="$(mktemp -d)"; mk_twin_repo "$AR"
+( cd "$AR" && printf 'SYSTEM_CONTRACT november\nsubsystem: november\ninvariants: [november reads session logs]\n' \
+    | bash "$WRITE" --subsystem "november" --source "session:fixture-0017r" ) >/dev/null 2>&1
+NFILE="$AR/.supervisor/twin/contracts/november.md"
+if [ ! -f "$NFILE" ]; then
+  no "(17d) SEED FAILED — no contract artifact; this case would assert nothing"
+else
+  # Darken it out of band, so WITH a reader present this call would re-provenance (that is 17b).
+  # The only variable under test here is whether the reader can be consulted at all.
+  ( cd "$AR" && sed 's/session logs/session logs and worker summaries/' "$NFILE" > "$NFILE.x" && mv "$NFILE.x" "$NFILE" )
+  ar_before="$(shasum -a 256 < "$AR/.supervisor/twin/.provenance.jsonl" | cut -d' ' -f1)"
+  ar_out="$( cd "$AR" && WRITE_SYSTEM_CONTRACT_READER="$AR/no-such-reader.sh" \
+      bash "$WRITE" --subsystem "november" --contract-file "$NFILE" --source "session:fixture-0017r" 2>&1 )"; ar_rc=$?
+  ar_after="$(shasum -a 256 < "$AR/.supervisor/twin/.provenance.jsonl" | cut -d' ' -f1)"
+  [ "$ar_rc" -eq 0 ] && ok "(17d) an unreadable read gate keeps the historical idempotent no-op (exit 0) — a re-run must not start failing because a helper is missing" || no "(17d) expected exit 0, got $ar_rc: $(tr '\n' ' ' <<< "$ar_out")"
+  grep -q 'COULD NOT BE CHECKED' <<< "$ar_out" \
+    && ok "(17d) and SAYS it could not be checked — the fallback is loud, not silent" \
+    || no "(17d) the fallback is silent about not having checked: $(tr '\n' ' ' <<< "$ar_out")"
+  grep -q 'no-such-reader.sh' <<< "$ar_out" \
+    && ok "(17d) and names the gate it could not reach" || no "(17d) the message does not name the missing reader"
+  [ "$ar_before" = "$ar_after" ] \
+    && ok "(17d) and the ledger is byte-unchanged — it does not append a speculative entry on a verdict it could not reach" \
+    || no "(17d) the could-not-check path mutated the provenance ledger"
+  # CONTROL: the SAME call with the real reader present DOES re-provenance. Without this, (17d)
+  # would pass equally well if the trust check had been deleted outright.
+  ctl_before="$(grep -c '"action":"add"' "$AR/.supervisor/twin/.provenance.jsonl" 2>/dev/null)"; ctl_before="${ctl_before:-0}"
+  ( cd "$AR" && bash "$WRITE" --subsystem "november" --contract-file "$NFILE" --source "session:fixture-0017r" ) >/dev/null 2>&1
+  ctl_after="$(grep -c '"action":"add"' "$AR/.supervisor/twin/.provenance.jsonl" 2>/dev/null)"; ctl_after="${ctl_after:-0}"
+  [ "$ctl_after" -eq "$((ctl_before + 1))" ] \
+    && ok "(17d) CONTROL: the identical call WITH the reader present DOES re-provenance — so (17d) pins the missing-gate branch, not a trust check that never fires" \
+    || no "(17d) CONTROL FAILED: adds $ctl_before -> $ctl_after with the real reader — (17d) may be vacuous"
+fi
+rm -rf "$AR" 2>/dev/null
+
+echo "== 18. reprovenance-twin-contracts.sh — the sanctioned recovery path =="
+REPRO="$HERE/reprovenance-twin-contracts.sh"
+if [ ! -r "$REPRO" ]; then
+  no "(18) reprovenance-twin-contracts.sh is missing — the read gate's own remedy text names a script that does not exist"
+else
+  PR3="$(mktemp -d)"; mk_twin_repo "$PR3"
+  ( cd "$PR3" \
+    && printf 'SYSTEM_CONTRACT echo\nsubsystem: echo\ninvariants: [echo parses session logs]\n'         | bash "$WRITE" --subsystem "echo"    --source "session:fixture-0018" \
+    && printf 'SYSTEM_CONTRACT foxtrot\nsubsystem: foxtrot\ninvariants: [foxtrot renders dashboards]\n' | bash "$WRITE" --subsystem "foxtrot" --source "session:fixture-0018" \
+    && printf 'SYSTEM_CONTRACT golf\nsubsystem: golf\ninvariants: [golf validates webhook payloads]\n'  | bash "$WRITE" --subsystem "golf"    --source "session:fixture-0018" ) >/dev/null 2>&1
+  n_seed="$(find "$PR3/.supervisor/twin/contracts" -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
+  if [ "${n_seed:-0}" -ne 3 ]; then
+    no "(18) SEED FAILED — $n_seed/3 contracts stored; this section would assert nothing"
+  else
+    # Reproduce the incident's shape: one substitution swept over every stored body.
+    ( cd "$PR3" && for f in .supervisor/twin/contracts/*.md; do sed 's/parses/reads/g; s/renders/draws/g; s/validates/checks/g' "$f" > "$f.x" && mv "$f.x" "$f"; done )
+    grep -q '^twin_store_status: dark' <<< "$( cd "$PR3" && bash "$READ" 2>/dev/null )" \
+      && ok "(18a) fixture: all three contracts are dark before the repair" || no "(18a) SEED FAILED — the store is not dark"
+
+    prov_before="$(shasum -a 256 < "$PR3/.supervisor/twin/.provenance.jsonl" | cut -d' ' -f1)"
+    rep_out="$( cd "$PR3" && bash "$REPRO" 2>&1 )"; rep_rc=$?
+    prov_after="$(shasum -a 256 < "$PR3/.supervisor/twin/.provenance.jsonl" | cut -d' ' -f1)"
+    [ "$rep_rc" -eq 0 ] && ok "(18b) the default (report) run exits 0" || no "(18b) report run exited $rep_rc"
+    if [ "$prov_before" = "$prov_after" ]; then
+      ok "(18b) and writes NOTHING — the ledger is byte-identical, so the report can never launder an out-of-band edit on its own"
+    else
+      no "(18b) the REPORT-ONLY run mutated the provenance ledger"
+    fi
+    grep -q 'UNVERIFIED:  3' <<< "$rep_out" && ok "(18b) and counts all three as unverified" || no "(18b) report miscounted: $(tr '\n' ' ' <<< "$rep_out")"
+    grep -q 'read path is 100% DARK' <<< "$rep_out" && ok "(18b) and names the 100%-dark state" || no "(18b) report does not name the dark state"
+    grep -q 'REPORT ONLY' <<< "$rep_out" && ok "(18b) and states that nothing was written" || no "(18b) report does not say it wrote nothing"
+
+    conf_out="$( cd "$PR3" && bash "$REPRO" --confirm 2>&1 )"; conf_rc=$?
+    post_out="$( cd "$PR3" && bash "$READ" 2>/dev/null )"
+    [ "$conf_rc" -eq 0 ] && ok "(18c) --confirm exits 0" || no "(18c) --confirm exited $conf_rc: $(tr '\n' ' ' <<< "$conf_out")"
+    if grep -q '^twin_store_status: healthy (emitted 3, dropped 0, stored 3)$' <<< "$post_out"; then
+      ok "(18c) and the store reads healthy again — all three verify through the UNCHANGED gate"
+    else
+      no "(18c) store not healthy after --confirm: $(grep '^twin_store_status' <<< "$post_out")"
+    fi
+    if grep -q 'echo reads session logs' <<< "$post_out" && grep -q 'golf checks webhook payloads' <<< "$post_out"; then
+      ok "(18c) and the CURRENT (edited) bodies are what consumers now receive"
+    else
+      no "(18c) repaired bodies not emitted"
+    fi
+    rp_src="$(grep -c '"source":"reprovenance:' "$PR3/.supervisor/twin/.provenance.jsonl" 2>/dev/null)"; rp_src="${rp_src:-0}"
+    [ "$rp_src" -eq 3 ] && ok "(18c) and each repair is labelled in the ledger as a re-provenance, not disguised as an ordinary write" || no "(18c) $rp_src/3 repairs carry a reprovenance source label"
+
+    # Idempotence: a second --confirm on a healthy store must find nothing and write nothing.
+    prov2="$(shasum -a 256 < "$PR3/.supervisor/twin/.provenance.jsonl" | cut -d' ' -f1)"
+    again="$( cd "$PR3" && bash "$REPRO" --confirm 2>&1 )"
+    prov3="$(shasum -a 256 < "$PR3/.supervisor/twin/.provenance.jsonl" | cut -d' ' -f1)"
+    if [ "$prov2" = "$prov3" ] && grep -q 'Nothing to re-provenance' <<< "$again"; then
+      ok "(18d) a second --confirm on a healthy store is a true no-op — the trust-aware dedup guard still deduplicates"
+    else
+      no "(18d) re-running --confirm on a healthy store was not a no-op"
+    fi
+
+    # The two refusals: a non-primary checkout, and an argument this script does not implement.
+    git -C "$PR3" worktree add -q "$PR3-wt" -b rpwt >/dev/null 2>&1
+    ( cd "$PR3-wt" && bash "$REPRO" >/dev/null 2>&1 ); wt_rc=$?
+    [ "$wt_rc" -eq 2 ] && ok "(18e) refuses to run from a linked worktree (exit 2), ahead of N individual writer refusals" || no "(18e) worktree run exited $wt_rc, expected 2"
+    git -C "$PR3" worktree remove --force "$PR3-wt" >/dev/null 2>&1
+    ( cd "$PR3" && bash "$REPRO" --store /tmp/elsewhere >/dev/null 2>&1 ); uf_rc=$?
+    [ "$uf_rc" -eq 2 ] && ok "(18e) refuses an unrecognised argument (exit 2) rather than silently ignoring a store-redirecting flag" || no "(18e) unknown-flag run exited $uf_rc, expected 2"
+  fi
+  rm -rf "$PR3" "$PR3-wt" 2>/dev/null
+fi
+rm -rf "$DK" "$RP" 2>/dev/null
+
+echo "== 19. per-subsystem status is the discriminator self-heal-advisory now depends on =="
+# The Phase 4.5 conformance step decides `unverified` vs `skipped` from the `twin_store_status:`
+# line of a `--subsystem` read: `dark` means "this id HAS a stored contract and the gate withheld
+# it", `empty` means "no contract for this id, nothing to withhold". Nothing pinned that
+# distinction, and it is load-bearing — collapse the two and a DEGRADED store where the touched
+# subsystem is the dropped one reports `skipped`, which is the silent loss this whole change
+# exists to end, scoped to one subsystem instead of the store. (PR #163 round-2 review.)
+PS="$(mktemp -d)"; mk_twin_repo "$PS"
+( cd "$PS" \
+  && printf 'SYSTEM_CONTRACT kilo\nsubsystem: kilo\ninvariants: [kilo reads session logs]\n'    | bash "$WRITE" --subsystem "kilo" --source "session:fixture-0019" \
+  && printf 'SYSTEM_CONTRACT lima\nsubsystem: lima\ninvariants: [lima renders dashboards]\n'    | bash "$WRITE" --subsystem "lima" --source "session:fixture-0019" ) >/dev/null 2>&1
+if [ ! -f "$PS/.supervisor/twin/contracts/kilo.md" ] || [ ! -f "$PS/.supervisor/twin/contracts/lima.md" ]; then
+  no "(19) SEED FAILED — need two stored contracts to build a DEGRADED store; this section would assert nothing"
+else
+  ( cd "$PS" && f=.supervisor/twin/contracts/lima.md && sed 's/renders/draws/' "$f" > "$f.x" && mv "$f.x" "$f" )
+  st_all="$(  cd "$PS" && bash "$READ"                     2>/dev/null | grep '^twin_store_status:')"
+  st_drop="$( cd "$PS" && bash "$READ" --subsystem "lima"  2>/dev/null | grep '^twin_store_status:')"
+  st_ok="$(   cd "$PS" && bash "$READ" --subsystem "kilo"  2>/dev/null | grep '^twin_store_status:')"
+  st_none="$( cd "$PS" && bash "$READ" --subsystem "mike"  2>/dev/null | grep '^twin_store_status:')"
+
+  case "$st_all"  in "twin_store_status: degraded"*) ok "(19a) fixture: the store as a whole is DEGRADED — the case the global probe alone cannot resolve" ;; *) no "(19a) SEED FAILED — store is not degraded: $st_all" ;; esac
+  case "$st_drop" in
+    "twin_store_status: dark"*) ok "(19b) a --subsystem read of a STORED-BUT-DROPPED id reports dark — this is what lets Phase 4.5 say 'unverified' inside a merely degraded store" ;;
+    *) no "(19b) stored-but-dropped id did not report dark: $st_drop" ;;
+  esac
+  case "$st_none" in
+    "twin_store_status: empty"*) ok "(19c) and a NEVER-STORED id reports empty, not dark — so the rule above cannot fire on a subsystem that simply has no contract" ;;
+    *) no "(19c) never-stored id did not report empty: $st_none" ;;
+  esac
+  case "$st_ok" in
+    "twin_store_status: healthy"*) ok "(19d) and a VERIFIED id reports healthy" ;;
+    *) no "(19d) verified id did not report healthy: $st_ok" ;;
+  esac
+  # NON-VACUITY: the three per-id verdicts must actually DIFFER. If a future change collapsed them
+  # to one value every case above would still "pass" its own grep while discriminating nothing.
+  if [ "$st_drop" != "$st_none" ] && [ "$st_drop" != "$st_ok" ] && [ "$st_none" != "$st_ok" ]; then
+    ok "(19e) NON-VACUITY: dropped / never-stored / verified produce three DISTINCT per-subsystem verdicts — collapse any two and the Phase 4.5 rule silently mis-classifies"
+  else
+    no "(19e) the per-subsystem verdicts are not all distinct (dropped=$st_drop none=$st_none ok=$st_ok)"
+  fi
+fi
+rm -rf "$PS" 2>/dev/null
+
+echo "== 20. the Phase 4.5 status decision tests WITHHELD before it tests checked =="
+# WHAT THIS CAN AND CANNOT DO, stated up front. self-heal-advisory/SKILL.md is agent-followed
+# pseudocode, not executable, so no fixture can run it — section 19 pins the per-subsystem
+# discriminator the rule CONSUMES, and nothing can pin the agent's behaviour. What IS mechanically
+# checkable is the rule's STRUCTURE, and the structure is exactly what went wrong: nesting the
+# withheld test under `if not checked` made a run that verified ANY touched subsystem stop asking
+# whether another one was withheld, so a mixed A-verified / B-withheld PR reported `pass` over an
+# invisible dropped contract (PR #163 round-4 review). This is the "prompt is program" convention:
+# a static invariant over a prompt surface, which is weaker than a behavioural test and much
+# stronger than nothing.
+SK="$(cd "$HERE/../.." && pwd)/loomwright/skills/self-heal-advisory/SKILL.md"
+if [ ! -r "$SK" ]; then
+  no "(20) self-heal-advisory/SKILL.md not readable at $SK — this section would assert nothing"
+else
+  ln_withheld="$(grep -n '^if twin_store_status == "dark" or touched_contract_withheld:' "$SK" | head -1 | cut -d: -f1)"
+  ln_checked="$( grep -n '^elif not contract_conformance.checked:'                        "$SK" | head -1 | cut -d: -f1)"
+  ln_pass="$(    grep -n '^  contract_conformance.status = "pass"'                        "$SK" | head -1 | cut -d: -f1)"
+  if [ -z "$ln_withheld" ] || [ -z "$ln_checked" ] || [ -z "$ln_pass" ]; then
+    no "(20) SEED FAILED — could not locate the three anchors (withheld=$ln_withheld checked=$ln_checked pass=$ln_pass); the ordering assertions below would be vacuous"
+  else
+    ok "(20a) NON-VACUITY: all three decision anchors are present in the skill (withheld=$ln_withheld, checked=$ln_checked, pass=$ln_pass)"
+    [ "$ln_withheld" -lt "$ln_checked" ] \
+      && ok "(20b) the withheld test is a TOP-LEVEL branch evaluated BEFORE the checked test — a run that verified some other subsystem cannot stop asking whether one was withheld" \
+      || no "(20b) the withheld test no longer precedes the checked test (withheld=$ln_withheld, checked=$ln_checked) — the mixed A-verified/B-withheld PR reports pass again"
+    [ "$ln_withheld" -lt "$ln_pass" ] \
+      && ok "(20c) and BEFORE the pass branch — 'pass' can only be reached once withheld has been ruled out" \
+      || no "(20c) the pass branch is reachable without ruling out a withheld contract (withheld=$ln_withheld, pass=$ln_pass)"
+    # The withheld branch must never resolve to `pass` or `skipped`; those are the two verdicts
+    # that read as "nothing wrong here" and are the ones the incident hid behind.
+    withheld_block="$(sed -n "${ln_withheld},${ln_checked}p" "$SK")"
+    if grep -q 'status = "pass"' <<< "$withheld_block" || grep -q 'status = "skipped"' <<< "$withheld_block"; then
+      no "(20d) the withheld branch can resolve to pass/skipped — the two verdicts that read as 'nothing wrong here'"
+    else
+      ok "(20d) and the withheld branch resolves only to unverified / advisory_violations, never pass or skipped"
+    fi
+    grep -q 'status = "unverified"' <<< "$withheld_block" \
+      && ok "(20e) and it does reach unverified — the branch is not merely free of the wrong verdicts, it names the right one" \
+      || no "(20e) the withheld branch never sets unverified"
+  fi
+fi
 
 echo
 echo "RESULT: $pass passed, $fail failed"

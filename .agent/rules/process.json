@@ -10,5 +10,20 @@
       "added": "2026-08-03T15:45:02Z"
     },
     "applies_to": null
+  },
+  {
+    "id": "process-when-one-surface-restates-a-list-table-or-enumeration-owned-by-another-the-restating-copy-is-updated-in-the-same-change-as-its-authority-or-it-is-replaced-by-a-pointer-to-that-authority-a-second-copy-that-drifts-silently-is-the-defect-not-the-drift",
+    "category": "process",
+    "statement": "When one surface restates a list, table or enumeration owned by another, the restating copy is updated in the SAME change as its authority, or it is replaced by a pointer to that authority — a second copy that drifts silently is the defect, not the drift.",
+    "enforcement": "advisory",
+    "check": null,
+    "provenance": {
+      "source": "dreaming:auto-2026-08-20-013613",
+      "added": "2026-09-01T05:38:43Z"
+    },
+    "applies_to": [
+      "CLAUDE.md",
+      "loomwright/scripts/*"
+    ]
   }
 ]
