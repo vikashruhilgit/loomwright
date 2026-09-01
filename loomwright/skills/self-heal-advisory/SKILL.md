@@ -237,29 +237,47 @@ for each subsystem id derivable from `touched` (a path or a logical subsystem na
       contract_conformance.findings += { subsystem: "<id>", invariant: "<text>", severity: "advisory", detail: "<what in the diff diverges>" }
 
 contract_conformance.violations = len(contract_conformance.findings)
-if not contract_conformance.checked:
-  # No verified contracts exist for any touched subsystem, OR read-system-contract.sh emitted nothing
-  # (no sha tool / empty store). Graceful no-op.
-  if twin_store_status == "dark" or touched_contract_withheld:
-    # NOT the same thing. A contract IS stored — for every subsystem (`dark` store) or for one this
-    # PR touched (`touched_contract_withheld`, reachable while the store is merely `degraded`) —
-    # and the gate withheld it. This run was not "checked and found nothing to check"; it could not
-    # check. Recording that as `skipped` is exactly what hid a two-week, 100% capability loss (all
-    # 21 contracts dark from 2026-08-12, found 2026-09-01) behind a green advisory field.
-    contract_conformance.status = "unverified"
+
+# STATUS. The withheld test is FIRST and is NOT nested under `not checked`, and that is the whole
+# correction. Nesting it there — which is what the previous revision did — means a run that
+# verified ANY touched subsystem stops asking whether another one was withheld: a PR touching A
+# (verified, clean) and B (stored contract withheld in a merely `degraded` store) sets
+# `checked = true`, finds zero divergences among what it could read, and reports `pass`. That is a
+# clean advisory field over an invisible dropped contract — this incident's exact shape, relocated
+# from the whole run to one subsystem of it. `pass` must mean "checked, and clean"; a run that
+# could not read a contract it was supposed to check has not earned it.
+if twin_store_status == "dark" or touched_contract_withheld:
+  # A contract EXISTS and the gate withheld it — for every subsystem (`dark` store) or for one this
+  # PR touched (`touched_contract_withheld`, reachable while the store is only `degraded`). This
+  # run could not fully check. Recording it as `pass` or `skipped` is what hid a two-week, 100%
+  # capability loss (all 21 contracts dark from 2026-08-12, found 2026-09-01) behind a green field.
+  #
+  # It does NOT suppress real findings: divergences among the subsystems that COULD be read are
+  # still reported, because an actual violation is more actionable than an incomplete-check notice.
+  if contract_conformance.violations >= 1:
+    contract_conformance.status = "advisory_violations"
   else:
-    contract_conformance.status = "skipped"      # (use "unverified" instead when the tooling itself was unavailable)
+    contract_conformance.status = "unverified"     # never `pass`, never `skipped`
+elif not contract_conformance.checked:
+  # Nothing was stored for any touched subsystem, or the reader emitted nothing (no sha tool /
+  # empty store) — and nothing was withheld. Genuinely nothing to do. Graceful no-op.
+  contract_conformance.status = "skipped"        # (use "unverified" instead when the tooling itself was unavailable)
 elif contract_conformance.violations == 0:
   contract_conformance.status = "pass"
 else:
   contract_conformance.status = "advisory_violations"
 
-record_decision(phase: SELF_HEAL, decision: "contract_conformance: {status} ({violations} advisory)", rationale: "advisory only — heal_decision unchanged")
+# NAME THE WITHHELD IDS. `violations` deliberately counts invariant divergences ONLY — a withheld
+# contract is a check that did not happen, not a violation, and inflating the count would make a
+# dark store look like a wave of new violations. So the ids are carried in the decision line
+# instead, which is the surface that keeps them from vanishing when `status` alone cannot say
+# WHICH subsystem went unchecked.
+record_decision(phase: SELF_HEAL, decision: "contract_conformance: {status} ({violations} advisory{, N withheld: <ids> if any})", rationale: "advisory only — heal_decision unchanged")
 ```
 
 **Contract-conformance rules:**
 - Absent contracts (empty `.supervisor/twin/`, or `read-system-contract.sh` emits nothing) → `checked: false`, `status: skipped` (or `unverified` if the tooling itself was unavailable), `contracts_evaluated: 0`, `violations: 0`. Graceful no-op — never an error, never a fix.
-- **A WITHHELD contract is not an absent one.** Record `status: unverified`, not `skipped`, in either of two cases: the whole-store probe prints `twin_store_status: dark`, or a `--subsystem` read for a touched id prints `dark` (that id has a stored contract the gate withheld — reachable while the store overall is only `degraded`, which is the commoner shape). An unstored id reports `empty`, never `dark`, so this cannot fire on a subsystem that simply has no contract. Both keep `checked: false` and stay advisory — the difference is that `unverified` is honest about a capability that is *missing*, and `skipped` reads as *nothing to do*. The reader also prints a loud `!!` block naming the repair (`scripts/reprovenance-twin-contracts.sh`); surface it rather than swallowing it. Never work around a drop by `cat`-ing the contract files — the gate is deliberately strict and the drop is its verdict, not a malfunction.
+- **A WITHHELD contract is not an absent one.** Record `status: unverified`, not `skipped`, in either of two cases: the whole-store probe prints `twin_store_status: dark`, or a `--subsystem` read for a touched id prints `dark` (that id has a stored contract the gate withheld — reachable while the store overall is only `degraded`, which is the commoner shape). An unstored id reports `empty`, never `dark`, so this cannot fire on a subsystem that simply has no contract. **The withheld test is evaluated FIRST, independently of `checked`** — a run that verified some other touched subsystem must still not report `pass`, because `pass` means "checked, and clean" and this run could not read a contract it was meant to check. Real divergences still win the status (`advisory_violations`) since they are more actionable; the withheld ids are named in the decision line rather than counted as violations, because a check that did not happen is not a violation. These stay advisory — the difference is that `unverified` is honest about a capability that is *missing*, and `skipped` reads as *nothing to do*. The reader also prints a loud `!!` block naming the repair (`scripts/reprovenance-twin-contracts.sh`); surface it rather than swallowing it. Never work around a drop by `cat`-ing the contract files — the gate is deliberately strict and the drop is its verdict, not a malfunction.
 - `status: pass` requires `violations: 0`; `status: advisory_violations` requires `violations >= 1` and a non-empty `findings[]` (each `severity: info | advisory`).
 - This is a READ of the twin store via `read-system-contract.sh` only — it NEVER writes the twin store (the WRITE happens in the completion tail, below).
 - It runs on EVERY Phase 4.5 (PASS or ESCALATED); unlike the Rubric Grader it is not gated on PASS, because conformance reporting is informational and does not depend on trusting the code state.

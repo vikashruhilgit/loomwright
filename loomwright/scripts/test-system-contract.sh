@@ -28,6 +28,11 @@ READ="$HERE/read-system-contract.sh"
 REAL_REPO="$(cd "$HERE/../.." && pwd)"
 
 pass=0; fail=0
+# COUNTING NOTE (a PR #163 reviewer manually counted CALL SITES and got a materially higher number
+# than the RESULT line): `ok`/`no` call sites far outnumber executed assertions, because the
+# dominant idiom here is `<test> && ok "..." || no "..."` — two call sites, one execution — and
+# because SEED-FAILED guards add a `no` arm that a green run never reaches. Measured on this file:
+# 175 call sites, 118 executed. The RESULT line is the count to quote; a grep of call sites is not.
 ok() { echo "  ok: $1"; pass=$((pass+1)); }
 no() { echo "  FAIL: $1"; fail=$((fail+1)); }
 
@@ -1002,6 +1007,47 @@ else
   fi
 fi
 rm -rf "$PS" 2>/dev/null
+
+echo "== 20. the Phase 4.5 status decision tests WITHHELD before it tests checked =="
+# WHAT THIS CAN AND CANNOT DO, stated up front. self-heal-advisory/SKILL.md is agent-followed
+# pseudocode, not executable, so no fixture can run it — section 19 pins the per-subsystem
+# discriminator the rule CONSUMES, and nothing can pin the agent's behaviour. What IS mechanically
+# checkable is the rule's STRUCTURE, and the structure is exactly what went wrong: nesting the
+# withheld test under `if not checked` made a run that verified ANY touched subsystem stop asking
+# whether another one was withheld, so a mixed A-verified / B-withheld PR reported `pass` over an
+# invisible dropped contract (PR #163 round-4 review). This is the "prompt is program" convention:
+# a static invariant over a prompt surface, which is weaker than a behavioural test and much
+# stronger than nothing.
+SK="$(cd "$HERE/../.." && pwd)/loomwright/skills/self-heal-advisory/SKILL.md"
+if [ ! -r "$SK" ]; then
+  no "(20) self-heal-advisory/SKILL.md not readable at $SK — this section would assert nothing"
+else
+  ln_withheld="$(grep -n '^if twin_store_status == "dark" or touched_contract_withheld:' "$SK" | head -1 | cut -d: -f1)"
+  ln_checked="$( grep -n '^elif not contract_conformance.checked:'                        "$SK" | head -1 | cut -d: -f1)"
+  ln_pass="$(    grep -n '^  contract_conformance.status = "pass"'                        "$SK" | head -1 | cut -d: -f1)"
+  if [ -z "$ln_withheld" ] || [ -z "$ln_checked" ] || [ -z "$ln_pass" ]; then
+    no "(20) SEED FAILED — could not locate the three anchors (withheld=$ln_withheld checked=$ln_checked pass=$ln_pass); the ordering assertions below would be vacuous"
+  else
+    ok "(20a) NON-VACUITY: all three decision anchors are present in the skill (withheld=$ln_withheld, checked=$ln_checked, pass=$ln_pass)"
+    [ "$ln_withheld" -lt "$ln_checked" ] \
+      && ok "(20b) the withheld test is a TOP-LEVEL branch evaluated BEFORE the checked test — a run that verified some other subsystem cannot stop asking whether one was withheld" \
+      || no "(20b) the withheld test no longer precedes the checked test (withheld=$ln_withheld, checked=$ln_checked) — the mixed A-verified/B-withheld PR reports pass again"
+    [ "$ln_withheld" -lt "$ln_pass" ] \
+      && ok "(20c) and BEFORE the pass branch — 'pass' can only be reached once withheld has been ruled out" \
+      || no "(20c) the pass branch is reachable without ruling out a withheld contract (withheld=$ln_withheld, pass=$ln_pass)"
+    # The withheld branch must never resolve to `pass` or `skipped`; those are the two verdicts
+    # that read as "nothing wrong here" and are the ones the incident hid behind.
+    withheld_block="$(sed -n "${ln_withheld},${ln_checked}p" "$SK")"
+    if grep -q 'status = "pass"' <<< "$withheld_block" || grep -q 'status = "skipped"' <<< "$withheld_block"; then
+      no "(20d) the withheld branch can resolve to pass/skipped — the two verdicts that read as 'nothing wrong here'"
+    else
+      ok "(20d) and the withheld branch resolves only to unverified / advisory_violations, never pass or skipped"
+    fi
+    grep -q 'status = "unverified"' <<< "$withheld_block" \
+      && ok "(20e) and it does reach unverified — the branch is not merely free of the wrong verdicts, it names the right one" \
+      || no "(20e) the withheld branch never sets unverified"
+  fi
+fi
 
 echo
 echo "RESULT: $pass passed, $fail failed"
