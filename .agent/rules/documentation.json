@@ -1,0 +1,17 @@
+[
+  {
+    "id": "documentation-wording-that-carries-a-contract-a-heading-a-gate-greps-for-a-sentence-that-states-a-guarantee-is-treated-as-an-interface-renaming-it-is-a-change-to-that-interface-and-its-consumers-move-with-it",
+    "category": "documentation",
+    "statement": "Wording that carries a contract — a heading a gate greps for, a sentence that states a guarantee — is treated as an interface: renaming it is a change to that interface and its consumers move with it.",
+    "enforcement": "advisory",
+    "check": null,
+    "provenance": {
+      "source": "dreaming:auto-2026-08-20-013613",
+      "added": "2026-09-01T05:38:44Z"
+    },
+    "applies_to": [
+      "CLAUDE.md",
+      "AGENT_GUIDELINES.md"
+    ]
+  }
+]
