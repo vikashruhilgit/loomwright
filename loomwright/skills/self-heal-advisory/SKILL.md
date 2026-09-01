@@ -196,22 +196,38 @@ touched = paths from the integrated diff (read-only):
 
 contract_conformance = { checked: false, status: "skipped", contracts_evaluated: 0, violations: 0, findings: [] }
 
-# STORE-HEALTH PROBE — ONE no-arg call, made ONCE, BEFORE the per-subsystem loop.
-# `twin_store_status` is a property of the STORE, not of a subsystem, and it must be sampled that
-# way. Two shapes were tried and are wrong: (a) taking it from the LAST `--subsystem` read in the
-# loop below — that makes the verdict depend on `touched` ordering, so a PR touching a dark
-# subsystem and then one with no stored contract ends on `empty` and records `skipped`; and
-# (b) taking the worst status across the loop — still blind, because a store can be dark for
-# subsystems this PR does not touch, and every `--subsystem` read for an unstored id reports
-# `empty`. Both reintroduce the exact silent loss this probe exists to end. The extra call is the
-# price of an answer that is about the store.
+# STORE-HEALTH PROBE — TWO scopes, because "was this checkable?" has two independent answers and
+# either one alone is blind. MEASURED, on a store with one verified and one dropped contract:
+#
+#   whole store        -> degraded (emitted 1, dropped 1, stored 2)
+#   --subsystem <dropped>  -> dark    (emitted 0, dropped 1, stored 1)   stored, withheld
+#   --subsystem <verified> -> healthy (emitted 1, dropped 0, stored 1)
+#   --subsystem <unstored> -> empty   (emitted 0, dropped 0, stored 0)   nothing to withhold
+#
+# So a `--subsystem` read says `dark` EXACTLY when that id had a stored contract and the gate
+# withheld it — which is the per-id discriminator, and it is why "worst status across the loop"
+# is safe once scoped to touched ids only (an unstored id reports `empty`, never `dark`).
+#
+# GLOBAL scope catches a store that is dark for ids this PR does not touch — real, and invisible
+# to the loop. PER-ID scope catches the far more common case the global probe misses: a merely
+# DEGRADED store where the one subsystem this PR touches is the dropped one. Take the union.
+#
+# Rejected, recorded so it is not re-derived: sampling `twin_store_status` INSIDE the loop and
+# keeping the LAST value. That makes the verdict depend on `touched` ordering — a dark id followed
+# by an unstored id ends on `empty` and records `skipped`, reintroducing the exact silent loss
+# this probe exists to end.
 twin_store_status = bash ${CLAUDE_PLUGIN_ROOT}/scripts/read-system-contract.sh | grep '^twin_store_status:'
   # -> empty | healthy | degraded | dark. Always exits 0; an unreadable/absent reader leaves this
   #    unset, which is treated as "not dark" below (fail-safe: never invent a dark verdict).
+touched_contract_withheld = false
 
 for each subsystem id derivable from `touched` (a path or a logical subsystem name):
   # read-side provenance gate; NEVER `cat` the contract files directly.
   contract = bash ${CLAUDE_PLUGIN_ROOT}/scripts/read-system-contract.sh --subsystem "<id>"
+  if that output's `twin_store_status:` is `dark`:
+    # This id HAS a stored contract and the gate withheld it. Not "nothing to check" — could not
+    # check. True even when the store as a whole is only `degraded`.
+    touched_contract_withheld = true
   if contract has a verified body (not "(no verified System Twin contracts)"):
     contract_conformance.checked = true
     contract_conformance.contracts_evaluated += 1
@@ -224,11 +240,12 @@ contract_conformance.violations = len(contract_conformance.findings)
 if not contract_conformance.checked:
   # No verified contracts exist for any touched subsystem, OR read-system-contract.sh emitted nothing
   # (no sha tool / empty store). Graceful no-op.
-  if twin_store_status == "dark":
-    # NOT the same thing. Contracts ARE stored; every one of them failed provenance and was
-    # withheld, so this run was not "checked and found nothing to check" — it could not check at
-    # all. Recording it as `skipped` is exactly what hid a two-week, 100% capability loss (all 21
-    # contracts dark from 2026-08-12, found 2026-09-01) behind a green advisory field.
+  if twin_store_status == "dark" or touched_contract_withheld:
+    # NOT the same thing. A contract IS stored — for every subsystem (`dark` store) or for one this
+    # PR touched (`touched_contract_withheld`, reachable while the store is merely `degraded`) —
+    # and the gate withheld it. This run was not "checked and found nothing to check"; it could not
+    # check. Recording that as `skipped` is exactly what hid a two-week, 100% capability loss (all
+    # 21 contracts dark from 2026-08-12, found 2026-09-01) behind a green advisory field.
     contract_conformance.status = "unverified"
   else:
     contract_conformance.status = "skipped"      # (use "unverified" instead when the tooling itself was unavailable)
@@ -242,7 +259,7 @@ record_decision(phase: SELF_HEAL, decision: "contract_conformance: {status} ({vi
 
 **Contract-conformance rules:**
 - Absent contracts (empty `.supervisor/twin/`, or `read-system-contract.sh` emits nothing) → `checked: false`, `status: skipped` (or `unverified` if the tooling itself was unavailable), `contracts_evaluated: 0`, `violations: 0`. Graceful no-op — never an error, never a fix.
-- **A DARK store is not an absent one.** When the reader prints `twin_store_status: dark`, contracts are stored but every one failed provenance verification and was withheld, so record `status: unverified`, not `skipped`. Both keep `checked: false` and stay advisory — the difference is that `unverified` is honest about a capability that is *missing*, and `skipped` reads as *nothing to do*. The reader also prints a loud `!!` block naming the repair (`scripts/reprovenance-twin-contracts.sh`); surface it rather than swallowing it. Never work around a drop by `cat`-ing the contract files — the gate is deliberately strict and the drop is its verdict, not a malfunction.
+- **A WITHHELD contract is not an absent one.** Record `status: unverified`, not `skipped`, in either of two cases: the whole-store probe prints `twin_store_status: dark`, or a `--subsystem` read for a touched id prints `dark` (that id has a stored contract the gate withheld — reachable while the store overall is only `degraded`, which is the commoner shape). An unstored id reports `empty`, never `dark`, so this cannot fire on a subsystem that simply has no contract. Both keep `checked: false` and stay advisory — the difference is that `unverified` is honest about a capability that is *missing*, and `skipped` reads as *nothing to do*. The reader also prints a loud `!!` block naming the repair (`scripts/reprovenance-twin-contracts.sh`); surface it rather than swallowing it. Never work around a drop by `cat`-ing the contract files — the gate is deliberately strict and the drop is its verdict, not a malfunction.
 - `status: pass` requires `violations: 0`; `status: advisory_violations` requires `violations >= 1` and a non-empty `findings[]` (each `severity: info | advisory`).
 - This is a READ of the twin store via `read-system-contract.sh` only — it NEVER writes the twin store (the WRITE happens in the completion tail, below).
 - It runs on EVERY Phase 4.5 (PASS or ESCALATED); unlike the Rubric Grader it is not gated on PASS, because conformance reporting is informational and does not depend on trusting the code state.

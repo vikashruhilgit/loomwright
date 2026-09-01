@@ -920,6 +920,49 @@ else
 fi
 rm -rf "$DK" "$RP" 2>/dev/null
 
+echo "== 19. per-subsystem status is the discriminator self-heal-advisory now depends on =="
+# The Phase 4.5 conformance step decides `unverified` vs `skipped` from the `twin_store_status:`
+# line of a `--subsystem` read: `dark` means "this id HAS a stored contract and the gate withheld
+# it", `empty` means "no contract for this id, nothing to withhold". Nothing pinned that
+# distinction, and it is load-bearing — collapse the two and a DEGRADED store where the touched
+# subsystem is the dropped one reports `skipped`, which is the silent loss this whole change
+# exists to end, scoped to one subsystem instead of the store. (PR #163 round-2 review.)
+PS="$(mktemp -d)"; mk_twin_repo "$PS"
+( cd "$PS" \
+  && printf 'SYSTEM_CONTRACT kilo\nsubsystem: kilo\ninvariants: [kilo reads session logs]\n'    | bash "$WRITE" --subsystem "kilo" --source "session:fixture-0019" \
+  && printf 'SYSTEM_CONTRACT lima\nsubsystem: lima\ninvariants: [lima renders dashboards]\n'    | bash "$WRITE" --subsystem "lima" --source "session:fixture-0019" ) >/dev/null 2>&1
+if [ ! -f "$PS/.supervisor/twin/contracts/kilo.md" ] || [ ! -f "$PS/.supervisor/twin/contracts/lima.md" ]; then
+  no "(19) SEED FAILED — need two stored contracts to build a DEGRADED store; this section would assert nothing"
+else
+  ( cd "$PS" && f=.supervisor/twin/contracts/lima.md && sed 's/renders/draws/' "$f" > "$f.x" && mv "$f.x" "$f" )
+  st_all="$(  cd "$PS" && bash "$READ"                     2>/dev/null | grep '^twin_store_status:')"
+  st_drop="$( cd "$PS" && bash "$READ" --subsystem "lima"  2>/dev/null | grep '^twin_store_status:')"
+  st_ok="$(   cd "$PS" && bash "$READ" --subsystem "kilo"  2>/dev/null | grep '^twin_store_status:')"
+  st_none="$( cd "$PS" && bash "$READ" --subsystem "mike"  2>/dev/null | grep '^twin_store_status:')"
+
+  case "$st_all"  in "twin_store_status: degraded"*) ok "(19a) fixture: the store as a whole is DEGRADED — the case the global probe alone cannot resolve" ;; *) no "(19a) SEED FAILED — store is not degraded: $st_all" ;; esac
+  case "$st_drop" in
+    "twin_store_status: dark"*) ok "(19b) a --subsystem read of a STORED-BUT-DROPPED id reports dark — this is what lets Phase 4.5 say 'unverified' inside a merely degraded store" ;;
+    *) no "(19b) stored-but-dropped id did not report dark: $st_drop" ;;
+  esac
+  case "$st_none" in
+    "twin_store_status: empty"*) ok "(19c) and a NEVER-STORED id reports empty, not dark — so the rule above cannot fire on a subsystem that simply has no contract" ;;
+    *) no "(19c) never-stored id did not report empty: $st_none" ;;
+  esac
+  case "$st_ok" in
+    "twin_store_status: healthy"*) ok "(19d) and a VERIFIED id reports healthy" ;;
+    *) no "(19d) verified id did not report healthy: $st_ok" ;;
+  esac
+  # NON-VACUITY: the three per-id verdicts must actually DIFFER. If a future change collapsed them
+  # to one value every case above would still "pass" its own grep while discriminating nothing.
+  if [ "$st_drop" != "$st_none" ] && [ "$st_drop" != "$st_ok" ] && [ "$st_none" != "$st_ok" ]; then
+    ok "(19e) NON-VACUITY: dropped / never-stored / verified produce three DISTINCT per-subsystem verdicts — collapse any two and the Phase 4.5 rule silently mis-classifies"
+  else
+    no "(19e) the per-subsystem verdicts are not all distinct (dropped=$st_drop none=$st_none ok=$st_ok)"
+  fi
+fi
+rm -rf "$PS" 2>/dev/null
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
