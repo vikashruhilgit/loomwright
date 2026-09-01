@@ -45,6 +45,21 @@ The run is **read-only** — `harvest-conventions.sh` has no write mode at all, 
 create a branch, a commit, a PR, or a rule. If the output below is not what you get, this file is
 stale or hand-written and should be rejected on that basis.
 
+**THIS TRANSCRIPT PREDATES THE STORE DEDUPE PASS, and is deliberately not regenerated.** It was taken
+before the harvester compared its proposals against the live `.agent/rules/` store, so re-running
+**today's** script — at the pinned sha or at HEAD — prints strictly more than what follows: a
+`store dedupe:` line under every emitted proposal naming the nearest live rule it did *not* match, a
+`DEFERRED — ALREADY COVERED` block in place of any proposal a stored rule already makes, a
+`dup-pct=` threshold on the `thresholds:` line, a live-rule count under `rules store`, and a
+`store dedupe` / `already covered by the live store` / `COMBINED convention coverage` group in the
+metrics. The batch below is affected in substance and not only in shape: proposal 1
+(`restated-count-version`) is exactly the duplicate the pass was written to catch — the store has
+carried an equivalent rule since 2026-08-03 — so a re-run defers it and emits one fewer rule. It is
+left as-is because it is a **transcript of a specific run at a pinned commit**, not a specification
+of current output; regenerating it against a ledger that has since grown would silently move every
+number on the page. Read it for the derivation, the finding ids and the two-figure fidelity design;
+do not read it as the shape of a batch you will get today.
+
 Two things will legitimately differ on a re-run, and neither invalidates the rest:
 
 - **`--session-id`.** Omitted, it defaults to `dreaming:<UTC date>-<short HEAD sha>`, so it moves with
