@@ -354,14 +354,67 @@ if [ -n "$CURATION_LINE" ]; then
   append "$CURATION_LINE"$'\n\n'
 fi
 
-# Section 1: in-progress Supervisor jobs ----
+# Section 1: in-progress Supervisor briefs — RECONCILED, not asserted ----
+#
+# HISTORY (do not regress): this section used to list every file in
+# .supervisor/jobs/in-progress/ under the heading "In-progress briefs
+# (Supervisor was mid-run)". That heading is an ASSERTION the hook cannot
+# make. The brief lifecycle move to done/ is a PROMPT-INSTRUCTED completion-tail
+# step (skills/self-heal-advisory/SKILL.md step 2), so an agent that dies before
+# reaching it — e.g. a Phase 4.5 reviewer failing with a server error, observed
+# 2026-08-30 on PR #160 — strands a brief whose PR has already merged and
+# shipped. The old wording then pointed the reader at `/supervisor --continue`
+# for work that was already on the base branch, and repeated that lie every
+# session until a human moved the file by hand.
+#
+# We now classify via the sibling reconcile-jobs.sh and report only what the
+# disk can evidence. That script is OFFLINE BY CONSTRUCTION (it never calls the
+# forge CLI) precisely because this hook runs on every resume, where a network
+# round-trip would be a latency and offline-correctness problem.
+#
+# Fail-safe: an absent, unreadable or silent reconciler falls back to a NEUTRAL
+# listing — never back to the old claim. Nothing here can fail the hook.
+HAS_UNKNOWN_BRIEF=0
 if compgen -G ".supervisor/jobs/in-progress/*.md" > /dev/null 2>&1; then
-  append "### In-progress briefs (Supervisor was mid-run)"$'\n'
-  for f in .supervisor/jobs/in-progress/*.md; do
-    [ -f "$f" ] || continue
-    append "- $f"$'\n'
-  done
-  append $'\n'
+  SR_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd || echo .)"
+  RECONCILER="$SR_DIR/reconcile-jobs.sh"
+  PORCELAIN=""
+  [ -r "$RECONCILER" ] && PORCELAIN="$(bash "$RECONCILER" --porcelain 2>/dev/null || true)"
+
+  if [ -z "$PORCELAIN" ]; then
+    append "### In-progress briefs (state UNVERIFIED — reconciler unavailable)"$'\n'
+    for f in .supervisor/jobs/in-progress/*.md; do
+      [ -f "$f" ] || continue
+      append "- $f"$'\n'
+    done
+    append $'\n'
+    HAS_UNKNOWN_BRIEF=1
+  else
+    STRANDED=""
+    UNKNOWN=""
+    while IFS=$'\t' read -r st path ev; do
+      [ -n "${st:-}" ] || continue
+      case "$st" in
+        unknown) UNKNOWN="${UNKNOWN}- ${path}"$'\n' ;;
+        *)       STRANDED="${STRANDED}- ${path}"$'\n'"  - evidence: ${ev}"$'\n' ;;
+      esac
+    done <<< "$PORCELAIN"
+
+    if [ -n "$STRANDED" ]; then
+      append "### Stranded briefs — lifecycle move never ran (NOT resumable)"$'\n'
+      append "These briefs sit in in-progress/ but the disk says their work already completed."$'\n'
+      append "Do NOT resume them. Finish the move with: \`bash $RECONCILER --repair\`"$'\n'
+      append "$STRANDED"
+      append $'\n'
+    fi
+    if [ -n "$UNKNOWN" ]; then
+      append "### In-progress briefs (possibly mid-run — UNVERIFIED)"$'\n'
+      append "No offline evidence either way; unverified is not the same as stale."$'\n'
+      append "$UNKNOWN"
+      append $'\n'
+      HAS_UNKNOWN_BRIEF=1
+    fi
+  fi
 fi
 
 # Section 2: recent failed jobs (last 5 by mtime) ----
@@ -425,7 +478,9 @@ fi
 append "### Recovery hints"$'\n'
 append "- Read \`.supervisor/state.md\` for full context."$'\n'
 append "- Check \`git status\` and \`git worktree list\` for in-flight changes."$'\n'
-append "- Resume in-progress Supervisor work: \`/supervisor --continue task: <task_id>\`."$'\n'
+if [ "${HAS_UNKNOWN_BRIEF:-0}" -eq 1 ]; then
+  append "- Resume in-progress Supervisor work: \`/supervisor --continue task: <task_id>\` (only for briefs listed UNVERIFIED above — never for stranded ones)."$'\n'
+fi
 append "- Resume an aborted /autonomous run: re-launch with the same requirement; the loop is single-iteration-safe to re-run."$'\n'
 
 # ---- Hard-cap and emit -----------------------------------------------------

@@ -204,8 +204,14 @@ remaining() {
 # §2 — folder / backlog-doc resolvers
 # --------------------------------------------------------------------------- #
 
-# is_done <file> — true if the file is stamped "## Status: done".
-is_done() { grep -qE '^## Status:[[:space:]]*done\b' "$1" 2>/dev/null; }
+# is_done <file> — true when the file carries a terminal close-out stamp on its
+# `## Status:` HEADING line. Both terminal values count: `done_with_escalation`
+# work still SHIPPED, so re-picking it would redo merged work. (The `\b` after a
+# bare `done` does NOT match `done_with_escalation` — `_` is a word character —
+# which is why the escalated arm is spelled out rather than left to the boundary.)
+# Authority for what the completion tail writes here: skills/self-heal-advisory/SKILL.md
+# step 2.5, which stamps the value ON this heading for exactly this reason.
+is_done() { grep -qE '^## Status:[[:space:]]*done(_with_escalation)?\b' "$1" 2>/dev/null; }
 
 # resolve-folder <dir> — every *.md NOT marked "## Status: done" (sorted).
 resolve_folder() {
