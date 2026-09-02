@@ -10,7 +10,8 @@
 #   Loomwright · EXECUTE · feature/status-line · 3/4 · 2m ago
 #     phase     — `- phase:` from state.md
 #     branch    — `- branch:` from state.md, falling back to a read-only `git rev-parse`
-#     N/M       — COMPLETED subtask rows / total rows in state.md's `## Subtasks` table
+#     N/M       — finished subtask rows / total rows in state.md's `## Subtasks` table
+#                 (both table shapes that exist on disk are read — see "subtask progress" below)
 #     age       — how long ago the newest session-log line was written
 #   With no state file at all: `Loomwright · no run state`
 #
@@ -90,18 +91,56 @@ if [ -z "$BRANCH" ] && command -v git >/dev/null 2>&1; then
 fi
 
 # ---- subtask progress -------------------------------------------------------
-# Rows of the `## Subtasks` table only. The header and separator rows are skipped by requiring
-# a leading numeric cell, so a table whose columns change shape degrades to 0 rows (field
-# omitted) rather than counting the header as a subtask.
+# Rows of the `## Subtasks` table only.
+#
+# TWO TABLE SHAPES EXIST ON DISK, and this reader tolerates BOTH.
+#   Shape A — `| # | Title | Status | Review |`, bare-integer ids, statuses like
+#             `COMPLETED (36c39de)`. This is the live `.supervisor/state.md` and 10 of the 17
+#             files in `.supervisor/history/`.
+#   Shape B — `| ID | Title | Status | Worker | Worktree | Review | Attempts |`, ids like `ST1`,
+#             `subtask_1` or `BD-1.2`, lowercase `pending/in_progress/completed/failed`. This is
+#             the other 7 history files, and what skills/state-management/SKILL.md documents.
+# WHICH SHAPE IS AUTHORITATIVE IS AN UNRESOLVED OWNER DECISION that predates this script, and it
+# is NOT settled here: this is a read-only consumer being made tolerant of both, not a vote. The
+# earlier matcher required a leading NUMERIC cell, so it matched zero rows of Shape B and the
+# field simply vanished — fail-safe, but a coverage gap.
+#
+# COLUMN CONTRACT (shared with reconcile-resume-state.sh): ID is data column 1 and Status is data
+# column 3 — `c[2]` and `c[4]` after splitting on `|` — which holds for the 7-column schema, the
+# 4-column form, and the abbreviated 3-column form alike. Status is matched as a COLUMN, never as
+# a substring of the whole line: `$0 ~ /COMPLETED/` counted a subtask merely TITLED
+# "Delete the COMPLETED marker handling" as finished. If that schema ever reorders, fix these
+# indices — a mis-read Status is silent in both directions.
+#
+# NON-SUBTASK ROWS are dropped by the id cell: the `|---|---|` separator (a cell of only dashes
+# and colons) and the header (`#` / `ID`). Everything else with a non-empty id counts, whatever
+# its shape.
+#
+# DONE = SUCCESS-SHAPED TERMINAL STATUSES ONLY, a deliberate and tested divergence from the
+# sibling's vocabulary. reconcile-resume-state.sh's `is_terminal_status` also treats
+# FAILED/SKIPPED/ABANDONED as terminal, which is correct for its question ("is anything left to
+# re-run?"). It is wrong for this one: `N/M` reads as progress toward a finished result, and
+# rendering a failed subtask as done would present failure as success on a one-line surface that
+# carries no other per-subtask signal. Those three count toward M and never toward N.
+# Matching is case-insensitive and uses the status' FIRST WORD, so Shape B's `completed`,
+# `DONE (review PASS)`, `COMPLETED (36c39de)` and `COMPLETED WITH ESCALATION` all count.
 DONE=0
 TOTAL=0
 if [ -f "$STATE" ]; then
   counts="$(awk '
     /^## Subtasks/       { in_tbl=1; next }
     in_tbl && /^## /     { in_tbl=0 }
-    in_tbl && /^\|[[:space:]]*[0-9]+[[:space:]]*\|/ {
+    in_tbl && /^[[:space:]]*\|/ {
+      n = split($0, c, "[|]")
+      id = c[2]; gsub(/^[ \t]+|[ \t]+$/, "", id)
+      st = (n >= 5 ? c[4] : ""); gsub(/^[ \t]+|[ \t]+$/, "", st)
+      sub(/[ \t].*$/, "", st)          # first word: "COMPLETED (36c39de)" -> "COMPLETED"
+      uid = toupper(id); ust = toupper(st)
+      ok_id = (id != "" && id !~ /^[-:]+$/ && uid != "#" && uid != "ID")
+      if (!ok_id) next
       total++
-      if ($0 ~ /COMPLETED/) done++
+      is_done = (ust == "DONE" || ust == "DONE:" || ust == "COMPLETE" || ust == "COMPLETED" || ust == "MERGED")
+      if (is_done) done++
     }
     END { printf "%d %d\n", done+0, total+0 }
   ' "$STATE" 2>/dev/null)"

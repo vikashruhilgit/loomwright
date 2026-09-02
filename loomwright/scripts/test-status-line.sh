@@ -21,6 +21,15 @@
 #   (e) write containment: the script creates and modifies nothing, asserted by checksumming
 #       the whole fixture tree before and after
 #   (f) fail-safe: every branch exits 0, including an unknown flag and an unreadable state file
+#   (g) BOTH `## Subtasks` TABLE SHAPES are counted. Shape A (`| # | Title | Status | Review |`,
+#       numeric ids, `COMPLETED (sha)`) is the live state.md; Shape B (the 7-column schema in
+#       state-management/SKILL.md, ids like ST1 / subtask_1 / BD-1.2, lowercase `completed`) is
+#       7 of the 17 files in .supervisor/history/. mkstate() only ever manufactured Shape A,
+#       which is exactly why the suite never saw that Shape B matched ZERO rows. Includes the
+#       separator-row trap (N rows must report N, never N+1), the status-is-a-COLUMN trap (a
+#       subtask *titled* "Delete the COMPLETED marker handling" is not finished), the deliberate
+#       FAILED/SKIPPED/ABANDONED-are-not-done choice, and TWO MUTATION CONTROLS that revert each
+#       half of the widening and prove the Shape B fixture goes red without it
 #
 # NO `producer | grep -q` PIPELINES (SIGPIPE turns a match into rc=141 under pipefail). Every
 # text assertion captures stdout into a variable and matches it with a here-string.
@@ -347,6 +356,187 @@ if [ "$rc" -eq 0 ] && [ -n "$out" ]; then
   ok "(f3) a JSON blob on stdin is accepted (current_dir honoured) and exits 0"
 else
   no "(f3) a JSON blob on stdin is accepted (current_dir honoured) and exits 0" "rc=$rc out='$out'"
+fi
+
+echo "== (g) both Subtasks table shapes are counted =="
+
+# mkstate7 <root> <phase> <branch> <session_id> — a SHAPE B fixture: the 7-column schema from
+# skills/state-management/SKILL.md, non-numeric ids, and the lowercase / annotated statuses that
+# really occur in .supervisor/history/. Written out literally rather than generated from a
+# template, so the fixture IS the shape on disk rather than a paraphrase of it. mkstate() above
+# is left untouched and still manufactures Shape A — the point is that both must work.
+mkstate7() {
+  local root="$1" phase="$2" branch="$3" sid="$4"
+  mkdir -p "$root/.supervisor" || setup_fail "mkdir -p $root/.supervisor failed"
+  {
+    echo "# Supervisor State"
+    echo
+    echo "## Session"
+    echo "- session_id: $sid"
+    echo "- branch: $branch"
+    echo "- status: running"
+    echo "- phase: $phase"
+    echo
+    echo "## Subtasks"
+    echo "| ID | Title | Status | Worker | Worktree | Review | Attempts |"
+    echo "|----|-------|--------|--------|----------|--------|----------|"
+    echo "| ST1 | lowercase completed, as history files write it | completed | task | -- | PASS | 1/3 |"
+    echo "| subtask_2 | an annotated terminal status | DONE (review PASS) | task | -- | PASS | 1/3 |"
+    echo "| BD-1.2 | a dotted id, still running | in_progress | task | -- | -- | 0/3 |"
+    echo "| ST4 | Delete the COMPLETED marker handling | pending | -- | -- | -- | 0/3 |"
+    echo
+    echo "## Parallelism"
+    echo "- launchable: 1"
+  } > "$root/.supervisor/state.md" || setup_fail "could not write the Shape B state fixture"
+}
+
+RB="$TMPROOT/g"; mkstate7 "$RB" "EXECUTE" "feature/shape-b" "sid-g"
+# FIXTURE CONTROLS. Each of (g2)/(g3) asserts that something is NOT counted; if the thing it
+# names were missing from the fixture, the assertion would pass while proving nothing.
+sep_rows="$(grep -c '^|----' "$RB/.supervisor/state.md" || true)"
+case "$sep_rows" in ''|*[!0-9]*) sep_rows=0 ;; esac
+[ "$sep_rows" -eq 1 ] || setup_fail "the Shape B fixture has $sep_rows separator rows, not 1 — (g2) would be vacuous"
+has "$(cat "$RB/.supervisor/state.md")" "Delete the COMPLETED marker handling" \
+  || setup_fail "the Shape B fixture lost its COMPLETED-in-the-title row — (g3) would be vacuous"
+
+run "$RB"
+if [ "$rc" -eq 0 ] && has "$out" "2/4"; then
+  ok "(g1) Shape B (7-column, ids ST1/subtask_2/BD-1.2, lowercase 'completed' + 'DONE (review PASS)') counts 2/4"
+else
+  no "(g1) Shape B (7-column, ids ST1/subtask_2/BD-1.2, lowercase 'completed' + 'DONE (review PASS)') counts 2/4" \
+     "rc=$rc out='$out'"
+fi
+# The classic trap: `|----|-------|...` is a table row too. A widened id matcher that forgets it
+# reports N+1 subtasks — silently, and in the direction that makes a finished run look unfinished.
+if ! has "$out" "/5"; then
+  ok "(g2) the |----| separator row is NOT counted — 4 subtask rows report a total of 4, never 5"
+else
+  no "(g2) the |----| separator row is NOT counted — 4 subtask rows report a total of 4, never 5" "$out"
+fi
+# Status is matched as a COLUMN. The old `$0 ~ /COMPLETED/` matched the whole line, so a subtask
+# whose TITLE contains the word counted as finished — here that would render 3/4.
+if ! has "$out" "3/4"; then
+  ok "(g3) a subtask TITLED 'Delete the COMPLETED marker handling' with status 'pending' is not counted as done"
+else
+  no "(g3) a subtask TITLED 'Delete the COMPLETED marker handling' with status 'pending' is not counted as done" "$out"
+fi
+
+# FAILED / SKIPPED / ABANDONED are terminal for reconcile-resume-state.sh's question, and
+# deliberately NOT done for this one — see the long comment in status-line.sh. Asserted either
+# way: they must appear in the total and must not appear in the done count.
+RB2="$TMPROOT/g2"; mkdir -p "$RB2/.supervisor" || setup_fail "mkdir g2"
+{
+  echo "## Session"; echo "- phase: EXECUTE"; echo "- branch: main"; echo
+  echo "## Subtasks"
+  echo "| ID | Title | Status | Worker | Worktree | Review | Attempts |"
+  echo "|----|-------|--------|--------|----------|--------|----------|"
+  echo "| ST1 | ok | completed | task | -- | PASS | 1/3 |"
+  echo "| ST2 | broke | failed | task | -- | -- | 3/3 |"
+  echo "| ST3 | not needed | skipped | -- | -- | -- | 0/3 |"
+  echo "| ST4 | dropped | abandoned | -- | -- | -- | 0/3 |"
+  echo "| ST5 | landed | MERGED | task | -- | PASS | 1/3 |"
+} > "$RB2/.supervisor/state.md" || setup_fail "could not write the terminal-status fixture"
+run "$RB2"
+if has "$out" "2/5"; then
+  ok "(g4) FAILED/SKIPPED/ABANDONED count toward the TOTAL but never toward DONE (2/5, not 5/5 and not 2/2)"
+else
+  no "(g4) FAILED/SKIPPED/ABANDONED count toward the TOTAL but never toward DONE (2/5, not 5/5 and not 2/2)" "$out"
+fi
+
+# The annotated forms reconcile-resume-state.sh documents, matched on the status' first word.
+RB3="$TMPROOT/g3"; mkdir -p "$RB3/.supervisor" || setup_fail "mkdir g3"
+{
+  echo "## Session"; echo "- phase: EXECUTE"; echo "- branch: main"; echo
+  echo "## Subtasks"
+  echo "| ID | Title | Status | Worker | Worktree | Review | Attempts |"
+  echo "|----|-------|--------|--------|----------|--------|----------|"
+  echo "| ST1 | escalated but finished | COMPLETED WITH ESCALATION | task | -- | PASS | 1/3 |"
+  echo "| ST2 | colon form | DONE: merged to main | task | -- | PASS | 1/3 |"
+  echo "| ST3 | bare complete | COMPLETE | task | -- | PASS | 1/3 |"
+  echo "| ST4 | waiting | pending | -- | -- | -- | 0/3 |"
+} > "$RB3/.supervisor/state.md" || setup_fail "could not write the annotated-status fixture"
+run "$RB3"
+if has "$out" "3/4"; then
+  ok "(g5) the annotated terminal forms COMPLETED WITH ESCALATION / DONE: / COMPLETE all count (3/4)"
+else
+  no "(g5) the annotated terminal forms COMPLETED WITH ESCALATION / DONE: / COMPLETE all count (3/4)" "$out"
+fi
+
+# Non-regression: the widening must not cost Shape A, which is what the live state.md is.
+RA="$TMPROOT/ga"; mkstate "$RA" "EXECUTE" "main" "sid-ga" 3 4
+run "$RA"
+if has "$out" "3/4"; then
+  ok "(g6) Shape A (4-column, numeric ids, 'COMPLETED (abc1233)') still counts 3/4 — no regression"
+else
+  no "(g6) Shape A (4-column, numeric ids, 'COMPLETED (abc1233)') still counts 3/4 — no regression" "$out"
+fi
+
+echo "== (g7/g8) MUTATION CONTROLS: revert each half of the widening, Shape B goes red =="
+# Both mutants are COPIES in $TMPROOT; status-line.sh on disk is never edited. Each is gated on
+# being non-empty, differing from the original, landing EXACTLY the intended one-line change, and
+# still parsing — a mutant that is empty or unparseable proves nothing, and a control never
+# observed failing is not evidence. Each also has to still RENDER against Shape A, so "the field
+# vanished" cannot be explained by the mutant simply having crashed.
+runmut() { mout="$(bash "$1" --root "$2" </dev/null 2>&1)"; mrc=$?; }
+mutant_ok() {  # <file> <label> <orig-count-in-SL> <stub-count-in-mutant>
+  local f="$1" label="$2" o="$3" s="$4"
+  if [ ! -s "$f" ];              then no "$label — mutant is EMPTY (vacuous control)"; return 1; fi
+  if cmp -s "$SL" "$f";          then no "$label — mutant is identical to the original (vacuous control)"; return 1; fi
+  if [ "$o" -ne 1 ] || [ "$s" -ne 1 ]; then
+    no "$label — the mutation did not land as intended (orig=$o stub=$s)"; return 1; fi
+  if ! bash -n "$f" 2>/dev/null; then no "$label — mutant does not parse (vacuous control)"; return 1; fi
+  return 0
+}
+
+# (g7) revert the ID widening: require a bare-integer id again, exactly as before this change.
+M1="$TMPROOT/mut-narrow-id.sh"
+o1="$(grep -c '^[[:space:]]*ok_id = (id != ""' "$SL" || true)"; case "$o1" in ''|*[!0-9]*) o1=0 ;; esac
+sed -e 's%^\([[:space:]]*\)ok_id = .*%\1ok_id = (id ~ /^[0-9]+$/)%' "$SL" > "$M1"
+s1="$(grep -c '^[[:space:]]*ok_id = (id ~ /\^\[0-9\]+\$/)$' "$M1" || true)"; case "$s1" in ''|*[!0-9]*) s1=0 ;; esac
+if mutant_ok "$M1" "(g7) id-narrowing mutant" "$o1" "$s1"; then
+  ok "(g7) the id-narrowing mutant is NON-VACUOUS: non-empty, differs from the original, parses, 1 widened guard replaced by 1 numeric-only guard"
+  runmut "$M1" "$RA"
+  if [ "$mrc" -eq 0 ] && has "$mout" "3/4"; then
+    ok "(g7) …and it still renders Shape A (3/4), so it runs — a missing field below is behavioural"
+    runmut "$M1" "$RB"
+    if ! has "$mout" "2/4"; then
+      ok "(g7) CONFIRMED: with the id widening reverted, the Shape B fixture loses its N/M field entirely — (g1) is load-bearing"
+    else
+      no "(g7) REFUTED: the narrowed mutant still counted Shape B — (g1) passes for some other reason and is vacuous" "$mout"
+    fi
+  else
+    no "(g7) INCONCLUSIVE: the mutant did not render Shape A either (rc=$mrc) — it discriminated nothing" "$mout"
+  fi
+fi
+
+# (g8) revert the DONE widening: exact-case COMPLETED only, as the bare literal did.
+M2="$TMPROOT/mut-narrow-done.sh"
+o2="$(grep -c '^[[:space:]]*is_done = (ust == "DONE"' "$SL" || true)"; case "$o2" in ''|*[!0-9]*) o2=0 ;; esac
+sed -e 's%^\([[:space:]]*\)is_done = .*%\1is_done = (st == "COMPLETED")%' "$SL" > "$M2"
+s2="$(grep -c '^[[:space:]]*is_done = (st == "COMPLETED")$' "$M2" || true)"; case "$s2" in ''|*[!0-9]*) s2=0 ;; esac
+if mutant_ok "$M2" "(g8) done-narrowing mutant" "$o2" "$s2"; then
+  ok "(g8) the done-narrowing mutant is NON-VACUOUS: non-empty, differs from the original, parses, 1 terminal-set match replaced by 1 exact-case COMPLETED match"
+  runmut "$M2" "$RA"
+  if [ "$mrc" -eq 0 ] && has "$mout" "3/4"; then
+    ok "(g8) …and it still renders Shape A (3/4), so the two halves of the fix are independent"
+    runmut "$M2" "$RB"
+    if has "$mout" "0/4" && ! has "$mout" "2/4"; then
+      ok "(g8) CONFIRMED: with the terminal-status set reverted, Shape B's lowercase 'completed' and 'DONE (review PASS)' count as 0/4 — the case-insensitive vocabulary is load-bearing"
+    else
+      no "(g8) REFUTED: the narrowed mutant still counted Shape B's done rows — (g1)'s numerator is vacuous" "$mout"
+    fi
+  else
+    no "(g8) INCONCLUSIVE: the mutant did not render Shape A either (rc=$mrc) — it discriminated nothing" "$mout"
+  fi
+fi
+rm -f "$M1" "$M2" 2>/dev/null   # a mutated reader must never outlive its own control
+
+# The original on disk was never touched by either control.
+run "$RB"
+if has "$out" "2/4"; then
+  ok "(g9) control — the real status-line.sh still counts the Shape B fixture 2/4 after both mutations"
+else
+  no "(g9) control — the real status-line.sh still counts the Shape B fixture 2/4 after both mutations" "$out"
 fi
 
 echo
