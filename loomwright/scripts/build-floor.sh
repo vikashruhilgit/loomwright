@@ -224,6 +224,19 @@ count_glob "logs" "$LOGS_DIR" "$logs_basis" "logs" ${logfiles[@]+"${logfiles[@]}
 # 5) sessions - distinct cc_session_id across every *.jsonl, NEVER by filename
 # ---------------------------------------------------------------------------
 sess_basis="distinct non-empty cc_session_id values across every line of .supervisor/logs/*.jsonl, grouped by that FIELD and never by filename, so one file may contribute many sessions and one session may span many files"
+# READABILITY FIRST, decided BEFORE the branch chain below. `cat ... 2>/dev/null` swallows a
+# read failure, so an unreadable log (or a directory that merely happens to be named `*.jsonl`)
+# was silently DROPPED and this surface reported `counted` with an UNDERCOUNT plus
+# `lines_malformed: 0` - actively asserting cleanliness about bytes it never saw, which is
+# worse than reporting nothing at all. state.md (`! -r`), postmortem (`! -r`) and count_glob
+# (`! -r`) all guard this; the bulk reader here was the one that did not. Harmless to run when
+# the directory is absent: the array is empty and the loop body never executes.
+log_unreadable=""
+for lf in ${logfiles[@]+"${logfiles[@]}"}; do
+  if [ ! -f "$lf" ]; then log_unreadable="$lf is not a regular file"; break; fi
+  if [ ! -r "$lf" ]; then log_unreadable="$lf is not readable";       break; fi
+done
+
 if [ ! -d "$LOGS_DIR" ]; then
   add_note "sessions omitted: input directory $LOGS_DIR is not present"
   add_surface "sessions" "$LOGS_DIR" "$sess_basis" "absent" "" \
@@ -232,10 +245,18 @@ elif [ ${#logfiles[@]} -eq 0 ]; then
   add_note "sessions omitted: no files match $LOGS_DIR/*.jsonl"
   add_surface "sessions" "$LOGS_DIR" "$sess_basis" "absent" "" \
     "no files match $LOGS_DIR/*.jsonl"
+elif [ -n "$log_unreadable" ]; then
+  add_note "sessions unverified: $log_unreadable"
+  add_surface "sessions" "$LOGS_DIR" "$sess_basis" "unverified" "" "$log_unreadable"
 else
   # Classify every raw line exactly once: blank / malformed / carries an id / lacks one.
   # `try ... catch` keeps a malformed line VISIBLE instead of silently dropping it.
-  classified="$(cat ${logfiles[@]+"${logfiles[@]}"} 2>/dev/null | jq -R -r '
+  #
+  # `awk 1 "$f"` per file, NOT one bulk `cat`: a file whose last record has no trailing newline
+  # is spliced by `cat` onto the first record of the NEXT file, destroying TWO valid records
+  # and reporting the splice as a malformed line - the reader blaming its inputs for its own
+  # defect. `awk 1` is the terse "print every line", which terminates each file's final line.
+  classified="$(for lf in ${logfiles[@]+"${logfiles[@]}"}; do awk 1 "$lf" 2>/dev/null; done | jq -R -r '
     if ((. | gsub("\\s"; "")) == "") then "blank"
     else
       (try (fromjson) catch null) as $o
@@ -328,6 +349,15 @@ count_json_docs() {
     add_surface "$k" "$dir" "$basis" "absent" "" "input directory $dir is not present"
     return 0
   fi
+  # BEFORE the n -eq 0 arm, and that order is the whole point: under `nullglob` an UNREADABLE
+  # directory expands to zero arguments exactly like an empty one, so without this guard the
+  # unreadable case falls through to "counted 0" and ships a proven-looking zero carrying an
+  # `mtime_epoch` that implies a reading which never happened. Mirrors count_glob's guard.
+  if [ ! -r "$dir" ]; then
+    add_note "$k unverified: input directory $dir is not readable"
+    add_surface "$k" "$dir" "$basis" "unverified" "" "input directory $dir is not readable"
+    return 0
+  fi
   if [ "$n" -eq 0 ]; then
     add_surface "$k" "$dir" "$basis" "counted" "0" "" "$(mtime_epoch "$dir")"
     return 0
@@ -381,7 +411,13 @@ mkdir -p "$OUT_DIR" 2>/dev/null || {
 }
 
 notes_json="$(printf '%s' "$NOTES" | jq -R -s 'split("\n") | map(select(length > 0))' 2>/dev/null)"
-[ -n "$notes_json" ] || notes_json='[]'
+# The fallback is deliberately NOT an empty array. Empty is a positive claim - "nothing was
+# omitted" - and it would be made at exactly the moment that is unknown, because reaching here
+# means the assembly itself failed. Emit a literal one-element array (no jq needed, since jq is
+# what just failed) that says so; a consumer rendering notes[] then shows the doubt rather than
+# a false all-clear. Written without spelling the empty-array literal, so that the source-level
+# check in test-build-floor.sh cannot be satisfied - or tripped - by this comment.
+[ -n "$notes_json" ] || notes_json='["notes unavailable: the notes list could not be assembled, so an empty notes array here would NOT mean nothing was omitted"]'
 
 out_json="$(printf '%s' "$SURF" | LC_ALL=C jq -S --indent 2 -s \
     --argjson sv "$SCHEMA_VERSION" --arg ge "$now_epoch" \
@@ -399,7 +435,12 @@ if [ -z "$out_json" ]; then
   exit 0
 fi
 
-printf '%s\n' "$out_json" > "$OUT" 2>/dev/null || {
+# Brace-grouped, because the command-level `2>/dev/null` is applied by the SHELL to `printf`'s
+# own stderr and is therefore too late: bash opens the redirect first and prints its own
+# `line NNN: ...: Permission denied` diagnostic before printf is ever executed. The group's
+# redirection covers the failing redirect itself, so an unwritable output path yields only this
+# script's own one-line message and the fail-safe exit 0.
+{ printf '%s\n' "$out_json" > "$OUT"; } 2>/dev/null || {
   echo "build-floor: cannot write $OUT - skipping" >&2
   exit 0
 }

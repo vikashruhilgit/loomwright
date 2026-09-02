@@ -23,6 +23,12 @@
 #   (d) missing directory -> absent + named reason + NO count + exit 0
 #   (e) empty log -> sessions absent + named reason + NO count + exit 0
 #   (f) malformed JSON -> `unverified`, never `counted`, count omitted, offender named
+#   (f2) UNREADABLE inputs -> `unverified`, count key ABSENT, offending path named, exit 0 -
+#       one case per surface family (count_glob dir, count_json_docs dir, state.md,
+#       postmortem/results.jsonl, logs/*.jsonl), each gated on a measured premise that
+#       chmod 000 actually denies a read on this machine
+#   (f3) an UNWRITABLE output path leaks no raw bash redirect diagnostic to the caller, with a
+#       mutation control proving the un-brace-grouped variant does leak
 #   (g) jq absent -> named reason, exit 0, no artefact
 #   (h) schema conformance - the required-key set is PARSED OUT of the `## FLOOR_PROJECTION`
 #       block in docs/RESULT_SCHEMAS.md (never restated here); every required key removed in
@@ -52,7 +58,9 @@ no()   { echo "  FAIL: $1";      fail=$((fail+1)); }
 skipn(){ echo "  SKIPPED - $1";  skip=$((skip+1)); }
 
 ROOT="$(mktemp -d)"
-trap 'rm -rf "$ROOT" 2>/dev/null' EXIT
+# chmod before rm: the (f2) cases deliberately create unreadable paths and restore them
+# in-block, but a mid-case abort must not strand a 000 directory that `rm -rf` cannot enter.
+trap 'chmod -R u+rwX "$ROOT" >/dev/null 2>&1; rm -rf "$ROOT" 2>/dev/null' EXIT
 mktmp() { mktemp -d "$ROOT/d.XXXXXX"; }
 
 csum() {
@@ -369,6 +377,179 @@ JF2="$RF2/.supervisor/floor/floor.json"
   || no "valid 'false' document misreported as $(sstatus "$JF2" drain_rounds)"
 
 # ============================================================================
+echo "== (f2) unreadable input -> unverified, count OMITTED, path named, exit 0 =="
+# THE GAP THIS CLOSES: before this block, `grep -n chmod` over this file returned exactly ONE
+# hit - the `chmod +x` on the (l) stat stub. No test made any input unreadable, so all three of
+# build-floor.sh's `! -r` branches were UNCOVERED and the two that were MISSING were invisible
+# behind a fully green suite. The failure is not loud: under `nullglob` an unreadable directory
+# expands to ZERO arguments, which is byte-indistinguishable from an empty one, so the surface
+# fell into the "counted 0" arm and shipped a FABRICATED zero carrying an `mtime_epoch` that
+# implies a real reading. Nothing but asserting the readability of the input itself can tell
+# those two trees apart.
+unreadable_premise() {
+  # chmod 000 does not stop root, and some filesystems ignore mode bits entirely. Measure the
+  # premise on THIS machine instead of assuming it - otherwise every assertion below is vacuous.
+  local p="$ROOT/unreadable-premise" denied=1
+  rm -rf "$p" 2>/dev/null; mkdir -p "$p/d" 2>/dev/null; : > "$p/f"
+  chmod 000 "$p/d" "$p/f" 2>/dev/null
+  { [ ! -r "$p/d" ] && [ ! -r "$p/f" ]; } || denied=0
+  # Restore and clean up BEFORE returning, so the probe never outlives the check.
+  chmod -R u+rwX "$p" >/dev/null 2>&1; rm -rf "$p" 2>/dev/null
+  [ "$denied" -eq 1 ]
+}
+if ! unreadable_premise; then
+  skipn "chmod 000 does not deny a read here (running as root, or a mode-less filesystem) - the unreadable-input cases cannot be exercised and are NOT counted as passes"
+else
+  ok "PREMISE: chmod 000 genuinely denies a read on this machine (the cases below are not vacuous)"
+  # <label> <surface key> <path relative to the fixture root> <substring the reason must name>
+  unreadable_case() {
+    local label="$1" key="$2" rel="$3" want="$4"
+    local r j rc st cnt rsn
+    r="$(new_repo)"; seed_tree "$r"
+    chmod 000 "$r/$rel" 2>/dev/null
+    if [ -r "$r/$rel" ]; then no "$label: $rel is still readable - case is vacuous"; return 0; fi
+    ( cd "$r" && bash "$BUILD" ) >/dev/null 2>&1; rc=$?
+    j="$r/.supervisor/floor/floor.json"
+    st="$(sstatus "$j" "$key")"; cnt="$(scount "$j" "$key")"; rsn="$(sreason "$j" "$key")"
+    # Restore in the SAME block, so teardown stays clean whatever the assertions say.
+    chmod -R u+rwX "$r/$rel" >/dev/null 2>&1
+    [ "$rc" -eq 0 ] && ok "$label: exits 0" || no "$label: expected exit 0, got $rc"
+    [ -f "$j" ] && ok "$label: the artefact is still written" || no "$label: no artefact written"
+    [ "$st" = "unverified" ] \
+      && ok "$label: status == unverified" \
+      || no "$label: status == $st, expected unverified"
+    [ "$cnt" = "ABSENT" ] \
+      && ok "$label: count key is OMITTED (never a zero it did not measure)" \
+      || no "$label: emitted count $cnt for an input it could not read - a fabricated zero"
+    printf '%s' "$rsn" | grep -qF "$want" \
+      && ok "$label: reason names $want" \
+      || no "$label: reason does not name $want (reason: '$rsn')"
+  }
+  unreadable_case "unreadable dir via count_glob" \
+    jobs_done    ".supervisor/jobs/done"                  ".supervisor/jobs/done"
+  unreadable_case "unreadable dir via count_json_docs" \
+    drain_rounds ".supervisor/drain-rounds"               ".supervisor/drain-rounds"
+  unreadable_case "unreadable dir via count_json_docs (rules)" \
+    rules        ".agent/rules"                           ".agent/rules"
+  unreadable_case "unreadable state.md" \
+    state        ".supervisor/state.md"                   ".supervisor/state.md"
+  unreadable_case "unreadable postmortem ledger" \
+    postmortem   ".supervisor/postmortem/results.jsonl"   ".supervisor/postmortem/results.jsonl"
+  unreadable_case "unreadable logs/*.jsonl member" \
+    sessions     ".supervisor/logs/second.jsonl"          ".supervisor/logs/second.jsonl"
+
+  # The unreadable-member case again, this time asserting the two properties a bulk
+  # `cat ... 2>/dev/null` gets WRONG in the same breath: it drops the file's lines silently, so
+  # `sessions` reports a `counted` UNDERCOUNT *and* `lines_malformed: 0` - actively asserting
+  # cleanliness about bytes it never read. `logs` must stay counted at 3, because glob
+  # membership IS provable from a readable directory; only the CONTENT reading is unverified.
+  RU="$(new_repo)"; seed_tree "$RU"
+  chmod 000 "$RU/.supervisor/logs/second.jsonl" 2>/dev/null
+  if [ -r "$RU/.supervisor/logs/second.jsonl" ]; then
+    no "unreadable log member: the file is still readable - this pair is vacuous"
+  else
+    run_build "$RU"
+    JU="$RU/.supervisor/floor/floor.json"
+    chmod -R u+rwX "$RU/.supervisor/logs" >/dev/null 2>&1
+    [ "$(sstatus "$JU" logs)" = "counted" ] && [ "$(scount "$JU" logs)" = "$EXP_LOGS" ] \
+      && ok "logs stays counted at $EXP_LOGS - glob membership is provable from a readable dir" \
+      || no "logs == $(sstatus "$JU" logs)/$(scount "$JU" logs), expected counted/$EXP_LOGS"
+    [ "$(jget "$JU" '.surfaces.sessions.detail.lines_malformed')" = "null" ] \
+      && ok "sessions publishes NO lines_malformed tally over bytes it could not read" \
+      || no "sessions asserted lines_malformed == $(jget "$JU" '.surfaces.sessions.detail.lines_malformed') over an unreadable file"
+    [ "$(scount "$JU" sessions)" != "$EXP_SESSIONS" ] && [ "$(scount "$JU" sessions)" = "ABSENT" ] \
+      && ok "sessions publishes no count at all, rather than a silent undercount" \
+      || no "sessions count == $(scount "$JU" sessions) with one log unreadable"
+  fi
+
+  # A directory named `*.jsonl` is a glob member that is readable but is NOT a record stream;
+  # `cat` on it fails the same silent way. The guard must be `-f` as well as `-r`.
+  RDJ="$(new_repo)"; seed_tree "$RDJ"
+  mkdir -p "$RDJ/.supervisor/logs/a-directory.jsonl"
+  run_build "$RDJ"; rcDJ=$?
+  JDJ="$RDJ/.supervisor/floor/floor.json"
+  [ "$rcDJ" -eq 0 ] && ok "directory named *.jsonl: exits 0" || no "expected exit 0, got $rcDJ"
+  [ "$(sstatus "$JDJ" sessions)" = "unverified" ] && [ "$(scount "$JDJ" sessions)" = "ABSENT" ] \
+    && ok "a directory named *.jsonl makes sessions unverified with no count" \
+    || no "sessions == $(sstatus "$JDJ" sessions)/$(scount "$JDJ" sessions) with a directory named *.jsonl"
+  sreason "$JDJ" sessions | grep -qF "a-directory.jsonl" \
+    && ok "reason names the offending glob member" \
+    || no "reason does not name the offending glob member: $(sreason "$JDJ" sessions)"
+
+  # A file whose last record carries no trailing newline. A bulk `cat` splices it onto the
+  # first record of the NEXT file, destroying TWO valid records and reporting the splice as a
+  # malformed line - blaming the reader for the reader's own defect.
+  RNL="$(new_repo)"; seed_tree "$RNL"
+  rm -f "$RNL/.supervisor/logs"/*.jsonl
+  printf '{"event":"a","cc_session_id":"sess-nl-0001"}\n{"event":"b","cc_session_id":"sess-nl-0002"}' \
+    > "$RNL/.supervisor/logs/aaa-no-trailing-newline.jsonl"
+  printf '{"event":"c","cc_session_id":"sess-nl-0003"}\n' \
+    > "$RNL/.supervisor/logs/bbb-normal.jsonl"
+  run_build "$RNL"
+  JNL="$RNL/.supervisor/floor/floor.json"
+  [ "$(sstatus "$JNL" sessions)" = "counted" ] && [ "$(scount "$JNL" sessions)" = "3" ] \
+    && ok "a newline-less final record does not swallow the next file's first record (3 ids)" \
+    || no "newline-less final record: sessions == $(sstatus "$JNL" sessions)/$(scount "$JNL" sessions), expected counted/3"
+  [ "$(jget "$JNL" '.surfaces.sessions.detail.lines_malformed')" = "0" ] \
+    && ok "and no splice is misreported as a malformed line" \
+    || no "lines_malformed == $(jget "$JNL" '.surfaces.sessions.detail.lines_malformed') on a well-formed newline-less file"
+fi
+
+# ============================================================================
+echo "== (f3) unwritable OUTPUT -> our own message only, no bash diagnostic, exit 0 =="
+if ! unreadable_premise; then
+  skipn "mode bits are not enforced here - the unwritable-output case cannot be exercised"
+else
+  # bash opens the redirect and reports ITS OWN `line NNN: <path>: Permission denied` BEFORE
+  # `printf` is ever executed, so a command-level `2>/dev/null` on the printf arrives too late
+  # and the caller sees a raw diagnostic naming a source line. Only a redirection on the brace
+  # GROUP covers the failing redirect itself.
+  RW="$(new_repo)"; seed_tree "$RW"
+  mkdir -p "$RW/.supervisor/floor"; : > "$RW/.supervisor/floor/floor.json"
+  chmod 400 "$RW/.supervisor/floor/floor.json" 2>/dev/null
+  if [ -w "$RW/.supervisor/floor/floor.json" ]; then
+    no "unwritable output: floor.json is still writable - this case is vacuous"
+  else
+    errW="$( cd "$RW" && bash "$BUILD" 2>&1 >/dev/null )"; rcW=$?
+    [ "$rcW" -eq 0 ] && ok "unwritable output: still exits 0" \
+      || no "unwritable output: expected exit 0, got $rcW"
+    printf '%s' "$errW" | grep -qF "build-floor: cannot write" \
+      && ok "unwritable output: the script's own one-line message is emitted" \
+      || no "unwritable output: our own message is missing (stderr: '$errW')"
+    printf '%s' "$errW" | grep -qiE 'line [0-9]+:|permission denied' \
+      && no "unwritable output: a raw bash redirect diagnostic leaked: '$errW'" \
+      || ok "unwritable output: no raw bash redirect diagnostic leaks to the caller"
+
+    # MUTATION CONTROL. Without it, "no diagnostic leaked" could be green because the write
+    # never failed at all. The un-brace-grouped variant must LEAK against this same fixture.
+    WMUT="$ROOT/write-redirect-mutant.sh"
+    WM_OLD='{ printf '"'"'%s\n'"'"' "$out_json" > "$OUT"; } 2>/dev/null || {'
+    WM_NEW='printf '"'"'%s\n'"'"' "$out_json" > "$OUT" 2>/dev/null || {'
+    # ENVIRON, not `awk -v`: -v processes escape sequences, so the `\n` inside the literal
+    # would become a real newline and the line comparison could never match.
+    WM_OLD="$WM_OLD" WM_NEW="$WM_NEW" awk '
+      BEGIN{o=ENVIRON["WM_OLD"]; n=ENVIRON["WM_NEW"]}
+      $0==o && !d {print n; d=1; next} {print}' "$BUILD" > "$WMUT"
+    if [ -s "$WMUT" ] && ! cmp -s "$WMUT" "$BUILD" && bash -n "$WMUT" 2>/dev/null \
+       && grep -qF "$WM_NEW" "$WMUT"; then
+      ok "the un-brace-grouped write mutant is buildable and bash -n clean"
+      errWM="$( cd "$RW" && bash "$WMUT" 2>&1 >/dev/null )"; rcWM=$?
+      if [ "$rcWM" -eq 0 ] && printf '%s' "$errWM" | grep -qF "build-floor: cannot write"; then
+        ok "the mutant still reaches its own success path (exit 0 + its own message)"
+        printf '%s' "$errWM" | grep -qiE 'line [0-9]+:|permission denied' \
+          && ok "MUTATION CONTROL: the un-brace-grouped variant DOES leak a bash diagnostic" \
+          || no "the un-brace-grouped variant leaked nothing - the leak assertion is vacuous"
+      else
+        no "the write mutant did not reach its success path (rc=$rcWM) - control inconclusive"
+      fi
+    else
+      no "could not build a valid un-brace-grouped write mutant - control inconclusive"
+    fi
+  fi
+  chmod -R u+rwX "$RW/.supervisor/floor" >/dev/null 2>&1
+fi
+
+# ============================================================================
 echo "== (g) jq absent -> named reason, exit 0, no artefact =="
 SHIM="$ROOT/nojq-bin"; mkdir -p "$SHIM"
 for t in git bash sh env date stat awk sort cat head cut mkdir tr ls rm grep sed find printf; do
@@ -594,23 +775,72 @@ nsame="$(printf '%s\n' "$dsame" | awk '/^[<>]/{n++} END{print n+0}')"
 
 # ============================================================================
 echo "== (j) source-level: exactly one wall-clock read =="
-# Strip full-line comments and trailing comments, then count `date` as a whole word.
+# Strip full-line comments and trailing comments, then count every WALL-CLOCK IDIOM, not just
+# `date`. A whole-word `date` alone is not the property being claimed: the clock is readable
+# four other ways that never spell the word - `printf '%(%s)T'`, `$EPOCHSECONDS`, `$SECONDS`,
+# and `git log -1 --format=%ct` (in three spellings) - and each would sail past a `date`-only
+# grep while breaking determinism. The (i) determinism case cannot compensate: two runs a fraction of a second
+# apart read the same second and diff clean, so it goes green on exactly the smuggled reads
+# this check exists to catch.
+CLOCK_RE='date|%\(%s\)T|EPOCHSECONDS|SECONDS|--format=%ct|--pretty=%ct|--pretty=format:%ct'
 clock_reads() {
-  sed '/^[[:space:]]*#/d' "$1" | sed 's/[[:space:]]#.*$//' | grep -owE 'date' | awk 'NF{n++} END{print n+0}'
+  sed '/^[[:space:]]*#/d' "$1" | sed 's/[[:space:]]#.*$//' \
+    | grep -owE "$CLOCK_RE" | awk 'NF{n++} END{print n+0}'
 }
 n_clock="$(clock_reads "$BUILD")"
 [ "$n_clock" -eq 1 ] && ok "build-floor.sh contains exactly one wall-clock read" \
   || no "build-floor.sh contains $n_clock wall-clock reads, expected 1"
 
-CLKMUT="$ROOT/clock-mutant.sh"
-awk '{print} /^set -uo pipefail$/ && !d {print "second_clock=\"$(date -u +%s)\""; d=1}' "$BUILD" > "$CLKMUT"
-if [ -s "$CLKMUT" ] && ! cmp -s "$CLKMUT" "$BUILD" && bash -n "$CLKMUT" 2>/dev/null; then
-  [ "$(clock_reads "$CLKMUT")" -eq 2 ] \
-    && ok "NEGATIVE CONTROL: a variant with a second clock read is detected (count 2, would fail)" \
-    || no "the clock-read check did not notice a second clock read (count $(clock_reads "$CLKMUT"))"
-else
-  no "could not build a valid clock-read mutant - the negative control is inconclusive"
-fi
+# One mutant PER IDIOM. A single `date` mutant only proves the grep can see the idiom it
+# already names; the alternation is only worth something if every branch of it is exercised.
+# EVERY branch of the alternation gets its own mutant, including the two `git log` spellings:
+# an alternation branch no mutant exercises is a branch nobody has shown can fire.
+CLOCK_IDIOMS=7
+clock_bad=""; clock_ok=0; clock_i=0
+for idiom in \
+  'second_clock="$(date -u +%s)"' \
+  'printf -v second_clock "%(%s)T" -1' \
+  'second_clock="$EPOCHSECONDS"' \
+  'second_clock="$SECONDS"' \
+  'second_clock="$(git log -1 --format=%ct)"' \
+  'second_clock="$(git log -1 --pretty=%ct)"' \
+  'second_clock="$(git log -1 --pretty=format:%ct)"'
+do
+  # clock_i indexes the file, clock_ok counts successes - one variable cannot do both, or a
+  # mutant that fails to build silently reuses the previous mutant's path.
+  clock_i=$((clock_i + 1))
+  CLKMUT="$ROOT/clock-mutant-$clock_i.sh"
+  awk -v ins="$idiom" '{print} /^set -uo pipefail$/ && !d {print ins; d=1}' "$BUILD" > "$CLKMUT"
+  if [ -s "$CLKMUT" ] && ! cmp -s "$CLKMUT" "$BUILD" && bash -n "$CLKMUT" 2>/dev/null; then
+    if [ "$(clock_reads "$CLKMUT")" -eq 2 ]; then clock_ok=$((clock_ok + 1))
+    else clock_bad="$clock_bad [$idiom -> $(clock_reads "$CLKMUT")]"; fi
+  else
+    clock_bad="$clock_bad [$idiom -> mutant-not-buildable]"
+  fi
+done
+[ "$clock_ok" -eq "$CLOCK_IDIOMS" ] && [ -z "$clock_bad" ] \
+  && ok "NEGATIVE CONTROL: each of the $clock_ok smuggled clock idioms is detected (count 2, would fail)" \
+  || no "the clock-read check missed a smuggled idiom ($clock_ok/$CLOCK_IDIOMS detected):$clock_bad"
+
+# The notes[] fallback must not assert "nothing was omitted". This is a SOURCE-level check by
+# necessity: the fallback fires only if jq fails while assembling notes, and jq's presence is
+# already a hard precondition of reaching that line, so no input reaches it. Forcing it would
+# mean stubbing jq to fail on one invocation and succeed on the others - a fixture that tests
+# the stub. What IS checkable is that the fallback value is not a false all-clear.
+# Comment lines are stripped FIRST: a comment that quotes the literal it warns about would
+# otherwise trip this check, which is the second-order trap this repo has recorded before.
+build_code() { sed '/^[[:space:]]*#/d' "$BUILD"; }
+build_code | grep -qF "notes_json='[]'" \
+  && no "the notes fallback is a bare [] - it claims nothing was omitted at exactly the moment that is unknown" \
+  || ok "the notes fallback is not a bare [] (an empty array there would be a false all-clear)"
+nf_line="$(build_code | grep -F '|| notes_json=' | head -1)"
+nf_val="$(printf '%s' "$nf_line" | sed "s/^.*|| notes_json=//; s/^'//; s/'\$//")"
+printf '%s' "$nf_val" | jq -e 'type == "array" and length > 0' >/dev/null 2>&1 \
+  && ok "the notes fallback is a valid, NON-empty JSON array" \
+  || no "the notes fallback is not a valid non-empty JSON array: '$nf_val'"
+printf '%s' "$nf_val" | jq -e 'all(.[]; test("could not be assembled"))' >/dev/null 2>&1 \
+  && ok "and it records that the list could not be assembled, rather than implying an all-clear" \
+  || no "the notes fallback does not say why it is not evidence: '$nf_val'"
 
 # ============================================================================
 echo "== (k) containment: git NEVER consulted; ignored files IN SCOPE =="
@@ -624,7 +854,15 @@ hash_set() {
       | LC_ALL=C sort \
       | while IFS= read -r p; do printf '%s  %s\n' "$(csum "$p")" "$p"; done )
 }
-path_set() { ( cd "$1" 2>/dev/null || return 1; find . -type f -not -path "./.git/*" -print | LC_ALL=C sort ); }
+# `-type f` ALONE would make a stray directory or a symlink dropped outside .supervisor/floor/
+# invisible to the containment assertion - and a symlink is the cheapest way to escape a
+# directory allow-list. Directories and symlinks are in scope; the ./.git/* exclusion stays
+# (plus ./.git itself, which -type d would otherwise add as constant noise).
+path_set() {
+  ( cd "$1" 2>/dev/null || return 1
+    find . \( -type f -o -type l -o -type d \) \
+      -not -path "./.git/*" -not -path "./.git" -print | LC_ALL=C sort )
+}
 
 RK="$(new_repo)"; seed_tree "$RK"
 # Demonstrate WHY git is unusable here, rather than merely asserting it.
@@ -647,8 +885,27 @@ after_h="$(hash_set "$RK")"; after_p="$(path_set "$RK")"
   || no "the tree changed:
 $(diff <(printf '%s\n' "$before_h") <(printf '%s\n' "$after_h"))"
 newp="$(diff <(printf '%s\n' "$before_p") <(printf '%s\n' "$after_p") | sed -n 's/^> //p')"
-[ "$newp" = "./.supervisor/floor/floor.json" ] \
-  && ok "floor.json is the ONLY path that appeared" || no "new paths: $newp"
+# Two, not one: path_set now sees directories, and the script legitimately CREATES its own
+# output directory. Anything else - a file, a directory or a symlink - is a containment breach.
+want_newp="$(printf './.supervisor/floor\n./.supervisor/floor/floor.json')"
+[ "$newp" = "$want_newp" ] \
+  && ok "the output dir and floor.json are the ONLY paths that appeared" \
+  || no "new paths: $newp"
+
+# The path_set widening is itself a claim; falsify it. A symlink and a directory planted
+# outside .supervisor/floor/ must both turn the assertion RED - under `-type f` they did not.
+for kind in symlink directory; do
+  RK3="$(new_repo)"; seed_tree "$RK3"
+  b3="$(path_set "$RK3")"
+  case "$kind" in
+    symlink)   ln -s /etc/hosts "$RK3/.supervisor/stray-link" 2>/dev/null ;;
+    directory) mkdir -p "$RK3/.supervisor/stray-dir" ;;
+  esac
+  a3="$(path_set "$RK3")"
+  [ "$b3" != "$a3" ] \
+    && ok "MUTATION CONTROL: a stray $kind outside .supervisor/floor/ is VISIBLE to path_set" \
+    || no "a stray $kind outside .supervisor/floor/ is invisible to path_set"
+done
 
 echo "-- mutation control: the containment assertion must be able to turn RED --"
 MUTB="$ROOT/write-mutant.sh"
