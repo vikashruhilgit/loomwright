@@ -269,10 +269,10 @@ introduced here.)
 > which meant nothing in the repo could re-execute them — a future edit reintroducing the
 > zero-byte-counts-as-capture defect would have produced a silent false NO-GO with every gate
 > green. Flagged MEDIUM in this PR's Phase 4.5 review and fixed:
-> **`bash loomwright/scripts/test-capture-task-spawn-payload.sh`** (29 assertions) pins MC1-MC4
-> plus the fail-SAFE and portability invariants, and carries two mutation controls of its own —
-> one proving the `-s` counter still rejects an empty capture, one proving the portability guard
-> is not vacuous. The table below is the narrative record; the script is the executable one.
+> **`bash loomwright/scripts/test-capture-task-spawn-payload.sh`** (33 assertions) pins MC1-MC4
+> plus the fail-SAFE and portability invariants, and carries THREE controls of its own —
+> one running the validated mutant's OWN counter, and a positive/negative pair proving the
+> portability guard neither misses a real violation nor fires on documentation. The table below is the narrative record; the script is the executable one.
 
 
 The harness is the artifact that outlives this item, so its capture path was verified
@@ -323,7 +323,7 @@ body into the Bash tool.**
 | #6, #7 emitter degenerate inputs / worktree anchoring | `not-applicable (NO-GO)` — no emitter written |
 | #9 consumers byte-identical | **VACUOUSLY MET** — no consumer-affecting file changed. Explicitly NOT claimed as a diff-proven result |
 | #10, #11, #12 doc-surface lockstep | `not-applicable (NO-GO)` — hook count unchanged at **24** |
-| #13 every new test case mutation-verified | **MET** — MC1-MC4 are committed as `loomwright/scripts/test-capture-task-spawn-payload.sh` (29 assertions, 2 self-mutation controls). MC1 found a real defect in the harness itself |
+| #13 every new test case mutation-verified | **MET** — MC1-MC4 are committed as `loomwright/scripts/test-capture-task-spawn-payload.sh` (33 assertions, 3 self-mutation controls). MC1 found a real defect in the harness itself |
 
 ## Next step — for items 02–05, not for this item
 
