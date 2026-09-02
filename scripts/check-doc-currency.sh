@@ -156,6 +156,25 @@ check_count '[0-9]+ reusable skills' "$SKILLS" "skill-count"
 check_count '[0-9]+ focused skill'   "$SKILLS" "skill-count"
 check_count 'and [0-9]+ skills'      "$SKILLS" "skill-count"
 
+# --- Color legend (generated table vs agent frontmatter) ---
+# The legend in ARCHITECTURE_CONTRACTS.md is GENERATED OUTPUT, so its currency is checked by
+# re-running the generator rather than by a prose pattern: gen-color-legend.sh --check compares
+# the marked block against agent frontmatter and exits non-zero with a `LEGEND DRIFT` /
+# `LEGEND MARKERS MISSING` diagnostic. Folded in here rather than added as a separate CI step,
+# per the requirement — this gate is already the doc-currency surface.
+#
+# The invocation is a single line on purpose. test-gen-color-legend.sh's mutation control
+# deletes exactly that line from a COPY of this script and proves the gate then wrongly PASSES
+# on a genuinely drifted fixture — which is what shows the check EXECUTED, not merely that it
+# is reachable. Keep it one line, and keep the function separate from its call.
+run_legend_check() {
+  local out rc
+  out="$(bash "$repo_root/loomwright/scripts/gen-color-legend.sh" --check 2>&1)"; rc=$?
+  [ -n "$out" ] && printf '%s\n' "$out"
+  return $rc
+}
+run_legend_check || fail=1
+
 if [ "$fail" -ne 0 ]; then
   echo "✗ doc-currency drift detected — update the offending lines to match the authoritative values above."
   exit 1
