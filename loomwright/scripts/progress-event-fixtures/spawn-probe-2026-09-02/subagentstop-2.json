@@ -1,0 +1,18 @@
+{
+  "session_id": "fixture-spawn-probe-session-0001",
+  "transcript_path": "/nonexistent/transcript_path.jsonl",
+  "cwd": "/nonexistent/Documents/work/AI/ai-agent-manager",
+  "prompt_id": "fixture-prompt-0001",
+  "permission_mode": "auto",
+  "agent_id": "a665151ef7efc0b49",
+  "agent_type": "probe-beta",
+  "effort": {
+    "level": "high"
+  },
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "agent_transcript_path": "/nonexistent/agent_transcript_path.jsonl",
+  "last_assistant_message": "BETA-DONE",
+  "background_tasks": [],
+  "session_crons": []
+}

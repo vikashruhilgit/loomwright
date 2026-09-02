@@ -9,30 +9,75 @@
 
 ## Verdict
 
-**PROBE-BLOCKED** — neither GO nor NO-GO.
+**NO-GO** on the requirement as written — and the NO-GO is *informed*, not empty. The probe
+ran, the hook fired, and the payload was measured. Per the source requirement's own framing
+("A NO-GO with a committed fixture is a **successful** outcome for this item"), this closes
+the item as a pass.
 
-The capture session could not authenticate, so **no `PreToolUse[Task]` payload was ever
-solicited from a running Claude Code session**. The central claim — that `PreToolUse[Task]`
-fires per subagent spawn carrying an id joinable to `SubagentStop.agent_id` — therefore
-remains exactly as unverified as it was before this run.
+Superseded state: this document previously recorded **PROBE-BLOCKED** (the capture session
+could not authenticate). That blocker was cleared on 2026-09-02 by minting a long-lived CLI
+token, the probe was re-run, and the verdict below rests on six committed payload captures.
+The PROBE-BLOCKED reasoning is retained in the sections that follow because the
+blocked-vs-negative distinction it drew is what kept the item from closing on absent
+evidence.
 
-**This is deliberately not recorded as NO-GO.** A NO-GO means *the hook was asked and did
-not deliver*; a PROBE-BLOCKED means *the hook was never asked*. Collapsing the two would
-close the item on evidence that does not exist, which is the same failure mode the
-requirement was written to prevent. Per brief AC #3, a NO-GO would license removing this
-work from the roadmap; a PROBE-BLOCKED licenses nothing.
+### The measured answer
 
-**Consequently, and by design, this branch ships no emitter**: no `emit-agent-spawn.sh`, no
-`hooks.json` `Task` matcher, no doc-surface count bump (hooks stay at **24**), no
-`emit-progress-event.sh` change. Brief AC #4, #5, #8, #9, #10, #11 and #12 are
-`not-applicable (probe blocked)`. Writing an emitter now would mean synthesizing the payload
-shape from documentation — the one thing the requirement explicitly forbids.
+`PreToolUse[Task]` **fires per subagent spawn** (2 spawns → 2 captures, 0 empty), but it
+**does not carry `agent_id`**, and carries no id in the `SubagentStop.agent_id` namespace at
+all. The requirement's gate — *"does not carry an id joinable to `SubagentStop`'s
+`agent_id`"* — is therefore met, and the verdict is NO-GO.
 
-### What would change the verdict
+| Event | Id field(s) present | Namespace |
+|---|---|---|
+| `PreToolUse[Task]` | `tool_use_id` | `toolu_…` |
+| `PostToolUse[Task]` | `tool_use_id`, `tool_response.agentId` | both |
+| `SubagentStop` | `agent_id` | `a…` |
 
-Re-run the exact command below once `claude` can authenticate as a subprocess. The harness
-is committed and its capture path is verified (see "Harness verification"), so the re-run is
-a single command and needs no new code.
+### What the payload DOES offer (this is what items 02–05 re-scope against)
+
+1. **A verified TRANSITIVE join**, demonstrated 2/2 on two real event pairs:
+   `PreToolUse.tool_use_id` → `PostToolUse.tool_use_id` → `PostToolUse.tool_response.agentId`
+   → `SubagentStop.agent_id`. It requires a **third** hook (`PostToolUse[Task]`), which the
+   brief did not budget for, and it resolves the `agent_id` only when the agent **finishes** —
+   so it does not give live spawn-time identity against the existing `agent_id`-keyed corpus.
+2. **Spawn-time identity that needs no join at all:** `tool_input.subagent_type` and
+   `tool_input.description` are both present on the spawn event. Keyed on `tool_use_id`, that
+   is sufficient on its own to answer "who is working right now, and on what" — which was the
+   actual motivating question. The `agent_id` join is only needed to correlate with the
+   *historical* corpus.
+
+### Three findings that contradict reasonable assumptions
+
+Each of these would have produced a silently-wrong emitter if assumed rather than measured.
+
+1. **The matcher is `Task`, but the payload reports `tool_name: "Agent"`.** Both hold at once.
+   A consumer that filters on the payload's `tool_name` field expecting `"Task"` never fires.
+2. **`effort` is an OBJECT here** (`{"level": "high"}`) but a **STRING** in the previously
+   committed `subagentstop-full.json` (`"medium"`). Any emitter copying `effort` additively
+   must tolerate both shapes.
+3. **`agent_type` is already emitted on the stop side.** See "A correction to the requirement"
+   below — GO scope item 3 was already implemented before this item began.
+
+### Committed evidence
+
+`loomwright/scripts/progress-event-fixtures/spawn-probe-2026-09-02/` — six captures
+(2 × `PreToolUse[Task]`, 2 × `PostToolUse[Task]`, 2 × `SubagentStop`) from ONE real run of
+two different agent types.
+
+**Scrub note (this repo is public):** absolute home paths were replaced with `/nonexistent`,
+and `session_id` / `prompt_id` / transcript paths with fixture placeholders. `tool_use_id`,
+`agentId` and `agent_id` are retained **verbatim and consistently across all six files**
+because they are load-bearing — the join is re-derivable from the committed fixtures alone,
+and was re-verified 2/2 after scrubbing.
+
+### What this branch deliberately does NOT ship
+
+No `emit-agent-spawn.sh`, no `hooks.json` `Task` matcher, no `emit-progress-event.sh` change,
+no doc-surface count bump — hooks stay at **24**. Brief AC #4, #5, #8, #9, #10, #11 and #12
+are `not-applicable (NO-GO)`. Building the emitter on the transitive join would take hooks to
+**26** and design around a completion-time id resolution the brief never reviewed; that is a
+re-plan, not a continuation.
 
 ---
 
@@ -85,7 +130,13 @@ The capture hooks registered were:
 
 ---
 
-## The raw evidence that no payload was captured
+## SUPERSEDED (2026-09-02): the blocked first run
+
+> Everything from here to "The joinability measurement" records the FIRST run, which never
+> reached the API. It is retained because the blocked-vs-negative distinction it drew is what
+> stopped the item closing on absent evidence. The authoritative result is `## Verdict` above.
+
+### The raw evidence that no payload was captured (first run)
 
 Probe summary (`probe-summary.txt`), verbatim:
 
@@ -166,11 +217,16 @@ reading):
 So the thing an `agent_spawn` event would need to join *to* exists, is populated on every
 line, and is individually addressable. The spawn half is the unknown.
 
-### Spawn side — NOT MEASURED
+### Spawn side — MEASURED on the 2026-09-02 re-run
 
-Zero payloads captured. Nothing is known about whether `PreToolUse[Task]` carries an id at
-all, whether that id is the same 17-hex-char `agent_id` namespace, or whether it fires once
-per spawn. **No claim is made here in either direction.**
+`PreToolUse[Task]` **fires once per spawn** (2 spawns → 2 non-empty captures) and carries
+`tool_use_id`, `tool_input.subagent_type` and `tool_input.description` — but **no `agent_id`**
+and nothing in the 17-hex-char `a…` namespace. The join to `SubagentStop.agent_id` exists only
+transitively, via `PostToolUse[Task].tool_response.agentId`, and therefore only once the agent
+has finished. Full detail and the committed fixtures: `## Verdict` above.
+
+*(The paragraph this replaces said "NOT MEASURED — no claim is made in either direction." That
+was correct for the blocked first run and is now superseded by measurement.)*
 
 ### A correction to the requirement, found while measuring
 
@@ -237,20 +293,28 @@ body into the Bash tool.**
 
 | AC | Status |
 |---|---|
-| #1 capture a real payload as a fixture | **NOT MET** — probe blocked; deliberately not faked |
+| #1 capture a real payload as a fixture | **MET** — 6 real captures committed under `progress-event-fixtures/spawn-probe-2026-09-02/`, observed not synthesized |
 | #2 this record, with command + raw evidence + join measurement + verdict | **MET** |
-| #3 NO-GO handling | **N/A** — verdict is PROBE-BLOCKED, not NO-GO |
-| #4, #5, #8 emitter / join demo / stop-side change | `not-applicable (probe blocked)` |
-| #6, #7 emitter degenerate inputs / worktree anchoring | `not-applicable (probe blocked)` — no emitter written |
-| #9 consumers byte-identical | **VACUOUSLY MET** — no consumer-affecting file was changed; not claimed as a diff-proven result |
-| #10, #11, #12 doc-surface lockstep | `not-applicable (probe blocked)` — hook count unchanged at 24 |
-| #13 every new test case mutation-verified | **MET** for the harness controls above (MC1 found a real defect) |
+| #3 NO-GO handling | **MET** — verdict is NO-GO, evidence and measured reason committed, remaining criteria recorded `not-applicable (NO-GO)` |
+| #4, #5, #8 emitter / join demo / stop-side change | `not-applicable (NO-GO)` — no emitter written. Note the join itself IS demonstrated on two real event pairs (AC #5's evidentiary bar), but transitively and without an emitter |
+| #6, #7 emitter degenerate inputs / worktree anchoring | `not-applicable (NO-GO)` — no emitter written |
+| #9 consumers byte-identical | **VACUOUSLY MET** — no consumer-affecting file changed. Explicitly NOT claimed as a diff-proven result |
+| #10, #11, #12 doc-surface lockstep | `not-applicable (NO-GO)` — hook count unchanged at **24** |
+| #13 every new test case mutation-verified | **MET** for the harness controls (MC1 found a real defect in the harness itself) |
 
-## Next step
+## Next step — for items 02–05, not for this item
 
-1. Restore CLI auth (`claude login` / `claude setup-token`) — user action.
-2. Re-run `bash loomwright/scripts/capture-task-spawn-payload.sh --out-dir <dir>`.
-3. If `PROBE_RESULT: FIRED`, commit a capture from `<dir>/captures/pretooluse-task-*` as the
-   fixture, measure the id against a `subagentstop-*` capture **from the same run**, and
-   replace this Verdict with GO or NO-GO.
-4. Treat `FIRED-EMPTY` as **not** a usable payload.
+This item is closed. The re-scope it hands forward:
+
+1. **Live "who is working now" is achievable today** without any join: key on
+   `PreToolUse[Task].tool_use_id` and read `subagent_type` + `description` straight off the
+   spawn payload.
+2. **Correlating with the historical `agent_id`-keyed corpus needs a second hook**
+   (`PostToolUse[Task]`) and resolves only at agent completion. That is a design change worth
+   its own requirement — hooks would go 24 → 26, and the brief that passed Plan Review
+   budgeted for one new hook, not two.
+3. **Item 01's scope item 3 was already done before it started** — `agent_type` is emitted on
+   the stop side today (see the correction section above). Strike it from any successor.
+4. **Do not assume payload shapes.** Three assumptions failed here: the matcher/`tool_name`
+   mismatch, `effort` being an object in one payload and a string in another, and the
+   already-implemented `agent_type`. Measure first; this harness makes that one command.
