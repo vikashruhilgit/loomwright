@@ -1,5 +1,5 @@
 ---
-description: Umbrella setup command — status dashboard plus guided configuration for every optional plugin capability — observability (local Langfuse + OTel collector), memory in version control, portable house-rule seeding, telemetry, notifications, webhook, Beads, MySQL MCP
+description: Umbrella setup command — status dashboard plus guided configuration for every optional plugin capability — observability (local Langfuse + OTel collector), memory in version control, portable house-rule seeding, telemetry, notifications, webhook, Beads, MySQL MCP, opt-in status line
 ---
 
 # Command: /setup
@@ -11,6 +11,7 @@ description: Umbrella setup command — status dashboard plus guided configurati
 /setup observability        # Observability module directly: init | status | remove
 /setup memory               # Put the Twin memory stores under version control IN PLACE (gitignore negation + repo allowlist): status | apply | remove
 /setup rules                # Seed .agent/rules/ with PORTABLE conventions on a cold-start repo (labelled seeded, not learned): status | (no-arg → seed)
+/setup statusline           # Wire the one-line run report into the user-scope settings file: status | apply | remove
 /setup telemetry            # DELEGATES to /telemetry (no consent logic duplicated here)
 /setup notifications        # Status + guidance (notification hooks are always-on)
 /setup webhook              # Status + guidance (LOOMWRIGHT_WEBHOOK_URL)
@@ -20,12 +21,13 @@ description: Umbrella setup command — status dashboard plus guided configurati
 
 ## Parameters
 
-- **module** (optional): one of `observability`, `telemetry`, `notifications`, `webhook`, `beads`, `mysql-mcp`, `memory`, `rules`.
+- **module** (optional): one of `observability`, `telemetry`, `notifications`, `webhook`, `beads`, `mysql-mcp`, `memory`, `rules`, `statusline`.
   - If omitted: run the full status dashboard, then offer configuration via `AskUserQuestion` (multi-select).
   - If unrecognised: print this usage block and stop.
 - **observability subcommand** (optional, second positional arg): `init` | `status` | `remove`. If omitted, the module's check step decides — unconfigured → offer `init`; configured → offer `status` / `remove` / reconfigure.
 - **rules subcommand** (optional, second positional arg): `status` = read-only report of which portable seeds are present (no writes). If omitted, the module's check step decides — unseeded → offer to seed; already seeded → report and offer status only. **`remove` is N/A** — the store is committed and human-curated, so removing a rule is `/rules` territory (`add-rule.sh --retract`), never a module teardown; and re-seeding a still-seeded repo is a no-op by design rather than a reconfigure — including one whose seeds you have EDITED, since presence is keyed on the seeded stamp rather than the statement text. A seed you RETRACTED is the exception and is re-offered (see the module's honest limits — retract is not a permanent opt-out).
 - **memory subcommand** (optional, second positional arg): `status` = read-only report (no writes) | `apply` | `remove`. If omitted, the module's check step decides — not configured → offer to apply (behind the consent gate); configured → offer `status` / `remove`. **`remove` is REQUIRED here** — un-committing is a real operation a user will want, most likely on realising something proprietary was published, so it is implemented rather than documented N/A.
+- **statusline subcommand** (optional, second positional arg): `status` = read-only report (no writes) | `apply` | `remove`. If omitted, the module's check step decides — not configured → offer to apply; configured → offer `status` / `remove`. **`remove` is REQUIRED here** — the module changes a visible, always-on surface, so backing it out (and restoring whatever status line was there before) is a real user need, not a documented N/A. **A pre-existing status line this plugin did not write is never replaced without an explicit choice** — see the module's Offer step.
 - Note: the twin module was retired with the graphify tier (graph + bridge cold-start bootstrap — a deliberate omission, not an oversight; see `CHANGELOG.md`).
 
 ## What This Does
@@ -83,6 +85,8 @@ Run ONE real check per module (never guess; every cell of the dashboard is deriv
 
 8. **rules** — run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/seed-rules.sh" check` and read its per-seed `seed: ABSENT` / `seed: ALREADY SEEDED` lines plus the `seeds: N total · N already seeded · N absent` summary. `check` is READ-ONLY — it invokes no writer and creates nothing (not even the store directory). Derive a compact status cell from that summary alone: `0 absent` → `seeded (N/N portable rules)`; `N absent` with some present → `partially seeded (N of M)`; all absent → `not seeded (M portable rules available)`. If the helper exits non-zero it could not run (missing `jq` — exit 2); report `unknown (seed-rules.sh could not run)` and never a seeded/not-seeded claim. Never guess — every cell comes from that one probe.
 
+9. **statusline** — run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-statusline.sh" check` and read its `statusLine:` cell plus the `Statusline readiness:` verdict. `check` is READ-ONLY — it writes nothing. Derive a compact status cell from that verdict alone: `configured` → `active (one-line run report)`; `not configured` → `not wired`; `foreign (...)` → `another status line is configured — preserved` (a **third** outcome: it is neither configured nor unconfigured, and must never be collapsed into either, because collapsing it to `not configured` is what would invite a silent overwrite); `unknown (...)` → surface the helper's own parenthetical verbatim (missing `jq`, or a settings document that does not parse — report UNVERIFIED, never a configured/not-configured claim). Never guess — every cell comes from that one probe.
+
 Print the dashboard:
 
 ```
@@ -98,19 +102,29 @@ Print the dashboard:
 | mysql-mcp     | <derived>                               | /setup mysql-mcp      |
 | memory        | <derived>                               | /setup memory         |
 | rules         | <derived>                               | /setup rules          |
+| statusline    | <derived>                               | /setup statusline     |
 ```
 
-Then use `AskUserQuestion`. **`AskUserQuestion` accepts at most 4 options**, so do NOT emit one option per unconfigured module (8 modules > 4 → an invalid call). The set below is FIXED at four and must NOT be grown when a module is added — a ninth module folds into an existing bucket or gets its own nested question, exactly as `memory` and `rules` do here:
+Then use `AskUserQuestion`. **`AskUserQuestion` accepts at most 4 options**, so do NOT emit one option per unconfigured module (9 modules > 4 → an invalid call). The set below is FIXED at four and must NOT be grown when a module is added — a tenth module folds into an existing bucket or gets its own nested question, exactly as `memory`, `rules` and `statusline` do here:
 - `question`: "Which would you like to configure now?"
 - `header`: "Configure"
 - `multiSelect`: true
 - `options` (exactly these, in order; append each module's current status to its description):
-  1. **observability** — full local-Langfuse / existing-endpoint / console init flow.
+  1. **Claude Code surfaces (observability · status line)** — the two modules that write the user-scope settings file; selecting it asks ONE nested question (below) to pick which.
   2. **Repo knowledge stores (memory in version control · portable rule seeds)** — the two per-repo apply flows; selecting it asks ONE nested question (below) to pick which.
   3. **Other integrations (telemetry · webhook · Beads · MySQL MCP)** — print status + setup guidance / delegation for these (telemetry delegates to `/telemetry`; webhook · Beads · MySQL MCP are guidance-only; `notifications` is always-on and needs no action).
   4. **Nothing — just checking** — stop with the summary line.
 
-**How to render the status on a BUNDLED option** (options 2 and 3 fold several modules behind one label, so "the module's status" is ambiguous): append the per-module statuses joined by ` · `, each prefixed with its module name — `memory: <status> · rules: <status>` for option 2, and `telemetry: <status> · webhook: <status> · beads: <status> · mysql-mcp: <status>` for option 3. Never collapse them into one aggregate word, and never pick one module's status to stand for the bundle. Options 1 and 4 are single/no-module and take the plain status (option 4 takes none). Truncate from the right if the description exceeds the option-description limit — drop whole `name: status` pairs, never a status string mid-word.
+**How to render the status on a BUNDLED option** (options 1, 2 and 3 each fold several modules behind one label, so "the module's status" is ambiguous): append the per-module statuses joined by ` · `, each prefixed with its module name — `observability: <status> · statusline: <status>` for option 1, `memory: <status> · rules: <status>` for option 2, and `telemetry: <status> · webhook: <status> · beads: <status> · mysql-mcp: <status>` for option 3. Never collapse them into one aggregate word, and never pick one module's status to stand for the bundle. Option 4 is no-module and takes none. Truncate from the right if the description exceeds the option-description limit — drop whole `name: status` pairs, never a status string mid-word.
+
+**Nested question — only when option 1 was selected** (also ≤4 options; never inline these into the set above):
+- `question`: "Which Claude Code surface?"
+- `header`: "Surfaces"
+- `multiSelect`: true
+- `options` (exactly these, in order; append each module's current status to its description):
+  1. **observability** — full local-Langfuse / existing-endpoint / console init flow.
+  2. **statusline** — wire the one-line run report (phase · branch · N/M subtasks · age of the last event) into the user-scope settings file. Backup-first and parse-gated. **If a status line you did not install is already configured it is PRESERVED and merely reported** — replacing it is a separate, explicit choice, and the previous value is recorded so `remove` restores it.
+  3. **None — go back** — skip both and continue with the remaining selections.
 
 **Nested question — only when option 2 was selected** (also ≤4 options; never inline these into the set above):
 - `question`: "Which repo knowledge store?"
@@ -383,6 +397,78 @@ A second `/setup rules` on a **seeded and unretracted** repo reports "already se
 
 ---
 
+## Module: statusline
+
+Wires Loomwright's one-line run report into the host's status-line surface, so a long run stops being opaque without the user opening `.supervisor/state.md` by hand. **Opt-in, and it is the only module that writes the USER-SCOPE settings document.**
+
+The line is assembled from facts that already exist and nothing else:
+
+```
+Loomwright · EXECUTE · feature/status-line · 3/4 · 2m ago
+```
+
+phase · branch · COMPLETED-over-total subtasks · how long ago the newest session-log record was written. **Every field is omitted rather than guessed** when its source is absent, and with no state file at all the line reads `Loomwright · no run state`.
+
+> **There is deliberately NO "currently running agent" field, and that absence is the honest answer rather than a gap.** Inferring it would mean reading the recency of some other record and calling that liveness — a log line proves something was written, never that anything is running now. The emitter that would have made such a field truthful was investigated and closed NO-GO, so no spawn event exists in any log to read. `test-status-line.sh` asserts the absence mechanically, in the rendered output AND as a source grep, so this paragraph cannot rot into a claim the code does not back.
+
+> **Time is read from the record, never from the filesystem.** The age comes from the log line's own `ts` field, parsed try-BSD-then-GNU and validated numeric before any arithmetic; the field is omitted when neither flavour parses it. `stat` is never invoked — `stat -f %m` is BSD and *succeeds with garbage* on GNU/Linux, which would put a plausible wrong number on screen rather than failing visibly.
+
+The deterministic engine is `${CLAUDE_PLUGIN_ROOT}/scripts/setup-statusline.sh` (subcommands `check` / `apply` / `remove`). It is fail-safe (always exits 0 — "fails closed" here means refuse-to-write plus a named-reason status line, never a non-zero exit), write-contained to the user-scope settings document (+ one timestamped backup), and it never touches a project file. The renderer itself is `${CLAUDE_PLUGIN_ROOT}/scripts/status-line.sh` — read-only, dependency-free, and it always exits 0. This command owns the INTERACTIVE half.
+
+### Check
+
+Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-statusline.sh" check` and report its cells: the settings path, whether the renderer exists, the `settings parse:` gate (`ok` / `absent` / `UNPARSEABLE`), the `statusLine:` cell (absent / installed by this plugin / **NOT installed by this plugin**, with the existing value shown), the `restore record:`, and the `Statusline readiness:` verdict (`configured` / `not configured` / `foreign (…)` / `unknown (…)`). Read-only — `check` writes nothing. `unknown` means nothing could be probed (missing `jq`, or a settings document that does not parse): report it as UNVERIFIED, never as clean.
+
+### Report
+
+Print what check found. For the `status` subcommand, STOP after the report — read-only, no writes, no offer.
+
+### Offer — CONSENT-BEARING when something already exists
+
+**If `not configured`** — use `AskUserQuestion` (cap 4 options):
+- `question`: "Wire Loomwright's status line into your settings?"
+- `header`: "Statusline"
+- `multiSelect`: false
+- `options`:
+  1. `Apply` — "Set statusLine to Loomwright's one-line run report. Your settings file is backed up first, and every unrelated key is preserved."
+  2. `Status only` — "Re-print the report and stop (no writes)."
+  3. `Cancel` — "Do nothing."
+
+**If `foreign`** — this is the case that matters, and it is neither configured nor unconfigured. **Do NOT offer a plain "Apply".** Report the existing value verbatim, state plainly that applying would REPLACE the user's own status line, and offer:
+  1. `Replace it` — "Install Loomwright's status line. Your current one is recorded under `.loomwrightStatusLinePrior` and `/setup statusline remove` restores it verbatim." Runs the engine **with `--replace`**.
+  2. `Leave mine alone` — "Change nothing." (the default; treat any ambiguous answer as this)
+  3. `Status only` — "Re-print the report and stop."
+
+Default to NOT applying in both cases. **Never pass `--replace` on the strength of a generic "yes"** — it is earned only by the user choosing `Replace it` against a report that named their existing value.
+
+### Apply
+
+1. Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-statusline.sh" apply` (adding `--replace` ONLY per the offer above) after an explicit confirm.
+2. Read its **headline status line** and report it verbatim. Exactly ONE of these is printed:
+   - `apply: applied` — the status line was installed; a timestamped backup path is printed on the following line.
+   - `apply: applied (REPLACED a pre-existing statusLine …)` — followed by the `replaced:` value. Relay BOTH; never present this as a plain `applied`, and tell the user how to get their line back.
+   - `apply: applied (created …)` — there was no settings document; one was created holding just the status line.
+   - `apply: no-op — already configured` — nothing was written (idempotent second run), and no second backup was made.
+   - `apply: WITHHELD — a statusLine this plugin did not write is already configured` — followed by the existing value. **Nothing was written and no backup was made.** This is the fail-closed path, not a failure: relay it and go back to the Offer step. Never re-run with `--replace` to "get past" it.
+   - `apply: ABORTED — <reason>` — nothing was written, no partial write, no backup. Reasons: the settings document exists but is not valid JSON; `jq` unavailable or non-functional; the renderer script is missing; no free backup name. Surface the reason and STOP. **Never "repair" the settings document to get past an abort** — a hand-edited file is the user's.
+3. Tell the user the status line appears on the next session (the host reads `statusLine` at startup).
+
+### Verify
+
+Re-run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-statusline.sh" check` and show the before/after: the verdict now `configured`, the command pointing at `status-line.sh`, and the backup path. Success is claimed ONLY after that re-check. As a live smoke test, run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/status-line.sh"` in the project and show the actual line — it exits 0 even with no run in flight.
+
+### Subflow: `/setup statusline remove`
+
+1. Confirm via `AskUserQuestion` first.
+2. Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-statusline.sh" remove`. It restores the status line that was there BEFORE this module applied (recorded at apply time under `.loomwrightStatusLinePrior`), or deletes ours outright when there was none, then drops the record. Backup-first, like apply.
+3. **`remove` REFUSES a status line this plugin did not write** — it prints `remove: REFUSED` and changes nothing. That is correct: a foreign status line is not this module's to remove, and the user should edit it themselves.
+
+### Idempotency note
+
+A second `/setup statusline` on an already-configured setup reports `no-op — already configured`, writes nothing and makes no second backup — apply computes the document it would write and byte-compares it against the one on disk before touching anything. **The restore record survives re-application unchanged:** a second apply must never recapture the current (ours) value as "the prior one", or `remove` would hand the user back a copy of the very thing it was undoing instead of their own status line.
+
+---
+
 ## Module: telemetry
 
 DELEGATES — print `Telemetry is managed by /telemetry (consent logic lives there and is not duplicated).`, show the consent state from the dashboard check, and tell the user to run `/telemetry enable | disable | status | test`.
@@ -416,6 +502,8 @@ Status + guidance only. Report which of `DB_HOST`, `DB_USER`, `DB_PASS`, `DB_NAM
   - `$HOME/.claude/settings.json` — user-scope env, via the merge recipe, backup-first,
   - `<project>/.claude/settings.local.json` — project-scope, gitignored-by-convention; sanctioned for the `remove` subflow's `jq 'del(.env.OTEL_RESOURCE_ATTRIBUTES)'` (backup-first, like the user-scope merge) and — via the invoked `set-otel-resource-attrs.sh` script — the init-tail per-project label. The script write uses parse-gate (`jq empty`, no clobber on unparseable) + atomic tmp-file-`mv` + idempotent skip-if-unchanged; it does NOT back up (the merge is single-key and idempotent, so there is nothing destructive to roll back), and
   - **memory** (`/setup memory`) — **a `.gitignore` write class no other module has, so it gets its own line:** (a) `<project>/.gitignore`, rewritten ONLY via `setup-memory.sh apply` / `remove`, and ONLY after an explicit consent-bearing confirm. The write is backup-first (a timestamped `<project>/.gitignore.backup.<ts>` sibling, pid-suffixed on a same-second collision so one backup can never overwrite another), atomic (tmp-file + `mv`), confined to a sentinel-delimited managed block plus the commenting-out of pre-existing directory-shaped `.claude/` / `.supervisor/` excludes — including the recursive `**` family (`.claude/**`, `**/.claude/`, `**/.claude/**`), but never the `X/*` working form — and **idempotent by byte-comparison** — apply computes the file it would write and does nothing when it already matches. It **ABORTS without any write and without a backup** on an absent, non-regular, symlinked, NUL-containing, conflict-marked, or sentinel-unbalanced `.gitignore` — never a partial write, never a blind repair; and (b) `<project>/.supervisor/config.json` key `.setup_memory.repo_allowlist` — a jq merge that is parse-gated (`jq empty`), backup-first, atomic, preserves every unrelated key, stores a JSON **array**, and never overwrites an existing non-empty one. The memory module touches NO `~/.claude/settings.json` and nothing under `~/.claude/`, and it **NEVER runs `git add`, `git rm`, `git commit` or any other history-touching git command** — un-ignoring is not committing, and un-committing is the user's own `git rm --cached`.
+
+  - **statusline** (`/setup statusline`) — **the only module whose write domain is the USER-SCOPE settings document, so it gets its own line:** the user-scope settings JSON ONLY (the same path Pattern 3 governs), written ONLY via `setup-statusline.sh apply` / `remove`, and ONLY after an explicit confirm. The write is backup-first (a timestamped `.backup.<ts>` sibling, pid- then counter-suffixed on a same-second collision so one backup can never overwrite another, and an apply that cannot obtain a free backup name ABORTS rather than write unbacked-up), parse-gated (`jq empty` — an unparseable document ABORTS with **no write and no backup**), atomic (tmp-file + `mv`), and **idempotent by byte-comparison** — apply computes the document it would write and does nothing when it already matches. It touches exactly TWO keys, `statusLine` and the namespaced restore record `loomwrightStatusLinePrior`; every other key at every level is preserved, which `test-setup-statusline.sh` asserts by DIFFING the two documents with those two keys removed rather than by spot-checking. **NOTHING ELSE under the user's `~/.claude/` directory** — no sidecar state file, no project write, no `.gitignore` write, and no history-touching git command. A pre-existing `statusLine` this plugin did not write is PRESERVED and reported; replacing it requires the explicit `--replace` flag, and the replaced value is recorded so `remove` restores it verbatim.
 
   - **rules** (`/setup rules`): `<project>/.agent/rules/<category>.json` ONLY, written ONLY via `seed-rules.sh seed --confirm` (which authors every rule through the sole writer `add-rule.sh`), and ONLY after an explicit confirm. `check` and a bare `seed` write NOTHING — every writer invocation is stdin-detached, so this module NEVER prompts and an unconfirmed run cannot write. No `~/.claude/` write of any kind, no `.gitignore` write, no `git add`/`rm`/`commit`, and no rule object built by hand.
 

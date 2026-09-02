@@ -117,7 +117,7 @@ your-project/
 └── src/ (your code)
 ```
 
-**Optional integrations in one place:** run `/setup` to configure optional integrations — observability (local Langfuse + OTel collector), telemetry, notifications, webhook, Beads, MySQL MCP, memory in version control, and `rules` (seed `.agent/rules/` with portable conventions) — from a single status dashboard.
+**Optional integrations in one place:** run `/setup` to configure optional integrations — observability (local Langfuse + OTel collector), telemetry, notifications, webhook, Beads, MySQL MCP, memory in version control, `rules` (seed `.agent/rules/` with portable conventions), and `statusline` (an opt-in one-line run report — phase, branch, subtask progress, age of the last event) — from a single status dashboard.
 
 ### 3. (Optional) Enable MySQL MCP
 
@@ -218,7 +218,7 @@ Optional next: run `/setup` for a status dashboard and guided configuration of o
 | **QA Strategist**     | `/qa-strategist src/`           | Risk-based test strategy → coverage targets → assertion quality audit | Before QA, strategy planning    |
 | **QA Executor**       | `/qa-executor`                  | Discover → generate strict tests → find missing functionality → QA_RESULT | Automated QA                    |
 | **Review-PR**         | `/review-pr <pr-url>`           | Standalone review→fix→re-review loop against an existing PR; auto-heals the diff, never auto-merges → REVIEW_HEAL_RESULT | Review/heal any open PR         |
-| **Setup** (command)   | `/setup [module]`               | Status dashboard + guided configuration for every optional capability — observability (local Langfuse + OTel collector), telemetry, notifications, webhook, Beads, MySQL MCP, memory in version control, `rules` (seed `.agent/rules/` with portable conventions) | First install, enabling integrations |
+| **Setup** (command)   | `/setup [module]`               | Status dashboard + guided configuration for every optional capability — observability (local Langfuse + OTel collector), telemetry, notifications, webhook, Beads, MySQL MCP, memory in version control, `rules` (seed `.agent/rules/` with portable conventions), `statusline` (opt-in one-line run report; never overwrites a status line you already have) | First install, enabling integrations |
 | **Rules** (command)   | `/rules [list\|suggest\|add\|check]` | House Rules substrate — committed `.agent/rules/` conventions store + fail-safe reader; list/suggest/add/check | Capturing durable team conventions |
 
 
