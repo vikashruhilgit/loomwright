@@ -1,7 +1,7 @@
 # Result Schemas
 
 > Strict contracts for all agent result blocks. Hooks validate against these schemas.
-> All schemas include a `schema_version` field for forward compatibility. Current versions: CODE_REVIEW_RESULT at `schema_version: 3` (review modes + consistency audit; v2 accepted for legacy); WORKER_RESULT at `schema_version: 2` (outputs_verified contract; v1 accepted for the v12.0.0 transition window); AUTONOMOUS_RUN at `schema_version: 2` (v14.0.0 status_reason extension; v1 accepted, no hook validation); LAUNCH_PAD_RESULT at `schema_version: 1` (added v14.2.0, validated by `scripts/validate-launch-pad-result.py`); REVIEW_HEAL_RESULT at `schema_version: 2` (v14.30.0 — `--until-mergeable` drain mode adds the `READY` decision + drain/postmortem fields; v1 still accepted for legacy artifacts / the default diff-only loop; added v14.16.0, no hook validator — runner is the main agent of its own session); EVAL_RESULT at `schema_version: 1` (added v14.17.0, the System Twin eval instrument emitted by `scripts/run-eval.sh`, no hook validator — standalone script); GROUND_TRUTH_JSON at `schema_version: 1` (added v14.19.0, the System Twin ground-truth instrument emitted by `scripts/run-ground-truth.sh`, no hook validator — standalone script; consumed advisory-only by Supervisor Phase 4.5); POSTMORTEM_RESULT at `schema_version: 1` (added v14.22.0, the advisory PR review-churn trend line appended by `/pr-postmortem` to `.supervisor/postmortem/results.jsonl`, no hook validator); GATE_VERDICT at `schema_version: 1` (Strategist↔Executor gate-audit handoff, no hook validator); RED_TEAM_RESULT at `schema_version: 1` (advisory audit tail, no hook validator); all others at `schema_version: 1`.
+> All schemas include a `schema_version` field for forward compatibility. Current versions: CODE_REVIEW_RESULT at `schema_version: 3` (review modes + consistency audit; v2 accepted for legacy); WORKER_RESULT at `schema_version: 2` (outputs_verified contract; v1 accepted for the v12.0.0 transition window); AUTONOMOUS_RUN at `schema_version: 2` (v14.0.0 status_reason extension; v1 accepted, no hook validation); LAUNCH_PAD_RESULT at `schema_version: 1` (added v14.2.0, validated by `scripts/validate-launch-pad-result.py`); REVIEW_HEAL_RESULT at `schema_version: 2` (v14.30.0 — `--until-mergeable` drain mode adds the `READY` decision + drain/postmortem fields; v1 still accepted for legacy artifacts / the default diff-only loop; added v14.16.0, no hook validator — runner is the main agent of its own session); EVAL_RESULT at `schema_version: 1` (added v14.17.0, the System Twin eval instrument emitted by `scripts/run-eval.sh`, no hook validator — standalone script); GROUND_TRUTH_JSON at `schema_version: 1` (added v14.19.0, the System Twin ground-truth instrument emitted by `scripts/run-ground-truth.sh`, no hook validator — standalone script; consumed advisory-only by Supervisor Phase 4.5); POSTMORTEM_RESULT at `schema_version: 1` (added v14.22.0, the advisory PR review-churn trend line appended by `/pr-postmortem` to `.supervisor/postmortem/results.jsonl`, no hook validator); GATE_VERDICT at `schema_version: 1` (Strategist↔Executor gate-audit handoff, no hook validator); RED_TEAM_RESULT at `schema_version: 1` (advisory audit tail, no hook validator); FLOOR_PROJECTION at `schema_version: 1` (added v15.43.0, the derived floor projection `.supervisor/floor/floor.json` emitted by `scripts/build-floor.sh`, no hook validator — standalone script, and not an agent-emitted result block; its required-key set is parsed back OUT of this file by `scripts/test-build-floor.sh`, so a doc/validator divergence fails CI); all others at `schema_version: 1`.
 
 > **API-level enforcement:** When using the Claude API directly (outside Claude Code), enforce these schemas via `output_config.format` (JSON Schema mode) for guaranteed conformance — the model is constrained to produce schema-valid output before the response is returned. Plugin hook validation (the `SubagentStop` hooks defined in `hooks.json`) is the runtime fallback validator inside Claude Code, where `output_config` is not available to plugin agents. See `AGENT_GUIDELINES.md` §"Structured Outputs" and the Anthropic API reference for the exact field name in your SDK version.
 
@@ -1836,6 +1836,7 @@ All result schemas include a `schema_version` field. This enables forward compat
 
 ### Version History
 
+- **FLOOR_PROJECTION (schema_version 1)** (v15.43.0, 2026-09-02): New `## FLOOR_PROJECTION` schema for the read-only floor projector `scripts/build-floor.sh`, which reads the nine scattered `.supervisor/` / `.agent/` surfaces (`state.md`, the four `jobs/` lifecycle folders, `automate/`, `logs/*.jsonl`, `insights/runs/`, `postmortem/results.jsonl`, `drain-rounds/`, `worker-summaries/`, `.agent/rules/`) and emits ONE versioned artefact at `.supervisor/floor/floor.json` so no downstream view re-parses a raw surface. Five top-level keys (`schema_version`, `generated_at_epoch`, `generator`, `surfaces`, `notes`) plus optional `repo_head`; each `surfaces` entry carries required `source` / `basis` / `status` plus optional `count` / `reason` / `mtime_epoch` / `detail`. **Every count states its own counting basis** — `.supervisor/logs/` holds 99 directory entries but 65 `*.jsonl` session logs, a 34-file gap between two defensible readings, so a bare number is already ambiguous. **Absent evidence is an omitted key, never a default:** an uncountable surface has no `count` key at all (never `0`), an input that would not parse reports `status: unverified` rather than `counted`, and an mtime that could not be read portably is omitted rather than defaulted to the Unix epoch. Sessions are segmented by the `cc_session_id` **field**, never by log filename — no emitter change required. The artefact is gitignored and regenerable; nothing commits it. No hook validates it (standalone script, the `EVAL_RESULT` / `GROUND_TRUTH_JSON` precedent) — instead `scripts/test-build-floor.sh` parses the required-key set out of the annotated block in this file and validates a real payload against it, so this doc IS the validator's input rather than a restatement of it. Additive — all other schemas unchanged.
 - **POSTMORTEM_RESULT `source: "curation"` record variant + reader staleness** (v15.7.0): Added the human-gated curation record variant to the churn ledger — `{schema_version:1, source:"curation", curation_action:"retract"\|"supersede", target_key, replacement, reason, ts}` lines appended ONLY by `scripts/curate-postmortem.sh` (dry-run exit 1 without `--confirm`; append-only; jq-built). `read-postmortem.sh` excludes any data entry whose `automate_key` OR `pr_url` exactly equals a well-formed record's `target_key` (presence-disciplined — a malformed record curates nothing) and never counts a curation record as a hit; it also drops data entries with a parseable `ts` older than `CHURN_STALE_DAYS` (env, default 180 days; missing/unparseable `ts` = FRESH, fail-open). **No `schema_version` bump** — the variant is additive; old readers fail-safe-skip it via the `changed_paths` overlap filter. Additive — all other schemas unchanged.
 - **POSTMORTEM_RESULT additive `source` + `automate_key`** (v14.44.0): Added two optional additive fields to POSTMORTEM_RESULT — `source` (`"github_postmortem"` implicit default \| `"automate_drain"`, discriminating a `/pr-postmortem` GitHub-surface line from an engine-native `/automate` end-of-DRAIN line) and `automate_key` (the deterministic `run_id`+item+`pr_url`+`source` idempotency key, present only on `automate_drain` lines so `learning-emit` can skip a crash/`--resume` duplicate). The new `source: "automate_drain"` variant is a FULL valid `schema_version: 1` record carrying the ground-truth drain `fix_cycles` as `effective_review_rounds` (or `1` for a zero-cycle escalation) — NOT a GitHub-measured count — with a single honestly-labeled synthetic `categories[]` entry (`drain_churn` / `drain_escalation`) honoring the zero-rule (`categories: []` only when `effective_review_rounds == 0`), and a required populated `changed_paths` for `read-postmortem.sh` visibility. **No `schema_version` bump** — both fields are optional/additive (same precedent as `pr_url`/`branch`/`changed_paths`/`brief_path`/`job_path`); a line with no `source` reads as `"github_postmortem"`. Additive — all other schemas unchanged.
 - **SUPERVISOR_RESULT + CODE_REVIEW_RESULT v-stable extensions + `session_end` hard-signal field** (v14.28.0): Added the optional additive `knowledge_sources_used: string[]` array on SUPERVISOR_RESULT (stays `schema_version: 1`) and CODE_REVIEW_RESULT (stays `schema_version: 3`), plus the matching FLAT `knowledge_sources_used` array on the `session_end` JSONL line (the surface `build-insights.sh` reads). It records which memory sources a run actually consulted — open-set lowercase tags `project_memory`, `lessons:<category>`, `agent_memory:<agent>`, `twin:<path>`, `brain_context`. **Advisory and non-gating** — NEVER changes `heal_decision` / the review `decision`, NEVER blocks the PR, and NOT enumerated by the Supervisor or Code Reviewer SubagentStop hooks, so blocks with or without it validate unchanged. Absent ⇒ "none used". Follows the `branch_base` / `pr_state` / `preflight_sync` additive precedent (optional, advisory-only, no `schema_version` bump); the nested result-block array and the flat `session_end` array are the same data in two shapes (the `contract_conformance` dual-shape pattern). Part of the v14.28.0 memory APPLY path. Additive — all other schemas unchanged.
@@ -2184,6 +2185,68 @@ REVIEW_HEAL_RESULT:
 **Postmortem dispatch is read-only / append-only (v2, AC12):** the churn-gated postmortem tail runs **only after** the loop's `decision` is computed and `REVIEW_HEAL_RESULT` is emitted — it reads the decision as an input and can **NEVER** change it. `/pr-postmortem` is read-only on the analyzed repo and only **appends** one JSONL line to `.supervisor/postmortem/results.jsonl` (it mutates no repo file). The dispatcher (`scripts/dispatch-pr-postmortem.sh`) is fire-and-forget and `exit 0` on every path, so a dispatcher/gather/append failure leaves `REVIEW_HEAL_RESULT.decision` unchanged and the merge-ready result identical to a successful-postmortem run. `postmortem_dispatched` is **informational, never a gate input**.
 
 **No re-coining:** the v1 seven fields, the v2 drain/postmortem fields, and the `decision` enum (including `READY`) match `skills/review-heal/SKILL.md` exactly (§"Pinned Canonical Names", §"Until-Mergeable Mode", §"Anti-Churn Guardrail", §"Postmortem Dispatch Tail"). Do NOT rename or add fields here without updating that skill first (it is authoritative).
+
+---
+
+## FLOOR_PROJECTION
+
+The on-disk shape of `.supervisor/floor/floor.json`, the single derived artefact emitted by `loomwright/scripts/build-floor.sh`. Unlike the RESULT blocks above this is **not an agent-emitted result block** — it is a read-only projection of the nine scattered `.supervisor/` / `.agent/` surfaces into one contract, so a downstream view consumes this file instead of re-implementing nine parsers. No hook validates it (the producer is a standalone script, the same precedent as `EVAL_RESULT` / `GROUND_TRUTH_JSON`); instead `loomwright/scripts/test-build-floor.sh` **parses the required-key set out of the annotated block below** and validates a real payload against it, so a doc/validator divergence fails CI.
+
+**Evidence-only derivation — the invariant this schema exists to encode:** absent evidence yields an **omitted key**, never a plausible default. A surface that could not be counted carries **no `count` key at all** (never `0`) and names the reason; an input that could not be fully parsed reports `status: unverified`, never `counted`; an mtime that could not be read portably is omitted rather than defaulted to the Unix epoch. A consumer must be able to render "unknown" and must never be handed a fabricated zero.
+
+```yaml
+FLOOR_PROJECTION:
+  schema_version: 1                    # integer, required — always 1
+  generated_at_epoch: integer|null     # integer|null, required — Unix seconds UTC of the run; the script's ONE wall-clock read, overridable via FLOOR_SOURCE_DATE_EPOCH. `null` ONLY when the clock read itself failed — the key is always present
+  generator: string                    # string, required — producing script name, always "build-floor.sh"
+  repo_head: string                    # string, optional — short HEAD SHA; OMITTED outside a git repo or when git is unavailable
+  surfaces: object                     # object, required — map of surface key → surface entry. Keys are stable snake_case names (state, jobs_pending, jobs_in_progress, jobs_done, jobs_failed, automate_runs, logs, sessions, insights_runs, postmortem, drain_rounds, worker_summaries, rules). Every entry carries the four-space keys below
+    source: string                     # string, required — the repo-relative path or directory the entry was derived from
+    basis: string                      # string, required — the glob or predicate that produced `count`, stated inline so `logs: 65` can never be confused with `logs: 99` (the same directory holds 34 plain .log files a `*.jsonl` glob does not count)
+    status: enum [counted, absent, unverified]   # enum, required — counted = the number is proven; absent = the input is not there; unverified = the input exists but could not be fully parsed or read
+    count: integer                     # integer, optional — present ONLY when status == counted. ABSENT, never 0, for absent/unverified
+    reason: string                     # string, optional — present when status != counted; names why the count was omitted
+    mtime_epoch: integer               # integer, optional — Unix seconds mtime of `source`; OMITTED when unreadable or non-numeric (never 0), and omitted by design for surfaces spanning many files
+    detail: object                     # object, optional — surface-specific evidence already in hand (e.g. `sessions` reports lines_scanned / lines_with_session_id / lines_without_session_id / lines_malformed / lines_blank_skipped; `state` reports phase / branch / run_status / session_id). Each inner field is itself omitted when absent
+  notes: string[]                      # string[], required — one human-readable line per omitted or unverified surface, in surface-processing order. MAY be `[]` when every surface was counted
+```
+
+**Validation rules:**
+- `schema_version` must equal `1`.
+- Every top-level key marked `required` must be **present**; `generated_at_epoch` is nullable but its key is still mandatory (a present-but-null value is meaningful — "the clock read failed" — while a missing key is a producer bug).
+- Every entry in `surfaces` must carry `source`, `basis` and `status`.
+- `count` present ⇒ `status == counted`; `status != counted` ⇒ `count` **absent**. Emitting `count: 0` for an absent surface is a contract violation, not a rounding convenience.
+- `status` must be one of `counted`, `absent`, `unverified`. An input that exists but could not be read or parsed is `unverified` — never `counted`.
+- Sessions are segmented by the `cc_session_id` **field**, never by log filename: one file routinely spans many sessions (its name derives from a `state.md` `status:` that can read `running` for weeks) and one session can span many files.
+- **Determinism:** two runs over an unchanged tree differ only in `generated_at_epoch`. Every enumeration is `LC_ALL=C` sorted and the artefact is emitted through `jq -S`, so the byte layout is a function of the data alone.
+
+**Example (abridged — two surfaces of the thirteen):**
+```json
+{
+  "schema_version": 1,
+  "generated_at_epoch": 1788364421,
+  "generator": "build-floor.sh",
+  "repo_head": "23e4b10",
+  "notes": [
+    "automate_runs omitted: input directory .supervisor/automate is not present"
+  ],
+  "surfaces": {
+    "logs": {
+      "source": ".supervisor/logs",
+      "basis": "files matching .supervisor/logs/*.jsonl, an extension glob; the same directory also holds plain .log dispatch transcripts which are deliberately NOT counted here",
+      "status": "counted",
+      "count": 65,
+      "mtime_epoch": 1788363534
+    },
+    "automate_runs": {
+      "source": ".supervisor/automate",
+      "basis": "files matching .supervisor/automate/*.md, which excludes the sibling *.config-backup.json transients",
+      "status": "absent",
+      "reason": "input directory .supervisor/automate is not present"
+    }
+  }
+}
+```
 
 ---
 

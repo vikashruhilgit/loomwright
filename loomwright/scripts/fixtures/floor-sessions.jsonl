@@ -1,0 +1,8 @@
+{"ts":"2026-08-01T09:00:00Z","event":"session_start","session_id":"file-name-is-not-a-session","cc_session_id":"sess-aaaa-0001","branch":"feature/one"}
+{"ts":"2026-08-01T09:05:00Z","event":"subtask_complete","session_id":"file-name-is-not-a-session","cc_session_id":"sess-aaaa-0001","subtask_id":"S1"}
+{"ts":"2026-08-01T09:40:00Z","event":"session_end","session_id":"file-name-is-not-a-session","cc_session_id":"sess-aaaa-0001","status":"completed"}
+{"ts":"2026-08-14T11:00:00Z","event":"session_start","session_id":"file-name-is-not-a-session","cc_session_id":"sess-bbbb-0002","branch":"feature/two"}
+{"ts":"2026-08-14T11:30:00Z","event":"session_end","session_id":"file-name-is-not-a-session","cc_session_id":"sess-bbbb-0002","status":"completed"}
+{"ts":"2026-08-27T16:00:00Z","event":"session_start","session_id":"file-name-is-not-a-session","cc_session_id":"sess-cccc-0003","branch":"feature/three"}
+{"ts":"2026-08-27T16:20:00Z","event":"session_end","session_id":"file-name-is-not-a-session","cc_session_id":"sess-cccc-0003","status":"failed"}
+{"ts":"2026-08-27T16:21:00Z","event":"token_ledger","session_id":"file-name-is-not-a-session","token_proxy_kind":"transcript_bytes"}
