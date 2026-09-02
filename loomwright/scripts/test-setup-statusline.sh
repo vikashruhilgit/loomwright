@@ -37,6 +37,15 @@
 #   (i) fail-safe: every subcommand exits 0 — including a bad flag, a bad subcommand, an absent
 #       settings file, and a missing command file
 #   (j) write containment (see above)
+#   (k) OWNERSHIP IS ANCHORED (regression pin). `is_ours` once matched any `.command` merely
+#       CONTAINING `status-line.sh`, so a user's own `my-status-line.sh` read as ours: `apply`
+#       overwrote it with no `--replace` and no WITHHELD gate, recorded `prior: null`, and
+#       `remove` then deleted it while printing "there was no statusLine before this module
+#       applied". Pinned with a mutation control that reverts the two-signal rule and shows the
+#       same fixture BEING overwritten
+#   (l) a SYMLINKED settings document survives the write. `mv` replaces a symlink with a
+#       regular file, silently detaching a dotfiles-managed config from version control; the
+#       engine resolves one level first, so the link stays a link and the TARGET is written
 #
 # NO `producer | grep -q` PIPELINES (SIGPIPE turns a match into rc=141 under pipefail).
 
@@ -69,6 +78,13 @@ if [ -f "$REAL_SETTINGS" ]; then
 else
   real_before="ABSENT"
 fi
+# (j2) baseline — how many backups of the REAL settings document already exist. Without this
+# the assertion below had nothing to compare against: `${STRAY_BASELINE:-$stray}` expanded to
+# `$stray`, making the test `[ "$stray" = "$stray" ]` — true for any value, including one this
+# run created. Captured HERE, before anything runs, so a backup made DURING the run is the only
+# thing that can move the number.
+STRAY_BASELINE="$(ls -1 "$REAL_SETTINGS".backup.* 2>/dev/null | wc -l | tr -d ' ')"
+case "$STRAY_BASELINE" in ''|*[!0-9]*) STRAY_BASELINE=0 ;; esac
 
 # eng <fixture-settings-path> <subcmd> [flags...]  -> $out / $rc
 eng() {
@@ -221,7 +237,7 @@ if [ "$(backup_count "$SD")" = "0" ]; then
 else
   no "(d4) …and no backup was written, because nothing was staged" "$(backup_count "$SD") backup(s)"
 fi
-if has "$out" -- "--replace"; then
+if has "$out" "--replace"; then
   ok "(d5) …and the refusal names the explicit flag required to proceed"
 else
   no "(d5) …and the refusal names the explicit flag required to proceed" "$out"
@@ -318,6 +334,142 @@ else
   no "(h4) a second remove is a no-op, not an error" "rc=$rc out=$out"
 fi
 
+echo "== (k) ownership is ANCHORED: a same-substring foreign line is not ours =="
+
+# The reported bypass verbatim: a user's own status line whose basename merely CONTAINS
+# `status-line.sh`, in a document this module has never touched (no marker key).
+FK="$TMPROOT/k"; mkdir -p "$FK" || setup_fail "mkdir k"
+SK="$FK/settings.json"
+# Deliberately NOT under the host's config directory: living somewhere else isolates the
+# BASENAME SUBSTRING as the only reason the old rule claimed this line as ours.
+LOOKALIKE='{"type":"command","command":"/Users/someone/bin/my-status-line.sh"}'
+jq -n --argjson sl "$LOOKALIKE" '{model:"opus", env:{KEEP:"yes"}, statusLine:$sl}' > "$SK" \
+  || setup_fail "could not write the (k) look-alike fixture"
+k_pristine="$(cat "$SK")"
+# The fixture is only a regression pin if it really is the shape that used to slip through:
+# no marker key, and a command that the OLD substring rule would have claimed.
+[ "$(jq -r 'has("loomwrightStatusLinePrior")' "$SK")" = "false" ] \
+  || setup_fail "the (k) fixture carries a marker key — it would not exercise the bypass"
+case "$(jq -r '.statusLine.command' "$SK")" in
+  *status-line.sh*) : ;;
+  *) setup_fail "the (k) fixture's command does not contain 'status-line.sh' — the old rule would not have claimed it, so (k) proves nothing" ;;
+esac
+
+eng "$SK" check
+if [ "$rc" -eq 0 ] && has "$out" "readiness: foreign"; then
+  ok "(k1) check calls a look-alike command FOREIGN, not ours"
+else
+  no "(k1) check calls a look-alike command FOREIGN, not ours" "rc=$rc out=$out"
+fi
+
+eng "$SK" apply
+if [ "$rc" -eq 0 ] && has "$out" "WITHHELD" && [ "$k_pristine" = "$(cat "$SK")" ]; then
+  ok "(k2) apply WITHOUT --replace WITHHOLDS against a look-alike and leaves it byte-identical"
+else
+  no "(k2) apply WITHOUT --replace WITHHOLDS against a look-alike and leaves it byte-identical" "rc=$rc out=$out"
+fi
+if [ "$(backup_count "$SK")" = "0" ]; then
+  ok "(k3) …and writes no backup, because nothing was staged"
+else
+  no "(k3) …and writes no backup, because nothing was staged" "$(backup_count "$SK") backup(s)"
+fi
+
+eng "$SK" remove
+if [ "$rc" -eq 0 ] && has "$out" "REFUSED" && [ "$k_pristine" = "$(cat "$SK")" ]; then
+  ok "(k4) remove REFUSES to touch a look-alike and leaves it byte-identical"
+else
+  no "(k4) remove REFUSES to touch a look-alike and leaves it byte-identical" "rc=$rc out=$out"
+fi
+if ! has "$out" "there was no statusLine before"; then
+  ok "(k5) …and never prints the false 'there was no statusLine before this module applied'"
+else
+  no "(k5) …and never prints the false 'there was no statusLine before this module applied'" "$out"
+fi
+
+# Mutation control. (k2)-(k5) are only evidence if they can FAIL, and the thing they guard is a
+# rule that was WRITTEN into the engine — a passing fixture proves nothing unless the fixture is
+# shown failing with that rule removed. The mutant reverts is_ours to the unanchored,
+# marker-free form and re-runs (k2) against a FRESH copy of the same fixture.
+MUT="$TMPROOT/mutant-engine.sh"
+sed -e '/jq -e --arg k "\$PRIOR_KEY"/d' \
+    -e 's#in "\$SL_COMMAND".\*/status-line\.sh)#in *status-line.sh*)#' \
+    "$ENGINE" > "$MUT" 2>/dev/null || setup_fail "could not build the (k) mutant"
+mut_valid=1
+[ -s "$MUT" ] || mut_valid=0
+cmp -s "$MUT" "$ENGINE" && mut_valid=0
+bash -n "$MUT" 2>/dev/null || mut_valid=0
+# The two edits must both have LANDED — a sed that matched nothing yields a file that differs
+# in neither respect and would "prove" the fix while testing the fixed code.
+grep -q 'in \*status-line.sh\*)' "$MUT" 2>/dev/null || mut_valid=0
+grep -q "jq -e --arg k \"\$PRIOR_KEY\"" "$MUT" 2>/dev/null && mut_valid=0
+if [ "$mut_valid" -ne 1 ]; then
+  no "(k6) mutation control — the reverted-rule mutant is a valid, actually-mutated script" \
+     "the mutant is empty, identical, syntactically broken, or the sed edits did not land"
+else
+  ok "(k6) mutation control — the reverted-rule mutant is a valid, actually-mutated script"
+  FKM="$TMPROOT/km"; mkdir -p "$FKM" || setup_fail "mkdir km"
+  SKM="$FKM/settings.json"
+  printf '%s\n' "$k_pristine" > "$SKM" || setup_fail "could not copy the (k) fixture for the mutant"
+  km_pristine="$(cat "$SKM")"
+  mout="$(bash "$MUT" apply --settings "$SKM" --command "$SLCMD" 2>&1)"; mrc=$?
+  if [ "$mrc" -eq 0 ] && ! has "$mout" "WITHHELD" && [ "$km_pristine" != "$(cat "$SKM")" ]; then
+    ok "(k7) …and with the anchored rule REVERTED the same fixture IS silently overwritten — (k2) is not vacuous"
+  else
+    no "(k7) …and with the anchored rule REVERTED the same fixture IS silently overwritten — (k2) is not vacuous" \
+       "mrc=$mrc mout=$mout"
+  fi
+fi
+
+echo "== (l) a SYMLINKED settings document keeps its link; the TARGET is written =="
+
+FL="$TMPROOT/l"; mkdir -p "$FL/real" || setup_fail "mkdir l"
+LTARGET="$FL/real/settings.json"
+LLINK="$FL/settings.json"
+printf '{"env":{"L":"1"}}\n' > "$LTARGET" || setup_fail "could not write the (l) target"
+ln -s "$LTARGET" "$LLINK" || setup_fail "could not create the (l) absolute symlink"
+[ -L "$LLINK" ] || setup_fail "the (l) fixture is not a symlink — the case would be vacuous"
+
+eng "$LLINK" apply
+if [ "$rc" -eq 0 ] && has "$out" "apply: applied"; then
+  ok "(l1) apply through a symlinked settings path succeeds"
+else
+  no "(l1) apply through a symlinked settings path succeeds" "rc=$rc out=$out"
+fi
+if [ -L "$LLINK" ]; then
+  ok "(l2) the settings path is STILL a symlink — it was not replaced by a regular file"
+else
+  no "(l2) the settings path is STILL a symlink — it was not replaced by a regular file" \
+     "$(ls -l "$LLINK" 2>&1)"
+fi
+if [ "$(jq -r '.statusLine.command // ""' "$LTARGET" 2>/dev/null)" = "$SLCMD" ]; then
+  ok "(l3) …and the TARGET file is the one that received the write"
+else
+  no "(l3) …and the TARGET file is the one that received the write" \
+     "target statusLine=$(jq -c '.statusLine' "$LTARGET" 2>&1)"
+fi
+if [ "$(backup_count "$LTARGET")" != "0" ] && [ "$(backup_count "$LLINK")" = "0" ]; then
+  ok "(l4) …and the backup was written beside the TARGET, not beside the link"
+else
+  no "(l4) …and the backup was written beside the TARGET, not beside the link" \
+     "target=$(backup_count "$LTARGET") link=$(backup_count "$LLINK")"
+fi
+
+# The RELATIVE-target branch of the resolver is a separate code path: a relative link resolves
+# against the LINK's directory, not the caller's cwd. A documented branch with no case is the
+# shape this repo's review keeps catching, so it gets its own fixture.
+FL2="$TMPROOT/l2"; mkdir -p "$FL2/real" || setup_fail "mkdir l2"
+L2TARGET="$FL2/real/settings.json"
+L2LINK="$FL2/settings.json"
+printf '{"env":{"L2":"1"}}\n' > "$L2TARGET" || setup_fail "could not write the (l) relative target"
+ln -s "real/settings.json" "$L2LINK" || setup_fail "could not create the (l) relative symlink"
+eng "$L2LINK" apply
+if [ "$rc" -eq 0 ] && [ -L "$L2LINK" ] && [ "$(jq -r '.statusLine.command // ""' "$L2TARGET" 2>/dev/null)" = "$SLCMD" ]; then
+  ok "(l5) a RELATIVE symlink resolves against the link's own directory: link intact, target written"
+else
+  no "(l5) a RELATIVE symlink resolves against the link's own directory: link intact, target written" \
+     "rc=$rc link=$([ -L "$L2LINK" ] && echo symlink || echo regular) target=$(jq -c '.statusLine' "$L2TARGET" 2>&1)"
+fi
+
 echo "== (i) fail-safe: every branch exits 0 =="
 
 FI="$TMPROOT/i"; mkdir -p "$FI" || setup_fail "mkdir i"
@@ -372,8 +524,11 @@ else
 fi
 stray="$(ls -1 "$REAL_SETTINGS".backup.* 2>/dev/null | wc -l | tr -d ' ')"
 case "$stray" in ''|*[!0-9]*) stray=0 ;; esac
-if [ "$stray" = "${STRAY_BASELINE:-$stray}" ]; then
+if [ "$stray" = "$STRAY_BASELINE" ]; then
   ok "(j2) no backup of the real settings document was created by this run"
+else
+  no "(j2) no backup of the real settings document was created by this run" \
+     "backups of $REAL_SETTINGS went $STRAY_BASELINE -> $stray — THIS SUITE WROTE OUTSIDE ITS FIXTURES"
 fi
 # Every DIRECT engine invocation must carry --settings. A call without it would default to the
 # real user-scope document — which is exactly what (j1) guards, but (j1) can only notice AFTER

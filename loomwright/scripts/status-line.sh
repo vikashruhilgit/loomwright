@@ -146,8 +146,13 @@ if [ -n "$LOGFILE" ] && [ -s "$LOGFILE" ]; then
     # timestamp omits the field rather than emptying it into a `$(( ))`.
     if [ -n "$then_epoch" ] && [ -n "$now_epoch" ]; then
       delta=$(( now_epoch - then_epoch ))
-      [ "$delta" -lt 0 ] && delta=0
-      if   [ "$delta" -lt 60 ];    then AGE="${delta}s ago"
+      # A `ts` in the FUTURE (clock skew, a hand-edited record, a log written on another host)
+      # cannot be aged honestly. Clamping the delta to 0 renders "0s ago", which PRESENTS a
+      # record from the future as if it had just happened — a guess dressed as a reading, in a
+      # script that otherwise omits every field it cannot resolve. So the field is OMITTED,
+      # exactly as an unparseable `ts` is: the rest of the line still renders.
+      if   [ "$delta" -lt 0 ];     then AGE=""
+      elif [ "$delta" -lt 60 ];    then AGE="${delta}s ago"
       elif [ "$delta" -lt 3600 ];  then AGE="$(( delta / 60 ))m ago"
       elif [ "$delta" -lt 86400 ]; then AGE="$(( delta / 3600 ))h ago"
       else                              AGE="$(( delta / 86400 ))d ago"

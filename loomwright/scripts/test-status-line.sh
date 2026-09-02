@@ -15,7 +15,9 @@
 #   (c) the happy path renders phase, branch, N/M and an age
 #   (d) AGE COMES FROM THE RECORD, NOT THE FILESYSTEM: a fixture whose `ts` is 3 days old
 #       renders `3d ago` even though the file was written seconds ago — which a `stat`-based
-#       implementation cannot do. An UNPARSEABLE `ts` omits the field rather than emptying it
+#       implementation cannot do. An UNPARSEABLE `ts` omits the field rather than emptying it,
+#       and so does a ts in the FUTURE: clamping a negative delta to 0 rendered `0s ago`,
+#       presenting a record from the future as if it had just happened
 #   (e) write containment: the script creates and modifies nothing, asserted by checksumming
 #       the whole fixture tree before and after
 #   (f) fail-safe: every branch exits 0, including an unknown flag and an unreadable state file
@@ -96,6 +98,15 @@ iso_days_ago() {
   local n="$1" out
   out="$(date -u -v-"${n}"d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
   [ -n "$out" ] || out="$(date -u -d "$n days ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
+  printf '%s' "$out"
+}
+
+# The mirror of iso_days_ago, for a timestamp in the FUTURE. Same try-BSD-then-GNU shape;
+# an empty result SKIPS the case rather than asserting against a wrong value.
+iso_days_ahead() {
+  local n="$1" out
+  out="$(date -u -v+"${n}"d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
+  [ -n "$out" ] || out="$(date -u -d "$n days" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)"
   printf '%s' "$out"
 }
 
@@ -227,6 +238,50 @@ if ! has "$out" "· ·" && ! has "$out" "  "; then
   ok "(d3) …and leaves no empty field behind (the set -u arithmetic-on-empty signature)"
 else
   no "(d3) …and leaves no empty field behind (the set -u arithmetic-on-empty signature)" "out='$out'"
+fi
+
+# A ts in the FUTURE. Clock skew, a hand-edited record, or a log written on another host all
+# produce one, and the old `[ "$delta" -lt 0 ] && delta=0` rendered it as "0s ago" — a record
+# from the future presented as "just now". The field must be OMITTED, like an unparseable ts.
+R="$TMPROOT/d5"; mkstate "$R" "EXECUTE" "main" "sid-d5" 1 2
+future_ts="$(iso_days_ahead 2)"
+if [ -z "$future_ts" ]; then
+  printf '  SKIP (d5) — neither date flavour could compute a 2-days-ahead timestamp on this host\n'
+else
+  mklog "$R" "sid-d5" "$future_ts"
+  run "$R"
+  if [ "$rc" -eq 0 ] && ! has "$out" "ago" && has "$out" "EXECUTE"; then
+    ok "(d5) a ts in the FUTURE omits the age field rather than rendering '0s ago', and still exits 0"
+  else
+    no "(d5) a ts in the FUTURE omits the age field rather than rendering '0s ago', and still exits 0" \
+       "ts=$future_ts rc=$rc out='$out'"
+  fi
+  # The specific wrong output the clamp produced, named so a regression is unambiguous.
+  if ! has "$out" "0s ago"; then
+    ok "(d6) …and specifically never prints '0s ago' for it"
+  else
+    no "(d6) …and specifically never prints '0s ago' for it" "out='$out'"
+  fi
+  if ! has "$out" "· ·" && ! has "$out" "  "; then
+    ok "(d7) …and leaves no empty field behind where the age would have been"
+  else
+    no "(d7) …and leaves no empty field behind where the age would have been" "out='$out'"
+  fi
+  # Control: the same fixture with a PAST ts of the same magnitude DOES render an age, so (d5)
+  # is measuring the sign of the delta and not some unrelated reason the field went missing.
+  past_ts="$(iso_days_ago 2)"
+  if [ -n "$past_ts" ]; then
+    mklog "$R" "sid-d5" "$past_ts"
+    run "$R"
+    if has "$out" "2d ago"; then
+      ok "(d8) control — the same fixture with a 2-day-PAST ts still renders '2d ago', so (d5) is not vacuous"
+    else
+      no "(d8) control — the same fixture with a 2-day-PAST ts still renders '2d ago', so (d5) is not vacuous" \
+         "ts=$past_ts out='$out'"
+    fi
+  else
+    printf '  SKIP (d8) — neither date flavour could compute a 2-days-ago timestamp on this host\n'
+  fi
 fi
 
 # The script must never shell out to `stat` — the flavour trap this design avoids by

@@ -18,11 +18,26 @@
 #   plugin did not write is REPORTED and PRESERVED, and replacing it requires the explicit
 #   `--replace` flag. The replaced value is recorded so `remove` restores it verbatim.
 #
-#   Ownership is decided by one rule, stated with its limit: a status line is OURS when its
-#   `.command` string contains `status-line.sh`. That is a heuristic, not a proof — a user with
-#   an unrelated script of the same basename would read as ours. It is the honest trade against
-#   the alternative (a marker key nested inside `statusLine`, which is a host-owned schema this
-#   module must not extend). The limit is stated here rather than hidden.
+#   OWNERSHIP TAKES TWO SIGNALS, AND BOTH ARE REQUIRED.
+#   A status line is OURS only when (1) the settings document carries this module's own
+#   top-level marker key `loomwrightStatusLinePrior` — written by every `apply`, deleted by
+#   `remove`, so its presence is an exact "we applied and have not removed" proof — AND (2) the
+#   `.command` string is either this module's resolved command verbatim or a path whose LAST
+#   SEGMENT is `status-line.sh`. The path arm is ANCHORED on the trailing segment on purpose:
+#   an unanchored substring test (`*status-line.sh*`) claimed `my-status-line.sh`,
+#   `status-line.sh.bak` and `not-our-status-line.sh.old` as ours, which turned `apply` into a
+#   silent overwrite of a status line the user wrote — no `--replace`, no WITHHELD gate — and
+#   left `remove` deleting it while reporting that there had been nothing there.
+#
+#   THE RESIDUAL LIMIT, STATED RATHER THAN HIDDEN: the path arm still cannot distinguish OUR
+#   `status-line.sh` from a DIFFERENT file of that exact name at another path. It is reachable
+#   only inside a document this module has already applied to and not yet removed from — the
+#   marker key gates it — so the user would have had to swap our line for a same-named script
+#   of their own without running `remove`. The looseness is deliberate in the other direction:
+#   it is what lets `remove` still recognise a line this module installed from a plugin
+#   directory that has since moved, where the verbatim-command arm no longer matches.
+#   The alternative — a marker nested inside `statusLine` — is a host-owned schema this module
+#   must not extend, which is why the marker lives at the top level beside it.
 #
 # FAIL-SAFE CONTRACT (mirrors setup-memory.sh): every branch exits 0. "Fails closed" here means
 # REFUSE-TO-WRITE plus a machine-readable named-reason status line — never a non-zero exit,
@@ -69,6 +84,26 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+# SYMLINK RESOLUTION — one level, before ANY probe or write.
+# `mv "$tmp" "$SETTINGS"` REPLACES a symlink with a regular file. On a dotfiles-managed setup
+# that silently detaches settings.json from version control: the write lands in the wrong place
+# and every later `git status` in the dotfiles repo reports nothing, because the tracked target
+# is no longer what the host reads. No content is lost (`cp` follows the link, so the backup is
+# of the real document) — the damage is to the link itself. Resolving here means the backup,
+# the temp file and the `mv` all target the real path.
+# ONE level, and `readlink` without `-f`: `readlink -f` is GNU-only and absent on stock macOS.
+# A relative target is resolved against the LINK's directory, which is what a relative symlink
+# means. A chain of links resolves only its first hop; that is the honest limit of one level.
+if [ -L "$SETTINGS" ]; then
+  _sl_target="$(readlink "$SETTINGS" 2>/dev/null || true)"
+  if [ -n "$_sl_target" ]; then
+    case "$_sl_target" in
+      /*) SETTINGS="$_sl_target" ;;
+      *)  SETTINGS="$(dirname "$SETTINGS")/$_sl_target" ;;
+    esac
+  fi
+fi
+
 # ---------------------------------------------------------------------------
 # Probes
 # ---------------------------------------------------------------------------
@@ -96,11 +131,16 @@ statusline_command() {
   jq -r '.statusLine.command // ""' "$SETTINGS" 2>/dev/null || printf ''
 }
 
+# is_ours — TWO signals, both required (see the ownership paragraph in the header).
+# The marker key is checked FIRST and is the load-bearing half: `has()` is true whenever the
+# key is present, INCLUDING when its value is `null` (the recorded "there was nothing before"
+# case), which is exactly the state a plain `.[$k] // null` test would misread as absent.
 is_ours() {
   local cmd
+  jq -e --arg k "$PRIOR_KEY" 'has($k)' "$SETTINGS" >/dev/null 2>&1 || return 1
   cmd="$(statusline_command)"
   [ -n "$cmd" ] || return 1
-  case "$cmd" in *status-line.sh*) return 0 ;; esac
+  case "$cmd" in "$SL_COMMAND"|*/status-line.sh) return 0 ;; esac
   return 1
 }
 
