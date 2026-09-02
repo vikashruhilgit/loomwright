@@ -580,12 +580,26 @@ else
 fi
 
 # Mutation control for (g10): reinstate the empty-status substitution and the wrong number returns.
+# A FAITHFUL revert to the pre-fix code, not merely a line swap: the guard is deleted AND
+# `st = c[4]` goes back to the `(n >= 5 ? c[4] : "")` substitution, so the mutant carries exactly
+# ONE `st` assignment. An earlier version replaced only the guard line and left the unconditional
+# `st = c[4]` below it, which overwrote the reinstated ternary — the mutant still flipped
+# behaviour, because DELETING THE GUARD is what does that, but its label claimed to reinstate a
+# substitution that was never the operative line. A control that discriminates for a different
+# reason than it states is the same class of defect this suite exists to catch. (Review of #173.)
 M3="$TMPROOT/mut-empty-status.sh"
-o3="$(grep -c '^[[:space:]]*if (n < 5) next$' "$SL" || true)"; case "$o3" in ''|*[!0-9]*) o3=0 ;; esac
-sed -e 's%^\([[:space:]]*\)if (n < 5) next$%\1st = (n >= 5 ? c[4] : "")%' "$SL" > "$M3"
-s3="$(grep -c '^[[:space:]]*st = (n >= 5 ? c\[4\] : "")$' "$M3" || true)"; case "$s3" in ''|*[!0-9]*) s3=0 ;; esac
+g_orig="$(grep -c '^[[:space:]]*if (n < 5) next$' "$SL" || true)"; case "$g_orig" in ''|*[!0-9]*) g_orig=0 ;; esac
+a_orig="$(grep -c '^[[:space:]]*st = c\[4\]; gsub' "$SL" || true)"; case "$a_orig" in ''|*[!0-9]*) a_orig=0 ;; esac
+o3=0; [ "$g_orig" -eq 1 ] && [ "$a_orig" -eq 1 ] && o3=1
+sed -e 's%^\([[:space:]]*\)if (n < 5) next$%\1# guard deleted by the mutant%' \
+    -e 's%^\([[:space:]]*\)st = c\[4\]; gsub%\1st = (n >= 5 ? c[4] : ""); gsub%' "$SL" > "$M3"
+g_stub="$(grep -c '^[[:space:]]*if (n < 5) next$' "$M3" || true)"; case "$g_stub" in ''|*[!0-9]*) g_stub=0 ;; esac
+t_stub="$(grep -c '^[[:space:]]*st = (n >= 5 ? c\[4\] : ""); gsub' "$M3" || true)"; case "$t_stub" in ''|*[!0-9]*) t_stub=0 ;; esac
+n_stub="$(grep -c '^[[:space:]]*st = ' "$M3" || true)"; case "$n_stub" in ''|*[!0-9]*) n_stub=0 ;; esac
+# guard gone, ternary present, and it is the ONLY st assignment — nothing overwrites it.
+s3=0; [ "$g_stub" -eq 0 ] && [ "$t_stub" -eq 1 ] && [ "$n_stub" -eq 1 ] && s3=1
 if mutant_ok "$M3" "(g10) empty-status mutant" "$o3" "$s3"; then
-  ok "(g10) the empty-status mutant is NON-VACUOUS: non-empty, differs from the original, parses, 1 skip replaced by 1 empty-status substitution"
+  ok "(g10) the empty-status mutant is NON-VACUOUS: non-empty, differs from the original, parses, guard deleted and the empty-status substitution restored as the SOLE st assignment"
   runmut "$M3" "$RA"
   if [ "$mrc" -eq 0 ] && has "$mout" "3/4"; then
     ok "(g10) …and it still renders Shape A (3/4), so it runs — a wrong number below is behavioural"
