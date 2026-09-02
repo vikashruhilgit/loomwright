@@ -1,8 +1,8 @@
 ---
 name: preflight-sync
 description: Protocol authority for Supervisor Phase 1.5 PRE-FLIGHT SYNC — CLEAR/OVERLAP/SUPERSEDED remote-state reconciliation of the requested work against recent origin/$BASE_BRANCH commits and open PRs, before Phase 2 PLAN spawns anything. Read on demand at phase entry, deliberately not preloaded.
-version: "1.1.0"
-lastUpdated: "2026-07-31"
+version: "1.2.0"
+lastUpdated: "2026-09-02"
 ---
 
 # Pre-Flight Sync Protocol (Supervisor Phase 1.5)
@@ -25,6 +25,27 @@ entry/exit conditions. The protocol prose below is moved verbatim from the Super
 **What this is NOT (scope guard):** Phase 1 ACQUIRE already does `git fetch origin "$BASE_BRANCH"` + `git pull` so the feature branch starts fresh (the ACQUIRE branch-creation step), and the existing `base_branch_mismatch` path (Phase 4 self-verify → Phase 4.5 cleanup) only checks the *PR's `baseRefName`* against `$BASE_BRANCH`. **Neither detects that the requested *work* overlaps with or is superseded by recent commits / open PRs.** This gate adds that *semantic work-overlap reconciliation* and MUST NOT duplicate or weaken either the existing fetch/pull or the post-hoc base-mismatch path. Reuse Phase 1's `git fetch` result where it is fresh — do not redundantly re-fetch if ACQUIRE just fetched `$BASE_BRANCH`.
 
 **Bounded budget (AC7):** the entire phase is capped at **≤ 6 tool calls and a short timeout** (treat ~20s per `gh`/`git` invocation as a SOFT guideline — there is no native per-call shell timeout, so this is an advisory budget the agent self-enforces by passing an explicit Bash `timeout`, not a hard bound). On any tooling unavailability or error (`gh` not installed/authenticated, `git fetch` failure, timeout), record "pre-flight unverified", emit ONE warning, set `preflight_sync = unverified`, and **continue to Phase 2** — NEVER hard-block on a tooling failure.
+
+**⚠️ Shell portability — an empty pathspec result is NOT evidence of no overlap (2026-09-02):** every `git`/`gh` snippet in this protocol is executed by an *agent*, whose shell is **not guaranteed to be bash** — the Claude Code Bash tool runs **zsh**, and **zsh does not word-split unquoted parameter expansions**. So the bash idiom
+
+```bash
+PATHS="a.md b.md"; git log --oneline "origin/$BASE_BRANCH" -- $PATHS   # ← NEVER do this
+```
+
+passes `"a.md b.md"` as ONE pathspec under zsh, matches nothing, and returns an **empty log**. That is indistinguishable from "no commits touched these files", so the failure presents as a **silent CLEAR** — the exact opposite of what this gate exists to do. It was reproduced live on 2026-09-02, where it hid a real five-path intersection with a merged PR.
+
+**Therefore, throughout this protocol:**
+
+1. **Never** interpolate a space-joined path variable into a pathspec. Pass each path as its **own quoted literal argument** — `-- "a.md" "b.md"` — which behaves identically in bash and zsh and tolerates spaces in paths.
+2. **Never conclude "no overlap" from an empty pathspec-filtered `git log` alone.** An empty result has two causes — genuinely no churn, or a pathspec that expanded wrong — and they look the same. Before trusting an empty result, run the **corroboration control**:
+   ```bash
+   # Same pathspec, but over ALL of the base branch's history instead of a SHA
+   # range. If the anticipated paths exist on the base branch at all, this MUST
+   # be non-empty — an empty result here can only mean the pathspec is broken.
+   git log --oneline "origin/$BASE_BRANCH" -1 -- "<anticipated-path-1>" "<anticipated-path-2>"
+   ```
+   Non-empty ⇒ the pathspec resolves, so the empty churn/overlap result is real. Empty for paths you believe already exist on the base branch ⇒ **the pathspec is broken; treat the scan as `unverified`, not as CLEAR** (fall back to the unfiltered `git log --oneline "origin/$BASE_BRANCH" -20` in action 2 and intersect the file sets by reading, per action 4a). Paths the task will *create* legitimately have no history — corroborate on the MODIFY paths, and if the anticipated set is create-only, skip the control (there is nothing for the filter to match either way).
+3. If you prefer to keep a variable, make the split explicit and shell-independent by wrapping the whole snippet in `bash -c '...'`.
 
 **Actions:**
 
@@ -53,19 +74,25 @@ entry/exit conditions. The protocol prose below is moved verbatim from the Super
 3. **Determine the task's anticipated file set:** use the job brief's **File Impact Map** when present (the `job:` brief lists per-subtask MODIFY/CREATE paths); otherwise derive from the task title + criteria.
 
 4. **Classify CLEAR | OVERLAP | SUPERSEDED** using these two required signals:
-   - **(a) same-file overlap → OVERLAP:** a recent `origin/$BASE_BRANCH` commit (from `git log`) OR an open PR whose changed files intersect the task's anticipated file set. Record the intersecting paths and the commit SHAs / PR numbers.
+   - **(a) same-file overlap → OVERLAP:** a recent `origin/$BASE_BRANCH` commit (from `git log`) OR an open PR whose changed files intersect the task's anticipated file set. Record the intersecting paths and the commit SHAs / PR numbers. **If you computed this intersection with a pathspec-filtered `git log` and it came back EMPTY, you MUST run the corroboration control from the shell-portability warning above before recording CLEAR** — an empty pathspec result is not evidence of no overlap, and a false CLEAR here is the failure mode this gate cannot afford. When the control shows the pathspec is broken, set `preflight_sync = unverified` (per Bounded budget) rather than CLEAR.
    - **(b) already-merged equivalent → SUPERSEDED:** recent `origin/$BASE_BRANCH` history already implements the requested work. This is the motivating case behind the **v13.1.0→v14.0.0 stale-branch incident** (work was branched from a stale base and re-implemented something already merged) — cite the specific landing commit(s). SUPERSEDED requires BOTH a topic match (the commit message or PR title names the same feature / versioned component as the task) AND a file overlap (changed files intersect the anticipated file set) — either signal alone is insufficient (prevents a topic-only false SUPERSEDED).
    - Otherwise → **CLEAR.**
 
    **(c) brief-staleness churn — ADVISORY ONLY, not a classification input (v15.19.0 — 4g(b)):** when the `job:` brief's `## Environment` section carries a `- **Base commit:** {sha}` line (stamped by Launch Pad Phase 5 PACKAGE step 3a, see `agents/launch-pad.md`), compute churn over the SAME anticipated file set already derived in action 3, from that stamp forward to the current base tip. Extract the two variables literally before running the churn command — `BRIEF_BASE_SHA` is read straight from the brief's `- **Base commit:** {sha}` line (e.g. `BRIEF_BASE_SHA=$(grep -m1 '\*\*Base commit:\*\*' "$BRIEF_PATH" | sed -E 's/.*Base commit:\*\* //')`), and `ANTICIPATED_PATHS` is simply the same anticipated file-path list action 3 already derived (the job brief's File Impact Map paths, or the title/criteria-derived set) — no new derivation, just reuse it:
      ```bash
-     git log --oneline "$BRIEF_BASE_SHA".."origin/$BASE_BRANCH" -- $ANTICIPATED_PATHS | wc -l
+     # SHELL-AGNOSTIC FORM — pass every anticipated path as its OWN literal
+     # argument. Do NOT interpolate one space-joined variable (see the
+     # word-splitting warning under **Actions:** above).
+     git log --oneline "$BRIEF_BASE_SHA".."origin/$BASE_BRANCH" \
+       -- "<anticipated-path-1>" "<anticipated-path-2>" "<anticipated-path-3>" | wc -l
      ```
-     (`$ANTICIPATED_PATHS` is intentionally **unquoted** so it word-splits into multiple pathspec
-     arguments. That assumes the File Impact Map's paths contain no spaces or glob-special
-     characters — true for every path the plugin derives itself. If this is ever lifted into a real
-     `scripts/*.sh`, switch to an array / `xargs` form rather than inheriting the split. A
-     mis-split only corrupts an advisory count, never a classification.)
+     (Substitute the literal paths action 3 derived, one quoted argument each. The old form of
+     this snippet passed `-- $ANTICIPATED_PATHS` unquoted and relied on the shell word-splitting
+     it into several pathspecs; that is a **bash-only** assumption and it silently produced a
+     churn count of `0` under zsh — see the warning under **Actions:**. Quoted literals behave
+     identically in both shells and also survive a path containing a space. If this is ever
+     lifted into a real `scripts/*.sh`, keep the literal/array form — do not reintroduce the
+     split.)
      Record the resulting count in the pre-flight summary / Decisions Log rationale (e.g. `"...; churn_since_brief=3"`) so a human reviewing the run can see how much unrelated activity landed on the brief's touched paths since it was planned. **This signal is ADVISORY ONLY and MUST NOT, by itself, change the CLEAR | OVERLAP | SUPERSEDED classification** — it is not a third classification input alongside (a) and (b); it never turns a CLEAR into an OVERLAP, never triggers the `AskUserQuestion` soft-gate, and never contributes to a `preflight_overlap_detected` fail-closed abort. A brief can show high churn on (c) and still classify CLEAR, provided (a) and (b) are both negative — churn alone proves nothing about *this specific* task's file set having been touched by *competing* work; (a)/(b) already answer that question precisely. **Fail-safe degradation:** if `$BRIEF_BASE_SHA` is absent (no `job:` brief, or a brief written before this change with no `Base commit` line), empty, or fails to parse as a valid SHA (`git rev-parse --verify --quiet "$BRIEF_BASE_SHA^{commit}"` fails), **skip signal (c) silently** — no warning, no gate, no classification change, no error; proceed with classification from (a)/(b) alone exactly as before this change. This is the same posture as the rest of Phase 1.5's graceful-degradation handling (Bounded budget, above) — it never turns an advisory read into a new blocking requirement.
 
 5. **Stacked-iteration scoping (AC6):** when `$BASE_BRANCH ≠ main` (the `/autonomous` loop stacks iteration N+1 on iteration N's branch), scope the overlap comparison to `$BASE_BRANCH` only and do NOT flag the **parent iteration's own commits or PR** as overlap — those are the legitimate base this iteration builds on, not a competing change. No false positive against the stacked-PR chain.
