@@ -65,6 +65,11 @@ Each of these would have produced a silently-wrong emitter if assumed rather tha
 (2 × `PreToolUse[Task]`, 2 × `PostToolUse[Task]`, 2 × `SubagentStop`) from ONE real run of
 two different agent types.
 
+**Index note:** the `-1` / `-2` suffixes are arbitrary. The sink writes `mktemp` random
+suffixes and the committed names are a hand-rename, so `-1` does NOT mean "first spawn"
+(`pretooluse-task-1.json` is in fact `probe-beta`). Pair the files by `tool_use_id` and
+`agent_id`, never by index.
+
 **Scrub note (this repo is public):** absolute home paths were replaced with `/nonexistent`,
 and `session_id` / `prompt_id` / transcript paths with fixture placeholders. `tool_use_id`,
 `agentId` and `agent_id` are retained **verbatim and consistently across all six files**
@@ -200,22 +205,29 @@ it as observed. This gap is reported rather than papered over.
 
 ## The joinability measurement
 
-Joinability has **two halves**. Only one of them could be measured.
+Joinability has **two halves**. **Both were measured** — the stop side against this repo's
+existing event corpus, the spawn side against the 2026-09-02 re-run captures.
 
 ### Stop side (the join target) — MEASURED, and it is sound
 
-Measured on this repo's own live log
-`.supervisor/logs/8d43da72-9b5b-4793-8599-d06e27b3a8b3.jsonl` (10,691 lines at time of
-reading):
+Measured on this repo's own live log `.supervisor/logs/8d43da72-….jsonl`. **That file is
+still being appended to** — including by the session that ran this probe — so every figure
+below is a snapshot, and all four were taken in ONE pass at **2026-09-02T05:55Z** so they
+reconcile exactly. (An earlier revision of this table mixed figures read at different
+moments and consequently did not add up; re-measuring without pinning the snapshot would
+simply reintroduce that.)
 
-| Event | Lines | Distinct `agent_id` | Notes |
-|---|---|---|---|
-| `token_ledger` | 6,914 | — | `agent_id` on 100% |
-| `subtask_complete` | 3,783 | — | `agent_id` on 100% |
-| **both, combined** | 10,691 | **622** | ids are 17-char lowercase hex, e.g. `a00e8c8c4dbb147df` |
+| Event | Lines | Notes |
+|---|---|---|
+| `token_ledger` | 7,029 | |
+| `subtask_complete` | 3,841 | |
+| **both, combined** | **10,870** | equals the file's total line count — the log carries no other event type |
+
+Distinct `agent_id`: **630**. Lines carrying an `agent_id`: **10,870 / 10,870 (100%)**. Ids
+are 17-char lowercase hex, e.g. `a00e8c8c4dbb147df`.
 
 So the thing an `agent_spawn` event would need to join *to* exists, is populated on every
-line, and is individually addressable. The spawn half is the unknown.
+line, and is individually addressable. The spawn half is measured directly below.
 
 ### Spawn side — MEASURED on the 2026-09-02 re-run
 
@@ -243,7 +255,7 @@ token_ledger     | agent_type present on 79 lines: {'loomwright:loomwright:code-
 (its `for opt in ("agent_type", "agent_id")` loop). It is absent on the other 98.3% of lines
 because the **payload** omits it there, not because the emitter drops it.
 
-**Consequence for the GO branch, whenever it is unblocked:** requirement scope item 3
+**Consequence for any successor to this item:** requirement scope item 3
 ("`agent_type` on the stop side too") is **already implemented** and needs no code change.
 It should be struck from the GO branch rather than re-implemented. (The doubled
 `loomwright:loomwright:` prefix is the known agent-type naming artifact, not a defect
@@ -253,8 +265,19 @@ introduced here.)
 
 ## Harness verification
 
-The harness is the artifact that survives this blocked run, so its capture path was verified
-independently of `claude`. This matters directly: if the sink were silently broken, a future
+> **These controls are now re-runnable.** They were originally recorded here as prose only,
+> which meant nothing in the repo could re-execute them — a future edit reintroducing the
+> zero-byte-counts-as-capture defect would have produced a silent false NO-GO with every gate
+> green. Flagged MEDIUM in this PR's Phase 4.5 review and fixed:
+> **`bash loomwright/scripts/test-capture-task-spawn-payload.sh`** (29 assertions) pins MC1-MC4
+> plus the fail-SAFE and portability invariants, and carries two mutation controls of its own —
+> one proving the `-s` counter still rejects an empty capture, one proving the portability guard
+> is not vacuous. The table below is the narrative record; the script is the executable one.
+
+
+The harness is the artifact that outlives this item, so its capture path was verified
+independently of `claude` — which is what made the 2026-09-02 re-run trustworthy the moment
+auth was restored. This matters directly: if the sink were silently broken, a future
 re-run would report "no payload fired" — a **false NO-GO** — which is precisely the R3 hazard
 one level down.
 
@@ -300,7 +323,7 @@ body into the Bash tool.**
 | #6, #7 emitter degenerate inputs / worktree anchoring | `not-applicable (NO-GO)` — no emitter written |
 | #9 consumers byte-identical | **VACUOUSLY MET** — no consumer-affecting file changed. Explicitly NOT claimed as a diff-proven result |
 | #10, #11, #12 doc-surface lockstep | `not-applicable (NO-GO)` — hook count unchanged at **24** |
-| #13 every new test case mutation-verified | **MET** for the harness controls (MC1 found a real defect in the harness itself) |
+| #13 every new test case mutation-verified | **MET** — MC1-MC4 are committed as `loomwright/scripts/test-capture-task-spawn-payload.sh` (29 assertions, 2 self-mutation controls). MC1 found a real defect in the harness itself |
 
 ## Next step — for items 02–05, not for this item
 

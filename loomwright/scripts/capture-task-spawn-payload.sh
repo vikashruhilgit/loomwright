@@ -165,7 +165,7 @@ PY
 
 PROMPT='Use the Task tool twice, one after the other. First spawn the probe-alpha subagent with the prompt "say your done word". Then spawn the probe-beta subagent with the prompt "say your done word". Do not use any other tool. Then reply with the two done words.'
 
-printf 'command: claude -p --settings %s --agents <file:%s> --model %s --max-turns 12 "<prompt>"\n' \
+printf 'command: claude -p --settings %s --agents <inline JSON from %s> --model %s --max-turns 12 "<prompt>"\n' \
   "$SETTINGS" "$AGENTS" "$MODEL" > "$OUT_DIR/command.txt"
 
 # --- Run headless, with a portable watchdog (no `timeout` on stock macOS) -----
