@@ -779,10 +779,16 @@ LESSON_ONELINE="$lesson_oneline" awk \
     } else {
       # Print up to (and including) the heading.
       for (i = 1; i <= sec_start; i++) print lines[i]
-      # Gather existing entry lines in the section, then append the new one.
-      ec = 0
+      # Gather existing entry lines in the section, then append the new one. NOTE: idx[] remembers
+      # the ORIGINAL line number of each entry so the rewrite below can replay the section in
+      # place instead of reconstructing it from entries[] alone. sec_end is the line just before
+      # the next "## " heading -- i.e. the BLANK SEPARATOR that this format puts between
+      # sections -- and a pure-entries[] rebuild silently dropped it on every write into a
+      # category that is not last (the sec_start == 0 sibling branch above prints that separator
+      # explicitly, so the two branches must agree).
+      ec = 0; last_entry = 0
       for (i = sec_start + 1; i <= sec_end; i++) {
-        if (lines[i] ~ /^- \[/) { ec++; entries[ec] = lines[i] }
+        if (lines[i] ~ /^- \[/) { ec++; entries[ec] = lines[i]; idx[ec] = i; last_entry = i }
       }
       ec++; entries[ec] = newline
       # Evict the oldest (front) entries until <= maxc remain; record each evicted id.
@@ -792,7 +798,19 @@ LESSON_ONELINE="$lesson_oneline" awk \
         print eid >> evictfile
         start++
       }
-      for (j = start; j <= ec; j++) print entries[j]
+      # Surviving PRE-EXISTING entries, keyed by original line number (the new entry has no
+      # original line and is emitted positionally below).
+      for (j = start; j <= ec - 1; j++) keep[idx[j]] = 1
+      # A section with a heading but no entry lines yet: the new entry goes right after the
+      # heading, before whatever non-entry lines the section already holds.
+      if (last_entry == 0) print newline
+      # Replay the section: surviving entries in place, the new entry immediately after the last
+      # pre-existing one, and every non-entry line (blank separator, prose) carried through.
+      for (i = sec_start + 1; i <= sec_end; i++) {
+        if (lines[i] ~ /^- \[/) { if (i in keep) print lines[i] }
+        else print lines[i]
+        if (i == last_entry) print newline
+      }
       # Print the remainder of the file (from the next section onward).
       for (i = sec_end + 1; i <= n; i++) print lines[i]
     }

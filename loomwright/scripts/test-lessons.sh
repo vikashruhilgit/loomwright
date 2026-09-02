@@ -8,6 +8,14 @@
 #   2. round-trip (lesson appears under its `## <category>` heading)
 #   3. <=3/category eviction (oldest evicted)
 #   4. two categories independent (both sections coexist)
+#  4b. REGRESSION: the blank separator before the NEXT heading survives a write into a category
+#      that is NOT last (case 4 only ever exercises the fresh-section arm of the awk rebuild, so
+#      the arm that ate the separator was untested), with the control that a separator existed
+#      first, the counter-case that a genuinely-last section gains no spurious trailing blank,
+#      the EMPTY-SECTION arm (a heading whose sole entry was retracted, then re-added into —
+#      reachable in production, and section 9 never reaches it because it always retracts one of
+#      TWO entries), and an in-file MUTATION CONTROL proving (sep2) goes red without the
+#      carry-through arm
 #   5. .gitignore coverage of .supervisor/memory/ (checked against the real repo)
 #   6. backslash integrity (awk ENVIRON, not -v)
 #   7. freshness trailer (last_verified + confidence, defaults + overrides; content_hash unchanged)
@@ -141,6 +149,171 @@ else
   no "categories not independent (auth=$ac, db=$dc)"
 fi
 rm -rf "$CDIR"
+
+# ---------------------------------------------------------------------------
+# (sep) THE BLANK SEPARATOR BEFORE THE NEXT HEADING. Case 4 above creates two FRESH categories,
+# so BOTH of its writes take the `sec_start == 0` arm of the writer's awk rebuild — the arm that
+# prints the separator explicitly. The `sec_start > 0` arm (a SECOND entry into an EXISTING
+# category) is therefore never exercised by it, and that arm rebuilt the section from its
+# `^- \[` lines alone. `sec_end` is the line just BEFORE the next `## ` heading — i.e. the blank
+# separator — so it matched no loop and was silently dropped on every write into a category that
+# is not last in the file. Deterministic, and compounding: once a separator is gone it never
+# comes back, so the committed .supervisor/memory/LESSONS.md lost one per affected category.
+#
+# The two arms must AGREE on the format, which cuts both ways: (sep2) proves the separator is
+# preserved where one exists, and (sep5) proves the fix did not over-correct into appending a
+# spurious trailing blank to a section that is genuinely last. (sep1) is the control without
+# which (sep2) could pass against a file that never had a separator to begin with.
+# ---------------------------------------------------------------------------
+echo "== 4b. the blank separator survives a write into a NON-LAST category =="
+SEPDIR="$(mktemp -d)"; ( cd "$SEPDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i ) >/dev/null 2>&1
+sf="$SEPDIR/$LFILE"
+# blank_before <file> <exact heading line> — true when a blank line immediately precedes it.
+blank_before() { awk -v h="$2" '$0 == h && NR > 1 && prev == "" { hit = 1 } { prev = $0 } END { exit(hit ? 0 : 1) }' "$1"; }
+( cd "$SEPDIR" && bash "$WRITE" --confirm --category sepa --lesson "separator alpha lesson" --source "session:fixture-0001" \
+    && bash "$WRITE" --confirm --category sepz --lesson "separator zulu lesson" --source "session:fixture-0001" ) >/dev/null 2>&1
+if blank_before "$sf" "## sepz"; then
+  ok "(sep1) CONTROL: two fresh categories leave a blank line before the second heading"
+else
+  no "(sep1) CONTROL: no blank line before '## sepz' even before the non-last write — (sep2) would prove nothing"
+fi
+( cd "$SEPDIR" && bash "$WRITE" --confirm --category sepa --lesson "separator bravo lesson" --source "session:fixture-0002" ) >/dev/null 2>&1
+if blank_before "$sf" "## sepz"; then
+  ok "(sep2) a SECOND entry into the non-last category 'sepa' leaves the blank line before '## sepz' intact"
+else
+  no "(sep2) the blank line before '## sepz' was DROPPED by the write into the non-last category 'sepa'"
+fi
+sepa_n="$(awk '/^## sepa$/{f=1;next} /^## /{f=0} f && /^- \[/{c++} END{print c+0}' "$sf" 2>/dev/null)"
+sepz_n="$(awk '/^## sepz$/{f=1;next} /^## /{f=0} f && /^- \[/{c++} END{print c+0}' "$sf" 2>/dev/null)"
+if [ "$sepa_n" -eq 2 ] && [ "$sepz_n" -eq 1 ]; then
+  ok "(sep3) and the entry lines are untouched (sepa=$sepa_n, sepz=$sepz_n) — the separator is carried through, not traded for an entry"
+else
+  no "(sep3) entry counts wrong after the non-last write (sepa=$sepa_n, sepz=$sepz_n)"
+fi
+sep_out="$( cd "$SEPDIR" && bash "$READ" 2>/dev/null )"
+if printf '%s\n' "$sep_out" | grep -qF "separator alpha lesson" \
+   && printf '%s\n' "$sep_out" | grep -qF "separator bravo lesson" \
+   && printf '%s\n' "$sep_out" | grep -qF "separator zulu lesson"; then
+  ok "(sep4) all three entries still read back through read-lessons.sh — the provenance chain is intact"
+else
+  no "(sep4) an entry went invisible to read-lessons.sh after the non-last write"
+fi
+( cd "$SEPDIR" && bash "$WRITE" --confirm --category sepz --lesson "separator yankee lesson" --source "session:fixture-0003" ) >/dev/null 2>&1
+# The entry-count guard is not decoration: without it a write that never happened would satisfy
+# "no trailing blank" vacuously, since over-correction can only show up on a write that ran.
+sepz2_n="$(awk '/^## sepz$/{f=1;next} /^## /{f=0} f && /^- \[/{c++} END{print c+0}' "$sf" 2>/dev/null)"
+if [ "$sepz2_n" -ne 2 ]; then
+  no "(sep5) INCONCLUSIVE: the write into the last category did not land (sepz=$sepz2_n, expected 2) — nothing was exercised"
+elif [ -n "$(tail -n 1 "$sf")" ]; then
+  ok "(sep5) a second entry into the LAST category appends no spurious trailing blank — the fix restores symmetry without over-correcting"
+else
+  no "(sep5) the write into the last category left a trailing blank line at EOF"
+fi
+
+# (sep6) — the OTHER arm the fix adds, and the one a hand-trace is not evidence for. When the
+# target section has a heading but ZERO entry lines, there is no "last pre-existing entry" to
+# print after, so the new entry goes directly under the heading. That state is REACHABLE IN
+# PRODUCTION, not hypothetical: `retract` removes only the matched entry line and deliberately
+# leaves the heading standing (asserted in section 9), so retracting the SOLE entry of a
+# category and then adding into it lands exactly here — and the section-9 retract fixtures never
+# reach it, because they always retract one of TWO entries. The old rebuild ate the separator on
+# this path too, so it is a second instance of the same defect rather than a new edge case.
+SEPEDIR="$(mktemp -d)"; ( cd "$SEPEDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i ) >/dev/null 2>&1
+ef="$SEPEDIR/$LFILE"
+( cd "$SEPEDIR" && bash "$WRITE" --confirm --category solo --lesson "the only solo lesson" --source "session:fixture-0001" \
+    && bash "$WRITE" --confirm --category tailcat --lesson "tail category lesson" --source "session:fixture-0001" \
+    && bash "$WRITE" retract --confirm --category solo --lesson "the only solo lesson" --source "session:fixture-0002" ) >/dev/null 2>&1
+solo_n="$(awk '/^## solo$/{f=1;next} /^## /{f=0} f && /^- \[/{c++} END{print c+0}' "$ef" 2>/dev/null)"
+if grep -q '^## solo$' "$ef" 2>/dev/null && [ "$solo_n" -eq 0 ]; then
+  ok "(sep6) CONTROL: retracting the sole entry leaves an EMPTY '## solo' section — the heading-with-no-entries state is reachable, not hypothetical"
+else
+  no "(sep6) CONTROL: could not reach the empty-section state (heading present=$(grep -c '^## solo$' "$ef" 2>/dev/null), entries=$solo_n) — the assertions below would prove nothing"
+fi
+( cd "$SEPEDIR" && bash "$WRITE" --confirm --category solo --lesson "replacement solo lesson" --source "session:fixture-0003" ) >/dev/null 2>&1
+solo2_n="$(awk '/^## solo$/{f=1;next} /^## /{f=0} f && /^- \[/{c++} END{print c+0}' "$ef" 2>/dev/null)"
+if [ "$solo2_n" -eq 1 ] && grep -qF "replacement solo lesson" "$ef" 2>/dev/null; then
+  ok "(sep6) adding into the EMPTY section lands the entry under its own heading"
+else
+  no "(sep6) the entry did not land under '## solo' after the re-add (entries=$solo2_n)"
+fi
+if blank_before "$ef" "## tailcat"; then
+  ok "(sep6) and the blank line before '## tailcat' survives that path too — the empty-section arm carries the separator like the populated one"
+else
+  no "(sep6) the blank line before '## tailcat' was DROPPED by the add into the empty section"
+fi
+# Captured to a variable first, NOT piped into `grep -q`: under this file's `set -o pipefail` a
+# producer killed by SIGPIPE when grep exits early makes the pipeline fail (141) EVEN ON MATCH.
+sep_eout="$( cd "$SEPEDIR" && bash "$READ" 2>/dev/null )"
+if printf '%s\n' "$sep_eout" | grep -qF "replacement solo lesson"; then
+  ok "(sep6) and the re-added entry reads back through read-lessons.sh"
+else
+  no "(sep6) the re-added entry is invisible to read-lessons.sh"
+fi
+rm -rf "$SEPEDIR" 2>/dev/null
+
+echo "== 4b. MUTATION CONTROL: with the carry-through arm removed, (sep2) goes RED =="
+# Reverting the fix precisely: dropping the `else print lines[i]` arm makes the replay loop emit
+# exactly the surviving entries and nothing else — byte-for-byte the old pure-entries[] rebuild.
+SEPMUT="$SEPDIR/mut-nocarry.sh"
+sep_orig="$(grep -c '^        else print lines\[i\]$' "$WRITE" 2>/dev/null || true)"; [ -n "$sep_orig" ] || sep_orig=0
+sed -e 's|^        else print lines\[i\]$|        else { }|' "$WRITE" > "$SEPMUT"
+sep_mut="$(grep -c '^        else print lines\[i\]$' "$SEPMUT" 2>/dev/null || true)"; [ -n "$sep_mut" ] || sep_mut=0
+sep_stub="$(grep -c '^        else { }$' "$SEPMUT" 2>/dev/null || true)"; [ -n "$sep_stub" ] || sep_stub=0
+if [ -s "$SEPMUT" ] && ! cmp -s "$WRITE" "$SEPMUT" && [ "$sep_orig" -eq 1 ] && [ "$sep_mut" -eq 0 ] && [ "$sep_stub" -eq 1 ]; then
+  ok "(sep7) the mutant is NON-VACUOUS: non-empty, differs from the writer, 1 carry-through arm in the real writer and 0 in the mutant"
+else
+  no "(sep7) the mutation did not land as intended (arm $sep_orig -> $sep_mut, stub $sep_stub) — the control below would prove nothing"
+fi
+if bash -n "$SEPMUT" 2>/dev/null; then
+  ok "(sep7) the mutant still parses, so a difference below is behavioural rather than a syntax error"
+  SEPMDIR="$(mktemp -d)"; ( cd "$SEPMDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i ) >/dev/null 2>&1
+  smf="$SEPMDIR/$LFILE"
+  # The mutant is a temp copy, so its sibling-directory lookup for validate-entry.sh misses; point
+  # it at the REAL validator (same reason as the uf4 control below). Without this the mutant
+  # refuses every write and the control silently degrades into "the mutant wrote nothing".
+  ( cd "$SEPMDIR" && export WRITE_LESSONS_VALIDATOR="$HERE/validate-entry.sh" \
+      && bash "$SEPMUT" --confirm --category sepa --lesson "separator alpha lesson" --source "session:fixture-0001" \
+      && bash "$SEPMUT" --confirm --category sepz --lesson "separator zulu lesson" --source "session:fixture-0001" \
+      && bash "$SEPMUT" --confirm --category sepa --lesson "separator bravo lesson" --source "session:fixture-0002" ) >/dev/null 2>&1
+  sep_mut_n="$(grep -c '^- \[' "$smf" 2>/dev/null || true)"; [ -n "$sep_mut_n" ] || sep_mut_n=0
+  if [ "$sep_mut_n" -ne 3 ]; then
+    no "(sep7) INCONCLUSIVE: the mutant wrote $sep_mut_n/3 entries — it never reached the rebuild, so it discriminated nothing"
+  elif ! blank_before "$smf" "## sepz"; then
+    ok "(sep7) CONFIRMED: without the carry-through arm the SAME sequence eats the blank line before '## sepz' — (sep2) goes RED without the fix and is load-bearing"
+  else
+    no "(sep7) REFUTED: the mutant kept the separator too — (sep2) is passing for some other reason and is vacuous"
+  fi
+  rm -rf "$SEPMDIR" 2>/dev/null
+else
+  no "(sep7) the mutant does not parse — it could not discriminate anything"
+fi
+rm -rf "$SEPDIR" 2>/dev/null   # a mutated writer must never outlive its own control
+
+# (sep8) — EVICTION *and* the separator, in COMBINATION. Case 3 covers the <=3 cap and case 4b
+# covers the separator, but each in isolation: case 3 seeds a single category, so the section it
+# evicts from is always the LAST one and has no following heading to lose. This is the only
+# fixture where the rebuild has to evict from the front AND carry a trailing separator in the
+# same pass — the two are independent in the code, and this is what makes that a checked claim
+# rather than a traced one.
+SEPXDIR="$(mktemp -d)"; ( cd "$SEPXDIR" && git init -q && git config user.email t@t && git config user.name t && echo i>f && git add f && git commit -qm i ) >/dev/null 2>&1
+xf="$SEPXDIR/$LFILE"
+( cd "$SEPXDIR" && bash "$WRITE" --confirm --category capcat --lesson "capacity alpha lesson" --source "session:fixture-0001" \
+    && bash "$WRITE" --confirm --category zlast --lesson "trailing category lesson" --source "session:fixture-0001" \
+    && bash "$WRITE" --confirm --category capcat --lesson "capacity bravo lesson" --source "session:fixture-0002" \
+    && bash "$WRITE" --confirm --category capcat --lesson "capacity charlie lesson" --source "session:fixture-0003" \
+    && bash "$WRITE" --confirm --category capcat --lesson "capacity delta lesson" --source "session:fixture-0004" ) >/dev/null 2>&1
+cap_n="$(awk '/^## capcat$/{f=1;next} /^## /{f=0} f && /^- \[/{c++} END{print c+0}' "$xf" 2>/dev/null)"
+if [ "$cap_n" -eq 3 ] && ! grep -qF "capacity alpha lesson" "$xf" 2>/dev/null && grep -qF "capacity delta lesson" "$xf" 2>/dev/null; then
+  ok "(sep8) a 4th entry into a NON-LAST category still evicts the OLDEST and caps at 3 — eviction is unaffected by section position"
+else
+  no "(sep8) eviction misbehaved in a non-last category (entries=$cap_n, oldest still present=$(grep -cF "capacity alpha lesson" "$xf" 2>/dev/null))"
+fi
+if blank_before "$xf" "## zlast"; then
+  ok "(sep8) and the blank line before '## zlast' survives the SAME evicting write — the two mechanisms compose"
+else
+  no "(sep8) the evicting write into a non-last category DROPPED the blank line before '## zlast'"
+fi
+rm -rf "$SEPXDIR" 2>/dev/null
 
 echo "== 5. .gitignore coverage (real repo) =="
 # INVERTED ON PURPOSE (2026-08-07). This asserted `.supervisor/memory/` was IGNORED. The
