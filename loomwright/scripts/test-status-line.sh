@@ -613,6 +613,7 @@ if mutant_ok "$M3" "(g10) empty-status mutant" "$o3" "$s3"; then
     no "(g10) INCONCLUSIVE: the mutant did not render Shape A either (rc=$mrc) — it discriminated nothing" "$mout"
   fi
 fi
+rm -f "$M3" 2>/dev/null   # a mutated reader must never outlive its own control
 
 echo "== (h) the DONE vocabulary is pinned to reconcile-resume-state.sh, not copied =="
 
@@ -653,6 +654,12 @@ else
   # (h2) THE DRIFT GATE. Every keyword reconcile knows must be CLASSIFIED here — either scored as
   # done, or named in the not-done exclusion comment as a deliberate exclusion. A keyword added to
   # reconcile that matches neither is an unreviewed silent default, and this fails.
+  # COUPLING, DELIBERATE AND WORTH KNOWING: the "named as a deliberate exclusion" half is a
+  # literal `grep -Fq` over the whole script, so it is satisfied by the PROSE that names
+  # FAILED/SKIPPED/ABANDONED, not by code. Reword that comment without preserving the literal
+  # keywords and this fails. That is the intended direction — the exclusion is a documented
+  # decision, and a decision nobody can find in the file is not documented — but it does mean
+  # this assertion is coupled to comment wording as well as to code. Flagged in review of #173.
   unclassified=""
   for kw in $recon_set; do
     if printf '%s\n' "$sl_done" | grep -Fqx "$kw"; then continue; fi
