@@ -389,6 +389,13 @@ emitted at `:469`) but **stamps no base commit**, so there is no anchor to measu
    ```bash
    git log --oneline "$BRIEF_BASE_SHA"..origin/"$BASE_BRANCH" -- $ANTICIPATED_PATHS | wc -l
    ```
+   [corrected 2026-09-02: the unquoted `-- $ANTICIPATED_PATHS` above is a **bash-only** idiom and
+   is retained here only as the historical record of what was proposed. The Claude Code Bash tool
+   runs **zsh**, which does not word-split unquoted parameter expansions, so this form collapses to
+   one pathspec, matches nothing, and returns an empty log — a *silent* false CLEAR. The shipped
+   protocol in `skills/preflight-sync/SKILL.md` now passes each path as its own quoted literal
+   argument and requires a corroboration control before any empty pathspec result is read as
+   "no overlap". Do not copy the line above.]
 
 **Use churn, not elapsed time.** A three-week-old brief against an untouched subsystem is fine; a
 two-hour-old brief against one someone just refactored is not. The clock measures the wrong thing,
