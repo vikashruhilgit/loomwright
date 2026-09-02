@@ -203,6 +203,18 @@ count_is "$JA" logs 999 \
 count_is "$JA" no_such_surface 1 \
   && no "comparator accepted a non-existent surface" \
   || ok "non-existent surface is rejected (count reads ABSENT)"
+# A negative-control FIXTURE: an identical tree with one extra job brief. The very same
+# expectation that passes against the good tree must FAIL against this one, which is what
+# proves the fixture (not just the literal) is what the assertion is reading.
+RNEG="$(new_repo)"; seed_tree "$RNEG"; echo "# extra" > "$RNEG/.supervisor/jobs/done/d99.md"
+run_build "$RNEG"
+JNEG="$RNEG/.supervisor/floor/floor.json"
+count_is "$JNEG" jobs_done "$EXP_JOBS_DONE" \
+  && no "the deliberately-wrong negative-control fixture still satisfied the assertion" \
+  || ok "negative-control fixture (one extra brief) turns the jobs_done assertion RED ($(scount "$JNEG" jobs_done) != $EXP_JOBS_DONE)"
+count_is "$JNEG" jobs_done "$((EXP_JOBS_DONE + 1))" \
+  && ok "and the same comparator accepts the negative fixture's true count - it tracks the tree, not a constant" \
+  || no "the comparator did not track the negative fixture's true count"
 
 # ============================================================================
 echo "== (b) every count states its counting basis =="
@@ -421,6 +433,27 @@ jq '.surfaces.drain_rounds.status = "absent" | .surfaces.drain_rounds.count = 0'
 validate_floor "$MUT" >/dev/null 2>&1 \
   && no "a fabricated count:0 on an absent surface was accepted" \
   || ok "a fabricated count:0 on an absent surface is rejected"
+
+# ============================================================================
+echo "== (h2) RESULT_SCHEMAS.md companion edits (enforced by no other gate) =="
+# check-doc-currency.sh does not scan this file and the contract-parity MANIFEST is fixed
+# and hook-scoped, so if these two edits are not asserted here they are asserted nowhere.
+intro="$(grep -n 'Current versions:' "$SCHEMA_MD" | head -1 | cut -d: -f1)"
+[ -n "$intro" ] && ok "the intro 'Current versions:' paragraph is present" \
+  || no "could not locate the intro 'Current versions:' paragraph"
+introline="$(sed -n "${intro:-1}p" "$SCHEMA_MD")"
+printf '%s' "$introline" | grep -qF 'FLOOR_PROJECTION at `schema_version: 1`' \
+  && ok "the intro names FLOOR_PROJECTION with its schema_version" \
+  || no "the intro does not name FLOOR_PROJECTION with its schema_version"
+printf '%s' "$introline" | grep -qi 'FLOOR_PROJECTION.*no hook validator' \
+  && ok "the intro records FLOOR_PROJECTION's no-hook-validator status" \
+  || no "the intro does not record FLOOR_PROJECTION's no-hook-validator status"
+
+vh="$(awk '/^### Version History$/{f=1;next} f&&/^## /{exit} f' "$SCHEMA_MD" | grep -F 'FLOOR_PROJECTION' | head -1)"
+[ -n "$vh" ] && ok "### Version History gains a FLOOR_PROJECTION entry" \
+  || no "### Version History has no FLOOR_PROJECTION entry"
+printf '%s' "$vh" | grep -qE '20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]' \
+  && ok "the Version History entry is dated" || no "the Version History entry carries no date"
 
 # ============================================================================
 echo "== (i) determinism: RAW UNFILTERED diff under two injected timestamps =="
