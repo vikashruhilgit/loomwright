@@ -212,7 +212,13 @@ count_glob "automate_runs" ".supervisor/automate" \
 LOGS_DIR=".supervisor/logs"
 logs_basis="files matching .supervisor/logs/*.jsonl, an extension glob; the same directory also holds plain .log dispatch transcripts which are deliberately NOT counted here"
 logfiles=("$LOGS_DIR"/*.jsonl)
-count_glob "logs" "$LOGS_DIR" "$logs_basis" "logs" "${logfiles[@]}"
+# `${arr[@]+"${arr[@]}"}`, not a bare `"${arr[@]}"`: under `set -u` macOS bash 3.2 treats an
+# EMPTY array expansion as an unbound variable and aborts the script with status 1. That is
+# not a corner case here - it is every fresh clone, every git worktree and every user who has
+# not run the plugin yet, i.e. exactly the trees where `*.jsonl` matches nothing. It would
+# have broken this script's headline exit-0-always invariant while staying INVISIBLE on Linux
+# CI (bash 4+ expands an empty array happily) - the exact inverse of the stat-flavour trap.
+count_glob "logs" "$LOGS_DIR" "$logs_basis" "logs" ${logfiles[@]+"${logfiles[@]}"}
 
 # ---------------------------------------------------------------------------
 # 5) sessions - distinct cc_session_id across every *.jsonl, NEVER by filename
@@ -229,7 +235,7 @@ elif [ ${#logfiles[@]} -eq 0 ]; then
 else
   # Classify every raw line exactly once: blank / malformed / carries an id / lacks one.
   # `try ... catch` keeps a malformed line VISIBLE instead of silently dropping it.
-  classified="$(cat "${logfiles[@]}" 2>/dev/null | jq -R -r '
+  classified="$(cat ${logfiles[@]+"${logfiles[@]}"} 2>/dev/null | jq -R -r '
     if ((. | gsub("\\s"; "")) == "") then "blank"
     else
       (try (fromjson) catch null) as $o

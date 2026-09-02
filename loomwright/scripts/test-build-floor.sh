@@ -185,16 +185,42 @@ check_pair worker_summaries   "$EXP_WORKER_SUMMARIES"
 check_pair rules              "$EXP_RULES"
 
 # An empty tree must never satisfy this suite: every section must be counted AND non-zero.
-zero_or_absent=""
-for k in $ALL_KEYS; do
-  st="$(sstatus "$JA" "$k")"; c="$(scount "$JA" "$k")"
-  case "$c" in ''|*[!0-9]*) zero_or_absent="$zero_or_absent $k(count=$c)"; continue ;; esac
-  [ "$st" = "counted" ] || zero_or_absent="$zero_or_absent $k(status=$st)"
-  [ "$c" -gt 0 ]        || zero_or_absent="$zero_or_absent $k(zero)"
-done
-[ -z "$zero_or_absent" ] \
-  && ok "all 13 sections counted and non-zero (an empty tree cannot satisfy this suite)" \
-  || no "sections absent or zero:$zero_or_absent"
+# Echoes the offending sections; empty output means every section is counted and non-zero.
+zero_offenders() {
+  local j="$1" k st c out=""
+  for k in $ALL_KEYS; do
+    st="$(sstatus "$j" "$k")"; c="$(scount "$j" "$k")"
+    case "$c" in ''|*[!0-9]*) out="$out $k(count=$c)"; continue ;; esac
+    [ "$st" = "counted" ] || out="$out $k(status=$st)"
+    [ "$c" -gt 0 ]        || out="$out $k(zero)"
+  done
+  printf '%s' "$out"
+}
+zo="$(zero_offenders "$JA")"
+[ -z "$zo" ] \
+  && ok "all 13 sections counted and non-zero" \
+  || no "sections absent or zero:$zo"
+
+# ANTI-VACUITY CONTROL: the same guard, pointed at an EMPTY fixture (a bare git repo with no
+# .supervisor/ at all), must FAIL - and must fail on the zero/absent check itself, before any
+# count comparison is reached. This is the assertion that makes "an empty tree can never
+# satisfy this suite" a measurement rather than a claim: it is exactly the tree a fresh clone,
+# a worktree and CI present.
+REMPTY="$(new_repo)"
+run_build "$REMPTY"; rcEmpty=$?
+JEMPTY="$REMPTY/.supervisor/floor/floor.json"
+[ "$rcEmpty" -eq 0 ] && [ -f "$JEMPTY" ] \
+  && ok "empty fixture: still exits 0 and writes an artefact" \
+  || no "empty fixture: rc=$rcEmpty, artefact $( [ -f "$JEMPTY" ] && echo present || echo absent )"
+zoe="$(zero_offenders "$JEMPTY")"
+n_zoe="$(printf '%s' "$zoe" | tr ' ' '\n' | awk 'NF{n++} END{print n+0}')"
+[ -n "$zoe" ] && [ "$n_zoe" -eq 13 ] \
+  && ok "ANTI-VACUITY: an EMPTY fixture fails the zero/absent guard on all 13 sections" \
+  || no "an empty fixture was NOT caught by the zero/absent guard (offenders: '$zoe', n=$n_zoe)"
+# ...and it fails on the guard, not merely on a count mismatch: no section is even `counted`.
+[ "$(jq -r '[.surfaces[] | select(.status == "counted")] | length' "$JEMPTY" 2>/dev/null)" = "0" ] \
+  && ok "ANTI-VACUITY: no section on the empty fixture reaches status counted at all" \
+  || no "a section on the empty fixture reported status counted"
 
 echo "-- negative control: the comparator must be able to fail --"
 count_is "$JA" logs 999 \
@@ -215,6 +241,23 @@ count_is "$JNEG" jobs_done "$EXP_JOBS_DONE" \
 count_is "$JNEG" jobs_done "$((EXP_JOBS_DONE + 1))" \
   && ok "and the same comparator accepts the negative fixture's true count - it tracks the tree, not a constant" \
   || no "the comparator did not track the negative fixture's true count"
+
+# The boundary between "no directory" (absent) and "directory exists but holds nothing"
+# (a legitimately counted 0). This is the shape a fresh worktree actually has, and the
+# empty-array expansion on this path aborts macOS bash 3.2 under `set -u` if written naively.
+RZL="$(new_repo)"; mkdir -p "$RZL/.supervisor/logs"
+echo "dispatch" > "$RZL/.supervisor/logs/review-pr-dispatch-1.log"
+run_build "$RZL"; rcZL=$?
+JZL="$RZL/.supervisor/floor/floor.json"
+[ "$rcZL" -eq 0 ] && [ -f "$JZL" ] \
+  && ok "logs dir present with zero *.jsonl: exits 0 and writes an artefact" \
+  || no "logs dir present with zero *.jsonl: rc=$rcZL, artefact $( [ -f "$JZL" ] && echo present || echo absent )"
+[ "$(sstatus "$JZL" logs)" = "counted" ] && [ "$(scount "$JZL" logs)" = "0" ] \
+  && ok "an existing but jsonl-less logs dir is a legitimately COUNTED 0, not absent" \
+  || no "logs on a jsonl-less dir: status=$(sstatus "$JZL" logs) count=$(scount "$JZL" logs)"
+[ "$(sstatus "$JZL" sessions)" = "absent" ] && [ "$(scount "$JZL" sessions)" = "ABSENT" ] \
+  && ok "sessions is absent with no count (a 0 there would be unprovable, not measured)" \
+  || no "sessions on a jsonl-less dir: status=$(sstatus "$JZL" sessions) count=$(scount "$JZL" sessions)"
 
 # ============================================================================
 echo "== (b) every count states its counting basis =="
@@ -454,6 +497,69 @@ vh="$(awk '/^### Version History$/{f=1;next} f&&/^## /{exit} f' "$SCHEMA_MD" | g
   || no "### Version History has no FLOOR_PROJECTION entry"
 printf '%s' "$vh" | grep -qE '20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]' \
   && ok "the Version History entry is dated" || no "the Version History entry carries no date"
+
+# The two checks above are SECTION-SCOPED (one addresses the single `Current versions:` line,
+# the other a bounded awk range) rather than whole-file greps. That is itself a claim, and a
+# claim no check backs is the failure mode this repo keeps rediscovering - so falsify it.
+# Both mutants below RELOCATE the text rather than deleting it: a whole-file `grep -F
+# FLOOR_PROJECTION` still succeeds on each, so only a section-scoped parse can reject them.
+companion_ok() {
+  local md="$1" il vhl
+  il="$(grep -m1 'Current versions:' "$md" 2>/dev/null)"
+  [ -n "$il" ] || return 1
+  printf '%s' "$il" | grep -qF 'FLOOR_PROJECTION at `schema_version: 1`' || return 1
+  printf '%s' "$il" | grep -qi 'FLOOR_PROJECTION.*no hook validator'     || return 1
+  vhl="$(awk '/^### Version History$/{f=1;next} f&&/^## /{exit} f' "$md" 2>/dev/null | grep -F 'FLOOR_PROJECTION' | head -1)"
+  [ -n "$vhl" ] || return 1
+  printf '%s' "$vhl" | grep -qE '20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]' || return 1
+  return 0
+}
+companion_ok "$SCHEMA_MD" \
+  && ok "CONTROL: the real RESULT_SCHEMAS.md passes the section-scoped companion check" \
+  || no "the real RESULT_SCHEMAS.md failed the section-scoped companion check"
+
+# Mutant 1 - the Version-History entry moved OUT of its section, re-appended at end of file.
+MVH="$ROOT/schema-vh-relocated.md"
+awk '
+  /^### Version History$/ {inv=1; print; next}
+  inv && /^## / {inv=0}
+  inv && /FLOOR_PROJECTION/ {saved=$0; next}
+  {print}
+  END {if (saved != "") print saved}
+' "$SCHEMA_MD" > "$MVH"
+if [ -s "$MVH" ] && ! cmp -s "$MVH" "$SCHEMA_MD" && grep -qF 'FLOOR_PROJECTION' "$MVH"; then
+  ok "mutant 1 is a RELOCATION: FLOOR_PROJECTION still present in the file (a whole-file grep would pass it)"
+  companion_ok "$MVH" \
+    && no "a Version-History entry moved out of its section was ACCEPTED - the check is a whole-file grep" \
+    || ok "MUTATION CONTROL: the entry relocated out of ### Version History is REJECTED"
+else
+  no "could not build the Version-History relocation mutant - this control is inconclusive"
+fi
+
+# Mutant 2 - the FLOOR_PROJECTION clause lifted OUT of the `Current versions:` paragraph
+# and left as its own line immediately below it.
+MIN="$ROOT/schema-intro-relocated.md"
+awk -v n="FLOOR_PROJECTION at " '
+  !d && /Current versions:/ {
+    i = index($0, n)
+    if (i > 0) {
+      print substr($0, 1, i-1) substr($0, i + length(n))
+      print ""
+      print "FLOOR_PROJECTION at `schema_version: 1` (no hook validator)"
+      d = 1
+      next
+    }
+  }
+  {print}
+' "$SCHEMA_MD" > "$MIN"
+if [ -s "$MIN" ] && ! cmp -s "$MIN" "$SCHEMA_MD" && grep -qF 'FLOOR_PROJECTION at `schema_version: 1`' "$MIN"; then
+  ok "mutant 2 is a RELOCATION: the clause still present in the file (a whole-file grep would pass it)"
+  companion_ok "$MIN" \
+    && no "an intro clause moved out of the Current versions: paragraph was ACCEPTED" \
+    || ok "MUTATION CONTROL: the clause relocated out of the Current versions: paragraph is REJECTED"
+else
+  no "could not build the intro relocation mutant - this control is inconclusive"
+fi
 
 # ============================================================================
 echo "== (i) determinism: RAW UNFILTERED diff under two injected timestamps =="
