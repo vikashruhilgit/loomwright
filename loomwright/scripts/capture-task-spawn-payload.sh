@@ -192,22 +192,37 @@ wait "$child" 2>/dev/null
 rc=$?
 
 # --- Report -------------------------------------------------------------------
-pre_n=0; stop_n=0; post_n=0
-for f in "$CAP_DIR"/pretooluse-task-*; do [ -f "$f" ] && pre_n=$(( pre_n + 1 )); done
-for f in "$CAP_DIR"/posttooluse-task-*; do [ -f "$f" ] && post_n=$(( post_n + 1 )); done
-for f in "$CAP_DIR"/subagentstop-*; do [ -f "$f" ] && stop_n=$(( stop_n + 1 )); done
+# Count NON-EMPTY captures separately from empty ones. A zero-byte capture file
+# means "the hook fired but delivered nothing" — reporting that as FIRED would be
+# the mirror image of the false-NO-GO hazard this harness exists to avoid, and a
+# mutation control (sink write deleted) proved a file-only count reports FIRED on
+# a totally broken sink. `-s` is the load-bearing test here, not `-f`.
+count_nonempty() {
+  _pat="$1"; _n=0; _empty=0
+  for _f in "$CAP_DIR"/${_pat}-*; do
+    [ -f "$_f" ] || continue
+    if [ -s "$_f" ]; then _n=$(( _n + 1 )); else _empty=$(( _empty + 1 )); fi
+  done
+  printf '%s %s' "$_n" "$_empty"
+}
+
+set -- $(count_nonempty pretooluse-task);  pre_n="$1";  pre_empty="$2"
+set -- $(count_nonempty posttooluse-task); post_n="$1"; post_empty="$2"
+set -- $(count_nonempty subagentstop);     stop_n="$1"; stop_empty="$2"
 
 {
   printf 'out_dir: %s\n' "$OUT_DIR"
   printf 'exit_code: %s\n' "$rc"
   printf 'timed_out: %s\n' "$timed_out"
-  printf 'pretooluse_task_captures: %s\n' "$pre_n"
-  printf 'posttooluse_task_captures: %s\n' "$post_n"
-  printf 'subagentstop_captures: %s\n' "$stop_n"
+  printf 'pretooluse_task_captures: %s (empty: %s)\n' "$pre_n" "$pre_empty"
+  printf 'posttooluse_task_captures: %s (empty: %s)\n' "$post_n" "$post_empty"
+  printf 'subagentstop_captures: %s (empty: %s)\n' "$stop_n" "$stop_empty"
 } | tee "$OUT_DIR/probe-summary.txt"
 
 if [ "$pre_n" -gt 0 ]; then
-  printf 'PROBE_RESULT: FIRED — %s PreToolUse[Task] payload(s) captured in %s\n' "$pre_n" "$CAP_DIR"
+  printf 'PROBE_RESULT: FIRED — %s non-empty PreToolUse[Task] payload(s) captured in %s\n' "$pre_n" "$CAP_DIR"
+elif [ "$pre_empty" -gt 0 ]; then
+  printf 'PROBE_RESULT: FIRED-EMPTY — the hook ran %s time(s) but delivered no stdin; NOT a usable payload\n' "$pre_empty"
 elif [ "$timed_out" = "1" ]; then
   printf 'PROBE_RESULT: BLOCKED — capture session timed out after %ss (see %s)\n' "$TIMEOUT_SECS" "$RUN_LOG"
 elif [ "$rc" != "0" ]; then
