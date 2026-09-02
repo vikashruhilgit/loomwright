@@ -126,21 +126,29 @@ elif ! bash -n "$MUT" 2>/dev/null; then
   no "case6 mutant does not parse — control INVALID"
 else
   ok "case6 mutant is valid (non-empty, differs, parses) — its result is evidence"
-  # Under the mutant, the empty file from case 2 WOULD count as a capture.
-  count_mutated() {
-    _dir="$1"; _pat="$2"; _n=0
-    for _f in "$_dir"/${_pat}-*; do [ -f "$_f" ] || continue; _n=$(( _n + 1 )); done
-    printf '%s' "$_n"
-  }
-  assert_eq "case6 mutated counter reports the EMPTY file as a capture (the defect)" \
-    "1" "$(count_mutated "$D2" pretooluse-task)"
-  assert_eq "case6 real counter still reports it as NOT a capture" \
-    "0" "$(count_nonempty_ref "$D2" pretooluse-task | cut -d' ' -f1)"
+  # Run the VALIDATED MUTANT's own counter, not a re-implementation of it. An earlier
+  # revision re-declared a `[ -f ]` counter here and asserted against that; since $D2 holds
+  # exactly one empty file, both assertions were arithmetically forced and never touched
+  # $MUT at all. Extracting and eval'ing the function from each file is what makes the
+  # validity gate above actually load-bearing.
+  extract_counter() { sed -n '/^count_nonempty() {/,/^}/p' "$1"; }
+  run_counter() { ( eval "$(extract_counter "$1")"; CAP_DIR="$2"; count_nonempty "$3" ); }
+  MUT_OUT="$(run_counter "$MUT" "$D2" pretooluse-task | cut -d' ' -f1)"
+  REAL_OUT="$(run_counter "$HARNESS" "$D2" pretooluse-task | cut -d' ' -f1)"
+  if [ -z "$MUT_OUT" ] || [ -z "$REAL_OUT" ]; then
+    no "case6 counter extraction produced nothing — control INVALID, not evidence"
+  else
+    ok "case6 both counters were extracted and ran (control is exercising \$MUT itself)"
+    assert_eq "case6 MUTANT counter miscounts the empty file as a capture (the defect)" "1" "$MUT_OUT"
+    assert_eq "case6 REAL counter correctly rejects it" "0" "$REAL_OUT"
+  fi
 fi
 
 echo "== 7. harness discipline: fail-SAFE and portable (CLAUDE.md invariants) =="
 grep -q '^set -u' "$HARNESS" && ok "case7 uses 'set -u'" || no "case7 missing 'set -u'"
-grep -q '^set -e' "$HARNESS" && no "case7 must NOT use 'set -e' (fail-safe emitter)" || ok "case7 correctly has no 'set -e'"
+# Anchored to column 0 in an earlier revision, so an INDENTED `set -e` inside a function or
+# if-block walked straight past the absence guard. Same vacuity class as the two above.
+grep -qE '^[[:space:]]*set -e' "$HARNESS" && no "case7 must NOT use 'set -e' (fail-safe emitter)" || ok "case7 correctly has no 'set -e' at any indent"
 grep -q "trap 'exit 0' EXIT" "$HARNESS" && ok "case7 has trap 'exit 0' EXIT" || no "case7 missing exit-0 trap"
 # Portability: no timeout(1) (absent on stock macOS), no BSD-only `stat -f`
 # (succeeds with GARBAGE under GNU/Linux CI — macOS-green is not CI-green).
@@ -149,16 +157,54 @@ grep -q "trap 'exit 0' EXIT" "$HARNESS" && ok "case7 has trap 'exit 0' EXIT" || 
 # own PORTABILITY header says it avoids `stat -f`, so a naive grep matches that sentence and
 # reports a violation the code never commits. A guard that fires on its own documentation is
 # worthless. The mutation control below proves the stripped guard still catches a real one.
+# The strip must NOT eat `$#`, `${v#p}` or `${v##p}`. A naive `s/[[:space:]]*#.*$//`
+# turns the harness's own `while [ "$#" -gt 0 ]; do` into `while [ "$`, leaving $CODE_ONLY
+# unparseable — so a real violation sharing a line with a parameter expansion would be
+# invisible to BOTH guards below. Strip only a `#` at line-start or after whitespace.
+strip_comments() { sed -E 's/(^|[[:space:]])#.*$/\1/' "$1"; }
+
 CODE_ONLY="$TMPROOT/harness-code-only.sh"
-sed 's/[[:space:]]*#.*$//' "$HARNESS" > "$CODE_ONLY"
+strip_comments "$HARNESS" > "$CODE_ONLY"
+# The strip is only trustworthy if it left valid shell behind — assert it, never assume it.
+bash -n "$CODE_ONLY" 2>/dev/null && ok "case7 comment-strip left parseable shell (did not eat \$#)" \
+  || no "case7 comment-strip CORRUPTED the code — both portability guards below are unreliable"
+# SUBSTANTIALITY. `bash -n` alone does NOT catch an over-strip, because an EMPTY file parses
+# cleanly and then both greps below find nothing and cheerfully report "no violation" — a
+# false CLEAN, the same class this whole section keeps re-learning. Verified: emptying
+# $CODE_ONLY left the suite fully green until this assertion existed. Pin code landmarks that
+# any correct strip must preserve, so a guard can never scan a gutted file and pass.
+_landmarks_missing=""
+for _lm in 'count_nonempty() {' '"--sink"' 'trap ' 'mktemp'; do
+  grep -qF "$_lm" "$CODE_ONLY" || _landmarks_missing="$_landmarks_missing [$_lm]"
+done
+[ -z "$_landmarks_missing" ] \
+  && ok "case7 stripped code retains its landmarks (guards are scanning real code, not a gutted file)" \
+  || no "case7 stripped code LOST landmarks:$_landmarks_missing — the guards below would scan a gutted file and falsely report clean"
 grep -qE '(^|[^-[:alnum:]])timeout ' "$CODE_ONLY" && no "case7 uses timeout(1) — absent on stock macOS" || ok "case7 no timeout(1) in code"
 grep -q 'stat -f' "$CODE_ONLY" && no "case7 uses BSD-only 'stat -f'" || ok "case7 no BSD-only 'stat -f' in code"
-# Mutation control for the guard itself: inject a REAL `stat -f` call into the code and
-# confirm the stripped guard catches it. Without this the guard could be vacuous.
-MUT7="$TMPROOT/mutant7.sh"
-printf 'mtime=$(stat -f %%m "$0")\n' > "$MUT7"; cat "$CODE_ONLY" >> "$MUT7"
-if grep -q 'stat -f' "$MUT7"; then ok "case7 guard catches a real 'stat -f' when one exists (not vacuous)"
-else no "case7 guard is VACUOUS — it missed an injected 'stat -f'"; fi
+
+# MUTATION CONTROL for the guard itself. The previous revision of this control was VACUOUS:
+# it printf'd `stat -f` into a file and grepped that same file for it, OUTSIDE the strip —
+# a round-trip that could not fail, and which stayed green even with $CODE_ONLY emptied to
+# zero bytes. It must inject into the SOURCE and run the SAME strip, or it certifies nothing.
+MUT7_SRC="$TMPROOT/mutant7-src.sh"; MUT7_CODE="$TMPROOT/mutant7-code.sh"
+{ printf 'mtime=$(stat -f %%m "$0")\n'; cat "$HARNESS"; } > "$MUT7_SRC"
+strip_comments "$MUT7_SRC" > "$MUT7_CODE"
+if grep -q 'stat -f' "$MUT7_CODE"; then
+  ok "case7 POSITIVE control: guard catches a real 'stat -f' surviving the strip (not vacuous)"
+else
+  no "case7 guard is VACUOUS — it missed a 'stat -f' injected into the source"
+fi
+# NEGATIVE control: a source whose ONLY `stat -f` is in a comment must NOT be flagged.
+# Without this, "strip everything" would pass the positive control above.
+NEG7_SRC="$TMPROOT/neg7-src.sh"; NEG7_CODE="$TMPROOT/neg7-code.sh"
+{ printf '# portability note: this file avoids stat -f on purpose\n'; printf 'echo ok\n'; } > "$NEG7_SRC"
+strip_comments "$NEG7_SRC" > "$NEG7_CODE"
+if grep -q 'stat -f' "$NEG7_CODE"; then
+  no "case7 NEGATIVE control: guard flags a comment-only mention — it fires on documentation"
+else
+  ok "case7 NEGATIVE control: comment-only 'stat -f' is correctly not flagged"
+fi
 bash -n "$HARNESS" 2>/dev/null && ok "case7 harness parses" || no "case7 harness does not parse"
 
 echo
