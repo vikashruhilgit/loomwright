@@ -1,0 +1,19 @@
+{
+  "session_id": "fixture-spawn-probe-session-0001",
+  "transcript_path": "/nonexistent/transcript_path.jsonl",
+  "cwd": "/nonexistent/Documents/work/AI/ai-agent-manager",
+  "prompt_id": "fixture-prompt-0001",
+  "permission_mode": "auto",
+  "effort": {
+    "level": "high"
+  },
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Agent",
+  "tool_input": {
+    "description": "Probe beta done word",
+    "prompt": "say your done word",
+    "subagent_type": "probe-beta",
+    "run_in_background": false
+  },
+  "tool_use_id": "toolu_015cesVz4Ya2cjmtB7tiTZqc"
+}
