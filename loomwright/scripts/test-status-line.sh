@@ -539,6 +539,141 @@ else
   no "(g9) control — the real status-line.sh still counts the Shape B fixture 2/4 after both mutations" "$out"
 fi
 
+echo "== (g10) a row with NO Status column is not counted at all =="
+
+# The widening reads Status as data column 3. A table with only two data columns has none, and
+# substituting an empty status while still incrementing the total renders `0/N` — a WRONG NUMBER
+# for a shape this reader does not understand, on a surface contracted to OMIT what it cannot
+# resolve. Same failure class as the bare-literal `COMPLETED` test, relocated to a different input.
+R="$TMPROOT/g10"; mkdir -p "$R/.supervisor" || setup_fail "mkdir g10"
+{
+  echo "## Session"; echo "- phase: EXECUTE"; echo "- branch: main"; echo
+  echo "## Subtasks"
+  echo "| ID | Title |"
+  echo "|----|-------|"
+  echo "| subtask_1 | a two-column table has no Status column |"
+  echo "| subtask_2 | so neither row may be scored |"
+} > "$R/.supervisor/state.md" || setup_fail "could not write the g10 fixture"
+run "$R"
+if [ "$rc" -eq 0 ] && has "$out" "EXECUTE" && ! has "$out" "0/2" && ! has "$out" "/2"; then
+  ok "(g10) a 2-column table is unreadable — the N/M field is OMITTED, the rest of the line still renders, exit 0"
+else
+  no "(g10) a 2-column table is unreadable — the N/M field is OMITTED, the rest of the line still renders, exit 0" "rc=$rc out='$out'"
+fi
+
+# Control: the SAME two rows with a Status column present DO get counted. Without this, (g10)
+# would also pass against an implementation that had simply stopped counting anything.
+R="$TMPROOT/g10c"; mkdir -p "$R/.supervisor" || setup_fail "mkdir g10c"
+{
+  echo "## Session"; echo "- phase: EXECUTE"; echo "- branch: main"; echo
+  echo "## Subtasks"
+  echo "| ID | Title | Status |"
+  echo "|----|-------|--------|"
+  echo "| subtask_1 | now there is a status column | completed |"
+  echo "| subtask_2 | and this one is not done | pending |"
+} > "$R/.supervisor/state.md" || setup_fail "could not write the g10c fixture"
+run "$R"
+if has "$out" "1/2"; then
+  ok "(g10c) control — the same rows WITH a Status column render 1/2, so (g10) is not vacuous"
+else
+  no "(g10c) control — the same rows WITH a Status column render 1/2, so (g10) is not vacuous" "$out"
+fi
+
+# Mutation control for (g10): reinstate the empty-status substitution and the wrong number returns.
+M3="$TMPROOT/mut-empty-status.sh"
+o3="$(grep -c '^[[:space:]]*if (n < 5) next$' "$SL" || true)"; case "$o3" in ''|*[!0-9]*) o3=0 ;; esac
+sed -e 's%^\([[:space:]]*\)if (n < 5) next$%\1st = (n >= 5 ? c[4] : "")%' "$SL" > "$M3"
+s3="$(grep -c '^[[:space:]]*st = (n >= 5 ? c\[4\] : "")$' "$M3" || true)"; case "$s3" in ''|*[!0-9]*) s3=0 ;; esac
+if mutant_ok "$M3" "(g10) empty-status mutant" "$o3" "$s3"; then
+  ok "(g10) the empty-status mutant is NON-VACUOUS: non-empty, differs from the original, parses, 1 skip replaced by 1 empty-status substitution"
+  runmut "$M3" "$RA"
+  if [ "$mrc" -eq 0 ] && has "$mout" "3/4"; then
+    ok "(g10) …and it still renders Shape A (3/4), so it runs — a wrong number below is behavioural"
+    runmut "$M3" "$TMPROOT/g10"
+    if has "$mout" "0/2"; then
+      ok "(g10) CONFIRMED: with the substitution reinstated the 2-column table renders the WRONG NUMBER 0/2 — the guard is load-bearing"
+    else
+      no "(g10) REFUTED: the mutant did not produce 0/2 — (g10) passes for some other reason and is vacuous" "$mout"
+    fi
+  else
+    no "(g10) INCONCLUSIVE: the mutant did not render Shape A either (rc=$mrc) — it discriminated nothing" "$mout"
+  fi
+fi
+
+echo "== (h) the DONE vocabulary is pinned to reconcile-resume-state.sh, not copied =="
+
+# The DONE set here is deliberately a SUBSET of reconcile's is_terminal_status() — FAILED /
+# SKIPPED / ABANDONED are terminal for "is anything left to re-run" but must never score as
+# progress. That divergence is only safe while it stays a *declared partition* of one vocabulary.
+# Copied by hand it silently rots: a keyword added to reconcile would go unclassified here and
+# land in the not-done branch with nothing failing. So the set is extracted from reconcile AT TEST
+# TIME and every member is required to be classified by status-line, one way or the other.
+RECON="$script_dir/reconcile-resume-state.sh"
+if [ ! -f "$RECON" ]; then
+  printf '  SKIP (h) — reconcile-resume-state.sh not found at %s\n' "$RECON"
+else
+  recon_raw="$(sed -n '/^is_terminal_status()/,/^}/p' "$RECON" | grep -F ') return 0 ;;' | head -1 \
+               | sed 's/).*//; s/^[[:space:]]*//')"
+  [ -n "$recon_raw" ] || setup_fail "could not extract is_terminal_status()'s keyword arm from $RECON — the (h) assertions would be vacuous"
+  recon_set="$(printf '%s' "$recon_raw" | tr '|' '\n' | sed '/^$/d' | sort -u)"
+  recon_n="$(printf '%s\n' "$recon_set" | grep -c . || true)"; case "$recon_n" in ''|*[!0-9]*) recon_n=0 ;; esac
+  # A one-element extraction would make the coverage test pass trivially; reconcile's arm has many.
+  [ "$recon_n" -ge 4 ] || setup_fail "extracted only $recon_n keyword(s) from $RECON — extraction is broken"
+
+  # status-line's own DONE set, read out of the `is_done` line it actually evaluates — not out of
+  # a comment, so this cannot drift from the code underneath it.
+  sl_done="$(grep -F 'is_done = (ust == ' "$SL" | head -1 | grep -o '"[A-Z:]*"' | tr -d '"' | sed '/^$/d' | sort -u)"
+  sl_n="$(printf '%s\n' "$sl_done" | grep -c . || true)"; case "$sl_n" in ''|*[!0-9]*) sl_n=0 ;; esac
+  [ "$sl_n" -ge 2 ] || setup_fail "extracted only $sl_n keyword(s) from status-line.sh's is_done line — the (h) assertions would be vacuous"
+
+  # (h1) status-line's DONE set must be drawn ENTIRELY from reconcile's vocabulary — no keyword
+  # invented here that reconcile has never heard of.
+  extra="$(comm -23 <(printf '%s\n' "$sl_done") <(printf '%s\n' "$recon_set") | tr '\n' ' ')"
+  if [ -z "$(printf '%s' "$extra" | tr -d ' ')" ]; then
+    ok "(h1) every DONE keyword status-line scores is drawn from reconcile's is_terminal_status() — one vocabulary, not two"
+  else
+    no "(h1) every DONE keyword status-line scores is drawn from reconcile's is_terminal_status() — one vocabulary, not two" \
+       "invented here, unknown to reconcile: $extra"
+  fi
+
+  # (h2) THE DRIFT GATE. Every keyword reconcile knows must be CLASSIFIED here — either scored as
+  # done, or named in the not-done exclusion comment as a deliberate exclusion. A keyword added to
+  # reconcile that matches neither is an unreviewed silent default, and this fails.
+  unclassified=""
+  for kw in $recon_set; do
+    if printf '%s\n' "$sl_done" | grep -Fqx "$kw"; then continue; fi
+    grep -Fq "$kw" "$SL" && continue
+    unclassified="$unclassified $kw"
+  done
+  if [ -z "$unclassified" ]; then
+    ok "(h2) every keyword reconcile treats as terminal is classified here — scored as done, or named as a deliberate exclusion"
+  else
+    no "(h2) every keyword reconcile treats as terminal is classified here — scored as done, or named as a deliberate exclusion" \
+       "reconcile grew keyword(s) status-line neither scores nor excludes:$unclassified"
+  fi
+
+  # (h3) The exclusion is not merely documented — it is rendered and checked. A subtask that
+  # FAILED must never inflate N/M into looking like success.
+  h_bad=""
+  for kw in $(comm -13 <(printf '%s\n' "$sl_done") <(printf '%s\n' "$recon_set")); do
+    R="$TMPROOT/h-$(printf '%s' "$kw" | tr -c 'A-Za-z0-9' '_')"; mkdir -p "$R/.supervisor" || setup_fail "mkdir h"
+    {
+      echo "## Session"; echo "- phase: EXECUTE"; echo "- branch: main"; echo
+      echo "## Subtasks"
+      echo "| ID | Title | Status | Worker | Worktree | Review | Attempts |"
+      echo "|----|-------|--------|--------|----------|--------|----------|"
+      echo "| subtask_1 | a subtask in a terminal-but-not-successful state | $kw | -- | -- | -- | 1/3 |"
+    } > "$R/.supervisor/state.md" || setup_fail "could not write the (h3) fixture for $kw"
+    run "$R"
+    has "$out" "0/1" || h_bad="$h_bad $kw(expected 0/1, got '$out')"
+  done
+  if [ -z "$h_bad" ]; then
+    ok "(h3) every terminal-but-not-successful keyword renders 0/1 — a failed subtask never inflates N/M"
+  else
+    no "(h3) every terminal-but-not-successful keyword renders 0/1 — a failed subtask never inflates N/M" "$h_bad"
+  fi
+fi
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

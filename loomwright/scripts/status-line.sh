@@ -113,8 +113,16 @@ fi
 # indices — a mis-read Status is silent in both directions.
 #
 # NON-SUBTASK ROWS are dropped by the id cell: the `|---|---|` separator (a cell of only dashes
-# and colons) and the header (`#` / `ID`). Everything else with a non-empty id counts, whatever
-# its shape.
+# and colons) and the header (`#` / `ID`). Everything else with a non-empty id AND a Status
+# column counts, whatever its shape.
+#
+# A ROW WITH NO STATUS COLUMN IS NOT COUNTED AT ALL. Substituting an empty status and still
+# incrementing the total renders `0/N` for a table this reader does not understand — a WRONG
+# NUMBER, on a surface whose whole contract is that a field it cannot resolve is OMITTED rather
+# than guessed. That is the same failure mode as the bare-literal `COMPLETED` test this widening
+# replaced, merely relocated to a different input, so it is refused the same way: too few columns
+# for a Status to exist means the row is skipped, the table degrades to 0 rows, and the field
+# disappears from the line.
 #
 # DONE = SUCCESS-SHAPED TERMINAL STATUSES ONLY, a deliberate and tested divergence from the
 # sibling's vocabulary. reconcile-resume-state.sh's `is_terminal_status` also treats
@@ -132,8 +140,11 @@ if [ -f "$STATE" ]; then
     in_tbl && /^## /     { in_tbl=0 }
     in_tbl && /^[[:space:]]*\|/ {
       n = split($0, c, "[|]")
+      # `| a | b |` splits into 4 fields — the empty strings outside the outer pipes count — so
+      # `n < 5` means "no third data column", i.e. no Status cell to read. Omit, never guess.
+      if (n < 5) next
       id = c[2]; gsub(/^[ \t]+|[ \t]+$/, "", id)
-      st = (n >= 5 ? c[4] : ""); gsub(/^[ \t]+|[ \t]+$/, "", st)
+      st = c[4]; gsub(/^[ \t]+|[ \t]+$/, "", st)
       sub(/[ \t].*$/, "", st)          # first word: "COMPLETED (36c39de)" -> "COMPLETED"
       uid = toupper(id); ust = toupper(st)
       ok_id = (id != "" && id !~ /^[-:]+$/ && uid != "#" && uid != "ID")
