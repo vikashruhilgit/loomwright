@@ -20,6 +20,9 @@
 #       and `logs` counts 3 `*.jsonl` out of 8 directory entries
 #   (c) session segmentation by cc_session_id, never by filename (committed fixture:
 #       3 ids / 7 lines + 1 field-less line), with the field-less line accounted explicitly
+#   (c2) blank / whitespace-only log lines - a SEPARATE seeded fixture carrying both shapes, so
+#       `lines_scanned` (total - blank) and a bare total stop being the same number; two
+#       mutation controls (the subtraction deleted, the classifier's `gsub` deleted)
 #   (d) missing directory -> absent + named reason + NO count + exit 0
 #   (e) empty log -> sessions absent + named reason + NO count + exit 0
 #   (f) malformed JSON -> `unverified`, never `counted`, count omitted, offender named
@@ -42,6 +45,9 @@
 #       output, because `.supervisor/` is IGNORED, not untracked), plus a mutation control
 #   (l) stat-flavour portability - a `stat` stub printing a non-numeric string must make
 #       mtime_epoch OMITTED, not empty, not 0, not the raw string
+#   (l2) clock-read failure - a `date` stub printing a non-numeric string must make
+#       generated_at_epoch exactly `null` with the KEY STILL PRESENT, with a no-shim numeric
+#       control and two mutation controls (a defaulted 0, and the key dropped)
 #   (m) real `.supervisor/` corroboration (local only) or an explicit SKIPPED line
 #
 # Exit 0 = all pass, 1 = any failure. Registered automatically by ci.yml's test-*.sh glob.
@@ -309,6 +315,147 @@ fix_lines="$(awk 'NF{n++} END{print n+0}' "$SESS_FIXTURE")"
 [ "$(jget "$JA" '.surfaces.sessions.detail.lines_scanned')" = "$EXP_SESS_LINES" ] \
   && ok "lines_scanned == $EXP_SESS_LINES across the three jsonl files" \
   || no "lines_scanned == $(jget "$JA" '.surfaces.sessions.detail.lines_scanned'), expected $EXP_SESS_LINES"
+
+# ============================================================================
+echo "== (c2) blank and whitespace-only log lines: skipped, tallied, never scanned =="
+# THE GAP THIS CLOSES: not one fixture in this file - nor the committed
+# fixtures/floor-sessions.jsonl - carried a blank line. So `lines_scanned` (= total - blank)
+# and a bare total were THE SAME NUMBER on every tree the suite built, and
+# `lines_blank_skipped` was asserted nowhere at all: a regression deleting the subtraction was
+# invisible behind a fully green run. That is measured at the end of this block rather than
+# claimed - the subtraction mutant's output is byte-identical to the real script's on a
+# blank-free tree.
+#
+# A SEPARATE seeded fixture, deliberately NOT an edit to the committed
+# fixtures/floor-sessions.jsonl. That file is pinned by EXP_SESS_LINES, EXP_SESSIONS and
+# EXP_SESS_NO_ID and by (c)'s 3-ids / 1-noid / 8-lines drift check; adding two lines to it
+# re-keys four expectations at once AND forces an edit to the very guard whose job is to
+# notice that file changing. A new fixture buys the coverage without spending that guard.
+#
+# BOTH blank shapes are present and both are load-bearing. A truly EMPTY line and a
+# WHITESPACE-ONLY line take the same branch, but only the second proves the classifier's
+# `gsub("\\s"; "")` is doing work - an empty line alone is caught by a bare `. == ""`.
+EXP_BLANK_TOTAL=4      # raw lines written to the seeded log
+EXP_BLANK_SKIPPED=2    # one empty + one whitespace-only
+EXP_BLANK_SCANNED=2    # TOTAL - SKIPPED: the formula under test
+EXP_BLANK_SESSIONS=2
+
+seed_blank_log() {
+  { printf '{"cc_session_id":"s1"}\n'
+    printf '\n'
+    printf '   \n'
+    printf '{"cc_session_id":"s2"}\n'; } > "$1"
+}
+
+RC2="$(new_repo)"; mkdir -p "$RC2/.supervisor/logs"
+BLANKLOG="$RC2/.supervisor/logs/blank-lines.jsonl"
+seed_blank_log "$BLANKLOG"
+# PREMISE, measured: the seeded log really holds one EMPTY and one WHITESPACE-ONLY line. A
+# trailing-whitespace-stripping editor collapses the second into the first shape, and every
+# assertion below would then stay green while covering only half the branch.
+b_total="$(awk 'END{print NR+0}' "$BLANKLOG")"
+b_empty="$(awk 'length($0)==0{n++} END{print n+0}' "$BLANKLOG")"
+b_ws="$(awk 'length($0)>0 && !/[^[:space:]]/{n++} END{print n+0}' "$BLANKLOG")"
+[ "$b_total" -eq "$EXP_BLANK_TOTAL" ] && [ "$b_empty" -eq 1 ] && [ "$b_ws" -eq 1 ] \
+  && ok "PREMISE: the seeded log is $EXP_BLANK_TOTAL lines with exactly one EMPTY and one WHITESPACE-ONLY line" \
+  || no "seeded log drifted: total=$b_total empty=$b_empty whitespace-only=$b_ws (expected $EXP_BLANK_TOTAL/1/1)"
+
+run_build "$RC2"; rcC2=$?
+JC2="$RC2/.supervisor/floor/floor.json"
+[ "$rcC2" -eq 0 ] && [ -f "$JC2" ] \
+  && ok "blank-line fixture: exits 0 and writes an artefact" \
+  || no "blank-line fixture: rc=$rcC2, artefact $( [ -f "$JC2" ] && echo present || echo absent )"
+
+bdet() { jget "$JC2" ".surfaces.sessions.detail.$1"; }
+[ "$(bdet lines_blank_skipped)" = "$EXP_BLANK_SKIPPED" ] \
+  && ok "lines_blank_skipped == $EXP_BLANK_SKIPPED (both blank shapes take the blank branch)" \
+  || no "lines_blank_skipped == $(bdet lines_blank_skipped), expected $EXP_BLANK_SKIPPED"
+[ "$(bdet lines_scanned)" = "$EXP_BLANK_SCANNED" ] \
+  && ok "lines_scanned == $EXP_BLANK_SCANNED (total $EXP_BLANK_TOTAL minus $EXP_BLANK_SKIPPED blanks)" \
+  || no "lines_scanned == $(bdet lines_scanned), expected $EXP_BLANK_SCANNED"
+# The entire point of this fixture: the two formulas no longer agree on it.
+[ "$EXP_BLANK_SCANNED" != "$EXP_BLANK_TOTAL" ] && [ "$(bdet lines_scanned)" != "$b_total" ] \
+  && ok "lines_scanned ($EXP_BLANK_SCANNED) differs from the raw line total ($b_total) - the two formulas are now distinguishable" \
+  || no "lines_scanned still equals the raw line total - this fixture does not separate the formulas"
+[ "$(bdet lines_malformed)" = "0" ] \
+  && ok "a blank line is SKIPPED, never counted as malformed (lines_malformed == 0)" \
+  || no "lines_malformed == $(bdet lines_malformed), expected 0"
+[ "$(bdet lines_with_session_id)" = "2" ] && [ "$(bdet lines_without_session_id)" = "0" ] \
+  && ok "the two real records are still accounted (with_session_id 2 / without 0)" \
+  || no "with_session_id=$(bdet lines_with_session_id) without=$(bdet lines_without_session_id), expected 2/0"
+[ "$(sstatus "$JC2" sessions)" = "counted" ] && count_is "$JC2" sessions "$EXP_BLANK_SESSIONS" \
+  && ok "sessions == counted/$EXP_BLANK_SESSIONS across a log containing blank lines" \
+  || no "sessions == $(sstatus "$JC2" sessions)/$(scount "$JC2" sessions), expected counted/$EXP_BLANK_SESSIONS"
+
+echo "-- mutation controls: both blank-line assertions must be able to turn RED --"
+# MUTANT 1 - the subtraction deleted, so `lines_scanned` becomes the raw total.
+# ENVIRON, not `awk -v`, throughout: -v processes escape sequences, so `\\s` and `\n` inside
+# these literals would be rewritten and the line comparison could never match.
+SL_OLD='  sess_lines=$((sess_total - sess_blank))'
+SL_NEW='  sess_lines=$sess_total'
+SLMUT="$ROOT/sess-lines-mutant.sh"
+SL_OLD="$SL_OLD" SL_NEW="$SL_NEW" awk '
+  BEGIN{o=ENVIRON["SL_OLD"]; n=ENVIRON["SL_NEW"]}
+  $0==o && !d {print n; d=1; next} {print}' "$BUILD" > "$SLMUT"
+if [ -s "$SLMUT" ] && ! cmp -s "$SLMUT" "$BUILD" && bash -n "$SLMUT" 2>/dev/null \
+   && grep -qF "$SL_NEW" "$SLMUT"; then
+  ok "the blank-subtraction mutant is buildable and bash -n clean"
+  RSL="$(new_repo)"; mkdir -p "$RSL/.supervisor/logs"
+  seed_blank_log "$RSL/.supervisor/logs/blank-lines.jsonl"
+  ( cd "$RSL" && bash "$SLMUT" ) >/dev/null 2>&1; rcSL=$?
+  JSL="$RSL/.supervisor/floor/floor.json"
+  if [ "$rcSL" -eq 0 ] && [ -f "$JSL" ]; then
+    ok "the mutant still reaches its own success line (exit 0 + artefact written)"
+    [ "$(jget "$JSL" '.surfaces.sessions.detail.lines_scanned')" = "$EXP_BLANK_TOTAL" ] \
+      && ok "MUTATION CONTROL: the mutant reports lines_scanned == $EXP_BLANK_TOTAL on this fixture, turning the assertion RED" \
+      || no "the mutant reported lines_scanned == $(jget "$JSL" '.surfaces.sessions.detail.lines_scanned') - control inconclusive"
+  else
+    no "the blank-subtraction mutant did not reach its success line (rc=$rcSL) - control inconclusive"
+  fi
+  # ...and THIS is why the gap was invisible: on a blank-FREE tree the same mutant and the real
+  # script are indistinguishable, so every pre-existing assertion stays green against it.
+  RSL2="$(new_repo)"; seed_tree "$RSL2"
+  ( cd "$RSL2" && bash "$SLMUT" ) >/dev/null 2>&1
+  JSL2="$RSL2/.supervisor/floor/floor.json"
+  [ "$(jget "$JSL2" '.surfaces.sessions.detail.lines_scanned')" = "$EXP_SESS_LINES" ] \
+    && ok "GAP MEASURED: on the blank-FREE fixture the same mutant still reports lines_scanned == $EXP_SESS_LINES, identical to the real script - which is why nothing caught it" \
+    || no "the mutant diverged on the blank-free fixture ($(jget "$JSL2" '.surfaces.sessions.detail.lines_scanned')) - the gap rationale needs re-checking"
+else
+  no "could not build a valid blank-subtraction mutant - this control is inconclusive"
+fi
+
+# MUTANT 2 - the classifier's whitespace normalisation deleted, so only a TRULY empty line is
+# blank. This is what makes the whitespace-only line load-bearing rather than decorative: that
+# record then falls through to `fromjson`, fails, and is reported MALFORMED - which drags the
+# whole surface to `unverified` with no count at all.
+GS_OLD='    if ((. | gsub("\\s"; "")) == "") then "blank"'
+GS_NEW='    if (. == "") then "blank"'
+GSMUT="$ROOT/blank-gsub-mutant.sh"
+GS_OLD="$GS_OLD" GS_NEW="$GS_NEW" awk '
+  BEGIN{o=ENVIRON["GS_OLD"]; n=ENVIRON["GS_NEW"]}
+  $0==o && !d {print n; d=1; next} {print}' "$BUILD" > "$GSMUT"
+# Exactly one gsub must survive. The identical line appears in the postmortem classifier and
+# only the SESSIONS one (the first) may be mutated, or this control changes two things at once.
+if [ -s "$GSMUT" ] && ! cmp -s "$GSMUT" "$BUILD" && bash -n "$GSMUT" 2>/dev/null \
+   && [ "$(grep -cF 'gsub("\\s"; "")' "$GSMUT")" = "1" ]; then
+  ok "the whitespace-normalisation mutant is buildable, bash -n clean, and touches only the sessions classifier"
+  RGS="$(new_repo)"; mkdir -p "$RGS/.supervisor/logs"
+  seed_blank_log "$RGS/.supervisor/logs/blank-lines.jsonl"
+  ( cd "$RGS" && bash "$GSMUT" ) >/dev/null 2>&1; rcGS=$?
+  JGS="$RGS/.supervisor/floor/floor.json"
+  if [ "$rcGS" -eq 0 ] && [ -f "$JGS" ]; then
+    ok "the mutant still reaches its own success line (exit 0 + artefact written)"
+    [ "$(jget "$JGS" '.surfaces.sessions.detail.lines_blank_skipped')" = "1" ] \
+      && [ "$(jget "$JGS" '.surfaces.sessions.detail.lines_malformed')" = "1" ] \
+      && [ "$(sstatus "$JGS" sessions)" = "unverified" ] && [ "$(scount "$JGS" sessions)" = "ABSENT" ] \
+      && ok "MUTATION CONTROL: without the gsub the WHITESPACE-ONLY line is misread as malformed (blank 1 / malformed 1 / unverified / no count) - the assertions above turn RED" \
+      || no "the gsub mutant did not change the classification (blank=$(jget "$JGS" '.surfaces.sessions.detail.lines_blank_skipped') malformed=$(jget "$JGS" '.surfaces.sessions.detail.lines_malformed') status=$(sstatus "$JGS" sessions)) - the whitespace-only line would prove nothing"
+  else
+    no "the whitespace-normalisation mutant did not reach its success line (rc=$rcGS) - control inconclusive"
+  fi
+else
+  no "could not build a valid whitespace-normalisation mutant - this control is inconclusive"
+fi
 
 # ============================================================================
 echo "== (d) missing input directory -> absent, reason named, NO count, exit 0 =="
@@ -953,6 +1100,130 @@ n_mt_ctl="$(jq -r '[.surfaces[] | select(has("mtime_epoch"))] | length' "$JA" 2>
   || no "CONTROL failed: no surface carries an mtime_epoch even with a working stat"
 jq -e '[.surfaces[] | select(has("mtime_epoch")) | .mtime_epoch | type] | all(. == "number")' "$JA" >/dev/null 2>&1 \
   && ok "CONTROL: every emitted mtime_epoch is numeric" || no "CONTROL: a non-numeric mtime_epoch was emitted"
+
+# ============================================================================
+echo "== (l2) a failed clock read is generated_at_epoch: null - present, never 0 =="
+# THE GAP THIS CLOSES: the `## FLOOR_PROJECTION` block in RESULT_SCHEMAS.md documents
+# `generated_at_epoch` as `integer|null, required`, `null` ONLY when the clock read itself
+# failed, "the key is always present" - and nothing anywhere tested it. (i) and (j) both name
+# the field but neither ever FAILS the clock: (i) asserts only that it is the one line that
+# changes between two injected timestamps, and (j) counts clock reads in the source. Same
+# shape as (l) directly above - an unverifiable value is reported as unknown, never defaulted -
+# and the same mechanism: a PATH stub for one coreutils binary.
+DSTUB="$ROOT/datestub"; mkdir -p "$DSTUB"
+printf '#!/bin/sh\necho "not-a-number"\n' > "$DSTUB/date"; chmod +x "$DSTUB/date"
+[ "$( PATH="$DSTUB:$PATH" date -u +%s 2>/dev/null )" = "not-a-number" ] \
+  && ok "the date stub is in effect (a non-numeric clock read, mimicking a broken date)" \
+  || no "the date stub is not in effect - this case would be vacuous"
+
+# The clock comparators - used UNCHANGED for the real assertions and for both mutants.
+# Presence and value are asserted SEPARATELY because neither alone is discriminating: a
+# key-less document also reads `.generated_at_epoch == null`, and a defaulted `0` also
+# satisfies `has()`. Each mutant below is caught by exactly one of the two.
+epoch_present() { jq -e 'has("generated_at_epoch")' "$1" >/dev/null 2>&1; }
+epoch_is_null() { jq -e 'has("generated_at_epoch") and .generated_at_epoch == null' "$1" >/dev/null 2>&1; }
+epoch_raw()     { jq -c '.generated_at_epoch' "$1" 2>/dev/null; }
+# For DIAGNOSTICS only. A bare `epoch_raw` on a key-less document prints `null`, so a failure
+# message built from it reads "generated_at_epoch == null, expected null" - measured against
+# the key-dropped variant. The two states must be distinguishable in the output, not only in
+# the assertion.
+epoch_desc()    { if epoch_present "$1"; then printf 'PRESENT with value %s' "$(epoch_raw "$1")"
+                  else printf 'ABSENT (which a bare value read still reports as null)'; fi; }
+
+RL2="$(new_repo)"; seed_tree "$RL2"
+JL2="$RL2/.supervisor/floor/floor.json"
+
+# NO-SHIM CONTROL first, on the SAME tree. Without it the null assertion is not
+# discriminating - a producer that emitted null unconditionally would satisfy it.
+( cd "$RL2" && unset FLOOR_SOURCE_DATE_EPOCH; bash "$BUILD" ) >/dev/null 2>&1; rcL2c=$?
+[ "$rcL2c" -eq 0 ] && [ -f "$JL2" ] \
+  && ok "CONTROL: with a working clock the script exits 0 and writes the artefact" \
+  || no "CONTROL: rc=$rcL2c, artefact $( [ -f "$JL2" ] && echo present || echo absent )"
+epoch_present "$JL2" && jq -e '.generated_at_epoch | type == "number"' "$JL2" >/dev/null 2>&1 \
+  && ok "CONTROL: with a working clock generated_at_epoch is PRESENT and NUMERIC ($(epoch_raw "$JL2"))" \
+  || no "CONTROL: generated_at_epoch is $(epoch_desc "$JL2") with a working clock"
+epoch_is_null "$JL2" \
+  && no "CONTROL: the null comparator accepted a working-clock artefact - it is not discriminating" \
+  || ok "CONTROL: the null comparator REJECTS a working-clock artefact"
+
+# The FLOOR_SOURCE_DATE_EPOCH seam must be OUT of the way or the stub proves nothing: it
+# short-circuits the `date` call entirely. Measured here, not assumed, which is also why every
+# run below unsets it inside its own subshell rather than trusting the ambient environment.
+( cd "$RL2" && FLOOR_SOURCE_DATE_EPOCH=1500000000 PATH="$DSTUB:$PATH" bash "$BUILD" ) >/dev/null 2>&1
+[ "$(epoch_raw "$JL2")" = "1500000000" ] \
+  && ok "PREMISE: FLOOR_SOURCE_DATE_EPOCH short-circuits the clock even under the stub - so the case below must run with it UNSET" \
+  || no "the FLOOR_SOURCE_DATE_EPOCH seam did not short-circuit the stub ($(epoch_raw "$JL2"))"
+
+rm -f "$JL2"
+( cd "$RL2" && unset FLOOR_SOURCE_DATE_EPOCH; PATH="$DSTUB:$PATH" bash "$BUILD" ) >/dev/null 2>&1; rcL2=$?
+[ "$rcL2" -eq 0 ] && [ -f "$JL2" ] \
+  && ok "broken clock: exits 0 and still writes the artefact" \
+  || no "broken clock: rc=$rcL2, artefact $( [ -f "$JL2" ] && echo present || echo absent )"
+epoch_present "$JL2" \
+  && ok "broken clock: the generated_at_epoch key is still PRESENT (a missing key is a producer bug)" \
+  || no "broken clock: the generated_at_epoch key is absent"
+epoch_is_null "$JL2" \
+  && ok "broken clock: generated_at_epoch is exactly null" \
+  || no "broken clock: generated_at_epoch is $(epoch_desc "$JL2"), expected a PRESENT null"
+jq -e '.generated_at_epoch == 0 or .generated_at_epoch == "" or (.generated_at_epoch | type) == "string"' "$JL2" >/dev/null 2>&1 \
+  && no "broken clock: a defaulted 0 / empty / raw-string stamp leaked through ($(epoch_raw "$JL2"))" \
+  || ok "broken clock: not 0, not empty, not the raw stub string"
+# A failed clock degrades ONE field; it does not degrade the projection.
+validate_floor "$JL2" >/dev/null 2>&1 \
+  && ok "broken clock: the artefact still conforms to the schema parsed from RESULT_SCHEMAS.md" \
+  || no "broken clock: the artefact failed schema validation: $(validate_floor "$JL2" 2>&1 | head -3)"
+
+echo "-- mutation controls: presence and null-ness must each be able to turn RED --"
+CE_OLD='   generated_at_epoch: (if $ge == "" then null else ($ge | tonumber) end),'
+run_clock_mutant() { rm -f "$JL2"
+  ( cd "$RL2" && unset FLOOR_SOURCE_DATE_EPOCH; PATH="$DSTUB:$PATH" bash "$1" ) >/dev/null 2>&1; }
+
+# MUTANT 1 - the plausible default. `0` is a real integer, the key is still present and the
+# document still validates, so ONLY the value assertion can see it. That is the fabricated zero
+# this projector exists to refuse, one character away from correct.
+CE_ZERO='   generated_at_epoch: (if $ge == "" then 0 else ($ge | tonumber) end),'
+CZMUT="$ROOT/clock-zero-mutant.sh"
+CE_OLD="$CE_OLD" CE_ZERO="$CE_ZERO" awk '
+  BEGIN{o=ENVIRON["CE_OLD"]; n=ENVIRON["CE_ZERO"]}
+  $0==o && !d {print n; d=1; next} {print}' "$BUILD" > "$CZMUT"
+if [ -s "$CZMUT" ] && ! cmp -s "$CZMUT" "$BUILD" && bash -n "$CZMUT" 2>/dev/null \
+   && grep -qF "$CE_ZERO" "$CZMUT"; then
+  ok "the defaulted-zero clock mutant is buildable and bash -n clean"
+  run_clock_mutant "$CZMUT"
+  if [ -f "$JL2" ]; then
+    ok "the defaulted-zero mutant still reaches its own success line (artefact written)"
+    epoch_present "$JL2" && [ "$(epoch_raw "$JL2")" = "0" ] \
+      && ok "MUTATION CONTROL: it emits a present-but-ZERO stamp, turning the null assertion RED - the presence assertion alone would NOT have caught it" \
+      || no "the defaulted-zero mutant emitted $(epoch_desc "$JL2") - control inconclusive"
+  else
+    no "the defaulted-zero mutant wrote no artefact - control inconclusive"
+  fi
+else
+  no "could not build a valid defaulted-zero clock mutant - this control is inconclusive"
+fi
+
+# MUTANT 2 - the key dropped entirely. The null assertion alone CANNOT see this, because
+# `.generated_at_epoch` on a key-less document also reads null; only the has() half rejects it.
+COMUT="$ROOT/clock-omitted-mutant.sh"
+CE_OLD="$CE_OLD" awk 'BEGIN{o=ENVIRON["CE_OLD"]} $0==o && !d {d=1; next} {print}' "$BUILD" > "$COMUT"
+if [ -s "$COMUT" ] && ! cmp -s "$COMUT" "$BUILD" && bash -n "$COMUT" 2>/dev/null \
+   && ! grep -qF "$CE_OLD" "$COMUT"; then
+  ok "the omitted-key clock mutant is buildable and bash -n clean"
+  run_clock_mutant "$COMUT"
+  if [ -f "$JL2" ]; then
+    ok "the omitted-key mutant still reaches its own success line (artefact written)"
+    epoch_present "$JL2" \
+      && no "the omitted-key mutant still carries the key - control inconclusive" \
+      || ok "MUTATION CONTROL: it drops the key entirely, turning the PRESENCE assertion RED"
+    [ "$(epoch_raw "$JL2")" = "null" ] \
+      && ok "...and a key-less document reads null to a bare value check - precisely why presence is asserted separately" \
+      || no "a key-less document did not read null to a bare value check ($(epoch_raw "$JL2")) - re-check the pairing rationale"
+  else
+    no "the omitted-key mutant wrote no artefact - control inconclusive"
+  fi
+else
+  no "could not build a valid omitted-key clock mutant - this control is inconclusive"
+fi
 
 # ============================================================================
 echo "== (m) real .supervisor/ corroboration (local only) =="
