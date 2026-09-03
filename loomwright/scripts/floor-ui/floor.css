@@ -137,9 +137,12 @@ code { font-family: var(--mono); font-size: 0.85em; }
 }
 .stage-name { display: block; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-dim); }
 .stage-val { display: block; font-size: 1.4rem; font-family: var(--mono); }
-/* The active stage is marked by a THICK LEFT RULE and the phase word in the note line
- * beneath, not by colour alone. */
-.stage.active { border-left: 6px solid var(--accent); font-weight: 700; }
+/* The active stage is distinguishable WITHOUT COLOUR, and not by the frame: its value cell
+ * prints the phase word (EXECUTE) where every inactive cell prints an em dash, and it is set
+ * in bold. The accent here is the third, redundant channel, so it is a full 1px border rather
+ * than a thick rail on one edge - drop the colour entirely and the word and the weight still
+ * carry the state. */
+.stage.active { border-color: var(--accent); font-weight: 700; }
 .stage-val.unknown { color: var(--unknown-ink); }
 
 /* ---- lanes ---- */
