@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "generated_at_epoch": 1788440000,
+  "generator": "build-floor.sh",
+  "notes": [
+    "rules count omitted: .agent/rules/broken.json - Invalid JSON text passed (line 1, column 5)",
+    "postmortem count omitted: 2 malformed line(s) in .supervisor/postmortem/results.jsonl"
+  ],
+  "surfaces": {
+    "rules": {
+      "source": ".agent/rules",
+      "basis": "files matching .agent/rules/*.json, each parsed as a JSON document; the sibling README.md is not counted",
+      "status": "unverified",
+      "reason": "at least one document does not parse as JSON: .agent/rules/broken.json - Invalid JSON text passed (line 1, column 5)",
+      "mtime_epoch": 1788439000,
+      "detail": {
+        "files_parsed": 1,
+        "rules_parsed": 2,
+        "read_completeness": "partial",
+        "rules": [
+          {
+            "source_file": ".agent/rules/process.json",
+            "id": "process-no-plausible-default",
+            "category": "process",
+            "statement": "Absent evidence is an omitted key, never a plausible default.",
+            "enforcement": "blocking",
+            "provenance": "review-remediation-2026-06",
+            "applies_to": null,
+            "check": null
+          },
+          {
+            "source_file": ".agent/rules/process.json",
+            "id": "process-glob-scoped",
+            "category": "process",
+            "statement": "A guard added for a malformed-input class is checked against every sibling consumer of that input.",
+            "enforcement": "advisory",
+            "provenance": "agent-guidelines",
+            "applies_to": ["loomwright/scripts/test-*.sh"]
+          }
+        ],
+        "files_unparseable": [
+          {"file": ".agent/rules/broken.json", "reason": "Invalid JSON text passed (line 1, column 5)"}
+        ]
+      }
+    },
+    "postmortem": {
+      "source": ".supervisor/postmortem/results.jsonl",
+      "basis": "non-blank lines in .supervisor/postmortem/results.jsonl that parse as a JSON object, one record per line",
+      "status": "unverified",
+      "reason": "2 line(s) do not parse as a JSON object",
+      "mtime_epoch": 1788439500,
+      "detail": {
+        "categories_total": 3,
+        "class_basis": ".categories[].class",
+        "flow_stage_basis": ".categories[].flow_stage",
+        "lines_without_categories": 0,
+        "flow_stage_counter_disagreements": 0,
+        "lines_malformed": 2,
+        "malformed_lines": [4, 7],
+        "class_distribution": {
+          "convention_mismatch": 2,
+          "quality_gap": 1
+        },
+        "flow_stage_distribution": {
+          "self_heal": 2,
+          "worker": 1
+        },
+        "entries": [
+          {"line": 1, "index": 0, "class": "convention_mismatch", "flow_stage": "self_heal", "round": 1, "evidence": "truthy check collapsed a present-null key"},
+          {"line": 2, "index": 0, "class": "convention_mismatch", "flow_stage": "self_heal", "round": 1, "evidence": "recurred after the first attempted fix"},
+          {"line": 3, "index": 0, "class": "quality_gap", "flow_stage": "worker", "round": 1, "evidence": "missing mutation control on the unparseable-file branch"}
+        ]
+      }
+    }
+  }
+}

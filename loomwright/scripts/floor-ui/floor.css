@@ -210,6 +210,42 @@ code { font-family: var(--mono); font-size: 0.85em; }
 .lane.stalled .lane-meta { color: var(--warn-ink); }
 .lane.stalled .shuttle { background: var(--warn-line); }
 
+/* ---- rules browser + churn view ----
+ * No colour-only signal here either: a rule card's shape (border + labelled text) carries
+ * every state, and the distribution lists are plain key: number rows, ordered by KEY and never
+ * by count, so nothing on this page orders rules by desirability. Nothing here moves. */
+.rules-category { font-size: 0.85rem; margin: 1rem 1.25rem 0.3rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-dim); }
+.rules-scope { font-size: 0.8rem; margin: 0.5rem 1.25rem 0.3rem; color: var(--ink-dim); font-weight: 600; }
+.rules-list { list-style: none; margin: 0 1.25rem; padding: 0; }
+.rule-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.5rem;
+}
+.rule-id { font-weight: 700; font-family: var(--mono); font-size: 0.85rem; }
+.rule-meta { color: var(--ink-dim); font-size: 0.8rem; margin: 0.25rem 0 0; }
+.rule-correlation {
+  margin-top: 0.4rem;
+  padding-top: 0.4rem;
+  border-top: 1px dashed var(--line);
+  font-size: 0.8rem;
+  color: var(--ink-dim);
+}
+.rule-correlation ul { margin: 0.2rem 0 0; padding-left: 1.1rem; }
+.churn-dist { list-style: none; margin: 0 1.25rem 0.5rem; padding: 0; font-family: var(--mono); font-size: 0.85rem; }
+.churn-dist li { border-bottom: 1px solid var(--line); padding: 0.2rem 0; }
+.view-banner {
+  margin: 0.5rem 1.25rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px dashed var(--warn-line);
+  border-radius: var(--radius);
+  background: var(--warn-bg);
+  color: var(--warn-ink);
+  font-size: 0.85rem;
+}
+
 /* ---- roster + notes ---- */
 .roster { list-style: none; margin: 0 1.25rem; padding: 0; display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .roster li {

@@ -230,6 +230,347 @@
     return 'the projector recorded no reason for this surface';
   }
 
+  /* RULES BROWSER + CHURN VIEW. Both views read ONLY the `rules` / `postmortem` surfaces the
+   * projector already carries — no new fetch, no new endpoint, no new timer. Both honour the
+   * same four-state contract as the rest of the page: absent (surface key missing), unverified
+   * (present but the projector names a reason it could not fully read it — the survivable
+   * partial detail is still shown), a counted surface with nothing in it (empty), and a
+   * counted surface with recorded rows (the browsable case). NOTHING here ranks, scores or
+   * sorts by desirability: every list below is sorted by KEY (category name, scope text, class
+   * name), never by a count, and a correlation is rendered as a labelled observation with its
+   * evidence, never as a rate. */
+
+  function clearHost(id) {
+    var h = el(id);
+    if (h) { h.innerHTML = ''; }
+    return h;
+  }
+
+  /* surfaceState mirrors countCell's absent/unverified/counted trichotomy but returns the
+   * surface itself rather than a rendered cell, because both views need the surface's own
+   * `detail` to render anything beyond the state banner. */
+  function surfaceState(d, key) {
+    var s = surfaceOf(d, key);
+    if (!s) { return { state: 'absent', s: null }; }
+    if (s.status === 'absent') { return { state: 'absent', s: s }; }
+    if (s.status === 'unverified') { return { state: 'unverified', s: s }; }
+    return { state: 'counted', s: s };
+  }
+
+  function sortedKeys(obj) {
+    var keys = [], k;
+    for (k in obj) { if (Object.prototype.hasOwnProperty.call(obj, k)) { keys.push(k); } }
+    keys.sort();
+    return keys;
+  }
+
+  /* applies_to is a genuine TRI-STATE, decided by key PRESENCE, never by truthiness: the key
+   * absent, present-and-null, or a (possibly empty) array. A truthy test would collapse a
+   * declared-null rule into "no scope recorded", which is a different, false claim. */
+  function ruleScopeLabel(r) {
+    if (!Object.prototype.hasOwnProperty.call(r, 'applies_to')) { return 'no scope recorded'; }
+    var v = r.applies_to;
+    if (v === null) { return 'declared repo-wide (applies_to recorded as null)'; }
+    if (Object.prototype.toString.call(v) === '[object Array]') {
+      return v.length ? ('scoped to ' + v.join(', ')) : 'declared with an empty glob list';
+    }
+    return 'no scope recorded';
+  }
+
+  /* check gets the identical tri-state treatment for the identical reason. The string is
+   * rendered as DATA via textContent below — it is never evaluated or executed. */
+  function ruleCheckLabel(r) {
+    if (!Object.prototype.hasOwnProperty.call(r, 'check')) { return 'no check declared'; }
+    return (r.check === null) ? 'declared, no runnable check (null)' : ('check: ' + r.check);
+  }
+
+  function renderRules(d) {
+    var basisEl = el('rules-basis');
+    var srcEl = el('rules-src');
+    var body = clearHost('rules-body');
+    if (!body) { return; }
+    var st = surfaceState(d, 'rules');
+
+    if (st.state === 'absent') {
+      if (basisEl) { basisEl.textContent = ''; }
+      if (srcEl) { srcEl.textContent = ''; }
+      var pAbsent = document.createElement('p');
+      pAbsent.className = 'empty';
+      pAbsent.textContent = st.s
+        ? ('rules surface ' + st.s.status + ': ' + reasonFor(d, st.s, 'rules'))
+        : 'rules surface is not present in floor.json';
+      body.appendChild(pAbsent);
+      return;
+    }
+
+    var s = st.s;
+    if (basisEl) { basisEl.textContent = s.basis || ''; }
+    if (st.state === 'unverified') {
+      var pUnv = document.createElement('p');
+      pUnv.className = 'view-banner';
+      pUnv.textContent = 'could not examine every rule file: ' + reasonFor(d, s, 'rules');
+      body.appendChild(pUnv);
+      /* fall through: the valid files' rules, if any, are still rendered below — "could not
+       * examine X" must never read as "examined and clean" for the files that DID parse. */
+    }
+
+    var detail = s.detail || {};
+    var rows = detail.rules || [];
+    if (srcEl) {
+      var n = (typeof detail.rules_parsed === 'number') ? detail.rules_parsed : rows.length;
+      srcEl.textContent = '(' + n + ' rule(s)' +
+        (detail.read_completeness ? (' · read ' + detail.read_completeness) : '') + ')';
+    }
+
+    var unparse = detail.files_unparseable || [];
+    if (unparse.length) {
+      var ulU = document.createElement('ul');
+      ulU.className = 'notes';
+      for (var u = 0; u < unparse.length; u++) {
+        var fu = unparse[u] || {};
+        var liU = document.createElement('li');
+        liU.textContent = 'could not examine ' + (fu.file || 'a file') + ': ' + (fu.reason || 'no reason recorded');
+        ulU.appendChild(liU);
+      }
+      body.appendChild(ulU);
+    }
+
+    if (!rows.length) {
+      var pEmpty = document.createElement('p');
+      pEmpty.className = 'empty';
+      pEmpty.textContent = 'no rules recorded';
+      body.appendChild(pEmpty);
+      return;
+    }
+
+    var byCat = {}, catOrder = [], i;
+    for (i = 0; i < rows.length; i++) {
+      var r = rows[i] || {};
+      var cat = r.category || 'uncategorised';
+      if (!Object.prototype.hasOwnProperty.call(byCat, cat)) { byCat[cat] = []; catOrder.push(cat); }
+      byCat[cat].push(r);
+    }
+    catOrder.sort();
+
+    var corrIndex = {}, corr = detail.correlations || [], c;
+    for (c = 0; c < corr.length; c++) {
+      if (corr[c] && corr[c].rule_id) { corrIndex[corr[c].rule_id] = corr[c]; }
+    }
+
+    for (var ci = 0; ci < catOrder.length; ci++) {
+      var catName = catOrder[ci];
+      var h3 = document.createElement('h3');
+      h3.className = 'rules-category';
+      h3.textContent = catName;
+      body.appendChild(h3);
+
+      var byScope = {}, scopeOrder = [], j;
+      var catRows = byCat[catName];
+      for (j = 0; j < catRows.length; j++) {
+        var scope = ruleScopeLabel(catRows[j]);
+        if (!Object.prototype.hasOwnProperty.call(byScope, scope)) { byScope[scope] = []; scopeOrder.push(scope); }
+        byScope[scope].push(catRows[j]);
+      }
+      scopeOrder.sort();
+
+      for (var si = 0; si < scopeOrder.length; si++) {
+        var h4 = document.createElement('h4');
+        h4.className = 'rules-scope';
+        h4.textContent = scopeOrder[si];
+        body.appendChild(h4);
+
+        var ulR = document.createElement('ul');
+        ulR.className = 'rules-list';
+        var scopeRows = byScope[scopeOrder[si]];
+        for (var k = 0; k < scopeRows.length; k++) {
+          var rule = scopeRows[k];
+          var li = document.createElement('li');
+          li.className = 'rule-card';
+
+          var idLine = document.createElement('div');
+          idLine.className = 'rule-id';
+          idLine.textContent = rule.id || '(no id recorded)';
+          li.appendChild(idLine);
+
+          var stmt = document.createElement('p');
+          stmt.textContent = rule.statement || '(no statement recorded)';
+          li.appendChild(stmt);
+
+          var meta = document.createElement('p');
+          meta.className = 'rule-meta';
+          var bits = [];
+          if (rule.enforcement) { bits.push('enforcement: ' + rule.enforcement); }
+          if (rule.provenance) { bits.push('provenance: ' + rule.provenance); }
+          bits.push(ruleCheckLabel(rule));
+          meta.textContent = bits.join(' · ');
+          li.appendChild(meta);
+
+          if (Object.prototype.hasOwnProperty.call(rule, 'supersedes')) {
+            var supP = document.createElement('p');
+            supP.className = 'rule-meta';
+            supP.textContent = 'supersedes: ' + rule.supersedes;
+            li.appendChild(supP);
+          }
+
+          var rc = rule.id ? corrIndex[rule.id] : null;
+          if (rc) {
+            var corrDiv = document.createElement('div');
+            corrDiv.className = 'rule-correlation';
+            var corrHead = document.createElement('p');
+            corrHead.textContent = (rc.label || 'observation') + ' — not a measurement: ' + (rc.basis || '');
+            corrDiv.appendChild(corrHead);
+            var ulEv = document.createElement('ul');
+            var matched = rc.matched || [];
+            for (var m = 0; m < matched.length; m++) {
+              var mm = matched[m] || {};
+              var liEv = document.createElement('li');
+              var evTxt = 'line ' + mm.line + ' · ' + mm.path + ' matched ' + mm.pattern;
+              if (mm.evidence && mm.evidence.length) { evTxt += ' — evidence: ' + mm.evidence.join('; '); }
+              liEv.textContent = evTxt;
+              ulEv.appendChild(liEv);
+            }
+            corrDiv.appendChild(ulEv);
+            li.appendChild(corrDiv);
+          }
+
+          ulR.appendChild(li);
+        }
+        body.appendChild(ulR);
+      }
+    }
+
+    var sup = detail.supersedes;
+    if (sup) {
+      var h3s = document.createElement('h3');
+      h3s.className = 'rules-category';
+      h3s.textContent = 'Supersession history';
+      body.appendChild(h3s);
+
+      var ulS = document.createElement('ul');
+      ulS.className = 'notes';
+      var chains = sup.chains || [], dangling = sup.dangling || [], cycles = sup.cycles || [];
+      for (var ch = 0; ch < chains.length; ch++) {
+        var liCh = document.createElement('li');
+        liCh.textContent = 'chain: ' + chains[ch].join(' → ');
+        ulS.appendChild(liCh);
+      }
+      for (var dg = 0; dg < dangling.length; dg++) {
+        var dd = dangling[dg] || {};
+        var liDg = document.createElement('li');
+        liDg.textContent = 'dangling: ' + dd.from + ' supersedes ' + dd.to + ', which does not exist in the parsed set';
+        ulS.appendChild(liDg);
+      }
+      for (var cy = 0; cy < cycles.length; cy++) {
+        var liCy = document.createElement('li');
+        liCy.textContent = 'cycle: ' + cycles[cy].join(' → ') + ' → ' + cycles[cy][0];
+        ulS.appendChild(liCy);
+      }
+      if (!chains.length && !dangling.length && !cycles.length) {
+        var liNone = document.createElement('li');
+        liNone.className = 'empty';
+        liNone.textContent = 'no chains, dangling pointers or cycles recorded';
+        ulS.appendChild(liNone);
+      }
+      body.appendChild(ulS);
+    }
+  }
+
+  function renderDistribution(host, obj, label) {
+    var ul = document.createElement('ul');
+    ul.className = 'churn-dist';
+    var keys = sortedKeys(obj || {}), i;
+    if (!keys.length) {
+      var li0 = document.createElement('li');
+      li0.className = 'empty';
+      li0.textContent = 'no ' + label + ' recorded';
+      ul.appendChild(li0);
+    } else {
+      for (i = 0; i < keys.length; i++) {
+        var li = document.createElement('li');
+        li.textContent = keys[i] + ': ' + obj[keys[i]];
+        ul.appendChild(li);
+      }
+    }
+    host.appendChild(ul);
+  }
+
+  function renderChurn(d) {
+    var basisEl = el('churn-basis');
+    var srcEl = el('churn-src');
+    var body = clearHost('churn-body');
+    if (!body) { return; }
+    var st = surfaceState(d, 'postmortem');
+
+    if (st.state === 'absent') {
+      if (basisEl) { basisEl.textContent = ''; }
+      if (srcEl) { srcEl.textContent = ''; }
+      var pAbsent = document.createElement('p');
+      pAbsent.className = 'empty';
+      pAbsent.textContent = st.s
+        ? ('postmortem surface ' + st.s.status + ': ' + reasonFor(d, st.s, 'postmortem'))
+        : 'postmortem surface is not present in floor.json';
+      body.appendChild(pAbsent);
+      return;
+    }
+
+    var s = st.s;
+    var detail = s.detail || {};
+    /* THE BASIS IS READ FROM THE PROJECTION, NEVER RESTATED. flow_stage_basis exists precisely
+     * because the ledger carries two disagreeing flow-stage representations (see build-floor.sh);
+     * a literal copy of the chosen predicate here would be a second place for that choice to
+     * drift out of sync with the one the projector actually applied. */
+    if (basisEl) {
+      var basisBits = [];
+      if (detail.class_basis) { basisBits.push('class basis: ' + detail.class_basis); }
+      if (detail.flow_stage_basis) { basisBits.push('flow-stage basis: ' + detail.flow_stage_basis); }
+      basisEl.textContent = basisBits.length ? basisBits.join(' · ') : (s.basis || '');
+    }
+    if (st.state === 'unverified') {
+      var pUnv = document.createElement('p');
+      pUnv.className = 'view-banner';
+      pUnv.textContent = 'could not examine every ledger line: ' + reasonFor(d, s, 'postmortem');
+      body.appendChild(pUnv);
+    }
+    if (srcEl) {
+      var bits = [];
+      if (typeof detail.categories_total === 'number') { bits.push(detail.categories_total + ' categorised finding(s)'); }
+      if (typeof detail.lines_without_categories === 'number') { bits.push(detail.lines_without_categories + ' line(s) without categories'); }
+      if (typeof detail.flow_stage_counter_disagreements === 'number') {
+        bits.push(detail.flow_stage_counter_disagreements + ' disagreement(s) with the unpublished flow-stage counter');
+      }
+      srcEl.textContent = bits.length ? ('(' + bits.join(' · ') + ')') : '';
+    }
+
+    var classKeys = sortedKeys(detail.class_distribution || {});
+    var flowKeys = sortedKeys(detail.flow_stage_distribution || {});
+    if (!classKeys.length && !flowKeys.length) {
+      var pEmpty = document.createElement('p');
+      pEmpty.className = 'empty';
+      pEmpty.textContent = 'no churn recorded';
+      body.appendChild(pEmpty);
+    } else {
+      var h3c = document.createElement('h3');
+      h3c.className = 'rules-category';
+      h3c.textContent = 'By root-cause class';
+      body.appendChild(h3c);
+      renderDistribution(body, detail.class_distribution, 'classes');
+
+      var h3f = document.createElement('h3');
+      h3f.className = 'rules-category';
+      h3f.textContent = 'By flow stage';
+      body.appendChild(h3f);
+      renderDistribution(body, detail.flow_stage_distribution, 'flow stages');
+    }
+
+    var malformed = detail.malformed_lines || [];
+    if (malformed.length) {
+      var pMal = document.createElement('p');
+      pMal.className = 'view-banner';
+      pMal.textContent = 'malformed line(s), never folded into any class: ' + malformed.join(', ');
+      body.appendChild(pMal);
+    }
+  }
+
   /* IDLE IS A MEASURED STATE, NEVER A DEFAULT. An empty lane list has three very different
    * causes and only one of them is "nothing is running":
    *   - sessions counted + `current` present + zero agents  -> a session was identified and
@@ -473,6 +814,8 @@
       renderStages(d);
       apply.lanes = renderLanes(d);
       renderRoster(d);
+      renderRules(d);
+      renderChurn(d);
       renderNotes(d);
     }
     renderFreshness(d, apply.lanes || 0);

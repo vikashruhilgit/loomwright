@@ -1,0 +1,166 @@
+{
+  "schema_version": 1,
+  "generated_at_epoch": 1788440000,
+  "generator": "build-floor.sh",
+  "repo_head": "5b90c27",
+  "notes": [],
+  "surfaces": {
+    "rules": {
+      "source": ".agent/rules",
+      "basis": "files matching .agent/rules/*.json, each parsed as a JSON document; the sibling README.md is not counted",
+      "status": "counted",
+      "count": 2,
+      "mtime_epoch": 1788439000,
+      "detail": {
+        "files_parsed": 2,
+        "rules_parsed": 10,
+        "read_completeness": "all",
+        "rules": [
+          {
+            "source_file": ".agent/rules/documentation.json",
+            "id": "doc-basis-stated",
+            "category": "documentation",
+            "statement": "Every derived count states the glob or predicate that produced it.",
+            "enforcement": "advisory",
+            "provenance": "review-remediation-2026-06",
+            "check": null
+          },
+          {
+            "source_file": ".agent/rules/process.json",
+            "id": "process-no-plausible-default",
+            "category": "process",
+            "statement": "Absent evidence is an omitted key, never a plausible default.",
+            "enforcement": "blocking",
+            "provenance": "review-remediation-2026-06",
+            "applies_to": null,
+            "check": "grep -RIn '\"count\": 0' loomwright/scripts/build-floor.sh || true"
+          },
+          {
+            "source_file": ".agent/rules/process.json",
+            "id": "process-glob-scoped",
+            "category": "process",
+            "statement": "A guard added for a malformed-input class is checked against every sibling consumer of that input.",
+            "enforcement": "advisory",
+            "provenance": "agent-guidelines",
+            "applies_to": ["loomwright/scripts/test-*.sh", "loomwright/scripts/build-*.sh"]
+          },
+          {
+            "source_file": ".agent/rules/process.json",
+            "id": "rule-chain-a",
+            "category": "process",
+            "statement": "A rule superseded by a later rule stays in the store for history, chained forward.",
+            "enforcement": "advisory",
+            "provenance": "curation",
+            "supersedes": "rule-chain-b"
+          },
+          {
+            "source_file": ".agent/rules/process.json",
+            "id": "rule-chain-b",
+            "category": "process",
+            "statement": "Intermediate link in the chain, itself superseded.",
+            "enforcement": "advisory",
+            "provenance": "curation",
+            "supersedes": "rule-chain-c"
+          },
+          {
+            "source_file": ".agent/rules/process.json",
+            "id": "rule-chain-c",
+            "category": "process",
+            "statement": "The current rule at the end of the chain.",
+            "enforcement": "advisory",
+            "provenance": "curation"
+          },
+          {
+            "source_file": ".agent/rules/process.json",
+            "id": "rule-retired-note",
+            "category": "process",
+            "statement": "A retired rule whose replacement id was mistyped when it was curated.",
+            "enforcement": "advisory",
+            "provenance": "curation",
+            "supersedes": "rule-does-not-exist"
+          },
+          {
+            "source_file": ".agent/rules/documentation.json",
+            "id": "rule-x",
+            "category": "documentation",
+            "statement": "Node x of a curation cycle (fixture only — never observed live).",
+            "enforcement": "advisory",
+            "provenance": "curation",
+            "supersedes": "rule-y"
+          },
+          {
+            "source_file": ".agent/rules/documentation.json",
+            "id": "rule-y",
+            "category": "documentation",
+            "statement": "Node y of a curation cycle.",
+            "enforcement": "advisory",
+            "provenance": "curation",
+            "supersedes": "rule-z"
+          },
+          {
+            "source_file": ".agent/rules/documentation.json",
+            "id": "rule-z",
+            "category": "documentation",
+            "statement": "Node z of a curation cycle, closing the loop back to rule-x.",
+            "enforcement": "advisory",
+            "provenance": "curation",
+            "supersedes": "rule-x"
+          }
+        ],
+        "supersedes": {
+          "chains": [["rule-chain-a", "rule-chain-b", "rule-chain-c"]],
+          "dangling": [{"from": "rule-retired-note", "to": "rule-does-not-exist"}],
+          "cycles": [["rule-x", "rule-y", "rule-z"]]
+        },
+        "correlations": [
+          {
+            "rule_id": "process-glob-scoped",
+            "label": "observation",
+            "basis": "ledger lines whose changed_paths match this rule's applies_to globs, matched with the same native shell case-glob read-rules.sh routes with; a path overlap is an observation that the rule's scope and the churn record touch the same files and is NOT evidence the rule was violated",
+            "matched": [
+              {
+                "line": 5,
+                "path": "loomwright/scripts/test-setup-ui.sh",
+                "pattern": "loomwright/scripts/test-*.sh",
+                "evidence": ["missing mutation control for the cycle detector"]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "postmortem": {
+      "source": ".supervisor/postmortem/results.jsonl",
+      "basis": "non-blank lines in .supervisor/postmortem/results.jsonl that parse as a JSON object, one record per line",
+      "status": "counted",
+      "count": 6,
+      "mtime_epoch": 1788439500,
+      "detail": {
+        "categories_total": 6,
+        "class_basis": ".categories[].class",
+        "flow_stage_basis": ".categories[].flow_stage",
+        "lines_without_categories": 1,
+        "flow_stage_counter_disagreements": 2,
+        "lines_malformed": 0,
+        "class_distribution": {
+          "convention_mismatch": 3,
+          "execution_bug": 2,
+          "quality_gap": 1
+        },
+        "flow_stage_distribution": {
+          "self_heal": 3,
+          "worker": 2,
+          "unknowable": 1
+        },
+        "entries": [
+          {"line": 1, "index": 0, "class": "convention_mismatch", "flow_stage": "self_heal", "round": 1, "self_heal_miss": false, "evidence": "reviewer flagged truthy check collapsing null to absent"},
+          {"line": 2, "index": 0, "class": "convention_mismatch", "flow_stage": "self_heal", "round": 1, "self_heal_miss": true, "evidence": "same defect recurred after the first fix attempt"},
+          {"line": 3, "index": 0, "class": "convention_mismatch", "flow_stage": "worker", "round": 1, "evidence": "worker used the truthy branch instead of has()"},
+          {"line": 4, "index": 0, "class": "execution_bug", "flow_stage": "worker", "round": 2, "evidence": "cycle walk was unbounded before the fix"},
+          {"line": 4, "index": 1, "class": "execution_bug", "flow_stage": "unknowable", "round": 2, "evidence": "could not determine which pass introduced the recursion"},
+          {"line": 5, "index": 0, "class": "quality_gap", "flow_stage": "self_heal", "round": 1, "evidence": "missing mutation control for the cycle detector"}
+        ]
+      }
+    }
+  }
+}

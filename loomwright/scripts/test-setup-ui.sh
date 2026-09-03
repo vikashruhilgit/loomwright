@@ -557,9 +557,12 @@ for j in "$FIX_DIR"/*.json; do
     && ok "(d2) $(basename "$j") conforms to the FLOOR_PROJECTION contract" \
     || no "(d2) $(basename "$j") conforms to the FLOOR_PROJECTION contract" "$vout"
 done
-[ "$n_fix" -eq 6 ] \
-  && ok "(d3) all six committed fixtures were validated (found $n_fix)" \
-  || no "(d3) all six committed fixtures were validated" "found $n_fix"
+# 6 from item 04 (lanes/sessions states) + 5 from item 05's rules/churn views
+# (floor-rules-churn-{live,absent,empty,unavailable,stale}.json) = 11. This literal moves with
+# the fixture set, per AC-suite-hermetic's sibling discipline in build-floor.sh.
+[ "$n_fix" -eq 11 ] \
+  && ok "(d3) all eleven committed fixtures were validated (found $n_fix)" \
+  || no "(d3) all eleven committed fixtures were validated" "found $n_fix"
 
 # Mutation control: a fixture that violates the omit-not-zero rule must be REJECTED.
 MUT_FIX="$TMPROOT/mut-fixture.json"
@@ -1328,6 +1331,170 @@ fi
 in_str "$out" "remove: removed" && [ ! -d "$RUI" ] \
   && ok "(i5) the sequence ended with the ui dir genuinely gone" \
   || no "(i5) the sequence ended with the ui dir genuinely gone" "$out"
+
+# ===========================================================================
+echo "(j) AC-views-render / AC-views-four-states / AC-no-scoring / AC-still-read-only — rules + churn views"
+# ===========================================================================
+# The bundle half of item 05 subtask 2. The BROWSER half of every AC below — does the DOM
+# actually render the grouped categories, does a screen reader see the tri-state text — is
+# recorded UNVERIFIED here and closed by the Supervisor at Phase 4.5 against these same
+# fixtures, exactly as group (b)/(c) already say for the lanes/roster views.
+
+check_lit "$JS" "function renderRules(d)" "(j1) floor.js defines renderRules(d)"
+check_lit "$JS" "function renderChurn(d)" "(j2) floor.js defines renderChurn(d)"
+n_rr_call="$(awk '/^  function apply\(d\)/{f=1} f{print} f&&/^  }$/{exit}' "$JS" | grep -c 'renderRules(d)\|renderChurn(d)' 2>/dev/null || true)"
+[ "${n_rr_call:-0}" = "2" ] \
+  && ok "(j3) apply() calls both renderRules(d) and renderChurn(d)" \
+  || no "(j3) apply() calls both renderRules(d) and renderChurn(d)" "found $n_rr_call call(s) inside apply()"
+
+# --- applies_to / check stay TRI-STATES in the render layer, decided by key PRESENCE ---------
+check_lit "$JS" "hasOwnProperty.call(r, 'applies_to')" "(j4) applies_to is decided by hasOwnProperty, never truthiness"
+check_lit "$JS" "hasOwnProperty.call(r, 'check')"       "(j5) check is decided by hasOwnProperty, never truthiness"
+check_lit "$JS" "hasOwnProperty.call(rule, 'supersedes')" "(j6) supersedes presence (vs absence) is checked with hasOwnProperty"
+
+# Mutation control: a truthy read of applies_to must be CAUGHT, or (j4) proves nothing.
+MUT_TRI="$TMPROOT/mut-tristate.js"
+sed "s/if (!Object.prototype.hasOwnProperty.call(r, 'applies_to')) { return 'no scope recorded'; }/if (!r.applies_to) { return 'no scope recorded'; }/" "$JS" > "$MUT_TRI" 2>/dev/null
+if mutant_ok "$JS" "$MUT_TRI"; then
+  has_lit "$MUT_TRI" "hasOwnProperty.call(r, 'applies_to')" \
+    && no "(j7) MUTATION CONTROL: replacing the hasOwnProperty check with a truthy read IS detected" "the literal survived the mutation, so (j4) proves nothing" \
+    || ok "(j7) MUTATION CONTROL: replacing the hasOwnProperty check with a truthy read IS detected — (j4) can turn red"
+fi
+
+# --- the flow-stage basis is READ from the projection, never restated as a literal -----------
+# The pinned predicate string lives in ONE place: build-floor.sh's own emission. A second,
+# hard-coded copy of it in floor.js would be a second place for the two to drift apart.
+n_basis_literal="$(grep -c -F -- '.categories[].flow_stage' "$JS" 2>/dev/null || true)"
+case "$n_basis_literal" in ''|*[!0-9]*) n_basis_literal=0 ;; esac
+[ "$n_basis_literal" = "0" ] \
+  && ok "(j8) floor.js never hard-codes the .categories[].flow_stage literal — it reads detail.flow_stage_basis (found $n_basis_literal)" \
+  || no "(j8) floor.js never hard-codes the .categories[].flow_stage literal" "found $n_basis_literal occurrence(s) — the basis must come from the projection, not be restated"
+check_lit "$JS" "detail.flow_stage_basis" "(j9) floor.js reads flow_stage_basis off the projected detail object"
+
+# --- AC-no-scoring: nothing on this page ranks, scores, or sorts by desirability -------------
+no_scoring_check() {
+  local f="$1"
+  grep -inE '\b(rank|ranking|score|scoring)\b' "$f" 2>/dev/null || true
+}
+scoring_findings=""
+for f in "$HTML" "$CSS" "$JS"; do
+  out="$(no_scoring_check "$f")"
+  [ -n "$out" ] && scoring_findings="$scoring_findings
+$(basename "$f"): $out"
+done
+[ -z "$scoring_findings" ] \
+  && ok "(j10) AC-no-scoring: no rank/score/ranking/scoring word appears anywhere in the bundle" \
+  || no "(j10) AC-no-scoring: no rank/score/ranking/scoring word appears anywhere in the bundle" "$scoring_findings"
+# Mutation control: a page that DOES rank rules must be caught.
+MUT_SCORE="$TMPROOT/mut-score.js"
+{ cat "$JS"; printf "\n// top-ranked rule score placeholder\n"; } > "$MUT_SCORE" 2>/dev/null
+if mutant_ok "$JS" "$MUT_SCORE"; then
+  mout="$(no_scoring_check "$MUT_SCORE")"
+  [ -n "$mout" ] \
+    && ok "(j11) MUTATION CONTROL: an added 'ranked'/'score' comment IS flagged by the scanner" \
+    || no "(j11) MUTATION CONTROL: an added 'ranked'/'score' comment IS flagged by the scanner" "scanner said: ${mout:-<nothing>}"
+fi
+# Distributions are sorted by KEY, not by value — the mechanism behind (j10)'s absence of the word.
+check_lit "$JS" "keys.sort();" "(j12) distribution keys are sorted lexically (sort(), never sorted by count)"
+
+# --- AC-still-read-only: CREATE the no-write-verb assertion (measured 0 today; this IS it) ---
+# no_write_verbs — the literal name this subtask's `provides` entry pins, because the
+# outputs_verified gate greps THIS repo for that exact token. Whole-word, uppercase (the HTTP
+# method spelling), scoped to the three bundle files that ship to the browser.
+no_write_verbs() {
+  local f
+  for f in "$HTML" "$CSS" "$JS"; do
+    grep -nE '\b(POST|PUT|DELETE)\b' "$f" 2>/dev/null | sed "s|^|$(basename "$f"): |"
+  done
+}
+write_findings="$(no_write_verbs)"
+[ -z "$write_findings" ] \
+  && ok "(j13) no_write_verbs: index.html / floor.css / floor.js carry no POST, PUT or DELETE token" \
+  || no "(j13) no_write_verbs: index.html / floor.css / floor.js carry no POST, PUT or DELETE token" "$write_findings"
+# Mutation control: a write verb really appearing in the bundle must be caught.
+MUT_WRITE="$TMPROOT/mut-write.js"
+{ cat "$JS"; printf "\n// fetch('floor.json', { method: 'POST' })\n"; } > "$MUT_WRITE" 2>/dev/null
+if mutant_ok "$JS" "$MUT_WRITE"; then
+  m_write="$(grep -nE '\b(POST|PUT|DELETE)\b' "$MUT_WRITE" 2>/dev/null || true)"
+  [ -n "$m_write" ] \
+    && ok "(j14) MUTATION CONTROL: a POST token added to floor.js IS flagged by no_write_verbs" \
+    || no "(j14) MUTATION CONTROL: a POST token added to floor.js IS flagged by no_write_verbs" "scanner said: ${m_write:-<nothing>}"
+fi
+
+# --- AC-views-four-states: the four distinct renders, by their own literals ------------------
+check_lit "$JS" "rules surface is not present in floor.json"      "(j15) rules ABSENT (surface key missing) has its own literal"
+check_lit "$JS" "postmortem surface is not present in floor.json" "(j16) churn ABSENT (surface key missing) has its own literal"
+check_lit "$JS" "no rules recorded"                                "(j17) rules EMPTY (counted, nothing in it) has its own literal, distinct from absent"
+check_lit "$JS" "no churn recorded"                                "(j18) churn EMPTY (counted, nothing in it) has its own literal, distinct from absent"
+check_lit "$JS" "could not examine every rule file:"               "(j19) rules UNAVAILABLE quotes the projector's own reason, distinct from empty and absent"
+check_lit "$JS" "could not examine every ledger line:"             "(j20) churn UNAVAILABLE quotes the projector's own reason, distinct from empty and absent"
+check_lit "$JS" "could not examine"                                "(j21) an unparseable rules FILE renders 'could not examine <file>', never silently as clean"
+
+# --- fixture facts the browser half will read (mirrors group (e)'s style) --------------------
+RC_LIVE="$FIX_DIR/floor-rules-churn-live.json"
+RC_ABSENT="$FIX_DIR/floor-rules-churn-absent.json"
+RC_EMPTY="$FIX_DIR/floor-rules-churn-empty.json"
+RC_UNAVAIL="$FIX_DIR/floor-rules-churn-unavailable.json"
+RC_STALE="$FIX_DIR/floor-rules-churn-stale.json"
+
+rc_absent_keys="$(jq -r '.surfaces | has("rules"), has("postmortem")' "$RC_ABSENT" 2>/dev/null | tr '\n' ' ')"
+[ "$rc_absent_keys" = "false false " ] \
+  && ok "(j22) floor-rules-churn-absent carries NEITHER the rules NOR the postmortem surface key" \
+  || no "(j22) floor-rules-churn-absent carries neither surface key" "got: $rc_absent_keys"
+
+rc_empty_shape="$(jq -r '"\(.surfaces.rules.status)/\(.surfaces.rules|has("count"))/\(.surfaces.rules|has("detail"))/\(.surfaces.postmortem.status)/\(.surfaces.postmortem.detail.categories_total)"' "$RC_EMPTY" 2>/dev/null)"
+[ "$rc_empty_shape" = "counted/true/false/counted/0" ] \
+  && ok "(j23) floor-rules-churn-empty: both surfaces counted with nothing in them (rules count 0 no detail, postmortem categories_total 0)" \
+  || no "(j23) floor-rules-churn-empty: both surfaces counted with nothing in them" "got: $rc_empty_shape"
+
+rc_unavail_shape="$(jq -r '"\(.surfaces.rules.status)/\(.surfaces.rules|has("count"))/\(.surfaces.rules.detail|has("files_unparseable"))/\(.surfaces.postmortem.status)/\(.surfaces.postmortem.detail|has("malformed_lines"))"' "$RC_UNAVAIL" 2>/dev/null)"
+[ "$rc_unavail_shape" = "unverified/false/true/unverified/true" ] \
+  && ok "(j24) floor-rules-churn-unavailable: both surfaces unverified, no count, and the reason is named (files_unparseable / malformed_lines)" \
+  || no "(j24) floor-rules-churn-unavailable: both surfaces unverified with a named reason" "got: $rc_unavail_shape"
+rc_unavail_partial="$(jq -r '.surfaces.rules.detail.rules | length' "$RC_UNAVAIL" 2>/dev/null)"
+[ "${rc_unavail_partial:-0}" -ge 1 ] 2>/dev/null \
+  && ok "(j25) floor-rules-churn-unavailable STILL reports the valid file's rules ($rc_unavail_partial recorded) — could-not-examine never means examined-and-clean" \
+  || no "(j25) floor-rules-churn-unavailable still reports the valid file's rules" "found $rc_unavail_partial"
+
+g_rc_live="$(jq -r '.generated_at_epoch' "$RC_LIVE" 2>/dev/null)"
+g_rc_stale="$(jq -r '.generated_at_epoch' "$RC_STALE" 2>/dev/null)"
+if [ "$g_rc_stale" -lt $((g_rc_live - 86400)) ] 2>/dev/null; then
+  ok "(j26) floor-rules-churn-stale's generation time is more than a day older than floor-rules-churn-live's ($g_rc_stale vs $g_rc_live)"
+else
+  no "(j26) floor-rules-churn-stale's generation time is far older than floor-rules-churn-live's" "stale=$g_rc_stale live=$g_rc_live"
+fi
+# CONTROL: the stale fixture still carries the SAME rules/churn content as live, so the browser
+# half can show the views keep rendering recorded data while the freshness banner is up.
+rc_stale_same="$(jq -r '.surfaces.rules.detail.rules_parsed == '"$(jq -r '.surfaces.rules.detail.rules_parsed' "$RC_LIVE" 2>/dev/null)" "$RC_STALE" 2>/dev/null)"
+[ "$rc_stale_same" = "true" ] \
+  && ok "(j27) CONTROL: floor-rules-churn-stale carries the same rules_parsed count as -live, so staleness alone is what differs" \
+  || no "(j27) CONTROL: floor-rules-churn-stale carries the same rules_parsed count as -live" "got $rc_stale_same"
+
+# --- the tri-state fixture coverage AC-rules-detail demands is present in THIS bundle's own
+# fixture too (subtask 1 proved it at the projector; this proves the browser fixture still has it)
+n_applies_absent="$(jq -r '[.surfaces.rules.detail.rules[] | select(has("applies_to")|not)] | length' "$RC_LIVE" 2>/dev/null)"
+n_applies_null="$(jq -r '[.surfaces.rules.detail.rules[] | select(has("applies_to")) | select(.applies_to == null)] | length' "$RC_LIVE" 2>/dev/null)"
+n_applies_array="$(jq -r '[.surfaces.rules.detail.rules[] | select(has("applies_to")) | select(.applies_to != null)] | length' "$RC_LIVE" 2>/dev/null)"
+[ "${n_applies_absent:-0}" -ge 1 ] 2>/dev/null && [ "${n_applies_null:-0}" -ge 1 ] 2>/dev/null && [ "${n_applies_array:-0}" -ge 1 ] 2>/dev/null \
+  && ok "(j28) floor-rules-churn-live exercises all three applies_to shapes: absent=$n_applies_absent null=$n_applies_null array=$n_applies_array" \
+  || no "(j28) floor-rules-churn-live exercises all three applies_to shapes" "absent=$n_applies_absent null=$n_applies_null array=$n_applies_array"
+n_check_absent="$(jq -r '[.surfaces.rules.detail.rules[] | select(has("check")|not)] | length' "$RC_LIVE" 2>/dev/null)"
+n_check_null="$(jq -r '[.surfaces.rules.detail.rules[] | select(has("check")) | select(.check == null)] | length' "$RC_LIVE" 2>/dev/null)"
+n_check_val="$(jq -r '[.surfaces.rules.detail.rules[] | select(has("check")) | select(.check != null)] | length' "$RC_LIVE" 2>/dev/null)"
+[ "${n_check_absent:-0}" -ge 1 ] 2>/dev/null && [ "${n_check_null:-0}" -ge 1 ] 2>/dev/null && [ "${n_check_val:-0}" -ge 1 ] 2>/dev/null \
+  && ok "(j29) floor-rules-churn-live exercises all three check shapes: absent=$n_check_absent null=$n_check_null value=$n_check_val" \
+  || no "(j29) floor-rules-churn-live exercises all three check shapes" "absent=$n_check_absent null=$n_check_null value=$n_check_val"
+n_chains="$(jq -r '.surfaces.rules.detail.supersedes.chains | length' "$RC_LIVE" 2>/dev/null)"
+n_dangling="$(jq -r '.surfaces.rules.detail.supersedes.dangling | length' "$RC_LIVE" 2>/dev/null)"
+n_cycles="$(jq -r '.surfaces.rules.detail.supersedes.cycles | length' "$RC_LIVE" 2>/dev/null)"
+[ "${n_chains:-0}" -ge 1 ] 2>/dev/null && [ "${n_dangling:-0}" -ge 1 ] 2>/dev/null && [ "${n_cycles:-0}" -ge 1 ] 2>/dev/null \
+  && ok "(j30) floor-rules-churn-live exercises a chain, a dangling pointer AND a cycle: chains=$n_chains dangling=$n_dangling cycles=$n_cycles" \
+  || no "(j30) floor-rules-churn-live exercises a chain, a dangling pointer and a cycle" "chains=$n_chains dangling=$n_dangling cycles=$n_cycles"
+n_corr="$(jq -r '.surfaces.rules.detail.correlations | length' "$RC_LIVE" 2>/dev/null)"
+n_corr_ev="$(jq -r '[.surfaces.rules.detail.correlations[].matched[] | select(has("evidence"))] | length' "$RC_LIVE" 2>/dev/null)"
+[ "${n_corr:-0}" -ge 1 ] 2>/dev/null && [ "${n_corr_ev:-0}" -ge 1 ] 2>/dev/null \
+  && ok "(j31) floor-rules-churn-live exercises a correlation whose matched entries carry evidence ($n_corr correlation(s), $n_corr_ev with evidence)" \
+  || no "(j31) floor-rules-churn-live exercises a correlation with evidence" "corr=$n_corr with-evidence=$n_corr_ev"
 
 # The RESULT summary and the exit status are emitted by `finish` from the EXIT trap (see its
 # definition above), so every assertion group below still runs and still counts.
