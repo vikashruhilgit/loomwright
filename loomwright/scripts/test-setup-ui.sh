@@ -813,3 +813,90 @@ in_str "$out" "remove: removed" && [ ! -d "$RUI" ] \
 # definition above), so every assertion group below still runs and still counts.
 
 # (z) release-surface parity — appended by subtask 3
+# ===========================================================================
+echo "(z) AC-module-registered — the release surfaces that make /setup ui a real module"
+# ===========================================================================
+# WHY THIS GROUP EXISTS AT ALL: a new /setup module has several enumerations spread across a
+# skill and two command files, and NO CI gate covers any of them — check-command-sync.sh
+# guards only commands/code-reviewer.md, and check-doc-currency.sh derives no module count.
+# So all of them can rot while every gate stays green. This group is that gate.
+#
+# It is APPENDED at the anchor left by the bundle+engine change, and it runs because the
+# RESULT summary and the exit status are emitted from the EXIT trap rather than inline — an
+# appended group after an inline `exit` would never execute, which is the whole reason the
+# trap is shaped that way.
+
+SKILL_MD="$script_dir/../skills/setup/SKILL.md"
+SETUP_MD="$script_dir/../commands/setup.md"
+HELP_MD="$script_dir/../commands/agent-help.md"
+
+for f in "$SKILL_MD" "$SETUP_MD" "$HELP_MD"; do
+  [ -r "$f" ] || setup_fail "(z) fixture: $f is not readable, so every assertion below would be vacuous"
+done
+
+# --- the Pattern 2 registry row -------------------------------------------------------
+# Matched on the leading table cell so a passing mention of `ui` in prose cannot satisfy it.
+if grep -q '^| `ui` |' "$SKILL_MD"; then
+  ok "(z1) skills/setup/SKILL.md carries a \`ui\` row in the Pattern 2 module registry"
+else
+  no "(z1) skills/setup/SKILL.md carries a \`ui\` row in the Pattern 2 module registry" \
+     "the registry is what the skill's own 'New modules append a row here' sentence mandates"
+fi
+
+# --- the command flow section ---------------------------------------------------------
+if grep -q '^## Module: ui$' "$SETUP_MD"; then
+  ok "(z2) commands/setup.md carries a '## Module: ui' flow section"
+else
+  no "(z2) commands/setup.md carries a '## Module: ui' flow section" \
+     "the skill mandates a registry row AND a flow section in the same change"
+fi
+
+# --- the bundled-status render recipe -------------------------------------------------
+# Option 1 of the no-arg dashboard folds several modules behind one label, so the recipe has
+# to name each one; a module missing from it renders a status that silently stands for it.
+recipe="$(grep -n 'How to render the status on a BUNDLED option' "$SETUP_MD" 2>/dev/null || true)"
+if [ -z "$recipe" ]; then
+  no "(z3) commands/setup.md's bundled-status recipe names \`ui:\`" "the recipe paragraph itself was not found"
+elif grep -q 'ui: <status>' "$SETUP_MD"; then
+  ok "(z3) commands/setup.md's bundled-status recipe names \`ui: <status>\`"
+else
+  no "(z3) commands/setup.md's bundled-status recipe names \`ui: <status>\`" \
+     "option 1 bundles the module but never renders its status"
+fi
+
+# --- the module is reachable from the dashboard ---------------------------------------
+if grep -q '/setup ui' "$SETUP_MD"; then
+  ok "(z4) commands/setup.md documents the direct \`/setup ui\` jump"
+else
+  no "(z4) commands/setup.md documents the direct \`/setup ui\` jump"
+fi
+
+# --- zero stale module-count residue ---------------------------------------------------
+# The count moved when this module was added. Grep the OLD value across all three files
+# rather than trusting an enumeration of where it was believed to live — that is exactly how
+# the previous module's registration found two sites its own plan had not named.
+stale=""
+for f in "$SKILL_MD" "$SETUP_MD" "$HELP_MD"; do
+  if grep -q '9 modules' "$f"; then stale="$stale $(basename "$f")"; fi
+done
+if [ -z "$stale" ]; then
+  ok "(z5) no '9 modules' residue in the setup skill, commands/setup.md or agent-help.md"
+else
+  no "(z5) no '9 modules' residue in the setup skill, commands/setup.md or agent-help.md" \
+     "still stale in:$stale"
+fi
+# ANTI-VACUITY for (z5): the grep above proves nothing if the current count is absent too —
+# a file that mentions no module count at all would pass (z5) while being just as rotten.
+if grep -q '10 modules' "$SKILL_MD" && grep -q '10 modules' "$SETUP_MD" && grep -q '10 modules' "$HELP_MD"; then
+  ok "(z6) all three files state the CURRENT module count, so (z5) is not passing on an absent claim"
+else
+  no "(z6) all three files state the CURRENT module count" \
+     "(z5) may be vacuous — one of the three carries no module-count claim at all"
+fi
+
+# --- the reference doc the flow points at ----------------------------------------------
+if [ -r "$script_dir/../docs/FLOOR_UI.md" ]; then
+  ok "(z7) docs/FLOOR_UI.md exists — the companion doc the module flow cites is not a dead pointer"
+else
+  no "(z7) docs/FLOOR_UI.md exists" "commands/setup.md cites it from the ## Module: ui flow"
+fi
