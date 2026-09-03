@@ -5,7 +5,10 @@
     "statement": "Head of a two-hop supersedes chain: head -> mid -> tail.",
     "enforcement": "advisory",
     "supersedes": "fixture-chain-mid",
-    "provenance": {"source": "fixtures/floor-rules/process.json", "added": "2026-09-03T00:00:03Z"}
+    "provenance": {
+      "source": "fixtures/floor-rules/process.json",
+      "added": "2026-09-03T00:00:03Z"
+    }
   },
   {
     "id": "fixture-chain-mid",
@@ -13,14 +16,20 @@
     "statement": "Middle of the two-hop supersedes chain. read-rules.sh would resolve this single-hop only; the projector resolves it transitively and in order.",
     "enforcement": "advisory",
     "supersedes": "fixture-chain-tail",
-    "provenance": {"source": "fixtures/floor-rules/process.json", "added": "2026-09-03T00:00:04Z"}
+    "provenance": {
+      "source": "fixtures/floor-rules/process.json",
+      "added": "2026-09-03T00:00:04Z"
+    }
   },
   {
     "id": "fixture-chain-tail",
     "category": "process",
     "statement": "Tail of the two-hop supersedes chain. Carries no supersedes of its own.",
     "enforcement": "advisory",
-    "provenance": {"source": "fixtures/floor-rules/process.json", "added": "2026-09-03T00:00:05Z"}
+    "provenance": {
+      "source": "fixtures/floor-rules/process.json",
+      "added": "2026-09-03T00:00:05Z"
+    }
   },
   {
     "id": "fixture-dangling-source",
@@ -28,7 +37,10 @@
     "statement": "Supersedes an id that exists nowhere in the merged set. read-rules.sh IGNORES this; the projector reports it as dangling and still emits the row.",
     "enforcement": "advisory",
     "supersedes": "fixture-no-such-rule-id",
-    "provenance": {"source": "fixtures/floor-rules/process.json", "added": "2026-09-03T00:00:06Z"}
+    "provenance": {
+      "source": "fixtures/floor-rules/process.json",
+      "added": "2026-09-03T00:00:06Z"
+    }
   },
   {
     "id": "fixture-cycle-a",
@@ -36,7 +48,10 @@
     "statement": "Cycle member A of the A -> B -> C -> A supersedes cycle.",
     "enforcement": "advisory",
     "supersedes": "fixture-cycle-b",
-    "provenance": {"source": "fixtures/floor-rules/process.json", "added": "2026-09-03T00:00:07Z"}
+    "provenance": {
+      "source": "fixtures/floor-rules/process.json",
+      "added": "2026-09-03T00:00:07Z"
+    }
   },
   {
     "id": "fixture-cycle-b",
@@ -44,7 +59,10 @@
     "statement": "Cycle member B of the A -> B -> C -> A supersedes cycle.",
     "enforcement": "advisory",
     "supersedes": "fixture-cycle-c",
-    "provenance": {"source": "fixtures/floor-rules/process.json", "added": "2026-09-03T00:00:08Z"}
+    "provenance": {
+      "source": "fixtures/floor-rules/process.json",
+      "added": "2026-09-03T00:00:08Z"
+    }
   },
   {
     "id": "fixture-cycle-c",
@@ -52,6 +70,25 @@
     "statement": "Cycle member C of the A -> B -> C -> A supersedes cycle. The walk that finds it is bounded by the total edge count, so it terminates by construction.",
     "enforcement": "advisory",
     "supersedes": "fixture-cycle-a",
-    "provenance": {"source": "fixtures/floor-rules/process.json", "added": "2026-09-03T00:00:09Z"}
+    "provenance": {
+      "source": "fixtures/floor-rules/process.json",
+      "added": "2026-09-03T00:00:09Z"
+    }
+  },
+  {
+    "id": "fixture-malformed-applies-to",
+    "category": "process",
+    "statement": "A rule whose applies_to was written as a bare string instead of an array — the authoring mistake read-rules.sh carries a WARN channel for.",
+    "enforcement": "advisory",
+    "check": [
+      "not",
+      "a",
+      "string"
+    ],
+    "provenance": {
+      "source": "fixture",
+      "added": "2026-09-04T00:00:00Z"
+    },
+    "applies_to": "loomwright/scripts/*"
   }
 ]

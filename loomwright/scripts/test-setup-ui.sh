@@ -1474,6 +1474,44 @@ else
   no "(j33) MUTATION CONTROL: could not build the rows.length mutant - control inconclusive"
 fi
 
+# --- (j34) applies_to / check have a FOURTH state, and it must not read as the first ----------
+# Found by the CI reviewer on this PR, after both the Phase 4.5 review and my own pass missed it.
+# ruleScopeLabel handled absent / null / array correctly and then fell through to the SAME string
+# it uses for key-absent on any other value — so a rule written `"applies_to": "src/**"` (the
+# bracket-forgotten authoring slip) rendered as "no scope recorded", indistinguishable from a rule
+# that never declared a scope at all. That is the exact collapse the null branch exists to
+# prevent, recurring one branch later.
+#
+# It is not hypothetical: read-rules.sh carries a dedicated WARN channel for a malformed
+# applies_to, and build-floor.sh forwards the value verbatim whenever the key is present without
+# validating its shape, so the malformed value reaches the page intact. The committed fixture now
+# holds one such rule (id fixture-malformed-applies-to: applies_to a bare string, check an array).
+[ "$(grep -cF 'applies_to is present but malformed' "$JS")" -ge 1 ] \
+  && ok "(j34) floor.js names the malformed applies_to state instead of reusing the absent-key text" \
+  || no "(j34) floor.js has no distinct label for a malformed applies_to - it collapses into 'no scope recorded'"
+
+[ "$(grep -cF 'check is present but malformed' "$JS")" -ge 1 ] \
+  && ok "(j34) floor.js names a malformed check rather than concatenating it into junk" \
+  || no "(j34) floor.js would stringify a non-string check into the label"
+
+# The absent-key text must still exist, and must NOT be what the malformed branch returns.
+if grep -qF 'no scope recorded' "$JS"; then
+  ok "(j34) the absent-key label is still present, so the fix added a state rather than renaming one"
+else
+  no "(j34) the absent-key label vanished - the malformed fix replaced the wrong branch"
+fi
+
+# MUTATION CONTROL: collapse the malformed branch back onto the absent-key text and prove (j34) reddens.
+MUT_SCOPE="$TMPROOT/mut-scope.js"
+sed "s|return 'applies_to is present but malformed (' +|return 'no scope recorded'; var _dead = (|" "$JS" > "$MUT_SCOPE" 2>/dev/null
+if [ -s "$MUT_SCOPE" ] && ! cmp -s "$MUT_SCOPE" "$JS"; then
+  [ "$(grep -cF 'applies_to is present but malformed' "$MUT_SCOPE")" -lt "$(grep -cF 'applies_to is present but malformed' "$JS")" ] \
+    && ok "(j35) MUTATION CONTROL: collapsing the malformed branch back onto the absent-key text IS detected by (j34)" \
+    || no "(j35) MUTATION CONTROL: the collapse was not detected - (j34) proves nothing"
+else
+  no "(j35) MUTATION CONTROL: could not build the scope-collapse mutant - control inconclusive"
+fi
+
 # --- AC-views-four-states: the four distinct renders, by their own literals ------------------
 check_lit "$JS" "rules surface is not present in floor.json"      "(j15) rules ABSENT (surface key missing) has its own literal"
 check_lit "$JS" "postmortem surface is not present in floor.json" "(j16) churn ABSENT (surface key missing) has its own literal"

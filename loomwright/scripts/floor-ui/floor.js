@@ -274,14 +274,34 @@
     if (Object.prototype.toString.call(v) === '[object Array]') {
       return v.length ? ('scoped to ' + v.join(', ')) : 'declared with an empty glob list';
     }
-    return 'no scope recorded';
+    /* FOURTH state: the key is present but the value is neither null nor an array - most often
+     * a bare string glob written without the array brackets. Returning the absent-key text here
+     * would collapse "declared, but malformed" into "never declared", which is the very defect
+     * class the null branch above exists to prevent, one branch later. It is not hypothetical:
+     * read-rules.sh carries a dedicated WARN channel for a malformed applies_to, and
+     * build-floor.sh forwards the value verbatim whenever the key is present without validating
+     * its shape - so this reaches the page intact. Name the type so the author can see what the
+     * store actually holds. */
+    return 'applies_to is present but malformed (' +
+      (Object.prototype.toString.call(v) === '[object String]' ? 'a bare string, not an array'
+        : (('aeiou'.indexOf((typeof v).charAt(0)) >= 0 ? 'an ' : 'a ') + typeof v)) +
+      ') — scope not interpretable';
   }
 
   /* check gets the identical tri-state treatment for the identical reason. The string is
    * rendered as DATA via textContent below — it is never evaluated or executed. */
   function ruleCheckLabel(r) {
     if (!Object.prototype.hasOwnProperty.call(r, 'check')) { return 'no check declared'; }
-    return (r.check === null) ? 'declared, no runnable check (null)' : ('check: ' + r.check);
+    if (r.check === null) { return 'declared, no runnable check (null)'; }
+    /* read-rules.sh types this `string | null`. Anything else is malformed, and concatenating it
+     * would render "[object Object]" - junk that reads like content. Same reasoning as
+     * ruleScopeLabel's fourth state: say what it is instead. */
+    if (Object.prototype.toString.call(r.check) !== '[object String]') {
+      return 'check is present but malformed (' +
+        ('aeiou'.indexOf((typeof r.check).charAt(0)) >= 0 ? 'an ' : 'a ') + typeof r.check +
+        '), not a runnable string';
+    }
+    return 'check: ' + r.check;
   }
 
   function renderRules(d) {
