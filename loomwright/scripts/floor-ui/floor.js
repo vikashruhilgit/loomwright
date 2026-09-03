@@ -14,12 +14,19 @@
  * projector's own `reason` as the cell title. It never substitutes 0, and it never infers a
  * value the projector refused to state. `read_only` on a roster row is a TRI-STATE for the
  * same reason - true / false / absent - and absent renders as "read-only unknown".
+ * THE SAME RULE GOVERNS THE BANNER: an empty lane list is not by itself evidence that nothing
+ * is running, because the projector omits `sessions.detail.current` whenever no log line
+ * carries a `ts` and reports the surface `unverified` when a log could not be read. Only a
+ * counted surface carrying a `current` view with zero agents earns the idle claim; every
+ * other shape says the session data is unavailable and quotes the projector's own reason.
  *
  * LIVENESS IS NEVER INFERRED. floor.json records events, not processes. No element on this
  * page is labelled with a word that would claim a running process; the permanent note under
  * the lanes says so on every render, and the self-test scans for those words by name.
  *
- * NETWORK: one relative fetch of `floor.json` against this page's own origin. Nothing else.
+ * NETWORK: one relative fetch of `floor.json` against this page's own origin. Nothing else,
+ * and never two at once - the poll holds an in-flight flag so a hung origin cannot stack
+ * requests, cleared on both settle paths of that single request.
  */
 'use strict';
 
@@ -31,7 +38,14 @@
    *   ?stale=<seconds>  how old floor.json itself may get before the page says so. It exists
    *                     so the committed fixtures (whose generated_at_epoch is necessarily in
    *                     the past) can be demonstrated without the stale banner swallowing the
-   *                     view; the default is 3x the poll interval, per the requirement.
+   *                     view; the default is 3x THIS PAGE'S OWN poll interval below.
+   *                     That default is NOT the serve loop's `--interval`, which this page has
+   *                     no way to observe: `setup-ui.sh serve --interval 10` regenerates every
+   *                     10 s, which is legal and documented, and every render of it is older
+   *                     than a 6 s default. So the banner states the age and the threshold it
+   *                     was measured against and stops there - it never claims a cause it
+   *                     cannot see - and `serve` prints the `?stale=` value to open the page
+   *                     with whenever its own interval outgrows this default.
    */
   function qpInt(name, dflt, lo) {
     var m = new RegExp('[?&]' + name + '=([0-9]+)').exec(window.location.search || '');
@@ -167,6 +181,53 @@
         note.textContent = age + br + rs;
       }
     }
+  }
+
+  /* The projector states its omissions twice: as a `reason` on the surface (which the schema
+   * documents for a surface whose status is not `counted`) and as a line in `notes[]` that
+   * starts with the surface key. This walks that ladder in order and NAMES its fallback, so a
+   * banner can never present the page's own guess as the projector's finding. */
+  function noteFor(d, key) {
+    var notes = (d && d.notes) || [], i, t;
+    for (i = 0; i < notes.length; i++) {
+      t = String(notes[i]);
+      if (t.indexOf(key + ' ') === 0) { return t; }
+    }
+    return null;
+  }
+
+  function reasonFor(d, s, key) {
+    if (s && s.reason) { return String(s.reason); }
+    var n = noteFor(d, key);
+    if (n) { return n; }
+    return 'the projector recorded no reason for this surface';
+  }
+
+  /* IDLE IS A MEASURED STATE, NEVER A DEFAULT. An empty lane list has three very different
+   * causes and only one of them is "nothing is running":
+   *   - sessions counted + `current` present + zero agents  -> a session was identified and
+   *     no agent event was recorded in it. That is a MEASURED zero, and the projector records
+   *     it by OMITTING `agents` from `current` rather than emitting `[]` (the omit-not-zero
+   *     rule), so a missing key and an empty array both read as zero here.
+   *   - sessions counted + `current` OMITTED -> no line carried a `ts`, so the newest session
+   *     could not be identified at all. The projector refused to state this; the page must
+   *     not answer for it, least of all while the state surface beside it records a phase.
+   *   - sessions absent / unverified -> the input was missing or could not be read.
+   * This mirrors renderStages' treatment of the sibling `state` surface exactly. */
+  function sessionsVerdict(d) {
+    var s = surfaceOf(d, 'sessions');
+    if (!s) { return { idle: false, reason: 'floor.json carries no sessions surface' }; }
+    if (s.status !== 'counted') {
+      return { idle: false, reason: 'sessions surface ' + s.status + ': ' + reasonFor(d, s, 'sessions') };
+    }
+    var cur = s.detail && s.detail.current;
+    if (!cur) { return { idle: false, reason: reasonFor(d, s, 'sessions') }; }
+    var agents = cur.agents;
+    if (agents === undefined || agents === null) { return { idle: true }; }
+    if (Object.prototype.toString.call(agents) !== '[object Array]') {
+      return { idle: false, reason: 'the recorded session view carries an agents field that is not an array' };
+    }
+    return { idle: agents.length === 0 };
   }
 
   function laneRows(d) {
@@ -359,11 +420,18 @@
     }
 
     if (age !== null && age > STALE_SEC) {
-      banner('floor.json is stale (' + fmtAge(age) + ') - nothing has regenerated it');
+      /* The AGE is measured; the CAUSE is not. This page cannot see `serve --interval`, so it
+       * says how old the document is and which threshold that was judged against, and leaves
+       * the diagnosis to the reader. Asserting that the file has stopped being regenerated
+       * would be FALSE on every legal `--interval` longer than a third of this threshold. */
+      banner('floor.json is stale (' + fmtAge(age) + ') - older than the ' + STALE_SEC +
+        's freshness threshold this page polls against; if the serve loop regenerates less ' +
+        'often than that, reopen the page with ?stale=<seconds>');
       return;
     }
     if (!laneCount) {
-      banner('no run in flight');
+      var v = sessionsVerdict(d);
+      banner(v.idle ? 'no run in flight' : ('session data unavailable — ' + v.reason));
       return;
     }
     banner('');
@@ -390,13 +458,24 @@
     if (lc) { lc.textContent = ''; }
   }
 
+  /* ONE REQUEST AT A TIME. An origin that accepts a connection and never answers would
+   * otherwise let every tick of the poll add another outstanding fetch, and the page would
+   * end up rendering whichever response settled last rather than the newest bytes. This is a
+   * flag, not a second timer: the existing poll simply skips a tick while one is open, and
+   * the flag is cleared on BOTH settle paths (and on a synchronous throw) so a single failure
+   * can never wedge the page permanently. */
+  var inFlight = false;
+
   function poll() {
+    if (inFlight) { return; }
+    inFlight = true;
     try {
       fetch('floor.json', { cache: 'no-store' }).then(function (r) {
         if (r.status === 404) { fail('no floor.json at this origin'); return null; }
         if (!r.ok) { fail('floor.json could not be read (status ' + r.status + ')'); return null; }
         return r.text();
       }).then(function (t) {
+        inFlight = false;
         if (t === null || t === undefined) { return; }
         var d;
         try { d = JSON.parse(t); } catch (e) {
@@ -405,9 +484,11 @@
         }
         apply(d);
       })['catch'](function (e) {
+        inFlight = false;
         fail('no floor.json at this origin (' + ((e && e.message) || 'fetch failed') + ')');
       });
     } catch (e) {
+      inFlight = false;
       fail('no floor.json at this origin (' + ((e && e.message) || 'fetch unavailable') + ')');
     }
   }

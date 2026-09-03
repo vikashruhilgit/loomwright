@@ -84,7 +84,7 @@
     "loomwright/scripts/set-otel-resource-attrs.sh": 13,
     "loomwright/scripts/setup-memory.sh": 42,
     "loomwright/scripts/setup-statusline.sh": 2,
-    "loomwright/scripts/setup-ui.sh": 4,
+    "loomwright/scripts/setup-ui.sh": 3,
     "loomwright/scripts/test-agent-memory-permission.sh": 2,
     "loomwright/scripts/test-build-handoff.sh": 11,
     "loomwright/scripts/test-check-contract-parity.sh": 4,

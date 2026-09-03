@@ -11,7 +11,7 @@ How the plugin's optional local run view works: what it renders, where the data 
 The Floor is a single static page — three files, no framework, no bundler, no Node, no package manager — that renders `.supervisor/floor/floor.json` (the projection `build-floor.sh` produces; contract in `RESULT_SCHEMAS.md` §`FLOOR_PROJECTION`). It answers one question the other surfaces do not: **what is happening right now, and has something stopped happening?** `/insights`, `/handoff` and `/obsidian` report history well; this reports the present.
 
 ```
-Claude Code run  →  .supervisor/{state.md, jobs/, logs/, …}     (nine surfaces, four formats)
+Claude Code run  →  .supervisor/{state.md, jobs/, logs/, …}     (the projector's own basis line)
                           │
                           ▼  build-floor.sh (read-only, exit 0 always)
                     .supervisor/floor/floor.json                 (ONE versioned contract)
@@ -22,6 +22,8 @@ Claude Code run  →  .supervisor/{state.md, jobs/, logs/, …}     (nine surfac
                           ▼  fetch('floor.json', {cache: 'no-store'}) every 2 s
                     index.html + floor.css + floor.js            (the page)
 ```
+
+The count of inputs on the first line is stated **once**, in `build-floor.sh`'s own header — "spread across FOURTEEN projected surfaces in five formats" — with the counting basis (one key under `surfaces`, which is *not* the number of directories read) spelled out beside it. That sentence is quoted here rather than paraphrased into a fourth independent copy of the number: this document carried the previous, smaller count for a release after the projector had already outgrown it, and no gate could see it because nothing tied the two sentences together. `test-setup-ui.sh` case (z8) now reads the words out of `build-floor.sh` and requires this quote to match them.
 
 The page shows, top to bottom:
 
@@ -51,21 +53,26 @@ The page shows, top to bottom:
 | Parameter | Default | Meaning |
 |---|---|---|
 | `?stall=<seconds>` | `300` | how old a lane's last event may get before that lane reads **stalled** |
-| `?stale=<seconds>` | `3 ×` the poll interval | how old `floor.json` itself may get before the page says so |
+| `?stale=<seconds>` | `6` — `3 ×` the **page's own 2 s poll**, *not* `serve --interval` | how old `floor.json` itself may get before the page says so |
 
-`?stale=` exists for a specific reason worth stating: a **committed fixture's `generated_at_epoch` is always in the past**, so without it every fixture would render under the stale banner and nothing else about the page could be demonstrated. Raise it when loading `fixtures/floor-ui/*.json` by hand; leave it alone against a live serve loop.
+`?stale=` exists for a specific reason worth stating: a **committed fixture's `generated_at_epoch` is always in the past**, so without it every fixture would render under the stale banner and nothing else about the page could be demonstrated. Raise it when loading `fixtures/floor-ui/*.json` by hand.
 
-## Three honest states
+It has a second, less obvious use. The page has **no way to observe `serve --interval`** — it polls on its own fixed 2 s clock, and its default threshold is three of those. With a perfectly legal `--interval 10` every render is older than that default, so the page would report a document that is being regenerated exactly as configured. Two things keep that from becoming a false claim: the banner states only what the page measured (the age, and the threshold it was measured against), never a cause it cannot see; and `serve` prints the URL to open — including `?stale=<3 × interval>` whenever its own interval outgrows the page default, and the bare URL when it does not.
 
-The page never renders a blank screen, a spinner, or a console error. Exactly one of these is shown when there is nothing normal to draw:
+## Honest states
+
+The page never renders a blank screen, a spinner, or a console error. Exactly one of these is shown when there is nothing normal to draw. There were three of them until a review found the fourth hiding inside the second — an idle claim being made from evidence the projector had declined to give:
 
 | Condition | Text |
 |---|---|
 | `floor.json` returns 404 (or the fetch fails) | `no floor.json at this origin` |
-| `state` absent **and** no `sessions.detail.current` | `no run in flight` |
-| `generated_at_epoch` older than the freshness threshold | `floor.json is stale (<age>) - nothing has regenerated it` |
+| `sessions` **counted**, a `detail.current` view present, and **zero agents** in it | `no run in flight` |
+| any other `sessions` shape with no lanes — surface absent or `unverified`, or `detail.current` **omitted** | `session data unavailable — <the projector's own reason>` |
+| `generated_at_epoch` older than the freshness threshold | `floor.json is stale (<age>) - older than the <n>s freshness threshold…` |
 
-Each has a committed fixture (`floor-empty.json`, `floor-stale.json`) so the rendering is reproducible rather than argued about.
+The middle two rows are the same rule as the em-dashed count cells, applied to the banner: **idle is a measured state, never a default.** `build-floor.sh` omits `sessions.detail.current` whenever no log line carries a `ts` (the newest session cannot be identified from file order) and reports the surface `unverified` when a log could not be read — in both cases it has *refused* to say whether anything is in flight, and the page must not answer for it. A zero-agent session is the opposite: the session *was* identified and no agent event was recorded in it, which the projector states by omitting `agents` from `current` rather than emitting `[]`, so both readings count as a measured zero. The reason quoted in the second row is taken from the surface's own `reason`, else the `notes[]` line for that surface, else a named fallback — never invented.
+
+Each has a committed fixture — `floor-empty.json` (the earned idle banner), `floor-nosession.json` (counted sessions, no `current`, beside a `state` surface still recording phase `EXECUTE`) and `floor-stale.json` — so the rendering is reproducible rather than argued about.
 
 ## Motion is evidence, never decoration
 
@@ -103,7 +110,7 @@ Nothing else, anywhere. It never touches the user-scope settings document (that 
 /setup ui              # check → report → offer, including remove when it is installed
 ```
 
-`remove` deletes the ui directory **only** when the `.loomwright-ui-module` marker is present *at the resolved path*, and it additionally refuses `/`, `$HOME`, and anything at or under the plugin install directory. A directory without the marker is **reported and preserved** — `--ui-dir` is user-supplied, and a typo pointing at a real directory must not cost you that directory. Removal takes the bundle, the marker, the pidfile and the `floor.json` copy with it; the projection under `.supervisor/floor/` is regenerable and is left alone.
+`remove` deletes the ui directory **only** when the `.loomwright-ui-module` marker is present *at the resolved path*, and it additionally refuses `/`, `$HOME`, and anything at or under the plugin install directory. The resolved path is the **physical** one (`cd -P` / `pwd -P`): bash's logical `pwd` hands back the path you typed with its symlinks intact, so those three refusals would never see a target reached through a symlinked parent. A `--ui-dir` that is **itself a symlink** is refused outright — unlinking it would leave every byte of the target in place under a report saying it was removed, and a false "removed" is worse than a refusal. A directory without the marker is **reported and preserved** — `--ui-dir` is user-supplied, and a typo pointing at a real directory must not cost you that directory. Removal takes the bundle, the marker, the pidfile and the `floor.json` copy with it; the projection under `.supervisor/floor/` is regenerable and is left alone.
 
 ## Troubleshooting
 
@@ -111,7 +118,7 @@ Nothing else, anywhere. It never touches the user-scope settings document (that 
 |---|---|
 | `serve: ABORTED — python3 not found` | `serve` is the only subcommand that needs it. Everything else (`check`, `apply`, `remove`) still works. |
 | `serve: ABORTED — port <n> is already in use` | Something else holds the port. Re-run with `--port <n>`; the module will not move it for you. |
-| The page says `floor.json is stale` under a live serve loop | `build-floor.sh` is not producing output — most often `jq` is missing (`serve` warns about this at startup) or the working directory is not the project root. |
+| The page says `floor.json is stale` under a live serve loop | Either `build-floor.sh` is not producing output — most often `jq` is missing (`serve` warns about this at startup) or the working directory is not the project root — **or `--interval` is longer than the page's 6 s default threshold**, in which case `serve` has already printed the `?stale=` URL to open instead. |
 | The page says `no floor.json at this origin` | `serve` has not copied one yet (first tick), or you are serving a ui dir that was never applied to. Run `/setup ui` and re-check. |
 | Everything renders but every lane says `identity unknown` | Expected on most sessions — see §"What it does not claim". The roster strip is still complete, because it comes from agent frontmatter rather than from logs. |
 | `apply: WITHHELD — … carries no .loomwright-ui-module marker` | The ui directory exists but this module did not create it. Nothing was written. Point `--ui-dir` somewhere else, or remove that directory yourself. |

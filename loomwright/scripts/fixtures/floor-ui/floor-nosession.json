@@ -4,7 +4,8 @@
   "generator": "build-floor.sh",
   "repo_head": "5b90c27",
   "notes": [
-    "state omitted: input file .supervisor/state.md is not present"
+    "automate_runs omitted: input directory .supervisor/automate is not present",
+    "sessions current omitted: no line under .supervisor/logs/*.jsonl carries a ts, so the newest session cannot be identified from the events themselves (file order is not evidence of recency)"
   ],
   "surfaces": {
     "agents": {
@@ -41,9 +42,8 @@
     "automate_runs": {
       "source": ".supervisor/automate",
       "basis": "files matching .supervisor/automate/*.md, which excludes the sibling *.config-backup.json transients",
-      "status": "counted",
-      "count": 0,
-      "mtime_epoch": 1788399900
+      "status": "absent",
+      "reason": "input directory .supervisor/automate is not present"
     },
     "jobs_done": {
       "source": ".supervisor/jobs/done",
@@ -63,14 +63,14 @@
       "source": ".supervisor/jobs/in-progress",
       "basis": "files matching .supervisor/jobs/in-progress/*.md",
       "status": "counted",
-      "count": 0,
+      "count": 1,
       "mtime_epoch": 1788399900
     },
     "jobs_pending": {
       "source": ".supervisor/jobs/pending",
       "basis": "files matching .supervisor/jobs/pending/*.md",
       "status": "counted",
-      "count": 0,
+      "count": 4,
       "mtime_epoch": 1788399900
     },
     "logs": {
@@ -90,18 +90,38 @@
         "lines_with_session_id": 13111,
         "lines_without_session_id": 95,
         "lines_malformed": 0,
-        "lines_blank_skipped": 0,
-        "current": {
-          "cc_session_id": "9f1c0e7a-2b44-4d10-9c33-0a7e5b6d81aa",
-          "last_event_ts": "2026-09-02T18:41:12Z"
-        }
+        "lines_blank_skipped": 0
       }
     },
     "state": {
       "source": ".supervisor/state.md",
       "basis": "rows matching a leading numeric cell inside the ## Subtasks table of .supervisor/state.md",
-      "status": "absent",
-      "reason": "input file .supervisor/state.md is not present"
+      "status": "counted",
+      "count": 3,
+      "mtime_epoch": 1788399985,
+      "detail": {
+        "phase": "EXECUTE",
+        "branch": "feature/the-floor-ui",
+        "run_status": "running",
+        "session_id": "25c6d887-13d5-4302-8b80-c39f7383d4c8",
+        "subtasks": [
+          {
+            "id": "1",
+            "title": "Projector: additive agents roster, newest-session rows, subtask rows",
+            "status": "COMPLETED (5b90c27)"
+          },
+          {
+            "id": "2",
+            "title": "The floor bundle + setup-ui.sh engine + static tests + fixtures",
+            "status": "IN_PROGRESS"
+          },
+          {
+            "id": "3",
+            "title": "Release surface: /setup ui registration, docs, version lockstep",
+            "status": "BLOCKED"
+          }
+        ]
+      }
     }
   }
 }

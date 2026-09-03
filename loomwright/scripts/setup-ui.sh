@@ -20,7 +20,11 @@
 #   resolved ui directory itself. A directory without the marker is REPORTED and PRESERVED,
 #   because `--ui-dir` is user-supplied and a typo pointing at a real directory must not cost
 #   the user that directory. `remove` additionally refuses `/`, `$HOME`, and anything at or
-#   under the plugin's own install directory.
+#   under the plugin's own install directory — each compared against the PHYSICAL path
+#   (`cd -P` / `pwd -P`), because bash's logical pwd hands back the path you typed and those
+#   three refusals would then never see a target reached through a symlinked parent. A
+#   `--ui-dir` that is ITSELF a symlink is refused outright: unlinking it would leave every
+#   byte of the target in place under a report saying it was removed.
 #
 # FAIL-SAFE CONTRACT (mirrors setup-statusline.sh and setup-memory.sh): EVERY branch exits 0.
 # "Fails closed" here means REFUSE-TO-WRITE plus a named-reason headline status line — never a
@@ -48,7 +52,9 @@
 #   --ui-dir <dir>    override the ui directory (default $HOME/.claude/loomwright/ui)
 #   --port <n>        listen port for `serve` (default 7734); a busy port is REPORTED, never
 #                     silently changed — a moved port is a page that loads stale bytes
-#   --interval <n>    seconds between regenerations (default 2, minimum 1)
+#   --interval <n>    seconds between regenerations (default 2, minimum 1). The page cannot
+#                     see this flag - it judges freshness against 3x its own fixed 2 s poll -
+#                     so `serve` prints the `?stale=` URL to open whenever this outgrows it
 #   --no-regen        serve whatever `floor.json` is already in the ui dir; run nothing
 #   --detach          `serve` returns immediately and records its pids in <ui dir>/serve.pid
 #
@@ -64,7 +70,22 @@ FLOOR_SCRIPT="$script_dir/build-floor.sh"
 MARKER=".loomwright-ui-module"
 BUNDLE_FILES="index.html floor.css floor.js"
 
-UI_DIR="$HOME/.claude/loomwright/ui"
+# The page's OWN clock, mirrored here so `serve` can tell the reader when its `--interval`
+# has outgrown it. These two are floor.js's POLL_MS/1000 and its 3x default; they are not
+# configurable from this script and this script cannot change them - it can only report the
+# `?stale=` value that keeps the page from calling a current document stale.
+PAGE_POLL_SEC=2
+PAGE_STALE_DEFAULT=6
+
+# HOME is read ONCE, defensively. `set -u` turns an unset HOME into an abort with a bash
+# diagnostic and a non-zero status, which contradicts this file's own EVERY-BRANCH-EXITS-0
+# contract - and an unset HOME is not exotic: cron, containers and `env -i` all produce one.
+# Everything downstream uses HOME_DIR, so the guard cannot be bypassed by a later reader.
+HOME_DIR="${HOME:-}"
+DEFAULT_UI_DIR=""
+[ -n "$HOME_DIR" ] && DEFAULT_UI_DIR="$HOME_DIR/.claude/loomwright/ui"
+
+UI_DIR="$DEFAULT_UI_DIR"
 PORT=7734
 INTERVAL=2
 REGEN=1
@@ -92,7 +113,14 @@ case "$PORT" in ''|*[!0-9]*) echo "setup-ui: --port must be a positive integer; 
 case "$INTERVAL" in ''|*[!0-9]*) echo "setup-ui: --interval must be a positive integer; falling back to 2"; INTERVAL=2 ;; esac
 [ "$INTERVAL" -lt 1 ] && INTERVAL=1
 
-[ -n "$UI_DIR" ] || UI_DIR="$HOME/.claude/loomwright/ui"
+[ -n "$UI_DIR" ] || UI_DIR="$DEFAULT_UI_DIR"
+
+# No HOME and no --ui-dir means there is no directory to name, let alone read or write. Say
+# so by name and exit 0 - the fail-safe contract is refuse-to-write plus a named reason.
+if [ -z "$UI_DIR" ]; then
+  echo "setup-ui: ABORTED — HOME is unset or empty and no --ui-dir was given, so there is no ui directory to check, install into, serve or remove. Re-run with --ui-dir <dir>. Nothing was read and nothing was written."
+  exit 0
+fi
 
 # ---------------------------------------------------------------------------
 # Probes (all read-only)
@@ -120,11 +148,24 @@ drifted_files() {
 
 is_ours() { [ -f "$UI_DIR/$MARKER" ]; }
 
-# resolved_ui_dir -> the absolute path, or empty when the directory does not exist. `remove`
-# compares against this so a relative --ui-dir cannot make the deletion target ambiguous.
+# resolved_ui_dir -> the absolute PHYSICAL path, or empty when the directory does not exist.
+# `remove` compares against this so a relative --ui-dir cannot make the deletion target
+# ambiguous. `cd -P` + `pwd -P`, never bash's logical pwd: the logical form hands back the
+# path you typed with its symlinks intact, so a --ui-dir reached through a symlinked parent
+# resolves to the LINK path and the `/`, $HOME and plugin-install-dir refusals below compare
+# against something that is not the directory about to be deleted. Those three refusals exist
+# to protect the real target, so they have to be given the real target.
 resolved_ui_dir() {
   [ -d "$UI_DIR" ] || return 1
-  ( cd "$UI_DIR" 2>/dev/null && pwd )
+  ( cd -P "$UI_DIR" 2>/dev/null && pwd -P )
+}
+
+# strip_slashes -> the path with trailing slashes removed, because `[ -L "$p/" ]` FOLLOWS the
+# link and answers false: a symlink test on a path with a trailing slash tests the target.
+strip_slashes() {
+  local p="$1"
+  while [ "$p" != "/" ] && [ "${p%/}" != "$p" ]; do p="${p%/}"; done
+  printf '%s' "$p"
 }
 
 port_free() {
@@ -309,6 +350,21 @@ do_serve() {
     echo "  regen:    disabled (--no-regen); serving the floor.json already in the ui dir"
   fi
 
+  # THE PAGE CANNOT SEE --interval. floor.js judges freshness against 3x its OWN fixed 2 s
+  # poll, so any interval above that page default makes every render older than the threshold
+  # and the page would report a document that is being regenerated exactly as configured as
+  # stale. The page states only what it measured (the age and the threshold) and never a
+  # cause; the missing half is this number, and only `serve` knows it - so `serve` prints it.
+  # The URL is printed on ONE line so it can be copied whole.
+  local stale_hint
+  stale_hint=$((INTERVAL * 3))
+  if [ "$stale_hint" -gt "$PAGE_STALE_DEFAULT" ]; then
+    echo "  open:     http://127.0.0.1:$PORT/?stale=$stale_hint"
+    echo "            (--interval ${INTERVAL}s regenerates less often than the page's built-in ${PAGE_STALE_DEFAULT}s freshness threshold, which is 3x its own ${PAGE_POLL_SEC}s poll and cannot see this flag; without ?stale=$stale_hint the page would call a perfectly current file stale)"
+  else
+    echo "  open:     http://127.0.0.1:$PORT/"
+  fi
+
   python3 -m http.server --bind 127.0.0.1 --directory "$UI_DIR" "$PORT" >/dev/null 2>&1 &
   local srv=$!
   printf '%s\n' "$srv" > "$UI_DIR/serve.pid" 2>/dev/null
@@ -369,6 +425,17 @@ do_remove() {
     echo "remove: no-op — $UI_DIR is not present."
     return 0
   fi
+  # A --ui-dir that is ITSELF a symlink is refused outright. Deleting it would unlink the
+  # link and leave every byte of the target - the bundle, the marker and the floor.json copy,
+  # which carry branch names, session ids and agent ids - sitting on disk underneath a report
+  # saying they are gone. A false "removed" is worse than a refusal, so this refuses.
+  local ui_path
+  ui_path="$(strip_slashes "$UI_DIR")"
+  if [ -L "$ui_path" ]; then
+    echo "remove: ABORTED — $ui_path is a symlink, not a directory this module created. Deleting it would unlink the link and leave the real directory it points at fully intact, so 'removed' would not be true. Nothing was deleted."
+    echo "  Re-run with --ui-dir pointing at the real directory if that is what you meant to remove."
+    return 0
+  fi
   if ! is_ours; then
     echo "remove: WITHHELD — $UI_DIR carries no $MARKER marker, so this module did not create it. It has been PRESERVED and nothing was deleted."
     return 0
@@ -380,9 +447,24 @@ do_remove() {
     return 0
   }
 
-  # Three assertions, all of which must hold before anything is deleted.
-  if [ "$resolved" = "/" ] || [ "$resolved" = "$HOME" ]; then
+  # Three assertions, all of which must hold before anything is deleted. Each compares the
+  # PHYSICAL path from resolved_ui_dir against a physically resolved candidate, because a
+  # refusal that compares two spellings of the same directory is not a refusal at all.
+  local home_phys="" script_phys=""
+  [ -n "$HOME_DIR" ] && [ -d "$HOME_DIR" ] && home_phys="$(cd -P "$HOME_DIR" 2>/dev/null && pwd -P)"
+  script_phys="$(cd -P "$script_dir" 2>/dev/null && pwd -P)"
+  # Written as separate `if`s on purpose: `[ A ] || [ B ] && [ C ]` groups as (A||B)&&C in
+  # every POSIX shell, which would have quietly let `/` through whenever HOME was set.
+  if [ "$resolved" = "/" ]; then
     echo "remove: ABORTED — the resolved ui dir is $resolved, which this module will never delete. Nothing was deleted."
+    return 0
+  fi
+  if [ -n "$HOME_DIR" ] && [ "$resolved" = "$HOME_DIR" ]; then
+    echo "remove: ABORTED — the resolved ui dir is $resolved, which this module will never delete. Nothing was deleted."
+    return 0
+  fi
+  if [ -n "$home_phys" ] && [ "$resolved" = "$home_phys" ]; then
+    echo "remove: ABORTED — the resolved ui dir is $resolved, which is the home directory ($HOME_DIR) reached through a symlink. Nothing was deleted."
     return 0
   fi
   case "$resolved" in
@@ -390,6 +472,13 @@ do_remove() {
       echo "remove: ABORTED — the resolved ui dir is inside the plugin install directory ($script_dir). Nothing was deleted."
       return 0 ;;
   esac
+  if [ -n "$script_phys" ]; then
+    case "$resolved" in
+      "$script_phys"|"$script_phys"/*)
+        echo "remove: ABORTED — the resolved ui dir is inside the plugin install directory ($script_phys). Nothing was deleted."
+        return 0 ;;
+    esac
+  fi
   if [ ! -f "$resolved/$MARKER" ]; then
     echo "remove: ABORTED — the marker is not present at the RESOLVED path $resolved. Nothing was deleted."
     return 0

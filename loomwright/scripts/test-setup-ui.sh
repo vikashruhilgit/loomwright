@@ -35,7 +35,10 @@
 #   (b) AC-lanes / AC-stall / AC-three-states static halves — the literal strings the browser
 #       pass will read, the doubled-prefix stripping expression, `cache: 'no-store'`, the stall
 #       query parameter, and THE MOTION BUDGET: exactly one setInterval and zero rAF calls in
-#       floor.js, counted by occurrence, with a mutation control adding a second timer
+#       floor.js, counted by occurrence, with a mutation control adding a second timer. Plus
+#       the two claims the page must NOT make: the idle banner is reachable only through a
+#       gated verdict (with a mutation control that ungates it), and the stale banner asserts
+#       no cause it cannot observe. Plus the poll's in-flight guard and both of its clear sites
 #   (c) AC-motion-a11y-theme — the reduced-motion block removes animation AND transition; the
 #       light palette is on bare :root, dark under the system-preference query and again on
 #       an explicit data-theme; body has a token background; exactly ONE @keyframes exists and
@@ -45,22 +48,31 @@
 #       test-build-floor.sh case (h) does. The key list is never restated here, so a schema
 #       change moves this validator with it
 #   (e) fixture FACTS the browser half depends on: floor-live has 3 agent rows of which 2 are
-#       typed; floor-stalled has exactly one row older than the 300 s default; floor-empty has
-#       agents counted with state absent and no current session; floor-stale's generation time
-#       is far older than the others'
+#       typed; floor-stalled has exactly one row older than the 300 s default; floor-empty is
+#       the EARNED idle case (sessions counted, a current session identified, zero agents in
+#       it); floor-nosession is its contrast (sessions counted, `current` OMITTED, a note
+#       saying why, beside a state surface still recording phase EXECUTE); floor-stale's
+#       generation time is far older than the others'
 #   (f) AC-engine-contract — check on an absent dir, apply installs, a second apply is a
 #       no-op, a drifted bundle is `updated` naming the file, remove is WITHHELD on a
 #       directory with no marker (and that directory survives), remove deletes an owned one.
 #       With a mutation control that strips the marker gate and shows the foreign directory
-#       being deleted
+#       being deleted. Plus the two paths on which a removal REPORT could be false: a
+#       --ui-dir that is itself a symlink, and a real directory whose PHYSICAL path is $HOME
+#       reached through a symlinked parent
 #   (g) AC-engine-fail-safe — python3 absent (PATH stub) aborts serve by name; jq absent still
 #       applies and warns that build-floor.sh will skip; build-floor.sh absent aborts serve by
-#       name; a bad subcommand and a bad flag both exit 0. EVERY branch exits 0
+#       name; a bad subcommand and a bad flag both exit 0; an UNSET HOME aborts by name rather
+#       than tripping `set -u`. EVERY branch exits 0. Plus the `?stale=` hint serve prints when
+#       --interval outgrows the page's own threshold, its control at the default interval, and
+#       a parity check on the two page constants the engine mirrors to compute it
 #   (h) AC-loopback — a real detached server, a real fetch from 127.0.0.1 returning the fixture
 #       bytes, and a refused connect to this host's first non-loopback IPv4 on the same port.
 #       SKIPPED (reported separately from passes) when the host has no non-loopback address
 #   (i) AC-remove-residue — the two hashed trees described above, plus the plugin's own bundle
 #       hashed before and after
+#   (z) release-surface parity for the /setup ui module registration, plus the surfaces/formats
+#       basis sentence, which is QUOTED from build-floor.sh rather than restated
 #
 # NO `producer | grep -q` PIPELINES (SIGPIPE turns a match into rc=141 under pipefail).
 
@@ -237,6 +249,59 @@ check_lit "$JS" "no floor.json at this origin" "(b7) state string: 'no floor.jso
 check_lit "$JS" "no run in flight"             "(b8) state string: 'no run in flight'"
 check_lit "$JS" "floor.json is stale ("        "(b9) state string: 'floor.json is stale (<age>)'"
 
+# --- THE IDLE BANNER MUST BE EARNED, NOT DEFAULTED -------------------------------------
+# build-floor.sh OMITS `sessions.detail.current` whenever no log line carries a `ts`, and
+# reports the surface `unverified` when a log could not be read. Rendering "no run in flight"
+# from either shape is the omit-absent-evidence rule broken in the render layer: the projector
+# refused to state whether a run is in flight, and the page would answer anyway. So the string
+# must be reachable ONLY through a verdict that saw a COUNTED surface carrying a `current`
+# view, and every other shape must get its own, differently-worded banner.
+check_lit "$JS" "session data unavailable" "(b14) floor.js has a distinct banner for a sessions surface that cannot support the idle claim"
+n_idle="$(occ "$JS" 'no run in flight')"
+idle_ungated="$(awk '/no run in flight/ && $0 !~ /idle/ {n++} END{print n+0}' "$JS")"
+[ "$n_idle" = "1" ] && [ "$idle_ungated" = "0" ] \
+  && ok "(b15) the ONE 'no run in flight' emission is gated on the idle verdict (occurrences=$n_idle ungated=$idle_ungated)" \
+  || no "(b15) every 'no run in flight' emission is gated on the idle verdict" "occurrences=$n_idle ungated=$idle_ungated"
+verdict_body="$(awk '/^  function sessionsVerdict/{f=1} f{print} f&&/^  }$/{exit}' "$JS")"
+if in_str "$verdict_body" "'counted'" && in_str "$verdict_body" "current"; then
+  ok "(b16) the idle verdict is computed from the sessions surface's own status AND its current view"
+else
+  no "(b16) the idle verdict is computed from the sessions surface's own status AND its current view" "sessionsVerdict body: ${verdict_body:-<function not found>}"
+fi
+# Mutation control for (b15): ungating the banner must be CAUGHT, or the scan proves nothing.
+MUT_IDLE="$TMPROOT/mut-idle.js"
+sed 's/v\.idle ?/true ?/' "$JS" > "$MUT_IDLE" 2>/dev/null
+if mutant_ok "$JS" "$MUT_IDLE"; then
+  m_ungated="$(awk '/no run in flight/ && $0 !~ /idle/ {n++} END{print n+0}' "$MUT_IDLE")"
+  [ "$m_ungated" = "1" ] \
+    && ok "(b17) MUTATION CONTROL: an ungated 'no run in flight' IS flagged (found $m_ungated)" \
+    || no "(b17) MUTATION CONTROL: an ungated 'no run in flight' IS flagged" "found $m_ungated"
+fi
+# The freshness banner must not assert a CAUSE it cannot observe. The page polls on its own
+# fixed 2 s clock and has no way to see `serve --interval <n>`; with a legal `--interval 10`
+# every render is older than a 6 s default threshold, so a claim that "nothing has regenerated
+# it" would be false while regeneration is working. The banner may state the age and the
+# threshold it was measured against — nothing more.
+n_cause="$(occ "$JS" 'nothing has regenerated it')"
+[ "$n_cause" = "0" ] \
+  && ok "(b18) the stale banner makes no unobservable causal claim about regeneration (found $n_cause)" \
+  || no "(b18) the stale banner makes no unobservable causal claim about regeneration" "found $n_cause occurrence(s) of 'nothing has regenerated it'"
+if has_lit "$JS" "freshness threshold"; then
+  ok "(b19) the stale banner names the threshold it measured against, so the reader can raise it"
+else
+  no "(b19) the stale banner names the threshold it measured against"
+fi
+# --- the poll cannot stack requests against a hung origin -------------------------------
+if has_lit "$JS" "inFlight"; then
+  ok "(b20) the poll carries an in-flight guard, so a hung origin cannot stack fetches"
+else
+  no "(b20) the poll carries an in-flight guard"
+fi
+n_clear="$(awk '/inFlight = false/ && $0 !~ /var[[:space:]]+inFlight/ {n++} END{print n+0}' "$JS")"
+[ "$n_clear" -ge 2 ] 2>/dev/null \
+  && ok "(b21) the in-flight guard is cleared on BOTH the resolve and the reject path (found $n_clear clear sites)" \
+  || no "(b21) the in-flight guard is cleared on both the resolve and the reject path" "found $n_clear clear site(s) — a guard set and never cleared wedges the poll permanently"
+
 # THE MOTION BUDGET. This is the assertion that makes "nothing animates that is not backed by
 # an event" checkable rather than aspirational: one timer, and it fetches.
 n_int="$(occ "$JS" 'setInterval[(]')"
@@ -389,9 +454,9 @@ for j in "$FIX_DIR"/*.json; do
     && ok "(d2) $(basename "$j") conforms to the FLOOR_PROJECTION contract" \
     || no "(d2) $(basename "$j") conforms to the FLOOR_PROJECTION contract" "$vout"
 done
-[ "$n_fix" -eq 4 ] \
-  && ok "(d3) all four committed fixtures were validated (found $n_fix)" \
-  || no "(d3) all four committed fixtures were validated" "found $n_fix"
+[ "$n_fix" -eq 5 ] \
+  && ok "(d3) all five committed fixtures were validated (found $n_fix)" \
+  || no "(d3) all five committed fixtures were validated" "found $n_fix"
 
 # Mutation control: a fixture that violates the omit-not-zero rule must be REJECTED.
 MUT_FIX="$TMPROOT/mut-fixture.json"
@@ -409,6 +474,7 @@ echo "(e) fixture facts the browser half will read"
 
 LIVE="$FIX_DIR/floor-live.json"; STALLED="$FIX_DIR/floor-stalled.json"
 EMPTY="$FIX_DIR/floor-empty.json"; STALE="$FIX_DIR/floor-stale.json"
+NOSESS="$FIX_DIR/floor-nosession.json"
 
 n_rows="$(jq -r '.surfaces.sessions.detail.current.agents | length' "$LIVE" 2>/dev/null)"
 n_typed="$(jq -r '[.surfaces.sessions.detail.current.agents[] | select(has("agent_type"))] | length' "$LIVE" 2>/dev/null)"
@@ -456,10 +522,28 @@ e_absent="$(jq -r '.surfaces.jobs_pending | "\(.status)/\(has("count"))/\(has("r
   && ok "(e6) floor-stalled's Queue surface is absent with a reason and NO count — the em-dash path" \
   || no "(e6) floor-stalled's Queue surface is absent with a reason and NO count" "got $e_absent"
 
-e_empty="$(jq -r '"\(.surfaces.agents.status)/\(.surfaces.state.status)/\(.surfaces.sessions.detail | has("current"))"' "$EMPTY" 2>/dev/null)"
-[ "$e_empty" = "counted/absent/false" ] \
-  && ok "(e7) floor-empty is 'no run in flight': agents counted, state absent, no current session" \
-  || no "(e7) floor-empty is 'no run in flight': agents counted, state absent, no current session" "got $e_empty"
+# floor-empty is the GENUINELY IDLE case, and that is a MEASURED zero rather than an absent
+# one: the sessions surface is counted, the newest session WAS identified, and no line of it
+# carried an agent_id — which the projector records by omitting `agents` from `current`
+# (never by emitting `[]`, per the omit-not-zero rule). This is the only shape from which
+# "no run in flight" may be rendered.
+e_empty="$(jq -r '"\(.surfaces.agents.status)/\(.surfaces.state.status)/\(.surfaces.sessions.status)/\(.surfaces.sessions.detail | has("current"))/\(.surfaces.sessions.detail.current | has("agents"))"' "$EMPTY" 2>/dev/null)"
+[ "$e_empty" = "counted/absent/counted/true/false" ] \
+  && ok "(e7) floor-empty is the earned 'no run in flight': sessions counted, a current session identified, zero agents in it" \
+  || no "(e7) floor-empty is the earned 'no run in flight': sessions counted, current present, zero agents" "got $e_empty"
+
+# floor-nosession is the CONTRAST, and it is the shape build-floor.sh really emits when no
+# log line carries a `ts`: sessions COUNTED (so the surface is not absent and not unverified)
+# but `current` OMITTED entirely with a note saying why — while `state` still records a phase.
+# A page that renders this as "no run in flight" contradicts the state surface beside it.
+e_nos="$(jq -r '"\(.surfaces.sessions.status)/\(.surfaces.sessions.detail | has("current"))/\(.surfaces.state.detail.phase)"' "$NOSESS" 2>/dev/null)"
+[ "$e_nos" = "counted/false/EXECUTE" ] \
+  && ok "(e9) floor-nosession: sessions counted with NO current view, beside a state surface recording phase EXECUTE" \
+  || no "(e9) floor-nosession: sessions counted with NO current view, beside a state surface recording phase EXECUTE" "got $e_nos"
+n_snote="$(jq -r '[.notes[] | select(startswith("sessions "))] | length' "$NOSESS" 2>/dev/null)"
+[ "$n_snote" -ge 1 ] 2>/dev/null \
+  && ok "(e10) floor-nosession carries the projector note the page reads its reason from ($n_snote sessions note(s))" \
+  || no "(e10) floor-nosession carries a sessions note for the page to quote" "found $n_snote — the page would have nothing but its named fallback"
 
 g_live="$(jq -r '.generated_at_epoch' "$LIVE" 2>/dev/null)"
 g_stale="$(jq -r '.generated_at_epoch' "$STALE" 2>/dev/null)"
@@ -559,6 +643,51 @@ if mutant_ok "$ENGINE" "$MUT_ENG" shell; then
     || no "(f12) MUTATION CONTROL: with BOTH marker assertions reverted the foreign directory IS deleted" "the mutant left $FOREIGN2 in place, so (f10) may be passing for the wrong reason"
 fi
 
+# --- a --ui-dir that is itself a SYMLINK ------------------------------------------------
+# `remove` reports what it deleted, and that report has to be TRUE. Unlinking a symlink
+# leaves every byte of the target — the bundle, the marker and the floor.json copy, which
+# carry branch names, session ids and agent ids — sitting on disk under a message saying they
+# are gone. Refusing is the only honest answer.
+SLTGT="$F/link-target"
+mkdir -p "$SLTGT" || setup_fail "(f13) fixture: could not create $SLTGT"
+printf 'the user keeps this\n' > "$SLTGT/precious.txt"
+printf 'marker\n' > "$SLTGT/.loomwright-ui-module"
+SLINK="$F/ui-link"
+ln -s "$SLTGT" "$SLINK" || setup_fail "(f13) fixture: could not create the symlink $SLINK"
+[ -L "$SLINK" ] || setup_fail "(f13) fixture: $SLINK is not a symlink, so the case below would test nothing"
+sl_before="$(tree_sig "$SLTGT")"
+out="$(bash "$ENGINE" remove --ui-dir "$SLINK" 2>&1)"; rc=$?
+sl_after="$(tree_sig "$SLTGT")"
+if [ "$rc" -eq 0 ] && ! in_str "$out" "remove: removed" && [ -L "$SLINK" ] && [ "$sl_before" = "$sl_after" ]; then
+  ok "(f13) remove REFUSES a --ui-dir that is itself a symlink, leaves the link in place and does not claim a removal"
+else
+  no "(f13) remove REFUSES a --ui-dir that is itself a symlink and does not claim a removal" \
+     "rc=$rc link=$([ -L "$SLINK" ] && echo present || echo UNLINKED) target-unchanged=$([ "$sl_before" = "$sl_after" ] && echo yes || echo NO) :: $out"
+fi
+
+# --- the refusals must compare against the PHYSICAL path --------------------------------
+# `remove` refuses `/`, `$HOME` and the plugin install dir. Resolving with bash's LOGICAL
+# pwd makes all three blind to a symlinked parent: the path they compare is the link path,
+# never the real target. Here the ui dir is a real directory whose PHYSICAL path IS the home
+# directory, reached through a symlinked parent — the $HOME refusal must still fire.
+FH="$F/fakehome"
+FHUI="$FH/home-itself"
+mkdir -p "$FHUI" || setup_fail "(f14) fixture: could not create $FHUI"
+printf 'marker\n' > "$FHUI/.loomwright-ui-module"
+printf 'the user keeps this\n' > "$FHUI/precious.txt"
+PLINK="$F/parent-link"
+ln -s "$FH" "$PLINK" || setup_fail "(f14) fixture: could not create the symlink $PLINK"
+[ ! -L "$PLINK/home-itself" ] || setup_fail "(f14) fixture: the ui dir must NOT itself be a symlink, or (f13)'s guard would answer instead"
+fh_before="$(tree_sig "$FHUI")"
+out="$(HOME="$FHUI" bash "$ENGINE" remove --ui-dir "$PLINK/home-itself" 2>&1)"; rc=$?
+fh_after="$(tree_sig "$FHUI")"
+if [ "$rc" -eq 0 ] && in_str "$out" "remove: ABORTED" && [ -d "$FHUI" ] && [ "$fh_before" = "$fh_after" ]; then
+  ok "(f14) the \$HOME refusal fires through a symlinked parent — the resolved path is the PHYSICAL one"
+else
+  no "(f14) the \$HOME refusal fires through a symlinked parent (physical resolution)" \
+     "rc=$rc dir=$([ -d "$FHUI" ] && echo present || echo GONE) unchanged=$([ "$fh_before" = "$fh_after" ] && echo yes || echo NO) :: $out"
+fi
+
 # ===========================================================================
 echo "(g) AC-engine-fail-safe — every branch exits 0, each with a named reason"
 # ===========================================================================
@@ -635,6 +764,68 @@ in_str "$out" "unknown subcommand" \
   && ok "(g6) an unknown subcommand says so and prints the usage line" \
   || no "(g6) an unknown subcommand says so and prints the usage line" "$out"
 
+# HOME unset. The default ui dir is built from $HOME, and `set -u` turns an unset one into an
+# abort with a bash diagnostic and rc=1 — which contradicts "EVERY branch exits 0" in this
+# file's own header. A cron job, a container and a `sudo -i` all reach this branch.
+if env -u HOME true >/dev/null 2>&1; then
+  probe_home="$(env -u HOME bash -c 'printf %s "${HOME:-<unset>}"' 2>/dev/null)"
+  if [ "$probe_home" != "<unset>" ]; then
+    skipn "(g7) this bash repopulates HOME even when the environment omits it, so the branch cannot be reached from here"
+  else
+    out="$(env -u HOME bash "$ENGINE" check 2>&1)"; rc=$?
+    [ "$rc" -eq 0 ] && in_str "$out" "HOME" \
+      && ok "(g7) with HOME unset and no --ui-dir, the engine aborts with a named reason and exits 0" \
+      || no "(g7) with HOME unset and no --ui-dir, the engine aborts with a named reason and exits 0" "rc=$rc :: $out"
+    out="$(env -u HOME bash "$ENGINE" check --ui-dir "$G/nowhere" 2>&1)"; rc=$?
+    [ "$rc" -eq 0 ] && in_str "$out" "UI readiness: not configured" \
+      && ok "(g8) with HOME unset but --ui-dir given, the engine works normally" \
+      || no "(g8) with HOME unset but --ui-dir given, the engine works normally" "rc=$rc :: $out"
+  fi
+else
+  skipn "(g7/g8) \`env -u\` is unavailable on this host, so the HOME-unset branch cannot be exercised"
+fi
+
+# `--interval` is unbounded, and the page's freshness threshold is derived from the page's own
+# fixed 2 s poll — it cannot see this flag. When 3x the interval exceeds that default, serve
+# must hand the reader the `?stale=` value to open the page with, or the page renders a stale
+# banner for a document that is being regenerated exactly as configured.
+hint_port="$(python3 -c 'import socket
+s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()' 2>/dev/null)"
+case "$hint_port" in ''|*[!0-9]*) setup_fail "(g9) fixture: could not obtain a free port for the interval-hint probe" ;; esac
+HINTUI="$G/ui-hint"
+bash "$ENGINE" apply --ui-dir "$HINTUI" >/dev/null 2>&1
+[ -f "$HINTUI/index.html" ] || setup_fail "(g9) fixture: apply did not install into $HINTUI"
+out="$(bash "$ENGINE" serve --ui-dir "$HINTUI" --no-regen --detach --port "$hint_port" --interval 10 2>&1)"; rc=$?
+SERVE_PIDFILES="$SERVE_PIDFILES $HINTUI/serve.pid"
+[ "$rc" -eq 0 ] && in_str "$out" "?stale=30" \
+  && ok "(g9) with --interval 10, serve prints the ?stale=30 the page needs to avoid a false stale banner" \
+  || no "(g9) with --interval 10, serve prints the ?stale= value the page needs" "rc=$rc :: $out"
+bash "$ENGINE" stop --ui-dir "$HINTUI" >/dev/null 2>&1
+
+# The engine mirrors two of the page's constants to compute that hint, and a mirror nobody
+# checks is a mirror that rots. These are derived from floor.js itself, never restated here.
+js_poll="$(awk -F'[ =;]+' '/^ *var POLL_MS = / {print $4; exit}' "$JS")"
+eng_poll="$(awk -F= '/^PAGE_POLL_SEC=/ {print $2; exit}' "$ENGINE")"
+eng_stale="$(awk -F= '/^PAGE_STALE_DEFAULT=/ {print $2; exit}' "$ENGINE")"
+case "${js_poll:-x}${eng_poll:-x}${eng_stale:-x}" in
+  *[!0-9]*) no "(g11) the engine's mirrored page constants match floor.js" "could not parse them (js POLL_MS='$js_poll' engine poll='$eng_poll' stale='$eng_stale') — the assertion would be vacuous" ;;
+  *)
+    [ "$eng_poll" = "$((js_poll / 1000))" ] && [ "$eng_stale" = "$((eng_poll * 3))" ] \
+      && ok "(g11) the engine's mirrored page constants match floor.js (poll ${eng_poll}s, default threshold ${eng_stale}s = 3x)" \
+      || no "(g11) the engine's mirrored page constants match floor.js" "floor.js polls every $((js_poll / 1000))s; the engine believes ${eng_poll}s with a ${eng_stale}s threshold — the ?stale= hint would be computed against the wrong default" ;;
+esac
+
+# CONTROL: at the default interval the page default already covers the cadence, so there is
+# nothing to say and serve must not invent a parameter the user did not need.
+hint_port2="$(python3 -c 'import socket
+s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()' 2>/dev/null)"
+case "$hint_port2" in ''|*[!0-9]*) setup_fail "(g10) fixture: could not obtain a second free port" ;; esac
+out="$(bash "$ENGINE" serve --ui-dir "$HINTUI" --no-regen --detach --port "$hint_port2" 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && ! in_str "$out" "?stale=" \
+  && ok "(g10) CONTROL: at the default interval serve prints no ?stale= hint — the hint is interval-driven, not decoration" \
+  || no "(g10) CONTROL: at the default interval serve prints no ?stale= hint" "rc=$rc :: $out"
+bash "$ENGINE" stop --ui-dir "$HINTUI" >/dev/null 2>&1
+
 # ===========================================================================
 echo "(h) AC-loopback — a real server, a real fetch, and a refused off-host connect"
 # ===========================================================================
@@ -646,18 +837,25 @@ port="$(python3 -c 'import socket
 s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()' 2>/dev/null)"
 case "$port" in ''|*[!0-9]*) setup_fail "(h) fixture: could not obtain a free port" ;; esac
 
-if has_lit "$ENGINE" "--bind 127.0.0.1"; then
-  ok "(h1) setup-ui.sh always passes --bind 127.0.0.1 to http.server"
-else
-  no "(h1) setup-ui.sh always passes --bind 127.0.0.1 to http.server"
-fi
-# Per-INVOCATION, not per-file: the engine's header prose names http.server four times and a
-# whole-file occurrence count would compare those mentions against the bind flag.
-binds="$(awk '/python3 -m http[.]server/ { t++; if ($0 ~ /--bind 127\.0\.0\.1/) b++ } END { print (t+0) " " (b+0) }' "$ENGINE")"
+# CODE ONLY. The engine's header comment carries both `python3 -m http.server` and
+# `--bind 127.0.0.1` on ONE line, so a whole-file scan was partly satisfied by PROSE — and
+# reported "2 invocations" where the engine has one. A comment that claims the bind is not
+# the bind; excluding `^\s*#` is what makes these two assertions about the code.
+binds="$(awk '$0 !~ /^[[:space:]]*#/ && /python3 -m http[.]server/ { t++; if ($0 ~ /--bind 127\.0\.0\.1/) b++ } END { print (t+0) " " (b+0) }' "$ENGINE")"
 n_bind="${binds%% *}"; n_loop="${binds##* }"
-[ "$n_bind" -ge 1 ] 2>/dev/null && [ "$n_bind" = "$n_loop" ] \
-  && ok "(h2) all $n_bind http.server invocation(s) in the engine carry --bind 127.0.0.1 on the same line" \
-  || no "(h2) every http.server invocation carries the loopback bind" "invocations=$n_bind bound=$n_loop"
+[ "$n_bind" = "1" ] 2>/dev/null && [ "$n_loop" = "1" ] \
+  && ok "(h1) setup-ui.sh has exactly ONE non-comment http.server invocation and it passes --bind 127.0.0.1" \
+  || no "(h1) setup-ui.sh has exactly ONE non-comment http.server invocation carrying --bind 127.0.0.1" "invocations=$n_bind bound=$n_loop"
+# MUTATION CONTROL: drop the flag from the one real invocation and the count must diverge.
+# Without this, (h1) would also pass against a scan that matched nothing at all.
+MUT_BIND="$TMPROOT/mut-bind.sh"
+sed 's/python3 -m http.server --bind 127.0.0.1/python3 -m http.server/' "$ENGINE" > "$MUT_BIND" 2>/dev/null
+if mutant_ok "$ENGINE" "$MUT_BIND" shell; then
+  mb="$(awk '$0 !~ /^[[:space:]]*#/ && /python3 -m http[.]server/ { t++; if ($0 ~ /--bind 127\.0\.0\.1/) b++ } END { print (t+0) " " (b+0) }' "$MUT_BIND")"
+  [ "${mb%% *}" = "1" ] && [ "${mb##* }" = "0" ] \
+    && ok "(h2) MUTATION CONTROL: an invocation with the loopback bind removed IS caught (invocations=${mb%% *} bound=${mb##* })" \
+    || no "(h2) MUTATION CONTROL: an invocation with the loopback bind removed IS caught" "got invocations=${mb%% *} bound=${mb##* }"
+fi
 
 out="$(bash "$ENGINE" serve --no-regen --detach --port "$port" --ui-dir "$HUI" 2>&1)"; rc=$?
 SERVE_PIDFILES="$SERVE_PIDFILES $HUI/serve.pid"
@@ -899,4 +1097,38 @@ if [ -r "$script_dir/../docs/FLOOR_UI.md" ]; then
   ok "(z7) docs/FLOOR_UI.md exists — the companion doc the module flow cites is not a dead pointer"
 else
   no "(z7) docs/FLOOR_UI.md exists" "commands/setup.md cites it from the ## Module: ui flow"
+fi
+
+# --- the surfaces/formats basis is stated in ONE place and quoted, not restated ---------
+# `build-floor.sh`'s own header is the basis sentence. A count copied into a fourth document
+# goes stale silently: this doc still said "nine surfaces, four formats" after the projector
+# grew to fourteen in five, and no gate could see it because nothing tied the two together.
+# This assertion ties them: the words come OUT of build-floor.sh.
+FLOOR_MD="$script_dir/../docs/FLOOR_UI.md"
+FLOOR_SH="$script_dir/build-floor.sh"
+if [ -r "$FLOOR_MD" ] && [ -r "$FLOOR_SH" ]; then
+  # The sentence wraps across comment lines, so it is un-wrapped before it is read.
+  basis_line="$(sed -n '1,40p' "$FLOOR_SH" | sed 's/^#[[:space:]]*//' | tr '\n' ' ' | tr -s ' ')"
+  basis_phrase="$(printf '%s' "$basis_line" | sed -nE 's/.*(across [A-Za-z]+ projected surfaces in [A-Za-z]+ formats).*/\1/p' | head -1)"
+  n_word="$(printf '%s' "$basis_phrase" | awk '{print $2}')"
+  f_word="$(printf '%s' "$basis_phrase" | awk '{print $6}')"
+  if [ -z "$basis_phrase" ] || [ -z "$n_word" ] || [ -z "$f_word" ]; then
+    no "(z8) FLOOR_UI.md quotes build-floor.sh's own surfaces/formats basis sentence" \
+       "could not parse the basis phrase out of build-floor.sh (phrase='$basis_phrase') — the assertion would be vacuous"
+  elif has_lit "$FLOOR_MD" "$basis_phrase"; then
+    ok "(z8) FLOOR_UI.md quotes build-floor.sh's basis sentence verbatim ('$basis_phrase')"
+  else
+    no "(z8) FLOOR_UI.md quotes build-floor.sh's basis sentence verbatim" \
+       "build-floor.sh says '$basis_phrase'; FLOOR_UI.md does not carry that phrase — a restated number here would be a fourth copy that rots on its own"
+  fi
+  # The residue grep is deliberately for the PREVIOUS wording, which is what actually rotted.
+  stale_md=""
+  for s in "nine surfaces" "four formats"; do
+    if has_lit "$FLOOR_MD" "$s"; then stale_md="$stale_md [$s]"; fi
+  done
+  [ -z "$stale_md" ] \
+    && ok "(z9) no pre-fourteen surfaces/formats residue survives in FLOOR_UI.md" \
+    || no "(z9) no pre-fourteen surfaces/formats residue survives in FLOOR_UI.md" "still present:$stale_md"
+else
+  no "(z8/z9) FLOOR_UI.md and build-floor.sh are both readable" "FLOOR_UI.md or build-floor.sh could not be read"
 fi
