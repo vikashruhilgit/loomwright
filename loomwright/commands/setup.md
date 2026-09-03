@@ -541,7 +541,7 @@ Default to NOT applying. `serve` is never started without an explicit choice.
 
 ### Verify
 
-Re-run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-ui.sh" check` and show the before/after: the verdict now `configured` and the bundle matching the plugin byte for byte. Success is claimed ONLY after that re-check. As a live smoke test with the server running, `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:<port>/floor.json` should print `200` — and on a machine with no run in flight the page still renders, saying `no run in flight` rather than going blank.
+Re-run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-ui.sh" check` and show the before/after: the verdict now `configured` and the bundle matching the plugin byte for byte. Success is claimed ONLY after that re-check. As a live smoke test with the server running, `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:<port>/floor.json` should print `200` — and on a machine with nothing running the page still renders rather than going blank — saying `no run in flight` when the projector actually observed an idle session, and `session data unavailable — <reason>` when it could not observe one at all (the two are deliberately different claims; see `docs/FLOOR_UI.md`).
 
 ### Subflow: `/setup ui remove`
 
