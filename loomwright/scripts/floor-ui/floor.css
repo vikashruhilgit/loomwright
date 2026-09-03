@@ -146,7 +146,6 @@ code { font-family: var(--mono); font-size: 0.85em; }
 .lanes { list-style: none; margin: 0 1.25rem; padding: 0; }
 .lane {
   border: 1px solid var(--line);
-  border-left: 6px solid var(--line-strong);
   border-radius: var(--radius);
   background: var(--panel);
   padding: 0.6rem 0.75rem;
@@ -196,9 +195,11 @@ code { font-family: var(--mono); font-size: 0.85em; }
 }
 .lane.pulse .dot { animation: pulse 2.4s ease-in-out infinite; }
 
+/* The whole outline goes dashed - a uniform shape change reads as a state change without
+ * colour, which is what the stall cue has to survive on. Nothing here is decorative: the
+ * agent's own colour lives on the dot, never on the lane's frame. */
 .lane.stalled {
   border-style: dashed;
-  border-left-style: solid;
   border-color: var(--warn-line);
   background: var(--warn-bg);
   color: var(--warn-ink);
