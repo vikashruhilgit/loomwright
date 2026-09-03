@@ -376,7 +376,13 @@ if [ -n "$GITROOT" ] && git -C "$GITROOT" cat-file -e "$PRECHANGE_SHA:loomwright
   PRE_FILT="$RL/.pre-digest-filtered.md"; POST_FILT="$RL/.post-digest-filtered.md"
   grep -v '^_Generated ' "$PRE_OUT" > "$PRE_FILT"
   grep -v '^_Generated ' "$DIGL"    > "$POST_FILT"
+  # default_byte_identical — the literal name this subtask's `provides` entry pins (mirrors the
+  # no_write_verbs convention subtask 2 established): the AC-handoff-byte-identical verdict itself.
+  default_byte_identical=0
   if diff -q "$PRE_FILT" "$POST_FILT" >/dev/null 2>&1; then
+    default_byte_identical=1
+  fi
+  if [ "$default_byte_identical" -eq 1 ]; then
     ok "AC-handoff-byte-identical: default digest.md is byte-identical pre- vs post-change (diff empty, excluding the volatile generation timestamp)"
   else
     no "default digest.md DIFFERS pre- vs post-change: $(diff "$PRE_FILT" "$POST_FILT" 2>&1 | head -5)"
