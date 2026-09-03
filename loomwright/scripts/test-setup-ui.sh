@@ -38,7 +38,12 @@
 #       floor.js, counted by occurrence, with a mutation control adding a second timer. Plus
 #       the two claims the page must NOT make: the idle banner is reachable only through a
 #       gated verdict (with a mutation control that ungates it), and the stale banner asserts
-#       no cause it cannot observe. Plus the poll's in-flight guard and both of its clear sites
+#       no cause it cannot observe. Plus the poll's in-flight guard and both of its clear sites.
+#       Plus THE PHASE MAP, checked against the closed phase set PARSED OUT of the
+#       state-management skill: the map may invent no phase, at least one closed-set phase
+#       must be left unmapped (or the fallback is dead code), and a recorded-but-unmapped
+#       phase must get its own note rather than rendering exactly like no phase at all — with
+#       one control that invents a stage for it and one that deletes the note
 #   (c) AC-motion-a11y-theme — the reduced-motion block removes animation AND transition; the
 #       light palette is on bare :root, dark under the system-preference query and again on
 #       an explicit data-theme; body has a token background; exactly ONE @keyframes exists and
@@ -51,21 +56,30 @@
 #       typed; floor-stalled has exactly one row older than the 300 s default; floor-empty is
 #       the EARNED idle case (sessions counted, a current session identified, zero agents in
 #       it); floor-nosession is its contrast (sessions counted, `current` OMITTED, a note
-#       saying why, beside a state surface still recording phase EXECUTE); floor-stale's
-#       generation time is far older than the others'
+#       saying why, beside a state surface still recording phase EXECUTE); floor-loop is the
+#       stage-map contrast (every surface counted, lanes present, and a recorded phase the
+#       map has no stage for); floor-stale's generation time is far older than the others'
 #   (f) AC-engine-contract — check on an absent dir, apply installs, a second apply is a
 #       no-op, a drifted bundle is `updated` naming the file, remove is WITHHELD on a
 #       directory with no marker (and that directory survives), remove deletes an owned one.
 #       With a mutation control that strips the marker gate and shows the foreign directory
 #       being deleted. Plus the two paths on which a removal REPORT could be false: a
 #       --ui-dir that is itself a symlink, and a real directory whose PHYSICAL path is $HOME
-#       reached through a symlinked parent
+#       reached through a symlinked parent. Plus all THREE path refusals exercised directly —
+#       `/` (twice: as the engine ships, and again with the ownership gate reverted so the
+#       /-refusal itself has to answer, both under a `rm` that only writes a log), a BARE
+#       $HOME, and an OWNED directory under the plugin install dir — against a fixture $HOME
+#       and a fixture plugin root, each asserting the target survives byte for byte, with a
+#       mutation control that reverts the plugin-dir guard and watches the delete go through
 #   (g) AC-engine-fail-safe — python3 absent (PATH stub) aborts serve by name; jq absent still
 #       applies and warns that build-floor.sh will skip; build-floor.sh absent aborts serve by
 #       name; a bad subcommand and a bad flag both exit 0; an UNSET HOME aborts by name rather
 #       than tripping `set -u`. EVERY branch exits 0. Plus the `?stale=` hint serve prints when
 #       --interval outgrows the page's own threshold, its control at the default interval, and
-#       a parity check on the two page constants the engine mirrors to compute it
+#       a parity check on the two page constants the engine mirrors to compute it. The fourth
+#       serve fail-safe branch — a BUSY PORT — is exercised against a socket this suite really
+#       holds, with a free-port control proving the refusal is the conflict and not a blanket
+#       one
 #   (h) AC-loopback — a real detached server, a real fetch from 127.0.0.1 returning the fixture
 #       bytes, and a refused connect to this host's first non-loopback IPv4 on the same port.
 #       SKIPPED (reported separately from passes) when the host has no non-loopback address
@@ -141,8 +155,16 @@ command -v python3 >/dev/null 2>&1 || setup_fail "python3 is required to run the
 
 TMPROOT="$(mktemp -d)" || setup_fail "mktemp -d failed"
 SERVE_PIDFILES=""
+# HOLDER_PIDS: processes this suite starts that are NOT the engine's own server — currently
+# the socket held on a port so the busy-port branch has something to collide with. They are
+# killed from the same EXIT trap, because a probe that outlives the run holds a port hostage.
+HOLDER_PIDS=""
 cleanup_files() {
   local pf pid
+  for pid in $HOLDER_PIDS; do
+    case "$pid" in ''|*[!0-9]*) continue ;; esac
+    kill "$pid" 2>/dev/null
+  done
   for pf in $SERVE_PIDFILES; do
     [ -f "$pf" ] || continue
     while IFS= read -r pid; do
@@ -331,6 +353,87 @@ if mutant_ok "$JS" "$MUT_JS"; then
     || no "(b13) MUTATION CONTROL: a second, purely decorative timer IS counted" "found $m_int"
 fi
 
+
+# --- A RECORDED PHASE OUTSIDE THE STAGE MAP MUST BE VISIBLE, NEVER SILENT ---------------
+# `state.md`'s `phase` is a CLOSED SET, and it is PARSED OUT of the state-management skill
+# here rather than restated, so a phase added there moves this assertion with it.
+# PHASE_STAGE maps the pipeline phases onto the three middle stages, and it is deliberately
+# PARTIAL: one member of the closed set sits BETWEEN items rather than inside the pipeline,
+# so no stage corresponds to it and inventing one would be the guess this page exists to
+# refuse. What the page must NOT do is render such a phase exactly as it renders NO phase —
+# three em dashes and a note that says nothing — because that reads as "no phase was
+# recorded" about a phase that WAS recorded, which is the measured-state-as-unknown failure
+# floor.js's own header names. Three claims, none of which restates a phase name:
+#   1. every key of the map is in the closed set (the map never invents a phase),
+#   2. at least one closed-set phase is left UNMAPPED (or the fallback is dead code),
+#   3. the page carries a distinct note for it, keyed on the MAP rather than on any phase
+#      value — so no unmapped phase name may appear in floor.js at all.
+STATE_SKILL="$script_dir/../skills/state-management/SKILL.md"
+PHASE_NOTE_LIT="no pipeline stage corresponds to it"
+map_keys_of() {
+  awk '/var PHASE_STAGE = \{/{f=1} f{print} f&&/\};/{exit}' "$1" \
+    | tr ',' '\n' | sed -nE 's/^[[:space:]]*([A-Z_]+)[[:space:]]*:.*/\1/p' | LC_ALL=C sort
+}
+not_in() { # not_in "<set>" "<candidates>" -> candidates absent from set
+  local s="$1" c out="" x
+  for x in $2; do case " $s " in *" $x "*) ;; *) out="$out $x" ;; esac; done
+  printf '%s' "${out# }"
+}
+if [ ! -f "$STATE_SKILL" ]; then
+  no "(b22) the phase closed set is parsed from the state-management skill" "not found: $STATE_SKILL — every phase assertion below would be vacuous"
+else
+  CLOSED_PHASES="$(sed -nE 's/^- phase: (.*)$/\1/p' "$STATE_SKILL" | head -1 | tr '|' ' ')"
+  CLOSED_PHASES="$(printf '%s' "$CLOSED_PHASES" | tr -s ' ' | sed -e 's/^ //' -e 's/ $//')"
+  MAP_KEYS="$(map_keys_of "$JS" | tr '\n' ' ' | sed -e 's/ $//')"
+  n_closed="$(printf '%s\n' $CLOSED_PHASES | awk 'NF{n++} END{print n+0}')"
+  n_map="$(printf '%s\n' $MAP_KEYS | awk 'NF{n++} END{print n+0}')"
+  if [ "$n_closed" -lt 2 ] || [ "$n_map" -lt 1 ]; then
+    no "(b22) the closed phase set and the PHASE_STAGE map were both parsed" "closed=$n_closed ($CLOSED_PHASES) map=$n_map ($MAP_KEYS) — the assertions below would be vacuous"
+  else
+    ok "(b22) parsed $n_closed closed-set phases from the skill and $n_map PHASE_STAGE keys from floor.js"
+    invented="$(not_in "$CLOSED_PHASES" "$MAP_KEYS")"
+    [ -z "$invented" ] \
+      && ok "(b23) every PHASE_STAGE key is a member of the closed set — the map invents no phase" \
+      || no "(b23) every PHASE_STAGE key is a member of the closed set" "not in the closed set:$invented"
+    UNMAPPED="$(not_in "$MAP_KEYS" "$CLOSED_PHASES")"
+    [ -n "$UNMAPPED" ] \
+      && ok "(b24) at least one closed-set phase is deliberately UNMAPPED ($UNMAPPED), so the unmapped-phase path is live code and not decoration" \
+      || no "(b24) at least one closed-set phase is deliberately unmapped" "every closed-set phase has a stage, so the fallback below can never run — either a stage was guessed for a phase that has none, or this assertion has rotted"
+    named=""
+    for p in $UNMAPPED; do
+      [ "$(occ "$JS" "$p")" = "0" ] || named="$named $p"
+    done
+    if has_lit "$JS" "$PHASE_NOTE_LIT" && has_lit "$JS" "no phase is recorded" && [ -z "$named" ]; then
+      ok "(b25) an unmapped recorded phase gets its own note ('$PHASE_NOTE_LIT'), distinct from 'no phase is recorded', and no unmapped phase is named in floor.js — the fallback is keyed on the map"
+    else
+      no "(b25) an unmapped recorded phase gets its own note, distinct from the no-phase case, with no hard-coded phase name" \
+         "note-literal=$(has_lit "$JS" "$PHASE_NOTE_LIT" && echo yes || echo NO) no-phase-literal=$(has_lit "$JS" "no phase is recorded" && echo yes || echo NO) hard-coded:${named:-none}"
+    fi
+    # MUTATION CONTROL for (b24): give the unmapped phase a stage and the set must empty out.
+    # This is the exact regression the finding describes in reverse — a page that answers for
+    # a phase it cannot place — and (b24) has to be able to see it.
+    first_unmapped="$(printf '%s\n' $UNMAPPED | awk 'NF{print; exit}')"
+    if [ -n "$first_unmapped" ]; then
+      MUT_MAP="$TMPROOT/mut-phasemap.js"
+      sed "s/^    EXECUTE: 'execute',$/    EXECUTE: 'execute', $first_unmapped: 'execute',/" "$JS" > "$MUT_MAP" 2>/dev/null
+      if mutant_ok "$JS" "$MUT_MAP"; then
+        m_keys="$(map_keys_of "$MUT_MAP" | tr '\n' ' ' | sed -e 's/ $//')"
+        m_unmapped="$(not_in "$m_keys" "$CLOSED_PHASES")"
+        [ -z "$m_unmapped" ] \
+          && ok "(b26) MUTATION CONTROL: a stage invented for $first_unmapped empties the unmapped set — (b24) can turn red" \
+          || no "(b26) MUTATION CONTROL: a stage invented for $first_unmapped empties the unmapped set" "still unmapped:$m_unmapped"
+      fi
+    fi
+    # MUTATION CONTROL for (b25): delete the note and the distinction disappears.
+    MUT_NOTE="$TMPROOT/mut-phasenote.js"
+    sed "s/ — $PHASE_NOTE_LIT//g" "$JS" > "$MUT_NOTE" 2>/dev/null
+    if mutant_ok "$JS" "$MUT_NOTE"; then
+      has_lit "$MUT_NOTE" "$PHASE_NOTE_LIT" \
+        && no "(b27) MUTATION CONTROL: removing the unmapped-phase note IS detected" "the literal survived the mutation, so (b25) proves nothing" \
+        || ok "(b27) MUTATION CONTROL: removing the unmapped-phase note IS detected — (b25) can turn red"
+    fi
+  fi
+fi
 # ===========================================================================
 echo "(c) AC-motion-a11y-theme — floor.css"
 # ===========================================================================
@@ -454,9 +557,9 @@ for j in "$FIX_DIR"/*.json; do
     && ok "(d2) $(basename "$j") conforms to the FLOOR_PROJECTION contract" \
     || no "(d2) $(basename "$j") conforms to the FLOOR_PROJECTION contract" "$vout"
 done
-[ "$n_fix" -eq 5 ] \
-  && ok "(d3) all five committed fixtures were validated (found $n_fix)" \
-  || no "(d3) all five committed fixtures were validated" "found $n_fix"
+[ "$n_fix" -eq 6 ] \
+  && ok "(d3) all six committed fixtures were validated (found $n_fix)" \
+  || no "(d3) all six committed fixtures were validated" "found $n_fix"
 
 # Mutation control: a fixture that violates the omit-not-zero rule must be REJECTED.
 MUT_FIX="$TMPROOT/mut-fixture.json"
@@ -475,6 +578,7 @@ echo "(e) fixture facts the browser half will read"
 LIVE="$FIX_DIR/floor-live.json"; STALLED="$FIX_DIR/floor-stalled.json"
 EMPTY="$FIX_DIR/floor-empty.json"; STALE="$FIX_DIR/floor-stale.json"
 NOSESS="$FIX_DIR/floor-nosession.json"
+LOOPF="$FIX_DIR/floor-loop.json"
 
 n_rows="$(jq -r '.surfaces.sessions.detail.current.agents | length' "$LIVE" 2>/dev/null)"
 n_typed="$(jq -r '[.surfaces.sessions.detail.current.agents[] | select(has("agent_type"))] | length' "$LIVE" 2>/dev/null)"
@@ -545,6 +649,27 @@ n_snote="$(jq -r '[.notes[] | select(startswith("sessions "))] | length' "$NOSES
   && ok "(e10) floor-nosession carries the projector note the page reads its reason from ($n_snote sessions note(s))" \
   || no "(e10) floor-nosession carries a sessions note for the page to quote" "found $n_snote — the page would have nothing but its named fallback"
 
+
+# floor-loop is the RECORDED-BUT-UNMAPPED phase, and it is the shape the projector really
+# emits between items: everything else about the run looks exactly like floor-live — the
+# sessions surface is counted, lanes are present — and the ONE difference is a phase that the
+# page's stage map does not carry. Rendering it identically to "no phase is recorded" would be
+# the same class of defect as the idle banner (e7)/(e9) exist for, one region up the page.
+e_loop="$(jq -r '"\(.surfaces.state.status)/\(.surfaces.state.detail.phase)/\(.surfaces.sessions.status)"' "$LOOPF" 2>/dev/null)"
+loop_phase="$(jq -r '.surfaces.state.detail.phase' "$LOOPF" 2>/dev/null)"
+case " $UNMAPPED " in
+  *" $loop_phase "*)
+    ok "(e11) floor-loop records phase $loop_phase — a member of the closed set that the stage map deliberately does NOT carry, so the unmapped rendering has a fixture" ;;
+  *)
+    no "(e11) floor-loop records a phase the stage map does not carry" "phase=$loop_phase, unmapped set='${UNMAPPED:-<empty>}' — the fixture no longer exercises the unmapped path" ;;
+esac
+[ "${e_loop%%/*}" = "counted" ] && [ "$(printf '%s' "$e_loop" | awk -F/ '{print $3}')" = "counted" ] \
+  && ok "(e12) floor-loop's state and sessions surfaces are BOTH counted, so the em dashes it renders can only come from the unmapped phase — never from an absent surface" \
+  || no "(e12) floor-loop's state and sessions surfaces are both counted" "got $e_loop"
+n_loop_rows="$(jq -r '.surfaces.sessions.detail.current.agents | length' "$LOOPF" 2>/dev/null)"
+[ "$n_loop_rows" -ge 1 ] 2>/dev/null \
+  && ok "(e13) CONTROL: floor-loop still has $n_loop_rows lane row(s), so no banner intercepts the page before the stage row is read" \
+  || no "(e13) floor-loop still has lane rows" "found $n_loop_rows — an empty lane list would raise a banner and the stage row would not be what the reader sees"
 g_live="$(jq -r '.generated_at_epoch' "$LIVE" 2>/dev/null)"
 g_stale="$(jq -r '.generated_at_epoch' "$STALE" 2>/dev/null)"
 if [ "$g_stale" -lt $((g_live - 86400)) ] 2>/dev/null; then
@@ -688,6 +813,142 @@ else
      "rc=$rc dir=$([ -d "$FHUI" ] && echo present || echo GONE) unchanged=$([ "$fh_before" = "$fh_after" ] && echo yes || echo NO) :: $out"
 fi
 
+
+# --- THE THREE PATH REFUSALS, EACH EXERCISED DIRECTLY -----------------------------------
+# `do_remove` refuses `/`, `$HOME` and anything at or under the plugin install directory.
+# The header, FLOOR_UI.md and commands/setup.md all describe these as load-bearing, and until
+# now only the symlinked-parent variant of the $HOME one had a case: `/` had none, the BARE
+# $HOME had none, and the plugin-install-dir guard was not merely uncovered but deliberately
+# ROUTED AROUND — (f12)'s mutant is placed in its own directory precisely so that guard does
+# not intercept it.
+#
+# NOTHING BELOW POINTS AT A REAL PATH. `$HOME` is a fixture directory under $TMPROOT for the
+# duration of one command, the "plugin install directory" is a COPY of the engine in another
+# one (the engine resolves script_dir from $0, which is the whole seam), and the two cases
+# that name `/` run with a `rm` that only writes a log — so even a total failure of every
+# guard could not delete anything. Each case asserts the refusal AND that the target is still
+# there, byte for byte.
+FAKE_HOME="$F/fake-home"
+mkdir -p "$FAKE_HOME" || setup_fail "(f15) fixture: could not create $FAKE_HOME"
+FAKE_BIN="$F/fake-bin"
+mkdir -p "$FAKE_BIN" || setup_fail "(f15) fixture: could not create $FAKE_BIN"
+RM_LOG="$F/rm-calls.log"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s"\nexit 0\n' "$RM_LOG" > "$FAKE_BIN/rm" \
+  || setup_fail "(f15) fixture: could not stage the no-op rm"
+chmod +x "$FAKE_BIN/rm" || setup_fail "(f15) fixture: could not make the no-op rm executable"
+: > "$RM_LOG"
+"$FAKE_BIN/rm" -r -- /proof-of-neutering >/dev/null 2>&1
+if [ "$(awk 'END{print NR+0}' "$RM_LOG")" = "1" ] && [ -d / ]; then
+  ok "(f15) fixture PREMISE: the no-op rm on the probe PATH records its arguments and deletes nothing"
+else
+  setup_fail "(f15) fixture: the no-op rm did not record its call, so the two /-refusal cases below would run against a REAL rm"
+fi
+: > "$RM_LOG"
+
+out="$(HOME="$FAKE_HOME" PATH="$FAKE_BIN:$PATH" bash "$ENGINE" remove --ui-dir / 2>&1)"; rc=$?
+n_rm="$(awk 'END{print NR+0}' "$RM_LOG")"
+if [ "$rc" -eq 0 ] && ! in_str "$out" "remove: removed" && [ "$n_rm" = "0" ] && [ -d / ]; then
+  ok "(f16) remove --ui-dir / refuses, exits 0 and never reaches a delete (rm calls: $n_rm)"
+else
+  no "(f16) remove --ui-dir / refuses, exits 0 and never reaches a delete" "rc=$rc rm-calls=$n_rm :: $out"
+fi
+# WHICH refusal answered matters. On any machine without a root-level marker the ownership
+# gate answers FIRST, so the `/` assertion itself is unreachable from outside and would sit
+# there untested forever — the exact shape of "a guard that cannot fire". Reverting only the
+# two marker gates (the same three sites (f12) reverts) lets the next line of defence speak,
+# and the no-op rm makes the probe harmless even if it did not.
+: > "$RM_LOG"
+MUT_ROOT_DIR="$TMPROOT/mutroot"
+mkdir -p "$MUT_ROOT_DIR" || setup_fail "(f17) fixture: could not create $MUT_ROOT_DIR"
+MUT_ROOT="$MUT_ROOT_DIR/setup-ui.sh"
+sed -e 's/^  if ! is_ours; then$/  if false; then/' \
+    -e 's/^  if \[ ! -f "\$resolved\/\$MARKER" \]; then$/  if false; then/' "$ENGINE" > "$MUT_ROOT" 2>/dev/null
+n_rev_root="$(occ "$MUT_ROOT" 'if false; then')"
+[ "$n_rev_root" = "3" ] || setup_fail "(f17) fixture: the mutant reverted $n_rev_root of the 3 marker assertions, so the /-refusal would not be the gate under test"
+if mutant_ok "$ENGINE" "$MUT_ROOT" shell; then
+  out="$(HOME="$FAKE_HOME" PATH="$FAKE_BIN:$PATH" bash "$MUT_ROOT" remove --ui-dir / 2>&1)"; rc=$?
+  n_rm="$(awk 'END{print NR+0}' "$RM_LOG")"
+  if [ "$rc" -eq 0 ] && in_str "$out" "the resolved ui dir is /, which this module will never delete" \
+     && [ "$n_rm" = "0" ] && [ -d / ]; then
+    ok "(f17) with the ownership gate removed the /-refusal ITSELF fires by name and still reaches no delete — it is a real second line of defence, not dead code behind the marker"
+  else
+    no "(f17) the /-refusal fires by name once the ownership gate is out of the way" "rc=$rc rm-calls=$n_rm :: $out"
+  fi
+fi
+
+# The BARE $HOME — no symlinked parent, which is what makes it a different case from (f14).
+# The marker is PRESENT, so the ownership gate cannot be what answers: the only thing left
+# that can refuse a marker-carrying directory outside the plugin dir is the $HOME guard.
+HOMEUI="$F/home-as-ui-dir"
+mkdir -p "$HOMEUI" || setup_fail "(f18) fixture: could not create $HOMEUI"
+printf 'marker\n' > "$HOMEUI/.loomwright-ui-module"
+printf 'the user keeps this\n' > "$HOMEUI/precious.txt"
+[ ! -L "$HOMEUI" ] || setup_fail "(f18) fixture: the ui dir must not be a symlink, or (f13)'s guard would answer instead"
+hu_before="$(tree_sig "$HOMEUI")"
+out="$(HOME="$HOMEUI" bash "$ENGINE" remove --ui-dir "$HOMEUI" 2>&1)"; rc=$?
+hu_after="$(tree_sig "$HOMEUI")"
+# Two spellings, one guard: on a host whose temp tree is reached through a symlink (macOS
+# /var -> /private/var) the PHYSICAL comparison answers and names the symlink; on a host
+# where it is not, the literal comparison answers. Either is the $HOME refusal.
+home_named=0
+in_str "$out" "which this module will never delete" && home_named=1
+in_str "$out" "which is the home directory" && home_named=1
+if [ "$rc" -eq 0 ] && in_str "$out" "remove: ABORTED" && [ "$home_named" = "1" ] \
+   && [ -d "$HOMEUI" ] && [ "$hu_before" = "$hu_after" ]; then
+  ok "(f18) a BARE --ui-dir equal to \$HOME is refused although it carries the marker, and survives byte for byte"
+else
+  no "(f18) a bare --ui-dir equal to \$HOME is refused and survives" \
+     "rc=$rc named=$home_named dir=$([ -d "$HOMEUI" ] && echo present || echo GONE) unchanged=$([ "$hu_before" = "$hu_after" ] && echo yes || echo NO) :: $out"
+fi
+
+# An OWNED directory inside the plugin's own install dir. The install dir is wherever the
+# engine is invoked from ($0), so a COPY of the engine in a fixture directory is a complete
+# and hermetic fake of one — this never touches the real plugin tree.
+FAKEPLUG="$F/fake-plugin"
+mkdir -p "$FAKEPLUG" || setup_fail "(f19) fixture: could not create $FAKEPLUG"
+cp "$ENGINE" "$FAKEPLUG/setup-ui.sh" || setup_fail "(f19) fixture: could not stage the engine copy"
+PLUGUI="$FAKEPLUG/ui"
+mkdir -p "$PLUGUI" || setup_fail "(f19) fixture: could not create $PLUGUI"
+printf 'marker\n' > "$PLUGUI/.loomwright-ui-module"
+printf 'the user keeps this\n' > "$PLUGUI/precious.txt"
+pu_before="$(tree_sig "$PLUGUI")"
+out="$(HOME="$FAKE_HOME" bash "$FAKEPLUG/setup-ui.sh" remove --ui-dir "$PLUGUI" 2>&1)"; rc=$?
+pu_after="$(tree_sig "$PLUGUI")"
+if [ "$rc" -eq 0 ] && in_str "$out" "inside the plugin install directory" \
+   && [ -d "$PLUGUI" ] && [ "$pu_before" = "$pu_after" ]; then
+  ok "(f19) an OWNED (marker-carrying) directory under the plugin install dir is refused by name and survives byte for byte"
+else
+  no "(f19) an owned directory under the plugin install dir is refused and survives" \
+     "rc=$rc dir=$([ -d "$PLUGUI" ] && echo present || echo GONE) unchanged=$([ "$pu_before" = "$pu_after" ] && echo yes || echo NO) :: $out"
+fi
+
+# MUTATION CONTROL for (f19). (f18) and (f19) both assert a REFUSAL, and a refusal is exactly
+# what an engine that never deletes anything also produces — so at least one of these guards
+# has to be shown deleting when it is taken away. The plugin-install-dir guard is the one
+# chosen because its whole blast radius is a fixture directory under $TMPROOT.
+MUTPLUG="$F/fake-plugin-mut"
+mkdir -p "$MUTPLUG" || setup_fail "(f20) fixture: could not create $MUTPLUG"
+MUT_PLUG_ENG="$MUTPLUG/setup-ui.sh"
+sed -e 's/^    "\$script_dir"|"\$script_dir"\/\*)$/    "@@no-such-path@@")/' \
+    -e 's/^      "\$script_phys"|"\$script_phys"\/\*)$/      "@@no-such-path@@")/' "$ENGINE" > "$MUT_PLUG_ENG" 2>/dev/null
+n_rev_plug="$(occ "$MUT_PLUG_ENG" '@@no-such-path@@')"
+[ "$n_rev_plug" = "2" ] || setup_fail "(f20) fixture: the mutant reverted $n_rev_plug of the 2 plugin-install-dir patterns, so the control would not be testing that guard"
+if mutant_ok "$ENGINE" "$MUT_PLUG_ENG" shell; then
+  MUTPUI="$MUTPLUG/ui"
+  mkdir -p "$MUTPUI" && printf 'marker\n' > "$MUTPUI/.loomwright-ui-module" && printf 'x\n' > "$MUTPUI/precious.txt" \
+    || setup_fail "(f20) fixture: could not create $MUTPUI"
+  SENTINEL="$F/sentinel"
+  mkdir -p "$SENTINEL" && printf 'untouched\n' > "$SENTINEL/keep.txt" || setup_fail "(f20) fixture: could not create $SENTINEL"
+  sent_before="$(tree_sig "$SENTINEL")"
+  HOME="$FAKE_HOME" bash "$MUT_PLUG_ENG" remove --ui-dir "$MUTPUI" >/dev/null 2>&1
+  sent_after="$(tree_sig "$SENTINEL")"
+  if [ ! -d "$MUTPUI" ] && [ "$sent_before" = "$sent_after" ]; then
+    ok "(f20) MUTATION CONTROL: with the plugin-install-dir guard reverted the owned directory IS deleted — the guard is what saved it in (f19), and the blast radius stayed inside the fixture"
+  else
+    no "(f20) MUTATION CONTROL: with the plugin-install-dir guard reverted the owned directory IS deleted" \
+       "dir=$([ -d "$MUTPUI" ] && echo STILL-PRESENT || echo gone) sentinel-unchanged=$([ "$sent_before" = "$sent_after" ] && echo yes || echo NO) — (f19) may be passing against an engine that simply never deletes"
+  fi
+fi
 # ===========================================================================
 echo "(g) AC-engine-fail-safe — every branch exits 0, each with a named reason"
 # ===========================================================================
@@ -826,6 +1087,67 @@ out="$(bash "$ENGINE" serve --ui-dir "$HINTUI" --no-regen --detach --port "$hint
   || no "(g10) CONTROL: at the default interval serve prints no ?stale= hint" "rc=$rc :: $out"
 bash "$ENGINE" stop --ui-dir "$HINTUI" >/dev/null 2>&1
 
+
+# A BUSY PORT IS THE FOURTH `serve` FAIL-SAFE BRANCH, and it was the only one with no case.
+# The other three are stubbed ABSENCES (no python3, no jq, no build-floor.sh); this one needs
+# a real conflict, so a socket is genuinely held on the port for the duration of the probe —
+# the same bind the engine's own `port_free()` performs, from the other side. It matters
+# because the module's stated posture is that a busy port is REPORTED and never silently
+# moved: a moved port is a browser tab reading bytes from something else.
+PORT_HOLDER_OUT="$G/busy-port.txt"
+: > "$PORT_HOLDER_OUT"
+python3 -c 'import socket, sys, time
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.bind(("127.0.0.1", 0)); s.listen(5)
+sys.stdout.write(str(s.getsockname()[1]) + "\n"); sys.stdout.flush()
+time.sleep(120)' > "$PORT_HOLDER_OUT" 2>/dev/null &
+PORT_HOLDER_PID=$!
+HOLDER_PIDS="$HOLDER_PIDS $PORT_HOLDER_PID"
+# Poll for the holder to publish its port. No `timeout` (absent on stock macOS) and no
+# unbounded wait: a holder that never came up must SKIP, not hang and not assert on nothing.
+hw=0
+while [ "$hw" -lt 100 ]; do
+  [ -s "$PORT_HOLDER_OUT" ] && break
+  sleep 0.1; hw=$((hw + 1))
+done
+busy_port="$(head -1 "$PORT_HOLDER_OUT" 2>/dev/null)"
+case "${busy_port:-x}" in
+  ''|*[!0-9]*)
+    kill "$PORT_HOLDER_PID" 2>/dev/null
+    skipn "(g12) no socket could be held on this host, so the busy-port branch cannot be exercised from here" ;;
+  *)
+    if ! kill -0 "$PORT_HOLDER_PID" 2>/dev/null; then
+      skipn "(g12) the port holder exited before the probe, so the port would not have been busy"
+    else
+      rm -f "$GUI/serve.pid" 2>/dev/null
+      out="$(bash "$ENGINE" serve --ui-dir "$GUI" --no-regen --port "$busy_port" 2>&1)"; rc=$?
+      if [ "$rc" -eq 0 ] \
+         && in_str "$out" "serve: ABORTED — port $busy_port is already in use" \
+         && in_str "$out" "Nothing was started" \
+         && [ ! -f "$GUI/serve.pid" ]; then
+        ok "(g12) with the port already held, serve aborts by name, exits 0, starts nothing and records no pidfile"
+      else
+        no "(g12) with the port already held, serve aborts by name and exits 0" \
+           "rc=$rc pidfile=$([ -f "$GUI/serve.pid" ] && echo WRITTEN || echo none) :: $out"
+      fi
+      # CONTROL: the abort must be caused by the CONFLICT, not by serve refusing every port.
+      free_port="$(python3 -c 'import socket
+s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()' 2>/dev/null)"
+      case "${free_port:-x}" in
+        ''|*[!0-9]*) skipn "(g13) CONTROL: no free port could be obtained for the contrast run" ;;
+        *)
+          out="$(bash "$ENGINE" serve --ui-dir "$GUI" --no-regen --detach --port "$free_port" 2>&1)"; rc=$?
+          SERVE_PIDFILES="$SERVE_PIDFILES $GUI/serve.pid"
+          if [ "$rc" -eq 0 ] && ! in_str "$out" "already in use"; then
+            ok "(g13) CONTROL: on a FREE port the same invocation does not abort — the refusal is the conflict, not a blanket refusal"
+          else
+            no "(g13) CONTROL: on a free port the same invocation does not abort" "rc=$rc :: $out"
+          fi
+          bash "$ENGINE" stop --ui-dir "$GUI" >/dev/null 2>&1 ;;
+      esac
+      kill "$PORT_HOLDER_PID" 2>/dev/null
+    fi ;;
+esac
 # ===========================================================================
 echo "(h) AC-loopback — a real server, a real fetch, and a refused off-host connect"
 # ===========================================================================

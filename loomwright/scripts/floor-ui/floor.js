@@ -121,6 +121,13 @@
     if (cell.text === '—') { node.classList.add('unknown'); } else { node.classList.remove('unknown'); }
   }
 
+  /* The recorded phase -> pipeline stage map, and it is deliberately PARTIAL. `state.md`'s
+   * `phase` is a CLOSED SET (skills/state-management/SKILL.md, §"State File Schema") and one
+   * of its members is the Supervisor's between-items phase, which belongs to no stage on this
+   * page. Assigning it one would be a guess, and guessing is the thing this file refuses to
+   * do - so it is absent here, and it is deliberately not NAMED here either: the fallback in
+   * renderStages is keyed on THIS MAP, not on any phase value, so a phase added to the closed
+   * set later is handled honestly with no edit to this file. */
   var PHASE_STAGE = {
     PLAN: 'plan', ACQUIRE: 'plan', INIT: 'plan',
     EXECUTE: 'execute',
@@ -150,7 +157,17 @@
 
     var state = surfaceOf(d, 'state');
     var phase = (state && state.detail && state.detail.phase) || null;
-    var active = phase ? PHASE_STAGE[phase] : null;
+    /* A RECORDED PHASE THE MAP DOES NOT KNOW IS NOT THE SAME AS NO PHASE AT ALL, and this is
+     * the one place the two shapes would otherwise become indistinguishable: both leave all
+     * three middle cells at an em dash - which is TRUE, no stage is active - and a reader
+     * would then be looking at a measured state rendered exactly like an absent one. So the
+     * stage cells stay honest and the phase-note below states the recorded value instead.
+     * hasOwnProperty rather than a truthy lookup: PHASE_STAGE['constructor'] is a function,
+     * which would light up no stage while reporting itself as mapped. */
+    var mapped = (phase !== null && Object.prototype.hasOwnProperty.call(PHASE_STAGE, phase))
+      ? PHASE_STAGE[phase] : null;
+    var unmapped = (phase !== null && mapped === null);
+    var active = mapped;
     var mids = ['plan', 'execute', 'review'], i, node;
     for (i = 0; i < mids.length; i++) {
       node = document.querySelector('.stage[data-stage="' + mids[i] + '"]');
@@ -162,7 +179,12 @@
       if (active === mids[i]) {
         setCell(vid, { text: phase, title: 'state.detail.phase, as recorded in .supervisor/state.md' });
       } else {
-        setCell(vid, { text: '—', title: phase ? ('the recorded phase is ' + phase) : 'no phase is recorded' });
+        setCell(vid, {
+          text: '—',
+          title: phase
+            ? ('the recorded phase is ' + phase + (unmapped ? ' — no pipeline stage corresponds to it' : ''))
+            : 'no phase is recorded'
+        });
       }
     }
 
@@ -178,7 +200,12 @@
           : 'state.md write time unknown';
         var br = (state.detail && state.detail.branch) ? (' · branch ' + state.detail.branch) : '';
         var rs = (state.detail && state.detail.run_status) ? (' · recorded run_status ' + state.detail.run_status) : '';
-        note.textContent = age + br + rs;
+        /* The two shapes the stage cells cannot tell apart, said in words. Both are TEXT, set
+         * through textContent like everything else on this page. */
+        var ph = unmapped
+          ? (' · recorded phase ' + phase + ' — no pipeline stage corresponds to it')
+          : (phase ? '' : ' · no phase is recorded');
+        note.textContent = age + br + rs + ph;
       }
     }
   }

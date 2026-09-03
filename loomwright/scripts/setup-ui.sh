@@ -128,12 +128,6 @@ fi
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
-csum() {
-  if   have sha256sum; then sha256sum "$1" 2>/dev/null | cut -d' ' -f1
-  elif have shasum;    then shasum -a 256 "$1" 2>/dev/null | cut -d' ' -f1
-  else cksum "$1" 2>/dev/null | cut -d' ' -f1; fi
-}
-
 # drifted_files -> the names of bundle files whose installed copy differs from the plugin's,
 # INCLUDING files that are missing from the ui dir. Empty output means "already configured".
 drifted_files() {

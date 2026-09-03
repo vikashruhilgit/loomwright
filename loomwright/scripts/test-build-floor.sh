@@ -51,7 +51,10 @@
 #   (n) agents roster - the three committed fixture agent files parsed from YAML frontmatter,
 #       with every absent frontmatter field OMITTED from its row rather than defaulted, and the
 #       whole-token `read_only` derivation (a row whose list holds `NotebookEdit` but not `Edit`
-#       must NOT read as read-only)
+#       must NOT read as read-only). Plus the third not-counted arm - the UNRESOLVED one that
+#       fires when neither `$0` nor FLOOR_AGENTS_DIR names a directory, reached with a spoofed
+#       argv[0] because every real directory resolves, with a control proving the arm needs
+#       BOTH conditions
 #   (o) newest-session agent rows - the session owning the newest `ts` picks `current`; per
 #       agent_id events / first_ts / last_ts / agent_type / branch, with a second session's rows
 #       never contributing, plus the no-`ts`-anywhere case (current OMITTED, never guessed from
@@ -1457,6 +1460,60 @@ else
   fi
 fi
 
+
+# --- THE UNRESOLVED ARM: neither $0 nor FLOOR_AGENTS_DIR names a directory ----------------
+# The `agents` surface has THREE not-counted arms and only two of them had a case. The third
+# fires when the plugin directory cannot be resolved from `$0` AND the override is unset -
+# and every other call site in this file exports FLOOR_AGENTS_DIR, so it had never once
+# executed. It is not reachable by staging the script somewhere odd: ANY real directory
+# resolves, and `cd "$SELF_DIR/.."` of one succeeds, which is exactly why the branch survived
+# uncovered. What it takes is a `$0` whose dirname does not exist, and `bash -c '. "$1"' <$0>`
+# supplies precisely that and nothing else - the script is the real one, byte for byte, and
+# the ONLY thing changed is the argv[0] it resolves its install directory from.
+RUN0="$(new_repo)"; seed_tree "$RUN0"
+( cd "$RUN0" && env -u FLOOR_AGENTS_DIR bash -c '. "$1"' \
+    "/no-such-directory-$$/build-floor.sh" "$BUILD" ) >/dev/null 2>&1
+rc0=$?
+JU="$RUN0/.supervisor/floor/floor.json"
+if [ ! -f "$JU" ]; then
+  no "unresolved agents dir: the projector still produced its artefact" "no floor.json at $JU (rc=$rc0)"
+else
+  stU="$(sstatus "$JU" agents)"; cnU="$(scount "$JU" agents)"; rsU="$(sreason "$JU" agents)"
+  srcU="$(jq -r '.surfaces.agents.source // "ABSENT"' "$JU" 2>/dev/null)"
+  hasdU="$(jq -r '.surfaces.agents | if has("detail") then "y" else "n" end' "$JU" 2>/dev/null)"
+  [ "$rc0" -eq 0 ] \
+    && ok "unresolved agents dir: exit 0 - a projector that cannot find its own install dir still must not break its caller" \
+    || no "unresolved agents dir: exit $rc0, expected 0"
+  [ "$stU" = "absent" ] && [ "$cnU" = "ABSENT" ] \
+    && ok "unresolved agents dir: absent with NO count - a roster nobody could look for is not a roster of size 0" \
+    || no "unresolved agents dir: status=$stU count=$cnU, expected absent/ABSENT"
+  [ "$srcU" = "unresolved" ] \
+    && ok "...and the source reads 'unresolved' rather than naming a path that was never resolved" \
+    || no "unresolved agents dir: source=$srcU, expected 'unresolved'"
+  case "$rsU" in
+    *"could not be resolved"*"FLOOR_AGENTS_DIR"*)
+      ok "...and the reason names BOTH halves of the condition (\$0 and the unset override)" ;;
+    *) no "the reason does not name both halves of the condition: '$rsU'" ;;
+  esac
+  [ "$hasdU" = "n" ] \
+    && ok "...and no roster is published for a directory that was never located" \
+    || no "the unresolved agents surface still carried a detail payload"
+  n_noteU="$(jq -r '[.notes[] | select(startswith("agents "))] | length' "$JU" 2>/dev/null)"
+  [ "$n_noteU" -ge 1 ] 2>/dev/null \
+    && ok "...and notes[] states the omission a second time, as the schema requires of a not-counted surface" \
+    || no "no agents note was emitted for the unresolved arm (found $n_noteU)"
+fi
+# CONTROL: the branch is the AND of two conditions. The SAME spoofed argv[0], with the
+# override SET, must NOT take it - otherwise the case above would pass for an engine that
+# ignores FLOOR_AGENTS_DIR entirely.
+RUN0C="$(new_repo)"; seed_tree "$RUN0C"
+( cd "$RUN0C" && FLOOR_AGENTS_DIR="$RUN0C/agents" bash -c '. "$1"' \
+    "/no-such-directory-$$/build-floor.sh" "$BUILD" ) >/dev/null 2>&1
+JUC="$RUN0C/.supervisor/floor/floor.json"
+stUC="$(sstatus "$JUC" agents)"; cnUC="$(scount "$JUC" agents)"
+[ "$stUC" = "counted" ] && [ "$cnUC" = "$EXP_AGENTS" ] \
+  && ok "CONTROL: the same unresolvable \$0 with FLOOR_AGENTS_DIR SET counts $cnUC agents - the unresolved arm needs BOTH conditions" \
+  || no "CONTROL: unresolvable \$0 + FLOOR_AGENTS_DIR set: status=$stUC count=$cnUC, expected counted/$EXP_AGENTS"
 # ============================================================================
 echo "== (o) newest-session agent rows: current is picked by the newest ts, never by file order =="
 # Every expectation below is recomputed FROM THE FIXTURE with jq, independently of the
