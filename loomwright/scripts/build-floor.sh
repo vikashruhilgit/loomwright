@@ -418,6 +418,10 @@ count_glob "insights_runs" ".supervisor/insights/runs" \
 # ---------------------------------------------------------------------------
 PM=".supervisor/postmortem/results.jsonl"
 pm_basis="non-blank lines in $PM that parse as a JSON object, one record per line"
+# Declared BEFORE the branch chain: every arm below except the last leaves the ledger unread, and
+# the rules correlation further down consults these under `set -u`. Empty means "no ledger
+# evidence was seen", which is what makes the correlation OMITTED rather than zero.
+pm_detail=""; pm_paths_tsv=""; pm_evidence_json="{}"
 if [ ! -f "$PM" ]; then
   add_note "postmortem omitted: $PM is not present"
   add_surface "postmortem" "$PM" "$pm_basis" "absent" "" "$PM is not present"
@@ -432,12 +436,118 @@ else
     end' "$PM" 2>/dev/null)"
   pm_ok="$(printf '%s\n'  "$pm_class" | awk '$0=="ok"{n++} END{print n+0}')"
   pm_bad="$(printf '%s\n' "$pm_class" | awk '$0=="malformed"{n++} END{print n+0}')"
+
+  # -------------------------------------------------------------------------
+  # THE CHURN DETAIL, and its one genuinely contested decision.
+  #
+  # The ledger carries TWO flow-stage representations that do NOT agree: a per-line
+  # `flow_stages` COUNTER object {launch_pad, worker, self_heal, unknowable}, and one
+  # `flow_stage` field per element of `categories[]`. `learning-emit` derives the counter from
+  # `fix_cycles` while emitting a single category object, so on an `automate_drain` line the
+  # counter can read 7 where `categories[]` holds one entry. Measured on this repo at the time
+  # this was written: they disagreed on 26 of 89 lines, every one of them `automate_drain`.
+  #
+  # The basis is PINNED to `.categories[].flow_stage`, and the reason is DENOMINATOR COHERENCE,
+  # not taste. The class distribution must be over category objects, because `evidence` - which
+  # every distribution here is required to carry - is a field ON the category object. Taking the
+  # counter for the flow-stage half would put two different denominators side by side inside one
+  # `detail`: a class distribution over N category objects next to a flow-stage distribution
+  # whose denominator on drain lines is `fix_cycles`. So both halves are computed over the SAME
+  # category objects, `categories_total` names that denominator, and `flow_stage_basis` /
+  # `class_basis` state each basis as a literal string in the artefact rather than in a comment
+  # a consumer never sees. `flow_stage_counter_disagreements` records how often the OTHER
+  # representation would have said something different - the number that makes the choice
+  # falsifiable instead of merely declared.
+  #
+  # Nothing here is a rate, a score or a ranking: the distributions are key-addressed objects,
+  # a malformed line is counted and NAMED by line number rather than folded into a class, and a
+  # line with an empty `categories[]` is counted separately rather than attributed anywhere.
+  # -------------------------------------------------------------------------
+  pm_detail="$(jq -R -s -c '
+    def nz: with_entries(select(.value != 0));
+    split("\n")
+    | to_entries
+    | map(select((.value | gsub("\\s"; "")) != ""))
+    | map({line: (.key + 1), o: ((try (.value | fromjson) catch null))})
+    | map(. + {ok: ((.o | type) == "object")})
+    | . as $rows
+    | ($rows | map(select(.ok | not) | .line))                             as $bad_lines
+    | ($rows | map(select(.ok)))                                           as $good
+    | ($good | map(. as $r
+        | (if (($r.o.categories) | type) == "array"
+           then ($r.o.categories | to_entries
+                 | map({line: $r.line, index: .key, c: .value}))
+           else [] end))
+       | add // [])                                                        as $cats
+    | ($cats | map(select((.c | type) == "object")))                       as $catobjs
+    | ($catobjs | map(.c.class)      | map(select(type == "string"))
+       | group_by(.) | map({key: .[0], value: length}) | from_entries)     as $classdist
+    | ($catobjs | map(.c.flow_stage) | map(select(type == "string"))
+       | group_by(.) | map({key: .[0], value: length}) | from_entries)     as $flowdist
+    | ($good | map(select((((.o.categories) | type) != "array")
+                          or (((.o.categories) | length) == 0))) | length) as $nocat
+    | ($good | map(
+        (.o.flow_stages) as $ctr
+        | (if (($ctr | type) == "object")
+             and (($ctr | to_entries | map(select((.value | type) != "number")) | length) == 0)
+           then ($ctr | nz) else null end)                                 as $ctrmap
+        | (if ((.o.categories) | type) == "array"
+           then (.o.categories | map(select(type == "object") | .flow_stage)
+                 | map(select(type == "string"))
+                 | group_by(.) | map({key: .[0], value: length}) | from_entries)
+           else {} end)                                                    as $catmap
+        | if $ctrmap == null then 0 elif $ctrmap == $catmap then 0 else 1 end)
+       | add // 0)                                                         as $disagree
+    | ($catobjs | map({line: .line, index: .index}
+        + (if ((.c.class)          | type) == "string"  then {class:          .c.class}          else {} end)
+        + (if ((.c.flow_stage)     | type) == "string"  then {flow_stage:     .c.flow_stage}     else {} end)
+        + (if ((.c.round)          | type) == "number"  then {round:          .c.round}          else {} end)
+        + (if ((.c.self_heal_miss) | type) == "boolean" then {self_heal_miss: .c.self_heal_miss} else {} end)
+        + (if ((.c.evidence)       | type) == "string"  then {evidence:       .c.evidence}       else {} end)))
+                                                                           as $entries
+    | {categories_total: ($catobjs | length),
+       class_basis: ".categories[].class",
+       flow_stage_basis: ".categories[].flow_stage",
+       lines_without_categories: $nocat,
+       flow_stage_counter_disagreements: $disagree,
+       lines_malformed: ($bad_lines | length)}
+      + (if ($classdist  | length) == 0 then {} else {class_distribution:      $classdist}  end)
+      + (if ($flowdist   | length) == 0 then {} else {flow_stage_distribution: $flowdist}   end)
+      + (if ($entries    | length) == 0 then {} else {entries:                 $entries}    end)
+      + (if ($bad_lines  | length) == 0 then {} else {malformed_lines:         $bad_lines}  end)
+  ' "$PM" 2>/dev/null)"
+
+  # Two by-products of the same read, kept for the rules/churn CORRELATION further down: the
+  # (line, changed_path) pairs and the per-line evidence strings. Derived here so the ledger is
+  # read once for the numbers and once for these, never a third time - and so a correlation can
+  # only ever cite evidence this pass actually saw.
+  pm_paths_tsv="$(jq -R -r '
+    split("\n") | to_entries
+    | map(select((.value | gsub("\\s"; "")) != ""))
+    | map(. as $e | ((try ($e.value | fromjson) catch null)) as $o
+        | if ($o | type) == "object" and (($o.changed_paths | type) == "array")
+          then ($o.changed_paths | map(select(type == "string" and length > 0))
+                | map((($e.key + 1) | tostring) + "\t" + (gsub("[\t\n]"; " "))))
+          else [] end)
+    | add // [] | .[]' -s "$PM" 2>/dev/null)"
+  pm_evidence_json="$(jq -R -s -c '
+    split("\n") | to_entries
+    | map(select((.value | gsub("\\s"; "")) != ""))
+    | map(. as $e | ((try ($e.value | fromjson) catch null)) as $o
+        | {key: (($e.key + 1) | tostring),
+           value: (if ($o | type) == "object" and (($o.categories | type) == "array")
+                   then ($o.categories | map(select(type == "object") | .evidence)
+                         | map(select(type == "string")))
+                   else [] end)})
+    | map(select((.value | length) > 0)) | from_entries' "$PM" 2>/dev/null)"
+
   if [ "$pm_bad" -gt 0 ]; then
     add_note "postmortem count omitted: $pm_bad malformed line(s) in $PM"
     add_surface "postmortem" "$PM" "$pm_basis" "unverified" "" \
-      "$pm_bad line(s) do not parse as a JSON object" "$(mtime_epoch "$PM")"
+      "$pm_bad line(s) do not parse as a JSON object" "$(mtime_epoch "$PM")" "$pm_detail"
   else
-    add_surface "postmortem" "$PM" "$pm_basis" "counted" "$pm_ok" "" "$(mtime_epoch "$PM")"
+    add_surface "postmortem" "$PM" "$pm_basis" "counted" "$pm_ok" "" \
+      "$(mtime_epoch "$PM")" "$pm_detail"
   fi
 fi
 
@@ -445,8 +555,14 @@ fi
 # 8+9) JSON-document surfaces: drain rounds and the committed rules store.
 # A malformed document makes the whole surface unverified, with the file named.
 # ---------------------------------------------------------------------------
+# count_json_docs <key> <dir> <basis> <detail_json> <files...>
+# `detail_json` is threaded to BOTH the counted and the unverified arm on purpose: a document
+# that would not parse costs the surface its count, but it must not cost the surface the rows
+# the OTHER documents were read from. Emitting the count and dropping the evidence would report
+# "could not examine" as "examined and clean", which is precisely the distinction this surface
+# exists to keep. The absent / unreadable arms pass nothing, because nothing was read.
 count_json_docs() {
-  local k="$1" dir="$2" basis="$3"; shift 3
+  local k="$1" dir="$2" basis="$3" detail="$4"; shift 4
   local n=$#
   if [ ! -d "$dir" ]; then
     add_note "$k omitted: input directory $dir is not present"
@@ -463,7 +579,7 @@ count_json_docs() {
     return 0
   fi
   if [ "$n" -eq 0 ]; then
-    add_surface "$k" "$dir" "$basis" "counted" "0" "" "$(mtime_epoch "$dir")"
+    add_surface "$k" "$dir" "$basis" "counted" "0" "" "$(mtime_epoch "$dir")" "$detail"
     return 0
   fi
   # `jq empty` — NOT `jq -e .`: with -e the exit status is taken from the last OUTPUT
@@ -487,23 +603,249 @@ count_json_docs() {
     [ -n "$offender" ] || offender="a document under $dir would not parse"
     add_note "$k count omitted: $offender"
     add_surface "$k" "$dir" "$basis" "unverified" "" \
-      "at least one document does not parse as JSON: $offender" "$(mtime_epoch "$dir")"
+      "at least one document does not parse as JSON: $offender" "$(mtime_epoch "$dir")" "$detail"
     return 0
   fi
-  add_surface "$k" "$dir" "$basis" "counted" "$n" "" "$(mtime_epoch "$dir")"
+  add_surface "$k" "$dir" "$basis" "counted" "$n" "" "$(mtime_epoch "$dir")" "$detail"
 }
 
 count_json_docs "drain_rounds" ".supervisor/drain-rounds" \
-  "files matching .supervisor/drain-rounds/*.json, each parsed as a JSON document" \
+  "files matching .supervisor/drain-rounds/*.json, each parsed as a JSON document" "" \
   .supervisor/drain-rounds/*.json
 
 count_glob "worker_summaries" ".supervisor/worker-summaries" \
   "files matching .supervisor/worker-summaries/*.md" \
   .supervisor/worker-summaries/*.md
 
-count_json_docs "rules" ".agent/rules" \
-  "files matching .agent/rules/*.json, each parsed as a JSON document; the sibling README.md is not counted" \
-  .agent/rules/*.json
+# ---------------------------------------------------------------------------
+# 9) the committed .agent/rules/ store - counted as FILES, detailed as RULES.
+#
+# `count` keeps meaning CATEGORY FILES and is not redefined; the number of rule objects is a
+# separate, differently-named field (`rules_parsed`), because three other surfaces publish
+# `count` under the shared count_json_docs contract and silently changing what it measures
+# would change a number they all share.
+#
+# THE SUPERSEDES WALK DELIBERATELY DIVERGES FROM read-rules.sh - READ THIS BEFORE "FIXING" IT.
+# That reader's SUPERSESSION block is marked "normative encoding contract - PINNED, do not
+# redesign" and specifies the opposite of this one on all three points: a live `supersedes`
+# HIDES the rule it names, resolution is single-hop only and never chased, and a dangling
+# target is a no-op that is IGNORED. Those are the right semantics for a ROUTING reader
+# answering "which rules apply to this diff". They are the wrong ones for a BROWSER, whose
+# whole purpose is to show the curation history - including what was retired and what points
+# nowhere. So here: nothing is hidden, chains are resolved TRANSITIVELY and in order, and a
+# dangling pointer is REPORTED as dangling rather than dropped. Only read-rules.sh's FIELD
+# SCHEMA is reused (`supersedes` is an optional non-null string, never self-referential).
+# read-rules.sh itself is not modified and keeps its own contract.
+#
+# WHAT IS NOT DIVERGED FROM, because dropping single-hop is exactly what makes it necessary:
+# its TERMINATION property. read-rules.sh documents cycles in this field as a real, found
+# defect (its "CYCLE DETECTION IS GENERAL, NOT PAIRWISE-ONLY" block, a bot-review fix covering
+# cycles of ANY length) and states that its safety comes from a single BOUNDED, non-recursive
+# pass - a fixed `range(0; edge_count)` walk per node - so an arbitrarily malformed or cyclic
+# graph can never loop or hang it. This projector runs against the REAL store on every
+# invocation, so an unbounded walk here would be fail-UNSAFE rather than a fixture gap. Every
+# traversal below is therefore the same `reduce range(0; $edge_n)` construction: bounded by the
+# total edge count, non-recursive, and safe by shape rather than by the data happening to be
+# acyclic. `supersedes` is at most one per rule, so the edge set is a functional graph
+# (out-degree <= 1) and one bounded pass per node yields all four answers at once - chain order,
+# cycle membership, dangling targets, and termination.
+# ---------------------------------------------------------------------------
+RULES_DIR=".agent/rules"
+rules_basis="files matching .agent/rules/*.json, each parsed as a JSON document; the sibling README.md is not counted"
+rulefiles=("$RULES_DIR"/*.json)
+rules_detail=""
+
+# Per-file parse classification, done HERE rather than inside count_json_docs, because the
+# detail has to survive a file that will not parse: the valid files' rules are still reported
+# and the offender is named with its own reason. `jq empty` - not `jq -e .` - for the same
+# reason count_json_docs uses it: with -e a valid document whose value is `null`/`false`/`0`
+# exits 1 and would be misreported as malformed.
+rules_docs=""
+for rf in ${rulefiles[@]+"${rulefiles[@]}"}; do
+  rf_err="$( { jq empty "$rf" >/dev/null; } 2>&1 )"
+  if [ $? -ne 0 ]; then
+    rules_docs="${rules_docs}$(jq -cn --arg f "$rf" \
+      --arg e "$(printf '%s\n' "$rf_err" | head -1 | cut -c1-160)" \
+      '{file: $f, parsed: false, reason: $e}' 2>/dev/null)
+"
+  else
+    rf_doc="$(jq -c '.' "$rf" 2>/dev/null)"
+    rules_docs="${rules_docs}$(jq -cn --arg f "$rf" --argjson d "${rf_doc:-null}" \
+      '{file: $f, parsed: true, doc: $d}' 2>/dev/null)
+"
+  fi
+done
+
+if [ -n "$rules_docs" ]; then
+  rules_detail="$(printf '%s' "$rules_docs" | LC_ALL=C sort | jq -s -c '
+    . as $files
+    | ($files | map(select(.parsed)))                                      as $okfiles
+    | ($files | map(select(.parsed | not) | {file: .file, reason: .reason})) as $badfiles
+    # A document that parses but is not the top-level ARRAY this store uses contributes no
+    # rules. Naming it is the difference between "held no rules" and "was never understood".
+    | ($okfiles | map(select((.doc | type) != "array") | .file))           as $notarray
+    | ($okfiles | map(. as $f
+        | (if ($f.doc | type) == "array" then $f.doc else [] end)
+        | map(select(type == "object")) | map({source_file: $f.file, r: .}))
+       | add // [])                                                        as $raw
+    # EVERY field is emitted only when the SOURCE carries it. `applies_to` and `check` are
+    # decided with has(), never with a truthiness test: both are genuine TRI-STATES (key
+    # absent / present-and-null / a value), read-rules.sh types `check` as (string | null),
+    # and all three live rules carry `check: null`. A `if .check then` producer would collapse
+    # "declared, deliberately no runnable check" into "absent" - the nullable-required-field
+    # defect this repo has already recorded against this exact field. The `check` string is
+    # carried as DATA and is never executed, matching read-rules.sh pinned rule.
+    | ($raw | map(.r as $r | {source_file: .source_file}
+        + (if (($r.id)          | type) == "string" then {id:          $r.id}          else {} end)
+        + (if (($r.category)    | type) == "string" then {category:    $r.category}    else {} end)
+        + (if (($r.statement)   | type) == "string" then {statement:   $r.statement}   else {} end)
+        + (if (($r.enforcement) | type) == "string" then {enforcement: $r.enforcement} else {} end)
+        + (if ($r | has("provenance")) then {provenance: $r.provenance} else {} end)
+        + (if ($r | has("applies_to")) then {applies_to: $r.applies_to} else {} end)
+        + (if ($r | has("check"))      then {check:      $r.check}      else {} end)
+        + (if ($r | has("supersedes")) then {supersedes: $r.supersedes} else {} end))
+       | sort_by([(.category // ""), (.id // ""), .source_file]))          as $rules
+    | ($rules | map(.id) | map(select(type == "string")))                  as $ids
+    | ($rules | map(.id) | map(select(type == "string"))
+       | group_by(.) | map(select(length > 1) | .[0]))                     as $dupes
+    | ($rules | map(select(((.supersedes) | type) == "string" and ((.id) | type) == "string")
+                    | {from: .id, to: .supersedes}))                       as $all_edges
+    | ($all_edges | map(select(.from == .to) | .from) | unique)            as $self_ref
+    | ($all_edges | map(select(.from != .to)))                             as $ext_edges
+    | ($ext_edges | map(. as $e | select(($ids | index($e.to)) == null)))  as $dangling
+    | ($ext_edges | map(. as $e | select(($ids | index($e.to)) != null)))  as $edges
+    | ((($edges | map({(.from): .to}) | add) // {}))                       as $edge_map
+    | ($edges | map(.from))                                                as $edge_from
+    | ($edges | map(.to))                                                  as $edge_to
+    | ($edge_from | length)                                                as $edge_n
+    # BOUNDED pass 1 - cycle membership. Identical in construction to read-rules.sh: out-degree
+    # is at most 1, so a node is a cycle member iff following its own edge chain returns to it
+    # within $edge_n steps.
+    | ([ $edge_from[] | . as $start
+         | (reduce range(0; $edge_n) as $i ({cur: $edge_map[$start], hit: false};
+              if .hit or (.cur == null) then .
+              elif .cur == $start then {cur: .cur, hit: true}
+              else {cur: ($edge_map[.cur] // null), hit: false} end)) as $w
+         | select($w.hit) | $start ] | unique)                             as $cycle_members
+    # BOUNDED pass 2 - the cycle itself, so every member is reported rather than merely flagged.
+    # Canonicalised by rotating to the smallest member, so all members of one cycle collapse to
+    # one entry under `unique` while the traversal ORDER survives.
+    | ([ $cycle_members[] | . as $s
+         | (reduce range(0; $edge_n) as $i ({cur: $s, path: [], done: false};
+              if .done then .
+              else (.path + [.cur]) as $p | ($edge_map[.cur]) as $n
+                 | if ($n == null) or ($n == $s) then {cur: .cur, path: $p, done: true}
+                   else {cur: $n, path: $p, done: false} end
+              end)) as $w
+         | $w.path | (min) as $m | (index($m)) as $ix | (.[$ix:] + .[:$ix]) ]
+       | unique)                                                          as $cycles
+    # BOUNDED pass 3 - the transitive chains, walked from each head (a node with an outgoing
+    # edge, no incoming edge, and no cycle membership) so the emitted order IS the chain order.
+    # The walk stops on a node it has already visited, so a chain that runs INTO a cycle ends
+    # at the cycle rather than circling it.
+    # `. as $n` BEFORE each index(): `index(FILTER)` evaluates FILTER against the ARRAY it is
+    # piped into, NOT the outer `.`, so a bare `index(.)` here searches $edge_to for $edge_to
+    # itself, matches at 0, and silently yields ZERO heads and an empty chain list. Same capture-
+    # before-pipe caveat read-rules.sh records on its own supersession edges.
+    | ([ $edge_from[] | . as $n
+         | select(($cycle_members | index($n)) == null)
+         | select(($edge_to | index($n)) == null) ] | unique)              as $heads
+    | ([ $heads[] | . as $h
+         | (reduce range(0; $edge_n) as $i ({cur: $h, path: [$h], stop: false};
+              if .stop then .
+              else ($edge_map[.cur]) as $n
+                 | if ($n == null) or ((.path | index($n)) != null)
+                   then {cur: .cur, path: .path, stop: true}
+                   else {cur: $n, path: (.path + [$n]), stop: false} end
+              end)) as $w
+         | $w.path ] | map(select(length > 1)) | sort)                     as $chains
+    | ({files_parsed: ($okfiles | length),
+        rules_parsed: ($rules | length),
+        read_completeness: (if   ($badfiles | length) == 0 then "all"
+                            elif ($okfiles  | length) == 0 then "none"
+                            else "partial" end)}
+       + (if ($rules    | length) == 0 then {} else {rules:             $rules}    end)
+       + (if ($badfiles | length) == 0 then {} else {files_unparseable: $badfiles} end)
+       + (if ($notarray | length) == 0 then {} else {files_not_an_array: $notarray} end)
+       + (({}
+           + (if ($chains    | length) == 0 then {} else {chains:           $chains}    end)
+           + (if ($dangling  | length) == 0 then {} else {dangling:         $dangling}  end)
+           + (if ($cycles    | length) == 0 then {} else {cycles:           $cycles}    end)
+           + (if ($self_ref  | length) == 0 then {} else {self_referential: $self_ref}  end)
+           + (if ($dupes     | length) == 0 then {} else {duplicate_ids:    $dupes}     end)) as $s
+          | if ($s | length) == 0 then {} else {supersedes: $s} end))
+  ' 2>/dev/null)"
+fi
+
+# ---------------------------------------------------------------------------
+# The rule x churn CORRELATION, and everything it refuses to claim.
+#
+# It is a PATH OVERLAP and nothing more: a ledger line whose `changed_paths` matches one of a
+# rule's `applies_to` globs. That is an OBSERVATION - the artefact says so in a literal `label`
+# field - not a measurement of violations, and the evidence it was derived from (the line, the
+# path, the pattern that matched, and the ledger's own evidence strings) travels with it so a
+# reader can check it rather than trust it. Nothing is rated, scored, ranked or topped-N.
+#
+# A correlation that cannot be established is OMITTED, never emitted as zero: a rule whose
+# `applies_to` is null or absent is repo-wide and has no glob to correlate on, an unread ledger
+# yields no pairs at all, and a rule whose globs match nothing produces no entry. A `0` in any
+# of those positions would read as "measured no violations" when the truth is "no correlation
+# was computable" - the fabricated-zero failure this projector exists to refuse.
+#
+# Matching is a native bash `case` glob, in SHELL and never in jq, because that is exactly what
+# read-rules.sh routing does (`*` and `**` are equivalent and BOTH cross `/`; the pattern is
+# anchored against the whole path). Re-implementing it as a jq regex would silently answer a
+# different question from the reader that owns these globs.
+# ---------------------------------------------------------------------------
+if [ -n "$rules_detail" ] && [ -n "$pm_paths_tsv" ]; then
+  rules_corr=""
+  corr_pats="$(printf '%s' "$rules_detail" | jq -r '
+    (.rules // [])[] | select(((.id) | type) == "string")
+    | select(((.applies_to) | type) == "array")
+    | . as $r | .applies_to[] | select(type == "string" and length > 0)
+    | ($r.id + "\t" + (gsub("[\t\n]"; " ")))' 2>/dev/null)"
+  while IFS="$(printf '\t')" read -r corr_rid corr_pat; do
+    [ -n "$corr_rid" ] && [ -n "$corr_pat" ] || continue
+    while IFS="$(printf '\t')" read -r corr_ln corr_path; do
+      [ -n "$corr_path" ] || continue
+      # Unquoted on purpose: that is what makes the expansion a GLOB rather than a literal.
+      # `case` is parsed before the expansion, so a `|` or `)` inside a pattern is a literal
+      # character and cannot smuggle in an extra branch - read-rules.sh's own reasoning.
+      case "$corr_path" in
+        $corr_pat) rules_corr="${rules_corr}${corr_rid}	${corr_pat}	${corr_ln}	${corr_path}
+" ;;
+      esac
+    done <<CORR_PATHS
+$pm_paths_tsv
+CORR_PATHS
+  done <<CORR_PATTERNS
+$corr_pats
+CORR_PATTERNS
+
+  if [ -n "$rules_corr" ]; then
+    corr_json="$(printf '%s' "$rules_corr" | jq -R -s -c --argjson ev "$pm_evidence_json" '
+      split("\n") | map(select(length > 0)) | map(split("\t"))
+      | map(select(length == 4))
+      | map({rule_id: .[0], pattern: .[1], line: (.[2] | tonumber), path: .[3]})
+      | group_by(.rule_id)
+      | map({rule_id: .[0].rule_id,
+             label: "observation",
+             basis: "ledger lines whose changed_paths match this rules applies_to globs, matched with the same native shell case-glob read-rules.sh routes with; a path overlap is an observation that the rules scope and the churn record touch the same files and is NOT evidence the rule was violated",
+             matched: (map({line: .line, path: .path, pattern: .pattern}
+                           + ((($ev[(.line | tostring)]) // []) as $e
+                              | if ($e | length) == 0 then {} else {evidence: $e} end))
+                       | sort_by([.line, .path, .pattern]))})
+      | sort_by(.rule_id)' 2>/dev/null)"
+    case "$corr_json" in
+      ''|'[]') : ;;
+      *) rules_detail="$(jq -cn --argjson d "$rules_detail" --argjson c "$corr_json" \
+           '$d + {correlations: $c}' 2>/dev/null)" ;;
+    esac
+  fi
+fi
+
+count_json_docs "rules" "$RULES_DIR" "$rules_basis" "$rules_detail" \
+  ${rulefiles[@]+"${rulefiles[@]}"}
 
 # ---------------------------------------------------------------------------
 # 10) the agent roster - <plugin>/agents/*.md YAML frontmatter.

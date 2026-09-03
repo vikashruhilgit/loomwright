@@ -1,0 +1,27 @@
+[
+  {
+    "id": "fixture-applies-absent-check-absent",
+    "category": "documentation",
+    "statement": "Tri-state shape 1 of 3: BOTH applies_to and check keys are ABSENT from the source object.",
+    "enforcement": "advisory",
+    "provenance": {"source": "fixtures/floor-rules/documentation.json", "added": "2026-09-03T00:00:00Z"}
+  },
+  {
+    "id": "fixture-applies-null-check-null",
+    "category": "documentation",
+    "statement": "Tri-state shape 2 of 3: BOTH applies_to and check keys are PRESENT with the value null. This is the only shape the live store carries today, which is why the other two are fixture-only.",
+    "enforcement": "advisory",
+    "applies_to": null,
+    "check": null,
+    "provenance": {"source": "fixtures/floor-rules/documentation.json", "added": "2026-09-03T00:00:01Z"}
+  },
+  {
+    "id": "fixture-applies-array-check-string",
+    "category": "documentation",
+    "statement": "Tri-state shape 3 of 3: applies_to is a non-empty array of path globs and check is a non-null string. The check string is DATA and is never executed.",
+    "enforcement": "blocking",
+    "applies_to": ["loomwright/scripts/*", "CLAUDE.md"],
+    "check": "grep -q 'a literal this fixture never runs' CLAUDE.md",
+    "provenance": {"source": "fixtures/floor-rules/documentation.json", "added": "2026-09-03T00:00:02Z"}
+  }
+]
