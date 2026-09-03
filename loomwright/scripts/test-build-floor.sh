@@ -48,7 +48,23 @@
 #   (l2) clock-read failure - a `date` stub printing a non-numeric string must make
 #       generated_at_epoch exactly `null` with the KEY STILL PRESENT, with a no-shim numeric
 #       control and two mutation controls (a defaulted 0, and the key dropped)
-#   (m) real `.supervisor/` corroboration (local only) or an explicit SKIPPED line
+#   (n) agents roster - the three committed fixture agent files parsed from YAML frontmatter,
+#       with every absent frontmatter field OMITTED from its row rather than defaulted, and the
+#       whole-token `read_only` derivation (a row whose list holds `NotebookEdit` but not `Edit`
+#       must NOT read as read-only)
+#   (o) newest-session agent rows - the session owning the newest `ts` picks `current`; per
+#       agent_id events / first_ts / last_ts / agent_type / branch, with a second session's rows
+#       never contributing, plus the no-`ts`-anywhere case (current OMITTED, never guessed from
+#       file order)
+#   (p) state subtask rows - {id, title, status} in table order, `status` omitted on a table
+#       with no Status column, with the existing row count unchanged
+#   (q) add_surface's invalid-detail guard - an unparseable `detail` still emits the surface
+#       (without `detail`) and names the key and the reason in notes[]; two controls, one
+#       reverting the guard (the surface vanishes) and one passing VALID detail through
+#   (m) real `.supervisor/` corroboration (local only) or an explicit SKIPPED line. Runs LAST
+#       despite its letter, because it is the only case that may SKIP and because its `(m)`
+#       label is what the brief commissioning (n)-(q) refers to; renaming it would break that
+#       reference to buy nothing.
 #
 # Exit 0 = all pass, 1 = any failure. Registered automatically by ci.yml's test-*.sh glob.
 
@@ -57,6 +73,8 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 BUILD="$HERE/build-floor.sh"
 SCHEMA_MD="$(cd "$HERE/../docs" && pwd)/RESULT_SCHEMAS.md"
 SESS_FIXTURE="$HERE/fixtures/floor-sessions.jsonl"
+SESS_CUR_FIXTURE="$HERE/fixtures/floor-sessions-current.jsonl"
+AGENTS_FIXTURE_DIR="$HERE/fixtures/floor-agents"
 
 pass=0; fail=0; skip=0
 ok()   { echo "  ok: $1";        pass=$((pass+1)); }
@@ -82,7 +100,12 @@ new_repo() {
   printf '%s' "$r"
 }
 
-run_build() { ( cd "$1" && bash "$BUILD" >/dev/null 2>&1 ); }
+# FLOOR_AGENTS_DIR on EVERY run, seeded fixture or not: an unset override sends the script to
+# its own install directory, so the empty fixture would report the real agent count instead of
+# `absent`. The eleven direct `bash "$BUILD"` call sites below (the c2/f2/f3/g/i/k/l/l2 groups)
+# deliberately do NOT export it - they resolve the real directory and assert nothing about the
+# `agents` surface.
+run_build() { ( cd "$1" && FLOOR_AGENTS_DIR="$1/agents" bash "$BUILD" >/dev/null 2>&1 ); }
 
 # ---------------------------------------------------------------------------
 # The hermetic fixture. Every number here is KNOWN and is what the assertions
@@ -101,6 +124,20 @@ EXP_POSTMORTEM=4
 EXP_DRAIN=7
 EXP_WORKER_SUMMARIES=6
 EXP_RULES=2
+EXP_AGENTS=3              # the three committed fixture agent files, copied into <fixture>/agents/
+
+# The roster expectations are LITERALS, and the premise block in (n) re-greps each one out of
+# the committed fixture file it came from. Deriving them here with a second frontmatter parser
+# would only prove that two parsers written on the same afternoon agree; a literal plus a drift
+# check on its source is what (c) already does for fixtures/floor-sessions.jsonl.
+EXP_AG_NAMES="alpha beta gamma"
+EXP_AG_ALPHA_COLOR='#1E90FF'   # quoted in the fixture; the surrounding quotes must be stripped
+EXP_AG_ALPHA_MODEL="sonnet"
+EXP_AG_ALPHA_TURNS=12
+EXP_AG_BETA_MODEL="opus"
+EXP_AG_BETA_TURNS=40
+EXP_AG_GAMMA_COLOR="forestgreen"   # unquoted in the fixture - the other half of the quote path
+EXP_AG_GAMMA_MODEL="haiku"
 
 seed_tree() {
   local r="$1" i
@@ -151,6 +188,14 @@ seed_tree() {
   for i in $(seq 1 $EXP_WORKER_SUMMARIES); do echo "## WORKER_SUMMARY $i" \
       > "$r/.supervisor/worker-summaries/w$i.md"; done
   for i in $(seq 1 $EXP_RULES); do printf '[{"id":"r%s"}]\n' "$i" > "$r/.agent/rules/rule-$i.json"; done
+
+  # The agent roster's real-run source is the PLUGIN directory, not a .supervisor/ one, so the
+  # fixture needs its own copy and run_build must point FLOOR_AGENTS_DIR at it. Without that
+  # export the script resolves its own install directory and would count the REAL agents on
+  # every fixture - including the EMPTY one, which would turn the anti-vacuity control green
+  # for a reason that has nothing to do with the tree under test.
+  mkdir -p "$r/agents"
+  cp "$AGENTS_FIXTURE_DIR"/*.md "$r/agents/" 2>/dev/null
 }
 
 jget() { jq -r "$2" "$1" 2>/dev/null; }
@@ -163,12 +208,14 @@ sreason() { jq -r --arg k "$2" '.surfaces[$k].reason // ""'       "$1" 2>/dev/nu
 count_is() { [ "$(scount "$1" "$2")" = "$3" ]; }
 
 ALL_KEYS="state jobs_pending jobs_in_progress jobs_done jobs_failed automate_runs logs \
-sessions insights_runs postmortem drain_rounds worker_summaries rules"
+sessions insights_runs postmortem drain_rounds worker_summaries rules agents"
 
 command -v jq >/dev/null 2>&1 || { echo "test-build-floor: jq required to run these tests" >&2; exit 1; }
 [ -f "$BUILD" ]        || { echo "test-build-floor: $BUILD missing" >&2; exit 1; }
 [ -f "$SCHEMA_MD" ]    || { echo "test-build-floor: $SCHEMA_MD missing" >&2; exit 1; }
 [ -f "$SESS_FIXTURE" ] || { echo "test-build-floor: committed fixture $SESS_FIXTURE missing" >&2; exit 1; }
+[ -f "$SESS_CUR_FIXTURE" ] || { echo "test-build-floor: committed fixture $SESS_CUR_FIXTURE missing" >&2; exit 1; }
+[ -d "$AGENTS_FIXTURE_DIR" ] || { echo "test-build-floor: committed fixture dir $AGENTS_FIXTURE_DIR missing" >&2; exit 1; }
 
 # ============================================================================
 echo "== (a) hermetic fixture: every count equals its independently known value =="
@@ -197,6 +244,7 @@ check_pair postmortem         "$EXP_POSTMORTEM"
 check_pair drain_rounds       "$EXP_DRAIN"
 check_pair worker_summaries   "$EXP_WORKER_SUMMARIES"
 check_pair rules              "$EXP_RULES"
+check_pair agents             "$EXP_AGENTS"
 
 # An empty tree must never satisfy this suite: every section must be counted AND non-zero.
 # Echoes the offending sections; empty output means every section is counted and non-zero.
@@ -212,7 +260,7 @@ zero_offenders() {
 }
 zo="$(zero_offenders "$JA")"
 [ -z "$zo" ] \
-  && ok "all 13 sections counted and non-zero" \
+  && ok "all 14 sections counted and non-zero" \
   || no "sections absent or zero:$zo"
 
 # ANTI-VACUITY CONTROL: the same guard, pointed at an EMPTY fixture (a bare git repo with no
@@ -228,8 +276,8 @@ JEMPTY="$REMPTY/.supervisor/floor/floor.json"
   || no "empty fixture: rc=$rcEmpty, artefact $( [ -f "$JEMPTY" ] && echo present || echo absent )"
 zoe="$(zero_offenders "$JEMPTY")"
 n_zoe="$(printf '%s' "$zoe" | tr ' ' '\n' | awk 'NF{n++} END{print n+0}')"
-[ -n "$zoe" ] && [ "$n_zoe" -eq 13 ] \
-  && ok "ANTI-VACUITY: an EMPTY fixture fails the zero/absent guard on all 13 sections" \
+[ -n "$zoe" ] && [ "$n_zoe" -eq 14 ] \
+  && ok "ANTI-VACUITY: an EMPTY fixture fails the zero/absent guard on all 14 sections" \
   || no "an empty fixture was NOT caught by the zero/absent guard (offenders: '$zoe', n=$n_zoe)"
 # ...and it fails on the guard, not merely on a count mismatch: no section is even `counted`.
 [ "$(jq -r '[.surfaces[] | select(.status == "counted")] | length' "$JEMPTY" 2>/dev/null)" = "0" ] \
@@ -280,7 +328,7 @@ for k in $ALL_KEYS; do
   b="$(jq -r --arg k "$k" '.surfaces[$k].basis // ""' "$JA" 2>/dev/null)"
   [ -n "$b" ] || missing_basis="$missing_basis $k"
 done
-[ -z "$missing_basis" ] && ok "all 13 surfaces carry a non-empty basis" \
+[ -z "$missing_basis" ] && ok "all 14 surfaces carry a non-empty basis" \
   || no "surfaces with no basis:$missing_basis"
 
 dir_entries="$(ls -1 "$RA/.supervisor/logs" | awk 'NF{n++} END{print n+0}')"
@@ -805,6 +853,37 @@ validate_floor "$MUT" >/dev/null 2>&1 \
   && no "a fabricated count:0 on an absent surface was accepted" \
   || ok "a fabricated count:0 on an absent surface is rejected"
 
+# The surfaces KEY LIST in the schema block is prose - the validator above parses key NAMES
+# out of the block but never checks that the list of surface keys matches what the producer
+# emits, so a new surface can ship undocumented behind a fully green (h). Read it here.
+# Captured ONCE into a here-string source. `schema_block | grep -q ...` would be a pipeline
+# whose producer is killed by SIGPIPE the moment grep matches and exits, and under `pipefail`
+# that makes the pipeline status 141 - a MATCH read as a miss. Here-strings are one command.
+SCHEMA_BLOCK_TXT="$(schema_block)"
+skeys_line="$(grep -F 'surfaces: object' <<< "$SCHEMA_BLOCK_TXT" | head -1)"
+undocumented=""
+for k in $ALL_KEYS; do
+  grep -qF "$k" <<< "$skeys_line" || undocumented="$undocumented $k"
+done
+[ -n "$skeys_line" ] && [ -z "$undocumented" ] \
+  && ok "every emitted surface key is named in the schema block's surfaces list" \
+  || no "surface keys missing from the schema block's list:$undocumented"
+# ...and the reverse direction, so a key removed from the producer cannot linger in the doc.
+grep -qF "no_such_surface" <<< "$skeys_line" \
+  && no "the surfaces-list check matched a key that does not exist - it is not discriminating" \
+  || ok "CONTROL: a key that is not in the list is NOT matched (the check can fail)"
+
+# The three documented `detail` sub-keys, each marked optional. They are six-space lines, so
+# they are deliberately invisible to the two- and four-space parsers above - a consumer reads
+# them, and nothing else would notice if they were deleted.
+missing_detail=""
+for k in roster current subtasks; do
+  grep -qE "^      $k:.*optional" <<< "$SCHEMA_BLOCK_TXT" || missing_detail="$missing_detail $k"
+done
+[ -z "$missing_detail" ] \
+  && ok "the schema block documents roster: / current: / subtasks: as optional detail sub-keys" \
+  || no "detail sub-keys missing or not marked optional:$missing_detail"
+
 # ============================================================================
 echo "== (h2) RESULT_SCHEMAS.md companion edits (enforced by no other gate) =="
 # check-doc-currency.sh does not scan this file and the contract-parity MANIFEST is fixed
@@ -1226,6 +1305,439 @@ else
 fi
 
 # ============================================================================
+echo "== (n) agents roster: frontmatter parsed, absent fields OMITTED, whole-token read_only =="
+# PREMISES, measured against the COMMITTED fixture files rather than assumed. Every literal in
+# the EXP_AG_* block near the top is re-derived here from the file it came from, so a fixture
+# edit turns THIS block red - naming the drift - instead of silently re-keying the assertions
+# below. Same convention as (c)'s 3-ids / 1-noid / 8-lines check on floor-sessions.jsonl.
+AF="$AGENTS_FIXTURE_DIR"
+n_af="$(ls -1 "$AF"/*.md 2>/dev/null | awk 'NF{n++} END{print n+0}')"
+[ "$n_af" -eq "$EXP_AGENTS" ] \
+  && ok "PREMISE: the committed fixture holds $EXP_AGENTS agent files" \
+  || no "the committed fixture holds $n_af agent files, expected $EXP_AGENTS"
+
+fm_count() { grep -c "^$2:" "$1" 2>/dev/null; }
+ag_premise=""
+grep -qxF "color: \"$EXP_AG_ALPHA_COLOR\"" "$AF/alpha.md"       || ag_premise="$ag_premise alpha.color"
+grep -qxF "model: $EXP_AG_ALPHA_MODEL" "$AF/alpha.md"           || ag_premise="$ag_premise alpha.model"
+grep -qxF "maxTurns: $EXP_AG_ALPHA_TURNS" "$AF/alpha.md"        || ag_premise="$ag_premise alpha.maxTurns"
+grep -qxF "model: $EXP_AG_BETA_MODEL" "$AF/beta.md"             || ag_premise="$ag_premise beta.model"
+grep -qxF "maxTurns: $EXP_AG_BETA_TURNS" "$AF/beta.md"          || ag_premise="$ag_premise beta.maxTurns"
+grep -qxF "color: $EXP_AG_GAMMA_COLOR" "$AF/gamma.md"           || ag_premise="$ag_premise gamma.color"
+grep -qxF "model: $EXP_AG_GAMMA_MODEL" "$AF/gamma.md"           || ag_premise="$ag_premise gamma.model"
+[ "$(fm_count "$AF/beta.md" color)"            = "0" ]          || ag_premise="$ag_premise beta.has-color"
+[ "$(fm_count "$AF/gamma.md" maxTurns)"        = "0" ]          || ag_premise="$ag_premise gamma.has-maxTurns"
+[ "$(fm_count "$AF/gamma.md" disallowedTools)" = "0" ]          || ag_premise="$ag_premise gamma.has-disallowedTools"
+[ -z "$ag_premise" ] \
+  && ok "PREMISE: every EXP_AG_* literal is still what the committed fixture files say" \
+  || no "the committed agent fixtures drifted from the expectations:$ag_premise"
+
+# The whole-token premise, stated as a measurement rather than as a claim about the fixture:
+# alpha's list must contain `Edit` as a standalone token and beta's must NOT, even though
+# beta's list DOES contain the string `Edit` inside `NotebookEdit`.
+a_dis="$(sed -n 's/^disallowedTools:[[:space:]]*//p' "$AF/alpha.md" | head -1)"
+b_dis="$(sed -n 's/^disallowedTools:[[:space:]]*//p' "$AF/beta.md"  | head -1)"
+# Here-strings, not `producer | grep -q`: under `pipefail` a producer killed by SIGPIPE when
+# grep exits early makes the PIPELINE status 141 even on a match. A here-string is one command.
+tok_has() { grep -qE "(^|[^A-Za-z0-9_])$2([^A-Za-z0-9_]|\$)" <<< "$1"; }
+if tok_has "$a_dis" Edit && tok_has "$a_dis" Write \
+   && ! tok_has "$b_dis" Edit && grep -qF 'Edit' <<< "$b_dis"; then
+  ok "PREMISE: alpha lists Edit+Write as whole tokens; beta contains the SUBSTRING Edit (NotebookEdit) but not the token"
+else
+  no "the whole-token premise does not hold (alpha: '$a_dis' / beta: '$b_dis') - the read_only assertions below would prove nothing"
+fi
+
+[ "$(sstatus "$JA" agents)" = "counted" ] && count_is "$JA" agents "$EXP_AGENTS" \
+  && ok "agents == counted/$EXP_AGENTS from the seeded fixture directory" \
+  || no "agents == $(sstatus "$JA" agents)/$(scount "$JA" agents), expected counted/$EXP_AGENTS"
+
+# Row readers. `araw` prints the RAW json value, because `read_only: false` and an ABSENT
+# read_only are different findings and `// "ABSENT"` collapses them into one.
+araw()  { jq -c  --arg n "$1" --arg k "$2" '[.surfaces.agents.detail.roster[] | select(.name == $n) | .[$k]] | .[0]' "$JA" 2>/dev/null; }
+astr()  { jq -r  --arg n "$1" --arg k "$2" '[.surfaces.agents.detail.roster[] | select(.name == $n) | .[$k]] | .[0] // "ABSENT"' "$JA" 2>/dev/null; }
+ahas()  { jq -e  --arg n "$1" --arg k "$2" '[.surfaces.agents.detail.roster[] | select(.name == $n) | has($k)] | .[0] // false' "$JA" >/dev/null 2>&1; }
+
+ros_names="$(jq -r '.surfaces.agents.detail.roster[].name' "$JA" 2>/dev/null | tr '\n' ' ' | sed 's/ $//')"
+[ "$ros_names" = "$EXP_AG_NAMES" ] \
+  && ok "roster is sorted by name and carries exactly: $EXP_AG_NAMES (the loomwright: prefix stripped)" \
+  || no "roster names are '$ros_names', expected '$EXP_AG_NAMES'"
+
+[ "$(astr alpha color)" = "$EXP_AG_ALPHA_COLOR" ] \
+  && ok "alpha.color == $EXP_AG_ALPHA_COLOR (the frontmatter's surrounding quotes are stripped)" \
+  || no "alpha.color == $(astr alpha color), expected $EXP_AG_ALPHA_COLOR"
+[ "$(astr gamma color)" = "$EXP_AG_GAMMA_COLOR" ] \
+  && ok "gamma.color == $EXP_AG_GAMMA_COLOR (an unquoted value survives the same path)" \
+  || no "gamma.color == $(astr gamma color), expected $EXP_AG_GAMMA_COLOR"
+[ "$(astr alpha model)" = "$EXP_AG_ALPHA_MODEL" ] && [ "$(astr beta model)" = "$EXP_AG_BETA_MODEL" ] \
+  && [ "$(astr gamma model)" = "$EXP_AG_GAMMA_MODEL" ] \
+  && ok "every model is the frontmatter's own value ($EXP_AG_ALPHA_MODEL / $EXP_AG_BETA_MODEL / $EXP_AG_GAMMA_MODEL)" \
+  || no "models read $(astr alpha model)/$(astr beta model)/$(astr gamma model)"
+[ "$(araw alpha max_turns)" = "$EXP_AG_ALPHA_TURNS" ] && [ "$(araw beta max_turns)" = "$EXP_AG_BETA_TURNS" ] \
+  && ok "max_turns is emitted as a NUMBER from maxTurns ($EXP_AG_ALPHA_TURNS / $EXP_AG_BETA_TURNS)" \
+  || no "max_turns reads $(araw alpha max_turns)/$(araw beta max_turns), expected $EXP_AG_ALPHA_TURNS/$EXP_AG_BETA_TURNS"
+
+# THE OMISSION RULE, one assertion per absent frontmatter field.
+ahas beta color \
+  && no "beta carries a color key although its frontmatter has no color: line - a default leaked in" \
+  || ok "beta has NO color key at all (absent frontmatter field => omitted, never defaulted)"
+ahas gamma max_turns \
+  && no "gamma carries a max_turns key although its frontmatter has no maxTurns: line" \
+  || ok "gamma has NO max_turns key (absent maxTurns => omitted)"
+ahas gamma read_only \
+  && no "gamma carries read_only == $(araw gamma read_only) although it lists no disallowedTools - that is a guess, not a reading" \
+  || ok "gamma has NO read_only key (no disallowedTools evidence => omitted, not false)"
+
+# THE WHOLE-TOKEN DERIVATION. beta is the discriminating row: a substring test for `Edit`
+# matches its `NotebookEdit` and would report it read-only.
+[ "$(araw alpha read_only)" = "true" ] \
+  && ok "alpha.read_only == true (its list covers BOTH Write and Edit)" \
+  || no "alpha.read_only == $(araw alpha read_only), expected true"
+[ "$(araw beta read_only)" = "false" ] \
+  && ok "beta.read_only == false although its list contains the SUBSTRING Edit inside NotebookEdit" \
+  || no "beta.read_only == $(araw beta read_only), expected false - the whole-token check is not whole-token"
+
+jq -e '[.surfaces.agents.detail.roster[] | to_entries[] | select(.value == "")] | length == 0' "$JA" >/dev/null 2>&1 \
+  && ok "no roster row carries an empty-string value (an omitted field is a missing KEY)" \
+  || no "a roster row carries an empty string: $(jq -c '[.surfaces.agents.detail.roster[] | to_entries[] | select(.value == "")]' "$JA" 2>/dev/null)"
+
+# The absent-directory arm, on the EMPTY fixture that (a) already built.
+[ "$(sstatus "$JEMPTY" agents)" = "absent" ] && [ "$(scount "$JEMPTY" agents)" = "ABSENT" ] \
+  && ok "agents on a tree with no agents dir: absent with NO count" \
+  || no "agents on the empty fixture: $(sstatus "$JEMPTY" agents)/$(scount "$JEMPTY" agents)"
+grep -qF "agents" <<< "$(sreason "$JEMPTY" agents)" \
+  && ok "and the reason names the directory it looked for" \
+  || no "the reason does not name the directory: '$(sreason "$JEMPTY" agents)'"
+jq -e '.surfaces.agents | has("detail") | not' "$JEMPTY" >/dev/null 2>&1 \
+  && ok "an absent agents dir yields no roster at all (never an empty roster asserting 'no agents')" \
+  || no "the absent agents surface still carried a detail payload"
+
+# The two `! -r` branches this surface adds, covered ON THE WAY IN. The suite that shipped
+# before this one had never made any input unreadable anywhere, so all three pre-existing
+# readability guards were dead code that had never once executed - which is precisely how two
+# proven-looking zeros shipped. A new guard gets its coverage now, not after the next incident.
+if ! unreadable_premise; then
+  skipn "chmod 000 does not deny a read here - the unreadable-agents cases cannot be exercised and are NOT counted as passes"
+else
+  RN1="$(new_repo)"; seed_tree "$RN1"
+  chmod 000 "$RN1/agents" 2>/dev/null
+  if [ -r "$RN1/agents" ]; then
+    no "unreadable agents dir: it is still readable - this case is vacuous"
+  else
+    run_build "$RN1"
+    JN1="$RN1/.supervisor/floor/floor.json"
+    stN1="$(sstatus "$JN1" agents)"; cnN1="$(scount "$JN1" agents)"; rsN1="$(sreason "$JN1" agents)"
+    chmod -R u+rwX "$RN1/agents" >/dev/null 2>&1
+    [ "$stN1" = "unverified" ] && [ "$cnN1" = "ABSENT" ] \
+      && ok "unreadable agents dir: unverified with NO count - under nullglob it expands exactly like an EMPTY one, so a counted 0 here would be a zero nobody measured" \
+      || no "unreadable agents dir: status=$stN1 count=$cnN1, expected unverified/ABSENT"
+    grep -qF "agents" <<< "$rsN1" \
+      && ok "...and the reason names the directory it could not read" \
+      || no "the reason does not name the directory: '$rsN1'"
+  fi
+
+  RN2="$(new_repo)"; seed_tree "$RN2"
+  chmod 000 "$RN2/agents/beta.md" 2>/dev/null
+  if [ -r "$RN2/agents/beta.md" ]; then
+    no "unreadable agent file: it is still readable - this case is vacuous"
+  else
+    run_build "$RN2"
+    JN2="$RN2/.supervisor/floor/floor.json"
+    stN2="$(sstatus "$JN2" agents)"; cnN2="$(scount "$JN2" agents)"; rsN2="$(sreason "$JN2" agents)"
+    hasrN2="$(jq -r '.surfaces.agents | if has("detail") then "y" else "n" end' "$JN2" 2>/dev/null)"
+    chmod -R u+rwX "$RN2/agents" >/dev/null 2>&1
+    [ "$stN2" = "unverified" ] && [ "$cnN2" = "ABSENT" ] \
+      && ok "an unreadable MEMBER makes the surface unverified with no count - awk on it prints nothing, so the roster would silently lose a row while the glob-derived count still claimed it" \
+      || no "unreadable agent file: status=$stN2 count=$cnN2, expected unverified/ABSENT"
+    grep -qF "beta.md" <<< "$rsN2" \
+      && ok "...and the reason names the offending file" \
+      || no "the reason does not name the file: '$rsN2'"
+    [ "$hasrN2" = "n" ] \
+      && ok "...and NO roster is published over files it could not fully read" \
+      || no "a roster was published although one member was unreadable"
+  fi
+fi
+
+# ============================================================================
+echo "== (o) newest-session agent rows: current is picked by the newest ts, never by file order =="
+# Every expectation below is recomputed FROM THE FIXTURE with jq, independently of the
+# projector's own aggregation - never read back out of floor.json.
+cf_lines="$(awk 'NF{n++} END{print n+0}' "$SESS_CUR_FIXTURE")"
+cf_ids="$(jq -r 'select(has("cc_session_id")) | .cc_session_id' "$SESS_CUR_FIXTURE" 2>/dev/null | LC_ALL=C sort -u | awk 'NF{n++} END{print n+0}')"
+cf_nots="$(jq -r 'select(has("ts") | not) | "x"' "$SESS_CUR_FIXTURE" 2>/dev/null | awk 'NF{n++} END{print n+0}')"
+cf_new_ts="$(jq -r 'select(has("ts")) | .ts' "$SESS_CUR_FIXTURE" 2>/dev/null | LC_ALL=C sort | tail -1)"
+cf_new_sid="$(jq -r 'select(has("ts")) | [.ts, .cc_session_id] | @tsv' "$SESS_CUR_FIXTURE" 2>/dev/null | LC_ALL=C sort | tail -1 | awk -F'\t' '{print $2}')"
+cf_agents="$(jq -r --arg s "$cf_new_sid" 'select(.cc_session_id == $s and has("agent_id")) | .agent_id' "$SESS_CUR_FIXTURE" 2>/dev/null | LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//')"
+cf_n_agents="$(printf '%s' "$cf_agents" | tr ' ' '\n' | awk 'NF{n++} END{print n+0}')"
+cf_typed="$(jq -r --arg s "$cf_new_sid" 'select(.cc_session_id == $s and has("agent_type")) | .agent_id' "$SESS_CUR_FIXTURE" 2>/dev/null | LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//')"
+cf_type_val="$(jq -r --arg s "$cf_new_sid" 'select(.cc_session_id == $s and has("agent_type")) | .agent_type' "$SESS_CUR_FIXTURE" 2>/dev/null | head -1)"
+cf_branch_val="$(jq -r --arg s "$cf_new_sid" 'select(.cc_session_id == $s and has("branch")) | .branch' "$SESS_CUR_FIXTURE" 2>/dev/null | head -1)"
+cf_other_agents="$(jq -r --arg s "$cf_new_sid" 'select(.cc_session_id != $s and has("agent_id")) | .agent_id' "$SESS_CUR_FIXTURE" 2>/dev/null | LC_ALL=C sort -u | tr '\n' ' ' | sed 's/ $//')"
+# The typed agent's OWN newest line must NOT be the one carrying agent_type: "take the type
+# from ANY of the agent's lines" is only tested if the newest line lacks it.
+cf_typed_newest="$(jq -r --arg s "$cf_new_sid" --arg a "$cf_typed" \
+  'select(.cc_session_id == $s and .agent_id == $a and has("ts")) | [.ts, (.agent_type // "-")] | @tsv' \
+  "$SESS_CUR_FIXTURE" 2>/dev/null | LC_ALL=C sort | tail -1 | awk -F'\t' '{print $2}')"
+
+[ "$cf_lines" -eq 9 ] && [ "$cf_ids" -eq 2 ] && [ "$cf_nots" -eq 1 ] && [ "$cf_n_agents" -eq 3 ] \
+  && ok "PREMISE: the committed fixture is $cf_lines lines / $cf_ids sessions / $cf_nots ts-less line / $cf_n_agents agents in the newest session" \
+  || no "committed fixture drifted: lines=$cf_lines ids=$cf_ids nots=$cf_nots agents=$cf_n_agents (expected 9/2/1/3)"
+[ "$(printf '%s' "$cf_typed" | tr ' ' '\n' | awk 'NF{n++} END{print n+0}')" -eq 1 ] && [ "$cf_typed_newest" = "-" ] \
+  && ok "PREMISE: exactly one agent in that session is typed, and its type is on an OLDER line than its own newest" \
+  || no "the typed-agent premise does not hold (typed='$cf_typed', newest line's type='$cf_typed_newest')"
+[ -n "$cf_other_agents" ] \
+  && ok "PREMISE: the older session contributes agent ids of its own ($cf_other_agents) that must NOT appear" \
+  || no "the older session carries no agent id - the cross-session isolation assertion would be vacuous"
+
+# ITS OWN new_repo, deliberately not seed_tree: this fixture would re-key EXP_LOGS,
+# EXP_LOG_DIR_ENTRIES, EXP_SESSIONS, EXP_SESS_LINES and the "3 jsonl + 5 plain .log" basis
+# assertion at once, and would edit the very file whose drift guard exists to notice it
+# changing. The (c2) precedent, for the same reason.
+RO="$(new_repo)"; mkdir -p "$RO/.supervisor/logs"
+cp "$SESS_CUR_FIXTURE" "$RO/.supervisor/logs/current-session.jsonl"
+run_build "$RO"; rcO=$?
+JO="$RO/.supervisor/floor/floor.json"
+[ "$rcO" -eq 0 ] && [ -f "$JO" ] \
+  && ok "current-session fixture: exits 0 and writes an artefact" \
+  || no "current-session fixture: rc=$rcO, artefact $( [ -f "$JO" ] && echo present || echo absent )"
+
+cur() { jq -r "$1" "$JO" 2>/dev/null; }
+[ "$(cur '.surfaces.sessions.detail.current.cc_session_id')" = "$cf_new_sid" ] \
+  && ok "current.cc_session_id == $cf_new_sid (the session owning the newest ts)" \
+  || no "current.cc_session_id == $(cur '.surfaces.sessions.detail.current.cc_session_id'), expected $cf_new_sid"
+[ "$(cur '.surfaces.sessions.detail.current.last_event_ts')" = "$cf_new_ts" ] \
+  && ok "current.last_event_ts == $cf_new_ts (the max ts, recomputed from the fixture)" \
+  || no "current.last_event_ts == $(cur '.surfaces.sessions.detail.current.last_event_ts'), expected $cf_new_ts"
+got_agents="$(cur '.surfaces.sessions.detail.current.agents[].agent_id' | tr '\n' ' ' | sed 's/ $//')"
+[ "$got_agents" = "$cf_agents" ] \
+  && ok "current.agents is sorted by agent_id and holds exactly: $cf_agents" \
+  || no "current.agents holds '$got_agents', expected '$cf_agents'"
+
+# Per-agent tallies, each recomputed from the fixture.
+agg_bad=""
+for a in $cf_agents; do
+  want_ev="$(jq -r --arg s "$cf_new_sid" --arg a "$a" 'select(.cc_session_id == $s and .agent_id == $a) | "x"' "$SESS_CUR_FIXTURE" 2>/dev/null | awk 'NF{n++} END{print n+0}')"
+  want_first="$(jq -r --arg s "$cf_new_sid" --arg a "$a" 'select(.cc_session_id == $s and .agent_id == $a and has("ts")) | .ts' "$SESS_CUR_FIXTURE" 2>/dev/null | LC_ALL=C sort | head -1)"
+  want_last="$(jq -r --arg s "$cf_new_sid" --arg a "$a" 'select(.cc_session_id == $s and .agent_id == $a and has("ts")) | .ts' "$SESS_CUR_FIXTURE" 2>/dev/null | LC_ALL=C sort | tail -1)"
+  got_ev="$(jq -r --arg a "$a" '[.surfaces.sessions.detail.current.agents[] | select(.agent_id == $a) | .events] | .[0]' "$JO" 2>/dev/null)"
+  got_first="$(jq -r --arg a "$a" '[.surfaces.sessions.detail.current.agents[] | select(.agent_id == $a) | .first_ts] | .[0]' "$JO" 2>/dev/null)"
+  got_last="$(jq -r --arg a "$a" '[.surfaces.sessions.detail.current.agents[] | select(.agent_id == $a) | .last_ts] | .[0]' "$JO" 2>/dev/null)"
+  [ "$got_ev" = "$want_ev" ]       || agg_bad="$agg_bad $a(events $got_ev!=$want_ev)"
+  [ "$got_first" = "$want_first" ] || agg_bad="$agg_bad $a(first_ts $got_first!=$want_first)"
+  [ "$got_last" = "$want_last" ]   || agg_bad="$agg_bad $a(last_ts $got_last!=$want_last)"
+done
+[ -z "$agg_bad" ] \
+  && ok "every agent's events / first_ts / last_ts matches the fixture recomputed independently" \
+  || no "per-agent aggregation mismatch:$agg_bad"
+# The ts-less line still counts as an event but contributes no timestamp: events > the number
+# of ts-carrying lines for exactly the agent that owns it.
+ts_less_agent="$(jq -r 'select(has("ts") | not) | .agent_id' "$SESS_CUR_FIXTURE" 2>/dev/null | head -1)"
+tla_ev="$(jq -r --arg a "$ts_less_agent" '[.surfaces.sessions.detail.current.agents[] | select(.agent_id == $a) | .events] | .[0]' "$JO" 2>/dev/null)"
+tla_ts="$(jq -r --arg s "$cf_new_sid" --arg a "$ts_less_agent" 'select(.cc_session_id == $s and .agent_id == $a and has("ts")) | "x"' "$SESS_CUR_FIXTURE" 2>/dev/null | awk 'NF{n++} END{print n+0}')"
+[ "$tla_ev" -gt "$tla_ts" ] \
+  && ok "$ts_less_agent counts $tla_ev events over $tla_ts ts-carrying lines - a ts-less line is an event with no timestamp" \
+  || no "$ts_less_agent counts $tla_ev events for $tla_ts ts-carrying lines - the ts-less line was dropped or double-counted"
+
+typed_rows="$(jq -r '[.surfaces.sessions.detail.current.agents[] | select(has("agent_type")) | .agent_id] | join(" ")' "$JO" 2>/dev/null)"
+[ "$typed_rows" = "$cf_typed" ] \
+  && ok "agent_type is present for exactly $cf_typed - taken from an OLDER line than that agent's newest" \
+  || no "typed rows are '$typed_rows', expected '$cf_typed'"
+[ "$(jq -r --arg a "$cf_typed" '[.surfaces.sessions.detail.current.agents[] | select(.agent_id == $a) | .agent_type] | .[0]' "$JO" 2>/dev/null)" = "$cf_type_val" ] \
+  && ok "and it is the fixture's own value ($cf_type_val), verbatim" \
+  || no "agent_type value mismatch, expected $cf_type_val"
+branch_rows="$(jq -r '[.surfaces.sessions.detail.current.agents[] | select(has("branch")) | .agent_id] | join(" ")' "$JO" 2>/dev/null)"
+[ "$branch_rows" = "$cf_typed" ] \
+  && ok "branch is present ONLY on the row whose lines carried one ($cf_branch_val), omitted on the rest" \
+  || no "branch rows are '$branch_rows', expected '$cf_typed'"
+
+iso_bad=""
+for a in $cf_other_agents; do
+  jq -e --arg a "$a" '[.surfaces.sessions.detail.current.agents[] | select(.agent_id == $a)] | length == 0' "$JO" >/dev/null 2>&1 \
+    || iso_bad="$iso_bad $a"
+done
+[ -z "$iso_bad" ] \
+  && ok "no agent from the OLDER session leaked into current.agents (checked: $cf_other_agents)" \
+  || no "agents from another session appear in current:$iso_bad"
+# The older session is nevertheless still counted as a session - `current` is a view, not a filter.
+[ "$(scount "$JO" sessions)" = "$cf_ids" ] \
+  && ok "the sessions count still spans BOTH sessions ($cf_ids) - current narrows the view, not the count" \
+  || no "sessions count == $(scount "$JO" sessions), expected $cf_ids"
+
+# No ts anywhere -> current OMITTED with a note, never guessed from file order.
+RO2="$(new_repo)"; mkdir -p "$RO2/.supervisor/logs"
+{ printf '{"event":"a","cc_session_id":"sess-nots-0001","agent_id":"agt-x"}\n'
+  printf '{"event":"b","cc_session_id":"sess-nots-0002","agent_id":"agt-y"}\n'; } \
+  > "$RO2/.supervisor/logs/no-ts.jsonl"
+run_build "$RO2"; rcO2=$?
+JO2="$RO2/.supervisor/floor/floor.json"
+[ "$rcO2" -eq 0 ] && [ -f "$JO2" ] && ok "no-ts fixture: exits 0 and writes an artefact" \
+  || no "no-ts fixture: rc=$rcO2, artefact $( [ -f "$JO2" ] && echo present || echo absent )"
+jq -e '.surfaces.sessions.detail | has("current") | not' "$JO2" >/dev/null 2>&1 \
+  && ok "with no ts on any line, current is OMITTED (file order is not evidence of recency)" \
+  || no "current was emitted without a single ts: $(jq -c '.surfaces.sessions.detail.current' "$JO2" 2>/dev/null)"
+jq -e '[.notes[] | select(test("current"))] | length > 0' "$JO2" >/dev/null 2>&1 \
+  && ok "and the omission is named in notes[]" \
+  || no "notes[] does not record the omitted current: $(jq -c '.notes' "$JO2" 2>/dev/null)"
+[ "$(sstatus "$JO2" sessions)" = "counted" ] && [ "$(scount "$JO2" sessions)" = "2" ] \
+  && ok "the sessions count itself is unaffected by the missing ts (counted/2)" \
+  || no "sessions == $(sstatus "$JO2" sessions)/$(scount "$JO2" sessions), expected counted/2"
+
+# ============================================================================
+echo "== (p) state subtask rows: {id, title, status} in table order, status omitted when absent =="
+# seed_tree writes rows `| N | sub N | COMPLETED | PASS |` for N in 1..EXP_STATE, so the
+# expectations here are the seeder's own literals - not a re-read of the projector's output.
+st_n="$(jq -r '.surfaces.state.detail.subtasks | length' "$JA" 2>/dev/null)"
+[ "$st_n" = "$EXP_STATE" ] \
+  && ok "state.detail.subtasks holds $EXP_STATE rows, one per seeded table row" \
+  || no "state.detail.subtasks holds $st_n rows, expected $EXP_STATE"
+count_is "$JA" state "$EXP_STATE" \
+  && ok "and the existing state count is unchanged at $EXP_STATE" \
+  || no "the state count changed to $(scount "$JA" state) when subtasks were added"
+row_bad=""
+i=1
+while [ "$i" -le "$EXP_STATE" ]; do
+  gid="$(jq -r --argjson i "$((i-1))" '.surfaces.state.detail.subtasks[$i].id' "$JA" 2>/dev/null)"
+  gti="$(jq -r --argjson i "$((i-1))" '.surfaces.state.detail.subtasks[$i].title' "$JA" 2>/dev/null)"
+  gst="$(jq -r --argjson i "$((i-1))" '.surfaces.state.detail.subtasks[$i].status' "$JA" 2>/dev/null)"
+  [ "$gid" = "$i" ]           || row_bad="$row_bad row$i(id=$gid)"
+  [ "$gti" = "sub $i" ]       || row_bad="$row_bad row$i(title=$gti)"
+  [ "$gst" = "COMPLETED" ]    || row_bad="$row_bad row$i(status=$gst)"
+  i=$((i+1))
+done
+[ -z "$row_bad" ] \
+  && ok "every row is {id, title, status} in TABLE ORDER, cells trimmed" \
+  || no "subtask rows mismatch:$row_bad"
+
+RP="$(new_repo)"; mkdir -p "$RP/.supervisor"
+{ printf '# Supervisor State\n\n## Session\n- phase: PLAN\n\n## Subtasks\n'
+  printf '| # | Title |\n|---|-------|\n'
+  printf '| 1 | alpha task |\n'
+  printf '| 2 | beta task |\n'
+  printf '\n## Parallelism\n- launchable: 0\n'; } > "$RP/.supervisor/state.md"
+run_build "$RP"; rcP=$?
+JP="$RP/.supervisor/floor/floor.json"
+[ "$rcP" -eq 0 ] && [ -f "$JP" ] && ok "status-less table: exits 0 and writes an artefact" \
+  || no "status-less table: rc=$rcP, artefact $( [ -f "$JP" ] && echo present || echo absent )"
+[ "$(sstatus "$JP" state)" = "counted" ] && [ "$(scount "$JP" state)" = "2" ] \
+  && ok "a table with no Status column is still counted (2 rows)" \
+  || no "state == $(sstatus "$JP" state)/$(scount "$JP" state), expected counted/2"
+[ "$(jq -r '.surfaces.state.detail.subtasks | length' "$JP" 2>/dev/null)" = "2" ] \
+  && ok "both rows are emitted" \
+  || no "subtasks holds $(jq -r '.surfaces.state.detail.subtasks | length' "$JP" 2>/dev/null) rows, expected 2"
+jq -e '[.surfaces.state.detail.subtasks[] | has("status")] | any | not' "$JP" >/dev/null 2>&1 \
+  && ok "no row carries a status key (a missing column is OMITTED, never guessed as PENDING)" \
+  || no "a status was invented for a table with no Status column: $(jq -c '.surfaces.state.detail.subtasks' "$JP" 2>/dev/null)"
+[ "$(jq -r '.surfaces.state.detail.subtasks[0].title' "$JP" 2>/dev/null)" = "alpha task" ] \
+  && ok "titles with an internal space survive the cell trim intact" \
+  || no "title reads '$(jq -r '.surfaces.state.detail.subtasks[0].title' "$JP" 2>/dev/null)', expected 'alpha task'"
+
+# ============================================================================
+echo "== (q) add_surface: an unparseable detail emits the surface WITHOUT detail, never drops it =="
+# The guard is DEFENSIVE: every `detail` payload in build-floor.sh is itself built by jq, so no
+# tree can reach it. Exercising it therefore needs an injected call site, and all three variants
+# below are the REAL script plus ONE inserted line - the probe runs the real add_surface with a
+# bad payload, the CONTROL is that same probe with the guard line reverted, and the third feeds
+# VALID detail so the injection mechanism itself is not what the assertions rest on.
+# ENVIRON, not `awk -v`, per this file's convention: -v processes escape sequences.
+PROBE_ANCHOR='STATE=".supervisor/state.md"'
+PROBE_BAD='add_surface "probe_bad_detail" "probe-source" "probe basis" "counted" "1" "" "" "{not valid json"'
+PROBE_GOOD='add_surface "probe_good_detail" "probe-source" "probe basis" "counted" "1" "" "" '"'"'{"ok":true}'"'"''
+GUARD_OLD='  if [ -z "$obj" ] && [ -n "$detail" ]; then'
+GUARD_NEW='  if false; then'
+
+inject_probe() {   # <outfile> <line to insert>
+  PI_ANCHOR="$PROBE_ANCHOR" PI_INS="$2" awk '
+    BEGIN{a=ENVIRON["PI_ANCHOR"]; ins=ENVIRON["PI_INS"]}
+    {print}
+    $0==a && !d {print ins; d=1}' "$BUILD" > "$1"
+}
+grep -qxF "$PROBE_ANCHOR" "$BUILD" \
+  && ok "the probe anchor line is present in build-floor.sh (the injection point is real)" \
+  || no "the probe anchor '$PROBE_ANCHOR' is not in build-floor.sh - every (q) case below is inconclusive"
+grep -qxF "$GUARD_OLD" "$BUILD" \
+  && ok "the add_surface guard line is present verbatim (the control below can revert it)" \
+  || no "the guard line '$GUARD_OLD' is not in build-floor.sh - the mutation control is inconclusive"
+
+PBAD="$ROOT/probe-bad-detail.sh"; inject_probe "$PBAD" "$PROBE_BAD"
+RQ="$(new_repo)"; seed_tree "$RQ"
+JQ1="$RQ/.supervisor/floor/floor.json"
+if [ -s "$PBAD" ] && ! cmp -s "$PBAD" "$BUILD" && bash -n "$PBAD" 2>/dev/null && grep -qxF "$PROBE_BAD" "$PBAD"; then
+  ok "the bad-detail probe is buildable and bash -n clean"
+  ( cd "$RQ" && FLOOR_AGENTS_DIR="$RQ/agents" bash "$PBAD" ) >/dev/null 2>&1; rcQ=$?
+  if [ "$rcQ" -eq 0 ] && [ -f "$JQ1" ]; then
+    ok "the probe still reaches its own success line (exit 0 + artefact written)"
+    jq -e '.surfaces | has("probe_bad_detail")' "$JQ1" >/dev/null 2>&1 \
+      && ok "the surface is STILL EMITTED although its detail would not parse" \
+      || no "the surface vanished on an unparseable detail - add_surface returned silently"
+    [ "$(sstatus "$JQ1" probe_bad_detail)" = "counted" ] && [ "$(scount "$JQ1" probe_bad_detail)" = "1" ] \
+      && ok "its status and count survive intact (counted/1)" \
+      || no "probe surface reads $(sstatus "$JQ1" probe_bad_detail)/$(scount "$JQ1" probe_bad_detail)"
+    jq -e '.surfaces.probe_bad_detail | has("detail") | not' "$JQ1" >/dev/null 2>&1 \
+      && ok "and it carries NO detail key (the unparseable payload is dropped, not half-written)" \
+      || no "an unparseable detail was emitted anyway: $(jq -c '.surfaces.probe_bad_detail.detail' "$JQ1" 2>/dev/null)"
+    jq -e '[.notes[] | select(test("probe_bad_detail"))] | length > 0' "$JQ1" >/dev/null 2>&1 \
+      && ok "notes[] names the offending surface key" \
+      || no "notes[] does not name probe_bad_detail: $(jq -c '.notes' "$JQ1" 2>/dev/null)"
+    jq -e '[.notes[] | select(test("probe_bad_detail") and (test("JSON") or test("json")))] | length > 0' "$JQ1" >/dev/null 2>&1 \
+      && ok "...and states the reason (the payload is not valid JSON) in the same line" \
+      || no "the note names the key but not the reason: $(jq -c '[.notes[] | select(test("probe_bad_detail"))]' "$JQ1" 2>/dev/null)"
+    count_is "$JQ1" logs "$EXP_LOGS" \
+      && ok "the rest of the projection is unaffected (logs still $EXP_LOGS)" \
+      || no "a bad detail on one surface disturbed another (logs == $(scount "$JQ1" logs))"
+  else
+    no "the bad-detail probe did not reach its success line (rc=$rcQ) - every (q) assertion is inconclusive"
+  fi
+else
+  no "could not build a valid bad-detail probe - every (q) assertion is inconclusive"
+fi
+
+echo "-- mutation control: reverting the guard must make the surface VANISH --"
+PREV="$ROOT/probe-guard-reverted.sh"
+GUARD_OLD="$GUARD_OLD" GUARD_NEW="$GUARD_NEW" awk '
+  BEGIN{o=ENVIRON["GUARD_OLD"]; n=ENVIRON["GUARD_NEW"]}
+  $0==o && !d {print n; d=1; next} {print}' "$PBAD" > "$PREV"
+if [ -s "$PREV" ] && ! cmp -s "$PREV" "$PBAD" && bash -n "$PREV" 2>/dev/null \
+   && grep -qxF "$GUARD_NEW" "$PREV" && grep -qxF "$PROBE_BAD" "$PREV"; then
+  ok "the guard-reverted mutant is buildable, bash -n clean, differs from the probe, and keeps the injected call"
+  RQ2="$(new_repo)"; seed_tree "$RQ2"
+  ( cd "$RQ2" && FLOOR_AGENTS_DIR="$RQ2/agents" bash "$PREV" ) >/dev/null 2>&1; rcQ2=$?
+  JQ2="$RQ2/.supervisor/floor/floor.json"
+  if [ "$rcQ2" -eq 0 ] && [ -f "$JQ2" ]; then
+    ok "the mutant still reaches its own success line (exit 0 + artefact written)"
+    jq -e '.surfaces | has("probe_bad_detail")' "$JQ2" >/dev/null 2>&1 \
+      && no "the guard-reverted mutant still emitted the surface - the control is inconclusive" \
+      || ok "MUTATION CONTROL: without the guard the surface VANISHES silently, turning the assertions above RED"
+    count_is "$JQ2" logs "$EXP_LOGS" \
+      && ok "...and it vanishes without any other symptom - which is exactly why nothing would notice" \
+      || no "the mutant diverged elsewhere too (logs == $(scount "$JQ2" logs)) - the silence claim needs re-checking"
+  else
+    no "the guard-reverted mutant did not reach its success line (rc=$rcQ2) - control inconclusive"
+  fi
+else
+  no "could not build a valid guard-reverted mutant - this control is inconclusive"
+fi
+
+echo "-- positive control: VALID injected detail must still reach the artefact --"
+PGOOD="$ROOT/probe-good-detail.sh"; inject_probe "$PGOOD" "$PROBE_GOOD"
+if [ -s "$PGOOD" ] && ! cmp -s "$PGOOD" "$BUILD" && bash -n "$PGOOD" 2>/dev/null && grep -qxF "$PROBE_GOOD" "$PGOOD"; then
+  ok "the valid-detail probe is buildable and bash -n clean"
+  RQ3="$(new_repo)"; seed_tree "$RQ3"
+  ( cd "$RQ3" && FLOOR_AGENTS_DIR="$RQ3/agents" bash "$PGOOD" ) >/dev/null 2>&1
+  JQ3="$RQ3/.supervisor/floor/floor.json"
+  if [ -f "$JQ3" ]; then
+    jq -e '.surfaces.probe_good_detail.detail.ok == true' "$JQ3" >/dev/null 2>&1 \
+      && ok "CONTROL: a VALID injected detail is emitted unchanged - the guard drops only what will not parse, and the injection mechanism works" \
+      || no "CONTROL: a valid injected detail did not reach the artefact ($(jq -c '.surfaces.probe_good_detail' "$JQ3" 2>/dev/null)) - the (q) probe proves nothing"
+    jq -e '[.notes[] | select(test("probe_good_detail"))] | length == 0' "$JQ3" >/dev/null 2>&1 \
+      && ok "CONTROL: and no note is emitted for a payload that parsed" \
+      || no "CONTROL: a note was emitted for a VALID detail: $(jq -c '[.notes[] | select(test("probe_good_detail"))]' "$JQ3" 2>/dev/null)"
+  else
+    no "the valid-detail probe wrote no artefact - this control is inconclusive"
+  fi
+else
+  no "could not build a valid valid-detail probe - this control is inconclusive"
+fi
+
+# ============================================================================
 echo "== (m) real .supervisor/ corroboration (local only) =="
 REAL="$(cd "$HERE/../.." 2>/dev/null && pwd)"
 real_logs=("$REAL"/.supervisor/logs/*.jsonl)
@@ -1243,6 +1755,11 @@ else
   done
   [ -f "$REAL/.supervisor/state.md" ] && ln -s "$REAL/.supervisor/state.md" "$MIR/.supervisor/state.md"
   [ -d "$REAL/.agent/rules" ] && ln -s "$REAL/.agent/rules" "$MIR/.agent/rules"
+  # The agents surface's source is the PLUGIN directory, not a .supervisor/ one, so the mirror
+  # needs its own link or run_build's FLOOR_AGENTS_DIR export resolves to nothing here. What
+  # this buys is a corroboration against the REAL agent files' CONTENT (via cmp_real below) -
+  # NOT a test of the `$0`-derived default path, which the export short-circuits either way.
+  [ -d "$HERE/../agents" ] && ln -s "$HERE/../agents" "$MIR/agents"
   REALART="$REAL/.supervisor/floor/floor.json"
   real_before="$( [ -f "$REALART" ] && csum "$REALART" || echo ABSENT )"
   run_build "$MIR"; rcM=$?
@@ -1269,6 +1786,7 @@ else
   cmp_real drain_rounds     "$(real_n "$REAL"/.supervisor/drain-rounds/*.json)"
   cmp_real worker_summaries "$(real_n "$REAL"/.supervisor/worker-summaries/*.md)"
   cmp_real rules            "$(real_n "$REAL"/.agent/rules/*.json)"
+  cmp_real agents           "$(real_n "$HERE"/../agents/*.md)"
   cmp_real postmortem       "$(awk 'NF{n++} END{print n+0}' "$REAL/.supervisor/postmortem/results.jsonl" 2>/dev/null)"
 
   real_sessions="$(cat "$REAL"/.supervisor/logs/*.jsonl 2>/dev/null \
