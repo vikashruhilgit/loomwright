@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "generated_at_epoch": 1735689600,
+  "generator": "build-floor.sh",
+  "repo_head": "0c0ffee",
+  "notes": [
+    "automate_runs omitted: input directory .supervisor/automate is not present"
+  ],
+  "surfaces": {
+    "agents": {
+      "source": "/opt/plugins/loomwright/agents",
+      "basis": "files matching <plugin>/agents/*.md, one per agent role, with name / color / model / maxTurns / disallowedTools read from the YAML frontmatter between the first two --- lines; the directory is the plugin's own install path resolved from $0 (overridable via FLOOR_AGENTS_DIR), NOT a repo-relative one",
+      "status": "counted",
+      "count": 3,
+      "mtime_epoch": 1788338037,
+      "detail": {
+        "roster": [
+          {
+            "name": "code-reviewer",
+            "color": "#20B2AA",
+            "model": "inherit",
+            "max_turns": 40,
+            "read_only": true
+          },
+          {
+            "name": "rubric-grader",
+            "color": "#9ACD32",
+            "model": "haiku",
+            "max_turns": 12
+          },
+          {
+            "name": "worker",
+            "color": "#32CD32",
+            "model": "inherit",
+            "max_turns": 40,
+            "read_only": false
+          }
+        ]
+      }
+    },
+    "automate_runs": {
+      "source": ".supervisor/automate",
+      "basis": "files matching .supervisor/automate/*.md, which excludes the sibling *.config-backup.json transients",
+      "status": "absent",
+      "reason": "input directory .supervisor/automate is not present"
+    },
+    "jobs_done": {
+      "source": ".supervisor/jobs/done",
+      "basis": "files matching .supervisor/jobs/done/*.md",
+      "status": "counted",
+      "count": 91,
+      "mtime_epoch": 1788402317
+    },
+    "jobs_failed": {
+      "source": ".supervisor/jobs/failed",
+      "basis": "files matching .supervisor/jobs/failed/*.md",
+      "status": "counted",
+      "count": 2,
+      "mtime_epoch": 1787379169
+    },
+    "jobs_in_progress": {
+      "source": ".supervisor/jobs/in-progress",
+      "basis": "files matching .supervisor/jobs/in-progress/*.md",
+      "status": "counted",
+      "count": 1,
+      "mtime_epoch": 1788399900
+    },
+    "jobs_pending": {
+      "source": ".supervisor/jobs/pending",
+      "basis": "files matching .supervisor/jobs/pending/*.md",
+      "status": "counted",
+      "count": 4,
+      "mtime_epoch": 1788399900
+    },
+    "logs": {
+      "source": ".supervisor/logs",
+      "basis": "files matching .supervisor/logs/*.jsonl, an extension glob; the same directory also holds plain .log dispatch transcripts which are deliberately NOT counted here",
+      "status": "counted",
+      "count": 65,
+      "mtime_epoch": 1735689588
+    },
+    "sessions": {
+      "source": ".supervisor/logs",
+      "basis": "distinct non-empty cc_session_id values across every line of .supervisor/logs/*.jsonl, grouped by that FIELD and never by filename, so one file may contribute many sessions and one session may span many files",
+      "status": "counted",
+      "count": 151,
+      "detail": {
+        "lines_scanned": 13206,
+        "lines_with_session_id": 13111,
+        "lines_without_session_id": 95,
+        "lines_malformed": 0,
+        "lines_blank_skipped": 0,
+        "current": {
+          "cc_session_id": "25c6d887-13d5-4302-8b80-c39f7383d4c8",
+          "last_event_ts": "2024-12-31T23:59:48Z",
+          "agents": [
+            {
+              "agent_id": "a14ab715aa7cd9765",
+              "agent_type": "loomwright:loomwright:worker",
+              "branch": "feature/the-floor-ui",
+              "events": 41,
+              "first_ts": "2024-12-31T23:55:00Z",
+              "last_ts": "2024-12-31T23:59:48Z"
+            },
+            {
+              "agent_id": "b71cc0d4e2f9a3312",
+              "agent_type": "loomwright:loomwright:code-reviewer",
+              "branch": "feature/the-floor-ui",
+              "events": 17,
+              "first_ts": "2024-12-31T23:55:20Z",
+              "last_ts": "2024-12-31T23:59:15Z"
+            },
+            {
+              "agent_id": "c93ff1a7b5c04e881",
+              "events": 5,
+              "first_ts": "2024-12-31T23:56:40Z",
+              "last_ts": "2024-12-31T23:58:30Z"
+            }
+          ]
+        }
+      }
+    },
+    "state": {
+      "source": ".supervisor/state.md",
+      "basis": "rows matching a leading numeric cell inside the ## Subtasks table of .supervisor/state.md",
+      "status": "counted",
+      "count": 3,
+      "mtime_epoch": 1735689585,
+      "detail": {
+        "phase": "EXECUTE",
+        "branch": "feature/the-floor-ui",
+        "run_status": "running",
+        "session_id": "25c6d887-13d5-4302-8b80-c39f7383d4c8",
+        "subtasks": [
+          {
+            "id": "1",
+            "title": "Projector: additive agents roster, newest-session rows, subtask rows",
+            "status": "COMPLETED (5b90c27)"
+          },
+          {
+            "id": "2",
+            "title": "The floor bundle + setup-ui.sh engine + static tests + fixtures",
+            "status": "IN_PROGRESS"
+          },
+          {
+            "id": "3",
+            "title": "Release surface: /setup ui registration, docs, version lockstep",
+            "status": "BLOCKED"
+          }
+        ]
+      }
+    }
+  }
+}

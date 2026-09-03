@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; connect-src 'self'; style-src 'self'; script-src 'self'; font-src 'self'">
+<title>The Floor</title>
+<!--
+  The Floor - a local, read-only view of .supervisor/floor/floor.json.
+
+  EVERY asset is a same-directory relative path and there is no remote of any kind: no CDN,
+  no web font, no framework, no bundler. The CSP meta above is belt-and-braces on top of
+  that - it is not what makes the page local, the absence of remote references is.
+-->
+<link rel="stylesheet" href="floor.css">
+</head>
+<body>
+<a class="skip-link" href="#lanes">Skip to the lanes</a>
+
+<header class="bar">
+  <h1>The Floor</h1>
+  <p class="sub" id="origin-note">a read-only projection of <code>.supervisor/floor/floor.json</code></p>
+  <p class="sub" id="generated">reading floor.json&hellip;</p>
+</header>
+
+<!--
+  The banner is the honest-state surface: absent / stale / no-run-in-flight all land here as
+  text, never as a blank page and never as a spinner. aria-live so a screen reader hears the
+  state change without polling the DOM.
+-->
+<p class="banner" id="banner" role="status" aria-live="polite" hidden></p>
+
+<main>
+  <section aria-labelledby="stages-h">
+    <h2 id="stages-h">Pipeline</h2>
+    <ol class="stages" id="stages">
+      <li class="stage" data-stage="queue"><span class="stage-name">Queue</span><span class="stage-val" id="st-queue">&mdash;</span></li>
+      <li class="stage" data-stage="plan"><span class="stage-name">Plan</span><span class="stage-val" id="st-plan">&mdash;</span></li>
+      <li class="stage" data-stage="execute"><span class="stage-name">Execute</span><span class="stage-val" id="st-execute">&mdash;</span></li>
+      <li class="stage" data-stage="review"><span class="stage-name">Review</span><span class="stage-val" id="st-review">&mdash;</span></li>
+      <li class="stage" data-stage="shipped"><span class="stage-name">Shipped</span><span class="stage-val" id="st-shipped">&mdash;</span></li>
+    </ol>
+    <p class="sub" id="phase-note"></p>
+  </section>
+
+  <section aria-labelledby="lanes-h">
+    <h2 id="lanes-h">Lanes <span class="sub" id="lane-count"></span></h2>
+    <ul class="lanes" id="lanes"></ul>
+    <p class="note-permanent" id="liveness-note">liveness unavailable — a lane shows recorded events, never a running process</p>
+  </section>
+
+  <section aria-labelledby="roster-h">
+    <h2 id="roster-h">Roster <span class="sub" id="roster-src"></span></h2>
+    <ul class="roster" id="roster"></ul>
+  </section>
+
+  <section aria-labelledby="notes-h">
+    <h2 id="notes-h">Projector notes</h2>
+    <ul class="notes" id="notes"></ul>
+  </section>
+</main>
+
+<footer class="bar">
+  <p class="sub">Served from this origin only. Nothing on this page reaches the network.</p>
+</footer>
+
+<script src="floor.js"></script>
+</body>
+</html>
