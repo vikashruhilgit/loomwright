@@ -2301,8 +2301,11 @@ PERF_MAX_UNITS=180           # primary arm: see the calibration note below
 #
 # Both numbers move with the machine, so a slow or loaded runner cancels out - exactly what
 # an absolute millisecond ceiling cannot do. Measured on the maintainer tree: the
-# consolidated readers cost ~105 units, the pre-consolidation code ~298. The bound sits at
-# 180: ~1.7x headroom over the real figure, far below the regression it must catch.
+# bound sits at 180. These are wall-clock figures and therefore NOISY: across repeated runs on
+# this machine the consolidated readers measured 93-109 units and the pre-consolidation code
+# 266-313. The bound sits above the top of the first range and well below the bottom of the
+# second, which is the property that matters; quoting one exact pair here would claim a
+# precision this measurement does not have.
 #
 # Counting `jq` INVOCATIONS was tried first and REJECTED after measuring - 37 now versus 35
 # then. The regression was work done per invocation, not process count, so that gate would

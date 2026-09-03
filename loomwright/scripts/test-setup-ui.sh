@@ -1404,7 +1404,18 @@ check_lit "$JS" "keys.sort();" "(j12) distribution keys are sorted lexically (so
 no_write_verbs() {
   local f
   for f in "$HTML" "$CSS" "$JS"; do
-    grep -nE '\b(POST|PUT|DELETE)\b' "$f" 2>/dev/null | sed "s|^|$(basename "$f"): |"
+    # Matches the METHOD POSITION, case-insensitively, rather than bare verb tokens. Both halves
+    # of that are load-bearing and each was arrived at by measurement, not taste:
+    #   * case-insensitive, because the Fetch spec NORMALIZES a lowercase known method, so
+    #     `fetch(u, {method: 'post'})` performs a real POST. An uppercase-only scanner reads like
+    #     a read-only guarantee while letting the lowercase spelling straight through.
+    #   * position-scoped, because a bare case-insensitive \bDELETE\b matches JavaScript's own
+    #     `delete` OPERATOR - floor.js:726 `delete laneEls[k];` is legitimate object-property
+    #     removal, and flagging it would be a false positive that pressures a future author into
+    #     deleting a correct line to appease the gate.
+    # Verified against four inputs: the real bundle 0, `method: 'post'` 1, `method: 'PUT'` 1,
+    # and the bare `delete` operator 0.
+    grep -inE "(method[[:space:]]*[:=][[:space:]]*['\"]?(post|put|delete)|['\"](post|put|delete)['\"])" "$f" 2>/dev/null | sed "s|^|$(basename "$f"): |"
   done
 }
 write_findings="$(no_write_verbs)"
@@ -1413,12 +1424,54 @@ write_findings="$(no_write_verbs)"
   || no "(j13) no_write_verbs: index.html / floor.css / floor.js carry no POST, PUT or DELETE token" "$write_findings"
 # Mutation control: a write verb really appearing in the bundle must be caught.
 MUT_WRITE="$TMPROOT/mut-write.js"
-{ cat "$JS"; printf "\n// fetch('floor.json', { method: 'POST' })\n"; } > "$MUT_WRITE" 2>/dev/null
+# The mutant uses the LOWERCASE spelling on purpose: an uppercase one passes against the old
+# uppercase-only scanner too, so it could not prove the widening. This one is red before the
+# `grep -i` above and green after.
+{ cat "$JS"; printf "\n// fetch('floor.json', { method: 'post' })\n"; } > "$MUT_WRITE" 2>/dev/null
 if mutant_ok "$JS" "$MUT_WRITE"; then
-  m_write="$(grep -nE '\b(POST|PUT|DELETE)\b' "$MUT_WRITE" 2>/dev/null || true)"
+  m_write="$(grep -inE "(method[[:space:]]*[:=][[:space:]]*['\"]?(post|put|delete)|['\"](post|put|delete)['\"])" "$MUT_WRITE" 2>/dev/null || true)"
   [ -n "$m_write" ] \
-    && ok "(j14) MUTATION CONTROL: a POST token added to floor.js IS flagged by no_write_verbs" \
+    && ok "(j14) MUTATION CONTROL: a LOWERCASE post token added to floor.js IS flagged by no_write_verbs (an uppercase-only scanner would have missed it)" \
     || no "(j14) MUTATION CONTROL: a POST token added to floor.js IS flagged by no_write_verbs" "scanner said: ${m_write:-<nothing>}"
+fi
+
+# --- (j32) a COUNTED surface with NO detail must not be rendered as an EMPTY one --------------
+# A projection from a projector older than this page carries `status: counted, count: N` and no
+# `detail` at all - `schema_version` stayed 1, so that combination is deliberately legal. The
+# first cut of renderRules fell back to `rows.length` there and printed "(0 rule(s))" +
+# "no rules recorded" for a store the projector had actually counted: a measured value displayed
+# identically to an examined-and-empty one.
+#
+# The distinction cannot key on `detail` alone, and that was established by MEASUREMENT, not
+# taste: a genuinely empty store also yields `counted / count 0` with NO detail, so the two
+# shapes are identical apart from the count. `count` is therefore what separates them - zero
+# files means there is nothing to browse either way, while a POSITIVE count with no detail means
+# this page cannot enumerate a store that was counted.
+[ "$(grep -c 'rules_parsed === .number. ? detail.rules_parsed : rows.length' "$JS")" = "0" ] \
+  && ok "(j32) renderRules does NOT fall back to rows.length for a counted-but-detail-less surface" \
+  || no "(j32) renderRules still falls back to rows.length - a counted surface renders as 0 rule(s)"
+
+for lit in 'no rule detail in this projection' 'carries no rule detail' 'carries no churn detail'; do
+  [ "$(grep -cF "$lit" "$JS")" -ge 1 ] \
+    && ok "(j32) floor.js carries the never-examined literal: $lit" \
+    || no "(j32) floor.js is missing the never-examined literal: $lit"
+done
+
+# ...and the EXAMINED-and-empty claim must still be reachable, or the fix traded one false
+# statement for another.
+[ "$(grep -cF 'no rules recorded' "$JS")" -ge 1 ] && [ "$(grep -cF 'no churn recorded' "$JS")" -ge 1 ] \
+  && ok "(j32) the examined-and-empty claims are still present, so the fix did not delete the distinction" \
+  || no "(j32) an examined-and-empty literal vanished - the never-examined text cannot be the only render"
+
+# MUTATION CONTROL: restore the rows.length fallback and show (j32)'s first assertion goes red.
+MUT_ZERO="$TMPROOT/mut-zero.js"
+sed "s|if (typeof detail.rules_parsed === 'number') {|var n = (typeof detail.rules_parsed === 'number') ? detail.rules_parsed : rows.length; if (false) {|" "$JS" > "$MUT_ZERO" 2>/dev/null
+if [ -s "$MUT_ZERO" ] && ! cmp -s "$MUT_ZERO" "$JS"; then
+  [ "$(grep -c 'rows.length' "$MUT_ZERO")" -gt "$(grep -c 'rows.length' "$JS")" ] \
+    && ok "(j33) MUTATION CONTROL: reintroducing the rows.length fallback IS detectable by (j32)'s scan" \
+    || no "(j33) MUTATION CONTROL: the reintroduced fallback was not detectable - (j32) proves nothing"
+else
+  no "(j33) MUTATION CONTROL: could not build the rows.length mutant - control inconclusive"
 fi
 
 # --- AC-views-four-states: the four distinct renders, by their own literals ------------------

@@ -317,9 +317,25 @@
     var detail = s.detail || {};
     var rows = detail.rules || [];
     if (srcEl) {
-      var n = (typeof detail.rules_parsed === 'number') ? detail.rules_parsed : rows.length;
-      srcEl.textContent = '(' + n + ' rule(s)' +
-        (detail.read_completeness ? (' · read ' + detail.read_completeness) : '') + ')';
+      /* NO FALLBACK TO rows.length. When the surface carries no `detail` at all - an artefact
+       * from a projector older than this page, which `schema_version: 1` deliberately keeps
+       * legal - rows is [] and a rows.length fallback would print "(0 rule(s))" for a store the
+       * projector actually counted: the banned shape named in this file's own header rule
+       * (absent evidence is rendered as unknown, never as zero). Cite the surface's own `count`,
+       * which IS recorded, and say plainly that the detail is missing. */
+      if (typeof detail.rules_parsed === 'number') {
+        srcEl.textContent = '(' + detail.rules_parsed + ' rule(s)' +
+          (detail.read_completeness ? (' · read ' + detail.read_completeness) : '') + ')';
+      } else if (st.s && st.s.count === 0) {
+        srcEl.textContent = '(0 rule(s))';
+      } else if (st.s && typeof st.s.count === 'number') {
+        /* surfaceState returns { state, s } - the surface object is under `.s`. Reading
+         * `st.count` here was a branch that could never fire, which is the same
+         * guard-that-cannot-fire class this render is guarding against. */
+        srcEl.textContent = '(' + st.s.count + ' file(s) counted · no rule detail in this projection)';
+      } else {
+        srcEl.textContent = '(no rule detail in this projection)';
+      }
     }
 
     var unparse = detail.files_unparseable || [];
@@ -338,6 +354,19 @@
     if (!rows.length) {
       var pEmpty = document.createElement('p');
       pEmpty.className = 'empty';
+      /* "no rules recorded" is a CLAIM about an examined store, so it is made only when the
+       * evidence supports it. Measured: a genuinely EMPTY store and an artefact from a projector
+       * older than this page produce the SAME shape - status counted, no `detail` - so `detail`
+       * alone cannot separate them. `count` can, and does: zero files means there is nothing to
+       * browse whether or not detail was supplied, while a positive count with no detail means
+       * this page cannot enumerate a store the projector did count. Saying "no rules recorded"
+       * for that second case is the fabricated zero; saying it for the first is simply true. */
+      if (typeof detail.rules_parsed !== 'number'
+          && !(st.s && st.s.count === 0)) {
+        pEmpty.textContent = 'this projection carries no rule detail — regenerate floor.json with a current projector to browse the store';
+        body.appendChild(pEmpty);
+        return;
+      }
       pEmpty.textContent = 'no rules recorded';
       body.appendChild(pEmpty);
       return;
@@ -546,7 +575,11 @@
     if (!classKeys.length && !flowKeys.length) {
       var pEmpty = document.createElement('p');
       pEmpty.className = 'empty';
-      pEmpty.textContent = 'no churn recorded';
+      /* Same distinction as renderRules above: an EMPTY distribution is "no churn recorded";
+       * a projection carrying no churn detail at all was never examined and says so. */
+      pEmpty.textContent = (typeof detail.categories_total === 'number' || (st.s && st.s.count === 0))
+        ? 'no churn recorded'
+        : 'this projection carries no churn detail — regenerate floor.json with a current projector';
       body.appendChild(pEmpty);
     } else {
       var h3c = document.createElement('h3');
