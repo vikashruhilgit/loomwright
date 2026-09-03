@@ -2252,6 +2252,105 @@ else
     || no "the real-tree artefact failed schema validation: $(validate_floor "$JM" 2>&1 | head -3)"
 fi
 
+# ============================================================================
+echo "== (x) runtime bound - the multi-scan regression cannot return silently =="
+# WHY THIS CASE EXISTS, and why it is shaped the way it is.
+#
+# The detail readers this suite commissions ((r)-(v)) shipped 4.1x SLOWER than the surface
+# they extended: 0.85s -> 3.5s on the maintainer tree, because each new reader re-walked
+# ledgers an existing pass had already walked. That is load-bearing, not cosmetic:
+# `setup-ui.sh serve` regenerates on a 2-SECOND default interval, so the loop had begun
+# taking longer than its own tick, and requirement 06 pins its whole scheduling design on
+# the measured sub-second figure. It passed 338 assertions and seven repo gates in silence.
+# THAT silence is the defect this case closes - not the timing number itself.
+#
+# Two shapes were rejected before this one:
+#
+#   1. Timing the SMALL fixtures. Redundant scans of a 4-line ledger cost nothing measurable
+#      -- `jq` process startup dominates entirely -- so a small-fixture bound would have gone
+#      green straight through the very 4x regression it was written to catch. Vacuous.
+#   2. An ABSOLUTE wall-clock ceiling. CI hardware is slower and noisier than a laptop, so
+#      any ceiling tight enough to catch a 4x regression here would flake there, and any
+#      ceiling loose enough to survive CI would not catch it. Unusable either way.
+#
+# So the bound is a RATIO against a real artefact: commit 2b41286, the last commit that
+# still had the multi-scan readers. Both versions run on the SAME synthesized input on the
+# SAME machine in the same test run, so a slow or loaded runner slows BOTH and the ratio
+# holds -- the guard is hardware-independent by construction. And the control is not a
+# hand-built mutant that might not represent anything: it IS the slow code, so this
+# assertion has demonstrably been red, in production, on the commit it names.
+#
+# The input is synthesized (~800 ledger lines), never the real tree, so the measurement does
+# not drift as `.supervisor/` grows.
+PERF_PRE_SHA="2b41286"
+PERF_MIN_RATIO_X10=20        # require >= 2.0x; integer tenths, because bash 3.2 has no floats
+
+perf_pre="$ROOT/build-floor-preperf.sh"
+if git -C "$HERE/../.." cat-file -e "$PERF_PRE_SHA:loomwright/scripts/build-floor.sh" 2>/dev/null \
+   && git -C "$HERE/../.." show "$PERF_PRE_SHA:loomwright/scripts/build-floor.sh" > "$perf_pre" 2>/dev/null \
+   && [ -s "$perf_pre" ] && bash -n "$perf_pre" 2>/dev/null; then
+
+  RPERF="$(new_repo)"
+  mkdir -p "$RPERF/.supervisor/postmortem" "$RPERF/.agent/rules" "$RPERF/agents"
+  cp "$RULES_FIXTURE_DIR"/*.json "$RPERF/.agent/rules/" 2>/dev/null
+  # ~800 lines built by REPEATING the committed fixture, so the synthesized corpus carries the
+  # same shapes the readers branch on (categories, flow_stages, evidence) rather than a
+  # degenerate record that might skip the expensive path entirely.
+  : > "$RPERF/.supervisor/postmortem/results.jsonl"
+  i=0; while [ "$i" -lt 200 ]; do cat "$PM_FIXTURE" >> "$RPERF/.supervisor/postmortem/results.jsonl"; i=$((i+1)); done
+  perf_lines="$(awk 'NF{n++} END{print n+0}' "$RPERF/.supervisor/postmortem/results.jsonl")"
+
+  # Wall-clock via python3 (bash 3.2 has no %N, and $SECONDS is whole-second granularity).
+  perf_ms() {
+    python3 - "$1" "$2" <<'PY'
+import subprocess, sys, time
+script, cwd = sys.argv[1], sys.argv[2]
+env_extra = {"FLOOR_AGENTS_DIR": cwd + "/agents"}
+import os
+env = dict(os.environ); env.update(env_extra)
+best = None
+for _ in range(3):                       # best-of-3: a loaded runner perturbs the mean, not the min
+    t = time.time()
+    subprocess.run(["bash", script], cwd=cwd, env=env,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    d = int((time.time() - t) * 1000)
+    best = d if best is None else min(best, d)
+print(best)
+PY
+  }
+
+  ms_now="$(perf_ms "$BUILD" "$RPERF")"
+  ms_pre="$(perf_ms "$perf_pre" "$RPERF")"
+
+  case "$ms_now$ms_pre" in
+    ''|*[!0-9]*) no "(x) could not measure runtime (now='$ms_now' pre='$ms_pre') - this bound is inconclusive" ;;
+    *)
+      if [ "$ms_now" -le 0 ]; then
+        no "(x) the current script measured ${ms_now}ms on $perf_lines lines - too fast to ratio, bound inconclusive"
+      else
+        ratio_x10=$(( ms_pre * 10 / ms_now ))
+        if [ "$ratio_x10" -ge "$PERF_MIN_RATIO_X10" ]; then
+          ok "(x) on $perf_lines synthesized ledger lines the consolidated passes are ${ratio_x10}/10x faster than $PERF_PRE_SHA's multi-scan readers (${ms_now}ms vs ${ms_pre}ms), at or above the required ${PERF_MIN_RATIO_X10}/10x"
+        else
+          no "(x) RUNTIME REGRESSION: only ${ratio_x10}/10x faster than $PERF_PRE_SHA (${ms_now}ms vs ${ms_pre}ms) on $perf_lines lines, below the required ${PERF_MIN_RATIO_X10}/10x - a reader is re-walking an input an earlier pass already read"
+        fi
+        # ANTI-VACUITY: the named control must actually be slow on this input. If 2b41286 ever
+        # measures as fast as HEAD, the ratio above is comparing two identical things and would
+        # pass with the consolidation reverted - the failure mode this whole case exists to
+        # prevent, one level up.
+        if [ "$ms_pre" -gt "$ms_now" ]; then
+          ok "(x) ANTI-VACUITY: the $PERF_PRE_SHA control is measurably slower on this input (${ms_pre}ms > ${ms_now}ms), so the ratio above is comparing two different implementations"
+        else
+          no "(x) ANTI-VACUITY FAILED: the $PERF_PRE_SHA control measured ${ms_pre}ms against HEAD's ${ms_now}ms - the control is not slow here, so the ratio proves nothing"
+        fi
+      fi ;;
+  esac
+else
+  # A shallow clone (actions/checkout defaults to depth 1) has no 2b41286 object. Reported as
+  # SKIPPED and counted separately from passes, never silently as a pass.
+  skipn "(x) runtime bound: commit $PERF_PRE_SHA is unreachable (shallow clone?), so the pre-consolidation control cannot be built"
+fi
+
 echo
 echo "RESULT: $pass passed, $fail failed, $skip skipped"
 [ "$fail" -eq 0 ] || exit 1
