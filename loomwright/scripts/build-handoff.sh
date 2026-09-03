@@ -33,10 +33,32 @@
 # .supervisor/automate/ which does not exist on this repo today) silently skip. With NO continuity
 # surfaces at all, a benign "nothing to summarize yet" line is emitted and exit 0.
 #
-# Usage:  build-handoff.sh
-# Exit:   0 always — a digest tool must never break its caller. Prints the output path.
+# PUBLISH (opt-in, AC-handoff-publish / AC-handoff-byte-identical): passing `--publish` makes the
+# script ALSO write .supervisor/handoff/snapshot.md — the SAME digest content (what shipped / what
+# was decided / what was tried and rejected / current state / provenance, per item) wrapped in a
+# banner that states it is a static, point-in-time export: it names its own generation time and does
+# NOT poll or update itself. This is strictly additive. The default digest.md write path, every line
+# that produces it, and its byte content are UNTOUCHED by this flag — the publish block below runs
+# only AFTER $OUT is fully written, and only inside the `[ "$PUBLISH" -eq 1 ]` guard, so with no flag
+# NO new code path executes at all (see test-build-handoff.sh cases (l)/(m)/(n)/(o), the diff proof
+# against the pre-flag script pinned at commit 2682ed2). Never writes outside .supervisor/handoff/.
+#
+# Usage:  build-handoff.sh                 # default: writes .supervisor/handoff/digest.md, byte-for-
+#                                             byte identical to every pre-`--publish` release
+#         build-handoff.sh --publish       # opt-in: ALSO writes .supervisor/handoff/snapshot.md, a
+#                                             shareable static export of the same digest
+# Exit:   0 always — a digest tool must never break its caller. Prints the output path(s) it wrote.
 
 set -uo pipefail
+
+# Opt-in flag parsing (AC-handoff-publish). Absent this flag PUBLISH stays 0 and the publish block
+# near the end of this script never runs — no new code path executes absent explicit opt-in.
+PUBLISH=0
+for _hf_arg in "$@"; do
+  case "$_hf_arg" in
+    --publish) PUBLISH=1 ;;
+  esac
+done
 
 GITROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$GITROOT" 2>/dev/null || true
@@ -359,4 +381,22 @@ mkdir -p "$OUT_DIR" 2>/dev/null || { echo "build-handoff: cannot create $OUT_DIR
 rm -f "$body.state" 2>/dev/null || true
 
 echo "build-handoff: wrote $OUT ($item_count work item(s), as-of HEAD $head_short)"
+
+# ---- 6) Opt-in publish (AC-handoff-publish) — runs ONLY when --publish was passed --------------
+# Emits the digest above as a shareable, point-in-time SNAPSHOT: same content, wrapped in a banner
+# that states its generation time and explicitly disclaims polling/live-ness. Writes ONLY under
+# .supervisor/handoff/ (AC-no-writes) — never touches $OUT or any source-of-truth surface.
+if [ "$PUBLISH" -eq 1 ]; then
+  SNAPSHOT="$OUT_DIR/snapshot.md"
+  {
+    echo "# Handoff snapshot — shareable, point-in-time export"
+    echo
+    echo "_Published $ts_now · as-of HEAD \`$head_short\` · STATIC SNAPSHOT: generated once from the digest below, does not poll, and will not update on its own. Regenerate with \`--publish\` to refresh. Read-only; carries no live state; subordinate to CLAUDE.md._"
+    echo
+    cat "$OUT"
+  } > "$SNAPSHOT" 2>/dev/null \
+    && echo "build-handoff: published snapshot to $SNAPSHOT" \
+    || echo "build-handoff: could not write $SNAPSHOT — skipping publish" >&2
+fi
+
 exit 0

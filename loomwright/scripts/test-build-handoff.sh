@@ -346,6 +346,136 @@ echo "$SECTK" | grep -qF "folder .supervisor/requirements/" \
 echo "$SECTK" | grep -qF "https://github.com/o/r/pull/77" \
   && ok "automate PR facet renders (from ## Current)" || no "automate PR facet missing"
 
+# ============================================================================
+echo "== (l) AC-handoff-byte-identical: default (no-flag) output matches the PRE-CHANGE script byte-for-byte =="
+# PRECHANGE_SHA is the commit immediately before the --publish flag was added to build-handoff.sh
+# (subtask 3 of the archive-views job). Pinning to a real commit — not reasoning that the flag is
+# "additive" — is what makes this a mechanized proof rather than an assertion by inspection.
+PRECHANGE_SHA="2682ed2"
+GITROOT="$(cd "$HERE" && git rev-parse --show-toplevel 2>/dev/null)"
+RL="$(new_repo)"
+seed_job "$RL" done "byte-identical-job" "- **built_at_commit:** $( cd "$RL" && git rev-parse HEAD )" >/dev/null
+seed_auto "$RL" "sess-l" >/dev/null
+seed_automate "$RL" "automate-l" >/dev/null
+if [ -n "$GITROOT" ] && git -C "$GITROOT" cat-file -e "$PRECHANGE_SHA:loomwright/scripts/build-handoff.sh" 2>/dev/null; then
+  PRE_SCRIPT="$ROOT/pre-build-handoff.sh"
+  git -C "$GITROOT" show "$PRECHANGE_SHA:loomwright/scripts/build-handoff.sh" > "$PRE_SCRIPT" 2>/dev/null
+  # Run the PRE-CHANGE script against the fixture first (no flag — it predates --publish anyway).
+  ( cd "$RL" && CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" bash "$PRE_SCRIPT" ) >/dev/null 2>&1; rcPre=$?
+  DIGL="$RL/.supervisor/handoff/digest.md"
+  [ "$rcPre" -eq 0 ] && [ -f "$DIGL" ] && ok "pre-change script ran and produced a digest" \
+    || no "pre-change script failed to produce a digest (rc=$rcPre)"
+  PRE_OUT="$RL/.pre-digest-snapshot.md"
+  cp "$DIGL" "$PRE_OUT" 2>/dev/null
+  # Now run the POST-CHANGE (current) script, NO --publish flag, over the SAME fixture inputs.
+  run_build "$RL" >/dev/null; rcPost=$?
+  [ "$rcPost" -eq 0 ] && ok "post-change default (no-flag) run exits 0" || no "post-change run failed (rc=$rcPost)"
+  # The two runs are separate invocations of `date -u` seconds apart in real wall-clock time — that
+  # non-determinism predates this change (unrelated to --publish) and is not what this AC is testing.
+  # Strip ONLY the volatile `_Generated <ts>` line before comparing everything else byte-for-byte.
+  PRE_FILT="$RL/.pre-digest-filtered.md"; POST_FILT="$RL/.post-digest-filtered.md"
+  grep -v '^_Generated ' "$PRE_OUT" > "$PRE_FILT"
+  grep -v '^_Generated ' "$DIGL"    > "$POST_FILT"
+  if diff -q "$PRE_FILT" "$POST_FILT" >/dev/null 2>&1; then
+    ok "AC-handoff-byte-identical: default digest.md is byte-identical pre- vs post-change (diff empty, excluding the volatile generation timestamp)"
+  else
+    no "default digest.md DIFFERS pre- vs post-change: $(diff "$PRE_FILT" "$POST_FILT" 2>&1 | head -5)"
+  fi
+  # Sanity control: prove the diff comparison itself can discriminate (else the assertion above would
+  # be vacuous — a diff command that never reports a difference would pass unconditionally).
+  CORRUPT="$RL/.pre-digest-corrupt.md"
+  { cat "$PRE_FILT"; echo "MUTATION_CONTROL_SENTINEL"; } > "$CORRUPT"
+  diff -q "$PRE_FILT" "$CORRUPT" >/dev/null 2>&1 && no "control: diff failed to detect a deliberately corrupted copy" \
+    || ok "control: diff correctly detects a deliberately corrupted copy (comparison is not vacuous)"
+else
+  echo "  SKIPPED — pinned commit $PRECHANGE_SHA:loomwright/scripts/build-handoff.sh not reachable in this checkout"
+fi
+
+# ============================================================================
+echo "== (m) absent --publish flag: no snapshot.md written, no new code path executes =="
+RM="$(new_repo)"
+seed_job "$RM" pending "no-publish-item" >/dev/null
+run_build "$RM" >/dev/null; rcM=$?
+SNAPM="$RM/.supervisor/handoff/snapshot.md"
+[ "$rcM" -eq 0 ] && ok "exits 0 with no flag" || no "expected exit 0, got $rcM"
+[ -f "$SNAPM" ] && no "snapshot.md was written despite NO --publish flag (publish path leaked)" \
+  || ok "no snapshot.md written absent --publish (AC-handoff-byte-identical: no new code path)"
+
+# ============================================================================
+echo "== (n) --publish: emits the digest as a shareable, point-in-time snapshot; digest.md unaffected =="
+RN="$(new_repo)"
+seed_job "$RN" done "publish-item" >/dev/null
+outN="$( cd "$RN" && CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" bash "$BUILD" --publish )"; rcN=$?
+DIGN="$RN/.supervisor/handoff/digest.md"
+SNAPN="$RN/.supervisor/handoff/snapshot.md"
+[ "$rcN" -eq 0 ] && ok "exits 0 with --publish" || no "expected exit 0, got $rcN"
+[ -f "$DIGN" ] && ok "digest.md still written with --publish" || no "digest.md missing with --publish"
+[ -f "$SNAPN" ] && ok "AC-handoff-publish: snapshot.md written with --publish" || no "snapshot.md missing with --publish"
+echo "$outN" | grep -qF "published snapshot" && ok "echoes the snapshot path" || no "no 'published snapshot' echo"
+# Snapshot states it is a static export: generation time + explicit non-live/non-polling language.
+grep -q "STATIC SNAPSHOT" "$SNAPN" 2>/dev/null && ok "snapshot states it is a static export" || no "snapshot missing static-export framing"
+grep -qi "does not poll" "$SNAPN" 2>/dev/null && ok "snapshot states it does not poll" || no "snapshot missing 'does not poll' statement"
+grep -qF "as-of HEAD" "$SNAPN" 2>/dev/null && ok "snapshot carries provenance (as-of HEAD)" || no "snapshot missing HEAD provenance"
+# Snapshot carries the same work item (what shipped/decided/tried/state/provenance) as the digest.
+grep -qF "publish-item" "$SNAPN" 2>/dev/null && ok "snapshot carries the work item (what shipped)" || no "snapshot missing work item content"
+grep -qF "ship the publish-item thing" "$SNAPN" 2>/dev/null && ok "snapshot carries the Why/decision facet" || no "snapshot missing decision facet"
+# digest.md content is UNCHANGED by publishing — re-run on the SAME repo/SAME job file with no flag
+# (same mtime, so the only legitimately-volatile field is the `_Generated <ts>` wall-clock line, which
+# is stripped before comparing). Reusing the same fixture (rather than a second freshly-seeded repo)
+# avoids conflating this assertion with unrelated mtime-driven freshness-line drift between two repos.
+DIGN_PUBLISH_COPY="$RN/.digest.after-publish.md"
+cp "$DIGN" "$DIGN_PUBLISH_COPY" 2>/dev/null
+run_build "$RN" >/dev/null   # re-run WITHOUT --publish, same repo, same job file
+DIGN_FILT="$RN/.digest.filtered.publish.md"; DIGN2_FILT="$RN/.digest.filtered.noflag.md"
+grep -v '^_Generated ' "$DIGN_PUBLISH_COPY" > "$DIGN_FILT"
+grep -v '^_Generated ' "$DIGN"              > "$DIGN2_FILT"
+if diff -q "$DIGN_FILT" "$DIGN2_FILT" >/dev/null 2>&1; then
+  ok "digest.md is byte-identical whether or not --publish was passed (excluding the volatile generation timestamp)"
+else
+  no "digest.md differs when --publish is passed: $(diff "$DIGN2_FILT" "$DIGN_FILT" 2>&1 | head -5)"
+fi
+
+# ============================================================================
+echo "== (o) AC-no-writes: --publish writes ONLY under .supervisor/handoff/; source-of-truth surfaces untouched =="
+RO="$(new_repo)"
+JOBO="$(seed_job "$RO" done "readonly-publish-job")"
+seed_auto "$RO" "sess-o" >/dev/null
+mkdir -p "$RO/.agent/rules" "$RO/.supervisor/postmortem"
+RULEO="$RO/.agent/rules/process.json"; printf '[{"id":"r1"}]\n' > "$RULEO"
+PMO="$RO/.supervisor/postmortem/results.jsonl"; printf '{"a":1}\n' > "$PMO"
+job_ob="$(csum "$JOBO")"; rule_ob="$(csum "$RULEO")"; pm_ob="$(csum "$PMO")"
+INV_O_BEFORE="$(mktmp)/inv.before"; mkdir -p "$(dirname "$INV_O_BEFORE")"
+( cd "$RO" && find .supervisor .agent -type f 2>/dev/null | sort ) > "$INV_O_BEFORE"
+( cd "$RO" && CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT" bash "$BUILD" --publish ) >/dev/null; rcO=$?
+[ "$rcO" -eq 0 ] && ok "exits 0" || no "expected exit 0, got $rcO"
+[ "$job_ob"  = "$(csum "$JOBO")" ]  && ok "job brief byte-identical after --publish" || no "job brief was modified"
+[ "$rule_ob" = "$(csum "$RULEO")" ] && ok ".agent/rules/ byte-identical after --publish" || no ".agent/rules/ was modified"
+[ "$pm_ob"   = "$(csum "$PMO")" ]   && ok "postmortem ledger byte-identical after --publish" || no "postmortem ledger was modified"
+INV_O_AFTER="$(mktmp)/inv.after"; mkdir -p "$(dirname "$INV_O_AFTER")"
+( cd "$RO" && find .supervisor .agent -type f 2>/dev/null | sort ) > "$INV_O_AFTER"
+strayO=0
+while IFS= read -r p; do
+  [ -n "$p" ] || continue
+  case "$p" in
+    .supervisor/handoff/*) ;;                                   # sanctioned: digest.md + snapshot.md
+    .supervisor/logs/memory.log|.supervisor/logs/twin.log) ;;   # sanctioned: reused readers' diagnostics
+    *) grep -qxF "$p" "$INV_O_BEFORE" || { strayO=$((strayO+1)); echo "    stray new path: $p"; } ;;
+  esac
+done < "$INV_O_AFTER"
+[ "$strayO" -eq 0 ] && ok "the one permitted write set is .supervisor/handoff/{digest.md,snapshot.md} — no stray writes" \
+  || no "$strayO stray new path(s) outside the sanctioned .supervisor/handoff/ set"
+# Anti-vacuity: prove the exercise actually ran (else the containment check above would pass on nothing having happened).
+[ -f "$RO/.supervisor/handoff/snapshot.md" ] && [ -s "$RO/.supervisor/handoff/snapshot.md" ] \
+  && ok "anti-vacuity: snapshot.md was actually produced and is non-empty" \
+  || no "anti-vacuity FAILED: snapshot.md missing/empty — the containment check above would be vacuous"
+
+# ============================================================================
+echo "== (p) agent/command mirror: commands/handoff.md documents --publish in the same commit =="
+HANDOFF_MD="$(dirname "$HERE")/commands/handoff.md"
+[ -f "$HANDOFF_MD" ] && ok "commands/handoff.md exists" || no "commands/handoff.md missing at $HANDOFF_MD"
+grep -qF -- "--publish" "$HANDOFF_MD" 2>/dev/null \
+  && ok "commands/handoff.md documents the --publish flag" || no "commands/handoff.md does NOT mention --publish (mirror drift)"
+
 echo
 echo "RESULT: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1
