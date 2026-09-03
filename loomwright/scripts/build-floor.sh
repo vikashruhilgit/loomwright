@@ -123,11 +123,11 @@ add_surface() {
 "
 }
 
-# count_glob <key> <dir> <basis> <label> <files...>
+# count_glob <key> <dir> <basis> <files...>
 # Shared path for the "how many files match this glob" surfaces. An absent parent
 # directory is `absent` with a named reason and NO count.
 count_glob() {
-  local k="$1" dir="$2" basis="$3" label="$4"; shift 4
+  local k="$1" dir="$2" basis="$3"; shift 3
   local n=$#
   if [ ! -d "$dir" ]; then
     add_note "$k omitted: input directory $dir is not present"
@@ -196,7 +196,7 @@ fi
 for lc in pending in-progress done failed; do
   key="jobs_$(printf '%s' "$lc" | tr '-' '_')"
   count_glob "$key" ".supervisor/jobs/$lc" \
-    "files matching .supervisor/jobs/$lc/*.md" "$lc" .supervisor/jobs/"$lc"/*.md
+    "files matching .supervisor/jobs/$lc/*.md" .supervisor/jobs/"$lc"/*.md
 done
 
 # ---------------------------------------------------------------------------
@@ -204,7 +204,7 @@ done
 # ---------------------------------------------------------------------------
 count_glob "automate_runs" ".supervisor/automate" \
   "files matching .supervisor/automate/*.md, which excludes the sibling *.config-backup.json transients" \
-  "runs" .supervisor/automate/*.md
+  .supervisor/automate/*.md
 
 # ---------------------------------------------------------------------------
 # 4) .supervisor/logs/*.jsonl - the event stream (the counting-basis case in point)
@@ -218,7 +218,7 @@ logfiles=("$LOGS_DIR"/*.jsonl)
 # not run the plugin yet, i.e. exactly the trees where `*.jsonl` matches nothing. It would
 # have broken this script's headline exit-0-always invariant while staying INVISIBLE on Linux
 # CI (bash 4+ expands an empty array happily) - the exact inverse of the stat-flavour trap.
-count_glob "logs" "$LOGS_DIR" "$logs_basis" "logs" ${logfiles[@]+"${logfiles[@]}"}
+count_glob "logs" "$LOGS_DIR" "$logs_basis" ${logfiles[@]+"${logfiles[@]}"}
 
 # ---------------------------------------------------------------------------
 # 5) sessions - distinct cc_session_id across every *.jsonl, NEVER by filename
@@ -307,7 +307,7 @@ fi
 # ---------------------------------------------------------------------------
 count_glob "insights_runs" ".supervisor/insights/runs" \
   "files matching .supervisor/insights/runs/*.md, one note per summarized run" \
-  "runs" .supervisor/insights/runs/*.md
+  .supervisor/insights/runs/*.md
 
 # ---------------------------------------------------------------------------
 # 7) .supervisor/postmortem/results.jsonl - the review-churn ledger
@@ -394,7 +394,7 @@ count_json_docs "drain_rounds" ".supervisor/drain-rounds" \
   .supervisor/drain-rounds/*.json
 
 count_glob "worker_summaries" ".supervisor/worker-summaries" \
-  "files matching .supervisor/worker-summaries/*.md" "summaries" \
+  "files matching .supervisor/worker-summaries/*.md" \
   .supervisor/worker-summaries/*.md
 
 count_json_docs "rules" ".agent/rules" \
