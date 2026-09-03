@@ -482,7 +482,14 @@
           fail('floor.json is present but is not valid JSON');
           return;
         }
-        apply(d);
+        /* Render errors are NOT fetch errors. The document was served and parsed by the
+           time we get here, so letting a throw from apply() fall through to the catch
+           below would banner "no floor.json at this origin" about a file we just read -
+           naming a cause the page has already disproved. Same discipline as the stale
+           banner: state what was measured, never a cause that was not. */
+        try { apply(d); } catch (e) {
+          fail('floor.json was read but could not be rendered (' + ((e && e.message) || 'render failed') + ')');
+        }
       })['catch'](function (e) {
         inFlight = false;
         fail('no floor.json at this origin (' + ((e && e.message) || 'fetch failed') + ')');
