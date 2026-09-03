@@ -2283,72 +2283,129 @@ echo "== (x) runtime bound - the multi-scan regression cannot return silently ==
 # The input is synthesized (~800 ledger lines), never the real tree, so the measurement does
 # not drift as `.supervisor/` grows.
 PERF_PRE_SHA="2b41286"
-PERF_MIN_RATIO_X10=20        # require >= 2.0x; integer tenths, because bash 3.2 has no floats
+PERF_MIN_RATIO_X10=20        # historical arm: require >= 2.0x; integer tenths (bash 3.2 has no floats)
+PERF_MAX_UNITS=180           # primary arm: see the calibration note below
 
+# ---------------------------------------------------------------------------
+# PRIMARY ARM - a CALIBRATED bound that needs NO git history, so it runs on CI.
+#
+# The first version of this case had only the historical arm below, and it was wrong in the
+# way that matters: `2b41286` is a BRANCH commit, so `actions/checkout` (depth 1) cannot
+# reach it and the entire case degraded to SKIPPED on CI - permanently so once this branch
+# squash-merges. A regression bound that runs only on the author's laptop is the
+# "a claim no check backs" class this repo keeps recording. So the arm that must always run
+# is measured against a UNIT calibrated in the same run:
+#
+#   unit  = wall time for ONE full `jq` scan of the synthesized ledger
+#   bound = projector wall time / unit
+#
+# Both numbers move with the machine, so a slow or loaded runner cancels out - exactly what
+# an absolute millisecond ceiling cannot do. Measured on the maintainer tree: the
+# consolidated readers cost ~105 units, the pre-consolidation code ~298. The bound sits at
+# 180: ~1.7x headroom over the real figure, far below the regression it must catch.
+#
+# Counting `jq` INVOCATIONS was tried first and REJECTED after measuring - 37 now versus 35
+# then. The regression was work done per invocation, not process count, so that gate would
+# have gone green straight through it. A second vacuous bound, avoided only by measuring
+# instead of assuming.
+# ---------------------------------------------------------------------------
+RPERF="$(new_repo)"
+mkdir -p "$RPERF/.supervisor/postmortem" "$RPERF/.agent/rules" "$RPERF/agents"
+cp "$RULES_FIXTURE_DIR"/*.json "$RPERF/.agent/rules/" 2>/dev/null
+: > "$RPERF/.supervisor/postmortem/results.jsonl"
+iperf=0
+while [ "$iperf" -lt 200 ]; do cat "$PM_FIXTURE" >> "$RPERF/.supervisor/postmortem/results.jsonl"; iperf=$((iperf+1)); done
+perf_lines="$(awk 'NF{n++} END{print n+0}' "$RPERF/.supervisor/postmortem/results.jsonl")"
+
+perf_units="$(python3 - "$RPERF" "$BUILD" 2>/dev/null <<'__PY1__'
+import subprocess, sys, time, os
+repo, script = sys.argv[1], sys.argv[2]
+led = repo + "/.supervisor/postmortem/results.jsonl"
+env = dict(os.environ); env["FLOOR_AGENTS_DIR"] = repo + "/agents"
+
+def best(fn, n=3):
+    return min(fn() for _ in range(n))
+
+def unit():
+    t = time.time()
+    subprocess.run(["jq", "-s", "[.[]|.categories]|length", led],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return time.time() - t
+
+def run():
+    t = time.time()
+    subprocess.run(["bash", script], cwd=repo, env=env,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return time.time() - t
+
+u = best(unit)
+if u <= 0:
+    print("ERR")
+else:
+    print(int(best(run) / u))
+__PY1__
+)"
+case "$perf_units" in
+  ''|*[!0-9]*) no "(x) could not calibrate the runtime bound (got '$perf_units') - PRIMARY arm inconclusive" ;;
+  *)
+    if [ "$perf_units" -le "$PERF_MAX_UNITS" ]; then
+      ok "(x) PRIMARY: the projector costs $perf_units calibrated units on $perf_lines ledger lines, within the $PERF_MAX_UNITS bound (1 unit = one full jq scan measured in this same run, so the machine cancels out)"
+    else
+      no "(x) RUNTIME REGRESSION: $perf_units calibrated units on $perf_lines ledger lines, over the $PERF_MAX_UNITS bound - a reader is re-walking an input an earlier pass already read"
+    fi ;;
+esac
+
+# ---------------------------------------------------------------------------
+# HISTORICAL ARM - a direct A/B against the real pre-consolidation code, when git history
+# reaches it. Strictly a BONUS: it is the strongest control available (the control IS the
+# slow code, not a hand-built mutant that might represent nothing), but it cannot run on a
+# shallow clone, which is why it is no longer the only arm.
+# ---------------------------------------------------------------------------
 perf_pre="$ROOT/build-floor-preperf.sh"
 if git -C "$HERE/../.." cat-file -e "$PERF_PRE_SHA:loomwright/scripts/build-floor.sh" 2>/dev/null \
    && git -C "$HERE/../.." show "$PERF_PRE_SHA:loomwright/scripts/build-floor.sh" > "$perf_pre" 2>/dev/null \
    && [ -s "$perf_pre" ] && bash -n "$perf_pre" 2>/dev/null; then
 
-  RPERF="$(new_repo)"
-  mkdir -p "$RPERF/.supervisor/postmortem" "$RPERF/.agent/rules" "$RPERF/agents"
-  cp "$RULES_FIXTURE_DIR"/*.json "$RPERF/.agent/rules/" 2>/dev/null
-  # ~800 lines built by REPEATING the committed fixture, so the synthesized corpus carries the
-  # same shapes the readers branch on (categories, flow_stages, evidence) rather than a
-  # degenerate record that might skip the expensive path entirely.
-  : > "$RPERF/.supervisor/postmortem/results.jsonl"
-  i=0; while [ "$i" -lt 200 ]; do cat "$PM_FIXTURE" >> "$RPERF/.supervisor/postmortem/results.jsonl"; i=$((i+1)); done
-  perf_lines="$(awk 'NF{n++} END{print n+0}' "$RPERF/.supervisor/postmortem/results.jsonl")"
-
-  # Wall-clock via python3 (bash 3.2 has no %N, and $SECONDS is whole-second granularity).
   perf_ms() {
-    python3 - "$1" "$2" <<'PY'
-import subprocess, sys, time
+    python3 - "$1" "$2" <<'__PY2__'
+import subprocess, sys, time, os
 script, cwd = sys.argv[1], sys.argv[2]
-env_extra = {"FLOOR_AGENTS_DIR": cwd + "/agents"}
-import os
-env = dict(os.environ); env.update(env_extra)
+env = dict(os.environ); env["FLOOR_AGENTS_DIR"] = cwd + "/agents"
 best = None
-for _ in range(3):                       # best-of-3: a loaded runner perturbs the mean, not the min
+for _ in range(3):
     t = time.time()
     subprocess.run(["bash", script], cwd=cwd, env=env,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     d = int((time.time() - t) * 1000)
     best = d if best is None else min(best, d)
 print(best)
-PY
+__PY2__
   }
 
   ms_now="$(perf_ms "$BUILD" "$RPERF")"
   ms_pre="$(perf_ms "$perf_pre" "$RPERF")"
 
   case "$ms_now$ms_pre" in
-    ''|*[!0-9]*) no "(x) could not measure runtime (now='$ms_now' pre='$ms_pre') - this bound is inconclusive" ;;
+    ''|*[!0-9]*) no "(x) HISTORICAL: could not measure (now='$ms_now' pre='$ms_pre') - inconclusive" ;;
     *)
       if [ "$ms_now" -le 0 ]; then
-        no "(x) the current script measured ${ms_now}ms on $perf_lines lines - too fast to ratio, bound inconclusive"
+        no "(x) HISTORICAL: the current script measured ${ms_now}ms - too fast to ratio, inconclusive"
       else
         ratio_x10=$(( ms_pre * 10 / ms_now ))
         if [ "$ratio_x10" -ge "$PERF_MIN_RATIO_X10" ]; then
-          ok "(x) on $perf_lines synthesized ledger lines the consolidated passes are ${ratio_x10}/10x faster than $PERF_PRE_SHA's multi-scan readers (${ms_now}ms vs ${ms_pre}ms), at or above the required ${PERF_MIN_RATIO_X10}/10x"
+          ok "(x) HISTORICAL: ${ratio_x10}/10x faster than $PERF_PRE_SHA's multi-scan readers (${ms_now}ms vs ${ms_pre}ms), at or above the required ${PERF_MIN_RATIO_X10}/10x"
         else
-          no "(x) RUNTIME REGRESSION: only ${ratio_x10}/10x faster than $PERF_PRE_SHA (${ms_now}ms vs ${ms_pre}ms) on $perf_lines lines, below the required ${PERF_MIN_RATIO_X10}/10x - a reader is re-walking an input an earlier pass already read"
+          no "(x) HISTORICAL REGRESSION: only ${ratio_x10}/10x faster than $PERF_PRE_SHA (${ms_now}ms vs ${ms_pre}ms), below the required ${PERF_MIN_RATIO_X10}/10x"
         fi
-        # ANTI-VACUITY: the named control must actually be slow on this input. If 2b41286 ever
-        # measures as fast as HEAD, the ratio above is comparing two identical things and would
-        # pass with the consolidation reverted - the failure mode this whole case exists to
-        # prevent, one level up.
         if [ "$ms_pre" -gt "$ms_now" ]; then
-          ok "(x) ANTI-VACUITY: the $PERF_PRE_SHA control is measurably slower on this input (${ms_pre}ms > ${ms_now}ms), so the ratio above is comparing two different implementations"
+          ok "(x) ANTI-VACUITY: the $PERF_PRE_SHA control is measurably slower here (${ms_pre}ms > ${ms_now}ms), so the ratio compares two different implementations"
         else
-          no "(x) ANTI-VACUITY FAILED: the $PERF_PRE_SHA control measured ${ms_pre}ms against HEAD's ${ms_now}ms - the control is not slow here, so the ratio proves nothing"
+          no "(x) ANTI-VACUITY FAILED: control ${ms_pre}ms vs HEAD ${ms_now}ms - the control is not slow, so the ratio proves nothing"
         fi
       fi ;;
   esac
 else
-  # A shallow clone (actions/checkout defaults to depth 1) has no 2b41286 object. Reported as
-  # SKIPPED and counted separately from passes, never silently as a pass.
-  skipn "(x) runtime bound: commit $PERF_PRE_SHA is unreachable (shallow clone?), so the pre-consolidation control cannot be built"
+  skipn "(x) HISTORICAL arm: commit $PERF_PRE_SHA is unreachable (shallow clone / post-squash-merge). The PRIMARY calibrated arm above still ran - which is precisely why it exists"
 fi
 
 echo
