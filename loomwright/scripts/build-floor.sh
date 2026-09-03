@@ -2,10 +2,14 @@
 # build-floor.sh - deterministic, READ-ONLY projector of the scattered .supervisor/ and
 # .agent/ surfaces into ONE versioned artefact: .supervisor/floor/floor.json.
 #
-# WHY: the state a view needs is already on disk, but spread across nine surfaces in four
-# formats (markdown tables, folder membership, JSONL, JSON). If every view parses them
-# itself, every view re-implements the same nine parsers and drifts independently. Exactly
-# one thing should read them. That is this script; floor.json is the contract.
+# WHY: the state a view needs is already on disk, but spread across FOURTEEN projected
+# surfaces in five formats (markdown tables, YAML frontmatter, folder membership, JSONL,
+# JSON). Counting basis for the fourteen: one key under `surfaces` in floor.json, which is
+# not the same as the number of directories read - the four jobs/ lifecycle folders are four
+# surfaces, while logs/*.jsonl yields two (`logs` counts files, `sessions` reads their
+# contents). If every view parses those inputs itself, every view re-implements the same
+# parsers and drifts independently. Exactly one thing should read them. That is this script;
+# floor.json is the contract.
 #
 # DISCIPLINE (mirrors build-insights.sh / build-handoff.sh, the two sibling projectors):
 #   * set -uo pipefail with NO set -e.
@@ -42,6 +46,15 @@
 # Exit:   0 always. Prints the output path.
 
 set -uo pipefail
+
+# Resolved BEFORE the `cd` below, and that order is load-bearing: `$0` is frequently a
+# RELATIVE path (`bash loomwright/scripts/build-floor.sh`), and resolving it after changing
+# directory would silently point at whatever `../agents` means from the new cwd. This is the
+# plugin's own install directory, never a repo-relative path - it is the one input that lives
+# beside the script rather than beside the project.
+SELF_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+PLUGIN_ROOT=""
+[ -n "$SELF_DIR" ] && PLUGIN_ROOT="$(cd "$SELF_DIR/.." 2>/dev/null && pwd)"
 
 GITROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$GITROOT" 2>/dev/null || true
@@ -102,22 +115,41 @@ NOTES=""
 add_note() { NOTES="${NOTES}$1
 "; }
 
-# add_surface <key> <source> <basis> <status> [count] [reason] [mtime] [detail_json]
-# An empty count / reason / mtime / detail OMITS that key entirely.
-add_surface() {
-  local k="$1" src="$2" basis="$3" status="$4"
-  local count="${5:-}" reason="${6:-}" mt="${7:-}" detail="${8:-}"
-  local obj
-  obj="$(jq -cn \
-      --arg k "$k" --arg source "$src" --arg basis "$basis" --arg status "$status" \
-      --arg count "$count" --arg reason "$reason" --arg mt "$mt" --arg detail "$detail" '
+# surface_obj <key> <source> <basis> <status> <count> <reason> <mtime> <detail_json>
+# The assembly, in ONE place, so add_surface below can call it twice - with the caller's
+# detail and, if that produced nothing, without it. An empty count / reason / mtime / detail
+# OMITS that key entirely.
+surface_obj() {
+  jq -cn \
+      --arg k "$1" --arg source "$2" --arg basis "$3" --arg status "$4" \
+      --arg count "$5" --arg reason "$6" --arg mt "$7" --arg detail "$8" '
     {k: $k,
      v: ({source: $source, basis: $basis, status: $status}
          + (if $count  == "" then {} else {count:       ($count | tonumber)} end)
          + (if $reason == "" then {} else {reason:      $reason}             end)
          + (if $mt     == "" then {} else {mtime_epoch: ($mt    | tonumber)} end)
          + (if $detail == "" then {} else {detail:      ($detail | fromjson)} end))}
-  ' 2>/dev/null)"
+  ' 2>/dev/null
+}
+
+# add_surface <key> <source> <basis> <status> [count] [reason] [mtime] [detail_json]
+# An empty count / reason / mtime / detail OMITS that key entirely.
+#
+# A `detail` that will not parse costs the caller its detail and NOTHING ELSE. Before the
+# retry below this function returned silently on that path, which deleted the entire surface -
+# source, basis, status and the proven count with it - over one bad OPTIONAL field, and said
+# so nowhere: the key was simply missing from `surfaces`, indistinguishable from a surface
+# that was never attempted. A projector that refuses to fabricate evidence has to equally
+# refuse to discard evidence it already holds; the note names the key and the reason.
+add_surface() {
+  local k="$1" src="$2" basis="$3" status="$4"
+  local count="${5:-}" reason="${6:-}" mt="${7:-}" detail="${8:-}"
+  local obj
+  obj="$(surface_obj "$k" "$src" "$basis" "$status" "$count" "$reason" "$mt" "$detail")"
+  if [ -z "$obj" ] && [ -n "$detail" ]; then
+    add_note "$k detail dropped: the detail payload for $k is not valid JSON - the surface is emitted without it"
+    obj="$(surface_obj "$k" "$src" "$basis" "$status" "$count" "$reason" "$mt" "")"
+  fi
   [ -n "$obj" ] || return 0
   SURF="${SURF}${obj}
 "
@@ -154,13 +186,35 @@ elif [ ! -r "$STATE" ]; then
   add_note "state unverified: $STATE is not readable"
   add_surface "state" "$STATE" "$state_basis" "unverified" "" "$STATE is not readable"
 else
-  st_rows="$(awk '
+  # ONE awk pass emits the rows; the count is their number. Two passes (one counting, one
+  # listing) could disagree about what a row IS, and the artefact would then carry a count and
+  # a list that contradict each other with no way to tell which was right.
+  st_table="$(awk '
     /^## Subtasks/ {f=1; next}
     f && /^## /    {exit}
-    f && /^\|[[:space:]]*[0-9]+[[:space:]]*\|/ {n++}
-    END {print n+0}
+    f && /^\|[[:space:]]*[0-9]+[[:space:]]*\|/ {
+      n = split($0, c, "|")
+      id = c[2]; title = (n >= 3 ? c[3] : ""); status = (n >= 4 ? c[4] : "")
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", id)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", title)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", status)
+      printf "%s\t%s\t%s\n", id, title, status
+    }
   ' "$STATE" 2>/dev/null)"
+  st_rows="$(printf '%s\n' "$st_table" | awk 'NF{n++} END{print n+0}')"
   case "$st_rows" in ''|*[!0-9]*) st_rows="" ;; esac
+
+  # A cell the table does not have is OMITTED from its row, not filled in: a subtask table
+  # with no Status column says nothing about status, and `PENDING` there would be this
+  # projector inventing the very thing it exists to stop inventing.
+  subtasks_rows="$(printf '%s' "$st_table" | jq -R -s -c '
+    split("\n") | map(select(length > 0)) | map(split("\t"))
+    | map({}
+        + (if (.[0] // "") == "" then {} else {id:     .[0]} end)
+        + (if (.[1] // "") == "" then {} else {title:  .[1]} end)
+        + (if (.[2] // "") == "" then {} else {status: .[2]} end))
+  ' 2>/dev/null)"
+  case "$subtasks_rows" in ''|'[]') subtasks_rows="null" ;; esac
   st_field() {
     awk -v key="$1" '
       /^## Session/ {f=1; next}
@@ -173,11 +227,13 @@ else
   }
   st_detail="$(jq -cn \
       --arg phase "$(st_field phase)" --arg branch "$(st_field branch)" \
-      --arg status "$(st_field status)" --arg sid "$(st_field session_id)" '
+      --arg status "$(st_field status)" --arg sid "$(st_field session_id)" \
+      --argjson subtasks "$subtasks_rows" '
     {} + (if $phase  == "" then {} else {phase:      $phase}  end)
        + (if $branch == "" then {} else {branch:     $branch} end)
        + (if $status == "" then {} else {run_status: $status} end)
        + (if $sid    == "" then {} else {session_id: $sid}    end)
+       + (if $subtasks == null then {} else {subtasks: $subtasks} end)
   ' 2>/dev/null)"
   [ "$st_detail" = "{}" ] && st_detail=""
   if [ -z "$st_rows" ]; then
@@ -264,7 +320,10 @@ else
         elif ($o | has("cc_session_id"))
              and (($o.cc_session_id | type) == "string")
              and (($o.cc_session_id | length) > 0)
-          then "id\t" + $o.cc_session_id
+          then "id\t" + $o.cc_session_id + "\t" +
+               ({sid: $o.cc_session_id, ts: $o.ts, agent_id: $o.agent_id,
+                 agent_type: $o.agent_type, branch: $o.branch}
+                | with_entries(select(.value != null and .value != "")) | tojson)
         else "noid" end
     end
   ' 2>/dev/null)"
@@ -278,12 +337,57 @@ else
     | awk -F'\t' '/^id\t/{print $2}' | LC_ALL=C sort -u | awk 'NF{n++} END{print n+0}')"
 
   sess_lines=$((sess_total - sess_blank))
+
+  # -------------------------------------------------------------------------
+  # The NEWEST-SESSION view. Built from the SAME classified lines the counts came from - the
+  # third field each id line already carries - so the log files are read exactly once. A
+  # second `cat` over .supervisor/logs/*.jsonl would re-read megabytes to answer a question
+  # the first pass already had the evidence for, and the two readings could disagree.
+  #
+  # The session is picked by the newest `ts` ON A RECORD, never by file order or filename:
+  # a log file is named for a `state.md` status that can read `running` for weeks, so the
+  # last file is not the latest session and the last line is not the latest event. When no
+  # record carries a `ts` at all the view is OMITTED with a note - the ordering the shell's
+  # glob happens to produce is not evidence of recency.
+  #
+  # `events` counts every line the agent appears on, including one with no `ts`; `first_ts`
+  # and `last_ts` span only the lines that carried one, and are omitted when none did.
+  # `agent_type` and `branch` are additive fields present on only some events, so they are
+  # taken from ANY line of that agent and omitted when no line carried them.
+  sess_current="$(printf '%s\n' "$classified" | awk -F'\t' '/^id\t/{print $3}' | jq -s -c '
+    map(select(type == "object")) as $all
+    | ($all | map(select(has("ts"))) | sort_by(.ts | tostring) | last) as $newest
+    | if $newest == null then null
+      else
+        ($newest.sid) as $s
+        | ($all | map(select(.sid == $s))) as $cur
+        | ($cur | map(select(has("agent_id")))) as $ev
+        | {cc_session_id: $s, last_event_ts: $newest.ts}
+          + (if ($ev | length) == 0 then {}
+             else {agents: ($ev | group_by(.agent_id) | map(
+                     (map(select(has("ts")) | .ts)) as $tss
+                     | {agent_id: .[0].agent_id, events: length}
+                       + (if ($tss | length) == 0 then {}
+                          else {first_ts: ($tss | min), last_ts: ($tss | max)} end)
+                       + ((map(select(has("agent_type")) | .agent_type) | first) as $t
+                          | if $t == null then {} else {agent_type: $t} end)
+                       + ((map(select(has("branch")) | .branch) | first) as $b
+                          | if $b == null then {} else {branch: $b} end)
+                   ) | sort_by(.agent_id))}
+             end)
+      end' 2>/dev/null)"
+  case "$sess_current" in ''|'null') sess_current="null" ;; esac
+  if [ "$sess_current" = "null" ]; then
+    add_note "sessions current omitted: no line under $LOGS_DIR/*.jsonl carries a ts, so the newest session cannot be identified from the events themselves (file order is not evidence of recency)"
+  fi
+
   sess_detail="$(jq -cn \
       --argjson lines "$sess_lines" --argjson blank "$sess_blank" \
       --argjson malformed "$sess_bad" --argjson without "$sess_noid" \
-      --argjson with "$sess_withid" '
+      --argjson with "$sess_withid" --argjson current "$sess_current" '
     {lines_scanned: $lines, lines_blank_skipped: $blank, lines_malformed: $malformed,
-     lines_with_session_id: $with, lines_without_session_id: $without}' 2>/dev/null)"
+     lines_with_session_id: $with, lines_without_session_id: $without}
+    + (if $current == null then {} else {current: $current} end)' 2>/dev/null)"
 
   if [ "$sess_bad" -gt 0 ]; then
     # A line we cannot parse may carry an id we cannot see, so the distinct count is
@@ -400,6 +504,112 @@ count_glob "worker_summaries" ".supervisor/worker-summaries" \
 count_json_docs "rules" ".agent/rules" \
   "files matching .agent/rules/*.json, each parsed as a JSON document; the sibling README.md is not counted" \
   .agent/rules/*.json
+
+# ---------------------------------------------------------------------------
+# 10) the agent roster - <plugin>/agents/*.md YAML frontmatter.
+#
+# The ONE input that is not repo-relative. Every other surface lives under the project being
+# projected; this one lives beside the script, because the roster is a property of the
+# INSTALLED PLUGIN and is identical for every project it runs in. FLOOR_AGENTS_DIR overrides
+# it, which is what keeps the test suite hermetic: without an override the script would
+# resolve its own install directory and report the real agent count against a fixture tree
+# that has no agents at all.
+#
+# Only the FIRST frontmatter block is read (the awk stops at the closing `---`), so a `name:`
+# or `color:` in the prose body can never be mistaken for one - the gen-color-legend.sh
+# convention. Every field is OMITTED when the frontmatter does not state it, `read_only`
+# included: "this file lists no disallowedTools" is a fact about the file, and `false` there
+# would be a derivation from silence.
+# ---------------------------------------------------------------------------
+AGENTS_DIR="${FLOOR_AGENTS_DIR:-}"
+if [ -z "$AGENTS_DIR" ] && [ -n "$PLUGIN_ROOT" ]; then AGENTS_DIR="$PLUGIN_ROOT/agents"; fi
+agents_basis="files matching <plugin>/agents/*.md, one per agent role, with name / color / model / maxTurns / disallowedTools read from the YAML frontmatter between the first two --- lines; the directory is the plugin's own install path resolved from \$0 (overridable via FLOOR_AGENTS_DIR), NOT a repo-relative one"
+
+# read_only is TRUE only when disallowedTools lists both Write and Edit as WHOLE TOKENS. A
+# substring test matches `NotebookEdit` and would report an agent that can still edit files as
+# read-only - the split on non-identifier characters is what makes the claim honest.
+agent_row() {
+  awk '
+    NR==1 && $0 ~ /^---[[:space:]]*$/ { fm=1; next }
+    fm && $0 ~ /^---[[:space:]]*$/    { exit }
+    fm {
+      if (match($0, /^[A-Za-z_]+:/)) {
+        k = substr($0, 1, RLENGTH-1)
+        v = substr($0, RLENGTH+1)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+        gsub(/^"|"$/, "", v)
+        if      (k == "name")            name  = v
+        else if (k == "color")           color = v
+        else if (k == "model")           model = v
+        else if (k == "maxTurns")        turns = v
+        else if (k == "disallowedTools") { dis = v; hasdis = 1 }
+      }
+    }
+    END {
+      ro = ""
+      if (hasdis) {
+        n = split(dis, t, /[^A-Za-z0-9_]+/)
+        for (i = 1; i <= n; i++) { if (t[i] == "Write") w = 1; if (t[i] == "Edit") e = 1 }
+        ro = (w && e) ? "true" : "false"
+      }
+      sub(/^loomwright:/, "", name)
+      printf "%s\t%s\t%s\t%s\t%s\n", name, color, model, turns, ro
+    }
+  ' "$1" 2>/dev/null
+}
+
+agentfiles=()
+[ -n "$AGENTS_DIR" ] && agentfiles=("$AGENTS_DIR"/*.md)
+if [ -z "$AGENTS_DIR" ]; then
+  add_note "agents omitted: the plugin agents directory could not be resolved from \$0 and FLOOR_AGENTS_DIR is unset"
+  add_surface "agents" "unresolved" "$agents_basis" "absent" "" \
+    "the plugin agents directory could not be resolved from \$0 and FLOOR_AGENTS_DIR is unset"
+elif [ ! -d "$AGENTS_DIR" ]; then
+  add_note "agents omitted: input directory $AGENTS_DIR is not present"
+  add_surface "agents" "$AGENTS_DIR" "$agents_basis" "absent" "" \
+    "input directory $AGENTS_DIR is not present"
+elif [ ! -r "$AGENTS_DIR" ]; then
+  add_note "agents unverified: input directory $AGENTS_DIR is not readable"
+  add_surface "agents" "$AGENTS_DIR" "$agents_basis" "unverified" "" \
+    "input directory $AGENTS_DIR is not readable"
+else
+  # Readability of every MEMBER, decided before any parsing: awk on an unreadable file prints
+  # nothing and exits fine, so the roster would silently lose a row while the count - taken
+  # from glob membership - still claimed it. Same guard, same reason, as the logs reader.
+  agent_unreadable=""
+  for af in ${agentfiles[@]+"${agentfiles[@]}"}; do
+    if [ ! -f "$af" ]; then agent_unreadable="$af is not a regular file"; break; fi
+    if [ ! -r "$af" ]; then agent_unreadable="$af is not readable";       break; fi
+  done
+  if [ -n "$agent_unreadable" ]; then
+    add_note "agents unverified: $agent_unreadable"
+    add_surface "agents" "$AGENTS_DIR" "$agents_basis" "unverified" "" "$agent_unreadable"
+  else
+    agent_tsv=""
+    for af in ${agentfiles[@]+"${agentfiles[@]}"}; do
+      agent_tsv="${agent_tsv}$(agent_row "$af")
+"
+    done
+    agents_roster="$(printf '%s' "$agent_tsv" | LC_ALL=C sort | jq -R -s -c '
+      split("\n") | map(select(length > 0)) | map(split("\t"))
+      | map({}
+          + (if (.[0] // "") == "" then {} else {name:  .[0]} end)
+          + (if (.[1] // "") == "" then {} else {color: .[1]} end)
+          + (if (.[2] // "") == "" then {} else {model: .[2]} end)
+          + (if ((.[3] // "") | test("^[0-9]+$")) then {max_turns: (.[3] | tonumber)} else {} end)
+          + (if   (.[4] // "") == "true"  then {read_only: true}
+             elif (.[4] // "") == "false" then {read_only: false}
+             else {} end))
+    ' 2>/dev/null)"
+    agents_detail=""
+    case "$agents_roster" in
+      ''|'[]') : ;;
+      *) agents_detail="$(jq -cn --argjson roster "$agents_roster" '{roster: $roster}' 2>/dev/null)" ;;
+    esac
+    add_surface "agents" "$AGENTS_DIR" "$agents_basis" "counted" "${#agentfiles[@]}" "" \
+      "$(mtime_epoch "$AGENTS_DIR")" "$agents_detail"
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # Assemble. jq -S sorts every key, so the byte layout is a function of the data

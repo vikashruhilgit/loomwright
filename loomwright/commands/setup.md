@@ -1,5 +1,5 @@
 ---
-description: Umbrella setup command — status dashboard plus guided configuration for every optional plugin capability — observability (local Langfuse + OTel collector), memory in version control, portable house-rule seeding, telemetry, notifications, webhook, Beads, MySQL MCP, opt-in status line
+description: Umbrella setup command — status dashboard plus guided configuration for every optional plugin capability — observability (local Langfuse + OTel collector), memory in version control, portable house-rule seeding, telemetry, notifications, webhook, Beads, MySQL MCP, opt-in status line, opt-in local run view
 ---
 
 # Command: /setup
@@ -12,6 +12,7 @@ description: Umbrella setup command — status dashboard plus guided configurati
 /setup memory               # Put the Twin memory stores under version control IN PLACE (gitignore negation + repo allowlist): status | apply | remove
 /setup rules                # Seed .agent/rules/ with PORTABLE conventions on a cold-start repo (labelled seeded, not learned): status | (no-arg → seed)
 /setup statusline           # Wire the one-line run report into the user-scope settings file: status | apply | remove
+/setup ui                   # Install and serve The Floor, a local loopback-only view of the run: check | apply | serve | stop | remove
 /setup telemetry            # DELEGATES to /telemetry (no consent logic duplicated here)
 /setup notifications        # Status + guidance (notification hooks are always-on)
 /setup webhook              # Status + guidance (LOOMWRIGHT_WEBHOOK_URL)
@@ -21,13 +22,14 @@ description: Umbrella setup command — status dashboard plus guided configurati
 
 ## Parameters
 
-- **module** (optional): one of `observability`, `telemetry`, `notifications`, `webhook`, `beads`, `mysql-mcp`, `memory`, `rules`, `statusline`.
+- **module** (optional): one of `observability`, `telemetry`, `notifications`, `webhook`, `beads`, `mysql-mcp`, `memory`, `rules`, `statusline`, `ui`.
   - If omitted: run the full status dashboard, then offer configuration via `AskUserQuestion` (multi-select).
   - If unrecognised: print this usage block and stop.
 - **observability subcommand** (optional, second positional arg): `init` | `status` | `remove`. If omitted, the module's check step decides — unconfigured → offer `init`; configured → offer `status` / `remove` / reconfigure.
 - **rules subcommand** (optional, second positional arg): `status` = read-only report of which portable seeds are present (no writes). If omitted, the module's check step decides — unseeded → offer to seed; already seeded → report and offer status only. **`remove` is N/A** — the store is committed and human-curated, so removing a rule is `/rules` territory (`add-rule.sh --retract`), never a module teardown; and re-seeding a still-seeded repo is a no-op by design rather than a reconfigure — including one whose seeds you have EDITED, since presence is keyed on the seeded stamp rather than the statement text. A seed you RETRACTED is the exception and is re-offered (see the module's honest limits — retract is not a permanent opt-out).
 - **memory subcommand** (optional, second positional arg): `status` = read-only report (no writes) | `apply` | `remove`. If omitted, the module's check step decides — not configured → offer to apply (behind the consent gate); configured → offer `status` / `remove`. **`remove` is REQUIRED here** — un-committing is a real operation a user will want, most likely on realising something proprietary was published, so it is implemented rather than documented N/A.
 - **statusline subcommand** (optional, second positional arg): `status` = read-only report (no writes) | `apply` | `remove`. If omitted, the module's check step decides — not configured → offer to apply; configured → offer `status` / `remove`. **`remove` is REQUIRED here** — the module changes a visible, always-on surface, so backing it out (and restoring whatever status line was there before) is a real user need, not a documented N/A. **A pre-existing status line this plugin did not write is never replaced without an explicit choice** — see the module's Offer step.
+- **ui subcommand** (optional, second positional arg): `check` = read-only report (no writes) | `apply` | `serve` | `stop` | `remove`. If omitted, the module's check step decides — not configured → offer to apply; configured → offer `serve` / `remove`. **`remove` is REQUIRED here** — apply materialises a directory of files outside the repo, so taking it back is a real need, not a documented N/A. **`serve` is a long-lived local process** and the only one any module starts: it binds 127.0.0.1 exclusively and `stop` kills only pids this module recorded.
 - Note: the twin module was retired with the graphify tier (graph + bridge cold-start bootstrap — a deliberate omission, not an oversight; see `CHANGELOG.md`).
 
 ## What This Does
@@ -87,6 +89,8 @@ Run ONE real check per module (never guess; every cell of the dashboard is deriv
 
 9. **statusline** — run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-statusline.sh" check` and read its `statusLine:` cell plus the `Statusline readiness:` verdict. `check` is READ-ONLY — it writes nothing. Derive a compact status cell from that verdict alone: `configured` → `active (one-line run report)`; `not configured` → `not wired`; `foreign (...)` → `another status line is configured — preserved` (a **third** outcome: it is neither configured nor unconfigured, and must never be collapsed into either, because collapsing it to `not configured` is what would invite a silent overwrite); `unknown (...)` → surface the helper's own parenthetical verbatim (missing `jq`, or a settings document that does not parse — report UNVERIFIED, never a configured/not-configured claim). Never guess — every cell comes from that one probe.
 
+10. **ui** — run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-ui.sh" check` and read its `installed:` cell plus the `UI readiness:` verdict. `check` is READ-ONLY — it writes nothing. Derive a compact status cell from that verdict alone: `configured` → `installed (serve it with /setup ui)`; `not configured` → `not installed`; `stale (run apply)` → `installed, bundle out of date`; `WITHHELD (...)` → surface the helper's own parenthetical verbatim (a directory exists at the ui path but carries no ownership marker — a **third** outcome that must never be collapsed into configured or not-configured, because collapsing it is what would invite this module to delete a directory it did not create). If the `python3:` cell reads `MISSING`, append `— serve unavailable (python3 not found)` rather than restating readiness. Never guess — every cell comes from that one probe.
+
 Print the dashboard:
 
 ```
@@ -103,19 +107,20 @@ Print the dashboard:
 | memory        | <derived>                               | /setup memory         |
 | rules         | <derived>                               | /setup rules          |
 | statusline    | <derived>                               | /setup statusline     |
+| ui            | <derived>                               | /setup ui             |
 ```
 
-Then use `AskUserQuestion`. **`AskUserQuestion` accepts at most 4 options**, so do NOT emit one option per unconfigured module (9 modules > 4 → an invalid call). The set below is FIXED at four and must NOT be grown when a module is added — a tenth module folds into an existing bucket or gets its own nested question, exactly as `memory`, `rules` and `statusline` do here:
+Then use `AskUserQuestion`. **`AskUserQuestion` accepts at most 4 options**, so do NOT emit one option per unconfigured module (10 modules > 4 → an invalid call). The set below is FIXED at four and must NOT be grown when a module is added — an eleventh module folds into an existing bucket or gets its own nested question, exactly as `memory`, `rules`, `statusline` and `ui` do here:
 - `question`: "Which would you like to configure now?"
 - `header`: "Configure"
 - `multiSelect`: true
 - `options` (exactly these, in order; append each module's current status to its description):
-  1. **Claude Code surfaces (observability · status line)** — the two modules that write the user-scope settings file; selecting it asks ONE nested question (below) to pick which.
+  1. **Claude Code surfaces (observability · status line · the floor)** — the modules that write under your Claude Code config directory; selecting it asks ONE nested question (below) to pick which.
   2. **Repo knowledge stores (memory in version control · portable rule seeds)** — the two per-repo apply flows; selecting it asks ONE nested question (below) to pick which.
   3. **Other integrations (telemetry · webhook · Beads · MySQL MCP)** — print status + setup guidance / delegation for these (telemetry delegates to `/telemetry`; webhook · Beads · MySQL MCP are guidance-only; `notifications` is always-on and needs no action).
   4. **Nothing — just checking** — stop with the summary line.
 
-**How to render the status on a BUNDLED option** (options 1, 2 and 3 each fold several modules behind one label, so "the module's status" is ambiguous): append the per-module statuses joined by ` · `, each prefixed with its module name — `observability: <status> · statusline: <status>` for option 1, `memory: <status> · rules: <status>` for option 2, and `telemetry: <status> · webhook: <status> · beads: <status> · mysql-mcp: <status>` for option 3. Never collapse them into one aggregate word, and never pick one module's status to stand for the bundle. Option 4 is no-module and takes none. Truncate from the right if the description exceeds the option-description limit — drop whole `name: status` pairs, never a status string mid-word.
+**How to render the status on a BUNDLED option** (options 1, 2 and 3 each fold several modules behind one label, so "the module's status" is ambiguous): append the per-module statuses joined by ` · `, each prefixed with its module name — `observability: <status> · statusline: <status> · ui: <status>` for option 1, `memory: <status> · rules: <status>` for option 2, and `telemetry: <status> · webhook: <status> · beads: <status> · mysql-mcp: <status>` for option 3. Never collapse them into one aggregate word, and never pick one module's status to stand for the bundle. Option 4 is no-module and takes none. Truncate from the right if the description exceeds the option-description limit — drop whole `name: status` pairs, never a status string mid-word.
 
 **Nested question — only when option 1 was selected** (also ≤4 options; never inline these into the set above):
 - `question`: "Which Claude Code surface?"
@@ -124,7 +129,8 @@ Then use `AskUserQuestion`. **`AskUserQuestion` accepts at most 4 options**, so 
 - `options` (exactly these, in order; append each module's current status to its description):
   1. **observability** — full local-Langfuse / existing-endpoint / console init flow.
   2. **statusline** — wire the one-line run report (phase · branch · N/M subtasks · age of the last event) into the user-scope settings file. Backup-first and parse-gated. **If a status line you did not install is already configured it is PRESERVED and merely reported** — replacing it is a separate, explicit choice, and the previous value is recorded so `remove` restores it.
-  3. **None — go back** — skip both and continue with the remaining selections.
+  3. **ui** — install The Floor, a local, loopback-only page that renders the current run: five pipeline stages above one lane per agent in the newest session, with a lane that stopped receiving events visibly stalled. Serves on 127.0.0.1 only; nothing leaves the machine.
+  4. **None — go back** — skip all three and continue with the remaining selections.
 
 **Nested question — only when option 2 was selected** (also ≤4 options; never inline these into the set above):
 - `question`: "Which repo knowledge store?"
@@ -469,6 +475,86 @@ A second `/setup statusline` on an already-configured setup reports `no-op — a
 
 ---
 
+## Module: ui
+
+Installs and serves **The Floor** — a local, read-only, loopback-only page that renders `.supervisor/floor/floor.json` so a run stops being opaque while it is still running. **Opt-in, and it is the only module that starts a long-lived local process.** Reference companion: `${CLAUDE_PLUGIN_ROOT}/docs/FLOOR_UI.md`.
+
+The page shows five pipeline stages (Queue · Plan · Execute · Review · Shipped) above one lane per agent in the newest session, plus a roster strip and the projector's own notes:
+
+```
+Queue 2   Plan   [Execute]   Review   Shipped 41
+  worker ················•·····   17 events · last 4s
+  code-reviewer ·····•··········    6 events · last 51s
+  identity unknown ·•·············  2 events · no event for 12m   ← stalled
+```
+
+> **Motion is evidence, never decoration.** There is exactly ONE timer on the page (a 2 s poll) and a lane's shuttle advances only when that lane's recorded `events` count changed between two renders. The single stated exemption is the pulse on a non-stalled lane — its ABSENCE is the stall signal, so it is state-driven even though a keyframe drives its frames.
+
+> **There is deliberately NO liveness and NO "currently running agent", and that absence is the honest answer rather than a gap.** No spawn event exists in any log, so a lane can only ever report events that were RECORDED — never that anything is running now. The page renders that sentence permanently under the lanes. Identity is partial for the same reason: a lane whose `agent_id` never appeared on a line carrying `agent_type` is drawn `identity unknown` rather than assigned a plausible role, and a roster row whose agent declares no `disallowedTools` reads `read-only unknown` rather than "not read-only".
+
+> **`floor.json` is local data.** It carries branch names, session ids and agent ids. `serve` always passes `--bind 127.0.0.1`; there is no flag to change that and no code path that omits it.
+
+The deterministic engine is `${CLAUDE_PLUGIN_ROOT}/scripts/setup-ui.sh` (subcommands `check` / `apply` / `serve` / `stop` / `remove`). It is fail-safe (always exits 0 — "fails closed" here means refuse-to-write plus a named-reason headline status line, never a non-zero exit), write-contained to the ui directory plus `build-floor.sh`'s own output, and it never touches the user-scope settings document. This command owns the INTERACTIVE half.
+
+### Check
+
+Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-ui.sh" check` and report its cells: the ui dir, the plugin bundle (`present (3 files)` / `INCOMPLETE — …`), the `python3:` / `jq:` / `build-floor.sh:` availability lines, the `installed:` cell (absent / a directory with no marker / marker present with the bundle matching or DRIFTED, naming the drifted files) and the `UI readiness:` verdict (`configured` / `not configured` / `stale (run apply)` / `WITHHELD (…)`). Read-only — `check` writes nothing. `WITHHELD` means a directory exists at the ui path that this module did not create: report it as-is, never as not-configured.
+
+### Report
+
+Print what check found. For the `check` subcommand, STOP after the report — read-only, no writes, no offer.
+
+### Offer
+
+**If `not configured`** — use `AskUserQuestion` (cap 4 options):
+- `question`: "Install The Floor (a local, loopback-only view of the run)?"
+- `header`: "The Floor"
+- `multiSelect`: false
+- `options`:
+  1. `Install` — "Copy the page into the ui directory. Nothing under your Claude Code settings is touched, and nothing is served until you ask for it."
+  2. `Check only` — "Re-print the report and stop (no writes)."
+  3. `Cancel` — "Do nothing."
+
+**If `configured` or `stale (run apply)`** — offer `Serve it` (start the loop and print the URL), `Update the bundle` (only when the verdict is `stale`), `Remove it`, and `Check only`.
+
+**If `WITHHELD`** — do NOT offer Apply or Remove. Report the directory verbatim, state that this module did not create it and will neither write into it nor delete it, and offer only `Check only` / `Cancel` plus the advice to re-run with a different `--ui-dir` or to clear that directory by hand. Never re-run to "get past" it.
+
+Default to NOT applying. `serve` is never started without an explicit choice.
+
+### Apply
+
+1. Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-ui.sh" apply` after an explicit confirm.
+2. Read its **headline status line** and report it verbatim. Exactly ONE of these is printed:
+   - `apply: installed — <files>` — the bundle and the ownership marker were written.
+   - `apply: updated — <files>` — the plugin bundle had changed; the named files were refreshed.
+   - `apply: no-op — already configured` — every file already matched byte for byte; nothing was written.
+   - `apply: WITHHELD — <dir> exists but carries no .loomwright-ui-module marker` — **nothing was written.** This is the fail-closed path, not a failure: relay it and go back to the Offer step.
+   - `apply: ABORTED — <reason>` — nothing (or, on the one named partial-write branch, exactly the files it lists) was written. Reasons: the plugin bundle is incomplete; the ui dir could not be created; a bundle file or the marker could not be written. Surface the reason and STOP.
+3. Tell the user the page is installed but not yet served, and that `/setup ui` → `Serve it` starts it.
+
+### Serve
+
+1. Run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-ui.sh" serve` from the project root. Add `--port <n>` only if the default 7734 is busy, `--interval <n>` (default 2, minimum 1) to change the regeneration cadence, and `--no-regen` to serve the existing copy without running the projector.
+2. Relay its headline and the two lines under it: the `127.0.0.1:<port>` URL (state plainly that it is not reachable from any other host), the ui dir, and whether regeneration is on and from which directory.
+3. Fail-safe branches to relay verbatim, never paraphrase: `serve: ABORTED — python3 not found`; `serve: ABORTED — <dir> does not exist. Run 'setup-ui.sh apply' first.`; `serve: ABORTED — build-floor.sh not found …` (suggest `--no-regen`); `serve: ABORTED — port <n> is already in use` — **this module never moves the port for you**, because a silently moved port is a browser tab reading bytes from something else; and the non-fatal `serve: note — jq not found …`, which means the page will render an increasingly stale copy and say so.
+4. Foreground is the default (Ctrl-C stops it). `--detach` records the pids in `<ui dir>/serve.pid`; `setup-ui.sh stop` kills only pids whose command line names `http.server` or `setup-ui.sh`, and prints `stop: no-op` when there is no recorded server.
+
+### Verify
+
+Re-run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-ui.sh" check` and show the before/after: the verdict now `configured` and the bundle matching the plugin byte for byte. Success is claimed ONLY after that re-check. As a live smoke test with the server running, `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:<port>/floor.json` should print `200` — and on a machine with nothing running the page still renders rather than going blank — saying `no run in flight` when the projector actually observed an idle session, and `session data unavailable — <reason>` when it could not observe one at all (the two are deliberately different claims; see `docs/FLOOR_UI.md`).
+
+### Subflow: `/setup ui remove`
+
+1. Confirm via `AskUserQuestion` first, and say what goes: the three bundle files, the marker, any pidfile and the `floor.json` copy. The projection under `.supervisor/floor/` is regenerable and is left alone.
+2. Stop any running server first (`setup-ui.sh stop`), then run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/setup-ui.sh" remove`.
+3. **`remove` REFUSES a directory this plugin did not create** — it prints `remove: WITHHELD — … carries no .loomwright-ui-module marker` and the directory is PRESERVED. It also refuses `/`, `$HOME` and anything at or under the plugin install directory. That is correct: `--ui-dir` is user-supplied and a typo pointing at a real directory must not cost the user that directory.
+
+### Idempotency note
+
+A second `/setup ui` on an already-configured install reports `apply: no-op — already configured` and writes nothing — apply byte-compares each bundle file against the plugin's copy before touching anything. When the plugin bundle has genuinely changed, the same path reports `apply: updated` and NAMES the files it refreshed, so an update is never indistinguishable from a no-op.
+
+---
+
 ## Module: telemetry
 
 DELEGATES — print `Telemetry is managed by /telemetry (consent logic lives there and is not duplicated).`, show the consent state from the dashboard check, and tell the user to run `/telemetry enable | disable | status | test`.
@@ -504,6 +590,8 @@ Status + guidance only. Report which of `DB_HOST`, `DB_USER`, `DB_PASS`, `DB_NAM
   - **memory** (`/setup memory`) — **a `.gitignore` write class no other module has, so it gets its own line:** (a) `<project>/.gitignore`, rewritten ONLY via `setup-memory.sh apply` / `remove`, and ONLY after an explicit consent-bearing confirm. The write is backup-first (a timestamped `<project>/.gitignore.backup.<ts>` sibling, pid-suffixed on a same-second collision so one backup can never overwrite another), atomic (tmp-file + `mv`), confined to a sentinel-delimited managed block plus the commenting-out of pre-existing directory-shaped `.claude/` / `.supervisor/` excludes — including the recursive `**` family (`.claude/**`, `**/.claude/`, `**/.claude/**`), but never the `X/*` working form — and **idempotent by byte-comparison** — apply computes the file it would write and does nothing when it already matches. It **ABORTS without any write and without a backup** on an absent, non-regular, symlinked, NUL-containing, conflict-marked, or sentinel-unbalanced `.gitignore` — never a partial write, never a blind repair; and (b) `<project>/.supervisor/config.json` key `.setup_memory.repo_allowlist` — a jq merge that is parse-gated (`jq empty`), backup-first, atomic, preserves every unrelated key, stores a JSON **array**, and never overwrites an existing non-empty one. The memory module touches NO `~/.claude/settings.json` and nothing under `~/.claude/`, and it **NEVER runs `git add`, `git rm`, `git commit` or any other history-touching git command** — un-ignoring is not committing, and un-committing is the user's own `git rm --cached`.
 
   - **statusline** (`/setup statusline`) — **the only module whose write domain is the USER-SCOPE settings document, so it gets its own line:** the user-scope settings JSON ONLY (the same path Pattern 3 governs), written ONLY via `setup-statusline.sh apply` / `remove`, and ONLY after an explicit confirm. The write is backup-first (a timestamped `.backup.<ts>` sibling, pid- then counter-suffixed on a same-second collision so one backup can never overwrite another, and an apply that cannot obtain a free backup name ABORTS rather than write unbacked-up), parse-gated (`jq empty` — an unparseable document ABORTS with **no write and no backup**), atomic (tmp-file + `mv`), and **idempotent by byte-comparison** — apply computes the document it would write and does nothing when it already matches. It touches exactly TWO keys, `statusLine` and the namespaced restore record `loomwrightStatusLinePrior`; every other key at every level is preserved, which `test-setup-statusline.sh` asserts by DIFFING the two documents with those two keys removed rather than by spot-checking. **NOTHING ELSE under the user's `~/.claude/` directory** — no sidecar state file, no project write, no `.gitignore` write, and no history-touching git command. A pre-existing `statusLine` this plugin did not write is PRESERVED and reported; replacing it requires the explicit `--replace` flag, and the replaced value is recorded so `remove` restores it verbatim.
+
+  - **ui** (`/setup ui`) — **the only module that materialises a directory of files outside the repo AND starts a process, so it gets its own line:** (a) the UI DIRECTORY, default `$HOME/.claude/loomwright/ui` and overridable with `--ui-dir`, written ONLY via `setup-ui.sh apply` / `serve` / `remove` and ONLY after an explicit confirm — into it go exactly the three bundle files, the `.loomwright-ui-module` ownership marker, an optional `serve.pid` and a copy of `floor.json`, and the write is **idempotent by byte-comparison** (an apply that would change nothing reports `no-op`); and (b) `<project>/.supervisor/floor/floor.json`, and ONLY by RUNNING `build-floor.sh` — this module never writes that path itself, and `serve --no-regen` makes even that write impossible. `apply` and `remove` both WITHHOLD on a directory carrying no marker, and `remove` additionally refuses `/`, `$HOME` and anything at or under the plugin install directory. **NOTHING under `~/.claude/settings.json`** — the user-scope settings document is the `statusline` module's one write domain and this module has no business in it — no `.gitignore` write and no history-touching git command. `serve` always passes `--bind 127.0.0.1`, and `stop` kills only a pid whose command line names `http.server` or `setup-ui.sh`.
 
   - **rules** (`/setup rules`): `<project>/.agent/rules/<category>.json` ONLY, written ONLY via `seed-rules.sh seed --confirm` (which authors every rule through the sole writer `add-rule.sh`), and ONLY after an explicit confirm. `check` and a bare `seed` write NOTHING — every writer invocation is stdin-detached, so this module NEVER prompts and an unconfirmed run cannot write. No `~/.claude/` write of any kind, no `.gitignore` write, no `git add`/`rm`/`commit`, and no rule object built by hand.
 

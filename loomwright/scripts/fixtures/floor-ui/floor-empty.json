@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "generated_at_epoch": 1788400000,
+  "generator": "build-floor.sh",
+  "repo_head": "5b90c27",
+  "notes": [
+    "state omitted: input file .supervisor/state.md is not present"
+  ],
+  "surfaces": {
+    "agents": {
+      "source": "/opt/plugins/loomwright/agents",
+      "basis": "files matching <plugin>/agents/*.md, one per agent role, with name / color / model / maxTurns / disallowedTools read from the YAML frontmatter between the first two --- lines; the directory is the plugin's own install path resolved from $0 (overridable via FLOOR_AGENTS_DIR), NOT a repo-relative one",
+      "status": "counted",
+      "count": 3,
+      "mtime_epoch": 1788338037,
+      "detail": {
+        "roster": [
+          {
+            "name": "code-reviewer",
+            "color": "#20B2AA",
+            "model": "inherit",
+            "max_turns": 40,
+            "read_only": true
+          },
+          {
+            "name": "rubric-grader",
+            "color": "#9ACD32",
+            "model": "haiku",
+            "max_turns": 12
+          },
+          {
+            "name": "worker",
+            "color": "#32CD32",
+            "model": "inherit",
+            "max_turns": 40,
+            "read_only": false
+          }
+        ]
+      }
+    },
+    "automate_runs": {
+      "source": ".supervisor/automate",
+      "basis": "files matching .supervisor/automate/*.md, which excludes the sibling *.config-backup.json transients",
+      "status": "counted",
+      "count": 0,
+      "mtime_epoch": 1788399900
+    },
+    "jobs_done": {
+      "source": ".supervisor/jobs/done",
+      "basis": "files matching .supervisor/jobs/done/*.md",
+      "status": "counted",
+      "count": 91,
+      "mtime_epoch": 1788402317
+    },
+    "jobs_failed": {
+      "source": ".supervisor/jobs/failed",
+      "basis": "files matching .supervisor/jobs/failed/*.md",
+      "status": "counted",
+      "count": 2,
+      "mtime_epoch": 1787379169
+    },
+    "jobs_in_progress": {
+      "source": ".supervisor/jobs/in-progress",
+      "basis": "files matching .supervisor/jobs/in-progress/*.md",
+      "status": "counted",
+      "count": 0,
+      "mtime_epoch": 1788399900
+    },
+    "jobs_pending": {
+      "source": ".supervisor/jobs/pending",
+      "basis": "files matching .supervisor/jobs/pending/*.md",
+      "status": "counted",
+      "count": 0,
+      "mtime_epoch": 1788399900
+    },
+    "logs": {
+      "source": ".supervisor/logs",
+      "basis": "files matching .supervisor/logs/*.jsonl, an extension glob; the same directory also holds plain .log dispatch transcripts which are deliberately NOT counted here",
+      "status": "counted",
+      "count": 65,
+      "mtime_epoch": 1788399988
+    },
+    "sessions": {
+      "source": ".supervisor/logs",
+      "basis": "distinct non-empty cc_session_id values across every line of .supervisor/logs/*.jsonl, grouped by that FIELD and never by filename, so one file may contribute many sessions and one session may span many files",
+      "status": "counted",
+      "count": 151,
+      "detail": {
+        "lines_scanned": 13206,
+        "lines_with_session_id": 13111,
+        "lines_without_session_id": 95,
+        "lines_malformed": 0,
+        "lines_blank_skipped": 0,
+        "current": {
+          "cc_session_id": "9f1c0e7a-2b44-4d10-9c33-0a7e5b6d81aa",
+          "last_event_ts": "2026-09-02T18:41:12Z"
+        }
+      }
+    },
+    "state": {
+      "source": ".supervisor/state.md",
+      "basis": "rows matching a leading numeric cell inside the ## Subtasks table of .supervisor/state.md",
+      "status": "absent",
+      "reason": "input file .supervisor/state.md is not present"
+    }
+  }
+}

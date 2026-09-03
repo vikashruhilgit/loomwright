@@ -1,0 +1,246 @@
+/* floor.css - the whole visual layer of The Floor.
+ *
+ * NO REMOTE ANYTHING. This file pulls in no other stylesheet, embeds no downloaded typeface,
+ * and references no external resource of any kind - the self-test scans for every one of
+ * those constructs by name and fails on a single occurrence ANYWHERE in the file, comments
+ * included, which is why this paragraph describes them rather than spelling them out. The
+ * type is the host's own system stack, the only stack guaranteed to be present offline.
+ *
+ * MOTION BUDGET - this file is deliberately almost motionless.
+ *   - exactly ONE keyframes block exists (`pulse`), and it is applied ONLY to a lane that is NOT
+ *     stalled. Its ABSENCE is the stall signal, which is why a keyframe is legitimate here:
+ *     the frames are timer-driven but the PRESENCE of the animation is state-driven.
+ *   - exactly ONE `transition` exists (the lane shuttle), and floor.js moves the shuttle only
+ *     when that lane's recorded `events` count changed between two renders.
+ *   Nothing else moves. There is no spinner, no skeleton shimmer, no progress bar that
+ *   advances on a clock - a moving thing on this page always means an event was recorded.
+ *
+ * COLOUR IS NEVER THE ONLY SIGNAL. Every state also carries a border treatment and words:
+ *   stalled          -> dashed lane border + the text "no event for <age>"
+ *   identity unknown -> dashed chip + the text "identity unknown"
+ *   read-only agent  -> hollow dot + the text "read-only"
+ *   absent / stale / empty -> text banners, never an empty page
+ */
+
+/* ---- light palette (bare :root is the default) ---- */
+:root {
+  --bg: #f7f7f5;
+  --panel: #ffffff;
+  --ink: #14171a;
+  --ink-dim: #4a5158;
+  --line: #c9cdd2;
+  --line-strong: #6d757d;
+  --accent: #1a4f8a;
+  --warn-ink: #7a3b00;
+  --warn-bg: #fdf1e0;
+  --warn-line: #a35a12;
+  --unknown-ink: #4a5158;
+  --radius: 6px;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+/* ---- dark palette: system preference, unless the document opted out to light ---- */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14171a;
+    --panel: #1d2226;
+    --ink: #eceff1;
+    --ink-dim: #a9b2ba;
+    --line: #39424a;
+    --line-strong: #8d979f;
+    --accent: #86b7ec;
+    --warn-ink: #ffcf9a;
+    --warn-bg: #3a2a14;
+    --warn-line: #d18f3f;
+    --unknown-ink: #a9b2ba;
+  }
+}
+
+/* ---- dark palette: explicit opt-in, independent of the system preference ---- */
+:root[data-theme="dark"] {
+  --bg: #14171a;
+  --panel: #1d2226;
+  --ink: #eceff1;
+  --ink-dim: #a9b2ba;
+  --line: #39424a;
+  --line-strong: #8d979f;
+  --accent: #86b7ec;
+  --warn-ink: #ffcf9a;
+  --warn-bg: #3a2a14;
+  --warn-line: #d18f3f;
+  --unknown-ink: #a9b2ba;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0 0 2rem;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  background: var(--panel);
+  color: var(--accent);
+  padding: 0.5rem 0.75rem;
+  z-index: 10;
+}
+.skip-link:focus { left: 0.5rem; top: 0.5rem; }
+
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+.bar {
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+footer.bar { border-bottom: 0; border-top: 1px solid var(--line); margin-top: 1.5rem; }
+
+h1 { font-size: 1.25rem; margin: 0; letter-spacing: 0.02em; }
+h2 { font-size: 0.95rem; margin: 1.5rem 1.25rem 0.5rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-dim); }
+.sub { margin: 0.25rem 0 0; color: var(--ink-dim); font-size: 0.85rem; }
+code { font-family: var(--mono); font-size: 0.85em; }
+
+.banner {
+  margin: 0.75rem 1.25rem 0;
+  padding: 0.75rem 1rem;
+  border: 2px dashed var(--warn-line);
+  border-radius: var(--radius);
+  background: var(--warn-bg);
+  color: var(--warn-ink);
+  font-weight: 600;
+}
+
+/* ---- stages ---- */
+.stages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  list-style: none;
+  margin: 0 1.25rem;
+  padding: 0;
+}
+.stage {
+  flex: 1 1 8rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: 0.6rem 0.75rem;
+}
+.stage-name { display: block; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-dim); }
+.stage-val { display: block; font-size: 1.4rem; font-family: var(--mono); }
+/* The active stage is distinguishable WITHOUT COLOUR, and not by the frame: its value cell
+ * prints the phase word (EXECUTE) where every inactive cell prints an em dash, and it is set
+ * in bold. The accent here is the third, redundant channel, so it is a full 1px border rather
+ * than a thick rail on one edge - drop the colour entirely and the word and the weight still
+ * carry the state. */
+.stage.active { border-color: var(--accent); font-weight: 700; }
+.stage-val.unknown { color: var(--unknown-ink); }
+
+/* ---- lanes ---- */
+.lanes { list-style: none; margin: 0 1.25rem; padding: 0; }
+.lane {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: 0.6rem 0.75rem;
+  margin-bottom: 0.5rem;
+}
+.lane-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem; }
+.lane-name { font-weight: 700; }
+.lane-meta { color: var(--ink-dim); font-size: 0.85rem; font-family: var(--mono); }
+.chip {
+  display: inline-block;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 0 0.5rem;
+  font-size: 0.75rem;
+}
+.chip.unknown { border-style: dashed; color: var(--unknown-ink); }
+.dot { display: inline-block; width: 0.7rem; height: 0.7rem; border-radius: 50%; border: 2px solid var(--line-strong); background: var(--line-strong); }
+/* read-only agents get a HOLLOW dot, so the state survives greyscale and colour-blindness. */
+.dot.hollow { background: transparent; }
+
+.track {
+  position: relative;
+  height: 8px;
+  margin-top: 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.shuttle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 18%;
+  border-radius: 999px;
+  background: var(--line-strong);
+  transform: translateX(0%);
+  transition: transform 600ms ease-in-out;
+}
+
+/* The ONE keyframes block in this file. It is applied only by the `.pulse` class, which floor.js
+ * puts on a lane only when that lane is NOT stalled. */
+@keyframes pulse {
+  0%   { opacity: 1; }
+  50%  { opacity: 0.45; }
+  100% { opacity: 1; }
+}
+.lane.pulse .dot { animation: pulse 2.4s ease-in-out infinite; }
+
+/* The whole outline goes dashed - a uniform shape change reads as a state change without
+ * colour, which is what the stall cue has to survive on. Nothing here is decorative: the
+ * agent's own colour lives on the dot, never on the lane's frame. */
+.lane.stalled {
+  border-style: dashed;
+  border-color: var(--warn-line);
+  background: var(--warn-bg);
+  color: var(--warn-ink);
+}
+.lane.stalled .lane-meta { color: var(--warn-ink); }
+.lane.stalled .shuttle { background: var(--warn-line); }
+
+/* ---- roster + notes ---- */
+.roster { list-style: none; margin: 0 1.25rem; padding: 0; display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.roster li {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: 0.35rem 0.6rem;
+  font-size: 0.85rem;
+}
+.roster .r-meta { color: var(--ink-dim); font-family: var(--mono); font-size: 0.78rem; }
+.notes { margin: 0 1.25rem; padding-left: 1.1rem; color: var(--ink-dim); font-size: 0.85rem; }
+.notes li { margin-bottom: 0.2rem; }
+.note-permanent {
+  margin: 0.5rem 1.25rem 0;
+  color: var(--ink-dim);
+  font-size: 0.85rem;
+  border-left: 3px solid var(--line);
+  padding-left: 0.6rem;
+}
+.empty { margin: 0 1.25rem; color: var(--ink-dim); font-style: italic; }
+
+/* ---- reduced motion ----
+ * Removes every animation and every transition on the page while leaving every state class
+ * rendered: a stalled lane is still dashed and still says "no event for <age>", and the
+ * pulse class is still present in the DOM - it just does not animate. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
