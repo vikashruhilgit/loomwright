@@ -8,7 +8,10 @@
 #
 # Covers (per the brief's Outcomes Rubric "Scriptable self-tests pass"):
 #   A. config suppress/restore: normal restore, absent-file restore DELETES config,
-#      malformed pre-existing config ABORTS (exit 2), crash-stranded backup restored.
+#      malformed pre-existing config ABORTS (exit 2), crash-stranded backup restored;
+#      AND (A7) config-orig is CALL-ORDER-INDEPENDENT — after config-suppress has
+#      rewritten the live config to auto_review:false it reads the backup, so the
+#      recorded auto_review_original keeps true/false/absent distinguishable.
 #   B. run-file: atomic write produces a parseable file; append-only ## Progress
 #      never loses prior lines; queue check-off flips the box (+ skipped form);
 #      `remaining` counts ONLY "- [ ]" lines.
@@ -166,6 +169,88 @@ if [ "$RUN_RC" -eq 2 ]; then
   ok "config-orig: malformed config ⇒ abort (exit 2)"
 else
   no "config-orig malformed should abort (rc=$RUN_RC out='$RUN_OUT')"
+fi
+rm -rf "$WD"
+
+# A7. CALL-ORDER HAZARD (§7) — the defect this assertion exists to catch.
+#     §7's sequence is backup -> suppress -> record `auto_review_original`, so a
+#     caller following the prose queries AFTER config-suppress has run, and by then
+#     the LIVE config says auto_review:false for EVERY original. Only the byte-for-byte
+#     backup still holds the truth. Observed 2026-09-04 on a real /automate run: a
+#     config with NO auto_review key was recorded as `false` when the true original
+#     was `absent`. Contract: `config-orig <cfg> [<bak>]` reports the TRUE original
+#     regardless of call order, and keeps true/false/absent DISTINGUISHABLE (the same
+#     distinction config_orig's own body is careful to preserve against jq's `//`).
+echo "== A7. config-orig is call-order-independent (post-suppress, via the backup) =="
+
+# A7a. THE OBSERVED DEFECT: no `auto_review` key at all -> must stay 'absent' after suppress.
+WD="$(mktemp -d)"; CFG="$WD/config.json"; BAK="$WD/run.config-backup.json"
+printf '{"notify": "x"}\n' > "$CFG"
+run_h bash "$H" config-orig "$CFG"          # pre-suppress, 1-arg form: already correct
+PRE_OUT="$RUN_OUT"
+bash "$H" config-suppress "$CFG" "$BAK"
+run_h bash "$H" config-orig "$CFG" "$BAK"   # post-suppress, contract form
+if [ "$PRE_OUT" = "absent" ] && [ "$RUN_OUT" = "absent" ] && [ "$RUN_RC" -eq 0 ]; then
+  ok "config-orig: no auto_review key ⇒ 'absent' BOTH before and after suppress"
+else
+  no "config-orig call-order: no-key original should be 'absent' (pre='$PRE_OUT' post='$RUN_OUT' rc=$RUN_RC)"
+fi
+# Live config really is suppressed — proves the assertion above is not vacuous.
+if [ "$(jq -r '.auto_review' "$CFG")" = "false" ]; then
+  ok "config-orig: (control) live config IS auto_review:false at query time"
+else
+  no "control failed: live config not suppressed (cfg='$(cat "$CFG")')"
+fi
+rm -rf "$WD"
+
+# A7b. a GENUINE `false` original must NOT collapse to 'absent' via the backup path
+#      either (the falsy-coercion hazard config_orig guards against on the live path).
+WD="$(mktemp -d)"; CFG="$WD/config.json"; BAK="$WD/run.config-backup.json"
+printf '{"auto_review": false, "notify": "x"}\n' > "$CFG"
+bash "$H" config-suppress "$CFG" "$BAK"
+run_h bash "$H" config-orig "$CFG" "$BAK"
+if [ "$RUN_OUT" = "false" ] && [ "$RUN_RC" -eq 0 ]; then
+  ok "config-orig: genuine false original ⇒ 'false' after suppress (not 'absent')"
+else
+  no "config-orig call-order: false original wrong (out='$RUN_OUT' rc=$RUN_RC)"
+fi
+rm -rf "$WD"
+
+# A7c. a `true` original must survive suppress (the case the live path silently loses).
+WD="$(mktemp -d)"; CFG="$WD/config.json"; BAK="$WD/run.config-backup.json"
+printf '{"auto_review": true, "notify": "x"}\n' > "$CFG"
+bash "$H" config-suppress "$CFG" "$BAK"
+run_h bash "$H" config-orig "$CFG" "$BAK"
+if [ "$RUN_OUT" = "true" ] && [ "$RUN_RC" -eq 0 ]; then
+  ok "config-orig: true original ⇒ 'true' after suppress"
+else
+  no "config-orig call-order: true original wrong (out='$RUN_OUT' rc=$RUN_RC)"
+fi
+rm -rf "$WD"
+
+# A7d. originally-ABSENT config: suppress writes the __ABSENT__ marker backup; the
+#      recorded original must be 'absent', not the 'false' the synthesized config shows.
+WD="$(mktemp -d)"; CFG="$WD/config.json"; BAK="$WD/run.config-backup.json"
+bash "$H" config-suppress "$CFG" "$BAK"     # no pre-existing config
+run_h bash "$H" config-orig "$CFG" "$BAK"
+if [ "$RUN_OUT" = "absent" ] && [ "$RUN_RC" -eq 0 ]; then
+  ok "config-orig: __ABSENT__ marker backup ⇒ 'absent' after suppress"
+else
+  no "config-orig call-order: absent-original wrong (out='$RUN_OUT' rc=$RUN_RC)"
+fi
+rm -rf "$WD"
+
+# A7e. a MALFORMED backup ABORTS (exit 2) — same never-silently-report-a-value rule
+#      as A6, so a corrupted sidecar can't fabricate an auto_review_original.
+WD="$(mktemp -d)"; CFG="$WD/config.json"; BAK="$WD/run.config-backup.json"
+printf '{"auto_review": true}\n' > "$CFG"
+bash "$H" config-suppress "$CFG" "$BAK"
+printf '{ not json \n' > "$BAK"
+run_h bash "$H" config-orig "$CFG" "$BAK"
+if [ "$RUN_RC" -eq 2 ]; then
+  ok "config-orig: malformed backup ⇒ abort (exit 2)"
+else
+  no "config-orig malformed backup should abort (rc=$RUN_RC out='$RUN_OUT')"
 fi
 rm -rf "$WD"
 

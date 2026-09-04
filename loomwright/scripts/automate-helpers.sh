@@ -22,7 +22,7 @@
 # Subcommands:
 #   config-suppress  <config_path> <backup_path>      # §7 backup byte-for-byte, set auto_review=false; malformed ⇒ abort
 #   config-restore   <config_path> <backup_path>      # §7 overwrite-from-backup OR delete-if-absent; deletes backup
-#   config-orig      <config_path>                     # §7 prints true|false|absent (the recorded auto_review_original)
+#   config-orig      <config_path> [<backup_path>]     # §7 prints true|false|absent (the ORIGINAL auto_review); pass the backup once suppress has run
 #   runfile-write    <runfile_path> < CONTENT          # §3 atomic temp+rename write
 #   progress-append  <runfile_path> <line>             # §3 append-only ## Progress (never rewrites prior lines)
 #   queue-checkoff   <runfile_path> <item> [reason] [mark]  # §3/§5 flip - [ ] -> - [x] (optional "# <skipped|abandoned>: reason"; mark default skipped)
@@ -93,18 +93,35 @@ config_restore() {
   rm -f "$bak"
 }
 
-# config-orig <config_path>
+# config-orig <config_path> [<backup_path>]
 # Prints the auto_review_original value to record in ## Run Config: true|false|absent.
+#
+# CALL-ORDER (§7): the contract sequence is backup -> suppress -> record, so this is
+# normally called AFTER config_suppress has rewritten the live config to
+# auto_review:false — at which point the LIVE file reports "false" for every original
+# and only the byte-for-byte backup still holds the truth. So when <backup_path>
+# exists we read THE BACKUP; otherwise we fall back to the live config (the
+# pre-suppress call order, where the live config IS the original). The answer is
+# therefore the same in either call order. Losing the true/false/absent distinction
+# by reading the wrong FILE would defeat the same care the value-extraction below
+# takes to avoid losing it by using the wrong OPERATOR.
 config_orig() {
-  local cfg="$1"
-  if [ ! -f "$cfg" ]; then echo "absent"; return 0; fi
-  if ! "$JQ" -e . "$cfg" >/dev/null 2>&1; then abort "pre-existing config is not valid JSON: $cfg"; fi
+  local cfg="$1" bak="${2:-}" src
+  if [ -n "$bak" ] && [ -f "$bak" ]; then
+    # The __ABSENT__ marker means there was no pre-existing config at suppress time.
+    if [ "$(head -n1 "$bak")" = "__ABSENT__" ]; then echo "absent"; return 0; fi
+    src="$bak"
+  else
+    src="$cfg"
+  fi
+  if [ ! -f "$src" ]; then echo "absent"; return 0; fi
+  if ! "$JQ" -e . "$src" >/dev/null 2>&1; then abort "config to read the original from is not valid JSON: $src"; fi
   # NB: use an explicit null/has() check, NOT `.auto_review // "absent"` — the `//`
   # operator is FALSY-triggered, so a genuine `false` would collapse to "absent",
   # making a recorded false original indistinguishable from no config (the same
   # falsy-coercion hazard documented in gate_eval §10). Emit true|false|absent
   # faithfully so ## Run Config records the real original.
-  local v; v="$("$JQ" -r 'if has("auto_review") and (.auto_review != null) then .auto_review else "absent" end' "$cfg")"
+  local v; v="$("$JQ" -r 'if has("auto_review") and (.auto_review != null) then .auto_review else "absent" end' "$src")"
   echo "$v"
 }
 
