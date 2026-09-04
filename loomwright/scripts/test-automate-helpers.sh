@@ -11,7 +11,9 @@
 #      malformed pre-existing config ABORTS (exit 2), crash-stranded backup restored;
 #      AND (A7) config-orig is CALL-ORDER-INDEPENDENT — after config-suppress has
 #      rewritten the live config to auto_review:false it reads the backup, so the
-#      recorded auto_review_original keeps true/false/absent distinguishable.
+#      recorded auto_review_original keeps true/false/absent distinguishable;
+#      plus both arms of the backup-given-but-missing FALLBACK (load-bearing
+#      pre-suppress; a pinned known limit post-suppress).
 #   B. run-file: atomic write produces a parseable file; append-only ## Progress
 #      never loses prior lines; queue check-off flips the box (+ skipped form);
 #      `remaining` counts ONLY "- [ ]" lines.
@@ -251,6 +253,46 @@ if [ "$RUN_RC" -eq 2 ]; then
   ok "config-orig: malformed backup ⇒ abort (exit 2)"
 else
   no "config-orig malformed backup should abort (rc=$RUN_RC out='$RUN_OUT')"
+fi
+rm -rf "$WD"
+
+# A7f. BRANCH COVERAGE for "backup path GIVEN but NOT FOUND" — the fallback branch.
+#      Missing is NOT treated like malformed (which aborts, A7e) because the two are
+#      not the same kind of event: a malformed backup can never be legitimate, whereas
+#      a MISSING one is the normal state of a correct PRE-suppress 2-arg call. Aborting
+#      on missing would re-introduce call-order dependence in the opposite direction —
+#      exactly what this fix exists to remove. So the fallback is INTENTIONAL, and both
+#      of its arms are pinned here so that changing it is a visible test change.
+
+# A7f-i. LOAD-BEARING arm: 2-arg call BEFORE suppress (backup not created yet) must
+#        fall back to the live config, which at that moment IS the original.
+WD="$(mktemp -d)"; CFG="$WD/config.json"; BAK="$WD/run.config-backup.json"
+printf '{"auto_review": true, "notify": "x"}\n' > "$CFG"
+run_h bash "$H" config-orig "$CFG" "$BAK"   # $BAK deliberately does not exist yet
+if [ "$RUN_OUT" = "true" ] && [ "$RUN_RC" -eq 0 ] && [ ! -f "$BAK" ]; then
+  ok "config-orig: 2-arg call pre-suppress (no backup yet) falls back to live ⇒ 'true'"
+else
+  no "config-orig pre-suppress 2-arg fallback wrong (out='$RUN_OUT' rc=$RUN_RC)"
+fi
+rm -rf "$WD"
+
+# A7f-ii. CHARACTERIZATION arm (pins a KNOWN LIMIT, not a desired outcome): if the
+#         backup goes missing AFTER suppress — stale/reused run_id, partial cleanup, a
+#         race with a concurrent restore — the fallback reads the SUPPRESSED live config
+#         and reports 'false' for an original that was 'absent'. The helper cannot tell
+#         this apart from A7f-i: both are "2 args, no backup on disk", and only the
+#         CALLER knows whether suppress has run. Documented in SKILL.md §7 and in the
+#         function's own comment. If this is ever changed to abort, THIS assertion is
+#         the one that must be edited — deliberately and visibly.
+WD="$(mktemp -d)"; CFG="$WD/config.json"; BAK="$WD/run.config-backup.json"
+printf '{"notify": "x"}\n' > "$CFG"        # no auto_review key ⇒ true original is 'absent'
+bash "$H" config-suppress "$CFG" "$BAK"
+rm -f "$BAK"                                # backup lost after suppress
+run_h bash "$H" config-orig "$CFG" "$BAK"
+if [ "$RUN_OUT" = "false" ] && [ "$RUN_RC" -eq 0 ]; then
+  ok "config-orig: (known limit, pinned) backup lost post-suppress ⇒ falls back to live 'false'"
+else
+  no "config-orig lost-backup fallback changed behavior (out='$RUN_OUT' rc=$RUN_RC) — intentional? update SKILL.md §7 + this arm"
 fi
 rm -rf "$WD"
 

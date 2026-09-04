@@ -105,6 +105,16 @@ config_restore() {
 # therefore the same in either call order. Losing the true/false/absent distinction
 # by reading the wrong FILE would defeat the same care the value-extraction below
 # takes to avoid losing it by using the wrong OPERATOR.
+#
+# A backup path that is GIVEN but MISSING falls back to the live config; it does NOT
+# abort the way a MALFORMED backup does (they are different kinds of event: malformed
+# can never be legitimate, missing is the normal state of a correct PRE-suppress 2-arg
+# call, and aborting on it would re-introduce call-order dependence in the other
+# direction). The residual: if the backup is lost AFTER suppress (stale/reused run_id,
+# partial cleanup, a race with a concurrent restore) the fallback reports the SUPPRESSED
+# value as the original. The helper cannot distinguish that from the pre-suppress call —
+# both are "2 args, no backup on disk" — so only the CALLER can prevent it, by recording
+# the original before deleting the backup. Both arms pinned in test §A7f; SKILL.md §7.
 config_orig() {
   local cfg="$1" bak="${2:-}" src
   if [ -n "$bak" ] && [ -f "$bak" ]; then
