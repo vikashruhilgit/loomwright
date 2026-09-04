@@ -775,20 +775,33 @@ reg_probe() {
 # so); this is the writer half of that same guard, and the asymmetry was the defect. Rejecting
 # HERE — the one place rows enter the engine — keeps it a single decision point, the same shape
 # reg_prepare uses for its three refusals. The pattern is precisely what project_slug guarantees.
+# ANCHORED \A..\z, NOT ^..$. jq/Oniguruma's `$` is the Perl anchor: it also matches immediately
+# before a SINGLE trailing newline, so `^..$` accepts "abc\n" while the shell `case` guard in
+# regen_project rejects it — the two mechanisms would disagree on exactly that input. Not
+# exploitable (a newline cannot encode `..`), but a row that one guard admits and the other
+# refuses renders `never-regenerated` forever while claiming the slow-cadence reason, which is
+# false for it. \A and \z are the strict anchors and make the two accept the identical set.
 reg_rows() {
   [ "$REG_STATE" = "ok" ] || return 0
   jq -r '.projects[]
          | select((.slug | type) == "string" and (.path | type) == "string"
-                  and (.slug | test("^[a-z0-9][a-z0-9-]*$")))
+                  and (.slug | test("\\A[a-z0-9][a-z0-9-]*\\z")))
          | [.slug, .path] | @tsv' "$REG_PATH" 2>/dev/null
 }
 
 # selected_slug_for <absolute path> -> the slug the registry gives that exact path, or nothing.
 # The SELECTED project is the one `serve` was launched inside, and it is decided HERE, in the
 # engine, never by the page: the page is a reader and has no way to send anything back.
+# The SELECTED slug is read by a DIFFERENT path from reg_rows, and that asymmetry was a defect:
+# reg_rows shape-filtered while this did not, so a hand-edited entry matching the serve directory
+# handed an unvalidated slug straight to regen_project. Same filter, same place in the pipeline —
+# one rule for every slug, whichever way it enters.
 selected_slug_for() {
   [ "$REG_STATE" = "ok" ] || return 0
-  jq -r --arg p "$1" '[.projects[] | select(.path == $p) | .slug] | first // ""' "$REG_PATH" 2>/dev/null
+  jq -r --arg p "$1" '[.projects[]
+                       | select(.path == $p and (.slug | type) == "string"
+                                and (.slug | test("\\A[a-z0-9][a-z0-9-]*\\z")))
+                       | .slug] | first // ""' "$REG_PATH" 2>/dev/null
 }
 
 # regen_project <dir> <slug> [also_ui_root] — run the projector INSIDE <dir> and copy its
@@ -814,9 +827,17 @@ regen_project() {
     # fire if a future caller reaches regen_project by another route — which is exactly when a
     # containment guard earns its keep. Refuse rather than write; the fail-safe contract is
     # refuse-plus-return, never a non-zero exit from the script.
+    # SKIP THE SLOT, NOT THE FUNCTION. A function-wide `return` here would also skip the
+    # root_too copy below — which has nothing to do with the slug — so one malformed entry
+    # would silently stop `$UI_DIR/floor.json` updating on every tick, for as long as the
+    # entry stayed malformed. That is fail-safe but it is still a silent availability
+    # regression against pre-registry behaviour, and the root copy is exactly what a page
+    # with no served index falls back to. Refuse the slot; let the rest of the tick proceed.
     case "$slug" in
-      *[!a-z0-9-]*|-*|"") return 5 ;;
+      *[!a-z0-9-]*|-*|"") slug="" ;;
     esac
+  fi
+  if [ -n "$slug" ]; then
     dest="$UI_DIR/projects/$slug"
     [ -d "$dest" ] || mkdir -p "$dest" 2>/dev/null || return 3
     cp "$src" "$dest/floor.json.tmp" 2>/dev/null || return 3

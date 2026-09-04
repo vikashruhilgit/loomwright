@@ -2500,11 +2500,23 @@ s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()
 case "$k_hs_port" in ''|*[!0-9]*) setup_fail "(k30) fixture: could not obtain a free port for the hostile-slug serve probe" ;; esac
 ( cd "$k_hs_root/elsewhere" && HOME="$k_hs_root/fakehome" bash "$ENGINE" serve \
     --ui-dir "$k_hs_ui" --registry "$k_hs_reg" --port "$k_hs_port" --interval 1 --detach >/dev/null 2>&1 )
+# THE WINDOW MUST OUTLAST A FULL ROUND-ROBIN, NOT JUST THE FIRST HIT. Non-selected projects
+# regenerate ONE AT A TIME on the slow cadence, so stopping the moment goodslug appears leaves
+# whichever entry is scheduled later without a turn. With the hostile entry listed first that
+# happens to be harmless; REORDER THE FIXTURE AND (k30) GOES GREEN ON A BROKEN ENGINE, because
+# the traversal write would have landed on the NEXT background tick and the server is already
+# stopped. That is the same under-powered-negative trap that made the original reproduction of
+# this very defect fail twice, and leaving it here would bake it into a permanent gate. So:
+# wait for goodslug, THEN keep serving for a full slow cycle across every entry, so each one
+# provably gets its turn regardless of registry order.
 k_hs_waited=0
 while [ "$k_hs_waited" -lt 30 ]; do
   [ -d "$k_hs_ui/projects/goodslug" ] && break
   sleep 1; k_hs_waited=$((k_hs_waited+1))
 done
+# SLOW_FACTOR ticks per entry, 2 entries, 1s interval, plus margin — order-independent.
+k_hs_extra=0
+while [ "$k_hs_extra" -lt 14 ]; do sleep 1; k_hs_extra=$((k_hs_extra+1)); done
 HOME="$k_hs_root/fakehome" bash "$ENGINE" stop --ui-dir "$k_hs_ui" >/dev/null 2>&1
 
 if [ ! -e "$k_hs_root/ESCAPED" ] && [ -z "$(find "$k_hs_root" -path "$k_hs_ui" -prune -o -type d -name 'ESCAPED*' -print 2>/dev/null)" ]; then
@@ -2519,6 +2531,53 @@ if [ -d "$k_hs_ui/projects/goodslug" ]; then
 else
   no "(k31) ANTI-VACUITY: a well-formed slug still gets its slot" \
      "goodslug produced no slot after ${k_hs_waited}s, so (k30) would pass even with the feature broken"
+fi
+
+
+# (k32) — the SELECTED project's slug takes a DIFFERENT path into the engine than every other
+# project's: selected_slug_for() reads the registry directly, while reg_rows() feeds the rest.
+# (k30)/(k31) poison an "other" project and therefore cannot see this path at all. The CI
+# reviewer found the consequence: a function-wide `return` in regen_project's slug guard also
+# skipped the root_too copy, which has NOTHING to do with the slug — so one hand-edited entry
+# matching the serve directory silently stopped "$UI_DIR/floor.json" updating on EVERY tick.
+# Fail-safe, but a silent availability regression against pre-registry behaviour, and the root
+# copy is exactly what a page with no served index falls back to. This case pins the root copy
+# keeping up while the slot is refused.
+k_sel_root="$TMPROOT/poisoned-selected"; mkdir -p "$k_sel_root/home"
+k_sel_ui="$k_sel_root/uidir"; k_sel_reg="$k_sel_root/reg.json"
+HOME="$k_sel_root/fakehome" bash "$ENGINE" apply --ui-dir "$k_sel_ui" >/dev/null 2>&1
+# The poisoned entry's path IS the directory serve runs in, so it becomes the SELECTED project.
+# THE PATH MUST BE THE PHYSICAL ONE. selected_slug_for() matches `.path == $SERVE_CWD`, and
+# SERVE_CWD is resolved (`pwd -P`), so on a host where the fixture root sits under a symlinked
+# /tmp a logical path NEVER matches — SELECTED_SLUG comes back empty, the slug guard is never
+# reached, and this case passes for the wrong reason. Observed exactly that on macOS while
+# proving this assertion red: it stayed green with the bug reinstated because it was measuring
+# nothing. Resolve it here so the entry genuinely becomes the SELECTED project.
+k_sel_home_phys="$(cd "$k_sel_root/home" && pwd -P)"
+printf '{"projects":[{"slug":"BAD..slug","path":"%s"}]}\n' "$k_sel_home_phys" > "$k_sel_reg"
+k_sel_port="$(python3 -c 'import socket
+s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()' 2>/dev/null)"
+case "$k_sel_port" in ''|*[!0-9]*) setup_fail "(k32) fixture: could not obtain a free port" ;; esac
+( cd "$k_sel_root/home" && HOME="$k_sel_root/fakehome" bash "$ENGINE" serve \
+    --ui-dir "$k_sel_ui" --registry "$k_sel_reg" --port "$k_sel_port" --interval 1 --detach >/dev/null 2>&1 )
+k_sel_waited=0
+while [ "$k_sel_waited" -lt 20 ]; do
+  [ -f "$k_sel_ui/floor.json" ] && break
+  sleep 1; k_sel_waited=$((k_sel_waited+1))
+done
+HOME="$k_sel_root/fakehome" bash "$ENGINE" stop --ui-dir "$k_sel_ui" >/dev/null 2>&1
+
+if [ -f "$k_sel_ui/floor.json" ]; then
+  ok "(k32) a malformed slug on the SELECTED project refuses only its own slot — the root floor.json still updates, so one hand-edited entry cannot silently stop the whole page refreshing"
+else
+  no "(k32) a malformed slug on the selected project still lets the root floor.json update" \
+     "no $k_sel_ui/floor.json after ${k_sel_waited}s — the slug guard skipped the root copy too"
+fi
+
+if [ ! -d "$k_sel_ui/projects/BAD..slug" ] && [ -z "$(find "$k_sel_root" -path "$k_sel_ui" -prune -o -name 'BAD*' -print 2>/dev/null)" ]; then
+  ok "(k32b) and its slot is still refused — the root copy proceeding is not the guard failing open"
+else
+  no "(k32b) the malformed selected slug is still refused a slot" "a BAD..slug path exists"
 fi
 
 # ===========================================================================

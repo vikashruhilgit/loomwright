@@ -1279,6 +1279,10 @@
     try {
       /* CHAINED, NEVER CONCURRENT. The served index is read first because it decides WHICH
        * floor.json the second read asks for; the single in-flight flag spans both. */
+      /* Which document the shared catch below should name. Set BEFORE each leg can reject,
+         so a rejection is attributed to the read that actually failed rather than to
+         whichever document the handler happened to be written about. */
+      var failedDoc = SERVED_INDEX;
       fetchText(SERVED_INDEX).then(function (res) {
         var idx;
         if (res && res.missing) {
@@ -1296,6 +1300,7 @@
           var pn = el('project-note');
           if (pn) { pn.textContent = 'the served index was read but the picker could not be rendered (' + ((e && e.message) || 'render failed') + ')'; }
         }
+        failedDoc = projectUrl(selectedSlug);
         return fetchText(projectUrl(selectedSlug));
       }).then(function (res) {
         inFlight = false;
@@ -1321,11 +1326,18 @@
         }
       })['catch'](function (e) {
         inFlight = false;
-        fail('no floor.json at this origin (' + ((e && e.message) || 'fetch failed') + ')');
+        /* poll() chains TWO fetches - the served index, then the selected project's floor.json -
+           behind this one handler, so blaming floor.json unconditionally names a document that
+           may have read fine. `failedDoc` is set by whichever leg actually rejected; the page
+           states what it measured and nothing more, which is the same rule the stale banner and
+           the render-failure branch above already follow. */
+        fail('could not read ' + (failedDoc || 'floor.json') + ' at this origin (' + ((e && e.message) || 'fetch failed') + ')');
       });
     } catch (e) {
+      /* Deliberately NOT failedDoc: this catch fires when the fetch could not even be
+         STARTED, so no document has been attempted and naming one would be a guess. */
       inFlight = false;
-      fail('no floor.json at this origin (' + ((e && e.message) || 'fetch unavailable') + ')');
+      fail('the floor could not be requested at this origin (' + ((e && e.message) || 'fetch unavailable') + ')');
     }
   }
 
