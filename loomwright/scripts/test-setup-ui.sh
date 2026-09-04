@@ -558,11 +558,12 @@ for j in "$FIX_DIR"/*.json; do
     || no "(d2) $(basename "$j") conforms to the FLOOR_PROJECTION contract" "$vout"
 done
 # 6 from item 04 (lanes/sessions states) + 5 from item 05's rules/churn views
-# (floor-rules-churn-{live,absent,empty,unavailable,stale}.json) = 11. This literal moves with
-# the fixture set, per AC-suite-hermetic's sibling discipline in build-floor.sh.
-[ "$n_fix" -eq 11 ] \
-  && ok "(d3) all eleven committed fixtures were validated (found $n_fix)" \
-  || no "(d3) all eleven committed fixtures were validated" "found $n_fix"
+# (floor-rules-churn-{live,absent,empty,unavailable,stale}.json) + 1 curation-faults fixture
+# driving the self_referential / duplicate_ids / files_not_an_array renders = 12. This literal
+# moves with the fixture set, per AC-suite-hermetic's sibling discipline in build-floor.sh.
+[ "$n_fix" -eq 12 ] \
+  && ok "(d3) all twelve committed fixtures were validated (found $n_fix)" \
+  || no "(d3) all twelve committed fixtures were validated" "found $n_fix"
 
 # Mutation control: a fixture that violates the omit-not-zero rule must be REJECTED.
 MUT_FIX="$TMPROOT/mut-fixture.json"
@@ -1562,6 +1563,51 @@ else
   no "(j41) MUTATION CONTROL: could not build the fourth-state mutant - control inconclusive"
 fi
 
+# --- (j42) the three curation-fault RENDER branches, driven by a UI fixture -------------------
+# (y)/(y2) in test-build-floor.sh pinned these three on the PROJECTOR side. The RENDER side was
+# still uncovered: floor.js has a branch for each of files_not_an_array, self_referential and
+# duplicate_ids, and no committed floor-ui fixture populated ANY of them, so all three drew text
+# nothing exercised. Same gap the previous round closed for supersedes/provenance, one surface
+# over - which is why the fixture is committed here rather than the assertion alone.
+RC_FAULTS="$script_dir/fixtures/floor-ui/floor-rules-curation-faults.json"
+if [ -r "$RC_FAULTS" ]; then
+  for k in files_not_an_array self_referential duplicate_ids; do
+    n="$(jq -r --arg k "$k" '[(.surfaces.rules.detail[$k] // .surfaces.rules.detail.supersedes[$k] // [])[]] | length' "$RC_FAULTS" 2>/dev/null)"
+    [ "${n:-0}" -ge 1 ] 2>/dev/null \
+      && ok "(j42) the curation-faults fixture populates $k ($n entr(y/ies))" \
+      || no "(j42) the curation-faults fixture does not populate $k - its render branch is undriven"
+  done
+  for lit in 'parsed but not understood' 'self-referential:' 'duplicate id:'; do
+    [ "$(grep -cF "$lit" "$JS")" -ge 1 ] \
+      && ok "(j42) floor.js carries the curation-fault literal: $lit" \
+      || no "(j42) floor.js is missing the curation-fault literal: $lit"
+  done
+  # MUTATION CONTROL: drop the files_not_an_array render and require (j42) to notice.
+  MUT_CF="$TMPROOT/mut-curation.js"
+  sed "s@liNA.textContent = 'parsed but not understood: ' +@liNA.textContent = 'x' + (@" "$JS" > "$MUT_CF" 2>/dev/null
+  if [ -s "$MUT_CF" ] && ! cmp -s "$MUT_CF" "$JS"; then
+    [ "$(grep -cF 'parsed but not understood' "$MUT_CF")" -lt "$(grep -cF 'parsed but not understood' "$JS")" ] \
+      && ok "(j43) MUTATION CONTROL: removing the not-understood render IS detected by (j42)" \
+      || no "(j43) MUTATION CONTROL: the removal was not detected - (j42) proves nothing"
+  else
+    no "(j43) MUTATION CONTROL: could not build the curation mutant - control inconclusive"
+  fi
+else
+  no "(j42) committed fixture $RC_FAULTS is missing - the curation-fault renders are undriven"
+fi
+
+# The provenance sub-fields are PRESENCE-checked, not truthy: an empty-but-present `source` used
+# to be dropped and, with `added` also empty, the page then claimed the object carried NEITHER
+# field while both keys were there - a false statement about the store.
+for lit in 'source declared, but empty' 'added declared, but empty' 'check: declared, but empty'; do
+  [ "$(grep -cF "$lit" "$JS")" -ge 1 ] \
+    && ok "(j42) floor.js names the declared-but-empty state: $lit" \
+    || no "(j42) floor.js collapses a declared-but-empty value: $lit"
+done
+[ "$(grep -c "typeof v.source === 'string' && v.source" "$JS")" = "0" ] \
+  && ok "(j42) ruleProvenanceLabel no longer truthiness-tests its sub-fields" \
+  || no "(j42) ruleProvenanceLabel still drops a present-but-empty source"
+
 # --- (j38) no committed fixture pins a key the projector can no longer emit -------------------
 # THE MISSING GATE, and the reason this case exists rather than the one-line fix above it.
 #
@@ -1606,6 +1652,13 @@ ph_seed() {   # $1 = repo dir, $2 = "clean"|"broken"
     cp "$script_dir"/fixtures/floor-rules-broken/*.json "$1/.agent/rules/" 2>/dev/null
     cp "$script_dir"/fixtures/floor-rules/*.json "$1/.agent/rules/" 2>/dev/null
     cp "$script_dir/fixtures/floor-postmortem-malformed.jsonl" "$1/.supervisor/postmortem/results.jsonl" 2>/dev/null
+  elif [ "$2" = "curation" ]; then
+    # Produces self_referential / duplicate_ids / files_not_an_array, which neither the clean nor
+    # the broken seed emits - without this variant the reference lacks those keys and the
+    # curation-faults FIXTURE reads as drift. The union is only as complete as its arms.
+    mkdir -p "$1/.agent/rules"
+    cp "$script_dir"/fixtures/floor-rules-curation/*.json "$1/.agent/rules/" 2>/dev/null
+    cp "$script_dir/fixtures/floor-postmortem.jsonl" "$1/.supervisor/postmortem/results.jsonl" 2>/dev/null
   else
     cp -R "$script_dir/fixtures/floor-rules" "$1/.agent/rules" 2>/dev/null
     cp "$script_dir/fixtures/floor-postmortem.jsonl" "$1/.supervisor/postmortem/results.jsonl" 2>/dev/null
@@ -1614,7 +1667,7 @@ ph_seed() {   # $1 = repo dir, $2 = "clean"|"broken"
 }
 live_paths="$TMPROOT/parity-live.paths"; : > "$live_paths"
 ph_ok=1
-for variant in clean broken; do
+for variant in clean broken curation; do
   ph_repo="$(mktemp -d "$TMPROOT/parity.XXXXXX")"
   ph_seed "$ph_repo" "$variant"
   if [ -s "$ph_repo/.supervisor/floor/floor.json" ]; then
@@ -1633,7 +1686,7 @@ if [ "$ph_ok" -eq 1 ] && [ -s "$live_paths" ]; then
     [ -n "$extra" ] && parity_drift="$parity_drift | $(basename "$fx"): $extra"
   done
   [ -z "$parity_drift" ] \
-    && ok "(j38) no committed floor-ui fixture pins a detail key the current projector cannot emit ($(wc -l < "$live_paths" | tr -d ' ') reference key paths across a clean and a broken run)" \
+    && ok "(j38) no committed floor-ui fixture pins a detail key the current projector cannot emit ($(wc -l < "$live_paths" | tr -d ' ') reference key paths across the clean, broken and curation runs)" \
     || no "(j38) FIXTURE/PROJECTOR SHAPE DRIFT - a fixture pins a key the producer no longer emits:$parity_drift"
 
   # ANTI-VACUITY: the comparison must be able to see a difference at all.

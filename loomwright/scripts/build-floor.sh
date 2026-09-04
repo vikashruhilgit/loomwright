@@ -441,8 +441,19 @@ else
   # `flow_stages` COUNTER object {launch_pad, worker, self_heal, unknowable}, and one
   # `flow_stage` field per element of `categories[]`. `learning-emit` derives the counter from
   # `fix_cycles` while emitting a single category object, so on an `automate_drain` line the
-  # counter can read 7 where `categories[]` holds one entry. Measured on this repo at the time
-  # this was written: they disagreed on 26 of 89 lines, every one of them `automate_drain`.
+  # counter can read 7 where `categories[]` holds one entry, and the disagreement is confined to
+  # `automate_drain` lines.
+  #
+  # NO COUNT IS PINNED HERE, deliberately. An earlier version of this comment said "26 of 89
+  # lines", and three separate measurements of that same file returned 89/26, 88/25 and 90/27 —
+  # none of them wrong, because `learning-emit` APPENDS to this ledger on every engine tick,
+  # including while this feature was being built. A "measured on this repo" number citing a file
+  # that grows continuously is stale within hours, and this projector's own emitted
+  # `flow_stage_counter_disagreements` is the live answer anyway. Re-derive rather than trust a
+  # literal:
+  #   jq -s '[.[]|select((.flow_stages//{}) != (reduce (.categories[]?.flow_stage) as $s
+  #        ({launch_pad:0,worker:0,self_heal:0,unknowable:0}; .[$s]=(.[$s]+1))))]|length' \
+  #     .supervisor/postmortem/results.jsonl
   #
   # The basis is PINNED to `.categories[].flow_stage`, and the reason is DENOMINATOR COHERENCE,
   # not taste. The class distribution must be over category objects, because `evidence` - which
@@ -728,6 +739,15 @@ if [ -n "$rules_docs" ]; then
     | ($all_edges | map(select(.from != .to)))                             as $ext_edges
     | ($ext_edges | map(. as $e | select(($ids | index($e.to)) == null)))  as $dangling
     | ($ext_edges | map(. as $e | select(($ids | index($e.to)) != null)))  as $edges
+    # `add` over single-key objects is LAST-write-wins, so when two rules share an id AND carry
+    # different `supersedes` values, the walk follows the LAST one and the earlier edge is
+    # dropped. Verified: two `dup` rules superseding `target` and `other` yield the chain
+    # ["dup","other"] — the first edge vanishes. This is NOT silent to the reader: `duplicate_ids`
+    # reports the id, and the page renders it, so the ambiguity is on screen next to the chain
+    # derived from it. Both rows are also emitted in `rules[]` — this projection browses what the
+    # store HOLDS and never dedups it away. Stated rather than left for someone to infer, because
+    # a chain that quietly picks one of two candidates is exactly the kind of arbitrary answer
+    # this surface refuses to present as the only one.
     | ((($edges | map({(.from): .to}) | add) // {}))                       as $edge_map
     | ($edges | map(.from))                                                as $edge_from
     | ($edges | map(.to))                                                  as $edge_to

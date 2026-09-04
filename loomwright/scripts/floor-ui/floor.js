@@ -324,11 +324,27 @@
       return 'provenance is present but malformed (' +
         ('aeiou'.indexOf((typeof v).charAt(0)) >= 0 ? 'an ' : 'a ') + typeof v + ')';
     }
+    /* PRESENCE, not truthiness - the same correction every sibling field in this file already
+     * got, and the one place it was missed. `&& v.source` dropped a present-but-EMPTY source,
+     * and when both fields were empty the function then claimed the object "carries no source or
+     * added field" while both keys were demonstrably there. A false statement about the store,
+     * which is worse than the bare render it was written to avoid. build-floor.sh forwards
+     * provenance verbatim on has() without validating the inner shape, so an empty string is a
+     * value this page can actually receive. */
     var parts = [];
-    if (typeof v.source === 'string' && v.source) { parts.push(v.source); }
-    if (typeof v.added === 'string' && v.added) { parts.push('added ' + v.added); }
-    /* An object with neither field is RECORDED but unreadable by this page - say that rather
-     * than printing an empty "provenance: ", which would read as "no provenance". */
+    var hasSrc = Object.prototype.hasOwnProperty.call(v, 'source');
+    var hasAdd = Object.prototype.hasOwnProperty.call(v, 'added');
+    if (hasSrc) {
+      parts.push(typeof v.source === 'string'
+        ? (v.source === '' ? 'source declared, but empty' : v.source)
+        : 'source is not a string');
+    }
+    if (hasAdd) {
+      parts.push(typeof v.added === 'string'
+        ? (v.added === '' ? 'added declared, but empty' : 'added ' + v.added)
+        : 'added is not a string');
+    }
+    /* Only when NEITHER key is present is "carries no source or added field" a true statement. */
     return parts.length ? ('provenance: ' + parts.join(' · '))
                         : 'provenance is recorded but carries no source or added field';
   }
@@ -344,7 +360,9 @@
         ('aeiou'.indexOf((typeof r.check).charAt(0)) >= 0 ? 'an ' : 'a ') + typeof r.check +
         '), not a runnable string';
     }
-    return 'check: ' + r.check;
+    /* An empty check is legal (read-rules.sh types it `string | null`) and used to render as a
+     * bare "check: " with nothing after the colon. Name it, the way `enforcement` does. */
+    return r.check === '' ? 'check: declared, but empty' : 'check: ' + r.check;
   }
 
   function renderRules(d) {
