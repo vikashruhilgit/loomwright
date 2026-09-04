@@ -710,7 +710,14 @@ if [ -n "$rules_docs" ]; then
     | ($rules | map(.id) | map(select(type == "string")))                  as $ids
     | ($rules | map(.id) | map(select(type == "string"))
        | group_by(.) | map(select(length > 1) | .[0]))                     as $dupes
-    | ($rules | map(select(((.supersedes) | type) == "string" and ((.id) | type) == "string")
+    # An EMPTY supersedes is NOT an edge. This diverges from read-rules.sh on hide/single-hop/
+    # ignore-dangling, but reuses its FIELD SCHEMA, and that schema requires a hiding edge to be
+    # a NON-EMPTY string. Without the `!= ""` guard an empty value was reported as a dangling
+    # pointer `{from: <id>, to: ""}` - which reads as "points at a rule that is not there" when
+    # the truth is that it points at nothing at all. The card already says "declared, but empty
+    # - names no rule"; the walk must not contradict it with a different story.
+    | ($rules | map(select(((.supersedes) | type) == "string" and (.supersedes) != ""
+                           and ((.id) | type) == "string")
                     | {from: .id, to: .supersedes}))                       as $all_edges
     | ($all_edges | map(select(.from == .to) | .from) | unique)            as $self_ref
     | ($all_edges | map(select(.from != .to)))                             as $ext_edges

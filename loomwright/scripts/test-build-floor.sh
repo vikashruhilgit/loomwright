@@ -145,7 +145,7 @@ EXP_POSTMORTEM=4
 EXP_DRAIN=7
 EXP_WORKER_SUMMARIES=6
 EXP_RULES=2                # category FILES, never rules - the count key keeps that meaning
-EXP_RULES_DETAIL=13        # rule OBJECTS across those two files; a separate, differently-named field
+EXP_RULES_DETAIL=16        # rule OBJECTS across those two files; a separate, differently-named field
 EXP_PM_CATEGORIES=4        # category objects across the 4 ledger lines (2 + 1 + 0 + 1)
 EXP_PM_DISAGREE=1          # ledger lines whose .flow_stages counter disagrees with .categories[].flow_stage
 EXP_AGENTS=3              # the three committed fixture agent files, copied into <fixture>/agents/
@@ -1878,7 +1878,7 @@ rdet() { jq -c "$2" "$1/.supervisor/floor/floor.json" 2>/dev/null; }
   || no "detail.rules[] length: $(rdet "$RA" '.surfaces.rules.detail.rules | length')"
 
 # Deterministic order, stated as a literal rather than read back out of the artefact.
-EXP_ROW_IDS='["fixture-applies-absent-check-absent","fixture-applies-array-check-string","fixture-applies-null-check-null","fixture-chain-head","fixture-chain-mid","fixture-chain-tail","fixture-cycle-a","fixture-cycle-b","fixture-cycle-c","fixture-dangling-source","fixture-malformed-applies-to","fixture-supersedes-malformed","fixture-supersedes-null"]'
+EXP_ROW_IDS='["fixture-applies-absent-check-absent","fixture-applies-array-check-string","fixture-applies-null-check-null","fixture-chain-head","fixture-chain-mid","fixture-chain-tail","fixture-cycle-a","fixture-cycle-b","fixture-cycle-c","fixture-dangling-source","fixture-malformed-applies-to","fixture-provenance-empty-object","fixture-provenance-malformed","fixture-supersedes-empty","fixture-supersedes-malformed","fixture-supersedes-null"]'
 [ "$(rdet "$RA" '[.surfaces.rules.detail.rules[].id]')" = "$EXP_ROW_IDS" ] \
   && ok "detail.rules[] is in a deterministic (category, id, source_file) order" \
   || no "row order/ids: $(rdet "$RA" '[.surfaces.rules.detail.rules[].id]')"

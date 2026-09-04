@@ -118,5 +118,36 @@
     "supersedes": {
       "id": "not-a-string"
     }
+  },
+  {
+    "id": "fixture-supersedes-empty",
+    "category": "process",
+    "statement": "supersedes present but an EMPTY string - names no rule, and was the one branch with no fixture at all.",
+    "enforcement": "advisory",
+    "check": null,
+    "provenance": {
+      "source": "fixture",
+      "added": "2026-09-04T00:00:00Z"
+    },
+    "applies_to": null,
+    "supersedes": ""
+  },
+  {
+    "id": "fixture-provenance-malformed",
+    "category": "process",
+    "statement": "provenance is a number - neither the documented object nor a string, so the card must name the type rather than concatenate it.",
+    "enforcement": "advisory",
+    "check": null,
+    "provenance": 42,
+    "applies_to": null
+  },
+  {
+    "id": "fixture-provenance-empty-object",
+    "category": "process",
+    "statement": "provenance is an object carrying NEITHER source nor added - recorded but unreadable, which must not render as an empty 'provenance:' that reads like none.",
+    "enforcement": "advisory",
+    "check": null,
+    "provenance": {},
+    "applies_to": null
   }
 ]

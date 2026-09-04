@@ -1514,6 +1514,54 @@ else
   no "(j35) MUTATION CONTROL: could not build the scope-collapse mutant - control inconclusive"
 fi
 
+# --- (j40) the THIRD and FOURTH fields get the same branch coverage as the first two ----------
+# (j34)/(j35) proved applies_to and check name their malformed state, with a mutation control.
+# supersedes and provenance - the fields fixed one and two commits later, in a PR whose own
+# narrative is "the same class, one field over" - got only (j36)'s does-the-function-exist check.
+# That is real coverage but strictly weaker, and it is exactly the asymmetry that let the first
+# two slips through. Every branch of all four label functions is now asserted by its literal, and
+# every one has a driving fixture: `supersedes: ""` and the two malformed provenance shapes had
+# no fixture at all before this, so three branches were unreachable from any committed input.
+for lit in \
+  'supersedes is present but malformed' \
+  'declared, but recorded as null' \
+  'declared, but empty' \
+  'provenance is present but malformed' \
+  'carries no source or added field'; do
+  [ "$(grep -cF "$lit" "$JS")" -ge 1 ] \
+    && ok "(j40) floor.js names this branch rather than collapsing it: $lit" \
+    || no "(j40) floor.js is missing the branch literal: $lit"
+done
+
+# The fixtures that DRIVE those branches must exist, or the literals above are decoration.
+rules_fx="$script_dir/fixtures/floor-rules/process.json"
+[ "$(jq -r '[.[] | select(has("supersedes") and .supersedes == "")] | length' "$rules_fx" 2>/dev/null)" -ge 1 ] \
+  && ok "(j40) a fixture rule carries supersedes as an EMPTY string" \
+  || no "(j40) no fixture drives the empty-supersedes branch"
+[ "$(jq -r '[.[] | select((.provenance | type) != "object" and (.provenance | type) != "string")] | length' "$rules_fx" 2>/dev/null)" -ge 1 ] \
+  && ok "(j40) a fixture rule carries a provenance that is neither object nor string" \
+  || no "(j40) no fixture drives the malformed-provenance branch"
+[ "$(jq -r '[.[] | select((.provenance | type) == "object" and (has("provenance")) and ((.provenance | has("source")) or (.provenance | has("added")) | not))] | length' "$rules_fx" 2>/dev/null)" -ge 1 ] \
+  && ok "(j40) a fixture rule carries a provenance object with neither source nor added" \
+  || no "(j40) no fixture drives the provenance-object-missing-both-fields branch"
+
+# MUTATION CONTROL: collapse the supersedes malformed branch onto its null text and the
+# provenance one onto a bare concatenation; (j40) must see both.
+MUT_S4="$TMPROOT/mut-fourth.js"
+sed -e "s|return 'supersedes is present but malformed (' +|return 'supersedes: declared, but recorded as null — names no rule'; var _d1 = (|" \
+    -e "s|return 'provenance is present but malformed (' +|return 'provenance: ' + v; var _d2 = (|" "$JS" > "$MUT_S4" 2>/dev/null
+if [ -s "$MUT_S4" ] && ! cmp -s "$MUT_S4" "$JS"; then
+  m_lost=0
+  for lit in 'supersedes is present but malformed' 'provenance is present but malformed'; do
+    [ "$(grep -cF "$lit" "$MUT_S4")" -lt "$(grep -cF "$lit" "$JS")" ] && m_lost=$((m_lost+1))
+  done
+  [ "$m_lost" -eq 2 ] \
+    && ok "(j41) MUTATION CONTROL: collapsing BOTH fourth-state branches IS detected by (j40)" \
+    || no "(j41) MUTATION CONTROL: only $m_lost of 2 collapsed branches were detected - (j40) is partly vacuous"
+else
+  no "(j41) MUTATION CONTROL: could not build the fourth-state mutant - control inconclusive"
+fi
+
 # --- (j38) no committed fixture pins a key the projector can no longer emit -------------------
 # THE MISSING GATE, and the reason this case exists rather than the one-line fix above it.
 #
