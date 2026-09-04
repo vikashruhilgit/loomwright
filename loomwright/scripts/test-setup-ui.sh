@@ -1514,6 +1514,95 @@ else
   no "(j35) MUTATION CONTROL: could not build the scope-collapse mutant - control inconclusive"
 fi
 
+# --- (j38) no committed fixture pins a key the projector can no longer emit -------------------
+# THE MISSING GATE, and the reason this case exists rather than the one-line fix above it.
+#
+# The evidence hoist changed a producer's serialisation, updated the producer's own test, and
+# left the CONSUMER (floor.js) and the consumer's FIXTURES untouched. floor.js went on reading
+# matched[].evidence, which the projector had stopped emitting, so every correlation rendered
+# with no evidence under it while three doc surfaces claimed otherwise. The suite stayed green
+# because (j31) asserted the OBSOLETE shape against a fixture that still had it: the fixture
+# pinned the dead serialisation and disarmed the assertion meant to guard it. Regenerating the
+# fixture correctly is what turned (j31) red.
+#
+# So the durable property is not "correlations carry evidence" - it is that a committed fixture
+# never pins a key its producer can no longer emit. Checking that direction (fixture -> live)
+# rather than equality is deliberate: fixtures legitimately model ABSENT and EMPTY surfaces and
+# so carry FEWER keys than a live run, but a fixture carrying MORE is always drift.
+# The reference is the UNION of SEVERAL runs, not one. A single projection cannot exercise
+# mutually exclusive states - a store is either fully parsed or partly unparseable, a ledger
+# either clean or malformed - so one run's missing keys would read as fixture drift. Seeding a
+# bare repo produced 12-25 false positives per fixture and a clean-only seed still produced 7;
+# the fixtures were right and the reference was impoverished each time. Union of: clean inputs,
+# broken inputs, and a state.md.
+ph_paths_of() {
+  # UNFILTERED `paths`, deliberately: a filtered `paths(...)` yields only LEAF paths, so an
+  # object-valued field registers as its children (provenance.added / provenance.source) and
+  # never as `provenance` itself - while a fixture carrying that field as a STRING leafs at
+  # `provenance` and read as drift. Both shapes are legal (the projector forwards provenance
+  # verbatim and ruleProvenanceLabel handles a string), so that was a false positive of this
+  # gate, not a defect in the fixture. Unfiltered paths include the intermediates, so a scalar
+  # is always a subset of the object form.
+  jq -r '[paths | select(.[0]=="surfaces") | join(".")] | .[]' "$1" 2>/dev/null \
+    | grep -E '^surfaces\.[a-z_]+\.detail' | sed -E 's/\.[0-9]+(\.|$)/.[]\1/g' | LC_ALL=C sort -u
+}
+ph_seed() {   # $1 = repo dir, $2 = "clean"|"broken"
+  mkdir -p "$1/.agent" "$1/agents" "$1/.supervisor/postmortem" "$1/.supervisor/logs"
+  cp "$script_dir"/fixtures/floor-agents/*.md "$1/agents/" 2>/dev/null
+  cp "$script_dir/fixtures/floor-sessions-current.jsonl" "$1/.supervisor/logs/ref.jsonl" 2>/dev/null
+  # NB the leading "- ": st_field matches list items, so a bare `session_id:` parses as
+  # nothing and the four state.detail keys never appear in the reference.
+  printf '## Session\n- session_id: ref\n- branch: ref\n- status: running\n- phase: EXECUTE\n\n## Subtasks\n\n| # | Title | Status |\n|---|---|---|\n| 1 | ref | done |\n' > "$1/.supervisor/state.md"
+  if [ "$2" = "broken" ]; then
+    mkdir -p "$1/.agent/rules"
+    cp "$script_dir"/fixtures/floor-rules-broken/*.json "$1/.agent/rules/" 2>/dev/null
+    cp "$script_dir"/fixtures/floor-rules/*.json "$1/.agent/rules/" 2>/dev/null
+    cp "$script_dir/fixtures/floor-postmortem-malformed.jsonl" "$1/.supervisor/postmortem/results.jsonl" 2>/dev/null
+  else
+    cp -R "$script_dir/fixtures/floor-rules" "$1/.agent/rules" 2>/dev/null
+    cp "$script_dir/fixtures/floor-postmortem.jsonl" "$1/.supervisor/postmortem/results.jsonl" 2>/dev/null
+  fi
+  ( cd "$1" && FLOOR_AGENTS_DIR="$1/agents" bash "$script_dir/build-floor.sh" >/dev/null 2>&1 )
+}
+live_paths="$TMPROOT/parity-live.paths"; : > "$live_paths"
+ph_ok=1
+for variant in clean broken; do
+  ph_repo="$(mktemp -d "$TMPROOT/parity.XXXXXX")"
+  ph_seed "$ph_repo" "$variant"
+  if [ -s "$ph_repo/.supervisor/floor/floor.json" ]; then
+    ph_paths_of "$ph_repo/.supervisor/floor/floor.json" >> "$live_paths"
+  else
+    ph_ok=0
+  fi
+done
+LC_ALL=C sort -u "$live_paths" -o "$live_paths"
+
+if [ "$ph_ok" -eq 1 ] && [ -s "$live_paths" ]; then
+  parity_drift=""
+  for fx in "$script_dir"/fixtures/floor-ui/*.json; do
+    [ -e "$fx" ] || continue
+    extra="$(ph_paths_of "$fx" | LC_ALL=C comm -23 - "$live_paths" | tr '\n' ' ')"
+    [ -n "$extra" ] && parity_drift="$parity_drift | $(basename "$fx"): $extra"
+  done
+  [ -z "$parity_drift" ] \
+    && ok "(j38) no committed floor-ui fixture pins a detail key the current projector cannot emit ($(wc -l < "$live_paths" | tr -d ' ') reference key paths across a clean and a broken run)" \
+    || no "(j38) FIXTURE/PROJECTOR SHAPE DRIFT - a fixture pins a key the producer no longer emits:$parity_drift"
+
+  # ANTI-VACUITY: the comparison must be able to see a difference at all.
+  ph_mut="$TMPROOT/parity-mutant.json"
+  jq '.surfaces.rules.detail.correlations[0] += {a_key_the_projector_never_emits: 1}' \
+     "$script_dir/fixtures/floor-ui/floor-rules-churn-live.json" > "$ph_mut" 2>/dev/null
+  if [ -s "$ph_mut" ]; then
+    [ -n "$(ph_paths_of "$ph_mut" | LC_ALL=C comm -23 - "$live_paths")" ] \
+      && ok "(j39) ANTI-VACUITY: an injected phantom key IS seen by the parity comparison" \
+      || no "(j39) ANTI-VACUITY FAILED: the comparison cannot see an injected key - (j38) proves nothing"
+  else
+    no "(j39) ANTI-VACUITY: could not build the parity mutant - control inconclusive"
+  fi
+else
+  no "(j38) could not generate the reference projections for the fixture-parity comparison"
+fi
+
 # --- (j36) every page region has a FLOOR_UI.md row, and every optional field a guard ----------
 # FLOOR_UI.md opens its table with "The page shows, top to bottom:" - an EXHAUSTIVE claim. This
 # PR added two sections to index.html and did not touch the doc, so a reader consulting the
@@ -1632,10 +1721,17 @@ n_cycles="$(jq -r '.surfaces.rules.detail.supersedes.cycles | length' "$RC_LIVE"
   && ok "(j30) floor-rules-churn-live exercises a chain, a dangling pointer AND a cycle: chains=$n_chains dangling=$n_dangling cycles=$n_cycles" \
   || no "(j30) floor-rules-churn-live exercises a chain, a dangling pointer and a cycle" "chains=$n_chains dangling=$n_dangling cycles=$n_cycles"
 n_corr="$(jq -r '.surfaces.rules.detail.correlations | length' "$RC_LIVE" 2>/dev/null)"
-n_corr_ev="$(jq -r '[.surfaces.rules.detail.correlations[].matched[] | select(has("evidence"))] | length' "$RC_LIVE" 2>/dev/null)"
-[ "${n_corr:-0}" -ge 1 ] 2>/dev/null && [ "${n_corr_ev:-0}" -ge 1 ] 2>/dev/null \
-  && ok "(j31) floor-rules-churn-live exercises a correlation whose matched entries carry evidence ($n_corr correlation(s), $n_corr_ev with evidence)" \
-  || no "(j31) floor-rules-churn-live exercises a correlation with evidence" "corr=$n_corr with-evidence=$n_corr_ev"
+# Evidence lives ONCE PER CORRELATION in `evidence_by_line`, keyed by line, not on each match.
+# This assertion used to require `matched[].evidence` - a shape the projector stopped emitting -
+# and stayed green ONLY because the committed fixture had not been regenerated after that change.
+# The fixture pinned the obsolete serialisation and disarmed the assertion that was supposed to
+# guard it; regenerating the fixture correctly turned this red, which is how it was found.
+# Assert the property that matters instead: every matched line RESOLVES to evidence.
+n_corr_unres="$(jq -r '[.surfaces.rules.detail.correlations[] as $c | $c.matched[].line | tostring as $l | select((($c.evidence_by_line // {}) | has($l)) | not)] | length' "$RC_LIVE" 2>/dev/null)"
+n_corr_ev="$(jq -r '[.surfaces.rules.detail.correlations[].evidence_by_line // {} | to_entries[]] | length' "$RC_LIVE" 2>/dev/null)"
+[ "${n_corr:-0}" -ge 1 ] 2>/dev/null && [ "${n_corr_ev:-0}" -ge 1 ] 2>/dev/null && [ "${n_corr_unres:-1}" -eq 0 ] 2>/dev/null \
+  && ok "(j31) floor-rules-churn-live exercises a correlation whose every matched line resolves to evidence ($n_corr correlation(s), $n_corr_ev evidence line(s), 0 unresolved)" \
+  || no "(j31) floor-rules-churn-live: a matched line does not resolve to evidence" "corr=$n_corr evidence-lines=$n_corr_ev unresolved=$n_corr_unres"
 
 # The RESULT summary and the exit status are emitted by `finish` from the EXIT trap (see its
 # definition above), so every assertion group below still runs and still counts.

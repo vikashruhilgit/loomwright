@@ -1,166 +1,399 @@
 {
-  "schema_version": 1,
   "generated_at_epoch": 1788440000,
   "generator": "build-floor.sh",
-  "repo_head": "5b90c27",
-  "notes": [],
+  "notes": [
+    "state omitted: .supervisor/state.md is not present",
+    "jobs_pending omitted: input directory .supervisor/jobs/pending is not present",
+    "jobs_in_progress omitted: input directory .supervisor/jobs/in-progress is not present",
+    "jobs_done omitted: input directory .supervisor/jobs/done is not present",
+    "jobs_failed omitted: input directory .supervisor/jobs/failed is not present",
+    "automate_runs omitted: input directory .supervisor/automate is not present",
+    "logs omitted: input directory .supervisor/logs is not present",
+    "sessions omitted: input directory .supervisor/logs is not present",
+    "insights_runs omitted: input directory .supervisor/insights/runs is not present",
+    "drain_rounds omitted: input directory .supervisor/drain-rounds is not present",
+    "worker_summaries omitted: input directory .supervisor/worker-summaries is not present"
+  ],
+  "schema_version": 1,
   "surfaces": {
-    "rules": {
-      "source": ".agent/rules",
-      "basis": "files matching .agent/rules/*.json, each parsed as a JSON document; the sibling README.md is not counted",
-      "status": "counted",
-      "count": 2,
-      "mtime_epoch": 1788439000,
+    "agents": {
+      "basis": "files matching <plugin>/agents/*.md, one per agent role, with name / color / model / maxTurns / disallowedTools read from the YAML frontmatter between the first two --- lines; the directory is the plugin's own install path resolved from $0 (overridable via FLOOR_AGENTS_DIR), NOT a repo-relative one",
+      "count": 0,
+      "mtime_epoch": 1788491522,
+      "source": "/var/folders/jh/sbkxjbkj7y959rkxq2m61rbw0000gn/T/tmp.wq6i1VgKsi/agents",
+      "status": "counted"
+    },
+    "automate_runs": {
+      "basis": "files matching .supervisor/automate/*.md, which excludes the sibling *.config-backup.json transients",
+      "reason": "input directory .supervisor/automate is not present",
+      "source": ".supervisor/automate",
+      "status": "absent"
+    },
+    "drain_rounds": {
+      "basis": "files matching .supervisor/drain-rounds/*.json, each parsed as a JSON document",
+      "reason": "input directory .supervisor/drain-rounds is not present",
+      "source": ".supervisor/drain-rounds",
+      "status": "absent"
+    },
+    "insights_runs": {
+      "basis": "files matching .supervisor/insights/runs/*.md, one note per summarized run",
+      "reason": "input directory .supervisor/insights/runs is not present",
+      "source": ".supervisor/insights/runs",
+      "status": "absent"
+    },
+    "jobs_done": {
+      "basis": "files matching .supervisor/jobs/done/*.md",
+      "reason": "input directory .supervisor/jobs/done is not present",
+      "source": ".supervisor/jobs/done",
+      "status": "absent"
+    },
+    "jobs_failed": {
+      "basis": "files matching .supervisor/jobs/failed/*.md",
+      "reason": "input directory .supervisor/jobs/failed is not present",
+      "source": ".supervisor/jobs/failed",
+      "status": "absent"
+    },
+    "jobs_in_progress": {
+      "basis": "files matching .supervisor/jobs/in-progress/*.md",
+      "reason": "input directory .supervisor/jobs/in-progress is not present",
+      "source": ".supervisor/jobs/in-progress",
+      "status": "absent"
+    },
+    "jobs_pending": {
+      "basis": "files matching .supervisor/jobs/pending/*.md",
+      "reason": "input directory .supervisor/jobs/pending is not present",
+      "source": ".supervisor/jobs/pending",
+      "status": "absent"
+    },
+    "logs": {
+      "basis": "files matching .supervisor/logs/*.jsonl, an extension glob; the same directory also holds plain .log dispatch transcripts which are deliberately NOT counted here",
+      "reason": "input directory .supervisor/logs is not present",
+      "source": ".supervisor/logs",
+      "status": "absent"
+    },
+    "postmortem": {
+      "basis": "non-blank lines in .supervisor/postmortem/results.jsonl that parse as a JSON object, one record per line",
+      "count": 4,
       "detail": {
+        "categories_total": 4,
+        "class_basis": ".categories[].class",
+        "class_distribution": {
+          "convention_mismatch": 1,
+          "drain_churn": 1,
+          "execution_bug": 1,
+          "quality_gap": 1
+        },
+        "entries": [
+          {
+            "class": "convention_mismatch",
+            "evidence": "the reviewer asked for the pinned literal and got a variant",
+            "flow_stage": "worker",
+            "index": 0,
+            "line": 1,
+            "round": 1,
+            "self_heal_miss": true
+          },
+          {
+            "class": "quality_gap",
+            "evidence": "a guard was added that could never fire",
+            "flow_stage": "self_heal",
+            "index": 1,
+            "line": 1,
+            "round": 2,
+            "self_heal_miss": false
+          },
+          {
+            "class": "drain_churn",
+            "evidence": "three fix cycles inside one drain, emitted as ONE category object",
+            "flow_stage": "self_heal",
+            "index": 0,
+            "line": 2,
+            "round": 1,
+            "self_heal_miss": false
+          },
+          {
+            "class": "execution_bug",
+            "evidence": "the offender was never named in the reason string",
+            "flow_stage": "unknowable",
+            "index": 0,
+            "line": 4,
+            "round": 1,
+            "self_heal_miss": false
+          }
+        ],
+        "flow_stage_basis": ".categories[].flow_stage",
+        "flow_stage_counter_disagreements": 1,
+        "flow_stage_distribution": {
+          "self_heal": 2,
+          "unknowable": 1,
+          "worker": 1
+        },
+        "lines_malformed": 0,
+        "lines_without_categories": 1
+      },
+      "mtime_epoch": 1788491522,
+      "source": ".supervisor/postmortem/results.jsonl",
+      "status": "counted"
+    },
+    "rules": {
+      "basis": "files matching .agent/rules/*.json, each parsed as a JSON document; the sibling README.md is not counted",
+      "count": 2,
+      "detail": {
+        "correlations": [
+          {
+            "basis": "ledger lines whose changed_paths match this rules applies_to globs, matched with the same native shell case-glob read-rules.sh routes with; a path overlap is an observation that the rules scope and the churn record touch the same files and is NOT evidence the rule was violated",
+            "evidence_by_line": {
+              "1": [
+                "the reviewer asked for the pinned literal and got a variant",
+                "a guard was added that could never fire"
+              ],
+              "2": [
+                "three fix cycles inside one drain, emitted as ONE category object"
+              ],
+              "4": [
+                "the offender was never named in the reason string"
+              ]
+            },
+            "label": "observation",
+            "matched": [
+              {
+                "line": 1,
+                "path": "loomwright/scripts/build-floor.sh",
+                "pattern": "loomwright/scripts/*"
+              },
+              {
+                "line": 2,
+                "path": "CLAUDE.md",
+                "pattern": "CLAUDE.md"
+              },
+              {
+                "line": 4,
+                "path": "loomwright/scripts/test-build-floor.sh",
+                "pattern": "loomwright/scripts/*"
+              }
+            ],
+            "rule_id": "fixture-applies-array-check-string"
+          }
+        ],
         "files_parsed": 2,
-        "rules_parsed": 10,
         "read_completeness": "all",
         "rules": [
           {
-            "source_file": ".agent/rules/documentation.json",
-            "id": "doc-basis-stated",
             "category": "documentation",
-            "statement": "Every derived count states the glob or predicate that produced it.",
             "enforcement": "advisory",
-            "provenance": "review-remediation-2026-06",
-            "check": null
+            "id": "fixture-applies-absent-check-absent",
+            "provenance": {
+              "added": "2026-09-03T00:00:00Z",
+              "source": "fixtures/floor-rules/documentation.json"
+            },
+            "source_file": ".agent/rules/documentation.json",
+            "statement": "Tri-state shape 1 of 3: BOTH applies_to and check keys are ABSENT from the source object."
           },
           {
-            "source_file": ".agent/rules/process.json",
-            "id": "process-no-plausible-default",
-            "category": "process",
-            "statement": "Absent evidence is an omitted key, never a plausible default.",
+            "applies_to": [
+              "loomwright/scripts/*",
+              "CLAUDE.md"
+            ],
+            "category": "documentation",
+            "check": "grep -q 'a literal this fixture never runs' CLAUDE.md",
             "enforcement": "blocking",
-            "provenance": "review-remediation-2026-06",
+            "id": "fixture-applies-array-check-string",
+            "provenance": {
+              "added": "2026-09-03T00:00:02Z",
+              "source": "fixtures/floor-rules/documentation.json"
+            },
+            "source_file": ".agent/rules/documentation.json",
+            "statement": "Tri-state shape 3 of 3: applies_to is a non-empty array of path globs and check is a non-null string. The check string is DATA and is never executed."
+          },
+          {
             "applies_to": null,
-            "check": "grep -RIn '\"count\": 0' loomwright/scripts/build-floor.sh || true"
-          },
-          {
-            "source_file": ".agent/rules/process.json",
-            "id": "process-glob-scoped",
-            "category": "process",
-            "statement": "A guard added for a malformed-input class is checked against every sibling consumer of that input.",
-            "enforcement": "advisory",
-            "provenance": "agent-guidelines",
-            "applies_to": ["loomwright/scripts/test-*.sh", "loomwright/scripts/build-*.sh"]
-          },
-          {
-            "source_file": ".agent/rules/process.json",
-            "id": "rule-chain-a",
-            "category": "process",
-            "statement": "A rule superseded by a later rule stays in the store for history, chained forward.",
-            "enforcement": "advisory",
-            "provenance": "curation",
-            "supersedes": "rule-chain-b"
-          },
-          {
-            "source_file": ".agent/rules/process.json",
-            "id": "rule-chain-b",
-            "category": "process",
-            "statement": "Intermediate link in the chain, itself superseded.",
-            "enforcement": "advisory",
-            "provenance": "curation",
-            "supersedes": "rule-chain-c"
-          },
-          {
-            "source_file": ".agent/rules/process.json",
-            "id": "rule-chain-c",
-            "category": "process",
-            "statement": "The current rule at the end of the chain.",
-            "enforcement": "advisory",
-            "provenance": "curation"
-          },
-          {
-            "source_file": ".agent/rules/process.json",
-            "id": "rule-retired-note",
-            "category": "process",
-            "statement": "A retired rule whose replacement id was mistyped when it was curated.",
-            "enforcement": "advisory",
-            "provenance": "curation",
-            "supersedes": "rule-does-not-exist"
-          },
-          {
-            "source_file": ".agent/rules/documentation.json",
-            "id": "rule-x",
             "category": "documentation",
-            "statement": "Node x of a curation cycle (fixture only — never observed live).",
+            "check": null,
             "enforcement": "advisory",
-            "provenance": "curation",
-            "supersedes": "rule-y"
+            "id": "fixture-applies-null-check-null",
+            "provenance": {
+              "added": "2026-09-03T00:00:01Z",
+              "source": "fixtures/floor-rules/documentation.json"
+            },
+            "source_file": ".agent/rules/documentation.json",
+            "statement": "Tri-state shape 2 of 3: BOTH applies_to and check keys are PRESENT with the value null. This is the only shape the live store carries today, which is why the other two are fixture-only."
           },
           {
-            "source_file": ".agent/rules/documentation.json",
-            "id": "rule-y",
-            "category": "documentation",
-            "statement": "Node y of a curation cycle.",
+            "category": "process",
             "enforcement": "advisory",
-            "provenance": "curation",
-            "supersedes": "rule-z"
+            "id": "fixture-chain-head",
+            "provenance": {
+              "added": "2026-09-03T00:00:03Z",
+              "source": "fixtures/floor-rules/process.json"
+            },
+            "source_file": ".agent/rules/process.json",
+            "statement": "Head of a two-hop supersedes chain: head -> mid -> tail.",
+            "supersedes": "fixture-chain-mid"
           },
           {
-            "source_file": ".agent/rules/documentation.json",
-            "id": "rule-z",
-            "category": "documentation",
-            "statement": "Node z of a curation cycle, closing the loop back to rule-x.",
+            "category": "process",
             "enforcement": "advisory",
-            "provenance": "curation",
-            "supersedes": "rule-x"
+            "id": "fixture-chain-mid",
+            "provenance": {
+              "added": "2026-09-03T00:00:04Z",
+              "source": "fixtures/floor-rules/process.json"
+            },
+            "source_file": ".agent/rules/process.json",
+            "statement": "Middle of the two-hop supersedes chain. read-rules.sh would resolve this single-hop only; the projector resolves it transitively and in order.",
+            "supersedes": "fixture-chain-tail"
+          },
+          {
+            "category": "process",
+            "enforcement": "advisory",
+            "id": "fixture-chain-tail",
+            "provenance": {
+              "added": "2026-09-03T00:00:05Z",
+              "source": "fixtures/floor-rules/process.json"
+            },
+            "source_file": ".agent/rules/process.json",
+            "statement": "Tail of the two-hop supersedes chain. Carries no supersedes of its own."
+          },
+          {
+            "category": "process",
+            "enforcement": "advisory",
+            "id": "fixture-cycle-a",
+            "provenance": {
+              "added": "2026-09-03T00:00:07Z",
+              "source": "fixtures/floor-rules/process.json"
+            },
+            "source_file": ".agent/rules/process.json",
+            "statement": "Cycle member A of the A -> B -> C -> A supersedes cycle.",
+            "supersedes": "fixture-cycle-b"
+          },
+          {
+            "category": "process",
+            "enforcement": "advisory",
+            "id": "fixture-cycle-b",
+            "provenance": {
+              "added": "2026-09-03T00:00:08Z",
+              "source": "fixtures/floor-rules/process.json"
+            },
+            "source_file": ".agent/rules/process.json",
+            "statement": "Cycle member B of the A -> B -> C -> A supersedes cycle.",
+            "supersedes": "fixture-cycle-c"
+          },
+          {
+            "category": "process",
+            "enforcement": "advisory",
+            "id": "fixture-cycle-c",
+            "provenance": {
+              "added": "2026-09-03T00:00:09Z",
+              "source": "fixtures/floor-rules/process.json"
+            },
+            "source_file": ".agent/rules/process.json",
+            "statement": "Cycle member C of the A -> B -> C -> A supersedes cycle. The walk that finds it is bounded by the total edge count, so it terminates by construction.",
+            "supersedes": "fixture-cycle-a"
+          },
+          {
+            "category": "process",
+            "enforcement": "advisory",
+            "id": "fixture-dangling-source",
+            "provenance": {
+              "added": "2026-09-03T00:00:06Z",
+              "source": "fixtures/floor-rules/process.json"
+            },
+            "source_file": ".agent/rules/process.json",
+            "statement": "Supersedes an id that exists nowhere in the merged set. read-rules.sh IGNORES this; the projector reports it as dangling and still emits the row.",
+            "supersedes": "fixture-no-such-rule-id"
+          },
+          {
+            "applies_to": "loomwright/scripts/*",
+            "category": "process",
+            "check": [
+              "not",
+              "a",
+              "string"
+            ],
+            "enforcement": "advisory",
+            "id": "fixture-malformed-applies-to",
+            "provenance": {
+              "added": "2026-09-04T00:00:00Z",
+              "source": "fixture"
+            },
+            "source_file": ".agent/rules/process.json",
+            "statement": "A rule whose applies_to was written as a bare string instead of an array — the authoring mistake read-rules.sh carries a WARN channel for."
+          },
+          {
+            "applies_to": null,
+            "category": "process",
+            "check": null,
+            "enforcement": "advisory",
+            "id": "fixture-supersedes-malformed",
+            "provenance": {
+              "added": "2026-09-04T00:00:00Z",
+              "source": "fixture"
+            },
+            "source_file": ".agent/rules/process.json",
+            "statement": "A rule whose supersedes is an object - excluded by the edge walk, so the card must say so rather than print [object Object].",
+            "supersedes": {
+              "id": "not-a-string"
+            }
+          },
+          {
+            "applies_to": null,
+            "category": "process",
+            "check": null,
+            "enforcement": "advisory",
+            "id": "fixture-supersedes-null",
+            "provenance": {
+              "added": "2026-09-04T00:00:00Z",
+              "source": "fixture"
+            },
+            "source_file": ".agent/rules/process.json",
+            "statement": "A rule whose supersedes key is present but recorded as null - names no rule.",
+            "supersedes": null
           }
         ],
+        "rules_parsed": 13,
         "supersedes": {
-          "chains": [["rule-chain-a", "rule-chain-b", "rule-chain-c"]],
-          "dangling": [{"from": "rule-retired-note", "to": "rule-does-not-exist"}],
-          "cycles": [["rule-x", "rule-y", "rule-z"]]
-        },
-        "correlations": [
-          {
-            "rule_id": "process-glob-scoped",
-            "label": "observation",
-            "basis": "ledger lines whose changed_paths match this rule's applies_to globs, matched with the same native shell case-glob read-rules.sh routes with; a path overlap is an observation that the rule's scope and the churn record touch the same files and is NOT evidence the rule was violated",
-            "matched": [
-              {
-                "line": 5,
-                "path": "loomwright/scripts/test-setup-ui.sh",
-                "pattern": "loomwright/scripts/test-*.sh",
-                "evidence": ["missing mutation control for the cycle detector"]
-              }
+          "chains": [
+            [
+              "fixture-chain-head",
+              "fixture-chain-mid",
+              "fixture-chain-tail"
             ]
-          }
-        ]
-      }
+          ],
+          "cycles": [
+            [
+              "fixture-cycle-a",
+              "fixture-cycle-b",
+              "fixture-cycle-c"
+            ]
+          ],
+          "dangling": [
+            {
+              "from": "fixture-dangling-source",
+              "to": "fixture-no-such-rule-id"
+            }
+          ]
+        }
+      },
+      "mtime_epoch": 1788491522,
+      "source": ".agent/rules",
+      "status": "counted"
     },
-    "postmortem": {
-      "source": ".supervisor/postmortem/results.jsonl",
-      "basis": "non-blank lines in .supervisor/postmortem/results.jsonl that parse as a JSON object, one record per line",
-      "status": "counted",
-      "count": 6,
-      "mtime_epoch": 1788439500,
-      "detail": {
-        "categories_total": 6,
-        "class_basis": ".categories[].class",
-        "flow_stage_basis": ".categories[].flow_stage",
-        "lines_without_categories": 1,
-        "flow_stage_counter_disagreements": 2,
-        "lines_malformed": 0,
-        "class_distribution": {
-          "convention_mismatch": 3,
-          "execution_bug": 2,
-          "quality_gap": 1
-        },
-        "flow_stage_distribution": {
-          "self_heal": 3,
-          "worker": 2,
-          "unknowable": 1
-        },
-        "entries": [
-          {"line": 1, "index": 0, "class": "convention_mismatch", "flow_stage": "self_heal", "round": 1, "self_heal_miss": false, "evidence": "reviewer flagged truthy check collapsing null to absent"},
-          {"line": 2, "index": 0, "class": "convention_mismatch", "flow_stage": "self_heal", "round": 1, "self_heal_miss": true, "evidence": "same defect recurred after the first fix attempt"},
-          {"line": 3, "index": 0, "class": "convention_mismatch", "flow_stage": "worker", "round": 1, "evidence": "worker used the truthy branch instead of has()"},
-          {"line": 4, "index": 0, "class": "execution_bug", "flow_stage": "worker", "round": 2, "evidence": "cycle walk was unbounded before the fix"},
-          {"line": 4, "index": 1, "class": "execution_bug", "flow_stage": "unknowable", "round": 2, "evidence": "could not determine which pass introduced the recursion"},
-          {"line": 5, "index": 0, "class": "quality_gap", "flow_stage": "self_heal", "round": 1, "evidence": "missing mutation control for the cycle detector"}
-        ]
-      }
+    "sessions": {
+      "basis": "distinct non-empty cc_session_id values across every line of .supervisor/logs/*.jsonl, grouped by that FIELD and never by filename, so one file may contribute many sessions and one session may span many files",
+      "reason": "input directory .supervisor/logs is not present",
+      "source": ".supervisor/logs",
+      "status": "absent"
+    },
+    "state": {
+      "basis": "rows matching a leading numeric cell inside the ## Subtasks table of .supervisor/state.md",
+      "reason": ".supervisor/state.md is not present",
+      "source": ".supervisor/state.md",
+      "status": "absent"
+    },
+    "worker_summaries": {
+      "basis": "files matching .supervisor/worker-summaries/*.md",
+      "reason": "input directory .supervisor/worker-summaries is not present",
+      "source": ".supervisor/worker-summaries",
+      "status": "absent"
     }
   }
 }

@@ -414,6 +414,23 @@
       body.appendChild(ulU);
     }
 
+    /* "Parsed as JSON, but not the ARRAY this store uses" is a THIRD outcome, distinct from both
+     * unparseable and clean — the projector's own comment calls it the difference between
+     * "held no rules" and "was never understood". It was emitted and rendered nowhere, so on the
+     * page a misunderstood file looked exactly like a file that simply held nothing. */
+    var notArr = detail.files_not_an_array || [];
+    if (notArr.length) {
+      var ulNA = document.createElement('ul');
+      ulNA.className = 'notes';
+      for (var na = 0; na < notArr.length; na++) {
+        var liNA = document.createElement('li');
+        liNA.textContent = 'parsed but not understood: ' + (notArr[na] || 'a file') +
+          ' holds valid JSON that is not the array of rule objects this store uses';
+        ulNA.appendChild(liNA);
+      }
+      body.appendChild(ulNA);
+    }
+
     if (!rows.length) {
       var pEmpty = document.createElement('p');
       pEmpty.className = 'empty';
@@ -519,7 +536,18 @@
               var mm = matched[m] || {};
               var liEv = document.createElement('li');
               var evTxt = 'line ' + mm.line + ' · ' + mm.path + ' matched ' + mm.pattern;
-              if (mm.evidence && mm.evidence.length) { evTxt += ' — evidence: ' + mm.evidence.join('; '); }
+              /* Evidence is carried ONCE PER CORRELATION in `evidence_by_line`, keyed by line -
+               * `matched[].line` is the key into it. This branch used to read `mm.evidence`, which
+               * the projector stopped emitting when the evidence was hoisted to kill a ~4x
+               * duplication; the read was not updated, so the branch was DEAD for every artefact
+               * the current projector can produce and every correlation rendered as a label and a
+               * basis with nothing under it - while three doc surfaces claimed the evidence was
+               * shown. The `mm.evidence` fallback is kept for an artefact produced BEFORE the
+               * hoist, which schema_version 1 still makes legal. */
+              var evList = (mm.evidence && mm.evidence.length) ? mm.evidence
+                         : ((rc.evidence_by_line || {})[String(mm.line)] || []);
+              if (evList.length) { evTxt += ' — evidence: ' + evList.join('; '); }
+              else { evTxt += ' — no evidence recorded for this line'; }
               liEv.textContent = evTxt;
               ulEv.appendChild(liEv);
             }
@@ -559,7 +587,20 @@
         liCy.textContent = 'cycle: ' + cycles[cy].join(' → ') + ' → ' + cycles[cy][0];
         ulS.appendChild(liCy);
       }
-      if (!chains.length && !dangling.length && !cycles.length) {
+      /* Two more shapes the walk records and the page used to drop on the floor. Both are
+       * curation faults a browser of curation history exists to surface. */
+      var selfRef = sup.self_referential || [], dupIds = sup.duplicate_ids || [];
+      for (var sr = 0; sr < selfRef.length; sr++) {
+        var liSR = document.createElement('li');
+        liSR.textContent = 'self-referential: ' + selfRef[sr] + ' names itself, so it supersedes nothing';
+        ulS.appendChild(liSR);
+      }
+      for (var di = 0; di < dupIds.length; di++) {
+        var liDI = document.createElement('li');
+        liDI.textContent = 'duplicate id: ' + dupIds[di] + ' appears more than once in the merged store — first seen wins';
+        ulS.appendChild(liDI);
+      }
+      if (!chains.length && !dangling.length && !cycles.length && !selfRef.length && !dupIds.length) {
         var liNone = document.createElement('li');
         liNone.className = 'empty';
         liNone.textContent = 'no chains, dangling pointers or cycles recorded';
