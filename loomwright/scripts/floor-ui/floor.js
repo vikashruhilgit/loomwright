@@ -24,19 +24,35 @@
  * page is labelled with a word that would claim a running process; the permanent note under
  * the lanes says so on every render, and the self-test scans for those words by name.
  *
- * NETWORK: relative GETs against this page's own origin and nothing else. There is exactly ONE
- * `fetch(` call site in this file - `fetchText` below - and every URL handed to it is built
- * HERE from a fixed string, never taken verbatim from a document the page just read. Two
- * documents are read per tick (`index.json`, then the selected project's `floor.json`) and
- * they are CHAINED, never concurrent: the poll holds one in-flight flag across both, so a hung
- * origin cannot stack requests, and the flag is cleared on every settle path.
+ * NETWORK: relative requests against this page's own origin and nothing else. There are exactly
+ * TWO `fetch(` call sites in this file - the READ helper `fetchText` and the WRITE helper
+ * `postAction` - and every URL handed to either is built HERE from a fixed string, never taken
+ * verbatim from a document the page just read. Two documents are read per tick (`index.json`,
+ * then the selected project's `floor.json`) and they are CHAINED, never concurrent: the poll
+ * holds one in-flight flag across both, so a hung origin cannot stack requests, and the flag is
+ * cleared on every settle path.
  *
- * THE PAGE ONLY READS, AND THE PICKER DOES NOT CHANGE THAT. Selecting a project switches which
- * already-written document this page DISPLAYS. It sends nothing, asks for nothing the static
- * server does not already hold as a file, and cannot cause a regeneration: which project the
- * serve loop regenerates on the fast cadence is decided by the engine, from the directory
- * `serve` was launched in. So a project on the slow cadence reads as exactly that - its own
- * recorded age, next to the cadence the served index states - rather than as a fresh floor.
+ * THE PICKER STILL SENDS NOTHING. Selecting a project switches which already-written document
+ * this page DISPLAYS. It asks for nothing the server does not already hold as a file, and
+ * cannot cause a regeneration: which project the serve loop regenerates on the fast cadence is
+ * decided by the engine, from the directory `serve` was launched in. So a project on the slow
+ * cadence reads as exactly that - its own recorded age, next to the cadence the served index
+ * states - rather than as a fresh floor.
+ *
+ * THE FOUR BUTTONS THAT DO SEND SOMETHING, AND WHY THEY ARE GUARDED. `add`, `forget`, `scan`
+ * and `stop` are the only writes this page can reach, and each one is a real write, so a
+ * loopback port is not enough: any site open in another tab can `fetch` a POST at
+ * 127.0.0.1:<port> and never read the reply, and the write has still landed. Every mutating
+ * request therefore carries this run's token in a CUSTOM header, which is what forces a CORS
+ * preflight the other tab cannot satisfy; the server checks that token, the `Origin` and the
+ * `Host` besides. The token is read ONCE, out of the URL fragment `serve` printed - a fragment
+ * is never sent to any server - and stripped from the address bar immediately, so it cannot
+ * leak through history, a bookmark or a shared screenshot.
+ *
+ * NO NEW TIMER, NOT EVEN FOR THE WRITE PATH. There is still exactly one timer on this page.
+ * A write is followed by an immediate re-poll of the ONE existing loop, never by a retry
+ * schedule, a debounce or a "saved" flash - all three of which are timers wearing a hat, and
+ * all three would break the rule at the top of this file.
  */
 'use strict';
 
@@ -99,6 +115,61 @@
   }
   var pickerSig = null;
   var pickerTouched = false;
+
+  /* THE WRITE PATH'S THREE CONSTANTS, and all three are fixed strings in this file.
+   * API_PREFIX is what makes the endpoint URLs a property of this code rather than of any
+   * document it read: the same guarantee projectUrl already gives the read path. */
+  var API_PREFIX = 'api/';
+  var TOKEN_HEADER = 'X-Floor-Token';
+  var STOP_ACTION = 'stop';
+
+  /* THE PER-RUN TOKEN. It arrives in the URL FRAGMENT, which a browser never transmits to any
+   * server, so it cannot appear in a request line, an access log, a proxy or a referrer. It is
+   * read once and the fragment is removed from the address bar in the same breath, because the
+   * address bar is exactly what ends up in history, in a bookmark and in a screenshot.
+   * An empty token is a legitimate state, not an error: the page still READS everything. Only
+   * the four buttons are refused, and they say why rather than failing silently. */
+  var floorToken = '';
+  (function () {
+    var raw = String(window.location.hash || '');
+    var m = /(?:^#|[#&])token=([A-Za-z0-9_-]+)/.exec(raw);
+    if (!m) { return; }
+    floorToken = m[1];
+    if (window.history && window.history.replaceState) {
+      try {
+        window.history.replaceState(null, '', window.location.pathname + (window.location.search || ''));
+      } catch (e) {
+        /* A browser that refuses the rewrite must not take the page down with it: the token is
+         * already held in the closure above, and the only cost is a URL that still shows it. */
+      }
+    }
+  }());
+
+  /* postAction — THE ONE AND ONLY WRITE CALL SITE IN THIS FILE, and the second of the two
+   * `fetch(` call sites the header counts. Every part of it is deliberate:
+   *   - the URL is API_PREFIX + one of four literals declared in this file, so it can never be
+   *     a path a served document supplied;
+   *   - the token travels in a CUSTOM header, which is what forces the CORS preflight a hostile
+   *     cross-origin page cannot satisfy. A safelisted header would have made this a "simple
+   *     request" - sent, and landed, before any check the browser could make;
+   *   - it RESOLVES on every HTTP outcome and describes it, exactly like fetchText, so a caller
+   *     never has to tell a refusal apart from a dead origin by inspecting an exception. */
+  function postAction(action, payload) {
+    var headers = { 'Content-Type': 'application/json' };
+    headers[TOKEN_HEADER] = floorToken;
+    return fetch(API_PREFIX + action, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: headers,
+      body: JSON.stringify(payload || {})
+    }).then(function (r) {
+      return r.text().then(function (t) {
+        var parsed = null;
+        try { parsed = JSON.parse(t); } catch (e) { parsed = null; }
+        return { status: r.status, body: parsed, text: t };
+      });
+    });
+  }
 
   function fmtAge(sec) {
     if (sec === null || sec === undefined || !isFinite(sec)) { return 'unknown'; }
@@ -1279,6 +1350,13 @@
    * can never wedge the page permanently. */
   var inFlight = false;
 
+  /* THE STOPPED STATE IS A STATE, NOT AN ERROR. Once `stop` has been accepted, this origin is
+   * going away, and a page that kept polling it would render a stream of fetch failures about
+   * a server the reader deliberately stopped - or, worse, keep showing the last floor as if it
+   * were current. The flag gates the poll instead: the one timer keeps ticking and does
+   * nothing, which is why no second timer and no listener teardown are needed. */
+  var serverStopped = false;
+
   /* THE ONE AND ONLY `fetch(` CALL SITE IN THIS FILE. Both documents the page reads go
    * through it, which is what keeps "exactly one request shape, relative, no-store, no method
    * option" a property that can be counted rather than reviewed. It RESOLVES on every HTTP
@@ -1293,6 +1371,7 @@
   }
 
   function poll() {
+    if (serverStopped) { return; }
     if (inFlight) { return; }
     inFlight = true;
     try {
@@ -1373,6 +1452,108 @@
       banner('');
       poll();
     };
+  }());
+
+  /* ------------------------------------------------------------------------------------
+   * THE FOUR ACTIONS
+   *
+   * Each button is an EVENT, never a schedule. A successful write re-polls the ONE existing
+   * loop immediately, so the change lands inside one poll interval rather than up to one
+   * interval later - the same shape the picker's change handler already uses, and the reason
+   * no retry, debounce or "saved"-flash timer appears anywhere in this file.
+   * ------------------------------------------------------------------------------------ */
+
+  function actionNote(text) {
+    var n = el('action-note');
+    if (n) { n.textContent = text || ''; }
+  }
+
+  function actionReport(text) {
+    var r = el('action-report');
+    if (r) { r.textContent = text || ''; }
+  }
+
+  /* THE STOPPED RENDER. Four things a reader could otherwise be shown instead, and all four
+   * would be lies: a spinner (nothing is coming), the last floor presented as current (it is a
+   * snapshot of a server that no longer exists), a fetch error (the reader asked for this), or
+   * an uncaught exception in the console. Say what happened, and say what the floor now is. */
+  function renderStopped() {
+    serverStopped = true;
+    document.body.setAttribute('data-stopped', 'true');
+    /* The word this banner must NOT reach for is the one that claims a running process: this
+     page has never labelled anything on it that way and a stopped state is not the place to
+     start. Say what was measured - the server was stopped, nothing is being fetched. */
+    banner('this server was stopped from this page. Nothing below is being updated any more, and this page will not ask this origin for anything again — run `/ui serve` to start it again and open the new URL it prints.');
+    var g = el('generated');
+    if (g) {
+      g.textContent = 'the server was stopped from this page — what is shown below is the last document it served, not a current one';
+    }
+    var lc = el('lane-count');
+    if (lc) { lc.textContent = ''; }
+    var sel = el('project-picker');
+    if (sel) { sel.disabled = true; }
+    var host = el('actions');
+    if (host) {
+      host.setAttribute('data-stopped', 'true');
+      var controls = host.querySelectorAll('button, input');
+      for (var i = 0; i < controls.length; i++) { controls[i].disabled = true; }
+    }
+    actionNote('stopped. There is nothing left at this origin to ask.');
+  }
+
+  /* runAction — the one place a button's outcome is turned into words. A refusal is reported by
+   * its NAME, because the server names every one of them and a page that flattened them all to
+   * "failed" would send the reader to fix the wrong thing. */
+  function runAction(action, payload) {
+    if (serverStopped) { return; }
+    if (!floorToken) {
+      actionNote('this page holds no token for this run, so the server would refuse the write. Open the URL `setup-ui.sh serve` printed — it carries the token in its #fragment — rather than a bare address.');
+      actionReport('');
+      return;
+    }
+    actionNote(action + ': asked the server…');
+    postAction(action, payload).then(function (res) {
+      var body = res.body || {};
+      var reason = (typeof body.reason === 'string' && body.reason) ? body.reason : ('status ' + res.status);
+      if (res.status === 403) {
+        actionNote(action + ' was REFUSED by the server guard (' + reason + '). Reopen the page from the URL this run of `serve` printed.');
+      } else if (res.status === 501) {
+        actionNote(action + ' is not a route this server answers (501) — the page and the engine are different versions.');
+      } else if (body.ok === true) {
+        actionNote(action + ': done.');
+        if (action === STOP_ACTION) { renderStopped(); }
+      } else {
+        actionNote(action + ' was refused: ' + reason);
+      }
+      actionReport(typeof body.report === 'string' ? body.report : res.text);
+      /* Re-read immediately rather than waiting for the next tick — but only for the writes
+       * that can have changed what the page shows. */
+      if (body.ok === true && action !== STOP_ACTION) { poll(); }
+    })['catch'](function (e) {
+      actionNote(action + ' could not be sent to this origin (' + ((e && e.message) || 'request failed') + ')');
+      actionReport('');
+    });
+  }
+
+  (function () {
+    var input = el('add-path');
+    var pathValue = function () { return input ? String(input.value || '').replace(/^\s+|\s+$/g, '') : ''; };
+    var wire = function (id, fn) {
+      var b = el(id);
+      if (b) { b.onclick = fn; }
+    };
+    wire('btn-add', function () { runAction('add', { path: pathValue() }); });
+    wire('btn-scan', function () { runAction('scan', { path: pathValue(), confirm: false }); });
+    wire('btn-scan-confirm', function () { runAction('scan', { path: pathValue(), confirm: true }); });
+    wire('btn-forget', function () {
+      if (selectedSlug === null || selectedSlug === '') {
+        actionNote('choose a registered project in the picker above first — `forget` names one entry by its slug, and the root document is not one.');
+        actionReport('');
+        return;
+      }
+      runAction('forget', { slug: String(selectedSlug) });
+    });
+    wire('btn-stop', function () { runAction(STOP_ACTION, {}); });
   }());
 
   poll();

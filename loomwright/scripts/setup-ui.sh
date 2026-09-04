@@ -6,11 +6,17 @@
 #   1. THE UI DIRECTORY, default `$HOME/.claude/loomwright/ui` and overridable with
 #      `--ui-dir` (which is how every self-test runs inside a `mktemp -d`). Into it go exactly
 #      the three bundle files copied from `<script dir>/floor-ui/`, the ownership marker
-#      `.loomwright-ui-module`, an optional `serve.pid`, a COPY of `floor.json`, THE SERVED
-#      INDEX `index.json`, and one `projects/<slug>/floor.json` per registered project.
+#      `.loomwright-ui-module`, an optional `serve.pid`, THE SERVE LOG `serve.log`, a COPY of
+#      `floor.json`, THE SERVED INDEX `index.json`, and one `projects/<slug>/floor.json` per
+#      registered project.
 #      `index.json` is written by `serve` alone and is the page's ONLY source for the project
-#      picker, the module's own state and per-project freshness: the page is a reader, so
-#      everything it can show has to be a file the static server can already hand it.
+#      picker, the module's own state and per-project freshness: the page is a reader for
+#      everything it DISPLAYS, so everything it can show has to be a file the server already
+#      holds. `serve.log` is written by `serve` alone too: it is the request handler's own
+#      stdout and stderr, which used to go to /dev/null and took every traceback with them.
+#      It records ONE line per MUTATING request — the route and the outcome — and never a
+#      caller-supplied string, so it can be neither injected into nor made to leak the
+#      per-run token.
 #   2. `.supervisor/floor/floor.json` UNDER THE CURRENT PROJECT ROOT, AND UNDER EACH REGISTERED
 #      PROJECT ROOT that `serve` regenerates — and only ever by running `build-floor.sh` in
 #      that directory, never by writing that path itself. `serve --no-regen` makes even that
@@ -43,10 +49,33 @@
 # non-zero exit, which would regress every non-blocking caller. A missing `python3`, a missing
 # `build-floor.sh`, a busy port and an unowned directory all ABORT or WITHHOLD, and all exit 0.
 #
-# LOOPBACK ONLY. `serve` always passes `--bind 127.0.0.1` to `python3 -m http.server`. There is
-# no flag to change that and no code path that omits it. `floor.json` carries branch names,
-# session ids and agent ids: it is local-only by construction, so the bind address is the whole
-# security posture and it is not negotiable at the command line.
+# LOOPBACK ONLY. `serve` binds 127.0.0.1 and nothing else. There is no flag to change that and
+# no code path that omits it. `floor.json` carries branch names, session ids and agent ids: it
+# is local-only by construction, so the bind address is not negotiable at the command line.
+#
+# THE BIND ADDRESS IS NO LONGER THE WHOLE SECURITY POSTURE, AND THAT SENTENCE USED TO BE HERE.
+# It was true while the page could only render: the module served the bundle with
+# `python3 -m http.server`, a static file server that answers 501 to every write, so there was
+# nothing to authenticate against. `serve` now runs a request handler with four MUTATING routes
+# on it, and a loopback port is not a security boundary in a browser: any site open in another
+# tab can `fetch` a POST at 127.0.0.1:<port>, and the attacker never reads the response but the
+# write has already landed. DNS rebinding extends the same reach to a remote origin. So every
+# mutating route is refused unless ALL FOUR of these hold together, because each one alone is
+# defeatable:
+#   1. A PER-RUN BEARER TOKEN, minted fresh by `serve`, handed to the handler through the
+#      ENVIRONMENT (never argv — a command line is world-readable in `ps`), never written to a
+#      file, never logged, never interpolated into the served HTML. It dies with the server.
+#   2. SENT IN A CUSTOM REQUEST HEADER (`X-Floor-Token`). This is the part that forces a CORS
+#      PREFLIGHT: a hostile cross-origin page cannot make a "simple request" carrying it, and
+#      this server answers no preflight at all, so the write is never sent.
+#   3. `Origin` VALIDATED against this server's own loopback origins. Absent or foreign is
+#      refused.
+#   4. `Host` VALIDATED against the loopback names. This is the part that actually defeats DNS
+#      rebinding — a rebound name resolves to 127.0.0.1 and reaches this socket, and its Origin
+#      can be made to look like anything, but the Host header still carries the attacker's name.
+# A path arriving through the page is UNTRUSTED INPUT, not a filename: it is resolved, confined
+# to the permitted root, and refused BY NAME when it is not an existing directory, escapes by
+# traversal, or is a symlink resolving outside that root.
 #
 # ONE SELECTED PROJECT PER TICK, AND THE REST ON A SLOWER CADENCE. This is a measured
 # constraint, not a preference: one `build-floor.sh` run costs ~1 s on a repo of this size, and
@@ -68,9 +97,13 @@
 #   serve   regenerate `floor.json` on an interval (unless `--no-regen`), copy it into the ui
 #           dir, and serve that directory on 127.0.0.1. Foreground by default. With projects
 #           registered it also regenerates them on the SLOWER cadence below and writes the
-#           served index every tick.
+#           served index every tick. It prints ONE URL carrying this run's token in the
+#           FRAGMENT — which a browser never sends to any server, so the token cannot reach a
+#           request line, a proxy or this module's own log.
 #   stop    kill the pids in `<ui dir>/serve.pid`, and ONLY if their command line names
-#           `http.server` or `setup-ui.sh`.
+#           `http.server` or `setup-ui.sh`. The request handler is launched with the engine's
+#           OWN path in its argv, so that guard keeps matching it verbatim and a page-initiated
+#           stop and a command-line one leave exactly the same state.
 #   remove  delete the ui directory, marker-gated (see above). The registry is NOT touched.
 #   add     register a project (the current directory, or `add <path>`) in the registry.
 #   list    print every registered project with its slug, path and last-regenerated age.
@@ -120,6 +153,11 @@ BUNDLE_DIR="$script_dir/floor-ui"
 FLOOR_SCRIPT="$script_dir/build-floor.sh"
 MARKER=".loomwright-ui-module"
 BUNDLE_FILES="index.html floor.css floor.js"
+# THIS FILE'S OWN ABSOLUTE PATH, because the request handler shells back into it for the four
+# verbs it exposes rather than reimplementing any of them. It is also what keeps `stop` honest:
+# the handler's command line carries this path, so `stop`'s existing `*setup-ui.sh*` guard
+# matches the new server exactly as it matched the old one — no widening, nothing relaxed.
+ENGINE_SELF="$script_dir/$(basename "$0")"
 
 # The page's OWN clock, mirrored here so `serve` can tell the reader when its `--interval`
 # has outgrown it. These two are floor.js's POLL_MS/1000 and its 3x default; they are not
@@ -135,6 +173,19 @@ PAGE_STALE_DEFAULT=6
 # project that is deliberately refreshed rarely is explainable rather than merely old.
 SERVED_INDEX="index.json"
 SLOW_FACTOR=5
+# The request handler's own stdout and stderr. Named here, once, so the write list at the top of
+# this file and the reference doc's exhaustive one can both be checked against the code rather
+# than against a memory of it. It holds one line per MUTATING request — route and outcome — and
+# nothing a caller supplied.
+SERVE_LOG="serve.log"
+# The name of the CUSTOM request header the token travels in. Custom is the whole point: a
+# request carrying it can never be a CORS "simple request", so a hostile cross-origin page has
+# to win a preflight this server does not answer.
+TOKEN_HEADER="X-Floor-Token"
+# This run's token and the handler's pid, declared here because `set -u` makes an unset one an
+# abort and this file's contract is that every branch exits 0.
+UI_TOKEN=""
+SERVE_HTTP_PID=""
 
 # HOME is read ONCE, defensively. `set -u` turns an unset HOME into an abort with a bash
 # diagnostic and a non-zero status, which contradicts this file's own EVERY-BRANCH-EXITS-0
@@ -1000,6 +1051,321 @@ serve_tick() {
 }
 BG_CURSOR=0
 
+# mint_token -> a fresh, per-run bearer token on stdout, or nothing with rc 1.
+# `secrets.token_urlsafe` is the stdlib's CSPRNG and produces a URL-safe string, which matters
+# because the token travels in a URL FRAGMENT. Not `$RANDOM`, not the pid, not the clock: a
+# token a page in another tab can predict is not a token.
+mint_token() {
+  local t
+  t="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))' 2>/dev/null)" || return 1
+  case "$t" in ''|*[!A-Za-z0-9_-]*) return 1 ;; esac
+  printf '%s' "$t"
+  return 0
+}
+
+# serve_http — THE MODULE'S HTTP ENGINE. It replaces `python3 -m http.server`, which was a
+# static file server and therefore had no endpoint a write could reach.
+#
+# GET IS UNCHANGED BY CONSTRUCTION, not by care: the handler SUBCLASSES the very class
+# `python3 -m http.server` instantiates (SimpleHTTPRequestHandler), rooted at the same
+# directory, and overrides nothing on the read path. Everything below is on the write side, and
+# anything not explicitly routed keeps answering exactly what it answered before, 501 included.
+#
+# The script is fed on stdin (`python3 -`) so it ships inside this file: no second script to
+# install, to keep in step with `apply`'s byte-comparison, or to classify in the vendor-coupling
+# manifest. The handler's argv carries this engine's own path, which is what keeps `stop`'s
+# command-line guard matching without being widened. THE TOKEN IS NOT IN THAT ARGV: it is handed
+# over in the environment and popped out of it inside the child, because a command line is
+# world-readable in `ps` and an environment on both Linux and macOS is not.
+#
+# Sets SERVE_HTTP_PID. Returns 0 always, like every other branch in this file.
+serve_http() {
+  LOOM_UI_TOKEN="$UI_TOKEN" python3 - \
+      "$UI_DIR" "$PORT" "$ENGINE_SELF" "$REGISTRY" "$HOME_DIR" "$SERVE_CWD" "$TOKEN_HEADER" \
+      >>"$UI_DIR/$SERVE_LOG" 2>&1 <<'PY' &
+import hmac
+import json
+import os
+import re
+import signal
+import subprocess
+import sys
+import threading
+from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
+
+UI_DIR = sys.argv[1]
+PORT = int(sys.argv[2])
+ENGINE = sys.argv[3]
+REGISTRY = sys.argv[4]
+ROOT = sys.argv[5]
+SERVE_CWD = sys.argv[6]
+TOKEN_HEADER = sys.argv[7]
+
+# THE TOKEN IS TAKEN FROM THE ENVIRONMENT AND REMOVED FROM IT IN THE SAME EXPRESSION. `pop`
+# rather than `get`: every subprocess spawned below inherits this environment, and a token that
+# reaches `bash setup-ui.sh add` reaches that process's own `ps` line.
+TOKEN = os.environ.pop("LOOM_UI_TOKEN", "")
+
+# The loopback names a `Host` header may carry, with and without the port suffix.
+ALLOWED_HOSTS = set()
+for _h in ("127.0.0.1", "localhost", "[::1]"):
+    ALLOWED_HOSTS.add(_h)
+    ALLOWED_HOSTS.add(_h + ":" + str(PORT))
+# The origins this page can legitimately have been loaded from: this server, under any of the
+# three loopback spellings. A request carrying NO Origin is refused too — `fetch` sets one on
+# every cross-origin request, so its absence on a write is not the page this server serves.
+ALLOWED_ORIGINS = set(
+    "http://" + _h + ":" + str(PORT) for _h in ("127.0.0.1", "localhost", "[::1]")
+)
+
+# The four mutating routes, and there are four. `apply` and `remove` are excluded BY DECISION,
+# not by omission: they are install-level, and a page able to uninstall itself buys nothing.
+ROUTES = ("add", "forget", "scan", "stop")
+
+# The slug shape reg_rows already enforces, restated here for the same reason it exists there:
+# a slug reaches a filesystem path, and one arriving from a browser is untrusted input. It also
+# makes a slug structurally unable to be read as a flag by the engine's own argument loop.
+SLUG_RE = re.compile(r"\A[a-z0-9][a-z0-9-]*\Z")
+
+REFUSALS = {
+    "path-empty": "no path was supplied, so there is nothing to resolve",
+    "path-not-absolute": "a path supplied through the page must be absolute",
+    "path-traversal": "that path contains a `..` segment; a traversal sequence is refused before it is resolved",
+    "no-permitted-root": "this serve has no permitted root (HOME is unset), so no page-supplied path can be confined",
+    "path-not-a-directory": "that path does not resolve to an existing directory",
+    "path-outside-permitted-root": "that path resolves outside the permitted root; a symlink that escapes is refused exactly like a literal one",
+    "slug-malformed": "that is not a slug this module could have written",
+    "body-not-json": "the request body was supplied and is not a JSON object this server can read",
+    "token-missing-or-wrong": "no valid per-run token in the " + TOKEN_HEADER + " header",
+    "origin-not-this-server": "the Origin header is absent or is not this server",
+    "host-not-loopback": "the Host header is not a loopback name",
+}
+
+
+def audit(line):
+    """One line per mutating request: the ROUTE and the OUTCOME, and nothing a caller supplied.
+    That is what makes this log neither injectable nor able to leak the token."""
+    sys.stderr.write(line + "\n")
+    sys.stderr.flush()
+
+
+# THE FOUR GUARD PARTS, one expression each, so a mutation control can disable exactly one of
+# them and watch the previously-refused request succeed. A guard with no such control is
+# indistinguishable from a guard that never fires.
+def _token_ok(raw):
+    return raw is not None and TOKEN != "" and hmac.compare_digest(str(raw), TOKEN)
+
+
+def _origin_ok(origin):
+    return origin is not None and origin in ALLOWED_ORIGINS
+
+
+def _host_ok(host):
+    return host is not None and host in ALLOWED_HOSTS
+
+
+def confine(raw):
+    """A path supplied through the page is UNTRUSTED INPUT, not a filename.
+    -> (resolved absolute path, None) or (None, <named reason>). A refusal registers nothing."""
+    if not isinstance(raw, str) or raw.strip() == "":
+        return (None, "path-empty")
+    p = raw.strip()
+    if not p.startswith("/"):
+        return (None, "path-not-absolute")
+    # Named BEFORE resolution, on purpose: `realpath` would silently normalise the traversal
+    # away and the refusal would then name the wrong thing (or nothing).
+    if ".." in p.split("/"):
+        return (None, "path-traversal")
+    if ROOT == "":
+        return (None, "no-permitted-root")
+    real = os.path.realpath(p)
+    if not os.path.isdir(real):
+        return (None, "path-not-a-directory")
+    # realpath FOLLOWS symlinks, which is the whole point: a link inside the root pointing at
+    # /etc resolves to /etc and is refused here, by the same comparison that refuses a literal
+    # /etc. The trailing separator stops `/home/user-evil` passing as `/home/user`.
+    root = os.path.realpath(ROOT)
+    if real != root and not real.startswith(root.rstrip("/") + "/"):
+        return (None, "path-outside-permitted-root")
+    return (real, None)
+
+
+def run_engine(args):
+    """Every route below shells back into this engine rather than reimplementing a verb. That is
+    what makes `scan`'s propose-then---confirm contract, `forget`'s registry-only edit and every
+    named refusal identical whether they were reached from the page or from a terminal."""
+    cmd = ["bash", ENGINE] + list(args) + ["--ui-dir", UI_DIR]
+    if REGISTRY:
+        cmd = cmd + ["--registry", REGISTRY]
+    try:
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            cwd=(SERVE_CWD if os.path.isdir(SERVE_CWD) else None))
+        out = proc.communicate()[0]
+        return (proc.returncode, out.decode("utf-8", "replace"))
+    except Exception as exc:
+        return (1, "the engine could not be run: %s" % exc)
+
+
+def stop_self():
+    """The page's stop IS the engine's own `stop` — the one verb whose whole job is this. It
+    takes the regeneration loop down with the listener and removes the pidfile, so a stop from
+    the page and a stop from a terminal leave exactly the same state."""
+    try:
+        subprocess.Popen(["bash", ENGINE, "stop", "--ui-dir", UI_DIR],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        os._exit(0)
+
+
+class FloorHandler(SimpleHTTPRequestHandler):
+    # server_version, sys_version and protocol_version are INHERITED, deliberately: they are
+    # what `python3 -m http.server` answers with, and "GET is unchanged" is a byte claim.
+
+    def __init__(self, *args, **kwargs):
+        SimpleHTTPRequestHandler.__init__(self, *args, directory=UI_DIR, **kwargs)
+
+    def log_message(self, fmt, *args):
+        # SILENT ON READS. A per-GET access log grows without bound in a file the page can
+        # itself fetch; the mutating requests are audited explicitly instead.
+        return
+
+    def _send_json(self, code, obj):
+        blob = json.dumps(obj).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(blob)))
+        # NO Access-Control-Allow-Origin on any response, ever, and no preflight answer: a
+        # cross-origin page must not be able to read a reply OR to get a write sent at all.
+        self.end_headers()
+        self.wfile.write(blob)
+        self.wfile.flush()
+
+    def _guard(self):
+        """-> None when the request may proceed, or the NAME of the part that refused it."""
+        if not _token_ok(self.headers.get(TOKEN_HEADER)):
+            return "token-missing-or-wrong"
+        if not _origin_ok(self.headers.get("Origin")):
+            return "origin-not-this-server"
+        if not _host_ok(self.headers.get("Host")):
+            return "host-not-loopback"
+        return None
+
+    def _payload(self):
+        """-> a dict, or None when a body WAS supplied and could not be read as a JSON object.
+        That distinction is the whole point of returning None rather than {}: "no body"
+        legitimately means "use the defaults", while "a body this server could not parse" has to
+        be REFUSED. Collapsing the two would make a malformed request silently register the
+        directory `serve` was launched in - a WRITE on a failure path, which is exactly what
+        this module's refuse-and-name-the-reason contract exists to prevent."""
+        raw = self.headers.get("Content-Length")
+        if raw is None:
+            return {}
+        try:
+            length = int(raw)
+        except (TypeError, ValueError):
+            return None
+        if length <= 0:
+            return {}
+        if length > 65536:
+            return None
+        try:
+            body = json.loads(self.rfile.read(length).decode("utf-8"))
+        except Exception:
+            return None
+        return body if isinstance(body, dict) else None
+
+    def _refuse(self, action, why, code=400):
+        audit("POST /api/%s -> %d %s" % (action, code, why))
+        self._send_json(code, {"ok": False, "reason": why,
+                               "report": "refused (" + why + "): "
+                                         + REFUSALS.get(why, "no further detail")})
+
+    def _report(self, action, rc, out):
+        good = (rc == 0)
+        audit("POST /api/%s -> 200 %s" % (action, "ran" if good else "engine-failed"))
+        self._send_json(200, {"ok": good, "reason": "ran" if good else "engine-failed",
+                              "report": out})
+
+    def do_POST(self):
+        route = self.path.split("?", 1)[0]
+        action = route[5:] if route.startswith("/api/") else ""
+        if action not in ROUTES:
+            # AN UNROUTED WRITE ANSWERS EXACTLY WHAT THE STATIC SERVER ANSWERED. The message is
+            # BaseHTTPRequestHandler's own, spelled the same way, so `POST /floor.json` is the
+            # same response body it has always been.
+            self.send_error(501, "Unsupported method (%r)" % self.command)
+            return
+        why = self._guard()
+        if why is not None:
+            self._refuse(action, why, 403)
+            return
+
+        if action == "stop":
+            self._send_json(200, {"ok": True, "reason": "stopped",
+                                  "report": "stop: this server was asked to stop from the page"})
+            audit("POST /api/stop -> 200 stopped")
+            self.close_connection = True
+            threading.Thread(target=stop_self).start()
+            return
+
+        payload = self._payload()
+        if payload is None:
+            self._refuse(action, "body-not-json")
+            return
+        if action == "forget":
+            slug = payload.get("slug", "")
+            if not isinstance(slug, str) or not SLUG_RE.match(slug):
+                self._refuse(action, "slug-malformed")
+                return
+            rc, out = run_engine(["forget", slug])
+            self._report(action, rc, out)
+            return
+
+        raw = payload.get("path", "")
+        if raw is None or raw == "":
+            # THE ONE PATH THAT SKIPS CONFINEMENT, and it skips it because it never came from
+            # the page: it is the directory `serve` itself was launched in, which the engine
+            # resolved before the listener existed.
+            target = SERVE_CWD
+        else:
+            target, why = confine(raw)
+            if target is None:
+                self._refuse(action, why)
+                return
+        if action == "add":
+            rc, out = run_engine(["add", target])
+        else:
+            args = ["scan", target]
+            if payload.get("confirm") is True:
+                args.append("--confirm")
+            rc, out = run_engine(args)
+        self._report(action, rc, out)
+
+
+def main():
+    if TOKEN == "":
+        audit("serve: ABORTED — no per-run token reached the request handler, so nothing was served")
+        return 0
+    signal.signal(signal.SIGTERM, lambda *_ignored: os._exit(0))
+    httpd = ThreadingHTTPServer(("127.0.0.1", PORT), FloorHandler)
+    httpd.serve_forever()
+    return 0
+
+
+try:
+    sys.exit(main())
+except KeyboardInterrupt:
+    sys.exit(0)
+except Exception as exc:
+    # FAIL SAFE, exactly like every branch of the shell around it: name the reason and exit 0.
+    audit("serve: the request handler stopped — %s: %s" % (type(exc).__name__, exc))
+    sys.exit(0)
+PY
+  SERVE_HTTP_PID=$!
+  return 0
+}
+
 do_serve() {
   if ! have python3; then
     echo "serve: ABORTED — python3 not found"
@@ -1027,6 +1393,15 @@ do_serve() {
 
   if ! port_free "$PORT"; then
     echo "serve: ABORTED — port $PORT is already in use. Re-run with --port <n>; this module never moves the port for you, because a silently moved port is a browser tab reading bytes from something else. Nothing was started."
+    return 0
+  fi
+
+  # THE PER-RUN TOKEN, minted before anything is written or served. Fresh every run and gone
+  # when the process is: a secret that survives a restart is a stored credential with none of
+  # the handling a stored credential deserves.
+  UI_TOKEN="$(mint_token)" || UI_TOKEN=""
+  if [ -z "$UI_TOKEN" ]; then
+    echo "serve: ABORTED — could not mint a per-run access token (python3's secrets module produced nothing usable), and the four mutating routes are refused without one. Nothing was started and nothing was written."
     return 0
   fi
 
@@ -1080,17 +1455,24 @@ do_serve() {
   # stale. The page states only what it measured (the age and the threshold) and never a
   # cause; the missing half is this number, and only `serve` knows it - so `serve` prints it.
   # The URL is printed on ONE line so it can be copied whole.
+  #
+  # THE URL CARRIES THIS RUN'S TOKEN IN THE FRAGMENT, and the fragment is the point: a browser
+  # never sends it to any server, so the token cannot reach a request line, this module's own
+  # log, a proxy or a referrer header. The page reads it once and strips it from the address
+  # bar, so it cannot leak through history, a bookmark or a shared screenshot either. Printed
+  # on ONE line so it can be copied whole — and this is the ONLY place a human ever sees it.
   local stale_hint
   stale_hint=$((INTERVAL * 3))
   if [ "$stale_hint" -gt "$PAGE_STALE_DEFAULT" ]; then
-    echo "  open:     http://127.0.0.1:$PORT/?stale=$stale_hint"
+    echo "  open:     http://127.0.0.1:$PORT/?stale=$stale_hint#token=$UI_TOKEN"
     echo "            (--interval ${INTERVAL}s regenerates less often than the page's built-in ${PAGE_STALE_DEFAULT}s freshness threshold, which is 3x its own ${PAGE_POLL_SEC}s poll and cannot see this flag; without ?stale=$stale_hint the page would call a perfectly current file stale)"
   else
-    echo "  open:     http://127.0.0.1:$PORT/"
+    echo "  open:     http://127.0.0.1:$PORT/#token=$UI_TOKEN"
   fi
+  echo "            open THAT url, not a bare one: the #token is this run's, it dies with this server, and without it the page can still read but the four buttons are refused"
 
-  python3 -m http.server --bind 127.0.0.1 --directory "$UI_DIR" "$PORT" >/dev/null 2>&1 &
-  local srv=$!
+  serve_http
+  local srv="$SERVE_HTTP_PID"
   printf '%s\n' "$srv" > "$UI_DIR/serve.pid" 2>/dev/null
 
   local loop=""

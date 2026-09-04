@@ -297,6 +297,51 @@ code { font-family: var(--mono); font-size: 0.85em; }
 .project-path { font-family: var(--mono); color: var(--ink-dim); font-size: 0.78rem; }
 .project-state { color: var(--ink-dim); }
 
+/* ---- the four actions ----
+ * Plain controls, no transition and no animation: the rule at the top of floor.js is that
+ * nothing moves that is not backed by a recorded event, and a button is not an exception.
+ * A disabled control is what the STOPPED state looks like - the page dims what it can no
+ * longer do rather than removing it, so a reader can still see what the page used to offer. */
+.actions { margin-top: 0.75rem; padding-top: 0.6rem; border-top: 1px solid var(--line); }
+.actions .row { margin: 0 0 0.45rem; display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+.actions label { color: var(--ink-dim); font-size: 0.82rem; }
+.actions input[type="text"] {
+  flex: 1 1 22rem;
+  min-width: 12rem;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  padding: 0.32rem 0.45rem;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+}
+.actions button {
+  font-family: inherit;
+  font-size: 0.82rem;
+  padding: 0.32rem 0.6rem;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.actions button:disabled,
+.actions input:disabled { opacity: 0.5; cursor: not-allowed; }
+#action-report {
+  margin: 0.35rem 0 0;
+  padding: 0.4rem 0.5rem;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--ink-dim);
+  background: var(--panel, transparent);
+  border-left: 3px solid var(--line);
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+[data-stopped="true"] .lanes,
+[data-stopped="true"] .projects { opacity: 0.6; }
+
 /* ---- reduced motion ----
  * Removes every animation and every transition on the page while leaving every state class
  * rendered: a stalled lane is still dashed and still says "no event for <age>", and the
