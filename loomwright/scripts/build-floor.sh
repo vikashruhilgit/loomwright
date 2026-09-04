@@ -541,6 +541,11 @@ else
   pm_evidence_json="$(printf '%s' "$pm_compound" | jq -c '.evidence' 2>/dev/null)"
   pm_paths_tsv="$(printf '%s' "$pm_compound"     | jq -r '.paths[]?' 2>/dev/null)"
   case "$pm_evidence_json" in ''|'null') pm_evidence_json="{}" ;; esac
+  # Same guard on the sibling, which lacked it: a literal `null` from a jq pass that produced no
+  # `.detail` would otherwise reach surface_obj and emit `detail: null` - a key that exists and
+  # says nothing, where absent is the honest shape this projection uses everywhere else.
+  # floor.js's `s.detail || {}` absorbs it, so this is defensive rather than a live defect.
+  case "$pm_detail" in ''|'null') pm_detail="" ;; esac
 
 
   if [ "$pm_bad" -gt 0 ]; then
@@ -812,7 +817,20 @@ fi
 # different question from the reader that owns these globs.
 # ---------------------------------------------------------------------------
 if [ -n "$rules_detail" ] && [ -n "$pm_paths_tsv" ]; then
-  rules_corr=""
+  # Matches are collected by CAPTURING THE LOOP'S STDOUT ONCE, not by appending onto a growing
+  # shell string. `rules_corr="${rules_corr}..."` re-copies the whole accumulated buffer on every
+  # match, which is quadratic in the match count: measured 5,200 iterations producing 329 KB at
+  # 3.0 s against 52,000 iterations producing 3.3 MB at 269 s - 10x the work for ~90x the time,
+  # the bash 3.2 quadratic-append class this repo has recorded before. Today's real store is far
+  # from the cliff (4 globs x ~1,300 paths => 325 matches), so this was a scaling hazard, not a
+  # present defect - but this script is what `setup-ui.sh serve` regenerates every 2 s, and the
+  # runtime bound added in this same PR scales the LEDGER while holding the rules store small,
+  # so nothing exercised this path.
+  #
+  # The loops are fed by PIPED printf rather than heredocs so the whole construct sits inside one
+  # command substitution without nesting heredocs in it. The outer pipe forks once per PATTERN
+  # (4 today), which is a different and far cheaper thing than the per-LINE fork the IFS comment
+  # below warns about.
   corr_pats="$(printf '%s' "$rules_detail" | jq -r '
     (.rules // [])[] | select(((.id) | type) == "string")
     | select(((.applies_to) | type) == "array")
@@ -823,23 +841,25 @@ if [ -n "$rules_detail" ] && [ -n "$pm_paths_tsv" ]; then
   # line read. Measured on this repo: 4 patterns x 1304 changed_paths = ~5200 forks costing
   # 2.16s, against 0.08s for the identical loop with the literal - 96% of this block's cost,
   # and enough on its own to push the projector past the serve loop's regeneration interval.
-  while IFS=$'\t' read -r corr_rid corr_pat; do
+  rules_corr="$(printf '%s\n' "$corr_pats" | while IFS=$'\t' read -r corr_rid corr_pat; do
     [ -n "$corr_rid" ] && [ -n "$corr_pat" ] || continue
-    while IFS=$'\t' read -r corr_ln corr_path; do
+    printf '%s\n' "$pm_paths_tsv" | while IFS=$'\t' read -r corr_ln corr_path; do
       [ -n "$corr_path" ] || continue
       # Unquoted on purpose: that is what makes the expansion a GLOB rather than a literal.
       # `case` is parsed before the expansion, so a `|` or `)` inside a pattern is a literal
       # character and cannot smuggle in an extra branch - read-rules.sh's own reasoning.
+      # The LEADING `(` is load-bearing on this platform, not style. bash 3.2 (which is what
+      # macOS ships, and what this repo targets) mis-parses a `case` pattern's closing `)` inside
+      # `$( )` as the end of the substitution. The failure is RUNTIME-only - `bash -n` reports the
+      # file as fine and the script then dies at runtime with a command-substitution syntax error
+      # near an unexpected newline token - so a static syntax check cannot catch it. Balancing the
+      # pattern with `(` is the POSIX-legal fix and leaves the glob semantics untouched
+      # (verified: `loomwright/scripts/*` still matches the path and still rejects CLAUDE.md).
       case "$corr_path" in
-        $corr_pat) rules_corr="${rules_corr}${corr_rid}	${corr_pat}	${corr_ln}	${corr_path}
-" ;;
+        ($corr_pat) printf '%s\t%s\t%s\t%s\n' "$corr_rid" "$corr_pat" "$corr_ln" "$corr_path" ;;
       esac
-    done <<CORR_PATHS
-$pm_paths_tsv
-CORR_PATHS
-  done <<CORR_PATTERNS
-$corr_pats
-CORR_PATTERNS
+    done
+  done)"
 
   # EVIDENCE IS CARRIED ONCE PER CORRELATION, KEYED BY LINE - not once per (rule, path) match.
   # A rule's globs typically match many paths on the SAME ledger line, and attaching the full
