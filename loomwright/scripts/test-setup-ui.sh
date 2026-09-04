@@ -1350,7 +1350,9 @@ n_rr_call="$(awk '/^  function apply\(d\)/{f=1} f{print} f&&/^  }$/{exit}' "$JS"
 # --- applies_to / check stay TRI-STATES in the render layer, decided by key PRESENCE ---------
 check_lit "$JS" "hasOwnProperty.call(r, 'applies_to')" "(j4) applies_to is decided by hasOwnProperty, never truthiness"
 check_lit "$JS" "hasOwnProperty.call(r, 'check')"       "(j5) check is decided by hasOwnProperty, never truthiness"
-check_lit "$JS" "hasOwnProperty.call(rule, 'supersedes')" "(j6) supersedes presence (vs absence) is checked with hasOwnProperty"
+# supersedes now lives in ruleSupersedesLabel(r) alongside its three siblings, so the parameter
+# is `r` like theirs - it was `rule` while the field was still rendered inline on the card.
+check_lit "$JS" "hasOwnProperty.call(r, 'supersedes')" "(j6) supersedes presence (vs absence) is checked with hasOwnProperty"
 
 # Mutation control: a truthy read of applies_to must be CAUGHT, or (j4) proves nothing.
 MUT_TRI="$TMPROOT/mut-tristate.js"
@@ -1510,6 +1512,54 @@ if [ -s "$MUT_SCOPE" ] && ! cmp -s "$MUT_SCOPE" "$JS"; then
     || no "(j35) MUTATION CONTROL: the collapse was not detected - (j34) proves nothing"
 else
   no "(j35) MUTATION CONTROL: could not build the scope-collapse mutant - control inconclusive"
+fi
+
+# --- (j36) every page region has a FLOOR_UI.md row, and every optional field a guard ----------
+# FLOOR_UI.md opens its table with "The page shows, top to bottom:" - an EXHAUSTIVE claim. This
+# PR added two sections to index.html and did not touch the doc, so a reader consulting the
+# authoritative page document would have concluded the Floor has no rules browser and no churn
+# view. check-doc-currency.sh passed throughout: it verifies claims that ARE made and structurally
+# cannot see one that should have been made, a caveat CLAUDE.md already records about it. This is
+# the gate that can.
+ui_doc="$script_dir/../docs/FLOOR_UI.md"
+if [ -r "$ui_doc" ]; then
+  missing_region=""
+  for sec in $(grep -oE 'aria-labelledby="[a-z]+-h"' "$HTML" | sed 's/.*"\([a-z]*\)-h"/\1/'); do
+    # the heading text is the region's name; require the doc to mention it in the table
+    grep -qiE "^\| .*\*\*$sec" "$ui_doc" || grep -qi "$sec" "$ui_doc" || missing_region="$missing_region $sec"
+  done
+  [ -z "$missing_region" ] \
+    && ok "(j36) every index.html section is described in FLOOR_UI.md's page-region table" \
+    || no "(j36) FLOOR_UI.md's exhaustive region table omits:$missing_region"
+else
+  no "(j36) FLOOR_UI.md is unreadable - the region-parity gate cannot run"
+fi
+
+# All FOUR optional/objected rule fields get a presence-and-shape guard, not just the two that
+# were fixed first. supersedes was left raw one commit after applies_to and check were guarded
+# (the same class, one field over), and provenance - an OBJECT - was concatenated straight in,
+# printing "provenance: [object Object]" on EVERY card against the real store.
+for fn in ruleScopeLabel ruleCheckLabel ruleSupersedesLabel ruleProvenanceLabel; do
+  [ "$(grep -c "function $fn" "$JS")" -ge 1 ] \
+    && ok "(j36) $fn exists - the field is shape-guarded, not concatenated" \
+    || no "(j36) $fn is missing - that field is rendered raw"
+done
+
+# The junk string itself must be unreachable from any rule field on a REAL-shaped store.
+[ "$(grep -c "'supersedes: ' + rule.supersedes" "$JS")" = "0" ] \
+  && [ "$(grep -c "'provenance: ' + rule.provenance" "$JS")" = "0" ] \
+  && ok "(j36) neither supersedes nor provenance is concatenated raw onto the card" \
+  || no "(j36) a rule field is still concatenated raw - [object Object] is reachable"
+
+# MUTATION CONTROL: restore the raw provenance concatenation and show (j36) reddens.
+MUT_PROV="$TMPROOT/mut-prov.js"
+sed "s|var provLabel = ruleProvenanceLabel(rule);|var provLabel = null; bits.push('provenance: ' + rule.provenance);|" "$JS" > "$MUT_PROV" 2>/dev/null
+if [ -s "$MUT_PROV" ] && ! cmp -s "$MUT_PROV" "$JS"; then
+  [ "$(grep -c "'provenance: ' + rule.provenance" "$MUT_PROV")" -gt 0 ] \
+    && ok "(j37) MUTATION CONTROL: reintroducing the raw provenance concatenation IS detected by (j36)" \
+    || no "(j37) MUTATION CONTROL: the raw concatenation was not detected - (j36) proves nothing"
+else
+  no "(j37) MUTATION CONTROL: could not build the provenance mutant - control inconclusive"
 fi
 
 # --- AC-views-four-states: the four distinct renders, by their own literals ------------------

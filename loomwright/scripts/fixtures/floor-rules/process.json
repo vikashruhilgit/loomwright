@@ -90,5 +90,33 @@
       "added": "2026-09-04T00:00:00Z"
     },
     "applies_to": "loomwright/scripts/*"
+  },
+  {
+    "id": "fixture-supersedes-null",
+    "category": "process",
+    "statement": "A rule whose supersedes key is present but recorded as null - names no rule.",
+    "enforcement": "advisory",
+    "check": null,
+    "provenance": {
+      "source": "fixture",
+      "added": "2026-09-04T00:00:00Z"
+    },
+    "applies_to": null,
+    "supersedes": null
+  },
+  {
+    "id": "fixture-supersedes-malformed",
+    "category": "process",
+    "statement": "A rule whose supersedes is an object - excluded by the edge walk, so the card must say so rather than print [object Object].",
+    "enforcement": "advisory",
+    "check": null,
+    "provenance": {
+      "source": "fixture",
+      "added": "2026-09-04T00:00:00Z"
+    },
+    "applies_to": null,
+    "supersedes": {
+      "id": "not-a-string"
+    }
   }
 ]

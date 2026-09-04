@@ -290,6 +290,49 @@
 
   /* check gets the identical tri-state treatment for the identical reason. The string is
    * rendered as DATA via textContent below — it is never evaluated or executed. */
+  /* The THIRD of the three optional rule fields, and it was left raw when applies_to and check
+   * were guarded one commit earlier (2337397) - the same class, one field over. The projector
+   * forwards `supersedes` on key presence with no type filter, while its OWN edge walk selects
+   * `type == "string"`; so a non-string is silently excluded from chains/dangling/cycles and yet
+   * still printed on the card, leaving the walk and the card disagreeing about what the value is.
+   * add-rule.sh never writes a non-string here, so this reaches the page only via a hand-edited
+   * store - but applies_to is equally validated by add-rule.sh and was still guarded. */
+  function ruleSupersedesLabel(r) {
+    if (!Object.prototype.hasOwnProperty.call(r, 'supersedes')) { return null; }
+    var v = r.supersedes;
+    if (v === null) { return 'supersedes: declared, but recorded as null — names no rule'; }
+    if (Object.prototype.toString.call(v) !== '[object String]') {
+      return 'supersedes is present but malformed (' +
+        ('aeiou'.indexOf((typeof v).charAt(0)) >= 0 ? 'an ' : 'a ') + typeof v +
+        '), so the supersession walk excluded it';
+    }
+    if (!v) { return 'supersedes: declared, but empty — names no rule'; }
+    return 'supersedes: ' + v;
+  }
+
+  /* provenance is an OBJECT ({source, added}) and was concatenated straight into the meta line,
+   * rendering "provenance: [object Object]" on EVERY rule card against the real store - not an
+   * edge case reachable only from a hand-edited store, but the default render. Found while
+   * verifying the supersedes fix in a browser; it is the fourth field of four to need this, and
+   * the only one where the junk was already on screen. Show the fields, and say so plainly when
+   * the value is not the object shape read-rules.sh documents. */
+  function ruleProvenanceLabel(r) {
+    var v = r.provenance;
+    if (v === undefined || v === null) { return null; }
+    if (Object.prototype.toString.call(v) === '[object String]') { return 'provenance: ' + v; }
+    if (Object.prototype.toString.call(v) !== '[object Object]') {
+      return 'provenance is present but malformed (' +
+        ('aeiou'.indexOf((typeof v).charAt(0)) >= 0 ? 'an ' : 'a ') + typeof v + ')';
+    }
+    var parts = [];
+    if (typeof v.source === 'string' && v.source) { parts.push(v.source); }
+    if (typeof v.added === 'string' && v.added) { parts.push('added ' + v.added); }
+    /* An object with neither field is RECORDED but unreadable by this page - say that rather
+     * than printing an empty "provenance: ", which would read as "no provenance". */
+    return parts.length ? ('provenance: ' + parts.join(' · '))
+                        : 'provenance is recorded but carries no source or added field';
+  }
+
   function ruleCheckLabel(r) {
     if (!Object.prototype.hasOwnProperty.call(r, 'check')) { return 'no check declared'; }
     if (r.check === null) { return 'declared, no runnable check (null)'; }
@@ -449,15 +492,17 @@
           meta.className = 'rule-meta';
           var bits = [];
           if (rule.enforcement) { bits.push('enforcement: ' + rule.enforcement); }
-          if (rule.provenance) { bits.push('provenance: ' + rule.provenance); }
+          var provLabel = ruleProvenanceLabel(rule);
+          if (provLabel !== null) { bits.push(provLabel); }
           bits.push(ruleCheckLabel(rule));
           meta.textContent = bits.join(' · ');
           li.appendChild(meta);
 
-          if (Object.prototype.hasOwnProperty.call(rule, 'supersedes')) {
+          var supLabel = ruleSupersedesLabel(rule);
+          if (supLabel !== null) {
             var supP = document.createElement('p');
             supP.className = 'rule-meta';
-            supP.textContent = 'supersedes: ' + rule.supersedes;
+            supP.textContent = supLabel;
             li.appendChild(supP);
           }
 
